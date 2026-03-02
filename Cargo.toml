@@ -7,12 +7,10 @@ edition = "2024"
 cortex-m = "0.7.7"
 cortex-m-rt = "0.7.5"
 panic-probe = { version = "1.0", features = ["print-defmt"] }
-defmt = "0.3"
-defmt-rtt = "0.4"
+defmt = "1"
+defmt-rtt = "1.1"
 
-embassy-executor = { version = "0.7", features = ["arch-cortex-m", "executor-thread"] }
-embassy-time = { version = "0.5", features = ["tick-hz-32_768"] }
-
+embassy-executor = { version = "0.9.1", features = ["arch-cortex-m", "executor-thread"] }
 nrf-softdevice = { version = "0.1.0", features = ["nrf52840", "s140", "ble-peripheral", "ble-gatt-server", "critical-section-impl", "defmt"] }
 nrf52840-hal = { version = "0.19.0", features = ["rt"] }
 embedded-hal = "1.0"

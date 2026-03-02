@@ -8,12 +8,20 @@ use nrf_softdevice::{Softdevice, raw};
 use nrf52840_hal as hal;
 use panic_probe as _;
 
-const DEFAULT_BATTERY_PCT: u8 = 50;
-const SLEEP_POLL_PERIOD_MS: u64 = 4_000;
-const SLEEP_LISTEN_WINDOW_10MS: u16 = 50; // 500 ms
+defmt::timestamp!("{=u64:us}", 0u64);
 
-const ADV_DATA: &[u8] = &[0x02, 0x01, 0x06, 0x06, 0x09, b't', b'x', b'i', b'n', b'g'];
-const SCAN_DATA: &[u8] = &[];
+#[defmt::panic_handler]
+fn defmt_panic() -> ! {
+    panic_probe::hard_fault()
+}
+
+const DEFAULT_BATTERY_PCT: u8 = 50;
+const SLEEP_ADV_INTERVAL_UNITS: u32 = 80; // 50 ms (0.625 ms units)
+const TXING_ADV_DATA: [u8; 9] = [
+    0x02, 0x01, 0x06, // Flags
+    0x05, 0xFF, 0xFF, 0xFF, b'T', b'X', // Manufacturer data: company=0xFFFF, marker="TX"
+];
+const TXING_SCAN_DATA: [u8; 7] = [0x06, 0x09, b't', b'x', b'i', b'n', b'g'];
 
 #[derive(Clone, Copy)]
 struct DeviceState {
@@ -25,7 +33,7 @@ impl DeviceState {
     const fn boot_default() -> Self {
         Self {
             battery_pct: DEFAULT_BATTERY_PCT,
-            sleep: true,
+            sleep: false,
         }
     }
 
@@ -79,23 +87,14 @@ async fn main(spawner: embassy_executor::Spawner) {
 fn softdevice_config() -> nrf_softdevice::Config {
     nrf_softdevice::Config {
         clock: Some(raw::nrf_clock_lf_cfg_t {
-            source: raw::NRF_CLOCK_LF_SRC_XTAL as u8,
-            rc_ctiv: 0,
-            rc_temp_ctiv: 0,
-            accuracy: raw::NRF_CLOCK_LF_ACCURACY_20_PPM as u8,
+            source: raw::NRF_CLOCK_LF_SRC_RC as u8,
+            rc_ctiv: 16,
+            rc_temp_ctiv: 2,
+            accuracy: raw::NRF_CLOCK_LF_ACCURACY_500_PPM as u8,
         }),
         conn_gap: Some(raw::ble_gap_conn_cfg_t {
             conn_count: 1,
             event_length: 24,
-        }),
-        conn_gatt: Some(raw::ble_gatt_conn_cfg_t { att_mtu: 64 }),
-        gatts_attr_tab_size: Some(raw::ble_gatts_cfg_attr_tab_size_t { attr_tab_size: 512 }),
-        gap_role_count: Some(raw::ble_gap_cfg_role_count_t {
-            adv_set_count: 1,
-            periph_role_count: 1,
-            central_role_count: 0,
-            central_sec_count: 0,
-            _bitfield_1: raw::ble_gap_cfg_role_count_t::new_bitfield_1(0),
         }),
         ..Default::default()
     }
@@ -116,14 +115,12 @@ async fn sleep_poll_cycle<P: OutputPin>(
     led: &mut P,
 ) {
     set_led_for_sleep_state(led, true);
-    embassy_time::Timer::after_millis(SLEEP_POLL_PERIOD_MS).await;
-
     let mut config = peripheral::Config::default();
-    config.timeout = Some(SLEEP_LISTEN_WINDOW_10MS);
-
+    config.interval = SLEEP_ADV_INTERVAL_UNITS;
+    // Keep advertising payloads in RAM; SoftDevice may reject flash-backed pointers.
     let adv = peripheral::ConnectableAdvertisement::ScannableUndirected {
-        adv_data: ADV_DATA,
-        scan_data: SCAN_DATA,
+        adv_data: &TXING_ADV_DATA,
+        scan_data: &TXING_SCAN_DATA,
     };
 
     if let Ok(conn) = peripheral::advertise_connectable(sd, adv, &config).await {
@@ -140,9 +137,10 @@ async fn awake_cycle<P: OutputPin>(
     set_led_for_sleep_state(led, false);
 
     let config = peripheral::Config::default();
+    // Keep advertising payloads in RAM; SoftDevice may reject flash-backed pointers.
     let adv = peripheral::ConnectableAdvertisement::ScannableUndirected {
-        adv_data: ADV_DATA,
-        scan_data: SCAN_DATA,
+        adv_data: &TXING_ADV_DATA,
+        scan_data: &TXING_SCAN_DATA,
     };
 
     if let Ok(conn) = peripheral::advertise_connectable(sd, adv, &config).await {

@@ -17,3 +17,6 @@ target/
 
 # macOS
 .DS_Store
+
+# Local BLE cache for xtask
+.txing_ble_id
