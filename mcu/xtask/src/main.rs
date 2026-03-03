@@ -53,9 +53,7 @@ fn main() -> ExitCode {
     let cmd = args.next().unwrap_or_else(|| "uf2".to_string());
     let cmd_args: Vec<String> = args.collect();
 
-    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("xtask should live under workspace root");
+    let workspace_root = workspace_root();
 
     match cmd.as_str() {
         "build" => to_exit_code(run_build(workspace_root)),
@@ -75,23 +73,23 @@ fn main() -> ExitCode {
 }
 
 fn print_usage() {
-    eprintln!("usage: cargo fw [build|bin|uf2|flash|scan|sleep|wakeup|ble-sleep]");
-    eprintln!("  cargo fw scan [--scan-timeout <sec>]");
-    eprintln!("  cargo fw sleep [--name <local_name>] [--id <peripheral_id>] [--scan-timeout <sec>]");
-    eprintln!("  cargo fw wakeup [--name <local_name>] [--id <peripheral_id>] [--scan-timeout <sec>]");
+    eprintln!("usage: cargo mcu [build|bin|uf2|flash|scan|sleep|wakeup|ble-sleep]");
+    eprintln!("  cargo mcu scan [--scan-timeout <sec>]");
+    eprintln!("  cargo mcu sleep [--name <local_name>] [--id <peripheral_id>] [--scan-timeout <sec>]");
+    eprintln!("  cargo mcu wakeup [--name <local_name>] [--id <peripheral_id>] [--scan-timeout <sec>]");
     eprintln!(
-        "  cargo fw ble-sleep --sleep <true|false> [--name <local_name>] [--id <peripheral_id>] [--scan-timeout <sec>]"
+        "  cargo mcu ble-sleep --sleep <true|false> [--name <local_name>] [--id <peripheral_id>] [--scan-timeout <sec>]"
     );
 }
 
 fn print_scan_usage() {
-    eprintln!("usage: cargo fw scan [--scan-timeout <sec>]");
+    eprintln!("usage: cargo mcu scan [--scan-timeout <sec>]");
     eprintln!("  --scan-timeout  scan timeout in seconds (default: 12)");
 }
 
 fn print_ble_sleep_usage() {
     eprintln!(
-        "usage: cargo fw ble-sleep --sleep <true|false> [--name <local_name>] [--id <peripheral_id>] [--scan-timeout <sec>]"
+        "usage: cargo mcu ble-sleep --sleep <true|false> [--name <local_name>] [--id <peripheral_id>] [--scan-timeout <sec>]"
     );
     eprintln!("  --sleep         target state (true/false), required");
     eprintln!("  --name          BLE local name fragment to match (default: txing)");
@@ -100,7 +98,7 @@ fn print_ble_sleep_usage() {
 }
 
 fn print_ble_alias_usage(cmd: &str) {
-    eprintln!("usage: cargo fw {cmd} [--name <local_name>] [--id <peripheral_id>] [--scan-timeout <sec>]");
+    eprintln!("usage: cargo mcu {cmd} [--name <local_name>] [--id <peripheral_id>] [--scan-timeout <sec>]");
     eprintln!("  --name          BLE local name fragment to match (default: txing)");
     eprintln!("  --id            BLE peripheral id to match exactly (example: 12C5364E-...)");
     eprintln!("  --scan-timeout  scan timeout in seconds (default: 12)");
@@ -265,9 +263,16 @@ fn run_ble_command(opts: BleSleepOptions) -> bool {
 }
 
 fn workspace_root() -> &'static Path {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("xtask should live under workspace root")
+    let mut dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    loop {
+        if dir.join("Cargo.toml").is_file() && dir.join("memory.x").is_file() {
+            return dir;
+        }
+
+        dir = dir
+            .parent()
+            .expect("failed to locate firmware workspace root for xtask");
+    }
 }
 
 fn ble_id_cache_path() -> PathBuf {
