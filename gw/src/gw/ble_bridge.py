@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -10,7 +11,7 @@ from bleak import BleakClient, BleakScanner
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
 
-TXING_SERVICE_UUID = "5A35B7B9-B4D8-21D6-F1FE-A61B1745ED7C"
+TXING_SERVICE_UUID = "f6b4a000-7b32-4d2d-9f4b-4ff0a2b8f100"
 SLEEP_COMMAND_UUID = "f6b4a001-7b32-4d2d-9f4b-4ff0a2b8f100"
 TXING_MFG_ID = 0xFFFF
 TXING_MFG_MAGIC = b"TX"
@@ -75,7 +76,10 @@ class BleSleepBridge:
 
     async def _poll_trigger_files(self) -> None:
         while self._is_connected() and not self._disconnected.is_set():
-            pending = self._pending_commands()
+            pending = pending_commands(
+                wake_file=self._config.wake_file,
+                sleep_file=self._config.sleep_file,
+            )
             for trigger_file, sleep_value in pending:
                 if not trigger_file.exists():
                     continue
@@ -89,23 +93,6 @@ class BleSleepBridge:
                 )
 
             await asyncio.sleep(self._config.poll_interval)
-
-    def _pending_commands(self) -> list[tuple[Path, bool]]:
-        candidates: list[tuple[float, Path, bool]] = []
-        for path, sleep_value in (
-            (self._config.wake_file, False),
-            (self._config.sleep_file, True),
-        ):
-            if not path.exists():
-                continue
-            try:
-                mtime = path.stat().st_mtime
-            except OSError:
-                continue
-            candidates.append((mtime, path, sleep_value))
-
-        candidates.sort(key=lambda item: item[0])
-        return [(path, sleep_value) for _, path, sleep_value in candidates]
 
     async def _send_sleep_command(self, sleep: bool) -> None:
         if not self._is_connected():
@@ -228,13 +215,63 @@ def _parse_args() -> argparse.Namespace:
         choices=("DEBUG", "INFO", "WARNING", "ERROR"),
         help="Logging verbosity (default: INFO)",
     )
+    parser.add_argument(
+        "--no-ble",
+        action="store_true",
+        help="Do not use BLE; only poll trigger files and log actions",
+    )
     return parser.parse_args()
+
+
+def pending_commands(wake_file: Path, sleep_file: Path) -> list[tuple[Path, bool]]:
+    candidates: list[tuple[float, Path, bool]] = []
+    for path, sleep_value in (
+        (wake_file, False),
+        (sleep_file, True),
+    ):
+        if not path.exists():
+            continue
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            continue
+        candidates.append((mtime, path, sleep_value))
+
+    candidates.sort(key=lambda item: item[0])
+    return [(path, sleep_value) for _, path, sleep_value in candidates]
+
+
+async def run_no_ble_loop(config: BridgeConfig) -> None:
+    LOGGER.info(
+        "Running in --no-ble mode; polling %s and %s every %.2fs",
+        config.wake_file,
+        config.sleep_file,
+        config.poll_interval,
+    )
+    while True:
+        pending = pending_commands(
+            wake_file=config.wake_file,
+            sleep_file=config.sleep_file,
+        )
+        for trigger_file, sleep_value in pending:
+            if not trigger_file.exists():
+                continue
+            LOGGER.info(
+                "Dry-run: would send Sleep Command sleep=%s (trigger=%s)",
+                sleep_value,
+                trigger_file,
+            )
+            trigger_file.unlink(missing_ok=True)
+            LOGGER.info("Dry-run: removed trigger file %s", trigger_file)
+
+        await asyncio.sleep(config.poll_interval)
 
 
 def main() -> None:
     args = _parse_args()
     logging.basicConfig(
         level=getattr(logging, args.log_level),
+        stream=sys.stdout,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
@@ -249,6 +286,9 @@ def main() -> None:
     bridge = BleSleepBridge(config)
 
     async def _runner() -> None:
+        if args.no_ble:
+            await run_no_ble_loop(config)
+            return
         while True:
             try:
                 await bridge.run()

@@ -14,6 +14,19 @@ Run from `gw/`:
 uv run gw
 ```
 
+Dry-run mode (no BLE calls, logs only to stdout):
+
+```bash
+uv run gw --no-ble
+```
+
+Create trigger files from another terminal:
+
+```bash
+uv run wake
+uv run sleep
+```
+
 Behavior:
 - Discovers the MCU over BLE on startup
 - Keeps BLE connection open
@@ -22,3 +35,4 @@ Behavior:
 - Every 1 second:
   - if `/tmp/wake` exists, writes `sleep=false` (`0x00`) and removes `/tmp/wake`
   - if `/tmp/sleep` exists, writes `sleep=true` (`0x01`) and removes `/tmp/sleep`
+- In `--no-ble` mode, it performs the same file polling/removal but only logs the intended BLE action.
