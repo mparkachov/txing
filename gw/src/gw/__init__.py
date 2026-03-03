@@ -1,2 +1,3 @@
-def main() -> None:
-    print("Hello from gw!")
+from .ble_bridge import main
+
+__all__ = ["main"]

@@ -7,7 +7,9 @@ authors = [
     { name = "Maxim Parkachov", email = "mparkachov@users.noreply.github.com" }
 ]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "bleak>=0.22,<1",
+]
 
 [project.scripts]
 gw = "gw:main"
