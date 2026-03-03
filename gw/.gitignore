@@ -1,0 +1,33 @@
+# Python cache and build artifacts
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+build/
+dist/
+
+# Test and tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Local environments and secrets
+.venv/
+.env
+.env.*
+!.env.example
+
+# Local AWS Greengrass runtime/artifacts (device-local)
+greengrass/v2/
+greengrass-build/
+ggc/
+
+# Local logs and dumps
+*.log
+ble-dumps/
+
+# OS files
+.DS_Store
