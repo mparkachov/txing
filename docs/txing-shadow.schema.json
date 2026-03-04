@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://txing.local/schemas/txing-shadow.schema.json",
-  "title": "Txing Thing Shadow Contract v2",
+  "title": "Txing Thing Shadow Contract v3",
   "description": "Canonical payload shape for txing Thing Shadow updates and snapshots.",
   "type": "object",
   "additionalProperties": true,
@@ -85,7 +85,8 @@
       "additionalProperties": true,
       "required": [
         "power",
-        "batteryPercent"
+        "batteryPercent",
+        "ble"
       ],
       "properties": {
         "power": {
@@ -95,6 +96,36 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 100
+        },
+        "ble": {
+          "$ref": "#/$defs/bleGattUuids"
+        }
+      }
+    },
+    "bleGattUuids": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "serviceUuid",
+        "sleepCommandUuid",
+        "stateReportUuid"
+      ],
+      "properties": {
+        "serviceUuid": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "sleepCommandUuid": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "stateReportUuid": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "deviceId": {
+          "type": "string",
+          "minLength": 1
         }
       }
     }

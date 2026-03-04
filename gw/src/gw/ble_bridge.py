@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 import paho.mqtt.client as mqtt
 from bleak import BleakClient, BleakScanner
@@ -39,6 +40,7 @@ TXING_MFG_MAGIC = b"TX"
 
 DEFAULT_NAME_FRAGMENT = "txing"
 DEFAULT_SCAN_TIMEOUT = 12.0
+DEFAULT_CACHED_DEVICE_LOOKUP_TIMEOUT = 1.0
 DEFAULT_RECONNECT_DELAY = 1.0
 DEFAULT_LOCK_FILE = Path("/tmp/txing_gw.lock")
 DEFAULT_THING_NAME = "txing"
@@ -78,6 +80,108 @@ def _default_cloudwatch_log_stream(thing_name: str) -> str:
     return f"{thing_name}-{hostname}-{timestamp}-{os.getpid()}"
 
 
+@dataclass(slots=True, frozen=True)
+class BleGattUuids:
+    service_uuid: str
+    sleep_command_uuid: str
+    state_report_uuid: str
+    device_id: str | None = None
+
+    def as_shadow_dict(self) -> dict[str, str]:
+        payload: dict[str, str] = {
+            "serviceUuid": self.service_uuid,
+            "sleepCommandUuid": self.sleep_command_uuid,
+            "stateReportUuid": self.state_report_uuid,
+        }
+        if self.device_id:
+            payload["deviceId"] = self.device_id
+        return payload
+
+    def with_device_id(self, device_id: str | None) -> BleGattUuids:
+        normalized_device_id = (
+            str(device_id).strip() if device_id is not None else None
+        )
+        if not normalized_device_id:
+            normalized_device_id = None
+        return BleGattUuids(
+            service_uuid=self.service_uuid,
+            sleep_command_uuid=self.sleep_command_uuid,
+            state_report_uuid=self.state_report_uuid,
+            device_id=normalized_device_id,
+        )
+
+
+DEFAULT_BLE_GATT_UUIDS = BleGattUuids(
+    service_uuid=TXING_SERVICE_UUID,
+    sleep_command_uuid=SLEEP_COMMAND_UUID,
+    state_report_uuid=STATE_REPORT_UUID,
+)
+
+
+def _normalize_uuid(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = value.strip() if isinstance(value, str) else str(value).strip()
+    if not text:
+        return None
+    try:
+        return str(UUID(text)).lower()
+    except ValueError:
+        return None
+
+
+def _extract_reported_mcu(payload: dict[str, Any]) -> dict[str, Any] | None:
+    state = payload.get("state")
+    if not isinstance(state, dict):
+        return None
+    reported = state.get("reported")
+    if not isinstance(reported, dict):
+        return None
+    mcu = reported.get("mcu")
+    return mcu if isinstance(mcu, dict) else None
+
+
+def _extract_reported_ble_uuids(payload: dict[str, Any]) -> BleGattUuids | None:
+    mcu = _extract_reported_mcu(payload)
+    if mcu is None:
+        return None
+    ble = _extract_reported_ble_map(mcu)
+    if ble is None:
+        return None
+
+    service_uuid = _normalize_uuid(ble.get("serviceUuid"))
+    sleep_command_uuid = _normalize_uuid(ble.get("sleepCommandUuid"))
+    state_report_uuid = _normalize_uuid(ble.get("stateReportUuid"))
+    device_id = _normalize_device_id(ble.get("deviceId"))
+    if (
+        service_uuid is None
+        or sleep_command_uuid is None
+        or state_report_uuid is None
+    ):
+        return None
+
+    return BleGattUuids(
+        service_uuid=service_uuid,
+        sleep_command_uuid=sleep_command_uuid,
+        state_report_uuid=state_report_uuid,
+        device_id=device_id,
+    )
+
+
+def _extract_reported_ble_map(mcu: dict[str, Any]) -> dict[str, Any] | None:
+    ble = mcu.get("ble")
+    return ble if isinstance(ble, dict) else None
+
+
+def _normalize_device_id(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    return text
+
+
 def _extract_desired_power_from_shadow(payload: dict[str, Any]) -> bool | None:
     state = payload.get("state")
     if not isinstance(state, dict):
@@ -104,28 +208,16 @@ def _extract_desired_power_from_delta(payload: dict[str, Any]) -> bool | None:
 
 
 def _extract_reported_power(payload: dict[str, Any]) -> bool | None:
-    state = payload.get("state")
-    if not isinstance(state, dict):
-        return None
-    reported = state.get("reported")
-    if not isinstance(reported, dict):
-        return None
-    mcu = reported.get("mcu")
-    if not isinstance(mcu, dict):
+    mcu = _extract_reported_mcu(payload)
+    if mcu is None:
         return None
     value = mcu.get("power")
     return value if isinstance(value, bool) else None
 
 
 def _extract_reported_battery_percent(payload: dict[str, Any]) -> int | None:
-    state = payload.get("state")
-    if not isinstance(state, dict):
-        return None
-    reported = state.get("reported")
-    if not isinstance(reported, dict):
-        return None
-    mcu = reported.get("mcu")
-    if not isinstance(mcu, dict):
+    mcu = _extract_reported_mcu(payload)
+    if mcu is None:
         return None
     value = mcu.get("batteryPercent")
     if isinstance(value, bool):
@@ -178,22 +270,32 @@ class ShadowState:
     desired_power: bool | None = None
     reported_power: bool = False
     battery_percent: int = DEFAULT_BATTERY_PERCENT
+    ble_uuids: BleGattUuids = DEFAULT_BLE_GATT_UUIDS
+    ble_uuid_search_mode: bool = False
     snapshot_file: Path = DEFAULT_SHADOW_FILE
 
     def set_desired(self, power: bool | None) -> None:
         self.desired_power = power
 
-    def set_reported(self, power: bool, battery_percent: int | None = None) -> None:
+    def set_reported(
+        self,
+        power: bool,
+        battery_percent: int | None = None,
+        ble_uuids: BleGattUuids | None = None,
+    ) -> None:
         self.reported_power = power
         if battery_percent is not None:
             self.battery_percent = battery_percent
+        if ble_uuids is not None:
+            self.ble_uuids = ble_uuids
 
-    def payload(self) -> dict[str, dict[str, dict[str, dict[str, bool | int]]]]:
-        state: dict[str, dict[str, dict[str, bool | int]]] = {
+    def payload(self) -> dict[str, dict[str, dict[str, dict[str, Any]]]]:
+        state: dict[str, dict[str, dict[str, Any]]] = {
             "reported": {
                 "mcu": {
                     "power": self.reported_power,
                     "batteryPercent": self.battery_percent,
+                    "ble": self.ble_uuids.as_shadow_dict(),
                 }
             },
         }
@@ -219,6 +321,7 @@ class AwsShadowUpdate:
     desired_power: bool | None = None
     reported_power: bool | None = None
     battery_percent: int | None = None
+    ble_uuids: BleGattUuids | None = None
 
 
 class AwsShadowClient:
@@ -346,6 +449,7 @@ class AwsShadowClient:
         *,
         power: bool,
         battery_percent: int,
+        ble_uuids: BleGattUuids,
         clear_desired_power: bool,
     ) -> None:
         state: dict[str, Any] = {
@@ -353,6 +457,7 @@ class AwsShadowClient:
                 "mcu": {
                     "power": power,
                     "batteryPercent": battery_percent,
+                    "ble": ble_uuids.as_shadow_dict(),
                 }
             }
         }
@@ -482,6 +587,7 @@ class AwsShadowClient:
                 desired_power=_extract_desired_power_from_shadow(payload),
                 reported_power=_extract_reported_power(payload),
                 battery_percent=_extract_reported_battery_percent(payload),
+                ble_uuids=_extract_reported_ble_uuids(payload),
             )
             self._enqueue_update(update)
             self._set_initial_snapshot(payload)
@@ -599,10 +705,11 @@ class BleSleepBridge:
         self._config = config
         self._shadow = shadow
         self._cloud_shadow = cloud_shadow
-        self._cached_device_id: str | None = None
+        self._cached_device_id: str | None = shadow.ble_uuids.device_id
         self._client: BleakClient | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._disconnect_event: asyncio.Event | None = None
+        self._ble_uuid_search_mode = shadow.ble_uuid_search_mode
 
     async def run(self) -> None:
         self._loop = asyncio.get_running_loop()
@@ -674,6 +781,8 @@ class BleSleepBridge:
             updates = self._cloud_shadow.drain_updates()
         for update in updates:
             changed = False
+            ble_uuids_changed = False
+            ble_gatt_uuids_changed = False
             if update.has_desired and self._shadow.desired_power != update.desired_power:
                 self._shadow.set_desired(update.desired_power)
                 changed = True
@@ -692,9 +801,35 @@ class BleSleepBridge:
                     battery_percent=update.battery_percent,
                 )
                 changed = True
+            if (
+                update.ble_uuids is not None
+                and self._shadow.ble_uuids != update.ble_uuids
+            ):
+                previous_ble_uuids = self._shadow.ble_uuids
+                self._shadow.set_reported(
+                    self._shadow.reported_power,
+                    battery_percent=self._shadow.battery_percent,
+                    ble_uuids=update.ble_uuids,
+                )
+                self._cached_device_id = update.ble_uuids.device_id
+                ble_gatt_uuids_changed = (
+                    previous_ble_uuids.service_uuid != update.ble_uuids.service_uuid
+                    or previous_ble_uuids.sleep_command_uuid
+                    != update.ble_uuids.sleep_command_uuid
+                    or previous_ble_uuids.state_report_uuid
+                    != update.ble_uuids.state_report_uuid
+                )
+                self._ble_uuid_search_mode = False
+                ble_uuids_changed = True
+                changed = True
 
             if changed:
                 self._shadow.log_state(f"Applied cloud shadow update ({update.source})")
+            if ble_uuids_changed and ble_gatt_uuids_changed and self._is_connected():
+                LOGGER.info(
+                    "Cloud shadow BLE UUIDs changed; reconnecting to validate new UUIDs"
+                )
+                await self._safe_disconnect()
 
     async def _ensure_connected(self) -> None:
         if self._is_connected():
@@ -711,6 +846,10 @@ class BleSleepBridge:
                 raise RuntimeError("BLE connect returned False")
             await client.get_services()
             self._cached_device_id = device.address
+            await self._resolve_ble_uuids_for_connected_client(
+                client,
+                device_id=device.address,
+            )
             _log_important(
                 LOGGER,
                 "Connected to %s (%s)",
@@ -795,6 +934,7 @@ class BleSleepBridge:
             await self._cloud_shadow.set_reported_state(
                 power=self._shadow.reported_power,
                 battery_percent=self._shadow.battery_percent,
+                ble_uuids=self._shadow.ble_uuids,
                 clear_desired_power=clear_desired_power,
             )
         except Exception:
@@ -812,7 +952,7 @@ class BleSleepBridge:
 
         payload = b"\x01" if sleep else b"\x00"
         await self._client.write_gatt_char(
-            SLEEP_COMMAND_UUID,
+            self._shadow.ble_uuids.sleep_command_uuid,
             payload,
             response=True,
         )
@@ -823,7 +963,9 @@ class BleSleepBridge:
             return
         assert self._client is not None
 
-        report = await self._client.read_gatt_char(STATE_REPORT_UUID)
+        report = await self._client.read_gatt_char(
+            self._shadow.ble_uuids.state_report_uuid
+        )
         if len(report) < 2:
             raise RuntimeError(
                 f"unexpected State Report length: {len(report)} (expected >= 2)"
@@ -848,24 +990,214 @@ class BleSleepBridge:
             reported_power,
         )
 
+    async def _resolve_ble_uuids_for_connected_client(
+        self,
+        client: BleakClient,
+        *,
+        device_id: str | None,
+    ) -> None:
+        configured_uuids = self._shadow.ble_uuids.with_device_id(device_id)
+        if (
+            not self._ble_uuid_search_mode
+            and self._service_has_uuid_config(client, configured_uuids)
+        ):
+            if configured_uuids != self._shadow.ble_uuids:
+                self._shadow.set_reported(
+                    self._shadow.reported_power,
+                    battery_percent=self._shadow.battery_percent,
+                    ble_uuids=configured_uuids,
+                )
+            LOGGER.info(
+                "Validated BLE UUIDs from shadow: service=%s sleepCommand=%s stateReport=%s deviceId=%s",
+                configured_uuids.service_uuid,
+                configured_uuids.sleep_command_uuid,
+                configured_uuids.state_report_uuid,
+                configured_uuids.device_id or "<unknown>",
+            )
+            return
+
+        if self._ble_uuid_search_mode:
+            LOGGER.info("BLE UUID search mode enabled; probing GATT services")
+        else:
+            LOGGER.warning(
+                "Configured BLE UUIDs failed validation; entering BLE UUID search mode"
+            )
+        self._ble_uuid_search_mode = True
+
+        discovered_uuids = self._discover_ble_uuids_from_connected_services(client)
+        if discovered_uuids is None:
+            raise RuntimeError(
+                "BLE UUID search mode failed: required write/read+notify characteristics not found"
+            )
+        discovered_uuids = discovered_uuids.with_device_id(device_id)
+
+        if discovered_uuids != configured_uuids:
+            _log_important(
+                LOGGER,
+                "BLE UUID search discovered service=%s sleepCommand=%s stateReport=%s deviceId=%s",
+                discovered_uuids.service_uuid,
+                discovered_uuids.sleep_command_uuid,
+                discovered_uuids.state_report_uuid,
+                discovered_uuids.device_id or "<unknown>",
+            )
+        else:
+            LOGGER.info("BLE UUID search confirmed configured UUIDs")
+
+        self._shadow.set_reported(
+            self._shadow.reported_power,
+            battery_percent=self._shadow.battery_percent,
+            ble_uuids=discovered_uuids,
+        )
+        self._ble_uuid_search_mode = False
+
+    def _discover_ble_uuids_from_connected_services(
+        self, client: BleakClient
+    ) -> BleGattUuids | None:
+        services = client.services
+        if services is None:
+            return None
+
+        candidates: list[BleGattUuids] = []
+        for service in services:
+            service_uuid = _normalize_uuid(getattr(service, "uuid", None))
+            if service_uuid is None:
+                continue
+
+            write_chars: list[str] = []
+            state_chars: list[str] = []
+            for characteristic in service.characteristics:
+                char_uuid = _normalize_uuid(getattr(characteristic, "uuid", None))
+                if char_uuid is None:
+                    continue
+                if self._characteristic_has_property(characteristic, "write"):
+                    write_chars.append(char_uuid)
+                if (
+                    self._characteristic_has_property(characteristic, "read")
+                    and self._characteristic_has_property(characteristic, "notify")
+                ):
+                    state_chars.append(char_uuid)
+
+            for sleep_uuid in sorted(set(write_chars)):
+                for state_uuid in sorted(set(state_chars)):
+                    if sleep_uuid == state_uuid:
+                        continue
+                    candidates.append(
+                        BleGattUuids(
+                            service_uuid=service_uuid,
+                            sleep_command_uuid=sleep_uuid,
+                            state_report_uuid=state_uuid,
+                        )
+                    )
+
+        if not candidates:
+            return None
+
+        preferred = [
+            candidate
+            for candidate in candidates
+            if candidate.service_uuid == self._shadow.ble_uuids.service_uuid
+        ]
+        selected_pool = preferred or candidates
+        selected_pool.sort(
+            key=lambda item: (
+                item.service_uuid,
+                item.sleep_command_uuid,
+                item.state_report_uuid,
+            )
+        )
+        return selected_pool[0]
+
+    def _service_has_uuid_config(self, client: BleakClient, uuids: BleGattUuids) -> bool:
+        services = client.services
+        if services is None:
+            return False
+
+        matched_service: Any | None = None
+        for service in services:
+            service_uuid = _normalize_uuid(getattr(service, "uuid", None))
+            if service_uuid == uuids.service_uuid:
+                matched_service = service
+                break
+        if matched_service is None:
+            return False
+
+        has_sleep_command = False
+        has_state_report = False
+        for characteristic in matched_service.characteristics:
+            char_uuid = _normalize_uuid(getattr(characteristic, "uuid", None))
+            if char_uuid is None:
+                continue
+            if (
+                char_uuid == uuids.sleep_command_uuid
+                and self._characteristic_has_property(characteristic, "write")
+            ):
+                has_sleep_command = True
+            if (
+                char_uuid == uuids.state_report_uuid
+                and self._characteristic_has_property(characteristic, "read")
+                and self._characteristic_has_property(characteristic, "notify")
+            ):
+                has_state_report = True
+
+        return has_sleep_command and has_state_report
+
+    @staticmethod
+    def _characteristic_has_property(characteristic: Any, property_name: str) -> bool:
+        properties = {
+            str(prop).lower()
+            for prop in (getattr(characteristic, "properties", None) or [])
+        }
+        if property_name == "write":
+            return "write" in properties
+        return property_name in properties
+
     async def _discover_target(self) -> BLEDevice:
         if self._cached_device_id:
-            LOGGER.info("Trying cached BLE id in memory: %s", self._cached_device_id)
+            LOGGER.info("Trying cached BLE deviceId: %s", self._cached_device_id)
             cached_device = await BleakScanner.find_device_by_address(
                 self._cached_device_id,
-                timeout=2.0,
+                timeout=DEFAULT_CACHED_DEVICE_LOOKUP_TIMEOUT,
             )
             if cached_device:
                 return cached_device
             LOGGER.warning("Cached id was not found, falling back to full discovery")
 
+        if self._ble_uuid_search_mode:
+            return await self._discover_target_with_filter_mode(
+                include_service_filter=False
+            )
+
+        try:
+            return await self._discover_target_with_filter_mode(
+                include_service_filter=True
+            )
+        except RuntimeError:
+            LOGGER.warning(
+                "Discovery with configured service UUID failed; falling back to BLE UUID search mode"
+            )
+            self._ble_uuid_search_mode = True
+            return await self._discover_target_with_filter_mode(
+                include_service_filter=False
+            )
+
+    async def _discover_target_with_filter_mode(
+        self,
+        *,
+        include_service_filter: bool,
+    ) -> BLEDevice:
         name_fragment = self._config.name_fragment.lower()
+        configured_service_uuid = self._shadow.ble_uuids.service_uuid
+        mode_name = (
+            "configured UUID mode" if include_service_filter else "BLE UUID search mode"
+        )
 
         def matches(device: BLEDevice, adv: AdvertisementData) -> bool:
-            service_match = any(
-                service.lower() == TXING_SERVICE_UUID
-                for service in (adv.service_uuids or [])
-            )
+            service_match = False
+            if include_service_filter:
+                service_match = any(
+                    _normalize_uuid(service) == configured_service_uuid
+                    for service in (adv.service_uuids or [])
+                )
             name = (adv.local_name or device.name or "").lower()
             name_match = bool(name) and name_fragment in name
             mfg_data = adv.manufacturer_data or {}
@@ -874,8 +1206,9 @@ class BleSleepBridge:
             return service_match or name_match or mfg_match
 
         LOGGER.info(
-            "Discovering BLE target (service=%s, name~=%s, timeout=%.1fs)",
-            TXING_SERVICE_UUID,
+            "Discovering BLE target (%s service=%s, name~=%s, timeout=%.1fs)",
+            mode_name,
+            configured_service_uuid if include_service_filter else "<disabled>",
             self._config.name_fragment,
             self._config.scan_timeout,
         )
@@ -884,9 +1217,12 @@ class BleSleepBridge:
             timeout=self._config.scan_timeout,
         )
         if device is None:
+            service_info = (
+                f"service={configured_service_uuid}, " if include_service_filter else ""
+            )
             raise RuntimeError(
                 "BLE device discovery timeout: no matching device found "
-                f"(service={TXING_SERVICE_UUID}, name~={self._config.name_fragment})"
+                f"({service_info}name~={self._config.name_fragment}, mfg=0x{TXING_MFG_ID:04X})"
             )
         return device
 
@@ -1060,6 +1396,24 @@ def _build_shadow_from_snapshot(
     cached = load_shadow(snapshot_file)
     reported_power = _extract_reported_power(snapshot)
     battery_percent = _extract_reported_battery_percent(snapshot)
+    mcu = _extract_reported_mcu(snapshot)
+    ble_map = _extract_reported_ble_map(mcu) if mcu is not None else None
+    reported_device_id = (
+        _normalize_device_id(ble_map.get("deviceId")) if ble_map is not None else None
+    )
+    ble_uuids = _extract_reported_ble_uuids(snapshot)
+    ble_uuid_search_mode = ble_uuids is None
+    if ble_uuids is None:
+        if ble_map is not None:
+            LOGGER.warning(
+                "Shadow reported.mcu.ble exists but is invalid; switching to BLE UUID search mode"
+            )
+        else:
+            LOGGER.warning(
+                "Shadow reported.mcu.ble is missing; switching to BLE UUID search mode"
+            )
+        ble_uuids = DEFAULT_BLE_GATT_UUIDS.with_device_id(reported_device_id)
+
     return ShadowState(
         desired_power=_extract_desired_power_from_shadow(snapshot),
         reported_power=(
@@ -1070,6 +1424,8 @@ def _build_shadow_from_snapshot(
             if battery_percent is not None
             else get_reported_battery_percent(cached)
         ),
+        ble_uuids=ble_uuids,
+        ble_uuid_search_mode=ble_uuid_search_mode,
         snapshot_file=snapshot_file,
     )
 

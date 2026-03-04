@@ -1,4 +1,4 @@
-# Txing Gateway Contract (Shadow + BLE) v0.3
+# Txing Gateway Contract (Shadow + BLE) v0.4
 
 This document is the integration contract for the gateway team only.
 Build, flash, and local developer commands are intentionally out of scope and live in `README.md`.
@@ -55,7 +55,13 @@ Authoritative JSON schema: `./txing-shadow.schema.json`
     "reported": {
       "mcu": {
         "power": false,
-        "batteryPercent": 50
+        "batteryPercent": 50,
+        "ble": {
+          "serviceUuid": "f6b4a000-7b32-4d2d-9f4b-4ff0a2b8f100",
+          "sleepCommandUuid": "f6b4a001-7b32-4d2d-9f4b-4ff0a2b8f100",
+          "stateReportUuid": "f6b4a002-7b32-4d2d-9f4b-4ff0a2b8f100",
+          "deviceId": "AA:BB:CC:DD:EE:FF"
+        }
       }
     }
   }
@@ -66,6 +72,8 @@ Rules:
 - Command input is `state.desired.mcu.power`
 - Confirmed device state is `state.reported.mcu.power`
 - Battery value is `state.reported.mcu.batteryPercent`
+- BLE GATT UUID config is `state.reported.mcu.ble.*`
+- BLE fast-connect hint is optional `state.reported.mcu.ble.deviceId`
 - Unknown fields must be ignored by both sides
 
 Mapping from firmware state:
@@ -76,9 +84,14 @@ Mapping from firmware state:
 ## 5. BLE GATT Contract
 
 UUIDs:
-- Service `TXING Control`: `f6b4a000-7b32-4d2d-9f4b-4ff0a2b8f100`
-- Characteristic `Sleep Command` (Write With Response): `f6b4a001-7b32-4d2d-9f4b-4ff0a2b8f100`
-- Characteristic `State Report` (Read + Notify): `f6b4a002-7b32-4d2d-9f4b-4ff0a2b8f100`
+- Service `TXING Control`: from shadow `state.reported.mcu.ble.serviceUuid`
+- Characteristic `Sleep Command` (Write With Response): from shadow `state.reported.mcu.ble.sleepCommandUuid`
+- Characteristic `State Report` (Read + Notify): from shadow `state.reported.mcu.ble.stateReportUuid`
+- Optional fast-connect device identifier: `state.reported.mcu.ble.deviceId`
+- Initial fallback defaults (used only in search mode bootstrap):
+  - service: `f6b4a000-7b32-4d2d-9f4b-4ff0a2b8f100`
+  - sleep command: `f6b4a001-7b32-4d2d-9f4b-4ff0a2b8f100`
+  - state report: `f6b4a002-7b32-4d2d-9f4b-4ff0a2b8f100`
 
 Payloads:
 - `Sleep Command` (1 byte):
@@ -95,6 +108,16 @@ Notification behavior:
 ## 6. Gateway Required Behavior
 
 - Subscribe to shadow delta updates for `desired.mcu.power`
+- On startup, read `state.reported.mcu.ble.*` and validate:
+  - all three values are valid UUID strings
+  - optional `deviceId` is used as fast-path target before scan
+  - the connected peripheral exposes these UUIDs with required properties
+- If startup UUID validation fails, gateway enters BLE UUID search mode:
+  - discover peripheral by name/manufacturer fallback
+  - inspect GATT services and find a service that contains:
+    - one write characteristic (Sleep Command candidate)
+    - one read+notify characteristic (State Report candidate)
+  - persist discovered UUIDs back to `state.reported.mcu.ble.*`
 - If `desired.mcu.power=true`:
   - scan/connect to Txing
   - write `Sleep Command=0x00` (`sleep=false`)
@@ -129,4 +152,5 @@ Operational implication:
 - Setting `desired.mcu.power=false` results in:
   - device returns to low-power periodic behavior
   - shadow `reported.mcu.power=false`
-- `reported.mcu.batteryPercent` is `50` in v0.3
+- `reported.mcu.batteryPercent` is `50` in v0.4
+- `reported.mcu.ble.*` is present and valid in v0.4
