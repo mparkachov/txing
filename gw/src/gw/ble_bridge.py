@@ -49,7 +49,7 @@ TXING_MFG_MAGIC = b"TX"
 
 DEFAULT_NAME_FRAGMENT = "txing"
 DEFAULT_SCAN_TIMEOUT = 12.0
-DEFAULT_CACHED_DEVICE_LOOKUP_TIMEOUT = 1.0
+DEFAULT_CACHED_DEVICE_LOOKUP_TIMEOUT = 5.0
 DEFAULT_RECONNECT_DELAY = 1.0
 DEFAULT_LOCK_FILE = Path("/tmp/txing_gw.lock")
 DEFAULT_THING_NAME = "txing"
@@ -925,25 +925,48 @@ class BleSleepBridge:
             return
 
         await self._safe_disconnect()
-        device = await self._discover_target()
+        target_device: BLEDevice | None = None
+        target_device_id: str | None = None
+        target_name = "<unnamed>"
+        try:
+            target_device = await self._discover_target()
+            target_device_id = target_device.address
+            target_name = target_device.name or "<unnamed>"
+            client = BleakClient(
+                target_device,
+                disconnected_callback=self._handle_disconnect,
+            )
+        except RuntimeError:
+            if not self._cached_device_id:
+                raise
+            LOGGER.warning(
+                "Discovery failed; trying direct BLE connect using cached deviceId=%s",
+                self._cached_device_id,
+            )
+            target_device_id = self._cached_device_id
+            target_name = "<cached-id-direct>"
+            client = BleakClient(
+                self._cached_device_id,
+                disconnected_callback=self._handle_disconnect,
+            )
 
-        client = BleakClient(device, disconnected_callback=self._handle_disconnect)
         self._client = client
         try:
             connected = await client.connect()
             if connected is False:
                 raise RuntimeError("BLE connect returned False")
             await self._ensure_services_discovered(client)
-            self._cached_device_id = device.address
+            if target_device_id:
+                self._cached_device_id = target_device_id
             await self._resolve_ble_uuids_for_connected_client(
                 client,
-                device_id=device.address,
+                device_id=target_device_id,
             )
             _log_important(
                 LOGGER,
                 "Connected to %s (%s)",
-                device.address,
-                device.name or "<unnamed>",
+                target_device_id or "<unknown>",
+                target_name,
             )
             await self._publish_ble_online_state(
                 online=True,
