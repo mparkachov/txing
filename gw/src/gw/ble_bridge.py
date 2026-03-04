@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import socket
 import sys
 from dataclasses import dataclass
@@ -22,6 +23,13 @@ try:
     import watchtower
 except ImportError:
     watchtower = None
+
+try:
+    import boto3
+    from botocore.exceptions import ClientError as BotoClientError
+except ImportError:
+    boto3 = None
+    BotoClientError = Exception
 
 from .shadow_store import (
     DEFAULT_BATTERY_PERCENT,
@@ -78,6 +86,67 @@ def _default_cloudwatch_log_stream(thing_name: str) -> str:
     hostname = socket.gethostname().split(".", 1)[0] or "gw"
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     return f"{thing_name}-{hostname}-{timestamp}-{os.getpid()}"
+
+
+def _extract_region_from_iot_endpoint(endpoint: str) -> str | None:
+    match = re.search(
+        r"\.iot\.([a-z0-9-]+)\.amazonaws\.com(?:\.cn)?$",
+        endpoint.strip(),
+    )
+    if not match:
+        return None
+    return match.group(1)
+
+
+def _resolve_cloudwatch_region(
+    cloudwatch_region: str | None,
+    *,
+    iot_endpoint: str,
+) -> str | None:
+    if cloudwatch_region:
+        region = cloudwatch_region.strip()
+        if region:
+            return region
+    endpoint_region = _extract_region_from_iot_endpoint(iot_endpoint)
+    if endpoint_region:
+        return endpoint_region
+    for env_name in ("AWS_REGION", "AWS_DEFAULT_REGION"):
+        region = os.getenv(env_name, "").strip()
+        if region:
+            return region
+    if boto3 is not None:
+        return boto3.session.Session().region_name
+    return None
+
+
+def _probe_cloudwatch_stream(
+    logs_client: Any,
+    *,
+    log_group_name: str,
+    log_stream_name: str,
+) -> str | None:
+    try:
+        logs_client.create_log_stream(
+            logGroupName=log_group_name,
+            logStreamName=log_stream_name,
+        )
+        return None
+    except BotoClientError as err:
+        error = err.response.get("Error", {})
+        code = error.get("Code", "Unknown")
+        if code == "ResourceAlreadyExistsException":
+            return None
+        if code == "ResourceNotFoundException":
+            return (
+                f"CloudWatch log group {log_group_name!r} not found for current AWS "
+                "account/region credentials"
+            )
+        return (
+            f"CloudWatch log stream preflight failed ({code}): "
+            f"{error.get('Message', str(err))}"
+        )
+    except Exception as err:
+        return f"CloudWatch log stream preflight failed: {err}"
 
 
 @dataclass(slots=True, frozen=True)
@@ -1376,6 +1445,11 @@ def _parse_args() -> argparse.Namespace:
         help="CloudWatch Logs stream name (default: generated per host/process)",
     )
     parser.add_argument(
+        "--cloudwatch-region",
+        default=None,
+        help="CloudWatch region override (default: inferred from AWS IoT endpoint)",
+    )
+    parser.add_argument(
         "--no-cloudwatch-logs",
         action="store_true",
         help="Disable direct CloudWatch Logs publishing",
@@ -1430,7 +1504,11 @@ def _build_shadow_from_snapshot(
     )
 
 
-def _configure_logging(args: argparse.Namespace) -> None:
+def _configure_logging(
+    args: argparse.Namespace,
+    *,
+    iot_endpoint: str,
+) -> None:
     formatter = logging.Formatter(
         "%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
@@ -1458,15 +1536,59 @@ def _configure_logging(args: argparse.Namespace) -> None:
         )
         return
 
+    if boto3 is None:
+        print(
+            "gw start warning: boto3 dependency is not installed; "
+            "CloudWatch log streaming disabled",
+            file=sys.stderr,
+        )
+        return
+
     stream_name = args.cloudwatch_log_stream or _default_cloudwatch_log_stream(
         args.thing_name
     )
+    cloudwatch_region = _resolve_cloudwatch_region(
+        args.cloudwatch_region,
+        iot_endpoint=iot_endpoint,
+    )
+    if not cloudwatch_region:
+        print(
+            "gw start warning: could not resolve CloudWatch region; "
+            "CloudWatch log streaming disabled",
+            file=sys.stderr,
+        )
+        return
+
+    try:
+        logs_client = boto3.client("logs", region_name=cloudwatch_region)
+    except Exception as err:
+        print(
+            "gw start warning: failed to initialize CloudWatch boto3 client "
+            f"(region={cloudwatch_region}): {err}; CloudWatch log streaming disabled",
+            file=sys.stderr,
+        )
+        return
+
+    preflight_error = _probe_cloudwatch_stream(
+        logs_client,
+        log_group_name=args.cloudwatch_log_group,
+        log_stream_name=stream_name,
+    )
+    if preflight_error is not None:
+        print(
+            f"gw start warning: {preflight_error}; "
+            "CloudWatch log streaming disabled",
+            file=sys.stderr,
+        )
+        return
+
     try:
         cloudwatch_handler = watchtower.CloudWatchLogHandler(
             log_group_name=args.cloudwatch_log_group,
             log_stream_name=stream_name,
+            boto3_client=logs_client,
             create_log_group=False,
-            create_log_stream=True,
+            create_log_stream=False,
             send_interval=5,
         )
     except Exception as err:
@@ -1489,7 +1611,6 @@ def _configure_logging(args: argparse.Namespace) -> None:
 
 def main() -> None:
     args = _parse_args()
-    _configure_logging(args)
 
     try:
         iot_endpoint = _read_iot_endpoint(args.iot_endpoint, args.iot_endpoint_file)
@@ -1499,6 +1620,8 @@ def main() -> None:
     except RuntimeError as err:
         print(f"gw start failed: {err}", file=sys.stderr)
         raise SystemExit(2) from err
+
+    _configure_logging(args, iot_endpoint=iot_endpoint)
 
     config = BridgeConfig(
         name_fragment=args.name,

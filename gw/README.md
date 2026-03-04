@@ -148,6 +148,7 @@ This uses bootstrap artifacts by default:
 Default logging behavior:
 - stdout/journal (`systemd`): only important lifecycle `INFO` + all `WARNING/ERROR`
 - CloudWatch Logs (`/txing/gw`): full operational logs (no CloudWatch agent required)
+- If CloudWatch preflight fails (missing log group or AWS credentials/permissions mismatch), gateway continues with stdout logging and prints a startup warning. Run `just gw::check`.
 
 Dry-run mode (no BLE writes, still syncs AWS shadow):
 
@@ -237,4 +238,5 @@ Common overrides:
 - `--debug` (verbose stdout logging)
 - `--cloudwatch-log-group /txing/gw`
 - `--cloudwatch-log-stream <stream-name>`
+- `--cloudwatch-region <aws-region>` (override region; default inferred from IoT endpoint)
 - `--no-cloudwatch-logs`
