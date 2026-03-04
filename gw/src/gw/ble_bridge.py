@@ -18,6 +18,7 @@ import paho.mqtt.client as mqtt
 from bleak import BleakClient, BleakScanner
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
+from bleak.exc import BleakError
 
 try:
     import watchtower
@@ -913,7 +914,7 @@ class BleSleepBridge:
             connected = await client.connect()
             if connected is False:
                 raise RuntimeError("BLE connect returned False")
-            await client.get_services()
+            await self._ensure_services_discovered(client)
             self._cached_device_id = device.address
             await self._resolve_ble_uuids_for_connected_client(
                 client,
@@ -1058,6 +1059,22 @@ class BleSleepBridge:
             sleep_flag == 0x01,
             reported_power,
         )
+
+    async def _ensure_services_discovered(self, client: BleakClient) -> None:
+        try:
+            _ = client.services
+            return
+        except BleakError:
+            pass
+
+        backend = getattr(client, "_backend", None)
+        get_services = getattr(backend, "get_services", None)
+        if callable(get_services):
+            await get_services()
+            return
+
+        # Compatibility fallback for older Bleak versions.
+        await client.get_services()
 
     async def _resolve_ble_uuids_for_connected_client(
         self,
