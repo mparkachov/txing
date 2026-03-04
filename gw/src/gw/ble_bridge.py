@@ -341,6 +341,7 @@ class ShadowState:
     reported_power: bool = False
     battery_percent: int = DEFAULT_BATTERY_PERCENT
     ble_uuids: BleGattUuids = DEFAULT_BLE_GATT_UUIDS
+    ble_online: bool = False
     ble_uuid_search_mode: bool = False
     snapshot_file: Path = DEFAULT_SHADOW_FILE
 
@@ -359,13 +360,18 @@ class ShadowState:
         if ble_uuids is not None:
             self.ble_uuids = ble_uuids
 
+    def set_ble_online(self, online: bool) -> None:
+        self.ble_online = online
+
     def payload(self) -> dict[str, dict[str, dict[str, dict[str, Any]]]]:
+        ble_state = self.ble_uuids.as_shadow_dict()
+        ble_state["online"] = self.ble_online
         state: dict[str, dict[str, dict[str, Any]]] = {
             "reported": {
                 "mcu": {
                     "power": self.reported_power,
                     "batteryPercent": self.battery_percent,
-                    "ble": self.ble_uuids.as_shadow_dict(),
+                    "ble": ble_state,
                 }
             },
         }
@@ -520,14 +526,17 @@ class AwsShadowClient:
         power: bool,
         battery_percent: int,
         ble_uuids: BleGattUuids,
+        ble_online: bool,
         clear_desired_power: bool,
     ) -> None:
+        ble_state = ble_uuids.as_shadow_dict()
+        ble_state["online"] = ble_online
         state: dict[str, Any] = {
             "reported": {
                 "mcu": {
                     "power": power,
                     "batteryPercent": battery_percent,
-                    "ble": ble_uuids.as_shadow_dict(),
+                    "ble": ble_state,
                 }
             }
         }
@@ -788,6 +797,11 @@ class BleSleepBridge:
             LOGGER,
             "Running in BLE mode; waiting for cloud shadow updates via MQTT",
         )
+        await self._publish_ble_online_state(
+            online=False,
+            context="Gateway startup: BLE disconnected",
+            force=True,
+        )
         pending_updates = self._cloud_shadow.drain_updates()
         try:
             while True:
@@ -827,6 +841,11 @@ class BleSleepBridge:
         _log_important(
             LOGGER,
             "Running in --no-ble mode; waiting for cloud shadow updates via MQTT",
+        )
+        await self._publish_ble_online_state(
+            online=False,
+            context="Gateway startup (--no-ble): BLE disconnected",
+            force=True,
         )
         await self._process_desired_no_ble_once()
         while True:
@@ -926,8 +945,16 @@ class BleSleepBridge:
                 device.address,
                 device.name or "<unnamed>",
             )
+            await self._publish_ble_online_state(
+                online=True,
+                context="BLE connected",
+            )
             await self._sync_reported_from_device_on_connect()
         except Exception:
+            await self._publish_ble_online_state(
+                online=False,
+                context="BLE disconnected",
+            )
             self._client = None
             raise
 
@@ -1005,6 +1032,7 @@ class BleSleepBridge:
                 power=self._shadow.reported_power,
                 battery_percent=self._shadow.battery_percent,
                 ble_uuids=self._shadow.ble_uuids,
+                ble_online=self._shadow.ble_online,
                 clear_desired_power=clear_desired_power,
             )
         except Exception:
@@ -1014,6 +1042,21 @@ class BleSleepBridge:
         if clear_desired_power:
             self._shadow.clear_desired_if_synced()
         self._shadow.log_state(context)
+
+    async def _publish_ble_online_state(
+        self,
+        *,
+        online: bool,
+        context: str,
+        force: bool = False,
+    ) -> None:
+        if not force and self._shadow.ble_online == online:
+            return
+        self._shadow.set_ble_online(online)
+        await self._publish_reported_update(
+            clear_desired_power=False,
+            context=context,
+        )
 
     async def _send_sleep_command(self, sleep: bool) -> None:
         if not self._is_connected():
@@ -1322,11 +1365,29 @@ class BleSleepBridge:
                 await client.disconnect()
         except Exception:
             LOGGER.exception("Failed to disconnect BLE client cleanly")
+        await self._publish_ble_online_state(
+            online=False,
+            context="BLE disconnected",
+        )
 
     def _handle_disconnect(self, _: BleakClient) -> None:
         LOGGER.warning("BLE connection lost")
-        if self._loop is not None and self._disconnect_event is not None:
-            self._loop.call_soon_threadsafe(self._disconnect_event.set)
+        loop = self._loop
+        if loop is not None:
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    self._publish_ble_online_state(
+                        online=False,
+                        context="BLE disconnected",
+                    ),
+                    loop,
+                )
+            except RuntimeError:
+                LOGGER.debug(
+                    "Event loop already closed; skipped BLE disconnected shadow publish"
+                )
+        if loop is not None and self._disconnect_event is not None:
+            loop.call_soon_threadsafe(self._disconnect_event.set)
 
     async def _wait_for_updates_or_disconnect(
         self,
@@ -1516,6 +1577,7 @@ def _build_shadow_from_snapshot(
             else get_reported_battery_percent(cached)
         ),
         ble_uuids=ble_uuids,
+        ble_online=False,
         ble_uuid_search_mode=ble_uuid_search_mode,
         snapshot_file=snapshot_file,
     )

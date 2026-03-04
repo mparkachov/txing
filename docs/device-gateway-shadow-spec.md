@@ -1,4 +1,4 @@
-# Txing Gateway Contract (Shadow + BLE) v0.4
+# Txing Gateway Contract (Shadow + BLE) v0.6
 
 This document is the integration contract for the gateway team only.
 Build, flash, and local developer commands are intentionally out of scope and live in `README.md`.
@@ -60,6 +60,7 @@ Authoritative JSON schema: `./txing-shadow.schema.json`
           "serviceUuid": "f6b4a000-7b32-4d2d-9f4b-4ff0a2b8f100",
           "sleepCommandUuid": "f6b4a001-7b32-4d2d-9f4b-4ff0a2b8f100",
           "stateReportUuid": "f6b4a002-7b32-4d2d-9f4b-4ff0a2b8f100",
+          "online": false,
           "deviceId": "AA:BB:CC:DD:EE:FF"
         }
       }
@@ -73,6 +74,7 @@ Rules:
 - Confirmed device state is `state.reported.mcu.power`
 - Battery value is `state.reported.mcu.batteryPercent`
 - BLE GATT UUID config is `state.reported.mcu.ble.*`
+- BLE connection liveness is `state.reported.mcu.ble.online`
 - BLE fast-connect hint is optional `state.reported.mcu.ble.deviceId`
 - Unknown fields must be ignored by both sides
 
@@ -112,6 +114,9 @@ Notification behavior:
   - all three values are valid UUID strings
   - optional `deviceId` is used as fast-path target before scan
   - the connected peripheral exposes these UUIDs with required properties
+- On gateway startup, publish `state.reported.mcu.ble.online=false`
+- After successful BLE connect, publish `state.reported.mcu.ble.online=true`
+- On BLE disconnect callback, publish `state.reported.mcu.ble.online=false`
 - If startup UUID validation fails, gateway enters BLE UUID search mode:
   - discover peripheral by name/manufacturer fallback
   - inspect GATT services and find a service that contains:
@@ -152,5 +157,6 @@ Operational implication:
 - Setting `desired.mcu.power=false` results in:
   - device returns to low-power periodic behavior
   - shadow `reported.mcu.power=false`
-- `reported.mcu.batteryPercent` is `50` in v0.4
-- `reported.mcu.ble.*` is present and valid in v0.4
+- `reported.mcu.batteryPercent` is `50` in v0.6
+- `reported.mcu.ble.*` is present and valid in v0.6
+- `reported.mcu.ble.online` flips false -> true -> false across startup/connect/disconnect in v0.6

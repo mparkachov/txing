@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://txing.local/schemas/txing-shadow.schema.json",
-  "title": "Txing Thing Shadow Contract v3",
+  "title": "Txing Thing Shadow Contract v5",
   "description": "Canonical payload shape for txing Thing Shadow updates and snapshots.",
   "type": "object",
   "additionalProperties": true,
@@ -108,7 +108,8 @@
       "required": [
         "serviceUuid",
         "sleepCommandUuid",
-        "stateReportUuid"
+        "stateReportUuid",
+        "online"
       ],
       "properties": {
         "serviceUuid": {
@@ -122,6 +123,9 @@
         "stateReportUuid": {
           "type": "string",
           "format": "uuid"
+        },
+        "online": {
+          "type": "boolean"
         },
         "deviceId": {
           "type": "string",

@@ -205,6 +205,10 @@ just gw::wake thing_name=my-thing region=eu-central-1 endpoint_file=certs/iot-da
 - On startup, requests full shadow with `$aws/things/<thing>/shadow/get`.
 - Loads BLE UUIDs from `state.reported.mcu.ble.*` and validates them against the connected peripheral.
 - Uses optional `state.reported.mcu.ble.deviceId` as fast-path reconnect target on restart.
+- Publishes BLE connection state at `state.reported.mcu.ble.online`:
+  - `false` on gateway startup
+  - `true` after BLE connect
+  - `false` on BLE disconnect callback
 - If UUIDs are missing/invalid or do not match GATT, enters BLE UUID search mode and discovers UUIDs from service/characteristic properties.
 - Processes desired power from cloud (`state.desired.mcu.power`).
 - Sends BLE Sleep Command:
@@ -216,6 +220,7 @@ just gw::wake thing_name=my-thing region=eu-central-1 endpoint_file=certs/iot-da
   - `state.reported.mcu.ble.serviceUuid`
   - `state.reported.mcu.ble.sleepCommandUuid`
   - `state.reported.mcu.ble.stateReportUuid`
+  - `state.reported.mcu.ble.online`
   - `state.reported.mcu.ble.deviceId` (when known)
 - Clears desired when reported matches by publishing `desired.mcu.power=null`.
 - Mirrors current local state into `/tmp/txing_shadow.json`.
