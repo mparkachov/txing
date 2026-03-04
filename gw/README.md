@@ -48,7 +48,17 @@ uv run gw --no-ble
 
 ## Set desired power (`just`)
 
-From `gw/`, use `just` recipes (AWS CLI) instead of `uv run wake/sleep`:
+Use `just` recipes (AWS CLI) instead of `uv run wake/sleep`.
+
+From repository root:
+
+```bash
+just gw::wake
+just gw::sleep
+just gw::print
+```
+
+From `gw/`:
 
 ```bash
 just wake
@@ -64,15 +74,15 @@ These recipes call `aws iot-data update-thing-shadow` directly with:
 Default recipe values:
 - thing name: `txing`
 - region: `eu-central-1`
-- endpoint file: `../certs/iot-data-ats.endpoint`
+- endpoint file: `<repo>/certs/iot-data-ats.endpoint`
 
 Override example:
 
 ```bash
-just wake thing_name=my-thing region=eu-central-1 endpoint_file=../certs/iot-data-ats.endpoint
+just gw::wake thing_name=my-thing region=eu-central-1 endpoint_file=certs/iot-data-ats.endpoint
 ```
 
-`just print` prints the current real AWS Thing Shadow document.
+`print` prints the current real AWS Thing Shadow document.
 
 ## Runtime behavior
 

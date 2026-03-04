@@ -1,0 +1,36 @@
+set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+
+mcu_dir := source_directory()
+xtask_manifest := mcu_dir + "/xtask/Cargo.toml"
+firmware_manifest := mcu_dir + "/Cargo.toml"
+target_triple := "thumbv7em-none-eabihf"
+
+@build:
+    cargo run --manifest-path "{{xtask_manifest}}" -- build
+
+@bin:
+    cargo run --manifest-path "{{xtask_manifest}}" -- bin
+
+@uf2:
+    cargo run --manifest-path "{{xtask_manifest}}" -- uf2
+
+@flash:
+    cargo run --manifest-path "{{xtask_manifest}}" -- flash
+
+@scan *args='':
+    cargo run --manifest-path "{{xtask_manifest}}" -- scan {{args}}
+
+@sleep *args='':
+    cargo run --manifest-path "{{xtask_manifest}}" -- sleep {{args}}
+
+@wakeup *args='':
+    cargo run --manifest-path "{{xtask_manifest}}" -- wakeup {{args}}
+
+@ble-sleep *args='':
+    cargo run --manifest-path "{{xtask_manifest}}" -- ble-sleep {{args}}
+
+@check:
+    cargo check --manifest-path "{{firmware_manifest}}" --target "{{target_triple}}"
+
+@check-xtask:
+    cargo check --manifest-path "{{xtask_manifest}}"

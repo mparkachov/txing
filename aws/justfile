@@ -1,0 +1,320 @@
+set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+
+aws_dir := source_directory()
+project_root := aws_dir + "/.."
+
+stack_name := "txing-iot"
+template_file := "template.yaml"
+region := "eu-central-1"
+profile := ""
+thing_name := "txing"
+policy_name := "txing-gw-policy"
+cert_dir := project_root + "/certs"
+endpoint_file := cert_dir + "/iot-data-ats.endpoint"
+ca_file := cert_dir + "/AmazonRootCA1.pem"
+ca_url := "https://www.amazontrust.com/repository/AmazonRootCA1.pem"
+default_shadow_file := "default-shadow.json"
+iot_data_endpoint := ""
+
+@create stack_name=stack_name template_file=template_file region=region profile=profile:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{aws_dir}}"
+
+    if [ -z "{{region}}" ]; then
+      echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
+      exit 1
+    fi
+
+    aws_flags=(--region "{{region}}")
+    if [ -n "{{profile}}" ]; then
+      aws_flags+=(--profile "{{profile}}")
+    fi
+    cfn_flags=(--stack-name "{{stack_name}}" --template-body "file://{{template_file}}" "${aws_flags[@]}")
+
+    aws cloudformation create-stack "${cfn_flags[@]}"
+    aws cloudformation wait stack-create-complete --stack-name "{{stack_name}}" "${aws_flags[@]}"
+    aws cloudformation describe-stacks \
+      --stack-name "{{stack_name}}" \
+      "${aws_flags[@]}" \
+      --query "Stacks[0].Outputs" \
+      --output table
+
+@update stack_name=stack_name template_file=template_file region=region profile=profile:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{aws_dir}}"
+
+    if [ -z "{{region}}" ]; then
+      echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
+      exit 1
+    fi
+
+    aws_flags=(--region "{{region}}")
+    if [ -n "{{profile}}" ]; then
+      aws_flags+=(--profile "{{profile}}")
+    fi
+    cfn_flags=(--stack-name "{{stack_name}}" --template-body "file://{{template_file}}" "${aws_flags[@]}")
+
+    output="$(aws cloudformation update-stack "${cfn_flags[@]}" 2>&1)" || {
+      if echo "$output" | grep -q "No updates are to be performed"; then
+        echo "$output"
+        exit 0
+      fi
+      echo "$output"
+      exit 1
+    }
+    echo "$output"
+
+    aws cloudformation wait stack-update-complete --stack-name "{{stack_name}}" "${aws_flags[@]}"
+    aws cloudformation describe-stacks \
+      --stack-name "{{stack_name}}" \
+      "${aws_flags[@]}" \
+      --query "Stacks[0].Outputs" \
+      --output table
+
+@deploy stack_name=stack_name template_file=template_file region=region profile=profile:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{aws_dir}}"
+
+    if [ -z "{{region}}" ]; then
+      echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
+      exit 1
+    fi
+
+    aws_flags=(--region "{{region}}")
+    if [ -n "{{profile}}" ]; then
+      aws_flags+=(--profile "{{profile}}")
+    fi
+
+    if aws cloudformation describe-stacks --stack-name "{{stack_name}}" "${aws_flags[@]}" >/dev/null 2>&1; then
+      just --justfile "{{aws_dir}}/justfile" update \
+        stack_name="{{stack_name}}" \
+        template_file="{{template_file}}" \
+        region="{{region}}" \
+        profile="{{profile}}"
+    else
+      just --justfile "{{aws_dir}}/justfile" create \
+        stack_name="{{stack_name}}" \
+        template_file="{{template_file}}" \
+        region="{{region}}" \
+        profile="{{profile}}"
+    fi
+
+@delete stack_name=stack_name thing_name=thing_name policy_name=policy_name region=region profile=profile:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{aws_dir}}"
+
+    if [ -z "{{region}}" ]; then
+      echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
+      exit 1
+    fi
+
+    aws_flags=(--region "{{region}}")
+    if [ -n "{{profile}}" ]; then
+      aws_flags+=(--profile "{{profile}}")
+    fi
+
+    principals="$(aws iot list-thing-principals --thing-name "{{thing_name}}" "${aws_flags[@]}" --query principals --output text 2>/dev/null || true)"
+    if [ -n "$principals" ] && [ "$principals" != "None" ]; then
+      for principal in $principals; do
+        aws iot detach-thing-principal --thing-name "{{thing_name}}" --principal "$principal" "${aws_flags[@]}" || true
+      done
+    fi
+
+    targets="$(aws iot list-targets-for-policy --policy-name "{{policy_name}}" "${aws_flags[@]}" --query targets --output text 2>/dev/null || true)"
+    if [ -n "$targets" ] && [ "$targets" != "None" ]; then
+      for target in $targets; do
+        aws iot detach-policy --policy-name "{{policy_name}}" --target "$target" "${aws_flags[@]}" || true
+      done
+    fi
+
+    aws cloudformation delete-stack --stack-name "{{stack_name}}" "${aws_flags[@]}"
+    aws cloudformation wait stack-delete-complete --stack-name "{{stack_name}}" "${aws_flags[@]}"
+
+@validate template_file=template_file region=region profile=profile:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{aws_dir}}"
+
+    if [ -z "{{region}}" ]; then
+      echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
+      exit 1
+    fi
+
+    aws_flags=(--region "{{region}}")
+    if [ -n "{{profile}}" ]; then
+      aws_flags+=(--profile "{{profile}}")
+    fi
+
+    aws cloudformation validate-template --template-body "file://{{template_file}}" "${aws_flags[@]}"
+
+@describe stack_name=stack_name region=region profile=profile:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{aws_dir}}"
+
+    if [ -z "{{region}}" ]; then
+      echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
+      exit 1
+    fi
+
+    aws_flags=(--region "{{region}}")
+    if [ -n "{{profile}}" ]; then
+      aws_flags+=(--profile "{{profile}}")
+    fi
+
+    aws cloudformation describe-stacks \
+      --stack-name "{{stack_name}}" \
+      "${aws_flags[@]}" \
+      --query "Stacks[0].Outputs" \
+      --output table
+
+@cert thing_name=thing_name policy_name=policy_name region=region profile=profile cert_dir=cert_dir cert_basename='' cert_arn_file='':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{aws_dir}}"
+
+    if [ -z "{{region}}" ]; then
+      echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
+      exit 1
+    fi
+
+    aws_flags=(--region "{{region}}")
+    if [ -n "{{profile}}" ]; then
+      aws_flags+=(--profile "{{profile}}")
+    fi
+
+    cert_basename="{{cert_basename}}"
+    if [ -z "$cert_basename" ]; then
+      cert_basename="{{thing_name}}-gw"
+    fi
+
+    cert_arn_file="{{cert_arn_file}}"
+    if [ -z "$cert_arn_file" ]; then
+      cert_arn_file="{{cert_dir}}/${cert_basename}.cert.arn"
+    fi
+
+    mkdir -p "{{cert_dir}}"
+    if [ -f "$cert_arn_file" ]; then
+      echo "$cert_arn_file already exists. Reuse this certificate or delete the file to issue a new one."
+      exit 0
+    fi
+
+    cert_arn="$(
+      aws iot create-keys-and-certificate \
+        --set-as-active \
+        --certificate-pem-outfile "{{cert_dir}}/${cert_basename}.cert.pem" \
+        --public-key-outfile "{{cert_dir}}/${cert_basename}.public.key" \
+        --private-key-outfile "{{cert_dir}}/${cert_basename}.private.key" \
+        "${aws_flags[@]}" \
+        --query certificateArn \
+        --output text
+    )"
+    echo "$cert_arn" | tee "$cert_arn_file"
+    aws iot attach-policy --policy-name "{{policy_name}}" --target "$cert_arn" "${aws_flags[@]}"
+    aws iot attach-thing-principal --thing-name "{{thing_name}}" --principal "$cert_arn" "${aws_flags[@]}"
+    echo "Certificate ARN saved to $cert_arn_file"
+
+@endpoint region=region profile=profile cert_dir=cert_dir endpoint_file=endpoint_file:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{aws_dir}}"
+
+    if [ -z "{{region}}" ]; then
+      echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
+      exit 1
+    fi
+
+    aws_flags=(--region "{{region}}")
+    if [ -n "{{profile}}" ]; then
+      aws_flags+=(--profile "{{profile}}")
+    fi
+
+    mkdir -p "{{cert_dir}}"
+    aws iot describe-endpoint \
+      --endpoint-type iot:Data-ATS \
+      "${aws_flags[@]}" \
+      --query endpointAddress \
+      --output text | tee "{{endpoint_file}}"
+
+@ca cert_dir=cert_dir ca_file=ca_file ca_url=ca_url:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{aws_dir}}"
+
+    mkdir -p "{{cert_dir}}"
+    curl -fsSL "{{ca_url}}" -o "{{ca_file}}"
+    echo "Root CA saved to {{ca_file}}"
+
+@init-shadow thing_name=thing_name region=region profile=profile cert_dir=cert_dir default_shadow_file=default_shadow_file shadow_response_file='' iot_data_endpoint=iot_data_endpoint:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{aws_dir}}"
+
+    if [ -z "{{region}}" ]; then
+      echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
+      exit 1
+    fi
+
+    aws_flags=(--region "{{region}}")
+    if [ -n "{{profile}}" ]; then
+      aws_flags+=(--profile "{{profile}}")
+    fi
+
+    shadow_response_file="{{shadow_response_file}}"
+    if [ -z "$shadow_response_file" ]; then
+      shadow_response_file="{{cert_dir}}/{{thing_name}}.shadow-response.json"
+    fi
+
+    mkdir -p "{{cert_dir}}"
+    endpoint="{{iot_data_endpoint}}"
+    if [ -z "$endpoint" ]; then
+      endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}" --query endpointAddress --output text)"
+    fi
+
+    aws iot-data update-thing-shadow \
+      --endpoint-url "https://$endpoint" \
+      --thing-name "{{thing_name}}" \
+      --payload "fileb://{{default_shadow_file}}" \
+      "${aws_flags[@]}" \
+      "$shadow_response_file"
+    echo "Shadow initialized from {{default_shadow_file}}"
+
+@bootstrap stack_name=stack_name template_file=template_file thing_name=thing_name policy_name=policy_name region=region profile=profile cert_dir=cert_dir cert_basename='' cert_arn_file='' endpoint_file=endpoint_file ca_file=ca_file ca_url=ca_url default_shadow_file=default_shadow_file shadow_response_file='' iot_data_endpoint=iot_data_endpoint:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{aws_dir}}"
+
+    just --justfile "{{aws_dir}}/justfile" deploy \
+      stack_name="{{stack_name}}" \
+      template_file="{{template_file}}" \
+      region="{{region}}" \
+      profile="{{profile}}"
+    just --justfile "{{aws_dir}}/justfile" cert \
+      thing_name="{{thing_name}}" \
+      policy_name="{{policy_name}}" \
+      region="{{region}}" \
+      profile="{{profile}}" \
+      cert_dir="{{cert_dir}}" \
+      cert_basename="{{cert_basename}}" \
+      cert_arn_file="{{cert_arn_file}}"
+    just --justfile "{{aws_dir}}/justfile" endpoint \
+      region="{{region}}" \
+      profile="{{profile}}" \
+      cert_dir="{{cert_dir}}" \
+      endpoint_file="{{endpoint_file}}"
+    just --justfile "{{aws_dir}}/justfile" ca \
+      cert_dir="{{cert_dir}}" \
+      ca_file="{{ca_file}}" \
+      ca_url="{{ca_url}}"
+    just --justfile "{{aws_dir}}/justfile" init-shadow \
+      thing_name="{{thing_name}}" \
+      region="{{region}}" \
+      profile="{{profile}}" \
+      cert_dir="{{cert_dir}}" \
+      default_shadow_file="{{default_shadow_file}}" \
+      shadow_response_file="{{shadow_response_file}}" \
+      iot_data_endpoint="{{iot_data_endpoint}}"

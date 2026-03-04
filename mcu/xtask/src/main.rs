@@ -73,23 +73,24 @@ fn main() -> ExitCode {
 }
 
 fn print_usage() {
-    eprintln!("usage: cargo mcu [build|bin|uf2|flash|scan|sleep|wakeup|ble-sleep]");
-    eprintln!("  cargo mcu scan [--scan-timeout <sec>]");
-    eprintln!("  cargo mcu sleep [--name <local_name>] [--id <peripheral_id>] [--scan-timeout <sec>]");
-    eprintln!("  cargo mcu wakeup [--name <local_name>] [--id <peripheral_id>] [--scan-timeout <sec>]");
+    eprintln!("usage (from repo root): just mcu::[build|bin|uf2|flash|scan|sleep|wakeup|ble-sleep]");
+    eprintln!("usage (from mcu/):      just [build|bin|uf2|flash|scan|sleep|wakeup|ble-sleep]");
+    eprintln!("  just mcu::scan [--scan-timeout <sec>]");
+    eprintln!("  just mcu::sleep [--name <local_name>] [--id <peripheral_id>] [--scan-timeout <sec>]");
+    eprintln!("  just mcu::wakeup [--name <local_name>] [--id <peripheral_id>] [--scan-timeout <sec>]");
     eprintln!(
-        "  cargo mcu ble-sleep --sleep <true|false> [--name <local_name>] [--id <peripheral_id>] [--scan-timeout <sec>]"
+        "  just mcu::ble-sleep --sleep <true|false> [--name <local_name>] [--id <peripheral_id>] [--scan-timeout <sec>]"
     );
 }
 
 fn print_scan_usage() {
-    eprintln!("usage: cargo mcu scan [--scan-timeout <sec>]");
+    eprintln!("usage: just mcu::scan [--scan-timeout <sec>] (or `just scan` from mcu/)");
     eprintln!("  --scan-timeout  scan timeout in seconds (default: 12)");
 }
 
 fn print_ble_sleep_usage() {
     eprintln!(
-        "usage: cargo mcu ble-sleep --sleep <true|false> [--name <local_name>] [--id <peripheral_id>] [--scan-timeout <sec>]"
+        "usage: just mcu::ble-sleep --sleep <true|false> [--name <local_name>] [--id <peripheral_id>] [--scan-timeout <sec>]"
     );
     eprintln!("  --sleep         target state (true/false), required");
     eprintln!("  --name          BLE local name fragment to match (default: txing)");
@@ -98,7 +99,7 @@ fn print_ble_sleep_usage() {
 }
 
 fn print_ble_alias_usage(cmd: &str) {
-    eprintln!("usage: cargo mcu {cmd} [--name <local_name>] [--id <peripheral_id>] [--scan-timeout <sec>]");
+    eprintln!("usage: just mcu::{cmd} [--name <local_name>] [--id <peripheral_id>] [--scan-timeout <sec>]");
     eprintln!("  --name          BLE local name fragment to match (default: txing)");
     eprintln!("  --id            BLE peripheral id to match exactly (example: 12C5364E-...)");
     eprintln!("  --scan-timeout  scan timeout in seconds (default: 12)");

@@ -1,8 +1,9 @@
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 
+gw_dir := source_directory()
 thing_name := "txing"
 region := "eu-central-1"
-endpoint_file := "../certs/iot-data-ats.endpoint"
+endpoint_file := gw_dir + "/../certs/iot-data-ats.endpoint"
 
 @wake:
     aws iot-data update-thing-shadow \

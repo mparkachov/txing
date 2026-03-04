@@ -5,7 +5,7 @@ Firmware for nRF52840 (Seeed XIAO BLE Sense) with BLE sleep control.
 ## Project Structure
 
 - `src/main.rs`: device firmware
-- `xtask/`: host-side utility commands (`cargo mcu ...`)
+- `xtask/`: host-side utility commands wrapped by `just` recipes
 - `../docs/device-gateway-shadow-spec.md`: gateway contract (Shadow + BLE only)
 - `../docs/txing-shadow.schema.json`: canonical Thing Shadow JSON schema
 
@@ -26,22 +26,23 @@ Firmware for nRF52840 (Seeed XIAO BLE Sense) with BLE sleep control.
 - Rust toolchain with `thumbv7em-none-eabihf` target
 - `uf2conv` available in `PATH` (for UF2 generation/flash)
 - Board mounted at `/Volumes/XIAO-SENSE` for `flash`
-- macOS host for `cargo mcu` alias in `.cargo/config.toml` (`aarch64-apple-darwin`)
+
+Run from `mcu/` with `just <recipe>`, or from repo root with `just mcu::<recipe>`.
 
 ## Build and Flash
 
 ```bash
 # Build release firmware
-cargo mcu build
+just build
 
 # Build binary artifact (.bin)
-cargo mcu bin
+just bin
 
 # Build UF2 artifact (.uf2)
-cargo mcu uf2
+just uf2
 
 # Build UF2 and copy to mounted board
-cargo mcu flash
+just flash
 ```
 
 ## Local BLE Debug Commands
@@ -50,32 +51,32 @@ Direct BLE control without Shadow/gateway:
 
 ```bash
 # Set sleep=false (wake / keep awake)
-cargo mcu wakeup
+just wakeup
 
 # Set sleep=true (return to low power)
-cargo mcu sleep
+just sleep
 ```
 
 Optional flags:
 
 ```bash
-cargo mcu wakeup --name txing --scan-timeout 20
-cargo mcu sleep --name txing --scan-timeout 20
+just wakeup --name txing --scan-timeout 20
+just sleep --name txing --scan-timeout 20
 ```
 
 Advanced command:
 
 ```bash
-cargo mcu ble-sleep --sleep false --name txing --scan-timeout 20
-cargo mcu ble-sleep --sleep true --name txing --scan-timeout 20
+just ble-sleep --sleep false --name txing --scan-timeout 20
+just ble-sleep --sleep true --name txing --scan-timeout 20
 ```
 
 ## Checks
 
 ```bash
 # Firmware compile check
-cargo check --target thumbv7em-none-eabihf
+just check
 
-# xtask compile check (host)
-cargo check --manifest-path xtask/Cargo.toml --target aarch64-apple-darwin
+# xtask compile check (host target)
+just check-xtask
 ```

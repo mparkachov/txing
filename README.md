@@ -19,13 +19,28 @@ For gateway workflows in this repository, install and configure:
 
 AWS CLI must be configured with credentials/profile and region.
 
-Run commands from the relevant subproject.
+## Task Runner
+
+This monorepo standardizes on `just` as the task runner.
+
+Run from repository root:
+
+```bash
+just --list
+just gw::wake
+just aws::bootstrap
+just mcu::build
+```
+
+Subproject `justfile`s are included by the root `justfile` as modules:
+- `gw::...` -> `gw/justfile`
+- `aws::...` -> `aws/justfile`
+- `mcu::...` -> `mcu/justfile`
 
 Firmware example:
 
 ```bash
-cd mcu
-cargo mcu build
+just mcu::build
 ```
 
 Gateway example:
