@@ -50,7 +50,7 @@ def _build_parser(action: str) -> argparse.ArgumentParser:
 
 def wake_main() -> None:
     args = _build_parser("wake").parse_args()
-    _touch(args.wake_file, "desired.mcu.power=on\n")
+    _touch(args.wake_file, "desired.mcu.power=true\n")
     _remove_if_exists(args.sleep_file)
     print(
         f"Created wake trigger {args.wake_file}; "
@@ -61,7 +61,7 @@ def wake_main() -> None:
 
 def sleep_main() -> None:
     args = _build_parser("sleep").parse_args()
-    _touch(args.sleep_file, "desired.mcu.power=off\n")
+    _touch(args.sleep_file, "desired.mcu.power=false\n")
     _remove_if_exists(args.wake_file)
     print(
         f"Created sleep trigger {args.sleep_file}; "

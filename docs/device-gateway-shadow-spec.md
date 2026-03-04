@@ -1,4 +1,4 @@
-# Txing Gateway Contract (Shadow + BLE) v0.1
+# Txing Gateway Contract (Shadow + BLE) v0.3
 
 This document is the integration contract for the gateway team only.
 Build, flash, and local developer commands are intentionally out of scope and live in `README.md`.
@@ -7,10 +7,23 @@ Build, flash, and local developer commands are intentionally out of scope and li
 
 Contract between:
 - Txing firmware (BLE peripheral)
-- BLE gateway service (Greengrass-side component)
+- BLE gateway service (direct MQTT client to AWS IoT)
 - AWS IoT Thing Shadow for thing name `txing`
 
-## 2. Device State Exposed to Gateway
+Authoritative shadow schema:
+- `./txing-shadow.schema.json`
+- Example default document: `../aws/default-shadow.json`
+
+High-level architecture:
+- AWS IoT Device Shadow -> MQTT -> gw -> BLE -> mcu
+
+## 2. Design Decision: Shadow Ownership
+
+- `gw` is the source of truth for MCU shadow data.
+- Only `gw` may define/evolve the `mcu.*` subtree contract.
+- `gw` communicates with the physical MCU over BLE and reflects MCU state in shadow.
+
+## 3. Device State Exposed to Gateway
 
 ```rust
 struct DeviceState {
@@ -24,34 +37,43 @@ State semantics:
 - `sleep=false`: active/awake mode
 - On reset/power-cycle, device starts with `sleep=true`, `battery_pct=50`
 
-## 3. Shadow Contract
+## 4. Shadow Contract
 
 Thing name: `txing`
+Shadow type: classic (unnamed) Thing Shadow (`$aws/things/txing/shadow/*`)
+
+Authoritative JSON schema: `./txing-shadow.schema.json`
 
 ```json
 {
   "state": {
     "desired": {
-      "sleep": false
+      "mcu": {
+        "power": true
+      }
     },
     "reported": {
-      "sleep": true,
-      "battery_pct": 50,
-      "connected": false,
-      "protocol_ver": 1
+      "mcu": {
+        "power": false,
+        "batteryPercent": 50
+      }
     }
   }
 }
 ```
 
 Rules:
-- Command input is `state.desired.sleep`
-- Confirmed device state is `state.reported.sleep`
-- Battery value is `state.reported.battery_pct`
-- Gateway link state is `state.reported.connected`
+- Command input is `state.desired.mcu.power`
+- Confirmed device state is `state.reported.mcu.power`
+- Battery value is `state.reported.mcu.batteryPercent`
 - Unknown fields must be ignored by both sides
 
-## 4. BLE GATT Contract
+Mapping from firmware state:
+- `mcu.power = !sleep`
+- `mcu.power=true` means MCU is awake/active
+- `mcu.power=false` means MCU is in low-power sleep behavior
+
+## 5. BLE GATT Contract
 
 UUIDs:
 - Service `TXING Control`: `f6b4a000-7b32-4d2d-9f4b-4ff0a2b8f100`
@@ -70,26 +92,26 @@ Notification behavior:
 - Device notifies `State Report` on connection establishment
 - Device notifies `State Report` when `sleep` changes
 
-## 5. Gateway Required Behavior
+## 6. Gateway Required Behavior
 
-- Subscribe to shadow delta updates for `desired.sleep`
-- If `desired.sleep=false`:
+- Subscribe to shadow delta updates for `desired.mcu.power`
+- If `desired.mcu.power=true`:
   - scan/connect to Txing
-  - write `Sleep Command=0x00`
-  - read/subscribe `State Report` and confirm `sleep=false`
-  - update `reported.sleep`, `reported.battery_pct`, `reported.connected=true`
-  - keep connection maintained while desired remains false
+  - write `Sleep Command=0x00` (`sleep=false`)
+  - read/subscribe `State Report` and confirm `mcu.power=true`
+  - update `reported.mcu.power=true`, `reported.mcu.batteryPercent=50`
+  - keep connection maintained while desired remains true
   - reconnect on link drop
-- If `desired.sleep=true`:
-  - if connected, write `Sleep Command=0x01`
+- If `desired.mcu.power=false`:
+  - if connected, write `Sleep Command=0x01` (`sleep=true`)
   - confirm report, update shadow, then disconnect
-  - set `reported.connected=false`
+  - set `reported.mcu.power=false`
 
 Consistency rules:
 - Shadow updates should be idempotent
-- Authority is `desired.sleep` (shadow-driven intent)
+- Authority is `desired.mcu.power` (shadow-driven intent)
 
-## 6. Timing Expectation
+## 7. Timing Expectation
 
 Current firmware defaults used by gateway expectations:
 - sleep polling period: `4 s`
@@ -98,14 +120,13 @@ Current firmware defaults used by gateway expectations:
 Operational implication:
 - expected wake/command latency is typically a few seconds
 
-## 7. Acceptance Criteria
+## 8. Acceptance Criteria
 
-- From sleeping state, setting `desired.sleep=false` results in:
+- From sleeping state, setting `desired.mcu.power=true` results in:
   - BLE connection established
   - device `sleep=false`
-  - shadow `reported.sleep=false`
-- Setting `desired.sleep=true` results in:
+  - shadow `reported.mcu.power=true`
+- Setting `desired.mcu.power=false` results in:
   - device returns to low-power periodic behavior
-  - shadow `reported.sleep=true`
-  - shadow `reported.connected=false`
-- `reported.battery_pct` is `50` in v0.1
+  - shadow `reported.mcu.power=false`
+- `reported.mcu.batteryPercent` is `50` in v0.3

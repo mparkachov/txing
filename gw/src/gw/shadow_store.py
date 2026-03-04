@@ -6,15 +6,20 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-POWER_ON = "on"
-POWER_OFF = "off"
+DEFAULT_REPORTED_POWER = False
+DEFAULT_BATTERY_PERCENT = 50
 DEFAULT_SHADOW_FILE = Path("/tmp/txing_shadow.json")
 
 
 def default_shadow_payload() -> dict[str, Any]:
     return {
         "state": {
-            "reported": {"mcu": {"power": POWER_OFF}},
+            "reported": {
+                "mcu": {
+                    "power": DEFAULT_REPORTED_POWER,
+                    "batteryPercent": DEFAULT_BATTERY_PERCENT,
+                }
+            },
         }
     }
 
@@ -53,20 +58,31 @@ def save_shadow(payload: dict[str, Any], path: Path = DEFAULT_SHADOW_FILE) -> No
             pass
 
 
-def get_desired_power(payload: dict[str, Any]) -> str | None:
+def get_desired_power(payload: dict[str, Any]) -> bool | None:
     desired = payload.get("state", {}).get("desired", {})
     mcu = desired.get("mcu", {}) if isinstance(desired, dict) else {}
     value = mcu.get("power") if isinstance(mcu, dict) else None
-    return value if isinstance(value, str) else None
+    return value if isinstance(value, bool) else None
 
 
-def get_reported_power(payload: dict[str, Any]) -> str:
+def get_reported_power(payload: dict[str, Any]) -> bool:
     reported = payload.get("state", {}).get("reported", {})
     mcu = reported.get("mcu", {}) if isinstance(reported, dict) else {}
     value = mcu.get("power") if isinstance(mcu, dict) else None
-    if isinstance(value, str):
+    if isinstance(value, bool):
         return value
-    return POWER_OFF
+    return DEFAULT_REPORTED_POWER
+
+
+def get_reported_battery_percent(payload: dict[str, Any]) -> int:
+    reported = payload.get("state", {}).get("reported", {})
+    mcu = reported.get("mcu", {}) if isinstance(reported, dict) else {}
+    value = mcu.get("batteryPercent") if isinstance(mcu, dict) else None
+    if isinstance(value, bool):
+        return DEFAULT_BATTERY_PERCENT
+    if isinstance(value, int) and 0 <= value <= 100:
+        return value
+    return DEFAULT_BATTERY_PERCENT
 
 
 def clear_desired_if_synced(path: Path = DEFAULT_SHADOW_FILE) -> dict[str, Any]:

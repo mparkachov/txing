@@ -7,3 +7,8 @@
 
 # macOS
 .DS_Store
+
+# Shared certs directory: keep only public/non-sensitive files in git
+/certs/*
+!/certs/AmazonRootCA1.pem
+!/certs/iot-data-ats.endpoint

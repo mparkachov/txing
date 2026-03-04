@@ -1,0 +1,10 @@
+{
+  "state": {
+    "reported": {
+      "mcu": {
+        "power": false,
+        "batteryPercent": 50
+      }
+    }
+  }
+}

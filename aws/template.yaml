@@ -1,0 +1,50 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Creates the txing AWS IoT Thing used by the gateway and Thing Shadow.
+
+Resources:
+  TxingThing:
+    Type: AWS::IoT::Thing
+    Properties:
+      ThingName: txing
+
+  TxingGatewayPolicy:
+    Type: AWS::IoT::Policy
+    Properties:
+      PolicyName: txing-gw-policy
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: Connect
+            Effect: Allow
+            Action: iot:Connect
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/txing-*
+          - Sid: ThingShadow
+            Effect: Allow
+            Action:
+              - iot:GetThingShadow
+              - iot:UpdateThingShadow
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/txing
+          - Sid: ShadowPublishReceive
+            Effect: Allow
+            Action:
+              - iot:Publish
+              - iot:Receive
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/txing/shadow/*
+          - Sid: ShadowSubscribe
+            Effect: Allow
+            Action: iot:Subscribe
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/$aws/things/txing/shadow/*
+
+Outputs:
+  ThingName:
+    Description: Fixed IoT Thing name used by the gateway.
+    Value: !Ref TxingThing
+  ThingArn:
+    Description: ARN of the txing IoT Thing.
+    Value: !GetAtt TxingThing.Arn
+  ShadowUpdateTopic:
+    Description: Reserved MQTT topic for Thing Shadow updates.
+    Value: !Sub "$aws/things/${TxingThing}/shadow/update"
+  PolicyName:
+    Description: IoT policy to attach to gateway certificate.
+    Value: !Ref TxingGatewayPolicy

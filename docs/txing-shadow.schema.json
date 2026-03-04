@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://txing.local/schemas/txing-shadow.schema.json",
+  "title": "Txing Thing Shadow Contract v2",
+  "description": "Canonical payload shape for txing Thing Shadow updates and snapshots.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "state"
+  ],
+  "properties": {
+    "state": {
+      "type": "object",
+      "description": "Classic (unnamed) Thing Shadow state object.",
+      "additionalProperties": true,
+      "properties": {
+        "desired": {
+          "$ref": "#/$defs/desiredState"
+        },
+        "reported": {
+          "$ref": "#/$defs/reportedState"
+        }
+      },
+      "anyOf": [
+        {
+          "required": [
+            "desired"
+          ]
+        },
+        {
+          "required": [
+            "reported"
+          ]
+        }
+      ]
+    },
+    "clientToken": {
+      "type": "string"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "timestamp": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "$defs": {
+    "desiredState": {
+      "type": "object",
+      "required": [
+        "mcu"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "mcu": {
+          "$ref": "#/$defs/desiredMcuState"
+        }
+      }
+    },
+    "reportedState": {
+      "type": "object",
+      "required": [
+        "mcu"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "mcu": {
+          "$ref": "#/$defs/reportedMcuState"
+        }
+      }
+    },
+    "desiredMcuState": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "power": {
+          "type": "boolean"
+        }
+      }
+    },
+    "reportedMcuState": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "power",
+        "batteryPercent"
+      ],
+      "properties": {
+        "power": {
+          "type": "boolean"
+        },
+        "batteryPercent": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        }
+      }
+    }
+  }
+}

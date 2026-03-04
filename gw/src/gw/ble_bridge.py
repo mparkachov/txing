@@ -14,10 +14,10 @@ from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
 
 from .shadow_store import (
+    DEFAULT_BATTERY_PERCENT,
     DEFAULT_SHADOW_FILE,
-    POWER_OFF,
-    POWER_ON,
     get_desired_power,
+    get_reported_battery_percent,
     get_reported_power,
     load_shadow,
     save_shadow,
@@ -119,19 +119,27 @@ class InstanceLock:
 
 @dataclass(slots=True)
 class SimulatedShadow:
-    desired_power: str | None = None
-    reported_power: str = POWER_OFF
+    desired_power: bool | None = None
+    reported_power: bool = False
+    battery_percent: int = DEFAULT_BATTERY_PERCENT
     snapshot_file: Path = DEFAULT_SHADOW_FILE
 
-    def set_desired(self, power: str) -> None:
+    def set_desired(self, power: bool) -> None:
         self.desired_power = power
 
-    def set_reported(self, power: str) -> None:
+    def set_reported(self, power: bool, battery_percent: int | None = None) -> None:
         self.reported_power = power
+        if battery_percent is not None:
+            self.battery_percent = battery_percent
 
-    def payload(self) -> dict[str, dict[str, dict[str, dict[str, str]]]]:
-        state: dict[str, dict[str, dict[str, str]]] = {
-            "reported": {"mcu": {"power": self.reported_power}},
+    def payload(self) -> dict[str, dict[str, dict[str, dict[str, bool | int]]]]:
+        state: dict[str, dict[str, dict[str, bool | int]]] = {
+            "reported": {
+                "mcu": {
+                    "power": self.reported_power,
+                    "batteryPercent": self.battery_percent,
+                }
+            },
         }
         if self.desired_power is not None:
             state["desired"] = {"mcu": {"power": self.desired_power}}
@@ -201,7 +209,7 @@ class BleSleepBridge:
             wake_file=self._config.wake_file,
             sleep_file=self._config.sleep_file,
         )
-        for trigger_file, target_power, sleep_value in pending:
+        for trigger_file, target_power in pending:
             if not trigger_file.exists():
                 continue
 
@@ -239,7 +247,7 @@ class BleSleepBridge:
                 continue
 
             try:
-                await self._send_sleep_command(sleep=sleep_value)
+                await self._send_sleep_command(sleep=not target_power)
             except Exception:
                 LOGGER.exception(
                     "Failed to send command for %s (desired=%s); will retry",
@@ -256,10 +264,9 @@ class BleSleepBridge:
                 f"Reported updated after BLE command success ({trigger_file})"
             )
             LOGGER.info(
-                "Processed %s (power=%s, sleep=%s) and removed trigger file",
+                "Processed %s (power=%s) and removed trigger file",
                 trigger_file,
                 target_power,
-                sleep_value,
             )
 
     async def _send_sleep_command(self, sleep: bool) -> None:
@@ -288,15 +295,18 @@ class BleSleepBridge:
 
         battery_pct = int(report[0])
         sleep_flag = int(report[1])
-        reported_power = POWER_ON if sleep_flag == 0x00 else POWER_OFF
+        reported_power = sleep_flag == 0x00
 
-        self._shadow.set_reported(reported_power)
+        self._shadow.set_reported(
+            power=reported_power,
+            battery_percent=battery_pct,
+        )
         self._shadow.clear_desired_if_synced()
         self._shadow.log_state(
             "Reported synchronized from MCU state report on connect"
         )
         LOGGER.info(
-            "MCU state report on connect: battery_pct=%s sleep=%s => reported power=%s",
+            "MCU state report on connect: battery_pct=%s sleep=%s => power=%s",
             battery_pct,
             sleep_flag == 0x01,
             reported_power,
@@ -432,11 +442,11 @@ def _parse_args() -> argparse.Namespace:
 
 def pending_commands(
     wake_file: Path, sleep_file: Path
-) -> list[tuple[Path, str, bool]]:
-    candidates: list[tuple[float, Path, str, bool]] = []
-    for path, target_power, sleep_value in (
-        (wake_file, POWER_ON, False),
-        (sleep_file, POWER_OFF, True),
+) -> list[tuple[Path, bool]]:
+    candidates: list[tuple[float, Path, bool]] = []
+    for path, target_power in (
+        (wake_file, True),
+        (sleep_file, False),
     ):
         if not path.exists():
             continue
@@ -444,13 +454,10 @@ def pending_commands(
             mtime = path.stat().st_mtime
         except OSError:
             continue
-        candidates.append((mtime, path, target_power, sleep_value))
+        candidates.append((mtime, path, target_power))
 
     candidates.sort(key=lambda item: item[0])
-    return [
-        (path, target_power, sleep_value)
-        for _, path, target_power, sleep_value in candidates
-    ]
+    return [(path, target_power) for _, path, target_power in candidates]
 
 
 async def run_no_ble_loop(config: BridgeConfig, shadow: SimulatedShadow) -> None:
@@ -465,7 +472,7 @@ async def run_no_ble_loop(config: BridgeConfig, shadow: SimulatedShadow) -> None
             wake_file=config.wake_file,
             sleep_file=config.sleep_file,
         )
-        for trigger_file, target_power, sleep_value in pending:
+        for trigger_file, target_power in pending:
             if not trigger_file.exists():
                 continue
             LOGGER.info(
@@ -491,7 +498,7 @@ async def run_no_ble_loop(config: BridgeConfig, shadow: SimulatedShadow) -> None
 
             LOGGER.info(
                 "Dry-run: would send Sleep Command sleep=%s (trigger=%s)",
-                sleep_value,
+                not target_power,
                 trigger_file,
             )
             trigger_file.unlink(missing_ok=True)
@@ -535,6 +542,7 @@ def main() -> None:
     shadow = SimulatedShadow(
         desired_power=get_desired_power(snapshot),
         reported_power=get_reported_power(snapshot),
+        battery_percent=get_reported_battery_percent(snapshot),
         snapshot_file=config.shadow_file,
     )
     LOGGER.info("gw instance pid=%s lock=%s", os.getpid(), config.lock_file)
