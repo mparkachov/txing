@@ -1292,9 +1292,20 @@ class BleSleepBridge:
             LOGGER.warning("Cached id was not found, falling back to full discovery")
 
         if self._ble_uuid_search_mode:
-            return await self._discover_target_with_filter_mode(
-                include_service_filter=False
-            )
+            # Even in search mode, first try matching the currently known service UUID.
+            # Some peripherals advertise service UUID but not local name/manufacturer data.
+            try:
+                return await self._discover_target_with_filter_mode(
+                    include_service_filter=True
+                )
+            except RuntimeError:
+                LOGGER.warning(
+                    "Discovery in BLE UUID search mode with service UUID hint failed; "
+                    "falling back to name/manufacturer matching only"
+                )
+                return await self._discover_target_with_filter_mode(
+                    include_service_filter=False
+                )
 
         try:
             return await self._discover_target_with_filter_mode(
