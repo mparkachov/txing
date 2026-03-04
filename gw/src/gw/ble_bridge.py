@@ -8,7 +8,9 @@ import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
+import paho.mqtt.client as mqtt
 from bleak import BleakClient, BleakScanner
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
@@ -16,7 +18,6 @@ from bleak.backends.scanner import AdvertisementData
 from .shadow_store import (
     DEFAULT_BATTERY_PERCENT,
     DEFAULT_SHADOW_FILE,
-    get_desired_power,
     get_reported_battery_percent,
     get_reported_power,
     load_shadow,
@@ -33,11 +34,98 @@ DEFAULT_NAME_FRAGMENT = "txing"
 DEFAULT_SCAN_TIMEOUT = 12.0
 DEFAULT_RECONNECT_DELAY = 1.0
 DEFAULT_POLL_INTERVAL = 1.0
-DEFAULT_WAKE_FILE = Path("/tmp/wake")
-DEFAULT_SLEEP_FILE = Path("/tmp/sleep")
 DEFAULT_LOCK_FILE = Path("/tmp/txing_gw.lock")
+DEFAULT_THING_NAME = "txing"
+DEFAULT_AWS_CONNECT_TIMEOUT = 20.0
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+DEFAULT_CERT_DIR = REPO_ROOT / "certs"
+DEFAULT_IOT_ENDPOINT_FILE = DEFAULT_CERT_DIR / "iot-data-ats.endpoint"
+DEFAULT_CERT_FILE = DEFAULT_CERT_DIR / "txing-gw.cert.pem"
+DEFAULT_KEY_FILE = DEFAULT_CERT_DIR / "txing-gw.private.key"
+DEFAULT_CA_FILE = DEFAULT_CERT_DIR / "AmazonRootCA1.pem"
 
 LOGGER = logging.getLogger("gw.ble_bridge")
+MQTT_LOGGER = logging.getLogger("gw.ble_bridge.mqtt")
+
+
+def _extract_desired_power_from_shadow(payload: dict[str, Any]) -> bool | None:
+    state = payload.get("state")
+    if not isinstance(state, dict):
+        return None
+    desired = state.get("desired")
+    if not isinstance(desired, dict):
+        return None
+    mcu = desired.get("mcu")
+    if not isinstance(mcu, dict):
+        return None
+    value = mcu.get("power")
+    return value if isinstance(value, bool) else None
+
+
+def _extract_desired_power_from_delta(payload: dict[str, Any]) -> bool | None:
+    state = payload.get("state")
+    if not isinstance(state, dict):
+        return None
+    mcu = state.get("mcu")
+    if not isinstance(mcu, dict):
+        return None
+    value = mcu.get("power")
+    return value if isinstance(value, bool) else None
+
+
+def _extract_reported_power(payload: dict[str, Any]) -> bool | None:
+    state = payload.get("state")
+    if not isinstance(state, dict):
+        return None
+    reported = state.get("reported")
+    if not isinstance(reported, dict):
+        return None
+    mcu = reported.get("mcu")
+    if not isinstance(mcu, dict):
+        return None
+    value = mcu.get("power")
+    return value if isinstance(value, bool) else None
+
+
+def _extract_reported_battery_percent(payload: dict[str, Any]) -> int | None:
+    state = payload.get("state")
+    if not isinstance(state, dict):
+        return None
+    reported = state.get("reported")
+    if not isinstance(reported, dict):
+        return None
+    mcu = reported.get("mcu")
+    if not isinstance(mcu, dict):
+        return None
+    value = mcu.get("batteryPercent")
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int) and 0 <= value <= 100:
+        return value
+    return None
+
+
+def _read_iot_endpoint(explicit_endpoint: str | None, endpoint_file: Path) -> str:
+    if explicit_endpoint:
+        endpoint = explicit_endpoint.strip()
+        if endpoint:
+            return endpoint
+
+    try:
+        endpoint = endpoint_file.read_text(encoding="utf-8").strip()
+    except OSError as err:
+        raise RuntimeError(
+            f"failed to read AWS IoT endpoint file {endpoint_file}: {err}"
+        ) from err
+    if not endpoint:
+        raise RuntimeError(f"AWS IoT endpoint file {endpoint_file} is empty")
+    return endpoint
+
+
+def _require_file(path: Path, description: str) -> None:
+    if not path.is_file():
+        raise RuntimeError(f"{description} not found: {path}")
 
 
 @dataclass(slots=True)
@@ -46,10 +134,340 @@ class BridgeConfig:
     scan_timeout: float = DEFAULT_SCAN_TIMEOUT
     reconnect_delay: float = DEFAULT_RECONNECT_DELAY
     poll_interval: float = DEFAULT_POLL_INTERVAL
-    wake_file: Path = DEFAULT_WAKE_FILE
-    sleep_file: Path = DEFAULT_SLEEP_FILE
     shadow_file: Path = DEFAULT_SHADOW_FILE
     lock_file: Path = DEFAULT_LOCK_FILE
+    thing_name: str = DEFAULT_THING_NAME
+    iot_endpoint: str = ""
+    cert_file: Path = DEFAULT_CERT_FILE
+    key_file: Path = DEFAULT_KEY_FILE
+    ca_file: Path = DEFAULT_CA_FILE
+    client_id: str = ""
+    aws_connect_timeout: float = DEFAULT_AWS_CONNECT_TIMEOUT
+
+
+@dataclass(slots=True)
+class ShadowState:
+    desired_power: bool | None = None
+    reported_power: bool = False
+    battery_percent: int = DEFAULT_BATTERY_PERCENT
+    snapshot_file: Path = DEFAULT_SHADOW_FILE
+
+    def set_desired(self, power: bool | None) -> None:
+        self.desired_power = power
+
+    def set_reported(self, power: bool, battery_percent: int | None = None) -> None:
+        self.reported_power = power
+        if battery_percent is not None:
+            self.battery_percent = battery_percent
+
+    def payload(self) -> dict[str, dict[str, dict[str, dict[str, bool | int]]]]:
+        state: dict[str, dict[str, dict[str, bool | int]]] = {
+            "reported": {
+                "mcu": {
+                    "power": self.reported_power,
+                    "batteryPercent": self.battery_percent,
+                }
+            },
+        }
+        if self.desired_power is not None:
+            state["desired"] = {"mcu": {"power": self.desired_power}}
+        return {"state": state}
+
+    def clear_desired_if_synced(self) -> bool:
+        if self.desired_power is not None and self.desired_power == self.reported_power:
+            self.desired_power = None
+            return True
+        return False
+
+    def log_state(self, context: str) -> None:
+        save_shadow(self.payload(), self.snapshot_file)
+        LOGGER.info("%s shadow=%s", context, json.dumps(self.payload(), sort_keys=True))
+
+
+@dataclass(slots=True)
+class AwsShadowUpdate:
+    source: str
+    has_desired: bool = False
+    desired_power: bool | None = None
+    reported_power: bool | None = None
+    battery_percent: int | None = None
+
+
+class AwsShadowClient:
+    def __init__(self, config: BridgeConfig) -> None:
+        self._config = config
+        self._topic_prefix = f"$aws/things/{config.thing_name}/shadow"
+        self._topic_get = f"{self._topic_prefix}/get"
+        self._topic_get_accepted = f"{self._topic_prefix}/get/accepted"
+        self._topic_get_rejected = f"{self._topic_prefix}/get/rejected"
+        self._topic_update = f"{self._topic_prefix}/update"
+        self._topic_update_delta = f"{self._topic_prefix}/update/delta"
+
+        self._client = mqtt.Client(
+            callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
+            client_id=config.client_id,
+            clean_session=True,
+            protocol=mqtt.MQTTv311,
+        )
+        self._client.enable_logger(MQTT_LOGGER)
+        self._client.tls_set(
+            ca_certs=str(config.ca_file),
+            certfile=str(config.cert_file),
+            keyfile=str(config.key_file),
+        )
+        self._client.reconnect_delay_set(min_delay=1, max_delay=30)
+        self._client.on_connect = self._on_connect
+        self._client.on_disconnect = self._on_disconnect
+        self._client.on_message = self._on_message
+
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._connected_event: asyncio.Event | None = None
+        self._updates: asyncio.Queue[AwsShadowUpdate] | None = None
+        self._initial_snapshot_future: asyncio.Future[dict[str, Any]] | None = None
+
+    @property
+    def is_connected(self) -> bool:
+        return bool(self._connected_event and self._connected_event.is_set())
+
+    async def connect_and_get_initial_snapshot(
+        self, timeout_seconds: float
+    ) -> dict[str, Any]:
+        self._loop = asyncio.get_running_loop()
+        self._connected_event = asyncio.Event()
+        self._updates = asyncio.Queue()
+        self._initial_snapshot_future = self._loop.create_future()
+
+        connect_rc = self._client.connect(
+            host=self._config.iot_endpoint,
+            port=8883,
+            keepalive=60,
+        )
+        if connect_rc != mqtt.MQTT_ERR_SUCCESS:
+            raise RuntimeError(
+                f"failed to initiate AWS IoT MQTT connection (rc={connect_rc})"
+            )
+        self._client.loop_start()
+
+        try:
+            await asyncio.wait_for(self._connected_event.wait(), timeout=timeout_seconds)
+            deadline = self._loop.time() + timeout_seconds
+            while True:
+                await self._request_shadow_get()
+                remaining = deadline - self._loop.time()
+                if remaining <= 0:
+                    raise TimeoutError(
+                        "timed out waiting for initial AWS IoT shadow snapshot"
+                    )
+                try:
+                    snapshot = await asyncio.wait_for(
+                        asyncio.shield(self._initial_snapshot_future),
+                        timeout=min(2.0, remaining),
+                    )
+                    return snapshot
+                except TimeoutError:
+                    continue
+        except Exception:
+            await self.disconnect()
+            raise
+
+    async def disconnect(self) -> None:
+        try:
+            self._client.disconnect()
+        finally:
+            self._client.loop_stop()
+
+    def drain_updates(self) -> list[AwsShadowUpdate]:
+        if self._updates is None:
+            return []
+        updates: list[AwsShadowUpdate] = []
+        while True:
+            try:
+                updates.append(self._updates.get_nowait())
+            except asyncio.QueueEmpty:
+                break
+        return updates
+
+    async def set_reported_state(
+        self,
+        *,
+        power: bool,
+        battery_percent: int,
+        clear_desired_power: bool,
+    ) -> None:
+        state: dict[str, Any] = {
+            "reported": {
+                "mcu": {
+                    "power": power,
+                    "batteryPercent": battery_percent,
+                }
+            }
+        }
+        if clear_desired_power:
+            state["desired"] = {"mcu": {"power": None}}
+
+        await self._publish_json(
+            self._topic_update,
+            {"state": state},
+        )
+
+    async def _publish_json(self, topic: str, payload: dict[str, Any]) -> None:
+        payload_text = json.dumps(payload, separators=(",", ":"), sort_keys=True)
+
+        def _publish_sync() -> None:
+            info = self._client.publish(topic, payload=payload_text, qos=1)
+            if info.rc != mqtt.MQTT_ERR_SUCCESS:
+                raise RuntimeError(
+                    f"failed to publish to {topic}: rc={info.rc} payload={payload_text}"
+                )
+            info.wait_for_publish(timeout=10)
+            if info.rc != mqtt.MQTT_ERR_SUCCESS:
+                raise RuntimeError(
+                    f"publish to {topic} did not complete successfully: rc={info.rc}"
+                )
+
+        await asyncio.to_thread(_publish_sync)
+
+    async def _request_shadow_get(self) -> None:
+        def _publish_sync() -> None:
+            info = self._client.publish(self._topic_get, payload="{}", qos=1)
+            if info.rc != mqtt.MQTT_ERR_SUCCESS:
+                raise RuntimeError(
+                    f"failed to publish shadow get to {self._topic_get} (rc={info.rc})"
+                )
+            info.wait_for_publish(timeout=10)
+            if info.rc != mqtt.MQTT_ERR_SUCCESS:
+                raise RuntimeError(
+                    f"shadow get publish did not complete successfully: rc={info.rc}"
+                )
+
+        await asyncio.to_thread(_publish_sync)
+
+    def _on_connect(
+        self,
+        client: mqtt.Client,
+        _userdata: Any,
+        _flags: Any,
+        reason_code: Any,
+        _properties: Any,
+    ) -> None:
+        is_failure = bool(getattr(reason_code, "is_failure", False))
+        if not hasattr(reason_code, "is_failure"):
+            is_failure = reason_code != 0
+
+        if is_failure:
+            error = RuntimeError(f"AWS IoT MQTT CONNACK rejected (reason={reason_code})")
+            LOGGER.error("%s", error)
+            self._set_initial_snapshot_exception(error)
+            return
+
+        LOGGER.info(
+            "Connected to AWS IoT endpoint=%s thing=%s client_id=%s",
+            self._config.iot_endpoint,
+            self._config.thing_name,
+            self._config.client_id,
+        )
+
+        for topic in (self._topic_get_accepted, self._topic_get_rejected, self._topic_update_delta):
+            subscribe_rc, _mid = client.subscribe(topic, qos=1)
+            if subscribe_rc != mqtt.MQTT_ERR_SUCCESS:
+                error = RuntimeError(
+                    f"failed to subscribe to {topic} (rc={subscribe_rc})"
+                )
+                LOGGER.error("%s", error)
+                self._set_initial_snapshot_exception(error)
+                return
+
+        if self._loop and self._connected_event:
+            self._loop.call_soon_threadsafe(self._connected_event.set)
+
+    def _on_disconnect(
+        self,
+        _client: mqtt.Client,
+        _userdata: Any,
+        _flags: Any,
+        reason_code: Any,
+        _properties: Any,
+    ) -> None:
+        is_failure = bool(getattr(reason_code, "is_failure", False))
+        if not hasattr(reason_code, "is_failure"):
+            is_failure = reason_code != 0
+
+        if is_failure:
+            LOGGER.warning(
+                "AWS IoT MQTT disconnected unexpectedly (reason=%s)",
+                reason_code,
+            )
+        else:
+            LOGGER.info("Disconnected from AWS IoT MQTT")
+        if self._loop and self._connected_event:
+            self._loop.call_soon_threadsafe(self._connected_event.clear)
+
+    def _on_message(
+        self,
+        _client: mqtt.Client,
+        _userdata: Any,
+        msg: mqtt.MQTTMessage,
+    ) -> None:
+        try:
+            payload: dict[str, Any] = json.loads(msg.payload.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            LOGGER.warning("Ignoring non-JSON payload on topic %s", msg.topic)
+            return
+
+        if msg.topic == self._topic_get_rejected:
+            error = RuntimeError(f"shadow get rejected: {payload}")
+            LOGGER.error("%s", error)
+            self._set_initial_snapshot_exception(error)
+            return
+
+        if msg.topic == self._topic_get_accepted:
+            update = AwsShadowUpdate(
+                source="shadow/get/accepted",
+                has_desired=True,
+                desired_power=_extract_desired_power_from_shadow(payload),
+                reported_power=_extract_reported_power(payload),
+                battery_percent=_extract_reported_battery_percent(payload),
+            )
+            self._enqueue_update(update)
+            self._set_initial_snapshot(payload)
+            return
+
+        if msg.topic == self._topic_update_delta:
+            desired_power = _extract_desired_power_from_delta(payload)
+            if desired_power is None:
+                LOGGER.debug("Ignored shadow delta without desired.mcu.power: %s", payload)
+                return
+            update = AwsShadowUpdate(
+                source="shadow/update/delta",
+                has_desired=True,
+                desired_power=desired_power,
+            )
+            self._enqueue_update(update)
+
+    def _enqueue_update(self, update: AwsShadowUpdate) -> None:
+        if self._loop is None or self._updates is None:
+            return
+        self._loop.call_soon_threadsafe(self._updates.put_nowait, update)
+
+    def _set_initial_snapshot(self, payload: dict[str, Any]) -> None:
+        if self._loop is None or self._initial_snapshot_future is None:
+            return
+
+        def _set() -> None:
+            if not self._initial_snapshot_future.done():
+                self._initial_snapshot_future.set_result(payload)
+
+        self._loop.call_soon_threadsafe(_set)
+
+    def _set_initial_snapshot_exception(self, error: Exception) -> None:
+        if self._loop is None or self._initial_snapshot_future is None:
+            return
+
+        def _set() -> None:
+            if not self._initial_snapshot_future.done():
+                self._initial_snapshot_future.set_exception(error)
+
+        self._loop.call_soon_threadsafe(_set)
 
 
 class InstanceLock:
@@ -77,7 +495,6 @@ class InstanceLock:
                     raise RuntimeError(
                         f"another gw instance is already running (pid={owner_pid}, lock={self._path})"
                     )
-                # stale lock file
                 try:
                     self._path.unlink()
                 except FileNotFoundError:
@@ -117,55 +534,24 @@ class InstanceLock:
             return True
 
 
-@dataclass(slots=True)
-class SimulatedShadow:
-    desired_power: bool | None = None
-    reported_power: bool = False
-    battery_percent: int = DEFAULT_BATTERY_PERCENT
-    snapshot_file: Path = DEFAULT_SHADOW_FILE
-
-    def set_desired(self, power: bool) -> None:
-        self.desired_power = power
-
-    def set_reported(self, power: bool, battery_percent: int | None = None) -> None:
-        self.reported_power = power
-        if battery_percent is not None:
-            self.battery_percent = battery_percent
-
-    def payload(self) -> dict[str, dict[str, dict[str, dict[str, bool | int]]]]:
-        state: dict[str, dict[str, dict[str, bool | int]]] = {
-            "reported": {
-                "mcu": {
-                    "power": self.reported_power,
-                    "batteryPercent": self.battery_percent,
-                }
-            },
-        }
-        if self.desired_power is not None:
-            state["desired"] = {"mcu": {"power": self.desired_power}}
-        return {"state": state}
-
-    def clear_desired_if_synced(self) -> None:
-        if self.desired_power is not None and self.desired_power == self.reported_power:
-            self.desired_power = None
-
-    def log_state(self, context: str) -> None:
-        save_shadow(self.payload(), self.snapshot_file)
-        LOGGER.info("%s shadow=%s", context, json.dumps(self.payload(), sort_keys=True))
-
-
 class BleSleepBridge:
-    def __init__(self, config: BridgeConfig, shadow: SimulatedShadow) -> None:
+    def __init__(
+        self,
+        config: BridgeConfig,
+        shadow: ShadowState,
+        cloud_shadow: AwsShadowClient,
+    ) -> None:
         self._config = config
         self._shadow = shadow
+        self._cloud_shadow = cloud_shadow
         self._cached_device_id: str | None = None
         self._client: BleakClient | None = None
-        self._disconnected = asyncio.Event()
-        self._disconnected.set()
 
     async def run(self) -> None:
         try:
             while True:
+                await self._apply_cloud_shadow_updates()
+
                 if not self._is_connected():
                     try:
                         await self._ensure_connected()
@@ -175,11 +561,48 @@ class BleSleepBridge:
                             self._config.reconnect_delay,
                         )
                         await asyncio.sleep(self._config.reconnect_delay)
+                        continue
 
-                await self._process_trigger_files_once()
+                await self._process_desired_power_once()
                 await asyncio.sleep(self._config.poll_interval)
         finally:
             await self._safe_disconnect()
+
+    async def run_no_ble(self) -> None:
+        LOGGER.info(
+            "Running in --no-ble mode; polling cloud shadow every %.2fs",
+            self._config.poll_interval,
+        )
+        while True:
+            await self._apply_cloud_shadow_updates()
+            await self._process_desired_no_ble_once()
+            await asyncio.sleep(self._config.poll_interval)
+
+    async def _apply_cloud_shadow_updates(self) -> None:
+        updates = self._cloud_shadow.drain_updates()
+        for update in updates:
+            changed = False
+            if update.has_desired and self._shadow.desired_power != update.desired_power:
+                self._shadow.set_desired(update.desired_power)
+                changed = True
+            if (
+                update.reported_power is not None
+                and self._shadow.reported_power != update.reported_power
+            ):
+                self._shadow.set_reported(update.reported_power)
+                changed = True
+            if (
+                update.battery_percent is not None
+                and self._shadow.battery_percent != update.battery_percent
+            ):
+                self._shadow.set_reported(
+                    self._shadow.reported_power,
+                    battery_percent=update.battery_percent,
+                )
+                changed = True
+
+            if changed:
+                self._shadow.log_state(f"Applied cloud shadow update ({update.source})")
 
     async def _ensure_connected(self) -> None:
         if self._is_connected():
@@ -189,7 +612,6 @@ class BleSleepBridge:
         device = await self._discover_target()
 
         client = BleakClient(device, disconnected_callback=self._handle_disconnect)
-        self._disconnected.clear()
         self._client = client
         try:
             connected = await client.connect()
@@ -201,73 +623,90 @@ class BleSleepBridge:
             await self._sync_reported_from_device_on_connect()
         except Exception:
             self._client = None
-            self._disconnected.set()
             raise
 
-    async def _process_trigger_files_once(self) -> None:
-        pending = pending_commands(
-            wake_file=self._config.wake_file,
-            sleep_file=self._config.sleep_file,
+    async def _process_desired_no_ble_once(self) -> None:
+        target_power = self._shadow.desired_power
+        if target_power is None:
+            return
+
+        if self._shadow.reported_power == target_power:
+            await self._clear_desired_if_synced(
+                context="No-op in --no-ble mode: desired already equals reported",
+            )
+            return
+
+        LOGGER.info(
+            "Dry-run: would send Sleep Command sleep=%s; updating reported in cloud",
+            not target_power,
         )
-        for trigger_file, target_power in pending:
-            if not trigger_file.exists():
-                continue
+        self._shadow.set_reported(target_power)
+        await self._publish_reported_update(
+            clear_desired_power=True,
+            context="Reported updated after dry-run command success",
+        )
 
-            LOGGER.info(
-                "Trigger detected %s -> desired power=%s (current desired=%s reported=%s)",
-                trigger_file,
-                target_power,
-                self._shadow.desired_power,
-                self._shadow.reported_power,
+    async def _process_desired_power_once(self) -> None:
+        target_power = self._shadow.desired_power
+        if target_power is None:
+            return
+
+        if self._shadow.reported_power == target_power:
+            await self._clear_desired_if_synced(
+                context="No-op: desired already equals reported",
             )
+            return
 
-            if self._shadow.desired_power != target_power:
-                self._shadow.set_desired(target_power)
-                self._shadow.log_state(f"Desired updated from trigger {trigger_file}")
+        if not self._is_connected():
+            LOGGER.info(
+                "Desired command pending (desired=%s): BLE disconnected, waiting for reconnect",
+                target_power,
+            )
+            return
 
-            if self._shadow.reported_power == target_power:
-                trigger_file.unlink(missing_ok=True)
-                self._shadow.clear_desired_if_synced()
-                self._shadow.log_state(
-                    f"No-op: desired already equals reported ({trigger_file})"
-                )
-                LOGGER.info(
-                    "No-op for %s: reported power already %s; removed trigger file",
-                    trigger_file,
-                    target_power,
-                )
-                continue
+        try:
+            await self._send_sleep_command(sleep=not target_power)
+        except Exception:
+            LOGGER.exception(
+                "Failed to send BLE command for desired power=%s; will retry",
+                target_power,
+            )
+            await self._safe_disconnect()
+            return
 
-            if not self._is_connected():
-                LOGGER.info(
-                    "Command pending for %s (desired=%s): BLE disconnected, waiting for reconnect",
-                    trigger_file,
-                    target_power,
-                )
-                continue
+        self._shadow.set_reported(target_power)
+        await self._publish_reported_update(
+            clear_desired_power=True,
+            context="Reported updated after BLE command success",
+        )
 
-            try:
-                await self._send_sleep_command(sleep=not target_power)
-            except Exception:
-                LOGGER.exception(
-                    "Failed to send command for %s (desired=%s); will retry",
-                    trigger_file,
-                    target_power,
-                )
-                await self._safe_disconnect()
-                continue
+    async def _clear_desired_if_synced(self, context: str) -> None:
+        if self._shadow.desired_power is None:
+            return
+        await self._publish_reported_update(
+            clear_desired_power=True,
+            context=context,
+        )
 
-            trigger_file.unlink(missing_ok=True)
-            self._shadow.set_reported(target_power)
+    async def _publish_reported_update(
+        self,
+        *,
+        clear_desired_power: bool,
+        context: str,
+    ) -> None:
+        try:
+            await self._cloud_shadow.set_reported_state(
+                power=self._shadow.reported_power,
+                battery_percent=self._shadow.battery_percent,
+                clear_desired_power=clear_desired_power,
+            )
+        except Exception:
+            LOGGER.exception("Failed to publish reported shadow update; will retry")
+            return
+
+        if clear_desired_power:
             self._shadow.clear_desired_if_synced()
-            self._shadow.log_state(
-                f"Reported updated after BLE command success ({trigger_file})"
-            )
-            LOGGER.info(
-                "Processed %s (power=%s) and removed trigger file",
-                trigger_file,
-                target_power,
-            )
+        self._shadow.log_state(context)
 
     async def _send_sleep_command(self, sleep: bool) -> None:
         if not self._is_connected():
@@ -301,9 +740,9 @@ class BleSleepBridge:
             power=reported_power,
             battery_percent=battery_pct,
         )
-        self._shadow.clear_desired_if_synced()
-        self._shadow.log_state(
-            "Reported synchronized from MCU state report on connect"
+        await self._publish_reported_update(
+            clear_desired_power=self._shadow.desired_power == reported_power,
+            context="Reported synchronized from MCU state report on connect",
         )
         LOGGER.info(
             "MCU state report on connect: battery_pct=%s sleep=%s => power=%s",
@@ -357,7 +796,6 @@ class BleSleepBridge:
     async def _safe_disconnect(self) -> None:
         client = self._client
         self._client = None
-        self._disconnected.set()
         if client is None:
             return
         try:
@@ -368,7 +806,6 @@ class BleSleepBridge:
 
     def _handle_disconnect(self, _: BleakClient) -> None:
         LOGGER.warning("BLE connection lost")
-        self._disconnected.set()
 
     def _is_connected(self) -> bool:
         return self._client is not None and self._client.is_connected
@@ -377,7 +814,7 @@ class BleSleepBridge:
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="gw",
-        description="Txing gateway BLE bridge process",
+        description="Txing gateway process (AWS IoT Shadow + BLE bridge)",
     )
     parser.add_argument(
         "--name",
@@ -394,37 +831,70 @@ def _parse_args() -> argparse.Namespace:
         "--poll-interval",
         type=float,
         default=DEFAULT_POLL_INTERVAL,
-        help="Seconds between /tmp trigger checks (default: 1)",
+        help="Seconds between shadow + BLE checks (default: 1)",
     )
     parser.add_argument(
         "--reconnect-delay",
         type=float,
         default=DEFAULT_RECONNECT_DELAY,
-        help="Seconds to wait before reconnect attempts after failure (default: 1)",
-    )
-    parser.add_argument(
-        "--wake-file",
-        type=Path,
-        default=DEFAULT_WAKE_FILE,
-        help="Path to wake trigger file (default: /tmp/wake)",
-    )
-    parser.add_argument(
-        "--sleep-file",
-        type=Path,
-        default=DEFAULT_SLEEP_FILE,
-        help="Path to sleep trigger file (default: /tmp/sleep)",
+        help="Seconds to wait before retrying failed loops (default: 1)",
     )
     parser.add_argument(
         "--shadow-file",
         type=Path,
         default=DEFAULT_SHADOW_FILE,
-        help="Path to simulated shadow snapshot file (default: /tmp/txing_shadow.json)",
+        help="Path to local shadow mirror file (default: /tmp/txing_shadow.json)",
     )
     parser.add_argument(
         "--lock-file",
         type=Path,
         default=DEFAULT_LOCK_FILE,
         help="Path to single-instance lock file (default: /tmp/txing_gw.lock)",
+    )
+    parser.add_argument(
+        "--thing-name",
+        default=DEFAULT_THING_NAME,
+        help="AWS IoT thing name (default: txing)",
+    )
+    parser.add_argument(
+        "--iot-endpoint",
+        default=None,
+        help="AWS IoT data endpoint hostname; if omitted, --iot-endpoint-file is used",
+    )
+    parser.add_argument(
+        "--iot-endpoint-file",
+        type=Path,
+        default=DEFAULT_IOT_ENDPOINT_FILE,
+        help=f"File containing AWS IoT endpoint (default: {DEFAULT_IOT_ENDPOINT_FILE})",
+    )
+    parser.add_argument(
+        "--cert-file",
+        type=Path,
+        default=DEFAULT_CERT_FILE,
+        help=f"Client certificate PEM file (default: {DEFAULT_CERT_FILE})",
+    )
+    parser.add_argument(
+        "--key-file",
+        type=Path,
+        default=DEFAULT_KEY_FILE,
+        help=f"Client private key file (default: {DEFAULT_KEY_FILE})",
+    )
+    parser.add_argument(
+        "--ca-file",
+        type=Path,
+        default=DEFAULT_CA_FILE,
+        help=f"Root CA file (default: {DEFAULT_CA_FILE})",
+    )
+    parser.add_argument(
+        "--client-id",
+        default=None,
+        help="MQTT client id (default: txing-gw-<pid>)",
+    )
+    parser.add_argument(
+        "--aws-connect-timeout",
+        type=float,
+        default=DEFAULT_AWS_CONNECT_TIMEOUT,
+        help="Seconds to wait for initial AWS MQTT connect + shadow get (default: 20)",
     )
     parser.add_argument(
         "--log-level",
@@ -435,81 +905,31 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--no-ble",
         action="store_true",
-        help="Do not use BLE; only poll trigger files and log actions",
+        help="Do not use BLE; still sync desired/reported with AWS shadow",
     )
     return parser.parse_args()
 
 
-def pending_commands(
-    wake_file: Path, sleep_file: Path
-) -> list[tuple[Path, bool]]:
-    candidates: list[tuple[float, Path, bool]] = []
-    for path, target_power in (
-        (wake_file, True),
-        (sleep_file, False),
-    ):
-        if not path.exists():
-            continue
-        try:
-            mtime = path.stat().st_mtime
-        except OSError:
-            continue
-        candidates.append((mtime, path, target_power))
-
-    candidates.sort(key=lambda item: item[0])
-    return [(path, target_power) for _, path, target_power in candidates]
-
-
-async def run_no_ble_loop(config: BridgeConfig, shadow: SimulatedShadow) -> None:
-    LOGGER.info(
-        "Running in --no-ble mode; polling %s and %s every %.2fs",
-        config.wake_file,
-        config.sleep_file,
-        config.poll_interval,
+def _build_shadow_from_snapshot(
+    snapshot: dict[str, Any],
+    *,
+    snapshot_file: Path,
+) -> ShadowState:
+    cached = load_shadow(snapshot_file)
+    reported_power = _extract_reported_power(snapshot)
+    battery_percent = _extract_reported_battery_percent(snapshot)
+    return ShadowState(
+        desired_power=_extract_desired_power_from_shadow(snapshot),
+        reported_power=(
+            reported_power if reported_power is not None else get_reported_power(cached)
+        ),
+        battery_percent=(
+            battery_percent
+            if battery_percent is not None
+            else get_reported_battery_percent(cached)
+        ),
+        snapshot_file=snapshot_file,
     )
-    while True:
-        pending = pending_commands(
-            wake_file=config.wake_file,
-            sleep_file=config.sleep_file,
-        )
-        for trigger_file, target_power in pending:
-            if not trigger_file.exists():
-                continue
-            LOGGER.info(
-                "Trigger detected %s -> desired power=%s (current desired=%s reported=%s)",
-                trigger_file,
-                target_power,
-                shadow.desired_power,
-                shadow.reported_power,
-            )
-            shadow.set_desired(target_power)
-            shadow.log_state(f"Desired updated from trigger {trigger_file}")
-
-            if shadow.reported_power == target_power:
-                trigger_file.unlink(missing_ok=True)
-                shadow.clear_desired_if_synced()
-                shadow.log_state(f"No-op: desired already equals reported ({trigger_file})")
-                LOGGER.info(
-                    "No-op for %s: reported power already %s; removed trigger file",
-                    trigger_file,
-                    target_power,
-                )
-                continue
-
-            LOGGER.info(
-                "Dry-run: would send Sleep Command sleep=%s (trigger=%s)",
-                not target_power,
-                trigger_file,
-            )
-            trigger_file.unlink(missing_ok=True)
-            shadow.set_reported(target_power)
-            shadow.clear_desired_if_synced()
-            shadow.log_state(
-                f"Reported updated after dry-run command success ({trigger_file})"
-            )
-            LOGGER.info("Dry-run: removed trigger file %s", trigger_file)
-
-        await asyncio.sleep(config.poll_interval)
 
 
 def main() -> None:
@@ -520,15 +940,29 @@ def main() -> None:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
+    try:
+        iot_endpoint = _read_iot_endpoint(args.iot_endpoint, args.iot_endpoint_file)
+        _require_file(args.cert_file, "AWS IoT client certificate")
+        _require_file(args.key_file, "AWS IoT client private key")
+        _require_file(args.ca_file, "AWS IoT root CA")
+    except RuntimeError as err:
+        print(f"gw start failed: {err}", file=sys.stderr)
+        raise SystemExit(2) from err
+
     config = BridgeConfig(
         name_fragment=args.name,
         scan_timeout=args.scan_timeout,
         reconnect_delay=args.reconnect_delay,
         poll_interval=args.poll_interval,
-        wake_file=args.wake_file,
-        sleep_file=args.sleep_file,
         shadow_file=args.shadow_file,
         lock_file=args.lock_file,
+        thing_name=args.thing_name,
+        iot_endpoint=iot_endpoint,
+        cert_file=args.cert_file,
+        key_file=args.key_file,
+        ca_file=args.ca_file,
+        client_id=args.client_id or f"txing-gw-{os.getpid()}",
+        aws_connect_timeout=args.aws_connect_timeout,
     )
 
     lock = InstanceLock(config.lock_file)
@@ -538,46 +972,58 @@ def main() -> None:
         print(f"gw start failed: {err}", file=sys.stderr)
         raise SystemExit(2) from err
 
-    snapshot = load_shadow(config.shadow_file)
-    shadow = SimulatedShadow(
-        desired_power=get_desired_power(snapshot),
-        reported_power=get_reported_power(snapshot),
-        battery_percent=get_reported_battery_percent(snapshot),
-        snapshot_file=config.shadow_file,
-    )
     LOGGER.info("gw instance pid=%s lock=%s", os.getpid(), config.lock_file)
-    shadow.log_state("Initialized simulated AWS IoT shadow")
-    bridge = BleSleepBridge(config, shadow)
+    LOGGER.info(
+        "AWS IoT config endpoint=%s thing=%s cert=%s key=%s ca=%s client_id=%s",
+        config.iot_endpoint,
+        config.thing_name,
+        config.cert_file,
+        config.key_file,
+        config.ca_file,
+        config.client_id,
+    )
 
     async def _runner() -> None:
-        if args.no_ble:
+        cloud_shadow = AwsShadowClient(config)
+        snapshot = await cloud_shadow.connect_and_get_initial_snapshot(
+            timeout_seconds=config.aws_connect_timeout,
+        )
+        shadow = _build_shadow_from_snapshot(snapshot, snapshot_file=config.shadow_file)
+        shadow.log_state("Initialized from AWS IoT shadow snapshot")
+
+        bridge = BleSleepBridge(config, shadow, cloud_shadow)
+        try:
+            if args.no_ble:
+                while True:
+                    try:
+                        await bridge.run_no_ble()
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        LOGGER.exception(
+                            "No-BLE loop failed; retrying in %.1fs",
+                            config.reconnect_delay,
+                        )
+                        await asyncio.sleep(config.reconnect_delay)
+                return
+
             while True:
                 try:
-                    await run_no_ble_loop(config, shadow)
+                    await bridge.run()
                 except asyncio.CancelledError:
                     raise
                 except Exception:
                     LOGGER.exception(
-                        "No-BLE loop failed; retrying in %.1fs",
+                        "BLE bridge loop failed; retrying in %.1fs",
                         config.reconnect_delay,
                     )
                     await asyncio.sleep(config.reconnect_delay)
-            return
-        while True:
-            try:
-                await bridge.run()
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                LOGGER.exception(
-                    "BLE bridge loop failed; retrying in %.1fs",
-                    config.reconnect_delay,
-                )
-                await asyncio.sleep(config.reconnect_delay)
+        finally:
+            await cloud_shadow.disconnect()
 
     try:
         asyncio.run(_runner())
     except KeyboardInterrupt:
-        LOGGER.info("Shutting down BLE bridge")
+        LOGGER.info("Shutting down gateway")
     finally:
         lock.release()

@@ -9,6 +9,16 @@ Monorepo root for `txing`.
 - Thing Shadow guidance lives in `docs/thing-shadow.md`.
 - High-level path: `AWS IoT Device Shadow -> MQTT -> gw -> BLE -> mcu`.
 
+## System requirements
+
+For gateway workflows in this repository, install and configure:
+- `uv`
+- `just`
+- `jq`
+- `aws` (AWS CLI)
+
+AWS CLI must be configured with credentials/profile and region.
+
 Run commands from the relevant subproject.
 
 Firmware example:

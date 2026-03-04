@@ -1,0 +1,30 @@
+set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+
+thing_name := "txing"
+region := "eu-central-1"
+endpoint_file := "../certs/iot-data-ats.endpoint"
+
+@wake:
+    aws iot-data update-thing-shadow \
+      --region "{{region}}" \
+      --endpoint-url "https://$(tr -d '\n' < "{{endpoint_file}}")" \
+      --thing-name "{{thing_name}}" \
+      --cli-binary-format raw-in-base64-out \
+      --payload '{"state":{"desired":{"mcu":{"power":true}}}}' \
+      /dev/stdout | jq '.'
+
+@sleep:
+    aws iot-data update-thing-shadow \
+      --region "{{region}}" \
+      --endpoint-url "https://$(tr -d '\n' < "{{endpoint_file}}")" \
+      --thing-name "{{thing_name}}" \
+      --cli-binary-format raw-in-base64-out \
+      --payload '{"state":{"desired":{"mcu":{"power":false}}}}' \
+      /dev/stdout | jq '.'
+
+@print:
+    aws iot-data get-thing-shadow \
+      --region "{{region}}" \
+      --endpoint-url "https://$(tr -d '\n' < "{{endpoint_file}}")" \
+      --thing-name "{{thing_name}}" \
+      /dev/stdout | jq '.'

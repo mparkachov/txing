@@ -2,19 +2,31 @@
 
 Python service for the Raspberry Pi 5 gateway.
 
-Planned responsibilities:
-- Run direct AWS IoT MQTT shadow synchronization on the gateway
-- Communicate with the MCU over BLE
+Responsibilities:
+- Connect directly to AWS IoT Core over MQTT/mTLS
+- Synchronize classic Thing Shadow for thing `txing`
+- Bridge `state.desired.mcu.power` commands to MCU over BLE
+- Publish MCU state to `state.reported.mcu.*`
 
 Shadow contract source of truth:
 - `../docs/txing-shadow.schema.json`
 - `../docs/device-gateway-shadow-spec.md`
 - Design decision: `gw` owns and evolves the `mcu.*` shadow subtree contract.
 
-High-level architecture for this path:
+High-level architecture:
 - AWS IoT Device Shadow -> MQTT -> gw -> BLE -> mcu
 
-## BLE Bridge Process
+## Requirements
+
+The system requires these tools installed:
+- `uv`
+- `just`
+- `jq`
+- `aws` (AWS CLI)
+
+AWS CLI must also be configured (credentials/profile + region) with permissions for AWS IoT and AWS IoT Data Plane calls used by this project.
+
+## Run gateway
 
 Run from `gw/`:
 
@@ -22,41 +34,74 @@ Run from `gw/`:
 uv run gw
 ```
 
-Dry-run mode (no BLE calls, logs only to stdout):
+This uses bootstrap artifacts by default:
+- endpoint file: `../certs/iot-data-ats.endpoint`
+- cert: `../certs/txing-gw.cert.pem`
+- private key: `../certs/txing-gw.private.key`
+- root CA: `../certs/AmazonRootCA1.pem`
+
+Dry-run mode (no BLE writes, still syncs AWS shadow):
 
 ```bash
 uv run gw --no-ble
 ```
 
-Create trigger files from another terminal:
+## Set desired power (`just`)
+
+From `gw/`, use `just` recipes (AWS CLI) instead of `uv run wake/sleep`:
 
 ```bash
-uv run wake
-uv run sleep
-uv run print
+just wake
+just sleep
+just print
 ```
 
-`uv run wake` / `uv run sleep` only create trigger files. `gw` is the single process that updates simulated shadow desired/reported. `uv run print` prints the current simulated shadow JSON.
+These recipes call `aws iot-data update-thing-shadow` directly with:
+- `state.desired.mcu.power=true` (`wake`)
+- `state.desired.mcu.power=false` (`sleep`)
+- `get-thing-shadow` (`print`)
 
-Behavior:
-- Discovers the MCU over BLE on startup
-- Keeps BLE connection open
-- Re-discovers/reconnects when the connection is lost
-- On each BLE connect/reconnect, reads MCU `State Report` and synchronizes:
-  - `state.reported.mcu.power` (`power = !sleep`)
+Default recipe values:
+- thing name: `txing`
+- region: `eu-central-1`
+- endpoint file: `../certs/iot-data-ats.endpoint`
+
+Override example:
+
+```bash
+just wake thing_name=my-thing region=eu-central-1 endpoint_file=../certs/iot-data-ats.endpoint
+```
+
+`just print` prints the current real AWS Thing Shadow document.
+
+## Runtime behavior
+
+- Subscribes to:
+  - `$aws/things/<thing>/shadow/get/accepted`
+  - `$aws/things/<thing>/shadow/update/delta`
+- On startup, requests full shadow with `$aws/things/<thing>/shadow/get`.
+- Processes desired power from cloud (`state.desired.mcu.power`).
+- Sends BLE Sleep Command:
+  - `power=true` -> `sleep=false` (`0x00`)
+  - `power=false` -> `sleep=true` (`0x01`)
+- Publishes reported updates to AWS:
+  - `state.reported.mcu.power`
   - `state.reported.mcu.batteryPercent`
-- Caches discovered BLE id in memory only (no temp file)
-- Maintains an in-memory simulated Shadow:
-  - `state.desired.mcu.power` (`true`/`false`) when command is pending
-  - `state.reported.mcu.power` (`true`/`false`)
-  - `state.reported.mcu.batteryPercent` (`0..100`, currently 50)
-- Mirrors the current simulated shadow into `/tmp/txing_shadow.json` so `uv run print` can print it.
-- Enforces single gw instance with lock file `/tmp/txing_gw.lock` (override with `--lock-file`).
-- Every 1 second:
-  - if `/tmp/wake` exists, sets `desired.mcu.power=true`, writes `sleep=false` (`0x00`), then updates `reported.mcu.power=true` after success
-  - if `/tmp/sleep` exists, sets `desired.mcu.power=false`, writes `sleep=true` (`0x01`), then updates `reported.mcu.power=false` after success
-- If requested desired power already equals reported power, gateway performs a no-op: logs it, removes trigger file, and clears `state.desired`.
-- After a successful report update, if `reported.mcu.power` equals desired, `state.desired` is removed from the simulated shadow.
-- If BLE is disconnected, gateway logs the command as pending and keeps trigger + desired until reconnect and successful send.
-- In `--no-ble` mode, it performs the same file polling/removal but only logs the intended BLE action.
-- Current simulated shadow payload is logged on initialization and each desired/reported update.
+- Clears desired when reported matches by publishing `desired.mcu.power=null`.
+- Mirrors current local state into `/tmp/txing_shadow.json`.
+- Enforces single instance lock at `/tmp/txing_gw.lock` (override with `--lock-file`).
+
+## Useful options
+
+```bash
+uv run gw --help
+```
+
+Common overrides:
+- `--thing-name txing`
+- `--iot-endpoint <host>`
+- `--iot-endpoint-file ../certs/iot-data-ats.endpoint`
+- `--cert-file ../certs/txing-gw.cert.pem`
+- `--key-file ../certs/txing-gw.private.key`
+- `--ca-file ../certs/AmazonRootCA1.pem`
+- `--client-id txing-gw-pi5`
