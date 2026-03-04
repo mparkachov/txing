@@ -1,9 +1,14 @@
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 
 gw_dir := source_directory()
+project_root := gw_dir + "/.."
+aws_justfile := project_root + "/aws/justfile"
 thing_name := "txing"
 region := "eu-central-1"
 endpoint_file := gw_dir + "/../certs/iot-data-ats.endpoint"
+
+@check:
+    just --justfile "{{aws_justfile}}" check
 
 @wake:
     aws iot-data update-thing-shadow \

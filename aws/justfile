@@ -9,6 +9,7 @@ region := "eu-central-1"
 profile := ""
 thing_name := "txing"
 policy_name := "txing-gw-policy"
+log_group_name := "/txing/gw"
 cert_dir := project_root + "/certs"
 endpoint_file := cert_dir + "/iot-data-ats.endpoint"
 ca_file := cert_dir + "/AmazonRootCA1.pem"
@@ -30,7 +31,7 @@ iot_data_endpoint := ""
     if [ -n "{{profile}}" ]; then
       aws_flags+=(--profile "{{profile}}")
     fi
-    cfn_flags=(--stack-name "{{stack_name}}" --template-body "file://{{template_file}}" "${aws_flags[@]}")
+    cfn_flags=(--stack-name "{{stack_name}}" --template-body "file://{{template_file}}" --capabilities CAPABILITY_IAM "${aws_flags[@]}")
 
     aws cloudformation create-stack "${cfn_flags[@]}"
     aws cloudformation wait stack-create-complete --stack-name "{{stack_name}}" "${aws_flags[@]}"
@@ -54,7 +55,7 @@ iot_data_endpoint := ""
     if [ -n "{{profile}}" ]; then
       aws_flags+=(--profile "{{profile}}")
     fi
-    cfn_flags=(--stack-name "{{stack_name}}" --template-body "file://{{template_file}}" "${aws_flags[@]}")
+    cfn_flags=(--stack-name "{{stack_name}}" --template-body "file://{{template_file}}" --capabilities CAPABILITY_IAM "${aws_flags[@]}")
 
     output="$(aws cloudformation update-stack "${cfn_flags[@]}" 2>&1)" || {
       if echo "$output" | grep -q "No updates are to be performed"; then
@@ -171,6 +172,199 @@ iot_data_endpoint := ""
       "${aws_flags[@]}" \
       --query "Stacks[0].Outputs" \
       --output table
+
+@check thing_name=thing_name policy_name=policy_name log_group_name=log_group_name region=region profile=profile cert_dir=cert_dir endpoint_file=endpoint_file ca_file=ca_file cert_basename='' cert_arn_file='':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{aws_dir}}"
+
+    if [ -z "{{region}}" ]; then
+      echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
+      exit 1
+    fi
+
+    aws_flags=(--region "{{region}}")
+    if [ -n "{{profile}}" ]; then
+      aws_flags+=(--profile "{{profile}}")
+    fi
+
+    cert_basename="{{cert_basename}}"
+    if [ -z "$cert_basename" ]; then
+      cert_basename="{{thing_name}}-gw"
+    fi
+
+    cert_arn_file="{{cert_arn_file}}"
+    if [ -z "$cert_arn_file" ]; then
+      cert_arn_file="{{cert_dir}}/${cert_basename}.cert.arn"
+    fi
+
+    cert_file="{{cert_dir}}/${cert_basename}.cert.pem"
+    private_key_file="{{cert_dir}}/${cert_basename}.private.key"
+
+    failures=0
+
+    check_tool() {
+      local tool="$1"
+      if command -v "$tool" >/dev/null 2>&1; then
+        echo "ok: tool '$tool' is installed"
+      else
+        echo "fail: tool '$tool' is not installed"
+        failures=$((failures + 1))
+      fi
+    }
+
+    check_cmd() {
+      local label="$1"
+      shift
+      if "$@" >/dev/null 2>&1; then
+        echo "ok: $label"
+      else
+        echo "fail: $label"
+        failures=$((failures + 1))
+      fi
+    }
+
+    check_file() {
+      local path="$1"
+      local label="$2"
+      if [ -s "$path" ]; then
+        echo "ok: $label ($path)"
+      else
+        echo "fail: $label missing or empty ($path)"
+        failures=$((failures + 1))
+      fi
+    }
+
+    echo "Checking local tools..."
+    check_tool aws
+    check_tool jq
+    check_tool uv
+    check_tool just
+    check_tool openssl
+
+    echo "Checking AWS identity..."
+    check_cmd "STS caller identity" aws sts get-caller-identity "${aws_flags[@]}"
+
+    log_group_found="$(
+      aws logs describe-log-groups \
+        --log-group-name-prefix "{{log_group_name}}" \
+        "${aws_flags[@]}" \
+        --query "logGroups[?logGroupName=='{{log_group_name}}'].logGroupName | [0]" \
+        --output text 2>/dev/null || true
+    )"
+    if [ "$log_group_found" = "{{log_group_name}}" ]; then
+      echo "ok: CloudWatch log group {{log_group_name}} exists"
+    else
+      echo "fail: CloudWatch log group {{log_group_name}} not found"
+      failures=$((failures + 1))
+    fi
+
+    check_stream="aws-check-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+    check_cmd \
+      "CloudWatch CreateLogStream on {{log_group_name}}" \
+      aws logs create-log-stream \
+      --log-group-name "{{log_group_name}}" \
+      --log-stream-name "$check_stream" \
+      "${aws_flags[@]}"
+
+    log_event_ts_ms="$(( $(date +%s) * 1000 ))"
+    check_cmd \
+      "CloudWatch PutLogEvents on {{log_group_name}}" \
+      aws logs put-log-events \
+      --log-group-name "{{log_group_name}}" \
+      --log-stream-name "$check_stream" \
+      --log-events "timestamp=${log_event_ts_ms},message=txing-aws-check" \
+      "${aws_flags[@]}"
+
+    echo "Checking local gateway certificate artifacts..."
+    check_file "$cert_file" "Gateway certificate file"
+    check_file "$private_key_file" "Gateway private key file"
+    check_file "{{ca_file}}" "Root CA file"
+    check_file "{{endpoint_file}}" "IoT endpoint file"
+    check_file "$cert_arn_file" "Certificate ARN file"
+
+    cert_arn=""
+    cert_id=""
+    if [ -s "$cert_arn_file" ]; then
+      cert_arn="$(tr -d '\r\n' < "$cert_arn_file")"
+      cert_id="${cert_arn##*/}"
+    fi
+
+    if [ -s "$cert_file" ]; then
+      check_cmd "Gateway certificate file parses" openssl x509 -in "$cert_file" -noout
+    fi
+    if [ -s "$private_key_file" ]; then
+      check_cmd "Gateway private key parses" openssl pkey -in "$private_key_file" -noout
+    fi
+    endpoint_value=""
+    if [ -s "{{endpoint_file}}" ]; then
+      endpoint_value="$(tr -d '\r\n' < "{{endpoint_file}}")"
+      if [ -n "$endpoint_value" ]; then
+        echo "ok: IoT endpoint file contains endpoint"
+      else
+        echo "fail: IoT endpoint file is empty"
+        failures=$((failures + 1))
+      fi
+    fi
+
+    if [ -n "$cert_id" ]; then
+      cert_status="$(
+        aws iot describe-certificate \
+          --certificate-id "$cert_id" \
+          "${aws_flags[@]}" \
+          --query "certificateDescription.status" \
+          --output text 2>/dev/null || true
+      )"
+      if [ -z "$cert_status" ] || [ "$cert_status" = "None" ]; then
+        echo "warn: Could not verify certificate status via AWS API (insufficient permission or missing cert)"
+      elif [ "$cert_status" = "ACTIVE" ]; then
+        echo "ok: Certificate is ACTIVE"
+      else
+        echo "fail: Certificate status is '$cert_status' (expected ACTIVE)"
+        failures=$((failures + 1))
+      fi
+
+      principals="$(
+        aws iot list-thing-principals \
+          --thing-name "{{thing_name}}" \
+          "${aws_flags[@]}" \
+          --query principals \
+          --output text 2>/dev/null || true
+      )"
+      if [ -z "$principals" ] || [ "$principals" = "None" ]; then
+        echo "warn: Could not verify thing principal attachment via AWS API"
+      elif printf '%s\n' "$principals" | tr '\t' '\n' | grep -Fx "$cert_arn" >/dev/null; then
+        echo "ok: Certificate attached to thing {{thing_name}}"
+      else
+        echo "fail: Certificate is not attached to thing {{thing_name}}"
+        failures=$((failures + 1))
+      fi
+
+      attached_policies="$(
+        aws iot list-attached-policies \
+          --target "$cert_arn" \
+          "${aws_flags[@]}" \
+          --query "policies[].policyName" \
+          --output text 2>/dev/null || true
+      )"
+      if [ -z "$attached_policies" ] || [ "$attached_policies" = "None" ]; then
+        echo "warn: Could not verify certificate policy attachment via AWS API"
+      elif printf '%s\n' "$attached_policies" | tr '\t' '\n' | grep -Fx "{{policy_name}}" >/dev/null; then
+        echo "ok: Policy {{policy_name}} attached to certificate"
+      else
+        echo "fail: Policy {{policy_name}} is not attached to certificate"
+        failures=$((failures + 1))
+      fi
+    else
+      echo "fail: Could not parse certificate ARN from $cert_arn_file"
+      failures=$((failures + 1))
+    fi
+
+    if [ "$failures" -ne 0 ]; then
+      echo "gateway check failed with $failures issue(s)."
+      exit 1
+    fi
+    echo "gateway check passed. Gateway prerequisites look good."
 
 @cert thing_name=thing_name policy_name=policy_name region=region profile=profile cert_dir=cert_dir cert_basename='' cert_arn_file='':
     #!/usr/bin/env bash

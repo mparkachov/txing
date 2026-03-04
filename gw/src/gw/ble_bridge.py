@@ -5,8 +5,10 @@ import asyncio
 import json
 import logging
 import os
+import socket
 import sys
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +16,11 @@ import paho.mqtt.client as mqtt
 from bleak import BleakClient, BleakScanner
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
+
+try:
+    import watchtower
+except ImportError:
+    watchtower = None
 
 from .shadow_store import (
     DEFAULT_BATTERY_PERCENT,
@@ -33,10 +40,10 @@ TXING_MFG_MAGIC = b"TX"
 DEFAULT_NAME_FRAGMENT = "txing"
 DEFAULT_SCAN_TIMEOUT = 12.0
 DEFAULT_RECONNECT_DELAY = 1.0
-DEFAULT_POLL_INTERVAL = 1.0
 DEFAULT_LOCK_FILE = Path("/tmp/txing_gw.lock")
 DEFAULT_THING_NAME = "txing"
 DEFAULT_AWS_CONNECT_TIMEOUT = 20.0
+DEFAULT_CLOUDWATCH_LOG_GROUP = "/txing/gw"
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_CERT_DIR = REPO_ROOT / "certs"
@@ -47,6 +54,28 @@ DEFAULT_CA_FILE = DEFAULT_CERT_DIR / "AmazonRootCA1.pem"
 
 LOGGER = logging.getLogger("gw.ble_bridge")
 MQTT_LOGGER = logging.getLogger("gw.ble_bridge.mqtt")
+
+
+class ImportantOrWarningFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return record.levelno >= logging.WARNING or bool(
+            getattr(record, "important", False)
+        )
+
+
+def _log_important(
+    logger: logging.Logger,
+    message: str,
+    *args: Any,
+    level: int = logging.INFO,
+) -> None:
+    logger.log(level, message, *args, extra={"important": True})
+
+
+def _default_cloudwatch_log_stream(thing_name: str) -> str:
+    hostname = socket.gethostname().split(".", 1)[0] or "gw"
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return f"{thing_name}-{hostname}-{timestamp}-{os.getpid()}"
 
 
 def _extract_desired_power_from_shadow(payload: dict[str, Any]) -> bool | None:
@@ -133,7 +162,6 @@ class BridgeConfig:
     name_fragment: str = DEFAULT_NAME_FRAGMENT
     scan_timeout: float = DEFAULT_SCAN_TIMEOUT
     reconnect_delay: float = DEFAULT_RECONNECT_DELAY
-    poll_interval: float = DEFAULT_POLL_INTERVAL
     shadow_file: Path = DEFAULT_SHADOW_FILE
     lock_file: Path = DEFAULT_LOCK_FILE
     thing_name: str = DEFAULT_THING_NAME
@@ -287,6 +315,32 @@ class AwsShadowClient:
                 break
         return updates
 
+    async def wait_for_updates(
+        self,
+        timeout_seconds: float | None = None,
+    ) -> list[AwsShadowUpdate]:
+        if self._updates is None:
+            return []
+
+        try:
+            if timeout_seconds is None:
+                first = await self._updates.get()
+            else:
+                first = await asyncio.wait_for(
+                    self._updates.get(),
+                    timeout=timeout_seconds,
+                )
+        except TimeoutError:
+            return []
+
+        updates = [first]
+        while True:
+            try:
+                updates.append(self._updates.get_nowait())
+            except asyncio.QueueEmpty:
+                break
+        return updates
+
     async def set_reported_state(
         self,
         *,
@@ -360,7 +414,8 @@ class AwsShadowClient:
             self._set_initial_snapshot_exception(error)
             return
 
-        LOGGER.info(
+        _log_important(
+            LOGGER,
             "Connected to AWS IoT endpoint=%s thing=%s client_id=%s",
             self._config.iot_endpoint,
             self._config.thing_name,
@@ -398,7 +453,7 @@ class AwsShadowClient:
                 reason_code,
             )
         else:
-            LOGGER.info("Disconnected from AWS IoT MQTT")
+            _log_important(LOGGER, "Disconnected from AWS IoT MQTT")
         if self._loop and self._connected_event:
             self._loop.call_soon_threadsafe(self._connected_event.clear)
 
@@ -546,11 +601,22 @@ class BleSleepBridge:
         self._cloud_shadow = cloud_shadow
         self._cached_device_id: str | None = None
         self._client: BleakClient | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._disconnect_event: asyncio.Event | None = None
 
     async def run(self) -> None:
+        self._loop = asyncio.get_running_loop()
+        self._disconnect_event = asyncio.Event()
+        _log_important(
+            LOGGER,
+            "Running in BLE mode; waiting for cloud shadow updates via MQTT",
+        )
+        pending_updates = self._cloud_shadow.drain_updates()
         try:
             while True:
-                await self._apply_cloud_shadow_updates()
+                if pending_updates:
+                    await self._apply_cloud_shadow_updates(updates=pending_updates)
+                    pending_updates = []
 
                 if not self._is_connected():
                     try:
@@ -560,26 +626,52 @@ class BleSleepBridge:
                             "BLE unavailable; will retry in %.1fs",
                             self._config.reconnect_delay,
                         )
-                        await asyncio.sleep(self._config.reconnect_delay)
+                        pending_updates = await self._wait_for_updates_or_disconnect(
+                            timeout_seconds=self._config.reconnect_delay
+                        )
                         continue
 
                 await self._process_desired_power_once()
-                await asyncio.sleep(self._config.poll_interval)
+
+                retry_timeout: float | None = None
+                if (
+                    self._shadow.desired_power is not None
+                    and self._shadow.desired_power != self._shadow.reported_power
+                ):
+                    retry_timeout = self._config.reconnect_delay
+
+                pending_updates = await self._wait_for_updates_or_disconnect(
+                    timeout_seconds=retry_timeout
+                )
         finally:
             await self._safe_disconnect()
 
     async def run_no_ble(self) -> None:
-        LOGGER.info(
-            "Running in --no-ble mode; polling cloud shadow every %.2fs",
-            self._config.poll_interval,
+        _log_important(
+            LOGGER,
+            "Running in --no-ble mode; waiting for cloud shadow updates via MQTT",
         )
+        await self._process_desired_no_ble_once()
         while True:
-            await self._apply_cloud_shadow_updates()
-            await self._process_desired_no_ble_once()
-            await asyncio.sleep(self._config.poll_interval)
+            retry_timeout: float | None = None
+            if (
+                self._shadow.desired_power is not None
+                and self._shadow.desired_power != self._shadow.reported_power
+            ):
+                retry_timeout = self._config.reconnect_delay
 
-    async def _apply_cloud_shadow_updates(self) -> None:
-        updates = self._cloud_shadow.drain_updates()
+            updates = await self._cloud_shadow.wait_for_updates(
+                timeout_seconds=retry_timeout
+            )
+            await self._apply_cloud_shadow_updates(updates=updates)
+            await self._process_desired_no_ble_once()
+
+    async def _apply_cloud_shadow_updates(
+        self,
+        updates: list[AwsShadowUpdate] | None = None,
+    ) -> None:
+        if updates is None:
+            updates = self._cloud_shadow.drain_updates()
         for update in updates:
             changed = False
             if update.has_desired and self._shadow.desired_power != update.desired_power:
@@ -619,7 +711,12 @@ class BleSleepBridge:
                 raise RuntimeError("BLE connect returned False")
             await client.get_services()
             self._cached_device_id = device.address
-            LOGGER.info("Connected to %s (%s)", device.address, device.name or "<unnamed>")
+            _log_important(
+                LOGGER,
+                "Connected to %s (%s)",
+                device.address,
+                device.name or "<unnamed>",
+            )
             await self._sync_reported_from_device_on_connect()
         except Exception:
             self._client = None
@@ -806,6 +903,37 @@ class BleSleepBridge:
 
     def _handle_disconnect(self, _: BleakClient) -> None:
         LOGGER.warning("BLE connection lost")
+        if self._loop is not None and self._disconnect_event is not None:
+            self._loop.call_soon_threadsafe(self._disconnect_event.set)
+
+    async def _wait_for_updates_or_disconnect(
+        self,
+        timeout_seconds: float | None = None,
+    ) -> list[AwsShadowUpdate]:
+        updates_task = asyncio.create_task(self._cloud_shadow.wait_for_updates())
+        disconnect_task = asyncio.create_task(self._wait_for_disconnect_event())
+        try:
+            done, _pending = await asyncio.wait(
+                {updates_task, disconnect_task},
+                timeout=timeout_seconds,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if not done:
+                return []
+            if updates_task in done:
+                return updates_task.result()
+            return []
+        finally:
+            for task in (updates_task, disconnect_task):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(updates_task, disconnect_task, return_exceptions=True)
+
+    async def _wait_for_disconnect_event(self) -> None:
+        if self._disconnect_event is None:
+            return
+        await self._disconnect_event.wait()
+        self._disconnect_event.clear()
 
     def _is_connected(self) -> bool:
         return self._client is not None and self._client.is_connected
@@ -826,12 +954,6 @@ def _parse_args() -> argparse.Namespace:
         type=float,
         default=DEFAULT_SCAN_TIMEOUT,
         help="Seconds to wait during BLE discovery (default: 12)",
-    )
-    parser.add_argument(
-        "--poll-interval",
-        type=float,
-        default=DEFAULT_POLL_INTERVAL,
-        help="Seconds between shadow + BLE checks (default: 1)",
     )
     parser.add_argument(
         "--reconnect-delay",
@@ -900,7 +1022,27 @@ def _parse_args() -> argparse.Namespace:
         "--log-level",
         default="INFO",
         choices=("DEBUG", "INFO", "WARNING", "ERROR"),
-        help="Logging verbosity (default: INFO)",
+        help="Minimum severity uploaded to CloudWatch Logs (default: INFO)",
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable verbose stdout logging (useful for interactive debugging)",
+    )
+    parser.add_argument(
+        "--cloudwatch-log-group",
+        default=DEFAULT_CLOUDWATCH_LOG_GROUP,
+        help="CloudWatch Logs group name for gateway logs (default: /txing/gw)",
+    )
+    parser.add_argument(
+        "--cloudwatch-log-stream",
+        default=None,
+        help="CloudWatch Logs stream name (default: generated per host/process)",
+    )
+    parser.add_argument(
+        "--no-cloudwatch-logs",
+        action="store_true",
+        help="Disable direct CloudWatch Logs publishing",
     )
     parser.add_argument(
         "--no-ble",
@@ -932,13 +1074,66 @@ def _build_shadow_from_snapshot(
     )
 
 
+def _configure_logging(args: argparse.Namespace) -> None:
+    formatter = logging.Formatter(
+        "%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+
+    root_logger = logging.getLogger()
+    root_logger.handlers.clear()
+    root_logger.setLevel(logging.DEBUG)
+
+    stdout_handler = logging.StreamHandler(sys.stdout)
+    stdout_handler.setFormatter(formatter)
+    stdout_handler.setLevel(logging.DEBUG if args.debug else logging.INFO)
+    if not args.debug:
+        stdout_handler.addFilter(ImportantOrWarningFilter())
+    root_logger.addHandler(stdout_handler)
+
+    if args.no_cloudwatch_logs:
+        _log_important(LOGGER, "CloudWatch log streaming disabled (--no-cloudwatch-logs)")
+        return
+
+    if watchtower is None:
+        print(
+            "gw start warning: watchtower dependency is not installed; "
+            "CloudWatch log streaming disabled",
+            file=sys.stderr,
+        )
+        return
+
+    stream_name = args.cloudwatch_log_stream or _default_cloudwatch_log_stream(
+        args.thing_name
+    )
+    try:
+        cloudwatch_handler = watchtower.CloudWatchLogHandler(
+            log_group_name=args.cloudwatch_log_group,
+            log_stream_name=stream_name,
+            create_log_group=False,
+            create_log_stream=True,
+            send_interval=5,
+        )
+    except Exception as err:
+        print(
+            f"gw start warning: failed to initialize CloudWatch log handler: {err}",
+            file=sys.stderr,
+        )
+        return
+
+    cloudwatch_handler.setLevel(getattr(logging, args.log_level))
+    cloudwatch_handler.setFormatter(formatter)
+    root_logger.addHandler(cloudwatch_handler)
+    _log_important(
+        LOGGER,
+        "CloudWatch log streaming enabled group=%s stream=%s",
+        args.cloudwatch_log_group,
+        stream_name,
+    )
+
+
 def main() -> None:
     args = _parse_args()
-    logging.basicConfig(
-        level=getattr(logging, args.log_level),
-        stream=sys.stdout,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
+    _configure_logging(args)
 
     try:
         iot_endpoint = _read_iot_endpoint(args.iot_endpoint, args.iot_endpoint_file)
@@ -953,7 +1148,6 @@ def main() -> None:
         name_fragment=args.name,
         scan_timeout=args.scan_timeout,
         reconnect_delay=args.reconnect_delay,
-        poll_interval=args.poll_interval,
         shadow_file=args.shadow_file,
         lock_file=args.lock_file,
         thing_name=args.thing_name,
@@ -972,7 +1166,13 @@ def main() -> None:
         print(f"gw start failed: {err}", file=sys.stderr)
         raise SystemExit(2) from err
 
-    LOGGER.info("gw instance pid=%s lock=%s", os.getpid(), config.lock_file)
+    _log_important(
+        LOGGER,
+        "Gateway started pid=%s lock=%s thing=%s",
+        os.getpid(),
+        config.lock_file,
+        config.thing_name,
+    )
     LOGGER.info(
         "AWS IoT config endpoint=%s thing=%s cert=%s key=%s ca=%s client_id=%s",
         config.iot_endpoint,
@@ -1024,6 +1224,7 @@ def main() -> None:
     try:
         asyncio.run(_runner())
     except KeyboardInterrupt:
-        LOGGER.info("Shutting down gateway")
+        _log_important(LOGGER, "Shutting down gateway")
     finally:
         lock.release()
+        logging.shutdown()

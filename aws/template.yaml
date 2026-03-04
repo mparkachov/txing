@@ -2,6 +2,29 @@ AWSTemplateFormatVersion: "2010-09-09"
 Description: Creates the txing AWS IoT Thing used by the gateway and Thing Shadow.
 
 Resources:
+  TxingGatewayLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /txing/gw
+      RetentionInDays: 30
+
+  TxingGatewayLogsManagedPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Allows the gateway to write logs directly to /txing/gw.
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: GatewayCloudWatchLogsWrite
+            Effect: Allow
+            Action:
+              - logs:CreateLogStream
+              - logs:DescribeLogStreams
+              - logs:PutLogEvents
+            Resource:
+              - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/txing/gw
+              - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/txing/gw:log-stream:*
+
   TxingThing:
     Type: AWS::IoT::Thing
     Properties:
@@ -36,6 +59,15 @@ Resources:
             Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/$aws/things/txing/shadow/*
 
 Outputs:
+  GatewayLogGroupName:
+    Description: CloudWatch Logs group used by the gateway process.
+    Value: !Ref TxingGatewayLogGroup
+  GatewayLogGroupArn:
+    Description: ARN of the CloudWatch Logs group used by the gateway process.
+    Value: !GetAtt TxingGatewayLogGroup.Arn
+  GatewayLogsManagedPolicyArn:
+    Description: Attach this managed policy to the IAM principal used by gw.
+    Value: !Ref TxingGatewayLogsManagedPolicy
   ThingName:
     Description: Fixed IoT Thing name used by the gateway.
     Value: !Ref TxingThing

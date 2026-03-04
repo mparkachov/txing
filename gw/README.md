@@ -24,7 +24,111 @@ The system requires these tools installed:
 - `jq`
 - `aws` (AWS CLI)
 
-AWS CLI must also be configured (credentials/profile + region) with permissions for AWS IoT and AWS IoT Data Plane calls used by this project.
+AWS CLI connectivity must be working (credentials + region via role/env/default config/SSO) with permissions for AWS IoT and AWS IoT Data Plane calls used by this project.
+Gateway runtime also needs AWS credentials (default SDK chain) with CloudWatch Logs write permissions for `/txing/gw`.
+
+## Install on a new Raspberry Pi 5 (64-bit OS)
+
+Assumption: latest Raspberry Pi OS 64-bit, user `pi`, clean machine.
+
+1. Install base packages:
+
+```bash
+sudo apt update
+sudo apt full-upgrade -y
+sudo apt install -y git curl jq awscli bluez just
+sudo systemctl enable --now bluetooth
+```
+
+2. Install `uv`:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.profile
+source ~/.profile
+uv --version
+```
+
+3. Clone the repository:
+
+```bash
+cd ~
+git clone <your-repo-url> txing
+cd txing
+```
+
+4. Ensure AWS connectivity is configured in this shell:
+
+```bash
+aws sts get-caller-identity
+```
+
+5. Standard procedure: copy existing gateway credentials into `certs/`:
+
+```bash
+mkdir -p ~/txing/certs
+# Copy these from an existing working gateway host or secure key storage:
+# - txing-gw.cert.pem
+# - txing-gw.private.key
+# - txing-gw.cert.arn
+# - iot-data-ats.endpoint
+# - AmazonRootCA1.pem
+```
+
+6. Validate AWS access and local cert artifacts:
+
+```bash
+cd ~/txing
+just gw::check
+```
+
+This check also validates required local tools (`aws`, `jq`, `uv`, `just`, `openssl`) are installed.
+
+7. Only if rotating certs or provisioning a brand new cert: run bootstrap.
+`just aws::bootstrap` generates a new key pair when local cert files are absent; it does not download old private keys from AWS.
+
+```bash
+cd ~/txing
+just aws::bootstrap
+```
+
+8. Install gateway dependencies and verify startup:
+
+```bash
+cd ~/txing/gw
+uv python install 3.12
+uv sync
+uv run gw --help
+uv run gw --debug
+```
+
+9. Optional: run as `systemd` service:
+
+```bash
+sudo tee /etc/systemd/system/txing-gw.service >/dev/null <<'EOF'
+[Unit]
+Description=txing gateway
+After=network-online.target bluetooth.target
+Wants=network-online.target bluetooth.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/txing/gw
+Environment=PATH=/home/pi/.local/bin:/usr/local/bin:/usr/bin
+Environment=AWS_REGION=eu-central-1
+ExecStart=/home/pi/.local/bin/uv run gw
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now txing-gw
+sudo journalctl -u txing-gw -f
+```
 
 ## Run gateway
 
@@ -39,12 +143,19 @@ This uses bootstrap artifacts by default:
 - cert: `../certs/txing-gw.cert.pem`
 - private key: `../certs/txing-gw.private.key`
 - root CA: `../certs/AmazonRootCA1.pem`
+- CloudWatch log group: `/txing/gw` (direct upload from process)
+
+Default logging behavior:
+- stdout/journal (`systemd`): only important lifecycle `INFO` + all `WARNING/ERROR`
+- CloudWatch Logs (`/txing/gw`): full operational logs (no CloudWatch agent required)
 
 Dry-run mode (no BLE writes, still syncs AWS shadow):
 
 ```bash
 uv run gw --no-ble
 ```
+
+`--no-ble` is MQTT update-driven (subscribed topics), not fixed-interval cloud polling.
 
 ## Set desired power (`just`)
 
@@ -86,6 +197,7 @@ just gw::wake thing_name=my-thing region=eu-central-1 endpoint_file=certs/iot-da
 
 ## Runtime behavior
 
+- Operates in event-driven mode from MQTT subscriptions (no fixed-interval cloud polling).
 - Subscribes to:
   - `$aws/things/<thing>/shadow/get/accepted`
   - `$aws/things/<thing>/shadow/update/delta`
@@ -115,3 +227,7 @@ Common overrides:
 - `--key-file ../certs/txing-gw.private.key`
 - `--ca-file ../certs/AmazonRootCA1.pem`
 - `--client-id txing-gw-pi5`
+- `--debug` (verbose stdout logging)
+- `--cloudwatch-log-group /txing/gw`
+- `--cloudwatch-log-stream <stream-name>`
+- `--no-cloudwatch-logs`
