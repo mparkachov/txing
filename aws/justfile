@@ -16,8 +16,11 @@ ca_file := cert_dir + "/AmazonRootCA1.pem"
 ca_url := "https://www.amazontrust.com/repository/AmazonRootCA1.pem"
 default_shadow_file := "default-shadow.json"
 iot_data_endpoint := ""
+localhost_app_url := "http://localhost:5173"
+localhost_alt_app_url := "http://127.0.0.1:5173"
+web_dist_dir := project_root + "/web/dist"
 
-@create stack_name=stack_name template_file=template_file region=region profile=profile:
+@create CognitoDomainPrefix AdminEmail stack_name=stack_name template_file=template_file region=region profile=profile LocalhostAppUrl=localhost_app_url LocalhostAltAppUrl=localhost_alt_app_url:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
@@ -31,7 +34,13 @@ iot_data_endpoint := ""
     if [ -n "{{profile}}" ]; then
       aws_flags+=(--profile "{{profile}}")
     fi
-    cfn_flags=(--stack-name "{{stack_name}}" --template-body "file://{{template_file}}" --capabilities CAPABILITY_IAM "${aws_flags[@]}")
+    params=(
+      ParameterKey=CognitoDomainPrefix,ParameterValue="{{CognitoDomainPrefix}}"
+      ParameterKey=AdminEmail,ParameterValue="{{AdminEmail}}"
+      ParameterKey=LocalhostAppUrl,ParameterValue="{{LocalhostAppUrl}}"
+      ParameterKey=LocalhostAltAppUrl,ParameterValue="{{LocalhostAltAppUrl}}"
+    )
+    cfn_flags=(--stack-name "{{stack_name}}" --template-body "file://{{template_file}}" --capabilities CAPABILITY_IAM --parameters "${params[@]}" "${aws_flags[@]}")
 
     aws cloudformation create-stack "${cfn_flags[@]}"
     aws cloudformation wait stack-create-complete --stack-name "{{stack_name}}" "${aws_flags[@]}"
@@ -41,7 +50,7 @@ iot_data_endpoint := ""
       --query "Stacks[0].Outputs" \
       --output table
 
-@update stack_name=stack_name template_file=template_file region=region profile=profile:
+@update CognitoDomainPrefix AdminEmail stack_name=stack_name template_file=template_file region=region profile=profile LocalhostAppUrl=localhost_app_url LocalhostAltAppUrl=localhost_alt_app_url:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
@@ -55,7 +64,13 @@ iot_data_endpoint := ""
     if [ -n "{{profile}}" ]; then
       aws_flags+=(--profile "{{profile}}")
     fi
-    cfn_flags=(--stack-name "{{stack_name}}" --template-body "file://{{template_file}}" --capabilities CAPABILITY_IAM "${aws_flags[@]}")
+    params=(
+      ParameterKey=CognitoDomainPrefix,ParameterValue="{{CognitoDomainPrefix}}"
+      ParameterKey=AdminEmail,ParameterValue="{{AdminEmail}}"
+      ParameterKey=LocalhostAppUrl,ParameterValue="{{LocalhostAppUrl}}"
+      ParameterKey=LocalhostAltAppUrl,ParameterValue="{{LocalhostAltAppUrl}}"
+    )
+    cfn_flags=(--stack-name "{{stack_name}}" --template-body "file://{{template_file}}" --capabilities CAPABILITY_IAM --parameters "${params[@]}" "${aws_flags[@]}")
 
     output="$(aws cloudformation update-stack "${cfn_flags[@]}" 2>&1)" || {
       if echo "$output" | grep -q "No updates are to be performed"; then
@@ -74,7 +89,7 @@ iot_data_endpoint := ""
       --query "Stacks[0].Outputs" \
       --output table
 
-@deploy stack_name=stack_name template_file=template_file region=region profile=profile:
+@deploy CognitoDomainPrefix AdminEmail stack_name=stack_name template_file=template_file region=region profile=profile LocalhostAppUrl=localhost_app_url LocalhostAltAppUrl=localhost_alt_app_url:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
@@ -91,16 +106,24 @@ iot_data_endpoint := ""
 
     if aws cloudformation describe-stacks --stack-name "{{stack_name}}" "${aws_flags[@]}" >/dev/null 2>&1; then
       just --justfile "{{aws_dir}}/justfile" update \
-        stack_name="{{stack_name}}" \
-        template_file="{{template_file}}" \
-        region="{{region}}" \
-        profile="{{profile}}"
+        "{{CognitoDomainPrefix}}" \
+        "{{AdminEmail}}" \
+        "{{stack_name}}" \
+        "{{template_file}}" \
+        "{{region}}" \
+        "{{profile}}" \
+        "{{LocalhostAppUrl}}" \
+        "{{LocalhostAltAppUrl}}"
     else
       just --justfile "{{aws_dir}}/justfile" create \
-        stack_name="{{stack_name}}" \
-        template_file="{{template_file}}" \
-        region="{{region}}" \
-        profile="{{profile}}"
+        "{{CognitoDomainPrefix}}" \
+        "{{AdminEmail}}" \
+        "{{stack_name}}" \
+        "{{template_file}}" \
+        "{{region}}" \
+        "{{profile}}" \
+        "{{LocalhostAppUrl}}" \
+        "{{LocalhostAltAppUrl}}"
     fi
 
 @delete stack_name=stack_name thing_name=thing_name policy_name=policy_name region=region profile=profile:
@@ -116,6 +139,15 @@ iot_data_endpoint := ""
     aws_flags=(--region "{{region}}")
     if [ -n "{{profile}}" ]; then
       aws_flags+=(--profile "{{profile}}")
+    fi
+
+    web_bucket_name="$(aws cloudformation describe-stacks \
+      --stack-name "{{stack_name}}" \
+      "${aws_flags[@]}" \
+      --query "Stacks[0].Outputs[?OutputKey=='WebAppBucketName'].OutputValue | [0]" \
+      --output text 2>/dev/null || true)"
+    if [ -n "$web_bucket_name" ] && [ "$web_bucket_name" != "None" ]; then
+      aws s3 rm "s3://$web_bucket_name" --recursive "${aws_flags[@]}" || true
     fi
 
     principals="$(aws iot list-thing-principals --thing-name "{{thing_name}}" "${aws_flags[@]}" --query principals --output text 2>/dev/null || true)"
@@ -172,6 +204,114 @@ iot_data_endpoint := ""
       "${aws_flags[@]}" \
       --query "Stacks[0].Outputs" \
       --output table
+
+@publish-web stack_name=stack_name region=region profile=profile web_dist_dir=web_dist_dir:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{aws_dir}}"
+
+    if [ -z "{{region}}" ]; then
+      echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
+      exit 1
+    fi
+
+    if [ ! -d "{{web_dist_dir}}" ]; then
+      echo "Web build output {{web_dist_dir}} not found. Run just web::build first." >&2
+      exit 1
+    fi
+
+    aws_flags=(--region "{{region}}")
+    if [ -n "{{profile}}" ]; then
+      aws_flags+=(--profile "{{profile}}")
+    fi
+
+    web_bucket_name="$(aws cloudformation describe-stacks \
+      --stack-name "{{stack_name}}" \
+      "${aws_flags[@]}" \
+      --query "Stacks[0].Outputs[?OutputKey=='WebAppBucketName'].OutputValue | [0]" \
+      --output text)"
+
+    web_distribution_id="$(aws cloudformation describe-stacks \
+      --stack-name "{{stack_name}}" \
+      "${aws_flags[@]}" \
+      --query "Stacks[0].Outputs[?OutputKey=='WebAppDistributionId'].OutputValue | [0]" \
+      --output text)"
+
+    if [ "$web_bucket_name" = "None" ] || [ "$web_distribution_id" = "None" ]; then
+      echo "Required web hosting outputs are missing in stack {{stack_name}}. Deploy aws/template.yaml first." >&2
+      exit 1
+    fi
+
+    aws s3 sync "{{web_dist_dir}}/" "s3://$web_bucket_name/" \
+      --delete \
+      --exclude "*.html" \
+      --cache-control "public,max-age=31536000,immutable" \
+      "${aws_flags[@]}"
+
+    while IFS= read -r -d '' html_file; do
+      key="${html_file#"{{web_dist_dir}}"/}"
+      key="${key#/}"
+      aws s3 cp "$html_file" "s3://$web_bucket_name/$key" \
+        --cache-control "no-cache, no-store, must-revalidate" \
+        "${aws_flags[@]}"
+    done < <(find "{{web_dist_dir}}" -type f -name '*.html' -print0)
+
+    aws cloudfront create-invalidation \
+      --distribution-id "$web_distribution_id" \
+      --paths "/*" \
+      "${aws_flags[@]}" >/dev/null
+
+    echo "Published {{web_dist_dir}} to s3://$web_bucket_name and invalidated CloudFront distribution $web_distribution_id."
+
+@create-admin-user AdminEmail AdminPassword stack_name=stack_name region=region profile=profile:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{aws_dir}}"
+
+    if [ -z "{{region}}" ]; then
+      echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
+      exit 1
+    fi
+
+    aws_flags=(--region "{{region}}")
+    if [ -n "{{profile}}" ]; then
+      aws_flags+=(--profile "{{profile}}")
+    fi
+
+    user_pool_id="$(aws cloudformation describe-stacks \
+      --stack-name "{{stack_name}}" \
+      "${aws_flags[@]}" \
+      --query "Stacks[0].Outputs[?OutputKey=='WebCognitoUserPoolId'].OutputValue | [0]" \
+      --output text)"
+
+    if [ "$user_pool_id" = "None" ]; then
+      echo "WebCognitoUserPoolId output not found in stack {{stack_name}}." >&2
+      exit 1
+    fi
+
+    if aws cognito-idp admin-get-user \
+      --user-pool-id "$user_pool_id" \
+      --username "{{AdminEmail}}" \
+      "${aws_flags[@]}" >/dev/null 2>&1; then
+      echo "Admin user already exists, updating password."
+    else
+      aws cognito-idp admin-create-user \
+        --user-pool-id "$user_pool_id" \
+        --username "{{AdminEmail}}" \
+        --user-attributes Name=email,Value="{{AdminEmail}}" Name=email_verified,Value=true \
+        --message-action SUPPRESS \
+        "${aws_flags[@]}" >/dev/null
+      echo "Admin user created."
+    fi
+
+    aws cognito-idp admin-set-user-password \
+      --user-pool-id "$user_pool_id" \
+      --username "{{AdminEmail}}" \
+      --password "{{AdminPassword}}" \
+      --permanent \
+      "${aws_flags[@]}" >/dev/null
+
+    echo "Admin user password set."
 
 @check thing_name=thing_name policy_name=policy_name log_group_name=log_group_name region=region profile=profile cert_dir=cert_dir endpoint_file=endpoint_file ca_file=ca_file cert_basename='' cert_arn_file='':
     #!/usr/bin/env bash
@@ -477,38 +617,40 @@ iot_data_endpoint := ""
       "$shadow_response_file"
     echo "Shadow initialized from {{default_shadow_file}}"
 
-@bootstrap stack_name=stack_name template_file=template_file thing_name=thing_name policy_name=policy_name region=region profile=profile cert_dir=cert_dir cert_basename='' cert_arn_file='' endpoint_file=endpoint_file ca_file=ca_file ca_url=ca_url default_shadow_file=default_shadow_file shadow_response_file='' iot_data_endpoint=iot_data_endpoint:
+@bootstrap CognitoDomainPrefix AdminEmail stack_name=stack_name template_file=template_file thing_name=thing_name policy_name=policy_name region=region profile=profile cert_dir=cert_dir cert_basename='' cert_arn_file='' endpoint_file=endpoint_file ca_file=ca_file ca_url=ca_url default_shadow_file=default_shadow_file shadow_response_file='' iot_data_endpoint=iot_data_endpoint:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
 
     just --justfile "{{aws_dir}}/justfile" deploy \
-      stack_name="{{stack_name}}" \
-      template_file="{{template_file}}" \
-      region="{{region}}" \
-      profile="{{profile}}"
+      "{{CognitoDomainPrefix}}" \
+      "{{AdminEmail}}" \
+      "{{stack_name}}" \
+      "{{template_file}}" \
+      "{{region}}" \
+      "{{profile}}"
     just --justfile "{{aws_dir}}/justfile" cert \
-      thing_name="{{thing_name}}" \
-      policy_name="{{policy_name}}" \
-      region="{{region}}" \
-      profile="{{profile}}" \
-      cert_dir="{{cert_dir}}" \
-      cert_basename="{{cert_basename}}" \
-      cert_arn_file="{{cert_arn_file}}"
+      "{{thing_name}}" \
+      "{{policy_name}}" \
+      "{{region}}" \
+      "{{profile}}" \
+      "{{cert_dir}}" \
+      "{{cert_basename}}" \
+      "{{cert_arn_file}}"
     just --justfile "{{aws_dir}}/justfile" endpoint \
-      region="{{region}}" \
-      profile="{{profile}}" \
-      cert_dir="{{cert_dir}}" \
-      endpoint_file="{{endpoint_file}}"
+      "{{region}}" \
+      "{{profile}}" \
+      "{{cert_dir}}" \
+      "{{endpoint_file}}"
     just --justfile "{{aws_dir}}/justfile" ca \
-      cert_dir="{{cert_dir}}" \
-      ca_file="{{ca_file}}" \
-      ca_url="{{ca_url}}"
+      "{{cert_dir}}" \
+      "{{ca_file}}" \
+      "{{ca_url}}"
     just --justfile "{{aws_dir}}/justfile" init-shadow \
-      thing_name="{{thing_name}}" \
-      region="{{region}}" \
-      profile="{{profile}}" \
-      cert_dir="{{cert_dir}}" \
-      default_shadow_file="{{default_shadow_file}}" \
-      shadow_response_file="{{shadow_response_file}}" \
-      iot_data_endpoint="{{iot_data_endpoint}}"
+      "{{thing_name}}" \
+      "{{region}}" \
+      "{{profile}}" \
+      "{{cert_dir}}" \
+      "{{default_shadow_file}}" \
+      "{{shadow_response_file}}" \
+      "{{iot_data_endpoint}}"

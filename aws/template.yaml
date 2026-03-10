@@ -1,5 +1,25 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: Creates the txing AWS IoT Thing used by the gateway and Thing Shadow.
+Description: txing infrastructure stack (IoT gateway + web admin API/auth).
+
+Parameters:
+  CognitoDomainPrefix:
+    Type: String
+    Description: Unique Cognito hosted UI domain prefix in this AWS region.
+    AllowedPattern: "^[a-z0-9-]{1,63}$"
+    ConstraintDescription: Use lowercase letters, numbers, and dashes only.
+  AdminEmail:
+    Type: String
+    Description: Single admin email expected by the SPA (client-side check).
+    AllowedPattern: "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+    ConstraintDescription: Must be a valid email address.
+  LocalhostAppUrl:
+    Type: String
+    Default: http://localhost:5173
+    Description: Vite local dev origin.
+  LocalhostAltAppUrl:
+    Type: String
+    Default: http://127.0.0.1:5173
+    Description: Alternate local dev origin.
 
 Resources:
   TxingGatewayLogGroup:
@@ -58,6 +78,210 @@ Resources:
             Action: iot:Subscribe
             Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/$aws/things/txing/shadow/*
 
+  TxingWebAdminIotPolicy:
+    Type: AWS::IoT::Policy
+    Properties:
+      PolicyName: !Sub ${AWS::StackName}-web-admin-iot-policy
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: ThingShadowHttp
+            Effect: Allow
+            Action:
+              - iot:GetThingShadow
+              - iot:UpdateThingShadow
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/txing
+
+  TxingAdminUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: txing-shadow-admin
+      AutoVerifiedAttributes:
+        - email
+      UsernameAttributes:
+        - email
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+      MfaConfiguration: "OFF"
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - Name: verified_email
+            Priority: 1
+      Schema:
+        - Name: email
+          Required: true
+          Mutable: true
+      UserPoolTags:
+        project: txing
+        app: web-admin
+        admin-email: !Ref AdminEmail
+
+  TxingWebBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+
+  TxingWebOriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub ${AWS::StackName}-txing-web
+        Description: Signs CloudFront requests to the txing web bucket.
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  TxingWebDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: txing shadow admin SPA
+        DefaultRootObject: index.html
+        HttpVersion: http2
+        IPV6Enabled: true
+        Origins:
+          - Id: txing-web-origin
+            DomainName: !GetAtt TxingWebBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt TxingWebOriginAccessControl.Id
+            S3OriginConfig: {}
+        DefaultCacheBehavior:
+          TargetOriginId: txing-web-origin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          CachedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          Compress: true
+          ForwardedValues:
+            QueryString: false
+            Cookies:
+              Forward: none
+        PriceClass: PriceClass_100
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+
+  TxingWebBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref TxingWebBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowCloudFrontRead
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub "${TxingWebBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${TxingWebDistribution}
+
+  TxingAdminUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref TxingAdminUserPool
+      ClientName: txing-shadow-admin-spa
+      GenerateSecret: false
+      PreventUserExistenceErrors: ENABLED
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows:
+        - code
+      AllowedOAuthScopes:
+        - openid
+        - email
+        - profile
+      SupportedIdentityProviders:
+        - COGNITO
+      CallbackURLs:
+        - !Sub https://${TxingWebDistribution.DomainName}/
+        - !Sub "${LocalhostAppUrl}/"
+        - !Sub "${LocalhostAltAppUrl}/"
+      LogoutURLs:
+        - !Sub https://${TxingWebDistribution.DomainName}/
+        - !Sub "${LocalhostAppUrl}/"
+        - !Sub "${LocalhostAltAppUrl}/"
+      AccessTokenValidity: 60
+      IdTokenValidity: 60
+      RefreshTokenValidity: 30
+      TokenValidityUnits:
+        AccessToken: minutes
+        IdToken: minutes
+        RefreshToken: days
+      ExplicitAuthFlows:
+        - ALLOW_REFRESH_TOKEN_AUTH
+
+  TxingAdminUserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      UserPoolId: !Ref TxingAdminUserPool
+      Domain: !Ref CognitoDomainPrefix
+
+  TxingAdminIdentityPool:
+    Type: AWS::Cognito::IdentityPool
+    Properties:
+      IdentityPoolName: txing_shadow_admin
+      AllowUnauthenticatedIdentities: false
+      CognitoIdentityProviders:
+        - ClientId: !Ref TxingAdminUserPoolClient
+          ProviderName: !Sub cognito-idp.${AWS::Region}.amazonaws.com/${TxingAdminUserPool}
+          ServerSideTokenCheck: true
+
+  TxingAdminIdentityPoolAuthenticatedRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: IAM role assumed by authenticated txing web admin identities.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: cognito-identity.amazonaws.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                cognito-identity.amazonaws.com:aud: !Ref TxingAdminIdentityPool
+              ForAnyValue:StringLike:
+                cognito-identity.amazonaws.com:amr: authenticated
+      Policies:
+        - PolicyName: iot-shadow-direct-access-txing
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: AllowAttachWebIotPolicy
+                Effect: Allow
+                Action: iot:AttachPolicy
+                Resource: "*"
+              - Sid: ReadAndUpdateTxingShadow
+                Effect: Allow
+                Action:
+                  - iot:GetThingShadow
+                  - iot:UpdateThingShadow
+                Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/txing
+
+  TxingAdminIdentityPoolRoleAttachment:
+    Type: AWS::Cognito::IdentityPoolRoleAttachment
+    Properties:
+      IdentityPoolId: !Ref TxingAdminIdentityPool
+      Roles:
+        authenticated: !GetAtt TxingAdminIdentityPoolAuthenticatedRole.Arn
+
 Outputs:
   GatewayLogGroupName:
     Description: CloudWatch Logs group used by the gateway process.
@@ -80,3 +304,33 @@ Outputs:
   PolicyName:
     Description: IoT policy to attach to gateway certificate.
     Value: !Ref TxingGatewayPolicy
+  WebIotPolicyName:
+    Description: IoT policy attached to authenticated Cognito identities for browser shadow access.
+    Value: !Ref TxingWebAdminIotPolicy
+  WebCognitoUserPoolId:
+    Description: Cognito User Pool for txing web admin.
+    Value: !Ref TxingAdminUserPool
+  WebCognitoUserPoolClientId:
+    Description: Cognito app client ID for the SPA.
+    Value: !Ref TxingAdminUserPoolClient
+  WebCognitoIdentityPoolId:
+    Description: Cognito identity pool for direct AWS credentials in the SPA.
+    Value: !Ref TxingAdminIdentityPool
+  WebCognitoDomain:
+    Description: Cognito hosted UI domain base URL.
+    Value: !Sub https://${CognitoDomainPrefix}.auth.${AWS::Region}.amazoncognito.com
+  WebAppBucketName:
+    Description: S3 bucket storing the deployed SPA assets.
+    Value: !Ref TxingWebBucket
+  WebAppDistributionId:
+    Description: CloudFront distribution serving the SPA.
+    Value: !Ref TxingWebDistribution
+  WebAppDistributionDomainName:
+    Description: CloudFront domain name serving the SPA.
+    Value: !GetAtt TxingWebDistribution.DomainName
+  WebAppUrl:
+    Description: Public URL for the deployed SPA.
+    Value: !Sub https://${TxingWebDistribution.DomainName}/
+  WebExpectedAdminEmail:
+    Description: Email expected by SPA client-side check.
+    Value: !Ref AdminEmail

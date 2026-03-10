@@ -1,0 +1,93 @@
+set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+
+web_dir := source_directory()
+stack_name := "txing-iot"
+region := "eu-central-1"
+profile := ""
+
+@install:
+    cd "{{web_dir}}"
+    npm install
+
+@dev:
+    cd "{{web_dir}}"
+    npm run dev
+
+@build:
+    cd "{{web_dir}}"
+    npm run build
+
+@lint:
+    cd "{{web_dir}}"
+    npm run lint
+
+@write-env stack_name=stack_name region=region profile=profile:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{web_dir}}"
+
+    aws_flags=(--region "{{region}}")
+    if [ -n "{{profile}}" ]; then
+      aws_flags+=(--profile "{{profile}}")
+    fi
+
+    cognito_domain="$(aws cloudformation describe-stacks \
+      --stack-name "{{stack_name}}" \
+      "${aws_flags[@]}" \
+      --query "Stacks[0].Outputs[?OutputKey=='WebCognitoDomain'].OutputValue | [0]" \
+      --output text)"
+
+    cognito_client_id="$(aws cloudformation describe-stacks \
+      --stack-name "{{stack_name}}" \
+      "${aws_flags[@]}" \
+      --query "Stacks[0].Outputs[?OutputKey=='WebCognitoUserPoolClientId'].OutputValue | [0]" \
+      --output text)"
+
+    cognito_user_pool_id="$(aws cloudformation describe-stacks \
+      --stack-name "{{stack_name}}" \
+      "${aws_flags[@]}" \
+      --query "Stacks[0].Outputs[?OutputKey=='WebCognitoUserPoolId'].OutputValue | [0]" \
+      --output text)"
+
+    cognito_identity_pool_id="$(aws cloudformation describe-stacks \
+      --stack-name "{{stack_name}}" \
+      "${aws_flags[@]}" \
+      --query "Stacks[0].Outputs[?OutputKey=='WebCognitoIdentityPoolId'].OutputValue | [0]" \
+      --output text)"
+
+    web_iot_policy_name="$(aws cloudformation describe-stacks \
+      --stack-name "{{stack_name}}" \
+      "${aws_flags[@]}" \
+      --query "Stacks[0].Outputs[?OutputKey=='WebIotPolicyName'].OutputValue | [0]" \
+      --output text)"
+
+    admin_email="$(aws cloudformation describe-stacks \
+      --stack-name "{{stack_name}}" \
+      "${aws_flags[@]}" \
+      --query "Stacks[0].Outputs[?OutputKey=='WebExpectedAdminEmail'].OutputValue | [0]" \
+      --output text)"
+
+    iot_data_endpoint="$(aws iot describe-endpoint \
+      --endpoint-type iot:Data-ATS \
+      "${aws_flags[@]}" \
+      --query endpointAddress \
+      --output text)"
+
+    if [ "$cognito_domain" = "None" ] || [ "$cognito_client_id" = "None" ] || [ "$cognito_user_pool_id" = "None" ] || [ "$cognito_identity_pool_id" = "None" ] || [ "$web_iot_policy_name" = "None" ] || [ "$admin_email" = "None" ] || [ "$iot_data_endpoint" = "None" ]; then
+      echo "Required web outputs are missing in stack {{stack_name}}. Deploy aws/template.yaml first." >&2
+      exit 1
+    fi
+
+    printf '%s\n' \
+      "VITE_AWS_REGION={{region}}" \
+      "VITE_IOT_DATA_ENDPOINT=https://$iot_data_endpoint" \
+      "VITE_COGNITO_DOMAIN=$cognito_domain" \
+      "VITE_COGNITO_CLIENT_ID=$cognito_client_id" \
+      "VITE_COGNITO_USER_POOL_ID=$cognito_user_pool_id" \
+      "VITE_COGNITO_IDENTITY_POOL_ID=$cognito_identity_pool_id" \
+      "VITE_IOT_POLICY_NAME=$web_iot_policy_name" \
+      "VITE_COGNITO_SCOPE=openid email profile" \
+      "VITE_ADMIN_EMAIL=$admin_email" \
+      > .env.local
+
+    echo "Wrote {{web_dir}}/.env.local from stack {{stack_name}} outputs."
