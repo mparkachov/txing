@@ -836,7 +836,12 @@ class BleSleepBridge:
                     timeout_seconds=retry_timeout
                 )
         finally:
-            await self._safe_disconnect()
+            cleanup_task = asyncio.create_task(self._safe_disconnect())
+            try:
+                await asyncio.shield(cleanup_task)
+            except asyncio.CancelledError:
+                await asyncio.shield(cleanup_task)
+                raise
 
     async def run_no_ble(self) -> None:
         _log_important(
@@ -1879,7 +1884,12 @@ def main() -> None:
                     )
                     await asyncio.sleep(config.reconnect_delay)
         finally:
-            await cloud_shadow.disconnect()
+            disconnect_task = asyncio.create_task(cloud_shadow.disconnect())
+            try:
+                await asyncio.shield(disconnect_task)
+            except asyncio.CancelledError:
+                await asyncio.shield(disconnect_task)
+                raise
 
     async def _runner() -> None:
         loop = asyncio.get_running_loop()
