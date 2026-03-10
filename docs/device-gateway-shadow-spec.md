@@ -27,7 +27,7 @@ High-level architecture:
 
 ```rust
 struct DeviceState {
-    battery_pct: u8, // 0..=100, currently fixed to 50
+    battery_pct: u8, // 0..=100, currently fixed to 30
     sleep: bool,
 }
 ```
@@ -35,7 +35,7 @@ struct DeviceState {
 State semantics:
 - `sleep=true`: low-power periodic listen mode
 - `sleep=false`: active/awake mode
-- On reset/power-cycle, device starts with `sleep=true`, `battery_pct=50`
+- On reset/power-cycle, device starts with `sleep=true`, `battery_pct=30`
 
 ## 4. Shadow Contract
 

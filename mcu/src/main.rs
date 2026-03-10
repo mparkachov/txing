@@ -15,7 +15,7 @@ fn defmt_panic() -> ! {
     panic_probe::hard_fault()
 }
 
-const DEFAULT_BATTERY_PCT: u8 = 50;
+const DEFAULT_BATTERY_PCT: u8 = 30;
 const SLEEP_ADV_INTERVAL_UNITS: u32 = 80; // 50 ms (0.625 ms units)
 const TXING_ADV_DATA: [u8; 9] = [
     0x02, 0x01, 0x06, // Flags

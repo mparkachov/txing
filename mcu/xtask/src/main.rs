@@ -1,8 +1,8 @@
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
-use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use btleplug::api::{Central, Manager as _, Peripheral as _, ScanFilter, WriteType};
@@ -15,6 +15,8 @@ const UF2_BASE: &str = "0x27000";
 const UF2_FAMILY: &str = "0xADA52840";
 const TARGET_TRIPLE: &str = "thumbv7em-none-eabihf";
 const UF2_MOUNT_DIR: &str = "/Volumes/XIAO-SENSE";
+const PROBE_RS_CHIP: &str = "nRF52840_xxAA";
+const PROBE_RS_PROTOCOL: &str = "swd";
 
 const SLEEP_COMMAND_UUID: &str = "f6b4a001-7b32-4d2d-9f4b-4ff0a2b8f100";
 const STATE_REPORT_UUID: &str = "f6b4a002-7b32-4d2d-9f4b-4ff0a2b8f100";
@@ -60,6 +62,8 @@ fn main() -> ExitCode {
         "bin" => to_exit_code(run_bin(workspace_root)),
         "uf2" => to_exit_code(run_uf2(workspace_root)),
         "flash" => to_exit_code(run_flash(workspace_root)),
+        "probe-flash" => to_exit_code(run_flash(workspace_root)),
+        "flash-uf2" => to_exit_code(run_flash_uf2(workspace_root)),
         "scan" => to_exit_code(run_scan(&cmd_args)),
         "sleep" => to_exit_code(run_ble_alias(&cmd_args, true)),
         "wakeup" => to_exit_code(run_ble_alias(&cmd_args, false)),
@@ -73,14 +77,24 @@ fn main() -> ExitCode {
 }
 
 fn print_usage() {
-    eprintln!("usage (from repo root): just mcu::[build|bin|uf2|flash|scan|sleep|wakeup|ble-sleep]");
-    eprintln!("usage (from mcu/):      just [build|bin|uf2|flash|scan|sleep|wakeup|ble-sleep]");
+    eprintln!(
+        "usage (from repo root): just mcu::[build|bin|uf2|flash|probe-flash|flash-uf2|scan|sleep|wakeup|ble-sleep]"
+    );
+    eprintln!(
+        "usage (from mcu/):      just [build|bin|uf2|flash|probe-flash|flash-uf2|scan|sleep|wakeup|ble-sleep]"
+    );
     eprintln!("  just mcu::scan [--scan-timeout <sec>]");
-    eprintln!("  just mcu::sleep [--name <local_name>] [--id <peripheral_id>] [--scan-timeout <sec>]");
-    eprintln!("  just mcu::wakeup [--name <local_name>] [--id <peripheral_id>] [--scan-timeout <sec>]");
+    eprintln!(
+        "  just mcu::sleep [--name <local_name>] [--id <peripheral_id>] [--scan-timeout <sec>]"
+    );
+    eprintln!(
+        "  just mcu::wakeup [--name <local_name>] [--id <peripheral_id>] [--scan-timeout <sec>]"
+    );
     eprintln!(
         "  just mcu::ble-sleep --sleep <true|false> [--name <local_name>] [--id <peripheral_id>] [--scan-timeout <sec>]"
     );
+    eprintln!("  just mcu::flash       # safe SWD flash via probe-rs");
+    eprintln!("  just mcu::flash-uf2   # legacy copy-to-mass-storage flash");
 }
 
 fn print_scan_usage() {
@@ -99,7 +113,9 @@ fn print_ble_sleep_usage() {
 }
 
 fn print_ble_alias_usage(cmd: &str) {
-    eprintln!("usage: just mcu::{cmd} [--name <local_name>] [--id <peripheral_id>] [--scan-timeout <sec>]");
+    eprintln!(
+        "usage: just mcu::{cmd} [--name <local_name>] [--id <peripheral_id>] [--scan-timeout <sec>]"
+    );
     eprintln!("  --name          BLE local name fragment to match (default: txing)");
     eprintln!("  --id            BLE peripheral id to match exactly (example: 12C5364E-...)");
     eprintln!("  --scan-timeout  scan timeout in seconds (default: 12)");
@@ -355,7 +371,10 @@ fn run_scan(args: &[String]) -> bool {
 }
 
 async fn run_scan_async(timeout: Duration) -> Result<(), String> {
-    println!("Scanning BLE peripherals (timeout={}s)...", timeout.as_secs());
+    println!(
+        "Scanning BLE peripherals (timeout={}s)...",
+        timeout.as_secs()
+    );
     let txing_service_uuid = Uuid::parse_str(TXING_SERVICE_UUID)
         .map_err(|err| format!("invalid Service UUID constant: {err}"))?;
 
@@ -471,13 +490,10 @@ async fn run_ble_sleep_async(opts: BleSleepOptions) -> Result<(), String> {
         );
     }
 
-    let manager = tokio::time::timeout(
-        Duration::from_secs(BLE_INIT_TIMEOUT_SECS),
-        Manager::new(),
-    )
-    .await
-    .map_err(|_| "timeout creating BLE manager".to_string())?
-    .map_err(|err| format!("failed to create BLE manager: {err}"))?;
+    let manager = tokio::time::timeout(Duration::from_secs(BLE_INIT_TIMEOUT_SECS), Manager::new())
+        .await
+        .map_err(|_| "timeout creating BLE manager".to_string())?
+        .map_err(|err| format!("failed to create BLE manager: {err}"))?;
     let adapters = tokio::time::timeout(
         Duration::from_secs(BLE_INIT_TIMEOUT_SECS),
         manager.adapters(),
@@ -614,7 +630,8 @@ async fn find_peripheral(
     timeout: Duration,
 ) -> Result<Option<Peripheral>, String> {
     let deadline = Instant::now() + timeout;
-    let id_fast_path_until = expected_id.map(|_| Instant::now() + Duration::from_secs(BLE_ID_FAST_PATH_SECS));
+    let id_fast_path_until =
+        expected_id.map(|_| Instant::now() + Duration::from_secs(BLE_ID_FAST_PATH_SECS));
     let mut probe_attempts: usize = 0;
     let mut last_probe_at: HashMap<String, Instant> = HashMap::new();
     let mut announced_candidates: HashSet<String> = HashSet::new();
@@ -701,7 +718,13 @@ async fn find_peripheral(
                         .get(&TXING_MFG_ID)
                         .map(|data| data.starts_with(TXING_MFG_MAGIC))
                         .unwrap_or(false);
-                    (service_match, name_exact, name_contains, mfg_match, local_name)
+                    (
+                        service_match,
+                        name_exact,
+                        name_contains,
+                        mfg_match,
+                        local_name,
+                    )
                 } else {
                     (false, false, false, false, None)
                 };
@@ -849,7 +872,10 @@ fn run_bin(workspace_root: &Path) -> bool {
         return false;
     }
 
-    let artifacts_dir = workspace_root.join("target").join(TARGET_TRIPLE).join("release");
+    let artifacts_dir = workspace_root
+        .join("target")
+        .join(TARGET_TRIPLE)
+        .join("release");
     if let Err(err) = fs::create_dir_all(&artifacts_dir) {
         eprintln!("failed to create artifacts directory: {err}");
         return false;
@@ -876,7 +902,10 @@ fn run_uf2(workspace_root: &Path) -> bool {
         return false;
     }
 
-    let artifacts_dir = workspace_root.join("target").join(TARGET_TRIPLE).join("release");
+    let artifacts_dir = workspace_root
+        .join("target")
+        .join(TARGET_TRIPLE)
+        .join("release");
     let bin_path = artifacts_dir.join(format!("{BIN_NAME}.bin"));
     let uf2_path = artifacts_dir.join(format!("{BIN_NAME}.uf2"));
 
@@ -897,11 +926,62 @@ fn run_uf2(workspace_root: &Path) -> bool {
 }
 
 fn run_flash(workspace_root: &Path) -> bool {
+    if !run_bin(workspace_root) {
+        return false;
+    }
+
+    let artifacts_dir = workspace_root
+        .join("target")
+        .join(TARGET_TRIPLE)
+        .join("release");
+    let bin_path = artifacts_dir.join(format!("{BIN_NAME}.bin"));
+
+    if !run(
+        workspace_root,
+        "probe-rs",
+        [
+            "download",
+            "--chip",
+            PROBE_RS_CHIP,
+            "--protocol",
+            PROBE_RS_PROTOCOL,
+            "--binary-format",
+            "bin",
+            "--base-address",
+            UF2_BASE,
+            "--preverify",
+            "--verify",
+            "--restore-unwritten",
+            &bin_path.display().to_string(),
+        ]
+        .as_slice(),
+    ) {
+        return false;
+    }
+
+    run(
+        workspace_root,
+        "probe-rs",
+        [
+            "reset",
+            "--chip",
+            PROBE_RS_CHIP,
+            "--protocol",
+            PROBE_RS_PROTOCOL,
+        ]
+        .as_slice(),
+    )
+}
+
+fn run_flash_uf2(workspace_root: &Path) -> bool {
     if !run_uf2(workspace_root) {
         return false;
     }
 
-    let artifacts_dir = workspace_root.join("target").join(TARGET_TRIPLE).join("release");
+    let artifacts_dir = workspace_root
+        .join("target")
+        .join(TARGET_TRIPLE)
+        .join("release");
     let uf2_path = artifacts_dir.join(format!("{BIN_NAME}.uf2"));
     let mount_dir = Path::new(UF2_MOUNT_DIR);
     let destination = mount_dir.join(format!("{BIN_NAME}.uf2"));

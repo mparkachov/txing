@@ -4,33 +4,40 @@ mcu_dir := source_directory()
 xtask_manifest := mcu_dir + "/xtask/Cargo.toml"
 firmware_manifest := mcu_dir + "/Cargo.toml"
 target_triple := "thumbv7em-none-eabihf"
+host_triple := `rustc -vV | sed -n 's/^host: //p'`
 
 @build:
-    cargo run --manifest-path "{{xtask_manifest}}" -- build
+    cargo run --manifest-path "{{xtask_manifest}}" --target "{{host_triple}}" -- build
 
 @bin:
-    cargo run --manifest-path "{{xtask_manifest}}" -- bin
+    cargo run --manifest-path "{{xtask_manifest}}" --target "{{host_triple}}" -- bin
 
 @uf2:
-    cargo run --manifest-path "{{xtask_manifest}}" -- uf2
+    cargo run --manifest-path "{{xtask_manifest}}" --target "{{host_triple}}" -- uf2
 
 @flash:
-    cargo run --manifest-path "{{xtask_manifest}}" -- flash
+    cargo run --manifest-path "{{xtask_manifest}}" --target "{{host_triple}}" -- flash
+
+@probe-flash:
+    cargo run --manifest-path "{{xtask_manifest}}" --target "{{host_triple}}" -- probe-flash
+
+@flash-uf2:
+    cargo run --manifest-path "{{xtask_manifest}}" --target "{{host_triple}}" -- flash-uf2
 
 @scan *args='':
-    cargo run --manifest-path "{{xtask_manifest}}" -- scan {{args}}
+    cargo run --manifest-path "{{xtask_manifest}}" --target "{{host_triple}}" -- scan {{args}}
 
 @sleep *args='':
-    cargo run --manifest-path "{{xtask_manifest}}" -- sleep {{args}}
+    cargo run --manifest-path "{{xtask_manifest}}" --target "{{host_triple}}" -- sleep {{args}}
 
 @wakeup *args='':
-    cargo run --manifest-path "{{xtask_manifest}}" -- wakeup {{args}}
+    cargo run --manifest-path "{{xtask_manifest}}" --target "{{host_triple}}" -- wakeup {{args}}
 
 @ble-sleep *args='':
-    cargo run --manifest-path "{{xtask_manifest}}" -- ble-sleep {{args}}
+    cargo run --manifest-path "{{xtask_manifest}}" --target "{{host_triple}}" -- ble-sleep {{args}}
 
 @check:
     cargo check --manifest-path "{{firmware_manifest}}" --target "{{target_triple}}"
 
 @check-xtask:
-    cargo check --manifest-path "{{xtask_manifest}}"
+    cargo check --manifest-path "{{xtask_manifest}}" --target "{{host_triple}}"
