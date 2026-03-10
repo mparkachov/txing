@@ -56,6 +56,9 @@ DEFAULT_LOCK_FILE = Path("/tmp/txing_gw.lock")
 DEFAULT_THING_NAME = "txing"
 DEFAULT_AWS_CONNECT_TIMEOUT = 20.0
 DEFAULT_CLOUDWATCH_LOG_GROUP = "/txing/gw"
+DEFAULT_MQTT_PUBLISH_TIMEOUT = 10.0
+SHUTDOWN_MQTT_PUBLISH_TIMEOUT = 2.0
+BLE_DISCONNECT_TIMEOUT = 2.0
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_CERT_DIR = REPO_ROOT / "certs"
@@ -529,6 +532,7 @@ class AwsShadowClient:
         ble_uuids: BleGattUuids,
         ble_online: bool,
         clear_desired_power: bool,
+        publish_timeout_seconds: float = DEFAULT_MQTT_PUBLISH_TIMEOUT,
     ) -> None:
         ble_state = ble_uuids.as_shadow_dict()
         ble_state["online"] = ble_online
@@ -547,39 +551,66 @@ class AwsShadowClient:
         await self._publish_json(
             self._topic_update,
             {"state": state},
+            timeout_seconds=publish_timeout_seconds,
         )
 
-    async def _publish_json(self, topic: str, payload: dict[str, Any]) -> None:
+    async def _publish_json(
+        self,
+        topic: str,
+        payload: dict[str, Any],
+        *,
+        timeout_seconds: float = DEFAULT_MQTT_PUBLISH_TIMEOUT,
+    ) -> None:
         payload_text = json.dumps(payload, separators=(",", ":"), sort_keys=True)
 
         def _publish_sync() -> None:
             info = self._client.publish(topic, payload=payload_text, qos=1)
-            if info.rc != mqtt.MQTT_ERR_SUCCESS:
-                raise RuntimeError(
-                    f"failed to publish to {topic}: rc={info.rc} payload={payload_text}"
-                )
-            info.wait_for_publish(timeout=10)
-            if info.rc != mqtt.MQTT_ERR_SUCCESS:
-                raise RuntimeError(
-                    f"publish to {topic} did not complete successfully: rc={info.rc}"
-                )
+            self._wait_for_publish(
+                info,
+                context=f"publish to {topic}",
+                payload=payload_text,
+                timeout_seconds=timeout_seconds,
+            )
 
         await asyncio.to_thread(_publish_sync)
 
     async def _request_shadow_get(self) -> None:
         def _publish_sync() -> None:
             info = self._client.publish(self._topic_get, payload="{}", qos=1)
-            if info.rc != mqtt.MQTT_ERR_SUCCESS:
-                raise RuntimeError(
-                    f"failed to publish shadow get to {self._topic_get} (rc={info.rc})"
-                )
-            info.wait_for_publish(timeout=10)
-            if info.rc != mqtt.MQTT_ERR_SUCCESS:
-                raise RuntimeError(
-                    f"shadow get publish did not complete successfully: rc={info.rc}"
-                )
+            self._wait_for_publish(
+                info,
+                context=f"shadow get publish to {self._topic_get}",
+                payload="{}",
+                timeout_seconds=DEFAULT_MQTT_PUBLISH_TIMEOUT,
+            )
 
         await asyncio.to_thread(_publish_sync)
+
+    @staticmethod
+    def _wait_for_publish(
+        info: mqtt.MQTTMessageInfo,
+        *,
+        context: str,
+        payload: str,
+        timeout_seconds: float,
+    ) -> None:
+        if info.rc != mqtt.MQTT_ERR_SUCCESS:
+            raise RuntimeError(f"failed to {context}: rc={info.rc} payload={payload}")
+
+        wait_result = info.wait_for_publish(timeout=timeout_seconds)
+        is_published = getattr(info, "is_published", None)
+        if callable(is_published) and not is_published():
+            raise TimeoutError(
+                f"{context} timed out after {timeout_seconds:.1f}s waiting for broker acknowledgement payload={payload}"
+            )
+        if wait_result is False:
+            raise TimeoutError(
+                f"{context} timed out after {timeout_seconds:.1f}s waiting for broker acknowledgement payload={payload}"
+            )
+        if info.rc != mqtt.MQTT_ERR_SUCCESS:
+            raise RuntimeError(
+                f"{context} did not complete successfully: rc={info.rc} payload={payload}"
+            )
 
     def _on_connect(
         self,
@@ -836,7 +867,12 @@ class BleSleepBridge:
                     timeout_seconds=retry_timeout
                 )
         finally:
-            cleanup_task = asyncio.create_task(self._safe_disconnect())
+            cleanup_task = asyncio.create_task(
+                self._safe_disconnect(
+                    publish_timeout_seconds=SHUTDOWN_MQTT_PUBLISH_TIMEOUT,
+                    disconnect_timeout_seconds=BLE_DISCONNECT_TIMEOUT,
+                )
+            )
             try:
                 await asyncio.shield(cleanup_task)
             except asyncio.CancelledError:
@@ -1056,6 +1092,7 @@ class BleSleepBridge:
         *,
         clear_desired_power: bool,
         context: str,
+        publish_timeout_seconds: float = DEFAULT_MQTT_PUBLISH_TIMEOUT,
     ) -> None:
         try:
             await self._cloud_shadow.set_reported_state(
@@ -1064,6 +1101,7 @@ class BleSleepBridge:
                 ble_uuids=self._shadow.ble_uuids,
                 ble_online=self._shadow.ble_online,
                 clear_desired_power=clear_desired_power,
+                publish_timeout_seconds=publish_timeout_seconds,
             )
         except Exception:
             LOGGER.exception("Failed to publish reported shadow update; will retry")
@@ -1079,6 +1117,7 @@ class BleSleepBridge:
         online: bool,
         context: str,
         force: bool = False,
+        publish_timeout_seconds: float = DEFAULT_MQTT_PUBLISH_TIMEOUT,
     ) -> None:
         if not force and self._shadow.ble_online == online:
             return
@@ -1086,6 +1125,7 @@ class BleSleepBridge:
         await self._publish_reported_update(
             clear_desired_power=False,
             context=context,
+            publish_timeout_seconds=publish_timeout_seconds,
         )
 
     async def _send_sleep_command(self, sleep: bool) -> None:
@@ -1460,20 +1500,38 @@ class BleSleepBridge:
             )
         return device
 
-    async def _safe_disconnect(self) -> None:
+    async def _safe_disconnect(
+        self,
+        *,
+        publish_timeout_seconds: float = DEFAULT_MQTT_PUBLISH_TIMEOUT,
+        disconnect_timeout_seconds: float | None = None,
+    ) -> None:
         client = self._client
         self._client = None
+        await self._publish_ble_online_state(
+            online=False,
+            context="BLE disconnected",
+            publish_timeout_seconds=publish_timeout_seconds,
+        )
         if client is None:
             return
         try:
             if client.is_connected:
-                await client.disconnect()
+                disconnect_coro = client.disconnect()
+                if disconnect_timeout_seconds is None:
+                    await disconnect_coro
+                else:
+                    await asyncio.wait_for(
+                        disconnect_coro,
+                        timeout=disconnect_timeout_seconds,
+                    )
+        except TimeoutError:
+            LOGGER.warning(
+                "Timed out disconnecting BLE client after %.1fs; continuing shutdown",
+                disconnect_timeout_seconds,
+            )
         except Exception:
             LOGGER.exception("Failed to disconnect BLE client cleanly")
-        await self._publish_ble_online_state(
-            online=False,
-            context="BLE disconnected",
-        )
 
     def _handle_disconnect(self, _: BleakClient) -> None:
         LOGGER.warning("BLE connection lost")
