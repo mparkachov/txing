@@ -838,9 +838,12 @@ version = "0.1.0"
 dependencies = [
  "cortex-m",
  "cortex-m-rt",
+ "critical-section",
  "defmt 1.0.1",
  "defmt-rtt",
  "embassy-executor",
+ "embassy-futures",
+ "embassy-sync",
  "embedded-hal 1.0.0",
  "nrf-softdevice",
  "nrf52840-hal",

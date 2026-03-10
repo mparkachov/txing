@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+import signal
 import socket
 import sys
 from dataclasses import dataclass
@@ -962,6 +963,7 @@ class BleSleepBridge:
                 client,
                 device_id=target_device_id,
             )
+            await self._subscribe_state_report_notifications()
             _log_important(
                 LOGGER,
                 "Connected to %s (%s)",
@@ -1094,6 +1096,88 @@ class BleSleepBridge:
         )
         LOGGER.info("Sent Sleep Command sleep=%s", sleep)
 
+    async def _subscribe_state_report_notifications(self) -> None:
+        if not self._is_connected():
+            return
+        assert self._client is not None
+
+        await self._client.start_notify(
+            self._shadow.ble_uuids.state_report_uuid,
+            self._handle_state_report_notification,
+        )
+
+    def _handle_state_report_notification(self, _: Any, data: bytearray) -> None:
+        loop = self._loop
+        if loop is None:
+            return
+
+        try:
+            asyncio.run_coroutine_threadsafe(
+                self._sync_reported_from_device_report(
+                    bytes(data),
+                    context="Reported synchronized from MCU state report notification",
+                    log_prefix="MCU state report notification",
+                ),
+                loop,
+            )
+        except RuntimeError:
+            LOGGER.debug(
+                "Event loop already closed; skipped MCU state report notification"
+            )
+
+    @staticmethod
+    def _parse_state_report(report: bytes) -> tuple[int, bool, bool]:
+        if len(report) < 2:
+            raise RuntimeError(
+                f"unexpected State Report length: {len(report)} (expected >= 2)"
+            )
+
+        battery_pct = int(report[0])
+        sleep_flag = int(report[1])
+        sleep = sleep_flag == 0x01
+        reported_power = sleep_flag == 0x00
+        return battery_pct, sleep, reported_power
+
+    async def _sync_reported_from_device_report(
+        self,
+        report: bytes,
+        *,
+        context: str,
+        log_prefix: str,
+    ) -> None:
+        battery_pct, sleep, reported_power = self._parse_state_report(report)
+        clear_desired = self._shadow.desired_power == reported_power
+
+        if (
+            self._shadow.reported_power == reported_power
+            and self._shadow.battery_percent == battery_pct
+            and not clear_desired
+        ):
+            LOGGER.debug(
+                "%s unchanged: battery_pct=%s sleep=%s => power=%s",
+                log_prefix,
+                battery_pct,
+                sleep,
+                reported_power,
+            )
+            return
+
+        self._shadow.set_reported(
+            power=reported_power,
+            battery_percent=battery_pct,
+        )
+        await self._publish_reported_update(
+            clear_desired_power=clear_desired,
+            context=context,
+        )
+        LOGGER.info(
+            "%s: battery_pct=%s sleep=%s => power=%s",
+            log_prefix,
+            battery_pct,
+            sleep,
+            reported_power,
+        )
+
     async def _sync_reported_from_device_on_connect(self) -> None:
         if not self._is_connected():
             return
@@ -1102,28 +1186,10 @@ class BleSleepBridge:
         report = await self._client.read_gatt_char(
             self._shadow.ble_uuids.state_report_uuid
         )
-        if len(report) < 2:
-            raise RuntimeError(
-                f"unexpected State Report length: {len(report)} (expected >= 2)"
-            )
-
-        battery_pct = int(report[0])
-        sleep_flag = int(report[1])
-        reported_power = sleep_flag == 0x00
-
-        self._shadow.set_reported(
-            power=reported_power,
-            battery_percent=battery_pct,
-        )
-        await self._publish_reported_update(
-            clear_desired_power=self._shadow.desired_power == reported_power,
+        await self._sync_reported_from_device_report(
+            bytes(report),
             context="Reported synchronized from MCU state report on connect",
-        )
-        LOGGER.info(
-            "MCU state report on connect: battery_pct=%s sleep=%s => power=%s",
-            battery_pct,
-            sleep_flag == 0x01,
-            reported_power,
+            log_prefix="MCU state report on connect",
         )
 
     async def _ensure_services_discovered(self, client: BleakClient) -> None:
@@ -1775,16 +1841,18 @@ def main() -> None:
         config.client_id,
     )
 
-    async def _runner() -> None:
+    async def _run_gateway() -> None:
         cloud_shadow = AwsShadowClient(config)
-        snapshot = await cloud_shadow.connect_and_get_initial_snapshot(
-            timeout_seconds=config.aws_connect_timeout,
-        )
-        shadow = _build_shadow_from_snapshot(snapshot, snapshot_file=config.shadow_file)
-        shadow.log_state("Initialized from AWS IoT shadow snapshot")
-
-        bridge = BleSleepBridge(config, shadow, cloud_shadow)
         try:
+            snapshot = await cloud_shadow.connect_and_get_initial_snapshot(
+                timeout_seconds=config.aws_connect_timeout,
+            )
+            shadow = _build_shadow_from_snapshot(
+                snapshot, snapshot_file=config.shadow_file
+            )
+            shadow.log_state("Initialized from AWS IoT shadow snapshot")
+
+            bridge = BleSleepBridge(config, shadow, cloud_shadow)
             if args.no_ble:
                 while True:
                     try:
@@ -1812,6 +1880,45 @@ def main() -> None:
                     await asyncio.sleep(config.reconnect_delay)
         finally:
             await cloud_shadow.disconnect()
+
+    async def _runner() -> None:
+        loop = asyncio.get_running_loop()
+        shutdown_event = asyncio.Event()
+        installed_signals: list[signal.Signals] = []
+
+        def _request_shutdown(sig: signal.Signals) -> None:
+            if shutdown_event.is_set():
+                return
+            _log_important(LOGGER, "Shutting down gateway (signal=%s)", sig.name)
+            shutdown_event.set()
+
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                loop.add_signal_handler(sig, _request_shutdown, sig)
+            except NotImplementedError:
+                LOGGER.debug("Signal handlers are not supported on this platform")
+                break
+            installed_signals.append(sig)
+
+        gateway_task = asyncio.create_task(_run_gateway())
+        shutdown_task = asyncio.create_task(shutdown_event.wait())
+        try:
+            done, _pending = await asyncio.wait(
+                {gateway_task, shutdown_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if gateway_task in done:
+                await gateway_task
+                return
+
+            gateway_task.cancel()
+            await asyncio.gather(gateway_task, return_exceptions=True)
+        finally:
+            for sig in installed_signals:
+                loop.remove_signal_handler(sig)
+            if not shutdown_task.done():
+                shutdown_task.cancel()
+            await asyncio.gather(shutdown_task, return_exceptions=True)
 
     try:
         asyncio.run(_runner())
