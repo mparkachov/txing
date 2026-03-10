@@ -3,9 +3,10 @@
 ## Repository structure
 - `mcu/`: Rust firmware subproject for the MCU.
 - `gw/`: Python subproject for the Raspberry Pi 5 gateway (AWS IoT MQTT + BLE communication with MCU).
+- `web/`: React/Vite SPA for admin management of Thing Shadow.
 
 ## Working rules
-- Treat this repository as a monorepo with the two subprojects above.
+- Treat this repository as a monorepo with the subprojects above.
 - Keep changes scoped to the relevant subproject.
 - Do not perform `git commit` automatically.
 - Create commits only when explicitly requested by the user.
