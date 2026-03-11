@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://txing.local/schemas/txing-shadow.schema.json",
-  "title": "Txing Thing Shadow Contract v5",
+  "title": "Txing Thing Shadow Contract v6",
   "description": "Canonical payload shape for txing Thing Shadow updates and snapshots.",
   "type": "object",
   "additionalProperties": true,
@@ -86,6 +86,7 @@
       "required": [
         "power",
         "batteryPercent",
+        "batteryVolt",
         "ble"
       ],
       "properties": {
@@ -96,6 +97,11 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 100
+        },
+        "batteryVolt": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 10
         },
         "ble": {
           "$ref": "#/$defs/bleGattUuids"

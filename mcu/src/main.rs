@@ -44,6 +44,7 @@ static BATTERY_REFRESH_ARMED: AtomicBool = AtomicBool::new(false);
 
 struct DeviceState {
     battery_pct: Cell<u8>,
+    battery_volt: Cell<f32>,
     sleep: Cell<bool>,
 }
 
@@ -51,19 +52,25 @@ impl DeviceState {
     const fn boot_default() -> Self {
         Self {
             battery_pct: Cell::new(BATTERY_PCT_FALLBACK),
+            battery_volt: Cell::new(0.0),
             sleep: Cell::new(false),
         }
     }
 
-    fn report_bytes(&self) -> [u8; 2] {
-        [
-            self.battery_pct.get(),
-            if self.sleep.get() { 0x01 } else { 0x00 },
-        ]
+    fn report_bytes(&self) -> [u8; 6] {
+        let mut report = [0u8; 6];
+        report[0] = self.battery_pct.get();
+        report[1] = if self.sleep.get() { 0x01 } else { 0x00 };
+        report[2..6].copy_from_slice(&self.battery_volt.get().to_le_bytes());
+        report
     }
 
     fn set_battery_pct(&self, battery_pct: u8) {
         self.battery_pct.set(battery_pct);
+    }
+
+    fn set_battery_volt(&self, battery_volt: f32) {
+        self.battery_volt.set(battery_volt);
     }
 
     fn sleep(&self) -> bool {
@@ -100,10 +107,6 @@ impl BatteryMonitor {
         }
     }
 
-    fn read_battery_pct(&mut self) -> u8 {
-        battery_pct_from_mv(battery_mv_from_raw(self.sample_raw()))
-    }
-
     fn sample_raw(&mut self) -> u32 {
         let _ = self.sense_enable.set_low();
 
@@ -130,7 +133,7 @@ struct TxingControlService {
     sleep_command: u8,
 
     #[characteristic(uuid = "f6b4a002-7b32-4d2d-9f4b-4ff0a2b8f100", read, notify)]
-    state_report: [u8; 2],
+    state_report: [u8; 6],
 }
 
 #[nrf_softdevice::gatt_server]
@@ -157,12 +160,12 @@ async fn main(spawner: embassy_executor::Spawner) {
     spawner.spawn(softdevice_task(sd)).unwrap();
 
     let state = DeviceState::boot_default();
-    refresh_battery_pct(&state, &mut battery_monitor);
+    refresh_battery_state(&state, &mut battery_monitor);
     set_led_for_sleep_state(&mut led, state.sleep());
     publish_state_report(&server, None, &state);
 
     loop {
-        refresh_battery_pct(&state, &mut battery_monitor);
+        refresh_battery_state(&state, &mut battery_monitor);
         if state.sleep() {
             sleep_poll_cycle(sd, &server, &state, &mut led, &mut battery_monitor).await;
         } else {
@@ -195,8 +198,10 @@ fn set_led_for_sleep_state<P: OutputPin>(led: &mut P, sleep: bool) {
     }
 }
 
-fn refresh_battery_pct(state: &DeviceState, battery_monitor: &mut BatteryMonitor) {
-    state.set_battery_pct(battery_monitor.read_battery_pct());
+fn refresh_battery_state(state: &DeviceState, battery_monitor: &mut BatteryMonitor) {
+    let battery_mv = battery_mv_from_raw(battery_monitor.sample_raw());
+    state.set_battery_pct(battery_pct_from_mv(battery_mv));
+    state.set_battery_volt(battery_volt_from_mv(battery_mv));
 }
 
 fn publish_state_report(server: &Server, conn: Option<&Connection>, state: &DeviceState) {
@@ -267,6 +272,10 @@ fn battery_pct_from_mv(battery_mv: u32) -> u8 {
 
     let span_mv = BATTERY_FULL_MV - BATTERY_EMPTY_MV;
     (((battery_mv - BATTERY_EMPTY_MV) * 100) / span_mv) as u8
+}
+
+fn battery_volt_from_mv(battery_mv: u32) -> f32 {
+    battery_mv as f32 / 1000.0
 }
 
 async fn sleep_poll_cycle<P: OutputPin>(
@@ -350,7 +359,7 @@ async fn refresh_battery_while_connected(
 ) {
     loop {
         wait_for_battery_refresh_tick().await;
-        refresh_battery_pct(state, battery_monitor);
+        refresh_battery_state(state, battery_monitor);
         publish_state_report(server, Some(conn), state);
     }
 }

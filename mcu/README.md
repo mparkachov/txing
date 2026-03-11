@@ -13,6 +13,7 @@ Firmware for nRF52840 (Seeed XIAO BLE Sense) with BLE sleep control.
 
 - Device state:
   - `battery_pct` (estimated from measured BAT voltage on the XIAO divider)
+  - `battery_volt` (measured BAT voltage estimate in volts)
   - `sleep` (`true`/`false`)
 - Reset/power-cycle default: `sleep=true`, `battery_pct` derived from the current battery voltage
 - `sleep=true`: low-power periodic wake/listen
