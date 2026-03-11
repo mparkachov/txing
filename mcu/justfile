@@ -27,15 +27,6 @@ host_triple := `rustc -vV | sed -n 's/^host: //p'`
 @scan *args='':
     cargo run --manifest-path "{{xtask_manifest}}" --target "{{host_triple}}" -- scan {{args}}
 
-@sleep *args='':
-    cargo run --manifest-path "{{xtask_manifest}}" --target "{{host_triple}}" -- sleep {{args}}
-
-@wakeup *args='':
-    cargo run --manifest-path "{{xtask_manifest}}" --target "{{host_triple}}" -- wakeup {{args}}
-
-@ble-sleep *args='':
-    cargo run --manifest-path "{{xtask_manifest}}" --target "{{host_triple}}" -- ble-sleep {{args}}
-
 @check:
     cargo check --manifest-path "{{firmware_manifest}}" --target "{{target_triple}}"
 

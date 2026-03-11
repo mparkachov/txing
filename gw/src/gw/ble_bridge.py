@@ -8,7 +8,6 @@ import os
 import re
 import signal
 import socket
-import struct
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -35,11 +34,9 @@ except ImportError:
     BotoClientError = Exception
 
 from .shadow_store import (
-    DEFAULT_BATTERY_PERCENT,
-    DEFAULT_BATTERY_VOLT,
+    DEFAULT_BATTERY_MV,
     DEFAULT_SHADOW_FILE,
-    get_reported_battery_percent,
-    get_reported_battery_volt,
+    get_reported_battery_mv,
     get_reported_power,
     load_shadow,
     save_shadow,
@@ -292,27 +289,15 @@ def _extract_reported_power(payload: dict[str, Any]) -> bool | None:
     return value if isinstance(value, bool) else None
 
 
-def _extract_reported_battery_percent(payload: dict[str, Any]) -> int | None:
+def _extract_reported_battery_mv(payload: dict[str, Any]) -> int | None:
     mcu = _extract_reported_mcu(payload)
     if mcu is None:
         return None
-    value = mcu.get("batteryPercent")
+    value = mcu.get("batteryMv")
     if isinstance(value, bool):
         return None
-    if isinstance(value, int) and 0 <= value <= 100:
+    if isinstance(value, int) and 0 <= value <= 10000:
         return value
-    return None
-
-
-def _extract_reported_battery_volt(payload: dict[str, Any]) -> float | None:
-    mcu = _extract_reported_mcu(payload)
-    if mcu is None:
-        return None
-    value = mcu.get("batteryVolt")
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, (int, float)) and 0.0 <= float(value) <= 10.0:
-        return round(float(value), 3)
     return None
 
 
@@ -358,8 +343,7 @@ class BridgeConfig:
 class ShadowState:
     desired_power: bool | None = None
     reported_power: bool = False
-    battery_percent: int = DEFAULT_BATTERY_PERCENT
-    battery_volt: float = DEFAULT_BATTERY_VOLT
+    battery_mv: int = DEFAULT_BATTERY_MV
     ble_uuids: BleGattUuids = DEFAULT_BLE_GATT_UUIDS
     ble_online: bool = False
     ble_uuid_search_mode: bool = False
@@ -371,15 +355,12 @@ class ShadowState:
     def set_reported(
         self,
         power: bool,
-        battery_percent: int | None = None,
-        battery_volt: float | None = None,
+        battery_mv: int | None = None,
         ble_uuids: BleGattUuids | None = None,
     ) -> None:
         self.reported_power = power
-        if battery_percent is not None:
-            self.battery_percent = battery_percent
-        if battery_volt is not None:
-            self.battery_volt = round(float(battery_volt), 3)
+        if battery_mv is not None:
+            self.battery_mv = int(battery_mv)
         if ble_uuids is not None:
             self.ble_uuids = ble_uuids
 
@@ -393,8 +374,7 @@ class ShadowState:
             "reported": {
                 "mcu": {
                     "power": self.reported_power,
-                    "batteryPercent": self.battery_percent,
-                    "batteryVolt": self.battery_volt,
+                    "batteryMv": self.battery_mv,
                     "ble": ble_state,
                 }
             },
@@ -420,8 +400,7 @@ class AwsShadowUpdate:
     has_desired: bool = False
     desired_power: bool | None = None
     reported_power: bool | None = None
-    battery_percent: int | None = None
-    battery_volt: float | None = None
+    battery_mv: int | None = None
     ble_uuids: BleGattUuids | None = None
 
 
@@ -549,8 +528,7 @@ class AwsShadowClient:
         self,
         *,
         power: bool,
-        battery_percent: int,
-        battery_volt: float,
+        battery_mv: int,
         ble_uuids: BleGattUuids,
         ble_online: bool,
         clear_desired_power: bool,
@@ -562,8 +540,9 @@ class AwsShadowClient:
             "reported": {
                 "mcu": {
                     "power": power,
-                    "batteryPercent": battery_percent,
-                    "batteryVolt": round(float(battery_volt), 3),
+                    "batteryPercent": None,
+                    "batteryMv": int(battery_mv),
+                    "batteryVolt": None,
                     "ble": ble_state,
                 }
             }
@@ -720,8 +699,7 @@ class AwsShadowClient:
                 has_desired=True,
                 desired_power=_extract_desired_power_from_shadow(payload),
                 reported_power=_extract_reported_power(payload),
-                battery_percent=_extract_reported_battery_percent(payload),
-                battery_volt=_extract_reported_battery_volt(payload),
+                battery_mv=_extract_reported_battery_mv(payload),
                 ble_uuids=_extract_reported_ble_uuids(payload),
             )
             self._enqueue_update(update)
@@ -948,21 +926,12 @@ class BleSleepBridge:
                 self._shadow.set_reported(update.reported_power)
                 changed = True
             if (
-                update.battery_percent is not None
-                and self._shadow.battery_percent != update.battery_percent
+                update.battery_mv is not None
+                and self._shadow.battery_mv != update.battery_mv
             ):
                 self._shadow.set_reported(
                     self._shadow.reported_power,
-                    battery_percent=update.battery_percent,
-                )
-                changed = True
-            if (
-                update.battery_volt is not None
-                and self._shadow.battery_volt != update.battery_volt
-            ):
-                self._shadow.set_reported(
-                    self._shadow.reported_power,
-                    battery_volt=update.battery_volt,
+                    battery_mv=update.battery_mv,
                 )
                 changed = True
             if (
@@ -972,8 +941,7 @@ class BleSleepBridge:
                 previous_ble_uuids = self._shadow.ble_uuids
                 self._shadow.set_reported(
                     self._shadow.reported_power,
-                    battery_percent=self._shadow.battery_percent,
-                    battery_volt=self._shadow.battery_volt,
+                    battery_mv=self._shadow.battery_mv,
                     ble_uuids=update.ble_uuids,
                 )
                 self._cached_device_id = update.ble_uuids.device_id
@@ -1131,8 +1099,7 @@ class BleSleepBridge:
         try:
             await self._cloud_shadow.set_reported_state(
                 power=self._shadow.reported_power,
-                battery_percent=self._shadow.battery_percent,
-                battery_volt=self._shadow.battery_volt,
+                battery_mv=self._shadow.battery_mv,
                 ble_uuids=self._shadow.ble_uuids,
                 ble_online=self._shadow.ble_online,
                 clear_desired_power=clear_desired_power,
@@ -1206,22 +1173,19 @@ class BleSleepBridge:
             )
 
     @staticmethod
-    def _parse_state_report(report: bytes) -> tuple[int, bool, bool, float | None]:
-        if len(report) < 2:
+    def _parse_state_report(report: bytes) -> tuple[bool, bool, int]:
+        if len(report) != 3:
             raise RuntimeError(
-                f"unexpected State Report length: {len(report)} (expected >= 2)"
+                f"unexpected State Report length: {len(report)} (expected 3)"
             )
 
-        battery_pct = int(report[0])
-        sleep_flag = int(report[1])
+        sleep_flag = int(report[0])
         sleep = sleep_flag == 0x01
         reported_power = sleep_flag == 0x00
-        battery_volt: float | None = None
-        if len(report) >= 6:
-            parsed_battery_volt = struct.unpack("<f", report[2:6])[0]
-            if parsed_battery_volt == parsed_battery_volt and 0.0 <= parsed_battery_volt <= 10.0:
-                battery_volt = round(parsed_battery_volt, 3)
-        return battery_pct, sleep, reported_power, battery_volt
+        battery_mv = int.from_bytes(report[1:3], byteorder="little")
+        if not (0 <= battery_mv <= 10000):
+            raise RuntimeError(f"unexpected battery millivolts in State Report: {battery_mv}")
+        return sleep, reported_power, battery_mv
 
     async def _sync_reported_from_device_report(
         self,
@@ -1230,23 +1194,19 @@ class BleSleepBridge:
         context: str,
         log_prefix: str,
     ) -> None:
-        battery_pct, sleep, reported_power, battery_volt = self._parse_state_report(report)
+        sleep, reported_power, battery_mv = self._parse_state_report(report)
         clear_desired = self._shadow.desired_power == reported_power
-        next_battery_volt = (
-            battery_volt if battery_volt is not None else self._shadow.battery_volt
-        )
+        next_battery_mv = battery_mv
 
         if (
             self._shadow.reported_power == reported_power
-            and self._shadow.battery_percent == battery_pct
-            and self._shadow.battery_volt == next_battery_volt
+            and self._shadow.battery_mv == next_battery_mv
             and not clear_desired
         ):
             LOGGER.debug(
-                "%s unchanged: battery_pct=%s battery_volt=%s sleep=%s => power=%s",
+                "%s unchanged: battery_mv=%s sleep=%s => power=%s",
                 log_prefix,
-                battery_pct,
-                next_battery_volt,
+                next_battery_mv,
                 sleep,
                 reported_power,
             )
@@ -1254,18 +1214,16 @@ class BleSleepBridge:
 
         self._shadow.set_reported(
             power=reported_power,
-            battery_percent=battery_pct,
-            battery_volt=battery_volt,
+            battery_mv=battery_mv,
         )
         await self._publish_reported_update(
             clear_desired_power=clear_desired,
             context=context,
         )
         LOGGER.info(
-            "%s: battery_pct=%s battery_volt=%s sleep=%s => power=%s",
+            "%s: battery_mv=%s sleep=%s => power=%s",
             log_prefix,
-            battery_pct,
-            next_battery_volt,
+            next_battery_mv,
             sleep,
             reported_power,
         )
@@ -1314,8 +1272,7 @@ class BleSleepBridge:
             if configured_uuids != self._shadow.ble_uuids:
                 self._shadow.set_reported(
                     self._shadow.reported_power,
-                    battery_percent=self._shadow.battery_percent,
-                    battery_volt=self._shadow.battery_volt,
+                    battery_mv=self._shadow.battery_mv,
                     ble_uuids=configured_uuids,
                 )
             LOGGER.info(
@@ -1356,8 +1313,7 @@ class BleSleepBridge:
 
         self._shadow.set_reported(
             self._shadow.reported_power,
-            battery_percent=self._shadow.battery_percent,
-            battery_volt=self._shadow.battery_volt,
+            battery_mv=self._shadow.battery_mv,
             ble_uuids=discovered_uuids,
         )
         self._ble_uuid_search_mode = False
@@ -1759,8 +1715,7 @@ def _build_shadow_from_snapshot(
 ) -> ShadowState:
     cached = load_shadow(snapshot_file)
     reported_power = _extract_reported_power(snapshot)
-    battery_percent = _extract_reported_battery_percent(snapshot)
-    battery_volt = _extract_reported_battery_volt(snapshot)
+    battery_mv = _extract_reported_battery_mv(snapshot)
     mcu = _extract_reported_mcu(snapshot)
     ble_map = _extract_reported_ble_map(mcu) if mcu is not None else None
     reported_device_id = (
@@ -1784,15 +1739,10 @@ def _build_shadow_from_snapshot(
         reported_power=(
             reported_power if reported_power is not None else get_reported_power(cached)
         ),
-        battery_percent=(
-            battery_percent
-            if battery_percent is not None
-            else get_reported_battery_percent(cached)
-        ),
-        battery_volt=(
-            battery_volt
-            if battery_volt is not None
-            else get_reported_battery_volt(cached)
+        battery_mv=(
+            battery_mv
+            if battery_mv is not None
+            else get_reported_battery_mv(cached)
         ),
         ble_uuids=ble_uuids,
         ble_online=False,

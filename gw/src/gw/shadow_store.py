@@ -7,8 +7,7 @@ from pathlib import Path
 from typing import Any
 
 DEFAULT_REPORTED_POWER = False
-DEFAULT_BATTERY_PERCENT = 50
-DEFAULT_BATTERY_VOLT = 3.75
+DEFAULT_BATTERY_MV = 3750
 DEFAULT_SHADOW_FILE = Path("/tmp/txing_shadow.json")
 
 
@@ -18,8 +17,7 @@ def default_shadow_payload() -> dict[str, Any]:
             "reported": {
                 "mcu": {
                     "power": DEFAULT_REPORTED_POWER,
-                    "batteryPercent": DEFAULT_BATTERY_PERCENT,
-                    "batteryVolt": DEFAULT_BATTERY_VOLT,
+                    "batteryMv": DEFAULT_BATTERY_MV,
                 }
             },
         }
@@ -76,26 +74,15 @@ def get_reported_power(payload: dict[str, Any]) -> bool:
     return DEFAULT_REPORTED_POWER
 
 
-def get_reported_battery_percent(payload: dict[str, Any]) -> int:
+def get_reported_battery_mv(payload: dict[str, Any]) -> int:
     reported = payload.get("state", {}).get("reported", {})
     mcu = reported.get("mcu", {}) if isinstance(reported, dict) else {}
-    value = mcu.get("batteryPercent") if isinstance(mcu, dict) else None
+    value = mcu.get("batteryMv") if isinstance(mcu, dict) else None
     if isinstance(value, bool):
-        return DEFAULT_BATTERY_PERCENT
-    if isinstance(value, int) and 0 <= value <= 100:
+        return DEFAULT_BATTERY_MV
+    if isinstance(value, int) and 0 <= value <= 10000:
         return value
-    return DEFAULT_BATTERY_PERCENT
-
-
-def get_reported_battery_volt(payload: dict[str, Any]) -> float:
-    reported = payload.get("state", {}).get("reported", {})
-    mcu = reported.get("mcu", {}) if isinstance(reported, dict) else {}
-    value = mcu.get("batteryVolt") if isinstance(mcu, dict) else None
-    if isinstance(value, bool):
-        return DEFAULT_BATTERY_VOLT
-    if isinstance(value, (int, float)) and 0.0 <= float(value) <= 10.0:
-        return round(float(value), 3)
-    return DEFAULT_BATTERY_VOLT
+    return DEFAULT_BATTERY_MV
 
 
 def clear_desired_if_synced(path: Path = DEFAULT_SHADOW_FILE) -> dict[str, Any]:

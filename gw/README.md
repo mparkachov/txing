@@ -216,7 +216,7 @@ just gw::wake thing_name=my-thing region=eu-central-1 endpoint_file=certs/iot-da
   - `power=false` -> `sleep=true` (`0x01`)
 - Publishes reported updates to AWS:
   - `state.reported.mcu.power`
-  - `state.reported.mcu.batteryPercent`
+  - `state.reported.mcu.batteryMv`
   - `state.reported.mcu.ble.serviceUuid`
   - `state.reported.mcu.ble.sleepCommandUuid`
   - `state.reported.mcu.ble.stateReportUuid`

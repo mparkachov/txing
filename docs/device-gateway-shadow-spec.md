@@ -1,4 +1,4 @@
-# Txing Gateway Contract (Shadow + BLE) v0.7
+# Txing Gateway Contract (Shadow + BLE) v0.9
 
 This document is the integration contract for the gateway team only.
 Build, flash, and local developer commands are intentionally out of scope and live in `README.md`.
@@ -27,8 +27,7 @@ High-level architecture:
 
 ```rust
 struct DeviceState {
-    battery_pct: u8, // 0..=100, estimated from measured battery voltage
-    battery_volt: f32, // measured battery voltage in volts
+    battery_mv: u16, // measured battery voltage in millivolts
     sleep: bool,
 }
 ```
@@ -36,7 +35,7 @@ struct DeviceState {
 State semantics:
 - `sleep=true`: low-power periodic listen mode
 - `sleep=false`: active/awake mode
-- On reset/power-cycle, device starts with `sleep=true`, `battery_pct` derived from the current battery voltage
+- On reset/power-cycle, device starts with `sleep=true`
 
 ## 4. Shadow Contract
 
@@ -56,8 +55,7 @@ Authoritative JSON schema: `./txing-shadow.schema.json`
     "reported": {
       "mcu": {
         "power": false,
-        "batteryPercent": 50,
-        "batteryVolt": 3.75,
+        "batteryMv": 3750,
         "ble": {
           "serviceUuid": "f6b4a000-7b32-4d2d-9f4b-4ff0a2b8f100",
           "sleepCommandUuid": "f6b4a001-7b32-4d2d-9f4b-4ff0a2b8f100",
@@ -74,8 +72,7 @@ Authoritative JSON schema: `./txing-shadow.schema.json`
 Rules:
 - Command input is `state.desired.mcu.power`
 - Confirmed device state is `state.reported.mcu.power`
-- Battery value is `state.reported.mcu.batteryPercent`
-- Battery voltage is `state.reported.mcu.batteryVolt`
+- Battery voltage is `state.reported.mcu.batteryMv`
 - BLE GATT UUID config is `state.reported.mcu.ble.*`
 - BLE connection liveness is `state.reported.mcu.ble.online`
 - BLE fast-connect hint is optional `state.reported.mcu.ble.deviceId`
@@ -102,10 +99,9 @@ Payloads:
 - `Sleep Command` (1 byte):
   - `0x00` -> set `sleep=false`
   - `0x01` -> set `sleep=true`
-- `State Report` (6 bytes):
-  - byte 0: `battery_pct`
-  - byte 1: `sleep` (`0x00` false, `0x01` true)
-  - bytes 2..5: `battery_volt` as little-endian `f32`
+- `State Report` (3 bytes):
+  - byte 0: `sleep` (`0x00` false, `0x01` true)
+  - bytes 1..2: `battery_mv` as little-endian `u16`
 
 Notification behavior:
 - Device notifies `State Report` on connection establishment
@@ -132,8 +128,7 @@ Notification behavior:
   - scan/connect to Txing
   - write `Sleep Command=0x00` (`sleep=false`)
   - read/subscribe `State Report` and confirm `mcu.power=true`
-  - update `reported.mcu.power=true`, `reported.mcu.batteryPercent=50`
-  - update `reported.mcu.batteryVolt` from the BLE `State Report`
+  - update `reported.mcu.batteryMv` from the BLE `State Report`
   - keep connection maintained while desired remains true
   - reconnect on link drop
 - If `desired.mcu.power=false`:
@@ -163,6 +158,6 @@ Operational implication:
 - Setting `desired.mcu.power=false` results in:
   - device returns to low-power periodic behavior
   - shadow `reported.mcu.power=false`
-- `reported.mcu.batteryPercent` and `reported.mcu.batteryVolt` are populated in v0.7
-- `reported.mcu.ble.*` is present and valid in v0.7
-- `reported.mcu.ble.online` flips false -> true -> false across startup/connect/disconnect in v0.7
+- `reported.mcu.batteryMv` is populated in v0.9
+- `reported.mcu.ble.*` is present and valid in v0.9
+- `reported.mcu.ble.online` flips false -> true -> false across startup/connect/disconnect in v0.9

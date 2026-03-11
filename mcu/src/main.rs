@@ -22,12 +22,13 @@ fn defmt_panic() -> ! {
     panic_probe::hard_fault()
 }
 
-const BATTERY_PCT_FALLBACK: u8 = 0;
 const BATTERY_SAADC_FULL_SCALE_MV: u32 = 3600;
-const BATTERY_EMPTY_MV: u32 = 3300;
-const BATTERY_FULL_MV: u32 = 4200;
 const BATTERY_DIVIDER_UPPER_OHMS: u32 = 1_000_000;
 const BATTERY_DIVIDER_LOWER_OHMS: u32 = 510_000;
+const BATTERY_CALIBRATION_LOW_REPORTED_MV: i64 = 3700;
+const BATTERY_CALIBRATION_LOW_MEASURED_MV: i64 = 3790;
+const BATTERY_CALIBRATION_HIGH_REPORTED_MV: i64 = 4085;
+const BATTERY_CALIBRATION_HIGH_MEASURED_MV: i64 = 4170;
 const BATTERY_ADC_MAX_READING: u32 = (1 << 14) - 1;
 const BATTERY_REFRESH_INTERVAL_TICKS: u32 = 60 * 32_768;
 const SLEEP_ADV_INTERVAL_UNITS: u32 = 80; // 50 ms (0.625 ms units)
@@ -43,34 +44,27 @@ static BATTERY_REFRESH_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new
 static BATTERY_REFRESH_ARMED: AtomicBool = AtomicBool::new(false);
 
 struct DeviceState {
-    battery_pct: Cell<u8>,
-    battery_volt: Cell<f32>,
+    battery_mv: Cell<u16>,
     sleep: Cell<bool>,
 }
 
 impl DeviceState {
     const fn boot_default() -> Self {
         Self {
-            battery_pct: Cell::new(BATTERY_PCT_FALLBACK),
-            battery_volt: Cell::new(0.0),
+            battery_mv: Cell::new(0),
             sleep: Cell::new(false),
         }
     }
 
-    fn report_bytes(&self) -> [u8; 6] {
-        let mut report = [0u8; 6];
-        report[0] = self.battery_pct.get();
-        report[1] = if self.sleep.get() { 0x01 } else { 0x00 };
-        report[2..6].copy_from_slice(&self.battery_volt.get().to_le_bytes());
+    fn report_bytes(&self) -> [u8; 3] {
+        let mut report = [0u8; 3];
+        report[0] = if self.sleep.get() { 0x01 } else { 0x00 };
+        report[1..3].copy_from_slice(&self.battery_mv.get().to_le_bytes());
         report
     }
 
-    fn set_battery_pct(&self, battery_pct: u8) {
-        self.battery_pct.set(battery_pct);
-    }
-
-    fn set_battery_volt(&self, battery_volt: f32) {
-        self.battery_volt.set(battery_volt);
+    fn set_battery_mv(&self, battery_mv: u16) {
+        self.battery_mv.set(battery_mv);
     }
 
     fn sleep(&self) -> bool {
@@ -133,7 +127,7 @@ struct TxingControlService {
     sleep_command: u8,
 
     #[characteristic(uuid = "f6b4a002-7b32-4d2d-9f4b-4ff0a2b8f100", read, notify)]
-    state_report: [u8; 6],
+    state_report: [u8; 3],
 }
 
 #[nrf_softdevice::gatt_server]
@@ -200,8 +194,7 @@ fn set_led_for_sleep_state<P: OutputPin>(led: &mut P, sleep: bool) {
 
 fn refresh_battery_state(state: &DeviceState, battery_monitor: &mut BatteryMonitor) {
     let battery_mv = battery_mv_from_raw(battery_monitor.sample_raw());
-    state.set_battery_pct(battery_pct_from_mv(battery_mv));
-    state.set_battery_volt(battery_volt_from_mv(battery_mv));
+    state.set_battery_mv(battery_mv.min(u16::MAX as u32) as u16);
 }
 
 fn publish_state_report(server: &Server, conn: Option<&Connection>, state: &DeviceState) {
@@ -254,28 +247,33 @@ fn battery_mv_from_raw(raw: u32) -> u32 {
     }
 
     let sense_mv = raw.saturating_mul(BATTERY_SAADC_FULL_SCALE_MV) / BATTERY_ADC_MAX_READING;
-    let battery_mv = sense_mv
+    let battery_mv_one_point = sense_mv
         .saturating_mul(BATTERY_DIVIDER_UPPER_OHMS + BATTERY_DIVIDER_LOWER_OHMS)
         / BATTERY_DIVIDER_LOWER_OHMS;
 
-    battery_mv
+    // Two-point calibration anchored to multimeter measurements using the
+    // raw ADC-derived battery estimate:
+    // 3.700 V estimated -> 3.790 V measured
+    // 4.085 V estimated -> 4.170 V measured
+    apply_battery_calibration(battery_mv_one_point as i64)
 }
 
-fn battery_pct_from_mv(battery_mv: u32) -> u8 {
-    if battery_mv <= BATTERY_EMPTY_MV {
-        return 0;
-    }
+fn apply_battery_calibration(reported_mv: i64) -> u32 {
+    let reported_span = BATTERY_CALIBRATION_HIGH_REPORTED_MV - BATTERY_CALIBRATION_LOW_REPORTED_MV;
+    let measured_span = BATTERY_CALIBRATION_HIGH_MEASURED_MV - BATTERY_CALIBRATION_LOW_MEASURED_MV;
+    let reported_delta = reported_mv - BATTERY_CALIBRATION_LOW_REPORTED_MV;
+    let corrected_mv = BATTERY_CALIBRATION_LOW_MEASURED_MV
+        + round_div_i64(reported_delta * measured_span, reported_span);
 
-    if battery_mv >= BATTERY_FULL_MV {
-        return 100;
-    }
-
-    let span_mv = BATTERY_FULL_MV - BATTERY_EMPTY_MV;
-    (((battery_mv - BATTERY_EMPTY_MV) * 100) / span_mv) as u8
+    corrected_mv.max(0) as u32
 }
 
-fn battery_volt_from_mv(battery_mv: u32) -> f32 {
-    battery_mv as f32 / 1000.0
+fn round_div_i64(numerator: i64, denominator: i64) -> i64 {
+    if numerator >= 0 {
+        (numerator + (denominator / 2)) / denominator
+    } else {
+        (numerator - (denominator / 2)) / denominator
+    }
 }
 
 async fn sleep_poll_cycle<P: OutputPin>(

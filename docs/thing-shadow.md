@@ -24,8 +24,7 @@ Schema validation should be done by project code and/or CI checks, while AWS IoT
 
 - `state.desired.mcu.power` (`boolean`) requests MCU power state.
 - `state.reported.mcu.power` (`boolean`) is the gateway-confirmed MCU power state.
-- `state.reported.mcu.batteryPercent` (`integer`, `0..100`, estimated from measured battery voltage).
-- `state.reported.mcu.batteryVolt` (`number`, volts, measured MCU battery estimate).
+- `state.reported.mcu.batteryMv` (`integer`, millivolts, measured MCU battery estimate).
 - `state.reported.mcu.ble.serviceUuid` (`uuid`) is the BLE service UUID used by gateway.
 - `state.reported.mcu.ble.sleepCommandUuid` (`uuid`) is the BLE write characteristic UUID.
 - `state.reported.mcu.ble.stateReportUuid` (`uuid`) is the BLE read+notify characteristic UUID.
