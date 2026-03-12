@@ -823,6 +823,7 @@ class BleSleepBridge:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._disconnect_event: asyncio.Event | None = None
         self._ble_uuid_search_mode = shadow.ble_uuid_search_mode
+        self._has_device_sync = False
 
     async def run(self) -> None:
         self._loop = asyncio.get_running_loop()
@@ -843,7 +844,18 @@ class BleSleepBridge:
                     await self._apply_cloud_shadow_updates(updates=pending_updates)
                     pending_updates = []
 
+                if (
+                    self._shadow.desired_power is not None
+                    and self._shadow.desired_power == self._shadow.reported_power
+                ):
+                    await self._clear_desired_if_synced(
+                        context="No-op: desired already equals reported",
+                    )
+
                 if not self._is_connected():
+                    if self._should_idle_disconnected_while_sleeping():
+                        pending_updates = await self._cloud_shadow.wait_for_updates()
+                        continue
                     try:
                         await self._ensure_connected()
                     except Exception:
@@ -854,6 +866,12 @@ class BleSleepBridge:
                         pending_updates = await self._wait_for_updates_or_disconnect(
                             timeout_seconds=self._config.reconnect_delay
                         )
+                        continue
+                    if self._should_idle_disconnected_while_sleeping():
+                        LOGGER.info(
+                            "MCU is sleeping; releasing BLE connection until wake is requested"
+                        )
+                        await self._safe_disconnect()
                         continue
 
                 await self._process_desired_power_once()
@@ -1080,6 +1098,11 @@ class BleSleepBridge:
             clear_desired_power=True,
             context="Reported updated after BLE command success",
         )
+        if not target_power and self._is_connected():
+            LOGGER.info(
+                "MCU entered sleep; disconnecting BLE session until wake is requested"
+            )
+            await self._safe_disconnect()
 
     async def _clear_desired_if_synced(self, context: str) -> None:
         if self._shadow.desired_power is None:
@@ -1241,6 +1264,7 @@ class BleSleepBridge:
             context="Reported synchronized from MCU state report on connect",
             log_prefix="MCU state report on connect",
         )
+        self._has_device_sync = True
 
     async def _ensure_services_discovered(self, client: BleakClient) -> None:
         try:
@@ -1588,6 +1612,13 @@ class BleSleepBridge:
 
     def _is_connected(self) -> bool:
         return self._client is not None and self._client.is_connected
+
+    def _should_idle_disconnected_while_sleeping(self) -> bool:
+        return (
+            self._has_device_sync
+            and not self._shadow.reported_power
+            and self._shadow.desired_power is None
+        )
 
 
 def _parse_args() -> argparse.Namespace:
