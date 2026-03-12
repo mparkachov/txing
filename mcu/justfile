@@ -24,6 +24,10 @@ host_triple := `rustc -vV | sed -n 's/^host: //p'`
 @flash-uf2:
     cargo run --manifest-path "{{xtask_manifest}}" --target "{{host_triple}}" -- flash-uf2
 
+@log:
+    cargo build --release --manifest-path "{{firmware_manifest}}"
+    probe-rs attach --chip nRF52840_xxAA --protocol swd --rtt-scan-memory --no-location "{{mcu_dir}}/target/{{target_triple}}/release/txing"
+
 @scan *args='':
     cargo run --manifest-path "{{xtask_manifest}}" --target "{{host_triple}}" -- scan {{args}}
 
