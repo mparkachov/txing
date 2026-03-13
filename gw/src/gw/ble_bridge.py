@@ -56,6 +56,7 @@ DEFAULT_CONNECT_TIMEOUT = 5.0
 DEFAULT_COMMAND_ACK_TIMEOUT = 1.0
 DEFAULT_COMMAND_ACK_POLL_INTERVAL = 0.1
 DEFAULT_DEVICE_STALE_AFTER = 0.75
+DEFAULT_ADVERTISEMENT_LOG_INTERVAL = 30.0
 DEFAULT_SCAN_MODE = "active"
 DEFAULT_LOCK_FILE = Path("/tmp/txing_gw.lock")
 DEFAULT_THING_NAME = "txing"
@@ -340,6 +341,7 @@ class BridgeConfig:
     command_ack_timeout: float = DEFAULT_COMMAND_ACK_TIMEOUT
     command_ack_poll_interval: float = DEFAULT_COMMAND_ACK_POLL_INTERVAL
     device_stale_after: float = DEFAULT_DEVICE_STALE_AFTER
+    advertisement_log_interval: float = DEFAULT_ADVERTISEMENT_LOG_INTERVAL
     scan_mode: str = DEFAULT_SCAN_MODE
     shadow_file: Path = DEFAULT_SHADOW_FILE
     lock_file: Path = DEFAULT_LOCK_FILE
@@ -371,6 +373,7 @@ class KnownBleDevice:
     local_name: str | None = None
     matched_by: str | None = None
     last_seen_monotonic: float | None = None
+    last_logged_seen_monotonic: float | None = None
     rssi: int | None = None
 
     def is_fresh(self, now: float, max_age: float) -> bool:
@@ -395,6 +398,15 @@ class KnownBleDevice:
         self.matched_by = matched_by
         self.last_seen_monotonic = seen_at
         self.rssi = rssi
+
+    def should_log_sighting(self, now: float, min_interval: float) -> bool:
+        if self.last_logged_seen_monotonic is None:
+            self.last_logged_seen_monotonic = now
+            return True
+        if (now - self.last_logged_seen_monotonic) >= min_interval:
+            self.last_logged_seen_monotonic = now
+            return True
+        return False
 
 
 @dataclass(slots=True)
@@ -917,6 +929,7 @@ class BleSleepBridge:
             context="Gateway startup: BLE disconnected",
             force=True,
         )
+        await self._normalize_shadow_for_rendezvous_startup()
         await self._start_scanner()
         pending_updates = self._cloud_shadow.drain_updates()
         try:
@@ -1106,6 +1119,21 @@ class BleSleepBridge:
             context="Reported updated after wake latch reset",
         )
 
+    async def _normalize_shadow_for_rendezvous_startup(self) -> None:
+        if self._shadow.desired_power is not None:
+            return
+        if not self._shadow.reported_power:
+            return
+
+        LOGGER.info(
+            "Clearing stale reported.mcu.power=true on startup for rendezvous mode"
+        )
+        self._shadow.set_reported(False)
+        await self._publish_reported_update(
+            clear_desired_power=False,
+            context="Cleared stale wake latch on gateway startup",
+        )
+
     def _wake_command_pending(self) -> bool:
         return self._shadow.desired_power is True and not self._shadow.reported_power
 
@@ -1185,6 +1213,16 @@ class BleSleepBridge:
             if previous_device_id != device.address:
                 LOGGER.info(
                     "Matched BLE advertisement deviceId=%s name=%s by=%s rssi=%s",
+                    device.address,
+                    adv.local_name or device.name or "<unnamed>",
+                    matched_by,
+                    getattr(adv, "rssi", None),
+                )
+            elif self._known_device.should_log_sighting(
+                seen_at, self._config.advertisement_log_interval
+            ):
+                LOGGER.info(
+                    "Observed BLE advertisement deviceId=%s name=%s by=%s rssi=%s",
                     device.address,
                     adv.local_name or device.name or "<unnamed>",
                     matched_by,
@@ -1756,6 +1794,12 @@ def _parse_args() -> argparse.Namespace:
         help="Seconds before a previously seen advertisement is considered stale for immediate reconnect (default: 0.75)",
     )
     parser.add_argument(
+        "--advertisement-log-interval",
+        type=float,
+        default=DEFAULT_ADVERTISEMENT_LOG_INTERVAL,
+        help="Minimum seconds between repeated info logs for advertisements from the same known device (default: 30)",
+    )
+    parser.add_argument(
         "--scan-mode",
         default=DEFAULT_SCAN_MODE,
         choices=("active", "passive"),
@@ -2027,6 +2071,7 @@ def main() -> None:
         command_ack_timeout=args.command_ack_timeout,
         command_ack_poll_interval=args.command_ack_poll_interval,
         device_stale_after=args.device_stale_after,
+        advertisement_log_interval=args.advertisement_log_interval,
         scan_mode=args.scan_mode,
         shadow_file=args.shadow_file,
         lock_file=args.lock_file,
