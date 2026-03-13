@@ -41,9 +41,12 @@ const WAKE_COMMAND_VALUE: u8 = 0x01;
 const LEGACY_WAKE_COMMAND_VALUE: u8 = 0x00;
 const STATE_REPORT_STATUS_IDLE: u8 = 0x00;
 const STATE_REPORT_STATUS_WAKE_ACK: u8 = 0x01;
-const TXING_ADV_DATA: [u8; 9] = [
+const TXING_ADV_DATA: [u8; 27] = [
     0x02, 0x01, 0x06, // Flags
     0x05, 0xFF, 0xFF, 0xFF, b'T', b'X', // Manufacturer data: company=0xFFFF, marker="TX"
+    // Complete list of 128-bit service UUIDs in little-endian BLE advertising order.
+    0x11, 0x07, 0x00, 0xA0, 0xB4, 0xF6, 0x32, 0x7B, 0x2D, 0x4D, 0x9F, 0x4B, 0x4F, 0xF0,
+    0xA2, 0xB8, 0xF1, 0x00,
 ];
 const TXING_SCAN_DATA: [u8; 7] = [0x06, 0x09, b't', b'x', b'i', b'n', b'g'];
 

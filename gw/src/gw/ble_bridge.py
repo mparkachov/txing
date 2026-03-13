@@ -902,7 +902,8 @@ class BleSleepBridge:
         if self._state == next_state:
             LOGGER.debug("BLE state %s (%s)", next_state.value, reason)
             return
-        LOGGER.info(
+        _log_important(
+            LOGGER,
             "BLE state %s -> %s (%s)",
             self._state.value,
             next_state.value,
@@ -931,7 +932,7 @@ class BleSleepBridge:
         )
         await self._normalize_shadow_for_rendezvous_startup()
         await self._start_scanner()
-        pending_updates = self._cloud_shadow.drain_updates()
+        pending_updates = self._drain_runtime_updates()
         try:
             while True:
                 if pending_updates:
@@ -967,7 +968,7 @@ class BleSleepBridge:
                             err,
                         )
                         await asyncio.sleep(self._config.reconnect_delay)
-                    pending_updates = self._cloud_shadow.drain_updates()
+                    pending_updates = self._drain_runtime_updates()
                     continue
 
                 self._set_gateway_state(
@@ -1013,6 +1014,16 @@ class BleSleepBridge:
             )
             await self._apply_cloud_shadow_updates(updates=updates)
             await self._process_desired_no_ble_once()
+
+    def _drain_runtime_updates(self) -> list[AwsShadowUpdate]:
+        updates = self._cloud_shadow.drain_updates()
+        filtered = [update for update in updates if update.source != "shadow/get/accepted"]
+        if len(filtered) != len(updates):
+            LOGGER.debug(
+                "Discarded %s queued startup snapshot update(s) already reflected in local state",
+                len(updates) - len(filtered),
+            )
+        return filtered
 
     async def _apply_cloud_shadow_updates(
         self,
@@ -1125,7 +1136,8 @@ class BleSleepBridge:
         if not self._shadow.reported_power:
             return
 
-        LOGGER.info(
+        _log_important(
+            LOGGER,
             "Clearing stale reported.mcu.power=true on startup for rendezvous mode"
         )
         self._shadow.set_reported(False)
@@ -1148,7 +1160,7 @@ class BleSleepBridge:
             scanning_mode=self._config.scan_mode,
         )
         await self._scanner.start()
-        LOGGER.info("Started BLE scanner mode=%s", self._config.scan_mode)
+        _log_important(LOGGER, "Started BLE scanner mode=%s", self._config.scan_mode)
 
     async def _stop_scanner(self) -> None:
         scanner = self._scanner
@@ -1211,7 +1223,8 @@ class BleSleepBridge:
             )
             self._cached_device_id = device.address
             if previous_device_id != device.address:
-                LOGGER.info(
+                _log_important(
+                    LOGGER,
                     "Matched BLE advertisement deviceId=%s name=%s by=%s rssi=%s",
                     device.address,
                     adv.local_name or device.name or "<unnamed>",
@@ -1221,7 +1234,8 @@ class BleSleepBridge:
             elif self._known_device.should_log_sighting(
                 seen_at, self._config.advertisement_log_interval
             ):
-                LOGGER.info(
+                _log_important(
+                    LOGGER,
                     "Observed BLE advertisement deviceId=%s name=%s by=%s rssi=%s",
                     device.address,
                     adv.local_name or device.name or "<unnamed>",
