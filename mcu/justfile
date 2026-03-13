@@ -25,12 +25,7 @@ probe_rs_protocol := "swd"
     cd "{{mcu_dir}}" && cargo objcopy --release --manifest-path "{{firmware_manifest}}" -- -O binary "{{bin_path}}"
     uf2conv "{{bin_path}}" --base "{{uf2_base}}" --family "{{uf2_family}}" --output "{{uf2_path}}"
 
-@flash:
-    cd "{{mcu_dir}}" && cargo build --release --manifest-path "{{firmware_manifest}}"
-    probe-rs download --chip "{{probe_rs_chip}}" --protocol "{{probe_rs_protocol}}" --preverify --verify --restore-unwritten "{{elf_path}}"
-    probe-rs reset --chip "{{probe_rs_chip}}" --protocol "{{probe_rs_protocol}}"
-
-@probe-flash:
+@flash-probe:
     cd "{{mcu_dir}}" && cargo build --release --manifest-path "{{firmware_manifest}}"
     probe-rs download --chip "{{probe_rs_chip}}" --protocol "{{probe_rs_protocol}}" --preverify --verify --restore-unwritten "{{elf_path}}"
     probe-rs reset --chip "{{probe_rs_chip}}" --protocol "{{probe_rs_protocol}}"
