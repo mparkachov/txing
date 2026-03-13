@@ -56,6 +56,9 @@ DEFAULT_CONNECT_TIMEOUT = 10.0
 DEFAULT_COMMAND_ACK_TIMEOUT = 2.0
 DEFAULT_COMMAND_ACK_POLL_INTERVAL = 0.1
 DEFAULT_DEVICE_STALE_AFTER = 0.75
+DEFAULT_BLE_ONLINE_STALE_AFTER = 30.0
+DEFAULT_BLE_ONLINE_RECOVER_AFTER = 30.0
+DEFAULT_BLE_ONLINE_RECOVERY_GAP = 12.0
 DEFAULT_ADVERTISEMENT_LOG_INTERVAL = 5.0
 DEFAULT_SCAN_MODE = "active"
 DEFAULT_LOCK_FILE = Path("/tmp/txing_gw.lock")
@@ -279,6 +282,17 @@ def _extract_reported_ble_map(mcu: dict[str, Any]) -> dict[str, Any] | None:
     return ble if isinstance(ble, dict) else None
 
 
+def _extract_reported_ble_online(payload: dict[str, Any]) -> bool | None:
+    mcu = _extract_reported_mcu(payload)
+    if mcu is None:
+        return None
+    ble = _extract_reported_ble_map(mcu)
+    if ble is None:
+        return None
+    value = ble.get("online")
+    return value if isinstance(value, bool) else None
+
+
 def _normalize_device_id(value: Any) -> str | None:
     if value is None:
         return None
@@ -364,6 +378,9 @@ class BridgeConfig:
     command_ack_timeout: float = DEFAULT_COMMAND_ACK_TIMEOUT
     command_ack_poll_interval: float = DEFAULT_COMMAND_ACK_POLL_INTERVAL
     device_stale_after: float = DEFAULT_DEVICE_STALE_AFTER
+    ble_online_stale_after: float = DEFAULT_BLE_ONLINE_STALE_AFTER
+    ble_online_recover_after: float = DEFAULT_BLE_ONLINE_RECOVER_AFTER
+    ble_online_recovery_gap: float = DEFAULT_BLE_ONLINE_RECOVERY_GAP
     advertisement_log_interval: float = DEFAULT_ADVERTISEMENT_LOG_INTERVAL
     scan_mode: str = DEFAULT_SCAN_MODE
     shadow_file: Path = DEFAULT_SHADOW_FILE
@@ -396,6 +413,7 @@ class KnownBleDevice:
     local_name: str | None = None
     matched_by: str | None = None
     last_seen_monotonic: float | None = None
+    online_candidate_since_monotonic: float | None = None
     last_logged_seen_monotonic: float | None = None
     rssi: int | None = None
 
@@ -414,7 +432,13 @@ class KnownBleDevice:
         matched_by: str,
         rssi: int | None,
         seen_at: float,
+        recovery_gap: float,
     ) -> None:
+        previous_seen_at = self.last_seen_monotonic
+        if previous_seen_at is None or (seen_at - previous_seen_at) > recovery_gap:
+            self.online_candidate_since_monotonic = seen_at
+        elif self.online_candidate_since_monotonic is None:
+            self.online_candidate_since_monotonic = previous_seen_at
         self.device_id = device.address
         self.device = device
         self.local_name = local_name
@@ -942,6 +966,65 @@ class BleSleepBridge:
         name = device.name or fallback_name or "<unnamed>"
         return f"{device.address} ({name})"
 
+    def _mark_ble_presence_now(self) -> None:
+        loop = self._loop
+        if loop is None:
+            return
+        now = loop.time()
+        self._known_device.last_seen_monotonic = now
+        if self._known_device.online_candidate_since_monotonic is None:
+            self._known_device.online_candidate_since_monotonic = now
+
+    def _ble_presence_recent(self) -> bool:
+        if self._is_connected():
+            return True
+        loop = self._loop
+        if loop is None:
+            return False
+        last_seen = self._known_device.last_seen_monotonic
+        if last_seen is None:
+            return False
+        return (loop.time() - last_seen) <= self._config.ble_online_stale_after
+
+    def _ble_online_timeout_seconds(self) -> float | None:
+        if not self._shadow.ble_online or self._is_connected():
+            return None
+        loop = self._loop
+        if loop is None:
+            return None
+        last_seen = self._known_device.last_seen_monotonic
+        if last_seen is None:
+            return 0.0
+        remaining = self._config.ble_online_stale_after - (loop.time() - last_seen)
+        return max(0.0, remaining)
+
+    def _ble_recovered_from_regular_advertising(self) -> bool:
+        if self._is_connected():
+            return True
+        loop = self._loop
+        if loop is None or not self._ble_presence_recent():
+            return False
+        candidate_since = self._known_device.online_candidate_since_monotonic
+        if candidate_since is None:
+            return False
+        return (loop.time() - candidate_since) >= self._config.ble_online_recover_after
+
+    def _desired_ble_online_state(self) -> bool:
+        if self._shadow.ble_online:
+            return self._ble_presence_recent()
+        return self._ble_recovered_from_regular_advertising()
+
+    async def _reconcile_ble_online_presence(self) -> None:
+        ble_online = self._desired_ble_online_state()
+        await self._publish_ble_online_state(
+            online=ble_online,
+            context=(
+                "BLE device confirmed reachable after sustained connection or advertising"
+                if ble_online
+                else "BLE device offline: no connection or matching advertisement within timeout"
+            ),
+        )
+
     async def run(self) -> None:
         self._loop = asyncio.get_running_loop()
         self._advertisement_event = asyncio.Event()
@@ -950,11 +1033,11 @@ class BleSleepBridge:
             LOGGER,
             "Running in hybrid BLE mode; sleep uses rendezvous, awake keeps a live connection",
         )
-        await self._publish_ble_online_state(
-            online=False,
-            context="Gateway startup: BLE disconnected",
-            force=True,
-        )
+        if self._shadow.ble_online:
+            self._mark_ble_presence_now()
+            LOGGER.info(
+                "Preserving reported BLE online state across startup until presence timeout or fresh advertisements prove otherwise"
+            )
         await self._normalize_shadow_for_startup_default()
         await self._start_scanner()
         pending_updates = self._drain_runtime_updates()
@@ -972,14 +1055,19 @@ class BleSleepBridge:
                         context="No-op: desired already equals reported",
                     )
 
+                await self._reconcile_ble_online_presence()
+
                 if not self._is_connected():
                     await self._start_scanner()
                     if self._should_idle_disconnected_while_sleeping():
                         self._set_gateway_state(
                             GatewayBleState.IDLE,
-                            "scanner armed; waiting for cloud shadow updates",
+                            "scanner armed; waiting for cloud updates, advertisements, or BLE presence timeout",
                         )
-                        pending_updates = await self._cloud_shadow.wait_for_updates()
+                        pending_updates = await self._wait_for_updates_or_disconnect(
+                            timeout_seconds=self._ble_online_timeout_seconds(),
+                            wake_on_advertisement=True,
+                        )
                         continue
 
                     try:
@@ -1214,8 +1302,7 @@ class BleSleepBridge:
                     )
                     if self._shadow.reported_power != target_power:
                         self._shadow.set_reported(target_power)
-                    if not self._is_connected():
-                        self._shadow.set_ble_online(False)
+                    self._mark_ble_presence_now()
                     await self._publish_reported_update(
                         clear_desired_power=True,
                         context="Reported synchronized after BLE sleep command disconnect",
@@ -1321,6 +1408,7 @@ class BleSleepBridge:
                 matched_by=matched_by,
                 rssi=getattr(adv, "rssi", None),
                 seen_at=seen_at,
+                recovery_gap=self._config.ble_online_recovery_gap,
             )
             self._cached_device_id = device.address
             if previous_device_id != device.address:
@@ -1451,6 +1539,7 @@ class BleSleepBridge:
                 device_id=target_device_id,
             )
             await self._subscribe_state_report_notifications()
+            self._mark_ble_presence_now()
             await self._publish_ble_online_state(
                 online=True,
                 context="BLE connected",
@@ -1851,17 +1940,13 @@ class BleSleepBridge:
                 GatewayBleState.DISCONNECT,
                 "closing BLE session",
             )
-            await self._publish_ble_online_state(
-                online=False,
-                context="BLE disconnected",
-                publish_timeout_seconds=publish_timeout_seconds,
-            )
             return
         try:
             self._set_gateway_state(
                 GatewayBleState.DISCONNECT,
                 "closing BLE session",
             )
+            self._mark_ble_presence_now()
             if client.is_connected:
                 disconnect_coro = client.disconnect()
                 if disconnect_timeout_seconds is None:
@@ -1885,58 +1970,58 @@ class BleSleepBridge:
                 )
             else:
                 LOGGER.exception("Failed to disconnect BLE client cleanly")
-        await self._publish_ble_online_state(
-            online=False,
-            context="BLE disconnected",
-            publish_timeout_seconds=publish_timeout_seconds,
-        )
 
     def _handle_disconnect(self, _: BleakClient) -> None:
         LOGGER.info("BLE connection ended")
         loop = self._loop
         if loop is not None:
-            try:
-                asyncio.run_coroutine_threadsafe(
-                    self._publish_ble_online_state(
-                        online=False,
-                        context="BLE disconnected",
-                    ),
-                    loop,
-                )
-            except RuntimeError:
-                LOGGER.debug(
-                    "Event loop already closed; skipped BLE disconnected shadow publish"
-                )
+            loop.call_soon_threadsafe(self._mark_ble_presence_now)
         if loop is not None and self._disconnect_event is not None:
             loop.call_soon_threadsafe(self._disconnect_event.set)
 
     async def _wait_for_updates_or_disconnect(
         self,
         timeout_seconds: float | None = None,
+        *,
+        wake_on_advertisement: bool = False,
     ) -> list[AwsShadowUpdate]:
         updates_task = asyncio.create_task(
             self._cloud_shadow.wait_for_updates(timeout_seconds=timeout_seconds)
         )
         disconnect_task = asyncio.create_task(self._wait_for_disconnect_event())
+        advertisement_task: asyncio.Task[None] | None = None
+        tasks: set[asyncio.Task[Any]] = {updates_task, disconnect_task}
+        if wake_on_advertisement:
+            advertisement_task = asyncio.create_task(self._wait_for_advertisement_event())
+            tasks.add(advertisement_task)
         try:
             done, _pending = await asyncio.wait(
-                {updates_task, disconnect_task},
+                tasks,
                 return_when=asyncio.FIRST_COMPLETED,
             )
             if updates_task in done:
                 return updates_task.result()
             return []
         finally:
-            for task in (updates_task, disconnect_task):
+            cleanup_tasks = [updates_task, disconnect_task]
+            if advertisement_task is not None:
+                cleanup_tasks.append(advertisement_task)
+            for task in cleanup_tasks:
                 if not task.done():
                     task.cancel()
-            await asyncio.gather(updates_task, disconnect_task, return_exceptions=True)
+            await asyncio.gather(*cleanup_tasks, return_exceptions=True)
 
     async def _wait_for_disconnect_event(self) -> None:
         if self._disconnect_event is None:
             return
         await self._disconnect_event.wait()
         self._disconnect_event.clear()
+
+    async def _wait_for_advertisement_event(self) -> None:
+        if self._advertisement_event is None:
+            return
+        await self._advertisement_event.wait()
+        self._advertisement_event.clear()
 
     async def _wait_for_target_advertisement(
         self,
@@ -2028,6 +2113,24 @@ def _parse_args() -> argparse.Namespace:
         type=float,
         default=DEFAULT_DEVICE_STALE_AFTER,
         help="Seconds before a previously seen advertisement is considered stale for immediate reconnect (default: 0.75)",
+    )
+    parser.add_argument(
+        "--ble-online-stale-after",
+        type=float,
+        default=DEFAULT_BLE_ONLINE_STALE_AFTER,
+        help="Seconds without a matching connection or advertisement before reported.mcu.ble.online becomes false (default: 30)",
+    )
+    parser.add_argument(
+        "--ble-online-recover-after",
+        type=float,
+        default=DEFAULT_BLE_ONLINE_RECOVER_AFTER,
+        help="Seconds of sustained BLE presence required before reported.mcu.ble.online becomes true after being false (default: 30)",
+    )
+    parser.add_argument(
+        "--ble-online-recovery-gap",
+        type=float,
+        default=DEFAULT_BLE_ONLINE_RECOVERY_GAP,
+        help="Maximum allowed gap between consecutive advertisements while proving BLE online recovery (default: 12)",
     )
     parser.add_argument(
         "--advertisement-log-interval",
@@ -2174,7 +2277,7 @@ def _build_shadow_from_snapshot(
             else get_reported_battery_mv(cached)
         ),
         ble_uuids=ble_uuids,
-        ble_online=False,
+        ble_online=bool(_extract_reported_ble_online(snapshot)),
         ble_uuid_search_mode=ble_uuid_search_mode,
         snapshot_file=snapshot_file,
     )
@@ -2307,6 +2410,9 @@ def main() -> None:
         command_ack_timeout=args.command_ack_timeout,
         command_ack_poll_interval=args.command_ack_poll_interval,
         device_stale_after=args.device_stale_after,
+        ble_online_stale_after=args.ble_online_stale_after,
+        ble_online_recover_after=args.ble_online_recover_after,
+        ble_online_recovery_gap=args.ble_online_recovery_gap,
         advertisement_log_interval=args.advertisement_log_interval,
         scan_mode=args.scan_mode,
         shadow_file=args.shadow_file,

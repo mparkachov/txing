@@ -22,24 +22,20 @@ High-level architecture:
 - Only `gw` may define or evolve the `mcu.*` contract.
 - `mcu` exposes BLE behavior; `gw` translates that behavior into shadow state.
 
-## 3. Rendezvous Model
+## 3. Hybrid BLE Model
 
-The BLE link is no longer persistent.
+The BLE link is persistent only while the MCU is in awake mode.
 
 Firmware behavior:
-- stay in low-power system-on idle between rendezvous intervals
-- wake itself from RTC every `5 s`
-- advertise for `1 s`
-- accept a short connection
-- process a one-byte wake command
-- return to sleep after disconnect or timeout
+- `power=false`: stay in low-power system-on idle between rendezvous intervals, wake from RTC every `5 s`, advertise briefly, accept a short connection, then return to sleep
+- `power=true`: stay awake, continue advertising when disconnected, and keep the BLE link available for a live session
 
 Gateway behavior:
 - keep a registry for the known device identity
 - keep scanning while disconnected
-- treat disconnects as expected
-- reconnect only during the periodic advertising window
-- send the wake command immediately after connection
+- reconnect during the periodic advertising window while the MCU is sleeping
+- keep a live BLE session while the MCU is awake
+- treat disconnects during sleep transitions as expected behavior
 - avoid full rediscovery once UUIDs and device identity are known
 
 Power note:
@@ -78,40 +74,40 @@ Shadow type: classic (unnamed) Thing Shadow (`$aws/things/txing/shadow/*`)
 ```
 
 Field semantics:
-- `state.desired.mcu.power=true` means "deliver a wake command on the next BLE rendezvous".
-- `state.desired.mcu.power=false` means "clear the wake latch / no wake request pending".
-- `state.reported.mcu.power=true` means "gateway delivered a wake command successfully".
-- `state.reported.mcu.power=false` means "no delivered wake command is currently latched".
+- `state.desired.mcu.power=true` means "request MCU awake mode and keep BLE available".
+- `state.desired.mcu.power=false` means "request MCU sleep mode with periodic BLE rendezvous".
+- `state.reported.mcu.power=true` means "MCU is awake".
+- `state.reported.mcu.power=false` means "MCU is in periodic low-power rendezvous mode".
 - `state.reported.mcu.batteryMv` is the latest battery reading observed over BLE.
-- `state.reported.mcu.ble.online` is `true` only while the short BLE session is connected.
+- `state.reported.mcu.ble.online` is `true` only after the MCU has shown sustained BLE reachability, either by staying connected or by advertising regularly for the configured recovery window.
 - `state.reported.mcu.ble.deviceId` is the last known BLE identity used for fast reconnect.
 
 Compatibility note:
 - The shadow field name `sleepCommandUuid` is retained for compatibility.
-- In v1.0 it identifies the wake-command characteristic, not a persistent sleep-mode toggle.
+- In v1.0 it identifies the MCU power-mode control characteristic.
 
 ## 5. BLE GATT Contract
 
 UUIDs:
 - Service `TXING Control`: `f6b4a000-7b32-4d2d-9f4b-4ff0a2b8f100`
-- Wake Command characteristic (compatibility field `sleepCommandUuid`): `f6b4a001-7b32-4d2d-9f4b-4ff0a2b8f100`
+- Power Command characteristic (compatibility field `sleepCommandUuid`): `f6b4a001-7b32-4d2d-9f4b-4ff0a2b8f100`
 - State Report characteristic: `f6b4a002-7b32-4d2d-9f4b-4ff0a2b8f100`
 
 Payloads:
-- Wake Command (1 byte, write with response):
-  - `0x01` -> trigger wake action
-  - `0x00` -> accepted as a legacy wake alias
+- Power Command (1 byte, write with response):
+  - `0x00` -> awake mode / `power=true`
+  - `0x01` -> sleep mode / `power=false`
 - State Report (3 bytes, read + notify):
-  - byte 0: status
+  - byte 0: sleep flag
   - bytes 1..2: `battery_mv` as little-endian `u16`
 
-State Report status values:
-- `0x00` -> idle/listening
-- `0x01` -> wake command acknowledged during the current connection
+State Report sleep-flag values:
+- `0x00` -> awake mode / `power=true`
+- `0x01` -> sleep mode / `power=false`
 
 Notification behavior:
 - Device updates State Report on connection establishment.
-- Device updates State Report again after processing a wake command.
+- Device updates State Report again after processing a power-mode command.
 - Gateway may use either reads or notifications; current implementation uses reads.
 
 ## 6. Firmware State Machine
@@ -123,31 +119,37 @@ States:
   - Transition to `Wake` when the timer expires.
 - `Wake`
   - Refresh battery measurement.
-  - Reset State Report status to `idle`.
+  - Publish the current sleep-state report.
   - Transition immediately to `Advertising`.
 - `Advertising`
-  - Start connectable advertising with a bounded timeout.
+  - In sleep mode, start connectable advertising with a bounded timeout.
+  - In awake mode, advertise continuously until the gateway connects.
   - Transition to `Connected` if the gateway connects.
-  - Transition to `ReturnToSleep` if the advertising window expires.
+  - In sleep mode, transition to `ReturnToSleep` if the advertising window expires.
 - `Connected`
   - Publish State Report to the client.
-  - Start a bounded command window.
-  - Transition to `CommandProcessing` when a valid wake command is written.
-  - Transition to `ReturnToSleep` on disconnect or command timeout.
+  - Start the bounded command window.
+  - Transition to `CommandProcessing` when a valid power-mode command is written.
+  - Transition to `ReturnToSleep` on disconnect or command timeout while in sleep mode.
+  - Transition back to `Advertising` on disconnect while in awake mode.
 - `CommandProcessing`
-  - Trigger the wake action.
-  - Update State Report status to `wake acknowledged`.
-  - Transition back to `Connected` until the link closes.
+  - Apply the requested power mode.
+  - Trigger the external wake action only on `sleep -> awake`.
+  - Update State Report with the new sleep flag and battery reading.
+  - Transition back to `Connected` until the link closes or the mode changes.
 - `ReturnToSleep`
-  - Clear transient command status.
+  - Stop advertising.
+  - Re-arm the RTC rendezvous timer.
   - Transition to `Sleep`.
 
 ## 7. Gateway State Machine
 
 States:
 - `Idle`
-  - No BLE action pending.
+  - No BLE power transition is pending.
   - Scanner remains armed in the background.
+  - `ble.online` remains `true` while the device is still being observed over BLE.
+  - If `ble.online` is `false`, the gateway requires the configured recovery window of regular advertisements before setting it back to `true`.
 - `Scanning`
   - Wait for either a matching advertisement or a shadow update.
   - Matching priority: known `deviceId`, then service UUID, then name/manufacturer fallback.
@@ -161,16 +163,15 @@ States:
 - `Connected`
   - Read State Report.
   - Update battery cache.
-  - If no wake is pending, disconnect and return to `Scanning`.
+  - If `power=false` is already confirmed and no change is pending, disconnect and return to `Idle`.
 - `CommandPending`
-  - `desired.mcu.power=true` and `reported.mcu.power=false`.
-  - Write the wake command.
+  - `desired.mcu.power != reported.mcu.power`.
+  - Write the requested power-mode command.
 - `CommandSent`
-  - Poll State Report until acknowledgement or timeout.
-  - On acknowledgement, set `reported.mcu.power=true`, clear desired, then disconnect.
+  - Poll State Report until the requested power mode is confirmed or timeout expires.
 - `Disconnect`
-  - Publish `ble.online=false`.
   - Restart scanner.
+  - Do not force `ble.online=false`; allow recent advertising to keep the device online until the presence timeout expires.
 - `WaitForNextAdvertisement`
   - The advertising window was missed or connect/ack failed.
   - Return to `Scanning`.
@@ -182,16 +183,19 @@ Normal-disconnect rule:
 
 Firmware defaults:
 - sleep interval: `5 s`
-- advertising window: `1 s`
-- advertising interval: `150 ms`
-- connected command window: `5 s`
+- advertising window: `2 s`
+- advertising interval: `100 ms`
+- connected command window: `15 s`
 
 Gateway defaults:
 - scan timeout before logging a missed window: `12 s`
-- connect timeout: `5 s`
-- wake acknowledgement timeout: `1 s`
+- connect timeout: `10 s`
+- power confirmation timeout: `2 s`
 - acknowledgement poll interval: `100 ms`
 - advertisement freshness threshold: `750 ms`
+- BLE online presence timeout: `30 s`
+- BLE online recovery window: `30 s`
+- maximum gap between advertisements during recovery: `12 s`
 - scan mode: `active`
 
 All of the above are tunable constants or CLI-configurable parameters.
@@ -200,13 +204,18 @@ All of the above are tunable constants or CLI-configurable parameters.
 
 - From `reported.mcu.power=false`, setting `desired.mcu.power=true` eventually results in:
   - a BLE connection during a rendezvous window
-  - a successful wake command write
-  - a State Report acknowledgement
+  - a successful awake-mode command write
+  - a State Report confirmation
   - `state.reported.mcu.power=true`
-- Setting `desired.mcu.power=false` clears the wake latch without requiring a BLE reconnect.
+- From `reported.mcu.power=true`, setting `desired.mcu.power=false` eventually results in:
+  - a successful sleep-mode command write
+  - `state.reported.mcu.power=false`
+  - the MCU returning to periodic rendezvous mode
 - `state.reported.mcu.batteryMv` is refreshed whenever the gateway completes a BLE rendezvous.
 - `state.reported.mcu.ble.*` remains present and valid.
-- `state.reported.mcu.ble.online` flips `false -> true -> false` around each short BLE session.
+- `state.reported.mcu.ble.online` becomes `true` again after the gateway observes sustained BLE presence for the configured recovery window.
+- `state.reported.mcu.ble.online` remains `true` while the device is connected or continues advertising within the configured presence timeout.
+- `state.reported.mcu.ble.online` becomes `false` only after the gateway has not observed the device for longer than the presence timeout.
 
 ## 10. Test Plan
 
