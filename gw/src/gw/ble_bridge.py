@@ -65,9 +65,6 @@ DEFAULT_CLOUDWATCH_LOG_GROUP = "/txing/gw"
 DEFAULT_MQTT_PUBLISH_TIMEOUT = 10.0
 SHUTDOWN_MQTT_PUBLISH_TIMEOUT = 2.0
 BLE_DISCONNECT_TIMEOUT = 2.0
-WAKE_COMMAND_PAYLOAD = b"\x01"
-STATE_REPORT_STATUS_IDLE = 0x00
-STATE_REPORT_STATUS_WAKE_ACK = 0x01
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_CERT_DIR = REPO_ROOT / "certs"
@@ -894,6 +891,7 @@ class BleSleepBridge:
         self._scanner: BleakScanner | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._advertisement_event: asyncio.Event | None = None
+        self._disconnect_event: asyncio.Event | None = None
         self._ble_uuid_search_mode = shadow.ble_uuid_search_mode
         self._has_device_sync = False
         self._state = GatewayBleState.IDLE
@@ -921,16 +919,17 @@ class BleSleepBridge:
     async def run(self) -> None:
         self._loop = asyncio.get_running_loop()
         self._advertisement_event = asyncio.Event()
+        self._disconnect_event = asyncio.Event()
         _log_important(
             LOGGER,
-            "Running in BLE rendezvous mode; scanning for known device advertisements",
+            "Running in hybrid BLE mode; sleep uses rendezvous, awake keeps a live connection",
         )
         await self._publish_ble_online_state(
             online=False,
             context="Gateway startup: BLE disconnected",
             force=True,
         )
-        await self._normalize_shadow_for_rendezvous_startup()
+        await self._normalize_shadow_for_startup_default()
         await self._start_scanner()
         pending_updates = self._drain_runtime_updates()
         try:
@@ -939,43 +938,70 @@ class BleSleepBridge:
                     await self._apply_cloud_shadow_updates(updates=pending_updates)
                     pending_updates = []
 
-                await self._process_desired_power_once()
-                if self._should_connect_on_next_advertisement():
-                    updates, target_device = await self._wait_for_advertisement_or_updates(
-                        timeout_seconds=self._config.scan_timeout
+                if (
+                    self._shadow.desired_power is not None
+                    and self._shadow.desired_power == self._shadow.reported_power
+                ):
+                    await self._clear_desired_if_synced(
+                        context="No-op: desired already equals reported",
                     )
-                    if updates:
-                        pending_updates = updates
-                        continue
-                    if target_device is None:
+
+                if not self._is_connected():
+                    await self._start_scanner()
+                    if self._should_idle_disconnected_while_sleeping():
                         self._set_gateway_state(
-                            GatewayBleState.WAIT_FOR_NEXT_ADVERTISEMENT,
-                            "matched advertisement not seen before scan timeout",
+                            GatewayBleState.IDLE,
+                            "scanner armed; waiting for cloud shadow updates",
                         )
+                        pending_updates = await self._cloud_shadow.wait_for_updates()
                         continue
 
                     try:
-                        await self._connect_and_process_once(target_device)
+                        await self._ensure_connected()
                     except asyncio.CancelledError:
                         raise
                     except Exception as err:
                         LOGGER.warning(
-                            "BLE rendezvous attempt failed for %s: %s %r",
-                            self._device_label(
-                                target_device, self._known_device.local_name
-                            ),
+                            "BLE session establish failed: %s %r",
                             err.__class__.__name__,
                             err,
                         )
-                        await asyncio.sleep(self._config.reconnect_delay)
-                    pending_updates = self._drain_runtime_updates()
-                    continue
+                        pending_updates = await self._wait_for_updates_or_disconnect(
+                            timeout_seconds=self._config.reconnect_delay
+                        )
+                        continue
 
-                self._set_gateway_state(
-                    GatewayBleState.IDLE,
-                    "scanner armed; waiting for cloud shadow updates",
+                    if self._should_idle_disconnected_while_sleeping():
+                        _log_important(
+                            LOGGER,
+                            "MCU is in sleep mode; releasing BLE connection until power=true is requested",
+                        )
+                        await self._safe_disconnect()
+                        continue
+
+                    try:
+                        await self._process_desired_power_once()
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as err:
+                        LOGGER.warning(
+                            "BLE power command failed after connect: %s %r",
+                            err.__class__.__name__,
+                            err,
+                        )
+                        await self._safe_disconnect()
+                        await asyncio.sleep(self._config.reconnect_delay)
+
+                retry_timeout: float | None = None
+                if (
+                    self._shadow.desired_power is not None
+                    and self._shadow.desired_power != self._shadow.reported_power
+                ):
+                    retry_timeout = self._config.reconnect_delay
+
+                pending_updates = await self._wait_for_updates_or_disconnect(
+                    timeout_seconds=retry_timeout
                 )
-                pending_updates = await self._cloud_shadow.wait_for_updates()
         finally:
             await self._stop_scanner()
             cleanup_task = asyncio.create_task(
@@ -1000,6 +1026,7 @@ class BleSleepBridge:
             context="Gateway startup (--no-ble): BLE disconnected",
             force=True,
         )
+        await self._normalize_shadow_for_startup_default()
         await self._process_desired_no_ble_once()
         while True:
             retry_timeout: float | None = None
@@ -1024,6 +1051,22 @@ class BleSleepBridge:
                 len(updates) - len(filtered),
             )
         return filtered
+
+    async def _normalize_shadow_for_startup_default(self) -> None:
+        if self._shadow.desired_power is True:
+            return
+        if not self._shadow.reported_power:
+            return
+
+        _log_important(
+            LOGGER,
+            "Forcing startup default mcu.power=false because no explicit desired=true is pending",
+        )
+        self._shadow.set_reported(False)
+        await self._publish_reported_update(
+            clear_desired_power=self._shadow.desired_power is False,
+            context="Normalized startup default to power=false",
+        )
 
     async def _apply_cloud_shadow_updates(
         self,
@@ -1098,7 +1141,7 @@ class BleSleepBridge:
             return
 
         LOGGER.info(
-            "Dry-run: would deliver wake latch state power=%s; updating reported in cloud",
+            "Dry-run: would set MCU power=%s over BLE; updating reported in cloud",
             target_power,
         )
         self._shadow.set_reported(target_power)
@@ -1118,39 +1161,50 @@ class BleSleepBridge:
             )
             return
 
-        if target_power:
+        if not self._is_connected():
+            LOGGER.info(
+                "Desired power change pending (desired=%s): BLE disconnected, waiting for reconnect",
+                target_power,
+            )
             return
 
-        LOGGER.info(
-            "Desired power=false; clearing wake latch without a BLE round-trip"
-        )
-        self._shadow.set_reported(False)
-        await self._publish_reported_update(
-            clear_desired_power=True,
-            context="Reported updated after wake latch reset",
-        )
-
-    async def _normalize_shadow_for_rendezvous_startup(self) -> None:
-        if self._shadow.desired_power is not None:
+        try:
+            self._set_gateway_state(
+                GatewayBleState.COMMAND_PENDING,
+                f"power={target_power} requested for {self._cached_device_id or '<unknown>'}",
+            )
+            await self._send_sleep_command(sleep=not target_power)
+            self._set_gateway_state(
+                GatewayBleState.COMMAND_SENT,
+                f"power command written for {self._cached_device_id or '<unknown>'}",
+            )
+            report = await self._wait_for_reported_power(target_power)
+            await self._sync_reported_from_device_report(
+                report,
+                context="Reported synchronized after BLE power command",
+                log_prefix="MCU state report after BLE power command",
+            )
+        except Exception:
+            LOGGER.exception(
+                "Failed to send BLE command for desired power=%s; will retry",
+                target_power,
+            )
+            await self._safe_disconnect()
             return
-        if not self._shadow.reported_power:
-            return
 
-        _log_important(
-            LOGGER,
-            "Clearing stale reported.mcu.power=true on startup for rendezvous mode"
+        if not target_power and self._is_connected():
+            _log_important(
+                LOGGER,
+                "MCU entered sleep mode; disconnecting BLE session until power=true is requested",
+            )
+            await self._safe_disconnect()
+
+    def _should_idle_disconnected_while_sleeping(self) -> bool:
+        return (
+            not self._shadow.reported_power
+            and self._shadow.desired_power is None
+            and not self._ble_uuid_search_mode
         )
-        self._shadow.set_reported(False)
-        await self._publish_reported_update(
-            clear_desired_power=False,
-            context="Cleared stale wake latch on gateway startup",
-        )
-
-    def _wake_command_pending(self) -> bool:
-        return self._shadow.desired_power is True and not self._shadow.reported_power
-
-    def _should_connect_on_next_advertisement(self) -> bool:
-        return self._wake_command_pending() or self._ble_uuid_search_mode
 
     async def _start_scanner(self) -> None:
         if self._scanner is not None:
@@ -1308,7 +1362,18 @@ class BleSleepBridge:
                 updates_task, advertisement_task, return_exceptions=True
             )
 
-    async def _connect_and_process_once(self, target_device: BLEDevice) -> None:
+    async def _ensure_connected(self) -> None:
+        if self._is_connected():
+            return
+
+        target_device = self._get_fresh_target_device()
+        if target_device is None:
+            target_device = await self._wait_for_target_advertisement(
+                timeout_seconds=self._config.scan_timeout
+            )
+        if target_device is None:
+            raise RuntimeError("matching advertisement not seen before connect deadline")
+
         await self._stop_scanner()
         target_name = target_device.name or self._known_device.local_name or "<unnamed>"
         target_device_id = target_device.address
@@ -1340,39 +1405,17 @@ class BleSleepBridge:
                 client,
                 device_id=target_device_id,
             )
-            if self._wake_command_pending():
-                self._set_gateway_state(
-                    GatewayBleState.COMMAND_PENDING,
-                    f"wake request queued for {target_device_id}",
-                )
-                await self._send_wake_command()
-                self._set_gateway_state(
-                    GatewayBleState.COMMAND_SENT,
-                    f"wake command written to {target_device_id}",
-                )
-                ack_report = await self._wait_for_wake_ack()
-                _status, battery_mv = self._parse_state_report(ack_report)
-                self._shadow.set_reported(True, battery_mv=battery_mv)
-                await self._publish_reported_update(
-                    clear_desired_power=True,
-                    context="Reported updated after wake command acknowledgement",
-                )
-            else:
-                initial_report = await self._read_state_report()
-                await self._sync_battery_from_device_report(
-                    initial_report,
-                    context="Reported synchronized from MCU state report on rendezvous",
-                    log_prefix="MCU state report on rendezvous",
-                )
-
-            self._has_device_sync = True
+            await self._subscribe_state_report_notifications()
             await self._publish_ble_online_state(
                 online=True,
                 context="BLE connected",
             )
-        finally:
+            await self._sync_reported_from_device_on_connect()
+            self._has_device_sync = True
+        except Exception:
             await self._safe_disconnect()
             await self._start_scanner()
+            raise
 
     async def _clear_desired_if_synced(self, context: str) -> None:
         if self._shadow.desired_power is None:
@@ -1428,67 +1471,78 @@ class BleSleepBridge:
             publish_timeout_seconds=publish_timeout_seconds,
         )
 
-    async def _send_wake_command(self) -> None:
+    async def _send_sleep_command(self, *, sleep: bool) -> None:
         if not self._is_connected():
             raise RuntimeError("BLE client is not connected")
         assert self._client is not None
 
+        payload = b"\x01" if sleep else b"\x00"
         await self._client.write_gatt_char(
             self._shadow.ble_uuids.sleep_command_uuid,
-            WAKE_COMMAND_PAYLOAD,
+            payload,
             response=True,
         )
         LOGGER.info(
-            "Sent Wake Command value=0x%02x via characteristic=%s",
-            WAKE_COMMAND_PAYLOAD[0],
+            "Sent Power Command sleep=%s power=%s via characteristic=%s",
+            sleep,
+            not sleep,
             self._shadow.ble_uuids.sleep_command_uuid,
         )
 
     @staticmethod
-    def _parse_state_report(report: bytes) -> tuple[int, int]:
+    def _parse_state_report(report: bytes) -> tuple[bool, bool, int]:
         if len(report) != 3:
             raise RuntimeError(
                 f"unexpected State Report length: {len(report)} (expected 3)"
             )
 
-        status = int(report[0])
-        if status not in (STATE_REPORT_STATUS_IDLE, STATE_REPORT_STATUS_WAKE_ACK):
-            raise RuntimeError(f"unexpected State Report status byte: 0x{status:02x}")
+        sleep_flag = int(report[0])
+        if sleep_flag not in (0x00, 0x01):
+            raise RuntimeError(f"unexpected State Report sleep byte: 0x{sleep_flag:02x}")
+        sleep = sleep_flag == 0x01
+        reported_power = not sleep
         battery_mv = int.from_bytes(report[1:3], byteorder="little")
         if not (0 <= battery_mv <= 10000):
             raise RuntimeError(f"unexpected battery millivolts in State Report: {battery_mv}")
-        return status, battery_mv
+        return sleep, reported_power, battery_mv
 
-    async def _sync_battery_from_device_report(
+    async def _sync_reported_from_device_report(
         self,
         report: bytes,
         *,
         context: str,
         log_prefix: str,
     ) -> None:
-        status, battery_mv = self._parse_state_report(report)
-        if self._shadow.battery_mv == battery_mv:
+        sleep, reported_power, battery_mv = self._parse_state_report(report)
+        clear_desired = self._shadow.desired_power == reported_power
+        if (
+            self._shadow.reported_power == reported_power
+            and self._shadow.battery_mv == battery_mv
+            and not clear_desired
+        ):
             LOGGER.debug(
-                "%s unchanged: battery_mv=%s status=0x%02x",
+                "%s unchanged: battery_mv=%s sleep=%s => power=%s",
                 log_prefix,
                 battery_mv,
-                status,
+                sleep,
+                reported_power,
             )
             return
 
         self._shadow.set_reported(
-            power=self._shadow.reported_power,
+            power=reported_power,
             battery_mv=battery_mv,
         )
         await self._publish_reported_update(
-            clear_desired_power=False,
+            clear_desired_power=clear_desired,
             context=context,
         )
         LOGGER.info(
-            "%s: battery_mv=%s status=0x%02x",
+            "%s: battery_mv=%s sleep=%s => power=%s",
             log_prefix,
             battery_mv,
-            status,
+            sleep,
+            reported_power,
         )
 
     async def _read_state_report(self) -> bytes:
@@ -1501,24 +1555,54 @@ class BleSleepBridge:
         )
         return bytes(report)
 
-    async def _wait_for_wake_ack(self) -> bytes:
+    async def _sync_reported_from_device_on_connect(self) -> None:
+        if not self._is_connected():
+            return
+        report = await self._read_state_report()
+        await self._sync_reported_from_device_report(
+            report,
+            context="Reported synchronized from MCU state report on connect",
+            log_prefix="MCU state report on connect",
+        )
+
+    async def _subscribe_state_report_notifications(self) -> None:
+        if not self._is_connected():
+            return
+        assert self._client is not None
+        await self._client.start_notify(
+            self._shadow.ble_uuids.state_report_uuid,
+            self._handle_state_report_notification,
+        )
+
+    def _handle_state_report_notification(self, _: Any, data: bytearray) -> None:
+        loop = self._loop
+        if loop is None:
+            return
+        try:
+            asyncio.run_coroutine_threadsafe(
+                self._sync_reported_from_device_report(
+                    bytes(data),
+                    context="Reported synchronized from MCU state report notification",
+                    log_prefix="MCU state report notification",
+                ),
+                loop,
+            )
+        except RuntimeError:
+            LOGGER.debug(
+                "Event loop already closed; skipped MCU state report notification"
+            )
+
+    async def _wait_for_reported_power(self, target_power: bool) -> bytes:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self._config.command_ack_timeout
 
         while True:
             report = await self._read_state_report()
-            status, battery_mv = self._parse_state_report(report)
+            _sleep, reported_power, battery_mv = self._parse_state_report(report)
             if battery_mv != self._shadow.battery_mv:
-                self._shadow.set_reported(
-                    self._shadow.reported_power,
-                    battery_mv=battery_mv,
-                )
-                await self._publish_reported_update(
-                    clear_desired_power=False,
-                    context="Reported synchronized while waiting for wake acknowledgement",
-                )
-            if status == STATE_REPORT_STATUS_WAKE_ACK:
-                LOGGER.info("Received wake acknowledgement from MCU")
+                self._shadow.set_reported(self._shadow.reported_power, battery_mv=battery_mv)
+            if reported_power == target_power:
+                LOGGER.info("Received MCU power confirmation power=%s", target_power)
                 return report
 
             remaining = deadline - loop.time()
@@ -1527,7 +1611,7 @@ class BleSleepBridge:
             await asyncio.sleep(min(self._config.command_ack_poll_interval, remaining))
 
         raise TimeoutError(
-            "timed out waiting for wake acknowledgement over BLE state report"
+            f"timed out waiting for MCU power confirmation power={target_power}"
         )
 
     async def _ensure_services_discovered(self, client: BleakClient) -> None:
@@ -1720,7 +1804,7 @@ class BleSleepBridge:
         if client is None:
             self._set_gateway_state(
                 GatewayBleState.DISCONNECT,
-                "closing BLE rendezvous session",
+                "closing BLE session",
             )
             await self._publish_ble_online_state(
                 online=False,
@@ -1731,7 +1815,7 @@ class BleSleepBridge:
         try:
             self._set_gateway_state(
                 GatewayBleState.DISCONNECT,
-                "closing BLE rendezvous session",
+                "closing BLE session",
             )
             if client.is_connected:
                 disconnect_coro = client.disconnect()
@@ -1771,6 +1855,77 @@ class BleSleepBridge:
                 LOGGER.debug(
                     "Event loop already closed; skipped BLE disconnected shadow publish"
                 )
+        if loop is not None and self._disconnect_event is not None:
+            loop.call_soon_threadsafe(self._disconnect_event.set)
+
+    async def _wait_for_updates_or_disconnect(
+        self,
+        timeout_seconds: float | None = None,
+    ) -> list[AwsShadowUpdate]:
+        updates_task = asyncio.create_task(
+            self._cloud_shadow.wait_for_updates(timeout_seconds=timeout_seconds)
+        )
+        disconnect_task = asyncio.create_task(self._wait_for_disconnect_event())
+        try:
+            done, _pending = await asyncio.wait(
+                {updates_task, disconnect_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if updates_task in done:
+                return updates_task.result()
+            return []
+        finally:
+            for task in (updates_task, disconnect_task):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(updates_task, disconnect_task, return_exceptions=True)
+
+    async def _wait_for_disconnect_event(self) -> None:
+        if self._disconnect_event is None:
+            return
+        await self._disconnect_event.wait()
+        self._disconnect_event.clear()
+
+    async def _wait_for_target_advertisement(
+        self,
+        *,
+        timeout_seconds: float,
+    ) -> BLEDevice | None:
+        target_device = self._get_fresh_target_device()
+        if target_device is not None:
+            self._set_gateway_state(
+                GatewayBleState.DEVICE_DETECTED,
+                f"fresh advertisement from {self._device_label(target_device, self._known_device.local_name)}",
+            )
+            return target_device
+
+        if self._advertisement_event is None:
+            raise RuntimeError("BLE advertisement event is not initialized")
+
+        self._advertisement_event.clear()
+        self._set_gateway_state(
+            GatewayBleState.SCANNING,
+            f"waiting up to {timeout_seconds:.1f}s for target advertisement",
+        )
+        try:
+            await asyncio.wait_for(
+                self._advertisement_event.wait(),
+                timeout=timeout_seconds,
+            )
+        except TimeoutError:
+            self._set_gateway_state(
+                GatewayBleState.WAIT_FOR_NEXT_ADVERTISEMENT,
+                "matched advertisement not seen before scan timeout",
+            )
+            return None
+
+        target_device = self._get_fresh_target_device()
+        if target_device is not None:
+            self._set_gateway_state(
+                GatewayBleState.DEVICE_DETECTED,
+                f"advertisement from {self._device_label(target_device, self._known_device.local_name)}",
+            )
+        return target_device
 
     def _is_connected(self) -> bool:
         return self._client is not None and self._client.is_connected
@@ -1790,7 +1945,7 @@ def _parse_args() -> argparse.Namespace:
         "--scan-timeout",
         type=float,
         default=DEFAULT_SCAN_TIMEOUT,
-        help="Seconds to wait for the next matching BLE advertisement before logging a missed rendezvous window (default: 12)",
+        help="Seconds to wait for the next matching BLE advertisement before connect retry (default: 12)",
     )
     parser.add_argument(
         "--reconnect-delay",
@@ -1802,19 +1957,19 @@ def _parse_args() -> argparse.Namespace:
         "--connect-timeout",
         type=float,
         default=DEFAULT_CONNECT_TIMEOUT,
-        help="Seconds to wait for a BLE connection attempt after a matching advertisement (default: 5)",
+        help="Seconds to wait for a BLE connection attempt after a matching advertisement (default: 10)",
     )
     parser.add_argument(
         "--command-ack-timeout",
         type=float,
         default=DEFAULT_COMMAND_ACK_TIMEOUT,
-        help="Seconds to wait for a wake acknowledgement in the BLE state report (default: 1)",
+        help="Seconds to wait for MCU power confirmation in the BLE state report (default: 2)",
     )
     parser.add_argument(
         "--command-ack-poll-interval",
         type=float,
         default=DEFAULT_COMMAND_ACK_POLL_INTERVAL,
-        help="Seconds between state-report polls while waiting for wake acknowledgement (default: 0.1)",
+        help="Seconds between state-report polls while waiting for MCU power confirmation (default: 0.1)",
     )
     parser.add_argument(
         "--device-stale-after",
@@ -1826,13 +1981,13 @@ def _parse_args() -> argparse.Namespace:
         "--advertisement-log-interval",
         type=float,
         default=DEFAULT_ADVERTISEMENT_LOG_INTERVAL,
-        help="Minimum seconds between repeated info logs for advertisements from the same known device (default: 30)",
+        help="Minimum seconds between repeated info logs for advertisements from the same known device (default: 5)",
     )
     parser.add_argument(
         "--scan-mode",
         default=DEFAULT_SCAN_MODE,
         choices=("active", "passive"),
-        help="BLE scan mode to use while waiting for rendezvous advertisements (default: active)",
+        help="BLE scan mode to use while waiting for advertisements from sleeping devices (default: active)",
     )
     parser.add_argument(
         "--shadow-file",

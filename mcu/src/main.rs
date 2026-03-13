@@ -2,6 +2,7 @@
 #![no_main]
 
 use core::cell::Cell;
+use core::future::pending;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use defmt_rtt as _;
@@ -37,10 +38,8 @@ const RENDEZVOUS_ADV_WINDOW_10MS: u16 = 200;
 const RENDEZVOUS_ADV_INTERVAL_UNITS: u32 = 160; // 100 ms (0.625 ms units)
 const RTC2_APP_PRIORITY: u8 = 0xE0;
 const RTC_COUNTER_MASK: u32 = 0x00FF_FFFF;
-const WAKE_COMMAND_VALUE: u8 = 0x01;
-const LEGACY_WAKE_COMMAND_VALUE: u8 = 0x00;
-const STATE_REPORT_STATUS_IDLE: u8 = 0x00;
-const STATE_REPORT_STATUS_WAKE_ACK: u8 = 0x01;
+const POWER_MODE_AWAKE_COMMAND_VALUE: u8 = 0x00;
+const POWER_MODE_SLEEP_COMMAND_VALUE: u8 = 0x01;
 const TXING_ADV_DATA: [u8; 27] = [
     0x02, 0x01, 0x06, // Flags
     0x05, 0xFF, 0xFF, 0xFF, b'T', b'X', // Manufacturer data: company=0xFFFF, marker="TX"
@@ -55,20 +54,20 @@ static RTC_ARMED: AtomicBool = AtomicBool::new(false);
 
 struct DeviceState {
     battery_mv: Cell<u16>,
-    status: Cell<u8>,
+    sleep: Cell<bool>,
 }
 
 impl DeviceState {
     const fn boot_default() -> Self {
         Self {
             battery_mv: Cell::new(0),
-            status: Cell::new(STATE_REPORT_STATUS_IDLE),
+            sleep: Cell::new(true),
         }
     }
 
     fn report_bytes(&self) -> [u8; 3] {
         let mut report = [0u8; 3];
-        report[0] = self.status.get();
+        report[0] = if self.sleep.get() { 0x01 } else { 0x00 };
         report[1..3].copy_from_slice(&self.battery_mv.get().to_le_bytes());
         report
     }
@@ -77,8 +76,12 @@ impl DeviceState {
         self.battery_mv.set(battery_mv);
     }
 
-    fn set_status(&self, status: u8) {
-        self.status.set(status);
+    fn sleep(&self) -> bool {
+        self.sleep.get()
+    }
+
+    fn set_sleep(&self, sleep: bool) {
+        self.sleep.set(sleep);
     }
 }
 
@@ -143,7 +146,7 @@ impl WakeOutput {
 #[nrf_softdevice::gatt_service(uuid = "f6b4a000-7b32-4d2d-9f4b-4ff0a2b8f100")]
 struct TxingControlService {
     #[characteristic(uuid = "f6b4a001-7b32-4d2d-9f4b-4ff0a2b8f100", write)]
-    wake_command: u8,
+    sleep_command: u8,
 
     #[characteristic(uuid = "f6b4a002-7b32-4d2d-9f4b-4ff0a2b8f100", read, notify)]
     state_report: [u8; 3],
@@ -176,24 +179,41 @@ async fn main(spawner: embassy_executor::Spawner) {
 
     let state = DeviceState::boot_default();
     refresh_battery_state(&state, &mut battery_monitor);
-    set_led_sleeping(&mut led, true);
+    set_led_for_sleep_state(&mut led, state.sleep());
     publish_state_report(&server, None, &state);
-    defmt::info!("boot battery_mv={}", state.battery_mv.get());
+    defmt::info!(
+        "boot sleep={} battery_mv={}",
+        state.sleep(),
+        state.battery_mv.get()
+    );
 
     loop {
-        rendezvous_cycle(
-            sd,
-            &server,
-            &state,
-            &mut led,
-            &mut battery_monitor,
-            &mut wake_output,
-        )
-        .await;
-
-        log_state_transition("sleep");
-        set_led_sleeping(&mut led, true);
-        wait_for_timer_ticks(RENDEZVOUS_SLEEP_TICKS).await;
+        if state.sleep() {
+            sleep_rendezvous_cycle(
+                sd,
+                &server,
+                &state,
+                &mut led,
+                &mut battery_monitor,
+                &mut wake_output,
+            )
+            .await;
+            if state.sleep() {
+                log_state_transition("sleep");
+                set_led_for_sleep_state(&mut led, true);
+                wait_for_timer_ticks(RENDEZVOUS_SLEEP_TICKS).await;
+            }
+        } else {
+            awake_cycle(
+                sd,
+                &server,
+                &state,
+                &mut led,
+                &mut battery_monitor,
+                &mut wake_output,
+            )
+            .await;
+        }
     }
 }
 
@@ -213,8 +233,8 @@ fn softdevice_config() -> nrf_softdevice::Config {
     }
 }
 
-fn set_led_sleeping<P: OutputPin>(led: &mut P, sleeping: bool) {
-    if sleeping {
+fn set_led_for_sleep_state<P: OutputPin>(led: &mut P, sleep: bool) {
+    if sleep {
         let _ = led.set_high();
     } else {
         let _ = led.set_low();
@@ -315,7 +335,7 @@ fn round_div_i64(numerator: i64, denominator: i64) -> i64 {
     }
 }
 
-async fn rendezvous_cycle<P: OutputPin>(
+async fn sleep_rendezvous_cycle<P: OutputPin>(
     sd: &'static Softdevice,
     server: &Server,
     state: &DeviceState,
@@ -325,9 +345,8 @@ async fn rendezvous_cycle<P: OutputPin>(
 ) {
     log_state_transition("wake");
     refresh_battery_state(state, battery_monitor);
-    state.set_status(STATE_REPORT_STATUS_IDLE);
     publish_state_report(server, None, state);
-    set_led_sleeping(led, false);
+    set_led_for_sleep_state(led, false);
 
     log_state_transition("advertising");
     let mut config = peripheral::Config::default();
@@ -351,9 +370,41 @@ async fn rendezvous_cycle<P: OutputPin>(
         }
     }
 
-    state.set_status(STATE_REPORT_STATUS_IDLE);
     publish_state_report(server, None, state);
-    log_state_transition("return_to_sleep");
+    if state.sleep() {
+        log_state_transition("return_to_sleep");
+    }
+}
+
+async fn awake_cycle<P: OutputPin>(
+    sd: &'static Softdevice,
+    server: &Server,
+    state: &DeviceState,
+    led: &mut P,
+    battery_monitor: &mut BatteryMonitor,
+    wake_output: &mut WakeOutput,
+) {
+    refresh_battery_state(state, battery_monitor);
+    publish_state_report(server, None, state);
+    set_led_for_sleep_state(led, false);
+    log_state_transition("awake_advertising");
+
+    let mut config = peripheral::Config::default();
+    config.interval = RENDEZVOUS_ADV_INTERVAL_UNITS;
+
+    let adv = peripheral::ConnectableAdvertisement::ScannableUndirected {
+        adv_data: &TXING_ADV_DATA,
+        scan_data: &TXING_SCAN_DATA,
+    };
+
+    match peripheral::advertise_connectable(sd, adv, &config).await {
+        Ok(conn) => {
+            run_connection(conn, server, state, led, battery_monitor, wake_output).await;
+        }
+        Err(err) => {
+            defmt::warn!("awake_advertising_err={:?}", err);
+        }
+    }
 }
 
 async fn run_connection<P: OutputPin>(
@@ -365,41 +416,86 @@ async fn run_connection<P: OutputPin>(
     wake_output: &mut WakeOutput,
 ) {
     log_state_transition("connected");
-    set_led_sleeping(led, false);
     refresh_battery_state(state, battery_monitor);
-    state.set_status(STATE_REPORT_STATUS_IDLE);
+    set_led_for_sleep_state(led, state.sleep());
     publish_state_report(server, Some(&conn), state);
 
-    let wake_seen = Cell::new(false);
     let result = select(
         gatt_server::run(&conn, server, |event| match event {
-            ServerEvent::Txing(TxingControlServiceEvent::WakeCommandWrite(value)) => {
-                if value == WAKE_COMMAND_VALUE || value == LEGACY_WAKE_COMMAND_VALUE {
-                    log_state_transition("command_processing");
-                    wake_seen.set(true);
-                    wake_output.trigger();
-                    refresh_battery_state(state, battery_monitor);
-                    state.set_status(STATE_REPORT_STATUS_WAKE_ACK);
-                    publish_state_report(server, Some(&conn), state);
-                } else {
-                    defmt::warn!("unexpected_wake_command value={}", value);
+            ServerEvent::Txing(TxingControlServiceEvent::SleepCommandWrite(value)) => {
+                handle_power_command(
+                    value,
+                    &conn,
+                    server,
+                    state,
+                    led,
+                    battery_monitor,
+                    wake_output,
+                );
+                if state.sleep() {
+                    let _ = conn.disconnect();
                 }
             }
             _ => {}
         }),
-        wait_for_timer_ticks(RENDEZVOUS_COMMAND_WINDOW_TICKS),
+        sleep_connection_timeout(&conn, state),
     )
     .await;
 
     match result {
         Either::First(_) => {
-            defmt::info!("connection_closed wake_seen={}", wake_seen.get());
+            defmt::info!("connection_closed sleep={}", state.sleep());
         }
         Either::Second(()) => {
-            defmt::info!("command_window_timeout wake_seen={}", wake_seen.get());
-            let _ = conn.disconnect();
+            defmt::info!("sleep_connection_timeout_complete sleep={}", state.sleep());
         }
     }
+}
+
+fn handle_power_command<P: OutputPin>(
+    value: u8,
+    conn: &Connection,
+    server: &Server,
+    state: &DeviceState,
+    led: &mut P,
+    battery_monitor: &mut BatteryMonitor,
+    wake_output: &mut WakeOutput,
+) {
+    match value {
+        POWER_MODE_AWAKE_COMMAND_VALUE => {
+            log_state_transition("command_processing");
+            let was_sleeping = state.sleep();
+            if was_sleeping {
+                wake_output.trigger();
+            }
+            state.set_sleep(false);
+            refresh_battery_state(state, battery_monitor);
+            set_led_for_sleep_state(led, false);
+            publish_state_report(server, Some(conn), state);
+            defmt::info!("power_command next_sleep=false");
+        }
+        POWER_MODE_SLEEP_COMMAND_VALUE => {
+            log_state_transition("command_processing");
+            state.set_sleep(true);
+            refresh_battery_state(state, battery_monitor);
+            set_led_for_sleep_state(led, true);
+            publish_state_report(server, Some(conn), state);
+            defmt::info!("power_command next_sleep=true");
+        }
+        _ => {
+            defmt::warn!("unexpected_power_command value={}", value);
+        }
+    }
+}
+
+async fn sleep_connection_timeout(conn: &Connection, state: &DeviceState) {
+    wait_for_timer_ticks(RENDEZVOUS_COMMAND_WINDOW_TICKS).await;
+    if state.sleep() {
+        defmt::info!("command_window_timeout sleep=true");
+        let _ = conn.disconnect();
+        return;
+    }
+    pending::<()>().await;
 }
 
 #[interrupt]
