@@ -347,6 +347,15 @@ def _extract_reported_battery_mv(payload: dict[str, Any]) -> int | None:
     return None
 
 
+def _extract_shadow_version(payload: dict[str, Any]) -> int | None:
+    value = payload.get("version")
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int) and value >= 0:
+        return value
+    return None
+
+
 def _read_iot_endpoint(explicit_endpoint: str | None, endpoint_file: Path) -> str:
     if explicit_endpoint:
         endpoint = explicit_endpoint.strip()
@@ -466,6 +475,7 @@ class ShadowState:
     ble_uuids: BleGattUuids = DEFAULT_BLE_GATT_UUIDS
     ble_online: bool = False
     ble_uuid_search_mode: bool = False
+    shadow_version: int | None = None
     snapshot_file: Path = DEFAULT_SHADOW_FILE
 
     def set_desired(self, power: bool | None) -> None:
@@ -524,6 +534,7 @@ class AwsShadowUpdate:
     reported_power: bool | None = None
     battery_mv: int | None = None
     ble_uuids: BleGattUuids | None = None
+    version: int | None = None
 
 
 class AwsShadowClient:
@@ -818,6 +829,7 @@ class AwsShadowClient:
                 reported_power=_extract_reported_power(payload),
                 battery_mv=_extract_reported_battery_mv(payload),
                 ble_uuids=_extract_reported_ble_uuids(payload),
+                version=_extract_shadow_version(payload),
             )
             self._enqueue_update(update)
             self._set_initial_snapshot(payload)
@@ -831,6 +843,7 @@ class AwsShadowClient:
                 reported_power=_extract_reported_power(payload),
                 battery_mv=_extract_reported_battery_mv(payload),
                 ble_uuids=_extract_reported_ble_uuids(payload),
+                version=_extract_shadow_version(payload),
             )
             self._enqueue_update(update)
             return
@@ -844,6 +857,7 @@ class AwsShadowClient:
                 source="shadow/update/delta",
                 has_desired=True,
                 desired_power=desired_power,
+                version=_extract_shadow_version(payload),
             )
             self._enqueue_update(update)
 
@@ -1270,6 +1284,22 @@ class BleSleepBridge:
         if updates is None:
             updates = self._cloud_shadow.drain_updates()
         for update in updates:
+            # AWS shadow accepted snapshots can arrive after a newer local publish;
+            # version-ordering prevents an older echo from reintroducing stale desired state.
+            current_version = self._shadow.shadow_version
+            if (
+                update.version is not None
+                and current_version is not None
+                and update.version <= current_version
+            ):
+                LOGGER.debug(
+                    "Ignored stale shadow update version=%s current_version=%s source=%s",
+                    update.version,
+                    current_version,
+                    update.source,
+                )
+                continue
+
             changed = False
             ble_uuids_changed = False
             ble_gatt_uuids_changed = False
@@ -1313,6 +1343,15 @@ class BleSleepBridge:
                 self._ble_uuid_search_mode = False
                 ble_uuids_changed = True
                 changed = True
+
+            if (
+                update.version is not None
+                and (
+                    self._shadow.shadow_version is None
+                    or update.version > self._shadow.shadow_version
+                )
+            ):
+                self._shadow.shadow_version = update.version
 
             if changed:
                 self._shadow.log_state(f"Applied cloud shadow update ({update.source})")
@@ -2436,6 +2475,7 @@ def _build_shadow_from_snapshot(
         ble_uuids=ble_uuids,
         ble_online=bool(_extract_reported_ble_online(snapshot)),
         ble_uuid_search_mode=ble_uuid_search_mode,
+        shadow_version=_extract_shadow_version(snapshot),
         snapshot_file=snapshot_file,
     )
 
