@@ -7,6 +7,3 @@ target/
 # Cargo lockfile
 # Keep Cargo.lock for applications; ignore for libraries if preferred.
 #! Cargo.lock
-
-# Local BLE cache for xtask
-.txing_ble_id

@@ -6,8 +6,3 @@ target = "thumbv7em-none-eabihf"
 
 [env]
 DEFMT_LOG = "info"
-
-[alias]
-# Runs the local xtask utility on the host toolchain.
-# If your host is not Apple Silicon macOS, replace the target triple below.
-mcu = "run --manifest-path xtask/Cargo.toml --target aarch64-apple-darwin --"

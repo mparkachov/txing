@@ -1,38 +1,50 @@
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 
 mcu_dir := source_directory()
-xtask_manifest := mcu_dir + "/xtask/Cargo.toml"
 firmware_manifest := mcu_dir + "/Cargo.toml"
 target_triple := "thumbv7em-none-eabihf"
-host_triple := `rustc -vV | sed -n 's/^host: //p'`
+artifacts_dir := mcu_dir + "/target/" + target_triple + "/release"
+elf_path := artifacts_dir + "/txing"
+bin_path := artifacts_dir + "/txing.bin"
+uf2_path := artifacts_dir + "/txing.uf2"
+uf2_base := "0x27000"
+uf2_family := "0xADA52840"
+uf2_mount_dir := "/Volumes/XIAO-SENSE"
+probe_rs_chip := "nRF52840_xxAA"
+probe_rs_protocol := "swd"
 
 @build:
-    cargo run --manifest-path "{{xtask_manifest}}" --target "{{host_triple}}" -- build
+    cd "{{mcu_dir}}" && cargo build --release --manifest-path "{{firmware_manifest}}"
 
 @bin:
-    cargo run --manifest-path "{{xtask_manifest}}" --target "{{host_triple}}" -- bin
+    cd "{{mcu_dir}}" && cargo build --release --manifest-path "{{firmware_manifest}}"
+    cd "{{mcu_dir}}" && cargo objcopy --release --manifest-path "{{firmware_manifest}}" -- -O binary "{{bin_path}}"
 
 @uf2:
-    cargo run --manifest-path "{{xtask_manifest}}" --target "{{host_triple}}" -- uf2
+    cd "{{mcu_dir}}" && cargo build --release --manifest-path "{{firmware_manifest}}"
+    cd "{{mcu_dir}}" && cargo objcopy --release --manifest-path "{{firmware_manifest}}" -- -O binary "{{bin_path}}"
+    uf2conv "{{bin_path}}" --base "{{uf2_base}}" --family "{{uf2_family}}" --output "{{uf2_path}}"
 
 @flash:
-    cargo run --manifest-path "{{xtask_manifest}}" --target "{{host_triple}}" -- flash
+    cd "{{mcu_dir}}" && cargo build --release --manifest-path "{{firmware_manifest}}"
+    probe-rs download --chip "{{probe_rs_chip}}" --protocol "{{probe_rs_protocol}}" --preverify --verify --restore-unwritten "{{elf_path}}"
+    probe-rs reset --chip "{{probe_rs_chip}}" --protocol "{{probe_rs_protocol}}"
 
 @probe-flash:
-    cargo run --manifest-path "{{xtask_manifest}}" --target "{{host_triple}}" -- probe-flash
+    cd "{{mcu_dir}}" && cargo build --release --manifest-path "{{firmware_manifest}}"
+    probe-rs download --chip "{{probe_rs_chip}}" --protocol "{{probe_rs_protocol}}" --preverify --verify --restore-unwritten "{{elf_path}}"
+    probe-rs reset --chip "{{probe_rs_chip}}" --protocol "{{probe_rs_protocol}}"
 
 @flash-uf2:
-    cargo run --manifest-path "{{xtask_manifest}}" --target "{{host_triple}}" -- flash-uf2
+    cd "{{mcu_dir}}" && cargo build --release --manifest-path "{{firmware_manifest}}"
+    cd "{{mcu_dir}}" && cargo objcopy --release --manifest-path "{{firmware_manifest}}" -- -O binary "{{bin_path}}"
+    uf2conv "{{bin_path}}" --base "{{uf2_base}}" --family "{{uf2_family}}" --output "{{uf2_path}}"
+    test -d "{{uf2_mount_dir}}" || { echo "mount point not found: {{uf2_mount_dir}}" >&2; exit 1; }
+    cp "{{uf2_path}}" "{{uf2_mount_dir}}/txing.uf2"
 
 @log:
-    cargo build --release --manifest-path "{{firmware_manifest}}"
-    probe-rs attach --chip nRF52840_xxAA --protocol swd --rtt-scan-memory --no-location "{{mcu_dir}}/target/{{target_triple}}/release/txing"
-
-@scan *args='':
-    cargo run --manifest-path "{{xtask_manifest}}" --target "{{host_triple}}" -- scan {{args}}
+    cd "{{mcu_dir}}" && cargo build --release --manifest-path "{{firmware_manifest}}"
+    probe-rs attach --chip "{{probe_rs_chip}}" --protocol "{{probe_rs_protocol}}" --rtt-scan-memory --no-location "{{elf_path}}"
 
 @check:
-    cargo check --manifest-path "{{firmware_manifest}}" --target "{{target_triple}}"
-
-@check-xtask:
-    cargo check --manifest-path "{{xtask_manifest}}" --target "{{host_triple}}"
+    cd "{{mcu_dir}}" && cargo check --manifest-path "{{firmware_manifest}}" --target "{{target_triple}}"

@@ -5,7 +5,6 @@ Firmware for nRF52840 (Seeed XIAO BLE Sense) with BLE sleep control.
 ## Project Structure
 
 - `src/main.rs`: device firmware
-- `xtask/`: host-side utility commands wrapped by `just` recipes
 - `../docs/device-gateway-shadow-spec.md`: gateway contract (Shadow + BLE only)
 - `../docs/txing-shadow.schema.json`: canonical Thing Shadow JSON schema
 
@@ -24,6 +23,7 @@ Firmware for nRF52840 (Seeed XIAO BLE Sense) with BLE sleep control.
 ## Prerequisites
 
 - Rust toolchain with `thumbv7em-none-eabihf` target
+- `cargo objcopy` available in `PATH` (for `.bin` and `.uf2` generation)
 - `probe-rs` available in `PATH` (for SWD flashing)
 - `uf2conv` available in `PATH` (for UF2 generation)
 - Board mounted at `/Volumes/XIAO-SENSE` only when using `flash-uf2`
@@ -42,17 +42,20 @@ just bin
 # Build UF2 artifact (.uf2)
 just uf2
 
-# Build binary and flash it over SWD with probe-rs
+# Build release firmware and flash it over SWD with probe-rs
 just flash
 
 # Explicit alias for SWD flashing
 just probe-flash
 
+# Build release firmware and attach RTT/defmt logs
+just log
+
 # Build UF2 and copy to the mounted board bootloader drive
 just flash-uf2
 ```
 
-`just flash` uses `probe-rs download` with the raw application binary at base address `0x27000`, which matches [`memory.x`](./memory.x) and keeps the existing SoftDevice + UF2 bootloader layout intact.
+`just flash` uses `probe-rs download` with the release ELF directly. The linked firmware already starts at `0x27000` via [`memory.x`](./memory.x), so probe-rs flashes the application region without requiring a manual binary base address.
 
 The double-tap reset USB mass-storage bootloader should remain available after `just flash`. Do not use `probe-rs erase`, `probe-rs download --chip-erase`, or `--allow-erase-all` unless you intentionally want to wipe the on-board bootloader/other non-application flash.
 
@@ -63,7 +66,4 @@ If you have more than one debug probe attached, use the standard probe-rs enviro
 ```bash
 # Firmware compile check
 just check
-
-# xtask compile check (host target)
-just check-xtask
 ```
