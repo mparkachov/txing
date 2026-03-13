@@ -979,18 +979,18 @@ class BleSleepBridge:
                         await self._safe_disconnect()
                         continue
 
-                    try:
-                        await self._process_desired_power_once()
-                    except asyncio.CancelledError:
-                        raise
-                    except Exception as err:
-                        LOGGER.warning(
-                            "BLE power command failed after connect: %s %r",
-                            err.__class__.__name__,
-                            err,
-                        )
-                        await self._safe_disconnect()
-                        await asyncio.sleep(self._config.reconnect_delay)
+                try:
+                    await self._process_desired_power_once()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as err:
+                    LOGGER.warning(
+                        "BLE power command failed after connect: %s %r",
+                        err.__class__.__name__,
+                        err,
+                    )
+                    await self._safe_disconnect()
+                    await asyncio.sleep(self._config.reconnect_delay)
 
                 retry_timeout: float | None = None
                 if (
