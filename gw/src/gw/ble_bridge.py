@@ -20,7 +20,7 @@ import paho.mqtt.client as mqtt
 from bleak import BleakClient, BleakScanner
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
-from bleak.exc import BleakError
+from bleak.exc import BleakDBusError, BleakError
 
 try:
     import watchtower
@@ -91,6 +91,18 @@ def _log_important(
     level: int = logging.INFO,
 ) -> None:
     logger.log(level, message, *args, extra={"important": True})
+
+
+def _is_expected_disconnect_error(err: Exception) -> bool:
+    if isinstance(err, EOFError):
+        return True
+    if isinstance(err, BleakDBusError):
+        return err.dbus_error in {
+            "org.bluez.Error.DoesNotExist",
+            "org.bluez.Error.NotConnected",
+            "org.bluez.Error.Failed",
+        }
+    return False
 
 
 def _default_cloudwatch_log_stream(thing_name: str) -> str:
@@ -1289,8 +1301,7 @@ class BleSleepBridge:
             elif self._known_device.should_log_sighting(
                 seen_at, self._config.advertisement_log_interval
             ):
-                _log_important(
-                    LOGGER,
+                LOGGER.debug(
                     "Observed BLE advertisement deviceId=%s name=%s by=%s rssi=%s",
                     device.address,
                     adv.local_name or device.name or "<unnamed>",
@@ -1831,8 +1842,15 @@ class BleSleepBridge:
                 "Timed out disconnecting BLE client after %.1fs; continuing shutdown",
                 disconnect_timeout_seconds,
             )
-        except Exception:
-            LOGGER.exception("Failed to disconnect BLE client cleanly")
+        except Exception as err:
+            if _is_expected_disconnect_error(err):
+                LOGGER.info(
+                    "BLE client was already closing during disconnect cleanup: %s %r",
+                    err.__class__.__name__,
+                    err,
+                )
+            else:
+                LOGGER.exception("Failed to disconnect BLE client cleanly")
         await self._publish_ble_online_state(
             online=False,
             context="BLE disconnected",
