@@ -105,6 +105,20 @@ def _is_expected_disconnect_error(err: Exception) -> bool:
     return False
 
 
+def _is_expected_post_sleep_confirmation_error(err: Exception) -> bool:
+    if isinstance(err, EOFError):
+        return True
+    if isinstance(err, BleakDBusError):
+        if err.dbus_error in {
+            "org.bluez.Error.DoesNotExist",
+            "org.bluez.Error.NotConnected",
+        }:
+            return True
+        if err.dbus_error == "org.bluez.Error.Failed":
+            return "ATT error: 0x0e" in str(err)
+    return False
+
+
 def _default_cloudwatch_log_stream(thing_name: str) -> str:
     hostname = socket.gethostname().split(".", 1)[0] or "gw"
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -1190,7 +1204,27 @@ class BleSleepBridge:
                 GatewayBleState.COMMAND_SENT,
                 f"power command written for {self._cached_device_id or '<unknown>'}",
             )
-            report = await self._wait_for_reported_power(target_power)
+            try:
+                report = await self._wait_for_reported_power(target_power)
+            except Exception as err:
+                if not target_power and _is_expected_post_sleep_confirmation_error(err):
+                    _log_important(
+                        LOGGER,
+                        "MCU disconnected immediately after sleep command; accepting power=false transition",
+                    )
+                    if self._shadow.reported_power != target_power:
+                        self._shadow.set_reported(target_power)
+                    if not self._is_connected():
+                        self._shadow.set_ble_online(False)
+                    await self._publish_reported_update(
+                        clear_desired_power=True,
+                        context="Reported synchronized after BLE sleep command disconnect",
+                    )
+                    report = None
+                else:
+                    raise
+            if report is None:
+                return
             await self._sync_reported_from_device_report(
                 report,
                 context="Reported synchronized after BLE power command",
