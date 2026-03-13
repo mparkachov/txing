@@ -5,7 +5,7 @@ Python service for the Raspberry Pi 5 gateway.
 Responsibilities:
 - Connect directly to AWS IoT Core over MQTT/mTLS
 - Synchronize classic Thing Shadow for thing `txing`
-- Bridge `state.desired.mcu.power` wake requests to the MCU over BLE rendezvous sessions
+- Bridge `state.desired.mcu.power` power-state requests to the MCU over BLE rendezvous sessions
 - Publish MCU state to `state.reported.mcu.*`
 
 Shadow contract source of truth:
@@ -179,8 +179,8 @@ just print
 ```
 
 These recipes call `aws iot-data update-thing-shadow` directly with:
-- `state.desired.mcu.power=true` (`wake`)
-- `state.desired.mcu.power=false` (`clear`)
+- `state.desired.mcu.power=true` (`wake`, meaning request the wakeup state)
+- `state.desired.mcu.power=false` (`sleep`, meaning request the sleep state)
 - `get-thing-shadow` (`print`)
 
 Default recipe values:
@@ -198,6 +198,9 @@ just gw::wake thing_name=my-thing region=eu-central-1 endpoint_file=certs/iot-da
 
 ## Runtime behavior
 
+- Terminology:
+  - `power=true` means the MCU is in the wakeup state.
+  - `power=false` means the MCU is in the sleep state with periodic `5 s` rendezvous wakeups and brief advertising windows.
 - Operates in event-driven mode from MQTT subscriptions (no fixed-interval cloud polling).
 - Subscribes to:
   - `$aws/things/<thing>/shadow/get/accepted`
@@ -206,14 +209,20 @@ just gw::wake thing_name=my-thing region=eu-central-1 endpoint_file=certs/iot-da
 - Loads BLE UUIDs from `state.reported.mcu.ble.*` and validates them against the peripheral during short rendezvous sessions.
 - Uses optional `state.reported.mcu.ble.deviceId` as the primary scan match for fast reconnect.
 - Keeps a scanner running while disconnected and treats disconnects as normal behavior.
+- While the MCU is in the sleep state, stays disconnected by default, watches the periodic advertisements to maintain BLE presence, and reconnects during a rendezvous window only when a BLE session is needed.
+- While the MCU is in the wakeup state, maintains a live BLE session when possible.
+- Uses one canonical 3-byte MCU State Report (`sleep flag` + `batteryMv`) from both BLE paths:
+  - advertising manufacturer data while disconnected
+  - GATT reads/notifications while connected
 - Publishes BLE connection state at `state.reported.mcu.ble.online`:
-  - `false` on gateway startup
-  - `true` during each short BLE session
-  - `false` after disconnect
+  - `true` only after sustained BLE presence has been confirmed
+  - remains `true` while the device is connected or keeps advertising within the presence timeout
+  - becomes `false` only after the configured presence timeout expires without a matching connection or advertisement
 - If UUIDs are missing/invalid or do not match GATT, enters BLE UUID search mode and discovers UUIDs from service/characteristic properties.
 - Processes desired power from cloud (`state.desired.mcu.power`).
-- For `power=true`, waits for the next advertisement, connects, writes the wake command, polls for acknowledgement, then disconnects.
-- For `power=false`, clears the wake latch locally without forcing a BLE reconnect.
+- For `power=true`, waits for the next advertisement if disconnected, connects, writes the wakeup-state command, polls for acknowledgement, and then keeps the BLE session available until a normal disconnect occurs.
+- For `power=false`, if connected, writes the sleep-state command and lets the MCU return to its periodic `5 s` rendezvous behavior; if already disconnected, it does not force a reconnect.
+- Updates `state.reported.mcu.batteryMv` only when the observed MCU battery value changes, so the AWS shadow metadata timestamp for `batteryMv` tracks real battery changes instead of unrelated BLE state publishes.
 - Publishes reported updates to AWS:
   - `state.reported.mcu.power`
   - `state.reported.mcu.batteryMv`

@@ -16,3 +16,10 @@
 - Thing Shadow schema source of truth: `docs/txing-shadow.schema.json`.
 - Shadow behavior contract: `docs/device-gateway-shadow-spec.md`.
 - Ownership rule: `gw` owns the `mcu.*` shadow subtree contract.
+
+## Terminology
+- `power=true` means the device is in the wakeup state.
+- `power=false` means the device is in the sleep state.
+- In the sleep state, the MCU stays in RTC-driven low-power idle between periodic rendezvous wakeups.
+- The sleep-state rendezvous interval is every `5 s`: the MCU wakes briefly, refreshes BLE state, advertises for a bounded window, and returns to low-power idle if no BLE session is needed.
+- Use `wakeup state` / `sleep state` when describing the external device power contract. Distinguish that from the firmware's internal `Wake` step inside the sleep-state rendezvous cycle.

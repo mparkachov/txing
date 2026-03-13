@@ -486,15 +486,18 @@ class ShadowState:
     def set_ble_online(self, online: bool) -> None:
         self.ble_online = online
 
-    def payload(self) -> dict[str, dict[str, dict[str, dict[str, Any]]]]:
+    def ble_state(self) -> dict[str, Any]:
         ble_state = self.ble_uuids.as_shadow_dict()
         ble_state["online"] = self.ble_online
+        return ble_state
+
+    def payload(self) -> dict[str, dict[str, dict[str, dict[str, Any]]]]:
         state: dict[str, dict[str, dict[str, Any]]] = {
             "reported": {
                 "mcu": {
                     "power": self.reported_power,
                     "batteryMv": self.battery_mv,
-                    "ble": ble_state,
+                    "ble": self.ble_state(),
                 }
             },
         }
@@ -644,31 +647,20 @@ class AwsShadowClient:
                 break
         return updates
 
-    async def set_reported_state(
+    async def update_shadow(
         self,
         *,
-        power: bool,
-        battery_mv: int,
-        ble_uuids: BleGattUuids,
-        ble_online: bool,
+        reported_mcu_patch: dict[str, Any] | None,
         clear_desired_power: bool,
         publish_timeout_seconds: float = DEFAULT_MQTT_PUBLISH_TIMEOUT,
     ) -> None:
-        ble_state = ble_uuids.as_shadow_dict()
-        ble_state["online"] = ble_online
-        state: dict[str, Any] = {
-            "reported": {
-                "mcu": {
-                    "power": power,
-                    "batteryPercent": None,
-                    "batteryMv": int(battery_mv),
-                    "batteryVolt": None,
-                    "ble": ble_state,
-                }
-            }
-        }
+        state: dict[str, Any] = {}
+        if reported_mcu_patch is not None:
+            state["reported"] = {"mcu": reported_mcu_patch}
         if clear_desired_power:
             state["desired"] = {"mcu": {"power": None}}
+        if not state:
+            return
 
         await self._publish_json(
             self._topic_update,
@@ -1031,6 +1023,7 @@ class BleSleepBridge:
             "Clearing desired.mcu.power=false after observing the next sleep advertisement",
         )
         published = await self._publish_reported_update(
+            reported_mcu_patch=None,
             clear_desired_power=True,
             context="Cleared desired.mcu.power=false after next sleep advertisement",
         )
@@ -1265,6 +1258,7 @@ class BleSleepBridge:
         )
         self._shadow.set_reported(False)
         await self._publish_reported_update(
+            reported_mcu_patch={"power": False},
             clear_desired_power=self._shadow.desired_power is False,
             context="Normalized startup default to power=false",
         )
@@ -1353,6 +1347,7 @@ class BleSleepBridge:
         )
         self._shadow.set_reported(target_power)
         await self._publish_reported_update(
+            reported_mcu_patch={"power": target_power},
             clear_desired_power=True,
             context="Reported updated after dry-run command success",
         )
@@ -1405,6 +1400,7 @@ class BleSleepBridge:
                         "sleep command accepted; waiting for next advertisement before clearing desired=false"
                     )
                     await self._publish_reported_update(
+                        reported_mcu_patch={"power": target_power},
                         clear_desired_power=False,
                         context="Reported synchronized after BLE sleep command disconnect",
                     )
@@ -1413,7 +1409,7 @@ class BleSleepBridge:
                     raise
             if report is None:
                 return
-            await self._sync_reported_from_device_report(
+            await self._sync_reported_from_state_report(
                 report,
                 context="Reported synchronized after BLE power command",
                 log_prefix="MCU state report after BLE power command",
@@ -1487,6 +1483,22 @@ class BleSleepBridge:
 
         return None
 
+    @staticmethod
+    def _extract_state_report_from_advertisement(
+        adv: AdvertisementData,
+    ) -> bytes | None:
+        manufacturer_data = adv.manufacturer_data or {}
+        payload = manufacturer_data.get(TXING_MFG_ID)
+        if payload is None:
+            return None
+        payload_bytes = bytes(payload)
+        if not payload_bytes.startswith(TXING_MFG_MAGIC):
+            return None
+        report = payload_bytes[len(TXING_MFG_MAGIC) :]
+        if len(report) != 3:
+            return None
+        return report
+
     def _handle_scan_detection(
         self,
         device: BLEDevice,
@@ -1499,6 +1511,7 @@ class BleSleepBridge:
         matched_by = self._match_scan_candidate(device, adv)
         if matched_by is None:
             return
+        state_report = self._extract_state_report_from_advertisement(adv)
 
         def _record_match() -> None:
             seen_at = loop.time()
@@ -1534,8 +1547,29 @@ class BleSleepBridge:
             self._schedule_sleep_desired_clear_after_advertisement()
             if self._advertisement_event is not None:
                 self._advertisement_event.set()
+            if state_report is not None:
+                task = asyncio.create_task(
+                    self._sync_reported_from_state_report(
+                        state_report,
+                        context="Reported synchronized from MCU advertisement state report",
+                        log_prefix="MCU advertisement state report",
+                    )
+                )
+                task.add_done_callback(self._log_background_task_error)
 
         loop.call_soon_threadsafe(_record_match)
+
+    @staticmethod
+    def _log_background_task_error(task: asyncio.Task[Any]) -> None:
+        if task.cancelled():
+            return
+        error = task.exception()
+        if error is not None:
+            LOGGER.warning(
+                "Background BLE task failed: %s %r",
+                error.__class__.__name__,
+                error,
+            )
 
     def _get_fresh_target_device(self) -> BLEDevice | None:
         loop = self._loop
@@ -1645,6 +1679,7 @@ class BleSleepBridge:
             await self._publish_ble_online_state(
                 online=True,
                 context="BLE connected",
+                force=True,
             )
             await self._sync_reported_from_device_on_connect()
             self._has_device_sync = True
@@ -1662,6 +1697,7 @@ class BleSleepBridge:
             self._shadow.reported_power,
         )
         await self._publish_reported_update(
+            reported_mcu_patch=None,
             clear_desired_power=True,
             context=context,
         )
@@ -1669,16 +1705,16 @@ class BleSleepBridge:
     async def _publish_reported_update(
         self,
         *,
+        reported_mcu_patch: dict[str, Any] | None,
         clear_desired_power: bool,
         context: str,
         publish_timeout_seconds: float = DEFAULT_MQTT_PUBLISH_TIMEOUT,
     ) -> bool:
+        if reported_mcu_patch is None and not clear_desired_power:
+            return True
         try:
-            await self._cloud_shadow.set_reported_state(
-                power=self._shadow.reported_power,
-                battery_mv=self._shadow.battery_mv,
-                ble_uuids=self._shadow.ble_uuids,
-                ble_online=self._shadow.ble_online,
+            await self._cloud_shadow.update_shadow(
+                reported_mcu_patch=reported_mcu_patch,
                 clear_desired_power=clear_desired_power,
                 publish_timeout_seconds=publish_timeout_seconds,
             )
@@ -1704,6 +1740,7 @@ class BleSleepBridge:
             return
         self._shadow.set_ble_online(online)
         published = await self._publish_reported_update(
+            reported_mcu_patch={"ble": self._shadow.ble_state()},
             clear_desired_power=False,
             context=context,
             publish_timeout_seconds=publish_timeout_seconds,
@@ -1752,7 +1789,7 @@ class BleSleepBridge:
             raise RuntimeError(f"unexpected battery millivolts in State Report: {battery_mv}")
         return sleep, reported_power, battery_mv
 
-    async def _sync_reported_from_device_report(
+    async def _sync_reported_from_state_report(
         self,
         report: bytes,
         *,
@@ -1761,11 +1798,9 @@ class BleSleepBridge:
     ) -> None:
         sleep, reported_power, battery_mv = self._parse_state_report(report)
         clear_desired = self._shadow.desired_power is True and reported_power
-        if (
-            self._shadow.reported_power == reported_power
-            and self._shadow.battery_mv == battery_mv
-            and not clear_desired
-        ):
+        power_changed = self._shadow.reported_power != reported_power
+        battery_changed = self._shadow.battery_mv != battery_mv
+        if not power_changed and not battery_changed and not clear_desired:
             LOGGER.debug(
                 "%s unchanged: battery_mv=%s sleep=%s => power=%s",
                 log_prefix,
@@ -1779,11 +1814,19 @@ class BleSleepBridge:
             power=reported_power,
             battery_mv=battery_mv,
         )
+        reported_mcu_patch: dict[str, Any] | None = {}
+        if power_changed:
+            reported_mcu_patch["power"] = reported_power
+        if battery_changed:
+            reported_mcu_patch["batteryMv"] = battery_mv
+        if not reported_mcu_patch:
+            reported_mcu_patch = None
         if self._shadow.desired_power is False and not reported_power:
             self._arm_sleep_desired_clear_wait(
                 "MCU reported sleep; waiting for next advertisement before clearing desired=false"
             )
         await self._publish_reported_update(
+            reported_mcu_patch=reported_mcu_patch,
             clear_desired_power=clear_desired,
             context=context,
         )
@@ -1809,7 +1852,7 @@ class BleSleepBridge:
         if not self._is_connected():
             return
         report = await self._read_state_report()
-        await self._sync_reported_from_device_report(
+        await self._sync_reported_from_state_report(
             report,
             context="Reported synchronized from MCU state report on connect",
             log_prefix="MCU state report on connect",
@@ -1830,7 +1873,7 @@ class BleSleepBridge:
             return
         try:
             asyncio.run_coroutine_threadsafe(
-                self._sync_reported_from_device_report(
+                self._sync_reported_from_state_report(
                     bytes(data),
                     context="Reported synchronized from MCU state report notification",
                     log_prefix="MCU state report notification",
@@ -1848,9 +1891,7 @@ class BleSleepBridge:
 
         while True:
             report = await self._read_state_report()
-            _sleep, reported_power, battery_mv = self._parse_state_report(report)
-            if battery_mv != self._shadow.battery_mv:
-                self._shadow.set_reported(self._shadow.reported_power, battery_mv=battery_mv)
+            _sleep, reported_power, _battery_mv = self._parse_state_report(report)
             if reported_power == target_power:
                 LOGGER.info("Received MCU power confirmation power=%s", target_power)
                 return report

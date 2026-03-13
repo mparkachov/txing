@@ -22,9 +22,10 @@ Schema validation should be done by project code and/or CI checks, while AWS IoT
 
 ## Required project fields
 
-- `state.desired.mcu.power` (`boolean`) requests the MCU power mode: `true` keeps the MCU awake and BLE-connectable, `false` returns it to periodic low-power rendezvous mode.
+- Terminology: `power=true` means the wakeup state, and `power=false` means the sleep state with periodic `5 s` BLE rendezvous wakeups.
+- `state.desired.mcu.power` (`boolean`) requests the MCU power mode: `true` keeps the MCU in the wakeup state and BLE-connectable, `false` returns it to the sleep state with periodic low-power rendezvous wakeups.
 - `state.reported.mcu.power` (`boolean`) is the gateway-confirmed MCU power mode.
-- `state.reported.mcu.batteryMv` (`integer`, millivolts, measured MCU battery estimate).
+- `state.reported.mcu.batteryMv` (`integer`, millivolts, measured MCU battery estimate observed from the MCU State Report over BLE advertising or GATT).
 - `state.reported.mcu.ble.serviceUuid` (`uuid`) is the BLE service UUID used by gateway.
 - `state.reported.mcu.ble.sleepCommandUuid` (`uuid`) is the compatibility field for the BLE power-mode control characteristic UUID.
 - `state.reported.mcu.ble.stateReportUuid` (`uuid`) is the BLE read+notify characteristic UUID.

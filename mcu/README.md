@@ -13,9 +13,15 @@ Firmware for nRF52840 (Seeed XIAO BLE Sense) with BLE sleep control.
 - Device state:
   - `battery_mv` (measured BAT voltage estimate in millivolts)
   - `sleep` (`true`/`false`)
+- External terminology:
+  - `sleep=true` corresponds to the sleep state / `power=false`
+  - `sleep=false` corresponds to the wakeup state / `power=true`
 - Reset/power-cycle default: `sleep=true`
-- `sleep=true`: low-power periodic wake/listen
-- `sleep=false`: stay awake and BLE-connectable
+- `sleep=true`: RTC-driven low-power idle with periodic `5 s` rendezvous wakeups and a brief advertising window
+- `sleep=false`: stay in the wakeup state and remain BLE-connectable
+- BLE state report transport:
+  - advertising manufacturer data carries `TX` plus the 3-byte MCU State Report while disconnected
+  - the GATT State Report characteristic carries the same 3-byte payload while connected
 - LED indication:
   - `sleep=true` -> LED OFF
   - `sleep=false` -> LED ON

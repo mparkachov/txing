@@ -2,7 +2,6 @@
 #![no_main]
 
 use core::cell::Cell;
-use core::future::pending;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use defmt_rtt as _;
@@ -33,24 +32,25 @@ const BATTERY_CALIBRATION_HIGH_MEASURED_MV: i64 = 4170;
 const BATTERY_ADC_MAX_READING: u32 = (1 << 14) - 1;
 const LOW_FREQ_CLOCK_HZ: u32 = 32_768;
 const RENDEZVOUS_SLEEP_TICKS: u32 = 5 * LOW_FREQ_CLOCK_HZ;
+const BATTERY_REFRESH_TICKS: u32 = 5 * LOW_FREQ_CLOCK_HZ;
 const RENDEZVOUS_COMMAND_WINDOW_TICKS: u32 = 15 * LOW_FREQ_CLOCK_HZ;
 const RENDEZVOUS_ADV_WINDOW_10MS: u16 = 200;
+const AWAKE_ADV_REFRESH_WINDOW_10MS: u16 = 500;
 const RENDEZVOUS_ADV_INTERVAL_UNITS: u32 = 160; // 100 ms (0.625 ms units)
 const RTC2_APP_PRIORITY: u8 = 0xE0;
 const RTC_COUNTER_MASK: u32 = 0x00FF_FFFF;
 const POWER_MODE_AWAKE_COMMAND_VALUE: u8 = 0x00;
 const POWER_MODE_SLEEP_COMMAND_VALUE: u8 = 0x01;
-const TXING_ADV_DATA: [u8; 27] = [
-    0x02, 0x01, 0x06, // Flags
-    0x05, 0xFF, 0xFF, 0xFF, b'T', b'X', // Manufacturer data: company=0xFFFF, marker="TX"
-    // Complete list of 128-bit service UUIDs in little-endian BLE advertising order.
-    0x11, 0x07, 0x00, 0xA0, 0xB4, 0xF6, 0x32, 0x7B, 0x2D, 0x4D, 0x9F, 0x4B, 0x4F, 0xF0,
-    0xA2, 0xB8, 0xF1, 0x00,
+const TXING_MFG_ID_LE: [u8; 2] = [0xFF, 0xFF];
+const TXING_MFG_MAGIC: [u8; 2] = [b'T', b'X'];
+const TXING_SERVICE_UUID_ADV_LE: [u8; 16] = [
+    0x00, 0xA0, 0xB4, 0xF6, 0x32, 0x7B, 0x2D, 0x4D, 0x9F, 0x4B, 0x4F, 0xF0, 0xA2, 0xB8, 0xF1, 0x00,
 ];
 const TXING_SCAN_DATA: [u8; 7] = [0x06, 0x09, b't', b'x', b'i', b'n', b'g'];
 
 static RTC_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 static RTC_ARMED: AtomicBool = AtomicBool::new(false);
+static POWER_COMMAND_SIGNAL: Signal<CriticalSectionRawMutex, u8> = Signal::new();
 
 struct DeviceState {
     battery_mv: Cell<u16>,
@@ -304,6 +304,43 @@ async fn wait_for_timer_ticks(ticks: u32) {
     RTC_SIGNAL.wait().await;
 }
 
+fn build_adv_data(report: [u8; 3]) -> [u8; 30] {
+    let mut adv = [0u8; 30];
+    adv[0..3].copy_from_slice(&[0x02, 0x01, 0x06]);
+    adv[3..12].copy_from_slice(&[
+        0x08,
+        0xFF,
+        TXING_MFG_ID_LE[0],
+        TXING_MFG_ID_LE[1],
+        TXING_MFG_MAGIC[0],
+        TXING_MFG_MAGIC[1],
+        report[0],
+        report[1],
+        report[2],
+    ]);
+    adv[12..30].copy_from_slice(&[
+        0x11,
+        0x07,
+        TXING_SERVICE_UUID_ADV_LE[0],
+        TXING_SERVICE_UUID_ADV_LE[1],
+        TXING_SERVICE_UUID_ADV_LE[2],
+        TXING_SERVICE_UUID_ADV_LE[3],
+        TXING_SERVICE_UUID_ADV_LE[4],
+        TXING_SERVICE_UUID_ADV_LE[5],
+        TXING_SERVICE_UUID_ADV_LE[6],
+        TXING_SERVICE_UUID_ADV_LE[7],
+        TXING_SERVICE_UUID_ADV_LE[8],
+        TXING_SERVICE_UUID_ADV_LE[9],
+        TXING_SERVICE_UUID_ADV_LE[10],
+        TXING_SERVICE_UUID_ADV_LE[11],
+        TXING_SERVICE_UUID_ADV_LE[12],
+        TXING_SERVICE_UUID_ADV_LE[13],
+        TXING_SERVICE_UUID_ADV_LE[14],
+        TXING_SERVICE_UUID_ADV_LE[15],
+    ]);
+    adv
+}
+
 fn battery_mv_from_raw(raw: u32) -> u32 {
     if raw == 0 {
         return 0;
@@ -347,6 +384,7 @@ async fn sleep_rendezvous_cycle<P: OutputPin>(
     refresh_battery_state(state, battery_monitor);
     publish_state_report(server, None, state);
     set_led_for_sleep_state(led, false);
+    let adv_data = build_adv_data(state.report_bytes());
 
     log_state_transition("advertising");
     let mut config = peripheral::Config::default();
@@ -354,7 +392,7 @@ async fn sleep_rendezvous_cycle<P: OutputPin>(
     config.timeout = Some(RENDEZVOUS_ADV_WINDOW_10MS);
 
     let adv = peripheral::ConnectableAdvertisement::ScannableUndirected {
-        adv_data: &TXING_ADV_DATA,
+        adv_data: &adv_data,
         scan_data: &TXING_SCAN_DATA,
     };
 
@@ -388,12 +426,14 @@ async fn awake_cycle<P: OutputPin>(
     publish_state_report(server, None, state);
     set_led_for_sleep_state(led, false);
     log_state_transition("awake_advertising");
+    let adv_data = build_adv_data(state.report_bytes());
 
     let mut config = peripheral::Config::default();
     config.interval = RENDEZVOUS_ADV_INTERVAL_UNITS;
+    config.timeout = Some(AWAKE_ADV_REFRESH_WINDOW_10MS);
 
     let adv = peripheral::ConnectableAdvertisement::ScannableUndirected {
-        adv_data: &TXING_ADV_DATA,
+        adv_data: &adv_data,
         scan_data: &TXING_SCAN_DATA,
     };
 
@@ -401,6 +441,7 @@ async fn awake_cycle<P: OutputPin>(
         Ok(conn) => {
             run_connection(conn, server, state, led, battery_monitor, wake_output).await;
         }
+        Err(peripheral::AdvertiseError::Timeout) => {}
         Err(err) => {
             defmt::warn!("awake_advertising_err={:?}", err);
         }
@@ -420,9 +461,36 @@ async fn run_connection<P: OutputPin>(
     set_led_for_sleep_state(led, state.sleep());
     publish_state_report(server, Some(&conn), state);
 
-    let result = select(
-        gatt_server::run(&conn, server, |event| match event {
-            ServerEvent::Txing(TxingControlServiceEvent::SleepCommandWrite(value)) => {
+    POWER_COMMAND_SIGNAL.reset();
+    let mut gatt_run = core::pin::pin!(gatt_server::run(&conn, server, |event| match event {
+        ServerEvent::Txing(TxingControlServiceEvent::SleepCommandWrite(value)) => {
+            POWER_COMMAND_SIGNAL.signal(value);
+        }
+        _ => {}
+    }));
+    let mut command_window_remaining = if state.sleep() {
+        Some(RENDEZVOUS_COMMAND_WINDOW_TICKS)
+    } else {
+        None
+    };
+
+    loop {
+        let wait_ticks = match command_window_remaining {
+            Some(remaining) => remaining.min(BATTERY_REFRESH_TICKS),
+            None => BATTERY_REFRESH_TICKS,
+        };
+
+        match select(
+            select(gatt_run.as_mut(), POWER_COMMAND_SIGNAL.wait()),
+            wait_for_timer_ticks(wait_ticks),
+        )
+        .await
+        {
+            Either::First(Either::First(_)) => {
+                defmt::info!("connection_closed sleep={}", state.sleep());
+                return;
+            }
+            Either::First(Either::Second(value)) => {
                 handle_power_command(
                     value,
                     &conn,
@@ -434,20 +502,28 @@ async fn run_connection<P: OutputPin>(
                 );
                 if state.sleep() {
                     let _ = conn.disconnect();
+                } else {
+                    command_window_remaining = None;
                 }
             }
-            _ => {}
-        }),
-        sleep_connection_timeout(&conn, state),
-    )
-    .await;
+            Either::Second(()) => {
+                if let Some(remaining) = command_window_remaining {
+                    let remaining_after_wait = remaining.saturating_sub(wait_ticks);
+                    if remaining_after_wait == 0 {
+                        defmt::info!("command_window_timeout sleep=true");
+                        let _ = conn.disconnect();
+                        defmt::info!("sleep_connection_timeout_complete sleep=true");
+                        return;
+                    }
+                    command_window_remaining = Some(remaining_after_wait);
+                }
 
-    match result {
-        Either::First(_) => {
-            defmt::info!("connection_closed sleep={}", state.sleep());
-        }
-        Either::Second(()) => {
-            defmt::info!("sleep_connection_timeout_complete sleep={}", state.sleep());
+                refresh_battery_state(state, battery_monitor);
+                publish_state_report(server, Some(&conn), state);
+                if !state.sleep() {
+                    command_window_remaining = None;
+                }
+            }
         }
     }
 }
@@ -486,16 +562,6 @@ fn handle_power_command<P: OutputPin>(
             defmt::warn!("unexpected_power_command value={}", value);
         }
     }
-}
-
-async fn sleep_connection_timeout(conn: &Connection, state: &DeviceState) {
-    wait_for_timer_ticks(RENDEZVOUS_COMMAND_WINDOW_TICKS).await;
-    if state.sleep() {
-        defmt::info!("command_window_timeout sleep=true");
-        let _ = conn.disconnect();
-        return;
-    }
-    pending::<()>().await;
 }
 
 #[interrupt]
