@@ -533,6 +533,7 @@ class AwsShadowClient:
         self._topic_get_accepted = f"{self._topic_prefix}/get/accepted"
         self._topic_get_rejected = f"{self._topic_prefix}/get/rejected"
         self._topic_update = f"{self._topic_prefix}/update"
+        self._topic_update_accepted = f"{self._topic_prefix}/update/accepted"
         self._topic_update_delta = f"{self._topic_prefix}/update/delta"
 
         self._client = mqtt.Client(
@@ -761,7 +762,12 @@ class AwsShadowClient:
             self._config.client_id,
         )
 
-        for topic in (self._topic_get_accepted, self._topic_get_rejected, self._topic_update_delta):
+        for topic in (
+            self._topic_get_accepted,
+            self._topic_get_rejected,
+            self._topic_update_accepted,
+            self._topic_update_delta,
+        ):
             subscribe_rc, _mid = client.subscribe(topic, qos=1)
             if subscribe_rc != mqtt.MQTT_ERR_SUCCESS:
                 error = RuntimeError(
@@ -825,6 +831,18 @@ class AwsShadowClient:
             )
             self._enqueue_update(update)
             self._set_initial_snapshot(payload)
+            return
+
+        if msg.topic == self._topic_update_accepted:
+            update = AwsShadowUpdate(
+                source="shadow/update/accepted",
+                has_desired=True,
+                desired_power=_extract_desired_power_from_shadow(payload),
+                reported_power=_extract_reported_power(payload),
+                battery_mv=_extract_reported_battery_mv(payload),
+                ble_uuids=_extract_reported_ble_uuids(payload),
+            )
+            self._enqueue_update(update)
             return
 
         if msg.topic == self._topic_update_delta:
