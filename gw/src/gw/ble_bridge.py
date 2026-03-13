@@ -968,6 +968,7 @@ class BleSleepBridge:
         self._has_device_sync = False
         self._state = GatewayBleState.IDLE
         self._sleep_desired_clear_after_advertisement_count: int | None = None
+        self._sleep_desired_clear_task: asyncio.Task[None] | None = None
 
     def _set_gateway_state(self, next_state: GatewayBleState, reason: str) -> None:
         if self._state == next_state:
@@ -1042,6 +1043,21 @@ class BleSleepBridge:
             self._arm_sleep_desired_clear_wait(
                 "shadow publish failed while clearing desired=false after advertisement"
             )
+
+    def _schedule_sleep_desired_clear_after_advertisement(self) -> None:
+        if not self._should_clear_sleep_desired_after_advertisement():
+            return
+        existing_task = self._sleep_desired_clear_task
+        if existing_task is not None and not existing_task.done():
+            return
+        task = asyncio.create_task(self._clear_sleep_desired_after_advertisement())
+        self._sleep_desired_clear_task = task
+
+        def _clear_task_ref(done_task: asyncio.Task[None]) -> None:
+            if self._sleep_desired_clear_task is done_task:
+                self._sleep_desired_clear_task = None
+
+        task.add_done_callback(_clear_task_ref)
 
     def _ble_presence_recent(self) -> bool:
         if self._is_connected():
@@ -1520,6 +1536,7 @@ class BleSleepBridge:
                     matched_by,
                     getattr(adv, "rssi", None),
                 )
+            self._schedule_sleep_desired_clear_after_advertisement()
             if self._advertisement_event is not None:
                 self._advertisement_event.set()
 
