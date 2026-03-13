@@ -413,6 +413,7 @@ class KnownBleDevice:
     local_name: str | None = None
     matched_by: str | None = None
     last_seen_monotonic: float | None = None
+    last_advertisement_seen_monotonic: float | None = None
     online_candidate_since_monotonic: float | None = None
     last_logged_seen_monotonic: float | None = None
     rssi: int | None = None
@@ -444,6 +445,7 @@ class KnownBleDevice:
         self.local_name = local_name
         self.matched_by = matched_by
         self.last_seen_monotonic = seen_at
+        self.last_advertisement_seen_monotonic = seen_at
         self.rssi = rssi
 
     def should_log_sighting(self, now: float, min_interval: float) -> bool:
@@ -945,6 +947,7 @@ class BleSleepBridge:
         self._ble_uuid_search_mode = shadow.ble_uuid_search_mode
         self._has_device_sync = False
         self._state = GatewayBleState.IDLE
+        self._sleep_desired_clear_after_advertisement_since: float | None = None
 
     def _set_gateway_state(self, next_state: GatewayBleState, reason: str) -> None:
         if self._state == next_state:
@@ -974,6 +977,56 @@ class BleSleepBridge:
         self._known_device.last_seen_monotonic = now
         if self._known_device.online_candidate_since_monotonic is None:
             self._known_device.online_candidate_since_monotonic = now
+
+    def _refresh_sleep_desired_clear_wait(self) -> None:
+        if self._shadow.desired_power is False and not self._shadow.reported_power:
+            return
+        self._sleep_desired_clear_after_advertisement_since = None
+
+    def _arm_sleep_desired_clear_wait(self, reason: str) -> None:
+        if self._shadow.desired_power is not False or self._shadow.reported_power:
+            self._sleep_desired_clear_after_advertisement_since = None
+            return
+        if self._sleep_desired_clear_after_advertisement_since is not None:
+            return
+        loop = self._loop
+        if loop is None:
+            return
+        self._sleep_desired_clear_after_advertisement_since = loop.time()
+        _log_important(
+            LOGGER,
+            "Holding desired.mcu.power=false until next sleep advertisement (%s)",
+            reason,
+        )
+
+    def _should_clear_sleep_desired_after_advertisement(self) -> bool:
+        wait_since = self._sleep_desired_clear_after_advertisement_since
+        if wait_since is None:
+            return False
+        if self._shadow.desired_power is not False or self._shadow.reported_power:
+            return False
+        last_advertisement_seen = self._known_device.last_advertisement_seen_monotonic
+        return (
+            last_advertisement_seen is not None
+            and last_advertisement_seen > wait_since
+        )
+
+    async def _clear_sleep_desired_after_advertisement(self) -> None:
+        if not self._should_clear_sleep_desired_after_advertisement():
+            return
+        self._sleep_desired_clear_after_advertisement_since = None
+        _log_important(
+            LOGGER,
+            "Clearing desired.mcu.power=false after observing the next sleep advertisement",
+        )
+        published = await self._publish_reported_update(
+            clear_desired_power=True,
+            context="Cleared desired.mcu.power=false after next sleep advertisement",
+        )
+        if not published:
+            self._arm_sleep_desired_clear_wait(
+                "shadow publish failed while clearing desired=false after advertisement"
+            )
 
     def _ble_presence_recent(self) -> bool:
         if self._is_connected():
@@ -1047,13 +1100,21 @@ class BleSleepBridge:
                     await self._apply_cloud_shadow_updates(updates=pending_updates)
                     pending_updates = []
 
+                self._refresh_sleep_desired_clear_wait()
+                await self._clear_sleep_desired_after_advertisement()
+
                 if (
                     self._shadow.desired_power is not None
                     and self._shadow.desired_power == self._shadow.reported_power
                 ):
-                    await self._clear_desired_if_synced(
-                        context="No-op: desired already equals reported",
-                    )
+                    if self._shadow.desired_power:
+                        await self._clear_desired_if_synced(
+                            context="No-op: desired already equals reported",
+                        )
+                    else:
+                        self._arm_sleep_desired_clear_wait(
+                            "sleep already matches reported state; waiting for next advertisement"
+                        )
 
                 await self._reconcile_ble_online_presence()
 
@@ -1235,6 +1296,12 @@ class BleSleepBridge:
 
             if changed:
                 self._shadow.log_state(f"Applied cloud shadow update ({update.source})")
+                if self._shadow.desired_power is False and not self._shadow.reported_power:
+                    self._arm_sleep_desired_clear_wait(
+                        f"{update.source}: sleep requested while MCU already reports sleep"
+                    )
+                else:
+                    self._refresh_sleep_desired_clear_wait()
             if ble_uuids_changed and ble_gatt_uuids_changed:
                 self._has_device_sync = False
                 if self._is_connected():
@@ -1270,9 +1337,14 @@ class BleSleepBridge:
             return
 
         if self._shadow.reported_power == target_power:
-            await self._clear_desired_if_synced(
-                context="No-op: desired already equals reported",
-            )
+            if target_power:
+                await self._clear_desired_if_synced(
+                    context="No-op: desired already equals reported",
+                )
+            else:
+                self._arm_sleep_desired_clear_wait(
+                    "sleep already matches reported state; waiting for next advertisement"
+                )
             return
 
         if not self._is_connected():
@@ -1303,8 +1375,11 @@ class BleSleepBridge:
                     if self._shadow.reported_power != target_power:
                         self._shadow.set_reported(target_power)
                     self._mark_ble_presence_now()
+                    self._arm_sleep_desired_clear_wait(
+                        "sleep command accepted; waiting for next advertisement before clearing desired=false"
+                    )
                     await self._publish_reported_update(
-                        clear_desired_power=True,
+                        clear_desired_power=False,
                         context="Reported synchronized after BLE sleep command disconnect",
                     )
                     report = None
@@ -1335,7 +1410,7 @@ class BleSleepBridge:
     def _should_idle_disconnected_while_sleeping(self) -> bool:
         return (
             not self._shadow.reported_power
-            and self._shadow.desired_power is None
+            and self._shadow.desired_power in (None, False)
             and not self._ble_uuid_search_mode
         )
 
@@ -1658,7 +1733,7 @@ class BleSleepBridge:
         log_prefix: str,
     ) -> None:
         sleep, reported_power, battery_mv = self._parse_state_report(report)
-        clear_desired = self._shadow.desired_power == reported_power
+        clear_desired = self._shadow.desired_power is True and reported_power
         if (
             self._shadow.reported_power == reported_power
             and self._shadow.battery_mv == battery_mv
@@ -1677,6 +1752,10 @@ class BleSleepBridge:
             power=reported_power,
             battery_mv=battery_mv,
         )
+        if self._shadow.desired_power is False and not reported_power:
+            self._arm_sleep_desired_clear_wait(
+                "MCU reported sleep; waiting for next advertisement before clearing desired=false"
+            )
         await self._publish_reported_update(
             clear_desired_power=clear_desired,
             context=context,
