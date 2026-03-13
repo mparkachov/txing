@@ -1158,6 +1158,7 @@ class BleSleepBridge:
         self._scanner = BleakScanner(
             detection_callback=self._handle_scan_detection,
             scanning_mode=self._config.scan_mode,
+            bluez={"filters": {"DuplicateData": True}},
         )
         await self._scanner.start()
         _log_important(LOGGER, "Started BLE scanner mode=%s", self._config.scan_mode)
@@ -1376,6 +1377,11 @@ class BleSleepBridge:
     async def _clear_desired_if_synced(self, context: str) -> None:
         if self._shadow.desired_power is None:
             return
+        _log_important(
+            LOGGER,
+            "Clearing desired.mcu.power because reported matches desired (power=%s)",
+            self._shadow.reported_power,
+        )
         await self._publish_reported_update(
             clear_desired_power=True,
             context=context,
@@ -1711,18 +1717,22 @@ class BleSleepBridge:
     ) -> None:
         client = self._client
         self._client = None
-        self._set_gateway_state(
-            GatewayBleState.DISCONNECT,
-            "closing BLE rendezvous session",
-        )
-        await self._publish_ble_online_state(
-            online=False,
-            context="BLE disconnected",
-            publish_timeout_seconds=publish_timeout_seconds,
-        )
         if client is None:
+            self._set_gateway_state(
+                GatewayBleState.DISCONNECT,
+                "closing BLE rendezvous session",
+            )
+            await self._publish_ble_online_state(
+                online=False,
+                context="BLE disconnected",
+                publish_timeout_seconds=publish_timeout_seconds,
+            )
             return
         try:
+            self._set_gateway_state(
+                GatewayBleState.DISCONNECT,
+                "closing BLE rendezvous session",
+            )
             if client.is_connected:
                 disconnect_coro = client.disconnect()
                 if disconnect_timeout_seconds is None:
@@ -1739,6 +1749,11 @@ class BleSleepBridge:
             )
         except Exception:
             LOGGER.exception("Failed to disconnect BLE client cleanly")
+        await self._publish_ble_online_state(
+            online=False,
+            context="BLE disconnected",
+            publish_timeout_seconds=publish_timeout_seconds,
+        )
 
     def _handle_disconnect(self, _: BleakClient) -> None:
         LOGGER.info("BLE connection ended")
