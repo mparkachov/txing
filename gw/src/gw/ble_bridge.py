@@ -1570,7 +1570,7 @@ class BleSleepBridge:
         clear_desired_power: bool,
         context: str,
         publish_timeout_seconds: float = DEFAULT_MQTT_PUBLISH_TIMEOUT,
-    ) -> None:
+    ) -> bool:
         try:
             await self._cloud_shadow.set_reported_state(
                 power=self._shadow.reported_power,
@@ -1582,11 +1582,12 @@ class BleSleepBridge:
             )
         except Exception:
             LOGGER.exception("Failed to publish reported shadow update; will retry")
-            return
+            return False
 
         if clear_desired_power:
             self._shadow.clear_desired_if_synced()
         self._shadow.log_state(context)
+        return True
 
     async def _publish_ble_online_state(
         self,
@@ -1596,14 +1597,23 @@ class BleSleepBridge:
         force: bool = False,
         publish_timeout_seconds: float = DEFAULT_MQTT_PUBLISH_TIMEOUT,
     ) -> None:
-        if not force and self._shadow.ble_online == online:
+        previous_online = self._shadow.ble_online
+        if not force and previous_online == online:
             return
         self._shadow.set_ble_online(online)
-        await self._publish_reported_update(
+        published = await self._publish_reported_update(
             clear_desired_power=False,
             context=context,
             publish_timeout_seconds=publish_timeout_seconds,
         )
+        if published and previous_online != online:
+            _log_important(
+                LOGGER,
+                "BLE online %s -> %s (%s)",
+                previous_online,
+                online,
+                context,
+            )
 
     async def _send_sleep_command(self, *, sleep: bool) -> None:
         if not self._is_connected():
