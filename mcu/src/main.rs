@@ -14,6 +14,7 @@ use nrf_softdevice::{RawError, Softdevice, raw};
 use nrf52840_hal as hal;
 use nrf52840_hal::pac::interrupt;
 use panic_probe as _;
+use static_cell::StaticCell;
 
 defmt::timestamp!("{=u64:us}", 0u64);
 
@@ -51,6 +52,7 @@ const TXING_SCAN_DATA: [u8; 7] = [0x06, 0x09, b't', b'x', b'i', b'n', b'g'];
 static RTC_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 static RTC_ARMED: AtomicBool = AtomicBool::new(false);
 static POWER_COMMAND_SIGNAL: Signal<CriticalSectionRawMutex, u8> = Signal::new();
+static ADV_DATA_BUF: StaticCell<[u8; 30]> = StaticCell::new();
 
 struct DeviceState {
     battery_mv: Cell<u16>,
@@ -178,6 +180,7 @@ async fn main(spawner: embassy_executor::Spawner) {
     spawner.spawn(softdevice_task(sd)).unwrap();
 
     let state = DeviceState::boot_default();
+    let adv_data_buf = ADV_DATA_BUF.init([0u8; 30]);
     refresh_battery_state(&state, &mut battery_monitor);
     set_led_for_sleep_state(&mut led, state.sleep());
     publish_state_report(&server, None, &state);
@@ -196,6 +199,7 @@ async fn main(spawner: embassy_executor::Spawner) {
                 &mut led,
                 &mut battery_monitor,
                 &mut wake_output,
+                adv_data_buf,
             )
             .await;
             if state.sleep() {
@@ -211,6 +215,7 @@ async fn main(spawner: embassy_executor::Spawner) {
                 &mut led,
                 &mut battery_monitor,
                 &mut wake_output,
+                adv_data_buf,
             )
             .await;
         }
@@ -379,12 +384,15 @@ async fn sleep_rendezvous_cycle<P: OutputPin>(
     led: &mut P,
     battery_monitor: &mut BatteryMonitor,
     wake_output: &mut WakeOutput,
+    adv_data_buf: &mut [u8; 30],
 ) {
     log_state_transition("wake");
     refresh_battery_state(state, battery_monitor);
     publish_state_report(server, None, state);
     set_led_for_sleep_state(led, false);
-    let adv_data = build_adv_data(state.report_bytes());
+    // Keep advertising data in stable memory so a software reset while BLE
+    // advertising is active cannot leave the stack-backed payload dangling.
+    *adv_data_buf = build_adv_data(state.report_bytes());
 
     log_state_transition("advertising");
     let mut config = peripheral::Config::default();
@@ -392,7 +400,7 @@ async fn sleep_rendezvous_cycle<P: OutputPin>(
     config.timeout = Some(RENDEZVOUS_ADV_WINDOW_10MS);
 
     let adv = peripheral::ConnectableAdvertisement::ScannableUndirected {
-        adv_data: &adv_data,
+        adv_data: &adv_data_buf[..],
         scan_data: &TXING_SCAN_DATA,
     };
 
@@ -421,19 +429,20 @@ async fn awake_cycle<P: OutputPin>(
     led: &mut P,
     battery_monitor: &mut BatteryMonitor,
     wake_output: &mut WakeOutput,
+    adv_data_buf: &mut [u8; 30],
 ) {
     refresh_battery_state(state, battery_monitor);
     publish_state_report(server, None, state);
     set_led_for_sleep_state(led, false);
     log_state_transition("awake_advertising");
-    let adv_data = build_adv_data(state.report_bytes());
+    *adv_data_buf = build_adv_data(state.report_bytes());
 
     let mut config = peripheral::Config::default();
     config.interval = RENDEZVOUS_ADV_INTERVAL_UNITS;
     config.timeout = Some(AWAKE_ADV_REFRESH_WINDOW_10MS);
 
     let adv = peripheral::ConnectableAdvertisement::ScannableUndirected {
-        adv_data: &adv_data,
+        adv_data: &adv_data_buf[..],
         scan_data: &TXING_SCAN_DATA,
     };
 
