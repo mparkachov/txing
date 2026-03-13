@@ -22,13 +22,13 @@ Schema validation should be done by project code and/or CI checks, while AWS IoT
 
 ## Required project fields
 
-- `state.desired.mcu.power` (`boolean`) requests MCU power state.
-- `state.reported.mcu.power` (`boolean`) is the gateway-confirmed MCU power state.
+- `state.desired.mcu.power` (`boolean`) requests wake delivery state for the MCU-controlled wake path.
+- `state.reported.mcu.power` (`boolean`) is the gateway-confirmed wake latch state.
 - `state.reported.mcu.batteryMv` (`integer`, millivolts, measured MCU battery estimate).
 - `state.reported.mcu.ble.serviceUuid` (`uuid`) is the BLE service UUID used by gateway.
-- `state.reported.mcu.ble.sleepCommandUuid` (`uuid`) is the BLE write characteristic UUID.
+- `state.reported.mcu.ble.sleepCommandUuid` (`uuid`) is the compatibility field for the BLE wake-command write characteristic UUID.
 - `state.reported.mcu.ble.stateReportUuid` (`uuid`) is the BLE read+notify characteristic UUID.
-- `state.reported.mcu.ble.online` (`boolean`) is gateway-observed BLE link state (`true` while connected).
+- `state.reported.mcu.ble.online` (`boolean`) is gateway-observed BLE session state (`true` only while the short rendezvous connection is up).
 - `state.reported.mcu.ble.deviceId` (`string`, optional) is the last known BLE device identifier used for fast reconnect.
 
 Unknown fields are allowed for forward compatibility and must be ignored by consumers.

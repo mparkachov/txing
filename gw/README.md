@@ -5,7 +5,7 @@ Python service for the Raspberry Pi 5 gateway.
 Responsibilities:
 - Connect directly to AWS IoT Core over MQTT/mTLS
 - Synchronize classic Thing Shadow for thing `txing`
-- Bridge `state.desired.mcu.power` commands to MCU over BLE
+- Bridge `state.desired.mcu.power` wake requests to the MCU over BLE rendezvous sessions
 - Publish MCU state to `state.reported.mcu.*`
 
 Shadow contract source of truth:
@@ -180,7 +180,7 @@ just print
 
 These recipes call `aws iot-data update-thing-shadow` directly with:
 - `state.desired.mcu.power=true` (`wake`)
-- `state.desired.mcu.power=false` (`sleep`)
+- `state.desired.mcu.power=false` (`clear`)
 - `get-thing-shadow` (`print`)
 
 Default recipe values:
@@ -203,17 +203,17 @@ just gw::wake thing_name=my-thing region=eu-central-1 endpoint_file=certs/iot-da
   - `$aws/things/<thing>/shadow/get/accepted`
   - `$aws/things/<thing>/shadow/update/delta`
 - On startup, requests full shadow with `$aws/things/<thing>/shadow/get`.
-- Loads BLE UUIDs from `state.reported.mcu.ble.*` and validates them against the connected peripheral.
-- Uses optional `state.reported.mcu.ble.deviceId` as fast-path reconnect target on restart.
+- Loads BLE UUIDs from `state.reported.mcu.ble.*` and validates them against the peripheral during short rendezvous sessions.
+- Uses optional `state.reported.mcu.ble.deviceId` as the primary scan match for fast reconnect.
+- Keeps a scanner running while disconnected and treats disconnects as normal behavior.
 - Publishes BLE connection state at `state.reported.mcu.ble.online`:
   - `false` on gateway startup
-  - `true` after BLE connect
-  - `false` on BLE disconnect callback
+  - `true` during each short BLE session
+  - `false` after disconnect
 - If UUIDs are missing/invalid or do not match GATT, enters BLE UUID search mode and discovers UUIDs from service/characteristic properties.
 - Processes desired power from cloud (`state.desired.mcu.power`).
-- Sends BLE Sleep Command:
-  - `power=true` -> `sleep=false` (`0x00`)
-  - `power=false` -> `sleep=true` (`0x01`)
+- For `power=true`, waits for the next advertisement, connects, writes the wake command, polls for acknowledgement, then disconnects.
+- For `power=false`, clears the wake latch locally without forcing a BLE reconnect.
 - Publishes reported updates to AWS:
   - `state.reported.mcu.power`
   - `state.reported.mcu.batteryMv`
@@ -234,6 +234,12 @@ uv run gw --help
 
 Common overrides:
 - `--thing-name txing`
+- `--scan-timeout 12`
+- `--connect-timeout 5`
+- `--command-ack-timeout 1`
+- `--command-ack-poll-interval 0.1`
+- `--device-stale-after 0.75`
+- `--scan-mode active`
 - `--iot-endpoint <host>`
 - `--iot-endpoint-file ../certs/iot-data-ats.endpoint`
 - `--cert-file ../certs/txing-gw.cert.pem`

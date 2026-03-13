@@ -1,48 +1,56 @@
-# Txing Gateway Contract (Shadow + BLE) v0.9
+# Txing Gateway Contract (Shadow + BLE) v1.0
 
 This document is the integration contract for the gateway team only.
-Build, flash, and local developer commands are intentionally out of scope and live in `README.md`.
+Build, flash, and local developer commands live in the subproject READMEs.
 
 ## 1. Scope
 
 Contract between:
-- Txing firmware (BLE peripheral)
-- BLE gateway service (direct MQTT client to AWS IoT)
-- AWS IoT Thing Shadow for thing name `txing`
+- Txing firmware (`mcu/`, BLE peripheral on nRF52840)
+- Txing gateway (`gw/`, BLE central on Raspberry Pi 5)
+- AWS IoT classic Thing Shadow for thing name `txing`
 
 Authoritative shadow schema:
 - `./txing-shadow.schema.json`
-- Example default document: `../aws/default-shadow.json`
 
 High-level architecture:
 - AWS IoT Device Shadow -> MQTT -> gw -> BLE -> mcu
 
-## 2. Design Decision: Shadow Ownership
+## 2. Ownership
 
-- `gw` is the source of truth for MCU shadow data.
-- Only `gw` may define/evolve the `mcu.*` subtree contract.
-- `gw` communicates with the physical MCU over BLE and reflects MCU state in shadow.
+- `gw` is the source of truth for the `mcu.*` shadow subtree.
+- Only `gw` may define or evolve the `mcu.*` contract.
+- `mcu` exposes BLE behavior; `gw` translates that behavior into shadow state.
 
-## 3. Device State Exposed to Gateway
+## 3. Rendezvous Model
 
-```rust
-struct DeviceState {
-    battery_mv: u16, // measured battery voltage in millivolts
-    sleep: bool,
-}
-```
+The BLE link is no longer persistent.
 
-State semantics:
-- `sleep=true`: low-power periodic listen mode
-- `sleep=false`: active/awake mode
-- On reset/power-cycle, device starts with `sleep=true`
+Firmware behavior:
+- stay in low-power system-on idle between rendezvous intervals
+- wake itself from RTC every `5 s`
+- advertise for `1 s`
+- accept a short connection
+- process a one-byte wake command
+- return to sleep after disconnect or timeout
+
+Gateway behavior:
+- keep a registry for the known device identity
+- keep scanning while disconnected
+- treat disconnects as expected
+- reconnect only during the periodic advertising window
+- send the wake command immediately after connection
+- avoid full rediscovery once UUIDs and device identity are known
+
+Power note:
+- The implementation uses RTC-driven system-on low-power idle instead of full System OFF.
+- Reason: the device must self-wake periodically from a low-frequency timer; that is the lowest practical mode for this behavior.
+- The board-specific wake GPIO mapping is still a hardware integration detail; firmware isolates it behind a single wake-action hook.
 
 ## 4. Shadow Contract
 
 Thing name: `txing`
 Shadow type: classic (unnamed) Thing Shadow (`$aws/things/txing/shadow/*`)
-
-Authoritative JSON schema: `./txing-shadow.schema.json`
 
 ```json
 {
@@ -69,95 +77,146 @@ Authoritative JSON schema: `./txing-shadow.schema.json`
 }
 ```
 
-Rules:
-- Command input is `state.desired.mcu.power`
-- Confirmed device state is `state.reported.mcu.power`
-- Battery voltage is `state.reported.mcu.batteryMv`
-- BLE GATT UUID config is `state.reported.mcu.ble.*`
-- BLE connection liveness is `state.reported.mcu.ble.online`
-- BLE fast-connect hint is optional `state.reported.mcu.ble.deviceId`
-- Unknown fields must be ignored by both sides
+Field semantics:
+- `state.desired.mcu.power=true` means "deliver a wake command on the next BLE rendezvous".
+- `state.desired.mcu.power=false` means "clear the wake latch / no wake request pending".
+- `state.reported.mcu.power=true` means "gateway delivered a wake command successfully".
+- `state.reported.mcu.power=false` means "no delivered wake command is currently latched".
+- `state.reported.mcu.batteryMv` is the latest battery reading observed over BLE.
+- `state.reported.mcu.ble.online` is `true` only while the short BLE session is connected.
+- `state.reported.mcu.ble.deviceId` is the last known BLE identity used for fast reconnect.
 
-Mapping from firmware state:
-- `mcu.power = !sleep`
-- `mcu.power=true` means MCU is awake/active
-- `mcu.power=false` means MCU is in low-power sleep behavior
+Compatibility note:
+- The shadow field name `sleepCommandUuid` is retained for compatibility.
+- In v1.0 it identifies the wake-command characteristic, not a persistent sleep-mode toggle.
 
 ## 5. BLE GATT Contract
 
 UUIDs:
-- Service `TXING Control`: from shadow `state.reported.mcu.ble.serviceUuid`
-- Characteristic `Sleep Command` (Write With Response): from shadow `state.reported.mcu.ble.sleepCommandUuid`
-- Characteristic `State Report` (Read + Notify): from shadow `state.reported.mcu.ble.stateReportUuid`
-- Optional fast-connect device identifier: `state.reported.mcu.ble.deviceId`
-- Initial fallback defaults (used only in search mode bootstrap):
-  - service: `f6b4a000-7b32-4d2d-9f4b-4ff0a2b8f100`
-  - sleep command: `f6b4a001-7b32-4d2d-9f4b-4ff0a2b8f100`
-  - state report: `f6b4a002-7b32-4d2d-9f4b-4ff0a2b8f100`
+- Service `TXING Control`: `f6b4a000-7b32-4d2d-9f4b-4ff0a2b8f100`
+- Wake Command characteristic (compatibility field `sleepCommandUuid`): `f6b4a001-7b32-4d2d-9f4b-4ff0a2b8f100`
+- State Report characteristic: `f6b4a002-7b32-4d2d-9f4b-4ff0a2b8f100`
 
 Payloads:
-- `Sleep Command` (1 byte):
-  - `0x00` -> set `sleep=false`
-  - `0x01` -> set `sleep=true`
-- `State Report` (3 bytes):
-  - byte 0: `sleep` (`0x00` false, `0x01` true)
+- Wake Command (1 byte, write with response):
+  - `0x01` -> trigger wake action
+  - `0x00` -> accepted as a legacy wake alias
+- State Report (3 bytes, read + notify):
+  - byte 0: status
   - bytes 1..2: `battery_mv` as little-endian `u16`
 
+State Report status values:
+- `0x00` -> idle/listening
+- `0x01` -> wake command acknowledged during the current connection
+
 Notification behavior:
-- Device notifies `State Report` on connection establishment
-- Device notifies `State Report` when `sleep` changes
-- Device notifies `State Report` every 60 seconds while connected
+- Device updates State Report on connection establishment.
+- Device updates State Report again after processing a wake command.
+- Gateway may use either reads or notifications; current implementation uses reads.
 
-## 6. Gateway Required Behavior
+## 6. Firmware State Machine
 
-- Subscribe to shadow delta updates for `desired.mcu.power`
-- On startup, read `state.reported.mcu.ble.*` and validate:
-  - all three values are valid UUID strings
-  - optional `deviceId` is used as fast-path target before scan
-  - the connected peripheral exposes these UUIDs with required properties
-- On gateway startup, publish `state.reported.mcu.ble.online=false`
-- After successful BLE connect, publish `state.reported.mcu.ble.online=true`
-- On BLE disconnect callback, publish `state.reported.mcu.ble.online=false`
-- If startup UUID validation fails, gateway enters BLE UUID search mode:
-  - discover peripheral by name/manufacturer fallback
-  - inspect GATT services and find a service that contains:
-    - one write characteristic (Sleep Command candidate)
-    - one read+notify characteristic (State Report candidate)
-  - persist discovered UUIDs back to `state.reported.mcu.ble.*`
-- If `desired.mcu.power=true`:
-  - scan/connect to Txing
-  - write `Sleep Command=0x00` (`sleep=false`)
-  - read/subscribe `State Report` and confirm `mcu.power=true`
-  - update `reported.mcu.batteryMv` from the BLE `State Report`
-  - keep connection maintained while desired remains true
-  - reconnect on link drop
-- If `desired.mcu.power=false`:
-  - if connected, write `Sleep Command=0x01` (`sleep=true`)
-  - confirm report, update shadow, then disconnect
-  - set `reported.mcu.power=false`
+States:
+- `Sleep`
+  - LED off.
+  - RTC timer armed for the next rendezvous interval.
+  - Transition to `Wake` when the timer expires.
+- `Wake`
+  - Refresh battery measurement.
+  - Reset State Report status to `idle`.
+  - Transition immediately to `Advertising`.
+- `Advertising`
+  - Start connectable advertising with a bounded timeout.
+  - Transition to `Connected` if the gateway connects.
+  - Transition to `ReturnToSleep` if the advertising window expires.
+- `Connected`
+  - Publish State Report to the client.
+  - Start a bounded command window.
+  - Transition to `CommandProcessing` when a valid wake command is written.
+  - Transition to `ReturnToSleep` on disconnect or command timeout.
+- `CommandProcessing`
+  - Trigger the wake action.
+  - Update State Report status to `wake acknowledged`.
+  - Transition back to `Connected` until the link closes.
+- `ReturnToSleep`
+  - Clear transient command status.
+  - Transition to `Sleep`.
 
-Consistency rules:
-- Shadow updates should be idempotent
-- Authority is `desired.mcu.power` (shadow-driven intent)
+## 7. Gateway State Machine
 
-## 7. Timing Expectation
+States:
+- `Idle`
+  - No BLE action pending.
+  - Scanner remains armed in the background.
+- `Scanning`
+  - Wait for either a matching advertisement or a shadow update.
+  - Matching priority: known `deviceId`, then service UUID, then name/manufacturer fallback.
+- `DeviceDetected`
+  - A fresh advertisement from the known device is available.
+  - Transition immediately to `Connecting`.
+- `Connecting`
+  - Stop scanning.
+  - Establish a short BLE session.
+  - Validate or rediscover UUIDs if needed.
+- `Connected`
+  - Read State Report.
+  - Update battery cache.
+  - If no wake is pending, disconnect and return to `Scanning`.
+- `CommandPending`
+  - `desired.mcu.power=true` and `reported.mcu.power=false`.
+  - Write the wake command.
+- `CommandSent`
+  - Poll State Report until acknowledgement or timeout.
+  - On acknowledgement, set `reported.mcu.power=true`, clear desired, then disconnect.
+- `Disconnect`
+  - Publish `ble.online=false`.
+  - Restart scanner.
+- `WaitForNextAdvertisement`
+  - The advertising window was missed or connect/ack failed.
+  - Return to `Scanning`.
 
-Current firmware defaults used by gateway expectations:
-- sleep polling period: `4 s`
-- connectable listen window per wake: `500 ms`
+Normal-disconnect rule:
+- Disconnects after a short session are expected behavior and must not reset the known-device registry.
 
-Operational implication:
-- expected wake/command latency is typically a few seconds
+## 8. Timing Defaults
 
-## 8. Acceptance Criteria
+Firmware defaults:
+- sleep interval: `5 s`
+- advertising window: `1 s`
+- advertising interval: `150 ms`
+- connected command window: `1 s`
 
-- From sleeping state, setting `desired.mcu.power=true` results in:
-  - BLE connection established
-  - device `sleep=false`
-  - shadow `reported.mcu.power=true`
-- Setting `desired.mcu.power=false` results in:
-  - device returns to low-power periodic behavior
-  - shadow `reported.mcu.power=false`
-- `reported.mcu.batteryMv` is populated in v0.9
-- `reported.mcu.ble.*` is present and valid in v0.9
-- `reported.mcu.ble.online` flips false -> true -> false across startup/connect/disconnect in v0.9
+Gateway defaults:
+- scan timeout before logging a missed window: `12 s`
+- connect timeout: `5 s`
+- wake acknowledgement timeout: `1 s`
+- acknowledgement poll interval: `100 ms`
+- advertisement freshness threshold: `750 ms`
+- scan mode: `active`
+
+All of the above are tunable constants or CLI-configurable parameters.
+
+## 9. Acceptance Criteria
+
+- From `reported.mcu.power=false`, setting `desired.mcu.power=true` eventually results in:
+  - a BLE connection during a rendezvous window
+  - a successful wake command write
+  - a State Report acknowledgement
+  - `state.reported.mcu.power=true`
+- Setting `desired.mcu.power=false` clears the wake latch without requiring a BLE reconnect.
+- `state.reported.mcu.batteryMv` is refreshed whenever the gateway completes a BLE rendezvous.
+- `state.reported.mcu.ble.*` remains present and valid.
+- `state.reported.mcu.ble.online` flips `false -> true -> false` around each short BLE session.
+
+## 10. Test Plan
+
+- Reconnect after periodic wake:
+  - Leave the MCU sleeping and verify that the gateway reconnects on the next advertising window without UUID rediscovery.
+- Sending wake command successfully:
+  - Set `desired.mcu.power=true` and verify wake acknowledgement plus `reported.mcu.power=true`.
+- Behavior when no command is pending:
+  - Observe multiple sleep/advertise cycles and verify the MCU returns to sleep without a BLE session if the gateway does not connect.
+- Behavior when the advertisement window is missed:
+  - Stop the gateway temporarily so one or more windows are missed, then restart it and verify the next window succeeds.
+- Repeated sleep/wake cycles:
+  - Toggle `desired.mcu.power` through several `false -> true -> false` cycles and verify the registry, battery updates, and disconnect handling remain stable.
