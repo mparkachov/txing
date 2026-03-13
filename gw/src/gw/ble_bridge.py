@@ -946,10 +946,11 @@ class BleSleepBridge:
                         raise
                     except Exception as err:
                         LOGGER.warning(
-                            "BLE rendezvous attempt failed for %s: %s",
+                            "BLE rendezvous attempt failed for %s: %s %r",
                             self._device_label(
                                 target_device, self._known_device.local_name
                             ),
+                            err.__class__.__name__,
                             err,
                         )
                         await asyncio.sleep(self._config.reconnect_delay)
@@ -1109,11 +1110,7 @@ class BleSleepBridge:
         return self._shadow.desired_power is True and not self._shadow.reported_power
 
     def _should_connect_on_next_advertisement(self) -> bool:
-        return (
-            self._wake_command_pending()
-            or not self._has_device_sync
-            or self._ble_uuid_search_mode
-        )
+        return self._wake_command_pending() or self._ble_uuid_search_mode
 
     async def _start_scanner(self) -> None:
         if self._scanner is not None:
@@ -1290,19 +1287,6 @@ class BleSleepBridge:
                 client,
                 device_id=target_device_id,
             )
-            await self._publish_ble_online_state(
-                online=True,
-                context="BLE connected",
-            )
-
-            initial_report = await self._read_state_report()
-            await self._sync_battery_from_device_report(
-                initial_report,
-                context="Reported synchronized from MCU state report on rendezvous",
-                log_prefix="MCU state report on rendezvous",
-            )
-            self._has_device_sync = True
-
             if self._wake_command_pending():
                 self._set_gateway_state(
                     GatewayBleState.COMMAND_PENDING,
@@ -1320,6 +1304,19 @@ class BleSleepBridge:
                     clear_desired_power=True,
                     context="Reported updated after wake command acknowledgement",
                 )
+            else:
+                initial_report = await self._read_state_report()
+                await self._sync_battery_from_device_report(
+                    initial_report,
+                    context="Reported synchronized from MCU state report on rendezvous",
+                    log_prefix="MCU state report on rendezvous",
+                )
+
+            self._has_device_sync = True
+            await self._publish_ble_online_state(
+                online=True,
+                context="BLE connected",
+            )
         finally:
             await self._safe_disconnect()
             await self._start_scanner()

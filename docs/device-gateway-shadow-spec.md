@@ -184,7 +184,7 @@ Firmware defaults:
 - sleep interval: `5 s`
 - advertising window: `1 s`
 - advertising interval: `150 ms`
-- connected command window: `1 s`
+- connected command window: `5 s`
 
 Gateway defaults:
 - scan timeout before logging a missed window: `12 s`
