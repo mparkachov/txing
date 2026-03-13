@@ -509,11 +509,14 @@ async fn run_connection<P: OutputPin>(
                     battery_monitor,
                     wake_output,
                 );
-                if state.sleep() {
-                    let _ = conn.disconnect();
+                // Do not disconnect immediately after a sleep command. Let the write
+                // response and updated State Report complete cleanly, then allow the
+                // gateway to close the session or the sleep command window to expire.
+                command_window_remaining = if state.sleep() {
+                    Some(RENDEZVOUS_COMMAND_WINDOW_TICKS)
                 } else {
-                    command_window_remaining = None;
-                }
+                    None
+                };
             }
             Either::Second(()) => {
                 if let Some(remaining) = command_window_remaining {

@@ -54,6 +54,9 @@ just flash
 # Explicit alias for SWD flashing
 just probe-flash
 
+# Temporary reset experiment: flash and run via probe-rs without reset catch
+just flash-probe-run
+
 # Build release firmware and attach RTT/defmt logs
 just log
 
@@ -62,6 +65,8 @@ just flash-uf2
 ```
 
 `just flash` uses `probe-rs download` with the release ELF directly. The linked firmware already starts at `0x27000` via [`memory.x`](./memory.x), so probe-rs flashes the application region without requiring a manual binary base address.
+
+`just flash-probe-run` is a temporary troubleshooting recipe for the current reset issue. It uses `probe-rs run` with `--no-catch-reset --no-catch-hardfault` to test whether probe-rs can start the application more reliably than the current `download + reset` flow.
 
 The double-tap reset USB mass-storage bootloader should remain available after `just flash`. Do not use `probe-rs erase`, `probe-rs download --chip-erase`, or `--allow-erase-all` unless you intentionally want to wipe the on-board bootloader/other non-application flash.
 

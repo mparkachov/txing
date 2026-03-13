@@ -1134,7 +1134,6 @@ class BleSleepBridge:
                     pending_updates = []
 
                 self._refresh_sleep_desired_clear_wait()
-                await self._clear_sleep_desired_after_advertisement()
 
                 if (
                     self._shadow.desired_power is not None
@@ -1199,6 +1198,11 @@ class BleSleepBridge:
                     )
                     await self._safe_disconnect()
                     await asyncio.sleep(self._config.reconnect_delay)
+
+                if not self._is_connected() and self._should_idle_disconnected_while_sleeping():
+                    # A successful transition into sleep should restart scanning
+                    # immediately so the next rendezvous advertisement can clear desired=false.
+                    continue
 
                 retry_timeout: float | None = None
                 if (

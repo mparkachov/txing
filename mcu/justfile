@@ -30,6 +30,10 @@ probe_rs_protocol := "swd"
     probe-rs download --chip "{{probe_rs_chip}}" --protocol "{{probe_rs_protocol}}" --preverify --verify --restore-unwritten "{{elf_path}}"
     probe-rs reset --chip "{{probe_rs_chip}}" --protocol "{{probe_rs_protocol}}"
 
+@flash-probe-run:
+    cd "{{mcu_dir}}" && cargo build --release --manifest-path "{{firmware_manifest}}"
+    probe-rs run --chip "{{probe_rs_chip}}" --protocol "{{probe_rs_protocol}}" --no-catch-reset --no-catch-hardfault --rtt-scan-memory --no-location "{{elf_path}}"
+
 @flash-uf2:
     cd "{{mcu_dir}}" && cargo build --release --manifest-path "{{firmware_manifest}}"
     cd "{{mcu_dir}}" && cargo objcopy --release --manifest-path "{{firmware_manifest}}" -- -O binary "{{bin_path}}"
