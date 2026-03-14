@@ -12,6 +12,7 @@ uf2_family := "0xADA52840"
 uf2_mount_dir := "/Volumes/XIAO-SENSE"
 probe_rs_chip := "nRF52840_xxAA"
 probe_rs_protocol := "swd"
+probe_rs_run_detach_seconds := "2"
 
 @build:
     cd "{{mcu_dir}}" && cargo build --release --manifest-path "{{firmware_manifest}}"
@@ -27,12 +28,7 @@ probe_rs_protocol := "swd"
 
 @flash-probe:
     cd "{{mcu_dir}}" && cargo build --release --manifest-path "{{firmware_manifest}}"
-    probe-rs download --chip "{{probe_rs_chip}}" --protocol "{{probe_rs_protocol}}" --preverify --verify --restore-unwritten "{{elf_path}}"
-    probe-rs reset --chip "{{probe_rs_chip}}" --protocol "{{probe_rs_protocol}}"
-
-@flash-probe-run:
-    cd "{{mcu_dir}}" && cargo build --release --manifest-path "{{firmware_manifest}}"
-    probe-rs run --chip "{{probe_rs_chip}}" --protocol "{{probe_rs_protocol}}" --no-catch-reset --no-catch-hardfault --rtt-scan-memory --no-location "{{elf_path}}"
+    (probe-rs run --chip "{{probe_rs_chip}}" --protocol "{{probe_rs_protocol}}" --no-catch-reset --no-catch-hardfault --rtt-scan-memory --no-location --target-output-file /dev/null "{{elf_path}}" & pid=$!; sleep "{{probe_rs_run_detach_seconds}}"; kill -INT "$pid" 2>/dev/null || true; wait "$pid" || test "$?" -eq 130)
 
 @flash-uf2:
     cd "{{mcu_dir}}" && cargo build --release --manifest-path "{{firmware_manifest}}"
