@@ -4,15 +4,18 @@ Monorepo root for `txing`.
 
 - MCU firmware lives in `mcu/` (Rust).
 - Gateway software lives in `gw/` (Python, direct AWS IoT MQTT + BLE bridge).
+- Device-side Raspberry Pi reporter lives in `board/` (Python, direct AWS IoT MQTT shadow reporting).
 - Web admin SPA lives in `web/` (React + Vite).
 - Shared docs live in `docs/`.
 - Thing Shadow contract schema lives in `docs/txing-shadow.schema.json`.
 - Thing Shadow guidance lives in `docs/thing-shadow.md`.
-- High-level path: `AWS IoT Device Shadow -> MQTT -> gw -> BLE -> mcu`.
+- High-level paths:
+  - `AWS IoT Device Shadow -> MQTT -> gw -> BLE -> mcu`
+  - `AWS IoT Device Shadow -> MQTT -> board`
 
 ## System requirements
 
-For gateway workflows in this repository, install and configure:
+For Python/AWS workflows in this repository, install and configure:
 - `uv`
 - `just`
 - `jq`
@@ -29,6 +32,7 @@ Run from repository root:
 ```bash
 just --list
 just gw::wake
+just board::run
 just aws::bootstrap
 just mcu::build
 just web::dev
@@ -37,6 +41,7 @@ just web::write-env
 
 Subproject `justfile`s are included by the root `justfile` as modules:
 - `gw::...` -> `gw/justfile`
+- `board::...` -> `board/justfile`
 - `aws::...` -> `aws/justfile`
 - `mcu::...` -> `mcu/justfile`
 - `web::...` -> `web/justfile`
@@ -52,6 +57,13 @@ Gateway example:
 ```bash
 cd gw
 uv run gw
+```
+
+Board example:
+
+```bash
+cd board
+uv run board --once
 ```
 
 AWS stack deploy example (single stack with IoT + web admin):

@@ -1,0 +1,10 @@
+set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+
+@sync:
+    cd "{{source_directory()}}" && uv sync
+
+@run:
+    cd "{{source_directory()}}" && uv run board
+
+@once:
+    cd "{{source_directory()}}" && uv run board --once

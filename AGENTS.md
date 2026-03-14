@@ -3,6 +3,7 @@
 ## Repository structure
 - `mcu/`: Rust firmware subproject for the MCU.
 - `gw/`: Python subproject for the Raspberry Pi 5 gateway (AWS IoT MQTT + BLE communication with MCU).
+- `board/`: Python subproject for the device-side Raspberry Pi board reporter (AWS IoT MQTT shadow reporting).
 - `web/`: React/Vite SPA for admin management of Thing Shadow.
 
 ## Working rules
@@ -16,6 +17,7 @@
 - Thing Shadow schema source of truth: `docs/txing-shadow.schema.json`.
 - Shadow behavior contract: `docs/device-gateway-shadow-spec.md`.
 - Ownership rule: `gw` owns the `mcu.*` shadow subtree contract.
+- Ownership rule: `board` owns the `board.*` shadow subtree contract.
 
 ## Terminology
 - `power=true` means the device is in the wakeup state.
