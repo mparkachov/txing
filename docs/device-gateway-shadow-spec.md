@@ -46,7 +46,8 @@ Gateway behavior:
 Power note:
 - The implementation uses RTC-driven system-on low-power idle instead of full System OFF.
 - Reason: the device must self-wake periodically from a low-frequency timer; that is the lowest practical mode for this behavior.
-- The board-specific wake GPIO mapping is still a hardware integration detail; firmware isolates it behind a single wake-action hook.
+- The board Pi power rail is switched by an external MOSFET driven from nRF pin `D0` / `P0.02`.
+- Firmware drives that GPIO high in the wakeup state and low in the sleep state.
 
 ## 4. Shadow Contract
 
@@ -149,7 +150,8 @@ States:
   - Transition back to `Advertising` on disconnect while in the wakeup state.
 - `CommandProcessing`
   - Apply the requested power mode.
-  - Trigger the external wake action only on `sleep state -> wakeup state`.
+  - Drive the board-power MOSFET high only on `sleep state -> wakeup state`.
+  - Drive the board-power MOSFET low on `wakeup state -> sleep state` before returning to rendezvous idle.
   - Update State Report with the new sleep flag and battery reading.
   - Transition back to `Connected` until the link closes or the mode changes.
 - `ReturnToSleep`

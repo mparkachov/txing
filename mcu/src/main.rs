@@ -131,17 +131,34 @@ impl BatteryMonitor {
     }
 }
 
-struct WakeOutput;
+struct BoardPowerSwitch {
+    mosfet_gate: hal::gpio::p0::P0_02<hal::gpio::Output<hal::gpio::PushPull>>,
+    wakeup_state_enabled: bool,
+}
 
-impl WakeOutput {
-    fn new() -> Self {
-        Self
+impl BoardPowerSwitch {
+    fn new(mosfet_gate: hal::gpio::p0::P0_02<hal::gpio::Disconnected>) -> Self {
+        Self {
+            // Board Pi power is switched through the MOSFET gate on D0 / P0.02.
+            mosfet_gate: mosfet_gate.into_push_pull_output(hal::gpio::Level::Low),
+            wakeup_state_enabled: false,
+        }
     }
 
-    fn trigger(&mut self) {
-        // The board-specific wake GPIO mapping is not described in this repo yet.
-        // Keep the wake hook isolated so a real output can be wired in here directly.
-        defmt::info!("wake_action triggered");
+    fn sync_to_sleep_state(&mut self, sleep: bool) {
+        let wakeup_state_enabled = !sleep;
+        if self.wakeup_state_enabled == wakeup_state_enabled {
+            return;
+        }
+
+        if wakeup_state_enabled {
+            let _ = self.mosfet_gate.set_high();
+        } else {
+            let _ = self.mosfet_gate.set_low();
+        }
+
+        self.wakeup_state_enabled = wakeup_state_enabled;
+        defmt::info!("board_power={}", wakeup_state_enabled);
     }
 }
 
@@ -171,7 +188,7 @@ async fn main(spawner: embassy_executor::Spawner) {
     let port0 = hal::gpio::p0::Parts::new(p.P0);
     let mut led = port0.p0_06.into_push_pull_output(hal::gpio::Level::High);
     let mut battery_monitor = BatteryMonitor::new(p.SAADC, port0.p0_14, port0.p0_31);
-    let mut wake_output = WakeOutput::new();
+    let mut board_power_switch = BoardPowerSwitch::new(port0.p0_02);
 
     let sd = Softdevice::enable(&softdevice_config());
     enable_dcdc();
@@ -182,6 +199,7 @@ async fn main(spawner: embassy_executor::Spawner) {
     let state = DeviceState::boot_default();
     let adv_data_buf = ADV_DATA_BUF.init([0u8; 30]);
     refresh_battery_state(&state, &mut battery_monitor);
+    board_power_switch.sync_to_sleep_state(state.sleep());
     set_led_for_sleep_state(&mut led, state.sleep());
     publish_state_report(&server, None, &state);
     defmt::info!(
@@ -198,12 +216,13 @@ async fn main(spawner: embassy_executor::Spawner) {
                 &state,
                 &mut led,
                 &mut battery_monitor,
-                &mut wake_output,
+                &mut board_power_switch,
                 adv_data_buf,
             )
             .await;
             if state.sleep() {
                 log_state_transition("sleep");
+                board_power_switch.sync_to_sleep_state(true);
                 set_led_for_sleep_state(&mut led, true);
                 wait_for_timer_ticks(RENDEZVOUS_SLEEP_TICKS).await;
             }
@@ -214,7 +233,7 @@ async fn main(spawner: embassy_executor::Spawner) {
                 &state,
                 &mut led,
                 &mut battery_monitor,
-                &mut wake_output,
+                &mut board_power_switch,
                 adv_data_buf,
             )
             .await;
@@ -383,10 +402,12 @@ async fn sleep_rendezvous_cycle<P: OutputPin>(
     state: &DeviceState,
     led: &mut P,
     battery_monitor: &mut BatteryMonitor,
-    wake_output: &mut WakeOutput,
+    board_power_switch: &mut BoardPowerSwitch,
     adv_data_buf: &mut [u8; 30],
 ) {
     log_state_transition("wake");
+    // This is the internal rendezvous wake while the external state is still sleep.
+    board_power_switch.sync_to_sleep_state(true);
     refresh_battery_state(state, battery_monitor);
     publish_state_report(server, None, state);
     set_led_for_sleep_state(led, false);
@@ -406,7 +427,15 @@ async fn sleep_rendezvous_cycle<P: OutputPin>(
 
     match peripheral::advertise_connectable(sd, adv, &config).await {
         Ok(conn) => {
-            run_connection(conn, server, state, led, battery_monitor, wake_output).await;
+            run_connection(
+                conn,
+                server,
+                state,
+                led,
+                battery_monitor,
+                board_power_switch,
+            )
+            .await;
         }
         Err(peripheral::AdvertiseError::Timeout) => {
             defmt::debug!("advertising_timeout");
@@ -428,9 +457,10 @@ async fn awake_cycle<P: OutputPin>(
     state: &DeviceState,
     led: &mut P,
     battery_monitor: &mut BatteryMonitor,
-    wake_output: &mut WakeOutput,
+    board_power_switch: &mut BoardPowerSwitch,
     adv_data_buf: &mut [u8; 30],
 ) {
+    board_power_switch.sync_to_sleep_state(false);
     refresh_battery_state(state, battery_monitor);
     publish_state_report(server, None, state);
     set_led_for_sleep_state(led, false);
@@ -448,7 +478,15 @@ async fn awake_cycle<P: OutputPin>(
 
     match peripheral::advertise_connectable(sd, adv, &config).await {
         Ok(conn) => {
-            run_connection(conn, server, state, led, battery_monitor, wake_output).await;
+            run_connection(
+                conn,
+                server,
+                state,
+                led,
+                battery_monitor,
+                board_power_switch,
+            )
+            .await;
         }
         Err(peripheral::AdvertiseError::Timeout) => {}
         Err(err) => {
@@ -463,7 +501,7 @@ async fn run_connection<P: OutputPin>(
     state: &DeviceState,
     led: &mut P,
     battery_monitor: &mut BatteryMonitor,
-    wake_output: &mut WakeOutput,
+    board_power_switch: &mut BoardPowerSwitch,
 ) {
     log_state_transition("connected");
     refresh_battery_state(state, battery_monitor);
@@ -507,7 +545,7 @@ async fn run_connection<P: OutputPin>(
                     state,
                     led,
                     battery_monitor,
-                    wake_output,
+                    board_power_switch,
                 );
                 // Do not disconnect immediately after a sleep command. Let the write
                 // response and updated State Report complete cleanly, then allow the
@@ -547,16 +585,13 @@ fn handle_power_command<P: OutputPin>(
     state: &DeviceState,
     led: &mut P,
     battery_monitor: &mut BatteryMonitor,
-    wake_output: &mut WakeOutput,
+    board_power_switch: &mut BoardPowerSwitch,
 ) {
     match value {
         POWER_MODE_AWAKE_COMMAND_VALUE => {
             log_state_transition("command_processing");
-            let was_sleeping = state.sleep();
-            if was_sleeping {
-                wake_output.trigger();
-            }
             state.set_sleep(false);
+            board_power_switch.sync_to_sleep_state(false);
             refresh_battery_state(state, battery_monitor);
             set_led_for_sleep_state(led, false);
             publish_state_report(server, Some(conn), state);
@@ -565,6 +600,7 @@ fn handle_power_command<P: OutputPin>(
         POWER_MODE_SLEEP_COMMAND_VALUE => {
             log_state_transition("command_processing");
             state.set_sleep(true);
+            board_power_switch.sync_to_sleep_state(true);
             refresh_battery_state(state, battery_monitor);
             set_led_for_sleep_state(led, true);
             publish_state_report(server, Some(conn), state);
