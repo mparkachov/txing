@@ -63,14 +63,14 @@ cd txing
 aws sts get-caller-identity
 ```
 
-5. Standard procedure: copy existing gateway credentials into `certs/`:
+5. Standard procedure: copy the shared device AWS IoT credentials into `certs/`:
 
 ```bash
 mkdir -p ~/txing/certs
-# Copy these from an existing working gateway host or secure key storage:
-# - txing-gw.cert.pem
-# - txing-gw.private.key
-# - txing-gw.cert.arn
+# Copy these from an existing working host or secure key storage:
+# - txing.cert.pem
+# - txing.private.key
+# - txing.cert.arn
 # - iot-data-ats.endpoint
 # - AmazonRootCA1.pem
 ```
@@ -85,7 +85,7 @@ just gw::check
 This check also validates required local tools (`aws`, `jq`, `uv`, `just`, `openssl`) are installed.
 
 7. Only if rotating certs or provisioning a brand new cert: run bootstrap.
-`just aws::bootstrap` generates a new key pair when local cert files are absent; it does not download old private keys from AWS.
+`just aws::bootstrap` generates the shared `txing.*` key pair when local cert files are absent; it does not download old private keys from AWS.
 
 ```bash
 cd ~/txing
@@ -140,8 +140,8 @@ uv run gw
 
 This uses bootstrap artifacts by default:
 - endpoint file: `../certs/iot-data-ats.endpoint`
-- cert: `../certs/txing-gw.cert.pem`
-- private key: `../certs/txing-gw.private.key`
+- cert: `../certs/txing.cert.pem`
+- private key: `../certs/txing.private.key`
 - root CA: `../certs/AmazonRootCA1.pem`
 - CloudWatch log group: `/txing/gw` (direct upload from process)
 
@@ -251,8 +251,8 @@ Common overrides:
 - `--scan-mode active`
 - `--iot-endpoint <host>`
 - `--iot-endpoint-file ../certs/iot-data-ats.endpoint`
-- `--cert-file ../certs/txing-gw.cert.pem`
-- `--key-file ../certs/txing-gw.private.key`
+- `--cert-file ../certs/txing.cert.pem`
+- `--key-file ../certs/txing.private.key`
 - `--ca-file ../certs/AmazonRootCA1.pem`
 - `--client-id txing-gw-pi5`
 - `--debug` (verbose stdout logging)

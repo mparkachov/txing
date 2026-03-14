@@ -10,4 +10,5 @@
 - Follow repository-level rule: do not create commits unless explicitly requested by the user.
 - Use `../docs/txing-shadow.schema.json` as the canonical shadow JSON structure.
 - `board` owns and evolves the `board.*` shadow subtree contract.
+- Use the shared AWS IoT mTLS client artifacts in `../certs/txing.cert.pem` and `../certs/txing.private.key`, matching `gw/`.
 - Hardware assumption: the board power rail is switched by an external low-side n-MOSFET driven from nRF pin `D0` / `P0.02`, so abrupt power loss is possible and `reportedAt` freshness matters more than best-effort shutdown updates.

@@ -330,7 +330,7 @@ web_dist_dir := project_root + "/web/dist"
 
     cert_basename="{{cert_basename}}"
     if [ -z "$cert_basename" ]; then
-      cert_basename="{{thing_name}}-gw"
+      cert_basename="{{thing_name}}"
     fi
 
     cert_arn_file="{{cert_arn_file}}"
@@ -416,9 +416,9 @@ web_dist_dir := project_root + "/web/dist"
       --log-events "timestamp=${log_event_ts_ms},message=txing-aws-check" \
       "${aws_flags[@]}"
 
-    echo "Checking local gateway certificate artifacts..."
-    check_file "$cert_file" "Gateway certificate file"
-    check_file "$private_key_file" "Gateway private key file"
+    echo "Checking local AWS IoT client certificate artifacts..."
+    check_file "$cert_file" "AWS IoT client certificate file"
+    check_file "$private_key_file" "AWS IoT client private key file"
     check_file "{{ca_file}}" "Root CA file"
     check_file "{{endpoint_file}}" "IoT endpoint file"
     check_file "$cert_arn_file" "Certificate ARN file"
@@ -431,10 +431,10 @@ web_dist_dir := project_root + "/web/dist"
     fi
 
     if [ -s "$cert_file" ]; then
-      check_cmd "Gateway certificate file parses" openssl x509 -in "$cert_file" -noout
+      check_cmd "AWS IoT client certificate file parses" openssl x509 -in "$cert_file" -noout
     fi
     if [ -s "$private_key_file" ]; then
-      check_cmd "Gateway private key parses" openssl pkey -in "$private_key_file" -noout
+      check_cmd "AWS IoT client private key parses" openssl pkey -in "$private_key_file" -noout
     fi
     endpoint_value=""
     if [ -s "{{endpoint_file}}" ]; then
@@ -501,10 +501,10 @@ web_dist_dir := project_root + "/web/dist"
     fi
 
     if [ "$failures" -ne 0 ]; then
-      echo "gateway check failed with $failures issue(s)."
+      echo "AWS/device check failed with $failures issue(s)."
       exit 1
     fi
-    echo "gateway check passed. Gateway prerequisites look good."
+    echo "AWS/device check passed. Shared AWS IoT client prerequisites look good."
 
 @cert thing_name=thing_name policy_name=policy_name region=region profile=profile cert_dir=cert_dir cert_basename='' cert_arn_file='':
     #!/usr/bin/env bash
@@ -523,7 +523,7 @@ web_dist_dir := project_root + "/web/dist"
 
     cert_basename="{{cert_basename}}"
     if [ -z "$cert_basename" ]; then
-      cert_basename="{{thing_name}}-gw"
+      cert_basename="{{thing_name}}"
     fi
 
     cert_arn_file="{{cert_arn_file}}"

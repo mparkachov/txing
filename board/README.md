@@ -4,6 +4,8 @@ Python service for the device-side Raspberry Pi board that is power-switched by 
 
 This is not the same Raspberry Pi as `gw/`. The `gw/` Pi remains the BLE/AWS gateway. This `board/` service is for the separate Pi mounted on the device itself.
 
+The board reuses the same AWS IoT mTLS certificate files as `gw/`, stored in `../certs/` as `txing.cert.pem` and `txing.private.key`.
+
 ## Hardware wiring
 
 What each wire means:
@@ -83,14 +85,16 @@ Notes:
 The defaults expect shared repo cert material in `../certs/`:
 
 - endpoint: `../certs/iot-data-ats.endpoint`
-- certificate: `../certs/txing-board.cert.pem`
-- private key: `../certs/txing-board.private.key`
+- certificate: `../certs/txing.cert.pem`
+- private key: `../certs/txing.private.key`
 - root CA: `../certs/AmazonRootCA1.pem`
 
-To issue a dedicated certificate attached to the same thing:
+The board uses the same certificate set as `gw/`; do not issue a separate board-specific certificate unless you intentionally want to rotate away from the shared default naming.
+
+To issue or rotate the shared certificate set:
 
 ```bash
-just aws::cert cert_basename=txing-board
+just aws::cert
 ```
 
 ## Quickstart

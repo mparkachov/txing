@@ -72,8 +72,8 @@ BLE_DISCONNECT_TIMEOUT = 2.0
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_CERT_DIR = REPO_ROOT / "certs"
 DEFAULT_IOT_ENDPOINT_FILE = DEFAULT_CERT_DIR / "iot-data-ats.endpoint"
-DEFAULT_CERT_FILE = DEFAULT_CERT_DIR / "txing-gw.cert.pem"
-DEFAULT_KEY_FILE = DEFAULT_CERT_DIR / "txing-gw.private.key"
+DEFAULT_CERT_FILE = DEFAULT_CERT_DIR / "txing.cert.pem"
+DEFAULT_KEY_FILE = DEFAULT_CERT_DIR / "txing.private.key"
 DEFAULT_CA_FILE = DEFAULT_CERT_DIR / "AmazonRootCA1.pem"
 
 LOGGER = logging.getLogger("gw.ble_bridge")
