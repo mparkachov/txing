@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://txing.local/schemas/txing-shadow.schema.json",
-  "title": "Txing Thing Shadow Contract v10",
+  "title": "Txing Thing Shadow Contract v12",
   "description": "Canonical payload shape for txing Thing Shadow updates and snapshots.",
   "type": "object",
   "additionalProperties": true,
@@ -121,37 +121,19 @@
         "online": {
           "type": "boolean"
         },
-        "hostname": {
-          "type": "string",
-          "minLength": 1
+        "ipv4": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "ipv4"
         },
-        "model": {
-          "type": "string",
-          "minLength": 1
-        },
-        "bootId": {
-          "type": "string",
-          "minLength": 1
-        },
-        "programVersion": {
-          "type": "string",
-          "minLength": 1
-        },
-        "startedAt": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "reportedAt": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "uptimeSeconds": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "clientId": {
-          "type": "string",
-          "minLength": 1
+        "ipv6": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "ipv6"
         }
       }
     },

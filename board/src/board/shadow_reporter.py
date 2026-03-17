@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import argparse
-import importlib.metadata
+import ipaddress
 import json
 import logging
 import os
@@ -35,6 +35,8 @@ DEFAULT_AWS_CONNECT_TIMEOUT = 20.0
 DEFAULT_MQTT_PUBLISH_TIMEOUT = 10.0
 DEFAULT_HEARTBEAT_SECONDS = 60.0
 DEFAULT_RECONNECT_DELAY = 5.0
+DEFAULT_ROUTE_PROBE_IPV4 = ("8.8.8.8", 80)
+DEFAULT_ROUTE_PROBE_IPV6 = ("2001:4860:4860::8888", 80, 0, 0)
 
 
 @dataclass(frozen=True)
@@ -53,6 +55,12 @@ class ReporterConfig:
     publish_timeout: float
     reconnect_delay: float
     once: bool
+
+
+@dataclass(frozen=True)
+class DefaultRouteAddresses:
+    ipv4: str | None
+    ipv6: str | None
 
 
 class AwsShadowClient:
@@ -198,7 +206,7 @@ class AwsShadowClient:
         reason_code: Any,
         _properties: Any,
     ) -> None:
-        if int(reason_code) != 0:
+        if _reason_code_is_failure(reason_code):
             error = RuntimeError(
                 f"AWS IoT MQTT CONNACK rejected (reason={reason_code})"
             )
@@ -416,55 +424,6 @@ def _read_iot_endpoint(endpoint: str | None, endpoint_file: Path) -> str:
     return value
 
 
-def _utc_now_iso() -> str:
-    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
-
-def _read_optional_text(path: Path) -> str | None:
-    try:
-        value = path.read_text(encoding="utf-8", errors="ignore")
-    except OSError:
-        return None
-    value = value.replace("\x00", "").strip()
-    return value or None
-
-
-def _read_boot_id() -> str | None:
-    return _read_optional_text(Path("/proc/sys/kernel/random/boot_id"))
-
-
-def _read_board_model() -> str | None:
-    for path in (
-        Path("/proc/device-tree/model"),
-        Path("/sys/firmware/devicetree/base/model"),
-    ):
-        value = _read_optional_text(path)
-        if value is not None:
-            return value
-    return None
-
-
-def _read_uptime_seconds() -> int | None:
-    value = _read_optional_text(Path("/proc/uptime"))
-    if value is None:
-        return None
-    first, *_rest = value.split()
-    try:
-        uptime_seconds = float(first)
-    except ValueError:
-        return None
-    if uptime_seconds < 0:
-        return None
-    return int(uptime_seconds)
-
-
-def _package_version() -> str:
-    try:
-        return importlib.metadata.version("board")
-    except importlib.metadata.PackageNotFoundError:
-        return "0.1.0"
-
-
 def _sanitize_client_id(value: str) -> str:
     sanitized = []
     for char in value:
@@ -476,36 +435,71 @@ def _sanitize_client_id(value: str) -> str:
     return result or "board"
 
 
-def _drop_none_values(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {
-            key: _drop_none_values(item)
-            for key, item in value.items()
-            if item is not None
-        }
-    if isinstance(value, list):
-        return [_drop_none_values(item) for item in value if item is not None]
-    return value
+def _normalize_ip_address(value: str) -> str | None:
+    address_text = value.partition("%")[0].strip()
+    if not address_text:
+        return None
+    try:
+        address = ipaddress.ip_address(address_text)
+    except ValueError:
+        return None
+    if address.is_unspecified or address.is_loopback:
+        return None
+    return str(address)
+
+
+def _detect_default_route_address(
+    family: socket.AddressFamily,
+    probe: tuple[Any, ...],
+) -> str | None:
+    try:
+        with socket.socket(family, socket.SOCK_DGRAM) as sock:
+            # UDP connect lets the OS choose the source address for the active route
+            # without sending application data. That is portable across platforms and
+            # avoids parsing route tables with OS-specific commands.
+            sock.connect(probe)
+            local_address = sock.getsockname()[0]
+    except OSError:
+        return None
+    if not isinstance(local_address, str):
+        return None
+    return _normalize_ip_address(local_address)
+
+
+def _detect_default_route_addresses() -> DefaultRouteAddresses:
+    return DefaultRouteAddresses(
+        ipv4=_detect_default_route_address(socket.AF_INET, DEFAULT_ROUTE_PROBE_IPV4),
+        ipv6=_detect_default_route_address(socket.AF_INET6, DEFAULT_ROUTE_PROBE_IPV6),
+    )
+
+
+def _reason_code_is_failure(reason_code: Any) -> bool:
+    is_failure = getattr(reason_code, "is_failure", None)
+    if callable(is_failure):
+        return bool(is_failure())
+    if is_failure is not None:
+        return bool(is_failure)
+    return reason_code != 0
 
 
 def _build_board_report(
-    config: ReporterConfig,
     *,
-    started_at: str,
+    addresses: DefaultRouteAddresses,
     online: bool,
 ) -> dict[str, Any]:
-    report = {
+    return {
         "online": online,
-        "hostname": config.board_name,
-        "model": _read_board_model(),
-        "bootId": _read_boot_id(),
-        "programVersion": _package_version(),
-        "startedAt": started_at,
-        "reportedAt": _utc_now_iso(),
-        "uptimeSeconds": _read_uptime_seconds(),
-        "clientId": config.client_id,
+        "ipv4": addresses.ipv4,
+        "ipv6": addresses.ipv6,
     }
-    return _drop_none_values(report)
+
+
+def _build_shutdown_board_report() -> dict[str, Any]:
+    return {
+        "online": False,
+        "ipv4": None,
+        "ipv6": None,
+    }
 
 
 def _build_shadow_update(report: dict[str, Any]) -> dict[str, Any]:
@@ -595,7 +589,7 @@ def main() -> None:
         print(f"board start failed: {err}", file=sys.stderr)
         raise SystemExit(2) from err
 
-    started_at = _utc_now_iso()
+    default_route_addresses = _detect_default_route_addresses()
     stop_event = threading.Event()
     _install_signal_handlers(stop_event)
 
@@ -605,6 +599,11 @@ def main() -> None:
         config.thing_name,
         config.client_id,
     )
+    LOGGER.info(
+        "Detected default-route addresses ipv4=%s ipv6=%s",
+        default_route_addresses.ipv4 or "-",
+        default_route_addresses.ipv6 or "-",
+    )
 
     shadow_client = AwsShadowClient(config)
 
@@ -612,7 +611,10 @@ def main() -> None:
         while not stop_event.is_set():
             try:
                 shadow_client.ensure_connected(timeout_seconds=config.aws_connect_timeout)
-                report = _build_board_report(config, started_at=started_at, online=True)
+                report = _build_board_report(
+                    addresses=default_route_addresses,
+                    online=True,
+                )
                 payload = _build_shadow_update(report)
                 _validate_shadow_update(validator, payload)
                 accepted = shadow_client.publish_update(
@@ -621,9 +623,10 @@ def main() -> None:
                 )
                 save_shadow(accepted, config.shadow_file)
                 LOGGER.info(
-                    "Published board shadow update online=%s uptimeSeconds=%s",
+                    "Published board shadow update online=%s ipv4=%s ipv6=%s",
                     report.get("online"),
-                    report.get("uptimeSeconds"),
+                    report.get("ipv4") or "-",
+                    report.get("ipv6") or "-",
                 )
                 if config.once:
                     break
@@ -638,7 +641,7 @@ def main() -> None:
 
         if stop_event.is_set() and not config.once and shadow_client.is_connected():
             try:
-                report = _build_board_report(config, started_at=started_at, online=False)
+                report = _build_shutdown_board_report()
                 payload = _build_shadow_update(report)
                 _validate_shadow_update(validator, payload)
                 accepted = shadow_client.publish_update(

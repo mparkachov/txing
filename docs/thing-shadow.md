@@ -37,13 +37,7 @@ Schema validation should be done by project code and/or CI checks, while AWS IoT
 - `state.reported.mcu.ble.online` (`boolean`) is gateway-observed BLE reachability: it becomes `true` after the device has shown sustained BLE presence, and becomes `false` only after the device has not been seen for the configured presence timeout.
 - `state.reported.mcu.ble.deviceId` (`string`, optional) is the last known BLE device identifier used for fast reconnect.
 - `state.reported.board.online` (`boolean`) is a best-effort board-process online flag; because the board can lose power abruptly, consumers must not treat stale `true` as authoritative after a hard power cut.
-- `state.reported.board.hostname` (`string`) is the board hostname or configured board name.
-- `state.reported.board.model` (`string`, optional) is the detected Raspberry Pi model string.
-- `state.reported.board.bootId` (`string`) is the current Linux boot identifier for the board.
-- `state.reported.board.programVersion` (`string`) is the running board reporter version.
-- `state.reported.board.startedAt` (`RFC3339 string`) is the board reporter process start time in UTC.
-- `state.reported.board.reportedAt` (`RFC3339 string`) is the last successful board shadow publish time in UTC.
-- `state.reported.board.uptimeSeconds` (`integer`) is the board uptime estimate from the local OS.
-- `state.reported.board.clientId` (`string`) is the MQTT client identifier used by the board reporter.
+- `state.reported.board.ipv4` (`ipv4 string`, update payload may temporarily use `null` to delete) is the IPv4 address chosen by the OS for the board's IPv4 default-route interface at daemon start.
+- `state.reported.board.ipv6` (`ipv6 string`, update payload may temporarily use `null` to delete) is the IPv6 address chosen by the OS for the board's IPv6 default-route interface at daemon start.
 
 Unknown fields are allowed for forward compatibility and must be ignored by consumers.
