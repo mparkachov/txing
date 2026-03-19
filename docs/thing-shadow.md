@@ -29,7 +29,7 @@ Schema validation should be done by project code and/or CI checks, while AWS IoT
 
 - Terminology: `power=true` means the wakeup state, and `power=false` means the sleep state with periodic `5 s` BLE rendezvous wakeups.
 - `state.desired.mcu.power` (`boolean`) requests the MCU power mode: `true` keeps the MCU in the wakeup state and BLE-connectable, `false` returns it to the sleep state with periodic low-power rendezvous wakeups.
-- `state.desired.board.online` (`boolean`, update payload may temporarily use `null` to delete) is a board-owned one-shot board power request: `false` asks the board Pi to halt locally, and the board reporter clears the field on clean shutdown after consuming it.
+- `state.desired.board.power` (`boolean`, update payload may temporarily use `null` to delete) is a board-owned one-shot board power request: `false` asks the board Pi to halt locally, and the board reporter clears the field on clean shutdown after consuming it.
 - `state.reported.mcu.power` (`boolean`) is the gateway-confirmed MCU power mode.
 - `state.reported.mcu.batteryMv` (`integer`, millivolts, measured MCU battery estimate observed from the MCU State Report over BLE advertising or GATT).
 - `state.reported.mcu.ble.serviceUuid` (`uuid`) is the BLE service UUID used by gateway.
@@ -37,8 +37,9 @@ Schema validation should be done by project code and/or CI checks, while AWS IoT
 - `state.reported.mcu.ble.stateReportUuid` (`uuid`) is the BLE read+notify characteristic UUID.
 - `state.reported.mcu.ble.online` (`boolean`) is gateway-observed BLE reachability: it becomes `true` after the device has shown sustained BLE presence, and becomes `false` only after the device has not been seen for the configured presence timeout.
 - `state.reported.mcu.ble.deviceId` (`string`, optional) is the last known BLE device identifier used for fast reconnect.
-- `state.reported.board.online` (`boolean`) is a best-effort board-process online flag; because the board can lose power abruptly, consumers must not treat stale `true` as authoritative after a hard power cut.
-- `state.reported.board.ipv4` (`ipv4 string`, update payload may temporarily use `null` to delete) is the IPv4 address chosen by the OS for the board's IPv4 default-route interface at daemon start.
-- `state.reported.board.ipv6` (`ipv6 string`, update payload may temporarily use `null` to delete) is the IPv6 address chosen by the OS for the board's IPv6 default-route interface at daemon start.
+- `state.reported.board.power` (`boolean`) is a best-effort board power-state flag; because the board can lose power abruptly through the MOSFET, consumers must not treat stale `true` as authoritative after a hard power cut.
+- `state.reported.board.wifi.online` (`boolean`) is the board-side Wi-Fi/reporter online flag while the board OS is up and the reporter is running.
+- `state.reported.board.wifi.ipv4` (`ipv4 string`, update payload may temporarily use `null` to delete) is the IPv4 address chosen by the OS for the board's IPv4 default-route interface at daemon start.
+- `state.reported.board.wifi.ipv6` (`ipv6 string`, update payload may temporarily use `null` to delete) is the IPv6 address chosen by the OS for the board's IPv6 default-route interface at daemon start.
 
 Unknown fields are allowed for forward compatibility and must be ignored by consumers.

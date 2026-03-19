@@ -111,7 +111,7 @@ class AwsShadowClient:
         self._ever_connected = False
         self._disconnect_requested = False
         self._halt_requested = threading.Event()
-        self._desired_board_online: bool | None = None
+        self._desired_board_power: bool | None = None
 
     def ensure_connected(self, *, timeout_seconds: float) -> None:
         with self._lock:
@@ -300,29 +300,29 @@ class AwsShadowClient:
             return
 
         if msg.topic == self._topic_get_accepted:
-            self._observe_desired_board_online(
-                _extract_desired_board_online_from_shadow(payload),
+            self._observe_desired_board_power(
+                _extract_desired_board_power_from_shadow(payload),
                 source="shadow/get/accepted",
             )
             return
 
         if msg.topic == self._topic_update_delta:
-            desired_online = _extract_desired_board_online_from_delta(payload)
-            if desired_online is None:
+            desired_power = _extract_desired_board_power_from_delta(payload)
+            if desired_power is None:
                 LOGGER.debug(
-                    "Ignored shadow delta without desired.board.online: %s",
+                    "Ignored shadow delta without desired.board.power: %s",
                     payload,
                 )
                 return
-            self._observe_desired_board_online(
-                desired_online,
+            self._observe_desired_board_power(
+                desired_power,
                 source="shadow/update/delta",
             )
             return
 
         if msg.topic == self._topic_update_accepted:
-            self._observe_desired_board_online(
-                _extract_desired_board_online_from_shadow(payload),
+            self._observe_desired_board_power(
+                _extract_desired_board_power_from_shadow(payload),
                 source="shadow/update/accepted",
             )
 
@@ -354,31 +354,31 @@ class AwsShadowClient:
                 info.rc,
             )
 
-    def _observe_desired_board_online(
+    def _observe_desired_board_power(
         self,
-        desired_online: bool | None,
+        desired_power: bool | None,
         *,
         source: str,
     ) -> None:
-        if desired_online is None:
+        if desired_power is None:
             return
 
         with self._lock:
-            previous = self._desired_board_online
-            self._desired_board_online = desired_online
+            previous = self._desired_board_power
+            self._desired_board_power = desired_power
 
-        if previous != desired_online:
+        if previous != desired_power:
             LOGGER.info(
-                "Observed desired.board.online=%s from %s",
-                desired_online,
+                "Observed desired.board.power=%s from %s",
+                desired_power,
                 source,
             )
 
-        if desired_online or self._halt_requested.is_set():
+        if desired_power or self._halt_requested.is_set():
             return
 
         LOGGER.warning(
-            "Desired board.online=false received from %s; preparing local halt",
+            "Desired board.power=false received from %s; preparing local halt",
             source,
         )
         self._halt_requested.set()
@@ -448,7 +448,7 @@ def _parse_args() -> argparse.Namespace:
         "--heartbeat-seconds",
         type=float,
         default=DEFAULT_HEARTBEAT_SECONDS,
-        help="Seconds between repeated reported.board updates (default: 60)",
+        help="Seconds between repeated reported.board.power/wifi updates (default: 60)",
     )
     parser.add_argument(
         "--aws-connect-timeout",
@@ -473,7 +473,7 @@ def _parse_args() -> argparse.Namespace:
         nargs="+",
         default=list(DEFAULT_HALT_COMMAND),
         help=(
-            "Command used when desired.board.online=false requests a local halt "
+            "Command used when desired.board.power=false requests a local halt "
             "(default: /usr/bin/systemctl halt --no-wall)"
         ),
     )
@@ -579,7 +579,7 @@ def _reason_code_is_failure(reason_code: Any) -> bool:
     return reason_code != 0
 
 
-def _extract_desired_board_online_from_shadow(payload: dict[str, Any]) -> bool | None:
+def _extract_desired_board_power_from_shadow(payload: dict[str, Any]) -> bool | None:
     state = payload.get("state")
     if not isinstance(state, dict):
         return None
@@ -589,58 +589,71 @@ def _extract_desired_board_online_from_shadow(payload: dict[str, Any]) -> bool |
     board = desired.get("board")
     if not isinstance(board, dict):
         return None
-    value = board.get("online")
+    value = board.get("power")
     return value if isinstance(value, bool) else None
 
 
-def _extract_desired_board_online_from_delta(payload: dict[str, Any]) -> bool | None:
+def _extract_desired_board_power_from_delta(payload: dict[str, Any]) -> bool | None:
     state = payload.get("state")
     if not isinstance(state, dict):
         return None
     board = state.get("board")
     if not isinstance(board, dict):
         return None
-    value = board.get("online")
+    value = board.get("power")
     return value if isinstance(value, bool) else None
 
 
 def _build_board_report(
     *,
     addresses: DefaultRouteAddresses,
-    online: bool,
+    power: bool,
 ) -> dict[str, Any]:
     return {
-        "online": online,
-        "ipv4": addresses.ipv4,
-        "ipv6": addresses.ipv6,
+        "power": power,
+        "wifi": {
+            "online": power,
+            "ipv4": addresses.ipv4,
+            "ipv6": addresses.ipv6,
+        },
+        "online": None,
+        "ipv4": None,
+        "ipv6": None,
     }
 
 
 def _build_shutdown_board_report() -> dict[str, Any]:
     return {
-        "online": False,
+        "power": False,
+        "wifi": {
+            "online": False,
+            "ipv4": None,
+            "ipv6": None,
+        },
+        "online": None,
         "ipv4": None,
         "ipv6": None,
     }
 
 
 def _build_shadow_update(report: dict[str, Any]) -> dict[str, Any]:
-    return _build_shadow_update_with_options(report=report, clear_desired_online=False)
+    return _build_shadow_update_with_options(report=report, clear_desired_power=False)
 
 
 def _build_shadow_update_with_options(
     *,
     report: dict[str, Any],
-    clear_desired_online: bool,
+    clear_desired_power: bool,
 ) -> dict[str, Any]:
     state: dict[str, Any] = {
         "reported": {
             "board": report,
         }
     }
-    if clear_desired_online:
+    if clear_desired_power:
         state["desired"] = {
             "board": {
+                "power": None,
                 "online": None,
             }
         }
@@ -774,7 +787,7 @@ def main() -> None:
                 shadow_client.ensure_connected(timeout_seconds=config.aws_connect_timeout)
                 report = _build_board_report(
                     addresses=default_route_addresses,
-                    online=True,
+                    power=True,
                 )
                 payload = _build_shadow_update(report)
                 _validate_shadow_update(validator, payload)
@@ -784,10 +797,11 @@ def main() -> None:
                 )
                 save_shadow(accepted, config.shadow_file)
                 LOGGER.info(
-                    "Published board shadow update online=%s ipv4=%s ipv6=%s",
-                    report.get("online"),
-                    report.get("ipv4") or "-",
-                    report.get("ipv6") or "-",
+                    "Published board shadow update power=%s wifi_online=%s ipv4=%s ipv6=%s",
+                    report.get("power"),
+                    report.get("wifi", {}).get("online") if isinstance(report.get("wifi"), dict) else None,
+                    report.get("wifi", {}).get("ipv4") if isinstance(report.get("wifi"), dict) else "-",
+                    report.get("wifi", {}).get("ipv6") if isinstance(report.get("wifi"), dict) else "-",
                 )
                 if config.once or shadow_client.halt_requested():
                     break
@@ -814,7 +828,7 @@ def main() -> None:
                 report = _build_shutdown_board_report()
                 payload = _build_shadow_update_with_options(
                     report=report,
-                    clear_desired_online=True,
+                    clear_desired_power=True,
                 )
                 _validate_shadow_update(validator, payload)
                 accepted = shadow_client.publish_update(
@@ -823,7 +837,7 @@ def main() -> None:
                 )
                 save_shadow(accepted, config.shadow_file)
                 LOGGER.info(
-                    "Published best-effort clean shutdown board update and cleared desired.board.online"
+                    "Published best-effort clean shutdown board update and cleared desired.board.power"
                 )
             except RuntimeError as err:
                 LOGGER.warning("Failed to publish best-effort shutdown board update: %s", err)

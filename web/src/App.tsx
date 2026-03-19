@@ -16,6 +16,91 @@ type AppProps = {
 }
 
 const formatJson = (value: unknown): string => JSON.stringify(value, null, 2)
+const shadowPollIntervalMs = 1000
+const boardOfflineTimeoutMs = 45000
+
+const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null
+
+const extractReportedMcu = (shadow: unknown): Record<string, unknown> | null => {
+  if (!isRecord(shadow)) {
+    return null
+  }
+  const state = shadow.state
+  if (!isRecord(state)) {
+    return null
+  }
+  const reported = state.reported
+  if (!isRecord(reported)) {
+    return null
+  }
+  const mcu = reported.mcu
+  return isRecord(mcu) ? mcu : null
+}
+
+const extractReportedBoard = (shadow: unknown): Record<string, unknown> | null => {
+  if (!isRecord(shadow)) {
+    return null
+  }
+  const state = shadow.state
+  if (!isRecord(state)) {
+    return null
+  }
+  const reported = state.reported
+  if (!isRecord(reported)) {
+    return null
+  }
+  const board = reported.board
+  return isRecord(board) ? board : null
+}
+
+const extractReportedBoardPower = (shadow: unknown): boolean | null => {
+  const board = extractReportedBoard(shadow)
+  if (!board) {
+    return null
+  }
+  if (typeof board.power === 'boolean') {
+    return board.power
+  }
+  return typeof board.online === 'boolean' ? board.online : null
+}
+
+const extractReportedMcuPower = (shadow: unknown): boolean | null => {
+  const mcu = extractReportedMcu(shadow)
+  if (!mcu) {
+    return null
+  }
+  return typeof mcu.power === 'boolean' ? mcu.power : null
+}
+
+const extractReportedMcuOnline = (shadow: unknown): boolean | null => {
+  const mcu = extractReportedMcu(shadow)
+  if (!mcu) {
+    return null
+  }
+  if (typeof mcu.online === 'boolean') {
+    return mcu.online
+  }
+  const ble = mcu.ble
+  if (!isRecord(ble)) {
+    return null
+  }
+  return typeof ble.online === 'boolean' ? ble.online : null
+}
+
+const extractReportedBoardWifiOnline = (shadow: unknown): boolean | null => {
+  const board = extractReportedBoard(shadow)
+  if (!board) {
+    return null
+  }
+  const wifi = board.wifi
+  if (isRecord(wifi) && typeof wifi.online === 'boolean') {
+    return wifi.online
+  }
+  return typeof board.online === 'boolean' ? board.online : null
+}
 
 function App({ initialAuthError = '' }: AppProps) {
   const [status, setStatus] = useState<SessionStatus>('loading')
@@ -34,6 +119,33 @@ function App({ initialAuthError = '' }: AppProps) {
     }
     return authUser.email.toLowerCase() !== appConfig.adminEmail
   }, [authUser?.email])
+
+  const shadowDocument = useMemo<unknown>(() => {
+    try {
+      return JSON.parse(shadowJson)
+    } catch {
+      return null
+    }
+  }, [shadowJson])
+
+  const reportedMcuPower = useMemo(
+    () => extractReportedMcuPower(shadowDocument),
+    [shadowDocument],
+  )
+  const reportedMcuOnline = useMemo(
+    () => extractReportedMcuOnline(shadowDocument),
+    [shadowDocument],
+  )
+  const reportedBoardPower = useMemo(
+    () => extractReportedBoardPower(shadowDocument),
+    [shadowDocument],
+  )
+  const reportedBoardOnline = useMemo(
+    () => extractReportedBoardWifiOnline(shadowDocument),
+    [shadowDocument],
+  )
+  const canWake = reportedMcuPower === false && reportedMcuOnline === true
+  const canSleep = reportedMcuPower === true || reportedBoardPower === true || reportedBoardOnline === true
 
   useEffect(() => {
     if (hasConfigErrors) {
@@ -58,6 +170,16 @@ function App({ initialAuthError = '' }: AppProps) {
         setAuthUser(user)
         setError('')
         setStatus('signed_in')
+        setIsLoadingShadow(true)
+        try {
+          const shadowResponse = await getThingShadow(restoredTokens.idToken)
+          setShadowJson(formatJson(shadowResponse))
+          setFeedback(`Shadow loaded at ${new Date().toLocaleTimeString()}`)
+        } catch (caughtError) {
+          setError(caughtError instanceof Error ? caughtError.message : 'Unable to load shadow')
+        } finally {
+          setIsLoadingShadow(false)
+        }
       } catch (caughtError) {
         clearAuthState()
         setStatus('signed_out')
@@ -95,6 +217,15 @@ function App({ initialAuthError = '' }: AppProps) {
     return refreshedTokens.idToken
   }
 
+  const loadShadowWithToken = async (
+    token: string,
+    feedbackMessage = `Shadow loaded at ${new Date().toLocaleTimeString()}`,
+  ): Promise<void> => {
+    const response = await getThingShadow(token)
+    setShadowJson(formatJson(response))
+    setFeedback(feedbackMessage)
+  }
+
   const loadShadow = async (): Promise<void> => {
     setIsLoadingShadow(true)
     setError('')
@@ -102,35 +233,11 @@ function App({ initialAuthError = '' }: AppProps) {
 
     try {
       const token = await withApiToken()
-      const response = await getThingShadow(token)
-      setShadowJson(formatJson(response))
-      setFeedback(`Shadow loaded at ${new Date().toLocaleTimeString()}`)
+      await loadShadowWithToken(token)
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'Unable to load shadow')
     } finally {
       setIsLoadingShadow(false)
-    }
-  }
-
-  const saveShadow = async (): Promise<void> => {
-    setIsUpdatingShadow(true)
-    setError('')
-    setFeedback('')
-
-    try {
-      const parsed = JSON.parse(shadowJson)
-      const token = await withApiToken()
-      const response = await updateThingShadow(token, parsed)
-      setShadowJson(formatJson(response))
-      setFeedback(`Shadow updated at ${new Date().toLocaleTimeString()}`)
-    } catch (caughtError) {
-      if (caughtError instanceof SyntaxError) {
-        setError(`JSON parse error: ${caughtError.message}`)
-      } else {
-        setError(caughtError instanceof Error ? caughtError.message : 'Unable to update shadow')
-      }
-    } finally {
-      setIsUpdatingShadow(false)
     }
   }
 
@@ -150,11 +257,79 @@ function App({ initialAuthError = '' }: AppProps) {
           },
         },
       }
-      const response = await updateThingShadow(token, payload)
-      setShadowJson(formatJson(response))
-      setFeedback(`desired.mcu.power -> ${power} at ${new Date().toLocaleTimeString()}`)
+      await updateThingShadow(token, payload)
+      await loadShadowWithToken(
+        token,
+        `desired.mcu.power -> ${power} at ${new Date().toLocaleTimeString()}`,
+      )
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'Unable to update desired power')
+    } finally {
+      setIsUpdatingShadow(false)
+    }
+  }
+
+  const requestSleep = async (): Promise<void> => {
+    setIsUpdatingShadow(true)
+    setError('')
+    setFeedback('')
+
+    try {
+      const token = await withApiToken()
+      await updateThingShadow(token, {
+        state: {
+          desired: {
+            board: {
+              power: false,
+            },
+          },
+        },
+      })
+
+      setFeedback('Waiting for reported.board.power=false...')
+
+      let boardOfflineShadow: unknown | null = null
+      const deadline = Date.now() + boardOfflineTimeoutMs
+      while (Date.now() < deadline) {
+        const shadowResponse = await getThingShadow(token)
+        setShadowJson(formatJson(shadowResponse))
+        boardOfflineShadow = shadowResponse
+        if (extractReportedBoardPower(shadowResponse) === false) {
+          break
+        }
+        await delay(shadowPollIntervalMs)
+      }
+
+      if (extractReportedBoardPower(boardOfflineShadow) !== false) {
+        throw new Error('Timed out waiting for reported.board.power=false before sleeping MCU')
+      }
+
+      await updateThingShadow(token, {
+        state: {
+          desired: {
+            board: {
+              power: null,
+              online: null,
+            },
+          },
+        },
+      })
+
+      await updateThingShadow(token, {
+        state: {
+          desired: {
+            mcu: {
+              power: false,
+            },
+          },
+        },
+      })
+      await loadShadowWithToken(
+        token,
+        `Sleep requested at ${new Date().toLocaleTimeString()}`,
+      )
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : 'Unable to request sleep')
     } finally {
       setIsUpdatingShadow(false)
     }
@@ -221,28 +396,37 @@ function App({ initialAuthError = '' }: AppProps) {
         </header>
 
         <div className="button-row">
-          <button type="button" onClick={() => void loadShadow()} disabled={isLoadingShadow}>
+          <button
+            type="button"
+            onClick={() => void loadShadow()}
+            disabled={isLoadingShadow || isUpdatingShadow}
+          >
             {isLoadingShadow ? 'Loading...' : 'Load Shadow'}
           </button>
-          <button type="button" onClick={() => void updateDesiredPower(true)} disabled={isUpdatingShadow}>
-            Wake MCU
+          <button
+            type="button"
+            onClick={() => void updateDesiredPower(true)}
+            disabled={isLoadingShadow || isUpdatingShadow || !canWake}
+          >
+            Wake
           </button>
-          <button type="button" onClick={() => void updateDesiredPower(false)} disabled={isUpdatingShadow}>
-            Sleep MCU
-          </button>
-          <button type="button" onClick={() => void saveShadow()} disabled={isUpdatingShadow}>
-            {isUpdatingShadow ? 'Updating...' : 'Update Shadow'}
+          <button
+            type="button"
+            onClick={() => void requestSleep()}
+            disabled={isLoadingShadow || isUpdatingShadow || !canSleep}
+          >
+            Sleep
           </button>
         </div>
 
         <label htmlFor="shadow-json" className="editor-label">
-          Full shadow JSON
+          Current shadow JSON
         </label>
         <textarea
           id="shadow-json"
           className="editor"
           value={shadowJson}
-          onChange={(event) => setShadowJson(event.target.value)}
+          readOnly
           spellCheck={false}
         />
 

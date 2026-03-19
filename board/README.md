@@ -6,7 +6,7 @@ This is not the same Raspberry Pi as `gw/`. The `gw/` Pi remains the BLE/AWS gat
 
 The board reuses the same AWS IoT mTLS certificate files as `gw/`, stored in `../certs/` as `txing.cert.pem` and `txing.private.key`.
 
-When the service is managed by `systemd`, run it as `root`. The reporter consumes `state.desired.board.online=false` and requests a local system halt, which requires root privileges.
+When the service is managed by `systemd`, run it as `root`. The reporter consumes `state.desired.board.power=false` and requests a local system halt, which requires root privileges.
 
 ## Shadow contract
 
@@ -17,9 +17,12 @@ The board publishes to the same classic Thing Shadow as `mcu`, but under a sibli
   "state": {
     "reported": {
       "board": {
-        "online": true,
-        "ipv4": "192.168.1.25",
-        "ipv6": "2001:db8::25"
+        "power": true,
+        "wifi": {
+          "online": true,
+          "ipv4": "192.168.1.25",
+          "ipv6": "2001:db8::25"
+        }
       }
     }
   }
@@ -29,11 +32,12 @@ The board publishes to the same classic Thing Shadow as `mcu`, but under a sibli
 Notes:
 
 - `board.*` is owned by this subproject.
-- `desired.board.online=false` is a one-shot shutdown request. The reporter clears that desired field on clean shutdown so the request does not persist across the next boot.
-- `online=false` is only a best-effort clean-shutdown update.
-- `ipv4` and `ipv6` are resolved once at daemon start from the interface the OS selects for the default route in each address family.
-- On a clean daemon stop, the board publishes `ipv4=null` and `ipv6=null` so AWS removes those two fields from the reported shadow document.
-- Because this Pi can lose power abruptly through the MOSFET, consumers should not treat stale `online=true` as authoritative after a hard power cut.
+- `desired.board.power=false` is a one-shot shutdown request. The reporter clears that desired field on clean shutdown so the request does not persist across the next boot.
+- `reported.board.power=false` is only a best-effort clean-shutdown update.
+- `reported.board.wifi.online` reflects the board-side online status while the board OS is up and the reporter is running.
+- `reported.board.wifi.ipv4` and `reported.board.wifi.ipv6` are resolved once at daemon start from the interface the OS selects for the default route in each address family.
+- On a clean daemon stop, the board publishes `wifi.ipv4=null` and `wifi.ipv6=null` so AWS removes those two fields from the reported shadow document.
+- Because this Pi can lose power abruptly through the MOSFET, consumers should not treat stale `power=true` or stale `wifi.online=true` as authoritative after a hard power cut.
 
 ## Project layout
 
@@ -128,7 +132,7 @@ sudo journalctl -u txing-board -f
 Notes:
 
 - The command above assumes `uv` is installed at `/home/maxim/.local/bin/uv`.
-- The unit intentionally omits `User=` so `systemd` runs it as `root`; that is required for local halt requests from `desired.board.online=false`.
+- The unit intentionally omits `User=` so `systemd` runs it as `root`; that is required for local halt requests from `desired.board.power=false`.
 - The service forces `uv` to use `/tmp/uv-cache` and `/tmp` so it can run with a read-only root filesystem.
 - The service also uses `--no-sync`, so the board environment must already exist before the root filesystem is remounted read-only.
 - The default runtime paths continue to use `/home/maxim/txing/certs/txing.cert.pem`, `/home/maxim/txing/certs/txing.private.key`, `/home/maxim/txing/certs/AmazonRootCA1.pem`, and `/home/maxim/txing/certs/iot-data-ats.endpoint`.
@@ -149,11 +153,12 @@ Useful overrides:
 - Connects directly to AWS IoT Core over MQTT with mTLS.
 - Publishes `state.reported.board` to `$aws/things/<thing>/shadow/update`.
 - Subscribes to `$aws/things/<thing>/shadow/get/accepted`, `$aws/things/<thing>/shadow/update/accepted`, and `$aws/things/<thing>/shadow/update/delta`.
-- Requests the full shadow snapshot on connect so a persisted `desired.board.online=false` is consumed immediately after startup.
-- Resolves `board.ipv4` and `board.ipv6` portably by asking the OS which source address it would use for IPv4 and IPv6 default-route traffic.
+- Requests the full shadow snapshot on connect so a persisted `desired.board.power=false` is consumed immediately after startup.
+- Resolves `board.wifi.ipv4` and `board.wifi.ipv6` portably by asking the OS which source address it would use for IPv4 and IPv6 default-route traffic.
 - Validates each outgoing payload against `../docs/txing-shadow.schema.json`.
 - Stores the last accepted shadow response in `/tmp/txing_board_shadow.json`.
-- When it observes `state.desired.board.online=false`, it publishes a final best-effort shutdown update, clears `desired.board.online`, and then requests `systemctl halt --no-wall`.
-- On clean `SIGINT` or `SIGTERM`, it attempts a final best-effort `online=false` publish, clears `ipv4` and `ipv6`, and removes `desired.board.online` before disconnecting.
+- Publishes `state.reported.board.power=true` and `state.reported.board.wifi.online=true` while the board service is running.
+- When it observes `state.desired.board.power=false`, it publishes a final best-effort shutdown update with `reported.board.power=false`, clears `desired.board.power`, and then requests `systemctl halt --no-wall`.
+- On clean `SIGINT` or `SIGTERM`, it attempts a final best-effort shutdown update, clears `wifi.ipv4` and `wifi.ipv6`, and removes `desired.board.power` before disconnecting.
 
 For a production deployment on the Pi, use a service manager such as `systemd` with restart-on-failure, because hard power removal can terminate the process without a graceful shutdown window.
