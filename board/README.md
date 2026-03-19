@@ -6,7 +6,7 @@ This is not the same Raspberry Pi as `gw/`. The `gw/` Pi remains the BLE/AWS gat
 
 The board reuses the same AWS IoT mTLS certificate files as `gw/`, stored in `../certs/` as `txing.cert.pem` and `txing.private.key`.
 
-When the service is managed by `systemd`, run it as `root`. The reporter consumes `state.desired.board.power=false` and requests a local system halt, which requires root privileges.
+When the service is managed by `systemd`, run it as `root`. The board control consumes `state.desired.board.power=false` and requests a local system halt, which requires root privileges.
 
 ## Shadow contract
 
@@ -32,9 +32,9 @@ The board publishes to the same classic Thing Shadow as `mcu`, but under a sibli
 Notes:
 
 - `board.*` is owned by this subproject.
-- `desired.board.power=false` is a one-shot shutdown request. The reporter clears that desired field on clean shutdown so the request does not persist across the next boot.
+- `desired.board.power=false` is a one-shot shutdown request. The board control clears that desired field on clean shutdown so the request does not persist across the next boot.
 - `reported.board.power=false` is only a best-effort clean-shutdown update.
-- `reported.board.wifi.online` reflects the board-side online status while the board OS is up and the reporter is running.
+- `reported.board.wifi.online` reflects the board-side online status while the board OS is up and the board control is running.
 - `reported.board.wifi.ipv4` and `reported.board.wifi.ipv6` are resolved once at daemon start from the interface the OS selects for the default route in each address family.
 - On a clean daemon stop, the board publishes `wifi.ipv4=null` and `wifi.ipv6=null` so AWS removes those two fields from the reported shadow document.
 - Because this Pi can lose power abruptly through the MOSFET, consumers should not treat stale `power=true` or stale `wifi.online=true` as authoritative after a hard power cut.
@@ -42,7 +42,7 @@ Notes:
 ## Project layout
 
 - `pyproject.toml`: `uv` project definition
-- `src/board/shadow_reporter.py`: CLI entrypoint and MQTT shadow reporter
+- `src/board/shadow_control.py`: CLI entrypoint and MQTT board control
 - `src/board/shadow_store.py`: local mirror file helper for accepted shadow responses
 - `justfile`: convenience commands for local use
 
@@ -96,7 +96,7 @@ Create the service unit:
 ```bash
 sudo tee /etc/systemd/system/txing-board.service >/dev/null <<'EOF'
 [Unit]
-Description=txing board reporter
+Description=txing board control
 After=network-online.target
 Wants=network-online.target
 

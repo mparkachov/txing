@@ -61,10 +61,7 @@ const extractReportedBoardPower = (shadow: unknown): boolean | null => {
   if (!board) {
     return null
   }
-  if (typeof board.power === 'boolean') {
-    return board.power
-  }
-  return typeof board.online === 'boolean' ? board.online : null
+  return typeof board.power === 'boolean' ? board.power : null
 }
 
 const extractReportedMcuPower = (shadow: unknown): boolean | null => {
@@ -96,10 +93,7 @@ const extractReportedBoardWifiOnline = (shadow: unknown): boolean | null => {
     return null
   }
   const wifi = board.wifi
-  if (isRecord(wifi) && typeof wifi.online === 'boolean') {
-    return wifi.online
-  }
-  return typeof board.online === 'boolean' ? board.online : null
+  return isRecord(wifi) && typeof wifi.online === 'boolean' ? wifi.online : null
 }
 
 function App({ initialAuthError = '' }: AppProps) {
@@ -309,7 +303,6 @@ function App({ initialAuthError = '' }: AppProps) {
           desired: {
             board: {
               power: null,
-              online: null,
             },
           },
         },

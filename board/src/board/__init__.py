@@ -1,3 +1,3 @@
-from .shadow_reporter import main
+from .shadow_control import main
 
 __all__ = ["main"]

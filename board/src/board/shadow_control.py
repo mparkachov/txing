@@ -22,8 +22,8 @@ import paho.mqtt.client as mqtt
 
 from .shadow_store import DEFAULT_SHADOW_FILE, save_shadow
 
-LOGGER = logging.getLogger("board.shadow_reporter")
-MQTT_LOGGER = logging.getLogger("board.shadow_reporter.mqtt")
+LOGGER = logging.getLogger("board.shadow_control")
+MQTT_LOGGER = logging.getLogger("board.shadow_control.mqtt")
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_CERT_DIR = REPO_ROOT / "certs"
@@ -44,7 +44,7 @@ DEFAULT_ROUTE_PROBE_IPV6 = ("2001:4860:4860::8888", 80, 0, 0)
 
 
 @dataclass(frozen=True)
-class ReporterConfig:
+class ControlConfig:
     thing_name: str
     iot_endpoint: str
     cert_file: Path
@@ -69,7 +69,7 @@ class DefaultRouteAddresses:
 
 
 class AwsShadowClient:
-    def __init__(self, config: ReporterConfig) -> None:
+    def __init__(self, config: ControlConfig) -> None:
         self._config = config
         self._topic_prefix = f"$aws/things/{config.thing_name}/shadow"
         self._topic_get = f"{self._topic_prefix}/get"
@@ -386,7 +386,7 @@ class AwsShadowClient:
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Txing device-side Raspberry Pi board shadow reporter",
+        description="Txing device-side Raspberry Pi board control",
     )
     parser.add_argument(
         "--shadow-file",
@@ -616,9 +616,6 @@ def _build_board_report(
             "ipv4": addresses.ipv4,
             "ipv6": addresses.ipv6,
         },
-        "online": None,
-        "ipv4": None,
-        "ipv6": None,
     }
 
 
@@ -630,9 +627,6 @@ def _build_shutdown_board_report() -> dict[str, Any]:
             "ipv4": None,
             "ipv6": None,
         },
-        "online": None,
-        "ipv4": None,
-        "ipv6": None,
     }
 
 
@@ -654,7 +648,6 @@ def _build_shadow_update_with_options(
         state["desired"] = {
             "board": {
                 "power": None,
-                "online": None,
             }
         }
     return {"state": state}
@@ -740,7 +733,7 @@ def main() -> None:
         _require_file(args.schema_file, "Thing Shadow schema file")
         board_client_suffix = _sanitize_client_id(args.board_name)
         client_id = args.client_id or f"txing-board-{board_client_suffix}-{os.getpid()}"
-        config = ReporterConfig(
+        config = ControlConfig(
             thing_name=args.thing_name,
             iot_endpoint=iot_endpoint,
             cert_file=args.cert_file,
@@ -767,7 +760,7 @@ def main() -> None:
     _install_signal_handlers(stop_event)
 
     LOGGER.info(
-        "Board reporter started pid=%s thing=%s client_id=%s",
+        "Board control started pid=%s thing=%s client_id=%s",
         os.getpid(),
         config.thing_name,
         config.client_id,

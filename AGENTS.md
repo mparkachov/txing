@@ -3,7 +3,7 @@
 ## Repository structure
 - `mcu/`: Rust firmware subproject for the MCU.
 - `gw/`: Python subproject for the Raspberry Pi 5 gateway (AWS IoT MQTT + BLE communication with MCU).
-- `board/`: Python subproject for the device-side Raspberry Pi board reporter (AWS IoT MQTT shadow reporting).
+- `board/`: Python subproject for the device-side Raspberry Pi board control (AWS IoT MQTT shadow control/reporting).
 - `web/`: React/Vite SPA for admin management of Thing Shadow.
 
 ## Working rules
