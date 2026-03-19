@@ -97,7 +97,10 @@ Wants=network-online.target
 Type=simple
 User=maxim
 WorkingDirectory=/home/maxim/txing/board
-ExecStart=/home/maxim/.local/bin/uv run board --heartbeat-seconds 60
+Environment=TMPDIR=/tmp
+Environment=UV_CACHE_DIR=/tmp/uv-cache
+ExecStartPre=/usr/bin/mkdir -p /tmp/uv-cache
+ExecStart=/home/maxim/.local/bin/uv run --no-sync --cache-dir /tmp/uv-cache board --heartbeat-seconds 60
 Restart=always
 RestartSec=5
 
@@ -123,6 +126,8 @@ sudo journalctl -u txing-board -f
 Notes:
 
 - The command above assumes `uv` is installed at `/home/maxim/.local/bin/uv`.
+- The service forces `uv` to use `/tmp/uv-cache` and `/tmp` so it can run with a read-only root filesystem.
+- The service also uses `--no-sync`, so the board environment must already exist before the root filesystem is remounted read-only.
 - The default runtime paths continue to use `/home/maxim/txing/certs/txing.cert.pem`, `/home/maxim/txing/certs/txing.private.key`, `/home/maxim/txing/certs/AmazonRootCA1.pem`, and `/home/maxim/txing/certs/iot-data-ats.endpoint`.
 - If you need custom arguments, edit `ExecStart=` and run `sudo systemctl daemon-reload && sudo systemctl restart txing-board`.
 
