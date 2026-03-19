@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   beginSignIn,
   clearAuthState,
@@ -14,12 +14,111 @@ type SessionStatus = 'loading' | 'authenticating' | 'signed_out' | 'signed_in'
 type AppProps = {
   initialAuthError?: string
 }
+type TxingSwitchTarget = 'on' | 'off' | null
+type BatteryCurvePoint = readonly [mv: number, percent: number]
+type ShadowSnapshotView = {
+  json: string
+  updatedAtMs: number
+}
 
 const formatJson = (value: unknown): string => JSON.stringify(value, null, 2)
 const shadowPollIntervalMs = 1000
 const boardOfflineTimeoutMs = 45000
+const batterySocCurve: readonly BatteryCurvePoint[] = [
+  [3300, 0],
+  [3600, 10],
+  [3700, 20],
+  [3800, 40],
+  [3900, 60],
+  [4000, 80],
+  [4100, 92],
+  [4200, 100],
+]
 
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+const createShadowSnapshotView = (shadow: unknown): ShadowSnapshotView => ({
+  json: formatJson(shadow),
+  updatedAtMs: Date.now(),
+})
+const formatShadowUpdateTime = (updatedAtMs: number | null): string =>
+  updatedAtMs === null
+    ? '--:--:--'
+    : new Date(updatedAtMs).toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      })
+const getPowerNodeClass = (power: boolean | null): string => {
+  if (power === true) {
+    return 'status-node-awake'
+  }
+  if (power === false) {
+    return 'status-node-asleep'
+  }
+  return 'status-node-unknown'
+}
+const getBatteryPercent = (batteryMv: number | null): number | null => {
+  if (batteryMv === null || Number.isNaN(batteryMv)) {
+    return null
+  }
+  const firstPoint = batterySocCurve[0]
+  const lastPoint = batterySocCurve[batterySocCurve.length - 1]
+  if (batteryMv <= firstPoint[0]) {
+    return firstPoint[1]
+  }
+  if (batteryMv >= lastPoint[0]) {
+    return lastPoint[1]
+  }
+
+  for (let index = 1; index < batterySocCurve.length; index += 1) {
+    const previousPoint = batterySocCurve[index - 1]
+    const nextPoint = batterySocCurve[index]
+    if (batteryMv > nextPoint[0]) {
+      continue
+    }
+    const pointSpan = nextPoint[0] - previousPoint[0]
+    const percentSpan = nextPoint[1] - previousPoint[1]
+    const mvOffset = batteryMv - previousPoint[0]
+    return previousPoint[1] + (mvOffset / pointSpan) * percentSpan
+  }
+
+  return null
+}
+const getBatteryToneClass = (batteryPercent: number | null): string => {
+  if (batteryPercent === null) {
+    return 'status-battery-unknown'
+  }
+  if (batteryPercent >= 55) {
+    return 'status-battery-good'
+  }
+  if (batteryPercent >= 20) {
+    return 'status-battery-warn'
+  }
+  return 'status-battery-low'
+}
+const getBoardWifiToneClass = (boardWifiOnline: boolean | null): string => {
+  if (boardWifiOnline === true) {
+    return 'status-wifi-online'
+  }
+  if (boardWifiOnline === false) {
+    return 'status-wifi-offline'
+  }
+  return 'status-wifi-unknown'
+}
+const getBleSignalToneClass = (bleStatusOnline: boolean | null): string =>
+  bleStatusOnline === true ? 'status-signal-online' : 'status-signal-offline'
+const getTxingPowerToneClass = (mcuPower: boolean | null, boardPower: boolean | null): string => {
+  if (mcuPower === true && boardPower === true) {
+    return 'status-txing-power-full'
+  }
+  if (mcuPower === false && boardPower === false) {
+    return 'status-txing-power-sleep'
+  }
+  if (mcuPower === true || boardPower === true) {
+    return 'status-txing-power-partial'
+  }
+  return 'status-txing-power-sleep'
+}
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null
@@ -87,6 +186,23 @@ const extractReportedMcuOnline = (shadow: unknown): boolean | null => {
   return typeof ble.online === 'boolean' ? ble.online : null
 }
 
+const extractReportedMcuBleOnline = (shadow: unknown): boolean | null => {
+  const mcu = extractReportedMcu(shadow)
+  if (!mcu) {
+    return null
+  }
+  const ble = mcu.ble
+  return isRecord(ble) && typeof ble.online === 'boolean' ? ble.online : null
+}
+
+const extractReportedMcuBatteryMv = (shadow: unknown): number | null => {
+  const mcu = extractReportedMcu(shadow)
+  if (!mcu) {
+    return null
+  }
+  return typeof mcu.batteryMv === 'number' ? mcu.batteryMv : null
+}
+
 const extractReportedBoardWifiOnline = (shadow: unknown): boolean | null => {
   const board = extractReportedBoard(shadow)
   if (!board) {
@@ -100,10 +216,15 @@ function App({ initialAuthError = '' }: AppProps) {
   const [status, setStatus] = useState<SessionStatus>('loading')
   const [authUser, setAuthUser] = useState<AuthUser | null>(null)
   const [shadowJson, setShadowJson] = useState<string>('{}')
+  const [lastShadowUpdateAtMs, setLastShadowUpdateAtMs] = useState<number | null>(null)
   const [isLoadingShadow, setIsLoadingShadow] = useState(false)
   const [isUpdatingShadow, setIsUpdatingShadow] = useState(false)
+  const [isDebugEnabled, setIsDebugEnabled] = useState(false)
+  const [isUserMenuOpen, setIsUserMenuOpen] = useState(false)
+  const [txingSwitchTarget, setTxingSwitchTarget] = useState<TxingSwitchTarget>(null)
   const [feedback, setFeedback] = useState<string>('')
   const [error, setError] = useState<string>(initialAuthError)
+  const userMenuRef = useRef<HTMLDivElement | null>(null)
 
   const hasConfigErrors = appConfig.errors.length > 0
 
@@ -130,6 +251,14 @@ function App({ initialAuthError = '' }: AppProps) {
     () => extractReportedMcuOnline(shadowDocument),
     [shadowDocument],
   )
+  const reportedMcuBleOnline = useMemo(
+    () => extractReportedMcuBleOnline(shadowDocument),
+    [shadowDocument],
+  )
+  const reportedMcuBatteryMv = useMemo(
+    () => extractReportedMcuBatteryMv(shadowDocument),
+    [shadowDocument],
+  )
   const reportedBoardPower = useMemo(
     () => extractReportedBoardPower(shadowDocument),
     [shadowDocument],
@@ -138,8 +267,28 @@ function App({ initialAuthError = '' }: AppProps) {
     () => extractReportedBoardWifiOnline(shadowDocument),
     [shadowDocument],
   )
+  const boardOnline = reportedBoardOnline === true
+  const batteryPercent = useMemo(
+    () => getBatteryPercent(reportedMcuBatteryMv),
+    [reportedMcuBatteryMv],
+  )
+  const batteryToneClass = getBatteryToneClass(batteryPercent)
+  const boardWifiToneClass = getBoardWifiToneClass(reportedBoardOnline)
+  const bleSignalToneClass = getBleSignalToneClass(reportedMcuBleOnline)
+  const txingPowerToneClass = getTxingPowerToneClass(reportedMcuPower, reportedBoardPower)
   const canWake = reportedMcuPower === false && reportedMcuOnline === true
   const canSleep = reportedMcuPower === true || reportedBoardPower === true || reportedBoardOnline === true
+  const txingSwitchChecked =
+    txingSwitchTarget === 'on' ? true : txingSwitchTarget === 'off' ? false : boardOnline
+  const isTxingSwitchPending = txingSwitchTarget !== null
+  const canToggleTxingSwitch = txingSwitchChecked ? canSleep : canWake
+  const userMenuIdentity = authUser?.email ?? authUser?.name ?? authUser?.sub ?? 'User'
+  const userMenuInitial = userMenuIdentity.trim().charAt(0).toUpperCase() || 'U'
+  const lastShadowUpdateLabel = formatShadowUpdateTime(lastShadowUpdateAtMs)
+  const lastShadowUpdateTitle =
+    lastShadowUpdateAtMs === null
+      ? 'Last shadow update unavailable'
+      : `Last shadow update ${new Date(lastShadowUpdateAtMs).toLocaleString()}`
 
   useEffect(() => {
     if (hasConfigErrors) {
@@ -167,8 +316,9 @@ function App({ initialAuthError = '' }: AppProps) {
         setIsLoadingShadow(true)
         try {
           const shadowResponse = await getThingShadow(restoredTokens.idToken)
-          setShadowJson(formatJson(shadowResponse))
-          setFeedback(`Shadow loaded at ${new Date().toLocaleTimeString()}`)
+          const snapshotView = createShadowSnapshotView(shadowResponse)
+          setShadowJson(snapshotView.json)
+          setLastShadowUpdateAtMs(snapshotView.updatedAtMs)
         } catch (caughtError) {
           setError(caughtError instanceof Error ? caughtError.message : 'Unable to load shadow')
         } finally {
@@ -197,6 +347,109 @@ function App({ initialAuthError = '' }: AppProps) {
     setError(`Signed-in user is not allowed. Expected: ${appConfig.adminEmail}`)
   }, [adminEmailMismatch, status])
 
+  useEffect(() => {
+    if (txingSwitchTarget === 'on' && boardOnline) {
+      setTxingSwitchTarget(null)
+      return
+    }
+    if (txingSwitchTarget === 'off' && reportedBoardOnline === false) {
+      setTxingSwitchTarget(null)
+    }
+  }, [boardOnline, reportedBoardOnline, txingSwitchTarget])
+
+  useEffect(() => {
+    if (!isUserMenuOpen) {
+      return
+    }
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!userMenuRef.current?.contains(event.target as Node)) {
+        setIsUserMenuOpen(false)
+      }
+    }
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsUserMenuOpen(false)
+      }
+    }
+
+    document.addEventListener('mousedown', handlePointerDown)
+    document.addEventListener('keydown', handleEscape)
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown)
+      document.removeEventListener('keydown', handleEscape)
+    }
+  }, [isUserMenuOpen])
+
+  useEffect(() => {
+    if (status !== 'signed_in' || adminEmailMismatch) {
+      return
+    }
+
+    let cancelled = false
+    let timeoutId: number | undefined
+
+    const scheduleNextPoll = () => {
+      if (cancelled) {
+        return
+      }
+      timeoutId = window.setTimeout(() => {
+        void pollShadow()
+      }, shadowPollIntervalMs)
+    }
+
+    const pollShadow = async () => {
+      if (cancelled) {
+        return
+      }
+      if (isLoadingShadow || isUpdatingShadow) {
+        scheduleNextPoll()
+        return
+      }
+
+      try {
+        const refreshedTokens = await refreshTokensIfNeeded()
+        if (cancelled) {
+          return
+        }
+        if (!refreshedTokens) {
+          clearAuthState()
+          setAuthUser(null)
+          setStatus('signed_out')
+          setError('Session expired. Sign in again.')
+          return
+        }
+
+        setAuthUser(getAuthUser(refreshedTokens))
+        const shadowResponse = await getThingShadow(refreshedTokens.idToken)
+        if (cancelled) {
+          return
+        }
+        const snapshotView = createShadowSnapshotView(shadowResponse)
+        setShadowJson(snapshotView.json)
+        setLastShadowUpdateAtMs(snapshotView.updatedAtMs)
+        setError('')
+      } catch (caughtError) {
+        if (cancelled) {
+          return
+        }
+        setError(caughtError instanceof Error ? caughtError.message : 'Unable to load shadow')
+      } finally {
+        scheduleNextPoll()
+      }
+    }
+
+    scheduleNextPoll()
+
+    return () => {
+      cancelled = true
+      if (timeoutId !== undefined) {
+        window.clearTimeout(timeoutId)
+      }
+    }
+  }, [adminEmailMismatch, isLoadingShadow, isUpdatingShadow, status])
+
   const withApiToken = async (): Promise<string> => {
     const refreshedTokens = await refreshTokensIfNeeded()
     if (!refreshedTokens) {
@@ -211,13 +464,14 @@ function App({ initialAuthError = '' }: AppProps) {
     return refreshedTokens.idToken
   }
 
-  const loadShadowWithToken = async (
-    token: string,
-    feedbackMessage = `Shadow loaded at ${new Date().toLocaleTimeString()}`,
-  ): Promise<void> => {
+  const loadShadowWithToken = async (token: string, feedbackMessage?: string): Promise<void> => {
     const response = await getThingShadow(token)
-    setShadowJson(formatJson(response))
-    setFeedback(feedbackMessage)
+    const snapshotView = createShadowSnapshotView(response)
+    setShadowJson(snapshotView.json)
+    setLastShadowUpdateAtMs(snapshotView.updatedAtMs)
+    if (feedbackMessage) {
+      setFeedback(feedbackMessage)
+    }
   }
 
   const loadShadow = async (): Promise<void> => {
@@ -235,7 +489,7 @@ function App({ initialAuthError = '' }: AppProps) {
     }
   }
 
-  const updateDesiredPower = async (power: boolean): Promise<void> => {
+  const updateDesiredPower = async (power: boolean): Promise<boolean> => {
     setIsUpdatingShadow(true)
     setError('')
     setFeedback('')
@@ -256,14 +510,16 @@ function App({ initialAuthError = '' }: AppProps) {
         token,
         `desired.mcu.power -> ${power} at ${new Date().toLocaleTimeString()}`,
       )
+      return true
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'Unable to update desired power')
+      return false
     } finally {
       setIsUpdatingShadow(false)
     }
   }
 
-  const requestSleep = async (): Promise<void> => {
+  const requestSleep = async (): Promise<boolean> => {
     setIsUpdatingShadow(true)
     setError('')
     setFeedback('')
@@ -286,7 +542,9 @@ function App({ initialAuthError = '' }: AppProps) {
       const deadline = Date.now() + boardOfflineTimeoutMs
       while (Date.now() < deadline) {
         const shadowResponse = await getThingShadow(token)
-        setShadowJson(formatJson(shadowResponse))
+        const snapshotView = createShadowSnapshotView(shadowResponse)
+        setShadowJson(snapshotView.json)
+        setLastShadowUpdateAtMs(snapshotView.updatedAtMs)
         boardOfflineShadow = shadowResponse
         if (extractReportedBoardPower(shadowResponse) === false) {
           break
@@ -321,11 +579,55 @@ function App({ initialAuthError = '' }: AppProps) {
         token,
         `Sleep requested at ${new Date().toLocaleTimeString()}`,
       )
+      return true
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'Unable to request sleep')
+      return false
     } finally {
       setIsUpdatingShadow(false)
     }
+  }
+
+  const handleTxingSwitchChange = async (checked: boolean): Promise<void> => {
+    if (isTxingSwitchPending) {
+      return
+    }
+
+    if (checked) {
+      if (!canWake) {
+        return
+      }
+      setTxingSwitchTarget('on')
+      const woke = await updateDesiredPower(true)
+      if (!woke) {
+        setTxingSwitchTarget(null)
+      }
+      return
+    }
+
+    if (!canSleep) {
+      return
+    }
+    setTxingSwitchTarget('off')
+    const slept = await requestSleep()
+    if (!slept) {
+      setTxingSwitchTarget(null)
+    }
+  }
+
+  const handleMenuLoadShadow = async (): Promise<void> => {
+    setIsUserMenuOpen(false)
+    await loadShadow()
+  }
+
+  const handleToggleDebug = (): void => {
+    setIsUserMenuOpen(false)
+    setIsDebugEnabled((currentValue) => !currentValue)
+  }
+
+  const handleSignOff = (): void => {
+    setIsUserMenuOpen(false)
+    signOut()
   }
 
   if (hasConfigErrors) {
@@ -357,75 +659,218 @@ function App({ initialAuthError = '' }: AppProps) {
 
   if (status === 'signed_out') {
     return (
-      <main className="page">
-        <section className="card">
-          <h1>Txing Shadow Admin</h1>
-          <p>Authentication is required.</p>
-          {error && <p className="error">{error}</p>}
-          <button type="button" onClick={() => void beginSignIn()} className="primary">
-            Sign in
-          </button>
+      <main className="page page-signed-in">
+        <section className="status-hero" aria-label="Txing sign in">
+          <div className="shadow-diagram">
+            <div className="status-node status-node-txing">
+              <div className="status-txing-header status-auth-header">
+                <div
+                  className="status-txing-header-side status-txing-header-side-start status-auth-spacer"
+                  aria-hidden="true"
+                />
+                <div className="status-name status-txing-name status-auth-name">Txing</div>
+                <div className="status-txing-header-side status-txing-header-side-end">
+                  <button type="button" onClick={() => void beginSignIn()} className="primary">
+                    Sign in
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
         </section>
+        {error && <p className="error status-inline-error">{error}</p>}
       </main>
     )
   }
 
   return (
-    <main className="page">
-      <section className="card">
-        <header className="top-row">
-          <div>
-            <h1>Txing Shadow Admin</h1>
-            <p className="subtitle">
-              Thing: <code>{appConfig.thingName}</code>
-            </p>
-            <p className="subtitle">
-              Signed in as <strong>{authUser?.email ?? authUser?.sub ?? 'unknown user'}</strong>
-            </p>
+    <main className="page page-signed-in">
+      <section className="status-hero" aria-label="Txing status">
+        <div className="shadow-diagram">
+          <div className="status-node status-node-txing">
+            <div className="status-txing-header">
+              <div className="status-txing-header-side status-txing-header-side-start">
+                <div className="user-menu" ref={userMenuRef}>
+                  <button
+                    type="button"
+                    className="user-menu-trigger"
+                    aria-label="Open user menu"
+                    aria-haspopup="menu"
+                    aria-expanded={isUserMenuOpen}
+                    onClick={() => {
+                      setIsUserMenuOpen((currentValue) => !currentValue)
+                    }}
+                  >
+                    <span className="user-avatar" aria-hidden="true">
+                      {userMenuInitial}
+                    </span>
+                  </button>
+                  {isUserMenuOpen && (
+                    <div className="user-menu-popover" role="menu" aria-label="User actions">
+                      <div className="user-menu-header">
+                        <span className="user-avatar user-avatar-large" aria-hidden="true">
+                          {userMenuInitial}
+                        </span>
+                        <div className="user-menu-identity">
+                          <p className="user-menu-name">{authUser?.name ?? 'Signed in'}</p>
+                          <p className="user-menu-email">
+                            {authUser?.email ?? authUser?.sub ?? 'Unknown user'}
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="user-menu-item"
+                        role="menuitem"
+                        onClick={() => {
+                          void handleMenuLoadShadow()
+                        }}
+                      >
+                        Load Shadow
+                      </button>
+                      <button
+                        type="button"
+                        className="user-menu-item"
+                        role="menuitem"
+                        onClick={handleToggleDebug}
+                      >
+                        {isDebugEnabled ? 'Disable Debug' : 'Enable Debug'}
+                      </button>
+                      <button
+                        type="button"
+                        className="user-menu-item user-menu-item-danger"
+                        role="menuitem"
+                        onClick={handleSignOff}
+                      >
+                        Sign Off
+                      </button>
+                    </div>
+                  )}
+                </div>
+                <time
+                  className="status-last-shadow-update"
+                  dateTime={
+                    lastShadowUpdateAtMs === null ? undefined : new Date(lastShadowUpdateAtMs).toISOString()
+                  }
+                  title={lastShadowUpdateTitle}
+                >
+                  {lastShadowUpdateLabel}
+                </time>
+              </div>
+              <div className={`status-name status-txing-name ${txingPowerToneClass}`}>Txing</div>
+              <div className="status-txing-header-side status-txing-header-side-end">
+                <label
+                  className={`status-switch ${isTxingSwitchPending ? 'status-switch-pending' : ''}`}
+                  aria-label="Wake or sleep txing"
+                >
+                  <input
+                    type="checkbox"
+                    checked={txingSwitchChecked}
+                    disabled={
+                      isLoadingShadow || isUpdatingShadow || isTxingSwitchPending || !canToggleTxingSwitch
+                    }
+                    onChange={(event) => {
+                      void handleTxingSwitchChange(event.target.checked)
+                    }}
+                  />
+                  <span className="status-switch-track" aria-hidden="true">
+                    <span className="status-switch-thumb" />
+                  </span>
+                </label>
+                <div
+                  className={`status-signal ${bleSignalToneClass}`}
+                  role="img"
+                  aria-label={
+                    reportedMcuBleOnline === true
+                      ? 'BLE online'
+                      : reportedMcuBleOnline === false
+                        ? 'BLE offline'
+                        : 'BLE status unavailable'
+                  }
+                >
+                  <span className="status-signal-bar status-signal-bar-1" aria-hidden="true" />
+                  <span className="status-signal-bar status-signal-bar-2" aria-hidden="true" />
+                  <span className="status-signal-bar status-signal-bar-3" aria-hidden="true" />
+                  <span className="status-signal-bar status-signal-bar-4" aria-hidden="true" />
+                </div>
+                <div
+                  className={`status-wifi ${boardWifiToneClass}`}
+                  role="img"
+                  aria-label={
+                    reportedBoardOnline === true
+                      ? 'Board Wi-Fi online'
+                      : reportedBoardOnline === false
+                        ? 'Board Wi-Fi offline'
+                        : 'Board Wi-Fi status unavailable'
+                  }
+                >
+                  <span className="status-wifi-arc status-wifi-arc-large" aria-hidden="true" />
+                  <span className="status-wifi-arc status-wifi-arc-medium" aria-hidden="true" />
+                  <span className="status-wifi-arc status-wifi-arc-small" aria-hidden="true" />
+                  <span className="status-wifi-dot" aria-hidden="true" />
+                </div>
+                <div
+                  className={`status-battery ${batteryToneClass}`}
+                  role="img"
+                  aria-label={
+                    reportedMcuBatteryMv === null || batteryPercent === null
+                      ? 'Battery level unavailable'
+                      : `Battery ${Math.round(batteryPercent)} percent at ${reportedMcuBatteryMv} millivolts`
+                  }
+                  title={
+                    reportedMcuBatteryMv === null || batteryPercent === null
+                      ? 'Battery unavailable'
+                      : `${reportedMcuBatteryMv} mV`
+                  }
+                >
+                  <span className="status-battery-shell" aria-hidden="true">
+                    <span
+                      className="status-battery-fill"
+                      style={{ width: `${Math.max(0, Math.min(100, batteryPercent ?? 0))}%` }}
+                    />
+                  </span>
+                  <span className="status-battery-cap" aria-hidden="true" />
+                </div>
+              </div>
+            </div>
           </div>
-          <button type="button" onClick={signOut}>
-            Sign out
-          </button>
-        </header>
-
-        <div className="button-row">
-          <button
-            type="button"
-            onClick={() => void loadShadow()}
-            disabled={isLoadingShadow || isUpdatingShadow}
-          >
-            {isLoadingShadow ? 'Loading...' : 'Load Shadow'}
-          </button>
-          <button
-            type="button"
-            onClick={() => void updateDesiredPower(true)}
-            disabled={isLoadingShadow || isUpdatingShadow || !canWake}
-          >
-            Wake
-          </button>
-          <button
-            type="button"
-            onClick={() => void requestSleep()}
-            disabled={isLoadingShadow || isUpdatingShadow || !canSleep}
-          >
-            Sleep
-          </button>
         </div>
-
-        <label htmlFor="shadow-json" className="editor-label">
-          Current shadow JSON
-        </label>
-        <textarea
-          id="shadow-json"
-          className="editor"
-          value={shadowJson}
-          readOnly
-          spellCheck={false}
-        />
-
-        {feedback && <p className="feedback">{feedback}</p>}
-        {error && <p className="error">{error}</p>}
       </section>
+
+      {isDebugEnabled && (
+        <section className="card debug-panel">
+          <div className="status-devices">
+            <div className={`status-device ${getPowerNodeClass(reportedMcuPower)}`}>
+              <pre className="status-glyph status-glyph-chip" aria-hidden="true">
+                {'╭┄┄╮\n┆▣▣┆\n╰┄┄╯'}
+              </pre>
+              <div className="status-device-label">MCU</div>
+            </div>
+            <div className={`status-device ${getPowerNodeClass(reportedBoardPower)}`}>
+              <pre className="status-glyph status-glyph-board" aria-hidden="true">
+                {'┏━╍━┓\n┃▣╋▣┃\n┗┳━┳┛\n◖▂▂◗'}
+              </pre>
+              <div className="status-device-label">Board</div>
+            </div>
+          </div>
+
+          {feedback && <p className="feedback">{feedback}</p>}
+          {error && <p className="error">{error}</p>}
+
+          <label htmlFor="shadow-json" className="editor-label">
+            Current shadow JSON
+          </label>
+          <textarea
+            id="shadow-json"
+            className="editor"
+            value={shadowJson}
+            readOnly
+            spellCheck={false}
+          />
+        </section>
+      )}
+
+      {!isDebugEnabled && error && <p className="error status-inline-error">{error}</p>}
     </main>
   )
 }
