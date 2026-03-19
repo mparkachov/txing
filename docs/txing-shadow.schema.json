@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://txing.local/schemas/txing-shadow.schema.json",
-  "title": "Txing Thing Shadow Contract v12",
+  "title": "Txing Thing Shadow Contract v13",
   "description": "Canonical payload shape for txing Thing Shadow updates and snapshots.",
   "type": "object",
   "additionalProperties": true,
@@ -49,13 +49,37 @@
   "$defs": {
     "desiredState": {
       "type": "object",
-      "required": [
-        "mcu"
-      ],
       "additionalProperties": true,
       "properties": {
         "mcu": {
           "$ref": "#/$defs/desiredMcuState"
+        },
+        "board": {
+          "$ref": "#/$defs/desiredBoardState"
+        }
+      },
+      "anyOf": [
+        {
+          "required": [
+            "mcu"
+          ]
+        },
+        {
+          "required": [
+            "board"
+          ]
+        }
+      ]
+    },
+    "desiredBoardState": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "online": {
+          "type": [
+            "boolean",
+            "null"
+          ]
         }
       }
     },

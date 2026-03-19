@@ -29,6 +29,7 @@ Schema validation should be done by project code and/or CI checks, while AWS IoT
 
 - Terminology: `power=true` means the wakeup state, and `power=false` means the sleep state with periodic `5 s` BLE rendezvous wakeups.
 - `state.desired.mcu.power` (`boolean`) requests the MCU power mode: `true` keeps the MCU in the wakeup state and BLE-connectable, `false` returns it to the sleep state with periodic low-power rendezvous wakeups.
+- `state.desired.board.online` (`boolean`, update payload may temporarily use `null` to delete) is a board-owned one-shot board power request: `false` asks the board Pi to halt locally, and the board reporter clears the field on clean shutdown after consuming it.
 - `state.reported.mcu.power` (`boolean`) is the gateway-confirmed MCU power mode.
 - `state.reported.mcu.batteryMv` (`integer`, millivolts, measured MCU battery estimate observed from the MCU State Report over BLE advertising or GATT).
 - `state.reported.mcu.ble.serviceUuid` (`uuid`) is the BLE service UUID used by gateway.

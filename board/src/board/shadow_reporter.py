@@ -5,10 +5,13 @@ import ipaddress
 import json
 import logging
 import os
+import shlex
 import signal
 import socket
+import subprocess
 import sys
 import threading
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -35,6 +38,7 @@ DEFAULT_AWS_CONNECT_TIMEOUT = 20.0
 DEFAULT_MQTT_PUBLISH_TIMEOUT = 10.0
 DEFAULT_HEARTBEAT_SECONDS = 60.0
 DEFAULT_RECONNECT_DELAY = 5.0
+DEFAULT_HALT_COMMAND = ("/usr/bin/systemctl", "halt", "--no-wall")
 DEFAULT_ROUTE_PROBE_IPV4 = ("8.8.8.8", 80)
 DEFAULT_ROUTE_PROBE_IPV6 = ("2001:4860:4860::8888", 80, 0, 0)
 
@@ -54,6 +58,7 @@ class ReporterConfig:
     aws_connect_timeout: float
     publish_timeout: float
     reconnect_delay: float
+    halt_command: tuple[str, ...]
     once: bool
 
 
@@ -66,13 +71,18 @@ class DefaultRouteAddresses:
 class AwsShadowClient:
     def __init__(self, config: ReporterConfig) -> None:
         self._config = config
-        self._topic_update = f"$aws/things/{config.thing_name}/shadow/update"
+        self._topic_prefix = f"$aws/things/{config.thing_name}/shadow"
+        self._topic_get = f"{self._topic_prefix}/get"
+        self._topic_get_accepted = f"{self._topic_prefix}/get/accepted"
+        self._topic_get_rejected = f"{self._topic_prefix}/get/rejected"
+        self._topic_update = f"{self._topic_prefix}/update"
         self._topic_update_accepted = (
-            f"$aws/things/{config.thing_name}/shadow/update/accepted"
+            f"{self._topic_prefix}/update/accepted"
         )
         self._topic_update_rejected = (
-            f"$aws/things/{config.thing_name}/shadow/update/rejected"
+            f"{self._topic_prefix}/update/rejected"
         )
+        self._topic_update_delta = f"{self._topic_prefix}/update/delta"
         self._client = mqtt.Client(
             callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
             client_id=config.client_id,
@@ -100,6 +110,8 @@ class AwsShadowClient:
         self._loop_started = False
         self._ever_connected = False
         self._disconnect_requested = False
+        self._halt_requested = threading.Event()
+        self._desired_board_online: bool | None = None
 
     def ensure_connected(self, *, timeout_seconds: float) -> None:
         with self._lock:
@@ -143,6 +155,9 @@ class AwsShadowClient:
     def is_connected(self) -> bool:
         with self._lock:
             return self._connection_ready
+
+    def halt_requested(self) -> bool:
+        return self._halt_requested.is_set()
 
     def publish_update(
         self,
@@ -224,8 +239,11 @@ class AwsShadowClient:
         )
         result, _mid = client.subscribe(
             [
+                (self._topic_get_accepted, 1),
+                (self._topic_get_rejected, 1),
                 (self._topic_update_accepted, 1),
                 (self._topic_update_rejected, 1),
+                (self._topic_update_delta, 1),
             ]
         )
         if result != mqtt.MQTT_ERR_SUCCESS:
@@ -249,6 +267,7 @@ class AwsShadowClient:
             self._connection_ready = True
             self._connection_error = None
         self._connection_done.set()
+        self._request_shadow_get()
 
     def _on_disconnect(
         self,
@@ -276,6 +295,37 @@ class AwsShadowClient:
             LOGGER.warning("Ignored non-JSON MQTT message on topic %s", msg.topic)
             return
 
+        if msg.topic == self._topic_get_rejected:
+            LOGGER.warning("Shadow get rejected: %s", json.dumps(payload, sort_keys=True))
+            return
+
+        if msg.topic == self._topic_get_accepted:
+            self._observe_desired_board_online(
+                _extract_desired_board_online_from_shadow(payload),
+                source="shadow/get/accepted",
+            )
+            return
+
+        if msg.topic == self._topic_update_delta:
+            desired_online = _extract_desired_board_online_from_delta(payload)
+            if desired_online is None:
+                LOGGER.debug(
+                    "Ignored shadow delta without desired.board.online: %s",
+                    payload,
+                )
+                return
+            self._observe_desired_board_online(
+                desired_online,
+                source="shadow/update/delta",
+            )
+            return
+
+        if msg.topic == self._topic_update_accepted:
+            self._observe_desired_board_online(
+                _extract_desired_board_online_from_shadow(payload),
+                source="shadow/update/accepted",
+            )
+
         token = payload.get("clientToken")
         if not isinstance(token, str):
             return
@@ -294,6 +344,44 @@ class AwsShadowClient:
                 return
 
         self._response_done.set()
+
+    def _request_shadow_get(self) -> None:
+        info = self._client.publish(self._topic_get, payload="{}", qos=1)
+        if info.rc != mqtt.MQTT_ERR_SUCCESS:
+            LOGGER.warning(
+                "Failed to request current shadow snapshot on %s (rc=%s)",
+                self._topic_get,
+                info.rc,
+            )
+
+    def _observe_desired_board_online(
+        self,
+        desired_online: bool | None,
+        *,
+        source: str,
+    ) -> None:
+        if desired_online is None:
+            return
+
+        with self._lock:
+            previous = self._desired_board_online
+            self._desired_board_online = desired_online
+
+        if previous != desired_online:
+            LOGGER.info(
+                "Observed desired.board.online=%s from %s",
+                desired_online,
+                source,
+            )
+
+        if desired_online or self._halt_requested.is_set():
+            return
+
+        LOGGER.warning(
+            "Desired board.online=false received from %s; preparing local halt",
+            source,
+        )
+        self._halt_requested.set()
 
 
 def _parse_args() -> argparse.Namespace:
@@ -379,6 +467,15 @@ def _parse_args() -> argparse.Namespace:
         type=float,
         default=DEFAULT_RECONNECT_DELAY,
         help="Seconds to wait before reconnect after a publish failure (default: 5)",
+    )
+    parser.add_argument(
+        "--halt-command",
+        nargs="+",
+        default=list(DEFAULT_HALT_COMMAND),
+        help=(
+            "Command used when desired.board.online=false requests a local halt "
+            "(default: /usr/bin/systemctl halt --no-wall)"
+        ),
     )
     parser.add_argument(
         "--once",
@@ -482,6 +579,31 @@ def _reason_code_is_failure(reason_code: Any) -> bool:
     return reason_code != 0
 
 
+def _extract_desired_board_online_from_shadow(payload: dict[str, Any]) -> bool | None:
+    state = payload.get("state")
+    if not isinstance(state, dict):
+        return None
+    desired = state.get("desired")
+    if not isinstance(desired, dict):
+        return None
+    board = desired.get("board")
+    if not isinstance(board, dict):
+        return None
+    value = board.get("online")
+    return value if isinstance(value, bool) else None
+
+
+def _extract_desired_board_online_from_delta(payload: dict[str, Any]) -> bool | None:
+    state = payload.get("state")
+    if not isinstance(state, dict):
+        return None
+    board = state.get("board")
+    if not isinstance(board, dict):
+        return None
+    value = board.get("online")
+    return value if isinstance(value, bool) else None
+
+
 def _build_board_report(
     *,
     addresses: DefaultRouteAddresses,
@@ -503,13 +625,26 @@ def _build_shutdown_board_report() -> dict[str, Any]:
 
 
 def _build_shadow_update(report: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "state": {
-            "reported": {
-                "board": report,
-            }
+    return _build_shadow_update_with_options(report=report, clear_desired_online=False)
+
+
+def _build_shadow_update_with_options(
+    *,
+    report: dict[str, Any],
+    clear_desired_online: bool,
+) -> dict[str, Any]:
+    state: dict[str, Any] = {
+        "reported": {
+            "board": report,
         }
     }
+    if clear_desired_online:
+        state["desired"] = {
+            "board": {
+                "online": None,
+            }
+        }
+    return {"state": state}
 
 
 def _load_validator(schema_file: Path) -> jsonschema.Draft202012Validator:
@@ -556,6 +691,30 @@ def _install_signal_handlers(stop_event: threading.Event) -> None:
         signal.signal(signal.SIGTERM, _request_stop)
 
 
+def _wait_for_stop_or_halt(
+    stop_event: threading.Event,
+    shadow_client: AwsShadowClient,
+    timeout_seconds: float,
+) -> bool:
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        if stop_event.is_set() or shadow_client.halt_requested():
+            return True
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        stop_event.wait(min(0.5, remaining))
+
+
+def _request_system_halt(command: tuple[str, ...]) -> None:
+    command_text = shlex.join(command)
+    LOGGER.warning("Requesting system halt via %s", command_text)
+    try:
+        subprocess.run(command, check=True)
+    except (OSError, subprocess.CalledProcessError) as err:
+        LOGGER.error("Failed to request system halt via %s: %s", command_text, err)
+
+
 def main() -> None:
     args = _parse_args()
     _configure_logging(args.debug)
@@ -582,6 +741,7 @@ def main() -> None:
             aws_connect_timeout=args.aws_connect_timeout,
             publish_timeout=args.publish_timeout,
             reconnect_delay=args.reconnect_delay,
+            halt_command=tuple(args.halt_command),
             once=args.once,
         )
         validator = _load_validator(config.schema_file)
@@ -606,9 +766,10 @@ def main() -> None:
     )
 
     shadow_client = AwsShadowClient(config)
+    halt_requested = False
 
     try:
-        while not stop_event.is_set():
+        while not stop_event.is_set() and not shadow_client.halt_requested():
             try:
                 shadow_client.ensure_connected(timeout_seconds=config.aws_connect_timeout)
                 report = _build_board_report(
@@ -628,29 +789,46 @@ def main() -> None:
                     report.get("ipv4") or "-",
                     report.get("ipv6") or "-",
                 )
-                if config.once:
+                if config.once or shadow_client.halt_requested():
                     break
-                if stop_event.wait(config.heartbeat_seconds):
+                if _wait_for_stop_or_halt(
+                    stop_event,
+                    shadow_client,
+                    config.heartbeat_seconds,
+                ):
                     break
             except RuntimeError as err:
                 LOGGER.warning("Board shadow publish failed: %s", err)
                 if config.once:
                     raise SystemExit(1) from err
-                if stop_event.wait(config.reconnect_delay):
+                if _wait_for_stop_or_halt(
+                    stop_event,
+                    shadow_client,
+                    config.reconnect_delay,
+                ):
                     break
 
-        if stop_event.is_set() and not config.once and shadow_client.is_connected():
+        halt_requested = shadow_client.halt_requested()
+        if (stop_event.is_set() or halt_requested) and not config.once and shadow_client.is_connected():
             try:
                 report = _build_shutdown_board_report()
-                payload = _build_shadow_update(report)
+                payload = _build_shadow_update_with_options(
+                    report=report,
+                    clear_desired_online=True,
+                )
                 _validate_shadow_update(validator, payload)
                 accepted = shadow_client.publish_update(
                     payload,
                     timeout_seconds=config.publish_timeout,
                 )
                 save_shadow(accepted, config.shadow_file)
-                LOGGER.info("Published best-effort clean shutdown board update")
+                LOGGER.info(
+                    "Published best-effort clean shutdown board update and cleared desired.board.online"
+                )
             except RuntimeError as err:
                 LOGGER.warning("Failed to publish best-effort shutdown board update: %s", err)
     finally:
         shadow_client.close()
+
+    if halt_requested:
+        _request_system_halt(config.halt_command)

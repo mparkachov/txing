@@ -6,6 +6,8 @@ This is not the same Raspberry Pi as `gw/`. The `gw/` Pi remains the BLE/AWS gat
 
 The board reuses the same AWS IoT mTLS certificate files as `gw/`, stored in `../certs/` as `txing.cert.pem` and `txing.private.key`.
 
+When the service is managed by `systemd`, run it as `root`. The reporter consumes `state.desired.board.online=false` and requests a local system halt, which requires root privileges.
+
 ## Shadow contract
 
 The board publishes to the same classic Thing Shadow as `mcu`, but under a sibling path:
@@ -27,6 +29,7 @@ The board publishes to the same classic Thing Shadow as `mcu`, but under a sibli
 Notes:
 
 - `board.*` is owned by this subproject.
+- `desired.board.online=false` is a one-shot shutdown request. The reporter clears that desired field on clean shutdown so the request does not persist across the next boot.
 - `online=false` is only a best-effort clean-shutdown update.
 - `ipv4` and `ipv6` are resolved once at daemon start from the interface the OS selects for the default route in each address family.
 - On a clean daemon stop, the board publishes `ipv4=null` and `ipv6=null` so AWS removes those two fields from the reported shadow document.
@@ -95,7 +98,6 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=maxim
 WorkingDirectory=/home/maxim/txing/board
 Environment=TMPDIR=/tmp
 Environment=UV_CACHE_DIR=/tmp/uv-cache
@@ -126,6 +128,7 @@ sudo journalctl -u txing-board -f
 Notes:
 
 - The command above assumes `uv` is installed at `/home/maxim/.local/bin/uv`.
+- The unit intentionally omits `User=` so `systemd` runs it as `root`; that is required for local halt requests from `desired.board.online=false`.
 - The service forces `uv` to use `/tmp/uv-cache` and `/tmp` so it can run with a read-only root filesystem.
 - The service also uses `--no-sync`, so the board environment must already exist before the root filesystem is remounted read-only.
 - The default runtime paths continue to use `/home/maxim/txing/certs/txing.cert.pem`, `/home/maxim/txing/certs/txing.private.key`, `/home/maxim/txing/certs/AmazonRootCA1.pem`, and `/home/maxim/txing/certs/iot-data-ats.endpoint`.
@@ -145,9 +148,12 @@ Useful overrides:
 
 - Connects directly to AWS IoT Core over MQTT with mTLS.
 - Publishes `state.reported.board` to `$aws/things/<thing>/shadow/update`.
+- Subscribes to `$aws/things/<thing>/shadow/get/accepted`, `$aws/things/<thing>/shadow/update/accepted`, and `$aws/things/<thing>/shadow/update/delta`.
+- Requests the full shadow snapshot on connect so a persisted `desired.board.online=false` is consumed immediately after startup.
 - Resolves `board.ipv4` and `board.ipv6` portably by asking the OS which source address it would use for IPv4 and IPv6 default-route traffic.
 - Validates each outgoing payload against `../docs/txing-shadow.schema.json`.
 - Stores the last accepted shadow response in `/tmp/txing_board_shadow.json`.
-- On clean `SIGINT` or `SIGTERM`, attempts a final best-effort `online=false` publish and clears `ipv4` and `ipv6` before disconnecting.
+- When it observes `state.desired.board.online=false`, it publishes a final best-effort shutdown update, clears `desired.board.online`, and then requests `systemctl halt --no-wall`.
+- On clean `SIGINT` or `SIGTERM`, it attempts a final best-effort `online=false` publish, clears `ipv4` and `ipv6`, and removes `desired.board.online` before disconnecting.
 
 For a production deployment on the Pi, use a service manager such as `systemd` with restart-on-failure, because hard power removal can terminate the process without a graceful shutdown window.
