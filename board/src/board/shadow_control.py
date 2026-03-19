@@ -25,7 +25,42 @@ from .shadow_store import DEFAULT_SHADOW_FILE, save_shadow
 LOGGER = logging.getLogger("board.shadow_control")
 MQTT_LOGGER = logging.getLogger("board.shadow_control.mqtt")
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+def _is_repo_root(path: Path) -> bool:
+    return (
+        (path / "board" / "pyproject.toml").is_file()
+        and (path / "docs" / "txing-shadow.schema.json").is_file()
+    )
+
+
+def _discover_repo_root(
+    *,
+    cwd: Path,
+    module_file: Path,
+    env_repo_root: str | None,
+) -> Path:
+    if env_repo_root:
+        return Path(env_repo_root).expanduser().resolve()
+
+    resolved_cwd = cwd.resolve()
+    seen: set[Path] = set()
+    candidates = [resolved_cwd, *resolved_cwd.parents, *module_file.resolve().parents]
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if _is_repo_root(candidate):
+            return candidate
+        if candidate.name == "board" and (candidate / "pyproject.toml").is_file():
+            return candidate.parent
+
+    return resolved_cwd.parent if resolved_cwd.name == "board" else resolved_cwd
+
+
+REPO_ROOT = _discover_repo_root(
+    cwd=Path.cwd(),
+    module_file=Path(__file__),
+    env_repo_root=os.environ.get("TXING_REPO_ROOT"),
+)
 DEFAULT_CERT_DIR = REPO_ROOT / "certs"
 DEFAULT_DOCS_DIR = REPO_ROOT / "docs"
 DEFAULT_THING_NAME = "txing"

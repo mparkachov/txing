@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from board.shadow_control import (
     REPO_ROOT,
+    _discover_repo_root,
     _build_shutdown_board_report,
     _build_shadow_update_with_options,
     _extract_desired_board_power_from_delta,
@@ -50,6 +52,36 @@ class ShadowControlContractTests(unittest.TestCase):
         self.assertIsNone(payload["state"]["desired"]["board"]["power"])
         self.assertIs(payload["state"]["reported"]["board"]["power"], False)
         self.assertIs(payload["state"]["reported"]["board"]["wifi"]["online"], False)
+
+    def test_repo_root_detection_uses_board_working_directory(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            board_dir = repo_root / "board"
+            docs_dir = repo_root / "docs"
+            board_dir.mkdir()
+            docs_dir.mkdir()
+            (board_dir / "pyproject.toml").write_text("", encoding="utf-8")
+            (docs_dir / "txing-shadow.schema.json").write_text("{}", encoding="utf-8")
+
+            installed_module = (
+                board_dir
+                / ".venv"
+                / "lib"
+                / "python3.12"
+                / "site-packages"
+                / "board"
+                / "shadow_control.py"
+            )
+            installed_module.parent.mkdir(parents=True)
+            installed_module.write_text("", encoding="utf-8")
+
+            detected = _discover_repo_root(
+                cwd=board_dir,
+                module_file=installed_module,
+                env_repo_root=None,
+            )
+
+        self.assertEqual(detected, repo_root.resolve())
 
 
 if __name__ == "__main__":

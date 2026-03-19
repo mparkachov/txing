@@ -48,7 +48,7 @@ Notes:
 
 ## Prerequisites
 
-- Python `3.12`
+- Python `3.12+` installed by the base OS and available as `python3`
 - `uv`
 - AWS IoT Core endpoint, root CA, client certificate, and client private key
 
@@ -71,16 +71,27 @@ just aws::cert
 
 ```bash
 cd board
-uv python install 3.12
-uv sync
-uv run board --once
+just build
+./.venv/bin/board --once
+```
+
+The build uses the system `python3`. Check that first:
+
+```bash
+python3 --version
 ```
 
 Long-running service example:
 
 ```bash
 cd board
-uv run board --heartbeat-seconds 60
+./.venv/bin/board --heartbeat-seconds 60
+```
+
+From the repository root, the same build step is:
+
+```bash
+just board::build
 ```
 
 ## systemd Service
@@ -90,6 +101,14 @@ Assumed project location on the device:
 - repo root: `/home/maxim/txing`
 - board project: `/home/maxim/txing/board`
 - shared certs: `/home/maxim/txing/certs`
+
+Build the runtime once before enabling the service:
+
+```bash
+cd /home/maxim/txing
+python3 --version
+just board::build
+```
 
 Create the service unit:
 
@@ -103,10 +122,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=/home/maxim/txing/board
-Environment=TMPDIR=/tmp
-Environment=UV_CACHE_DIR=/tmp/uv-cache
-ExecStartPre=/usr/bin/mkdir -p /tmp/uv-cache
-ExecStart=/home/maxim/.local/bin/uv run --no-sync --cache-dir /tmp/uv-cache board --heartbeat-seconds 60
+ExecStart=/home/maxim/txing/board/.venv/bin/board --heartbeat-seconds 60
 Restart=always
 RestartSec=5
 
@@ -131,12 +147,44 @@ sudo journalctl -u txing-board -f
 
 Notes:
 
-- The command above assumes `uv` is installed at `/home/maxim/.local/bin/uv`.
+- `just board::build` uses the OS-provided `python3`, installs the locked board environment into `board/.venv` as a non-editable runtime, and precompiles Python bytecode there.
+- If `python3 --version` reports lower than `3.12`, update the OS Python before building the board runtime.
 - The unit intentionally omits `User=` so `systemd` runs it as `root`; that is required for local halt requests from `desired.board.power=false`.
-- The service forces `uv` to use `/tmp/uv-cache` and `/tmp` so it can run with a read-only root filesystem.
-- The service also uses `--no-sync`, so the board environment must already exist before the root filesystem is remounted read-only.
+- Re-run `just board::build` after changing board code, dependencies, or the Python version on the device.
+- Keep `WorkingDirectory=/home/maxim/txing/board` unless you also pass explicit `--cert-file`, `--key-file`, `--ca-file`, `--iot-endpoint-file`, and `--schema-file` paths or set `TXING_REPO_ROOT`.
 - The default runtime paths continue to use `/home/maxim/txing/certs/txing.cert.pem`, `/home/maxim/txing/certs/txing.private.key`, `/home/maxim/txing/certs/AmazonRootCA1.pem`, and `/home/maxim/txing/certs/iot-data-ats.endpoint`.
 - If you need custom arguments, edit `ExecStart=` and run `sudo systemctl daemon-reload && sudo systemctl restart txing-board`.
+
+## Migrating an Existing `systemd` Service
+
+If the board is still running through `uv run`, update it in place:
+
+1. Rebuild the board runtime:
+
+```bash
+cd /home/maxim/txing
+python3 --version
+just board::build
+```
+
+2. Edit the existing unit at `/etc/systemd/system/txing-board.service`:
+   - remove `User=maxim` if it is still present
+   - remove `Environment=TMPDIR=/tmp`
+   - remove `Environment=UV_CACHE_DIR=/tmp/uv-cache`
+   - remove `ExecStartPre=/usr/bin/mkdir -p /tmp/uv-cache`
+   - replace the old `ExecStart=/home/maxim/.local/bin/uv run ...` with:
+
+```ini
+ExecStart=/home/maxim/txing/board/.venv/bin/board --heartbeat-seconds 60
+```
+
+3. Reload and restart the service:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart txing-board
+sudo systemctl status txing-board
+```
 
 Useful overrides:
 

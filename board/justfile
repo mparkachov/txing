@@ -1,10 +1,24 @@
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 
+board_dir := source_directory()
+python_executable := "python3"
+built_board := board_dir + "/.venv/bin/board"
+
 @sync:
-    cd "{{source_directory()}}" && uv sync
+    cd "{{board_dir}}" && uv sync --python "{{python_executable}}" --no-managed-python --no-python-downloads
+
+@build:
+    cd "{{board_dir}}" && uv sync --frozen --no-editable --compile-bytecode --python "{{python_executable}}" --no-managed-python --no-python-downloads
+    test -x "{{built_board}}"
 
 @run:
-    cd "{{source_directory()}}" && uv run board
+    cd "{{board_dir}}" && "{{built_board}}"
 
 @once:
-    cd "{{source_directory()}}" && uv run board --once
+    cd "{{board_dir}}" && "{{built_board}}" --once
+
+@dev:
+    cd "{{board_dir}}" && uv run board
+
+@once-dev:
+    cd "{{board_dir}}" && uv run board --once
