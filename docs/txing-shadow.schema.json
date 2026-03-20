@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://txing.local/schemas/txing-shadow.schema.json",
-  "title": "Txing Thing Shadow Contract v15",
+  "title": "Txing Thing Shadow Contract v16",
   "description": "Canonical payload shape for txing Thing Shadow updates and snapshots.",
   "type": "object",
   "additionalProperties": true,
@@ -154,6 +154,9 @@
         },
         "wifi": {
           "$ref": "#/$defs/reportedBoardWifiState"
+        },
+        "video": {
+          "$ref": "#/$defs/reportedBoardVideoState"
         }
       }
     },
@@ -180,6 +183,85 @@
             "null"
           ],
           "format": "ipv6"
+        }
+      }
+    },
+    "reportedBoardVideoState": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "ready",
+        "status",
+        "local",
+        "codec",
+        "viewerConnected",
+        "lastError"
+      ],
+      "properties": {
+        "ready": {
+          "type": "boolean"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "starting",
+            "ready",
+            "error"
+          ]
+        },
+        "local": {
+          "$ref": "#/$defs/reportedBoardVideoLocalState"
+        },
+        "codec": {
+          "$ref": "#/$defs/reportedBoardVideoCodecState"
+        },
+        "viewerConnected": {
+          "type": "boolean"
+        },
+        "lastError": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "reportedBoardVideoLocalState": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "signallingUrl",
+        "streamName"
+      ],
+      "properties": {
+        "signallingUrl": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "streamName": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        }
+      }
+    },
+    "reportedBoardVideoCodecState": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "video"
+      ],
+      "properties": {
+        "video": {
+          "enum": [
+            "h264",
+            null
+          ]
         }
       }
     },

@@ -22,10 +22,11 @@
 ## Board Video Phase 1
 - Phase 1 board video is a headless network-service design. Do not assume any GUI, local browser, or desktop session on the board.
 - `txing-board` remains the only publisher of `board.*` Thing Shadow updates.
-- Phase 1 local video uses a dedicated media service plus MediaMTX for board-local WebRTC/WHEP serving.
-- Phase 1 browser authentication uses a read-only bearer token generated on the board, mirrored into `board.*` by `txing-board`, and consumed by `web`.
-- Phase 1 keeps a future `kvssink` branch in mind but does not implement cloud upload yet.
-- Browser-to-board control transport is out of scope for board video phase 1 and must not be treated as already decided.
+- Phase 1 local video uses GStreamer rswebrtc directly (`webrtcsink` plus `gstwebrtc-api`) for local Vite-dev testing over direct IPv6.
+- Phase 1 is local-dev-only from the Vite dev server and does not target the deployed HTTPS SPA.
+- `txing-board-media` writes local runtime state and supervises the GStreamer pipeline, but it does not publish to AWS IoT directly.
+- Phase 1 does not use MediaMTX, TLS, auth, CloudFront integration, or `kvssink`.
+- Browser-to-board control transport is deferred beyond the MVP unless the user explicitly changes that decision.
 
 ## Terminology
 - `power=true` means the device is in the wakeup state.

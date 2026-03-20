@@ -20,6 +20,7 @@ from typing import Any
 import jsonschema
 import paho.mqtt.client as mqtt
 
+from .media_state import DEFAULT_MEDIA_STATE_FILE, build_reported_media_state, load_media_state
 from .shadow_store import DEFAULT_SHADOW_FILE, save_shadow
 
 LOGGER = logging.getLogger("board.shadow_control")
@@ -87,6 +88,7 @@ class ControlConfig:
     ca_file: Path
     schema_file: Path
     shadow_file: Path
+    media_state_file: Path
     client_id: str
     board_name: str
     heartbeat_seconds: float
@@ -475,6 +477,12 @@ def _parse_args() -> argparse.Namespace:
         help="MQTT client id (default: txing-board-<hostname>-<pid>)",
     )
     parser.add_argument(
+        "--media-state-file",
+        type=Path,
+        default=DEFAULT_MEDIA_STATE_FILE,
+        help=f"Path to local board-media runtime state file (default: {DEFAULT_MEDIA_STATE_FILE})",
+    )
+    parser.add_argument(
         "--board-name",
         default=socket.gethostname(),
         help="Reported board hostname/name (default: current hostname)",
@@ -643,8 +651,9 @@ def _build_board_report(
     *,
     addresses: DefaultRouteAddresses,
     power: bool,
+    media_state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
+    report: dict[str, Any] = {
         "power": power,
         "wifi": {
             "online": power,
@@ -652,6 +661,9 @@ def _build_board_report(
             "ipv6": addresses.ipv6,
         },
     }
+    if isinstance(media_state, dict):
+        report["video"] = build_reported_media_state(media_state)
+    return report
 
 
 def _build_shutdown_board_report() -> dict[str, Any]:
@@ -776,6 +788,7 @@ def main() -> None:
             ca_file=args.ca_file,
             schema_file=args.schema_file,
             shadow_file=args.shadow_file,
+            media_state_file=args.media_state_file,
             client_id=client_id,
             board_name=args.board_name,
             heartbeat_seconds=args.heartbeat_seconds,
@@ -790,7 +803,6 @@ def main() -> None:
         print(f"board start failed: {err}", file=sys.stderr)
         raise SystemExit(2) from err
 
-    default_route_addresses = _detect_default_route_addresses()
     stop_event = threading.Event()
     _install_signal_handlers(stop_event)
 
@@ -800,10 +812,11 @@ def main() -> None:
         config.thing_name,
         config.client_id,
     )
+    initial_addresses = _detect_default_route_addresses()
     LOGGER.info(
-        "Detected default-route addresses ipv4=%s ipv6=%s",
-        default_route_addresses.ipv4 or "-",
-        default_route_addresses.ipv6 or "-",
+        "Initial default-route addresses ipv4=%s ipv6=%s",
+        initial_addresses.ipv4 or "-",
+        initial_addresses.ipv6 or "-",
     )
 
     shadow_client = AwsShadowClient(config)
@@ -813,9 +826,12 @@ def main() -> None:
         while not stop_event.is_set() and not shadow_client.halt_requested():
             try:
                 shadow_client.ensure_connected(timeout_seconds=config.aws_connect_timeout)
+                default_route_addresses = _detect_default_route_addresses()
+                media_state = load_media_state(config.media_state_file)
                 report = _build_board_report(
                     addresses=default_route_addresses,
                     power=True,
+                    media_state=media_state,
                 )
                 payload = _build_shadow_update(report)
                 _validate_shadow_update(validator, payload)
@@ -825,11 +841,21 @@ def main() -> None:
                 )
                 save_shadow(accepted, config.shadow_file)
                 LOGGER.info(
-                    "Published board shadow update power=%s wifi_online=%s ipv4=%s ipv6=%s",
+                    (
+                        "Published board shadow update power=%s wifi_online=%s ipv4=%s ipv6=%s "
+                        "video_status=%s video_ready=%s signalling_url=%s"
+                    ),
                     report.get("power"),
                     report.get("wifi", {}).get("online") if isinstance(report.get("wifi"), dict) else None,
                     report.get("wifi", {}).get("ipv4") if isinstance(report.get("wifi"), dict) else "-",
                     report.get("wifi", {}).get("ipv6") if isinstance(report.get("wifi"), dict) else "-",
+                    report.get("video", {}).get("status") if isinstance(report.get("video"), dict) else "-",
+                    report.get("video", {}).get("ready") if isinstance(report.get("video"), dict) else "-",
+                    (
+                        report.get("video", {}).get("local", {}).get("signallingUrl")
+                        if isinstance(report.get("video", {}).get("local"), dict)
+                        else "-"
+                    ),
                 )
                 if config.once or shadow_client.halt_requested():
                     break

@@ -9,6 +9,7 @@ import {
 } from './auth'
 import { appConfig } from './config'
 import { getThingShadow, updateThingShadow } from './shadow-api'
+import { BoardVideoClient, type BoardVideoStatus } from './video-client'
 
 type SessionStatus = 'loading' | 'authenticating' | 'signed_out' | 'signed_in'
 type AppProps = {
@@ -19,6 +20,13 @@ type BatteryCurvePoint = readonly [mv: number, percent: number]
 type ShadowSnapshotView = {
   json: string
   updatedAtMs: number
+}
+type BoardVideoRuntime = {
+  ready: boolean
+  status: 'starting' | 'ready' | 'error' | null
+  signallingUrl: string | null
+  streamName: string | null
+  lastError: string | null
 }
 
 const formatJson = (value: unknown): string => JSON.stringify(value, null, 2)
@@ -212,6 +220,51 @@ const extractReportedBoardWifiOnline = (shadow: unknown): boolean | null => {
   return isRecord(wifi) && typeof wifi.online === 'boolean' ? wifi.online : null
 }
 
+const extractReportedBoardVideo = (shadow: unknown): BoardVideoRuntime => {
+  const board = extractReportedBoard(shadow)
+  if (!board) {
+    return {
+      ready: false,
+      status: null,
+      signallingUrl: null,
+      streamName: null,
+      lastError: null,
+    }
+  }
+
+  const video = board.video
+  if (!isRecord(video)) {
+    return {
+      ready: false,
+      status: null,
+      signallingUrl: null,
+      streamName: null,
+      lastError: null,
+    }
+  }
+
+  const local = video.local
+  const localRecord = isRecord(local) ? local : null
+  const status = video.status
+
+  return {
+    ready: video.ready === true,
+    status:
+      status === 'starting' || status === 'ready' || status === 'error'
+        ? status
+        : null,
+    signallingUrl:
+      localRecord && typeof localRecord.signallingUrl === 'string' && localRecord.signallingUrl.trim()
+        ? localRecord.signallingUrl.trim()
+        : null,
+    streamName:
+      localRecord && typeof localRecord.streamName === 'string' && localRecord.streamName.trim()
+        ? localRecord.streamName.trim()
+        : null,
+    lastError: typeof video.lastError === 'string' && video.lastError.trim() ? video.lastError : null,
+  }
+}
+
 function App({ initialAuthError = '' }: AppProps) {
   const [status, setStatus] = useState<SessionStatus>('loading')
   const [authUser, setAuthUser] = useState<AuthUser | null>(null)
@@ -224,7 +277,12 @@ function App({ initialAuthError = '' }: AppProps) {
   const [txingSwitchTarget, setTxingSwitchTarget] = useState<TxingSwitchTarget>(null)
   const [feedback, setFeedback] = useState<string>('')
   const [error, setError] = useState<string>(initialAuthError)
+  const [videoStatus, setVideoStatus] = useState<BoardVideoStatus>('idle')
+  const [videoMessage, setVideoMessage] = useState<string>('Board video idle')
+  const [videoError, setVideoError] = useState<string>('')
   const userMenuRef = useRef<HTMLDivElement | null>(null)
+  const boardVideoRef = useRef<HTMLVideoElement | null>(null)
+  const boardVideoClientRef = useRef<BoardVideoClient | null>(null)
 
   const hasConfigErrors = appConfig.errors.length > 0
 
@@ -267,6 +325,10 @@ function App({ initialAuthError = '' }: AppProps) {
     () => extractReportedBoardWifiOnline(shadowDocument),
     [shadowDocument],
   )
+  const reportedBoardVideo = useMemo(
+    () => extractReportedBoardVideo(shadowDocument),
+    [shadowDocument],
+  )
   const boardOnline = reportedBoardOnline === true
   const batteryPercent = useMemo(
     () => getBatteryPercent(reportedMcuBatteryMv),
@@ -289,6 +351,13 @@ function App({ initialAuthError = '' }: AppProps) {
     lastShadowUpdateAtMs === null
       ? 'Last shadow update unavailable'
       : `Last shadow update ${new Date(lastShadowUpdateAtMs).toLocaleString()}`
+  const boardVideoReady =
+    reportedBoardVideo.ready &&
+    reportedBoardVideo.status === 'ready' &&
+    reportedBoardVideo.signallingUrl !== null &&
+    reportedBoardVideo.streamName !== null
+  const isBoardVideoConnecting = videoStatus === 'connecting' || videoStatus === 'waiting'
+  const isBoardVideoStreaming = videoStatus === 'streaming'
 
   useEffect(() => {
     if (hasConfigErrors) {
@@ -335,7 +404,22 @@ function App({ initialAuthError = '' }: AppProps) {
   }, [hasConfigErrors, initialAuthError])
 
   useEffect(() => {
+    return () => {
+      boardVideoClientRef.current?.disconnect()
+      boardVideoClientRef.current = null
+    }
+  }, [])
+
+  useEffect(() => {
     if (status !== 'signed_in') {
+      boardVideoClientRef.current?.disconnect()
+      boardVideoClientRef.current = null
+      if (boardVideoRef.current) {
+        boardVideoRef.current.srcObject = null
+      }
+      setVideoStatus('idle')
+      setVideoMessage('Board video idle')
+      setVideoError('')
       return
     }
     if (!adminEmailMismatch) {
@@ -630,6 +714,62 @@ function App({ initialAuthError = '' }: AppProps) {
     signOut()
   }
 
+  const handleConnectBoardVideo = async (): Promise<void> => {
+    if (!boardVideoReady || !boardVideoRef.current || !reportedBoardVideo.signallingUrl || !reportedBoardVideo.streamName) {
+      return
+    }
+
+    boardVideoClientRef.current?.disconnect()
+    boardVideoClientRef.current = null
+    boardVideoRef.current.srcObject = null
+    setVideoError('')
+
+    const client = new BoardVideoClient({
+      signallingUrl: reportedBoardVideo.signallingUrl,
+      streamName: reportedBoardVideo.streamName,
+      onStateChange: (nextStatus, message) => {
+        setVideoStatus(nextStatus)
+        setVideoMessage(message)
+      },
+    })
+    boardVideoClientRef.current = client
+
+    try {
+      const mediaStream = await client.connect()
+      if (!boardVideoRef.current) {
+        client.disconnect()
+        boardVideoClientRef.current = null
+        return
+      }
+      boardVideoRef.current.srcObject = mediaStream
+      setVideoStatus('streaming')
+      setVideoMessage(`Streaming ${reportedBoardVideo.streamName}`)
+    } catch (caughtError) {
+      client.disconnect()
+      if (boardVideoClientRef.current === client) {
+        boardVideoClientRef.current = null
+      }
+      if (boardVideoRef.current) {
+        boardVideoRef.current.srcObject = null
+      }
+      setVideoStatus('error')
+      setVideoError(
+        caughtError instanceof Error ? caughtError.message : 'Unable to connect to board video',
+      )
+    }
+  }
+
+  const handleDisconnectBoardVideo = (): void => {
+    boardVideoClientRef.current?.disconnect()
+    boardVideoClientRef.current = null
+    if (boardVideoRef.current) {
+      boardVideoRef.current.srcObject = null
+    }
+    setVideoStatus('idle')
+    setVideoMessage('Board video idle')
+    setVideoError('')
+  }
+
   if (hasConfigErrors) {
     return (
       <main className="page">
@@ -835,6 +975,54 @@ function App({ initialAuthError = '' }: AppProps) {
             </div>
           </div>
         </div>
+      </section>
+
+      <section className="card video-panel" aria-label="Board video">
+        <div className="video-panel-header">
+          <div>
+            <h2 className="video-panel-title">Board Video</h2>
+            <p className="video-panel-subtitle">
+              {reportedBoardVideo.status === 'error' && reportedBoardVideo.lastError
+                ? reportedBoardVideo.lastError
+                : reportedBoardVideo.signallingUrl ?? 'Waiting for board media service'}
+            </p>
+          </div>
+          <div className="video-panel-actions">
+            <span className={`video-status-pill video-status-${videoStatus}`}>
+              {isBoardVideoStreaming
+                ? 'Live'
+                : isBoardVideoConnecting
+                  ? 'Connecting'
+                  : reportedBoardVideo.status === 'ready'
+                    ? 'Ready'
+                    : reportedBoardVideo.status === 'error'
+                      ? 'Error'
+                      : 'Starting'}
+            </span>
+            {isBoardVideoStreaming ? (
+              <button type="button" onClick={handleDisconnectBoardVideo}>
+                Disconnect Video
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="primary"
+                onClick={() => {
+                  void handleConnectBoardVideo()
+                }}
+                disabled={!boardVideoReady || isBoardVideoConnecting}
+              >
+                Connect Video
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div className="video-stage">
+          <video ref={boardVideoRef} className="video-preview" autoPlay playsInline muted />
+        </div>
+        <p className="video-message">{videoMessage}</p>
+        {videoError && <p className="error video-error">{videoError}</p>}
       </section>
 
       {isDebugEnabled && (

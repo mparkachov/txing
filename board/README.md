@@ -43,6 +43,8 @@ Notes:
 
 - `pyproject.toml`: `uv` project definition
 - `src/board/shadow_control.py`: CLI entrypoint and MQTT board control
+- `src/board/media_service.py`: CLI entrypoint for the local rswebrtc media service
+- `src/board/media_state.py`: local runtime state file helper for board video MVP
 - `src/board/shadow_store.py`: local mirror file helper for accepted shadow responses
 - `justfile`: convenience commands for local use
 
@@ -147,6 +149,93 @@ Useful `ExecStart=` overrides:
 - `--ca-file <path>`
 - `--board-name <name>`
 - `--once`
+
+## Board Video MVP
+
+The local board video MVP is intentionally separate from `txing-board`:
+
+- `txing-board` remains the only AWS IoT shadow publisher
+- `txing-board-media` supervises the local GStreamer rswebrtc publisher
+- the web app connects directly to the board over IPv6 from the local Vite dev server
+
+Useful local commands:
+
+```bash
+cd /home/maxim/txing/board
+./.venv/bin/board-media
+just board::run-media
+just board::install-media-service
+```
+
+Notes:
+
+- The default `board-media` source pipeline is locked to `1920x1080` at `30 fps`.
+- On Raspberry Pi 4-class devices and earlier, including the Raspberry Pi Zero 2 W, the default path uses `libcamerasrc + v4l2h264enc` so the board uses the Pi hardware H.264 encoder.
+- On Raspberry Pi 5, Raspberry Pi's camera documentation recommends `x264enc` instead of `v4l2h264enc`, so use an explicit `--source-pipeline` override there.
+
+Install the Raspberry Pi camera and GStreamer pieces first:
+
+```bash
+sudo apt update
+sudo apt install -y \
+  libcamera-tools \
+  gstreamer1.0-tools \
+  gstreamer1.0-libcamera \
+  gstreamer1.0-plugins-base \
+  gstreamer1.0-plugins-good \
+  gstreamer1.0-plugins-bad
+```
+
+If you also want the software `x264enc` fallback for diagnostics or Raspberry Pi 5, install:
+
+```bash
+sudo apt install -y gstreamer1.0-plugins-ugly
+```
+
+Check the target board before enabling the service:
+
+```bash
+rpicam-hello --list-cameras
+gst-inspect-1.0 libcamerasrc
+gst-inspect-1.0 v4l2h264enc
+gst-inspect-1.0 webrtcsink
+```
+
+Optional software fallback check:
+
+```bash
+gst-inspect-1.0 x264enc
+```
+
+Run a short hardware-encoder smoke test on the Raspberry Pi Zero 2 W:
+
+```bash
+gst-launch-1.0 -e \
+  libcamerasrc num-buffers=300 \
+  ! capsfilter caps=video/x-raw,width=1920,height=1080,framerate=30/1,format=NV12,interlace-mode=progressive \
+  ! v4l2h264enc extra-controls="controls,repeat_sequence_header=1" \
+  ! h264parse config-interval=-1 \
+  ! filesink location=/tmp/board-camera-test.h264
+
+ls -lh /tmp/board-camera-test.h264
+```
+
+If you need a diagnostics-only stream without the camera, override `--source-pipeline` with a test pattern instead:
+
+```bash
+./.venv/bin/board-media \
+  --source-pipeline 'videotestsrc is-live=true pattern=ball ! video/x-raw,width=1920,height=1080,framerate=30/1 ! x264enc tune=zerolatency speed-preset=ultrafast bitrate=4000 key-int-max=30 ! h264parse config-interval=-1'
+```
+
+For Raspberry Pi 5, use the explicit software-encode override instead of the default hardware-encode path:
+
+```bash
+./.venv/bin/board-media \
+  --source-pipeline 'libcamerasrc ! videoconvert ! videoscale ! video/x-raw,width=1920,height=1080,framerate=30/1 ! x264enc tune=zerolatency speed-preset=ultrafast bitrate=4000 key-int-max=30 ! h264parse config-interval=-1'
+```
+
+- The MVP does not use auth, TLS, MediaMTX, or cloud upload.
+- The MVP advertises the direct rswebrtc signaling URL under `reported.board.video.local.signallingUrl`.
 
 ## Read-Only Root on Raspberry Pi Zero 2 W
 

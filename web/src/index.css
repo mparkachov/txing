@@ -186,6 +186,10 @@ h1 {
   width: min(100%, 1100px);
 }
 
+.video-panel {
+  width: min(100%, 1100px);
+}
+
 .debug-panel .status-devices {
   margin-bottom: 1rem;
 }
@@ -294,6 +298,98 @@ h1 {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.8rem;
+}
+
+.video-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.video-panel-title {
+  margin: 0;
+  font-size: 1rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.video-panel-subtitle,
+.video-message {
+  margin: 0.35rem 0 0;
+  color: #607184;
+  font-size: 0.88rem;
+}
+
+.video-panel-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.video-status-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 5.6rem;
+  padding: 0.34rem 0.7rem;
+  border-radius: 999px;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border: 1px solid rgba(143, 155, 171, 0.3);
+}
+
+.video-status-idle,
+.video-status-closed {
+  background: rgba(143, 155, 171, 0.1);
+  color: #607184;
+}
+
+.video-status-connecting,
+.video-status-waiting {
+  background: rgba(225, 180, 40, 0.12);
+  color: #ad7b00;
+  border-color: rgba(225, 180, 40, 0.28);
+}
+
+.video-status-streaming {
+  background: rgba(30, 169, 104, 0.12);
+  color: #1b9c62;
+  border-color: rgba(27, 156, 98, 0.28);
+}
+
+.video-status-error {
+  background: rgba(219, 75, 57, 0.12);
+  color: #b42318;
+  border-color: rgba(219, 75, 57, 0.24);
+}
+
+.video-stage {
+  margin-top: 1rem;
+  border-radius: 14px;
+  background:
+    radial-gradient(circle at top left, rgba(56, 82, 116, 0.18), rgba(12, 18, 27, 0.94)),
+    linear-gradient(180deg, rgba(14, 23, 35, 0.96), rgba(7, 12, 19, 0.98));
+  overflow: hidden;
+  aspect-ratio: 16 / 9;
+  display: grid;
+  place-items: center;
+}
+
+.video-preview {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: contain;
+  background: transparent;
+}
+
+.video-error {
+  margin-top: 0.45rem;
 }
 
 .status-device-label {
@@ -672,6 +768,10 @@ button:disabled {
     width: 100%;
   }
 
+  .video-panel {
+    width: 100%;
+  }
+
   .status-txing-header {
     grid-template-columns: 1fr;
     justify-items: center;
@@ -694,6 +794,15 @@ button:disabled {
 
   .status-devices {
     grid-template-columns: 1fr;
+  }
+
+  .video-panel-header {
+    flex-direction: column;
+  }
+
+  .video-panel-actions {
+    width: 100%;
+    justify-content: flex-start;
   }
 
   .editor {

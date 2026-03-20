@@ -3,7 +3,9 @@ set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 board_dir := source_directory()
 python_executable := "python3"
 built_board := board_dir + "/.venv/bin/board"
+built_board_media := board_dir + "/.venv/bin/board-media"
 systemd_unit := "/etc/systemd/system/txing-board.service"
+media_systemd_unit := "/etc/systemd/system/txing-board-media.service"
 
 @sync:
     cd "{{board_dir}}" && uv sync --python "{{python_executable}}" --no-managed-python --no-python-downloads
@@ -11,15 +13,22 @@ systemd_unit := "/etc/systemd/system/txing-board.service"
 @build:
     cd "{{board_dir}}" && uv sync --frozen --no-editable --compile-bytecode --python "{{python_executable}}" --no-managed-python --no-python-downloads
     test -x "{{built_board}}"
+    test -x "{{built_board_media}}"
 
 @run:
     cd "{{board_dir}}" && "{{built_board}}"
+
+@run-media:
+    cd "{{board_dir}}" && "{{built_board_media}}"
 
 @once:
     cd "{{board_dir}}" && "{{built_board}}" --once
 
 @dev:
     cd "{{board_dir}}" && uv run board
+
+@dev-media:
+    cd "{{board_dir}}" && uv run board-media
 
 @once-dev:
     cd "{{board_dir}}" && uv run board --once
@@ -44,3 +53,23 @@ systemd_unit := "/etc/systemd/system/txing-board.service"
         | sudo tee "{{systemd_unit}}" >/dev/null
     sudo systemctl daemon-reload
     sudo systemctl enable --now txing-board
+
+@install-media-service:
+    printf '%s\n' \
+        '[Unit]' \
+        'Description=txing board media' \
+        'After=network-online.target txing-board.service' \
+        'Wants=network-online.target' \
+        '' \
+        '[Service]' \
+        'Type=simple' \
+        'WorkingDirectory={{board_dir}}' \
+        'ExecStart={{built_board_media}}' \
+        'Restart=always' \
+        'RestartSec=5' \
+        '' \
+        '[Install]' \
+        'WantedBy=multi-user.target' \
+        | sudo tee "{{media_systemd_unit}}" >/dev/null
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now txing-board-media

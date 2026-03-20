@@ -5,9 +5,11 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from board.media_state import build_reported_media_state, load_media_state
 from board.shadow_control import (
     REPO_ROOT,
     _discover_repo_root,
+    _build_board_report,
     _build_shutdown_board_report,
     _build_shadow_update_with_options,
     _extract_desired_board_power_from_delta,
@@ -54,6 +56,29 @@ class ShadowControlContractTests(unittest.TestCase):
         self.assertIs(payload["state"]["reported"]["board"]["power"], False)
         self.assertIs(payload["state"]["reported"]["board"]["wifi"]["online"], False)
 
+    def test_board_report_with_video_matches_schema(self) -> None:
+        validator = _load_validator(Path(REPO_ROOT / "docs" / "txing-shadow.schema.json"))
+        report = _build_board_report(
+            addresses=type("Addresses", (), {"ipv4": "192.168.1.20", "ipv6": "2001:db8::20"})(),
+            power=True,
+            media_state={
+                "status": "ready",
+                "ready": True,
+                "local": {
+                    "signallingUrl": "ws://[2001:db8::20]:8443",
+                    "streamName": "board-cam",
+                },
+                "codec": {
+                    "video": "h264",
+                },
+                "viewerConnected": False,
+                "lastError": None,
+            },
+        )
+
+        _validate_shadow_update(validator, {"state": {"reported": {"board": report}}})
+        self.assertEqual(report["video"]["local"]["streamName"], "board-cam")
+
     def test_default_shadow_reset_payload_matches_schema(self) -> None:
         validator = _load_validator(Path(REPO_ROOT / "docs" / "txing-shadow.schema.json"))
         payload = json.loads(
@@ -68,6 +93,35 @@ class ShadowControlContractTests(unittest.TestCase):
         self.assertIsNone(payload["state"]["reported"]["mcu"]["ble"]["deviceId"])
         self.assertIs(payload["state"]["reported"]["board"]["power"], False)
         self.assertIs(payload["state"]["reported"]["board"]["wifi"]["online"], False)
+
+    def test_missing_media_state_defaults_to_starting(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            state = load_media_state(Path(tmpdir) / "missing-media.json")
+
+        self.assertEqual(state["status"], "starting")
+        self.assertIs(state["ready"], False)
+        self.assertIsNone(state["local"]["signallingUrl"])
+        self.assertIs(state["viewerConnected"], False)
+
+    def test_reported_media_state_omits_runtime_timestamp(self) -> None:
+        reported = build_reported_media_state(
+            {
+                "status": "ready",
+                "ready": True,
+                "local": {
+                    "signallingUrl": "ws://[2001:db8::20]:8443",
+                    "streamName": "board-cam",
+                },
+                "codec": {
+                    "video": "h264",
+                },
+                "viewerConnected": False,
+                "lastError": None,
+                "updatedAt": "2026-03-20T12:00:00Z",
+            }
+        )
+
+        self.assertNotIn("updatedAt", reported)
 
     def test_repo_root_detection_uses_board_working_directory(self) -> None:
         with TemporaryDirectory() as tmpdir:
