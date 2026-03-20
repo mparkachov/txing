@@ -3,6 +3,7 @@ set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 board_dir := source_directory()
 python_executable := "python3"
 built_board := board_dir + "/.venv/bin/board"
+systemd_unit := "/etc/systemd/system/txing-board.service"
 
 @sync:
     cd "{{board_dir}}" && uv sync --python "{{python_executable}}" --no-managed-python --no-python-downloads
@@ -22,3 +23,24 @@ built_board := board_dir + "/.venv/bin/board"
 
 @once-dev:
     cd "{{board_dir}}" && uv run board --once
+
+@install-service:
+    sudo systemctl enable NetworkManager-wait-online.service
+    printf '%s\n' \
+        '[Unit]' \
+        'Description=txing board control' \
+        'Wants=network-online.target' \
+        'After=network-online.target' \
+        '' \
+        '[Service]' \
+        'Type=simple' \
+        'WorkingDirectory={{board_dir}}' \
+        'ExecStart={{built_board}} --heartbeat-seconds 60' \
+        'Restart=always' \
+        'RestartSec=5' \
+        '' \
+        '[Install]' \
+        'WantedBy=multi-user.target' \
+        | sudo tee "{{systemd_unit}}" >/dev/null
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now txing-board

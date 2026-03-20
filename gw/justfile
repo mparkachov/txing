@@ -6,6 +6,7 @@ aws_justfile := project_root + "/aws/justfile"
 thing_name := "txing"
 region := "eu-central-1"
 endpoint_file := gw_dir + "/../certs/iot-data-ats.endpoint"
+systemd_unit := "/etc/systemd/system/txing-gw.service"
 
 @check:
     just --justfile "{{aws_justfile}}" check
@@ -34,3 +35,27 @@ endpoint_file := gw_dir + "/../certs/iot-data-ats.endpoint"
       --endpoint-url "https://$(tr -d '\n' < "{{endpoint_file}}")" \
       --thing-name "{{thing_name}}" \
       /dev/stdout | jq '.'
+
+@install-service:
+    sudo systemctl enable --now bluetooth
+    run_user="$(id -un)"; run_home="$(getent passwd "$run_user" | cut -d: -f6)"; printf '%s\n' \
+        '[Unit]' \
+        'Description=txing gateway' \
+        'After=network-online.target bluetooth.target' \
+        'Wants=network-online.target bluetooth.target' \
+        '' \
+        '[Service]' \
+        'Type=simple' \
+        "User=$run_user" \
+        'WorkingDirectory={{gw_dir}}' \
+        "Environment=PATH=$run_home/.local/bin:/usr/local/bin:/usr/bin" \
+        'Environment=AWS_REGION={{region}}' \
+        "ExecStart=$run_home/.local/bin/uv run gw" \
+        'Restart=always' \
+        'RestartSec=3' \
+        '' \
+        '[Install]' \
+        'WantedBy=multi-user.target' \
+        | sudo tee "{{systemd_unit}}" >/dev/null
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now txing-gw

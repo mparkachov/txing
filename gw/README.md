@@ -102,33 +102,15 @@ uv run gw --help
 uv run gw --debug
 ```
 
-9. Optional: run as `systemd` service:
+9. Optional: install the `systemd` service:
 
 ```bash
-sudo tee /etc/systemd/system/txing-gw.service >/dev/null <<'EOF'
-[Unit]
-Description=txing gateway
-After=network-online.target bluetooth.target
-Wants=network-online.target bluetooth.target
-
-[Service]
-Type=simple
-User=pi
-WorkingDirectory=/home/pi/txing/gw
-Environment=PATH=/home/pi/.local/bin:/usr/local/bin:/usr/bin
-Environment=AWS_REGION=eu-central-1
-ExecStart=/home/pi/.local/bin/uv run gw
-Restart=always
-RestartSec=3
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-sudo systemctl daemon-reload
-sudo systemctl enable --now txing-gw
+cd ~/txing
+just gw::install-service
 sudo journalctl -u txing-gw -f
 ```
+
+The `just gw::install-service` task enables `bluetooth`, writes `/etc/systemd/system/txing-gw.service` for the current user and checkout path, reloads `systemd`, and enables `txing-gw`.
 
 ## Run gateway
 
