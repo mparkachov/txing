@@ -7,19 +7,19 @@ profile := ""
 
 @install:
     cd "{{web_dir}}"
-    npm install
+    bun install
 
 @dev:
     cd "{{web_dir}}"
-    npm run dev
+    bun run dev
 
 @build:
     cd "{{web_dir}}"
-    npm run build
+    bun run build
 
 @lint:
     cd "{{web_dir}}"
-    npm run lint
+    bun run lint
 
 @write-env stack_name=stack_name region=region profile=profile:
     #!/usr/bin/env bash

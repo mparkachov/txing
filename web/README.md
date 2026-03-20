@@ -13,7 +13,7 @@ SPA for reading/updating the `txing` Thing Shadow.
 
 ## Prerequisites
 
-- Node.js 20+ and npm.
+- Bun 1.3+.
 - AWS account in `eu-central-1`.
 
 ## Local development
