@@ -210,7 +210,36 @@ The practical single-card fallback is to keep the Netplan Wi-Fi definition on th
 
 If you later get offline access to the card, the preferred layout is still a small ext4 partition labeled `TXING-PERSIST` mounted at `/mnt/persist`, with `/var/lib/NetworkManager` bind-mounted from there.
 
-3. Update `/etc/fstab`.
+3. Make `/etc/resolv.conf` compatible with a read-only root.
+
+If `/etc/resolv.conf` is a regular file on the root filesystem, DNS updates can break after `/` becomes read-only because NetworkManager can no longer rewrite that file in `/etc`.
+
+Check the current resolver mode:
+
+```bash
+ls -l /etc/resolv.conf
+readlink -f /etc/resolv.conf || true
+```
+
+For the Netplan + NetworkManager setup used in this guide, make `/etc/resolv.conf` a symlink to NetworkManager's runtime resolver file while the root filesystem is still writable:
+
+```bash
+sudo mount -o remount,rw /
+sudo rm -f /etc/resolv.conf
+sudo ln -s /run/NetworkManager/resolv.conf /etc/resolv.conf
+sudo systemctl restart NetworkManager
+```
+
+If `systemd-resolved` is already enabled and `/etc/resolv.conf` already points to `/run/systemd/resolve/stub-resolv.conf` or `/run/systemd/resolve/resolv.conf`, keep that existing symlink instead of replacing it.
+
+Verify before continuing:
+
+```bash
+cat /etc/resolv.conf
+getent hosts google.com
+```
+
+4. Update `/etc/fstab`.
 
 For the current single-card, SSH-only setup, use this fallback layout:
 
@@ -253,7 +282,7 @@ Notes:
 - On the single-card fallback, NetworkManager state is intentionally volatile. The Netplan YAML still persists on the read-only root, so the board can reconnect, but without cached runtime state.
 - On the preferred partitioned layout, `/var/lib/NetworkManager` stays persistent across reboots, which gives the fastest reconnect behavior.
 
-4. Make the journal volatile.
+5. Make the journal volatile.
 
 ```bash
 sudo install -d -m 0755 /etc/systemd/journald.conf.d
@@ -264,7 +293,7 @@ RuntimeMaxUse=16M
 EOF
 ```
 
-5. Add remount aliases for the sudo-capable user.
+6. Add remount aliases for the sudo-capable user.
 
 Add these lines to the user's shell rc file such as `~/.bashrc` or `~/.zshrc`:
 
@@ -273,7 +302,7 @@ alias txing-rw='sudo mount -o remount,rw / && sudo mount -o remount,rw /boot/fir
 alias txing-ro='sudo sync && sudo mount -o remount,ro /boot/firmware && sudo mount -o remount,ro /'
 ```
 
-6. Apply the changed mounts, restart the relevant services, and reboot once to validate the layout.
+7. Apply the changed mounts, restart the relevant services, and reboot once to validate the layout.
 
 ```bash
 sudo mount -a
@@ -287,7 +316,9 @@ After reboot, verify the mount state and the board service:
 
 ```bash
 findmnt / /boot/firmware /tmp /var/tmp /var/log /var/cache /var/lib/NetworkManager
+readlink -f /etc/resolv.conf
 nmcli connection show --active
+getent hosts google.com
 sudo systemctl status txing-board
 ```
 
