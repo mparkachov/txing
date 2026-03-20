@@ -168,6 +168,8 @@ From repository root:
 just gw::wake
 just gw::sleep
 just gw::print
+just aws::shadow
+just aws::shadow-reset
 ```
 
 From `gw/`:
@@ -195,6 +197,8 @@ just gw::wake thing_name=my-thing region=eu-central-1 endpoint_file=certs/iot-da
 ```
 
 `print` prints the current real AWS Thing Shadow document.
+
+`aws::shadow-reset` is the hard reset path for manual whole-device power cuts. It deletes the current shadow and reseeds it to the repository's clean offline baseline: `desired.*.power` cleared, `reported.mcu.power=false`, `reported.mcu.ble.online=false`, `reported.board.power=false`, and `reported.board.wifi.online=false`.
 
 ## Runtime behavior
 

@@ -34,6 +34,8 @@ just --list
 just gw::wake
 just board::run
 just aws::bootstrap
+just aws::shadow
+just aws::shadow-reset
 just mcu::build
 just web::dev
 just web::write-env
@@ -73,6 +75,15 @@ just aws::deploy \
   <unique-cognito-prefix> \
   <admin-email>
 ```
+
+Inspect or reset the live Thing Shadow from the repository root:
+
+```bash
+just aws::shadow
+just aws::shadow-reset
+```
+
+`aws::shadow-reset` deletes the current classic shadow document and reseeds it from `aws/default-shadow.json`, which represents the clean offline/powered-down state with stale desired power requests removed.
 
 The web admin does not use API Gateway. After Cognito sign-in, the SPA exchanges the user pool token for temporary AWS credentials through a Cognito Identity Pool and calls AWS IoT Thing Shadow directly.
 

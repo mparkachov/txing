@@ -506,6 +506,83 @@ web_dist_dir := project_root + "/web/dist"
     fi
     echo "AWS/device check passed. Shared AWS IoT client prerequisites look good."
 
+@shadow thing_name=thing_name region=region profile=profile endpoint_file=endpoint_file iot_data_endpoint=iot_data_endpoint:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{aws_dir}}"
+
+    if [ -z "{{region}}" ]; then
+      echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
+      exit 1
+    fi
+
+    aws_flags=(--region "{{region}}")
+    if [ -n "{{profile}}" ]; then
+      aws_flags+=(--profile "{{profile}}")
+    fi
+
+    endpoint="{{iot_data_endpoint}}"
+    if [ -z "$endpoint" ] && [ -s "{{endpoint_file}}" ]; then
+      endpoint="$(tr -d '\r\n' < "{{endpoint_file}}")"
+    fi
+    if [ -z "$endpoint" ]; then
+      endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}" --query endpointAddress --output text)"
+    fi
+
+    aws iot-data get-thing-shadow \
+      --endpoint-url "https://$endpoint" \
+      --thing-name "{{thing_name}}" \
+      "${aws_flags[@]}" \
+      /dev/stdout | jq '.'
+
+@shadow-reset thing_name=thing_name region=region profile=profile endpoint_file=endpoint_file default_shadow_file=default_shadow_file iot_data_endpoint=iot_data_endpoint:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{aws_dir}}"
+
+    if [ -z "{{region}}" ]; then
+      echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
+      exit 1
+    fi
+    if [ ! -f "{{default_shadow_file}}" ]; then
+      echo "shadow reset payload {{default_shadow_file}} not found" >&2
+      exit 1
+    fi
+
+    aws_flags=(--region "{{region}}")
+    if [ -n "{{profile}}" ]; then
+      aws_flags+=(--profile "{{profile}}")
+    fi
+
+    endpoint="{{iot_data_endpoint}}"
+    if [ -z "$endpoint" ] && [ -s "{{endpoint_file}}" ]; then
+      endpoint="$(tr -d '\r\n' < "{{endpoint_file}}")"
+    fi
+    if [ -z "$endpoint" ]; then
+      endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}" --query endpointAddress --output text)"
+    fi
+
+    delete_output=""
+    if ! delete_output="$(
+      aws iot-data delete-thing-shadow \
+        --endpoint-url "https://$endpoint" \
+        --thing-name "{{thing_name}}" \
+        "${aws_flags[@]}" \
+        /dev/null 2>&1
+    )"; then
+      if ! printf '%s\n' "$delete_output" | grep -F "ResourceNotFoundException" >/dev/null; then
+        printf '%s\n' "$delete_output" >&2
+        exit 1
+      fi
+    fi
+
+    aws iot-data update-thing-shadow \
+      --endpoint-url "https://$endpoint" \
+      --thing-name "{{thing_name}}" \
+      --payload "fileb://{{default_shadow_file}}" \
+      "${aws_flags[@]}" \
+      /dev/stdout | jq '.'
+
 @cert thing_name=thing_name policy_name=policy_name region=region profile=profile cert_dir=cert_dir cert_basename='' cert_arn_file='':
     #!/usr/bin/env bash
     set -euo pipefail

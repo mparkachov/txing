@@ -1,14 +1,31 @@
 {
   "state": {
+    "desired": {
+      "mcu": {
+        "power": null
+      },
+      "board": {
+        "power": null
+      }
+    },
     "reported": {
       "mcu": {
         "power": false,
-        "batteryPercent": 50,
+        "batteryMv": 3750,
         "ble": {
           "serviceUuid": "f6b4a000-7b32-4d2d-9f4b-4ff0a2b8f100",
           "sleepCommandUuid": "f6b4a001-7b32-4d2d-9f4b-4ff0a2b8f100",
           "stateReportUuid": "f6b4a002-7b32-4d2d-9f4b-4ff0a2b8f100",
-          "online": false
+          "online": false,
+          "deviceId": null
+        }
+      },
+      "board": {
+        "power": false,
+        "wifi": {
+          "online": false,
+          "ipv4": null,
+          "ipv6": null
         }
       }
     }

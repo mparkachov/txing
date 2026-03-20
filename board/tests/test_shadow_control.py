@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -50,6 +51,21 @@ class ShadowControlContractTests(unittest.TestCase):
 
         _validate_shadow_update(validator, payload)
         self.assertIsNone(payload["state"]["desired"]["board"]["power"])
+        self.assertIs(payload["state"]["reported"]["board"]["power"], False)
+        self.assertIs(payload["state"]["reported"]["board"]["wifi"]["online"], False)
+
+    def test_default_shadow_reset_payload_matches_schema(self) -> None:
+        validator = _load_validator(Path(REPO_ROOT / "docs" / "txing-shadow.schema.json"))
+        payload = json.loads(
+            Path(REPO_ROOT / "aws" / "default-shadow.json").read_text(encoding="utf-8")
+        )
+
+        _validate_shadow_update(validator, payload)
+        self.assertIsNone(payload["state"]["desired"]["mcu"]["power"])
+        self.assertIsNone(payload["state"]["desired"]["board"]["power"])
+        self.assertIs(payload["state"]["reported"]["mcu"]["power"], False)
+        self.assertIs(payload["state"]["reported"]["mcu"]["ble"]["online"], False)
+        self.assertIsNone(payload["state"]["reported"]["mcu"]["ble"]["deviceId"])
         self.assertIs(payload["state"]["reported"]["board"]["power"], False)
         self.assertIs(payload["state"]["reported"]["board"]["wifi"]["online"], False)
 
