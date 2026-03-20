@@ -19,6 +19,14 @@
 - Ownership rule: `gw` owns the `mcu.*` shadow subtree contract.
 - Ownership rule: `board` owns the `board.*` shadow subtree contract.
 
+## Board Video Phase 1
+- Phase 1 board video is a headless network-service design. Do not assume any GUI, local browser, or desktop session on the board.
+- `txing-board` remains the only publisher of `board.*` Thing Shadow updates.
+- Phase 1 local video uses a dedicated media service plus MediaMTX for board-local WebRTC/WHEP serving.
+- Phase 1 browser authentication uses a read-only bearer token generated on the board, mirrored into `board.*` by `txing-board`, and consumed by `web`.
+- Phase 1 keeps a future `kvssink` branch in mind but does not implement cloud upload yet.
+- Browser-to-board control transport is out of scope for board video phase 1 and must not be treated as already decided.
+
 ## Terminology
 - `power=true` means the device is in the wakeup state.
 - `power=false` means the device is in the sleep state.
