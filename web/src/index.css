@@ -174,8 +174,16 @@ h1 {
 }
 
 .status-hero {
-  width: min(100%, 28rem);
+  width: 100%;
   margin: 0 auto;
+}
+
+.status-hero-auth {
+  max-width: 28rem;
+}
+
+.status-hero-dashboard {
+  max-width: 70rem;
 }
 
 .shadow-diagram {
@@ -183,10 +191,6 @@ h1 {
 }
 
 .debug-panel {
-  width: min(100%, 1100px);
-}
-
-.video-panel {
   width: min(100%, 1100px);
 }
 
@@ -255,21 +259,25 @@ h1 {
   justify-items: stretch;
   align-content: stretch;
   text-align: left;
-  gap: 0.8rem;
-  padding: 0.95rem;
+  gap: 1rem;
+  padding: 1.05rem;
+}
+
+.status-node-txing-expanded {
+  padding-bottom: 1.1rem;
 }
 
 .status-txing-header {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
-  gap: 0.6rem;
+  gap: 0.85rem;
 }
 
 .status-txing-header-side {
   display: inline-flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: 0.55rem;
   justify-content: center;
   min-width: 0;
 }
@@ -300,87 +308,27 @@ h1 {
   gap: 0.8rem;
 }
 
-.video-panel-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1rem;
-}
-
-.video-panel-title {
-  margin: 0;
-  font-size: 1rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.video-panel-subtitle,
-.video-message {
-  margin: 0.35rem 0 0;
-  color: #607184;
-  font-size: 0.88rem;
-}
-
-.video-panel-actions {
-  display: inline-flex;
-  align-items: center;
+.status-video-panel {
+  display: grid;
   gap: 0.75rem;
-  flex-wrap: wrap;
-  justify-content: flex-end;
+  padding-top: 0.95rem;
+  border-top: 1px solid rgba(207, 218, 232, 0.78);
 }
 
-.video-status-pill {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 5.6rem;
-  padding: 0.34rem 0.7rem;
-  border-radius: 999px;
-  font-size: 0.74rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  border: 1px solid rgba(143, 155, 171, 0.3);
-}
-
-.video-status-idle,
-.video-status-closed {
-  background: rgba(143, 155, 171, 0.1);
-  color: #607184;
-}
-
-.video-status-connecting,
-.video-status-waiting {
-  background: rgba(225, 180, 40, 0.12);
-  color: #ad7b00;
-  border-color: rgba(225, 180, 40, 0.28);
-}
-
-.video-status-streaming {
-  background: rgba(30, 169, 104, 0.12);
-  color: #1b9c62;
-  border-color: rgba(27, 156, 98, 0.28);
-}
-
-.video-status-error {
-  background: rgba(219, 75, 57, 0.12);
-  color: #b42318;
-  border-color: rgba(219, 75, 57, 0.24);
-}
-
-.video-stage {
-  margin-top: 1rem;
-  border-radius: 14px;
+.status-video-stage {
+  position: relative;
+  border-radius: 18px;
   background:
     radial-gradient(circle at top left, rgba(56, 82, 116, 0.18), rgba(12, 18, 27, 0.94)),
     linear-gradient(180deg, rgba(14, 23, 35, 0.96), rgba(7, 12, 19, 0.98));
   overflow: hidden;
   aspect-ratio: 16 / 9;
+  min-height: 15rem;
   display: grid;
   place-items: center;
 }
 
-.video-preview {
+.status-video-preview {
   width: 100%;
   height: 100%;
   display: block;
@@ -389,7 +337,21 @@ h1 {
   background: transparent;
 }
 
-.video-placeholder {
+.status-video-overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  background: linear-gradient(180deg, rgba(10, 15, 23, 0.32), rgba(10, 15, 23, 0.52));
+  color: #d8e6f7;
+  text-align: center;
+  font-size: 0.96rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+.status-video-placeholder {
   margin: 0;
   padding: 1.5rem;
   text-align: center;
@@ -398,8 +360,8 @@ h1 {
   line-height: 1.5;
 }
 
-.video-error {
-  margin-top: 0.45rem;
+.status-video-error {
+  margin-top: 0;
 }
 
 .status-device-label {
@@ -636,6 +598,68 @@ h1 {
   color: var(--battery-unknown);
 }
 
+.status-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.7rem;
+  height: 2.7rem;
+  padding: 0;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #fafcff 0%, #eef3f9 100%);
+  color: #607184;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 10px 18px rgba(19, 41, 70, 0.08);
+  transition:
+    transform 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease,
+    background 140ms ease,
+    box-shadow 140ms ease,
+    opacity 140ms ease;
+}
+
+.status-icon-button:hover:not(:disabled),
+.status-icon-button:focus-visible:not(:disabled) {
+  outline: none;
+  transform: translateY(-1px);
+  border-color: rgba(68, 98, 127, 0.34);
+}
+
+.status-camera-button-ready {
+  color: #2248d4;
+  border-color: rgba(34, 72, 212, 0.2);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(235, 241, 255, 0.98));
+}
+
+.status-camera-button-connecting {
+  color: #ad7b00;
+  border-color: rgba(225, 180, 40, 0.28);
+  background: rgba(225, 180, 40, 0.12);
+}
+
+.status-camera-button-live {
+  color: #1b9c62;
+  border-color: rgba(27, 156, 98, 0.28);
+  background: rgba(27, 156, 98, 0.12);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.7),
+    0 0 1rem rgba(30, 169, 104, 0.18);
+}
+
+.status-camera-button-error {
+  color: #b42318;
+  border-color: rgba(219, 75, 57, 0.24);
+  background: rgba(219, 75, 57, 0.12);
+}
+
+.status-camera-glyph {
+  width: 1.28rem;
+  height: 1.28rem;
+  display: block;
+}
+
 .status-switch {
   position: relative;
   justify-self: center;
@@ -778,10 +802,6 @@ button:disabled {
     width: 100%;
   }
 
-  .video-panel {
-    width: 100%;
-  }
-
   .status-txing-header {
     grid-template-columns: 1fr;
     justify-items: center;
@@ -797,6 +817,11 @@ button:disabled {
     min-width: 0;
   }
 
+  .status-txing-header-side-end {
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
   .status-last-shadow-update {
     min-width: 5rem;
     font-size: 0.68rem;
@@ -806,13 +831,18 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 
-  .video-panel-header {
-    flex-direction: column;
+  .status-video-panel {
+    padding-top: 0.8rem;
   }
 
-  .video-panel-actions {
-    width: 100%;
-    justify-content: flex-start;
+  .status-video-stage {
+    min-height: 12rem;
+    border-radius: 16px;
+  }
+
+  .status-icon-button {
+    width: 2.5rem;
+    height: 2.5rem;
   }
 
   .editor {

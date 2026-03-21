@@ -28,6 +28,9 @@ type BoardVideoRuntime = {
   streamPath: string | null
   lastError: string | null
 }
+type CameraGlyphProps = {
+  crossed: boolean
+}
 
 const formatJson = (value: unknown): string => JSON.stringify(value, null, 2)
 const shadowPollIntervalMs = 1000
@@ -265,6 +268,26 @@ const extractReportedBoardVideo = (shadow: unknown): BoardVideoRuntime => {
   }
 }
 
+function CameraGlyph({ crossed }: CameraGlyphProps) {
+  return (
+    <svg
+      className="status-camera-glyph"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path d="M4.5 7.5h8.2l1.8-2.1h2.5a2.5 2.5 0 0 1 2.5 2.5v8.2a2.5 2.5 0 0 1-2.5 2.5H6.5A2.5 2.5 0 0 1 4 16.1V8a.5.5 0 0 1 .5-.5Z" />
+      <path d="m14.8 10.4 4.7-2.2v7.5l-4.7-2.2" />
+      {crossed ? <path d="M5 19 19 5" /> : null}
+    </svg>
+  )
+}
+
 function App({ initialAuthError = '' }: AppProps) {
   const [status, setStatus] = useState<SessionStatus>('loading')
   const [authUser, setAuthUser] = useState<AuthUser | null>(null)
@@ -278,7 +301,6 @@ function App({ initialAuthError = '' }: AppProps) {
   const [feedback, setFeedback] = useState<string>('')
   const [error, setError] = useState<string>(initialAuthError)
   const [videoStatus, setVideoStatus] = useState<BoardVideoStatus>('idle')
-  const [videoMessage, setVideoMessage] = useState<string>('Board video idle')
   const [videoError, setVideoError] = useState<string>('')
   const [isBoardVideoEmbedded, setIsBoardVideoEmbedded] = useState(false)
   const userMenuRef = useRef<HTMLDivElement | null>(null)
@@ -355,26 +377,33 @@ function App({ initialAuthError = '' }: AppProps) {
     reportedBoardVideo.status === 'ready' &&
     reportedBoardVideo.viewerUrl !== null &&
     reportedBoardVideo.streamPath !== null
+  const boardVideoReachable =
+    txingSwitchTarget !== 'off' && boardOnline && reportedBoardPower !== false
+  const canUseBoardVideo = boardVideoReachable && boardVideoReady
   const isBoardVideoConnecting = videoStatus === 'connecting'
   const isBoardVideoStreaming = videoStatus === 'streaming'
-  const boardVideoPillTone: BoardVideoStatus = isBoardVideoStreaming
-    ? 'streaming'
+  const boardVideoErrorMessage = videoError || reportedBoardVideo.lastError || ''
+  const boardVideoControlTone = isBoardVideoStreaming
+    ? 'live'
     : isBoardVideoConnecting
       ? 'connecting'
-      : videoStatus === 'error' || reportedBoardVideo.status === 'error'
+      : boardVideoReachable && (videoStatus === 'error' || reportedBoardVideo.status === 'error')
         ? 'error'
-        : 'idle'
-  const boardVideoPillLabel = isBoardVideoStreaming
-    ? 'Live'
-    : isBoardVideoConnecting
-      ? 'Connecting'
-      : videoStatus === 'error'
-        ? 'Error'
-        : reportedBoardVideo.status === 'ready'
-          ? 'Ready'
-          : reportedBoardVideo.status === 'error'
-            ? 'Error'
-            : 'Starting'
+        : canUseBoardVideo
+          ? 'ready'
+          : 'idle'
+  const boardVideoControlLabel = isBoardVideoEmbedded
+    ? isBoardVideoStreaming
+      ? 'Hide board video'
+      : 'Cancel board video'
+    : canUseBoardVideo
+      ? 'Show board video'
+      : 'Board video unavailable'
+  const boardVideoControlTitle = isBoardVideoEmbedded
+    ? 'Hide board camera'
+    : canUseBoardVideo
+      ? `Show ${reportedBoardVideo.streamPath ?? 'board-cam'}`
+      : 'Board video is not ready'
 
   useEffect(() => {
     if (hasConfigErrors) {
@@ -424,7 +453,6 @@ function App({ initialAuthError = '' }: AppProps) {
     if (status !== 'signed_in') {
       setIsBoardVideoEmbedded(false)
       setVideoStatus('idle')
-      setVideoMessage('Board video idle')
       setVideoError('')
       return
     }
@@ -473,23 +501,26 @@ function App({ initialAuthError = '' }: AppProps) {
   }, [isUserMenuOpen])
 
   useEffect(() => {
-    if (!isBoardVideoEmbedded || boardVideoReady) {
+    if (!isBoardVideoEmbedded || canUseBoardVideo) {
       return
     }
 
     setIsBoardVideoEmbedded(false)
-    if (reportedBoardVideo.status === 'error' && reportedBoardVideo.lastError) {
+    if (
+      boardVideoReachable &&
+      reportedBoardVideo.status === 'error' &&
+      reportedBoardVideo.lastError
+    ) {
       setVideoStatus('error')
-      setVideoMessage(reportedBoardVideo.lastError)
       setVideoError(reportedBoardVideo.lastError)
       return
     }
 
     setVideoStatus('idle')
-    setVideoMessage('Board video unavailable')
     setVideoError('')
   }, [
-    boardVideoReady,
+    boardVideoReachable,
+    canUseBoardVideo,
     isBoardVideoEmbedded,
     reportedBoardVideo.lastError,
     reportedBoardVideo.status,
@@ -721,6 +752,9 @@ function App({ initialAuthError = '' }: AppProps) {
     if (!canSleep) {
       return
     }
+    setIsBoardVideoEmbedded(false)
+    setVideoStatus('idle')
+    setVideoError('')
     setTxingSwitchTarget('off')
     const slept = await requestSleep()
     if (!slept) {
@@ -744,21 +778,28 @@ function App({ initialAuthError = '' }: AppProps) {
   }
 
   const handleConnectBoardVideo = (): void => {
-    if (!boardVideoReady || !reportedBoardVideo.viewerUrl || !reportedBoardVideo.streamPath) {
+    if (!canUseBoardVideo || !reportedBoardVideo.viewerUrl || !reportedBoardVideo.streamPath) {
       return
     }
 
     setIsBoardVideoEmbedded(true)
     setVideoStatus('connecting')
-    setVideoMessage(`Loading ${reportedBoardVideo.viewerUrl}`)
     setVideoError('')
   }
 
   const handleDisconnectBoardVideo = (): void => {
     setIsBoardVideoEmbedded(false)
     setVideoStatus('idle')
-    setVideoMessage('Board video idle')
     setVideoError('')
+  }
+
+  const handleToggleBoardVideo = (): void => {
+    if (isBoardVideoEmbedded) {
+      handleDisconnectBoardVideo()
+      return
+    }
+
+    handleConnectBoardVideo()
   }
 
   const handleBoardVideoFrameLoad = (): void => {
@@ -766,7 +807,6 @@ function App({ initialAuthError = '' }: AppProps) {
       return
     }
     setVideoStatus('streaming')
-    setVideoMessage(`Streaming ${reportedBoardVideo.streamPath ?? 'board-cam'}`)
     setVideoError('')
   }
 
@@ -775,7 +815,6 @@ function App({ initialAuthError = '' }: AppProps) {
       return
     }
     setVideoStatus('error')
-    setVideoMessage('Board video viewer failed to load')
     setVideoError('Unable to load the MediaMTX viewer page from the board')
   }
 
@@ -809,7 +848,7 @@ function App({ initialAuthError = '' }: AppProps) {
   if (status === 'signed_out') {
     return (
       <main className="page page-signed-in">
-        <section className="status-hero" aria-label="Txing sign in">
+        <section className="status-hero status-hero-auth" aria-label="Txing sign in">
           <div className="shadow-diagram">
             <div className="status-node status-node-txing">
               <div className="status-txing-header status-auth-header">
@@ -834,9 +873,13 @@ function App({ initialAuthError = '' }: AppProps) {
 
   return (
     <main className="page page-signed-in">
-      <section className="status-hero" aria-label="Txing status">
+      <section className="status-hero status-hero-dashboard" aria-label="Txing status">
         <div className="shadow-diagram">
-          <div className="status-node status-node-txing">
+          <div
+            className={`status-node status-node-txing ${
+              isBoardVideoEmbedded ? 'status-node-txing-expanded' : ''
+            }`}
+          >
             <div className="status-txing-header">
               <div className="status-txing-header-side status-txing-header-side-start">
                 <div className="user-menu" ref={userMenuRef}>
@@ -896,18 +939,6 @@ function App({ initialAuthError = '' }: AppProps) {
                     </div>
                   )}
                 </div>
-                <time
-                  className="status-last-shadow-update"
-                  dateTime={
-                    lastShadowUpdateAtMs === null ? undefined : new Date(lastShadowUpdateAtMs).toISOString()
-                  }
-                  title={lastShadowUpdateTitle}
-                >
-                  {lastShadowUpdateLabel}
-                </time>
-              </div>
-              <div className={`status-name status-txing-name ${txingPowerToneClass}`}>Txing</div>
-              <div className="status-txing-header-side status-txing-header-side-end">
                 <label
                   className={`status-switch ${isTxingSwitchPending ? 'status-switch-pending' : ''}`}
                   aria-label="Wake or sleep txing"
@@ -926,6 +957,29 @@ function App({ initialAuthError = '' }: AppProps) {
                     <span className="status-switch-thumb" />
                   </span>
                 </label>
+                <time
+                  className="status-last-shadow-update"
+                  dateTime={
+                    lastShadowUpdateAtMs === null ? undefined : new Date(lastShadowUpdateAtMs).toISOString()
+                  }
+                  title={lastShadowUpdateTitle}
+                >
+                  {lastShadowUpdateLabel}
+                </time>
+              </div>
+              <div className={`status-name status-txing-name ${txingPowerToneClass}`}>Txing</div>
+              <div className="status-txing-header-side status-txing-header-side-end">
+                <button
+                  type="button"
+                  className={`status-icon-button status-camera-button status-camera-button-${boardVideoControlTone}`}
+                  aria-label={boardVideoControlLabel}
+                  aria-pressed={isBoardVideoEmbedded}
+                  title={boardVideoControlTitle}
+                  onClick={handleToggleBoardVideo}
+                  disabled={!isBoardVideoEmbedded && !canUseBoardVideo}
+                >
+                  <CameraGlyph crossed={!isBoardVideoEmbedded} />
+                </button>
                 <div
                   className={`status-signal ${bleSignalToneClass}`}
                   role="img"
@@ -982,70 +1036,39 @@ function App({ initialAuthError = '' }: AppProps) {
                 </div>
               </div>
             </div>
-          </div>
-        </div>
-      </section>
-
-      <section className="card video-panel" aria-label="Board video">
-        <div className="video-panel-header">
-          <div>
-            <h2 className="video-panel-title">Board Video</h2>
-            <p className="video-panel-subtitle">
-              {reportedBoardVideo.status === 'error' && reportedBoardVideo.lastError
-                ? reportedBoardVideo.lastError
-                : reportedBoardVideo.viewerUrl ?? 'Waiting for board media service'}
-            </p>
-          </div>
-          <div className="video-panel-actions">
-            <span className={`video-status-pill video-status-${boardVideoPillTone}`}>{boardVideoPillLabel}</span>
-            {isBoardVideoEmbedded ? (
-              <button type="button" onClick={handleDisconnectBoardVideo}>
-                {isBoardVideoStreaming ? 'Disconnect Video' : 'Cancel Video'}
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="primary"
-                onClick={() => {
-                  void handleConnectBoardVideo()
-                }}
-                disabled={!boardVideoReady || isBoardVideoConnecting}
-              >
-                Connect Video
-              </button>
+            {isBoardVideoEmbedded && (
+              <div className="status-video-panel">
+                <div className="status-video-stage">
+                  {reportedBoardVideo.viewerUrl ? (
+                    <>
+                      <iframe
+                        key={reportedBoardVideo.viewerUrl}
+                        className="status-video-preview"
+                        title="Board video viewer"
+                        src={reportedBoardVideo.viewerUrl}
+                        allow="autoplay; fullscreen"
+                        onLoad={handleBoardVideoFrameLoad}
+                        onError={handleBoardVideoFrameError}
+                      />
+                      {isBoardVideoConnecting && (
+                        <div className="status-video-overlay" aria-live="polite">
+                          Opening board camera...
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <p className="status-video-placeholder">Board video is not ready yet.</p>
+                  )}
+                </div>
+                {boardVideoErrorMessage && (
+                  <p className="error status-video-error" aria-live="polite">
+                    {boardVideoErrorMessage}
+                  </p>
+                )}
+              </div>
             )}
           </div>
         </div>
-
-        <div className="video-stage">
-          {isBoardVideoEmbedded && reportedBoardVideo.viewerUrl ? (
-            <iframe
-              key={reportedBoardVideo.viewerUrl}
-              className="video-preview"
-              title="Board video viewer"
-              src={reportedBoardVideo.viewerUrl}
-              allow="autoplay; fullscreen"
-              onLoad={handleBoardVideoFrameLoad}
-              onError={handleBoardVideoFrameError}
-            />
-          ) : (
-            <p className="video-placeholder">
-              {boardVideoReady
-                ? 'Connect video to open the board-local MediaMTX viewer.'
-                : 'Board video is not ready yet.'}
-            </p>
-          )}
-        </div>
-        {reportedBoardVideo.viewerUrl && (
-          <p className="video-message">
-            Viewer URL:{' '}
-            <a href={reportedBoardVideo.viewerUrl} target="_blank" rel="noreferrer">
-              {reportedBoardVideo.viewerUrl}
-            </a>
-          </p>
-        )}
-        <p className="video-message">{videoMessage}</p>
-        {videoError && <p className="error video-error">{videoError}</p>}
       </section>
 
       {isDebugEnabled && (
