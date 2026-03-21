@@ -8,7 +8,11 @@ import {
   type AuthUser,
 } from './auth'
 import { appConfig } from './config'
-import { getThingShadow, updateThingShadow } from './shadow-api'
+import {
+  createShadowSession,
+  type ShadowConnectionState,
+  type ShadowSession,
+} from './shadow-api'
 
 type SessionStatus = 'loading' | 'authenticating' | 'signed_out' | 'signed_in'
 type AppProps = {
@@ -33,7 +37,6 @@ type CameraGlyphProps = {
 }
 
 const formatJson = (value: unknown): string => JSON.stringify(value, null, 2)
-const shadowPollIntervalMs = 1000
 const boardOfflineTimeoutMs = 45000
 const batterySocCurve: readonly BatteryCurvePoint[] = [
   [3300, 0],
@@ -46,7 +49,6 @@ const batterySocCurve: readonly BatteryCurvePoint[] = [
   [4200, 100],
 ]
 
-const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 const createShadowSnapshotView = (shadow: unknown): ShadowSnapshotView => ({
   json: formatJson(shadow),
   updatedAtMs: Date.now(),
@@ -300,10 +302,13 @@ function App({ initialAuthError = '' }: AppProps) {
   const [txingSwitchTarget, setTxingSwitchTarget] = useState<TxingSwitchTarget>(null)
   const [feedback, setFeedback] = useState<string>('')
   const [error, setError] = useState<string>(initialAuthError)
+  const [shadowConnectionState, setShadowConnectionState] =
+    useState<ShadowConnectionState>('idle')
   const [videoStatus, setVideoStatus] = useState<BoardVideoStatus>('idle')
   const [videoError, setVideoError] = useState<string>('')
   const [isBoardVideoEmbedded, setIsBoardVideoEmbedded] = useState(false)
   const userMenuRef = useRef<HTMLDivElement | null>(null)
+  const shadowSessionRef = useRef<ShadowSession | null>(null)
 
   const hasConfigErrors = appConfig.errors.length > 0
 
@@ -361,10 +366,11 @@ function App({ initialAuthError = '' }: AppProps) {
   const txingPowerToneClass = getTxingPowerToneClass(reportedMcuPower, reportedBoardPower)
   const canWake = reportedMcuPower === false && reportedMcuOnline === true
   const canSleep = reportedMcuPower === true || reportedBoardPower === true || reportedBoardOnline === true
+  const isShadowConnected = shadowConnectionState === 'connected'
   const txingSwitchChecked =
     txingSwitchTarget === 'on' ? true : txingSwitchTarget === 'off' ? false : boardOnline
   const isTxingSwitchPending = txingSwitchTarget !== null
-  const canToggleTxingSwitch = txingSwitchChecked ? canSleep : canWake
+  const canToggleTxingSwitch = (txingSwitchChecked ? canSleep : canWake) && isShadowConnected
   const userMenuIdentity = authUser?.email ?? authUser?.name ?? authUser?.sub ?? 'User'
   const userMenuInitial = userMenuIdentity.trim().charAt(0).toUpperCase() || 'U'
   const lastShadowUpdateLabel = formatShadowUpdateTime(lastShadowUpdateAtMs)
@@ -405,6 +411,36 @@ function App({ initialAuthError = '' }: AppProps) {
       ? `Show ${reportedBoardVideo.streamPath ?? 'board-cam'}`
       : 'Board video is not ready'
 
+  const applyShadowSnapshot = (shadow: unknown, feedbackMessage?: string): void => {
+    const snapshotView = createShadowSnapshotView(shadow)
+    setShadowJson(snapshotView.json)
+    setLastShadowUpdateAtMs(snapshotView.updatedAtMs)
+    if (feedbackMessage) {
+      setFeedback(feedbackMessage)
+    }
+  }
+
+  const resolveSessionIdToken = async (): Promise<string> => {
+    const refreshedTokens = await refreshTokensIfNeeded()
+    if (!refreshedTokens) {
+      clearAuthState()
+      setAuthUser(null)
+      setStatus('signed_out')
+      throw new Error('Session expired. Sign in again.')
+    }
+
+    setAuthUser(getAuthUser(refreshedTokens))
+    return refreshedTokens.idToken
+  }
+
+  const getShadowSession = (): ShadowSession => {
+    const shadowSession = shadowSessionRef.current
+    if (!shadowSession || !isShadowConnected) {
+      throw new Error('Shadow connection is not ready')
+    }
+    return shadowSession
+  }
+
   useEffect(() => {
     if (hasConfigErrors) {
       setStatus('signed_out')
@@ -428,17 +464,6 @@ function App({ initialAuthError = '' }: AppProps) {
         setAuthUser(user)
         setError('')
         setStatus('signed_in')
-        setIsLoadingShadow(true)
-        try {
-          const shadowResponse = await getThingShadow(restoredTokens.idToken)
-          const snapshotView = createShadowSnapshotView(shadowResponse)
-          setShadowJson(snapshotView.json)
-          setLastShadowUpdateAtMs(snapshotView.updatedAtMs)
-        } catch (caughtError) {
-          setError(caughtError instanceof Error ? caughtError.message : 'Unable to load shadow')
-        } finally {
-          setIsLoadingShadow(false)
-        }
       } catch (caughtError) {
         clearAuthState()
         setStatus('signed_out')
@@ -463,6 +488,66 @@ function App({ initialAuthError = '' }: AppProps) {
     clearAuthState()
     setStatus('signed_out')
     setError(`Signed-in user is not allowed. Expected: ${appConfig.adminEmail}`)
+  }, [adminEmailMismatch, status])
+
+  useEffect(() => {
+    if (status !== 'signed_in' || adminEmailMismatch) {
+      shadowSessionRef.current?.close()
+      shadowSessionRef.current = null
+      setShadowConnectionState('idle')
+      setIsLoadingShadow(false)
+      return
+    }
+
+    let cancelled = false
+    const shadowSession = createShadowSession({
+      thingName: appConfig.thingName,
+      iotDataEndpoint: appConfig.iotDataEndpoint,
+      awsRegion: appConfig.awsRegion,
+      resolveIdToken: resolveSessionIdToken,
+      onShadowDocument: (shadow) => {
+        if (cancelled) {
+          return
+        }
+        applyShadowSnapshot(shadow)
+        setIsLoadingShadow(false)
+        setError('')
+      },
+      onConnectionStateChange: (nextState) => {
+        if (!cancelled) {
+          setShadowConnectionState(nextState)
+        }
+      },
+      onError: (message) => {
+        if (!cancelled) {
+          setError(message)
+        }
+      },
+    })
+
+    shadowSessionRef.current = shadowSession
+    setIsLoadingShadow(true)
+    setShadowConnectionState('connecting')
+    setError('')
+    setFeedback('')
+
+    void shadowSession.start().catch((caughtError) => {
+      if (cancelled) {
+        return
+      }
+      setIsLoadingShadow(false)
+      setError(
+        caughtError instanceof Error ? caughtError.message : 'Unable to open Thing Shadow session',
+      )
+    })
+
+    return () => {
+      cancelled = true
+      if (shadowSessionRef.current === shadowSession) {
+        shadowSessionRef.current = null
+      }
+      shadowSession.close()
+    }
   }, [adminEmailMismatch, status])
 
   useEffect(() => {
@@ -526,106 +611,15 @@ function App({ initialAuthError = '' }: AppProps) {
     reportedBoardVideo.status,
   ])
 
-  useEffect(() => {
-    if (status !== 'signed_in' || adminEmailMismatch) {
-      return
-    }
-
-    let cancelled = false
-    let timeoutId: number | undefined
-
-    const scheduleNextPoll = () => {
-      if (cancelled) {
-        return
-      }
-      timeoutId = window.setTimeout(() => {
-        void pollShadow()
-      }, shadowPollIntervalMs)
-    }
-
-    const pollShadow = async () => {
-      if (cancelled) {
-        return
-      }
-      if (isLoadingShadow || isUpdatingShadow) {
-        scheduleNextPoll()
-        return
-      }
-
-      try {
-        const refreshedTokens = await refreshTokensIfNeeded()
-        if (cancelled) {
-          return
-        }
-        if (!refreshedTokens) {
-          clearAuthState()
-          setAuthUser(null)
-          setStatus('signed_out')
-          setError('Session expired. Sign in again.')
-          return
-        }
-
-        setAuthUser(getAuthUser(refreshedTokens))
-        const shadowResponse = await getThingShadow(refreshedTokens.idToken)
-        if (cancelled) {
-          return
-        }
-        const snapshotView = createShadowSnapshotView(shadowResponse)
-        setShadowJson(snapshotView.json)
-        setLastShadowUpdateAtMs(snapshotView.updatedAtMs)
-        setError('')
-      } catch (caughtError) {
-        if (cancelled) {
-          return
-        }
-        setError(caughtError instanceof Error ? caughtError.message : 'Unable to load shadow')
-      } finally {
-        scheduleNextPoll()
-      }
-    }
-
-    scheduleNextPoll()
-
-    return () => {
-      cancelled = true
-      if (timeoutId !== undefined) {
-        window.clearTimeout(timeoutId)
-      }
-    }
-  }, [adminEmailMismatch, isLoadingShadow, isUpdatingShadow, status])
-
-  const withApiToken = async (): Promise<string> => {
-    const refreshedTokens = await refreshTokensIfNeeded()
-    if (!refreshedTokens) {
-      clearAuthState()
-      setAuthUser(null)
-      setStatus('signed_out')
-      throw new Error('Session expired. Sign in again.')
-    }
-
-    setAuthUser(getAuthUser(refreshedTokens))
-    // The identity pool exchanges the user pool ID token for temporary AWS credentials.
-    return refreshedTokens.idToken
-  }
-
-  const loadShadowWithToken = async (token: string, feedbackMessage?: string): Promise<void> => {
-    const response = await getThingShadow(token)
-    const snapshotView = createShadowSnapshotView(response)
-    setShadowJson(snapshotView.json)
-    setLastShadowUpdateAtMs(snapshotView.updatedAtMs)
-    if (feedbackMessage) {
-      setFeedback(feedbackMessage)
-    }
-  }
-
   const loadShadow = async (): Promise<void> => {
     setIsLoadingShadow(true)
     setError('')
     setFeedback('')
 
     try {
-      const token = await withApiToken()
-      await loadShadowWithToken(token)
+      const shadowSession = getShadowSession()
+      const shadowResponse = await shadowSession.requestSnapshot()
+      applyShadowSnapshot(shadowResponse)
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'Unable to load shadow')
     } finally {
@@ -639,7 +633,6 @@ function App({ initialAuthError = '' }: AppProps) {
     setFeedback('')
 
     try {
-      const token = await withApiToken()
       const payload = {
         state: {
           desired: {
@@ -649,9 +642,10 @@ function App({ initialAuthError = '' }: AppProps) {
           },
         },
       }
-      await updateThingShadow(token, payload)
-      await loadShadowWithToken(
-        token,
+      const shadowSession = getShadowSession()
+      const shadowResponse = await shadowSession.updateShadow(payload)
+      applyShadowSnapshot(
+        shadowResponse,
         `desired.mcu.power -> ${power} at ${new Date().toLocaleTimeString()}`,
       )
       return true
@@ -669,8 +663,8 @@ function App({ initialAuthError = '' }: AppProps) {
     setFeedback('')
 
     try {
-      const token = await withApiToken()
-      await updateThingShadow(token, {
+      const shadowSession = getShadowSession()
+      await shadowSession.updateShadow({
         state: {
           desired: {
             board: {
@@ -682,25 +676,12 @@ function App({ initialAuthError = '' }: AppProps) {
 
       setFeedback('Waiting for reported.board.power=false...')
 
-      let boardOfflineShadow: unknown | null = null
-      const deadline = Date.now() + boardOfflineTimeoutMs
-      while (Date.now() < deadline) {
-        const shadowResponse = await getThingShadow(token)
-        const snapshotView = createShadowSnapshotView(shadowResponse)
-        setShadowJson(snapshotView.json)
-        setLastShadowUpdateAtMs(snapshotView.updatedAtMs)
-        boardOfflineShadow = shadowResponse
-        if (extractReportedBoardPower(shadowResponse) === false) {
-          break
-        }
-        await delay(shadowPollIntervalMs)
-      }
+      await shadowSession.waitForSnapshot(
+        (shadow) => extractReportedBoardPower(shadow) === false,
+        boardOfflineTimeoutMs,
+      )
 
-      if (extractReportedBoardPower(boardOfflineShadow) !== false) {
-        throw new Error('Timed out waiting for reported.board.power=false before sleeping MCU')
-      }
-
-      await updateThingShadow(token, {
+      const boardPowerClearedShadow = await shadowSession.updateShadow({
         state: {
           desired: {
             board: {
@@ -709,8 +690,9 @@ function App({ initialAuthError = '' }: AppProps) {
           },
         },
       })
+      applyShadowSnapshot(boardPowerClearedShadow)
 
-      await updateThingShadow(token, {
+      const mcuPowerUpdatedShadow = await shadowSession.updateShadow({
         state: {
           desired: {
             mcu: {
@@ -719,8 +701,8 @@ function App({ initialAuthError = '' }: AppProps) {
           },
         },
       })
-      await loadShadowWithToken(
-        token,
+      applyShadowSnapshot(
+        mcuPowerUpdatedShadow,
         `Sleep requested at ${new Date().toLocaleTimeString()}`,
       )
       return true
@@ -774,6 +756,9 @@ function App({ initialAuthError = '' }: AppProps) {
 
   const handleSignOff = (): void => {
     setIsUserMenuOpen(false)
+    shadowSessionRef.current?.close()
+    shadowSessionRef.current = null
+    setShadowConnectionState('idle')
     signOut()
   }
 
@@ -914,6 +899,7 @@ function App({ initialAuthError = '' }: AppProps) {
                         type="button"
                         className="user-menu-item"
                         role="menuitem"
+                        disabled={isLoadingShadow || shadowConnectionState !== 'connected'}
                         onClick={() => {
                           void handleMenuLoadShadow()
                         }}

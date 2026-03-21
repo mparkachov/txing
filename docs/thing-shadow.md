@@ -49,4 +49,10 @@ Schema validation should be done by project code and/or CI checks, while AWS IoT
 - `state.reported.board.video.viewerConnected` (`boolean`) is the board-side viewer-connected flag for the MVP. It is currently conservative and may remain `false` while the MVP uses a separate MediaMTX service owned outside the Python runtime.
 - `state.reported.board.video.lastError` (`string` or `null`) is the last board-local media error message surfaced by the `board-media` service.
 
+## Web admin transport note
+
+- The browser admin SPA consumes the classic `txing` Thing Shadow over AWS IoT MQTT/WSS.
+- `board` and `gw` continue to publish shadow state exactly as before; only the browser shadow transport changed from HTTP polling to push-driven MQTT shadow updates.
+- The browser still uses HTTPS for Cognito hosted UI, Cognito token exchange/refresh, Cognito Identity credential bootstrap, and IoT policy attachment. Only shadow document traffic moved to MQTT/WSS.
+
 Unknown fields are allowed for forward compatibility and must be ignored by consumers.

@@ -85,12 +85,32 @@ Resources:
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
-          - Sid: ThingShadowHttp
+          - Sid: ShadowConnect
             Effect: Allow
-            Action:
-              - iot:GetThingShadow
-              - iot:UpdateThingShadow
-            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/txing
+            Action: iot:Connect
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/${!cognito-identity.amazonaws.com:sub}
+          - Sid: ShadowPublish
+            Effect: Allow
+            Action: iot:Publish
+            Resource:
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/txing/shadow/get
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/txing/shadow/update
+          - Sid: ShadowSubscribe
+            Effect: Allow
+            Action: iot:Subscribe
+            Resource:
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/$aws/things/txing/shadow/get/accepted
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/$aws/things/txing/shadow/get/rejected
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/$aws/things/txing/shadow/update/accepted
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/$aws/things/txing/shadow/update/rejected
+          - Sid: ShadowReceive
+            Effect: Allow
+            Action: iot:Receive
+            Resource:
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/txing/shadow/get/accepted
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/txing/shadow/get/rejected
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/txing/shadow/update/accepted
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/txing/shadow/update/rejected
 
   TxingAdminUserPool:
     Type: AWS::Cognito::UserPool
@@ -268,12 +288,32 @@ Resources:
                 Effect: Allow
                 Action: iot:AttachPolicy
                 Resource: "*"
-              - Sid: ReadAndUpdateTxingShadow
+              - Sid: ShadowConnect
                 Effect: Allow
-                Action:
-                  - iot:GetThingShadow
-                  - iot:UpdateThingShadow
-                Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/txing
+                Action: iot:Connect
+                Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/${!cognito-identity.amazonaws.com:sub}
+              - Sid: ShadowPublish
+                Effect: Allow
+                Action: iot:Publish
+                Resource:
+                  - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/txing/shadow/get
+                  - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/txing/shadow/update
+              - Sid: ShadowSubscribe
+                Effect: Allow
+                Action: iot:Subscribe
+                Resource:
+                  - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/$aws/things/txing/shadow/get/accepted
+                  - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/$aws/things/txing/shadow/get/rejected
+                  - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/$aws/things/txing/shadow/update/accepted
+                  - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/$aws/things/txing/shadow/update/rejected
+              - Sid: ShadowReceive
+                Effect: Allow
+                Action: iot:Receive
+                Resource:
+                  - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/txing/shadow/get/accepted
+                  - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/txing/shadow/get/rejected
+                  - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/txing/shadow/update/accepted
+                  - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/txing/shadow/update/rejected
 
   TxingAdminIdentityPoolRoleAttachment:
     Type: AWS::Cognito::IdentityPoolRoleAttachment

@@ -7,8 +7,11 @@ SPA for reading/updating the `txing` Thing Shadow.
 - Static SPA built with Vite, stored in S3, and served through the stack-managed CloudFront URL.
 - Cognito native authentication via hosted UI (email + password).
 - After sign-in, the SPA exchanges the Cognito ID token for temporary AWS credentials through a Cognito Identity Pool.
-- Thing Shadow reads/writes go directly from the SPA to AWS IoT Data Plane with SigV4-signed requests.
+- Thing Shadow reads/writes go directly from the SPA to AWS IoT Core over MQTT/WSS with SigV4-signed websocket handshakes.
 - On first use, the SPA attaches the stack-managed AWS IoT policy to the authenticated Cognito identity.
+- Current transport split:
+  - classic Thing Shadow traffic uses MQTT/WSS only
+  - Cognito hosted UI redirects, Cognito `/oauth2/token`, Cognito Identity, and IoT `AttachPolicy` still use HTTPS
 - Hardcoded thing name: `txing`.
 
 ## Prerequisites
@@ -48,6 +51,7 @@ Then fill `web/.env.local`:
 - `VITE_ADMIN_EMAIL`
 
 The SPA derives the Cognito callback/logout URL from the page it is currently loaded from, so no deployed redirect URI env vars are needed.
+`VITE_IOT_DATA_ENDPOINT` remains the single AWS IoT endpoint input; the SPA derives the MQTT/WSS host from that Data-ATS endpoint.
 
 3. Start Vite:
 
@@ -115,9 +119,10 @@ Relevant outputs:
 - `WebIotPolicyName` -> `VITE_IOT_POLICY_NAME`
 - `WebExpectedAdminEmail` -> `VITE_ADMIN_EMAIL`
 
-`web::write-env` also resolves the AWS IoT Data ATS endpoint and writes it as `VITE_IOT_DATA_ENDPOINT`, plus `VITE_AWS_REGION`.
+`web::write-env` also resolves the AWS IoT Data ATS endpoint and writes it as `VITE_IOT_DATA_ENDPOINT`, plus `VITE_AWS_REGION`. The app reuses that endpoint for MQTT/WSS shadow connections.
 
-On the first shadow request after a new sign-in, the SPA may briefly retry while the IoT policy attachment propagates for the Cognito identity.
+On the first MQTT shadow connect after a new sign-in, the SPA may briefly retry while the IoT policy attachment propagates for the Cognito identity.
+The current implementation still performs HTTPS auth/bootstrap calls after sign-in for Cognito token refresh, Cognito Identity, and IoT policy attachment; only the shadow document transport itself moved from HTTP polling to MQTT/WSS.
 
 ## Deploy the SPA
 
