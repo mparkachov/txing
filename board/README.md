@@ -156,9 +156,10 @@ Useful `ExecStart=` overrides:
 The local board video MVP is intentionally separate from `txing-board`:
 
 - `txing-board` remains the only AWS IoT shadow publisher
-- `txing-board-media` supervises the local GStreamer publisher that feeds MediaMTX
-- the web app connects directly to the board over IPv6 from the local Vite dev server
-- MediaMTX runs as a separate operator-installed service and serves the browser-ready WebRTC page
+- MediaMTX owns the Raspberry Pi camera directly through its `rpiCamera` source
+- `txing-board-media` only checks MediaMTX readiness and writes `/run/txing/board-media/state.json`
+- the web app connects directly to the board over the local LAN from the Vite dev server
+- the published viewer URL prefers the board's default-route IPv4 address and falls back to IPv6 if IPv4 is unavailable
 
 Useful local commands:
 
@@ -171,41 +172,25 @@ just board::install-media-service
 
 Notes:
 
-- The default `board-media` source pipeline is locked to `1920x1080` at `30 fps`.
-- On Raspberry Pi 4-class devices and earlier, including the Raspberry Pi Zero 2 W, the default path uses `libcamerasrc + v4l2h264enc` so the board uses the Pi hardware H.264 encoder.
-- On Raspberry Pi 5, Raspberry Pi's camera documentation recommends `x264enc` instead of `v4l2h264enc`, so use an explicit `--source-pipeline` override there.
-- The default MediaMTX publish target is `rtsp://127.0.0.1:8554/board-cam`.
-- The default browser viewer URL published into the Thing Shadow is `http://[<board-ipv6>]:8889/board-cam`.
+- The sample MediaMTX config in `examples/mediamtx.yml` is pinned to `1920x1080` at `30 fps`.
+- The sample config uses `rpiCameraCodec: hardwareH264`, which works on the tested Pi image even though the GStreamer `v4l2h264enc` path does not.
+- The default browser viewer URL published into the Thing Shadow is `http://<board-ipv4>:8889/board-cam/`.
+- If you prefer to publish a hostname instead of the detected address, start `board-media` with `--viewer-host txing`.
 
-Install the Raspberry Pi camera and GStreamer pieces first:
+Install the Raspberry Pi camera tools first:
 
 ```bash
 sudo apt update
 sudo apt install -y \
-  libcamera-tools \
-  gstreamer1.0-tools \
-  gstreamer1.0-libcamera \
-  gstreamer1.0-rtsp \
-  gstreamer1.0-plugins-base \
-  gstreamer1.0-plugins-good \
-  gstreamer1.0-plugins-bad \
-  gstreamer1.0-plugins-ugly
+  libcamera-tools
 ```
 
 Check the target board before enabling the service:
 
 ```bash
 rpicam-hello --list-cameras
-gst-inspect-1.0 libcamerasrc
-gst-inspect-1.0 v4l2h264enc
-gst-inspect-1.0 rtph264pay
-gst-inspect-1.0 rtspclientsink
-```
-
-If you want the software `x264enc` fallback for diagnostics or Raspberry Pi 5, verify it too:
-
-```bash
-gst-inspect-1.0 x264enc
+rpicam-vid -t 5000 --width 1920 --height 1080 --framerate 30 --codec h264 -o /tmp/rpicam-1080p30.h264
+ls -lh /tmp/rpicam-1080p30.h264
 ```
 
 Install MediaMTX separately. The repo does not vendor it. Use the upstream Linux release that matches the Pi OS architecture and then install the sample config from this repo:
@@ -215,7 +200,7 @@ sudo install -d -m 0755 /etc/mediamtx
 sudo install -m 0644 /home/maxim/txing/board/examples/mediamtx.yml /etc/mediamtx/mediamtx.yml
 ```
 
-If the local Vite dev app can load the iframe page but WebRTC does not connect, add the board IPv6 address to `webrtcAdditionalHosts` in `/etc/mediamtx/mediamtx.yml` and restart MediaMTX.
+For the IPv4-local MVP, no extra `webrtcAdditionalHosts` entry is required. If you later switch back to IPv6-only local access, add the board's reachable IPv6 address there and restart MediaMTX.
 
 Create or update the operator-managed MediaMTX unit so it starts before `txing-board-media`:
 
@@ -231,25 +216,20 @@ sudo systemctl enable --now mediamtx
 sudo systemctl status mediamtx
 ```
 
-Run a short hardware-encoder smoke test on the Raspberry Pi Zero 2 W against MediaMTX:
+The sample config already opens the camera directly at `1920x1080` and `30 fps`. Verify that MediaMTX has the stream online:
 
 ```bash
-gst-launch-1.0 -e \
-  libcamerasrc num-buffers=300 \
-  ! capsfilter caps=video/x-raw,width=1920,height=1080,framerate=30/1,format=NV12,interlace-mode=progressive \
-  ! v4l2h264enc extra-controls="controls,repeat_sequence_header=1" \
-  ! h264parse config-interval=-1 \
-  ! rtph264pay pt=96 config-interval=1 \
-  ! rtspclientsink location=rtsp://127.0.0.1:8554/board-cam protocols=tcp
+sudo journalctl -u mediamtx -n 50 --no-pager
+curl -sSf http://127.0.0.1:8889/board-cam/ >/dev/null
 ```
 
-Then verify MediaMTX serves the viewer page:
+Look for a line like:
 
-```bash
-curl -sSf http://127.0.0.1:8889/board-cam >/dev/null
+```text
+[path board-cam] stream is available and online, 1 track (H264)
 ```
 
-Build and start the board media service:
+Build and start the board state reporter:
 
 ```bash
 cd /home/maxim/txing
@@ -257,6 +237,12 @@ just board::build
 
 cd /home/maxim/txing/board
 ./.venv/bin/board-media --debug
+```
+
+If you want the published URL to use your local hostname instead of the detected address:
+
+```bash
+./.venv/bin/board-media --debug --viewer-host txing
 ```
 
 In another shell, verify the published runtime state:
@@ -272,7 +258,7 @@ The expected local payload shape is:
   "status": "ready",
   "ready": true,
   "local": {
-    "viewerUrl": "http://[2001:db8::25]:8889/board-cam",
+    "viewerUrl": "http://192.168.0.10:8889/board-cam/",
     "streamPath": "board-cam"
   },
   "codec": {
@@ -283,23 +269,22 @@ The expected local payload shape is:
 }
 ```
 
-If you need a diagnostics-only stream without the camera, override `--source-pipeline` with a test pattern instead:
+Then publish the URL into the Thing Shadow:
 
 ```bash
-./.venv/bin/board-media \
-  --source-pipeline 'videotestsrc is-live=true pattern=ball ! video/x-raw,width=1920,height=1080,framerate=30/1 ! x264enc tune=zerolatency speed-preset=ultrafast bitrate=4000 key-int-max=30 ! h264parse config-interval=-1'
+./.venv/bin/board --once --media-state-file /run/txing/board-media/state.json
 ```
 
-For Raspberry Pi 5, use the explicit software-encode override instead of the default hardware-encode path:
+From the Mac, you can test the viewer page directly before using the web app:
 
-```bash
-./.venv/bin/board-media \
-  --source-pipeline 'libcamerasrc ! videoconvert ! videoscale ! video/x-raw,width=1920,height=1080,framerate=30/1 ! x264enc tune=zerolatency speed-preset=ultrafast bitrate=4000 key-int-max=30 ! h264parse config-interval=-1'
+```text
+http://192.168.0.10:8889/board-cam/
 ```
 
 - The MVP uses MediaMTX and the built-in viewer page over plain HTTP.
 - The MVP does not use auth, TLS, CloudFront, browser-to-board control transport, or cloud upload.
 - The MVP advertises the exact iframe URL under `reported.board.video.local.viewerUrl`.
+- On the tested Pi image, MediaMTX `rpiCamera` works for hardware H.264 while the GStreamer `v4l2h264enc` path fails on the first frame. Keep the MVP on the MediaMTX camera source unless the OS image changes.
 
 ## Read-Only Root on Raspberry Pi Zero 2 W
 

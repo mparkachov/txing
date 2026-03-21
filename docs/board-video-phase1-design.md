@@ -3,35 +3,29 @@
 ## Status
 
 - Scope: local MVP only
-- Goal: show the board camera in the local Vite dev app over direct IPv6
+- Goal: show the board camera in the local Vite dev app over the local LAN
 - Explicit non-goals for this slice: auth, TLS, CloudFront compatibility, browser-to-board control transport, cloud upload
 
 ## MVP Decisions
 
 - The board stays fully headless.
 - `txing-board` remains the only publisher of `board.*` state into the shared Thing Shadow.
-- A separate `txing-board-media` service supervises the local GStreamer publisher.
-- MediaMTX is used as a separate operator-installed service:
-  - publisher on the board: `gst-launch-1.0` with `rtspclientsink`
-  - browser path on the Mac: MediaMTX built-in WebRTC viewer page loaded in an `iframe`
-- The browser connects directly to the board over IPv6 through the MediaMTX viewer URL.
+- MediaMTX is the camera owner and browser-ready WebRTC server:
+  - camera source on the board: MediaMTX `rpiCamera`
+  - browser path on the Mac: MediaMTX built-in viewer page loaded in an `iframe`
+- A separate `txing-board-media` service only monitors MediaMTX and writes runtime state.
+- The published viewer URL prefers the board's default-route IPv4 address and falls back to IPv6 if IPv4 is unavailable.
 - The MVP is single-viewer and local-dev only.
 
 ## High-Level Architecture
 
 ```text
-Raspi Cam v3 or overrideable source pipeline
-  -> GStreamer H.264 source fragment
-  -> rtph264pay
-  -> rtspclientsink
-  -> rtsp://127.0.0.1:8554/board-cam
-
-MediaMTX
-  -> ingests RTSP publisher on board-cam
-  -> serves WebRTC viewer page on http://[board-ipv6]:8889/board-cam
+Raspi Cam v3
+  -> MediaMTX rpiCamera source
+  -> WebRTC viewer page on http://<board-ipv4>:8889/board-cam/
 
 txing-board-media
-  -> supervises the gst-launch publisher pipeline
+  -> probes MediaMTX locally
   -> writes /run/txing/board-media/state.json
 
 txing-board
@@ -57,7 +51,7 @@ The MVP adds `reported.board.video`:
           "ready": true,
           "status": "ready",
           "local": {
-            "viewerUrl": "http://[2001:db8::25]:8889/board-cam",
+            "viewerUrl": "http://192.168.0.10:8889/board-cam/",
             "streamPath": "board-cam"
           },
           "codec": {
@@ -75,7 +69,7 @@ The MVP adds `reported.board.video`:
 Notes:
 
 - `viewerUrl` is the exact MediaMTX page the local Vite app should load in an iframe.
-- `streamPath` is the fixed MediaMTX path published by `txing-board-media`.
+- `streamPath` is the fixed MediaMTX path.
 - `viewerConnected` remains conservative in the MVP because MediaMTX owns the browser sessions, not the Python service.
 
 ## Runtime Split
@@ -94,17 +88,18 @@ Responsibilities:
 
 Responsibilities:
 
-- launch and restart the board-local GStreamer publisher pipeline
+- probe the local MediaMTX viewer page
 - publish runtime state to `/run/txing/board-media/state.json`
 - set the stream path to `board-cam`
-- publish the exact viewer URL derived from the current board IPv6 address and MediaMTX viewer port
+- publish the exact viewer URL derived from the current board address and MediaMTX viewer port
 
 ### MediaMTX
 
 Responsibilities:
 
-- accept RTSP publish on `rtsp://127.0.0.1:8554/board-cam`
-- serve the WebRTC viewer page on `http://[board-ipv6]:8889/board-cam`
+- open the Raspberry Pi camera directly with `source: rpiCamera`
+- encode `1920x1080` at `30 fps` with hardware H.264
+- serve the WebRTC viewer page on port `8889`
 - remain a separate operator-installed service outside of AWS IoT publishing
 
 ### Browser
@@ -119,15 +114,14 @@ Responsibilities:
 
 The MVP uses:
 
-- `libcamerasrc`
-- `v4l2h264enc`
-- `h264parse`
-- `rtph264pay`
-- `rtspclientsink`
-- MediaMTX RTSP ingest on `127.0.0.1:8554`
+- MediaMTX `rpiCamera`
+- `rpiCameraWidth: 1920`
+- `rpiCameraHeight: 1080`
+- `rpiCameraFPS: 30`
+- `rpiCameraCodec: hardwareH264`
 - MediaMTX WebRTC viewer page on port `8889`
 
-The Python service supervises `gst-launch-1.0` instead of embedding GStreamer bindings. That keeps the MVP simple and avoids taking a dependency on `gi` / `PyGObject` inside the project runtime.
+The Python service does not own the media pipeline. It only reports local MediaMTX readiness and publishes the browser URL into the Thing Shadow.
 
 ## Deferred
 
@@ -143,5 +137,6 @@ Not part of the MVP:
 ## References
 
 - MediaMTX overview: https://mediamtx.org/
+- MediaMTX publish a stream: https://mediamtx.org/docs/usage/publish
 - MediaMTX embed streams: https://mediamtx.org/docs/other/embed-streams-in-a-website
 - MediaMTX configuration reference: https://mediamtx.org/docs/references/configuration-file

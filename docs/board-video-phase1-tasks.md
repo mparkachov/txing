@@ -4,8 +4,8 @@ This checklist tracks only the simplified local MVP:
 
 - headless board
 - local Vite dev server on the Mac
-- direct IPv6 access to the board
-- GStreamer hardware H.264 encode on the board
+- direct local-LAN access to the board
+- MediaMTX `rpiCamera` hardware H.264 encode on the board
 - MediaMTX as the separate browser-ready WebRTC server
 - no auth, TLS, browser-to-board control transport, or cloud upload
 
@@ -26,11 +26,11 @@ This checklist tracks only the simplified local MVP:
 
 ## 3. Media Serving
 
-- [x] Replace `webrtcsink` with RTSP publish into MediaMTX
-- [x] Keep the publisher locked to `1920x1080` at `30 fps`
+- [x] Replace `webrtcsink` with MediaMTX camera ownership
+- [x] Keep the camera source locked to `1920x1080` at `30 fps`
 - [x] Fix the MediaMTX stream path to `board-cam`
-- [x] Publish the iframe URL as `http://[<board-ipv6>]:8889/board-cam`
-- [x] Keep the publisher H.264-oriented and overrideable through `--source-pipeline`
+- [x] Publish the iframe URL as `http://<board-ipv4>:8889/board-cam/`
+- [x] Keep hardware H.264 inside MediaMTX `rpiCamera`
 
 ## 4. Web Integration
 

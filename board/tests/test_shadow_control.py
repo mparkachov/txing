@@ -65,7 +65,7 @@ class ShadowControlContractTests(unittest.TestCase):
                 "status": "ready",
                 "ready": True,
                 "local": {
-                    "viewerUrl": "http://[2001:db8::20]:8889/board-cam",
+                    "viewerUrl": "http://192.168.1.20:8889/board-cam/",
                     "streamPath": "board-cam",
                 },
                 "codec": {
@@ -109,7 +109,7 @@ class ShadowControlContractTests(unittest.TestCase):
                 "status": "ready",
                 "ready": True,
                 "local": {
-                    "viewerUrl": "http://[2001:db8::20]:8889/board-cam",
+                    "viewerUrl": "http://192.168.1.20:8889/board-cam/",
                     "streamPath": "board-cam",
                 },
                 "codec": {

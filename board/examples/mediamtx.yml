@@ -1,9 +1,7 @@
 logLevel: info
 logDestinations: [stdout]
 
-rtsp: true
-rtspTransports: [tcp]
-rtspAddress: :8554
+rtsp: false
 
 webrtc: true
 webrtcAddress: :8889
@@ -23,9 +21,12 @@ metrics: false
 pprof: false
 playback: false
 
-pathDefaults:
-  source: publisher
-  overridePublisher: true
-
 paths:
-  board-cam: {}
+  board-cam:
+    source: rpiCamera
+    rpiCameraWidth: 1920
+    rpiCameraHeight: 1080
+    rpiCameraFPS: 30
+    rpiCameraCodec: hardwareH264
+    rpiCameraHardwareH264Profile: baseline
+    rpiCameraBitrate: 5000000

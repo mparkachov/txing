@@ -37,8 +37,8 @@ def default_media_state_payload() -> dict[str, Any]:
         "codec": {
             "video": None,
         },
-        # The MVP runs gst-launch as a supervised subprocess and MediaMTX owns browser
-        # sessions, so consumer lifecycle is not surfaced to Python yet.
+        # MediaMTX owns browser sessions in the MVP, so consumer lifecycle is not
+        # surfaced to the local Python state reporter.
         "viewerConnected": False,
         "lastError": None,
         "updatedAt": None,
