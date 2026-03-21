@@ -243,3 +243,7 @@ def main() -> None:
         stream_path=args.stream_path,
         last_error="media service stopped",
     )
+
+
+if __name__ == "__main__":
+    main()
