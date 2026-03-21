@@ -35,7 +35,7 @@ Notes:
 - `desired.board.power=false` is a one-shot shutdown request. The board control clears that desired field on clean shutdown so the request does not persist across the next boot.
 - `reported.board.power=false` is only a best-effort clean-shutdown update.
 - `reported.board.wifi.online` reflects the board-side online status while the board OS is up and the board control is running.
-- `reported.board.wifi.ipv4` and `reported.board.wifi.ipv6` are resolved once at daemon start from the interface the OS selects for the default route in each address family.
+- `reported.board.wifi.ipv4` and `reported.board.wifi.ipv6` are refreshed on each publish loop from the interface the OS selects for the default route in each address family.
 - On a clean daemon stop, the board publishes `wifi.ipv4=null` and `wifi.ipv6=null` so AWS removes those two fields from the reported shadow document.
 - Because this Pi can lose power abruptly through the MOSFET, consumers should not treat stale `power=true` or stale `wifi.online=true` as authoritative after a hard power cut.
 
@@ -43,9 +43,10 @@ Notes:
 
 - `pyproject.toml`: `uv` project definition
 - `src/board/shadow_control.py`: CLI entrypoint and MQTT board control
-- `src/board/media_service.py`: CLI entrypoint for the local rswebrtc media service
+- `src/board/media_service.py`: CLI entrypoint for the local GStreamer-to-MediaMTX publisher
 - `src/board/media_state.py`: local runtime state file helper for board video MVP
 - `src/board/shadow_store.py`: local mirror file helper for accepted shadow responses
+- `examples/mediamtx.yml`: sample MediaMTX config for the phase-1 local video MVP
 - `justfile`: convenience commands for local use
 
 ## Prerequisites
@@ -155,8 +156,9 @@ Useful `ExecStart=` overrides:
 The local board video MVP is intentionally separate from `txing-board`:
 
 - `txing-board` remains the only AWS IoT shadow publisher
-- `txing-board-media` supervises the local GStreamer rswebrtc publisher
+- `txing-board-media` supervises the local GStreamer publisher that feeds MediaMTX
 - the web app connects directly to the board over IPv6 from the local Vite dev server
+- MediaMTX runs as a separate operator-installed service and serves the browser-ready WebRTC page
 
 Useful local commands:
 
@@ -172,6 +174,8 @@ Notes:
 - The default `board-media` source pipeline is locked to `1920x1080` at `30 fps`.
 - On Raspberry Pi 4-class devices and earlier, including the Raspberry Pi Zero 2 W, the default path uses `libcamerasrc + v4l2h264enc` so the board uses the Pi hardware H.264 encoder.
 - On Raspberry Pi 5, Raspberry Pi's camera documentation recommends `x264enc` instead of `v4l2h264enc`, so use an explicit `--source-pipeline` override there.
+- The default MediaMTX publish target is `rtsp://127.0.0.1:8554/board-cam`.
+- The default browser viewer URL published into the Thing Shadow is `http://[<board-ipv6>]:8889/board-cam`.
 
 Install the Raspberry Pi camera and GStreamer pieces first:
 
@@ -181,15 +185,11 @@ sudo apt install -y \
   libcamera-tools \
   gstreamer1.0-tools \
   gstreamer1.0-libcamera \
+  gstreamer1.0-rtsp \
   gstreamer1.0-plugins-base \
   gstreamer1.0-plugins-good \
-  gstreamer1.0-plugins-bad
-```
-
-If you also want the software `x264enc` fallback for diagnostics or Raspberry Pi 5, install:
-
-```bash
-sudo apt install -y gstreamer1.0-plugins-ugly
+  gstreamer1.0-plugins-bad \
+  gstreamer1.0-plugins-ugly
 ```
 
 Check the target board before enabling the service:
@@ -198,16 +198,40 @@ Check the target board before enabling the service:
 rpicam-hello --list-cameras
 gst-inspect-1.0 libcamerasrc
 gst-inspect-1.0 v4l2h264enc
-gst-inspect-1.0 webrtcsink
+gst-inspect-1.0 rtph264pay
+gst-inspect-1.0 rtspclientsink
 ```
 
-Optional software fallback check:
+If you want the software `x264enc` fallback for diagnostics or Raspberry Pi 5, verify it too:
 
 ```bash
 gst-inspect-1.0 x264enc
 ```
 
-Run a short hardware-encoder smoke test on the Raspberry Pi Zero 2 W:
+Install MediaMTX separately. The repo does not vendor it. Use the upstream Linux release that matches the Pi OS architecture and then install the sample config from this repo:
+
+```bash
+sudo install -d -m 0755 /etc/mediamtx
+sudo install -m 0644 /home/maxim/txing/board/examples/mediamtx.yml /etc/mediamtx/mediamtx.yml
+```
+
+If the local Vite dev app can load the iframe page but WebRTC does not connect, add the board IPv6 address to `webrtcAdditionalHosts` in `/etc/mediamtx/mediamtx.yml` and restart MediaMTX.
+
+Create or update the operator-managed MediaMTX unit so it starts before `txing-board-media`:
+
+```bash
+sudo systemctl edit --full mediamtx
+```
+
+Use an `ExecStart=` that points to the installed `mediamtx` binary and `/etc/mediamtx/mediamtx.yml`, then:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now mediamtx
+sudo systemctl status mediamtx
+```
+
+Run a short hardware-encoder smoke test on the Raspberry Pi Zero 2 W against MediaMTX:
 
 ```bash
 gst-launch-1.0 -e \
@@ -215,9 +239,48 @@ gst-launch-1.0 -e \
   ! capsfilter caps=video/x-raw,width=1920,height=1080,framerate=30/1,format=NV12,interlace-mode=progressive \
   ! v4l2h264enc extra-controls="controls,repeat_sequence_header=1" \
   ! h264parse config-interval=-1 \
-  ! filesink location=/tmp/board-camera-test.h264
+  ! rtph264pay pt=96 config-interval=1 \
+  ! rtspclientsink location=rtsp://127.0.0.1:8554/board-cam protocols=tcp
+```
 
-ls -lh /tmp/board-camera-test.h264
+Then verify MediaMTX serves the viewer page:
+
+```bash
+curl -sSf http://127.0.0.1:8889/board-cam >/dev/null
+```
+
+Build and start the board media service:
+
+```bash
+cd /home/maxim/txing
+just board::build
+
+cd /home/maxim/txing/board
+./.venv/bin/board-media --debug
+```
+
+In another shell, verify the published runtime state:
+
+```bash
+cat /run/txing/board-media/state.json
+```
+
+The expected local payload shape is:
+
+```json
+{
+  "status": "ready",
+  "ready": true,
+  "local": {
+    "viewerUrl": "http://[2001:db8::25]:8889/board-cam",
+    "streamPath": "board-cam"
+  },
+  "codec": {
+    "video": "h264"
+  },
+  "viewerConnected": false,
+  "lastError": null
+}
 ```
 
 If you need a diagnostics-only stream without the camera, override `--source-pipeline` with a test pattern instead:
@@ -234,8 +297,9 @@ For Raspberry Pi 5, use the explicit software-encode override instead of the def
   --source-pipeline 'libcamerasrc ! videoconvert ! videoscale ! video/x-raw,width=1920,height=1080,framerate=30/1 ! x264enc tune=zerolatency speed-preset=ultrafast bitrate=4000 key-int-max=30 ! h264parse config-interval=-1'
 ```
 
-- The MVP does not use auth, TLS, MediaMTX, or cloud upload.
-- The MVP advertises the direct rswebrtc signaling URL under `reported.board.video.local.signallingUrl`.
+- The MVP uses MediaMTX and the built-in viewer page over plain HTTP.
+- The MVP does not use auth, TLS, CloudFront, browser-to-board control transport, or cloud upload.
+- The MVP advertises the exact iframe URL under `reported.board.video.local.viewerUrl`.
 
 ## Read-Only Root on Raspberry Pi Zero 2 W
 
@@ -243,11 +307,13 @@ After the board runtime is built and `txing-board.service` is running normally o
 
 - `/` mounted read-only
 - `/boot/firmware` mounted read-only
-- `/tmp`, `/var/tmp`, `/var/log`, and `/var/cache` mounted as `tmpfs`
+- `/tmp`, `/var/tmp`, and `/var/log` mounted as `tmpfs`
 - `journald` configured as volatile so local logs are lost on reboot
 - one small writable ext4 partition used only for persistent NetworkManager state
 
 The board process already stores its accepted-shadow mirror in `/tmp/txing_board_shadow.json`, so the board application itself does not need a persistent writable path.
+
+Leave `/var/cache` on the root filesystem. It is not needed by the board services during normal read-only operation, and keeping it on disk makes maintenance sessions simpler when you temporarily remount `/` read-write to run `apt`.
 
 1. Keep the existing Imager-created Wi-Fi configuration.
 
@@ -338,7 +404,6 @@ PARTUUID=<boot-partuuid>  /boot/firmware      vfat  defaults,ro,noatime         
 tmpfs                     /tmp                 tmpfs nosuid,nodev,mode=1777,size=32M 0 0
 tmpfs                     /var/tmp             tmpfs nosuid,nodev,mode=1777,size=16M 0 0
 tmpfs                     /var/log             tmpfs nosuid,nodev,mode=0755,size=16M 0 0
-tmpfs                     /var/cache           tmpfs nosuid,nodev,mode=0755,size=32M 0 0
 tmpfs                     /var/lib/NetworkManager tmpfs nosuid,nodev,mode=0755,size=16M 0 0
 ```
 
@@ -351,7 +416,6 @@ LABEL=TXING-PERSIST       /mnt/persist         ext4  defaults,noatime           
 tmpfs                     /tmp                 tmpfs nosuid,nodev,mode=1777,size=32M 0 0
 tmpfs                     /var/tmp             tmpfs nosuid,nodev,mode=1777,size=16M 0 0
 tmpfs                     /var/log             tmpfs nosuid,nodev,mode=0755,size=16M 0 0
-tmpfs                     /var/cache           tmpfs nosuid,nodev,mode=0755,size=32M 0 0
 /mnt/persist/NetworkManager /var/lib/NetworkManager none bind                    0 0
 ```
 
@@ -368,6 +432,7 @@ Notes:
 - `/run` is already a `tmpfs` on `systemd` systems; no extra `fstab` entry is needed there.
 - Disable swap or move it off the root filesystem before switching `/` to read-only.
 - The board service itself only needs `/tmp`, volatile logs, and some writable NetworkManager state.
+- Keeping `/var/cache` on disk avoids special-case maintenance steps when you temporarily remount `/` read-write for package installs or upgrades.
 - On the single-card fallback, NetworkManager state is intentionally volatile. The Netplan YAML still persists on the read-only root, so the board can reconnect, but without cached runtime state.
 - On the preferred partitioned layout, `/var/lib/NetworkManager` stays persistent across reboots, which gives the fastest reconnect behavior.
 
@@ -387,11 +452,58 @@ EOF
 Add these lines to the user's shell rc file such as `~/.bashrc` or `~/.zshrc`:
 
 ```bash
-alias txing-rw='sudo mount -o remount,rw / && sudo mount -o remount,rw /boot/firmware'
-alias txing-ro='sudo sync && sudo mount -o remount,ro /boot/firmware && sudo mount -o remount,ro /'
+alias root-rw='sudo mount -o remount,rw /'
+alias root-ro='sudo sync && sudo mount -o remount,ro /'
 ```
 
-7. Apply the changed mounts, restart the relevant services, and reboot once to validate the layout.
+If you also keep `/boot/firmware` mounted read-only, remount it explicitly only when needed:
+
+```bash
+sudo mount -o remount,rw /boot/firmware
+sudo mount -o remount,ro /boot/firmware
+```
+
+7. Disable periodic maintenance timers and optional cron jobs that are not useful on the read-only board.
+
+Inspect what is active first:
+
+```bash
+systemctl list-timers --all
+```
+
+For a minimal headless board, a practical default is to disable automatic package maintenance, disable log rotation because logs are already volatile, and disable cron if nothing on the board needs it:
+
+```bash
+sudo systemctl disable --now apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true
+sudo systemctl mask apt-daily.service apt-daily-upgrade.service 2>/dev/null || true
+sudo systemctl disable --now logrotate.timer 2>/dev/null || true
+sudo systemctl disable --now cron.service 2>/dev/null || true
+```
+
+Keep `systemd-tmpfiles-clean.timer` enabled. It cleans old files from `/tmp` and other volatile directories and is useful on this layout.
+
+On Raspberry Pi OS, after disabling the generic maintenance timers above, the remaining ones you are likely to still see are:
+
+```bash
+sudo systemctl disable --now dpkg-db-backup.timer
+sudo systemctl disable --now rpi-zram-writeback.timer
+```
+
+If present on the image and not needed for your deployment, you can also disable other periodic housekeeping timers one by one:
+
+```bash
+sudo systemctl disable --now man-db.timer 2>/dev/null || true
+sudo systemctl disable --now e2scrub_all.timer 2>/dev/null || true
+sudo systemctl disable --now fstrim.timer 2>/dev/null || true
+```
+
+Re-check the active timers afterward:
+
+```bash
+systemctl list-timers --all
+```
+
+8. Apply the changed mounts, restart the relevant services, and reboot once to validate the layout.
 
 ```bash
 sudo mount -a

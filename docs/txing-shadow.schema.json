@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://txing.local/schemas/txing-shadow.schema.json",
-  "title": "Txing Thing Shadow Contract v16",
+  "title": "Txing Thing Shadow Contract v17",
   "description": "Canonical payload shape for txing Thing Shadow updates and snapshots.",
   "type": "object",
   "additionalProperties": true,
@@ -230,18 +230,18 @@
       "type": "object",
       "additionalProperties": true,
       "required": [
-        "signallingUrl",
-        "streamName"
+        "viewerUrl",
+        "streamPath"
       ],
       "properties": {
-        "signallingUrl": {
+        "viewerUrl": {
           "type": [
             "string",
             "null"
           ],
           "minLength": 1
         },
-        "streamName": {
+        "streamPath": {
           "type": [
             "string",
             "null"

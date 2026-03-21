@@ -1,0 +1,31 @@
+logLevel: info
+logDestinations: [stdout]
+
+rtsp: true
+rtspTransports: [tcp]
+rtspAddress: :8554
+
+webrtc: true
+webrtcAddress: :8889
+webrtcEncryption: false
+webrtcAllowOrigins: ['*']
+webrtcLocalUDPAddress: :8189
+webrtcLocalTCPAddress: ''
+webrtcIPsFromInterfaces: true
+webrtcIPsFromInterfacesList: []
+webrtcAdditionalHosts: []
+
+hls: false
+rtmp: false
+srt: false
+api: false
+metrics: false
+pprof: false
+playback: false
+
+pathDefaults:
+  source: publisher
+  overridePublisher: true
+
+paths:
+  board-cam: {}

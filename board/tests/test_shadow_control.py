@@ -65,8 +65,8 @@ class ShadowControlContractTests(unittest.TestCase):
                 "status": "ready",
                 "ready": True,
                 "local": {
-                    "signallingUrl": "ws://[2001:db8::20]:8443",
-                    "streamName": "board-cam",
+                    "viewerUrl": "http://[2001:db8::20]:8889/board-cam",
+                    "streamPath": "board-cam",
                 },
                 "codec": {
                     "video": "h264",
@@ -77,7 +77,7 @@ class ShadowControlContractTests(unittest.TestCase):
         )
 
         _validate_shadow_update(validator, {"state": {"reported": {"board": report}}})
-        self.assertEqual(report["video"]["local"]["streamName"], "board-cam")
+        self.assertEqual(report["video"]["local"]["streamPath"], "board-cam")
 
     def test_default_shadow_reset_payload_matches_schema(self) -> None:
         validator = _load_validator(Path(REPO_ROOT / "docs" / "txing-shadow.schema.json"))
@@ -100,7 +100,7 @@ class ShadowControlContractTests(unittest.TestCase):
 
         self.assertEqual(state["status"], "starting")
         self.assertIs(state["ready"], False)
-        self.assertIsNone(state["local"]["signallingUrl"])
+        self.assertIsNone(state["local"]["viewerUrl"])
         self.assertIs(state["viewerConnected"], False)
 
     def test_reported_media_state_omits_runtime_timestamp(self) -> None:
@@ -109,8 +109,8 @@ class ShadowControlContractTests(unittest.TestCase):
                 "status": "ready",
                 "ready": True,
                 "local": {
-                    "signallingUrl": "ws://[2001:db8::20]:8443",
-                    "streamName": "board-cam",
+                    "viewerUrl": "http://[2001:db8::20]:8889/board-cam",
+                    "streamPath": "board-cam",
                 },
                 "codec": {
                     "video": "h264",

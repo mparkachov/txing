@@ -843,7 +843,7 @@ def main() -> None:
                 LOGGER.info(
                     (
                         "Published board shadow update power=%s wifi_online=%s ipv4=%s ipv6=%s "
-                        "video_status=%s video_ready=%s signalling_url=%s"
+                        "video_status=%s video_ready=%s viewer_url=%s"
                     ),
                     report.get("power"),
                     report.get("wifi", {}).get("online") if isinstance(report.get("wifi"), dict) else None,
@@ -852,7 +852,7 @@ def main() -> None:
                     report.get("video", {}).get("status") if isinstance(report.get("video"), dict) else "-",
                     report.get("video", {}).get("ready") if isinstance(report.get("video"), dict) else "-",
                     (
-                        report.get("video", {}).get("local", {}).get("signallingUrl")
+                        report.get("video", {}).get("local", {}).get("viewerUrl")
                         if isinstance(report.get("video", {}).get("local"), dict)
                         else "-"
                     ),

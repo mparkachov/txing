@@ -9,7 +9,6 @@ import {
 } from './auth'
 import { appConfig } from './config'
 import { getThingShadow, updateThingShadow } from './shadow-api'
-import { BoardVideoClient, type BoardVideoStatus } from './video-client'
 
 type SessionStatus = 'loading' | 'authenticating' | 'signed_out' | 'signed_in'
 type AppProps = {
@@ -21,11 +20,12 @@ type ShadowSnapshotView = {
   json: string
   updatedAtMs: number
 }
+type BoardVideoStatus = 'idle' | 'connecting' | 'streaming' | 'error'
 type BoardVideoRuntime = {
   ready: boolean
   status: 'starting' | 'ready' | 'error' | null
-  signallingUrl: string | null
-  streamName: string | null
+  viewerUrl: string | null
+  streamPath: string | null
   lastError: string | null
 }
 
@@ -226,8 +226,8 @@ const extractReportedBoardVideo = (shadow: unknown): BoardVideoRuntime => {
     return {
       ready: false,
       status: null,
-      signallingUrl: null,
-      streamName: null,
+      viewerUrl: null,
+      streamPath: null,
       lastError: null,
     }
   }
@@ -237,8 +237,8 @@ const extractReportedBoardVideo = (shadow: unknown): BoardVideoRuntime => {
     return {
       ready: false,
       status: null,
-      signallingUrl: null,
-      streamName: null,
+      viewerUrl: null,
+      streamPath: null,
       lastError: null,
     }
   }
@@ -253,13 +253,13 @@ const extractReportedBoardVideo = (shadow: unknown): BoardVideoRuntime => {
       status === 'starting' || status === 'ready' || status === 'error'
         ? status
         : null,
-    signallingUrl:
-      localRecord && typeof localRecord.signallingUrl === 'string' && localRecord.signallingUrl.trim()
-        ? localRecord.signallingUrl.trim()
+    viewerUrl:
+      localRecord && typeof localRecord.viewerUrl === 'string' && localRecord.viewerUrl.trim()
+        ? localRecord.viewerUrl.trim()
         : null,
-    streamName:
-      localRecord && typeof localRecord.streamName === 'string' && localRecord.streamName.trim()
-        ? localRecord.streamName.trim()
+    streamPath:
+      localRecord && typeof localRecord.streamPath === 'string' && localRecord.streamPath.trim()
+        ? localRecord.streamPath.trim()
         : null,
     lastError: typeof video.lastError === 'string' && video.lastError.trim() ? video.lastError : null,
   }
@@ -280,9 +280,8 @@ function App({ initialAuthError = '' }: AppProps) {
   const [videoStatus, setVideoStatus] = useState<BoardVideoStatus>('idle')
   const [videoMessage, setVideoMessage] = useState<string>('Board video idle')
   const [videoError, setVideoError] = useState<string>('')
+  const [isBoardVideoEmbedded, setIsBoardVideoEmbedded] = useState(false)
   const userMenuRef = useRef<HTMLDivElement | null>(null)
-  const boardVideoRef = useRef<HTMLVideoElement | null>(null)
-  const boardVideoClientRef = useRef<BoardVideoClient | null>(null)
 
   const hasConfigErrors = appConfig.errors.length > 0
 
@@ -354,10 +353,28 @@ function App({ initialAuthError = '' }: AppProps) {
   const boardVideoReady =
     reportedBoardVideo.ready &&
     reportedBoardVideo.status === 'ready' &&
-    reportedBoardVideo.signallingUrl !== null &&
-    reportedBoardVideo.streamName !== null
-  const isBoardVideoConnecting = videoStatus === 'connecting' || videoStatus === 'waiting'
+    reportedBoardVideo.viewerUrl !== null &&
+    reportedBoardVideo.streamPath !== null
+  const isBoardVideoConnecting = videoStatus === 'connecting'
   const isBoardVideoStreaming = videoStatus === 'streaming'
+  const boardVideoPillTone: BoardVideoStatus = isBoardVideoStreaming
+    ? 'streaming'
+    : isBoardVideoConnecting
+      ? 'connecting'
+      : videoStatus === 'error' || reportedBoardVideo.status === 'error'
+        ? 'error'
+        : 'idle'
+  const boardVideoPillLabel = isBoardVideoStreaming
+    ? 'Live'
+    : isBoardVideoConnecting
+      ? 'Connecting'
+      : videoStatus === 'error'
+        ? 'Error'
+        : reportedBoardVideo.status === 'ready'
+          ? 'Ready'
+          : reportedBoardVideo.status === 'error'
+            ? 'Error'
+            : 'Starting'
 
   useEffect(() => {
     if (hasConfigErrors) {
@@ -404,19 +421,8 @@ function App({ initialAuthError = '' }: AppProps) {
   }, [hasConfigErrors, initialAuthError])
 
   useEffect(() => {
-    return () => {
-      boardVideoClientRef.current?.disconnect()
-      boardVideoClientRef.current = null
-    }
-  }, [])
-
-  useEffect(() => {
     if (status !== 'signed_in') {
-      boardVideoClientRef.current?.disconnect()
-      boardVideoClientRef.current = null
-      if (boardVideoRef.current) {
-        boardVideoRef.current.srcObject = null
-      }
+      setIsBoardVideoEmbedded(false)
       setVideoStatus('idle')
       setVideoMessage('Board video idle')
       setVideoError('')
@@ -465,6 +471,29 @@ function App({ initialAuthError = '' }: AppProps) {
       document.removeEventListener('keydown', handleEscape)
     }
   }, [isUserMenuOpen])
+
+  useEffect(() => {
+    if (!isBoardVideoEmbedded || boardVideoReady) {
+      return
+    }
+
+    setIsBoardVideoEmbedded(false)
+    if (reportedBoardVideo.status === 'error' && reportedBoardVideo.lastError) {
+      setVideoStatus('error')
+      setVideoMessage(reportedBoardVideo.lastError)
+      setVideoError(reportedBoardVideo.lastError)
+      return
+    }
+
+    setVideoStatus('idle')
+    setVideoMessage('Board video unavailable')
+    setVideoError('')
+  }, [
+    boardVideoReady,
+    isBoardVideoEmbedded,
+    reportedBoardVideo.lastError,
+    reportedBoardVideo.status,
+  ])
 
   useEffect(() => {
     if (status !== 'signed_in' || adminEmailMismatch) {
@@ -714,60 +743,40 @@ function App({ initialAuthError = '' }: AppProps) {
     signOut()
   }
 
-  const handleConnectBoardVideo = async (): Promise<void> => {
-    if (!boardVideoReady || !boardVideoRef.current || !reportedBoardVideo.signallingUrl || !reportedBoardVideo.streamName) {
+  const handleConnectBoardVideo = (): void => {
+    if (!boardVideoReady || !reportedBoardVideo.viewerUrl || !reportedBoardVideo.streamPath) {
       return
     }
 
-    boardVideoClientRef.current?.disconnect()
-    boardVideoClientRef.current = null
-    boardVideoRef.current.srcObject = null
+    setIsBoardVideoEmbedded(true)
+    setVideoStatus('connecting')
+    setVideoMessage(`Loading ${reportedBoardVideo.viewerUrl}`)
     setVideoError('')
-
-    const client = new BoardVideoClient({
-      signallingUrl: reportedBoardVideo.signallingUrl,
-      streamName: reportedBoardVideo.streamName,
-      onStateChange: (nextStatus, message) => {
-        setVideoStatus(nextStatus)
-        setVideoMessage(message)
-      },
-    })
-    boardVideoClientRef.current = client
-
-    try {
-      const mediaStream = await client.connect()
-      if (!boardVideoRef.current) {
-        client.disconnect()
-        boardVideoClientRef.current = null
-        return
-      }
-      boardVideoRef.current.srcObject = mediaStream
-      setVideoStatus('streaming')
-      setVideoMessage(`Streaming ${reportedBoardVideo.streamName}`)
-    } catch (caughtError) {
-      client.disconnect()
-      if (boardVideoClientRef.current === client) {
-        boardVideoClientRef.current = null
-      }
-      if (boardVideoRef.current) {
-        boardVideoRef.current.srcObject = null
-      }
-      setVideoStatus('error')
-      setVideoError(
-        caughtError instanceof Error ? caughtError.message : 'Unable to connect to board video',
-      )
-    }
   }
 
   const handleDisconnectBoardVideo = (): void => {
-    boardVideoClientRef.current?.disconnect()
-    boardVideoClientRef.current = null
-    if (boardVideoRef.current) {
-      boardVideoRef.current.srcObject = null
-    }
+    setIsBoardVideoEmbedded(false)
     setVideoStatus('idle')
     setVideoMessage('Board video idle')
     setVideoError('')
+  }
+
+  const handleBoardVideoFrameLoad = (): void => {
+    if (!isBoardVideoEmbedded) {
+      return
+    }
+    setVideoStatus('streaming')
+    setVideoMessage(`Streaming ${reportedBoardVideo.streamPath ?? 'board-cam'}`)
+    setVideoError('')
+  }
+
+  const handleBoardVideoFrameError = (): void => {
+    if (!isBoardVideoEmbedded) {
+      return
+    }
+    setVideoStatus('error')
+    setVideoMessage('Board video viewer failed to load')
+    setVideoError('Unable to load the MediaMTX viewer page from the board')
   }
 
   if (hasConfigErrors) {
@@ -984,24 +993,14 @@ function App({ initialAuthError = '' }: AppProps) {
             <p className="video-panel-subtitle">
               {reportedBoardVideo.status === 'error' && reportedBoardVideo.lastError
                 ? reportedBoardVideo.lastError
-                : reportedBoardVideo.signallingUrl ?? 'Waiting for board media service'}
+                : reportedBoardVideo.viewerUrl ?? 'Waiting for board media service'}
             </p>
           </div>
           <div className="video-panel-actions">
-            <span className={`video-status-pill video-status-${videoStatus}`}>
-              {isBoardVideoStreaming
-                ? 'Live'
-                : isBoardVideoConnecting
-                  ? 'Connecting'
-                  : reportedBoardVideo.status === 'ready'
-                    ? 'Ready'
-                    : reportedBoardVideo.status === 'error'
-                      ? 'Error'
-                      : 'Starting'}
-            </span>
-            {isBoardVideoStreaming ? (
+            <span className={`video-status-pill video-status-${boardVideoPillTone}`}>{boardVideoPillLabel}</span>
+            {isBoardVideoEmbedded ? (
               <button type="button" onClick={handleDisconnectBoardVideo}>
-                Disconnect Video
+                {isBoardVideoStreaming ? 'Disconnect Video' : 'Cancel Video'}
               </button>
             ) : (
               <button
@@ -1019,8 +1018,32 @@ function App({ initialAuthError = '' }: AppProps) {
         </div>
 
         <div className="video-stage">
-          <video ref={boardVideoRef} className="video-preview" autoPlay playsInline muted />
+          {isBoardVideoEmbedded && reportedBoardVideo.viewerUrl ? (
+            <iframe
+              key={reportedBoardVideo.viewerUrl}
+              className="video-preview"
+              title="Board video viewer"
+              src={reportedBoardVideo.viewerUrl}
+              allow="autoplay; fullscreen"
+              onLoad={handleBoardVideoFrameLoad}
+              onError={handleBoardVideoFrameError}
+            />
+          ) : (
+            <p className="video-placeholder">
+              {boardVideoReady
+                ? 'Connect video to open the board-local MediaMTX viewer.'
+                : 'Board video is not ready yet.'}
+            </p>
+          )}
         </div>
+        {reportedBoardVideo.viewerUrl && (
+          <p className="video-message">
+            Viewer URL:{' '}
+            <a href={reportedBoardVideo.viewerUrl} target="_blank" rel="noreferrer">
+              {reportedBoardVideo.viewerUrl}
+            </a>
+          </p>
+        )}
         <p className="video-message">{videoMessage}</p>
         {videoError && <p className="error video-error">{videoError}</p>}
       </section>

@@ -58,8 +58,8 @@ media_systemd_unit := "/etc/systemd/system/txing-board-media.service"
     printf '%s\n' \
         '[Unit]' \
         'Description=txing board media' \
-        'After=network-online.target txing-board.service' \
-        'Wants=network-online.target' \
+        'After=network-online.target txing-board.service mediamtx.service' \
+        'Wants=network-online.target mediamtx.service' \
         '' \
         '[Service]' \
         'Type=simple' \

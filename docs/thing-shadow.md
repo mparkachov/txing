@@ -41,12 +41,12 @@ Schema validation should be done by project code and/or CI checks, while AWS IoT
 - `state.reported.board.wifi.online` (`boolean`) is the board-side Wi-Fi/control online flag while the board OS is up and the board control is running.
 - `state.reported.board.wifi.ipv4` (`ipv4 string`, update payload may temporarily use `null` to delete) is the IPv4 address chosen by the OS for the board's current IPv4 default-route interface when the board control publishes.
 - `state.reported.board.wifi.ipv6` (`ipv6 string`, update payload may temporarily use `null` to delete) is the IPv6 address chosen by the OS for the board's current IPv6 default-route interface when the board control publishes.
-- `state.reported.board.video.ready` (`boolean`) indicates whether the board-local rswebrtc publisher is ready for a direct browser session.
+- `state.reported.board.video.ready` (`boolean`) indicates whether the board-local MediaMTX-backed video path is ready for a direct browser session.
 - `state.reported.board.video.status` (`"starting" | "ready" | "error"`) is the coarse runtime state of the board-local media service.
-- `state.reported.board.video.local.signallingUrl` (`string`, update payload may temporarily use `null` to delete) is the direct rswebrtc WebSocket signaling URL the local Vite dev app should use to connect to the board.
-- `state.reported.board.video.local.streamName` (`string`, update payload may temporarily use `null` to delete) is the rswebrtc producer stream name published by the board-local media pipeline.
+- `state.reported.board.video.local.viewerUrl` (`string`, update payload may temporarily use `null` to delete) is the exact MediaMTX viewer URL the local Vite dev app should load in an iframe.
+- `state.reported.board.video.local.streamPath` (`string`, update payload may temporarily use `null` to delete) is the fixed MediaMTX stream path published by the board-local media pipeline.
 - `state.reported.board.video.codec.video` (`"h264"` or `null`) is the currently configured video codec for the local board stream.
-- `state.reported.board.video.viewerConnected` (`boolean`) is the board-side viewer-connected flag for the MVP. It is currently conservative and may remain `false` while the MVP uses a supervised `gst-launch-1.0` subprocess.
+- `state.reported.board.video.viewerConnected` (`boolean`) is the board-side viewer-connected flag for the MVP. It is currently conservative and may remain `false` while the MVP uses a supervised `gst-launch-1.0` subprocess and a separate MediaMTX service.
 - `state.reported.board.video.lastError` (`string` or `null`) is the last board-local media error message surfaced by the `board-media` service.
 
 Unknown fields are allowed for forward compatibility and must be ignored by consumers.

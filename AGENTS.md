@@ -22,10 +22,10 @@
 ## Board Video Phase 1
 - Phase 1 board video is a headless network-service design. Do not assume any GUI, local browser, or desktop session on the board.
 - `txing-board` remains the only publisher of `board.*` Thing Shadow updates.
-- Phase 1 local video uses GStreamer rswebrtc directly (`webrtcsink` plus `gstwebrtc-api`) for local Vite-dev testing over direct IPv6.
+- Phase 1 local video uses GStreamer for camera capture/encode and MediaMTX as the separate browser-ready WebRTC server for local Vite-dev testing over direct IPv6.
 - Phase 1 is local-dev-only from the Vite dev server and does not target the deployed HTTPS SPA.
 - `txing-board-media` writes local runtime state and supervises the GStreamer pipeline, but it does not publish to AWS IoT directly.
-- Phase 1 does not use MediaMTX, TLS, auth, CloudFront integration, or `kvssink`.
+- Phase 1 uses the MediaMTX viewer page in an iframe and does not use `webrtcsink`, `gstwebrtc-api`, TLS, auth, CloudFront integration, or `kvssink`.
 - Browser-to-board control transport is deferred beyond the MVP unless the user explicitly changes that decision.
 
 ## Terminology

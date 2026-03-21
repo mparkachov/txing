@@ -8,8 +8,9 @@ from pathlib import Path
 from typing import Any
 
 DEFAULT_MEDIA_STATE_FILE = Path("/run/txing/board-media/state.json")
-DEFAULT_STREAM_NAME = "board-cam"
-DEFAULT_SIGNALLING_PORT = 8443
+DEFAULT_STREAM_PATH = "board-cam"
+DEFAULT_MEDIAMTX_RTSP_PORT = 8554
+DEFAULT_MEDIAMTX_VIEWER_PORT = 8889
 DEFAULT_VIDEO_CODEC = "h264"
 MEDIA_STATUS_STARTING = "starting"
 MEDIA_STATUS_READY = "ready"
@@ -30,14 +31,14 @@ def default_media_state_payload() -> dict[str, Any]:
         "status": MEDIA_STATUS_STARTING,
         "ready": False,
         "local": {
-            "signallingUrl": None,
-            "streamName": None,
+            "viewerUrl": None,
+            "streamPath": None,
         },
         "codec": {
             "video": None,
         },
-        # The MVP runs gst-launch as a supervised subprocess, so consumer lifecycle
-        # is not surfaced to Python yet. Keep the field stable and pessimistic.
+        # The MVP runs gst-launch as a supervised subprocess and MediaMTX owns browser
+        # sessions, so consumer lifecycle is not surfaced to Python yet.
         "viewerConnected": False,
         "lastError": None,
         "updatedAt": None,
@@ -59,13 +60,13 @@ def normalize_media_state(payload: dict[str, Any] | None) -> dict[str, Any]:
 
     local = payload.get("local")
     if isinstance(local, dict):
-        signalling_url = local.get("signallingUrl")
-        if isinstance(signalling_url, str) and signalling_url.strip():
-            normalized["local"]["signallingUrl"] = signalling_url.strip()
+        viewer_url = local.get("viewerUrl")
+        if isinstance(viewer_url, str) and viewer_url.strip():
+            normalized["local"]["viewerUrl"] = viewer_url.strip()
 
-        stream_name = local.get("streamName")
-        if isinstance(stream_name, str) and stream_name.strip():
-            normalized["local"]["streamName"] = stream_name.strip()
+        stream_path = local.get("streamPath")
+        if isinstance(stream_path, str) and stream_path.strip():
+            normalized["local"]["streamPath"] = stream_path.strip().strip("/")
 
     codec = payload.get("codec")
     if isinstance(codec, dict):
@@ -94,8 +95,8 @@ def build_reported_media_state(payload: dict[str, Any] | None) -> dict[str, Any]
         "status": normalized["status"],
         "ready": normalized["ready"],
         "local": {
-            "signallingUrl": normalized["local"]["signallingUrl"],
-            "streamName": normalized["local"]["streamName"],
+            "viewerUrl": normalized["local"]["viewerUrl"],
+            "streamPath": normalized["local"]["streamPath"],
         },
         "codec": {
             "video": normalized["codec"]["video"],

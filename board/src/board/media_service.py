@@ -14,8 +14,9 @@ from pathlib import Path
 
 from .media_state import (
     DEFAULT_MEDIA_STATE_FILE,
-    DEFAULT_SIGNALLING_PORT,
-    DEFAULT_STREAM_NAME,
+    DEFAULT_MEDIAMTX_RTSP_PORT,
+    DEFAULT_MEDIAMTX_VIEWER_PORT,
+    DEFAULT_STREAM_PATH,
     DEFAULT_VIDEO_CODEC,
     MEDIA_STATUS_ERROR,
     MEDIA_STATUS_READY,
@@ -31,7 +32,7 @@ DEFAULT_GST_LAUNCH_BIN = "gst-launch-1.0"
 DEFAULT_RESTART_DELAY = 5.0
 DEFAULT_STATE_WRITE_INTERVAL = 5.0
 DEFAULT_STARTUP_GRACE_SECONDS = 2.0
-DEFAULT_SIGNALLING_HOST = "::"
+DEFAULT_RTSP_PUBLISH_HOST = "127.0.0.1"
 DEFAULT_SOURCE_PIPELINE = (
     "libcamerasrc "
     "! capsfilter caps=video/x-raw,width=1920,height=1080,framerate=30/1,format=NV12,interlace-mode=progressive "
@@ -42,7 +43,7 @@ DEFAULT_SOURCE_PIPELINE = (
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Txing board-local GStreamer rswebrtc media service",
+        description="Txing board-local GStreamer to MediaMTX publisher",
     )
     parser.add_argument(
         "--state-file",
@@ -51,20 +52,26 @@ def _parse_args() -> argparse.Namespace:
         help=f"Path to runtime media state file (default: {DEFAULT_MEDIA_STATE_FILE})",
     )
     parser.add_argument(
-        "--stream-name",
-        default=DEFAULT_STREAM_NAME,
-        help=f"Published rswebrtc stream name (default: {DEFAULT_STREAM_NAME})",
+        "--stream-path",
+        default=DEFAULT_STREAM_PATH,
+        help=f"Published MediaMTX stream path (default: {DEFAULT_STREAM_PATH})",
     )
     parser.add_argument(
-        "--signalling-port",
+        "--viewer-port",
         type=int,
-        default=DEFAULT_SIGNALLING_PORT,
-        help=f"Published rswebrtc signalling port (default: {DEFAULT_SIGNALLING_PORT})",
+        default=DEFAULT_MEDIAMTX_VIEWER_PORT,
+        help=f"Published MediaMTX WebRTC viewer port (default: {DEFAULT_MEDIAMTX_VIEWER_PORT})",
     )
     parser.add_argument(
-        "--signalling-host",
-        default=DEFAULT_SIGNALLING_HOST,
-        help=f"webrtcsink signalling server listen address (default: {DEFAULT_SIGNALLING_HOST})",
+        "--rtsp-publish-host",
+        default=DEFAULT_RTSP_PUBLISH_HOST,
+        help=f"MediaMTX RTSP publish host (default: {DEFAULT_RTSP_PUBLISH_HOST})",
+    )
+    parser.add_argument(
+        "--rtsp-publish-port",
+        type=int,
+        default=DEFAULT_MEDIAMTX_RTSP_PORT,
+        help=f"MediaMTX RTSP publish port (default: {DEFAULT_MEDIAMTX_RTSP_PORT})",
     )
     parser.add_argument(
         "--gst-launch-bin",
@@ -74,7 +81,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--source-pipeline",
         default=DEFAULT_SOURCE_PIPELINE,
-        help="GStreamer source fragment ending in H.264 before webrtcsink",
+        help="GStreamer source fragment ending in H.264 before RTSP publish",
     )
     parser.add_argument(
         "--restart-delay",
@@ -133,11 +140,21 @@ def _require_executable(name: str) -> str:
     raise RuntimeError(f"required executable {name!r} was not found in PATH")
 
 
-def _build_signalling_url(port: int) -> str | None:
+def _build_viewer_url(port: int, stream_path: str) -> str | None:
     addresses = _detect_default_route_addresses()
     if not addresses.ipv6:
         return None
-    return f"ws://[{addresses.ipv6}]:{port}"
+    normalized_path = stream_path.strip().strip("/")
+    if not normalized_path:
+        return None
+    return f"http://[{addresses.ipv6}]:{port}/{normalized_path}"
+
+
+def _build_publish_url(*, host: str, port: int, stream_path: str) -> str:
+    normalized_path = stream_path.strip().strip("/")
+    if not normalized_path:
+        raise RuntimeError("--stream-path must not be empty")
+    return f"rtsp://{host}:{port}/{normalized_path}"
 
 
 def _save_runtime_state(
@@ -145,8 +162,8 @@ def _save_runtime_state(
     path: Path,
     status: str,
     ready: bool,
-    signalling_url: str | None,
-    stream_name: str,
+    viewer_url: str | None,
+    stream_path: str,
     last_error: str | None,
 ) -> None:
     save_media_state(
@@ -154,8 +171,8 @@ def _save_runtime_state(
             "status": status,
             "ready": ready,
             "local": {
-                "signallingUrl": signalling_url,
-                "streamName": stream_name,
+                "viewerUrl": viewer_url,
+                "streamPath": stream_path,
             },
             "codec": {
                 "video": DEFAULT_VIDEO_CODEC,
@@ -173,16 +190,21 @@ def _build_gstreamer_command(args: argparse.Namespace, gst_launch_bin: str) -> l
     if not source_tokens:
         raise RuntimeError("--source-pipeline must not be empty")
 
+    publish_url = _build_publish_url(
+        host=args.rtsp_publish_host,
+        port=args.rtsp_publish_port,
+        stream_path=args.stream_path,
+    )
+
     sink_tokens = [
         "!",
-        "webrtcsink",
-        "run-signalling-server=true",
-        "run-web-server=false",
-        "enable-control-data-channel=false",
-        f"signalling-server-host={args.signalling_host}",
-        f"signalling-server-port={args.signalling_port}",
-        "stun-server=",
-        f"meta=meta,name={args.stream_name}",
+        "rtph264pay",
+        "pt=96",
+        "config-interval=1",
+        "!",
+        "rtspclientsink",
+        f"location={publish_url}",
+        "protocols=tcp",
     ]
     return [gst_launch_bin, "-e", *source_tokens, *sink_tokens]
 
@@ -213,23 +235,23 @@ def main() -> None:
         raise SystemExit(2) from err
 
     LOGGER.info(
-        "Board media service started pid=%s stream_name=%s signalling_host=%s signalling_port=%s",
+        "Board media service started pid=%s stream_path=%s rtsp_publish_host=%s rtsp_publish_port=%s viewer_port=%s",
         os.getpid(),
-        args.stream_name,
-        args.signalling_host,
-        args.signalling_port,
+        args.stream_path,
+        args.rtsp_publish_host,
+        args.rtsp_publish_port,
+        args.viewer_port,
     )
     LOGGER.info("Board media source pipeline: %s", args.source_pipeline)
     LOGGER.info("Board media gst-launch command: %s", shlex.join(command))
 
     while not stop_event.is_set():
-        signalling_url = _build_signalling_url(args.signalling_port)
         _save_runtime_state(
             path=args.state_file,
             status=MEDIA_STATUS_STARTING,
             ready=False,
-            signalling_url=signalling_url,
-            stream_name=args.stream_name,
+            viewer_url=_build_viewer_url(args.viewer_port, args.stream_path),
+            stream_path=args.stream_path,
             last_error=None,
         )
 
@@ -248,8 +270,8 @@ def main() -> None:
                 path=args.state_file,
                 status=MEDIA_STATUS_ERROR,
                 ready=False,
-                signalling_url=_build_signalling_url(args.signalling_port),
-                stream_name=args.stream_name,
+                viewer_url=_build_viewer_url(args.viewer_port, args.stream_path),
+                stream_path=args.stream_path,
                 last_error=error_text,
             )
             if _wait_for_stop(stop_event, args.restart_delay):
@@ -261,13 +283,22 @@ def main() -> None:
             if exit_code is not None:
                 break
 
+            viewer_url = _build_viewer_url(args.viewer_port, args.stream_path)
+            last_error = None
+            status = MEDIA_STATUS_READY
+            ready = True
+            if viewer_url is None:
+                status = MEDIA_STATUS_ERROR
+                ready = False
+                last_error = "board has no global IPv6 address for MediaMTX viewer URL"
+
             _save_runtime_state(
                 path=args.state_file,
-                status=MEDIA_STATUS_READY,
-                ready=True,
-                signalling_url=_build_signalling_url(args.signalling_port),
-                stream_name=args.stream_name,
-                last_error=None,
+                status=status,
+                ready=ready,
+                viewer_url=viewer_url,
+                stream_path=args.stream_path,
+                last_error=last_error,
             )
             if _wait_for_stop(stop_event, args.state_write_interval):
                 break
@@ -278,8 +309,8 @@ def main() -> None:
                 path=args.state_file,
                 status=MEDIA_STATUS_ERROR,
                 ready=False,
-                signalling_url=_build_signalling_url(args.signalling_port),
-                stream_name=args.stream_name,
+                viewer_url=_build_viewer_url(args.viewer_port, args.stream_path),
+                stream_path=args.stream_path,
                 last_error="media service stopped",
             )
             break
@@ -291,8 +322,8 @@ def main() -> None:
             path=args.state_file,
             status=MEDIA_STATUS_ERROR,
             ready=False,
-            signalling_url=_build_signalling_url(args.signalling_port),
-            stream_name=args.stream_name,
+            viewer_url=_build_viewer_url(args.viewer_port, args.stream_path),
+            stream_path=args.stream_path,
             last_error=error_text,
         )
         if _wait_for_stop(stop_event, args.restart_delay):
