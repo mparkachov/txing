@@ -42,9 +42,9 @@ Notes:
 ## Project layout
 
 - `pyproject.toml`: `uv` project definition
-- `src/board/shadow_control.py`: CLI entrypoint and MQTT board control
-- `src/board/media_service.py`: CLI entrypoint for the local GStreamer-to-MediaMTX publisher
-- `src/board/media_state.py`: local runtime state file helper for board video MVP
+- `src/board/shadow_control.py`: CLI entrypoint and MQTT board control, including MediaMTX startup gating and video reporting
+- `src/board/media_runtime.py`: MediaMTX viewer URL and readiness probe helpers
+- `src/board/media_state.py`: board video shadow-state normalization helpers
 - `src/board/shadow_store.py`: local mirror file helper for accepted shadow responses
 - `examples/mediamtx.yml`: sample MediaMTX config for the phase-1 local video MVP
 - `justfile`: convenience commands for local use
@@ -70,6 +70,71 @@ To issue or rotate the shared certificate set:
 just aws::cert
 ```
 
+## End-to-End Reinstall From Raspberry Pi Imager
+
+Use this order on a fresh board rebuild:
+
+1. On the development machine, prepare the AWS IoT artifacts in the repo `certs/` directory.
+2. Flash a fresh Raspberry Pi OS Lite image with Raspberry Pi Imager and enable SSH + Wi-Fi.
+3. Boot the board, install local tools, and clone the repo to `/home/maxim/txing`.
+4. Copy the four AWS IoT client files from the development machine to `/home/maxim/txing/certs` on the board.
+5. Install MediaMTX and its `systemd` unit on the board.
+6. Build and smoke-test `txing-board` on the normal writable root filesystem.
+7. Enable `mediamtx` and `txing-board` services and verify they survive a reboot.
+8. Only after both services work normally, apply the read-only-root steps later in this document.
+
+Assumptions used below:
+
+- the board login user is `maxim`
+- the repo path on the board is `/home/maxim/txing`
+- the board is reachable as `maxim@<board-host>`
+
+If you choose a different Imager username or clone path, replace `/home/maxim` consistently in the commands below.
+
+### 1. Prepare AWS Artifacts on the Development Machine
+
+If the AWS stack already exists and you only need the board/gateway client artifacts:
+
+```bash
+cd /path/to/txing
+just aws::cert
+just aws::endpoint
+just aws::ca
+just aws::init-shadow
+just aws::check
+```
+
+If this is a new AWS environment and you want the stack plus IoT artifacts in one pass:
+
+```bash
+cd /path/to/txing
+just aws::bootstrap \
+  <unique-cognito-prefix> \
+  <admin-email>
+just aws::check
+```
+
+The board only needs these four files from the repo `certs/` directory:
+
+- `txing.cert.pem`
+- `txing.private.key`
+- `AmazonRootCA1.pem`
+- `iot-data-ats.endpoint`
+
+### 2. Flash and Boot the Board
+
+In Raspberry Pi Imager:
+
+- choose Raspberry Pi OS Lite based on Raspberry Pi OS Trixie
+- use the advanced options to set the hostname, username, password, Wi-Fi, locale, and enable SSH
+- if you want to reuse the commands below exactly, set the username to `maxim`
+
+After the first boot, connect over SSH:
+
+```bash
+ssh maxim@<board-host>
+```
+
 ## Initial Setup
 
 On a fresh board image, update the OS packages first and install the local tooling used by this subproject:
@@ -78,12 +143,48 @@ On a fresh board image, update the OS packages first and install the local tooli
 sudo apt update
 sudo apt dist-upgrade -y
 sudo apt autoremove -y
-sudo apt install -y git just pipx
+sudo apt install -y curl git jq just pipx
 pipx install uv
 pipx ensurepath
 ```
 
-Start a new shell after `pipx ensurepath`, then clone the repository onto the board if needed and continue with the build steps below.
+Start a new shell after `pipx ensurepath`, then clone the repository onto the board:
+
+```bash
+cd /home/maxim
+git clone <your-txing-repo-url> txing
+cd /home/maxim/txing
+```
+
+## Copy AWS IoT Client Artifacts to the Board
+
+From the development machine, create the target directory and copy the shared AWS IoT client files:
+
+```bash
+ssh maxim@<board-host> 'install -d -m 0755 /home/maxim/txing/certs'
+scp \
+  certs/txing.cert.pem \
+  certs/txing.private.key \
+  certs/AmazonRootCA1.pem \
+  certs/iot-data-ats.endpoint \
+  maxim@<board-host>:/home/maxim/txing/certs/
+ssh maxim@<board-host> '\
+  chmod 0644 /home/maxim/txing/certs/txing.cert.pem \
+             /home/maxim/txing/certs/AmazonRootCA1.pem \
+             /home/maxim/txing/certs/iot-data-ats.endpoint && \
+  chmod 0600 /home/maxim/txing/certs/txing.private.key'
+```
+
+Back on the board, verify the files before building anything:
+
+```bash
+cd /home/maxim/txing
+ls -l certs
+test -s certs/txing.cert.pem
+test -s certs/txing.private.key
+test -s certs/AmazonRootCA1.pem
+test -s certs/iot-data-ats.endpoint
+```
 
 ## Build and Smoke Test
 
@@ -119,7 +220,7 @@ Notes:
 
 ## Install as a `systemd` Service
 
-Create or replace `/etc/systemd/system/txing-board.service`, enable `NetworkManager-wait-online.service`, reload `systemd`, and enable the board service:
+Create or replace `/etc/systemd/system/txing-board.service`, enable `NetworkManager-wait-online.service`, reload `systemd`, and enable the board service. The generated unit pulls in `mediamtx.service` and starts `txing-board` after MediaMTX:
 
 ```bash
 cd /home/maxim/txing
@@ -139,6 +240,8 @@ Notes:
 - If you already have an older `txing-board.service`, update it in place instead of creating a second unit.
 - Remove old `uv run` details if they are still present: `User=maxim`, `Environment=TMPDIR=/tmp`, `Environment=UV_CACHE_DIR=/tmp/uv-cache`, and `ExecStartPre=/usr/bin/mkdir -p /tmp/uv-cache`.
 - If the old unit still uses `/home/maxim/.local/bin/uv run ...`, replace it with `ExecStart=/home/maxim/txing/board/.venv/bin/board --heartbeat-seconds 60`.
+- The generated unit now includes `Wants=mediamtx.service` and `After=mediamtx.service`.
+- `txing-board` waits for a successful local MediaMTX probe before its first shadow publish. If MediaMTX does not become ready within the startup timeout, the process exits non-zero so `systemd` can retry it.
 - If you need custom board arguments, edit `ExecStart=` and run `sudo systemctl daemon-reload && sudo systemctl restart txing-board`.
 
 Useful `ExecStart=` overrides:
@@ -149,15 +252,22 @@ Useful `ExecStart=` overrides:
 - `--key-file <path>`
 - `--ca-file <path>`
 - `--board-name <name>`
+- `--stream-path <path>`
+- `--viewer-port <port>`
+- `--viewer-host <name-or-address>`
+- `--probe-host <host>`
+- `--probe-timeout-seconds <seconds>`
+- `--media-startup-timeout-seconds <seconds>`
 - `--once`
 
 ## Board Video MVP
 
-The local board video MVP is intentionally separate from `txing-board`:
+The local board video MVP uses a single Python board daemon plus a separate operator-managed MediaMTX service:
 
 - `txing-board` remains the only AWS IoT shadow publisher
+- `txing-board` now probes MediaMTX locally and publishes `board.video.*` directly
+- `txing-board` blocks its first shadow publish until the MediaMTX viewer page is reachable
 - MediaMTX owns the Raspberry Pi camera directly through its `rpiCamera` source
-- `txing-board-media` only checks MediaMTX readiness and writes `/run/txing/board-media/state.json`
 - the web app connects directly to the board over the local LAN from the Vite dev server
 - the published viewer URL prefers the board's default-route IPv4 address and falls back to IPv6 if IPv4 is unavailable
 
@@ -165,9 +275,8 @@ Useful local commands:
 
 ```bash
 cd /home/maxim/txing/board
-./.venv/bin/board-media
-just board::run-media
-just board::install-media-service
+./.venv/bin/board --once --debug
+./.venv/bin/board --once --debug --viewer-host txing
 ```
 
 Notes:
@@ -175,7 +284,8 @@ Notes:
 - The sample MediaMTX config in `examples/mediamtx.yml` is pinned to `1920x1080` at `30 fps`.
 - The sample config uses `rpiCameraCodec: hardwareH264`, which works on the tested Pi image even though the GStreamer `v4l2h264enc` path does not.
 - The default browser viewer URL published into the Thing Shadow is `http://<board-ipv4>:8889/board-cam/`.
-- If you prefer to publish a hostname instead of the detected address, start `board-media` with `--viewer-host txing`.
+- If you prefer to publish a hostname instead of the detected address, start `board` with `--viewer-host txing`.
+- `board --once` now waits for a successful local MediaMTX probe before publishing; if MediaMTX is not ready within the startup timeout, it exits non-zero.
 
 Install the Raspberry Pi camera tools first:
 
@@ -196,21 +306,56 @@ ls -lh /tmp/rpicam-1080p30.h264
 Install MediaMTX separately. The repo does not vendor it. Use the upstream Linux release that matches the Pi OS architecture and then install the sample config from this repo:
 
 ```bash
+arch="$(dpkg --print-architecture)"
+case "$arch" in
+  arm64) mediamtx_arch='linux_arm64v8' ;;
+  armhf) mediamtx_arch='linux_armv7' ;;
+  *)
+    echo "Unsupported architecture for this guide: $arch" >&2
+    exit 1
+    ;;
+esac
+
+MEDIAMTX_VERSION="$(curl -fsSL https://api.github.com/repos/bluenviron/mediamtx/releases/latest | jq -r .tag_name)"
+workdir="$(mktemp -d)"
+archive="mediamtx_${MEDIAMTX_VERSION}_${mediamtx_arch}.tar.gz"
+trap 'rm -rf "$workdir"' EXIT
+curl -fsSL \
+  -o "$workdir/$archive" \
+  "https://github.com/bluenviron/mediamtx/releases/download/${MEDIAMTX_VERSION}/${archive}"
+tar -xzf "$workdir/$archive" -C "$workdir"
+sudo install -m 0755 "$workdir/mediamtx" /usr/local/bin/mediamtx
+
 sudo install -d -m 0755 /etc/mediamtx
 sudo install -m 0644 /home/maxim/txing/board/examples/mediamtx.yml /etc/mediamtx/mediamtx.yml
 ```
 
 For the IPv4-local MVP, no extra `webrtcAdditionalHosts` entry is required. If you later switch back to IPv6-only local access, add the board's reachable IPv6 address there and restart MediaMTX.
 
-Create or update the operator-managed MediaMTX unit so it starts before `txing-board-media`:
+Create the operator-managed MediaMTX unit:
 
 ```bash
-sudo systemctl edit --full mediamtx
+sudo tee /etc/systemd/system/mediamtx.service >/dev/null <<'EOF'
+[Unit]
+Description=MediaMTX
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/mediamtx /etc/mediamtx/mediamtx.yml
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
 ```
 
-Use an `ExecStart=` that points to the installed `mediamtx` binary and `/etc/mediamtx/mediamtx.yml`, then:
+Then enable and start MediaMTX:
 
 ```bash
+sudo systemctl enable NetworkManager-wait-online.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now mediamtx
 sudo systemctl status mediamtx
@@ -229,29 +374,23 @@ Look for a line like:
 [path board-cam] stream is available and online, 1 track (H264)
 ```
 
-Build and start the board state reporter:
+Build and start the board process with MediaMTX gating:
 
 ```bash
 cd /home/maxim/txing
 just board::build
 
 cd /home/maxim/txing/board
-./.venv/bin/board-media --debug
+./.venv/bin/board --once --debug
 ```
 
 If you want the published URL to use your local hostname instead of the detected address:
 
 ```bash
-./.venv/bin/board-media --debug --viewer-host txing
+./.venv/bin/board --once --debug --viewer-host txing
 ```
 
-In another shell, verify the published runtime state:
-
-```bash
-cat /run/txing/board-media/state.json
-```
-
-The expected local payload shape is:
+The expected `reported.board.video` payload in the accepted shadow response is:
 
 ```json
 {
@@ -269,12 +408,6 @@ The expected local payload shape is:
 }
 ```
 
-Then publish the URL into the Thing Shadow:
-
-```bash
-./.venv/bin/board --once --media-state-file /run/txing/board-media/state.json
-```
-
 From the Mac, you can test the viewer page directly before using the web app:
 
 ```text
@@ -286,9 +419,31 @@ http://192.168.0.10:8889/board-cam/
 - The MVP advertises the exact iframe URL under `reported.board.video.local.viewerUrl`.
 - On the tested Pi image, MediaMTX `rpiCamera` works for hardware H.264 while the GStreamer `v4l2h264enc` path fails on the first frame. Keep the MVP on the MediaMTX camera source unless the OS image changes.
 
+## Fresh-Image Service Install Order
+
+Once the foreground checks above pass on the writable root filesystem, install the services in this order:
+
+```bash
+cd /home/maxim/txing
+just board::install-service
+sudo systemctl status mediamtx
+sudo systemctl status txing-board
+sudo reboot
+```
+
+After reboot, verify both services before switching the board to read-only mode:
+
+```bash
+sudo systemctl status mediamtx
+sudo systemctl status txing-board
+sudo journalctl -u mediamtx -n 50 --no-pager
+sudo journalctl -u txing-board -n 50 --no-pager
+curl -sSf http://127.0.0.1:8889/board-cam/ >/dev/null
+```
+
 ## Read-Only Root on Raspberry Pi Zero 2 W
 
-After the board runtime is built and `txing-board.service` is running normally on a writable root filesystem, you can harden the Pi with a read-only Raspberry Pi OS Trixie layout. A practical deployment profile is:
+After the board runtime is built and both `mediamtx.service` and `txing-board.service` are running normally on a writable root filesystem, you can harden the Pi with a read-only Raspberry Pi OS Trixie layout. A practical deployment profile is:
 
 - `/` mounted read-only
 - `/boot/firmware` mounted read-only
@@ -494,18 +649,21 @@ systemctl list-timers --all
 sudo mount -a
 sudo systemctl daemon-reload
 sudo systemctl restart systemd-journald
+sudo systemctl restart mediamtx
 sudo systemctl restart txing-board
 sudo reboot
 ```
 
-After reboot, verify the mount state and the board service:
+After reboot, verify the mount state and both services:
 
 ```bash
 findmnt / /boot/firmware /tmp /var/tmp /var/log /var/cache /var/lib/NetworkManager
 readlink -f /etc/resolv.conf
 nmcli connection show --active
 getent hosts google.com
+sudo systemctl status mediamtx
 sudo systemctl status txing-board
+curl -sSf http://127.0.0.1:8889/board-cam/ >/dev/null
 ```
 
 ## Behavior of the scaffold

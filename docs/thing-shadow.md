@@ -42,12 +42,12 @@ Schema validation should be done by project code and/or CI checks, while AWS IoT
 - `state.reported.board.wifi.ipv4` (`ipv4 string`, update payload may temporarily use `null` to delete) is the IPv4 address chosen by the OS for the board's current IPv4 default-route interface when the board control publishes.
 - `state.reported.board.wifi.ipv6` (`ipv6 string`, update payload may temporarily use `null` to delete) is the IPv6 address chosen by the OS for the board's current IPv6 default-route interface when the board control publishes.
 - `state.reported.board.video.ready` (`boolean`) indicates whether the board-local MediaMTX-backed video path is ready for a direct browser session.
-- `state.reported.board.video.status` (`"starting" | "ready" | "error"`) is the coarse runtime state of the board-local media service.
+- `state.reported.board.video.status` (`"starting" | "ready" | "error"`) is the coarse runtime state of the board-local MediaMTX probe path.
 - `state.reported.board.video.local.viewerUrl` (`string`, update payload may temporarily use `null` to delete) is the exact MediaMTX viewer URL the local Vite dev app should load in an iframe. In the local MVP it normally uses the board's current IPv4 address.
 - `state.reported.board.video.local.streamPath` (`string`, update payload may temporarily use `null` to delete) is the fixed MediaMTX stream path served by the board-local MediaMTX camera source.
 - `state.reported.board.video.codec.video` (`"h264"` or `null`) is the currently configured video codec for the local board stream.
 - `state.reported.board.video.viewerConnected` (`boolean`) is the board-side viewer-connected flag for the MVP. It is currently conservative and may remain `false` while the MVP uses a separate MediaMTX service owned outside the Python runtime.
-- `state.reported.board.video.lastError` (`string` or `null`) is the last board-local media error message surfaced by the `board-media` service.
+- `state.reported.board.video.lastError` (`string` or `null`) is the last board-local media error message surfaced by `txing-board` while probing MediaMTX.
 
 ## Web admin transport note
 

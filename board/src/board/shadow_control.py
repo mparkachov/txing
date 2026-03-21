@@ -20,7 +20,16 @@ from typing import Any
 import jsonschema
 import paho.mqtt.client as mqtt
 
-from .media_state import DEFAULT_MEDIA_STATE_FILE, build_reported_media_state, load_media_state
+from .media_runtime import (
+    DEFAULT_PROBE_HOST,
+    DEFAULT_PROBE_TIMEOUT_SECONDS,
+    build_live_media_state,
+)
+from .media_state import (
+    DEFAULT_MEDIAMTX_VIEWER_PORT,
+    DEFAULT_STREAM_PATH,
+    build_reported_media_state,
+)
 from .shadow_store import DEFAULT_SHADOW_FILE, save_shadow
 
 LOGGER = logging.getLogger("board.shadow_control")
@@ -74,6 +83,8 @@ DEFAULT_AWS_CONNECT_TIMEOUT = 20.0
 DEFAULT_MQTT_PUBLISH_TIMEOUT = 10.0
 DEFAULT_HEARTBEAT_SECONDS = 60.0
 DEFAULT_RECONNECT_DELAY = 5.0
+DEFAULT_MEDIA_STARTUP_TIMEOUT_SECONDS = 30.0
+DEFAULT_MEDIA_READY_POLL_INTERVAL = 0.5
 DEFAULT_HALT_COMMAND = ("/usr/bin/systemctl", "halt", "--no-wall")
 DEFAULT_ROUTE_PROBE_IPV4 = ("8.8.8.8", 80)
 DEFAULT_ROUTE_PROBE_IPV6 = ("2001:4860:4860::8888", 80, 0, 0)
@@ -88,8 +99,13 @@ class ControlConfig:
     ca_file: Path
     schema_file: Path
     shadow_file: Path
-    media_state_file: Path
     client_id: str
+    stream_path: str
+    viewer_port: int
+    viewer_host: str
+    probe_host: str
+    probe_timeout_seconds: float
+    media_startup_timeout_seconds: float
     board_name: str
     heartbeat_seconds: float
     aws_connect_timeout: float
@@ -103,6 +119,10 @@ class ControlConfig:
 class DefaultRouteAddresses:
     ipv4: str | None
     ipv6: str | None
+
+
+class MediaStartupTimeoutError(RuntimeError):
+    pass
 
 
 class AwsShadowClient:
@@ -477,10 +497,40 @@ def _parse_args() -> argparse.Namespace:
         help="MQTT client id (default: txing-board-<hostname>-<pid>)",
     )
     parser.add_argument(
-        "--media-state-file",
-        type=Path,
-        default=DEFAULT_MEDIA_STATE_FILE,
-        help=f"Path to local board-media runtime state file (default: {DEFAULT_MEDIA_STATE_FILE})",
+        "--stream-path",
+        default=DEFAULT_STREAM_PATH,
+        help=f"Published MediaMTX stream path (default: {DEFAULT_STREAM_PATH})",
+    )
+    parser.add_argument(
+        "--viewer-port",
+        type=int,
+        default=DEFAULT_MEDIAMTX_VIEWER_PORT,
+        help=f"Published MediaMTX WebRTC viewer port (default: {DEFAULT_MEDIAMTX_VIEWER_PORT})",
+    )
+    parser.add_argument(
+        "--viewer-host",
+        default="",
+        help="Optional hostname or address to publish in viewerUrl (default: auto-detect IPv4, then IPv6)",
+    )
+    parser.add_argument(
+        "--probe-host",
+        default=DEFAULT_PROBE_HOST,
+        help=f"Local host to probe for the MediaMTX viewer page (default: {DEFAULT_PROBE_HOST})",
+    )
+    parser.add_argument(
+        "--probe-timeout-seconds",
+        type=float,
+        default=DEFAULT_PROBE_TIMEOUT_SECONDS,
+        help=f"HTTP timeout for probing MediaMTX (default: {DEFAULT_PROBE_TIMEOUT_SECONDS})",
+    )
+    parser.add_argument(
+        "--media-startup-timeout-seconds",
+        type=float,
+        default=DEFAULT_MEDIA_STARTUP_TIMEOUT_SECONDS,
+        help=(
+            "Seconds to wait for MediaMTX readiness before the first shadow publish "
+            f"(default: {DEFAULT_MEDIA_STARTUP_TIMEOUT_SECONDS})"
+        ),
     )
     parser.add_argument(
         "--board-name",
@@ -666,6 +716,21 @@ def _build_board_report(
     return report
 
 
+def _build_live_media_state_from_config(
+    config: ControlConfig,
+    addresses: DefaultRouteAddresses,
+) -> dict[str, Any]:
+    return build_live_media_state(
+        stream_path=config.stream_path,
+        viewer_port=config.viewer_port,
+        viewer_host_override=config.viewer_host,
+        probe_host=config.probe_host,
+        probe_timeout_seconds=config.probe_timeout_seconds,
+        route_ipv4=addresses.ipv4,
+        route_ipv6=addresses.ipv6,
+    )
+
+
 def _build_shutdown_board_report() -> dict[str, Any]:
     return {
         "power": False,
@@ -759,6 +824,68 @@ def _wait_for_stop_or_halt(
         stop_event.wait(min(0.5, remaining))
 
 
+def _wait_for_media_ready(
+    stop_event: threading.Event,
+    shadow_client: AwsShadowClient,
+    config: ControlConfig,
+) -> tuple[DefaultRouteAddresses, dict[str, Any]] | None:
+    deadline = time.monotonic() + config.media_startup_timeout_seconds
+    last_error: str | None = None
+    LOGGER.info(
+        "Waiting for MediaMTX readiness before first shadow publish timeout=%.1fs",
+        config.media_startup_timeout_seconds,
+    )
+    while True:
+        if stop_event.is_set() or shadow_client.halt_requested():
+            return None
+
+        default_route_addresses = _detect_default_route_addresses()
+        media_state = _build_live_media_state_from_config(config, default_route_addresses)
+        if media_state.get("ready") is True:
+            LOGGER.info(
+                "MediaMTX ready for first shadow publish viewer_url=%s",
+                (
+                    media_state.get("local", {}).get("viewerUrl")
+                    if isinstance(media_state.get("local"), dict)
+                    else "-"
+                ),
+            )
+            return default_route_addresses, media_state
+
+        last_error_value = media_state.get("lastError")
+        if isinstance(last_error_value, str) and last_error_value:
+            last_error = last_error_value
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            detail = last_error or "MediaMTX did not report a ready viewer URL"
+            raise MediaStartupTimeoutError(
+                f"timed out waiting for MediaMTX readiness after {config.media_startup_timeout_seconds:.1f}s: {detail}"
+            )
+        stop_event.wait(min(DEFAULT_MEDIA_READY_POLL_INTERVAL, remaining))
+
+
+def _publish_board_report(
+    *,
+    shadow_client: AwsShadowClient,
+    validator: jsonschema.Draft202012Validator,
+    config: ControlConfig,
+    report: dict[str, Any],
+    clear_desired_power: bool = False,
+) -> dict[str, Any]:
+    payload = _build_shadow_update_with_options(
+        report=report,
+        clear_desired_power=clear_desired_power,
+    )
+    _validate_shadow_update(validator, payload)
+    accepted = shadow_client.publish_update(
+        payload,
+        timeout_seconds=config.publish_timeout,
+    )
+    save_shadow(accepted, config.shadow_file)
+    return accepted
+
+
 def _request_system_halt(command: tuple[str, ...]) -> None:
     command_text = shlex.join(command)
     LOGGER.warning("Requesting system halt via %s", command_text)
@@ -788,8 +915,13 @@ def main() -> None:
             ca_file=args.ca_file,
             schema_file=args.schema_file,
             shadow_file=args.shadow_file,
-            media_state_file=args.media_state_file,
             client_id=client_id,
+            stream_path=args.stream_path,
+            viewer_port=args.viewer_port,
+            viewer_host=args.viewer_host,
+            probe_host=args.probe_host,
+            probe_timeout_seconds=args.probe_timeout_seconds,
+            media_startup_timeout_seconds=args.media_startup_timeout_seconds,
             board_name=args.board_name,
             heartbeat_seconds=args.heartbeat_seconds,
             aws_connect_timeout=args.aws_connect_timeout,
@@ -821,25 +953,27 @@ def main() -> None:
 
     shadow_client = AwsShadowClient(config)
     halt_requested = False
+    startup_published = False
 
     try:
-        while not stop_event.is_set() and not shadow_client.halt_requested():
+        while not stop_event.is_set() and not shadow_client.halt_requested() and not startup_published:
             try:
                 shadow_client.ensure_connected(timeout_seconds=config.aws_connect_timeout)
-                default_route_addresses = _detect_default_route_addresses()
-                media_state = load_media_state(config.media_state_file)
+                media_ready = _wait_for_media_ready(stop_event, shadow_client, config)
+                if media_ready is None:
+                    break
+                default_route_addresses, media_state = media_ready
                 report = _build_board_report(
                     addresses=default_route_addresses,
                     power=True,
                     media_state=media_state,
                 )
-                payload = _build_shadow_update(report)
-                _validate_shadow_update(validator, payload)
-                accepted = shadow_client.publish_update(
-                    payload,
-                    timeout_seconds=config.publish_timeout,
+                _publish_board_report(
+                    shadow_client=shadow_client,
+                    validator=validator,
+                    config=config,
+                    report=report,
                 )
-                save_shadow(accepted, config.shadow_file)
                 LOGGER.info(
                     (
                         "Published board shadow update power=%s wifi_online=%s ipv4=%s ipv6=%s "
@@ -857,18 +991,70 @@ def main() -> None:
                         else "-"
                     ),
                 )
-                if config.once or shadow_client.halt_requested():
+                startup_published = True
+                if config.once:
                     break
+            except MediaStartupTimeoutError as err:
+                LOGGER.error("Board startup failed: %s", err)
+                raise SystemExit(1) from err
+            except RuntimeError as err:
+                LOGGER.warning("Board startup publish failed: %s", err)
+                if config.once:
+                    raise SystemExit(1) from err
                 if _wait_for_stop_or_halt(
                     stop_event,
                     shadow_client,
-                    config.heartbeat_seconds,
+                    config.reconnect_delay,
                 ):
                     break
+
+        while (
+            startup_published
+            and not config.once
+            and not stop_event.is_set()
+            and not shadow_client.halt_requested()
+        ):
+            if _wait_for_stop_or_halt(
+                stop_event,
+                shadow_client,
+                config.heartbeat_seconds,
+            ):
+                break
+
+            try:
+                shadow_client.ensure_connected(timeout_seconds=config.aws_connect_timeout)
+                default_route_addresses = _detect_default_route_addresses()
+                media_state = _build_live_media_state_from_config(config, default_route_addresses)
+                report = _build_board_report(
+                    addresses=default_route_addresses,
+                    power=True,
+                    media_state=media_state,
+                )
+                _publish_board_report(
+                    shadow_client=shadow_client,
+                    validator=validator,
+                    config=config,
+                    report=report,
+                )
+                LOGGER.info(
+                    (
+                        "Published board shadow update power=%s wifi_online=%s ipv4=%s ipv6=%s "
+                        "video_status=%s video_ready=%s viewer_url=%s"
+                    ),
+                    report.get("power"),
+                    report.get("wifi", {}).get("online") if isinstance(report.get("wifi"), dict) else None,
+                    report.get("wifi", {}).get("ipv4") if isinstance(report.get("wifi"), dict) else "-",
+                    report.get("wifi", {}).get("ipv6") if isinstance(report.get("wifi"), dict) else "-",
+                    report.get("video", {}).get("status") if isinstance(report.get("video"), dict) else "-",
+                    report.get("video", {}).get("ready") if isinstance(report.get("video"), dict) else "-",
+                    (
+                        report.get("video", {}).get("local", {}).get("viewerUrl")
+                        if isinstance(report.get("video", {}).get("local"), dict)
+                        else "-"
+                    ),
+                )
             except RuntimeError as err:
                 LOGGER.warning("Board shadow publish failed: %s", err)
-                if config.once:
-                    raise SystemExit(1) from err
                 if _wait_for_stop_or_halt(
                     stop_event,
                     shadow_client,
@@ -880,16 +1066,13 @@ def main() -> None:
         if (stop_event.is_set() or halt_requested) and not config.once and shadow_client.is_connected():
             try:
                 report = _build_shutdown_board_report()
-                payload = _build_shadow_update_with_options(
+                _publish_board_report(
+                    shadow_client=shadow_client,
+                    validator=validator,
+                    config=config,
                     report=report,
                     clear_desired_power=True,
                 )
-                _validate_shadow_update(validator, payload)
-                accepted = shadow_client.publish_update(
-                    payload,
-                    timeout_seconds=config.publish_timeout,
-                )
-                save_shadow(accepted, config.shadow_file)
                 LOGGER.info(
                     "Published best-effort clean shutdown board update and cleared desired.board.power"
                 )

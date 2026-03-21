@@ -19,10 +19,10 @@ This checklist tracks only the simplified local MVP:
 
 ## 2. Board Runtime Split
 
-- [x] Keep `txing-board-media` as the dedicated board media service
-- [x] Keep `/run/txing/board-media/state.json` as the runtime handoff
-- [x] Keep `txing-board-media` out of AWS IoT publishing
 - [x] Keep `txing-board` as the only publisher of `board.*`
+- [x] Probe MediaMTX directly inside `txing-board`
+- [x] Gate the first board shadow publish on MediaMTX readiness
+- [x] Keep `mediamtx` as the separate operator-managed media service
 
 ## 3. Media Serving
 

@@ -14,7 +14,6 @@ dependencies = [
 
 [project.scripts]
 board = "board:main"
-board-media = "board.media_service:main"
 
 [build-system]
 requires = ["uv_build>=0.10.6,<0.11.0"]

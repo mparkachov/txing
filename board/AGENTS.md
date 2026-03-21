@@ -16,7 +16,7 @@
 ## Board Video Phase 1
 - Treat board video phase 1 as a headless service-only design.
 - `txing-board` is the only process allowed to publish `board.*` updates into the Thing Shadow.
-- Phase 1 local video uses MediaMTX `rpiCamera` for camera access and a dedicated `board-media` service that only reports MediaMTX readiness.
+- Phase 1 local video uses MediaMTX `rpiCamera` for camera access, and `txing-board` probes MediaMTX readiness directly before publishing board video state.
 - The MVP connects only from the local Vite dev server over plain HTTP and the board's local-LAN address.
 - Phase 1 uses MediaMTX and its built-in viewer page. Do not use `webrtcsink` or `gstwebrtc-api` in this slice.
 - Phase 1 does not use auth, TLS, or cloud upload.
