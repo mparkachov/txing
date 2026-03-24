@@ -2,42 +2,54 @@
 
 ## Status
 
-- Scope: local MVP only
-- Goal: show the board camera in the local Vite dev app over the local LAN
-- Explicit non-goals for this slice: auth, TLS, CloudFront compatibility, browser-to-board control transport, cloud upload
+- Scope: v1 operator video over plain AWS WebRTC only
+- Goal: one live operator path with minimal IT operations
+- Live-control target: `p95` operator glass-to-glass latency under `800 ms` on target links
+- Control model: directional commands, not precision teleoperation
+- Field-test rule: this phase-1 choice can be changed after field tests if the plain-AWS-WebRTC path does not deliver acceptable operator quality
 
-## MVP Decisions
+Explicit non-goals for this slice:
+
+- HLS/DASH as the live control path
+- WebRTC ingestion/storage as the default phase-1 path
+- multiviewer as a requirement
+- a second direct device-to-operator video path by default
+- recording as a requirement
+- low-latency ML consumption
+
+## Phase 1 Decision
 
 - The board stays fully headless.
 - `txing-board` remains the only publisher of `board.*` state into the shared Thing Shadow.
-- MediaMTX is the camera owner and browser-ready WebRTC server:
-  - camera source on the board: MediaMTX `rpiCamera`
-  - browser path on the Mac: MediaMTX built-in viewer page loaded in an `iframe`
-- `txing-board` probes MediaMTX locally and only publishes the first board shadow update after the viewer is ready.
-- The published viewer URL prefers the board's default-route IPv4 address and falls back to IPv6 if IPv4 is unavailable.
-- The MVP is single-viewer and local-dev only.
+- Phase 1 uses one live video path only: board camera -> plain AWS WebRTC signaling channel -> operator.
+- The operator watches the plain AWS WebRTC path, not a board-local viewer page.
+- Phase 1 does not use WebRTC ingestion/storage, multiviewer, or `kvssink`.
+- ML and other cloud-side consumers are explicitly outside the phase-1 media path. If they need video later, that will require a separate follow-on design.
+- A second direct operator path remains a fallback option only if field tests show the plain-AWS-WebRTC path is not good enough.
 
 ## High-Level Architecture
 
 ```text
 txing-board
-  -> probes MediaMTX locally
-  -> derives board.video.local.viewerUrl
-  -> merges board.video.* into reported.board.*
-  -> publishes the combined board state to AWS IoT
+  -> owns board.* shadow state
+  -> reports board.video transport/session metadata
+  -> tracks coarse board video readiness and failures
 
-Raspi Cam v3
-  -> MediaMTX rpiCamera source
-  -> WebRTC viewer page on http://<board-ipv4>:8889/board-cam/
+board video sender
+  -> captures board camera
+  -> encodes H.264
+  -> connects as master through the KVS WebRTC signaling channel
+  -> sends one live stream to the operator path
 
-web (local Vite dev on the Mac)
-  -> reads board.video.local.viewerUrl from shadow
-  -> loads that URL in an iframe
+operator client
+  -> connects as viewer through the KVS WebRTC signaling channel
+  -> receives the live path negotiated by AWS signaling / ICE
+  -> sends directional commands out of band
 ```
 
 ## Shadow Contract
 
-The MVP adds `reported.board.video`:
+Phase 1 uses `reported.board.video` to describe the plain AWS WebRTC live path:
 
 ```json
 {
@@ -47,9 +59,10 @@ The MVP adds `reported.board.video`:
         "video": {
           "ready": true,
           "status": "ready",
-          "local": {
-            "viewerUrl": "http://192.168.0.10:8889/board-cam/",
-            "streamPath": "board-cam"
+          "transport": "aws-webrtc",
+          "session": {
+            "viewerUrl": "https://ops.example.com/txing/video",
+            "channelName": "txing-board-video"
           },
           "codec": {
             "video": "h264"
@@ -65,9 +78,11 @@ The MVP adds `reported.board.video`:
 
 Notes:
 
-- `viewerUrl` is the exact MediaMTX page the local Vite app should load in an iframe.
-- `streamPath` is the fixed MediaMTX path.
-- `viewerConnected` remains conservative in the MVP because MediaMTX owns the browser sessions, not the Python service.
+- `transport=aws-webrtc` is the phase-1 choice.
+- `session.viewerUrl` is the browser entry point when a browser operator route exists.
+- `session.channelName` is the AWS WebRTC signaling channel name for browser or native clients.
+- Phase 1 means plain KVS WebRTC signaling, not ingestion/storage.
+- The earlier `board.video.local.*` MediaMTX fields are legacy compatibility fields from the previous prototype and should be treated as transitional only until implementation catches up.
 
 ## Runtime Layout
 
@@ -78,54 +93,79 @@ Responsibilities:
 - publish all `board.*` Thing Shadow updates
 - keep handling `desired.board.power`
 - refresh board IPv4 and IPv6 on each publish loop
-- probe MediaMTX locally
-- block the first board shadow publish until MediaMTX is ready
-- mirror `board.video.*` into the reported shadow
+- publish board video transport/session metadata
+- gate `board.video.ready` on successful plain AWS WebRTC session readiness
+- surface the last coarse media error through `board.video.lastError`
 
-### MediaMTX
-
-Responsibilities:
-
-- open the Raspberry Pi camera directly with `source: rpiCamera`
-- encode `1920x1080` at `30 fps` with hardware H.264
-- serve the WebRTC viewer page on port `8889`
-- remain a separate operator-installed service outside of AWS IoT publishing
-
-### Browser
+### Board Video Sender
 
 Responsibilities:
 
-- run from the local Vite dev server
-- consume `board.video.local.viewerUrl`
-- load the MediaMTX viewer page in an iframe
+- open the board camera
+- encode H.264
+- establish the plain AWS WebRTC master session
+- publish a single live path to the operator
+- keep the sender simple enough for field validation in v1
+
+### Operator Client
+
+Responsibilities:
+
+- join the plain AWS WebRTC viewer session
+- render the live stream for directional control
+- support the existing browser operator first and allow later native-client adoption
 
 ## Media Serving
 
-The MVP uses:
+Phase 1 uses:
 
-- MediaMTX `rpiCamera`
-- `rpiCameraWidth: 1920`
-- `rpiCameraHeight: 1080`
-- `rpiCameraFPS: 30`
-- `rpiCameraCodec: hardwareH264`
-- MediaMTX WebRTC viewer page on port `8889`
+- plain AWS WebRTC signaling as the only live operator video path
+- H.264 as the expected video codec
+- one live uplink from the device
+- no direct browser-to-board media path in the default design
 
-The Python service does not own the media pipeline. It only probes local MediaMTX readiness and publishes the browser URL into the Thing Shadow.
+Phase 1 does not use:
+
+- WebRTC ingestion/storage
+- multiviewer
+- `kvssink`
+- HLS/DASH for live control
+- a board-local iframe viewer page
+- a second direct operator path by default
+
+## Field Tests
+
+Field tests decide whether phase 1 stays AWS-WebRTC-only or reopens a second direct operator path.
+
+Measure at minimum:
+
+- `p95` operator glass-to-glass latency against the `800 ms` target
+- operator control quality for directional commands
+- jitter and short-stall behavior under weaker links
+- reconnect behavior after temporary link loss
+
+Revisit the architecture if:
+
+- `p95` latency misses the target
+- operator control quality is poor even when average latency looks acceptable
+- the plain AWS WebRTC path adds too much variability for practical use
 
 ## Deferred
 
-Not part of the MVP:
+Not part of phase 1:
 
-- auth
-- TLS
-- deployed HTTPS SPA compatibility
-- browser-to-board control transport
-- `kvssink`
-- cloud upload
+- recording as a requirement
+- low-latency ML consumption
+- cloud-side video ingestion/storage
+- multiviewer
+- HLS/DASH as the operator path
+- a second direct operator video path unless field tests justify it
 
 ## References
 
-- MediaMTX overview: https://mediamtx.org/
-- MediaMTX publish a stream: https://mediamtx.org/docs/usage/publish
-- MediaMTX embed streams: https://mediamtx.org/docs/other/embed-streams-in-a-website
-- MediaMTX configuration reference: https://mediamtx.org/docs/references/configuration-file
+- AWS create signaling channel: https://docs.aws.amazon.com/kinesisvideostreams-webrtc-dg/latest/devguide/create-channel.html
+- AWS ConnectAsMaster: https://docs.aws.amazon.com/kinesisvideostreams-webrtc-dg/latest/devguide/ConnectAsMaster.html
+- AWS GetSignalingChannelEndpoint: https://docs.aws.amazon.com/kinesisvideostreams/latest/dg/API_GetSignalingChannelEndpoint.html
+- AWS Kinesis Video Streams playback: https://docs.aws.amazon.com/kinesisvideostreams/latest/dg/how-playback.html
+- AWS Kinesis Video Streams HLS playback: https://docs.aws.amazon.com/kinesisvideostreams/latest/dg/hls-playback.html
+- AWS Kinesis Video Streams WebRTC IPv6/Dual-Stack: https://docs.aws.amazon.com/kinesisvideostreams-webrtc-dg/latest/devguide/kvswebrtc-ipv6.html

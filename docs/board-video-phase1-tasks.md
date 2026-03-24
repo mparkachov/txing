@@ -1,49 +1,55 @@
 # Board Video MVP Tasks
 
-This checklist tracks only the simplified local MVP:
+This checklist tracks the plain-AWS-WebRTC phase-1 plan.
 
 - headless board
-- local Vite dev server on the Mac
-- direct local-LAN access to the board
-- MediaMTX `rpiCamera` hardware H.264 encode on the board
-- MediaMTX as the separate browser-ready WebRTC server
-- no auth, TLS, browser-to-board control transport, or cloud upload
+- one live operator path through plain AWS WebRTC signaling
+- no HLS/DASH as the live control path
+- no WebRTC ingestion/storage or multiviewer in phase 1
+- directional operator control, not precision teleoperation
+- field tests may still reopen a second direct operator path later
 
 ## 1. Contracts and Docs
 
-- [x] Replace the earlier rswebrtc MVP design doc with the MediaMTX MVP design
-- [x] Update `docs/txing-shadow.schema.json` with `reported.board.video.local.viewerUrl` and `streamPath`
-- [x] Update `docs/thing-shadow.md` with the new `board.video` fields
-- [x] Lock the MVP status enum to `starting | ready | error`
-- [x] Lock the MVP local fields to `viewerUrl` and `streamPath`
+- [x] Replace the old local-MediaMTX phase-1 design with the plain-AWS-WebRTC design
+- [x] Update `docs/thing-shadow.md` to describe the plain-AWS-WebRTC phase-1 contract and mark old local fields as compatibility-only
+- [x] Update `docs/txing-shadow.schema.json` to support the AWS-WebRTC transport/session shape while tolerating legacy local fields
+- [x] Document the phase-1 field-test rule: direct operator video is deferred unless field tests justify it
 
-## 2. Board Runtime Split
+## 2. Board Runtime
 
-- [x] Keep `txing-board` as the only publisher of `board.*`
-- [x] Probe MediaMTX directly inside `txing-board`
-- [x] Gate the first board shadow publish on MediaMTX readiness
-- [x] Keep `mediamtx` as the separate operator-managed media service
+- [ ] Keep `txing-board` as the only publisher of `board.*`
+- [ ] Decide whether the board owns the plain AWS WebRTC master session directly or supervises a dedicated sender
+- [ ] Publish `board.video.transport=aws-webrtc`
+- [ ] Publish `board.video.session.*` metadata for browser/native clients
+- [ ] Gate `board.video.ready` on plain AWS WebRTC session readiness, not a board-local iframe endpoint
+- [ ] Surface coarse sender failures through `board.video.lastError`
+- [ ] Avoid `kvssink` in the phase-1 sender path
 
-## 3. Media Serving
+## 3. Operator Integration
 
-- [x] Replace `webrtcsink` with MediaMTX camera ownership
-- [x] Keep the camera source locked to `1920x1080` at `30 fps`
-- [x] Fix the MediaMTX stream path to `board-cam`
-- [x] Publish the iframe URL as `http://<board-ipv4>:8889/board-cam/`
-- [x] Keep hardware H.264 inside MediaMTX `rpiCamera`
+- [ ] Replace the board-local iframe viewer approach with a plain AWS WebRTC viewer path
+- [ ] Keep the initial operator scope to one human operator
+- [ ] Allow the same phase-1 design to expand to native iOS/Android clients later
 
-## 4. Web Integration
+## 4. ML / Cloud Consumption
 
-- [x] Remove `gstwebrtc-api` from the local web app
-- [x] Read `board.video.local.viewerUrl` and `streamPath` from shadow
-- [x] Keep the board video panel in the signed-in UI
-- [x] Load the MediaMTX viewer page in an iframe from the Vite dev app
-- [x] Keep the MVP single-viewer and local-dev-only
+- [ ] Keep ML and other cloud-side consumers out of the phase-1 media path
+- [ ] Define a separate follow-on cloud consume path if ML needs media later
+- [ ] Do not make low-latency ML a blocker for the operator path
 
-## 5. Explicitly Deferred
+## 5. Field Tests
 
-- [ ] auth
-- [ ] TLS
-- [ ] browser-to-board control transport
-- [ ] `kvssink`
-- [ ] cloud upload
+- [ ] Measure `p95` operator glass-to-glass latency against the `800 ms` target
+- [ ] Measure jitter and short-stall behavior on target links
+- [ ] Validate practical operator quality for directional commands
+- [ ] Revisit the direct operator path only if field tests fail the plain-AWS-WebRTC design
+
+## 6. Explicitly Deferred
+
+- [ ] HLS/DASH as the operator control path
+- [ ] WebRTC ingestion/storage
+- [ ] multiviewer
+- [ ] recording as a requirement
+- [ ] low-latency ML as a requirement
+- [ ] a second direct device-to-operator video path unless field tests justify it

@@ -192,7 +192,6 @@
       "required": [
         "ready",
         "status",
-        "local",
         "codec",
         "viewerConnected",
         "lastError"
@@ -209,6 +208,16 @@
             "error"
           ]
         },
+        "transport": {
+          "type": "string",
+          "enum": [
+            "aws-webrtc",
+            "local-webrtc"
+          ]
+        },
+        "session": {
+          "$ref": "#/$defs/reportedBoardVideoSessionState"
+        },
         "local": {
           "$ref": "#/$defs/reportedBoardVideoLocalState"
         },
@@ -223,6 +232,42 @@
             "string",
             "null"
           ]
+        }
+      },
+      "anyOf": [
+        {
+          "required": [
+            "transport"
+          ]
+        },
+        {
+          "required": [
+            "local"
+          ]
+        }
+      ]
+    },
+    "reportedBoardVideoSessionState": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "viewerUrl",
+        "channelName"
+      ],
+      "properties": {
+        "viewerUrl": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "channelName": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
         }
       }
     },
