@@ -76,8 +76,8 @@ Use this order on a fresh board rebuild:
 
 1. On the development machine, prepare the AWS IoT artifacts in the repo `certs/` directory.
 2. Flash a fresh Raspberry Pi OS Lite image with Raspberry Pi Imager and enable SSH + Wi-Fi.
-3. Boot the board, install local tools, and clone the repo to `/home/maxim/txing`.
-4. Copy the four AWS IoT client files from the development machine to `/home/maxim/txing/certs` on the board.
+3. Boot the board, install local tools, and clone the repo to `/home/user/txing`.
+4. Copy the four AWS IoT client files from the development machine to `/home/user/txing/certs` on the board.
 5. Install MediaMTX and its `systemd` unit on the board.
 6. Build and smoke-test `txing-board` on the normal writable root filesystem.
 7. Enable `mediamtx` and `txing-board` services and verify they survive a reboot.
@@ -85,11 +85,12 @@ Use this order on a fresh board rebuild:
 
 Assumptions used below:
 
-- the board login user is `maxim`
-- the repo path on the board is `/home/maxim/txing`
-- the board is reachable as `maxim@<board-host>`
+- the board login user is `user`
+- `user` is the login account created with Raspberry Pi Imager
+- the repo path on the board is `/home/user/txing`
+- the board is reachable as `user@<board-host>`
 
-If you choose a different Imager username or clone path, replace `/home/maxim` consistently in the commands below.
+If you choose a different Imager username or clone path, replace `/home/user` consistently in the commands below.
 
 ### 1. Prepare AWS Artifacts on the Development Machine
 
@@ -127,12 +128,12 @@ In Raspberry Pi Imager:
 
 - choose Raspberry Pi OS Lite based on Raspberry Pi OS Trixie
 - use the advanced options to set the hostname, username, password, Wi-Fi, locale, and enable SSH
-- if you want to reuse the commands below exactly, set the username to `maxim`
+- if you want to reuse the commands below exactly, set the username to `user`
 
 After the first boot, connect over SSH:
 
 ```bash
-ssh maxim@<board-host>
+ssh user@<board-host>
 ```
 
 ## Initial Setup
@@ -151,9 +152,9 @@ pipx ensurepath
 Start a new shell after `pipx ensurepath`, then clone the repository onto the board:
 
 ```bash
-cd /home/maxim
+cd /home/user
 git clone <your-txing-repo-url> txing
-cd /home/maxim/txing
+cd /home/user/txing
 ```
 
 ## Copy AWS IoT Client Artifacts to the Board
@@ -161,24 +162,24 @@ cd /home/maxim/txing
 From the development machine, create the target directory and copy the shared AWS IoT client files:
 
 ```bash
-ssh maxim@<board-host> 'install -d -m 0755 /home/maxim/txing/certs'
+ssh user@<board-host> 'install -d -m 0755 /home/user/txing/certs'
 scp \
   certs/txing.cert.pem \
   certs/txing.private.key \
   certs/AmazonRootCA1.pem \
   certs/iot-data-ats.endpoint \
-  maxim@<board-host>:/home/maxim/txing/certs/
-ssh maxim@<board-host> '\
-  chmod 0644 /home/maxim/txing/certs/txing.cert.pem \
-             /home/maxim/txing/certs/AmazonRootCA1.pem \
-             /home/maxim/txing/certs/iot-data-ats.endpoint && \
-  chmod 0600 /home/maxim/txing/certs/txing.private.key'
+  user@<board-host>:/home/user/txing/certs/
+ssh user@<board-host> '\
+  chmod 0644 /home/user/txing/certs/txing.cert.pem \
+             /home/user/txing/certs/AmazonRootCA1.pem \
+             /home/user/txing/certs/iot-data-ats.endpoint && \
+  chmod 0600 /home/user/txing/certs/txing.private.key'
 ```
 
 Back on the board, verify the files before building anything:
 
 ```bash
-cd /home/maxim/txing
+cd /home/user/txing
 ls -l certs
 test -s certs/txing.cert.pem
 test -s certs/txing.private.key
@@ -190,23 +191,23 @@ test -s certs/iot-data-ats.endpoint
 
 Assumed project location on the device:
 
-- repo root: `/home/maxim/txing`
-- board project: `/home/maxim/txing/board`
-- shared certs: `/home/maxim/txing/certs`
+- repo root: `/home/user/txing`
+- board project: `/home/user/txing/board`
+- shared certs: `/home/user/txing/certs`
 
 Build the runtime and verify that the board process can publish once in the foreground:
 
 ```bash
-cd /home/maxim/txing
+cd /home/user/txing
 python3 --version
 just board::build
-/home/maxim/txing/board/.venv/bin/board --once
+/home/user/txing/board/.venv/bin/board --once
 ```
 
 For a longer foreground check before installing the service:
 
 ```bash
-cd /home/maxim/txing/board
+cd /home/user/txing/board
 ./.venv/bin/board --heartbeat-seconds 60
 ```
 
@@ -215,15 +216,15 @@ Notes:
 - `just board::build` uses the OS-provided `python3`, installs the locked board environment into `board/.venv` as a non-editable runtime, and precompiles Python bytecode there.
 - If `python3 --version` reports lower than `3.12`, update the OS Python before building the board runtime.
 - Re-run `just board::build` after changing board code, dependencies, or the Python version on the device.
-- Keep `WorkingDirectory=/home/maxim/txing/board` unless you also pass explicit `--cert-file`, `--key-file`, `--ca-file`, `--iot-endpoint-file`, and `--schema-file` paths or set `TXING_REPO_ROOT`.
-- The default runtime paths continue to use `/home/maxim/txing/certs/txing.cert.pem`, `/home/maxim/txing/certs/txing.private.key`, `/home/maxim/txing/certs/AmazonRootCA1.pem`, and `/home/maxim/txing/certs/iot-data-ats.endpoint`.
+- Keep `WorkingDirectory=/home/user/txing/board` unless you also pass explicit `--cert-file`, `--key-file`, `--ca-file`, `--iot-endpoint-file`, and `--schema-file` paths or set `TXING_REPO_ROOT`.
+- The default runtime paths continue to use `/home/user/txing/certs/txing.cert.pem`, `/home/user/txing/certs/txing.private.key`, `/home/user/txing/certs/AmazonRootCA1.pem`, and `/home/user/txing/certs/iot-data-ats.endpoint`.
 
 ## Install as a `systemd` Service
 
 Create or replace `/etc/systemd/system/txing-board.service`, enable `NetworkManager-wait-online.service`, reload `systemd`, and enable the board service. The generated unit pulls in `mediamtx.service` and starts `txing-board` after MediaMTX:
 
 ```bash
-cd /home/maxim/txing
+cd /home/user/txing
 just board::install-service
 ```
 
@@ -238,8 +239,8 @@ Notes:
 
 - The unit intentionally omits `User=` so `systemd` runs it as `root`; that is required for local halt requests from `desired.board.power=false`.
 - If you already have an older `txing-board.service`, update it in place instead of creating a second unit.
-- Remove old `uv run` details if they are still present: `User=maxim`, `Environment=TMPDIR=/tmp`, `Environment=UV_CACHE_DIR=/tmp/uv-cache`, and `ExecStartPre=/usr/bin/mkdir -p /tmp/uv-cache`.
-- If the old unit still uses `/home/maxim/.local/bin/uv run ...`, replace it with `ExecStart=/home/maxim/txing/board/.venv/bin/board --heartbeat-seconds 60`.
+- Remove old `uv run` details if they are still present: `User=user`, `Environment=TMPDIR=/tmp`, `Environment=UV_CACHE_DIR=/tmp/uv-cache`, and `ExecStartPre=/usr/bin/mkdir -p /tmp/uv-cache`.
+- If the old unit still uses `/home/user/.local/bin/uv run ...`, replace it with `ExecStart=/home/user/txing/board/.venv/bin/board --heartbeat-seconds 60`.
 - The generated unit now includes `Wants=mediamtx.service` and `After=mediamtx.service`.
 - `txing-board` waits for a successful local MediaMTX probe before its first shadow publish. If MediaMTX does not become ready within the startup timeout, the process exits non-zero so `systemd` can retry it.
 - If you need custom board arguments, edit `ExecStart=` and run `sudo systemctl daemon-reload && sudo systemctl restart txing-board`.
@@ -274,7 +275,7 @@ The local board video MVP uses a single Python board daemon plus a separate oper
 Useful local commands:
 
 ```bash
-cd /home/maxim/txing/board
+cd /home/user/txing/board
 ./.venv/bin/board --once --debug
 ./.venv/bin/board --once --debug --viewer-host txing
 ```
@@ -327,7 +328,7 @@ tar -xzf "$workdir/$archive" -C "$workdir"
 sudo install -m 0755 "$workdir/mediamtx" /usr/local/bin/mediamtx
 
 sudo install -d -m 0755 /etc/mediamtx
-sudo install -m 0644 /home/maxim/txing/board/examples/mediamtx.yml /etc/mediamtx/mediamtx.yml
+sudo install -m 0644 /home/user/txing/board/examples/mediamtx.yml /etc/mediamtx/mediamtx.yml
 ```
 
 For the IPv4-local MVP, no extra `webrtcAdditionalHosts` entry is required. If you later switch back to IPv6-only local access, add the board's reachable IPv6 address there and restart MediaMTX.
@@ -377,10 +378,10 @@ Look for a line like:
 Build and start the board process with MediaMTX gating:
 
 ```bash
-cd /home/maxim/txing
+cd /home/user/txing
 just board::build
 
-cd /home/maxim/txing/board
+cd /home/user/txing/board
 ./.venv/bin/board --once --debug
 ```
 
@@ -424,7 +425,7 @@ http://192.168.0.10:8889/board-cam/
 Once the foreground checks above pass on the writable root filesystem, install the services in this order:
 
 ```bash
-cd /home/maxim/txing
+cd /home/user/txing
 just board::install-service
 sudo systemctl status mediamtx
 sudo systemctl status txing-board
