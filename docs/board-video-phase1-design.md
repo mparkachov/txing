@@ -82,7 +82,7 @@ Notes:
 - `session.viewerUrl` is the browser entry point when a browser operator route exists.
 - `session.channelName` is the AWS WebRTC signaling channel name for browser or native clients.
 - Phase 1 means plain KVS WebRTC signaling, not ingestion/storage.
-- The earlier `board.video.local.*` MediaMTX fields are legacy compatibility fields from the previous prototype and should be treated as transitional only until implementation catches up.
+- `board.video.local.*` is no longer part of the active phase-1 contract.
 
 ## Runtime Layout
 

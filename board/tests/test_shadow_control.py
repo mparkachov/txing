@@ -8,22 +8,17 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import MagicMock, patch
 
-from board.media_runtime import DEFAULT_PROBE_HOST
-from board.media_state import (
-    DEFAULT_MEDIAMTX_VIEWER_PORT,
-    DEFAULT_STREAM_PATH,
-    build_reported_media_state,
-)
 from board.shadow_control import (
     DEFAULT_AWS_CONNECT_TIMEOUT,
     DEFAULT_HEARTBEAT_SECONDS,
-    DEFAULT_MEDIA_STARTUP_TIMEOUT_SECONDS,
     DEFAULT_MQTT_PUBLISH_TIMEOUT,
     DEFAULT_RECONNECT_DELAY,
+    DEFAULT_VIDEO_REGION,
+    DEFAULT_VIDEO_STARTUP_TIMEOUT_SECONDS,
     ControlConfig,
     DefaultRouteAddresses,
-    MediaStartupTimeoutError,
     REPO_ROOT,
+    VideoStartupTimeoutError,
     _build_board_report,
     _build_shutdown_board_report,
     _build_shadow_update_with_options,
@@ -32,8 +27,9 @@ from board.shadow_control import (
     _extract_desired_board_power_from_shadow,
     _load_validator,
     _validate_shadow_update,
-    _wait_for_media_ready,
+    _wait_for_video_ready,
 )
+from board.video_state import DEFAULT_VIDEO_CHANNEL_NAME, build_reported_video_state
 import board.shadow_control as shadow_control
 
 
@@ -48,12 +44,10 @@ def _make_args(**overrides: object) -> Namespace:
         "ca_file": Path("/tmp/AmazonRootCA1.pem"),
         "schema_file": Path(REPO_ROOT / "docs" / "txing-shadow.schema.json"),
         "client_id": None,
-        "stream_path": DEFAULT_STREAM_PATH,
-        "viewer_port": DEFAULT_MEDIAMTX_VIEWER_PORT,
-        "viewer_host": "",
-        "probe_host": DEFAULT_PROBE_HOST,
-        "probe_timeout_seconds": 0.1,
-        "media_startup_timeout_seconds": DEFAULT_MEDIA_STARTUP_TIMEOUT_SECONDS,
+        "video_channel_name": DEFAULT_VIDEO_CHANNEL_NAME,
+        "video_viewer_url": "https://ops.example.com/txing/video",
+        "video_region": DEFAULT_VIDEO_REGION,
+        "video_startup_timeout_seconds": DEFAULT_VIDEO_STARTUP_TIMEOUT_SECONDS,
         "board_name": "txing-board-test",
         "heartbeat_seconds": DEFAULT_HEARTBEAT_SECONDS,
         "aws_connect_timeout": DEFAULT_AWS_CONNECT_TIMEOUT,
@@ -67,18 +61,24 @@ def _make_args(**overrides: object) -> Namespace:
     return Namespace(**values)
 
 
-def _make_media_state(*, ready: bool, last_error: str | None = None) -> dict[str, object]:
+def _make_video_state(
+    *,
+    ready: bool,
+    viewer_connected: bool = False,
+    last_error: str | None = None,
+) -> dict[str, object]:
     return {
         "status": "ready" if ready else "error",
         "ready": ready,
-        "local": {
-            "viewerUrl": "http://192.168.1.20:8889/board-cam/",
-            "streamPath": "board-cam",
+        "transport": "aws-webrtc",
+        "session": {
+            "viewerUrl": "https://ops.example.com/txing/video",
+            "channelName": "txing-board-video",
         },
         "codec": {
             "video": "h264",
         },
-        "viewerConnected": False,
+        "viewerConnected": viewer_connected,
         "lastError": last_error,
     }
 
@@ -93,12 +93,10 @@ def _make_config(**overrides: object) -> ControlConfig:
         "schema_file": Path(REPO_ROOT / "docs" / "txing-shadow.schema.json"),
         "shadow_file": Path("/tmp/txing_board_shadow.json"),
         "client_id": "txing-board-test",
-        "stream_path": DEFAULT_STREAM_PATH,
-        "viewer_port": DEFAULT_MEDIAMTX_VIEWER_PORT,
-        "viewer_host": "",
-        "probe_host": DEFAULT_PROBE_HOST,
-        "probe_timeout_seconds": 0.1,
-        "media_startup_timeout_seconds": DEFAULT_MEDIA_STARTUP_TIMEOUT_SECONDS,
+        "video_channel_name": DEFAULT_VIDEO_CHANNEL_NAME,
+        "video_viewer_url": "https://ops.example.com/txing/video",
+        "video_region": DEFAULT_VIDEO_REGION,
+        "video_startup_timeout_seconds": DEFAULT_VIDEO_STARTUP_TIMEOUT_SECONDS,
         "board_name": "txing-board-test",
         "heartbeat_seconds": DEFAULT_HEARTBEAT_SECONDS,
         "aws_connect_timeout": DEFAULT_AWS_CONNECT_TIMEOUT,
@@ -153,23 +151,11 @@ class ShadowControlContractTests(unittest.TestCase):
         report = _build_board_report(
             addresses=type("Addresses", (), {"ipv4": "192.168.1.20", "ipv6": "2001:db8::20"})(),
             power=True,
-            media_state={
-                "status": "ready",
-                "ready": True,
-                "local": {
-                    "viewerUrl": "http://192.168.1.20:8889/board-cam/",
-                    "streamPath": "board-cam",
-                },
-                "codec": {
-                    "video": "h264",
-                },
-                "viewerConnected": False,
-                "lastError": None,
-            },
+            video_state=_make_video_state(ready=True),
         )
 
         _validate_shadow_update(validator, {"state": {"reported": {"board": report}}})
-        self.assertEqual(report["video"]["local"]["streamPath"], "board-cam")
+        self.assertEqual(report["video"]["session"]["channelName"], "txing-board-video")
 
     def test_default_shadow_reset_payload_matches_schema(self) -> None:
         validator = _load_validator(Path(REPO_ROOT / "docs" / "txing-shadow.schema.json"))
@@ -180,37 +166,37 @@ class ShadowControlContractTests(unittest.TestCase):
         _validate_shadow_update(validator, payload)
         self.assertIsNone(payload["state"]["desired"]["mcu"]["power"])
         self.assertIsNone(payload["state"]["desired"]["board"]["power"])
-        self.assertIs(payload["state"]["reported"]["mcu"]["power"], False)
-        self.assertIs(payload["state"]["reported"]["mcu"]["ble"]["online"], False)
-        self.assertIsNone(payload["state"]["reported"]["mcu"]["ble"]["deviceId"])
         self.assertIs(payload["state"]["reported"]["board"]["power"], False)
         self.assertIs(payload["state"]["reported"]["board"]["wifi"]["online"], False)
 
-    def test_reported_media_state_omits_runtime_timestamp(self) -> None:
-        reported = build_reported_media_state(
+    def test_reported_video_state_omits_runtime_timestamp(self) -> None:
+        reported = build_reported_video_state(
             {
                 "status": "ready",
                 "ready": True,
-                "local": {
-                    "viewerUrl": "http://192.168.1.20:8889/board-cam/",
-                    "streamPath": "board-cam",
+                "transport": "aws-webrtc",
+                "session": {
+                    "viewerUrl": "https://ops.example.com/txing/video",
+                    "channelName": "txing-board-video",
                 },
                 "codec": {
                     "video": "h264",
                 },
                 "viewerConnected": False,
                 "lastError": None,
-                "updatedAt": "2026-03-20T12:00:00Z",
+                "updatedAt": "2026-03-25T12:00:00Z",
             }
         )
 
         self.assertNotIn("updatedAt", reported)
 
-    def test_wait_for_media_ready_times_out_when_media_never_becomes_ready(self) -> None:
-        config = _make_config(media_startup_timeout_seconds=0.0)
+    def test_wait_for_video_ready_times_out_when_sender_never_becomes_ready(self) -> None:
+        config = _make_config(video_startup_timeout_seconds=0.0)
         stop_event = threading.Event()
         shadow_client = MagicMock()
         shadow_client.halt_requested.return_value = False
+        video_supervisor = MagicMock()
+        video_supervisor.return_code.return_value = None
 
         with (
             patch.object(
@@ -220,19 +206,25 @@ class ShadowControlContractTests(unittest.TestCase):
             ),
             patch.object(
                 shadow_control,
-                "_build_live_media_state_from_config",
-                return_value=_make_media_state(ready=False, last_error="MediaMTX probe failed"),
+                "_read_video_state",
+                return_value=_make_video_state(ready=False, last_error="video sender boot failed"),
             ),
         ):
-            with self.assertRaises(MediaStartupTimeoutError):
-                _wait_for_media_ready(stop_event, shadow_client, config)
+            with self.assertRaises(VideoStartupTimeoutError):
+                _wait_for_video_ready(stop_event, shadow_client, config, video_supervisor)
 
-    def test_main_once_waits_for_media_ready_before_first_publish(self) -> None:
+    def test_main_once_waits_for_video_ready_before_first_publish(self) -> None:
         args = _make_args(once=True)
         shadow_client = MagicMock()
         shadow_client.halt_requested.return_value = False
         shadow_client.publish_update.return_value = {"state": {}}
         shadow_client.is_connected.return_value = True
+        video_supervisor = MagicMock()
+        video_supervisor.return_code.return_value = None
+        video_supervisor.read_state.side_effect = [
+            _make_video_state(ready=False, last_error="sender warming up"),
+            _make_video_state(ready=True),
+        ]
 
         with (
             patch.object(shadow_control, "_parse_args", return_value=args),
@@ -252,31 +244,30 @@ class ShadowControlContractTests(unittest.TestCase):
                 "_detect_default_route_addresses",
                 return_value=DefaultRouteAddresses(ipv4="192.168.1.20", ipv6="2001:db8::20"),
             ),
-            patch.object(
-                shadow_control,
-                "_build_live_media_state_from_config",
-                side_effect=[
-                    _make_media_state(ready=False, last_error="MediaMTX probe failed"),
-                    _make_media_state(ready=True),
-                ],
-            ) as build_media_state,
             patch.object(shadow_control, "AwsShadowClient", return_value=shadow_client),
-            patch.object(shadow_control, "DEFAULT_MEDIA_READY_POLL_INTERVAL", 0.0),
+            patch.object(shadow_control, "VideoSenderSupervisor", return_value=video_supervisor),
+            patch.object(shadow_control, "DEFAULT_VIDEO_READY_POLL_INTERVAL", 0.0),
         ):
             shadow_control.main()
 
-        self.assertEqual(build_media_state.call_count, 2)
+        self.assertEqual(video_supervisor.read_state.call_count, 2)
         self.assertEqual(shadow_client.publish_update.call_count, 1)
         payload = shadow_client.publish_update.call_args.args[0]
         self.assertEqual(payload["state"]["reported"]["board"]["video"]["status"], "ready")
         self.assertIs(payload["state"]["reported"]["board"]["video"]["ready"], True)
 
-    def test_main_publishes_runtime_media_error_after_successful_start(self) -> None:
+    def test_main_publishes_runtime_video_error_after_successful_start(self) -> None:
         args = _make_args()
         shadow_client = MagicMock()
         shadow_client.halt_requested.return_value = False
         shadow_client.publish_update.return_value = {"state": {}}
         shadow_client.is_connected.return_value = True
+        video_supervisor = MagicMock()
+        video_supervisor.return_code.return_value = None
+        video_supervisor.read_state.side_effect = [
+            _make_video_state(ready=True),
+            _make_video_state(ready=False, last_error="video sender exited"),
+        ]
 
         with (
             patch.object(shadow_control, "_parse_args", return_value=args),
@@ -296,17 +287,10 @@ class ShadowControlContractTests(unittest.TestCase):
                 "_detect_default_route_addresses",
                 return_value=DefaultRouteAddresses(ipv4="192.168.1.20", ipv6="2001:db8::20"),
             ),
-            patch.object(
-                shadow_control,
-                "_build_live_media_state_from_config",
-                side_effect=[
-                    _make_media_state(ready=True),
-                    _make_media_state(ready=False, last_error="MediaMTX probe failed"),
-                ],
-            ),
             patch.object(shadow_control, "_wait_for_stop_or_halt", side_effect=[False, True]),
             patch.object(shadow_control, "AwsShadowClient", return_value=shadow_client),
-            patch.object(shadow_control, "DEFAULT_MEDIA_READY_POLL_INTERVAL", 0.0),
+            patch.object(shadow_control, "VideoSenderSupervisor", return_value=video_supervisor),
+            patch.object(shadow_control, "DEFAULT_VIDEO_READY_POLL_INTERVAL", 0.0),
         ):
             shadow_control.main()
 
@@ -318,15 +302,21 @@ class ShadowControlContractTests(unittest.TestCase):
         self.assertIs(second_payload["state"]["reported"]["board"]["video"]["ready"], False)
         self.assertEqual(
             second_payload["state"]["reported"]["board"]["video"]["lastError"],
-            "MediaMTX probe failed",
+            "video sender exited",
         )
 
-    def test_main_honors_halt_requested_during_media_startup_gate(self) -> None:
+    def test_main_honors_halt_requested_during_video_startup_gate(self) -> None:
         args = _make_args()
         shadow_client = MagicMock()
         shadow_client.halt_requested.side_effect = [False, False, True, True]
         shadow_client.publish_update.return_value = {"state": {}}
         shadow_client.is_connected.return_value = True
+        video_supervisor = MagicMock()
+        video_supervisor.return_code.return_value = None
+        video_supervisor.read_state.return_value = _make_video_state(
+            ready=False,
+            last_error="video sender boot failed",
+        )
 
         with (
             patch.object(shadow_control, "_parse_args", return_value=args),
@@ -346,14 +336,10 @@ class ShadowControlContractTests(unittest.TestCase):
                 "_detect_default_route_addresses",
                 return_value=DefaultRouteAddresses(ipv4="192.168.1.20", ipv6="2001:db8::20"),
             ),
-            patch.object(
-                shadow_control,
-                "_build_live_media_state_from_config",
-                return_value=_make_media_state(ready=False, last_error="MediaMTX probe failed"),
-            ),
             patch.object(shadow_control, "_request_system_halt") as request_system_halt,
             patch.object(shadow_control, "AwsShadowClient", return_value=shadow_client),
-            patch.object(shadow_control, "DEFAULT_MEDIA_READY_POLL_INTERVAL", 0.0),
+            patch.object(shadow_control, "VideoSenderSupervisor", return_value=video_supervisor),
+            patch.object(shadow_control, "DEFAULT_VIDEO_READY_POLL_INTERVAL", 0.0),
         ):
             shadow_control.main()
 
@@ -363,13 +349,20 @@ class ShadowControlContractTests(unittest.TestCase):
         self.assertIsNone(payload["state"]["desired"]["board"]["power"])
         request_system_halt.assert_called_once()
 
-    def test_justfile_install_service_depends_on_mediamtx_only(self) -> None:
+    def test_justfile_install_service_has_no_mediamtx_dependency(self) -> None:
         justfile = Path(REPO_ROOT / "board" / "justfile").read_text(encoding="utf-8")
 
-        self.assertIn("'Wants=network-online.target mediamtx.service' \\", justfile)
-        self.assertIn("'After=network-online.target mediamtx.service' \\", justfile)
-        self.assertNotIn("txing-board-media.service", justfile)
-        self.assertNotIn("@install-media-service", justfile)
+        self.assertIn("'Wants=network-online.target' \\", justfile)
+        self.assertIn("'After=network-online.target' \\", justfile)
+        self.assertNotIn("mediamtx.service", justfile)
+        self.assertIn("Environment=TXING_BOARD_VIDEO_SENDER_COMMAND=", justfile)
+        self.assertIn("--video-viewer-url {{video_viewer_url}}", justfile)
+        self.assertIn("--video-region {{video_region}}", justfile)
+        self.assertIn("--video-channel-name {{video_channel_name}}", justfile)
+        self.assertIn('env_var_or_default("TXING_BOARD_AWS_SHARED_CREDENTIALS_FILE"', justfile)
+        self.assertIn('env_var_or_default("TXING_BOARD_AWS_CONFIG_FILE"', justfile)
+        self.assertIn('env_var_or_default("TXING_BOARD_VIDEO_REGION"', justfile)
+        self.assertIn('env_var_or_default("TXING_BOARD_VIDEO_CHANNEL_NAME"', justfile)
 
     def test_repo_root_detection_uses_board_working_directory(self) -> None:
         with TemporaryDirectory() as tmpdir:

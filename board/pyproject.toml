@@ -8,12 +8,14 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "boto3>=1.42,<2",
     "jsonschema>=4.25,<5",
     "paho-mqtt>=2,<3",
 ]
 
 [project.scripts]
 board = "board:main"
+board-video-sender = "board.video_sender:main"
 
 [build-system]
 requires = ["uv_build>=0.10.6,<0.11.0"]

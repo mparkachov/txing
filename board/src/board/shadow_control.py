@@ -20,17 +20,13 @@ from typing import Any
 import jsonschema
 import paho.mqtt.client as mqtt
 
-from .media_runtime import (
-    DEFAULT_PROBE_HOST,
-    DEFAULT_PROBE_TIMEOUT_SECONDS,
-    build_live_media_state,
-)
-from .media_state import (
-    DEFAULT_MEDIAMTX_VIEWER_PORT,
-    DEFAULT_STREAM_PATH,
-    build_reported_media_state,
-)
 from .shadow_store import DEFAULT_SHADOW_FILE, save_shadow
+from .video_sender import VideoSenderSupervisor
+from .video_state import (
+    DEFAULT_VIDEO_CHANNEL_NAME,
+    DEFAULT_VIDEO_STATE_FILE,
+    build_reported_video_state,
+)
 
 LOGGER = logging.getLogger("board.shadow_control")
 MQTT_LOGGER = logging.getLogger("board.shadow_control.mqtt")
@@ -83,8 +79,9 @@ DEFAULT_AWS_CONNECT_TIMEOUT = 20.0
 DEFAULT_MQTT_PUBLISH_TIMEOUT = 10.0
 DEFAULT_HEARTBEAT_SECONDS = 60.0
 DEFAULT_RECONNECT_DELAY = 5.0
-DEFAULT_MEDIA_STARTUP_TIMEOUT_SECONDS = 30.0
-DEFAULT_MEDIA_READY_POLL_INTERVAL = 0.5
+DEFAULT_VIDEO_REGION = "eu-central-1"
+DEFAULT_VIDEO_STARTUP_TIMEOUT_SECONDS = 30.0
+DEFAULT_VIDEO_READY_POLL_INTERVAL = 0.5
 DEFAULT_HALT_COMMAND = ("/usr/bin/systemctl", "halt", "--no-wall")
 DEFAULT_ROUTE_PROBE_IPV4 = ("8.8.8.8", 80)
 DEFAULT_ROUTE_PROBE_IPV6 = ("2001:4860:4860::8888", 80, 0, 0)
@@ -100,12 +97,10 @@ class ControlConfig:
     schema_file: Path
     shadow_file: Path
     client_id: str
-    stream_path: str
-    viewer_port: int
-    viewer_host: str
-    probe_host: str
-    probe_timeout_seconds: float
-    media_startup_timeout_seconds: float
+    video_channel_name: str
+    video_viewer_url: str
+    video_region: str
+    video_startup_timeout_seconds: float
     board_name: str
     heartbeat_seconds: float
     aws_connect_timeout: float
@@ -121,7 +116,7 @@ class DefaultRouteAddresses:
     ipv6: str | None
 
 
-class MediaStartupTimeoutError(RuntimeError):
+class VideoStartupTimeoutError(RuntimeError):
     pass
 
 
@@ -497,39 +492,27 @@ def _parse_args() -> argparse.Namespace:
         help="MQTT client id (default: txing-board-<hostname>-<pid>)",
     )
     parser.add_argument(
-        "--stream-path",
-        default=DEFAULT_STREAM_PATH,
-        help=f"Published MediaMTX stream path (default: {DEFAULT_STREAM_PATH})",
+        "--video-channel-name",
+        default=DEFAULT_VIDEO_CHANNEL_NAME,
+        help=f"AWS KVS signaling channel name (default: {DEFAULT_VIDEO_CHANNEL_NAME})",
     )
     parser.add_argument(
-        "--viewer-port",
-        type=int,
-        default=DEFAULT_MEDIAMTX_VIEWER_PORT,
-        help=f"Published MediaMTX WebRTC viewer port (default: {DEFAULT_MEDIAMTX_VIEWER_PORT})",
-    )
-    parser.add_argument(
-        "--viewer-host",
+        "--video-viewer-url",
         default="",
-        help="Optional hostname or address to publish in viewerUrl (default: auto-detect IPv4, then IPv6)",
+        help="Published operator-facing browser URL for the board video route",
     )
     parser.add_argument(
-        "--probe-host",
-        default=DEFAULT_PROBE_HOST,
-        help=f"Local host to probe for the MediaMTX viewer page (default: {DEFAULT_PROBE_HOST})",
+        "--video-region",
+        default=DEFAULT_VIDEO_REGION,
+        help=f"AWS region for the board video signaling channel (default: {DEFAULT_VIDEO_REGION})",
     )
     parser.add_argument(
-        "--probe-timeout-seconds",
+        "--video-startup-timeout-seconds",
         type=float,
-        default=DEFAULT_PROBE_TIMEOUT_SECONDS,
-        help=f"HTTP timeout for probing MediaMTX (default: {DEFAULT_PROBE_TIMEOUT_SECONDS})",
-    )
-    parser.add_argument(
-        "--media-startup-timeout-seconds",
-        type=float,
-        default=DEFAULT_MEDIA_STARTUP_TIMEOUT_SECONDS,
+        default=DEFAULT_VIDEO_STARTUP_TIMEOUT_SECONDS,
         help=(
-            "Seconds to wait for MediaMTX readiness before the first shadow publish "
-            f"(default: {DEFAULT_MEDIA_STARTUP_TIMEOUT_SECONDS})"
+            "Seconds to wait for board video sender readiness before the first shadow publish "
+            f"(default: {DEFAULT_VIDEO_STARTUP_TIMEOUT_SECONDS})"
         ),
     )
     parser.add_argument(
@@ -612,6 +595,13 @@ def _read_iot_endpoint(endpoint: str | None, endpoint_file: Path) -> str:
     if not value:
         raise RuntimeError(f"AWS IoT endpoint file {endpoint_file} is empty")
     return value
+
+
+def _require_non_empty_option(value: str, option_name: str) -> str:
+    stripped = value.strip()
+    if not stripped:
+        raise RuntimeError(f"{option_name} must not be empty")
+    return stripped
 
 
 def _sanitize_client_id(value: str) -> str:
@@ -701,7 +691,7 @@ def _build_board_report(
     *,
     addresses: DefaultRouteAddresses,
     power: bool,
-    media_state: dict[str, Any] | None = None,
+    video_state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     report: dict[str, Any] = {
         "power": power,
@@ -711,24 +701,9 @@ def _build_board_report(
             "ipv6": addresses.ipv6,
         },
     }
-    if isinstance(media_state, dict):
-        report["video"] = build_reported_media_state(media_state)
+    if isinstance(video_state, dict):
+        report["video"] = build_reported_video_state(video_state)
     return report
-
-
-def _build_live_media_state_from_config(
-    config: ControlConfig,
-    addresses: DefaultRouteAddresses,
-) -> dict[str, Any]:
-    return build_live_media_state(
-        stream_path=config.stream_path,
-        viewer_port=config.viewer_port,
-        viewer_host_override=config.viewer_host,
-        probe_host=config.probe_host,
-        probe_timeout_seconds=config.probe_timeout_seconds,
-        route_ipv4=addresses.ipv4,
-        route_ipv6=addresses.ipv6,
-    )
 
 
 def _build_shutdown_board_report() -> dict[str, Any]:
@@ -824,45 +799,62 @@ def _wait_for_stop_or_halt(
         stop_event.wait(min(0.5, remaining))
 
 
-def _wait_for_media_ready(
+def _read_video_state(
+    video_supervisor: VideoSenderSupervisor,
+) -> dict[str, Any]:
+    return video_supervisor.read_state()
+
+
+def _wait_for_video_ready(
     stop_event: threading.Event,
     shadow_client: AwsShadowClient,
     config: ControlConfig,
+    video_supervisor: VideoSenderSupervisor,
 ) -> tuple[DefaultRouteAddresses, dict[str, Any]] | None:
-    deadline = time.monotonic() + config.media_startup_timeout_seconds
+    deadline = time.monotonic() + config.video_startup_timeout_seconds
     last_error: str | None = None
+    video_supervisor.start()
     LOGGER.info(
-        "Waiting for MediaMTX readiness before first shadow publish timeout=%.1fs",
-        config.media_startup_timeout_seconds,
+        "Waiting for board video sender readiness before first shadow publish timeout=%.1fs",
+        config.video_startup_timeout_seconds,
     )
     while True:
         if stop_event.is_set() or shadow_client.halt_requested():
             return None
 
         default_route_addresses = _detect_default_route_addresses()
-        media_state = _build_live_media_state_from_config(config, default_route_addresses)
-        if media_state.get("ready") is True:
+        video_state = _read_video_state(video_supervisor)
+        if video_state.get("ready") is True:
             LOGGER.info(
-                "MediaMTX ready for first shadow publish viewer_url=%s",
+                "Board video sender ready for first shadow publish viewer_url=%s channel_name=%s",
                 (
-                    media_state.get("local", {}).get("viewerUrl")
-                    if isinstance(media_state.get("local"), dict)
+                    video_state.get("session", {}).get("viewerUrl")
+                    if isinstance(video_state.get("session"), dict)
+                    else "-"
+                ),
+                (
+                    video_state.get("session", {}).get("channelName")
+                    if isinstance(video_state.get("session"), dict)
                     else "-"
                 ),
             )
-            return default_route_addresses, media_state
+            return default_route_addresses, video_state
 
-        last_error_value = media_state.get("lastError")
+        last_error_value = video_state.get("lastError")
         if isinstance(last_error_value, str) and last_error_value:
             last_error = last_error_value
 
+        if video_supervisor.return_code() is not None:
+            detail = last_error or f"video sender process exited with code {video_supervisor.return_code()}"
+            raise VideoStartupTimeoutError(detail)
+
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            detail = last_error or "MediaMTX did not report a ready viewer URL"
-            raise MediaStartupTimeoutError(
-                f"timed out waiting for MediaMTX readiness after {config.media_startup_timeout_seconds:.1f}s: {detail}"
+            detail = last_error or "video sender did not report ready"
+            raise VideoStartupTimeoutError(
+                f"timed out waiting for video sender readiness after {config.video_startup_timeout_seconds:.1f}s: {detail}"
             )
-        stop_event.wait(min(DEFAULT_MEDIA_READY_POLL_INTERVAL, remaining))
+        stop_event.wait(min(DEFAULT_VIDEO_READY_POLL_INTERVAL, remaining))
 
 
 def _publish_board_report(
@@ -905,6 +897,18 @@ def main() -> None:
         _require_file(args.key_file, "AWS IoT client private key")
         _require_file(args.ca_file, "AWS IoT root CA")
         _require_file(args.schema_file, "Thing Shadow schema file")
+        video_viewer_url = _require_non_empty_option(
+            args.video_viewer_url,
+            "--video-viewer-url",
+        )
+        video_region = _require_non_empty_option(
+            args.video_region,
+            "--video-region",
+        )
+        video_channel_name = _require_non_empty_option(
+            args.video_channel_name,
+            "--video-channel-name",
+        )
         board_client_suffix = _sanitize_client_id(args.board_name)
         client_id = args.client_id or f"txing-board-{board_client_suffix}-{os.getpid()}"
         config = ControlConfig(
@@ -916,12 +920,10 @@ def main() -> None:
             schema_file=args.schema_file,
             shadow_file=args.shadow_file,
             client_id=client_id,
-            stream_path=args.stream_path,
-            viewer_port=args.viewer_port,
-            viewer_host=args.viewer_host,
-            probe_host=args.probe_host,
-            probe_timeout_seconds=args.probe_timeout_seconds,
-            media_startup_timeout_seconds=args.media_startup_timeout_seconds,
+            video_channel_name=video_channel_name,
+            video_viewer_url=video_viewer_url,
+            video_region=video_region,
+            video_startup_timeout_seconds=args.video_startup_timeout_seconds,
             board_name=args.board_name,
             heartbeat_seconds=args.heartbeat_seconds,
             aws_connect_timeout=args.aws_connect_timeout,
@@ -952,6 +954,12 @@ def main() -> None:
     )
 
     shadow_client = AwsShadowClient(config)
+    video_supervisor = VideoSenderSupervisor(
+        channel_name=config.video_channel_name,
+        viewer_url=config.video_viewer_url,
+        region=config.video_region,
+        state_file=DEFAULT_VIDEO_STATE_FILE,
+    )
     halt_requested = False
     startup_published = False
 
@@ -959,14 +967,19 @@ def main() -> None:
         while not stop_event.is_set() and not shadow_client.halt_requested() and not startup_published:
             try:
                 shadow_client.ensure_connected(timeout_seconds=config.aws_connect_timeout)
-                media_ready = _wait_for_media_ready(stop_event, shadow_client, config)
-                if media_ready is None:
+                video_ready = _wait_for_video_ready(
+                    stop_event,
+                    shadow_client,
+                    config,
+                    video_supervisor,
+                )
+                if video_ready is None:
                     break
-                default_route_addresses, media_state = media_ready
+                default_route_addresses, video_state = video_ready
                 report = _build_board_report(
                     addresses=default_route_addresses,
                     power=True,
-                    media_state=media_state,
+                    video_state=video_state,
                 )
                 _publish_board_report(
                     shadow_client=shadow_client,
@@ -986,15 +999,15 @@ def main() -> None:
                     report.get("video", {}).get("status") if isinstance(report.get("video"), dict) else "-",
                     report.get("video", {}).get("ready") if isinstance(report.get("video"), dict) else "-",
                     (
-                        report.get("video", {}).get("local", {}).get("viewerUrl")
-                        if isinstance(report.get("video", {}).get("local"), dict)
+                        report.get("video", {}).get("session", {}).get("viewerUrl")
+                        if isinstance(report.get("video", {}).get("session"), dict)
                         else "-"
                     ),
                 )
                 startup_published = True
                 if config.once:
                     break
-            except MediaStartupTimeoutError as err:
+            except VideoStartupTimeoutError as err:
                 LOGGER.error("Board startup failed: %s", err)
                 raise SystemExit(1) from err
             except RuntimeError as err:
@@ -1023,12 +1036,13 @@ def main() -> None:
 
             try:
                 shadow_client.ensure_connected(timeout_seconds=config.aws_connect_timeout)
+                video_supervisor.ensure_running()
                 default_route_addresses = _detect_default_route_addresses()
-                media_state = _build_live_media_state_from_config(config, default_route_addresses)
+                video_state = _read_video_state(video_supervisor)
                 report = _build_board_report(
                     addresses=default_route_addresses,
                     power=True,
-                    media_state=media_state,
+                    video_state=video_state,
                 )
                 _publish_board_report(
                     shadow_client=shadow_client,
@@ -1048,8 +1062,8 @@ def main() -> None:
                     report.get("video", {}).get("status") if isinstance(report.get("video"), dict) else "-",
                     report.get("video", {}).get("ready") if isinstance(report.get("video"), dict) else "-",
                     (
-                        report.get("video", {}).get("local", {}).get("viewerUrl")
-                        if isinstance(report.get("video", {}).get("local"), dict)
+                        report.get("video", {}).get("session", {}).get("viewerUrl")
+                        if isinstance(report.get("video", {}).get("session"), dict)
                         else "-"
                     ),
                 )
@@ -1079,6 +1093,7 @@ def main() -> None:
             except RuntimeError as err:
                 LOGGER.warning("Failed to publish best-effort shutdown board update: %s", err)
     finally:
+        video_supervisor.stop()
         shadow_client.close()
 
     if halt_requested:

@@ -13,22 +13,22 @@ This checklist tracks the plain-AWS-WebRTC phase-1 plan.
 
 - [x] Replace the old local-MediaMTX phase-1 design with the plain-AWS-WebRTC design
 - [x] Update `docs/thing-shadow.md` to describe the plain-AWS-WebRTC phase-1 contract and mark old local fields as compatibility-only
-- [x] Update `docs/txing-shadow.schema.json` to support the AWS-WebRTC transport/session shape while tolerating legacy local fields
+- [x] Update `docs/txing-shadow.schema.json` to support the AWS-WebRTC transport/session shape
 - [x] Document the phase-1 field-test rule: direct operator video is deferred unless field tests justify it
 
 ## 2. Board Runtime
 
-- [ ] Keep `txing-board` as the only publisher of `board.*`
-- [ ] Decide whether the board owns the plain AWS WebRTC master session directly or supervises a dedicated sender
-- [ ] Publish `board.video.transport=aws-webrtc`
-- [ ] Publish `board.video.session.*` metadata for browser/native clients
-- [ ] Gate `board.video.ready` on plain AWS WebRTC session readiness, not a board-local iframe endpoint
-- [ ] Surface coarse sender failures through `board.video.lastError`
+- [x] Keep `txing-board` as the only publisher of `board.*`
+- [x] Decide whether the board owns the plain AWS WebRTC master session directly or supervises a dedicated sender
+- [x] Publish `board.video.transport=aws-webrtc`
+- [x] Publish `board.video.session.*` metadata for browser/native clients
+- [x] Gate `board.video.ready` on plain AWS WebRTC session readiness, not a board-local iframe endpoint
+- [x] Surface coarse sender failures through `board.video.lastError`
 - [ ] Avoid `kvssink` in the phase-1 sender path
 
 ## 3. Operator Integration
 
-- [ ] Replace the board-local iframe viewer approach with a plain AWS WebRTC viewer path
+- [x] Replace the board-local iframe viewer approach with a plain AWS WebRTC viewer path
 - [ ] Keep the initial operator scope to one human operator
 - [ ] Allow the same phase-1 design to expand to native iOS/Android clients later
 

@@ -1,0 +1,468 @@
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import shlex
+import signal
+import subprocess
+import sys
+import threading
+import time
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+import boto3
+
+from .video_state import (
+    DEFAULT_VIDEO_CHANNEL_NAME,
+    DEFAULT_VIDEO_CODEC,
+    DEFAULT_VIDEO_STATE_FILE,
+    VIDEO_STATUS_ERROR,
+    VIDEO_STATUS_READY,
+    VIDEO_STATUS_STARTING,
+    VIDEO_TRANSPORT,
+    load_video_state,
+)
+
+DEFAULT_ASSUME_READY_AFTER_SECONDS = 3.0
+DEFAULT_SENDER_COMMAND_ENV = "TXING_BOARD_VIDEO_SENDER_COMMAND"
+DEFAULT_READY_PATTERN_ENV = "TXING_BOARD_VIDEO_READY_PATTERN"
+DEFAULT_VIEWER_CONNECTED_PATTERN_ENV = "TXING_BOARD_VIDEO_VIEWER_CONNECTED_PATTERN"
+DEFAULT_VIEWER_DISCONNECTED_PATTERN_ENV = "TXING_BOARD_VIDEO_VIEWER_DISCONNECTED_PATTERN"
+DEFAULT_READY_PATTERN = r"^TXING_KVS_READY(?:\s|$)"
+DEFAULT_VIEWER_CONNECTED_PATTERN = r"^TXING_VIEWER_CONNECTED(?:\s|$)"
+DEFAULT_VIEWER_DISCONNECTED_PATTERN = r"^TXING_VIEWER_DISCONNECTED(?:\s|$)"
+
+
+def _utc_now() -> str:
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _build_state(
+    *,
+    status: str,
+    ready: bool,
+    viewer_url: str,
+    channel_name: str,
+    viewer_connected: bool,
+    last_error: str | None,
+) -> dict[str, Any]:
+    return {
+        "status": status,
+        "ready": ready,
+        "transport": VIDEO_TRANSPORT,
+        "session": {
+            "viewerUrl": viewer_url,
+            "channelName": channel_name,
+        },
+        "codec": {
+            "video": DEFAULT_VIDEO_CODEC,
+        },
+        "viewerConnected": viewer_connected,
+        "lastError": last_error,
+        "updatedAt": _utc_now(),
+    }
+
+
+def _write_state_file(state_file: Path, payload: dict[str, Any]) -> None:
+    state_file.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = state_file.with_suffix(f"{state_file.suffix}.tmp")
+    temporary_path.write_text(
+        json.dumps(payload, sort_keys=True),
+        encoding="utf-8",
+    )
+    temporary_path.replace(state_file)
+
+
+def _resolve_channel_arn(*, region: str, channel_name: str) -> str:
+    try:
+        client = boto3.client("kinesisvideo", region_name=region)
+        response = client.describe_signaling_channel(ChannelName=channel_name)
+        channel_info = response.get("ChannelInfo") or {}
+        channel_arn = channel_info.get("ChannelARN")
+        if not isinstance(channel_arn, str) or not channel_arn.strip():
+            raise RuntimeError(f"AWS did not return a signaling channel ARN for {channel_name!r}")
+
+        channel_status = channel_info.get("ChannelStatus")
+        if channel_status not in ("ACTIVE", "UPDATING"):
+            raise RuntimeError(
+                f"signaling channel {channel_name!r} is not ready (status={channel_status!r})"
+            )
+        return channel_arn
+    except RuntimeError:
+        raise
+    except Exception as err:
+        raise RuntimeError(
+            f"failed to describe signaling channel {channel_name!r} in region {region!r}: {err}"
+        ) from err
+
+
+def _compile_pattern(value: str, *, env_name: str) -> re.Pattern[str] | None:
+    stripped = value.strip()
+    if not stripped:
+        return None
+    try:
+        return re.compile(stripped)
+    except re.error as err:
+        raise RuntimeError(f"{env_name} is not a valid regular expression: {err}") from err
+
+
+def _build_sender_environment(*, region: str, channel_name: str) -> dict[str, str]:
+    environment = os.environ.copy()
+    environment["TXING_BOARD_VIDEO_REGION"] = region
+    environment["TXING_BOARD_VIDEO_CHANNEL_NAME"] = channel_name
+    return environment
+
+
+@dataclass(frozen=True)
+class VideoSenderRuntimeConfig:
+    region: str
+    channel_name: str
+    viewer_url: str
+    state_file: Path
+    sender_command: str
+    assume_ready_after_seconds: float
+    ready_pattern: re.Pattern[str] | None
+    viewer_connected_pattern: re.Pattern[str] | None
+    viewer_disconnected_pattern: re.Pattern[str] | None
+
+
+class VideoSenderProcess:
+    def __init__(self, config: VideoSenderRuntimeConfig) -> None:
+        self._config = config
+        self._process: subprocess.Popen[str] | None = None
+        self._stop_requested = threading.Event()
+        self._state_lock = threading.Lock()
+        self._viewer_connected = False
+        self._ready = False
+
+    def run(self) -> int:
+        _write_state_file(
+            self._config.state_file,
+            _build_state(
+                status=VIDEO_STATUS_STARTING,
+                ready=False,
+                viewer_url=self._config.viewer_url,
+                channel_name=self._config.channel_name,
+                viewer_connected=False,
+                last_error=None,
+            ),
+        )
+
+        _resolve_channel_arn(
+            region=self._config.region,
+            channel_name=self._config.channel_name,
+        )
+        command = shlex.split(self._config.sender_command)
+        if not command:
+            raise RuntimeError(f"{DEFAULT_SENDER_COMMAND_ENV} must not be empty")
+
+        self._process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+            env=_build_sender_environment(
+                region=self._config.region,
+                channel_name=self._config.channel_name,
+            ),
+        )
+        reader_thread = threading.Thread(
+            target=self._forward_sender_output,
+            name="txing-board-video-sender-output",
+            daemon=True,
+        )
+        reader_thread.start()
+
+        ready_deadline = time.monotonic() + self._config.assume_ready_after_seconds
+        while not self._stop_requested.is_set():
+            process = self._process
+            if process is None:
+                raise RuntimeError("video sender process was not started")
+
+            return_code = process.poll()
+            if return_code is not None:
+                raise RuntimeError(f"video sender command exited with code {return_code}")
+
+            if not self._ready:
+                if (
+                    self._config.ready_pattern is None
+                    and time.monotonic() >= ready_deadline
+                ):
+                    self._set_ready()
+            time.sleep(0.2)
+
+        self._terminate_child()
+        return 0
+
+    def request_stop(self) -> None:
+        self._stop_requested.set()
+
+    def _forward_sender_output(self) -> None:
+        process = self._process
+        if process is None or process.stdout is None:
+            return
+
+        for raw_line in process.stdout:
+            line = raw_line.rstrip()
+            if line:
+                print(f"[txing-board-video-sender] {line}", flush=True)
+            self._handle_output_line(line)
+
+    def _handle_output_line(self, line: str) -> None:
+        if self._config.ready_pattern and self._config.ready_pattern.search(line):
+            self._set_ready()
+        if (
+            self._config.viewer_connected_pattern
+            and self._config.viewer_connected_pattern.search(line)
+        ):
+            self._set_viewer_connected(True)
+        if (
+            self._config.viewer_disconnected_pattern
+            and self._config.viewer_disconnected_pattern.search(line)
+        ):
+            self._set_viewer_connected(False)
+
+    def _set_ready(self) -> None:
+        with self._state_lock:
+            if self._ready:
+                return
+            self._ready = True
+            viewer_connected = self._viewer_connected
+
+        _write_state_file(
+            self._config.state_file,
+            _build_state(
+                status=VIDEO_STATUS_READY,
+                ready=True,
+                viewer_url=self._config.viewer_url,
+                channel_name=self._config.channel_name,
+                viewer_connected=viewer_connected,
+                last_error=None,
+            ),
+        )
+
+    def _set_viewer_connected(self, connected: bool) -> None:
+        with self._state_lock:
+            self._viewer_connected = connected
+            ready = self._ready
+
+        _write_state_file(
+            self._config.state_file,
+            _build_state(
+                status=VIDEO_STATUS_READY if ready else VIDEO_STATUS_STARTING,
+                ready=ready,
+                viewer_url=self._config.viewer_url,
+                channel_name=self._config.channel_name,
+                viewer_connected=connected,
+                last_error=None,
+            ),
+        )
+
+    def _terminate_child(self) -> None:
+        process = self._process
+        if process is None or process.poll() is not None:
+            return
+
+        process.terminate()
+        try:
+            process.wait(timeout=5.0)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5.0)
+
+
+class VideoSenderSupervisor:
+    def __init__(
+        self,
+        *,
+        channel_name: str,
+        viewer_url: str,
+        region: str,
+        state_file: Path = DEFAULT_VIDEO_STATE_FILE,
+    ) -> None:
+        self._channel_name = channel_name
+        self._viewer_url = viewer_url
+        self._region = region
+        self._state_file = state_file
+        self._process: subprocess.Popen[bytes] | None = None
+
+    @property
+    def state_file(self) -> Path:
+        return self._state_file
+
+    def start(self) -> None:
+        if self.is_running():
+            return
+        command = [
+            sys.executable,
+            "-m",
+            "board.video_sender",
+            "--region",
+            self._region,
+            "--channel-name",
+            self._channel_name,
+            "--viewer-url",
+            self._viewer_url,
+            "--state-file",
+            str(self._state_file),
+        ]
+        self._process = subprocess.Popen(command)
+
+    def ensure_running(self) -> None:
+        if not self.is_running():
+            self.start()
+
+    def is_running(self) -> bool:
+        return self._process is not None and self._process.poll() is None
+
+    def return_code(self) -> int | None:
+        if self._process is None:
+            return None
+        return self._process.poll()
+
+    def read_state(self) -> dict[str, Any]:
+        return load_video_state(
+            self._state_file,
+            viewer_url=self._viewer_url,
+            channel_name=self._channel_name,
+        )
+
+    def stop(self) -> None:
+        if self._process is None or self._process.poll() is not None:
+            return
+        self._process.terminate()
+        try:
+            self._process.wait(timeout=5.0)
+        except subprocess.TimeoutExpired:
+            self._process.kill()
+            self._process.wait(timeout=5.0)
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Dedicated board video sender state manager for txing",
+    )
+    parser.add_argument("--region", required=True, help="AWS region for the signaling channel")
+    parser.add_argument(
+        "--channel-name",
+        default=DEFAULT_VIDEO_CHANNEL_NAME,
+        help=f"AWS KVS signaling channel name (default: {DEFAULT_VIDEO_CHANNEL_NAME})",
+    )
+    parser.add_argument(
+        "--viewer-url",
+        required=True,
+        help="Operator-facing browser URL for the board video route",
+    )
+    parser.add_argument(
+        "--state-file",
+        type=Path,
+        default=DEFAULT_VIDEO_STATE_FILE,
+        help=f"Path to the local sender state file (default: {DEFAULT_VIDEO_STATE_FILE})",
+    )
+    parser.add_argument(
+        "--sender-command",
+        default=os.environ.get(DEFAULT_SENDER_COMMAND_ENV, ""),
+        help=(
+            "Command that runs the actual KVS master sender "
+            f"(default: ${DEFAULT_SENDER_COMMAND_ENV})"
+        ),
+    )
+    parser.add_argument(
+        "--assume-ready-after-seconds",
+        type=float,
+        default=DEFAULT_ASSUME_READY_AFTER_SECONDS,
+        help=(
+            "Fallback startup grace period before marking the sender ready when no "
+            "ready-pattern is configured"
+        ),
+    )
+    parser.add_argument(
+        "--ready-pattern",
+        default=os.environ.get(DEFAULT_READY_PATTERN_ENV, DEFAULT_READY_PATTERN),
+        help=f"Regex for child output that confirms sender readiness (default: ${DEFAULT_READY_PATTERN_ENV})",
+    )
+    parser.add_argument(
+        "--viewer-connected-pattern",
+        default=os.environ.get(
+            DEFAULT_VIEWER_CONNECTED_PATTERN_ENV,
+            DEFAULT_VIEWER_CONNECTED_PATTERN,
+        ),
+        help=(
+            "Regex for child output that indicates a viewer is connected "
+            f"(default: ${DEFAULT_VIEWER_CONNECTED_PATTERN_ENV})"
+        ),
+    )
+    parser.add_argument(
+        "--viewer-disconnected-pattern",
+        default=os.environ.get(
+            DEFAULT_VIEWER_DISCONNECTED_PATTERN_ENV,
+            DEFAULT_VIEWER_DISCONNECTED_PATTERN,
+        ),
+        help=(
+            "Regex for child output that indicates the viewer disconnected "
+            f"(default: ${DEFAULT_VIEWER_DISCONNECTED_PATTERN_ENV})"
+        ),
+    )
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = _parse_args()
+    runtime = VideoSenderProcess(
+        VideoSenderRuntimeConfig(
+            region=args.region,
+            channel_name=args.channel_name,
+            viewer_url=args.viewer_url,
+            state_file=args.state_file,
+            sender_command=args.sender_command,
+            assume_ready_after_seconds=args.assume_ready_after_seconds,
+            ready_pattern=_compile_pattern(
+                args.ready_pattern,
+                env_name=DEFAULT_READY_PATTERN_ENV,
+            ),
+            viewer_connected_pattern=_compile_pattern(
+                args.viewer_connected_pattern,
+                env_name=DEFAULT_VIEWER_CONNECTED_PATTERN_ENV,
+            ),
+            viewer_disconnected_pattern=_compile_pattern(
+                args.viewer_disconnected_pattern,
+                env_name=DEFAULT_VIEWER_DISCONNECTED_PATTERN_ENV,
+            ),
+        )
+    )
+
+    def _request_stop(_signum: int, _frame: Any) -> None:
+        runtime.request_stop()
+
+    signal.signal(signal.SIGINT, _request_stop)
+    if hasattr(signal, "SIGTERM"):
+        signal.signal(signal.SIGTERM, _request_stop)
+
+    try:
+        raise SystemExit(runtime.run())
+    except Exception as err:
+        _write_state_file(
+            args.state_file,
+            _build_state(
+                status=VIDEO_STATUS_ERROR,
+                ready=False,
+                viewer_url=args.viewer_url,
+                channel_name=args.channel_name,
+                viewer_connected=False,
+                last_error=str(err),
+            ),
+        )
+        print(f"board video sender failed: {err}", file=sys.stderr)
+        raise SystemExit(1) from err
+
+
+if __name__ == "__main__":
+    main()

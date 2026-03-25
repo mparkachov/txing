@@ -24,3 +24,6 @@ htmlcov/
 
 # OS files
 .DS_Store
+
+# Native sender build artifacts
+native/kvs_master/target/

@@ -50,6 +50,29 @@ Resources:
     Properties:
       ThingName: txing
 
+  TxingBoardVideoChannel:
+    Type: AWS::KinesisVideo::SignalingChannel
+    Properties:
+      Name: txing-board-video
+      SingleMasterConfiguration:
+        MessageTtlSeconds: 60
+
+  TxingBoardVideoSenderManagedPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Attach to the AWS principal used by the board video sender.
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: BoardVideoMaster
+            Effect: Allow
+            Action:
+              - kinesisvideo:DescribeSignalingChannel
+              - kinesisvideo:GetSignalingChannelEndpoint
+              - kinesisvideo:GetIceServerConfig
+              - kinesisvideo:ConnectAsMaster
+            Resource: !GetAtt TxingBoardVideoChannel.Arn
+
   TxingGatewayPolicy:
     Type: AWS::IoT::Policy
     Properties:
@@ -192,6 +215,15 @@ Resources:
             QueryString: false
             Cookies:
               Forward: none
+        CustomErrorResponses:
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+            ErrorCachingMinTTL: 0
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+            ErrorCachingMinTTL: 0
         PriceClass: PriceClass_100
         ViewerCertificate:
           CloudFrontDefaultCertificate: true
@@ -314,6 +346,14 @@ Resources:
                   - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/txing/shadow/get/rejected
                   - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/txing/shadow/update/accepted
                   - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/txing/shadow/update/rejected
+              - Sid: BoardVideoViewer
+                Effect: Allow
+                Action:
+                  - kinesisvideo:DescribeSignalingChannel
+                  - kinesisvideo:GetSignalingChannelEndpoint
+                  - kinesisvideo:GetIceServerConfig
+                  - kinesisvideo:ConnectAsViewer
+                Resource: !GetAtt TxingBoardVideoChannel.Arn
 
   TxingAdminIdentityPoolRoleAttachment:
     Type: AWS::Cognito::IdentityPoolRoleAttachment
@@ -332,6 +372,15 @@ Outputs:
   GatewayLogsManagedPolicyArn:
     Description: Attach this managed policy to the IAM principal used by gw.
     Value: !Ref TxingGatewayLogsManagedPolicy
+  BoardVideoChannelArn:
+    Description: ARN of the txing board KVS signaling channel.
+    Value: !GetAtt TxingBoardVideoChannel.Arn
+  BoardVideoChannelName:
+    Description: Fixed signaling channel name for the phase-1 board video path.
+    Value: txing-board-video
+  BoardVideoSenderManagedPolicyArn:
+    Description: Attach this managed policy to the AWS principal used by the board video sender.
+    Value: !Ref TxingBoardVideoSenderManagedPolicy
   ThingName:
     Description: Fixed IoT Thing name used by the gateway.
     Value: !Ref TxingThing
@@ -371,6 +420,9 @@ Outputs:
   WebAppUrl:
     Description: Public URL for the deployed SPA.
     Value: !Sub https://${TxingWebDistribution.DomainName}/
+  BoardVideoViewerUrl:
+    Description: Public URL for the SPA video viewer route.
+    Value: !Sub https://${TxingWebDistribution.DomainName}/video
   WebExpectedAdminEmail:
     Description: Email expected by SPA client-side check.
     Value: !Ref AdminEmail

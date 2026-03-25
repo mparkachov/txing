@@ -16,9 +16,8 @@
 ## Board Video Phase 1
 - Treat board video phase 1 as a headless service-only design.
 - `txing-board` is the only process allowed to publish `board.*` updates into the Thing Shadow.
-- Phase 1 local video uses MediaMTX `rpiCamera` for camera access, and `txing-board` probes MediaMTX readiness directly before publishing board video state.
-- The MVP connects only from the local Vite dev server over plain HTTP and the board's local-LAN address.
-- Phase 1 uses MediaMTX and its built-in viewer page. Do not use `webrtcsink` or `gstwebrtc-api` in this slice.
-- Phase 1 does not use auth, TLS, or cloud upload.
-- Keep the design compatible with a later `kvssink` branch, but do not implement cloud upload in phase 1.
-- Browser-to-board control transport is deferred beyond the MVP unless the user explicitly changes that decision.
+- Phase 1 uses one live operator path only: board camera -> AWS KVS WebRTC signaling channel -> operator.
+- The board does not expose a board-local viewer page, iframe endpoint, or direct browser-to-board media transport.
+- `txing-board` supervises a dedicated local video sender and publishes coarse `board.video.*` readiness, session metadata, viewer presence, and failures into the Thing Shadow.
+- The supervised sender uses the board host's default AWS SDK credential chain for KVS access; it does not publish to AWS IoT directly.
+- Phase 1 does not use MediaMTX, `webrtcsink`, `gstwebrtc-api`, `kvssink`, ingestion/storage, or multiviewer.

@@ -3,10 +3,10 @@ import {
   CognitoIdentityClient,
 } from '@aws-sdk/client-cognito-identity'
 import { AttachPolicyCommand, IoTClient } from '@aws-sdk/client-iot'
-import { fromCognitoIdentityPool } from '@aws-sdk/credential-providers'
 import * as auth from 'aws-crt/dist.browser/browser/auth'
 import * as iot from 'aws-crt/dist.browser/browser/iot'
 import * as mqtt5 from 'aws-crt/dist.browser/browser/mqtt5'
+import { buildCognitoLogins, createCredentialProvider } from './aws-credentials'
 import { appConfig } from './config'
 import {
   buildGetShadowPublishPacket,
@@ -68,26 +68,13 @@ const cognitoIdentityClient = new CognitoIdentityClient({
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null
 
-const getLogins = (idToken: string): Record<string, string> => ({
-  [`cognito-idp.${appConfig.awsRegion}.amazonaws.com/${appConfig.cognitoUserPoolId}`]: idToken,
-})
-
-const createCredentialProvider = (idToken: string) =>
-  fromCognitoIdentityPool({
-    clientConfig: {
-      region: appConfig.awsRegion,
-    },
-    identityPoolId: appConfig.cognitoIdentityPoolId,
-    logins: getLogins(idToken),
-  })
-
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
 const getIdentityId = async (idToken: string): Promise<string> => {
   const response = await cognitoIdentityClient.send(
     new GetIdCommand({
       IdentityPoolId: appConfig.cognitoIdentityPoolId,
-      Logins: getLogins(idToken),
+      Logins: buildCognitoLogins(idToken),
     }),
   )
 

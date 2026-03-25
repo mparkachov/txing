@@ -3,7 +3,14 @@ set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 board_dir := source_directory()
 python_executable := "python3"
 built_board := board_dir + "/.venv/bin/board"
+built_board_video_sender := board_dir + "/.venv/bin/board-video-sender"
+native_kvs_master_dir := board_dir + "/native/kvs_master"
+built_native_kvs_master := native_kvs_master_dir + "/target/release/txing-board-kvs-master"
 systemd_unit := "/etc/systemd/system/txing-board.service"
+default_video_region := env_var_or_default("TXING_BOARD_VIDEO_REGION", "eu-central-1")
+default_video_channel_name := env_var_or_default("TXING_BOARD_VIDEO_CHANNEL_NAME", "txing-board-video")
+default_aws_shared_credentials_file := env_var_or_default("TXING_BOARD_AWS_SHARED_CREDENTIALS_FILE", "/root/.aws/credentials")
+default_aws_config_file := env_var_or_default("TXING_BOARD_AWS_CONFIG_FILE", "/root/.aws/config")
 
 @sync:
     cd "{{board_dir}}" && uv sync --python "{{python_executable}}" --no-managed-python --no-python-downloads
@@ -11,6 +18,14 @@ systemd_unit := "/etc/systemd/system/txing-board.service"
 @build:
     cd "{{board_dir}}" && uv sync --frozen --no-editable --compile-bytecode --python "{{python_executable}}" --no-managed-python --no-python-downloads
     test -x "{{built_board}}"
+    test -x "{{built_board_video_sender}}"
+
+@build-native:
+    cd "{{native_kvs_master_dir}}" && cargo build --release
+    test -x "{{built_native_kvs_master}}"
+
+@test-native:
+    cd "{{native_kvs_master_dir}}" && cargo test
 
 @run:
     cd "{{board_dir}}" && "{{built_board}}"
@@ -24,18 +39,21 @@ systemd_unit := "/etc/systemd/system/txing-board.service"
 @once-dev:
     cd "{{board_dir}}" && uv run board --once
 
-@install-service:
+@install-service video_viewer_url video_sender_command video_region=default_video_region video_channel_name=default_video_channel_name aws_shared_credentials_file=default_aws_shared_credentials_file aws_config_file=default_aws_config_file:
     sudo systemctl enable NetworkManager-wait-online.service
     printf '%s\n' \
         '[Unit]' \
         'Description=txing board control' \
-        'Wants=network-online.target mediamtx.service' \
-        'After=network-online.target mediamtx.service' \
+        'Wants=network-online.target' \
+        'After=network-online.target' \
         '' \
         '[Service]' \
         'Type=simple' \
         'WorkingDirectory={{board_dir}}' \
-        'ExecStart={{built_board}} --heartbeat-seconds 60' \
+        'Environment=AWS_SHARED_CREDENTIALS_FILE={{aws_shared_credentials_file}}' \
+        'Environment=AWS_CONFIG_FILE={{aws_config_file}}' \
+        'Environment=TXING_BOARD_VIDEO_SENDER_COMMAND={{video_sender_command}}' \
+        'ExecStart={{built_board}} --heartbeat-seconds 60 --video-viewer-url {{video_viewer_url}} --video-region {{video_region}} --video-channel-name {{video_channel_name}}' \
         'Restart=always' \
         'RestartSec=5' \
         '' \

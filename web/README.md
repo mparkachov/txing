@@ -9,8 +9,10 @@ SPA for reading/updating the `txing` Thing Shadow.
 - After sign-in, the SPA exchanges the Cognito ID token for temporary AWS credentials through a Cognito Identity Pool.
 - Thing Shadow reads/writes go directly from the SPA to AWS IoT Core over MQTT/WSS with SigV4-signed websocket handshakes.
 - On first use, the SPA attaches the stack-managed AWS IoT policy to the authenticated Cognito identity.
+- The deployed SPA now also serves a `/video` route for the board AWS WebRTC viewer.
 - Current transport split:
   - classic Thing Shadow traffic uses MQTT/WSS only
+  - board video uses KVS WebRTC signaling from the `/video` route
   - Cognito hosted UI redirects, Cognito `/oauth2/token`, Cognito Identity, and IoT `AttachPolicy` still use HTTPS
 - Hardcoded thing name: `txing`.
 
@@ -112,6 +114,7 @@ This writes `web/.env.local` from stack outputs.
 Relevant outputs:
 
 - `WebAppUrl` -> generated CloudFront URL for the deployed SPA
+- `BoardVideoViewerUrl` -> generated CloudFront URL for the `/video` route
 - `WebCognitoDomain` -> `VITE_COGNITO_DOMAIN`
 - `WebCognitoUserPoolId` -> `VITE_COGNITO_USER_POOL_ID`
 - `WebCognitoUserPoolClientId` -> `VITE_COGNITO_CLIENT_ID`

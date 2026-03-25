@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from 'react'
 import {
   beginSignIn,
   clearAuthState,
@@ -7,12 +7,20 @@ import {
   signOut,
   type AuthUser,
 } from './auth'
-import { appConfig } from './config'
 import {
-  createShadowSession,
-  type ShadowConnectionState,
-  type ShadowSession,
-} from './shadow-api'
+  buildViewerUrlWithChannel,
+  extractReportedBoardPower,
+  extractReportedBoardVideo,
+  extractReportedBoardWifiOnline,
+  extractReportedMcuBatteryMv,
+  extractReportedMcuBleOnline,
+  extractReportedMcuOnline,
+  extractReportedMcuPower,
+  getAppRoute,
+} from './app-model'
+import { appConfig } from './config'
+import { createShadowSession, type ShadowConnectionState, type ShadowSession } from './shadow-api'
+import VideoPage from './VideoPage'
 
 type SessionStatus = 'loading' | 'authenticating' | 'signed_out' | 'signed_in'
 type AppProps = {
@@ -24,20 +32,12 @@ type ShadowSnapshotView = {
   json: string
   updatedAtMs: number
 }
-type BoardVideoStatus = 'idle' | 'connecting' | 'streaming' | 'error'
-type BoardVideoRuntime = {
-  ready: boolean
-  status: 'starting' | 'ready' | 'error' | null
-  viewerUrl: string | null
-  streamPath: string | null
-  lastError: string | null
-}
 type CameraGlyphProps = {
   crossed: boolean
 }
 
 const formatJson = (value: unknown): string => JSON.stringify(value, null, 2)
-const boardOfflineTimeoutMs = 45000
+const boardOfflineTimeoutMs = 45_000
 const batterySocCurve: readonly BatteryCurvePoint[] = [
   [3300, 0],
   [3600, 10],
@@ -53,6 +53,7 @@ const createShadowSnapshotView = (shadow: unknown): ShadowSnapshotView => ({
   json: formatJson(shadow),
   updatedAtMs: Date.now(),
 })
+
 const formatShadowUpdateTime = (updatedAtMs: number | null): string =>
   updatedAtMs === null
     ? '--:--:--'
@@ -61,6 +62,7 @@ const formatShadowUpdateTime = (updatedAtMs: number | null): string =>
         minute: '2-digit',
         second: '2-digit',
       })
+
 const getPowerNodeClass = (power: boolean | null): string => {
   if (power === true) {
     return 'status-node-awake'
@@ -70,10 +72,12 @@ const getPowerNodeClass = (power: boolean | null): string => {
   }
   return 'status-node-unknown'
 }
+
 const getBatteryPercent = (batteryMv: number | null): number | null => {
   if (batteryMv === null || Number.isNaN(batteryMv)) {
     return null
   }
+
   const firstPoint = batterySocCurve[0]
   const lastPoint = batterySocCurve[batterySocCurve.length - 1]
   if (batteryMv <= firstPoint[0]) {
@@ -89,6 +93,7 @@ const getBatteryPercent = (batteryMv: number | null): number | null => {
     if (batteryMv > nextPoint[0]) {
       continue
     }
+
     const pointSpan = nextPoint[0] - previousPoint[0]
     const percentSpan = nextPoint[1] - previousPoint[1]
     const mvOffset = batteryMv - previousPoint[0]
@@ -97,6 +102,7 @@ const getBatteryPercent = (batteryMv: number | null): number | null => {
 
   return null
 }
+
 const getBatteryToneClass = (batteryPercent: number | null): string => {
   if (batteryPercent === null) {
     return 'status-battery-unknown'
@@ -109,6 +115,7 @@ const getBatteryToneClass = (batteryPercent: number | null): string => {
   }
   return 'status-battery-low'
 }
+
 const getBoardWifiToneClass = (boardWifiOnline: boolean | null): string => {
   if (boardWifiOnline === true) {
     return 'status-wifi-online'
@@ -118,8 +125,10 @@ const getBoardWifiToneClass = (boardWifiOnline: boolean | null): string => {
   }
   return 'status-wifi-unknown'
 }
+
 const getBleSignalToneClass = (bleStatusOnline: boolean | null): string =>
   bleStatusOnline === true ? 'status-signal-online' : 'status-signal-offline'
+
 const getTxingPowerToneClass = (mcuPower: boolean | null, boardPower: boolean | null): string => {
   if (mcuPower === true && boardPower === true) {
     return 'status-txing-power-full'
@@ -131,143 +140,6 @@ const getTxingPowerToneClass = (mcuPower: boolean | null, boardPower: boolean | 
     return 'status-txing-power-partial'
   }
   return 'status-txing-power-sleep'
-}
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null
-
-const extractReportedMcu = (shadow: unknown): Record<string, unknown> | null => {
-  if (!isRecord(shadow)) {
-    return null
-  }
-  const state = shadow.state
-  if (!isRecord(state)) {
-    return null
-  }
-  const reported = state.reported
-  if (!isRecord(reported)) {
-    return null
-  }
-  const mcu = reported.mcu
-  return isRecord(mcu) ? mcu : null
-}
-
-const extractReportedBoard = (shadow: unknown): Record<string, unknown> | null => {
-  if (!isRecord(shadow)) {
-    return null
-  }
-  const state = shadow.state
-  if (!isRecord(state)) {
-    return null
-  }
-  const reported = state.reported
-  if (!isRecord(reported)) {
-    return null
-  }
-  const board = reported.board
-  return isRecord(board) ? board : null
-}
-
-const extractReportedBoardPower = (shadow: unknown): boolean | null => {
-  const board = extractReportedBoard(shadow)
-  if (!board) {
-    return null
-  }
-  return typeof board.power === 'boolean' ? board.power : null
-}
-
-const extractReportedMcuPower = (shadow: unknown): boolean | null => {
-  const mcu = extractReportedMcu(shadow)
-  if (!mcu) {
-    return null
-  }
-  return typeof mcu.power === 'boolean' ? mcu.power : null
-}
-
-const extractReportedMcuOnline = (shadow: unknown): boolean | null => {
-  const mcu = extractReportedMcu(shadow)
-  if (!mcu) {
-    return null
-  }
-  if (typeof mcu.online === 'boolean') {
-    return mcu.online
-  }
-  const ble = mcu.ble
-  if (!isRecord(ble)) {
-    return null
-  }
-  return typeof ble.online === 'boolean' ? ble.online : null
-}
-
-const extractReportedMcuBleOnline = (shadow: unknown): boolean | null => {
-  const mcu = extractReportedMcu(shadow)
-  if (!mcu) {
-    return null
-  }
-  const ble = mcu.ble
-  return isRecord(ble) && typeof ble.online === 'boolean' ? ble.online : null
-}
-
-const extractReportedMcuBatteryMv = (shadow: unknown): number | null => {
-  const mcu = extractReportedMcu(shadow)
-  if (!mcu) {
-    return null
-  }
-  return typeof mcu.batteryMv === 'number' ? mcu.batteryMv : null
-}
-
-const extractReportedBoardWifiOnline = (shadow: unknown): boolean | null => {
-  const board = extractReportedBoard(shadow)
-  if (!board) {
-    return null
-  }
-  const wifi = board.wifi
-  return isRecord(wifi) && typeof wifi.online === 'boolean' ? wifi.online : null
-}
-
-const extractReportedBoardVideo = (shadow: unknown): BoardVideoRuntime => {
-  const board = extractReportedBoard(shadow)
-  if (!board) {
-    return {
-      ready: false,
-      status: null,
-      viewerUrl: null,
-      streamPath: null,
-      lastError: null,
-    }
-  }
-
-  const video = board.video
-  if (!isRecord(video)) {
-    return {
-      ready: false,
-      status: null,
-      viewerUrl: null,
-      streamPath: null,
-      lastError: null,
-    }
-  }
-
-  const local = video.local
-  const localRecord = isRecord(local) ? local : null
-  const status = video.status
-
-  return {
-    ready: video.ready === true,
-    status:
-      status === 'starting' || status === 'ready' || status === 'error'
-        ? status
-        : null,
-    viewerUrl:
-      localRecord && typeof localRecord.viewerUrl === 'string' && localRecord.viewerUrl.trim()
-        ? localRecord.viewerUrl.trim()
-        : null,
-    streamPath:
-      localRecord && typeof localRecord.streamPath === 'string' && localRecord.streamPath.trim()
-        ? localRecord.streamPath.trim()
-        : null,
-    lastError: typeof video.lastError === 'string' && video.lastError.trim() ? video.lastError : null,
-  }
 }
 
 function CameraGlyph({ crossed }: CameraGlyphProps) {
@@ -304,12 +176,10 @@ function App({ initialAuthError = '' }: AppProps) {
   const [error, setError] = useState<string>(initialAuthError)
   const [shadowConnectionState, setShadowConnectionState] =
     useState<ShadowConnectionState>('idle')
-  const [videoStatus, setVideoStatus] = useState<BoardVideoStatus>('idle')
-  const [videoError, setVideoError] = useState<string>('')
-  const [isBoardVideoEmbedded, setIsBoardVideoEmbedded] = useState(false)
-  const userMenuRef = useRef<HTMLDivElement | null>(null)
   const shadowSessionRef = useRef<ShadowSession | null>(null)
+  const userMenuRef = useRef<HTMLDivElement | null>(null)
 
+  const appRoute = useMemo(() => getAppRoute(window.location.pathname), [])
   const hasConfigErrors = appConfig.errors.length > 0
 
   const adminEmailMismatch = useMemo(() => {
@@ -355,11 +225,9 @@ function App({ initialAuthError = '' }: AppProps) {
     () => extractReportedBoardVideo(shadowDocument),
     [shadowDocument],
   )
+
   const boardOnline = reportedBoardOnline === true
-  const batteryPercent = useMemo(
-    () => getBatteryPercent(reportedMcuBatteryMv),
-    [reportedMcuBatteryMv],
-  )
+  const batteryPercent = useMemo(() => getBatteryPercent(reportedMcuBatteryMv), [reportedMcuBatteryMv])
   const batteryToneClass = getBatteryToneClass(batteryPercent)
   const boardWifiToneClass = getBoardWifiToneClass(reportedBoardOnline)
   const bleSignalToneClass = getBleSignalToneClass(reportedMcuBleOnline)
@@ -379,48 +247,32 @@ function App({ initialAuthError = '' }: AppProps) {
       ? 'Last shadow update unavailable'
       : `Last shadow update ${new Date(lastShadowUpdateAtMs).toLocaleString()}`
   const boardVideoReady =
+    reportedBoardVideo.transport === 'aws-webrtc' &&
     reportedBoardVideo.ready &&
     reportedBoardVideo.status === 'ready' &&
     reportedBoardVideo.viewerUrl !== null &&
-    reportedBoardVideo.streamPath !== null
+    reportedBoardVideo.channelName !== null
   const boardVideoReachable =
     txingSwitchTarget !== 'off' && boardOnline && reportedBoardPower !== false
   const canUseBoardVideo = boardVideoReachable && boardVideoReady
-  const isBoardVideoConnecting = videoStatus === 'connecting'
-  const isBoardVideoStreaming = videoStatus === 'streaming'
-  const boardVideoErrorMessage = videoError || reportedBoardVideo.lastError || ''
-  const boardVideoControlTone = isBoardVideoStreaming
-    ? 'live'
-    : isBoardVideoConnecting
-      ? 'connecting'
-      : boardVideoReachable && (videoStatus === 'error' || reportedBoardVideo.status === 'error')
-        ? 'error'
-        : canUseBoardVideo
-          ? 'ready'
-          : 'idle'
-  const boardVideoControlLabel = isBoardVideoEmbedded
-    ? isBoardVideoStreaming
-      ? 'Hide board video'
-      : 'Cancel board video'
-    : canUseBoardVideo
-      ? 'Show board video'
-      : 'Board video unavailable'
-  const boardVideoControlTitle = isBoardVideoEmbedded
-    ? 'Hide board camera'
-    : canUseBoardVideo
-      ? `Show ${reportedBoardVideo.streamPath ?? 'board-cam'}`
-      : 'Board video is not ready'
+  const boardVideoTargetUrl =
+    reportedBoardVideo.viewerUrl && reportedBoardVideo.channelName
+      ? buildViewerUrlWithChannel(
+          reportedBoardVideo.viewerUrl,
+          reportedBoardVideo.channelName,
+        )
+      : null
 
-  const applyShadowSnapshot = (shadow: unknown, feedbackMessage?: string): void => {
+  const applyShadowSnapshot = useEffectEvent((shadow: unknown, feedbackMessage?: string): void => {
     const snapshotView = createShadowSnapshotView(shadow)
     setShadowJson(snapshotView.json)
     setLastShadowUpdateAtMs(snapshotView.updatedAtMs)
     if (feedbackMessage) {
       setFeedback(feedbackMessage)
     }
-  }
+  })
 
-  const resolveSessionIdToken = async (): Promise<string> => {
+  const resolveSessionIdToken = useEffectEvent(async (): Promise<string> => {
     const refreshedTokens = await refreshTokensIfNeeded()
     if (!refreshedTokens) {
       clearAuthState()
@@ -431,7 +283,7 @@ function App({ initialAuthError = '' }: AppProps) {
 
     setAuthUser(getAuthUser(refreshedTokens))
     return refreshedTokens.idToken
-  }
+  })
 
   const getShadowSession = (): ShadowSession => {
     const shadowSession = shadowSessionRef.current
@@ -460,8 +312,7 @@ function App({ initialAuthError = '' }: AppProps) {
           return
         }
 
-        const user = getAuthUser(restoredTokens)
-        setAuthUser(user)
+        setAuthUser(getAuthUser(restoredTokens))
         setError('')
         setStatus('signed_in')
       } catch (caughtError) {
@@ -476,9 +327,6 @@ function App({ initialAuthError = '' }: AppProps) {
 
   useEffect(() => {
     if (status !== 'signed_in') {
-      setIsBoardVideoEmbedded(false)
-      setVideoStatus('idle')
-      setVideoError('')
       return
     }
     if (!adminEmailMismatch) {
@@ -491,7 +339,7 @@ function App({ initialAuthError = '' }: AppProps) {
   }, [adminEmailMismatch, status])
 
   useEffect(() => {
-    if (status !== 'signed_in' || adminEmailMismatch) {
+    if (status !== 'signed_in' || adminEmailMismatch || appRoute !== 'dashboard') {
       shadowSessionRef.current?.close()
       shadowSessionRef.current = null
       setShadowConnectionState('idle')
@@ -548,7 +396,7 @@ function App({ initialAuthError = '' }: AppProps) {
       }
       shadowSession.close()
     }
-  }, [adminEmailMismatch, status])
+  }, [adminEmailMismatch, appRoute, applyShadowSnapshot, resolveSessionIdToken, status])
 
   useEffect(() => {
     if (txingSwitchTarget === 'on' && boardOnline) {
@@ -585,32 +433,6 @@ function App({ initialAuthError = '' }: AppProps) {
     }
   }, [isUserMenuOpen])
 
-  useEffect(() => {
-    if (!isBoardVideoEmbedded || canUseBoardVideo) {
-      return
-    }
-
-    setIsBoardVideoEmbedded(false)
-    if (
-      boardVideoReachable &&
-      reportedBoardVideo.status === 'error' &&
-      reportedBoardVideo.lastError
-    ) {
-      setVideoStatus('error')
-      setVideoError(reportedBoardVideo.lastError)
-      return
-    }
-
-    setVideoStatus('idle')
-    setVideoError('')
-  }, [
-    boardVideoReachable,
-    canUseBoardVideo,
-    isBoardVideoEmbedded,
-    reportedBoardVideo.lastError,
-    reportedBoardVideo.status,
-  ])
-
   const loadShadow = async (): Promise<void> => {
     setIsLoadingShadow(true)
     setError('')
@@ -633,7 +455,8 @@ function App({ initialAuthError = '' }: AppProps) {
     setFeedback('')
 
     try {
-      const payload = {
+      const shadowSession = getShadowSession()
+      const shadowResponse = await shadowSession.updateShadow({
         state: {
           desired: {
             mcu: {
@@ -641,9 +464,7 @@ function App({ initialAuthError = '' }: AppProps) {
             },
           },
         },
-      }
-      const shadowSession = getShadowSession()
-      const shadowResponse = await shadowSession.updateShadow(payload)
+      })
       applyShadowSnapshot(
         shadowResponse,
         `desired.mcu.power -> ${power} at ${new Date().toLocaleTimeString()}`,
@@ -734,24 +555,12 @@ function App({ initialAuthError = '' }: AppProps) {
     if (!canSleep) {
       return
     }
-    setIsBoardVideoEmbedded(false)
-    setVideoStatus('idle')
-    setVideoError('')
+
     setTxingSwitchTarget('off')
     const slept = await requestSleep()
     if (!slept) {
       setTxingSwitchTarget(null)
     }
-  }
-
-  const handleMenuLoadShadow = async (): Promise<void> => {
-    setIsUserMenuOpen(false)
-    await loadShadow()
-  }
-
-  const handleToggleDebug = (): void => {
-    setIsUserMenuOpen(false)
-    setIsDebugEnabled((currentValue) => !currentValue)
   }
 
   const handleSignOff = (): void => {
@@ -762,45 +571,11 @@ function App({ initialAuthError = '' }: AppProps) {
     signOut()
   }
 
-  const handleConnectBoardVideo = (): void => {
-    if (!canUseBoardVideo || !reportedBoardVideo.viewerUrl || !reportedBoardVideo.streamPath) {
+  const handleOpenBoardVideo = (): void => {
+    if (!boardVideoTargetUrl || !canUseBoardVideo) {
       return
     }
-
-    setIsBoardVideoEmbedded(true)
-    setVideoStatus('connecting')
-    setVideoError('')
-  }
-
-  const handleDisconnectBoardVideo = (): void => {
-    setIsBoardVideoEmbedded(false)
-    setVideoStatus('idle')
-    setVideoError('')
-  }
-
-  const handleToggleBoardVideo = (): void => {
-    if (isBoardVideoEmbedded) {
-      handleDisconnectBoardVideo()
-      return
-    }
-
-    handleConnectBoardVideo()
-  }
-
-  const handleBoardVideoFrameLoad = (): void => {
-    if (!isBoardVideoEmbedded) {
-      return
-    }
-    setVideoStatus('streaming')
-    setVideoError('')
-  }
-
-  const handleBoardVideoFrameError = (): void => {
-    if (!isBoardVideoEmbedded) {
-      return
-    }
-    setVideoStatus('error')
-    setVideoError('Unable to load the MediaMTX viewer page from the board')
+    window.location.assign(boardVideoTargetUrl)
   }
 
   if (hasConfigErrors) {
@@ -856,15 +631,21 @@ function App({ initialAuthError = '' }: AppProps) {
     )
   }
 
+  if (appRoute === 'video') {
+    return (
+      <VideoPage
+        authUser={authUser}
+        onSignOut={handleSignOff}
+        resolveIdToken={resolveSessionIdToken}
+      />
+    )
+  }
+
   return (
     <main className="page page-signed-in">
       <section className="status-hero status-hero-dashboard" aria-label="Txing status">
         <div className="shadow-diagram">
-          <div
-            className={`status-node status-node-txing ${
-              isBoardVideoEmbedded ? 'status-node-txing-expanded' : ''
-            }`}
-          >
+          <div className="status-node status-node-txing">
             <div className="status-txing-header">
               <div className="status-txing-header-side status-txing-header-side-start">
                 <div className="user-menu" ref={userMenuRef}>
@@ -901,7 +682,8 @@ function App({ initialAuthError = '' }: AppProps) {
                         role="menuitem"
                         disabled={isLoadingShadow || shadowConnectionState !== 'connected'}
                         onClick={() => {
-                          void handleMenuLoadShadow()
+                          void loadShadow()
+                          setIsUserMenuOpen(false)
                         }}
                       >
                         Load Shadow
@@ -910,7 +692,10 @@ function App({ initialAuthError = '' }: AppProps) {
                         type="button"
                         className="user-menu-item"
                         role="menuitem"
-                        onClick={handleToggleDebug}
+                        onClick={() => {
+                          setIsUserMenuOpen(false)
+                          setIsDebugEnabled((currentValue) => !currentValue)
+                        }}
                       >
                         {isDebugEnabled ? 'Disable Debug' : 'Enable Debug'}
                       </button>
@@ -957,14 +742,15 @@ function App({ initialAuthError = '' }: AppProps) {
               <div className="status-txing-header-side status-txing-header-side-end">
                 <button
                   type="button"
-                  className={`status-icon-button status-camera-button status-camera-button-${boardVideoControlTone}`}
-                  aria-label={boardVideoControlLabel}
-                  aria-pressed={isBoardVideoEmbedded}
-                  title={boardVideoControlTitle}
-                  onClick={handleToggleBoardVideo}
-                  disabled={!isBoardVideoEmbedded && !canUseBoardVideo}
+                  className={`status-icon-button status-camera-button ${
+                    canUseBoardVideo ? 'status-camera-button-ready' : 'status-camera-button-idle'
+                  }`}
+                  aria-label={canUseBoardVideo ? 'Open board video' : 'Board video unavailable'}
+                  title={boardVideoTargetUrl ?? 'Board video is not ready'}
+                  onClick={handleOpenBoardVideo}
+                  disabled={!canUseBoardVideo}
                 >
-                  <CameraGlyph crossed={!isBoardVideoEmbedded} />
+                  <CameraGlyph crossed={!canUseBoardVideo} />
                 </button>
                 <div
                   className={`status-signal ${bleSignalToneClass}`}
@@ -1022,40 +808,15 @@ function App({ initialAuthError = '' }: AppProps) {
                 </div>
               </div>
             </div>
-            {isBoardVideoEmbedded && (
-              <div className="status-video-panel">
-                <div className="status-video-stage">
-                  {reportedBoardVideo.viewerUrl ? (
-                    <>
-                      <iframe
-                        key={reportedBoardVideo.viewerUrl}
-                        className="status-video-preview"
-                        title="Board video viewer"
-                        src={reportedBoardVideo.viewerUrl}
-                        allow="autoplay; fullscreen"
-                        onLoad={handleBoardVideoFrameLoad}
-                        onError={handleBoardVideoFrameError}
-                      />
-                      {isBoardVideoConnecting && (
-                        <div className="status-video-overlay" aria-live="polite">
-                          Opening board camera...
-                        </div>
-                      )}
-                    </>
-                  ) : (
-                    <p className="status-video-placeholder">Board video is not ready yet.</p>
-                  )}
-                </div>
-                {boardVideoErrorMessage && (
-                  <p className="error status-video-error" aria-live="polite">
-                    {boardVideoErrorMessage}
-                  </p>
-                )}
-              </div>
-            )}
           </div>
         </div>
       </section>
+
+      {feedback && <p className="feedback status-inline-feedback">{feedback}</p>}
+      {reportedBoardVideo.lastError && !error ? (
+        <p className="error status-inline-error">{reportedBoardVideo.lastError}</p>
+      ) : null}
+      {error && <p className="error status-inline-error">{error}</p>}
 
       {isDebugEnabled && (
         <section className="card debug-panel">
@@ -1074,9 +835,6 @@ function App({ initialAuthError = '' }: AppProps) {
             </div>
           </div>
 
-          {feedback && <p className="feedback">{feedback}</p>}
-          {error && <p className="error">{error}</p>}
-
           <label htmlFor="shadow-json" className="editor-label">
             Current shadow JSON
           </label>
@@ -1089,8 +847,6 @@ function App({ initialAuthError = '' }: AppProps) {
           />
         </section>
       )}
-
-      {!isDebugEnabled && error && <p className="error status-inline-error">{error}</p>}
     </main>
   )
 }

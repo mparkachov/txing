@@ -16,6 +16,10 @@ const toUrl = (value: string | null, fallback: string): string => {
 }
 
 const getRuntimeAppUrl = (): string => {
+  if (typeof window === 'undefined') {
+    return 'http://localhost/'
+  }
+
   const url = new URL(window.location.href)
   url.search = ''
   url.hash = ''

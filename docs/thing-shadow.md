@@ -43,16 +43,12 @@ Schema validation should be done by project code and/or CI checks, while AWS IoT
 - `state.reported.board.wifi.ipv6` (`ipv6 string`, update payload may temporarily use `null` to delete) is the IPv6 address chosen by the OS for the board's current IPv6 default-route interface when the board control publishes.
 - `state.reported.board.video.ready` (`boolean`) indicates whether the phase-1 plain AWS WebRTC live path is ready for operator use.
 - `state.reported.board.video.status` (`"starting" | "ready" | "error"`) is the coarse runtime state of the board video sender path.
-- `state.reported.board.video.transport` (`"aws-webrtc"` or `"local-webrtc"`) identifies the currently published live-video transport. Phase 1 intends `aws-webrtc` as the only live operator path, specifically as a plain KVS WebRTC signaling session. `local-webrtc` remains compatibility-only for the older local MediaMTX prototype.
+- `state.reported.board.video.transport` (`"aws-webrtc"`) identifies the live-video transport. Phase 1 uses `aws-webrtc` as the only live operator path, specifically as a plain KVS WebRTC signaling session.
 - `state.reported.board.video.session.viewerUrl` (`string`, update payload may temporarily use `null` to delete) is the operator-facing browser entry URL when a browser route exists for the live video session.
 - `state.reported.board.video.session.channelName` (`string`, update payload may temporarily use `null` to delete) is the KVS WebRTC signaling channel name for browser or native clients.
 - `state.reported.board.video.codec.video` (`"h264"` or `null`) is the currently configured board video codec.
 - `state.reported.board.video.viewerConnected` (`boolean`) is the best-effort operator-viewer presence flag for the live path.
 - `state.reported.board.video.lastError` (`string` or `null`) is the last coarse board-side video error surfaced by `txing-board` or its supervised sender path.
-
-Compatibility note:
-
-- `state.reported.board.video.local.*` remains temporarily tolerated in the schema for compatibility with the earlier local MediaMTX prototype.
 - Phase-1 design intent is now plain AWS WebRTC only for the live operator path.
 - Phase 1 does not assume WebRTC ingestion/storage, multiviewer, or `kvssink`.
 - Whether a second direct operator path is needed later is explicitly deferred until field tests.
