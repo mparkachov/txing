@@ -26,4 +26,5 @@ htmlcov/
 .DS_Store
 
 # Native sender build artifacts
-native/kvs_master/target/
+kvs_master/build/
+kvs_master/build-tests/

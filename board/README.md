@@ -15,16 +15,16 @@ When the service is managed by `systemd`, run it as `root`. The board control co
 Phase 1 board video is a headless AWS KVS WebRTC path:
 
 - board camera and encoder
-- repo-owned Rust KVS master sender command on the board
+- repo-owned C++ KVS master sender command on the board
 - `board-video-sender` adapter and state writer
 - `txing-board` shadow publisher
 - browser viewer at the SPA `/video` route
 
 Important:
 
-- This repo now ships the native sender in `board/native/kvs_master/`.
+- This repo now ships the native sender in `board/kvs_master/`.
 - `board-video-sender` remains a supervisor/state adapter around a child command exposed through `TXING_BOARD_VIDEO_SENDER_COMMAND`.
-- The native sender spawns `rpicam-vid`, parses inline H.264 Annex-B access units, and feeds them to AWS KVS WebRTC as master through a narrow C shim over the AWS WebRTC C SDK.
+- The native sender is a standalone C++ executable that spawns `rpicam-vid`, parses inline H.264 Annex-B access units, and feeds them to AWS KVS WebRTC as master through the AWS WebRTC C SDK directly.
 
 ## Shadow contract
 
@@ -73,8 +73,8 @@ Notes:
 
 ## Prerequisites
 
-- Raspberry Pi OS Lite with Python `3.12+` available as `python3`
-- `git`, `just`, `pipx`, `uv`, `rustup`, `cargo`, `rustc`, `cmake`, `pkg-config`, and a native C toolchain
+- Raspberry Pi OS Lite 64-bit with Python `3.12+` available as `python3`
+- `git`, `just`, `pipx`, `uv`, `cmake`, `pkg-config`, and a native C/C++ toolchain
 - native build packages for the AWS WebRTC C SDK dependencies: `build-essential`, `curl`, `libssl-dev`, `libcurl4-openssl-dev`, and `liblog4cplus-dev`
 - AWS IoT endpoint, root CA, client certificate, and client private key
 - AWS credentials for the board video sender with permission to use the KVS signaling channel as master
@@ -157,6 +157,7 @@ The sender AWS credentials must be allowed to use the exported signaling channel
 In Raspberry Pi Imager:
 
 - choose Raspberry Pi OS Lite
+- choose the 64-bit image, not the 32-bit image
 - set the hostname, username, password, Wi-Fi, locale, and enable SSH
 - if you want to reuse the commands below exactly, set the username to `user`
 
@@ -172,22 +173,33 @@ ssh user@<board-host>
 sudo apt update
 sudo apt dist-upgrade -y
 sudo apt autoremove -y
-sudo apt install -y awscli build-essential cmake curl git just libcurl4-openssl-dev liblog4cplus-dev libssl-dev pipx pkg-config
+sudo apt install -y build-essential cmake curl git g++ just libcurl4-openssl-dev liblog4cplus-dev libssl-dev make pipx pkg-config unzip
 pipx install uv
 pipx ensurepath
-curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal
-source "$HOME/.cargo/env"
-cargo --version
-rustc --version
 ```
 
-Start a new shell, or reload the Rust toolchain into the current shell again with `source "$HOME/.cargo/env"`, then clone the repository:
+Start a new shell so the `pipx` path is active, then clone the repository:
 
 ```bash
 cd /home/user
 git clone <your-txing-repo-url> txing
 cd /home/user/txing
 ```
+
+Install AWS CLI v2 from AWS's official Linux ARM installer:
+
+```bash
+uname -m
+test "$(uname -m)" = "aarch64"
+cd /tmp
+curl "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o "awscliv2.zip"
+unzip -q awscliv2.zip
+sudo ./aws/install
+aws --version
+rm -rf /tmp/aws /tmp/awscliv2.zip
+```
+
+If `uname -m` is not `aarch64`, stop and reinstall a 64-bit Raspberry Pi OS image. AWS documents AWS CLI v2 support for 64-bit Linux ARM and the official Linux ARM installer uses the `awscli-exe-linux-aarch64.zip` package.
 
 ### 4. Copy AWS IoT Client Artifacts to the Board
 
@@ -221,12 +233,9 @@ test -s certs/iot-data-ats.endpoint
 
 ### 5. Build the Native KVS Sender
 
-Load the Rust toolchain in the current shell and build the repo-owned sender:
+Build the repo-owned sender:
 
 ```bash
-source "$HOME/.cargo/env"
-cargo --version
-rustc --version
 cd /home/user/txing/board
 just build-native
 ```
@@ -234,7 +243,7 @@ just build-native
 The resulting sender binary lives at:
 
 ```bash
-/home/user/txing/board/native/kvs_master/target/release/txing-board-kvs-master
+/home/user/txing/board/kvs_master/build/txing-board-kvs-master
 ```
 
 You do not need to set sender regex environment variables for the repo sender. `board-video-sender` now recognizes these built-in markers by default:
@@ -284,7 +293,7 @@ Get the published viewer URL from the stack output and export the sender command
 
 ```bash
 export BOARD_VIDEO_VIEWER_URL='https://<cloudfront-domain>/video'
-export TXING_BOARD_VIDEO_SENDER_COMMAND=/home/user/txing/board/native/kvs_master/target/release/txing-board-kvs-master
+export TXING_BOARD_VIDEO_SENDER_COMMAND=/home/user/txing/board/kvs_master/build/txing-board-kvs-master
 ```
 
 Build the board runtime:
@@ -389,7 +398,7 @@ From `board/`:
 uv run board --help
 uv run board-video-sender --help
 uv run board --once --video-viewer-url "$BOARD_VIDEO_VIEWER_URL"
-./native/kvs_master/target/release/txing-board-kvs-master --help
+./kvs_master/build/txing-board-kvs-master --help
 ```
 
 Useful board options:

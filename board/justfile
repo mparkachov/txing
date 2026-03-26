@@ -4,8 +4,10 @@ board_dir := source_directory()
 python_executable := "python3"
 built_board := board_dir + "/.venv/bin/board"
 built_board_video_sender := board_dir + "/.venv/bin/board-video-sender"
-native_kvs_master_dir := board_dir + "/native/kvs_master"
-built_native_kvs_master := native_kvs_master_dir + "/target/release/txing-board-kvs-master"
+native_kvs_master_dir := board_dir + "/kvs_master"
+native_kvs_master_build_dir := native_kvs_master_dir + "/build"
+native_kvs_master_test_build_dir := native_kvs_master_dir + "/build-tests"
+built_native_kvs_master := native_kvs_master_build_dir + "/txing-board-kvs-master"
 systemd_unit := "/etc/systemd/system/txing-board.service"
 default_video_region := env_var_or_default("TXING_BOARD_VIDEO_REGION", "eu-central-1")
 default_video_channel_name := env_var_or_default("TXING_BOARD_VIDEO_CHANNEL_NAME", "txing-board-video")
@@ -21,11 +23,14 @@ default_aws_config_file := env_var_or_default("TXING_BOARD_AWS_CONFIG_FILE", "/r
     test -x "{{built_board_video_sender}}"
 
 @build-native:
-    cd "{{native_kvs_master_dir}}" && cargo build --release
+    cmake -S "{{native_kvs_master_dir}}" -B "{{native_kvs_master_build_dir}}" -DCMAKE_BUILD_TYPE=Release
+    cmake --build "{{native_kvs_master_build_dir}}" --config Release
     test -x "{{built_native_kvs_master}}"
 
 @test-native:
-    cd "{{native_kvs_master_dir}}" && cargo test
+    cmake -S "{{native_kvs_master_dir}}" -B "{{native_kvs_master_test_build_dir}}" -DCMAKE_BUILD_TYPE=Debug -DTXING_KVS_REAL_SDK=OFF
+    cmake --build "{{native_kvs_master_test_build_dir}}" --config Debug --target txing-board-kvs-master-tests
+    ctest --test-dir "{{native_kvs_master_test_build_dir}}" --output-on-failure
 
 @run:
     cd "{{board_dir}}" && "{{built_board}}"

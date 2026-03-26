@@ -8,7 +8,7 @@ from board import video_sender
 
 
 class VideoSenderTests(unittest.TestCase):
-    def test_parse_args_uses_rust_sender_marker_defaults(self) -> None:
+    def test_parse_args_uses_repo_sender_marker_defaults(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
             with patch(
                 "sys.argv",
