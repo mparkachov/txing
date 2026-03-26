@@ -1,7 +1,7 @@
 #ifndef TXING_BOARD_KVS_MASTER_AWS_ENV_HPP
 #define TXING_BOARD_KVS_MASTER_AWS_ENV_HPP
 
-#include "txing_board_kvs_master/config.hpp"
+#include "kvs_master/config.hpp"
 
 #include <filesystem>
 #include <functional>

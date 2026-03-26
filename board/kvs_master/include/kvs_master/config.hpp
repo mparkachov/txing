@@ -12,7 +12,6 @@ namespace txing::board::kvs_master {
 using EnvLookup = std::function<std::optional<std::string>(const std::string&)>;
 
 struct CameraConfig {
-    std::string path = "/usr/bin/rpicam-vid";
     std::uint32_t camera = 0;
     std::uint32_t width = 1920;
     std::uint32_t height = 1080;

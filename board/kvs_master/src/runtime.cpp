@@ -1,20 +1,18 @@
-#include "txing_board_kvs_master/runtime.hpp"
+#include "kvs_master/runtime.hpp"
 
-#include "txing_board_kvs_master/aws_env.hpp"
-#include "txing_board_kvs_master/h264.hpp"
-#include "txing_board_kvs_master/kvs_session.hpp"
-#include "txing_board_kvs_master/rpicam.hpp"
+#include "kvs_master/aws_env.hpp"
+#include "kvs_master/kvs_session.hpp"
+#include "kvs_master/markers.hpp"
+#include "kvs_master/video_capturer.hpp"
 
 #include <algorithm>
-#include <array>
 #include <atomic>
-#include <cerrno>
 #include <csignal>
 #include <cstdint>
 #include <limits>
 #include <optional>
 #include <stdexcept>
-#include <unistd.h>
+#include <string>
 
 namespace txing::board::kvs_master {
 namespace {
@@ -39,91 +37,111 @@ void InstallSignalHandlers() {
     }
 }
 
-std::uint64_t SaturatingAdd(std::uint64_t left, std::uint64_t right) {
-    if (left > std::numeric_limits<std::uint64_t>::max() - right) {
+std::uint64_t SaturatingMultiply(std::uint64_t value, std::uint64_t multiplier) {
+    if (value == 0 || multiplier == 0) {
+        return 0;
+    }
+    if (value > std::numeric_limits<std::uint64_t>::max() / multiplier) {
         return std::numeric_limits<std::uint64_t>::max();
     }
-    return left + right;
+    return value * multiplier;
+}
+
+std::uint64_t TimestampUsTo100ns(std::uint64_t timestamp_us) {
+    return SaturatingMultiply(timestamp_us, 10);
+}
+
+std::uint64_t DefaultFrameDuration100ns(const CameraConfig& config) {
+    const auto framerate = std::max<std::uint32_t>(1, config.framerate);
+    return std::uint64_t(10'000'000) / framerate;
 }
 
 }  // namespace
 
+RuntimeHooks DefaultRuntimeHooks() {
+    RuntimeHooks hooks;
+    hooks.resolve_aws_credentials = []() { return ResolveAwsCredentials(); };
+    hooks.create_kvs_session = [](
+                                   const RuntimeConfig& config,
+                                   const AwsCredentials& credentials
+                               ) { return CreateKvsSession(config, credentials); };
+    hooks.create_video_capturer = []() { return CreateVideoCapturer(); };
+    return hooks;
+}
+
 void Run(const RuntimeConfig& config) {
+    Run(config, DefaultRuntimeHooks());
+}
+
+void Run(const RuntimeConfig& config, const RuntimeHooks& hooks) {
+    if (!hooks.resolve_aws_credentials || !hooks.create_kvs_session || !hooks.create_video_capturer) {
+        throw std::runtime_error("runtime hooks are incomplete");
+    }
+
     g_stop_requested.store(false);
     InstallSignalHandlers();
 
-    const auto credentials = ResolveAwsCredentials();
-    auto kvs_session = CreateKvsSession(config, credentials);
-    kvs_session->Start();
+    const auto credentials = hooks.resolve_aws_credentials();
+    auto kvs_session = hooks.create_kvs_session(config, credentials);
+    auto capturer = hooks.create_video_capturer();
 
-    auto camera = RpicamProcess::Spawn(config.camera);
-    AnnexBAccessUnitParser parser;
-    const auto frame_duration = std::uint64_t(10'000'000) / std::max<std::uint32_t>(1, config.camera.framerate);
-    std::uint64_t presentation_ts = 0;
+    if (kvs_session == nullptr || capturer == nullptr) {
+        throw std::runtime_error("runtime dependencies are not initialized");
+    }
+
     std::optional<std::string> first_error;
-    std::array<std::uint8_t, 64 * 1024> buffer{};
-
-    while (!g_stop_requested.load()) {
-        if (const auto fatal_error = kvs_session->TakeFatalError()) {
-            first_error = *fatal_error;
-            break;
-        }
-
-        const auto bytes_read = read(camera.stdout_fd(), buffer.data(), buffer.size());
-        if (bytes_read == 0) {
-            const auto exit_status = camera.TryWait();
-            if (exit_status && *exit_status == 0) {
-                break;
-            }
-            if (exit_status) {
-                first_error = "rpicam-vid exited with status " + std::to_string(*exit_status);
-            } else {
-                first_error = "rpicam-vid stdout closed unexpectedly";
-            }
-            break;
-        }
-
-        if (bytes_read < 0) {
-            if (errno == EINTR) {
-                continue;
-            }
-            first_error = "failed to read rpicam-vid output";
-            break;
-        }
-
-        const auto access_units = parser.Push(buffer.data(), static_cast<std::size_t>(bytes_read));
-        for (const auto& access_unit : access_units) {
-            kvs_session->PushH264AccessUnit(
-                access_unit.bytes.data(),
-                access_unit.bytes.size(),
-                presentation_ts,
-                frame_duration,
-                access_unit.is_keyframe
-            );
-            presentation_ts = SaturatingAdd(presentation_ts, frame_duration);
-        }
-    }
-
-    if (!first_error) {
-        for (const auto& access_unit : parser.Finish()) {
-            kvs_session->PushH264AccessUnit(
-                access_unit.bytes.data(),
-                access_unit.bytes.size(),
-                presentation_ts,
-                frame_duration,
-                access_unit.is_keyframe
-            );
-            presentation_ts = SaturatingAdd(presentation_ts, frame_duration);
-        }
-    }
+    bool ready_emitted = false;
+    std::uint64_t previous_timestamp_us = 0;
+    const auto default_duration_100ns = DefaultFrameDuration100ns(config.camera);
 
     try {
-        camera.Terminate();
-    } catch (const std::exception& error) {
-        if (!first_error) {
-            first_error = error.what();
+        kvs_session->Start();
+        capturer->Configure(config.camera);
+        capturer->Start();
+
+        while (!g_stop_requested.load()) {
+            if (const auto fatal_error = kvs_session->TakeFatalError()) {
+                first_error = *fatal_error;
+                break;
+            }
+
+            auto maybe_frame = capturer->GetFrame(100);
+            if (!maybe_frame) {
+                if (capturer->GetStatus() == VideoCapturerStatus::kStopped) {
+                    break;
+                }
+                continue;
+            }
+
+            auto& frame = *maybe_frame;
+            if (frame.bytes.empty()) {
+                continue;
+            }
+
+            std::uint64_t duration_100ns = default_duration_100ns;
+            if (previous_timestamp_us != 0 && frame.timestamp_us > previous_timestamp_us) {
+                duration_100ns = TimestampUsTo100ns(frame.timestamp_us - previous_timestamp_us);
+            }
+
+            kvs_session->PushH264AccessUnit(
+                frame.bytes.data(),
+                frame.bytes.size(),
+                TimestampUsTo100ns(frame.timestamp_us),
+                duration_100ns,
+                frame.is_keyframe
+            );
+            previous_timestamp_us = frame.timestamp_us;
+
+            if (!ready_emitted && frame.is_keyframe) {
+                EmitMarker("TXING_KVS_READY", {});
+                ready_emitted = true;
+            }
         }
+    } catch (const std::exception& error) {
+        first_error = error.what();
     }
+
+    capturer->Stop();
     kvs_session->Stop();
 
     if (first_error) {

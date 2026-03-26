@@ -1,6 +1,6 @@
-#include "txing_board_kvs_master/config.hpp"
-#include "txing_board_kvs_master/markers.hpp"
-#include "txing_board_kvs_master/runtime.hpp"
+#include "kvs_master/config.hpp"
+#include "kvs_master/markers.hpp"
+#include "kvs_master/runtime.hpp"
 
 #include <exception>
 #include <iostream>

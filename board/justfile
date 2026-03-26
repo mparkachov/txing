@@ -13,6 +13,7 @@ default_video_region := env_var_or_default("TXING_BOARD_VIDEO_REGION", "eu-centr
 default_video_channel_name := env_var_or_default("TXING_BOARD_VIDEO_CHANNEL_NAME", "txing-board-video")
 default_aws_shared_credentials_file := env_var_or_default("TXING_BOARD_AWS_SHARED_CREDENTIALS_FILE", "/root/.aws/credentials")
 default_aws_config_file := env_var_or_default("TXING_BOARD_AWS_CONFIG_FILE", "/root/.aws/config")
+default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_SYSTEM_DEPENDENCIES", "OFF")
 
 @sync:
     cd "{{board_dir}}" && uv sync --python "{{python_executable}}" --no-managed-python --no-python-downloads
@@ -23,12 +24,12 @@ default_aws_config_file := env_var_or_default("TXING_BOARD_AWS_CONFIG_FILE", "/r
     test -x "{{built_board_video_sender}}"
 
 @build-native:
-    cmake -S "{{native_kvs_master_dir}}" -B "{{native_kvs_master_build_dir}}" -DCMAKE_BUILD_TYPE=Release
+    cmake -S "{{native_kvs_master_dir}}" -B "{{native_kvs_master_build_dir}}" -DCMAKE_BUILD_TYPE=Release -DTXING_KVS_USE_SYSTEM_DEPENDENCIES="{{default_kvs_use_system_dependencies}}"
     cmake --build "{{native_kvs_master_build_dir}}" --config Release
     test -x "{{built_native_kvs_master}}"
 
 @test-native:
-    cmake -S "{{native_kvs_master_dir}}" -B "{{native_kvs_master_test_build_dir}}" -DCMAKE_BUILD_TYPE=Debug -DTXING_KVS_REAL_SDK=OFF
+    cmake -S "{{native_kvs_master_dir}}" -B "{{native_kvs_master_test_build_dir}}" -DCMAKE_BUILD_TYPE=Debug -DTXING_KVS_REAL_SDK=OFF -DTXING_KVS_USE_SYSTEM_DEPENDENCIES="{{default_kvs_use_system_dependencies}}"
     cmake --build "{{native_kvs_master_test_build_dir}}" --config Debug --target txing-board-kvs-master-tests
     ctest --test-dir "{{native_kvs_master_test_build_dir}}" --output-on-failure
 

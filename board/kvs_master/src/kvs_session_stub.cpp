@@ -1,6 +1,4 @@
-#include "txing_board_kvs_master/kvs_session.hpp"
-
-#include "txing_board_kvs_master/markers.hpp"
+#include "kvs_master/kvs_session.hpp"
 
 #include <memory>
 #include <stdexcept>
@@ -12,7 +10,6 @@ class StubKvsSession final : public KvsSession {
   public:
     void Start() override {
         started_ = true;
-        EmitMarker("TXING_KVS_READY", {});
     }
 
     void PushH264AccessUnit(

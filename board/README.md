@@ -24,7 +24,7 @@ Important:
 
 - This repo now ships the native sender in `board/kvs_master/`.
 - `board-video-sender` remains a supervisor/state adapter around a child command exposed through `TXING_BOARD_VIDEO_SENDER_COMMAND`.
-- The native sender is a standalone C++ executable that spawns `rpicam-vid`, parses inline H.264 Annex-B access units, and feeds them to AWS KVS WebRTC as master through the AWS WebRTC C SDK directly.
+- The native sender is a standalone C++ executable that captures with `libcamera`, encodes H.264 through the Raspberry Pi V4L2 hardware encoder, and feeds those encoded access units to AWS KVS WebRTC as master through the AWS WebRTC C SDK directly.
 
 ## Shadow contract
 
@@ -76,9 +76,10 @@ Notes:
 - Raspberry Pi OS Lite 64-bit with Python `3.12+` available as `python3`
 - `git`, `just`, `pipx`, `uv`, `cmake`, `pkg-config`, and a native C/C++ toolchain
 - native build packages for the AWS WebRTC C SDK dependencies: `build-essential`, `curl`, `libssl-dev`, `libcurl4-openssl-dev`, and `liblog4cplus-dev`
+- `libcamera-dev` for the in-process camera capture path
 - AWS IoT endpoint, root CA, client certificate, and client private key
 - AWS credentials for the board video sender with permission to use the KVS signaling channel as master
-- a working Raspberry Pi camera stack with `/usr/bin/rpicam-vid`
+- a working Raspberry Pi camera stack with the modern `libcamera` pipeline and the Pi V4L2 H.264 encoder available
 
 The defaults expect shared repo cert material in `../certs/`:
 
@@ -173,7 +174,7 @@ ssh user@<board-host>
 sudo apt update
 sudo apt dist-upgrade -y
 sudo apt autoremove -y
-sudo apt install -y build-essential cmake curl git g++ just libcurl4-openssl-dev liblog4cplus-dev libssl-dev make pipx pkg-config unzip
+sudo apt install -y build-essential cmake curl git g++ just libcamera-dev libcurl4-openssl-dev liblog4cplus-dev libssl-dev make pipx pkg-config unzip
 pipx install uv
 pipx ensurepath
 ```
@@ -237,6 +238,7 @@ Build the repo-owned sender:
 
 ```bash
 cd /home/user/txing/board
+pkg-config --modversion libcamera
 just build-native
 ```
 
@@ -245,6 +247,14 @@ The resulting sender binary lives at:
 ```bash
 /home/user/txing/board/kvs_master/build/txing-board-kvs-master
 ```
+
+Dependency mode note for Raspberry Pi OS Trixie:
+
+- AWS documents the system dependency path as `BUILD_DEPENDENCIES=OFF` with system `libopenssl=1.1.1x`, `libsrtp2<=2.5.0`, `libusrsctp<=0.9.5.0`, and `libwebsockets>=4.2.0`.
+- Debian Trixie currently ships `libssl-dev 3.5.5`, `libsrtp2-dev 2.7.0`, `libusrsctp-dev 0.9.5.0`, and `libwebsockets-dev 4.3.5`.
+- That means `libusrsctp-dev` and `libwebsockets-dev` fit AWS's documented window, but `libssl-dev` and `libsrtp2-dev` do not.
+- Because the AWS SDK's `BUILD_DEPENDENCIES` switch is global and system `libwebsockets` depends on system OpenSSL, the board build keeps the vendored dependency path by default on Trixie.
+- If you intentionally want the unsupported system-dependency path anyway, export `TXING_BOARD_KVS_USE_SYSTEM_DEPENDENCIES=ON` before `just build-native`.
 
 You do not need to set sender regex environment variables for the repo sender. `board-video-sender` now recognizes these built-in markers by default:
 
@@ -419,7 +429,6 @@ Useful sender options:
 - `--region <aws-region>` or `TXING_BOARD_VIDEO_REGION`
 - `--channel-name <channel-name>` or `TXING_BOARD_VIDEO_CHANNEL_NAME`
 - `--client-id <id>`
-- `--rpicam-vid-path </path/to/rpicam-vid>`
 - `--camera <index>`
 - `--width <pixels>`
 - `--height <pixels>`

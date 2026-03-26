@@ -1,6 +1,6 @@
-#include "txing_board_kvs_master/kvs_session.hpp"
+#include "kvs_master/kvs_session.hpp"
 
-#include "txing_board_kvs_master/markers.hpp"
+#include "kvs_master/markers.hpp"
 
 #include <array>
 #include <cstdarg>
@@ -85,7 +85,6 @@ class RealKvsSession final : public KvsSession {
         cleanup_thread_started_ = true;
         started_ = true;
         stopping_ = false;
-        EmitMarker("TXING_KVS_READY", {});
     }
 
     void PushH264AccessUnit(

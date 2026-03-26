@@ -1,4 +1,4 @@
-#include "txing_board_kvs_master/config.hpp"
+#include "kvs_master/config.hpp"
 
 #include <cstdlib>
 #include <sstream>
@@ -117,10 +117,6 @@ ParsedCli ParseCli(const std::vector<std::string>& arguments, const EnvLookup& l
         parsed.config.client_id = *client_id;
     }
 
-    if (const auto path = LookupValue(options, "rpicam-vid-path", lookup_env, ""); path && !path->empty()) {
-        parsed.config.camera.path = *path;
-    }
-
     parsed.config.camera.camera = ParseUnsigned(options, "camera", parsed.config.camera.camera);
     parsed.config.camera.width = ParseUnsigned(options, "width", parsed.config.camera.width);
     parsed.config.camera.height = ParseUnsigned(options, "height", parsed.config.camera.height);
@@ -148,7 +144,6 @@ std::string UsageText() {
         << "  --region <aws-region>                  or TXING_BOARD_VIDEO_REGION\n"
         << "  --channel-name <channel-name>          or TXING_BOARD_VIDEO_CHANNEL_NAME\n"
         << "  --client-id <id>                       default: txing-board-kvs-master\n"
-        << "  --rpicam-vid-path <path>               default: /usr/bin/rpicam-vid\n"
         << "  --camera <index>                       default: 0\n"
         << "  --width <pixels>                       default: 1920\n"
         << "  --height <pixels>                      default: 1080\n"

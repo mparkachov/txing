@@ -1,27 +1,35 @@
-#include "txing_board_kvs_master/aws_env.hpp"
-#include "txing_board_kvs_master/config.hpp"
-#include "txing_board_kvs_master/h264.hpp"
-#include "txing_board_kvs_master/markers.hpp"
-#include "txing_board_kvs_master/rpicam.hpp"
+#include "kvs_master/aws_env.hpp"
+#include "kvs_master/config.hpp"
+#include "kvs_master/markers.hpp"
+#include "kvs_master/runtime.hpp"
+#include "kvs_master/video_capturer.hpp"
 
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
+#include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace {
 
-using txing::board::kvs_master::AccessUnit;
-using txing::board::kvs_master::AnnexBAccessUnitParser;
 using txing::board::kvs_master::AwsCredentials;
-using txing::board::kvs_master::BuildRpicamArguments;
-using txing::board::kvs_master::CameraConfig;
+using txing::board::kvs_master::EncodedVideoFrame;
 using txing::board::kvs_master::FormatMarkerLine;
+using txing::board::kvs_master::KvsSession;
 using txing::board::kvs_master::ParseCli;
 using txing::board::kvs_master::ResolveAwsCredentials;
+using txing::board::kvs_master::Run;
+using txing::board::kvs_master::RuntimeConfig;
+using txing::board::kvs_master::RuntimeHooks;
+using txing::board::kvs_master::UsageText;
+using txing::board::kvs_master::VideoCapturer;
+using txing::board::kvs_master::VideoCapturerStatus;
 
 int g_failures = 0;
 
@@ -32,12 +40,6 @@ void Expect(bool condition, const std::string& message) {
     }
 }
 
-std::vector<std::uint8_t> Nal(std::initializer_list<std::uint8_t> payload) {
-    std::vector<std::uint8_t> bytes = {0x00, 0x00, 0x00, 0x01};
-    bytes.insert(bytes.end(), payload.begin(), payload.end());
-    return bytes;
-}
-
 txing::board::kvs_master::EnvLookup EnvFrom(const std::unordered_map<std::string, std::string>& values) {
     return [values](const std::string& key) -> std::optional<std::string> {
         const auto it = values.find(key);
@@ -46,6 +48,159 @@ txing::board::kvs_master::EnvLookup EnvFrom(const std::unordered_map<std::string
         }
         return it->second;
     };
+}
+
+struct FakeKvsPush {
+    std::uint64_t pts_100ns = 0;
+    std::uint64_t duration_100ns = 0;
+    bool is_keyframe = false;
+    std::size_t len = 0;
+};
+
+struct FakeKvsState {
+    bool started = false;
+    bool stopped = false;
+    std::vector<FakeKvsPush> pushes;
+};
+
+class FakeKvsSession final : public KvsSession {
+  public:
+    explicit FakeKvsSession(FakeKvsState* state) : state_(state) {}
+
+    void Start() override {
+        state_->started = true;
+    }
+
+    void PushH264AccessUnit(
+        const std::uint8_t* data,
+        std::size_t len,
+        std::uint64_t presentation_ts_100ns,
+        std::uint64_t duration_100ns,
+        bool is_keyframe
+    ) override {
+        if (data == nullptr || len == 0) {
+            throw std::runtime_error("unexpected empty frame");
+        }
+        FakeKvsPush push;
+        push.pts_100ns = presentation_ts_100ns;
+        push.duration_100ns = duration_100ns;
+        push.is_keyframe = is_keyframe;
+        push.len = len;
+        state_->pushes.push_back(push);
+    }
+
+    void Stop() noexcept override {
+        state_->stopped = true;
+    }
+
+    std::optional<std::string> TakeFatalError() override {
+        return std::nullopt;
+    }
+
+  private:
+    FakeKvsState* state_;
+};
+
+struct FakeCapturerState {
+    VideoCapturerStatus status = VideoCapturerStatus::kNotReady;
+    bool configured = false;
+    bool started = false;
+    bool stopped = false;
+    bool throw_on_start = false;
+    bool throw_on_get_frame = false;
+    std::string error_message = "capturer failure";
+    std::vector<EncodedVideoFrame> frames;
+};
+
+class FakeVideoCapturer final : public VideoCapturer {
+  public:
+    explicit FakeVideoCapturer(FakeCapturerState* state) : state_(state) {}
+
+    void Configure(const txing::board::kvs_master::CameraConfig&) override {
+        state_->configured = true;
+        state_->status = VideoCapturerStatus::kConfigured;
+    }
+
+    void Start() override {
+        if (state_->throw_on_start) {
+            state_->status = VideoCapturerStatus::kError;
+            throw std::runtime_error(state_->error_message);
+        }
+        state_->started = true;
+        state_->status = VideoCapturerStatus::kStreaming;
+    }
+
+    std::optional<EncodedVideoFrame> GetFrame(std::uint32_t /*timeout_ms*/) override {
+        if (state_->throw_on_get_frame) {
+            state_->status = VideoCapturerStatus::kError;
+            throw std::runtime_error(state_->error_message);
+        }
+        if (state_->frames.empty()) {
+            state_->status = VideoCapturerStatus::kStopped;
+            return std::nullopt;
+        }
+        auto frame = std::move(state_->frames.front());
+        state_->frames.erase(state_->frames.begin());
+        return frame;
+    }
+
+    void Stop() noexcept override {
+        state_->stopped = true;
+        state_->status = VideoCapturerStatus::kStopped;
+    }
+
+    VideoCapturerStatus GetStatus() const noexcept override {
+        return state_->status;
+    }
+
+  private:
+    FakeCapturerState* state_;
+};
+
+class ScopedStdoutCapture {
+  public:
+    ScopedStdoutCapture() : previous_(std::cout.rdbuf(stream_.rdbuf())) {}
+    ~ScopedStdoutCapture() {
+        std::cout.rdbuf(previous_);
+    }
+
+    std::string str() const {
+        return stream_.str();
+    }
+
+  private:
+    std::ostringstream stream_;
+    std::streambuf* previous_;
+};
+
+RuntimeHooks HooksFrom(FakeKvsState* kvs_state, FakeCapturerState* capturer_state) {
+    RuntimeHooks hooks;
+    hooks.resolve_aws_credentials = [] {
+        AwsCredentials credentials;
+        credentials.access_key_id = "test-access";
+        credentials.secret_access_key = "test-secret";
+        credentials.session_token = std::nullopt;
+        return credentials;
+    };
+    hooks.create_kvs_session = [kvs_state](
+                                   const RuntimeConfig&,
+                                   const AwsCredentials&
+                               ) { return std::make_unique<FakeKvsSession>(kvs_state); };
+    hooks.create_video_capturer = [capturer_state] { return std::make_unique<FakeVideoCapturer>(capturer_state); };
+    return hooks;
+}
+
+RuntimeConfig TestRuntimeConfig() {
+    RuntimeConfig config;
+    config.region = "eu-central-1";
+    config.channel_name = "txing-board-video";
+    config.client_id = "board-master";
+    config.camera.width = 1920;
+    config.camera.height = 1080;
+    config.camera.framerate = 30;
+    config.camera.bitrate = 8'000'000;
+    config.camera.intra = 30;
+    return config;
 }
 
 void TestCliParsing() {
@@ -80,6 +235,15 @@ void TestCliParsing() {
     Expect(parsed.config.camera.framerate == 15, "CLI should parse framerate");
     Expect(parsed.config.camera.bitrate == 1'200'000, "CLI should parse bitrate");
     Expect(parsed.config.camera.intra == 15, "CLI should parse intra");
+}
+
+void TestUsageText() {
+    const auto usage = UsageText();
+    Expect(
+        usage.find("--rpicam-vid-path") == std::string::npos,
+        "usage text should not mention the removed rpicam-vid path"
+    );
+    Expect(usage.find("--camera <index>") != std::string::npos, "usage text should still document camera selection");
 }
 
 void TestCredentialResolution() {
@@ -129,47 +293,54 @@ void TestCredentialResolution() {
     Expect(!file_credentials.session_token.has_value(), "file session token should be optional");
 }
 
-void TestRpicamArguments() {
-    CameraConfig config;
-    config.path = "/usr/bin/rpicam-vid";
-    config.camera = 1;
-    config.width = 1920;
-    config.height = 1080;
-    config.framerate = 30;
-    config.bitrate = 8'000'000;
-    config.intra = 30;
-    const auto arguments = BuildRpicamArguments(config);
+void TestRuntimeReadyAndTimestamps() {
+    FakeKvsState kvs_state;
+    FakeCapturerState capturer_state;
+    capturer_state.frames = {
+        EncodedVideoFrame {{0x00, 0x00, 0x01}, 1'000'000, false},
+        EncodedVideoFrame {{0x00, 0x00, 0x02}, 1'033'333, true},
+        EncodedVideoFrame {{0x00, 0x00, 0x03}, 1'066'666, false},
+    };
 
-    Expect(arguments.size() == 18, "rpicam arguments should have the expected count");
-    Expect(arguments[0] == "-n", "rpicam should disable preview");
-    Expect(arguments[3] == "--inline", "rpicam should request inline SPS/PPS");
-    Expect(arguments[5] == "1", "rpicam should include camera index");
-    Expect(arguments[17] == "-", "rpicam should stream to stdout");
+    ScopedStdoutCapture stdout_capture;
+    Run(TestRuntimeConfig(), HooksFrom(&kvs_state, &capturer_state));
+    const auto output = stdout_capture.str();
+
+    Expect(kvs_state.started, "runtime should start the KVS session");
+    Expect(kvs_state.stopped, "runtime should stop the KVS session");
+    Expect(capturer_state.configured, "runtime should configure the video capturer");
+    Expect(capturer_state.started, "runtime should start the video capturer");
+    Expect(capturer_state.stopped, "runtime should stop the video capturer");
+    Expect(kvs_state.pushes.size() == 3, "runtime should forward each encoded frame to KVS");
+    Expect(kvs_state.pushes[0].pts_100ns == 10'000'000, "runtime should convert the first timestamp to 100ns units");
+    Expect(
+        kvs_state.pushes[1].duration_100ns == 333'330,
+        "runtime should derive frame duration from successive encoder timestamps"
+    );
+    Expect(kvs_state.pushes[1].is_keyframe, "runtime should preserve keyframe flags");
+    Expect(
+        output.find("TXING_KVS_READY") != std::string::npos,
+        "runtime should emit readiness only after receiving a keyframe"
+    );
 }
 
-void TestAnnexBParser() {
-    AnnexBAccessUnitParser parser;
-    std::vector<std::uint8_t> stream;
-    const auto sps = Nal({0x67, 0xaa});
-    const auto pps = Nal({0x68, 0xbb});
-    const auto idr = Nal({0x65, 0x80});
-    const auto p = Nal({0x41, 0x80});
-    stream.insert(stream.end(), sps.begin(), sps.end());
-    stream.insert(stream.end(), pps.begin(), pps.end());
-    stream.insert(stream.end(), idr.begin(), idr.end());
-    stream.insert(stream.end(), p.begin(), p.end());
+void TestRuntimePropagatesCapturerErrors() {
+    FakeKvsState kvs_state;
+    FakeCapturerState capturer_state;
+    capturer_state.throw_on_start = true;
+    capturer_state.error_message = "camera startup failed";
 
-    std::vector<AccessUnit> access_units;
-    const auto chunk_one = parser.Push(stream.data(), 11);
-    access_units.insert(access_units.end(), chunk_one.begin(), chunk_one.end());
-    const auto chunk_two = parser.Push(stream.data() + 11, stream.size() - 11);
-    access_units.insert(access_units.end(), chunk_two.begin(), chunk_two.end());
-    const auto final_units = parser.Finish();
-    access_units.insert(access_units.end(), final_units.begin(), final_units.end());
+    bool threw = false;
+    try {
+        Run(TestRuntimeConfig(), HooksFrom(&kvs_state, &capturer_state));
+    } catch (const std::exception& error) {
+        threw = true;
+        Expect(std::string(error.what()) == "camera startup failed", "runtime should bubble up capturer errors");
+    }
 
-    Expect(access_units.size() == 2, "parser should emit two access units");
-    Expect(access_units[0].is_keyframe, "first access unit should be a keyframe");
-    Expect(!access_units[1].is_keyframe, "second access unit should not be a keyframe");
+    Expect(threw, "runtime should throw when the capturer fails");
+    Expect(kvs_state.started, "runtime should already have started the KVS session before capturer startup");
+    Expect(kvs_state.stopped, "runtime should stop KVS after a capturer failure");
 }
 
 void TestMarkerFormatting() {
@@ -184,9 +355,10 @@ void TestMarkerFormatting() {
 
 int main() {
     TestCliParsing();
+    TestUsageText();
     TestCredentialResolution();
-    TestRpicamArguments();
-    TestAnnexBParser();
+    TestRuntimeReadyAndTimestamps();
+    TestRuntimePropagatesCapturerErrors();
     TestMarkerFormatting();
 
     if (g_failures != 0) {
