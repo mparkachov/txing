@@ -895,7 +895,15 @@ class RealKvsSession final : public KvsSession {
         }
 
         if (session->remote_can_trickle) {
-            ThrowIfFailed(SendIceCandidate(session, candidate_json), "send ICE candidate");
+            const STATUS status = SendIceCandidate(session, candidate_json);
+            if (STATUS_FAILED(status)) {
+                DLOGW(
+                    "send ICE candidate failed with status %s for peer %s; keeping session alive",
+                    FormatStatus(status).c_str(),
+                    session->peer_id.c_str()
+                );
+                RequestSignalingRecreate();
+            }
         }
     }
 
@@ -1098,11 +1106,7 @@ class RealKvsSession final : public KvsSession {
             return;
         }
 
-        try {
-            session->owner->HandleLocalIceCandidate(session, candidate_json);
-        } catch (const std::exception& error) {
-            session->owner->ReportError("%s", error.what());
-        }
+        session->owner->HandleLocalIceCandidate(session, candidate_json);
     }
 
     static VOID OnConnectionStateChange(UINT64 custom_data, RTC_PEER_CONNECTION_STATE new_state) {
