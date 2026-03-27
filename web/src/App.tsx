@@ -8,7 +8,6 @@ import {
   type AuthUser,
 } from './auth'
 import {
-  buildViewerUrlWithChannel,
   extractReportedBoardPower,
   extractReportedBoardVideo,
   extractReportedBoardWifiOnline,
@@ -16,7 +15,6 @@ import {
   extractReportedMcuBleOnline,
   extractReportedMcuOnline,
   extractReportedMcuPower,
-  getAppRoute,
 } from './app-model'
 import { appConfig } from './config'
 import { createShadowSession, type ShadowConnectionState, type ShadowSession } from './shadow-api'
@@ -170,6 +168,7 @@ function App({ initialAuthError = '' }: AppProps) {
   const [isLoadingShadow, setIsLoadingShadow] = useState(false)
   const [isUpdatingShadow, setIsUpdatingShadow] = useState(false)
   const [isDebugEnabled, setIsDebugEnabled] = useState(false)
+  const [isBoardVideoExpanded, setIsBoardVideoExpanded] = useState(false)
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false)
   const [txingSwitchTarget, setTxingSwitchTarget] = useState<TxingSwitchTarget>(null)
   const [feedback, setFeedback] = useState<string>('')
@@ -179,7 +178,6 @@ function App({ initialAuthError = '' }: AppProps) {
   const shadowSessionRef = useRef<ShadowSession | null>(null)
   const userMenuRef = useRef<HTMLDivElement | null>(null)
 
-  const appRoute = useMemo(() => getAppRoute(window.location.pathname), [])
   const hasConfigErrors = appConfig.errors.length > 0
 
   const adminEmailMismatch = useMemo(() => {
@@ -250,18 +248,10 @@ function App({ initialAuthError = '' }: AppProps) {
     reportedBoardVideo.transport === 'aws-webrtc' &&
     reportedBoardVideo.ready &&
     reportedBoardVideo.status === 'ready' &&
-    reportedBoardVideo.viewerUrl !== null &&
     reportedBoardVideo.channelName !== null
   const boardVideoReachable =
     txingSwitchTarget !== 'off' && boardOnline && reportedBoardPower !== false
   const canUseBoardVideo = boardVideoReachable && boardVideoReady
-  const boardVideoTargetUrl =
-    reportedBoardVideo.viewerUrl && reportedBoardVideo.channelName
-      ? buildViewerUrlWithChannel(
-          reportedBoardVideo.viewerUrl,
-          reportedBoardVideo.channelName,
-        )
-      : null
 
   const applyShadowSnapshot = useEffectEvent((shadow: unknown, feedbackMessage?: string): void => {
     const snapshotView = createShadowSnapshotView(shadow)
@@ -339,7 +329,7 @@ function App({ initialAuthError = '' }: AppProps) {
   }, [adminEmailMismatch, status])
 
   useEffect(() => {
-    if (status !== 'signed_in' || adminEmailMismatch || appRoute !== 'dashboard') {
+    if (status !== 'signed_in' || adminEmailMismatch) {
       shadowSessionRef.current?.close()
       shadowSessionRef.current = null
       setShadowConnectionState('idle')
@@ -396,7 +386,7 @@ function App({ initialAuthError = '' }: AppProps) {
       }
       shadowSession.close()
     }
-  }, [adminEmailMismatch, appRoute, status])
+  }, [adminEmailMismatch, status])
 
   useEffect(() => {
     if (txingSwitchTarget === 'on' && boardOnline) {
@@ -407,6 +397,12 @@ function App({ initialAuthError = '' }: AppProps) {
       setTxingSwitchTarget(null)
     }
   }, [boardOnline, reportedBoardOnline, txingSwitchTarget])
+
+  useEffect(() => {
+    if (!canUseBoardVideo && isBoardVideoExpanded) {
+      setIsBoardVideoExpanded(false)
+    }
+  }, [canUseBoardVideo, isBoardVideoExpanded])
 
   useEffect(() => {
     if (!isUserMenuOpen) {
@@ -572,10 +568,10 @@ function App({ initialAuthError = '' }: AppProps) {
   }
 
   const handleOpenBoardVideo = (): void => {
-    if (!boardVideoTargetUrl || !canUseBoardVideo) {
+    if (!canUseBoardVideo) {
       return
     }
-    window.location.assign(boardVideoTargetUrl)
+    setIsBoardVideoExpanded((currentValue) => !currentValue)
   }
 
   if (hasConfigErrors) {
@@ -631,21 +627,15 @@ function App({ initialAuthError = '' }: AppProps) {
     )
   }
 
-  if (appRoute === 'video') {
-    return (
-      <VideoPage
-        authUser={authUser}
-        onSignOut={handleSignOff}
-        resolveIdToken={resolveSessionIdToken}
-      />
-    )
-  }
-
   return (
     <main className="page page-signed-in">
       <section className="status-hero status-hero-dashboard" aria-label="Txing status">
         <div className="shadow-diagram">
-          <div className="status-node status-node-txing">
+          <div
+            className={`status-node status-node-txing ${
+              isBoardVideoExpanded && canUseBoardVideo ? 'status-node-txing-expanded' : ''
+            }`}
+          >
             <div className="status-txing-header">
               <div className="status-txing-header-side status-txing-header-side-start">
                 <div className="user-menu" ref={userMenuRef}>
@@ -743,10 +733,26 @@ function App({ initialAuthError = '' }: AppProps) {
                 <button
                   type="button"
                   className={`status-icon-button status-camera-button ${
-                    canUseBoardVideo ? 'status-camera-button-ready' : 'status-camera-button-idle'
+                    !canUseBoardVideo
+                      ? 'status-camera-button-idle'
+                      : isBoardVideoExpanded
+                        ? 'status-camera-button-live'
+                        : 'status-camera-button-ready'
                   }`}
-                  aria-label={canUseBoardVideo ? 'Open board video' : 'Board video unavailable'}
-                  title={boardVideoTargetUrl ?? 'Board video is not ready'}
+                  aria-label={
+                    canUseBoardVideo
+                      ? isBoardVideoExpanded
+                        ? 'Hide board video'
+                        : 'Show board video'
+                      : 'Board video unavailable'
+                  }
+                  title={
+                    canUseBoardVideo
+                      ? isBoardVideoExpanded
+                        ? 'Hide board video panel'
+                        : 'Show board video panel'
+                      : 'Board video is not ready'
+                  }
                   onClick={handleOpenBoardVideo}
                   disabled={!canUseBoardVideo}
                 >
@@ -808,6 +814,15 @@ function App({ initialAuthError = '' }: AppProps) {
                 </div>
               </div>
             </div>
+            {isBoardVideoExpanded && canUseBoardVideo ? (
+              <VideoPage
+                authUser={authUser}
+                channelName={reportedBoardVideo.channelName}
+                debugEnabled={isDebugEnabled}
+                embedded
+                resolveIdToken={resolveSessionIdToken}
+              />
+            ) : null}
           </div>
         </div>
       </section>

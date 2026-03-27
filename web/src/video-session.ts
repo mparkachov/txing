@@ -33,6 +33,7 @@ export type StartVideoViewerOptions = {
   resolveIdToken: () => Promise<string>
   onRemoteStream: (stream: MediaStream) => void
   onUiEvent: (event: ViewerUiEvent) => void
+  debugEnabled?: boolean
 }
 
 export type VideoViewerHandle = {
@@ -47,14 +48,6 @@ type SignalingCredentials = {
 }
 type InboundVideoStats = RTCInboundRtpStreamStats & {
   mediaType?: string
-}
-
-const logVideoDebug = (message: string, details?: unknown): void => {
-  if (details === undefined) {
-    console.info('[txing-video]', message)
-    return
-  }
-  console.info('[txing-video]', message, details)
 }
 
 const extractCandidateType = (candidate: string): string | null => {
@@ -130,6 +123,17 @@ const getErrorMessage = (error: unknown, fallback = 'Board video viewer failed')
 export const startBoardVideoViewer = async (
   options: StartVideoViewerOptions,
 ): Promise<VideoViewerHandle> => {
+  const logVideoDebug = (message: string, details?: unknown): void => {
+    if (options.debugEnabled !== true) {
+      return
+    }
+    if (details === undefined) {
+      console.info('[txing-video]', message)
+      return
+    }
+    console.info('[txing-video]', message, details)
+  }
+
   options.onUiEvent({ type: 'connecting' })
   logVideoDebug('viewer start', {
     channelName: options.channelName,

@@ -1,4 +1,3 @@
-export type AppRoute = 'dashboard' | 'video'
 export type BoardVideoRuntime = {
   ready: boolean
   status: 'starting' | 'ready' | 'error' | null
@@ -11,9 +10,6 @@ export type BoardVideoRuntime = {
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null
-
-export const getAppRoute = (pathname: string): AppRoute =>
-  pathname.replace(/\/+$/, '') === '/video' ? 'video' : 'dashboard'
 
 export const extractReportedMcu = (shadow: unknown): Record<string, unknown> | null => {
   if (!isRecord(shadow)) {
