@@ -396,7 +396,7 @@ function App({ initialAuthError = '' }: AppProps) {
       }
       shadowSession.close()
     }
-  }, [adminEmailMismatch, appRoute, applyShadowSnapshot, resolveSessionIdToken, status])
+  }, [adminEmailMismatch, appRoute, status])
 
   useEffect(() => {
     if (txingSwitchTarget === 'on' && boardOnline) {

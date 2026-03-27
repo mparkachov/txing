@@ -312,7 +312,11 @@ void TestRuntimeReadyAndTimestamps() {
     Expect(capturer_state.started, "runtime should start the video capturer");
     Expect(capturer_state.stopped, "runtime should stop the video capturer");
     Expect(kvs_state.pushes.size() == 3, "runtime should forward each encoded frame to KVS");
-    Expect(kvs_state.pushes[0].pts_100ns == 10'000'000, "runtime should convert the first timestamp to 100ns units");
+    Expect(kvs_state.pushes[0].pts_100ns == 0, "runtime should start presentation timestamps at zero");
+    Expect(
+        kvs_state.pushes[1].pts_100ns == 333'330,
+        "runtime should advance presentation timestamps from successive frame deltas"
+    );
     Expect(
         kvs_state.pushes[1].duration_100ns == 333'330,
         "runtime should derive frame duration from successive encoder timestamps"

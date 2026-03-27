@@ -55,6 +55,13 @@ std::uint64_t TimestampUsTo100ns(std::uint64_t timestamp_us) {
     return SaturatingMultiply(timestamp_us, 10);
 }
 
+std::uint64_t SaturatingAdd(std::uint64_t left, std::uint64_t right) {
+    if (left > std::numeric_limits<std::uint64_t>::max() - right) {
+        return std::numeric_limits<std::uint64_t>::max();
+    }
+    return left + right;
+}
+
 std::uint64_t DefaultFrameDuration100ns(const CameraConfig& config) {
     const auto framerate = std::max<std::uint32_t>(1, config.framerate);
     return std::uint64_t(10'000'000) / framerate;
@@ -158,6 +165,7 @@ void Run(const RuntimeConfig& config, const RuntimeHooks& hooks) {
     std::optional<std::string> first_error;
     bool ready_emitted = false;
     std::uint64_t previous_timestamp_us = 0;
+    std::uint64_t presentation_timestamp_100ns = 0;
     const auto default_duration_100ns = DefaultFrameDuration100ns(config.camera);
 
     try {
@@ -187,12 +195,15 @@ void Run(const RuntimeConfig& config, const RuntimeHooks& hooks) {
             std::uint64_t duration_100ns = default_duration_100ns;
             if (previous_timestamp_us != 0 && frame.timestamp_us > previous_timestamp_us) {
                 duration_100ns = TimestampUsTo100ns(frame.timestamp_us - previous_timestamp_us);
+                presentation_timestamp_100ns = SaturatingAdd(presentation_timestamp_100ns, duration_100ns);
+            } else if (previous_timestamp_us != 0) {
+                presentation_timestamp_100ns = SaturatingAdd(presentation_timestamp_100ns, duration_100ns);
             }
 
             kvs_session->PushH264AccessUnit(
                 frame.bytes.data(),
                 frame.bytes.size(),
-                TimestampUsTo100ns(frame.timestamp_us),
+                presentation_timestamp_100ns,
                 duration_100ns,
                 frame.is_keyframe
             );

@@ -26,7 +26,7 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
     cd "{{board_dir}}" && uv sync --python "{{python_executable}}" --no-managed-python --no-python-downloads
 
 @build:
-    cd "{{board_dir}}" && uv sync --frozen --no-editable --compile-bytecode --python "{{python_executable}}" --no-managed-python --no-python-downloads
+    cd "{{board_dir}}" && uv sync --frozen --no-editable --compile-bytecode --python "{{python_executable}}" --no-managed-python --no-python-downloads --refresh-package board --reinstall-package board
     test -x "{{built_board}}"
     test -x "{{built_board_video_sender}}"
 

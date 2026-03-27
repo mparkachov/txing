@@ -60,6 +60,9 @@ export type ShadowSession = {
 
 let attachedIdentityId: string | null = null
 let pendingAttachment: Promise<void> | null = null
+let cachedIdentityIdToken: string | null = null
+let cachedIdentityId: string | null = null
+let pendingIdentityId: Promise<string> | null = null
 
 const cognitoIdentityClient = new CognitoIdentityClient({
   region: appConfig.awsRegion,
@@ -71,18 +74,39 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
 const getIdentityId = async (idToken: string): Promise<string> => {
-  const response = await cognitoIdentityClient.send(
-    new GetIdCommand({
-      IdentityPoolId: appConfig.cognitoIdentityPoolId,
-      Logins: buildCognitoLogins(idToken),
-    }),
-  )
-
-  if (!response.IdentityId) {
-    throw new Error('Cognito identity ID was not returned')
+  if (cachedIdentityIdToken === idToken && cachedIdentityId) {
+    return cachedIdentityId
   }
 
-  return response.IdentityId
+  if (cachedIdentityIdToken === idToken && pendingIdentityId) {
+    return pendingIdentityId
+  }
+
+  const identityRequest = cognitoIdentityClient
+    .send(
+      new GetIdCommand({
+        IdentityPoolId: appConfig.cognitoIdentityPoolId,
+        Logins: buildCognitoLogins(idToken),
+      }),
+    )
+    .then((response) => {
+      if (!response.IdentityId) {
+        throw new Error('Cognito identity ID was not returned')
+      }
+
+      cachedIdentityIdToken = idToken
+      cachedIdentityId = response.IdentityId
+      return response.IdentityId
+    })
+    .finally(() => {
+      if (cachedIdentityIdToken === idToken) {
+        pendingIdentityId = null
+      }
+    })
+
+  cachedIdentityIdToken = idToken
+  pendingIdentityId = identityRequest
+  return identityRequest
 }
 
 const ensureIotPolicyAttached = async (idToken: string): Promise<boolean> => {
@@ -183,6 +207,9 @@ const getShadowRejectedMessage = (
 class BrowserCredentialProvider extends auth.CredentialsProvider {
   private credentials: auth.AWSCredentials | undefined
   private readonly resolveIdToken: ResolveIdToken
+  private provider: ReturnType<typeof createCredentialProvider> | null = null
+  private providerIdToken: string | null = null
+  private refreshPromise: Promise<void> | null = null
 
   constructor(resolveIdToken: ResolveIdToken) {
     super()
@@ -194,10 +221,23 @@ class BrowserCredentialProvider extends auth.CredentialsProvider {
   }
 
   override async refreshCredentials(): Promise<void> {
-    const idToken = await this.resolveIdToken()
-    const provider = createCredentialProvider(idToken)
-    const credentials = await provider()
+    if (!this.refreshPromise) {
+      this.refreshPromise = this.loadCredentials().finally(() => {
+        this.refreshPromise = null
+      })
+    }
 
+    await this.refreshPromise
+  }
+
+  private async loadCredentials(): Promise<void> {
+    const idToken = await this.resolveIdToken()
+    if (!this.provider || this.providerIdToken !== idToken) {
+      this.provider = createCredentialProvider(idToken)
+      this.providerIdToken = idToken
+    }
+
+    const credentials = await this.provider()
     if (!credentials.accessKeyId || !credentials.secretAccessKey) {
       throw new Error('Cognito identity pool did not return AWS credentials')
     }

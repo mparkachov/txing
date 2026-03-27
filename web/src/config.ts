@@ -20,20 +20,7 @@ const getRuntimeAppUrl = (): string => {
     return 'http://localhost/'
   }
 
-  const url = new URL(window.location.href)
-  url.search = ''
-  url.hash = ''
-
-  if (url.pathname.endsWith('/index.html')) {
-    url.pathname = url.pathname.slice(0, -'index.html'.length)
-  } else if (!url.pathname.endsWith('/')) {
-    const lastSegment = url.pathname.split('/').pop() ?? ''
-    if (!lastSegment.includes('.')) {
-      url.pathname = `${url.pathname}/`
-    }
-  }
-
-  return url.toString()
+  return new URL(import.meta.env.BASE_URL ?? '/', window.location.href).toString()
 }
 
 const buildConfig = () => {
