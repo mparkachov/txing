@@ -46,6 +46,42 @@ class VideoSenderTests(unittest.TestCase):
             "txing-board-video",
         )
 
+    def test_build_sender_environment_discovers_default_ca_bundle(self) -> None:
+        with patch.dict(os.environ, {"EXISTING": "value"}, clear=True):
+            with patch.object(
+                video_sender,
+                "DEFAULT_CA_CERT_CANDIDATES",
+                (video_sender.Path("/tmp/test-ca-bundle.crt"),),
+            ):
+                with patch.object(video_sender.Path, "is_file", return_value=True):
+                    environment = video_sender._build_sender_environment(
+                        region="eu-central-1",
+                        channel_name="txing-board-video",
+                    )
+
+        self.assertEqual(
+            environment["SSL_CERT_FILE"],
+            "/tmp/test-ca-bundle.crt",
+        )
+        self.assertEqual(
+            environment["AWS_KVS_CACERT_PATH"],
+            "/tmp/test-ca-bundle.crt",
+        )
+
+    def test_build_sender_environment_preserves_explicit_ca_env(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"SSL_CERT_FILE": "/custom/ca.pem"},
+            clear=True,
+        ):
+            environment = video_sender._build_sender_environment(
+                region="eu-central-1",
+                channel_name="txing-board-video",
+            )
+
+        self.assertEqual(environment["SSL_CERT_FILE"], "/custom/ca.pem")
+        self.assertEqual(environment["AWS_KVS_CACERT_PATH"], "/custom/ca.pem")
+
 
 if __name__ == "__main__":
     unittest.main()

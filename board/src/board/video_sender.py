@@ -33,9 +33,15 @@ DEFAULT_SENDER_COMMAND_ENV = "TXING_BOARD_VIDEO_SENDER_COMMAND"
 DEFAULT_READY_PATTERN_ENV = "TXING_BOARD_VIDEO_READY_PATTERN"
 DEFAULT_VIEWER_CONNECTED_PATTERN_ENV = "TXING_BOARD_VIDEO_VIEWER_CONNECTED_PATTERN"
 DEFAULT_VIEWER_DISCONNECTED_PATTERN_ENV = "TXING_BOARD_VIDEO_VIEWER_DISCONNECTED_PATTERN"
+DEFAULT_SSL_CERT_FILE_ENV = "SSL_CERT_FILE"
+DEFAULT_KVS_CA_CERT_PATH_ENV = "AWS_KVS_CACERT_PATH"
 DEFAULT_READY_PATTERN = r"^TXING_KVS_READY(?:\s|$)"
 DEFAULT_VIEWER_CONNECTED_PATTERN = r"^TXING_VIEWER_CONNECTED(?:\s|$)"
 DEFAULT_VIEWER_DISCONNECTED_PATTERN = r"^TXING_VIEWER_DISCONNECTED(?:\s|$)"
+DEFAULT_CA_CERT_CANDIDATES = (
+    Path("/etc/ssl/certs/ca-certificates.crt"),
+    Path("/etc/ssl/cert.pem"),
+)
 
 
 def _utc_now() -> str:
@@ -111,10 +117,28 @@ def _compile_pattern(value: str, *, env_name: str) -> re.Pattern[str] | None:
         raise RuntimeError(f"{env_name} is not a valid regular expression: {err}") from err
 
 
+def _discover_ca_cert_path(environment: dict[str, str]) -> str | None:
+    explicit_kvs_ca_cert = environment.get(DEFAULT_KVS_CA_CERT_PATH_ENV, "").strip()
+    if explicit_kvs_ca_cert:
+        return explicit_kvs_ca_cert
+
+    explicit_ssl_cert_file = environment.get(DEFAULT_SSL_CERT_FILE_ENV, "").strip()
+    if explicit_ssl_cert_file:
+        return explicit_ssl_cert_file
+
+    for candidate in DEFAULT_CA_CERT_CANDIDATES:
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
 def _build_sender_environment(*, region: str, channel_name: str) -> dict[str, str]:
     environment = os.environ.copy()
     environment["TXING_BOARD_VIDEO_REGION"] = region
     environment["TXING_BOARD_VIDEO_CHANNEL_NAME"] = channel_name
+    if ca_cert_path := _discover_ca_cert_path(environment):
+        environment.setdefault(DEFAULT_SSL_CERT_FILE_ENV, ca_cert_path)
+        environment.setdefault(DEFAULT_KVS_CA_CERT_PATH_ENV, ca_cert_path)
     return environment
 
 

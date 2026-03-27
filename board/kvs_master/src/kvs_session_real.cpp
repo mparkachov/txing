@@ -36,6 +36,7 @@ constexpr UINT64 kCleanupWaitPeriod100ns = 5 * HUNDREDS_OF_NANOS_IN_A_SECOND;
 constexpr UINT64 kPendingMessageCleanupDuration100ns = 20 * HUNDREDS_OF_NANOS_IN_A_SECOND;
 constexpr DOUBLE kVideoRollingBufferDurationSec = 3.0;
 constexpr CHAR kControlPlaneUriEnvVar[] = "CONTROL_PLANE_URI";
+constexpr CHAR kKvsCaCertPathEnvVar[] = "AWS_KVS_CACERT_PATH";
 constexpr CHAR kIceTransportPolicyEnvVar[] = "KVS_ICE_TRANSPORT_POLICY";
 constexpr CHAR kSslCertFileEnvVar[] = "SSL_CERT_FILE";
 constexpr CHAR kVideoStreamId[] = "txingBoardVideo";
@@ -86,8 +87,12 @@ std::optional<std::string> ExistingFile(const char* path) {
 }
 
 std::optional<std::string> DiscoverCaCertPath() {
-    if (const auto from_env = ExistingFile(std::getenv(kSslCertFileEnvVar)); from_env) {
-        return from_env;
+    if (const auto from_kvs_env = ExistingFile(std::getenv(kKvsCaCertPathEnvVar)); from_kvs_env) {
+        return from_kvs_env;
+    }
+
+    if (const auto from_ssl_env = ExistingFile(std::getenv(kSslCertFileEnvVar)); from_ssl_env) {
+        return from_ssl_env;
     }
 
     static constexpr const char* kCandidatePaths[] = {

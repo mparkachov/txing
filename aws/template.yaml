@@ -54,8 +54,8 @@ Resources:
     Type: AWS::KinesisVideo::SignalingChannel
     Properties:
       Name: txing-board-video
-      SingleMasterConfiguration:
-        MessageTtlSeconds: 60
+      Type: SINGLE_MASTER
+      MessageTtlSeconds: 60
 
   TxingBoardVideoSenderManagedPolicy:
     Type: AWS::IAM::ManagedPolicy
