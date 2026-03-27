@@ -958,6 +958,7 @@ def main() -> None:
         channel_name=config.video_channel_name,
         viewer_url=config.video_viewer_url,
         region=config.video_region,
+        ca_file=config.ca_file,
         state_file=DEFAULT_VIDEO_STATE_FILE,
     )
     halt_requested = False

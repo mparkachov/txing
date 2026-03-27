@@ -35,6 +35,7 @@ DEFAULT_VIEWER_CONNECTED_PATTERN_ENV = "TXING_BOARD_VIDEO_VIEWER_CONNECTED_PATTE
 DEFAULT_VIEWER_DISCONNECTED_PATTERN_ENV = "TXING_BOARD_VIDEO_VIEWER_DISCONNECTED_PATTERN"
 DEFAULT_SSL_CERT_FILE_ENV = "SSL_CERT_FILE"
 DEFAULT_KVS_CA_CERT_PATH_ENV = "AWS_KVS_CACERT_PATH"
+DEFAULT_CA_FILE_ENV = "TXING_BOARD_VIDEO_CA_FILE"
 DEFAULT_READY_PATTERN = r"^TXING_KVS_READY(?:\s|$)"
 DEFAULT_VIEWER_CONNECTED_PATTERN = r"^TXING_VIEWER_CONNECTED(?:\s|$)"
 DEFAULT_VIEWER_DISCONNECTED_PATTERN = r"^TXING_VIEWER_DISCONNECTED(?:\s|$)"
@@ -117,7 +118,18 @@ def _compile_pattern(value: str, *, env_name: str) -> re.Pattern[str] | None:
         raise RuntimeError(f"{env_name} is not a valid regular expression: {err}") from err
 
 
-def _discover_ca_cert_path(environment: dict[str, str]) -> str | None:
+def _discover_ca_cert_path(
+    environment: dict[str, str],
+    *,
+    explicit_ca_file: Path | None = None,
+) -> str | None:
+    if explicit_ca_file is not None and explicit_ca_file.is_file():
+        return str(explicit_ca_file)
+
+    explicit_board_ca_file = environment.get(DEFAULT_CA_FILE_ENV, "").strip()
+    if explicit_board_ca_file:
+        return explicit_board_ca_file
+
     explicit_kvs_ca_cert = environment.get(DEFAULT_KVS_CA_CERT_PATH_ENV, "").strip()
     if explicit_kvs_ca_cert:
         return explicit_kvs_ca_cert
@@ -132,11 +144,18 @@ def _discover_ca_cert_path(environment: dict[str, str]) -> str | None:
     return None
 
 
-def _build_sender_environment(*, region: str, channel_name: str) -> dict[str, str]:
+def _build_sender_environment(
+    *,
+    region: str,
+    channel_name: str,
+    ca_file: Path | None = None,
+) -> dict[str, str]:
     environment = os.environ.copy()
     environment["TXING_BOARD_VIDEO_REGION"] = region
     environment["TXING_BOARD_VIDEO_CHANNEL_NAME"] = channel_name
-    if ca_cert_path := _discover_ca_cert_path(environment):
+    if ca_file is not None:
+        environment[DEFAULT_CA_FILE_ENV] = str(ca_file)
+    if ca_cert_path := _discover_ca_cert_path(environment, explicit_ca_file=ca_file):
         environment.setdefault(DEFAULT_SSL_CERT_FILE_ENV, ca_cert_path)
         environment.setdefault(DEFAULT_KVS_CA_CERT_PATH_ENV, ca_cert_path)
     return environment
@@ -148,6 +167,7 @@ class VideoSenderRuntimeConfig:
     channel_name: str
     viewer_url: str
     state_file: Path
+    ca_file: Path | None
     sender_command: str
     assume_ready_after_seconds: float
     ready_pattern: re.Pattern[str] | None
@@ -196,6 +216,7 @@ class VideoSenderProcess:
             env=_build_sender_environment(
                 region=self._config.region,
                 channel_name=self._config.channel_name,
+                ca_file=self._config.ca_file,
             ),
         )
         reader_thread = threading.Thread(
@@ -310,11 +331,13 @@ class VideoSenderSupervisor:
         channel_name: str,
         viewer_url: str,
         region: str,
+        ca_file: Path | None = None,
         state_file: Path = DEFAULT_VIDEO_STATE_FILE,
     ) -> None:
         self._channel_name = channel_name
         self._viewer_url = viewer_url
         self._region = region
+        self._ca_file = ca_file
         self._state_file = state_file
         self._process: subprocess.Popen[bytes] | None = None
 
@@ -338,6 +361,8 @@ class VideoSenderSupervisor:
             "--state-file",
             str(self._state_file),
         ]
+        if self._ca_file is not None:
+            command.extend(["--ca-file", str(self._ca_file)])
         self._process = subprocess.Popen(command)
 
     def ensure_running(self) -> None:
@@ -390,6 +415,15 @@ def _parse_args() -> argparse.Namespace:
         type=Path,
         default=DEFAULT_VIDEO_STATE_FILE,
         help=f"Path to the local sender state file (default: {DEFAULT_VIDEO_STATE_FILE})",
+    )
+    parser.add_argument(
+        "--ca-file",
+        type=Path,
+        default=Path(os.environ[DEFAULT_CA_FILE_ENV]) if DEFAULT_CA_FILE_ENV in os.environ else None,
+        help=(
+            "Root CA PEM file to reuse for the native KVS sender "
+            f"(default: ${DEFAULT_CA_FILE_ENV} or auto-discovery)"
+        ),
     )
     parser.add_argument(
         "--sender-command",
@@ -446,6 +480,7 @@ def main() -> None:
             channel_name=args.channel_name,
             viewer_url=args.viewer_url,
             state_file=args.state_file,
+            ca_file=args.ca_file,
             sender_command=args.sender_command,
             assume_ready_after_seconds=args.assume_ready_after_seconds,
             ready_pattern=_compile_pattern(

@@ -46,6 +46,28 @@ class VideoSenderTests(unittest.TestCase):
             "txing-board-video",
         )
 
+    def test_build_sender_environment_prefers_explicit_board_ca_file(self) -> None:
+        with patch.dict(os.environ, {"EXISTING": "value"}, clear=True):
+            with patch.object(video_sender.Path, "is_file", return_value=True):
+                environment = video_sender._build_sender_environment(
+                    region="eu-central-1",
+                    channel_name="txing-board-video",
+                    ca_file=video_sender.Path("/home/user/txing/certs/AmazonRootCA1.pem"),
+                )
+
+        self.assertEqual(
+            environment["TXING_BOARD_VIDEO_CA_FILE"],
+            "/home/user/txing/certs/AmazonRootCA1.pem",
+        )
+        self.assertEqual(
+            environment["SSL_CERT_FILE"],
+            "/home/user/txing/certs/AmazonRootCA1.pem",
+        )
+        self.assertEqual(
+            environment["AWS_KVS_CACERT_PATH"],
+            "/home/user/txing/certs/AmazonRootCA1.pem",
+        )
+
     def test_build_sender_environment_discovers_default_ca_bundle(self) -> None:
         with patch.dict(os.environ, {"EXISTING": "value"}, clear=True):
             with patch.object(

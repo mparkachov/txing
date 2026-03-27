@@ -77,7 +77,7 @@ Notes:
 - `git`, `just`, `pipx`, `uv`, `cmake`, `pkg-config`, and a native C/C++ toolchain
 - native build packages for the AWS WebRTC C SDK dependencies: `build-essential`, `curl`, `libssl-dev`, `libcurl4-openssl-dev`, `liblog4cplus-dev`, `libsrtp2-dev`, `libusrsctp-dev`, `libwebsockets-dev`, and `zlib1g-dev`
 - `libcamera-dev` for the in-process camera capture path
-- `ca-certificates` with a working system CA bundle at `/etc/ssl/certs/ca-certificates.crt`
+- `ca-certificates` for general HTTPS tooling on the board
 - AWS IoT endpoint, root CA, client certificate, and client private key
 - AWS credentials for the board video sender with permission to use the KVS signaling channel as master
 - a working Raspberry Pi camera stack with the modern `libcamera` pipeline and the Pi V4L2 H.264 encoder available
@@ -260,7 +260,6 @@ Clone and build the AWS KVS WebRTC SDK once into the board working tree, then bu
 ```bash
 cd /home/user/txing/board
 pkg-config --modversion libcamera
-test -s /etc/ssl/certs/ca-certificates.crt
 just build-aws-sdk
 just build-native
 ```
@@ -305,7 +304,7 @@ You do not need to set sender regex environment variables for the repo sender. `
 
 `board-video-sender` also exports `TXING_BOARD_VIDEO_REGION` and `TXING_BOARD_VIDEO_CHANNEL_NAME` to the child automatically, so the native sender does not need those flags when it is started under the Python supervisor.
 
-You also do not need to add manual TLS trust-store overrides to the service for a normal Raspberry Pi OS image. When `/etc/ssl/certs/ca-certificates.crt` exists, the Python supervisor and the native sender now both auto-populate `SSL_CERT_FILE` and `AWS_KVS_CACERT_PATH` for the AWS KVS signaling path.
+For TLS trust on the KVS signaling path, `txing-board` now reuses the same AWS root CA PEM you already provision for the board (`certs/AmazonRootCA1.pem`). The Python supervisor passes that file to the native sender as `SSL_CERT_FILE` and `AWS_KVS_CACERT_PATH`, so you do not need to add manual `systemd` TLS environment overrides for the normal board setup.
 
 ### 6. Configure AWS Credentials for the Sender
 
@@ -376,7 +375,7 @@ What this proves:
 
 - the board can load the shared AWS IoT mTLS files from `/home/user/txing/certs`
 - the sender can resolve the signaling channel in AWS
-- the sender can use the system CA bundle for KVS TLS
+- the sender can reuse the provisioned AWS root CA PEM for KVS TLS
 - the sender command starts successfully
 - `txing-board` can publish the initial `reported.board.video` payload
 
@@ -412,7 +411,7 @@ The generated unit:
 - runs `txing-board` as `root`
 - sets `TXING_BOARD_VIDEO_SENDER_COMMAND`
 - starts `board` with `--video-viewer-url`, `--video-region`, and `--video-channel-name`
-- inherits automatic KVS CA bundle discovery when the standard system bundle exists at `/etc/ssl/certs/ca-certificates.crt`
+- inherits the board AWS root CA PEM for the native KVS sender
 
 If you also need sender regex environment variables in the service, add `Environment=` lines to `/etc/systemd/system/txing-board.service`, then run `sudo systemctl daemon-reload && sudo systemctl restart txing-board`.
 
