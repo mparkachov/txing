@@ -452,7 +452,7 @@ class LibcameraVideoCapturer final : public VideoCapturer {
         PendingCameraRequest pending;
         pending.request = request;
         pending.buffer = buffer;
-        auto timestamp_ns = request->metadata().get(libcamera::controls::FrameWallClock);
+        auto timestamp_ns = request->metadata().get(libcamera::controls::SensorTimestamp);
         if (timestamp_ns) {
             pending.timestamp_us = static_cast<std::uint64_t>(*timestamp_ns / 1000);
         } else {

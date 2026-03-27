@@ -21,7 +21,27 @@ option(
   OFF
 )
 
-set(TXING_KVS_WEBRTC_SDK_DIR "" CACHE PATH "Optional local checkout of amazon-kinesis-video-streams-webrtc-sdk-c")
+set(
+  _txing_kvs_default_sdk_source_dir
+  "${CMAKE_CURRENT_SOURCE_DIR}/../aws-kvs-webrtc-sdk"
+)
+set(
+  _txing_kvs_default_sdk_install_dir
+  "${_txing_kvs_default_sdk_source_dir}/install"
+)
+
+set(
+  TXING_KVS_WEBRTC_SDK_DIR
+  "${_txing_kvs_default_sdk_source_dir}"
+  CACHE PATH
+  "Local checkout of amazon-kinesis-video-streams-webrtc-sdk-c"
+)
+set(
+  TXING_KVS_WEBRTC_SDK_INSTALL_DIR
+  "${_txing_kvs_default_sdk_install_dir}"
+  CACHE PATH
+  "Install prefix of the locally built amazon-kinesis-video-streams-webrtc-sdk-c"
+)
 
 add_library(
   txing_board_kvs_master_lib
@@ -69,67 +89,138 @@ else()
   target_compile_definitions(txing_board_kvs_master_lib PRIVATE TXING_KVS_HAS_LIBCAMERA=0)
 endif()
 
+function(txing_find_local_or_system_library output_var)
+  set(options REQUIRED)
+  set(oneValueArgs FRIENDLY_NAME)
+  set(multiValueArgs NAMES)
+  cmake_parse_arguments(TXING_FIND "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+
+  find_library(
+    ${output_var}
+    NAMES ${TXING_FIND_NAMES}
+    PATHS
+      "${TXING_KVS_WEBRTC_SDK_INSTALL_DIR}/lib"
+      "${TXING_KVS_WEBRTC_SDK_INSTALL_DIR}/lib64"
+    NO_DEFAULT_PATH
+  )
+
+  if(NOT ${output_var})
+    find_library(${output_var} NAMES ${TXING_FIND_NAMES})
+  endif()
+
+  if(NOT ${output_var} AND TXING_FIND_REQUIRED)
+    message(FATAL_ERROR
+      "Required library '${TXING_FIND_FRIENDLY_NAME}' was not found. "
+      "Build the local AWS SDK install first with `just build-aws-sdk`."
+    )
+  endif()
+endfunction()
+
 if(TXING_KVS_REAL_SDK)
-  include(FetchContent)
-
-  if(DEFINED TXING_KVS_WEBRTC_SDK_DIR AND NOT TXING_KVS_WEBRTC_SDK_DIR STREQUAL "")
-    set(KVS_WEBRTC_SDK_SOURCE_DIR "${TXING_KVS_WEBRTC_SDK_DIR}")
-  else()
-    FetchContent_Declare(
-      kvs_webrtc_sdk
-      GIT_REPOSITORY https://github.com/awslabs/amazon-kinesis-video-streams-webrtc-sdk-c.git
-      GIT_TAG        v1.17.0
-      GIT_SHALLOW    TRUE
+  if(NOT EXISTS "${TXING_KVS_WEBRTC_SDK_INSTALL_DIR}/include/com/amazonaws/kinesis/video/webrtcclient/Include.h")
+    message(FATAL_ERROR
+      "AWS KVS WebRTC SDK install not found at '${TXING_KVS_WEBRTC_SDK_INSTALL_DIR}'. "
+      "Run `just build-aws-sdk` from the board directory first."
     )
-    FetchContent_MakeAvailable(kvs_webrtc_sdk)
-    set(KVS_WEBRTC_SDK_SOURCE_DIR "${kvs_webrtc_sdk_SOURCE_DIR}")
   endif()
 
-  set(BUILD_SAMPLE OFF CACHE BOOL "" FORCE)
-  set(BUILD_TEST OFF CACHE BOOL "" FORCE)
-  set(BUILD_BENCHMARK OFF CACHE BOOL "" FORCE)
-  set(BUILD_STATIC_LIBS ON CACHE BOOL "" FORCE)
-  set(BUILD_DEPENDENCIES OFF CACHE BOOL "" FORCE)
-  if(NOT TXING_KVS_USE_SYSTEM_DEPENDENCIES)
-    set(BUILD_DEPENDENCIES ON CACHE BOOL "" FORCE)
-  elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  if(TXING_KVS_USE_SYSTEM_DEPENDENCIES AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
     message(WARNING
-      "TXING_KVS_USE_SYSTEM_DEPENDENCIES=ON is an explicit override. "
-      "AWS documents the system dependency matrix as OpenSSL 1.1.1x, libsrtp2 <= 2.5.0, "
-      "libusrsctp <= 0.9.5.0, and libwebsockets >= 4.2.0. Debian Trixie ships newer "
-      "OpenSSL and libsrtp2 packages, so this mode is not the default board build on Raspberry Pi OS Trixie."
+      "TXING_KVS_USE_SYSTEM_DEPENDENCIES=ON assumes the separately built local AWS SDK install "
+      "was configured with BUILD_DEPENDENCIES=OFF. Debian Trixie ships newer OpenSSL and libsrtp2 "
+      "packages than AWS's documented system dependency window, so this mode remains an explicit override."
     )
   endif()
-  set(USE_OPENSSL ON CACHE BOOL "" FORCE)
-  set(USE_MBEDTLS OFF CACHE BOOL "" FORCE)
-  set(OPEN_SRC_INSTALL_PREFIX "${CMAKE_CURRENT_BINARY_DIR}/open-source" CACHE PATH "" FORCE)
 
-  add_subdirectory("${KVS_WEBRTC_SDK_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/kvs-webrtc-sdk")
+  find_package(Threads REQUIRED)
+  find_package(ZLIB QUIET)
+  set(OPENSSL_USE_STATIC_LIBS FALSE)
+  find_package(OpenSSL REQUIRED)
+
+  txing_find_local_or_system_library(
+    TXING_KVS_WEBRTC_CLIENT_LIBRARY
+    REQUIRED
+    FRIENDLY_NAME "kvsWebrtcClient"
+    NAMES kvsWebrtcClient libkvsWebrtcClient.a
+  )
+  txing_find_local_or_system_library(
+    TXING_KVS_WEBRTC_SIGNALING_CLIENT_LIBRARY
+    REQUIRED
+    FRIENDLY_NAME "kvsWebrtcSignalingClient"
+    NAMES kvsWebrtcSignalingClient libkvsWebrtcSignalingClient.a
+  )
+  txing_find_local_or_system_library(
+    TXING_KVS_COMMON_LWS_LIBRARY
+    REQUIRED
+    FRIENDLY_NAME "kvsCommonLws"
+    NAMES kvsCommonLws libkvsCommonLws.a
+  )
+  txing_find_local_or_system_library(
+    TXING_KVS_PIC_UTILS_LIBRARY
+    REQUIRED
+    FRIENDLY_NAME "kvspicUtils"
+    NAMES kvspicUtils libkvspicUtils.a
+  )
+  txing_find_local_or_system_library(
+    TXING_KVS_PIC_STATE_LIBRARY
+    REQUIRED
+    FRIENDLY_NAME "kvspicState"
+    NAMES kvspicState libkvspicState.a
+  )
+  txing_find_local_or_system_library(
+    TXING_KVS_WEBSOCKETS_LIBRARY
+    REQUIRED
+    FRIENDLY_NAME "websockets"
+    NAMES websockets libwebsockets.a
+  )
+  txing_find_local_or_system_library(
+    TXING_KVS_SRTP_LIBRARY
+    REQUIRED
+    FRIENDLY_NAME "srtp2"
+    NAMES srtp2 libsrtp2.a
+  )
+  txing_find_local_or_system_library(
+    TXING_KVS_USRSCTP_LIBRARY
+    REQUIRED
+    FRIENDLY_NAME "usrsctp"
+    NAMES usrsctp libusrsctp.a
+  )
+  find_library(TXING_KVS_CAP_LIBRARY NAMES cap)
 
   target_sources(
     txing_board_kvs_master_lib
     PRIVATE
       src/kvs_session_real.cpp
-      "${KVS_WEBRTC_SDK_SOURCE_DIR}/samples/common/Common.c"
   )
   target_compile_definitions(txing_board_kvs_master_lib PRIVATE TXING_KVS_REAL_SDK=1)
   target_include_directories(
     txing_board_kvs_master_lib
     PRIVATE
-      "${KVS_WEBRTC_SDK_SOURCE_DIR}"
-      "${KVS_WEBRTC_SDK_SOURCE_DIR}/samples/common"
-      "${KVS_WEBRTC_SDK_SOURCE_DIR}/src/include"
-      "${OPEN_SRC_INSTALL_PREFIX}/include"
+      "${TXING_KVS_WEBRTC_SDK_INSTALL_DIR}/include"
   )
   target_link_libraries(
     txing_board_kvs_master_lib
     PRIVATE
-      kvsWebrtcClient
-      kvsWebrtcSignalingClient
-      kvsCommonLws
-      kvspicUtils
-      websockets
+      "${TXING_KVS_WEBRTC_CLIENT_LIBRARY}"
+      "${TXING_KVS_WEBRTC_SIGNALING_CLIENT_LIBRARY}"
+      "${TXING_KVS_COMMON_LWS_LIBRARY}"
+      "${TXING_KVS_PIC_UTILS_LIBRARY}"
+      "${TXING_KVS_PIC_STATE_LIBRARY}"
+      "${TXING_KVS_WEBSOCKETS_LIBRARY}"
+      "${TXING_KVS_SRTP_LIBRARY}"
+      "${TXING_KVS_USRSCTP_LIBRARY}"
+      OpenSSL::SSL
+      OpenSSL::Crypto
+      Threads::Threads
+      m
+      "${CMAKE_DL_LIBS}"
   )
+  if(ZLIB_FOUND)
+    target_link_libraries(txing_board_kvs_master_lib PRIVATE ZLIB::ZLIB)
+  endif()
+  if(TXING_KVS_CAP_LIBRARY)
+    target_link_libraries(txing_board_kvs_master_lib PRIVATE "${TXING_KVS_CAP_LIBRARY}")
+  endif()
 else()
   target_sources(txing_board_kvs_master_lib PRIVATE src/kvs_session_stub.cpp)
   target_compile_definitions(txing_board_kvs_master_lib PRIVATE TXING_KVS_REAL_SDK=0)

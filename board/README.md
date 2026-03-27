@@ -75,7 +75,7 @@ Notes:
 
 - Raspberry Pi OS Lite 64-bit with Python `3.12+` available as `python3`
 - `git`, `just`, `pipx`, `uv`, `cmake`, `pkg-config`, and a native C/C++ toolchain
-- native build packages for the AWS WebRTC C SDK dependencies: `build-essential`, `curl`, `libssl-dev`, `libcurl4-openssl-dev`, and `liblog4cplus-dev`
+- native build packages for the AWS WebRTC C SDK dependencies: `build-essential`, `curl`, `libssl-dev`, `libcurl4-openssl-dev`, `liblog4cplus-dev`, `libsrtp2-dev`, `libusrsctp-dev`, `libwebsockets-dev`, and `zlib1g-dev`
 - `libcamera-dev` for the in-process camera capture path
 - AWS IoT endpoint, root CA, client certificate, and client private key
 - AWS credentials for the board video sender with permission to use the KVS signaling channel as master
@@ -234,13 +234,22 @@ test -s certs/iot-data-ats.endpoint
 
 ### 5. Build the Native KVS Sender
 
-Build the repo-owned sender:
+Clone and build the AWS KVS WebRTC SDK once into the board working tree, then build the repo-owned sender against that local install:
 
 ```bash
 cd /home/user/txing/board
 pkg-config --modversion libcamera
+just build-aws-sdk
 just build-native
 ```
+
+The local AWS SDK checkout, build tree, and install prefix live under:
+
+```bash
+/home/user/txing/board/aws-kvs-webrtc-sdk
+```
+
+By default the local AWS SDK checkout tracks upstream `main`. After that SDK build completes once, repeat `just build-native` for sender code changes. You only need to rerun `just build-aws-sdk` when you want to refresh the local SDK checkout/install, change the dependency mode, or rebuild from scratch. Use `just clean` first if you want to rebuild both the local AWS SDK install and the sender from scratch, and `just distclean` if you also want to remove the local AWS SDK checkout.
 
 The resulting sender binary lives at:
 
@@ -253,8 +262,18 @@ Dependency mode note for Raspberry Pi OS Trixie:
 - AWS documents the system dependency path as `BUILD_DEPENDENCIES=OFF` with system `libopenssl=1.1.1x`, `libsrtp2<=2.5.0`, `libusrsctp<=0.9.5.0`, and `libwebsockets>=4.2.0`.
 - Debian Trixie currently ships `libssl-dev 3.5.5`, `libsrtp2-dev 2.7.0`, `libusrsctp-dev 0.9.5.0`, and `libwebsockets-dev 4.3.5`.
 - That means `libusrsctp-dev` and `libwebsockets-dev` fit AWS's documented window, but `libssl-dev` and `libsrtp2-dev` do not.
-- Because the AWS SDK's `BUILD_DEPENDENCIES` switch is global and system `libwebsockets` depends on system OpenSSL, the board build keeps the vendored dependency path by default on Trixie.
-- If you intentionally want the unsupported system-dependency path anyway, export `TXING_BOARD_KVS_USE_SYSTEM_DEPENDENCIES=ON` before `just build-native`.
+- This repo now defaults to the system-dependency path for the board-local AWS SDK build, so it will try to use the Debian-supplied OpenSSL, libsrtp2, usrsctp, and libwebsockets packages first.
+- In that system-dependency path, the board build now forces the shared Debian OpenSSL libraries (`libssl.so` / `libcrypto.so`) instead of the static archives so OpenSSL security updates can come from normal OS package updates.
+- If that path fails on your image, export `TXING_BOARD_KVS_USE_SYSTEM_DEPENDENCIES=OFF` before `just build-aws-sdk` to fall back to the vendored AWS dependency build.
+
+The SDK clone/build recipes are configurable through these optional environment variables:
+
+- `TXING_BOARD_AWS_KVS_WEBRTC_SDK_REPOSITORY`
+- `TXING_BOARD_AWS_KVS_WEBRTC_SDK_REF`
+
+If you leave `TXING_BOARD_AWS_KVS_WEBRTC_SDK_REF` unset, the local SDK checkout stays on the `main` branch instead of a detached tag checkout.
+
+`just build-native` now only checks that the local SDK install exists. It does not rebuild the AWS SDK on every sender rebuild. Run `just build-aws-sdk` explicitly when you need to refresh that local SDK install.
 
 You do not need to set sender regex environment variables for the repo sender. `board-video-sender` now recognizes these built-in markers by default:
 

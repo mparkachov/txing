@@ -28,3 +28,4 @@ htmlcov/
 # Native sender build artifacts
 kvs_master/build/
 kvs_master/build-tests/
+aws-kvs-webrtc-sdk/

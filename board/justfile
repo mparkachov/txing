@@ -8,12 +8,19 @@ native_kvs_master_dir := board_dir + "/kvs_master"
 native_kvs_master_build_dir := native_kvs_master_dir + "/build"
 native_kvs_master_test_build_dir := native_kvs_master_dir + "/build-tests"
 built_native_kvs_master := native_kvs_master_build_dir + "/txing-board-kvs-master"
+aws_kvs_sdk_dir := board_dir + "/aws-kvs-webrtc-sdk"
+aws_kvs_sdk_build_dir := aws_kvs_sdk_dir + "/build"
+aws_kvs_sdk_install_dir := aws_kvs_sdk_dir + "/install"
+aws_kvs_sdk_install_header := aws_kvs_sdk_install_dir + "/include/com/amazonaws/kinesis/video/webrtcclient/Include.h"
+aws_kvs_sdk_install_library := aws_kvs_sdk_install_dir + "/lib/libkvsWebrtcClient.a"
+default_aws_kvs_sdk_repository := env_var_or_default("TXING_BOARD_AWS_KVS_WEBRTC_SDK_REPOSITORY", "https://github.com/awslabs/amazon-kinesis-video-streams-webrtc-sdk-c.git")
+default_aws_kvs_sdk_ref := env_var_or_default("TXING_BOARD_AWS_KVS_WEBRTC_SDK_REF", "main")
 systemd_unit := "/etc/systemd/system/txing-board.service"
 default_video_region := env_var_or_default("TXING_BOARD_VIDEO_REGION", "eu-central-1")
 default_video_channel_name := env_var_or_default("TXING_BOARD_VIDEO_CHANNEL_NAME", "txing-board-video")
 default_aws_shared_credentials_file := env_var_or_default("TXING_BOARD_AWS_SHARED_CREDENTIALS_FILE", "/root/.aws/credentials")
 default_aws_config_file := env_var_or_default("TXING_BOARD_AWS_CONFIG_FILE", "/root/.aws/config")
-default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_SYSTEM_DEPENDENCIES", "OFF")
+default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_SYSTEM_DEPENDENCIES", "ON")
 
 @sync:
     cd "{{board_dir}}" && uv sync --python "{{python_executable}}" --no-managed-python --no-python-downloads
@@ -23,8 +30,107 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
     test -x "{{built_board}}"
     test -x "{{built_board_video_sender}}"
 
+@clone-aws-sdk:
+    if [ ! -d "{{aws_kvs_sdk_dir}}/.git" ]; then \
+        git clone --branch "{{default_aws_kvs_sdk_ref}}" --depth 1 "{{default_aws_kvs_sdk_repository}}" "{{aws_kvs_sdk_dir}}"; \
+    else \
+        git -C "{{aws_kvs_sdk_dir}}" remote set-url origin "{{default_aws_kvs_sdk_repository}}"; \
+        git -C "{{aws_kvs_sdk_dir}}" fetch --force --tags origin; \
+        if git -C "{{aws_kvs_sdk_dir}}" show-ref --verify --quiet "refs/remotes/origin/{{default_aws_kvs_sdk_ref}}"; then \
+            git -C "{{aws_kvs_sdk_dir}}" checkout -B "{{default_aws_kvs_sdk_ref}}" "origin/{{default_aws_kvs_sdk_ref}}"; \
+            git -C "{{aws_kvs_sdk_dir}}" reset --hard "origin/{{default_aws_kvs_sdk_ref}}"; \
+        else \
+            git -C "{{aws_kvs_sdk_dir}}" checkout "{{default_aws_kvs_sdk_ref}}"; \
+        fi; \
+    fi
+
+@build-aws-sdk:
+    just clone-aws-sdk
+    build_dependencies=ON; \
+    cmake_args=( \
+        -S "{{aws_kvs_sdk_dir}}" \
+        -B "{{aws_kvs_sdk_build_dir}}" \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX="{{aws_kvs_sdk_install_dir}}" \
+        -DBUILD_SAMPLE=OFF \
+        -DBUILD_TEST=OFF \
+        -DBUILD_BENCHMARK=OFF \
+        -DBUILD_STATIC_LIBS=ON \
+        -DUSE_OPENSSL=ON \
+        -DUSE_MBEDTLS=OFF \
+    ); \
+    if [ "{{default_kvs_use_system_dependencies}}" = "ON" ]; then \
+        build_dependencies=OFF; \
+        if [ "$(uname -s)" = "Linux" ]; then \
+            if ! pkg-config --exists openssl; then \
+                echo "OpenSSL pkg-config metadata not found; install libssl-dev" >&2; \
+                exit 1; \
+            fi; \
+            openssl_libdir="$(pkg-config --variable=libdir openssl)"; \
+            openssl_includedir="$(pkg-config --variable=includedir openssl)"; \
+            openssl_ssl_library="$openssl_libdir/libssl.so"; \
+            openssl_crypto_library="$openssl_libdir/libcrypto.so"; \
+            if [ ! -f "$openssl_ssl_library" ] || [ ! -f "$openssl_crypto_library" ]; then \
+                echo "Expected shared OpenSSL libraries were not found under $openssl_libdir" >&2; \
+                exit 1; \
+            fi; \
+            cmake_args+=( -DOPENSSL_USE_STATIC_LIBS=FALSE ); \
+            cmake_args+=( -DOPENSSL_INCLUDE_DIR="$openssl_includedir" ); \
+            cmake_args+=( -DOPENSSL_SSL_LIBRARY="$openssl_ssl_library" ); \
+            cmake_args+=( -DOPENSSL_CRYPTO_LIBRARY="$openssl_crypto_library" ); \
+        fi; \
+    fi; \
+    cmake_args+=( -DOPEN_SRC_INSTALL_PREFIX="{{aws_kvs_sdk_install_dir}}" ); \
+    cmake_args+=( -DBUILD_DEPENDENCIES="$build_dependencies" ); \
+    cmake "${cmake_args[@]}"; \
+    cmake --build "{{aws_kvs_sdk_build_dir}}" --config Release; \
+    cmake --install "{{aws_kvs_sdk_build_dir}}" --config Release
+
+@ensure-aws-sdk:
+    if [ ! -f "{{aws_kvs_sdk_install_header}}" ] || [ ! -f "{{aws_kvs_sdk_install_library}}" ]; then \
+        just build-aws-sdk; \
+    fi
+
+@clean-native:
+    rm -rf "{{native_kvs_master_build_dir}}" "{{native_kvs_master_test_build_dir}}"
+
+@clean-aws-sdk:
+    rm -rf "{{aws_kvs_sdk_build_dir}}" "{{aws_kvs_sdk_install_dir}}"
+
+@clean:
+    just clean-native
+    just clean-aws-sdk
+
+@distclean:
+    just clean
+    rm -rf "{{aws_kvs_sdk_dir}}"
+
 @build-native:
-    cmake -S "{{native_kvs_master_dir}}" -B "{{native_kvs_master_build_dir}}" -DCMAKE_BUILD_TYPE=Release -DTXING_KVS_USE_SYSTEM_DEPENDENCIES="{{default_kvs_use_system_dependencies}}"
+    if [ "$(uname -s)" = "Linux" ]; then \
+        just ensure-aws-sdk; \
+    fi
+    native_cmake_args=( \
+        -S "{{native_kvs_master_dir}}" \
+        -B "{{native_kvs_master_build_dir}}" \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_TESTING=OFF \
+        -DTXING_KVS_USE_SYSTEM_DEPENDENCIES="{{default_kvs_use_system_dependencies}}" \
+        -DTXING_KVS_WEBRTC_SDK_DIR="{{aws_kvs_sdk_dir}}" \
+        -DTXING_KVS_WEBRTC_SDK_INSTALL_DIR="{{aws_kvs_sdk_install_dir}}" \
+    ); \
+    if [ "$(uname -s)" = "Linux" ] && [ "{{default_kvs_use_system_dependencies}}" = "ON" ]; then \
+        if ! pkg-config --exists openssl; then \
+            echo "OpenSSL pkg-config metadata not found; install libssl-dev" >&2; \
+            exit 1; \
+        fi; \
+        openssl_libdir="$(pkg-config --variable=libdir openssl)"; \
+        openssl_includedir="$(pkg-config --variable=includedir openssl)"; \
+        native_cmake_args+=( -DOPENSSL_USE_STATIC_LIBS=FALSE ); \
+        native_cmake_args+=( -DOPENSSL_INCLUDE_DIR="$openssl_includedir" ); \
+        native_cmake_args+=( -DOPENSSL_SSL_LIBRARY="$openssl_libdir/libssl.so" ); \
+        native_cmake_args+=( -DOPENSSL_CRYPTO_LIBRARY="$openssl_libdir/libcrypto.so" ); \
+    fi; \
+    cmake "${native_cmake_args[@]}"
     cmake --build "{{native_kvs_master_build_dir}}" --config Release
     test -x "{{built_native_kvs_master}}"
 
