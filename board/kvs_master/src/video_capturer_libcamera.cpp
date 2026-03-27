@@ -442,7 +442,7 @@ class LibcameraVideoCapturer final : public VideoCapturer {
             return;
         }
         if (buffer->metadata().status != libcamera::FrameMetadata::FrameSuccess) {
-            request->reuse();
+            request->reuse(libcamera::Request::ReuseBuffers);
             if (camera_->queueRequest(request) < 0) {
                 SetFatalError("failed to requeue libcamera request after a skipped frame");
             }
@@ -575,7 +575,7 @@ class LibcameraVideoCapturer final : public VideoCapturer {
             pending_ready_.notify_one();
 
             if (request != nullptr && !stop_requested_.load()) {
-                request->reuse();
+                request->reuse(libcamera::Request::ReuseBuffers);
                 if (camera_->queueRequest(request) < 0) {
                     throw std::runtime_error("failed to requeue libcamera request after encoding");
                 }
