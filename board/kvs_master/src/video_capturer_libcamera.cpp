@@ -66,6 +66,32 @@ struct OutputSlot {
     libcamera::Request* request = nullptr;
 };
 
+std::uint32_t ImportedDmabufSpan(const libcamera::FrameBuffer& buffer) {
+    const auto& planes = buffer.planes();
+    if (planes.empty()) {
+        throw std::runtime_error("libcamera buffer does not contain any planes");
+    }
+
+    const int dma_fd = planes.front().fd.get();
+    if (dma_fd < 0) {
+        throw std::runtime_error("libcamera buffer plane does not expose a valid DMABUF fd");
+    }
+
+    std::uint64_t span = 0;
+    for (const auto& plane : planes) {
+        if (plane.fd.get() != dma_fd) {
+            throw std::runtime_error("libcamera buffer uses multiple DMABUF fds; unsupported encoder import layout");
+        }
+        span = std::max<std::uint64_t>(span, static_cast<std::uint64_t>(plane.offset) + plane.length);
+    }
+
+    if (span == 0 || span > std::numeric_limits<std::uint32_t>::max()) {
+        throw std::runtime_error("libcamera buffer span is invalid for V4L2 encoder import");
+    }
+
+    return static_cast<std::uint32_t>(span);
+}
+
 class LibcameraVideoCapturer final : public VideoCapturer {
   public:
     ~LibcameraVideoCapturer() override {
@@ -498,6 +524,7 @@ class LibcameraVideoCapturer final : public VideoCapturer {
     }
 
     void QueueEncoderInput(const unsigned int output_index, const PendingCameraRequest& pending) {
+        const auto imported_span = ImportedDmabufSpan(*pending.buffer);
         v4l2_plane planes[VIDEO_MAX_PLANES] = {};
         v4l2_buffer buffer = {};
         buffer.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
@@ -509,8 +536,8 @@ class LibcameraVideoCapturer final : public VideoCapturer {
         buffer.timestamp.tv_usec = static_cast<decltype(buffer.timestamp.tv_usec)>(pending.timestamp_us % 1'000'000);
 
         planes[0].m.fd = pending.buffer->planes()[0].fd.get();
-        planes[0].length = static_cast<__u32>(pending.buffer->planes()[0].length);
-        planes[0].bytesused = static_cast<__u32>(frame_size_);
+        planes[0].length = imported_span;
+        planes[0].bytesused = imported_span;
 
         if (RetryIoctl(encoder_fd_, VIDIOC_QBUF, &buffer) < 0) {
             throw std::runtime_error("failed to queue libcamera buffer into the H.264 encoder");
