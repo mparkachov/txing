@@ -328,6 +328,29 @@ void TestRuntimeReadyAndTimestamps() {
     );
 }
 
+void TestRuntimeAdvancesWhenEncoderTimestampsStayZero() {
+    FakeKvsState kvs_state;
+    FakeCapturerState capturer_state;
+    capturer_state.frames = {
+        EncodedVideoFrame {{0x00, 0x00, 0x01}, 0, false},
+        EncodedVideoFrame {{0x00, 0x00, 0x02}, 0, true},
+        EncodedVideoFrame {{0x00, 0x00, 0x03}, 0, false},
+    };
+
+    Run(TestRuntimeConfig(), HooksFrom(&kvs_state, &capturer_state));
+
+    Expect(kvs_state.pushes.size() == 3, "runtime should forward frames even with zero encoder timestamps");
+    Expect(kvs_state.pushes[0].pts_100ns == 0, "runtime should still start at zero");
+    Expect(
+        kvs_state.pushes[1].pts_100ns == kvs_state.pushes[0].duration_100ns,
+        "runtime should advance with the default frame duration after the first zero timestamp"
+    );
+    Expect(
+        kvs_state.pushes[2].pts_100ns == kvs_state.pushes[0].duration_100ns + kvs_state.pushes[1].duration_100ns,
+        "runtime should keep advancing when encoder timestamps remain zero"
+    );
+}
+
 void TestRuntimePropagatesCapturerErrors() {
     FakeKvsState kvs_state;
     FakeCapturerState capturer_state;
@@ -362,6 +385,7 @@ int main() {
     TestUsageText();
     TestCredentialResolution();
     TestRuntimeReadyAndTimestamps();
+    TestRuntimeAdvancesWhenEncoderTimestampsStayZero();
     TestRuntimePropagatesCapturerErrors();
     TestMarkerFormatting();
 

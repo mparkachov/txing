@@ -165,6 +165,7 @@ void Run(const RuntimeConfig& config, const RuntimeHooks& hooks) {
     std::optional<std::string> first_error;
     bool ready_emitted = false;
     std::uint64_t previous_timestamp_us = 0;
+    bool have_previous_timestamp = false;
     std::uint64_t presentation_timestamp_100ns = 0;
     const auto default_duration_100ns = DefaultFrameDuration100ns(config.camera);
 
@@ -193,10 +194,10 @@ void Run(const RuntimeConfig& config, const RuntimeHooks& hooks) {
             }
 
             std::uint64_t duration_100ns = default_duration_100ns;
-            if (previous_timestamp_us != 0 && frame.timestamp_us > previous_timestamp_us) {
+            if (have_previous_timestamp && frame.timestamp_us > previous_timestamp_us) {
                 duration_100ns = TimestampUsTo100ns(frame.timestamp_us - previous_timestamp_us);
                 presentation_timestamp_100ns = SaturatingAdd(presentation_timestamp_100ns, duration_100ns);
-            } else if (previous_timestamp_us != 0) {
+            } else if (have_previous_timestamp) {
                 presentation_timestamp_100ns = SaturatingAdd(presentation_timestamp_100ns, duration_100ns);
             }
 
@@ -208,6 +209,7 @@ void Run(const RuntimeConfig& config, const RuntimeHooks& hooks) {
                 frame.is_keyframe
             );
             previous_timestamp_us = frame.timestamp_us;
+            have_previous_timestamp = true;
 
             if (!ready_emitted && frame.is_keyframe) {
                 EmitMarker("TXING_KVS_READY", {});
