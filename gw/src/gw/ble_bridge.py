@@ -125,6 +125,14 @@ def _is_expected_post_sleep_confirmation_error(err: Exception) -> bool:
     return False
 
 
+def _is_retryable_gatt_write_error(err: Exception) -> bool:
+    if isinstance(err, BleakDBusError):
+        return err.dbus_error == "org.bluez.Error.Failed" and "ATT error: 0x0e" in str(
+            err
+        )
+    return False
+
+
 def _default_cloudwatch_log_stream(thing_name: str) -> str:
     hostname = socket.gethostname().split(".", 1)[0] or "gw"
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -1918,11 +1926,24 @@ class BleSleepBridge:
         assert self._client is not None
 
         payload = b"\x01" if sleep else b"\x00"
-        await self._client.write_gatt_char(
-            self._shadow.ble_uuids.sleep_command_uuid,
-            payload,
-            response=True,
-        )
+        max_attempts = 2 if not sleep else 1
+        for attempt in range(1, max_attempts + 1):
+            try:
+                await self._client.write_gatt_char(
+                    self._shadow.ble_uuids.sleep_command_uuid,
+                    payload,
+                    response=True,
+                )
+                break
+            except Exception as err:
+                if attempt >= max_attempts or not _is_retryable_gatt_write_error(err):
+                    raise
+                LOGGER.warning(
+                    "Retrying wake command after transient GATT write failure attempt=%s error=%s",
+                    attempt,
+                    err,
+                )
+                await asyncio.sleep(self._config.command_ack_poll_interval)
         LOGGER.info(
             "Sent Power Command sleep=%s power=%s via characteristic=%s",
             sleep,

@@ -709,10 +709,10 @@ fn handle_power_command<P: OutputPin>(
         POWER_MODE_AWAKE_COMMAND_VALUE => {
             log_state_transition("command_processing");
             state.set_sleep(false);
-            board_power_switch.sync_to_sleep_state(false);
             refresh_battery_state(state, battery_monitor);
             set_led_for_sleep_state(led, false);
             publish_state_report(server, Some(conn), state);
+            board_power_switch.sync_to_sleep_state(false);
             defmt::info!("power_command next_sleep=false");
         }
         POWER_MODE_SLEEP_COMMAND_VALUE => {

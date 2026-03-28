@@ -8,6 +8,10 @@ import {
   type AuthUser,
 } from './auth'
 import {
+  deriveTxingPowerTransitionPending,
+  deriveTxingPoweredOn,
+  extractDesiredBoardPower,
+  extractDesiredMcuPower,
   extractReportedBoardPower,
   extractReportedBoardVideo,
   extractReportedBoardWifiOnline,
@@ -26,7 +30,6 @@ type SessionStatus = 'loading' | 'authenticating' | 'signed_out' | 'signed_in'
 type AppProps = {
   initialAuthError?: string
 }
-type TxingSwitchTarget = 'on' | 'off' | null
 type ShadowSnapshotView = {
   json: string
   updatedAtMs: number
@@ -49,7 +52,6 @@ function App({ initialAuthError = '' }: AppProps) {
   const [isUpdatingShadow, setIsUpdatingShadow] = useState(false)
   const [isDebugEnabled, setIsDebugEnabled] = useState(false)
   const [isBoardVideoExpanded, setIsBoardVideoExpanded] = useState(false)
-  const [txingSwitchTarget, setTxingSwitchTarget] = useState<TxingSwitchTarget>(null)
   const [feedback, setFeedback] = useState<string>('')
   const [error, setError] = useState<string>(initialAuthError)
   const [shadowConnectionState, setShadowConnectionState] =
@@ -105,14 +107,40 @@ function App({ initialAuthError = '' }: AppProps) {
     () => extractReportedRedcon(shadowDocument),
     [shadowDocument],
   )
+  const desiredMcuPower = useMemo(
+    () => extractDesiredMcuPower(shadowDocument),
+    [shadowDocument],
+  )
+  const desiredBoardPower = useMemo(
+    () => extractDesiredBoardPower(shadowDocument),
+    [shadowDocument],
+  )
 
   const boardOnline = reportedBoardOnline === true
-  const canWake = reportedMcuPower === false && reportedMcuOnline === true
-  const canSleep = reportedMcuPower === true || reportedBoardPower === true || reportedBoardOnline === true
+  const txingPoweredOn = useMemo(
+    () =>
+      deriveTxingPoweredOn({
+        reportedRedcon,
+        reportedMcuPower,
+        reportedBoardPower,
+        reportedBoardWifiOnline: reportedBoardOnline,
+      }),
+    [reportedBoardOnline, reportedBoardPower, reportedMcuPower, reportedRedcon],
+  )
+  const canWake = !txingPoweredOn && reportedMcuOnline === true && desiredMcuPower !== true
+  const canSleep =
+    txingPoweredOn && desiredMcuPower !== false && desiredBoardPower !== false
   const isShadowConnected = shadowConnectionState === 'connected'
-  const txingSwitchChecked =
-    txingSwitchTarget === 'on' ? true : txingSwitchTarget === 'off' ? false : boardOnline
-  const isTxingSwitchPending = txingSwitchTarget !== null
+  const txingSwitchChecked = txingPoweredOn
+  const isTxingSwitchPending = useMemo(
+    () =>
+      deriveTxingPowerTransitionPending({
+        txingPoweredOn,
+        desiredMcuPower,
+        desiredBoardPower,
+      }),
+    [desiredBoardPower, desiredMcuPower, txingPoweredOn],
+  )
   const canToggleTxingSwitch = (txingSwitchChecked ? canSleep : canWake) && isShadowConnected
   const canLoadShadow = !isLoadingShadow && isShadowConnected
   const isTxingSwitchDisabled =
@@ -122,8 +150,7 @@ function App({ initialAuthError = '' }: AppProps) {
     reportedBoardVideo.ready &&
     reportedBoardVideo.status === 'ready' &&
     reportedBoardVideo.channelName !== null
-  const boardVideoReachable =
-    txingSwitchTarget !== 'off' && boardOnline && reportedBoardPower !== false
+  const boardVideoReachable = !isTxingSwitchPending && boardOnline && reportedBoardPower !== false
   const canUseBoardVideo = boardVideoReachable && boardVideoReady
 
   const applyShadowSnapshot = useEffectEvent((shadow: unknown, feedbackMessage?: string): void => {
@@ -262,16 +289,6 @@ function App({ initialAuthError = '' }: AppProps) {
   }, [adminEmailMismatch, status])
 
   useEffect(() => {
-    if (txingSwitchTarget === 'on' && boardOnline) {
-      setTxingSwitchTarget(null)
-      return
-    }
-    if (txingSwitchTarget === 'off' && reportedBoardOnline === false) {
-      setTxingSwitchTarget(null)
-    }
-  }, [boardOnline, reportedBoardOnline, txingSwitchTarget])
-
-  useEffect(() => {
     if (!canUseBoardVideo && isBoardVideoExpanded) {
       setIsBoardVideoExpanded(false)
     }
@@ -388,11 +405,7 @@ function App({ initialAuthError = '' }: AppProps) {
       if (!canWake) {
         return
       }
-      setTxingSwitchTarget('on')
-      const woke = await updateDesiredPower(true)
-      if (!woke) {
-        setTxingSwitchTarget(null)
-      }
+      await updateDesiredPower(true)
       return
     }
 
@@ -400,11 +413,7 @@ function App({ initialAuthError = '' }: AppProps) {
       return
     }
 
-    setTxingSwitchTarget('off')
-    const slept = await requestSleep()
-    if (!slept) {
-      setTxingSwitchTarget(null)
-    }
+    await requestSleep()
   }
 
   const handleSignOff = (): void => {

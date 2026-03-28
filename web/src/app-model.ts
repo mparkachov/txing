@@ -8,8 +8,33 @@ export type BoardVideoRuntime = {
   lastError: string | null
 }
 
+export type TxingReportedPowerInputs = {
+  reportedRedcon: number | null
+  reportedMcuPower: boolean | null
+  reportedBoardPower: boolean | null
+  reportedBoardWifiOnline: boolean | null
+}
+
+export type TxingPowerTransitionInputs = {
+  txingPoweredOn: boolean
+  desiredMcuPower: boolean | null
+  desiredBoardPower: boolean | null
+}
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null
+
+const extractDesiredState = (shadow: unknown): Record<string, unknown> | null => {
+  if (!isRecord(shadow)) {
+    return null
+  }
+  const state = shadow.state
+  if (!isRecord(state)) {
+    return null
+  }
+  const desired = state.desired
+  return isRecord(desired) ? desired : null
+}
 
 const extractReportedState = (shadow: unknown): Record<string, unknown> | null => {
   if (!isRecord(shadow)) {
@@ -41,6 +66,30 @@ export const extractReportedBoard = (shadow: unknown): Record<string, unknown> |
   return isRecord(board) ? board : null
 }
 
+export const extractDesiredMcuPower = (shadow: unknown): boolean | null => {
+  const desired = extractDesiredState(shadow)
+  if (!desired) {
+    return null
+  }
+  const mcu = desired.mcu
+  if (!isRecord(mcu)) {
+    return null
+  }
+  return typeof mcu.power === 'boolean' ? mcu.power : null
+}
+
+export const extractDesiredBoardPower = (shadow: unknown): boolean | null => {
+  const desired = extractDesiredState(shadow)
+  if (!desired) {
+    return null
+  }
+  const board = desired.board
+  if (!isRecord(board)) {
+    return null
+  }
+  return typeof board.power === 'boolean' ? board.power : null
+}
+
 export const extractReportedRedcon = (shadow: unknown): number | null => {
   const reported = extractReportedState(shadow)
   if (!reported) {
@@ -51,6 +100,36 @@ export const extractReportedRedcon = (shadow: unknown): number | null => {
     return null
   }
   return redcon >= 1 && redcon <= 4 ? redcon : null
+}
+
+export const deriveTxingPoweredOn = ({
+  reportedRedcon,
+  reportedMcuPower,
+  reportedBoardPower,
+  reportedBoardWifiOnline,
+}: TxingReportedPowerInputs): boolean => {
+  if (reportedRedcon !== null) {
+    return reportedRedcon < 4
+  }
+  return (
+    reportedMcuPower === true ||
+    reportedBoardPower === true ||
+    reportedBoardWifiOnline === true
+  )
+}
+
+export const deriveTxingPowerTransitionPending = ({
+  txingPoweredOn,
+  desiredMcuPower,
+  desiredBoardPower,
+}: TxingPowerTransitionInputs): boolean => {
+  if (desiredMcuPower === true) {
+    return !txingPoweredOn
+  }
+  if (desiredMcuPower === false || desiredBoardPower === false) {
+    return txingPoweredOn
+  }
+  return false
 }
 
 export const extractReportedBoardPower = (shadow: unknown): boolean | null => {
