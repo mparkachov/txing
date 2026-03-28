@@ -1112,6 +1112,7 @@ class BleSleepBridge:
         self._ble_uuid_search_mode = shadow.ble_uuid_search_mode
         self._has_device_sync = False
         self._last_state_report: bytes | None = None
+        self._require_fresh_advertisement_for_reconnect = False
         self._state = GatewayBleState.IDLE
 
     def _set_gateway_state(self, next_state: GatewayBleState, reason: str) -> None:
@@ -1674,6 +1675,7 @@ class BleSleepBridge:
                 recovery_gap=self._config.ble_online_recovery_gap,
             )
             self._cached_device_id = device.address
+            self._require_fresh_advertisement_for_reconnect = False
             if previous_device_id != device.address:
                 _log_important(
                     LOGGER,
@@ -1722,6 +1724,8 @@ class BleSleepBridge:
     def _get_fresh_target_device(self) -> BLEDevice | None:
         loop = self._loop
         if loop is None:
+            return None
+        if self._require_fresh_advertisement_for_reconnect:
             return None
         if not self._known_device.is_fresh(loop.time(), self._config.device_stale_after):
             return None
@@ -1823,6 +1827,7 @@ class BleSleepBridge:
                 device_id=target_device_id,
             )
             await self._subscribe_state_report_notifications()
+            self._require_fresh_advertisement_for_reconnect = False
             self._mark_ble_presence_now()
             await self._publish_ble_online_state(
                 online=True,
@@ -2340,6 +2345,7 @@ class BleSleepBridge:
 
     def _handle_disconnect(self, _: BleakClient) -> None:
         LOGGER.info("BLE connection ended")
+        self._require_fresh_advertisement_for_reconnect = True
         loop = self._loop
         if loop is not None:
             loop.call_soon_threadsafe(self._mark_ble_presence_now)
