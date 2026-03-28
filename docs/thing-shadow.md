@@ -33,10 +33,10 @@ Schema validation should be done by project code and/or CI checks, while AWS IoT
 - `state.desired.board.power` (`boolean`, update payload may temporarily use `null` to delete) is a board-owned one-shot board power request: `false` asks the board Pi to halt locally, and the board control clears the field on clean shutdown after consuming it.
 - `state.reported.mcu.power` (`boolean`) is the gateway-confirmed MCU power mode.
 - `state.reported.redcon` (`integer`, `1..4`) is the gateway-derived readiness summary:
-  - `4`: MCU sleep state
-  - `3`: MCU wakeup state while board power/online are not yet reported
-  - `2`: MCU wakeup state with board power reported but board Wi-Fi/control still offline
-  - `1`: MCU wakeup state with board Wi-Fi/control online
+  - `4`: Green / `Cold Camp` / MCU sleep state
+  - `3`: Yellow / `Torch-Up` / MCU wakeup state while board power/online are not yet reported
+  - `2`: Orange/Amber / `Ember Watch` / MCU wakeup state with board power reported but board Wi-Fi/control still offline
+  - `1`: Red / `Hot Rig` / MCU wakeup state with board Wi-Fi/control online
 - `state.reported.mcu.batteryMv` (`integer`, millivolts, measured MCU battery estimate observed from the MCU State Report over BLE advertising or GATT).
 - `state.reported.mcu.ble.serviceUuid` (`uuid`) is the BLE service UUID used by gateway.
 - `state.reported.mcu.ble.sleepCommandUuid` (`uuid`) is the compatibility field for the BLE power-mode control characteristic UUID.

@@ -87,10 +87,10 @@ Field semantics:
 - `state.desired.mcu.power=true` means "request MCU wakeup state and keep BLE available".
 - `state.desired.mcu.power=false` means "request MCU sleep state with periodic `5 s` BLE rendezvous wakeups".
 - `state.reported.redcon` is the derived readiness summary:
-  - `4` -> `reported.mcu.power=false`
-  - `3` -> `reported.mcu.power=true` while the board is not yet reported powered or online
-  - `2` -> `reported.mcu.power=true`, `reported.board.power=true`, and `reported.board.wifi.online=false`
-  - `1` -> `reported.mcu.power=true` and `reported.board.wifi.online=true`
+  - `4` -> Green / `Cold Camp` -> `reported.mcu.power=false`
+  - `3` -> Yellow / `Torch-Up` -> `reported.mcu.power=true` while the board is not yet reported powered or online
+  - `2` -> Orange/Amber / `Ember Watch` -> `reported.mcu.power=true`, `reported.board.power=true`, and `reported.board.wifi.online=false`
+  - `1` -> Red / `Hot Rig` -> `reported.mcu.power=true` and `reported.board.wifi.online=true`
 - `state.reported.mcu.power=true` means "MCU is in the wakeup state".
 - `state.reported.mcu.power=false` means "MCU is in the sleep state with periodic BLE rendezvous wakeups".
 - `state.reported.mcu.batteryMv` is the latest battery reading observed over BLE, sourced from the MCU state report carried over either advertising manufacturer data or the GATT State Report characteristic.

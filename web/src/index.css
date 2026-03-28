@@ -15,6 +15,11 @@
   --status-node-asleep-bg: rgba(127, 138, 150, 0.14);
   --status-node-unknown: #44627f;
   --status-node-unknown-bg: rgba(68, 98, 127, 0.1);
+  --redcon-1: #c44232;
+  --redcon-2: #d7821f;
+  --redcon-3: #caa61a;
+  --redcon-4: #1b9c62;
+  --redcon-unknown: #607184;
   --battery-good: #1ea968;
   --battery-warn: #e1b428;
   --battery-low: #db4b39;
@@ -439,16 +444,24 @@ h1 {
   text-align: center;
 }
 
-.status-txing-name.status-txing-power-sleep {
-  color: var(--status-node-asleep);
+.status-txing-name.status-txing-redcon-1 {
+  color: var(--redcon-1);
 }
 
-.status-txing-name.status-txing-power-partial {
-  color: var(--battery-warn);
+.status-txing-name.status-txing-redcon-2 {
+  color: var(--redcon-2);
 }
 
-.status-txing-name.status-txing-power-full {
-  color: var(--status-node-awake);
+.status-txing-name.status-txing-redcon-3 {
+  color: var(--redcon-3);
+}
+
+.status-txing-name.status-txing-redcon-4 {
+  color: var(--redcon-4);
+}
+
+.status-txing-name.status-txing-redcon-unknown {
+  color: var(--redcon-unknown);
 }
 
 .status-last-shadow-update {

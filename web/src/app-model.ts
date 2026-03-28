@@ -21,6 +21,35 @@ export type TxingPowerTransitionInputs = {
   desiredBoardPower: boolean | null
 }
 
+type RedconDescriptor = {
+  colorName: string
+  postureName: string
+  toneClass: string
+}
+
+const redconDescriptors: Record<1 | 2 | 3 | 4, RedconDescriptor> = {
+  1: {
+    colorName: 'Red',
+    postureName: 'Hot Rig',
+    toneClass: 'status-txing-redcon-1',
+  },
+  2: {
+    colorName: 'Amber',
+    postureName: 'Ember Watch',
+    toneClass: 'status-txing-redcon-2',
+  },
+  3: {
+    colorName: 'Yellow',
+    postureName: 'Torch-Up',
+    toneClass: 'status-txing-redcon-3',
+  },
+  4: {
+    colorName: 'Green',
+    postureName: 'Cold Camp',
+    toneClass: 'status-txing-redcon-4',
+  },
+}
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null
 
@@ -100,6 +129,27 @@ export const extractReportedRedcon = (shadow: unknown): number | null => {
     return null
   }
   return redcon >= 1 && redcon <= 4 ? redcon : null
+}
+
+export const getTxingRedconToneClass = (redcon: number | null): string => {
+  if (redcon === null) {
+    return 'status-txing-redcon-unknown'
+  }
+
+  const descriptor = redconDescriptors[redcon as 1 | 2 | 3 | 4]
+  return descriptor?.toneClass ?? 'status-txing-redcon-unknown'
+}
+
+export const describeRedcon = (redcon: number | null): string => {
+  if (redcon === null) {
+    return 'REDCON unavailable'
+  }
+
+  const descriptor = redconDescriptors[redcon as 1 | 2 | 3 | 4]
+  if (!descriptor) {
+    return 'REDCON unavailable'
+  }
+  return `REDCON ${redcon} · ${descriptor.postureName} · ${descriptor.colorName}`
 }
 
 export const deriveTxingPoweredOn = ({

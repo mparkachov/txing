@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AuthUser } from './auth'
+import { describeRedcon, getTxingRedconToneClass } from './app-model'
 import VideoPanel from './VideoPanel'
 
 type TxingPanelProps = {
@@ -12,10 +13,8 @@ type TxingPanelProps = {
   isTxingSwitchPending: boolean
   lastShadowUpdateAtMs: number | null
   reportedBoardOnline: boolean | null
-  reportedBoardPower: boolean | null
   reportedMcuBatteryMv: number | null
   reportedMcuBleOnline: boolean | null
-  reportedMcuPower: boolean | null
   reportedRedcon: number | null
   txingSwitchChecked: boolean
   videoChannelName: string | null
@@ -108,19 +107,6 @@ const getBoardWifiToneClass = (boardWifiOnline: boolean | null): string => {
 const getBleSignalToneClass = (bleStatusOnline: boolean | null): string =>
   bleStatusOnline === true ? 'status-signal-online' : 'status-signal-offline'
 
-const getTxingPowerToneClass = (mcuPower: boolean | null, boardPower: boolean | null): string => {
-  if (mcuPower === true && boardPower === true) {
-    return 'status-txing-power-full'
-  }
-  if (mcuPower === false && boardPower === false) {
-    return 'status-txing-power-sleep'
-  }
-  if (mcuPower === true || boardPower === true) {
-    return 'status-txing-power-partial'
-  }
-  return 'status-txing-power-sleep'
-}
-
 function CameraGlyph({ crossed }: CameraGlyphProps) {
   return (
     <svg
@@ -151,10 +137,8 @@ function TxingPanel({
   isTxingSwitchPending,
   lastShadowUpdateAtMs,
   reportedBoardOnline,
-  reportedBoardPower,
   reportedMcuBatteryMv,
   reportedMcuBleOnline,
-  reportedMcuPower,
   reportedRedcon,
   txingSwitchChecked,
   videoChannelName,
@@ -172,7 +156,8 @@ function TxingPanel({
   const batteryToneClass = getBatteryToneClass(batteryPercent)
   const boardWifiToneClass = getBoardWifiToneClass(reportedBoardOnline)
   const bleSignalToneClass = getBleSignalToneClass(reportedMcuBleOnline)
-  const txingPowerToneClass = getTxingPowerToneClass(reportedMcuPower, reportedBoardPower)
+  const txingRedconToneClass = getTxingRedconToneClass(reportedRedcon)
+  const txingRedconLabel = describeRedcon(reportedRedcon)
   const userMenuIdentity = authUser?.email ?? authUser?.name ?? authUser?.sub ?? 'User'
   const userMenuInitial = userMenuIdentity.trim().charAt(0).toUpperCase() || 'U'
   const lastShadowUpdateLabel = formatShadowUpdateTime(lastShadowUpdateAtMs)
@@ -309,8 +294,11 @@ function TxingPanel({
                 {lastShadowUpdateLabel}
               </time>
             </div>
-            <div className={`status-name status-txing-name ${txingPowerToneClass}`}>
-              {`TXING - ${reportedRedcon ?? '--'}/4`}
+            <div
+              className={`status-name status-txing-name ${txingRedconToneClass}`}
+              title={txingRedconLabel}
+            >
+              TXING
             </div>
             <div className="status-txing-header-side status-txing-header-side-end">
               <button

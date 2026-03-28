@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import {
   buildViewerUrlWithChannel,
+  describeRedcon,
   deriveTxingPowerTransitionPending,
   deriveTxingPoweredOn,
   extractDesiredBoardPower,
@@ -8,6 +9,7 @@ import {
   extractReportedBoardVideo,
   extractReportedRedcon,
   getAppRoute,
+  getTxingRedconToneClass,
   resolveViewerChannelName,
 } from '../src/app-model'
 
@@ -58,6 +60,20 @@ describe('app model helpers', () => {
       }),
     ).toBe(2)
     expect(extractReportedRedcon({ state: { reported: { redcon: 7 } } })).toBeNull()
+  })
+
+  test('maps redcon values to txing label tone classes and descriptions', () => {
+    expect(getTxingRedconToneClass(1)).toBe('status-txing-redcon-1')
+    expect(getTxingRedconToneClass(2)).toBe('status-txing-redcon-2')
+    expect(getTxingRedconToneClass(3)).toBe('status-txing-redcon-3')
+    expect(getTxingRedconToneClass(4)).toBe('status-txing-redcon-4')
+    expect(getTxingRedconToneClass(null)).toBe('status-txing-redcon-unknown')
+
+    expect(describeRedcon(1)).toBe('REDCON 1 · Hot Rig · Red')
+    expect(describeRedcon(2)).toBe('REDCON 2 · Ember Watch · Amber')
+    expect(describeRedcon(3)).toBe('REDCON 3 · Torch-Up · Yellow')
+    expect(describeRedcon(4)).toBe('REDCON 4 · Cold Camp · Green')
+    expect(describeRedcon(null)).toBe('REDCON unavailable')
   })
 
   test('extracts desired mcu and board power from shadow state', () => {

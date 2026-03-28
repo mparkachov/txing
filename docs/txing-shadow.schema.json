@@ -88,6 +88,7 @@
       "additionalProperties": true,
       "properties": {
         "redcon": {
+          "description": "Gateway-derived readiness summary. 1=Red/Hot Rig, 2=Orange-Amber/Ember Watch, 3=Yellow/Torch-Up, 4=Green/Cold Camp.",
           "type": "integer",
           "minimum": 1,
           "maximum": 4

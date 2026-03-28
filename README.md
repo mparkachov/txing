@@ -41,21 +41,21 @@ The action link is for live work: richer telemetry, video, operator control, and
 
 This README uses military readiness shorthand for the technical posture and plain-language names with a little wasteland flavor for the public voice. `REDCON 4` is the only essential posture in the concept. Higher levels are optional. A simple weather station may live entirely at `REDCON 4`, surfacing only to emit tiny reports over the watch link. Systems with richer local and remote behavior can extend upward through the rest of the ladder.
 
-| Device state | Technical call | Public name | Meaning |
-| --- | --- | --- | --- |
-| Sleep state | `REDCON 4` | `Cold Camp` | The device is conserving power. Only the watch layer is truly on watch, and the device can still be reached through the watch link. |
-| Booting | `REDCON 3` | `Torch-Up` | The action layer has been called up. Power is flowing and services are starting, but the device is still climbing out of its cold posture. |
-| On watch | `REDCON 2` | `Ember Watch` | Local power and local processing are available. The device can observe, decide, buffer, and operate locally, but the high-bandwidth remote link is not necessarily up. |
-| Ready | `REDCON 1` | `Hot Rig` | The device is fully up, the action link is up, and the rig is ready for live interaction, streaming, or cloud-assisted work. |
+| Device state | Technical call | UI color | Public name | Meaning |
+| --- | --- | --- | --- | --- |
+| Sleep state | `REDCON 4` | Green | `Cold Camp` | The device is conserving power. Only the watch layer is truly on watch, and the device can still be reached through the watch link. |
+| Booting | `REDCON 3` | Yellow | `Torch-Up` | The action layer has been called up. Power is flowing and services are starting, but the device is still climbing out of its cold posture. |
+| On watch | `REDCON 2` | Orange / Amber | `Ember Watch` | Local power and local processing are available. The device can observe, decide, buffer, and operate locally, but the high-bandwidth remote link is not necessarily up. |
+| Ready | `REDCON 1` | Red | `Hot Rig` | The device is fully up, the action link is up, and the rig is ready for live interaction, streaming, or cloud-assisted work. |
 
 In this repository's current Thing Shadow contract, the gateway derives a single top-level readiness field at `state.reported.redcon` from the reported MCU and board state:
 
-| `state.reported.redcon` | Meaning | Current derivation |
-| --- | --- | --- |
-| `4` | Sleep state / `Cold Camp` | `reported.mcu.power=false` |
-| `3` | Booting / `Torch-Up` | `reported.mcu.power=true`, while the board is not yet reported powered or online |
-| `2` | On watch / `Ember Watch` | `reported.mcu.power=true`, `reported.board.power=true`, `reported.board.wifi.online=false` |
-| `1` | Ready / `Hot Rig` | `reported.mcu.power=true`, `reported.board.wifi.online=true` |
+| `state.reported.redcon` | UI color | Meaning | Current derivation |
+| --- | --- | --- | --- |
+| `4` | Green | Sleep state / `Cold Camp` | `reported.mcu.power=false` |
+| `3` | Yellow | Booting / `Torch-Up` | `reported.mcu.power=true`, while the board is not yet reported powered or online |
+| `2` | Orange / Amber | On watch / `Ember Watch` | `reported.mcu.power=true`, `reported.board.power=true`, `reported.board.wifi.online=false` |
+| `1` | Red | Ready / `Hot Rig` | `reported.mcu.power=true`, `reported.board.wifi.online=true` |
 
 This mapping is intentionally derived from reported state, not desired state. It answers "how far up is the rig right now?" rather than "what was requested?".
 
