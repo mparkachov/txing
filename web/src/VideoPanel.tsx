@@ -1,5 +1,4 @@
 import { useEffect, useEffectEvent, useReducer, useRef } from 'react'
-import type { AuthUser } from './auth'
 import { resolveViewerChannelName } from './app-model'
 import { appConfig } from './config'
 import {
@@ -8,12 +7,9 @@ import {
   type ViewerUiState,
 } from './video-session'
 
-type VideoPageProps = {
-  authUser?: AuthUser | null
+type VideoPanelProps = {
   resolveIdToken: () => Promise<string>
-  onSignOut?: () => void
   channelName?: string | null
-  embedded?: boolean
   debugEnabled?: boolean
 }
 type VideoElementWithFrameCallback = HTMLVideoElement & {
@@ -50,14 +46,11 @@ const getViewerStatusLabel = (state: ViewerUiState): string => {
   }
 }
 
-function VideoPage({
-  authUser = null,
+function VideoPanel({
   resolveIdToken,
-  onSignOut,
   channelName: preferredChannelName = null,
-  embedded = false,
   debugEnabled = false,
-}: VideoPageProps) {
+}: VideoPanelProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const remoteStreamRef = useRef<MediaStream | null>(null)
@@ -240,7 +233,7 @@ function VideoPage({
       }
     })()
 
-    logVideoUiDebug('viewer page effect start', { channelName })
+    logVideoUiDebug('viewer panel effect start', { channelName })
 
     void startBoardVideoViewer({
       channelName,
@@ -404,78 +397,28 @@ function VideoPage({
       if (videoRef.current) {
         videoRef.current.srcObject = null
       }
-      logVideoUiDebug('viewer page effect cleanup', { channelName })
+      logVideoUiDebug('viewer panel effect cleanup', { channelName })
     }
   }, [channelName, debugEnabled])
 
-  if (embedded) {
-    return (
-      <div className="status-video-panel">
-        <div className="status-video-stage">
-          <video
-            ref={videoRef}
-            className="video-stream status-video-preview"
-            autoPlay
-            playsInline
-            muted
-            controls={false}
-          />
-          <canvas ref={canvasRef} className="video-canvas" aria-hidden="true" />
-          {viewerState.status !== 'streaming' ? (
-            <div className="video-placeholder">{getViewerStatusLabel(viewerState)}</div>
-          ) : null}
-        </div>
-      </div>
-    )
-  }
-
   return (
-    <main className="page page-video">
-      <section className="video-shell">
-        <header className="video-header">
-          <div>
-            <p className="video-kicker">Txing operator video</p>
-            <h1>Board camera</h1>
-            <p className="video-subtitle">
-              Channel <code>{channelName}</code>
-            </p>
-          </div>
-          <div className="video-actions">
-            <span className="video-user">{authUser?.email ?? authUser?.sub ?? 'Unknown user'}</span>
-            <a className="secondary" href="/">
-              Back
-            </a>
-            {onSignOut ? (
-              <button type="button" className="primary" onClick={onSignOut}>
-                Sign off
-              </button>
-            ) : null}
-          </div>
-        </header>
-        <div className="video-status-bar" aria-live="polite">
-          <span className={`video-status-pill video-status-pill-${viewerState.status}`}>
-            {getViewerStatusLabel(viewerState)}
-          </span>
-          {viewerState.error ? <span className="error">{viewerState.error}</span> : null}
-        </div>
-
-        <div className="video-stage">
-          <video
-            ref={videoRef}
-            className="video-stream"
-            autoPlay
-            playsInline
-            muted
-            controls={false}
-          />
-          <canvas ref={canvasRef} className="video-canvas" aria-hidden="true" />
-          {viewerState.status !== 'streaming' ? (
-            <div className="video-placeholder">{getViewerStatusLabel(viewerState)}</div>
-          ) : null}
-        </div>
-      </section>
-    </main>
+    <div className="status-video-panel">
+      <div className="status-video-stage">
+        <video
+          ref={videoRef}
+          className="status-video-preview"
+          autoPlay
+          playsInline
+          muted
+          controls={false}
+        />
+        <canvas ref={canvasRef} className="status-video-canvas" aria-hidden="true" />
+        {viewerState.status !== 'streaming' ? (
+          <div className="status-video-placeholder">{getViewerStatusLabel(viewerState)}</div>
+        ) : null}
+      </div>
+    </div>
   )
 }
 
-export default VideoPage
+export default VideoPanel
