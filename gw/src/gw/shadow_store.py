@@ -8,6 +8,9 @@ from typing import Any
 
 DEFAULT_REPORTED_POWER = False
 DEFAULT_BATTERY_MV = 3750
+DEFAULT_BOARD_POWER = False
+DEFAULT_BOARD_WIFI_ONLINE = False
+DEFAULT_REDCON = 4
 DEFAULT_SHADOW_FILE = Path("/tmp/txing_shadow.json")
 
 
@@ -15,10 +18,17 @@ def default_shadow_payload() -> dict[str, Any]:
     return {
         "state": {
             "reported": {
+                "redcon": DEFAULT_REDCON,
                 "mcu": {
                     "power": DEFAULT_REPORTED_POWER,
                     "batteryMv": DEFAULT_BATTERY_MV,
-                }
+                },
+                "board": {
+                    "power": DEFAULT_BOARD_POWER,
+                    "wifi": {
+                        "online": DEFAULT_BOARD_WIFI_ONLINE,
+                    },
+                },
             },
         }
     }
@@ -83,6 +93,33 @@ def get_reported_battery_mv(payload: dict[str, Any]) -> int:
     if isinstance(value, int) and 0 <= value <= 10000:
         return value
     return DEFAULT_BATTERY_MV
+
+
+def get_reported_board_power(payload: dict[str, Any]) -> bool:
+    reported = payload.get("state", {}).get("reported", {})
+    board = reported.get("board", {}) if isinstance(reported, dict) else {}
+    value = board.get("power") if isinstance(board, dict) else None
+    if isinstance(value, bool):
+        return value
+    return DEFAULT_BOARD_POWER
+
+
+def get_reported_board_wifi_online(payload: dict[str, Any]) -> bool:
+    reported = payload.get("state", {}).get("reported", {})
+    board = reported.get("board", {}) if isinstance(reported, dict) else {}
+    wifi = board.get("wifi", {}) if isinstance(board, dict) else {}
+    value = wifi.get("online") if isinstance(wifi, dict) else None
+    if isinstance(value, bool):
+        return value
+    return DEFAULT_BOARD_WIFI_ONLINE
+
+
+def get_reported_redcon(payload: dict[str, Any]) -> int:
+    reported = payload.get("state", {}).get("reported", {})
+    value = reported.get("redcon") if isinstance(reported, dict) else None
+    if isinstance(value, int) and 1 <= value <= 4:
+        return value
+    return DEFAULT_REDCON
 
 
 def clear_desired_if_synced(path: Path = DEFAULT_SHADOW_FILE) -> dict[str, Any]:

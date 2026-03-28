@@ -19,6 +19,7 @@ High-level architecture:
 ## 2. Ownership
 
 - `gw` is the source of truth for the `mcu.*` shadow subtree.
+- `gw` is also the source of truth for top-level `reported.redcon`, derived from reported MCU and board posture.
 - Only `gw` may define or evolve the `mcu.*` contract.
 - `mcu` exposes BLE behavior; `gw` translates that behavior into shadow state.
 
@@ -32,7 +33,7 @@ Terminology:
 The BLE link is intended to be persistent only while the MCU is in the wakeup state.
 
 Firmware behavior:
-- `power=false`: stay in RTC-driven low-power system-on idle between rendezvous intervals, wake from RTC every `5 s`, refresh the State Report, restart BLE advertising for a bounded window, accept a short connection if needed, then return to low-power idle
+- `power=false`: stay in RTC-driven low-power system-on idle between rendezvous intervals, wake from RTC every `5 s`, refresh the State Report, restart BLE advertising for a short bounded window, accept a short connection if needed, then return to low-power idle
 - `power=true`: stay in the wakeup state, continue advertising when disconnected, and keep the BLE link available for a live session
 
 Gateway behavior:
@@ -46,6 +47,8 @@ Gateway behavior:
 Power note:
 - The implementation uses RTC-driven system-on low-power idle instead of full System OFF.
 - Reason: the device must self-wake periodically from a low-frequency timer; that is the lowest practical mode for this behavior.
+- Sleep-mode low-power measures keep the external flash in deep power-down, drive the Sense-board IMU and microphone power-enable GPIOs low, and park the related unused pins.
+- Battery-sense divider gating is intentionally not used: Seeed documents that driving `P0.14` high can expose `P0.31` to battery voltage during charging.
 - The board Pi power rail is switched by an external MOSFET driven from nRF pin `D0` / `P0.02`.
 - Firmware drives that GPIO high in the wakeup state and low in the sleep state.
 
@@ -63,6 +66,7 @@ Shadow type: classic (unnamed) Thing Shadow (`$aws/things/txing/shadow/*`)
       }
     },
     "reported": {
+      "redcon": 4,
       "mcu": {
         "power": false,
         "batteryMv": 3750,
@@ -82,6 +86,11 @@ Shadow type: classic (unnamed) Thing Shadow (`$aws/things/txing/shadow/*`)
 Field semantics:
 - `state.desired.mcu.power=true` means "request MCU wakeup state and keep BLE available".
 - `state.desired.mcu.power=false` means "request MCU sleep state with periodic `5 s` BLE rendezvous wakeups".
+- `state.reported.redcon` is the derived readiness summary:
+  - `4` -> `reported.mcu.power=false`
+  - `3` -> `reported.mcu.power=true` while the board is not yet reported powered or online
+  - `2` -> `reported.mcu.power=true`, `reported.board.power=true`, and `reported.board.wifi.online=false`
+  - `1` -> `reported.mcu.power=true` and `reported.board.wifi.online=true`
 - `state.reported.mcu.power=true` means "MCU is in the wakeup state".
 - `state.reported.mcu.power=false` means "MCU is in the sleep state with periodic BLE rendezvous wakeups".
 - `state.reported.mcu.batteryMv` is the latest battery reading observed over BLE, sourced from the MCU state report carried over either advertising manufacturer data or the GATT State Report characteristic.
@@ -200,7 +209,7 @@ Normal-disconnect rule:
 
 Firmware defaults:
 - sleep-state rendezvous interval: `5 s`
-- advertising window: `2 s`
+- advertising window: `1 s`
 - advertising interval: `100 ms`
 - connected command window: `15 s`
 

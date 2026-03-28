@@ -48,6 +48,17 @@ This README uses military readiness shorthand for the technical posture and plai
 | On watch | `REDCON 2` | `Ember Watch` | Local power and local processing are available. The device can observe, decide, buffer, and operate locally, but the high-bandwidth remote link is not necessarily up. |
 | Ready | `REDCON 1` | `Hot Rig` | The device is fully up, the action link is up, and the rig is ready for live interaction, streaming, or cloud-assisted work. |
 
+In this repository's current Thing Shadow contract, the gateway derives a single top-level readiness field at `state.reported.redcon` from the reported MCU and board state:
+
+| `state.reported.redcon` | Meaning | Current derivation |
+| --- | --- | --- |
+| `4` | Sleep state / `Cold Camp` | `reported.mcu.power=false` |
+| `3` | Booting / `Torch-Up` | `reported.mcu.power=true`, while the board is not yet reported powered or online |
+| `2` | On watch / `Ember Watch` | `reported.mcu.power=true`, `reported.board.power=true`, `reported.board.wifi.online=false` |
+| `1` | Ready / `Hot Rig` | `reported.mcu.power=true`, `reported.board.wifi.online=true` |
+
+This mapping is intentionally derived from reported state, not desired state. It answers "how far up is the rig right now?" rather than "what was requested?".
+
 ## Why this shape exists
 
 The military analogy here is about posture, not purpose. A `txing` device is not necessarily a military device. The useful idea is readiness discipline: conserve, observe, stay reachable, and escalate only when needed.

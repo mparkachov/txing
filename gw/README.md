@@ -7,6 +7,7 @@ Responsibilities:
 - Synchronize classic Thing Shadow for thing `txing`
 - Bridge `state.desired.mcu.power` power-state requests to the MCU over BLE rendezvous sessions
 - Publish MCU state to `state.reported.mcu.*`
+- Publish derived readiness at top-level `state.reported.redcon`
 
 Shadow contract source of truth:
 - `../docs/txing-shadow.schema.json`
@@ -180,13 +181,13 @@ just gw::wake thing_name=my-thing region=eu-central-1 endpoint_file=certs/iot-da
 
 `print` prints the current real AWS Thing Shadow document.
 
-`aws::shadow-reset` is the hard reset path for manual whole-device power cuts. It deletes the current shadow and reseeds it to the repository's clean offline baseline: `desired.*.power` cleared, `reported.mcu.power=false`, `reported.mcu.ble.online=false`, `reported.board.power=false`, and `reported.board.wifi.online=false`.
+`aws::shadow-reset` is the hard reset path for manual whole-device power cuts. It deletes the current shadow and reseeds it to the repository's clean offline baseline: `desired.*.power` cleared, `reported.redcon=4`, `reported.mcu.power=false`, `reported.mcu.ble.online=false`, `reported.board.power=false`, and `reported.board.wifi.online=false`.
 
 ## Runtime behavior
 
 - Terminology:
   - `power=true` means the MCU is in the wakeup state.
-  - `power=false` means the MCU is in the sleep state with periodic `5 s` rendezvous wakeups and brief advertising windows.
+  - `power=false` means the MCU is in the sleep state with periodic `5 s` rendezvous wakeups and short low-duty-cycle advertising windows.
 - Operates in event-driven mode from MQTT subscriptions (no fixed-interval cloud polling).
 - Subscribes to:
   - `$aws/things/<thing>/shadow/get/accepted`
@@ -210,6 +211,7 @@ just gw::wake thing_name=my-thing region=eu-central-1 endpoint_file=certs/iot-da
 - For `power=false`, if connected, writes the sleep-state command and lets the MCU return to its periodic `5 s` rendezvous behavior; if already disconnected, it does not force a reconnect.
 - Updates `state.reported.mcu.batteryMv` only when the observed MCU battery value changes, so the AWS shadow metadata timestamp for `batteryMv` tracks real battery changes instead of unrelated BLE state publishes.
 - Publishes reported updates to AWS:
+  - `state.reported.redcon`
   - `state.reported.mcu.power`
   - `state.reported.mcu.batteryMv`
   - `state.reported.mcu.ble.serviceUuid`

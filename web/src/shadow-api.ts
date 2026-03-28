@@ -8,6 +8,7 @@ import * as iot from 'aws-crt/dist.browser/browser/iot'
 import * as mqtt5 from 'aws-crt/dist.browser/browser/mqtt5'
 import { buildCognitoLogins, createCredentialProvider } from './aws-credentials'
 import { appConfig } from './config'
+import { mergeShadowUpdate } from './shadow-merge'
 import {
   buildGetShadowPublishPacket,
   buildShadowSubscriptionPacket,
@@ -69,7 +70,7 @@ const cognitoIdentityClient = new CognitoIdentityClient({
 })
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null
+  typeof value === 'object' && value !== null && !Array.isArray(value)
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -305,11 +306,15 @@ class AwsIotShadowSession implements ShadowSession {
     }
 
     if (decoded.kind === 'getAccepted' || decoded.kind === 'updateAccepted') {
-      this.latestShadow = decoded.payload
-      this.options.onShadowDocument(decoded.payload, decoded.operation ?? 'get')
-      this.resolveSnapshotWaiters(decoded.payload)
+      const nextShadow =
+        decoded.kind === 'updateAccepted'
+          ? mergeShadowUpdate(this.latestShadow, decoded.payload)
+          : decoded.payload
+      this.latestShadow = nextShadow
+      this.options.onShadowDocument(nextShadow, decoded.operation ?? 'get')
+      this.resolveSnapshotWaiters(nextShadow)
       if (decoded.clientToken) {
-        this.resolvePendingRequest(decoded.clientToken, decoded.payload)
+        this.resolvePendingRequest(decoded.clientToken, nextShadow)
       }
       return
     }

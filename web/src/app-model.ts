@@ -11,7 +11,7 @@ export type BoardVideoRuntime = {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null
 
-export const extractReportedMcu = (shadow: unknown): Record<string, unknown> | null => {
+const extractReportedState = (shadow: unknown): Record<string, unknown> | null => {
   if (!isRecord(shadow)) {
     return null
   }
@@ -20,7 +20,12 @@ export const extractReportedMcu = (shadow: unknown): Record<string, unknown> | n
     return null
   }
   const reported = state.reported
-  if (!isRecord(reported)) {
+  return isRecord(reported) ? reported : null
+}
+
+export const extractReportedMcu = (shadow: unknown): Record<string, unknown> | null => {
+  const reported = extractReportedState(shadow)
+  if (!reported) {
     return null
   }
   const mcu = reported.mcu
@@ -28,19 +33,24 @@ export const extractReportedMcu = (shadow: unknown): Record<string, unknown> | n
 }
 
 export const extractReportedBoard = (shadow: unknown): Record<string, unknown> | null => {
-  if (!isRecord(shadow)) {
-    return null
-  }
-  const state = shadow.state
-  if (!isRecord(state)) {
-    return null
-  }
-  const reported = state.reported
-  if (!isRecord(reported)) {
+  const reported = extractReportedState(shadow)
+  if (!reported) {
     return null
   }
   const board = reported.board
   return isRecord(board) ? board : null
+}
+
+export const extractReportedRedcon = (shadow: unknown): number | null => {
+  const reported = extractReportedState(shadow)
+  if (!reported) {
+    return null
+  }
+  const redcon = reported.redcon
+  if (typeof redcon !== 'number' || !Number.isInteger(redcon)) {
+    return null
+  }
+  return redcon >= 1 && redcon <= 4 ? redcon : null
 }
 
 export const extractReportedBoardPower = (shadow: unknown): boolean | null => {
@@ -178,4 +188,11 @@ export const buildViewerUrlWithChannel = (
     targetUrl.searchParams.set('channel', channelName.trim())
   }
   return targetUrl.toString()
+}
+
+export const getAppRoute = (pathname: string): 'dashboard' | 'video' => {
+  if (pathname === '/video' || pathname === '/video/') {
+    return 'video'
+  }
+  return 'dashboard'
 }

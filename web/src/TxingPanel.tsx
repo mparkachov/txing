@@ -16,6 +16,7 @@ type TxingPanelProps = {
   reportedMcuBatteryMv: number | null
   reportedMcuBleOnline: boolean | null
   reportedMcuPower: boolean | null
+  reportedRedcon: number | null
   txingSwitchChecked: boolean
   videoChannelName: string | null
   resolveIdToken: () => Promise<string>
@@ -154,6 +155,7 @@ function TxingPanel({
   reportedMcuBatteryMv,
   reportedMcuBleOnline,
   reportedMcuPower,
+  reportedRedcon,
   txingSwitchChecked,
   videoChannelName,
   resolveIdToken,
@@ -307,7 +309,9 @@ function TxingPanel({
                 {lastShadowUpdateLabel}
               </time>
             </div>
-            <div className={`status-name status-txing-name ${txingPowerToneClass}`}>Txing</div>
+            <div className={`status-name status-txing-name ${txingPowerToneClass}`}>
+              {`TXING - ${reportedRedcon ?? '--'}/4`}
+            </div>
             <div className="status-txing-header-side status-txing-header-side-end">
               <button
                 type="button"

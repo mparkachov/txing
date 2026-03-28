@@ -16,6 +16,7 @@ This document defines how shadow structure is governed across the repo.
 - `mcu.*` is owned by the gateway (`gw`) as the source of truth for MCU-related shadow data.
 - Only `gw` is allowed to define or evolve fields under `mcu`.
 - Other components must treat `mcu.*` as a stable contract and must not add, rename, or repurpose fields.
+- Top-level `reported.redcon` is owned by the gateway (`gw`) as a derived readiness summary computed from reported MCU and board state.
 - `board.*` is owned by the device-side board control (`board`) as the source of truth for board-related shadow data.
 - Only `board` is allowed to define or evolve fields under `board`.
 - Other components must treat `board.*` as a stable contract and must not add, rename, or repurpose fields.
@@ -31,6 +32,11 @@ Schema validation should be done by project code and/or CI checks, while AWS IoT
 - `state.desired.mcu.power` (`boolean`, update payload may temporarily use `null` to delete) requests the MCU power mode: `true` keeps the MCU in the wakeup state and BLE-connectable, `false` returns it to the sleep state with periodic low-power rendezvous wakeups.
 - `state.desired.board.power` (`boolean`, update payload may temporarily use `null` to delete) is a board-owned one-shot board power request: `false` asks the board Pi to halt locally, and the board control clears the field on clean shutdown after consuming it.
 - `state.reported.mcu.power` (`boolean`) is the gateway-confirmed MCU power mode.
+- `state.reported.redcon` (`integer`, `1..4`) is the gateway-derived readiness summary:
+  - `4`: MCU sleep state
+  - `3`: MCU wakeup state while board power/online are not yet reported
+  - `2`: MCU wakeup state with board power reported but board Wi-Fi/control still offline
+  - `1`: MCU wakeup state with board Wi-Fi/control online
 - `state.reported.mcu.batteryMv` (`integer`, millivolts, measured MCU battery estimate observed from the MCU State Report over BLE advertising or GATT).
 - `state.reported.mcu.ble.serviceUuid` (`uuid`) is the BLE service UUID used by gateway.
 - `state.reported.mcu.ble.sleepCommandUuid` (`uuid`) is the compatibility field for the BLE power-mode control characteristic UUID.

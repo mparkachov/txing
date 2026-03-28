@@ -12,6 +12,7 @@ use embedded_hal::digital::OutputPin;
 use nrf_softdevice::ble::{Connection, gatt_server, peripheral};
 use nrf_softdevice::{RawError, Softdevice, raw};
 use nrf52840_hal as hal;
+use nrf52840_hal::gpio::{Disconnected, Input, Level, Output, Pin, PullDown, PullUp, PushPull};
 use nrf52840_hal::pac::interrupt;
 use panic_probe as _;
 use static_cell::StaticCell;
@@ -35,13 +36,16 @@ const LOW_FREQ_CLOCK_HZ: u32 = 32_768;
 const RENDEZVOUS_SLEEP_TICKS: u32 = 5 * LOW_FREQ_CLOCK_HZ;
 const BATTERY_REFRESH_TICKS: u32 = 5 * LOW_FREQ_CLOCK_HZ;
 const RENDEZVOUS_COMMAND_WINDOW_TICKS: u32 = 15 * LOW_FREQ_CLOCK_HZ;
-const RENDEZVOUS_ADV_WINDOW_10MS: u16 = 200;
+const RENDEZVOUS_ADV_WINDOW_10MS: u16 = 100;
 const AWAKE_ADV_REFRESH_WINDOW_10MS: u16 = 500;
 const RENDEZVOUS_ADV_INTERVAL_UNITS: u32 = 160; // 100 ms (0.625 ms units)
 const RTC2_APP_PRIORITY: u8 = 0xE0;
 const RTC_COUNTER_MASK: u32 = 0x00FF_FFFF;
 const POWER_MODE_AWAKE_COMMAND_VALUE: u8 = 0x00;
 const POWER_MODE_SLEEP_COMMAND_VALUE: u8 = 0x01;
+const EXTERNAL_FLASH_DEEP_POWER_DOWN_COMMAND: u8 = 0xB9;
+const EXTERNAL_FLASH_BIT_DELAY_CYCLES: u32 = 32;
+const EXTERNAL_FLASH_SETTLE_CYCLES: u32 = 640;
 const TXING_MFG_ID_LE: [u8; 2] = [0xFF, 0xFF];
 const TXING_MFG_MAGIC: [u8; 2] = [b'T', b'X'];
 const TXING_SERVICE_UUID_ADV_LE: [u8; 16] = [
@@ -105,8 +109,8 @@ impl BatteryMonitor {
 
         Self {
             saadc: hal::Saadc::new(saadc, saadc_config),
-            // On XIAO nRF52840, P0.14 is active-low battery-sense enable. Keep it low
-            // so the divider stays connected and P0.31 never sees raw battery voltage.
+            // Seeed documents that driving P0.14 high can expose P0.31 to battery
+            // voltage during charging, so keep the divider permanently enabled here.
             sense_enable: sense_enable.into_push_pull_output(hal::gpio::Level::Low),
             sense_pin,
         }
@@ -128,6 +132,103 @@ impl BatteryMonitor {
         }
 
         if samples == 0 { 0 } else { total / samples }
+    }
+}
+
+struct ExternalFlashSleepPins {
+    _sck: Pin<Disconnected>,
+    _csn: Pin<Input<PullUp>>,
+    _io0: Pin<Disconnected>,
+    _io1: Pin<Disconnected>,
+    _io2: Pin<Disconnected>,
+    _io3: Pin<Disconnected>,
+}
+
+struct BoardLowPowerPins {
+    _charge_led: Pin<Output<PushPull>>,
+    _red_led: Pin<Output<PushPull>>,
+    _green_led: Pin<Output<PushPull>>,
+    _imu_power_enable: Pin<Output<PushPull>>,
+    _imu_interrupt: Pin<Input<PullDown>>,
+    _mic_power_enable: Pin<Output<PushPull>>,
+    _mic_clk: Pin<Output<PushPull>>,
+    _mic_data: Pin<Input<PullDown>>,
+    _flash: ExternalFlashSleepPins,
+}
+
+impl BoardLowPowerPins {
+    fn new(
+        charge_led: hal::gpio::p0::P0_17<Disconnected>,
+        red_led: hal::gpio::p0::P0_26<Disconnected>,
+        green_led: hal::gpio::p0::P0_30<Disconnected>,
+        imu_interrupt: hal::gpio::p0::P0_11<Disconnected>,
+        mic_data: hal::gpio::p0::P0_16<Disconnected>,
+        flash_io0: hal::gpio::p0::P0_20<Disconnected>,
+        flash_sck: hal::gpio::p0::P0_21<Disconnected>,
+        flash_io2: hal::gpio::p0::P0_22<Disconnected>,
+        flash_io3: hal::gpio::p0::P0_23<Disconnected>,
+        flash_io1: hal::gpio::p0::P0_24<Disconnected>,
+        flash_csn: hal::gpio::p0::P0_25<Disconnected>,
+        mic_clk: hal::gpio::p1::P1_00<Disconnected>,
+        imu_power_enable: hal::gpio::p1::P1_08<Disconnected>,
+        mic_power_enable: hal::gpio::p1::P1_10<Disconnected>,
+    ) -> Self {
+        Self {
+            _charge_led: charge_led.into_push_pull_output(Level::High).degrade(),
+            _red_led: red_led.into_push_pull_output(Level::High).degrade(),
+            _green_led: green_led.into_push_pull_output(Level::High).degrade(),
+            _imu_power_enable: imu_power_enable.into_push_pull_output(Level::Low).degrade(),
+            _imu_interrupt: imu_interrupt.into_pulldown_input().degrade(),
+            _mic_power_enable: mic_power_enable.into_push_pull_output(Level::Low).degrade(),
+            _mic_clk: mic_clk.into_push_pull_output(Level::Low).degrade(),
+            _mic_data: mic_data.into_pulldown_input().degrade(),
+            _flash: enter_external_flash_deep_power_down(
+                flash_io0, flash_sck, flash_io2, flash_io3, flash_io1, flash_csn,
+            ),
+        }
+    }
+}
+
+fn enter_external_flash_deep_power_down(
+    flash_io0: hal::gpio::p0::P0_20<Disconnected>,
+    flash_sck: hal::gpio::p0::P0_21<Disconnected>,
+    flash_io2: hal::gpio::p0::P0_22<Disconnected>,
+    flash_io3: hal::gpio::p0::P0_23<Disconnected>,
+    flash_io1: hal::gpio::p0::P0_24<Disconnected>,
+    flash_csn: hal::gpio::p0::P0_25<Disconnected>,
+) -> ExternalFlashSleepPins {
+    // The onboard P25Q16H flash starts in single-bit SPI mode, so a one-byte
+    // bit-banged DPD command is enough before the pins are parked.
+    let mut flash_io0 = flash_io0.into_push_pull_output(Level::Low);
+    let mut flash_sck = flash_sck.into_push_pull_output(Level::Low);
+    let flash_io2 = flash_io2.into_push_pull_output(Level::High);
+    let flash_io3 = flash_io3.into_push_pull_output(Level::High);
+    let flash_io1 = flash_io1.into_floating_input();
+    let mut flash_csn = flash_csn.into_push_pull_output(Level::High);
+
+    let _ = flash_csn.set_low();
+    cortex_m::asm::delay(EXTERNAL_FLASH_SETTLE_CYCLES);
+    for shift in (0..8).rev() {
+        if ((EXTERNAL_FLASH_DEEP_POWER_DOWN_COMMAND >> shift) & 0x01) != 0 {
+            let _ = flash_io0.set_high();
+        } else {
+            let _ = flash_io0.set_low();
+        }
+        cortex_m::asm::delay(EXTERNAL_FLASH_BIT_DELAY_CYCLES);
+        let _ = flash_sck.set_high();
+        cortex_m::asm::delay(EXTERNAL_FLASH_BIT_DELAY_CYCLES);
+        let _ = flash_sck.set_low();
+    }
+    let _ = flash_csn.set_high();
+    cortex_m::asm::delay(EXTERNAL_FLASH_SETTLE_CYCLES);
+
+    ExternalFlashSleepPins {
+        _sck: flash_sck.into_disconnected().degrade(),
+        _csn: flash_csn.into_pullup_input().degrade(),
+        _io0: flash_io0.into_disconnected().degrade(),
+        _io1: flash_io1.into_disconnected().degrade(),
+        _io2: flash_io2.into_disconnected().degrade(),
+        _io3: flash_io3.into_disconnected().degrade(),
     }
 }
 
@@ -186,9 +287,26 @@ async fn main(spawner: embassy_executor::Spawner) {
     let p = hal::pac::Peripherals::take().unwrap();
     let rtc2 = p.RTC2;
     let port0 = hal::gpio::p0::Parts::new(p.P0);
+    let port1 = hal::gpio::p1::Parts::new(p.P1);
     let mut led = port0.p0_06.into_push_pull_output(hal::gpio::Level::High);
     let mut battery_monitor = BatteryMonitor::new(p.SAADC, port0.p0_14, port0.p0_31);
     let mut board_power_switch = BoardPowerSwitch::new(port0.p0_02);
+    let _board_low_power_pins = BoardLowPowerPins::new(
+        port0.p0_17,
+        port0.p0_26,
+        port0.p0_30,
+        port0.p0_11,
+        port0.p0_16,
+        port0.p0_20,
+        port0.p0_21,
+        port0.p0_22,
+        port0.p0_23,
+        port0.p0_24,
+        port0.p0_25,
+        port1.p1_00,
+        port1.p1_08,
+        port1.p1_10,
+    );
 
     let sd = Softdevice::enable(&softdevice_config());
     enable_dcdc();

@@ -9,6 +9,7 @@
       }
     },
     "reported": {
+      "redcon": 4,
       "mcu": {
         "power": false,
         "batteryMv": 3750,

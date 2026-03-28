@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import {
   buildViewerUrlWithChannel,
   extractReportedBoardVideo,
+  extractReportedRedcon,
   getAppRoute,
   resolveViewerChannelName,
 } from '../src/app-model'
@@ -40,6 +41,19 @@ describe('app model helpers', () => {
     expect(runtime.viewerUrl).toBe('https://ops.example.com/txing/video')
     expect(runtime.channelName).toBe('txing-board-video')
     expect(runtime.viewerConnected).toBe(true)
+  })
+
+  test('extracts top-level reported redcon from shadow state', () => {
+    expect(
+      extractReportedRedcon({
+        state: {
+          reported: {
+            redcon: 2,
+          },
+        },
+      }),
+    ).toBe(2)
+    expect(extractReportedRedcon({ state: { reported: { redcon: 7 } } })).toBeNull()
   })
 
   test('builds viewer urls with channel query parameters', () => {

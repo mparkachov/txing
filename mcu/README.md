@@ -17,7 +17,7 @@ Firmware for nRF52840 (Seeed XIAO BLE Sense) with BLE sleep control.
   - `sleep=true` corresponds to the sleep state / `power=false`
   - `sleep=false` corresponds to the wakeup state / `power=true`
 - Reset/power-cycle default: `sleep=true`
-- `sleep=true`: RTC-driven low-power idle with periodic `5 s` rendezvous wakeups and a brief advertising window
+- `sleep=true`: RTC-driven system-on low-power idle with periodic `5 s` rendezvous wakeups and a short `1 s` advertising window
 - `sleep=false`: stay in the wakeup state and remain BLE-connectable
 - BLE state report transport:
   - advertising manufacturer data carries `TX` plus the 3-byte MCU State Report while disconnected
@@ -25,6 +25,12 @@ Firmware for nRF52840 (Seeed XIAO BLE Sense) with BLE sleep control.
 - LED indication:
   - `sleep=true` -> LED OFF
   - `sleep=false` -> LED ON
+- Sleep-mode power policy:
+  - stays in `System ON`; it does not use `System OFF`, because RTC wakeups every `5 s` are required
+  - puts the onboard QSPI flash into deep power-down at boot and parks the flash pins
+  - keeps the onboard IMU and microphone power-enable GPIOs low
+  - parks unused onboard sensor/flash pins and keeps the unused RGB/charge LEDs driven OFF
+  - keeps the battery divider enabled because Seeed documents that driving `P0.14` high can expose `P0.31` to battery voltage during charging
 
 ## Prerequisites
 

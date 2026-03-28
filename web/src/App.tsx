@@ -15,6 +15,7 @@ import {
   extractReportedMcuBleOnline,
   extractReportedMcuOnline,
   extractReportedMcuPower,
+  extractReportedRedcon,
 } from './app-model'
 import { appConfig } from './config'
 import DebugPanel from './DebugPanel'
@@ -98,6 +99,10 @@ function App({ initialAuthError = '' }: AppProps) {
   )
   const reportedBoardVideo = useMemo(
     () => extractReportedBoardVideo(shadowDocument),
+    [shadowDocument],
+  )
+  const reportedRedcon = useMemo(
+    () => extractReportedRedcon(shadowDocument),
     [shadowDocument],
   )
 
@@ -485,6 +490,7 @@ function App({ initialAuthError = '' }: AppProps) {
         reportedMcuBatteryMv={reportedMcuBatteryMv}
         reportedMcuBleOnline={reportedMcuBleOnline}
         reportedMcuPower={reportedMcuPower}
+        reportedRedcon={reportedRedcon}
         txingSwitchChecked={txingSwitchChecked}
         videoChannelName={reportedBoardVideo.channelName}
         resolveIdToken={resolveSessionIdToken}

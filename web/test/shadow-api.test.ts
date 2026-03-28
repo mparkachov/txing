@@ -9,6 +9,7 @@ import {
   decodeShadowResponse,
   deriveMqttHostFromIotDataEndpoint,
 } from '../src/shadow-protocol'
+import { mergeShadowUpdate } from '../src/shadow-merge'
 
 const decoder = new TextDecoder()
 
@@ -126,6 +127,93 @@ describe('shadow protocol helpers', () => {
         message: 'Not authorized',
       },
       clientToken: 'request-2',
+    })
+  })
+
+  test('merges partial update-accepted payloads into the last full shadow snapshot', () => {
+    const currentShadow = {
+      state: {
+        reported: {
+          mcu: {
+            power: false,
+            batteryMv: 3729,
+            ble: {
+              serviceUuid: 'svc',
+              sleepCommandUuid: 'sleep',
+              stateReportUuid: 'report',
+              online: false,
+              deviceId: 'AA:BB',
+            },
+          },
+        },
+      },
+      metadata: {
+        reported: {
+          mcu: {
+            power: { timestamp: 1 },
+            batteryMv: { timestamp: 2 },
+            ble: {
+              online: { timestamp: 3 },
+            },
+          },
+        },
+      },
+      version: 10,
+      timestamp: 100,
+    }
+
+    const updateAcceptedPayload = {
+      state: {
+        reported: {
+          mcu: {
+            ble: {
+              online: true,
+            },
+          },
+        },
+      },
+      metadata: {
+        reported: {
+          mcu: {
+            ble: {
+              online: { timestamp: 4 },
+            },
+          },
+        },
+      },
+      version: 11,
+      timestamp: 110,
+    }
+
+    expect(mergeShadowUpdate(currentShadow, updateAcceptedPayload)).toEqual({
+      state: {
+        reported: {
+          mcu: {
+            power: false,
+            batteryMv: 3729,
+            ble: {
+              serviceUuid: 'svc',
+              sleepCommandUuid: 'sleep',
+              stateReportUuid: 'report',
+              online: true,
+              deviceId: 'AA:BB',
+            },
+          },
+        },
+      },
+      metadata: {
+        reported: {
+          mcu: {
+            power: { timestamp: 1 },
+            batteryMv: { timestamp: 2 },
+            ble: {
+              online: { timestamp: 4 },
+            },
+          },
+        },
+      },
+      version: 11,
+      timestamp: 110,
     })
   })
 })

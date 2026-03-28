@@ -37,8 +37,11 @@ except ImportError:
 from .shadow_store import (
     DEFAULT_BATTERY_MV,
     DEFAULT_SHADOW_FILE,
+    get_reported_board_power,
+    get_reported_board_wifi_online,
     get_reported_battery_mv,
     get_reported_power,
+    get_reported_redcon,
     load_shadow,
     save_shadow,
 )
@@ -282,6 +285,36 @@ def _extract_reported_ble_map(mcu: dict[str, Any]) -> dict[str, Any] | None:
     return ble if isinstance(ble, dict) else None
 
 
+def _extract_reported_board(payload: dict[str, Any]) -> dict[str, Any] | None:
+    state = payload.get("state")
+    if not isinstance(state, dict):
+        return None
+    reported = state.get("reported")
+    if not isinstance(reported, dict):
+        return None
+    board = reported.get("board")
+    return board if isinstance(board, dict) else None
+
+
+def _extract_reported_board_power(payload: dict[str, Any]) -> bool | None:
+    board = _extract_reported_board(payload)
+    if board is None:
+        return None
+    value = board.get("power")
+    return value if isinstance(value, bool) else None
+
+
+def _extract_reported_board_wifi_online(payload: dict[str, Any]) -> bool | None:
+    board = _extract_reported_board(payload)
+    if board is None:
+        return None
+    wifi = board.get("wifi")
+    if not isinstance(wifi, dict):
+        return None
+    value = wifi.get("online")
+    return value if isinstance(value, bool) else None
+
+
 def _extract_reported_ble_online(payload: dict[str, Any]) -> bool | None:
     mcu = _extract_reported_mcu(payload)
     if mcu is None:
@@ -314,6 +347,19 @@ def _extract_desired_power_from_shadow(payload: dict[str, Any]) -> bool | None:
         return None
     value = mcu.get("power")
     return value if isinstance(value, bool) else None
+
+
+def _shadow_payload_includes_desired_power(payload: dict[str, Any]) -> bool:
+    state = payload.get("state")
+    if not isinstance(state, dict):
+        return False
+    desired = state.get("desired")
+    if not isinstance(desired, dict):
+        return False
+    mcu = desired.get("mcu")
+    if not isinstance(mcu, dict):
+        return False
+    return "power" in mcu
 
 
 def _extract_desired_power_from_delta(payload: dict[str, Any]) -> bool | None:
@@ -354,6 +400,36 @@ def _extract_shadow_version(payload: dict[str, Any]) -> int | None:
     if isinstance(value, int) and value >= 0:
         return value
     return None
+
+
+def _extract_reported_redcon(payload: dict[str, Any]) -> int | None:
+    state = payload.get("state")
+    if not isinstance(state, dict):
+        return None
+    reported = state.get("reported")
+    if not isinstance(reported, dict):
+        return None
+    value = reported.get("redcon")
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int) and 1 <= value <= 4:
+        return value
+    return None
+
+
+def _calculate_redcon(
+    *,
+    mcu_power: bool,
+    board_power: bool,
+    board_wifi_online: bool,
+) -> int:
+    if not mcu_power:
+        return 4
+    if board_wifi_online:
+        return 1
+    if board_power:
+        return 2
+    return 3
 
 
 def _read_iot_endpoint(explicit_endpoint: str | None, endpoint_file: Path) -> str:
@@ -474,6 +550,9 @@ class ShadowState:
     battery_mv: int = DEFAULT_BATTERY_MV
     ble_uuids: BleGattUuids = DEFAULT_BLE_GATT_UUIDS
     ble_online: bool = False
+    board_power: bool = False
+    board_wifi_online: bool = False
+    redcon: int = 4
     ble_uuid_search_mode: bool = False
     shadow_version: int | None = None
     snapshot_file: Path = DEFAULT_SHADOW_FILE
@@ -496,6 +575,28 @@ class ShadowState:
     def set_ble_online(self, online: bool) -> None:
         self.ble_online = online
 
+    def set_board_reported(
+        self,
+        *,
+        power: bool | None = None,
+        wifi_online: bool | None = None,
+    ) -> None:
+        if power is not None:
+            self.board_power = power
+        if wifi_online is not None:
+            self.board_wifi_online = wifi_online
+
+    def reconcile_redcon(self) -> bool:
+        derived_redcon = _calculate_redcon(
+            mcu_power=self.reported_power,
+            board_power=self.board_power,
+            board_wifi_online=self.board_wifi_online,
+        )
+        if self.redcon == derived_redcon:
+            return False
+        self.redcon = derived_redcon
+        return True
+
     def ble_state(self) -> dict[str, Any]:
         ble_state = self.ble_uuids.as_shadow_dict()
         ble_state["online"] = self.ble_online
@@ -504,11 +605,18 @@ class ShadowState:
     def payload(self) -> dict[str, dict[str, dict[str, dict[str, Any]]]]:
         state: dict[str, dict[str, dict[str, Any]]] = {
             "reported": {
+                "redcon": self.redcon,
                 "mcu": {
                     "power": self.reported_power,
                     "batteryMv": self.battery_mv,
                     "ble": self.ble_state(),
-                }
+                },
+                "board": {
+                    "power": self.board_power,
+                    "wifi": {
+                        "online": self.board_wifi_online,
+                    },
+                },
             },
         }
         if self.desired_power is not None:
@@ -520,6 +628,16 @@ class ShadowState:
             self.desired_power = None
             return True
         return False
+
+    def report_bytes(self) -> bytes:
+        battery_mv = max(0, min(int(self.battery_mv), 0xFFFF))
+        return bytes(
+            (
+                0x01 if not self.reported_power else 0x00,
+                battery_mv & 0xFF,
+                (battery_mv >> 8) & 0xFF,
+            )
+        )
 
     def log_state(self, context: str) -> None:
         save_shadow(self.payload(), self.snapshot_file)
@@ -534,6 +652,9 @@ class AwsShadowUpdate:
     reported_power: bool | None = None
     battery_mv: int | None = None
     ble_uuids: BleGattUuids | None = None
+    board_power: bool | None = None
+    board_wifi_online: bool | None = None
+    reported_redcon: int | None = None
     version: int | None = None
 
 
@@ -662,12 +783,18 @@ class AwsShadowClient:
         self,
         *,
         reported_mcu_patch: dict[str, Any] | None,
+        reported_root_patch: dict[str, Any] | None = None,
         clear_desired_power: bool,
         publish_timeout_seconds: float = DEFAULT_MQTT_PUBLISH_TIMEOUT,
     ) -> None:
         state: dict[str, Any] = {}
+        reported: dict[str, Any] = {}
+        if reported_root_patch is not None:
+            reported.update(reported_root_patch)
         if reported_mcu_patch is not None:
-            state["reported"] = {"mcu": reported_mcu_patch}
+            reported["mcu"] = reported_mcu_patch
+        if reported:
+            state["reported"] = reported
         if clear_desired_power:
             state["desired"] = {"mcu": {"power": None}}
         if not state:
@@ -829,6 +956,9 @@ class AwsShadowClient:
                 reported_power=_extract_reported_power(payload),
                 battery_mv=_extract_reported_battery_mv(payload),
                 ble_uuids=_extract_reported_ble_uuids(payload),
+                board_power=_extract_reported_board_power(payload),
+                board_wifi_online=_extract_reported_board_wifi_online(payload),
+                reported_redcon=_extract_reported_redcon(payload),
                 version=_extract_shadow_version(payload),
             )
             self._enqueue_update(update)
@@ -838,11 +968,14 @@ class AwsShadowClient:
         if msg.topic == self._topic_update_accepted:
             update = AwsShadowUpdate(
                 source="shadow/update/accepted",
-                has_desired=True,
+                has_desired=_shadow_payload_includes_desired_power(payload),
                 desired_power=_extract_desired_power_from_shadow(payload),
                 reported_power=_extract_reported_power(payload),
                 battery_mv=_extract_reported_battery_mv(payload),
                 ble_uuids=_extract_reported_ble_uuids(payload),
+                board_power=_extract_reported_board_power(payload),
+                board_wifi_online=_extract_reported_board_wifi_online(payload),
+                reported_redcon=_extract_reported_redcon(payload),
                 version=_extract_shadow_version(payload),
             )
             self._enqueue_update(update)
@@ -970,6 +1103,7 @@ class BleSleepBridge:
         self._disconnect_event: asyncio.Event | None = None
         self._ble_uuid_search_mode = shadow.ble_uuid_search_mode
         self._has_device_sync = False
+        self._last_state_report: bytes | None = None
         self._state = GatewayBleState.IDLE
 
     def _set_gateway_state(self, next_state: GatewayBleState, reason: str) -> None:
@@ -1065,6 +1199,13 @@ class BleSleepBridge:
                 "Preserving reported BLE online state across startup until presence timeout or fresh advertisements prove otherwise"
             )
         await self._normalize_shadow_for_startup_default()
+        await self._publish_reported_update(
+            reported_mcu_patch=None,
+            reported_root_patch={"redcon": self._shadow.redcon},
+            clear_desired_power=False,
+            context="Synchronized reported.redcon on startup",
+            include_redcon_if_changed=False,
+        )
         await self._start_scanner()
         pending_updates = self._drain_runtime_updates()
         try:
@@ -1173,6 +1314,13 @@ class BleSleepBridge:
             force=True,
         )
         await self._normalize_shadow_for_startup_default()
+        await self._publish_reported_update(
+            reported_mcu_patch=None,
+            reported_root_patch={"redcon": self._shadow.redcon},
+            clear_desired_power=False,
+            context="Synchronized reported.redcon on startup (--no-ble)",
+            include_redcon_if_changed=False,
+        )
         await self._process_desired_no_ble_once()
         while True:
             retry_timeout: float | None = None
@@ -1199,6 +1347,7 @@ class BleSleepBridge:
         return filtered
 
     async def _normalize_shadow_for_startup_default(self) -> None:
+        self._shadow.reconcile_redcon()
         if self._shadow.desired_power is True:
             return
         if not self._shadow.reported_power:
@@ -1239,6 +1388,7 @@ class BleSleepBridge:
                 continue
 
             changed = False
+            redcon_inputs_changed = False
             ble_uuids_changed = False
             ble_gatt_uuids_changed = False
             if update.has_desired and self._shadow.desired_power != update.desired_power:
@@ -1250,6 +1400,7 @@ class BleSleepBridge:
             ):
                 self._shadow.set_reported(update.reported_power)
                 changed = True
+                redcon_inputs_changed = True
             if (
                 update.battery_mv is not None
                 and self._shadow.battery_mv != update.battery_mv
@@ -1281,6 +1432,26 @@ class BleSleepBridge:
                 self._ble_uuid_search_mode = False
                 ble_uuids_changed = True
                 changed = True
+            if (
+                update.board_power is not None
+                and self._shadow.board_power != update.board_power
+            ):
+                self._shadow.set_board_reported(power=update.board_power)
+                changed = True
+                redcon_inputs_changed = True
+            if (
+                update.board_wifi_online is not None
+                and self._shadow.board_wifi_online != update.board_wifi_online
+            ):
+                self._shadow.set_board_reported(wifi_online=update.board_wifi_online)
+                changed = True
+                redcon_inputs_changed = True
+            if (
+                update.reported_redcon is not None
+                and self._shadow.redcon != update.reported_redcon
+            ):
+                self._shadow.redcon = update.reported_redcon
+                changed = True
 
             if (
                 update.version is not None
@@ -1293,6 +1464,13 @@ class BleSleepBridge:
 
             if changed:
                 self._shadow.log_state(f"Applied cloud shadow update ({update.source})")
+            if redcon_inputs_changed:
+                await self._publish_reported_update(
+                    reported_mcu_patch=None,
+                    reported_root_patch=None,
+                    clear_desired_power=False,
+                    context=f"Published derived reported.redcon after cloud shadow update ({update.source})",
+                )
             if ble_uuids_changed and ble_gatt_uuids_changed:
                 self._has_device_sync = False
                 if self._is_connected():
@@ -1671,15 +1849,30 @@ class BleSleepBridge:
         self,
         *,
         reported_mcu_patch: dict[str, Any] | None,
+        reported_root_patch: dict[str, Any] | None = None,
         clear_desired_power: bool,
         context: str,
         publish_timeout_seconds: float = DEFAULT_MQTT_PUBLISH_TIMEOUT,
+        include_redcon_if_changed: bool = True,
     ) -> bool:
-        if reported_mcu_patch is None and not clear_desired_power:
+        next_reported_root_patch = (
+            dict(reported_root_patch) if reported_root_patch is not None else None
+        )
+        if include_redcon_if_changed and self._shadow.reconcile_redcon():
+            if next_reported_root_patch is None:
+                next_reported_root_patch = {}
+            next_reported_root_patch["redcon"] = self._shadow.redcon
+
+        if (
+            reported_mcu_patch is None
+            and next_reported_root_patch is None
+            and not clear_desired_power
+        ):
             return True
         try:
             await self._cloud_shadow.update_shadow(
                 reported_mcu_patch=reported_mcu_patch,
+                reported_root_patch=next_reported_root_patch,
                 clear_desired_power=clear_desired_power,
                 publish_timeout_seconds=publish_timeout_seconds,
             )
@@ -1762,6 +1955,7 @@ class BleSleepBridge:
         log_prefix: str,
     ) -> None:
         sleep, reported_power, battery_mv = self._parse_state_report(report)
+        self._last_state_report = bytes(report)
         clear_desired = (
             self._shadow.desired_power is not None
             and self._shadow.desired_power == reported_power
@@ -1810,7 +2004,9 @@ class BleSleepBridge:
         report = await self._client.read_gatt_char(
             self._shadow.ble_uuids.state_report_uuid
         )
-        return bytes(report)
+        report_bytes = bytes(report)
+        self._last_state_report = report_bytes
+        return report_bytes
 
     async def _sync_reported_from_device_on_connect(self) -> None:
         if not self._is_connected():
@@ -1849,12 +2045,41 @@ class BleSleepBridge:
                 "Event loop already closed; skipped MCU state report notification"
             )
 
+    def _cached_or_shadow_state_report(self, target_power: bool) -> bytes:
+        report = self._last_state_report
+        if report is not None:
+            try:
+                _sleep, reported_power, _battery_mv = self._parse_state_report(report)
+            except RuntimeError:
+                report = None
+            else:
+                if reported_power == target_power:
+                    return report
+        return self._shadow.report_bytes()
+
     async def _wait_for_reported_power(self, target_power: bool) -> bytes:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self._config.command_ack_timeout
 
         while True:
-            report = await self._read_state_report()
+            if self._shadow.reported_power == target_power:
+                LOGGER.info(
+                    "Accepted MCU power confirmation from cached state power=%s",
+                    target_power,
+                )
+                return self._cached_or_shadow_state_report(target_power)
+
+            try:
+                report = await self._read_state_report()
+            except Exception as err:
+                if self._shadow.reported_power == target_power:
+                    LOGGER.info(
+                        "Accepted MCU power confirmation after GATT read failure power=%s error=%s",
+                        target_power,
+                        err.__class__.__name__,
+                    )
+                    return self._cached_or_shadow_state_report(target_power)
+                raise
             _sleep, reported_power, _battery_mv = self._parse_state_report(report)
             if reported_power == target_power:
                 LOGGER.info("Received MCU power confirmation power=%s", target_power)
@@ -2369,6 +2594,9 @@ def _build_shadow_from_snapshot(
     cached = load_shadow(snapshot_file)
     reported_power = _extract_reported_power(snapshot)
     battery_mv = _extract_reported_battery_mv(snapshot)
+    board_power = _extract_reported_board_power(snapshot)
+    board_wifi_online = _extract_reported_board_wifi_online(snapshot)
+    reported_redcon = _extract_reported_redcon(snapshot)
     mcu = _extract_reported_mcu(snapshot)
     ble_map = _extract_reported_ble_map(mcu) if mcu is not None else None
     reported_device_id = (
@@ -2399,6 +2627,21 @@ def _build_shadow_from_snapshot(
         ),
         ble_uuids=ble_uuids,
         ble_online=bool(_extract_reported_ble_online(snapshot)),
+        board_power=(
+            board_power
+            if board_power is not None
+            else get_reported_board_power(cached)
+        ),
+        board_wifi_online=(
+            board_wifi_online
+            if board_wifi_online is not None
+            else get_reported_board_wifi_online(cached)
+        ),
+        redcon=(
+            reported_redcon
+            if reported_redcon is not None
+            else get_reported_redcon(cached)
+        ),
         ble_uuid_search_mode=ble_uuid_search_mode,
         shadow_version=_extract_shadow_version(snapshot),
         snapshot_file=snapshot_file,

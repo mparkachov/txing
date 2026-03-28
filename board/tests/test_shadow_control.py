@@ -166,6 +166,7 @@ class ShadowControlContractTests(unittest.TestCase):
         _validate_shadow_update(validator, payload)
         self.assertIsNone(payload["state"]["desired"]["mcu"]["power"])
         self.assertIsNone(payload["state"]["desired"]["board"]["power"])
+        self.assertEqual(payload["state"]["reported"]["redcon"], 4)
         self.assertIs(payload["state"]["reported"]["board"]["power"], False)
         self.assertIs(payload["state"]["reported"]["board"]["wifi"]["online"], False)
 
