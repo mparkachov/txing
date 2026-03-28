@@ -156,8 +156,8 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
     printf '%s\n' \
         '[Unit]' \
         'Description=txing board control' \
-        'Wants=network-online.target' \
-        'After=network-online.target' \
+        'Wants=network-online.target systemd-time-wait-sync.service' \
+        'After=network-online.target systemd-time-wait-sync.service time-sync.target' \
         '' \
         '[Service]' \
         'Type=simple' \

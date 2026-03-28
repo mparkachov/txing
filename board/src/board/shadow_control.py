@@ -79,10 +79,18 @@ DEFAULT_AWS_CONNECT_TIMEOUT = 20.0
 DEFAULT_MQTT_PUBLISH_TIMEOUT = 10.0
 DEFAULT_HEARTBEAT_SECONDS = 60.0
 DEFAULT_RECONNECT_DELAY = 5.0
+DEFAULT_TIME_SYNC_TIMEOUT = 120.0
+DEFAULT_TIME_SYNC_POLL_INTERVAL = 1.0
 DEFAULT_VIDEO_REGION = "eu-central-1"
 DEFAULT_VIDEO_STARTUP_TIMEOUT_SECONDS = 30.0
 DEFAULT_VIDEO_READY_POLL_INTERVAL = 0.5
 DEFAULT_HALT_COMMAND = ("/usr/bin/systemctl", "halt", "--no-wall")
+DEFAULT_TIMEDATECTL_SYNC_COMMAND = (
+    "/usr/bin/timedatectl",
+    "show",
+    "--property=SystemClockSynchronized",
+    "--value",
+)
 DEFAULT_ROUTE_PROBE_IPV4 = ("8.8.8.8", 80)
 DEFAULT_ROUTE_PROBE_IPV6 = ("2001:4860:4860::8888", 80, 0, 0)
 
@@ -106,6 +114,7 @@ class ControlConfig:
     aws_connect_timeout: float
     publish_timeout: float
     reconnect_delay: float
+    time_sync_timeout_seconds: float
     halt_command: tuple[str, ...]
     once: bool
 
@@ -545,6 +554,15 @@ def _parse_args() -> argparse.Namespace:
         help="Seconds to wait before reconnect after a publish failure (default: 5)",
     )
     parser.add_argument(
+        "--time-sync-timeout-seconds",
+        type=float,
+        default=DEFAULT_TIME_SYNC_TIMEOUT,
+        help=(
+            "Seconds to wait for system clock synchronization before starting AWS video "
+            f"startup (default: {DEFAULT_TIME_SYNC_TIMEOUT})"
+        ),
+    )
+    parser.add_argument(
         "--halt-command",
         nargs="+",
         default=list(DEFAULT_HALT_COMMAND),
@@ -805,6 +823,75 @@ def _read_video_state(
     return video_supervisor.read_state()
 
 
+def _query_system_clock_synchronized() -> bool | None:
+    try:
+        completed = subprocess.run(
+            DEFAULT_TIMEDATECTL_SYNC_COMMAND,
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5.0,
+        )
+    except (FileNotFoundError, OSError, subprocess.SubprocessError):
+        return None
+
+    if completed.returncode != 0:
+        return None
+
+    value = completed.stdout.strip().lower()
+    if value in {"yes", "true", "1"}:
+        return True
+    if value in {"no", "false", "0"}:
+        return False
+    return None
+
+
+def _wait_for_system_clock_sync(
+    stop_event: threading.Event,
+    timeout_seconds: float,
+) -> None:
+    if timeout_seconds <= 0:
+        return
+
+    synchronized = _query_system_clock_synchronized()
+    if synchronized is None:
+        LOGGER.warning(
+            "Could not determine system clock sync state via timedatectl; proceeding without an explicit clock-sync gate"
+        )
+        return
+    if synchronized:
+        return
+
+    LOGGER.info(
+        "Waiting for system clock synchronization before AWS startup timeout=%.1fs",
+        timeout_seconds,
+    )
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        if stop_event.is_set():
+            return
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError(
+                f"timed out waiting for system clock synchronization after {timeout_seconds:.1f}s; "
+                "check timedatectl status and NTP"
+            )
+
+        stop_event.wait(min(DEFAULT_TIME_SYNC_POLL_INTERVAL, remaining))
+        synchronized = _query_system_clock_synchronized()
+        if synchronized is None:
+            LOGGER.warning(
+                "Could not determine system clock sync state via timedatectl while waiting; proceeding without an explicit clock-sync gate"
+            )
+            return
+        if synchronized:
+            LOGGER.info("System clock synchronized; continuing board startup")
+            return
+
+
 def _wait_for_video_ready(
     stop_event: threading.Event,
     shadow_client: AwsShadowClient,
@@ -929,6 +1016,7 @@ def main() -> None:
             aws_connect_timeout=args.aws_connect_timeout,
             publish_timeout=args.publish_timeout,
             reconnect_delay=args.reconnect_delay,
+            time_sync_timeout_seconds=args.time_sync_timeout_seconds,
             halt_command=tuple(args.halt_command),
             once=args.once,
         )
@@ -967,6 +1055,10 @@ def main() -> None:
     try:
         while not stop_event.is_set() and not shadow_client.halt_requested() and not startup_published:
             try:
+                _wait_for_system_clock_sync(
+                    stop_event,
+                    config.time_sync_timeout_seconds,
+                )
                 shadow_client.ensure_connected(timeout_seconds=config.aws_connect_timeout)
                 video_ready = _wait_for_video_ready(
                     stop_event,

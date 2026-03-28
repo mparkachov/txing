@@ -13,6 +13,7 @@ from board.shadow_control import (
     DEFAULT_HEARTBEAT_SECONDS,
     DEFAULT_MQTT_PUBLISH_TIMEOUT,
     DEFAULT_RECONNECT_DELAY,
+    DEFAULT_TIME_SYNC_TIMEOUT,
     DEFAULT_VIDEO_REGION,
     DEFAULT_VIDEO_STARTUP_TIMEOUT_SECONDS,
     ControlConfig,
@@ -27,6 +28,7 @@ from board.shadow_control import (
     _extract_desired_board_power_from_shadow,
     _load_validator,
     _validate_shadow_update,
+    _wait_for_system_clock_sync,
     _wait_for_video_ready,
 )
 from board.video_state import DEFAULT_VIDEO_CHANNEL_NAME, build_reported_video_state
@@ -53,6 +55,7 @@ def _make_args(**overrides: object) -> Namespace:
         "aws_connect_timeout": DEFAULT_AWS_CONNECT_TIMEOUT,
         "publish_timeout": DEFAULT_MQTT_PUBLISH_TIMEOUT,
         "reconnect_delay": DEFAULT_RECONNECT_DELAY,
+        "time_sync_timeout_seconds": DEFAULT_TIME_SYNC_TIMEOUT,
         "halt_command": ["/bin/true"],
         "once": False,
         "debug": False,
@@ -102,6 +105,7 @@ def _make_config(**overrides: object) -> ControlConfig:
         "aws_connect_timeout": DEFAULT_AWS_CONNECT_TIMEOUT,
         "publish_timeout": DEFAULT_MQTT_PUBLISH_TIMEOUT,
         "reconnect_delay": DEFAULT_RECONNECT_DELAY,
+        "time_sync_timeout_seconds": DEFAULT_TIME_SYNC_TIMEOUT,
         "halt_command": ("/bin/true",),
         "once": False,
     }
@@ -214,6 +218,29 @@ class ShadowControlContractTests(unittest.TestCase):
             with self.assertRaises(VideoStartupTimeoutError):
                 _wait_for_video_ready(stop_event, shadow_client, config, video_supervisor)
 
+    def test_wait_for_system_clock_sync_returns_when_clock_becomes_synchronized(self) -> None:
+        stop_event = threading.Event()
+
+        with (
+            patch.object(
+                shadow_control,
+                "_query_system_clock_synchronized",
+                side_effect=[False, True],
+            ),
+            patch.object(shadow_control, "DEFAULT_TIME_SYNC_POLL_INTERVAL", 0.0),
+        ):
+            _wait_for_system_clock_sync(stop_event, 1.0)
+
+    def test_wait_for_system_clock_sync_proceeds_when_timedatectl_unavailable(self) -> None:
+        stop_event = threading.Event()
+
+        with patch.object(
+            shadow_control,
+            "_query_system_clock_synchronized",
+            return_value=None,
+        ):
+            _wait_for_system_clock_sync(stop_event, 1.0)
+
     def test_main_once_waits_for_video_ready_before_first_publish(self) -> None:
         args = _make_args(once=True)
         shadow_client = MagicMock()
@@ -240,6 +267,7 @@ class ShadowControlContractTests(unittest.TestCase):
             patch.object(shadow_control, "_install_signal_handlers"),
             patch.object(shadow_control, "_validate_shadow_update"),
             patch.object(shadow_control, "save_shadow"),
+            patch.object(shadow_control, "_wait_for_system_clock_sync"),
             patch.object(
                 shadow_control,
                 "_detect_default_route_addresses",
@@ -283,6 +311,7 @@ class ShadowControlContractTests(unittest.TestCase):
             patch.object(shadow_control, "_install_signal_handlers"),
             patch.object(shadow_control, "_validate_shadow_update"),
             patch.object(shadow_control, "save_shadow"),
+            patch.object(shadow_control, "_wait_for_system_clock_sync"),
             patch.object(
                 shadow_control,
                 "_detect_default_route_addresses",
@@ -332,6 +361,7 @@ class ShadowControlContractTests(unittest.TestCase):
             patch.object(shadow_control, "_install_signal_handlers"),
             patch.object(shadow_control, "_validate_shadow_update"),
             patch.object(shadow_control, "save_shadow"),
+            patch.object(shadow_control, "_wait_for_system_clock_sync"),
             patch.object(
                 shadow_control,
                 "_detect_default_route_addresses",
@@ -353,8 +383,11 @@ class ShadowControlContractTests(unittest.TestCase):
     def test_justfile_install_service_has_no_mediamtx_dependency(self) -> None:
         justfile = Path(REPO_ROOT / "board" / "justfile").read_text(encoding="utf-8")
 
-        self.assertIn("'Wants=network-online.target' \\", justfile)
-        self.assertIn("'After=network-online.target' \\", justfile)
+        self.assertIn("'Wants=network-online.target systemd-time-wait-sync.service' \\", justfile)
+        self.assertIn(
+            "'After=network-online.target systemd-time-wait-sync.service time-sync.target' \\",
+            justfile,
+        )
         self.assertNotIn("mediamtx.service", justfile)
         self.assertIn("Environment=TXING_BOARD_VIDEO_SENDER_COMMAND=", justfile)
         self.assertIn("--video-viewer-url {{video_viewer_url}}", justfile)

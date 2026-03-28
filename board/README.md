@@ -408,10 +408,13 @@ just board::install-service \
 The generated unit:
 
 - enables `NetworkManager-wait-online.service`
+- waits for `systemd-time-wait-sync.service` / `time-sync.target` before startup
 - runs `txing-board` as `root`
 - sets `TXING_BOARD_VIDEO_SENDER_COMMAND`
 - starts `board` with `--video-viewer-url`, `--video-region`, and `--video-channel-name`
 - inherits the board AWS root CA PEM for the native KVS sender
+
+The Python service also waits up to `120 s` for `timedatectl` to report `SystemClockSynchronized=yes` before it starts the AWS-backed video sender. That avoids transient KVS `InvalidSignatureException` failures after boot when networking is up but NTP has not corrected the clock yet.
 
 If you also need sender regex environment variables in the service, add `Environment=` lines to `/etc/systemd/system/txing-board.service`, then run `sudo systemctl daemon-reload && sudo systemctl restart txing-board`.
 
