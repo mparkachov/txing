@@ -47,6 +47,8 @@ Schema validation should be done by project code and/or CI checks, while AWS IoT
 - `state.reported.board.wifi.online` (`boolean`) is the board-side Wi-Fi/control online flag while the board OS is up and the board control is running.
 - `state.reported.board.wifi.ipv4` (`ipv4 string`, update payload may temporarily use `null` to delete) is the IPv4 address chosen by the OS for the board's current IPv4 default-route interface when the board control publishes.
 - `state.reported.board.wifi.ipv6` (`ipv6 string`, update payload may temporarily use `null` to delete) is the IPv6 address chosen by the OS for the board's current IPv6 default-route interface when the board control publishes.
+- `state.reported.board.drive.leftSpeed` (`integer`, `-480..480`) is the last applied left motor command reported by `txing-board` in the current Pololu-compatible speed range.
+- `state.reported.board.drive.rightSpeed` (`integer`, `-480..480`) is the last applied right motor command reported by `txing-board` in the current Pololu-compatible speed range.
 - `state.reported.board.video.ready` (`boolean`) indicates whether the phase-1 plain AWS WebRTC live path is ready for operator use.
 - `state.reported.board.video.status` (`"starting" | "ready" | "error"`) is the coarse runtime state of the board video sender path.
 - `state.reported.board.video.transport` (`"aws-webrtc"`) identifies the live-video transport. Phase 1 uses `aws-webrtc` as the only live operator path, specifically as a plain KVS WebRTC signaling session.

@@ -20,7 +20,7 @@ from typing import Any
 import jsonschema
 import paho.mqtt.client as mqtt
 
-from .cmd_vel import CmdVelController, build_cmd_vel_topic
+from .cmd_vel import CmdVelController, DriveState, build_cmd_vel_topic
 from .shadow_store import DEFAULT_SHADOW_FILE, save_shadow
 from .video_sender import VideoSenderSupervisor
 from .video_state import (
@@ -79,6 +79,7 @@ DEFAULT_SCHEMA_FILE = DEFAULT_DOCS_DIR / "txing-shadow.schema.json"
 DEFAULT_AWS_CONNECT_TIMEOUT = 20.0
 DEFAULT_MQTT_PUBLISH_TIMEOUT = 10.0
 DEFAULT_HEARTBEAT_SECONDS = 60.0
+DEFAULT_DRIVE_REPORT_POLL_INTERVAL = 0.25
 DEFAULT_RECONNECT_DELAY = 5.0
 DEFAULT_TIME_SYNC_TIMEOUT = 120.0
 DEFAULT_TIME_SYNC_POLL_INTERVAL = 1.0
@@ -727,6 +728,7 @@ def _build_board_report(
     *,
     addresses: DefaultRouteAddresses,
     power: bool,
+    drive_state: DriveState,
     video_state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     report: dict[str, Any] = {
@@ -735,6 +737,10 @@ def _build_board_report(
             "online": power,
             "ipv4": addresses.ipv4,
             "ipv6": addresses.ipv6,
+        },
+        "drive": {
+            "leftSpeed": drive_state.left_speed,
+            "rightSpeed": drive_state.right_speed,
         },
     }
     if isinstance(video_state, dict):
@@ -749,6 +755,10 @@ def _build_shutdown_board_report() -> dict[str, Any]:
             "online": False,
             "ipv4": None,
             "ipv6": None,
+        },
+        "drive": {
+            "leftSpeed": 0,
+            "rightSpeed": 0,
         },
     }
 
@@ -1074,6 +1084,9 @@ def main() -> None:
     )
     halt_requested = False
     startup_published = False
+    last_published_drive_state: DriveState | None = None
+    last_published_video_report: dict[str, Any] | None = None
+    last_shadow_publish_monotonic: float | None = None
 
     try:
         while not stop_event.is_set() and not shadow_client.halt_requested() and not startup_published:
@@ -1092,9 +1105,11 @@ def main() -> None:
                 if video_ready is None:
                     break
                 default_route_addresses, video_state = video_ready
+                drive_state = cmd_vel_controller.get_drive_state()
                 report = _build_board_report(
                     addresses=default_route_addresses,
                     power=True,
+                    drive_state=drive_state,
                     video_state=video_state,
                 )
                 _publish_board_report(
@@ -1106,12 +1121,14 @@ def main() -> None:
                 LOGGER.info(
                     (
                         "Published board shadow update power=%s wifi_online=%s ipv4=%s ipv6=%s "
-                        "video_status=%s video_ready=%s viewer_url=%s"
+                        "drive_left=%s drive_right=%s video_status=%s video_ready=%s viewer_url=%s"
                     ),
                     report.get("power"),
                     report.get("wifi", {}).get("online") if isinstance(report.get("wifi"), dict) else None,
                     report.get("wifi", {}).get("ipv4") if isinstance(report.get("wifi"), dict) else "-",
                     report.get("wifi", {}).get("ipv6") if isinstance(report.get("wifi"), dict) else "-",
+                    report.get("drive", {}).get("leftSpeed") if isinstance(report.get("drive"), dict) else "-",
+                    report.get("drive", {}).get("rightSpeed") if isinstance(report.get("drive"), dict) else "-",
                     report.get("video", {}).get("status") if isinstance(report.get("video"), dict) else "-",
                     report.get("video", {}).get("ready") if isinstance(report.get("video"), dict) else "-",
                     (
@@ -1121,6 +1138,9 @@ def main() -> None:
                     ),
                 )
                 startup_published = True
+                last_published_drive_state = drive_state
+                last_published_video_report = report.get("video") if isinstance(report.get("video"), dict) else None
+                last_shadow_publish_monotonic = time.monotonic()
                 if config.once:
                     break
             except VideoStartupTimeoutError as err:
@@ -1143,22 +1163,46 @@ def main() -> None:
             and not stop_event.is_set()
             and not shadow_client.halt_requested()
         ):
-            if _wait_for_stop_or_halt(
-                stop_event,
-                shadow_client,
-                config.heartbeat_seconds,
-            ):
-                break
+            if last_shadow_publish_monotonic is None:
+                heartbeat_due = True
+                heartbeat_remaining = 0.0
+            else:
+                elapsed_since_publish = time.monotonic() - last_shadow_publish_monotonic
+                heartbeat_due = elapsed_since_publish >= config.heartbeat_seconds
+                heartbeat_remaining = max(0.0, config.heartbeat_seconds - elapsed_since_publish)
+
+            current_drive_state = cmd_vel_controller.get_drive_state()
+            current_video_state = _read_video_state(video_supervisor)
+            current_video_report = (
+                build_reported_video_state(current_video_state)
+                if isinstance(current_video_state, dict)
+                else None
+            )
+            drive_changed = (
+                last_published_drive_state is None
+                or current_drive_state.sequence != last_published_drive_state.sequence
+            )
+            video_changed = current_video_report != last_published_video_report
+
+            if not heartbeat_due and not drive_changed and not video_changed:
+                wait_seconds = min(DEFAULT_DRIVE_REPORT_POLL_INTERVAL, heartbeat_remaining)
+                if _wait_for_stop_or_halt(
+                    stop_event,
+                    shadow_client,
+                    wait_seconds,
+                ):
+                    break
+                continue
 
             try:
                 shadow_client.ensure_connected(timeout_seconds=config.aws_connect_timeout)
                 video_supervisor.ensure_running()
                 default_route_addresses = _detect_default_route_addresses()
-                video_state = _read_video_state(video_supervisor)
                 report = _build_board_report(
                     addresses=default_route_addresses,
                     power=True,
-                    video_state=video_state,
+                    drive_state=current_drive_state,
+                    video_state=current_video_state,
                 )
                 _publish_board_report(
                     shadow_client=shadow_client,
@@ -1169,12 +1213,14 @@ def main() -> None:
                 LOGGER.info(
                     (
                         "Published board shadow update power=%s wifi_online=%s ipv4=%s ipv6=%s "
-                        "video_status=%s video_ready=%s viewer_url=%s"
+                        "drive_left=%s drive_right=%s video_status=%s video_ready=%s viewer_url=%s"
                     ),
                     report.get("power"),
                     report.get("wifi", {}).get("online") if isinstance(report.get("wifi"), dict) else None,
                     report.get("wifi", {}).get("ipv4") if isinstance(report.get("wifi"), dict) else "-",
                     report.get("wifi", {}).get("ipv6") if isinstance(report.get("wifi"), dict) else "-",
+                    report.get("drive", {}).get("leftSpeed") if isinstance(report.get("drive"), dict) else "-",
+                    report.get("drive", {}).get("rightSpeed") if isinstance(report.get("drive"), dict) else "-",
                     report.get("video", {}).get("status") if isinstance(report.get("video"), dict) else "-",
                     report.get("video", {}).get("ready") if isinstance(report.get("video"), dict) else "-",
                     (
@@ -1183,6 +1229,9 @@ def main() -> None:
                         else "-"
                     ),
                 )
+                last_published_drive_state = current_drive_state
+                last_published_video_report = report.get("video") if isinstance(report.get("video"), dict) else None
+                last_shadow_publish_monotonic = time.monotonic()
             except RuntimeError as err:
                 LOGGER.warning("Board shadow publish failed: %s", err)
                 if _wait_for_stop_or_halt(

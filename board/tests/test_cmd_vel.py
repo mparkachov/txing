@@ -4,6 +4,7 @@ import time
 import unittest
 
 from board.cmd_vel import (
+    DriveState,
     MAX_WHEEL_LINEAR_SPEED_MPS,
     MAX_SPEED,
     TRACK_WIDTH_M,
@@ -187,3 +188,25 @@ class CmdVelContractTests(unittest.TestCase):
     def test_uses_temporary_phase_motion_constants(self) -> None:
         self.assertEqual(TRACK_WIDTH_M, 0.28)
         self.assertEqual(MAX_WHEEL_LINEAR_SPEED_MPS, 0.5)
+
+    def test_controller_exposes_current_drive_state(self) -> None:
+        motor_driver = _FakeMotorDriver()
+        controller = CmdVelController(
+            thing_name="txing",
+            motor_driver=motor_driver,
+        )
+
+        self.assertEqual(controller.get_drive_state(), DriveState(0, 0, 0))
+
+        try:
+            controller.handle_message(
+                {
+                    "linear": {"x": 0.2, "y": 0, "z": 0},
+                    "angular": {"x": 0, "y": 0, "z": 0.2},
+                }
+            )
+            self.assertEqual(controller.get_drive_state(), DriveState(165, 219, 1))
+            controller.stop(reason="test stop")
+            self.assertEqual(controller.get_drive_state(), DriveState(0, 0, 2))
+        finally:
+            controller.close()

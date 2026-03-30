@@ -68,6 +68,7 @@ Notes:
 - `reported.board.power=false` is only a best-effort clean-shutdown update.
 - `reported.board.wifi.online` reflects the board-side online status while the board OS is up and the board control is running.
 - `reported.board.wifi.ipv4` and `reported.board.wifi.ipv6` are refreshed on each publish loop from the interface the OS selects for the default route in each address family.
+- `reported.board.drive.leftSpeed` and `reported.board.drive.rightSpeed` expose the last applied tank-drive motor commands in the current `[-480, 480]` range.
 - `reported.board.video.viewerConnected` is best-effort board-side viewer presence derived from sender events. The browser does not write it.
 - Because this Pi can lose power abruptly through the MOSFET, consumers should not treat stale `power=true` or stale `wifi.online=true` as authoritative after a hard power cut.
 
@@ -82,6 +83,8 @@ This topic is a strict ROS `geometry_msgs/Twist` semantic contract:
 - `linear.y`, `linear.z`, `angular.x`, and `angular.y` are unsupported on the current differential-drive board and must be `0`
 
 The board converts `linear.x` and `angular.z` to tank-drive motor commands through standard differential-drive kinematics. Browser key-step behavior is not part of this contract; browser teleop and AI clients are equal producers of the same strict `Twist` meaning.
+
+The board also reports the currently applied left and right motor commands back into Thing Shadow under `state.reported.board.drive.*`. Those values are best-effort runtime state published by `txing-board`, so they can lag the instantaneous motor command slightly.
 
 Temporary phase constants currently hardcoded in the board control:
 

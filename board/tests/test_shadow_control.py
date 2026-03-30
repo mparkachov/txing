@@ -8,7 +8,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import MagicMock, patch
 
-from board.cmd_vel import build_cmd_vel_topic
+from board.cmd_vel import DriveState, build_cmd_vel_topic
 from board.shadow_control import (
     AwsShadowClient,
     DEFAULT_AWS_CONNECT_TIMEOUT,
@@ -181,17 +181,22 @@ class ShadowControlContractTests(unittest.TestCase):
         self.assertIsNone(payload["state"]["desired"]["board"]["power"])
         self.assertIs(payload["state"]["reported"]["board"]["power"], False)
         self.assertIs(payload["state"]["reported"]["board"]["wifi"]["online"], False)
+        self.assertEqual(payload["state"]["reported"]["board"]["drive"]["leftSpeed"], 0)
+        self.assertEqual(payload["state"]["reported"]["board"]["drive"]["rightSpeed"], 0)
 
     def test_board_report_with_video_matches_schema(self) -> None:
         validator = _load_validator(Path(REPO_ROOT / "docs" / "txing-shadow.schema.json"))
         report = _build_board_report(
             addresses=type("Addresses", (), {"ipv4": "192.168.1.20", "ipv6": "2001:db8::20"})(),
             power=True,
+            drive_state=DriveState(left_speed=96, right_speed=144, sequence=1),
             video_state=_make_video_state(ready=True),
         )
 
         _validate_shadow_update(validator, {"state": {"reported": {"board": report}}})
         self.assertEqual(report["video"]["session"]["channelName"], "txing-board-video")
+        self.assertEqual(report["drive"]["leftSpeed"], 96)
+        self.assertEqual(report["drive"]["rightSpeed"], 144)
 
     def test_default_shadow_reset_payload_matches_schema(self) -> None:
         validator = _load_validator(Path(REPO_ROOT / "docs" / "txing-shadow.schema.json"))
@@ -205,6 +210,8 @@ class ShadowControlContractTests(unittest.TestCase):
         self.assertEqual(payload["state"]["reported"]["redcon"], 4)
         self.assertIs(payload["state"]["reported"]["board"]["power"], False)
         self.assertIs(payload["state"]["reported"]["board"]["wifi"]["online"], False)
+        self.assertEqual(payload["state"]["reported"]["board"]["drive"]["leftSpeed"], 0)
+        self.assertEqual(payload["state"]["reported"]["board"]["drive"]["rightSpeed"], 0)
 
     def test_reported_video_state_omits_runtime_timestamp(self) -> None:
         reported = build_reported_video_state(
@@ -316,6 +323,8 @@ class ShadowControlContractTests(unittest.TestCase):
         payload = shadow_client.publish_update.call_args.args[0]
         self.assertEqual(payload["state"]["reported"]["board"]["video"]["status"], "ready")
         self.assertIs(payload["state"]["reported"]["board"]["video"]["ready"], True)
+        self.assertEqual(payload["state"]["reported"]["board"]["drive"]["leftSpeed"], 0)
+        self.assertEqual(payload["state"]["reported"]["board"]["drive"]["rightSpeed"], 0)
 
     def test_main_publishes_runtime_video_error_after_successful_start(self) -> None:
         args = _make_args()
@@ -327,6 +336,8 @@ class ShadowControlContractTests(unittest.TestCase):
         video_supervisor.return_code.return_value = None
         video_supervisor.read_state.side_effect = [
             _make_video_state(ready=True),
+            _make_video_state(ready=False, last_error="video sender exited"),
+            _make_video_state(ready=False, last_error="video sender exited"),
             _make_video_state(ready=False, last_error="video sender exited"),
         ]
 
@@ -410,7 +421,60 @@ class ShadowControlContractTests(unittest.TestCase):
         payload = shadow_client.publish_update.call_args.args[0]
         self.assertIs(payload["state"]["reported"]["board"]["power"], False)
         self.assertIsNone(payload["state"]["desired"]["board"]["power"])
+        self.assertEqual(payload["state"]["reported"]["board"]["drive"]["leftSpeed"], 0)
+        self.assertEqual(payload["state"]["reported"]["board"]["drive"]["rightSpeed"], 0)
         request_system_halt.assert_called_once()
+
+    def test_main_publishes_drive_state_changes_before_heartbeat(self) -> None:
+        args = _make_args()
+        shadow_client = MagicMock()
+        shadow_client.halt_requested.return_value = False
+        shadow_client.publish_update.return_value = {"state": {}}
+        shadow_client.is_connected.return_value = True
+        video_supervisor = MagicMock()
+        video_supervisor.return_code.return_value = None
+        video_supervisor.read_state.return_value = _make_video_state(ready=True)
+        cmd_vel_controller = MagicMock()
+        cmd_vel_controller.get_drive_state.side_effect = [
+            DriveState(left_speed=0, right_speed=0, sequence=0),
+            DriveState(left_speed=96, right_speed=192, sequence=1),
+            DriveState(left_speed=96, right_speed=192, sequence=1),
+        ]
+
+        with (
+            patch.object(shadow_control, "_parse_args", return_value=args),
+            patch.object(shadow_control, "_configure_logging"),
+            patch.object(
+                shadow_control,
+                "_read_iot_endpoint",
+                return_value="example-ats.iot.eu-central-1.amazonaws.com",
+            ),
+            patch.object(shadow_control, "_require_file"),
+            patch.object(shadow_control, "_load_validator", return_value=object()),
+            patch.object(shadow_control, "_install_signal_handlers"),
+            patch.object(shadow_control, "_validate_shadow_update"),
+            patch.object(shadow_control, "save_shadow"),
+            patch.object(shadow_control, "_wait_for_system_clock_sync"),
+            patch.object(
+                shadow_control,
+                "_detect_default_route_addresses",
+                return_value=DefaultRouteAddresses(ipv4="192.168.1.20", ipv6="2001:db8::20"),
+            ),
+            patch.object(shadow_control, "_wait_for_stop_or_halt", side_effect=[True]),
+            patch.object(shadow_control, "AwsShadowClient", return_value=shadow_client),
+            patch.object(shadow_control, "VideoSenderSupervisor", return_value=video_supervisor),
+            patch.object(shadow_control, "CmdVelController", return_value=cmd_vel_controller),
+            patch.object(shadow_control, "DEFAULT_VIDEO_READY_POLL_INTERVAL", 0.0),
+        ):
+            shadow_control.main()
+
+        self.assertEqual(shadow_client.publish_update.call_count, 2)
+        first_payload = shadow_client.publish_update.call_args_list[0].args[0]
+        second_payload = shadow_client.publish_update.call_args_list[1].args[0]
+        self.assertEqual(first_payload["state"]["reported"]["board"]["drive"]["leftSpeed"], 0)
+        self.assertEqual(first_payload["state"]["reported"]["board"]["drive"]["rightSpeed"], 0)
+        self.assertEqual(second_payload["state"]["reported"]["board"]["drive"]["leftSpeed"], 96)
+        self.assertEqual(second_payload["state"]["reported"]["board"]["drive"]["rightSpeed"], 192)
 
     def test_justfile_install_service_has_no_mediamtx_dependency(self) -> None:
         justfile = Path(REPO_ROOT / "board" / "justfile").read_text(encoding="utf-8")

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://txing.local/schemas/txing-shadow.schema.json",
-  "title": "Txing Thing Shadow Contract v18",
+  "title": "Txing Thing Shadow Contract v19",
   "description": "Canonical payload shape for txing Thing Shadow updates and snapshots.",
   "type": "object",
   "additionalProperties": true,
@@ -152,7 +152,8 @@
       "additionalProperties": true,
       "required": [
         "power",
-        "wifi"
+        "wifi",
+        "drive"
       ],
       "properties": {
         "power": {
@@ -160,6 +161,9 @@
         },
         "wifi": {
           "$ref": "#/$defs/reportedBoardWifiState"
+        },
+        "drive": {
+          "$ref": "#/$defs/reportedBoardDriveState"
         },
         "video": {
           "$ref": "#/$defs/reportedBoardVideoState"
@@ -189,6 +193,26 @@
             "null"
           ],
           "format": "ipv6"
+        }
+      }
+    },
+    "reportedBoardDriveState": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "leftSpeed",
+        "rightSpeed"
+      ],
+      "properties": {
+        "leftSpeed": {
+          "type": "integer",
+          "minimum": -480,
+          "maximum": 480
+        },
+        "rightSpeed": {
+          "type": "integer",
+          "minimum": -480,
+          "maximum": 480
         }
       }
     },

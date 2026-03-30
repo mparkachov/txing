@@ -27,6 +27,10 @@
           "online": false,
           "ipv4": null,
           "ipv6": null
+        },
+        "drive": {
+          "leftSpeed": 0,
+          "rightSpeed": 0
         }
       }
     }

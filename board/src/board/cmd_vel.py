@@ -28,6 +28,13 @@ class Twist:
     angular: Vector3
 
 
+@dataclass(frozen=True)
+class DriveState:
+    left_speed: int
+    right_speed: int
+    sequence: int
+
+
 class _MotorDriverStub:
     MAX_SPEED = MAX_SPEED
 
@@ -135,6 +142,7 @@ class CmdVelController:
         self._watchdog_poll_interval = watchdog_poll_interval
         self._last_message_monotonic: float | None = None
         self._last_speeds = (0, 0)
+        self._drive_state_sequence = 0
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
         self._watchdog_thread: threading.Thread | None = None
@@ -143,6 +151,14 @@ class CmdVelController:
     @property
     def topic(self) -> str:
         return self._topic
+
+    def get_drive_state(self) -> DriveState:
+        with self._lock:
+            return DriveState(
+                left_speed=self._last_speeds[0],
+                right_speed=self._last_speeds[1],
+                sequence=self._drive_state_sequence,
+            )
 
     def start(self) -> None:
         if self._watchdog_thread is not None:
@@ -221,9 +237,12 @@ class CmdVelController:
         with self._lock:
             if self._closed:
                 return
-            if not force and self._last_speeds == (left_speed, right_speed):
+            state_changed = self._last_speeds != (left_speed, right_speed)
+            if not force and not state_changed:
                 return
             self._last_speeds = (left_speed, right_speed)
+            if state_changed:
+                self._drive_state_sequence += 1
 
         LOGGER.debug(
             "Applying tank speeds left=%s right=%s reason=%s",
