@@ -10,6 +10,9 @@ from typing import Any
 LOGGER = logging.getLogger("board.cmd_vel")
 
 MAX_SPEED = 480
+# Temporary phase constants until per-robot calibration is added to runtime config.
+TRACK_WIDTH_M = 0.28
+MAX_WHEEL_LINEAR_SPEED_MPS = 0.50
 
 
 @dataclass(frozen=True)
@@ -76,13 +79,38 @@ def _clamp_unit_interval(value: float) -> float:
     return max(-1.0, min(1.0, value))
 
 
+def _find_unsupported_axes(twist: Twist) -> list[str]:
+    unsupported_axes: list[str] = []
+    if twist.linear.y != 0.0:
+        unsupported_axes.append(f"linear.y={twist.linear.y:.3f}")
+    if twist.linear.z != 0.0:
+        unsupported_axes.append(f"linear.z={twist.linear.z:.3f}")
+    if twist.angular.x != 0.0:
+        unsupported_axes.append(f"angular.x={twist.angular.x:.3f}")
+    if twist.angular.y != 0.0:
+        unsupported_axes.append(f"angular.y={twist.angular.y:.3f}")
+    return unsupported_axes
+
+
 def mix_twist_to_tank_speeds(
     twist: Twist,
     *,
+    track_width_m: float = TRACK_WIDTH_M,
+    max_wheel_linear_speed_mps: float = MAX_WHEEL_LINEAR_SPEED_MPS,
     max_speed: int = MAX_SPEED,
 ) -> tuple[int, int]:
-    left = _clamp_unit_interval(twist.linear.x - twist.angular.z)
-    right = _clamp_unit_interval(twist.linear.x + twist.angular.z)
+    if track_width_m <= 0.0:
+        raise ValueError("track_width_m must be positive")
+    if max_wheel_linear_speed_mps <= 0.0:
+        raise ValueError("max_wheel_linear_speed_mps must be positive")
+
+    half_track_width_m = track_width_m / 2.0
+    left_wheel_linear_speed = twist.linear.x - (twist.angular.z * half_track_width_m)
+    right_wheel_linear_speed = twist.linear.x + (twist.angular.z * half_track_width_m)
+
+    left = _clamp_unit_interval(left_wheel_linear_speed / max_wheel_linear_speed_mps)
+    right = _clamp_unit_interval(right_wheel_linear_speed / max_wheel_linear_speed_mps)
+
     return (
         int(round(left * max_speed)),
         int(round(right * max_speed)),
@@ -149,6 +177,14 @@ class CmdVelController:
             if self._closed:
                 return False
             self._last_message_monotonic = time.monotonic()
+
+        unsupported_axes = _find_unsupported_axes(twist)
+        if unsupported_axes:
+            LOGGER.warning(
+                "Ignoring unsupported cmd_vel axes on %s: %s",
+                self._topic,
+                ", ".join(unsupported_axes),
+            )
 
         left_speed, right_speed = mix_twist_to_tank_speeds(
             twist,

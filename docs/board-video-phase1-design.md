@@ -44,7 +44,7 @@ board video sender
 operator client
   -> connects as viewer through the KVS WebRTC signaling channel
   -> receives the live path negotiated by AWS signaling / ICE
-  -> sends directional commands out of band
+  -> sends directional commands out of band as strict ROS `geometry_msgs/Twist`
 ```
 
 ## Shadow Contract
@@ -113,7 +113,14 @@ Responsibilities:
 
 - join the plain AWS WebRTC viewer session
 - render the live stream for directional control
+- translate browser key presses into strict ROS `Twist` commands for `txing/board/cmd_vel`
 - support the existing browser operator first and allow later native-client adoption
+
+Control contract notes:
+
+- `txing/board/cmd_vel` uses strict ROS `Twist` semantics, not browser-specific steering semantics.
+- `linear.x` is forward velocity in `m/s` and `angular.z` is yaw rate in `rad/s`.
+- Browser teleop step sizes are a UI policy only. The shared MQTT contract for browser and AI producers remains the strict `Twist` meaning above.
 
 ## Media Serving
 

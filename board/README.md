@@ -71,6 +71,26 @@ Notes:
 - `reported.board.video.viewerConnected` is best-effort board-side viewer presence derived from sender events. The browser does not write it.
 - Because this Pi can lose power abruptly through the MOSFET, consumers should not treat stale `power=true` or stale `wifi.online=true` as authoritative after a hard power cut.
 
+## `cmd_vel` contract
+
+Live motion control is out of band from Thing Shadow and uses the MQTT topic `txing/board/cmd_vel`.
+
+This topic is a strict ROS `geometry_msgs/Twist` semantic contract:
+
+- `linear.x` is forward body velocity in `m/s`
+- `angular.z` is yaw rate in `rad/s`
+- `linear.y`, `linear.z`, `angular.x`, and `angular.y` are unsupported on the current differential-drive board and must be `0`
+
+The board converts `linear.x` and `angular.z` to tank-drive motor commands through standard differential-drive kinematics. Browser key-step behavior is not part of this contract; browser teleop and AI clients are equal producers of the same strict `Twist` meaning.
+
+Temporary phase constants currently hardcoded in the board control:
+
+- `TRACK_WIDTH_M = 0.28`
+- `MAX_WHEEL_LINEAR_SPEED_MPS = 0.50`
+- `MAX_SPEED = 480`
+
+These constants are provisional for this phase and must be replaced by calibrated runtime configuration in a later follow-up.
+
 ## Prerequisites
 
 - Raspberry Pi OS Lite 64-bit with Python `3.12+` available as `python3`

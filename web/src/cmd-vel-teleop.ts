@@ -1,5 +1,5 @@
 import {
-  buildTwistFromPressedKeys,
+  applyCmdVelStep,
   buildZeroTwist,
   isCmdVelControlKey,
   isZeroTwist,
@@ -14,7 +14,6 @@ export type CmdVelTeleopControllerOptions = {
 }
 
 export class CmdVelTeleopController {
-  private readonly pressedKeys = new Set<string>()
   private readonly publishCmdVel: PublishCmdVel
   private active = false
   private currentTwist = buildZeroTwist()
@@ -32,18 +31,16 @@ export class CmdVelTeleopController {
       return
     }
     this.active = false
-    this.publishStop(true)
+    this.publishStop()
   }
 
-  handleKeyDown(key: string): boolean {
+  handleKeyDown(key: string, repeat = false): boolean {
     if (!this.active || !isCmdVelControlKey(key)) {
       return false
     }
 
-    const sizeBefore = this.pressedKeys.size
-    this.pressedKeys.add(key)
-    if (this.pressedKeys.size !== sizeBefore) {
-      this.publishCurrentTwist()
+    if (!repeat) {
+      this.publishNextTwist(applyCmdVelStep(this.currentTwist, key))
     }
     return true
   }
@@ -52,10 +49,6 @@ export class CmdVelTeleopController {
     if (!this.active || !isCmdVelControlKey(key)) {
       return false
     }
-
-    if (this.pressedKeys.delete(key)) {
-      this.publishCurrentTwist()
-    }
     return true
   }
 
@@ -63,14 +56,14 @@ export class CmdVelTeleopController {
     if (!this.active) {
       return
     }
-    this.publishStop(true)
+    this.publishStop()
   }
 
   handleVisibilityHidden(): void {
     if (!this.active) {
       return
     }
-    this.publishStop(true)
+    this.publishStop()
   }
 
   tick(): void {
@@ -80,8 +73,7 @@ export class CmdVelTeleopController {
     void this.publishCmdVel(this.currentTwist)
   }
 
-  private publishCurrentTwist(): void {
-    const nextTwist = buildTwistFromPressedKeys(this.pressedKeys)
+  private publishNextTwist(nextTwist: Twist): void {
     if (twistEquals(nextTwist, this.currentTwist)) {
       return
     }
@@ -89,10 +81,9 @@ export class CmdVelTeleopController {
     void this.publishCmdVel(nextTwist)
   }
 
-  private publishStop(forcePublish: boolean): void {
-    this.pressedKeys.clear()
+  private publishStop(): void {
     const zeroTwist = buildZeroTwist()
-    const shouldPublish = forcePublish || !isZeroTwist(this.currentTwist)
+    const shouldPublish = !isZeroTwist(this.currentTwist)
     this.currentTwist = zeroTwist
     if (shouldPublish) {
       void this.publishCmdVel(zeroTwist)

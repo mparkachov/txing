@@ -327,7 +327,7 @@ function App({ initialAuthError = '' }: AppProps) {
     }, cmdVelRepeatIntervalMs)
 
     const handleKeyDown = (event: KeyboardEvent): void => {
-      if (teleopController.handleKeyDown(event.key)) {
+      if (teleopController.handleKeyDown(event.key, event.repeat)) {
         event.preventDefault()
       }
     }

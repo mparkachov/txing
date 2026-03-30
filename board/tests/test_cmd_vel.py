@@ -4,7 +4,9 @@ import time
 import unittest
 
 from board.cmd_vel import (
+    MAX_WHEEL_LINEAR_SPEED_MPS,
     MAX_SPEED,
+    TRACK_WIDTH_M,
     CmdVelController,
     Twist,
     Vector3,
@@ -59,7 +61,7 @@ class CmdVelContractTests(unittest.TestCase):
         self.assertEqual(
             mix_twist_to_tank_speeds(
                 Twist(
-                    linear=Vector3(x=1.0, y=0.0, z=0.0),
+                    linear=Vector3(x=0.5, y=0.0, z=0.0),
                     angular=Vector3(x=0.0, y=0.0, z=0.0),
                 )
             ),
@@ -72,16 +74,25 @@ class CmdVelContractTests(unittest.TestCase):
                     angular=Vector3(x=0.0, y=0.0, z=1.0),
                 )
             ),
-            (-480, 480),
+            (-134, 134),
         )
         self.assertEqual(
             mix_twist_to_tank_speeds(
                 Twist(
-                    linear=Vector3(x=1.0, y=0.0, z=0.0),
+                    linear=Vector3(x=0.2, y=0.0, z=0.0),
+                    angular=Vector3(x=0.0, y=0.0, z=0.2),
+                )
+            ),
+            (165, 219),
+        )
+        self.assertEqual(
+            mix_twist_to_tank_speeds(
+                Twist(
+                    linear=Vector3(x=0.5, y=0.0, z=0.0),
                     angular=Vector3(x=0.0, y=0.0, z=1.0),
                 )
             ),
-            (0, 480),
+            (346, 480),
         )
 
     def test_controller_stops_after_watchdog_timeout(self) -> None:
@@ -97,7 +108,7 @@ class CmdVelContractTests(unittest.TestCase):
         try:
             handled = controller.handle_message(
                 {
-                    "linear": {"x": 1, "y": 0, "z": 0},
+                    "linear": {"x": 0.5, "y": 0, "z": 0},
                     "angular": {"x": 0, "y": 0, "z": 0},
                 }
             )
@@ -106,7 +117,7 @@ class CmdVelContractTests(unittest.TestCase):
         finally:
             controller.close()
 
-        self.assertEqual(motor_driver.calls[0], (480, 480))
+        self.assertEqual(motor_driver.calls[0], (MAX_SPEED, MAX_SPEED))
         self.assertIn((0, 0), motor_driver.calls)
 
     def test_controller_stops_on_disconnect(self) -> None:
@@ -122,15 +133,15 @@ class CmdVelContractTests(unittest.TestCase):
         try:
             controller.handle_message(
                 {
-                    "linear": {"x": 0, "y": 0, "z": 0},
-                    "angular": {"x": 0, "y": 0, "z": -1},
+                    "linear": {"x": 0.2, "y": 0, "z": 0},
+                    "angular": {"x": 0, "y": 0, "z": -0.2},
                 }
             )
             controller.handle_disconnect("lost connection")
         finally:
             controller.close()
 
-        self.assertEqual(motor_driver.calls[0], (480, -480))
+        self.assertEqual(motor_driver.calls[0], (219, 165))
         self.assertIn((0, 0), motor_driver.calls)
 
     def test_controller_ignores_malformed_payloads(self) -> None:
@@ -150,3 +161,29 @@ class CmdVelContractTests(unittest.TestCase):
 
         self.assertFalse(handled)
         self.assertEqual(motor_driver.calls, [(0, 0)])
+
+    def test_controller_warns_and_ignores_unsupported_axes(self) -> None:
+        motor_driver = _FakeMotorDriver()
+        controller = CmdVelController(
+            thing_name="txing",
+            motor_driver=motor_driver,
+        )
+
+        try:
+            with self.assertLogs("board.cmd_vel", level="WARNING") as captured:
+                handled = controller.handle_message(
+                    {
+                        "linear": {"x": 0.5, "y": 0.3, "z": 0.1},
+                        "angular": {"x": 0.2, "y": 0.4, "z": 0.0},
+                    }
+                )
+        finally:
+            controller.close()
+
+        self.assertTrue(handled)
+        self.assertEqual(motor_driver.calls[0], (MAX_SPEED, MAX_SPEED))
+        self.assertIn("Ignoring unsupported cmd_vel axes", "\n".join(captured.output))
+
+    def test_uses_temporary_phase_motion_constants(self) -> None:
+        self.assertEqual(TRACK_WIDTH_M, 0.28)
+        self.assertEqual(MAX_WHEEL_LINEAR_SPEED_MPS, 0.5)

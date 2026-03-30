@@ -17,7 +17,13 @@ export type CmdVelPublishPacket = {
 }
 
 const encoder = new TextEncoder()
-const controlKeys = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'])
+const directionalKeys = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'])
+// Temporary browser teleop defaults; the MQTT contract stays strict ROS Twist semantics.
+export const cmdVelLinearStepMps = 0.1
+export const cmdVelAngularStepRadPerSec = 0.2
+export const cmdVelMaxLinearXMps = 0.5
+export const cmdVelMaxAngularZRadPerSec = 1.0
+const cmdVelAxisPrecision = 3
 
 const createZeroVector = (): Vector3 => ({
   x: 0,
@@ -25,7 +31,12 @@ const createZeroVector = (): Vector3 => ({
   z: 0,
 })
 
-export const isCmdVelControlKey = (key: string): boolean => controlKeys.has(key)
+export const isCmdVelDirectionalKey = (key: string): boolean => directionalKeys.has(key)
+
+export const isCmdVelStopKey = (key: string): boolean => key.toLowerCase() === 's'
+
+export const isCmdVelControlKey = (key: string): boolean =>
+  isCmdVelDirectionalKey(key) || isCmdVelStopKey(key)
 
 export const buildCmdVelTopic = (thingName: string): string => `${thingName}/board/cmd_vel`
 
@@ -34,39 +45,49 @@ export const buildZeroTwist = (): Twist => ({
   angular: createZeroVector(),
 })
 
-export const buildTwistFromPressedKeys = (pressedKeys: Iterable<string>): Twist => {
-  let linearX = 0
-  let angularZ = 0
+const clampAxis = (value: number, limit: number): number => Math.max(-limit, Math.min(limit, value))
 
-  for (const key of pressedKeys) {
-    switch (key) {
-      case 'ArrowUp':
-        linearX += 1
-        break
-      case 'ArrowDown':
-        linearX -= 1
-        break
-      case 'ArrowLeft':
-        angularZ += 1
-        break
-      case 'ArrowRight':
-        angularZ -= 1
-        break
-      default:
-        break
-    }
+const normalizeAxis = (value: number, limit: number): number =>
+  Math.round(clampAxis(value, limit) * 10 ** cmdVelAxisPrecision) / 10 ** cmdVelAxisPrecision
+
+export const applyCmdVelStep = (
+  currentTwist: Twist,
+  key: string,
+): Twist => {
+  if (isCmdVelStopKey(key)) {
+    return buildZeroTwist()
+  }
+
+  let linearX = currentTwist.linear.x
+  let angularZ = currentTwist.angular.z
+
+  switch (key) {
+    case 'ArrowUp':
+      linearX += cmdVelLinearStepMps
+      break
+    case 'ArrowDown':
+      linearX -= cmdVelLinearStepMps
+      break
+    case 'ArrowLeft':
+      angularZ += cmdVelAngularStepRadPerSec
+      break
+    case 'ArrowRight':
+      angularZ -= cmdVelAngularStepRadPerSec
+      break
+    default:
+      return currentTwist
   }
 
   return {
     linear: {
-      x: Math.max(-1, Math.min(1, linearX)),
+      x: normalizeAxis(linearX, cmdVelMaxLinearXMps),
       y: 0,
       z: 0,
     },
     angular: {
       x: 0,
       y: 0,
-      z: Math.max(-1, Math.min(1, angularZ)),
+      z: normalizeAxis(angularZ, cmdVelMaxAngularZRadPerSec),
     },
   }
 }

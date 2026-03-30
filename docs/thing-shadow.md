@@ -65,5 +65,10 @@ Schema validation should be done by project code and/or CI checks, while AWS IoT
 - `board` and `gw` continue to publish shadow state exactly as before; only the browser shadow transport changed from HTTP polling to push-driven MQTT shadow updates.
 - The browser still uses HTTPS for Cognito hosted UI, Cognito token exchange/refresh, Cognito Identity credential bootstrap, and IoT policy attachment. Only shadow document traffic moved to MQTT/WSS.
 - Live board motion control remains out of band and is not part of the Thing Shadow contract. The current browser-to-board control topic is `txing/board/cmd_vel`, carrying raw JSON shaped like ROS `geometry_msgs/Twist`.
+- `txing/board/cmd_vel` is a strict semantic contract, not only a ROS-shaped JSON payload:
+  - `linear.x` is forward body velocity in `m/s`
+  - `angular.z` is yaw rate in `rad/s`
+  - `linear.y`, `linear.z`, `angular.x`, and `angular.y` are unsupported on the current differential-drive board and must be `0`
+- The browser teleop implementation is only one producer of this contract. AI clients and any future producers must publish the same strict `Twist` semantics and must not rely on browser-specific key-step behavior.
 
 Unknown fields are allowed for forward compatibility and must be ignored by consumers.
