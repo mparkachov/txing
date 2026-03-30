@@ -7,6 +7,7 @@ import * as auth from 'aws-crt/dist.browser/browser/auth'
 import * as iot from 'aws-crt/dist.browser/browser/iot'
 import * as mqtt5 from 'aws-crt/dist.browser/browser/mqtt5'
 import { buildCognitoLogins, createCredentialProvider } from './aws-credentials'
+import { buildCmdVelPublishPacket, type Twist } from './cmd-vel'
 import { appConfig } from './config'
 import { mergeShadowUpdate } from './shadow-merge'
 import {
@@ -51,6 +52,7 @@ export type ShadowSession = {
   start: () => Promise<unknown>
   requestSnapshot: () => Promise<unknown>
   updateShadow: (shadowDocument: unknown) => Promise<unknown>
+  publishCmdVel: (twist: Twist) => Promise<void>
   waitForSnapshot: (
     predicate: (shadow: unknown) => boolean,
     timeoutMs: number,
@@ -359,6 +361,17 @@ class AwsIotShadowSession implements ShadowSession {
     const clientToken = createShadowClientToken('update')
     const packet = buildUpdateShadowPublishPacket(this.topics, shadowDocument, clientToken)
     return this.publishRequest('update', clientToken, packet)
+  }
+
+  async publishCmdVel(twist: Twist): Promise<void> {
+    const client = this.client
+    if (!client || !this.isConnected()) {
+      throw new Error('Shadow connection is not ready')
+    }
+
+    await client.publish(
+      buildCmdVelPublishPacket(this.options.thingName, twist) as mqtt5.PublishPacket,
+    )
   }
 
   async waitForSnapshot(

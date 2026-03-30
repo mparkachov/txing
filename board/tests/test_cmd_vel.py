@@ -1,0 +1,152 @@
+from __future__ import annotations
+
+import time
+import unittest
+
+from board.cmd_vel import (
+    MAX_SPEED,
+    CmdVelController,
+    Twist,
+    Vector3,
+    build_cmd_vel_topic,
+    mix_twist_to_tank_speeds,
+    parse_twist_payload,
+)
+
+
+class _FakeMotorDriver:
+    MAX_SPEED = MAX_SPEED
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[int, int]] = []
+
+    def setSpeeds(self, m1_speed: int, m2_speed: int) -> None:
+        self.calls.append((m1_speed, m2_speed))
+
+
+class CmdVelContractTests(unittest.TestCase):
+    def test_builds_topic(self) -> None:
+        self.assertEqual(build_cmd_vel_topic("txing"), "txing/board/cmd_vel")
+
+    def test_parses_valid_twist_payload(self) -> None:
+        twist = parse_twist_payload(
+            {
+                "linear": {"x": 1, "y": 0, "z": 0},
+                "angular": {"x": 0, "y": 0, "z": -1},
+            }
+        )
+
+        self.assertEqual(
+            twist,
+            Twist(
+                linear=Vector3(x=1.0, y=0.0, z=0.0),
+                angular=Vector3(x=0.0, y=0.0, z=-1.0),
+            ),
+        )
+
+    def test_rejects_invalid_twist_payload(self) -> None:
+        self.assertIsNone(
+            parse_twist_payload(
+                {
+                    "linear": {"x": True, "y": 0, "z": 0},
+                    "angular": {"x": 0, "y": 0, "z": 0},
+                }
+            )
+        )
+        self.assertIsNone(parse_twist_payload({"linear": {"x": 1, "y": 0, "z": 0}}))
+
+    def test_mixes_twist_into_tank_speeds(self) -> None:
+        self.assertEqual(
+            mix_twist_to_tank_speeds(
+                Twist(
+                    linear=Vector3(x=1.0, y=0.0, z=0.0),
+                    angular=Vector3(x=0.0, y=0.0, z=0.0),
+                )
+            ),
+            (480, 480),
+        )
+        self.assertEqual(
+            mix_twist_to_tank_speeds(
+                Twist(
+                    linear=Vector3(x=0.0, y=0.0, z=0.0),
+                    angular=Vector3(x=0.0, y=0.0, z=1.0),
+                )
+            ),
+            (-480, 480),
+        )
+        self.assertEqual(
+            mix_twist_to_tank_speeds(
+                Twist(
+                    linear=Vector3(x=1.0, y=0.0, z=0.0),
+                    angular=Vector3(x=0.0, y=0.0, z=1.0),
+                )
+            ),
+            (0, 480),
+        )
+
+    def test_controller_stops_after_watchdog_timeout(self) -> None:
+        motor_driver = _FakeMotorDriver()
+        controller = CmdVelController(
+            thing_name="txing",
+            motor_driver=motor_driver,
+            watchdog_timeout_seconds=0.01,
+            watchdog_poll_interval=0.001,
+        )
+        controller.start()
+
+        try:
+            handled = controller.handle_message(
+                {
+                    "linear": {"x": 1, "y": 0, "z": 0},
+                    "angular": {"x": 0, "y": 0, "z": 0},
+                }
+            )
+            self.assertTrue(handled)
+            time.sleep(0.05)
+        finally:
+            controller.close()
+
+        self.assertEqual(motor_driver.calls[0], (480, 480))
+        self.assertIn((0, 0), motor_driver.calls)
+
+    def test_controller_stops_on_disconnect(self) -> None:
+        motor_driver = _FakeMotorDriver()
+        controller = CmdVelController(
+            thing_name="txing",
+            motor_driver=motor_driver,
+            watchdog_timeout_seconds=1.0,
+            watchdog_poll_interval=0.01,
+        )
+        controller.start()
+
+        try:
+            controller.handle_message(
+                {
+                    "linear": {"x": 0, "y": 0, "z": 0},
+                    "angular": {"x": 0, "y": 0, "z": -1},
+                }
+            )
+            controller.handle_disconnect("lost connection")
+        finally:
+            controller.close()
+
+        self.assertEqual(motor_driver.calls[0], (480, -480))
+        self.assertIn((0, 0), motor_driver.calls)
+
+    def test_controller_ignores_malformed_payloads(self) -> None:
+        motor_driver = _FakeMotorDriver()
+        controller = CmdVelController(
+            thing_name="txing",
+            motor_driver=motor_driver,
+            watchdog_timeout_seconds=1.0,
+            watchdog_poll_interval=0.01,
+        )
+        controller.start()
+
+        try:
+            handled = controller.handle_message({"linear": {"x": 1}})
+        finally:
+            controller.close()
+
+        self.assertFalse(handled)
+        self.assertEqual(motor_driver.calls, [(0, 0)])

@@ -20,6 +20,7 @@ from typing import Any
 import jsonschema
 import paho.mqtt.client as mqtt
 
+from .cmd_vel import CmdVelController, build_cmd_vel_topic
 from .shadow_store import DEFAULT_SHADOW_FILE, save_shadow
 from .video_sender import VideoSenderSupervisor
 from .video_state import (
@@ -130,7 +131,12 @@ class VideoStartupTimeoutError(RuntimeError):
 
 
 class AwsShadowClient:
-    def __init__(self, config: ControlConfig) -> None:
+    def __init__(
+        self,
+        config: ControlConfig,
+        *,
+        cmd_vel_controller: CmdVelController | None = None,
+    ) -> None:
         self._config = config
         self._topic_prefix = f"$aws/things/{config.thing_name}/shadow"
         self._topic_get = f"{self._topic_prefix}/get"
@@ -144,6 +150,8 @@ class AwsShadowClient:
             f"{self._topic_prefix}/update/rejected"
         )
         self._topic_update_delta = f"{self._topic_prefix}/update/delta"
+        self._topic_cmd_vel = build_cmd_vel_topic(config.thing_name)
+        self._cmd_vel_controller = cmd_vel_controller
         self._client = mqtt.Client(
             callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
             client_id=config.client_id,
@@ -305,6 +313,7 @@ class AwsShadowClient:
                 (self._topic_update_accepted, 1),
                 (self._topic_update_rejected, 1),
                 (self._topic_update_delta, 1),
+                (self._topic_cmd_vel, 1),
             ]
         )
         if result != mqtt.MQTT_ERR_SUCCESS:
@@ -338,6 +347,10 @@ class AwsShadowClient:
         reason_code: Any,
         _properties: Any,
     ) -> None:
+        if self._cmd_vel_controller is not None:
+            self._cmd_vel_controller.handle_disconnect(
+                f"AWS IoT MQTT disconnect reason={reason_code}"
+            )
         with self._lock:
             self._connection_ready = False
         if not self._disconnect_requested:
@@ -354,6 +367,11 @@ class AwsShadowClient:
             payload = json.loads(msg.payload.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
             LOGGER.warning("Ignored non-JSON MQTT message on topic %s", msg.topic)
+            return
+
+        if msg.topic == self._topic_cmd_vel:
+            if self._cmd_vel_controller is not None:
+                self._cmd_vel_controller.handle_message(payload)
             return
 
         if msg.topic == self._topic_get_rejected:
@@ -1041,7 +1059,12 @@ def main() -> None:
         initial_addresses.ipv6 or "-",
     )
 
-    shadow_client = AwsShadowClient(config)
+    cmd_vel_controller = CmdVelController(thing_name=config.thing_name)
+    cmd_vel_controller.start()
+    shadow_client = AwsShadowClient(
+        config,
+        cmd_vel_controller=cmd_vel_controller,
+    )
     video_supervisor = VideoSenderSupervisor(
         channel_name=config.video_channel_name,
         viewer_url=config.video_viewer_url,
@@ -1188,6 +1211,7 @@ def main() -> None:
     finally:
         video_supervisor.stop()
         shadow_client.close()
+        cmd_vel_controller.close()
 
     if halt_requested:
         _request_system_halt(config.halt_command)

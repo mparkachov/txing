@@ -22,6 +22,8 @@ import {
   extractReportedRedcon,
 } from './app-model'
 import { appConfig } from './config'
+import { CmdVelTeleopController } from './cmd-vel-teleop'
+import type { Twist } from './cmd-vel'
 import DebugPanel from './DebugPanel'
 import { createShadowSession, type ShadowConnectionState, type ShadowSession } from './shadow-api'
 import TxingPanel from './TxingPanel'
@@ -37,6 +39,7 @@ type ShadowSnapshotView = {
 
 const formatJson = (value: unknown): string => JSON.stringify(value, null, 2)
 const boardOfflineTimeoutMs = 45_000
+const cmdVelRepeatIntervalMs = 100
 
 const createShadowSnapshotView = (shadow: unknown): ShadowSnapshotView => ({
   json: formatJson(shadow),
@@ -288,11 +291,83 @@ function App({ initialAuthError = '' }: AppProps) {
     }
   }, [adminEmailMismatch, status])
 
+  const publishCmdVel = useEffectEvent(async (twist: Twist): Promise<void> => {
+    const shadowSession = shadowSessionRef.current
+    if (!shadowSession || !shadowSession.isConnected()) {
+      return
+    }
+
+    try {
+      await shadowSession.publishCmdVel(twist)
+    } catch (caughtError) {
+      setError(
+        caughtError instanceof Error ? caughtError.message : 'Unable to publish board cmd_vel',
+      )
+    }
+  })
+
   useEffect(() => {
     if (!canUseBoardVideo && isBoardVideoExpanded) {
       setIsBoardVideoExpanded(false)
     }
   }, [canUseBoardVideo, isBoardVideoExpanded])
+
+  useEffect(() => {
+    if (!isBoardVideoExpanded || !canUseBoardVideo || !isShadowConnected) {
+      return
+    }
+
+    const teleopController = new CmdVelTeleopController({
+      publishCmdVel,
+    })
+    teleopController.activate()
+
+    const repeatTimerId = window.setInterval(() => {
+      teleopController.tick()
+    }, cmdVelRepeatIntervalMs)
+
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      if (teleopController.handleKeyDown(event.key)) {
+        event.preventDefault()
+      }
+    }
+
+    const handleKeyUp = (event: KeyboardEvent): void => {
+      if (teleopController.handleKeyUp(event.key)) {
+        event.preventDefault()
+      }
+    }
+
+    const handleBlur = (): void => {
+      teleopController.handleBlur()
+    }
+
+    const handleVisibilityChange = (): void => {
+      if (document.hidden) {
+        teleopController.handleVisibilityHidden()
+      }
+    }
+
+    const handlePageHide = (): void => {
+      teleopController.handleBlur()
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    window.addEventListener('keyup', handleKeyUp)
+    window.addEventListener('blur', handleBlur)
+    window.addEventListener('pagehide', handlePageHide)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+
+    return () => {
+      window.clearInterval(repeatTimerId)
+      window.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener('keyup', handleKeyUp)
+      window.removeEventListener('blur', handleBlur)
+      window.removeEventListener('pagehide', handlePageHide)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      teleopController.deactivate()
+    }
+  }, [canUseBoardVideo, isBoardVideoExpanded, isShadowConnected])
 
   const loadShadow = async (): Promise<void> => {
     setIsLoadingShadow(true)

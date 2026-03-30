@@ -8,7 +8,9 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import MagicMock, patch
 
+from board.cmd_vel import build_cmd_vel_topic
 from board.shadow_control import (
+    AwsShadowClient,
     DEFAULT_AWS_CONNECT_TIMEOUT,
     DEFAULT_HEARTBEAT_SECONDS,
     DEFAULT_MQTT_PUBLISH_TIMEOUT,
@@ -114,6 +116,36 @@ def _make_config(**overrides: object) -> ControlConfig:
 
 
 class ShadowControlContractTests(unittest.TestCase):
+    def test_routes_cmd_vel_messages_to_controller(self) -> None:
+        cmd_vel_controller = MagicMock()
+        with patch.object(shadow_control.mqtt.Client, "tls_set", return_value=None):
+            shadow_client = AwsShadowClient(
+                _make_config(),
+                cmd_vel_controller=cmd_vel_controller,
+            )
+        msg = type(
+            "Message",
+            (),
+            {
+                "topic": build_cmd_vel_topic("txing"),
+                "payload": json.dumps(
+                    {
+                        "linear": {"x": 1, "y": 0, "z": 0},
+                        "angular": {"x": 0, "y": 0, "z": 0},
+                    }
+                ).encode("utf-8"),
+            },
+        )()
+
+        shadow_client._on_message(MagicMock(), None, msg)  # type: ignore[arg-type]
+
+        cmd_vel_controller.handle_message.assert_called_once_with(
+            {
+                "linear": {"x": 1, "y": 0, "z": 0},
+                "angular": {"x": 0, "y": 0, "z": 0},
+            }
+        )
+
     def test_extracts_desired_board_power_from_shadow_snapshot(self) -> None:
         payload = {
             "state": {

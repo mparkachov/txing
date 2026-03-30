@@ -64,5 +64,6 @@ Schema validation should be done by project code and/or CI checks, while AWS IoT
 - The browser admin SPA consumes the classic `txing` Thing Shadow over AWS IoT MQTT/WSS.
 - `board` and `gw` continue to publish shadow state exactly as before; only the browser shadow transport changed from HTTP polling to push-driven MQTT shadow updates.
 - The browser still uses HTTPS for Cognito hosted UI, Cognito token exchange/refresh, Cognito Identity credential bootstrap, and IoT policy attachment. Only shadow document traffic moved to MQTT/WSS.
+- Live board motion control remains out of band and is not part of the Thing Shadow contract. The current browser-to-board control topic is `txing/board/cmd_vel`, carrying raw JSON shaped like ROS `geometry_msgs/Twist`.
 
 Unknown fields are allowed for forward compatibility and must be ignored by consumers.
