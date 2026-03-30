@@ -189,14 +189,14 @@ class ShadowControlContractTests(unittest.TestCase):
         report = _build_board_report(
             addresses=type("Addresses", (), {"ipv4": "192.168.1.20", "ipv6": "2001:db8::20"})(),
             power=True,
-            drive_state=DriveState(left_speed=96, right_speed=144, sequence=1),
+            drive_state=DriveState(left_speed=20, right_speed=30, sequence=1),
             video_state=_make_video_state(ready=True),
         )
 
         _validate_shadow_update(validator, {"state": {"reported": {"board": report}}})
         self.assertEqual(report["video"]["session"]["channelName"], "txing-board-video")
-        self.assertEqual(report["drive"]["leftSpeed"], 96)
-        self.assertEqual(report["drive"]["rightSpeed"], 144)
+        self.assertEqual(report["drive"]["leftSpeed"], 20)
+        self.assertEqual(report["drive"]["rightSpeed"], 30)
 
     def test_default_shadow_reset_payload_matches_schema(self) -> None:
         validator = _load_validator(Path(REPO_ROOT / "docs" / "txing-shadow.schema.json"))
@@ -437,8 +437,8 @@ class ShadowControlContractTests(unittest.TestCase):
         cmd_vel_controller = MagicMock()
         cmd_vel_controller.get_drive_state.side_effect = [
             DriveState(left_speed=0, right_speed=0, sequence=0),
-            DriveState(left_speed=96, right_speed=192, sequence=1),
-            DriveState(left_speed=96, right_speed=192, sequence=1),
+            DriveState(left_speed=20, right_speed=40, sequence=1),
+            DriveState(left_speed=20, right_speed=40, sequence=1),
         ]
 
         with (
@@ -473,8 +473,8 @@ class ShadowControlContractTests(unittest.TestCase):
         second_payload = shadow_client.publish_update.call_args_list[1].args[0]
         self.assertEqual(first_payload["state"]["reported"]["board"]["drive"]["leftSpeed"], 0)
         self.assertEqual(first_payload["state"]["reported"]["board"]["drive"]["rightSpeed"], 0)
-        self.assertEqual(second_payload["state"]["reported"]["board"]["drive"]["leftSpeed"], 96)
-        self.assertEqual(second_payload["state"]["reported"]["board"]["drive"]["rightSpeed"], 192)
+        self.assertEqual(second_payload["state"]["reported"]["board"]["drive"]["leftSpeed"], 20)
+        self.assertEqual(second_payload["state"]["reported"]["board"]["drive"]["rightSpeed"], 40)
 
     def test_justfile_install_service_has_no_mediamtx_dependency(self) -> None:
         justfile = Path(REPO_ROOT / "board" / "justfile").read_text(encoding="utf-8")

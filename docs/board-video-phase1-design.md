@@ -121,6 +121,7 @@ Control contract notes:
 - `txing/board/cmd_vel` uses strict ROS `Twist` semantics, not browser-specific steering semantics.
 - `linear.x` is forward velocity in `m/s` and `angular.z` is yaw rate in `rad/s`.
 - Browser teleop step sizes are a UI policy only. The shared MQTT contract for browser and AI producers remains the strict `Twist` meaning above.
+- Board runtime track status reported in Thing Shadow is a separate provisional contract: `reported.board.drive.leftSpeed` and `rightSpeed` are signed percent values in `[-100, 100]` for this phase.
 
 ## Media Serving
 

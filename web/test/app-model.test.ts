@@ -6,9 +6,11 @@ import {
   deriveTxingPoweredOn,
   extractDesiredBoardPower,
   extractDesiredMcuPower,
+  extractReportedBoardDrive,
   extractReportedBoardVideo,
   extractReportedRedcon,
   getAppRoute,
+  getTrackIndicatorPresentation,
   getTxingRedconToneClass,
   resolveViewerChannelName,
 } from '../src/app-model'
@@ -62,6 +64,44 @@ describe('app model helpers', () => {
     expect(extractReportedRedcon({ state: { reported: { redcon: 7 } } })).toBeNull()
   })
 
+  test('extracts signed board track percentages from shadow state', () => {
+    expect(
+      extractReportedBoardDrive({
+        state: {
+          reported: {
+            board: {
+              drive: {
+                leftSpeed: 60,
+                rightSpeed: -30,
+              },
+            },
+          },
+        },
+      }),
+    ).toEqual({
+      leftSpeed: 60,
+      rightSpeed: -30,
+    })
+
+    expect(
+      extractReportedBoardDrive({
+        state: {
+          reported: {
+            board: {
+              drive: {
+                leftSpeed: 160,
+                rightSpeed: 0,
+              },
+            },
+          },
+        },
+      }),
+    ).toEqual({
+      leftSpeed: null,
+      rightSpeed: 0,
+    })
+  })
+
   test('maps redcon values to txing label tone classes and descriptions', () => {
     expect(getTxingRedconToneClass(1)).toBe('status-txing-redcon-1')
     expect(getTxingRedconToneClass(2)).toBe('status-txing-redcon-2')
@@ -74,6 +114,24 @@ describe('app model helpers', () => {
     expect(describeRedcon(3)).toBe('REDCON 3 · Torch-Up · Yellow')
     expect(describeRedcon(4)).toBe('REDCON 4 · Cold Camp · Green')
     expect(describeRedcon(null)).toBe('REDCON unavailable')
+  })
+
+  test('maps track values to tone and intensity for header indicators', () => {
+    expect(getTrackIndicatorPresentation(60, 'Left')).toEqual({
+      toneClass: 'status-track-forward',
+      intensity: 0.6,
+      ariaLabel: 'Left track forward 60 percent',
+    })
+    expect(getTrackIndicatorPresentation(-30, 'Right')).toEqual({
+      toneClass: 'status-track-reverse',
+      intensity: 0.3,
+      ariaLabel: 'Right track reverse 30 percent',
+    })
+    expect(getTrackIndicatorPresentation(0, 'Left')).toEqual({
+      toneClass: 'status-track-idle',
+      intensity: 0,
+      ariaLabel: 'Left track idle',
+    })
   })
 
   test('extracts desired mcu and board power from shadow state', () => {

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://txing.local/schemas/txing-shadow.schema.json",
-  "title": "Txing Thing Shadow Contract v19",
+  "title": "Txing Thing Shadow Contract v20",
   "description": "Canonical payload shape for txing Thing Shadow updates and snapshots.",
   "type": "object",
   "additionalProperties": true,
@@ -88,7 +88,7 @@
       "additionalProperties": true,
       "properties": {
         "redcon": {
-          "description": "Gateway-derived readiness summary. 1=Red/Hot Rig, 2=Orange-Amber/Ember Watch, 3=Yellow/Torch-Up, 4=Green/Cold Camp.",
+          "description": "Gateway-derived readiness summary. 4=MCU sleep state, 3=MCU awake but operator video path not ready, 2=board online and video ready without an active viewer, 1=board online with an active viewer.",
           "type": "integer",
           "minimum": 1,
           "maximum": 4
@@ -206,13 +206,13 @@
       "properties": {
         "leftSpeed": {
           "type": "integer",
-          "minimum": -480,
-          "maximum": 480
+          "minimum": -100,
+          "maximum": 100
         },
         "rightSpeed": {
           "type": "integer",
-          "minimum": -480,
-          "maximum": 480
+          "minimum": -100,
+          "maximum": 100
         }
       }
     },

@@ -8,6 +8,17 @@ export type BoardVideoRuntime = {
   lastError: string | null
 }
 
+export type BoardDriveRuntime = {
+  leftSpeed: number | null
+  rightSpeed: number | null
+}
+
+export type TrackIndicatorPresentation = {
+  toneClass: 'status-track-forward' | 'status-track-reverse' | 'status-track-idle'
+  intensity: number
+  ariaLabel: string
+}
+
 export type TxingReportedPowerInputs = {
   reportedRedcon: number | null
   reportedMcuPower: boolean | null
@@ -52,6 +63,13 @@ const redconDescriptors: Record<1 | 2 | 3 | 4, RedconDescriptor> = {
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null
+
+const clampSignedPercent = (value: unknown): number | null => {
+  if (typeof value !== 'number' || !Number.isInteger(value)) {
+    return null
+  }
+  return value >= -100 && value <= 100 ? value : null
+}
 
 const extractDesiredState = (shadow: unknown): Record<string, unknown> | null => {
   if (!isRecord(shadow)) {
@@ -289,6 +307,57 @@ export const extractReportedBoardVideo = (shadow: unknown): BoardVideoRuntime =>
         : null,
     viewerConnected: video.viewerConnected === true,
     lastError: typeof video.lastError === 'string' && video.lastError.trim() ? video.lastError : null,
+  }
+}
+
+export const extractReportedBoardDrive = (shadow: unknown): BoardDriveRuntime => {
+  const board = extractReportedBoard(shadow)
+  if (!board) {
+    return {
+      leftSpeed: null,
+      rightSpeed: null,
+    }
+  }
+
+  const drive = board.drive
+  if (!isRecord(drive)) {
+    return {
+      leftSpeed: null,
+      rightSpeed: null,
+    }
+  }
+
+  return {
+    leftSpeed: clampSignedPercent(drive.leftSpeed),
+    rightSpeed: clampSignedPercent(drive.rightSpeed),
+  }
+}
+
+export const getTrackIndicatorPresentation = (
+  speed: number | null,
+  sideLabel: 'Left' | 'Right',
+): TrackIndicatorPresentation => {
+  if (speed === null) {
+    return {
+      toneClass: 'status-track-idle',
+      intensity: 0,
+      ariaLabel: `${sideLabel} track speed unavailable`,
+    }
+  }
+
+  if (speed === 0) {
+    return {
+      toneClass: 'status-track-idle',
+      intensity: 0,
+      ariaLabel: `${sideLabel} track idle`,
+    }
+  }
+
+  const magnitude = Math.abs(speed)
+  return {
+    toneClass: speed > 0 ? 'status-track-forward' : 'status-track-reverse',
+    intensity: magnitude / 100,
+    ariaLabel: `${sideLabel} track ${speed > 0 ? 'forward' : 'reverse'} ${magnitude} percent`,
   }
 }
 

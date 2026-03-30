@@ -66,7 +66,7 @@ class CmdVelContractTests(unittest.TestCase):
                     angular=Vector3(x=0.0, y=0.0, z=0.0),
                 )
             ),
-            (480, 480),
+            (100, 100),
         )
         self.assertEqual(
             mix_twist_to_tank_speeds(
@@ -75,7 +75,7 @@ class CmdVelContractTests(unittest.TestCase):
                     angular=Vector3(x=0.0, y=0.0, z=1.0),
                 )
             ),
-            (-134, 134),
+            (-28, 28),
         )
         self.assertEqual(
             mix_twist_to_tank_speeds(
@@ -84,7 +84,7 @@ class CmdVelContractTests(unittest.TestCase):
                     angular=Vector3(x=0.0, y=0.0, z=0.2),
                 )
             ),
-            (165, 219),
+            (34, 46),
         )
         self.assertEqual(
             mix_twist_to_tank_speeds(
@@ -93,7 +93,7 @@ class CmdVelContractTests(unittest.TestCase):
                     angular=Vector3(x=0.0, y=0.0, z=1.0),
                 )
             ),
-            (346, 480),
+            (72, 100),
         )
 
     def test_controller_stops_after_watchdog_timeout(self) -> None:
@@ -142,7 +142,7 @@ class CmdVelContractTests(unittest.TestCase):
         finally:
             controller.close()
 
-        self.assertEqual(motor_driver.calls[0], (219, 165))
+        self.assertEqual(motor_driver.calls[0], (46, 34))
         self.assertIn((0, 0), motor_driver.calls)
 
     def test_controller_ignores_malformed_payloads(self) -> None:
@@ -186,6 +186,7 @@ class CmdVelContractTests(unittest.TestCase):
         self.assertIn("Ignoring unsupported cmd_vel axes", "\n".join(captured.output))
 
     def test_uses_temporary_phase_motion_constants(self) -> None:
+        self.assertEqual(MAX_SPEED, 100)
         self.assertEqual(TRACK_WIDTH_M, 0.28)
         self.assertEqual(MAX_WHEEL_LINEAR_SPEED_MPS, 0.5)
 
@@ -205,7 +206,7 @@ class CmdVelContractTests(unittest.TestCase):
                     "angular": {"x": 0, "y": 0, "z": 0.2},
                 }
             )
-            self.assertEqual(controller.get_drive_state(), DriveState(165, 219, 1))
+            self.assertEqual(controller.get_drive_state(), DriveState(34, 46, 1))
             controller.stop(reason="test stop")
             self.assertEqual(controller.get_drive_state(), DriveState(0, 0, 2))
         finally:

@@ -38,6 +38,8 @@ from .shadow_store import (
     DEFAULT_BATTERY_MV,
     DEFAULT_SHADOW_FILE,
     get_reported_board_power,
+    get_reported_board_video_ready,
+    get_reported_board_video_viewer_connected,
     get_reported_board_wifi_online,
     get_reported_battery_mv,
     get_reported_power,
@@ -323,6 +325,28 @@ def _extract_reported_board_wifi_online(payload: dict[str, Any]) -> bool | None:
     return value if isinstance(value, bool) else None
 
 
+def _extract_reported_board_video_ready(payload: dict[str, Any]) -> bool | None:
+    board = _extract_reported_board(payload)
+    if board is None:
+        return None
+    video = board.get("video")
+    if not isinstance(video, dict):
+        return None
+    value = video.get("ready")
+    return value if isinstance(value, bool) else None
+
+
+def _extract_reported_board_video_viewer_connected(payload: dict[str, Any]) -> bool | None:
+    board = _extract_reported_board(payload)
+    if board is None:
+        return None
+    video = board.get("video")
+    if not isinstance(video, dict):
+        return None
+    value = video.get("viewerConnected")
+    return value if isinstance(value, bool) else None
+
+
 def _extract_reported_ble_online(payload: dict[str, Any]) -> bool | None:
     mcu = _extract_reported_mcu(payload)
     if mcu is None:
@@ -430,14 +454,16 @@ def _calculate_redcon(
     mcu_power: bool,
     board_power: bool,
     board_wifi_online: bool,
+    board_video_ready: bool,
+    board_video_viewer_connected: bool,
 ) -> int:
     if not mcu_power:
         return 4
-    if board_wifi_online:
+    if not (board_power and board_wifi_online and board_video_ready):
+        return 3
+    if board_video_viewer_connected:
         return 1
-    if board_power:
-        return 2
-    return 3
+    return 2
 
 
 def _read_iot_endpoint(explicit_endpoint: str | None, endpoint_file: Path) -> str:
@@ -560,6 +586,8 @@ class ShadowState:
     ble_online: bool = False
     board_power: bool = False
     board_wifi_online: bool = False
+    board_video_ready: bool = False
+    board_video_viewer_connected: bool = False
     redcon: int = 4
     ble_uuid_search_mode: bool = False
     shadow_version: int | None = None
@@ -588,17 +616,25 @@ class ShadowState:
         *,
         power: bool | None = None,
         wifi_online: bool | None = None,
+        video_ready: bool | None = None,
+        video_viewer_connected: bool | None = None,
     ) -> None:
         if power is not None:
             self.board_power = power
         if wifi_online is not None:
             self.board_wifi_online = wifi_online
+        if video_ready is not None:
+            self.board_video_ready = video_ready
+        if video_viewer_connected is not None:
+            self.board_video_viewer_connected = video_viewer_connected
 
     def reconcile_redcon(self) -> bool:
         derived_redcon = _calculate_redcon(
             mcu_power=self.reported_power,
             board_power=self.board_power,
             board_wifi_online=self.board_wifi_online,
+            board_video_ready=self.board_video_ready,
+            board_video_viewer_connected=self.board_video_viewer_connected,
         )
         if self.redcon == derived_redcon:
             return False
@@ -623,6 +659,10 @@ class ShadowState:
                     "power": self.board_power,
                     "wifi": {
                         "online": self.board_wifi_online,
+                    },
+                    "video": {
+                        "ready": self.board_video_ready,
+                        "viewerConnected": self.board_video_viewer_connected,
                     },
                 },
             },
@@ -662,6 +702,8 @@ class AwsShadowUpdate:
     ble_uuids: BleGattUuids | None = None
     board_power: bool | None = None
     board_wifi_online: bool | None = None
+    board_video_ready: bool | None = None
+    board_video_viewer_connected: bool | None = None
     reported_redcon: int | None = None
     version: int | None = None
 
@@ -966,6 +1008,10 @@ class AwsShadowClient:
                 ble_uuids=_extract_reported_ble_uuids(payload),
                 board_power=_extract_reported_board_power(payload),
                 board_wifi_online=_extract_reported_board_wifi_online(payload),
+                board_video_ready=_extract_reported_board_video_ready(payload),
+                board_video_viewer_connected=_extract_reported_board_video_viewer_connected(
+                    payload
+                ),
                 reported_redcon=_extract_reported_redcon(payload),
                 version=_extract_shadow_version(payload),
             )
@@ -983,6 +1029,10 @@ class AwsShadowClient:
                 ble_uuids=_extract_reported_ble_uuids(payload),
                 board_power=_extract_reported_board_power(payload),
                 board_wifi_online=_extract_reported_board_wifi_online(payload),
+                board_video_ready=_extract_reported_board_video_ready(payload),
+                board_video_viewer_connected=_extract_reported_board_video_viewer_connected(
+                    payload
+                ),
                 reported_redcon=_extract_reported_redcon(payload),
                 version=_extract_shadow_version(payload),
             )
@@ -1453,6 +1503,23 @@ class BleSleepBridge:
                 and self._shadow.board_wifi_online != update.board_wifi_online
             ):
                 self._shadow.set_board_reported(wifi_online=update.board_wifi_online)
+                changed = True
+                redcon_inputs_changed = True
+            if (
+                update.board_video_ready is not None
+                and self._shadow.board_video_ready != update.board_video_ready
+            ):
+                self._shadow.set_board_reported(video_ready=update.board_video_ready)
+                changed = True
+                redcon_inputs_changed = True
+            if (
+                update.board_video_viewer_connected is not None
+                and self._shadow.board_video_viewer_connected
+                != update.board_video_viewer_connected
+            ):
+                self._shadow.set_board_reported(
+                    video_viewer_connected=update.board_video_viewer_connected
+                )
                 changed = True
                 redcon_inputs_changed = True
             if (
@@ -2623,6 +2690,8 @@ def _build_shadow_from_snapshot(
     battery_mv = _extract_reported_battery_mv(snapshot)
     board_power = _extract_reported_board_power(snapshot)
     board_wifi_online = _extract_reported_board_wifi_online(snapshot)
+    board_video_ready = _extract_reported_board_video_ready(snapshot)
+    board_video_viewer_connected = _extract_reported_board_video_viewer_connected(snapshot)
     reported_redcon = _extract_reported_redcon(snapshot)
     mcu = _extract_reported_mcu(snapshot)
     ble_map = _extract_reported_ble_map(mcu) if mcu is not None else None
@@ -2663,6 +2732,16 @@ def _build_shadow_from_snapshot(
             board_wifi_online
             if board_wifi_online is not None
             else get_reported_board_wifi_online(cached)
+        ),
+        board_video_ready=(
+            board_video_ready
+            if board_video_ready is not None
+            else get_reported_board_video_ready(cached)
+        ),
+        board_video_viewer_connected=(
+            board_video_viewer_connected
+            if board_video_viewer_connected is not None
+            else get_reported_board_video_viewer_connected(cached)
         ),
         redcon=(
             reported_redcon

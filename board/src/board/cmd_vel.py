@@ -9,8 +9,9 @@ from typing import Any
 
 LOGGER = logging.getLogger("board.cmd_vel")
 
-MAX_SPEED = 480
-# Temporary phase constants until per-robot calibration is added to runtime config.
+# Temporary phase constants until per-robot calibration and hardware mapping are
+# added to runtime config. The current runtime scale is signed percent effort.
+MAX_SPEED = 100
 TRACK_WIDTH_M = 0.28
 MAX_WHEEL_LINEAR_SPEED_MPS = 0.50
 

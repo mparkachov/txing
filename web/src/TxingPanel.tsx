@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AuthUser } from './auth'
-import { describeRedcon, getTxingRedconToneClass } from './app-model'
+import {
+  describeRedcon,
+  getTrackIndicatorPresentation,
+  getTxingRedconToneClass,
+} from './app-model'
 import VideoPanel from './VideoPanel'
 
 type TxingPanelProps = {
@@ -12,7 +16,9 @@ type TxingPanelProps = {
   isTxingSwitchDisabled: boolean
   isTxingSwitchPending: boolean
   lastShadowUpdateAtMs: number | null
+  reportedBoardLeftTrackSpeed: number | null
   reportedBoardOnline: boolean | null
+  reportedBoardRightTrackSpeed: number | null
   reportedMcuBatteryMv: number | null
   reportedMcuBleOnline: boolean | null
   reportedRedcon: number | null
@@ -136,7 +142,9 @@ function TxingPanel({
   isTxingSwitchDisabled,
   isTxingSwitchPending,
   lastShadowUpdateAtMs,
+  reportedBoardLeftTrackSpeed,
   reportedBoardOnline,
+  reportedBoardRightTrackSpeed,
   reportedMcuBatteryMv,
   reportedMcuBleOnline,
   reportedRedcon,
@@ -158,6 +166,8 @@ function TxingPanel({
   const bleSignalToneClass = getBleSignalToneClass(reportedMcuBleOnline)
   const txingRedconToneClass = getTxingRedconToneClass(reportedRedcon)
   const txingRedconLabel = describeRedcon(reportedRedcon)
+  const leftTrackPresentation = getTrackIndicatorPresentation(reportedBoardLeftTrackSpeed, 'Left')
+  const rightTrackPresentation = getTrackIndicatorPresentation(reportedBoardRightTrackSpeed, 'Right')
   const userMenuIdentity = authUser?.email ?? authUser?.name ?? authUser?.sub ?? 'User'
   const userMenuInitial = userMenuIdentity.trim().charAt(0).toUpperCase() || 'U'
   const lastShadowUpdateLabel = formatShadowUpdateTime(lastShadowUpdateAtMs)
@@ -294,11 +304,27 @@ function TxingPanel({
                 {lastShadowUpdateLabel}
               </time>
             </div>
-            <div
-              className={`status-name status-txing-name ${txingRedconToneClass}`}
-              title={txingRedconLabel}
-            >
-              TXING
+            <div className="status-txing-title-group">
+              <div
+                className={`status-track-indicator ${leftTrackPresentation.toneClass}`}
+                role="img"
+                aria-label={leftTrackPresentation.ariaLabel}
+                title={leftTrackPresentation.ariaLabel}
+                style={{ opacity: 0.28 + leftTrackPresentation.intensity * 0.68 }}
+              />
+              <div
+                className={`status-name status-txing-name ${txingRedconToneClass}`}
+                title={txingRedconLabel}
+              >
+                TXING
+              </div>
+              <div
+                className={`status-track-indicator ${rightTrackPresentation.toneClass}`}
+                role="img"
+                aria-label={rightTrackPresentation.ariaLabel}
+                title={rightTrackPresentation.ariaLabel}
+                style={{ opacity: 0.28 + rightTrackPresentation.intensity * 0.68 }}
+              />
             </div>
             <div className="status-txing-header-side status-txing-header-side-end">
               <button

@@ -10,6 +10,8 @@ DEFAULT_REPORTED_POWER = False
 DEFAULT_BATTERY_MV = 3750
 DEFAULT_BOARD_POWER = False
 DEFAULT_BOARD_WIFI_ONLINE = False
+DEFAULT_BOARD_VIDEO_READY = False
+DEFAULT_BOARD_VIDEO_VIEWER_CONNECTED = False
 DEFAULT_REDCON = 4
 DEFAULT_SHADOW_FILE = Path("/tmp/txing_shadow.json")
 
@@ -27,6 +29,10 @@ def default_shadow_payload() -> dict[str, Any]:
                     "power": DEFAULT_BOARD_POWER,
                     "wifi": {
                         "online": DEFAULT_BOARD_WIFI_ONLINE,
+                    },
+                    "video": {
+                        "ready": DEFAULT_BOARD_VIDEO_READY,
+                        "viewerConnected": DEFAULT_BOARD_VIDEO_VIEWER_CONNECTED,
                     },
                 },
             },
@@ -112,6 +118,26 @@ def get_reported_board_wifi_online(payload: dict[str, Any]) -> bool:
     if isinstance(value, bool):
         return value
     return DEFAULT_BOARD_WIFI_ONLINE
+
+
+def get_reported_board_video_ready(payload: dict[str, Any]) -> bool:
+    reported = payload.get("state", {}).get("reported", {})
+    board = reported.get("board", {}) if isinstance(reported, dict) else {}
+    video = board.get("video", {}) if isinstance(board, dict) else {}
+    value = video.get("ready") if isinstance(video, dict) else None
+    if isinstance(value, bool):
+        return value
+    return DEFAULT_BOARD_VIDEO_READY
+
+
+def get_reported_board_video_viewer_connected(payload: dict[str, Any]) -> bool:
+    reported = payload.get("state", {}).get("reported", {})
+    board = reported.get("board", {}) if isinstance(reported, dict) else {}
+    video = board.get("video", {}) if isinstance(board, dict) else {}
+    value = video.get("viewerConnected") if isinstance(video, dict) else None
+    if isinstance(value, bool):
+        return value
+    return DEFAULT_BOARD_VIDEO_VIEWER_CONNECTED
 
 
 def get_reported_redcon(payload: dict[str, Any]) -> int:
