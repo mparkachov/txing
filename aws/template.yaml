@@ -93,7 +93,9 @@ Resources:
           - Sid: Connect
             Effect: Allow
             Action: iot:Connect
-            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/txing-*
+            Resource:
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/txing-*
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/rig-*
           - Sid: ThingShadow
             Effect: Allow
             Action:
