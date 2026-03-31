@@ -117,7 +117,7 @@ sudo journalctl -u rig -f
 ```
 
 The `just rig::install-service` task enables `bluetooth`, writes `/etc/systemd/system/rig.service` for the current user and checkout path, reloads `systemd`, and enables `rig`.
-It points `ExecStart` at the built rig executable in `rig/.venv/bin/rig`, so run `just rig::build` first.
+It points `ExecStart` at the built rig executable in `rig/.venv/bin/rig` and writes the runtime contract into `Environment=` lines for `THING_NAME`, `RIG_THING_NAME`, `TOWN_THING_NAME`, `SPARKPLUG_GROUP_ID`, `SPARKPLUG_EDGE_NODE_ID`, `IOT_ENDPOINT_FILE`, `CERT_FILE`, `KEY_FILE`, `CA_FILE`, `CLOUDWATCH_LOG_GROUP`, and `AWS_REGION`, so run `just rig::build` first.
 
 ## Run rig
 

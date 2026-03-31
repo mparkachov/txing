@@ -94,6 +94,16 @@ DEFAULT_MQTT_PUBLISH_TIMEOUT = 10.0
 DEFAULT_BOARD_OFFLINE_TIMEOUT = 45.0
 SHUTDOWN_MQTT_PUBLISH_TIMEOUT = 2.0
 BLE_DISCONNECT_TIMEOUT = 2.0
+DEFAULT_THING_NAME_ENV = "THING_NAME"
+DEFAULT_RIG_THING_NAME_ENV = "RIG_THING_NAME"
+DEFAULT_TOWN_THING_NAME_ENV = "TOWN_THING_NAME"
+DEFAULT_SPARKPLUG_GROUP_ID_ENV = "SPARKPLUG_GROUP_ID"
+DEFAULT_SPARKPLUG_EDGE_NODE_ID_ENV = "SPARKPLUG_EDGE_NODE_ID"
+DEFAULT_IOT_ENDPOINT_FILE_ENV = "IOT_ENDPOINT_FILE"
+DEFAULT_CERT_FILE_ENV = "CERT_FILE"
+DEFAULT_KEY_FILE_ENV = "KEY_FILE"
+DEFAULT_CA_FILE_ENV = "CA_FILE"
+DEFAULT_CLOUDWATCH_LOG_GROUP_ENV = "CLOUDWATCH_LOG_GROUP"
 
 LOGGER = logging.getLogger("rig.ble_bridge")
 MQTT_LOGGER = logging.getLogger("rig.ble_bridge.mqtt")
@@ -153,6 +163,16 @@ def _default_cloudwatch_log_stream(thing_name: str) -> str:
     hostname = socket.gethostname().split(".", 1)[0] or "rig"
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     return f"{thing_name}-{hostname}-{timestamp}-{os.getpid()}"
+
+
+def _env_text(name: str, default: str) -> str:
+    value = os.environ.get(name, "").strip()
+    return value or default
+
+
+def _env_path(name: str, default: Path) -> Path:
+    value = os.environ.get(name, "").strip()
+    return Path(value) if value else default
 
 
 def _extract_region_from_iot_endpoint(endpoint: str) -> str | None:
@@ -3003,27 +3023,30 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--thing-name",
-        default=DEFAULT_THING_NAME,
+        default=_env_text(DEFAULT_THING_NAME_ENV, DEFAULT_THING_NAME),
         help="Txing AWS IoT thing name and Sparkplug device id (default: txing)",
     )
     parser.add_argument(
         "--rig-thing-name",
-        default=DEFAULT_RIG_THING_NAME,
+        default=_env_text(DEFAULT_RIG_THING_NAME_ENV, DEFAULT_RIG_THING_NAME),
         help="AWS IoT thing name used for rig lifecycle reflection (default: rig)",
     )
     parser.add_argument(
         "--town-thing-name",
-        default=DEFAULT_TOWN_THING_NAME,
+        default=_env_text(DEFAULT_TOWN_THING_NAME_ENV, DEFAULT_TOWN_THING_NAME),
         help="AWS IoT thing name used for town lifecycle reflection (default: town)",
     )
     parser.add_argument(
         "--sparkplug-group-id",
-        default=DEFAULT_SPARKPLUG_GROUP_ID,
+        default=_env_text(DEFAULT_SPARKPLUG_GROUP_ID_ENV, DEFAULT_SPARKPLUG_GROUP_ID),
         help="Sparkplug group id (default: town)",
     )
     parser.add_argument(
         "--sparkplug-edge-node-id",
-        default=DEFAULT_SPARKPLUG_EDGE_NODE_ID,
+        default=_env_text(
+            DEFAULT_SPARKPLUG_EDGE_NODE_ID_ENV,
+            DEFAULT_SPARKPLUG_EDGE_NODE_ID,
+        ),
         help="Sparkplug edge node id (default: rig)",
     )
     parser.add_argument(
@@ -3034,25 +3057,25 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--iot-endpoint-file",
         type=Path,
-        default=DEFAULT_IOT_ENDPOINT_FILE,
+        default=_env_path(DEFAULT_IOT_ENDPOINT_FILE_ENV, DEFAULT_IOT_ENDPOINT_FILE),
         help=f"File containing AWS IoT endpoint (default: {DEFAULT_IOT_ENDPOINT_FILE})",
     )
     parser.add_argument(
         "--cert-file",
         type=Path,
-        default=DEFAULT_CERT_FILE,
+        default=_env_path(DEFAULT_CERT_FILE_ENV, DEFAULT_CERT_FILE),
         help=f"Client certificate PEM file (default: {DEFAULT_CERT_FILE})",
     )
     parser.add_argument(
         "--key-file",
         type=Path,
-        default=DEFAULT_KEY_FILE,
+        default=_env_path(DEFAULT_KEY_FILE_ENV, DEFAULT_KEY_FILE),
         help=f"Client private key file (default: {DEFAULT_KEY_FILE})",
     )
     parser.add_argument(
         "--ca-file",
         type=Path,
-        default=DEFAULT_CA_FILE,
+        default=_env_path(DEFAULT_CA_FILE_ENV, DEFAULT_CA_FILE),
         help=f"Root CA file (default: {DEFAULT_CA_FILE})",
     )
     parser.add_argument(
@@ -3085,7 +3108,10 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--cloudwatch-log-group",
-        default=DEFAULT_CLOUDWATCH_LOG_GROUP,
+        default=_env_text(
+            DEFAULT_CLOUDWATCH_LOG_GROUP_ENV,
+            DEFAULT_CLOUDWATCH_LOG_GROUP,
+        ),
         help="CloudWatch Logs group name for rig logs (default: /town/rig/txing)",
     )
     parser.add_argument(

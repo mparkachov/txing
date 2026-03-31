@@ -12,22 +12,32 @@ std::optional<std::string> LookupValue(
     const std::unordered_map<std::string, std::string>& options,
     const std::string& key,
     const EnvLookup& lookup_env,
-    const std::string& env_name
+    const std::string& env_name,
+    const std::string& fallback_env_name = ""
 ) {
     const auto option = options.find(key);
     if (option != options.end()) {
         return option->second;
     }
-    return lookup_env(env_name);
+    if (!env_name.empty()) {
+        if (const auto value = lookup_env(env_name); value && !value->empty()) {
+            return value;
+        }
+    }
+    if (!fallback_env_name.empty()) {
+        return lookup_env(fallback_env_name);
+    }
+    return std::nullopt;
 }
 
 std::string RequireValue(
     const std::unordered_map<std::string, std::string>& options,
     const std::string& key,
     const EnvLookup& lookup_env,
-    const std::string& env_name
+    const std::string& env_name,
+    const std::string& fallback_env_name = ""
 ) {
-    auto value = LookupValue(options, key, lookup_env, env_name);
+    auto value = LookupValue(options, key, lookup_env, env_name, fallback_env_name);
     if (!value || value->empty()) {
         throw std::runtime_error("--" + key + " or " + env_name + " is required");
     }
@@ -105,11 +115,18 @@ ParsedCli ParseCli(const std::vector<std::string>& arguments, const EnvLookup& l
         return parsed;
     }
 
-    parsed.config.region = RequireValue(options, "region", lookup_env, "TXING_BOARD_VIDEO_REGION");
+    parsed.config.region = RequireValue(
+        options,
+        "region",
+        lookup_env,
+        "BOARD_VIDEO_REGION",
+        "TXING_BOARD_VIDEO_REGION"
+    );
     parsed.config.channel_name = RequireValue(
         options,
         "channel-name",
         lookup_env,
+        "BOARD_VIDEO_CHANNEL_NAME",
         "TXING_BOARD_VIDEO_CHANNEL_NAME"
     );
 
@@ -141,8 +158,8 @@ std::string UsageText() {
     usage
         << "Usage: txing-board-kvs-master [options]\n\n"
         << "Options:\n"
-        << "  --region <aws-region>                  or TXING_BOARD_VIDEO_REGION\n"
-        << "  --channel-name <channel-name>          or TXING_BOARD_VIDEO_CHANNEL_NAME\n"
+        << "  --region <aws-region>                  or BOARD_VIDEO_REGION\n"
+        << "  --channel-name <channel-name>          or BOARD_VIDEO_CHANNEL_NAME\n"
         << "  --client-id <id>                       default: txing-board-kvs-master\n"
         << "  --camera <index>                       default: 0\n"
         << "  --width <pixels>                       default: 1920\n"

@@ -29,15 +29,24 @@ from .video_state import (
 )
 
 DEFAULT_ASSUME_READY_AFTER_SECONDS = 3.0
-DEFAULT_SENDER_COMMAND_ENV = "TXING_BOARD_VIDEO_SENDER_COMMAND"
-DEFAULT_READY_PATTERN_ENV = "TXING_BOARD_VIDEO_READY_PATTERN"
-DEFAULT_VIEWER_CONNECTED_PATTERN_ENV = "TXING_BOARD_VIDEO_VIEWER_CONNECTED_PATTERN"
-DEFAULT_VIEWER_DISCONNECTED_PATTERN_ENV = "TXING_BOARD_VIDEO_VIEWER_DISCONNECTED_PATTERN"
+DEFAULT_REGION_ENV = "BOARD_VIDEO_REGION"
+DEFAULT_CHANNEL_NAME_ENV = "BOARD_VIDEO_CHANNEL_NAME"
+DEFAULT_SENDER_COMMAND_ENV = "BOARD_VIDEO_SENDER_COMMAND"
+DEFAULT_READY_PATTERN_ENV = "BOARD_VIDEO_READY_PATTERN"
+DEFAULT_VIEWER_CONNECTED_PATTERN_ENV = "BOARD_VIDEO_VIEWER_CONNECTED_PATTERN"
+DEFAULT_VIEWER_DISCONNECTED_PATTERN_ENV = "BOARD_VIDEO_VIEWER_DISCONNECTED_PATTERN"
 DEFAULT_AWS_SHARED_CREDENTIALS_FILE_ENV = "AWS_SHARED_CREDENTIALS_FILE"
 DEFAULT_AWS_CONFIG_FILE_ENV = "AWS_CONFIG_FILE"
 DEFAULT_SSL_CERT_FILE_ENV = "SSL_CERT_FILE"
 DEFAULT_KVS_CA_CERT_PATH_ENV = "AWS_KVS_CACERT_PATH"
-DEFAULT_CA_FILE_ENV = "TXING_BOARD_VIDEO_CA_FILE"
+DEFAULT_CA_FILE_ENV = "BOARD_VIDEO_CA_FILE"
+LEGACY_REGION_ENV = "TXING_BOARD_VIDEO_REGION"
+LEGACY_CHANNEL_NAME_ENV = "TXING_BOARD_VIDEO_CHANNEL_NAME"
+LEGACY_SENDER_COMMAND_ENV = "TXING_BOARD_VIDEO_SENDER_COMMAND"
+LEGACY_READY_PATTERN_ENV = "TXING_BOARD_VIDEO_READY_PATTERN"
+LEGACY_VIEWER_CONNECTED_PATTERN_ENV = "TXING_BOARD_VIDEO_VIEWER_CONNECTED_PATTERN"
+LEGACY_VIEWER_DISCONNECTED_PATTERN_ENV = "TXING_BOARD_VIDEO_VIEWER_DISCONNECTED_PATTERN"
+LEGACY_CA_FILE_ENV = "TXING_BOARD_VIDEO_CA_FILE"
 DEFAULT_READY_PATTERN = r"^TXING_KVS_READY(?:\s|$)"
 DEFAULT_VIEWER_CONNECTED_PATTERN = r"^TXING_VIEWER_CONNECTED(?:\s|$)"
 DEFAULT_VIEWER_DISCONNECTED_PATTERN = r"^TXING_VIEWER_DISCONNECTED(?:\s|$)"
@@ -120,6 +129,22 @@ def _compile_pattern(value: str, *, env_name: str) -> re.Pattern[str] | None:
         raise RuntimeError(f"{env_name} is not a valid regular expression: {err}") from err
 
 
+def _env_value(environment: dict[str, str], *names: str) -> str:
+    for name in names:
+        value = environment.get(name, "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _optional_env_path(*names: str) -> Path | None:
+    for name in names:
+        value = os.environ.get(name, "").strip()
+        if value:
+            return Path(value)
+    return None
+
+
 def _discover_ca_cert_path(
     environment: dict[str, str],
     *,
@@ -128,7 +153,7 @@ def _discover_ca_cert_path(
     if explicit_ca_file is not None and explicit_ca_file.is_file():
         return str(explicit_ca_file)
 
-    explicit_board_ca_file = environment.get(DEFAULT_CA_FILE_ENV, "").strip()
+    explicit_board_ca_file = _env_value(environment, DEFAULT_CA_FILE_ENV, LEGACY_CA_FILE_ENV)
     if explicit_board_ca_file:
         return explicit_board_ca_file
 
@@ -153,8 +178,8 @@ def _build_sender_environment(
     ca_file: Path | None = None,
 ) -> dict[str, str]:
     environment = os.environ.copy()
-    environment["TXING_BOARD_VIDEO_REGION"] = region
-    environment["TXING_BOARD_VIDEO_CHANNEL_NAME"] = channel_name
+    environment[DEFAULT_REGION_ENV] = region
+    environment[DEFAULT_CHANNEL_NAME_ENV] = channel_name
     if ca_file is not None:
         environment[DEFAULT_CA_FILE_ENV] = str(ca_file)
     if ca_cert_path := _discover_ca_cert_path(environment, explicit_ca_file=ca_file):
@@ -438,7 +463,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--ca-file",
         type=Path,
-        default=Path(os.environ[DEFAULT_CA_FILE_ENV]) if DEFAULT_CA_FILE_ENV in os.environ else None,
+        default=_optional_env_path(DEFAULT_CA_FILE_ENV, LEGACY_CA_FILE_ENV),
         help=(
             "Root CA PEM file to reuse for the native KVS sender "
             f"(default: ${DEFAULT_CA_FILE_ENV} or auto-discovery)"
@@ -446,7 +471,7 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--sender-command",
-        default=os.environ.get(DEFAULT_SENDER_COMMAND_ENV, ""),
+        default=_env_value(os.environ, DEFAULT_SENDER_COMMAND_ENV, LEGACY_SENDER_COMMAND_ENV),
         help=(
             "Command that runs the actual KVS master sender "
             f"(default: ${DEFAULT_SENDER_COMMAND_ENV})"
@@ -455,9 +480,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--aws-shared-credentials-file",
         type=Path,
-        default=Path(os.environ[DEFAULT_AWS_SHARED_CREDENTIALS_FILE_ENV])
-        if DEFAULT_AWS_SHARED_CREDENTIALS_FILE_ENV in os.environ
-        else None,
+        default=_optional_env_path(DEFAULT_AWS_SHARED_CREDENTIALS_FILE_ENV),
         help=(
             "AWS shared credentials file used for the signaling-channel lookup and "
             "passed through to the native sender "
@@ -467,9 +490,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--aws-config-file",
         type=Path,
-        default=Path(os.environ[DEFAULT_AWS_CONFIG_FILE_ENV])
-        if DEFAULT_AWS_CONFIG_FILE_ENV in os.environ
-        else None,
+        default=_optional_env_path(DEFAULT_AWS_CONFIG_FILE_ENV),
         help=(
             "AWS config file used for the signaling-channel lookup and passed through "
             f"to the native sender (default: ${DEFAULT_AWS_CONFIG_FILE_ENV})"
@@ -486,14 +507,21 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--ready-pattern",
-        default=os.environ.get(DEFAULT_READY_PATTERN_ENV, DEFAULT_READY_PATTERN),
+        default=(
+            _env_value(os.environ, DEFAULT_READY_PATTERN_ENV, LEGACY_READY_PATTERN_ENV)
+            or DEFAULT_READY_PATTERN
+        ),
         help=f"Regex for child output that confirms sender readiness (default: ${DEFAULT_READY_PATTERN_ENV})",
     )
     parser.add_argument(
         "--viewer-connected-pattern",
-        default=os.environ.get(
-            DEFAULT_VIEWER_CONNECTED_PATTERN_ENV,
-            DEFAULT_VIEWER_CONNECTED_PATTERN,
+        default=(
+            _env_value(
+                os.environ,
+                DEFAULT_VIEWER_CONNECTED_PATTERN_ENV,
+                LEGACY_VIEWER_CONNECTED_PATTERN_ENV,
+            )
+            or DEFAULT_VIEWER_CONNECTED_PATTERN
         ),
         help=(
             "Regex for child output that indicates a viewer is connected "
@@ -502,9 +530,13 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--viewer-disconnected-pattern",
-        default=os.environ.get(
-            DEFAULT_VIEWER_DISCONNECTED_PATTERN_ENV,
-            DEFAULT_VIEWER_DISCONNECTED_PATTERN,
+        default=(
+            _env_value(
+                os.environ,
+                DEFAULT_VIEWER_DISCONNECTED_PATTERN_ENV,
+                LEGACY_VIEWER_DISCONNECTED_PATTERN_ENV,
+            )
+            or DEFAULT_VIEWER_DISCONNECTED_PATTERN
         ),
         help=(
             "Regex for child output that indicates the viewer disconnected "

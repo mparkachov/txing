@@ -98,6 +98,38 @@ DEFAULT_TIMEDATECTL_SYNC_COMMAND = (
 )
 DEFAULT_ROUTE_PROBE_IPV4 = ("8.8.8.8", 80)
 DEFAULT_ROUTE_PROBE_IPV6 = ("2001:4860:4860::8888", 80, 0, 0)
+DEFAULT_THING_NAME_ENV = "THING_NAME"
+DEFAULT_IOT_ENDPOINT_FILE_ENV = "IOT_ENDPOINT_FILE"
+DEFAULT_CERT_FILE_ENV = "CERT_FILE"
+DEFAULT_KEY_FILE_ENV = "KEY_FILE"
+DEFAULT_CA_FILE_ENV = "CA_FILE"
+DEFAULT_SCHEMA_FILE_ENV = "SCHEMA_FILE"
+DEFAULT_VIDEO_CHANNEL_NAME_ENV = "BOARD_VIDEO_CHANNEL_NAME"
+LEGACY_VIDEO_CHANNEL_NAME_ENV = "TXING_BOARD_VIDEO_CHANNEL_NAME"
+DEFAULT_VIDEO_VIEWER_URL_ENV = "BOARD_VIDEO_VIEWER_URL"
+DEFAULT_VIDEO_REGION_ENV = "BOARD_VIDEO_REGION"
+LEGACY_VIDEO_REGION_ENV = "TXING_BOARD_VIDEO_REGION"
+
+
+def _env_text(*names: str, default: str) -> str:
+    for name in names:
+        value = os.environ.get(name, "").strip()
+        if value:
+            return value
+    return default
+
+
+def _env_optional_path(*names: str) -> Path | None:
+    for name in names:
+        value = os.environ.get(name, "").strip()
+        if value:
+            return Path(value)
+    return None
+
+
+def _env_path(*names: str, default: Path) -> Path:
+    resolved = _env_optional_path(*names)
+    return resolved if resolved is not None else default
 
 
 @dataclass(frozen=True)
@@ -482,7 +514,7 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--thing-name",
-        default=DEFAULT_THING_NAME,
+        default=_env_text(DEFAULT_THING_NAME_ENV, default=DEFAULT_THING_NAME),
         help="AWS IoT thing name (default: txing)",
     )
     parser.add_argument(
@@ -493,31 +525,31 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--iot-endpoint-file",
         type=Path,
-        default=DEFAULT_IOT_ENDPOINT_FILE,
+        default=_env_path(DEFAULT_IOT_ENDPOINT_FILE_ENV, default=DEFAULT_IOT_ENDPOINT_FILE),
         help=f"File containing AWS IoT endpoint (default: {DEFAULT_IOT_ENDPOINT_FILE})",
     )
     parser.add_argument(
         "--cert-file",
         type=Path,
-        default=DEFAULT_CERT_FILE,
+        default=_env_path(DEFAULT_CERT_FILE_ENV, default=DEFAULT_CERT_FILE),
         help=f"Client certificate PEM file (default: {DEFAULT_CERT_FILE})",
     )
     parser.add_argument(
         "--key-file",
         type=Path,
-        default=DEFAULT_KEY_FILE,
+        default=_env_path(DEFAULT_KEY_FILE_ENV, default=DEFAULT_KEY_FILE),
         help=f"Client private key file (default: {DEFAULT_KEY_FILE})",
     )
     parser.add_argument(
         "--ca-file",
         type=Path,
-        default=DEFAULT_CA_FILE,
+        default=_env_path(DEFAULT_CA_FILE_ENV, default=DEFAULT_CA_FILE),
         help=f"Root CA file (default: {DEFAULT_CA_FILE})",
     )
     parser.add_argument(
         "--schema-file",
         type=Path,
-        default=DEFAULT_SCHEMA_FILE,
+        default=_env_path(DEFAULT_SCHEMA_FILE_ENV, default=DEFAULT_SCHEMA_FILE),
         help=f"Thing Shadow schema file (default: {DEFAULT_SCHEMA_FILE})",
     )
     parser.add_argument(
@@ -527,12 +559,16 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--video-channel-name",
-        default=DEFAULT_VIDEO_CHANNEL_NAME,
+        default=_env_text(
+            DEFAULT_VIDEO_CHANNEL_NAME_ENV,
+            LEGACY_VIDEO_CHANNEL_NAME_ENV,
+            default=DEFAULT_VIDEO_CHANNEL_NAME,
+        ),
         help=f"AWS KVS signaling channel name (default: {DEFAULT_VIDEO_CHANNEL_NAME})",
     )
     parser.add_argument(
         "--video-viewer-url",
-        default="",
+        default=_env_text(DEFAULT_VIDEO_VIEWER_URL_ENV, default=""),
         help="Published operator-facing browser URL for the board video route",
     )
     parser.add_argument(
@@ -545,15 +581,17 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--video-region",
-        default=DEFAULT_VIDEO_REGION,
+        default=_env_text(
+            DEFAULT_VIDEO_REGION_ENV,
+            LEGACY_VIDEO_REGION_ENV,
+            default=DEFAULT_VIDEO_REGION,
+        ),
         help=f"AWS region for the board video signaling channel (default: {DEFAULT_VIDEO_REGION})",
     )
     parser.add_argument(
         "--aws-shared-credentials-file",
         type=Path,
-        default=Path(os.environ["AWS_SHARED_CREDENTIALS_FILE"])
-        if "AWS_SHARED_CREDENTIALS_FILE" in os.environ
-        else None,
+        default=_env_optional_path("AWS_SHARED_CREDENTIALS_FILE"),
         help=(
             "AWS shared credentials file passed through to the board video sender "
             "(default: $AWS_SHARED_CREDENTIALS_FILE or SDK default chain)"
@@ -562,9 +600,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--aws-config-file",
         type=Path,
-        default=Path(os.environ["AWS_CONFIG_FILE"])
-        if "AWS_CONFIG_FILE" in os.environ
-        else None,
+        default=_env_optional_path("AWS_CONFIG_FILE"),
         help=(
             "AWS config file passed through to the board video sender "
             "(default: $AWS_CONFIG_FILE or SDK default chain)"

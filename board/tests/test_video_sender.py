@@ -40,9 +40,9 @@ class VideoSenderTests(unittest.TestCase):
             )
 
         self.assertEqual(environment["EXISTING"], "value")
-        self.assertEqual(environment["TXING_BOARD_VIDEO_REGION"], "eu-central-1")
+        self.assertEqual(environment["BOARD_VIDEO_REGION"], "eu-central-1")
         self.assertEqual(
-            environment["TXING_BOARD_VIDEO_CHANNEL_NAME"],
+            environment["BOARD_VIDEO_CHANNEL_NAME"],
             "txing-board-video",
         )
 
@@ -56,7 +56,7 @@ class VideoSenderTests(unittest.TestCase):
                 )
 
         self.assertEqual(
-            environment["TXING_BOARD_VIDEO_CA_FILE"],
+            environment["BOARD_VIDEO_CA_FILE"],
             "/home/user/txing/certs/AmazonRootCA1.pem",
         )
         self.assertEqual(
@@ -124,6 +124,40 @@ class VideoSenderTests(unittest.TestCase):
 
         self.assertEqual(str(args.aws_shared_credentials_file), "/tmp/credentials")
         self.assertEqual(str(args.aws_config_file), "/tmp/config")
+
+    def test_parse_args_accepts_service_environment_defaults(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "BOARD_VIDEO_SENDER_COMMAND": "/tmp/txing-board-kvs-master",
+                "BOARD_VIDEO_READY_PATTERN": "^READY$",
+                "BOARD_VIDEO_VIEWER_CONNECTED_PATTERN": "^CONNECTED$",
+                "BOARD_VIDEO_VIEWER_DISCONNECTED_PATTERN": "^DISCONNECTED$",
+                "BOARD_VIDEO_CA_FILE": "/tmp/ca.pem",
+                "AWS_SHARED_CREDENTIALS_FILE": "/tmp/credentials",
+                "AWS_CONFIG_FILE": "/tmp/config",
+            },
+            clear=True,
+        ):
+            with patch(
+                "sys.argv",
+                [
+                    "board-video-sender",
+                    "--region",
+                    "eu-central-1",
+                    "--viewer-url",
+                    "https://ops.example.com/video",
+                ],
+            ):
+                args = video_sender._parse_args()
+
+        self.assertEqual(args.sender_command, "/tmp/txing-board-kvs-master")
+        self.assertEqual(str(args.ca_file), "/tmp/ca.pem")
+        self.assertEqual(str(args.aws_shared_credentials_file), "/tmp/credentials")
+        self.assertEqual(str(args.aws_config_file), "/tmp/config")
+        self.assertEqual(args.ready_pattern, "^READY$")
+        self.assertEqual(args.viewer_connected_pattern, "^CONNECTED$")
+        self.assertEqual(args.viewer_disconnected_pattern, "^DISCONNECTED$")
 
 
 if __name__ == "__main__":

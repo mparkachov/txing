@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 from rig.ble_bridge import (
     BleSleepBridge,
@@ -12,6 +14,7 @@ from rig.ble_bridge import (
     ShadowState,
     _build_shadow_from_snapshot,
     _calculate_redcon,
+    _parse_args,
     _shadow_payload_includes_desired_redcon,
 )
 from rig.sparkplug import (
@@ -45,6 +48,60 @@ class ShadowPayloadTests(unittest.TestCase):
     def test_update_payload_with_null_desired_redcon_still_claims_desired(self) -> None:
         payload = {"state": {"desired": {"redcon": None}}}
         self.assertTrue(_shadow_payload_includes_desired_redcon(payload))
+
+
+class ServiceConfigTests(unittest.TestCase):
+    def test_parse_args_accepts_service_environment_defaults(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "THING_NAME": "txing-prod",
+                "RIG_THING_NAME": "rig-prod",
+                "TOWN_THING_NAME": "town-prod",
+                "SPARKPLUG_GROUP_ID": "town-prod",
+                "SPARKPLUG_EDGE_NODE_ID": "rig-prod",
+                "IOT_ENDPOINT_FILE": "/tmp/iot-endpoint",
+                "CERT_FILE": "/tmp/cert.pem",
+                "KEY_FILE": "/tmp/key.pem",
+                "CA_FILE": "/tmp/ca.pem",
+                "CLOUDWATCH_LOG_GROUP": "/town/rig/txing-prod",
+            },
+            clear=True,
+        ):
+            with patch("sys.argv", ["rig"]):
+                args = _parse_args()
+
+        self.assertEqual(args.thing_name, "txing-prod")
+        self.assertEqual(args.rig_thing_name, "rig-prod")
+        self.assertEqual(args.town_thing_name, "town-prod")
+        self.assertEqual(args.sparkplug_group_id, "town-prod")
+        self.assertEqual(args.sparkplug_edge_node_id, "rig-prod")
+        self.assertEqual(args.iot_endpoint_file, Path("/tmp/iot-endpoint"))
+        self.assertEqual(args.cert_file, Path("/tmp/cert.pem"))
+        self.assertEqual(args.key_file, Path("/tmp/key.pem"))
+        self.assertEqual(args.ca_file, Path("/tmp/ca.pem"))
+        self.assertEqual(args.cloudwatch_log_group, "/town/rig/txing-prod")
+
+    def test_justfile_install_service_exports_environment(self) -> None:
+        justfile = (Path(__file__).resolve().parents[2] / "rig" / "justfile").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('Environment="AWS_REGION={{region}}"', justfile)
+        self.assertIn('Environment="THING_NAME={{thing_name}}"', justfile)
+        self.assertIn('Environment="RIG_THING_NAME={{rig_thing_name}}"', justfile)
+        self.assertIn('Environment="TOWN_THING_NAME={{town_thing_name}}"', justfile)
+        self.assertIn('Environment="SPARKPLUG_GROUP_ID={{sparkplug_group_id}}"', justfile)
+        self.assertIn(
+            'Environment="SPARKPLUG_EDGE_NODE_ID={{sparkplug_edge_node_id}}"',
+            justfile,
+        )
+        self.assertIn('Environment="IOT_ENDPOINT_FILE={{endpoint_file}}"', justfile)
+        self.assertIn('Environment="CERT_FILE={{cert_file}}"', justfile)
+        self.assertIn('Environment="KEY_FILE={{key_file}}"', justfile)
+        self.assertIn('Environment="CA_FILE={{ca_file}}"', justfile)
+        self.assertIn('Environment="CLOUDWATCH_LOG_GROUP={{cloudwatch_log_group}}"', justfile)
+        self.assertIn('ExecStart={{built_rig}}', justfile)
 
 
 class RedconTests(unittest.TestCase):

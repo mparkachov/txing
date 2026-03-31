@@ -18,6 +18,23 @@ from .sparkplug import build_device_topic, build_redcon_payload
 DEFAULT_THING_NAME = "txing"
 DEFAULT_SPARKPLUG_GROUP_ID = "town"
 DEFAULT_SPARKPLUG_EDGE_NODE_ID = "rig"
+DEFAULT_THING_NAME_ENV = "THING_NAME"
+DEFAULT_SPARKPLUG_GROUP_ID_ENV = "SPARKPLUG_GROUP_ID"
+DEFAULT_SPARKPLUG_EDGE_NODE_ID_ENV = "SPARKPLUG_EDGE_NODE_ID"
+DEFAULT_IOT_ENDPOINT_FILE_ENV = "IOT_ENDPOINT_FILE"
+DEFAULT_CERT_FILE_ENV = "CERT_FILE"
+DEFAULT_KEY_FILE_ENV = "KEY_FILE"
+DEFAULT_CA_FILE_ENV = "CA_FILE"
+
+
+def _env_text(name: str, default: str) -> str:
+    value = os.environ.get(name, "").strip()
+    return value or default
+
+
+def _env_path(name: str, default: Path) -> Path:
+    value = os.environ.get(name, "").strip()
+    return Path(value) if value else default
 
 
 def _read_iot_endpoint(explicit_endpoint: str | None, endpoint_file: Path) -> str:
@@ -56,17 +73,20 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--thing-name",
-        default=DEFAULT_THING_NAME,
+        default=_env_text(DEFAULT_THING_NAME_ENV, DEFAULT_THING_NAME),
         help="Sparkplug device id / txing thing name (default: txing)",
     )
     parser.add_argument(
         "--sparkplug-group-id",
-        default=DEFAULT_SPARKPLUG_GROUP_ID,
+        default=_env_text(DEFAULT_SPARKPLUG_GROUP_ID_ENV, DEFAULT_SPARKPLUG_GROUP_ID),
         help="Sparkplug group id (default: town)",
     )
     parser.add_argument(
         "--sparkplug-edge-node-id",
-        default=DEFAULT_SPARKPLUG_EDGE_NODE_ID,
+        default=_env_text(
+            DEFAULT_SPARKPLUG_EDGE_NODE_ID_ENV,
+            DEFAULT_SPARKPLUG_EDGE_NODE_ID,
+        ),
         help="Sparkplug edge node id (default: rig)",
     )
     parser.add_argument(
@@ -77,25 +97,25 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--iot-endpoint-file",
         type=Path,
-        default=DEFAULT_IOT_ENDPOINT_FILE,
+        default=_env_path(DEFAULT_IOT_ENDPOINT_FILE_ENV, DEFAULT_IOT_ENDPOINT_FILE),
         help=f"File containing AWS IoT endpoint (default: {DEFAULT_IOT_ENDPOINT_FILE})",
     )
     parser.add_argument(
         "--cert-file",
         type=Path,
-        default=DEFAULT_CERT_FILE,
+        default=_env_path(DEFAULT_CERT_FILE_ENV, DEFAULT_CERT_FILE),
         help=f"Client certificate PEM file (default: {DEFAULT_CERT_FILE})",
     )
     parser.add_argument(
         "--key-file",
         type=Path,
-        default=DEFAULT_KEY_FILE,
+        default=_env_path(DEFAULT_KEY_FILE_ENV, DEFAULT_KEY_FILE),
         help=f"Client private key file (default: {DEFAULT_KEY_FILE})",
     )
     parser.add_argument(
         "--ca-file",
         type=Path,
-        default=DEFAULT_CA_FILE,
+        default=_env_path(DEFAULT_CA_FILE_ENV, DEFAULT_CA_FILE),
         help=f"Root CA file (default: {DEFAULT_CA_FILE})",
     )
     parser.add_argument(

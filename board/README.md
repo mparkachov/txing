@@ -325,7 +325,7 @@ You do not need to set sender regex environment variables for the repo sender. `
 - `TXING_VIEWER_CONNECTED clientId=<id> viewers=<n>`
 - `TXING_VIEWER_DISCONNECTED clientId=<id> viewers=<n>`
 
-`board-video-sender` also exports `TXING_BOARD_VIDEO_REGION` and `TXING_BOARD_VIDEO_CHANNEL_NAME` to the child automatically, so the native sender does not need those flags when it is started under the Python supervisor.
+`board-video-sender` also exports `BOARD_VIDEO_REGION` and `BOARD_VIDEO_CHANNEL_NAME` to the child automatically, so the native sender does not need those flags when it is started under the Python supervisor.
 
 For TLS trust on the KVS signaling path, `txing-board` now reuses the same AWS root CA PEM you already provision for the board (`certs/AmazonRootCA1.pem`). The Python supervisor passes that file to the native sender as `SSL_CERT_FILE` and `AWS_KVS_CACERT_PATH`, so you do not need to add manual `systemd` TLS environment overrides for the normal board setup.
 
@@ -355,7 +355,7 @@ sudo AWS_SHARED_CREDENTIALS_FILE=/root/.aws/credentials \
   aws sts get-caller-identity
 ```
 
-If you want the install recipe to use different credential paths, region, or channel defaults, pass them directly to `just board::install-service` as parameters.
+If you want the install recipe to use different thing/cert paths, credential paths, region, or channel defaults, pass them directly to `just board::install-service` as parameters.
 
 ### 7. Build and Smoke Test
 
@@ -430,7 +430,8 @@ The generated unit:
 - enables `NetworkManager-wait-online.service`
 - waits for `systemd-time-wait-sync.service` / `time-sync.target` before startup
 - runs `txing-board` as `root`
-- starts `board` with `--video-viewer-url`, `--video-region`, `--video-channel-name`, `--video-sender-command`, `--aws-shared-credentials-file`, and `--aws-config-file`
+- defines `THING_NAME`, `IOT_ENDPOINT_FILE`, `CERT_FILE`, `KEY_FILE`, `CA_FILE`, `SCHEMA_FILE`, `BOARD_VIDEO_VIEWER_URL`, `BOARD_VIDEO_REGION`, `BOARD_VIDEO_CHANNEL_NAME`, `BOARD_VIDEO_SENDER_COMMAND`, `AWS_SHARED_CREDENTIALS_FILE`, and `AWS_CONFIG_FILE`
+- starts `board` with `ExecStart=/home/.../board/.venv/bin/board --heartbeat-seconds 60`
 - inherits the board AWS root CA PEM for the native KVS sender
 
 The Python service also waits up to `120 s` for `timedatectl` to report `SystemClockSynchronized=yes` before it starts the AWS-backed video sender. That avoids transient KVS `InvalidSignatureException` failures after boot when networking is up but NTP has not corrected the clock yet.
@@ -492,8 +493,8 @@ Useful board options:
 
 Useful sender options:
 
-- `--region <aws-region>` or `TXING_BOARD_VIDEO_REGION`
-- `--channel-name <channel-name>` or `TXING_BOARD_VIDEO_CHANNEL_NAME`
+- `--region <aws-region>` or `BOARD_VIDEO_REGION`
+- `--channel-name <channel-name>` or `BOARD_VIDEO_CHANNEL_NAME`
 - `--client-id <id>`
 - `--camera <index>`
 - `--width <pixels>`

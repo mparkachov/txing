@@ -244,6 +244,14 @@ void TestUsageText() {
         "usage text should not mention the removed rpicam-vid path"
     );
     Expect(usage.find("--camera <index>") != std::string::npos, "usage text should still document camera selection");
+    Expect(
+        usage.find("BOARD_VIDEO_REGION") != std::string::npos,
+        "usage text should document the board video region environment variable"
+    );
+    Expect(
+        usage.find("BOARD_VIDEO_CHANNEL_NAME") != std::string::npos,
+        "usage text should document the board video channel environment variable"
+    );
 }
 
 void TestCredentialResolution() {

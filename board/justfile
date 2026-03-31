@@ -16,10 +16,16 @@ aws_kvs_sdk_install_library := aws_kvs_sdk_install_dir + "/lib/libkvsWebrtcClien
 default_aws_kvs_sdk_repository := env_var_or_default("TXING_BOARD_AWS_KVS_WEBRTC_SDK_REPOSITORY", "https://github.com/awslabs/amazon-kinesis-video-streams-webrtc-sdk-c.git")
 default_aws_kvs_sdk_ref := env_var_or_default("TXING_BOARD_AWS_KVS_WEBRTC_SDK_REF", "main")
 systemd_unit := "/etc/systemd/system/txing-board.service"
-default_video_region := env_var_or_default("TXING_BOARD_VIDEO_REGION", "eu-central-1")
-default_video_channel_name := env_var_or_default("TXING_BOARD_VIDEO_CHANNEL_NAME", "txing-board-video")
-default_aws_shared_credentials_file := env_var_or_default("TXING_BOARD_AWS_SHARED_CREDENTIALS_FILE", "/root/.aws/credentials")
-default_aws_config_file := env_var_or_default("TXING_BOARD_AWS_CONFIG_FILE", "/root/.aws/config")
+default_thing_name := "txing"
+default_iot_endpoint_file := board_dir + "/../certs/iot-data-ats.endpoint"
+default_cert_file := board_dir + "/../certs/txing.cert.pem"
+default_key_file := board_dir + "/../certs/txing.private.key"
+default_ca_file := board_dir + "/../certs/AmazonRootCA1.pem"
+default_schema_file := board_dir + "/../docs/txing-shadow.schema.json"
+default_video_region := "eu-central-1"
+default_video_channel_name := "txing-board-video"
+default_aws_shared_credentials_file := "/root/.aws/credentials"
+default_aws_config_file := "/root/.aws/config"
 default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_SYSTEM_DEPENDENCIES", "ON")
 
 @sync:
@@ -151,7 +157,7 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
 @once-dev:
     cd "{{board_dir}}" && uv run board --once
 
-@install-service video_viewer_url video_sender_command video_region=default_video_region video_channel_name=default_video_channel_name aws_shared_credentials_file=default_aws_shared_credentials_file aws_config_file=default_aws_config_file:
+@install-service video_viewer_url video_sender_command thing_name=default_thing_name endpoint_file=default_iot_endpoint_file cert_file=default_cert_file key_file=default_key_file ca_file=default_ca_file schema_file=default_schema_file video_region=default_video_region video_channel_name=default_video_channel_name aws_shared_credentials_file=default_aws_shared_credentials_file aws_config_file=default_aws_config_file:
     test -x "{{built_board}}" || { \
         echo "Missing built board executable at {{built_board}}. Run 'just build' first." >&2; \
         exit 1; \
@@ -166,7 +172,19 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
         '[Service]' \
         'Type=simple' \
         'WorkingDirectory={{board_dir}}' \
-        'ExecStart={{built_board}} --heartbeat-seconds 60 --video-viewer-url {{video_viewer_url}} --video-region {{video_region}} --video-channel-name {{video_channel_name}} --aws-shared-credentials-file {{aws_shared_credentials_file}} --aws-config-file {{aws_config_file}} --video-sender-command "{{video_sender_command}}"' \
+        'Environment="THING_NAME={{thing_name}}"' \
+        'Environment="IOT_ENDPOINT_FILE={{endpoint_file}}"' \
+        'Environment="CERT_FILE={{cert_file}}"' \
+        'Environment="KEY_FILE={{key_file}}"' \
+        'Environment="CA_FILE={{ca_file}}"' \
+        'Environment="SCHEMA_FILE={{schema_file}}"' \
+        'Environment="BOARD_VIDEO_VIEWER_URL={{video_viewer_url}}"' \
+        'Environment="BOARD_VIDEO_REGION={{video_region}}"' \
+        'Environment="BOARD_VIDEO_CHANNEL_NAME={{video_channel_name}}"' \
+        'Environment="BOARD_VIDEO_SENDER_COMMAND={{video_sender_command}}"' \
+        'Environment="AWS_SHARED_CREDENTIALS_FILE={{aws_shared_credentials_file}}"' \
+        'Environment="AWS_CONFIG_FILE={{aws_config_file}}"' \
+        'ExecStart={{built_board}} --heartbeat-seconds 60' \
         'Restart=always' \
         'RestartSec=5' \
         '' \
