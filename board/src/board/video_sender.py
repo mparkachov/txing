@@ -33,6 +33,8 @@ DEFAULT_SENDER_COMMAND_ENV = "TXING_BOARD_VIDEO_SENDER_COMMAND"
 DEFAULT_READY_PATTERN_ENV = "TXING_BOARD_VIDEO_READY_PATTERN"
 DEFAULT_VIEWER_CONNECTED_PATTERN_ENV = "TXING_BOARD_VIDEO_VIEWER_CONNECTED_PATTERN"
 DEFAULT_VIEWER_DISCONNECTED_PATTERN_ENV = "TXING_BOARD_VIDEO_VIEWER_DISCONNECTED_PATTERN"
+DEFAULT_AWS_SHARED_CREDENTIALS_FILE_ENV = "AWS_SHARED_CREDENTIALS_FILE"
+DEFAULT_AWS_CONFIG_FILE_ENV = "AWS_CONFIG_FILE"
 DEFAULT_SSL_CERT_FILE_ENV = "SSL_CERT_FILE"
 DEFAULT_KVS_CA_CERT_PATH_ENV = "AWS_KVS_CACERT_PATH"
 DEFAULT_CA_FILE_ENV = "TXING_BOARD_VIDEO_CA_FILE"
@@ -331,12 +333,18 @@ class VideoSenderSupervisor:
         channel_name: str,
         viewer_url: str,
         region: str,
+        sender_command: str,
+        aws_shared_credentials_file: Path | None = None,
+        aws_config_file: Path | None = None,
         ca_file: Path | None = None,
         state_file: Path = DEFAULT_VIDEO_STATE_FILE,
     ) -> None:
         self._channel_name = channel_name
         self._viewer_url = viewer_url
         self._region = region
+        self._sender_command = sender_command
+        self._aws_shared_credentials_file = aws_shared_credentials_file
+        self._aws_config_file = aws_config_file
         self._ca_file = ca_file
         self._state_file = state_file
         self._process: subprocess.Popen[bytes] | None = None
@@ -360,7 +368,18 @@ class VideoSenderSupervisor:
             self._viewer_url,
             "--state-file",
             str(self._state_file),
+            "--sender-command",
+            self._sender_command,
         ]
+        if self._aws_shared_credentials_file is not None:
+            command.extend(
+                [
+                    "--aws-shared-credentials-file",
+                    str(self._aws_shared_credentials_file),
+                ]
+            )
+        if self._aws_config_file is not None:
+            command.extend(["--aws-config-file", str(self._aws_config_file)])
         if self._ca_file is not None:
             command.extend(["--ca-file", str(self._ca_file)])
         self._process = subprocess.Popen(command)
@@ -434,6 +453,29 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--aws-shared-credentials-file",
+        type=Path,
+        default=Path(os.environ[DEFAULT_AWS_SHARED_CREDENTIALS_FILE_ENV])
+        if DEFAULT_AWS_SHARED_CREDENTIALS_FILE_ENV in os.environ
+        else None,
+        help=(
+            "AWS shared credentials file used for the signaling-channel lookup and "
+            "passed through to the native sender "
+            f"(default: ${DEFAULT_AWS_SHARED_CREDENTIALS_FILE_ENV})"
+        ),
+    )
+    parser.add_argument(
+        "--aws-config-file",
+        type=Path,
+        default=Path(os.environ[DEFAULT_AWS_CONFIG_FILE_ENV])
+        if DEFAULT_AWS_CONFIG_FILE_ENV in os.environ
+        else None,
+        help=(
+            "AWS config file used for the signaling-channel lookup and passed through "
+            f"to the native sender (default: ${DEFAULT_AWS_CONFIG_FILE_ENV})"
+        ),
+    )
+    parser.add_argument(
         "--assume-ready-after-seconds",
         type=float,
         default=DEFAULT_ASSUME_READY_AFTER_SECONDS,
@@ -474,6 +516,10 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = _parse_args()
+    if args.aws_shared_credentials_file is not None:
+        os.environ[DEFAULT_AWS_SHARED_CREDENTIALS_FILE_ENV] = str(args.aws_shared_credentials_file)
+    if args.aws_config_file is not None:
+        os.environ[DEFAULT_AWS_CONFIG_FILE_ENV] = str(args.aws_config_file)
     runtime = VideoSenderProcess(
         VideoSenderRuntimeConfig(
             region=args.region,

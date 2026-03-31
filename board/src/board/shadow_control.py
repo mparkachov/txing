@@ -22,7 +22,10 @@ import paho.mqtt.client as mqtt
 
 from .cmd_vel import CmdVelController, DriveState, build_cmd_vel_topic
 from .shadow_store import DEFAULT_SHADOW_FILE, save_shadow
-from .video_sender import VideoSenderSupervisor
+from .video_sender import (
+    DEFAULT_SENDER_COMMAND_ENV,
+    VideoSenderSupervisor,
+)
 from .video_state import (
     DEFAULT_VIDEO_CHANNEL_NAME,
     DEFAULT_VIDEO_STATE_FILE,
@@ -110,6 +113,9 @@ class ControlConfig:
     video_channel_name: str
     video_viewer_url: str
     video_region: str
+    video_sender_command: str
+    aws_shared_credentials_file: Path | None
+    aws_config_file: Path | None
     video_startup_timeout_seconds: float
     board_name: str
     heartbeat_seconds: float
@@ -530,9 +536,39 @@ def _parse_args() -> argparse.Namespace:
         help="Published operator-facing browser URL for the board video route",
     )
     parser.add_argument(
+        "--video-sender-command",
+        default=os.environ.get(DEFAULT_SENDER_COMMAND_ENV, ""),
+        help=(
+            "Command that runs the actual KVS master sender "
+            f"(default: ${DEFAULT_SENDER_COMMAND_ENV})"
+        ),
+    )
+    parser.add_argument(
         "--video-region",
         default=DEFAULT_VIDEO_REGION,
         help=f"AWS region for the board video signaling channel (default: {DEFAULT_VIDEO_REGION})",
+    )
+    parser.add_argument(
+        "--aws-shared-credentials-file",
+        type=Path,
+        default=Path(os.environ["AWS_SHARED_CREDENTIALS_FILE"])
+        if "AWS_SHARED_CREDENTIALS_FILE" in os.environ
+        else None,
+        help=(
+            "AWS shared credentials file passed through to the board video sender "
+            "(default: $AWS_SHARED_CREDENTIALS_FILE or SDK default chain)"
+        ),
+    )
+    parser.add_argument(
+        "--aws-config-file",
+        type=Path,
+        default=Path(os.environ["AWS_CONFIG_FILE"])
+        if "AWS_CONFIG_FILE" in os.environ
+        else None,
+        help=(
+            "AWS config file passed through to the board video sender "
+            "(default: $AWS_CONFIG_FILE or SDK default chain)"
+        ),
     )
     parser.add_argument(
         "--video-startup-timeout-seconds",
@@ -1016,6 +1052,10 @@ def main() -> None:
             args.video_viewer_url,
             "--video-viewer-url",
         )
+        video_sender_command = _require_non_empty_option(
+            args.video_sender_command,
+            "--video-sender-command",
+        )
         video_region = _require_non_empty_option(
             args.video_region,
             "--video-region",
@@ -1024,6 +1064,10 @@ def main() -> None:
             args.video_channel_name,
             "--video-channel-name",
         )
+        if args.aws_shared_credentials_file is not None:
+            _require_file(args.aws_shared_credentials_file, "AWS shared credentials file")
+        if args.aws_config_file is not None:
+            _require_file(args.aws_config_file, "AWS config file")
         board_client_suffix = _sanitize_client_id(args.board_name)
         client_id = args.client_id or f"txing-board-{board_client_suffix}-{os.getpid()}"
         config = ControlConfig(
@@ -1038,6 +1082,9 @@ def main() -> None:
             video_channel_name=video_channel_name,
             video_viewer_url=video_viewer_url,
             video_region=video_region,
+            video_sender_command=video_sender_command,
+            aws_shared_credentials_file=args.aws_shared_credentials_file,
+            aws_config_file=args.aws_config_file,
             video_startup_timeout_seconds=args.video_startup_timeout_seconds,
             board_name=args.board_name,
             heartbeat_seconds=args.heartbeat_seconds,
@@ -1079,6 +1126,9 @@ def main() -> None:
         channel_name=config.video_channel_name,
         viewer_url=config.video_viewer_url,
         region=config.video_region,
+        sender_command=config.video_sender_command,
+        aws_shared_credentials_file=config.aws_shared_credentials_file,
+        aws_config_file=config.aws_config_file,
         ca_file=config.ca_file,
         state_file=DEFAULT_VIDEO_STATE_FILE,
     )

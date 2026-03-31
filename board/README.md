@@ -23,7 +23,7 @@ Phase 1 board video is a headless AWS KVS WebRTC path:
 Important:
 
 - This repo now ships the native sender in `board/kvs_master/`.
-- `board-video-sender` remains a supervisor/state adapter around a child command exposed through `TXING_BOARD_VIDEO_SENDER_COMMAND`.
+- `board-video-sender` remains a supervisor/state adapter around a child command configured through the board runtime `--video-sender-command` option.
 - The native sender is a standalone C++ executable that captures with `libcamera`, encodes H.264 through the Raspberry Pi V4L2 hardware encoder, and feeds those encoded access units to AWS KVS WebRTC as master through the AWS WebRTC C SDK directly.
 
 ## Shadow contract
@@ -355,20 +355,15 @@ sudo AWS_SHARED_CREDENTIALS_FILE=/root/.aws/credentials \
   aws sts get-caller-identity
 ```
 
-If you want the install recipe to use different credential paths, region, or channel defaults, export these variables before running `just board::install-service`:
-
-- `TXING_BOARD_AWS_SHARED_CREDENTIALS_FILE`
-- `TXING_BOARD_AWS_CONFIG_FILE`
-- `TXING_BOARD_VIDEO_REGION`
-- `TXING_BOARD_VIDEO_CHANNEL_NAME`
+If you want the install recipe to use different credential paths, region, or channel defaults, pass them directly to `just board::install-service` as parameters.
 
 ### 7. Build and Smoke Test
 
-Get the published viewer URL from the stack output and export the sender command:
+Get the published viewer URL from the stack output and define the sender command path:
 
 ```bash
-export BOARD_VIDEO_VIEWER_URL='https://<cloudfront-domain>/video'
-export TXING_BOARD_VIDEO_SENDER_COMMAND=/home/user/txing/board/kvs_master/build/txing-board-kvs-master
+BOARD_VIDEO_VIEWER_URL='https://<cloudfront-domain>/video'
+BOARD_VIDEO_SENDER_COMMAND=/home/user/txing/board/kvs_master/build/txing-board-kvs-master
 ```
 
 Build the board runtime:
@@ -379,19 +374,20 @@ python3 --version
 just board::build
 ```
 
+`just board::build` is the normal install step for the Python board runtime. It creates or updates `board/.venv/` from the OS `python3` on `PATH` and installs the packaged entry points there. You do not need to run `sync` first for deployment.
+
 Run a one-shot foreground publish using the same user that will later install the service:
 
 ```bash
 cd /home/user/txing/board
-sudo env \
-  TXING_BOARD_VIDEO_SENDER_COMMAND="$TXING_BOARD_VIDEO_SENDER_COMMAND" \
-  AWS_SHARED_CREDENTIALS_FILE=/root/.aws/credentials \
-  AWS_CONFIG_FILE=/root/.aws/config \
-  ./.venv/bin/board \
+sudo ./.venv/bin/board \
   --once \
   --video-viewer-url "$BOARD_VIDEO_VIEWER_URL" \
   --video-region eu-central-1 \
-  --video-channel-name txing-board-video
+  --video-channel-name txing-board-video \
+  --video-sender-command "$BOARD_VIDEO_SENDER_COMMAND" \
+  --aws-shared-credentials-file /root/.aws/credentials \
+  --aws-config-file /root/.aws/config
 ```
 
 What this proves:
@@ -410,22 +406,23 @@ From the repo root on the board:
 
 ```bash
 cd /home/user/txing
+just board::build
 just board::install-service \
   "$BOARD_VIDEO_VIEWER_URL" \
-  "$TXING_BOARD_VIDEO_SENDER_COMMAND"
+  "$BOARD_VIDEO_SENDER_COMMAND"
 ```
 
 If the root AWS credentials are stored elsewhere or you need a different region or channel:
 
 ```bash
 cd /home/user/txing
-export TXING_BOARD_AWS_SHARED_CREDENTIALS_FILE=/path/to/credentials
-export TXING_BOARD_AWS_CONFIG_FILE=/path/to/config
-export TXING_BOARD_VIDEO_REGION=eu-central-1
-export TXING_BOARD_VIDEO_CHANNEL_NAME=txing-board-video
 just board::install-service \
+  video_region=eu-central-1 \
+  video_channel_name=txing-board-video \
+  aws_shared_credentials_file=/path/to/credentials \
+  aws_config_file=/path/to/config \
   "$BOARD_VIDEO_VIEWER_URL" \
-  "$TXING_BOARD_VIDEO_SENDER_COMMAND"
+  "$BOARD_VIDEO_SENDER_COMMAND"
 ```
 
 The generated unit:
@@ -433,8 +430,7 @@ The generated unit:
 - enables `NetworkManager-wait-online.service`
 - waits for `systemd-time-wait-sync.service` / `time-sync.target` before startup
 - runs `txing-board` as `root`
-- sets `TXING_BOARD_VIDEO_SENDER_COMMAND`
-- starts `board` with `--video-viewer-url`, `--video-region`, and `--video-channel-name`
+- starts `board` with `--video-viewer-url`, `--video-region`, `--video-channel-name`, `--video-sender-command`, `--aws-shared-credentials-file`, and `--aws-config-file`
 - inherits the board AWS root CA PEM for the native KVS sender
 
 The Python service also waits up to `120 s` for `timedatectl` to report `SystemClockSynchronized=yes` before it starts the AWS-backed video sender. That avoids transient KVS `InvalidSignatureException` failures after boot when networking is up but NTP has not corrected the clock yet.

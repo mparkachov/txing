@@ -22,7 +22,6 @@ default_town_shadow_file := "default-town-shadow.json"
 iot_data_endpoint := ""
 localhost_app_url := "http://localhost:5173"
 localhost_alt_app_url := "http://127.0.0.1:5173"
-web_dist_dir := project_root + "/web/dist"
 
 @create CognitoDomainPrefix AdminEmail stack_name=stack_name template_file=template_file region=region profile=profile LocalhostAppUrl=localhost_app_url LocalhostAltAppUrl=localhost_alt_app_url:
     #!/usr/bin/env bash
@@ -208,64 +207,6 @@ web_dist_dir := project_root + "/web/dist"
       "${aws_flags[@]}" \
       --query "Stacks[0].Outputs" \
       --output table
-
-@publish-web stack_name=stack_name region=region profile=profile web_dist_dir=web_dist_dir:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    cd "{{aws_dir}}"
-
-    if [ -z "{{region}}" ]; then
-      echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
-      exit 1
-    fi
-
-    if [ ! -d "{{web_dist_dir}}" ]; then
-      echo "Web build output {{web_dist_dir}} not found. Run just web::build first." >&2
-      exit 1
-    fi
-
-    aws_flags=(--region "{{region}}")
-    if [ -n "{{profile}}" ]; then
-      aws_flags+=(--profile "{{profile}}")
-    fi
-
-    web_bucket_name="$(aws cloudformation describe-stacks \
-      --stack-name "{{stack_name}}" \
-      "${aws_flags[@]}" \
-      --query "Stacks[0].Outputs[?OutputKey=='WebAppBucketName'].OutputValue | [0]" \
-      --output text)"
-
-    web_distribution_id="$(aws cloudformation describe-stacks \
-      --stack-name "{{stack_name}}" \
-      "${aws_flags[@]}" \
-      --query "Stacks[0].Outputs[?OutputKey=='WebAppDistributionId'].OutputValue | [0]" \
-      --output text)"
-
-    if [ "$web_bucket_name" = "None" ] || [ "$web_distribution_id" = "None" ]; then
-      echo "Required web hosting outputs are missing in stack {{stack_name}}. Deploy aws/template.yaml first." >&2
-      exit 1
-    fi
-
-    aws s3 sync "{{web_dist_dir}}/" "s3://$web_bucket_name/" \
-      --delete \
-      --exclude "*.html" \
-      --cache-control "public,max-age=31536000,immutable" \
-      "${aws_flags[@]}"
-
-    while IFS= read -r -d '' html_file; do
-      key="${html_file#"{{web_dist_dir}}"/}"
-      key="${key#/}"
-      aws s3 cp "$html_file" "s3://$web_bucket_name/$key" \
-        --cache-control "no-cache, no-store, must-revalidate" \
-        "${aws_flags[@]}"
-    done < <(find "{{web_dist_dir}}" -type f -name '*.html' -print0)
-
-    aws cloudfront create-invalidation \
-      --distribution-id "$web_distribution_id" \
-      --paths "/*" \
-      "${aws_flags[@]}" >/dev/null
-
-    echo "Published {{web_dist_dir}} to s3://$web_bucket_name and invalidated CloudFront distribution $web_distribution_id."
 
 @create-admin-user AdminEmail AdminPassword stack_name=stack_name region=region profile=profile:
     #!/usr/bin/env bash

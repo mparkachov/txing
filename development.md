@@ -106,7 +106,7 @@ Publish the web SPA after building it:
 
 ```bash
 just web::build
-just aws::publish-web
+just web::publish
 ```
 
 Set the admin password in Cognito:

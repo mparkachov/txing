@@ -152,6 +152,10 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
     cd "{{board_dir}}" && uv run board --once
 
 @install-service video_viewer_url video_sender_command video_region=default_video_region video_channel_name=default_video_channel_name aws_shared_credentials_file=default_aws_shared_credentials_file aws_config_file=default_aws_config_file:
+    test -x "{{built_board}}" || { \
+        echo "Missing built board executable at {{built_board}}. Run 'just build' first." >&2; \
+        exit 1; \
+    }
     sudo systemctl enable NetworkManager-wait-online.service
     printf '%s\n' \
         '[Unit]' \
@@ -162,10 +166,7 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
         '[Service]' \
         'Type=simple' \
         'WorkingDirectory={{board_dir}}' \
-        'Environment=AWS_SHARED_CREDENTIALS_FILE={{aws_shared_credentials_file}}' \
-        'Environment=AWS_CONFIG_FILE={{aws_config_file}}' \
-        'Environment=TXING_BOARD_VIDEO_SENDER_COMMAND={{video_sender_command}}' \
-        'ExecStart={{built_board}} --heartbeat-seconds 60 --video-viewer-url {{video_viewer_url}} --video-region {{video_region}} --video-channel-name {{video_channel_name}}' \
+        'ExecStart={{built_board}} --heartbeat-seconds 60 --video-viewer-url {{video_viewer_url}} --video-region {{video_region}} --video-channel-name {{video_channel_name}} --aws-shared-credentials-file {{aws_shared_credentials_file}} --aws-config-file {{aws_config_file}} --video-sender-command "{{video_sender_command}}"' \
         'Restart=always' \
         'RestartSec=5' \
         '' \

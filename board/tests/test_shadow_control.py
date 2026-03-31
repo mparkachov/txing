@@ -51,6 +51,9 @@ def _make_args(**overrides: object) -> Namespace:
         "video_channel_name": DEFAULT_VIDEO_CHANNEL_NAME,
         "video_viewer_url": "https://ops.example.com/txing/video",
         "video_region": DEFAULT_VIDEO_REGION,
+        "video_sender_command": "/tmp/txing-board-kvs-master",
+        "aws_shared_credentials_file": Path("/tmp/credentials"),
+        "aws_config_file": Path("/tmp/config"),
         "video_startup_timeout_seconds": DEFAULT_VIDEO_STARTUP_TIMEOUT_SECONDS,
         "board_name": "txing-board-test",
         "heartbeat_seconds": DEFAULT_HEARTBEAT_SECONDS,
@@ -101,6 +104,9 @@ def _make_config(**overrides: object) -> ControlConfig:
         "video_channel_name": DEFAULT_VIDEO_CHANNEL_NAME,
         "video_viewer_url": "https://ops.example.com/txing/video",
         "video_region": DEFAULT_VIDEO_REGION,
+        "video_sender_command": "/tmp/txing-board-kvs-master",
+        "aws_shared_credentials_file": Path("/tmp/credentials"),
+        "aws_config_file": Path("/tmp/config"),
         "video_startup_timeout_seconds": DEFAULT_VIDEO_STARTUP_TIMEOUT_SECONDS,
         "board_name": "txing-board-test",
         "heartbeat_seconds": DEFAULT_HEARTBEAT_SECONDS,
@@ -485,10 +491,12 @@ class ShadowControlContractTests(unittest.TestCase):
             justfile,
         )
         self.assertNotIn("mediamtx.service", justfile)
-        self.assertIn("Environment=TXING_BOARD_VIDEO_SENDER_COMMAND=", justfile)
         self.assertIn("--video-viewer-url {{video_viewer_url}}", justfile)
         self.assertIn("--video-region {{video_region}}", justfile)
         self.assertIn("--video-channel-name {{video_channel_name}}", justfile)
+        self.assertIn("--video-sender-command", justfile)
+        self.assertIn("--aws-shared-credentials-file {{aws_shared_credentials_file}}", justfile)
+        self.assertIn("--aws-config-file {{aws_config_file}}", justfile)
         self.assertIn('env_var_or_default("TXING_BOARD_AWS_SHARED_CREDENTIALS_FILE"', justfile)
         self.assertIn('env_var_or_default("TXING_BOARD_AWS_CONFIG_FILE"', justfile)
         self.assertIn('env_var_or_default("TXING_BOARD_VIDEO_REGION"', justfile)

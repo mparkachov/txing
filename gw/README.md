@@ -96,15 +96,17 @@ cd ~/txing
 just aws::bootstrap
 ```
 
-8. Install gateway dependencies and verify startup:
+8. Build the gateway with the OS `python3` and verify startup:
 
 ```bash
 cd ~/txing/gw
-uv python install 3.12
-uv sync
-uv run gw --help
-uv run gw --debug
+python3 --version
+just build
+./.venv/bin/gw --help
+just debug
 ```
+
+`build` is the normal install step for the gateway. It creates or updates `gw/.venv/` from the OS `python3` on `PATH` and installs the packaged entry points there. You do not need to run `sync` first. `gw` requires Python `3.12+`, so make sure `python3 --version` on the gateway machine satisfies that before running `just build`.
 
 9. Optional: install the `systemd` service:
 
@@ -115,13 +117,14 @@ sudo journalctl -u txing-gw -f
 ```
 
 The `just gw::install-service` task enables `bluetooth`, writes `/etc/systemd/system/txing-gw.service` for the current user and checkout path, reloads `systemd`, and enables `txing-gw`.
+It points `ExecStart` at the built gateway executable in `gw/.venv/bin/gw`, so run `just gw::build` first.
 
 ## Run gateway
 
 Run from `gw/`:
 
 ```bash
-uv run gw
+just run
 ```
 
 This uses bootstrap artifacts by default:
@@ -139,7 +142,7 @@ Default logging behavior:
 Dry-run mode (no BLE writes, still syncs AWS shadow and Sparkplug lifecycle traffic):
 
 ```bash
-uv run gw --no-ble
+./.venv/bin/gw --no-ble
 ```
 
 `--no-ble` is MQTT update-driven (subscribed topics), not fixed-interval cloud polling.
@@ -161,8 +164,11 @@ just aws::shadow-reset
 From `gw/`:
 
 ```bash
+just build
 just wake
 just sleep
+just dcmd
+just ddata
 just print
 ```
 

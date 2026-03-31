@@ -141,10 +141,10 @@ Build and publish:
 
 ```bash
 just web::build
-just aws::publish-web
+just web::publish
 ```
 
-`aws::publish-web` uploads `web/dist` to the stack output bucket, marks HTML as non-cacheable, and invalidates the CloudFront distribution.
+`web::publish` uploads `web/dist` to the stack output bucket, marks HTML as non-cacheable, and invalidates the CloudFront distribution.
 
 ## Hosting note
 

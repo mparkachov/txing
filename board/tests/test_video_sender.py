@@ -104,6 +104,27 @@ class VideoSenderTests(unittest.TestCase):
         self.assertEqual(environment["SSL_CERT_FILE"], "/custom/ca.pem")
         self.assertEqual(environment["AWS_KVS_CACERT_PATH"], "/custom/ca.pem")
 
+    def test_parse_args_accepts_explicit_aws_files(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            with patch(
+                "sys.argv",
+                [
+                    "board-video-sender",
+                    "--region",
+                    "eu-central-1",
+                    "--viewer-url",
+                    "https://ops.example.com/video",
+                    "--aws-shared-credentials-file",
+                    "/tmp/credentials",
+                    "--aws-config-file",
+                    "/tmp/config",
+                ],
+            ):
+                args = video_sender._parse_args()
+
+        self.assertEqual(str(args.aws_shared_credentials_file), "/tmp/credentials")
+        self.assertEqual(str(args.aws_config_file), "/tmp/config")
+
 
 if __name__ == "__main__":
     unittest.main()

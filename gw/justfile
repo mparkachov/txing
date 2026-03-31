@@ -1,6 +1,10 @@
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 
 gw_dir := source_directory()
+python_executable := "python3"
+built_gw := gw_dir + "/.venv/bin/gw"
+built_gw_sparkplug_cmd := gw_dir + "/.venv/bin/gw-sparkplug-cmd"
+built_gw_sparkplug_log := gw_dir + "/.venv/bin/gw-sparkplug-log"
 project_root := gw_dir + "/.."
 aws_justfile := project_root + "/aws/justfile"
 thing_name := "txing"
@@ -8,20 +12,41 @@ region := "eu-central-1"
 endpoint_file := gw_dir + "/../certs/iot-data-ats.endpoint"
 systemd_unit := "/etc/systemd/system/txing-gw.service"
 
+@sync:
+    cd "{{gw_dir}}" && uv sync --python "{{python_executable}}" --no-managed-python --no-python-downloads
+
+@build:
+    cd "{{gw_dir}}" && uv sync --frozen --no-editable --compile-bytecode --python "{{python_executable}}" --no-managed-python --no-python-downloads --refresh-package gw --reinstall-package gw
+    test -x "{{built_gw}}"
+    test -x "{{built_gw_sparkplug_cmd}}"
+    test -x "{{built_gw_sparkplug_log}}"
+
 @check:
     just --justfile "{{aws_justfile}}" check
 
+@run:
+    cd "{{gw_dir}}" && "{{built_gw}}"
+
+@debug:
+    cd "{{gw_dir}}" && "{{built_gw}}" --debug
+
+@dev:
+    cd "{{gw_dir}}" && uv run gw
+
+@debug-dev:
+    cd "{{gw_dir}}" && uv run gw --debug
+
 @wake:
-    uv run gw-sparkplug-cmd --redcon 3 --thing-name "{{thing_name}}"
+    cd "{{gw_dir}}" && "{{built_gw_sparkplug_cmd}}" --redcon 3 --thing-name "{{thing_name}}"
 
 @sleep:
-    uv run gw-sparkplug-cmd --redcon 4 --thing-name "{{thing_name}}"
+    cd "{{gw_dir}}" && "{{built_gw_sparkplug_cmd}}" --redcon 4 --thing-name "{{thing_name}}"
 
 @dcmd:
-    uv run gw-sparkplug-log --thing-name "{{thing_name}}" --message-type dcmd
+    cd "{{gw_dir}}" && "{{built_gw_sparkplug_log}}" --thing-name "{{thing_name}}" --message-type dcmd
 
 @ddata:
-    uv run gw-sparkplug-log --thing-name "{{thing_name}}" --message-type ddata
+    cd "{{gw_dir}}" && "{{built_gw_sparkplug_log}}" --thing-name "{{thing_name}}" --message-type ddata
 
 @print:
     aws iot-data get-thing-shadow \
@@ -31,8 +56,12 @@ systemd_unit := "/etc/systemd/system/txing-gw.service"
       /dev/stdout | jq '.'
 
 @install-service:
+    test -x "{{built_gw}}" || { \
+        echo "Missing built gateway executable at {{built_gw}}. Run 'just build' first." >&2; \
+        exit 1; \
+    }
     sudo systemctl enable --now bluetooth
-    run_user="$(id -un)"; run_home="$(getent passwd "$run_user" | cut -d: -f6)"; printf '%s\n' \
+    run_user="$(id -un)"; printf '%s\n' \
         '[Unit]' \
         'Description=txing gateway' \
         'After=network-online.target bluetooth.target' \
@@ -42,9 +71,8 @@ systemd_unit := "/etc/systemd/system/txing-gw.service"
         'Type=simple' \
         "User=$run_user" \
         'WorkingDirectory={{gw_dir}}' \
-        "Environment=PATH=$run_home/.local/bin:/usr/local/bin:/usr/bin" \
         'Environment=AWS_REGION={{region}}' \
-        "ExecStart=$run_home/.local/bin/uv run gw" \
+        'ExecStart={{built_gw}}' \
         'Restart=always' \
         'RestartSec=3' \
         '' \
