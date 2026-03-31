@@ -7,6 +7,7 @@
 - Live-control target: `p95` operator glass-to-glass latency under `800 ms` on target links
 - Control model: directional commands, not precision teleoperation
 - Field-test rule: this phase-1 choice can be changed after field tests if the plain-AWS-WebRTC path does not deliver acceptable operator quality
+- Current repo implementation: `txing-board` publishes `board.video.*`, supervises a dedicated sender state manager, and the browser uses AWS KVS signaling + WebRTC for the viewer path
 
 Explicit non-goals for this slice:
 
@@ -26,20 +27,25 @@ Explicit non-goals for this slice:
 - Phase 1 does not use WebRTC ingestion/storage, multiviewer, or `kvssink`.
 - ML and other cloud-side consumers are explicitly outside the phase-1 media path. If they need video later, that will require a separate follow-on design.
 - A second direct operator path remains a fallback option only if field tests show the plain-AWS-WebRTC path is not good enough.
+- In the current repo, the actual native sender command is injected at runtime and supervised by `board.video_sender`; the repo does not embed the media-pipeline implementation directly.
 
 ## High-Level Architecture
 
 ```text
 txing-board
   -> owns board.* shadow state
+  -> supervises board video sender state
   -> reports board.video transport/session metadata
   -> tracks coarse board video readiness and failures
 
-board video sender
-  -> captures board camera
-  -> encodes H.264
-  -> connects as master through the KVS WebRTC signaling channel
-  -> sends one live stream to the operator path
+board video sender state manager
+  -> validates the KVS signaling channel exists
+  -> launches the externally configured native sender command
+  -> marks sender ready from child output or fallback startup timeout
+  -> tracks best-effort viewer connected/disconnected state from child output markers
+
+native sender command
+  -> owns the actual camera capture, encode, and KVS master session
 
 operator client
   -> connects as viewer through the KVS WebRTC signaling channel
@@ -83,6 +89,7 @@ Notes:
 - `session.channelName` is the AWS WebRTC signaling channel name for browser or native clients.
 - Phase 1 means plain KVS WebRTC signaling, not ingestion/storage.
 - `board.video.local.*` is no longer part of the active phase-1 contract.
+- `ready` and `viewerConnected` are coarse runtime signals derived from the supervised sender state, not a full media-quality guarantee.
 
 ## Runtime Layout
 
@@ -94,10 +101,21 @@ Responsibilities:
 - keep handling `desired.board.power`
 - refresh board IPv4 and IPv6 on each publish loop
 - publish board video transport/session metadata
-- gate `board.video.ready` on successful plain AWS WebRTC session readiness
+- supervise the local board video sender state manager
+- gate `board.video.ready` on sender readiness rather than any board-local iframe endpoint
 - surface the last coarse media error through `board.video.lastError`
 
-### Board Video Sender
+### Board Video Sender State Manager
+
+Responsibilities:
+
+- validate the configured signaling channel before steady-state sender supervision
+- run the actual native sender command provided at runtime
+- persist local sender state for `txing-board`
+- translate sender output markers into coarse `ready` / `viewerConnected` state
+- keep the repo-managed path simple enough for field validation in v1
+
+### Native Sender Command
 
 Responsibilities:
 
@@ -105,7 +123,6 @@ Responsibilities:
 - encode H.264
 - establish the plain AWS WebRTC master session
 - publish a single live path to the operator
-- keep the sender simple enough for field validation in v1
 
 ### Operator Client
 
@@ -114,7 +131,7 @@ Responsibilities:
 - join the plain AWS WebRTC viewer session
 - render the live stream for directional control
 - translate browser key presses into strict ROS `Twist` commands for `txing/board/cmd_vel`
-- support the existing browser operator first and allow later native-client adoption
+- support the existing browser operator first; future native-client support remains a design goal, not a completed implementation
 
 Control contract notes:
 
@@ -131,12 +148,13 @@ Phase 1 uses:
 - H.264 as the expected video codec
 - one live uplink from the device
 - no direct browser-to-board media path in the default design
+- a repo-managed sender supervisor that launches an externally configured native sender command
 
 Phase 1 does not use:
 
 - WebRTC ingestion/storage
 - multiviewer
-- `kvssink`
+- a repo-managed `kvssink`-based sender implementation
 - HLS/DASH for live control
 - a board-local iframe viewer page
 - a second direct operator path by default

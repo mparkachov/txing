@@ -53,9 +53,9 @@ In this repository's current Thing Shadow contract, the gateway derives a single
 | `state.reported.redcon` | UI color | Meaning | Current derivation |
 | --- | --- | --- | --- |
 | `4` | Green | Sleep state / `Cold Camp` | `reported.mcu.power=false` |
-| `3` | Yellow | Booting / `Torch-Up` | `reported.mcu.power=true`, while the board is not yet reported powered or online |
-| `2` | Orange / Amber | On watch / `Ember Watch` | `reported.mcu.power=true`, `reported.board.power=true`, `reported.board.wifi.online=false` |
-| `1` | Red | Ready / `Hot Rig` | `reported.mcu.power=true`, `reported.board.wifi.online=true` |
+| `3` | Yellow | Booting / `Torch-Up` | `reported.mcu.power=true`, while the operator video path is not ready yet |
+| `2` | Orange / Amber | On watch / `Ember Watch` | `reported.mcu.power=true`, `reported.board.power=true`, `reported.board.wifi.online=true`, `reported.board.video.ready=true`, and `reported.board.video.viewerConnected=false` |
+| `1` | Red | Ready / `Hot Rig` | same as `2`, plus `reported.board.video.viewerConnected=true` |
 
 This mapping is intentionally derived from reported state, not desired state. It answers "how far up is the rig right now?" rather than "what was requested?".
 
@@ -71,10 +71,16 @@ The point is to let a physical device live cheaply in the world most of the time
 
 In that kind of system, a human operator is just one sample caller among many. Cloud services, automation, and supervisory nodes can all occupy the same conceptual role: they issue intent, consume reports, and decide when a device should stay cold, stay local, or go fully hot.
 
-Open question:
-Should a regional coordinator itself count as a `txing`, or is `txing` a term reserved for field devices at the edge?
+Phase-1 functional decision:
 
-The current implementation leaves that unresolved. `gw` already behaves somewhat like a lieutenant for multiple `txing` devices, but it does not itself fit the full sleep-hard pattern, because it is expected to remain up as technical support for the field devices. For now, that makes it a useful example of hierarchy, but not a clean conceptual fit.
+- `town` is the top-level management namespace and the Sparkplug group id.
+- `rig` is the always-on regional coordinator and the Sparkplug edge node.
+- `txing` is the field device and the Sparkplug device.
+- One physical `txing` includes both the MCU watch layer and the board action layer.
+- One `rig` is expected to manage multiple `txing` devices over time.
+- In phase 1, lifecycle intent moves toward Sparkplug `redcon`, while AWS shadow remains a reflected operational store and restart cache.
+
+That means the regional coordinator is not itself a `txing` in phase 1. It is a separate layer in the hierarchy: the `rig`.
 
 ## Sample implementation in this repo
 
@@ -82,10 +88,12 @@ This repository contains one sample implementation of the `txing` concept:
 
 - `mcu/`: the current watch layer
 - `board/`: the current action layer
-- `gw/`: one support component that bridges cloud intent to the current watch link, and an early example of the shape a regional coordinator could take
+- `gw/`: the current Raspberry Pi support component that bridges cloud intent to the watch link today and is the codebase that will evolve toward the phase-1 `rig`
 - `web/`: one operator/admin surface
-- `docs/`: shared contracts and schema for this implementation
+- `docs/`: shared contracts, schema, and Sparkplug phase-1 design notes for this implementation
 
 In this implementation, the watch link is BLE and the action link is Wi-Fi. Those are examples, not the definition of `txing`.
+
+For the current Sparkplug phase-1 design decisions around `town`, `rig`, and `txing`, see [docs/sparkplug-phase1-design.md](./docs/sparkplug-phase1-design.md).
 
 For build, deploy, and local development workflows, see [development.md](./development.md).

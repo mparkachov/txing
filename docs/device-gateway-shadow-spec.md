@@ -3,6 +3,12 @@
 This document is the integration contract for the gateway team only.
 Build, flash, and local developer commands live in the subproject READMEs.
 
+Status note:
+
+- This document describes the current gw-era BLE + AWS shadow compatibility contract implemented in the repo today.
+- It does not describe the target Sparkplug phase-1 lifecycle architecture.
+- For the target `town` / `rig` / `txing` lifecycle model and Sparkplug authority split, see `docs/sparkplug-phase1-design.md`.
+
 ## 1. Scope
 
 Contract between:

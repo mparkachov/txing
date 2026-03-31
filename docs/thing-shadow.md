@@ -2,6 +2,13 @@
 
 This document defines how shadow structure is governed across the repo.
 
+## Status
+
+- This document describes the current gw/board AWS shadow compatibility model implemented in the repo today.
+- The current compatibility implementation still uses the classic single thing shadow for `txing`.
+- The Sparkplug phase-1 target lifecycle model is documented separately in `docs/sparkplug-phase1-design.md`.
+- Where the Sparkplug phase-1 target differs from the current compatibility contract, this document describes the current implemented behavior and the Sparkplug doc describes the intended transition.
+
 ## Canonical schema
 
 - Schema file: `./txing-shadow.schema.json`
@@ -21,10 +28,20 @@ This document defines how shadow structure is governed across the repo.
 - Only `board` is allowed to define or evolve fields under `board`.
 - Other components must treat `board.*` as a stable contract and must not add, rename, or repurpose fields.
 
+Sparkplug phase-1 target note:
+
+- The target lifecycle authority moves toward `rig` with Sparkplug `redcon` as the authoritative intent path.
+- During that transition, the current gw/board ownership above remains the implemented compatibility contract for `mcu.*`, `board.*`, and current shadow-derived `reported.redcon`.
+
 ## AWS IoT note
 
 AWS IoT Thing Shadows do not enforce a custom JSON schema automatically.
 Schema validation should be done by project code and/or CI checks, while AWS IoT stores the JSON document.
+
+Sparkplug phase-1 note:
+
+- Phase 1 moves lifecycle intent toward Sparkplug and uses shadow as reflection and restart cache.
+- Until that transition is implemented end-to-end, the field definitions below remain the authoritative compatibility contract for the current codebase.
 
 ## Required project fields
 
