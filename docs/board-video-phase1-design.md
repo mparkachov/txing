@@ -98,7 +98,7 @@ Notes:
 Responsibilities:
 
 - publish all `board.*` Thing Shadow updates
-- keep handling `desired.board.power`
+- keep handling internal `desired.board.power`
 - refresh board IPv4 and IPv6 on each publish loop
 - publish board video transport/session metadata
 - supervise the local board video sender state manager

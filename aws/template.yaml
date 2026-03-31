@@ -50,6 +50,16 @@ Resources:
     Properties:
       ThingName: txing
 
+  RigThing:
+    Type: AWS::IoT::Thing
+    Properties:
+      ThingName: rig
+
+  TownThing:
+    Type: AWS::IoT::Thing
+    Properties:
+      ThingName: town
+
   TxingBoardVideoChannel:
     Type: AWS::KinesisVideo::SignalingChannel
     Properties:
@@ -89,17 +99,36 @@ Resources:
             Action:
               - iot:GetThingShadow
               - iot:UpdateThingShadow
-            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/txing
+            Resource:
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/txing
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/rig
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/town
           - Sid: ShadowPublishReceive
             Effect: Allow
             Action:
               - iot:Publish
               - iot:Receive
-            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/txing/shadow/*
+            Resource:
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/txing/shadow/*
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/rig/shadow/*
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/town/shadow/*
           - Sid: ShadowSubscribe
             Effect: Allow
             Action: iot:Subscribe
-            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/$aws/things/txing/shadow/*
+            Resource:
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/$aws/things/txing/shadow/*
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/$aws/things/rig/shadow/*
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/$aws/things/town/shadow/*
+          - Sid: SparkplugPublishReceive
+            Effect: Allow
+            Action:
+              - iot:Publish
+              - iot:Receive
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/spBv1.0/*
+          - Sid: SparkplugSubscribe
+            Effect: Allow
+            Action: iot:Subscribe
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/spBv1.0/*
           - Sid: CmdVelPublishReceive
             Effect: Allow
             Action:
@@ -144,6 +173,10 @@ Resources:
               - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/txing/shadow/get/rejected
               - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/txing/shadow/update/accepted
               - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/txing/shadow/update/rejected
+          - Sid: SparkplugCommandPublish
+            Effect: Allow
+            Action: iot:Publish
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/spBv1.0/town/DCMD/rig/txing
           - Sid: CmdVelPublishReceive
             Effect: Allow
             Action:
@@ -366,6 +399,10 @@ Resources:
                   - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/txing/shadow/get/rejected
                   - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/txing/shadow/update/accepted
                   - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/txing/shadow/update/rejected
+              - Sid: SparkplugCommandPublish
+                Effect: Allow
+                Action: iot:Publish
+                Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/spBv1.0/town/DCMD/rig/txing
               - Sid: CmdVelPublishReceive
                 Effect: Allow
                 Action:
@@ -417,6 +454,12 @@ Outputs:
   ThingArn:
     Description: ARN of the txing IoT Thing.
     Value: !GetAtt TxingThing.Arn
+  RigThingName:
+    Description: Fixed IoT Thing name used for rig lifecycle reflection.
+    Value: !Ref RigThing
+  TownThingName:
+    Description: Fixed IoT Thing name used for town lifecycle reflection.
+    Value: !Ref TownThing
   ShadowUpdateTopic:
     Description: Reserved MQTT topic for Thing Shadow updates.
     Value: !Sub "$aws/things/${TxingThing}/shadow/update"

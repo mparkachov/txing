@@ -4,50 +4,55 @@ This document defines how shadow structure is governed across the repo.
 
 ## Status
 
-- This document describes the current gw/board AWS shadow compatibility model implemented in the repo today.
-- The current compatibility implementation still uses the classic single thing shadow for `txing`.
-- The Sparkplug phase-1 target lifecycle model is documented separately in `docs/sparkplug-phase1-design.md`.
-- Where the Sparkplug phase-1 target differs from the current compatibility contract, this document describes the current implemented behavior and the Sparkplug doc describes the intended transition.
+- This document describes the current Sparkplug phase-1 shadow model implemented in the repo.
+- Sparkplug `DCMD.redcon` is the only authoritative external lifecycle intent path.
+- The classic `txing` Thing Shadow remains the lifecycle reflection and restart-cache document.
+- The phase-1 `rig` and `town` shadows are minimal reflection documents with `state.reported.redcon=1`.
+- The design background remains documented in `docs/sparkplug-phase1-design.md`.
 
 ## Canonical schema
 
 - Schema file: `./txing-shadow.schema.json`
-- Thing name: `txing`
-- Shadow type: classic (unnamed) Thing Shadow
+- Thing names:
+  - `txing`: device shadow
+  - `rig`: edge-node reflection shadow
+  - `town`: group reflection shadow
+- Shadow type: classic (unnamed) Thing Shadow for each thing
 - High-level paths:
-  - `AWS IoT Device Shadow -> MQTT -> gw -> BLE -> mcu`
-  - `AWS IoT Device Shadow -> MQTT -> board`
+  - `Sparkplug host -> AWS IoT MQTT -> gw (phase-1 rig runtime) -> BLE -> mcu`
+  - `gw -> AWS IoT Thing Shadows (txing, rig, town)`
+  - `board -> AWS IoT Thing Shadow (txing.board.*)`
 
 ## Ownership decision
 
-- `mcu.*` is owned by the gateway (`gw`) as the source of truth for MCU-related shadow data.
+- `mcu.*` is owned by the gateway (`gw`) runtime acting as the phase-1 `rig` lifecycle service.
 - Only `gw` is allowed to define or evolve fields under `mcu`.
 - Other components must treat `mcu.*` as a stable contract and must not add, rename, or repurpose fields.
-- Top-level `reported.redcon` is owned by the gateway (`gw`) as a derived readiness summary computed from reported MCU and board state.
+- Top-level `txing.state.reported.redcon` is owned by `gw` as a derived readiness summary computed from reported MCU and board state.
+- Top-level `txing.state.desired.redcon` is owned by `gw` as the reflected cache of the latest unresolved Sparkplug lifecycle command.
+- `txing.state.desired.board.power` remains an internal rig-to-board graceful-halt actuator only. It is not a public lifecycle API.
+- `txing.state.desired.mcu.power` is deprecated and ignored by the phase-1 runtime.
 - `board.*` is owned by the device-side board control (`board`) as the source of truth for board-related shadow data.
 - Only `board` is allowed to define or evolve fields under `board`.
 - Other components must treat `board.*` as a stable contract and must not add, rename, or repurpose fields.
-
-Sparkplug phase-1 target note:
-
-- The target lifecycle authority moves toward `rig` with Sparkplug `redcon` as the authoritative intent path.
-- During that transition, the current gw/board ownership above remains the implemented compatibility contract for `mcu.*`, `board.*`, and current shadow-derived `reported.redcon`.
 
 ## AWS IoT note
 
 AWS IoT Thing Shadows do not enforce a custom JSON schema automatically.
 Schema validation should be done by project code and/or CI checks, while AWS IoT stores the JSON document.
 
-Sparkplug phase-1 note:
+Phase-1 note:
 
-- Phase 1 moves lifecycle intent toward Sparkplug and uses shadow as reflection and restart cache.
-- Until that transition is implemented end-to-end, the field definitions below remain the authoritative compatibility contract for the current codebase.
+- Sparkplug owns lifecycle intent.
+- Shadow is reflection and restart cache.
+- `gw` continues to derive `reported.redcon` from current `reported.mcu.*` and `reported.board.*`, including the phase-1 viewer-dependent `REDCON 1` rule.
 
 ## Required project fields
 
 - Terminology: `power=true` means the wakeup state, and `power=false` means the sleep state with periodic `5 s` BLE rendezvous wakeups.
-- `state.desired.mcu.power` (`boolean`, update payload may temporarily use `null` to delete) requests the MCU power mode: `true` keeps the MCU in the wakeup state and BLE-connectable, `false` returns it to the sleep state with periodic low-power rendezvous wakeups.
-- `state.desired.board.power` (`boolean`, update payload may temporarily use `null` to delete) is a board-owned one-shot board power request: `false` asks the board Pi to halt locally, and the board control clears the field on clean shutdown after consuming it.
+- `state.desired.redcon` (`integer | null`, `1..4`) reflects the latest unresolved Sparkplug lifecycle target for `txing`. `gw` writes it when a valid `DCMD.redcon` arrives and clears it after convergence or `DDEATH`.
+- `state.desired.board.power` (`boolean | null`, update payload may temporarily use `null` to delete) is an internal rig-to-board one-shot graceful-halt request: `false` asks the board Pi to halt locally before `gw` sends the MCU sleep command for `REDCON 4`.
+- `state.desired.mcu.power` is deprecated compatibility state only. Phase-1 runtime behavior does not read or act on it.
 - `state.reported.mcu.power` (`boolean`) is the gateway-confirmed MCU power mode.
 - `state.reported.redcon` (`integer`, `1..4`) is the gateway-derived readiness summary:
   - `4`: Green / `Cold Camp` / MCU sleep state
@@ -81,8 +86,12 @@ Sparkplug phase-1 note:
 
 ## Web admin transport note
 
-- The browser admin SPA consumes the classic `txing` Thing Shadow over AWS IoT MQTT/WSS.
-- `board` and `gw` continue to publish shadow state exactly as before; only the browser shadow transport changed from HTTP polling to push-driven MQTT shadow updates.
+- The browser admin SPA consumes the classic `txing` Thing Shadow over AWS IoT MQTT/WSS as its read path.
+- Browser lifecycle writes no longer target shadow desired power fields.
+- The phase-1 on/off switch publishes Sparkplug `DCMD.redcon` over MQTT/WSS:
+  - `on` -> `redcon=3`
+  - `off` -> `redcon=4`
+- `board` and `gw` continue to publish shadow state as the reflected operational state.
 - The browser still uses HTTPS for Cognito hosted UI, Cognito token exchange/refresh, Cognito Identity credential bootstrap, and IoT policy attachment. Only shadow document traffic moved to MQTT/WSS.
 - Live board motion control remains out of band and is not part of the Thing Shadow contract. The current browser-to-board control topic is `txing/board/cmd_vel`, carrying raw JSON shaped like ROS `geometry_msgs/Twist`.
 - `txing/board/cmd_vel` is a strict semantic contract, not only a ROS-shaped JSON payload:

@@ -11,6 +11,11 @@ import { buildCmdVelPublishPacket, type Twist } from './cmd-vel'
 import { appConfig } from './config'
 import { mergeShadowUpdate } from './shadow-merge'
 import {
+  buildSparkplugRedconCommandPacket,
+  buildSparkplugTopics,
+  type SparkplugTopics,
+} from './sparkplug-protocol'
+import {
   buildGetShadowPublishPacket,
   buildShadowSubscriptionPacket,
   buildShadowTopics,
@@ -43,6 +48,8 @@ export type ShadowSessionOptions = {
   thingName: string
   iotDataEndpoint: string
   awsRegion: string
+  sparkplugGroupId: string
+  sparkplugEdgeNodeId: string
   resolveIdToken: ResolveIdToken
   onShadowDocument: (shadow: unknown, operation: ShadowOperation) => void
   onConnectionStateChange: (state: ShadowConnectionState) => void
@@ -52,6 +59,7 @@ export type ShadowSession = {
   start: () => Promise<unknown>
   requestSnapshot: () => Promise<unknown>
   updateShadow: (shadowDocument: unknown) => Promise<unknown>
+  publishRedconCommand: (redcon: number) => Promise<void>
   publishCmdVel: (twist: Twist) => Promise<void>
   waitForSnapshot: (
     predicate: (shadow: unknown) => boolean,
@@ -257,6 +265,7 @@ class BrowserCredentialProvider extends auth.CredentialsProvider {
 class AwsIotShadowSession implements ShadowSession {
   private readonly options: ShadowSessionOptions
   private readonly topics: ShadowTopics
+  private readonly sparkplugTopics: SparkplugTopics
   private readonly mqttHost: string
   private readonly credentialsProvider: BrowserCredentialProvider
   private client: mqtt5.Mqtt5Client | null = null
@@ -264,6 +273,7 @@ class AwsIotShadowSession implements ShadowSession {
   private connectionState: ShadowConnectionState = 'idle'
   private startPromise: Promise<unknown> | null = null
   private latestShadow: unknown = null
+  private sparkplugCommandSeq = 0
   private readonly pendingRequests = new Map<string, PendingRequest>()
   private readonly snapshotWaiters = new Set<SnapshotWaiter>()
   private readonly handleAttemptingConnect = (): void => {
@@ -331,6 +341,11 @@ class AwsIotShadowSession implements ShadowSession {
   constructor(options: ShadowSessionOptions) {
     this.options = options
     this.topics = buildShadowTopics(options.thingName)
+    this.sparkplugTopics = buildSparkplugTopics(
+      options.sparkplugGroupId,
+      options.sparkplugEdgeNodeId,
+      options.thingName,
+    )
     this.mqttHost = deriveMqttHostFromIotDataEndpoint(options.iotDataEndpoint)
     this.credentialsProvider = new BrowserCredentialProvider(options.resolveIdToken)
   }
@@ -361,6 +376,21 @@ class AwsIotShadowSession implements ShadowSession {
     const clientToken = createShadowClientToken('update')
     const packet = buildUpdateShadowPublishPacket(this.topics, shadowDocument, clientToken)
     return this.publishRequest('update', clientToken, packet)
+  }
+
+  async publishRedconCommand(redcon: number): Promise<void> {
+    const client = this.client
+    if (!client || !this.isConnected()) {
+      throw new Error('Shadow connection is not ready')
+    }
+
+    const packet = buildSparkplugRedconCommandPacket(
+      this.sparkplugTopics,
+      redcon,
+      this.sparkplugCommandSeq,
+    )
+    this.sparkplugCommandSeq = (this.sparkplugCommandSeq + 1) % 256
+    await client.publish(packet as mqtt5.PublishPacket)
   }
 
   async publishCmdVel(twist: Twist): Promise<void> {

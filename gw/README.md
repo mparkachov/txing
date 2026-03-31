@@ -4,8 +4,10 @@ Python service for the Raspberry Pi 5 gateway.
 
 Responsibilities:
 - Connect directly to AWS IoT Core over MQTT/mTLS
-- Synchronize classic Thing Shadow for thing `txing`
-- Bridge `state.desired.mcu.power` power-state requests to the MCU over BLE rendezvous sessions
+- Act as the phase-1 `rig` lifecycle runtime in the same process
+- Synchronize classic Thing Shadows for `txing`, `rig`, and `town`
+- Accept Sparkplug `DCMD.redcon` lifecycle commands and publish `NBIRTH`/`NDATA`/`DBIRTH`/`DDATA`/`DDEATH`
+- Bridge REDCON-driven wakeup-state and sleep-state changes to the MCU over BLE rendezvous sessions
 - Publish MCU state to `state.reported.mcu.*`
 - Publish derived readiness at top-level `state.reported.redcon`
 
@@ -15,7 +17,8 @@ Shadow contract source of truth:
 - Design decision: `gw` owns and evolves the `mcu.*` shadow subtree contract.
 
 High-level architecture:
-- AWS IoT Device Shadow -> MQTT -> gw -> BLE -> mcu
+- Sparkplug host -> AWS IoT MQTT -> gw -> BLE -> mcu
+- gw -> AWS IoT Thing Shadows (`txing`, `rig`, `town`)
 
 ## Requirements
 
@@ -133,7 +136,7 @@ Default logging behavior:
 - CloudWatch Logs (`/txing/gw`): full operational logs (no CloudWatch agent required)
 - If CloudWatch preflight fails (missing log group or AWS credentials/permissions mismatch), gateway continues with stdout logging and prints a startup warning. Run `just gw::check`.
 
-Dry-run mode (no BLE writes, still syncs AWS shadow):
+Dry-run mode (no BLE writes, still syncs AWS shadow and Sparkplug lifecycle traffic):
 
 ```bash
 uv run gw --no-ble
@@ -141,9 +144,9 @@ uv run gw --no-ble
 
 `--no-ble` is MQTT update-driven (subscribed topics), not fixed-interval cloud polling.
 
-## Set desired power (`just`)
+## Send lifecycle commands (`just`)
 
-Use `just` recipes (AWS CLI) instead of `uv run wake/sleep`.
+Use `just` recipes to publish phase-1 Sparkplug lifecycle commands.
 
 From repository root:
 
@@ -163,9 +166,9 @@ just sleep
 just print
 ```
 
-These recipes call `aws iot-data update-thing-shadow` directly with:
-- `state.desired.mcu.power=true` (`wake`, meaning request the wakeup state)
-- `state.desired.mcu.power=false` (`sleep`, meaning request the sleep state)
+These recipes call `gw-sparkplug-cmd` with:
+- `DCMD.redcon=3` (`wake`, meaning request the wakeup state)
+- `DCMD.redcon=4` (`sleep`, meaning request the sleep state)
 - `get-thing-shadow` (`print`)
 
 Default recipe values:
@@ -181,7 +184,7 @@ just gw::wake thing_name=my-thing region=eu-central-1 endpoint_file=certs/iot-da
 
 `print` prints the current real AWS Thing Shadow document.
 
-`aws::shadow-reset` is the hard reset path for manual whole-device power cuts. It deletes the current shadow and reseeds it to the repository's clean offline baseline: `desired.*.power` cleared, `reported.redcon=4`, `reported.mcu.power=false`, `reported.mcu.ble.online=false`, `reported.board.power=false`, and `reported.board.wifi.online=false`.
+`aws::shadow-reset` is the hard reset path for manual whole-device power cuts. It deletes the current txing shadow and reseeds it to the repository's clean offline baseline: `desired.redcon=null`, internal `desired.board.power=null`, `reported.redcon=4`, `reported.mcu.power=false`, `reported.mcu.ble.online=false`, `reported.board.power=false`, and `reported.board.wifi.online=false`.
 
 ## Runtime behavior
 
@@ -191,8 +194,10 @@ just gw::wake thing_name=my-thing region=eu-central-1 endpoint_file=certs/iot-da
 - Operates in event-driven mode from MQTT subscriptions (no fixed-interval cloud polling).
 - Subscribes to:
   - `$aws/things/<thing>/shadow/get/accepted`
-  - `$aws/things/<thing>/shadow/update/delta`
+  - `$aws/things/<thing>/shadow/update/accepted`
+  - `spBv1.0/<group>/DCMD/<edge>/<thing>`
 - On startup, requests full shadow with `$aws/things/<thing>/shadow/get`.
+- On startup, also reflects static `reported.redcon=1` into the `rig` and `town` shadows and publishes `NBIRTH` for `rig`.
 - Loads BLE UUIDs from `state.reported.mcu.ble.*` and validates them against the peripheral during short rendezvous sessions.
 - Uses optional `state.reported.mcu.ble.deviceId` as the primary scan match for fast reconnect.
 - Keeps a scanner running while disconnected and treats disconnects as normal behavior.
@@ -201,14 +206,20 @@ just gw::wake thing_name=my-thing region=eu-central-1 endpoint_file=certs/iot-da
 - Uses one canonical 3-byte MCU State Report (`sleep flag` + `batteryMv`) from both BLE paths:
   - advertising manufacturer data while disconnected
   - GATT reads/notifications while connected
+- Reflects each unresolved valid Sparkplug lifecycle command into `state.desired.redcon`.
 - Publishes BLE connection state at `state.reported.mcu.ble.online`:
   - `true` only after sustained BLE presence has been confirmed
   - remains `true` while the device is connected or keeps advertising within the presence timeout
   - becomes `false` only after the configured presence timeout expires without a matching connection or advertisement
+- Publishes Sparkplug lifecycle state:
+  - `NBIRTH`/`NDATA` for node metric `rig.redcon=1`
+  - `DBIRTH` when BLE reachability becomes online
+  - `DDATA` when txing `redcon` or `batteryMv` changes while the device is born
+  - `DDEATH` when BLE reachability times out
 - If UUIDs are missing/invalid or do not match GATT, enters BLE UUID search mode and discovers UUIDs from service/characteristic properties.
-- Processes desired power from cloud (`state.desired.mcu.power`).
-- For `power=true`, waits for the next advertisement if disconnected, connects, writes the wakeup-state command, polls for acknowledgement, and then keeps the BLE session available until a normal disconnect occurs.
-- For `power=false`, if connected, writes the sleep-state command and lets the MCU return to its periodic `5 s` rendezvous behavior; if already disconnected, it does not force a reconnect.
+- Ignores deprecated `state.desired.mcu.power` for lifecycle control.
+- For `desired.redcon=1..3`, waits for the next advertisement if disconnected, connects if needed, writes the wakeup-state command only when `reported.mcu.power=false`, and clears `desired.redcon` after `reported.redcon` reaches the requested minimum readiness.
+- For `desired.redcon=4`, first writes internal `desired.board.power=false` if the board is still up, waits for board-offline confirmation, then writes the BLE sleep command and clears `desired.redcon` after convergence.
 - Updates `state.reported.mcu.batteryMv` only when the observed MCU battery value changes, so the AWS shadow metadata timestamp for `batteryMv` tracks real battery changes instead of unrelated BLE state publishes.
 - Publishes reported updates to AWS:
   - `state.reported.redcon`
@@ -219,7 +230,8 @@ just gw::wake thing_name=my-thing region=eu-central-1 endpoint_file=certs/iot-da
   - `state.reported.mcu.ble.stateReportUuid`
   - `state.reported.mcu.ble.online`
   - `state.reported.mcu.ble.deviceId` (when known)
-- Clears desired when reported matches by publishing `desired.mcu.power=null`.
+- Clears `state.desired.redcon` when REDCON convergence completes.
+- Clears internal `state.desired.board.power` after clean board shutdown and also on `DDEATH`.
 - Mirrors current local state into `/tmp/txing_shadow.json`.
 - Enforces single instance lock at `/tmp/txing_gw.lock` (override with `--lock-file`).
 
@@ -231,8 +243,13 @@ uv run gw --help
 
 Common overrides:
 - `--thing-name txing`
+- `--rig-thing-name rig`
+- `--town-thing-name town`
+- `--sparkplug-group-id town`
+- `--sparkplug-edge-node-id rig`
 - `--scan-timeout 12`
 - `--connect-timeout 5`
+- `--board-offline-timeout 45`
 - `--command-ack-timeout 1`
 - `--command-ack-poll-interval 0.1`
 - `--device-stale-after 0.75`

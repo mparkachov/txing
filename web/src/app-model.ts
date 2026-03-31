@@ -27,9 +27,8 @@ export type TxingReportedPowerInputs = {
 }
 
 export type TxingPowerTransitionInputs = {
-  txingPoweredOn: boolean
-  desiredMcuPower: boolean | null
-  desiredBoardPower: boolean | null
+  desiredRedcon: number | null
+  reportedRedcon: number | null
 }
 
 type RedconDescriptor = {
@@ -125,6 +124,18 @@ export const extractDesiredMcuPower = (shadow: unknown): boolean | null => {
   return typeof mcu.power === 'boolean' ? mcu.power : null
 }
 
+export const extractDesiredRedcon = (shadow: unknown): number | null => {
+  const desired = extractDesiredState(shadow)
+  if (!desired) {
+    return null
+  }
+  const redcon = desired.redcon
+  if (typeof redcon !== 'number' || !Number.isInteger(redcon)) {
+    return null
+  }
+  return redcon >= 1 && redcon <= 4 ? redcon : null
+}
+
 export const extractDesiredBoardPower = (shadow: unknown): boolean | null => {
   const desired = extractDesiredState(shadow)
   if (!desired) {
@@ -187,17 +198,19 @@ export const deriveTxingPoweredOn = ({
 }
 
 export const deriveTxingPowerTransitionPending = ({
-  txingPoweredOn,
-  desiredMcuPower,
-  desiredBoardPower,
+  desiredRedcon,
+  reportedRedcon,
 }: TxingPowerTransitionInputs): boolean => {
-  if (desiredMcuPower === true) {
-    return !txingPoweredOn
+  if (desiredRedcon === null) {
+    return false
   }
-  if (desiredMcuPower === false || desiredBoardPower === false) {
-    return txingPoweredOn
+  if (reportedRedcon === null) {
+    return true
   }
-  return false
+  if (desiredRedcon === 4) {
+    return reportedRedcon !== 4
+  }
+  return reportedRedcon > desiredRedcon
 }
 
 export const extractReportedBoardPower = (shadow: unknown): boolean | null => {

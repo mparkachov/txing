@@ -8,6 +8,8 @@ template_file := "template.yaml"
 region := "eu-central-1"
 profile := ""
 thing_name := "txing"
+rig_thing_name := "rig"
+town_thing_name := "town"
 policy_name := "txing-gw-policy"
 log_group_name := "/txing/gw"
 cert_dir := project_root + "/certs"
@@ -15,6 +17,8 @@ endpoint_file := cert_dir + "/iot-data-ats.endpoint"
 ca_file := cert_dir + "/AmazonRootCA1.pem"
 ca_url := "https://www.amazontrust.com/repository/AmazonRootCA1.pem"
 default_shadow_file := "default-shadow.json"
+default_rig_shadow_file := "default-rig-shadow.json"
+default_town_shadow_file := "default-town-shadow.json"
 iot_data_endpoint := ""
 localhost_app_url := "http://localhost:5173"
 localhost_alt_app_url := "http://127.0.0.1:5173"
@@ -694,7 +698,7 @@ web_dist_dir := project_root + "/web/dist"
       "$shadow_response_file"
     echo "Shadow initialized from {{default_shadow_file}}"
 
-@bootstrap CognitoDomainPrefix AdminEmail stack_name=stack_name template_file=template_file thing_name=thing_name policy_name=policy_name region=region profile=profile cert_dir=cert_dir cert_basename='' cert_arn_file='' endpoint_file=endpoint_file ca_file=ca_file ca_url=ca_url default_shadow_file=default_shadow_file shadow_response_file='' iot_data_endpoint=iot_data_endpoint:
+@bootstrap CognitoDomainPrefix AdminEmail stack_name=stack_name template_file=template_file thing_name=thing_name rig_thing_name=rig_thing_name town_thing_name=town_thing_name policy_name=policy_name region=region profile=profile cert_dir=cert_dir cert_basename='' cert_arn_file='' endpoint_file=endpoint_file ca_file=ca_file ca_url=ca_url default_shadow_file=default_shadow_file default_rig_shadow_file=default_rig_shadow_file default_town_shadow_file=default_town_shadow_file shadow_response_file='' iot_data_endpoint=iot_data_endpoint:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
@@ -730,4 +734,20 @@ web_dist_dir := project_root + "/web/dist"
       "{{cert_dir}}" \
       "{{default_shadow_file}}" \
       "{{shadow_response_file}}" \
+      "{{iot_data_endpoint}}"
+    just --justfile "{{aws_dir}}/justfile" init-shadow \
+      "{{rig_thing_name}}" \
+      "{{region}}" \
+      "{{profile}}" \
+      "{{cert_dir}}" \
+      "{{default_rig_shadow_file}}" \
+      "" \
+      "{{iot_data_endpoint}}"
+    just --justfile "{{aws_dir}}/justfile" init-shadow \
+      "{{town_thing_name}}" \
+      "{{region}}" \
+      "{{profile}}" \
+      "{{cert_dir}}" \
+      "{{default_town_shadow_file}}" \
+      "" \
       "{{iot_data_endpoint}}"

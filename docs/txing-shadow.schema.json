@@ -51,14 +51,30 @@
       "type": "object",
       "additionalProperties": true,
       "properties": {
+        "redcon": {
+          "description": "Latest unresolved Sparkplug lifecycle target reflected into shadow by gw/rig.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 4
+        },
         "mcu": {
+          "description": "Deprecated compatibility desired subtree. Phase-1 runtime ignores desired.mcu.power as a lifecycle authority.",
           "$ref": "#/$defs/desiredMcuState"
         },
         "board": {
+          "description": "Internal-only rig-to-board graceful-halt actuator used during REDCON 4 convergence.",
           "$ref": "#/$defs/desiredBoardState"
         }
       },
       "anyOf": [
+        {
+          "required": [
+            "redcon"
+          ]
+        },
         {
           "required": [
             "mcu"
@@ -76,6 +92,7 @@
       "additionalProperties": true,
       "properties": {
         "power": {
+          "description": "Internal-only board graceful-halt request. false asks the board to halt locally before MCU sleep.",
           "type": [
             "boolean",
             "null"
@@ -118,6 +135,7 @@
       "additionalProperties": true,
       "properties": {
         "power": {
+          "description": "Deprecated compatibility field. Phase-1 runtime ignores desired.mcu.power.",
           "type": [
             "boolean",
             "null"

@@ -8,7 +8,7 @@ This is not the same Raspberry Pi as `gw/`. The `gw/` Pi remains the BLE/AWS gat
 
 The board reuses the same AWS IoT mTLS certificate files as `gw/`, stored in `../certs/` as `txing.cert.pem` and `txing.private.key`.
 
-When the service is managed by `systemd`, run it as `root`. The board control consumes `state.desired.board.power=false` and requests a local system halt, which requires root privileges. The supervised video sender resolves AWS credentials from `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` first and otherwise falls back to the shared credentials file for the active profile, so the simplest service setup is to keep the sender credentials in the root account's AWS files unless you override the credential file paths in the generated unit.
+When the service is managed by `systemd`, run it as `root`. The board control consumes internal `state.desired.board.power=false` requests from the phase-1 `rig` runtime and requests a local system halt, which requires root privileges. The supervised video sender resolves AWS credentials from `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` first and otherwise falls back to the shared credentials file for the active profile, so the simplest service setup is to keep the sender credentials in the root account's AWS files unless you override the credential file paths in the generated unit.
 
 ## Video runtime
 
@@ -64,7 +64,7 @@ The board publishes to the same classic Thing Shadow as `mcu`, but under a sibli
 Notes:
 
 - `board.*` is owned by this subproject.
-- `desired.board.power=false` is a one-shot shutdown request. The board control clears that desired field on clean shutdown so the request does not persist across the next boot.
+- `desired.board.power=false` is an internal one-shot shutdown request from the `rig` runtime. The board control clears that desired field on clean shutdown so the request does not persist across the next boot.
 - `reported.board.power=false` is only a best-effort clean-shutdown update.
 - `reported.board.wifi.online` reflects the board-side online status while the board OS is up and the board control is running.
 - `reported.board.wifi.ipv4` and `reported.board.wifi.ipv6` are refreshed on each publish loop from the interface the OS selects for the default route in each address family.

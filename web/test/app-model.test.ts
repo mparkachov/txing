@@ -4,6 +4,7 @@ import {
   describeRedcon,
   deriveTxingPowerTransitionPending,
   deriveTxingPoweredOn,
+  extractDesiredRedcon,
   extractDesiredBoardPower,
   extractDesiredMcuPower,
   extractReportedBoardDrive,
@@ -150,6 +151,7 @@ describe('app model helpers', () => {
 
     expect(extractDesiredMcuPower(shadow)).toBe(true)
     expect(extractDesiredBoardPower(shadow)).toBe(false)
+    expect(extractDesiredRedcon({ state: { desired: { redcon: 3 } } })).toBe(3)
   })
 
   test('derives txing power from redcon first and falls back to reported flags', () => {
@@ -181,36 +183,39 @@ describe('app model helpers', () => {
     ).toBe(true)
   })
 
-  test('derives txing switch pending from desired state and reported posture', () => {
+  test('derives txing switch pending from desired redcon and reported posture', () => {
     expect(
       deriveTxingPowerTransitionPending({
-        txingPoweredOn: false,
-        desiredMcuPower: true,
-        desiredBoardPower: null,
+        desiredRedcon: 3,
+        reportedRedcon: 4,
       }),
     ).toBe(true)
 
     expect(
       deriveTxingPowerTransitionPending({
-        txingPoweredOn: true,
-        desiredMcuPower: false,
-        desiredBoardPower: null,
+        desiredRedcon: 4,
+        reportedRedcon: 2,
       }),
     ).toBe(true)
 
     expect(
       deriveTxingPowerTransitionPending({
-        txingPoweredOn: true,
-        desiredMcuPower: null,
-        desiredBoardPower: false,
+        desiredRedcon: 2,
+        reportedRedcon: 3,
       }),
     ).toBe(true)
 
     expect(
       deriveTxingPowerTransitionPending({
-        txingPoweredOn: false,
-        desiredMcuPower: null,
-        desiredBoardPower: null,
+        desiredRedcon: null,
+        reportedRedcon: 4,
+      }),
+    ).toBe(false)
+
+    expect(
+      deriveTxingPowerTransitionPending({
+        desiredRedcon: 4,
+        reportedRedcon: 4,
       }),
     ).toBe(false)
   })

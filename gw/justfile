@@ -12,22 +12,10 @@ systemd_unit := "/etc/systemd/system/txing-gw.service"
     just --justfile "{{aws_justfile}}" check
 
 @wake:
-    aws iot-data update-thing-shadow \
-      --region "{{region}}" \
-      --endpoint-url "https://$(tr -d '\n' < "{{endpoint_file}}")" \
-      --thing-name "{{thing_name}}" \
-      --cli-binary-format raw-in-base64-out \
-      --payload '{"state":{"desired":{"mcu":{"power":true}}}}' \
-      /dev/stdout | jq '.'
+    uv run gw-sparkplug-cmd --redcon 3 --thing-name "{{thing_name}}"
 
 @sleep:
-    aws iot-data update-thing-shadow \
-      --region "{{region}}" \
-      --endpoint-url "https://$(tr -d '\n' < "{{endpoint_file}}")" \
-      --thing-name "{{thing_name}}" \
-      --cli-binary-format raw-in-base64-out \
-      --payload '{"state":{"desired":{"mcu":{"power":false}}}}' \
-      /dev/stdout | jq '.'
+    uv run gw-sparkplug-cmd --redcon 4 --thing-name "{{thing_name}}"
 
 @print:
     aws iot-data get-thing-shadow \

@@ -1,31 +1,38 @@
-# Txing Gateway Contract (Shadow + BLE) v1.0
+# Txing Gateway Contract (Shadow + Sparkplug + BLE) v1.1
 
 This document is the integration contract for the gateway team only.
 Build, flash, and local developer commands live in the subproject READMEs.
 
 Status note:
 
-- This document describes the current gw-era BLE + AWS shadow compatibility contract implemented in the repo today.
-- It does not describe the target Sparkplug phase-1 lifecycle architecture.
-- For the target `town` / `rig` / `txing` lifecycle model and Sparkplug authority split, see `docs/sparkplug-phase1-design.md`.
+- This document describes the current implemented phase-1 `gw` runtime contract.
+- `gw` now acts as the phase-1 `rig` lifecycle service in the same process.
+- Sparkplug `DCMD.redcon` is the authoritative lifecycle command path.
+- The `txing` Thing Shadow remains the reflected operational document and restart cache.
+- For the broader design context, see `docs/sparkplug-phase1-design.md`.
 
 ## 1. Scope
 
 Contract between:
 - Txing firmware (`mcu/`, BLE peripheral on nRF52840)
-- Txing gateway (`gw/`, BLE central on Raspberry Pi 5)
+- Txing gateway (`gw/`, BLE central on Raspberry Pi 5 and phase-1 `rig` lifecycle runtime)
 - AWS IoT classic Thing Shadow for thing name `txing`
+- AWS IoT MQTT Sparkplug namespace `spBv1.0`
 
 Authoritative shadow schema:
 - `./txing-shadow.schema.json`
 
 High-level architecture:
-- AWS IoT Device Shadow -> MQTT -> gw -> BLE -> mcu
+- Sparkplug host -> AWS IoT MQTT -> gw -> BLE -> mcu
+- gw -> AWS IoT Thing Shadow reflection/cache
 
 ## 2. Ownership
 
 - `gw` is the source of truth for the `mcu.*` shadow subtree.
 - `gw` is also the source of truth for top-level `reported.redcon`, derived from reported MCU and board posture.
+- `gw` is the only component that accepts lifecycle intent from Sparkplug and reflects unresolved intent into `state.desired.redcon`.
+- `state.desired.board.power` remains an internal rig-to-board actuator only.
+- `state.desired.mcu.power` is deprecated and ignored by runtime logic.
 - Only `gw` may define or evolve the `mcu.*` contract.
 - `mcu` exposes BLE behavior; `gw` translates that behavior into shadow state.
 
@@ -67,8 +74,9 @@ Shadow type: classic (unnamed) Thing Shadow (`$aws/things/txing/shadow/*`)
 {
   "state": {
     "desired": {
-      "mcu": {
-        "power": true
+      "redcon": 3,
+      "board": {
+        "power": null
       }
     },
     "reported": {
@@ -90,8 +98,9 @@ Shadow type: classic (unnamed) Thing Shadow (`$aws/things/txing/shadow/*`)
 ```
 
 Field semantics:
-- `state.desired.mcu.power=true` means "request MCU wakeup state and keep BLE available".
-- `state.desired.mcu.power=false` means "request MCU sleep state with periodic `5 s` BLE rendezvous wakeups".
+- `state.desired.redcon` is the reflected cache of the latest unresolved Sparkplug `DCMD.redcon` command.
+- `state.desired.board.power=false` is an internal-only graceful-halt request written by `gw` while converging `redcon=4`.
+- `state.desired.mcu.power` is deprecated compatibility state and must be ignored by phase-1 runtime behavior.
 - `state.reported.redcon` is the derived readiness summary:
   - `4` -> Green / `Cold Camp` -> `reported.mcu.power=false`
   - `3` -> Yellow / `Torch-Up` -> `reported.mcu.power=true` while the operator video path is not ready yet
@@ -103,10 +112,35 @@ Field semantics:
 - `state.reported.mcu.ble.online` is `true` only after the MCU has shown sustained BLE reachability, either by staying connected or by advertising regularly for the configured recovery window.
 - `state.reported.mcu.ble.deviceId` is the last known BLE identity used for fast reconnect.
 - `gw` reads `state.reported.board.power`, `state.reported.board.wifi.online`, `state.reported.board.video.ready`, and `state.reported.board.video.viewerConnected` from the shared shadow as the board posture inputs for `reported.redcon`.
+- `gw` emits `DBIRTH` when BLE reachability reaches the same sustained-online condition that drives `reported.mcu.ble.online=true`.
+- `gw` emits `DDEATH` when BLE reachability times out, forces `reported.redcon=4`, and clears `desired.redcon` plus internal `desired.board.power` best-effort.
 
 Compatibility note:
 - The shadow field name `sleepCommandUuid` is retained for compatibility.
 - In v1.0 it identifies the MCU power-mode control characteristic.
+
+## 4A. Sparkplug Contract
+
+Namespace and identity:
+- Namespace: `spBv1.0`
+- Group id: `town`
+- Edge node id: `rig`
+- Device id: configured txing thing name
+
+Phase-1 metrics:
+- Node metric: `rig.redcon`
+- Device metrics: `redcon`, `batteryMv`
+- Writable device command metric: `redcon`
+
+Phase-1 topics:
+- `NBIRTH` and `NDATA` for `rig`
+- `DBIRTH`, `DDATA`, and `DDEATH` for `txing`
+- `DCMD` for txing lifecycle commands
+
+Command semantics:
+- Only literal integer `1..4` values for `DCMD.redcon` are accepted.
+- `redcon=4` converges toward the MCU sleep state.
+- `redcon=1`, `2`, or `3` only require wakeup-state BLE actuation if the MCU is asleep.
 
 ## 5. BLE GATT Contract
 
@@ -198,8 +232,9 @@ States:
   - Update battery cache.
   - If `power=false` is already confirmed and no change is pending, disconnect and return to `Idle`.
 - `CommandPending`
-  - `desired.mcu.power != reported.mcu.power`.
-  - Write the requested power-mode command.
+  - `desired.redcon` is present and current `reported.redcon` has not converged yet.
+  - For `redcon=4`, request internal `desired.board.power=false` first if the board is still up.
+  - For `redcon=1..3`, wake the MCU only if `reported.mcu.power=false`.
 - `CommandSent`
   - Poll State Report until the requested power mode is confirmed or timeout expires.
 - `Disconnect`
@@ -235,30 +270,37 @@ All of the above are tunable constants or CLI-configurable parameters.
 
 ## 9. Acceptance Criteria
 
-- From `reported.mcu.power=false`, setting `desired.mcu.power=true` eventually results in:
+- From `reported.redcon=4`, sending `DCMD.redcon=3` eventually results in:
   - a BLE connection during a rendezvous window
   - a successful wakeup-state command write
   - a State Report confirmation
   - `state.reported.mcu.power=true`
-- From `reported.mcu.power=true`, setting `desired.mcu.power=false` eventually results in:
+  - `state.desired.redcon` cleared once `reported.redcon <= 3`
+- From `reported.mcu.power=true`, sending `DCMD.redcon=4` eventually results in:
+  - if the board is still up, `state.desired.board.power=false` first
+  - board-offline confirmation or continued retry if the board does not go offline yet
   - a successful sleep-state command write
   - `state.reported.mcu.power=false`
+  - `state.reported.redcon=4`
+  - `state.desired.redcon` cleared on convergence
   - the MCU returning to the sleep state with periodic rendezvous wakeups
 - `state.reported.mcu.batteryMv` is refreshed whenever the gateway observes a changed battery value from the MCU State Report, whether that report arrives in advertising manufacturer data or over GATT.
 - `state.reported.mcu.ble.*` remains present and valid.
 - `state.reported.mcu.ble.online` becomes `true` again after the gateway observes sustained BLE presence for the configured recovery window.
 - `state.reported.mcu.ble.online` remains `true` while the device is connected or continues advertising within the configured presence timeout.
 - `state.reported.mcu.ble.online` becomes `false` only after the gateway has not observed the device for longer than the presence timeout.
+- `DBIRTH` is emitted when `state.reported.mcu.ble.online` becomes `true`.
+- `DDEATH` is emitted when `state.reported.mcu.ble.online` becomes `false`.
 
 ## 10. Test Plan
 
 - Sleep-state advertisement presence:
   - Leave the MCU in the sleep state and verify that the gateway observes the repeated `5 s` advertising windows without requiring UUID rediscovery or a persistent BLE session.
 - Sending wake command successfully:
-  - Set `desired.mcu.power=true` and verify wakeup-state acknowledgement plus `reported.mcu.power=true`.
+  - Publish `DCMD.redcon=3` and verify wakeup-state acknowledgement plus `reported.mcu.power=true`.
 - Behavior when no command is pending:
   - Observe multiple sleep-state rendezvous cycles and verify the MCU returns to low-power idle without a BLE session if the gateway does not need one.
 - Behavior when the advertisement window is missed:
   - Stop the gateway temporarily so one or more windows are missed, then restart it and verify the next window succeeds.
 - Repeated sleep/wakeup-state transitions:
-  - Toggle `desired.mcu.power` through several `false -> true -> false` cycles and verify the registry, battery updates, and disconnect handling remain stable.
+  - Toggle `DCMD.redcon` through several `4 -> 3 -> 4` cycles and verify the registry, battery updates, board-shutdown handling, and disconnect handling remain stable.

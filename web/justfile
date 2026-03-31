@@ -81,6 +81,9 @@ profile := ""
     printf '%s\n' \
       "VITE_AWS_REGION={{region}}" \
       "VITE_IOT_DATA_ENDPOINT=https://$iot_data_endpoint" \
+      "VITE_TXING_THING_NAME=txing" \
+      "VITE_SPARKPLUG_GROUP_ID=town" \
+      "VITE_SPARKPLUG_EDGE_NODE_ID=rig" \
       "VITE_COGNITO_DOMAIN=$cognito_domain" \
       "VITE_COGNITO_CLIENT_ID=$cognito_client_id" \
       "VITE_COGNITO_USER_POOL_ID=$cognito_user_pool_id" \

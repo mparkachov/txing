@@ -10,8 +10,7 @@ import {
 import {
   deriveTxingPowerTransitionPending,
   deriveTxingPoweredOn,
-  extractDesiredBoardPower,
-  extractDesiredMcuPower,
+  extractDesiredRedcon,
   extractReportedBoardDrive,
   extractReportedBoardPower,
   extractReportedBoardVideo,
@@ -39,7 +38,6 @@ type ShadowSnapshotView = {
 }
 
 const formatJson = (value: unknown): string => JSON.stringify(value, null, 2)
-const boardOfflineTimeoutMs = 45_000
 const cmdVelRepeatIntervalMs = 100
 
 const createShadowSnapshotView = (shadow: unknown): ShadowSnapshotView => ({
@@ -115,12 +113,8 @@ function App({ initialAuthError = '' }: AppProps) {
     () => extractReportedRedcon(shadowDocument),
     [shadowDocument],
   )
-  const desiredMcuPower = useMemo(
-    () => extractDesiredMcuPower(shadowDocument),
-    [shadowDocument],
-  )
-  const desiredBoardPower = useMemo(
-    () => extractDesiredBoardPower(shadowDocument),
+  const desiredRedcon = useMemo(
+    () => extractDesiredRedcon(shadowDocument),
     [shadowDocument],
   )
 
@@ -135,19 +129,17 @@ function App({ initialAuthError = '' }: AppProps) {
       }),
     [reportedBoardOnline, reportedBoardPower, reportedMcuPower, reportedRedcon],
   )
-  const canWake = !txingPoweredOn && reportedMcuOnline === true && desiredMcuPower !== true
-  const canSleep =
-    txingPoweredOn && desiredMcuPower !== false && desiredBoardPower !== false
+  const canWake = !txingPoweredOn && reportedMcuOnline === true && desiredRedcon !== 3
+  const canSleep = txingPoweredOn && desiredRedcon !== 4
   const isShadowConnected = shadowConnectionState === 'connected'
   const txingSwitchChecked = txingPoweredOn
   const isTxingSwitchPending = useMemo(
     () =>
       deriveTxingPowerTransitionPending({
-        txingPoweredOn,
-        desiredMcuPower,
-        desiredBoardPower,
+        desiredRedcon,
+        reportedRedcon,
       }),
-    [desiredBoardPower, desiredMcuPower, txingPoweredOn],
+    [desiredRedcon, reportedRedcon],
   )
   const canToggleTxingSwitch = (txingSwitchChecked ? canSleep : canWake) && isShadowConnected
   const canLoadShadow = !isLoadingShadow && isShadowConnected
@@ -250,6 +242,8 @@ function App({ initialAuthError = '' }: AppProps) {
       thingName: appConfig.thingName,
       iotDataEndpoint: appConfig.iotDataEndpoint,
       awsRegion: appConfig.awsRegion,
+      sparkplugGroupId: appConfig.sparkplugGroupId,
+      sparkplugEdgeNodeId: appConfig.sparkplugEdgeNodeId,
       resolveIdToken: resolveSessionIdToken,
       onShadowDocument: (shadow) => {
         if (cancelled) {
@@ -390,86 +384,20 @@ function App({ initialAuthError = '' }: AppProps) {
     }
   }
 
-  const updateDesiredPower = async (power: boolean): Promise<boolean> => {
+  const publishRedconCommand = async (redcon: 3 | 4): Promise<boolean> => {
     setIsUpdatingShadow(true)
     setError('')
     setFeedback('')
 
     try {
       const shadowSession = getShadowSession()
-      const shadowResponse = await shadowSession.updateShadow({
-        state: {
-          desired: {
-            mcu: {
-              power,
-            },
-          },
-        },
-      })
-      applyShadowSnapshot(
-        shadowResponse,
-        `desired.mcu.power -> ${power} at ${new Date().toLocaleTimeString()}`,
-      )
+      await shadowSession.publishRedconCommand(redcon)
+      setFeedback(`Sparkplug DCMD.redcon -> ${redcon} at ${new Date().toLocaleTimeString()}`)
       return true
     } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : 'Unable to update desired power')
-      return false
-    } finally {
-      setIsUpdatingShadow(false)
-    }
-  }
-
-  const requestSleep = async (): Promise<boolean> => {
-    setIsUpdatingShadow(true)
-    setError('')
-    setFeedback('')
-
-    try {
-      const shadowSession = getShadowSession()
-      await shadowSession.updateShadow({
-        state: {
-          desired: {
-            board: {
-              power: false,
-            },
-          },
-        },
-      })
-
-      setFeedback('Waiting for reported.board.power=false...')
-
-      await shadowSession.waitForSnapshot(
-        (shadow) => extractReportedBoardPower(shadow) === false,
-        boardOfflineTimeoutMs,
+      setError(
+        caughtError instanceof Error ? caughtError.message : 'Unable to publish Sparkplug command',
       )
-
-      const boardPowerClearedShadow = await shadowSession.updateShadow({
-        state: {
-          desired: {
-            board: {
-              power: null,
-            },
-          },
-        },
-      })
-      applyShadowSnapshot(boardPowerClearedShadow)
-
-      const mcuPowerUpdatedShadow = await shadowSession.updateShadow({
-        state: {
-          desired: {
-            mcu: {
-              power: false,
-            },
-          },
-        },
-      })
-      applyShadowSnapshot(
-        mcuPowerUpdatedShadow,
-        `Sleep requested at ${new Date().toLocaleTimeString()}`,
-      )
-      return true
-    } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : 'Unable to request sleep')
       return false
     } finally {
       setIsUpdatingShadow(false)
@@ -485,7 +413,7 @@ function App({ initialAuthError = '' }: AppProps) {
       if (!canWake) {
         return
       }
-      await updateDesiredPower(true)
+      await publishRedconCommand(3)
       return
     }
 
@@ -493,7 +421,7 @@ function App({ initialAuthError = '' }: AppProps) {
       return
     }
 
-    await requestSleep()
+    await publishRedconCommand(4)
   }
 
   const handleSignOff = (): void => {

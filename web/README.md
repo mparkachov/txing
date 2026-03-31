@@ -1,20 +1,25 @@
 # txing web admin
 
-SPA for reading/updating the `txing` Thing Shadow.
+SPA for reading the `txing` Thing Shadow and publishing phase-1 lifecycle commands.
 
 ## Scope (v1)
 
 - Static SPA built with Vite, stored in S3, and served through the stack-managed CloudFront URL.
 - Cognito native authentication via hosted UI (email + password).
 - After sign-in, the SPA exchanges the Cognito ID token for temporary AWS credentials through a Cognito Identity Pool.
-- Thing Shadow reads/writes go directly from the SPA to AWS IoT Core over MQTT/WSS with SigV4-signed websocket handshakes.
+- Thing Shadow reads and reflection updates go directly from the SPA to AWS IoT Core over MQTT/WSS with SigV4-signed websocket handshakes.
+- Lifecycle on/off writes publish Sparkplug `DCMD.redcon` over the same MQTT/WSS connection.
 - On first use, the SPA attaches the stack-managed AWS IoT policy to the authenticated Cognito identity.
 - The deployed SPA now also serves a `/video` route for the board AWS WebRTC viewer.
 - Current transport split:
-  - classic Thing Shadow traffic uses MQTT/WSS only
+  - classic Thing Shadow is the UI read path over MQTT/WSS
+  - phase-1 lifecycle commands use Sparkplug `DCMD.redcon` over MQTT/WSS
   - board video uses KVS WebRTC signaling from the `/video` route
   - Cognito hosted UI redirects, Cognito `/oauth2/token`, Cognito Identity, and IoT `AttachPolicy` still use HTTPS
-- Hardcoded thing name: `txing`.
+- Default phase-1 identity:
+  - txing thing name: `txing`
+  - Sparkplug group id: `town`
+  - Sparkplug edge node id: `rig`
 
 ## Prerequisites
 
@@ -45,6 +50,9 @@ Then fill `web/.env.local`:
 
 - `VITE_AWS_REGION`
 - `VITE_IOT_DATA_ENDPOINT`
+- `VITE_TXING_THING_NAME`
+- `VITE_SPARKPLUG_GROUP_ID`
+- `VITE_SPARKPLUG_EDGE_NODE_ID`
 - `VITE_COGNITO_DOMAIN`
 - `VITE_COGNITO_CLIENT_ID`
 - `VITE_COGNITO_USER_POOL_ID`
@@ -109,7 +117,7 @@ After deploy, generate local Vite env automatically:
 just web::write-env
 ```
 
-This writes `web/.env.local` from stack outputs.
+This writes `web/.env.local` from stack outputs plus the phase-1 Sparkplug identity defaults.
 
 Relevant outputs:
 
@@ -122,10 +130,10 @@ Relevant outputs:
 - `WebIotPolicyName` -> `VITE_IOT_POLICY_NAME`
 - `WebExpectedAdminEmail` -> `VITE_ADMIN_EMAIL`
 
-`web::write-env` also resolves the AWS IoT Data ATS endpoint and writes it as `VITE_IOT_DATA_ENDPOINT`, plus `VITE_AWS_REGION`. The app reuses that endpoint for MQTT/WSS shadow connections.
+`web::write-env` also resolves the AWS IoT Data ATS endpoint and writes it as `VITE_IOT_DATA_ENDPOINT`, plus `VITE_AWS_REGION`, `VITE_TXING_THING_NAME`, `VITE_SPARKPLUG_GROUP_ID`, and `VITE_SPARKPLUG_EDGE_NODE_ID`. The app reuses that endpoint for both shadow and Sparkplug MQTT/WSS connections.
 
 On the first MQTT shadow connect after a new sign-in, the SPA may briefly retry while the IoT policy attachment propagates for the Cognito identity.
-The current implementation still performs HTTPS auth/bootstrap calls after sign-in for Cognito token refresh, Cognito Identity, and IoT policy attachment; only the shadow document transport itself moved from HTTP polling to MQTT/WSS.
+The current implementation still performs HTTPS auth/bootstrap calls after sign-in for Cognito token refresh, Cognito Identity, and IoT policy attachment; the live shadow view and Sparkplug command transport use MQTT/WSS.
 
 ## Deploy the SPA
 
@@ -145,3 +153,11 @@ The stack serves the SPA from CloudFront instead of the raw S3 website endpoint 
 ## Security note
 
 `AdminEmail` is currently enforced in the SPA client only. It is suitable for your single-admin v1, but it is not a hard server-side authorization boundary.
+
+## Phase-1 lifecycle note
+
+- The UI switch remains a simple on/off control.
+- `on` publishes `DCMD.redcon=3`.
+- `off` publishes `DCMD.redcon=4`.
+- The UI reads lifecycle state from shadow `desired.redcon` and `reported.redcon`.
+- The SPA does not write `desired.mcu.power` or `desired.board.power`.

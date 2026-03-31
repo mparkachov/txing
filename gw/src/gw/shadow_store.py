@@ -13,12 +13,19 @@ DEFAULT_BOARD_WIFI_ONLINE = False
 DEFAULT_BOARD_VIDEO_READY = False
 DEFAULT_BOARD_VIDEO_VIEWER_CONNECTED = False
 DEFAULT_REDCON = 4
+DEFAULT_DESIRED_REDCON: int | None = None
 DEFAULT_SHADOW_FILE = Path("/tmp/txing_shadow.json")
 
 
 def default_shadow_payload() -> dict[str, Any]:
     return {
         "state": {
+            "desired": {
+                "redcon": DEFAULT_DESIRED_REDCON,
+                "board": {
+                    "power": None,
+                },
+            },
             "reported": {
                 "redcon": DEFAULT_REDCON,
                 "mcu": {
@@ -38,6 +45,23 @@ def default_shadow_payload() -> dict[str, Any]:
             },
         }
     }
+
+
+def get_desired_redcon(payload: dict[str, Any]) -> int | None:
+    desired = payload.get("state", {}).get("desired", {})
+    value = desired.get("redcon") if isinstance(desired, dict) else None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int) and 1 <= value <= 4:
+        return value
+    return None
+
+
+def get_desired_board_power(payload: dict[str, Any]) -> bool | None:
+    desired = payload.get("state", {}).get("desired", {})
+    board = desired.get("board", {}) if isinstance(desired, dict) else {}
+    value = board.get("power") if isinstance(board, dict) else None
+    return value if isinstance(value, bool) else None
 
 
 def load_shadow(path: Path = DEFAULT_SHADOW_FILE) -> dict[str, Any]:

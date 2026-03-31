@@ -1,9 +1,7 @@
 {
   "state": {
     "desired": {
-      "mcu": {
-        "power": null
-      },
+      "redcon": null,
       "board": {
         "power": null
       }
