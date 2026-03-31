@@ -220,11 +220,11 @@ just gw::wake thing_name=my-thing region=eu-central-1 endpoint_file=certs/iot-da
 - Ignores deprecated `state.desired.mcu.power` for lifecycle control.
 - For `desired.redcon=1..3`, waits for the next advertisement if disconnected, connects if needed, writes the wakeup-state command only when `reported.mcu.power=false`, and clears `desired.redcon` after `reported.redcon` reaches the requested minimum readiness.
 - For `desired.redcon=4`, first writes internal `desired.board.power=false` if the board is still up, waits for board-offline confirmation, then writes the BLE sleep command and clears `desired.redcon` after convergence.
-- Updates `state.reported.mcu.batteryMv` only when the observed MCU battery value changes, so the AWS shadow metadata timestamp for `batteryMv` tracks real battery changes instead of unrelated BLE state publishes.
+- Updates top-level `state.reported.batteryMv` only when the observed MCU battery value changes, so the AWS shadow metadata timestamp for `batteryMv` tracks real battery changes instead of unrelated BLE state publishes.
 - Publishes reported updates to AWS:
   - `state.reported.redcon`
+  - `state.reported.batteryMv`
   - `state.reported.mcu.power`
-  - `state.reported.mcu.batteryMv`
   - `state.reported.mcu.ble.serviceUuid`
   - `state.reported.mcu.ble.sleepCommandUuid`
   - `state.reported.mcu.ble.stateReportUuid`

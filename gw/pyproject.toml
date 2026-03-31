@@ -16,6 +16,7 @@ dependencies = [
 [project.scripts]
 gw = "gw:main"
 gw-sparkplug-cmd = "gw.sparkplug_cmd:main"
+gw-sparkplug-log = "gw.sparkplug_log:main"
 
 [build-system]
 requires = ["uv_build>=0.10.6,<0.11.0"]

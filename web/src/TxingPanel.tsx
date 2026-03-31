@@ -19,7 +19,7 @@ type TxingPanelProps = {
   reportedBoardLeftTrackSpeed: number | null
   reportedBoardOnline: boolean | null
   reportedBoardRightTrackSpeed: number | null
-  reportedMcuBatteryMv: number | null
+  reportedBatteryMv: number | null
   reportedMcuBleOnline: boolean | null
   reportedRedcon: number | null
   txingSwitchChecked: boolean
@@ -145,7 +145,7 @@ function TxingPanel({
   reportedBoardLeftTrackSpeed,
   reportedBoardOnline,
   reportedBoardRightTrackSpeed,
-  reportedMcuBatteryMv,
+  reportedBatteryMv,
   reportedMcuBleOnline,
   reportedRedcon,
   txingSwitchChecked,
@@ -160,7 +160,7 @@ function TxingPanel({
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false)
   const userMenuRef = useRef<HTMLDivElement | null>(null)
 
-  const batteryPercent = useMemo(() => getBatteryPercent(reportedMcuBatteryMv), [reportedMcuBatteryMv])
+  const batteryPercent = useMemo(() => getBatteryPercent(reportedBatteryMv), [reportedBatteryMv])
   const batteryToneClass = getBatteryToneClass(batteryPercent)
   const boardWifiToneClass = getBoardWifiToneClass(reportedBoardOnline)
   const bleSignalToneClass = getBleSignalToneClass(reportedMcuBleOnline)
@@ -391,14 +391,14 @@ function TxingPanel({
                 className={`status-battery ${batteryToneClass}`}
                 role="img"
                 aria-label={
-                  reportedMcuBatteryMv === null || batteryPercent === null
+                  reportedBatteryMv === null || batteryPercent === null
                     ? 'Battery level unavailable'
-                    : `Battery ${Math.round(batteryPercent)} percent at ${reportedMcuBatteryMv} millivolts`
+                    : `Battery ${Math.round(batteryPercent)} percent at ${reportedBatteryMv} millivolts`
                 }
                 title={
-                  reportedMcuBatteryMv === null || batteryPercent === null
+                  reportedBatteryMv === null || batteryPercent === null
                     ? 'Battery unavailable'
-                    : `${reportedMcuBatteryMv} mV`
+                    : `${reportedBatteryMv} mV`
                 }
               >
                 <span className="status-battery-shell" aria-hidden="true">

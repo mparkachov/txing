@@ -28,9 +28,9 @@ def default_shadow_payload() -> dict[str, Any]:
             },
             "reported": {
                 "redcon": DEFAULT_REDCON,
+                "batteryMv": DEFAULT_BATTERY_MV,
                 "mcu": {
                     "power": DEFAULT_REPORTED_POWER,
-                    "batteryMv": DEFAULT_BATTERY_MV,
                 },
                 "board": {
                     "power": DEFAULT_BOARD_POWER,
@@ -116,8 +116,7 @@ def get_reported_power(payload: dict[str, Any]) -> bool:
 
 def get_reported_battery_mv(payload: dict[str, Any]) -> int:
     reported = payload.get("state", {}).get("reported", {})
-    mcu = reported.get("mcu", {}) if isinstance(reported, dict) else {}
-    value = mcu.get("batteryMv") if isinstance(mcu, dict) else None
+    value = reported.get("batteryMv") if isinstance(reported, dict) else None
     if isinstance(value, bool):
         return DEFAULT_BATTERY_MV
     if isinstance(value, int) and 0 <= value <= 10000:

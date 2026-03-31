@@ -11,11 +11,11 @@ import {
   deriveTxingPowerTransitionPending,
   deriveTxingPoweredOn,
   extractDesiredRedcon,
+  extractReportedBatteryMv,
   extractReportedBoardDrive,
   extractReportedBoardPower,
   extractReportedBoardVideo,
   extractReportedBoardWifiOnline,
-  extractReportedMcuBatteryMv,
   extractReportedMcuBleOnline,
   extractReportedMcuOnline,
   extractReportedMcuPower,
@@ -89,8 +89,8 @@ function App({ initialAuthError = '' }: AppProps) {
     () => extractReportedMcuBleOnline(shadowDocument),
     [shadowDocument],
   )
-  const reportedMcuBatteryMv = useMemo(
-    () => extractReportedMcuBatteryMv(shadowDocument),
+  const reportedBatteryMv = useMemo(
+    () => extractReportedBatteryMv(shadowDocument),
     [shadowDocument],
   )
   const reportedBoardPower = useMemo(
@@ -505,7 +505,7 @@ function App({ initialAuthError = '' }: AppProps) {
         reportedBoardOnline={reportedBoardOnline}
         reportedBoardLeftTrackSpeed={reportedBoardDrive.leftSpeed}
         reportedBoardRightTrackSpeed={reportedBoardDrive.rightSpeed}
-        reportedMcuBatteryMv={reportedMcuBatteryMv}
+        reportedBatteryMv={reportedBatteryMv}
         reportedMcuBleOnline={reportedMcuBleOnline}
         reportedRedcon={reportedRedcon}
         txingSwitchChecked={txingSwitchChecked}

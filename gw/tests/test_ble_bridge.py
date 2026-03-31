@@ -123,9 +123,9 @@ class RedconTests(unittest.TestCase):
                     "state": {
                         "reported": {
                             "redcon": 1,
+                            "batteryMv": 3795,
                             "mcu": {
                                 "power": True,
-                                "batteryMv": 3795,
                                 "ble": {
                                     "serviceUuid": "f6b4a000-7b32-4d2d-9f4b-4ff0a2b8f100",
                                     "sleepCommandUuid": "f6b4a001-7b32-4d2d-9f4b-4ff0a2b8f100",
@@ -285,9 +285,9 @@ class SnapshotRecoveryTests(unittest.TestCase):
                             },
                             "reported": {
                                 "redcon": 4,
+                                "batteryMv": 3795,
                                 "mcu": {
                                     "power": False,
-                                    "batteryMv": 3795,
                                     "ble": {
                                         "serviceUuid": "f6b4a000-7b32-4d2d-9f4b-4ff0a2b8f100",
                                         "sleepCommandUuid": "f6b4a001-7b32-4d2d-9f4b-4ff0a2b8f100",
@@ -312,9 +312,9 @@ class SnapshotRecoveryTests(unittest.TestCase):
                     "state": {
                         "reported": {
                             "redcon": 4,
+                            "batteryMv": 3795,
                             "mcu": {
                                 "power": False,
-                                "batteryMv": 3795,
                                 "ble": {
                                     "serviceUuid": "f6b4a000-7b32-4d2d-9f4b-4ff0a2b8f100",
                                     "sleepCommandUuid": "f6b4a001-7b32-4d2d-9f4b-4ff0a2b8f100",

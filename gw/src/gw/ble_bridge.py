@@ -443,10 +443,13 @@ def _extract_reported_power(payload: dict[str, Any]) -> bool | None:
 
 
 def _extract_reported_battery_mv(payload: dict[str, Any]) -> int | None:
-    mcu = _extract_reported_mcu(payload)
-    if mcu is None:
+    state = payload.get("state")
+    if not isinstance(state, dict):
         return None
-    value = mcu.get("batteryMv")
+    reported = state.get("reported")
+    if not isinstance(reported, dict):
+        return None
+    value = reported.get("batteryMv")
     if isinstance(value, bool):
         return None
     if isinstance(value, int) and 0 <= value <= 10000:
@@ -692,9 +695,9 @@ class ShadowState:
         state: dict[str, dict[str, dict[str, Any]]] = {
             "reported": {
                 "redcon": self.redcon,
+                "batteryMv": self.battery_mv,
                 "mcu": {
                     "power": self.reported_power,
-                    "batteryMv": self.battery_mv,
                     "ble": self.ble_state(),
                 },
                 "board": {
@@ -2466,14 +2469,18 @@ class BleSleepBridge:
             battery_mv=battery_mv,
         )
         reported_mcu_patch: dict[str, Any] | None = {}
+        reported_root_patch: dict[str, Any] | None = {}
         if power_changed:
             reported_mcu_patch["power"] = reported_power
         if battery_changed:
-            reported_mcu_patch["batteryMv"] = battery_mv
+            reported_root_patch["batteryMv"] = battery_mv
         if not reported_mcu_patch:
             reported_mcu_patch = None
+        if not reported_root_patch:
+            reported_root_patch = None
         await self._publish_reported_update(
             reported_mcu_patch=reported_mcu_patch,
+            reported_root_patch=reported_root_patch,
             desired_redcon=_SHADOW_UNSET,
             desired_board_power=_SHADOW_UNSET,
             context=context,

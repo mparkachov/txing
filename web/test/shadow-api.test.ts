@@ -134,9 +134,9 @@ describe('shadow protocol helpers', () => {
     const currentShadow = {
       state: {
         reported: {
+          batteryMv: 3729,
           mcu: {
             power: false,
-            batteryMv: 3729,
             ble: {
               serviceUuid: 'svc',
               sleepCommandUuid: 'sleep',
@@ -149,9 +149,9 @@ describe('shadow protocol helpers', () => {
       },
       metadata: {
         reported: {
+          batteryMv: { timestamp: 2 },
           mcu: {
             power: { timestamp: 1 },
-            batteryMv: { timestamp: 2 },
             ble: {
               online: { timestamp: 3 },
             },
@@ -188,9 +188,9 @@ describe('shadow protocol helpers', () => {
     expect(mergeShadowUpdate(currentShadow, updateAcceptedPayload)).toEqual({
       state: {
         reported: {
+          batteryMv: 3729,
           mcu: {
             power: false,
-            batteryMv: 3729,
             ble: {
               serviceUuid: 'svc',
               sleepCommandUuid: 'sleep',
@@ -203,9 +203,9 @@ describe('shadow protocol helpers', () => {
       },
       metadata: {
         reported: {
+          batteryMv: { timestamp: 2 },
           mcu: {
             power: { timestamp: 1 },
-            batteryMv: { timestamp: 2 },
             ble: {
               online: { timestamp: 4 },
             },

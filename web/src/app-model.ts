@@ -253,12 +253,12 @@ export const extractReportedMcuBleOnline = (shadow: unknown): boolean | null => 
   return isRecord(ble) && typeof ble.online === 'boolean' ? ble.online : null
 }
 
-export const extractReportedMcuBatteryMv = (shadow: unknown): number | null => {
-  const mcu = extractReportedMcu(shadow)
-  if (!mcu) {
+export const extractReportedBatteryMv = (shadow: unknown): number | null => {
+  const reported = extractReportedState(shadow)
+  if (!reported) {
     return null
   }
-  return typeof mcu.batteryMv === 'number' ? mcu.batteryMv : null
+  return typeof reported.batteryMv === 'number' ? reported.batteryMv : null
 }
 
 export const extractReportedBoardWifiOnline = (shadow: unknown): boolean | null => {

@@ -29,7 +29,8 @@ High-level architecture:
 ## 2. Ownership
 
 - `gw` is the source of truth for the `mcu.*` shadow subtree.
-- `gw` is also the source of truth for top-level `reported.redcon`, derived from reported MCU and board posture.
+- `gw` is also the source of truth for the direct Sparkplug metric reflections under top-level `reported`.
+- In phase 1 that strict top-level metric set is exactly `reported.redcon` and `reported.batteryMv`.
 - `gw` is the only component that accepts lifecycle intent from Sparkplug and reflects unresolved intent into `state.desired.redcon`.
 - `state.desired.board.power` remains an internal rig-to-board actuator only.
 - `state.desired.mcu.power` is deprecated and ignored by runtime logic.
@@ -81,9 +82,9 @@ Shadow type: classic (unnamed) Thing Shadow (`$aws/things/txing/shadow/*`)
     },
     "reported": {
       "redcon": 4,
+      "batteryMv": 3750,
       "mcu": {
         "power": false,
-        "batteryMv": 3750,
         "ble": {
           "serviceUuid": "f6b4a000-7b32-4d2d-9f4b-4ff0a2b8f100",
           "sleepCommandUuid": "f6b4a001-7b32-4d2d-9f4b-4ff0a2b8f100",
@@ -101,14 +102,17 @@ Field semantics:
 - `state.desired.redcon` is the reflected cache of the latest unresolved Sparkplug `DCMD.redcon` command.
 - `state.desired.board.power=false` is an internal-only graceful-halt request written by `gw` while converging `redcon=4`.
 - `state.desired.mcu.power` is deprecated compatibility state and must be ignored by phase-1 runtime behavior.
+- Direct scalar attributes under `state.reported` are the strict Sparkplug metric reflection surface.
+- In phase 1 that set is exactly `redcon` and `batteryMv`.
+- `mcu.*` and `board.*` remain shadow-only operational detail and are not alternate locations for Sparkplug metric reflection.
 - `state.reported.redcon` is the derived readiness summary:
   - `4` -> Green / `Cold Camp` -> `reported.mcu.power=false`
   - `3` -> Yellow / `Torch-Up` -> `reported.mcu.power=true` while the operator video path is not ready yet
   - `2` -> Orange/Amber / `Ember Watch` -> `reported.mcu.power=true`, `reported.board.power=true`, `reported.board.wifi.online=true`, `reported.board.video.ready=true`, and `reported.board.video.viewerConnected=false`
   - `1` -> Red / `Hot Rig` -> same as `2`, plus `reported.board.video.viewerConnected=true`
+- `state.reported.batteryMv` is the latest battery reading observed over BLE, surfaced at top-level alongside `redcon`, sourced from the MCU state report carried over either advertising manufacturer data or the GATT State Report characteristic.
 - `state.reported.mcu.power=true` means "MCU is in the wakeup state".
 - `state.reported.mcu.power=false` means "MCU is in the sleep state with periodic BLE rendezvous wakeups".
-- `state.reported.mcu.batteryMv` is the latest battery reading observed over BLE, sourced from the MCU state report carried over either advertising manufacturer data or the GATT State Report characteristic.
 - `state.reported.mcu.ble.online` is `true` only after the MCU has shown sustained BLE reachability, either by staying connected or by advertising regularly for the configured recovery window.
 - `state.reported.mcu.ble.deviceId` is the last known BLE identity used for fast reconnect.
 - `gw` reads `state.reported.board.power`, `state.reported.board.wifi.online`, `state.reported.board.video.ready`, and `state.reported.board.video.viewerConnected` from the shared shadow as the board posture inputs for `reported.redcon`.
@@ -284,7 +288,7 @@ All of the above are tunable constants or CLI-configurable parameters.
   - `state.reported.redcon=4`
   - `state.desired.redcon` cleared on convergence
   - the MCU returning to the sleep state with periodic rendezvous wakeups
-- `state.reported.mcu.batteryMv` is refreshed whenever the gateway observes a changed battery value from the MCU State Report, whether that report arrives in advertising manufacturer data or over GATT.
+- `state.reported.batteryMv` is refreshed whenever the gateway observes a changed battery value from the MCU State Report, whether that report arrives in advertising manufacturer data or over GATT.
 - `state.reported.mcu.ble.*` remains present and valid.
 - `state.reported.mcu.ble.online` becomes `true` again after the gateway observes sustained BLE presence for the configured recovery window.
 - `state.reported.mcu.ble.online` remains `true` while the device is connected or continues advertising within the configured presence timeout.

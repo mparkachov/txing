@@ -110,6 +110,7 @@ Txing shadow keeps:
 
 - `state.desired.redcon`
 - `state.reported.redcon`
+- `state.reported.batteryMv`
 - supporting `reported.mcu.*`
 - supporting `reported.board.*`
 
@@ -124,6 +125,12 @@ Semantics:
 - `state.reported.redcon`
   - reflects the actual lifecycle state of txing
   - must match the Sparkplug device actual REDCON
+- `state.reported.batteryMv`
+  - reflects the actual lifecycle battery metric of txing
+  - must match the Sparkplug device actual `batteryMv`
+- Direct scalar attributes under `txing.state.reported` are the strict Sparkplug metric reflection surface.
+  - In phase 1 that set is exactly `redcon` and `batteryMv`.
+  - `mcu.*` and `board.*` remain shadow-only operational detail and are not Sparkplug metric reflections.
 
 Example reflected txing shadow shape:
 
@@ -135,6 +142,7 @@ Example reflected txing shadow shape:
     },
     "reported": {
       "redcon": 2,
+      "batteryMv": 3972,
       "mcu": {
         "power": true
       },
@@ -305,4 +313,3 @@ Phase 1 does not include:
 - user-facing REDCON selection in UI
 - mobility or automatic handoff between rigs
 - redefinition of `REDCON 1` to remove viewer dependency
-

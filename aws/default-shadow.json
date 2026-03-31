@@ -8,9 +8,9 @@
     },
     "reported": {
       "redcon": 4,
+      "batteryMv": 3750,
       "mcu": {
         "power": false,
-        "batteryMv": 3750,
         "ble": {
           "serviceUuid": "f6b4a000-7b32-4d2d-9f4b-4ff0a2b8f100",
           "sleepCommandUuid": "f6b4a001-7b32-4d2d-9f4b-4ff0a2b8f100",

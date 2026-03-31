@@ -28,7 +28,10 @@ This document defines how shadow structure is governed across the repo.
 - `mcu.*` is owned by the gateway (`gw`) runtime acting as the phase-1 `rig` lifecycle service.
 - Only `gw` is allowed to define or evolve fields under `mcu`.
 - Other components must treat `mcu.*` as a stable contract and must not add, rename, or repurpose fields.
-- Top-level `txing.state.reported.redcon` is owned by `gw` as a derived readiness summary computed from reported MCU and board state.
+- Top-level direct Sparkplug metric reflections under `txing.state.reported` are owned by `gw`.
+- In phase 1 that strict direct-metric set is exactly:
+  - `txing.state.reported.redcon`
+  - `txing.state.reported.batteryMv`
 - Top-level `txing.state.desired.redcon` is owned by `gw` as the reflected cache of the latest unresolved Sparkplug lifecycle command.
 - `txing.state.desired.board.power` remains an internal rig-to-board graceful-halt actuator only. It is not a public lifecycle API.
 - `txing.state.desired.mcu.power` is deprecated and ignored by the phase-1 runtime.
@@ -46,6 +49,9 @@ Phase-1 note:
 - Sparkplug owns lifecycle intent.
 - Shadow is reflection and restart cache.
 - `gw` continues to derive `reported.redcon` from current `reported.mcu.*` and `reported.board.*`, including the phase-1 viewer-dependent `REDCON 1` rule.
+- Direct scalar attributes under `state.reported` are a strict reflection of the current Sparkplug device metrics only.
+- In phase 1 that direct-metric set is exactly `redcon` and `batteryMv`.
+- `mcu.*` and `board.*` remain additional operational detail and must not be used as alternate Sparkplug metric locations.
 
 ## Required project fields
 
@@ -59,7 +65,7 @@ Phase-1 note:
   - `3`: Yellow / `Torch-Up` / MCU wakeup state while the operator video path is not ready
   - `2`: Orange/Amber / `Ember Watch` / MCU wakeup state with board power, board Wi-Fi/control, and board video ready, but no active viewer
   - `1`: Red / `Hot Rig` / same as `2`, plus `reported.board.video.viewerConnected=true`
-- `state.reported.mcu.batteryMv` (`integer`, millivolts, measured MCU battery estimate observed from the MCU State Report over BLE advertising or GATT).
+- `state.reported.batteryMv` (`integer`, millivolts, measured MCU battery estimate observed from the MCU State Report over BLE advertising or GATT).
 - `state.reported.mcu.ble.serviceUuid` (`uuid`) is the BLE service UUID used by gateway.
 - `state.reported.mcu.ble.sleepCommandUuid` (`uuid`) is the compatibility field for the BLE power-mode control characteristic UUID.
 - `state.reported.mcu.ble.stateReportUuid` (`uuid`) is the BLE read+notify characteristic UUID.

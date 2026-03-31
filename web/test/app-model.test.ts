@@ -5,6 +5,7 @@ import {
   deriveTxingPowerTransitionPending,
   deriveTxingPoweredOn,
   extractDesiredRedcon,
+  extractReportedBatteryMv,
   extractDesiredBoardPower,
   extractDesiredMcuPower,
   extractReportedBoardDrive,
@@ -63,6 +64,30 @@ describe('app model helpers', () => {
       }),
     ).toBe(2)
     expect(extractReportedRedcon({ state: { reported: { redcon: 7 } } })).toBeNull()
+  })
+
+  test('extracts top-level reported battery from shadow state', () => {
+    expect(
+      extractReportedBatteryMv({
+        state: {
+          reported: {
+            batteryMv: 3972,
+          },
+        },
+      }),
+    ).toBe(3972)
+
+    expect(
+      extractReportedBatteryMv({
+        state: {
+          reported: {
+            mcu: {
+              batteryMv: 3901,
+            },
+          },
+        },
+      }),
+    ).toBeNull()
   })
 
   test('extracts signed board track percentages from shadow state', () => {

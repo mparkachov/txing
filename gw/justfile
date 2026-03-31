@@ -17,6 +17,12 @@ systemd_unit := "/etc/systemd/system/txing-gw.service"
 @sleep:
     uv run gw-sparkplug-cmd --redcon 4 --thing-name "{{thing_name}}"
 
+@dcmd:
+    uv run gw-sparkplug-log --thing-name "{{thing_name}}" --message-type dcmd
+
+@ddata:
+    uv run gw-sparkplug-log --thing-name "{{thing_name}}" --message-type ddata
+
 @print:
     aws iot-data get-thing-shadow \
       --region "{{region}}" \
