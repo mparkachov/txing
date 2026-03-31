@@ -50,6 +50,12 @@ from .shadow_store import (
     load_shadow,
     save_shadow,
 )
+from .repo_paths import (
+    DEFAULT_CA_FILE,
+    DEFAULT_CERT_FILE,
+    DEFAULT_IOT_ENDPOINT_FILE,
+    DEFAULT_KEY_FILE,
+)
 from .sparkplug import (
     build_device_report_payload,
     build_device_topic,
@@ -88,13 +94,6 @@ DEFAULT_MQTT_PUBLISH_TIMEOUT = 10.0
 DEFAULT_BOARD_OFFLINE_TIMEOUT = 45.0
 SHUTDOWN_MQTT_PUBLISH_TIMEOUT = 2.0
 BLE_DISCONNECT_TIMEOUT = 2.0
-
-REPO_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_CERT_DIR = REPO_ROOT / "certs"
-DEFAULT_IOT_ENDPOINT_FILE = DEFAULT_CERT_DIR / "iot-data-ats.endpoint"
-DEFAULT_CERT_FILE = DEFAULT_CERT_DIR / "txing.cert.pem"
-DEFAULT_KEY_FILE = DEFAULT_CERT_DIR / "txing.private.key"
-DEFAULT_CA_FILE = DEFAULT_CERT_DIR / "AmazonRootCA1.pem"
 
 LOGGER = logging.getLogger("gw.ble_bridge")
 MQTT_LOGGER = logging.getLogger("gw.ble_bridge.mqtt")

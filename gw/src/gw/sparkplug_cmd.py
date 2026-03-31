@@ -7,14 +7,14 @@ from pathlib import Path
 
 import paho.mqtt.client as mqtt
 
+from .repo_paths import (
+    DEFAULT_CA_FILE,
+    DEFAULT_CERT_FILE,
+    DEFAULT_IOT_ENDPOINT_FILE,
+    DEFAULT_KEY_FILE,
+)
 from .sparkplug import build_device_topic, build_redcon_payload
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_CERT_DIR = REPO_ROOT / "certs"
-DEFAULT_IOT_ENDPOINT_FILE = DEFAULT_CERT_DIR / "iot-data-ats.endpoint"
-DEFAULT_CERT_FILE = DEFAULT_CERT_DIR / "txing.cert.pem"
-DEFAULT_KEY_FILE = DEFAULT_CERT_DIR / "txing.private.key"
-DEFAULT_CA_FILE = DEFAULT_CERT_DIR / "AmazonRootCA1.pem"
 DEFAULT_THING_NAME = "txing"
 DEFAULT_SPARKPLUG_GROUP_ID = "town"
 DEFAULT_SPARKPLUG_EDGE_NODE_ID = "rig"
