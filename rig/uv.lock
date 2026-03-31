@@ -79,7 +79,7 @@ wheels = [
 ]
 
 [[package]]
-name = "gw"
+name = "rig"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

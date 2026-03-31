@@ -5,14 +5,14 @@ For a high-level device overview, see [README.md](./README.md).
 Monorepo root for `txing`.
 
 - MCU firmware lives in `mcu/` (Rust).
-- Gateway software lives in `gw/` (Python, direct AWS IoT MQTT + BLE bridge).
+- Rig software lives in `rig/` (Python, direct AWS IoT MQTT + BLE bridge).
 - Device-side Raspberry Pi reporter lives in `board/` (Python, direct AWS IoT MQTT shadow reporting).
 - Web admin SPA lives in `web/` (React + Vite).
 - Shared docs live in `docs/`.
 - Thing Shadow contract schema lives in `docs/txing-shadow.schema.json`.
 - Thing Shadow guidance lives in `docs/thing-shadow.md`.
 - High-level paths:
-  - `AWS IoT Device Shadow -> MQTT -> gw -> BLE -> mcu`
+  - `AWS IoT Device Shadow -> MQTT -> rig -> BLE -> mcu`
   - `AWS IoT Device Shadow -> MQTT -> board`
 
 ## System requirements
@@ -33,7 +33,7 @@ Run from repository root:
 
 ```bash
 just --list
-just gw::wake
+just rig::wake
 just board::run
 just aws::bootstrap
 just aws::shadow
@@ -44,7 +44,7 @@ just web::write-env
 ```
 
 Subproject `justfile`s are included by the root `justfile` as modules:
-- `gw::...` -> `gw/justfile`
+- `rig::...` -> `rig/justfile`
 - `board::...` -> `board/justfile`
 - `aws::...` -> `aws/justfile`
 - `mcu::...` -> `mcu/justfile`
@@ -56,11 +56,11 @@ Firmware example:
 just mcu::build
 ```
 
-Gateway example:
+Rig example:
 
 ```bash
-cd gw
-uv run gw
+cd rig
+just run
 ```
 
 Board example:

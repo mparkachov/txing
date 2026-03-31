@@ -48,7 +48,7 @@ This README uses military readiness shorthand for the technical posture and plai
 | On watch | `REDCON 2` | Orange / Amber | `Ember Watch` | Local power and local processing are available. The device can observe, decide, buffer, and operate locally, but the high-bandwidth remote link is not necessarily up. |
 | Ready | `REDCON 1` | Red | `Hot Rig` | The device is fully up, the action link is up, and the rig is ready for live interaction, streaming, or cloud-assisted work. |
 
-In this repository's current Thing Shadow contract, the gateway derives a single top-level readiness field at `state.reported.redcon` from the reported MCU and board state:
+In this repository's current Thing Shadow contract, the rig runtime derives a single top-level readiness field at `state.reported.redcon` from the reported MCU and board state:
 
 | `state.reported.redcon` | UI color | Meaning | Current derivation |
 | --- | --- | --- | --- |
@@ -88,7 +88,7 @@ This repository contains one sample implementation of the `txing` concept:
 
 - `mcu/`: the current watch layer
 - `board/`: the current action layer
-- `gw/`: the current Raspberry Pi support component that bridges cloud intent to the watch link today and is the codebase that will evolve toward the phase-1 `rig`
+- `rig/`: the current Raspberry Pi support component that acts as the phase-1 `rig` runtime and bridges cloud intent to the watch link
 - `web/`: one operator/admin surface
 - `docs/`: shared contracts, schema, and Sparkplug phase-1 design notes for this implementation
 

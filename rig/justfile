@@ -1,0 +1,83 @@
+set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+
+rig_dir := source_directory()
+python_executable := "python3"
+built_rig := rig_dir + "/.venv/bin/rig"
+built_rig_sparkplug_cmd := rig_dir + "/.venv/bin/rig-sparkplug-cmd"
+built_rig_sparkplug_log := rig_dir + "/.venv/bin/rig-sparkplug-log"
+project_root := rig_dir + "/.."
+aws_justfile := project_root + "/aws/justfile"
+thing_name := "txing"
+region := "eu-central-1"
+endpoint_file := rig_dir + "/../certs/iot-data-ats.endpoint"
+systemd_unit := "/etc/systemd/system/rig.service"
+
+@sync:
+    cd "{{rig_dir}}" && uv sync --python "{{python_executable}}" --no-managed-python --no-python-downloads
+
+@build:
+    cd "{{rig_dir}}" && uv sync --frozen --no-editable --compile-bytecode --python "{{python_executable}}" --no-managed-python --no-python-downloads --refresh-package rig --reinstall-package rig
+    test -x "{{built_rig}}"
+    test -x "{{built_rig_sparkplug_cmd}}"
+    test -x "{{built_rig_sparkplug_log}}"
+
+@check:
+    just --justfile "{{aws_justfile}}" check
+
+@run:
+    cd "{{rig_dir}}" && "{{built_rig}}"
+
+@debug:
+    cd "{{rig_dir}}" && "{{built_rig}}" --debug
+
+@dev:
+    cd "{{rig_dir}}" && uv run rig
+
+@debug-dev:
+    cd "{{rig_dir}}" && uv run rig --debug
+
+@wake:
+    cd "{{rig_dir}}" && "{{built_rig_sparkplug_cmd}}" --redcon 3 --thing-name "{{thing_name}}"
+
+@sleep:
+    cd "{{rig_dir}}" && "{{built_rig_sparkplug_cmd}}" --redcon 4 --thing-name "{{thing_name}}"
+
+@dcmd:
+    cd "{{rig_dir}}" && "{{built_rig_sparkplug_log}}" --thing-name "{{thing_name}}" --message-type dcmd
+
+@ddata:
+    cd "{{rig_dir}}" && "{{built_rig_sparkplug_log}}" --thing-name "{{thing_name}}" --message-type ddata
+
+@print:
+    aws iot-data get-thing-shadow \
+      --region "{{region}}" \
+      --endpoint-url "https://$(tr -d '\n' < "{{endpoint_file}}")" \
+      --thing-name "{{thing_name}}" \
+      /dev/stdout | jq '.'
+
+@install-service:
+    test -x "{{built_rig}}" || { \
+        echo "Missing built rig executable at {{built_rig}}. Run 'just build' first." >&2; \
+        exit 1; \
+    }
+    sudo systemctl enable --now bluetooth
+    run_user="$(id -un)"; printf '%s\n' \
+        '[Unit]' \
+        'Description=txing rig lifecycle runtime' \
+        'After=network-online.target bluetooth.target' \
+        'Wants=network-online.target bluetooth.target' \
+        '' \
+        '[Service]' \
+        'Type=simple' \
+        "User=$run_user" \
+        'WorkingDirectory={{rig_dir}}' \
+        'Environment=AWS_REGION={{region}}' \
+        'ExecStart={{built_rig}}' \
+        'Restart=always' \
+        'RestartSec=3' \
+        '' \
+        '[Install]' \
+        'WantedBy=multi-user.target' \
+        | sudo tee "{{systemd_unit}}" >/dev/null
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now rig

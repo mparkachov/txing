@@ -15,7 +15,7 @@ This checklist tracks the phase-1 Sparkplug lifecycle plan.
 - [x] Create `docs/sparkplug-phase1-design.md`
 - [x] Create `docs/sparkplug-phase1-tasks.md`
 - [x] Update `docs/thing-shadow.md` to distinguish the current shadow compatibility contract from the Sparkplug phase-1 target
-- [x] Update `docs/device-gateway-shadow-spec.md` or replace it with a rig-centric lifecycle contract
+- [x] Update `docs/device-rig-shadow-spec.md` or replace it with a rig-centric lifecycle contract
 - [x] Document the phase-1 identity mapping for `town`, `rig`, and per-txing thing names
 - [x] Document that Sparkplug, not shadow, is the authoritative lifecycle intent path
 

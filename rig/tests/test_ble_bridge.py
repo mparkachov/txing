@@ -6,7 +6,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from gw.ble_bridge import (
+from rig.ble_bridge import (
     BleSleepBridge,
     BridgeConfig,
     ShadowState,
@@ -14,7 +14,7 @@ from gw.ble_bridge import (
     _calculate_redcon,
     _shadow_payload_includes_desired_redcon,
 )
-from gw.sparkplug import (
+from rig.sparkplug import (
     build_device_topic,
     build_device_report_payload,
     build_redcon_payload,

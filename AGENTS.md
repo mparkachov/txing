@@ -2,7 +2,7 @@
 
 ## Repository structure
 - `mcu/`: Rust firmware subproject for the MCU.
-- `gw/`: Python subproject for the Raspberry Pi 5 gateway (AWS IoT MQTT + BLE communication with MCU).
+- `rig/`: Python subproject for the Raspberry Pi 5 rig runtime (AWS IoT MQTT + BLE communication with MCU).
 - `board/`: Python subproject for the device-side Raspberry Pi board control (AWS IoT MQTT shadow control/reporting).
 - `web/`: React/Vite SPA for admin management of Thing Shadow.
 
@@ -15,9 +15,9 @@
 
 ## Shared contracts
 - Thing Shadow schema source of truth: `docs/txing-shadow.schema.json`.
-- Current gw-era shadow + BLE compatibility contract: `docs/device-gateway-shadow-spec.md`.
+- Current rig-era shadow + BLE compatibility contract: `docs/device-rig-shadow-spec.md`.
 - Sparkplug phase-1 target lifecycle design: `docs/sparkplug-phase1-design.md`.
-- Ownership rule: `gw` owns the `mcu.*` shadow subtree contract.
+- Ownership rule: `rig` owns the `mcu.*` shadow subtree contract.
 - Ownership rule: `board` owns the `board.*` shadow subtree contract.
 
 ## Board Video Phase 1

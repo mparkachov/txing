@@ -6,7 +6,7 @@ from pathlib import Path
 
 def _is_repo_root(path: Path) -> bool:
     return (
-        (path / "gw" / "pyproject.toml").is_file()
+        (path / "rig" / "pyproject.toml").is_file()
         and (path / "docs" / "txing-shadow.schema.json").is_file()
     )
 
@@ -29,10 +29,10 @@ def _discover_repo_root(
         seen.add(candidate)
         if _is_repo_root(candidate):
             return candidate
-        if candidate.name == "gw" and (candidate / "pyproject.toml").is_file():
+        if candidate.name == "rig" and (candidate / "pyproject.toml").is_file():
             return candidate.parent
 
-    return resolved_cwd.parent if resolved_cwd.name == "gw" else resolved_cwd
+    return resolved_cwd.parent if resolved_cwd.name == "rig" else resolved_cwd
 
 
 REPO_ROOT = _discover_repo_root(

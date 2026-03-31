@@ -82,21 +82,21 @@ DEFAULT_BLE_ONLINE_RECOVER_AFTER = 30.0
 DEFAULT_BLE_ONLINE_RECOVERY_GAP = 12.0
 DEFAULT_ADVERTISEMENT_LOG_INTERVAL = 5.0
 DEFAULT_SCAN_MODE = "active"
-DEFAULT_LOCK_FILE = Path("/tmp/txing_gw.lock")
+DEFAULT_LOCK_FILE = Path("/tmp/rig.lock")
 DEFAULT_THING_NAME = "txing"
 DEFAULT_RIG_THING_NAME = "rig"
 DEFAULT_TOWN_THING_NAME = "town"
 DEFAULT_SPARKPLUG_GROUP_ID = "town"
 DEFAULT_SPARKPLUG_EDGE_NODE_ID = "rig"
 DEFAULT_AWS_CONNECT_TIMEOUT = 20.0
-DEFAULT_CLOUDWATCH_LOG_GROUP = "/txing/gw"
+DEFAULT_CLOUDWATCH_LOG_GROUP = "/town/rig/txing"
 DEFAULT_MQTT_PUBLISH_TIMEOUT = 10.0
 DEFAULT_BOARD_OFFLINE_TIMEOUT = 45.0
 SHUTDOWN_MQTT_PUBLISH_TIMEOUT = 2.0
 BLE_DISCONNECT_TIMEOUT = 2.0
 
-LOGGER = logging.getLogger("gw.ble_bridge")
-MQTT_LOGGER = logging.getLogger("gw.ble_bridge.mqtt")
+LOGGER = logging.getLogger("rig.ble_bridge")
+MQTT_LOGGER = logging.getLogger("rig.ble_bridge.mqtt")
 
 
 class ImportantOrWarningFilter(logging.Filter):
@@ -150,7 +150,7 @@ def _is_retryable_gatt_write_error(err: Exception) -> bool:
 
 
 def _default_cloudwatch_log_stream(thing_name: str) -> str:
-    hostname = socket.gethostname().split(".", 1)[0] or "gw"
+    hostname = socket.gethostname().split(".", 1)[0] or "rig"
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     return f"{thing_name}-{hostname}-{timestamp}-{os.getpid()}"
 
@@ -552,7 +552,7 @@ class BridgeConfig:
     board_offline_timeout: float = DEFAULT_BOARD_OFFLINE_TIMEOUT
 
 
-class GatewayBleState(str, Enum):
+class RigBleState(str, Enum):
     IDLE = "idle"
     SCANNING = "scanning"
     DEVICE_DETECTED = "device_detected"
@@ -1206,7 +1206,7 @@ class InstanceLock:
                 owner_pid = self._read_owner_pid()
                 if owner_pid is not None and self._pid_running(owner_pid):
                     raise RuntimeError(
-                        f"another gw instance is already running (pid={owner_pid}, lock={self._path})"
+                        f"another rig instance is already running (pid={owner_pid}, lock={self._path})"
                     )
                 try:
                     self._path.unlink()
@@ -1268,7 +1268,7 @@ class BleSleepBridge:
         self._has_device_sync = False
         self._last_state_report: bytes | None = None
         self._require_fresh_advertisement_for_reconnect = False
-        self._state = GatewayBleState.IDLE
+        self._state = RigBleState.IDLE
         self._sparkplug_node_seq = 0
         self._sparkplug_device_seq = 0
         self._sparkplug_node_born = False
@@ -1278,7 +1278,7 @@ class BleSleepBridge:
         if shadow.desired_board_power is False and shadow.board_power:
             self._board_shutdown_requested_at = time.monotonic()
 
-    def _set_gateway_state(self, next_state: GatewayBleState, reason: str) -> None:
+    def _set_rig_state(self, next_state: RigBleState, reason: str) -> None:
         if self._state == next_state:
             LOGGER.debug("BLE state %s (%s)", next_state.value, reason)
             return
@@ -1550,8 +1550,8 @@ class BleSleepBridge:
                 if not self._is_connected():
                     await self._start_scanner()
                     if self._should_idle_disconnected_while_sleeping():
-                        self._set_gateway_state(
-                            GatewayBleState.IDLE,
+                        self._set_rig_state(
+                            RigBleState.IDLE,
                             "scanner armed; waiting for cloud updates, advertisements, or BLE presence timeout",
                         )
                         pending_updates = await self._wait_for_updates_or_disconnect(
@@ -1630,7 +1630,7 @@ class BleSleepBridge:
         )
         await self._publish_ble_online_state(
             online=False,
-            context="Gateway startup (--no-ble): BLE disconnected",
+            context="Rig startup (--no-ble): BLE disconnected",
             force=True,
         )
         await self._normalize_shadow_for_startup_default()
@@ -1928,13 +1928,13 @@ class BleSleepBridge:
                 return
 
             try:
-                self._set_gateway_state(
-                    GatewayBleState.COMMAND_PENDING,
+                self._set_rig_state(
+                    RigBleState.COMMAND_PENDING,
                     f"redcon=4 requested for {self._cached_device_id or '<unknown>'}",
                 )
                 await self._send_sleep_command(sleep=True)
-                self._set_gateway_state(
-                    GatewayBleState.COMMAND_SENT,
+                self._set_rig_state(
+                    RigBleState.COMMAND_SENT,
                     f"sleep command written for {self._cached_device_id or '<unknown>'}",
                 )
                 try:
@@ -1999,13 +1999,13 @@ class BleSleepBridge:
             return
 
         try:
-            self._set_gateway_state(
-                GatewayBleState.COMMAND_PENDING,
+            self._set_rig_state(
+                RigBleState.COMMAND_PENDING,
                 f"redcon={target_redcon} requested for {self._cached_device_id or '<unknown>'}",
             )
             await self._send_sleep_command(sleep=False)
-            self._set_gateway_state(
-                GatewayBleState.COMMAND_SENT,
+            self._set_rig_state(
+                RigBleState.COMMAND_SENT,
                 f"wake command written for {self._cached_device_id or '<unknown>'}",
             )
             report = await self._wait_for_reported_power(True)
@@ -2186,8 +2186,8 @@ class BleSleepBridge:
     ) -> tuple[list[AwsShadowUpdate], BLEDevice | None]:
         target_device = self._get_fresh_target_device()
         if target_device is not None:
-            self._set_gateway_state(
-                GatewayBleState.DEVICE_DETECTED,
+            self._set_rig_state(
+                RigBleState.DEVICE_DETECTED,
                 f"fresh advertisement from {self._device_label(target_device, self._known_device.local_name)}",
             )
             return [], target_device
@@ -2196,8 +2196,8 @@ class BleSleepBridge:
             raise RuntimeError("BLE advertisement event is not initialized")
 
         self._advertisement_event.clear()
-        self._set_gateway_state(
-            GatewayBleState.SCANNING,
+        self._set_rig_state(
+            RigBleState.SCANNING,
             f"waiting up to {timeout_seconds:.1f}s for target advertisement",
         )
         updates_task = asyncio.create_task(
@@ -2216,8 +2216,8 @@ class BleSleepBridge:
             if advertisement_task in done:
                 target_device = self._get_fresh_target_device()
                 if target_device is not None:
-                    self._set_gateway_state(
-                        GatewayBleState.DEVICE_DETECTED,
+                    self._set_rig_state(
+                        RigBleState.DEVICE_DETECTED,
                         f"advertisement from {self._device_label(target_device, self._known_device.local_name)}",
                     )
                     return [], target_device
@@ -2252,8 +2252,8 @@ class BleSleepBridge:
         )
         self._client = client
         try:
-            self._set_gateway_state(
-                GatewayBleState.CONNECTING,
+            self._set_rig_state(
+                RigBleState.CONNECTING,
                 self._device_label(target_device, self._known_device.local_name),
             )
             connected = await asyncio.wait_for(
@@ -2263,8 +2263,8 @@ class BleSleepBridge:
             if connected is False:
                 raise RuntimeError("BLE connect returned False")
 
-            self._set_gateway_state(
-                GatewayBleState.CONNECTED,
+            self._set_rig_state(
+                RigBleState.CONNECTED,
                 f"{target_device_id} ({target_name})",
             )
             await self._ensure_services_discovered(client)
@@ -2780,14 +2780,14 @@ class BleSleepBridge:
         client = self._client
         self._client = None
         if client is None:
-            self._set_gateway_state(
-                GatewayBleState.DISCONNECT,
+            self._set_rig_state(
+                RigBleState.DISCONNECT,
                 "closing BLE session",
             )
             return
         try:
-            self._set_gateway_state(
-                GatewayBleState.DISCONNECT,
+            self._set_rig_state(
+                RigBleState.DISCONNECT,
                 "closing BLE session",
             )
             self._mark_ble_presence_now()
@@ -2875,8 +2875,8 @@ class BleSleepBridge:
     ) -> BLEDevice | None:
         target_device = self._get_fresh_target_device()
         if target_device is not None:
-            self._set_gateway_state(
-                GatewayBleState.DEVICE_DETECTED,
+            self._set_rig_state(
+                RigBleState.DEVICE_DETECTED,
                 f"fresh advertisement from {self._device_label(target_device, self._known_device.local_name)}",
             )
             return target_device
@@ -2885,8 +2885,8 @@ class BleSleepBridge:
             raise RuntimeError("BLE advertisement event is not initialized")
 
         self._advertisement_event.clear()
-        self._set_gateway_state(
-            GatewayBleState.SCANNING,
+        self._set_rig_state(
+            RigBleState.SCANNING,
             f"waiting up to {timeout_seconds:.1f}s for target advertisement",
         )
         try:
@@ -2895,16 +2895,16 @@ class BleSleepBridge:
                 timeout=timeout_seconds,
             )
         except TimeoutError:
-            self._set_gateway_state(
-                GatewayBleState.WAIT_FOR_NEXT_ADVERTISEMENT,
+            self._set_rig_state(
+                RigBleState.WAIT_FOR_NEXT_ADVERTISEMENT,
                 "matched advertisement not seen before scan timeout",
             )
             return None
 
         target_device = self._get_fresh_target_device()
         if target_device is not None:
-            self._set_gateway_state(
-                GatewayBleState.DEVICE_DETECTED,
+            self._set_rig_state(
+                RigBleState.DEVICE_DETECTED,
                 f"advertisement from {self._device_label(target_device, self._known_device.local_name)}",
             )
         return target_device
@@ -2915,7 +2915,7 @@ class BleSleepBridge:
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        prog="gw",
+        prog="rig",
         description="Txing rig lifecycle process (AWS IoT Shadow + Sparkplug + BLE bridge)",
     )
     parser.add_argument(
@@ -2999,7 +2999,7 @@ def _parse_args() -> argparse.Namespace:
         "--lock-file",
         type=Path,
         default=DEFAULT_LOCK_FILE,
-        help="Path to single-instance lock file (default: /tmp/txing_gw.lock)",
+        help="Path to single-instance lock file (default: /tmp/rig.lock)",
     )
     parser.add_argument(
         "--thing-name",
@@ -3058,7 +3058,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--client-id",
         default=None,
-        help="MQTT client id (default: txing-gw-<pid>)",
+        help="MQTT client id (default: rig-<pid>)",
     )
     parser.add_argument(
         "--aws-connect-timeout",
@@ -3086,7 +3086,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--cloudwatch-log-group",
         default=DEFAULT_CLOUDWATCH_LOG_GROUP,
-        help="CloudWatch Logs group name for gateway logs (default: /txing/gw)",
+        help="CloudWatch Logs group name for rig logs (default: /town/rig/txing)",
     )
     parser.add_argument(
         "--cloudwatch-log-stream",
@@ -3220,7 +3220,7 @@ def _configure_logging(
 
     if watchtower is None:
         print(
-            "gw start warning: watchtower dependency is not installed; "
+            "rig start warning: watchtower dependency is not installed; "
             "CloudWatch log streaming disabled",
             file=sys.stderr,
         )
@@ -3228,7 +3228,7 @@ def _configure_logging(
 
     if boto3 is None:
         print(
-            "gw start warning: boto3 dependency is not installed; "
+            "rig start warning: boto3 dependency is not installed; "
             "CloudWatch log streaming disabled",
             file=sys.stderr,
         )
@@ -3243,7 +3243,7 @@ def _configure_logging(
     )
     if not cloudwatch_region:
         print(
-            "gw start warning: could not resolve CloudWatch region; "
+            "rig start warning: could not resolve CloudWatch region; "
             "CloudWatch log streaming disabled",
             file=sys.stderr,
         )
@@ -3253,7 +3253,7 @@ def _configure_logging(
         logs_client = boto3.client("logs", region_name=cloudwatch_region)
     except Exception as err:
         print(
-            "gw start warning: failed to initialize CloudWatch boto3 client "
+            "rig start warning: failed to initialize CloudWatch boto3 client "
             f"(region={cloudwatch_region}): {err}; CloudWatch log streaming disabled",
             file=sys.stderr,
         )
@@ -3266,7 +3266,7 @@ def _configure_logging(
     )
     if preflight_error is not None:
         print(
-            f"gw start warning: {preflight_error}; "
+            f"rig start warning: {preflight_error}; "
             "CloudWatch log streaming disabled",
             file=sys.stderr,
         )
@@ -3283,7 +3283,7 @@ def _configure_logging(
         )
     except Exception as err:
         print(
-            f"gw start warning: failed to initialize CloudWatch log handler: {err}",
+            f"rig start warning: failed to initialize CloudWatch log handler: {err}",
             file=sys.stderr,
         )
         return
@@ -3308,7 +3308,7 @@ def main() -> None:
         _require_file(args.key_file, "AWS IoT client private key")
         _require_file(args.ca_file, "AWS IoT root CA")
     except RuntimeError as err:
-        print(f"gw start failed: {err}", file=sys.stderr)
+        print(f"rig start failed: {err}", file=sys.stderr)
         raise SystemExit(2) from err
 
     _configure_logging(args, iot_endpoint=iot_endpoint)
@@ -3337,7 +3337,7 @@ def main() -> None:
         cert_file=args.cert_file,
         key_file=args.key_file,
         ca_file=args.ca_file,
-        client_id=args.client_id or f"txing-gw-{os.getpid()}",
+        client_id=args.client_id or f"rig-{os.getpid()}",
         aws_connect_timeout=args.aws_connect_timeout,
         board_offline_timeout=args.board_offline_timeout,
     )
@@ -3346,12 +3346,12 @@ def main() -> None:
     try:
         lock.acquire()
     except RuntimeError as err:
-        print(f"gw start failed: {err}", file=sys.stderr)
+        print(f"rig start failed: {err}", file=sys.stderr)
         raise SystemExit(2) from err
 
     _log_important(
         LOGGER,
-        "Gateway started pid=%s lock=%s thing=%s",
+        "Rig started pid=%s lock=%s thing=%s",
         os.getpid(),
         config.lock_file,
         config.thing_name,
@@ -3370,7 +3370,7 @@ def main() -> None:
         config.client_id,
     )
 
-    async def _run_gateway() -> None:
+    async def _run_rig() -> None:
         cloud_shadow = AwsShadowClient(config)
         try:
             snapshot = await cloud_shadow.connect_and_get_initial_snapshot(
@@ -3423,7 +3423,7 @@ def main() -> None:
         def _request_shutdown(sig: signal.Signals) -> None:
             if shutdown_event.is_set():
                 return
-            _log_important(LOGGER, "Shutting down gateway (signal=%s)", sig.name)
+            _log_important(LOGGER, "Shutting down rig (signal=%s)", sig.name)
             shutdown_event.set()
 
         for sig in (signal.SIGINT, signal.SIGTERM):
@@ -3434,19 +3434,19 @@ def main() -> None:
                 break
             installed_signals.append(sig)
 
-        gateway_task = asyncio.create_task(_run_gateway())
+        rig_task = asyncio.create_task(_run_rig())
         shutdown_task = asyncio.create_task(shutdown_event.wait())
         try:
             done, _pending = await asyncio.wait(
-                {gateway_task, shutdown_task},
+                {rig_task, shutdown_task},
                 return_when=asyncio.FIRST_COMPLETED,
             )
-            if gateway_task in done:
-                await gateway_task
+            if rig_task in done:
+                await rig_task
                 return
 
-            gateway_task.cancel()
-            await asyncio.gather(gateway_task, return_exceptions=True)
+            rig_task.cancel()
+            await asyncio.gather(rig_task, return_exceptions=True)
         finally:
             for sig in installed_signals:
                 loop.remove_signal_handler(sig)
@@ -3457,7 +3457,7 @@ def main() -> None:
     try:
         asyncio.run(_runner())
     except KeyboardInterrupt:
-        _log_important(LOGGER, "Shutting down gateway")
+        _log_important(LOGGER, "Shutting down rig")
     finally:
         lock.release()
         logging.shutdown()

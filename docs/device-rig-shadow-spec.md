@@ -1,12 +1,12 @@
-# Txing Gateway Contract (Shadow + Sparkplug + BLE) v1.1
+# Txing Rig Contract (Shadow + Sparkplug + BLE) v1.1
 
-This document is the integration contract for the gateway team only.
+This document is the integration contract for the rig runtime only.
 Build, flash, and local developer commands live in the subproject READMEs.
 
 Status note:
 
-- This document describes the current implemented phase-1 `gw` runtime contract.
-- `gw` now acts as the phase-1 `rig` lifecycle service in the same process.
+- This document describes the current implemented phase-1 `rig` runtime contract.
+- `rig` now acts as the phase-1 `rig` lifecycle service in the same process.
 - Sparkplug `DCMD.redcon` is the authoritative lifecycle command path.
 - The `txing` Thing Shadow remains the reflected operational document and restart cache.
 - For the broader design context, see `docs/sparkplug-phase1-design.md`.
@@ -15,7 +15,7 @@ Status note:
 
 Contract between:
 - Txing firmware (`mcu/`, BLE peripheral on nRF52840)
-- Txing gateway (`gw/`, BLE central on Raspberry Pi 5 and phase-1 `rig` lifecycle runtime)
+- Txing rig runtime (`rig/`, BLE central on Raspberry Pi 5 and phase-1 `rig` lifecycle runtime)
 - AWS IoT classic Thing Shadow for thing name `txing`
 - AWS IoT MQTT Sparkplug namespace `spBv1.0`
 
@@ -23,19 +23,19 @@ Authoritative shadow schema:
 - `./txing-shadow.schema.json`
 
 High-level architecture:
-- Sparkplug host -> AWS IoT MQTT -> gw -> BLE -> mcu
-- gw -> AWS IoT Thing Shadow reflection/cache
+- Sparkplug host -> AWS IoT MQTT -> rig -> BLE -> mcu
+- rig -> AWS IoT Thing Shadow reflection/cache
 
 ## 2. Ownership
 
-- `gw` is the source of truth for the `mcu.*` shadow subtree.
-- `gw` is also the source of truth for the direct Sparkplug metric reflections under top-level `reported`.
+- `rig` is the source of truth for the `mcu.*` shadow subtree.
+- `rig` is also the source of truth for the direct Sparkplug metric reflections under top-level `reported`.
 - In phase 1 that strict top-level metric set is exactly `reported.redcon` and `reported.batteryMv`.
-- `gw` is the only component that accepts lifecycle intent from Sparkplug and reflects unresolved intent into `state.desired.redcon`.
+- `rig` is the only component that accepts lifecycle intent from Sparkplug and reflects unresolved intent into `state.desired.redcon`.
 - `state.desired.board.power` remains an internal rig-to-board actuator only.
 - `state.desired.mcu.power` is deprecated and ignored by runtime logic.
-- Only `gw` may define or evolve the `mcu.*` contract.
-- `mcu` exposes BLE behavior; `gw` translates that behavior into shadow state.
+- Only `rig` may define or evolve the `mcu.*` contract.
+- `mcu` exposes BLE behavior; `rig` translates that behavior into shadow state.
 
 ## 3. Hybrid BLE Model
 
@@ -50,7 +50,7 @@ Firmware behavior:
 - `power=false`: stay in RTC-driven low-power system-on idle between rendezvous intervals, wake from RTC every `5 s`, refresh the State Report, restart BLE advertising for a short bounded window, accept a short connection if needed, then return to low-power idle
 - `power=true`: stay in the wakeup state, continue advertising when disconnected, and keep the BLE link available for a live session
 
-Gateway behavior:
+Rig behavior:
 - keep a registry for the known device identity
 - keep scanning while disconnected
 - while the MCU is in the sleep state, observe the periodic advertising windows to maintain BLE presence and reconnect during a rendezvous window only when a BLE session is needed
@@ -100,24 +100,24 @@ Shadow type: classic (unnamed) Thing Shadow (`$aws/things/txing/shadow/*`)
 
 Field semantics:
 - `state.desired.redcon` is the reflected cache of the latest unresolved Sparkplug `DCMD.redcon` command.
-- `state.desired.board.power=false` is an internal-only graceful-halt request written by `gw` while converging `redcon=4`.
+- `state.desired.board.power=false` is an internal-only graceful-halt request written by `rig` while converging `redcon=4`.
 - `state.desired.mcu.power` is deprecated compatibility state and must be ignored by phase-1 runtime behavior.
 - Direct scalar attributes under `state.reported` are the strict Sparkplug metric reflection surface.
 - In phase 1 that set is exactly `redcon` and `batteryMv`.
 - `mcu.*` and `board.*` remain shadow-only operational detail and are not alternate locations for Sparkplug metric reflection.
-- `state.reported.redcon` is the derived readiness summary:
+- `state.reported.redcon` is the rig-derived readiness summary:
   - `4` -> Green / `Cold Camp` -> `reported.mcu.power=false`
   - `3` -> Yellow / `Torch-Up` -> `reported.mcu.power=true` while the operator video path is not ready yet
   - `2` -> Orange/Amber / `Ember Watch` -> `reported.mcu.power=true`, `reported.board.power=true`, `reported.board.wifi.online=true`, `reported.board.video.ready=true`, and `reported.board.video.viewerConnected=false`
   - `1` -> Red / `Hot Rig` -> same as `2`, plus `reported.board.video.viewerConnected=true`
-- `state.reported.batteryMv` is the latest battery reading observed over BLE, surfaced at top-level alongside `redcon`, sourced from the MCU state report carried over either advertising manufacturer data or the GATT State Report characteristic.
+- `state.reported.batteryMv` is the latest battery reading observed over BLE by rig, surfaced at top-level alongside `redcon`, sourced from the MCU state report carried over either advertising manufacturer data or the GATT State Report characteristic.
 - `state.reported.mcu.power=true` means "MCU is in the wakeup state".
 - `state.reported.mcu.power=false` means "MCU is in the sleep state with periodic BLE rendezvous wakeups".
 - `state.reported.mcu.ble.online` is `true` only after the MCU has shown sustained BLE reachability, either by staying connected or by advertising regularly for the configured recovery window.
 - `state.reported.mcu.ble.deviceId` is the last known BLE identity used for fast reconnect.
-- `gw` reads `state.reported.board.power`, `state.reported.board.wifi.online`, `state.reported.board.video.ready`, and `state.reported.board.video.viewerConnected` from the shared shadow as the board posture inputs for `reported.redcon`.
-- `gw` emits `DBIRTH` when BLE reachability reaches the same sustained-online condition that drives `reported.mcu.ble.online=true`.
-- `gw` emits `DDEATH` when BLE reachability times out, forces `reported.redcon=4`, and clears `desired.redcon` plus internal `desired.board.power` best-effort.
+- `rig` reads `state.reported.board.power`, `state.reported.board.wifi.online`, `state.reported.board.video.ready`, and `state.reported.board.video.viewerConnected` from the shared shadow as the board posture inputs for `reported.redcon`.
+- `rig` emits `DBIRTH` when BLE reachability reaches the same sustained-online condition that drives `reported.mcu.ble.online=true`.
+- `rig` emits `DDEATH` when BLE reachability times out, forces `reported.redcon=4`, and clears `desired.redcon` plus internal `desired.board.power` best-effort.
 
 Compatibility note:
 - The shadow field name `sleepCommandUuid` is retained for compatibility.
@@ -172,7 +172,7 @@ Notification behavior:
 - Device refreshes battery and rebuilds the State Report before each sleep-state advertisement window.
 - Device refreshes battery before wakeup-state advertising starts and periodically while a BLE connection is held open.
 - Device updates State Report on connection establishment and again after processing a power-mode command.
-- Gateway consumes the same State Report payload from either advertising manufacturer data or the GATT State Report characteristic.
+- Rig consumes the same State Report payload from either advertising manufacturer data or the GATT State Report characteristic.
 
 ## 6. Firmware State Machine
 
@@ -192,8 +192,8 @@ States:
   - Transition immediately to `Advertising`.
 - `Advertising`
   - In the sleep state, start connectable advertising with a bounded timeout.
-  - In the wakeup state, advertise continuously until the gateway connects.
-  - Transition to `Connected` if the gateway connects.
+  - In the wakeup state, advertise continuously until rig connects.
+  - Transition to `Connected` if rig connects.
   - In the sleep state, transition to `ReturnToSleep` if the advertising window expires.
 - `Connected`
   - Publish State Report to the client.
@@ -213,14 +213,14 @@ States:
   - Re-arm the RTC rendezvous timer.
   - Transition to `Sleep`.
 
-## 7. Gateway State Machine
+## 7. Rig State Machine
 
 States:
 - `Idle`
   - No BLE power transition is pending.
   - Scanner remains armed in the background.
   - `ble.online` remains `true` while the device is still being observed over BLE.
-  - If `ble.online` is `false`, the gateway requires the configured recovery window of regular advertisements before setting it back to `true`.
+  - If `ble.online` is `false`, rig requires the configured recovery window of regular advertisements before setting it back to `true`.
 - `Scanning`
   - Wait for either a matching advertisement or a shadow update.
   - Matching priority: known `deviceId`, then service UUID, then name/manufacturer fallback.
@@ -259,7 +259,7 @@ Firmware defaults:
 - advertising interval: `100 ms`
 - connected command window: `15 s`
 
-Gateway defaults:
+Rig defaults:
 - scan timeout before logging a missed window: `12 s`
 - connect timeout: `10 s`
 - power confirmation timeout: `2 s`
@@ -288,23 +288,23 @@ All of the above are tunable constants or CLI-configurable parameters.
   - `state.reported.redcon=4`
   - `state.desired.redcon` cleared on convergence
   - the MCU returning to the sleep state with periodic rendezvous wakeups
-- `state.reported.batteryMv` is refreshed whenever the gateway observes a changed battery value from the MCU State Report, whether that report arrives in advertising manufacturer data or over GATT.
+- `state.reported.batteryMv` is refreshed whenever rig observes a changed battery value from the MCU State Report, whether that report arrives in advertising manufacturer data or over GATT.
 - `state.reported.mcu.ble.*` remains present and valid.
-- `state.reported.mcu.ble.online` becomes `true` again after the gateway observes sustained BLE presence for the configured recovery window.
+- `state.reported.mcu.ble.online` becomes `true` again after rig observes sustained BLE presence for the configured recovery window.
 - `state.reported.mcu.ble.online` remains `true` while the device is connected or continues advertising within the configured presence timeout.
-- `state.reported.mcu.ble.online` becomes `false` only after the gateway has not observed the device for longer than the presence timeout.
+- `state.reported.mcu.ble.online` becomes `false` only after rig has not observed the device for longer than the presence timeout.
 - `DBIRTH` is emitted when `state.reported.mcu.ble.online` becomes `true`.
 - `DDEATH` is emitted when `state.reported.mcu.ble.online` becomes `false`.
 
 ## 10. Test Plan
 
 - Sleep-state advertisement presence:
-  - Leave the MCU in the sleep state and verify that the gateway observes the repeated `5 s` advertising windows without requiring UUID rediscovery or a persistent BLE session.
+  - Leave the MCU in the sleep state and verify that rig observes the repeated `5 s` advertising windows without requiring UUID rediscovery or a persistent BLE session.
 - Sending wake command successfully:
   - Publish `DCMD.redcon=3` and verify wakeup-state acknowledgement plus `reported.mcu.power=true`.
 - Behavior when no command is pending:
-  - Observe multiple sleep-state rendezvous cycles and verify the MCU returns to low-power idle without a BLE session if the gateway does not need one.
+  - Observe multiple sleep-state rendezvous cycles and verify the MCU returns to low-power idle without a BLE session if rig does not need one.
 - Behavior when the advertisement window is missed:
-  - Stop the gateway temporarily so one or more windows are missed, then restart it and verify the next window succeeds.
+  - Stop rig temporarily so one or more windows are missed, then restart it and verify the next window succeeds.
 - Repeated sleep/wakeup-state transitions:
   - Toggle `DCMD.redcon` through several `4 -> 3 -> 4` cycles and verify the registry, battery updates, board-shutdown handling, and disconnect handling remain stable.

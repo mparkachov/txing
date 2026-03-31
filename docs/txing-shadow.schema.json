@@ -52,7 +52,7 @@
       "additionalProperties": true,
       "properties": {
         "redcon": {
-          "description": "Latest unresolved Sparkplug lifecycle target reflected into shadow by gw/rig.",
+          "description": "Latest unresolved Sparkplug lifecycle target reflected into shadow by rig.",
           "type": [
             "integer",
             "null"
@@ -105,13 +105,13 @@
       "additionalProperties": false,
       "properties": {
         "redcon": {
-          "description": "Gateway-derived readiness summary. 4=MCU sleep state, 3=MCU awake but operator video path not ready, 2=board online and video ready without an active viewer, 1=board online with an active viewer.",
+          "description": "Rig-derived readiness summary. 4=MCU sleep state, 3=MCU awake but operator video path not ready, 2=board online and video ready without an active viewer, 1=board online with an active viewer.",
           "type": "integer",
           "minimum": 1,
           "maximum": 4
         },
         "batteryMv": {
-          "description": "Gateway-reported MCU battery estimate in millivolts, surfaced at top-level alongside redcon.",
+          "description": "Rig-reported MCU battery estimate in millivolts, surfaced at top-level alongside redcon.",
           "type": "integer",
           "minimum": 0,
           "maximum": 10000

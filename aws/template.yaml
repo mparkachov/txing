@@ -25,13 +25,13 @@ Resources:
   TxingGatewayLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: /txing/gw
+      LogGroupName: /town/rig/txing
       RetentionInDays: 30
 
   TxingGatewayLogsManagedPolicy:
     Type: AWS::IAM::ManagedPolicy
     Properties:
-      Description: Allows the gateway to write logs directly to /txing/gw.
+      Description: Allows the rig runtime to write logs directly to /town/rig/txing.
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -42,8 +42,8 @@ Resources:
               - logs:DescribeLogStreams
               - logs:PutLogEvents
             Resource:
-              - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/txing/gw
-              - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/txing/gw:log-stream:*
+              - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/town/rig/txing
+              - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/town/rig/txing:log-stream:*
 
   TxingThing:
     Type: AWS::IoT::Thing
@@ -86,7 +86,7 @@ Resources:
   TxingGatewayPolicy:
     Type: AWS::IoT::Policy
     Properties:
-      PolicyName: txing-gw-policy
+      PolicyName: town-rig-txing-policy
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -430,14 +430,14 @@ Resources:
         authenticated: !GetAtt TxingAdminIdentityPoolAuthenticatedRole.Arn
 
 Outputs:
-  GatewayLogGroupName:
-    Description: CloudWatch Logs group used by the gateway process.
+  RigLogGroupName:
+    Description: CloudWatch Logs group used by the rig process.
     Value: !Ref TxingGatewayLogGroup
-  GatewayLogGroupArn:
-    Description: ARN of the CloudWatch Logs group used by the gateway process.
+  RigLogGroupArn:
+    Description: ARN of the CloudWatch Logs group used by the rig process.
     Value: !GetAtt TxingGatewayLogGroup.Arn
-  GatewayLogsManagedPolicyArn:
-    Description: Attach this managed policy to the IAM principal used by gw.
+  RigLogsManagedPolicyArn:
+    Description: Attach this managed policy to the IAM principal used by rig.
     Value: !Ref TxingGatewayLogsManagedPolicy
   BoardVideoChannelArn:
     Description: ARN of the txing board KVS signaling channel.
@@ -449,7 +449,7 @@ Outputs:
     Description: Attach this managed policy to the AWS principal used by the board video sender.
     Value: !Ref TxingBoardVideoSenderManagedPolicy
   ThingName:
-    Description: Fixed IoT Thing name used by the gateway.
+    Description: Fixed IoT Thing name used by the field device.
     Value: !Ref TxingThing
   ThingArn:
     Description: ARN of the txing IoT Thing.
@@ -464,7 +464,7 @@ Outputs:
     Description: Reserved MQTT topic for Thing Shadow updates.
     Value: !Sub "$aws/things/${TxingThing}/shadow/update"
   PolicyName:
-    Description: IoT policy to attach to gateway certificate.
+    Description: IoT policy to attach to the rig certificate.
     Value: !Ref TxingGatewayPolicy
   WebIotPolicyName:
     Description: IoT policy attached to authenticated Cognito identities for browser shadow access.

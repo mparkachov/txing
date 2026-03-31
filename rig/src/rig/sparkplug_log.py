@@ -61,7 +61,7 @@ def _emit_event(event: dict[str, object]) -> None:
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        prog="gw-sparkplug-log",
+        prog="rig-sparkplug-log",
         description="Subscribe to phase-1 Sparkplug lifecycle topics and decode payloads",
     )
     parser.add_argument(
@@ -111,7 +111,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--client-id",
         default=None,
-        help="MQTT client id (default: txing-gw-log-<pid>)",
+        help="MQTT client id (default: rig-log-<pid>)",
     )
     parser.add_argument(
         "--message-type",
@@ -130,7 +130,7 @@ def main() -> None:
         _require_file(args.key_file, "AWS IoT client private key")
         _require_file(args.ca_file, "AWS IoT root CA")
     except RuntimeError as err:
-        print(f"gw-sparkplug-log failed: {err}", file=sys.stderr)
+        print(f"rig-sparkplug-log failed: {err}", file=sys.stderr)
         raise SystemExit(2) from err
 
     dcmd_topic = build_device_topic(
@@ -153,7 +153,7 @@ def main() -> None:
 
     client = mqtt.Client(
         callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
-        client_id=args.client_id or f"txing-gw-log-{os.getpid()}",
+        client_id=args.client_id or f"rig-log-{os.getpid()}",
         clean_session=True,
         protocol=mqtt.MQTTv311,
     )
@@ -172,7 +172,7 @@ def main() -> None:
     ) -> None:
         if reason_code != 0:
             print(
-                f"gw-sparkplug-log failed: MQTT connect rejected (reason_code={reason_code})",
+                f"rig-sparkplug-log failed: MQTT connect rejected (reason_code={reason_code})",
                 file=sys.stderr,
             )
             client.disconnect()
@@ -180,7 +180,7 @@ def main() -> None:
         subscribe_rc, _mid = client.subscribe(subscribe_topics)
         if subscribe_rc != mqtt.MQTT_ERR_SUCCESS:
             print(
-                "gw-sparkplug-log failed: unable to subscribe to lifecycle topics "
+                "rig-sparkplug-log failed: unable to subscribe to lifecycle topics "
                 f"(rc={subscribe_rc})",
                 file=sys.stderr,
             )
@@ -286,7 +286,7 @@ def main() -> None:
     except KeyboardInterrupt:
         return
     except Exception as err:
-        print(f"gw-sparkplug-log failed: {err}", file=sys.stderr)
+        print(f"rig-sparkplug-log failed: {err}", file=sys.stderr)
         raise SystemExit(1) from err
     finally:
         try:

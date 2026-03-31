@@ -1,6 +1,6 @@
-# `gw` gateway subproject
+# `rig` lifecycle subproject
 
-Python service for the Raspberry Pi 5 gateway.
+Python service for the Raspberry Pi 5 rig runtime.
 
 Responsibilities:
 - Connect directly to AWS IoT Core over MQTT/mTLS
@@ -13,12 +13,12 @@ Responsibilities:
 
 Shadow contract source of truth:
 - `../docs/txing-shadow.schema.json`
-- `../docs/device-gateway-shadow-spec.md`
-- Design decision: `gw` owns and evolves the `mcu.*` shadow subtree contract.
+- `../docs/device-rig-shadow-spec.md`
+- Design decision: `rig` owns and evolves the `mcu.*` shadow subtree contract.
 
 High-level architecture:
-- Sparkplug host -> AWS IoT MQTT -> gw -> BLE -> mcu
-- gw -> AWS IoT Thing Shadows (`txing`, `rig`, `town`)
+- Sparkplug host -> AWS IoT MQTT -> rig -> BLE -> mcu
+- rig -> AWS IoT Thing Shadows (`txing`, `rig`, `town`)
 
 ## Requirements
 
@@ -29,7 +29,7 @@ The system requires these tools installed:
 - `aws` (AWS CLI)
 
 AWS CLI connectivity must be working (credentials + region via role/env/default config/SSO) with permissions for AWS IoT and AWS IoT Data Plane calls used by this project.
-Gateway runtime also needs AWS credentials (default SDK chain) with CloudWatch Logs write permissions for `/txing/gw`.
+Rig runtime also needs AWS credentials (default SDK chain) with CloudWatch Logs write permissions for `/town/rig/txing`.
 
 ## Install on a new Raspberry Pi 5 (64-bit OS)
 
@@ -83,7 +83,7 @@ mkdir -p ~/txing/certs
 
 ```bash
 cd ~/txing
-just gw::check
+just rig::check
 ```
 
 This check also validates required local tools (`aws`, `jq`, `uv`, `just`, `openssl`) are installed.
@@ -96,32 +96,32 @@ cd ~/txing
 just aws::bootstrap
 ```
 
-8. Build the gateway with the OS `python3` and verify startup:
+8. Build the rig runtime with the OS `python3` and verify startup:
 
 ```bash
-cd ~/txing/gw
+cd ~/txing/rig
 python3 --version
 just build
-./.venv/bin/gw --help
+./.venv/bin/rig --help
 just debug
 ```
 
-`build` is the normal install step for the gateway. It creates or updates `gw/.venv/` from the OS `python3` on `PATH` and installs the packaged entry points there. You do not need to run `sync` first. `gw` requires Python `3.12+`, so make sure `python3 --version` on the gateway machine satisfies that before running `just build`.
+`build` is the normal install step for the rig runtime. It creates or updates `rig/.venv/` from the OS `python3` on `PATH` and installs the packaged entry points there. You do not need to run `sync` first. `rig` requires Python `3.12+`, so make sure `python3 --version` on the host machine satisfies that before running `just build`.
 
 9. Optional: install the `systemd` service:
 
 ```bash
 cd ~/txing
-just gw::install-service
-sudo journalctl -u txing-gw -f
+just rig::install-service
+sudo journalctl -u rig -f
 ```
 
-The `just gw::install-service` task enables `bluetooth`, writes `/etc/systemd/system/txing-gw.service` for the current user and checkout path, reloads `systemd`, and enables `txing-gw`.
-It points `ExecStart` at the built gateway executable in `gw/.venv/bin/gw`, so run `just gw::build` first.
+The `just rig::install-service` task enables `bluetooth`, writes `/etc/systemd/system/rig.service` for the current user and checkout path, reloads `systemd`, and enables `rig`.
+It points `ExecStart` at the built rig executable in `rig/.venv/bin/rig`, so run `just rig::build` first.
 
-## Run gateway
+## Run rig
 
-Run from `gw/`:
+Run from `rig/`:
 
 ```bash
 just run
@@ -132,17 +132,17 @@ This uses bootstrap artifacts by default:
 - cert: `../certs/txing.cert.pem`
 - private key: `../certs/txing.private.key`
 - root CA: `../certs/AmazonRootCA1.pem`
-- CloudWatch log group: `/txing/gw` (direct upload from process)
+- CloudWatch log group: `/town/rig/txing` (direct upload from process)
 
 Default logging behavior:
 - stdout/journal (`systemd`): only important lifecycle `INFO` + all `WARNING/ERROR`
-- CloudWatch Logs (`/txing/gw`): full operational logs (no CloudWatch agent required)
-- If CloudWatch preflight fails (missing log group or AWS credentials/permissions mismatch), gateway continues with stdout logging and prints a startup warning. Run `just gw::check`.
+- CloudWatch Logs (`/town/rig/txing`): full operational logs (no CloudWatch agent required)
+- If CloudWatch preflight fails (missing log group or AWS credentials/permissions mismatch), rig continues with stdout logging and prints a startup warning. Run `just rig::check`.
 
 Dry-run mode (no BLE writes, still syncs AWS shadow and Sparkplug lifecycle traffic):
 
 ```bash
-./.venv/bin/gw --no-ble
+./.venv/bin/rig --no-ble
 ```
 
 `--no-ble` is MQTT update-driven (subscribed topics), not fixed-interval cloud polling.
@@ -154,14 +154,14 @@ Use `just` recipes to publish phase-1 Sparkplug lifecycle commands.
 From repository root:
 
 ```bash
-just gw::wake
-just gw::sleep
-just gw::print
+just rig::wake
+just rig::sleep
+just rig::print
 just aws::shadow
 just aws::shadow-reset
 ```
 
-From `gw/`:
+From `rig/`:
 
 ```bash
 just build
@@ -172,7 +172,7 @@ just ddata
 just print
 ```
 
-These recipes call `gw-sparkplug-cmd` with:
+These recipes call `rig-sparkplug-cmd` with:
 - `DCMD.redcon=3` (`wake`, meaning request the wakeup state)
 - `DCMD.redcon=4` (`sleep`, meaning request the sleep state)
 - `get-thing-shadow` (`print`)
@@ -185,7 +185,7 @@ Default recipe values:
 Override example:
 
 ```bash
-just gw::wake thing_name=my-thing region=eu-central-1 endpoint_file=certs/iot-data-ats.endpoint
+just rig::wake thing_name=my-thing region=eu-central-1 endpoint_file=certs/iot-data-ats.endpoint
 ```
 
 `print` prints the current real AWS Thing Shadow document.
@@ -239,12 +239,12 @@ just gw::wake thing_name=my-thing region=eu-central-1 endpoint_file=certs/iot-da
 - Clears `state.desired.redcon` when REDCON convergence completes.
 - Clears internal `state.desired.board.power` after clean board shutdown and also on `DDEATH`.
 - Mirrors current local state into `/tmp/txing_shadow.json`.
-- Enforces single instance lock at `/tmp/txing_gw.lock` (override with `--lock-file`).
+- Enforces single instance lock at `/tmp/rig.lock` (override with `--lock-file`).
 
 ## Useful options
 
 ```bash
-uv run gw --help
+./.venv/bin/rig --help
 ```
 
 Common overrides:
@@ -265,9 +265,9 @@ Common overrides:
 - `--cert-file ../certs/txing.cert.pem`
 - `--key-file ../certs/txing.private.key`
 - `--ca-file ../certs/AmazonRootCA1.pem`
-- `--client-id txing-gw-pi5`
+- `--client-id rig-pi5`
 - `--debug` (verbose stdout logging)
-- `--cloudwatch-log-group /txing/gw`
+- `--cloudwatch-log-group /town/rig/txing`
 - `--cloudwatch-log-stream <stream-name>`
 - `--cloudwatch-region <aws-region>` (override region; default inferred from IoT endpoint)
 - `--no-cloudwatch-logs`

@@ -44,7 +44,7 @@ def _require_file(path: Path, description: str) -> None:
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        prog="gw-sparkplug-cmd",
+        prog="rig-sparkplug-cmd",
         description="Publish a phase-1 Sparkplug DCMD.redcon command",
     )
     parser.add_argument(
@@ -101,7 +101,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--client-id",
         default=None,
-        help="MQTT client id (default: txing-gw-cmd-<pid>)",
+        help="MQTT client id (default: rig-cmd-<pid>)",
     )
     parser.add_argument(
         "--publish-timeout",
@@ -120,7 +120,7 @@ def main() -> None:
         _require_file(args.key_file, "AWS IoT client private key")
         _require_file(args.ca_file, "AWS IoT root CA")
     except RuntimeError as err:
-        print(f"gw-sparkplug-cmd failed: {err}", file=sys.stderr)
+        print(f"rig-sparkplug-cmd failed: {err}", file=sys.stderr)
         raise SystemExit(2) from err
 
     topic = build_device_topic(
@@ -133,7 +133,7 @@ def main() -> None:
 
     client = mqtt.Client(
         callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
-        client_id=args.client_id or f"txing-gw-cmd-{os.getpid()}",
+        client_id=args.client_id or f"rig-cmd-{os.getpid()}",
         clean_session=True,
         protocol=mqtt.MQTTv311,
     )
@@ -159,7 +159,7 @@ def main() -> None:
                 f"timed out waiting {args.publish_timeout:.1f}s for Sparkplug publish acknowledgement"
             )
     except Exception as err:
-        print(f"gw-sparkplug-cmd failed: {err}", file=sys.stderr)
+        print(f"rig-sparkplug-cmd failed: {err}", file=sys.stderr)
         raise SystemExit(1) from err
     finally:
         try:

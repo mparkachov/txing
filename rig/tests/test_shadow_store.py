@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from gw.shadow_store import (
+from rig.shadow_store import (
     default_shadow_payload,
     get_desired_board_power,
     get_desired_redcon,

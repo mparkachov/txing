@@ -2,11 +2,11 @@
 
 Python service for the device-side Raspberry Pi board that is power-switched by the MCU and reports runtime state to the shared `txing` Thing Shadow under `state.reported.board`.
 
-This is not the same Raspberry Pi as `gw/`. The `gw/` Pi remains the BLE/AWS gateway. This `board/` service is for the separate Pi mounted on the device itself.
+This is not the same Raspberry Pi as `rig/`. The `rig/` Pi remains the BLE/AWS control node. This `board/` service is for the separate Pi mounted on the device itself.
 
 `txing-board` is the only process that publishes `board.*` Thing Shadow updates. For video, it supervises a dedicated local sender helper and publishes coarse AWS WebRTC session state under `reported.board.video`.
 
-The board reuses the same AWS IoT mTLS certificate files as `gw/`, stored in `../certs/` as `txing.cert.pem` and `txing.private.key`.
+The board reuses the same AWS IoT mTLS certificate files as `rig/`, stored in `../certs/` as `txing.cert.pem` and `txing.private.key`.
 
 When the service is managed by `systemd`, run it as `root`. The board control consumes internal `state.desired.board.power=false` requests from the phase-1 `rig` runtime and requests a local system halt, which requires root privileges. The supervised video sender resolves AWS credentials from `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` first and otherwise falls back to the shared credentials file for the active profile, so the simplest service setup is to keep the sender credentials in the root account's AWS files unless you override the credential file paths in the generated unit.
 

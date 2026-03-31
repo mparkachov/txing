@@ -1,4 +1,4 @@
-mod gw 'gw/justfile'
+mod rig 'rig/justfile'
 mod board 'board/justfile'
 mod aws 'aws/justfile'
 mod mcu 'mcu/justfile'
