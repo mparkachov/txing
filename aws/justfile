@@ -22,6 +22,7 @@ default_town_shadow_file := "default-town-shadow.json"
 iot_data_endpoint := ""
 localhost_app_url := "http://localhost:5173"
 localhost_alt_app_url := "http://127.0.0.1:5173"
+thing_index_name := "AWS_Things"
 
 @create CognitoDomainPrefix AdminEmail stack_name=stack_name template_file=template_file region=region profile=profile LocalhostAppUrl=localhost_app_url LocalhostAltAppUrl=localhost_alt_app_url:
     #!/usr/bin/env bash
@@ -258,7 +259,7 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
 
     echo "Admin user password set."
 
-@check thing_name=thing_name policy_name=policy_name log_group_name=log_group_name region=region profile=profile cert_dir=cert_dir endpoint_file=endpoint_file ca_file=ca_file cert_basename='' cert_arn_file='':
+@check thing_name=thing_name rig_thing_name=rig_thing_name policy_name=policy_name log_group_name=log_group_name region=region profile=profile cert_dir=cert_dir endpoint_file=endpoint_file ca_file=ca_file cert_basename='' cert_arn_file='':
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
@@ -329,6 +330,55 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
 
     echo "Checking AWS identity..."
     check_cmd "STS caller identity" aws sts get-caller-identity "${aws_flags[@]}"
+    check_cmd "IoT DescribeThing on {{thing_name}}" aws iot describe-thing --thing-name "{{thing_name}}" "${aws_flags[@]}"
+    check_cmd "IoT DescribeThing on {{rig_thing_name}}" aws iot describe-thing --thing-name "{{rig_thing_name}}" "${aws_flags[@]}"
+
+    thing_indexing_mode="$(
+      aws iot get-indexing-configuration \
+        "${aws_flags[@]}" \
+        --query "thingIndexingConfiguration.thingIndexingMode" \
+        --output text 2>/dev/null || true
+    )"
+    thing_connectivity_indexing_mode="$(
+      aws iot get-indexing-configuration \
+        "${aws_flags[@]}" \
+        --query "thingIndexingConfiguration.thingConnectivityIndexingMode" \
+        --output text 2>/dev/null || true
+    )"
+    if [ "$thing_indexing_mode" = "REGISTRY" ] && [ "$thing_connectivity_indexing_mode" = "OFF" ]; then
+      echo "ok: AWS IoT fleet indexing is enabled in REGISTRY mode"
+    else
+      echo "fail: AWS IoT fleet indexing is not configured as REGISTRY/OFF"
+      failures=$((failures + 1))
+    fi
+
+    indexed_rig="$(
+      aws iot search-index \
+        --index-name "{{thing_index_name}}" \
+        --query-string "thingName:{{rig_thing_name}}" \
+        "${aws_flags[@]}" \
+        --query "things[0].thingName" \
+        --output text 2>/dev/null || true
+    )"
+    if [ "$indexed_rig" = "{{rig_thing_name}}" ]; then
+      echo "ok: AWS IoT SearchIndex can query indexed things"
+    else
+      echo "fail: AWS IoT SearchIndex did not return thing {{rig_thing_name}}"
+      failures=$((failures + 1))
+    fi
+
+    if assigned_query="$(
+      aws iot search-index \
+        --index-name "{{thing_index_name}}" \
+        --query-string "attributes.rig:{{rig_thing_name}}" \
+        "${aws_flags[@]}" 2>/dev/null
+    )"; then
+      assigned_count="$(printf '%s' "$assigned_query" | jq '.things | length')"
+      echo "ok: Fleet index query by attributes.rig succeeded ($assigned_count assigned thing(s) for {{rig_thing_name}})"
+    else
+      echo "fail: Fleet index query by attributes.rig failed"
+      failures=$((failures + 1))
+    fi
 
     log_group_found="$(
       aws logs describe-log-groups \
@@ -450,6 +500,65 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
       exit 1
     fi
     echo "AWS/device check passed. Shared AWS IoT client prerequisites look good."
+
+@assign-rig thing_name rig_name=rig_thing_name region=region profile=profile ble_device_id='':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{aws_dir}}"
+
+    if [ -z "{{region}}" ]; then
+      echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
+      exit 1
+    fi
+
+    aws_flags=(--region "{{region}}")
+    if [ -n "{{profile}}" ]; then
+      aws_flags+=(--profile "{{profile}}")
+    fi
+
+    attribute_payload="$(
+      jq -nc \
+        --arg rig "{{rig_name}}" \
+        --arg ble_device_id "{{ble_device_id}}" \
+        'if $ble_device_id == "" then
+           {attributes: {rig: $rig}, merge: true}
+         else
+           {attributes: {rig: $rig, bleDeviceId: $ble_device_id}, merge: true}
+         end'
+    )"
+
+    aws iot update-thing \
+      --thing-name "{{thing_name}}" \
+      --attribute-payload "$attribute_payload" \
+      "${aws_flags[@]}"
+
+    aws iot describe-thing \
+      --thing-name "{{thing_name}}" \
+      "${aws_flags[@]}" \
+      --query "{thingName: thingName, rig: attributes.rig, bleDeviceId: attributes.bleDeviceId, version: version}" \
+      --output table
+
+@things-for-rig rig_name=rig_thing_name region=region profile=profile:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{aws_dir}}"
+
+    if [ -z "{{region}}" ]; then
+      echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
+      exit 1
+    fi
+
+    aws_flags=(--region "{{region}}")
+    if [ -n "{{profile}}" ]; then
+      aws_flags+=(--profile "{{profile}}")
+    fi
+
+    aws iot search-index \
+      --index-name "{{thing_index_name}}" \
+      --query-string "attributes.rig:{{rig_name}}" \
+      "${aws_flags[@]}" \
+      --query "things[].{thingName: thingName, rig: attributes.rig, bleDeviceId: attributes.bleDeviceId}" \
+      --output table
 
 @shadow thing_name=thing_name region=region profile=profile endpoint_file=endpoint_file iot_data_endpoint=iot_data_endpoint:
     #!/usr/bin/env bash

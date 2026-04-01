@@ -5,11 +5,13 @@ Python service for the Raspberry Pi 5 rig runtime.
 Responsibilities:
 - Connect directly to AWS IoT Core over MQTT/mTLS
 - Act as the phase-1 `rig` lifecycle runtime in the same process
-- Synchronize classic Thing Shadows for `txing`, `rig`, and `town`
+- Synchronize classic Thing Shadows for all txings assigned to this rig plus the `rig` and `town` reflection things
 - Accept Sparkplug `DCMD.redcon` lifecycle commands and publish `NBIRTH`/`NDATA`/`DBIRTH`/`DDATA`/`DDEATH`
 - Bridge REDCON-driven wakeup-state and sleep-state changes to the MCU over BLE rendezvous sessions
 - Publish MCU state to `state.reported.mcu.*`
 - Publish derived readiness at top-level `state.reported.redcon`
+- Load assigned txings from AWS IoT fleet indexing via `attributes.rig=<rig thing name>`
+- Persist last known BLE reconnect hints to AWS IoT thing attribute `bleDeviceId`
 
 Shadow contract source of truth:
 - `../docs/txing-shadow.schema.json`
@@ -29,7 +31,7 @@ The system requires these tools installed:
 - `aws` (AWS CLI)
 
 AWS CLI connectivity must be working (credentials + region via role/env/default config/SSO) with permissions for AWS IoT and AWS IoT Data Plane calls used by this project.
-Rig runtime also needs AWS credentials (default SDK chain) with CloudWatch Logs write permissions for `/town/rig/txing`.
+Rig runtime also needs host AWS credentials (default SDK chain) with CloudWatch Logs write permissions for `/town/rig/txing` plus `iot:SearchIndex`, `iot:DescribeThing`, and `iot:UpdateThing`.
 
 ## Install on a new Raspberry Pi 5 (64-bit OS)
 
@@ -117,7 +119,7 @@ sudo journalctl -u rig -f
 ```
 
 The `just rig::install-service` task enables `bluetooth`, writes `/etc/systemd/system/rig.service` for the current user and checkout path, reloads `systemd`, and enables `rig`.
-It points `ExecStart` at the built rig executable in `rig/.venv/bin/rig` and writes the runtime contract into `Environment=` lines for `THING_NAME`, `RIG_THING_NAME`, `TOWN_THING_NAME`, `SPARKPLUG_GROUP_ID`, `SPARKPLUG_EDGE_NODE_ID`, `IOT_ENDPOINT_FILE`, `CERT_FILE`, `KEY_FILE`, `CA_FILE`, `CLOUDWATCH_LOG_GROUP`, and `AWS_REGION`, so run `just rig::build` first.
+It points `ExecStart` at the built rig executable in `rig/.venv/bin/rig` and writes the runtime contract into `Environment=` lines for `RIG_THING_NAME`, `TOWN_THING_NAME`, `SPARKPLUG_GROUP_ID`, `SPARKPLUG_EDGE_NODE_ID`, `IOT_ENDPOINT_FILE`, `CERT_FILE`, `KEY_FILE`, `CA_FILE`, `CLOUDWATCH_LOG_GROUP`, and `AWS_REGION`, so run `just rig::build` first.
 
 ## Run rig
 
@@ -192,21 +194,30 @@ just rig::wake thing_name=my-thing region=eu-central-1 endpoint_file=certs/iot-d
 
 `aws::shadow-reset` is the hard reset path for manual whole-device power cuts. It deletes the current txing shadow and reseeds it to the repository's clean offline baseline: `desired.redcon=null`, internal `desired.board.power=null`, `reported.redcon=4`, `reported.mcu.power=false`, `reported.mcu.ble.online=false`, `reported.board.power=false`, and `reported.board.wifi.online=false`.
 
+Use the registry helpers to assign txings to a rig and inspect current membership:
+
+```bash
+just aws::assign-rig thing_name=txing-01 rig_name=rig
+just aws::things-for-rig rig_name=rig
+```
+
 ## Runtime behavior
 
 - Terminology:
   - `power=true` means the MCU is in the wakeup state.
   - `power=false` means the MCU is in the sleep state with periodic `5 s` rendezvous wakeups and short low-duty-cycle advertising windows.
 - Operates in event-driven mode from MQTT subscriptions (no fixed-interval cloud polling).
-- Subscribes to:
+- On startup, queries AWS IoT fleet indexing for all things where `attributes.rig=<RIG_THING_NAME>`.
+- Subscribes to each managed txing:
   - `$aws/things/<thing>/shadow/get/accepted`
   - `$aws/things/<thing>/shadow/update/accepted`
   - `spBv1.0/<group>/DCMD/<edge>/<thing>`
-- On startup, requests full shadow with `$aws/things/<thing>/shadow/get`.
+- On startup, requests the full shadow for each managed txing with `$aws/things/<thing>/shadow/get`.
 - On startup, also reflects static `reported.redcon=1` into the `rig` and `town` shadows and publishes `NBIRTH` for `rig`.
 - Loads BLE UUIDs from `state.reported.mcu.ble.*` and validates them against the peripheral during short rendezvous sessions.
-- Uses optional `state.reported.mcu.ble.deviceId` as the primary scan match for fast reconnect.
+- Uses AWS IoT thing attribute `bleDeviceId` as the primary persisted fast-reconnect hint.
 - Keeps a scanner running while disconnected and treats disconnects as normal behavior.
+- Shares one BLE scanner across all txings assigned to the rig and allows one active BLE session at a time.
 - While the MCU is in the sleep state, stays disconnected by default, watches the periodic advertisements to maintain BLE presence, and reconnects during a rendezvous window only when a BLE session is needed.
 - While the MCU is in the wakeup state, maintains a live BLE session when possible.
 - Uses one canonical 3-byte MCU State Report (`sleep flag` + `batteryMv`) from both BLE paths:
@@ -220,13 +231,15 @@ just rig::wake thing_name=my-thing region=eu-central-1 endpoint_file=certs/iot-d
 - Publishes Sparkplug lifecycle state:
   - `NBIRTH`/`NDATA` for node metric `rig.redcon=1`
   - `DBIRTH` when BLE reachability becomes online
-  - `DDATA` when txing `redcon` or `batteryMv` changes while the device is born
+  - `DDATA` when either txing Sparkplug report field changes while the device is born: `redcon` or `batteryMv`
   - `DDEATH` when BLE reachability times out
 - If UUIDs are missing/invalid or do not match GATT, enters BLE UUID search mode and discovers UUIDs from service/characteristic properties.
 - Ignores deprecated `state.desired.mcu.power` for lifecycle control.
+- Ignores deprecated shadow metadata fields `state.reported.bleDeviceId`, `state.reported.homeRig`, and `state.reported.mcu.ble.deviceId`.
 - For `desired.redcon=1..3`, waits for the next advertisement if disconnected, connects if needed, writes the wakeup-state command only when `reported.mcu.power=false`, and clears `desired.redcon` after `reported.redcon` reaches the requested minimum readiness.
 - For `desired.redcon=4`, first writes internal `desired.board.power=false` if the board is still up, waits for board-offline confirmation, then writes the BLE sleep command and clears `desired.redcon` after convergence.
 - Updates top-level `state.reported.batteryMv` only when the observed MCU battery value changes, so the AWS shadow metadata timestamp for `batteryMv` tracks real battery changes instead of unrelated BLE state publishes.
+- After a successful BLE association, writes the observed BLE address back to AWS IoT thing attribute `bleDeviceId` if it changed.
 - Publishes reported updates to AWS:
   - `state.reported.redcon`
   - `state.reported.batteryMv`
@@ -235,10 +248,9 @@ just rig::wake thing_name=my-thing region=eu-central-1 endpoint_file=certs/iot-d
   - `state.reported.mcu.ble.sleepCommandUuid`
   - `state.reported.mcu.ble.stateReportUuid`
   - `state.reported.mcu.ble.online`
-  - `state.reported.mcu.ble.deviceId` (when known)
 - Clears `state.desired.redcon` when REDCON convergence completes.
 - Clears internal `state.desired.board.power` after clean board shutdown and also on `DDEATH`.
-- Mirrors current local state into `/tmp/txing_shadow.json`.
+- Does not rely on local shadow cache files; startup state comes from AWS IoT shadow plus IoT thing attributes.
 - Enforces single instance lock at `/tmp/rig.lock` (override with `--lock-file`).
 
 ## Useful options
@@ -248,7 +260,6 @@ just rig::wake thing_name=my-thing region=eu-central-1 endpoint_file=certs/iot-d
 ```
 
 Common overrides:
-- `--thing-name txing`
 - `--rig-thing-name rig`
 - `--town-thing-name town`
 - `--sparkplug-group-id town`

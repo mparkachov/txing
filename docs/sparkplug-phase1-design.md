@@ -8,6 +8,7 @@
 - Edge model: `rig` is the Sparkplug edge node
 - Device model: each physical `txing` is one Sparkplug device and one AWS IoT thing
 - Shadow role: reflection and restart cache only, not the authoritative intent transport
+- Registry role: `attributes.rig` and `attributes.bleDeviceId` carry stable per-txing rig assignment and BLE reconnect metadata
 
 ## Phase 1 Decisions
 
@@ -88,8 +89,6 @@ Each txing device publishes exactly these Sparkplug lifecycle metrics in phase 1
 - `redcon`
 - `batteryMv`
 
-No additional Sparkplug lifecycle or diagnostic metrics are part of phase 1.
-
 ### Commands
 
 Phase 1 accepts exactly one writable lifecycle command:
@@ -131,6 +130,9 @@ Semantics:
 - Direct scalar attributes under `txing.state.reported` are the strict Sparkplug metric reflection surface.
   - In phase 1 that set is exactly `redcon` and `batteryMv`.
   - `mcu.*` and `board.*` remain shadow-only operational detail and are not Sparkplug metric reflections.
+- AWS IoT registry attributes hold stable per-device metadata outside the shadow:
+  - `attributes.rig`
+  - `attributes.bleDeviceId`
 
 Example reflected txing shadow shape:
 

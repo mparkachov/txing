@@ -63,7 +63,7 @@ systemd_unit := "/etc/systemd/system/rig.service"
       --thing-name "{{thing_name}}" \
       /dev/stdout | jq '.'
 
-@install-service thing_name=thing_name rig_thing_name=rig_thing_name town_thing_name=town_thing_name sparkplug_group_id=sparkplug_group_id sparkplug_edge_node_id=sparkplug_edge_node_id region=region endpoint_file=endpoint_file cert_file=cert_file key_file=key_file ca_file=ca_file cloudwatch_log_group=cloudwatch_log_group:
+@install-service rig_thing_name=rig_thing_name town_thing_name=town_thing_name sparkplug_group_id=sparkplug_group_id sparkplug_edge_node_id=sparkplug_edge_node_id region=region endpoint_file=endpoint_file cert_file=cert_file key_file=key_file ca_file=ca_file cloudwatch_log_group=cloudwatch_log_group:
     test -x "{{built_rig}}" || { \
         echo "Missing built rig executable at {{built_rig}}. Run 'just build' first." >&2; \
         exit 1; \
@@ -80,7 +80,6 @@ systemd_unit := "/etc/systemd/system/rig.service"
         "User=$run_user" \
         'WorkingDirectory={{rig_dir}}' \
         'Environment="AWS_REGION={{region}}"' \
-        'Environment="THING_NAME={{thing_name}}"' \
         'Environment="RIG_THING_NAME={{rig_thing_name}}"' \
         'Environment="TOWN_THING_NAME={{town_thing_name}}"' \
         'Environment="SPARKPLUG_GROUP_ID={{sparkplug_group_id}}"' \

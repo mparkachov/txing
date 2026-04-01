@@ -35,6 +35,19 @@ class ShadowStoreTests(unittest.TestCase):
 
         self.assertEqual(get_reported_battery_mv(payload), 3750)
 
+    def test_default_shadow_payload_does_not_expose_registry_metadata(self) -> None:
+        payload = {
+            "state": {
+                "reported": {
+                    "bleDeviceId": "AA:BB:CC:DD:EE:FF",
+                    "homeRig": "rig-a",
+                },
+            },
+        }
+
+        self.assertNotIn("bleDeviceId", default_shadow_payload()["state"]["reported"])
+        self.assertIn("bleDeviceId", payload["state"]["reported"])
+
 
 if __name__ == "__main__":
     unittest.main()

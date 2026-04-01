@@ -4,9 +4,154 @@ import asyncio
 import json
 import os
 from pathlib import Path
+import sys
 from tempfile import TemporaryDirectory
+import types
 import unittest
 from unittest.mock import patch
+
+
+def _install_bleak_stub() -> None:
+    if "bleak" in sys.modules:
+        return
+
+    bleak = types.ModuleType("bleak")
+    backends = types.ModuleType("bleak.backends")
+    device = types.ModuleType("bleak.backends.device")
+    scanner = types.ModuleType("bleak.backends.scanner")
+    exc = types.ModuleType("bleak.exc")
+
+    class BleakClient:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            self.is_connected = False
+
+        async def connect(self, **_kwargs: object) -> bool:
+            self.is_connected = True
+            return True
+
+        async def disconnect(self) -> bool:
+            self.is_connected = False
+            return True
+
+    class BleakScanner:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            self.args = args
+            self.kwargs = kwargs
+
+        async def start(self) -> None:
+            return
+
+        async def stop(self) -> None:
+            return
+
+    class BLEDevice:
+        def __init__(self, address: str, name: str | None = None) -> None:
+            self.address = address
+            self.name = name
+
+    class AdvertisementData:
+        def __init__(
+            self,
+            *,
+            local_name: str | None = None,
+            manufacturer_data: dict[int, bytes] | None = None,
+            service_uuids: list[str] | None = None,
+        ) -> None:
+            self.local_name = local_name
+            self.manufacturer_data = manufacturer_data or {}
+            self.service_uuids = service_uuids or []
+
+    class BleakError(Exception):
+        pass
+
+    class BleakDBusError(BleakError):
+        def __init__(self, dbus_error: str = "", *args: object) -> None:
+            super().__init__(*args or (dbus_error,))
+            self.dbus_error = dbus_error
+
+    bleak.BleakClient = BleakClient
+    bleak.BleakScanner = BleakScanner
+    device.BLEDevice = BLEDevice
+    scanner.AdvertisementData = AdvertisementData
+    exc.BleakError = BleakError
+    exc.BleakDBusError = BleakDBusError
+
+    sys.modules["bleak"] = bleak
+    sys.modules["bleak.backends"] = backends
+    sys.modules["bleak.backends.device"] = device
+    sys.modules["bleak.backends.scanner"] = scanner
+    sys.modules["bleak.exc"] = exc
+
+
+def _install_paho_stub() -> None:
+    if "paho.mqtt.client" in sys.modules:
+        return
+
+    paho = types.ModuleType("paho")
+    mqtt_pkg = types.ModuleType("paho.mqtt")
+    client_mod = types.ModuleType("paho.mqtt.client")
+
+    class CallbackAPIVersion:
+        VERSION2 = object()
+
+    class MQTTMessage:
+        def __init__(self) -> None:
+            self.topic = ""
+            self.payload = b""
+
+    class _PublishInfo:
+        rc = 0
+
+        def wait_for_publish(self, timeout: float | None = None) -> bool:
+            return True
+
+        def is_published(self) -> bool:
+            return True
+
+    class Client:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            self.args = args
+            self.kwargs = kwargs
+            self.on_connect = None
+            self.on_disconnect = None
+            self.on_message = None
+
+        def tls_set(self, *args: object, **kwargs: object) -> None:
+            return
+
+        def reconnect_delay_set(self, *args: object, **kwargs: object) -> None:
+            return
+
+        def connect(self, *args: object, **kwargs: object) -> int:
+            return 0
+
+        def loop_start(self) -> None:
+            return
+
+        def loop_stop(self) -> None:
+            return
+
+        def disconnect(self) -> int:
+            return 0
+
+        def publish(self, *args: object, **kwargs: object) -> _PublishInfo:
+            return _PublishInfo()
+
+        def subscribe(self, *args: object, **kwargs: object) -> tuple[int, int]:
+            return (0, 1)
+
+    client_mod.CallbackAPIVersion = CallbackAPIVersion
+    client_mod.Client = Client
+    client_mod.MQTT_ERR_SUCCESS = 0
+    client_mod.MQTTMessage = MQTTMessage
+
+    sys.modules["paho"] = paho
+    sys.modules["paho.mqtt"] = mqtt_pkg
+    sys.modules["paho.mqtt.client"] = client_mod
+
+
+_install_bleak_stub()
+_install_paho_stub()
 
 from rig.ble_bridge import (
     BleSleepBridge,
@@ -18,11 +163,11 @@ from rig.ble_bridge import (
     _shadow_payload_includes_desired_redcon,
 )
 from rig.sparkplug import (
-    build_device_topic,
     build_device_report_payload,
-    build_redcon_payload,
+    build_device_topic,
     build_node_redcon_payload,
     build_node_topic,
+    build_redcon_payload,
     decode_payload,
     decode_redcon_command,
 )
@@ -55,7 +200,6 @@ class ServiceConfigTests(unittest.TestCase):
         with patch.dict(
             os.environ,
             {
-                "THING_NAME": "txing-prod",
                 "RIG_THING_NAME": "rig-prod",
                 "TOWN_THING_NAME": "town-prod",
                 "SPARKPLUG_GROUP_ID": "town-prod",
@@ -71,7 +215,7 @@ class ServiceConfigTests(unittest.TestCase):
             with patch("sys.argv", ["rig"]):
                 args = _parse_args()
 
-        self.assertEqual(args.thing_name, "txing-prod")
+        self.assertFalse(hasattr(args, "thing_name"))
         self.assertEqual(args.rig_thing_name, "rig-prod")
         self.assertEqual(args.town_thing_name, "town-prod")
         self.assertEqual(args.sparkplug_group_id, "town-prod")
@@ -82,13 +226,13 @@ class ServiceConfigTests(unittest.TestCase):
         self.assertEqual(args.ca_file, Path("/tmp/ca.pem"))
         self.assertEqual(args.cloudwatch_log_group, "/town/rig/txing-prod")
 
-    def test_justfile_install_service_exports_environment(self) -> None:
+    def test_justfile_install_service_exports_multi_device_environment(self) -> None:
         justfile = (Path(__file__).resolve().parents[2] / "rig" / "justfile").read_text(
             encoding="utf-8"
         )
 
         self.assertIn('Environment="AWS_REGION={{region}}"', justfile)
-        self.assertIn('Environment="THING_NAME={{thing_name}}"', justfile)
+        self.assertNotIn('Environment="THING_NAME={{thing_name}}"', justfile)
         self.assertIn('Environment="RIG_THING_NAME={{rig_thing_name}}"', justfile)
         self.assertIn('Environment="TOWN_THING_NAME={{town_thing_name}}"', justfile)
         self.assertIn('Environment="SPARKPLUG_GROUP_ID={{sparkplug_group_id}}"', justfile)
@@ -173,7 +317,7 @@ class RedconTests(unittest.TestCase):
             4,
         )
 
-    def test_builds_shadow_state_from_board_video_snapshot(self) -> None:
+    def test_builds_shadow_state_from_snapshot_using_registry_ble_device_id(self) -> None:
         with TemporaryDirectory() as tmpdir:
             shadow = _build_shadow_from_snapshot(
                 {
@@ -181,6 +325,8 @@ class RedconTests(unittest.TestCase):
                         "reported": {
                             "redcon": 1,
                             "batteryMv": 3795,
+                            "bleDeviceId": "legacy-top-level-id",
+                            "homeRig": "legacy-rig",
                             "mcu": {
                                 "power": True,
                                 "ble": {
@@ -188,6 +334,7 @@ class RedconTests(unittest.TestCase):
                                     "sleepCommandUuid": "f6b4a001-7b32-4d2d-9f4b-4ff0a2b8f100",
                                     "stateReportUuid": "f6b4a002-7b32-4d2d-9f4b-4ff0a2b8f100",
                                     "online": True,
+                                    "deviceId": "legacy-nested-id",
                                 },
                             },
                             "board": {
@@ -204,11 +351,58 @@ class RedconTests(unittest.TestCase):
                     },
                 },
                 snapshot_file=Path(tmpdir) / "shadow.json",
+                registered_ble_device_id="AA:BB:CC:DD:EE:FF",
             )
 
         self.assertTrue(shadow.board_video_ready)
         self.assertTrue(shadow.board_video_viewer_connected)
         self.assertEqual(shadow.redcon, 1)
+        self.assertEqual(shadow.ble_device_id, "AA:BB:CC:DD:EE:FF")
+        payload = shadow.payload()
+        reported = payload["state"]["reported"]
+        self.assertNotIn("bleDeviceId", reported)
+        self.assertNotIn("homeRig", reported)
+        self.assertNotIn("deviceId", reported["mcu"]["ble"])
+
+    def test_snapshot_recovery_ignores_legacy_ble_device_id_cache(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            snapshot_file = Path(tmpdir) / "shadow.json"
+            snapshot_file.write_text(
+                json.dumps(
+                    {
+                        "state": {
+                            "reported": {
+                                "redcon": 4,
+                                "batteryMv": 3795,
+                                "bleDeviceId": "AA:BB:CC:DD:EE:FF",
+                                "mcu": {
+                                    "power": False,
+                                    "ble": {
+                                        "deviceId": "nested-stale-id",
+                                    },
+                                },
+                            },
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            shadow = _build_shadow_from_snapshot(
+                {
+                    "state": {
+                        "reported": {
+                            "redcon": 4,
+                            "batteryMv": 3795,
+                            "mcu": {
+                                "power": False,
+                            },
+                        }
+                    }
+                },
+                snapshot_file=snapshot_file,
+            )
+
+        self.assertIsNone(shadow.ble_device_id)
 
     def test_desired_redcon_only_converges_after_target_is_reached(self) -> None:
         shadow = ShadowState(desired_redcon=2, redcon=3)
@@ -319,15 +513,18 @@ class LifecycleBridgeTests(unittest.TestCase):
         )
         ddeath = decode_payload(cloud_shadow.sparkplug_publishes[0][1])
         self.assertEqual(ddeath.seq, 0)
+        self.assertEqual(len(ddeath.metrics), 2)
         self.assertEqual(ddeath.metrics[0].name, "redcon")
         self.assertEqual(ddeath.metrics[0].int_value, 4)
+        self.assertEqual(ddeath.metrics[1].name, "batteryMv")
+        self.assertEqual(ddeath.metrics[1].int_value, 3812)
         self.assertEqual(len(cloud_shadow.shadow_updates), 2)
         self.assertIsNone(cloud_shadow.shadow_updates[1]["desired_redcon"])
         self.assertIsNone(cloud_shadow.shadow_updates[1]["desired_board_power"])
 
 
 class SnapshotRecoveryTests(unittest.TestCase):
-    def test_restart_recovers_cached_desired_redcon_when_snapshot_omits_it(self) -> None:
+    def test_restart_does_not_recover_desired_redcon_from_local_cache(self) -> None:
         with TemporaryDirectory() as tmpdir:
             snapshot_file = Path(tmpdir) / "shadow.json"
             snapshot_file.write_text(
@@ -385,7 +582,7 @@ class SnapshotRecoveryTests(unittest.TestCase):
                 snapshot_file=snapshot_file,
             )
 
-        self.assertEqual(shadow.desired_redcon, 3)
+        self.assertIsNone(shadow.desired_redcon)
         self.assertIsNone(shadow.desired_board_power)
 
 
@@ -426,7 +623,13 @@ class SparkplugCodecTests(unittest.TestCase):
             "spBv1.0/town/DDEATH/rig/txing",
         )
 
-        payload = decode_payload(build_device_report_payload(redcon=2, battery_mv=3777, seq=11))
+        payload = decode_payload(
+            build_device_report_payload(
+                redcon=2,
+                battery_mv=3777,
+                seq=11,
+            )
+        )
 
         self.assertEqual(payload.seq, 11)
         self.assertEqual(len(payload.metrics), 2)

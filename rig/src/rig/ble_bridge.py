@@ -10,7 +10,7 @@ import signal
 import socket
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
@@ -37,19 +37,16 @@ except ImportError:
 
 from .shadow_store import (
     DEFAULT_BATTERY_MV,
+    DEFAULT_BOARD_POWER,
+    DEFAULT_BOARD_VIDEO_READY,
+    DEFAULT_BOARD_VIDEO_VIEWER_CONNECTED,
+    DEFAULT_BOARD_WIFI_ONLINE,
+    DEFAULT_DESIRED_REDCON,
+    DEFAULT_REDCON,
+    DEFAULT_REPORTED_POWER,
     DEFAULT_SHADOW_FILE,
-    get_desired_board_power,
-    get_desired_redcon,
-    get_reported_board_power,
-    get_reported_board_video_ready,
-    get_reported_board_video_viewer_connected,
-    get_reported_board_wifi_online,
-    get_reported_battery_mv,
-    get_reported_power,
-    get_reported_redcon,
-    load_shadow,
-    save_shadow,
 )
+from .thing_registry import AwsThingRegistryClient, ThingRegistration
 from .repo_paths import (
     DEFAULT_CA_FILE,
     DEFAULT_CERT_FILE,
@@ -206,6 +203,19 @@ def _resolve_cloudwatch_region(
     return None
 
 
+def _resolve_aws_region(*, iot_endpoint: str) -> str | None:
+    endpoint_region = _extract_region_from_iot_endpoint(iot_endpoint)
+    if endpoint_region:
+        return endpoint_region
+    for env_name in ("AWS_REGION", "AWS_DEFAULT_REGION"):
+        region = os.getenv(env_name, "").strip()
+        if region:
+            return region
+    if boto3 is not None:
+        return boto3.session.Session().region_name
+    return None
+
+
 def _probe_cloudwatch_stream(
     logs_client: Any,
     *,
@@ -244,14 +254,11 @@ class BleGattUuids:
     device_id: str | None = None
 
     def as_shadow_dict(self) -> dict[str, str]:
-        payload: dict[str, str] = {
+        return {
             "serviceUuid": self.service_uuid,
             "sleepCommandUuid": self.sleep_command_uuid,
             "stateReportUuid": self.state_report_uuid,
         }
-        if self.device_id:
-            payload["deviceId"] = self.device_id
-        return payload
 
     def with_device_id(self, device_id: str | None) -> BleGattUuids:
         normalized_device_id = (
@@ -297,6 +304,14 @@ def _extract_reported_mcu(payload: dict[str, Any]) -> dict[str, Any] | None:
     return mcu if isinstance(mcu, dict) else None
 
 
+def _extract_reported_root(payload: dict[str, Any]) -> dict[str, Any] | None:
+    state = payload.get("state")
+    if not isinstance(state, dict):
+        return None
+    reported = state.get("reported")
+    return reported if isinstance(reported, dict) else None
+
+
 def _extract_reported_ble_uuids(payload: dict[str, Any]) -> BleGattUuids | None:
     mcu = _extract_reported_mcu(payload)
     if mcu is None:
@@ -308,7 +323,6 @@ def _extract_reported_ble_uuids(payload: dict[str, Any]) -> BleGattUuids | None:
     service_uuid = _normalize_uuid(ble.get("serviceUuid"))
     sleep_command_uuid = _normalize_uuid(ble.get("sleepCommandUuid"))
     state_report_uuid = _normalize_uuid(ble.get("stateReportUuid"))
-    device_id = _normalize_device_id(ble.get("deviceId"))
     if (
         service_uuid is None
         or sleep_command_uuid is None
@@ -320,7 +334,6 @@ def _extract_reported_ble_uuids(payload: dict[str, Any]) -> BleGattUuids | None:
         service_uuid=service_uuid,
         sleep_command_uuid=sleep_command_uuid,
         state_report_uuid=state_report_uuid,
-        device_id=device_id,
     )
 
 
@@ -462,11 +475,8 @@ def _extract_reported_power(payload: dict[str, Any]) -> bool | None:
 
 
 def _extract_reported_battery_mv(payload: dict[str, Any]) -> int | None:
-    state = payload.get("state")
-    if not isinstance(state, dict):
-        return None
-    reported = state.get("reported")
-    if not isinstance(reported, dict):
+    reported = _extract_reported_root(payload)
+    if reported is None:
         return None
     value = reported.get("batteryMv")
     if isinstance(value, bool):
@@ -486,11 +496,8 @@ def _extract_shadow_version(payload: dict[str, Any]) -> int | None:
 
 
 def _extract_reported_redcon(payload: dict[str, Any]) -> int | None:
-    state = payload.get("state")
-    if not isinstance(state, dict):
-        return None
-    reported = state.get("reported")
-    if not isinstance(reported, dict):
+    reported = _extract_reported_root(payload)
+    if reported is None:
         return None
     value = reported.get("redcon")
     if isinstance(value, bool):
@@ -674,6 +681,10 @@ class ShadowState:
     def set_ble_online(self, online: bool) -> None:
         self.ble_online = online
 
+    @property
+    def ble_device_id(self) -> str | None:
+        return self.ble_uuids.device_id
+
     def set_board_reported(
         self,
         *,
@@ -710,26 +721,27 @@ class ShadowState:
         ble_state["online"] = self.ble_online
         return ble_state
 
-    def payload(self) -> dict[str, dict[str, dict[str, dict[str, Any]]]]:
-        state: dict[str, dict[str, dict[str, Any]]] = {
-            "reported": {
-                "redcon": self.redcon,
-                "batteryMv": self.battery_mv,
-                "mcu": {
-                    "power": self.reported_power,
-                    "ble": self.ble_state(),
+    def payload(self) -> dict[str, Any]:
+        reported: dict[str, Any] = {
+            "redcon": self.redcon,
+            "batteryMv": self.battery_mv,
+            "mcu": {
+                "power": self.reported_power,
+                "ble": self.ble_state(),
+            },
+            "board": {
+                "power": self.board_power,
+                "wifi": {
+                    "online": self.board_wifi_online,
                 },
-                "board": {
-                    "power": self.board_power,
-                    "wifi": {
-                        "online": self.board_wifi_online,
-                    },
-                    "video": {
-                        "ready": self.board_video_ready,
-                        "viewerConnected": self.board_video_viewer_connected,
-                    },
+                "video": {
+                    "ready": self.board_video_ready,
+                    "viewerConnected": self.board_video_viewer_connected,
                 },
             },
+        }
+        state: dict[str, dict[str, dict[str, Any]]] = {
+            "reported": reported,
         }
         desired: dict[str, Any] = {}
         if self.desired_redcon is not None:
@@ -761,12 +773,12 @@ class ShadowState:
         )
 
     def log_state(self, context: str) -> None:
-        save_shadow(self.payload(), self.snapshot_file)
         LOGGER.info("%s shadow=%s", context, json.dumps(self.payload(), sort_keys=True))
 
 
 @dataclass(slots=True)
 class AwsShadowUpdate:
+    thing_name: str
     source: str
     has_desired_redcon: bool = False
     desired_redcon: int | None = None
@@ -789,19 +801,6 @@ _SHADOW_UNSET = object()
 class AwsShadowClient:
     def __init__(self, config: BridgeConfig) -> None:
         self._config = config
-        self._topic_prefix = f"$aws/things/{config.thing_name}/shadow"
-        self._topic_get = f"{self._topic_prefix}/get"
-        self._topic_get_accepted = f"{self._topic_prefix}/get/accepted"
-        self._topic_get_rejected = f"{self._topic_prefix}/get/rejected"
-        self._topic_update = f"{self._topic_prefix}/update"
-        self._topic_update_accepted = f"{self._topic_prefix}/update/accepted"
-        self._sparkplug_dcmd_topic = build_device_topic(
-            config.sparkplug_group_id,
-            "DCMD",
-            config.sparkplug_edge_node_id,
-            config.thing_name,
-        )
-
         self._client = mqtt.Client(
             callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
             client_id=config.client_id,
@@ -821,20 +820,27 @@ class AwsShadowClient:
 
         self._loop: asyncio.AbstractEventLoop | None = None
         self._connected_event: asyncio.Event | None = None
+        self._connect_future: asyncio.Future[None] | None = None
         self._updates: asyncio.Queue[AwsShadowUpdate] | None = None
-        self._initial_snapshot_future: asyncio.Future[dict[str, Any]] | None = None
+        self._managed_things: tuple[str, ...] = ()
+        self._managed_thing_names: set[str] = set()
+        self._initial_snapshot_futures: dict[str, asyncio.Future[dict[str, Any]]] = {}
 
     @property
     def is_connected(self) -> bool:
         return bool(self._connected_event and self._connected_event.is_set())
 
-    async def connect_and_get_initial_snapshot(
-        self, timeout_seconds: float
-    ) -> dict[str, Any]:
+    def set_managed_things(self, thing_names: list[str] | tuple[str, ...]) -> None:
+        unique = tuple(sorted({thing_name.strip() for thing_name in thing_names if thing_name.strip()}))
+        self._managed_things = unique
+        self._managed_thing_names = set(unique)
+
+    async def connect(self, timeout_seconds: float) -> None:
         self._loop = asyncio.get_running_loop()
         self._connected_event = asyncio.Event()
+        self._connect_future = self._loop.create_future()
         self._updates = asyncio.Queue()
-        self._initial_snapshot_future = self._loop.create_future()
+        self._initial_snapshot_futures = {}
 
         connect_rc = self._client.connect(
             host=self._config.iot_endpoint,
@@ -848,26 +854,44 @@ class AwsShadowClient:
         self._client.loop_start()
 
         try:
-            await asyncio.wait_for(self._connected_event.wait(), timeout=timeout_seconds)
-            deadline = self._loop.time() + timeout_seconds
-            while True:
-                await self._request_shadow_get()
-                remaining = deadline - self._loop.time()
-                if remaining <= 0:
-                    raise TimeoutError(
-                        "timed out waiting for initial AWS IoT shadow snapshot"
-                    )
-                try:
-                    snapshot = await asyncio.wait_for(
-                        asyncio.shield(self._initial_snapshot_future),
-                        timeout=min(2.0, remaining),
-                    )
-                    return snapshot
-                except TimeoutError:
-                    continue
+            await asyncio.wait_for(
+                asyncio.shield(self._connect_future),
+                timeout=timeout_seconds,
+            )
         except Exception:
             await self.disconnect()
             raise
+
+    async def connect_and_get_initial_snapshots(
+        self,
+        thing_names: list[str] | tuple[str, ...],
+        timeout_seconds: float,
+    ) -> dict[str, dict[str, Any]]:
+        self.set_managed_things(thing_names)
+        await self.connect(timeout_seconds)
+        if not self._managed_things:
+            return {}
+
+        assert self._loop is not None
+        self._initial_snapshot_futures = {
+            thing_name: self._loop.create_future() for thing_name in self._managed_things
+        }
+        deadline = self._loop.time() + timeout_seconds
+        for thing_name in self._managed_things:
+            await self._request_shadow_get(thing_name)
+
+        snapshots: dict[str, dict[str, Any]] = {}
+        for thing_name, future in self._initial_snapshot_futures.items():
+            remaining = deadline - self._loop.time()
+            if remaining <= 0:
+                raise TimeoutError(
+                    "timed out waiting for initial AWS IoT shadow snapshots"
+                )
+            snapshots[thing_name] = await asyncio.wait_for(
+                asyncio.shield(future),
+                timeout=remaining,
+            )
+        return snapshots
 
     async def disconnect(self) -> None:
         try:
@@ -915,7 +939,7 @@ class AwsShadowClient:
     async def update_shadow(
         self,
         *,
-        thing_name: str | None = None,
+        thing_name: str,
         reported_mcu_patch: dict[str, Any] | None,
         reported_root_patch: dict[str, Any] | None = None,
         desired_redcon: int | None | object = _SHADOW_UNSET,
@@ -940,9 +964,8 @@ class AwsShadowClient:
         if not state:
             return
 
-        target_thing_name = thing_name or self._config.thing_name
         await self._publish_json(
-            f"$aws/things/{target_thing_name}/shadow/update",
+            f"$aws/things/{thing_name}/shadow/update",
             {"state": state},
             timeout_seconds=publish_timeout_seconds,
         )
@@ -985,12 +1008,13 @@ class AwsShadowClient:
 
         await asyncio.to_thread(_publish_sync)
 
-    async def _request_shadow_get(self) -> None:
+    async def _request_shadow_get(self, thing_name: str) -> None:
         def _publish_sync() -> None:
-            info = self._client.publish(self._topic_get, payload="{}", qos=1)
+            topic = f"$aws/things/{thing_name}/shadow/get"
+            info = self._client.publish(topic, payload="{}", qos=1)
             self._wait_for_publish(
                 info,
-                context=f"shadow get publish to {self._topic_get}",
+                context=f"shadow get publish to {topic}",
                 payload="{}",
                 timeout_seconds=DEFAULT_MQTT_PUBLISH_TIMEOUT,
             )
@@ -1038,34 +1062,45 @@ class AwsShadowClient:
         if is_failure:
             error = RuntimeError(f"AWS IoT MQTT CONNACK rejected (reason={reason_code})")
             LOGGER.error("%s", error)
-            self._set_initial_snapshot_exception(error)
+            self._set_connect_exception(error)
             return
 
         _log_important(
             LOGGER,
-            "Connected to AWS IoT endpoint=%s thing=%s client_id=%s",
+            "Connected to AWS IoT endpoint=%s rig=%s client_id=%s managed_things=%s",
             self._config.iot_endpoint,
-            self._config.thing_name,
+            self._config.rig_thing_name,
             self._config.client_id,
+            len(self._managed_things),
         )
 
-        for topic in (
-            self._topic_get_accepted,
-            self._topic_get_rejected,
-            self._topic_update_accepted,
-            self._sparkplug_dcmd_topic,
-        ):
+        topics: list[str] = []
+        for thing_name in self._managed_things:
+            topics.extend(
+                (
+                    f"$aws/things/{thing_name}/shadow/get/accepted",
+                    f"$aws/things/{thing_name}/shadow/get/rejected",
+                    f"$aws/things/{thing_name}/shadow/update/accepted",
+                    build_device_topic(
+                        self._config.sparkplug_group_id,
+                        "DCMD",
+                        self._config.sparkplug_edge_node_id,
+                        thing_name,
+                    ),
+                )
+            )
+
+        for topic in topics:
             subscribe_rc, _mid = client.subscribe(topic, qos=1)
             if subscribe_rc != mqtt.MQTT_ERR_SUCCESS:
                 error = RuntimeError(
                     f"failed to subscribe to {topic} (rc={subscribe_rc})"
                 )
                 LOGGER.error("%s", error)
-                self._set_initial_snapshot_exception(error)
+                self._set_connect_exception(error)
                 return
 
-        if self._loop and self._connected_event:
-            self._loop.call_soon_threadsafe(self._connected_event.set)
+        self._set_connected()
 
     def _on_disconnect(
         self,
@@ -1095,7 +1130,15 @@ class AwsShadowClient:
         _userdata: Any,
         msg: mqtt.MQTTMessage,
     ) -> None:
-        if msg.topic == self._sparkplug_dcmd_topic:
+        dcmd_prefix = build_node_topic(
+            self._config.sparkplug_group_id,
+            "DCMD",
+            self._config.sparkplug_edge_node_id,
+        )
+        if msg.topic.startswith(f"{dcmd_prefix}/"):
+            thing_name = msg.topic.rsplit("/", 1)[-1]
+            if thing_name not in self._managed_thing_names:
+                return
             try:
                 command = decode_redcon_command(bytes(msg.payload))
             except Exception as err:
@@ -1109,6 +1152,7 @@ class AwsShadowClient:
                 return
             self._enqueue_update(
                 AwsShadowUpdate(
+                    thing_name=thing_name,
                     source="sparkplug/dcmd",
                     has_desired_redcon=True,
                     desired_redcon=command.value,
@@ -1122,14 +1166,23 @@ class AwsShadowClient:
             LOGGER.warning("Ignoring non-JSON payload on topic %s", msg.topic)
             return
 
-        if msg.topic == self._topic_get_rejected:
-            error = RuntimeError(f"shadow get rejected: {payload}")
+        parts = msg.topic.split("/")
+        if len(parts) < 6 or parts[0] != "$aws" or parts[1] != "things" or parts[3] != "shadow":
+            return
+        thing_name = parts[2]
+        if thing_name not in self._managed_thing_names:
+            return
+        operation = "/".join(parts[4:])
+
+        if operation == "get/rejected":
+            error = RuntimeError(f"shadow get rejected for {thing_name}: {payload}")
             LOGGER.error("%s", error)
-            self._set_initial_snapshot_exception(error)
+            self._set_initial_snapshot_exception(thing_name, error)
             return
 
-        if msg.topic == self._topic_get_accepted:
+        if operation == "get/accepted":
             update = AwsShadowUpdate(
+                thing_name=thing_name,
                 source="shadow/get/accepted",
                 has_desired_redcon=_shadow_payload_includes_desired_redcon(payload),
                 desired_redcon=_extract_desired_redcon_from_shadow(payload),
@@ -1150,11 +1203,12 @@ class AwsShadowClient:
                 version=_extract_shadow_version(payload),
             )
             self._enqueue_update(update)
-            self._set_initial_snapshot(payload)
+            self._set_initial_snapshot(thing_name, payload)
             return
 
-        if msg.topic == self._topic_update_accepted:
+        if operation == "update/accepted":
             update = AwsShadowUpdate(
+                thing_name=thing_name,
                 source="shadow/update/accepted",
                 has_desired_redcon=_shadow_payload_includes_desired_redcon(payload),
                 desired_redcon=_extract_desired_redcon_from_shadow(payload),
@@ -1182,25 +1236,70 @@ class AwsShadowClient:
             return
         self._loop.call_soon_threadsafe(self._updates.put_nowait, update)
 
-    def _set_initial_snapshot(self, payload: dict[str, Any]) -> None:
-        if self._loop is None or self._initial_snapshot_future is None:
+    def _set_connected(self) -> None:
+        if self._loop is None or self._connect_future is None or self._connected_event is None:
             return
 
         def _set() -> None:
-            if not self._initial_snapshot_future.done():
-                self._initial_snapshot_future.set_result(payload)
+            self._connected_event.set()
+            if not self._connect_future.done():
+                self._connect_future.set_result(None)
 
         self._loop.call_soon_threadsafe(_set)
 
-    def _set_initial_snapshot_exception(self, error: Exception) -> None:
-        if self._loop is None or self._initial_snapshot_future is None:
+    def _set_connect_exception(self, error: Exception) -> None:
+        if self._loop is None or self._connect_future is None:
             return
 
         def _set() -> None:
-            if not self._initial_snapshot_future.done():
-                self._initial_snapshot_future.set_exception(error)
+            if not self._connect_future.done():
+                self._connect_future.set_exception(error)
 
         self._loop.call_soon_threadsafe(_set)
+
+    def _set_initial_snapshot(self, thing_name: str, payload: dict[str, Any]) -> None:
+        if self._loop is None:
+            return
+        future = self._initial_snapshot_futures.get(thing_name)
+        if future is None:
+            return
+
+        def _set() -> None:
+            if not future.done():
+                future.set_result(payload)
+
+        self._loop.call_soon_threadsafe(_set)
+
+    def _set_initial_snapshot_exception(self, thing_name: str, error: Exception) -> None:
+        if self._loop is None:
+            return
+        future = self._initial_snapshot_futures.get(thing_name)
+        if future is None:
+            return
+
+        def _set() -> None:
+            if not future.done():
+                future.set_exception(error)
+
+        self._loop.call_soon_threadsafe(_set)
+
+
+class DeviceCloudProxy:
+    def __init__(self, client: AwsShadowClient, thing_name: str) -> None:
+        self._client = client
+        self._thing_name = thing_name
+
+    async def update_shadow(self, **kwargs: object) -> None:
+        kwargs.setdefault("thing_name", self._thing_name)
+        await self._client.update_shadow(**kwargs)
+
+    async def publish_sparkplug(
+        self,
+        topic: str,
+        payload: bytes,
+        **kwargs: object,
+    ) -> None:
+        await self._client.publish_sparkplug(topic, payload, **kwargs)
 
 
 class InstanceLock:
@@ -1681,7 +1780,7 @@ class BleSleepBridge:
         filtered = [update for update in updates if update.source != "shadow/get/accepted"]
         if len(filtered) != len(updates):
             LOGGER.debug(
-                "Discarded %s queued startup snapshot update(s) already reflected in local state",
+                "Discarded %s queued startup snapshot update(s) already reflected in runtime state",
                 len(updates) - len(filtered),
             )
         return filtered
@@ -2634,6 +2733,7 @@ class BleSleepBridge:
         *,
         device_id: str | None,
     ) -> None:
+        previous_ble_uuids = self._shadow.ble_uuids
         configured_uuids = self._shadow.ble_uuids.with_device_id(device_id)
         if (
             not self._ble_uuid_search_mode
@@ -2653,6 +2753,14 @@ class BleSleepBridge:
                 configured_uuids.state_report_uuid,
                 configured_uuids.device_id or "<unknown>",
             )
+            if configured_uuids != previous_ble_uuids:
+                await self._publish_reported_update(
+                    reported_mcu_patch={"ble": self._shadow.ble_state()},
+                    desired_redcon=_SHADOW_UNSET,
+                    desired_board_power=_SHADOW_UNSET,
+                    context="Published validated BLE association data after connect",
+                    include_redcon_if_changed=False,
+                )
             return
 
         if self._ble_uuid_search_mode:
@@ -2689,6 +2797,14 @@ class BleSleepBridge:
         )
         self._known_device.device_id = discovered_uuids.device_id
         self._ble_uuid_search_mode = False
+        if discovered_uuids != previous_ble_uuids:
+            await self._publish_reported_update(
+                reported_mcu_patch={"ble": self._shadow.ble_state()},
+                desired_redcon=_SHADOW_UNSET,
+                desired_board_power=_SHADOW_UNSET,
+                context="Published discovered BLE association data after connect",
+                include_redcon_if_changed=False,
+            )
 
     def _discover_ble_uuids_from_connected_services(
         self, client: BleakClient
@@ -2933,6 +3049,375 @@ class BleSleepBridge:
         return self._client is not None and self._client.is_connected
 
 
+@dataclass(slots=True)
+class ManagedThing:
+    registration: ThingRegistration
+    bridge: BleSleepBridge
+
+
+def _device_snapshot_file(base_path: Path, thing_name: str) -> Path:
+    if base_path.suffix:
+        cache_dir = base_path.parent / base_path.stem
+    else:
+        cache_dir = base_path
+    return cache_dir / f"{thing_name}.json"
+
+
+class RigFleetBridge:
+    def __init__(
+        self,
+        config: BridgeConfig,
+        *,
+        cloud_shadow: AwsShadowClient,
+        registry: AwsThingRegistryClient,
+        managed_things: list[ManagedThing],
+    ) -> None:
+        self._config = config
+        self._cloud_shadow = cloud_shadow
+        self._registry = registry
+        self._managed_things = managed_things
+        self._managed_by_name = {
+            managed.registration.thing_name: managed for managed in managed_things
+        }
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._scanner: BleakScanner | None = None
+        self._activity_event: asyncio.Event | None = None
+        self._node_born = False
+        self._node_seq = 0
+
+        for managed in self._managed_things:
+            managed.bridge._start_scanner = self._noop_scanner  # type: ignore[method-assign]
+            managed.bridge._stop_scanner = self._noop_scanner  # type: ignore[method-assign]
+
+    async def _noop_scanner(self) -> None:
+        return
+
+    def _next_node_seq(self) -> int:
+        seq = self._node_seq
+        self._node_seq = (self._node_seq + 1) % 256
+        return seq
+
+    def _active_bridge(self) -> BleSleepBridge | None:
+        for managed in self._managed_things:
+            if managed.bridge._is_connected():
+                return managed.bridge
+        return None
+
+    async def _publish_node_birth(self) -> None:
+        await self._cloud_shadow.publish_sparkplug(
+            build_node_topic(
+                self._config.sparkplug_group_id,
+                "NBIRTH",
+                self._config.sparkplug_edge_node_id,
+            ),
+            build_node_redcon_payload(redcon=1, seq=self._next_node_seq()),
+        )
+        self._node_born = True
+
+    async def _publish_static_lifecycle_reflection(self) -> None:
+        await self._cloud_shadow.update_shadow(
+            thing_name=self._config.rig_thing_name,
+            reported_mcu_patch=None,
+            reported_root_patch={"redcon": 1},
+        )
+        await self._cloud_shadow.update_shadow(
+            thing_name=self._config.town_thing_name,
+            reported_mcu_patch=None,
+            reported_root_patch={"redcon": 1},
+        )
+
+    async def _start_scanner(self) -> None:
+        if self._scanner is not None:
+            return
+        self._scanner = BleakScanner(
+            detection_callback=self._handle_scan_detection,
+            scanning_mode=self._config.scan_mode,
+            bluez={"filters": {"DuplicateData": True}},
+        )
+        await self._scanner.start()
+        _log_important(LOGGER, "Started shared BLE scanner mode=%s", self._config.scan_mode)
+
+    async def _stop_scanner(self) -> None:
+        scanner = self._scanner
+        self._scanner = None
+        if scanner is None:
+            return
+        try:
+            await scanner.stop()
+        except Exception:
+            LOGGER.exception("Failed to stop shared BLE scanner cleanly")
+
+    def _handle_scan_detection(
+        self,
+        device: BLEDevice,
+        adv: AdvertisementData,
+    ) -> None:
+        exact_matches: list[BleSleepBridge] = []
+        for managed in self._managed_things:
+            bridge = managed.bridge
+            if bridge._cached_device_id and device.address == bridge._cached_device_id:
+                exact_matches.append(bridge)
+        if exact_matches:
+            for bridge in exact_matches:
+                bridge._handle_scan_detection(device, adv)
+            if self._loop is not None and self._activity_event is not None:
+                self._loop.call_soon_threadsafe(self._activity_event.set)
+            return
+
+        generic_candidates: list[BleSleepBridge] = []
+        single_device = len(self._managed_things) == 1
+        for managed in self._managed_things:
+            if managed.registration.ble_device_id is not None and not single_device:
+                continue
+            matched_by = managed.bridge._match_scan_candidate(device, adv)
+            if matched_by in {"serviceUuid", "name", "manufacturer"}:
+                generic_candidates.append(managed.bridge)
+
+        if len(generic_candidates) == 1:
+            generic_candidates[0]._handle_scan_detection(device, adv)
+            if self._loop is not None and self._activity_event is not None:
+                self._loop.call_soon_threadsafe(self._activity_event.set)
+        elif len(generic_candidates) > 1:
+            LOGGER.debug(
+                "Ignoring ambiguous BLE advertisement candidate deviceId=%s name=%s candidates=%s",
+                device.address,
+                adv.local_name or device.name or "<unnamed>",
+                len(generic_candidates),
+            )
+
+    async def _apply_updates(self, updates: list[AwsShadowUpdate]) -> None:
+        grouped: dict[str, list[AwsShadowUpdate]] = {}
+        for update in updates:
+            grouped.setdefault(update.thing_name, []).append(update)
+        for thing_name, thing_updates in grouped.items():
+            managed = self._managed_by_name.get(thing_name)
+            if managed is None:
+                continue
+            await managed.bridge._apply_cloud_shadow_updates(updates=thing_updates)
+
+    async def _normalize_startup(self) -> None:
+        for managed in self._managed_things:
+            bridge = managed.bridge
+            bridge._loop = self._loop
+            bridge._advertisement_event = asyncio.Event()
+            bridge._disconnect_event = asyncio.Event()
+            if bridge._shadow.ble_online:
+                bridge._mark_ble_presence_now()
+            await bridge._normalize_shadow_for_startup_default()
+            await bridge._publish_reported_update(
+                reported_mcu_patch=None,
+                reported_root_patch={"redcon": bridge._shadow.redcon},
+                desired_redcon=_SHADOW_UNSET,
+                desired_board_power=_SHADOW_UNSET,
+                context=f"Synchronized reported.redcon on startup ({managed.registration.thing_name})",
+                include_redcon_if_changed=False,
+            )
+            if bridge._shadow.ble_online:
+                await bridge._publish_device_birth()
+
+    async def _reconcile_presence(self) -> None:
+        for managed in self._managed_things:
+            await managed.bridge._reconcile_ble_online_presence()
+
+    async def _clear_converged_targets(self) -> None:
+        for managed in self._managed_things:
+            bridge = managed.bridge
+            if bridge._shadow.clear_desired_redcon_if_converged():
+                await bridge._publish_reported_update(
+                    reported_mcu_patch=None,
+                    desired_redcon=None,
+                    desired_board_power=_SHADOW_UNSET,
+                    context=f"Cleared desired.redcon after convergence ({managed.registration.thing_name})",
+                    include_redcon_if_changed=False,
+                )
+
+    def _bridge_needs_session(self, bridge: BleSleepBridge) -> bool:
+        target_redcon = bridge._shadow.desired_redcon
+        if target_redcon is not None and not bridge._shadow.clear_desired_redcon_if_converged():
+            return True
+        return bridge._cached_device_id is None and bridge._get_fresh_target_device() is not None
+
+    def _select_bridge_for_session(self) -> BleSleepBridge | None:
+        pending = [
+            managed.bridge
+            for managed in self._managed_things
+            if self._bridge_needs_session(managed.bridge)
+        ]
+        for bridge in pending:
+            if bridge._get_fresh_target_device() is not None:
+                return bridge
+        return pending[0] if pending else None
+
+    async def _update_registration_after_connect(self, managed: ManagedThing) -> None:
+        bridge = managed.bridge
+        current_device_id = bridge._cached_device_id
+        if current_device_id is None or current_device_id == managed.registration.ble_device_id:
+            return
+        try:
+            registration = self._registry.update_registration(
+                managed.registration.thing_name,
+                rig_name=self._config.rig_thing_name,
+                ble_device_id=current_device_id,
+                expected_version=managed.registration.version,
+            )
+        except Exception:
+            LOGGER.exception(
+                "Failed to update IoT registry bleDeviceId for thing=%s deviceId=%s",
+                managed.registration.thing_name,
+                current_device_id,
+            )
+            return
+        managed.registration = registration
+        _log_important(
+            LOGGER,
+            "Updated IoT registry bleDeviceId thing=%s deviceId=%s",
+            registration.thing_name,
+            registration.ble_device_id or "<unknown>",
+        )
+
+    async def _connect_bridge(self, bridge: BleSleepBridge) -> None:
+        await self._stop_scanner()
+        try:
+            await bridge._ensure_connected()
+        except Exception:
+            await self._start_scanner()
+            raise
+        managed = self._managed_by_name[bridge._config.thing_name]
+        await self._update_registration_after_connect(managed)
+
+    def _manager_timeout(self) -> float | None:
+        timeouts: list[float] = []
+        for managed in self._managed_things:
+            timeout = managed.bridge._ble_online_timeout_seconds()
+            if timeout is not None:
+                timeouts.append(timeout)
+        if not timeouts:
+            return None
+        return max(0.0, min(timeouts))
+
+    async def _wait_for_manager_events(
+        self,
+        timeout_seconds: float | None,
+    ) -> list[AwsShadowUpdate]:
+        updates_task = asyncio.create_task(
+            self._cloud_shadow.wait_for_updates(timeout_seconds=timeout_seconds)
+        )
+        tasks: set[asyncio.Task[Any]] = {updates_task}
+        activity_task: asyncio.Task[None] | None = None
+        if self._activity_event is not None:
+            activity_task = asyncio.create_task(self._activity_event.wait())
+            tasks.add(activity_task)
+        try:
+            done, _pending = await asyncio.wait(
+                tasks,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if updates_task in done:
+                return updates_task.result()
+            return []
+        finally:
+            if self._activity_event is not None:
+                self._activity_event.clear()
+            cleanup_tasks = [updates_task]
+            if activity_task is not None:
+                cleanup_tasks.append(activity_task)
+            for task in cleanup_tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*cleanup_tasks, return_exceptions=True)
+
+    async def run(self) -> None:
+        self._loop = asyncio.get_running_loop()
+        self._activity_event = asyncio.Event()
+        await self._publish_static_lifecycle_reflection()
+        await self._publish_node_birth()
+        await self._normalize_startup()
+        await self._start_scanner()
+        pending_updates = self._cloud_shadow.drain_updates()
+        try:
+            while True:
+                if pending_updates:
+                    await self._apply_updates(pending_updates)
+                    pending_updates = []
+
+                await self._clear_converged_targets()
+                await self._reconcile_presence()
+
+                active_bridge = self._active_bridge()
+                if active_bridge is not None:
+                    await active_bridge._process_desired_redcon_once()
+                    if active_bridge._is_connected() and active_bridge._shadow.desired_redcon is None:
+                        await active_bridge._safe_disconnect()
+                        await self._start_scanner()
+                    pending_updates = await self._wait_for_manager_events(
+                        timeout_seconds=self._manager_timeout()
+                    )
+                    continue
+
+                candidate = self._select_bridge_for_session()
+                if candidate is not None:
+                    try:
+                        await self._connect_bridge(candidate)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as err:
+                        LOGGER.warning(
+                            "BLE session establish failed thing=%s error=%s %r",
+                            candidate._config.thing_name,
+                            err.__class__.__name__,
+                            err,
+                        )
+                        pending_updates = await self._wait_for_manager_events(
+                            timeout_seconds=self._config.reconnect_delay
+                        )
+                    continue
+
+                pending_updates = await self._wait_for_manager_events(
+                    timeout_seconds=self._manager_timeout()
+                )
+        finally:
+            await self._stop_scanner()
+            active_bridge = self._active_bridge()
+            if active_bridge is not None:
+                cleanup_task = asyncio.create_task(
+                    active_bridge._safe_disconnect(
+                        publish_timeout_seconds=SHUTDOWN_MQTT_PUBLISH_TIMEOUT,
+                        disconnect_timeout_seconds=BLE_DISCONNECT_TIMEOUT,
+                    )
+                )
+                try:
+                    await asyncio.shield(cleanup_task)
+                except asyncio.CancelledError:
+                    await asyncio.shield(cleanup_task)
+                    raise
+
+    async def run_no_ble(self) -> None:
+        self._loop = asyncio.get_running_loop()
+        self._activity_event = asyncio.Event()
+        await self._publish_static_lifecycle_reflection()
+        await self._publish_node_birth()
+        for managed in self._managed_things:
+            bridge = managed.bridge
+            await bridge._publish_ble_online_state(
+                online=False,
+                context=f"Rig startup (--no-ble): BLE disconnected ({managed.registration.thing_name})",
+                force=True,
+            )
+        await self._normalize_startup()
+        for managed in self._managed_things:
+            await managed.bridge._process_desired_no_ble_once()
+
+        while True:
+            retry_timeout = self._config.reconnect_delay if any(
+                managed.bridge._shadow.desired_redcon is not None
+                for managed in self._managed_things
+            ) else None
+            updates = await self._cloud_shadow.wait_for_updates(timeout_seconds=retry_timeout)
+            await self._apply_updates(updates)
+            for managed in self._managed_things:
+                await managed.bridge._process_desired_no_ble_once()
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="rig",
@@ -3013,18 +3498,13 @@ def _parse_args() -> argparse.Namespace:
         "--shadow-file",
         type=Path,
         default=DEFAULT_SHADOW_FILE,
-        help="Path to local shadow mirror file (default: /tmp/txing_shadow.json)",
+        help="Deprecated local shadow cache path (ignored; default: /tmp/txing_shadow.json)",
     )
     parser.add_argument(
         "--lock-file",
         type=Path,
         default=DEFAULT_LOCK_FILE,
         help="Path to single-instance lock file (default: /tmp/rig.lock)",
-    )
-    parser.add_argument(
-        "--thing-name",
-        default=_env_text(DEFAULT_THING_NAME_ENV, DEFAULT_THING_NAME),
-        help="Txing AWS IoT thing name and Sparkplug device id (default: txing)",
     )
     parser.add_argument(
         "--rig-thing-name",
@@ -3141,8 +3621,8 @@ def _build_shadow_from_snapshot(
     snapshot: dict[str, Any],
     *,
     snapshot_file: Path,
+    registered_ble_device_id: str | None = None,
 ) -> ShadowState:
-    cached = load_shadow(snapshot_file)
     reported_power = _extract_reported_power(snapshot)
     battery_mv = _extract_reported_battery_mv(snapshot)
     board_power = _extract_reported_board_power(snapshot)
@@ -3152,10 +3632,9 @@ def _build_shadow_from_snapshot(
     reported_redcon = _extract_reported_redcon(snapshot)
     mcu = _extract_reported_mcu(snapshot)
     ble_map = _extract_reported_ble_map(mcu) if mcu is not None else None
-    reported_device_id = (
-        _normalize_device_id(ble_map.get("deviceId")) if ble_map is not None else None
-    )
     ble_uuids = _extract_reported_ble_uuids(snapshot)
+    if ble_uuids is not None:
+        ble_uuids = ble_uuids.with_device_id(registered_ble_device_id)
     ble_uuid_search_mode = ble_uuids is None
     if ble_uuids is None:
         if ble_map is not None:
@@ -3166,53 +3645,53 @@ def _build_shadow_from_snapshot(
             LOGGER.warning(
                 "Shadow reported.mcu.ble is missing; switching to BLE UUID search mode"
             )
-        ble_uuids = DEFAULT_BLE_GATT_UUIDS.with_device_id(reported_device_id)
+        ble_uuids = DEFAULT_BLE_GATT_UUIDS.with_device_id(registered_ble_device_id)
 
     return ShadowState(
         desired_redcon=(
             _extract_desired_redcon_from_shadow(snapshot)
             if _shadow_payload_includes_desired_redcon(snapshot)
-            else get_desired_redcon(cached)
+            else DEFAULT_DESIRED_REDCON
         ),
         desired_board_power=(
             _extract_desired_board_power_from_shadow(snapshot)
             if _shadow_payload_includes_desired_board_power(snapshot)
-            else get_desired_board_power(cached)
+            else None
         ),
         reported_power=(
-            reported_power if reported_power is not None else get_reported_power(cached)
+            reported_power if reported_power is not None else DEFAULT_REPORTED_POWER
         ),
         battery_mv=(
             battery_mv
             if battery_mv is not None
-            else get_reported_battery_mv(cached)
+            else DEFAULT_BATTERY_MV
         ),
         ble_uuids=ble_uuids,
         ble_online=bool(_extract_reported_ble_online(snapshot)),
         board_power=(
             board_power
             if board_power is not None
-            else get_reported_board_power(cached)
+            else DEFAULT_BOARD_POWER
         ),
         board_wifi_online=(
             board_wifi_online
             if board_wifi_online is not None
-            else get_reported_board_wifi_online(cached)
+            else DEFAULT_BOARD_WIFI_ONLINE
         ),
         board_video_ready=(
             board_video_ready
             if board_video_ready is not None
-            else get_reported_board_video_ready(cached)
+            else DEFAULT_BOARD_VIDEO_READY
         ),
         board_video_viewer_connected=(
             board_video_viewer_connected
             if board_video_viewer_connected is not None
-            else get_reported_board_video_viewer_connected(cached)
+            else DEFAULT_BOARD_VIDEO_VIEWER_CONNECTED
         ),
         redcon=(
             reported_redcon
             if reported_redcon is not None
-            else get_reported_redcon(cached)
+            else DEFAULT_REDCON
         ),
         ble_uuid_search_mode=ble_uuid_search_mode,
         shadow_version=_extract_shadow_version(snapshot),
@@ -3261,7 +3740,7 @@ def _configure_logging(
         return
 
     stream_name = args.cloudwatch_log_stream or _default_cloudwatch_log_stream(
-        args.thing_name
+        args.rig_thing_name
     )
     cloudwatch_region = _resolve_cloudwatch_region(
         args.cloudwatch_region,
@@ -3329,6 +3808,8 @@ def main() -> None:
     args = _parse_args()
 
     try:
+        if boto3 is None:
+            raise RuntimeError("boto3 is required for IoT registry and fleet indexing access")
         iot_endpoint = _read_iot_endpoint(args.iot_endpoint, args.iot_endpoint_file)
         _require_file(args.cert_file, "AWS IoT client certificate")
         _require_file(args.key_file, "AWS IoT client private key")
@@ -3354,7 +3835,6 @@ def main() -> None:
         scan_mode=args.scan_mode,
         shadow_file=args.shadow_file,
         lock_file=args.lock_file,
-        thing_name=args.thing_name,
         rig_thing_name=args.rig_thing_name,
         town_thing_name=args.town_thing_name,
         sparkplug_group_id=args.sparkplug_group_id,
@@ -3377,15 +3857,14 @@ def main() -> None:
 
     _log_important(
         LOGGER,
-        "Rig started pid=%s lock=%s thing=%s",
+        "Rig started pid=%s lock=%s rig=%s",
         os.getpid(),
         config.lock_file,
-        config.thing_name,
+        config.rig_thing_name,
     )
     LOGGER.info(
-        "AWS IoT config endpoint=%s thing=%s rig=%s town=%s sparkplug_group=%s sparkplug_edge=%s cert=%s key=%s ca=%s client_id=%s",
+        "AWS IoT config endpoint=%s rig=%s town=%s sparkplug_group=%s sparkplug_edge=%s cert=%s key=%s ca=%s client_id=%s",
         config.iot_endpoint,
-        config.thing_name,
         config.rig_thing_name,
         config.town_thing_name,
         config.sparkplug_group_id,
@@ -3398,20 +3877,59 @@ def main() -> None:
 
     async def _run_rig() -> None:
         cloud_shadow = AwsShadowClient(config)
+        aws_region = _resolve_aws_region(iot_endpoint=config.iot_endpoint)
+        if not aws_region:
+            raise RuntimeError("could not resolve AWS region for IoT registry client")
+        registry_client = AwsThingRegistryClient(
+            boto3.client("iot", region_name=aws_region)
+        )
         try:
-            snapshot = await cloud_shadow.connect_and_get_initial_snapshot(
+            registrations = registry_client.list_rig_things(config.rig_thing_name)
+            _log_important(
+                LOGGER,
+                "Loaded %s txing thing(s) from fleet index for rig=%s",
+                len(registrations),
+                config.rig_thing_name,
+            )
+            snapshots = await cloud_shadow.connect_and_get_initial_snapshots(
+                [registration.thing_name for registration in registrations],
                 timeout_seconds=config.aws_connect_timeout,
             )
-            shadow = _build_shadow_from_snapshot(
-                snapshot, snapshot_file=config.shadow_file
-            )
-            shadow.log_state("Initialized from AWS IoT shadow snapshot")
+            managed_things: list[ManagedThing] = []
+            for registration in registrations:
+                thing_name = registration.thing_name
+                device_config = replace(
+                    config,
+                    thing_name=thing_name,
+                    shadow_file=_device_snapshot_file(config.shadow_file, thing_name),
+                )
+                shadow = _build_shadow_from_snapshot(
+                    snapshots[thing_name],
+                    snapshot_file=device_config.shadow_file,
+                    registered_ble_device_id=registration.ble_device_id,
+                )
+                shadow.log_state(f"Initialized from AWS IoT shadow snapshot ({thing_name})")
+                managed_things.append(
+                    ManagedThing(
+                        registration=registration,
+                        bridge=BleSleepBridge(
+                            device_config,
+                            shadow,
+                            DeviceCloudProxy(cloud_shadow, thing_name),  # type: ignore[arg-type]
+                        ),
+                    )
+                )
 
-            bridge = BleSleepBridge(config, shadow, cloud_shadow)
+            fleet_bridge = RigFleetBridge(
+                config,
+                cloud_shadow=cloud_shadow,
+                registry=registry_client,
+                managed_things=managed_things,
+            )
             if args.no_ble:
                 while True:
                     try:
-                        await bridge.run_no_ble()
+                        await fleet_bridge.run_no_ble()
                     except asyncio.CancelledError:
                         raise
                     except Exception:
@@ -3424,7 +3942,7 @@ def main() -> None:
 
             while True:
                 try:
-                    await bridge.run()
+                    await fleet_bridge.run()
                 except asyncio.CancelledError:
                     raise
                 except Exception:

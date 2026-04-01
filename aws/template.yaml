@@ -31,7 +31,7 @@ Resources:
   TxingGatewayLogsManagedPolicy:
     Type: AWS::IAM::ManagedPolicy
     Properties:
-      Description: Allows the rig runtime to write logs directly to /town/rig/txing.
+      Description: Attach to the rig host AWS principal for CloudWatch logs and IoT registry/fleet-index control-plane access.
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -44,6 +44,18 @@ Resources:
             Resource:
               - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/town/rig/txing
               - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/town/rig/txing:log-stream:*
+          - Sid: GatewayThingRegistryReadWrite
+            Effect: Allow
+            Action:
+              - iot:DescribeThing
+              - iot:UpdateThing
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/*
+          - Sid: GatewayFleetIndexSearch
+            Effect: Allow
+            Action:
+              - iot:GetIndexingConfiguration
+              - iot:SearchIndex
+            Resource: "*"
 
   TxingThing:
     Type: AWS::IoT::Thing
@@ -59,6 +71,128 @@ Resources:
     Type: AWS::IoT::Thing
     Properties:
       ThingName: town
+
+  TxingFleetIndexingRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: Allows the stack custom resource to enable AWS IoT fleet indexing.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: txing-enable-fleet-indexing
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: FleetIndexingConfig
+                Effect: Allow
+                Action:
+                  - iot:GetIndexingConfiguration
+                  - iot:UpdateIndexingConfiguration
+                Resource: "*"
+
+  TxingFleetIndexingFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: CloudFormation custom resource that enables registry-only AWS IoT fleet indexing.
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt TxingFleetIndexingRole.Arn
+      Timeout: 120
+      Code:
+        ZipFile: |
+          import json
+          import logging
+          import time
+          import urllib.request
+
+          import boto3
+
+          LOGGER = logging.getLogger()
+          LOGGER.setLevel(logging.INFO)
+
+
+          def _respond(event, context, status, *, reason=None, data=None):
+              response_body = json.dumps(
+                  {
+                      "Status": status,
+                      "Reason": reason or ("See CloudWatch Log Stream: " + context.log_stream_name),
+                      "PhysicalResourceId": "txing-fleet-indexing",
+                      "StackId": event["StackId"],
+                      "RequestId": event["RequestId"],
+                      "LogicalResourceId": event["LogicalResourceId"],
+                      "NoEcho": False,
+                      "Data": data or {},
+                  }
+              ).encode("utf-8")
+              request = urllib.request.Request(
+                  event["ResponseURL"],
+                  data=response_body,
+                  headers={
+                      "content-type": "",
+                      "content-length": str(len(response_body)),
+                  },
+                  method="PUT",
+              )
+              with urllib.request.urlopen(request) as response:
+                  LOGGER.info("Sent CloudFormation response status=%s", response.status)
+
+
+          def handler(event, context):
+              client = boto3.client("iot")
+              desired_mode = event["ResourceProperties"].get("ThingIndexingMode", "REGISTRY")
+              desired_connectivity_mode = event["ResourceProperties"].get(
+                  "ThingConnectivityIndexingMode",
+                  "OFF",
+              )
+              try:
+                  if event["RequestType"] in {"Create", "Update"}:
+                      client.update_indexing_configuration(
+                          thingIndexingConfiguration={
+                              "thingIndexingMode": desired_mode,
+                              "thingConnectivityIndexingMode": desired_connectivity_mode,
+                          }
+                      )
+                      deadline = time.time() + 90
+                      while True:
+                          configuration = client.get_indexing_configuration()
+                          current = configuration.get("thingIndexingConfiguration", {})
+                          if (
+                              current.get("thingIndexingMode") == desired_mode
+                              and current.get("thingConnectivityIndexingMode")
+                              == desired_connectivity_mode
+                          ):
+                              break
+                          if time.time() >= deadline:
+                              raise TimeoutError(
+                                  "Timed out waiting for AWS IoT fleet indexing configuration"
+                              )
+                          time.sleep(3)
+                  _respond(
+                      event,
+                      context,
+                      "SUCCESS",
+                      data={
+                          "ThingIndexingMode": desired_mode,
+                          "ThingConnectivityIndexingMode": desired_connectivity_mode,
+                      },
+                  )
+              except Exception as exc:
+                  LOGGER.exception("Failed to configure AWS IoT fleet indexing")
+                  _respond(event, context, "FAILED", reason=str(exc))
+
+  TxingFleetIndexingConfiguration:
+    Type: Custom::TxingFleetIndexingConfiguration
+    Properties:
+      ServiceToken: !GetAtt TxingFleetIndexingFunction.Arn
+      ThingIndexingMode: REGISTRY
+      ThingConnectivityIndexingMode: "OFF"
 
   TxingBoardVideoChannel:
     Type: AWS::KinesisVideo::SignalingChannel
@@ -101,26 +235,17 @@ Resources:
             Action:
               - iot:GetThingShadow
               - iot:UpdateThingShadow
-            Resource:
-              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/txing
-              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/rig
-              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/town
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/*
           - Sid: ShadowPublishReceive
             Effect: Allow
             Action:
               - iot:Publish
               - iot:Receive
-            Resource:
-              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/txing/shadow/*
-              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/rig/shadow/*
-              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/town/shadow/*
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/*/shadow/*
           - Sid: ShadowSubscribe
             Effect: Allow
             Action: iot:Subscribe
-            Resource:
-              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/$aws/things/txing/shadow/*
-              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/$aws/things/rig/shadow/*
-              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/$aws/things/town/shadow/*
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/$aws/things/*/shadow/*
           - Sid: SparkplugPublishReceive
             Effect: Allow
             Action:
@@ -439,8 +564,11 @@ Outputs:
     Description: ARN of the CloudWatch Logs group used by the rig process.
     Value: !GetAtt TxingGatewayLogGroup.Arn
   RigLogsManagedPolicyArn:
-    Description: Attach this managed policy to the IAM principal used by rig.
+    Description: Attach this managed policy to the rig host AWS principal for CloudWatch logs and IoT registry/fleet-index access.
     Value: !Ref TxingGatewayLogsManagedPolicy
+  ThingIndexingMode:
+    Description: AWS IoT fleet indexing mode configured by the stack.
+    Value: !GetAtt TxingFleetIndexingConfiguration.ThingIndexingMode
   BoardVideoChannelArn:
     Description: ARN of the txing board KVS signaling channel.
     Value: !GetAtt TxingBoardVideoChannel.Arn

@@ -33,6 +33,8 @@ This checklist tracks the phase-1 Sparkplug lifecycle plan.
 - [x] Add or formalize `state.desired.redcon` on txing shadow as transient Sparkplug intent cache
 - [x] Add or formalize `state.reported.redcon` on txing shadow as actual lifecycle state
 - [x] Keep `reported.mcu.*` and `reported.board.*` as supporting operational detail
+- [x] Move stable txing metadata to AWS IoT thing attributes `rig` and `bleDeviceId`
+- [x] Load managed txings on rig restart from fleet indexing query `attributes.rig:<rig thing name>`
 - [x] Remove lifecycle authority from top-level `desired.mcu.power` and `desired.board.power`
 - [x] Make rig the only owner of top-level txing `reported.redcon`
 - [x] Keep current board and MCU reporting paths as REDCON inputs in phase 1

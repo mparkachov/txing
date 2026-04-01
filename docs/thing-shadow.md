@@ -52,6 +52,9 @@ Phase-1 note:
 - Direct scalar attributes under `state.reported` are a strict reflection of the current Sparkplug device metrics only.
 - In phase 1 that direct-metric set is exactly `redcon` and `batteryMv`.
 - `mcu.*` and `board.*` remain additional operational detail and must not be used as alternate Sparkplug metric locations.
+- Stable per-device metadata lives in AWS IoT thing attributes instead:
+  - `attributes.rig`
+  - `attributes.bleDeviceId`
 
 ## Required project fields
 
@@ -70,7 +73,6 @@ Phase-1 note:
 - `state.reported.mcu.ble.sleepCommandUuid` (`uuid`) is the compatibility field for the BLE power-mode control characteristic UUID.
 - `state.reported.mcu.ble.stateReportUuid` (`uuid`) is the BLE read+notify characteristic UUID.
 - `state.reported.mcu.ble.online` (`boolean`) is rig-observed BLE reachability: it becomes `true` after the device has shown sustained BLE presence, and becomes `false` only after the device has not been seen for the configured presence timeout.
-- `state.reported.mcu.ble.deviceId` (`string`, optional, update payload may temporarily use `null` to delete) is the last known BLE device identifier used for fast reconnect.
 - `state.reported.board.power` (`boolean`) is a best-effort board power-state flag; because the board can lose power abruptly through the MOSFET, consumers must not treat stale `true` as authoritative after a hard power cut.
 - `state.reported.board.wifi.online` (`boolean`) is the board-side Wi-Fi/control online flag while the board OS is up and the board control is running.
 - `state.reported.board.wifi.ipv4` (`ipv4 string`, update payload may temporarily use `null` to delete) is the IPv4 address chosen by the OS for the board's current IPv4 default-route interface when the board control publishes.
@@ -98,6 +100,7 @@ Phase-1 note:
   - `on` -> `redcon=3`
   - `off` -> `redcon=4`
 - `board` and `rig` continue to publish shadow state as the reflected operational state.
+- Registry metadata remains out of the shadow path; `attributes.rig` and `attributes.bleDeviceId` are rig-managed.
 - The browser still uses HTTPS for Cognito hosted UI, Cognito token exchange/refresh, Cognito Identity credential bootstrap, and IoT policy attachment. Only shadow document traffic moved to MQTT/WSS.
 - Live board motion control remains out of band and is not part of the Thing Shadow contract. The current browser-to-board control topic is `txing/board/cmd_vel`, carrying raw JSON shaped like ROS `geometry_msgs/Twist`.
 - `txing/board/cmd_vel` is a strict semantic contract, not only a ROS-shaped JSON payload:
