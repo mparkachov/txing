@@ -161,43 +161,67 @@ class AwsIotWebsocketConnection:
 
     def _on_connection_interrupted(
         self,
-        _connection: Any,
-        error: Exception,
-        **_kwargs: Any,
+        connection: Any = None,
+        error: Exception | None = None,
+        **kwargs: Any,
     ) -> None:
+        del connection
+        if error is None:
+            error = kwargs.get("error")
+        if error is None:
+            return
         if self._on_connection_interrupted_callback is not None:
             self._on_connection_interrupted_callback(error)
 
     def _on_connection_resumed(
         self,
-        _connection: Any,
-        return_code: Any,
-        session_present: bool,
-        **_kwargs: Any,
+        connection: Any = None,
+        return_code: Any = None,
+        session_present: bool | None = None,
+        **kwargs: Any,
     ) -> None:
+        del connection
+        if return_code is None:
+            return_code = kwargs.get("return_code")
+        if session_present is None:
+            session_present = kwargs.get("session_present")
+        if session_present is None:
+            return
         if self._on_connection_resumed_callback is not None:
             self._on_connection_resumed_callback(return_code, session_present)
 
     def _on_connection_success(
         self,
-        _connection: Any,
-        callback_data: Any,
+        connection: Any = None,
+        callback_data: Any = None,
+        **kwargs: Any,
     ) -> None:
+        del connection
+        if callback_data is None:
+            callback_data = kwargs.get("callback_data", kwargs.get("data"))
         if self._on_connection_success_callback is not None:
             self._on_connection_success_callback(callback_data)
 
     def _on_connection_failure(
         self,
-        _connection: Any,
-        callback_data: Any,
+        connection: Any = None,
+        callback_data: Any = None,
+        **kwargs: Any,
     ) -> None:
+        del connection
+        if callback_data is None:
+            callback_data = kwargs.get("callback_data", kwargs.get("data"))
         if self._on_connection_failure_callback is not None:
             self._on_connection_failure_callback(callback_data)
 
     def _on_connection_closed(
         self,
-        _connection: Any,
-        callback_data: Any,
+        connection: Any = None,
+        callback_data: Any = None,
+        **kwargs: Any,
     ) -> None:
+        del connection
+        if callback_data is None:
+            callback_data = kwargs.get("callback_data", kwargs.get("data"))
         if self._on_connection_closed_callback is not None:
             self._on_connection_closed_callback(callback_data)
