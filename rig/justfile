@@ -51,6 +51,10 @@ systemd_unit := "/etc/systemd/system/rig.service"
 @run:
     #!/usr/bin/env bash
     set -euo pipefail
+    test -x "{{built_rig}}" || { \
+        echo "Missing built rig executable at {{built_rig}}. Run 'just rig::build' first." >&2; \
+        exit 1; \
+    }
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}" "{{endpoint_file}}")"
     endpoint_file="$TXING_AWS_ENDPOINT_FILE"
     export IOT_ENDPOINT_FILE="$endpoint_file"
@@ -59,6 +63,10 @@ systemd_unit := "/etc/systemd/system/rig.service"
 @debug:
     #!/usr/bin/env bash
     set -euo pipefail
+    test -x "{{built_rig}}" || { \
+        echo "Missing built rig executable at {{built_rig}}. Run 'just rig::build' first." >&2; \
+        exit 1; \
+    }
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}" "{{endpoint_file}}")"
     endpoint_file="$TXING_AWS_ENDPOINT_FILE"
     export IOT_ENDPOINT_FILE="$endpoint_file"
@@ -83,6 +91,10 @@ systemd_unit := "/etc/systemd/system/rig.service"
 @wake:
     #!/usr/bin/env bash
     set -euo pipefail
+    test -x "{{built_rig_sparkplug_cmd}}" || { \
+        echo "Missing built rig Sparkplug command executable at {{built_rig_sparkplug_cmd}}. Run 'just rig::build' first." >&2; \
+        exit 1; \
+    }
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}" "{{endpoint_file}}")"
     endpoint_file="$TXING_AWS_ENDPOINT_FILE"
     export IOT_ENDPOINT_FILE="$endpoint_file"
@@ -91,6 +103,10 @@ systemd_unit := "/etc/systemd/system/rig.service"
 @sleep:
     #!/usr/bin/env bash
     set -euo pipefail
+    test -x "{{built_rig_sparkplug_cmd}}" || { \
+        echo "Missing built rig Sparkplug command executable at {{built_rig_sparkplug_cmd}}. Run 'just rig::build' first." >&2; \
+        exit 1; \
+    }
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}" "{{endpoint_file}}")"
     endpoint_file="$TXING_AWS_ENDPOINT_FILE"
     export IOT_ENDPOINT_FILE="$endpoint_file"
@@ -99,6 +115,10 @@ systemd_unit := "/etc/systemd/system/rig.service"
 @dcmd:
     #!/usr/bin/env bash
     set -euo pipefail
+    test -x "{{built_rig_sparkplug_log}}" || { \
+        echo "Missing built rig Sparkplug log executable at {{built_rig_sparkplug_log}}. Run 'just rig::build' first." >&2; \
+        exit 1; \
+    }
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}" "{{endpoint_file}}")"
     endpoint_file="$TXING_AWS_ENDPOINT_FILE"
     export IOT_ENDPOINT_FILE="$endpoint_file"
@@ -107,6 +127,10 @@ systemd_unit := "/etc/systemd/system/rig.service"
 @ddata:
     #!/usr/bin/env bash
     set -euo pipefail
+    test -x "{{built_rig_sparkplug_log}}" || { \
+        echo "Missing built rig Sparkplug log executable at {{built_rig_sparkplug_log}}. Run 'just rig::build' first." >&2; \
+        exit 1; \
+    }
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}" "{{endpoint_file}}")"
     endpoint_file="$TXING_AWS_ENDPOINT_FILE"
     export IOT_ENDPOINT_FILE="$endpoint_file"

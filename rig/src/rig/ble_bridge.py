@@ -3213,6 +3213,10 @@ class RigFleetBridge:
                     await active_bridge._process_desired_redcon_once()
                     if active_bridge._is_connected() and active_bridge._shadow.desired_redcon is None:
                         await active_bridge._safe_disconnect()
+                    if not active_bridge._is_connected():
+                        # Mirror the single-device path: once a session has been
+                        # released, keep scanning so sleep-state rendezvous
+                        # advertisements continue to maintain BLE presence.
                         await self._start_scanner()
                     pending_updates = await self._wait_for_manager_events(
                         timeout_seconds=self._manager_timeout()

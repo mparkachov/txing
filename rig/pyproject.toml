@@ -24,6 +24,7 @@ requires = ["uv_build>=0.10.6,<0.11.0"]
 build-backend = "uv_build"
 
 [tool.uv.extra-build-dependencies]
-pyobjc-core = ["setuptools"]
-pyobjc-framework-cocoa = ["setuptools"]
-pyobjc-framework-libdispatch = ["setuptools"]
+pyobjc-core = ["setuptools<81"]
+pyobjc-framework-cocoa = ["setuptools<81"]
+pyobjc-framework-corebluetooth = ["setuptools<81"]
+pyobjc-framework-libdispatch = ["setuptools<81"]

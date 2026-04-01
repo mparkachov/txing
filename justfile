@@ -78,8 +78,10 @@ _project-aws-env scope='rig' region='' profile='' endpoint_file='' stack_name=''
     export_line AWS_DEFAULT_REGION "$txing_aws_region"
     if [ -n "$txing_aws_selected_profile" ]; then
       export_line AWS_PROFILE "$txing_aws_selected_profile"
+      export_line AWS_DEFAULT_PROFILE "$txing_aws_selected_profile"
     else
       printf 'unset AWS_PROFILE\n'
+      printf 'unset AWS_DEFAULT_PROFILE\n'
     fi
 
 [positional-arguments]

@@ -185,6 +185,9 @@ class FakeCloudShadow:
     async def publish_sparkplug(self, topic: str, payload: bytes, **_: object) -> None:
         self.sparkplug_publishes.append((topic, payload))
 
+    def drain_updates(self) -> list[object]:
+        return []
+
 
 class ShadowPayloadTests(unittest.TestCase):
     def test_update_payload_without_desired_redcon_does_not_claim_desired(self) -> None:
@@ -282,6 +285,75 @@ class RigNodeReflectionTests(unittest.TestCase):
 
         self.assertEqual(cloud_shadow.shadow_updates, [])
         self.assertEqual(cloud_shadow.sparkplug_publishes, [])
+
+
+class RigFleetScannerTests(unittest.TestCase):
+    def test_fleet_bridge_restarts_scanner_after_bridge_disconnects(self) -> None:
+        asyncio.run(self._exercise_fleet_bridge_restarts_scanner())
+
+    async def _exercise_fleet_bridge_restarts_scanner(self) -> None:
+        class FakeBridge:
+            def __init__(self) -> None:
+                self._connected = True
+                self._shadow = types.SimpleNamespace(desired_redcon=4)
+
+            async def _process_desired_redcon_once(self) -> None:
+                self._connected = False
+                self._shadow.desired_redcon = None
+
+            async def _safe_disconnect(self, **_: object) -> None:
+                self._connected = False
+
+            def _is_connected(self) -> bool:
+                return self._connected
+
+        class TestRigFleetBridge(RigFleetBridge):
+            def __init__(self, active_bridge: FakeBridge) -> None:
+                super().__init__(
+                    BridgeConfig(),
+                    cloud_shadow=FakeCloudShadow(),  # type: ignore[arg-type]
+                    registry=object(),  # type: ignore[arg-type]
+                    managed_things=[],
+                )
+                self._test_active_bridge = active_bridge
+                self.start_calls = 0
+
+            async def _publish_node_birth(self) -> None:
+                return
+
+            async def _normalize_startup(self) -> None:
+                return
+
+            async def _clear_converged_targets(self) -> None:
+                return
+
+            async def _reconcile_presence(self) -> None:
+                return
+
+            async def _wait_for_manager_events(
+                self,
+                timeout_seconds: float | None,
+            ) -> list[object]:
+                del timeout_seconds
+                raise asyncio.CancelledError
+
+            async def _start_scanner(self) -> None:
+                self.start_calls += 1
+                self._scanner = object()  # type: ignore[assignment]
+
+            async def _stop_scanner(self) -> None:
+                self._scanner = None
+
+            def _active_bridge(self) -> FakeBridge | None:
+                return self._test_active_bridge
+
+        bridge = FakeBridge()
+        fleet_bridge = TestRigFleetBridge(bridge)
+
+        with self.assertRaises(asyncio.CancelledError):
+            await fleet_bridge.run()
+
+        self.assertEqual(fleet_bridge.start_calls, 1)
 
 
 class RedconTests(unittest.TestCase):
