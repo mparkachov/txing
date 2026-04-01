@@ -125,6 +125,8 @@ systemd_unit := "/etc/systemd/system/rig.service"
       /dev/stdout | jq '.'
 
 @install-service rig_name=rig_name sparkplug_group_id=sparkplug_group_id sparkplug_edge_node_id=sparkplug_edge_node_id region=region endpoint_file=endpoint_file aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file aws_config_file=aws_config_file cloudwatch_log_group=cloudwatch_log_group:
+    #!/usr/bin/env bash
+    set -euo pipefail
     test -x "{{built_rig}}" || { \
         echo "Missing built rig executable at {{built_rig}}. Run 'just build' first." >&2; \
         exit 1; \
