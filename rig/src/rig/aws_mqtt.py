@@ -138,10 +138,7 @@ class AwsIotWebsocketConnection:
         subscribe_future, _packet_id = self._connection.subscribe(
             topic=topic,
             qos=mqtt.QoS.AT_LEAST_ONCE,
-            callback=lambda message_topic, payload, **_kwargs: callback(
-                message_topic,
-                bytes(payload),
-            ),
+            callback=self._wrap_message_callback(callback),
         )
         return await _await_future(
             subscribe_future,
@@ -225,3 +222,26 @@ class AwsIotWebsocketConnection:
             callback_data = kwargs.get("callback_data", kwargs.get("data"))
         if self._on_connection_closed_callback is not None:
             self._on_connection_closed_callback(callback_data)
+
+    @staticmethod
+    def _wrap_message_callback(callback: MessageCallback) -> Callable[..., None]:
+        def _wrapped_message_callback(
+            topic: str | None = None,
+            payload: bytes | bytearray | memoryview | str | None = None,
+            **kwargs: Any,
+        ) -> None:
+            message_topic = topic
+            if message_topic is None:
+                message_topic = kwargs.get("message_topic")
+            if message_topic is None:
+                raise TypeError("MQTT message callback missing topic")
+
+            message_payload = payload
+            if message_payload is None:
+                message_payload = kwargs.get("message_payload")
+            if message_payload is None:
+                raise TypeError("MQTT message callback missing payload")
+
+            callback(message_topic, bytes(message_payload))
+
+        return _wrapped_message_callback

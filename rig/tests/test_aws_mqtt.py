@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import unittest
 
 from rig.aws_mqtt import AwsIotWebsocketConnection
@@ -54,3 +55,22 @@ class AwsMqttCallbackTests(unittest.TestCase):
         self.assertEqual(success_events, [callback_data])
         self.assertEqual(failure_events, [callback_data])
         self.assertEqual(closed_events, [callback_data])
+
+    def test_message_callback_wrapper_accepts_crt_keyword_probe(self) -> None:
+        messages: list[tuple[str, bytes]] = []
+
+        wrapped = AwsIotWebsocketConnection._wrap_message_callback(
+            lambda topic, payload: messages.append((topic, payload))
+        )
+
+        inspect.signature(wrapped).bind(topic="topic", payload=b"payload")
+        wrapped(topic="topic", payload=memoryview(b"payload"))
+        wrapped(message_topic="other/topic", message_payload=bytearray(b"data"))
+
+        self.assertEqual(
+            messages,
+            [
+                ("topic", b"payload"),
+                ("other/topic", b"data"),
+            ],
+        )
