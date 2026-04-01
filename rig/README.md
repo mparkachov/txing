@@ -3,7 +3,7 @@
 Python service for the Raspberry Pi 5 rig runtime.
 
 Responsibilities:
-- Connect directly to AWS IoT Core over MQTT/mTLS
+- Connect directly to AWS IoT Core over SigV4-authenticated MQTT over WebSockets
 - Act as the phase-1 `rig` lifecycle runtime in the same process
 - Synchronize classic Thing Shadows for all txings assigned to this rig
 - Accept Sparkplug `DCMD.redcon` lifecycle commands and publish `NBIRTH`/`NDATA`/`DBIRTH`/`DDATA`/`DDEATH`
@@ -30,8 +30,10 @@ The system requires these tools installed:
 - `jq`
 - `aws` (AWS CLI)
 
-AWS CLI connectivity must be working (credentials + region via role/env/default config/SSO) with permissions for AWS IoT and AWS IoT Data Plane calls used by this project.
-Rig runtime also needs host AWS credentials (default SDK chain) with CloudWatch Logs write permissions for `/town/rig/txing` plus `iot:DescribeThing`, `iot:UpdateThing`, `iot:DescribeThingGroup`, and `iot:ListThingsInThingGroup`.
+The documented repo workflow keeps AWS settings inside the checkout under `../config/`.
+`just` recipes load `../config/aws.env` automatically and export project-local `AWS_SHARED_CREDENTIALS_FILE`, `AWS_CONFIG_FILE`, `AWS_REGION`, and `AWS_PROFILE` from that file before invoking AWS CLI or `rig`.
+Use `just aws-rig ...` for AWS CLI commands with the rig/runtime profile and `just aws-town ...` for AWS CLI commands with the town account profile.
+The recommended field setup is: the `town` profile in `../config/aws.credentials` holds access keys for the AWS account that owns the resources, and the `rig` profile in `../config/aws.config` assumes the stack output role `RigRuntimeRoleArn`.
 
 ## Install on a new Raspberry Pi 5 (64-bit OS)
 
@@ -63,40 +65,43 @@ git clone <your-repo-url> txing
 cd txing
 ```
 
-4. Ensure AWS connectivity is configured in this shell:
+4. Copy the project-local AWS config examples and fill them in.
+For an already provisioned town account, the minimum rig setup is:
+- put the town account access key in `config/aws.credentials`
+- set the runtime role ARN in `config/aws.config`
+- set the profile names and defaults in `config/aws.env`
 
 ```bash
-aws sts get-caller-identity
+cd ~/txing
+mkdir -p config
+cp config/aws.env.example config/aws.env
+cp config/aws.credentials.example config/aws.credentials
+cp config/aws.config.example config/aws.config
+$EDITOR config/aws.env
+$EDITOR config/aws.credentials
+$EDITOR config/aws.config
+
+just aws-rig sts get-caller-identity
 ```
 
-5. Standard procedure: copy the shared device AWS IoT credentials into `certs/`:
+5. Write the AWS IoT endpoint file used by `rig`:
 
 ```bash
-mkdir -p ~/txing/certs
-# Copy these from an existing working host or secure key storage:
-# - txing.cert.pem
-# - txing.private.key
-# - txing.cert.arn
-# - iot-data-ats.endpoint
-# - AmazonRootCA1.pem
+cd ~/txing
+just aws::endpoint
 ```
 
-6. Validate AWS access and local cert artifacts:
+6. Validate AWS access and endpoint configuration:
 
 ```bash
 cd ~/txing
 just rig::check
 ```
 
-This check also validates required local tools (`aws`, `jq`, `uv`, `just`, `openssl`) are installed.
+This check validates required local tools plus caller identity, IoT control-plane access, CloudWatch log writes, and the configured Data-ATS endpoint file.
 
-7. Only if rotating certs or provisioning a brand new cert: run bootstrap.
-`just aws::bootstrap` generates the shared `txing.*` key pair when local cert files are absent; it does not download old private keys from AWS.
-
-```bash
-cd ~/txing
-just aws::bootstrap
-```
+7. `just aws::bootstrap` is obsolete for `rig` certificate provisioning.
+`rig` no longer uses AWS IoT thing certificates. The recipe may still exist for other legacy flows in the repo, but it is not part of the rig runtime setup anymore.
 
 8. Build the rig runtime with the OS `python3` and verify startup:
 
@@ -119,7 +124,7 @@ sudo journalctl -u rig -f
 ```
 
 The `just rig::install-service` task enables `bluetooth`, writes `/etc/systemd/system/rig.service` for the current user and checkout path, reloads `systemd`, and enables `rig`.
-It points `ExecStart` at the built rig executable in `rig/.venv/bin/rig` and writes the runtime contract into `Environment=` lines for `RIG_NAME`, `SPARKPLUG_GROUP_ID`, `SPARKPLUG_EDGE_NODE_ID`, `IOT_ENDPOINT_FILE`, `CERT_FILE`, `KEY_FILE`, `CA_FILE`, `CLOUDWATCH_LOG_GROUP`, and `AWS_REGION`, so run `just rig::build` first.
+It points `ExecStart` at the built rig executable in `rig/.venv/bin/rig` and writes the runtime contract into `Environment=` lines for `RIG_NAME`, `SPARKPLUG_GROUP_ID`, `SPARKPLUG_EDGE_NODE_ID`, `IOT_ENDPOINT_FILE`, `CLOUDWATCH_LOG_GROUP`, `AWS_REGION`, and optionally `AWS_PROFILE`, `AWS_SHARED_CREDENTIALS_FILE`, and `AWS_CONFIG_FILE`, so run `just rig::build` first.
 
 ## Run rig
 
@@ -129,11 +134,8 @@ Run from `rig/`:
 just run
 ```
 
-This uses bootstrap artifacts by default:
+By default this reads `../config/aws.env`, exports the project-local AWS credential/config file paths from there, and uses the endpoint file:
 - endpoint file: `../certs/iot-data-ats.endpoint`
-- cert: `../certs/txing.cert.pem`
-- private key: `../certs/txing.private.key`
-- root CA: `../certs/AmazonRootCA1.pem`
 - CloudWatch log group: `/town/rig/txing` (direct upload from process)
 
 Default logging behavior:
@@ -273,12 +275,15 @@ Common overrides:
 - `--scan-mode active`
 - `--iot-endpoint <host>`
 - `--iot-endpoint-file ../certs/iot-data-ats.endpoint`
-- `--cert-file ../certs/txing.cert.pem`
-- `--key-file ../certs/txing.private.key`
-- `--ca-file ../certs/AmazonRootCA1.pem`
 - `--client-id rig-pi5`
 - `--debug` (verbose stdout logging)
 - `--cloudwatch-log-group /town/rig/txing`
 - `--cloudwatch-log-stream <stream-name>`
 - `--cloudwatch-region <aws-region>` (override region; default inferred from IoT endpoint)
 - `--no-cloudwatch-logs`
+
+Authentication selection uses the standard AWS SDK environment, not rig-specific CLI flags:
+- `AWS_PROFILE`
+- `AWS_REGION`
+- `AWS_SHARED_CREDENTIALS_FILE`
+- `AWS_CONFIG_FILE`

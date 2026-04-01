@@ -7,15 +7,16 @@ built_rig_sparkplug_cmd := rig_dir + "/.venv/bin/rig-sparkplug-cmd"
 built_rig_sparkplug_log := rig_dir + "/.venv/bin/rig-sparkplug-log"
 project_root := rig_dir + "/.."
 aws_justfile := project_root + "/aws/justfile"
+root_justfile := project_root + "/justfile"
 thing_name := "txing"
 rig_name := "rig"
 sparkplug_group_id := "town"
 sparkplug_edge_node_id := "rig"
-region := "eu-central-1"
-endpoint_file := rig_dir + "/../certs/iot-data-ats.endpoint"
-cert_file := rig_dir + "/../certs/txing.cert.pem"
-key_file := rig_dir + "/../certs/txing.private.key"
-ca_file := rig_dir + "/../certs/AmazonRootCA1.pem"
+region := ""
+endpoint_file := ""
+aws_profile := ""
+aws_shared_credentials_file := ""
+aws_config_file := ""
 cloudwatch_log_group := "/town/rig/txing"
 systemd_unit := "/etc/systemd/system/rig.service"
 
@@ -28,71 +29,150 @@ systemd_unit := "/etc/systemd/system/rig.service"
     test -x "{{built_rig_sparkplug_cmd}}"
     test -x "{{built_rig_sparkplug_log}}"
 
+[positional-arguments]
+@aws *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig)"
+    command aws "$@"
+
 @check:
-    just --justfile "{{aws_justfile}}" check
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}" "{{endpoint_file}}")"
+    region="$TXING_AWS_REGION"
+    endpoint_file="$TXING_AWS_ENDPOINT_FILE"
+    aws_profile="$TXING_AWS_SELECTED_PROFILE"
+    just --justfile "{{aws_justfile}}" check \
+      region="$region" \
+      profile="$aws_profile" \
+      endpoint_file="$endpoint_file"
 
 @run:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}" "{{endpoint_file}}")"
+    endpoint_file="$TXING_AWS_ENDPOINT_FILE"
+    export IOT_ENDPOINT_FILE="$endpoint_file"
     cd "{{rig_dir}}" && "{{built_rig}}"
 
 @debug:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}" "{{endpoint_file}}")"
+    endpoint_file="$TXING_AWS_ENDPOINT_FILE"
+    export IOT_ENDPOINT_FILE="$endpoint_file"
     cd "{{rig_dir}}" && "{{built_rig}}" --debug
 
 @dev:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}" "{{endpoint_file}}")"
+    endpoint_file="$TXING_AWS_ENDPOINT_FILE"
+    export IOT_ENDPOINT_FILE="$endpoint_file"
     cd "{{rig_dir}}" && uv run rig
 
 @debug-dev:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}" "{{endpoint_file}}")"
+    endpoint_file="$TXING_AWS_ENDPOINT_FILE"
+    export IOT_ENDPOINT_FILE="$endpoint_file"
     cd "{{rig_dir}}" && uv run rig --debug
 
 @wake:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}" "{{endpoint_file}}")"
+    endpoint_file="$TXING_AWS_ENDPOINT_FILE"
+    export IOT_ENDPOINT_FILE="$endpoint_file"
     cd "{{rig_dir}}" && "{{built_rig_sparkplug_cmd}}" --redcon 3 --thing-name "{{thing_name}}" --sparkplug-group-id "{{sparkplug_group_id}}" --sparkplug-edge-node-id "{{sparkplug_edge_node_id}}"
 
 @sleep:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}" "{{endpoint_file}}")"
+    endpoint_file="$TXING_AWS_ENDPOINT_FILE"
+    export IOT_ENDPOINT_FILE="$endpoint_file"
     cd "{{rig_dir}}" && "{{built_rig_sparkplug_cmd}}" --redcon 4 --thing-name "{{thing_name}}" --sparkplug-group-id "{{sparkplug_group_id}}" --sparkplug-edge-node-id "{{sparkplug_edge_node_id}}"
 
 @dcmd:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}" "{{endpoint_file}}")"
+    endpoint_file="$TXING_AWS_ENDPOINT_FILE"
+    export IOT_ENDPOINT_FILE="$endpoint_file"
     cd "{{rig_dir}}" && "{{built_rig_sparkplug_log}}" --thing-name "{{thing_name}}" --sparkplug-group-id "{{sparkplug_group_id}}" --sparkplug-edge-node-id "{{sparkplug_edge_node_id}}" --message-type dcmd
 
 @ddata:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}" "{{endpoint_file}}")"
+    endpoint_file="$TXING_AWS_ENDPOINT_FILE"
+    export IOT_ENDPOINT_FILE="$endpoint_file"
     cd "{{rig_dir}}" && "{{built_rig_sparkplug_log}}" --thing-name "{{thing_name}}" --sparkplug-group-id "{{sparkplug_group_id}}" --sparkplug-edge-node-id "{{sparkplug_edge_node_id}}" --message-type ddata
 
 @print:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}" "{{endpoint_file}}")"
+    region="$TXING_AWS_REGION"
+    endpoint_file="$TXING_AWS_ENDPOINT_FILE"
     aws iot-data get-thing-shadow \
-      --region "{{region}}" \
-      --endpoint-url "https://$(tr -d '\n' < "{{endpoint_file}}")" \
+      --region "$region" \
+      --endpoint-url "https://$(tr -d '\n' < "$endpoint_file")" \
       --thing-name "{{thing_name}}" \
       /dev/stdout | jq '.'
 
-@install-service rig_name=rig_name sparkplug_group_id=sparkplug_group_id sparkplug_edge_node_id=sparkplug_edge_node_id region=region endpoint_file=endpoint_file cert_file=cert_file key_file=key_file ca_file=ca_file cloudwatch_log_group=cloudwatch_log_group:
+@install-service rig_name=rig_name sparkplug_group_id=sparkplug_group_id sparkplug_edge_node_id=sparkplug_edge_node_id region=region endpoint_file=endpoint_file aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file aws_config_file=aws_config_file cloudwatch_log_group=cloudwatch_log_group:
     test -x "{{built_rig}}" || { \
         echo "Missing built rig executable at {{built_rig}}. Run 'just build' first." >&2; \
         exit 1; \
     }
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}" "{{endpoint_file}}" "" "" "" "{{aws_shared_credentials_file}}" "{{aws_config_file}}")"
+    region="$TXING_AWS_REGION"
+    endpoint_file="$TXING_AWS_ENDPOINT_FILE"
+    aws_profile="$TXING_AWS_SELECTED_PROFILE"
+    aws_shared_credentials_file="$TXING_AWS_SHARED_CREDENTIALS_FILE"
+    aws_config_file="$TXING_AWS_CONFIG_FILE"
     sudo systemctl enable --now bluetooth
-    run_user="$(id -un)"; printf '%s\n' \
-        '[Unit]' \
-        'Description=txing rig lifecycle runtime' \
-        'After=network-online.target bluetooth.target' \
-        'Wants=network-online.target bluetooth.target' \
-        '' \
-        '[Service]' \
-        'Type=simple' \
-        "User=$run_user" \
-        'WorkingDirectory={{rig_dir}}' \
-        'Environment="AWS_REGION={{region}}"' \
+    run_user="$(id -un)"; \
+    service_env=( \
+        "Environment=\"AWS_REGION=$region\"" \
         'Environment="RIG_NAME={{rig_name}}"' \
         'Environment="SPARKPLUG_GROUP_ID={{sparkplug_group_id}}"' \
         'Environment="SPARKPLUG_EDGE_NODE_ID={{sparkplug_edge_node_id}}"' \
-        'Environment="IOT_ENDPOINT_FILE={{endpoint_file}}"' \
-        'Environment="CERT_FILE={{cert_file}}"' \
-        'Environment="KEY_FILE={{key_file}}"' \
-        'Environment="CA_FILE={{ca_file}}"' \
+        "Environment=\"IOT_ENDPOINT_FILE=$endpoint_file\"" \
         'Environment="CLOUDWATCH_LOG_GROUP={{cloudwatch_log_group}}"' \
-        'ExecStart={{built_rig}}' \
-        'Restart=always' \
-        'RestartSec=3' \
-        '' \
-        '[Install]' \
-        'WantedBy=multi-user.target' \
-        | sudo tee "{{systemd_unit}}" >/dev/null
+    ); \
+    if [ -n "$aws_profile" ]; then \
+        service_env+=("Environment=\"AWS_PROFILE=$aws_profile\""); \
+    fi; \
+    if [ -n "$aws_shared_credentials_file" ]; then \
+        service_env+=("Environment=\"AWS_SHARED_CREDENTIALS_FILE=$aws_shared_credentials_file\""); \
+    fi; \
+    if [ -n "$aws_config_file" ]; then \
+        service_env+=("Environment=\"AWS_CONFIG_FILE=$aws_config_file\""); \
+    fi; \
+    { \
+        printf '%s\n' \
+            '[Unit]' \
+            'Description=txing rig lifecycle runtime' \
+            'After=network-online.target bluetooth.target' \
+            'Wants=network-online.target bluetooth.target' \
+            '' \
+            '[Service]' \
+            'Type=simple' \
+            "User=$run_user" \
+            'WorkingDirectory={{rig_dir}}'; \
+        printf '%s\n' "${service_env[@]}"; \
+        printf '%s\n' \
+            'ExecStart={{built_rig}}' \
+            'Restart=always' \
+            'RestartSec=3' \
+            '' \
+            '[Install]' \
+            'WantedBy=multi-user.target'; \
+    } | sudo tee "{{systemd_unit}}" >/dev/null
     sudo systemctl daemon-reload
     sudo systemctl enable --now rig

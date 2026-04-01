@@ -2,10 +2,11 @@ set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 
 aws_dir := source_directory()
 project_root := aws_dir + "/.."
+root_justfile := project_root + "/justfile"
 
-stack_name := "txing-iot"
+stack_name := ""
 template_file := "template.yaml"
-region := "eu-central-1"
+region := ""
 profile := ""
 thing_name := "txing"
 rig_name := "rig"
@@ -21,57 +22,71 @@ localhost_app_url := "http://localhost:5173"
 localhost_alt_app_url := "http://127.0.0.1:5173"
 thing_index_name := "AWS_Things"
 
-@create CognitoDomainPrefix AdminEmail stack_name=stack_name template_file=template_file region=region profile=profile LocalhostAppUrl=localhost_app_url LocalhostAltAppUrl=localhost_alt_app_url:
+@create CognitoDomainPrefix='' AdminEmail='' stack_name=stack_name template_file=template_file region=region profile=profile LocalhostAppUrl=localhost_app_url LocalhostAltAppUrl=localhost_alt_app_url:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
 
-    if [ -z "{{region}}" ]; then
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}" "" "{{stack_name}}" "{{CognitoDomainPrefix}}" "{{AdminEmail}}")"
+    stack_name="$TXING_AWS_STACK_NAME"
+    region="$TXING_AWS_REGION"
+    profile="$TXING_AWS_SELECTED_PROFILE"
+    cognito_domain_prefix="$TXING_AWS_COGNITO_DOMAIN_PREFIX"
+    admin_email="$TXING_AWS_ADMIN_EMAIL"
+
+    if [ -z "$region" ]; then
       echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
       exit 1
     fi
 
-    aws_flags=(--region "{{region}}")
-    if [ -n "{{profile}}" ]; then
-      aws_flags+=(--profile "{{profile}}")
+    aws_flags=(--region "$region")
+    if [ -n "$profile" ]; then
+      aws_flags+=(--profile "$profile")
     fi
     params=(
-      ParameterKey=CognitoDomainPrefix,ParameterValue="{{CognitoDomainPrefix}}"
-      ParameterKey=AdminEmail,ParameterValue="{{AdminEmail}}"
+      ParameterKey=CognitoDomainPrefix,ParameterValue="$cognito_domain_prefix"
+      ParameterKey=AdminEmail,ParameterValue="$admin_email"
       ParameterKey=LocalhostAppUrl,ParameterValue="{{LocalhostAppUrl}}"
       ParameterKey=LocalhostAltAppUrl,ParameterValue="{{LocalhostAltAppUrl}}"
     )
-    cfn_flags=(--stack-name "{{stack_name}}" --template-body "file://{{template_file}}" --capabilities CAPABILITY_IAM --parameters "${params[@]}" "${aws_flags[@]}")
+    cfn_flags=(--stack-name "$stack_name" --template-body "file://{{template_file}}" --capabilities CAPABILITY_NAMED_IAM --parameters "${params[@]}" "${aws_flags[@]}")
 
     aws cloudformation create-stack "${cfn_flags[@]}"
-    aws cloudformation wait stack-create-complete --stack-name "{{stack_name}}" "${aws_flags[@]}"
+    aws cloudformation wait stack-create-complete --stack-name "$stack_name" "${aws_flags[@]}"
     aws cloudformation describe-stacks \
-      --stack-name "{{stack_name}}" \
+      --stack-name "$stack_name" \
       "${aws_flags[@]}" \
       --query "Stacks[0].Outputs" \
       --output table
 
-@update CognitoDomainPrefix AdminEmail stack_name=stack_name template_file=template_file region=region profile=profile LocalhostAppUrl=localhost_app_url LocalhostAltAppUrl=localhost_alt_app_url:
+@update CognitoDomainPrefix='' AdminEmail='' stack_name=stack_name template_file=template_file region=region profile=profile LocalhostAppUrl=localhost_app_url LocalhostAltAppUrl=localhost_alt_app_url:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
 
-    if [ -z "{{region}}" ]; then
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}" "" "{{stack_name}}" "{{CognitoDomainPrefix}}" "{{AdminEmail}}")"
+    stack_name="$TXING_AWS_STACK_NAME"
+    region="$TXING_AWS_REGION"
+    profile="$TXING_AWS_SELECTED_PROFILE"
+    cognito_domain_prefix="$TXING_AWS_COGNITO_DOMAIN_PREFIX"
+    admin_email="$TXING_AWS_ADMIN_EMAIL"
+
+    if [ -z "$region" ]; then
       echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
       exit 1
     fi
 
-    aws_flags=(--region "{{region}}")
-    if [ -n "{{profile}}" ]; then
-      aws_flags+=(--profile "{{profile}}")
+    aws_flags=(--region "$region")
+    if [ -n "$profile" ]; then
+      aws_flags+=(--profile "$profile")
     fi
     params=(
-      ParameterKey=CognitoDomainPrefix,ParameterValue="{{CognitoDomainPrefix}}"
-      ParameterKey=AdminEmail,ParameterValue="{{AdminEmail}}"
+      ParameterKey=CognitoDomainPrefix,ParameterValue="$cognito_domain_prefix"
+      ParameterKey=AdminEmail,ParameterValue="$admin_email"
       ParameterKey=LocalhostAppUrl,ParameterValue="{{LocalhostAppUrl}}"
       ParameterKey=LocalhostAltAppUrl,ParameterValue="{{LocalhostAltAppUrl}}"
     )
-    cfn_flags=(--stack-name "{{stack_name}}" --template-body "file://{{template_file}}" --capabilities CAPABILITY_IAM --parameters "${params[@]}" "${aws_flags[@]}")
+    cfn_flags=(--stack-name "$stack_name" --template-body "file://{{template_file}}" --capabilities CAPABILITY_NAMED_IAM --parameters "${params[@]}" "${aws_flags[@]}")
 
     output="$(aws cloudformation update-stack "${cfn_flags[@]}" 2>&1)" || {
       if echo "$output" | grep -q "No updates are to be performed"; then
@@ -83,67 +98,88 @@ thing_index_name := "AWS_Things"
     }
     echo "$output"
 
-    aws cloudformation wait stack-update-complete --stack-name "{{stack_name}}" "${aws_flags[@]}"
+    aws cloudformation wait stack-update-complete --stack-name "$stack_name" "${aws_flags[@]}"
     aws cloudformation describe-stacks \
-      --stack-name "{{stack_name}}" \
+      --stack-name "$stack_name" \
       "${aws_flags[@]}" \
       --query "Stacks[0].Outputs" \
       --output table
 
-@deploy CognitoDomainPrefix AdminEmail stack_name=stack_name template_file=template_file region=region profile=profile LocalhostAppUrl=localhost_app_url LocalhostAltAppUrl=localhost_alt_app_url:
+@deploy CognitoDomainPrefix='' AdminEmail='' stack_name=stack_name template_file=template_file region=region profile=profile LocalhostAppUrl=localhost_app_url LocalhostAltAppUrl=localhost_alt_app_url:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
 
-    if [ -z "{{region}}" ]; then
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}" "" "{{stack_name}}" "{{CognitoDomainPrefix}}" "{{AdminEmail}}")"
+    stack_name="$TXING_AWS_STACK_NAME"
+    region="$TXING_AWS_REGION"
+    profile="$TXING_AWS_SELECTED_PROFILE"
+    cognito_domain_prefix="$TXING_AWS_COGNITO_DOMAIN_PREFIX"
+    admin_email="$TXING_AWS_ADMIN_EMAIL"
+
+    if [ -z "$region" ]; then
       echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
       exit 1
     fi
 
-    aws_flags=(--region "{{region}}")
-    if [ -n "{{profile}}" ]; then
-      aws_flags+=(--profile "{{profile}}")
+    aws_flags=(--region "$region")
+    if [ -n "$profile" ]; then
+      aws_flags+=(--profile "$profile")
     fi
 
-    if aws cloudformation describe-stacks --stack-name "{{stack_name}}" "${aws_flags[@]}" >/dev/null 2>&1; then
-      just --justfile "{{aws_dir}}/justfile" update \
-        "{{CognitoDomainPrefix}}" \
-        "{{AdminEmail}}" \
-        "{{stack_name}}" \
-        "{{template_file}}" \
-        "{{region}}" \
-        "{{profile}}" \
-        "{{LocalhostAppUrl}}" \
-        "{{LocalhostAltAppUrl}}"
+    params=(
+      ParameterKey=CognitoDomainPrefix,ParameterValue="$cognito_domain_prefix"
+      ParameterKey=AdminEmail,ParameterValue="$admin_email"
+      ParameterKey=LocalhostAppUrl,ParameterValue="{{LocalhostAppUrl}}"
+      ParameterKey=LocalhostAltAppUrl,ParameterValue="{{LocalhostAltAppUrl}}"
+    )
+    cfn_flags=(--stack-name "$stack_name" --template-body "file://{{template_file}}" --capabilities CAPABILITY_NAMED_IAM --parameters "${params[@]}" "${aws_flags[@]}")
+
+    if aws cloudformation describe-stacks --stack-name "$stack_name" "${aws_flags[@]}" >/dev/null 2>&1; then
+      output="$(aws cloudformation update-stack "${cfn_flags[@]}" 2>&1)" || {
+        if echo "$output" | grep -q "No updates are to be performed"; then
+          echo "$output"
+          exit 0
+        fi
+        echo "$output"
+        exit 1
+      }
+      echo "$output"
+
+      aws cloudformation wait stack-update-complete --stack-name "$stack_name" "${aws_flags[@]}"
     else
-      just --justfile "{{aws_dir}}/justfile" create \
-        "{{CognitoDomainPrefix}}" \
-        "{{AdminEmail}}" \
-        "{{stack_name}}" \
-        "{{template_file}}" \
-        "{{region}}" \
-        "{{profile}}" \
-        "{{LocalhostAppUrl}}" \
-        "{{LocalhostAltAppUrl}}"
+      aws cloudformation create-stack "${cfn_flags[@]}"
+      aws cloudformation wait stack-create-complete --stack-name "$stack_name" "${aws_flags[@]}"
     fi
+
+    aws cloudformation describe-stacks \
+      --stack-name "$stack_name" \
+      "${aws_flags[@]}" \
+      --query "Stacks[0].Outputs" \
+      --output table
 
 @delete stack_name=stack_name thing_name=thing_name policy_name=policy_name region=region profile=profile:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
 
-    if [ -z "{{region}}" ]; then
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}" "" "{{stack_name}}")"
+    stack_name="$TXING_AWS_STACK_NAME"
+    region="$TXING_AWS_REGION"
+    profile="$TXING_AWS_SELECTED_PROFILE"
+
+    if [ -z "$region" ]; then
       echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
       exit 1
     fi
 
-    aws_flags=(--region "{{region}}")
-    if [ -n "{{profile}}" ]; then
-      aws_flags+=(--profile "{{profile}}")
+    aws_flags=(--region "$region")
+    if [ -n "$profile" ]; then
+      aws_flags+=(--profile "$profile")
     fi
 
     web_bucket_name="$(aws cloudformation describe-stacks \
-      --stack-name "{{stack_name}}" \
+      --stack-name "$stack_name" \
       "${aws_flags[@]}" \
       --query "Stacks[0].Outputs[?OutputKey=='WebAppBucketName'].OutputValue | [0]" \
       --output text 2>/dev/null || true)"
@@ -165,22 +201,26 @@ thing_index_name := "AWS_Things"
       done
     fi
 
-    aws cloudformation delete-stack --stack-name "{{stack_name}}" "${aws_flags[@]}"
-    aws cloudformation wait stack-delete-complete --stack-name "{{stack_name}}" "${aws_flags[@]}"
+    aws cloudformation delete-stack --stack-name "$stack_name" "${aws_flags[@]}"
+    aws cloudformation wait stack-delete-complete --stack-name "$stack_name" "${aws_flags[@]}"
 
 @validate template_file=template_file region=region profile=profile:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
 
-    if [ -z "{{region}}" ]; then
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}")"
+    region="$TXING_AWS_REGION"
+    profile="$TXING_AWS_SELECTED_PROFILE"
+
+    if [ -z "$region" ]; then
       echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
       exit 1
     fi
 
-    aws_flags=(--region "{{region}}")
-    if [ -n "{{profile}}" ]; then
-      aws_flags+=(--profile "{{profile}}")
+    aws_flags=(--region "$region")
+    if [ -n "$profile" ]; then
+      aws_flags+=(--profile "$profile")
     fi
 
     aws cloudformation validate-template --template-body "file://{{template_file}}" "${aws_flags[@]}"
@@ -190,58 +230,69 @@ thing_index_name := "AWS_Things"
     set -euo pipefail
     cd "{{aws_dir}}"
 
-    if [ -z "{{region}}" ]; then
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}" "" "{{stack_name}}")"
+    stack_name="$TXING_AWS_STACK_NAME"
+    region="$TXING_AWS_REGION"
+    profile="$TXING_AWS_SELECTED_PROFILE"
+
+    if [ -z "$region" ]; then
       echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
       exit 1
     fi
 
-    aws_flags=(--region "{{region}}")
-    if [ -n "{{profile}}" ]; then
-      aws_flags+=(--profile "{{profile}}")
+    aws_flags=(--region "$region")
+    if [ -n "$profile" ]; then
+      aws_flags+=(--profile "$profile")
     fi
 
     aws cloudformation describe-stacks \
-      --stack-name "{{stack_name}}" \
+      --stack-name "$stack_name" \
       "${aws_flags[@]}" \
       --query "Stacks[0].Outputs" \
       --output table
 
-@create-admin-user AdminEmail AdminPassword stack_name=stack_name region=region profile=profile:
+@create-admin-user AdminPassword AdminEmail='' stack_name=stack_name region=region profile=profile:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
 
-    if [ -z "{{region}}" ]; then
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}" "" "{{stack_name}}" "" "{{AdminEmail}}")"
+    stack_name="$TXING_AWS_STACK_NAME"
+    region="$TXING_AWS_REGION"
+    profile="$TXING_AWS_SELECTED_PROFILE"
+    admin_email="$TXING_AWS_ADMIN_EMAIL"
+
+    if [ -z "$region" ]; then
       echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
       exit 1
     fi
 
-    aws_flags=(--region "{{region}}")
-    if [ -n "{{profile}}" ]; then
-      aws_flags+=(--profile "{{profile}}")
+    aws_flags=(--region "$region")
+    if [ -n "$profile" ]; then
+      aws_flags+=(--profile "$profile")
     fi
 
     user_pool_id="$(aws cloudformation describe-stacks \
-      --stack-name "{{stack_name}}" \
+      --stack-name "$stack_name" \
       "${aws_flags[@]}" \
       --query "Stacks[0].Outputs[?OutputKey=='WebCognitoUserPoolId'].OutputValue | [0]" \
       --output text)"
 
     if [ "$user_pool_id" = "None" ]; then
-      echo "WebCognitoUserPoolId output not found in stack {{stack_name}}." >&2
+      echo "WebCognitoUserPoolId output not found in stack $stack_name." >&2
       exit 1
     fi
 
     if aws cognito-idp admin-get-user \
       --user-pool-id "$user_pool_id" \
-      --username "{{AdminEmail}}" \
+      --username "$admin_email" \
       "${aws_flags[@]}" >/dev/null 2>&1; then
       echo "Admin user already exists, updating password."
     else
       aws cognito-idp admin-create-user \
         --user-pool-id "$user_pool_id" \
-        --username "{{AdminEmail}}" \
-        --user-attributes Name=email,Value="{{AdminEmail}}" Name=email_verified,Value=true \
+        --username "$admin_email" \
+        --user-attributes Name=email,Value="$admin_email" Name=email_verified,Value=true \
         --message-action SUPPRESS \
         "${aws_flags[@]}" >/dev/null
       echo "Admin user created."
@@ -249,40 +300,33 @@ thing_index_name := "AWS_Things"
 
     aws cognito-idp admin-set-user-password \
       --user-pool-id "$user_pool_id" \
-      --username "{{AdminEmail}}" \
+      --username "$admin_email" \
       --password "{{AdminPassword}}" \
       --permanent \
       "${aws_flags[@]}" >/dev/null
 
     echo "Admin user password set."
 
-@check thing_name=thing_name rig_name=rig_name policy_name=policy_name log_group_name=log_group_name region=region profile=profile cert_dir=cert_dir endpoint_file=endpoint_file ca_file=ca_file cert_basename='' cert_arn_file='':
+@check thing_name=thing_name rig_name=rig_name log_group_name=log_group_name region=region profile=profile endpoint_file=endpoint_file iot_data_endpoint=iot_data_endpoint:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
 
-    if [ -z "{{region}}" ]; then
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{profile}}" "{{endpoint_file}}")"
+    region="$TXING_AWS_REGION"
+    profile="$TXING_AWS_SELECTED_PROFILE"
+    endpoint_file="$TXING_AWS_ENDPOINT_FILE"
+    expected_endpoint="{{iot_data_endpoint}}"
+
+    if [ -z "$region" ]; then
       echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
       exit 1
     fi
 
-    aws_flags=(--region "{{region}}")
-    if [ -n "{{profile}}" ]; then
-      aws_flags+=(--profile "{{profile}}")
+    aws_flags=(--region "$region")
+    if [ -n "$profile" ]; then
+      aws_flags+=(--profile "$profile")
     fi
-
-    cert_basename="{{cert_basename}}"
-    if [ -z "$cert_basename" ]; then
-      cert_basename="{{thing_name}}"
-    fi
-
-    cert_arn_file="{{cert_arn_file}}"
-    if [ -z "$cert_arn_file" ]; then
-      cert_arn_file="{{cert_dir}}/${cert_basename}.cert.arn"
-    fi
-
-    cert_file="{{cert_dir}}/${cert_basename}.cert.pem"
-    private_key_file="{{cert_dir}}/${cert_basename}.private.key"
 
     failures=0
 
@@ -323,12 +367,12 @@ thing_index_name := "AWS_Things"
     check_tool jq
     check_tool uv
     check_tool just
-    check_tool openssl
 
     echo "Checking AWS identity..."
     check_cmd "STS caller identity" aws sts get-caller-identity "${aws_flags[@]}"
     check_cmd "IoT DescribeThing on {{thing_name}}" aws iot describe-thing --thing-name "{{thing_name}}" "${aws_flags[@]}"
     check_cmd "IoT DescribeThingGroup on {{rig_name}}" aws iot describe-thing-group --thing-group-name "{{rig_name}}" "${aws_flags[@]}"
+    check_cmd "IoT DescribeEndpoint (Data-ATS)" aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}"
 
     thing_indexing_mode="$(
       aws iot get-indexing-configuration \
@@ -430,29 +474,20 @@ thing_index_name := "AWS_Things"
       --log-events "timestamp=${log_event_ts_ms},message=txing-aws-check" \
       "${aws_flags[@]}"
 
-    echo "Checking local AWS IoT client certificate artifacts..."
-    check_file "$cert_file" "AWS IoT client certificate file"
-    check_file "$private_key_file" "AWS IoT client private key file"
-    check_file "{{ca_file}}" "Root CA file"
-    check_file "{{endpoint_file}}" "IoT endpoint file"
-    check_file "$cert_arn_file" "Certificate ARN file"
-
-    cert_arn=""
-    cert_id=""
-    if [ -s "$cert_arn_file" ]; then
-      cert_arn="$(tr -d '\r\n' < "$cert_arn_file")"
-      cert_id="${cert_arn##*/}"
-    fi
-
-    if [ -s "$cert_file" ]; then
-      check_cmd "AWS IoT client certificate file parses" openssl x509 -in "$cert_file" -noout
-    fi
-    if [ -s "$private_key_file" ]; then
-      check_cmd "AWS IoT client private key parses" openssl pkey -in "$private_key_file" -noout
+    echo "Checking local AWS IoT endpoint configuration..."
+    check_file "$endpoint_file" "IoT endpoint file"
+    if [ -z "$expected_endpoint" ]; then
+      expected_endpoint="$(
+        aws iot describe-endpoint \
+          --endpoint-type iot:Data-ATS \
+          "${aws_flags[@]}" \
+          --query endpointAddress \
+          --output text 2>/dev/null || true
+      )"
     fi
     endpoint_value=""
-    if [ -s "{{endpoint_file}}" ]; then
-      endpoint_value="$(tr -d '\r\n' < "{{endpoint_file}}")"
+    if [ -s "$endpoint_file" ]; then
+      endpoint_value="$(tr -d '\r\n' < "$endpoint_file")"
       if [ -n "$endpoint_value" ]; then
         echo "ok: IoT endpoint file contains endpoint"
       else
@@ -460,79 +495,38 @@ thing_index_name := "AWS_Things"
         failures=$((failures + 1))
       fi
     fi
-
-    if [ -n "$cert_id" ]; then
-      cert_status="$(
-        aws iot describe-certificate \
-          --certificate-id "$cert_id" \
-          "${aws_flags[@]}" \
-          --query "certificateDescription.status" \
-          --output text 2>/dev/null || true
-      )"
-      if [ -z "$cert_status" ] || [ "$cert_status" = "None" ]; then
-        echo "warn: Could not verify certificate status via AWS API (insufficient permission or missing cert)"
-      elif [ "$cert_status" = "ACTIVE" ]; then
-        echo "ok: Certificate is ACTIVE"
+    if [ -n "$expected_endpoint" ] && [ "$expected_endpoint" != "None" ] && [ -n "$endpoint_value" ]; then
+      if [ "$endpoint_value" = "$expected_endpoint" ]; then
+        echo "ok: IoT endpoint file matches AWS IoT Data-ATS endpoint"
       else
-        echo "fail: Certificate status is '$cert_status' (expected ACTIVE)"
+        echo "fail: IoT endpoint file contains '$endpoint_value' (expected '$expected_endpoint')"
         failures=$((failures + 1))
       fi
-
-      principals="$(
-        aws iot list-thing-principals \
-          --thing-name "{{thing_name}}" \
-          "${aws_flags[@]}" \
-          --query principals \
-          --output text 2>/dev/null || true
-      )"
-      if [ -z "$principals" ] || [ "$principals" = "None" ]; then
-        echo "warn: Could not verify thing principal attachment via AWS API"
-      elif printf '%s\n' "$principals" | tr '\t' '\n' | grep -Fx "$cert_arn" >/dev/null; then
-        echo "ok: Certificate attached to thing {{thing_name}}"
-      else
-        echo "fail: Certificate is not attached to thing {{thing_name}}"
-        failures=$((failures + 1))
-      fi
-
-      attached_policies="$(
-        aws iot list-attached-policies \
-          --target "$cert_arn" \
-          "${aws_flags[@]}" \
-          --query "policies[].policyName" \
-          --output text 2>/dev/null || true
-      )"
-      if [ -z "$attached_policies" ] || [ "$attached_policies" = "None" ]; then
-        echo "warn: Could not verify certificate policy attachment via AWS API"
-      elif printf '%s\n' "$attached_policies" | tr '\t' '\n' | grep -Fx "{{policy_name}}" >/dev/null; then
-        echo "ok: Policy {{policy_name}} attached to certificate"
-      else
-        echo "fail: Policy {{policy_name}} is not attached to certificate"
-        failures=$((failures + 1))
-      fi
-    else
-      echo "fail: Could not parse certificate ARN from $cert_arn_file"
-      failures=$((failures + 1))
     fi
 
     if [ "$failures" -ne 0 ]; then
       echo "AWS/device check failed with $failures issue(s)."
       exit 1
     fi
-    echo "AWS/device check passed. Shared AWS IoT client prerequisites look good."
+    echo "AWS/device check passed. Role-based AWS IoT prerequisites look good."
 
 @upsert-rig-group rig_name=rig_name region=region profile=profile:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
 
-    if [ -z "{{region}}" ]; then
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}")"
+    region="$TXING_AWS_REGION"
+    profile="$TXING_AWS_SELECTED_PROFILE"
+
+    if [ -z "$region" ]; then
       echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
       exit 1
     fi
 
-    aws_flags=(--region "{{region}}")
-    if [ -n "{{profile}}" ]; then
-      aws_flags+=(--profile "{{profile}}")
+    aws_flags=(--region "$region")
+    if [ -n "$profile" ]; then
+      aws_flags+=(--profile "$profile")
     fi
 
     thing_group_properties="$(
@@ -579,14 +573,18 @@ thing_index_name := "AWS_Things"
     set -euo pipefail
     cd "{{aws_dir}}"
 
-    if [ -z "{{region}}" ]; then
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{profile}}")"
+    region="$TXING_AWS_REGION"
+    profile="$TXING_AWS_SELECTED_PROFILE"
+
+    if [ -z "$region" ]; then
       echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
       exit 1
     fi
 
-    aws_flags=(--region "{{region}}")
-    if [ -n "{{profile}}" ]; then
-      aws_flags+=(--profile "{{profile}}")
+    aws_flags=(--region "$region")
+    if [ -n "$profile" ]; then
+      aws_flags+=(--profile "$profile")
     fi
 
     attribute_payload="$(
@@ -616,14 +614,18 @@ thing_index_name := "AWS_Things"
     set -euo pipefail
     cd "{{aws_dir}}"
 
-    if [ -z "{{region}}" ]; then
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{profile}}")"
+    region="$TXING_AWS_REGION"
+    profile="$TXING_AWS_SELECTED_PROFILE"
+
+    if [ -z "$region" ]; then
       echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
       exit 1
     fi
 
-    aws_flags=(--region "{{region}}")
-    if [ -n "{{profile}}" ]; then
-      aws_flags+=(--profile "{{profile}}")
+    aws_flags=(--region "$region")
+    if [ -n "$profile" ]; then
+      aws_flags+=(--profile "$profile")
     fi
 
     thing_names="$(
@@ -662,19 +664,24 @@ thing_index_name := "AWS_Things"
     set -euo pipefail
     cd "{{aws_dir}}"
 
-    if [ -z "{{region}}" ]; then
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{profile}}" "{{endpoint_file}}")"
+    region="$TXING_AWS_REGION"
+    profile="$TXING_AWS_SELECTED_PROFILE"
+    endpoint_file="$TXING_AWS_ENDPOINT_FILE"
+
+    if [ -z "$region" ]; then
       echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
       exit 1
     fi
 
-    aws_flags=(--region "{{region}}")
-    if [ -n "{{profile}}" ]; then
-      aws_flags+=(--profile "{{profile}}")
+    aws_flags=(--region "$region")
+    if [ -n "$profile" ]; then
+      aws_flags+=(--profile "$profile")
     fi
 
     endpoint="{{iot_data_endpoint}}"
-    if [ -z "$endpoint" ] && [ -s "{{endpoint_file}}" ]; then
-      endpoint="$(tr -d '\r\n' < "{{endpoint_file}}")"
+    if [ -z "$endpoint" ] && [ -s "$endpoint_file" ]; then
+      endpoint="$(tr -d '\r\n' < "$endpoint_file")"
     fi
     if [ -z "$endpoint" ]; then
       endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}" --query endpointAddress --output text)"
@@ -691,7 +698,12 @@ thing_index_name := "AWS_Things"
     set -euo pipefail
     cd "{{aws_dir}}"
 
-    if [ -z "{{region}}" ]; then
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{profile}}" "{{endpoint_file}}")"
+    region="$TXING_AWS_REGION"
+    profile="$TXING_AWS_SELECTED_PROFILE"
+    endpoint_file="$TXING_AWS_ENDPOINT_FILE"
+
+    if [ -z "$region" ]; then
       echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
       exit 1
     fi
@@ -700,14 +712,14 @@ thing_index_name := "AWS_Things"
       exit 1
     fi
 
-    aws_flags=(--region "{{region}}")
-    if [ -n "{{profile}}" ]; then
-      aws_flags+=(--profile "{{profile}}")
+    aws_flags=(--region "$region")
+    if [ -n "$profile" ]; then
+      aws_flags+=(--profile "$profile")
     fi
 
     endpoint="{{iot_data_endpoint}}"
-    if [ -z "$endpoint" ] && [ -s "{{endpoint_file}}" ]; then
-      endpoint="$(tr -d '\r\n' < "{{endpoint_file}}")"
+    if [ -z "$endpoint" ] && [ -s "$endpoint_file" ]; then
+      endpoint="$(tr -d '\r\n' < "$endpoint_file")"
     fi
     if [ -z "$endpoint" ]; then
       endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}" --query endpointAddress --output text)"
@@ -739,14 +751,18 @@ thing_index_name := "AWS_Things"
     set -euo pipefail
     cd "{{aws_dir}}"
 
-    if [ -z "{{region}}" ]; then
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}")"
+    region="$TXING_AWS_REGION"
+    profile="$TXING_AWS_SELECTED_PROFILE"
+
+    if [ -z "$region" ]; then
       echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
       exit 1
     fi
 
-    aws_flags=(--region "{{region}}")
-    if [ -n "{{profile}}" ]; then
-      aws_flags+=(--profile "{{profile}}")
+    aws_flags=(--region "$region")
+    if [ -n "$profile" ]; then
+      aws_flags+=(--profile "$profile")
     fi
 
     cert_basename="{{cert_basename}}"
@@ -785,22 +801,31 @@ thing_index_name := "AWS_Things"
     set -euo pipefail
     cd "{{aws_dir}}"
 
-    if [ -z "{{region}}" ]; then
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{profile}}" "{{endpoint_file}}")"
+    region="$TXING_AWS_REGION"
+    profile="$TXING_AWS_SELECTED_PROFILE"
+    endpoint_file="$TXING_AWS_ENDPOINT_FILE"
+    cert_dir="{{cert_dir}}"
+    if [ -z "$cert_dir" ]; then
+      cert_dir="$(dirname "$endpoint_file")"
+    fi
+
+    if [ -z "$region" ]; then
       echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
       exit 1
     fi
 
-    aws_flags=(--region "{{region}}")
-    if [ -n "{{profile}}" ]; then
-      aws_flags+=(--profile "{{profile}}")
+    aws_flags=(--region "$region")
+    if [ -n "$profile" ]; then
+      aws_flags+=(--profile "$profile")
     fi
 
-    mkdir -p "{{cert_dir}}"
+    mkdir -p "$cert_dir"
     aws iot describe-endpoint \
       --endpoint-type iot:Data-ATS \
       "${aws_flags[@]}" \
       --query endpointAddress \
-      --output text | tee "{{endpoint_file}}"
+      --output text | tee "$endpoint_file"
 
 @ca cert_dir=cert_dir ca_file=ca_file ca_url=ca_url:
     #!/usr/bin/env bash
@@ -816,14 +841,18 @@ thing_index_name := "AWS_Things"
     set -euo pipefail
     cd "{{aws_dir}}"
 
-    if [ -z "{{region}}" ]; then
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{profile}}")"
+    region="$TXING_AWS_REGION"
+    profile="$TXING_AWS_SELECTED_PROFILE"
+
+    if [ -z "$region" ]; then
       echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
       exit 1
     fi
 
-    aws_flags=(--region "{{region}}")
-    if [ -n "{{profile}}" ]; then
-      aws_flags+=(--profile "{{profile}}")
+    aws_flags=(--region "$region")
+    if [ -n "$profile" ]; then
+      aws_flags+=(--profile "$profile")
     fi
 
     shadow_response_file="{{shadow_response_file}}"
@@ -845,10 +874,13 @@ thing_index_name := "AWS_Things"
       "$shadow_response_file"
     echo "Shadow initialized from {{default_shadow_file}}"
 
-@bootstrap CognitoDomainPrefix AdminEmail stack_name=stack_name template_file=template_file thing_name=thing_name rig_name=rig_name policy_name=policy_name region=region profile=profile cert_dir=cert_dir cert_basename='' cert_arn_file='' endpoint_file=endpoint_file ca_file=ca_file ca_url=ca_url default_shadow_file=default_shadow_file shadow_response_file='' iot_data_endpoint=iot_data_endpoint:
+@bootstrap CognitoDomainPrefix='' AdminEmail='' stack_name=stack_name template_file=template_file thing_name=thing_name rig_name=rig_name policy_name=policy_name region=region profile=profile cert_dir=cert_dir cert_basename='' cert_arn_file='' endpoint_file=endpoint_file ca_file=ca_file ca_url=ca_url default_shadow_file=default_shadow_file shadow_response_file='' iot_data_endpoint=iot_data_endpoint:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
+
+    echo "warning: aws::bootstrap is not part of the recommended rig setup anymore."
+    echo "warning: rig now uses IAM role credentials + SigV4 MQTT/WSS; this recipe remains only for legacy certificate flows elsewhere in the repo."
 
     just --justfile "{{aws_dir}}/justfile" deploy \
       "{{CognitoDomainPrefix}}" \

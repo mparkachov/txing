@@ -1,18 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import os
 import sys
 from pathlib import Path
 
-import paho.mqtt.client as mqtt
-
-from .repo_paths import (
-    DEFAULT_CA_FILE,
-    DEFAULT_CERT_FILE,
-    DEFAULT_IOT_ENDPOINT_FILE,
-    DEFAULT_KEY_FILE,
-)
+from .aws_auth import build_aws_runtime, read_iot_endpoint, resolve_aws_region
+from .aws_mqtt import AwsIotWebsocketConnection, AwsMqttConnectionConfig
+from .repo_paths import DEFAULT_IOT_ENDPOINT_FILE
 from .sparkplug import build_device_topic, build_redcon_payload
 
 DEFAULT_THING_NAME = "txing"
@@ -22,9 +18,7 @@ DEFAULT_THING_NAME_ENV = "THING_NAME"
 DEFAULT_SPARKPLUG_GROUP_ID_ENV = "SPARKPLUG_GROUP_ID"
 DEFAULT_SPARKPLUG_EDGE_NODE_ID_ENV = "SPARKPLUG_EDGE_NODE_ID"
 DEFAULT_IOT_ENDPOINT_FILE_ENV = "IOT_ENDPOINT_FILE"
-DEFAULT_CERT_FILE_ENV = "CERT_FILE"
-DEFAULT_KEY_FILE_ENV = "KEY_FILE"
-DEFAULT_CA_FILE_ENV = "CA_FILE"
+DEFAULT_CONNECT_TIMEOUT = 10.0
 
 
 def _env_text(name: str, default: str) -> str:
@@ -35,28 +29,6 @@ def _env_text(name: str, default: str) -> str:
 def _env_path(name: str, default: Path) -> Path:
     value = os.environ.get(name, "").strip()
     return Path(value) if value else default
-
-
-def _read_iot_endpoint(explicit_endpoint: str | None, endpoint_file: Path) -> str:
-    if explicit_endpoint:
-        endpoint = explicit_endpoint.strip()
-        if endpoint:
-            return endpoint
-
-    try:
-        endpoint = endpoint_file.read_text(encoding="utf-8").strip()
-    except OSError as err:
-        raise RuntimeError(
-            f"failed to read AWS IoT endpoint file {endpoint_file}: {err}"
-        ) from err
-    if not endpoint:
-        raise RuntimeError(f"AWS IoT endpoint file {endpoint_file} is empty")
-    return endpoint
-
-
-def _require_file(path: Path, description: str) -> None:
-    if not path.is_file():
-        raise RuntimeError(f"{description} not found: {path}")
 
 
 def _parse_args() -> argparse.Namespace:
@@ -101,24 +73,6 @@ def _parse_args() -> argparse.Namespace:
         help=f"File containing AWS IoT endpoint (default: {DEFAULT_IOT_ENDPOINT_FILE})",
     )
     parser.add_argument(
-        "--cert-file",
-        type=Path,
-        default=_env_path(DEFAULT_CERT_FILE_ENV, DEFAULT_CERT_FILE),
-        help=f"Client certificate PEM file (default: {DEFAULT_CERT_FILE})",
-    )
-    parser.add_argument(
-        "--key-file",
-        type=Path,
-        default=_env_path(DEFAULT_KEY_FILE_ENV, DEFAULT_KEY_FILE),
-        help=f"Client private key file (default: {DEFAULT_KEY_FILE})",
-    )
-    parser.add_argument(
-        "--ca-file",
-        type=Path,
-        default=_env_path(DEFAULT_CA_FILE_ENV, DEFAULT_CA_FILE),
-        help=f"Root CA file (default: {DEFAULT_CA_FILE})",
-    )
-    parser.add_argument(
         "--client-id",
         default=None,
         help="MQTT client id (default: rig-cmd-<pid>)",
@@ -132,16 +86,11 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> None:
-    args = _parse_args()
-    try:
-        endpoint = _read_iot_endpoint(args.iot_endpoint, args.iot_endpoint_file)
-        _require_file(args.cert_file, "AWS IoT client certificate")
-        _require_file(args.key_file, "AWS IoT client private key")
-        _require_file(args.ca_file, "AWS IoT root CA")
-    except RuntimeError as err:
-        print(f"rig-sparkplug-cmd failed: {err}", file=sys.stderr)
-        raise SystemExit(2) from err
+async def _run_publish(args: argparse.Namespace) -> str:
+    endpoint = read_iot_endpoint(args.iot_endpoint, args.iot_endpoint_file)
+    aws_region = resolve_aws_region(iot_endpoint=endpoint)
+    if not aws_region:
+        raise RuntimeError("could not resolve AWS region for AWS IoT access")
 
     topic = build_device_topic(
         args.sparkplug_group_id,
@@ -150,42 +99,38 @@ def main() -> None:
         args.thing_name,
     )
     payload = build_redcon_payload(redcon=args.redcon, seq=0)
-
-    client = mqtt.Client(
-        callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
-        client_id=args.client_id or f"rig-cmd-{os.getpid()}",
-        clean_session=True,
-        protocol=mqtt.MQTTv311,
-    )
-    client.tls_set(
-        ca_certs=str(args.ca_file),
-        certfile=str(args.cert_file),
-        keyfile=str(args.key_file),
+    runtime = build_aws_runtime(region_name=aws_region)
+    connection = AwsIotWebsocketConnection(
+        AwsMqttConnectionConfig(
+            endpoint=endpoint,
+            client_id=args.client_id or f"rig-cmd-{os.getpid()}",
+            region_name=aws_region,
+            connect_timeout_seconds=DEFAULT_CONNECT_TIMEOUT,
+            operation_timeout_seconds=args.publish_timeout,
+        ),
+        aws_runtime=runtime,
     )
 
     try:
-        connect_rc = client.connect(host=endpoint, port=8883, keepalive=60)
-        if connect_rc != mqtt.MQTT_ERR_SUCCESS:
-            raise RuntimeError(
-                f"failed to initiate AWS IoT MQTT connection (rc={connect_rc})"
-            )
-        client.loop_start()
-        info = client.publish(topic, payload=payload, qos=1)
-        if info.rc != mqtt.MQTT_ERR_SUCCESS:
-            raise RuntimeError(f"failed to publish Sparkplug command (rc={info.rc})")
-        wait_result = info.wait_for_publish(timeout=args.publish_timeout)
-        if wait_result is False:
-            raise TimeoutError(
-                f"timed out waiting {args.publish_timeout:.1f}s for Sparkplug publish acknowledgement"
-            )
+        await connection.connect(timeout_seconds=DEFAULT_CONNECT_TIMEOUT)
+        await connection.publish(
+            topic,
+            payload,
+            timeout_seconds=args.publish_timeout,
+        )
+    finally:
+        await connection.disconnect(timeout_seconds=DEFAULT_CONNECT_TIMEOUT)
+
+    return topic
+
+
+def main() -> None:
+    args = _parse_args()
+    try:
+        topic = asyncio.run(_run_publish(args))
     except Exception as err:
         print(f"rig-sparkplug-cmd failed: {err}", file=sys.stderr)
         raise SystemExit(1) from err
-    finally:
-        try:
-            client.disconnect()
-        finally:
-            client.loop_stop()
 
     print(f"Published DCMD.redcon={args.redcon} to {topic}")
 

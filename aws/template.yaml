@@ -31,7 +31,7 @@ Resources:
   TxingGatewayLogsManagedPolicy:
     Type: AWS::IAM::ManagedPolicy
     Properties:
-      Description: Attach to the rig host AWS principal for CloudWatch logs and IoT registry/thing-group control-plane access.
+      Description: Legacy direct-principal policy for CloudWatch logs and IoT registry/thing-group control-plane access.
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -57,6 +57,113 @@ Resources:
               - iot:ListThingsInThingGroup
               - iot:GetIndexingConfiguration
             Resource: "*"
+
+  TxingRigRuntimeManagedPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Attach to the town-scoped rig runtime IAM role used by rig MQTT/WSS and control-plane calls.
+      ManagedPolicyName: !Sub ${AWS::StackName}-rig-runtime
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: RigMqttConnect
+            Effect: Allow
+            Action: iot:Connect
+            Resource:
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/rig-*
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/rig-cmd-*
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/rig-log-*
+          - Sid: RigShadowMqttTopics
+            Effect: Allow
+            Action:
+              - iot:Publish
+              - iot:Receive
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/*/shadow/*
+          - Sid: RigShadowMqttTopicFilters
+            Effect: Allow
+            Action: iot:Subscribe
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/$aws/things/*/shadow/*
+          - Sid: RigSparkplugMqttTopics
+            Effect: Allow
+            Action:
+              - iot:Publish
+              - iot:Receive
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/spBv1.0/*
+          - Sid: RigSparkplugMqttTopicFilters
+            Effect: Allow
+            Action: iot:Subscribe
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/spBv1.0/*
+          - Sid: RigCmdVelTopics
+            Effect: Allow
+            Action:
+              - iot:Publish
+              - iot:Receive
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txing/board/cmd_vel
+          - Sid: RigCmdVelTopicFilters
+            Effect: Allow
+            Action: iot:Subscribe
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/txing/board/cmd_vel
+          - Sid: RigThingShadowApi
+            Effect: Allow
+            Action:
+              - iot:GetThingShadow
+              - iot:UpdateThingShadow
+              - iot:DeleteThingShadow
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/*
+          - Sid: RigThingRegistryReadWrite
+            Effect: Allow
+            Action:
+              - iot:DescribeThing
+              - iot:UpdateThing
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/*
+          - Sid: RigThingGroupRead
+            Effect: Allow
+            Action:
+              - iot:DescribeThingGroup
+              - iot:ListThingsInThingGroup
+              - iot:GetIndexingConfiguration
+            Resource: "*"
+          - Sid: RigDescribeEndpoint
+            Effect: Allow
+            Action: iot:DescribeEndpoint
+            Resource: "*"
+          - Sid: RigCloudWatchLogsWrite
+            Effect: Allow
+            Action:
+              - logs:CreateLogStream
+              - logs:DescribeLogStreams
+              - logs:PutLogEvents
+            Resource:
+              - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/town/rig/txing
+              - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/town/rig/txing:log-stream:*
+
+  TxingRigRuntimeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: Town-scoped runtime IAM role assumed by rig hosts for SigV4 MQTT/WSS and AWS control-plane access.
+      RoleName: !Sub ${AWS::StackName}-rig-runtime
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:root
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Ref TxingRigRuntimeManagedPolicy
+
+  TxingRigBootstrapManagedPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Attach to the bootstrap IAM principal distributed to rigs; grants only sts:AssumeRole for the town rig runtime role.
+      ManagedPolicyName: !Sub ${AWS::StackName}-rig-bootstrap-assume-role
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AssumeRigRuntimeRole
+            Effect: Allow
+            Action: sts:AssumeRole
+            Resource: !GetAtt TxingRigRuntimeRole.Arn
 
   TxingThing:
     Type: AWS::IoT::Thing
@@ -555,8 +662,20 @@ Outputs:
     Description: ARN of the CloudWatch Logs group used by the rig process.
     Value: !GetAtt TxingGatewayLogGroup.Arn
   RigLogsManagedPolicyArn:
-    Description: Attach this managed policy to the rig host AWS principal for CloudWatch logs and IoT registry/thing-group access.
+    Description: Legacy direct-principal managed policy for CloudWatch logs and IoT registry/thing-group access.
     Value: !Ref TxingGatewayLogsManagedPolicy
+  RigRuntimeRoleArn:
+    Description: Town-scoped IAM role to assume from rigs for SigV4-authenticated MQTT over WebSockets and AWS control-plane access.
+    Value: !GetAtt TxingRigRuntimeRole.Arn
+  RigRuntimeRoleName:
+    Description: Name of the town-scoped rig runtime IAM role.
+    Value: !Ref TxingRigRuntimeRole
+  RigRuntimeManagedPolicyArn:
+    Description: Managed policy attached to the town-scoped rig runtime role.
+    Value: !Ref TxingRigRuntimeManagedPolicy
+  RigBootstrapManagedPolicyArn:
+    Description: Attach this managed policy to the bootstrap IAM principal whose access keys are distributed to rigs.
+    Value: !Ref TxingRigBootstrapManagedPolicy
   ThingIndexingMode:
     Description: AWS IoT fleet indexing mode configured by the stack.
     Value: !GetAtt TxingFleetIndexingConfiguration.ThingIndexingMode
@@ -579,7 +698,7 @@ Outputs:
     Description: Reserved MQTT topic for Thing Shadow updates.
     Value: !Sub "$aws/things/${TxingThing}/shadow/update"
   PolicyName:
-    Description: IoT policy to attach to the rig certificate.
+    Description: IoT policy retained for certificate-authenticated board or legacy device clients.
     Value: !Ref TxingGatewayPolicy
   WebIotPolicyName:
     Description: IoT policy attached to authenticated Cognito identities for browser shadow access.

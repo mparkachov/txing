@@ -8,9 +8,9 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "awsiotsdk>=1.22,<2",
     "bleak>=0.22,<1",
     "boto3>=1.34,<2",
-    "paho-mqtt>=2,<3",
     "watchtower>=3.3,<4",
 ]
 
@@ -22,3 +22,8 @@ rig-sparkplug-log = "rig.sparkplug_log:main"
 [build-system]
 requires = ["uv_build>=0.10.6,<0.11.0"]
 build-backend = "uv_build"
+
+[tool.uv.extra-build-dependencies]
+pyobjc-core = ["setuptools"]
+pyobjc-framework-cocoa = ["setuptools"]
+pyobjc-framework-libdispatch = ["setuptools"]

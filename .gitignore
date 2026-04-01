@@ -12,3 +12,7 @@
 /certs/*
 !/certs/AmazonRootCA1.pem
 !/certs/iot-data-ats.endpoint
+
+# Project-local AWS config: keep examples only
+/config/*
+!/config/*.example

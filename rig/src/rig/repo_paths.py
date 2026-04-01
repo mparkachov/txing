@@ -42,6 +42,3 @@ REPO_ROOT = _discover_repo_root(
 )
 DEFAULT_CERT_DIR = REPO_ROOT / "certs"
 DEFAULT_IOT_ENDPOINT_FILE = DEFAULT_CERT_DIR / "iot-data-ats.endpoint"
-DEFAULT_CERT_FILE = DEFAULT_CERT_DIR / "txing.cert.pem"
-DEFAULT_KEY_FILE = DEFAULT_CERT_DIR / "txing.private.key"
-DEFAULT_CA_FILE = DEFAULT_CERT_DIR / "AmazonRootCA1.pem"

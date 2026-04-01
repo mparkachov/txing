@@ -72,15 +72,13 @@ just web::dev
 Typical local test flow:
 
 ```bash
-just aws::deploy \
-  <existing-or-new-cognito-prefix> \
-  <admin-email>
-just aws::create-admin-user \
-  <admin-email> \
-  '<strong-password>'
+just aws::deploy
+just aws::create-admin-user '<strong-password>'
 just web::write-env
 just web::dev
 ```
+
+These commands read `TXING_AWS_COGNITO_DOMAIN_PREFIX`, `TXING_AWS_ADMIN_EMAIL`, and `TXING_AWS_TOWN_PROFILE` from `config/aws.env`.
 
 If you have stale local auth state after callback or token-flow changes, clear the session storage in the browser console and sign in again:
 
@@ -98,17 +96,13 @@ Template location:
 Deploy command:
 
 ```bash
-just aws::deploy \
-  txing-admin-auth-123456789012 \
-  <admin-email>
+just aws::deploy
 ```
 
 Create or update the admin user password:
 
 ```bash
-just aws::create-admin-user \
-  <admin-email> \
-  '<strong-password>'
+just aws::create-admin-user '<strong-password>'
 ```
 
 After deploy, generate local Vite env automatically:

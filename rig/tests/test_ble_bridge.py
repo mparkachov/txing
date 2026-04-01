@@ -205,9 +205,6 @@ class ServiceConfigTests(unittest.TestCase):
                 "SPARKPLUG_GROUP_ID": "town-prod",
                 "SPARKPLUG_EDGE_NODE_ID": "rig-prod",
                 "IOT_ENDPOINT_FILE": "/tmp/iot-endpoint",
-                "CERT_FILE": "/tmp/cert.pem",
-                "KEY_FILE": "/tmp/key.pem",
-                "CA_FILE": "/tmp/ca.pem",
                 "CLOUDWATCH_LOG_GROUP": "/town/rig/txing-prod",
             },
             clear=True,
@@ -220,9 +217,9 @@ class ServiceConfigTests(unittest.TestCase):
         self.assertEqual(args.sparkplug_group_id, "town-prod")
         self.assertEqual(args.sparkplug_edge_node_id, "rig-prod")
         self.assertEqual(args.iot_endpoint_file, Path("/tmp/iot-endpoint"))
-        self.assertEqual(args.cert_file, Path("/tmp/cert.pem"))
-        self.assertEqual(args.key_file, Path("/tmp/key.pem"))
-        self.assertEqual(args.ca_file, Path("/tmp/ca.pem"))
+        self.assertFalse(hasattr(args, "cert_file"))
+        self.assertFalse(hasattr(args, "key_file"))
+        self.assertFalse(hasattr(args, "ca_file"))
         self.assertEqual(args.cloudwatch_log_group, "/town/rig/txing-prod")
 
     def test_justfile_install_service_exports_multi_device_environment(self) -> None:
@@ -230,7 +227,27 @@ class ServiceConfigTests(unittest.TestCase):
             encoding="utf-8"
         )
 
-        self.assertIn('Environment="AWS_REGION={{region}}"', justfile)
+        self.assertIn("@aws *args:", justfile)
+        self.assertIn('just --justfile "{{root_justfile}}" _project-aws-env rig', justfile)
+        self.assertIn('command aws "$@"', justfile)
+        self.assertIn('region="$TXING_AWS_REGION"', justfile)
+        self.assertIn(
+            'endpoint_file="$TXING_AWS_ENDPOINT_FILE"',
+            justfile,
+        )
+        self.assertIn(
+            'aws_profile="$TXING_AWS_SELECTED_PROFILE"',
+            justfile,
+        )
+        self.assertIn(
+            'aws_shared_credentials_file="$TXING_AWS_SHARED_CREDENTIALS_FILE"',
+            justfile,
+        )
+        self.assertIn(
+            'aws_config_file="$TXING_AWS_CONFIG_FILE"',
+            justfile,
+        )
+        self.assertIn('AWS_REGION=$region', justfile)
         self.assertNotIn('Environment="THING_NAME={{thing_name}}"', justfile)
         self.assertIn('Environment="RIG_NAME={{rig_name}}"', justfile)
         self.assertNotIn('Environment="RIG_THING_NAME={{rig_thing_name}}"', justfile)
@@ -240,10 +257,10 @@ class ServiceConfigTests(unittest.TestCase):
             'Environment="SPARKPLUG_EDGE_NODE_ID={{sparkplug_edge_node_id}}"',
             justfile,
         )
-        self.assertIn('Environment="IOT_ENDPOINT_FILE={{endpoint_file}}"', justfile)
-        self.assertIn('Environment="CERT_FILE={{cert_file}}"', justfile)
-        self.assertIn('Environment="KEY_FILE={{key_file}}"', justfile)
-        self.assertIn('Environment="CA_FILE={{ca_file}}"', justfile)
+        self.assertIn('IOT_ENDPOINT_FILE=$endpoint_file', justfile)
+        self.assertIn('AWS_PROFILE=$aws_profile', justfile)
+        self.assertIn('AWS_SHARED_CREDENTIALS_FILE=$aws_shared_credentials_file', justfile)
+        self.assertIn('AWS_CONFIG_FILE=$aws_config_file', justfile)
         self.assertIn('Environment="CLOUDWATCH_LOG_GROUP={{cloudwatch_log_group}}"', justfile)
         self.assertIn('ExecStart={{built_rig}}', justfile)
 

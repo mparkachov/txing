@@ -23,7 +23,9 @@ For Python/AWS workflows in this repository, install and configure:
 - `jq`
 - `aws` (AWS CLI)
 
-AWS CLI must be configured with credentials/profile and region.
+The default repo workflow keeps AWS CLI config inside `config/` in the checkout.
+Copy `config/aws.env.example` to `config/aws.env`, `config/aws.credentials.example` to `config/aws.credentials`, and `config/aws.config.example` to `config/aws.config`, then edit those files for your town/account.
+Use `just aws-rig ...` for AWS CLI commands with the project rig/runtime profile and `just aws-town ...` for AWS CLI commands with the direct town account profile.
 
 ## Task Runner
 
@@ -35,7 +37,7 @@ Run from repository root:
 just --list
 just rig::wake
 just board::run
-just aws::bootstrap
+just aws::endpoint
 just aws::shadow
 just aws::shadow-reset
 just mcu::build
@@ -73,10 +75,10 @@ uv run board --once
 AWS stack deploy example (single stack with IoT + web admin):
 
 ```bash
-just aws::deploy \
-  <unique-cognito-prefix> \
-  <admin-email>
+just aws::deploy
 ```
+
+That uses `TXING_AWS_COGNITO_DOMAIN_PREFIX`, `TXING_AWS_ADMIN_EMAIL`, and `TXING_AWS_TOWN_PROFILE` from `config/aws.env`.
 
 Inspect or reset the live Thing Shadow from the repository root:
 
@@ -92,12 +94,8 @@ The web admin does not use API Gateway. After Cognito sign-in, the SPA exchanges
 Typical local web test flow:
 
 ```bash
-just aws::deploy \
-  <existing-or-new-cognito-prefix> \
-  <admin-email>
-just aws::create-admin-user \
-  <admin-email> \
-  '<strong-password>'
+just aws::deploy
+just aws::create-admin-user '<strong-password>'
 just web::write-env
 just web::dev
 ```
@@ -112,7 +110,5 @@ just web::publish
 Set the admin password in Cognito:
 
 ```bash
-just aws::create-admin-user \
-  <admin-email> \
-  '<strong-password>'
+just aws::create-admin-user '<strong-password>'
 ```
