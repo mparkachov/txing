@@ -3141,6 +3141,12 @@ class RigFleetBridge:
         )
 
     async def _connect_bridge(self, bridge: BleSleepBridge) -> None:
+        if bridge._get_fresh_target_device() is None:
+            target_device = await bridge._wait_for_target_advertisement(
+                timeout_seconds=bridge._config.scan_timeout
+            )
+            if target_device is None:
+                raise RuntimeError("matching advertisement not seen before connect deadline")
         await self._stop_scanner()
         try:
             await bridge._ensure_connected()
