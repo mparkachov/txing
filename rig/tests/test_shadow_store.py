@@ -40,7 +40,7 @@ class ShadowStoreTests(unittest.TestCase):
             "state": {
                 "reported": {
                     "bleDeviceId": "AA:BB:CC:DD:EE:FF",
-                    "homeRig": "rig-a",
+                    "rig": "rig-a",
                 },
             },
         }

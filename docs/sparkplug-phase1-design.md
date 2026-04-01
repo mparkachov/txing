@@ -26,12 +26,11 @@
 
 - `town`
   - Sparkplug group id
-  - has its own AWS IoT thing/shadow
-  - phase 1 shadow keeps static `state.reported.redcon=1`
+  - plain Sparkplug/MQTT identifier only
 - `rig`
   - Sparkplug edge node id
-  - has its own AWS IoT thing/shadow
-  - phase 1 `rig.redcon` is a node metric carried by `NBIRTH/NDATA`
+  - dynamic AWS IoT thing group name for assigned txings
+  - phase 1 `rig.redcon` is a Sparkplug node metric carried by `NBIRTH/NDATA`
 - `txing`
   - Sparkplug device id
   - each physical txing has its own AWS IoT thing/shadow
@@ -50,7 +49,7 @@ rig
   -> owns lifecycle intent and lifecycle convergence
   -> publishes NBIRTH/NDATA with rig.redcon
   -> publishes DBIRTH/DDATA/DDEATH for txing devices
-  -> reflects desired/report lifecycle state into AWS shadows
+  -> reflects desired/report lifecycle state into txing AWS shadows only
   -> derives txing reported.redcon from current MCU + board operational detail
 
 txing board control
@@ -163,37 +162,13 @@ Example reflected txing shadow shape:
 }
 ```
 
-### Rig Shadow
+### Rig And Town Reflection
 
-Rig shadow keeps only reflected lifecycle state:
+Phase 1 does not maintain AWS IoT things or shadows for `rig` or `town`.
 
-```json
-{
-  "state": {
-    "reported": {
-      "redcon": 1
-    }
-  }
-}
-```
-
-Phase 1 does not require rig desired/delta lifecycle handling in shadow.
-
-### Town Shadow
-
-Town shadow keeps only reflected lifecycle state:
-
-```json
-{
-  "state": {
-    "reported": {
-      "redcon": 1
-    }
-  }
-}
-```
-
-Phase 1 keeps this value static. Town-level lifecycle management is not modeled in Sparkplug yet.
+- `rig.redcon=1` exists only as a Sparkplug node metric in `NBIRTH/NDATA`.
+- `town` exists only as the Sparkplug group id.
+- Rig membership comes from the dynamic AWS IoT thing group whose name matches `attributes.rig`.
 
 ## Phase 1 REDCON Semantics
 

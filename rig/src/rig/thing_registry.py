@@ -1,7 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 from typing import Any
+
+LOGGER = logging.getLogger("rig.thing_registry")
+
+
+class ThingGroupNotFoundError(RuntimeError):
+    pass
 
 
 @dataclass(slots=True, frozen=True)
@@ -24,20 +31,32 @@ class AwsThingRegistryClient:
         self._client = client
 
     def list_rig_things(self, rig_name: str) -> list[ThingRegistration]:
-        query = f"attributes.rig:{rig_name}"
+        try:
+            self._client.describe_thing_group(thingGroupName=rig_name)
+        except Exception as exc:
+            error_code = (
+                getattr(exc, "response", {})
+                .get("Error", {})
+                .get("Code")
+            )
+            if error_code in {"ResourceNotFoundException", "ResourceNotFound"}:
+                raise ThingGroupNotFoundError(
+                    f"Dynamic thing group {rig_name!r} was not found"
+                ) from exc
+            raise
+
         next_token: str | None = None
         thing_names: list[str] = []
         while True:
             request: dict[str, Any] = {
-                "indexName": "AWS_Things",
-                "queryString": query,
+                "thingGroupName": rig_name,
                 "maxResults": 100,
             }
             if next_token:
                 request["nextToken"] = next_token
-            response = self._client.search_index(**request)
+            response = self._client.list_things_in_thing_group(**request)
             for item in response.get("things", []):
-                thing_name = normalize_registry_text(item.get("thingName"))
+                thing_name = normalize_registry_text(item)
                 if thing_name:
                     thing_names.append(thing_name)
             next_token = normalize_registry_text(response.get("nextToken"))
@@ -46,7 +65,25 @@ class AwsThingRegistryClient:
 
         registrations: list[ThingRegistration] = []
         for thing_name in sorted(set(thing_names)):
-            registrations.append(self.describe_thing(thing_name))
+            try:
+                registration = self.describe_thing(thing_name)
+            except RuntimeError as exc:
+                LOGGER.warning(
+                    "Skipping thing=%s from dynamic group=%s: %s",
+                    thing_name,
+                    rig_name,
+                    exc,
+                )
+                continue
+            if registration.rig_name != rig_name:
+                LOGGER.warning(
+                    "Skipping thing=%s from dynamic group=%s because attributes.rig=%s",
+                    thing_name,
+                    rig_name,
+                    registration.rig_name,
+                )
+                continue
+            registrations.append(registration)
         return registrations
 
     def describe_thing(self, thing_name: str) -> ThingRegistration:
@@ -64,15 +101,14 @@ class AwsThingRegistryClient:
             version=response.get("version"),
         )
 
-    def update_registration(
+    def update_ble_device_id(
         self,
         thing_name: str,
         *,
-        rig_name: str,
         ble_device_id: str | None,
         expected_version: int | None = None,
     ) -> ThingRegistration:
-        attributes: dict[str, str] = {"rig": rig_name}
+        attributes: dict[str, str] = {}
         if ble_device_id is not None:
             attributes["bleDeviceId"] = ble_device_id
 

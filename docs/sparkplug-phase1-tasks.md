@@ -21,8 +21,8 @@ This checklist tracks the phase-1 Sparkplug lifecycle plan.
 
 ## 2. Sparkplug Identity and Transport
 
-- [x] Register `rig` as a Sparkplug edge node using its AWS IoT thing/shadow identity
-- [x] Register `town` as the Sparkplug group id using its AWS IoT thing/shadow identity
+- [x] Register `rig` as the Sparkplug edge node id without an AWS IoT thing/shadow
+- [x] Register `town` as the Sparkplug group id without an AWS IoT thing/shadow
 - [x] Register each physical txing as a Sparkplug device using its AWS IoT thing name
 - [x] Publish `rig.redcon` through `NBIRTH/NDATA`
 - [x] Publish txing `redcon` and `batteryMv` through `DBIRTH/DDATA`
@@ -34,7 +34,7 @@ This checklist tracks the phase-1 Sparkplug lifecycle plan.
 - [x] Add or formalize `state.reported.redcon` on txing shadow as actual lifecycle state
 - [x] Keep `reported.mcu.*` and `reported.board.*` as supporting operational detail
 - [x] Move stable txing metadata to AWS IoT thing attributes `rig` and `bleDeviceId`
-- [x] Load managed txings on rig restart from fleet indexing query `attributes.rig:<rig thing name>`
+- [x] Load managed txings on rig restart from the dynamic AWS IoT thing group named by `attributes.rig`
 - [x] Remove lifecycle authority from top-level `desired.mcu.power` and `desired.board.power`
 - [x] Make rig the only owner of top-level txing `reported.redcon`
 - [x] Keep current board and MCU reporting paths as REDCON inputs in phase 1
@@ -58,11 +58,11 @@ This checklist tracks the phase-1 Sparkplug lifecycle plan.
 - [x] After rebirth, reconverge conservatively from observed state instead of trying to restore prior state blindly
 - [x] On rig restart, inspect lingering `desired.redcon` and converge conservatively if present
 
-## 6. Rig and Town Reflection
+## 6. Rig and Town Identity
 
-- [x] Reflect `rig.redcon` into rig shadow `state.reported.redcon`
-- [x] Keep rig shadow lifecycle reflection to `reported.redcon` only in phase 1
-- [x] Reflect static `town.state.reported.redcon=1`
+- [x] Keep `rig.redcon` as a Sparkplug node metric only
+- [x] Keep `town` as a Sparkplug group id only
+- [x] Remove AWS IoT thing/shadow reflection for `rig` and `town`
 - [x] Keep town lifecycle management out of Sparkplug for phase 1
 
 ## 7. UI and Compatibility

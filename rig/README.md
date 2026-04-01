@@ -5,12 +5,12 @@ Python service for the Raspberry Pi 5 rig runtime.
 Responsibilities:
 - Connect directly to AWS IoT Core over MQTT/mTLS
 - Act as the phase-1 `rig` lifecycle runtime in the same process
-- Synchronize classic Thing Shadows for all txings assigned to this rig plus the `rig` and `town` reflection things
+- Synchronize classic Thing Shadows for all txings assigned to this rig
 - Accept Sparkplug `DCMD.redcon` lifecycle commands and publish `NBIRTH`/`NDATA`/`DBIRTH`/`DDATA`/`DDEATH`
 - Bridge REDCON-driven wakeup-state and sleep-state changes to the MCU over BLE rendezvous sessions
 - Publish MCU state to `state.reported.mcu.*`
 - Publish derived readiness at top-level `state.reported.redcon`
-- Load assigned txings from AWS IoT fleet indexing via `attributes.rig=<rig thing name>`
+- Load assigned txings from the dynamic AWS IoT thing group named by `RIG_NAME`
 - Persist last known BLE reconnect hints to AWS IoT thing attribute `bleDeviceId`
 
 Shadow contract source of truth:
@@ -20,7 +20,7 @@ Shadow contract source of truth:
 
 High-level architecture:
 - Sparkplug host -> AWS IoT MQTT -> rig -> BLE -> mcu
-- rig -> AWS IoT Thing Shadows (`txing`, `rig`, `town`)
+- rig -> AWS IoT Thing Shadow (`txing`)
 
 ## Requirements
 
@@ -31,7 +31,7 @@ The system requires these tools installed:
 - `aws` (AWS CLI)
 
 AWS CLI connectivity must be working (credentials + region via role/env/default config/SSO) with permissions for AWS IoT and AWS IoT Data Plane calls used by this project.
-Rig runtime also needs host AWS credentials (default SDK chain) with CloudWatch Logs write permissions for `/town/rig/txing` plus `iot:SearchIndex`, `iot:DescribeThing`, and `iot:UpdateThing`.
+Rig runtime also needs host AWS credentials (default SDK chain) with CloudWatch Logs write permissions for `/town/rig/txing` plus `iot:DescribeThing`, `iot:UpdateThing`, `iot:DescribeThingGroup`, and `iot:ListThingsInThingGroup`.
 
 ## Install on a new Raspberry Pi 5 (64-bit OS)
 
@@ -119,7 +119,7 @@ sudo journalctl -u rig -f
 ```
 
 The `just rig::install-service` task enables `bluetooth`, writes `/etc/systemd/system/rig.service` for the current user and checkout path, reloads `systemd`, and enables `rig`.
-It points `ExecStart` at the built rig executable in `rig/.venv/bin/rig` and writes the runtime contract into `Environment=` lines for `RIG_THING_NAME`, `TOWN_THING_NAME`, `SPARKPLUG_GROUP_ID`, `SPARKPLUG_EDGE_NODE_ID`, `IOT_ENDPOINT_FILE`, `CERT_FILE`, `KEY_FILE`, `CA_FILE`, `CLOUDWATCH_LOG_GROUP`, and `AWS_REGION`, so run `just rig::build` first.
+It points `ExecStart` at the built rig executable in `rig/.venv/bin/rig` and writes the runtime contract into `Environment=` lines for `RIG_NAME`, `SPARKPLUG_GROUP_ID`, `SPARKPLUG_EDGE_NODE_ID`, `IOT_ENDPOINT_FILE`, `CERT_FILE`, `KEY_FILE`, `CA_FILE`, `CLOUDWATCH_LOG_GROUP`, and `AWS_REGION`, so run `just rig::build` first.
 
 ## Run rig
 
@@ -197,8 +197,9 @@ just rig::wake thing_name=my-thing region=eu-central-1 endpoint_file=certs/iot-d
 Use the registry helpers to assign txings to a rig and inspect current membership:
 
 ```bash
-just aws::assign-rig thing_name=txing-01 rig_name=rig
-just aws::things-for-rig rig_name=rig
+just aws::upsert-rig-group rig
+just aws::assign-rig txing-01 rig
+just aws::things-for-rig rig
 ```
 
 ## Runtime behavior
@@ -207,13 +208,13 @@ just aws::things-for-rig rig_name=rig
   - `power=true` means the MCU is in the wakeup state.
   - `power=false` means the MCU is in the sleep state with periodic `5 s` rendezvous wakeups and short low-duty-cycle advertising windows.
 - Operates in event-driven mode from MQTT subscriptions (no fixed-interval cloud polling).
-- On startup, queries AWS IoT fleet indexing for all things where `attributes.rig=<RIG_THING_NAME>`.
+- On startup, lists txings from the dynamic AWS IoT thing group named by `RIG_NAME`, then `DescribeThing`s each txing to read `attributes.rig` and `attributes.bleDeviceId`.
 - Subscribes to each managed txing:
   - `$aws/things/<thing>/shadow/get/accepted`
   - `$aws/things/<thing>/shadow/update/accepted`
   - `spBv1.0/<group>/DCMD/<edge>/<thing>`
 - On startup, requests the full shadow for each managed txing with `$aws/things/<thing>/shadow/get`.
-- On startup, also reflects static `reported.redcon=1` into the `rig` and `town` shadows and publishes `NBIRTH` for `rig`.
+- Publishes `NBIRTH` for the Sparkplug node `rig`, but does not maintain AWS IoT shadows for `rig` or `town`.
 - Loads BLE UUIDs from `state.reported.mcu.ble.*` and validates them against the peripheral during short rendezvous sessions.
 - Uses AWS IoT thing attribute `bleDeviceId` as the primary persisted fast-reconnect hint.
 - Keeps a scanner running while disconnected and treats disconnects as normal behavior.
@@ -260,8 +261,7 @@ just aws::things-for-rig rig_name=rig
 ```
 
 Common overrides:
-- `--rig-thing-name rig`
-- `--town-thing-name town`
+- `--rig-name rig`
 - `--sparkplug-group-id town`
 - `--sparkplug-edge-node-id rig`
 - `--scan-timeout 12`

@@ -46,7 +46,7 @@ from .shadow_store import (
     DEFAULT_REPORTED_POWER,
     DEFAULT_SHADOW_FILE,
 )
-from .thing_registry import AwsThingRegistryClient, ThingRegistration
+from .thing_registry import AwsThingRegistryClient, ThingGroupNotFoundError, ThingRegistration
 from .repo_paths import (
     DEFAULT_CA_FILE,
     DEFAULT_CERT_FILE,
@@ -81,8 +81,7 @@ DEFAULT_ADVERTISEMENT_LOG_INTERVAL = 5.0
 DEFAULT_SCAN_MODE = "active"
 DEFAULT_LOCK_FILE = Path("/tmp/rig.lock")
 DEFAULT_THING_NAME = "txing"
-DEFAULT_RIG_THING_NAME = "rig"
-DEFAULT_TOWN_THING_NAME = "town"
+DEFAULT_RIG_NAME = "rig"
 DEFAULT_SPARKPLUG_GROUP_ID = "town"
 DEFAULT_SPARKPLUG_EDGE_NODE_ID = "rig"
 DEFAULT_AWS_CONNECT_TIMEOUT = 20.0
@@ -92,8 +91,7 @@ DEFAULT_BOARD_OFFLINE_TIMEOUT = 45.0
 SHUTDOWN_MQTT_PUBLISH_TIMEOUT = 2.0
 BLE_DISCONNECT_TIMEOUT = 2.0
 DEFAULT_THING_NAME_ENV = "THING_NAME"
-DEFAULT_RIG_THING_NAME_ENV = "RIG_THING_NAME"
-DEFAULT_TOWN_THING_NAME_ENV = "TOWN_THING_NAME"
+DEFAULT_RIG_NAME_ENV = "RIG_NAME"
 DEFAULT_SPARKPLUG_GROUP_ID_ENV = "SPARKPLUG_GROUP_ID"
 DEFAULT_SPARKPLUG_EDGE_NODE_ID_ENV = "SPARKPLUG_EDGE_NODE_ID"
 DEFAULT_IOT_ENDPOINT_FILE_ENV = "IOT_ENDPOINT_FILE"
@@ -566,8 +564,7 @@ class BridgeConfig:
     shadow_file: Path = DEFAULT_SHADOW_FILE
     lock_file: Path = DEFAULT_LOCK_FILE
     thing_name: str = DEFAULT_THING_NAME
-    rig_thing_name: str = DEFAULT_RIG_THING_NAME
-    town_thing_name: str = DEFAULT_TOWN_THING_NAME
+    rig_name: str = DEFAULT_RIG_NAME
     sparkplug_group_id: str = DEFAULT_SPARKPLUG_GROUP_ID
     sparkplug_edge_node_id: str = DEFAULT_SPARKPLUG_EDGE_NODE_ID
     iot_endpoint: str = ""
@@ -1069,7 +1066,7 @@ class AwsShadowClient:
             LOGGER,
             "Connected to AWS IoT endpoint=%s rig=%s client_id=%s managed_things=%s",
             self._config.iot_endpoint,
-            self._config.rig_thing_name,
+            self._config.rig_name,
             self._config.client_id,
             len(self._managed_things),
         )
@@ -1490,16 +1487,7 @@ class BleSleepBridge:
         self._sparkplug_device_born = False
 
     async def _publish_static_lifecycle_reflection(self) -> None:
-        await self._cloud_shadow.update_shadow(
-            thing_name=self._config.rig_thing_name,
-            reported_mcu_patch=None,
-            reported_root_patch={"redcon": 1},
-        )
-        await self._cloud_shadow.update_shadow(
-            thing_name=self._config.town_thing_name,
-            reported_mcu_patch=None,
-            reported_root_patch={"redcon": 1},
-        )
+        return
 
     def _mark_ble_presence_now(self) -> None:
         loop = self._loop
@@ -3115,16 +3103,7 @@ class RigFleetBridge:
         self._node_born = True
 
     async def _publish_static_lifecycle_reflection(self) -> None:
-        await self._cloud_shadow.update_shadow(
-            thing_name=self._config.rig_thing_name,
-            reported_mcu_patch=None,
-            reported_root_patch={"redcon": 1},
-        )
-        await self._cloud_shadow.update_shadow(
-            thing_name=self._config.town_thing_name,
-            reported_mcu_patch=None,
-            reported_root_patch={"redcon": 1},
-        )
+        return
 
     async def _start_scanner(self) -> None:
         if self._scanner is not None:
@@ -3254,9 +3233,8 @@ class RigFleetBridge:
         if current_device_id is None or current_device_id == managed.registration.ble_device_id:
             return
         try:
-            registration = self._registry.update_registration(
+            registration = self._registry.update_ble_device_id(
                 managed.registration.thing_name,
-                rig_name=self._config.rig_thing_name,
                 ble_device_id=current_device_id,
                 expected_version=managed.registration.version,
             )
@@ -3329,10 +3307,10 @@ class RigFleetBridge:
     async def run(self) -> None:
         self._loop = asyncio.get_running_loop()
         self._activity_event = asyncio.Event()
-        await self._publish_static_lifecycle_reflection()
         await self._publish_node_birth()
         await self._normalize_startup()
-        await self._start_scanner()
+        if self._managed_things:
+            await self._start_scanner()
         pending_updates = self._cloud_shadow.drain_updates()
         try:
             while True:
@@ -3394,7 +3372,6 @@ class RigFleetBridge:
     async def run_no_ble(self) -> None:
         self._loop = asyncio.get_running_loop()
         self._activity_event = asyncio.Event()
-        await self._publish_static_lifecycle_reflection()
         await self._publish_node_birth()
         for managed in self._managed_things:
             bridge = managed.bridge
@@ -3507,14 +3484,9 @@ def _parse_args() -> argparse.Namespace:
         help="Path to single-instance lock file (default: /tmp/rig.lock)",
     )
     parser.add_argument(
-        "--rig-thing-name",
-        default=_env_text(DEFAULT_RIG_THING_NAME_ENV, DEFAULT_RIG_THING_NAME),
-        help="AWS IoT thing name used for rig lifecycle reflection (default: rig)",
-    )
-    parser.add_argument(
-        "--town-thing-name",
-        default=_env_text(DEFAULT_TOWN_THING_NAME_ENV, DEFAULT_TOWN_THING_NAME),
-        help="AWS IoT thing name used for town lifecycle reflection (default: town)",
+        "--rig-name",
+        default=_env_text(DEFAULT_RIG_NAME_ENV, DEFAULT_RIG_NAME),
+        help="Dynamic AWS IoT thing group name for txings assigned to this rig (default: rig)",
     )
     parser.add_argument(
         "--sparkplug-group-id",
@@ -3740,7 +3712,7 @@ def _configure_logging(
         return
 
     stream_name = args.cloudwatch_log_stream or _default_cloudwatch_log_stream(
-        args.rig_thing_name
+        args.rig_name
     )
     cloudwatch_region = _resolve_cloudwatch_region(
         args.cloudwatch_region,
@@ -3809,7 +3781,7 @@ def main() -> None:
 
     try:
         if boto3 is None:
-            raise RuntimeError("boto3 is required for IoT registry and fleet indexing access")
+            raise RuntimeError("boto3 is required for IoT registry and thing-group access")
         iot_endpoint = _read_iot_endpoint(args.iot_endpoint, args.iot_endpoint_file)
         _require_file(args.cert_file, "AWS IoT client certificate")
         _require_file(args.key_file, "AWS IoT client private key")
@@ -3835,8 +3807,7 @@ def main() -> None:
         scan_mode=args.scan_mode,
         shadow_file=args.shadow_file,
         lock_file=args.lock_file,
-        rig_thing_name=args.rig_thing_name,
-        town_thing_name=args.town_thing_name,
+        rig_name=args.rig_name,
         sparkplug_group_id=args.sparkplug_group_id,
         sparkplug_edge_node_id=args.sparkplug_edge_node_id,
         iot_endpoint=iot_endpoint,
@@ -3860,13 +3831,12 @@ def main() -> None:
         "Rig started pid=%s lock=%s rig=%s",
         os.getpid(),
         config.lock_file,
-        config.rig_thing_name,
+        config.rig_name,
     )
     LOGGER.info(
-        "AWS IoT config endpoint=%s rig=%s town=%s sparkplug_group=%s sparkplug_edge=%s cert=%s key=%s ca=%s client_id=%s",
+        "AWS IoT config endpoint=%s rig=%s sparkplug_group=%s sparkplug_edge=%s cert=%s key=%s ca=%s client_id=%s",
         config.iot_endpoint,
-        config.rig_thing_name,
-        config.town_thing_name,
+        config.rig_name,
         config.sparkplug_group_id,
         config.sparkplug_edge_node_id,
         config.cert_file,
@@ -3884,12 +3854,19 @@ def main() -> None:
             boto3.client("iot", region_name=aws_region)
         )
         try:
-            registrations = registry_client.list_rig_things(config.rig_thing_name)
+            try:
+                registrations = registry_client.list_rig_things(config.rig_name)
+            except ThingGroupNotFoundError:
+                LOGGER.warning(
+                    "Dynamic thing group for rig=%s was not found; starting idle with no managed txings",
+                    config.rig_name,
+                )
+                registrations = []
             _log_important(
                 LOGGER,
-                "Loaded %s txing thing(s) from fleet index for rig=%s",
+                "Loaded %s txing thing(s) from dynamic thing group for rig=%s",
                 len(registrations),
-                config.rig_thing_name,
+                config.rig_name,
             )
             snapshots = await cloud_shadow.connect_and_get_initial_snapshots(
                 [registration.thing_name for registration in registrations],

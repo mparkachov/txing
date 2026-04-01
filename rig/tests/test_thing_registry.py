@@ -2,14 +2,26 @@ from __future__ import annotations
 
 import unittest
 
-from rig.thing_registry import AwsThingRegistryClient, ThingRegistration
+from rig.thing_registry import (
+    AwsThingRegistryClient,
+    ThingGroupNotFoundError,
+    ThingRegistration,
+)
+
+
+class FakeClientError(Exception):
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+        self.response = {"Error": {"Code": code}}
 
 
 class FakeIotClient:
     def __init__(self) -> None:
-        self.search_requests: list[dict[str, object]] = []
+        self.describe_group_requests: list[str] = []
+        self.list_group_requests: list[dict[str, object]] = []
         self.describe_requests: list[str] = []
         self.update_requests: list[dict[str, object]] = []
+        self.missing_groups: set[str] = set()
         self._things: dict[str, dict[str, object]] = {
             "txing-b": {
                 "thingName": "txing-b",
@@ -26,22 +38,28 @@ class FakeIotClient:
                 "attributes": {"bleDeviceId": "missing-rig"},
                 "version": 1,
             },
+            "txing-other": {
+                "thingName": "txing-other",
+                "attributes": {"rig": "rig-b", "bleDeviceId": "DD:DD:DD:DD:DD:DD"},
+                "version": 2,
+            },
         }
 
-    def search_index(self, **kwargs: object) -> dict[str, object]:
-        self.search_requests.append(kwargs)
+    def describe_thing_group(self, *, thingGroupName: str) -> dict[str, object]:
+        self.describe_group_requests.append(thingGroupName)
+        if thingGroupName in self.missing_groups:
+            raise FakeClientError("ResourceNotFoundException")
+        return {"thingGroupName": thingGroupName}
+
+    def list_things_in_thing_group(self, **kwargs: object) -> dict[str, object]:
+        self.list_group_requests.append(kwargs)
         if "nextToken" not in kwargs:
             return {
-                "things": [
-                    {"thingName": "txing-b"},
-                    {"thingName": "txing-a"},
-                ],
+                "things": ["txing-b", "txing-a"],
                 "nextToken": "page-2",
             }
         return {
-            "things": [
-                {"thingName": "txing-a"},
-            ]
+            "things": ["txing-a", "rig-only", "txing-other"]
         }
 
     def describe_thing(self, *, thingName: str) -> dict[str, object]:
@@ -64,7 +82,7 @@ class FakeIotClient:
 
 
 class ThingRegistryTests(unittest.TestCase):
-    def test_list_rig_things_uses_fleet_index_and_describe_thing(self) -> None:
+    def test_list_rig_things_uses_thing_group_membership_and_describe_thing(self) -> None:
         client = FakeIotClient()
         registry = AwsThingRegistryClient(client)
 
@@ -87,8 +105,30 @@ class ThingRegistryTests(unittest.TestCase):
                 ),
             ],
         )
-        self.assertEqual(client.search_requests[0]["queryString"], "attributes.rig:rig-a")
-        self.assertEqual(client.describe_requests, ["txing-a", "txing-b"])
+        self.assertEqual(client.describe_group_requests, ["rig-a"])
+        self.assertEqual(
+            client.list_group_requests,
+            [
+                {"thingGroupName": "rig-a", "maxResults": 100},
+                {
+                    "thingGroupName": "rig-a",
+                    "maxResults": 100,
+                    "nextToken": "page-2",
+                },
+            ],
+        )
+        self.assertEqual(
+            client.describe_requests,
+            ["rig-only", "txing-a", "txing-b", "txing-other"],
+        )
+
+    def test_list_rig_things_raises_when_dynamic_group_is_missing(self) -> None:
+        client = FakeIotClient()
+        client.missing_groups.add("rig-missing")
+        registry = AwsThingRegistryClient(client)
+
+        with self.assertRaises(ThingGroupNotFoundError):
+            registry.list_rig_things("rig-missing")
 
     def test_describe_thing_requires_rig_attribute(self) -> None:
         client = FakeIotClient()
@@ -97,13 +137,12 @@ class ThingRegistryTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "missing required IoT registry attribute 'rig'"):
             registry.describe_thing("rig-only")
 
-    def test_update_registration_merges_rig_and_ble_device_id(self) -> None:
+    def test_update_ble_device_id_only_merges_ble_device_id(self) -> None:
         client = FakeIotClient()
         registry = AwsThingRegistryClient(client)
 
-        registration = registry.update_registration(
+        registration = registry.update_ble_device_id(
             "txing-a",
-            rig_name="rig-z",
             ble_device_id="CC:CC:CC:CC:CC:CC",
             expected_version=5,
         )
@@ -114,7 +153,6 @@ class ThingRegistryTests(unittest.TestCase):
                 "thingName": "txing-a",
                 "attributePayload": {
                     "attributes": {
-                        "rig": "rig-z",
                         "bleDeviceId": "CC:CC:CC:CC:CC:CC",
                     },
                     "merge": True,
@@ -122,30 +160,9 @@ class ThingRegistryTests(unittest.TestCase):
                 "expectedVersion": 5,
             },
         )
-        self.assertEqual(registration.rig_name, "rig-z")
+        self.assertEqual(registration.rig_name, "rig-a")
         self.assertEqual(registration.ble_device_id, "CC:CC:CC:CC:CC:CC")
         self.assertEqual(registration.version, 6)
-
-    def test_update_registration_can_refresh_rig_without_touching_ble_device_id(self) -> None:
-        client = FakeIotClient()
-        registry = AwsThingRegistryClient(client)
-
-        registration = registry.update_registration(
-            "txing-b",
-            rig_name="rig-a",
-            ble_device_id=None,
-        )
-
-        self.assertEqual(
-            client.update_requests[0]["attributePayload"],
-            {
-                "attributes": {
-                    "rig": "rig-a",
-                },
-                "merge": True,
-            },
-        )
-        self.assertEqual(registration.ble_device_id, "BB:BB:BB:BB:BB:BB")
 
 
 if __name__ == "__main__":

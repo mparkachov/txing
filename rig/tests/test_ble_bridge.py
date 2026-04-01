@@ -156,6 +156,7 @@ _install_paho_stub()
 from rig.ble_bridge import (
     BleSleepBridge,
     BridgeConfig,
+    RigFleetBridge,
     ShadowState,
     _build_shadow_from_snapshot,
     _calculate_redcon,
@@ -200,8 +201,7 @@ class ServiceConfigTests(unittest.TestCase):
         with patch.dict(
             os.environ,
             {
-                "RIG_THING_NAME": "rig-prod",
-                "TOWN_THING_NAME": "town-prod",
+                "RIG_NAME": "rig-prod",
                 "SPARKPLUG_GROUP_ID": "town-prod",
                 "SPARKPLUG_EDGE_NODE_ID": "rig-prod",
                 "IOT_ENDPOINT_FILE": "/tmp/iot-endpoint",
@@ -216,8 +216,7 @@ class ServiceConfigTests(unittest.TestCase):
                 args = _parse_args()
 
         self.assertFalse(hasattr(args, "thing_name"))
-        self.assertEqual(args.rig_thing_name, "rig-prod")
-        self.assertEqual(args.town_thing_name, "town-prod")
+        self.assertEqual(args.rig_name, "rig-prod")
         self.assertEqual(args.sparkplug_group_id, "town-prod")
         self.assertEqual(args.sparkplug_edge_node_id, "rig-prod")
         self.assertEqual(args.iot_endpoint_file, Path("/tmp/iot-endpoint"))
@@ -233,8 +232,9 @@ class ServiceConfigTests(unittest.TestCase):
 
         self.assertIn('Environment="AWS_REGION={{region}}"', justfile)
         self.assertNotIn('Environment="THING_NAME={{thing_name}}"', justfile)
-        self.assertIn('Environment="RIG_THING_NAME={{rig_thing_name}}"', justfile)
-        self.assertIn('Environment="TOWN_THING_NAME={{town_thing_name}}"', justfile)
+        self.assertIn('Environment="RIG_NAME={{rig_name}}"', justfile)
+        self.assertNotIn('Environment="RIG_THING_NAME={{rig_thing_name}}"', justfile)
+        self.assertNotIn('Environment="TOWN_THING_NAME={{town_thing_name}}"', justfile)
         self.assertIn('Environment="SPARKPLUG_GROUP_ID={{sparkplug_group_id}}"', justfile)
         self.assertIn(
             'Environment="SPARKPLUG_EDGE_NODE_ID={{sparkplug_edge_node_id}}"',
@@ -246,6 +246,25 @@ class ServiceConfigTests(unittest.TestCase):
         self.assertIn('Environment="CA_FILE={{ca_file}}"', justfile)
         self.assertIn('Environment="CLOUDWATCH_LOG_GROUP={{cloudwatch_log_group}}"', justfile)
         self.assertIn('ExecStart={{built_rig}}', justfile)
+
+
+class RigNodeReflectionTests(unittest.TestCase):
+    def test_rig_node_reflection_no_longer_writes_shadow(self) -> None:
+        asyncio.run(self._exercise_rig_node_reflection_no_shadow_write())
+
+    async def _exercise_rig_node_reflection_no_shadow_write(self) -> None:
+        cloud_shadow = FakeCloudShadow()
+        bridge = RigFleetBridge(
+            BridgeConfig(),
+            cloud_shadow=cloud_shadow,  # type: ignore[arg-type]
+            registry=object(),  # type: ignore[arg-type]
+            managed_things=[],
+        )
+
+        await bridge._publish_static_lifecycle_reflection()
+
+        self.assertEqual(cloud_shadow.shadow_updates, [])
+        self.assertEqual(cloud_shadow.sparkplug_publishes, [])
 
 
 class RedconTests(unittest.TestCase):

@@ -119,7 +119,7 @@ Field semantics:
 - `rig` emits `DBIRTH` when BLE reachability reaches the same sustained-online condition that drives `reported.mcu.ble.online=true`.
 - `rig` emits `DDEATH` when BLE reachability times out, forces `reported.redcon=4`, and clears `desired.redcon` plus internal `desired.board.power` best-effort.
 - AWS IoT registry attributes:
-  - `attributes.rig` is the authoritative rig assignment used by fleet indexing on rig restart.
+  - `attributes.rig` is the authoritative rig assignment used to populate the dynamic AWS IoT thing group that the rig reads on restart.
   - `attributes.bleDeviceId` is the last known BLE identity address written by rig after a successful BLE association and used as the primary reconnect hint on the next restart.
   - legacy shadow metadata fields `reported.bleDeviceId`, `reported.homeRig`, and `reported.mcu.ble.deviceId` are ignored by runtime.
 

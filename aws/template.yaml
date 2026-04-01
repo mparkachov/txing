@@ -31,7 +31,7 @@ Resources:
   TxingGatewayLogsManagedPolicy:
     Type: AWS::IAM::ManagedPolicy
     Properties:
-      Description: Attach to the rig host AWS principal for CloudWatch logs and IoT registry/fleet-index control-plane access.
+      Description: Attach to the rig host AWS principal for CloudWatch logs and IoT registry/thing-group control-plane access.
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -50,27 +50,18 @@ Resources:
               - iot:DescribeThing
               - iot:UpdateThing
             Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/*
-          - Sid: GatewayFleetIndexSearch
+          - Sid: GatewayThingGroupRead
             Effect: Allow
             Action:
+              - iot:DescribeThingGroup
+              - iot:ListThingsInThingGroup
               - iot:GetIndexingConfiguration
-              - iot:SearchIndex
             Resource: "*"
 
   TxingThing:
     Type: AWS::IoT::Thing
     Properties:
       ThingName: txing
-
-  RigThing:
-    Type: AWS::IoT::Thing
-    Properties:
-      ThingName: rig
-
-  TownThing:
-    Type: AWS::IoT::Thing
-    Properties:
-      ThingName: town
 
   TxingFleetIndexingRole:
     Type: AWS::IAM::Role
@@ -564,7 +555,7 @@ Outputs:
     Description: ARN of the CloudWatch Logs group used by the rig process.
     Value: !GetAtt TxingGatewayLogGroup.Arn
   RigLogsManagedPolicyArn:
-    Description: Attach this managed policy to the rig host AWS principal for CloudWatch logs and IoT registry/fleet-index access.
+    Description: Attach this managed policy to the rig host AWS principal for CloudWatch logs and IoT registry/thing-group access.
     Value: !Ref TxingGatewayLogsManagedPolicy
   ThingIndexingMode:
     Description: AWS IoT fleet indexing mode configured by the stack.
@@ -584,12 +575,6 @@ Outputs:
   ThingArn:
     Description: ARN of the txing IoT Thing.
     Value: !GetAtt TxingThing.Arn
-  RigThingName:
-    Description: Fixed IoT Thing name used for rig lifecycle reflection.
-    Value: !Ref RigThing
-  TownThingName:
-    Description: Fixed IoT Thing name used for town lifecycle reflection.
-    Value: !Ref TownThing
   ShadowUpdateTopic:
     Description: Reserved MQTT topic for Thing Shadow updates.
     Value: !Sub "$aws/things/${TxingThing}/shadow/update"

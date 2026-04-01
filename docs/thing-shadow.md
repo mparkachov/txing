@@ -7,7 +7,7 @@ This document defines how shadow structure is governed across the repo.
 - This document describes the current Sparkplug phase-1 shadow model implemented in the repo.
 - Sparkplug `DCMD.redcon` is the only authoritative external lifecycle intent path.
 - The classic `txing` Thing Shadow remains the lifecycle reflection and restart-cache document.
-- The phase-1 `rig` and `town` shadows are minimal reflection documents with `state.reported.redcon=1`.
+- `rig` and `town` are Sparkplug identifiers only; they do not have AWS IoT thing shadows.
 - The design background remains documented in `docs/sparkplug-phase1-design.md`.
 
 ## Canonical schema
@@ -15,12 +15,10 @@ This document defines how shadow structure is governed across the repo.
 - Schema file: `./txing-shadow.schema.json`
 - Thing names:
   - `txing`: device shadow
-  - `rig`: edge-node reflection shadow
-  - `town`: group reflection shadow
-- Shadow type: classic (unnamed) Thing Shadow for each thing
+- Shadow type: classic (unnamed) Thing Shadow for the txing thing only
 - High-level paths:
   - `Sparkplug host -> AWS IoT MQTT -> rig (phase-1 rig runtime) -> BLE -> mcu`
-  - `rig -> AWS IoT Thing Shadows (txing, rig, town)`
+  - `rig -> AWS IoT Thing Shadow (txing)`
   - `board -> AWS IoT Thing Shadow (txing.board.*)`
 
 ## Ownership decision
@@ -99,7 +97,7 @@ Phase-1 note:
 - The phase-1 on/off switch publishes Sparkplug `DCMD.redcon` over MQTT/WSS:
   - `on` -> `redcon=3`
   - `off` -> `redcon=4`
-- `board` and `rig` continue to publish shadow state as the reflected operational state.
+- `board` and `rig` continue to publish reflected operational state for `txing`; there are no separate `rig` or `town` shadows.
 - Registry metadata remains out of the shadow path; `attributes.rig` and `attributes.bleDeviceId` are rig-managed.
 - The browser still uses HTTPS for Cognito hosted UI, Cognito token exchange/refresh, Cognito Identity credential bootstrap, and IoT policy attachment. Only shadow document traffic moved to MQTT/WSS.
 - Live board motion control remains out of band and is not part of the Thing Shadow contract. The current browser-to-board control topic is `txing/board/cmd_vel`, carrying raw JSON shaped like ROS `geometry_msgs/Twist`.
