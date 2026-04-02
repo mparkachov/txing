@@ -21,3 +21,9 @@
 - `txing-board` supervises a dedicated local video sender and publishes coarse `board.video.*` readiness, session metadata, viewer presence, and failures into the Thing Shadow.
 - The supervised sender uses the board host's default AWS SDK credential chain for KVS access; it does not publish to AWS IoT directly.
 - Phase 1 does not use MediaMTX, `webrtcsink`, `gstwebrtc-api`, `kvssink`, ingestion/storage, or multiviewer.
+
+## Package task scoping
+When working in `board/`:
+- Prefer tasks already linked to the current epic.
+- If a new subtask is board-specific, create it under the parent epic and note `board/` in the title or description.
+- Do not duplicate cross-subproject work here; link dependencies in Beads instead.
