@@ -234,6 +234,7 @@ class ServiceConfigTests(unittest.TestCase):
         self.assertIn('just --justfile "{{root_justfile}}" _project-aws-env rig', justfile)
         self.assertIn('command aws "$@"', justfile)
         self.assertIn('region="$TXING_AWS_REGION"', justfile)
+        self.assertNotIn('describe-log-groups', justfile)
         self.assertIn(
             'aws_profile="$TXING_AWS_SELECTED_PROFILE"',
             justfile,

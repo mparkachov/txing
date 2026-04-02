@@ -20,7 +20,7 @@ Rules:
 - Treat Beads as the source of truth for active work. Do not rely on Codex task management, `update_plan`, or markdown checklists as a substitute for Beads status, sequencing, or dependency tracking.
 - Do not keep active implementation plans only in markdown.
 - When `/plan` produces actionable work, convert it into a Beads epic with child tasks before implementation starts.
-- Before starting implementation, make sure the work is attached to an open Beads epic. If no epic exists yet, create it first and then create the implementation task under that epic.
+- Before starting implementation, make sure the work has a Beads issue. Use a Beads epic only for `/plan`-driven work that is being broken down into multiple actionable tasks; otherwise a standalone Beads task/bug/feature is sufficient.
 - Before starting implementation, run `bd ready`.
 - Claim the task you are working on with `bd update <id> --claim`.
 - Record dependencies with `bd dep add`.

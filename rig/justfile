@@ -81,20 +81,6 @@ systemd_unit := "/etc/systemd/system/rig.service"
     check_cmd "IoT DescribeEndpoint (Data-ATS)" aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}"
 
     echo "Checking CloudWatch Logs access..."
-    log_group_found="$(
-      aws logs describe-log-groups \
-        --log-group-name-prefix "{{cloudwatch_log_group}}" \
-        "${aws_flags[@]}" \
-        --query "logGroups[?logGroupName=='{{cloudwatch_log_group}}'].logGroupName | [0]" \
-        --output text 2>/dev/null || true
-    )"
-    if [ "$log_group_found" = "{{cloudwatch_log_group}}" ]; then
-      echo "ok: CloudWatch log group {{cloudwatch_log_group}} exists"
-    else
-      echo "fail: CloudWatch log group {{cloudwatch_log_group}} not found"
-      failures=$((failures + 1))
-    fi
-
     check_stream="rig-check-$(date -u +%Y%m%dT%H%M%SZ)-$$"
     check_cmd \
       "CloudWatch CreateLogStream on {{cloudwatch_log_group}}" \
