@@ -16,3 +16,8 @@
 # Project-local AWS config: keep examples only
 /config/*
 !/config/*.example
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key

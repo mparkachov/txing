@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "txing",
+  "project_id": "b5f8e148-0b2c-4910-a551-d4c81e34207c"
+}
