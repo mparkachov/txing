@@ -1,0 +1,60 @@
+#!/usr/bin/env sh
+
+# Close Beads issues only after a successful commit, and only when the
+# commit message explicitly names them via a Beads-Close trailer.
+#
+# Example:
+#   feat: wire rig endpoint autodiscovery
+#
+#   Beads-Close: txing-123 txing-123.1
+
+if ! command -v bd >/dev/null 2>&1; then
+  exit 0
+fi
+
+if ! command -v git >/dev/null 2>&1; then
+  exit 0
+fi
+
+commit_sha="$(git rev-parse --verify HEAD 2>/dev/null || true)"
+if [ -z "$commit_sha" ]; then
+  exit 0
+fi
+
+commit_message="$(git show -s --format=%B "$commit_sha" 2>/dev/null || true)"
+if [ -z "$commit_message" ]; then
+  exit 0
+fi
+
+issue_ids="$(
+  printf '%s' "$commit_message" |
+    git interpret-trailers --parse 2>/dev/null |
+    awk '
+      BEGIN { IGNORECASE = 1 }
+      index(tolower($0), "beads-close:") == 1 {
+        sub(/^[^:]*:[[:space:]]*/, "", $0)
+        gsub(/,/, " ", $0)
+        n = split($0, parts, /[[:space:]]+/)
+        for (i = 1; i <= n; i++) {
+          if (parts[i] != "") {
+            print parts[i]
+          }
+        }
+      }
+    ' |
+    awk '!seen[$0]++'
+)"
+
+if [ -z "$issue_ids" ]; then
+  exit 0
+fi
+
+reason="Closed by commit $commit_sha"
+
+# shellcheck disable=SC2086
+set -- $issue_ids
+if ! bd close "$@" --reason "$reason"; then
+  echo >&2 "beads: failed to close issue(s) from Beads-Close trailer on commit $commit_sha"
+fi
+
+exit 0

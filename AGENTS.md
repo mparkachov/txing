@@ -17,12 +17,16 @@
 Use `bd` for task tracking and execution state.
 
 Rules:
+- Treat Beads as the source of truth for active work. Do not rely on Codex task management, `update_plan`, or markdown checklists as a substitute for Beads status, sequencing, or dependency tracking.
 - Do not keep active implementation plans only in markdown.
-- When `/plan` produces actionable work, convert it into Beads issues.
+- When `/plan` produces actionable work, convert it into a Beads epic with child tasks before implementation starts.
+- Before starting implementation, make sure the work is attached to an open Beads epic. If no epic exists yet, create it first and then create the implementation task under that epic.
 - Before starting implementation, run `bd ready`.
 - Claim the task you are working on with `bd update <id> --claim`.
 - Record dependencies with `bd dep add`.
-- Close completed tasks in Beads with a short resolution note.
+- Keep implementation tasks open through review and follow-up adjustments. Do not close them just because local code changes are done.
+- When a commit is the completion point, put the task IDs in a `Beads-Close:` commit trailer, for example `Beads-Close: txing-123 txing-123.1`; the repo `post-commit` hook closes those Beads issues after the commit succeeds.
+- If no commit is being made yet, leave the Beads task open. For non-code/admin work with no commit, close the task manually in Beads with a short resolution note once the user confirms completion.
 - Keep `AGENTS.md` focused on stable instructions, not transient task lists.
 
 ## Shared contracts

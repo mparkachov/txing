@@ -3,8 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import os
-import re
-from pathlib import Path
 from typing import Any
 
 try:
@@ -23,38 +21,10 @@ except ImportError as exc:  # pragma: no cover - exercised in startup validation
 else:
     AWS_CRT_IMPORT_ERROR = None
 
-
-def read_iot_endpoint(explicit_endpoint: str | None, endpoint_file: Path) -> str:
-    if explicit_endpoint:
-        endpoint = explicit_endpoint.strip()
-        if endpoint:
-            return endpoint
-
-    try:
-        endpoint = endpoint_file.read_text(encoding="utf-8").strip()
-    except OSError as err:
-        raise RuntimeError(
-            f"failed to read AWS IoT endpoint file {endpoint_file}: {err}"
-        ) from err
-    if not endpoint:
-        raise RuntimeError(f"AWS IoT endpoint file {endpoint_file} is empty")
-    return endpoint
+AWS_IOT_DATA_ENDPOINT_TYPE = "iot:Data-ATS"
 
 
-def extract_region_from_iot_endpoint(endpoint: str) -> str | None:
-    match = re.search(
-        r"\.iot\.([a-z0-9-]+)\.amazonaws\.com(?:\.cn)?$",
-        endpoint.strip(),
-    )
-    if not match:
-        return None
-    return match.group(1)
-
-
-def resolve_aws_region(*, iot_endpoint: str) -> str | None:
-    endpoint_region = extract_region_from_iot_endpoint(iot_endpoint)
-    if endpoint_region:
-        return endpoint_region
+def resolve_aws_region() -> str | None:
     for env_name in ("AWS_REGION", "AWS_DEFAULT_REGION"):
         region = os.getenv(env_name, "").strip()
         if region:
@@ -62,6 +32,17 @@ def resolve_aws_region(*, iot_endpoint: str) -> str | None:
     if boto3 is not None:
         return boto3.session.Session().region_name
     return None
+
+
+def _normalize_iot_endpoint_address(endpoint_address: Any) -> str:
+    if not isinstance(endpoint_address, str):
+        raise RuntimeError(
+            "AWS IoT DescribeEndpoint did not return a valid endpointAddress"
+        )
+    endpoint = endpoint_address.strip()
+    if not endpoint:
+        raise RuntimeError("AWS IoT DescribeEndpoint returned an empty endpointAddress")
+    return endpoint
 
 
 @dataclass(slots=True, frozen=True)
@@ -156,6 +137,7 @@ class AwsRuntime:
     session: Any
     region_name: str
     _credentials_bridge: AwsCredentialsBridge = field(init=False)
+    _iot_data_endpoint: str | None = field(init=False, default=None)
 
     def __post_init__(self) -> None:
         self._credentials_bridge = AwsCredentialsBridge(self.session)
@@ -171,6 +153,21 @@ class AwsRuntime:
 
     def sts_client(self, *, region_name: str | None = None) -> Any:
         return self.client("sts", region_name=region_name)
+
+    def iot_data_endpoint(self) -> str:
+        if self._iot_data_endpoint is not None:
+            return self._iot_data_endpoint
+        try:
+            response = self.iot_client().describe_endpoint(
+                endpointType=AWS_IOT_DATA_ENDPOINT_TYPE
+            )
+        except Exception as err:
+            raise RuntimeError(
+                f"failed to discover AWS IoT Data-ATS endpoint: {err}"
+            ) from err
+        endpoint = _normalize_iot_endpoint_address(response.get("endpointAddress"))
+        self._iot_data_endpoint = endpoint
+        return endpoint
 
     def credentials_provider(self) -> Any:
         return self._credentials_bridge.credentials_provider()

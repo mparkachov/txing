@@ -6,14 +6,12 @@ built_rig := rig_dir + "/.venv/bin/rig"
 built_rig_sparkplug_cmd := rig_dir + "/.venv/bin/rig-sparkplug-cmd"
 built_rig_sparkplug_log := rig_dir + "/.venv/bin/rig-sparkplug-log"
 project_root := rig_dir + "/.."
-aws_justfile := project_root + "/aws/justfile"
 root_justfile := project_root + "/justfile"
 thing_name := "txing"
 rig_name := "rig"
 sparkplug_group_id := "town"
 sparkplug_edge_node_id := "rig"
 region := ""
-endpoint_file := ""
 aws_profile := ""
 aws_shared_credentials_file := ""
 aws_config_file := ""
@@ -39,14 +37,86 @@ systemd_unit := "/etc/systemd/system/rig.service"
 @check:
     #!/usr/bin/env bash
     set -euo pipefail
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}" "{{endpoint_file}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}")"
     region="$TXING_AWS_REGION"
-    endpoint_file="$TXING_AWS_ENDPOINT_FILE"
     aws_profile="$TXING_AWS_SELECTED_PROFILE"
-    just --justfile "{{aws_justfile}}" check \
-      region="$region" \
-      profile="$aws_profile" \
-      endpoint_file="$endpoint_file"
+    aws_flags=(--region "$region")
+    if [ -n "$aws_profile" ]; then
+      aws_flags+=(--profile "$aws_profile")
+    fi
+
+    failures=0
+
+    check_tool() {
+      local tool="$1"
+      if command -v "$tool" >/dev/null 2>&1; then
+        echo "ok: tool '$tool' is installed"
+      else
+        echo "fail: tool '$tool' is not installed"
+        failures=$((failures + 1))
+      fi
+    }
+
+    check_cmd() {
+      local label="$1"
+      shift
+      if "$@" >/dev/null 2>&1; then
+        echo "ok: $label"
+      else
+        echo "fail: $label"
+        failures=$((failures + 1))
+      fi
+    }
+
+    echo "Checking local tools..."
+    check_tool aws
+    check_tool jq
+    check_tool uv
+    check_tool just
+
+    echo "Checking AWS identity and IoT access..."
+    check_cmd "STS caller identity" aws sts get-caller-identity "${aws_flags[@]}"
+    check_cmd "IoT DescribeThing on {{thing_name}}" aws iot describe-thing --thing-name "{{thing_name}}" "${aws_flags[@]}"
+    check_cmd "IoT DescribeThingGroup on {{rig_name}}" aws iot describe-thing-group --thing-group-name "{{rig_name}}" "${aws_flags[@]}"
+    check_cmd "IoT DescribeEndpoint (Data-ATS)" aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}"
+
+    echo "Checking CloudWatch Logs access..."
+    log_group_found="$(
+      aws logs describe-log-groups \
+        --log-group-name-prefix "{{cloudwatch_log_group}}" \
+        "${aws_flags[@]}" \
+        --query "logGroups[?logGroupName=='{{cloudwatch_log_group}}'].logGroupName | [0]" \
+        --output text 2>/dev/null || true
+    )"
+    if [ "$log_group_found" = "{{cloudwatch_log_group}}" ]; then
+      echo "ok: CloudWatch log group {{cloudwatch_log_group}} exists"
+    else
+      echo "fail: CloudWatch log group {{cloudwatch_log_group}} not found"
+      failures=$((failures + 1))
+    fi
+
+    check_stream="rig-check-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+    check_cmd \
+      "CloudWatch CreateLogStream on {{cloudwatch_log_group}}" \
+      aws logs create-log-stream \
+      --log-group-name "{{cloudwatch_log_group}}" \
+      --log-stream-name "$check_stream" \
+      "${aws_flags[@]}"
+
+    log_event_ts_ms="$(( $(date +%s) * 1000 ))"
+    check_cmd \
+      "CloudWatch PutLogEvents on {{cloudwatch_log_group}}" \
+      aws logs put-log-events \
+      --log-group-name "{{cloudwatch_log_group}}" \
+      --log-stream-name "$check_stream" \
+      --log-events "timestamp=${log_event_ts_ms},message=txing-rig-check" \
+      "${aws_flags[@]}"
+
+    if [ "$failures" -ne 0 ]; then
+      echo "rig check failed with $failures problem(s)" >&2
+      exit 1
+    fi
+    echo "rig check passed"
 
 @run:
     #!/usr/bin/env bash
@@ -55,9 +125,7 @@ systemd_unit := "/etc/systemd/system/rig.service"
         echo "Missing built rig executable at {{built_rig}}. Run 'just rig::build' first." >&2; \
         exit 1; \
     }
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}" "{{endpoint_file}}")"
-    endpoint_file="$TXING_AWS_ENDPOINT_FILE"
-    export IOT_ENDPOINT_FILE="$endpoint_file"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}")"
     cd "{{rig_dir}}" && "{{built_rig}}"
 
 @debug:
@@ -67,25 +135,19 @@ systemd_unit := "/etc/systemd/system/rig.service"
         echo "Missing built rig executable at {{built_rig}}. Run 'just rig::build' first." >&2; \
         exit 1; \
     }
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}" "{{endpoint_file}}")"
-    endpoint_file="$TXING_AWS_ENDPOINT_FILE"
-    export IOT_ENDPOINT_FILE="$endpoint_file"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}")"
     cd "{{rig_dir}}" && "{{built_rig}}" --debug
 
 @dev:
     #!/usr/bin/env bash
     set -euo pipefail
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}" "{{endpoint_file}}")"
-    endpoint_file="$TXING_AWS_ENDPOINT_FILE"
-    export IOT_ENDPOINT_FILE="$endpoint_file"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}")"
     cd "{{rig_dir}}" && uv run rig
 
 @debug-dev:
     #!/usr/bin/env bash
     set -euo pipefail
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}" "{{endpoint_file}}")"
-    endpoint_file="$TXING_AWS_ENDPOINT_FILE"
-    export IOT_ENDPOINT_FILE="$endpoint_file"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}")"
     cd "{{rig_dir}}" && uv run rig --debug
 
 @wake:
@@ -95,9 +157,7 @@ systemd_unit := "/etc/systemd/system/rig.service"
         echo "Missing built rig Sparkplug command executable at {{built_rig_sparkplug_cmd}}. Run 'just rig::build' first." >&2; \
         exit 1; \
     }
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}" "{{endpoint_file}}")"
-    endpoint_file="$TXING_AWS_ENDPOINT_FILE"
-    export IOT_ENDPOINT_FILE="$endpoint_file"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}")"
     cd "{{rig_dir}}" && "{{built_rig_sparkplug_cmd}}" --redcon 3 --thing-name "{{thing_name}}" --sparkplug-group-id "{{sparkplug_group_id}}" --sparkplug-edge-node-id "{{sparkplug_edge_node_id}}"
 
 @sleep:
@@ -107,9 +167,7 @@ systemd_unit := "/etc/systemd/system/rig.service"
         echo "Missing built rig Sparkplug command executable at {{built_rig_sparkplug_cmd}}. Run 'just rig::build' first." >&2; \
         exit 1; \
     }
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}" "{{endpoint_file}}")"
-    endpoint_file="$TXING_AWS_ENDPOINT_FILE"
-    export IOT_ENDPOINT_FILE="$endpoint_file"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}")"
     cd "{{rig_dir}}" && "{{built_rig_sparkplug_cmd}}" --redcon 4 --thing-name "{{thing_name}}" --sparkplug-group-id "{{sparkplug_group_id}}" --sparkplug-edge-node-id "{{sparkplug_edge_node_id}}"
 
 @dcmd:
@@ -119,9 +177,7 @@ systemd_unit := "/etc/systemd/system/rig.service"
         echo "Missing built rig Sparkplug log executable at {{built_rig_sparkplug_log}}. Run 'just rig::build' first." >&2; \
         exit 1; \
     }
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}" "{{endpoint_file}}")"
-    endpoint_file="$TXING_AWS_ENDPOINT_FILE"
-    export IOT_ENDPOINT_FILE="$endpoint_file"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}")"
     cd "{{rig_dir}}" && "{{built_rig_sparkplug_log}}" --thing-name "{{thing_name}}" --sparkplug-group-id "{{sparkplug_group_id}}" --sparkplug-edge-node-id "{{sparkplug_edge_node_id}}" --message-type dcmd
 
 @ddata:
@@ -131,33 +187,37 @@ systemd_unit := "/etc/systemd/system/rig.service"
         echo "Missing built rig Sparkplug log executable at {{built_rig_sparkplug_log}}. Run 'just rig::build' first." >&2; \
         exit 1; \
     }
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}" "{{endpoint_file}}")"
-    endpoint_file="$TXING_AWS_ENDPOINT_FILE"
-    export IOT_ENDPOINT_FILE="$endpoint_file"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}")"
     cd "{{rig_dir}}" && "{{built_rig_sparkplug_log}}" --thing-name "{{thing_name}}" --sparkplug-group-id "{{sparkplug_group_id}}" --sparkplug-edge-node-id "{{sparkplug_edge_node_id}}" --message-type ddata
 
 @print:
     #!/usr/bin/env bash
     set -euo pipefail
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}" "{{endpoint_file}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}")"
     region="$TXING_AWS_REGION"
-    endpoint_file="$TXING_AWS_ENDPOINT_FILE"
+    aws_profile="$TXING_AWS_SELECTED_PROFILE"
+    aws_flags=(--region "$region")
+    if [ -n "$aws_profile" ]; then
+      aws_flags+=(--profile "$aws_profile")
+    fi
+    endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}" --query endpointAddress --output text)"
     aws iot-data get-thing-shadow \
       --region "$region" \
-      --endpoint-url "https://$(tr -d '\n' < "$endpoint_file")" \
+      --endpoint-url "https://$endpoint" \
       --thing-name "{{thing_name}}" \
       /dev/stdout | jq '.'
 
-@install-service rig_name=rig_name sparkplug_group_id=sparkplug_group_id sparkplug_edge_node_id=sparkplug_edge_node_id region=region endpoint_file=endpoint_file aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file aws_config_file=aws_config_file cloudwatch_log_group=cloudwatch_log_group:
+@install-service rig_name=rig_name sparkplug_group_id=sparkplug_group_id sparkplug_edge_node_id=sparkplug_edge_node_id region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file aws_config_file=aws_config_file cloudwatch_log_group=cloudwatch_log_group:
     #!/usr/bin/env bash
     set -euo pipefail
     test -x "{{built_rig}}" || { \
         echo "Missing built rig executable at {{built_rig}}. Run 'just build' first." >&2; \
         exit 1; \
     }
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}" "{{endpoint_file}}" "" "" "" "{{aws_shared_credentials_file}}" "{{aws_config_file}}")"
+    export TXING_AWS_SHARED_CREDENTIALS_FILE="{{aws_shared_credentials_file}}"
+    export TXING_AWS_CONFIG_FILE="{{aws_config_file}}"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}")"
     region="$TXING_AWS_REGION"
-    endpoint_file="$TXING_AWS_ENDPOINT_FILE"
     aws_profile="$TXING_AWS_SELECTED_PROFILE"
     aws_shared_credentials_file="$TXING_AWS_SHARED_CREDENTIALS_FILE"
     aws_config_file="$TXING_AWS_CONFIG_FILE"
@@ -168,7 +228,6 @@ systemd_unit := "/etc/systemd/system/rig.service"
         'Environment="RIG_NAME={{rig_name}}"' \
         'Environment="SPARKPLUG_GROUP_ID={{sparkplug_group_id}}"' \
         'Environment="SPARKPLUG_EDGE_NODE_ID={{sparkplug_edge_node_id}}"' \
-        "Environment=\"IOT_ENDPOINT_FILE=$endpoint_file\"" \
         'Environment="CLOUDWATCH_LOG_GROUP={{cloudwatch_log_group}}"' \
     ); \
     if [ -n "$aws_profile" ]; then \

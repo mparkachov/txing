@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import os
 import unittest
 from unittest.mock import patch
 
@@ -74,6 +75,42 @@ class _FakeAuthModule:
             return _FakeCredentialsProvider(get_credentials)
 
 
+class _FakeBoto3Session:
+    def __init__(self, region_name: str | None) -> None:
+        self.region_name = region_name
+
+
+class _FakeBoto3Module:
+    def __init__(self, region_name: str | None) -> None:
+        self.session = self
+        self._region_name = region_name
+
+    def Session(self, region_name: str | None = None) -> _FakeBoto3Session:
+        return _FakeBoto3Session(region_name or self._region_name)
+
+
+class _FakeIotClient:
+    def __init__(self, response: dict[str, object]) -> None:
+        self._response = response
+        self.describe_calls = 0
+        self.endpoint_type: str | None = None
+
+    def describe_endpoint(self, *, endpointType: str) -> dict[str, object]:
+        self.describe_calls += 1
+        self.endpoint_type = endpointType
+        return self._response
+
+
+class _FakeEndpointSession:
+    def __init__(self, client: _FakeIotClient) -> None:
+        self._client = client
+        self.last_client_request: tuple[str, str | None] | None = None
+
+    def client(self, service_name: str, region_name: str | None = None) -> _FakeIotClient:
+        self.last_client_request = (service_name, region_name)
+        return self._client
+
+
 class AwsAuthTests(unittest.TestCase):
     def test_freeze_session_credentials_reads_current_boto3_values(self) -> None:
         session = _RotatingSession()
@@ -100,6 +137,43 @@ class AwsAuthTests(unittest.TestCase):
         self.assertEqual(first.secret_access_key, "secret-1")
         self.assertEqual(second.access_key_id, "AKIA2")
         self.assertEqual(second.secret_access_key, "secret-2")
+
+    def test_resolve_aws_region_uses_sdk_defaults_without_endpoint_input(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            with patch.object(aws_auth, "boto3", _FakeBoto3Module("eu-central-1")):
+                self.assertEqual(aws_auth.resolve_aws_region(), "eu-central-1")
+
+    def test_iot_data_endpoint_discovers_and_caches_endpoint(self) -> None:
+        client = _FakeIotClient({"endpointAddress": "abc123-ats.iot.eu-central-1.amazonaws.com"})
+        session = _FakeEndpointSession(client)
+        runtime = aws_auth.AwsRuntime(session=session, region_name="eu-central-1")
+
+        first = runtime.iot_data_endpoint()
+        second = runtime.iot_data_endpoint()
+
+        self.assertEqual(first, "abc123-ats.iot.eu-central-1.amazonaws.com")
+        self.assertEqual(second, first)
+        self.assertEqual(client.describe_calls, 1)
+        self.assertEqual(client.endpoint_type, aws_auth.AWS_IOT_DATA_ENDPOINT_TYPE)
+        self.assertEqual(session.last_client_request, ("iot", "eu-central-1"))
+
+    def test_iot_data_endpoint_rejects_missing_endpoint_address(self) -> None:
+        runtime = aws_auth.AwsRuntime(
+            session=_FakeEndpointSession(_FakeIotClient({})),
+            region_name="eu-central-1",
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "endpointAddress"):
+            runtime.iot_data_endpoint()
+
+    def test_iot_data_endpoint_rejects_empty_endpoint_address(self) -> None:
+        runtime = aws_auth.AwsRuntime(
+            session=_FakeEndpointSession(_FakeIotClient({"endpointAddress": "   "})),
+            region_name="eu-central-1",
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "empty endpointAddress"):
+            runtime.iot_data_endpoint()
 
 
 if __name__ == "__main__":

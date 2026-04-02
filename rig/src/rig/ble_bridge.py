@@ -47,13 +47,10 @@ from .shadow_store import (
 from .thing_registry import AwsThingRegistryClient, ThingGroupNotFoundError, ThingRegistration
 from .aws_auth import (
     build_aws_runtime,
-    extract_region_from_iot_endpoint,
-    read_iot_endpoint,
     resolve_aws_region,
     AwsRuntime,
 )
 from .aws_mqtt import AwsIotWebsocketConnection, AwsMqttConnectionConfig
-from .repo_paths import DEFAULT_IOT_ENDPOINT_FILE
 from .sparkplug import (
     build_device_report_payload,
     build_device_topic,
@@ -95,7 +92,6 @@ DEFAULT_THING_NAME_ENV = "THING_NAME"
 DEFAULT_RIG_NAME_ENV = "RIG_NAME"
 DEFAULT_SPARKPLUG_GROUP_ID_ENV = "SPARKPLUG_GROUP_ID"
 DEFAULT_SPARKPLUG_EDGE_NODE_ID_ENV = "SPARKPLUG_EDGE_NODE_ID"
-DEFAULT_IOT_ENDPOINT_FILE_ENV = "IOT_ENDPOINT_FILE"
 DEFAULT_CLOUDWATCH_LOG_GROUP_ENV = "CLOUDWATCH_LOG_GROUP"
 
 LOGGER = logging.getLogger("rig.ble_bridge")
@@ -162,30 +158,17 @@ def _env_text(name: str, default: str) -> str:
     return value or default
 
 
-def _env_path(name: str, default: Path) -> Path:
-    value = os.environ.get(name, "").strip()
-    return Path(value) if value else default
-
-
 def _resolve_cloudwatch_region(
     cloudwatch_region: str | None,
     *,
-    iot_endpoint: str,
+    aws_region: str,
 ) -> str | None:
     if cloudwatch_region:
         region = cloudwatch_region.strip()
         if region:
             return region
-    endpoint_region = extract_region_from_iot_endpoint(iot_endpoint)
-    if endpoint_region:
-        return endpoint_region
-    for env_name in ("AWS_REGION", "AWS_DEFAULT_REGION"):
-        region = os.getenv(env_name, "").strip()
-        if region:
-            return region
-    if boto3 is not None:
-        return boto3.session.Session().region_name
-    return None
+    region = aws_region.strip()
+    return region or None
 
 
 def _probe_cloudwatch_stream(
@@ -3399,17 +3382,6 @@ def _parse_args() -> argparse.Namespace:
         help="Sparkplug edge node id (default: rig)",
     )
     parser.add_argument(
-        "--iot-endpoint",
-        default=None,
-        help="AWS IoT data endpoint hostname; if omitted, --iot-endpoint-file is used",
-    )
-    parser.add_argument(
-        "--iot-endpoint-file",
-        type=Path,
-        default=_env_path(DEFAULT_IOT_ENDPOINT_FILE_ENV, DEFAULT_IOT_ENDPOINT_FILE),
-        help=f"File containing AWS IoT endpoint (default: {DEFAULT_IOT_ENDPOINT_FILE})",
-    )
-    parser.add_argument(
         "--client-id",
         default=None,
         help="MQTT client id (default: rig-<pid>)",
@@ -3453,7 +3425,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--cloudwatch-region",
         default=None,
-        help="CloudWatch region override (default: inferred from AWS IoT endpoint)",
+        help="CloudWatch region override (default: same as AWS region)",
     )
     parser.add_argument(
         "--no-cloudwatch-logs",
@@ -3553,7 +3525,7 @@ def _build_shadow_from_snapshot(
 def _configure_logging(
     args: argparse.Namespace,
     *,
-    iot_endpoint: str,
+    aws_region: str,
     aws_runtime: AwsRuntime | None,
 ) -> None:
     formatter = logging.Formatter(
@@ -3596,7 +3568,7 @@ def _configure_logging(
     )
     cloudwatch_region = _resolve_cloudwatch_region(
         args.cloudwatch_region,
-        iot_endpoint=iot_endpoint,
+        aws_region=aws_region,
     )
     if not cloudwatch_region:
         print(
@@ -3664,16 +3636,16 @@ def main() -> None:
     try:
         if boto3 is None:
             raise RuntimeError("boto3 is required for IoT registry and thing-group access")
-        iot_endpoint = read_iot_endpoint(args.iot_endpoint, args.iot_endpoint_file)
-        aws_region = resolve_aws_region(iot_endpoint=iot_endpoint)
+        aws_region = resolve_aws_region()
         if not aws_region:
             raise RuntimeError("could not resolve AWS region for AWS IoT access")
         aws_runtime = build_aws_runtime(region_name=aws_region)
+        iot_endpoint = aws_runtime.iot_data_endpoint()
     except RuntimeError as err:
         print(f"rig start failed: {err}", file=sys.stderr)
         raise SystemExit(2) from err
 
-    _configure_logging(args, iot_endpoint=iot_endpoint, aws_runtime=aws_runtime)
+    _configure_logging(args, aws_region=aws_region, aws_runtime=aws_runtime)
 
     config = BridgeConfig(
         name_fragment=args.name,

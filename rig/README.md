@@ -84,26 +84,19 @@ $EDITOR config/aws.config
 just aws-rig sts get-caller-identity
 ```
 
-5. Write the AWS IoT endpoint file used by `rig`:
-
-```bash
-cd ~/txing
-just aws::endpoint
-```
-
-6. Validate AWS access and endpoint configuration:
+5. Validate AWS access and rig runtime configuration:
 
 ```bash
 cd ~/txing
 just rig::check
 ```
 
-This check validates required local tools plus caller identity, IoT control-plane access, CloudWatch log writes, and the configured Data-ATS endpoint file.
+This check validates required local tools plus caller identity, IoT control-plane access including Data-ATS endpoint discovery, and CloudWatch log writes.
 
-7. `just aws::bootstrap` is obsolete for `rig` certificate provisioning.
+6. `just aws::bootstrap` is obsolete for `rig` certificate provisioning.
 `rig` no longer uses AWS IoT thing certificates. The recipe may still exist for other legacy flows in the repo, but it is not part of the rig runtime setup anymore.
 
-8. Build the rig runtime with the OS `python3` and verify startup:
+7. Build the rig runtime with the OS `python3` and verify startup:
 
 ```bash
 cd ~/txing/rig
@@ -115,7 +108,7 @@ just debug
 
 `build` is the normal install step for the rig runtime. It creates or updates `rig/.venv/` from the OS `python3` on `PATH` and installs the packaged entry points there. You do not need to run `sync` first. `rig` requires Python `3.12+`, so make sure `python3 --version` on the host machine satisfies that before running `just build`.
 
-9. Optional: install the `systemd` service:
+8. Optional: install the `systemd` service:
 
 ```bash
 cd ~/txing
@@ -124,7 +117,7 @@ sudo journalctl -u rig -f
 ```
 
 The `just rig::install-service` task enables `bluetooth`, writes `/etc/systemd/system/rig.service` for the current user and checkout path, reloads `systemd`, and enables `rig`.
-It points `ExecStart` at the built rig executable in `rig/.venv/bin/rig` and writes the runtime contract into `Environment=` lines for `RIG_NAME`, `SPARKPLUG_GROUP_ID`, `SPARKPLUG_EDGE_NODE_ID`, `IOT_ENDPOINT_FILE`, `CLOUDWATCH_LOG_GROUP`, `AWS_REGION`, and optionally `AWS_PROFILE`, `AWS_SHARED_CREDENTIALS_FILE`, and `AWS_CONFIG_FILE`, so run `just rig::build` first.
+It points `ExecStart` at the built rig executable in `rig/.venv/bin/rig` and writes the runtime contract into `Environment=` lines for `RIG_NAME`, `SPARKPLUG_GROUP_ID`, `SPARKPLUG_EDGE_NODE_ID`, `CLOUDWATCH_LOG_GROUP`, `AWS_REGION`, and optionally `AWS_PROFILE`, `AWS_SHARED_CREDENTIALS_FILE`, and `AWS_CONFIG_FILE`, so run `just rig::build` first. The rig runtime discovers the AWS IoT Data-ATS endpoint automatically from the configured AWS region/profile.
 
 ## Run rig
 
@@ -134,8 +127,7 @@ Run from `rig/`:
 just run
 ```
 
-By default this reads `../config/aws.env`, exports the project-local AWS credential/config file paths from there, and uses the endpoint file:
-- endpoint file: `../certs/iot-data-ats.endpoint`
+By default this reads `../config/aws.env`, exports the project-local AWS credential/config file paths from there, and autodiscovers the AWS IoT Data-ATS endpoint from the configured AWS region/profile:
 - CloudWatch log group: `/town/rig/txing` (direct upload from process)
 
 Default logging behavior:
@@ -184,12 +176,11 @@ These recipes call `rig-sparkplug-cmd` with:
 Default recipe values:
 - thing name: `txing`
 - region: `eu-central-1`
-- endpoint file: `<repo>/certs/iot-data-ats.endpoint`
 
 Override example:
 
 ```bash
-just rig::wake thing_name=my-thing region=eu-central-1 endpoint_file=certs/iot-data-ats.endpoint
+just rig::wake thing_name=my-thing region=eu-central-1
 ```
 
 `print` prints the current real AWS Thing Shadow document.
@@ -273,13 +264,11 @@ Common overrides:
 - `--command-ack-poll-interval 0.1`
 - `--device-stale-after 0.75`
 - `--scan-mode active`
-- `--iot-endpoint <host>`
-- `--iot-endpoint-file ../certs/iot-data-ats.endpoint`
 - `--client-id rig-pi5`
 - `--debug` (verbose stdout logging)
 - `--cloudwatch-log-group /town/rig/txing`
 - `--cloudwatch-log-stream <stream-name>`
-- `--cloudwatch-region <aws-region>` (override region; default inferred from IoT endpoint)
+- `--cloudwatch-region <aws-region>` (override region; default: same as AWS region)
 - `--no-cloudwatch-logs`
 
 Authentication selection uses the standard AWS SDK environment, not rig-specific CLI flags:

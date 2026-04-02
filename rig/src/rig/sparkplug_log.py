@@ -6,11 +6,9 @@ from datetime import datetime, timezone
 import json
 import os
 import sys
-from pathlib import Path
 
-from .aws_auth import build_aws_runtime, read_iot_endpoint, resolve_aws_region
+from .aws_auth import build_aws_runtime, resolve_aws_region
 from .aws_mqtt import AwsIotWebsocketConnection, AwsMqttConnectionConfig
-from .repo_paths import DEFAULT_IOT_ENDPOINT_FILE
 from .sparkplug import build_device_topic, decode_payload, decode_redcon_command
 
 DEFAULT_THING_NAME = "txing"
@@ -20,7 +18,6 @@ DEFAULT_MESSAGE_TYPE = "both"
 DEFAULT_THING_NAME_ENV = "THING_NAME"
 DEFAULT_SPARKPLUG_GROUP_ID_ENV = "SPARKPLUG_GROUP_ID"
 DEFAULT_SPARKPLUG_EDGE_NODE_ID_ENV = "SPARKPLUG_EDGE_NODE_ID"
-DEFAULT_IOT_ENDPOINT_FILE_ENV = "IOT_ENDPOINT_FILE"
 DEFAULT_CONNECT_TIMEOUT = 10.0
 
 
@@ -41,11 +38,6 @@ def _emit_event(event: dict[str, object]) -> None:
 def _env_text(name: str, default: str) -> str:
     value = os.environ.get(name, "").strip()
     return value or default
-
-
-def _env_path(name: str, default: Path) -> Path:
-    value = os.environ.get(name, "").strip()
-    return Path(value) if value else default
 
 
 def _parse_args() -> argparse.Namespace:
@@ -70,17 +62,6 @@ def _parse_args() -> argparse.Namespace:
             DEFAULT_SPARKPLUG_EDGE_NODE_ID,
         ),
         help="Sparkplug edge node id (default: rig)",
-    )
-    parser.add_argument(
-        "--iot-endpoint",
-        default=None,
-        help="AWS IoT data endpoint hostname; if omitted, --iot-endpoint-file is used",
-    )
-    parser.add_argument(
-        "--iot-endpoint-file",
-        type=Path,
-        default=_env_path(DEFAULT_IOT_ENDPOINT_FILE_ENV, DEFAULT_IOT_ENDPOINT_FILE),
-        help=f"File containing AWS IoT endpoint (default: {DEFAULT_IOT_ENDPOINT_FILE})",
     )
     parser.add_argument(
         "--client-id",
@@ -181,8 +162,7 @@ def _handle_message(
 
 
 async def _run_log(args: argparse.Namespace) -> None:
-    endpoint = read_iot_endpoint(args.iot_endpoint, args.iot_endpoint_file)
-    aws_region = resolve_aws_region(iot_endpoint=endpoint)
+    aws_region = resolve_aws_region()
     if not aws_region:
         raise RuntimeError("could not resolve AWS region for AWS IoT access")
 
@@ -205,6 +185,7 @@ async def _run_log(args: argparse.Namespace) -> None:
         subscribe_topics.append(ddata_topic)
 
     runtime = build_aws_runtime(region_name=aws_region)
+    endpoint = runtime.iot_data_endpoint()
     connection = AwsIotWebsocketConnection(
         AwsMqttConnectionConfig(
             endpoint=endpoint,

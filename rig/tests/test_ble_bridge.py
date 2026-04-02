@@ -207,7 +207,6 @@ class ServiceConfigTests(unittest.TestCase):
                 "RIG_NAME": "rig-prod",
                 "SPARKPLUG_GROUP_ID": "town-prod",
                 "SPARKPLUG_EDGE_NODE_ID": "rig-prod",
-                "IOT_ENDPOINT_FILE": "/tmp/iot-endpoint",
                 "CLOUDWATCH_LOG_GROUP": "/town/rig/txing-prod",
             },
             clear=True,
@@ -219,7 +218,8 @@ class ServiceConfigTests(unittest.TestCase):
         self.assertEqual(args.rig_name, "rig-prod")
         self.assertEqual(args.sparkplug_group_id, "town-prod")
         self.assertEqual(args.sparkplug_edge_node_id, "rig-prod")
-        self.assertEqual(args.iot_endpoint_file, Path("/tmp/iot-endpoint"))
+        self.assertFalse(hasattr(args, "iot_endpoint"))
+        self.assertFalse(hasattr(args, "iot_endpoint_file"))
         self.assertFalse(hasattr(args, "cert_file"))
         self.assertFalse(hasattr(args, "key_file"))
         self.assertFalse(hasattr(args, "ca_file"))
@@ -234,10 +234,6 @@ class ServiceConfigTests(unittest.TestCase):
         self.assertIn('just --justfile "{{root_justfile}}" _project-aws-env rig', justfile)
         self.assertIn('command aws "$@"', justfile)
         self.assertIn('region="$TXING_AWS_REGION"', justfile)
-        self.assertIn(
-            'endpoint_file="$TXING_AWS_ENDPOINT_FILE"',
-            justfile,
-        )
         self.assertIn(
             'aws_profile="$TXING_AWS_SELECTED_PROFILE"',
             justfile,
@@ -260,7 +256,9 @@ class ServiceConfigTests(unittest.TestCase):
             'Environment="SPARKPLUG_EDGE_NODE_ID={{sparkplug_edge_node_id}}"',
             justfile,
         )
-        self.assertIn('IOT_ENDPOINT_FILE=$endpoint_file', justfile)
+        self.assertIn('aws iot describe-endpoint --endpoint-type iot:Data-ATS', justfile)
+        self.assertNotIn('TXING_AWS_ENDPOINT_FILE', justfile)
+        self.assertNotIn('IOT_ENDPOINT_FILE', justfile)
         self.assertIn('AWS_PROFILE=$aws_profile', justfile)
         self.assertIn('AWS_SHARED_CREDENTIALS_FILE=$aws_shared_credentials_file', justfile)
         self.assertIn('AWS_CONFIG_FILE=$aws_config_file', justfile)
