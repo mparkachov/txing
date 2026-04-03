@@ -26,6 +26,7 @@ For Python/AWS workflows in this repository, install and configure:
 The default repo workflow keeps AWS CLI config inside `config/` in the checkout.
 Copy `config/aws.env.example` to `config/aws.env`, `config/aws.credentials.example` to `config/aws.credentials`, and `config/aws.config.example` to `config/aws.config`, then edit those files for your town/account.
 Use `just aws-rig ...` for AWS CLI commands with the project rig/runtime profile and `just aws-town ...` for AWS CLI commands with the direct town account profile.
+Use `just aws-txing ...` for AWS CLI commands with the txing endpoint runtime profile.
 
 ## Task Runner
 
@@ -78,7 +79,7 @@ AWS stack deploy example (single stack with IoT + web admin):
 just aws::deploy
 ```
 
-That uses `TXING_AWS_COGNITO_DOMAIN_PREFIX`, `TXING_AWS_ADMIN_EMAIL`, and `TXING_AWS_TOWN_PROFILE` from `config/aws.env`.
+That uses `AWS_COGNITO_DOMAIN_PREFIX`, `AWS_ADMIN_EMAIL`, and `AWS_TOWN_PROFILE` from `config/aws.env`.
 
 Inspect or reset the live Thing Shadow from the repository root:
 

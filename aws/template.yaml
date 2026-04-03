@@ -165,6 +165,83 @@ Resources:
             Action: sts:AssumeRole
             Resource: !GetAtt TxingRigRuntimeRole.Arn
 
+  TxingRuntimeManagedPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Attach to the txing endpoint runtime IAM role used by the device-side txing runtime.
+      ManagedPolicyName: !Sub ${AWS::StackName}-txing-runtime
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: TxingMqttConnect
+            Effect: Allow
+            Action: iot:Connect
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/txing-*
+          - Sid: TxingShadowMqttTopics
+            Effect: Allow
+            Action:
+              - iot:Publish
+              - iot:Receive
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/txing/shadow/*
+          - Sid: TxingShadowMqttTopicFilters
+            Effect: Allow
+            Action: iot:Subscribe
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/$aws/things/txing/shadow/*
+          - Sid: TxingCmdVelTopics
+            Effect: Allow
+            Action:
+              - iot:Publish
+              - iot:Receive
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txing/board/cmd_vel
+          - Sid: TxingCmdVelTopicFilters
+            Effect: Allow
+            Action: iot:Subscribe
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/txing/board/cmd_vel
+          - Sid: TxingThingShadowApi
+            Effect: Allow
+            Action: iot:GetThingShadow
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/txing
+          - Sid: TxingDescribeEndpoint
+            Effect: Allow
+            Action: iot:DescribeEndpoint
+            Resource: "*"
+          - Sid: TxingBoardVideoMaster
+            Effect: Allow
+            Action:
+              - kinesisvideo:DescribeSignalingChannel
+              - kinesisvideo:GetSignalingChannelEndpoint
+              - kinesisvideo:GetIceServerConfig
+              - kinesisvideo:ConnectAsMaster
+            Resource: !GetAtt TxingBoardVideoChannel.Arn
+
+  TxingRuntimeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: Town-scoped IAM role assumed by txing endpoint hosts for SigV4-authenticated MQTT over WebSockets.
+      RoleName: !Sub ${AWS::StackName}-txing-runtime
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:root
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Ref TxingRuntimeManagedPolicy
+
+  TxingBootstrapManagedPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Attach to the bootstrap IAM principal distributed to txing endpoint hosts; grants only sts:AssumeRole for the txing runtime role.
+      ManagedPolicyName: !Sub ${AWS::StackName}-txing-bootstrap-assume-role
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AssumeTxingRuntimeRole
+            Effect: Allow
+            Action: sts:AssumeRole
+            Resource: !GetAtt TxingRuntimeRole.Arn
+
   TxingThing:
     Type: AWS::IoT::Thing
     Properties:
@@ -676,6 +753,18 @@ Outputs:
   RigBootstrapManagedPolicyArn:
     Description: Attach this managed policy to the bootstrap IAM principal whose access keys are distributed to rigs.
     Value: !Ref TxingRigBootstrapManagedPolicy
+  TxingRuntimeRoleArn:
+    Description: Town-scoped IAM role to assume from txing endpoint hosts for SigV4-authenticated MQTT over WebSockets.
+    Value: !GetAtt TxingRuntimeRole.Arn
+  TxingRuntimeRoleName:
+    Description: Name of the town-scoped txing runtime IAM role.
+    Value: !Ref TxingRuntimeRole
+  TxingRuntimeManagedPolicyArn:
+    Description: Managed policy attached to the txing endpoint runtime role.
+    Value: !Ref TxingRuntimeManagedPolicy
+  TxingBootstrapManagedPolicyArn:
+    Description: Attach this managed policy to the bootstrap IAM principal whose access keys are distributed to txing endpoint hosts.
+    Value: !Ref TxingBootstrapManagedPolicy
   ThingIndexingMode:
     Description: AWS IoT fleet indexing mode configured by the stack.
     Value: !GetAtt TxingFleetIndexingConfiguration.ThingIndexingMode

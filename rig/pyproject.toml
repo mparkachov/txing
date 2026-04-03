@@ -11,6 +11,7 @@ dependencies = [
     "awsiotsdk>=1.22,<2",
     "bleak>=0.22,<1",
     "boto3>=1.34,<2",
+    "txing-aws",
     "watchtower>=3.3,<4",
 ]
 
@@ -28,3 +29,6 @@ pyobjc-core = ["setuptools<81"]
 pyobjc-framework-cocoa = ["setuptools<81"]
 pyobjc-framework-corebluetooth = ["setuptools<81"]
 pyobjc-framework-libdispatch = ["setuptools<81"]
+
+[tool.uv.sources]
+txing-aws = { path = "../txing_aws" }

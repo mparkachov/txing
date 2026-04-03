@@ -4,6 +4,8 @@ board_dir := source_directory()
 python_executable := "python3"
 built_board := board_dir + "/.venv/bin/board"
 built_board_video_sender := board_dir + "/.venv/bin/board-video-sender"
+project_root := board_dir + "/.."
+root_justfile := project_root + "/justfile"
 native_kvs_master_dir := board_dir + "/kvs_master"
 native_kvs_master_build_dir := native_kvs_master_dir + "/build"
 native_kvs_master_test_build_dir := native_kvs_master_dir + "/build-tests"
@@ -17,15 +19,13 @@ default_aws_kvs_sdk_repository := env_var_or_default("TXING_BOARD_AWS_KVS_WEBRTC
 default_aws_kvs_sdk_ref := env_var_or_default("TXING_BOARD_AWS_KVS_WEBRTC_SDK_REF", "main")
 systemd_unit := "/etc/systemd/system/txing-board.service"
 default_thing_name := "txing"
-default_iot_endpoint_file := board_dir + "/../certs/iot-data-ats.endpoint"
-default_cert_file := board_dir + "/../certs/txing.cert.pem"
-default_key_file := board_dir + "/../certs/txing.private.key"
-default_ca_file := board_dir + "/../certs/AmazonRootCA1.pem"
 default_schema_file := board_dir + "/../docs/txing-shadow.schema.json"
 default_video_region := "eu-central-1"
 default_video_channel_name := "txing-board-video"
-default_aws_shared_credentials_file := "/root/.aws/credentials"
-default_aws_config_file := "/root/.aws/config"
+region := ""
+aws_profile := ""
+aws_shared_credentials_file := ""
+aws_config_file := ""
 default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_SYSTEM_DEPENDENCIES", "ON")
 
 @sync:
@@ -35,6 +35,77 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
     cd "{{board_dir}}" && uv sync --frozen --no-editable --compile-bytecode --python "{{python_executable}}" --no-managed-python --no-python-downloads --refresh-package board --reinstall-package board
     test -x "{{built_board}}"
     test -x "{{built_board_video_sender}}"
+
+[positional-arguments]
+@aws *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env txing)"
+    command aws "$@"
+
+@check thing_name=default_thing_name video_channel_name=default_video_channel_name region=region aws_profile=aws_profile:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env txing "{{region}}" "{{aws_profile}}")"
+    region="$AWS_REGION"
+    aws_profile="$AWS_SELECTED_PROFILE"
+    aws_flags=(--region "$region")
+    if [ -n "$aws_profile" ]; then
+      aws_flags+=(--profile "$aws_profile")
+    fi
+
+    failures=0
+
+    check_tool() {
+      local tool="$1"
+      if command -v "$tool" >/dev/null 2>&1; then
+        echo "ok: tool '$tool' is installed"
+      else
+        echo "fail: tool '$tool' is not installed"
+        failures=$((failures + 1))
+      fi
+    }
+
+    check_cmd() {
+      local label="$1"
+      shift
+      if "$@" >/dev/null 2>&1; then
+        echo "ok: $label"
+      else
+        echo "fail: $label"
+        failures=$((failures + 1))
+      fi
+    }
+
+    echo "Checking local tools..."
+    check_tool aws
+    check_tool jq
+    check_tool uv
+    check_tool just
+
+    echo "Checking AWS identity and txing runtime access..."
+    check_cmd "STS caller identity" aws sts get-caller-identity "${aws_flags[@]}"
+    check_cmd "IoT DescribeEndpoint (Data-ATS)" aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}"
+
+    endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}" --query endpointAddress --output text)"
+    check_cmd \
+      "IoT Data GetThingShadow on {{thing_name}}" \
+      aws iot-data get-thing-shadow \
+      --endpoint-url "https://$endpoint" \
+      --thing-name "{{thing_name}}" \
+      "${aws_flags[@]}" \
+      /dev/null
+    check_cmd \
+      "KinesisVideo DescribeSignalingChannel on {{video_channel_name}}" \
+      aws kinesisvideo describe-signaling-channel \
+      --channel-name "{{video_channel_name}}" \
+      "${aws_flags[@]}"
+
+    if [ "$failures" -ne 0 ]; then
+      echo "txing runtime check failed with $failures problem(s)" >&2
+      exit 1
+    fi
+    echo "txing runtime check passed"
 
 @clone-aws-sdk:
     if [ ! -d "{{aws_kvs_sdk_dir}}/.git" ]; then \
@@ -146,50 +217,88 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
     ctest --test-dir "{{native_kvs_master_test_build_dir}}" --output-on-failure
 
 @run:
-    cd "{{board_dir}}" && "{{built_board}}"
-
-@once:
-    cd "{{board_dir}}" && "{{built_board}}" --once
-
-@dev:
-    cd "{{board_dir}}" && uv run board
-
-@once-dev:
-    cd "{{board_dir}}" && uv run board --once
-
-@install-service video_viewer_url video_sender_command thing_name=default_thing_name endpoint_file=default_iot_endpoint_file cert_file=default_cert_file key_file=default_key_file ca_file=default_ca_file schema_file=default_schema_file video_region=default_video_region video_channel_name=default_video_channel_name aws_shared_credentials_file=default_aws_shared_credentials_file aws_config_file=default_aws_config_file:
+    #!/usr/bin/env bash
+    set -euo pipefail
     test -x "{{built_board}}" || { \
         echo "Missing built board executable at {{built_board}}. Run 'just build' first." >&2; \
         exit 1; \
     }
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env txing "{{region}}" "{{aws_profile}}")"
+    cd "{{board_dir}}" && "{{built_board}}"
+
+@once:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    test -x "{{built_board}}" || { \
+        echo "Missing built board executable at {{built_board}}. Run 'just build' first." >&2; \
+        exit 1; \
+    }
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env txing "{{region}}" "{{aws_profile}}")"
+    cd "{{board_dir}}" && "{{built_board}}" --once
+
+@dev:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env txing "{{region}}" "{{aws_profile}}")"
+    cd "{{board_dir}}" && uv run board
+
+@once-dev:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env txing "{{region}}" "{{aws_profile}}")"
+    cd "{{board_dir}}" && uv run board --once
+
+@install-service video_viewer_url video_sender_command thing_name=default_thing_name schema_file=default_schema_file video_region=default_video_region video_channel_name=default_video_channel_name region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file aws_config_file=aws_config_file:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    test -x "{{built_board}}" || { \
+        echo "Missing built board executable at {{built_board}}. Run 'just build' first." >&2; \
+        exit 1; \
+    }
+    export AWS_SHARED_CREDENTIALS_FILE="{{aws_shared_credentials_file}}"
+    export AWS_CONFIG_FILE="{{aws_config_file}}"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env txing "{{region}}" "{{aws_profile}}")"
+    region="$AWS_REGION"
+    aws_profile="$AWS_SELECTED_PROFILE"
+    aws_shared_credentials_file="$AWS_SHARED_CREDENTIALS_FILE"
+    aws_config_file="$AWS_CONFIG_FILE"
     sudo systemctl enable NetworkManager-wait-online.service
-    printf '%s\n' \
-        '[Unit]' \
-        'Description=txing board control' \
-        'Wants=network-online.target systemd-time-wait-sync.service' \
-        'After=network-online.target systemd-time-wait-sync.service time-sync.target' \
-        '' \
-        '[Service]' \
-        'Type=simple' \
-        'WorkingDirectory={{board_dir}}' \
+    service_env=( \
+        "Environment=\"AWS_REGION=$region\"" \
         'Environment="THING_NAME={{thing_name}}"' \
-        'Environment="IOT_ENDPOINT_FILE={{endpoint_file}}"' \
-        'Environment="CERT_FILE={{cert_file}}"' \
-        'Environment="KEY_FILE={{key_file}}"' \
-        'Environment="CA_FILE={{ca_file}}"' \
         'Environment="SCHEMA_FILE={{schema_file}}"' \
         'Environment="BOARD_VIDEO_VIEWER_URL={{video_viewer_url}}"' \
         'Environment="BOARD_VIDEO_REGION={{video_region}}"' \
         'Environment="BOARD_VIDEO_CHANNEL_NAME={{video_channel_name}}"' \
         'Environment="BOARD_VIDEO_SENDER_COMMAND={{video_sender_command}}"' \
-        'Environment="AWS_SHARED_CREDENTIALS_FILE={{aws_shared_credentials_file}}"' \
-        'Environment="AWS_CONFIG_FILE={{aws_config_file}}"' \
-        'ExecStart={{built_board}} --heartbeat-seconds 60' \
-        'Restart=always' \
-        'RestartSec=5' \
-        '' \
-        '[Install]' \
-        'WantedBy=multi-user.target' \
-        | sudo tee "{{systemd_unit}}" >/dev/null
+    ); \
+    if [ -n "$aws_profile" ]; then \
+        service_env+=("Environment=\"AWS_PROFILE=$aws_profile\""); \
+    fi; \
+    if [ -n "$aws_shared_credentials_file" ]; then \
+        service_env+=("Environment=\"AWS_SHARED_CREDENTIALS_FILE=$aws_shared_credentials_file\""); \
+    fi; \
+    if [ -n "$aws_config_file" ]; then \
+        service_env+=("Environment=\"AWS_CONFIG_FILE=$aws_config_file\""); \
+    fi; \
+    { \
+        printf '%s\n' \
+            '[Unit]' \
+            'Description=txing runtime control' \
+            'Wants=network-online.target systemd-time-wait-sync.service' \
+            'After=network-online.target systemd-time-wait-sync.service time-sync.target' \
+            '' \
+            '[Service]' \
+            'Type=simple' \
+            'WorkingDirectory={{board_dir}}'; \
+        printf '%s\n' "${service_env[@]}"; \
+        printf '%s\n' \
+            'ExecStart={{built_board}} --heartbeat-seconds 60' \
+            'Restart=always' \
+            'RestartSec=5' \
+            '' \
+            '[Install]' \
+            'WantedBy=multi-user.target'; \
+    } | sudo tee "{{systemd_unit}}" >/dev/null
     sudo systemctl daemon-reload
     sudo systemctl enable --now txing-board

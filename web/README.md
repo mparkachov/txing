@@ -78,7 +78,7 @@ just web::write-env
 just web::dev
 ```
 
-These commands read `TXING_AWS_COGNITO_DOMAIN_PREFIX`, `TXING_AWS_ADMIN_EMAIL`, and `TXING_AWS_TOWN_PROFILE` from `config/aws.env`.
+These commands read `AWS_COGNITO_DOMAIN_PREFIX`, `AWS_ADMIN_EMAIL`, and `AWS_TOWN_PROFILE` from `config/aws.env`.
 
 If you have stale local auth state after callback or token-flow changes, clear the session storage in the browser console and sign in again:
 

@@ -41,11 +41,6 @@ def _make_args(**overrides: object) -> Namespace:
     values: dict[str, object] = {
         "shadow_file": Path("/tmp/txing_board_shadow.json"),
         "thing_name": "txing",
-        "iot_endpoint": None,
-        "iot_endpoint_file": Path("/tmp/iot-data-ats.endpoint"),
-        "cert_file": Path("/tmp/txing.cert.pem"),
-        "key_file": Path("/tmp/txing.private.key"),
-        "ca_file": Path("/tmp/AmazonRootCA1.pem"),
         "schema_file": Path(REPO_ROOT / "docs" / "txing-shadow.schema.json"),
         "client_id": None,
         "video_channel_name": DEFAULT_VIDEO_CHANNEL_NAME,
@@ -94,10 +89,8 @@ def _make_video_state(
 def _make_config(**overrides: object) -> ControlConfig:
     values: dict[str, object] = {
         "thing_name": "txing",
+        "aws_region": "eu-central-1",
         "iot_endpoint": "example-ats.iot.eu-central-1.amazonaws.com",
-        "cert_file": Path("/tmp/txing.cert.pem"),
-        "key_file": Path("/tmp/txing.private.key"),
-        "ca_file": Path("/tmp/AmazonRootCA1.pem"),
         "schema_file": Path(REPO_ROOT / "docs" / "txing-shadow.schema.json"),
         "shadow_file": Path("/tmp/txing_board_shadow.json"),
         "client_id": "txing-board-test",
@@ -124,26 +117,21 @@ def _make_config(**overrides: object) -> ControlConfig:
 class ShadowControlContractTests(unittest.TestCase):
     def test_routes_cmd_vel_messages_to_controller(self) -> None:
         cmd_vel_controller = MagicMock()
-        with patch.object(shadow_control.mqtt.Client, "tls_set", return_value=None):
-            shadow_client = AwsShadowClient(
-                _make_config(),
-                cmd_vel_controller=cmd_vel_controller,
-            )
-        msg = type(
-            "Message",
-            (),
-            {
-                "topic": build_cmd_vel_topic("txing"),
-                "payload": json.dumps(
-                    {
-                        "linear": {"x": 1, "y": 0, "z": 0},
-                        "angular": {"x": 0, "y": 0, "z": 0},
-                    }
-                ).encode("utf-8"),
-            },
-        )()
+        shadow_client = AwsShadowClient(
+            _make_config(),
+            aws_runtime=MagicMock(),
+            cmd_vel_controller=cmd_vel_controller,
+        )
 
-        shadow_client._on_message(MagicMock(), None, msg)  # type: ignore[arg-type]
+        shadow_client._on_message(
+            build_cmd_vel_topic("txing"),
+            json.dumps(
+                {
+                    "linear": {"x": 1, "y": 0, "z": 0},
+                    "angular": {"x": 0, "y": 0, "z": 0},
+                }
+            ).encode("utf-8"),
+        )
 
         cmd_vel_controller.handle_message.assert_called_once_with(
             {
@@ -302,11 +290,8 @@ class ShadowControlContractTests(unittest.TestCase):
         with (
             patch.object(shadow_control, "_parse_args", return_value=args),
             patch.object(shadow_control, "_configure_logging"),
-            patch.object(
-                shadow_control,
-                "_read_iot_endpoint",
-                return_value="example-ats.iot.eu-central-1.amazonaws.com",
-            ),
+            patch.object(shadow_control, "resolve_aws_region", return_value="eu-central-1"),
+            patch.object(shadow_control, "build_aws_runtime", return_value=MagicMock(iot_data_endpoint=MagicMock(return_value="example-ats.iot.eu-central-1.amazonaws.com"))),
             patch.object(shadow_control, "_require_file"),
             patch.object(shadow_control, "_load_validator", return_value=object()),
             patch.object(shadow_control, "_install_signal_handlers"),
@@ -350,11 +335,8 @@ class ShadowControlContractTests(unittest.TestCase):
         with (
             patch.object(shadow_control, "_parse_args", return_value=args),
             patch.object(shadow_control, "_configure_logging"),
-            patch.object(
-                shadow_control,
-                "_read_iot_endpoint",
-                return_value="example-ats.iot.eu-central-1.amazonaws.com",
-            ),
+            patch.object(shadow_control, "resolve_aws_region", return_value="eu-central-1"),
+            patch.object(shadow_control, "build_aws_runtime", return_value=MagicMock(iot_data_endpoint=MagicMock(return_value="example-ats.iot.eu-central-1.amazonaws.com"))),
             patch.object(shadow_control, "_require_file"),
             patch.object(shadow_control, "_load_validator", return_value=object()),
             patch.object(shadow_control, "_install_signal_handlers"),
@@ -400,11 +382,8 @@ class ShadowControlContractTests(unittest.TestCase):
         with (
             patch.object(shadow_control, "_parse_args", return_value=args),
             patch.object(shadow_control, "_configure_logging"),
-            patch.object(
-                shadow_control,
-                "_read_iot_endpoint",
-                return_value="example-ats.iot.eu-central-1.amazonaws.com",
-            ),
+            patch.object(shadow_control, "resolve_aws_region", return_value="eu-central-1"),
+            patch.object(shadow_control, "build_aws_runtime", return_value=MagicMock(iot_data_endpoint=MagicMock(return_value="example-ats.iot.eu-central-1.amazonaws.com"))),
             patch.object(shadow_control, "_require_file"),
             patch.object(shadow_control, "_load_validator", return_value=object()),
             patch.object(shadow_control, "_install_signal_handlers"),
@@ -450,11 +429,8 @@ class ShadowControlContractTests(unittest.TestCase):
         with (
             patch.object(shadow_control, "_parse_args", return_value=args),
             patch.object(shadow_control, "_configure_logging"),
-            patch.object(
-                shadow_control,
-                "_read_iot_endpoint",
-                return_value="example-ats.iot.eu-central-1.amazonaws.com",
-            ),
+            patch.object(shadow_control, "resolve_aws_region", return_value="eu-central-1"),
+            patch.object(shadow_control, "build_aws_runtime", return_value=MagicMock(iot_data_endpoint=MagicMock(return_value="example-ats.iot.eu-central-1.amazonaws.com"))),
             patch.object(shadow_control, "_require_file"),
             patch.object(shadow_control, "_load_validator", return_value=object()),
             patch.object(shadow_control, "_install_signal_handlers"),
@@ -492,20 +468,17 @@ class ShadowControlContractTests(unittest.TestCase):
         )
         self.assertNotIn("mediamtx.service", justfile)
         self.assertIn('Environment="THING_NAME={{thing_name}}"', justfile)
-        self.assertIn('Environment="IOT_ENDPOINT_FILE={{endpoint_file}}"', justfile)
-        self.assertIn('Environment="CERT_FILE={{cert_file}}"', justfile)
-        self.assertIn('Environment="KEY_FILE={{key_file}}"', justfile)
-        self.assertIn('Environment="CA_FILE={{ca_file}}"', justfile)
         self.assertIn('Environment="SCHEMA_FILE={{schema_file}}"', justfile)
         self.assertIn('Environment="BOARD_VIDEO_VIEWER_URL={{video_viewer_url}}"', justfile)
         self.assertIn('Environment="BOARD_VIDEO_REGION={{video_region}}"', justfile)
         self.assertIn('Environment="BOARD_VIDEO_CHANNEL_NAME={{video_channel_name}}"', justfile)
         self.assertIn('Environment="BOARD_VIDEO_SENDER_COMMAND={{video_sender_command}}"', justfile)
-        self.assertIn('Environment="AWS_SHARED_CREDENTIALS_FILE={{aws_shared_credentials_file}}"', justfile)
-        self.assertIn('Environment="AWS_CONFIG_FILE={{aws_config_file}}"', justfile)
         self.assertIn('ExecStart={{built_board}} --heartbeat-seconds 60', justfile)
-        self.assertIn('default_aws_shared_credentials_file := "/root/.aws/credentials"', justfile)
-        self.assertIn('default_aws_config_file := "/root/.aws/config"', justfile)
+        self.assertIn('eval "$(just --justfile "{{root_justfile}}" _project-aws-env txing', justfile)
+        self.assertIn('"Environment=\\"AWS_REGION=$region\\""', justfile)
+        self.assertIn('service_env+=("Environment=\\"AWS_PROFILE=$aws_profile\\"");', justfile)
+        self.assertIn('service_env+=("Environment=\\"AWS_SHARED_CREDENTIALS_FILE=$aws_shared_credentials_file\\"");', justfile)
+        self.assertIn('service_env+=("Environment=\\"AWS_CONFIG_FILE=$aws_config_file\\"");', justfile)
         self.assertIn('default_video_region := "eu-central-1"', justfile)
         self.assertIn('default_video_channel_name := "txing-board-video"', justfile)
 

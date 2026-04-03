@@ -26,9 +26,9 @@ web_dist_dir := web_dir + "/dist"
     cd "{{web_dir}}"
 
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}" "" "{{stack_name}}")"
-    stack_name="$TXING_AWS_STACK_NAME"
-    region="$TXING_AWS_REGION"
-    profile="$TXING_AWS_SELECTED_PROFILE"
+    stack_name="$AWS_STACK_NAME"
+    region="$AWS_REGION"
+    profile="$AWS_SELECTED_PROFILE"
 
     if [ -z "$region" ]; then
       echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
@@ -93,9 +93,9 @@ web_dist_dir := web_dir + "/dist"
     cd "{{web_dir}}"
 
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}" "" "{{stack_name}}")"
-    stack_name="$TXING_AWS_STACK_NAME"
-    region="$TXING_AWS_REGION"
-    profile="$TXING_AWS_SELECTED_PROFILE"
+    stack_name="$AWS_STACK_NAME"
+    region="$AWS_REGION"
+    profile="$AWS_SELECTED_PROFILE"
 
     aws_flags=(--region "$region")
     if [ -n "$profile" ]; then

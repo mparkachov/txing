@@ -6,9 +6,9 @@ This is not the same Raspberry Pi as `rig/`. The `rig/` Pi remains the BLE/AWS c
 
 `txing-board` is the only process that publishes `board.*` Thing Shadow updates. For video, it supervises a dedicated local sender helper and publishes coarse AWS WebRTC session state under `reported.board.video`.
 
-The board reuses the same AWS IoT mTLS certificate files as `rig/`, stored in `../certs/` as `txing.cert.pem` and `txing.private.key`.
+The txing runtime now connects to AWS IoT Core over SigV4-authenticated MQTT over WebSockets using the standard AWS SDK credential chain. The intended project-local profile layout is `town`, `rig`, and `txing`, with `txing` assuming the stack output role `TxingRuntimeRoleArn`.
 
-When the service is managed by `systemd`, run it as `root`. The board control consumes internal `state.desired.board.power=false` requests from the phase-1 `rig` runtime and requests a local system halt, which requires root privileges. The supervised video sender resolves AWS credentials from `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` first and otherwise falls back to the shared credentials file for the active profile, so the simplest service setup is to keep the sender credentials in the root account's AWS files unless you override the credential file paths in the generated unit.
+When the service is managed by `systemd`, run it as `root`. The board control consumes internal `state.desired.board.power=false` requests from the phase-1 `rig` runtime and requests a local system halt, which requires root privileges. The supervised video sender keeps using the board host's AWS SDK credential chain, so the generated service unit exports `AWS_REGION` plus optional `AWS_PROFILE`, `AWS_SHARED_CREDENTIALS_FILE`, and `AWS_CONFIG_FILE`.
 
 ## Video runtime
 
@@ -101,27 +101,20 @@ These constants are provisional for this phase. `MAX_SPEED=100` currently means 
 - native build packages for the AWS WebRTC C SDK dependencies: `build-essential`, `curl`, `libssl-dev`, `libcurl4-openssl-dev`, `liblog4cplus-dev`, `libsrtp2-dev`, `libusrsctp-dev`, `libwebsockets-dev`, and `zlib1g-dev`
 - `libcamera-dev` for the in-process camera capture path
 - `ca-certificates` for general HTTPS tooling on the board
-- AWS IoT endpoint, root CA, client certificate, and client private key
+- project-local AWS config files for the `town` source profile and the `txing` runtime profile
 - AWS credentials for the board video sender with permission to use the KVS signaling channel as master
 - a working Raspberry Pi camera stack with the modern `libcamera` pipeline and the Pi V4L2 H.264 encoder available
-
-The defaults expect shared repo cert material in `../certs/`:
-
-- endpoint: `../certs/iot-data-ats.endpoint`
-- certificate: `../certs/txing.cert.pem`
-- private key: `../certs/txing.private.key`
-- root CA: `../certs/AmazonRootCA1.pem`
 
 ## Fresh Setup From Raspberry Pi Imager
 
 Use this order on a full board rebuild from a new SD card image:
 
-1. Prepare the AWS stack outputs, IoT client files, and board video IAM access on the development machine.
+1. Prepare the AWS stack outputs and txing runtime IAM access on the development machine.
 2. Flash Raspberry Pi OS Lite with Raspberry Pi Imager and enable SSH plus Wi-Fi.
 3. Boot the board, install local tools, and clone the repo to `/home/user/txing`.
-4. Copy the four AWS IoT client files from the development machine to `/home/user/txing/certs`.
+4. Copy the project-local AWS config files from the development machine to `/home/user/txing/config`.
 5. Install the native sender build prerequisites and build the KVS master sender on the board.
-6. Configure AWS credentials for the sender in the same location the `systemd` service will use.
+6. Verify the `txing` runtime profile resolves on the board.
 7. Build the board runtime and run a foreground smoke test.
 8. Install `txing-board` as a `systemd` service and verify it survives a reboot.
 
@@ -137,13 +130,10 @@ If you use a different username, hostname, repo path, region, or channel name, r
 
 ### 1. Prepare AWS Artifacts on the Development Machine
 
-If the AWS stack already exists and you only need the board artifacts:
+If the AWS stack already exists and you only need the txing runtime artifacts:
 
 ```bash
 cd /path/to/txing
-just aws::cert
-just aws::endpoint
-just aws::ca
 just aws::describe
 ```
 
@@ -152,30 +142,24 @@ If this is a new AWS environment:
 ```bash
 cd /path/to/txing
 just aws::deploy <unique-cognito-prefix> <admin-email>
-just aws::cert
-just aws::endpoint
-just aws::ca
 just aws::describe
 ```
 
-Fetch the board video outputs you need:
+Fetch the txing runtime and board video outputs you need:
 
 ```bash
 aws cloudformation describe-stacks \
   --stack-name txing-iot \
   --region eu-central-1 \
-  --query "Stacks[0].Outputs[?OutputKey=='BoardVideoViewerUrl' || OutputKey=='BoardVideoChannelName' || OutputKey=='BoardVideoSenderManagedPolicyArn'].[OutputKey,OutputValue]" \
+  --query "Stacks[0].Outputs[?OutputKey=='BoardVideoViewerUrl' || OutputKey=='BoardVideoChannelName' || OutputKey=='TxingRuntimeRoleArn' || OutputKey=='TxingBootstrapManagedPolicyArn'].[OutputKey,OutputValue]" \
   --output table
 ```
 
-The board needs these four files from the repo `certs/` directory:
+Prepare the local config files the board will use:
 
-- `txing.cert.pem`
-- `txing.private.key`
-- `AmazonRootCA1.pem`
-- `iot-data-ats.endpoint`
-
-The sender AWS credentials must be allowed to use the exported signaling channel as master. The stack exports `BoardVideoSenderManagedPolicyArn` for that purpose, but how you attach it depends on the IAM user or role you choose for the board.
+- `config/aws.env` with `AWS_TXING_PROFILE=txing`
+- `config/aws.credentials` with the `town` source credentials
+- `config/aws.config` with `[profile txing]` assuming `TxingRuntimeRoleArn`
 
 ### 2. Flash and Boot the Board
 
@@ -246,34 +230,30 @@ rm -rf /tmp/aws /tmp/awscliv2.zip
 
 If `uname -m` is not `aarch64`, stop and reinstall a 64-bit Raspberry Pi OS image. AWS documents AWS CLI v2 support for 64-bit Linux ARM and the official Linux ARM installer uses the `awscli-exe-linux-aarch64.zip` package.
 
-### 4. Copy AWS IoT Client Artifacts to the Board
+### 4. Copy Project-Local AWS Config to the Board
 
 From the development machine:
 
 ```bash
-ssh user@<board-host> 'install -d -m 0755 /home/user/txing/certs'
+ssh user@<board-host> 'install -d -m 0755 /home/user/txing/config'
 scp \
-  certs/txing.cert.pem \
-  certs/txing.private.key \
-  certs/AmazonRootCA1.pem \
-  certs/iot-data-ats.endpoint \
-  user@<board-host>:/home/user/txing/certs/
-ssh user@<board-host> '\
-  chmod 0644 /home/user/txing/certs/txing.cert.pem \
-             /home/user/txing/certs/AmazonRootCA1.pem \
-             /home/user/txing/certs/iot-data-ats.endpoint && \
-  chmod 0600 /home/user/txing/certs/txing.private.key'
+  config/aws.env \
+  config/aws.credentials \
+  config/aws.config \
+  user@<board-host>:/home/user/txing/config/
 ```
 
-Back on the board, verify the files:
+Back on the board, verify the config and the `txing` profile:
 
 ```bash
 cd /home/user/txing
-ls -l certs
-test -s certs/txing.cert.pem
-test -s certs/txing.private.key
-test -s certs/AmazonRootCA1.pem
-test -s certs/iot-data-ats.endpoint
+ls -l config
+test -s config/aws.env
+test -s config/aws.credentials
+test -s config/aws.config
+just aws-txing sts get-caller-identity
+cd board
+just check
 ```
 
 ### 5. Build the Native KVS Sender
@@ -327,35 +307,20 @@ You do not need to set sender regex environment variables for the repo sender. `
 
 `board-video-sender` also exports `BOARD_VIDEO_REGION` and `BOARD_VIDEO_CHANNEL_NAME` to the child automatically, so the native sender does not need those flags when it is started under the Python supervisor.
 
-For TLS trust on the KVS signaling path, `txing-board` now reuses the same AWS root CA PEM you already provision for the board (`certs/AmazonRootCA1.pem`). The Python supervisor passes that file to the native sender as `SSL_CERT_FILE` and `AWS_KVS_CACERT_PATH`, so you do not need to add manual `systemd` TLS environment overrides for the normal board setup.
+For TLS trust on the KVS signaling path, `board-video-sender` autodiscovers the system CA bundle for the native sender. You do not need IoT-specific certificate files for the txing runtime bootstrap.
 
-### 6. Configure AWS Credentials for the Sender
+### 6. Verify the `txing` Runtime Profile
 
-The sender resolves credentials from environment variables first and otherwise falls back to the shared AWS credentials file for the active profile. The generated `systemd` unit runs as `root`, so the simplest path is to install the credentials in `/root/.aws/`.
+The txing runtime and the supervised sender both use the standard AWS SDK chain. The generated service unit exports `AWS_REGION` and, when configured, `AWS_PROFILE`, `AWS_SHARED_CREDENTIALS_FILE`, and `AWS_CONFIG_FILE`.
 
-Create the root AWS config directory:
-
-```bash
-sudo install -d -m 0700 /root/.aws
-```
-
-Copy or create the credentials and config files there:
+Verify the intended txing identity before installing the service:
 
 ```bash
-sudo cp /path/to/credentials /root/.aws/credentials
-sudo cp /path/to/config /root/.aws/config
-sudo chmod 0600 /root/.aws/credentials /root/.aws/config
+cd /home/user/txing
+just aws-txing sts get-caller-identity
 ```
 
-Verify the root account can resolve the intended identity:
-
-```bash
-sudo AWS_SHARED_CREDENTIALS_FILE=/root/.aws/credentials \
-  AWS_CONFIG_FILE=/root/.aws/config \
-  aws sts get-caller-identity
-```
-
-If you want the install recipe to use different thing/cert paths, credential paths, region, or channel defaults, pass them directly to `just board::install-service` as parameters.
+If you want the install recipe to use credential files outside the checkout, pass `aws_shared_credentials_file=` and `aws_config_file=` directly to `just board::install-service`.
 
 ### 7. Build and Smoke Test
 
@@ -385,16 +350,13 @@ sudo ./.venv/bin/board \
   --video-viewer-url "$BOARD_VIDEO_VIEWER_URL" \
   --video-region eu-central-1 \
   --video-channel-name txing-board-video \
-  --video-sender-command "$BOARD_VIDEO_SENDER_COMMAND" \
-  --aws-shared-credentials-file /root/.aws/credentials \
-  --aws-config-file /root/.aws/config
+  --video-sender-command "$BOARD_VIDEO_SENDER_COMMAND"
 ```
 
 What this proves:
 
-- the board can load the shared AWS IoT mTLS files from `/home/user/txing/certs`
+- the txing runtime can resolve AWS region, credentials, and the IoT Data-ATS endpoint from the shared config flow
 - the sender can resolve the signaling channel in AWS
-- the sender can reuse the provisioned AWS root CA PEM for KVS TLS
 - the sender command starts successfully
 - `txing-board` can publish the initial `reported.board.video` payload
 
@@ -430,9 +392,8 @@ The generated unit:
 - enables `NetworkManager-wait-online.service`
 - waits for `systemd-time-wait-sync.service` / `time-sync.target` before startup
 - runs `txing-board` as `root`
-- defines `THING_NAME`, `IOT_ENDPOINT_FILE`, `CERT_FILE`, `KEY_FILE`, `CA_FILE`, `SCHEMA_FILE`, `BOARD_VIDEO_VIEWER_URL`, `BOARD_VIDEO_REGION`, `BOARD_VIDEO_CHANNEL_NAME`, `BOARD_VIDEO_SENDER_COMMAND`, `AWS_SHARED_CREDENTIALS_FILE`, and `AWS_CONFIG_FILE`
+- defines `AWS_REGION`, `THING_NAME`, `SCHEMA_FILE`, `BOARD_VIDEO_VIEWER_URL`, `BOARD_VIDEO_REGION`, `BOARD_VIDEO_CHANNEL_NAME`, `BOARD_VIDEO_SENDER_COMMAND`, and optionally `AWS_PROFILE`, `AWS_SHARED_CREDENTIALS_FILE`, and `AWS_CONFIG_FILE`
 - starts `board` with `ExecStart=/home/.../board/.venv/bin/board --heartbeat-seconds 60`
-- inherits the board AWS root CA PEM for the native KVS sender
 
 The Python service also waits up to `120 s` for `timedatectl` to report `SystemClockSynchronized=yes` before it starts the AWS-backed video sender. That avoids transient KVS `InvalidSignatureException` failures after boot when networking is up but NTP has not corrected the clock yet.
 
@@ -481,10 +442,6 @@ uv run board --once --video-viewer-url "$BOARD_VIDEO_VIEWER_URL"
 Useful board options:
 
 - `--thing-name <thing>`
-- `--iot-endpoint <hostname>`
-- `--cert-file <path>`
-- `--key-file <path>`
-- `--ca-file <path>`
 - `--video-viewer-url <https-url>`
 - `--video-region <aws-region>`
 - `--video-channel-name <channel-name>`

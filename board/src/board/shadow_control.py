@@ -18,7 +18,8 @@ from pathlib import Path
 from typing import Any
 
 import jsonschema
-import paho.mqtt.client as mqtt
+from txing_aws.auth import AwsRuntime, build_aws_runtime, resolve_aws_region
+from txing_aws.mqtt import AwsIotWebsocketSyncConnection, AwsMqttConnectionConfig
 
 from .cmd_vel import CmdVelController, DriveState, build_cmd_vel_topic
 from .shadow_store import DEFAULT_SHADOW_FILE, save_shadow
@@ -33,7 +34,6 @@ from .video_state import (
 )
 
 LOGGER = logging.getLogger("board.shadow_control")
-MQTT_LOGGER = logging.getLogger("board.shadow_control.mqtt")
 
 def _is_repo_root(path: Path) -> bool:
     return (
@@ -71,13 +71,8 @@ REPO_ROOT = _discover_repo_root(
     module_file=Path(__file__),
     env_repo_root=os.environ.get("TXING_REPO_ROOT"),
 )
-DEFAULT_CERT_DIR = REPO_ROOT / "certs"
 DEFAULT_DOCS_DIR = REPO_ROOT / "docs"
 DEFAULT_THING_NAME = "txing"
-DEFAULT_IOT_ENDPOINT_FILE = DEFAULT_CERT_DIR / "iot-data-ats.endpoint"
-DEFAULT_CERT_FILE = DEFAULT_CERT_DIR / "txing.cert.pem"
-DEFAULT_KEY_FILE = DEFAULT_CERT_DIR / "txing.private.key"
-DEFAULT_CA_FILE = DEFAULT_CERT_DIR / "AmazonRootCA1.pem"
 DEFAULT_SCHEMA_FILE = DEFAULT_DOCS_DIR / "txing-shadow.schema.json"
 DEFAULT_AWS_CONNECT_TIMEOUT = 20.0
 DEFAULT_MQTT_PUBLISH_TIMEOUT = 10.0
@@ -99,10 +94,6 @@ DEFAULT_TIMEDATECTL_SYNC_COMMAND = (
 DEFAULT_ROUTE_PROBE_IPV4 = ("8.8.8.8", 80)
 DEFAULT_ROUTE_PROBE_IPV6 = ("2001:4860:4860::8888", 80, 0, 0)
 DEFAULT_THING_NAME_ENV = "THING_NAME"
-DEFAULT_IOT_ENDPOINT_FILE_ENV = "IOT_ENDPOINT_FILE"
-DEFAULT_CERT_FILE_ENV = "CERT_FILE"
-DEFAULT_KEY_FILE_ENV = "KEY_FILE"
-DEFAULT_CA_FILE_ENV = "CA_FILE"
 DEFAULT_SCHEMA_FILE_ENV = "SCHEMA_FILE"
 DEFAULT_VIDEO_CHANNEL_NAME_ENV = "BOARD_VIDEO_CHANNEL_NAME"
 LEGACY_VIDEO_CHANNEL_NAME_ENV = "TXING_BOARD_VIDEO_CHANNEL_NAME"
@@ -135,10 +126,8 @@ def _env_path(*names: str, default: Path) -> Path:
 @dataclass(frozen=True)
 class ControlConfig:
     thing_name: str
+    aws_region: str
     iot_endpoint: str
-    cert_file: Path
-    key_file: Path
-    ca_file: Path
     schema_file: Path
     shadow_file: Path
     client_id: str
@@ -174,9 +163,11 @@ class AwsShadowClient:
         self,
         config: ControlConfig,
         *,
+        aws_runtime: AwsRuntime,
         cmd_vel_controller: CmdVelController | None = None,
     ) -> None:
         self._config = config
+        self._aws_runtime = aws_runtime
         self._topic_prefix = f"$aws/things/{config.thing_name}/shadow"
         self._topic_get = f"{self._topic_prefix}/get"
         self._topic_get_accepted = f"{self._topic_prefix}/get/accepted"
@@ -191,78 +182,99 @@ class AwsShadowClient:
         self._topic_update_delta = f"{self._topic_prefix}/update/delta"
         self._topic_cmd_vel = build_cmd_vel_topic(config.thing_name)
         self._cmd_vel_controller = cmd_vel_controller
-        self._client = mqtt.Client(
-            callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
+        self._connection_config = AwsMqttConnectionConfig(
+            endpoint=config.iot_endpoint,
             client_id=config.client_id,
-            protocol=mqtt.MQTTv311,
+            region_name=config.aws_region,
+            connect_timeout_seconds=config.aws_connect_timeout,
+            operation_timeout_seconds=config.publish_timeout,
         )
-        self._client.enable_logger(MQTT_LOGGER)
-        self._client.tls_set(
-            ca_certs=str(config.ca_file),
-            certfile=str(config.cert_file),
-            keyfile=str(config.key_file),
-        )
-        self._client.on_connect = self._on_connect
-        self._client.on_disconnect = self._on_disconnect
-        self._client.on_message = self._on_message
-        self._client.on_subscribe = self._on_subscribe
+        self._client: AwsIotWebsocketSyncConnection | None = None
 
         self._lock = threading.Lock()
-        self._connection_done = threading.Event()
         self._response_done = threading.Event()
         self._connection_ready = False
-        self._connection_error: RuntimeError | None = None
         self._pending_token: str | None = None
         self._pending_error: RuntimeError | None = None
         self._pending_response: dict[str, Any] | None = None
-        self._loop_started = False
-        self._ever_connected = False
         self._disconnect_requested = False
         self._halt_requested = threading.Event()
         self._desired_board_power: bool | None = None
 
     def ensure_connected(self, *, timeout_seconds: float) -> None:
         with self._lock:
-            if self._connection_ready:
+            if self._connection_ready and self._client is not None:
                 return
+            previous_client = self._client
             self._connection_ready = False
-            self._connection_error = None
-            self._connection_done.clear()
+            self._client = None
 
-        if not self._loop_started:
-            self._client.loop_start()
-            self._loop_started = True
+        if previous_client is not None:
+            try:
+                previous_client.disconnect(timeout_seconds=timeout_seconds)
+            except Exception:
+                pass
+
+        client_holder: dict[str, AwsIotWebsocketSyncConnection] = {}
+        client = AwsIotWebsocketSyncConnection(
+            self._connection_config,
+            aws_runtime=self._aws_runtime,
+            on_connection_interrupted=lambda error: self._on_connection_interrupted(
+                client_holder["client"],
+                error,
+            ),
+            on_connection_closed=lambda callback_data: self._on_connection_closed(
+                client_holder["client"],
+                callback_data,
+            ),
+        )
+        client_holder["client"] = client
 
         try:
-            if self._ever_connected:
-                rc = self._client.reconnect()
-            else:
-                rc = self._client.connect(self._config.iot_endpoint, port=8883, keepalive=60)
-                self._ever_connected = True
+            client.connect(timeout_seconds=timeout_seconds)
         except Exception as err:
             raise RuntimeError(
                 f"failed to connect to AWS IoT endpoint {self._config.iot_endpoint!r}: {err}"
             ) from err
 
-        if rc != mqtt.MQTT_ERR_SUCCESS:
+        LOGGER.info(
+            "Connected to AWS IoT endpoint=%s thing=%s client_id=%s",
+            self._config.iot_endpoint,
+            self._config.thing_name,
+            self._config.client_id,
+        )
+        try:
+            for topic in (
+                self._topic_get_accepted,
+                self._topic_get_rejected,
+                self._topic_update_accepted,
+                self._topic_update_rejected,
+                self._topic_update_delta,
+                self._topic_cmd_vel,
+            ):
+                client.subscribe(
+                    topic,
+                    self._on_message,
+                    timeout_seconds=timeout_seconds,
+                )
+        except Exception as err:
+            try:
+                client.disconnect(timeout_seconds=timeout_seconds)
+            except Exception:
+                pass
             raise RuntimeError(
-                f"failed to initiate AWS IoT MQTT connection (rc={rc})"
-            )
-
-        if not self._connection_done.wait(timeout_seconds):
-            raise RuntimeError(
-                f"timed out waiting for AWS IoT MQTT readiness after {timeout_seconds:.1f}s"
-            )
+                f"failed to subscribe to shadow update topics: {err}"
+            ) from err
 
         with self._lock:
-            if self._connection_error is not None:
-                raise self._connection_error
-            if not self._connection_ready:
-                raise RuntimeError("AWS IoT MQTT did not become ready")
+            self._client = client
+            self._connection_ready = True
+
+        self._request_shadow_get()
 
     def is_connected(self) -> bool:
         with self._lock:
-            return self._connection_ready
+            return self._connection_ready and self._client is not None
 
     def halt_requested(self) -> bool:
         return self._halt_requested.is_set()
@@ -284,13 +296,24 @@ class AwsShadowClient:
             self._response_done.clear()
 
         encoded_payload = json.dumps(envelope, sort_keys=True)
-        info = self._client.publish(self._topic_update, payload=encoded_payload, qos=1)
-        if info.rc != mqtt.MQTT_ERR_SUCCESS:
+        with self._lock:
+            client = self._client
+        if client is None:
+            with self._lock:
+                self._pending_token = None
+            raise RuntimeError("AWS IoT MQTT is not connected")
+        try:
+            client.publish(
+                self._topic_update,
+                encoded_payload,
+                timeout_seconds=timeout_seconds,
+            )
+        except Exception as err:
             with self._lock:
                 self._pending_token = None
             raise RuntimeError(
-                f"failed to publish shadow update to {self._topic_update} (rc={info.rc})"
-            )
+                f"failed to publish shadow update to {self._topic_update}: {err}"
+            ) from err
 
         if not self._response_done.wait(timeout_seconds):
             with self._lock:
@@ -314,117 +337,77 @@ class AwsShadowClient:
 
     def close(self) -> None:
         self._disconnect_requested = True
-        try:
-            if self._loop_started and self.is_connected():
-                self._client.disconnect()
-        finally:
-            if self._loop_started:
-                self._client.loop_stop()
-
-    def _on_connect(
-        self,
-        client: mqtt.Client,
-        _userdata: Any,
-        _flags: Any,
-        reason_code: Any,
-        _properties: Any,
-    ) -> None:
-        if _reason_code_is_failure(reason_code):
-            error = RuntimeError(
-                f"AWS IoT MQTT CONNACK rejected (reason={reason_code})"
-            )
-            with self._lock:
-                self._connection_ready = False
-                self._connection_error = error
-            self._connection_done.set()
-            return
-
-        LOGGER.info(
-            "Connected to AWS IoT endpoint=%s thing=%s client_id=%s",
-            self._config.iot_endpoint,
-            self._config.thing_name,
-            self._config.client_id,
-        )
-        result, _mid = client.subscribe(
-            [
-                (self._topic_get_accepted, 1),
-                (self._topic_get_rejected, 1),
-                (self._topic_update_accepted, 1),
-                (self._topic_update_rejected, 1),
-                (self._topic_update_delta, 1),
-                (self._topic_cmd_vel, 1),
-            ]
-        )
-        if result != mqtt.MQTT_ERR_SUCCESS:
-            error = RuntimeError(
-                f"failed to subscribe to shadow update topics (rc={result})"
-            )
-            with self._lock:
-                self._connection_ready = False
-                self._connection_error = error
-            self._connection_done.set()
-
-    def _on_subscribe(
-        self,
-        _client: mqtt.Client,
-        _userdata: Any,
-        _mid: int,
-        _reason_codes: Any,
-        _properties: Any,
-    ) -> None:
         with self._lock:
-            self._connection_ready = True
-            self._connection_error = None
-        self._connection_done.set()
-        self._request_shadow_get()
-
-    def _on_disconnect(
-        self,
-        _client: mqtt.Client,
-        _userdata: Any,
-        _disconnect_flags: Any,
-        reason_code: Any,
-        _properties: Any,
-    ) -> None:
-        if self._cmd_vel_controller is not None:
-            self._cmd_vel_controller.handle_disconnect(
-                f"AWS IoT MQTT disconnect reason={reason_code}"
-            )
-        with self._lock:
+            client = self._client
+            self._client = None
             self._connection_ready = False
+        if client is not None:
+            try:
+                client.disconnect(timeout_seconds=self._config.aws_connect_timeout)
+            except Exception:
+                pass
+
+    def _mark_connection_lost(
+        self,
+        source_client: AwsIotWebsocketSyncConnection,
+        detail: str,
+    ) -> None:
+        with self._lock:
+            if self._client is not source_client:
+                return
+            self._connection_ready = False
+            self._client = None
+            if self._pending_token is not None and self._pending_error is None:
+                self._pending_error = RuntimeError(detail)
+                self._response_done.set()
+        if self._cmd_vel_controller is not None:
+            self._cmd_vel_controller.handle_disconnect(detail)
         if not self._disconnect_requested:
-            LOGGER.warning("AWS IoT MQTT disconnected unexpectedly (reason=%s)", reason_code)
-            self._connection_done.set()
+            LOGGER.warning("AWS IoT MQTT disconnected unexpectedly (%s)", detail)
+
+    def _on_connection_interrupted(
+        self,
+        source_client: AwsIotWebsocketSyncConnection,
+        error: Exception,
+    ) -> None:
+        self._mark_connection_lost(source_client, f"interrupt: {error}")
+
+    def _on_connection_closed(
+        self,
+        source_client: AwsIotWebsocketSyncConnection,
+        callback_data: Any,
+    ) -> None:
+        detail = f"closed: {callback_data}" if callback_data is not None else "closed"
+        self._mark_connection_lost(source_client, detail)
 
     def _on_message(
         self,
-        _client: mqtt.Client,
-        _userdata: Any,
-        msg: mqtt.MQTTMessage,
+        topic: str,
+        payload_bytes: bytes,
     ) -> None:
         try:
-            payload = json.loads(msg.payload.decode("utf-8"))
+            payload = json.loads(payload_bytes.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
-            LOGGER.warning("Ignored non-JSON MQTT message on topic %s", msg.topic)
+            LOGGER.warning("Ignored non-JSON MQTT message on topic %s", topic)
             return
 
-        if msg.topic == self._topic_cmd_vel:
+        if topic == self._topic_cmd_vel:
             if self._cmd_vel_controller is not None:
                 self._cmd_vel_controller.handle_message(payload)
             return
 
-        if msg.topic == self._topic_get_rejected:
+        if topic == self._topic_get_rejected:
             LOGGER.warning("Shadow get rejected: %s", json.dumps(payload, sort_keys=True))
             return
 
-        if msg.topic == self._topic_get_accepted:
+        if topic == self._topic_get_accepted:
             self._observe_desired_board_power(
                 _extract_desired_board_power_from_shadow(payload),
                 source="shadow/get/accepted",
             )
             return
 
-        if msg.topic == self._topic_update_delta:
+        if topic == self._topic_update_delta:
             desired_power = _extract_desired_board_power_from_delta(payload)
             if desired_power is None:
                 LOGGER.debug(
@@ -438,7 +421,7 @@ class AwsShadowClient:
             )
             return
 
-        if msg.topic == self._topic_update_accepted:
+        if topic == self._topic_update_accepted:
             self._observe_desired_board_power(
                 _extract_desired_board_power_from_shadow(payload),
                 source="shadow/update/accepted",
@@ -452,9 +435,9 @@ class AwsShadowClient:
             if token != self._pending_token:
                 return
 
-            if msg.topic == self._topic_update_accepted:
+            if topic == self._topic_update_accepted:
                 self._pending_response = payload
-            elif msg.topic == self._topic_update_rejected:
+            elif topic == self._topic_update_rejected:
                 self._pending_error = RuntimeError(
                     f"shadow update rejected: {json.dumps(payload, sort_keys=True)}"
                 )
@@ -464,12 +447,21 @@ class AwsShadowClient:
         self._response_done.set()
 
     def _request_shadow_get(self) -> None:
-        info = self._client.publish(self._topic_get, payload="{}", qos=1)
-        if info.rc != mqtt.MQTT_ERR_SUCCESS:
-            LOGGER.warning(
-                "Failed to request current shadow snapshot on %s (rc=%s)",
+        with self._lock:
+            client = self._client
+        if client is None:
+            return
+        try:
+            client.publish(
                 self._topic_get,
-                info.rc,
+                "{}",
+                timeout_seconds=self._config.publish_timeout,
+            )
+        except Exception as err:
+            LOGGER.warning(
+                "Failed to request current shadow snapshot on %s: %s",
+                self._topic_get,
+                err,
             )
 
     def _observe_desired_board_power(
@@ -518,35 +510,6 @@ def _parse_args() -> argparse.Namespace:
         help="AWS IoT thing name (default: txing)",
     )
     parser.add_argument(
-        "--iot-endpoint",
-        default=None,
-        help="AWS IoT data endpoint hostname; if omitted, --iot-endpoint-file is used",
-    )
-    parser.add_argument(
-        "--iot-endpoint-file",
-        type=Path,
-        default=_env_path(DEFAULT_IOT_ENDPOINT_FILE_ENV, default=DEFAULT_IOT_ENDPOINT_FILE),
-        help=f"File containing AWS IoT endpoint (default: {DEFAULT_IOT_ENDPOINT_FILE})",
-    )
-    parser.add_argument(
-        "--cert-file",
-        type=Path,
-        default=_env_path(DEFAULT_CERT_FILE_ENV, default=DEFAULT_CERT_FILE),
-        help=f"Client certificate PEM file (default: {DEFAULT_CERT_FILE})",
-    )
-    parser.add_argument(
-        "--key-file",
-        type=Path,
-        default=_env_path(DEFAULT_KEY_FILE_ENV, default=DEFAULT_KEY_FILE),
-        help=f"Client private key file (default: {DEFAULT_KEY_FILE})",
-    )
-    parser.add_argument(
-        "--ca-file",
-        type=Path,
-        default=_env_path(DEFAULT_CA_FILE_ENV, default=DEFAULT_CA_FILE),
-        help=f"Root CA file (default: {DEFAULT_CA_FILE})",
-    )
-    parser.add_argument(
         "--schema-file",
         type=Path,
         default=_env_path(DEFAULT_SCHEMA_FILE_ENV, default=DEFAULT_SCHEMA_FILE),
@@ -555,7 +518,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--client-id",
         default=None,
-        help="MQTT client id (default: txing-board-<hostname>-<pid>)",
+        help="MQTT client id (default: txing-<hostname>-<pid>)",
     )
     parser.add_argument(
         "--video-channel-name",
@@ -689,23 +652,6 @@ def _require_file(path: Path, description: str) -> None:
         raise RuntimeError(f"{description} {path} does not exist")
 
 
-def _read_iot_endpoint(endpoint: str | None, endpoint_file: Path) -> str:
-    if endpoint is not None:
-        value = endpoint.strip()
-        if value:
-            return value
-        raise RuntimeError("--iot-endpoint was provided but is empty")
-    try:
-        value = endpoint_file.read_text(encoding="utf-8").strip()
-    except OSError as err:
-        raise RuntimeError(
-            f"failed to read AWS IoT endpoint file {endpoint_file}: {err}"
-        ) from err
-    if not value:
-        raise RuntimeError(f"AWS IoT endpoint file {endpoint_file} is empty")
-    return value
-
-
 def _require_non_empty_option(value: str, option_name: str) -> str:
     stripped = value.strip()
     if not stripped:
@@ -721,7 +667,7 @@ def _sanitize_client_id(value: str) -> str:
         else:
             sanitized.append("-")
     result = "".join(sanitized).strip("-")
-    return result or "board"
+    return result or "txing"
 
 
 def _normalize_ip_address(value: str) -> str | None:
@@ -760,15 +706,6 @@ def _detect_default_route_addresses() -> DefaultRouteAddresses:
         ipv4=_detect_default_route_address(socket.AF_INET, DEFAULT_ROUTE_PROBE_IPV4),
         ipv6=_detect_default_route_address(socket.AF_INET6, DEFAULT_ROUTE_PROBE_IPV6),
     )
-
-
-def _reason_code_is_failure(reason_code: Any) -> bool:
-    is_failure = getattr(reason_code, "is_failure", None)
-    if callable(is_failure):
-        return bool(is_failure())
-    if is_failure is not None:
-        return bool(is_failure)
-    return reason_code != 0
 
 
 def _extract_desired_board_power_from_shadow(payload: dict[str, Any]) -> bool | None:
@@ -1079,10 +1016,11 @@ def main() -> None:
     _configure_logging(args.debug)
 
     try:
-        iot_endpoint = _read_iot_endpoint(args.iot_endpoint, args.iot_endpoint_file)
-        _require_file(args.cert_file, "AWS IoT client certificate")
-        _require_file(args.key_file, "AWS IoT client private key")
-        _require_file(args.ca_file, "AWS IoT root CA")
+        aws_region = resolve_aws_region()
+        if not aws_region:
+            raise RuntimeError("could not resolve AWS region for AWS IoT access")
+        aws_runtime = build_aws_runtime(region_name=aws_region)
+        iot_endpoint = aws_runtime.iot_data_endpoint()
         _require_file(args.schema_file, "Thing Shadow schema file")
         video_viewer_url = _require_non_empty_option(
             args.video_viewer_url,
@@ -1105,13 +1043,11 @@ def main() -> None:
         if args.aws_config_file is not None:
             _require_file(args.aws_config_file, "AWS config file")
         board_client_suffix = _sanitize_client_id(args.board_name)
-        client_id = args.client_id or f"txing-board-{board_client_suffix}-{os.getpid()}"
+        client_id = args.client_id or f"txing-{board_client_suffix}-{os.getpid()}"
         config = ControlConfig(
             thing_name=args.thing_name,
+            aws_region=aws_region,
             iot_endpoint=iot_endpoint,
-            cert_file=args.cert_file,
-            key_file=args.key_file,
-            ca_file=args.ca_file,
             schema_file=args.schema_file,
             shadow_file=args.shadow_file,
             client_id=client_id,
@@ -1156,6 +1092,7 @@ def main() -> None:
     cmd_vel_controller.start()
     shadow_client = AwsShadowClient(
         config,
+        aws_runtime=aws_runtime,
         cmd_vel_controller=cmd_vel_controller,
     )
     video_supervisor = VideoSenderSupervisor(
@@ -1165,7 +1102,7 @@ def main() -> None:
         sender_command=config.video_sender_command,
         aws_shared_credentials_file=config.aws_shared_credentials_file,
         aws_config_file=config.aws_config_file,
-        ca_file=config.ca_file,
+        ca_file=None,
         state_file=DEFAULT_VIDEO_STATE_FILE,
     )
     halt_requested = False

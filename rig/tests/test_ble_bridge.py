@@ -233,18 +233,18 @@ class ServiceConfigTests(unittest.TestCase):
         self.assertIn("@aws *args:", justfile)
         self.assertIn('just --justfile "{{root_justfile}}" _project-aws-env rig', justfile)
         self.assertIn('command aws "$@"', justfile)
-        self.assertIn('region="$TXING_AWS_REGION"', justfile)
+        self.assertIn('region="$AWS_REGION"', justfile)
         self.assertNotIn('describe-log-groups', justfile)
         self.assertIn(
-            'aws_profile="$TXING_AWS_SELECTED_PROFILE"',
+            'aws_profile="$AWS_SELECTED_PROFILE"',
             justfile,
         )
         self.assertIn(
-            'aws_shared_credentials_file="$TXING_AWS_SHARED_CREDENTIALS_FILE"',
+            'aws_shared_credentials_file="$AWS_SHARED_CREDENTIALS_FILE"',
             justfile,
         )
         self.assertIn(
-            'aws_config_file="$TXING_AWS_CONFIG_FILE"',
+            'aws_config_file="$AWS_CONFIG_FILE"',
             justfile,
         )
         self.assertIn('AWS_REGION=$region', justfile)
@@ -258,7 +258,7 @@ class ServiceConfigTests(unittest.TestCase):
             justfile,
         )
         self.assertIn('aws iot describe-endpoint --endpoint-type iot:Data-ATS', justfile)
-        self.assertNotIn('TXING_AWS_ENDPOINT_FILE', justfile)
+        self.assertNotIn('AWS_ENDPOINT_FILE', justfile)
         self.assertNotIn('IOT_ENDPOINT_FILE', justfile)
         self.assertIn('AWS_PROFILE=$aws_profile', justfile)
         self.assertIn('AWS_SHARED_CREDENTIALS_FILE=$aws_shared_credentials_file', justfile)

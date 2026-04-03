@@ -28,11 +28,11 @@ thing_index_name := "AWS_Things"
     cd "{{aws_dir}}"
 
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}" "" "{{stack_name}}" "{{CognitoDomainPrefix}}" "{{AdminEmail}}")"
-    stack_name="$TXING_AWS_STACK_NAME"
-    region="$TXING_AWS_REGION"
-    profile="$TXING_AWS_SELECTED_PROFILE"
-    cognito_domain_prefix="$TXING_AWS_COGNITO_DOMAIN_PREFIX"
-    admin_email="$TXING_AWS_ADMIN_EMAIL"
+    stack_name="$AWS_STACK_NAME"
+    region="$AWS_REGION"
+    profile="$AWS_SELECTED_PROFILE"
+    cognito_domain_prefix="$AWS_COGNITO_DOMAIN_PREFIX"
+    admin_email="$AWS_ADMIN_EMAIL"
 
     if [ -z "$region" ]; then
       echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
@@ -65,11 +65,11 @@ thing_index_name := "AWS_Things"
     cd "{{aws_dir}}"
 
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}" "" "{{stack_name}}" "{{CognitoDomainPrefix}}" "{{AdminEmail}}")"
-    stack_name="$TXING_AWS_STACK_NAME"
-    region="$TXING_AWS_REGION"
-    profile="$TXING_AWS_SELECTED_PROFILE"
-    cognito_domain_prefix="$TXING_AWS_COGNITO_DOMAIN_PREFIX"
-    admin_email="$TXING_AWS_ADMIN_EMAIL"
+    stack_name="$AWS_STACK_NAME"
+    region="$AWS_REGION"
+    profile="$AWS_SELECTED_PROFILE"
+    cognito_domain_prefix="$AWS_COGNITO_DOMAIN_PREFIX"
+    admin_email="$AWS_ADMIN_EMAIL"
 
     if [ -z "$region" ]; then
       echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
@@ -111,11 +111,11 @@ thing_index_name := "AWS_Things"
     cd "{{aws_dir}}"
 
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}" "" "{{stack_name}}" "{{CognitoDomainPrefix}}" "{{AdminEmail}}")"
-    stack_name="$TXING_AWS_STACK_NAME"
-    region="$TXING_AWS_REGION"
-    profile="$TXING_AWS_SELECTED_PROFILE"
-    cognito_domain_prefix="$TXING_AWS_COGNITO_DOMAIN_PREFIX"
-    admin_email="$TXING_AWS_ADMIN_EMAIL"
+    stack_name="$AWS_STACK_NAME"
+    region="$AWS_REGION"
+    profile="$AWS_SELECTED_PROFILE"
+    cognito_domain_prefix="$AWS_COGNITO_DOMAIN_PREFIX"
+    admin_email="$AWS_ADMIN_EMAIL"
 
     if [ -z "$region" ]; then
       echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
@@ -164,9 +164,9 @@ thing_index_name := "AWS_Things"
     cd "{{aws_dir}}"
 
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}" "" "{{stack_name}}")"
-    stack_name="$TXING_AWS_STACK_NAME"
-    region="$TXING_AWS_REGION"
-    profile="$TXING_AWS_SELECTED_PROFILE"
+    stack_name="$AWS_STACK_NAME"
+    region="$AWS_REGION"
+    profile="$AWS_SELECTED_PROFILE"
 
     if [ -z "$region" ]; then
       echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
@@ -210,8 +210,8 @@ thing_index_name := "AWS_Things"
     cd "{{aws_dir}}"
 
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}")"
-    region="$TXING_AWS_REGION"
-    profile="$TXING_AWS_SELECTED_PROFILE"
+    region="$AWS_REGION"
+    profile="$AWS_SELECTED_PROFILE"
 
     if [ -z "$region" ]; then
       echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
@@ -231,9 +231,9 @@ thing_index_name := "AWS_Things"
     cd "{{aws_dir}}"
 
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}" "" "{{stack_name}}")"
-    stack_name="$TXING_AWS_STACK_NAME"
-    region="$TXING_AWS_REGION"
-    profile="$TXING_AWS_SELECTED_PROFILE"
+    stack_name="$AWS_STACK_NAME"
+    region="$AWS_REGION"
+    profile="$AWS_SELECTED_PROFILE"
 
     if [ -z "$region" ]; then
       echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
@@ -257,10 +257,10 @@ thing_index_name := "AWS_Things"
     cd "{{aws_dir}}"
 
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}" "" "{{stack_name}}" "" "{{AdminEmail}}")"
-    stack_name="$TXING_AWS_STACK_NAME"
-    region="$TXING_AWS_REGION"
-    profile="$TXING_AWS_SELECTED_PROFILE"
-    admin_email="$TXING_AWS_ADMIN_EMAIL"
+    stack_name="$AWS_STACK_NAME"
+    region="$AWS_REGION"
+    profile="$AWS_SELECTED_PROFILE"
+    admin_email="$AWS_ADMIN_EMAIL"
 
     if [ -z "$region" ]; then
       echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
@@ -313,9 +313,9 @@ thing_index_name := "AWS_Things"
     cd "{{aws_dir}}"
 
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{profile}}" "{{endpoint_file}}")"
-    region="$TXING_AWS_REGION"
-    profile="$TXING_AWS_SELECTED_PROFILE"
-    endpoint_file="$TXING_AWS_ENDPOINT_FILE"
+    region="$AWS_REGION"
+    profile="$AWS_SELECTED_PROFILE"
+    endpoint_file="$AWS_ENDPOINT_FILE"
     expected_endpoint="{{iot_data_endpoint}}"
 
     if [ -z "$region" ]; then
@@ -516,8 +516,8 @@ thing_index_name := "AWS_Things"
     cd "{{aws_dir}}"
 
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}")"
-    region="$TXING_AWS_REGION"
-    profile="$TXING_AWS_SELECTED_PROFILE"
+    region="$AWS_REGION"
+    profile="$AWS_SELECTED_PROFILE"
 
     if [ -z "$region" ]; then
       echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
@@ -574,8 +574,8 @@ thing_index_name := "AWS_Things"
     cd "{{aws_dir}}"
 
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{profile}}")"
-    region="$TXING_AWS_REGION"
-    profile="$TXING_AWS_SELECTED_PROFILE"
+    region="$AWS_REGION"
+    profile="$AWS_SELECTED_PROFILE"
 
     if [ -z "$region" ]; then
       echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
@@ -615,8 +615,8 @@ thing_index_name := "AWS_Things"
     cd "{{aws_dir}}"
 
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{profile}}")"
-    region="$TXING_AWS_REGION"
-    profile="$TXING_AWS_SELECTED_PROFILE"
+    region="$AWS_REGION"
+    profile="$AWS_SELECTED_PROFILE"
 
     if [ -z "$region" ]; then
       echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
@@ -665,9 +665,9 @@ thing_index_name := "AWS_Things"
     cd "{{aws_dir}}"
 
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{profile}}" "{{endpoint_file}}")"
-    region="$TXING_AWS_REGION"
-    profile="$TXING_AWS_SELECTED_PROFILE"
-    endpoint_file="$TXING_AWS_ENDPOINT_FILE"
+    region="$AWS_REGION"
+    profile="$AWS_SELECTED_PROFILE"
+    endpoint_file="$AWS_ENDPOINT_FILE"
 
     if [ -z "$region" ]; then
       echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
@@ -699,9 +699,9 @@ thing_index_name := "AWS_Things"
     cd "{{aws_dir}}"
 
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{profile}}" "{{endpoint_file}}")"
-    region="$TXING_AWS_REGION"
-    profile="$TXING_AWS_SELECTED_PROFILE"
-    endpoint_file="$TXING_AWS_ENDPOINT_FILE"
+    region="$AWS_REGION"
+    profile="$AWS_SELECTED_PROFILE"
+    endpoint_file="$AWS_ENDPOINT_FILE"
 
     if [ -z "$region" ]; then
       echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
@@ -752,8 +752,8 @@ thing_index_name := "AWS_Things"
     cd "{{aws_dir}}"
 
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}")"
-    region="$TXING_AWS_REGION"
-    profile="$TXING_AWS_SELECTED_PROFILE"
+    region="$AWS_REGION"
+    profile="$AWS_SELECTED_PROFILE"
 
     if [ -z "$region" ]; then
       echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
@@ -802,9 +802,9 @@ thing_index_name := "AWS_Things"
     cd "{{aws_dir}}"
 
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{profile}}" "{{endpoint_file}}")"
-    region="$TXING_AWS_REGION"
-    profile="$TXING_AWS_SELECTED_PROFILE"
-    endpoint_file="$TXING_AWS_ENDPOINT_FILE"
+    region="$AWS_REGION"
+    profile="$AWS_SELECTED_PROFILE"
+    endpoint_file="$AWS_ENDPOINT_FILE"
     cert_dir="{{cert_dir}}"
     if [ -z "$cert_dir" ]; then
       cert_dir="$(dirname "$endpoint_file")"
@@ -842,8 +842,8 @@ thing_index_name := "AWS_Things"
     cd "{{aws_dir}}"
 
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{profile}}")"
-    region="$TXING_AWS_REGION"
-    profile="$TXING_AWS_SELECTED_PROFILE"
+    region="$AWS_REGION"
+    profile="$AWS_SELECTED_PROFILE"
 
     if [ -z "$region" ]; then
       echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2

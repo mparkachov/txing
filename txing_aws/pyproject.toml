@@ -1,0 +1,13 @@
+[project]
+name = "txing-aws"
+version = "0.1.0"
+description = "Shared AWS runtime helpers for txing subprojects"
+requires-python = ">=3.12"
+dependencies = [
+    "awsiotsdk>=1.22,<2",
+    "boto3>=1.34,<2",
+]
+
+[build-system]
+requires = ["uv_build>=0.10.6,<0.11.0"]
+build-backend = "uv_build"
