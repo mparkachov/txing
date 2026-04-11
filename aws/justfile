@@ -127,30 +127,20 @@ thing_index_name := "AWS_Things"
       aws_flags+=(--profile "$profile")
     fi
 
-    params=(
-      ParameterKey=CognitoDomainPrefix,ParameterValue="$cognito_domain_prefix"
-      ParameterKey=AdminEmail,ParameterValue="$admin_email"
-      ParameterKey=LocalhostAppUrl,ParameterValue="{{LocalhostAppUrl}}"
-      ParameterKey=LocalhostAltAppUrl,ParameterValue="{{LocalhostAltAppUrl}}"
+    deploy_flags=(
+      --stack-name "$stack_name"
+      --template-file "{{template_file}}"
+      --capabilities CAPABILITY_NAMED_IAM
+      --parameter-overrides
+      "CognitoDomainPrefix=$cognito_domain_prefix"
+      "AdminEmail=$admin_email"
+      "LocalhostAppUrl={{LocalhostAppUrl}}"
+      "LocalhostAltAppUrl={{LocalhostAltAppUrl}}"
+      --no-fail-on-empty-changeset
+      "${aws_flags[@]}"
     )
-    cfn_flags=(--stack-name "$stack_name" --template-body "file://{{template_file}}" --capabilities CAPABILITY_NAMED_IAM --parameters "${params[@]}" "${aws_flags[@]}")
 
-    if aws cloudformation describe-stacks --stack-name "$stack_name" "${aws_flags[@]}" >/dev/null 2>&1; then
-      output="$(aws cloudformation update-stack "${cfn_flags[@]}" 2>&1)" || {
-        if echo "$output" | grep -q "No updates are to be performed"; then
-          echo "$output"
-          exit 0
-        fi
-        echo "$output"
-        exit 1
-      }
-      echo "$output"
-
-      aws cloudformation wait stack-update-complete --stack-name "$stack_name" "${aws_flags[@]}"
-    else
-      aws cloudformation create-stack "${cfn_flags[@]}"
-      aws cloudformation wait stack-create-complete --stack-name "$stack_name" "${aws_flags[@]}"
-    fi
+    aws cloudformation deploy "${deploy_flags[@]}"
 
     aws cloudformation describe-stacks \
       --stack-name "$stack_name" \

@@ -22,10 +22,6 @@
 - The supervised sender uses the board host's default AWS SDK credential chain for KVS access; it does not publish to AWS IoT directly.
 - Phase 1 does not use MediaMTX, `webrtcsink`, `gstwebrtc-api`, `kvssink`, ingestion/storage, or multiviewer.
 
-## Package task scoping
-When working in `board/`:
-- If the work comes from `/plan` and is already under a Beads epic, prefer tasks already linked to that current epic.
-- If the work is not `/plan`-driven, a standalone Beads issue is sufficient; do not create a new epic just for routine board work.
-- If a new board-specific subtask belongs to a plan-created epic, create it under the parent epic and note `board/` in the title or description.
-- Do not duplicate cross-subproject work here; link dependencies in Beads instead.
-- Do not use Codex task management or markdown TODOs as the authoritative tracker for board work; keep execution state in Beads.
+## Shared workflow
+- Follow the repository-level Beads workflow in `../AGENTS.md`.
+- If a board-specific task is created under a shared epic, mention `board/` in the Beads title or description so ownership is obvious.

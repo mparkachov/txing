@@ -20,6 +20,8 @@ Rules:
 - Treat Beads as the source of truth for active work. Do not rely on Codex task management, `update_plan`, or markdown checklists as a substitute for Beads status, sequencing, or dependency tracking.
 - Do not keep active implementation plans only in markdown.
 - When `/plan` produces actionable work, convert it into a Beads epic with child tasks before implementation starts.
+- When `/plan` creates an epic, copy the approved plan summary into the epic description so the Beads record captures the implementation intent, constraints, and scope.
+- When creating implementation issues, include a description with the concrete scope, constraints, and intended approach. Do not create bare-title issues when the work needs implementation detail; use the issue description and design fields to capture that context.
 - Before starting implementation, make sure the work has a Beads issue. Use a Beads epic only for `/plan`-driven work that is being broken down into multiple actionable tasks; otherwise a standalone Beads task/bug/feature is sufficient.
 - Before starting implementation, run `bd ready`.
 - Claim the task you are working on with `bd update <id> --claim`.
@@ -27,6 +29,7 @@ Rules:
 - Keep implementation tasks open through review and follow-up adjustments. Do not close them just because local code changes are done.
 - When a commit is the completion point, put the task IDs in a `Beads-Close:` commit trailer, for example `Beads-Close: txing-123 txing-123.1`; the repo `post-commit` hook closes those Beads issues after the commit succeeds.
 - If no commit is being made yet, leave the Beads task open. For non-code/admin work with no commit, close the task manually in Beads with a short resolution note once the user confirms completion.
+- Keep Beads workflow rules centralized in this file. Subproject `AGENTS.md` files should reference these shared rules instead of duplicating them.
 - Keep `AGENTS.md` focused on stable instructions, not transient task lists.
 
 ## Shared contracts
