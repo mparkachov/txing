@@ -86,6 +86,14 @@ std::optional<std::string> ExistingFile(const char* path) {
     return std::nullopt;
 }
 
+std::optional<std::string> ExistingPath(const std::filesystem::path& path) {
+    std::error_code error;
+    if (std::filesystem::exists(path, error) && !error) {
+        return path.string();
+    }
+    return std::nullopt;
+}
+
 std::optional<std::string> DiscoverCaCertPath() {
     if (const auto from_kvs_env = ExistingFile(std::getenv(kKvsCaCertPathEnvVar)); from_kvs_env) {
         return from_kvs_env;
@@ -93,6 +101,21 @@ std::optional<std::string> DiscoverCaCertPath() {
 
     if (const auto from_ssl_env = ExistingFile(std::getenv(kSslCertFileEnvVar)); from_ssl_env) {
         return from_ssl_env;
+    }
+
+    std::error_code error;
+    const auto cwd = std::filesystem::current_path(error);
+    if (!error) {
+        static constexpr const char* kRelativeCandidatePaths[] = {
+            "aws-kvs-webrtc-sdk/certs/cert.pem",
+            "board/aws-kvs-webrtc-sdk/certs/cert.pem",
+        };
+
+        for (const auto* candidate : kRelativeCandidatePaths) {
+            if (const auto discovered = ExistingPath(cwd / candidate); discovered) {
+                return discovered;
+            }
+        }
     }
 
     return std::nullopt;

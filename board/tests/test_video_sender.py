@@ -111,10 +111,13 @@ class VideoSenderTests(unittest.TestCase):
         self.assertNotIn("SSL_CERT_FILE", environment)
         self.assertNotIn("AWS_KVS_CACERT_PATH", environment)
 
-    def test_build_sender_environment_preserves_explicit_ca_env(self) -> None:
+    def test_build_sender_environment_strips_inherited_tls_ca_env(self) -> None:
         with patch.dict(
             os.environ,
-            {"SSL_CERT_FILE": "/custom/ca.pem"},
+            {
+                "SSL_CERT_FILE": "/custom/ca.pem",
+                "AWS_KVS_CACERT_PATH": "/custom/kvs-ca.pem",
+            },
             clear=True,
         ):
             environment = video_sender._build_sender_environment(
@@ -127,8 +130,27 @@ class VideoSenderTests(unittest.TestCase):
                 ),
             )
 
-        self.assertEqual(environment["SSL_CERT_FILE"], "/custom/ca.pem")
-        self.assertEqual(environment["AWS_KVS_CACERT_PATH"], "/custom/ca.pem")
+        self.assertNotIn("SSL_CERT_FILE", environment)
+        self.assertNotIn("AWS_KVS_CACERT_PATH", environment)
+
+    def test_build_sender_environment_uses_explicit_board_ca_env(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"BOARD_VIDEO_CA_FILE": "/custom/board-ca.pem"},
+            clear=True,
+        ):
+            environment = video_sender._build_sender_environment(
+                region="eu-central-1",
+                channel_name="txing-board-video",
+                credentials=AwsCredentialSnapshot(
+                    access_key_id="env-access",
+                    secret_access_key="env-secret",
+                    session_token="env-token",
+                ),
+            )
+
+        self.assertEqual(environment["SSL_CERT_FILE"], "/custom/board-ca.pem")
+        self.assertEqual(environment["AWS_KVS_CACERT_PATH"], "/custom/board-ca.pem")
 
     def test_build_sender_environment_removes_profile_and_file_hints(self) -> None:
         with patch.dict(

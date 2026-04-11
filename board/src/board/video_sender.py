@@ -162,14 +162,6 @@ def _resolve_explicit_ca_cert_path(
     if explicit_board_ca_file:
         return explicit_board_ca_file
 
-    explicit_kvs_ca_cert = environment.get(DEFAULT_KVS_CA_CERT_PATH_ENV, "").strip()
-    if explicit_kvs_ca_cert:
-        return explicit_kvs_ca_cert
-
-    explicit_ssl_cert_file = environment.get(DEFAULT_SSL_CERT_FILE_ENV, "").strip()
-    if explicit_ssl_cert_file:
-        return explicit_ssl_cert_file
-
     return None
 
 
@@ -180,6 +172,7 @@ def _build_sender_environment(
     credentials: AwsCredentialSnapshot,
     ca_file: Path | None = None,
 ) -> dict[str, str]:
+    explicit_ca_cert_path = _resolve_explicit_ca_cert_path(os.environ, explicit_ca_file=ca_file)
     environment = os.environ.copy()
     environment[DEFAULT_REGION_ENV] = region
     environment[DEFAULT_CHANNEL_NAME_ENV] = channel_name
@@ -193,11 +186,13 @@ def _build_sender_environment(
     environment.pop("AWS_DEFAULT_PROFILE", None)
     environment.pop(DEFAULT_AWS_SHARED_CREDENTIALS_FILE_ENV, None)
     environment.pop(DEFAULT_AWS_CONFIG_FILE_ENV, None)
+    environment.pop(DEFAULT_SSL_CERT_FILE_ENV, None)
+    environment.pop(DEFAULT_KVS_CA_CERT_PATH_ENV, None)
     if ca_file is not None:
         environment[DEFAULT_CA_FILE_ENV] = str(ca_file)
-    if ca_cert_path := _resolve_explicit_ca_cert_path(environment, explicit_ca_file=ca_file):
-        environment.setdefault(DEFAULT_SSL_CERT_FILE_ENV, ca_cert_path)
-        environment.setdefault(DEFAULT_KVS_CA_CERT_PATH_ENV, ca_cert_path)
+    if explicit_ca_cert_path:
+        environment[DEFAULT_SSL_CERT_FILE_ENV] = explicit_ca_cert_path
+        environment[DEFAULT_KVS_CA_CERT_PATH_ENV] = explicit_ca_cert_path
     return environment
 
 

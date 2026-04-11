@@ -6,6 +6,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <cstdlib>
 #include <iostream>
 #include <iterator>
 #include <optional>
@@ -19,6 +20,7 @@
 namespace {
 
 using txing::board::kvs_master::AwsCredentials;
+using txing::board::kvs_master::DiscoverTlsCaCertPath;
 using txing::board::kvs_master::EncodedVideoFrame;
 using txing::board::kvs_master::FormatMarkerLine;
 using txing::board::kvs_master::KvsSession;
@@ -39,6 +41,52 @@ void Expect(bool condition, const std::string& message) {
         std::cerr << "FAIL: " << message << '\n';
     }
 }
+
+class ScopedCurrentPath {
+  public:
+    explicit ScopedCurrentPath(const std::filesystem::path& path)
+        : previous_(std::filesystem::current_path()) {
+        std::filesystem::current_path(path);
+    }
+
+    ~ScopedCurrentPath() {
+        std::error_code error;
+        std::filesystem::current_path(previous_, error);
+    }
+
+  private:
+    std::filesystem::path previous_;
+};
+
+class ScopedUnsetEnv {
+  public:
+    explicit ScopedUnsetEnv(const char* name) : name_(name) {
+        if (const char* value = std::getenv(name_); value != nullptr) {
+            previous_ = std::string(value);
+            had_previous_ = true;
+        }
+#if defined(_WIN32)
+        _putenv_s(name_, "");
+#else
+        unsetenv(name_);
+#endif
+    }
+
+    ~ScopedUnsetEnv() {
+        if (had_previous_) {
+#if defined(_WIN32)
+            _putenv_s(name_, previous_->c_str());
+#else
+            setenv(name_, previous_->c_str(), 1);
+#endif
+        }
+    }
+
+  private:
+    const char* name_;
+    bool had_previous_ = false;
+    std::optional<std::string> previous_;
+};
 
 txing::board::kvs_master::EnvLookup EnvFrom(const std::unordered_map<std::string, std::string>& values) {
     return [values](const std::string& key) -> std::optional<std::string> {
@@ -378,6 +426,22 @@ void TestRuntimePropagatesCapturerErrors() {
     Expect(kvs_state.stopped, "runtime should stop KVS after a capturer failure");
 }
 
+void TestRuntimeExportsSdkCaPathFromRepoLayouts() {
+    const auto source_file = std::filesystem::path(__FILE__);
+    const auto board_dir = source_file.parent_path().parent_path().parent_path();
+    const auto repo_root = board_dir.parent_path();
+    ScopedCurrentPath scoped_current_path(repo_root);
+    ScopedUnsetEnv unset_ssl_cert_file("SSL_CERT_FILE");
+    ScopedUnsetEnv unset_kvs_ca_cert_path("AWS_KVS_CACERT_PATH");
+
+    const auto expected_path = (repo_root / "board" / "aws-kvs-webrtc-sdk" / "certs" / "cert.pem").string();
+    const auto discovered_path = DiscoverTlsCaCertPath();
+    Expect(
+        discovered_path && *discovered_path == expected_path,
+        "runtime should discover the SDK cert.pem path from repo layouts when no TLS env is set"
+    );
+}
+
 void TestMarkerFormatting() {
     const auto line = FormatMarkerLine(
         "TXING_KVS_ERROR",
@@ -395,6 +459,7 @@ int main() {
     TestRuntimeReadyAndTimestamps();
     TestRuntimeAdvancesWhenEncoderTimestampsStayZero();
     TestRuntimePropagatesCapturerErrors();
+    TestRuntimeExportsSdkCaPathFromRepoLayouts();
     TestMarkerFormatting();
 
     if (g_failures != 0) {
