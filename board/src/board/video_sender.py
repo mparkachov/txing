@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import re
 import shlex
@@ -49,10 +50,18 @@ LEGACY_VIEWER_DISCONNECTED_PATTERN_ENV = "TXING_BOARD_VIDEO_VIEWER_DISCONNECTED_
 DEFAULT_READY_PATTERN = r"^TXING_KVS_READY(?:\s|$)"
 DEFAULT_VIEWER_CONNECTED_PATTERN = r"^TXING_VIEWER_CONNECTED(?:\s|$)"
 DEFAULT_VIEWER_DISCONNECTED_PATTERN = r"^TXING_VIEWER_DISCONNECTED(?:\s|$)"
+LOGGER = logging.getLogger("board.video_sender")
 
 
 def _utc_now() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _configure_logging() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
 
 
 def _build_state(
@@ -197,6 +206,13 @@ class VideoSenderProcess:
         self._ready = False
 
     def run(self) -> int:
+        LOGGER.info(
+            "Board video sender starting pid=%s region=%s channel_name=%s state_file=%s",
+            os.getpid(),
+            self._config.region,
+            self._config.channel_name,
+            self._config.state_file,
+        )
         _write_state_file(
             self._config.state_file,
             _build_state(
@@ -209,15 +225,29 @@ class VideoSenderProcess:
             ),
         )
 
+        LOGGER.info(
+            "Resolving signaling channel region=%s channel_name=%s",
+            self._config.region,
+            self._config.channel_name,
+        )
         _resolve_channel_arn(
             region=self._config.region,
             channel_name=self._config.channel_name,
+        )
+        LOGGER.info(
+            "Resolved signaling channel region=%s channel_name=%s",
+            self._config.region,
+            self._config.channel_name,
         )
         credentials = _resolve_final_credentials()
         command = shlex.split(self._config.sender_command)
         if not command:
             raise RuntimeError(f"{DEFAULT_SENDER_COMMAND_ENV} must not be empty")
 
+        LOGGER.info(
+            "Launching native video sender command=%s",
+            self._config.sender_command,
+        )
         self._process = subprocess.Popen(
             command,
             stdout=subprocess.PIPE,
@@ -231,6 +261,10 @@ class VideoSenderProcess:
                 channel_name=self._config.channel_name,
                 credentials=credentials,
             ),
+        )
+        LOGGER.info(
+            "Native video sender started pid=%s",
+            self._process.pid,
         )
         reader_thread = threading.Thread(
             target=self._forward_sender_output,
@@ -247,6 +281,11 @@ class VideoSenderProcess:
 
             return_code = process.poll()
             if return_code is not None:
+                LOGGER.error(
+                    "Native video sender exited before readiness pid=%s return_code=%s",
+                    process.pid,
+                    return_code,
+                )
                 raise RuntimeError(f"video sender command exited with code {return_code}")
 
             if not self._ready:
@@ -295,6 +334,10 @@ class VideoSenderProcess:
             self._ready = True
             viewer_connected = self._viewer_connected
 
+        LOGGER.info(
+            "Board video sender ready viewer_connected=%s",
+            viewer_connected,
+        )
         _write_state_file(
             self._config.state_file,
             _build_state(
@@ -312,6 +355,11 @@ class VideoSenderProcess:
             self._viewer_connected = connected
             ready = self._ready
 
+        LOGGER.info(
+            "Board video viewer connection changed connected=%s ready=%s",
+            connected,
+            ready,
+        )
         _write_state_file(
             self._config.state_file,
             _build_state(
@@ -361,6 +409,12 @@ class VideoSenderSupervisor:
     @property
     def state_file(self) -> Path:
         return self._state_file
+
+    @property
+    def pid(self) -> int | None:
+        if self._process is None:
+            return None
+        return self._process.pid
 
     def start(self) -> None:
         if self.is_running():
@@ -520,6 +574,7 @@ def _parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    _configure_logging()
     args = _parse_args()
     if args.aws_shared_credentials_file is not None:
         os.environ[DEFAULT_AWS_SHARED_CREDENTIALS_FILE_ENV] = str(args.aws_shared_credentials_file)

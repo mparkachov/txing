@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from board import video_sender
 from aws.auth import AwsCredentialSnapshot
@@ -215,6 +215,21 @@ class VideoSenderTests(unittest.TestCase):
         self.assertEqual(args.viewer_connected_pattern, "^CONNECTED$")
         self.assertEqual(args.viewer_disconnected_pattern, "^DISCONNECTED$")
         self.assertFalse(hasattr(args, "ca_file"))
+
+    def test_video_sender_supervisor_exposes_child_pid(self) -> None:
+        supervisor = video_sender.VideoSenderSupervisor(
+            channel_name="txing-board-video",
+            viewer_url="https://ops.example.com/video",
+            region="eu-central-1",
+            sender_command="/tmp/txing-board-kvs-master",
+        )
+        self.assertIsNone(supervisor.pid)
+
+        process = MagicMock()
+        process.pid = 4321
+        supervisor._process = process
+
+        self.assertEqual(supervisor.pid, 4321)
 
 
 if __name__ == "__main__":

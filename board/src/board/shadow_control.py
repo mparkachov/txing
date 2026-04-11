@@ -939,6 +939,11 @@ def _wait_for_video_ready(
     last_error: str | None = None
     video_supervisor.start()
     LOGGER.info(
+        "Started board video supervisor pid=%s state_file=%s",
+        video_supervisor.pid,
+        video_supervisor.state_file,
+    )
+    LOGGER.info(
         "Waiting for board video sender readiness before first shadow publish timeout=%.1fs",
         config.video_startup_timeout_seconds,
     )
@@ -975,6 +980,10 @@ def _wait_for_video_ready(
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             detail = last_error or "video sender did not report ready"
+            status = video_state.get("status")
+            updated_at = video_state.get("updatedAt")
+            if isinstance(status, str) and status:
+                detail = f"{detail} (status={status!r}, updatedAt={updated_at!r})"
             raise VideoStartupTimeoutError(
                 f"timed out waiting for video sender readiness after {config.video_startup_timeout_seconds:.1f}s: {detail}"
             )
