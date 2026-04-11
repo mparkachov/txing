@@ -31,6 +31,10 @@ extern "C" {
 namespace txing::board::kvs_master {
 namespace {
 
+#ifndef TXING_KVS_SYSTEM_CA_CERT_PATH
+#define TXING_KVS_SYSTEM_CA_CERT_PATH "/etc/ssl/certs/Starfield_Services_Root_Certificate_Authority_-_G2.pem"
+#endif
+
 constexpr UINT32 kMaxConcurrentStreamingSessions = 10;
 constexpr UINT64 kCleanupWaitPeriod100ns = 5 * HUNDREDS_OF_NANOS_IN_A_SECOND;
 constexpr UINT64 kPendingMessageCleanupDuration100ns = 20 * HUNDREDS_OF_NANOS_IN_A_SECOND;
@@ -39,7 +43,7 @@ constexpr CHAR kControlPlaneUriEnvVar[] = "CONTROL_PLANE_URI";
 constexpr CHAR kIceTransportPolicyEnvVar[] = "KVS_ICE_TRANSPORT_POLICY";
 constexpr CHAR kVideoStreamId[] = "txingBoardVideo";
 constexpr CHAR kVideoTrackId[] = "txingBoardVideoTrack";
-constexpr char kDebianCaBundlePath[] = "/etc/ssl/certs/ca-certificates.crt";
+constexpr char kSystemCaCertPath[] = TXING_KVS_SYSTEM_CA_CERT_PATH;
 
 template <std::size_t N>
 void CopyCString(CHAR (&destination)[N], const std::string& value, const char* field_name) {
@@ -99,14 +103,14 @@ bool IsSignalingCallFailure(STATUS status) {
 }
 
 std::string ResolveSignalingCaCertPath() {
-    std::ifstream ca_bundle(kDebianCaBundlePath);
+    const std::string path = kSystemCaCertPath;
+    std::ifstream ca_bundle(path);
     if (!ca_bundle.good()) {
         throw std::runtime_error(
-            std::string("Debian CA bundle not found or unreadable at ") + kDebianCaBundlePath +
-            "; install ca-certificates on the board host"
+            std::string("system CA certificate not found or unreadable at ") + path
         );
     }
-    return kDebianCaBundlePath;
+    return path;
 }
 
 class RealKvsSession;

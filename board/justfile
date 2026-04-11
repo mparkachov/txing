@@ -19,6 +19,7 @@ aws_kvs_sdk_flags_file := aws_kvs_sdk_build_dir + "/CMakeFiles/kvsWebrtcSignalin
 aws_kvs_sdk_state_file := aws_kvs_sdk_install_dir + "/.txing-sdk-build-state"
 default_aws_kvs_sdk_repository := env_var_or_default("TXING_BOARD_AWS_KVS_WEBRTC_SDK_REPOSITORY", "https://github.com/awslabs/amazon-kinesis-video-streams-webrtc-sdk-c.git")
 default_aws_kvs_sdk_ref := env_var_or_default("TXING_BOARD_AWS_KVS_WEBRTC_SDK_REF", "main")
+default_system_ca_cert_path := env_var_or_default("TXING_BOARD_KVS_SYSTEM_CA_CERT_PATH", "/etc/ssl/certs/Starfield_Services_Root_Certificate_Authority_-_G2.pem")
 systemd_unit := "/etc/systemd/system/board.service"
 region := ""
 aws_profile := ""
@@ -159,6 +160,7 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
         -DCMAKE_BUILD_TYPE=Release \
         -DBUILD_TESTING=OFF \
         -DTXING_KVS_USE_SYSTEM_DEPENDENCIES="{{default_kvs_use_system_dependencies}}" \
+        -DTXING_KVS_SYSTEM_CA_CERT_PATH="{{default_system_ca_cert_path}}" \
         -DTXING_KVS_WEBRTC_SDK_DIR="{{aws_kvs_sdk_dir}}" \
         -DTXING_KVS_WEBRTC_SDK_INSTALL_DIR="{{aws_kvs_sdk_install_dir}}" \
     ); \
@@ -179,7 +181,7 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
     test -x "{{built_native_kvs_master}}"
 
 @test-native:
-    cmake -S "{{native_kvs_master_dir}}" -B "{{native_kvs_master_test_build_dir}}" -DCMAKE_BUILD_TYPE=Debug -DTXING_KVS_REAL_SDK=OFF -DTXING_KVS_USE_SYSTEM_DEPENDENCIES="{{default_kvs_use_system_dependencies}}"
+    cmake -S "{{native_kvs_master_dir}}" -B "{{native_kvs_master_test_build_dir}}" -DCMAKE_BUILD_TYPE=Debug -DTXING_KVS_REAL_SDK=OFF -DTXING_KVS_USE_SYSTEM_DEPENDENCIES="{{default_kvs_use_system_dependencies}}" -DTXING_KVS_SYSTEM_CA_CERT_PATH="{{default_system_ca_cert_path}}"
     cmake --build "{{native_kvs_master_test_build_dir}}" --config Debug --target txing-board-kvs-master-tests
     ctest --test-dir "{{native_kvs_master_test_build_dir}}" --output-on-failure
 

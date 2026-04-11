@@ -42,6 +42,12 @@ set(
   CACHE PATH
   "Install prefix of the locally built amazon-kinesis-video-streams-webrtc-sdk-c"
 )
+set(
+  TXING_KVS_SYSTEM_CA_CERT_PATH
+  "/etc/ssl/certs/Starfield_Services_Root_Certificate_Authority_-_G2.pem"
+  CACHE STRING
+  "Full path to the system CA certificate used by the native signaling client for AWS TLS verification"
+)
 
 add_library(
   txing_board_kvs_master_lib
@@ -192,7 +198,12 @@ if(TXING_KVS_REAL_SDK)
     PRIVATE
       src/kvs_session_real.cpp
   )
-  target_compile_definitions(txing_board_kvs_master_lib PRIVATE TXING_KVS_REAL_SDK=1)
+  target_compile_definitions(
+    txing_board_kvs_master_lib
+    PRIVATE
+      TXING_KVS_REAL_SDK=1
+      TXING_KVS_SYSTEM_CA_CERT_PATH=\"${TXING_KVS_SYSTEM_CA_CERT_PATH}\"
+  )
   target_include_directories(
     txing_board_kvs_master_lib
     PRIVATE

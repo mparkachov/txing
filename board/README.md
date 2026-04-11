@@ -307,7 +307,7 @@ You do not need to set sender regex environment variables for the repo sender. `
 
 `board-video-sender` also exports `BOARD_VIDEO_REGION` and `BOARD_VIDEO_CHANNEL_NAME` to the child automatically, so the native sender does not need those flags when it is started under the Python supervisor.
 
-For TLS trust on the KVS signaling path, `board-video-sender` strips inherited CA override environment variables before launching the native sender, and `kvs_master` points the upstream AWS signaling client at Debian's standard CA bundle at `/etc/ssl/certs/ca-certificates.crt`. Install normal OS trust data such as Debian's `ca-certificates` package. You do not need repo-local AWS root CA files or IoT-specific certificate files for the txing runtime bootstrap.
+For TLS trust on the KVS signaling path, `board-video-sender` strips inherited CA override environment variables before launching the native sender, and `kvs_master` points the upstream AWS signaling client at a system PEM path compiled into the native binary. The default is `/etc/ssl/certs/Starfield_Services_Root_Certificate_Authority_-_G2.pem`, which matches the SDK's historical `cert.pem`. If you need a different system certificate on another distro or image, override the full path during native build with `TXING_BOARD_KVS_SYSTEM_CA_CERT_PATH=/path/to/system-ca.pem just build-native`. You do not need repo-local AWS root CA files or IoT-specific certificate files for the txing runtime bootstrap.
 
 ### 6. Verify the `txing` Runtime Profile
 
