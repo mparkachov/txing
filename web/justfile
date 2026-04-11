@@ -25,7 +25,7 @@ web_dist_dir := web_dir + "/dist"
     set -euo pipefail
     cd "{{web_dir}}"
 
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}" "" "{{stack_name}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}" "{{stack_name}}")"
     stack_name="$AWS_STACK_NAME"
     region="$AWS_REGION"
     profile="$AWS_SELECTED_PROFILE"
@@ -92,7 +92,7 @@ web_dist_dir := web_dir + "/dist"
     set -euo pipefail
     cd "{{web_dir}}"
 
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}" "" "{{stack_name}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}" "{{stack_name}}")"
     stack_name="$AWS_STACK_NAME"
     region="$AWS_REGION"
     profile="$AWS_SELECTED_PROFILE"
@@ -138,20 +138,13 @@ web_dist_dir := web_dir + "/dist"
       --query "Stacks[0].Outputs[?OutputKey=='WebExpectedAdminEmail'].OutputValue | [0]" \
       --output text)"
 
-    iot_data_endpoint="$(aws iot describe-endpoint \
-      --endpoint-type iot:Data-ATS \
-      "${aws_flags[@]}" \
-      --query endpointAddress \
-      --output text)"
-
-    if [ "$cognito_domain" = "None" ] || [ "$cognito_client_id" = "None" ] || [ "$cognito_user_pool_id" = "None" ] || [ "$cognito_identity_pool_id" = "None" ] || [ "$web_iot_policy_name" = "None" ] || [ "$admin_email" = "None" ] || [ "$iot_data_endpoint" = "None" ]; then
+    if [ "$cognito_domain" = "None" ] || [ "$cognito_client_id" = "None" ] || [ "$cognito_user_pool_id" = "None" ] || [ "$cognito_identity_pool_id" = "None" ] || [ "$web_iot_policy_name" = "None" ] || [ "$admin_email" = "None" ]; then
       echo "Required web outputs are missing in stack $stack_name. Deploy shared/aws/template.yaml first." >&2
       exit 1
     fi
 
     printf '%s\n' \
       "VITE_AWS_REGION=$region" \
-      "VITE_IOT_DATA_ENDPOINT=https://$iot_data_endpoint" \
       "VITE_TXING_THING_NAME=txing" \
       "VITE_SPARKPLUG_GROUP_ID=town" \
       "VITE_SPARKPLUG_EDGE_NODE_ID=rig" \

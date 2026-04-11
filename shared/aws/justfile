@@ -12,10 +12,8 @@ thing_name := "txing"
 rig_name := "rig"
 policy_name := "town-rig-txing-policy"
 log_group_name := "/town/rig/txing"
-cert_dir := project_root + "/certs"
-endpoint_file := cert_dir + "/iot-data-ats.endpoint"
+local_state_dir := project_root + "/.state/aws"
 default_shadow_file := "default-shadow.json"
-iot_data_endpoint := ""
 localhost_app_url := "http://localhost:5173"
 localhost_alt_app_url := "http://127.0.0.1:5173"
 thing_index_name := "AWS_Things"
@@ -25,7 +23,7 @@ thing_index_name := "AWS_Things"
     set -euo pipefail
     cd "{{aws_dir}}"
 
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}" "" "{{stack_name}}" "{{CognitoDomainPrefix}}" "{{AdminEmail}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}" "{{stack_name}}" "{{CognitoDomainPrefix}}" "{{AdminEmail}}")"
     stack_name="$AWS_STACK_NAME"
     region="$AWS_REGION"
     profile="$AWS_SELECTED_PROFILE"
@@ -62,7 +60,7 @@ thing_index_name := "AWS_Things"
     set -euo pipefail
     cd "{{aws_dir}}"
 
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}" "" "{{stack_name}}" "{{CognitoDomainPrefix}}" "{{AdminEmail}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}" "{{stack_name}}" "{{CognitoDomainPrefix}}" "{{AdminEmail}}")"
     stack_name="$AWS_STACK_NAME"
     region="$AWS_REGION"
     profile="$AWS_SELECTED_PROFILE"
@@ -108,7 +106,7 @@ thing_index_name := "AWS_Things"
     set -euo pipefail
     cd "{{aws_dir}}"
 
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}" "" "{{stack_name}}" "{{CognitoDomainPrefix}}" "{{AdminEmail}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}" "{{stack_name}}" "{{CognitoDomainPrefix}}" "{{AdminEmail}}")"
     stack_name="$AWS_STACK_NAME"
     region="$AWS_REGION"
     profile="$AWS_SELECTED_PROFILE"
@@ -151,7 +149,7 @@ thing_index_name := "AWS_Things"
     set -euo pipefail
     cd "{{aws_dir}}"
 
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}" "" "{{stack_name}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}" "{{stack_name}}")"
     stack_name="$AWS_STACK_NAME"
     region="$AWS_REGION"
     profile="$AWS_SELECTED_PROFILE"
@@ -218,7 +216,7 @@ thing_index_name := "AWS_Things"
     set -euo pipefail
     cd "{{aws_dir}}"
 
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}" "" "{{stack_name}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}" "{{stack_name}}")"
     stack_name="$AWS_STACK_NAME"
     region="$AWS_REGION"
     profile="$AWS_SELECTED_PROFILE"
@@ -244,7 +242,7 @@ thing_index_name := "AWS_Things"
     set -euo pipefail
     cd "{{aws_dir}}"
 
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}" "" "{{stack_name}}" "" "{{AdminEmail}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}" "{{stack_name}}" "" "{{AdminEmail}}")"
     stack_name="$AWS_STACK_NAME"
     region="$AWS_REGION"
     profile="$AWS_SELECTED_PROFILE"
@@ -295,16 +293,14 @@ thing_index_name := "AWS_Things"
 
     echo "Admin user password set."
 
-@check thing_name=thing_name rig_name=rig_name log_group_name=log_group_name video_channel_name='' region=region profile=profile txing_profile='' endpoint_file=endpoint_file iot_data_endpoint=iot_data_endpoint:
+@check thing_name=thing_name rig_name=rig_name log_group_name=log_group_name video_channel_name='' region=region profile=profile txing_profile='':
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
 
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{profile}}" "{{endpoint_file}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{profile}}")"
     region="$AWS_REGION"
     profile="$AWS_SELECTED_PROFILE"
-    endpoint_file="$AWS_ENDPOINT_FILE"
-    expected_endpoint="{{iot_data_endpoint}}"
 
     if [ -z "$region" ]; then
       echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
@@ -339,17 +335,6 @@ thing_index_name := "AWS_Things"
       fi
     }
 
-    check_file() {
-      local path="$1"
-      local label="$2"
-      if [ -s "$path" ]; then
-        echo "ok: $label ($path)"
-      else
-        echo "fail: $label missing or empty ($path)"
-        failures=$((failures + 1))
-      fi
-    }
-
     echo "Checking local tools..."
     check_tool aws
     check_tool jq
@@ -366,7 +351,7 @@ thing_index_name := "AWS_Things"
       local scope_profile="$2"
       shift 2
 
-      eval "$(just --justfile "{{root_justfile}}" _project-aws-env "$scope" "{{region}}" "$scope_profile" "{{endpoint_file}}")"
+      eval "$(just --justfile "{{root_justfile}}" _project-aws-env "$scope" "{{region}}" "$scope_profile")"
       uv run --project "{{aws_dir}}/python" python -m aws.check --scope "$scope" "$@"
     }
 
@@ -378,10 +363,9 @@ thing_index_name := "AWS_Things"
       failures=$((failures + 1))
     fi
 
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{profile}}" "{{endpoint_file}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{profile}}")"
     region="$AWS_REGION"
     profile="$AWS_SELECTED_PROFILE"
-    endpoint_file="$AWS_ENDPOINT_FILE"
     aws_flags=(--region "$region")
     if [ -n "$profile" ]; then
       aws_flags+=(--profile "$profile")
@@ -488,34 +472,19 @@ thing_index_name := "AWS_Things"
         "${aws_flags[@]}"
     fi
 
-    echo "Checking local AWS IoT endpoint configuration..."
-    check_file "$endpoint_file" "IoT endpoint file"
-    if [ -z "$expected_endpoint" ]; then
-      expected_endpoint="$(
-        aws iot describe-endpoint \
-          --endpoint-type iot:Data-ATS \
-          "${aws_flags[@]}" \
-          --query endpointAddress \
-          --output text 2>/dev/null || true
-      )"
-    fi
-    endpoint_value=""
-    if [ -s "$endpoint_file" ]; then
-      endpoint_value="$(tr -d '\r\n' < "$endpoint_file")"
-      if [ -n "$endpoint_value" ]; then
-        echo "ok: IoT endpoint file contains endpoint"
-      else
-        echo "fail: IoT endpoint file is empty"
-        failures=$((failures + 1))
-      fi
-    fi
-    if [ -n "$expected_endpoint" ] && [ "$expected_endpoint" != "None" ] && [ -n "$endpoint_value" ]; then
-      if [ "$endpoint_value" = "$expected_endpoint" ]; then
-        echo "ok: IoT endpoint file matches AWS IoT Data-ATS endpoint"
-      else
-        echo "fail: IoT endpoint file contains '$endpoint_value' (expected '$expected_endpoint')"
-        failures=$((failures + 1))
-      fi
+    echo "Checking AWS IoT Data-ATS endpoint resolution..."
+    resolved_endpoint="$(
+      aws iot describe-endpoint \
+        --endpoint-type iot:Data-ATS \
+        "${aws_flags[@]}" \
+        --query endpointAddress \
+        --output text 2>/dev/null || true
+    )"
+    if [ -n "$resolved_endpoint" ] && [ "$resolved_endpoint" != "None" ]; then
+      echo "ok: IoT DescribeEndpoint returned $resolved_endpoint"
+    else
+      echo "fail: IoT DescribeEndpoint did not return a valid Data-ATS endpoint"
+      failures=$((failures + 1))
     fi
 
     if [ "$failures" -ne 0 ]; then
@@ -673,15 +642,14 @@ thing_index_name := "AWS_Things"
 
     printf '%s\n' "$result" | jq '.'
 
-@shadow thing_name=thing_name region=region profile=profile endpoint_file=endpoint_file iot_data_endpoint=iot_data_endpoint:
+@shadow thing_name=thing_name region=region profile=profile:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
 
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{profile}}" "{{endpoint_file}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{profile}}")"
     region="$AWS_REGION"
     profile="$AWS_SELECTED_PROFILE"
-    endpoint_file="$AWS_ENDPOINT_FILE"
 
     if [ -z "$region" ]; then
       echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
@@ -693,13 +661,7 @@ thing_index_name := "AWS_Things"
       aws_flags+=(--profile "$profile")
     fi
 
-    endpoint="{{iot_data_endpoint}}"
-    if [ -z "$endpoint" ] && [ -s "$endpoint_file" ]; then
-      endpoint="$(tr -d '\r\n' < "$endpoint_file")"
-    fi
-    if [ -z "$endpoint" ]; then
-      endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}" --query endpointAddress --output text)"
-    fi
+    endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}" --query endpointAddress --output text)"
 
     aws iot-data get-thing-shadow \
       --endpoint-url "https://$endpoint" \
@@ -707,15 +669,14 @@ thing_index_name := "AWS_Things"
       "${aws_flags[@]}" \
       /dev/stdout | jq '.'
 
-@shadow-reset thing_name=thing_name region=region profile=profile endpoint_file=endpoint_file default_shadow_file=default_shadow_file iot_data_endpoint=iot_data_endpoint:
+@shadow-reset thing_name=thing_name region=region profile=profile default_shadow_file=default_shadow_file:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
 
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{profile}}" "{{endpoint_file}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{profile}}")"
     region="$AWS_REGION"
     profile="$AWS_SELECTED_PROFILE"
-    endpoint_file="$AWS_ENDPOINT_FILE"
 
     if [ -z "$region" ]; then
       echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
@@ -731,13 +692,7 @@ thing_index_name := "AWS_Things"
       aws_flags+=(--profile "$profile")
     fi
 
-    endpoint="{{iot_data_endpoint}}"
-    if [ -z "$endpoint" ] && [ -s "$endpoint_file" ]; then
-      endpoint="$(tr -d '\r\n' < "$endpoint_file")"
-    fi
-    if [ -z "$endpoint" ]; then
-      endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}" --query endpointAddress --output text)"
-    fi
+    endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}" --query endpointAddress --output text)"
 
     delete_output=""
     if ! delete_output="$(
@@ -760,7 +715,7 @@ thing_index_name := "AWS_Things"
       "${aws_flags[@]}" \
       /dev/stdout | jq '.'
 
-@cert thing_name=thing_name policy_name=policy_name region=region profile=profile cert_dir=cert_dir cert_basename='' cert_arn_file='':
+@cert thing_name=thing_name policy_name=policy_name region=region profile=profile output_dir=local_state_dir cert_basename='' cert_arn_file='':
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
@@ -786,10 +741,10 @@ thing_index_name := "AWS_Things"
 
     cert_arn_file="{{cert_arn_file}}"
     if [ -z "$cert_arn_file" ]; then
-      cert_arn_file="{{cert_dir}}/${cert_basename}.cert.arn"
+      cert_arn_file="{{output_dir}}/${cert_basename}.cert.arn"
     fi
 
-    mkdir -p "{{cert_dir}}"
+    mkdir -p "{{output_dir}}"
     if [ -f "$cert_arn_file" ]; then
       echo "$cert_arn_file already exists. Reuse this certificate or delete the file to issue a new one."
       exit 0
@@ -798,9 +753,9 @@ thing_index_name := "AWS_Things"
     cert_arn="$(
       aws iot create-keys-and-certificate \
         --set-as-active \
-        --certificate-pem-outfile "{{cert_dir}}/${cert_basename}.cert.pem" \
-        --public-key-outfile "{{cert_dir}}/${cert_basename}.public.key" \
-        --private-key-outfile "{{cert_dir}}/${cert_basename}.private.key" \
+        --certificate-pem-outfile "{{output_dir}}/${cert_basename}.cert.pem" \
+        --public-key-outfile "{{output_dir}}/${cert_basename}.public.key" \
+        --private-key-outfile "{{output_dir}}/${cert_basename}.private.key" \
         "${aws_flags[@]}" \
         --query certificateArn \
         --output text
@@ -810,38 +765,7 @@ thing_index_name := "AWS_Things"
     aws iot attach-thing-principal --thing-name "{{thing_name}}" --principal "$cert_arn" "${aws_flags[@]}"
     echo "Certificate ARN saved to $cert_arn_file"
 
-@endpoint region=region profile=profile cert_dir=cert_dir endpoint_file=endpoint_file:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    cd "{{aws_dir}}"
-
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{profile}}" "{{endpoint_file}}")"
-    region="$AWS_REGION"
-    profile="$AWS_SELECTED_PROFILE"
-    endpoint_file="$AWS_ENDPOINT_FILE"
-    cert_dir="{{cert_dir}}"
-    if [ -z "$cert_dir" ]; then
-      cert_dir="$(dirname "$endpoint_file")"
-    fi
-
-    if [ -z "$region" ]; then
-      echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
-      exit 1
-    fi
-
-    aws_flags=(--region "$region")
-    if [ -n "$profile" ]; then
-      aws_flags+=(--profile "$profile")
-    fi
-
-    mkdir -p "$cert_dir"
-    aws iot describe-endpoint \
-      --endpoint-type iot:Data-ATS \
-      "${aws_flags[@]}" \
-      --query endpointAddress \
-      --output text | tee "$endpoint_file"
-
-@init-shadow thing_name=thing_name region=region profile=profile cert_dir=cert_dir default_shadow_file=default_shadow_file shadow_response_file='' iot_data_endpoint=iot_data_endpoint:
+@init-shadow thing_name=thing_name region=region profile=profile output_dir=local_state_dir default_shadow_file=default_shadow_file shadow_response_file='':
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
@@ -862,14 +786,11 @@ thing_index_name := "AWS_Things"
 
     shadow_response_file="{{shadow_response_file}}"
     if [ -z "$shadow_response_file" ]; then
-      shadow_response_file="{{cert_dir}}/{{thing_name}}.shadow-response.json"
+      shadow_response_file="{{output_dir}}/{{thing_name}}.shadow-response.json"
     fi
 
-    mkdir -p "{{cert_dir}}"
-    endpoint="{{iot_data_endpoint}}"
-    if [ -z "$endpoint" ]; then
-      endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}" --query endpointAddress --output text)"
-    fi
+    mkdir -p "{{output_dir}}"
+    endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}" --query endpointAddress --output text)"
 
     aws iot-data update-thing-shadow \
       --endpoint-url "https://$endpoint" \
@@ -879,7 +800,7 @@ thing_index_name := "AWS_Things"
       "$shadow_response_file"
     echo "Shadow initialized from {{default_shadow_file}}"
 
-@bootstrap CognitoDomainPrefix='' AdminEmail='' stack_name=stack_name template_file=template_file thing_name=thing_name rig_name=rig_name policy_name=policy_name region=region profile=profile cert_dir=cert_dir cert_basename='' cert_arn_file='' endpoint_file=endpoint_file default_shadow_file=default_shadow_file shadow_response_file='' iot_data_endpoint=iot_data_endpoint:
+@bootstrap CognitoDomainPrefix='' AdminEmail='' stack_name=stack_name template_file=template_file thing_name=thing_name rig_name=rig_name policy_name=policy_name region=region profile=profile output_dir=local_state_dir cert_basename='' cert_arn_file='' default_shadow_file=default_shadow_file shadow_response_file='':
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
@@ -899,22 +820,16 @@ thing_index_name := "AWS_Things"
       "{{policy_name}}" \
       "{{region}}" \
       "{{profile}}" \
-      "{{cert_dir}}" \
+      "{{output_dir}}" \
       "{{cert_basename}}" \
       "{{cert_arn_file}}"
-    just --justfile "{{aws_dir}}/justfile" endpoint \
-      "{{region}}" \
-      "{{profile}}" \
-      "{{cert_dir}}" \
-      "{{endpoint_file}}"
     just --justfile "{{aws_dir}}/justfile" init-shadow \
       "{{thing_name}}" \
       "{{region}}" \
       "{{profile}}" \
-      "{{cert_dir}}" \
+      "{{output_dir}}" \
       "{{default_shadow_file}}" \
-      "{{shadow_response_file}}" \
-      "{{iot_data_endpoint}}"
+      "{{shadow_response_file}}"
     just --justfile "{{aws_dir}}/justfile" upsert-rig-group \
       "{{rig_name}}" \
       "{{region}}" \

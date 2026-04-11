@@ -38,7 +38,6 @@ Run from repository root:
 just --list
 just rig::wake
 just board::run
-just aws::endpoint
 just aws::shadow
 just aws::shadow-reset
 just mcu::build

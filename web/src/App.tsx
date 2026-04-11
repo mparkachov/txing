@@ -240,7 +240,6 @@ function App({ initialAuthError = '' }: AppProps) {
     let cancelled = false
     const shadowSession = createShadowSession({
       thingName: appConfig.thingName,
-      iotDataEndpoint: appConfig.iotDataEndpoint,
       awsRegion: appConfig.awsRegion,
       sparkplugGroupId: appConfig.sparkplugGroupId,
       sparkplugEdgeNodeId: appConfig.sparkplugEdgeNodeId,

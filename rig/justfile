@@ -179,7 +179,7 @@ systemd_unit := "/etc/systemd/system/rig.service"
         echo "Missing built rig executable at {{built_rig}}. Run 'just build' first." >&2; \
         exit 1; \
     }
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}" "" "" "" "" "{{aws_shared_credentials_file}}" "{{aws_config_file}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}" "" "" "" "{{aws_shared_credentials_file}}" "{{aws_config_file}}")"
     project_root="$TXING_PROJECT_ROOT"
     env_file="$AWS_ENV_FILE"
     region="$AWS_REGION"

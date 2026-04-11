@@ -15,7 +15,7 @@ SPA for reading the `txing` Thing Shadow and publishing phase-1 lifecycle comman
   - classic Thing Shadow is the UI read path over MQTT/WSS
   - phase-1 lifecycle commands use Sparkplug `DCMD.redcon` over MQTT/WSS
   - board video uses KVS WebRTC signaling from the `/video` route
-  - Cognito hosted UI redirects, Cognito `/oauth2/token`, Cognito Identity, and IoT `AttachPolicy` still use HTTPS
+  - Cognito hosted UI redirects, Cognito `/oauth2/token`, Cognito Identity, IoT `AttachPolicy`, and IoT `DescribeEndpoint` still use HTTPS
 - Default phase-1 identity:
   - txing thing name: `txing`
   - Sparkplug group id: `town`
@@ -49,7 +49,6 @@ cp web/.env.example web/.env.local
 Then fill `web/.env.local`:
 
 - `VITE_AWS_REGION`
-- `VITE_IOT_DATA_ENDPOINT`
 - `VITE_TXING_THING_NAME`
 - `VITE_SPARKPLUG_GROUP_ID`
 - `VITE_SPARKPLUG_EDGE_NODE_ID`
@@ -61,7 +60,7 @@ Then fill `web/.env.local`:
 - `VITE_ADMIN_EMAIL`
 
 The SPA derives the Cognito callback/logout URL from the page it is currently loaded from, so no deployed redirect URI env vars are needed.
-`VITE_IOT_DATA_ENDPOINT` remains the single AWS IoT endpoint input; the SPA derives the MQTT/WSS host from that Data-ATS endpoint.
+The SPA now resolves the AWS IoT Data-ATS endpoint dynamically at runtime with Cognito-backed AWS credentials, so no endpoint env var is required.
 
 3. Start Vite:
 
@@ -124,7 +123,7 @@ Relevant outputs:
 - `WebIotPolicyName` -> `VITE_IOT_POLICY_NAME`
 - `WebExpectedAdminEmail` -> `VITE_ADMIN_EMAIL`
 
-`web::write-env` also resolves the AWS IoT Data ATS endpoint and writes it as `VITE_IOT_DATA_ENDPOINT`, plus `VITE_AWS_REGION`, `VITE_TXING_THING_NAME`, `VITE_SPARKPLUG_GROUP_ID`, and `VITE_SPARKPLUG_EDGE_NODE_ID`. The app reuses that endpoint for both shadow and Sparkplug MQTT/WSS connections.
+`web::write-env` writes `VITE_AWS_REGION`, `VITE_TXING_THING_NAME`, `VITE_SPARKPLUG_GROUP_ID`, and `VITE_SPARKPLUG_EDGE_NODE_ID` plus the Cognito stack outputs. The app resolves the AWS IoT Data-ATS endpoint dynamically at runtime and reuses it for both shadow and Sparkplug MQTT/WSS connections.
 
 On the first MQTT shadow connect after a new sign-in, the SPA may briefly retry while the IoT policy attachment propagates for the Cognito identity.
 The current implementation still performs HTTPS auth/bootstrap calls after sign-in for Cognito token refresh, Cognito Identity, and IoT policy attachment; the live shadow view and Sparkplug command transport use MQTT/WSS.

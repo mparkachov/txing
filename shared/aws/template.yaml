@@ -675,6 +675,10 @@ Resources:
                 Effect: Allow
                 Action: iot:AttachPolicy
                 Resource: "*"
+              - Sid: AllowDescribeIotEndpoint
+                Effect: Allow
+                Action: iot:DescribeEndpoint
+                Resource: "*"
               - Sid: ShadowConnect
                 Effect: Allow
                 Action: iot:Connect

@@ -45,13 +45,13 @@ from .shadow_store import (
     DEFAULT_SHADOW_FILE,
 )
 from .thing_registry import AwsThingRegistryClient, ThingGroupNotFoundError, ThingRegistration
-from .aws_auth import (
+from aws.auth import (
     build_aws_runtime,
     resolve_aws_region,
     AwsRuntime,
     ensure_aws_profile,
 )
-from .aws_mqtt import AwsIotWebsocketConnection, AwsMqttConnectionConfig
+from aws.mqtt import AwsIotWebsocketConnection, AwsMqttConnectionConfig
 from .sparkplug import (
     build_device_report_payload,
     build_device_topic,

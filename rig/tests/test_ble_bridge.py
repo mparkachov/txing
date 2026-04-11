@@ -163,7 +163,7 @@ from rig.ble_bridge import (
     _parse_args,
     _shadow_payload_includes_desired_redcon,
 )
-from rig.aws_auth import ensure_aws_profile
+from aws.auth import ensure_aws_profile
 from rig.sparkplug import (
     build_device_report_payload,
     build_device_topic,

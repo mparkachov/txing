@@ -9,6 +9,7 @@ import * as mqtt5 from 'aws-crt/dist.browser/browser/mqtt5'
 import { buildCognitoLogins, createCredentialProvider } from './aws-credentials'
 import { buildCmdVelPublishPacket, type Twist } from './cmd-vel'
 import { appConfig } from './config'
+import { resolveIotDataEndpoint } from './iot-endpoint'
 import { mergeShadowUpdate } from './shadow-merge'
 import {
   buildSparkplugRedconCommandPacket,
@@ -46,7 +47,6 @@ type SnapshotWaiter = {
 }
 export type ShadowSessionOptions = {
   thingName: string
-  iotDataEndpoint: string
   awsRegion: string
   sparkplugGroupId: string
   sparkplugEdgeNodeId: string
@@ -266,7 +266,6 @@ class AwsIotShadowSession implements ShadowSession {
   private readonly options: ShadowSessionOptions
   private readonly topics: ShadowTopics
   private readonly sparkplugTopics: SparkplugTopics
-  private readonly mqttHost: string
   private readonly credentialsProvider: BrowserCredentialProvider
   private client: mqtt5.Mqtt5Client | null = null
   private closed = false
@@ -346,7 +345,6 @@ class AwsIotShadowSession implements ShadowSession {
       options.sparkplugEdgeNodeId,
       options.thingName,
     )
-    this.mqttHost = deriveMqttHostFromIotDataEndpoint(options.iotDataEndpoint)
     this.credentialsProvider = new BrowserCredentialProvider(options.resolveIdToken)
   }
 
@@ -470,8 +468,13 @@ class AwsIotShadowSession implements ShadowSession {
     )
 
     const clientId = await getIdentityId(idToken)
+    const iotDataEndpoint = await resolveIotDataEndpoint({
+      region: this.options.awsRegion,
+      idToken,
+    })
+    const mqttHost = deriveMqttHostFromIotDataEndpoint(iotDataEndpoint)
     const builder = iot.AwsIotMqtt5ClientConfigBuilder.newWebsocketMqttBuilderWithSigv4Auth(
-      this.mqttHost,
+      mqttHost,
       {
         region: this.options.awsRegion,
         credentialsProvider: this.credentialsProvider,

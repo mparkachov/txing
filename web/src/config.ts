@@ -25,7 +25,6 @@ const getRuntimeAppUrl = (): string => {
 
 const buildConfig = () => {
   const cognitoDomain = toUrl(requireEnv('VITE_COGNITO_DOMAIN'), '')
-  const iotDataEndpoint = toUrl(requireEnv('VITE_IOT_DATA_ENDPOINT'), '')
   const adminEmail = requireEnv('VITE_ADMIN_EMAIL')?.toLowerCase() ?? ''
   const appUrl = getRuntimeAppUrl()
   const awsRegion = requireEnv('VITE_AWS_REGION') ?? ''
@@ -40,9 +39,6 @@ const buildConfig = () => {
 
   if (!awsRegion) {
     errors.push('Missing VITE_AWS_REGION')
-  }
-  if (!iotDataEndpoint) {
-    errors.push('Missing VITE_IOT_DATA_ENDPOINT')
   }
   if (!cognitoDomain) {
     errors.push('Missing VITE_COGNITO_DOMAIN')
@@ -76,7 +72,6 @@ const buildConfig = () => {
     cognitoScope: requireEnv('VITE_COGNITO_SCOPE') ?? 'openid email profile',
     cognitoUserPoolId,
     iotPolicyName,
-    iotDataEndpoint,
     appUrl,
   }
 }

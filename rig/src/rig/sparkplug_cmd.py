@@ -5,8 +5,8 @@ import asyncio
 import os
 import sys
 
-from .aws_auth import build_aws_runtime, resolve_aws_region
-from .aws_mqtt import AwsIotWebsocketConnection, AwsMqttConnectionConfig
+from aws.auth import build_aws_runtime, resolve_aws_region
+from aws.mqtt import AwsIotWebsocketConnection, AwsMqttConnectionConfig
 from .sparkplug import build_device_topic, build_redcon_payload
 
 DEFAULT_THING_NAME = "txing"

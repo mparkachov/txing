@@ -3,7 +3,7 @@ set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 root_dir := source_directory()
 
 [private]
-_project-aws-env scope='rig' region='' profile='' endpoint_file='' stack_name='' cognito_domain_prefix='' admin_email='' aws_shared_credentials_file='' aws_config_file='' env_file='':
+_project-aws-env scope='rig' region='' profile='' stack_name='' cognito_domain_prefix='' admin_email='' aws_shared_credentials_file='' aws_config_file='' env_file='':
     #!/usr/bin/env bash
     set -euo pipefail
 
@@ -61,7 +61,6 @@ _project-aws-env scope='rig' region='' profile='' endpoint_file='' stack_name=''
     aws_selected_profile="$(choose_value "{{profile}}" "$aws_selected_profile_default")"
     aws_shared_credentials_file="$(resolve_path "$(choose_value "{{aws_shared_credentials_file}}" "${AWS_SHARED_CREDENTIALS_FILE:-config/aws.credentials}")")"
     aws_config_file="$(resolve_path "$(choose_value "{{aws_config_file}}" "${AWS_CONFIG_FILE:-config/aws.config}")")"
-    aws_endpoint_file="$(resolve_path "$(choose_value "{{endpoint_file}}" "${AWS_ENDPOINT_FILE:-certs/iot-data-ats.endpoint}")")"
     rig_name="${RIG_NAME:-rig}"
     sparkplug_group_id="${SPARKPLUG_GROUP_ID:-town}"
     sparkplug_edge_node_id="${SPARKPLUG_EDGE_NODE_ID:-rig}"
@@ -85,7 +84,6 @@ _project-aws-env scope='rig' region='' profile='' endpoint_file='' stack_name=''
     export_line AWS_SELECTED_PROFILE "$aws_selected_profile"
     export_line AWS_SHARED_CREDENTIALS_FILE "$aws_shared_credentials_file"
     export_line AWS_CONFIG_FILE "$aws_config_file"
-    export_line AWS_ENDPOINT_FILE "$aws_endpoint_file"
     export_line RIG_NAME "$rig_name"
     export_line SPARKPLUG_GROUP_ID "$sparkplug_group_id"
     export_line SPARKPLUG_EDGE_NODE_ID "$sparkplug_edge_node_id"
