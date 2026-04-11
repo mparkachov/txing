@@ -251,7 +251,7 @@ class VideoSenderProcess:
         self._process = subprocess.Popen(
             command,
             stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
+            stderr=subprocess.PIPE,
             text=True,
             encoding="utf-8",
             errors="replace",
@@ -267,11 +267,17 @@ class VideoSenderProcess:
             self._process.pid,
         )
         reader_thread = threading.Thread(
-            target=self._forward_sender_output,
-            name="txing-board-video-sender-output",
+            target=self._forward_sender_stdout,
+            name="txing-board-video-sender-stdout",
             daemon=True,
         )
         reader_thread.start()
+        error_thread = threading.Thread(
+            target=self._forward_sender_stderr,
+            name="txing-board-video-sender-stderr",
+            daemon=True,
+        )
+        error_thread.start()
 
         ready_deadline = time.monotonic() + self._config.assume_ready_after_seconds
         while not self._stop_requested.is_set():
@@ -302,7 +308,7 @@ class VideoSenderProcess:
     def request_stop(self) -> None:
         self._stop_requested.set()
 
-    def _forward_sender_output(self) -> None:
+    def _forward_sender_stdout(self) -> None:
         process = self._process
         if process is None or process.stdout is None:
             return
@@ -311,6 +317,17 @@ class VideoSenderProcess:
             line = raw_line.rstrip()
             if line:
                 print(f"[txing-board-video-sender] {line}", flush=True)
+            self._handle_output_line(line)
+
+    def _forward_sender_stderr(self) -> None:
+        process = self._process
+        if process is None or process.stderr is None:
+            return
+
+        for raw_line in process.stderr:
+            line = raw_line.rstrip()
+            if line:
+                print(f"[txing-board-video-sender] {line}", file=sys.stderr, flush=True)
             self._handle_output_line(line)
 
     def _handle_output_line(self, line: str) -> None:

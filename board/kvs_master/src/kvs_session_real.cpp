@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <fstream>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -38,6 +39,7 @@ constexpr CHAR kControlPlaneUriEnvVar[] = "CONTROL_PLANE_URI";
 constexpr CHAR kIceTransportPolicyEnvVar[] = "KVS_ICE_TRANSPORT_POLICY";
 constexpr CHAR kVideoStreamId[] = "txingBoardVideo";
 constexpr CHAR kVideoTrackId[] = "txingBoardVideoTrack";
+constexpr char kDebianCaBundlePath[] = "/etc/ssl/certs/ca-certificates.crt";
 
 template <std::size_t N>
 void CopyCString(CHAR (&destination)[N], const std::string& value, const char* field_name) {
@@ -96,6 +98,17 @@ bool IsSignalingCallFailure(STATUS status) {
         status == STATUS_SIGNALING_DESCRIBE_MEDIA_CALL_FAILED;
 }
 
+std::string ResolveSignalingCaCertPath() {
+    std::ifstream ca_bundle(kDebianCaBundlePath);
+    if (!ca_bundle.good()) {
+        throw std::runtime_error(
+            std::string("Debian CA bundle not found or unreadable at ") + kDebianCaBundlePath +
+            "; install ca-certificates on the board host"
+        );
+    }
+    return kDebianCaBundlePath;
+}
+
 class RealKvsSession;
 
 struct PendingIceMessage {
@@ -129,6 +142,7 @@ class RealKvsSession final : public KvsSession {
           access_key_id_(credentials.access_key_id),
           secret_access_key_(credentials.secret_access_key),
           session_token_(credentials.session_token),
+          ca_cert_path_(ResolveSignalingCaCertPath()),
           video_bitrate_bps_(config.camera.bitrate) {
         try {
             CreateCredentialProvider();
@@ -309,6 +323,7 @@ class RealKvsSession final : public KvsSession {
         channel_info_.retry = TRUE;
         channel_info_.reconnect = TRUE;
         channel_info_.messageTtl = 0;
+        channel_info_.pCertPath = const_cast<PCHAR>(ca_cert_path_.c_str());
 
         if (const char* control_plane_url = std::getenv(kControlPlaneUriEnvVar);
             control_plane_url != nullptr && *control_plane_url != '\0') {
@@ -1094,6 +1109,7 @@ class RealKvsSession final : public KvsSession {
     std::string access_key_id_;
     std::string secret_access_key_;
     std::optional<std::string> session_token_;
+    std::string ca_cert_path_;
     UINT32 video_bitrate_bps_ = 0;
 
     std::optional<std::string> control_plane_url_;

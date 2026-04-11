@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -230,6 +231,49 @@ class VideoSenderTests(unittest.TestCase):
         supervisor._process = process
 
         self.assertEqual(supervisor.pid, 4321)
+
+    @patch("board.video_sender._resolve_final_credentials")
+    @patch("board.video_sender._resolve_channel_arn")
+    @patch("board.video_sender.subprocess.Popen")
+    def test_video_sender_process_captures_native_stderr_separately(
+        self,
+        popen_mock: MagicMock,
+        resolve_channel_arn_mock: MagicMock,
+        resolve_final_credentials_mock: MagicMock,
+    ) -> None:
+        resolve_channel_arn_mock.return_value = "arn:aws:kinesisvideo:eu-central-1:123:channel/test/abc"
+        resolve_final_credentials_mock.return_value = AwsCredentialSnapshot(
+            access_key_id="env-access",
+            secret_access_key="env-secret",
+            session_token="env-token",
+        )
+
+        process_mock = MagicMock()
+        process_mock.pid = 9876
+        process_mock.poll.side_effect = [0]
+        process_mock.stdout = []
+        process_mock.stderr = []
+        popen_mock.return_value = process_mock
+
+        runtime = video_sender.VideoSenderProcess(
+            video_sender.VideoSenderRuntimeConfig(
+                region="eu-central-1",
+                channel_name="txing-board-video",
+                viewer_url="https://ops.example.com/video",
+                state_file=video_sender.DEFAULT_VIDEO_STATE_FILE,
+                sender_command="/tmp/txing-board-kvs-master",
+                assume_ready_after_seconds=0.0,
+                ready_pattern=None,
+                viewer_connected_pattern=None,
+                viewer_disconnected_pattern=None,
+            )
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "video sender command exited with code 0"):
+            runtime.run()
+
+        self.assertEqual(popen_mock.call_args.kwargs["stdout"], subprocess.PIPE)
+        self.assertEqual(popen_mock.call_args.kwargs["stderr"], subprocess.PIPE)
 
 
 if __name__ == "__main__":
