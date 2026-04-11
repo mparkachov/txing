@@ -91,7 +91,7 @@ location.reload()
 
 Template location:
 
-- `aws/template.yaml` (single stack for IoT + web admin infra)
+- `shared/aws/template.yaml` (single stack for IoT + web admin infra)
 
 Deploy command:
 

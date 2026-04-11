@@ -1,7 +1,7 @@
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 
 aws_dir := source_directory()
-project_root := aws_dir + "/.."
+project_root := aws_dir + "/../.."
 root_justfile := project_root + "/justfile"
 
 stack_name := ""
@@ -297,7 +297,7 @@ thing_index_name := "AWS_Things"
 
     echo "Admin user password set."
 
-@check thing_name=thing_name rig_name=rig_name log_group_name=log_group_name region=region profile=profile endpoint_file=endpoint_file iot_data_endpoint=iot_data_endpoint:
+@check thing_name=thing_name rig_name=rig_name log_group_name=log_group_name video_channel_name='' region=region profile=profile txing_profile='' endpoint_file=endpoint_file iot_data_endpoint=iot_data_endpoint:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
@@ -358,11 +358,36 @@ thing_index_name := "AWS_Things"
     check_tool uv
     check_tool just
 
-    echo "Checking AWS identity..."
-    check_cmd "STS caller identity" aws sts get-caller-identity "${aws_flags[@]}"
-    check_cmd "IoT DescribeThing on {{thing_name}}" aws iot describe-thing --thing-name "{{thing_name}}" "${aws_flags[@]}"
-    check_cmd "IoT DescribeThingGroup on {{rig_name}}" aws iot describe-thing-group --thing-group-name "{{rig_name}}" "${aws_flags[@]}"
-    check_cmd "IoT DescribeEndpoint (Data-ATS)" aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}"
+    video_channel_name="$BOARD_VIDEO_CHANNEL_NAME"
+    if [ -n "{{video_channel_name}}" ]; then
+      video_channel_name="{{video_channel_name}}"
+    fi
+
+    run_python_service_check() {
+      local scope="$1"
+      local scope_profile="$2"
+      shift 2
+
+      eval "$(just --justfile "{{root_justfile}}" _project-aws-env "$scope" "{{region}}" "$scope_profile" "{{endpoint_file}}")"
+      uv run --project "{{aws_dir}}/python" python -m aws.check --scope "$scope" "$@"
+    }
+
+    echo "Checking Python service AWS runtimes..."
+    if ! run_python_service_check rig "{{profile}}" --thing-name "{{thing_name}}" --rig-name "{{rig_name}}" --log-group-name "{{log_group_name}}"; then
+      failures=$((failures + 1))
+    fi
+    if ! run_python_service_check txing "{{txing_profile}}" --thing-name "{{thing_name}}" --video-channel-name "$video_channel_name"; then
+      failures=$((failures + 1))
+    fi
+
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{profile}}" "{{endpoint_file}}")"
+    region="$AWS_REGION"
+    profile="$AWS_SELECTED_PROFILE"
+    endpoint_file="$AWS_ENDPOINT_FILE"
+    aws_flags=(--region "$region")
+    if [ -n "$profile" ]; then
+      aws_flags+=(--profile "$profile")
+    fi
 
     thing_indexing_mode="$(
       aws iot get-indexing-configuration \
@@ -461,7 +486,7 @@ thing_index_name := "AWS_Things"
         aws logs put-log-events \
         --log-group-name "{{log_group_name}}" \
         --log-stream-name "$check_stream" \
-        --log-events "timestamp=${log_event_ts_ms},message=txing-aws-check" \
+        --log-events "timestamp=${log_event_ts_ms},message=aws-check" \
         "${aws_flags[@]}"
     fi
 

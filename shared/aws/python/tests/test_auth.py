@@ -5,7 +5,7 @@ import os
 import unittest
 from unittest.mock import patch
 
-import rig.aws_auth as aws_auth
+from aws import auth as aws_auth
 
 
 class _FakeFrozenCredentials:
@@ -104,10 +104,15 @@ class _FakeIotClient:
 class _FakeEndpointSession:
     def __init__(self, client: _FakeIotClient) -> None:
         self._client = client
-        self.last_client_request: tuple[str, str | None] | None = None
+        self.last_client_request: tuple[str, str | None, dict[str, object]] | None = None
 
-    def client(self, service_name: str, region_name: str | None = None) -> _FakeIotClient:
-        self.last_client_request = (service_name, region_name)
+    def client(
+        self,
+        service_name: str,
+        region_name: str | None = None,
+        **kwargs: object,
+    ) -> _FakeIotClient:
+        self.last_client_request = (service_name, region_name, kwargs)
         return self._client
 
 
@@ -155,7 +160,7 @@ class AwsAuthTests(unittest.TestCase):
         self.assertEqual(second, first)
         self.assertEqual(client.describe_calls, 1)
         self.assertEqual(client.endpoint_type, aws_auth.AWS_IOT_DATA_ENDPOINT_TYPE)
-        self.assertEqual(session.last_client_request, ("iot", "eu-central-1"))
+        self.assertEqual(session.last_client_request, ("iot", "eu-central-1", {}))
 
     def test_iot_data_endpoint_rejects_missing_endpoint_address(self) -> None:
         runtime = aws_auth.AwsRuntime(

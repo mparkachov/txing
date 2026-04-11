@@ -11,7 +11,7 @@ dependencies = [
     "awsiotsdk>=1.22,<2",
     "boto3>=1.42,<2",
     "jsonschema>=4.25,<5",
-    "txing-aws",
+    "aws",
 ]
 
 [project.scripts]
@@ -23,4 +23,4 @@ requires = ["uv_build>=0.10.6,<0.11.0"]
 build-backend = "uv_build"
 
 [tool.uv.sources]
-txing-aws = { path = "../txing_aws" }
+aws = { path = "../shared/aws/python" }

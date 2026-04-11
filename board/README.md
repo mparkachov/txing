@@ -8,7 +8,7 @@ This is not the same Raspberry Pi as `rig/`. The `rig/` Pi remains the BLE/AWS c
 
 The txing runtime now connects to AWS IoT Core over SigV4-authenticated MQTT over WebSockets using the standard AWS SDK credential chain. The intended project-local profile layout is `town`, `rig`, and `txing`, with `txing` assuming the stack output role `TxingRuntimeRoleArn`.
 
-When the service is managed by `systemd`, run it as `root`. The board control consumes internal `state.desired.board.power=false` requests from the phase-1 `rig` runtime and requests a local system halt, which requires root privileges. The supervised video sender keeps using the board host's AWS SDK credential chain, so the generated service unit exports `AWS_REGION` plus optional `AWS_PROFILE`, `AWS_SHARED_CREDENTIALS_FILE`, and `AWS_CONFIG_FILE`.
+When the service is managed by `systemd`, run it as `root`. The board control consumes internal `state.desired.board.power=false` requests from the phase-1 `rig` runtime and requests a local system halt, which requires root privileges. The supervised video sender keeps using the board host's AWS SDK credential chain, and the generated service unit now loads both AWS and board runtime defaults from `config/aws.env`.
 
 ## Video runtime
 
@@ -311,7 +311,7 @@ For TLS trust on the KVS signaling path, `board-video-sender` autodiscovers the 
 
 ### 6. Verify the `txing` Runtime Profile
 
-The txing runtime and the supervised sender both use the standard AWS SDK chain. The generated service unit exports `AWS_REGION` and, when configured, `AWS_PROFILE`, `AWS_SHARED_CREDENTIALS_FILE`, and `AWS_CONFIG_FILE`.
+The txing runtime and the supervised sender both use the standard AWS SDK chain. The generated service unit loads `config/aws.env` via `EnvironmentFile=`, so `AWS_REGION`, `AWS_TXING_PROFILE`, `AWS_SHARED_CREDENTIALS_FILE`, `AWS_CONFIG_FILE`, `THING_NAME`, `SCHEMA_FILE`, `BOARD_VIDEO_VIEWER_URL`, `BOARD_VIDEO_REGION`, `BOARD_VIDEO_CHANNEL_NAME`, and `BOARD_VIDEO_SENDER_COMMAND` all come from the shared project-local config by default.
 
 Verify the intended txing identity before installing the service:
 
@@ -324,12 +324,14 @@ If you want the install recipe to use credential files outside the checkout, pas
 
 ### 7. Build and Smoke Test
 
-Get the published viewer URL from the stack output and define the sender command path:
+Set the board runtime defaults in `config/aws.env`, especially:
 
-```bash
-BOARD_VIDEO_VIEWER_URL='https://<cloudfront-domain>/video'
-BOARD_VIDEO_SENDER_COMMAND=/home/user/txing/board/kvs_master/build/txing-board-kvs-master
-```
+- `THING_NAME`
+- `SCHEMA_FILE`
+- `BOARD_VIDEO_VIEWER_URL`
+- `BOARD_VIDEO_REGION`
+- `BOARD_VIDEO_CHANNEL_NAME`
+- `BOARD_VIDEO_SENDER_COMMAND`
 
 Build the board runtime:
 
@@ -370,8 +372,8 @@ From the repo root on the board:
 cd /home/user/txing
 just board::build
 just board::install-service \
-  "$BOARD_VIDEO_VIEWER_URL" \
-  "$BOARD_VIDEO_SENDER_COMMAND"
+  video_viewer_url="$BOARD_VIDEO_VIEWER_URL" \
+  video_sender_command="$BOARD_VIDEO_SENDER_COMMAND"
 ```
 
 If the root AWS credentials are stored elsewhere or you need a different region or channel:
@@ -379,12 +381,14 @@ If the root AWS credentials are stored elsewhere or you need a different region 
 ```bash
 cd /home/user/txing
 just board::install-service \
+  thing_name=txing \
+  schema_file=docs/txing-shadow.schema.json \
+  video_viewer_url="$BOARD_VIDEO_VIEWER_URL" \
   video_region=eu-central-1 \
   video_channel_name=txing-board-video \
+  video_sender_command="$BOARD_VIDEO_SENDER_COMMAND" \
   aws_shared_credentials_file=/path/to/credentials \
-  aws_config_file=/path/to/config \
-  "$BOARD_VIDEO_VIEWER_URL" \
-  "$BOARD_VIDEO_SENDER_COMMAND"
+  aws_config_file=/path/to/config
 ```
 
 The generated unit:
@@ -392,7 +396,8 @@ The generated unit:
 - enables `NetworkManager-wait-online.service`
 - waits for `systemd-time-wait-sync.service` / `time-sync.target` before startup
 - runs `txing-board` as `root`
-- defines `AWS_REGION`, `THING_NAME`, `SCHEMA_FILE`, `BOARD_VIDEO_VIEWER_URL`, `BOARD_VIDEO_REGION`, `BOARD_VIDEO_CHANNEL_NAME`, `BOARD_VIDEO_SENDER_COMMAND`, and optionally `AWS_PROFILE`, `AWS_SHARED_CREDENTIALS_FILE`, and `AWS_CONFIG_FILE`
+- sets `WorkingDirectory=/home/.../txing` and loads `config/aws.env` through `EnvironmentFile=`
+- only adds `Environment=` overrides for board or AWS values when you pass explicit `just board::install-service ...` overrides
 - starts `board` with `ExecStart=/home/.../board/.venv/bin/board --heartbeat-seconds 60`
 
 The Python service also waits up to `120 s` for `timedatectl` to report `SystemClockSynchronized=yes` before it starts the AWS-backed video sender. That avoids transient KVS `InvalidSignatureException` failures after boot when networking is up but NTP has not corrected the clock yet.

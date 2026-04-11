@@ -8,21 +8,17 @@ built_rig_sparkplug_log := rig_dir + "/.venv/bin/rig-sparkplug-log"
 project_root := rig_dir + "/.."
 root_justfile := project_root + "/justfile"
 thing_name := "txing"
-rig_name := "rig"
-sparkplug_group_id := "town"
-sparkplug_edge_node_id := "rig"
 region := ""
 aws_profile := ""
 aws_shared_credentials_file := ""
 aws_config_file := ""
-cloudwatch_log_group := "/town/rig/txing"
 systemd_unit := "/etc/systemd/system/rig.service"
 
 @sync:
     cd "{{rig_dir}}" && uv sync --python "{{python_executable}}" --no-managed-python --no-python-downloads
 
 @build:
-    cd "{{rig_dir}}" && uv sync --frozen --no-editable --compile-bytecode --python "{{python_executable}}" --no-managed-python --no-python-downloads --refresh-package rig --reinstall-package rig
+    cd "{{rig_dir}}" && uv sync --frozen --no-editable --compile-bytecode --python "{{python_executable}}" --no-managed-python --no-python-downloads --refresh-package rig --reinstall-package rig --refresh-package aws --reinstall-package aws
     test -x "{{built_rig}}"
     test -x "{{built_rig_sparkplug_cmd}}"
     test -x "{{built_rig_sparkplug_log}}"
@@ -34,75 +30,26 @@ systemd_unit := "/etc/systemd/system/rig.service"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig)"
     command aws "$@"
 
-@check:
+@check rig_name='' cloudwatch_log_group='' region=region aws_profile=aws_profile:
     #!/usr/bin/env bash
     set -euo pipefail
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}")"
-    region="$AWS_REGION"
-    aws_profile="$AWS_SELECTED_PROFILE"
-    aws_flags=(--region "$region")
-    if [ -n "$aws_profile" ]; then
-      aws_flags+=(--profile "$aws_profile")
+    thing_name="$THING_NAME"
+    rig_name="$RIG_NAME"
+    cloudwatch_log_group="$CLOUDWATCH_LOG_GROUP"
+    if [ -n "{{rig_name}}" ]; then
+      rig_name="{{rig_name}}"
+    fi
+    if [ -n "{{cloudwatch_log_group}}" ]; then
+      cloudwatch_log_group="{{cloudwatch_log_group}}"
     fi
 
-    failures=0
-
-    check_tool() {
-      local tool="$1"
-      if command -v "$tool" >/dev/null 2>&1; then
-        echo "ok: tool '$tool' is installed"
-      else
-        echo "fail: tool '$tool' is not installed"
-        failures=$((failures + 1))
-      fi
-    }
-
-    check_cmd() {
-      local label="$1"
-      shift
-      if "$@" >/dev/null 2>&1; then
-        echo "ok: $label"
-      else
-        echo "fail: $label"
-        failures=$((failures + 1))
-      fi
-    }
-
-    echo "Checking local tools..."
-    check_tool aws
-    check_tool jq
-    check_tool uv
-    check_tool just
-
-    echo "Checking AWS identity and IoT access..."
-    check_cmd "STS caller identity" aws sts get-caller-identity "${aws_flags[@]}"
-    check_cmd "IoT DescribeThing on {{thing_name}}" aws iot describe-thing --thing-name "{{thing_name}}" "${aws_flags[@]}"
-    check_cmd "IoT DescribeThingGroup on {{rig_name}}" aws iot describe-thing-group --thing-group-name "{{rig_name}}" "${aws_flags[@]}"
-    check_cmd "IoT DescribeEndpoint (Data-ATS)" aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}"
-
-    echo "Checking CloudWatch Logs access..."
-    check_stream="rig-check-$(date -u +%Y%m%dT%H%M%SZ)-$$"
-    check_cmd \
-      "CloudWatch CreateLogStream on {{cloudwatch_log_group}}" \
-      aws logs create-log-stream \
-      --log-group-name "{{cloudwatch_log_group}}" \
-      --log-stream-name "$check_stream" \
-      "${aws_flags[@]}"
-
-    log_event_ts_ms="$(( $(date +%s) * 1000 ))"
-    check_cmd \
-      "CloudWatch PutLogEvents on {{cloudwatch_log_group}}" \
-      aws logs put-log-events \
-      --log-group-name "{{cloudwatch_log_group}}" \
-      --log-stream-name "$check_stream" \
-      --log-events "timestamp=${log_event_ts_ms},message=txing-rig-check" \
-      "${aws_flags[@]}"
-
-    if [ "$failures" -ne 0 ]; then
-      echo "rig check failed with $failures problem(s)" >&2
-      exit 1
-    fi
-    echo "rig check passed"
+    uv run --project "{{project_root}}/shared/aws/python" \
+      python -m aws.check \
+      --scope rig \
+      --thing-name "$thing_name" \
+      --rig-name "$rig_name" \
+      --log-group-name "$cloudwatch_log_group"
 
 @run:
     #!/usr/bin/env bash
@@ -136,7 +83,7 @@ systemd_unit := "/etc/systemd/system/rig.service"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}")"
     cd "{{rig_dir}}" && uv run rig --debug
 
-@wake:
+@wake sparkplug_group_id='' sparkplug_edge_node_id='' region=region aws_profile=aws_profile:
     #!/usr/bin/env bash
     set -euo pipefail
     test -x "{{built_rig_sparkplug_cmd}}" || { \
@@ -144,9 +91,17 @@ systemd_unit := "/etc/systemd/system/rig.service"
         exit 1; \
     }
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}")"
-    cd "{{rig_dir}}" && "{{built_rig_sparkplug_cmd}}" --redcon 3 --thing-name "{{thing_name}}" --sparkplug-group-id "{{sparkplug_group_id}}" --sparkplug-edge-node-id "{{sparkplug_edge_node_id}}"
+    sparkplug_group_id="$SPARKPLUG_GROUP_ID"
+    sparkplug_edge_node_id="$SPARKPLUG_EDGE_NODE_ID"
+    if [ -n "{{sparkplug_group_id}}" ]; then
+      sparkplug_group_id="{{sparkplug_group_id}}"
+    fi
+    if [ -n "{{sparkplug_edge_node_id}}" ]; then
+      sparkplug_edge_node_id="{{sparkplug_edge_node_id}}"
+    fi
+    cd "{{rig_dir}}" && "{{built_rig_sparkplug_cmd}}" --redcon 3 --thing-name "{{thing_name}}" --sparkplug-group-id "$sparkplug_group_id" --sparkplug-edge-node-id "$sparkplug_edge_node_id"
 
-@sleep:
+@sleep sparkplug_group_id='' sparkplug_edge_node_id='' region=region aws_profile=aws_profile:
     #!/usr/bin/env bash
     set -euo pipefail
     test -x "{{built_rig_sparkplug_cmd}}" || { \
@@ -154,9 +109,17 @@ systemd_unit := "/etc/systemd/system/rig.service"
         exit 1; \
     }
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}")"
-    cd "{{rig_dir}}" && "{{built_rig_sparkplug_cmd}}" --redcon 4 --thing-name "{{thing_name}}" --sparkplug-group-id "{{sparkplug_group_id}}" --sparkplug-edge-node-id "{{sparkplug_edge_node_id}}"
+    sparkplug_group_id="$SPARKPLUG_GROUP_ID"
+    sparkplug_edge_node_id="$SPARKPLUG_EDGE_NODE_ID"
+    if [ -n "{{sparkplug_group_id}}" ]; then
+      sparkplug_group_id="{{sparkplug_group_id}}"
+    fi
+    if [ -n "{{sparkplug_edge_node_id}}" ]; then
+      sparkplug_edge_node_id="{{sparkplug_edge_node_id}}"
+    fi
+    cd "{{rig_dir}}" && "{{built_rig_sparkplug_cmd}}" --redcon 4 --thing-name "{{thing_name}}" --sparkplug-group-id "$sparkplug_group_id" --sparkplug-edge-node-id "$sparkplug_edge_node_id"
 
-@dcmd:
+@dcmd sparkplug_group_id='' sparkplug_edge_node_id='' region=region aws_profile=aws_profile:
     #!/usr/bin/env bash
     set -euo pipefail
     test -x "{{built_rig_sparkplug_log}}" || { \
@@ -164,9 +127,17 @@ systemd_unit := "/etc/systemd/system/rig.service"
         exit 1; \
     }
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}")"
-    cd "{{rig_dir}}" && "{{built_rig_sparkplug_log}}" --thing-name "{{thing_name}}" --sparkplug-group-id "{{sparkplug_group_id}}" --sparkplug-edge-node-id "{{sparkplug_edge_node_id}}" --message-type dcmd
+    sparkplug_group_id="$SPARKPLUG_GROUP_ID"
+    sparkplug_edge_node_id="$SPARKPLUG_EDGE_NODE_ID"
+    if [ -n "{{sparkplug_group_id}}" ]; then
+      sparkplug_group_id="{{sparkplug_group_id}}"
+    fi
+    if [ -n "{{sparkplug_edge_node_id}}" ]; then
+      sparkplug_edge_node_id="{{sparkplug_edge_node_id}}"
+    fi
+    cd "{{rig_dir}}" && "{{built_rig_sparkplug_log}}" --thing-name "{{thing_name}}" --sparkplug-group-id "$sparkplug_group_id" --sparkplug-edge-node-id "$sparkplug_edge_node_id" --message-type dcmd
 
-@ddata:
+@ddata sparkplug_group_id='' sparkplug_edge_node_id='' region=region aws_profile=aws_profile:
     #!/usr/bin/env bash
     set -euo pipefail
     test -x "{{built_rig_sparkplug_log}}" || { \
@@ -174,7 +145,15 @@ systemd_unit := "/etc/systemd/system/rig.service"
         exit 1; \
     }
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}")"
-    cd "{{rig_dir}}" && "{{built_rig_sparkplug_log}}" --thing-name "{{thing_name}}" --sparkplug-group-id "{{sparkplug_group_id}}" --sparkplug-edge-node-id "{{sparkplug_edge_node_id}}" --message-type ddata
+    sparkplug_group_id="$SPARKPLUG_GROUP_ID"
+    sparkplug_edge_node_id="$SPARKPLUG_EDGE_NODE_ID"
+    if [ -n "{{sparkplug_group_id}}" ]; then
+      sparkplug_group_id="{{sparkplug_group_id}}"
+    fi
+    if [ -n "{{sparkplug_edge_node_id}}" ]; then
+      sparkplug_edge_node_id="{{sparkplug_edge_node_id}}"
+    fi
+    cd "{{rig_dir}}" && "{{built_rig_sparkplug_log}}" --thing-name "{{thing_name}}" --sparkplug-group-id "$sparkplug_group_id" --sparkplug-edge-node-id "$sparkplug_edge_node_id" --message-type ddata
 
 @print:
     #!/usr/bin/env bash
@@ -193,36 +172,60 @@ systemd_unit := "/etc/systemd/system/rig.service"
       --thing-name "{{thing_name}}" \
       /dev/stdout | jq '.'
 
-@install-service rig_name=rig_name sparkplug_group_id=sparkplug_group_id sparkplug_edge_node_id=sparkplug_edge_node_id region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file aws_config_file=aws_config_file cloudwatch_log_group=cloudwatch_log_group:
+@install-service rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file aws_config_file=aws_config_file cloudwatch_log_group='':
     #!/usr/bin/env bash
     set -euo pipefail
     test -x "{{built_rig}}" || { \
         echo "Missing built rig executable at {{built_rig}}. Run 'just build' first." >&2; \
         exit 1; \
     }
-    export AWS_SHARED_CREDENTIALS_FILE="{{aws_shared_credentials_file}}"
-    export AWS_CONFIG_FILE="{{aws_config_file}}"
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}" "" "" "" "" "{{aws_shared_credentials_file}}" "{{aws_config_file}}")"
+    env_file="$AWS_ENV_FILE"
     region="$AWS_REGION"
     aws_profile="$AWS_SELECTED_PROFILE"
     aws_shared_credentials_file="$AWS_SHARED_CREDENTIALS_FILE"
     aws_config_file="$AWS_CONFIG_FILE"
+    rig_name="$RIG_NAME"
+    sparkplug_group_id="$SPARKPLUG_GROUP_ID"
+    sparkplug_edge_node_id="$SPARKPLUG_EDGE_NODE_ID"
+    cloudwatch_log_group="$CLOUDWATCH_LOG_GROUP"
+    if [ -n "{{rig_name}}" ]; then \
+        rig_name="{{rig_name}}"; \
+    fi; \
+    if [ -n "{{sparkplug_group_id}}" ]; then \
+        sparkplug_group_id="{{sparkplug_group_id}}"; \
+    fi; \
+    if [ -n "{{sparkplug_edge_node_id}}" ]; then \
+        sparkplug_edge_node_id="{{sparkplug_edge_node_id}}"; \
+    fi; \
+    if [ -n "{{cloudwatch_log_group}}" ]; then \
+        cloudwatch_log_group="{{cloudwatch_log_group}}"; \
+    fi; \
     sudo systemctl enable --now bluetooth
     run_user="$(id -un)"; \
-    service_env=( \
-        "Environment=\"AWS_REGION=$region\"" \
-        'Environment="RIG_NAME={{rig_name}}"' \
-        'Environment="SPARKPLUG_GROUP_ID={{sparkplug_group_id}}"' \
-        'Environment="SPARKPLUG_EDGE_NODE_ID={{sparkplug_edge_node_id}}"' \
-        'Environment="CLOUDWATCH_LOG_GROUP={{cloudwatch_log_group}}"' \
-    ); \
-    if [ -n "$aws_profile" ]; then \
+    service_env=(); \
+    if [ -n "{{rig_name}}" ]; then \
+        service_env+=("Environment=\"RIG_NAME=$rig_name\""); \
+    fi; \
+    if [ -n "{{sparkplug_group_id}}" ]; then \
+        service_env+=("Environment=\"SPARKPLUG_GROUP_ID=$sparkplug_group_id\""); \
+    fi; \
+    if [ -n "{{sparkplug_edge_node_id}}" ]; then \
+        service_env+=("Environment=\"SPARKPLUG_EDGE_NODE_ID=$sparkplug_edge_node_id\""); \
+    fi; \
+    if [ -n "{{cloudwatch_log_group}}" ]; then \
+        service_env+=("Environment=\"CLOUDWATCH_LOG_GROUP=$cloudwatch_log_group\""); \
+    fi; \
+    if [ -n "{{region}}" ] && [ -n "$region" ]; then \
+        service_env+=("Environment=\"AWS_REGION=$region\""); \
+    fi; \
+    if [ -n "{{aws_profile}}" ] && [ -n "$aws_profile" ]; then \
         service_env+=("Environment=\"AWS_PROFILE=$aws_profile\""); \
     fi; \
-    if [ -n "$aws_shared_credentials_file" ]; then \
+    if [ -n "{{aws_shared_credentials_file}}" ] && [ -n "$aws_shared_credentials_file" ]; then \
         service_env+=("Environment=\"AWS_SHARED_CREDENTIALS_FILE=$aws_shared_credentials_file\""); \
     fi; \
-    if [ -n "$aws_config_file" ]; then \
+    if [ -n "{{aws_config_file}}" ] && [ -n "$aws_config_file" ]; then \
         service_env+=("Environment=\"AWS_CONFIG_FILE=$aws_config_file\""); \
     fi; \
     { \
@@ -235,7 +238,8 @@ systemd_unit := "/etc/systemd/system/rig.service"
             '[Service]' \
             'Type=simple' \
             "User=$run_user" \
-            'WorkingDirectory={{rig_dir}}'; \
+            'WorkingDirectory={{project_root}}' \
+            "EnvironmentFile=$env_file"; \
         printf '%s\n' "${service_env[@]}"; \
         printf '%s\n' \
             'ExecStart={{built_rig}}' \

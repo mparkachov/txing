@@ -3,7 +3,7 @@ from __future__ import annotations
 import inspect
 import unittest
 
-from rig.aws_mqtt import AwsIotWebsocketConnection
+from aws.mqtt import AwsIotWebsocketConnection
 
 
 class AwsMqttCallbackTests(unittest.TestCase):
@@ -74,3 +74,7 @@ class AwsMqttCallbackTests(unittest.TestCase):
                 ("other/topic", b"data"),
             ],
         )
+
+
+if __name__ == "__main__":
+    unittest.main()

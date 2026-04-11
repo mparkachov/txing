@@ -1,5 +1,5 @@
 [project]
-name = "txing-aws"
+name = "aws"
 version = "0.1.0"
 description = "Shared AWS runtime helpers for txing subprojects"
 requires-python = ">=3.12"

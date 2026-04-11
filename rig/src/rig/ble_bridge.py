@@ -49,6 +49,7 @@ from .aws_auth import (
     build_aws_runtime,
     resolve_aws_region,
     AwsRuntime,
+    ensure_aws_profile,
 )
 from .aws_mqtt import AwsIotWebsocketConnection, AwsMqttConnectionConfig
 from .sparkplug import (
@@ -3636,6 +3637,7 @@ def main() -> None:
     try:
         if boto3 is None:
             raise RuntimeError("boto3 is required for IoT registry and thing-group access")
+        ensure_aws_profile("AWS_RIG_PROFILE")
         aws_region = resolve_aws_region()
         if not aws_region:
             raise RuntimeError("could not resolve AWS region for AWS IoT access")

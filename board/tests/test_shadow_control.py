@@ -195,7 +195,7 @@ class ShadowControlContractTests(unittest.TestCase):
     def test_default_shadow_reset_payload_matches_schema(self) -> None:
         validator = _load_validator(Path(REPO_ROOT / "docs" / "txing-shadow.schema.json"))
         payload = json.loads(
-            Path(REPO_ROOT / "aws" / "default-shadow.json").read_text(encoding="utf-8")
+            Path(REPO_ROOT / "shared" / "aws" / "default-shadow.json").read_text(encoding="utf-8")
         )
 
         _validate_shadow_update(validator, payload)
@@ -461,26 +461,46 @@ class ShadowControlContractTests(unittest.TestCase):
     def test_justfile_install_service_has_no_mediamtx_dependency(self) -> None:
         justfile = Path(REPO_ROOT / "board" / "justfile").read_text(encoding="utf-8")
 
+        self.assertIn("--refresh-package aws --reinstall-package aws", justfile)
         self.assertIn("'Wants=network-online.target systemd-time-wait-sync.service' \\", justfile)
         self.assertIn(
             "'After=network-online.target systemd-time-wait-sync.service time-sync.target' \\",
             justfile,
         )
         self.assertNotIn("mediamtx.service", justfile)
-        self.assertIn('Environment="THING_NAME={{thing_name}}"', justfile)
-        self.assertIn('Environment="SCHEMA_FILE={{schema_file}}"', justfile)
-        self.assertIn('Environment="BOARD_VIDEO_VIEWER_URL={{video_viewer_url}}"', justfile)
-        self.assertIn('Environment="BOARD_VIDEO_REGION={{video_region}}"', justfile)
-        self.assertIn('Environment="BOARD_VIDEO_CHANNEL_NAME={{video_channel_name}}"', justfile)
-        self.assertIn('Environment="BOARD_VIDEO_SENDER_COMMAND={{video_sender_command}}"', justfile)
+        self.assertIn('thing_name="$THING_NAME"', justfile)
+        self.assertIn('schema_file="$SCHEMA_FILE"', justfile)
+        self.assertIn('video_viewer_url="$BOARD_VIDEO_VIEWER_URL"', justfile)
+        self.assertIn('video_region="$BOARD_VIDEO_REGION"', justfile)
+        self.assertIn('video_channel_name="$BOARD_VIDEO_CHANNEL_NAME"', justfile)
+        self.assertIn('video_sender_command="$BOARD_VIDEO_SENDER_COMMAND"', justfile)
+        self.assertIn('python -m aws.check', justfile)
+        self.assertIn('--scope txing', justfile)
         self.assertIn('ExecStart={{built_board}} --heartbeat-seconds 60', justfile)
         self.assertIn('eval "$(just --justfile "{{root_justfile}}" _project-aws-env txing', justfile)
-        self.assertIn('"Environment=\\"AWS_REGION=$region\\""', justfile)
-        self.assertIn('service_env+=("Environment=\\"AWS_PROFILE=$aws_profile\\"");', justfile)
-        self.assertIn('service_env+=("Environment=\\"AWS_SHARED_CREDENTIALS_FILE=$aws_shared_credentials_file\\"");', justfile)
-        self.assertIn('service_env+=("Environment=\\"AWS_CONFIG_FILE=$aws_config_file\\"");', justfile)
-        self.assertIn('default_video_region := "eu-central-1"', justfile)
-        self.assertIn('default_video_channel_name := "txing-board-video"', justfile)
+        self.assertIn('env_file="$AWS_ENV_FILE"', justfile)
+        self.assertIn('EnvironmentFile=$env_file', justfile)
+        self.assertIn('WorkingDirectory={{project_root}}', justfile)
+        self.assertIn('[ -n "{{thing_name}}" ]', justfile)
+        self.assertIn('THING_NAME=$thing_name', justfile)
+        self.assertIn('[ -n "{{schema_file}}" ]', justfile)
+        self.assertIn('SCHEMA_FILE=$schema_file', justfile)
+        self.assertIn('[ -n "{{video_viewer_url}}" ]', justfile)
+        self.assertIn('BOARD_VIDEO_VIEWER_URL=$video_viewer_url', justfile)
+        self.assertIn('[ -n "{{video_region}}" ]', justfile)
+        self.assertIn('BOARD_VIDEO_REGION=$video_region', justfile)
+        self.assertIn('[ -n "{{video_channel_name}}" ]', justfile)
+        self.assertIn('BOARD_VIDEO_CHANNEL_NAME=$video_channel_name', justfile)
+        self.assertIn('[ -n "{{video_sender_command}}" ]', justfile)
+        self.assertIn('BOARD_VIDEO_SENDER_COMMAND=$video_sender_command', justfile)
+        self.assertIn('[ -n "{{region}}" ]', justfile)
+        self.assertIn('AWS_REGION=$region', justfile)
+        self.assertIn('[ -n "{{aws_profile}}" ]', justfile)
+        self.assertIn('AWS_PROFILE=$aws_profile', justfile)
+        self.assertIn('[ -n "{{aws_shared_credentials_file}}" ]', justfile)
+        self.assertIn('AWS_SHARED_CREDENTIALS_FILE=$aws_shared_credentials_file', justfile)
+        self.assertIn('[ -n "{{aws_config_file}}" ]', justfile)
+        self.assertIn('AWS_CONFIG_FILE=$aws_config_file', justfile)
 
     def test_repo_root_detection_uses_board_working_directory(self) -> None:
         with TemporaryDirectory() as tmpdir:

@@ -24,6 +24,22 @@ else:
 AWS_IOT_DATA_ENDPOINT_TYPE = "iot:Data-ATS"
 
 
+def ensure_aws_profile(*profile_env_names: str) -> str | None:
+    profile = os.getenv("AWS_PROFILE", "").strip()
+    if profile:
+        os.environ.setdefault("AWS_DEFAULT_PROFILE", profile)
+        return profile
+
+    for env_name in profile_env_names:
+        candidate = os.getenv(env_name, "").strip()
+        if not candidate:
+            continue
+        os.environ["AWS_PROFILE"] = candidate
+        os.environ.setdefault("AWS_DEFAULT_PROFILE", candidate)
+        return candidate
+    return None
+
+
 def resolve_aws_region() -> str | None:
     for env_name in ("AWS_REGION", "AWS_DEFAULT_REGION"):
         region = os.getenv(env_name, "").strip()
@@ -142,10 +158,17 @@ class AwsRuntime:
     def __post_init__(self) -> None:
         self._credentials_bridge = AwsCredentialsBridge(self.session)
 
-    def client(self, service_name: str, *, region_name: str | None = None) -> Any:
+    def client(
+        self,
+        service_name: str,
+        *,
+        region_name: str | None = None,
+        **kwargs: Any,
+    ) -> Any:
         return self.session.client(
             service_name,
             region_name=region_name or self.region_name,
+            **kwargs,
         )
 
     def iot_client(self, *, region_name: str | None = None) -> Any:

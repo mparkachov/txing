@@ -18,8 +18,8 @@ from pathlib import Path
 from typing import Any
 
 import jsonschema
-from txing_aws.auth import AwsRuntime, build_aws_runtime, resolve_aws_region
-from txing_aws.mqtt import AwsIotWebsocketSyncConnection, AwsMqttConnectionConfig
+from aws.auth import AwsRuntime, build_aws_runtime, ensure_aws_profile, resolve_aws_region
+from aws.mqtt import AwsIotWebsocketSyncConnection, AwsMqttConnectionConfig
 
 from .cmd_vel import CmdVelController, DriveState, build_cmd_vel_topic
 from .shadow_store import DEFAULT_SHADOW_FILE, save_shadow
@@ -1016,6 +1016,7 @@ def main() -> None:
     _configure_logging(args.debug)
 
     try:
+        ensure_aws_profile("AWS_TXING_PROFILE")
         aws_region = resolve_aws_region()
         if not aws_region:
             raise RuntimeError("could not resolve AWS region for AWS IoT access")

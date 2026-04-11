@@ -58,7 +58,7 @@ web_dist_dir := web_dir + "/dist"
       --output text)"
 
     if [ "$web_bucket_name" = "None" ] || [ "$web_distribution_id" = "None" ]; then
-      echo "Required web hosting outputs are missing in stack $stack_name. Deploy aws/template.yaml first." >&2
+      echo "Required web hosting outputs are missing in stack $stack_name. Deploy shared/aws/template.yaml first." >&2
       exit 1
     fi
 
@@ -145,7 +145,7 @@ web_dist_dir := web_dir + "/dist"
       --output text)"
 
     if [ "$cognito_domain" = "None" ] || [ "$cognito_client_id" = "None" ] || [ "$cognito_user_pool_id" = "None" ] || [ "$cognito_identity_pool_id" = "None" ] || [ "$web_iot_policy_name" = "None" ] || [ "$admin_email" = "None" ] || [ "$iot_data_endpoint" = "None" ]; then
-      echo "Required web outputs are missing in stack $stack_name. Deploy aws/template.yaml first." >&2
+      echo "Required web outputs are missing in stack $stack_name. Deploy shared/aws/template.yaml first." >&2
       exit 1
     fi
 

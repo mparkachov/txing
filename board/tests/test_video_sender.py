@@ -8,6 +8,20 @@ from board import video_sender
 
 
 class VideoSenderTests(unittest.TestCase):
+    def test_ensure_aws_profile_falls_back_to_aws_txing_profile(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "AWS_TXING_PROFILE": "txing-service",
+            },
+            clear=True,
+        ):
+            profile = video_sender.ensure_aws_profile("AWS_TXING_PROFILE")
+            self.assertEqual(os.environ["AWS_PROFILE"], "txing-service")
+            self.assertEqual(os.environ["AWS_DEFAULT_PROFILE"], "txing-service")
+
+        self.assertEqual(profile, "txing-service")
+
     def test_parse_args_uses_repo_sender_marker_defaults(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
             with patch(

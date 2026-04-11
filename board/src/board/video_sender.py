@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import boto3
+from aws.auth import ensure_aws_profile
 
 from .video_state import (
     DEFAULT_VIDEO_CHANNEL_NAME,
@@ -552,6 +553,7 @@ def main() -> None:
         os.environ[DEFAULT_AWS_SHARED_CREDENTIALS_FILE_ENV] = str(args.aws_shared_credentials_file)
     if args.aws_config_file is not None:
         os.environ[DEFAULT_AWS_CONFIG_FILE_ENV] = str(args.aws_config_file)
+    ensure_aws_profile("AWS_TXING_PROFILE")
     runtime = VideoSenderProcess(
         VideoSenderRuntimeConfig(
             region=args.region,

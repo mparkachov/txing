@@ -163,6 +163,7 @@ from rig.ble_bridge import (
     _parse_args,
     _shadow_payload_includes_desired_redcon,
 )
+from rig.aws_auth import ensure_aws_profile
 from rig.sparkplug import (
     build_device_report_payload,
     build_device_topic,
@@ -200,6 +201,20 @@ class ShadowPayloadTests(unittest.TestCase):
 
 
 class ServiceConfigTests(unittest.TestCase):
+    def test_ensure_aws_profile_falls_back_to_aws_rig_profile(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "AWS_RIG_PROFILE": "rig-service",
+            },
+            clear=True,
+        ):
+            profile = ensure_aws_profile("AWS_RIG_PROFILE")
+
+            self.assertEqual(profile, "rig-service")
+            self.assertEqual(os.environ["AWS_PROFILE"], "rig-service")
+            self.assertEqual(os.environ["AWS_DEFAULT_PROFILE"], "rig-service")
+
     def test_parse_args_accepts_service_environment_defaults(self) -> None:
         with patch.dict(
             os.environ,
@@ -231,9 +246,9 @@ class ServiceConfigTests(unittest.TestCase):
         )
 
         self.assertIn("@aws *args:", justfile)
+        self.assertIn("--refresh-package aws --reinstall-package aws", justfile)
         self.assertIn('just --justfile "{{root_justfile}}" _project-aws-env rig', justfile)
         self.assertIn('command aws "$@"', justfile)
-        self.assertIn('region="$AWS_REGION"', justfile)
         self.assertNotIn('describe-log-groups', justfile)
         self.assertIn(
             'aws_profile="$AWS_SELECTED_PROFILE"',
@@ -247,23 +262,37 @@ class ServiceConfigTests(unittest.TestCase):
             'aws_config_file="$AWS_CONFIG_FILE"',
             justfile,
         )
-        self.assertIn('AWS_REGION=$region', justfile)
+        self.assertIn('env_file="$AWS_ENV_FILE"', justfile)
         self.assertNotIn('Environment="THING_NAME={{thing_name}}"', justfile)
-        self.assertIn('Environment="RIG_NAME={{rig_name}}"', justfile)
+        self.assertIn('rig_name="$RIG_NAME"', justfile)
         self.assertNotIn('Environment="RIG_THING_NAME={{rig_thing_name}}"', justfile)
         self.assertNotIn('Environment="TOWN_THING_NAME={{town_thing_name}}"', justfile)
-        self.assertIn('Environment="SPARKPLUG_GROUP_ID={{sparkplug_group_id}}"', justfile)
-        self.assertIn(
-            'Environment="SPARKPLUG_EDGE_NODE_ID={{sparkplug_edge_node_id}}"',
-            justfile,
-        )
-        self.assertIn('aws iot describe-endpoint --endpoint-type iot:Data-ATS', justfile)
+        self.assertIn('sparkplug_group_id="$SPARKPLUG_GROUP_ID"', justfile)
+        self.assertIn('sparkplug_edge_node_id="$SPARKPLUG_EDGE_NODE_ID"', justfile)
+        self.assertIn('python -m aws.check', justfile)
+        self.assertIn('--scope rig', justfile)
         self.assertNotIn('AWS_ENDPOINT_FILE', justfile)
         self.assertNotIn('IOT_ENDPOINT_FILE', justfile)
+        self.assertIn('EnvironmentFile=$env_file', justfile)
+        self.assertIn('region="$AWS_REGION"', justfile)
+        self.assertIn('[ -n "{{region}}" ]', justfile)
+        self.assertIn('AWS_REGION=$region', justfile)
+        self.assertIn('[ -n "{{rig_name}}" ]', justfile)
+        self.assertIn('RIG_NAME=$rig_name', justfile)
+        self.assertIn('[ -n "{{sparkplug_group_id}}" ]', justfile)
+        self.assertIn('SPARKPLUG_GROUP_ID=$sparkplug_group_id', justfile)
+        self.assertIn('[ -n "{{sparkplug_edge_node_id}}" ]', justfile)
+        self.assertIn('SPARKPLUG_EDGE_NODE_ID=$sparkplug_edge_node_id', justfile)
+        self.assertIn('[ -n "{{aws_profile}}" ]', justfile)
         self.assertIn('AWS_PROFILE=$aws_profile', justfile)
+        self.assertIn('[ -n "{{aws_shared_credentials_file}}" ]', justfile)
         self.assertIn('AWS_SHARED_CREDENTIALS_FILE=$aws_shared_credentials_file', justfile)
+        self.assertIn('[ -n "{{aws_config_file}}" ]', justfile)
         self.assertIn('AWS_CONFIG_FILE=$aws_config_file', justfile)
-        self.assertIn('Environment="CLOUDWATCH_LOG_GROUP={{cloudwatch_log_group}}"', justfile)
+        self.assertIn('cloudwatch_log_group="$CLOUDWATCH_LOG_GROUP"', justfile)
+        self.assertIn('[ -n "{{cloudwatch_log_group}}" ]', justfile)
+        self.assertIn('CLOUDWATCH_LOG_GROUP=$cloudwatch_log_group', justfile)
+        self.assertIn('WorkingDirectory={{project_root}}', justfile)
         self.assertIn('ExecStart={{built_rig}}', justfile)
 
 

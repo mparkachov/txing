@@ -49,7 +49,7 @@ just web::write-env
 Subproject `justfile`s are included by the root `justfile` as modules:
 - `rig::...` -> `rig/justfile`
 - `board::...` -> `board/justfile`
-- `aws::...` -> `aws/justfile`
+- `aws::...` -> `shared/aws/justfile`
 - `mcu::...` -> `mcu/justfile`
 - `web::...` -> `web/justfile`
 
@@ -88,7 +88,7 @@ just aws::shadow
 just aws::shadow-reset
 ```
 
-`aws::shadow-reset` deletes the current classic shadow document and reseeds it from `aws/default-shadow.json`, which represents the clean offline/powered-down state with stale desired power requests removed.
+`aws::shadow-reset` deletes the current classic shadow document and reseeds it from `shared/aws/default-shadow.json`, which represents the clean offline/powered-down state with stale desired power requests removed.
 
 The web admin does not use API Gateway. After Cognito sign-in, the SPA exchanges the user pool token for temporary AWS credentials through a Cognito Identity Pool and calls AWS IoT Thing Shadow directly.
 
