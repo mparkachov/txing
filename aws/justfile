@@ -433,36 +433,37 @@ thing_index_name := "AWS_Things"
       failures=$((failures + 1))
     fi
 
-    log_group_found="$(
-      aws logs describe-log-groups \
-        --log-group-name-prefix "{{log_group_name}}" \
-        "${aws_flags[@]}" \
-        --query "logGroups[?logGroupName=='{{log_group_name}}'].logGroupName | [0]" \
-        --output text 2>/dev/null || true
-    )"
-    if [ "$log_group_found" = "{{log_group_name}}" ]; then
+    check_stream="aws-check-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+    create_stream_output=""
+    if create_stream_output="$(
+      aws logs create-log-stream \
+        --log-group-name "{{log_group_name}}" \
+        --log-stream-name "$check_stream" \
+        "${aws_flags[@]}" 2>&1
+    )"; then
       echo "ok: CloudWatch log group {{log_group_name}} exists"
+      echo "ok: CloudWatch CreateLogStream on {{log_group_name}}"
     else
-      echo "fail: CloudWatch log group {{log_group_name}} not found"
+      if printf '%s' "$create_stream_output" | grep -Eq 'ResourceNotFoundException|log group does not exist'; then
+        echo "fail: CloudWatch log group {{log_group_name}} not found"
+      else
+        echo "fail: CloudWatch CreateLogStream on {{log_group_name}}"
+        echo "$create_stream_output"
+      fi
       failures=$((failures + 1))
+      check_stream=""
     fi
 
-    check_stream="aws-check-$(date -u +%Y%m%dT%H%M%SZ)-$$"
-    check_cmd \
-      "CloudWatch CreateLogStream on {{log_group_name}}" \
-      aws logs create-log-stream \
-      --log-group-name "{{log_group_name}}" \
-      --log-stream-name "$check_stream" \
-      "${aws_flags[@]}"
-
-    log_event_ts_ms="$(( $(date +%s) * 1000 ))"
-    check_cmd \
-      "CloudWatch PutLogEvents on {{log_group_name}}" \
-      aws logs put-log-events \
-      --log-group-name "{{log_group_name}}" \
-      --log-stream-name "$check_stream" \
-      --log-events "timestamp=${log_event_ts_ms},message=txing-aws-check" \
-      "${aws_flags[@]}"
+    if [ -n "$check_stream" ]; then
+      log_event_ts_ms="$(( $(date +%s) * 1000 ))"
+      check_cmd \
+        "CloudWatch PutLogEvents on {{log_group_name}}" \
+        aws logs put-log-events \
+        --log-group-name "{{log_group_name}}" \
+        --log-stream-name "$check_stream" \
+        --log-events "timestamp=${log_event_ts_ms},message=txing-aws-check" \
+        "${aws_flags[@]}"
+    fi
 
     echo "Checking local AWS IoT endpoint configuration..."
     check_file "$endpoint_file" "IoT endpoint file"

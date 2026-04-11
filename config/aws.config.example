@@ -10,10 +10,10 @@ region = eu-central-1
 
 [profile rig]
 region = eu-central-1
-role_arn = arn:aws:iam::123456789012:role/txing-iot-rig-runtime
+role_arn = arn:aws:iam::123456789012:role/town-rig-runtime
 source_profile = town
 
 [profile txing]
 region = eu-central-1
-role_arn = arn:aws:iam::123456789012:role/txing-iot-txing-runtime
+role_arn = arn:aws:iam::123456789012:role/town-txing-runtime
 source_profile = town
