@@ -29,6 +29,8 @@ from .video_state import (
     load_video_state,
 )
 
+REPO_ROOT = Path(__file__).resolve().parents[3]
+DEFAULT_REPO_AWS_CA_FILE = REPO_ROOT / "certs" / "AmazonRootCA1.pem"
 DEFAULT_ASSUME_READY_AFTER_SECONDS = 3.0
 DEFAULT_REGION_ENV = "BOARD_VIDEO_REGION"
 DEFAULT_CHANNEL_NAME_ENV = "BOARD_VIDEO_CHANNEL_NAME"
@@ -52,6 +54,7 @@ DEFAULT_READY_PATTERN = r"^TXING_KVS_READY(?:\s|$)"
 DEFAULT_VIEWER_CONNECTED_PATTERN = r"^TXING_VIEWER_CONNECTED(?:\s|$)"
 DEFAULT_VIEWER_DISCONNECTED_PATTERN = r"^TXING_VIEWER_DISCONNECTED(?:\s|$)"
 DEFAULT_CA_CERT_CANDIDATES = (
+    DEFAULT_REPO_AWS_CA_FILE,
     Path("/etc/ssl/certs/ca-certificates.crt"),
     Path("/etc/ssl/cert.pem"),
 )
@@ -488,7 +491,7 @@ def _parse_args() -> argparse.Namespace:
         default=_optional_env_path(DEFAULT_CA_FILE_ENV, LEGACY_CA_FILE_ENV),
         help=(
             "Root CA PEM file to reuse for the native KVS sender "
-            f"(default: ${DEFAULT_CA_FILE_ENV} or auto-discovery)"
+            f"(default: ${DEFAULT_CA_FILE_ENV} or repo/system auto-discovery)"
         ),
     )
     parser.add_argument(

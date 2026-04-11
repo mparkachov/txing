@@ -307,7 +307,7 @@ You do not need to set sender regex environment variables for the repo sender. `
 
 `board-video-sender` also exports `BOARD_VIDEO_REGION` and `BOARD_VIDEO_CHANNEL_NAME` to the child automatically, so the native sender does not need those flags when it is started under the Python supervisor.
 
-For TLS trust on the KVS signaling path, `board-video-sender` autodiscovers the system CA bundle for the native sender. You do not need IoT-specific certificate files for the txing runtime bootstrap.
+For TLS trust on the KVS signaling path, `board-video-sender` prefers the repo-pinned AWS root CA at `/home/user/txing/certs/AmazonRootCA1.pem`, then falls back to the system CA bundle if needed. You do not need IoT-specific certificate files for the txing runtime bootstrap.
 
 ### 6. Verify the `txing` Runtime Profile
 
@@ -399,7 +399,6 @@ The generated unit:
 - sets `WorkingDirectory=/home/.../txing` and loads `config/aws.env` through `EnvironmentFile=`
 - only adds `Environment=` overrides for board or AWS values when you pass explicit `just board::install-service ...` overrides
 - starts `board` with `ExecStart=/home/.../board/.venv/bin/board --heartbeat-seconds 60`
-- disables and removes the legacy `txing-board.service` unit during install
 
 The Python service also waits up to `120 s` for `timedatectl` to report `SystemClockSynchronized=yes` before it starts the AWS-backed video sender. That avoids transient KVS `InvalidSignatureException` failures after boot when networking is up but NTP has not corrected the clock yet.
 
