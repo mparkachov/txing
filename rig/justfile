@@ -180,6 +180,7 @@ systemd_unit := "/etc/systemd/system/rig.service"
         exit 1; \
     }
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}" "" "" "" "" "{{aws_shared_credentials_file}}" "{{aws_config_file}}")"
+    project_root="$TXING_PROJECT_ROOT"
     env_file="$AWS_ENV_FILE"
     region="$AWS_REGION"
     aws_profile="$AWS_SELECTED_PROFILE"
@@ -238,7 +239,7 @@ systemd_unit := "/etc/systemd/system/rig.service"
             '[Service]' \
             'Type=simple' \
             "User=$run_user" \
-            'WorkingDirectory={{project_root}}' \
+            "WorkingDirectory=$project_root" \
             "EnvironmentFile=$env_file"; \
         printf '%s\n' "${service_env[@]}"; \
         printf '%s\n' \

@@ -263,6 +263,7 @@ class ServiceConfigTests(unittest.TestCase):
             justfile,
         )
         self.assertIn('env_file="$AWS_ENV_FILE"', justfile)
+        self.assertIn('project_root="$TXING_PROJECT_ROOT"', justfile)
         self.assertNotIn('Environment="THING_NAME={{thing_name}}"', justfile)
         self.assertIn('rig_name="$RIG_NAME"', justfile)
         self.assertNotIn('Environment="RIG_THING_NAME={{rig_thing_name}}"', justfile)
@@ -292,7 +293,7 @@ class ServiceConfigTests(unittest.TestCase):
         self.assertIn('cloudwatch_log_group="$CLOUDWATCH_LOG_GROUP"', justfile)
         self.assertIn('[ -n "{{cloudwatch_log_group}}" ]', justfile)
         self.assertIn('CLOUDWATCH_LOG_GROUP=$cloudwatch_log_group', justfile)
-        self.assertIn('WorkingDirectory={{project_root}}', justfile)
+        self.assertIn('WorkingDirectory=$project_root', justfile)
         self.assertIn('ExecStart={{built_rig}}', justfile)
 
 
