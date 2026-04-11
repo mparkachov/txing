@@ -96,62 +96,20 @@ class VideoSenderTests(unittest.TestCase):
             "/home/user/txing/certs/AmazonRootCA1.pem",
         )
 
-    def test_build_sender_environment_discovers_default_ca_bundle(self) -> None:
+    def test_build_sender_environment_does_not_inject_ca_by_default(self) -> None:
         with patch.dict(os.environ, {"EXISTING": "value"}, clear=True):
-            with patch.object(
-                video_sender,
-                "DEFAULT_CA_CERT_CANDIDATES",
-                (video_sender.Path("/tmp/test-ca-bundle.crt"),),
-            ):
-                with patch.object(video_sender.Path, "is_file", return_value=True):
-                    environment = video_sender._build_sender_environment(
-                        region="eu-central-1",
-                        channel_name="txing-board-video",
-                        credentials=AwsCredentialSnapshot(
-                            access_key_id="env-access",
-                            secret_access_key="env-secret",
-                            session_token="env-token",
-                        ),
-                    )
-
-        self.assertEqual(
-            environment["SSL_CERT_FILE"],
-            "/tmp/test-ca-bundle.crt",
-        )
-        self.assertEqual(
-            environment["AWS_KVS_CACERT_PATH"],
-            "/tmp/test-ca-bundle.crt",
-        )
-
-    def test_build_sender_environment_prefers_first_discovered_ca_candidate(self) -> None:
-        with patch.dict(os.environ, {"EXISTING": "value"}, clear=True):
-            with patch.object(
-                video_sender,
-                "DEFAULT_CA_CERT_CANDIDATES",
-                (
-                    video_sender.Path("/repo/certs/AmazonRootCA1.pem"),
-                    video_sender.Path("/etc/ssl/certs/ca-certificates.crt"),
+            environment = video_sender._build_sender_environment(
+                region="eu-central-1",
+                channel_name="txing-board-video",
+                credentials=AwsCredentialSnapshot(
+                    access_key_id="env-access",
+                    secret_access_key="env-secret",
+                    session_token="env-token",
                 ),
-            ):
-                with patch.object(video_sender.Path, "is_file", return_value=True):
-                    environment = video_sender._build_sender_environment(
-                        region="eu-central-1",
-                        channel_name="txing-board-video",
-                        credentials=AwsCredentialSnapshot(
-                            access_key_id="env-access",
-                            secret_access_key="env-secret",
-                            session_token="env-token",
-                        ),
-                    )
+            )
 
-        self.assertEqual(
-            environment["SSL_CERT_FILE"],
-            "/repo/certs/AmazonRootCA1.pem",
-        )
-        self.assertEqual(
-            environment["AWS_KVS_CACERT_PATH"],
-            "/repo/certs/AmazonRootCA1.pem",
-        )
+        self.assertNotIn("SSL_CERT_FILE", environment)
+        self.assertNotIn("AWS_KVS_CACERT_PATH", environment)
 
     def test_build_sender_environment_preserves_explicit_ca_env(self) -> None:
         with patch.dict(

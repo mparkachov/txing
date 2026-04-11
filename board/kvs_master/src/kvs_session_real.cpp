@@ -95,17 +95,6 @@ std::optional<std::string> DiscoverCaCertPath() {
         return from_ssl_env;
     }
 
-    static constexpr const char* kCandidatePaths[] = {
-        "/etc/ssl/certs/ca-certificates.crt",
-        "/etc/ssl/cert.pem",
-    };
-
-    for (const auto* candidate : kCandidatePaths) {
-        if (const auto discovered = ExistingFile(candidate); discovered) {
-            return discovered;
-        }
-    }
-
     return std::nullopt;
 }
 

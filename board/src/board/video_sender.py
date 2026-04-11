@@ -29,8 +29,6 @@ from .video_state import (
     load_video_state,
 )
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_REPO_AWS_CA_FILE = REPO_ROOT / "certs" / "AmazonRootCA1.pem"
 DEFAULT_ASSUME_READY_AFTER_SECONDS = 3.0
 DEFAULT_REGION_ENV = "BOARD_VIDEO_REGION"
 DEFAULT_CHANNEL_NAME_ENV = "BOARD_VIDEO_CHANNEL_NAME"
@@ -53,11 +51,6 @@ LEGACY_CA_FILE_ENV = "TXING_BOARD_VIDEO_CA_FILE"
 DEFAULT_READY_PATTERN = r"^TXING_KVS_READY(?:\s|$)"
 DEFAULT_VIEWER_CONNECTED_PATTERN = r"^TXING_VIEWER_CONNECTED(?:\s|$)"
 DEFAULT_VIEWER_DISCONNECTED_PATTERN = r"^TXING_VIEWER_DISCONNECTED(?:\s|$)"
-DEFAULT_CA_CERT_CANDIDATES = (
-    DEFAULT_REPO_AWS_CA_FILE,
-    Path("/etc/ssl/certs/ca-certificates.crt"),
-    Path("/etc/ssl/cert.pem"),
-)
 
 
 def _utc_now() -> str:
@@ -157,7 +150,7 @@ def _optional_env_path(*names: str) -> Path | None:
     return None
 
 
-def _discover_ca_cert_path(
+def _resolve_explicit_ca_cert_path(
     environment: dict[str, str],
     *,
     explicit_ca_file: Path | None = None,
@@ -177,9 +170,6 @@ def _discover_ca_cert_path(
     if explicit_ssl_cert_file:
         return explicit_ssl_cert_file
 
-    for candidate in DEFAULT_CA_CERT_CANDIDATES:
-        if candidate.is_file():
-            return str(candidate)
     return None
 
 
@@ -205,7 +195,7 @@ def _build_sender_environment(
     environment.pop(DEFAULT_AWS_CONFIG_FILE_ENV, None)
     if ca_file is not None:
         environment[DEFAULT_CA_FILE_ENV] = str(ca_file)
-    if ca_cert_path := _discover_ca_cert_path(environment, explicit_ca_file=ca_file):
+    if ca_cert_path := _resolve_explicit_ca_cert_path(environment, explicit_ca_file=ca_file):
         environment.setdefault(DEFAULT_SSL_CERT_FILE_ENV, ca_cert_path)
         environment.setdefault(DEFAULT_KVS_CA_CERT_PATH_ENV, ca_cert_path)
     return environment
@@ -491,7 +481,7 @@ def _parse_args() -> argparse.Namespace:
         default=_optional_env_path(DEFAULT_CA_FILE_ENV, LEGACY_CA_FILE_ENV),
         help=(
             "Root CA PEM file to reuse for the native KVS sender "
-            f"(default: ${DEFAULT_CA_FILE_ENV} or repo/system auto-discovery)"
+            f"(default: ${DEFAULT_CA_FILE_ENV}; otherwise use the native TLS defaults)"
         ),
     )
     parser.add_argument(

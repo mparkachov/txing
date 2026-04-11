@@ -89,22 +89,11 @@ std::optional<std::string> ExistingFile(const char* path) {
 }
 
 std::optional<std::string> DiscoverCaCertPath() {
-    if (const auto from_kvs_env = NonEmptyEnv(kKvsCaCertPathEnvVar); from_kvs_env) {
+    if (const auto from_kvs_env = ExistingFile(std::getenv(kKvsCaCertPathEnvVar)); from_kvs_env) {
         return from_kvs_env;
     }
-    if (const auto from_ssl_env = NonEmptyEnv(kSslCertFileEnvVar); from_ssl_env) {
+    if (const auto from_ssl_env = ExistingFile(std::getenv(kSslCertFileEnvVar)); from_ssl_env) {
         return from_ssl_env;
-    }
-
-    static constexpr const char* kCandidatePaths[] = {
-        "/etc/ssl/certs/ca-certificates.crt",
-        "/etc/ssl/cert.pem",
-    };
-
-    for (const auto* candidate : kCandidatePaths) {
-        if (const auto discovered = ExistingFile(candidate); discovered) {
-            return discovered;
-        }
     }
 
     return std::nullopt;
