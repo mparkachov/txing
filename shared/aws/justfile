@@ -14,8 +14,6 @@ policy_name := "town-rig-txing-policy"
 log_group_name := "/town/rig/txing"
 cert_dir := project_root + "/certs"
 endpoint_file := cert_dir + "/iot-data-ats.endpoint"
-ca_file := cert_dir + "/AmazonRootCA1.pem"
-ca_url := "https://www.amazontrust.com/repository/AmazonRootCA1.pem"
 default_shadow_file := "default-shadow.json"
 iot_data_endpoint := ""
 localhost_app_url := "http://localhost:5173"
@@ -843,15 +841,6 @@ thing_index_name := "AWS_Things"
       --query endpointAddress \
       --output text | tee "$endpoint_file"
 
-@ca cert_dir=cert_dir ca_file=ca_file ca_url=ca_url:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    cd "{{aws_dir}}"
-
-    mkdir -p "{{cert_dir}}"
-    curl -fsSL "{{ca_url}}" -o "{{ca_file}}"
-    echo "Root CA saved to {{ca_file}}"
-
 @init-shadow thing_name=thing_name region=region profile=profile cert_dir=cert_dir default_shadow_file=default_shadow_file shadow_response_file='' iot_data_endpoint=iot_data_endpoint:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -890,7 +879,7 @@ thing_index_name := "AWS_Things"
       "$shadow_response_file"
     echo "Shadow initialized from {{default_shadow_file}}"
 
-@bootstrap CognitoDomainPrefix='' AdminEmail='' stack_name=stack_name template_file=template_file thing_name=thing_name rig_name=rig_name policy_name=policy_name region=region profile=profile cert_dir=cert_dir cert_basename='' cert_arn_file='' endpoint_file=endpoint_file ca_file=ca_file ca_url=ca_url default_shadow_file=default_shadow_file shadow_response_file='' iot_data_endpoint=iot_data_endpoint:
+@bootstrap CognitoDomainPrefix='' AdminEmail='' stack_name=stack_name template_file=template_file thing_name=thing_name rig_name=rig_name policy_name=policy_name region=region profile=profile cert_dir=cert_dir cert_basename='' cert_arn_file='' endpoint_file=endpoint_file default_shadow_file=default_shadow_file shadow_response_file='' iot_data_endpoint=iot_data_endpoint:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
@@ -918,10 +907,6 @@ thing_index_name := "AWS_Things"
       "{{profile}}" \
       "{{cert_dir}}" \
       "{{endpoint_file}}"
-    just --justfile "{{aws_dir}}/justfile" ca \
-      "{{cert_dir}}" \
-      "{{ca_file}}" \
-      "{{ca_url}}"
     just --justfile "{{aws_dir}}/justfile" init-shadow \
       "{{thing_name}}" \
       "{{region}}" \

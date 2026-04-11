@@ -8,8 +8,6 @@
 
 #include <functional>
 #include <memory>
-#include <optional>
-#include <string>
 
 namespace txing::board::kvs_master {
 
@@ -20,7 +18,6 @@ struct RuntimeHooks {
 };
 
 RuntimeHooks DefaultRuntimeHooks();
-std::optional<std::string> DiscoverTlsCaCertPath();
 void Run(const RuntimeConfig& config);
 void Run(const RuntimeConfig& config, const RuntimeHooks& hooks);
 

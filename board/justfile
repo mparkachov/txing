@@ -15,6 +15,7 @@ aws_kvs_sdk_build_dir := aws_kvs_sdk_dir + "/build"
 aws_kvs_sdk_install_dir := aws_kvs_sdk_dir + "/install"
 aws_kvs_sdk_install_header := aws_kvs_sdk_install_dir + "/include/com/amazonaws/kinesis/video/webrtcclient/Include.h"
 aws_kvs_sdk_install_library := aws_kvs_sdk_install_dir + "/lib/libkvsWebrtcClient.a"
+aws_kvs_sdk_flags_file := aws_kvs_sdk_build_dir + "/CMakeFiles/kvsWebrtcSignalingClient.dir/flags.make"
 default_aws_kvs_sdk_repository := env_var_or_default("TXING_BOARD_AWS_KVS_WEBRTC_SDK_REPOSITORY", "https://github.com/awslabs/amazon-kinesis-video-streams-webrtc-sdk-c.git")
 default_aws_kvs_sdk_ref := env_var_or_default("TXING_BOARD_AWS_KVS_WEBRTC_SDK_REF", "main")
 systemd_unit := "/etc/systemd/system/board.service"
@@ -116,6 +117,8 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
 
 @ensure-aws-sdk:
     if [ ! -f "{{aws_kvs_sdk_install_header}}" ] || [ ! -f "{{aws_kvs_sdk_install_library}}" ]; then \
+        just build-aws-sdk; \
+    elif [ "$(uname -s)" = "Linux" ] && { [ ! -f "{{aws_kvs_sdk_flags_file}}" ] || grep -Eq 'KVS_CA_CERT_PATH=|CMAKE_DETECTED_CACERT_PATH' "{{aws_kvs_sdk_flags_file}}"; }; then \
         just build-aws-sdk; \
     fi
 

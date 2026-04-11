@@ -46,6 +46,7 @@ class VideoSenderTests(unittest.TestCase):
             args.viewer_disconnected_pattern,
             video_sender.DEFAULT_VIEWER_DISCONNECTED_PATTERN,
         )
+        self.assertFalse(hasattr(args, "ca_file"))
 
     def test_build_sender_environment_exports_region_and_channel_name(self) -> None:
         with patch.dict(os.environ, {"EXISTING": "value"}, clear=True):
@@ -68,33 +69,6 @@ class VideoSenderTests(unittest.TestCase):
         self.assertEqual(environment["AWS_ACCESS_KEY_ID"], "env-access")
         self.assertEqual(environment["AWS_SECRET_ACCESS_KEY"], "env-secret")
         self.assertEqual(environment["AWS_SESSION_TOKEN"], "env-token")
-
-    def test_build_sender_environment_prefers_explicit_board_ca_file(self) -> None:
-        with patch.dict(os.environ, {"EXISTING": "value"}, clear=True):
-            with patch.object(video_sender.Path, "is_file", return_value=True):
-                environment = video_sender._build_sender_environment(
-                    region="eu-central-1",
-                    channel_name="txing-board-video",
-                    credentials=AwsCredentialSnapshot(
-                        access_key_id="env-access",
-                        secret_access_key="env-secret",
-                        session_token="env-token",
-                    ),
-                    ca_file=video_sender.Path("/home/user/txing/certs/AmazonRootCA1.pem"),
-                )
-
-        self.assertEqual(
-            environment["BOARD_VIDEO_CA_FILE"],
-            "/home/user/txing/certs/AmazonRootCA1.pem",
-        )
-        self.assertEqual(
-            environment["SSL_CERT_FILE"],
-            "/home/user/txing/certs/AmazonRootCA1.pem",
-        )
-        self.assertEqual(
-            environment["AWS_KVS_CACERT_PATH"],
-            "/home/user/txing/certs/AmazonRootCA1.pem",
-        )
 
     def test_build_sender_environment_does_not_inject_ca_by_default(self) -> None:
         with patch.dict(os.environ, {"EXISTING": "value"}, clear=True):
@@ -133,10 +107,13 @@ class VideoSenderTests(unittest.TestCase):
         self.assertNotIn("SSL_CERT_FILE", environment)
         self.assertNotIn("AWS_KVS_CACERT_PATH", environment)
 
-    def test_build_sender_environment_uses_explicit_board_ca_env(self) -> None:
+    def test_build_sender_environment_strips_legacy_board_ca_env(self) -> None:
         with patch.dict(
             os.environ,
-            {"BOARD_VIDEO_CA_FILE": "/custom/board-ca.pem"},
+            {
+                "BOARD_VIDEO_CA_FILE": "/custom/board-ca.pem",
+                "TXING_BOARD_VIDEO_CA_FILE": "/custom/legacy-board-ca.pem",
+            },
             clear=True,
         ):
             environment = video_sender._build_sender_environment(
@@ -149,8 +126,10 @@ class VideoSenderTests(unittest.TestCase):
                 ),
             )
 
-        self.assertEqual(environment["SSL_CERT_FILE"], "/custom/board-ca.pem")
-        self.assertEqual(environment["AWS_KVS_CACERT_PATH"], "/custom/board-ca.pem")
+        self.assertNotIn("BOARD_VIDEO_CA_FILE", environment)
+        self.assertNotIn("TXING_BOARD_VIDEO_CA_FILE", environment)
+        self.assertNotIn("SSL_CERT_FILE", environment)
+        self.assertNotIn("AWS_KVS_CACERT_PATH", environment)
 
     def test_build_sender_environment_removes_profile_and_file_hints(self) -> None:
         with patch.dict(
@@ -202,6 +181,7 @@ class VideoSenderTests(unittest.TestCase):
 
         self.assertEqual(str(args.aws_shared_credentials_file), "/tmp/credentials")
         self.assertEqual(str(args.aws_config_file), "/tmp/config")
+        self.assertFalse(hasattr(args, "ca_file"))
 
     def test_parse_args_accepts_service_environment_defaults(self) -> None:
         with patch.dict(
@@ -211,7 +191,6 @@ class VideoSenderTests(unittest.TestCase):
                 "BOARD_VIDEO_READY_PATTERN": "^READY$",
                 "BOARD_VIDEO_VIEWER_CONNECTED_PATTERN": "^CONNECTED$",
                 "BOARD_VIDEO_VIEWER_DISCONNECTED_PATTERN": "^DISCONNECTED$",
-                "BOARD_VIDEO_CA_FILE": "/tmp/ca.pem",
                 "AWS_SHARED_CREDENTIALS_FILE": "/tmp/credentials",
                 "AWS_CONFIG_FILE": "/tmp/config",
             },
@@ -230,12 +209,12 @@ class VideoSenderTests(unittest.TestCase):
                 args = video_sender._parse_args()
 
         self.assertEqual(args.sender_command, "/tmp/txing-board-kvs-master")
-        self.assertEqual(str(args.ca_file), "/tmp/ca.pem")
         self.assertEqual(str(args.aws_shared_credentials_file), "/tmp/credentials")
         self.assertEqual(str(args.aws_config_file), "/tmp/config")
         self.assertEqual(args.ready_pattern, "^READY$")
         self.assertEqual(args.viewer_connected_pattern, "^CONNECTED$")
         self.assertEqual(args.viewer_disconnected_pattern, "^DISCONNECTED$")
+        self.assertFalse(hasattr(args, "ca_file"))
 
 
 if __name__ == "__main__":

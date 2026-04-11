@@ -1103,7 +1103,6 @@ def main() -> None:
         sender_command=config.video_sender_command,
         aws_shared_credentials_file=config.aws_shared_credentials_file,
         aws_config_file=config.aws_config_file,
-        ca_file=None,
         state_file=DEFAULT_VIDEO_STATE_FILE,
     )
     halt_requested = False

@@ -8,11 +8,8 @@
 #include <algorithm>
 #include <atomic>
 #include <csignal>
-#include <cstdlib>
 #include <cstdint>
-#include <filesystem>
 #include <limits>
-#include <optional>
 #include <stdexcept>
 #include <string>
 
@@ -20,8 +17,6 @@ namespace txing::board::kvs_master {
 namespace {
 
 std::atomic_bool g_stop_requested = false;
-constexpr char kSslCertFileEnvVar[] = "SSL_CERT_FILE";
-constexpr char kKvsCaCertPathEnvVar[] = "AWS_KVS_CACERT_PATH";
 
 extern "C" void OnSignal(int) {
     g_stop_requested.store(true);
@@ -67,79 +62,6 @@ std::uint64_t DefaultFrameDuration100ns(const CameraConfig& config) {
     return std::uint64_t(10'000'000) / framerate;
 }
 
-std::optional<std::string> NonEmptyEnv(const char* name) {
-    const char* value = std::getenv(name);
-    if (value == nullptr || *value == '\0') {
-        return std::nullopt;
-    }
-    return std::string(value);
-}
-
-std::optional<std::string> ExistingFile(const char* path) {
-    if (path == nullptr || *path == '\0') {
-        return std::nullopt;
-    }
-
-    std::error_code error;
-    const auto file_path = std::filesystem::path(path);
-    if (std::filesystem::exists(file_path, error) && !error) {
-        return file_path.string();
-    }
-    return std::nullopt;
-}
-
-std::optional<std::string> ExistingPath(const std::filesystem::path& path) {
-    std::error_code error;
-    if (std::filesystem::exists(path, error) && !error) {
-        return path.string();
-    }
-    return std::nullopt;
-}
-
-std::optional<std::string> DiscoverCaCertPath() {
-    if (const auto from_kvs_env = ExistingFile(std::getenv(kKvsCaCertPathEnvVar)); from_kvs_env) {
-        return from_kvs_env;
-    }
-    if (const auto from_ssl_env = ExistingFile(std::getenv(kSslCertFileEnvVar)); from_ssl_env) {
-        return from_ssl_env;
-    }
-
-    std::error_code error;
-    const auto cwd = std::filesystem::current_path(error);
-    if (!error) {
-        static constexpr const char* kRelativeCandidatePaths[] = {
-            "aws-kvs-webrtc-sdk/certs/cert.pem",
-            "board/aws-kvs-webrtc-sdk/certs/cert.pem",
-        };
-
-        for (const auto* candidate : kRelativeCandidatePaths) {
-            if (const auto discovered = ExistingPath(cwd / candidate); discovered) {
-                return discovered;
-            }
-        }
-    }
-
-    return std::nullopt;
-}
-
-void SetEnvIfAbsent(const char* name, const std::string& value) {
-    if (NonEmptyEnv(name)) {
-        return;
-    }
-#if defined(_WIN32)
-    _putenv_s(name, value.c_str());
-#else
-    setenv(name, value.c_str(), 0);
-#endif
-}
-
-void ConfigureTlsCaEnvironment() {
-    if (const auto ca_cert_path = DiscoverCaCertPath(); ca_cert_path) {
-        SetEnvIfAbsent(kSslCertFileEnvVar, *ca_cert_path);
-        SetEnvIfAbsent(kKvsCaCertPathEnvVar, *ca_cert_path);
-    }
-}
-
 }  // namespace
 
 RuntimeHooks DefaultRuntimeHooks() {
@@ -153,10 +75,6 @@ RuntimeHooks DefaultRuntimeHooks() {
     return hooks;
 }
 
-std::optional<std::string> DiscoverTlsCaCertPath() {
-    return DiscoverCaCertPath();
-}
-
 void Run(const RuntimeConfig& config) {
     Run(config, DefaultRuntimeHooks());
 }
@@ -168,7 +86,6 @@ void Run(const RuntimeConfig& config, const RuntimeHooks& hooks) {
 
     g_stop_requested.store(false);
     InstallSignalHandlers();
-    ConfigureTlsCaEnvironment();
 
     const auto credentials = hooks.resolve_aws_credentials();
     auto kvs_session = hooks.create_kvs_session(config, credentials);

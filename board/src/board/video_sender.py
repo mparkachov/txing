@@ -40,14 +40,12 @@ DEFAULT_AWS_SHARED_CREDENTIALS_FILE_ENV = "AWS_SHARED_CREDENTIALS_FILE"
 DEFAULT_AWS_CONFIG_FILE_ENV = "AWS_CONFIG_FILE"
 DEFAULT_SSL_CERT_FILE_ENV = "SSL_CERT_FILE"
 DEFAULT_KVS_CA_CERT_PATH_ENV = "AWS_KVS_CACERT_PATH"
-DEFAULT_CA_FILE_ENV = "BOARD_VIDEO_CA_FILE"
 LEGACY_REGION_ENV = "TXING_BOARD_VIDEO_REGION"
 LEGACY_CHANNEL_NAME_ENV = "TXING_BOARD_VIDEO_CHANNEL_NAME"
 LEGACY_SENDER_COMMAND_ENV = "TXING_BOARD_VIDEO_SENDER_COMMAND"
 LEGACY_READY_PATTERN_ENV = "TXING_BOARD_VIDEO_READY_PATTERN"
 LEGACY_VIEWER_CONNECTED_PATTERN_ENV = "TXING_BOARD_VIDEO_VIEWER_CONNECTED_PATTERN"
 LEGACY_VIEWER_DISCONNECTED_PATTERN_ENV = "TXING_BOARD_VIDEO_VIEWER_DISCONNECTED_PATTERN"
-LEGACY_CA_FILE_ENV = "TXING_BOARD_VIDEO_CA_FILE"
 DEFAULT_READY_PATTERN = r"^TXING_KVS_READY(?:\s|$)"
 DEFAULT_VIEWER_CONNECTED_PATTERN = r"^TXING_VIEWER_CONNECTED(?:\s|$)"
 DEFAULT_VIEWER_DISCONNECTED_PATTERN = r"^TXING_VIEWER_DISCONNECTED(?:\s|$)"
@@ -150,29 +148,12 @@ def _optional_env_path(*names: str) -> Path | None:
     return None
 
 
-def _resolve_explicit_ca_cert_path(
-    environment: dict[str, str],
-    *,
-    explicit_ca_file: Path | None = None,
-) -> str | None:
-    if explicit_ca_file is not None and explicit_ca_file.is_file():
-        return str(explicit_ca_file)
-
-    explicit_board_ca_file = _env_value(environment, DEFAULT_CA_FILE_ENV, LEGACY_CA_FILE_ENV)
-    if explicit_board_ca_file:
-        return explicit_board_ca_file
-
-    return None
-
-
 def _build_sender_environment(
     *,
     region: str,
     channel_name: str,
     credentials: AwsCredentialSnapshot,
-    ca_file: Path | None = None,
 ) -> dict[str, str]:
-    explicit_ca_cert_path = _resolve_explicit_ca_cert_path(os.environ, explicit_ca_file=ca_file)
     environment = os.environ.copy()
     environment[DEFAULT_REGION_ENV] = region
     environment[DEFAULT_CHANNEL_NAME_ENV] = channel_name
@@ -188,11 +169,8 @@ def _build_sender_environment(
     environment.pop(DEFAULT_AWS_CONFIG_FILE_ENV, None)
     environment.pop(DEFAULT_SSL_CERT_FILE_ENV, None)
     environment.pop(DEFAULT_KVS_CA_CERT_PATH_ENV, None)
-    if ca_file is not None:
-        environment[DEFAULT_CA_FILE_ENV] = str(ca_file)
-    if explicit_ca_cert_path:
-        environment[DEFAULT_SSL_CERT_FILE_ENV] = explicit_ca_cert_path
-        environment[DEFAULT_KVS_CA_CERT_PATH_ENV] = explicit_ca_cert_path
+    environment.pop("BOARD_VIDEO_CA_FILE", None)
+    environment.pop("TXING_BOARD_VIDEO_CA_FILE", None)
     return environment
 
 
@@ -202,7 +180,6 @@ class VideoSenderRuntimeConfig:
     channel_name: str
     viewer_url: str
     state_file: Path
-    ca_file: Path | None
     sender_command: str
     assume_ready_after_seconds: float
     ready_pattern: re.Pattern[str] | None
@@ -253,7 +230,6 @@ class VideoSenderProcess:
                 region=self._config.region,
                 channel_name=self._config.channel_name,
                 credentials=credentials,
-                ca_file=self._config.ca_file,
             ),
         )
         reader_thread = threading.Thread(
@@ -371,7 +347,6 @@ class VideoSenderSupervisor:
         sender_command: str,
         aws_shared_credentials_file: Path | None = None,
         aws_config_file: Path | None = None,
-        ca_file: Path | None = None,
         state_file: Path = DEFAULT_VIDEO_STATE_FILE,
     ) -> None:
         self._channel_name = channel_name
@@ -380,7 +355,6 @@ class VideoSenderSupervisor:
         self._sender_command = sender_command
         self._aws_shared_credentials_file = aws_shared_credentials_file
         self._aws_config_file = aws_config_file
-        self._ca_file = ca_file
         self._state_file = state_file
         self._process: subprocess.Popen[bytes] | None = None
 
@@ -415,8 +389,6 @@ class VideoSenderSupervisor:
             )
         if self._aws_config_file is not None:
             command.extend(["--aws-config-file", str(self._aws_config_file)])
-        if self._ca_file is not None:
-            command.extend(["--ca-file", str(self._ca_file)])
         self._process = subprocess.Popen(command)
 
     def ensure_running(self) -> None:
@@ -471,15 +443,6 @@ def _parse_args() -> argparse.Namespace:
         help=f"Path to the local sender state file (default: {DEFAULT_VIDEO_STATE_FILE})",
     )
     parser.add_argument(
-        "--ca-file",
-        type=Path,
-        default=_optional_env_path(DEFAULT_CA_FILE_ENV, LEGACY_CA_FILE_ENV),
-        help=(
-            "Root CA PEM file to reuse for the native KVS sender "
-            f"(default: ${DEFAULT_CA_FILE_ENV}; otherwise use the native TLS defaults)"
-        ),
-    )
-    parser.add_argument(
         "--sender-command",
         default=_env_value(os.environ, DEFAULT_SENDER_COMMAND_ENV, LEGACY_SENDER_COMMAND_ENV),
         help=(
@@ -492,8 +455,8 @@ def _parse_args() -> argparse.Namespace:
         type=Path,
         default=_optional_env_path(DEFAULT_AWS_SHARED_CREDENTIALS_FILE_ENV),
         help=(
-            "AWS shared credentials file used for the signaling-channel lookup and "
-            "passed through to the native sender "
+            "AWS shared credentials file used for the signaling-channel lookup before "
+            "final credential injection into the native sender "
             f"(default: ${DEFAULT_AWS_SHARED_CREDENTIALS_FILE_ENV})"
         ),
     )
@@ -502,8 +465,8 @@ def _parse_args() -> argparse.Namespace:
         type=Path,
         default=_optional_env_path(DEFAULT_AWS_CONFIG_FILE_ENV),
         help=(
-            "AWS config file used for the signaling-channel lookup and passed through "
-            f"to the native sender (default: ${DEFAULT_AWS_CONFIG_FILE_ENV})"
+            "AWS config file used for the signaling-channel lookup before final "
+            f"credential injection into the native sender (default: ${DEFAULT_AWS_CONFIG_FILE_ENV})"
         ),
     )
     parser.add_argument(
@@ -569,7 +532,6 @@ def main() -> None:
             channel_name=args.channel_name,
             viewer_url=args.viewer_url,
             state_file=args.state_file,
-            ca_file=args.ca_file,
             sender_command=args.sender_command,
             assume_ready_after_seconds=args.assume_ready_after_seconds,
             ready_pattern=_compile_pattern(

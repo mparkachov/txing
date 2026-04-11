@@ -12,7 +12,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <deque>
-#include <filesystem>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -36,9 +35,7 @@ constexpr UINT64 kCleanupWaitPeriod100ns = 5 * HUNDREDS_OF_NANOS_IN_A_SECOND;
 constexpr UINT64 kPendingMessageCleanupDuration100ns = 20 * HUNDREDS_OF_NANOS_IN_A_SECOND;
 constexpr DOUBLE kVideoRollingBufferDurationSec = 3.0;
 constexpr CHAR kControlPlaneUriEnvVar[] = "CONTROL_PLANE_URI";
-constexpr CHAR kKvsCaCertPathEnvVar[] = "AWS_KVS_CACERT_PATH";
 constexpr CHAR kIceTransportPolicyEnvVar[] = "KVS_ICE_TRANSPORT_POLICY";
-constexpr CHAR kSslCertFileEnvVar[] = "SSL_CERT_FILE";
 constexpr CHAR kVideoStreamId[] = "txingBoardVideo";
 constexpr CHAR kVideoTrackId[] = "txingBoardVideoTrack";
 
@@ -71,54 +68,6 @@ bool EnvEnabled(const char* name) {
     const std::string normalized(value);
     return normalized == "1" || normalized == "true" || normalized == "TRUE" || normalized == "yes" ||
         normalized == "YES" || normalized == "on" || normalized == "ON";
-}
-
-std::optional<std::string> ExistingFile(const char* path) {
-    if (path == nullptr || *path == '\0') {
-        return std::nullopt;
-    }
-
-    std::error_code error;
-    const auto file_path = std::filesystem::path(path);
-    if (std::filesystem::exists(file_path, error) && !error) {
-        return file_path.string();
-    }
-    return std::nullopt;
-}
-
-std::optional<std::string> ExistingPath(const std::filesystem::path& path) {
-    std::error_code error;
-    if (std::filesystem::exists(path, error) && !error) {
-        return path.string();
-    }
-    return std::nullopt;
-}
-
-std::optional<std::string> DiscoverCaCertPath() {
-    if (const auto from_kvs_env = ExistingFile(std::getenv(kKvsCaCertPathEnvVar)); from_kvs_env) {
-        return from_kvs_env;
-    }
-
-    if (const auto from_ssl_env = ExistingFile(std::getenv(kSslCertFileEnvVar)); from_ssl_env) {
-        return from_ssl_env;
-    }
-
-    std::error_code error;
-    const auto cwd = std::filesystem::current_path(error);
-    if (!error) {
-        static constexpr const char* kRelativeCandidatePaths[] = {
-            "aws-kvs-webrtc-sdk/certs/cert.pem",
-            "board/aws-kvs-webrtc-sdk/certs/cert.pem",
-        };
-
-        for (const auto* candidate : kRelativeCandidatePaths) {
-            if (const auto discovered = ExistingPath(cwd / candidate); discovered) {
-                return discovered;
-            }
-        }
-    }
-
-    return std::nullopt;
 }
 
 bool IsChinaRegion(const std::string& region) {
@@ -365,11 +314,6 @@ class RealKvsSession final : public KvsSession {
             control_plane_url != nullptr && *control_plane_url != '\0') {
             control_plane_url_ = control_plane_url;
             channel_info_.pControlPlaneUrl = const_cast<PCHAR>(control_plane_url_->c_str());
-        }
-
-        if (const auto ca_cert_path = DiscoverCaCertPath(); ca_cert_path) {
-            ca_cert_path_ = *ca_cert_path;
-            channel_info_.pCertPath = const_cast<PCHAR>(ca_cert_path_->c_str());
         }
 
         client_info_.version = SIGNALING_CLIENT_INFO_CURRENT_VERSION;
@@ -909,8 +853,9 @@ class RealKvsSession final : public KvsSession {
         if (session->remote_can_trickle) {
             const STATUS status = SendIceCandidate(session, candidate_json);
             if (STATUS_FAILED(status)) {
-                DLOGW(
-                    "send ICE candidate failed with status %s for peer %s; keeping session alive",
+                std::fprintf(
+                    stderr,
+                    "WARN kvs_session_real: send ICE candidate failed with status %s for peer %s; keeping session alive\n",
                     FormatStatus(status).c_str(),
                     session->peer_id.c_str()
                 );
@@ -1151,7 +1096,6 @@ class RealKvsSession final : public KvsSession {
     std::optional<std::string> session_token_;
     UINT32 video_bitrate_bps_ = 0;
 
-    std::optional<std::string> ca_cert_path_;
     std::optional<std::string> control_plane_url_;
 
     PAwsCredentialProvider credential_provider_ = nullptr;

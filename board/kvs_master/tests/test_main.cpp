@@ -20,7 +20,6 @@
 namespace {
 
 using txing::board::kvs_master::AwsCredentials;
-using txing::board::kvs_master::DiscoverTlsCaCertPath;
 using txing::board::kvs_master::EncodedVideoFrame;
 using txing::board::kvs_master::FormatMarkerLine;
 using txing::board::kvs_master::KvsSession;
@@ -41,22 +40,6 @@ void Expect(bool condition, const std::string& message) {
         std::cerr << "FAIL: " << message << '\n';
     }
 }
-
-class ScopedCurrentPath {
-  public:
-    explicit ScopedCurrentPath(const std::filesystem::path& path)
-        : previous_(std::filesystem::current_path()) {
-        std::filesystem::current_path(path);
-    }
-
-    ~ScopedCurrentPath() {
-        std::error_code error;
-        std::filesystem::current_path(previous_, error);
-    }
-
-  private:
-    std::filesystem::path previous_;
-};
 
 class ScopedUnsetEnv {
   public:
@@ -426,20 +409,19 @@ void TestRuntimePropagatesCapturerErrors() {
     Expect(kvs_state.stopped, "runtime should stop KVS after a capturer failure");
 }
 
-void TestRuntimeExportsSdkCaPathFromRepoLayouts() {
-    const auto source_file = std::filesystem::path(__FILE__);
-    const auto board_dir = source_file.parent_path().parent_path().parent_path();
-    const auto repo_root = board_dir.parent_path();
-    ScopedCurrentPath scoped_current_path(repo_root);
+void TestRuntimeDoesNotExportTlsCaEnvironment() {
     ScopedUnsetEnv unset_ssl_cert_file("SSL_CERT_FILE");
     ScopedUnsetEnv unset_kvs_ca_cert_path("AWS_KVS_CACERT_PATH");
+    FakeKvsState kvs_state;
+    FakeCapturerState capturer_state;
+    capturer_state.frames = {
+        EncodedVideoFrame {{0x00, 0x00, 0x01}, 1'000'000, true},
+    };
 
-    const auto expected_path = (repo_root / "board" / "aws-kvs-webrtc-sdk" / "certs" / "cert.pem").string();
-    const auto discovered_path = DiscoverTlsCaCertPath();
-    Expect(
-        discovered_path && *discovered_path == expected_path,
-        "runtime should discover the SDK cert.pem path from repo layouts when no TLS env is set"
-    );
+    Run(TestRuntimeConfig(), HooksFrom(&kvs_state, &capturer_state));
+
+    Expect(std::getenv("SSL_CERT_FILE") == nullptr, "runtime should not set SSL_CERT_FILE");
+    Expect(std::getenv("AWS_KVS_CACERT_PATH") == nullptr, "runtime should not set AWS_KVS_CACERT_PATH");
 }
 
 void TestMarkerFormatting() {
@@ -459,7 +441,7 @@ int main() {
     TestRuntimeReadyAndTimestamps();
     TestRuntimeAdvancesWhenEncoderTimestampsStayZero();
     TestRuntimePropagatesCapturerErrors();
-    TestRuntimeExportsSdkCaPathFromRepoLayouts();
+    TestRuntimeDoesNotExportTlsCaEnvironment();
     TestMarkerFormatting();
 
     if (g_failures != 0) {
