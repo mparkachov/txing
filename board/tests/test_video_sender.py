@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import patch
 
 from board import video_sender
+from aws.auth import AwsCredentialSnapshot
 
 
 class VideoSenderTests(unittest.TestCase):
@@ -51,6 +52,11 @@ class VideoSenderTests(unittest.TestCase):
             environment = video_sender._build_sender_environment(
                 region="eu-central-1",
                 channel_name="txing-board-video",
+                credentials=AwsCredentialSnapshot(
+                    access_key_id="env-access",
+                    secret_access_key="env-secret",
+                    session_token="env-token",
+                ),
             )
 
         self.assertEqual(environment["EXISTING"], "value")
@@ -59,6 +65,9 @@ class VideoSenderTests(unittest.TestCase):
             environment["BOARD_VIDEO_CHANNEL_NAME"],
             "txing-board-video",
         )
+        self.assertEqual(environment["AWS_ACCESS_KEY_ID"], "env-access")
+        self.assertEqual(environment["AWS_SECRET_ACCESS_KEY"], "env-secret")
+        self.assertEqual(environment["AWS_SESSION_TOKEN"], "env-token")
 
     def test_build_sender_environment_prefers_explicit_board_ca_file(self) -> None:
         with patch.dict(os.environ, {"EXISTING": "value"}, clear=True):
@@ -66,6 +75,11 @@ class VideoSenderTests(unittest.TestCase):
                 environment = video_sender._build_sender_environment(
                     region="eu-central-1",
                     channel_name="txing-board-video",
+                    credentials=AwsCredentialSnapshot(
+                        access_key_id="env-access",
+                        secret_access_key="env-secret",
+                        session_token="env-token",
+                    ),
                     ca_file=video_sender.Path("/home/user/txing/certs/AmazonRootCA1.pem"),
                 )
 
@@ -93,6 +107,11 @@ class VideoSenderTests(unittest.TestCase):
                     environment = video_sender._build_sender_environment(
                         region="eu-central-1",
                         channel_name="txing-board-video",
+                        credentials=AwsCredentialSnapshot(
+                            access_key_id="env-access",
+                            secret_access_key="env-secret",
+                            session_token="env-token",
+                        ),
                     )
 
         self.assertEqual(
@@ -113,10 +132,45 @@ class VideoSenderTests(unittest.TestCase):
             environment = video_sender._build_sender_environment(
                 region="eu-central-1",
                 channel_name="txing-board-video",
+                credentials=AwsCredentialSnapshot(
+                    access_key_id="env-access",
+                    secret_access_key="env-secret",
+                    session_token="env-token",
+                ),
             )
 
         self.assertEqual(environment["SSL_CERT_FILE"], "/custom/ca.pem")
         self.assertEqual(environment["AWS_KVS_CACERT_PATH"], "/custom/ca.pem")
+
+    def test_build_sender_environment_removes_profile_and_file_hints(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "AWS_PROFILE": "txing",
+                "AWS_DEFAULT_PROFILE": "txing",
+                "AWS_SHARED_CREDENTIALS_FILE": "config/aws.credentials",
+                "AWS_CONFIG_FILE": "config/aws.config",
+                "AWS_SESSION_TOKEN": "stale-token",
+            },
+            clear=True,
+        ):
+            environment = video_sender._build_sender_environment(
+                region="eu-central-1",
+                channel_name="txing-board-video",
+                credentials=AwsCredentialSnapshot(
+                    access_key_id="env-access",
+                    secret_access_key="env-secret",
+                    session_token=None,
+                ),
+            )
+
+        self.assertNotIn("AWS_PROFILE", environment)
+        self.assertNotIn("AWS_DEFAULT_PROFILE", environment)
+        self.assertNotIn("AWS_SHARED_CREDENTIALS_FILE", environment)
+        self.assertNotIn("AWS_CONFIG_FILE", environment)
+        self.assertNotIn("AWS_SESSION_TOKEN", environment)
+        self.assertEqual(environment["AWS_ACCESS_KEY_ID"], "env-access")
+        self.assertEqual(environment["AWS_SECRET_ACCESS_KEY"], "env-secret")
 
     def test_parse_args_accepts_explicit_aws_files(self) -> None:
         with patch.dict(os.environ, {}, clear=True):

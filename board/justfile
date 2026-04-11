@@ -17,7 +17,7 @@ aws_kvs_sdk_install_header := aws_kvs_sdk_install_dir + "/include/com/amazonaws/
 aws_kvs_sdk_install_library := aws_kvs_sdk_install_dir + "/lib/libkvsWebrtcClient.a"
 default_aws_kvs_sdk_repository := env_var_or_default("TXING_BOARD_AWS_KVS_WEBRTC_SDK_REPOSITORY", "https://github.com/awslabs/amazon-kinesis-video-streams-webrtc-sdk-c.git")
 default_aws_kvs_sdk_ref := env_var_or_default("TXING_BOARD_AWS_KVS_WEBRTC_SDK_REF", "main")
-systemd_unit := "/etc/systemd/system/txing-board.service"
+systemd_unit := "/etc/systemd/system/board.service"
 region := ""
 aws_profile := ""
 aws_shared_credentials_file := ""
@@ -272,7 +272,7 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
     { \
         printf '%s\n' \
             '[Unit]' \
-            'Description=txing runtime control' \
+            'Description=board runtime control' \
             'Wants=network-online.target systemd-time-wait-sync.service' \
             'After=network-online.target systemd-time-wait-sync.service time-sync.target' \
             '' \
@@ -290,4 +290,4 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
             'WantedBy=multi-user.target'; \
     } | sudo tee "{{systemd_unit}}" >/dev/null
     sudo systemctl daemon-reload
-    sudo systemctl enable --now txing-board
+    sudo systemctl enable --now board

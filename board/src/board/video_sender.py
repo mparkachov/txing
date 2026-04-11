@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import boto3
-from aws.auth import ensure_aws_profile
+from aws.auth import AwsCredentialSnapshot, ensure_aws_profile, freeze_session_credentials
 
 from .video_state import (
     DEFAULT_VIDEO_CHANNEL_NAME,
@@ -120,6 +120,14 @@ def _resolve_channel_arn(*, region: str, channel_name: str) -> str:
         ) from err
 
 
+def _resolve_final_credentials() -> AwsCredentialSnapshot:
+    try:
+        session = boto3.session.Session()
+        return freeze_session_credentials(session)
+    except Exception as err:
+        raise RuntimeError(f"failed to resolve AWS credentials for board video sender: {err}") from err
+
+
 def _compile_pattern(value: str, *, env_name: str) -> re.Pattern[str] | None:
     stripped = value.strip()
     if not stripped:
@@ -176,11 +184,22 @@ def _build_sender_environment(
     *,
     region: str,
     channel_name: str,
+    credentials: AwsCredentialSnapshot,
     ca_file: Path | None = None,
 ) -> dict[str, str]:
     environment = os.environ.copy()
     environment[DEFAULT_REGION_ENV] = region
     environment[DEFAULT_CHANNEL_NAME_ENV] = channel_name
+    environment["AWS_ACCESS_KEY_ID"] = credentials.access_key_id
+    environment["AWS_SECRET_ACCESS_KEY"] = credentials.secret_access_key
+    if credentials.session_token:
+        environment["AWS_SESSION_TOKEN"] = credentials.session_token
+    else:
+        environment.pop("AWS_SESSION_TOKEN", None)
+    environment.pop("AWS_PROFILE", None)
+    environment.pop("AWS_DEFAULT_PROFILE", None)
+    environment.pop(DEFAULT_AWS_SHARED_CREDENTIALS_FILE_ENV, None)
+    environment.pop(DEFAULT_AWS_CONFIG_FILE_ENV, None)
     if ca_file is not None:
         environment[DEFAULT_CA_FILE_ENV] = str(ca_file)
     if ca_cert_path := _discover_ca_cert_path(environment, explicit_ca_file=ca_file):
@@ -229,6 +248,7 @@ class VideoSenderProcess:
             region=self._config.region,
             channel_name=self._config.channel_name,
         )
+        credentials = _resolve_final_credentials()
         command = shlex.split(self._config.sender_command)
         if not command:
             raise RuntimeError(f"{DEFAULT_SENDER_COMMAND_ENV} must not be empty")
@@ -244,6 +264,7 @@ class VideoSenderProcess:
             env=_build_sender_environment(
                 region=self._config.region,
                 channel_name=self._config.channel_name,
+                credentials=credentials,
                 ca_file=self._config.ca_file,
             ),
         )

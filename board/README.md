@@ -116,7 +116,7 @@ Use this order on a full board rebuild from a new SD card image:
 5. Install the native sender build prerequisites and build the KVS master sender on the board.
 6. Verify the `txing` runtime profile resolves on the board.
 7. Build the board runtime and run a foreground smoke test.
-8. Install `txing-board` as a `systemd` service and verify it survives a reboot.
+8. Install `board` as a `systemd` service and verify it survives a reboot.
 
 Assumptions used below:
 
@@ -395,28 +395,29 @@ The generated unit:
 
 - enables `NetworkManager-wait-online.service`
 - waits for `systemd-time-wait-sync.service` / `time-sync.target` before startup
-- runs `txing-board` as `root`
+- runs `board` as `root`
 - sets `WorkingDirectory=/home/.../txing` and loads `config/aws.env` through `EnvironmentFile=`
 - only adds `Environment=` overrides for board or AWS values when you pass explicit `just board::install-service ...` overrides
 - starts `board` with `ExecStart=/home/.../board/.venv/bin/board --heartbeat-seconds 60`
+- disables and removes the legacy `txing-board.service` unit during install
 
 The Python service also waits up to `120 s` for `timedatectl` to report `SystemClockSynchronized=yes` before it starts the AWS-backed video sender. That avoids transient KVS `InvalidSignatureException` failures after boot when networking is up but NTP has not corrected the clock yet.
 
-If you also need sender regex environment variables in the service, add `Environment=` lines to `/etc/systemd/system/txing-board.service`, then run `sudo systemctl daemon-reload && sudo systemctl restart txing-board`.
+If you also need sender regex environment variables in the service, add `Environment=` lines to `/etc/systemd/system/board.service`, then run `sudo systemctl daemon-reload && sudo systemctl restart board`.
 
 ### 9. Verify and Reboot
 
 Check status and logs:
 
 ```bash
-sudo systemctl status txing-board
-sudo journalctl -u txing-board -f
+sudo systemctl status board
+sudo journalctl -u board -f
 ```
 
 The unit file should now contain the sender command and the published viewer URL:
 
 ```bash
-sudo systemctl cat txing-board
+sudo systemctl cat board
 ```
 
 Reboot and verify again:
@@ -429,8 +430,8 @@ After the board comes back:
 
 ```bash
 ssh user@<board-host>
-sudo systemctl status txing-board
-sudo journalctl -u txing-board -n 100 --no-pager
+sudo systemctl status board
+sudo journalctl -u board -n 100 --no-pager
 ```
 
 ## Useful foreground commands
