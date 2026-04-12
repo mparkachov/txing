@@ -2,10 +2,15 @@
 
 #include "kvs_master/markers.hpp"
 
+#include <arpa/inet.h>
+#include <netdb.h>
+#include <sys/socket.h>
+
 #include <array>
 #include <atomic>
 #include <cinttypes>
 #include <chrono>
+#include <cctype>
 #include <condition_variable>
 #include <cstdarg>
 #include <cstdio>
@@ -16,8 +21,11 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
+#include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <unordered_map>
 #include <utility>
@@ -44,6 +52,129 @@ constexpr CHAR kIceTransportPolicyEnvVar[] = "KVS_ICE_TRANSPORT_POLICY";
 constexpr CHAR kVideoStreamId[] = "txingBoardVideo";
 constexpr CHAR kVideoTrackId[] = "txingBoardVideoTrack";
 constexpr char kSystemCaCertPath[] = TXING_KVS_SYSTEM_CA_CERT_PATH;
+constexpr std::size_t kCandidateAddressTokenIndex = 4;
+
+std::optional<std::string> ExtractJsonStringField(std::string_view json, std::string_view key) {
+    const std::string quoted_key = std::string("\"") + std::string(key) + "\"";
+    const std::size_t key_position = json.find(quoted_key);
+    if (key_position == std::string_view::npos) {
+        return std::nullopt;
+    }
+
+    std::size_t cursor = json.find(':', key_position + quoted_key.size());
+    if (cursor == std::string_view::npos) {
+        return std::nullopt;
+    }
+
+    ++cursor;
+    while (cursor < json.size() && std::isspace(static_cast<unsigned char>(json[cursor])) != 0) {
+        ++cursor;
+    }
+    if (cursor >= json.size() || json[cursor] != '"') {
+        return std::nullopt;
+    }
+
+    ++cursor;
+    std::string value;
+    bool escaping = false;
+    for (; cursor < json.size(); ++cursor) {
+        const char ch = json[cursor];
+        if (escaping) {
+            value.push_back(ch);
+            escaping = false;
+            continue;
+        }
+        if (ch == '\\') {
+            escaping = true;
+            continue;
+        }
+        if (ch == '"') {
+            return value;
+        }
+        value.push_back(ch);
+    }
+
+    return std::nullopt;
+}
+
+std::vector<std::string> SplitWhitespaceSeparated(std::string_view value) {
+    std::istringstream stream{std::string(value)};
+    std::vector<std::string> parts;
+    for (std::string part; stream >> part;) {
+        parts.push_back(std::move(part));
+    }
+    return parts;
+}
+
+std::optional<std::string> ExtractIceCandidateAddress(std::string_view candidate_sdp) {
+    const std::vector<std::string> parts = SplitWhitespaceSeparated(candidate_sdp);
+    if (parts.size() <= kCandidateAddressTokenIndex || parts[0].rfind("candidate:", 0) != 0) {
+        return std::nullopt;
+    }
+    return parts[kCandidateAddressTokenIndex];
+}
+
+bool IsMdnsHostname(std::string_view hostname) {
+    return hostname.size() > 6 && hostname.substr(hostname.size() - 6) == ".local";
+}
+
+std::optional<std::string> ResolveHostnameToSingleIp(std::string_view hostname) {
+    addrinfo hints{};
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_DGRAM;
+    hints.ai_flags = AI_ADDRCONFIG;
+
+    addrinfo* results = nullptr;
+    const int status = getaddrinfo(std::string(hostname).c_str(), nullptr, &hints, &results);
+    if (status != 0 || results == nullptr) {
+        if (results != nullptr) {
+            freeaddrinfo(results);
+        }
+        return std::nullopt;
+    }
+
+    std::set<std::string> addresses;
+    for (addrinfo* current = results; current != nullptr; current = current->ai_next) {
+        char host[NI_MAXHOST];
+        const int name_status = getnameinfo(
+            current->ai_addr,
+            static_cast<socklen_t>(current->ai_addrlen),
+            host,
+            sizeof(host),
+            nullptr,
+            0,
+            NI_NUMERICHOST
+        );
+        if (name_status == 0) {
+            addresses.emplace(host);
+        }
+    }
+
+    freeaddrinfo(results);
+    if (addresses.size() != 1) {
+        return std::nullopt;
+    }
+
+    return *addresses.begin();
+}
+
+std::optional<std::string> RewriteIceCandidateAddress(
+    std::string_view candidate_sdp,
+    std::string_view replacement_address
+) {
+    std::vector<std::string> parts = SplitWhitespaceSeparated(candidate_sdp);
+    if (parts.size() <= kCandidateAddressTokenIndex || parts[0].rfind("candidate:", 0) != 0) {
+        return std::nullopt;
+    }
+
+    parts[kCandidateAddressTokenIndex] = std::string(replacement_address);
+    std::string rewritten = parts[0];
+    for (std::size_t index = 1; index < parts.size(); ++index) {
+        rewritten.push_back(' ');
+        rewritten.append(parts[index]);
+    }
+    return rewritten;
+}
 
 template <std::size_t N>
 void CopyCString(CHAR (&destination)[N], const std::string& value, const char* field_name) {
@@ -669,17 +800,64 @@ class RealKvsSession final : public KvsSession {
             return STATUS_NULL_ARG;
         }
 
-        RtcIceCandidateInit ice_candidate{};
-        STATUS status = deserializeRtcIceCandidateInit(
-            signaling_message->payload,
-            signaling_message->payloadLen,
-            &ice_candidate
-        );
-        if (STATUS_FAILED(status)) {
-            return status;
+        const std::string_view candidate_json(signaling_message->payload, signaling_message->payloadLen);
+        auto candidate_sdp = ExtractJsonStringField(candidate_json, "candidate");
+        if (!candidate_sdp.has_value() || candidate_sdp->empty()) {
+            std::fprintf(
+                stderr,
+                "INFO kvs_session_real: skipping remote ICE candidate without candidate text for peer %s\n",
+                session->peer_id.c_str()
+            );
+            return STATUS_SUCCESS;
         }
 
-        return addIceCandidate(session->peer_connection, ice_candidate.candidate);
+        if (const auto candidate_address = ExtractIceCandidateAddress(*candidate_sdp);
+            candidate_address.has_value() && IsMdnsHostname(*candidate_address)) {
+            const auto resolved_address = ResolveHostnameToSingleIp(*candidate_address);
+            if (!resolved_address.has_value()) {
+                std::fprintf(
+                    stderr,
+                    "INFO kvs_session_real: skipping unresolved mDNS remote ICE candidate host=%s for peer %s\n",
+                    candidate_address->c_str(),
+                    session->peer_id.c_str()
+                );
+                return STATUS_SUCCESS;
+            }
+
+            const auto rewritten_candidate = RewriteIceCandidateAddress(*candidate_sdp, *resolved_address);
+            if (!rewritten_candidate.has_value()) {
+                std::fprintf(
+                    stderr,
+                    "INFO kvs_session_real: skipping malformed mDNS remote ICE candidate for peer %s\n",
+                    session->peer_id.c_str()
+                );
+                return STATUS_SUCCESS;
+            }
+
+            std::fprintf(
+                stderr,
+                "INFO kvs_session_real: resolved mDNS remote ICE candidate host=%s ip=%s for peer %s\n",
+                candidate_address->c_str(),
+                resolved_address->c_str(),
+                session->peer_id.c_str()
+            );
+            candidate_sdp = std::move(*rewritten_candidate);
+        }
+
+        std::string mutable_candidate = *candidate_sdp;
+        STATUS status = addIceCandidate(session->peer_connection, mutable_candidate.data());
+        if (status == STATUS_ICE_CANDIDATE_MISSING_CANDIDATE || status == STATUS_ICE_CANDIDATE_STRING_MISSING_IP) {
+            std::fprintf(
+                stderr,
+                "INFO kvs_session_real: skipping unsupported remote ICE candidate status=%s peer=%s candidate=%s\n",
+                FormatStatus(status).c_str(),
+                session->peer_id.c_str(),
+                candidate_sdp->c_str()
+            );
+            return STATUS_SUCCESS;
+        }
+
+        return status;
     }
 
     STATUS SendAnswer(StreamingSession* session) {

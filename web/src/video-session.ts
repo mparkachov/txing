@@ -274,13 +274,20 @@ export const startBoardVideoViewer = async (
   }
 
   const handleIceCandidate = ({ candidate }: RTCPeerConnectionIceEvent): void => {
-    if (candidate) {
+    const candidateSdp = candidate?.candidate.trim() ?? ''
+    if (candidate && candidateSdp !== '') {
       logVideoDebug('local ICE candidate', {
-        type: extractCandidateType(candidate.candidate),
+        type: extractCandidateType(candidateSdp),
         sdpMid: candidate.sdpMid,
       })
       signalingClient.sendIceCandidate(candidate)
       return
+    }
+    if (candidate) {
+      logVideoDebug('local ICE candidate skipped', {
+        reason: 'empty-candidate',
+        sdpMid: candidate.sdpMid,
+      })
     }
     logVideoDebug('local ICE candidate gathering complete')
   }
