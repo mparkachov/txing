@@ -232,6 +232,7 @@ class VideoSenderTests(unittest.TestCase):
                 cwd=Path("/repo"),
                 aws_shared_credentials_file=None,
                 aws_config_file=None,
+                aws_credentials=None,
             )
 
         self.assertEqual(environment["AWS_PROFILE"], "txing")
@@ -244,6 +245,36 @@ class VideoSenderTests(unittest.TestCase):
             environment["AWS_CONFIG_FILE"],
             str((Path("/repo") / "config/aws.config").resolve()),
         )
+
+    def test_build_supervisor_environment_prefers_explicit_credentials(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "AWS_TXING_PROFILE": "txing",
+                "AWS_SHARED_CREDENTIALS_FILE": "config/aws.credentials",
+                "AWS_CONFIG_FILE": "config/aws.config",
+            },
+            clear=True,
+        ):
+            environment = video_sender._build_supervisor_environment(
+                cwd=Path("/repo"),
+                aws_shared_credentials_file=Path("config/aws.credentials"),
+                aws_config_file=Path("config/aws.config"),
+                aws_credentials=AwsCredentialSnapshot(
+                    access_key_id="env-access",
+                    secret_access_key="env-secret",
+                    session_token="env-token",
+                ),
+            )
+
+        self.assertEqual(environment["AWS_ACCESS_KEY_ID"], "env-access")
+        self.assertEqual(environment["AWS_SECRET_ACCESS_KEY"], "env-secret")
+        self.assertEqual(environment["AWS_SESSION_TOKEN"], "env-token")
+        self.assertNotIn("AWS_PROFILE", environment)
+        self.assertNotIn("AWS_DEFAULT_PROFILE", environment)
+        self.assertNotIn("AWS_TXING_PROFILE", environment)
+        self.assertNotIn("AWS_SHARED_CREDENTIALS_FILE", environment)
+        self.assertNotIn("AWS_CONFIG_FILE", environment)
 
     @patch("board.video_sender.subprocess.Popen")
     def test_video_sender_supervisor_starts_with_explicit_env_and_cwd(
@@ -285,6 +316,53 @@ class VideoSenderTests(unittest.TestCase):
             environment["AWS_CONFIG_FILE"],
             str((Path("/repo") / "config/aws.config").resolve()),
         )
+
+    @patch("board.video_sender.subprocess.Popen")
+    def test_video_sender_supervisor_uses_parent_credentials_when_available(
+        self,
+        popen_mock: MagicMock,
+    ) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "AWS_TXING_PROFILE": "txing",
+                "AWS_SHARED_CREDENTIALS_FILE": "config/aws.credentials",
+                "AWS_CONFIG_FILE": "config/aws.config",
+            },
+            clear=True,
+        ):
+            with patch("board.video_sender.Path.cwd", return_value=Path("/repo")):
+                process = MagicMock()
+                process.poll.return_value = None
+                popen_mock.return_value = process
+
+                supervisor = video_sender.VideoSenderSupervisor(
+                    channel_name="txing-board-video",
+                    viewer_url="https://ops.example.com/video",
+                    region="eu-central-1",
+                    sender_command="/tmp/txing-board-kvs-master",
+                    aws_shared_credentials_file=Path("config/aws.credentials"),
+                    aws_config_file=Path("config/aws.config"),
+                    aws_credentials=AwsCredentialSnapshot(
+                        access_key_id="env-access",
+                        secret_access_key="env-secret",
+                        session_token="env-token",
+                    ),
+                )
+                supervisor.start()
+
+        kwargs = popen_mock.call_args.kwargs
+        environment = kwargs["env"]
+        self.assertEqual(environment["AWS_ACCESS_KEY_ID"], "env-access")
+        self.assertEqual(environment["AWS_SECRET_ACCESS_KEY"], "env-secret")
+        self.assertEqual(environment["AWS_SESSION_TOKEN"], "env-token")
+        self.assertNotIn("AWS_PROFILE", environment)
+        self.assertNotIn("AWS_DEFAULT_PROFILE", environment)
+        self.assertNotIn("AWS_TXING_PROFILE", environment)
+        self.assertNotIn("AWS_SHARED_CREDENTIALS_FILE", environment)
+        self.assertNotIn("AWS_CONFIG_FILE", environment)
+        self.assertNotIn("--aws-shared-credentials-file", popen_mock.call_args.args[0])
+        self.assertNotIn("--aws-config-file", popen_mock.call_args.args[0])
 
     def test_video_sender_supervisor_exposes_child_pid(self) -> None:
         supervisor = video_sender.VideoSenderSupervisor(
@@ -343,6 +421,53 @@ class VideoSenderTests(unittest.TestCase):
 
         self.assertEqual(popen_mock.call_args.kwargs["stdout"], subprocess.PIPE)
         self.assertEqual(popen_mock.call_args.kwargs["stderr"], subprocess.PIPE)
+
+    @patch("board.video_sender.ensure_aws_profile")
+    @patch("board.video_sender.VideoSenderProcess")
+    def test_main_skips_profile_resolution_when_explicit_credentials_exist(
+        self,
+        runtime_cls_mock: MagicMock,
+        ensure_aws_profile_mock: MagicMock,
+    ) -> None:
+        runtime_mock = MagicMock()
+        runtime_mock.run.return_value = 0
+        runtime_cls_mock.return_value = runtime_mock
+
+        with patch.dict(
+            os.environ,
+            {
+                "AWS_ACCESS_KEY_ID": "env-access",
+                "AWS_SECRET_ACCESS_KEY": "env-secret",
+                "AWS_SESSION_TOKEN": "env-token",
+                "AWS_TXING_PROFILE": "txing",
+                "AWS_SHARED_CREDENTIALS_FILE": "/tmp/credentials",
+                "AWS_CONFIG_FILE": "/tmp/config",
+            },
+            clear=True,
+        ):
+            with patch(
+                "sys.argv",
+                [
+                    "board-video-sender",
+                    "--region",
+                    "eu-central-1",
+                    "--viewer-url",
+                    "https://ops.example.com/video",
+                    "--sender-command",
+                    "/tmp/txing-board-kvs-master",
+                ],
+            ):
+                with self.assertRaises(SystemExit) as exit_ctx:
+                    video_sender.main()
+
+            self.assertEqual(exit_ctx.exception.code, 0)
+            self.assertNotIn("AWS_PROFILE", os.environ)
+            self.assertNotIn("AWS_DEFAULT_PROFILE", os.environ)
+            self.assertNotIn("AWS_TXING_PROFILE", os.environ)
+            self.assertNotIn("AWS_SHARED_CREDENTIALS_FILE", os.environ)
+            self.assertNotIn("AWS_CONFIG_FILE", os.environ)
+
+        ensure_aws_profile_mock.assert_not_called()
 
 
 if __name__ == "__main__":

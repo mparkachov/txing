@@ -164,13 +164,35 @@ def _resolve_path_for_child(value: Path | str, *, cwd: Path) -> str:
     return str(candidate.resolve())
 
 
+def _has_explicit_aws_credentials(environment: dict[str, str]) -> bool:
+    return bool(
+        environment.get("AWS_ACCESS_KEY_ID", "").strip()
+        and environment.get("AWS_SECRET_ACCESS_KEY", "").strip()
+    )
+
+
 def _build_supervisor_environment(
     *,
     cwd: Path,
     aws_shared_credentials_file: Path | None,
     aws_config_file: Path | None,
+    aws_credentials: AwsCredentialSnapshot | None,
 ) -> dict[str, str]:
     environment = os.environ.copy()
+    if aws_credentials is not None:
+        environment["AWS_ACCESS_KEY_ID"] = aws_credentials.access_key_id
+        environment["AWS_SECRET_ACCESS_KEY"] = aws_credentials.secret_access_key
+        if aws_credentials.session_token:
+            environment["AWS_SESSION_TOKEN"] = aws_credentials.session_token
+        else:
+            environment.pop("AWS_SESSION_TOKEN", None)
+        environment.pop("AWS_PROFILE", None)
+        environment.pop("AWS_DEFAULT_PROFILE", None)
+        environment.pop("AWS_TXING_PROFILE", None)
+        environment.pop(DEFAULT_AWS_SHARED_CREDENTIALS_FILE_ENV, None)
+        environment.pop(DEFAULT_AWS_CONFIG_FILE_ENV, None)
+        return environment
+
     profile = environment.get("AWS_PROFILE", "").strip() or environment.get("AWS_TXING_PROFILE", "").strip()
     if profile:
         environment["AWS_PROFILE"] = profile
@@ -449,6 +471,7 @@ class VideoSenderSupervisor:
         sender_command: str,
         aws_shared_credentials_file: Path | None = None,
         aws_config_file: Path | None = None,
+        aws_credentials: AwsCredentialSnapshot | None = None,
         state_file: Path = DEFAULT_VIDEO_STATE_FILE,
     ) -> None:
         self._channel_name = channel_name
@@ -457,6 +480,7 @@ class VideoSenderSupervisor:
         self._sender_command = sender_command
         self._aws_shared_credentials_file = aws_shared_credentials_file
         self._aws_config_file = aws_config_file
+        self._aws_credentials = aws_credentials
         self._state_file = state_file
         self._process: subprocess.Popen[bytes] | None = None
 
@@ -489,14 +513,14 @@ class VideoSenderSupervisor:
             "--sender-command",
             self._sender_command,
         ]
-        if self._aws_shared_credentials_file is not None:
+        if self._aws_credentials is None and self._aws_shared_credentials_file is not None:
             command.extend(
                 [
                     "--aws-shared-credentials-file",
                     _resolve_path_for_child(self._aws_shared_credentials_file, cwd=spawn_cwd),
                 ]
             )
-        if self._aws_config_file is not None:
+        if self._aws_credentials is None and self._aws_config_file is not None:
             command.extend(
                 [
                     "--aws-config-file",
@@ -510,6 +534,7 @@ class VideoSenderSupervisor:
                 cwd=spawn_cwd,
                 aws_shared_credentials_file=self._aws_shared_credentials_file,
                 aws_config_file=self._aws_config_file,
+                aws_credentials=self._aws_credentials,
             ),
         )
 
@@ -648,7 +673,14 @@ def main() -> None:
         os.environ[DEFAULT_AWS_SHARED_CREDENTIALS_FILE_ENV] = str(args.aws_shared_credentials_file)
     if args.aws_config_file is not None:
         os.environ[DEFAULT_AWS_CONFIG_FILE_ENV] = str(args.aws_config_file)
-    ensure_aws_profile("AWS_TXING_PROFILE")
+    if _has_explicit_aws_credentials(os.environ):
+        os.environ.pop("AWS_PROFILE", None)
+        os.environ.pop("AWS_DEFAULT_PROFILE", None)
+        os.environ.pop("AWS_TXING_PROFILE", None)
+        os.environ.pop(DEFAULT_AWS_SHARED_CREDENTIALS_FILE_ENV, None)
+        os.environ.pop(DEFAULT_AWS_CONFIG_FILE_ENV, None)
+    else:
+        ensure_aws_profile("AWS_TXING_PROFILE")
     runtime = VideoSenderProcess(
         VideoSenderRuntimeConfig(
             region=args.region,
