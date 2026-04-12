@@ -452,8 +452,9 @@ The generated unit:
 - waits for `systemd-time-wait-sync.service` / `time-sync.target` before startup
 - runs `board` as `root`
 - sets `WorkingDirectory=/home/.../txing` and loads `config/aws.env` through `EnvironmentFile=`
+- always writes resolved AWS runtime vars (`AWS_REGION`, `AWS_PROFILE`, `AWS_DEFAULT_PROFILE`, `AWS_TXING_PROFILE`, `AWS_SHARED_CREDENTIALS_FILE`, `AWS_CONFIG_FILE`) into `Environment=` lines so the service does not depend on shell state
 - sets `LG_WD=/tmp/txing-lgpio` by default and creates that directory during install (override with `lg_wd=...`)
-- only adds `Environment=` overrides for board or AWS values when you pass explicit `just board::install-service ...` overrides
+- adds optional `Environment=` overrides for board-specific values when you pass explicit `just board::install-service ...` overrides
 - starts `board` with `ExecStart=/home/.../board/.venv/bin/board --heartbeat-seconds 60`
 
 The Python service also waits up to `120 s` for `timedatectl` to report `SystemClockSynchronized=yes` before it starts the AWS-backed video sender. That avoids transient KVS `InvalidSignatureException` failures after boot when networking is up but NTP has not corrected the clock yet.

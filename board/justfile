@@ -306,17 +306,21 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
     if [ -n "{{video_sender_command}}" ]; then \
         service_env+=("Environment=\"BOARD_VIDEO_SENDER_COMMAND=$video_sender_command\""); \
     fi; \
-    if [ -n "{{region}}" ] && [ -n "$region" ]; then \
+    if [ -n "$region" ]; then \
         service_env+=("Environment=\"AWS_REGION=$region\""); \
     fi; \
-    if [ -n "{{aws_profile}}" ] && [ -n "$aws_profile" ]; then \
+    if [ -n "$aws_profile" ]; then \
         service_env+=("Environment=\"AWS_PROFILE=$aws_profile\""); \
+        service_env+=("Environment=\"AWS_DEFAULT_PROFILE=$aws_profile\""); \
     fi; \
-    if [ -n "{{aws_shared_credentials_file}}" ] && [ -n "$aws_shared_credentials_file" ]; then \
+    if [ -n "$aws_shared_credentials_file" ]; then \
         service_env+=("Environment=\"AWS_SHARED_CREDENTIALS_FILE=$aws_shared_credentials_file\""); \
     fi; \
-    if [ -n "{{aws_config_file}}" ] && [ -n "$aws_config_file" ]; then \
+    if [ -n "$aws_config_file" ]; then \
         service_env+=("Environment=\"AWS_CONFIG_FILE=$aws_config_file\""); \
+    fi; \
+    if [ -n "${AWS_TXING_PROFILE:-}" ]; then \
+        service_env+=("Environment=\"AWS_TXING_PROFILE=$AWS_TXING_PROFILE\""); \
     fi; \
     if [ -n "$lg_wd" ]; then \
         service_env+=("Environment=\"LG_WD=$lg_wd\""); \
