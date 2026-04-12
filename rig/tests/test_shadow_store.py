@@ -18,6 +18,13 @@ class ShadowStoreTests(unittest.TestCase):
 
         self.assertIsNone(get_desired_redcon(payload))
         self.assertIsNone(get_desired_board_power(payload))
+        self.assertEqual(
+            payload["state"]["reported"]["mcu"],
+            {
+                "power": False,
+                "online": False,
+            },
+        )
         self.assertEqual(get_reported_battery_mv(payload), 3750)
         self.assertFalse(get_reported_board_video_ready(payload))
         self.assertFalse(get_reported_board_video_viewer_connected(payload))

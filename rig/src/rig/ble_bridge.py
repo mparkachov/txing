@@ -41,6 +41,7 @@ from .shadow_store import (
     DEFAULT_BOARD_WIFI_ONLINE,
     DEFAULT_DESIRED_REDCON,
     DEFAULT_REDCON,
+    DEFAULT_REPORTED_ONLINE,
     DEFAULT_REPORTED_POWER,
     DEFAULT_SHADOW_FILE,
 )
@@ -209,13 +210,6 @@ class BleGattUuids:
     state_report_uuid: str
     device_id: str | None = None
 
-    def as_shadow_dict(self) -> dict[str, str]:
-        return {
-            "serviceUuid": self.service_uuid,
-            "sleepCommandUuid": self.sleep_command_uuid,
-            "stateReportUuid": self.state_report_uuid,
-        }
-
     def with_device_id(self, device_id: str | None) -> BleGattUuids:
         normalized_device_id = (
             str(device_id).strip() if device_id is not None else None
@@ -266,36 +260,6 @@ def _extract_reported_root(payload: dict[str, Any]) -> dict[str, Any] | None:
         return None
     reported = state.get("reported")
     return reported if isinstance(reported, dict) else None
-
-
-def _extract_reported_ble_uuids(payload: dict[str, Any]) -> BleGattUuids | None:
-    mcu = _extract_reported_mcu(payload)
-    if mcu is None:
-        return None
-    ble = _extract_reported_ble_map(mcu)
-    if ble is None:
-        return None
-
-    service_uuid = _normalize_uuid(ble.get("serviceUuid"))
-    sleep_command_uuid = _normalize_uuid(ble.get("sleepCommandUuid"))
-    state_report_uuid = _normalize_uuid(ble.get("stateReportUuid"))
-    if (
-        service_uuid is None
-        or sleep_command_uuid is None
-        or state_report_uuid is None
-    ):
-        return None
-
-    return BleGattUuids(
-        service_uuid=service_uuid,
-        sleep_command_uuid=sleep_command_uuid,
-        state_report_uuid=state_report_uuid,
-    )
-
-
-def _extract_reported_ble_map(mcu: dict[str, Any]) -> dict[str, Any] | None:
-    ble = mcu.get("ble")
-    return ble if isinstance(ble, dict) else None
 
 
 def _extract_reported_board(payload: dict[str, Any]) -> dict[str, Any] | None:
@@ -350,14 +314,11 @@ def _extract_reported_board_video_viewer_connected(payload: dict[str, Any]) -> b
     return value if isinstance(value, bool) else None
 
 
-def _extract_reported_ble_online(payload: dict[str, Any]) -> bool | None:
+def _extract_reported_online(payload: dict[str, Any]) -> bool | None:
     mcu = _extract_reported_mcu(payload)
     if mcu is None:
         return None
-    ble = _extract_reported_ble_map(mcu)
-    if ble is None:
-        return None
-    value = ble.get("online")
+    value = mcu.get("online")
     return value if isinstance(value, bool) else None
 
 
@@ -647,18 +608,13 @@ class ShadowState:
         self.redcon = derived_redcon
         return True
 
-    def ble_state(self) -> dict[str, Any]:
-        ble_state = self.ble_uuids.as_shadow_dict()
-        ble_state["online"] = self.ble_online
-        return ble_state
-
     def payload(self) -> dict[str, Any]:
         reported: dict[str, Any] = {
             "redcon": self.redcon,
             "batteryMv": self.battery_mv,
             "mcu": {
                 "power": self.reported_power,
-                "ble": self.ble_state(),
+                "online": self.ble_online,
             },
             "board": {
                 "power": self.board_power,
@@ -716,8 +672,8 @@ class AwsShadowUpdate:
     has_desired_board_power: bool = False
     desired_board_power: bool | None = None
     reported_power: bool | None = None
+    reported_online: bool | None = None
     battery_mv: int | None = None
-    ble_uuids: BleGattUuids | None = None
     board_power: bool | None = None
     board_wifi_online: bool | None = None
     board_video_ready: bool | None = None
@@ -1080,8 +1036,8 @@ class AwsShadowClient:
                 ),
                 desired_board_power=_extract_desired_board_power_from_shadow(payload),
                 reported_power=_extract_reported_power(payload),
+                reported_online=_extract_reported_online(payload),
                 battery_mv=_extract_reported_battery_mv(payload),
-                ble_uuids=_extract_reported_ble_uuids(payload),
                 board_power=_extract_reported_board_power(payload),
                 board_wifi_online=_extract_reported_board_wifi_online(payload),
                 board_video_ready=_extract_reported_board_video_ready(payload),
@@ -1106,8 +1062,8 @@ class AwsShadowClient:
                 ),
                 desired_board_power=_extract_desired_board_power_from_shadow(payload),
                 reported_power=_extract_reported_power(payload),
+                reported_online=_extract_reported_online(payload),
                 battery_mv=_extract_reported_battery_mv(payload),
-                ble_uuids=_extract_reported_ble_uuids(payload),
                 board_power=_extract_reported_board_power(payload),
                 board_wifi_online=_extract_reported_board_wifi_online(payload),
                 board_video_ready=_extract_reported_board_video_ready(payload),
@@ -1683,8 +1639,6 @@ class BleSleepBridge:
             previous_battery = self._shadow.battery_mv
             changed = False
             redcon_inputs_changed = False
-            ble_uuids_changed = False
-            ble_gatt_uuids_changed = False
             if (
                 update.has_desired_redcon
                 and self._shadow.desired_redcon != update.desired_redcon
@@ -1709,6 +1663,13 @@ class BleSleepBridge:
                 changed = True
                 redcon_inputs_changed = True
             if (
+                update.reported_online is not None
+                and self._shadow.ble_online != update.reported_online
+            ):
+                self._shadow.set_ble_online(update.reported_online)
+                changed = True
+                redcon_inputs_changed = True
+            if (
                 update.battery_mv is not None
                 and self._shadow.battery_mv != update.battery_mv
             ):
@@ -1716,28 +1677,6 @@ class BleSleepBridge:
                     self._shadow.reported_power,
                     battery_mv=update.battery_mv,
                 )
-                changed = True
-            if (
-                update.ble_uuids is not None
-                and self._shadow.ble_uuids != update.ble_uuids
-            ):
-                previous_ble_uuids = self._shadow.ble_uuids
-                self._shadow.set_reported(
-                    self._shadow.reported_power,
-                    battery_mv=self._shadow.battery_mv,
-                    ble_uuids=update.ble_uuids,
-                )
-                self._cached_device_id = update.ble_uuids.device_id
-                self._known_device.device_id = self._cached_device_id
-                ble_gatt_uuids_changed = (
-                    previous_ble_uuids.service_uuid != update.ble_uuids.service_uuid
-                    or previous_ble_uuids.sleep_command_uuid
-                    != update.ble_uuids.sleep_command_uuid
-                    or previous_ble_uuids.state_report_uuid
-                    != update.ble_uuids.state_report_uuid
-                )
-                self._ble_uuid_search_mode = False
-                ble_uuids_changed = True
                 changed = True
             if (
                 update.board_power is not None
@@ -1805,13 +1744,6 @@ class BleSleepBridge:
                     previous_redcon=previous_redcon,
                     previous_battery=previous_battery,
                 )
-            if ble_uuids_changed and ble_gatt_uuids_changed:
-                self._has_device_sync = False
-                if self._is_connected():
-                    LOGGER.info(
-                        "Cloud shadow BLE UUIDs changed; disconnecting current session"
-                    )
-                    await self._safe_disconnect()
 
     async def _process_desired_no_ble_once(self) -> None:
         target_redcon = self._shadow.desired_redcon
@@ -2333,7 +2265,7 @@ class BleSleepBridge:
         previous_battery = self._shadow.battery_mv
         self._shadow.set_ble_online(online)
         published = await self._publish_reported_update(
-            reported_mcu_patch={"ble": self._shadow.ble_state()},
+            reported_mcu_patch={"online": online},
             desired_redcon=_SHADOW_UNSET,
             desired_board_power=_SHADOW_UNSET,
             context=context,
@@ -2592,7 +2524,6 @@ class BleSleepBridge:
         *,
         device_id: str | None,
     ) -> None:
-        previous_ble_uuids = self._shadow.ble_uuids
         configured_uuids = self._shadow.ble_uuids.with_device_id(device_id)
         if (
             not self._ble_uuid_search_mode
@@ -2606,20 +2537,12 @@ class BleSleepBridge:
                 )
             self._known_device.device_id = configured_uuids.device_id
             LOGGER.info(
-                "Validated BLE UUIDs from shadow: service=%s sleepCommand=%s stateReport=%s deviceId=%s",
+                "Validated configured BLE UUIDs: service=%s sleepCommand=%s stateReport=%s deviceId=%s",
                 configured_uuids.service_uuid,
                 configured_uuids.sleep_command_uuid,
                 configured_uuids.state_report_uuid,
                 configured_uuids.device_id or "<unknown>",
             )
-            if configured_uuids != previous_ble_uuids:
-                await self._publish_reported_update(
-                    reported_mcu_patch={"ble": self._shadow.ble_state()},
-                    desired_redcon=_SHADOW_UNSET,
-                    desired_board_power=_SHADOW_UNSET,
-                    context="Published validated BLE association data after connect",
-                    include_redcon_if_changed=False,
-                )
             return
 
         if self._ble_uuid_search_mode:
@@ -2656,14 +2579,6 @@ class BleSleepBridge:
         )
         self._known_device.device_id = discovered_uuids.device_id
         self._ble_uuid_search_mode = False
-        if discovered_uuids != previous_ble_uuids:
-            await self._publish_reported_update(
-                reported_mcu_patch={"ble": self._shadow.ble_state()},
-                desired_redcon=_SHADOW_UNSET,
-                desired_board_power=_SHADOW_UNSET,
-                context="Published discovered BLE association data after connect",
-                include_redcon_if_changed=False,
-            )
 
     def _discover_ble_uuids_from_connected_services(
         self, client: BleakClient
@@ -3326,13 +3241,13 @@ def _parse_args() -> argparse.Namespace:
         "--ble-online-stale-after",
         type=float,
         default=DEFAULT_BLE_ONLINE_STALE_AFTER,
-        help="Seconds without a matching connection or advertisement before reported.mcu.ble.online becomes false (default: 30)",
+        help="Seconds without a matching connection or advertisement before reported.mcu.online becomes false (default: 30)",
     )
     parser.add_argument(
         "--ble-online-recover-after",
         type=float,
         default=DEFAULT_BLE_ONLINE_RECOVER_AFTER,
-        help="Seconds of sustained BLE presence required before reported.mcu.ble.online becomes true after being false (default: 30)",
+        help="Seconds of sustained BLE presence required before reported.mcu.online becomes true after being false (default: 30)",
     )
     parser.add_argument(
         "--ble-online-recovery-gap",
@@ -3448,28 +3363,14 @@ def _build_shadow_from_snapshot(
     registered_ble_device_id: str | None = None,
 ) -> ShadowState:
     reported_power = _extract_reported_power(snapshot)
+    reported_online = _extract_reported_online(snapshot)
     battery_mv = _extract_reported_battery_mv(snapshot)
     board_power = _extract_reported_board_power(snapshot)
     board_wifi_online = _extract_reported_board_wifi_online(snapshot)
     board_video_ready = _extract_reported_board_video_ready(snapshot)
     board_video_viewer_connected = _extract_reported_board_video_viewer_connected(snapshot)
     reported_redcon = _extract_reported_redcon(snapshot)
-    mcu = _extract_reported_mcu(snapshot)
-    ble_map = _extract_reported_ble_map(mcu) if mcu is not None else None
-    ble_uuids = _extract_reported_ble_uuids(snapshot)
-    if ble_uuids is not None:
-        ble_uuids = ble_uuids.with_device_id(registered_ble_device_id)
-    ble_uuid_search_mode = ble_uuids is None
-    if ble_uuids is None:
-        if ble_map is not None:
-            LOGGER.warning(
-                "Shadow reported.mcu.ble exists but is invalid; switching to BLE UUID search mode"
-            )
-        else:
-            LOGGER.warning(
-                "Shadow reported.mcu.ble is missing; switching to BLE UUID search mode"
-            )
-        ble_uuids = DEFAULT_BLE_GATT_UUIDS.with_device_id(registered_ble_device_id)
+    ble_uuids = DEFAULT_BLE_GATT_UUIDS.with_device_id(registered_ble_device_id)
 
     return ShadowState(
         desired_redcon=(
@@ -3491,7 +3392,11 @@ def _build_shadow_from_snapshot(
             else DEFAULT_BATTERY_MV
         ),
         ble_uuids=ble_uuids,
-        ble_online=bool(_extract_reported_ble_online(snapshot)),
+        ble_online=(
+            reported_online
+            if reported_online is not None
+            else DEFAULT_REPORTED_ONLINE
+        ),
         board_power=(
             board_power
             if board_power is not None
@@ -3517,7 +3422,7 @@ def _build_shadow_from_snapshot(
             if reported_redcon is not None
             else DEFAULT_REDCON
         ),
-        ble_uuid_search_mode=ble_uuid_search_mode,
+        ble_uuid_search_mode=False,
         shadow_version=_extract_shadow_version(snapshot),
         snapshot_file=snapshot_file,
     )

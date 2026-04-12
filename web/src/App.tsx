@@ -16,7 +16,6 @@ import {
   extractReportedBoardPower,
   extractReportedBoardVideo,
   extractReportedBoardWifiOnline,
-  extractReportedMcuBleOnline,
   extractReportedMcuOnline,
   extractReportedMcuPower,
   extractReportedRedcon,
@@ -83,10 +82,6 @@ function App({ initialAuthError = '' }: AppProps) {
   )
   const reportedMcuOnline = useMemo(
     () => extractReportedMcuOnline(shadowDocument),
-    [shadowDocument],
-  )
-  const reportedMcuBleOnline = useMemo(
-    () => extractReportedMcuBleOnline(shadowDocument),
     [shadowDocument],
   )
   const reportedBatteryMv = useMemo(
@@ -505,7 +500,7 @@ function App({ initialAuthError = '' }: AppProps) {
         reportedBoardLeftTrackSpeed={reportedBoardDrive.leftSpeed}
         reportedBoardRightTrackSpeed={reportedBoardDrive.rightSpeed}
         reportedBatteryMv={reportedBatteryMv}
-        reportedMcuBleOnline={reportedMcuBleOnline}
+        reportedMcuOnline={reportedMcuOnline}
         reportedRedcon={reportedRedcon}
         txingSwitchChecked={txingSwitchChecked}
         videoChannelName={reportedBoardVideo.channelName}

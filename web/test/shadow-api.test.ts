@@ -137,13 +137,7 @@ describe('shadow protocol helpers', () => {
           batteryMv: 3729,
           mcu: {
             power: false,
-            ble: {
-              serviceUuid: 'svc',
-              sleepCommandUuid: 'sleep',
-              stateReportUuid: 'report',
-              online: false,
-              deviceId: 'AA:BB',
-            },
+            online: false,
           },
         },
       },
@@ -152,9 +146,7 @@ describe('shadow protocol helpers', () => {
           batteryMv: { timestamp: 2 },
           mcu: {
             power: { timestamp: 1 },
-            ble: {
-              online: { timestamp: 3 },
-            },
+            online: { timestamp: 3 },
           },
         },
       },
@@ -166,18 +158,14 @@ describe('shadow protocol helpers', () => {
       state: {
         reported: {
           mcu: {
-            ble: {
-              online: true,
-            },
+            online: true,
           },
         },
       },
       metadata: {
         reported: {
           mcu: {
-            ble: {
-              online: { timestamp: 4 },
-            },
+            online: { timestamp: 4 },
           },
         },
       },
@@ -191,13 +179,7 @@ describe('shadow protocol helpers', () => {
           batteryMv: 3729,
           mcu: {
             power: false,
-            ble: {
-              serviceUuid: 'svc',
-              sleepCommandUuid: 'sleep',
-              stateReportUuid: 'report',
-              online: true,
-              deviceId: 'AA:BB',
-            },
+            online: true,
           },
         },
       },
@@ -206,9 +188,7 @@ describe('shadow protocol helpers', () => {
           batteryMv: { timestamp: 2 },
           mcu: {
             power: { timestamp: 1 },
-            ble: {
-              online: { timestamp: 4 },
-            },
+            online: { timestamp: 4 },
           },
         },
       },

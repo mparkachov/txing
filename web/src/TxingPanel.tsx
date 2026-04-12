@@ -20,7 +20,7 @@ type TxingPanelProps = {
   reportedBoardOnline: boolean | null
   reportedBoardRightTrackSpeed: number | null
   reportedBatteryMv: number | null
-  reportedMcuBleOnline: boolean | null
+  reportedMcuOnline: boolean | null
   reportedRedcon: number | null
   txingSwitchChecked: boolean
   videoChannelName: string | null
@@ -146,7 +146,7 @@ function TxingPanel({
   reportedBoardOnline,
   reportedBoardRightTrackSpeed,
   reportedBatteryMv,
-  reportedMcuBleOnline,
+  reportedMcuOnline,
   reportedRedcon,
   txingSwitchChecked,
   videoChannelName,
@@ -163,7 +163,7 @@ function TxingPanel({
   const batteryPercent = useMemo(() => getBatteryPercent(reportedBatteryMv), [reportedBatteryMv])
   const batteryToneClass = getBatteryToneClass(batteryPercent)
   const boardWifiToneClass = getBoardWifiToneClass(reportedBoardOnline)
-  const bleSignalToneClass = getBleSignalToneClass(reportedMcuBleOnline)
+  const bleSignalToneClass = getBleSignalToneClass(reportedMcuOnline)
   const txingRedconToneClass = getTxingRedconToneClass(reportedRedcon)
   const txingRedconLabel = describeRedcon(reportedRedcon)
   const leftTrackPresentation = getTrackIndicatorPresentation(reportedBoardLeftTrackSpeed, 'Left')
@@ -359,9 +359,9 @@ function TxingPanel({
                 className={`status-signal ${bleSignalToneClass}`}
                 role="img"
                 aria-label={
-                  reportedMcuBleOnline === true
+                  reportedMcuOnline === true
                     ? 'BLE online'
-                    : reportedMcuBleOnline === false
+                    : reportedMcuOnline === false
                       ? 'BLE offline'
                       : 'BLE status unavailable'
                 }

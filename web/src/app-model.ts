@@ -112,18 +112,6 @@ export const extractReportedBoard = (shadow: unknown): Record<string, unknown> |
   return isRecord(board) ? board : null
 }
 
-export const extractDesiredMcuPower = (shadow: unknown): boolean | null => {
-  const desired = extractDesiredState(shadow)
-  if (!desired) {
-    return null
-  }
-  const mcu = desired.mcu
-  if (!isRecord(mcu)) {
-    return null
-  }
-  return typeof mcu.power === 'boolean' ? mcu.power : null
-}
-
 export const extractDesiredRedcon = (shadow: unknown): number | null => {
   const desired = extractDesiredState(shadow)
   if (!desired) {
@@ -234,23 +222,7 @@ export const extractReportedMcuOnline = (shadow: unknown): boolean | null => {
   if (!mcu) {
     return null
   }
-  if (typeof mcu.online === 'boolean') {
-    return mcu.online
-  }
-  const ble = mcu.ble
-  if (!isRecord(ble)) {
-    return null
-  }
-  return typeof ble.online === 'boolean' ? ble.online : null
-}
-
-export const extractReportedMcuBleOnline = (shadow: unknown): boolean | null => {
-  const mcu = extractReportedMcu(shadow)
-  if (!mcu) {
-    return null
-  }
-  const ble = mcu.ble
-  return isRecord(ble) && typeof ble.online === 'boolean' ? ble.online : null
+  return typeof mcu.online === 'boolean' ? mcu.online : null
 }
 
 export const extractReportedBatteryMv = (shadow: unknown): number | null => {

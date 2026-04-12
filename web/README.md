@@ -153,4 +153,4 @@ The stack serves the SPA from CloudFront instead of the raw S3 website endpoint 
 - `on` publishes `DCMD.redcon=3`.
 - `off` publishes `DCMD.redcon=4`.
 - The UI reads lifecycle state from shadow `desired.redcon` and `reported.redcon`.
-- The SPA does not write `desired.mcu.power` or `desired.board.power`.
+- The SPA does not write internal desired lifecycle fields such as `desired.board.power`.

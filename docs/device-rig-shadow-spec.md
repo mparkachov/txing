@@ -35,7 +35,6 @@ High-level architecture:
 - In phase 1 that strict top-level metric set is exactly `reported.redcon` and `reported.batteryMv`.
 - `rig` is the only component that accepts lifecycle intent from Sparkplug and reflects unresolved intent into `state.desired.redcon`.
 - `state.desired.board.power` remains an internal rig-to-board actuator only.
-- `state.desired.mcu.power` is deprecated and ignored by runtime logic.
 - Only `rig` may define or evolve the `mcu.*` contract.
 - `mcu` exposes BLE behavior; `rig` translates that behavior into shadow state.
 
@@ -87,12 +86,7 @@ Shadow type: classic (unnamed) Thing Shadow (`$aws/things/txing/shadow/*`)
       "batteryMv": 3750,
       "mcu": {
         "power": false,
-        "ble": {
-          "serviceUuid": "f6b4a000-7b32-4d2d-9f4b-4ff0a2b8f100",
-          "sleepCommandUuid": "f6b4a001-7b32-4d2d-9f4b-4ff0a2b8f100",
-          "stateReportUuid": "f6b4a002-7b32-4d2d-9f4b-4ff0a2b8f100",
-          "online": false
-        }
+        "online": false
       }
     }
   }
@@ -102,7 +96,6 @@ Shadow type: classic (unnamed) Thing Shadow (`$aws/things/txing/shadow/*`)
 Field semantics:
 - `state.desired.redcon` is the reflected cache of the latest unresolved Sparkplug `DCMD.redcon` command.
 - `state.desired.board.power=false` is an internal-only graceful-halt request written by `rig` while converging `redcon=4`.
-- `state.desired.mcu.power` is deprecated compatibility state and must be ignored by phase-1 runtime behavior.
 - Direct scalar attributes under `state.reported` are the strict Sparkplug metric reflection surface.
 - In phase 1 that set is exactly `redcon` and `batteryMv`.
 - `mcu.*` and `board.*` remain shadow-only operational detail and are not alternate locations for Sparkplug metric reflection.
@@ -114,18 +107,14 @@ Field semantics:
 - `state.reported.batteryMv` is the latest battery reading observed over BLE by rig, surfaced at top-level alongside `redcon`, sourced from the MCU state report carried over either advertising manufacturer data or the GATT State Report characteristic.
 - `state.reported.mcu.power=true` means "MCU is in the wakeup state".
 - `state.reported.mcu.power=false` means "MCU is in the sleep state with periodic BLE rendezvous wakeups".
-- `state.reported.mcu.ble.online` is `true` only after the MCU has shown sustained BLE reachability, either by staying connected or by advertising regularly for the configured recovery window.
+- `state.reported.mcu.online` is `true` only after the MCU has shown sustained BLE reachability, either by staying connected or by advertising regularly for the configured recovery window.
 - `rig` reads `state.reported.board.power`, `state.reported.board.wifi.online`, `state.reported.board.video.ready`, and `state.reported.board.video.viewerConnected` from the shared shadow as the board posture inputs for `reported.redcon`.
-- `rig` emits `DBIRTH` when BLE reachability reaches the same sustained-online condition that drives `reported.mcu.ble.online=true`.
+- `rig` emits `DBIRTH` when BLE reachability reaches the same sustained-online condition that drives `reported.mcu.online=true`.
 - `rig` emits `DDEATH` when BLE reachability times out, forces `reported.redcon=4`, and clears `desired.redcon` plus internal `desired.board.power` best-effort.
 - AWS IoT registry attributes:
   - `attributes.rig` is the authoritative rig assignment used to populate the dynamic AWS IoT thing group that the rig reads on restart.
   - `attributes.bleDeviceId` is the last known BLE identity address written by rig after a successful BLE association and used as the primary reconnect hint on the next restart.
-  - legacy shadow metadata fields `reported.bleDeviceId`, `reported.homeRig`, and `reported.mcu.ble.deviceId` are ignored by runtime.
-
-Compatibility note:
-- The shadow field name `sleepCommandUuid` is retained for compatibility.
-- In v1.0 it identifies the MCU power-mode control characteristic.
+  - legacy shadow metadata fields `reported.bleDeviceId` and `reported.homeRig` are ignored by runtime.
 
 ## 4A. Sparkplug Contract
 
@@ -154,7 +143,7 @@ Command semantics:
 
 UUIDs:
 - Service `TXING Control`: `f6b4a000-7b32-4d2d-9f4b-4ff0a2b8f100`
-- Power Command characteristic (compatibility field `sleepCommandUuid`): `f6b4a001-7b32-4d2d-9f4b-4ff0a2b8f100`
+- Power Command characteristic: `f6b4a001-7b32-4d2d-9f4b-4ff0a2b8f100`
 - State Report characteristic: `f6b4a002-7b32-4d2d-9f4b-4ff0a2b8f100`
 
 Payloads:
@@ -293,12 +282,11 @@ All of the above are tunable constants or CLI-configurable parameters.
   - `state.desired.redcon` cleared on convergence
   - the MCU returning to the sleep state with periodic rendezvous wakeups
 - `state.reported.batteryMv` is refreshed whenever rig observes a changed battery value from the MCU State Report, whether that report arrives in advertising manufacturer data or over GATT.
-- `state.reported.mcu.ble.*` remains present and valid.
-- `state.reported.mcu.ble.online` becomes `true` again after rig observes sustained BLE presence for the configured recovery window.
-- `state.reported.mcu.ble.online` remains `true` while the device is connected or continues advertising within the configured presence timeout.
-- `state.reported.mcu.ble.online` becomes `false` only after rig has not observed the device for longer than the presence timeout.
-- `DBIRTH` is emitted when `state.reported.mcu.ble.online` becomes `true`.
-- `DDEATH` is emitted when `state.reported.mcu.ble.online` becomes `false`.
+- `state.reported.mcu.online` becomes `true` again after rig observes sustained BLE presence for the configured recovery window.
+- `state.reported.mcu.online` remains `true` while the device is connected or continues advertising within the configured presence timeout.
+- `state.reported.mcu.online` becomes `false` only after rig has not observed the device for longer than the presence timeout.
+- `DBIRTH` is emitted when `state.reported.mcu.online` becomes `true`.
+- `DDEATH` is emitted when `state.reported.mcu.online` becomes `false`.
 
 ## 10. Test Plan
 

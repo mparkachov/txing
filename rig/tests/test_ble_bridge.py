@@ -524,13 +524,7 @@ class RedconTests(unittest.TestCase):
                             "homeRig": "legacy-rig",
                             "mcu": {
                                 "power": True,
-                                "ble": {
-                                    "serviceUuid": "f6b4a000-7b32-4d2d-9f4b-4ff0a2b8f100",
-                                    "sleepCommandUuid": "f6b4a001-7b32-4d2d-9f4b-4ff0a2b8f100",
-                                    "stateReportUuid": "f6b4a002-7b32-4d2d-9f4b-4ff0a2b8f100",
-                                    "online": True,
-                                    "deviceId": "legacy-nested-id",
-                                },
+                                "online": True,
                             },
                             "board": {
                                 "power": True,
@@ -557,9 +551,15 @@ class RedconTests(unittest.TestCase):
         reported = payload["state"]["reported"]
         self.assertNotIn("bleDeviceId", reported)
         self.assertNotIn("homeRig", reported)
-        self.assertNotIn("deviceId", reported["mcu"]["ble"])
+        self.assertEqual(
+            reported["mcu"],
+            {
+                "power": True,
+                "online": True,
+            },
+        )
 
-    def test_snapshot_recovery_ignores_legacy_ble_device_id_cache(self) -> None:
+    def test_snapshot_recovery_does_not_read_legacy_nested_ble_online(self) -> None:
         with TemporaryDirectory() as tmpdir:
             snapshot_file = Path(tmpdir) / "shadow.json"
             snapshot_file.write_text(
@@ -573,7 +573,7 @@ class RedconTests(unittest.TestCase):
                                 "mcu": {
                                     "power": False,
                                     "ble": {
-                                        "deviceId": "nested-stale-id",
+                                        "online": True,
                                     },
                                 },
                             },
@@ -590,6 +590,7 @@ class RedconTests(unittest.TestCase):
                             "batteryMv": 3795,
                             "mcu": {
                                 "power": False,
+                                "online": False,
                             },
                         }
                     }
@@ -598,6 +599,7 @@ class RedconTests(unittest.TestCase):
             )
 
         self.assertIsNone(shadow.ble_device_id)
+        self.assertFalse(shadow.ble_online)
 
     def test_desired_redcon_only_converges_after_target_is_reached(self) -> None:
         shadow = ShadowState(desired_redcon=2, redcon=3)
@@ -737,12 +739,7 @@ class SnapshotRecoveryTests(unittest.TestCase):
                                 "batteryMv": 3795,
                                 "mcu": {
                                     "power": False,
-                                    "ble": {
-                                        "serviceUuid": "f6b4a000-7b32-4d2d-9f4b-4ff0a2b8f100",
-                                        "sleepCommandUuid": "f6b4a001-7b32-4d2d-9f4b-4ff0a2b8f100",
-                                        "stateReportUuid": "f6b4a002-7b32-4d2d-9f4b-4ff0a2b8f100",
-                                        "online": False,
-                                    },
+                                    "online": False,
                                 },
                                 "board": {
                                     "power": False,
@@ -764,12 +761,7 @@ class SnapshotRecoveryTests(unittest.TestCase):
                             "batteryMv": 3795,
                             "mcu": {
                                 "power": False,
-                                "ble": {
-                                    "serviceUuid": "f6b4a000-7b32-4d2d-9f4b-4ff0a2b8f100",
-                                    "sleepCommandUuid": "f6b4a001-7b32-4d2d-9f4b-4ff0a2b8f100",
-                                    "stateReportUuid": "f6b4a002-7b32-4d2d-9f4b-4ff0a2b8f100",
-                                    "online": False,
-                                },
+                                "online": False,
                             },
                         }
                     }

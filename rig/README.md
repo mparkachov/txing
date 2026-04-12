@@ -187,7 +187,7 @@ just rig::wake thing_name=my-thing region=eu-central-1
 
 `print` prints the current real AWS Thing Shadow document.
 
-`aws::shadow-reset` is the hard reset path for manual whole-device power cuts. It deletes the current txing shadow and reseeds it to the repository's clean offline baseline: `desired.redcon=null`, internal `desired.board.power=null`, `reported.redcon=4`, `reported.mcu.power=false`, `reported.mcu.ble.online=false`, `reported.board.power=false`, and `reported.board.wifi.online=false`.
+`aws::shadow-reset` is the hard reset path for manual whole-device power cuts. It deletes the current txing shadow and reseeds it to the repository's clean offline baseline: `desired.redcon=null`, internal `desired.board.power=null`, `reported.redcon=4`, `reported.mcu.power=false`, `reported.mcu.online=false`, `reported.board.power=false`, and `reported.board.wifi.online=false`.
 
 Use the registry helpers to assign txings to a rig and inspect current membership:
 
@@ -210,7 +210,7 @@ just aws::things-for-rig rig
   - `spBv1.0/<group>/DCMD/<edge>/<thing>`
 - On startup, requests the full shadow for each managed txing with `$aws/things/<thing>/shadow/get`.
 - Publishes `NBIRTH` for the Sparkplug node `rig`, but does not maintain AWS IoT shadows for `rig` or `town`.
-- Loads BLE UUIDs from `state.reported.mcu.ble.*` and validates them against the peripheral during short rendezvous sessions.
+- Starts from the built-in BLE UUID configuration and validates it against the peripheral during short rendezvous sessions.
 - Uses AWS IoT thing attribute `bleDeviceId` as the primary persisted fast-reconnect hint.
 - Keeps a scanner running while disconnected and treats disconnects as normal behavior.
 - Shares one BLE scanner across all txings assigned to the rig and allows one active BLE session at a time.
@@ -220,7 +220,7 @@ just aws::things-for-rig rig
   - advertising manufacturer data while disconnected
   - GATT reads/notifications while connected
 - Reflects each unresolved valid Sparkplug lifecycle command into `state.desired.redcon`.
-- Publishes BLE connection state at `state.reported.mcu.ble.online`:
+- Publishes BLE connection state at `state.reported.mcu.online`:
   - `true` only after sustained BLE presence has been confirmed
   - remains `true` while the device is connected or keeps advertising within the presence timeout
   - becomes `false` only after the configured presence timeout expires without a matching connection or advertisement
@@ -230,8 +230,7 @@ just aws::things-for-rig rig
   - `DDATA` when either txing Sparkplug report field changes while the device is born: `redcon` or `batteryMv`
   - `DDEATH` when BLE reachability times out
 - If UUIDs are missing/invalid or do not match GATT, enters BLE UUID search mode and discovers UUIDs from service/characteristic properties.
-- Ignores deprecated `state.desired.mcu.power` for lifecycle control.
-- Ignores deprecated shadow metadata fields `state.reported.bleDeviceId`, `state.reported.homeRig`, and `state.reported.mcu.ble.deviceId`.
+- Ignores deprecated shadow metadata fields `state.reported.bleDeviceId` and `state.reported.homeRig`.
 - For `desired.redcon=1..3`, waits for the next advertisement if disconnected, connects if needed, writes the wakeup-state command only when `reported.mcu.power=false`, and clears `desired.redcon` after `reported.redcon` reaches the requested minimum readiness.
 - For `desired.redcon=4`, first writes internal `desired.board.power=false` if the board is still up, waits for board-offline confirmation, then writes the BLE sleep command and clears `desired.redcon` after convergence.
 - Updates top-level `state.reported.batteryMv` only when the observed MCU battery value changes, so the AWS shadow metadata timestamp for `batteryMv` tracks real battery changes instead of unrelated BLE state publishes.
@@ -240,10 +239,7 @@ just aws::things-for-rig rig
   - `state.reported.redcon`
   - `state.reported.batteryMv`
   - `state.reported.mcu.power`
-  - `state.reported.mcu.ble.serviceUuid`
-  - `state.reported.mcu.ble.sleepCommandUuid`
-  - `state.reported.mcu.ble.stateReportUuid`
-  - `state.reported.mcu.ble.online`
+  - `state.reported.mcu.online`
 - Clears `state.desired.redcon` when REDCON convergence completes.
 - Clears internal `state.desired.board.power` after clean board shutdown and also on `DDEATH`.
 - Does not rely on local shadow cache files; startup state comes from AWS IoT shadow plus IoT thing attributes.

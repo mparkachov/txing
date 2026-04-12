@@ -7,7 +7,7 @@ import {
   extractDesiredRedcon,
   extractReportedBatteryMv,
   extractDesiredBoardPower,
-  extractDesiredMcuPower,
+  extractReportedMcuOnline,
   extractReportedBoardDrive,
   extractReportedBoardVideo,
   extractReportedRedcon,
@@ -160,22 +160,24 @@ describe('app model helpers', () => {
     })
   })
 
-  test('extracts desired mcu and board power from shadow state', () => {
+  test('extracts desired board power and reported mcu online from shadow state', () => {
     const shadow = {
       state: {
         desired: {
-          mcu: {
-            power: true,
-          },
           board: {
             power: false,
+          },
+        },
+        reported: {
+          mcu: {
+            online: true,
           },
         },
       },
     }
 
-    expect(extractDesiredMcuPower(shadow)).toBe(true)
     expect(extractDesiredBoardPower(shadow)).toBe(false)
+    expect(extractReportedMcuOnline(shadow)).toBe(true)
     expect(extractDesiredRedcon({ state: { desired: { redcon: 3 } } })).toBe(3)
   })
 

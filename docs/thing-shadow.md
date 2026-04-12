@@ -32,7 +32,6 @@ This document defines how shadow structure is governed across the repo.
   - `txing.state.reported.batteryMv`
 - Top-level `txing.state.desired.redcon` is owned by `rig` as the reflected cache of the latest unresolved Sparkplug lifecycle command.
 - `txing.state.desired.board.power` remains an internal rig-to-board graceful-halt actuator only. It is not a public lifecycle API.
-- `txing.state.desired.mcu.power` is deprecated and ignored by the phase-1 runtime.
 - `board.*` is owned by the device-side board control (`board`) as the source of truth for board-related shadow data.
 - Only `board` is allowed to define or evolve fields under `board`.
 - Other components must treat `board.*` as a stable contract and must not add, rename, or repurpose fields.
@@ -59,18 +58,14 @@ Phase-1 note:
 - Terminology: `power=true` means the wakeup state, and `power=false` means the sleep state with periodic `5 s` BLE rendezvous wakeups.
 - `state.desired.redcon` (`integer | null`, `1..4`) reflects the latest unresolved Sparkplug lifecycle target for `txing`. `rig` writes it when a valid `DCMD.redcon` arrives and clears it after convergence or `DDEATH`.
 - `state.desired.board.power` (`boolean | null`, update payload may temporarily use `null` to delete) is an internal rig-to-board one-shot graceful-halt request: `false` asks the board Pi to halt locally before `rig` sends the MCU sleep command for `REDCON 4`.
-- `state.desired.mcu.power` is deprecated compatibility state only. Phase-1 runtime behavior does not read or act on it.
 - `state.reported.mcu.power` (`boolean`) is the rig-confirmed MCU power mode.
+- `state.reported.mcu.online` (`boolean`) is rig-observed BLE reachability: it becomes `true` after the device has shown sustained BLE presence, and becomes `false` only after the device has not been seen for the configured presence timeout.
 - `state.reported.redcon` (`integer`, `1..4`) is the rig-derived readiness summary:
   - `4`: Green / `Cold Camp` / MCU sleep state
   - `3`: Yellow / `Torch-Up` / MCU wakeup state while the operator video path is not ready
   - `2`: Orange/Amber / `Ember Watch` / MCU wakeup state with board power, board Wi-Fi/control, and board video ready, but no active viewer
   - `1`: Red / `Hot Rig` / same as `2`, plus `reported.board.video.viewerConnected=true`
 - `state.reported.batteryMv` (`integer`, millivolts, measured MCU battery estimate observed from the MCU State Report over BLE advertising or GATT).
-- `state.reported.mcu.ble.serviceUuid` (`uuid`) is the BLE service UUID used by rig.
-- `state.reported.mcu.ble.sleepCommandUuid` (`uuid`) is the compatibility field for the BLE power-mode control characteristic UUID.
-- `state.reported.mcu.ble.stateReportUuid` (`uuid`) is the BLE read+notify characteristic UUID.
-- `state.reported.mcu.ble.online` (`boolean`) is rig-observed BLE reachability: it becomes `true` after the device has shown sustained BLE presence, and becomes `false` only after the device has not been seen for the configured presence timeout.
 - `state.reported.board.power` (`boolean`) is a best-effort board power-state flag; because the board can lose power abruptly through the MOSFET, consumers must not treat stale `true` as authoritative after a hard power cut.
 - `state.reported.board.wifi.online` (`boolean`) is the board-side Wi-Fi/control online flag while the board OS is up and the board control is running.
 - `state.reported.board.wifi.ipv4` (`ipv4 string`, update payload may temporarily use `null` to delete) is the IPv4 address chosen by the OS for the board's current IPv4 default-route interface when the board control publishes.

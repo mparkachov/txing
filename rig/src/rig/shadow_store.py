@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 DEFAULT_REPORTED_POWER = False
+DEFAULT_REPORTED_ONLINE = False
 DEFAULT_BATTERY_MV = 3750
 DEFAULT_BOARD_POWER = False
 DEFAULT_BOARD_WIFI_ONLINE = False
@@ -31,6 +32,7 @@ def default_shadow_payload() -> dict[str, Any]:
                 "batteryMv": DEFAULT_BATTERY_MV,
                 "mcu": {
                     "power": DEFAULT_REPORTED_POWER,
+                    "online": DEFAULT_REPORTED_ONLINE,
                 },
                 "board": {
                     "power": DEFAULT_BOARD_POWER,
@@ -98,13 +100,6 @@ def save_shadow(payload: dict[str, Any], path: Path = DEFAULT_SHADOW_FILE) -> No
             pass
 
 
-def get_desired_power(payload: dict[str, Any]) -> bool | None:
-    desired = payload.get("state", {}).get("desired", {})
-    mcu = desired.get("mcu", {}) if isinstance(desired, dict) else {}
-    value = mcu.get("power") if isinstance(mcu, dict) else None
-    return value if isinstance(value, bool) else None
-
-
 def get_reported_power(payload: dict[str, Any]) -> bool:
     reported = payload.get("state", {}).get("reported", {})
     mcu = reported.get("mcu", {}) if isinstance(reported, dict) else {}
@@ -170,16 +165,3 @@ def get_reported_redcon(payload: dict[str, Any]) -> int:
         return value
     return DEFAULT_REDCON
 
-
-def clear_desired_if_synced(path: Path = DEFAULT_SHADOW_FILE) -> dict[str, Any]:
-    payload = load_shadow(path)
-    desired_power = get_desired_power(payload)
-    reported_power = get_reported_power(payload)
-    if desired_power is None or desired_power != reported_power:
-        return payload
-
-    state = payload.setdefault("state", {})
-    if isinstance(state, dict):
-        state.pop("desired", None)
-    save_shadow(payload, path)
-    return payload
