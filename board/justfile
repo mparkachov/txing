@@ -21,7 +21,6 @@ aws_kvs_sdk_state_file := aws_kvs_sdk_install_dir + "/.txing-sdk-build-state"
 default_aws_kvs_sdk_repository := env_var_or_default("TXING_BOARD_AWS_KVS_WEBRTC_SDK_REPOSITORY", "https://github.com/awslabs/amazon-kinesis-video-streams-webrtc-sdk-c.git")
 default_aws_kvs_sdk_ref := env_var_or_default("TXING_BOARD_AWS_KVS_WEBRTC_SDK_REF", "main")
 default_system_ca_cert_path := env_var_or_default("TXING_BOARD_KVS_SYSTEM_CA_CERT_PATH", "/etc/ssl/certs/Starfield_Services_Root_Certificate_Authority_-_G2.pem")
-default_lgpio_workdir := env_var_or_default("TXING_BOARD_LGPIO_WORKDIR", "/tmp/txing-lgpio")
 systemd_unit := "/etc/systemd/system/board.service"
 region := ""
 aws_profile := ""
@@ -273,12 +272,14 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
     aws_shared_credentials_file="$AWS_SHARED_CREDENTIALS_FILE"
     aws_config_file="$AWS_CONFIG_FILE"
     lg_wd_override="{{lg_wd}}"
-    lg_wd="$lg_wd_override"
-    if [ -z "$lg_wd" ]; then \
-        lg_wd="${LG_WD:-{{default_lgpio_workdir}}}"; \
+    lg_wd_configured="$lg_wd_override"
+    if [ -z "$lg_wd_configured" ]; then \
+        lg_wd_configured="${LG_WD:-}"; \
     fi; \
     sudo systemctl enable NetworkManager-wait-online.service
-    sudo install -d -m 0700 "$lg_wd"
+    if [ -n "$lg_wd_configured" ]; then \
+        sudo install -d -m 0700 "$lg_wd_configured"; \
+    fi; \
     service_env=(); \
     if [ -n "{{thing_name}}" ]; then \
         service_env+=("Environment=\"THING_NAME={{thing_name}}\""); \

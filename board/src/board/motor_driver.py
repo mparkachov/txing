@@ -5,6 +5,7 @@ import logging
 import os
 from pathlib import Path
 import sys
+import tempfile
 import time
 from typing import Any, Callable
 
@@ -24,7 +25,7 @@ DEFAULT_DRIVE_LEFT_INVERTED = False
 DEFAULT_DRIVE_RIGHT_INVERTED = False
 DEFAULT_DRIVE_PERCENT_MAX_SPEED = 100
 DEFAULT_PWM_SYSFS_ROOT = Path("/sys/class/pwm")
-DEFAULT_LGPIO_WORKDIR = Path("/tmp/txing-lgpio")
+DEFAULT_LGPIO_WORKDIR_PREFIX = "txing-lgpio-"
 
 ENV_DRIVE_RAW_MAX_SPEED = "BOARD_DRIVE_RAW_MAX_SPEED"
 ENV_DRIVE_CMD_RAW_MIN_SPEED = "BOARD_DRIVE_CMD_RAW_MIN_SPEED"
@@ -215,6 +216,8 @@ class _HardwareResources:
 
 
 class Drv8835MotorDriver:
+    _auto_lgpio_workdir: tempfile.TemporaryDirectory[str] | None = None
+
     def __init__(
         self,
         *,
@@ -298,7 +301,11 @@ class Drv8835MotorDriver:
         if configured:
             workdir = Path(configured)
         else:
-            workdir = DEFAULT_LGPIO_WORKDIR
+            auto_workdir = Drv8835MotorDriver._auto_lgpio_workdir
+            if auto_workdir is None:
+                auto_workdir = tempfile.TemporaryDirectory(prefix=DEFAULT_LGPIO_WORKDIR_PREFIX)
+                Drv8835MotorDriver._auto_lgpio_workdir = auto_workdir
+            workdir = Path(auto_workdir.name)
             os.environ["LG_WD"] = str(workdir)
         try:
             workdir.mkdir(parents=True, exist_ok=True)

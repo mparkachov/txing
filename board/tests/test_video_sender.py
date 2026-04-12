@@ -11,6 +11,23 @@ from aws.auth import AwsCredentialSnapshot
 
 
 class VideoSenderTests(unittest.TestCase):
+    def test_native_sender_uses_in_memory_signaling_cache(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[1]
+            / "kvs_master"
+            / "src"
+            / "kvs_session_real.cpp"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            "SIGNALING_API_CALL_CACHE_TYPE_DESCRIBE_GETENDPOINT",
+            source,
+        )
+        self.assertNotIn(
+            "channel_info_.cachingPolicy = SIGNALING_API_CALL_CACHE_TYPE_FILE;",
+            source,
+        )
+
     def test_ensure_aws_profile_falls_back_to_aws_txing_profile(self) -> None:
         with patch.dict(
             os.environ,

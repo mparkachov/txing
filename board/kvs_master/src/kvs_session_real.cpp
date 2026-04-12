@@ -452,7 +452,10 @@ class RealKvsSession final : public KvsSession {
         channel_info_.pRegion = const_cast<PCHAR>(region_.c_str());
         channel_info_.channelType = SIGNALING_CHANNEL_TYPE_SINGLE_MASTER;
         channel_info_.channelRoleType = SIGNALING_CHANNEL_ROLE_TYPE_MASTER;
-        channel_info_.cachingPolicy = SIGNALING_API_CALL_CACHE_TYPE_FILE;
+        // Keep signaling endpoint discovery cached for this process only.
+        // Avoid the SDK default file cache, which would otherwise create
+        // ./.SignalingCache_v1 in the current working directory.
+        channel_info_.cachingPolicy = SIGNALING_API_CALL_CACHE_TYPE_DESCRIBE_GETENDPOINT;
         channel_info_.cachingPeriod = SIGNALING_API_CALL_CACHE_TTL_SENTINEL_VALUE;
         channel_info_.asyncIceServerConfig = TRUE;
         channel_info_.retry = TRUE;

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 from board.motor_driver import (
     DEFAULT_DRIVE_CMD_RAW_MAX_SPEED,
@@ -270,6 +272,24 @@ class MotorDriverTests(unittest.TestCase):
             self.assertEqual((chip_path / "pwm0" / "enable").read_text(encoding="utf-8").strip(), "0")
             self.assertEqual((chip_path / "pwm0" / "period").read_text(encoding="utf-8").strip(), "50000")
             self.assertEqual((chip_path / "pwm0" / "duty_cycle").read_text(encoding="utf-8").strip(), "0")
+
+    def test_ensure_lgpio_workdir_creates_tempdir_when_unset(self) -> None:
+        original_workdir = Drv8835MotorDriver._auto_lgpio_workdir
+        created_workdir = None
+        try:
+            Drv8835MotorDriver._auto_lgpio_workdir = None
+            with patch.dict(os.environ, {}, clear=True):
+                Drv8835MotorDriver._ensure_lgpio_workdir()
+                created_workdir = Drv8835MotorDriver._auto_lgpio_workdir
+                self.assertIsNotNone(created_workdir)
+                self.assertIn("LG_WD", os.environ)
+                workdir = Path(os.environ["LG_WD"])
+                self.assertTrue(workdir.is_dir())
+                self.assertTrue(workdir.name.startswith("txing-lgpio-"))
+        finally:
+            if created_workdir is not None and created_workdir is not original_workdir:
+                created_workdir.cleanup()
+            Drv8835MotorDriver._auto_lgpio_workdir = original_workdir
 
 
 if __name__ == "__main__":
