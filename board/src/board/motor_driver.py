@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
+import os
 from pathlib import Path
 import sys
 import time
@@ -21,6 +22,7 @@ DEFAULT_DRIVE_LEFT_INVERTED = False
 DEFAULT_DRIVE_RIGHT_INVERTED = False
 DEFAULT_DRIVE_PERCENT_MAX_SPEED = 100
 DEFAULT_PWM_SYSFS_ROOT = Path("/sys/class/pwm")
+DEFAULT_LGPIO_WORKDIR = Path("/tmp/txing-lgpio")
 
 ENV_DRIVE_RAW_MAX_SPEED = "BOARD_DRIVE_RAW_MAX_SPEED"
 ENV_DRIVE_PWM_HZ = "BOARD_DRIVE_PWM_HZ"
@@ -251,7 +253,21 @@ class Drv8835MotorDriver:
             pass
 
     @staticmethod
+    def _ensure_lgpio_workdir() -> None:
+        configured = os.environ.get("LG_WD", "").strip()
+        if configured:
+            workdir = Path(configured)
+        else:
+            workdir = DEFAULT_LGPIO_WORKDIR
+            os.environ["LG_WD"] = str(workdir)
+        try:
+            workdir.mkdir(parents=True, exist_ok=True)
+        except OSError as err:
+            raise RuntimeError(f"failed to create LGPIO workdir {workdir}: {err}") from err
+
+    @staticmethod
     def _import_gpiozero_lgpio() -> tuple[type[Any], type[Any]]:
+        Drv8835MotorDriver._ensure_lgpio_workdir()
         try:
             from gpiozero import OutputDevice
             from gpiozero.pins.lgpio import LGPIOFactory

@@ -131,6 +131,8 @@ dtoverlay=pwm-2chan,pin=12,func=4,pin2=13,func2=4
 
 The board runtime and raw motor test helper must run as `root`.
 
+`txing-board` now sets `LG_WD=/tmp/txing-lgpio` by default before initializing `gpiozero`/`lgpio` so notification FIFO files are created in a stable writable location under systemd. If needed, override with `LG_WD=/some/writable/path`.
+
 ## Manual Motor Bring-Up
 
 Use raw DRV8835 units only for this helper (`[-480, 480]`, where `240` is approximately 50% duty):
@@ -363,7 +365,7 @@ For TLS trust on the KVS signaling path, `board-video-sender` strips inherited C
 
 ### 6. Verify the `txing` Runtime Profile
 
-The txing runtime and the supervised sender both use the standard AWS SDK chain. The generated service unit loads `config/aws.env` via `EnvironmentFile=`, so `AWS_REGION`, `AWS_TXING_PROFILE`, `AWS_SHARED_CREDENTIALS_FILE`, `AWS_CONFIG_FILE`, `THING_NAME`, `SCHEMA_FILE`, `BOARD_VIDEO_VIEWER_URL`, `BOARD_VIDEO_REGION`, `BOARD_VIDEO_CHANNEL_NAME`, `BOARD_VIDEO_SENDER_COMMAND`, and `KVS_DUALSTACK_ENDPOINTS` all come from the shared project-local config by default.
+The txing runtime and the supervised sender both use the standard AWS SDK chain. The generated service unit loads `config/aws.env` via `EnvironmentFile=`, so `AWS_REGION`, `AWS_TXING_PROFILE`, `AWS_SHARED_CREDENTIALS_FILE`, `AWS_CONFIG_FILE`, `THING_NAME`, `SCHEMA_FILE`, `BOARD_VIDEO_VIEWER_URL`, `BOARD_VIDEO_REGION`, `BOARD_VIDEO_CHANNEL_NAME`, `BOARD_VIDEO_SENDER_COMMAND`, and `KVS_DUALSTACK_ENDPOINTS` all come from the shared project-local config by default. It also sets `LG_WD` (default `/tmp/txing-lgpio`) for the `lgpio` notify FIFO workspace.
 
 Verify the intended txing identity before installing the service:
 
@@ -372,7 +374,7 @@ cd /home/user/txing
 just aws-txing sts get-caller-identity
 ```
 
-If you want the install recipe to use credential files outside the checkout, pass `aws_shared_credentials_file=` and `aws_config_file=` directly to `just board::install-service`.
+If you want the install recipe to use credential files outside the checkout, pass `aws_shared_credentials_file=` and `aws_config_file=` directly to `just board::install-service`. To override the lgpio workspace path, pass `lg_wd=/some/writable/path`.
 
 ### 7. Build and Smoke Test
 
@@ -450,6 +452,7 @@ The generated unit:
 - waits for `systemd-time-wait-sync.service` / `time-sync.target` before startup
 - runs `board` as `root`
 - sets `WorkingDirectory=/home/.../txing` and loads `config/aws.env` through `EnvironmentFile=`
+- sets `LG_WD=/tmp/txing-lgpio` by default and creates that directory during install (override with `lg_wd=...`)
 - only adds `Environment=` overrides for board or AWS values when you pass explicit `just board::install-service ...` overrides
 - starts `board` with `ExecStart=/home/.../board/.venv/bin/board --heartbeat-seconds 60`
 

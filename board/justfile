@@ -21,6 +21,7 @@ aws_kvs_sdk_state_file := aws_kvs_sdk_install_dir + "/.txing-sdk-build-state"
 default_aws_kvs_sdk_repository := env_var_or_default("TXING_BOARD_AWS_KVS_WEBRTC_SDK_REPOSITORY", "https://github.com/awslabs/amazon-kinesis-video-streams-webrtc-sdk-c.git")
 default_aws_kvs_sdk_ref := env_var_or_default("TXING_BOARD_AWS_KVS_WEBRTC_SDK_REF", "main")
 default_system_ca_cert_path := env_var_or_default("TXING_BOARD_KVS_SYSTEM_CA_CERT_PATH", "/etc/ssl/certs/Starfield_Services_Root_Certificate_Authority_-_G2.pem")
+default_lgpio_workdir := env_var_or_default("TXING_BOARD_LGPIO_WORKDIR", "/tmp/txing-lgpio")
 systemd_unit := "/etc/systemd/system/board.service"
 region := ""
 aws_profile := ""
@@ -242,7 +243,7 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
     set -euo pipefail
     just motor-raw left=0 right=0 duration=0.25 region="{{region}}" aws_profile="{{aws_profile}}"
 
-@install-service video_viewer_url='' video_sender_command='' thing_name='' schema_file='' video_region='' video_channel_name='' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file aws_config_file=aws_config_file:
+@install-service video_viewer_url='' video_sender_command='' thing_name='' schema_file='' video_region='' video_channel_name='' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file aws_config_file=aws_config_file lg_wd='':
     #!/usr/bin/env bash
     set -euo pipefail
     test -x "{{built_board}}" || { \
@@ -262,6 +263,7 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
     video_region="$BOARD_VIDEO_REGION"
     video_channel_name="$BOARD_VIDEO_CHANNEL_NAME"
     video_sender_command="$BOARD_VIDEO_SENDER_COMMAND"
+    lg_wd="${LG_WD:-{{default_lgpio_workdir}}}"
     if [ -n "{{thing_name}}" ]; then \
         thing_name="{{thing_name}}"; \
     fi; \
@@ -280,7 +282,11 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
     if [ -n "{{video_sender_command}}" ]; then \
         video_sender_command="{{video_sender_command}}"; \
     fi; \
+    if [ -n "{{lg_wd}}" ]; then \
+        lg_wd="{{lg_wd}}"; \
+    fi; \
     sudo systemctl enable NetworkManager-wait-online.service
+    sudo install -d -m 0700 "$lg_wd"
     service_env=(); \
     if [ -n "{{thing_name}}" ]; then \
         service_env+=("Environment=\"THING_NAME=$thing_name\""); \
@@ -311,6 +317,9 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
     fi; \
     if [ -n "{{aws_config_file}}" ] && [ -n "$aws_config_file" ]; then \
         service_env+=("Environment=\"AWS_CONFIG_FILE=$aws_config_file\""); \
+    fi; \
+    if [ -n "$lg_wd" ]; then \
+        service_env+=("Environment=\"LG_WD=$lg_wd\""); \
     fi; \
     { \
         printf '%s\n' \

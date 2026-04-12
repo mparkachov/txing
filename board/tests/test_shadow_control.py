@@ -526,6 +526,9 @@ class ShadowControlContractTests(unittest.TestCase):
         self.assertIn('AWS_SHARED_CREDENTIALS_FILE=$aws_shared_credentials_file', justfile)
         self.assertIn('[ -n "{{aws_config_file}}" ]', justfile)
         self.assertIn('AWS_CONFIG_FILE=$aws_config_file', justfile)
+        self.assertIn('default_lgpio_workdir := env_var_or_default("TXING_BOARD_LGPIO_WORKDIR", "/tmp/txing-lgpio")', justfile)
+        self.assertIn('lg_wd="${LG_WD:-{{default_lgpio_workdir}}}"', justfile)
+        self.assertIn('LG_WD=$lg_wd', justfile)
 
     def test_repo_root_detection_uses_board_working_directory(self) -> None:
         with TemporaryDirectory() as tmpdir:
