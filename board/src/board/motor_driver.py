@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import logging
 from pathlib import Path
+import sys
 import time
 from typing import Any, Callable
 
@@ -250,6 +251,36 @@ class Drv8835MotorDriver:
             pass
 
     @staticmethod
+    def _import_gpiozero_lgpio() -> tuple[type[Any], type[Any]]:
+        try:
+            from gpiozero import OutputDevice
+            from gpiozero.pins.lgpio import LGPIOFactory
+            return OutputDevice, LGPIOFactory
+        except ImportError as initial_err:
+            # On Raspberry Pi OS, python3-lgpio is commonly installed system-wide
+            # outside project venvs. Add dist-packages paths and retry before failing.
+            version = f"{sys.version_info.major}.{sys.version_info.minor}"
+            for candidate in (
+                Path(f"/usr/lib/python{version}/dist-packages"),
+                Path("/usr/lib/python3/dist-packages"),
+                Path(f"/usr/local/lib/python{version}/dist-packages"),
+                Path("/usr/local/lib/python3/dist-packages"),
+            ):
+                if candidate.is_dir():
+                    candidate_text = str(candidate)
+                    if candidate_text not in sys.path:
+                        sys.path.append(candidate_text)
+            try:
+                from gpiozero import OutputDevice
+                from gpiozero.pins.lgpio import LGPIOFactory
+                return OutputDevice, LGPIOFactory
+            except ImportError as retry_err:
+                raise RuntimeError(
+                    "LGPIO backend is unavailable. Install distro package `python3-lgpio` "
+                    "or provide a Python environment with `lgpio` support."
+                ) from retry_err
+
+    @staticmethod
     def _create_hardware_resources(
         *,
         config: DriveHardwareConfig,
@@ -276,8 +307,7 @@ class Drv8835MotorDriver:
                 on_export=pwm_on_export,
             )
 
-            from gpiozero import OutputDevice
-            from gpiozero.pins.lgpio import LGPIOFactory
+            OutputDevice, LGPIOFactory = Drv8835MotorDriver._import_gpiozero_lgpio()
 
             pin_factory = LGPIOFactory(chip=config.gpio_chip)
             left_direction = OutputDevice(

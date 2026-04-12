@@ -252,7 +252,6 @@ sudo apt install -y \
   pipx \
   pkg-config \
   python3-lgpio \
-  swig \
   unzip \
   zlib1g-dev
 sudo update-ca-certificates
