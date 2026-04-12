@@ -92,18 +92,69 @@ Temporary phase constants currently hardcoded in the board control:
 - `MAX_WHEEL_LINEAR_SPEED_MPS = 0.50`
 - `MAX_SPEED = 100`
 
-These constants are provisional for this phase. `MAX_SPEED=100` currently means signed percent effort only; mapping that effort to hardware-specific motor-driver units must be added in a later follow-up.
+`txing-board` keeps `MAX_SPEED=100` as the reported/runtime percent-effort contract and maps that scale to the DRV8835 raw range `[-480, 480]` before writing hardware.
+
+Default DRV8835 hardware settings in the board runtime:
+
+- `BOARD_DRIVE_RAW_MAX_SPEED=480`
+- `BOARD_DRIVE_PWM_HZ=20000`
+- `BOARD_DRIVE_PWM_CHIP=0`
+- `BOARD_DRIVE_LEFT_PWM_CHANNEL=0`
+- `BOARD_DRIVE_RIGHT_PWM_CHANNEL=1`
+- `BOARD_DRIVE_GPIO_CHIP=0`
+- `BOARD_DRIVE_LEFT_DIR_GPIO=5`
+- `BOARD_DRIVE_RIGHT_DIR_GPIO=6`
+- `BOARD_DRIVE_LEFT_INVERTED=false`
+- `BOARD_DRIVE_RIGHT_INVERTED=false`
+
+Default stock Pololu shield mapping in this repo:
+
+- PWM speed outputs: GPIO12 (left), GPIO13 (right)
+- Direction outputs: GPIO5 (left), GPIO6 (right)
 
 ## Prerequisites
 
 - Raspberry Pi OS Lite 64-bit with Python `3.12+` available as `python3`
 - `git`, `just`, `pipx`, `uv`, `cmake`, `pkg-config`, and a native C/C++ toolchain
+- `python3-lgpio` available on the board image for the `gpiozero` LGPIO pin factory
 - native build packages for the AWS WebRTC C SDK dependencies: `build-essential`, `curl`, `libssl-dev`, `libcurl4-openssl-dev`, `liblog4cplus-dev`, `libsrtp2-dev`, `libusrsctp-dev`, `libwebsockets-dev`, and `zlib1g-dev`
 - `libcamera-dev` for the in-process camera capture path
 - `ca-certificates` for general HTTPS tooling on the board
 - project-local AWS config files for the `town` source profile and the `txing` runtime profile
 - AWS credentials for the board video sender with permission to use the KVS signaling channel as master
 - a working Raspberry Pi camera stack with the modern `libcamera` pipeline and the Pi V4L2 H.264 encoder available
+- hardware PWM enabled for GPIO12/GPIO13 with this line in `/boot/firmware/config.txt`:
+
+```ini
+dtoverlay=pwm-2chan,pin=12,func=4,pin2=13,func2=4
+```
+
+The board runtime and raw motor test helper must run as `root`.
+
+## Manual Motor Bring-Up
+
+Use raw DRV8835 units only for this helper (`[-480, 480]`, where `240` is approximately 50% duty):
+
+```bash
+cd /home/user/txing
+sudo systemctl stop board
+just board::motor-raw left=240 right=240
+```
+
+Timed run (auto-stop after one second):
+
+```bash
+cd /home/user/txing
+just board::motor-raw left=240 right=240 duration=1
+```
+
+Explicit stop helper:
+
+```bash
+cd /home/user/txing
+just board::motor-stop
+sudo systemctl start board
+```
 
 ## Fresh Setup From Raspberry Pi Imager
 
@@ -200,6 +251,8 @@ sudo apt install -y \
   make \
   pipx \
   pkg-config \
+  python3-lgpio \
+  swig \
   unzip \
   zlib1g-dev
 sudo update-ca-certificates

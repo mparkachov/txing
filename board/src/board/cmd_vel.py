@@ -177,6 +177,9 @@ class CmdVelController:
         if self._watchdog_thread is not None:
             self._watchdog_thread.join(timeout=max(1.0, self._watchdog_timeout_seconds))
         self.stop(reason="cmd_vel controller closed", force=True)
+        close_method = getattr(self._motor_driver, "close", None)
+        if callable(close_method):
+            close_method()
         with self._lock:
             self._closed = True
 
@@ -238,12 +241,10 @@ class CmdVelController:
         with self._lock:
             if self._closed:
                 return
-            state_changed = self._last_speeds != (left_speed, right_speed)
+            previous_speeds = self._last_speeds
+            state_changed = previous_speeds != (left_speed, right_speed)
             if not force and not state_changed:
                 return
-            self._last_speeds = (left_speed, right_speed)
-            if state_changed:
-                self._drive_state_sequence += 1
 
         LOGGER.debug(
             "Applying tank speeds left=%s right=%s reason=%s",
@@ -251,7 +252,37 @@ class CmdVelController:
             right_speed,
             reason,
         )
-        self._motor_driver.setSpeeds(left_speed, right_speed)
+        try:
+            self._motor_driver.setSpeeds(left_speed, right_speed)
+        except Exception as err:
+            LOGGER.error(
+                "Failed to apply tank speeds left=%s right=%s reason=%s error=%s",
+                left_speed,
+                right_speed,
+                reason,
+                err,
+            )
+            emergency_stop_applied = False
+            try:
+                self._motor_driver.setSpeeds(0, 0)
+                emergency_stop_applied = True
+            except Exception as stop_err:
+                LOGGER.error("Failed to apply emergency stop after motor error: %s", stop_err)
+            if emergency_stop_applied:
+                with self._lock:
+                    if self._closed:
+                        return
+                    if self._last_speeds != (0, 0):
+                        self._last_speeds = (0, 0)
+                        self._drive_state_sequence += 1
+            return
+
+        with self._lock:
+            if self._closed:
+                return
+            if self._last_speeds != (left_speed, right_speed):
+                self._last_speeds = (left_speed, right_speed)
+                self._drive_state_sequence += 1
 
     def _run_watchdog(self) -> None:
         while not self._stop_event.wait(self._watchdog_poll_interval):

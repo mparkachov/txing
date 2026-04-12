@@ -21,7 +21,33 @@ import jsonschema
 from aws.auth import AwsRuntime, build_aws_runtime, ensure_aws_profile, resolve_aws_region
 from aws.mqtt import AwsIotWebsocketSyncConnection, AwsMqttConnectionConfig
 
-from .cmd_vel import CmdVelController, DriveState, build_cmd_vel_topic
+from .cmd_vel import CmdVelController, DriveState, MAX_SPEED, build_cmd_vel_topic
+from .motor_driver import (
+    DEFAULT_DRIVE_GPIO_CHIP,
+    DEFAULT_DRIVE_LEFT_DIR_GPIO,
+    DEFAULT_DRIVE_LEFT_INVERTED,
+    DEFAULT_DRIVE_LEFT_PWM_CHANNEL,
+    DEFAULT_DRIVE_PWM_CHIP,
+    DEFAULT_DRIVE_PWM_HZ,
+    DEFAULT_DRIVE_RAW_MAX_SPEED,
+    DEFAULT_DRIVE_RIGHT_DIR_GPIO,
+    DEFAULT_DRIVE_RIGHT_INVERTED,
+    DEFAULT_DRIVE_RIGHT_PWM_CHANNEL,
+    Drv8835MotorDriver,
+    DriveHardwareConfig,
+    ENV_DRIVE_GPIO_CHIP,
+    ENV_DRIVE_LEFT_DIR_GPIO,
+    ENV_DRIVE_LEFT_INVERTED,
+    ENV_DRIVE_LEFT_PWM_CHANNEL,
+    ENV_DRIVE_PWM_CHIP,
+    ENV_DRIVE_PWM_HZ,
+    ENV_DRIVE_RAW_MAX_SPEED,
+    ENV_DRIVE_RIGHT_DIR_GPIO,
+    ENV_DRIVE_RIGHT_INVERTED,
+    ENV_DRIVE_RIGHT_PWM_CHANNEL,
+    PercentMotorDriverAdapter,
+    parse_bool_text,
+)
 from .shadow_store import DEFAULT_SHADOW_FILE, save_shadow
 from .video_sender import (
     DEFAULT_SENDER_COMMAND_ENV,
@@ -123,6 +149,43 @@ def _env_path(*names: str, default: Path) -> Path:
     return resolved if resolved is not None else default
 
 
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return int(raw.strip())
+    except ValueError as err:
+        raise RuntimeError(f"invalid integer in ${name}: {raw!r}") from err
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return parse_bool_text(raw, option_name=f"${name}")
+    except ValueError as err:
+        raise RuntimeError(str(err)) from err
+
+
+def _parse_bool_arg(value: str) -> bool:
+    try:
+        return parse_bool_text(value, option_name="boolean option")
+    except ValueError as err:
+        raise argparse.ArgumentTypeError(str(err)) from err
+
+
+def _positive_int(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as err:
+        raise argparse.ArgumentTypeError(f"expected integer value, got {value!r}") from err
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("value must be greater than 0")
+    return parsed
+
+
 @dataclass(frozen=True)
 class ControlConfig:
     thing_name: str
@@ -144,6 +207,16 @@ class ControlConfig:
     publish_timeout: float
     reconnect_delay: float
     time_sync_timeout_seconds: float
+    drive_raw_max_speed: int
+    drive_pwm_hz: int
+    drive_pwm_chip: int
+    drive_left_pwm_channel: int
+    drive_right_pwm_channel: int
+    drive_gpio_chip: int
+    drive_left_dir_gpio: int
+    drive_right_dir_gpio: int
+    drive_left_inverted: bool
+    drive_right_inverted: bool
     halt_command: tuple[str, ...]
     once: bool
 
@@ -617,6 +690,87 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--drive-raw-max-speed",
+        type=_positive_int,
+        default=_env_int(ENV_DRIVE_RAW_MAX_SPEED, DEFAULT_DRIVE_RAW_MAX_SPEED),
+        help=(
+            "Raw DRV8835 max speed used behind cmd_vel percent mapping "
+            f"(default: ${ENV_DRIVE_RAW_MAX_SPEED} or {DEFAULT_DRIVE_RAW_MAX_SPEED})"
+        ),
+    )
+    parser.add_argument(
+        "--drive-pwm-hz",
+        type=_positive_int,
+        default=_env_int(ENV_DRIVE_PWM_HZ, DEFAULT_DRIVE_PWM_HZ),
+        help=f"Motor PWM frequency in Hz (default: ${ENV_DRIVE_PWM_HZ} or {DEFAULT_DRIVE_PWM_HZ})",
+    )
+    parser.add_argument(
+        "--drive-pwm-chip",
+        type=int,
+        default=_env_int(ENV_DRIVE_PWM_CHIP, DEFAULT_DRIVE_PWM_CHIP),
+        help=f"PWM chip index for motor speed outputs (default: ${ENV_DRIVE_PWM_CHIP} or {DEFAULT_DRIVE_PWM_CHIP})",
+    )
+    parser.add_argument(
+        "--drive-left-pwm-channel",
+        type=int,
+        default=_env_int(ENV_DRIVE_LEFT_PWM_CHANNEL, DEFAULT_DRIVE_LEFT_PWM_CHANNEL),
+        help=(
+            f"Left motor PWM channel index (default: ${ENV_DRIVE_LEFT_PWM_CHANNEL} "
+            f"or {DEFAULT_DRIVE_LEFT_PWM_CHANNEL})"
+        ),
+    )
+    parser.add_argument(
+        "--drive-right-pwm-channel",
+        type=int,
+        default=_env_int(ENV_DRIVE_RIGHT_PWM_CHANNEL, DEFAULT_DRIVE_RIGHT_PWM_CHANNEL),
+        help=(
+            f"Right motor PWM channel index (default: ${ENV_DRIVE_RIGHT_PWM_CHANNEL} "
+            f"or {DEFAULT_DRIVE_RIGHT_PWM_CHANNEL})"
+        ),
+    )
+    parser.add_argument(
+        "--drive-gpio-chip",
+        type=int,
+        default=_env_int(ENV_DRIVE_GPIO_CHIP, DEFAULT_DRIVE_GPIO_CHIP),
+        help=f"GPIO chip index for motor direction lines (default: ${ENV_DRIVE_GPIO_CHIP} or {DEFAULT_DRIVE_GPIO_CHIP})",
+    )
+    parser.add_argument(
+        "--drive-left-dir-gpio",
+        type=int,
+        default=_env_int(ENV_DRIVE_LEFT_DIR_GPIO, DEFAULT_DRIVE_LEFT_DIR_GPIO),
+        help=(
+            f"Left motor direction GPIO pin (default: ${ENV_DRIVE_LEFT_DIR_GPIO} "
+            f"or {DEFAULT_DRIVE_LEFT_DIR_GPIO})"
+        ),
+    )
+    parser.add_argument(
+        "--drive-right-dir-gpio",
+        type=int,
+        default=_env_int(ENV_DRIVE_RIGHT_DIR_GPIO, DEFAULT_DRIVE_RIGHT_DIR_GPIO),
+        help=(
+            f"Right motor direction GPIO pin (default: ${ENV_DRIVE_RIGHT_DIR_GPIO} "
+            f"or {DEFAULT_DRIVE_RIGHT_DIR_GPIO})"
+        ),
+    )
+    parser.add_argument(
+        "--drive-left-inverted",
+        type=_parse_bool_arg,
+        default=_env_bool(ENV_DRIVE_LEFT_INVERTED, DEFAULT_DRIVE_LEFT_INVERTED),
+        help=(
+            f"Whether to invert left motor direction (default: ${ENV_DRIVE_LEFT_INVERTED} "
+            f"or {str(DEFAULT_DRIVE_LEFT_INVERTED).lower()})"
+        ),
+    )
+    parser.add_argument(
+        "--drive-right-inverted",
+        type=_parse_bool_arg,
+        default=_env_bool(ENV_DRIVE_RIGHT_INVERTED, DEFAULT_DRIVE_RIGHT_INVERTED),
+        help=(
+            f"Whether to invert right motor direction (default: ${ENV_DRIVE_RIGHT_INVERTED} "
+            f"or {str(DEFAULT_DRIVE_RIGHT_INVERTED).lower()})"
+        ),
+    )
+    parser.add_argument(
         "--halt-command",
         nargs="+",
         default=list(DEFAULT_HALT_COMMAND),
@@ -1011,6 +1165,28 @@ def _publish_board_report(
     return accepted
 
 
+def _build_cmd_vel_motor_driver(config: ControlConfig) -> PercentMotorDriverAdapter:
+    raw_driver = Drv8835MotorDriver(
+        config=DriveHardwareConfig(
+            raw_max_speed=config.drive_raw_max_speed,
+            pwm_hz=config.drive_pwm_hz,
+            pwm_chip=config.drive_pwm_chip,
+            left_pwm_channel=config.drive_left_pwm_channel,
+            right_pwm_channel=config.drive_right_pwm_channel,
+            gpio_chip=config.drive_gpio_chip,
+            left_dir_gpio=config.drive_left_dir_gpio,
+            right_dir_gpio=config.drive_right_dir_gpio,
+            left_inverted=config.drive_left_inverted,
+            right_inverted=config.drive_right_inverted,
+        )
+    )
+    return PercentMotorDriverAdapter(
+        raw_motor_driver=raw_driver,
+        percent_max_speed=MAX_SPEED,
+        raw_max_speed=config.drive_raw_max_speed,
+    )
+
+
 def _request_system_halt(command: tuple[str, ...]) -> None:
     command_text = shlex.join(command)
     LOGGER.warning("Requesting system halt via %s", command_text)
@@ -1021,10 +1197,9 @@ def _request_system_halt(command: tuple[str, ...]) -> None:
 
 
 def main() -> None:
-    args = _parse_args()
-    _configure_logging(args.debug)
-
     try:
+        args = _parse_args()
+        _configure_logging(args.debug)
         ensure_aws_profile("AWS_TXING_PROFILE")
         aws_region = resolve_aws_region()
         if not aws_region:
@@ -1074,11 +1249,22 @@ def main() -> None:
             publish_timeout=args.publish_timeout,
             reconnect_delay=args.reconnect_delay,
             time_sync_timeout_seconds=args.time_sync_timeout_seconds,
+            drive_raw_max_speed=args.drive_raw_max_speed,
+            drive_pwm_hz=args.drive_pwm_hz,
+            drive_pwm_chip=args.drive_pwm_chip,
+            drive_left_pwm_channel=args.drive_left_pwm_channel,
+            drive_right_pwm_channel=args.drive_right_pwm_channel,
+            drive_gpio_chip=args.drive_gpio_chip,
+            drive_left_dir_gpio=args.drive_left_dir_gpio,
+            drive_right_dir_gpio=args.drive_right_dir_gpio,
+            drive_left_inverted=args.drive_left_inverted,
+            drive_right_inverted=args.drive_right_inverted,
             halt_command=tuple(args.halt_command),
             once=args.once,
         )
         validator = _load_validator(config.schema_file)
-    except RuntimeError as err:
+        motor_driver = _build_cmd_vel_motor_driver(config)
+    except (RuntimeError, ValueError) as err:
         print(f"board start failed: {err}", file=sys.stderr)
         raise SystemExit(2) from err
 
@@ -1098,7 +1284,10 @@ def main() -> None:
         initial_addresses.ipv6 or "-",
     )
 
-    cmd_vel_controller = CmdVelController(thing_name=config.thing_name)
+    cmd_vel_controller = CmdVelController(
+        thing_name=config.thing_name,
+        motor_driver=motor_driver,
+    )
     cmd_vel_controller.start()
     shadow_client = AwsShadowClient(
         config,

@@ -27,6 +27,20 @@ class _FakeMotorDriver:
         self.calls.append((m1_speed, m2_speed))
 
 
+class _FlakyMotorDriver:
+    MAX_SPEED = MAX_SPEED
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[int, int]] = []
+        self._first_non_zero_fails = True
+
+    def setSpeeds(self, m1_speed: int, m2_speed: int) -> None:
+        self.calls.append((m1_speed, m2_speed))
+        if self._first_non_zero_fails and (m1_speed, m2_speed) != (0, 0):
+            self._first_non_zero_fails = False
+            raise RuntimeError("simulated motor write failure")
+
+
 class CmdVelContractTests(unittest.TestCase):
     def test_builds_topic(self) -> None:
         self.assertEqual(build_cmd_vel_topic("txing"), "txing/board/cmd_vel")
@@ -211,3 +225,22 @@ class CmdVelContractTests(unittest.TestCase):
             self.assertEqual(controller.get_drive_state(), DriveState(0, 0, 2))
         finally:
             controller.close()
+
+    def test_controller_rolls_back_to_stopped_state_when_motor_write_fails(self) -> None:
+        motor_driver = _FlakyMotorDriver()
+        controller = CmdVelController(
+            thing_name="txing",
+            motor_driver=motor_driver,
+        )
+
+        self.assertEqual(controller.get_drive_state(), DriveState(0, 0, 0))
+        controller.handle_message(
+            {
+                "linear": {"x": 0.2, "y": 0, "z": 0},
+                "angular": {"x": 0, "y": 0, "z": 0},
+            }
+        )
+        self.assertEqual(controller.get_drive_state(), DriveState(0, 0, 0))
+        self.assertGreaterEqual(len(motor_driver.calls), 2)
+        self.assertEqual(motor_driver.calls[0], (40, 40))
+        self.assertEqual(motor_driver.calls[1], (0, 0))

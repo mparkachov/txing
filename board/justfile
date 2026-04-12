@@ -4,6 +4,7 @@ board_dir := source_directory()
 python_executable := "python3"
 built_board := board_dir + "/.venv/bin/board"
 built_board_video_sender := board_dir + "/.venv/bin/board-video-sender"
+built_board_motor_raw := board_dir + "/.venv/bin/board-motor-raw"
 project_root := board_dir + "/.."
 root_justfile := project_root + "/justfile"
 native_kvs_master_dir := board_dir + "/kvs_master"
@@ -34,6 +35,7 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
     cd "{{board_dir}}" && uv sync --frozen --no-editable --compile-bytecode --python "{{python_executable}}" --no-managed-python --no-python-downloads --refresh-package board --reinstall-package board --refresh-package aws --reinstall-package aws
     test -x "{{built_board}}"
     test -x "{{built_board_video_sender}}"
+    test -x "{{built_board_motor_raw}}"
 
 [positional-arguments]
 @aws *args:
@@ -216,6 +218,29 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
     set -euo pipefail
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env txing "{{region}}" "{{aws_profile}}")"
     cd "{{board_dir}}" && uv run board --once
+
+@motor-raw left='' right='' duration='' region=region aws_profile=aws_profile:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    test -x "{{built_board_motor_raw}}" || { \
+        echo "Missing built board-motor-raw executable at {{built_board_motor_raw}}. Run 'just build' first." >&2; \
+        exit 1; \
+    }
+    if [ -z "{{left}}" ] || [ -z "{{right}}" ]; then \
+        echo "Both left= and right= are required. Example: just board::motor-raw left=240 right=240" >&2; \
+        exit 1; \
+    fi
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env txing "{{region}}" "{{aws_profile}}")"
+    command=(sudo "{{built_board_motor_raw}}" --left "{{left}}" --right "{{right}}")
+    if [ -n "{{duration}}" ]; then \
+        command+=(--duration "{{duration}}"); \
+    fi
+    "${command[@]}"
+
+@motor-stop region=region aws_profile=aws_profile:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just motor-raw left=0 right=0 duration=0.25 region="{{region}}" aws_profile="{{aws_profile}}"
 
 @install-service video_viewer_url='' video_sender_command='' thing_name='' schema_file='' video_region='' video_channel_name='' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file aws_config_file=aws_config_file:
     #!/usr/bin/env bash

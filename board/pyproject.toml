@@ -10,13 +10,16 @@ requires-python = ">=3.12"
 dependencies = [
     "awsiotsdk>=1.22,<2",
     "boto3>=1.42,<2",
+    "gpiozero>=2.0,<3",
     "jsonschema>=4.25,<5",
+    "lgpio>=0.2.2,<1; platform_system == 'Linux' and (platform_machine == 'aarch64' or platform_machine == 'armv7l')",
     "aws",
 ]
 
 [project.scripts]
 board = "board:main"
 board-video-sender = "board.video_sender:main"
+board-motor-raw = "board.motor_raw:main"
 
 [build-system]
 requires = ["uv_build>=0.10.6,<0.11.0"]
