@@ -257,70 +257,43 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
     aws_profile="$AWS_SELECTED_PROFILE"
     aws_shared_credentials_file="$AWS_SHARED_CREDENTIALS_FILE"
     aws_config_file="$AWS_CONFIG_FILE"
-    thing_name="$THING_NAME"
-    schema_file="$SCHEMA_FILE"
-    video_viewer_url="$BOARD_VIDEO_VIEWER_URL"
-    video_region="$BOARD_VIDEO_REGION"
-    video_channel_name="$BOARD_VIDEO_CHANNEL_NAME"
-    video_sender_command="$BOARD_VIDEO_SENDER_COMMAND"
-    lg_wd="${LG_WD:-{{default_lgpio_workdir}}}"
-    if [ -n "{{thing_name}}" ]; then \
-        thing_name="{{thing_name}}"; \
-    fi; \
-    if [ -n "{{schema_file}}" ]; then \
-        schema_file="{{schema_file}}"; \
-    fi; \
-    if [ -n "{{video_viewer_url}}" ]; then \
-        video_viewer_url="{{video_viewer_url}}"; \
-    fi; \
-    if [ -n "{{video_region}}" ]; then \
-        video_region="{{video_region}}"; \
-    fi; \
-    if [ -n "{{video_channel_name}}" ]; then \
-        video_channel_name="{{video_channel_name}}"; \
-    fi; \
-    if [ -n "{{video_sender_command}}" ]; then \
-        video_sender_command="{{video_sender_command}}"; \
-    fi; \
-    if [ -n "{{lg_wd}}" ]; then \
-        lg_wd="{{lg_wd}}"; \
+    lg_wd="{{lg_wd}}"
+    if [ -z "$lg_wd" ]; then \
+        lg_wd="${LG_WD:-{{default_lgpio_workdir}}}"; \
     fi; \
     sudo systemctl enable NetworkManager-wait-online.service
     sudo install -d -m 0700 "$lg_wd"
     service_env=(); \
     if [ -n "{{thing_name}}" ]; then \
-        service_env+=("Environment=\"THING_NAME=$thing_name\""); \
+        service_env+=("Environment=\"THING_NAME={{thing_name}}\""); \
     fi; \
     if [ -n "{{schema_file}}" ]; then \
-        service_env+=("Environment=\"SCHEMA_FILE=$schema_file\""); \
+        service_env+=("Environment=\"SCHEMA_FILE={{schema_file}}\""); \
     fi; \
     if [ -n "{{video_viewer_url}}" ]; then \
-        service_env+=("Environment=\"BOARD_VIDEO_VIEWER_URL=$video_viewer_url\""); \
+        service_env+=("Environment=\"BOARD_VIDEO_VIEWER_URL={{video_viewer_url}}\""); \
     fi; \
     if [ -n "{{video_region}}" ]; then \
-        service_env+=("Environment=\"BOARD_VIDEO_REGION=$video_region\""); \
+        service_env+=("Environment=\"BOARD_VIDEO_REGION={{video_region}}\""); \
     fi; \
     if [ -n "{{video_channel_name}}" ]; then \
-        service_env+=("Environment=\"BOARD_VIDEO_CHANNEL_NAME=$video_channel_name\""); \
+        service_env+=("Environment=\"BOARD_VIDEO_CHANNEL_NAME={{video_channel_name}}\""); \
     fi; \
     if [ -n "{{video_sender_command}}" ]; then \
-        service_env+=("Environment=\"BOARD_VIDEO_SENDER_COMMAND=$video_sender_command\""); \
+        service_env+=("Environment=\"BOARD_VIDEO_SENDER_COMMAND={{video_sender_command}}\""); \
     fi; \
-    if [ -n "$region" ]; then \
+    if [ -n "{{region}}" ] && [ -n "$region" ]; then \
         service_env+=("Environment=\"AWS_REGION=$region\""); \
     fi; \
-    if [ -n "$aws_profile" ]; then \
+    if [ -n "{{aws_profile}}" ] && [ -n "$aws_profile" ]; then \
         service_env+=("Environment=\"AWS_PROFILE=$aws_profile\""); \
         service_env+=("Environment=\"AWS_DEFAULT_PROFILE=$aws_profile\""); \
     fi; \
-    if [ -n "$aws_shared_credentials_file" ]; then \
+    if [ -n "{{aws_shared_credentials_file}}" ] && [ -n "$aws_shared_credentials_file" ]; then \
         service_env+=("Environment=\"AWS_SHARED_CREDENTIALS_FILE=$aws_shared_credentials_file\""); \
     fi; \
-    if [ -n "$aws_config_file" ]; then \
+    if [ -n "{{aws_config_file}}" ] && [ -n "$aws_config_file" ]; then \
         service_env+=("Environment=\"AWS_CONFIG_FILE=$aws_config_file\""); \
-    fi; \
-    if [ -n "${AWS_TXING_PROFILE:-}" ]; then \
-        service_env+=("Environment=\"AWS_TXING_PROFILE=$AWS_TXING_PROFILE\""); \
     fi; \
     if [ -n "$lg_wd" ]; then \
         service_env+=("Environment=\"LG_WD=$lg_wd\""); \

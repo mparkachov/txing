@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 import subprocess
 import unittest
 from unittest.mock import MagicMock, patch
@@ -216,6 +217,74 @@ class VideoSenderTests(unittest.TestCase):
         self.assertEqual(args.viewer_connected_pattern, "^CONNECTED$")
         self.assertEqual(args.viewer_disconnected_pattern, "^DISCONNECTED$")
         self.assertFalse(hasattr(args, "ca_file"))
+
+    def test_build_supervisor_environment_normalizes_profile_and_paths(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "AWS_TXING_PROFILE": "txing",
+                "AWS_SHARED_CREDENTIALS_FILE": "config/aws.credentials",
+                "AWS_CONFIG_FILE": "config/aws.config",
+            },
+            clear=True,
+        ):
+            environment = video_sender._build_supervisor_environment(
+                cwd=Path("/repo"),
+                aws_shared_credentials_file=None,
+                aws_config_file=None,
+            )
+
+        self.assertEqual(environment["AWS_PROFILE"], "txing")
+        self.assertEqual(environment["AWS_DEFAULT_PROFILE"], "txing")
+        self.assertEqual(
+            environment["AWS_SHARED_CREDENTIALS_FILE"],
+            str((Path("/repo") / "config/aws.credentials").resolve()),
+        )
+        self.assertEqual(
+            environment["AWS_CONFIG_FILE"],
+            str((Path("/repo") / "config/aws.config").resolve()),
+        )
+
+    @patch("board.video_sender.subprocess.Popen")
+    def test_video_sender_supervisor_starts_with_explicit_env_and_cwd(
+        self,
+        popen_mock: MagicMock,
+    ) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "AWS_TXING_PROFILE": "txing",
+            },
+            clear=True,
+        ):
+            with patch("board.video_sender.Path.cwd", return_value=Path("/repo")):
+                process = MagicMock()
+                process.poll.return_value = None
+                popen_mock.return_value = process
+
+                supervisor = video_sender.VideoSenderSupervisor(
+                    channel_name="txing-board-video",
+                    viewer_url="https://ops.example.com/video",
+                    region="eu-central-1",
+                    sender_command="/tmp/txing-board-kvs-master",
+                    aws_shared_credentials_file=Path("config/aws.credentials"),
+                    aws_config_file=Path("config/aws.config"),
+                )
+                supervisor.start()
+
+        kwargs = popen_mock.call_args.kwargs
+        self.assertEqual(kwargs["cwd"], str(Path("/repo").resolve()))
+        environment = kwargs["env"]
+        self.assertEqual(environment["AWS_PROFILE"], "txing")
+        self.assertEqual(environment["AWS_DEFAULT_PROFILE"], "txing")
+        self.assertEqual(
+            environment["AWS_SHARED_CREDENTIALS_FILE"],
+            str((Path("/repo") / "config/aws.credentials").resolve()),
+        )
+        self.assertEqual(
+            environment["AWS_CONFIG_FILE"],
+            str((Path("/repo") / "config/aws.config").resolve()),
+        )
 
     def test_video_sender_supervisor_exposes_child_pid(self) -> None:
         supervisor = video_sender.VideoSenderSupervisor(

@@ -157,6 +157,43 @@ def _optional_env_path(*names: str) -> Path | None:
     return None
 
 
+def _resolve_path_for_child(value: Path | str, *, cwd: Path) -> str:
+    candidate = Path(value).expanduser()
+    if not candidate.is_absolute():
+        candidate = cwd / candidate
+    return str(candidate.resolve())
+
+
+def _build_supervisor_environment(
+    *,
+    cwd: Path,
+    aws_shared_credentials_file: Path | None,
+    aws_config_file: Path | None,
+) -> dict[str, str]:
+    environment = os.environ.copy()
+    profile = environment.get("AWS_PROFILE", "").strip() or environment.get("AWS_TXING_PROFILE", "").strip()
+    if profile:
+        environment["AWS_PROFILE"] = profile
+        environment.setdefault("AWS_DEFAULT_PROFILE", profile)
+
+    for env_name in (DEFAULT_AWS_SHARED_CREDENTIALS_FILE_ENV, DEFAULT_AWS_CONFIG_FILE_ENV):
+        value = environment.get(env_name, "").strip()
+        if value:
+            environment[env_name] = _resolve_path_for_child(value, cwd=cwd)
+
+    if aws_shared_credentials_file is not None:
+        environment[DEFAULT_AWS_SHARED_CREDENTIALS_FILE_ENV] = _resolve_path_for_child(
+            aws_shared_credentials_file,
+            cwd=cwd,
+        )
+    if aws_config_file is not None:
+        environment[DEFAULT_AWS_CONFIG_FILE_ENV] = _resolve_path_for_child(
+            aws_config_file,
+            cwd=cwd,
+        )
+    return environment
+
+
 def _build_sender_environment(
     *,
     region: str,
@@ -436,6 +473,7 @@ class VideoSenderSupervisor:
     def start(self) -> None:
         if self.is_running():
             return
+        spawn_cwd = Path.cwd().resolve()
         command = [
             sys.executable,
             "-m",
@@ -455,12 +493,25 @@ class VideoSenderSupervisor:
             command.extend(
                 [
                     "--aws-shared-credentials-file",
-                    str(self._aws_shared_credentials_file),
+                    _resolve_path_for_child(self._aws_shared_credentials_file, cwd=spawn_cwd),
                 ]
             )
         if self._aws_config_file is not None:
-            command.extend(["--aws-config-file", str(self._aws_config_file)])
-        self._process = subprocess.Popen(command)
+            command.extend(
+                [
+                    "--aws-config-file",
+                    _resolve_path_for_child(self._aws_config_file, cwd=spawn_cwd),
+                ]
+            )
+        self._process = subprocess.Popen(
+            command,
+            cwd=str(spawn_cwd),
+            env=_build_supervisor_environment(
+                cwd=spawn_cwd,
+                aws_shared_credentials_file=self._aws_shared_credentials_file,
+                aws_config_file=self._aws_config_file,
+            ),
+        )
 
     def ensure_running(self) -> None:
         if not self.is_running():
