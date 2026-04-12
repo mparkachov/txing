@@ -8,7 +8,7 @@ This is not the same Raspberry Pi as `rig/`. The `rig/` Pi remains the BLE/AWS c
 
 The txing runtime now connects to AWS IoT Core over SigV4-authenticated MQTT over WebSockets using the standard AWS SDK credential chain. The intended project-local profile layout is `town`, `rig`, and `txing`, with `txing` assuming the stack output role `TxingRuntimeRoleArn`.
 
-When the service is managed by `systemd`, run it as `root`. The board control consumes internal `state.desired.board.power=false` requests from the phase-1 `rig` runtime and requests a local system halt, which requires root privileges. The supervised video sender keeps using the board host's AWS SDK credential chain, and the generated service unit now loads both AWS and board runtime defaults from `config/aws.env`.
+When the service is managed by `systemd`, run it as `root`. The board control consumes internal `state.desired.board.power=false` requests from the phase-1 `rig` runtime and requests a local system halt, which requires root privileges. The supervised video sender keeps using the board host's AWS SDK credential chain, and the generated service unit now loads shared AWS defaults from `config/aws.env` plus optional board-local overrides from `config/board.env`.
 
 ## Video runtime
 
@@ -92,7 +92,7 @@ Temporary phase constants currently hardcoded in the board control:
 - `MAX_WHEEL_LINEAR_SPEED_MPS = 0.50`
 - `MAX_SPEED = 100`
 
-`txing-board` keeps `MAX_SPEED=100` as the reported/runtime percent-effort contract and maps that scale to the DRV8835 raw range `[-480, 480]` before writing hardware.
+`txing-board` keeps `MAX_SPEED=100` as the reported/runtime percent-effort contract. `cmd_vel` is then mapped into a configurable raw DRV8835 operating range before writing hardware, while `board-motor-raw` still drives the full raw range directly.
 
 Default DRV8835 hardware settings in the board runtime:
 
@@ -106,6 +106,16 @@ Default DRV8835 hardware settings in the board runtime:
 - `BOARD_DRIVE_RIGHT_DIR_GPIO=6`
 - `BOARD_DRIVE_LEFT_INVERTED=false`
 - `BOARD_DRIVE_RIGHT_INVERTED=false`
+
+Default `cmd_vel` percent-mapping range in the board runtime:
+
+- `BOARD_DRIVE_CMD_RAW_MIN_SPEED=0`
+- `BOARD_DRIVE_CMD_RAW_MAX_SPEED=480`
+
+For the current chassis bring-up, set these explicitly in `config/board.env` to match the usable range you measured:
+
+- `BOARD_DRIVE_CMD_RAW_MIN_SPEED=50`
+- `BOARD_DRIVE_CMD_RAW_MAX_SPEED=250`
 
 Default stock Pololu shield mapping in this repo:
 
@@ -131,7 +141,7 @@ dtoverlay=pwm-2chan,pin=12,func=4,pin2=13,func2=4
 
 The board runtime and raw motor test helper must run as `root`.
 
-`txing-board` now sets `LG_WD=/tmp/txing-lgpio` by default before initializing `gpiozero`/`lgpio` so notification FIFO files are created in a stable writable location under systemd. If needed, override with `LG_WD=/some/writable/path`.
+Set `LG_WD` in `config/board.env` if you need a different `lgpio` notify FIFO workspace. If it is omitted, `txing-board` still defaults to `/tmp/txing-lgpio`.
 
 ## Manual Motor Bring-Up
 
@@ -157,6 +167,8 @@ cd /home/user/txing
 just board::motor-stop
 sudo systemctl start board
 ```
+
+`just board::motor-raw` forwards `LG_WD` and the DRV8835 hardware wiring settings from `config/board.env` into the root-owned helper process, but it does not apply the `BOARD_DRIVE_CMD_RAW_MIN_SPEED` / `BOARD_DRIVE_CMD_RAW_MAX_SPEED` operating range. Those only affect `cmd_vel`.
 
 ## Fresh Setup From Raspberry Pi Imager
 
@@ -211,6 +223,7 @@ aws cloudformation describe-stacks \
 Prepare the local config files the board will use:
 
 - `config/aws.env` with `AWS_TXING_PROFILE=txing`
+- `config/board.env` with `THING_NAME`, board video settings, `LG_WD`, and any board-local motor overrides such as `BOARD_DRIVE_CMD_RAW_MIN_SPEED=50` and `BOARD_DRIVE_CMD_RAW_MAX_SPEED=250`
 - `config/aws.credentials` with the `town` source credentials
 - `config/aws.config` with `[profile txing]` assuming `TxingRuntimeRoleArn`
 
@@ -284,7 +297,7 @@ rm -rf /tmp/aws /tmp/awscliv2.zip
 
 If `uname -m` is not `aarch64`, stop and reinstall a 64-bit Raspberry Pi OS image. AWS documents AWS CLI v2 support for 64-bit Linux ARM and the official Linux ARM installer uses the `awscli-exe-linux-aarch64.zip` package.
 
-### 4. Copy Project-Local AWS Config to the Board
+### 4. Copy Project-Local Config to the Board
 
 From the development machine:
 
@@ -292,6 +305,7 @@ From the development machine:
 ssh user@<board-host> 'install -d -m 0755 /home/user/txing/config'
 scp \
   config/aws.env \
+  config/board.env \
   config/aws.credentials \
   config/aws.config \
   user@<board-host>:/home/user/txing/config/
@@ -303,6 +317,7 @@ Back on the board, verify the config and the `txing` profile:
 cd /home/user/txing
 ls -l config
 test -s config/aws.env
+test -s config/board.env
 test -s config/aws.credentials
 test -s config/aws.config
 just aws-txing sts get-caller-identity
@@ -365,7 +380,7 @@ For TLS trust on the KVS signaling path, `board-video-sender` strips inherited C
 
 ### 6. Verify the `txing` Runtime Profile
 
-The txing runtime and the supervised sender both use the standard AWS SDK chain. The generated service unit loads `config/aws.env` via `EnvironmentFile=`, so `AWS_REGION`, `AWS_TXING_PROFILE`, `AWS_SHARED_CREDENTIALS_FILE`, `AWS_CONFIG_FILE`, `THING_NAME`, `SCHEMA_FILE`, `BOARD_VIDEO_VIEWER_URL`, `BOARD_VIDEO_REGION`, `BOARD_VIDEO_CHANNEL_NAME`, `BOARD_VIDEO_SENDER_COMMAND`, and `KVS_DUALSTACK_ENDPOINTS` all come from the shared project-local config by default. It also sets `LG_WD` (default `/tmp/txing-lgpio`) for the `lgpio` notify FIFO workspace.
+The txing runtime and the supervised sender both use the standard AWS SDK chain. The generated service unit loads `config/aws.env` first and then `config/board.env`, so AWS/shared settings come from `config/aws.env` while board-local settings such as `THING_NAME`, `SCHEMA_FILE`, board video defaults, `LG_WD`, and motor tuning come from `config/board.env` by default.
 
 Verify the intended txing identity before installing the service:
 
@@ -378,7 +393,7 @@ If you want the install recipe to use credential files outside the checkout, pas
 
 ### 7. Build and Smoke Test
 
-Set the board runtime defaults in `config/aws.env`, especially:
+Set the board runtime defaults in `config/board.env`, especially:
 
 - `THING_NAME`
 - `SCHEMA_FILE`
@@ -387,6 +402,9 @@ Set the board runtime defaults in `config/aws.env`, especially:
 - `BOARD_VIDEO_CHANNEL_NAME`
 - `BOARD_VIDEO_SENDER_COMMAND`
 - `KVS_DUALSTACK_ENDPOINTS=ON` to enable dual-stack KVS WebRTC endpoints for the native sender and allow IPv6 candidate gathering when the network supports it
+- `LG_WD=/tmp/txing-lgpio` unless you need a different writable `lgpio` workspace
+- `BOARD_DRIVE_CMD_RAW_MIN_SPEED=50`
+- `BOARD_DRIVE_CMD_RAW_MAX_SPEED=250`
 
 Build the board runtime:
 
@@ -451,9 +469,9 @@ The generated unit:
 - enables `NetworkManager-wait-online.service`
 - waits for `systemd-time-wait-sync.service` / `time-sync.target` before startup
 - runs `board` as `root`
-- sets `WorkingDirectory=/home/.../txing` and loads `config/aws.env` through `EnvironmentFile=`
-- sets `LG_WD=/tmp/txing-lgpio` by default and creates that directory during install (override with `lg_wd=...`)
-- adds `Environment=` overrides only for explicit `just board::install-service ...` overrides, while `config/aws.env` remains the default source for AWS and board settings
+- sets `WorkingDirectory=/home/.../txing` and loads `config/aws.env` plus optional `config/board.env` through `EnvironmentFile=`
+- creates the resolved `LG_WD` directory during install using `lg_wd=...`, `config/board.env`, or the default `/tmp/txing-lgpio`
+- adds `Environment=` overrides only for explicit `just board::install-service ...` overrides, while the env files remain the default source for AWS and board settings
 - starts `board` with `ExecStart=/home/.../board/.venv/bin/board --heartbeat-seconds 60`
 
 The Python service also waits up to `120 s` for `timedatectl` to report `SystemClockSynchronized=yes` before it starts the AWS-backed video sender. That avoids transient KVS `InvalidSignatureException` failures after boot when networking is up but NTP has not corrected the clock yet.

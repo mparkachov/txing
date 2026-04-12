@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from argparse import Namespace
+import os
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -74,6 +75,27 @@ class MotorRawTests(unittest.TestCase):
                 motor_raw.main()
 
         self.assertEqual(captured.exception.code, 2)
+
+    def test_parse_args_ignores_cmd_vel_operational_range_env(self) -> None:
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "BOARD_DRIVE_RAW_MAX_SPEED": "480",
+                    "BOARD_DRIVE_CMD_RAW_MAX_SPEED": "250",
+                },
+                clear=True,
+            ),
+            patch(
+                "sys.argv",
+                ["board-motor-raw", "--left", "300", "--right", "300", "--duration", "0.01"],
+            ),
+        ):
+            args = motor_raw._parse_args()
+
+        self.assertEqual(args.drive_raw_max_speed, 480)
+        self.assertEqual(args.left, 300)
+        self.assertEqual(args.right, 300)
 
 
 if __name__ == "__main__":

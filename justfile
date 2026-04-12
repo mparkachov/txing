@@ -3,7 +3,7 @@ set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 root_dir := source_directory()
 
 [private]
-_project-aws-env scope='rig' region='' profile='' stack_name='' cognito_domain_prefix='' admin_email='' aws_shared_credentials_file='' aws_config_file='' env_file='':
+_project-aws-env scope='rig' region='' profile='' stack_name='' cognito_domain_prefix='' admin_email='' aws_shared_credentials_file='' aws_config_file='' env_file='' board_env_file='':
     #!/usr/bin/env bash
     set -euo pipefail
 
@@ -42,6 +42,15 @@ _project-aws-env scope='rig' region='' profile='' stack_name='' cognito_domain_p
       source "$env_file"
     fi
 
+    board_env_file=""
+    if [ "{{scope}}" = "txing" ]; then
+      board_env_file="$(resolve_path "$(choose_value "{{board_env_file}}" "${BOARD_ENV_FILE:-config/board.env}")")"
+      if [ -f "$board_env_file" ]; then
+        # shellcheck disable=SC1090
+        source "$board_env_file"
+      fi
+    fi
+
     aws_town_profile_default="${AWS_TOWN_PROFILE:-town}"
     aws_rig_profile_default="${AWS_RIG_PROFILE:-rig}"
     aws_txing_profile_default="${AWS_TXING_PROFILE:-txing}"
@@ -72,9 +81,27 @@ _project-aws-env scope='rig' region='' profile='' stack_name='' cognito_domain_p
     board_video_channel_name="${BOARD_VIDEO_CHANNEL_NAME:-txing-board-video}"
     board_video_sender_command="${BOARD_VIDEO_SENDER_COMMAND:-}"
     kvs_dualstack_endpoints="${KVS_DUALSTACK_ENDPOINTS:-}"
+    lg_wd="${LG_WD:-}"
+    board_drive_raw_max_speed="${BOARD_DRIVE_RAW_MAX_SPEED:-}"
+    board_drive_cmd_raw_min_speed="${BOARD_DRIVE_CMD_RAW_MIN_SPEED:-}"
+    board_drive_cmd_raw_max_speed="${BOARD_DRIVE_CMD_RAW_MAX_SPEED:-}"
+    board_drive_pwm_hz="${BOARD_DRIVE_PWM_HZ:-}"
+    board_drive_pwm_chip="${BOARD_DRIVE_PWM_CHIP:-}"
+    board_drive_left_pwm_channel="${BOARD_DRIVE_LEFT_PWM_CHANNEL:-}"
+    board_drive_right_pwm_channel="${BOARD_DRIVE_RIGHT_PWM_CHANNEL:-}"
+    board_drive_gpio_chip="${BOARD_DRIVE_GPIO_CHIP:-}"
+    board_drive_left_dir_gpio="${BOARD_DRIVE_LEFT_DIR_GPIO:-}"
+    board_drive_right_dir_gpio="${BOARD_DRIVE_RIGHT_DIR_GPIO:-}"
+    board_drive_left_inverted="${BOARD_DRIVE_LEFT_INVERTED:-}"
+    board_drive_right_inverted="${BOARD_DRIVE_RIGHT_INVERTED:-}"
 
     export_line TXING_PROJECT_ROOT "$project_root"
     export_line AWS_ENV_FILE "$env_file"
+    if [ -n "$board_env_file" ]; then
+      export_line BOARD_ENV_FILE "$board_env_file"
+    else
+      printf 'unset BOARD_ENV_FILE\n'
+    fi
     export_line AWS_REGION "$aws_region"
     export_line AWS_STACK_NAME "$aws_stack_name"
     export_line AWS_COGNITO_DOMAIN_PREFIX "$aws_cognito_domain_prefix"
@@ -99,6 +126,71 @@ _project-aws-env scope='rig' region='' profile='' stack_name='' cognito_domain_p
       export_line KVS_DUALSTACK_ENDPOINTS "$kvs_dualstack_endpoints"
     else
       printf 'unset KVS_DUALSTACK_ENDPOINTS\n'
+    fi
+    if [ -n "$lg_wd" ]; then
+      export_line LG_WD "$lg_wd"
+    else
+      printf 'unset LG_WD\n'
+    fi
+    if [ -n "$board_drive_raw_max_speed" ]; then
+      export_line BOARD_DRIVE_RAW_MAX_SPEED "$board_drive_raw_max_speed"
+    else
+      printf 'unset BOARD_DRIVE_RAW_MAX_SPEED\n'
+    fi
+    if [ -n "$board_drive_cmd_raw_min_speed" ]; then
+      export_line BOARD_DRIVE_CMD_RAW_MIN_SPEED "$board_drive_cmd_raw_min_speed"
+    else
+      printf 'unset BOARD_DRIVE_CMD_RAW_MIN_SPEED\n'
+    fi
+    if [ -n "$board_drive_cmd_raw_max_speed" ]; then
+      export_line BOARD_DRIVE_CMD_RAW_MAX_SPEED "$board_drive_cmd_raw_max_speed"
+    else
+      printf 'unset BOARD_DRIVE_CMD_RAW_MAX_SPEED\n'
+    fi
+    if [ -n "$board_drive_pwm_hz" ]; then
+      export_line BOARD_DRIVE_PWM_HZ "$board_drive_pwm_hz"
+    else
+      printf 'unset BOARD_DRIVE_PWM_HZ\n'
+    fi
+    if [ -n "$board_drive_pwm_chip" ]; then
+      export_line BOARD_DRIVE_PWM_CHIP "$board_drive_pwm_chip"
+    else
+      printf 'unset BOARD_DRIVE_PWM_CHIP\n'
+    fi
+    if [ -n "$board_drive_left_pwm_channel" ]; then
+      export_line BOARD_DRIVE_LEFT_PWM_CHANNEL "$board_drive_left_pwm_channel"
+    else
+      printf 'unset BOARD_DRIVE_LEFT_PWM_CHANNEL\n'
+    fi
+    if [ -n "$board_drive_right_pwm_channel" ]; then
+      export_line BOARD_DRIVE_RIGHT_PWM_CHANNEL "$board_drive_right_pwm_channel"
+    else
+      printf 'unset BOARD_DRIVE_RIGHT_PWM_CHANNEL\n'
+    fi
+    if [ -n "$board_drive_gpio_chip" ]; then
+      export_line BOARD_DRIVE_GPIO_CHIP "$board_drive_gpio_chip"
+    else
+      printf 'unset BOARD_DRIVE_GPIO_CHIP\n'
+    fi
+    if [ -n "$board_drive_left_dir_gpio" ]; then
+      export_line BOARD_DRIVE_LEFT_DIR_GPIO "$board_drive_left_dir_gpio"
+    else
+      printf 'unset BOARD_DRIVE_LEFT_DIR_GPIO\n'
+    fi
+    if [ -n "$board_drive_right_dir_gpio" ]; then
+      export_line BOARD_DRIVE_RIGHT_DIR_GPIO "$board_drive_right_dir_gpio"
+    else
+      printf 'unset BOARD_DRIVE_RIGHT_DIR_GPIO\n'
+    fi
+    if [ -n "$board_drive_left_inverted" ]; then
+      export_line BOARD_DRIVE_LEFT_INVERTED "$board_drive_left_inverted"
+    else
+      printf 'unset BOARD_DRIVE_LEFT_INVERTED\n'
+    fi
+    if [ -n "$board_drive_right_inverted" ]; then
+      export_line BOARD_DRIVE_RIGHT_INVERTED "$board_drive_right_inverted"
+    else
+      printf 'unset BOARD_DRIVE_RIGHT_INVERTED\n'
     fi
     export_line AWS_DEFAULT_REGION "$aws_region"
     if [ -n "$aws_selected_profile" ]; then

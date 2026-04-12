@@ -11,6 +11,8 @@ from typing import Any, Callable
 LOGGER = logging.getLogger("board.motor_driver")
 
 DEFAULT_DRIVE_RAW_MAX_SPEED = 480
+DEFAULT_DRIVE_CMD_RAW_MIN_SPEED = 0
+DEFAULT_DRIVE_CMD_RAW_MAX_SPEED = DEFAULT_DRIVE_RAW_MAX_SPEED
 DEFAULT_DRIVE_PWM_HZ = 20_000
 DEFAULT_DRIVE_PWM_CHIP = 0
 DEFAULT_DRIVE_LEFT_PWM_CHANNEL = 0
@@ -25,6 +27,8 @@ DEFAULT_PWM_SYSFS_ROOT = Path("/sys/class/pwm")
 DEFAULT_LGPIO_WORKDIR = Path("/tmp/txing-lgpio")
 
 ENV_DRIVE_RAW_MAX_SPEED = "BOARD_DRIVE_RAW_MAX_SPEED"
+ENV_DRIVE_CMD_RAW_MIN_SPEED = "BOARD_DRIVE_CMD_RAW_MIN_SPEED"
+ENV_DRIVE_CMD_RAW_MAX_SPEED = "BOARD_DRIVE_CMD_RAW_MAX_SPEED"
 ENV_DRIVE_PWM_HZ = "BOARD_DRIVE_PWM_HZ"
 ENV_DRIVE_PWM_CHIP = "BOARD_DRIVE_PWM_CHIP"
 ENV_DRIVE_LEFT_PWM_CHANNEL = "BOARD_DRIVE_LEFT_PWM_CHANNEL"
@@ -93,6 +97,42 @@ def scale_speed(value: int, *, source_max_speed: int, target_max_speed: int) -> 
         raise ValueError("target_max_speed must be positive")
     clamped = clamp_speed(value, source_max_speed)
     return int(round((clamped / source_max_speed) * target_max_speed))
+
+
+def scale_speed_to_range(
+    value: int,
+    *,
+    source_max_speed: int,
+    target_min_speed: int,
+    target_max_speed: int,
+) -> int:
+    if source_max_speed <= 0:
+        raise ValueError("source_max_speed must be positive")
+    if target_min_speed < 0:
+        raise ValueError("target_min_speed must be non-negative")
+    if target_max_speed <= 0:
+        raise ValueError("target_max_speed must be positive")
+    if target_min_speed >= target_max_speed:
+        raise ValueError("target_min_speed must be less than target_max_speed")
+    if target_min_speed == 0:
+        return scale_speed(
+            value,
+            source_max_speed=source_max_speed,
+            target_max_speed=target_max_speed,
+        )
+
+    clamped = clamp_speed(value, source_max_speed)
+    if clamped == 0:
+        return 0
+
+    magnitude = abs(clamped)
+    if source_max_speed == 1:
+        return target_max_speed if clamped > 0 else -target_max_speed
+
+    position = (magnitude - 1) / (source_max_speed - 1)
+    scaled = target_min_speed + position * (target_max_speed - target_min_speed)
+    rounded = int(round(scaled))
+    return rounded if clamped > 0 else -rounded
 
 
 class _SysfsPwmChannel:
@@ -362,26 +402,34 @@ class PercentMotorDriverAdapter:
         *,
         raw_motor_driver: Any,
         percent_max_speed: int = DEFAULT_DRIVE_PERCENT_MAX_SPEED,
+        raw_min_speed: int = DEFAULT_DRIVE_CMD_RAW_MIN_SPEED,
         raw_max_speed: int = DEFAULT_DRIVE_RAW_MAX_SPEED,
     ) -> None:
         if percent_max_speed <= 0:
             raise ValueError("percent_max_speed must be positive")
+        if raw_min_speed < 0:
+            raise ValueError("raw_min_speed must be non-negative")
         if raw_max_speed <= 0:
             raise ValueError("raw_max_speed must be positive")
+        if raw_min_speed >= raw_max_speed:
+            raise ValueError("raw_min_speed must be less than raw_max_speed")
         self._raw_motor_driver = raw_motor_driver
         self._percent_max_speed = percent_max_speed
+        self._raw_min_speed = raw_min_speed
         self._raw_max_speed = raw_max_speed
         self.MAX_SPEED = percent_max_speed
 
     def setSpeeds(self, m1_speed: int, m2_speed: int) -> None:
-        left_raw = scale_speed(
+        left_raw = scale_speed_to_range(
             int(m1_speed),
             source_max_speed=self._percent_max_speed,
+            target_min_speed=self._raw_min_speed,
             target_max_speed=self._raw_max_speed,
         )
-        right_raw = scale_speed(
+        right_raw = scale_speed_to_range(
             int(m2_speed),
             source_max_speed=self._percent_max_speed,
+            target_min_speed=self._raw_min_speed,
             target_max_speed=self._raw_max_speed,
         )
         self._raw_motor_driver.setSpeeds(left_raw, right_raw)

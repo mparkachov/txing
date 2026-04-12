@@ -23,6 +23,7 @@ from board.shadow_control import (
     REPO_ROOT,
     VideoStartupTimeoutError,
     _build_board_report,
+    _build_cmd_vel_motor_driver,
     _build_shutdown_board_report,
     _build_shadow_update_with_options,
     _discover_repo_root,
@@ -57,6 +58,8 @@ def _make_args(**overrides: object) -> Namespace:
         "reconnect_delay": DEFAULT_RECONNECT_DELAY,
         "time_sync_timeout_seconds": DEFAULT_TIME_SYNC_TIMEOUT,
         "drive_raw_max_speed": 480,
+        "drive_cmd_raw_min_speed": 0,
+        "drive_cmd_raw_max_speed": 480,
         "drive_pwm_hz": 20_000,
         "drive_pwm_chip": 0,
         "drive_left_pwm_channel": 0,
@@ -118,6 +121,8 @@ def _make_config(**overrides: object) -> ControlConfig:
         "reconnect_delay": DEFAULT_RECONNECT_DELAY,
         "time_sync_timeout_seconds": DEFAULT_TIME_SYNC_TIMEOUT,
         "drive_raw_max_speed": 480,
+        "drive_cmd_raw_min_speed": 0,
+        "drive_cmd_raw_max_speed": 480,
         "drive_pwm_hz": 20_000,
         "drive_pwm_chip": 0,
         "drive_left_pwm_channel": 0,
@@ -482,6 +487,16 @@ class ShadowControlContractTests(unittest.TestCase):
         self.assertEqual(second_payload["state"]["reported"]["board"]["drive"]["leftSpeed"], 20)
         self.assertEqual(second_payload["state"]["reported"]["board"]["drive"]["rightSpeed"], 40)
 
+    def test_build_cmd_vel_motor_driver_rejects_operational_range_above_hardware_max(self) -> None:
+        with self.assertRaises(ValueError):
+            _build_cmd_vel_motor_driver(
+                _make_config(
+                    drive_raw_max_speed=480,
+                    drive_cmd_raw_min_speed=50,
+                    drive_cmd_raw_max_speed=500,
+                )
+            )
+
     def test_justfile_install_service_has_no_mediamtx_dependency(self) -> None:
         justfile = Path(REPO_ROOT / "board" / "justfile").read_text(encoding="utf-8")
 
@@ -498,7 +513,9 @@ class ShadowControlContractTests(unittest.TestCase):
         self.assertIn('eval "$(just --justfile "{{root_justfile}}" _project-aws-env txing', justfile)
         self.assertIn('project_root="$TXING_PROJECT_ROOT"', justfile)
         self.assertIn('env_file="$AWS_ENV_FILE"', justfile)
+        self.assertIn('board_env_file="$BOARD_ENV_FILE"', justfile)
         self.assertIn('EnvironmentFile=$env_file', justfile)
+        self.assertIn('EnvironmentFile=-$board_env_file', justfile)
         self.assertIn('WorkingDirectory=$project_root', justfile)
         self.assertIn('[ -n "{{thing_name}}" ]', justfile)
         self.assertIn('THING_NAME={{thing_name}}', justfile)
@@ -523,9 +540,27 @@ class ShadowControlContractTests(unittest.TestCase):
         self.assertIn('AWS_CONFIG_FILE=$aws_config_file', justfile)
         self.assertNotIn('AWS_TXING_PROFILE=$AWS_TXING_PROFILE', justfile)
         self.assertIn('default_lgpio_workdir := env_var_or_default("TXING_BOARD_LGPIO_WORKDIR", "/tmp/txing-lgpio")', justfile)
-        self.assertIn('lg_wd="{{lg_wd}}"', justfile)
+        self.assertIn('lg_wd_override="{{lg_wd}}"', justfile)
         self.assertIn('lg_wd="${LG_WD:-{{default_lgpio_workdir}}}"', justfile)
-        self.assertIn('LG_WD=$lg_wd', justfile)
+        self.assertIn('[ -n "$lg_wd_override" ]', justfile)
+        self.assertIn('LG_WD=$lg_wd_override', justfile)
+        self.assertNotIn('Environment="LG_WD=/tmp/txing-lgpio"', justfile)
+        self.assertIn('preserve_env=(', justfile)
+        self.assertIn('sudo "--preserve-env=$preserve_env_csv"', justfile)
+
+    def test_root_justfile_sources_optional_board_env_for_txing_scope(self) -> None:
+        justfile = Path(REPO_ROOT / "justfile").read_text(encoding="utf-8")
+
+        self.assertIn("_project-aws-env scope='rig'", justfile)
+        self.assertIn('board_env_file=\'\'', justfile)
+        self.assertIn('env_file="$(resolve_path "$(choose_value "{{env_file}}" "config/aws.env")")"', justfile)
+        self.assertIn('if [ "{{scope}}" = "txing" ]; then', justfile)
+        self.assertIn('board_env_file="$(resolve_path "$(choose_value "{{board_env_file}}" "${BOARD_ENV_FILE:-config/board.env}")")"', justfile)
+        self.assertIn('source "$board_env_file"', justfile)
+        self.assertIn('export_line BOARD_ENV_FILE "$board_env_file"', justfile)
+        self.assertIn('export_line LG_WD "$lg_wd"', justfile)
+        self.assertIn('export_line BOARD_DRIVE_CMD_RAW_MIN_SPEED "$board_drive_cmd_raw_min_speed"', justfile)
+        self.assertIn('export_line BOARD_DRIVE_CMD_RAW_MAX_SPEED "$board_drive_cmd_raw_max_speed"', justfile)
 
     def test_repo_root_detection_uses_board_working_directory(self) -> None:
         with TemporaryDirectory() as tmpdir:

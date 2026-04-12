@@ -23,6 +23,8 @@ from aws.mqtt import AwsIotWebsocketSyncConnection, AwsMqttConnectionConfig
 
 from .cmd_vel import CmdVelController, DriveState, MAX_SPEED, build_cmd_vel_topic
 from .motor_driver import (
+    DEFAULT_DRIVE_CMD_RAW_MAX_SPEED,
+    DEFAULT_DRIVE_CMD_RAW_MIN_SPEED,
     DEFAULT_DRIVE_GPIO_CHIP,
     DEFAULT_DRIVE_LEFT_DIR_GPIO,
     DEFAULT_DRIVE_LEFT_INVERTED,
@@ -35,6 +37,8 @@ from .motor_driver import (
     DEFAULT_DRIVE_RIGHT_PWM_CHANNEL,
     Drv8835MotorDriver,
     DriveHardwareConfig,
+    ENV_DRIVE_CMD_RAW_MAX_SPEED,
+    ENV_DRIVE_CMD_RAW_MIN_SPEED,
     ENV_DRIVE_GPIO_CHIP,
     ENV_DRIVE_LEFT_DIR_GPIO,
     ENV_DRIVE_LEFT_INVERTED,
@@ -159,6 +163,16 @@ def _env_int(name: str, default: int) -> int:
         raise RuntimeError(f"invalid integer in ${name}: {raw!r}") from err
 
 
+def _env_optional_int(name: str) -> int | None:
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return None
+    try:
+        return int(raw.strip())
+    except ValueError as err:
+        raise RuntimeError(f"invalid integer in ${name}: {raw!r}") from err
+
+
 def _env_bool(name: str, default: bool) -> bool:
     raw = os.environ.get(name)
     if raw is None or raw.strip() == "":
@@ -186,6 +200,16 @@ def _positive_int(value: str) -> int:
     return parsed
 
 
+def _non_negative_int(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as err:
+        raise argparse.ArgumentTypeError(f"expected integer value, got {value!r}") from err
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("value must be greater than or equal to 0")
+    return parsed
+
+
 @dataclass(frozen=True)
 class ControlConfig:
     thing_name: str
@@ -208,6 +232,8 @@ class ControlConfig:
     reconnect_delay: float
     time_sync_timeout_seconds: float
     drive_raw_max_speed: int
+    drive_cmd_raw_min_speed: int
+    drive_cmd_raw_max_speed: int
     drive_pwm_hz: int
     drive_pwm_chip: int
     drive_left_pwm_channel: int
@@ -694,8 +720,26 @@ def _parse_args() -> argparse.Namespace:
         type=_positive_int,
         default=_env_int(ENV_DRIVE_RAW_MAX_SPEED, DEFAULT_DRIVE_RAW_MAX_SPEED),
         help=(
-            "Raw DRV8835 max speed used behind cmd_vel percent mapping "
+            "Raw DRV8835 hardware max speed and raw-helper ceiling "
             f"(default: ${ENV_DRIVE_RAW_MAX_SPEED} or {DEFAULT_DRIVE_RAW_MAX_SPEED})"
+        ),
+    )
+    parser.add_argument(
+        "--drive-cmd-raw-min-speed",
+        type=_non_negative_int,
+        default=_env_optional_int(ENV_DRIVE_CMD_RAW_MIN_SPEED),
+        help=(
+            "Minimum non-zero raw DRV8835 speed used for cmd_vel percent mapping "
+            f"(default: ${ENV_DRIVE_CMD_RAW_MIN_SPEED} or {DEFAULT_DRIVE_CMD_RAW_MIN_SPEED})"
+        ),
+    )
+    parser.add_argument(
+        "--drive-cmd-raw-max-speed",
+        type=_positive_int,
+        default=_env_optional_int(ENV_DRIVE_CMD_RAW_MAX_SPEED),
+        help=(
+            "Maximum raw DRV8835 speed used for cmd_vel percent mapping "
+            f"(default: ${ENV_DRIVE_CMD_RAW_MAX_SPEED} or {DEFAULT_DRIVE_CMD_RAW_MAX_SPEED})"
         ),
     )
     parser.add_argument(
@@ -1166,6 +1210,15 @@ def _publish_board_report(
 
 
 def _build_cmd_vel_motor_driver(config: ControlConfig) -> PercentMotorDriverAdapter:
+    if config.drive_cmd_raw_min_speed < 0:
+        raise ValueError("drive_cmd_raw_min_speed must be non-negative")
+    if config.drive_cmd_raw_max_speed <= 0:
+        raise ValueError("drive_cmd_raw_max_speed must be positive")
+    if config.drive_cmd_raw_min_speed >= config.drive_cmd_raw_max_speed:
+        raise ValueError("drive_cmd_raw_min_speed must be less than drive_cmd_raw_max_speed")
+    if config.drive_cmd_raw_max_speed > config.drive_raw_max_speed:
+        raise ValueError("drive_cmd_raw_max_speed must be less than or equal to drive_raw_max_speed")
+
     raw_driver = Drv8835MotorDriver(
         config=DriveHardwareConfig(
             raw_max_speed=config.drive_raw_max_speed,
@@ -1183,7 +1236,8 @@ def _build_cmd_vel_motor_driver(config: ControlConfig) -> PercentMotorDriverAdap
     return PercentMotorDriverAdapter(
         raw_motor_driver=raw_driver,
         percent_max_speed=MAX_SPEED,
-        raw_max_speed=config.drive_raw_max_speed,
+        raw_min_speed=config.drive_cmd_raw_min_speed,
+        raw_max_speed=config.drive_cmd_raw_max_speed,
     )
 
 
@@ -1229,6 +1283,16 @@ def main() -> None:
             _require_file(args.aws_config_file, "AWS config file")
         board_client_suffix = _sanitize_client_id(args.board_name)
         client_id = args.client_id or f"txing-{board_client_suffix}-{os.getpid()}"
+        drive_cmd_raw_min_speed = (
+            DEFAULT_DRIVE_CMD_RAW_MIN_SPEED
+            if args.drive_cmd_raw_min_speed is None
+            else args.drive_cmd_raw_min_speed
+        )
+        drive_cmd_raw_max_speed = (
+            args.drive_raw_max_speed
+            if args.drive_cmd_raw_max_speed is None
+            else args.drive_cmd_raw_max_speed
+        )
         config = ControlConfig(
             thing_name=args.thing_name,
             aws_region=aws_region,
@@ -1250,6 +1314,8 @@ def main() -> None:
             reconnect_delay=args.reconnect_delay,
             time_sync_timeout_seconds=args.time_sync_timeout_seconds,
             drive_raw_max_speed=args.drive_raw_max_speed,
+            drive_cmd_raw_min_speed=drive_cmd_raw_min_speed,
+            drive_cmd_raw_max_speed=drive_cmd_raw_max_speed,
             drive_pwm_hz=args.drive_pwm_hz,
             drive_pwm_chip=args.drive_pwm_chip,
             drive_left_pwm_channel=args.drive_left_pwm_channel,

@@ -5,6 +5,8 @@ from tempfile import TemporaryDirectory
 import unittest
 
 from board.motor_driver import (
+    DEFAULT_DRIVE_CMD_RAW_MAX_SPEED,
+    DEFAULT_DRIVE_CMD_RAW_MIN_SPEED,
     DEFAULT_DRIVE_PERCENT_MAX_SPEED,
     DEFAULT_DRIVE_RAW_MAX_SPEED,
     Drv8835MotorDriver,
@@ -14,6 +16,7 @@ from board.motor_driver import (
     _SysfsPwmChannel,
     clamp_speed,
     scale_speed,
+    scale_speed_to_range,
 )
 
 
@@ -92,6 +95,64 @@ class MotorDriverTests(unittest.TestCase):
             -360,
         )
 
+    def test_scale_speed_to_range_maps_zero_and_non_zero_percent(self) -> None:
+        self.assertEqual(
+            scale_speed_to_range(
+                0,
+                source_max_speed=DEFAULT_DRIVE_PERCENT_MAX_SPEED,
+                target_min_speed=50,
+                target_max_speed=250,
+            ),
+            0,
+        )
+        self.assertEqual(
+            scale_speed_to_range(
+                1,
+                source_max_speed=DEFAULT_DRIVE_PERCENT_MAX_SPEED,
+                target_min_speed=50,
+                target_max_speed=250,
+            ),
+            50,
+        )
+        self.assertEqual(
+            scale_speed_to_range(
+                50,
+                source_max_speed=DEFAULT_DRIVE_PERCENT_MAX_SPEED,
+                target_min_speed=50,
+                target_max_speed=250,
+            ),
+            149,
+        )
+        self.assertEqual(
+            scale_speed_to_range(
+                -100,
+                source_max_speed=DEFAULT_DRIVE_PERCENT_MAX_SPEED,
+                target_min_speed=50,
+                target_max_speed=250,
+            ),
+            -250,
+        )
+
+    def test_scale_speed_to_range_preserves_linear_behavior_when_min_is_zero(self) -> None:
+        self.assertEqual(
+            scale_speed_to_range(
+                1,
+                source_max_speed=DEFAULT_DRIVE_PERCENT_MAX_SPEED,
+                target_min_speed=DEFAULT_DRIVE_CMD_RAW_MIN_SPEED,
+                target_max_speed=DEFAULT_DRIVE_CMD_RAW_MAX_SPEED,
+            ),
+            5,
+        )
+        self.assertEqual(
+            scale_speed_to_range(
+                50,
+                source_max_speed=DEFAULT_DRIVE_PERCENT_MAX_SPEED,
+                target_min_speed=DEFAULT_DRIVE_CMD_RAW_MIN_SPEED,
+                target_max_speed=DEFAULT_DRIVE_CMD_RAW_MAX_SPEED,
+            ),
+            240,
+        )
+
     def test_clamp_speed_limits_to_range(self) -> None:
         self.assertEqual(clamp_speed(481, DEFAULT_DRIVE_RAW_MAX_SPEED), 480)
         self.assertEqual(clamp_speed(-481, DEFAULT_DRIVE_RAW_MAX_SPEED), -480)
@@ -102,14 +163,23 @@ class MotorDriverTests(unittest.TestCase):
         adapter = PercentMotorDriverAdapter(
             raw_motor_driver=raw_driver,
             percent_max_speed=100,
+            raw_min_speed=50,
             raw_max_speed=480,
         )
 
-        adapter.setSpeeds(50, -50)
+        adapter.setSpeeds(1, -50)
         adapter.close()
 
-        self.assertEqual(raw_driver.calls, [(240, -240)])
+        self.assertEqual(raw_driver.calls, [(50, -263)])
         self.assertTrue(raw_driver.closed)
+
+    def test_percent_adapter_rejects_invalid_raw_range(self) -> None:
+        with self.assertRaises(ValueError):
+            PercentMotorDriverAdapter(
+                raw_motor_driver=_FakeRawMotorDriver(),
+                raw_min_speed=250,
+                raw_max_speed=250,
+            )
 
     def test_drv8835_driver_applies_direction_and_duty(self) -> None:
         left_pwm = _FakePwmChannel(period_ns=1000)

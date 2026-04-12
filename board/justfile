@@ -232,7 +232,21 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
         exit 1; \
     fi
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env txing "{{region}}" "{{aws_profile}}")"
-    command=(sudo "{{built_board_motor_raw}}" --left "{{left}}" --right "{{right}}")
+    preserve_env=(
+        LG_WD
+        BOARD_DRIVE_RAW_MAX_SPEED
+        BOARD_DRIVE_PWM_HZ
+        BOARD_DRIVE_PWM_CHIP
+        BOARD_DRIVE_LEFT_PWM_CHANNEL
+        BOARD_DRIVE_RIGHT_PWM_CHANNEL
+        BOARD_DRIVE_GPIO_CHIP
+        BOARD_DRIVE_LEFT_DIR_GPIO
+        BOARD_DRIVE_RIGHT_DIR_GPIO
+        BOARD_DRIVE_LEFT_INVERTED
+        BOARD_DRIVE_RIGHT_INVERTED
+    )
+    preserve_env_csv="$(IFS=,; printf '%s' "${preserve_env[*]}")"
+    command=(sudo "--preserve-env=$preserve_env_csv" "{{built_board_motor_raw}}" --left "{{left}}" --right "{{right}}")
     if [ -n "{{duration}}" ]; then \
         command+=(--duration "{{duration}}"); \
     fi
@@ -253,11 +267,13 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env txing "{{region}}" "{{aws_profile}}" "" "" "" "{{aws_shared_credentials_file}}" "{{aws_config_file}}")"
     project_root="$TXING_PROJECT_ROOT"
     env_file="$AWS_ENV_FILE"
+    board_env_file="$BOARD_ENV_FILE"
     region="$AWS_REGION"
     aws_profile="$AWS_SELECTED_PROFILE"
     aws_shared_credentials_file="$AWS_SHARED_CREDENTIALS_FILE"
     aws_config_file="$AWS_CONFIG_FILE"
-    lg_wd="{{lg_wd}}"
+    lg_wd_override="{{lg_wd}}"
+    lg_wd="$lg_wd_override"
     if [ -z "$lg_wd" ]; then \
         lg_wd="${LG_WD:-{{default_lgpio_workdir}}}"; \
     fi; \
@@ -295,8 +311,8 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
     if [ -n "{{aws_config_file}}" ] && [ -n "$aws_config_file" ]; then \
         service_env+=("Environment=\"AWS_CONFIG_FILE=$aws_config_file\""); \
     fi; \
-    if [ -n "$lg_wd" ]; then \
-        service_env+=("Environment=\"LG_WD=$lg_wd\""); \
+    if [ -n "$lg_wd_override" ]; then \
+        service_env+=("Environment=\"LG_WD=$lg_wd_override\""); \
     fi; \
     { \
         printf '%s\n' \
@@ -308,7 +324,8 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
             '[Service]' \
             'Type=simple' \
             "WorkingDirectory=$project_root" \
-            "EnvironmentFile=$env_file"; \
+            "EnvironmentFile=$env_file" \
+            "EnvironmentFile=-$board_env_file"; \
         printf '%s\n' "${service_env[@]}"; \
         printf '%s\n' \
             'ExecStart={{built_board}} --heartbeat-seconds 60' \
