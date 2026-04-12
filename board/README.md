@@ -311,7 +311,7 @@ For TLS trust on the KVS signaling path, `board-video-sender` strips inherited C
 
 ### 6. Verify the `txing` Runtime Profile
 
-The txing runtime and the supervised sender both use the standard AWS SDK chain. The generated service unit loads `config/aws.env` via `EnvironmentFile=`, so `AWS_REGION`, `AWS_TXING_PROFILE`, `AWS_SHARED_CREDENTIALS_FILE`, `AWS_CONFIG_FILE`, `THING_NAME`, `SCHEMA_FILE`, `BOARD_VIDEO_VIEWER_URL`, `BOARD_VIDEO_REGION`, `BOARD_VIDEO_CHANNEL_NAME`, and `BOARD_VIDEO_SENDER_COMMAND` all come from the shared project-local config by default.
+The txing runtime and the supervised sender both use the standard AWS SDK chain. The generated service unit loads `config/aws.env` via `EnvironmentFile=`, so `AWS_REGION`, `AWS_TXING_PROFILE`, `AWS_SHARED_CREDENTIALS_FILE`, `AWS_CONFIG_FILE`, `THING_NAME`, `SCHEMA_FILE`, `BOARD_VIDEO_VIEWER_URL`, `BOARD_VIDEO_REGION`, `BOARD_VIDEO_CHANNEL_NAME`, `BOARD_VIDEO_SENDER_COMMAND`, and `KVS_DUALSTACK_ENDPOINTS` all come from the shared project-local config by default.
 
 Verify the intended txing identity before installing the service:
 
@@ -332,6 +332,7 @@ Set the board runtime defaults in `config/aws.env`, especially:
 - `BOARD_VIDEO_REGION`
 - `BOARD_VIDEO_CHANNEL_NAME`
 - `BOARD_VIDEO_SENDER_COMMAND`
+- `KVS_DUALSTACK_ENDPOINTS=ON` to enable dual-stack KVS WebRTC endpoints for the native sender and allow IPv6 candidate gathering when the network supports it
 
 Build the board runtime:
 

@@ -71,6 +71,7 @@ _project-aws-env scope='rig' region='' profile='' stack_name='' cognito_domain_p
     board_video_region="${BOARD_VIDEO_REGION:-eu-central-1}"
     board_video_channel_name="${BOARD_VIDEO_CHANNEL_NAME:-txing-board-video}"
     board_video_sender_command="${BOARD_VIDEO_SENDER_COMMAND:-}"
+    kvs_dualstack_endpoints="${KVS_DUALSTACK_ENDPOINTS:-}"
 
     export_line TXING_PROJECT_ROOT "$project_root"
     export_line AWS_ENV_FILE "$env_file"
@@ -94,6 +95,11 @@ _project-aws-env scope='rig' region='' profile='' stack_name='' cognito_domain_p
     export_line BOARD_VIDEO_REGION "$board_video_region"
     export_line BOARD_VIDEO_CHANNEL_NAME "$board_video_channel_name"
     export_line BOARD_VIDEO_SENDER_COMMAND "$board_video_sender_command"
+    if [ -n "$kvs_dualstack_endpoints" ]; then
+      export_line KVS_DUALSTACK_ENDPOINTS "$kvs_dualstack_endpoints"
+    else
+      printf 'unset KVS_DUALSTACK_ENDPOINTS\n'
+    fi
     export_line AWS_DEFAULT_REGION "$aws_region"
     if [ -n "$aws_selected_profile" ]; then
       export_line AWS_PROFILE "$aws_selected_profile"
