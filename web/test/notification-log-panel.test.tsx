@@ -10,16 +10,16 @@ describe('notification log panel', () => {
           {
             id: 'runtime-log-1',
             tone: 'success',
-            message: 'Sparkplug DCMD.redcon -> 3 at 14:49:36',
+            message: 'Sparkplug DCMD.redcon -> 3',
             dedupeKey: 'sparkplug-redcon:3',
-            createdAtMs: new Date('2026-04-13T14:49:36Z').getTime(),
+            createdAtMs: new Date(2026, 3, 13, 14, 49, 36).getTime(),
           },
           {
             id: 'runtime-log-2',
             tone: 'error',
             message: 'Board video signaling closed',
             dedupeKey: 'board-video-viewer:Board video signaling closed',
-            createdAtMs: new Date('2026-04-13T14:49:40Z').getTime(),
+            createdAtMs: new Date(2026, 3, 13, 14, 49, 40).getTime(),
           },
         ]}
       />,
@@ -28,7 +28,8 @@ describe('notification log panel', () => {
     expect(markup).toContain('Session Log')
     expect(markup).toContain('notification-log-entry notification-log-entry-success')
     expect(markup).toContain('notification-log-entry notification-log-entry-error')
-    expect(markup).toContain('Sparkplug DCMD.redcon -&gt; 3 at 14:49:36')
+    expect(markup).toContain('2026-04-13 14:49:36')
+    expect(markup).toContain('Sparkplug DCMD.redcon -&gt; 3')
     expect(markup).toContain('Board video signaling closed')
   })
 })

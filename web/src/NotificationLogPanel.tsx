@@ -1,15 +1,11 @@
-import type { AppNotificationLogEntry } from './app-notifications'
+import {
+  formatRuntimeTimestamp,
+  type AppNotificationLogEntry,
+} from './app-notifications'
 
 type NotificationLogPanelProps = {
   notificationLog: AppNotificationLogEntry[]
 }
-
-const formatLogTime = (createdAtMs: number): string =>
-  new Date(createdAtMs).toLocaleTimeString([], {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  })
 
 function NotificationLogPanel({ notificationLog }: NotificationLogPanelProps) {
   return (
@@ -34,13 +30,18 @@ function NotificationLogPanel({ notificationLog }: NotificationLogPanelProps) {
               role="listitem"
               className={`notification-log-entry notification-log-entry-${entry.tone}`}
             >
-              <time
-                className="notification-log-time"
-                dateTime={new Date(entry.createdAtMs).toISOString()}
-              >
-                {formatLogTime(entry.createdAtMs)}
-              </time>
-              <p className="notification-log-message">{entry.message}</p>
+              <p className="notification-log-message">
+                <time
+                  className="notification-log-time"
+                  dateTime={new Date(entry.createdAtMs).toISOString()}
+                >
+                  {formatRuntimeTimestamp(entry.createdAtMs)}
+                </time>
+                <span className="notification-log-separator" aria-hidden="true">
+                  :{' '}
+                </span>
+                <span>{entry.message}</span>
+              </p>
             </article>
           ))}
         </div>

@@ -12,6 +12,7 @@ import {
   deriveTxingPoweredOn,
   extractDesiredRedcon,
   extractReportedBatteryMv,
+  extractReportedBoardDrive,
   extractReportedBoardPower,
   extractReportedBoardVideo,
   extractReportedBoardWifiOnline,
@@ -39,7 +40,7 @@ import {
   type AppNotificationInput,
   type AppNotificationLogEntry,
 } from './app-notifications'
-import { createShadowSession, type ShadowConnectionState, type ShadowSession } from './shadow-api'
+import type { ShadowConnectionState, ShadowSession } from './shadow-api'
 import TxingPanel from './TxingPanel'
 
 type SessionStatus = 'loading' | 'authenticating' | 'signed_out' | 'signed_in'
@@ -53,11 +54,19 @@ type ShadowSnapshotView = {
 
 const formatJson = (value: unknown): string => JSON.stringify(value, null, 2)
 const cmdVelRepeatIntervalMs = 100
+let shadowApiModulePromise: Promise<typeof import('./shadow-api')> | null = null
 
 const createShadowSnapshotView = (shadow: unknown): ShadowSnapshotView => ({
   json: formatJson(shadow),
   updatedAtMs: Date.now(),
 })
+
+const loadShadowApiModule = (): Promise<typeof import('./shadow-api')> => {
+  if (!shadowApiModulePromise) {
+    shadowApiModulePromise = import('./shadow-api')
+  }
+  return shadowApiModulePromise
+}
 
 function App({ initialAuthError = '' }: AppProps) {
   const [status, setStatus] = useState<SessionStatus>('loading')
@@ -125,6 +134,10 @@ function App({ initialAuthError = '' }: AppProps) {
   )
   const reportedBoardVideo = useMemo(
     () => extractReportedBoardVideo(shadowDocument),
+    [shadowDocument],
+  )
+  const reportedBoardDrive = useMemo(
+    () => extractReportedBoardDrive(shadowDocument),
     [shadowDocument],
   )
   const reportedRedcon = useMemo(
@@ -320,52 +333,70 @@ function App({ initialAuthError = '' }: AppProps) {
     }
 
     let cancelled = false
-    const shadowSession = createShadowSession({
-      thingName: appConfig.thingName,
-      awsRegion: appConfig.awsRegion,
-      sparkplugGroupId: appConfig.sparkplugGroupId,
-      sparkplugEdgeNodeId: appConfig.sparkplugEdgeNodeId,
-      resolveIdToken: resolveSessionIdToken,
-      onShadowDocument: (shadow) => {
-        if (cancelled) {
-          return
-        }
-        applyShadowSnapshot(shadow)
-        setIsLoadingShadow(false)
-      },
-      onConnectionStateChange: (nextState) => {
-        if (!cancelled) {
-          setShadowConnectionState(nextState)
-        }
-      },
-      onError: (message) => {
-        if (!cancelled) {
-          enqueueRuntimeError(message, 'shadow-session')
-        }
-      },
-    })
-
-    shadowSessionRef.current = shadowSession
+    let shadowSession: ShadowSession | null = null
     setIsLoadingShadow(true)
     setShadowConnectionState('connecting')
 
-    void shadowSession.start().catch((caughtError) => {
-      if (cancelled) {
-        return
+    const startShadowSession = async (): Promise<void> => {
+      try {
+        const { createShadowSession } = await loadShadowApiModule()
+        if (cancelled) {
+          return
+        }
+
+        shadowSession = createShadowSession({
+          thingName: appConfig.thingName,
+          awsRegion: appConfig.awsRegion,
+          sparkplugGroupId: appConfig.sparkplugGroupId,
+          sparkplugEdgeNodeId: appConfig.sparkplugEdgeNodeId,
+          resolveIdToken: resolveSessionIdToken,
+          onShadowDocument: (shadow) => {
+            if (cancelled) {
+              return
+            }
+            applyShadowSnapshot(shadow)
+            setIsLoadingShadow(false)
+          },
+          onConnectionStateChange: (nextState) => {
+            if (!cancelled) {
+              setShadowConnectionState(nextState)
+            }
+          },
+          onError: (message) => {
+            if (!cancelled) {
+              enqueueRuntimeError(message, 'shadow-session')
+            }
+          },
+        })
+
+        if (cancelled) {
+          shadowSession.close()
+          shadowSession = null
+          return
+        }
+
+        shadowSessionRef.current = shadowSession
+        await shadowSession.start()
+      } catch (caughtError) {
+        if (cancelled) {
+          return
+        }
+        setIsLoadingShadow(false)
+        enqueueRuntimeError(
+          caughtError instanceof Error ? caughtError.message : 'Unable to open Thing Shadow session',
+          'shadow-session',
+        )
       }
-      setIsLoadingShadow(false)
-      enqueueRuntimeError(
-        caughtError instanceof Error ? caughtError.message : 'Unable to open Thing Shadow session',
-        'shadow-session',
-      )
-    })
+    }
+
+    void startShadowSession()
 
     return () => {
       cancelled = true
       if (shadowSessionRef.current === shadowSession) {
         shadowSessionRef.current = null
       }
-      shadowSession.close()
+      shadowSession?.close()
     }
   }, [adminEmailMismatch, applyShadowSnapshot, enqueueRuntimeError, resolveSessionIdToken, status])
 
@@ -490,7 +521,7 @@ function App({ initialAuthError = '' }: AppProps) {
       await shadowSession.publishRedconCommand(redcon)
       enqueueNotification({
         tone: 'success',
-        message: `Sparkplug DCMD.redcon -> ${redcon} at ${new Date().toLocaleTimeString()}`,
+        message: `Sparkplug DCMD.redcon -> ${redcon}`,
         dedupeKey: `sparkplug-redcon:${redcon}`,
       })
       return true
@@ -594,12 +625,6 @@ function App({ initialAuthError = '' }: AppProps) {
 
   return (
     <main className="page page-signed-in">
-      <NotificationTray
-        notifications={notifications}
-        onDismiss={(notificationId) => {
-          dismissNotification(notificationId)
-        }}
-      />
       <TxingPanel
         authUser={authUser}
         canLoadShadow={canLoadShadow}
@@ -610,7 +635,9 @@ function App({ initialAuthError = '' }: AppProps) {
         isTxingSwitchDisabled={isTxingSwitchDisabled}
         isTxingSwitchPending={isTxingSwitchPending}
         lastShadowUpdateAtMs={lastShadowUpdateAtMs}
+        reportedBoardLeftTrackSpeed={reportedBoardDrive.leftSpeed}
         reportedBoardOnline={reportedBoardOnline}
+        reportedBoardRightTrackSpeed={reportedBoardDrive.rightSpeed}
         reportedBatteryMv={reportedBatteryMv}
         reportedMcuOnline={reportedMcuOnline}
         reportedRedcon={reportedRedcon}
@@ -633,6 +660,13 @@ function App({ initialAuthError = '' }: AppProps) {
         }}
         onTxingSwitchChange={(checked) => {
           void handleTxingSwitchChange(checked)
+        }}
+      />
+
+      <NotificationTray
+        notifications={notifications}
+        onDismiss={(notificationId) => {
+          dismissNotification(notificationId)
         }}
       />
 

@@ -5,6 +5,8 @@ import {
   dismissAppNotification,
   enqueueAppNotification,
   expireAppNotifications,
+  formatRuntimeNotificationLine,
+  formatRuntimeTimestamp,
   getNextBoardVideoLastErrorNotification,
   serializeNotificationLog,
   runtimeNotificationLifetimeMs,
@@ -16,7 +18,7 @@ describe('app notification helpers', () => {
       [],
       {
         tone: 'success',
-        message: 'Sparkplug DCMD.redcon -> 3 at 14:49:36',
+        message: 'Sparkplug DCMD.redcon -> 3',
         dedupeKey: 'sparkplug-redcon:3',
       },
       1_000,
@@ -27,8 +29,9 @@ describe('app notification helpers', () => {
       {
         id: 'notification-1',
         tone: 'success',
-        message: 'Sparkplug DCMD.redcon -> 3 at 14:49:36',
+        message: 'Sparkplug DCMD.redcon -> 3',
         dedupeKey: 'sparkplug-redcon:3',
+        createdAtMs: 1_000,
         expiresAtMs: 1_000 + runtimeNotificationLifetimeMs,
       },
     ])
@@ -42,6 +45,7 @@ describe('app notification helpers', () => {
           tone: 'neutral',
           message: 'Older message',
           dedupeKey: 'older',
+          createdAtMs: 4_000,
           expiresAtMs: 5_000,
         },
         {
@@ -49,6 +53,7 @@ describe('app notification helpers', () => {
           tone: 'error',
           message: 'Original runtime error',
           dedupeKey: 'runtime-error',
+          createdAtMs: 5_000,
           expiresAtMs: 8_000,
         },
       ],
@@ -67,6 +72,7 @@ describe('app notification helpers', () => {
         tone: 'error',
         message: 'Updated runtime error',
         dedupeKey: 'runtime-error',
+        createdAtMs: 6_000,
         expiresAtMs: 6_000 + runtimeNotificationLifetimeMs,
       },
       {
@@ -74,6 +80,7 @@ describe('app notification helpers', () => {
         tone: 'neutral',
         message: 'Older message',
         dedupeKey: 'older',
+        createdAtMs: 4_000,
         expiresAtMs: 5_000,
       },
     ])
@@ -86,14 +93,16 @@ describe('app notification helpers', () => {
         tone: 'success' as const,
         message: 'Success',
         dedupeKey: 'success',
-        expiresAtMs: 10_000,
+        createdAtMs: 1_000,
+        expiresAtMs: 5_000,
       },
       {
         id: 'notification-2',
         tone: 'error' as const,
         message: 'Error',
         dedupeKey: 'error',
-        expiresAtMs: 20_000,
+        createdAtMs: 2_000,
+        expiresAtMs: 10_000,
       },
     ]
 
@@ -103,7 +112,8 @@ describe('app notification helpers', () => {
         tone: 'error',
         message: 'Error',
         dedupeKey: 'error',
-        expiresAtMs: 20_000,
+        createdAtMs: 2_000,
+        expiresAtMs: 10_000,
       },
     ])
     expect(expireAppNotifications(notifications, 15_000)).toEqual([
@@ -112,9 +122,18 @@ describe('app notification helpers', () => {
         tone: 'error',
         message: 'Error',
         dedupeKey: 'error',
-        expiresAtMs: 20_000,
+        createdAtMs: 2_000,
+        expiresAtMs: 10_000,
       },
     ])
+  })
+
+  test('formats runtime timestamps and rendered message lines', () => {
+    const createdAtMs = new Date(2026, 3, 13, 14, 49, 36).getTime()
+    expect(formatRuntimeTimestamp(createdAtMs)).toBe('2026-04-13 14:49:36')
+    expect(formatRuntimeNotificationLine(createdAtMs, 'Sparkplug DCMD.redcon -> 3')).toBe(
+      '2026-04-13 14:49:36: Sparkplug DCMD.redcon -> 3',
+    )
   })
 
   test('only emits board video lastError notifications for changed non-empty errors', () => {

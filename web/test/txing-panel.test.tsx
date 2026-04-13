@@ -15,7 +15,9 @@ describe('txing panel', () => {
         isTxingSwitchDisabled={false}
         isTxingSwitchPending={false}
         lastShadowUpdateAtMs={null}
+        reportedBoardLeftTrackSpeed={60}
         reportedBoardOnline={true}
+        reportedBoardRightTrackSpeed={-30}
         reportedBatteryMv={3900}
         reportedMcuOnline={true}
         reportedRedcon={2}
@@ -44,7 +46,14 @@ describe('txing panel', () => {
     expect(markup.indexOf('TXING')).toBeLessThan(markup.indexOf('data-redcon-level="2"'))
     expect(markup.indexOf('data-redcon-level="2"')).toBeLessThan(markup.indexOf('data-redcon-level="1"'))
     expect(markup.match(/status-redcon-connector/g)?.length).toBe(2)
-    expect(markup.match(/status-redcon-bridge/g)?.length).toBe(2)
+    expect(markup).toContain('data-track-side="left"')
+    expect(markup).toContain('data-track-speed="60"')
+    expect(markup).toContain('aria-label="Left track forward 60 percent"')
+    expect(markup).toContain('data-track-side="right"')
+    expect(markup).toContain('data-track-speed="-30"')
+    expect(markup).toContain('aria-label="Right track reverse 30 percent"')
+    expect(markup).toContain('status-track-gauge-needle status-track-forward')
+    expect(markup).toContain('status-track-gauge-needle status-track-reverse')
     expect(markup).toContain('status-redcon-dot status-redcon-dot-active status-txing-redcon-2')
     expect(markup).toContain('status-redcon-dot status-redcon-dot-inactive')
     expect(markup).not.toContain('status-redcon-dot-active status-txing-redcon-1')

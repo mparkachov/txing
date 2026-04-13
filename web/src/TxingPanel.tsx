@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AuthUser } from './auth'
-import { describeRedcon, getTxingRedconToneClass } from './app-model'
+import {
+  describeRedcon,
+  getTrackIndicatorPresentation,
+  getTxingRedconToneClass,
+} from './app-model'
 import VideoPanel from './VideoPanel'
 
 type TxingPanelProps = {
@@ -13,7 +17,9 @@ type TxingPanelProps = {
   isTxingSwitchDisabled: boolean
   isTxingSwitchPending: boolean
   lastShadowUpdateAtMs: number | null
+  reportedBoardLeftTrackSpeed: number | null
   reportedBoardOnline: boolean | null
+  reportedBoardRightTrackSpeed: number | null
   reportedBatteryMv: number | null
   reportedMcuOnline: boolean | null
   reportedRedcon: number | null
@@ -32,6 +38,10 @@ type TxingPanelProps = {
 type BatteryCurvePoint = readonly [mv: number, percent: number]
 type CameraGlyphProps = {
   crossed: boolean
+}
+type TrackGaugeProps = {
+  side: 'Left' | 'Right'
+  speed: number | null
 }
 type RedconLevel = 1 | 2 | 3 | 4
 
@@ -53,6 +63,17 @@ const getRedconDotClass = (level: RedconLevel, activeRedcon: number | null): str
       ? `status-redcon-dot-active ${getTxingRedconToneClass(level)}`
       : 'status-redcon-dot-inactive'
   }`
+const getTrackGaugeAngle = (speed: number | null): number =>
+  speed === null ? 0 : Math.max(-78, Math.min(78, speed * 0.78))
+const formatTrackGaugeValue = (speed: number | null): string => {
+  if (speed === null) {
+    return '--'
+  }
+  if (speed === 0) {
+    return '0'
+  }
+  return `${speed > 0 ? '+' : ''}${speed}`
+}
 
 const formatShadowUpdateTime = (updatedAtMs: number | null): string =>
   updatedAtMs === null
@@ -139,6 +160,41 @@ function CameraGlyph({ crossed }: CameraGlyphProps) {
   )
 }
 
+function TrackGauge({ side, speed }: TrackGaugeProps) {
+  const presentation = getTrackIndicatorPresentation(speed, side)
+  const angle = getTrackGaugeAngle(speed)
+  const valueLabel = formatTrackGaugeValue(speed)
+
+  return (
+    <div
+      className="status-track-gauge"
+      role="img"
+      aria-label={presentation.ariaLabel}
+      title={`${side} track ${valueLabel === '--' ? 'unavailable' : `${valueLabel}%`}`}
+      data-track-side={side.toLowerCase()}
+      data-track-speed={speed === null ? 'null' : String(speed)}
+    >
+      <span className="status-track-gauge-arc" aria-hidden="true" />
+      <span className="status-track-gauge-mark status-track-gauge-mark-minus" aria-hidden="true">
+        -
+      </span>
+      <span className="status-track-gauge-mark status-track-gauge-mark-plus" aria-hidden="true">
+        +
+      </span>
+      <span className="status-track-gauge-zero" aria-hidden="true" />
+      <span
+        className={`status-track-gauge-needle ${presentation.toneClass}`}
+        aria-hidden="true"
+        style={{ transform: `translateX(-50%) rotate(${angle}deg)` }}
+      />
+      <span className="status-track-gauge-pivot" aria-hidden="true" />
+      <span className="status-track-gauge-value" aria-hidden="true">
+        {valueLabel}
+      </span>
+    </div>
+  )
+}
+
 function TxingPanel({
   authUser,
   canLoadShadow,
@@ -149,7 +205,9 @@ function TxingPanel({
   isTxingSwitchDisabled,
   isTxingSwitchPending,
   lastShadowUpdateAtMs,
+  reportedBoardLeftTrackSpeed,
   reportedBoardOnline,
+  reportedBoardRightTrackSpeed,
   reportedBatteryMv,
   reportedMcuOnline,
   reportedRedcon,
@@ -321,7 +379,7 @@ function TxingPanel({
             </div>
             <div
               className="status-txing-title-group"
-              role="img"
+              role="group"
               aria-label={txingRedconLabel}
               title={txingRedconLabel}
             >
@@ -336,11 +394,11 @@ function TxingPanel({
                   data-redcon-level={leftRedconLevels[1]}
                 />
               </div>
-              <span className="status-redcon-bridge" aria-hidden="true" />
+              <TrackGauge side="Left" speed={reportedBoardLeftTrackSpeed} />
               <div className="status-name status-txing-name" aria-hidden="true">
                 TXING
               </div>
-              <span className="status-redcon-bridge" aria-hidden="true" />
+              <TrackGauge side="Right" speed={reportedBoardRightTrackSpeed} />
               <div className="status-redcon-cluster status-redcon-cluster-right" aria-hidden="true">
                 <span
                   className={getRedconDotClass(rightRedconLevels[0], reportedRedcon)}

@@ -10,16 +10,18 @@ describe('notification tray', () => {
           {
             id: 'notification-1',
             tone: 'success',
-            message: 'Sparkplug DCMD.redcon -> 3 at 14:49:36',
+            message: 'Sparkplug DCMD.redcon -> 3',
             dedupeKey: 'sparkplug-redcon:3',
-            expiresAtMs: 10_000,
+            createdAtMs: new Date(2026, 3, 13, 14, 49, 36).getTime(),
+            expiresAtMs: 5_000,
           },
           {
             id: 'notification-2',
             tone: 'error',
             message: 'Board video signaling closed',
             dedupeKey: 'board-video-viewer:Board video signaling closed',
-            expiresAtMs: 10_000,
+            createdAtMs: new Date(2026, 3, 13, 14, 49, 40).getTime(),
+            expiresAtMs: 5_000,
           },
         ]}
         onDismiss={() => {}}
@@ -29,7 +31,13 @@ describe('notification tray', () => {
     expect(markup).toContain('class="notification-tray"')
     expect(markup).toContain('notification-card notification-card-success')
     expect(markup).toContain('notification-card notification-card-error')
-    expect(markup).toContain('aria-label="Dismiss notification: Sparkplug DCMD.redcon -&gt; 3 at 14:49:36"')
-    expect(markup).toContain('aria-label="Dismiss notification: Board video signaling closed"')
+    expect(markup).toContain('2026-04-13 14:49:36')
+    expect(markup).toContain('Sparkplug DCMD.redcon -&gt; 3')
+    expect(markup).toContain(
+      'aria-label="Dismiss notification: 2026-04-13 14:49:36: Sparkplug DCMD.redcon -&gt; 3"',
+    )
+    expect(markup).toContain(
+      'aria-label="Dismiss notification: 2026-04-13 14:49:40: Board video signaling closed"',
+    )
   })
 })
