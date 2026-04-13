@@ -13,6 +13,7 @@ type TxingPanelProps = {
   canUseBoardVideo: boolean
   isBoardVideoExpanded: boolean
   isDebugEnabled: boolean
+  isSessionLogVisible: boolean
   isTxingSwitchDisabled: boolean
   isTxingSwitchPending: boolean
   lastShadowUpdateAtMs: number | null
@@ -25,10 +26,12 @@ type TxingPanelProps = {
   txingSwitchChecked: boolean
   videoChannelName: string | null
   resolveIdToken: () => Promise<string>
+  onBoardVideoRuntimeError: (message: string) => void
   onLoadShadow: () => void
   onSignOff: () => void
   onToggleBoardVideo: () => void
   onToggleDebug: () => void
+  onToggleSessionLog: () => void
   onTxingSwitchChange: (checked: boolean) => void
 }
 
@@ -139,6 +142,7 @@ function TxingPanel({
   canUseBoardVideo,
   isBoardVideoExpanded,
   isDebugEnabled,
+  isSessionLogVisible,
   isTxingSwitchDisabled,
   isTxingSwitchPending,
   lastShadowUpdateAtMs,
@@ -151,10 +155,12 @@ function TxingPanel({
   txingSwitchChecked,
   videoChannelName,
   resolveIdToken,
+  onBoardVideoRuntimeError,
   onLoadShadow,
   onSignOff,
   onToggleBoardVideo,
   onToggleDebug,
+  onToggleSessionLog,
   onTxingSwitchChange,
 }: TxingPanelProps) {
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false)
@@ -261,6 +267,17 @@ function TxingPanel({
                       }}
                     >
                       {isDebugEnabled ? 'Disable Debug' : 'Enable Debug'}
+                    </button>
+                    <button
+                      type="button"
+                      className="user-menu-item"
+                      role="menuitem"
+                      onClick={() => {
+                        onToggleSessionLog()
+                        setIsUserMenuOpen(false)
+                      }}
+                    >
+                      {isSessionLogVisible ? 'Hide Session Log' : 'Show Session Log'}
                     </button>
                     <button
                       type="button"
@@ -415,6 +432,7 @@ function TxingPanel({
             <VideoPanel
               channelName={videoChannelName}
               debugEnabled={isDebugEnabled}
+              onRuntimeError={onBoardVideoRuntimeError}
               resolveIdToken={resolveIdToken}
             />
           ) : null}

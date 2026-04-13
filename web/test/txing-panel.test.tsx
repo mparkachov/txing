@@ -11,6 +11,7 @@ describe('txing panel', () => {
         canUseBoardVideo={false}
         isBoardVideoExpanded={false}
         isDebugEnabled={false}
+        isSessionLogVisible={false}
         isTxingSwitchDisabled={false}
         isTxingSwitchPending={false}
         lastShadowUpdateAtMs={null}
@@ -23,10 +24,12 @@ describe('txing panel', () => {
         txingSwitchChecked={true}
         videoChannelName={null}
         resolveIdToken={async () => 'token'}
+        onBoardVideoRuntimeError={() => {}}
         onLoadShadow={() => {}}
         onSignOff={() => {}}
         onToggleBoardVideo={() => {}}
         onToggleDebug={() => {}}
+        onToggleSessionLog={() => {}}
         onTxingSwitchChange={() => {}}
       />,
     )

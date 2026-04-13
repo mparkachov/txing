@@ -1,0 +1,136 @@
+export type NotificationTone = 'neutral' | 'success' | 'error'
+
+export type AppNotification = {
+  id: string
+  tone: NotificationTone
+  message: string
+  dedupeKey: string
+  expiresAtMs: number
+}
+
+export type AppNotificationLogEntry = {
+  id: string
+  tone: NotificationTone
+  message: string
+  dedupeKey: string
+  createdAtMs: number
+}
+
+export type AppNotificationInput = {
+  tone: NotificationTone
+  message: string
+  dedupeKey: string
+}
+
+export const runtimeNotificationLifetimeMs = 10_000
+export const notificationLogSessionStorageKey = 'txing.runtime-notifications.log'
+
+export const normalizeRuntimeMessage = (message: string | null | undefined): string | null => {
+  if (typeof message !== 'string') {
+    return null
+  }
+
+  const normalizedMessage = message.trim()
+  return normalizedMessage ? normalizedMessage : null
+}
+
+export const enqueueAppNotification = (
+  notifications: AppNotification[],
+  notification: AppNotificationInput,
+  nowMs: number,
+  nextId: string,
+): AppNotification[] => {
+  const activeNotification = notifications.find(
+    (candidate) => candidate.dedupeKey === notification.dedupeKey,
+  )
+  const nextNotification: AppNotification = {
+    id: activeNotification?.id ?? nextId,
+    tone: notification.tone,
+    message: notification.message,
+    dedupeKey: notification.dedupeKey,
+    expiresAtMs: nowMs + runtimeNotificationLifetimeMs,
+  }
+
+  return [
+    nextNotification,
+    ...notifications.filter((candidate) => candidate.dedupeKey !== notification.dedupeKey),
+  ]
+}
+
+export const appendNotificationLogEntry = (
+  notificationLog: AppNotificationLogEntry[],
+  notification: AppNotificationInput,
+  nowMs: number,
+  nextId: string,
+): AppNotificationLogEntry[] => [
+  {
+    id: nextId,
+    tone: notification.tone,
+    message: notification.message,
+    dedupeKey: notification.dedupeKey,
+    createdAtMs: nowMs,
+  },
+  ...notificationLog,
+]
+
+export const dismissAppNotification = (
+  notifications: AppNotification[],
+  notificationId: string,
+): AppNotification[] =>
+  notifications.filter((notification) => notification.id !== notificationId)
+
+export const expireAppNotifications = (
+  notifications: AppNotification[],
+  nowMs: number,
+): AppNotification[] =>
+  notifications.filter((notification) => notification.expiresAtMs > nowMs)
+
+export const getNextBoardVideoLastErrorNotification = (
+  previousLastError: string | null,
+  nextLastError: string | null,
+): string | null => {
+  const normalizedPrevious = normalizeRuntimeMessage(previousLastError)
+  const normalizedNext = normalizeRuntimeMessage(nextLastError)
+  if (!normalizedNext || normalizedNext === normalizedPrevious) {
+    return null
+  }
+  return normalizedNext
+}
+
+const isNotificationTone = (value: unknown): value is NotificationTone =>
+  value === 'neutral' || value === 'success' || value === 'error'
+
+const isLogEntryShape = (value: unknown): value is AppNotificationLogEntry => {
+  if (!value || typeof value !== 'object') {
+    return false
+  }
+
+  const candidate = value as Partial<AppNotificationLogEntry>
+  return (
+    typeof candidate.id === 'string' &&
+    isNotificationTone(candidate.tone) &&
+    typeof candidate.message === 'string' &&
+    typeof candidate.dedupeKey === 'string' &&
+    typeof candidate.createdAtMs === 'number' &&
+    Number.isFinite(candidate.createdAtMs)
+  )
+}
+
+export const serializeNotificationLog = (notificationLog: AppNotificationLogEntry[]): string =>
+  JSON.stringify(notificationLog)
+
+export const deserializeNotificationLog = (rawValue: string | null): AppNotificationLogEntry[] => {
+  if (!rawValue) {
+    return []
+  }
+
+  try {
+    const parsed = JSON.parse(rawValue) as unknown
+    if (!Array.isArray(parsed)) {
+      return []
+    }
+    return parsed.filter(isLogEntryShape)
+  } catch {
+    return []
+  }
+}

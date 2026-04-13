@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from 'react'
 import {
   beginSignIn,
   clearAuthState,
@@ -24,6 +24,22 @@ import { appConfig } from './config'
 import { CmdVelTeleopController } from './cmd-vel-teleop'
 import type { Twist } from './cmd-vel'
 import DebugPanel from './DebugPanel'
+import NotificationLogPanel from './NotificationLogPanel'
+import NotificationTray from './NotificationTray'
+import {
+  appendNotificationLogEntry,
+  deserializeNotificationLog,
+  dismissAppNotification,
+  enqueueAppNotification,
+  expireAppNotifications,
+  getNextBoardVideoLastErrorNotification,
+  notificationLogSessionStorageKey,
+  normalizeRuntimeMessage,
+  serializeNotificationLog,
+  type AppNotification,
+  type AppNotificationInput,
+  type AppNotificationLogEntry,
+} from './app-notifications'
 import { createShadowSession, type ShadowConnectionState, type ShadowSession } from './shadow-api'
 import TxingPanel from './TxingPanel'
 
@@ -53,11 +69,23 @@ function App({ initialAuthError = '' }: AppProps) {
   const [isUpdatingShadow, setIsUpdatingShadow] = useState(false)
   const [isDebugEnabled, setIsDebugEnabled] = useState(false)
   const [isBoardVideoExpanded, setIsBoardVideoExpanded] = useState(false)
-  const [feedback, setFeedback] = useState<string>('')
-  const [error, setError] = useState<string>(initialAuthError)
+  const [isSessionLogVisible, setIsSessionLogVisible] = useState(false)
+  const [blockingError, setBlockingError] = useState<string>(initialAuthError)
+  const [notifications, setNotifications] = useState<AppNotification[]>([])
+  const [notificationLog, setNotificationLog] = useState<AppNotificationLogEntry[]>(() => {
+    if (typeof window === 'undefined') {
+      return []
+    }
+    return deserializeNotificationLog(
+      window.sessionStorage.getItem(notificationLogSessionStorageKey),
+    )
+  })
   const [shadowConnectionState, setShadowConnectionState] =
     useState<ShadowConnectionState>('idle')
   const shadowSessionRef = useRef<ShadowSession | null>(null)
+  const nextNotificationIdRef = useRef(0)
+  const nextNotificationLogIdRef = useRef(0)
+  const lastBoardVideoErrorRef = useRef<string | null>(null)
 
   const hasConfigErrors = appConfig.errors.length > 0
 
@@ -148,27 +176,64 @@ function App({ initialAuthError = '' }: AppProps) {
   const boardVideoReachable = !isTxingSwitchPending && boardOnline && reportedBoardPower !== false
   const canUseBoardVideo = boardVideoReachable && boardVideoReady
 
-  const applyShadowSnapshot = useEffectEvent((shadow: unknown, feedbackMessage?: string): void => {
+  useEffect(() => {
+    window.sessionStorage.setItem(
+      notificationLogSessionStorageKey,
+      serializeNotificationLog(notificationLog),
+    )
+  }, [notificationLog])
+
+  const enqueueNotification = useCallback((notification: AppNotificationInput): void => {
+    const nowMs = Date.now()
+    nextNotificationIdRef.current += 1
+    const nextNotificationId = `runtime-notification-${nextNotificationIdRef.current}`
+    setNotifications((currentNotifications) =>
+      enqueueAppNotification(currentNotifications, notification, nowMs, nextNotificationId),
+    )
+    nextNotificationLogIdRef.current += 1
+    const nextNotificationLogId = `runtime-log-${nowMs}-${nextNotificationLogIdRef.current}`
+    setNotificationLog((currentNotificationLog) =>
+      appendNotificationLogEntry(currentNotificationLog, notification, nowMs, nextNotificationLogId),
+    )
+  }, [])
+
+  const dismissNotification = useCallback((notificationId: string): void => {
+    setNotifications((currentNotifications) =>
+      dismissAppNotification(currentNotifications, notificationId),
+    )
+  }, [])
+
+  const enqueueRuntimeError = useCallback((message: string, source: string): void => {
+    const normalizedMessage = normalizeRuntimeMessage(message)
+    if (!normalizedMessage) {
+      return
+    }
+    enqueueNotification({
+      tone: 'error',
+      message: normalizedMessage,
+      dedupeKey: `${source}:${normalizedMessage}`,
+    })
+  }, [enqueueNotification])
+
+  const applyShadowSnapshot = useCallback((shadow: unknown): void => {
     const snapshotView = createShadowSnapshotView(shadow)
     setShadowJson(snapshotView.json)
     setLastShadowUpdateAtMs(snapshotView.updatedAtMs)
-    if (feedbackMessage) {
-      setFeedback(feedbackMessage)
-    }
-  })
+  }, [])
 
-  const resolveSessionIdToken = useEffectEvent(async (): Promise<string> => {
+  const resolveSessionIdToken = useCallback(async (): Promise<string> => {
     const refreshedTokens = await refreshTokensIfNeeded()
     if (!refreshedTokens) {
       clearAuthState()
       setAuthUser(null)
       setStatus('signed_out')
+      setBlockingError('Session expired. Sign in again.')
       throw new Error('Session expired. Sign in again.')
     }
 
     setAuthUser(getAuthUser(refreshedTokens))
     return refreshedTokens.idToken
-  })
+  }, [])
 
   const getShadowSession = (): ShadowSession => {
     const shadowSession = shadowSessionRef.current
@@ -185,9 +250,8 @@ function App({ initialAuthError = '' }: AppProps) {
     }
 
     const hydrateSession = async () => {
-      setFeedback('')
       if (!initialAuthError) {
-        setError('')
+        setBlockingError('')
       }
 
       try {
@@ -198,17 +262,45 @@ function App({ initialAuthError = '' }: AppProps) {
         }
 
         setAuthUser(getAuthUser(restoredTokens))
-        setError('')
+        setBlockingError('')
         setStatus('signed_in')
       } catch (caughtError) {
         clearAuthState()
         setStatus('signed_out')
-        setError(caughtError instanceof Error ? caughtError.message : 'Authentication failed')
+        setBlockingError(caughtError instanceof Error ? caughtError.message : 'Authentication failed')
       }
     }
 
     void hydrateSession()
   }, [hasConfigErrors, initialAuthError])
+
+  useEffect(() => {
+    if (status === 'signed_in') {
+      return
+    }
+    lastBoardVideoErrorRef.current = null
+    setNotifications([])
+  }, [status])
+
+  useEffect(() => {
+    if (notifications.length === 0) {
+      return
+    }
+
+    const nextExpirationAtMs = Math.min(
+      ...notifications.map((notification) => notification.expiresAtMs),
+    )
+    const timeoutDelayMs = Math.max(0, nextExpirationAtMs - Date.now())
+    const timeoutId = window.setTimeout(() => {
+      setNotifications((currentNotifications) =>
+        expireAppNotifications(currentNotifications, Date.now()),
+      )
+    }, timeoutDelayMs)
+
+    return () => {
+      window.clearTimeout(timeoutId)
+    }
+  }, [notifications])
 
   useEffect(() => {
     if (status !== 'signed_in') {
@@ -220,7 +312,7 @@ function App({ initialAuthError = '' }: AppProps) {
 
     clearAuthState()
     setStatus('signed_out')
-    setError(`Signed-in user is not allowed. Expected: ${appConfig.adminEmail}`)
+    setBlockingError(`Signed-in user is not allowed. Expected: ${appConfig.adminEmail}`)
   }, [adminEmailMismatch, status])
 
   useEffect(() => {
@@ -245,7 +337,6 @@ function App({ initialAuthError = '' }: AppProps) {
         }
         applyShadowSnapshot(shadow)
         setIsLoadingShadow(false)
-        setError('')
       },
       onConnectionStateChange: (nextState) => {
         if (!cancelled) {
@@ -254,7 +345,7 @@ function App({ initialAuthError = '' }: AppProps) {
       },
       onError: (message) => {
         if (!cancelled) {
-          setError(message)
+          enqueueRuntimeError(message, 'shadow-session')
         }
       },
     })
@@ -262,16 +353,15 @@ function App({ initialAuthError = '' }: AppProps) {
     shadowSessionRef.current = shadowSession
     setIsLoadingShadow(true)
     setShadowConnectionState('connecting')
-    setError('')
-    setFeedback('')
 
     void shadowSession.start().catch((caughtError) => {
       if (cancelled) {
         return
       }
       setIsLoadingShadow(false)
-      setError(
+      enqueueRuntimeError(
         caughtError instanceof Error ? caughtError.message : 'Unable to open Thing Shadow session',
+        'shadow-session',
       )
     })
 
@@ -282,7 +372,7 @@ function App({ initialAuthError = '' }: AppProps) {
       }
       shadowSession.close()
     }
-  }, [adminEmailMismatch, status])
+  }, [adminEmailMismatch, applyShadowSnapshot, enqueueRuntimeError, resolveSessionIdToken, status])
 
   const publishCmdVel = useEffectEvent(async (twist: Twist): Promise<void> => {
     const shadowSession = shadowSessionRef.current
@@ -293,11 +383,29 @@ function App({ initialAuthError = '' }: AppProps) {
     try {
       await shadowSession.publishCmdVel(twist)
     } catch (caughtError) {
-      setError(
+      enqueueRuntimeError(
         caughtError instanceof Error ? caughtError.message : 'Unable to publish board cmd_vel',
+        'board-cmd-vel',
       )
     }
   })
+
+  useEffect(() => {
+    const nextBoardVideoLastError = normalizeRuntimeMessage(reportedBoardVideo.lastError)
+    const nextNotificationMessage = getNextBoardVideoLastErrorNotification(
+      lastBoardVideoErrorRef.current,
+      nextBoardVideoLastError,
+    )
+    lastBoardVideoErrorRef.current = nextBoardVideoLastError
+    if (!nextNotificationMessage) {
+      return
+    }
+    enqueueNotification({
+      tone: 'error',
+      message: nextNotificationMessage,
+      dedupeKey: `board-video-shadow:${nextNotificationMessage}`,
+    })
+  }, [enqueueNotification, reportedBoardVideo.lastError])
 
   useEffect(() => {
     if (!canUseBoardVideo && isBoardVideoExpanded) {
@@ -364,15 +472,16 @@ function App({ initialAuthError = '' }: AppProps) {
 
   const loadShadow = async (): Promise<void> => {
     setIsLoadingShadow(true)
-    setError('')
-    setFeedback('')
 
     try {
       const shadowSession = getShadowSession()
       const shadowResponse = await shadowSession.requestSnapshot()
       applyShadowSnapshot(shadowResponse)
     } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : 'Unable to load shadow')
+      enqueueRuntimeError(
+        caughtError instanceof Error ? caughtError.message : 'Unable to load shadow',
+        'shadow-load',
+      )
     } finally {
       setIsLoadingShadow(false)
     }
@@ -380,17 +489,20 @@ function App({ initialAuthError = '' }: AppProps) {
 
   const publishRedconCommand = async (redcon: 3 | 4): Promise<boolean> => {
     setIsUpdatingShadow(true)
-    setError('')
-    setFeedback('')
 
     try {
       const shadowSession = getShadowSession()
       await shadowSession.publishRedconCommand(redcon)
-      setFeedback(`Sparkplug DCMD.redcon -> ${redcon} at ${new Date().toLocaleTimeString()}`)
+      enqueueNotification({
+        tone: 'success',
+        message: `Sparkplug DCMD.redcon -> ${redcon} at ${new Date().toLocaleTimeString()}`,
+        dedupeKey: `sparkplug-redcon:${redcon}`,
+      })
       return true
     } catch (caughtError) {
-      setError(
+      enqueueRuntimeError(
         caughtError instanceof Error ? caughtError.message : 'Unable to publish Sparkplug command',
+        'sparkplug-redcon',
       )
       return false
     } finally {
@@ -480,19 +592,26 @@ function App({ initialAuthError = '' }: AppProps) {
             </div>
           </div>
         </section>
-        {error && <p className="error status-inline-error">{error}</p>}
+        {blockingError && <p className="error status-inline-error">{blockingError}</p>}
       </main>
     )
   }
 
   return (
     <main className="page page-signed-in">
+      <NotificationTray
+        notifications={notifications}
+        onDismiss={(notificationId) => {
+          dismissNotification(notificationId)
+        }}
+      />
       <TxingPanel
         authUser={authUser}
         canLoadShadow={canLoadShadow}
         canUseBoardVideo={canUseBoardVideo}
         isBoardVideoExpanded={isBoardVideoExpanded}
         isDebugEnabled={isDebugEnabled}
+        isSessionLogVisible={isSessionLogVisible}
         isTxingSwitchDisabled={isTxingSwitchDisabled}
         isTxingSwitchPending={isTxingSwitchPending}
         lastShadowUpdateAtMs={lastShadowUpdateAtMs}
@@ -505,6 +624,9 @@ function App({ initialAuthError = '' }: AppProps) {
         txingSwitchChecked={txingSwitchChecked}
         videoChannelName={reportedBoardVideo.channelName}
         resolveIdToken={resolveSessionIdToken}
+        onBoardVideoRuntimeError={(message) => {
+          enqueueRuntimeError(message, 'board-video-viewer')
+        }}
         onLoadShadow={() => {
           void loadShadow()
         }}
@@ -513,19 +635,18 @@ function App({ initialAuthError = '' }: AppProps) {
         onToggleDebug={() => {
           setIsDebugEnabled((currentValue) => !currentValue)
         }}
+        onToggleSessionLog={() => {
+          setIsSessionLogVisible((currentValue) => !currentValue)
+        }}
         onTxingSwitchChange={(checked) => {
           void handleTxingSwitchChange(checked)
         }}
       />
 
-      {reportedBoardVideo.lastError && !error ? (
-        <p className="error status-inline-error">{reportedBoardVideo.lastError}</p>
-      ) : null}
-      {error && <p className="error status-inline-error">{error}</p>}
+      {isSessionLogVisible && <NotificationLogPanel notificationLog={notificationLog} />}
 
       {isDebugEnabled && (
         <DebugPanel
-          feedback={feedback}
           reportedBoardPower={reportedBoardPower}
           reportedMcuPower={reportedMcuPower}
           shadowJson={shadowJson}

@@ -11,6 +11,7 @@ type VideoPanelProps = {
   resolveIdToken: () => Promise<string>
   channelName?: string | null
   debugEnabled?: boolean
+  onRuntimeError?: (message: string) => void
 }
 type VideoElementWithFrameCallback = HTMLVideoElement & {
   requestVideoFrameCallback?: (callback: VideoFrameRequestCallback) => number
@@ -50,6 +51,7 @@ function VideoPanel({
   resolveIdToken,
   channelName: preferredChannelName = null,
   debugEnabled = false,
+  onRuntimeError,
 }: VideoPanelProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -162,11 +164,19 @@ function VideoPanel({
   })
 
   useEffect(() => {
+    if (viewerState.status !== 'error' || !viewerState.error) {
+      return
+    }
+    onRuntimeError?.(viewerState.error)
+  }, [onRuntimeError, viewerState.error, viewerState.status])
+
+  useEffect(() => {
     let cancelled = false
     let viewerHandle: { close: () => void } | null = null
     let activeFrameCallbackHandle: number | null = null
     let activeTrackProcessorReader: ReadableStreamDefaultReader<VideoFrameLike> | null = null
     const videoElement = videoRef.current
+    const canvasElement = canvasRef.current
 
     const logVideoElementState = (eventName: string): void => {
       if (!videoElement) {
@@ -380,7 +390,7 @@ function VideoPanel({
         activeTrackProcessorReader = null
       }
       if (activeFrameCallbackHandle !== null) {
-        const currentVideo = videoRef.current as VideoElementWithFrameCallback | null
+        const currentVideo = videoElement as VideoElementWithFrameCallback | null
         currentVideo?.cancelVideoFrameCallback?.(activeFrameCallbackHandle)
         activeFrameCallbackHandle = null
       }
@@ -390,12 +400,12 @@ function VideoPanel({
         remoteStreamRef.current.getTracks().forEach((track) => track.stop())
         remoteStreamRef.current = null
       }
-      if (canvasRef.current) {
-        const context = canvasRef.current.getContext('2d')
-        context?.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height)
+      if (canvasElement) {
+        const context = canvasElement.getContext('2d')
+        context?.clearRect(0, 0, canvasElement.width, canvasElement.height)
       }
-      if (videoRef.current) {
-        videoRef.current.srcObject = null
+      if (videoElement) {
+        videoElement.srcObject = null
       }
       logVideoUiDebug('viewer panel effect cleanup', { channelName })
     }

@@ -1,7 +1,6 @@
 type DebugPanelProps = {
   reportedMcuPower: boolean | null
   reportedBoardPower: boolean | null
-  feedback: string
   shadowJson: string
 }
 
@@ -18,7 +17,6 @@ const getPowerNodeClass = (power: boolean | null): string => {
 function DebugPanel({
   reportedMcuPower,
   reportedBoardPower,
-  feedback,
   shadowJson,
 }: DebugPanelProps) {
   return (
@@ -37,8 +35,6 @@ function DebugPanel({
           <div className="status-device-label">Board</div>
         </div>
       </div>
-
-      {feedback ? <p className="feedback">{feedback}</p> : null}
 
       <label htmlFor="shadow-json" className="editor-label">
         Current shadow JSON
