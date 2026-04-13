@@ -8,6 +8,10 @@
 # macOS
 .DS_Store
 
+# Python bytecode caches
+__pycache__/
+*.py[cod]
+
 # Local generated AWS helper state
 /.state/
 
