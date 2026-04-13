@@ -16,10 +16,11 @@
   --status-node-unknown: #44627f;
   --status-node-unknown-bg: rgba(68, 98, 127, 0.1);
   --redcon-1: #c44232;
-  --redcon-2: #d7821f;
+  --redcon-2: #ee8a1d;
   --redcon-3: #caa61a;
   --redcon-4: #1b9c62;
   --redcon-unknown: #607184;
+  --redcon-inactive: #a8b3bf;
   --battery-good: #1ea968;
   --battery-warn: #e1b428;
   --battery-low: #db4b39;
@@ -502,7 +503,7 @@ h1 {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 0.7rem;
+  gap: 0.48rem;
   min-width: 0;
 }
 
@@ -633,24 +634,83 @@ h1 {
   text-align: center;
 }
 
-.status-txing-name.status-txing-redcon-1 {
+.status-txing-name {
+  color: #607184;
+}
+
+.status-txing-redcon-1 {
   color: var(--redcon-1);
 }
 
-.status-txing-name.status-txing-redcon-2 {
+.status-txing-redcon-2 {
   color: var(--redcon-2);
 }
 
-.status-txing-name.status-txing-redcon-3 {
+.status-txing-redcon-3 {
   color: var(--redcon-3);
 }
 
-.status-txing-name.status-txing-redcon-4 {
+.status-txing-redcon-4 {
   color: var(--redcon-4);
 }
 
-.status-txing-name.status-txing-redcon-unknown {
+.status-txing-redcon-unknown {
   color: var(--redcon-unknown);
+}
+
+.status-redcon-cluster {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.14rem;
+  flex: 0 0 auto;
+}
+
+.status-redcon-dot {
+  width: 0.8rem;
+  height: 0.8rem;
+  border-radius: 999px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.7),
+    0 0 0 1px rgba(122, 137, 153, 0.14);
+  flex: 0 0 auto;
+}
+
+.status-redcon-connector {
+  width: 1.42rem;
+  height: 2px;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    rgba(168, 179, 191, 0.2),
+    rgba(168, 179, 191, 0.92),
+    rgba(168, 179, 191, 0.2)
+  );
+  flex: 0 0 auto;
+}
+
+.status-redcon-bridge {
+  width: 1.1rem;
+  height: 2px;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    rgba(143, 155, 171, 0.35),
+    rgba(143, 155, 171, 0.95),
+    rgba(143, 155, 171, 0.35)
+  );
+  flex: 0 0 auto;
+}
+
+.status-redcon-dot-inactive {
+  background: var(--redcon-inactive);
+}
+
+.status-redcon-dot-active {
+  background: currentColor;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.38),
+    0 0 0 1px rgba(255, 255, 255, 0.82),
+    0 4px 10px rgba(20, 41, 67, 0.18);
 }
 
 .status-track-indicator {
@@ -1074,7 +1134,24 @@ button:disabled {
   }
 
   .status-txing-title-group {
-    gap: 0.6rem;
+    gap: 0.38rem;
+  }
+
+  .status-redcon-cluster {
+    gap: 0.12rem;
+  }
+
+  .status-redcon-dot {
+    width: 0.74rem;
+    height: 0.74rem;
+  }
+
+  .status-redcon-connector {
+    width: 1.08rem;
+  }
+
+  .status-redcon-bridge {
+    width: 0.82rem;
   }
 
   .status-auth-header {

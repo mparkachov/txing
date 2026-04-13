@@ -1,10 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AuthUser } from './auth'
-import {
-  describeRedcon,
-  getTrackIndicatorPresentation,
-  getTxingRedconToneClass,
-} from './app-model'
+import { describeRedcon, getTxingRedconToneClass } from './app-model'
 import VideoPanel from './VideoPanel'
 
 type TxingPanelProps = {
@@ -17,9 +13,7 @@ type TxingPanelProps = {
   isTxingSwitchDisabled: boolean
   isTxingSwitchPending: boolean
   lastShadowUpdateAtMs: number | null
-  reportedBoardLeftTrackSpeed: number | null
   reportedBoardOnline: boolean | null
-  reportedBoardRightTrackSpeed: number | null
   reportedBatteryMv: number | null
   reportedMcuOnline: boolean | null
   reportedRedcon: number | null
@@ -39,6 +33,7 @@ type BatteryCurvePoint = readonly [mv: number, percent: number]
 type CameraGlyphProps = {
   crossed: boolean
 }
+type RedconLevel = 1 | 2 | 3 | 4
 
 const batterySocCurve: readonly BatteryCurvePoint[] = [
   [3300, 0],
@@ -50,6 +45,14 @@ const batterySocCurve: readonly BatteryCurvePoint[] = [
   [4100, 92],
   [4200, 100],
 ]
+const leftRedconLevels: readonly RedconLevel[] = [4, 3]
+const rightRedconLevels: readonly RedconLevel[] = [2, 1]
+const getRedconDotClass = (level: RedconLevel, activeRedcon: number | null): string =>
+  `status-redcon-dot ${
+    activeRedcon === level
+      ? `status-redcon-dot-active ${getTxingRedconToneClass(level)}`
+      : 'status-redcon-dot-inactive'
+  }`
 
 const formatShadowUpdateTime = (updatedAtMs: number | null): string =>
   updatedAtMs === null
@@ -146,9 +149,7 @@ function TxingPanel({
   isTxingSwitchDisabled,
   isTxingSwitchPending,
   lastShadowUpdateAtMs,
-  reportedBoardLeftTrackSpeed,
   reportedBoardOnline,
-  reportedBoardRightTrackSpeed,
   reportedBatteryMv,
   reportedMcuOnline,
   reportedRedcon,
@@ -170,10 +171,7 @@ function TxingPanel({
   const batteryToneClass = getBatteryToneClass(batteryPercent)
   const boardWifiToneClass = getBoardWifiToneClass(reportedBoardOnline)
   const bleSignalToneClass = getBleSignalToneClass(reportedMcuOnline)
-  const txingRedconToneClass = getTxingRedconToneClass(reportedRedcon)
   const txingRedconLabel = describeRedcon(reportedRedcon)
-  const leftTrackPresentation = getTrackIndicatorPresentation(reportedBoardLeftTrackSpeed, 'Left')
-  const rightTrackPresentation = getTrackIndicatorPresentation(reportedBoardRightTrackSpeed, 'Right')
   const userMenuIdentity = authUser?.email ?? authUser?.name ?? authUser?.sub ?? 'User'
   const userMenuInitial = userMenuIdentity.trim().charAt(0).toUpperCase() || 'U'
   const lastShadowUpdateLabel = formatShadowUpdateTime(lastShadowUpdateAtMs)
@@ -321,27 +319,39 @@ function TxingPanel({
                 {lastShadowUpdateLabel}
               </time>
             </div>
-            <div className="status-txing-title-group">
-              <div
-                className={`status-track-indicator ${leftTrackPresentation.toneClass}`}
-                role="img"
-                aria-label={leftTrackPresentation.ariaLabel}
-                title={leftTrackPresentation.ariaLabel}
-                style={{ opacity: 0.28 + leftTrackPresentation.intensity * 0.68 }}
-              />
-              <div
-                className={`status-name status-txing-name ${txingRedconToneClass}`}
-                title={txingRedconLabel}
-              >
+            <div
+              className="status-txing-title-group"
+              role="img"
+              aria-label={txingRedconLabel}
+              title={txingRedconLabel}
+            >
+              <div className="status-redcon-cluster status-redcon-cluster-left" aria-hidden="true">
+                <span
+                  className={getRedconDotClass(leftRedconLevels[0], reportedRedcon)}
+                  data-redcon-level={leftRedconLevels[0]}
+                />
+                <span className="status-redcon-connector" aria-hidden="true" />
+                <span
+                  className={getRedconDotClass(leftRedconLevels[1], reportedRedcon)}
+                  data-redcon-level={leftRedconLevels[1]}
+                />
+              </div>
+              <span className="status-redcon-bridge" aria-hidden="true" />
+              <div className="status-name status-txing-name" aria-hidden="true">
                 TXING
               </div>
-              <div
-                className={`status-track-indicator ${rightTrackPresentation.toneClass}`}
-                role="img"
-                aria-label={rightTrackPresentation.ariaLabel}
-                title={rightTrackPresentation.ariaLabel}
-                style={{ opacity: 0.28 + rightTrackPresentation.intensity * 0.68 }}
-              />
+              <span className="status-redcon-bridge" aria-hidden="true" />
+              <div className="status-redcon-cluster status-redcon-cluster-right" aria-hidden="true">
+                <span
+                  className={getRedconDotClass(rightRedconLevels[0], reportedRedcon)}
+                  data-redcon-level={rightRedconLevels[0]}
+                />
+                <span className="status-redcon-connector" aria-hidden="true" />
+                <span
+                  className={getRedconDotClass(rightRedconLevels[1], reportedRedcon)}
+                  data-redcon-level={rightRedconLevels[1]}
+                />
+              </div>
             </div>
             <div className="status-txing-header-side status-txing-header-side-end">
               <button

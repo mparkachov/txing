@@ -44,7 +44,7 @@ const redconDescriptors: Record<1 | 2 | 3 | 4, RedconDescriptor> = {
     toneClass: 'status-txing-redcon-1',
   },
   2: {
-    colorName: 'Amber',
+    colorName: 'Orange',
     postureName: 'Ember Watch',
     toneClass: 'status-txing-redcon-2',
   },

@@ -136,7 +136,7 @@ describe('app model helpers', () => {
     expect(getTxingRedconToneClass(null)).toBe('status-txing-redcon-unknown')
 
     expect(describeRedcon(1)).toBe('REDCON 1 · Hot Rig · Red')
-    expect(describeRedcon(2)).toBe('REDCON 2 · Ember Watch · Amber')
+    expect(describeRedcon(2)).toBe('REDCON 2 · Ember Watch · Orange')
     expect(describeRedcon(3)).toBe('REDCON 3 · Torch-Up · Yellow')
     expect(describeRedcon(4)).toBe('REDCON 4 · Cold Camp · Green')
     expect(describeRedcon(null)).toBe('REDCON unavailable')

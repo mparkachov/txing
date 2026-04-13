@@ -12,7 +12,6 @@ import {
   deriveTxingPoweredOn,
   extractDesiredRedcon,
   extractReportedBatteryMv,
-  extractReportedBoardDrive,
   extractReportedBoardPower,
   extractReportedBoardVideo,
   extractReportedBoardWifiOnline,
@@ -126,10 +125,6 @@ function App({ initialAuthError = '' }: AppProps) {
   )
   const reportedBoardVideo = useMemo(
     () => extractReportedBoardVideo(shadowDocument),
-    [shadowDocument],
-  )
-  const reportedBoardDrive = useMemo(
-    () => extractReportedBoardDrive(shadowDocument),
     [shadowDocument],
   )
   const reportedRedcon = useMemo(
@@ -616,8 +611,6 @@ function App({ initialAuthError = '' }: AppProps) {
         isTxingSwitchPending={isTxingSwitchPending}
         lastShadowUpdateAtMs={lastShadowUpdateAtMs}
         reportedBoardOnline={reportedBoardOnline}
-        reportedBoardLeftTrackSpeed={reportedBoardDrive.leftSpeed}
-        reportedBoardRightTrackSpeed={reportedBoardDrive.rightSpeed}
         reportedBatteryMv={reportedBatteryMv}
         reportedMcuOnline={reportedMcuOnline}
         reportedRedcon={reportedRedcon}
