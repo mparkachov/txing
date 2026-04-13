@@ -3,7 +3,7 @@ set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 root_dir := source_directory()
 
 [private]
-_project-aws-env scope='rig' region='' profile='' stack_name='' cognito_domain_prefix='' admin_email='' aws_shared_credentials_file='' aws_config_file='' env_file='' board_env_file='':
+_project-aws-env scope='rig' region='' profile='' stack_name='' cognito_domain_prefix='' admin_email='' aws_shared_credentials_file='' aws_config_file='' env_file='' rig_env_file='' board_env_file='':
     #!/usr/bin/env bash
     set -euo pipefail
 
@@ -40,6 +40,15 @@ _project-aws-env scope='rig' region='' profile='' stack_name='' cognito_domain_p
     if [ -f "$env_file" ]; then
       # shellcheck disable=SC1090
       source "$env_file"
+    fi
+
+    rig_env_file=""
+    if [ "{{scope}}" = "rig" ]; then
+      rig_env_file="$(resolve_path "$(choose_value "{{rig_env_file}}" "${RIG_ENV_FILE:-config/rig.env}")")"
+      if [ -f "$rig_env_file" ]; then
+        # shellcheck disable=SC1090
+        source "$rig_env_file"
+      fi
     fi
 
     board_env_file=""
@@ -97,6 +106,11 @@ _project-aws-env scope='rig' region='' profile='' stack_name='' cognito_domain_p
 
     export_line TXING_PROJECT_ROOT "$project_root"
     export_line AWS_ENV_FILE "$env_file"
+    if [ -n "$rig_env_file" ]; then
+      export_line RIG_ENV_FILE "$rig_env_file"
+    else
+      printf 'unset RIG_ENV_FILE\n'
+    fi
     if [ -n "$board_env_file" ]; then
       export_line BOARD_ENV_FILE "$board_env_file"
     else

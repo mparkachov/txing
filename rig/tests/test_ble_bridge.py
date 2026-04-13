@@ -263,6 +263,7 @@ class ServiceConfigTests(unittest.TestCase):
             justfile,
         )
         self.assertIn('env_file="$AWS_ENV_FILE"', justfile)
+        self.assertIn('rig_env_file="$RIG_ENV_FILE"', justfile)
         self.assertIn('project_root="$TXING_PROJECT_ROOT"', justfile)
         self.assertNotIn('Environment="THING_NAME={{thing_name}}"', justfile)
         self.assertIn('rig_name="$RIG_NAME"', justfile)
@@ -275,6 +276,7 @@ class ServiceConfigTests(unittest.TestCase):
         self.assertNotIn('AWS_ENDPOINT_FILE', justfile)
         self.assertNotIn('IOT_ENDPOINT_FILE', justfile)
         self.assertIn('EnvironmentFile=$env_file', justfile)
+        self.assertIn('EnvironmentFile=-$rig_env_file', justfile)
         self.assertIn('region="$AWS_REGION"', justfile)
         self.assertIn('[ -n "{{region}}" ]', justfile)
         self.assertIn('AWS_REGION=$region', justfile)
@@ -295,6 +297,21 @@ class ServiceConfigTests(unittest.TestCase):
         self.assertIn('CLOUDWATCH_LOG_GROUP=$cloudwatch_log_group', justfile)
         self.assertIn('WorkingDirectory=$project_root', justfile)
         self.assertIn('ExecStart={{built_rig}}', justfile)
+
+    def test_root_justfile_sources_optional_rig_env_for_rig_scope(self) -> None:
+        justfile = (Path(__file__).resolve().parents[2] / "justfile").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("_project-aws-env scope='rig'", justfile)
+        self.assertIn("rig_env_file=''", justfile)
+        self.assertIn('if [ "{{scope}}" = "rig" ]; then', justfile)
+        self.assertIn(
+            'rig_env_file="$(resolve_path "$(choose_value "{{rig_env_file}}" "${RIG_ENV_FILE:-config/rig.env}")")"',
+            justfile,
+        )
+        self.assertIn('source "$rig_env_file"', justfile)
+        self.assertIn('export_line RIG_ENV_FILE "$rig_env_file"', justfile)
 
 
 class RigNodeReflectionTests(unittest.TestCase):

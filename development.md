@@ -25,6 +25,7 @@ For Python/AWS workflows in this repository, install and configure:
 
 The default repo workflow keeps AWS CLI config inside `config/` in the checkout.
 Copy `config/aws.env.example` to `config/aws.env`, `config/aws.credentials.example` to `config/aws.credentials`, and `config/aws.config.example` to `config/aws.config`, then edit those files for your town/account.
+If you are working on the rig runtime, also copy `config/rig.env.example` to `config/rig.env` and edit the rig-local runtime settings there.
 If you are working on the device-side board runtime, also copy `config/board.env.example` to `config/board.env` and edit the board-local runtime settings there.
 Use `just aws-rig ...` for AWS CLI commands with the project rig/runtime profile and `just aws-town ...` for AWS CLI commands with the direct town account profile.
 Use `just aws-txing ...` for AWS CLI commands with the txing endpoint runtime profile.
