@@ -13,7 +13,7 @@ wheels = [
 
 [[package]]
 name = "aws"
-version = "0.1.0"
+version = "0.2.0"
 source = { directory = "../shared/aws/python" }
 dependencies = [
     { name = "awsiotsdk" },
@@ -62,7 +62,7 @@ wheels = [
 
 [[package]]
 name = "board"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "aws" },
