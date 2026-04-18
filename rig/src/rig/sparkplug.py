@@ -216,16 +216,36 @@ def build_device_report_payload(
     return encode_payload(payload)
 
 
-def build_node_redcon_payload(
+def build_node_birth_payload(
     *,
     redcon: int,
+    bdseq: int,
     seq: int,
     timestamp: int | None = None,
 ) -> bytes:
+    if bdseq < 0:
+        raise ValueError("bdseq must not be negative")
     payload = Payload(
         timestamp=timestamp if timestamp is not None else utc_timestamp_ms(),
-        metrics=(Metric(name="rig.redcon", datatype=DataType.INT32, int_value=redcon),),
+        metrics=(
+            Metric(name="bdSeq", datatype=DataType.UINT64, long_value=bdseq),
+            Metric(name="rig.redcon", datatype=DataType.INT32, int_value=redcon),
+        ),
         seq=seq,
+    )
+    return encode_payload(payload)
+
+
+def build_node_death_payload(
+    *,
+    bdseq: int,
+    timestamp: int | None = None,
+) -> bytes:
+    if bdseq < 0:
+        raise ValueError("bdseq must not be negative")
+    payload = Payload(
+        timestamp=timestamp if timestamp is not None else utc_timestamp_ms(),
+        metrics=(Metric(name="bdSeq", datatype=DataType.UINT64, long_value=bdseq),),
     )
     return encode_payload(payload)
 

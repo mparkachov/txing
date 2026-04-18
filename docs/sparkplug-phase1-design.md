@@ -30,7 +30,8 @@
 - `rig`
   - Sparkplug edge node id
   - dynamic AWS IoT thing group name for assigned txings
-  - phase 1 `rig.redcon` is a Sparkplug node metric carried by `NBIRTH/NDATA`
+  - phase 1 node lifecycle uses `NBIRTH/NDEATH`
+  - phase 1 `rig.redcon` is a Sparkplug node metric carried by `NBIRTH`
 - `txing`
   - Sparkplug device id
   - each physical txing has its own AWS IoT thing/shadow
@@ -47,7 +48,7 @@ Sparkplug host
 
 rig
   -> owns lifecycle intent and lifecycle convergence
-  -> publishes NBIRTH/NDATA with rig.redcon
+  -> publishes NBIRTH/NDEATH for the rig node; NBIRTH carries rig.redcon
   -> publishes DBIRTH/DDATA/DDEATH for txing devices
   -> reflects desired/report lifecycle state into txing AWS shadows only
   -> derives txing reported.redcon from current MCU + board operational detail
@@ -73,13 +74,24 @@ txing gateway / BLE path
 
 ### Node Metrics
 
-`rig.redcon` is a Sparkplug node metric published through `NBIRTH/NDATA`.
+Phase 1 publishes rig node lifecycle through `NBIRTH/NDEATH`.
+
+`rig.redcon` is a Sparkplug node metric published through `NBIRTH`.
+
+Phase-1 node birth/death uses Sparkplug `bdSeq`:
+
+- `NBIRTH`
+  - carries `bdSeq`
+  - carries `rig.redcon=1`
+- `NDEATH`
+  - carries the matching `bdSeq`
 
 Phase-1 meaning:
 
 - if the rig lifecycle service is up and operating, `rig.redcon=1`
 
 Rig REDCON is independent from child txing REDCON values in phase 1.
+Phase 1 does not add node `NDATA`.
 
 ### Device Metrics
 
@@ -119,7 +131,7 @@ Semantics:
   - exists only as transient restart cache
   - is not an authoritative command ingress
   - is cleared when `reported.redcon` converges
-  - is also cleared on `DDEATH`
+  - is also cleared on unexpected-loss `DDEATH`
 - `state.reported.redcon`
   - reflects the actual lifecycle state of txing
   - must match the Sparkplug device actual REDCON
@@ -166,7 +178,7 @@ Example reflected txing shadow shape:
 
 Phase 1 does not maintain AWS IoT things or shadows for `rig` or `town`.
 
-- `rig.redcon=1` exists only as a Sparkplug node metric in `NBIRTH/NDATA`.
+- `rig.redcon=1` exists only as a Sparkplug node metric in `NBIRTH`.
 - `town` exists only as the Sparkplug group id.
 - Rig membership comes from the dynamic AWS IoT thing group whose name matches `attributes.rig`.
 
@@ -211,6 +223,14 @@ Phase 1 keeps the current derived-behavior model rather than making REDCON a str
 
 ## Birth and Death Rules
 
+### NBIRTH / NDEATH
+
+Rig publishes Sparkplug node lifecycle as a proper `NBIRTH` / `NDEATH` pair:
+
+- `NBIRTH` carries `bdSeq` and `rig.redcon=1`
+- `NDEATH` carries the matching `bdSeq`
+- phase 1 does not add node `NDATA`
+
 ### DBIRTH
 
 Txing emits `DBIRTH` when the device is BLE-reachable.
@@ -221,13 +241,13 @@ Functional interpretation:
 
 ### DDEATH
 
-Txing emits `DDEATH` on the same condition that currently drives `ble.online=false`:
+Txing emits `DDEATH` only for unexpected device loss on the same reachability timeout that currently drives `ble.online=false`:
 
 - no matching advertisement observed for 30 seconds
 
-This is normal field behavior, not an exceptional failure path.
+Intentional GUI-off / `REDCON 4` sleep does not emit `DDEATH`. In that case the rig keeps the device in normal `reported.redcon=4` lifecycle state and only reflects `reported.mcu.online=false` once BLE presence ages out.
 
-On `DDEATH`, rig should best-effort:
+On unexpected-loss `DDEATH`, rig should best-effort:
 
 - force `state.reported.redcon=4`
 - clear `state.desired.redcon`

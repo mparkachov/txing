@@ -62,6 +62,8 @@ class AwsMqttConnectionConfig:
     reconnect_min_timeout_seconds: int = 1
     reconnect_max_timeout_seconds: int = 30
     keep_alive_seconds: int = 60
+    will_topic: str | None = None
+    will_payload: bytes | None = None
 
 
 class _AwsIotWebsocketConnectionBase:
@@ -84,6 +86,14 @@ class _AwsIotWebsocketConnectionBase:
         self._on_connection_success_callback = on_connection_success
         self._on_connection_failure_callback = on_connection_failure
         self._on_connection_closed_callback = on_connection_closed
+        will = None
+        if config.will_topic is not None and config.will_payload is not None:
+            will = mqtt.Will(
+                config.will_topic,
+                mqtt.QoS.AT_LEAST_ONCE,
+                config.will_payload,
+                False,
+            )
 
         self._connection = mqtt_connection_builder.websockets_with_default_aws_signing(
             region=config.region_name,
@@ -100,6 +110,7 @@ class _AwsIotWebsocketConnectionBase:
                 0,
                 int(config.operation_timeout_seconds * 1000),
             ),
+            will=will,
             on_connection_interrupted=self._on_connection_interrupted,
             on_connection_resumed=self._on_connection_resumed,
             on_connection_success=self._on_connection_success,

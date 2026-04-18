@@ -154,6 +154,7 @@ _install_bleak_stub()
 _install_paho_stub()
 
 from rig.ble_bridge import (
+    AwsShadowClient,
     BleSleepBridge,
     BridgeConfig,
     RigFleetBridge,
@@ -165,9 +166,11 @@ from rig.ble_bridge import (
 )
 from aws.auth import ensure_aws_profile
 from rig.sparkplug import (
+    DataType,
     build_device_report_payload,
     build_device_topic,
-    build_node_redcon_payload,
+    build_node_birth_payload,
+    build_node_death_payload,
     build_node_topic,
     build_redcon_payload,
     decode_payload,
@@ -214,6 +217,37 @@ class ServiceConfigTests(unittest.TestCase):
             self.assertEqual(profile, "rig-service")
             self.assertEqual(os.environ["AWS_PROFILE"], "rig-service")
             self.assertEqual(os.environ["AWS_DEFAULT_PROFILE"], "rig-service")
+
+
+class AwsShadowClientTests(unittest.TestCase):
+    def test_configures_node_death_last_will(self) -> None:
+        captured: dict[str, object] = {}
+
+        class FakeConnection:
+            def __init__(self, config: object, **kwargs: object) -> None:
+                captured["config"] = config
+                captured["kwargs"] = kwargs
+
+        with patch("rig.ble_bridge.AwsIotWebsocketConnection", FakeConnection):
+            AwsShadowClient(
+                BridgeConfig(
+                    sparkplug_group_id="town",
+                    sparkplug_edge_node_id="rig",
+                    sparkplug_node_bdseq=77,
+                ),
+                aws_runtime=object(),  # type: ignore[arg-type]
+            )
+
+        config = captured["config"]
+        assert isinstance(config, object)
+        will_topic = getattr(config, "will_topic")
+        will_payload = getattr(config, "will_payload")
+        self.assertEqual(will_topic, "spBv1.0/town/NDEATH/rig")
+        payload = decode_payload(will_payload)
+        self.assertIsNone(payload.seq)
+        self.assertEqual(len(payload.metrics), 1)
+        self.assertEqual(payload.metrics[0].name, "bdSeq")
+        self.assertEqual(payload.metrics[0].long_value, 77)
 
     def test_parse_args_accepts_service_environment_defaults(self) -> None:
         with patch.dict(
@@ -736,6 +770,131 @@ class LifecycleBridgeTests(unittest.TestCase):
         self.assertIsNone(cloud_shadow.shadow_updates[1]["desired_redcon"])
         self.assertIsNone(cloud_shadow.shadow_updates[1]["desired_board_power"])
 
+    def test_intentional_redcon_four_offline_suppresses_ddeath(self) -> None:
+        asyncio.run(self._exercise_intentional_redcon_four_offline())
+
+    async def _exercise_intentional_redcon_four_offline(self) -> None:
+        cloud_shadow = FakeCloudShadow()
+        shadow = ShadowState(
+            desired_redcon=4,
+            desired_board_power=False,
+            reported_power=False,
+            battery_mv=3812,
+            ble_online=True,
+            redcon=4,
+        )
+        bridge = BleSleepBridge(
+            BridgeConfig(),
+            shadow,
+            cloud_shadow,  # type: ignore[arg-type]
+        )
+        bridge._sparkplug_device_born = True
+
+        await bridge._publish_ble_online_state(
+            online=False,
+            context="unit-test intentional sleep",
+            force=True,
+        )
+
+        self.assertFalse(shadow.ble_online)
+        self.assertEqual(shadow.redcon, 4)
+        self.assertEqual(shadow.desired_redcon, 4)
+        self.assertIs(shadow.desired_board_power, False)
+        self.assertTrue(bridge._sparkplug_device_born)
+        self.assertEqual(cloud_shadow.sparkplug_publishes, [])
+        self.assertEqual(len(cloud_shadow.shadow_updates), 1)
+
+    def test_steady_state_redcon_four_offline_suppresses_ddeath(self) -> None:
+        asyncio.run(self._exercise_steady_state_redcon_four_offline())
+
+    async def _exercise_steady_state_redcon_four_offline(self) -> None:
+        cloud_shadow = FakeCloudShadow()
+        shadow = ShadowState(
+            reported_power=False,
+            battery_mv=3812,
+            ble_online=True,
+            redcon=4,
+        )
+        bridge = BleSleepBridge(
+            BridgeConfig(),
+            shadow,
+            cloud_shadow,  # type: ignore[arg-type]
+        )
+        bridge._sparkplug_device_born = True
+
+        await bridge._publish_ble_online_state(
+            online=False,
+            context="unit-test steady sleep",
+            force=True,
+        )
+
+        self.assertFalse(shadow.ble_online)
+        self.assertTrue(bridge._sparkplug_device_born)
+        self.assertEqual(cloud_shadow.sparkplug_publishes, [])
+
+    def test_online_recovery_after_intentional_sleep_does_not_duplicate_dbirth(self) -> None:
+        asyncio.run(self._exercise_intentional_sleep_online_recovery())
+
+    async def _exercise_intentional_sleep_online_recovery(self) -> None:
+        cloud_shadow = FakeCloudShadow()
+        shadow = ShadowState(
+            reported_power=False,
+            battery_mv=3812,
+            ble_online=False,
+            redcon=4,
+        )
+        bridge = BleSleepBridge(
+            BridgeConfig(),
+            shadow,
+            cloud_shadow,  # type: ignore[arg-type]
+        )
+        bridge._sparkplug_device_born = True
+
+        await bridge._publish_ble_online_state(
+            online=True,
+            context="unit-test intentional sleep recovery",
+            force=True,
+        )
+
+        self.assertTrue(shadow.ble_online)
+        self.assertEqual(cloud_shadow.sparkplug_publishes, [])
+
+    def test_node_death_publishes_once_after_birth(self) -> None:
+        asyncio.run(self._exercise_node_death_once_after_birth())
+
+    async def _exercise_node_death_once_after_birth(self) -> None:
+        cloud_shadow = FakeCloudShadow()
+        bridge = BleSleepBridge(
+            BridgeConfig(sparkplug_node_bdseq=41),
+            ShadowState(),
+            cloud_shadow,  # type: ignore[arg-type]
+        )
+
+        await bridge._publish_node_birth()
+        await bridge._publish_node_death()
+        await bridge._publish_node_death()
+
+        self.assertEqual(len(cloud_shadow.sparkplug_publishes), 2)
+        self.assertEqual(
+            [topic for topic, _payload in cloud_shadow.sparkplug_publishes],
+            [
+                "spBv1.0/town/NBIRTH/rig",
+                "spBv1.0/town/NDEATH/rig",
+            ],
+        )
+        birth = decode_payload(cloud_shadow.sparkplug_publishes[0][1])
+        self.assertEqual(birth.seq, 0)
+        self.assertEqual(
+            [(metric.name, metric.long_value, metric.int_value) for metric in birth.metrics],
+            [("bdSeq", 41, None), ("rig.redcon", None, 1)],
+        )
+        death = decode_payload(cloud_shadow.sparkplug_publishes[1][1])
+        self.assertIsNone(death.seq)
+        self.assertEqual(
+            [(metric.name, metric.long_value, metric.int_value) for metric in death.metrics],
+            [("bdSeq", 41, None)],
+        )
+
 
 class SnapshotRecoveryTests(unittest.TestCase):
     def test_restart_does_not_recover_desired_redcon_from_local_cache(self) -> None:
@@ -800,14 +959,33 @@ class SparkplugCodecTests(unittest.TestCase):
         self.assertEqual(command.value, 3)
         self.assertEqual(command.seq, 5)
 
-    def test_encodes_node_redcon_payload(self) -> None:
+    def test_encodes_node_birth_payload(self) -> None:
         topic = build_node_topic("town", "NBIRTH", "rig")
-        payload = decode_payload(build_node_redcon_payload(redcon=1, seq=9))
+        payload = decode_payload(
+            build_node_birth_payload(
+                redcon=1,
+                bdseq=123,
+                seq=9,
+            )
+        )
 
         self.assertEqual(topic, "spBv1.0/town/NBIRTH/rig")
         self.assertEqual(payload.seq, 9)
-        self.assertEqual(payload.metrics[0].name, "rig.redcon")
-        self.assertEqual(payload.metrics[0].int_value, 1)
+        self.assertEqual(payload.metrics[0].name, "bdSeq")
+        self.assertEqual(payload.metrics[0].datatype, DataType.UINT64)
+        self.assertEqual(payload.metrics[0].long_value, 123)
+        self.assertEqual(payload.metrics[1].name, "rig.redcon")
+        self.assertEqual(payload.metrics[1].int_value, 1)
+
+    def test_encodes_node_death_payload(self) -> None:
+        topic = build_node_topic("town", "NDEATH", "rig")
+        payload = decode_payload(build_node_death_payload(bdseq=123))
+
+        self.assertEqual(topic, "spBv1.0/town/NDEATH/rig")
+        self.assertIsNone(payload.seq)
+        self.assertEqual(len(payload.metrics), 1)
+        self.assertEqual(payload.metrics[0].name, "bdSeq")
+        self.assertEqual(payload.metrics[0].long_value, 123)
 
     def test_builds_phase_one_device_topics_and_payload_sequences(self) -> None:
         self.assertEqual(

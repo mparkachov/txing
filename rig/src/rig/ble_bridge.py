@@ -9,7 +9,7 @@ import signal
 import socket
 import sys
 import time
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
@@ -56,9 +56,11 @@ from aws.mqtt import AwsIotWebsocketConnection, AwsMqttConnectionConfig
 from .sparkplug import (
     build_device_report_payload,
     build_device_topic,
-    build_node_redcon_payload,
+    build_node_birth_payload,
+    build_node_death_payload,
     build_node_topic,
     decode_redcon_command,
+    utc_timestamp_ms,
 )
 
 TXING_SERVICE_UUID = "f6b4a000-7b32-4d2d-9f4b-4ff0a2b8f100"
@@ -469,6 +471,7 @@ class BridgeConfig:
     client_id: str = ""
     aws_connect_timeout: float = DEFAULT_AWS_CONNECT_TIMEOUT
     board_offline_timeout: float = DEFAULT_BOARD_OFFLINE_TIMEOUT
+    sparkplug_node_bdseq: int = field(default_factory=utc_timestamp_ms)
 
 
 class RigBleState(str, Enum):
@@ -688,6 +691,14 @@ _SHADOW_UNSET = object()
 class AwsShadowClient:
     def __init__(self, config: BridgeConfig, aws_runtime: AwsRuntime) -> None:
         self._config = config
+        node_death_topic = build_node_topic(
+            config.sparkplug_group_id,
+            "NDEATH",
+            config.sparkplug_edge_node_id,
+        )
+        node_death_payload = build_node_death_payload(
+            bdseq=config.sparkplug_node_bdseq,
+        )
         self._mqtt = AwsIotWebsocketConnection(
             AwsMqttConnectionConfig(
                 endpoint=config.iot_endpoint,
@@ -698,6 +709,8 @@ class AwsShadowClient:
                 reconnect_min_timeout_seconds=1,
                 reconnect_max_timeout_seconds=30,
                 keep_alive_seconds=60,
+                will_topic=node_death_topic,
+                will_payload=node_death_payload,
             ),
             aws_runtime=aws_runtime,
             on_connection_interrupted=self._on_connection_interrupted,
@@ -1258,9 +1271,47 @@ class BleSleepBridge:
                 "NBIRTH",
                 self._config.sparkplug_edge_node_id,
             ),
-            build_node_redcon_payload(redcon=1, seq=self._next_sparkplug_node_seq()),
+            build_node_birth_payload(
+                redcon=1,
+                bdseq=self._config.sparkplug_node_bdseq,
+                seq=self._next_sparkplug_node_seq(),
+            ),
         )
         self._sparkplug_node_born = True
+
+    async def _publish_node_death(
+        self,
+        *,
+        timeout_seconds: float = DEFAULT_MQTT_PUBLISH_TIMEOUT,
+    ) -> None:
+        if not self._sparkplug_node_born:
+            return
+        await self._cloud_shadow.publish_sparkplug(
+            build_node_topic(
+                self._config.sparkplug_group_id,
+                "NDEATH",
+                self._config.sparkplug_edge_node_id,
+            ),
+            build_node_death_payload(
+                bdseq=self._config.sparkplug_node_bdseq,
+            ),
+            timeout_seconds=timeout_seconds,
+        )
+        self._sparkplug_node_born = False
+
+    async def _publish_node_death_for_shutdown(self) -> None:
+        death_task = asyncio.create_task(
+            self._publish_node_death(
+                timeout_seconds=SHUTDOWN_MQTT_PUBLISH_TIMEOUT,
+            )
+        )
+        try:
+            await asyncio.shield(death_task)
+        except asyncio.CancelledError:
+            await asyncio.shield(death_task)
+            raise
+        except Exception:
+            LOGGER.exception("Failed to publish Sparkplug NDEATH during shutdown")
 
     async def _publish_device_birth(self) -> None:
         await self._cloud_shadow.publish_sparkplug(
@@ -1363,6 +1414,11 @@ class BleSleepBridge:
         if self._shadow.ble_online:
             return self._ble_presence_recent()
         return self._ble_recovered_from_regular_advertising()
+
+    def _ble_offline_is_intentional_sleep(self) -> bool:
+        if self._shadow.desired_redcon == 4:
+            return True
+        return self._shadow.redcon == 4 and not self._shadow.reported_power
 
     def _board_shutdown_wait_expired(self) -> bool:
         requested_at = self._board_shutdown_requested_at
@@ -1543,6 +1599,9 @@ class BleSleepBridge:
                 pending_updates = await self._wait_for_updates_or_disconnect(
                     timeout_seconds=retry_timeout
                 )
+        except asyncio.CancelledError:
+            await self._publish_node_death_for_shutdown()
+            raise
         finally:
             await self._stop_scanner()
             cleanup_task = asyncio.create_task(
@@ -1579,16 +1638,20 @@ class BleSleepBridge:
         await self._publish_static_lifecycle_reflection()
         await self._publish_node_birth()
         await self._process_desired_no_ble_once()
-        while True:
-            retry_timeout: float | None = None
-            if self._shadow.desired_redcon is not None:
-                retry_timeout = self._config.reconnect_delay
+        try:
+            while True:
+                retry_timeout: float | None = None
+                if self._shadow.desired_redcon is not None:
+                    retry_timeout = self._config.reconnect_delay
 
-            updates = await self._cloud_shadow.wait_for_updates(
-                timeout_seconds=retry_timeout
-            )
-            await self._apply_cloud_shadow_updates(updates=updates)
-            await self._process_desired_no_ble_once()
+                updates = await self._cloud_shadow.wait_for_updates(
+                    timeout_seconds=retry_timeout
+                )
+                await self._apply_cloud_shadow_updates(updates=updates)
+                await self._process_desired_no_ble_once()
+        except asyncio.CancelledError:
+            await self._publish_node_death_for_shutdown()
+            raise
 
     def _drain_runtime_updates(self) -> list[AwsShadowUpdate]:
         updates = self._cloud_shadow.drain_updates()
@@ -2282,25 +2345,36 @@ class BleSleepBridge:
                 context,
             )
             if online:
-                await self._publish_device_birth()
+                if not self._sparkplug_device_born:
+                    await self._publish_device_birth()
             else:
-                await self._publish_device_death()
-                clear_redcon = None if self._shadow.desired_redcon is not None else _SHADOW_UNSET
-                clear_board_power = (
-                    None if self._shadow.desired_board_power is not None else _SHADOW_UNSET
-                )
-                if clear_redcon is not _SHADOW_UNSET or clear_board_power is not _SHADOW_UNSET:
-                    self._shadow.set_desired_redcon(None)
-                    self._shadow.set_desired_board_power(None)
-                    self._board_shutdown_requested_at = None
-                    self._board_shutdown_timeout_logged = False
-                    await self._publish_reported_update(
-                        reported_mcu_patch=None,
-                        desired_redcon=clear_redcon,
-                        desired_board_power=clear_board_power,
-                        context="Cleared desired lifecycle state after DDEATH",
-                        include_redcon_if_changed=False,
+                if self._ble_offline_is_intentional_sleep():
+                    LOGGER.info(
+                        "Suppressing DDEATH; BLE offline reflects intentional REDCON 4 sleep state"
                     )
+                else:
+                    await self._publish_device_death()
+                    clear_redcon = (
+                        None if self._shadow.desired_redcon is not None else _SHADOW_UNSET
+                    )
+                    clear_board_power = (
+                        None if self._shadow.desired_board_power is not None else _SHADOW_UNSET
+                    )
+                    if (
+                        clear_redcon is not _SHADOW_UNSET
+                        or clear_board_power is not _SHADOW_UNSET
+                    ):
+                        self._shadow.set_desired_redcon(None)
+                        self._shadow.set_desired_board_power(None)
+                        self._board_shutdown_requested_at = None
+                        self._board_shutdown_timeout_logged = False
+                        await self._publish_reported_update(
+                            reported_mcu_patch=None,
+                            desired_redcon=clear_redcon,
+                            desired_board_power=clear_board_power,
+                            context="Cleared desired lifecycle state after DDEATH",
+                            include_redcon_if_changed=False,
+                        )
 
     async def _send_sleep_command(self, *, sleep: bool) -> None:
         if not self._is_connected():
@@ -2884,9 +2958,47 @@ class RigFleetBridge:
                 "NBIRTH",
                 self._config.sparkplug_edge_node_id,
             ),
-            build_node_redcon_payload(redcon=1, seq=self._next_node_seq()),
+            build_node_birth_payload(
+                redcon=1,
+                bdseq=self._config.sparkplug_node_bdseq,
+                seq=self._next_node_seq(),
+            ),
         )
         self._node_born = True
+
+    async def _publish_node_death(
+        self,
+        *,
+        timeout_seconds: float = DEFAULT_MQTT_PUBLISH_TIMEOUT,
+    ) -> None:
+        if not self._node_born:
+            return
+        await self._cloud_shadow.publish_sparkplug(
+            build_node_topic(
+                self._config.sparkplug_group_id,
+                "NDEATH",
+                self._config.sparkplug_edge_node_id,
+            ),
+            build_node_death_payload(
+                bdseq=self._config.sparkplug_node_bdseq,
+            ),
+            timeout_seconds=timeout_seconds,
+        )
+        self._node_born = False
+
+    async def _publish_node_death_for_shutdown(self) -> None:
+        death_task = asyncio.create_task(
+            self._publish_node_death(
+                timeout_seconds=SHUTDOWN_MQTT_PUBLISH_TIMEOUT,
+            )
+        )
+        try:
+            await asyncio.shield(death_task)
+        except asyncio.CancelledError:
+            await asyncio.shield(death_task)
+            raise
+        except Exception:
+            LOGGER.exception("Failed to publish Sparkplug NDEATH during shutdown")
 
     async def _publish_static_lifecycle_reflection(self) -> None:
         return
@@ -3149,6 +3261,9 @@ class RigFleetBridge:
                 pending_updates = await self._wait_for_manager_events(
                     timeout_seconds=self._manager_timeout()
                 )
+        except asyncio.CancelledError:
+            await self._publish_node_death_for_shutdown()
+            raise
         finally:
             await self._stop_scanner()
             active_bridge = self._active_bridge()
@@ -3179,16 +3294,21 @@ class RigFleetBridge:
         await self._normalize_startup()
         for managed in self._managed_things:
             await managed.bridge._process_desired_no_ble_once()
-
-        while True:
-            retry_timeout = self._config.reconnect_delay if any(
-                managed.bridge._shadow.desired_redcon is not None
-                for managed in self._managed_things
-            ) else None
-            updates = await self._cloud_shadow.wait_for_updates(timeout_seconds=retry_timeout)
-            await self._apply_updates(updates)
-            for managed in self._managed_things:
-                await managed.bridge._process_desired_no_ble_once()
+        try:
+            while True:
+                retry_timeout = self._config.reconnect_delay if any(
+                    managed.bridge._shadow.desired_redcon is not None
+                    for managed in self._managed_things
+                ) else None
+                updates = await self._cloud_shadow.wait_for_updates(
+                    timeout_seconds=retry_timeout
+                )
+                await self._apply_updates(updates)
+                for managed in self._managed_things:
+                    await managed.bridge._process_desired_no_ble_once()
+        except asyncio.CancelledError:
+            await self._publish_node_death_for_shutdown()
+            raise
 
 
 def _parse_args() -> argparse.Namespace:
@@ -3607,6 +3727,7 @@ def main() -> None:
     async def _run_rig() -> None:
         cloud_shadow = AwsShadowClient(config, aws_runtime)
         registry_client = AwsThingRegistryClient(aws_runtime.iot_client())
+        fleet_bridge: RigFleetBridge | None = None
         try:
             try:
                 registrations = registry_client.list_rig_things(config.rig_name)
@@ -3683,6 +3804,8 @@ def main() -> None:
                     )
                     await asyncio.sleep(config.reconnect_delay)
         finally:
+            if fleet_bridge is not None:
+                await fleet_bridge._publish_node_death_for_shutdown()
             disconnect_task = asyncio.create_task(cloud_shadow.disconnect())
             try:
                 await asyncio.shield(disconnect_task)

@@ -24,7 +24,8 @@ This checklist tracks the phase-1 Sparkplug lifecycle plan.
 - [x] Register `rig` as the Sparkplug edge node id without an AWS IoT thing/shadow
 - [x] Register `town` as the Sparkplug group id without an AWS IoT thing/shadow
 - [x] Register each physical txing as a Sparkplug device using its AWS IoT thing name
-- [x] Publish `rig.redcon` through `NBIRTH/NDATA`
+- [x] Publish rig node lifecycle through `NBIRTH/NDEATH` with `bdSeq`
+- [x] Publish `rig.redcon` through `NBIRTH`
 - [x] Publish txing `redcon` and `batteryMv` through `DBIRTH/DDATA`
 - [x] Accept `DCMD.redcon` with literal values `1..4` as the only lifecycle command
 
@@ -50,10 +51,13 @@ This checklist tracks the phase-1 Sparkplug lifecycle plan.
 
 ## 5. Birth, Death, and Recovery
 
+- [x] Emit `NBIRTH` with `bdSeq` and `rig.redcon=1`
+- [x] Emit `NDEATH` with the matching `bdSeq` on rig shutdown
 - [x] Emit `DBIRTH` when txing becomes BLE-reachable
-- [x] Emit `DDEATH` on the same 30-second BLE timeout used for current `ble.online=false`
-- [x] On `DDEATH`, best-effort force txing `reported.redcon=4`
-- [x] On `DDEATH`, clear txing `desired.redcon`
+- [x] Emit `DDEATH` on the same 30-second BLE timeout used for current `ble.online=false` only for unexpected device loss
+- [x] On unexpected-loss `DDEATH`, best-effort force txing `reported.redcon=4`
+- [x] On unexpected-loss `DDEATH`, clear txing `desired.redcon`
+- [x] Keep intentional GUI-off / `REDCON 4` sleep on the normal `reported.redcon=4` path without `DDEATH`
 - [x] When BLE returns, emit a fresh `DBIRTH`
 - [x] After rebirth, reconverge conservatively from observed state instead of trying to restore prior state blindly
 - [x] On rig restart, inspect lingering `desired.redcon` and converge conservatively if present
