@@ -6,7 +6,7 @@
 - Goal: one live operator path with minimal IT operations
 - Live-control target: `p95` operator glass-to-glass latency under `800 ms` on target links
 - Control model: directional commands, not precision teleoperation
-- Field-test rule: this phase-1 choice can be changed after field tests if the plain-AWS-WebRTC path does not deliver acceptable operator quality
+- Field-validation status: manual field validation was completed and accepted the plain-AWS-WebRTC path from a business perspective; no lab-grade metrics dataset is recorded in-repo
 - Current repo implementation: `txing-board` publishes `board.video.*`, supervises a dedicated sender state manager, and the browser uses AWS KVS signaling + WebRTC for the viewer path
 
 Explicit non-goals for this slice:
@@ -25,9 +25,10 @@ Explicit non-goals for this slice:
 - Phase 1 uses one live video path only: board camera -> plain AWS WebRTC signaling channel -> operator.
 - The operator watches the plain AWS WebRTC path, not a board-local viewer page.
 - Phase 1 does not use WebRTC ingestion/storage, multiviewer, or `kvssink`.
+- Phase 1 assumes one human operator at a time operationally, but does not enforce single-viewer admission control in the repo.
 - ML and other cloud-side consumers are explicitly outside the phase-1 media path.
-- A second direct operator path remains a fallback option only if field tests show the plain-AWS-WebRTC path is not good enough.
-- In the current repo, the actual native sender command is injected at runtime and supervised by `board.video_sender`; the repo does not embed the media-pipeline implementation directly.
+- A second direct operator path remains deferred. The manual field validation performed for phase 1 did not justify reopening it.
+- In the current repo, the native sender implementation is shipped in-tree and is still launched as a supervised child process by `board.video_sender`.
 
 ## High-Level Architecture
 
@@ -40,11 +41,12 @@ txing-board
 
 board video sender state manager
   -> validates the KVS signaling channel exists
-  -> launches the externally configured native sender command
+  -> launches the configured native sender child command
   -> marks sender ready from child output or fallback startup timeout
   -> tracks best-effort viewer connected/disconnected state from child output markers
 
 native sender command
+  -> is shipped in-tree by this repo
   -> owns the actual camera capture, encode, and KVS master session
 
 operator client
@@ -90,6 +92,7 @@ Notes:
 - Phase 1 means plain KVS WebRTC signaling, not ingestion/storage.
 - `board.video.local.*` is no longer part of the active phase-1 contract.
 - `ready` and `viewerConnected` are coarse runtime signals derived from the supervised sender state, not a full media-quality guarantee.
+- Phase-1 single-operator scope is an operational assumption only. `viewerConnected` is not an admission-control signal and does not prove that only one viewer exists.
 
 ## Runtime Layout
 
@@ -110,7 +113,7 @@ Responsibilities:
 Responsibilities:
 
 - validate the configured signaling channel before steady-state sender supervision
-- run the actual native sender command provided at runtime
+- run the native sender child command selected for the board runtime
 - persist local sender state for `txing-board`
 - translate sender output markers into coarse `ready` / `viewerConnected` state
 - keep the repo-managed path simple enough for field validation in v1
@@ -119,6 +122,7 @@ Responsibilities:
 
 Responsibilities:
 
+- provide the in-repo media-pipeline implementation for phase 1
 - open the board camera
 - encode H.264
 - establish the plain AWS WebRTC master session
@@ -135,6 +139,11 @@ Responsibilities:
 - translate browser key presses into strict ROS `Twist` commands for `txing/board/cmd_vel`
 - support the existing browser operator path
 
+Phase-1 operator scope note:
+
+- one human operator is the intended operational model
+- the current repo does not enforce single-viewer admission control
+
 Control contract notes:
 
 - `txing/board/cmd_vel` uses strict ROS `Twist` semantics, not browser-specific steering semantics.
@@ -150,7 +159,7 @@ Phase 1 uses:
 - H.264 as the expected video codec
 - one live uplink from the device
 - no direct browser-to-board media path in the default design
-- a repo-managed sender supervisor that launches an externally configured native sender command
+- a repo-managed sender supervisor that launches the repo-shipped native sender as a child process by default
 
 Phase 1 does not use:
 
@@ -161,22 +170,23 @@ Phase 1 does not use:
 - a board-local iframe viewer page
 - a second direct operator path by default
 
-## Field Tests
+## Field Validation
 
-Field tests decide whether phase 1 stays AWS-WebRTC-only or reopens a second direct operator path.
+Phase 1 has already been accepted through manual field validation from a business perspective.
 
-Measure at minimum:
+What is recorded for that acceptance:
 
-- `p95` operator glass-to-glass latency against the `800 ms` target
-- operator control quality for directional commands
-- jitter and short-stall behavior under weaker links
-- reconnect behavior after temporary link loss
+- the plain AWS WebRTC operator path was manually exercised in realistic use
+- practical directional-control quality was considered good enough for business use
+- no second direct operator path was justified by that manual validation
 
-Revisit the architecture if:
+What is not recorded for that acceptance:
 
-- `p95` latency misses the target
-- operator control quality is poor even when average latency looks acceptable
-- the plain AWS WebRTC path adds too much variability for practical use
+- no lab-grade `p95` glass-to-glass latency dataset against the `800 ms` target
+- no formal jitter or short-stall benchmark dataset
+- no formal reconnect benchmark report
+
+Future architecture work should reopen only if later field use shows that operator quality is no longer acceptable in practice.
 
 ## Deferred
 
@@ -187,7 +197,7 @@ Not part of phase 1:
 - cloud-side video ingestion/storage
 - multiviewer
 - HLS/DASH as the operator path
-- a second direct operator video path unless field tests justify it
+- a second direct operator video path unless future field use justifies it
 
 ## Future Enhancements
 

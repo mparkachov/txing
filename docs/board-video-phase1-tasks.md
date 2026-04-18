@@ -32,7 +32,7 @@ This checklist tracks the plain-AWS-WebRTC phase-1 plan.
 
 - [x] Replace the board-local iframe viewer approach with a plain AWS WebRTC viewer path
 - [x] Keep board motion control out of the media path and continue using `txing/board/cmd_vel`
-- [ ] Keep the initial operator scope to one human operator
+- [x] Document that the initial single-operator scope is an operational assumption, not enforced admission control
 
 ## 4. ML / Cloud Consumption
 
@@ -41,10 +41,10 @@ This checklist tracks the plain-AWS-WebRTC phase-1 plan.
 
 ## 5. Field Tests
 
-- [ ] Measure `p95` operator glass-to-glass latency against the `800 ms` target
-- [ ] Measure jitter and short-stall behavior on target links
-- [ ] Validate practical operator quality for directional commands
-- [ ] Revisit the direct operator path only if field tests fail the plain-AWS-WebRTC design
+- [x] Record that manual field validation accepted the plain-AWS-WebRTC operator path from a business perspective
+- [x] Record that no lab-grade `p95` / jitter benchmark dataset was captured for this phase-1 acceptance
+- [x] Record practical directional-control quality as good enough for business use
+- [x] Keep the direct operator path deferred because the recorded manual validation did not justify reopening it
 
 ## 6. Explicitly Deferred
 
@@ -53,4 +53,4 @@ This checklist tracks the plain-AWS-WebRTC phase-1 plan.
 - [ ] multiviewer
 - [ ] recording as a requirement
 - [ ] low-latency ML as a requirement
-- [ ] a second direct device-to-operator video path unless field tests justify it
+- [ ] a second direct device-to-operator video path unless future field use justifies it
