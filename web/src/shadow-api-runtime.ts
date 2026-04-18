@@ -10,6 +10,7 @@ import { buildCognitoLogins, createCredentialProvider } from './aws-credentials'
 import { buildCmdVelPublishPacket, type Twist } from './cmd-vel'
 import { appConfig } from './config'
 import { resolveIotDataEndpoint } from './iot-endpoint'
+import { buildShadowMqttClientId } from './shadow-client-id'
 import { mergeShadowUpdate } from './shadow-merge'
 import {
   buildSparkplugRedconCommandPacket,
@@ -467,7 +468,8 @@ class AwsIotShadowSession implements ShadowSession {
       policyWasAttached,
     )
 
-    const clientId = await getIdentityId(idToken)
+    const identityId = await getIdentityId(idToken)
+    const clientId = buildShadowMqttClientId(identityId)
     const iotDataEndpoint = await resolveIotDataEndpoint({
       region: this.options.awsRegion,
       idToken,
