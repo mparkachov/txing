@@ -10,11 +10,11 @@ import {
   KinesisVideoSignalingClient,
   type IceServer,
 } from '@aws-sdk/client-kinesis-video-signaling'
-import {
-  Role,
-  SignalingClient,
-} from 'amazon-kinesis-video-streams-webrtc'
 import { createCredentialProvider } from './aws-credentials'
+import {
+  loadKvsWebRtcBrowserSdk,
+  type KvsWebRtcSignalingClient,
+} from './kvs-webrtc-browser'
 
 export type ViewerUiState = {
   status: 'idle' | 'connecting' | 'streaming' | 'error'
@@ -140,6 +140,8 @@ export const startBoardVideoViewerRuntime = async (
     region: options.region,
   })
 
+  const kvsWebRtcBrowserSdkPromise = loadKvsWebRtcBrowserSdk()
+
   const idToken = await options.resolveIdToken()
   const credentialProvider = createCredentialProvider(idToken)
   const credentials = await credentialProvider()
@@ -200,7 +202,10 @@ export const startBoardVideoViewerRuntime = async (
     iceServers: buildRtcIceServers(options.region, iceConfigResponse.IceServerList).map((server) => server.urls),
   })
 
-  const signalingClient = new SignalingClient({
+  const { Role, SignalingClient } = await kvsWebRtcBrowserSdkPromise
+  logVideoDebug('KVS WebRTC browser SDK loaded')
+
+  const signalingClient: KvsWebRtcSignalingClient = new SignalingClient({
     channelARN: channelArn,
     channelEndpoint: endpoints.WSS,
     role: Role.VIEWER,
