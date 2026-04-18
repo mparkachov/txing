@@ -5,18 +5,18 @@ Build, flash, and local developer commands live in the subproject READMEs.
 
 Status note:
 
-- This document describes the current implemented phase-1 `rig` runtime contract.
-- `rig` now acts as the phase-1 `rig` lifecycle service in the same process.
+- This document describes the current implemented `rig` runtime contract.
+- `rig` now acts as the lifecycle service in the same process.
 - Sparkplug `DCMD.redcon` is the authoritative lifecycle command path.
 - The `txing` Thing Shadow remains the reflected operational document and restart cache.
 - Stable rig assignment and BLE reconnect metadata now live in AWS IoT thing attributes, not in the shadow.
-- For the broader design context, see `docs/sparkplug-phase1-design.md`.
+- For the broader design context, see `docs/sparkplug-lifecycle.md`.
 
 ## 1. Scope
 
 Contract between:
 - Txing firmware (`mcu/`, BLE peripheral on nRF52840)
-- Txing rig runtime (`rig/`, BLE central on Raspberry Pi 5 and phase-1 `rig` lifecycle runtime)
+- Txing rig runtime (`rig/`, BLE central on Raspberry Pi 5 and current `rig` lifecycle runtime)
 - AWS IoT classic Thing Shadow for thing name `txing`
 - AWS IoT MQTT Sparkplug namespace `spBv1.0`
 
@@ -32,7 +32,7 @@ High-level architecture:
 
 - `rig` is the source of truth for the `mcu.*` shadow subtree.
 - `rig` is also the source of truth for the direct Sparkplug metric reflections under top-level `reported`.
-- In phase 1 that strict top-level metric set is exactly `reported.redcon` and `reported.batteryMv`.
+- In the current implementation that strict top-level metric set is exactly `reported.redcon` and `reported.batteryMv`.
 - `rig` is the only component that accepts lifecycle intent from Sparkplug and reflects unresolved intent into `state.desired.redcon`.
 - `state.desired.board.power` remains an internal rig-to-board actuator only.
 - Only `rig` may define or evolve the `mcu.*` contract.
@@ -97,7 +97,7 @@ Field semantics:
 - `state.desired.redcon` is the reflected cache of the latest unresolved Sparkplug `DCMD.redcon` command.
 - `state.desired.board.power=false` is an internal-only graceful-halt request written by `rig` while converging `redcon=4`.
 - Direct scalar attributes under `state.reported` are the strict Sparkplug metric reflection surface.
-- In phase 1 that set is exactly `redcon` and `batteryMv`.
+- In the current implementation that set is exactly `redcon` and `batteryMv`.
 - `mcu.*` and `board.*` remain shadow-only operational detail and are not alternate locations for Sparkplug metric reflection.
 - `state.reported.redcon` is the rig-derived readiness summary:
   - `4` -> Green / `Cold Camp` -> `reported.mcu.power=false`
@@ -124,13 +124,13 @@ Namespace and identity:
 - Edge node id: `rig`
 - Device id: configured txing thing name
 
-Phase-1 metrics:
+Current metrics:
 - Node metric: `rig.redcon`
 - Device metrics: `redcon`, `batteryMv`
 - Writable device command metric: `redcon`
 
-Phase-1 topics:
-- `NBIRTH` and `NDATA` for `rig`
+Current topics:
+- `NBIRTH` and `NDEATH` for `rig`
 - `DBIRTH`, `DDATA`, and `DDEATH` for `txing`
 - `DCMD` for txing lifecycle commands
 

@@ -4,11 +4,11 @@ This document defines how shadow structure is governed across the repo.
 
 ## Status
 
-- This document describes the current Sparkplug phase-1 shadow model implemented in the repo.
+- This document describes the current Sparkplug-backed shadow model implemented in the repo.
 - Sparkplug `DCMD.redcon` is the only authoritative external lifecycle intent path.
 - The classic `txing` Thing Shadow remains the lifecycle reflection and restart-cache document.
 - `rig` and `town` are Sparkplug identifiers only; they do not have AWS IoT thing shadows.
-- The design background remains documented in `docs/sparkplug-phase1-design.md`.
+- The design background remains documented in `docs/sparkplug-lifecycle.md`.
 
 ## Canonical schema
 
@@ -17,17 +17,17 @@ This document defines how shadow structure is governed across the repo.
   - `txing`: device shadow
 - Shadow type: classic (unnamed) Thing Shadow for the txing thing only
 - High-level paths:
-  - `Sparkplug host -> AWS IoT MQTT -> rig (phase-1 rig runtime) -> BLE -> mcu`
+  - `Sparkplug host -> AWS IoT MQTT -> rig (current rig runtime) -> BLE -> mcu`
   - `rig -> AWS IoT Thing Shadow (txing)`
   - `board -> AWS IoT Thing Shadow (txing.board.*)`
 
 ## Ownership decision
 
-- `mcu.*` is owned by the `rig` runtime acting as the phase-1 `rig` lifecycle service.
+- `mcu.*` is owned by the `rig` runtime acting as the lifecycle service.
 - Only `rig` is allowed to define or evolve fields under `mcu`.
 - Other components must treat `mcu.*` as a stable contract and must not add, rename, or repurpose fields.
 - Top-level direct Sparkplug metric reflections under `txing.state.reported` are owned by `rig`.
-- In phase 1 that strict direct-metric set is exactly:
+- In the current implementation that strict direct-metric set is exactly:
   - `txing.state.reported.redcon`
   - `txing.state.reported.batteryMv`
 - Top-level `txing.state.desired.redcon` is owned by `rig` as the reflected cache of the latest unresolved Sparkplug lifecycle command.
@@ -41,13 +41,13 @@ This document defines how shadow structure is governed across the repo.
 AWS IoT Thing Shadows do not enforce a custom JSON schema automatically.
 Schema validation should be done by project code and/or CI checks, while AWS IoT stores the JSON document.
 
-Phase-1 note:
+Current implementation note:
 
 - Sparkplug owns lifecycle intent.
 - Shadow is reflection and restart cache.
-- `rig` continues to derive `reported.redcon` from current `reported.mcu.*` and `reported.board.*`, including the phase-1 viewer-dependent `REDCON 1` rule.
+- `rig` continues to derive `reported.redcon` from current `reported.mcu.*` and `reported.board.*`, including the current viewer-dependent `REDCON 1` rule.
 - Direct scalar attributes under `state.reported` are a strict reflection of the current Sparkplug device metrics only.
-- In phase 1 that direct-metric set is exactly `redcon` and `batteryMv`.
+- In the current implementation that direct-metric set is exactly `redcon` and `batteryMv`.
 - `mcu.*` and `board.*` remain additional operational detail and must not be used as alternate Sparkplug metric locations.
 - Stable per-device metadata lives in AWS IoT thing attributes instead:
   - `attributes.rig`
@@ -72,24 +72,24 @@ Phase-1 note:
 - `state.reported.board.wifi.ipv6` (`ipv6 string`, update payload may temporarily use `null` to delete) is the IPv6 address chosen by the OS for the board's current IPv6 default-route interface when the board control publishes.
 - `state.reported.board.drive.leftSpeed` (`integer`, `-100..100`) is the last applied left track effort reported by `txing-board` as a provisional signed percent scale.
 - `state.reported.board.drive.rightSpeed` (`integer`, `-100..100`) is the last applied right track effort reported by `txing-board` as a provisional signed percent scale.
-- `state.reported.board.video.ready` (`boolean`) indicates whether the phase-1 plain AWS WebRTC live path is ready for operator use.
+- `state.reported.board.video.ready` (`boolean`) indicates whether the current plain AWS WebRTC live path is ready for operator use.
 - `state.reported.board.video.status` (`"starting" | "ready" | "error"`) is the coarse runtime state of the board video sender path.
-- `state.reported.board.video.transport` (`"aws-webrtc"`) identifies the live-video transport. Phase 1 uses `aws-webrtc` as the only live operator path, specifically as a plain KVS WebRTC signaling session.
+- `state.reported.board.video.transport` (`"aws-webrtc"`) identifies the live-video transport. The current implementation uses `aws-webrtc` as the only live operator path, specifically as a plain KVS WebRTC signaling session.
 - `state.reported.board.video.session.viewerUrl` (`string`, update payload may temporarily use `null` to delete) is the operator-facing browser entry URL when a browser route exists for the live video session.
 - `state.reported.board.video.session.channelName` (`string`, update payload may temporarily use `null` to delete) is the KVS WebRTC signaling channel name for browser or native clients.
 - `state.reported.board.video.codec.video` (`"h264"` or `null`) is the currently configured board video codec.
 - `state.reported.board.video.viewerConnected` (`boolean`) is the best-effort operator-viewer presence flag for the live path.
 - `state.reported.board.video.lastError` (`string` or `null`) is the last coarse board-side video error surfaced by `txing-board` or its supervised sender path.
 - For `reported.redcon`, rig treats `reported.board.power`, `reported.board.wifi.online`, `reported.board.video.ready`, and `reported.board.video.viewerConnected` as the shared board posture inputs.
-- Phase-1 design intent is now plain AWS WebRTC only for the live operator path.
-- Phase 1 does not assume WebRTC ingestion/storage, multiviewer, or `kvssink`.
-- Whether a second direct operator path is needed later is explicitly deferred until field tests.
+- Current design intent is plain AWS WebRTC only for the live operator path.
+- The current implementation does not assume WebRTC ingestion/storage, multiviewer, or `kvssink`.
+- Whether a second direct operator path is needed later is explicitly deferred until future field use.
 
 ## Web admin transport note
 
 - The browser admin SPA consumes the classic `txing` Thing Shadow over AWS IoT MQTT/WSS as its read path.
 - Browser lifecycle writes no longer target shadow desired power fields.
-- The phase-1 on/off switch publishes Sparkplug `DCMD.redcon` over MQTT/WSS:
+- The current on/off switch publishes Sparkplug `DCMD.redcon` over MQTT/WSS:
   - `on` -> `redcon=3`
   - `off` -> `redcon=4`
 - `board` and `rig` continue to publish reflected operational state for `txing`; there are no separate `rig` or `town` shadows.

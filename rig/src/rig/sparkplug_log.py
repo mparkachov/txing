@@ -43,7 +43,7 @@ def _env_text(name: str, default: str) -> str:
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="rig-sparkplug-log",
-        description="Subscribe to phase-1 Sparkplug lifecycle topics and decode payloads",
+        description="Subscribe to Sparkplug lifecycle topics and decode payloads",
     )
     parser.add_argument(
         "--thing-name",

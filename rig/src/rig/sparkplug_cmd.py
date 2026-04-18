@@ -26,7 +26,7 @@ def _env_text(name: str, default: str) -> str:
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="rig-sparkplug-cmd",
-        description="Publish a phase-1 Sparkplug DCMD.redcon command",
+        description="Publish a Sparkplug DCMD.redcon command",
     )
     parser.add_argument(
         "--redcon",

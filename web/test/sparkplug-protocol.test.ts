@@ -6,7 +6,7 @@ import {
 } from '../src/sparkplug-protocol'
 
 describe('sparkplug protocol helpers', () => {
-  test('builds the expected phase-1 sparkplug topics', () => {
+  test('builds the expected sparkplug topics', () => {
     expect(buildSparkplugTopics('town', 'rig', 'txing')).toEqual({
       nbirth: 'spBv1.0/town/NBIRTH/rig',
       ndata: 'spBv1.0/town/NDATA/rig',

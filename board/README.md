@@ -8,11 +8,11 @@ This is not the same Raspberry Pi as `rig/`. The `rig/` Pi remains the BLE/AWS c
 
 The txing runtime now connects to AWS IoT Core over SigV4-authenticated MQTT over WebSockets using the standard AWS SDK credential chain. The intended project-local profile layout is `town`, `rig`, and `txing`, with `txing` assuming the stack output role `TxingRuntimeRoleArn`.
 
-When the service is managed by `systemd`, run it as `root`. The board control consumes internal `state.desired.board.power=false` requests from the phase-1 `rig` runtime and requests a local system halt, which requires root privileges. The supervised video sender keeps using the board host's AWS SDK credential chain, and the generated service unit now loads shared AWS defaults from `config/aws.env` plus optional board-local overrides from `config/board.env`.
+When the service is managed by `systemd`, run it as `root`. The board control consumes internal `state.desired.board.power=false` requests from the `rig` runtime and requests a local system halt, which requires root privileges. The supervised video sender keeps using the board host's AWS SDK credential chain, and the generated service unit now loads shared AWS defaults from `config/aws.env` plus optional board-local overrides from `config/board.env`.
 
 ## Video runtime
 
-Phase 1 board video is a headless AWS KVS WebRTC path:
+Current board video is a headless AWS KVS WebRTC path:
 
 - board camera and encoder
 - repo-owned C++ KVS master sender command on the board

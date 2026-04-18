@@ -35,17 +35,17 @@ Rules:
 ## Shared contracts
 - Thing Shadow schema source of truth: `docs/txing-shadow.schema.json`.
 - Current rig-era shadow + BLE compatibility contract: `docs/device-rig-shadow-spec.md`.
-- Sparkplug phase-1 target lifecycle design: `docs/sparkplug-phase1-design.md`.
+- Sparkplug lifecycle design: `docs/sparkplug-lifecycle.md`.
 - Ownership rule: `rig` owns the `mcu.*` shadow subtree contract.
 - Ownership rule: `board` owns the `board.*` shadow subtree contract.
 
-## Board Video Phase 1
-- Phase 1 board video is a headless network-service design. Do not assume any GUI, local browser, or desktop session on the board.
+## Board Video
+- Board video is a headless network-service design. Do not assume any GUI, local browser, or desktop session on the board.
 - `txing-board` remains the only publisher of `board.*` Thing Shadow updates.
-- Phase 1 uses plain AWS KVS WebRTC signaling as the live operator video path.
+- The current implementation uses plain AWS KVS WebRTC signaling as the live operator video path.
 - `board.video_sender` writes local runtime state and probes supervised sender readiness, but it does not publish to AWS IoT directly.
 - The browser operator path uses the AWS KVS viewer flow, not a board-local iframe page.
-- The repo supervises an externally configured native sender command rather than embedding the full media pipeline directly.
+- The repo ships the native sender in-tree and supervises it as a child process from `board.video_sender`.
 - Browser-to-board motion control currently stays out of the media path on `txing/board/cmd_vel`.
 
 ## Terminology

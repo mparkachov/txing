@@ -1,6 +1,6 @@
 # txing web admin
 
-SPA for reading the `txing` Thing Shadow and publishing phase-1 lifecycle commands.
+SPA for reading the `txing` Thing Shadow and publishing lifecycle commands.
 
 ## Scope (v1)
 
@@ -14,10 +14,10 @@ SPA for reading the `txing` Thing Shadow and publishing phase-1 lifecycle comman
 - The deployed SPA now also serves a `/video` route for the board AWS WebRTC viewer.
 - Current transport split:
   - classic Thing Shadow is the UI read path over MQTT/WSS
-  - phase-1 lifecycle commands use Sparkplug `DCMD.redcon` over MQTT/WSS
+  - lifecycle commands use Sparkplug `DCMD.redcon` over MQTT/WSS
   - board video uses KVS WebRTC signaling from the `/video` route
   - Cognito hosted UI redirects, Cognito `/oauth2/token`, Cognito Identity, IoT `AttachPolicy`, and IoT `DescribeEndpoint` still use HTTPS
-- Default phase-1 identity:
+- Default identity:
   - txing thing name: `txing`
   - Sparkplug group id: `town`
   - Sparkplug edge node id: `rig`
@@ -111,7 +111,7 @@ After deploy, generate local Vite env automatically:
 just web::write-env
 ```
 
-This writes `web/.env.local` from stack outputs plus the phase-1 Sparkplug identity defaults.
+This writes `web/.env.local` from stack outputs plus the current Sparkplug identity defaults.
 
 Relevant outputs:
 
@@ -149,7 +149,7 @@ The stack serves the SPA from CloudFront instead of the raw S3 website endpoint 
 
 `AdminEmail` is currently enforced in the SPA client only. It is suitable for your single-admin v1, but it is not a hard server-side authorization boundary.
 
-## Phase-1 lifecycle note
+## Lifecycle note
 
 - The UI switch remains a simple on/off control.
 - `on` publishes `DCMD.redcon=3`.

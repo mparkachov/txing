@@ -1,8 +1,8 @@
-# Sparkplug Phase 1 Design
+# Sparkplug Lifecycle
 
 ## Status
 
-- Scope: phase-1 lifecycle control through Sparkplug with one writable metric: `redcon`
+- Scope: current lifecycle control through Sparkplug with one writable metric: `redcon`
 - Goal: move lifecycle authority from AWS shadow power fields to Sparkplug while preserving current operational behavior
 - Group model: `town` is the Sparkplug group id
 - Edge model: `rig` is the Sparkplug edge node
@@ -10,17 +10,17 @@
 - Shadow role: reflection and restart cache only, not the authoritative intent transport
 - Registry role: `attributes.rig` and `attributes.bleDeviceId` carry stable per-txing rig assignment and BLE reconnect metadata
 
-## Phase 1 Decisions
+## Current Decisions
 
 - Sparkplug is the only authoritative lifecycle intent transport.
-- `DCMD.redcon` is the only writable lifecycle command in phase 1.
-- The phase-1 UI stays simple: one on/off switch and one video button.
+- `DCMD.redcon` is the only writable lifecycle command.
+- The current UI stays simple: one on/off switch and one video button.
 - UI lifecycle mapping is:
   - `on` -> request `redcon=3`
   - `off` -> request `redcon=4`
-- Users do not directly select REDCON levels in phase 1.
+- Users do not directly select REDCON levels.
 - `mcu.*` and `board.*` remain in shadow as supporting operational detail only.
-- Phase 1 keeps the current REDCON derivation semantics, including the viewer-dependent `REDCON 1` rule.
+- The current implementation keeps the viewer-dependent `REDCON 1` rule.
 
 ## Identity Model
 
@@ -30,8 +30,8 @@
 - `rig`
   - Sparkplug edge node id
   - dynamic AWS IoT thing group name for assigned txings
-  - phase 1 node lifecycle uses `NBIRTH/NDEATH`
-  - phase 1 `rig.redcon` is a Sparkplug node metric carried by `NBIRTH`
+  - node lifecycle uses `NBIRTH/NDEATH`
+  - `rig.redcon` is a Sparkplug node metric carried by `NBIRTH`
 - `txing`
   - Sparkplug device id
   - each physical txing has its own AWS IoT thing/shadow
@@ -68,17 +68,17 @@ txing gateway / BLE path
 - `rig` is the only authority that computes top-level `txing.state.reported.redcon`.
 - `board` remains the source of truth for `reported.board.*`.
 - `rig` remains the source of truth for `reported.mcu.*`.
-- `mcu.*` and `board.*` are not the intended public lifecycle control API in phase 1.
+- `mcu.*` and `board.*` are not the intended public lifecycle control API.
 
 ## Sparkplug Contract
 
 ### Node Metrics
 
-Phase 1 publishes rig node lifecycle through `NBIRTH/NDEATH`.
+The current implementation publishes rig node lifecycle through `NBIRTH/NDEATH`.
 
 `rig.redcon` is a Sparkplug node metric published through `NBIRTH`.
 
-Phase-1 node birth/death uses Sparkplug `bdSeq`:
+Node birth/death uses Sparkplug `bdSeq`:
 
 - `NBIRTH`
   - carries `bdSeq`
@@ -86,28 +86,28 @@ Phase-1 node birth/death uses Sparkplug `bdSeq`:
 - `NDEATH`
   - carries the matching `bdSeq`
 
-Phase-1 meaning:
+Meaning:
 
 - if the rig lifecycle service is up and operating, `rig.redcon=1`
 
-Rig REDCON is independent from child txing REDCON values in phase 1.
-Phase 1 does not add node `NDATA`.
+Rig REDCON is independent from child txing REDCON values.
+The current implementation does not add node `NDATA`.
 
 ### Device Metrics
 
-Each txing device publishes exactly these Sparkplug lifecycle metrics in phase 1:
+Each txing device publishes exactly these Sparkplug lifecycle metrics:
 
 - `redcon`
 - `batteryMv`
 
 ### Commands
 
-Phase 1 accepts exactly one writable lifecycle command:
+The current implementation accepts exactly one writable lifecycle command:
 
 - `DCMD.redcon`
   - integer literal values `1..4`
 
-Example phase-1 UI mapping:
+Current UI mapping:
 
 - UI `on` sends intent equivalent to `DCMD.redcon=3`
 - UI `off` sends intent equivalent to `DCMD.redcon=4`
@@ -139,7 +139,7 @@ Semantics:
   - reflects the actual lifecycle battery metric of txing
   - must match the Sparkplug device actual `batteryMv`
 - Direct scalar attributes under `txing.state.reported` are the strict Sparkplug metric reflection surface.
-  - In phase 1 that set is exactly `redcon` and `batteryMv`.
+  - In the current implementation that set is exactly `redcon` and `batteryMv`.
   - `mcu.*` and `board.*` remain shadow-only operational detail and are not Sparkplug metric reflections.
 - AWS IoT registry attributes hold stable per-device metadata outside the shadow:
   - `attributes.rig`
@@ -176,15 +176,15 @@ Example reflected txing shadow shape:
 
 ### Rig And Town Reflection
 
-Phase 1 does not maintain AWS IoT things or shadows for `rig` or `town`.
+The current implementation does not maintain AWS IoT things or shadows for `rig` or `town`.
 
 - `rig.redcon=1` exists only as a Sparkplug node metric in `NBIRTH`.
 - `town` exists only as the Sparkplug group id.
 - Rig membership comes from the dynamic AWS IoT thing group whose name matches `attributes.rig`.
 
-## Phase 1 REDCON Semantics
+## Current REDCON Semantics
 
-Phase 1 keeps the current txing REDCON ladder:
+The current implementation uses this txing REDCON ladder:
 
 - `REDCON 4`
   - BLE reachable
@@ -201,13 +201,13 @@ Phase 1 keeps the current txing REDCON ladder:
   - same as `REDCON 2`
   - external viewer connected
 
-Phase 1 intentionally keeps `REDCON 1` dependent on current `reported.board.video.viewerConnected` behavior.
+The current implementation keeps `REDCON 1` dependent on `reported.board.video.viewerConnected`.
 
 ## Convergence Behavior
 
 Rig receives target REDCON only through Sparkplug.
 
-Phase-1 examples:
+Current examples:
 
 - target `redcon=4`
   - converge txing to the sleep state
@@ -219,7 +219,7 @@ Phase-1 examples:
   - if board/video conditions later satisfy higher derived levels, reported REDCON may rise naturally to `2` or `1`
   - clear `state.desired.redcon` once actual REDCON reaches the commanded REDCON
 
-Phase 1 keeps the current derived-behavior model rather than making REDCON a strict actuator state machine.
+The current implementation keeps the current derived-behavior model rather than making REDCON a strict actuator state machine.
 
 ## Birth and Death Rules
 
@@ -229,7 +229,7 @@ Rig publishes Sparkplug node lifecycle as a proper `NBIRTH` / `NDEATH` pair:
 
 - `NBIRTH` carries `bdSeq` and `rig.redcon=1`
 - `NDEATH` carries the matching `bdSeq`
-- phase 1 does not add node `NDATA`
+- the current implementation does not add node `NDATA`
 
 ### DBIRTH
 
@@ -269,13 +269,13 @@ Rig restart should be conservative:
 - check whether `state.desired.redcon` is still present
 - if present, attempt convergence from current observed state
 - prefer stability over speed
-- do not optimize for fast convergence in phase 1
+- do not optimize for fast convergence
 
 A lingering `desired.redcon` after restart is treated as recoverable abnormal state, not normal steady-state behavior.
 
 ## UI Behavior
 
-Phase-1 UI behavior stays intentionally simple:
+UI behavior stays intentionally simple:
 
 - the user has one on/off switch
 - the user has one video button
@@ -292,9 +292,9 @@ Actual REDCON still moves according to observed state:
 - `2` when board/video-ready conditions are satisfied
 - `1` when an external viewer connects
 
-## Phase 1 Boundaries
+## Boundaries
 
-Phase 1 includes:
+The current implementation includes:
 
 - Sparkplug lifecycle command transport
 - one writable Sparkplug metric: `redcon`
@@ -302,7 +302,7 @@ Phase 1 includes:
 - shadow reflection of actual and transient desired lifecycle state
 - continued use of current `mcu.*` and `board.*` operational detail
 
-Phase 1 does not include:
+The current implementation does not include:
 
 - additional Sparkplug metrics beyond txing `redcon` and `batteryMv`
 - town lifecycle management through Sparkplug

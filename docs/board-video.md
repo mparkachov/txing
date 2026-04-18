@@ -1,10 +1,10 @@
-# Board Video Phase 1 Design
+# Board Video
 
 ## Status
 
-- Scope: v1 operator video over plain AWS WebRTC only
+- Scope: current operator video over plain AWS WebRTC only
 - Goal: one live operator path with minimal IT operations
-- Live-control target: `p95` operator glass-to-glass latency under `800 ms` on target links
+- Current live-control target: `p95` operator glass-to-glass latency under `800 ms` on target links
 - Control model: directional commands, not precision teleoperation
 - Field-validation status: manual field validation was completed and accepted the plain-AWS-WebRTC path from a business perspective; no lab-grade metrics dataset is recorded in-repo
 - Current repo implementation: `txing-board` publishes `board.video.*`, supervises a dedicated sender state manager, and the browser uses AWS KVS signaling + WebRTC for the viewer path
@@ -12,22 +12,22 @@
 Explicit non-goals for this slice:
 
 - HLS/DASH as the live control path
-- WebRTC ingestion/storage as the default phase-1 path
+- WebRTC ingestion/storage as the default live path
 - multiviewer as a requirement
 - a second direct device-to-operator video path by default
 - recording as a requirement
 - low-latency ML consumption
 
-## Phase 1 Decision
+## Current Design
 
 - The board stays fully headless.
 - `txing-board` remains the only publisher of `board.*` state into the shared Thing Shadow.
-- Phase 1 uses one live video path only: board camera -> plain AWS WebRTC signaling channel -> operator.
+- The current implementation uses one live video path only: board camera -> plain AWS WebRTC signaling channel -> operator.
 - The operator watches the plain AWS WebRTC path, not a board-local viewer page.
-- Phase 1 does not use WebRTC ingestion/storage, multiviewer, or `kvssink`.
-- Phase 1 assumes one human operator at a time operationally, but does not enforce single-viewer admission control in the repo.
-- ML and other cloud-side consumers are explicitly outside the phase-1 media path.
-- A second direct operator path remains deferred. The manual field validation performed for phase 1 did not justify reopening it.
+- The current implementation does not use WebRTC ingestion/storage, multiviewer, or `kvssink`.
+- The current implementation assumes one human operator at a time operationally, but does not enforce single-viewer admission control in the repo.
+- ML and other cloud-side consumers are explicitly outside the current media path.
+- A second direct operator path remains deferred. The recorded manual field validation did not justify reopening it.
 - In the current repo, the native sender implementation is shipped in-tree and is still launched as a supervised child process by `board.video_sender`.
 
 ## High-Level Architecture
@@ -57,7 +57,7 @@ operator client
 
 ## Shadow Contract
 
-Phase 1 uses `reported.board.video` to describe the plain AWS WebRTC live path:
+The current implementation uses `reported.board.video` to describe the plain AWS WebRTC live path:
 
 ```json
 {
@@ -86,13 +86,13 @@ Phase 1 uses `reported.board.video` to describe the plain AWS WebRTC live path:
 
 Notes:
 
-- `transport=aws-webrtc` is the phase-1 choice.
+- `transport=aws-webrtc` is the current choice.
 - `session.viewerUrl` is the browser entry point when a browser operator route exists.
 - `session.channelName` is the AWS WebRTC signaling channel name for the current viewer session.
-- Phase 1 means plain KVS WebRTC signaling, not ingestion/storage.
-- `board.video.local.*` is no longer part of the active phase-1 contract.
+- The current implementation means plain KVS WebRTC signaling, not ingestion/storage.
+- `board.video.local.*` is no longer part of the active contract.
 - `ready` and `viewerConnected` are coarse runtime signals derived from the supervised sender state, not a full media-quality guarantee.
-- Phase-1 single-operator scope is an operational assumption only. `viewerConnected` is not an admission-control signal and does not prove that only one viewer exists.
+- Single-operator scope is an operational assumption only. `viewerConnected` is not an admission-control signal and does not prove that only one viewer exists.
 
 ## Runtime Layout
 
@@ -116,13 +116,13 @@ Responsibilities:
 - run the native sender child command selected for the board runtime
 - persist local sender state for `txing-board`
 - translate sender output markers into coarse `ready` / `viewerConnected` state
-- keep the repo-managed path simple enough for field validation in v1
+- keep the repo-managed path simple enough for field validation
 
 ### Native Sender Command
 
 Responsibilities:
 
-- provide the in-repo media-pipeline implementation for phase 1
+- provide the in-repo media-pipeline implementation
 - open the board camera
 - encode H.264
 - establish the plain AWS WebRTC master session
@@ -130,7 +130,7 @@ Responsibilities:
 
 ### Operator Client
 
-The operator client is the phase-1 client of this session model, not the only possible client type.
+The operator client is the current client of this session model, not the only possible client type.
 
 Responsibilities:
 
@@ -139,7 +139,7 @@ Responsibilities:
 - translate browser key presses into strict ROS `Twist` commands for `txing/board/cmd_vel`
 - support the existing browser operator path
 
-Phase-1 operator scope note:
+Operator scope note:
 
 - one human operator is the intended operational model
 - the current repo does not enforce single-viewer admission control
@@ -153,7 +153,7 @@ Control contract notes:
 
 ## Media Serving
 
-Phase 1 uses:
+The current implementation uses:
 
 - plain AWS WebRTC signaling as the only live operator video path
 - H.264 as the expected video codec
@@ -161,7 +161,7 @@ Phase 1 uses:
 - no direct browser-to-board media path in the default design
 - a repo-managed sender supervisor that launches the repo-shipped native sender as a child process by default
 
-Phase 1 does not use:
+The current implementation does not use:
 
 - WebRTC ingestion/storage
 - multiviewer
@@ -172,7 +172,7 @@ Phase 1 does not use:
 
 ## Field Validation
 
-Phase 1 has already been accepted through manual field validation from a business perspective.
+The current implementation has already been accepted through manual field validation from a business perspective.
 
 What is recorded for that acceptance:
 
@@ -190,7 +190,7 @@ Future architecture work should reopen only if later field use shows that operat
 
 ## Deferred
 
-Not part of phase 1:
+Not part of the current implementation:
 
 - recording as a requirement
 - low-latency ML consumption
@@ -201,10 +201,10 @@ Not part of phase 1:
 
 ## Future Enhancements
 
-- A later phase may add native iOS/Android operator clients using the same signaling/session model.
-- A later phase may add a separate cloud-consumption path for ML and other cloud-side consumers.
-- Additional future clients may reuse the same session metadata and signaling model without changing the phase-1 browser-operator path.
-- These future paths are outside the phase-1 operator media path and do not change the current AWS-WebRTC browser-operator design.
+- A later implementation may add native iOS/Android operator clients using the same signaling/session model.
+- A later implementation may add a separate cloud-consumption path for ML and other cloud-side consumers.
+- Additional future clients may reuse the same session metadata and signaling model without changing the current browser-operator path.
+- These future paths are outside the current operator media path and do not change the current AWS-WebRTC browser-operator design.
 
 ## References
 

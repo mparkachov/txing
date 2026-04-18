@@ -4,9 +4,9 @@ Python service for the Raspberry Pi 5 rig runtime.
 
 Responsibilities:
 - Connect directly to AWS IoT Core over SigV4-authenticated MQTT over WebSockets
-- Act as the phase-1 `rig` lifecycle runtime in the same process
+- Act as the `rig` lifecycle runtime in the same process
 - Synchronize classic Thing Shadows for all txings assigned to this rig
-- Accept Sparkplug `DCMD.redcon` lifecycle commands and publish `NBIRTH`/`NDATA`/`DBIRTH`/`DDATA`/`DDEATH`
+- Accept Sparkplug `DCMD.redcon` lifecycle commands and publish `NBIRTH`/`NDEATH`/`DBIRTH`/`DDATA`/`DDEATH`
 - Bridge REDCON-driven wakeup-state and sleep-state changes to the MCU over BLE rendezvous sessions
 - Publish MCU state to `state.reported.mcu.*`
 - Publish derived readiness at top-level `state.reported.redcon`
@@ -150,7 +150,7 @@ Dry-run mode (no BLE writes, still syncs AWS shadow and Sparkplug lifecycle traf
 
 ## Send lifecycle commands (`just`)
 
-Use `just` recipes to publish phase-1 Sparkplug lifecycle commands.
+Use `just` recipes to publish Sparkplug lifecycle commands.
 
 From repository root:
 

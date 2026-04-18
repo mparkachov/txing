@@ -71,16 +71,16 @@ The point is to let a physical device live cheaply in the world most of the time
 
 In that kind of system, a human operator is just one sample caller among many. Cloud services, automation, and supervisory nodes can all occupy the same conceptual role: they issue intent, consume reports, and decide when a device should stay cold, stay local, or go fully hot.
 
-Phase-1 functional decision:
+Current functional decision:
 
 - `town` is the top-level management namespace and the Sparkplug group id.
 - `rig` is the always-on regional coordinator and the Sparkplug edge node.
 - `txing` is the field device and the Sparkplug device.
 - One physical `txing` includes both the MCU watch layer and the board action layer.
 - One `rig` is expected to manage multiple `txing` devices over time.
-- In phase 1, lifecycle intent moves toward Sparkplug `redcon`, while AWS shadow remains a reflected operational store and restart cache.
+- In the current implementation, lifecycle intent moves toward Sparkplug `redcon`, while AWS shadow remains a reflected operational store and restart cache.
 
-That means the regional coordinator is not itself a `txing` in phase 1. It is a separate layer in the hierarchy: the `rig`.
+That means the regional coordinator is not itself a `txing` in the current implementation. It is a separate layer in the hierarchy: the `rig`.
 
 ## Sample implementation in this repo
 
@@ -88,12 +88,12 @@ This repository contains one sample implementation of the `txing` concept:
 
 - `mcu/`: the current watch layer
 - `board/`: the current action layer
-- `rig/`: the current Raspberry Pi support component that acts as the phase-1 `rig` runtime and bridges cloud intent to the watch link
+- `rig/`: the current Raspberry Pi support component that acts as the `rig` lifecycle runtime and bridges cloud intent to the watch link
 - `web/`: one operator/admin surface
-- `docs/`: shared contracts, schema, and Sparkplug phase-1 design notes for this implementation
+- `docs/`: shared contracts, schema, and Sparkplug lifecycle notes for this implementation
 
 In this implementation, the watch link is BLE and the action link is Wi-Fi. Those are examples, not the definition of `txing`.
 
-For the current Sparkplug phase-1 design decisions around `town`, `rig`, and `txing`, see [docs/sparkplug-phase1-design.md](./docs/sparkplug-phase1-design.md).
+For the current Sparkplug lifecycle design around `town`, `rig`, and `txing`, see [docs/sparkplug-lifecycle.md](./docs/sparkplug-lifecycle.md).
 
 For build, deploy, and local development workflows, see [development.md](./development.md).

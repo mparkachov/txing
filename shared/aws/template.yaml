@@ -780,7 +780,7 @@ Outputs:
     Description: ARN of the txing board KVS signaling channel.
     Value: !GetAtt TxingBoardVideoChannel.Arn
   BoardVideoChannelName:
-    Description: Fixed signaling channel name for the phase-1 board video path.
+    Description: Fixed signaling channel name for the current board video path.
     Value: txing-board-video
   BoardVideoSenderManagedPolicyArn:
     Description: Attach this managed policy to the AWS principal used by the board video sender.
