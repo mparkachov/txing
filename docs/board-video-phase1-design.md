@@ -25,7 +25,7 @@ Explicit non-goals for this slice:
 - Phase 1 uses one live video path only: board camera -> plain AWS WebRTC signaling channel -> operator.
 - The operator watches the plain AWS WebRTC path, not a board-local viewer page.
 - Phase 1 does not use WebRTC ingestion/storage, multiviewer, or `kvssink`.
-- ML and other cloud-side consumers are explicitly outside the phase-1 media path. If they need video later, that will require a separate follow-on design.
+- ML and other cloud-side consumers are explicitly outside the phase-1 media path.
 - A second direct operator path remains a fallback option only if field tests show the plain-AWS-WebRTC path is not good enough.
 - In the current repo, the actual native sender command is injected at runtime and supervised by `board.video_sender`; the repo does not embed the media-pipeline implementation directly.
 
@@ -86,7 +86,7 @@ Notes:
 
 - `transport=aws-webrtc` is the phase-1 choice.
 - `session.viewerUrl` is the browser entry point when a browser operator route exists.
-- `session.channelName` is the AWS WebRTC signaling channel name for browser or native clients.
+- `session.channelName` is the AWS WebRTC signaling channel name for the current viewer session.
 - Phase 1 means plain KVS WebRTC signaling, not ingestion/storage.
 - `board.video.local.*` is no longer part of the active phase-1 contract.
 - `ready` and `viewerConnected` are coarse runtime signals derived from the supervised sender state, not a full media-quality guarantee.
@@ -126,12 +126,14 @@ Responsibilities:
 
 ### Operator Client
 
+The operator client is the phase-1 client of this session model, not the only possible client type.
+
 Responsibilities:
 
 - join the plain AWS WebRTC viewer session
 - render the live stream for directional control
 - translate browser key presses into strict ROS `Twist` commands for `txing/board/cmd_vel`
-- support the existing browser operator first; future native-client support remains a design goal, not a completed implementation
+- support the existing browser operator path
 
 Control contract notes:
 
@@ -186,6 +188,13 @@ Not part of phase 1:
 - multiviewer
 - HLS/DASH as the operator path
 - a second direct operator video path unless field tests justify it
+
+## Future Enhancements
+
+- A later phase may add native iOS/Android operator clients using the same signaling/session model.
+- A later phase may add a separate cloud-consumption path for ML and other cloud-side consumers.
+- Additional future clients may reuse the same session metadata and signaling model without changing the phase-1 browser-operator path.
+- These future paths are outside the phase-1 operator media path and do not change the current AWS-WebRTC browser-operator design.
 
 ## References
 
