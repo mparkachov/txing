@@ -452,7 +452,9 @@ Resources:
           - Sid: ShadowConnect
             Effect: Allow
             Action: iot:Connect
-            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/${!cognito-identity.amazonaws.com:sub}
+            Resource:
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/${!cognito-identity.amazonaws.com:sub}
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/${!cognito-identity.amazonaws.com:sub}-*
           - Sid: ShadowPublish
             Effect: Allow
             Action: iot:Publish
@@ -682,7 +684,9 @@ Resources:
               - Sid: ShadowConnect
                 Effect: Allow
                 Action: iot:Connect
-                Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/${!cognito-identity.amazonaws.com:sub}
+                Resource:
+                  - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/${!cognito-identity.amazonaws.com:sub}
+                  - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/${!cognito-identity.amazonaws.com:sub}-*
               - Sid: ShadowPublish
                 Effect: Allow
                 Action: iot:Publish

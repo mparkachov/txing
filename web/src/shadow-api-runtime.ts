@@ -180,6 +180,9 @@ const isForbiddenError = (error: unknown): boolean =>
   error instanceof Error &&
   (error.name === 'ForbiddenException' || error.message.toLowerCase().includes('not authorized'))
 
+const isNotAuthorizedConnectError = (error: unknown): boolean =>
+  error instanceof Error && error.message.toLowerCase().includes('not authorized')
+
 const runWithForbiddenRetry = async <T>(
   operation: () => Promise<T>,
   retryForbidden: boolean,
@@ -274,6 +277,7 @@ class AwsIotShadowSession implements ShadowSession {
   private startPromise: Promise<unknown> | null = null
   private latestShadow: unknown = null
   private sparkplugCommandSeq = 0
+  private suppressConnectionErrors = false
   private readonly pendingRequests = new Map<string, PendingRequest>()
   private readonly snapshotWaiters = new Set<SnapshotWaiter>()
   private readonly handleAttemptingConnect = (): void => {
@@ -292,19 +296,25 @@ class AwsIotShadowSession implements ShadowSession {
     if (this.closed) {
       return
     }
-    this.setConnectionState('error')
-    this.options.onError(`Shadow connection failed: ${getErrorMessage(event.error)}`)
-    this.rejectPendingRequests(new Error('Shadow connection failed before response'))
-    this.rejectSnapshotWaiters(new Error('Shadow connection failed before response'))
+    const detail = getErrorMessage(event.error)
+    if (!this.suppressConnectionErrors) {
+      this.setConnectionState('error')
+      this.options.onError(`Shadow connection failed: ${detail}`)
+    }
+    this.rejectPendingRequests(new Error(`Shadow connection failed before response: ${detail}`))
+    this.rejectSnapshotWaiters(new Error(`Shadow connection failed before response: ${detail}`))
   }
   private readonly handleDisconnection = (event: mqtt5.DisconnectionEvent): void => {
     if (this.closed) {
       return
     }
-    this.setConnectionState('error')
-    this.options.onError(`Shadow connection lost: ${getErrorMessage(event.error)}`)
-    this.rejectPendingRequests(new Error('Shadow connection lost before response'))
-    this.rejectSnapshotWaiters(new Error('Shadow connection lost before response'))
+    const detail = getErrorMessage(event.error)
+    if (!this.suppressConnectionErrors) {
+      this.setConnectionState('error')
+      this.options.onError(`Shadow connection lost: ${detail}`)
+    }
+    this.rejectPendingRequests(new Error(`Shadow connection lost before response: ${detail}`))
+    this.rejectSnapshotWaiters(new Error(`Shadow connection lost before response: ${detail}`))
   }
   private readonly handleMessageReceived = (event: mqtt5.MessageReceivedEvent): void => {
     if (this.closed) {
@@ -443,19 +453,7 @@ class AwsIotShadowSession implements ShadowSession {
     this.setConnectionState('idle')
     this.rejectPendingRequests(new Error('Shadow session closed'))
     this.rejectSnapshotWaiters(new Error('Shadow session closed'))
-
-    if (!this.client) {
-      return
-    }
-
-    this.client.removeListener('attemptingConnect', this.handleAttemptingConnect)
-    this.client.removeListener('connectionSuccess', this.handleConnectionSuccess)
-    this.client.removeListener('connectionFailure', this.handleConnectionFailure)
-    this.client.removeListener('disconnection', this.handleDisconnection)
-    this.client.removeListener('messageReceived', this.handleMessageReceived)
-    this.client.stop()
-    this.client.close()
-    this.client = null
+    this.disposeClient(this.client)
   }
 
   private async open(): Promise<unknown> {
@@ -469,12 +467,51 @@ class AwsIotShadowSession implements ShadowSession {
     )
 
     const identityId = await getIdentityId(idToken)
-    const clientId = buildShadowMqttClientId(identityId)
     const iotDataEndpoint = await resolveIotDataEndpoint({
       region: this.options.awsRegion,
       idToken,
     })
     const mqttHost = deriveMqttHostFromIotDataEndpoint(iotDataEndpoint)
+    try {
+      try {
+        return await this.openWithClientId(
+          mqttHost,
+          buildShadowMqttClientId(identityId),
+          true,
+        )
+      } catch (caughtError) {
+        if (!isNotAuthorizedConnectError(caughtError)) {
+          throw caughtError
+        }
+        return await this.openWithClientId(mqttHost, identityId, false)
+      }
+    } finally {
+      this.startPromise = null
+    }
+  }
+
+  private async openWithClientId(
+    mqttHost: string,
+    clientId: string,
+    suppressErrors: boolean,
+  ): Promise<unknown> {
+    const client = this.createClient(mqttHost, clientId)
+    this.client = client
+    this.suppressConnectionErrors = suppressErrors
+    this.setConnectionState('connecting')
+    client.start()
+
+    try {
+      return await this.waitForSnapshot(() => true, initialSnapshotTimeoutMs)
+    } catch (caughtError) {
+      this.disposeClient(client)
+      throw caughtError
+    } finally {
+      this.suppressConnectionErrors = false
+    }
+  }
+
+  private createClient(mqttHost: string, clientId: string): mqtt5.Mqtt5Client {
     const builder = iot.AwsIotMqtt5ClientConfigBuilder.newWebsocketMqttBuilderWithSigv4Auth(
       mqttHost,
       {
@@ -496,15 +533,22 @@ class AwsIotShadowSession implements ShadowSession {
     client.on('connectionFailure', this.handleConnectionFailure)
     client.on('disconnection', this.handleDisconnection)
     client.on('messageReceived', this.handleMessageReceived)
+    return client
+  }
 
-    this.client = client
-    this.setConnectionState('connecting')
-    client.start()
-
-    try {
-      return await this.waitForSnapshot(() => true, initialSnapshotTimeoutMs)
-    } finally {
-      this.startPromise = null
+  private disposeClient(client: mqtt5.Mqtt5Client | null): void {
+    if (!client) {
+      return
+    }
+    client.removeListener('attemptingConnect', this.handleAttemptingConnect)
+    client.removeListener('connectionSuccess', this.handleConnectionSuccess)
+    client.removeListener('connectionFailure', this.handleConnectionFailure)
+    client.removeListener('disconnection', this.handleDisconnection)
+    client.removeListener('messageReceived', this.handleMessageReceived)
+    client.stop()
+    client.close()
+    if (this.client === client) {
+      this.client = null
     }
   }
 

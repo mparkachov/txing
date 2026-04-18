@@ -10,6 +10,7 @@ SPA for reading the `txing` Thing Shadow and publishing phase-1 lifecycle comman
 - Thing Shadow reads and reflection updates go directly from the SPA to AWS IoT Core over MQTT/WSS with SigV4-signed websocket handshakes.
 - Lifecycle on/off writes publish Sparkplug `DCMD.redcon` over the same MQTT/WSS connection.
 - On first use, the SPA attaches the stack-managed AWS IoT policy to the authenticated Cognito identity.
+- The browser MQTT client ID uses the Cognito identity ID plus a per-session suffix so multiple tabs or dev remounts do not collide on the same AWS IoT client ID.
 - The deployed SPA now also serves a `/video` route for the board AWS WebRTC viewer.
 - Current transport split:
   - classic Thing Shadow is the UI read path over MQTT/WSS
@@ -127,6 +128,7 @@ Relevant outputs:
 
 On the first MQTT shadow connect after a new sign-in, the SPA may briefly retry while the IoT policy attachment propagates for the Cognito identity.
 The current implementation still performs HTTPS auth/bootstrap calls after sign-in for Cognito token refresh, Cognito Identity, and IoT policy attachment; the live shadow view and Sparkplug command transport use MQTT/WSS.
+If you update from an older stack, redeploy `shared/aws/template.yaml` so the web IoT policy allows the per-session MQTT client ID suffix. Until that policy change is deployed, the SPA falls back to the legacy exact identity client ID for compatibility, which means overlapping tabs can still evict each other.
 
 ## Deploy the SPA
 
