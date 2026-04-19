@@ -34,7 +34,6 @@ systemd_unit := "/etc/systemd/system/rig.service"
     #!/usr/bin/env bash
     set -euo pipefail
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}")"
-    thing_name="$THING_NAME"
     rig_name="$RIG_NAME"
     cloudwatch_log_group="$CLOUDWATCH_LOG_GROUP"
     if [ -n "{{rig_name}}" ]; then
@@ -47,7 +46,6 @@ systemd_unit := "/etc/systemd/system/rig.service"
     uv run --project "{{project_root}}/shared/aws/python" \
       python -m aws.check \
       --scope rig \
-      --thing-name "$thing_name" \
       --rig-name "$rig_name" \
       --log-group-name "$cloudwatch_log_group"
 

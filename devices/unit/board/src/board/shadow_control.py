@@ -1374,6 +1374,7 @@ def main() -> None:
         aws_config_file=config.aws_config_file,
         aws_credentials=aws_runtime.credential_snapshot(),
         state_file=DEFAULT_VIDEO_STATE_FILE,
+        working_directory=REPO_ROOT,
     )
     halt_requested = False
     startup_published = False

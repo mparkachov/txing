@@ -270,7 +270,7 @@ Resources:
   TxingFleetIndexingFunction:
     Type: AWS::Lambda::Function
     Properties:
-      Description: CloudFormation custom resource that enables registry-only AWS IoT fleet indexing.
+      Description: CloudFormation custom resource that enables registry-only AWS IoT fleet indexing and required custom fields.
       Runtime: python3.12
       Handler: index.handler
       Role: !GetAtt TxingFleetIndexingRole.Arn
@@ -321,22 +321,63 @@ Resources:
                   "ThingConnectivityIndexingMode",
                   "OFF",
               )
+              desired_custom_fields = event["ResourceProperties"].get(
+                  "CustomFields",
+                  [],
+              )
+              if not isinstance(desired_custom_fields, list):
+                  raise TypeError("CustomFields must be a list")
+              normalized_custom_fields = []
+              for item in desired_custom_fields:
+                  if not isinstance(item, dict):
+                      raise TypeError("CustomFields entries must be objects")
+                  name = item.get("name")
+                  field_type = item.get("type")
+                  if not isinstance(name, str) or not name:
+                      raise TypeError("CustomFields name must be a non-empty string")
+                  if not isinstance(field_type, str) or not field_type:
+                      raise TypeError("CustomFields type must be a non-empty string")
+                  normalized_custom_fields.append(
+                      {
+                          "name": name,
+                          "type": field_type,
+                      }
+                  )
+              normalized_custom_fields.sort(key=lambda item: item["name"])
               try:
                   if event["RequestType"] in {"Create", "Update"}:
                       client.update_indexing_configuration(
                           thingIndexingConfiguration={
                               "thingIndexingMode": desired_mode,
                               "thingConnectivityIndexingMode": desired_connectivity_mode,
+                              "customFields": normalized_custom_fields,
                           }
                       )
                       deadline = time.time() + 90
                       while True:
                           configuration = client.get_indexing_configuration()
                           current = configuration.get("thingIndexingConfiguration", {})
+                          current_custom_fields = current.get("customFields", [])
+                          if not isinstance(current_custom_fields, list):
+                              current_custom_fields = []
+                          normalized_current_custom_fields = []
+                          for item in current_custom_fields:
+                              if isinstance(item, dict):
+                                  name = item.get("name")
+                                  field_type = item.get("type")
+                                  if isinstance(name, str) and isinstance(field_type, str):
+                                      normalized_current_custom_fields.append(
+                                          {
+                                              "name": name,
+                                              "type": field_type,
+                                          }
+                                      )
+                          normalized_current_custom_fields.sort(key=lambda item: item["name"])
                           if (
                               current.get("thingIndexingMode") == desired_mode
                               and current.get("thingConnectivityIndexingMode")
                               == desired_connectivity_mode
+                              and normalized_current_custom_fields == normalized_custom_fields
                           ):
                               break
                           if time.time() >= deadline:
@@ -351,6 +392,7 @@ Resources:
                       data={
                           "ThingIndexingMode": desired_mode,
                           "ThingConnectivityIndexingMode": desired_connectivity_mode,
+                          "CustomFields": normalized_custom_fields,
                       },
                   )
               except Exception as exc:
@@ -363,6 +405,11 @@ Resources:
       ServiceToken: !GetAtt TxingFleetIndexingFunction.Arn
       ThingIndexingMode: REGISTRY
       ThingConnectivityIndexingMode: "OFF"
+      CustomFields:
+        - name: attributes.rig
+          type: String
+        - name: attributes.bleDeviceId
+          type: String
 
   TxingBoardVideoSenderManagedPolicy:
     Type: AWS::IAM::ManagedPolicy

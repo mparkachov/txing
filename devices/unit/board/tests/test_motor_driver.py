@@ -273,12 +273,12 @@ class MotorDriverTests(unittest.TestCase):
             self.assertEqual((chip_path / "pwm0" / "period").read_text(encoding="utf-8").strip(), "50000")
             self.assertEqual((chip_path / "pwm0" / "duty_cycle").read_text(encoding="utf-8").strip(), "0")
 
-    def test_ensure_lgpio_workdir_creates_tempdir_when_unset(self) -> None:
+    def test_ensure_lgpio_workdir_creates_tempdir_and_ignores_configured_env(self) -> None:
         original_workdir = Drv8835MotorDriver._auto_lgpio_workdir
         created_workdir = None
         try:
             Drv8835MotorDriver._auto_lgpio_workdir = None
-            with patch.dict(os.environ, {}, clear=True):
+            with patch.dict(os.environ, {"LG_WD": "/tmp/stale-lgpio"}, clear=True):
                 Drv8835MotorDriver._ensure_lgpio_workdir()
                 created_workdir = Drv8835MotorDriver._auto_lgpio_workdir
                 self.assertIsNotNone(created_workdir)
@@ -286,6 +286,7 @@ class MotorDriverTests(unittest.TestCase):
                 workdir = Path(os.environ["LG_WD"])
                 self.assertTrue(workdir.is_dir())
                 self.assertTrue(workdir.name.startswith("txing-lgpio-"))
+                self.assertNotEqual(str(workdir), "/tmp/stale-lgpio")
         finally:
             if created_workdir is not None and created_workdir is not original_workdir:
                 created_workdir.cleanup()

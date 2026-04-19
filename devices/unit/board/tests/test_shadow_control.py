@@ -333,11 +333,15 @@ class ShadowControlContractTests(unittest.TestCase):
                 return_value=DefaultRouteAddresses(ipv4="192.168.1.20", ipv6="2001:db8::20"),
             ),
             patch.object(shadow_control, "AwsShadowClient", return_value=shadow_client),
-            patch.object(shadow_control, "VideoSenderSupervisor", return_value=video_supervisor),
+            patch.object(shadow_control, "VideoSenderSupervisor", return_value=video_supervisor) as video_supervisor_cls,
             patch.object(shadow_control, "DEFAULT_VIDEO_READY_POLL_INTERVAL", 0.0),
         ):
             shadow_control.main()
 
+        self.assertEqual(
+            video_supervisor_cls.call_args.kwargs["working_directory"],
+            shadow_control.REPO_ROOT,
+        )
         self.assertEqual(video_supervisor.read_state.call_count, 2)
         self.assertEqual(shadow_client.publish_update.call_count, 1)
         payload = shadow_client.publish_update.call_args.args[0]
@@ -534,7 +538,8 @@ class ShadowControlContractTests(unittest.TestCase):
         self.assertIn('BOARD_VIDEO_SENDER_COMMAND={{video_sender_command}}', justfile)
         self.assertIn('[ -n "{{region}}" ] && [ -n "$region" ]', justfile)
         self.assertIn('AWS_REGION=$region', justfile)
-        self.assertIn('[ -n "{{aws_profile}}" ] && [ -n "$aws_profile" ]', justfile)
+        self.assertIn('[ -n "$aws_profile" ]', justfile)
+        self.assertNotIn('[ -n "{{aws_profile}}" ] && [ -n "$aws_profile" ]', justfile)
         self.assertIn('AWS_PROFILE=$aws_profile', justfile)
         self.assertIn('AWS_DEFAULT_PROFILE=$aws_profile', justfile)
         self.assertIn('[ -n "{{aws_shared_credentials_file}}" ] && [ -n "$aws_shared_credentials_file" ]', justfile)
@@ -542,15 +547,14 @@ class ShadowControlContractTests(unittest.TestCase):
         self.assertIn('[ -n "{{aws_config_file}}" ] && [ -n "$aws_config_file" ]', justfile)
         self.assertIn('AWS_CONFIG_FILE=$aws_config_file', justfile)
         self.assertNotIn('AWS_TXING_PROFILE=$AWS_TXING_PROFILE', justfile)
-        self.assertIn('lg_wd_override="{{lg_wd}}"', justfile)
-        self.assertIn('lg_wd_configured="$lg_wd_override"', justfile)
-        self.assertIn('lg_wd_configured="${LG_WD:-}"', justfile)
-        self.assertIn('[ -n "$lg_wd_configured" ]', justfile)
-        self.assertIn('[ -n "$lg_wd_override" ]', justfile)
-        self.assertIn('LG_WD=$lg_wd_override', justfile)
+        self.assertNotIn('lg_wd_override="{{lg_wd}}"', justfile)
+        self.assertNotIn('lg_wd_configured="$lg_wd_override"', justfile)
+        self.assertNotIn('lg_wd_configured="${LG_WD:-}"', justfile)
+        self.assertNotIn('LG_WD=$lg_wd_override', justfile)
         self.assertNotIn('Environment="LG_WD=/tmp/txing-lgpio"', justfile)
         self.assertIn('preserve_env=(', justfile)
         self.assertIn('sudo "--preserve-env=$preserve_env_csv"', justfile)
+        self.assertNotIn('LG_WD', justfile)
 
     def test_root_justfile_sources_optional_board_env_for_device_scope(self) -> None:
         justfile = Path(REPO_ROOT / "justfile").read_text(encoding="utf-8")
@@ -562,7 +566,7 @@ class ShadowControlContractTests(unittest.TestCase):
         self.assertIn('board_env_file="$(resolve_path "$(choose_value "{{board_env_file}}" "${BOARD_ENV_FILE:-config/board.env}")")"', justfile)
         self.assertIn('source "$board_env_file"', justfile)
         self.assertIn('export_line BOARD_ENV_FILE "$board_env_file"', justfile)
-        self.assertIn('export_line LG_WD "$lg_wd"', justfile)
+        self.assertNotIn('export_line LG_WD "$lg_wd"', justfile)
         self.assertIn('export_line BOARD_DRIVE_CMD_RAW_MIN_SPEED "$board_drive_cmd_raw_min_speed"', justfile)
         self.assertIn('export_line BOARD_DRIVE_CMD_RAW_MAX_SPEED "$board_drive_cmd_raw_max_speed"', justfile)
 

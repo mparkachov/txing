@@ -142,8 +142,6 @@ dtoverlay=pwm-2chan,pin=12,func=4,pin2=13,func2=4
 
 The board runtime and raw motor test helper must run as `root`.
 
-Set `LG_WD` only if you need to override the `lgpio` notify FIFO workspace. If it is omitted, `txing-board` creates a per-process temporary directory automatically.
-
 ## Manual Motor Bring-Up
 
 Use raw DRV8835 units only for this helper (`[-480, 480]`, where `240` is approximately 50% duty):
@@ -169,7 +167,7 @@ just board::motor-stop
 sudo systemctl start board
 ```
 
-`just board::motor-raw` forwards `LG_WD` when it is explicitly set, plus the DRV8835 hardware wiring settings from `config/board.env`, into the root-owned helper process. It does not apply the `BOARD_DRIVE_CMD_RAW_MIN_SPEED` / `BOARD_DRIVE_CMD_RAW_MAX_SPEED` operating range. Those only affect `cmd_vel`.
+`just board::motor-raw` forwards the DRV8835 hardware wiring settings from `config/board.env` into the root-owned helper process. It does not apply the `BOARD_DRIVE_CMD_RAW_MIN_SPEED` / `BOARD_DRIVE_CMD_RAW_MAX_SPEED` operating range. Those only affect `cmd_vel`.
 
 ## Fresh Setup From Raspberry Pi Imager
 
@@ -381,7 +379,7 @@ For TLS trust on the KVS signaling path, `board-video-sender` strips inherited C
 
 ### 6. Verify the `txing` Runtime Profile
 
-The txing runtime and the supervised sender both use the standard AWS SDK chain. The generated service unit loads `config/aws.env` first and then `config/board.env`, so AWS/shared settings come from `config/aws.env` while board-local settings such as `THING_NAME`, `SCHEMA_FILE`, board video defaults, and motor tuning come from `config/board.env` by default. `LG_WD` remains an optional override only.
+The txing runtime and the supervised sender both use the standard AWS SDK chain. The generated service unit loads `config/aws.env` first and then `config/board.env`, so AWS/shared settings come from `config/aws.env` while board-local settings such as `THING_NAME`, `SCHEMA_FILE`, board video defaults, and motor tuning come from `config/board.env` by default.
 
 Verify the intended device identity before installing the service:
 
@@ -390,7 +388,7 @@ cd /home/user/txing
 just aws-device sts get-caller-identity
 ```
 
-If you want the install recipe to use credential files outside the checkout, pass `aws_shared_credentials_file=` and `aws_config_file=` directly to `just board::install-service`. To override the lgpio workspace path, pass `lg_wd=/some/writable/path`.
+If you want the install recipe to use credential files outside the checkout, pass `aws_shared_credentials_file=` and `aws_config_file=` directly to `just board::install-service`.
 
 ### 7. Build and Smoke Test
 
@@ -403,7 +401,6 @@ Set the board runtime defaults in `config/board.env`, especially:
 - `BOARD_VIDEO_CHANNEL_NAME`
 - `BOARD_VIDEO_SENDER_COMMAND`
 - `KVS_DUALSTACK_ENDPOINTS=ON` to enable dual-stack KVS WebRTC endpoints for the native sender and allow IPv6 candidate gathering when the network supports it
-- optional `LG_WD=/some/writable/path` only if you need to override the auto-created temporary `lgpio` workspace
 - `BOARD_DRIVE_CMD_RAW_MIN_SPEED=50`
 - `BOARD_DRIVE_CMD_RAW_MAX_SPEED=250`
 
@@ -471,7 +468,6 @@ The generated unit:
 - waits for `systemd-time-wait-sync.service` / `time-sync.target` before startup
 - runs `board` as `root`
 - sets `WorkingDirectory=/home/.../txing` and loads `config/aws.env` plus optional `config/board.env` through `EnvironmentFile=`
-- pre-creates the `LG_WD` directory only when `lg_wd=...` or `LG_WD` is explicitly configured; otherwise the runtime creates a temporary workspace automatically
 - adds `Environment=` overrides only for explicit `just board::install-service ...` overrides, while the env files remain the default source for AWS and board settings
 - starts `board` with `ExecStart=/home/.../board/.venv/bin/board --heartbeat-seconds 60`
 

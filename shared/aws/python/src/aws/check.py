@@ -77,6 +77,7 @@ def _validate_common_environment(
     environment: Mapping[str, str],
     *,
     profile_env_names: Sequence[str],
+    require_thing_name: bool,
 ) -> tuple[list[CheckResult], dict[str, Any]]:
     results: list[CheckResult] = []
     resolved: dict[str, Any] = {}
@@ -116,10 +117,11 @@ def _validate_common_environment(
     if aws_config_file is not None:
         resolved["aws_config_file"] = aws_config_file
 
-    result, thing_name = _check_text_env(environment, "Thing name", "THING_NAME")
-    results.append(result)
-    if thing_name is not None:
-        resolved["thing_name"] = thing_name
+    if require_thing_name:
+        result, thing_name = _check_text_env(environment, "Thing name", "THING_NAME")
+        results.append(result)
+        if thing_name is not None:
+            resolved["thing_name"] = thing_name
 
     return results, resolved
 
@@ -134,6 +136,7 @@ def validate_service_environment(
     results, resolved = _validate_common_environment(
         environment,
         profile_env_names=_SCOPE_PROFILE_ENV_NAMES[scope],
+        require_thing_name=(scope != "rig"),
     )
 
     if scope == "rig":
@@ -262,7 +265,6 @@ def _probe_cloudwatch_logs(
 def _run_rig_connectivity_checks(
     runtime: AwsRuntime,
     *,
-    thing_name: str,
     rig_name: str,
     log_group_name: str,
 ) -> list[CheckResult]:
@@ -272,11 +274,6 @@ def _run_rig_connectivity_checks(
         results,
         "IoT DescribeEndpoint (Data-ATS)",
         runtime.iot_data_endpoint,
-    )
-    _run_aws_check(
-        results,
-        f"IoT DescribeThing on {thing_name}",
-        lambda: runtime.iot_client().describe_thing(thingName=thing_name),
     )
     _run_aws_check(
         results,
@@ -344,18 +341,17 @@ def run_service_check(
             )
         runtime = _build_runtime(scope, region_name=resolved["aws_region"])
 
-    resolved_thing_name = thing_name or resolved["thing_name"]
     if scope == "rig":
         results.extend(
             _run_rig_connectivity_checks(
                 runtime,
-                thing_name=resolved_thing_name,
                 rig_name=rig_name or resolved["rig_name"],
                 log_group_name=log_group_name or resolved["log_group_name"],
             )
         )
         return results
 
+    resolved_thing_name = thing_name or resolved["thing_name"]
     results.extend(
         _run_device_connectivity_checks(
             runtime,

@@ -20,6 +20,14 @@ from .device_catalog import (
 THING_INDEX_NAME = "AWS_Things"
 SHORT_ID_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyz"
 SHORT_ID_LENGTH = 6
+SEARCHABLE_REGISTRY_ATTRIBUTES = (
+    "town",
+    "rig",
+    "deviceType",
+    "deviceName",
+    "shortId",
+    "bleDeviceId",
+)
 RESOURCE_NOT_FOUND_CODES = {
     "NotFoundException",
     "ResourceNotFound",
@@ -79,6 +87,17 @@ def _generate_short_id(rng: random.Random) -> str:
 
 def build_device_id(device_type: str, short_id: str) -> str:
     return f"{device_type}-{short_id}"
+
+
+def build_rig_group_query(rig_name: str) -> str:
+    normalized_rig_name = _normalize_slug("rig", rig_name)
+    return (
+        f"attributes.rig:{normalized_rig_name} "
+        "AND attributes.town:* "
+        "AND attributes.deviceType:* "
+        "AND attributes.deviceName:* "
+        "AND attributes.shortId:*"
+    )
 
 
 @dataclass(slots=True, frozen=True)
@@ -165,7 +184,7 @@ class AwsDeviceRegistry:
                 "merge": True,
             },
         }
-        query_string = f"attributes.rig:{normalized_rig_name}"
+        query_string = build_rig_group_query(normalized_rig_name)
         try:
             self._iot_client.describe_thing_group(thingGroupName=normalized_rig_name)
         except Exception as err:
@@ -188,10 +207,38 @@ class AwsDeviceRegistry:
 
     def ensure_thing_type(self, device_type: str) -> None:
         normalized_device_type = _normalize_slug("device type", device_type)
+        expected_searchable_attributes = list(SEARCHABLE_REGISTRY_ATTRIBUTES)
         try:
-            self._iot_client.describe_thing_type(thingTypeName=normalized_device_type)
+            response = self._iot_client.describe_thing_type(
+                thingTypeName=normalized_device_type
+            )
+            current_properties = response.get("thingTypeProperties") or {}
+            current_searchable_attributes = current_properties.get("searchableAttributes") or []
+            if not isinstance(current_searchable_attributes, list):
+                current_searchable_attributes = []
+            current_attribute_set = {
+                attribute
+                for attribute in current_searchable_attributes
+                if isinstance(attribute, str) and attribute
+            }
+            missing_attributes = [
+                attribute
+                for attribute in expected_searchable_attributes
+                if attribute not in current_attribute_set
+            ]
+            if missing_attributes:
+                missing_text = ", ".join(sorted(missing_attributes))
+                raise DeviceRegistryError(
+                    "Thing type "
+                    f"{normalized_device_type!r} already exists without required "
+                    f"searchableAttributes ({missing_text}). "
+                    "AWS IoT thing types are immutable; delete and recreate the thing type "
+                    "before registering devices again."
+                )
             return
         except Exception as err:
+            if isinstance(err, DeviceRegistryError):
+                raise
             if not _is_resource_not_found(err):
                 raise
         self._iot_client.create_thing_type(
@@ -199,7 +246,8 @@ class AwsDeviceRegistry:
             thingTypeProperties={
                 "thingTypeDescription": (
                     f"Registered txing device type {normalized_device_type}"
-                )
+                ),
+                "searchableAttributes": expected_searchable_attributes,
             },
         )
 

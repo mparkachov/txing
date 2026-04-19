@@ -478,6 +478,7 @@ class VideoSenderSupervisor:
         aws_config_file: Path | None = None,
         aws_credentials: AwsCredentialSnapshot | None = None,
         state_file: Path = DEFAULT_VIDEO_STATE_FILE,
+        working_directory: Path | None = None,
     ) -> None:
         self._channel_name = channel_name
         self._viewer_url = viewer_url
@@ -487,6 +488,11 @@ class VideoSenderSupervisor:
         self._aws_config_file = aws_config_file
         self._aws_credentials = aws_credentials
         self._state_file = state_file
+        self._working_directory = (
+            working_directory.expanduser().resolve()
+            if working_directory is not None
+            else Path.cwd().resolve()
+        )
         self._process: subprocess.Popen[bytes] | None = None
 
     @property
@@ -502,7 +508,7 @@ class VideoSenderSupervisor:
     def start(self) -> None:
         if self.is_running():
             return
-        spawn_cwd = Path.cwd().resolve()
+        spawn_cwd = self._working_directory
         command = [
             sys.executable,
             "-m",

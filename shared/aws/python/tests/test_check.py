@@ -125,7 +125,6 @@ class AwsCheckTests(unittest.TestCase):
                     "AWS_RIG_PROFILE": "rig",
                     "AWS_SHARED_CREDENTIALS_FILE": str(shared_credentials_file),
                     "AWS_CONFIG_FILE": str(aws_config_file),
-                    "THING_NAME": "unit-local",
                     "RIG_NAME": "rig",
                     "SPARKPLUG_GROUP_ID": "town",
                     "SPARKPLUG_EDGE_NODE_ID": "rig",
@@ -135,7 +134,6 @@ class AwsCheckTests(unittest.TestCase):
 
         self.assertTrue(all(result.ok for result in results))
         self.assertEqual(resolved["aws_region"], "eu-central-1")
-        self.assertEqual(resolved["thing_name"], "unit-local")
         self.assertEqual(resolved["rig_name"], "rig")
 
     def test_validate_device_environment_reports_missing_values(self) -> None:
@@ -182,7 +180,6 @@ class AwsCheckTests(unittest.TestCase):
                     "AWS_RIG_PROFILE": "rig",
                     "AWS_SHARED_CREDENTIALS_FILE": str(shared_credentials_file),
                     "AWS_CONFIG_FILE": str(aws_config_file),
-                    "THING_NAME": "unit-local",
                     "RIG_NAME": "rig",
                     "SPARKPLUG_GROUP_ID": "town",
                     "SPARKPLUG_EDGE_NODE_ID": "rig",
@@ -193,7 +190,7 @@ class AwsCheckTests(unittest.TestCase):
 
         self.assertTrue(all(result.ok for result in results))
         self.assertEqual(runtime.sts.calls, 1)
-        self.assertEqual(runtime.iot.describe_thing_names, ["unit-local"])
+        self.assertEqual(runtime.iot.describe_thing_names, [])
         self.assertEqual(runtime.iot.describe_group_names, ["rig"])
         self.assertEqual(len(runtime.logs.created_streams), 1)
         self.assertEqual(runtime.logs.created_streams[0][0], "/town/rig/txing")

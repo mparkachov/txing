@@ -297,16 +297,12 @@ class Drv8835MotorDriver:
 
     @staticmethod
     def _ensure_lgpio_workdir() -> None:
-        configured = os.environ.get("LG_WD", "").strip()
-        if configured:
-            workdir = Path(configured)
-        else:
-            auto_workdir = Drv8835MotorDriver._auto_lgpio_workdir
-            if auto_workdir is None:
-                auto_workdir = tempfile.TemporaryDirectory(prefix=DEFAULT_LGPIO_WORKDIR_PREFIX)
-                Drv8835MotorDriver._auto_lgpio_workdir = auto_workdir
-            workdir = Path(auto_workdir.name)
-            os.environ["LG_WD"] = str(workdir)
+        auto_workdir = Drv8835MotorDriver._auto_lgpio_workdir
+        if auto_workdir is None:
+            auto_workdir = tempfile.TemporaryDirectory(prefix=DEFAULT_LGPIO_WORKDIR_PREFIX)
+            Drv8835MotorDriver._auto_lgpio_workdir = auto_workdir
+        workdir = Path(auto_workdir.name)
+        os.environ["LG_WD"] = str(workdir)
         try:
             workdir.mkdir(parents=True, exist_ok=True)
         except OSError as err:

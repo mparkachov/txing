@@ -39,7 +39,7 @@ class _FakeIotClient:
         self.create_group_requests: list[dict[str, object]] = []
         self.update_group_requests: list[dict[str, object]] = []
         self.groups: set[str] = set()
-        self.thing_types: set[str] = set()
+        self.thing_types: dict[str, dict[str, object]] = {}
         self._things: dict[str, dict[str, object]] = {
             "unit-aaaaaa": {
                 "thingName": "unit-aaaaaa",
@@ -105,13 +105,18 @@ class _FakeIotClient:
         self.describe_thing_type_requests.append(thingTypeName)
         if thingTypeName not in self.thing_types:
             raise _FakeClientError("ResourceNotFoundException")
-        return {"thingTypeName": thingTypeName}
+        return {
+            "thingTypeName": thingTypeName,
+            "thingTypeProperties": dict(self.thing_types[thingTypeName]),
+        }
 
     def create_thing_type(self, **kwargs: object) -> dict[str, object]:
         self.create_thing_type_requests.append(kwargs)
         thing_type_name = kwargs["thingTypeName"]
         assert isinstance(thing_type_name, str)
-        self.thing_types.add(thing_type_name)
+        thing_type_properties = kwargs["thingTypeProperties"]
+        assert isinstance(thing_type_properties, dict)
+        self.thing_types[thing_type_name] = dict(thing_type_properties)
         return {"thingTypeName": thing_type_name}
 
     def describe_thing_group(self, *, thingGroupName: str) -> dict[str, object]:
@@ -245,10 +250,22 @@ class DeviceRegistryTests(unittest.TestCase):
                 "thingTypeName": "unit",
                 "thingTypeProperties": {
                     "thingTypeDescription": "Registered txing device type unit",
+                    "searchableAttributes": [
+                        "town",
+                        "rig",
+                        "deviceType",
+                        "deviceName",
+                        "shortId",
+                        "bleDeviceId",
+                    ],
                 },
             },
         )
         self.assertEqual(runtime.iot.create_group_requests[0]["thingGroupName"], "rig-a")
+        self.assertEqual(
+            runtime.iot.create_group_requests[0]["queryString"],
+            "attributes.rig:rig-a AND attributes.town:* AND attributes.deviceType:* AND attributes.deviceName:* AND attributes.shortId:*",
+        )
         self.assertEqual(runtime.iot_data.get_requests, ["unit-bbbbbb"])
         self.assertEqual(runtime.iot_data.update_requests[0][0], "unit-bbbbbb")
         self.assertTrue(runtime.iot_data.update_requests[0][1].startswith(b"{"))
@@ -300,6 +317,28 @@ class DeviceRegistryTests(unittest.TestCase):
         self.assertEqual(registration.device_type, "unit")
         self.assertEqual(registration.device_name, "bot")
         self.assertEqual(runtime.iot.create_group_requests[0]["thingGroupName"], "rig-b")
+        self.assertEqual(
+            runtime.iot.create_group_requests[0]["queryString"],
+            "attributes.rig:rig-b AND attributes.town:* AND attributes.deviceType:* AND attributes.deviceName:* AND attributes.shortId:*",
+        )
+
+    def test_register_device_rejects_existing_thing_type_without_required_searchable_attributes(self) -> None:
+        runtime = _FakeRuntime()
+        runtime.iot.thing_types["unit"] = {
+            "thingTypeDescription": "Registered txing device type unit",
+            "searchableAttributes": ["town", "rig"],
+        }
+        registry = AwsDeviceRegistry(runtime, repo_root=REPO_ROOT)
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "already exists without required searchableAttributes",
+        ):
+            registry.register_device(
+                town_name="berlin",
+                rig_name="rig-a",
+                device_type="unit",
+            )
 
 
 if __name__ == "__main__":

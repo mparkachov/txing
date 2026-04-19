@@ -90,7 +90,6 @@ _project-aws-env scope='rig' region='' profile='' stack_name='' cognito_domain_p
     board_video_channel_name="${BOARD_VIDEO_CHANNEL_NAME:-$thing_name-board-video}"
     board_video_sender_command="${BOARD_VIDEO_SENDER_COMMAND:-}"
     kvs_dualstack_endpoints="${KVS_DUALSTACK_ENDPOINTS:-}"
-    lg_wd="${LG_WD:-}"
     board_drive_raw_max_speed="${BOARD_DRIVE_RAW_MAX_SPEED:-}"
     board_drive_cmd_raw_min_speed="${BOARD_DRIVE_CMD_RAW_MIN_SPEED:-}"
     board_drive_cmd_raw_max_speed="${BOARD_DRIVE_CMD_RAW_MAX_SPEED:-}"
@@ -140,11 +139,6 @@ _project-aws-env scope='rig' region='' profile='' stack_name='' cognito_domain_p
       export_line KVS_DUALSTACK_ENDPOINTS "$kvs_dualstack_endpoints"
     else
       printf 'unset KVS_DUALSTACK_ENDPOINTS\n'
-    fi
-    if [ -n "$lg_wd" ]; then
-      export_line LG_WD "$lg_wd"
-    else
-      printf 'unset LG_WD\n'
     fi
     if [ -n "$board_drive_raw_max_speed" ]; then
       export_line BOARD_DRIVE_RAW_MAX_SPEED "$board_drive_raw_max_speed"

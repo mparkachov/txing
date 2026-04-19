@@ -317,21 +317,22 @@ class VideoSenderTests(unittest.TestCase):
                     sender_command="/tmp/txing-board-kvs-master",
                     aws_shared_credentials_file=Path("config/aws.credentials"),
                     aws_config_file=Path("config/aws.config"),
+                    working_directory=Path("/stable-repo"),
                 )
                 supervisor.start()
 
         kwargs = popen_mock.call_args.kwargs
-        self.assertEqual(kwargs["cwd"], str(Path("/repo").resolve()))
+        self.assertEqual(kwargs["cwd"], str(Path("/stable-repo").resolve()))
         environment = kwargs["env"]
         self.assertEqual(environment["AWS_PROFILE"], "txing")
         self.assertEqual(environment["AWS_DEFAULT_PROFILE"], "txing")
         self.assertEqual(
             environment["AWS_SHARED_CREDENTIALS_FILE"],
-            str((Path("/repo") / "config/aws.credentials").resolve()),
+            str((Path("/stable-repo") / "config/aws.credentials").resolve()),
         )
         self.assertEqual(
             environment["AWS_CONFIG_FILE"],
-            str((Path("/repo") / "config/aws.config").resolve()),
+            str((Path("/stable-repo") / "config/aws.config").resolve()),
         )
 
     @patch("board.video_sender.subprocess.Popen")

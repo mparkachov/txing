@@ -232,7 +232,6 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
     fi
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "{{aws_profile}}")"
     preserve_env=(
-        LG_WD
         BOARD_DRIVE_RAW_MAX_SPEED
         BOARD_DRIVE_PWM_HZ
         BOARD_DRIVE_PWM_CHIP
@@ -256,7 +255,7 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
     set -euo pipefail
     just motor-raw left=0 right=0 duration=0.25 region="{{region}}" aws_profile="{{aws_profile}}"
 
-@install-service video_viewer_url='' video_sender_command='' thing_name='' schema_file='' video_region='' video_channel_name='' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file aws_config_file=aws_config_file lg_wd='':
+@install-service video_viewer_url='' video_sender_command='' thing_name='' schema_file='' video_region='' video_channel_name='' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file aws_config_file=aws_config_file:
     #!/usr/bin/env bash
     set -euo pipefail
     test -x "{{built_board}}" || { \
@@ -271,15 +270,7 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
     aws_profile="$AWS_SELECTED_PROFILE"
     aws_shared_credentials_file="$AWS_SHARED_CREDENTIALS_FILE"
     aws_config_file="$AWS_CONFIG_FILE"
-    lg_wd_override="{{lg_wd}}"
-    lg_wd_configured="$lg_wd_override"
-    if [ -z "$lg_wd_configured" ]; then \
-        lg_wd_configured="${LG_WD:-}"; \
-    fi; \
     sudo systemctl enable NetworkManager-wait-online.service
-    if [ -n "$lg_wd_configured" ]; then \
-        sudo install -d -m 0700 "$lg_wd_configured"; \
-    fi; \
     service_env=(); \
     if [ -n "{{thing_name}}" ]; then \
         service_env+=("Environment=\"THING_NAME={{thing_name}}\""); \
@@ -302,7 +293,7 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
     if [ -n "{{region}}" ] && [ -n "$region" ]; then \
         service_env+=("Environment=\"AWS_REGION=$region\""); \
     fi; \
-    if [ -n "{{aws_profile}}" ] && [ -n "$aws_profile" ]; then \
+    if [ -n "$aws_profile" ]; then \
         service_env+=("Environment=\"AWS_PROFILE=$aws_profile\""); \
         service_env+=("Environment=\"AWS_DEFAULT_PROFILE=$aws_profile\""); \
     fi; \
@@ -311,9 +302,6 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
     fi; \
     if [ -n "{{aws_config_file}}" ] && [ -n "$aws_config_file" ]; then \
         service_env+=("Environment=\"AWS_CONFIG_FILE=$aws_config_file\""); \
-    fi; \
-    if [ -n "$lg_wd_override" ]; then \
-        service_env+=("Environment=\"LG_WD=$lg_wd_override\""); \
     fi; \
     { \
         printf '%s\n' \
