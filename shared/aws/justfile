@@ -293,7 +293,7 @@ thing_index_name := "AWS_Things"
 
     echo "Admin user password set."
 
-@check thing_name=thing_name rig_name=rig_name log_group_name=log_group_name video_channel_name='' region=region profile=profile device_profile='':
+@check thing_name='' rig_name=rig_name log_group_name=log_group_name video_channel_name='' region=region profile=profile device_profile='':
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
@@ -341,7 +341,12 @@ thing_index_name := "AWS_Things"
     check_tool uv
     check_tool just
 
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "{{device_profile}}")"
+    device_thing_name="$THING_NAME"
     video_channel_name="$BOARD_VIDEO_CHANNEL_NAME"
+    if [ -n "{{thing_name}}" ]; then
+      device_thing_name="{{thing_name}}"
+    fi
     if [ -n "{{video_channel_name}}" ]; then
       video_channel_name="{{video_channel_name}}"
     fi
@@ -356,10 +361,10 @@ thing_index_name := "AWS_Things"
     }
 
     echo "Checking Python service AWS runtimes..."
-    if ! run_python_service_check rig "{{profile}}" --thing-name "{{thing_name}}" --rig-name "{{rig_name}}" --log-group-name "{{log_group_name}}"; then
+    if ! run_python_service_check rig "{{profile}}" --rig-name "{{rig_name}}" --log-group-name "{{log_group_name}}"; then
       failures=$((failures + 1))
     fi
-    if ! run_python_service_check device "{{device_profile}}" --thing-name "{{thing_name}}" --video-channel-name "$video_channel_name"; then
+    if ! run_python_service_check device "{{device_profile}}" --thing-name "$device_thing_name" --video-channel-name "$video_channel_name"; then
       failures=$((failures + 1))
     fi
 
@@ -432,7 +437,7 @@ thing_index_name := "AWS_Things"
 
     thing_attributes_json="$(
       aws iot describe-thing \
-        --thing-name "{{thing_name}}" \
+        --thing-name "$device_thing_name" \
         "${aws_flags[@]}" \
         --query "attributes" \
         --output json 2>/dev/null || true
@@ -440,17 +445,17 @@ thing_index_name := "AWS_Things"
     if [ -n "$thing_attributes_json" ] && [ "$thing_attributes_json" != "null" ]; then
       if attribute_payload="$(printf '%s' "$thing_attributes_json" | jq -c '{attributes: ., merge: true}' 2>/dev/null)"; then
         check_cmd \
-          "IoT UpdateThing on {{thing_name}}" \
+          "IoT UpdateThing on $device_thing_name" \
           aws iot update-thing \
-          --thing-name "{{thing_name}}" \
+          --thing-name "$device_thing_name" \
           --attribute-payload "$attribute_payload" \
           "${aws_flags[@]}"
       else
-        echo "fail: Could not build no-op attribute payload for {{thing_name}}"
+        echo "fail: Could not build no-op attribute payload for $device_thing_name"
         failures=$((failures + 1))
       fi
     else
-      echo "fail: Could not read thing attributes for {{thing_name}}"
+      echo "fail: Could not read thing attributes for $device_thing_name"
       failures=$((failures + 1))
     fi
 

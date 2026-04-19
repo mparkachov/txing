@@ -570,6 +570,22 @@ class ShadowControlContractTests(unittest.TestCase):
         self.assertIn('export_line BOARD_DRIVE_CMD_RAW_MIN_SPEED "$board_drive_cmd_raw_min_speed"', justfile)
         self.assertIn('export_line BOARD_DRIVE_CMD_RAW_MAX_SPEED "$board_drive_cmd_raw_max_speed"', justfile)
 
+    def test_shared_aws_check_uses_device_scope_defaults_for_thing_and_video_channel(self) -> None:
+        justfile = Path(REPO_ROOT / "shared" / "aws" / "justfile").read_text(encoding="utf-8")
+
+        self.assertIn("@check thing_name=''", justfile)
+        self.assertIn(
+            'eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "{{device_profile}}")"',
+            justfile,
+        )
+        self.assertIn('device_thing_name="$THING_NAME"', justfile)
+        self.assertIn('video_channel_name="$BOARD_VIDEO_CHANNEL_NAME"', justfile)
+        self.assertIn('if [ -n "{{thing_name}}" ]; then', justfile)
+        self.assertIn('if ! run_python_service_check rig "{{profile}}" --rig-name "{{rig_name}}" --log-group-name "{{log_group_name}}"; then', justfile)
+        self.assertIn('if ! run_python_service_check device "{{device_profile}}" --thing-name "$device_thing_name" --video-channel-name "$video_channel_name"; then', justfile)
+        self.assertIn('--thing-name "$device_thing_name" \\', justfile)
+        self.assertNotIn('@check thing_name=thing_name', justfile)
+
     def test_repo_root_detection_uses_board_working_directory(self) -> None:
         with TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir)
