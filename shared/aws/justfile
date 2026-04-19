@@ -507,7 +507,8 @@ thing_index_name := "AWS_Things"
     fi
     echo "AWS/device check passed. Role-based AWS IoT prerequisites look good."
 
-@upsert-rig-group rig_name=rig_name region=region profile=profile:
+# Upsert the dynamic rig thing group. Usage: just aws::upsert-rig-group <rig-name> [region] [profile]
+@upsert-rig-group rig_name region=region profile=profile:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
@@ -565,23 +566,11 @@ thing_index_name := "AWS_Things"
       --query "{thingGroupName: thingGroupName, queryString: queryString, thingGroupDescription: thingGroupProperties.thingGroupDescription}" \
       --output table
 
-@register-device town='' rig='' device_type='' region=region profile=profile:
+# Register a new device. Usage: just aws::register-device <town> <rig> <device-type> [region] [profile]
+@register-device town rig device_type region=region profile=profile:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
-
-    town="{{town}}"
-    rig="{{rig}}"
-    device_type="{{device_type}}"
-    case "$town" in
-      town=*) town="${town#town=}" ;;
-    esac
-    case "$rig" in
-      rig=*) rig="${rig#rig=}" ;;
-    esac
-    case "$device_type" in
-      device_type=*) device_type="${device_type#device_type=}" ;;
-    esac
 
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}")"
     region="$AWS_REGION"
@@ -591,16 +580,16 @@ thing_index_name := "AWS_Things"
       echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
       exit 1
     fi
-    if [ -z "$town" ]; then
-      echo "town is required. Use town=<town>." >&2
+    if [ -z "{{town}}" ]; then
+      echo "town is required. Usage: just aws::register-device <town> <rig> <device-type> [region] [profile]" >&2
       exit 1
     fi
-    if [ -z "$rig" ]; then
-      echo "rig is required. Use rig=<rig>." >&2
+    if [ -z "{{rig}}" ]; then
+      echo "rig is required. Usage: just aws::register-device <town> <rig> <device-type> [region] [profile]" >&2
       exit 1
     fi
-    if [ -z "$device_type" ]; then
-      echo "device_type is required. Use device_type=<type>." >&2
+    if [ -z "{{device_type}}" ]; then
+      echo "device_type is required. Usage: just aws::register-device <town> <rig> <device-type> [region] [profile]" >&2
       exit 1
     fi
 
@@ -613,27 +602,15 @@ thing_index_name := "AWS_Things"
       python -m aws.device_registry \
       --region "$region" \
       register \
-      --town "$town" \
-      --rig "$rig" \
-      --device-type "$device_type"
+      --town "{{town}}" \
+      --rig "{{rig}}" \
+      --device-type "{{device_type}}"
 
-@assign-device device_id='' town='' rig='' region=region profile=profile:
+# Reassign an existing device. Usage: just aws::assign-device <device-id> <town> <rig> [region] [profile]
+@assign-device device_id town rig region=region profile=profile:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
-
-    device_id="{{device_id}}"
-    town="{{town}}"
-    rig="{{rig}}"
-    case "$device_id" in
-      device_id=*) device_id="${device_id#device_id=}" ;;
-    esac
-    case "$town" in
-      town=*) town="${town#town=}" ;;
-    esac
-    case "$rig" in
-      rig=*) rig="${rig#rig=}" ;;
-    esac
 
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}")"
     region="$AWS_REGION"
@@ -643,16 +620,16 @@ thing_index_name := "AWS_Things"
       echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
       exit 1
     fi
-    if [ -z "$device_id" ]; then
-      echo "device_id is required. Use device_id=<device-id>." >&2
+    if [ -z "{{device_id}}" ]; then
+      echo "device_id is required. Usage: just aws::assign-device <device-id> <town> <rig> [region] [profile]" >&2
       exit 1
     fi
-    if [ -z "$town" ]; then
-      echo "town is required. Use town=<town>." >&2
+    if [ -z "{{town}}" ]; then
+      echo "town is required. Usage: just aws::assign-device <device-id> <town> <rig> [region] [profile]" >&2
       exit 1
     fi
-    if [ -z "$rig" ]; then
-      echo "rig is required. Use rig=<rig>." >&2
+    if [ -z "{{rig}}" ]; then
+      echo "rig is required. Usage: just aws::assign-device <device-id> <town> <rig> [region] [profile]" >&2
       exit 1
     fi
 
@@ -665,14 +642,14 @@ thing_index_name := "AWS_Things"
       python -m aws.device_registry \
       --region "$region" \
       assign \
-      --device-id "$device_id" \
-      --town "$town" \
-      --rig "$rig"
+      --device-id "{{device_id}}" \
+      --town "{{town}}" \
+      --rig "{{rig}}"
 
 @assign-rig thing_name rig_name=rig_name region=region profile=profile:
     #!/usr/bin/env bash
     set -euo pipefail
-    echo "aws::assign-rig is deprecated; use aws::assign-device device_id=<id> town=<town> rig=<rig> instead." >&2
+    echo "aws::assign-rig is deprecated; use just aws::assign-device <device-id> <town> <rig> [region] [profile] instead." >&2
     exit 1
 
 @things-for-rig rig_name=rig_name region=region profile=profile:

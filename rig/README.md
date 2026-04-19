@@ -192,11 +192,12 @@ just rig::wake thing_name=my-thing region=eu-central-1
 
 `aws::shadow-reset` is the hard reset path for manual whole-device power cuts. It deletes the current txing shadow and reseeds it to the repository's clean offline baseline: `desired.redcon=null`, internal `desired.board.power=null`, `reported.redcon=4`, `reported.mcu.power=false`, `reported.mcu.online=false`, `reported.board.power=false`, and `reported.board.wifi.online=false`.
 
-Use the registry helpers to assign txings to a rig and inspect current membership:
+Use the registry helpers with positional arguments to create/update rig membership and inspect current membership:
 
 ```bash
 just aws::upsert-rig-group rig
-just aws::assign-rig txing-01 rig
+just aws::register-device town rig unit
+just aws::assign-device unit-01 town rig
 just aws::things-for-rig rig
 ```
 
