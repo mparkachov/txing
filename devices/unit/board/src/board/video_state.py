@@ -20,7 +20,6 @@ VALID_VIDEO_STATUSES = {
 
 def default_video_state_payload(
     *,
-    viewer_url: str | None = None,
     channel_name: str = DEFAULT_VIDEO_CHANNEL_NAME,
 ) -> dict[str, Any]:
     return {
@@ -28,7 +27,6 @@ def default_video_state_payload(
         "ready": False,
         "transport": VIDEO_TRANSPORT,
         "session": {
-            "viewerUrl": viewer_url,
             "channelName": channel_name,
         },
         "codec": {
@@ -43,11 +41,9 @@ def default_video_state_payload(
 def normalize_video_state(
     payload: dict[str, Any] | None,
     *,
-    viewer_url: str | None = None,
     channel_name: str = DEFAULT_VIDEO_CHANNEL_NAME,
 ) -> dict[str, Any]:
     normalized = default_video_state_payload(
-        viewer_url=viewer_url,
         channel_name=channel_name,
     )
     if not isinstance(payload, dict):
@@ -67,10 +63,6 @@ def normalize_video_state(
 
     session = payload.get("session")
     if isinstance(session, dict):
-        session_viewer_url = session.get("viewerUrl")
-        if isinstance(session_viewer_url, str) and session_viewer_url.strip():
-            normalized["session"]["viewerUrl"] = session_viewer_url.strip()
-
         session_channel_name = session.get("channelName")
         if isinstance(session_channel_name, str) and session_channel_name.strip():
             normalized["session"]["channelName"] = session_channel_name.strip()
@@ -99,20 +91,17 @@ def normalize_video_state(
 def load_video_state(
     state_file: Path,
     *,
-    viewer_url: str | None = None,
     channel_name: str = DEFAULT_VIDEO_CHANNEL_NAME,
 ) -> dict[str, Any]:
     try:
         payload = json.loads(state_file.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return default_video_state_payload(
-            viewer_url=viewer_url,
             channel_name=channel_name,
         )
     except (OSError, json.JSONDecodeError):
         return {
             **default_video_state_payload(
-                viewer_url=viewer_url,
                 channel_name=channel_name,
             ),
             "status": VIDEO_STATUS_ERROR,
@@ -121,7 +110,6 @@ def load_video_state(
     if not isinstance(payload, dict):
         return {
             **default_video_state_payload(
-                viewer_url=viewer_url,
                 channel_name=channel_name,
             ),
             "status": VIDEO_STATUS_ERROR,
@@ -129,7 +117,6 @@ def load_video_state(
         }
     return normalize_video_state(
         payload,
-        viewer_url=viewer_url,
         channel_name=channel_name,
     )
 
@@ -137,22 +124,16 @@ def load_video_state(
 def build_reported_video_state(
     payload: dict[str, Any] | None,
     *,
-    viewer_url: str | None = None,
     channel_name: str = DEFAULT_VIDEO_CHANNEL_NAME,
 ) -> dict[str, Any]:
     normalized = normalize_video_state(
         payload,
-        viewer_url=viewer_url,
         channel_name=channel_name,
     )
     return {
         "status": normalized["status"],
         "ready": normalized["ready"],
         "transport": normalized["transport"],
-        "session": {
-            "viewerUrl": normalized["session"]["viewerUrl"],
-            "channelName": normalized["session"]["channelName"],
-        },
         "codec": {
             "video": normalized["codec"]["video"],
         },

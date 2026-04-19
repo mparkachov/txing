@@ -1,4 +1,4 @@
-import { appConfig } from './config'
+import { appConfig, getRuntimeAppUrl } from './config'
 
 export type AuthTokens = {
   accessToken: string
@@ -157,7 +157,7 @@ export const processAuthCallbackIfPresent = async (): Promise<void> => {
 
   // Remove one-time auth parameters before React mounts so dev StrictMode
   // cannot trigger a second code exchange with the same authorization code.
-  window.history.replaceState({}, document.title, appConfig.appUrl)
+  window.history.replaceState({}, document.title, getRuntimeAppUrl())
   await handleAuthCallback(callbackUrl)
 }
 
@@ -172,7 +172,7 @@ export const beginSignIn = async (): Promise<void> => {
   const params = new URLSearchParams({
     response_type: 'code',
     client_id: appConfig.cognitoClientId,
-    redirect_uri: appConfig.appUrl,
+    redirect_uri: getRuntimeAppUrl(),
     scope: appConfig.cognitoScope,
     code_challenge_method: 'S256',
     code_challenge: challenge,
@@ -205,7 +205,7 @@ export const handleAuthCallback = async (url: string): Promise<AuthTokens> => {
       grant_type: 'authorization_code',
       client_id: appConfig.cognitoClientId,
       code,
-      redirect_uri: appConfig.appUrl,
+      redirect_uri: getRuntimeAppUrl(),
       code_verifier: verifier,
     }),
   )
@@ -267,7 +267,7 @@ export const signOut = (): void => {
   clearAuthState()
   const params = new URLSearchParams({
     client_id: appConfig.cognitoClientId,
-    logout_uri: appConfig.appUrl,
+    logout_uri: getRuntimeAppUrl(),
   })
   window.location.assign(`${appConfig.cognitoDomain}/logout?${params.toString()}`)
 }

@@ -19,12 +19,10 @@ from board.video_state import (
 class VideoStateTests(unittest.TestCase):
     def test_default_state_uses_aws_webrtc_session_shape(self) -> None:
         payload = default_video_state_payload(
-            viewer_url="https://ops.example.com/video",
             channel_name=DEFAULT_VIDEO_CHANNEL_NAME,
         )
 
         self.assertEqual(payload["transport"], VIDEO_TRANSPORT)
-        self.assertEqual(payload["session"]["viewerUrl"], "https://ops.example.com/video")
         self.assertEqual(payload["session"]["channelName"], DEFAULT_VIDEO_CHANNEL_NAME)
         self.assertIs(payload["viewerConnected"], False)
 
@@ -35,7 +33,6 @@ class VideoStateTests(unittest.TestCase):
                 "ready": True,
                 "transport": "aws-webrtc",
                 "session": {
-                    "viewerUrl": " https://ops.example.com/video ",
                     "channelName": " txing-board-video ",
                 },
                 "viewerConnected": True,
@@ -44,7 +41,6 @@ class VideoStateTests(unittest.TestCase):
         )
 
         self.assertEqual(normalized["status"], "ready")
-        self.assertEqual(normalized["session"]["viewerUrl"], "https://ops.example.com/video")
         self.assertEqual(normalized["session"]["channelName"], "txing-board-video")
         self.assertIs(normalized["viewerConnected"], True)
         self.assertEqual(normalized["lastError"], "ignored until next publish")
@@ -55,10 +51,7 @@ class VideoStateTests(unittest.TestCase):
                 "status": "ready",
                 "ready": True,
                 "transport": "aws-webrtc",
-                "session": {
-                    "viewerUrl": "https://ops.example.com/video",
-                    "channelName": "txing-board-video",
-                },
+                "session": {"channelName": "txing-board-video"},
                 "codec": {
                     "video": "h264",
                 },
@@ -69,7 +62,7 @@ class VideoStateTests(unittest.TestCase):
         )
 
         self.assertNotIn("updatedAt", reported)
-        self.assertEqual(reported["session"]["channelName"], "txing-board-video")
+        self.assertNotIn("session", reported)
 
     def test_load_video_state_returns_error_for_invalid_json(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -78,7 +71,6 @@ class VideoStateTests(unittest.TestCase):
 
             loaded = load_video_state(
                 state_file,
-                viewer_url="https://ops.example.com/video",
                 channel_name=DEFAULT_VIDEO_CHANNEL_NAME,
             )
 
@@ -89,11 +81,9 @@ class VideoStateTests(unittest.TestCase):
         with TemporaryDirectory() as tmpdir:
             loaded = load_video_state(
                 Path(tmpdir) / "missing.json",
-                viewer_url="https://ops.example.com/video",
                 channel_name=DEFAULT_VIDEO_CHANNEL_NAME,
             )
 
-        self.assertEqual(loaded["session"]["viewerUrl"], "https://ops.example.com/video")
         self.assertEqual(loaded["session"]["channelName"], DEFAULT_VIDEO_CHANNEL_NAME)
 
     def test_load_video_state_reads_saved_payload(self) -> None:
@@ -105,10 +95,7 @@ class VideoStateTests(unittest.TestCase):
                         "status": "ready",
                         "ready": True,
                         "transport": "aws-webrtc",
-                        "session": {
-                            "viewerUrl": "https://ops.example.com/video",
-                            "channelName": "txing-board-video",
-                        },
+                        "session": {"channelName": "txing-board-video"},
                         "viewerConnected": True,
                         "lastError": None,
                     }

@@ -68,7 +68,6 @@ def _build_state(
     *,
     status: str,
     ready: bool,
-    viewer_url: str,
     channel_name: str,
     viewer_connected: bool,
     last_error: str | None,
@@ -78,7 +77,6 @@ def _build_state(
         "ready": ready,
         "transport": VIDEO_TRANSPORT,
         "session": {
-            "viewerUrl": viewer_url,
             "channelName": channel_name,
         },
         "codec": {
@@ -251,7 +249,6 @@ def _build_sender_environment(
 class VideoSenderRuntimeConfig:
     region: str
     channel_name: str
-    viewer_url: str
     state_file: Path
     sender_command: str
     assume_ready_after_seconds: float
@@ -282,7 +279,6 @@ class VideoSenderProcess:
             _build_state(
                 status=VIDEO_STATUS_STARTING,
                 ready=False,
-                viewer_url=self._config.viewer_url,
                 channel_name=self._config.channel_name,
                 viewer_connected=False,
                 last_error=None,
@@ -424,7 +420,6 @@ class VideoSenderProcess:
             _build_state(
                 status=VIDEO_STATUS_READY,
                 ready=True,
-                viewer_url=self._config.viewer_url,
                 channel_name=self._config.channel_name,
                 viewer_connected=viewer_connected,
                 last_error=None,
@@ -446,7 +441,6 @@ class VideoSenderProcess:
             _build_state(
                 status=VIDEO_STATUS_READY if ready else VIDEO_STATUS_STARTING,
                 ready=ready,
-                viewer_url=self._config.viewer_url,
                 channel_name=self._config.channel_name,
                 viewer_connected=connected,
                 last_error=None,
@@ -471,7 +465,6 @@ class VideoSenderSupervisor:
         self,
         *,
         channel_name: str,
-        viewer_url: str,
         region: str,
         sender_command: str,
         aws_shared_credentials_file: Path | None = None,
@@ -481,7 +474,6 @@ class VideoSenderSupervisor:
         working_directory: Path | None = None,
     ) -> None:
         self._channel_name = channel_name
-        self._viewer_url = viewer_url
         self._region = region
         self._sender_command = sender_command
         self._aws_shared_credentials_file = aws_shared_credentials_file
@@ -517,8 +509,6 @@ class VideoSenderSupervisor:
             self._region,
             "--channel-name",
             self._channel_name,
-            "--viewer-url",
-            self._viewer_url,
             "--state-file",
             str(self._state_file),
             "--sender-command",
@@ -564,7 +554,6 @@ class VideoSenderSupervisor:
     def read_state(self) -> dict[str, Any]:
         return load_video_state(
             self._state_file,
-            viewer_url=self._viewer_url,
             channel_name=self._channel_name,
         )
 
@@ -588,11 +577,6 @@ def _parse_args() -> argparse.Namespace:
         "--channel-name",
         default=DEFAULT_VIDEO_CHANNEL_NAME,
         help=f"AWS KVS signaling channel name (default: {DEFAULT_VIDEO_CHANNEL_NAME})",
-    )
-    parser.add_argument(
-        "--viewer-url",
-        required=True,
-        help="Operator-facing browser URL for the board video route",
     )
     parser.add_argument(
         "--state-file",
@@ -696,7 +680,6 @@ def main() -> None:
         VideoSenderRuntimeConfig(
             region=args.region,
             channel_name=args.channel_name,
-            viewer_url=args.viewer_url,
             state_file=args.state_file,
             sender_command=args.sender_command,
             assume_ready_after_seconds=args.assume_ready_after_seconds,
@@ -730,7 +713,6 @@ def main() -> None:
             _build_state(
                 status=VIDEO_STATUS_ERROR,
                 ready=False,
-                viewer_url=args.viewer_url,
                 channel_name=args.channel_name,
                 viewer_connected=False,
                 last_error=str(err),

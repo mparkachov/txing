@@ -36,7 +36,7 @@ Explicit non-goals for this slice:
 txing-board
   -> owns board.* shadow state
   -> supervises board video sender state
-  -> reports board.video transport/session metadata
+  -> reports board.video transport metadata
   -> tracks coarse board video readiness and failures
 
 board video sender state manager
@@ -68,10 +68,6 @@ The current implementation uses `reported.board.video` to describe the plain AWS
           "ready": true,
           "status": "ready",
           "transport": "aws-webrtc",
-          "session": {
-            "viewerUrl": "https://ops.example.com/txing/video",
-            "channelName": "unit-local-board-video"
-          },
           "codec": {
             "video": "h264"
           },
@@ -87,8 +83,8 @@ The current implementation uses `reported.board.video` to describe the plain AWS
 Notes:
 
 - `transport=aws-webrtc` is the current choice.
-- `session.viewerUrl` is the browser entry point when a browser operator route exists.
-- `session.channelName` is the AWS WebRTC signaling channel name for the current viewer session.
+- The canonical browser route path is `/<town>/<rig>/<device>/video`, computed by the SPA from the current device assignment.
+- The AWS WebRTC signaling channel name is computed as `<device_id>-board-video`; it is no longer published into Thing Shadow.
 - The current implementation means plain KVS WebRTC signaling, not ingestion/storage.
 - `board.video.local.*` is no longer part of the active contract.
 - `ready` and `viewerConnected` are coarse runtime signals derived from the supervised sender state, not a full media-quality guarantee.
@@ -103,7 +99,7 @@ Responsibilities:
 - publish all `board.*` Thing Shadow updates
 - keep handling internal `desired.board.power`
 - refresh board IPv4 and IPv6 on each publish loop
-- publish board video transport/session metadata
+- publish board video transport metadata
 - supervise the local board video sender state manager
 - gate `board.video.ready` on sender readiness rather than any board-local iframe endpoint
 - surface the last coarse media error through `board.video.lastError`

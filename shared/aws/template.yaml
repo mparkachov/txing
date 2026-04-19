@@ -706,6 +706,13 @@ Resources:
                 Effect: Allow
                 Action: iot:DescribeEndpoint
                 Resource: "*"
+              - Sid: AllowThingCatalogListing
+                Effect: Allow
+                Action:
+                  - iot:ListThingGroups
+                  - iot:DescribeThingGroup
+                  - iot:ListThingsInThingGroup
+                Resource: "*"
               - Sid: ShadowConnect
                 Effect: Allow
                 Action: iot:Connect
@@ -824,9 +831,6 @@ Outputs:
   WebAppUrl:
     Description: Public URL for the deployed SPA.
     Value: !Sub https://${TxingWebDistribution.DomainName}/
-  BoardVideoViewerUrl:
-    Description: Public URL for the SPA video viewer route.
-    Value: !Sub https://${TxingWebDistribution.DomainName}/video
   WebExpectedAdminEmail:
     Description: Email expected by SPA client-side check.
     Value: !Ref AdminEmail

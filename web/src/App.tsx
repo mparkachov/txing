@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useEffectEvent,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+  type ReactElement,
+} from 'react'
 import {
   beginSignIn,
   clearAuthState,
@@ -8,24 +17,14 @@ import {
   type AuthUser,
 } from './auth'
 import {
-  deriveTxingPowerTransitionPending,
-  deriveTxingPoweredOn,
-  extractDesiredRedcon,
-  extractReportedBatteryMv,
-  extractReportedBoardDrive,
-  extractReportedBoardPower,
-  extractReportedBoardVideo,
-  extractReportedBoardWifiOnline,
-  extractReportedMcuOnline,
-  extractReportedMcuPower,
-  extractReportedRedcon,
-} from './app-model'
-import { appConfig } from './config'
-import { CmdVelTeleopController } from './cmd-vel-teleop'
-import type { Twist } from './cmd-vel'
-import DebugPanel from './DebugPanel'
-import NotificationLogPanel from './NotificationLogPanel'
-import NotificationTray from './NotificationTray'
+  buildDevicePath,
+  buildDeviceVideoPath,
+  buildRigPath,
+  buildTownPath,
+  describeRouteTown,
+  parseAppRoute,
+  type AppRoute,
+} from './app-route'
 import {
   appendNotificationLogEntry,
   deserializeNotificationLog,
@@ -40,8 +39,30 @@ import {
   type AppNotificationInput,
   type AppNotificationLogEntry,
 } from './app-notifications'
+import {
+  buildBoardVideoChannelName,
+  deriveTxingPowerTransitionPending,
+  deriveTxingPoweredOn,
+  extractDesiredRedcon,
+  extractReportedBatteryMv,
+  extractReportedBoardDrive,
+  extractReportedBoardPower,
+  extractReportedBoardVideo,
+  extractReportedBoardWifiOnline,
+  extractReportedMcuOnline,
+  extractReportedMcuPower,
+  extractReportedRedcon,
+} from './app-model'
+import { listRigDevices, listRigThingGroups, isResourceNotFoundError } from './catalog-api'
+import { CmdVelTeleopController } from './cmd-vel-teleop'
+import type { Twist } from './cmd-vel'
+import { appConfig } from './config'
+import DebugPanel from './DebugPanel'
+import NotificationLogPanel from './NotificationLogPanel'
+import NotificationTray from './NotificationTray'
 import type { ShadowConnectionState, ShadowSession } from './shadow-api'
 import TxingPanel from './TxingPanel'
+import VideoPanel from './VideoPanel'
 
 type SessionStatus = 'loading' | 'authenticating' | 'signed_out' | 'signed_in'
 type AppProps = {
@@ -51,10 +72,37 @@ type ShadowSnapshotView = {
   json: string
   updatedAtMs: number
 }
+type RigCatalogState = {
+  status: 'idle' | 'loading' | 'ready' | 'error'
+  rigNames: string[]
+  error: string
+}
+type DeviceCatalogState = {
+  status: 'idle' | 'loading' | 'ready' | 'error' | 'not_found'
+  deviceIds: string[]
+  error: string
+}
+type DeviceRoute = {
+  town: string
+  rig: string
+  device: string
+}
 
 const formatJson = (value: unknown): string => JSON.stringify(value, null, 2)
 const cmdVelRepeatIntervalMs = 100
 let shadowApiModulePromise: Promise<typeof import('./shadow-api')> | null = null
+
+const emptyRigCatalogState = (): RigCatalogState => ({
+  status: 'idle',
+  rigNames: [],
+  error: '',
+})
+
+const emptyDeviceCatalogState = (): DeviceCatalogState => ({
+  status: 'idle',
+  deviceIds: [],
+  error: '',
+})
 
 const createShadowSnapshotView = (shadow: unknown): ShadowSnapshotView => ({
   json: formatJson(shadow),
@@ -68,7 +116,24 @@ const loadShadowApiModule = (): Promise<typeof import('./shadow-api')> => {
   return shadowApiModulePromise
 }
 
+const getInitialRoute = (): AppRoute => {
+  if (typeof window === 'undefined') {
+    return { kind: 'root' }
+  }
+
+  return parseAppRoute(window.location.pathname)
+}
+
+const isPlainLeftClick = (event: ReactMouseEvent<HTMLAnchorElement>): boolean =>
+  event.button === 0 &&
+  !event.defaultPrevented &&
+  !event.metaKey &&
+  !event.ctrlKey &&
+  !event.altKey &&
+  !event.shiftKey
+
 function App({ initialAuthError = '' }: AppProps) {
+  const [route, setRoute] = useState<AppRoute>(getInitialRoute)
   const [status, setStatus] = useState<SessionStatus>('loading')
   const [authUser, setAuthUser] = useState<AuthUser | null>(null)
   const [shadowJson, setShadowJson] = useState<string>('{}')
@@ -90,12 +155,32 @@ function App({ initialAuthError = '' }: AppProps) {
   })
   const [shadowConnectionState, setShadowConnectionState] =
     useState<ShadowConnectionState>('idle')
+  const [rigCatalog, setRigCatalog] = useState<RigCatalogState>(emptyRigCatalogState)
+  const [deviceCatalog, setDeviceCatalog] = useState<DeviceCatalogState>(emptyDeviceCatalogState)
   const shadowSessionRef = useRef<ShadowSession | null>(null)
   const nextNotificationIdRef = useRef(0)
   const nextNotificationLogIdRef = useRef(0)
   const lastBoardVideoErrorRef = useRef<string | null>(null)
+  const hasObservedBoardVideoLastErrorRef = useRef(false)
 
   const hasConfigErrors = appConfig.errors.length > 0
+  const configuredTown = appConfig.sparkplugGroupId
+  const configuredTownPath = buildTownPath(configuredTown)
+  const currentRouteTown = useMemo(() => describeRouteTown(route), [route])
+  const hasUnsupportedTown =
+    currentRouteTown !== null && currentRouteTown !== appConfig.sparkplugGroupId
+  const routeRigName =
+    !hasUnsupportedTown &&
+    (route.kind === 'rig' || route.kind === 'device' || route.kind === 'device_video')
+      ? route.rig
+      : null
+  const selectedDeviceRoute = useMemo<DeviceRoute | null>(() => {
+    if (!hasUnsupportedTown && (route.kind === 'device' || route.kind === 'device_video')) {
+      return route
+    }
+    return null
+  }, [hasUnsupportedTown, route])
+  const selectedRigName = routeRigName ?? null
 
   const adminEmailMismatch = useMemo(() => {
     if (!appConfig.adminEmail || !authUser?.email) {
@@ -179,10 +264,33 @@ function App({ initialAuthError = '' }: AppProps) {
   const boardVideoReady =
     reportedBoardVideo.transport === 'aws-webrtc' &&
     reportedBoardVideo.ready &&
-    reportedBoardVideo.status === 'ready' &&
-    reportedBoardVideo.channelName !== null
+    reportedBoardVideo.status === 'ready'
   const boardVideoReachable = !isTxingSwitchPending && boardOnline && reportedBoardPower !== false
   const canUseBoardVideo = boardVideoReachable && boardVideoReady
+
+  const isSelectedDeviceValid =
+    selectedDeviceRoute !== null &&
+    deviceCatalog.status === 'ready' &&
+    deviceCatalog.deviceIds.includes(selectedDeviceRoute.device)
+
+  const activeSessionRoute =
+    status === 'signed_in' &&
+    !adminEmailMismatch &&
+    route.kind === 'device' &&
+    isSelectedDeviceValid
+      ? selectedDeviceRoute
+      : null
+
+  useEffect(() => {
+    const handlePopstate = (): void => {
+      setRoute(parseAppRoute(window.location.pathname))
+    }
+
+    window.addEventListener('popstate', handlePopstate)
+    return () => {
+      window.removeEventListener('popstate', handlePopstate)
+    }
+  }, [])
 
   useEffect(() => {
     window.sessionStorage.setItem(
@@ -190,6 +298,31 @@ function App({ initialAuthError = '' }: AppProps) {
       serializeNotificationLog(notificationLog),
     )
   }, [notificationLog])
+
+  const navigateToPath = useCallback((path: string, replace = false): void => {
+    const normalizedUrl = new URL(path, window.location.origin)
+    const nextPath = `${normalizedUrl.pathname}${normalizedUrl.search}${normalizedUrl.hash}`
+    const nextRoute = parseAppRoute(normalizedUrl.pathname)
+
+    if (replace) {
+      window.history.replaceState({}, document.title, nextPath)
+    } else {
+      window.history.pushState({}, document.title, nextPath)
+    }
+    setRoute(nextRoute)
+  }, [])
+
+  const handleRouteLinkClick = useCallback(
+    (event: ReactMouseEvent<HTMLAnchorElement>, path: string): void => {
+      if (!isPlainLeftClick(event)) {
+        return
+      }
+
+      event.preventDefault()
+      navigateToPath(path)
+    },
+    [navigateToPath],
+  )
 
   const enqueueNotification = useCallback((notification: AppNotificationInput): void => {
     const nowMs = Date.now()
@@ -287,6 +420,7 @@ function App({ initialAuthError = '' }: AppProps) {
       return
     }
     lastBoardVideoErrorRef.current = null
+    hasObservedBoardVideoLastErrorRef.current = false
     setNotifications([])
   }, [status])
 
@@ -325,17 +459,150 @@ function App({ initialAuthError = '' }: AppProps) {
 
   useEffect(() => {
     if (status !== 'signed_in' || adminEmailMismatch) {
+      return
+    }
+    if (route.kind !== 'root') {
+      return
+    }
+
+    navigateToPath(configuredTownPath, true)
+  }, [adminEmailMismatch, configuredTownPath, navigateToPath, route.kind, status])
+
+  useEffect(() => {
+    if (
+      status !== 'signed_in' ||
+      adminEmailMismatch ||
+      route.kind !== 'town' ||
+      hasUnsupportedTown
+    ) {
+      setRigCatalog(emptyRigCatalogState())
+      return
+    }
+
+    let cancelled = false
+    setRigCatalog({
+      status: 'loading',
+      rigNames: [],
+      error: '',
+    })
+
+    const loadRigCatalog = async (): Promise<void> => {
+      try {
+        const rigNames = await listRigThingGroups(resolveSessionIdToken)
+        if (cancelled) {
+          return
+        }
+
+        setRigCatalog({
+          status: 'ready',
+          rigNames,
+          error: '',
+        })
+      } catch (caughtError) {
+        if (cancelled) {
+          return
+        }
+        setRigCatalog({
+          status: 'error',
+          rigNames: [],
+          error:
+            caughtError instanceof Error ? caughtError.message : 'Unable to list rigs',
+        })
+      }
+    }
+
+    void loadRigCatalog()
+
+    return () => {
+      cancelled = true
+    }
+  }, [adminEmailMismatch, hasUnsupportedTown, resolveSessionIdToken, route.kind, status])
+
+  useEffect(() => {
+    if (
+      status !== 'signed_in' ||
+      adminEmailMismatch ||
+      !selectedRigName ||
+      hasUnsupportedTown
+    ) {
+      setDeviceCatalog(emptyDeviceCatalogState())
+      return
+    }
+
+    let cancelled = false
+    setDeviceCatalog({
+      status: 'loading',
+      deviceIds: [],
+      error: '',
+    })
+
+    const loadDeviceCatalog = async (): Promise<void> => {
+      try {
+        const deviceIds = await listRigDevices(resolveSessionIdToken, selectedRigName)
+        if (cancelled) {
+          return
+        }
+
+        setDeviceCatalog({
+          status: 'ready',
+          deviceIds,
+          error: '',
+        })
+      } catch (caughtError) {
+        if (cancelled) {
+          return
+        }
+
+        if (isResourceNotFoundError(caughtError)) {
+          setDeviceCatalog({
+            status: 'not_found',
+            deviceIds: [],
+            error: `Rig '${selectedRigName}' was not found.`,
+          })
+          return
+        }
+
+        setDeviceCatalog({
+          status: 'error',
+          deviceIds: [],
+          error:
+            caughtError instanceof Error ? caughtError.message : 'Unable to list devices',
+        })
+      }
+    }
+
+    void loadDeviceCatalog()
+
+    return () => {
+      cancelled = true
+    }
+  }, [adminEmailMismatch, hasUnsupportedTown, resolveSessionIdToken, selectedRigName, status])
+
+  useEffect(() => {
+    if (!activeSessionRoute) {
       shadowSessionRef.current?.close()
       shadowSessionRef.current = null
       setShadowConnectionState('idle')
       setIsLoadingShadow(false)
+      setIsUpdatingShadow(false)
+      setLastShadowUpdateAtMs(null)
+      setShadowJson('{}')
+      setIsBoardVideoExpanded(false)
+      lastBoardVideoErrorRef.current = null
+      hasObservedBoardVideoLastErrorRef.current = false
       return
     }
 
     let cancelled = false
     let shadowSession: ShadowSession | null = null
+    setShadowJson('{}')
+    setLastShadowUpdateAtMs(null)
     setIsLoadingShadow(true)
+    setIsUpdatingShadow(false)
+    setIsBoardVideoExpanded(false)
     setShadowConnectionState('connecting')
+    lastBoardVideoErrorRef.current = null
+    hasObservedBoardVideoLastErrorRef.current = false
 
     const startShadowSession = async (): Promise<void> => {
       try {
@@ -345,10 +612,10 @@ function App({ initialAuthError = '' }: AppProps) {
         }
 
         shadowSession = createShadowSession({
-          thingName: appConfig.thingName,
+          thingName: activeSessionRoute.device,
           awsRegion: appConfig.awsRegion,
-          sparkplugGroupId: appConfig.sparkplugGroupId,
-          sparkplugEdgeNodeId: appConfig.sparkplugEdgeNodeId,
+          sparkplugGroupId: activeSessionRoute.town,
+          sparkplugEdgeNodeId: activeSessionRoute.rig,
           resolveIdToken: resolveSessionIdToken,
           onShadowDocument: (shadow) => {
             if (cancelled) {
@@ -398,7 +665,7 @@ function App({ initialAuthError = '' }: AppProps) {
       }
       shadowSession?.close()
     }
-  }, [adminEmailMismatch, applyShadowSnapshot, enqueueRuntimeError, resolveSessionIdToken, status])
+  }, [activeSessionRoute, applyShadowSnapshot, enqueueRuntimeError, resolveSessionIdToken])
 
   const publishCmdVel = useEffectEvent(async (twist: Twist): Promise<void> => {
     const shadowSession = shadowSessionRef.current
@@ -421,8 +688,10 @@ function App({ initialAuthError = '' }: AppProps) {
     const nextNotificationMessage = getNextBoardVideoLastErrorNotification(
       lastBoardVideoErrorRef.current,
       nextBoardVideoLastError,
+      hasObservedBoardVideoLastErrorRef.current,
     )
     lastBoardVideoErrorRef.current = nextBoardVideoLastError
+    hasObservedBoardVideoLastErrorRef.current = true
     if (!nextNotificationMessage) {
       return
     }
@@ -570,6 +839,59 @@ function App({ initialAuthError = '' }: AppProps) {
     setIsBoardVideoExpanded((currentValue) => !currentValue)
   }
 
+  const renderRouteLink = (path: string, label: string): ReactElement => (
+    <a
+      href={path}
+      className="catalog-link"
+      onClick={(event) => {
+        handleRouteLinkClick(event, path)
+      }}
+    >
+      {label}
+    </a>
+  )
+
+  const renderBreadcrumbs = (): ReactElement | null => {
+    if (route.kind === 'root' || route.kind === 'not_found') {
+      return null
+    }
+
+    const crumbs = [renderRouteLink(buildTownPath(route.town), route.town)]
+    if (route.kind === 'rig' || route.kind === 'device' || route.kind === 'device_video') {
+      crumbs.push(renderRouteLink(buildRigPath(route.town, route.rig), route.rig))
+    }
+    if (route.kind === 'device' || route.kind === 'device_video') {
+      crumbs.push(
+        renderRouteLink(buildDevicePath(route.town, route.rig, route.device), route.device),
+      )
+    }
+    if (route.kind === 'device_video') {
+      crumbs.push(
+        <span key={`crumb-video:${route.device}`} className="catalog-crumb-current">
+          video
+        </span>,
+      )
+    }
+    if (route.kind === 'device') {
+      crumbs[crumbs.length - 1] = (
+        <span key={`crumb-device:${route.device}`} className="catalog-crumb-current">
+          {route.device}
+        </span>
+      )
+    }
+
+    return (
+      <nav className="catalog-breadcrumbs" aria-label="Breadcrumb">
+        {crumbs.map((crumb, index) => (
+          <span key={`crumb:${index}`} className="catalog-breadcrumb">
+            {index > 0 ? <span className="catalog-breadcrumb-separator">/</span> : null}
+            {crumb}
+          </span>
+        ))}
+      </nav>
+    )
+  }
+
   if (hasConfigErrors) {
     return (
       <main className="page">
@@ -623,45 +945,210 @@ function App({ initialAuthError = '' }: AppProps) {
     )
   }
 
+  const showDevicePanel = activeSessionRoute !== null
+
+  let content: ReactElement
+  if (route.kind === 'root') {
+    content = (
+      <section className="card">
+        <h1>Device Shadow Admin</h1>
+        <p>Loading town route...</p>
+      </section>
+    )
+  } else if (route.kind === 'not_found') {
+    content = (
+      <section className="card catalog-card">
+        <h1>Route not found</h1>
+        <p>The path does not match the supported town / rig / device URL schema.</p>
+        <p>{renderRouteLink(configuredTownPath, 'Open the configured town')}</p>
+      </section>
+    )
+  } else if (hasUnsupportedTown) {
+    content = (
+      <section className="card catalog-card">
+        <h1>Unsupported town</h1>
+        <p>
+          This deployment is scoped to <strong>{configuredTown}</strong>. The current URL targets{' '}
+          <strong>{currentRouteTown}</strong>.
+        </p>
+        <p>{renderRouteLink(configuredTownPath, `Open ${configuredTown}`)}</p>
+      </section>
+    )
+  } else if (route.kind === 'town') {
+    content = (
+      <section className="card catalog-card">
+        <h1>{route.town}</h1>
+        <p>Available rigs</p>
+        {rigCatalog.status === 'loading' ? <p>Loading rigs...</p> : null}
+        {rigCatalog.status === 'error' ? <p className="error">{rigCatalog.error}</p> : null}
+        {rigCatalog.status === 'ready' && rigCatalog.rigNames.length === 0 ? (
+          <p>No rigs are currently registered for this town.</p>
+        ) : null}
+        {rigCatalog.rigNames.length > 0 ? (
+          <ul className="catalog-list" aria-label={`Rigs in ${route.town}`}>
+            {rigCatalog.rigNames.map((rigName) => (
+              <li key={rigName} className="catalog-list-item">
+                {renderRouteLink(buildRigPath(route.town, rigName), rigName)}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </section>
+    )
+  } else if (route.kind === 'rig') {
+    content = (
+      <section className="card catalog-card">
+        {renderBreadcrumbs()}
+        <h1>{route.rig}</h1>
+        <p>Registered devices</p>
+        {deviceCatalog.status === 'loading' ? <p>Loading devices...</p> : null}
+        {deviceCatalog.status === 'not_found' ? <p className="error">{deviceCatalog.error}</p> : null}
+        {deviceCatalog.status === 'error' ? <p className="error">{deviceCatalog.error}</p> : null}
+        {deviceCatalog.status === 'ready' && deviceCatalog.deviceIds.length === 0 ? (
+          <p>No devices are currently assigned to this rig.</p>
+        ) : null}
+        {deviceCatalog.deviceIds.length > 0 ? (
+          <ul className="catalog-list" aria-label={`Devices in ${route.rig}`}>
+            {deviceCatalog.deviceIds.map((deviceId) => (
+              <li key={deviceId} className="catalog-list-item">
+                {renderRouteLink(buildDevicePath(route.town, route.rig, deviceId), deviceId)}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </section>
+    )
+  } else if (selectedDeviceRoute && deviceCatalog.status === 'loading') {
+    content = (
+      <section className="card catalog-card">
+        {renderBreadcrumbs()}
+        <h1>{selectedDeviceRoute.device}</h1>
+        <p>Validating device membership for rig {selectedDeviceRoute.rig}...</p>
+      </section>
+    )
+  } else if (
+    selectedDeviceRoute &&
+    (deviceCatalog.status === 'not_found' ||
+      deviceCatalog.status === 'error' ||
+      (deviceCatalog.status === 'ready' &&
+        !deviceCatalog.deviceIds.includes(selectedDeviceRoute.device)))
+  ) {
+    content = (
+      <section className="card catalog-card">
+        {renderBreadcrumbs()}
+        <h1>Device not found</h1>
+        <p>
+          {deviceCatalog.status === 'error'
+            ? deviceCatalog.error
+            : `Device '${selectedDeviceRoute.device}' is not assigned to rig '${selectedDeviceRoute.rig}'.`}
+        </p>
+        <p>
+          {renderRouteLink(
+            buildRigPath(selectedDeviceRoute.town, selectedDeviceRoute.rig),
+            `Open ${selectedDeviceRoute.rig}`,
+          )}
+        </p>
+      </section>
+    )
+  } else if (route.kind === 'device_video' && selectedDeviceRoute) {
+    content = (
+      <>
+        <section className="card catalog-card catalog-card-detail">
+          {renderBreadcrumbs()}
+          <div className="catalog-detail-heading">
+            <h1>{selectedDeviceRoute.device} video</h1>
+            <p>
+              Rig <strong>{selectedDeviceRoute.rig}</strong> · Town{' '}
+              <strong>{selectedDeviceRoute.town}</strong>
+            </p>
+          </div>
+        </section>
+        <section className="card catalog-card catalog-card-detail">
+          <VideoPanel
+            channelName={buildBoardVideoChannelName(selectedDeviceRoute.device)}
+            debugEnabled={isDebugEnabled}
+            onRuntimeError={(message: string) => {
+              enqueueRuntimeError(message, 'board-video-viewer')
+            }}
+            resolveIdToken={resolveSessionIdToken}
+          />
+        </section>
+      </>
+    )
+  } else if (showDevicePanel && selectedDeviceRoute) {
+    content = (
+      <>
+        <section className="card catalog-card catalog-card-detail">
+          {renderBreadcrumbs()}
+          <div className="catalog-detail-heading">
+            <h1>{selectedDeviceRoute.device}</h1>
+            <p>
+              Rig <strong>{selectedDeviceRoute.rig}</strong> · Town{' '}
+              <strong>{selectedDeviceRoute.town}</strong> ·{' '}
+              {renderRouteLink(
+                buildDeviceVideoPath(
+                  selectedDeviceRoute.town,
+                  selectedDeviceRoute.rig,
+                  selectedDeviceRoute.device,
+                ),
+                'open video route',
+              )}
+            </p>
+          </div>
+        </section>
+
+        <TxingPanel
+          authUser={authUser}
+          canLoadShadow={canLoadShadow}
+          canUseBoardVideo={canUseBoardVideo}
+          isBoardVideoExpanded={isBoardVideoExpanded}
+          isDebugEnabled={isDebugEnabled}
+          isSessionLogVisible={isSessionLogVisible}
+          isTxingSwitchDisabled={isTxingSwitchDisabled}
+          isTxingSwitchPending={isTxingSwitchPending}
+          lastShadowUpdateAtMs={lastShadowUpdateAtMs}
+          reportedBoardLeftTrackSpeed={reportedBoardDrive.leftSpeed}
+          reportedBoardOnline={reportedBoardOnline}
+          reportedBoardRightTrackSpeed={reportedBoardDrive.rightSpeed}
+          reportedBatteryMv={reportedBatteryMv}
+          reportedMcuOnline={reportedMcuOnline}
+          reportedRedcon={reportedRedcon}
+          txingSwitchChecked={txingSwitchChecked}
+          videoChannelName={buildBoardVideoChannelName(selectedDeviceRoute.device)}
+          resolveIdToken={resolveSessionIdToken}
+          onBoardVideoRuntimeError={(message) => {
+            enqueueRuntimeError(message, 'board-video-viewer')
+          }}
+          onLoadShadow={() => {
+            void loadShadow()
+          }}
+          onSignOff={handleSignOff}
+          onToggleBoardVideo={handleOpenBoardVideo}
+          onToggleDebug={() => {
+            setIsDebugEnabled((currentValue) => !currentValue)
+          }}
+          onToggleSessionLog={() => {
+            setIsSessionLogVisible((currentValue) => !currentValue)
+          }}
+          onTxingSwitchChange={(checked) => {
+            void handleTxingSwitchChange(checked)
+          }}
+        />
+      </>
+    )
+  } else {
+    content = (
+      <section className="card catalog-card">
+        <h1>Device Shadow Admin</h1>
+        <p>Waiting for a valid route selection.</p>
+        <p>{renderRouteLink(configuredTownPath, `Open ${configuredTown}`)}</p>
+      </section>
+    )
+  }
+
   return (
     <main className="page page-signed-in">
-      <TxingPanel
-        authUser={authUser}
-        canLoadShadow={canLoadShadow}
-        canUseBoardVideo={canUseBoardVideo}
-        isBoardVideoExpanded={isBoardVideoExpanded}
-        isDebugEnabled={isDebugEnabled}
-        isSessionLogVisible={isSessionLogVisible}
-        isTxingSwitchDisabled={isTxingSwitchDisabled}
-        isTxingSwitchPending={isTxingSwitchPending}
-        lastShadowUpdateAtMs={lastShadowUpdateAtMs}
-        reportedBoardLeftTrackSpeed={reportedBoardDrive.leftSpeed}
-        reportedBoardOnline={reportedBoardOnline}
-        reportedBoardRightTrackSpeed={reportedBoardDrive.rightSpeed}
-        reportedBatteryMv={reportedBatteryMv}
-        reportedMcuOnline={reportedMcuOnline}
-        reportedRedcon={reportedRedcon}
-        txingSwitchChecked={txingSwitchChecked}
-        videoChannelName={reportedBoardVideo.channelName}
-        resolveIdToken={resolveSessionIdToken}
-        onBoardVideoRuntimeError={(message) => {
-          enqueueRuntimeError(message, 'board-video-viewer')
-        }}
-        onLoadShadow={() => {
-          void loadShadow()
-        }}
-        onSignOff={handleSignOff}
-        onToggleBoardVideo={handleOpenBoardVideo}
-        onToggleDebug={() => {
-          setIsDebugEnabled((currentValue) => !currentValue)
-        }}
-        onToggleSessionLog={() => {
-          setIsSessionLogVisible((currentValue) => !currentValue)
-        }}
-        onTxingSwitchChange={(checked) => {
-          void handleTxingSwitchChange(checked)
-        }}
-      />
+      {content}
 
       <NotificationTray
         notifications={notifications}
@@ -672,7 +1159,7 @@ function App({ initialAuthError = '' }: AppProps) {
 
       {isSessionLogVisible && <NotificationLogPanel notificationLog={notificationLog} />}
 
-      {isDebugEnabled && (
+      {isDebugEnabled && showDevicePanel && (
         <DebugPanel
           reportedBoardPower={reportedBoardPower}
           reportedMcuPower={reportedMcuPower}

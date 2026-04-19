@@ -47,8 +47,6 @@ def _make_args(**overrides: object) -> Namespace:
         "thing_name": "unit-local",
         "schema_file": Path(UNIT_AWS_DIR / "shadow.schema.json"),
         "client_id": None,
-        "video_channel_name": DEFAULT_VIDEO_CHANNEL_NAME,
-        "video_viewer_url": "https://ops.example.com/video",
         "video_region": DEFAULT_VIDEO_REGION,
         "video_sender_command": "/tmp/bot-board-kvs-master",
         "aws_shared_credentials_file": Path("/tmp/credentials"),
@@ -90,10 +88,7 @@ def _make_video_state(
         "status": "ready" if ready else "error",
         "ready": ready,
         "transport": "aws-webrtc",
-        "session": {
-            "viewerUrl": "https://ops.example.com/video",
-            "channelName": "unit-local-board-video",
-        },
+        "session": {"channelName": "unit-local-board-video"},
         "codec": {
             "video": "h264",
         },
@@ -111,7 +106,6 @@ def _make_config(**overrides: object) -> ControlConfig:
         "shadow_file": Path("/tmp/unit_board_shadow.json"),
         "client_id": "bot-board-test",
         "video_channel_name": DEFAULT_VIDEO_CHANNEL_NAME,
-        "video_viewer_url": "https://ops.example.com/video",
         "video_region": DEFAULT_VIDEO_REGION,
         "video_sender_command": "/tmp/bot-board-kvs-master",
         "aws_shared_credentials_file": Path("/tmp/credentials"),
@@ -140,6 +134,22 @@ def _make_config(**overrides: object) -> ControlConfig:
     }
     values.update(overrides)
     return ControlConfig(**values)
+
+
+def _make_runtime() -> MagicMock:
+    runtime = MagicMock()
+    runtime.iot_data_endpoint.return_value = "example-ats.iot.eu-central-1.amazonaws.com"
+    runtime.iot_client.return_value.describe_thing.return_value = {
+        "thingName": "unit-local",
+        "attributes": {
+            "town": "town",
+            "rig": "rig",
+            "deviceType": "unit",
+            "deviceName": "bot",
+            "shortId": "local00",
+        },
+    }
+    return runtime
 
 
 class ShadowControlContractTests(unittest.TestCase):
@@ -216,7 +226,7 @@ class ShadowControlContractTests(unittest.TestCase):
         )
 
         _validate_shadow_update(validator, {"state": {"reported": {"board": report}}})
-        self.assertEqual(report["video"]["session"]["channelName"], "unit-local-board-video")
+        self.assertNotIn("session", report["video"])
         self.assertEqual(report["drive"]["leftSpeed"], 20)
         self.assertEqual(report["drive"]["rightSpeed"], 30)
 
@@ -241,10 +251,7 @@ class ShadowControlContractTests(unittest.TestCase):
                 "status": "ready",
                 "ready": True,
                 "transport": "aws-webrtc",
-                "session": {
-                    "viewerUrl": "https://ops.example.com/video",
-                    "channelName": "unit-local-board-video",
-                },
+                "session": {"channelName": "unit-local-board-video"},
                 "codec": {
                     "video": "h264",
                 },
@@ -319,7 +326,7 @@ class ShadowControlContractTests(unittest.TestCase):
             patch.object(shadow_control, "_parse_args", return_value=args),
             patch.object(shadow_control, "_configure_logging"),
             patch.object(shadow_control, "resolve_aws_region", return_value="eu-central-1"),
-            patch.object(shadow_control, "build_aws_runtime", return_value=MagicMock(iot_data_endpoint=MagicMock(return_value="example-ats.iot.eu-central-1.amazonaws.com"))),
+            patch.object(shadow_control, "build_aws_runtime", return_value=_make_runtime()),
             patch.object(shadow_control, "_require_file"),
             patch.object(shadow_control, "_load_validator", return_value=object()),
             patch.object(shadow_control, "_install_signal_handlers"),
@@ -347,6 +354,7 @@ class ShadowControlContractTests(unittest.TestCase):
         payload = shadow_client.publish_update.call_args.args[0]
         self.assertEqual(payload["state"]["reported"]["board"]["video"]["status"], "ready")
         self.assertIs(payload["state"]["reported"]["board"]["video"]["ready"], True)
+        self.assertNotIn("session", payload["state"]["reported"]["board"]["video"])
         self.assertEqual(payload["state"]["reported"]["board"]["drive"]["leftSpeed"], 0)
         self.assertEqual(payload["state"]["reported"]["board"]["drive"]["rightSpeed"], 0)
 
@@ -369,7 +377,7 @@ class ShadowControlContractTests(unittest.TestCase):
             patch.object(shadow_control, "_parse_args", return_value=args),
             patch.object(shadow_control, "_configure_logging"),
             patch.object(shadow_control, "resolve_aws_region", return_value="eu-central-1"),
-            patch.object(shadow_control, "build_aws_runtime", return_value=MagicMock(iot_data_endpoint=MagicMock(return_value="example-ats.iot.eu-central-1.amazonaws.com"))),
+            patch.object(shadow_control, "build_aws_runtime", return_value=_make_runtime()),
             patch.object(shadow_control, "_require_file"),
             patch.object(shadow_control, "_load_validator", return_value=object()),
             patch.object(shadow_control, "_install_signal_handlers"),
@@ -417,7 +425,7 @@ class ShadowControlContractTests(unittest.TestCase):
             patch.object(shadow_control, "_parse_args", return_value=args),
             patch.object(shadow_control, "_configure_logging"),
             patch.object(shadow_control, "resolve_aws_region", return_value="eu-central-1"),
-            patch.object(shadow_control, "build_aws_runtime", return_value=MagicMock(iot_data_endpoint=MagicMock(return_value="example-ats.iot.eu-central-1.amazonaws.com"))),
+            patch.object(shadow_control, "build_aws_runtime", return_value=_make_runtime()),
             patch.object(shadow_control, "_require_file"),
             patch.object(shadow_control, "_load_validator", return_value=object()),
             patch.object(shadow_control, "_install_signal_handlers"),
@@ -465,7 +473,7 @@ class ShadowControlContractTests(unittest.TestCase):
             patch.object(shadow_control, "_parse_args", return_value=args),
             patch.object(shadow_control, "_configure_logging"),
             patch.object(shadow_control, "resolve_aws_region", return_value="eu-central-1"),
-            patch.object(shadow_control, "build_aws_runtime", return_value=MagicMock(iot_data_endpoint=MagicMock(return_value="example-ats.iot.eu-central-1.amazonaws.com"))),
+            patch.object(shadow_control, "build_aws_runtime", return_value=_make_runtime()),
             patch.object(shadow_control, "_require_file"),
             patch.object(shadow_control, "_load_validator", return_value=object()),
             patch.object(shadow_control, "_install_signal_handlers"),
@@ -528,12 +536,8 @@ class ShadowControlContractTests(unittest.TestCase):
         self.assertIn('THING_NAME={{thing_name}}', justfile)
         self.assertIn('[ -n "{{schema_file}}" ]', justfile)
         self.assertIn('SCHEMA_FILE={{schema_file}}', justfile)
-        self.assertIn('[ -n "{{video_viewer_url}}" ]', justfile)
-        self.assertIn('BOARD_VIDEO_VIEWER_URL={{video_viewer_url}}', justfile)
         self.assertIn('[ -n "{{video_region}}" ]', justfile)
         self.assertIn('BOARD_VIDEO_REGION={{video_region}}', justfile)
-        self.assertIn('[ -n "{{video_channel_name}}" ]', justfile)
-        self.assertIn('BOARD_VIDEO_CHANNEL_NAME={{video_channel_name}}', justfile)
         self.assertIn('[ -n "{{video_sender_command}}" ]', justfile)
         self.assertIn('BOARD_VIDEO_SENDER_COMMAND={{video_sender_command}}', justfile)
         self.assertIn('[ -n "{{region}}" ] && [ -n "$region" ]', justfile)
@@ -552,6 +556,8 @@ class ShadowControlContractTests(unittest.TestCase):
         self.assertNotIn('lg_wd_configured="${LG_WD:-}"', justfile)
         self.assertNotIn('LG_WD=$lg_wd_override', justfile)
         self.assertNotIn('Environment="LG_WD=/tmp/txing-lgpio"', justfile)
+        self.assertNotIn('BOARD_VIDEO_VIEWER_URL', justfile)
+        self.assertNotIn('BOARD_VIDEO_CHANNEL_NAME', justfile)
         self.assertIn('preserve_env=(', justfile)
         self.assertIn('sudo "--preserve-env=$preserve_env_csv"', justfile)
         self.assertNotIn('LG_WD', justfile)
@@ -566,6 +572,7 @@ class ShadowControlContractTests(unittest.TestCase):
         self.assertIn('board_env_file="$(resolve_path "$(choose_value "{{board_env_file}}" "${BOARD_ENV_FILE:-config/board.env}")")"', justfile)
         self.assertIn('source "$board_env_file"', justfile)
         self.assertIn('export_line BOARD_ENV_FILE "$board_env_file"', justfile)
+        self.assertNotIn('export_line BOARD_VIDEO_VIEWER_URL', justfile)
         self.assertNotIn('export_line LG_WD "$lg_wd"', justfile)
         self.assertIn('export_line BOARD_DRIVE_CMD_RAW_MIN_SPEED "$board_drive_cmd_raw_min_speed"', justfile)
         self.assertIn('export_line BOARD_DRIVE_CMD_RAW_MAX_SPEED "$board_drive_cmd_raw_max_speed"', justfile)
@@ -579,10 +586,9 @@ class ShadowControlContractTests(unittest.TestCase):
             justfile,
         )
         self.assertIn('device_thing_name="$THING_NAME"', justfile)
-        self.assertIn('video_channel_name="$BOARD_VIDEO_CHANNEL_NAME"', justfile)
         self.assertIn('if [ -n "{{thing_name}}" ]; then', justfile)
         self.assertIn('if ! run_python_service_check rig "{{profile}}" --rig-name "{{rig_name}}" --log-group-name "{{log_group_name}}"; then', justfile)
-        self.assertIn('if ! run_python_service_check device "{{device_profile}}" --thing-name "$device_thing_name" --video-channel-name "$video_channel_name"; then', justfile)
+        self.assertIn('if ! run_python_service_check device "{{device_profile}}" --thing-name "$device_thing_name"; then', justfile)
         self.assertIn('--thing-name "$device_thing_name" \\', justfile)
         self.assertNotIn('@check thing_name=thing_name', justfile)
 

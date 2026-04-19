@@ -44,24 +44,19 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env device)"
     command aws "$@"
 
-@check thing_name='' video_channel_name='' region=region aws_profile=aws_profile:
+@check thing_name='' region=region aws_profile=aws_profile:
     #!/usr/bin/env bash
     set -euo pipefail
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "{{aws_profile}}")"
     thing_name="$THING_NAME"
-    video_channel_name="$BOARD_VIDEO_CHANNEL_NAME"
     if [ -n "{{thing_name}}" ]; then
       thing_name="{{thing_name}}"
-    fi
-    if [ -n "{{video_channel_name}}" ]; then
-      video_channel_name="{{video_channel_name}}"
     fi
 
     uv run --project "{{project_root}}/shared/aws/python" \
       python -m aws.check \
       --scope device \
-      --thing-name "$thing_name" \
-      --video-channel-name "$video_channel_name"
+      --thing-name "$thing_name"
 
 @clone-aws-sdk:
     if [ ! -d "{{aws_kvs_sdk_dir}}/.git" ]; then \
@@ -255,7 +250,7 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
     set -euo pipefail
     just motor-raw left=0 right=0 duration=0.25 region="{{region}}" aws_profile="{{aws_profile}}"
 
-@install-service video_viewer_url='' video_sender_command='' thing_name='' schema_file='' video_region='' video_channel_name='' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file aws_config_file=aws_config_file:
+@install-service video_sender_command='' thing_name='' schema_file='' video_region='' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file aws_config_file=aws_config_file:
     #!/usr/bin/env bash
     set -euo pipefail
     test -x "{{built_board}}" || { \
@@ -278,14 +273,8 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
     if [ -n "{{schema_file}}" ]; then \
         service_env+=("Environment=\"SCHEMA_FILE={{schema_file}}\""); \
     fi; \
-    if [ -n "{{video_viewer_url}}" ]; then \
-        service_env+=("Environment=\"BOARD_VIDEO_VIEWER_URL={{video_viewer_url}}\""); \
-    fi; \
     if [ -n "{{video_region}}" ]; then \
         service_env+=("Environment=\"BOARD_VIDEO_REGION={{video_region}}\""); \
-    fi; \
-    if [ -n "{{video_channel_name}}" ]; then \
-        service_env+=("Environment=\"BOARD_VIDEO_CHANNEL_NAME={{video_channel_name}}\""); \
     fi; \
     if [ -n "{{video_sender_command}}" ]; then \
         service_env+=("Environment=\"BOARD_VIDEO_SENDER_COMMAND={{video_sender_command}}\""); \

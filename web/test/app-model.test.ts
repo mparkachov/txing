@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import {
-  buildViewerUrlWithChannel,
+  buildBoardVideoChannelName,
   describeRedcon,
   deriveTxingPowerTransitionPending,
   deriveTxingPoweredOn,
@@ -11,21 +11,12 @@ import {
   extractReportedBoardDrive,
   extractReportedBoardVideo,
   extractReportedRedcon,
-  getAppRoute,
   getTrackIndicatorPresentation,
   getTxingRedconToneClass,
-  resolveViewerChannelName,
 } from '../src/app-model'
 
 describe('app model helpers', () => {
-  test('detects dashboard and video routes', () => {
-    expect(getAppRoute('/')).toBe('dashboard')
-    expect(getAppRoute('/video')).toBe('video')
-    expect(getAppRoute('/video/')).toBe('video')
-    expect(getAppRoute('/video/extra')).toBe('dashboard')
-  })
-
-  test('extracts board video session metadata from shadow state', () => {
+  test('extracts board video runtime metadata from shadow state', () => {
     const runtime = extractReportedBoardVideo({
       state: {
         reported: {
@@ -34,10 +25,6 @@ describe('app model helpers', () => {
               ready: true,
               status: 'ready',
               transport: 'aws-webrtc',
-              session: {
-                viewerUrl: 'https://ops.example.com/txing/video',
-                channelName: 'txing-board-video',
-              },
               viewerConnected: true,
               lastError: null,
             },
@@ -48,8 +35,6 @@ describe('app model helpers', () => {
 
     expect(runtime.ready).toBe(true)
     expect(runtime.transport).toBe('aws-webrtc')
-    expect(runtime.viewerUrl).toBe('https://ops.example.com/txing/video')
-    expect(runtime.channelName).toBe('txing-board-video')
     expect(runtime.viewerConnected).toBe(true)
   })
 
@@ -247,24 +232,7 @@ describe('app model helpers', () => {
     ).toBe(false)
   })
 
-  test('builds viewer urls with channel query parameters', () => {
-    expect(
-      buildViewerUrlWithChannel('https://ops.example.com/txing/video', 'txing-board-video'),
-    ).toBe('https://ops.example.com/txing/video?channel=txing-board-video')
-  })
-
-  test('resolves channel from url first and falls back to shadow metadata', () => {
-    expect(
-      resolveViewerChannelName(
-        'https://ops.example.com/txing/video?channel=from-url',
-        'from-shadow',
-      ),
-    ).toBe('from-url')
-    expect(
-      resolveViewerChannelName(
-        'https://ops.example.com/txing/video',
-        'from-shadow',
-      ),
-    ).toBe('from-shadow')
+  test('builds board video channel names from device ids', () => {
+    expect(buildBoardVideoChannelName('unit-a7k2p9')).toBe('unit-a7k2p9-board-video')
   })
 })

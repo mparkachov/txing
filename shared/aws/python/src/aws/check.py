@@ -126,6 +126,10 @@ def _validate_common_environment(
     return results, resolved
 
 
+def _build_video_channel_name(thing_name: str) -> str:
+    return f"{thing_name}-board-video"
+
+
 def validate_service_environment(
     scope: str,
     environment: Mapping[str, str],
@@ -158,9 +162,7 @@ def validate_service_environment(
         resolved["schema_file"] = schema_file
 
     for key, label, env_name in (
-        ("video_viewer_url", "Board video viewer URL", "BOARD_VIDEO_VIEWER_URL"),
         ("video_region", "Board video region", "BOARD_VIDEO_REGION"),
-        ("video_channel_name", "Board video channel name", "BOARD_VIDEO_CHANNEL_NAME"),
         ("video_sender_command", "Board video sender command", "BOARD_VIDEO_SENDER_COMMAND"),
     ):
         result, value = _check_text_env(environment, label, env_name)
@@ -298,6 +300,26 @@ def _run_device_connectivity_checks(
         "IoT DescribeEndpoint (Data-ATS)",
         runtime.iot_data_endpoint,
     )
+    thing_description = _run_aws_check(
+        results,
+        f"IoT DescribeThing on {thing_name}",
+        lambda: runtime.iot_client().describe_thing(thingName=thing_name),
+    )
+    if isinstance(thing_description, Mapping):
+        attributes = thing_description.get("attributes")
+        if isinstance(attributes, Mapping):
+            town_name = attributes.get("town")
+            rig_name = attributes.get("rig")
+            if isinstance(town_name, str) and town_name.strip() and isinstance(rig_name, str) and rig_name.strip():
+                results.append(_ok(f"IoT registry town/rig attributes on {thing_name}"))
+            else:
+                results.append(
+                    _fail(
+                        f"IoT registry town/rig attributes missing on {thing_name}"
+                    )
+                )
+        else:
+            results.append(_fail(f"IoT registry attributes missing on {thing_name}"))
     if isinstance(endpoint, str) and endpoint:
         _run_aws_check(
             results,
@@ -356,7 +378,7 @@ def run_service_check(
         _run_device_connectivity_checks(
             runtime,
             thing_name=resolved_thing_name,
-            video_channel_name=video_channel_name or resolved["video_channel_name"],
+            video_channel_name=video_channel_name or _build_video_channel_name(resolved_thing_name),
             video_region=resolved["video_region"],
         )
     )
@@ -390,11 +412,6 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default="",
         help="Override CloudWatch log group name for rig AWS probes",
     )
-    parser.add_argument(
-        "--video-channel-name",
-        default="",
-        help="Override KVS signaling channel name for device AWS probes",
-    )
     return parser.parse_args(argv)
 
 
@@ -410,7 +427,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             thing_name=args.thing_name or None,
             rig_name=args.rig_name or None,
             log_group_name=args.log_group_name or None,
-            video_channel_name=args.video_channel_name or None,
         )
     except RuntimeError as err:
         print(f"fail: {scope_label} Python service check setup ({err})")

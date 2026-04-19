@@ -112,9 +112,13 @@ export const expireAppNotifications = (
 export const getNextBoardVideoLastErrorNotification = (
   previousLastError: string | null,
   nextLastError: string | null,
+  hasObservedInitialValue = true,
 ): string | null => {
   const normalizedPrevious = normalizeRuntimeMessage(previousLastError);
   const normalizedNext = normalizeRuntimeMessage(nextLastError);
+  if (!hasObservedInitialValue) {
+    return null;
+  }
   if (!normalizedNext || normalizedNext === normalizedPrevious) {
     return null;
   }

@@ -18,7 +18,7 @@ Current board video is a headless AWS KVS WebRTC path:
 - repo-owned C++ KVS master sender command on the board
 - `board-video-sender` adapter and state writer
 - `txing-board` shadow publisher
-- browser viewer at the SPA `/video` route
+- browser viewer at the SPA `/<town>/<rig>/<device>/video` route
 
 Important:
 
@@ -46,10 +46,6 @@ The board publishes to the same classic Thing Shadow as `mcu`, but under a sibli
           "status": "ready",
           "ready": true,
           "transport": "aws-webrtc",
-          "session": {
-            "viewerUrl": "https://example.cloudfront.net/video",
-            "channelName": "unit-local-board-video"
-          },
           "codec": {
             "video": "h264"
           },
@@ -71,6 +67,8 @@ Notes:
 - `reported.board.wifi.ipv4` and `reported.board.wifi.ipv6` are refreshed on each publish loop from the interface the OS selects for the default route in each address family.
 - `reported.board.drive.leftSpeed` and `reported.board.drive.rightSpeed` expose the last applied tank-drive effort in the current provisional signed-percent range `[-100, 100]`.
 - `reported.board.video.viewerConnected` is best-effort board-side viewer presence derived from sender events. The browser does not write it.
+- The browser video route is computed as `/<town>/<rig>/<device>/video`.
+- The KVS signaling channel name is computed as `<device_id>-board-video`.
 - Because this Pi can lose power abruptly through the MOSFET, consumers should not treat stale `power=true` or stale `wifi.online=true` as authoritative after a hard power cut.
 
 ## `cmd_vel` contract
@@ -215,7 +213,7 @@ Fetch the device runtime outputs you need:
 aws cloudformation describe-stacks \
   --stack-name txing-iot \
   --region eu-central-1 \
-  --query "Stacks[0].Outputs[?OutputKey=='BoardVideoViewerUrl' || OutputKey=='DeviceRuntimeRoleArn' || OutputKey=='DeviceBootstrapManagedPolicyArn'].[OutputKey,OutputValue]" \
+  --query "Stacks[0].Outputs[?OutputKey=='DeviceRuntimeRoleArn' || OutputKey=='DeviceBootstrapManagedPolicyArn'].[OutputKey,OutputValue]" \
   --output table
 ```
 
@@ -373,7 +371,7 @@ You do not need to set sender regex environment variables for the repo sender. `
 - `TXING_VIEWER_CONNECTED clientId=<id> viewers=<n>`
 - `TXING_VIEWER_DISCONNECTED clientId=<id> viewers=<n>`
 
-`board-video-sender` also exports `BOARD_VIDEO_REGION` and `BOARD_VIDEO_CHANNEL_NAME` to the child automatically, so the native sender does not need those flags when it is started under the Python supervisor.
+`board-video-sender` also exports `BOARD_VIDEO_REGION` and the computed channel name to the child automatically, so the native sender does not need those flags when it is started under the Python supervisor.
 
 For TLS trust on the KVS signaling path, `board-video-sender` strips inherited CA override environment variables before launching the native sender, and `kvs_master` points the upstream AWS signaling client at a system PEM path compiled into the native binary. The default is `/etc/ssl/certs/Starfield_Services_Root_Certificate_Authority_-_G2.pem`, which matches the SDK's historical `cert.pem`. If you need a different system certificate on another distro or image, override the full path during native build with `TXING_BOARD_KVS_SYSTEM_CA_CERT_PATH=/path/to/system-ca.pem just build-native`. You do not need repo-local AWS root CA files or IoT-specific certificate files for the txing runtime bootstrap.
 
@@ -396,13 +394,19 @@ Set the board runtime defaults in `config/board.env`, especially:
 
 - `THING_NAME`
 - `SCHEMA_FILE`
-- `BOARD_VIDEO_VIEWER_URL`
 - `BOARD_VIDEO_REGION`
-- `BOARD_VIDEO_CHANNEL_NAME`
 - `BOARD_VIDEO_SENDER_COMMAND`
 - `KVS_DUALSTACK_ENDPOINTS=ON` to enable dual-stack KVS WebRTC endpoints for the native sender and allow IPv6 candidate gathering when the network supports it
 - `BOARD_DRIVE_CMD_RAW_MIN_SPEED=50`
 - `BOARD_DRIVE_CMD_RAW_MAX_SPEED=250`
+
+The board computes the published operator video route from the registered device assignment:
+
+```text
+/<town>/<rig>/<device_id>/video
+```
+
+It does not read that route from stack outputs or board env files.
 
 Build the board runtime:
 
@@ -420,9 +424,7 @@ Run a one-shot foreground publish using the same user that will later install th
 cd /home/user/txing/devices/unit/board
 sudo ./.venv/bin/board \
   --once \
-  --video-viewer-url "$BOARD_VIDEO_VIEWER_URL" \
   --video-region eu-central-1 \
-  --video-channel-name unit-local-board-video \
   --video-sender-command "$BOARD_VIDEO_SENDER_COMMAND"
 ```
 
@@ -443,7 +445,6 @@ From the repo root on the board:
 cd /home/user/txing
 just board::build
 just board::install-service \
-  video_viewer_url="$BOARD_VIDEO_VIEWER_URL" \
   video_sender_command="$BOARD_VIDEO_SENDER_COMMAND"
 ```
 
@@ -454,9 +455,7 @@ cd /home/user/txing
 just board::install-service \
   thing_name=unit-local \
   schema_file=devices/unit/aws/shadow.schema.json \
-  video_viewer_url="$BOARD_VIDEO_VIEWER_URL" \
   video_region=eu-central-1 \
-  video_channel_name=unit-local-board-video \
   video_sender_command="$BOARD_VIDEO_SENDER_COMMAND" \
   aws_shared_credentials_file=/path/to/credentials \
   aws_config_file=/path/to/config
@@ -484,7 +483,7 @@ sudo systemctl status board
 sudo journalctl -u board -f
 ```
 
-The unit file should now contain the sender command and the published viewer URL:
+The unit file should now contain the sender command and no explicit viewer URL override:
 
 ```bash
 sudo systemctl cat board
@@ -511,23 +510,21 @@ From `board/`:
 ```bash
 uv run board --help
 uv run board-video-sender --help
-uv run board --once --video-viewer-url "$BOARD_VIDEO_VIEWER_URL"
+uv run board --once
 ./kvs_master/build/txing-board-kvs-master --help
 ```
 
 Useful board options:
 
 - `--thing-name <thing>`
-- `--video-viewer-url <https-url>`
 - `--video-region <aws-region>`
-- `--video-channel-name <channel-name>`
 - `--video-startup-timeout-seconds <seconds>`
 - `--board-name <name>`
 
 Useful sender options:
 
 - `--region <aws-region>` or `BOARD_VIDEO_REGION`
-- `--channel-name <channel-name>` or `BOARD_VIDEO_CHANNEL_NAME`
+- `--channel-name <channel-name>`
 - `--client-id <id>`
 - `--camera <index>`
 - `--width <pixels>`

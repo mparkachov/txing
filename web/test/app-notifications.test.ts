@@ -141,6 +141,13 @@ describe('app notification helpers', () => {
       getNextBoardVideoLastErrorNotification(
         null,
         "failed to describe signaling channel 'txing-board-video'",
+        false,
+      ),
+    ).toBeNull()
+    expect(
+      getNextBoardVideoLastErrorNotification(
+        null,
+        "failed to describe signaling channel 'txing-board-video'",
       ),
     ).toBe("failed to describe signaling channel 'txing-board-video'")
     expect(

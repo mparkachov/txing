@@ -224,7 +224,6 @@
         "ready",
         "status",
         "transport",
-        "session",
         "codec",
         "viewerConnected",
         "lastError"
@@ -247,9 +246,6 @@
             "aws-webrtc"
           ]
         },
-        "session": {
-          "$ref": "#/$defs/reportedBoardVideoSessionState"
-        },
         "codec": {
           "$ref": "#/$defs/reportedBoardVideoCodecState"
         },
@@ -261,30 +257,6 @@
             "string",
             "null"
           ]
-        }
-      }
-    },
-    "reportedBoardVideoSessionState": {
-      "type": "object",
-      "additionalProperties": true,
-      "required": [
-        "viewerUrl",
-        "channelName"
-      ],
-      "properties": {
-        "viewerUrl": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "minLength": 1
-        },
-        "channelName": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "minLength": 1
         }
       }
     },

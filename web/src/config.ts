@@ -15,7 +15,7 @@ const toUrl = (value: string | null, fallback: string): string => {
   return value.endsWith('/') ? value.slice(0, -1) : value
 }
 
-const getRuntimeAppUrl = (): string => {
+export const getRuntimeAppUrl = (): string => {
   if (typeof window === 'undefined') {
     return 'http://localhost/'
   }
@@ -26,14 +26,13 @@ const getRuntimeAppUrl = (): string => {
 const buildConfig = () => {
   const cognitoDomain = toUrl(requireEnv('VITE_COGNITO_DOMAIN'), '')
   const adminEmail = requireEnv('VITE_ADMIN_EMAIL')?.toLowerCase() ?? ''
-  const appUrl = getRuntimeAppUrl()
   const awsRegion = requireEnv('VITE_AWS_REGION') ?? ''
   const cognitoUserPoolId = requireEnv('VITE_COGNITO_USER_POOL_ID') ?? ''
   const cognitoIdentityPoolId = requireEnv('VITE_COGNITO_IDENTITY_POOL_ID') ?? ''
   const iotPolicyName = requireEnv('VITE_IOT_POLICY_NAME') ?? ''
   const thingName = requireEnv('VITE_DEVICE_THING_NAME') ?? ''
-  const sparkplugGroupId = requireEnv('VITE_SPARKPLUG_GROUP_ID') ?? 'town'
-  const sparkplugEdgeNodeId = requireEnv('VITE_SPARKPLUG_EDGE_NODE_ID') ?? 'rig'
+  const sparkplugGroupId = requireEnv('VITE_SPARKPLUG_GROUP_ID') ?? ''
+  const sparkplugEdgeNodeId = requireEnv('VITE_SPARKPLUG_EDGE_NODE_ID') ?? ''
 
   const errors: string[] = []
 
@@ -55,8 +54,8 @@ const buildConfig = () => {
   if (!iotPolicyName) {
     errors.push('Missing VITE_IOT_POLICY_NAME')
   }
-  if (!thingName) {
-    errors.push('Missing VITE_DEVICE_THING_NAME')
+  if (!sparkplugGroupId) {
+    errors.push('Missing VITE_SPARKPLUG_GROUP_ID')
   }
   if (!adminEmail) {
     errors.push('Missing VITE_ADMIN_EMAIL')
@@ -75,7 +74,6 @@ const buildConfig = () => {
     cognitoScope: requireEnv('VITE_COGNITO_SCOPE') ?? 'openid email profile',
     cognitoUserPoolId,
     iotPolicyName,
-    appUrl,
   }
 }
 

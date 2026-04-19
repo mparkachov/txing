@@ -50,8 +50,6 @@ class VideoSenderTests(unittest.TestCase):
                     "board-video-sender",
                     "--region",
                     "eu-central-1",
-                    "--viewer-url",
-                    "https://ops.example.com/video",
                 ],
             ):
                 args = video_sender._parse_args()
@@ -188,8 +186,6 @@ class VideoSenderTests(unittest.TestCase):
                     "board-video-sender",
                     "--region",
                     "eu-central-1",
-                    "--viewer-url",
-                    "https://ops.example.com/video",
                     "--aws-shared-credentials-file",
                     "/tmp/credentials",
                     "--aws-config-file",
@@ -221,8 +217,6 @@ class VideoSenderTests(unittest.TestCase):
                     "board-video-sender",
                     "--region",
                     "eu-central-1",
-                    "--viewer-url",
-                    "https://ops.example.com/video",
                 ],
             ):
                 args = video_sender._parse_args()
@@ -312,7 +306,6 @@ class VideoSenderTests(unittest.TestCase):
 
                 supervisor = video_sender.VideoSenderSupervisor(
                     channel_name="txing-board-video",
-                    viewer_url="https://ops.example.com/video",
                     region="eu-central-1",
                     sender_command="/tmp/txing-board-kvs-master",
                     aws_shared_credentials_file=Path("config/aws.credentials"),
@@ -356,7 +349,6 @@ class VideoSenderTests(unittest.TestCase):
 
                 supervisor = video_sender.VideoSenderSupervisor(
                     channel_name="txing-board-video",
-                    viewer_url="https://ops.example.com/video",
                     region="eu-central-1",
                     sender_command="/tmp/txing-board-kvs-master",
                     aws_shared_credentials_file=Path("config/aws.credentials"),
@@ -385,7 +377,6 @@ class VideoSenderTests(unittest.TestCase):
     def test_video_sender_supervisor_exposes_child_pid(self) -> None:
         supervisor = video_sender.VideoSenderSupervisor(
             channel_name="txing-board-video",
-            viewer_url="https://ops.example.com/video",
             region="eu-central-1",
             sender_command="/tmp/txing-board-kvs-master",
         )
@@ -424,7 +415,6 @@ class VideoSenderTests(unittest.TestCase):
             video_sender.VideoSenderRuntimeConfig(
                 region="eu-central-1",
                 channel_name="txing-board-video",
-                viewer_url="https://ops.example.com/video",
                 state_file=video_sender.DEFAULT_VIDEO_STATE_FILE,
                 sender_command="/tmp/txing-board-kvs-master",
                 assume_ready_after_seconds=0.0,
@@ -469,8 +459,6 @@ class VideoSenderTests(unittest.TestCase):
                     "board-video-sender",
                     "--region",
                     "eu-central-1",
-                    "--viewer-url",
-                    "https://ops.example.com/video",
                     "--sender-command",
                     "/tmp/txing-board-kvs-master",
                 ],

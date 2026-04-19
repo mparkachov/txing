@@ -2,8 +2,6 @@ export type BoardVideoRuntime = {
   ready: boolean
   status: 'starting' | 'ready' | 'error' | null
   transport: 'aws-webrtc' | null
-  viewerUrl: string | null
-  channelName: string | null
   viewerConnected: boolean
   lastError: string | null
 }
@@ -249,8 +247,6 @@ export const extractReportedBoardVideo = (shadow: unknown): BoardVideoRuntime =>
       ready: false,
       status: null,
       transport: null,
-      viewerUrl: null,
-      channelName: null,
       viewerConnected: false,
       lastError: null,
     }
@@ -262,15 +258,11 @@ export const extractReportedBoardVideo = (shadow: unknown): BoardVideoRuntime =>
       ready: false,
       status: null,
       transport: null,
-      viewerUrl: null,
-      channelName: null,
       viewerConnected: false,
       lastError: null,
     }
   }
 
-  const session = video.session
-  const sessionRecord = isRecord(session) ? session : null
   const status = video.status
 
   return {
@@ -280,16 +272,6 @@ export const extractReportedBoardVideo = (shadow: unknown): BoardVideoRuntime =>
         ? status
         : null,
     transport: video.transport === 'aws-webrtc' ? 'aws-webrtc' : null,
-    viewerUrl:
-      sessionRecord && typeof sessionRecord.viewerUrl === 'string' && sessionRecord.viewerUrl.trim()
-        ? sessionRecord.viewerUrl.trim()
-        : null,
-    channelName:
-      sessionRecord &&
-      typeof sessionRecord.channelName === 'string' &&
-      sessionRecord.channelName.trim()
-        ? sessionRecord.channelName.trim()
-        : null,
     viewerConnected: video.viewerConnected === true,
     lastError: typeof video.lastError === 'string' && video.lastError.trim() ? video.lastError : null,
   }
@@ -346,36 +328,4 @@ export const getTrackIndicatorPresentation = (
   }
 }
 
-export const resolveViewerChannelName = (
-  currentUrl: string,
-  fallbackChannelName: string | null,
-  defaultChannelName = 'unit-local-board-video',
-): string => {
-  const routeUrl = new URL(currentUrl, 'https://device.local')
-  const channelFromUrl = routeUrl.searchParams.get('channel')?.trim()
-  if (channelFromUrl) {
-    return channelFromUrl
-  }
-  if (fallbackChannelName && fallbackChannelName.trim()) {
-    return fallbackChannelName.trim()
-  }
-  return defaultChannelName
-}
-
-export const buildViewerUrlWithChannel = (
-  viewerUrl: string,
-  channelName: string | null,
-): string => {
-  const targetUrl = new URL(viewerUrl, 'https://device.local')
-  if (channelName && channelName.trim()) {
-    targetUrl.searchParams.set('channel', channelName.trim())
-  }
-  return targetUrl.toString()
-}
-
-export const getAppRoute = (pathname: string): 'dashboard' | 'video' => {
-  if (pathname === '/video' || pathname === '/video/') {
-    return 'video'
-  }
-  return 'dashboard'
-}
+export const buildBoardVideoChannelName = (deviceId: string): string => `${deviceId}-board-video`

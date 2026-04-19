@@ -21,9 +21,15 @@ class _FakeIotClient:
         self.describe_thing_names: list[str] = []
         self.describe_group_names: list[str] = []
 
-    def describe_thing(self, *, thingName: str) -> dict[str, str]:
+    def describe_thing(self, *, thingName: str) -> dict[str, object]:
         self.describe_thing_names.append(thingName)
-        return {"thingName": thingName}
+        return {
+            "thingName": thingName,
+            "attributes": {
+                "town": "town",
+                "rig": "rig",
+            },
+        }
 
     def describe_thing_group(self, *, thingGroupName: str) -> dict[str, str]:
         self.describe_group_names.append(thingGroupName)
@@ -145,9 +151,7 @@ class AwsCheckTests(unittest.TestCase):
                 "AWS_CONFIG_FILE": "/missing/aws.config",
                 "THING_NAME": "unit-local",
                 "SCHEMA_FILE": "/missing/schema.json",
-                "BOARD_VIDEO_VIEWER_URL": "",
                 "BOARD_VIDEO_REGION": "eu-central-1",
-                "BOARD_VIDEO_CHANNEL_NAME": "",
                 "BOARD_VIDEO_SENDER_COMMAND": "",
             },
         )
@@ -160,8 +164,6 @@ class AwsCheckTests(unittest.TestCase):
         self.assertIn("AWS shared credentials file missing or not a file (/missing/aws.credentials)", failure_messages)
         self.assertIn("AWS config file missing or not a file (/missing/aws.config)", failure_messages)
         self.assertIn("Shadow schema file missing or not a file (/missing/schema.json)", failure_messages)
-        self.assertIn("Board video viewer URL missing ($BOARD_VIDEO_VIEWER_URL)", failure_messages)
-        self.assertIn("Board video channel name missing ($BOARD_VIDEO_CHANNEL_NAME)", failure_messages)
         self.assertIn("Board video sender command missing ($BOARD_VIDEO_SENDER_COMMAND)", failure_messages)
 
     def test_run_rig_service_check_uses_shared_runtime(self) -> None:
@@ -218,9 +220,7 @@ class AwsCheckTests(unittest.TestCase):
                     "AWS_CONFIG_FILE": str(aws_config_file),
                     "THING_NAME": "unit-local",
                     "SCHEMA_FILE": str(schema_file),
-                    "BOARD_VIDEO_VIEWER_URL": "https://example.com/video",
                     "BOARD_VIDEO_REGION": "us-east-1",
-                    "BOARD_VIDEO_CHANNEL_NAME": "unit-local-board-video",
                     "BOARD_VIDEO_SENDER_COMMAND": "/tmp/bot-board-kvs-master",
                 },
                 aws_runtime=runtime,
@@ -228,7 +228,7 @@ class AwsCheckTests(unittest.TestCase):
 
         self.assertTrue(all(result.ok for result in results))
         self.assertEqual(runtime.sts.calls, 1)
-        self.assertEqual(runtime.iot.describe_thing_names, [])
+        self.assertEqual(runtime.iot.describe_thing_names, ["unit-local"])
         self.assertEqual(runtime.iot_data.thing_names, ["unit-local"])
         self.assertEqual(runtime.kinesisvideo.channel_names, ["unit-local-board-video"])
         self.assertIn(

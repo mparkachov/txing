@@ -126,9 +126,6 @@ DEFAULT_ROUTE_PROBE_IPV4 = ("8.8.8.8", 80)
 DEFAULT_ROUTE_PROBE_IPV6 = ("2001:4860:4860::8888", 80, 0, 0)
 DEFAULT_THING_NAME_ENV = "THING_NAME"
 DEFAULT_SCHEMA_FILE_ENV = "SCHEMA_FILE"
-DEFAULT_VIDEO_CHANNEL_NAME_ENV = "BOARD_VIDEO_CHANNEL_NAME"
-LEGACY_VIDEO_CHANNEL_NAME_ENV = "TXING_BOARD_VIDEO_CHANNEL_NAME"
-DEFAULT_VIDEO_VIEWER_URL_ENV = "BOARD_VIDEO_VIEWER_URL"
 DEFAULT_VIDEO_REGION_ENV = "BOARD_VIDEO_REGION"
 LEGACY_VIDEO_REGION_ENV = "TXING_BOARD_VIDEO_REGION"
 
@@ -141,7 +138,7 @@ def _env_text(*names: str, default: str) -> str:
     return default
 
 
-def _default_video_channel_name(thing_name: str) -> str:
+def _build_video_channel_name(thing_name: str) -> str:
     return f"{thing_name}-board-video"
 
 
@@ -224,7 +221,6 @@ class ControlConfig:
     shadow_file: Path
     client_id: str
     video_channel_name: str
-    video_viewer_url: str
     video_region: str
     video_sender_command: str
     aws_shared_credentials_file: Path | None
@@ -623,20 +619,6 @@ def _parse_args() -> argparse.Namespace:
         "--client-id",
         default=None,
         help="MQTT client id (default: device-<hostname>-<pid>)",
-    )
-    parser.add_argument(
-        "--video-channel-name",
-        default=_env_text(
-            DEFAULT_VIDEO_CHANNEL_NAME_ENV,
-            LEGACY_VIDEO_CHANNEL_NAME_ENV,
-            default="",
-        ),
-        help="AWS KVS signaling channel name (default: <thing-name>-board-video)",
-    )
-    parser.add_argument(
-        "--video-viewer-url",
-        default=_env_text(DEFAULT_VIDEO_VIEWER_URL_ENV, default=""),
-        help="Published operator-facing browser URL for the board video route",
     )
     parser.add_argument(
         "--video-sender-command",
@@ -1158,12 +1140,7 @@ def _wait_for_video_ready(
         video_state = _read_video_state(video_supervisor)
         if video_state.get("ready") is True:
             LOGGER.info(
-                "Board video sender ready for first shadow publish viewer_url=%s channel_name=%s",
-                (
-                    video_state.get("session", {}).get("viewerUrl")
-                    if isinstance(video_state.get("session"), dict)
-                    else "-"
-                ),
+                "Board video sender ready for first shadow publish channel_name=%s",
                 (
                     video_state.get("session", {}).get("channelName")
                     if isinstance(video_state.get("session"), dict)
@@ -1266,10 +1243,6 @@ def main() -> None:
         aws_runtime = build_aws_runtime(region_name=aws_region)
         iot_endpoint = aws_runtime.iot_data_endpoint()
         _require_file(args.schema_file, "Thing Shadow schema file")
-        video_viewer_url = _require_non_empty_option(
-            args.video_viewer_url,
-            "--video-viewer-url",
-        )
         video_sender_command = _require_non_empty_option(
             args.video_sender_command,
             "--video-sender-command",
@@ -1278,10 +1251,7 @@ def main() -> None:
             args.video_region,
             "--video-region",
         )
-        video_channel_name = _require_non_empty_option(
-            args.video_channel_name or _default_video_channel_name(args.thing_name),
-            "--video-channel-name",
-        )
+        video_channel_name = _build_video_channel_name(args.thing_name)
         if args.aws_shared_credentials_file is not None:
             _require_file(args.aws_shared_credentials_file, "AWS shared credentials file")
         if args.aws_config_file is not None:
@@ -1306,7 +1276,6 @@ def main() -> None:
             shadow_file=args.shadow_file,
             client_id=client_id,
             video_channel_name=video_channel_name,
-            video_viewer_url=video_viewer_url,
             video_region=video_region,
             video_sender_command=video_sender_command,
             aws_shared_credentials_file=args.aws_shared_credentials_file,
@@ -1367,7 +1336,6 @@ def main() -> None:
     )
     video_supervisor = VideoSenderSupervisor(
         channel_name=config.video_channel_name,
-        viewer_url=config.video_viewer_url,
         region=config.video_region,
         sender_command=config.video_sender_command,
         aws_shared_credentials_file=config.aws_shared_credentials_file,
@@ -1415,7 +1383,7 @@ def main() -> None:
                 LOGGER.info(
                     (
                         "Published board shadow update power=%s wifi_online=%s ipv4=%s ipv6=%s "
-                        "drive_left=%s drive_right=%s video_status=%s video_ready=%s viewer_url=%s"
+                        "drive_left=%s drive_right=%s video_status=%s video_ready=%s"
                     ),
                     report.get("power"),
                     report.get("wifi", {}).get("online") if isinstance(report.get("wifi"), dict) else None,
@@ -1425,11 +1393,6 @@ def main() -> None:
                     report.get("drive", {}).get("rightSpeed") if isinstance(report.get("drive"), dict) else "-",
                     report.get("video", {}).get("status") if isinstance(report.get("video"), dict) else "-",
                     report.get("video", {}).get("ready") if isinstance(report.get("video"), dict) else "-",
-                    (
-                        report.get("video", {}).get("session", {}).get("viewerUrl")
-                        if isinstance(report.get("video", {}).get("session"), dict)
-                        else "-"
-                    ),
                 )
                 startup_published = True
                 last_published_drive_state = drive_state
@@ -1507,7 +1470,7 @@ def main() -> None:
                 LOGGER.info(
                     (
                         "Published board shadow update power=%s wifi_online=%s ipv4=%s ipv6=%s "
-                        "drive_left=%s drive_right=%s video_status=%s video_ready=%s viewer_url=%s"
+                        "drive_left=%s drive_right=%s video_status=%s video_ready=%s"
                     ),
                     report.get("power"),
                     report.get("wifi", {}).get("online") if isinstance(report.get("wifi"), dict) else None,
@@ -1517,11 +1480,6 @@ def main() -> None:
                     report.get("drive", {}).get("rightSpeed") if isinstance(report.get("drive"), dict) else "-",
                     report.get("video", {}).get("status") if isinstance(report.get("video"), dict) else "-",
                     report.get("video", {}).get("ready") if isinstance(report.get("video"), dict) else "-",
-                    (
-                        report.get("video", {}).get("session", {}).get("viewerUrl")
-                        if isinstance(report.get("video", {}).get("session"), dict)
-                        else "-"
-                    ),
                 )
                 last_published_drive_state = current_drive_state
                 last_published_video_report = report.get("video") if isinstance(report.get("video"), dict) else None

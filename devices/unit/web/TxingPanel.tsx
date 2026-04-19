@@ -24,7 +24,7 @@ type TxingPanelProps = {
   reportedMcuOnline: boolean | null
   reportedRedcon: number | null
   txingSwitchChecked: boolean
-  videoChannelName: string | null
+  videoChannelName: string
   resolveIdToken: () => Promise<string>
   onBoardVideoRuntimeError: (message: string) => void
   onLoadShadow: () => void

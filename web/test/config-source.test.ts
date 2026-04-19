@@ -24,11 +24,16 @@ describe('web config wiring', () => {
     expect(justfile).not.toContain('"VITE_DEVICE_THING_NAME=unit-local"')
   })
 
-  test('runtime config requires the generated device thing name', () => {
+  test('runtime config requires the configured town but not a preselected device', () => {
     const configSource = readFileSync(resolve(repoRoot, 'web/src/config.ts'), 'utf-8')
+    const authSource = readFileSync(resolve(repoRoot, 'web/src/auth.ts'), 'utf-8')
 
     expect(configSource).toContain("const thingName = requireEnv('VITE_DEVICE_THING_NAME') ?? ''")
-    expect(configSource).toContain("errors.push('Missing VITE_DEVICE_THING_NAME')")
+    expect(configSource).toContain("const sparkplugGroupId = requireEnv('VITE_SPARKPLUG_GROUP_ID') ?? ''")
+    expect(configSource).toContain("errors.push('Missing VITE_SPARKPLUG_GROUP_ID')")
+    expect(configSource).not.toContain("errors.push('Missing VITE_DEVICE_THING_NAME')")
     expect(configSource).not.toContain("const thingName = requireEnv('VITE_DEVICE_THING_NAME') ?? 'unit-local'")
+    expect(authSource).toContain('redirect_uri: getRuntimeAppUrl()')
+    expect(authSource).toContain('logout_uri: getRuntimeAppUrl()')
   })
 })

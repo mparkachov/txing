@@ -1,5 +1,4 @@
 import { useEffect, useEffectEvent, useReducer, useRef } from 'react'
-import { resolveViewerChannelName } from './app-model'
 import { appConfig } from './config'
 import {
   reduceViewerUiState,
@@ -9,7 +8,7 @@ import {
 
 type VideoPanelProps = {
   resolveIdToken: () => Promise<string>
-  channelName?: string | null
+  channelName: string
   debugEnabled?: boolean
   onRuntimeError?: (message: string) => void
 }
@@ -49,7 +48,7 @@ const getViewerStatusLabel = (state: ViewerUiState): string => {
 
 function VideoPanel({
   resolveIdToken,
-  channelName: preferredChannelName = null,
+  channelName,
   debugEnabled = false,
   onRuntimeError,
 }: VideoPanelProps) {
@@ -61,7 +60,6 @@ function VideoPanel({
     reduceViewerUiState,
     initialViewerUiState,
   )
-  const channelName = resolveViewerChannelName(window.location.href, preferredChannelName)
   const logVideoUiDebug = useEffectEvent((message: string, details?: unknown): void => {
     if (!debugEnabled) {
       return

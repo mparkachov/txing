@@ -293,7 +293,7 @@ thing_index_name := "AWS_Things"
 
     echo "Admin user password set."
 
-@check thing_name='' rig_name=rig_name log_group_name=log_group_name video_channel_name='' region=region profile=profile device_profile='':
+@check thing_name='' rig_name=rig_name log_group_name=log_group_name region=region profile=profile device_profile='':
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
@@ -343,12 +343,8 @@ thing_index_name := "AWS_Things"
 
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "{{device_profile}}")"
     device_thing_name="$THING_NAME"
-    video_channel_name="$BOARD_VIDEO_CHANNEL_NAME"
     if [ -n "{{thing_name}}" ]; then
       device_thing_name="{{thing_name}}"
-    fi
-    if [ -n "{{video_channel_name}}" ]; then
-      video_channel_name="{{video_channel_name}}"
     fi
 
     run_python_service_check() {
@@ -364,7 +360,7 @@ thing_index_name := "AWS_Things"
     if ! run_python_service_check rig "{{profile}}" --rig-name "{{rig_name}}" --log-group-name "{{log_group_name}}"; then
       failures=$((failures + 1))
     fi
-    if ! run_python_service_check device "{{device_profile}}" --thing-name "$device_thing_name" --video-channel-name "$video_channel_name"; then
+    if ! run_python_service_check device "{{device_profile}}" --thing-name "$device_thing_name"; then
       failures=$((failures + 1))
     fi
 
