@@ -714,11 +714,11 @@ Resources:
               - Sid: BoardVideoViewer
                 Effect: Allow
                 Action:
-              - kinesisvideo:DescribeSignalingChannel
-              - kinesisvideo:GetSignalingChannelEndpoint
-              - kinesisvideo:GetIceServerConfig
-              - kinesisvideo:ConnectAsViewer
-            Resource: "*"
+                  - kinesisvideo:DescribeSignalingChannel
+                  - kinesisvideo:GetSignalingChannelEndpoint
+                  - kinesisvideo:GetIceServerConfig
+                  - kinesisvideo:ConnectAsViewer
+                Resource: "*"
 
   TxingAdminIdentityPoolRoleAttachment:
     Type: AWS::Cognito::IdentityPoolRoleAttachment

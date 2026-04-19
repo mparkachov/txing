@@ -186,6 +186,23 @@ class AwsDeviceRegistry:
             queryString=query_string,
         )
 
+    def ensure_thing_type(self, device_type: str) -> None:
+        normalized_device_type = _normalize_slug("device type", device_type)
+        try:
+            self._iot_client.describe_thing_type(thingTypeName=normalized_device_type)
+            return
+        except Exception as err:
+            if not _is_resource_not_found(err):
+                raise
+        self._iot_client.create_thing_type(
+            thingTypeName=normalized_device_type,
+            thingTypeProperties={
+                "thingTypeDescription": (
+                    f"Registered txing device type {normalized_device_type}"
+                )
+            },
+        )
+
     def ensure_shadow_initialized(
         self,
         device_id: str,
@@ -243,8 +260,10 @@ class AwsDeviceRegistry:
         normalized_rig_name = _normalize_slug("rig", rig_name)
         normalized_device_type = _normalize_slug("device type", manifest.type)
         device_id, short_id = self._allocate_device_id(normalized_device_type)
+        self.ensure_thing_type(normalized_device_type)
         self._iot_client.create_thing(
             thingName=device_id,
+            thingTypeName=normalized_device_type,
             attributePayload={
                 "attributes": {
                     "town": normalized_town_name,

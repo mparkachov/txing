@@ -33,10 +33,13 @@ class _FakeIotClient:
     def __init__(self) -> None:
         self.create_thing_requests: list[dict[str, object]] = []
         self.update_thing_requests: list[dict[str, object]] = []
+        self.describe_thing_type_requests: list[str] = []
+        self.create_thing_type_requests: list[dict[str, object]] = []
         self.describe_group_requests: list[str] = []
         self.create_group_requests: list[dict[str, object]] = []
         self.update_group_requests: list[dict[str, object]] = []
         self.groups: set[str] = set()
+        self.thing_types: set[str] = set()
         self._things: dict[str, dict[str, object]] = {
             "unit-aaaaaa": {
                 "thingName": "unit-aaaaaa",
@@ -97,6 +100,19 @@ class _FakeIotClient:
         current["attributes"] = merged
         current["version"] = int(current["version"]) + 1
         return {"thingName": thing_name}
+
+    def describe_thing_type(self, *, thingTypeName: str) -> dict[str, object]:
+        self.describe_thing_type_requests.append(thingTypeName)
+        if thingTypeName not in self.thing_types:
+            raise _FakeClientError("ResourceNotFoundException")
+        return {"thingTypeName": thingTypeName}
+
+    def create_thing_type(self, **kwargs: object) -> dict[str, object]:
+        self.create_thing_type_requests.append(kwargs)
+        thing_type_name = kwargs["thingTypeName"]
+        assert isinstance(thing_type_name, str)
+        self.thing_types.add(thing_type_name)
+        return {"thingTypeName": thing_type_name}
 
     def describe_thing_group(self, *, thingGroupName: str) -> dict[str, object]:
         self.describe_group_requests.append(thingGroupName)
@@ -211,6 +227,7 @@ class DeviceRegistryTests(unittest.TestCase):
             runtime.iot.create_thing_requests[0],
             {
                 "thingName": "unit-bbbbbb",
+                "thingTypeName": "unit",
                 "attributePayload": {
                     "attributes": {
                         "town": "berlin",
@@ -219,6 +236,15 @@ class DeviceRegistryTests(unittest.TestCase):
                         "deviceName": "bot",
                         "shortId": "bbbbbb",
                     }
+                },
+            },
+        )
+        self.assertEqual(
+            runtime.iot.create_thing_type_requests[0],
+            {
+                "thingTypeName": "unit",
+                "thingTypeProperties": {
+                    "thingTypeDescription": "Registered txing device type unit",
                 },
             },
         )
