@@ -18,9 +18,9 @@ SPA shell for reading the current device Thing Shadow and publishing lifecycle c
   - board video uses KVS WebRTC signaling from the `/video` route
   - Cognito hosted UI redirects, Cognito `/oauth2/token`, Cognito Identity, IoT `AttachPolicy`, and IoT `DescribeEndpoint` still use HTTPS
 - Default identity:
-  - device thing name: `unit-local`
-  - Sparkplug group id: `town`
-  - Sparkplug edge node id: `rig`
+  - device thing name comes from `config/board.env`
+  - Sparkplug group id comes from `config/rig.env`
+  - Sparkplug edge node id comes from `config/rig.env`
 
 ## Prerequisites
 
@@ -111,7 +111,7 @@ After deploy, generate local Vite env automatically:
 just web::write-env
 ```
 
-This writes `web/.env.local` from stack outputs plus the current Sparkplug identity defaults.
+This writes `web/.env.local` from stack outputs plus the current device id from `config/board.env` and the current Sparkplug ids from `config/rig.env`.
 
 Relevant outputs:
 

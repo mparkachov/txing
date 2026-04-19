@@ -88,7 +88,7 @@ web_dist_dir := web_dir + "/dist"
     cd "{{web_dir}}"
     bun run lint
 
-@write-env stack_name=stack_name region=region profile=profile:
+@write-env thing_name='' sparkplug_group_id='' sparkplug_edge_node_id='' stack_name=stack_name region=region profile=profile:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{web_dir}}"
@@ -144,11 +144,28 @@ web_dist_dir := web_dir + "/dist"
       exit 1
     fi
 
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "")"
+    device_thing_name="$THING_NAME"
+
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "")"
+    current_sparkplug_group_id="$SPARKPLUG_GROUP_ID"
+    current_sparkplug_edge_node_id="$SPARKPLUG_EDGE_NODE_ID"
+
+    if [ -n "{{thing_name}}" ]; then
+      device_thing_name="{{thing_name}}"
+    fi
+    if [ -n "{{sparkplug_group_id}}" ]; then
+      current_sparkplug_group_id="{{sparkplug_group_id}}"
+    fi
+    if [ -n "{{sparkplug_edge_node_id}}" ]; then
+      current_sparkplug_edge_node_id="{{sparkplug_edge_node_id}}"
+    fi
+
     printf '%s\n' \
       "VITE_AWS_REGION=$region" \
-      "VITE_DEVICE_THING_NAME=unit-local" \
-      "VITE_SPARKPLUG_GROUP_ID=town" \
-      "VITE_SPARKPLUG_EDGE_NODE_ID=rig" \
+      "VITE_DEVICE_THING_NAME=$device_thing_name" \
+      "VITE_SPARKPLUG_GROUP_ID=$current_sparkplug_group_id" \
+      "VITE_SPARKPLUG_EDGE_NODE_ID=$current_sparkplug_edge_node_id" \
       "VITE_COGNITO_DOMAIN=$cognito_domain" \
       "VITE_COGNITO_CLIENT_ID=$cognito_client_id" \
       "VITE_COGNITO_USER_POOL_ID=$cognito_user_pool_id" \
