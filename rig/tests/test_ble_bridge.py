@@ -347,6 +347,25 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertIn('source "$rig_env_file"', justfile)
         self.assertIn('export_line RIG_ENV_FILE "$rig_env_file"', justfile)
 
+    def test_unit_rig_adapter_uses_generic_device_wording(self) -> None:
+        adapter = (
+            Path(__file__).resolve().parents[2]
+            / "devices"
+            / "unit"
+            / "rig"
+            / "python"
+            / "src"
+            / "unit_rig"
+            / "ble_bridge.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("registered device(s) from dynamic thing group", adapter)
+        self.assertIn("starting idle with no managed devices", adapter)
+        self.assertIn("into device shadow", adapter)
+        self.assertNotIn("txing thing(s)", adapter)
+        self.assertNotIn("managed txings", adapter)
+        self.assertNotIn("into txing shadow", adapter)
+
 
 class RigNodeReflectionTests(unittest.TestCase):
     def test_rig_node_reflection_no_longer_writes_shadow(self) -> None:

@@ -1792,7 +1792,7 @@ class BleSleepBridge:
                     desired_redcon=self._shadow.desired_redcon,
                     desired_board_power=_SHADOW_UNSET,
                     context=(
-                        f"Reflected Sparkplug desired.redcon into txing shadow "
+                        f"Reflected Sparkplug desired.redcon into device shadow "
                         f"({self._shadow.desired_redcon})"
                     ),
                     include_redcon_if_changed=False,
@@ -3402,7 +3402,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--rig-name",
         default=_env_text(DEFAULT_RIG_NAME_ENV, DEFAULT_RIG_NAME),
-        help="Dynamic AWS IoT thing group name for txings assigned to this rig (default: rig)",
+        help="Dynamic AWS IoT thing group name for devices assigned to this rig (default: rig)",
     )
     parser.add_argument(
         "--sparkplug-group-id",
@@ -3733,13 +3733,13 @@ def main() -> None:
                 registrations = registry_client.list_rig_things(config.rig_name)
             except ThingGroupNotFoundError:
                 LOGGER.warning(
-                    "Dynamic thing group for rig=%s was not found; starting idle with no managed txings",
+                    "Dynamic thing group for rig=%s was not found; starting idle with no managed devices",
                     config.rig_name,
                 )
                 registrations = []
             _log_important(
                 LOGGER,
-                "Loaded %s txing thing(s) from dynamic thing group for rig=%s",
+                "Loaded %s registered device(s) from dynamic thing group for rig=%s",
                 len(registrations),
                 config.rig_name,
             )
