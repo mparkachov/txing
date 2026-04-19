@@ -18,18 +18,7 @@ class _FakeStsClient:
 
 class _FakeIotClient:
     def __init__(self) -> None:
-        self.describe_thing_names: list[str] = []
         self.describe_group_names: list[str] = []
-
-    def describe_thing(self, *, thingName: str) -> dict[str, object]:
-        self.describe_thing_names.append(thingName)
-        return {
-            "thingName": thingName,
-            "attributes": {
-                "town": "town",
-                "rig": "rig",
-            },
-        }
 
     def describe_thing_group(self, *, thingGroupName: str) -> dict[str, str]:
         self.describe_group_names.append(thingGroupName)
@@ -192,7 +181,6 @@ class AwsCheckTests(unittest.TestCase):
 
         self.assertTrue(all(result.ok for result in results))
         self.assertEqual(runtime.sts.calls, 1)
-        self.assertEqual(runtime.iot.describe_thing_names, [])
         self.assertEqual(runtime.iot.describe_group_names, ["rig"])
         self.assertEqual(len(runtime.logs.created_streams), 1)
         self.assertEqual(runtime.logs.created_streams[0][0], "/town/rig/txing")
@@ -228,7 +216,6 @@ class AwsCheckTests(unittest.TestCase):
 
         self.assertTrue(all(result.ok for result in results))
         self.assertEqual(runtime.sts.calls, 1)
-        self.assertEqual(runtime.iot.describe_thing_names, ["unit-local"])
         self.assertEqual(runtime.iot_data.thing_names, ["unit-local"])
         self.assertEqual(runtime.kinesisvideo.channel_names, ["unit-local-board-video"])
         self.assertIn(

@@ -300,26 +300,6 @@ def _run_device_connectivity_checks(
         "IoT DescribeEndpoint (Data-ATS)",
         runtime.iot_data_endpoint,
     )
-    thing_description = _run_aws_check(
-        results,
-        f"IoT DescribeThing on {thing_name}",
-        lambda: runtime.iot_client().describe_thing(thingName=thing_name),
-    )
-    if isinstance(thing_description, Mapping):
-        attributes = thing_description.get("attributes")
-        if isinstance(attributes, Mapping):
-            town_name = attributes.get("town")
-            rig_name = attributes.get("rig")
-            if isinstance(town_name, str) and town_name.strip() and isinstance(rig_name, str) and rig_name.strip():
-                results.append(_ok(f"IoT registry town/rig attributes on {thing_name}"))
-            else:
-                results.append(
-                    _fail(
-                        f"IoT registry town/rig attributes missing on {thing_name}"
-                    )
-                )
-        else:
-            results.append(_fail(f"IoT registry attributes missing on {thing_name}"))
     if isinstance(endpoint, str) and endpoint:
         _run_aws_check(
             results,
