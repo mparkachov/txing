@@ -21,11 +21,8 @@ THING_INDEX_NAME = "AWS_Things"
 SHORT_ID_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyz"
 SHORT_ID_LENGTH = 6
 SEARCHABLE_REGISTRY_ATTRIBUTES = (
-    "town",
     "rig",
-    "deviceType",
-    "deviceName",
-    "shortId",
+    "town",
     "bleDeviceId",
 )
 RESOURCE_NOT_FOUND_CODES = {
@@ -91,13 +88,7 @@ def build_device_id(device_type: str, short_id: str) -> str:
 
 def build_rig_group_query(rig_name: str) -> str:
     normalized_rig_name = _normalize_slug("rig", rig_name)
-    return (
-        f"attributes.rig:{normalized_rig_name} "
-        "AND attributes.town:* "
-        "AND attributes.deviceType:* "
-        "AND attributes.deviceName:* "
-        "AND attributes.shortId:*"
-    )
+    return f"attributes.rig:{normalized_rig_name} AND attributes.town:*"
 
 
 @dataclass(slots=True, frozen=True)

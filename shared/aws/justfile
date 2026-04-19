@@ -410,7 +410,7 @@ thing_index_name := "AWS_Things"
         --query "queryString" \
         --output text 2>/dev/null || true
     )"
-    expected_thing_group_query="attributes.rig:{{rig_name}} AND attributes.town:* AND attributes.deviceType:* AND attributes.deviceName:* AND attributes.shortId:*"
+    expected_thing_group_query="attributes.rig:{{rig_name}} AND attributes.town:*"
     if [ "$thing_group_query" = "$expected_thing_group_query" ]; then
       echo "ok: Dynamic thing group {{rig_name}} query matches the registered-device filter"
     else
@@ -540,7 +540,7 @@ thing_index_name := "AWS_Things"
            }
          }'
     )"
-    query_string="attributes.rig:{{rig_name}} AND attributes.town:* AND attributes.deviceType:* AND attributes.deviceName:* AND attributes.shortId:*"
+    query_string="attributes.rig:{{rig_name}} AND attributes.town:*"
 
     if aws iot describe-thing-group --thing-group-name "{{rig_name}}" "${aws_flags[@]}" >/dev/null 2>&1; then
       aws iot update-dynamic-thing-group \

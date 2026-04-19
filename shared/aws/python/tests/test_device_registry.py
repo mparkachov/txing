@@ -251,11 +251,8 @@ class DeviceRegistryTests(unittest.TestCase):
                 "thingTypeProperties": {
                     "thingTypeDescription": "Registered txing device type unit",
                     "searchableAttributes": [
-                        "town",
                         "rig",
-                        "deviceType",
-                        "deviceName",
-                        "shortId",
+                        "town",
                         "bleDeviceId",
                     ],
                 },
@@ -264,7 +261,7 @@ class DeviceRegistryTests(unittest.TestCase):
         self.assertEqual(runtime.iot.create_group_requests[0]["thingGroupName"], "rig-a")
         self.assertEqual(
             runtime.iot.create_group_requests[0]["queryString"],
-            "attributes.rig:rig-a AND attributes.town:* AND attributes.deviceType:* AND attributes.deviceName:* AND attributes.shortId:*",
+            "attributes.rig:rig-a AND attributes.town:*",
         )
         self.assertEqual(runtime.iot_data.get_requests, ["unit-bbbbbb"])
         self.assertEqual(runtime.iot_data.update_requests[0][0], "unit-bbbbbb")
@@ -319,7 +316,7 @@ class DeviceRegistryTests(unittest.TestCase):
         self.assertEqual(runtime.iot.create_group_requests[0]["thingGroupName"], "rig-b")
         self.assertEqual(
             runtime.iot.create_group_requests[0]["queryString"],
-            "attributes.rig:rig-b AND attributes.town:* AND attributes.deviceType:* AND attributes.deviceName:* AND attributes.shortId:*",
+            "attributes.rig:rig-b AND attributes.town:*",
         )
 
     def test_register_device_rejects_existing_thing_type_without_required_searchable_attributes(self) -> None:
