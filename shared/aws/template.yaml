@@ -493,25 +493,15 @@ Resources:
           - Sid: ShadowPublish
             Effect: Allow
             Action: iot:Publish
-            Resource:
-              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/txing/shadow/get
-              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/txing/shadow/update
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/*/shadow/*
           - Sid: ShadowSubscribe
             Effect: Allow
             Action: iot:Subscribe
-            Resource:
-              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/$aws/things/txing/shadow/get/accepted
-              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/$aws/things/txing/shadow/get/rejected
-              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/$aws/things/txing/shadow/update/accepted
-              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/$aws/things/txing/shadow/update/rejected
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/$aws/things/*/shadow/*
           - Sid: ShadowReceive
             Effect: Allow
             Action: iot:Receive
-            Resource:
-              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/txing/shadow/get/accepted
-              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/txing/shadow/get/rejected
-              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/txing/shadow/update/accepted
-              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/txing/shadow/update/rejected
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/*/shadow/*
           - Sid: SparkplugCommandPublish
             Effect: Allow
             Action: iot:Publish
@@ -725,25 +715,15 @@ Resources:
               - Sid: ShadowPublish
                 Effect: Allow
                 Action: iot:Publish
-                Resource:
-                  - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/txing/shadow/get
-                  - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/txing/shadow/update
+                Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/*/shadow/*
               - Sid: ShadowSubscribe
                 Effect: Allow
                 Action: iot:Subscribe
-                Resource:
-                  - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/$aws/things/txing/shadow/get/accepted
-                  - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/$aws/things/txing/shadow/get/rejected
-                  - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/$aws/things/txing/shadow/update/accepted
-                  - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/$aws/things/txing/shadow/update/rejected
+                Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/$aws/things/*/shadow/*
               - Sid: ShadowReceive
                 Effect: Allow
                 Action: iot:Receive
-                Resource:
-                  - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/txing/shadow/get/accepted
-                  - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/txing/shadow/get/rejected
-                  - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/txing/shadow/update/accepted
-                  - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/txing/shadow/update/rejected
+                Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/*/shadow/*
               - Sid: SparkplugCommandPublish
                 Effect: Allow
                 Action: iot:Publish
