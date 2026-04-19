@@ -1,0 +1,10 @@
+type = "unit"
+device_name = "bot"
+display_name = "Bot"
+shadow_schema = "devices/unit/aws/shadow.schema.json"
+default_shadow = "devices/unit/aws/default-shadow.json"
+rig_adapter = "unit_rig.ble_bridge"
+web_adapter = "unit"
+
+[resources.board_video]
+channel_name = "{device_id}-board-video"

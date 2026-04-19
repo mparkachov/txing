@@ -37,21 +37,24 @@ from board.shadow_control import (
 from board.video_state import DEFAULT_VIDEO_CHANNEL_NAME, build_reported_video_state
 import board.shadow_control as shadow_control
 
+UNIT_AWS_DIR = REPO_ROOT / "devices" / "unit" / "aws"
+UNIT_BOARD_DIR = REPO_ROOT / "devices" / "unit" / "board"
+
 
 def _make_args(**overrides: object) -> Namespace:
     values: dict[str, object] = {
-        "shadow_file": Path("/tmp/txing_board_shadow.json"),
-        "thing_name": "txing",
-        "schema_file": Path(REPO_ROOT / "docs" / "txing-shadow.schema.json"),
+        "shadow_file": Path("/tmp/unit_board_shadow.json"),
+        "thing_name": "unit-local",
+        "schema_file": Path(UNIT_AWS_DIR / "shadow.schema.json"),
         "client_id": None,
         "video_channel_name": DEFAULT_VIDEO_CHANNEL_NAME,
-        "video_viewer_url": "https://ops.example.com/txing/video",
+        "video_viewer_url": "https://ops.example.com/video",
         "video_region": DEFAULT_VIDEO_REGION,
-        "video_sender_command": "/tmp/txing-board-kvs-master",
+        "video_sender_command": "/tmp/bot-board-kvs-master",
         "aws_shared_credentials_file": Path("/tmp/credentials"),
         "aws_config_file": Path("/tmp/config"),
         "video_startup_timeout_seconds": DEFAULT_VIDEO_STARTUP_TIMEOUT_SECONDS,
-        "board_name": "txing-board-test",
+        "board_name": "bot-board-test",
         "heartbeat_seconds": DEFAULT_HEARTBEAT_SECONDS,
         "aws_connect_timeout": DEFAULT_AWS_CONNECT_TIMEOUT,
         "publish_timeout": DEFAULT_MQTT_PUBLISH_TIMEOUT,
@@ -88,8 +91,8 @@ def _make_video_state(
         "ready": ready,
         "transport": "aws-webrtc",
         "session": {
-            "viewerUrl": "https://ops.example.com/txing/video",
-            "channelName": "txing-board-video",
+            "viewerUrl": "https://ops.example.com/video",
+            "channelName": "unit-local-board-video",
         },
         "codec": {
             "video": "h264",
@@ -101,20 +104,20 @@ def _make_video_state(
 
 def _make_config(**overrides: object) -> ControlConfig:
     values: dict[str, object] = {
-        "thing_name": "txing",
+        "thing_name": "unit-local",
         "aws_region": "eu-central-1",
         "iot_endpoint": "example-ats.iot.eu-central-1.amazonaws.com",
-        "schema_file": Path(REPO_ROOT / "docs" / "txing-shadow.schema.json"),
-        "shadow_file": Path("/tmp/txing_board_shadow.json"),
-        "client_id": "txing-board-test",
+        "schema_file": Path(UNIT_AWS_DIR / "shadow.schema.json"),
+        "shadow_file": Path("/tmp/unit_board_shadow.json"),
+        "client_id": "bot-board-test",
         "video_channel_name": DEFAULT_VIDEO_CHANNEL_NAME,
-        "video_viewer_url": "https://ops.example.com/txing/video",
+        "video_viewer_url": "https://ops.example.com/video",
         "video_region": DEFAULT_VIDEO_REGION,
-        "video_sender_command": "/tmp/txing-board-kvs-master",
+        "video_sender_command": "/tmp/bot-board-kvs-master",
         "aws_shared_credentials_file": Path("/tmp/credentials"),
         "aws_config_file": Path("/tmp/config"),
         "video_startup_timeout_seconds": DEFAULT_VIDEO_STARTUP_TIMEOUT_SECONDS,
-        "board_name": "txing-board-test",
+        "board_name": "bot-board-test",
         "heartbeat_seconds": DEFAULT_HEARTBEAT_SECONDS,
         "aws_connect_timeout": DEFAULT_AWS_CONNECT_TIMEOUT,
         "publish_timeout": DEFAULT_MQTT_PUBLISH_TIMEOUT,
@@ -149,7 +152,7 @@ class ShadowControlContractTests(unittest.TestCase):
         )
 
         shadow_client._on_message(
-            build_cmd_vel_topic("txing"),
+            build_cmd_vel_topic("unit-local"),
             json.dumps(
                 {
                     "linear": {"x": 1, "y": 0, "z": 0},
@@ -190,7 +193,7 @@ class ShadowControlContractTests(unittest.TestCase):
         self.assertIs(_extract_desired_board_power_from_delta(payload), False)
 
     def test_shutdown_update_clears_desired_board_power(self) -> None:
-        validator = _load_validator(Path(REPO_ROOT / "docs" / "txing-shadow.schema.json"))
+        validator = _load_validator(Path(UNIT_AWS_DIR / "shadow.schema.json"))
         payload = _build_shadow_update_with_options(
             report=_build_shutdown_board_report(),
             clear_desired_power=True,
@@ -204,7 +207,7 @@ class ShadowControlContractTests(unittest.TestCase):
         self.assertEqual(payload["state"]["reported"]["board"]["drive"]["rightSpeed"], 0)
 
     def test_board_report_with_video_matches_schema(self) -> None:
-        validator = _load_validator(Path(REPO_ROOT / "docs" / "txing-shadow.schema.json"))
+        validator = _load_validator(Path(UNIT_AWS_DIR / "shadow.schema.json"))
         report = _build_board_report(
             addresses=type("Addresses", (), {"ipv4": "192.168.1.20", "ipv6": "2001:db8::20"})(),
             power=True,
@@ -213,14 +216,14 @@ class ShadowControlContractTests(unittest.TestCase):
         )
 
         _validate_shadow_update(validator, {"state": {"reported": {"board": report}}})
-        self.assertEqual(report["video"]["session"]["channelName"], "txing-board-video")
+        self.assertEqual(report["video"]["session"]["channelName"], "unit-local-board-video")
         self.assertEqual(report["drive"]["leftSpeed"], 20)
         self.assertEqual(report["drive"]["rightSpeed"], 30)
 
     def test_default_shadow_reset_payload_matches_schema(self) -> None:
-        validator = _load_validator(Path(REPO_ROOT / "docs" / "txing-shadow.schema.json"))
+        validator = _load_validator(Path(UNIT_AWS_DIR / "shadow.schema.json"))
         payload = json.loads(
-            Path(REPO_ROOT / "shared" / "aws" / "default-shadow.json").read_text(encoding="utf-8")
+            Path(UNIT_AWS_DIR / "default-shadow.json").read_text(encoding="utf-8")
         )
 
         _validate_shadow_update(validator, payload)
@@ -239,8 +242,8 @@ class ShadowControlContractTests(unittest.TestCase):
                 "ready": True,
                 "transport": "aws-webrtc",
                 "session": {
-                    "viewerUrl": "https://ops.example.com/txing/video",
-                    "channelName": "txing-board-video",
+                    "viewerUrl": "https://ops.example.com/video",
+                    "channelName": "unit-local-board-video",
                 },
                 "codec": {
                     "video": "h264",
@@ -498,7 +501,7 @@ class ShadowControlContractTests(unittest.TestCase):
             )
 
     def test_justfile_install_service_has_no_mediamtx_dependency(self) -> None:
-        justfile = Path(REPO_ROOT / "board" / "justfile").read_text(encoding="utf-8")
+        justfile = Path(UNIT_BOARD_DIR / "justfile").read_text(encoding="utf-8")
 
         self.assertIn("--refresh-package aws --reinstall-package aws", justfile)
         self.assertIn("'Wants=network-online.target systemd-time-wait-sync.service' \\", justfile)
@@ -508,9 +511,9 @@ class ShadowControlContractTests(unittest.TestCase):
         )
         self.assertNotIn("mediamtx.service", justfile)
         self.assertIn('python -m aws.check', justfile)
-        self.assertIn('--scope txing', justfile)
+        self.assertIn('--scope device', justfile)
         self.assertIn('ExecStart={{built_board}} --heartbeat-seconds 60', justfile)
-        self.assertIn('eval "$(just --justfile "{{root_justfile}}" _project-aws-env txing', justfile)
+        self.assertIn('eval "$(just --justfile "{{root_justfile}}" _project-aws-env device', justfile)
         self.assertIn('project_root="$TXING_PROJECT_ROOT"', justfile)
         self.assertIn('env_file="$AWS_ENV_FILE"', justfile)
         self.assertIn('board_env_file="$BOARD_ENV_FILE"', justfile)
@@ -549,13 +552,13 @@ class ShadowControlContractTests(unittest.TestCase):
         self.assertIn('preserve_env=(', justfile)
         self.assertIn('sudo "--preserve-env=$preserve_env_csv"', justfile)
 
-    def test_root_justfile_sources_optional_board_env_for_txing_scope(self) -> None:
+    def test_root_justfile_sources_optional_board_env_for_device_scope(self) -> None:
         justfile = Path(REPO_ROOT / "justfile").read_text(encoding="utf-8")
 
         self.assertIn("_project-aws-env scope='rig'", justfile)
         self.assertIn('board_env_file=\'\'', justfile)
         self.assertIn('env_file="$(resolve_path "$(choose_value "{{env_file}}" "config/aws.env")")"', justfile)
-        self.assertIn('if [ "{{scope}}" = "txing" ]; then', justfile)
+        self.assertIn('if [ "{{scope}}" = "device" ]; then', justfile)
         self.assertIn('board_env_file="$(resolve_path "$(choose_value "{{board_env_file}}" "${BOARD_ENV_FILE:-config/board.env}")")"', justfile)
         self.assertIn('source "$board_env_file"', justfile)
         self.assertIn('export_line BOARD_ENV_FILE "$board_env_file"', justfile)
@@ -566,12 +569,12 @@ class ShadowControlContractTests(unittest.TestCase):
     def test_repo_root_detection_uses_board_working_directory(self) -> None:
         with TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir)
-            board_dir = repo_root / "board"
-            docs_dir = repo_root / "docs"
-            board_dir.mkdir()
-            docs_dir.mkdir()
+            board_dir = repo_root / "devices" / "unit" / "board"
+            aws_dir = repo_root / "devices" / "unit" / "aws"
+            board_dir.mkdir(parents=True)
+            aws_dir.mkdir(parents=True)
             (board_dir / "pyproject.toml").write_text("", encoding="utf-8")
-            (docs_dir / "txing-shadow.schema.json").write_text("{}", encoding="utf-8")
+            (aws_dir / "shadow.schema.json").write_text("{}", encoding="utf-8")
 
             installed_module = (
                 board_dir

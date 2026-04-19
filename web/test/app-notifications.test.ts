@@ -116,7 +116,7 @@ describe('app notification helpers', () => {
         expiresAtMs: 10_000,
       },
     ])
-    expect(expireAppNotifications(notifications, 15_000)).toEqual([
+    expect(expireAppNotifications(notifications, 9_000)).toEqual([
       {
         id: 'notification-2',
         tone: 'error',

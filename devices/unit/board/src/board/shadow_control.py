@@ -67,8 +67,8 @@ LOGGER = logging.getLogger("board.shadow_control")
 
 def _is_repo_root(path: Path) -> bool:
     return (
-        (path / "board" / "pyproject.toml").is_file()
-        and (path / "docs" / "txing-shadow.schema.json").is_file()
+        (path / "devices" / "unit" / "board" / "pyproject.toml").is_file()
+        and (path / "devices" / "unit" / "aws" / "shadow.schema.json").is_file()
     )
 
 
@@ -91,7 +91,7 @@ def _discover_repo_root(
         if _is_repo_root(candidate):
             return candidate
         if candidate.name == "board" and (candidate / "pyproject.toml").is_file():
-            return candidate.parent
+            return candidate.parents[2]
 
     return resolved_cwd.parent if resolved_cwd.name == "board" else resolved_cwd
 
@@ -101,9 +101,10 @@ REPO_ROOT = _discover_repo_root(
     module_file=Path(__file__),
     env_repo_root=os.environ.get("TXING_REPO_ROOT"),
 )
-DEFAULT_DOCS_DIR = REPO_ROOT / "docs"
-DEFAULT_THING_NAME = "txing"
-DEFAULT_SCHEMA_FILE = DEFAULT_DOCS_DIR / "txing-shadow.schema.json"
+DEFAULT_UNIT_DIR = REPO_ROOT / "devices" / "unit"
+DEFAULT_AWS_DIR = DEFAULT_UNIT_DIR / "aws"
+DEFAULT_THING_NAME = "unit-local"
+DEFAULT_SCHEMA_FILE = DEFAULT_AWS_DIR / "shadow.schema.json"
 DEFAULT_AWS_CONNECT_TIMEOUT = 20.0
 DEFAULT_MQTT_PUBLISH_TIMEOUT = 10.0
 DEFAULT_HEARTBEAT_SECONDS = 60.0
@@ -138,6 +139,10 @@ def _env_text(*names: str, default: str) -> str:
         if value:
             return value
     return default
+
+
+def _default_video_channel_name(thing_name: str) -> str:
+    return f"{thing_name}-board-video"
 
 
 def _env_optional_path(*names: str) -> Path | None:
@@ -606,7 +611,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--thing-name",
         default=_env_text(DEFAULT_THING_NAME_ENV, default=DEFAULT_THING_NAME),
-        help="AWS IoT thing name (default: txing)",
+        help="AWS IoT thing name / device id (default: unit-local)",
     )
     parser.add_argument(
         "--schema-file",
@@ -617,16 +622,16 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--client-id",
         default=None,
-        help="MQTT client id (default: txing-<hostname>-<pid>)",
+        help="MQTT client id (default: device-<hostname>-<pid>)",
     )
     parser.add_argument(
         "--video-channel-name",
         default=_env_text(
             DEFAULT_VIDEO_CHANNEL_NAME_ENV,
             LEGACY_VIDEO_CHANNEL_NAME_ENV,
-            default=DEFAULT_VIDEO_CHANNEL_NAME,
+            default="",
         ),
-        help=f"AWS KVS signaling channel name (default: {DEFAULT_VIDEO_CHANNEL_NAME})",
+        help="AWS KVS signaling channel name (default: <thing-name>-board-video)",
     )
     parser.add_argument(
         "--video-viewer-url",
@@ -865,7 +870,7 @@ def _sanitize_client_id(value: str) -> str:
         else:
             sanitized.append("-")
     result = "".join(sanitized).strip("-")
-    return result or "txing"
+    return result or "device"
 
 
 def _normalize_ip_address(value: str) -> str | None:
@@ -1254,7 +1259,7 @@ def main() -> None:
     try:
         args = _parse_args()
         _configure_logging(args.debug)
-        ensure_aws_profile("AWS_TXING_PROFILE")
+        ensure_aws_profile("AWS_DEVICE_PROFILE", "AWS_TXING_PROFILE")
         aws_region = resolve_aws_region()
         if not aws_region:
             raise RuntimeError("could not resolve AWS region for AWS IoT access")
@@ -1274,7 +1279,7 @@ def main() -> None:
             "--video-region",
         )
         video_channel_name = _require_non_empty_option(
-            args.video_channel_name,
+            args.video_channel_name or _default_video_channel_name(args.thing_name),
             "--video-channel-name",
         )
         if args.aws_shared_credentials_file is not None:
@@ -1282,7 +1287,7 @@ def main() -> None:
         if args.aws_config_file is not None:
             _require_file(args.aws_config_file, "AWS config file")
         board_client_suffix = _sanitize_client_id(args.board_name)
-        client_id = args.client_id or f"txing-{board_client_suffix}-{os.getpid()}"
+        client_id = args.client_id or f"device-{board_client_suffix}-{os.getpid()}"
         drive_cmd_raw_min_speed = (
             DEFAULT_DRIVE_CMD_RAW_MIN_SPEED
             if args.drive_cmd_raw_min_speed is None

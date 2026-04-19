@@ -5,22 +5,22 @@ Python service for the Raspberry Pi 5 rig runtime.
 Responsibilities:
 - Connect directly to AWS IoT Core over SigV4-authenticated MQTT over WebSockets
 - Act as the `rig` lifecycle runtime in the same process
-- Synchronize classic Thing Shadows for all txings assigned to this rig
+- Synchronize classic Thing Shadows for all registered devices assigned to this rig
 - Accept Sparkplug `DCMD.redcon` lifecycle commands and publish `NBIRTH`/`NDEATH`/`DBIRTH`/`DDATA`/`DDEATH`
 - Bridge REDCON-driven wakeup-state and sleep-state changes to the MCU over BLE rendezvous sessions
 - Publish MCU state to `state.reported.mcu.*`
 - Publish derived readiness at top-level `state.reported.redcon`
-- Load assigned txings from the dynamic AWS IoT thing group named by `RIG_NAME`
+- Load assigned devices from the dynamic AWS IoT thing group named by `RIG_NAME`
 - Persist last known BLE reconnect hints to AWS IoT thing attribute `bleDeviceId`
 
 Shadow contract source of truth:
-- `../docs/txing-shadow.schema.json`
-- `../docs/device-rig-shadow-spec.md`
+- `../devices/unit/aws/shadow.schema.json`
+- `../devices/unit/docs/device-rig-shadow-spec.md`
 - Design decision: `rig` owns and evolves the `mcu.*` shadow subtree contract.
 
 High-level architecture:
 - Sparkplug host -> AWS IoT MQTT -> rig -> BLE -> mcu
-- rig -> AWS IoT Thing Shadow (`txing`)
+- rig -> AWS IoT Thing Shadow (`device_id`)
 
 ## Requirements
 

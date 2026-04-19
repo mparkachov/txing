@@ -6,7 +6,7 @@
 ## Notes
 - Run frontend package manager, build, and test commands from `web/`.
 - Follow repository-level rule: do not create commits unless explicitly requested by the user.
-- Use `../docs/txing-shadow.schema.json` as the canonical shadow JSON structure.
+- Use `../devices/unit/aws/shadow.schema.json` as the canonical shadow JSON structure for the current `unit` device type.
 - Treat the web app as a consumer of shared shadow contracts rather than an owner of the `mcu.*` or `board.*` subtrees.
 
 ## Shared workflow

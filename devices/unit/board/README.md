@@ -1,12 +1,12 @@
 # txing board
 
-Python service for the device-side Raspberry Pi board that is power-switched by the MCU and reports runtime state to the shared `txing` Thing Shadow under `state.reported.board`.
+Python service for the device-side Raspberry Pi board that is power-switched by the MCU and reports runtime state to the shared device Thing Shadow under `state.reported.board`.
 
 This is not the same Raspberry Pi as `rig/`. The `rig/` Pi remains the BLE/AWS control node. This `board/` service is for the separate Pi mounted on the device itself.
 
 `txing-board` is the only process that publishes `board.*` Thing Shadow updates. For video, it supervises a dedicated local sender helper and publishes coarse AWS WebRTC session state under `reported.board.video`.
 
-The txing runtime now connects to AWS IoT Core over SigV4-authenticated MQTT over WebSockets using the standard AWS SDK credential chain. The intended project-local profile layout is `town`, `rig`, and `txing`, with `txing` assuming the stack output role `TxingRuntimeRoleArn`.
+The device runtime now connects to AWS IoT Core over SigV4-authenticated MQTT over WebSockets using the standard AWS SDK credential chain. The intended project-local profile layout is `town`, `rig`, and `device`, with `device` assuming the stack output role `DeviceRuntimeRoleArn`.
 
 When the service is managed by `systemd`, run it as `root`. The board control consumes internal `state.desired.board.power=false` requests from the `rig` runtime and requests a local system halt, which requires root privileges. The supervised video sender keeps using the board host's AWS SDK credential chain, and the generated service unit now loads shared AWS defaults from `config/aws.env` plus optional board-local overrides from `config/board.env`.
 
@@ -48,7 +48,7 @@ The board publishes to the same classic Thing Shadow as `mcu`, but under a sibli
           "transport": "aws-webrtc",
           "session": {
             "viewerUrl": "https://example.cloudfront.net/video",
-            "channelName": "txing-board-video"
+            "channelName": "unit-local-board-video"
           },
           "codec": {
             "video": "h264"
@@ -75,7 +75,7 @@ Notes:
 
 ## `cmd_vel` contract
 
-Live motion control is out of band from Thing Shadow and uses the MQTT topic `txing/board/cmd_vel`.
+Live motion control is out of band from Thing Shadow and uses the MQTT topic `<device_id>/board/cmd_vel`.
 
 This topic is a strict ROS `geometry_msgs/Twist` semantic contract:
 
@@ -190,13 +190,13 @@ Assumptions used below:
 - the repo path on the board is `/home/user/txing`
 - the board is reachable as `user@<board-host>`
 - the AWS region is `eu-central-1`
-- the signaling channel name is `txing-board-video`
+- the signaling channel name defaults to `<device_id>-board-video` (for example `unit-local-board-video`)
 
 If you use a different username, hostname, repo path, region, or channel name, replace those values consistently in the commands below.
 
 ### 1. Prepare AWS Artifacts on the Development Machine
 
-If the AWS stack already exists and you only need the txing runtime artifacts:
+If the AWS stack already exists and you only need the device runtime artifacts:
 
 ```bash
 cd /path/to/txing
@@ -211,22 +211,22 @@ just aws::deploy <unique-cognito-prefix> <admin-email>
 just aws::describe
 ```
 
-Fetch the txing runtime and board video outputs you need:
+Fetch the device runtime outputs you need:
 
 ```bash
 aws cloudformation describe-stacks \
   --stack-name txing-iot \
   --region eu-central-1 \
-  --query "Stacks[0].Outputs[?OutputKey=='BoardVideoViewerUrl' || OutputKey=='BoardVideoChannelName' || OutputKey=='TxingRuntimeRoleArn' || OutputKey=='TxingBootstrapManagedPolicyArn'].[OutputKey,OutputValue]" \
+  --query "Stacks[0].Outputs[?OutputKey=='BoardVideoViewerUrl' || OutputKey=='DeviceRuntimeRoleArn' || OutputKey=='DeviceBootstrapManagedPolicyArn'].[OutputKey,OutputValue]" \
   --output table
 ```
 
 Prepare the local config files the board will use:
 
-- `config/aws.env` with `AWS_TXING_PROFILE=txing`
+- `config/aws.env` with `AWS_DEVICE_PROFILE=device`
 - `config/board.env` with `THING_NAME`, board video settings, and any board-local motor overrides such as `BOARD_DRIVE_CMD_RAW_MIN_SPEED=50` and `BOARD_DRIVE_CMD_RAW_MAX_SPEED=250`
 - `config/aws.credentials` with the `town` source credentials
-- `config/aws.config` with `[profile txing]` assuming `TxingRuntimeRoleArn`
+- `config/aws.config` with `[profile device]` assuming `DeviceRuntimeRoleArn`
 
 ### 2. Flash and Boot the Board
 
@@ -321,8 +321,8 @@ test -s config/aws.env
 test -s config/board.env
 test -s config/aws.credentials
 test -s config/aws.config
-just aws-txing sts get-caller-identity
-cd board
+just aws-device sts get-caller-identity
+cd devices/unit/board
 just check
 ```
 
@@ -331,7 +331,7 @@ just check
 Clone and build the AWS KVS WebRTC SDK once into the board working tree, then build the repo-owned sender against that local install:
 
 ```bash
-cd /home/user/txing/board
+cd /home/user/txing/devices/unit/board
 pkg-config --modversion libcamera
 just build-aws-sdk
 just build-native
@@ -383,11 +383,11 @@ For TLS trust on the KVS signaling path, `board-video-sender` strips inherited C
 
 The txing runtime and the supervised sender both use the standard AWS SDK chain. The generated service unit loads `config/aws.env` first and then `config/board.env`, so AWS/shared settings come from `config/aws.env` while board-local settings such as `THING_NAME`, `SCHEMA_FILE`, board video defaults, and motor tuning come from `config/board.env` by default. `LG_WD` remains an optional override only.
 
-Verify the intended txing identity before installing the service:
+Verify the intended device identity before installing the service:
 
 ```bash
 cd /home/user/txing
-just aws-txing sts get-caller-identity
+just aws-device sts get-caller-identity
 ```
 
 If you want the install recipe to use credential files outside the checkout, pass `aws_shared_credentials_file=` and `aws_config_file=` directly to `just board::install-service`. To override the lgpio workspace path, pass `lg_wd=/some/writable/path`.
@@ -415,23 +415,23 @@ python3 --version
 just board::build
 ```
 
-`just board::build` is the normal install step for the Python board runtime. It creates or updates `board/.venv/` from the OS `python3` on `PATH` and installs the packaged entry points there. You do not need to run `sync` first for deployment.
+`just board::build` is the normal install step for the Python board runtime. It creates or updates `devices/unit/board/.venv/` from the OS `python3` on `PATH` and installs the packaged entry points there. You do not need to run `sync` first for deployment.
 
 Run a one-shot foreground publish using the same user that will later install the service:
 
 ```bash
-cd /home/user/txing/board
+cd /home/user/txing/devices/unit/board
 sudo ./.venv/bin/board \
   --once \
   --video-viewer-url "$BOARD_VIDEO_VIEWER_URL" \
   --video-region eu-central-1 \
-  --video-channel-name txing-board-video \
+  --video-channel-name unit-local-board-video \
   --video-sender-command "$BOARD_VIDEO_SENDER_COMMAND"
 ```
 
 What this proves:
 
-- the txing runtime can resolve AWS region, credentials, and the IoT Data-ATS endpoint from the shared config flow
+- the device runtime can resolve AWS region, credentials, and the IoT Data-ATS endpoint from the shared config flow
 - the sender can resolve the signaling channel in AWS
 - the sender command starts successfully
 - `txing-board` can publish the initial `reported.board.video` payload
@@ -455,11 +455,11 @@ If the root AWS credentials are stored elsewhere or you need a different region 
 ```bash
 cd /home/user/txing
 just board::install-service \
-  thing_name=txing \
-  schema_file=docs/txing-shadow.schema.json \
+  thing_name=unit-local \
+  schema_file=devices/unit/aws/shadow.schema.json \
   video_viewer_url="$BOARD_VIDEO_VIEWER_URL" \
   video_region=eu-central-1 \
-  video_channel_name=txing-board-video \
+  video_channel_name=unit-local-board-video \
   video_sender_command="$BOARD_VIDEO_SENDER_COMMAND" \
   aws_shared_credentials_file=/path/to/credentials \
   aws_config_file=/path/to/config

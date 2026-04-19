@@ -13,7 +13,7 @@ class _FakeStsClient:
 
     def get_caller_identity(self) -> dict[str, str]:
         self.calls += 1
-        return {"Arn": "arn:aws:sts::123456789012:assumed-role/test/txing"}
+        return {"Arn": "arn:aws:sts::123456789012:assumed-role/test/device"}
 
 
 class _FakeIotClient:
@@ -125,7 +125,7 @@ class AwsCheckTests(unittest.TestCase):
                     "AWS_RIG_PROFILE": "rig",
                     "AWS_SHARED_CREDENTIALS_FILE": str(shared_credentials_file),
                     "AWS_CONFIG_FILE": str(aws_config_file),
-                    "THING_NAME": "txing",
+                    "THING_NAME": "unit-local",
                     "RIG_NAME": "rig",
                     "SPARKPLUG_GROUP_ID": "town",
                     "SPARKPLUG_EDGE_NODE_ID": "rig",
@@ -135,17 +135,17 @@ class AwsCheckTests(unittest.TestCase):
 
         self.assertTrue(all(result.ok for result in results))
         self.assertEqual(resolved["aws_region"], "eu-central-1")
-        self.assertEqual(resolved["thing_name"], "txing")
+        self.assertEqual(resolved["thing_name"], "unit-local")
         self.assertEqual(resolved["rig_name"], "rig")
 
-    def test_validate_txing_environment_reports_missing_values(self) -> None:
+    def test_validate_device_environment_reports_missing_values(self) -> None:
         results, _resolved = validate_service_environment(
-            "txing",
+            "device",
             {
                 "AWS_REGION": "eu-central-1",
                 "AWS_SHARED_CREDENTIALS_FILE": "/missing/aws.credentials",
                 "AWS_CONFIG_FILE": "/missing/aws.config",
-                "THING_NAME": "txing",
+                "THING_NAME": "unit-local",
                 "SCHEMA_FILE": "/missing/schema.json",
                 "BOARD_VIDEO_VIEWER_URL": "",
                 "BOARD_VIDEO_REGION": "eu-central-1",
@@ -155,7 +155,10 @@ class AwsCheckTests(unittest.TestCase):
         )
 
         failure_messages = [result.message for result in results if not result.ok]
-        self.assertIn("AWS runtime profile selector missing ($AWS_PROFILE or $AWS_TXING_PROFILE)", failure_messages)
+        self.assertIn(
+            "AWS runtime profile selector missing ($AWS_PROFILE or $AWS_DEVICE_PROFILE or $AWS_TXING_PROFILE)",
+            failure_messages,
+        )
         self.assertIn("AWS shared credentials file missing or not a file (/missing/aws.credentials)", failure_messages)
         self.assertIn("AWS config file missing or not a file (/missing/aws.config)", failure_messages)
         self.assertIn("Shadow schema file missing or not a file (/missing/schema.json)", failure_messages)
@@ -179,7 +182,7 @@ class AwsCheckTests(unittest.TestCase):
                     "AWS_RIG_PROFILE": "rig",
                     "AWS_SHARED_CREDENTIALS_FILE": str(shared_credentials_file),
                     "AWS_CONFIG_FILE": str(aws_config_file),
-                    "THING_NAME": "txing",
+                    "THING_NAME": "unit-local",
                     "RIG_NAME": "rig",
                     "SPARKPLUG_GROUP_ID": "town",
                     "SPARKPLUG_EDGE_NODE_ID": "rig",
@@ -190,7 +193,7 @@ class AwsCheckTests(unittest.TestCase):
 
         self.assertTrue(all(result.ok for result in results))
         self.assertEqual(runtime.sts.calls, 1)
-        self.assertEqual(runtime.iot.describe_thing_names, ["txing"])
+        self.assertEqual(runtime.iot.describe_thing_names, ["unit-local"])
         self.assertEqual(runtime.iot.describe_group_names, ["rig"])
         self.assertEqual(len(runtime.logs.created_streams), 1)
         self.assertEqual(runtime.logs.created_streams[0][0], "/town/rig/txing")
@@ -198,30 +201,30 @@ class AwsCheckTests(unittest.TestCase):
         self.assertEqual(runtime.logs.events[0][0], "/town/rig/txing")
         self.assertIsInstance(runtime.logs.events[0][2][0]["timestamp"], int)
 
-    def test_run_txing_service_check_uses_discovered_endpoint_and_video_region(self) -> None:
+    def test_run_device_service_check_uses_discovered_endpoint_and_video_region(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             temp_path = Path(tempdir)
             shared_credentials_file = temp_path / "aws.credentials"
             shared_credentials_file.write_text("[town]\n", encoding="utf-8")
             aws_config_file = temp_path / "aws.config"
-            aws_config_file.write_text("[profile txing]\n", encoding="utf-8")
+            aws_config_file.write_text("[profile device]\n", encoding="utf-8")
             schema_file = temp_path / "schema.json"
             schema_file.write_text("{}", encoding="utf-8")
             runtime = _FakeRuntime(endpoint="abc123-ats.iot.eu-central-1.amazonaws.com")
 
             results = run_service_check(
-                "txing",
+                "device",
                 environment={
                     "AWS_REGION": "eu-central-1",
-                    "AWS_TXING_PROFILE": "txing",
+                    "AWS_DEVICE_PROFILE": "device",
                     "AWS_SHARED_CREDENTIALS_FILE": str(shared_credentials_file),
                     "AWS_CONFIG_FILE": str(aws_config_file),
-                    "THING_NAME": "txing",
+                    "THING_NAME": "unit-local",
                     "SCHEMA_FILE": str(schema_file),
                     "BOARD_VIDEO_VIEWER_URL": "https://example.com/video",
                     "BOARD_VIDEO_REGION": "us-east-1",
-                    "BOARD_VIDEO_CHANNEL_NAME": "txing-board-video",
-                    "BOARD_VIDEO_SENDER_COMMAND": "/tmp/txing-board-kvs-master",
+                    "BOARD_VIDEO_CHANNEL_NAME": "unit-local-board-video",
+                    "BOARD_VIDEO_SENDER_COMMAND": "/tmp/bot-board-kvs-master",
                 },
                 aws_runtime=runtime,
             )
@@ -229,8 +232,8 @@ class AwsCheckTests(unittest.TestCase):
         self.assertTrue(all(result.ok for result in results))
         self.assertEqual(runtime.sts.calls, 1)
         self.assertEqual(runtime.iot.describe_thing_names, [])
-        self.assertEqual(runtime.iot_data.thing_names, ["txing"])
-        self.assertEqual(runtime.kinesisvideo.channel_names, ["txing-board-video"])
+        self.assertEqual(runtime.iot_data.thing_names, ["unit-local"])
+        self.assertEqual(runtime.kinesisvideo.channel_names, ["unit-local-board-video"])
         self.assertIn(
             (
                 "iot-data",

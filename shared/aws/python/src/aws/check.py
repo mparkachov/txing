@@ -12,10 +12,12 @@ from .auth import AwsRuntime, build_aws_runtime, ensure_aws_profile
 
 _SCOPE_LABELS = {
     "rig": "rig",
-    "txing": "txing",
+    "device": "device",
+    "txing": "device",
 }
 _SCOPE_PROFILE_ENV_NAMES = {
     "rig": ("AWS_PROFILE", "AWS_RIG_PROFILE"),
+    "device": ("AWS_PROFILE", "AWS_DEVICE_PROFILE", "AWS_TXING_PROFILE"),
     "txing": ("AWS_PROFILE", "AWS_TXING_PROFILE"),
 }
 
@@ -196,6 +198,8 @@ def _run_aws_check(
 def _build_runtime(scope: str, *, region_name: str) -> AwsRuntime:
     if scope == "rig":
         ensure_aws_profile("AWS_RIG_PROFILE")
+    elif scope == "device":
+        ensure_aws_profile("AWS_DEVICE_PROFILE", "AWS_TXING_PROFILE")
     else:
         ensure_aws_profile("AWS_TXING_PROFILE")
     return build_aws_runtime(region_name=region_name)
@@ -283,7 +287,7 @@ def _run_rig_connectivity_checks(
     return results
 
 
-def _run_txing_connectivity_checks(
+def _run_device_connectivity_checks(
     runtime: AwsRuntime,
     *,
     thing_name: str,
@@ -353,7 +357,7 @@ def run_service_check(
         return results
 
     results.extend(
-        _run_txing_connectivity_checks(
+        _run_device_connectivity_checks(
             runtime,
             thing_name=resolved_thing_name,
             video_channel_name=video_channel_name or resolved["video_channel_name"],
@@ -375,7 +379,7 @@ def _print_results(results: Sequence[CheckResult]) -> int:
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Shared AWS service preflight checks for txing Python runtimes",
+        description="Shared AWS service preflight checks for rig and device Python runtimes",
     )
     parser.add_argument(
         "--scope",
@@ -393,7 +397,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--video-channel-name",
         default="",
-        help="Override KVS signaling channel name for txing AWS probes",
+        help="Override KVS signaling channel name for device AWS probes",
     )
     return parser.parse_args(argv)
 

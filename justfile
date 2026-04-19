@@ -52,7 +52,7 @@ _project-aws-env scope='rig' region='' profile='' stack_name='' cognito_domain_p
     fi
 
     board_env_file=""
-    if [ "{{scope}}" = "txing" ]; then
+    if [ "{{scope}}" = "device" ]; then
       board_env_file="$(resolve_path "$(choose_value "{{board_env_file}}" "${BOARD_ENV_FILE:-config/board.env}")")"
       if [ -f "$board_env_file" ]; then
         # shellcheck disable=SC1090
@@ -62,12 +62,12 @@ _project-aws-env scope='rig' region='' profile='' stack_name='' cognito_domain_p
 
     aws_town_profile_default="${AWS_TOWN_PROFILE:-town}"
     aws_rig_profile_default="${AWS_RIG_PROFILE:-rig}"
-    aws_txing_profile_default="${AWS_TXING_PROFILE:-txing}"
+    aws_device_profile_default="${AWS_DEVICE_PROFILE:-device}"
     aws_selected_profile_default="$aws_rig_profile_default"
     if [ "{{scope}}" = "town" ]; then
       aws_selected_profile_default="$aws_town_profile_default"
-    elif [ "{{scope}}" = "txing" ]; then
-      aws_selected_profile_default="$aws_txing_profile_default"
+    elif [ "{{scope}}" = "device" ]; then
+      aws_selected_profile_default="$aws_device_profile_default"
     fi
 
     aws_region="$(choose_value "{{region}}" "${AWS_REGION:-eu-central-1}")"
@@ -83,11 +83,11 @@ _project-aws-env scope='rig' region='' profile='' stack_name='' cognito_domain_p
     sparkplug_group_id="${SPARKPLUG_GROUP_ID:-town}"
     sparkplug_edge_node_id="${SPARKPLUG_EDGE_NODE_ID:-rig}"
     cloudwatch_log_group="${CLOUDWATCH_LOG_GROUP:-/town/rig/txing}"
-    thing_name="${THING_NAME:-txing}"
-    schema_file="$(resolve_path "${SCHEMA_FILE:-docs/txing-shadow.schema.json}")"
+    thing_name="${THING_NAME:-unit-local}"
+    schema_file="$(resolve_path "${SCHEMA_FILE:-devices/unit/aws/shadow.schema.json}")"
     board_video_viewer_url="${BOARD_VIDEO_VIEWER_URL:-}"
     board_video_region="${BOARD_VIDEO_REGION:-eu-central-1}"
-    board_video_channel_name="${BOARD_VIDEO_CHANNEL_NAME:-txing-board-video}"
+    board_video_channel_name="${BOARD_VIDEO_CHANNEL_NAME:-$thing_name-board-video}"
     board_video_sender_command="${BOARD_VIDEO_SENDER_COMMAND:-}"
     kvs_dualstack_endpoints="${KVS_DUALSTACK_ENDPOINTS:-}"
     lg_wd="${LG_WD:-}"
@@ -122,7 +122,7 @@ _project-aws-env scope='rig' region='' profile='' stack_name='' cognito_domain_p
     export_line AWS_ADMIN_EMAIL "$aws_admin_email"
     export_line AWS_TOWN_PROFILE "$aws_town_profile"
     export_line AWS_RIG_PROFILE "$aws_rig_profile"
-    export_line AWS_TXING_PROFILE "$aws_txing_profile_default"
+    export_line AWS_DEVICE_PROFILE "$aws_device_profile_default"
     export_line AWS_SELECTED_PROFILE "$aws_selected_profile"
     export_line AWS_SHARED_CREDENTIALS_FILE "$aws_shared_credentials_file"
     export_line AWS_CONFIG_FILE "$aws_config_file"
@@ -230,16 +230,16 @@ _project-aws-env scope='rig' region='' profile='' stack_name='' cognito_domain_p
     command aws "$@"
 
 [positional-arguments]
-@aws-txing *args:
+@aws-device *args:
     #!/usr/bin/env bash
     set -euo pipefail
-    eval "$(just --justfile "{{root_dir}}/justfile" _project-aws-env txing)"
+    eval "$(just --justfile "{{root_dir}}/justfile" _project-aws-env device)"
     command aws "$@"
 
 mod rig 'rig/justfile'
-mod board 'board/justfile'
+mod board 'devices/unit/board/justfile'
 mod aws 'shared/aws/justfile'
-mod mcu 'mcu/justfile'
+mod mcu 'devices/unit/mcu/justfile'
 mod web 'web/justfile'
 
 @default:

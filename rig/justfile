@@ -7,7 +7,7 @@ built_rig_sparkplug_cmd := rig_dir + "/.venv/bin/rig-sparkplug-cmd"
 built_rig_sparkplug_log := rig_dir + "/.venv/bin/rig-sparkplug-log"
 project_root := rig_dir + "/.."
 root_justfile := project_root + "/justfile"
-thing_name := "txing"
+thing_name := "unit-local"
 region := ""
 aws_profile := ""
 aws_shared_credentials_file := ""
@@ -18,7 +18,7 @@ systemd_unit := "/etc/systemd/system/rig.service"
     cd "{{rig_dir}}" && uv sync --python "{{python_executable}}" --no-managed-python --no-python-downloads
 
 @build:
-    cd "{{rig_dir}}" && uv sync --frozen --no-editable --compile-bytecode --python "{{python_executable}}" --no-managed-python --no-python-downloads --refresh-package rig --reinstall-package rig --refresh-package aws --reinstall-package aws
+    cd "{{rig_dir}}" && uv sync --frozen --no-editable --compile-bytecode --python "{{python_executable}}" --no-managed-python --no-python-downloads --refresh-package rig --reinstall-package rig --refresh-package aws --reinstall-package aws --refresh-package unit-rig --reinstall-package unit-rig
     test -x "{{built_rig}}"
     test -x "{{built_rig_sparkplug_cmd}}"
     test -x "{{built_rig_sparkplug_log}}"

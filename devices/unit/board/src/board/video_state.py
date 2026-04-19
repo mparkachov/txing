@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-DEFAULT_VIDEO_CHANNEL_NAME = "txing-board-video"
+DEFAULT_VIDEO_CHANNEL_NAME = "unit-local-board-video"
 DEFAULT_VIDEO_CODEC = "h264"
 DEFAULT_VIDEO_STATE_FILE = Path("/tmp/txing_board_video_state.json")
 VIDEO_TRANSPORT = "aws-webrtc"

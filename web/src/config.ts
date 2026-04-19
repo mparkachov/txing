@@ -31,7 +31,7 @@ const buildConfig = () => {
   const cognitoUserPoolId = requireEnv('VITE_COGNITO_USER_POOL_ID') ?? ''
   const cognitoIdentityPoolId = requireEnv('VITE_COGNITO_IDENTITY_POOL_ID') ?? ''
   const iotPolicyName = requireEnv('VITE_IOT_POLICY_NAME') ?? ''
-  const thingName = requireEnv('VITE_TXING_THING_NAME') ?? 'txing'
+  const thingName = requireEnv('VITE_DEVICE_THING_NAME') ?? 'unit-local'
   const sparkplugGroupId = requireEnv('VITE_SPARKPLUG_GROUP_ID') ?? 'town'
   const sparkplugEdgeNodeId = requireEnv('VITE_SPARKPLUG_EDGE_NODE_ID') ?? 'rig'
 

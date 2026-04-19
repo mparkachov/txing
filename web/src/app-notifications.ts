@@ -25,7 +25,7 @@ export type AppNotificationInput = {
 
 export const runtimeNotificationLifetimeMs = 5_000;
 export const notificationLogSessionStorageKey =
-  "txing.runtime-notifications.log";
+  "device.runtime-notifications.log";
 
 const padTimestampPart = (value: number): string =>
   String(value).padStart(2, "0");

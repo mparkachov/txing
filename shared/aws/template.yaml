@@ -98,11 +98,11 @@ Resources:
             Action:
               - iot:Publish
               - iot:Receive
-            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txing/board/cmd_vel
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/*/board/cmd_vel
           - Sid: RigCmdVelTopicFilters
             Effect: Allow
             Action: iot:Subscribe
-            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/txing/board/cmd_vel
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/*/board/cmd_vel
           - Sid: RigThingShadowApi
             Effect: Allow
             Action:
@@ -168,57 +168,57 @@ Resources:
   TxingRuntimeManagedPolicy:
     Type: AWS::IAM::ManagedPolicy
     Properties:
-      Description: Attach to the txing endpoint runtime IAM role used by the device-side txing runtime.
-      ManagedPolicyName: !Sub ${AWS::StackName}-txing-runtime
+      Description: Attach to the device endpoint runtime IAM role used by registered device-side runtimes.
+      ManagedPolicyName: !Sub ${AWS::StackName}-device-runtime
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
-          - Sid: TxingMqttConnect
+          - Sid: DeviceMqttConnect
             Effect: Allow
             Action: iot:Connect
-            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/txing-*
-          - Sid: TxingShadowMqttTopics
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/device-*
+          - Sid: DeviceShadowMqttTopics
             Effect: Allow
             Action:
               - iot:Publish
               - iot:Receive
-            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/txing/shadow/*
-          - Sid: TxingShadowMqttTopicFilters
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/*/shadow/*
+          - Sid: DeviceShadowMqttTopicFilters
             Effect: Allow
             Action: iot:Subscribe
-            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/$aws/things/txing/shadow/*
-          - Sid: TxingCmdVelTopics
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/$aws/things/*/shadow/*
+          - Sid: DeviceCmdVelTopics
             Effect: Allow
             Action:
               - iot:Publish
               - iot:Receive
-            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txing/board/cmd_vel
-          - Sid: TxingCmdVelTopicFilters
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/*/board/cmd_vel
+          - Sid: DeviceCmdVelTopicFilters
             Effect: Allow
             Action: iot:Subscribe
-            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/txing/board/cmd_vel
-          - Sid: TxingThingShadowApi
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/*/board/cmd_vel
+          - Sid: DeviceThingShadowApi
             Effect: Allow
             Action: iot:GetThingShadow
-            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/txing
-          - Sid: TxingDescribeEndpoint
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/*
+          - Sid: DeviceDescribeEndpoint
             Effect: Allow
             Action: iot:DescribeEndpoint
             Resource: "*"
-          - Sid: TxingBoardVideoMaster
+          - Sid: DeviceBoardVideoMaster
             Effect: Allow
             Action:
               - kinesisvideo:DescribeSignalingChannel
               - kinesisvideo:GetSignalingChannelEndpoint
               - kinesisvideo:GetIceServerConfig
               - kinesisvideo:ConnectAsMaster
-            Resource: !GetAtt TxingBoardVideoChannel.Arn
+            Resource: "*"
 
   TxingRuntimeRole:
     Type: AWS::IAM::Role
     Properties:
-      Description: Town-scoped IAM role assumed by txing endpoint hosts for SigV4-authenticated MQTT over WebSockets.
-      RoleName: !Sub ${AWS::StackName}-txing-runtime
+      Description: Town-scoped IAM role assumed by registered device endpoint hosts for SigV4-authenticated MQTT over WebSockets.
+      RoleName: !Sub ${AWS::StackName}-device-runtime
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -232,20 +232,15 @@ Resources:
   TxingBootstrapManagedPolicy:
     Type: AWS::IAM::ManagedPolicy
     Properties:
-      Description: Attach to the bootstrap IAM principal distributed to txing endpoint hosts; grants only sts:AssumeRole for the txing runtime role.
-      ManagedPolicyName: !Sub ${AWS::StackName}-txing-bootstrap-assume-role
+      Description: Attach to the bootstrap IAM principal distributed to device endpoint hosts; grants only sts:AssumeRole for the device runtime role.
+      ManagedPolicyName: !Sub ${AWS::StackName}-device-bootstrap-assume-role
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
-          - Sid: AssumeTxingRuntimeRole
+          - Sid: AssumeDeviceRuntimeRole
             Effect: Allow
             Action: sts:AssumeRole
             Resource: !GetAtt TxingRuntimeRole.Arn
-
-  TxingThing:
-    Type: AWS::IoT::Thing
-    Properties:
-      ThingName: txing
 
   TxingFleetIndexingRole:
     Type: AWS::IAM::Role
@@ -369,17 +364,10 @@ Resources:
       ThingIndexingMode: REGISTRY
       ThingConnectivityIndexingMode: "OFF"
 
-  TxingBoardVideoChannel:
-    Type: AWS::KinesisVideo::SignalingChannel
-    Properties:
-      Name: txing-board-video
-      Type: SINGLE_MASTER
-      MessageTtlSeconds: 60
-
   TxingBoardVideoSenderManagedPolicy:
     Type: AWS::IAM::ManagedPolicy
     Properties:
-      Description: Attach to the AWS principal used by the board video sender.
+      Description: Attach to the AWS principal used by per-device board video senders.
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -390,12 +378,12 @@ Resources:
               - kinesisvideo:GetSignalingChannelEndpoint
               - kinesisvideo:GetIceServerConfig
               - kinesisvideo:ConnectAsMaster
-            Resource: !GetAtt TxingBoardVideoChannel.Arn
+            Resource: "*"
 
   TxingGatewayPolicy:
     Type: AWS::IoT::Policy
     Properties:
-      PolicyName: town-rig-txing-policy
+      PolicyName: town-rig-device-policy
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -403,7 +391,7 @@ Resources:
             Effect: Allow
             Action: iot:Connect
             Resource:
-              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/txing-*
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/device-*
               - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/rig-*
           - Sid: ThingShadow
             Effect: Allow
@@ -436,11 +424,11 @@ Resources:
             Action:
               - iot:Publish
               - iot:Receive
-            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txing/board/cmd_vel
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/*/board/cmd_vel
           - Sid: CmdVelSubscribe
             Effect: Allow
             Action: iot:Subscribe
-            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/txing/board/cmd_vel
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/*/board/cmd_vel
 
   TxingWebAdminIotPolicy:
     Type: AWS::IoT::Policy
@@ -480,17 +468,17 @@ Resources:
           - Sid: SparkplugCommandPublish
             Effect: Allow
             Action: iot:Publish
-            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/spBv1.0/town/DCMD/rig/txing
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/spBv1.0/*/DCMD/*/*
           - Sid: CmdVelPublishReceive
             Effect: Allow
             Action:
               - iot:Publish
               - iot:Receive
-            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txing/board/cmd_vel
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/*/board/cmd_vel
           - Sid: CmdVelSubscribe
             Effect: Allow
             Action: iot:Subscribe
-            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/txing/board/cmd_vel
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/*/board/cmd_vel
 
   TxingAdminUserPool:
     Type: AWS::Cognito::UserPool
@@ -712,25 +700,25 @@ Resources:
               - Sid: SparkplugCommandPublish
                 Effect: Allow
                 Action: iot:Publish
-                Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/spBv1.0/town/DCMD/rig/txing
+                Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/spBv1.0/*/DCMD/*/*
               - Sid: CmdVelPublishReceive
                 Effect: Allow
                 Action:
                   - iot:Publish
                   - iot:Receive
-                Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txing/board/cmd_vel
+                Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/*/board/cmd_vel
               - Sid: CmdVelSubscribe
                 Effect: Allow
                 Action: iot:Subscribe
-                Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/txing/board/cmd_vel
+                Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/*/board/cmd_vel
               - Sid: BoardVideoViewer
                 Effect: Allow
                 Action:
-                  - kinesisvideo:DescribeSignalingChannel
-                  - kinesisvideo:GetSignalingChannelEndpoint
-                  - kinesisvideo:GetIceServerConfig
-                  - kinesisvideo:ConnectAsViewer
-                Resource: !GetAtt TxingBoardVideoChannel.Arn
+              - kinesisvideo:DescribeSignalingChannel
+              - kinesisvideo:GetSignalingChannelEndpoint
+              - kinesisvideo:GetIceServerConfig
+              - kinesisvideo:ConnectAsViewer
+            Resource: "*"
 
   TxingAdminIdentityPoolRoleAttachment:
     Type: AWS::Cognito::IdentityPoolRoleAttachment
@@ -761,39 +749,24 @@ Outputs:
   RigBootstrapManagedPolicyArn:
     Description: Attach this managed policy to the bootstrap IAM principal whose access keys are distributed to rigs.
     Value: !Ref TxingRigBootstrapManagedPolicy
-  TxingRuntimeRoleArn:
-    Description: Town-scoped IAM role to assume from txing endpoint hosts for SigV4-authenticated MQTT over WebSockets.
+  DeviceRuntimeRoleArn:
+    Description: Town-scoped IAM role to assume from registered device endpoint hosts for SigV4-authenticated MQTT over WebSockets.
     Value: !GetAtt TxingRuntimeRole.Arn
-  TxingRuntimeRoleName:
-    Description: Name of the town-scoped txing runtime IAM role.
+  DeviceRuntimeRoleName:
+    Description: Name of the town-scoped device runtime IAM role.
     Value: !Ref TxingRuntimeRole
-  TxingRuntimeManagedPolicyArn:
-    Description: Managed policy attached to the txing endpoint runtime role.
+  DeviceRuntimeManagedPolicyArn:
+    Description: Managed policy attached to the registered device runtime role.
     Value: !Ref TxingRuntimeManagedPolicy
-  TxingBootstrapManagedPolicyArn:
-    Description: Attach this managed policy to the bootstrap IAM principal whose access keys are distributed to txing endpoint hosts.
+  DeviceBootstrapManagedPolicyArn:
+    Description: Attach this managed policy to the bootstrap IAM principal whose access keys are distributed to device endpoint hosts.
     Value: !Ref TxingBootstrapManagedPolicy
   ThingIndexingMode:
     Description: AWS IoT fleet indexing mode configured by the stack.
     Value: !GetAtt TxingFleetIndexingConfiguration.ThingIndexingMode
-  BoardVideoChannelArn:
-    Description: ARN of the txing board KVS signaling channel.
-    Value: !GetAtt TxingBoardVideoChannel.Arn
-  BoardVideoChannelName:
-    Description: Fixed signaling channel name for the current board video path.
-    Value: txing-board-video
   BoardVideoSenderManagedPolicyArn:
     Description: Attach this managed policy to the AWS principal used by the board video sender.
     Value: !Ref TxingBoardVideoSenderManagedPolicy
-  ThingName:
-    Description: Fixed IoT Thing name used by the field device.
-    Value: !Ref TxingThing
-  ThingArn:
-    Description: ARN of the txing IoT Thing.
-    Value: !GetAtt TxingThing.Arn
-  ShadowUpdateTopic:
-    Description: Reserved MQTT topic for Thing Shadow updates.
-    Value: !Sub "$aws/things/${TxingThing}/shadow/update"
   PolicyName:
     Description: IoT policy retained for certificate-authenticated board or legacy device clients.
     Value: !Ref TxingGatewayPolicy

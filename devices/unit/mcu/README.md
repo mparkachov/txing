@@ -6,7 +6,7 @@ Firmware for nRF52840 (Seeed XIAO BLE Sense) with BLE sleep control.
 
 - `src/main.rs`: device firmware
 - `../docs/device-rig-shadow-spec.md`: rig contract (Shadow + BLE only)
-- `../docs/txing-shadow.schema.json`: canonical Thing Shadow JSON schema
+- `../aws/shadow.schema.json`: canonical Thing Shadow JSON schema
 
 ## Firmware Behavior (Summary)
 

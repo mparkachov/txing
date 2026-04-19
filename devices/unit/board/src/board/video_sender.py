@@ -188,12 +188,17 @@ def _build_supervisor_environment(
             environment.pop("AWS_SESSION_TOKEN", None)
         environment.pop("AWS_PROFILE", None)
         environment.pop("AWS_DEFAULT_PROFILE", None)
+        environment.pop("AWS_DEVICE_PROFILE", None)
         environment.pop("AWS_TXING_PROFILE", None)
         environment.pop(DEFAULT_AWS_SHARED_CREDENTIALS_FILE_ENV, None)
         environment.pop(DEFAULT_AWS_CONFIG_FILE_ENV, None)
         return environment
 
-    profile = environment.get("AWS_PROFILE", "").strip() or environment.get("AWS_TXING_PROFILE", "").strip()
+    profile = (
+        environment.get("AWS_PROFILE", "").strip()
+        or environment.get("AWS_DEVICE_PROFILE", "").strip()
+        or environment.get("AWS_TXING_PROFILE", "").strip()
+    )
     if profile:
         environment["AWS_PROFILE"] = profile
         environment.setdefault("AWS_DEFAULT_PROFILE", profile)
@@ -327,13 +332,13 @@ class VideoSenderProcess:
         )
         reader_thread = threading.Thread(
             target=self._forward_sender_stdout,
-            name="txing-board-video-sender-stdout",
+            name="bot-board-video-sender-stdout",
             daemon=True,
         )
         reader_thread.start()
         error_thread = threading.Thread(
             target=self._forward_sender_stderr,
-            name="txing-board-video-sender-stderr",
+            name="bot-board-video-sender-stderr",
             daemon=True,
         )
         error_thread.start()
@@ -375,7 +380,7 @@ class VideoSenderProcess:
         for raw_line in process.stdout:
             line = raw_line.rstrip()
             if line:
-                print(f"[txing-board-video-sender] {line}", flush=True)
+                print(f"[bot-board-video-sender] {line}", flush=True)
             self._handle_output_line(line)
 
     def _forward_sender_stderr(self) -> None:
@@ -386,7 +391,7 @@ class VideoSenderProcess:
         for raw_line in process.stderr:
             line = raw_line.rstrip()
             if line:
-                print(f"[txing-board-video-sender] {line}", file=sys.stderr, flush=True)
+                print(f"[bot-board-video-sender] {line}", file=sys.stderr, flush=True)
             self._handle_output_line(line)
 
     def _handle_output_line(self, line: str) -> None:
@@ -680,7 +685,7 @@ def main() -> None:
         os.environ.pop(DEFAULT_AWS_SHARED_CREDENTIALS_FILE_ENV, None)
         os.environ.pop(DEFAULT_AWS_CONFIG_FILE_ENV, None)
     else:
-        ensure_aws_profile("AWS_TXING_PROFILE")
+        ensure_aws_profile("AWS_DEVICE_PROFILE", "AWS_TXING_PROFILE")
     runtime = VideoSenderProcess(
         VideoSenderRuntimeConfig(
             region=args.region,

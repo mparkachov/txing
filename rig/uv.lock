@@ -214,6 +214,7 @@ dependencies = [
     { name = "awsiotsdk" },
     { name = "bleak" },
     { name = "boto3" },
+    { name = "unit-rig" },
     { name = "watchtower" },
 ]
 
@@ -223,6 +224,7 @@ requires-dist = [
     { name = "awsiotsdk", specifier = ">=1.22,<2" },
     { name = "bleak", specifier = ">=0.22,<1" },
     { name = "boto3", specifier = ">=1.34,<2" },
+    { name = "unit-rig", directory = "../devices/unit/rig/python" },
     { name = "watchtower", specifier = ">=3.3,<4" },
 ]
 
@@ -245,6 +247,27 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/94/e7/b2c673351809dca68a0e064b6af791aa332cf192da575fd474ed7d6f16a2/six-1.17.0.tar.gz", hash = "sha256:ff70335d468e7eb6ec65b95b99d3a2836546063f63acc5171de367e834932a81", size = 34031, upload-time = "2024-12-04T17:35:28.174Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl", hash = "sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274", size = 11050, upload-time = "2024-12-04T17:35:26.475Z" },
+]
+
+[[package]]
+name = "unit-rig"
+version = "0.2.0"
+source = { directory = "../devices/unit/rig/python" }
+dependencies = [
+    { name = "aws" },
+    { name = "awsiotsdk" },
+    { name = "bleak" },
+    { name = "boto3" },
+    { name = "watchtower" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aws", directory = "../shared/aws/python" },
+    { name = "awsiotsdk", specifier = ">=1.22,<2" },
+    { name = "bleak", specifier = ">=0.22,<1" },
+    { name = "boto3", specifier = ">=1.34,<2" },
+    { name = "watchtower", specifier = ">=3.3,<4" },
 ]
 
 [[package]]

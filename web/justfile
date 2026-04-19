@@ -11,6 +11,7 @@ web_dist_dir := web_dir + "/dist"
 @install:
     cd "{{web_dir}}"
     bun install
+    ln -snf ../../../web/node_modules "{{project_root}}/devices/unit/web/node_modules"
 
 @dev:
     cd "{{web_dir}}"
@@ -145,7 +146,7 @@ web_dist_dir := web_dir + "/dist"
 
     printf '%s\n' \
       "VITE_AWS_REGION=$region" \
-      "VITE_TXING_THING_NAME=txing" \
+      "VITE_DEVICE_THING_NAME=unit-local" \
       "VITE_SPARKPLUG_GROUP_ID=town" \
       "VITE_SPARKPLUG_EDGE_NODE_ID=rig" \
       "VITE_COGNITO_DOMAIN=$cognito_domain" \

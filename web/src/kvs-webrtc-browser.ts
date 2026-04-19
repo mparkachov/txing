@@ -1,7 +1,7 @@
 const kvsWebRtcBrowserSdkUrl =
   'https://unpkg.com/amazon-kinesis-video-streams-webrtc@2.6.1/dist/kvs-webrtc.min.js'
 
-const kvsWebRtcBrowserSdkScriptId = 'txing-kvs-webrtc-browser-sdk'
+const kvsWebRtcBrowserSdkScriptId = 'device-kvs-webrtc-browser-sdk'
 
 type KvsWebRtcRole = {
   VIEWER: string

@@ -1,0 +1,10 @@
+type = "example"
+device_name = "example-device"
+display_name = "Example Device"
+shadow_schema = "devices/example/aws/shadow.schema.json"
+default_shadow = "devices/example/aws/default-shadow.json"
+rig_adapter = "example_rig.runtime"
+web_adapter = "example"
+
+[resources]
+# Declare any registration-time resources here.

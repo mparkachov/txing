@@ -1,9 +1,9 @@
 # txing agent guide
 
 ## Repository structure
-- `mcu/`: Rust firmware subproject for the MCU.
+- `devices/unit/mcu/`: Rust firmware subproject for the current `unit` device type MCU.
 - `rig/`: Python subproject for the Raspberry Pi 5 rig runtime (AWS IoT MQTT + BLE communication with MCU).
-- `board/`: Python subproject for the device-side Raspberry Pi board control (AWS IoT MQTT shadow control/reporting).
+- `devices/unit/board/`: Python subproject for the current `unit` device-side Raspberry Pi board control (AWS IoT MQTT shadow control/reporting).
 - `web/`: React/Vite SPA for admin management of Thing Shadow.
 
 ## Working rules
@@ -33,8 +33,8 @@ Rules:
 - Keep `AGENTS.md` focused on stable instructions, not transient task lists.
 
 ## Shared contracts
-- Thing Shadow schema source of truth: `docs/txing-shadow.schema.json`.
-- Current rig-era shadow + BLE compatibility contract: `docs/device-rig-shadow-spec.md`.
+- Thing Shadow schema source of truth for the current `unit` device type: `devices/unit/aws/shadow.schema.json`.
+- Current rig-era shadow + BLE compatibility contract: `devices/unit/docs/device-rig-shadow-spec.md`.
 - Sparkplug lifecycle design: `docs/sparkplug-lifecycle.md`.
 - Ownership rule: `rig` owns the `mcu.*` shadow subtree contract.
 - Ownership rule: `board` owns the `board.*` shadow subtree contract.
@@ -46,7 +46,7 @@ Rules:
 - `board.video_sender` writes local runtime state and probes supervised sender readiness, but it does not publish to AWS IoT directly.
 - The browser operator path uses the AWS KVS viewer flow, not a board-local iframe page.
 - The repo ships the native sender in-tree and supervises it as a child process from `board.video_sender`.
-- Browser-to-board motion control currently stays out of the media path on `txing/board/cmd_vel`.
+- Browser-to-board motion control currently stays out of the media path on `<device_id>/board/cmd_vel`.
 
 ## Terminology
 - `power=true` means the device is in the wakeup state.

@@ -7,7 +7,7 @@
 ## Notes
 - Run Python and `uv` commands from `rig/`.
 - Follow repository-level rule: do not create commits unless explicitly requested by the user.
-- Use `../docs/txing-shadow.schema.json` as the canonical shadow JSON structure.
+- Use `../devices/unit/aws/shadow.schema.json` as the canonical shadow JSON structure for the current `unit` device type.
 - `rig` owns and evolves the `mcu.*` shadow subtree contract.
 
 ## Shared workflow

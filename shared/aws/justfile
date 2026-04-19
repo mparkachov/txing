@@ -8,12 +8,12 @@ stack_name := ""
 template_file := "template.yaml"
 region := ""
 profile := ""
-thing_name := "txing"
+thing_name := "unit-local"
 rig_name := "rig"
-policy_name := "town-rig-txing-policy"
+policy_name := "town-rig-device-policy"
 log_group_name := "/town/rig/txing"
 local_state_dir := project_root + "/.state/aws"
-default_shadow_file := "default-shadow.json"
+default_shadow_file := project_root + "/devices/unit/aws/default-shadow.json"
 localhost_app_url := "http://localhost:5173"
 localhost_alt_app_url := "http://127.0.0.1:5173"
 thing_index_name := "AWS_Things"
@@ -293,7 +293,7 @@ thing_index_name := "AWS_Things"
 
     echo "Admin user password set."
 
-@check thing_name=thing_name rig_name=rig_name log_group_name=log_group_name video_channel_name='' region=region profile=profile txing_profile='':
+@check thing_name=thing_name rig_name=rig_name log_group_name=log_group_name video_channel_name='' region=region profile=profile device_profile='':
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
@@ -359,7 +359,7 @@ thing_index_name := "AWS_Things"
     if ! run_python_service_check rig "{{profile}}" --thing-name "{{thing_name}}" --rig-name "{{rig_name}}" --log-group-name "{{log_group_name}}"; then
       failures=$((failures + 1))
     fi
-    if ! run_python_service_check txing "{{txing_profile}}" --thing-name "{{thing_name}}" --video-channel-name "$video_channel_name"; then
+    if ! run_python_service_check device "{{device_profile}}" --thing-name "{{thing_name}}" --video-channel-name "$video_channel_name"; then
       failures=$((failures + 1))
     fi
 
@@ -516,7 +516,7 @@ thing_index_name := "AWS_Things"
       jq -nc \
         --arg rig "{{rig_name}}" \
         '{
-           thingGroupDescription: ("Dynamic txing membership for rig " + $rig),
+           thingGroupDescription: ("Dynamic device membership for rig " + $rig),
            attributePayload: {
              attributes: {
                rig: $rig
@@ -551,12 +551,12 @@ thing_index_name := "AWS_Things"
       --query "{thingGroupName: thingGroupName, queryString: queryString, thingGroupDescription: thingGroupProperties.thingGroupDescription}" \
       --output table
 
-@assign-rig thing_name rig_name=rig_name region=region profile=profile ble_device_id='':
+@register-device town rig device_type region=region profile=profile:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
 
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{profile}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}")"
     region="$AWS_REGION"
     profile="$AWS_SELECTED_PROFILE"
 
@@ -570,27 +570,46 @@ thing_index_name := "AWS_Things"
       aws_flags+=(--profile "$profile")
     fi
 
-    attribute_payload="$(
-      jq -nc \
-        --arg rig "{{rig_name}}" \
-        --arg ble_device_id "{{ble_device_id}}" \
-        'if $ble_device_id == "" then
-           {attributes: {rig: $rig}, merge: true}
-         else
-           {attributes: {rig: $rig, bleDeviceId: $ble_device_id}, merge: true}
-         end'
-    )"
+    uv run --project "{{aws_dir}}/python" \
+      python -m aws.device_registry \
+      --region "$region" \
+      register \
+      --town "{{town}}" \
+      --rig "{{rig}}" \
+      --device-type "{{device_type}}"
 
-    aws iot update-thing \
-      --thing-name "{{thing_name}}" \
-      --attribute-payload "$attribute_payload" \
-      "${aws_flags[@]}"
+@assign-device device_id town rig region=region profile=profile:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{aws_dir}}"
 
-    aws iot describe-thing \
-      --thing-name "{{thing_name}}" \
-      "${aws_flags[@]}" \
-      --query "{thingName: thingName, rig: attributes.rig, bleDeviceId: attributes.bleDeviceId, version: version}" \
-      --output table
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}")"
+    region="$AWS_REGION"
+    profile="$AWS_SELECTED_PROFILE"
+
+    if [ -z "$region" ]; then
+      echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
+      exit 1
+    fi
+
+    aws_flags=(--region "$region")
+    if [ -n "$profile" ]; then
+      aws_flags+=(--profile "$profile")
+    fi
+
+    uv run --project "{{aws_dir}}/python" \
+      python -m aws.device_registry \
+      --region "$region" \
+      assign \
+      --device-id "{{device_id}}" \
+      --town "{{town}}" \
+      --rig "{{rig}}"
+
+@assign-rig thing_name rig_name=rig_name region=region profile=profile:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "aws::assign-rig is deprecated; use aws::assign-device device_id=<id> town=<town> rig=<rig> instead." >&2
+    exit 1
 
 @things-for-rig rig_name=rig_name region=region profile=profile:
     #!/usr/bin/env bash
@@ -636,7 +655,14 @@ thing_index_name := "AWS_Things"
         jq -cn \
           --argjson rows "$result" \
           --argjson thing "$thing_json" \
-          '$rows + [{thingName: $thing.thingName, rig: ($thing.attributes.rig // null), bleDeviceId: ($thing.attributes.bleDeviceId // null)}]'
+          '$rows + [{
+            thingName: $thing.thingName,
+            town: ($thing.attributes.town // null),
+            rig: ($thing.attributes.rig // null),
+            deviceType: ($thing.attributes.deviceType // null),
+            deviceName: ($thing.attributes.deviceName // null),
+            bleDeviceId: ($thing.attributes.bleDeviceId // null)
+          }]'
       )"
     done
 

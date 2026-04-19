@@ -2,7 +2,7 @@
 # `town` is the direct profile for the AWS account that owns the resources.
 # `rig` assumes the runtime role created by the stack output `RigRuntimeRoleArn`
 # using `town` as its source credentials.
-# `txing` assumes the runtime role created by the stack output `TxingRuntimeRoleArn`
+# `device` assumes the runtime role created by the stack output for registered device hosts
 # using `town` as its source credentials.
 
 [profile town]
@@ -13,7 +13,7 @@ region = eu-central-1
 role_arn = arn:aws:iam::123456789012:role/town-rig-runtime
 source_profile = town
 
-[profile txing]
+[profile device]
 region = eu-central-1
-role_arn = arn:aws:iam::123456789012:role/town-txing-runtime
+role_arn = arn:aws:iam::123456789012:role/town-device-runtime
 source_profile = town

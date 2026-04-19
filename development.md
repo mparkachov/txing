@@ -4,13 +4,13 @@ For a high-level device overview, see [README.md](./README.md).
 
 Monorepo root for `txing`.
 
-- MCU firmware lives in `mcu/` (Rust).
+- MCU firmware for the current `unit` device type lives in `devices/unit/mcu/` (Rust).
 - Rig software lives in `rig/` (Python, direct AWS IoT MQTT + BLE bridge).
-- Device-side Raspberry Pi reporter lives in `board/` (Python, direct AWS IoT MQTT shadow reporting).
+- Device-side Raspberry Pi reporter for the current `unit` device type lives in `devices/unit/board/` (Python, direct AWS IoT MQTT shadow reporting).
 - Web admin SPA lives in `web/` (React + Vite).
 - Shared docs live in `docs/`.
-- Thing Shadow contract schema lives in `docs/txing-shadow.schema.json`.
-- Thing Shadow guidance lives in `docs/thing-shadow.md`.
+- Thing Shadow contract schema for the current `unit` device type lives in `devices/unit/aws/shadow.schema.json`.
+- Thing Shadow guidance for the current `unit` device type lives in `devices/unit/docs/thing-shadow.md`.
 - High-level paths:
   - `AWS IoT Device Shadow -> MQTT -> rig -> BLE -> mcu`
   - `AWS IoT Device Shadow -> MQTT -> board`
@@ -28,7 +28,7 @@ Copy `config/aws.env.example` to `config/aws.env`, `config/aws.credentials.examp
 If you are working on the rig runtime, also copy `config/rig.env.example` to `config/rig.env` and edit the rig-local runtime settings there.
 If you are working on the device-side board runtime, also copy `config/board.env.example` to `config/board.env` and edit the board-local runtime settings there.
 Use `just aws-rig ...` for AWS CLI commands with the project rig/runtime profile and `just aws-town ...` for AWS CLI commands with the direct town account profile.
-Use `just aws-txing ...` for AWS CLI commands with the txing endpoint runtime profile.
+Use `just aws-device ...` for AWS CLI commands with the device endpoint runtime profile.
 
 ## Task Runner
 
@@ -89,7 +89,7 @@ just aws::shadow
 just aws::shadow-reset
 ```
 
-`aws::shadow-reset` deletes the current classic shadow document and reseeds it from `shared/aws/default-shadow.json`, which represents the clean offline/powered-down state with stale desired power requests removed.
+`aws::shadow-reset` deletes the current classic shadow document and reseeds it from `devices/unit/aws/default-shadow.json`, which represents the clean offline/powered-down state with stale desired power requests removed.
 
 The web admin does not use API Gateway. After Cognito sign-in, the SPA exchanges the user pool token for temporary AWS credentials through a Cognito Identity Pool and calls AWS IoT Thing Shadow directly.
 

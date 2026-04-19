@@ -1,6 +1,6 @@
 # txing web admin
 
-SPA for reading the `txing` Thing Shadow and publishing lifecycle commands.
+SPA shell for reading the current device Thing Shadow and publishing lifecycle commands.
 
 ## Scope (v1)
 
@@ -18,7 +18,7 @@ SPA for reading the `txing` Thing Shadow and publishing lifecycle commands.
   - board video uses KVS WebRTC signaling from the `/video` route
   - Cognito hosted UI redirects, Cognito `/oauth2/token`, Cognito Identity, IoT `AttachPolicy`, and IoT `DescribeEndpoint` still use HTTPS
 - Default identity:
-  - txing thing name: `txing`
+  - device thing name: `unit-local`
   - Sparkplug group id: `town`
   - Sparkplug edge node id: `rig`
 
@@ -50,7 +50,7 @@ cp web/.env.example web/.env.local
 Then fill `web/.env.local`:
 
 - `VITE_AWS_REGION`
-- `VITE_TXING_THING_NAME`
+- `VITE_DEVICE_THING_NAME`
 - `VITE_SPARKPLUG_GROUP_ID`
 - `VITE_SPARKPLUG_EDGE_NODE_ID`
 - `VITE_COGNITO_DOMAIN`
@@ -124,7 +124,7 @@ Relevant outputs:
 - `WebIotPolicyName` -> `VITE_IOT_POLICY_NAME`
 - `WebExpectedAdminEmail` -> `VITE_ADMIN_EMAIL`
 
-`web::write-env` writes `VITE_AWS_REGION`, `VITE_TXING_THING_NAME`, `VITE_SPARKPLUG_GROUP_ID`, and `VITE_SPARKPLUG_EDGE_NODE_ID` plus the Cognito stack outputs. The app resolves the AWS IoT Data-ATS endpoint dynamically at runtime and reuses it for both shadow and Sparkplug MQTT/WSS connections.
+`web::write-env` writes `VITE_AWS_REGION`, `VITE_DEVICE_THING_NAME`, `VITE_SPARKPLUG_GROUP_ID`, and `VITE_SPARKPLUG_EDGE_NODE_ID` plus the Cognito stack outputs. The app resolves the AWS IoT Data-ATS endpoint dynamically at runtime and reuses it for both shadow and Sparkplug MQTT/WSS connections.
 
 On the first MQTT shadow connect after a new sign-in, the SPA may briefly retry while the IoT policy attachment propagates for the Cognito identity.
 The current implementation still performs HTTPS auth/bootstrap calls after sign-in for Cognito token refresh, Cognito Identity, and IoT policy attachment; the live shadow view and Sparkplug command transport use MQTT/WSS.

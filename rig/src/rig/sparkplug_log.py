@@ -11,7 +11,7 @@ from aws.auth import build_aws_runtime, resolve_aws_region
 from aws.mqtt import AwsIotWebsocketConnection, AwsMqttConnectionConfig
 from .sparkplug import build_device_topic, decode_payload, decode_redcon_command
 
-DEFAULT_THING_NAME = "txing"
+DEFAULT_THING_NAME = "unit-local"
 DEFAULT_SPARKPLUG_GROUP_ID = "town"
 DEFAULT_SPARKPLUG_EDGE_NODE_ID = "rig"
 DEFAULT_MESSAGE_TYPE = "both"
@@ -48,7 +48,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--thing-name",
         default=_env_text(DEFAULT_THING_NAME_ENV, DEFAULT_THING_NAME),
-        help="Sparkplug device id / txing thing name (default: txing)",
+        help="Sparkplug device id / AWS IoT thing name (default: unit-local)",
     )
     parser.add_argument(
         "--sparkplug-group-id",

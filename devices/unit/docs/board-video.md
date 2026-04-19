@@ -70,7 +70,7 @@ The current implementation uses `reported.board.video` to describe the plain AWS
           "transport": "aws-webrtc",
           "session": {
             "viewerUrl": "https://ops.example.com/txing/video",
-            "channelName": "txing-board-video"
+            "channelName": "unit-local-board-video"
           },
           "codec": {
             "video": "h264"

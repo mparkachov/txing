@@ -5,7 +5,7 @@ python_executable := "python3"
 built_board := board_dir + "/.venv/bin/board"
 built_board_video_sender := board_dir + "/.venv/bin/board-video-sender"
 built_board_motor_raw := board_dir + "/.venv/bin/board-motor-raw"
-project_root := board_dir + "/.."
+project_root := board_dir + "/../../.."
 root_justfile := project_root + "/justfile"
 native_kvs_master_dir := board_dir + "/kvs_master"
 native_kvs_master_build_dir := native_kvs_master_dir + "/build"
@@ -41,13 +41,13 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
 @aws *args:
     #!/usr/bin/env bash
     set -euo pipefail
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env txing)"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env device)"
     command aws "$@"
 
 @check thing_name='' video_channel_name='' region=region aws_profile=aws_profile:
     #!/usr/bin/env bash
     set -euo pipefail
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env txing "{{region}}" "{{aws_profile}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "{{aws_profile}}")"
     thing_name="$THING_NAME"
     video_channel_name="$BOARD_VIDEO_CHANNEL_NAME"
     if [ -n "{{thing_name}}" ]; then
@@ -59,7 +59,7 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
 
     uv run --project "{{project_root}}/shared/aws/python" \
       python -m aws.check \
-      --scope txing \
+      --scope device \
       --thing-name "$thing_name" \
       --video-channel-name "$video_channel_name"
 
@@ -194,7 +194,7 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
         echo "Missing built board executable at {{built_board}}. Run 'just build' first." >&2; \
         exit 1; \
     }
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env txing "{{region}}" "{{aws_profile}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "{{aws_profile}}")"
     cd "{{board_dir}}" && "{{built_board}}"
 
 @once:
@@ -204,19 +204,19 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
         echo "Missing built board executable at {{built_board}}. Run 'just build' first." >&2; \
         exit 1; \
     }
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env txing "{{region}}" "{{aws_profile}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "{{aws_profile}}")"
     cd "{{board_dir}}" && "{{built_board}}" --once
 
 @dev:
     #!/usr/bin/env bash
     set -euo pipefail
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env txing "{{region}}" "{{aws_profile}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "{{aws_profile}}")"
     cd "{{board_dir}}" && uv run board
 
 @once-dev:
     #!/usr/bin/env bash
     set -euo pipefail
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env txing "{{region}}" "{{aws_profile}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "{{aws_profile}}")"
     cd "{{board_dir}}" && uv run board --once
 
 @motor-raw left='' right='' duration='' region=region aws_profile=aws_profile:
@@ -230,7 +230,7 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
         echo "Both left= and right= are required. Example: just board::motor-raw left=240 right=240" >&2; \
         exit 1; \
     fi
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env txing "{{region}}" "{{aws_profile}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "{{aws_profile}}")"
     preserve_env=(
         LG_WD
         BOARD_DRIVE_RAW_MAX_SPEED
@@ -263,7 +263,7 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
         echo "Missing built board executable at {{built_board}}. Run 'just build' first." >&2; \
         exit 1; \
     }
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env txing "{{region}}" "{{aws_profile}}" "" "" "" "{{aws_shared_credentials_file}}" "{{aws_config_file}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "{{aws_profile}}" "" "" "" "{{aws_shared_credentials_file}}" "{{aws_config_file}}")"
     project_root="$TXING_PROJECT_ROOT"
     env_file="$AWS_ENV_FILE"
     board_env_file="$BOARD_ENV_FILE"

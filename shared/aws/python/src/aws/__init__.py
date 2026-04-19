@@ -9,6 +9,22 @@ from .auth import (
     freeze_session_credentials,
     resolve_aws_region,
 )
+from .device_catalog import (
+    DeviceCatalogError,
+    DeviceManifest,
+    DeviceManifestError,
+    DeviceTypeNotFoundError,
+    discover_repo_root,
+    list_loadable_device_types,
+    load_device_manifest,
+)
+from .device_registry import (
+    AwsDeviceRegistry,
+    DeviceRegistration,
+    DeviceRegistryError,
+    build_device_id,
+    normalize_registry_text,
+)
 from .mqtt import (
     AWS_IOT_SDK_IMPORT_ERROR,
     AwsIotWebsocketConnection,
@@ -21,13 +37,25 @@ __all__ = [
     "AWS_IOT_DATA_ENDPOINT_TYPE",
     "AWS_IOT_SDK_IMPORT_ERROR",
     "BOTO3_IMPORT_ERROR",
+    "AwsDeviceRegistry",
     "AwsCredentialSnapshot",
     "AwsCredentialsBridge",
     "AwsIotWebsocketConnection",
     "AwsIotWebsocketSyncConnection",
     "AwsMqttConnectionConfig",
     "AwsRuntime",
+    "DeviceCatalogError",
+    "DeviceManifest",
+    "DeviceManifestError",
+    "DeviceRegistration",
+    "DeviceRegistryError",
+    "DeviceTypeNotFoundError",
     "build_aws_runtime",
+    "build_device_id",
+    "discover_repo_root",
     "freeze_session_credentials",
+    "list_loadable_device_types",
+    "load_device_manifest",
+    "normalize_registry_text",
     "resolve_aws_region",
 ]

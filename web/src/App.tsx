@@ -574,7 +574,7 @@ function App({ initialAuthError = '' }: AppProps) {
     return (
       <main className="page">
         <section className="card">
-          <h1>Txing Shadow Admin</h1>
+          <h1>Device Shadow Admin</h1>
           <p>App configuration is incomplete.</p>
           <ul className="error-list">
             {appConfig.errors.map((cfgError) => (
@@ -590,7 +590,7 @@ function App({ initialAuthError = '' }: AppProps) {
     return (
       <main className="page">
         <section className="card">
-          <h1>Txing Shadow Admin</h1>
+          <h1>Device Shadow Admin</h1>
           <p>{status === 'authenticating' ? 'Finishing sign-in...' : 'Loading session...'}</p>
         </section>
       </main>
@@ -600,7 +600,7 @@ function App({ initialAuthError = '' }: AppProps) {
   if (status === 'signed_out') {
     return (
       <main className="page page-signed-in">
-        <section className="status-hero status-hero-auth" aria-label="Txing sign in">
+        <section className="status-hero status-hero-auth" aria-label="Device sign in">
           <div className="shadow-diagram">
             <div className="status-node status-node-txing">
               <div className="status-txing-header status-auth-header">
@@ -608,7 +608,7 @@ function App({ initialAuthError = '' }: AppProps) {
                   className="status-txing-header-side status-txing-header-side-start status-auth-spacer"
                   aria-hidden="true"
                 />
-                <div className="status-name status-txing-name status-auth-name">Txing</div>
+                <div className="status-name status-txing-name status-auth-name">Bot</div>
                 <div className="status-txing-header-side status-txing-header-side-end">
                   <button type="button" onClick={() => void beginSignIn()} className="primary">
                     Sign in

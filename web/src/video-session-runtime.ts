@@ -128,10 +128,10 @@ export const startBoardVideoViewerRuntime = async (
       return
     }
     if (details === undefined) {
-      console.info('[txing-video]', message)
+      console.info('[device-video]', message)
       return
     }
-    console.info('[txing-video]', message, details)
+    console.info('[device-video]', message, details)
   }
 
   options.onUiEvent({ type: 'connecting' })

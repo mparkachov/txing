@@ -67,10 +67,10 @@ function VideoPanel({
       return
     }
     if (details === undefined) {
-      console.info('[txing-video-ui]', message)
+      console.info('[device-video-ui]', message)
       return
     }
-    console.info('[txing-video-ui]', message, details)
+    console.info('[device-video-ui]', message, details)
   })
   const resolveIdTokenForViewer = useEffectEvent(async (): Promise<string> => resolveIdToken())
   const drawCanvasSource = useEffectEvent((

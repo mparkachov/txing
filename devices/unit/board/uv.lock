@@ -14,7 +14,7 @@ wheels = [
 [[package]]
 name = "aws"
 version = "0.2.0"
-source = { directory = "../shared/aws/python" }
+source = { directory = "../../../shared/aws/python" }
 dependencies = [
     { name = "awsiotsdk" },
     { name = "boto3" },
@@ -74,7 +74,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "aws", directory = "../shared/aws/python" },
+    { name = "aws", directory = "../../../shared/aws/python" },
     { name = "awsiotsdk", specifier = ">=1.22,<2" },
     { name = "boto3", specifier = ">=1.42,<2" },
     { name = "gpiozero", specifier = ">=2.0,<3" },
