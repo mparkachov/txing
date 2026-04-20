@@ -1048,7 +1048,18 @@ class AwsIotShadowSession implements ShadowSession {
       }
     }
 
-    const acquired = parseMcpLeaseState(await this.callMcpTool('control.acquire_lease', {}))
+    let acquiredResult: unknown
+    try {
+      acquiredResult = await this.callMcpTool('control.acquire_lease', {})
+    } catch (caughtError) {
+      if (!isMcpSessionNotInitializedError(caughtError)) {
+        throw caughtError
+      }
+      this.mcpInitialized = false
+      await this.ensureMcpSessionReady()
+      acquiredResult = await this.callMcpTool('control.acquire_lease', {})
+    }
+    const acquired = parseMcpLeaseState(acquiredResult)
     if (!acquired) {
       throw new Error('MCP control.acquire_lease returned an invalid payload')
     }
