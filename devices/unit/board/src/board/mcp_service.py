@@ -103,12 +103,20 @@ class BoardMcpServer:
         with self._lock:
             self._available = False
             self._client = None
-            self._clear_lease_locked(reason=reason, publish_status=False)
+            self._clear_lease_locked(
+                reason=reason,
+                publish_status=False,
+                clear_initialized_sessions=True,
+            )
 
     def close(self) -> None:
         with self._lock:
             self._available = False
-            self._clear_lease_locked(reason="board mcp server closed", publish_status=False)
+            self._clear_lease_locked(
+                reason="board mcp server closed",
+                publish_status=False,
+                clear_initialized_sessions=True,
+            )
             client = self._client
             timeout_seconds = self._publish_timeout_seconds
             payload = self._build_status_payload_locked(available=False)
@@ -515,9 +523,16 @@ class BoardMcpServer:
             return
         self._clear_lease_locked(reason="MCP lease expired", publish_status=True)
 
-    def _clear_lease_locked(self, *, reason: str, publish_status: bool) -> None:
+    def _clear_lease_locked(
+        self,
+        *,
+        reason: str,
+        publish_status: bool,
+        clear_initialized_sessions: bool = False,
+    ) -> None:
         self._lease = None
-        self._initialized_sessions.clear()
+        if clear_initialized_sessions:
+            self._initialized_sessions.clear()
         self._cmd_vel_controller.stop(reason=reason, force=True)
         if publish_status:
             self._publish_status_locked()

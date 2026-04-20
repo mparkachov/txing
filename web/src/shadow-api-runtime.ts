@@ -99,6 +99,7 @@ export type ShadowSession = {
     timeoutMs: number,
   ) => Promise<unknown>
   isConnected: () => boolean
+  isMcpConnected: () => boolean
   close: () => void
 }
 
@@ -214,6 +215,12 @@ const isForbiddenError = (error: unknown): boolean =>
 
 const isNotAuthorizedConnectError = (error: unknown): boolean =>
   error instanceof Error && error.message.toLowerCase().includes('not authorized')
+
+const isInvalidMcpLeaseTokenError = (error: unknown): boolean =>
+  getErrorMessage(error, '').toLowerCase().includes('invalid lease token')
+
+const isMcpSessionNotInitializedError = (error: unknown): boolean =>
+  getErrorMessage(error, '').toLowerCase().includes('mcp session is not initialized')
 
 const runWithForbiddenRetry = async <T>(
   operation: () => Promise<T>,
@@ -432,6 +439,7 @@ class AwsIotShadowSession implements ShadowSession {
   private mcpSessionSubscribed = false
   private mcpInitialized = false
   private warnedMcpFallback = false
+  private cmdVelPublishChain: Promise<void> = Promise.resolve()
   private readonly handleAttemptingConnect = (): void => {
     if (this.closed) {
       return
@@ -563,28 +571,34 @@ class AwsIotShadowSession implements ShadowSession {
   }
 
   async publishCmdVel(twist: Twist): Promise<void> {
-    const client = this.client
-    if (!client || !this.isConnected()) {
-      throw new Error('Shadow connection is not ready')
-    }
-
-    try {
-      await this.publishCmdVelViaMcp(twist)
-      this.warnedMcpFallback = false
-      return
-    } catch (caughtError) {
-      if (!this.warnedMcpFallback) {
-        this.warnedMcpFallback = true
-        this.options.onError(
-          `MCP cmd_vel path unavailable, falling back to raw topic: ${getErrorMessage(
-            caughtError,
-            'unknown MCP error',
-          )}`,
-        )
+    const run = async (): Promise<void> => {
+      const client = this.client
+      if (!client || !this.isConnected()) {
+        throw new Error('Shadow connection is not ready')
       }
+
+      try {
+        await this.publishCmdVelViaMcp(twist)
+        this.warnedMcpFallback = false
+        return
+      } catch (caughtError) {
+        if (!this.warnedMcpFallback) {
+          this.warnedMcpFallback = true
+          this.options.onError(
+            `MCP cmd_vel path unavailable, falling back to raw topic: ${getErrorMessage(
+              caughtError,
+              'unknown MCP error',
+            )}`,
+          )
+        }
+      }
+
+      await client.publish(buildCmdVelPublishPacket(this.options.thingName, twist) as mqtt5.PublishPacket)
     }
 
-    await client.publish(buildCmdVelPublishPacket(this.options.thingName, twist) as mqtt5.PublishPacket)
+    const queued = this.cmdVelPublishChain.then(run, run)
+    this.cmdVelPublishChain = queued.catch(() => undefined)
+    return queued
   }
 
   async waitForSnapshot(
@@ -620,6 +634,10 @@ class AwsIotShadowSession implements ShadowSession {
 
   isConnected(): boolean {
     return this.connectionState === 'connected' && this.client?.isConnected() === true
+  }
+
+  isMcpConnected(): boolean {
+    return this.isConnected() && this.mcpDiscovery.available === true && this.mcpInitialized
   }
 
   close(): void {
@@ -753,6 +771,7 @@ class AwsIotShadowSession implements ShadowSession {
       }
       this.setConnectionState('connected')
       await this.requestSnapshot()
+      void this.warmUpMcpSession()
     } catch (caughtError) {
       this.setConnectionState('error')
       this.options.onError(`Unable to subscribe to shadow topics: ${getErrorMessage(caughtError)}`)
@@ -913,11 +932,33 @@ class AwsIotShadowSession implements ShadowSession {
       return
     }
 
-    const lease = await this.ensureMcpLease()
-    await this.callMcpTool('cmd_vel.publish', {
-      leaseToken: lease.leaseToken,
-      twist,
-    })
+    let lease = await this.ensureMcpLease()
+    try {
+      await this.callMcpTool('cmd_vel.publish', {
+        leaseToken: lease.leaseToken,
+        twist,
+      })
+    } catch (caughtError) {
+      if (isMcpSessionNotInitializedError(caughtError)) {
+        this.mcpInitialized = false
+        await this.ensureMcpSessionReady()
+        lease = await this.ensureMcpLease()
+        await this.callMcpTool('cmd_vel.publish', {
+          leaseToken: lease.leaseToken,
+          twist,
+        })
+        return
+      }
+      if (!isInvalidMcpLeaseTokenError(caughtError)) {
+        throw caughtError
+      }
+      this.mcpLease = null
+      lease = await this.ensureMcpLease()
+      await this.callMcpTool('cmd_vel.publish', {
+        leaseToken: lease.leaseToken,
+        twist,
+      })
+    }
   }
 
   private async ensureMcpSessionReady(): Promise<void> {
@@ -977,16 +1018,34 @@ class AwsIotShadowSession implements ShadowSession {
       if (nowMs < this.mcpLease.expiresAtMs - renewBeforeMs) {
         return this.mcpLease
       }
-      const renewed = parseMcpLeaseState(
-        await this.callMcpTool('control.renew_lease', {
-          leaseToken: this.mcpLease.leaseToken,
-        }),
-      )
-      if (!renewed) {
-        throw new Error('MCP control.renew_lease returned an invalid payload')
+      try {
+        const renewed = parseMcpLeaseState(
+          await this.callMcpTool('control.renew_lease', {
+            leaseToken: this.mcpLease.leaseToken,
+          }),
+        )
+        if (!renewed) {
+          throw new Error('MCP control.renew_lease returned an invalid payload')
+        }
+        this.mcpLease = renewed
+        return renewed
+      } catch (caughtError) {
+        if (isMcpSessionNotInitializedError(caughtError)) {
+          this.mcpInitialized = false
+          this.mcpLease = null
+          await this.ensureMcpSessionReady()
+          const acquired = parseMcpLeaseState(await this.callMcpTool('control.acquire_lease', {}))
+          if (!acquired) {
+            throw new Error('MCP control.acquire_lease returned an invalid payload')
+          }
+          this.mcpLease = acquired
+          return acquired
+        }
+        if (!isInvalidMcpLeaseTokenError(caughtError)) {
+          throw caughtError
+        }
+        this.mcpLease = null
       }
-      this.mcpLease = renewed
-      return renewed
     }
 
     const acquired = parseMcpLeaseState(await this.callMcpTool('control.acquire_lease', {}))
@@ -995,6 +1054,14 @@ class AwsIotShadowSession implements ShadowSession {
     }
     this.mcpLease = acquired
     return acquired
+  }
+
+  private async warmUpMcpSession(): Promise<void> {
+    try {
+      await this.ensureMcpSessionReady()
+    } catch {
+      return
+    }
   }
 
   private async releaseMcpControlBestEffort(): Promise<void> {

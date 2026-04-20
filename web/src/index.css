@@ -1253,6 +1253,34 @@ h1 {
     opacity 140ms ease;
 }
 
+.status-camera-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42rem;
+}
+
+.status-mcp-indicator {
+  width: 0.56rem;
+  height: 0.56rem;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  display: inline-block;
+  box-shadow: 0 0 0 1px rgba(24, 33, 48, 0.1);
+}
+
+.status-mcp-indicator-connected {
+  background: #1fbe78;
+  border-color: rgba(31, 190, 120, 0.55);
+  box-shadow:
+    0 0 0 1px rgba(31, 190, 120, 0.24),
+    0 0 0.5rem rgba(31, 190, 120, 0.35);
+}
+
+.status-mcp-indicator-disconnected {
+  background: #c9d2dd;
+  border-color: rgba(145, 163, 181, 0.6);
+}
+
 .status-icon-button:hover:not(:disabled),
 .status-icon-button:focus-visible:not(:disabled) {
   outline: none;
@@ -1542,6 +1570,15 @@ button:disabled {
   .status-icon-button {
     width: 2.5rem;
     height: 2.5rem;
+  }
+
+  .status-camera-control {
+    gap: 0.34rem;
+  }
+
+  .status-mcp-indicator {
+    width: 0.5rem;
+    height: 0.5rem;
   }
 
   .editor {

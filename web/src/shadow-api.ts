@@ -25,6 +25,7 @@ export type ShadowSession = {
     timeoutMs: number,
   ) => Promise<unknown>
   isConnected: () => boolean
+  isMcpConnected: () => boolean
   close: () => void
 }
 
@@ -85,6 +86,10 @@ class LazyShadowSession implements ShadowSession {
 
   isConnected(): boolean {
     return this.session?.isConnected() ?? false
+  }
+
+  isMcpConnected(): boolean {
+    return this.session?.isMcpConnected() ?? false
   }
 
   close(): void {

@@ -263,6 +263,73 @@ class BoardMcpServerTests(unittest.TestCase):
 
         self.assertTrue(any("expired" in reason for reason in cmd_vel.stop_reasons))
 
+    def test_release_lease_keeps_session_initialized(self) -> None:
+        cmd_vel = _FakeCmdVelController()
+        client = _FakeMqttClient()
+        server = BoardMcpServer(
+            device_id="unit-local",
+            cmd_vel_controller=cmd_vel,
+            lease_ttl_ms=5000,
+        )
+        server.on_connected(client=client, publish_timeout_seconds=2.0)
+        session_id = "session-a"
+
+        _send_rpc(
+            server=server,
+            session_id=session_id,
+            payload={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+        )
+        _send_rpc(
+            server=server,
+            session_id=session_id,
+            payload={"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
+        )
+        _send_rpc(
+            server=server,
+            session_id=session_id,
+            payload={
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {"name": "control.acquire_lease", "arguments": {}},
+            },
+        )
+        first_acquire = _latest_s2c_payload(client, session_id)
+        first_lease_token = first_acquire["result"]["structuredContent"]["leaseToken"]
+
+        _send_rpc(
+            server=server,
+            session_id=session_id,
+            payload={
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "tools/call",
+                "params": {
+                    "name": "control.release_lease",
+                    "arguments": {"leaseToken": first_lease_token},
+                },
+            },
+        )
+        release_response = _latest_s2c_payload(client, session_id)
+        self.assertIs(release_response["result"]["structuredContent"]["released"], True)
+
+        _send_rpc(
+            server=server,
+            session_id=session_id,
+            payload={
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "tools/call",
+                "params": {"name": "control.acquire_lease", "arguments": {}},
+            },
+        )
+        second_acquire = _latest_s2c_payload(client, session_id)
+        self.assertIn("result", second_acquire)
+        self.assertNotEqual(
+            second_acquire["result"]["structuredContent"]["leaseToken"],
+            first_lease_token,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

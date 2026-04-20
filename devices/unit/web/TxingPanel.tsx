@@ -9,6 +9,7 @@ import VideoPanel from '../../../web/src/VideoPanel'
 type TxingPanelProps = {
   canUseBoardVideo: boolean
   isBoardVideoExpanded: boolean
+  isMcpConnected: boolean
   isDebugEnabled: boolean
   isTxingSwitchDisabled: boolean
   isTxingSwitchPending: boolean
@@ -180,6 +181,7 @@ function TrackGauge({ side, speed }: TrackGaugeProps) {
 function TxingPanel({
   canUseBoardVideo,
   isBoardVideoExpanded,
+  isMcpConnected,
   isDebugEnabled,
   isTxingSwitchDisabled,
   isTxingSwitchPending,
@@ -264,34 +266,44 @@ function TxingPanel({
               </div>
             </div>
             <div className="status-txing-header-side status-txing-header-side-end">
-              <button
-                type="button"
-                className={`status-icon-button status-camera-button ${
-                  !canUseBoardVideo
-                    ? 'status-camera-button-idle'
-                    : isBoardVideoExpanded
-                      ? 'status-camera-button-live'
-                      : 'status-camera-button-ready'
-                }`}
-                aria-label={
-                  canUseBoardVideo
-                    ? isBoardVideoExpanded
-                      ? 'Hide board video'
-                      : 'Show board video'
-                    : 'Board video unavailable'
-                }
-                title={
-                  canUseBoardVideo
-                    ? isBoardVideoExpanded
-                      ? 'Hide board video panel'
-                      : 'Show board video panel'
-                    : 'Board video is not ready'
-                }
-                onClick={onToggleBoardVideo}
-                disabled={!canUseBoardVideo}
-              >
-                <CameraGlyph crossed={!canUseBoardVideo} />
-              </button>
+              <div className="status-camera-control">
+                <span
+                  className={`status-mcp-indicator ${
+                    isMcpConnected ? 'status-mcp-indicator-connected' : 'status-mcp-indicator-disconnected'
+                  }`}
+                  role="img"
+                  aria-label={isMcpConnected ? 'MCP connected' : 'MCP disconnected'}
+                  title={isMcpConnected ? 'MCP connected' : 'MCP disconnected'}
+                />
+                <button
+                  type="button"
+                  className={`status-icon-button status-camera-button ${
+                    !canUseBoardVideo
+                      ? 'status-camera-button-idle'
+                      : isBoardVideoExpanded
+                        ? 'status-camera-button-live'
+                        : 'status-camera-button-ready'
+                  }`}
+                  aria-label={
+                    canUseBoardVideo
+                      ? isBoardVideoExpanded
+                        ? 'Hide board video'
+                        : 'Show board video'
+                      : 'Board video unavailable'
+                  }
+                  title={
+                    canUseBoardVideo
+                      ? isBoardVideoExpanded
+                        ? 'Hide board video panel'
+                        : 'Show board video panel'
+                      : 'Board video is not ready'
+                  }
+                  onClick={onToggleBoardVideo}
+                  disabled={!canUseBoardVideo}
+                >
+                  <CameraGlyph crossed={!canUseBoardVideo} />
+                </button>
+              </div>
               <div
                 className={`status-signal ${bleSignalToneClass}`}
                 role="img"

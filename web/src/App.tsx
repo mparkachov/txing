@@ -293,6 +293,7 @@ function App({ initialAuthError = '' }: AppProps) {
   const [isUpdatingShadow, setIsUpdatingShadow] = useState(false)
   const [isDebugEnabled, setIsDebugEnabled] = useState(false)
   const [isBoardVideoExpanded, setIsBoardVideoExpanded] = useState(false)
+  const [isMcpConnected, setIsMcpConnected] = useState(false)
   const [isSessionLogVisible, setIsSessionLogVisible] = useState(false)
   const [blockingError, setBlockingError] = useState<string>(initialAuthError)
   const [notifications, setNotifications] = useState<AppNotification[]>([])
@@ -754,6 +755,7 @@ function App({ initialAuthError = '' }: AppProps) {
       setLastShadowUpdateAtMs(null)
       setShadowJson('{}')
       setIsBoardVideoExpanded(false)
+      setIsMcpConnected(false)
       lastBoardVideoErrorRef.current = null
       hasObservedBoardVideoLastErrorRef.current = false
       return
@@ -766,6 +768,7 @@ function App({ initialAuthError = '' }: AppProps) {
     setIsLoadingShadow(true)
     setIsUpdatingShadow(false)
     setIsBoardVideoExpanded(false)
+    setIsMcpConnected(false)
     setShadowConnectionState('connecting')
     lastBoardVideoErrorRef.current = null
     hasObservedBoardVideoLastErrorRef.current = false
@@ -848,6 +851,24 @@ function App({ initialAuthError = '' }: AppProps) {
       )
     }
   })
+
+  useEffect(() => {
+    if (!activeSessionRoute) {
+      setIsMcpConnected(false)
+      return
+    }
+
+    const refreshMcpStatus = (): void => {
+      const shadowSession = shadowSessionRef.current
+      setIsMcpConnected(Boolean(shadowSession && shadowSession.isMcpConnected()))
+    }
+
+    refreshMcpStatus()
+    const timerId = window.setInterval(refreshMcpStatus, 500)
+    return () => {
+      window.clearInterval(timerId)
+    }
+  }, [activeSessionRoute, shadowConnectionState])
 
   useEffect(() => {
     const nextBoardVideoLastError = normalizeRuntimeMessage(reportedBoardVideo.lastError)
@@ -1343,6 +1364,7 @@ function App({ initialAuthError = '' }: AppProps) {
       <TxingPanel
         canUseBoardVideo={canUseBoardVideo}
         isBoardVideoExpanded={isBoardVideoExpanded}
+        isMcpConnected={isMcpConnected}
         isDebugEnabled={isDebugEnabled}
         isTxingSwitchDisabled={isTxingSwitchDisabled}
         isTxingSwitchPending={isTxingSwitchPending}
