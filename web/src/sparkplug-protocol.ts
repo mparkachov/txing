@@ -2,6 +2,9 @@ export const SPARKPLUG_NAMESPACE = 'spBv1.0'
 
 export const SparkplugDataType = {
   Int32: 3,
+  UInt64: 8,
+  Boolean: 11,
+  String: 12,
 } as const
 
 export type SparkplugDataType = (typeof SparkplugDataType)[keyof typeof SparkplugDataType]
@@ -11,6 +14,8 @@ export type SparkplugMetric = {
   datatype: SparkplugDataType
   intValue: number | null
   longValue: number | null
+  boolValue: boolean | null
+  stringValue: string | null
   timestamp: number | null
 }
 
@@ -36,6 +41,7 @@ export type SparkplugPublishPacket = {
 }
 
 const textEncoder = new TextEncoder()
+const textDecoder = new TextDecoder()
 
 const appendVarint = (bytes: number[], value: number): void => {
   if (!Number.isInteger(value) || value < 0) {
@@ -81,6 +87,8 @@ const encodeSparkplugMetric = (metric: {
   datatype: SparkplugDataType
   intValue?: number
   longValue?: number
+  boolValue?: boolean
+  stringValue?: string
   timestamp?: number
 }): Uint8Array => {
   const bytes: number[] = []
@@ -93,6 +101,10 @@ const encodeSparkplugMetric = (metric: {
     appendVarintField(bytes, 10, metric.intValue)
   } else if (typeof metric.longValue === 'number') {
     appendVarintField(bytes, 11, metric.longValue)
+  } else if (typeof metric.boolValue === 'boolean') {
+    appendVarintField(bytes, 12, metric.boolValue ? 1 : 0)
+  } else if (typeof metric.stringValue === 'string') {
+    appendStringField(bytes, 13, metric.stringValue)
   } else {
     throw new Error(`Sparkplug metric ${metric.name} is missing a value`)
   }
@@ -107,6 +119,8 @@ export const encodeSparkplugPayload = (options: {
     datatype: SparkplugDataType
     intValue?: number
     longValue?: number
+    boolValue?: boolean
+    stringValue?: string
     timestamp?: number
   }>
 }): Uint8Array => {
@@ -175,9 +189,11 @@ const skipField = (bytes: Uint8Array, startOffset: number, wireType: number): nu
 const decodeSparkplugMetric = (bytes: Uint8Array): SparkplugMetric => {
   let offset = 0
   let name = ''
-  let datatype = SparkplugDataType.Int32
+  let datatype: SparkplugDataType = SparkplugDataType.Int32
   let intValue: number | null = null
   let longValue: number | null = null
+  let boolValue: boolean | null = null
+  let stringValue: string | null = null
   let timestamp: number | null = null
 
   while (offset < bytes.byteLength) {
@@ -188,7 +204,7 @@ const decodeSparkplugMetric = (bytes: Uint8Array): SparkplugMetric => {
 
     if (fieldNumber === 1 && wireType === 2) {
       const field = readLengthDelimited(bytes, offset)
-      name = new TextDecoder().decode(field.value)
+      name = textDecoder.decode(field.value)
       offset = field.nextOffset
       continue
     }
@@ -216,6 +232,18 @@ const decodeSparkplugMetric = (bytes: Uint8Array): SparkplugMetric => {
       offset = field.nextOffset
       continue
     }
+    if (fieldNumber === 12 && wireType === 0) {
+      const field = readVarint(bytes, offset)
+      boolValue = field.value !== 0
+      offset = field.nextOffset
+      continue
+    }
+    if (fieldNumber === 13 && wireType === 2) {
+      const field = readLengthDelimited(bytes, offset)
+      stringValue = textDecoder.decode(field.value)
+      offset = field.nextOffset
+      continue
+    }
     offset = skipField(bytes, offset, wireType)
   }
 
@@ -224,6 +252,8 @@ const decodeSparkplugMetric = (bytes: Uint8Array): SparkplugMetric => {
     datatype,
     intValue,
     longValue,
+    boolValue,
+    stringValue,
     timestamp,
   }
 }

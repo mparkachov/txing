@@ -406,6 +406,15 @@ That means the design is stable on:
 - web as MCP client over existing MQTT/WSS
 - lease-based motion control
 
+## Implementation Alignment
+
+Current Phase-2 implementation aligns with this model:
+
+- `board` publishes retained descriptor and status on `txings/<device-id>/mcp/{descriptor,status}` and serves session JSON-RPC traffic on `txings/<device-id>/mcp/session/{sessionId}/{c2s,s2c}`.
+- `board` enforces lease ownership for `cmd_vel.publish`/`cmd_vel.stop`, stops motion on lease release/expiry, and publishes retained unavailable status on disconnect using MQTT will semantics.
+- `rig` subscribes to retained MCP descriptor/status topics and mirrors `services/mcp/*` Sparkplug metrics in its device `DBIRTH`/`DDATA` payloads while remaining the only Sparkplug publisher for that device session.
+- `web` consumes Sparkplug `services/mcp/*` discovery summary, reads retained MCP descriptor/status topics, and uses MCP tool calls for teleop lease and `cmd_vel` control on the route-selected device.
+
 ## Acceptance Criteria For Phase 2 Design
 
 This phase-2 design is complete when:

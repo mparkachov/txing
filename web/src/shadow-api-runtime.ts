@@ -7,14 +7,22 @@ import * as auth from 'aws-crt/dist.browser/browser/auth'
 import * as iot from 'aws-crt/dist.browser/browser/iot'
 import * as mqtt5 from 'aws-crt/dist.browser/browser/mqtt5'
 import { buildCognitoLogins, createCredentialProvider } from './aws-credentials'
-import { buildCmdVelPublishPacket, type Twist } from './cmd-vel'
+import { buildCmdVelPublishPacket, isZeroTwist, type Twist } from './cmd-vel'
 import { appConfig } from './config'
 import { resolveIotDataEndpoint } from './iot-endpoint'
+import {
+  buildMcpDescriptorTopic,
+  buildMcpSessionC2sTopic,
+  buildMcpSessionS2cTopic,
+  buildMcpStatusTopic,
+} from './mcp-topics'
 import { buildShadowMqttClientId } from './shadow-client-id'
 import { mergeShadowUpdate } from './shadow-merge'
 import {
   buildSparkplugRedconCommandPacket,
   buildSparkplugTopics,
+  decodeSparkplugPayload,
+  type SparkplugMetric,
   type SparkplugTopics,
 } from './sparkplug-protocol'
 import {
@@ -25,6 +33,7 @@ import {
   createShadowClientToken,
   decodeShadowResponse,
   deriveMqttHostFromIotDataEndpoint,
+  parseShadowPayload,
   type DecodedShadowResponse,
   type ShadowOperation,
   type ShadowTopics,
@@ -32,6 +41,7 @@ import {
 
 const forbiddenRetryDelaysMs = [500, 1000, 2000]
 const initialSnapshotTimeoutMs = 20_000
+const mcpRequestTimeoutMs = 4_000
 
 export type ShadowConnectionState = 'idle' | 'connecting' | 'connected' | 'error'
 type ResolveIdToken = () => Promise<string>
@@ -45,6 +55,28 @@ type SnapshotWaiter = {
   resolve: (shadow: unknown) => void
   reject: (error: Error) => void
   timeoutId: number
+}
+type PendingMcpRequest = {
+  resolve: (result: unknown) => void
+  reject: (error: Error) => void
+  timeoutId: number
+}
+type McpDiscoverySummary = {
+  available: boolean | null
+  transport: string | null
+  mcpProtocolVersion: string | null
+  descriptorTopic: string | null
+  leaseRequired: boolean | null
+  leaseTtlMs: number | null
+  serverVersion: string | null
+}
+type McpDescriptor = {
+  leaseTtlMs: number
+}
+type McpLeaseState = {
+  leaseToken: string
+  expiresAtMs: number
+  leaseTtlMs: number
 }
 export type ShadowSessionOptions = {
   thingName: string
@@ -219,6 +251,115 @@ const getShadowRejectedMessage = (
   return `Thing Shadow ${decodedResponse.operation ?? 'request'} was rejected`
 }
 
+const normalizePayloadToBytes = (payload: unknown): Uint8Array => {
+  if (payload instanceof Uint8Array) {
+    return payload
+  }
+  if (payload instanceof ArrayBuffer) {
+    return new Uint8Array(payload)
+  }
+  if (ArrayBuffer.isView(payload)) {
+    return new Uint8Array(payload.buffer, payload.byteOffset, payload.byteLength)
+  }
+  if (typeof payload === 'string') {
+    return new TextEncoder().encode(payload)
+  }
+  return new Uint8Array()
+}
+
+const normalizeMcpDiscoverySummary = (thingName: string): McpDiscoverySummary => ({
+  available: null,
+  transport: null,
+  mcpProtocolVersion: null,
+  descriptorTopic: buildMcpDescriptorTopic(thingName),
+  leaseRequired: null,
+  leaseTtlMs: null,
+  serverVersion: null,
+})
+
+const createMcpSessionId = (): string =>
+  typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `session-${Date.now()}-${Math.random().toString(16).slice(2)}`
+
+const metricToBoolean = (metric: SparkplugMetric | undefined): boolean | null => {
+  if (!metric) {
+    return null
+  }
+  if (typeof metric.boolValue === 'boolean') {
+    return metric.boolValue
+  }
+  if (typeof metric.intValue === 'number') {
+    return metric.intValue !== 0
+  }
+  if (typeof metric.longValue === 'number') {
+    return metric.longValue !== 0
+  }
+  return null
+}
+
+const metricToNumber = (metric: SparkplugMetric | undefined): number | null => {
+  if (!metric) {
+    return null
+  }
+  if (typeof metric.intValue === 'number') {
+    return metric.intValue
+  }
+  if (typeof metric.longValue === 'number') {
+    return metric.longValue
+  }
+  return null
+}
+
+const metricToString = (metric: SparkplugMetric | undefined): string | null => {
+  if (!metric) {
+    return null
+  }
+  if (typeof metric.stringValue === 'string' && metric.stringValue.trim()) {
+    return metric.stringValue
+  }
+  return null
+}
+
+const parseMcpDescriptor = (value: unknown): McpDescriptor | null => {
+  if (!isRecord(value)) {
+    return null
+  }
+  const leaseTtlRaw = value.leaseTtlMs
+  if (typeof leaseTtlRaw !== 'number' || !Number.isFinite(leaseTtlRaw) || leaseTtlRaw <= 0) {
+    return null
+  }
+  return {
+    leaseTtlMs: Math.round(leaseTtlRaw),
+  }
+}
+
+const parseMcpLeaseState = (value: unknown): McpLeaseState | null => {
+  if (!isRecord(value)) {
+    return null
+  }
+  const leaseToken = value.leaseToken
+  const expiresAtMs = value.expiresAtMs
+  const leaseTtlMs = value.leaseTtlMs
+  if (typeof leaseToken !== 'string' || !leaseToken) {
+    return null
+  }
+  if (
+    typeof expiresAtMs !== 'number' ||
+    !Number.isFinite(expiresAtMs) ||
+    typeof leaseTtlMs !== 'number' ||
+    !Number.isFinite(leaseTtlMs) ||
+    leaseTtlMs <= 0
+  ) {
+    return null
+  }
+  return {
+    leaseToken,
+    expiresAtMs,
+    leaseTtlMs,
+  }
+}
+
 class BrowserCredentialProvider extends auth.CredentialsProvider {
   private credentials: auth.AWSCredentials | undefined
   private readonly resolveIdToken: ResolveIdToken
@@ -270,6 +411,8 @@ class AwsIotShadowSession implements ShadowSession {
   private readonly options: ShadowSessionOptions
   private readonly topics: ShadowTopics
   private readonly sparkplugTopics: SparkplugTopics
+  private readonly mcpDescriptorTopic: string
+  private readonly mcpStatusTopic: string
   private readonly credentialsProvider: BrowserCredentialProvider
   private client: mqtt5.Mqtt5Client | null = null
   private closed = false
@@ -280,6 +423,15 @@ class AwsIotShadowSession implements ShadowSession {
   private suppressConnectionErrors = false
   private readonly pendingRequests = new Map<string, PendingRequest>()
   private readonly snapshotWaiters = new Set<SnapshotWaiter>()
+  private readonly pendingMcpRequests = new Map<number, PendingMcpRequest>()
+  private mcpRequestSeq = 0
+  private mcpDiscovery: McpDiscoverySummary
+  private mcpDescriptor: McpDescriptor | null = null
+  private mcpLease: McpLeaseState | null = null
+  private mcpSessionId: string | null = null
+  private mcpSessionSubscribed = false
+  private mcpInitialized = false
+  private warnedMcpFallback = false
   private readonly handleAttemptingConnect = (): void => {
     if (this.closed) {
       return
@@ -303,6 +455,8 @@ class AwsIotShadowSession implements ShadowSession {
     }
     this.rejectPendingRequests(new Error(`Shadow connection failed before response: ${detail}`))
     this.rejectSnapshotWaiters(new Error(`Shadow connection failed before response: ${detail}`))
+    this.rejectPendingMcpRequests(new Error(`MCP request failed before response: ${detail}`))
+    this.resetMcpConnectionState()
   }
   private readonly handleDisconnection = (event: mqtt5.DisconnectionEvent): void => {
     if (this.closed) {
@@ -315,6 +469,8 @@ class AwsIotShadowSession implements ShadowSession {
     }
     this.rejectPendingRequests(new Error(`Shadow connection lost before response: ${detail}`))
     this.rejectSnapshotWaiters(new Error(`Shadow connection lost before response: ${detail}`))
+    this.rejectPendingMcpRequests(new Error(`MCP request failed before response: ${detail}`))
+    this.resetMcpConnectionState()
   }
   private readonly handleMessageReceived = (event: mqtt5.MessageReceivedEvent): void => {
     if (this.closed) {
@@ -324,6 +480,7 @@ class AwsIotShadowSession implements ShadowSession {
     const topic = event.message.topicName ?? ''
     const decoded = decodeShadowResponse(topic, event.message.payload, this.topics)
     if (decoded.kind === 'ignored') {
+      this.handleNonShadowMessage(topic, event.message.payload)
       return
     }
 
@@ -356,6 +513,9 @@ class AwsIotShadowSession implements ShadowSession {
       options.sparkplugEdgeNodeId,
       options.thingName,
     )
+    this.mcpDescriptorTopic = buildMcpDescriptorTopic(options.thingName)
+    this.mcpStatusTopic = buildMcpStatusTopic(options.thingName)
+    this.mcpDiscovery = normalizeMcpDiscoverySummary(options.thingName)
     this.credentialsProvider = new BrowserCredentialProvider(options.resolveIdToken)
   }
 
@@ -408,9 +568,23 @@ class AwsIotShadowSession implements ShadowSession {
       throw new Error('Shadow connection is not ready')
     }
 
-    await client.publish(
-      buildCmdVelPublishPacket(this.options.thingName, twist) as mqtt5.PublishPacket,
-    )
+    try {
+      await this.publishCmdVelViaMcp(twist)
+      this.warnedMcpFallback = false
+      return
+    } catch (caughtError) {
+      if (!this.warnedMcpFallback) {
+        this.warnedMcpFallback = true
+        this.options.onError(
+          `MCP cmd_vel path unavailable, falling back to raw topic: ${getErrorMessage(
+            caughtError,
+            'unknown MCP error',
+          )}`,
+        )
+      }
+    }
+
+    await client.publish(buildCmdVelPublishPacket(this.options.thingName, twist) as mqtt5.PublishPacket)
   }
 
   async waitForSnapshot(
@@ -449,10 +623,13 @@ class AwsIotShadowSession implements ShadowSession {
   }
 
   close(): void {
+    this.sendMcpStopAndReleaseBestEffort()
     this.closed = true
     this.setConnectionState('idle')
     this.rejectPendingRequests(new Error('Shadow session closed'))
     this.rejectSnapshotWaiters(new Error('Shadow session closed'))
+    this.rejectPendingMcpRequests(new Error('MCP session closed'))
+    this.resetMcpConnectionState()
     this.disposeClient(this.client)
   }
 
@@ -497,6 +674,7 @@ class AwsIotShadowSession implements ShadowSession {
   ): Promise<unknown> {
     const client = this.createClient(mqttHost, clientId)
     this.client = client
+    this.resetMcpConnectionState()
     this.suppressConnectionErrors = suppressErrors
     this.setConnectionState('connecting')
     client.start()
@@ -560,6 +738,16 @@ class AwsIotShadowSession implements ShadowSession {
 
     try {
       await client.subscribe(buildShadowSubscriptionPacket(this.topics) as mqtt5.SubscribePacket)
+      await client.subscribe(
+        {
+          subscriptions: [
+            { topicFilter: this.sparkplugTopics.dbirth, qos: 1 },
+            { topicFilter: this.sparkplugTopics.ddata, qos: 1 },
+            { topicFilter: this.mcpDescriptorTopic, qos: 1 },
+            { topicFilter: this.mcpStatusTopic, qos: 1 },
+          ],
+        } as mqtt5.SubscribePacket,
+      )
       if (this.closed || client !== this.client) {
         return
       }
@@ -622,6 +810,359 @@ class AwsIotShadowSession implements ShadowSession {
     for (const clientToken of [...this.pendingRequests.keys()]) {
       this.rejectPendingRequest(clientToken, error)
     }
+  }
+
+  private handleNonShadowMessage(topic: string, payload: unknown): void {
+    if (this.handleSparkplugMcpDiscovery(topic, payload)) {
+      return
+    }
+
+    if (topic === this.mcpDescriptorTopic) {
+      const parsed = parseShadowPayload(payload)
+      const descriptor = parseMcpDescriptor(parsed)
+      if (descriptor) {
+        this.mcpDescriptor = descriptor
+      }
+      if (isRecord(parsed) && typeof parsed.descriptorTopic === 'string' && parsed.descriptorTopic.trim()) {
+        this.mcpDiscovery.descriptorTopic = parsed.descriptorTopic
+      }
+      return
+    }
+
+    if (topic === this.mcpStatusTopic) {
+      const parsed = parseShadowPayload(payload)
+      if (isRecord(parsed) && typeof parsed.available === 'boolean') {
+        this.mcpDiscovery.available = parsed.available
+      }
+      return
+    }
+
+    if (this.mcpSessionId && topic === buildMcpSessionS2cTopic(this.options.thingName, this.mcpSessionId)) {
+      this.handleMcpSessionMessage(payload)
+    }
+  }
+
+  private handleSparkplugMcpDiscovery(topic: string, payload: unknown): boolean {
+    if (topic !== this.sparkplugTopics.dbirth && topic !== this.sparkplugTopics.ddata) {
+      return false
+    }
+
+    let decoded
+    try {
+      decoded = decodeSparkplugPayload(normalizePayloadToBytes(payload))
+    } catch {
+      return true
+    }
+
+    const metricsByName = new Map<string, SparkplugMetric>()
+    for (const metric of decoded.metrics) {
+      metricsByName.set(metric.name, metric)
+    }
+    if (!metricsByName.has('services/mcp/available')) {
+      return true
+    }
+
+    this.mcpDiscovery.available = metricToBoolean(metricsByName.get('services/mcp/available'))
+    this.mcpDiscovery.transport = metricToString(metricsByName.get('services/mcp/transport'))
+    this.mcpDiscovery.mcpProtocolVersion = metricToString(
+      metricsByName.get('services/mcp/mcpProtocolVersion'),
+    )
+    this.mcpDiscovery.descriptorTopic =
+      metricToString(metricsByName.get('services/mcp/descriptorTopic')) ?? this.mcpDescriptorTopic
+    this.mcpDiscovery.leaseRequired = metricToBoolean(metricsByName.get('services/mcp/leaseRequired'))
+    this.mcpDiscovery.leaseTtlMs = metricToNumber(metricsByName.get('services/mcp/leaseTtlMs'))
+    this.mcpDiscovery.serverVersion = metricToString(metricsByName.get('services/mcp/serverVersion'))
+    return true
+  }
+
+  private handleMcpSessionMessage(payload: unknown): void {
+    const parsed = parseShadowPayload(payload)
+    if (!isRecord(parsed)) {
+      return
+    }
+    if (typeof parsed.id !== 'number') {
+      return
+    }
+    const pending = this.pendingMcpRequests.get(parsed.id)
+    if (!pending) {
+      return
+    }
+    this.pendingMcpRequests.delete(parsed.id)
+    window.clearTimeout(pending.timeoutId)
+    if (isRecord(parsed.error)) {
+      const message =
+        typeof parsed.error.message === 'string'
+          ? parsed.error.message
+          : `MCP request failed with code ${String(parsed.error.code ?? 'unknown')}`
+      pending.reject(new Error(message))
+      return
+    }
+    pending.resolve(parsed.result)
+  }
+
+  private async publishCmdVelViaMcp(twist: Twist): Promise<void> {
+    await this.ensureMcpSessionReady()
+    if (isZeroTwist(twist)) {
+      if (!this.mcpLease) {
+        return
+      }
+      await this.callMcpTool('cmd_vel.stop', {
+        leaseToken: this.mcpLease.leaseToken,
+      })
+      await this.releaseMcpControlBestEffort()
+      return
+    }
+
+    const lease = await this.ensureMcpLease()
+    await this.callMcpTool('cmd_vel.publish', {
+      leaseToken: lease.leaseToken,
+      twist,
+    })
+  }
+
+  private async ensureMcpSessionReady(): Promise<void> {
+    if (this.mcpDiscovery.available === false) {
+      throw new Error('MCP service is currently unavailable')
+    }
+    if (this.mcpInitialized) {
+      return
+    }
+
+    await this.ensureMcpSessionSubscription()
+    const initializeResult = await this.publishMcpRequest('initialize', {
+      protocolVersion: this.mcpDiscovery.mcpProtocolVersion ?? '2025-11-25',
+      capabilities: {},
+      clientInfo: {
+        name: 'txing-web',
+        version: '0.2.0',
+      },
+    })
+    if (!isRecord(initializeResult)) {
+      throw new Error('MCP initialize returned an invalid result payload')
+    }
+    await this.publishMcpNotification('notifications/initialized', {})
+    this.mcpInitialized = true
+  }
+
+  private async ensureMcpSessionSubscription(): Promise<void> {
+    const client = this.client
+    if (!client || !this.isConnected()) {
+      throw new Error('Shadow connection is not ready')
+    }
+    if (!this.mcpSessionId) {
+      this.mcpSessionId = createMcpSessionId()
+    }
+    if (this.mcpSessionSubscribed) {
+      return
+    }
+    await client.subscribe(
+      {
+        subscriptions: [
+          {
+            topicFilter: buildMcpSessionS2cTopic(this.options.thingName, this.mcpSessionId),
+            qos: 1,
+          },
+        ],
+      } as mqtt5.SubscribePacket,
+    )
+    this.mcpSessionSubscribed = true
+  }
+
+  private async ensureMcpLease(): Promise<McpLeaseState> {
+    const nowMs = Date.now()
+    const knownLeaseTtlMs = this.mcpDescriptor?.leaseTtlMs ?? this.mcpDiscovery.leaseTtlMs ?? 5_000
+    if (this.mcpLease) {
+      const activeLeaseTtlMs = this.mcpLease.leaseTtlMs || knownLeaseTtlMs
+      const renewBeforeMs = Math.min(1500, Math.max(300, Math.round(activeLeaseTtlMs * 0.4)))
+      if (nowMs < this.mcpLease.expiresAtMs - renewBeforeMs) {
+        return this.mcpLease
+      }
+      const renewed = parseMcpLeaseState(
+        await this.callMcpTool('control.renew_lease', {
+          leaseToken: this.mcpLease.leaseToken,
+        }),
+      )
+      if (!renewed) {
+        throw new Error('MCP control.renew_lease returned an invalid payload')
+      }
+      this.mcpLease = renewed
+      return renewed
+    }
+
+    const acquired = parseMcpLeaseState(await this.callMcpTool('control.acquire_lease', {}))
+    if (!acquired) {
+      throw new Error('MCP control.acquire_lease returned an invalid payload')
+    }
+    this.mcpLease = acquired
+    return acquired
+  }
+
+  private async releaseMcpControlBestEffort(): Promise<void> {
+    const lease = this.mcpLease
+    this.mcpLease = null
+    if (!lease) {
+      return
+    }
+    try {
+      await this.callMcpTool('control.release_lease', {
+        leaseToken: lease.leaseToken,
+      })
+    } catch {
+      return
+    }
+  }
+
+  private sendMcpStopAndReleaseBestEffort(): void {
+    const lease = this.mcpLease
+    if (!lease) {
+      return
+    }
+    this.publishMcpToolCallBestEffort('cmd_vel.stop', {
+      leaseToken: lease.leaseToken,
+    })
+    this.publishMcpToolCallBestEffort('control.release_lease', {
+      leaseToken: lease.leaseToken,
+    })
+    this.mcpLease = null
+  }
+
+  private publishMcpToolCallBestEffort(
+    name: string,
+    argumentsPayload: Record<string, unknown>,
+  ): void {
+    const client = this.client
+    const sessionId = this.mcpSessionId
+    if (!client || !sessionId || !this.isConnected()) {
+      return
+    }
+    const requestId = this.mcpRequestSeq
+    this.mcpRequestSeq = (this.mcpRequestSeq + 1) % 1_000_000_000
+    void client
+      .publish(
+        {
+          topicName: buildMcpSessionC2sTopic(this.options.thingName, sessionId),
+          qos: 1,
+          payload: new TextEncoder().encode(
+            JSON.stringify({
+              jsonrpc: '2.0',
+              id: requestId,
+              method: 'tools/call',
+              params: {
+                name,
+                arguments: argumentsPayload,
+              },
+            }),
+          ),
+        } as mqtt5.PublishPacket,
+      )
+      .catch(() => undefined)
+  }
+
+  private async callMcpTool(name: string, argumentsPayload: Record<string, unknown>): Promise<unknown> {
+    const result = await this.publishMcpRequest('tools/call', {
+      name,
+      arguments: argumentsPayload,
+    })
+    if (!isRecord(result)) {
+      throw new Error(`MCP tools/call for ${name} returned an invalid result payload`)
+    }
+    if (result.isError === true) {
+      throw new Error(`MCP tools/call for ${name} returned isError=true`)
+    }
+    if (isRecord(result.structuredContent)) {
+      return result.structuredContent
+    }
+    if (Array.isArray(result.content) && result.content.length > 0 && isRecord(result.content[0])) {
+      const firstContent = result.content[0]
+      if (isRecord(firstContent.json)) {
+        return firstContent.json
+      }
+    }
+    return {}
+  }
+
+  private async publishMcpNotification(method: string, params: Record<string, unknown>): Promise<void> {
+    const client = this.client
+    if (!client || !this.isConnected() || !this.mcpSessionId) {
+      throw new Error('MCP session is not ready')
+    }
+    await client.publish(
+      {
+        topicName: buildMcpSessionC2sTopic(this.options.thingName, this.mcpSessionId),
+        qos: 1,
+        payload: new TextEncoder().encode(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            method,
+            params,
+          }),
+        ),
+      } as mqtt5.PublishPacket,
+    )
+  }
+
+  private async publishMcpRequest(
+    method: string,
+    params: Record<string, unknown>,
+  ): Promise<unknown> {
+    const client = this.client
+    if (!client || !this.isConnected() || !this.mcpSessionId) {
+      throw new Error('MCP session is not ready')
+    }
+    const requestId = this.mcpRequestSeq
+    this.mcpRequestSeq = (this.mcpRequestSeq + 1) % 1_000_000_000
+    const packet = {
+      topicName: buildMcpSessionC2sTopic(this.options.thingName, this.mcpSessionId),
+      qos: 1,
+      payload: new TextEncoder().encode(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: requestId,
+          method,
+          params,
+        }),
+      ),
+    } as mqtt5.PublishPacket
+
+    return new Promise<unknown>((resolve, reject) => {
+      const timeoutId = window.setTimeout(() => {
+        this.pendingMcpRequests.delete(requestId)
+        reject(new Error(`Timed out waiting for MCP response to ${method}`))
+      }, mcpRequestTimeoutMs)
+
+      this.pendingMcpRequests.set(requestId, {
+        resolve,
+        reject,
+        timeoutId,
+      })
+
+      void client.publish(packet).catch((caughtError) => {
+        const pending = this.pendingMcpRequests.get(requestId)
+        if (!pending) {
+          return
+        }
+        this.pendingMcpRequests.delete(requestId)
+        window.clearTimeout(pending.timeoutId)
+        pending.reject(new Error(`Unable to publish MCP request ${method}: ${getErrorMessage(caughtError)}`))
+      })
+    })
+  }
+
+  private rejectPendingMcpRequests(error: Error): void {
+    for (const [requestId, pending] of [...this.pendingMcpRequests.entries()]) {
+      this.pendingMcpRequests.delete(requestId)
+      window.clearTimeout(pending.timeoutId)
+      pending.reject(error)
+    }
+  }
+
+  private resetMcpConnectionState(): void {
+    this.mcpLease = null
+    this.mcpInitialized = false
+    this.mcpSessionSubscribed = false
+    this.mcpSessionId = null
+    this.mcpRequestSeq = 0
+    this.warnedMcpFallback = false
   }
 
   private resolveSnapshotWaiters(shadow: unknown): void {

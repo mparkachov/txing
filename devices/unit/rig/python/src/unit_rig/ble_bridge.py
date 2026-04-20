@@ -52,8 +52,18 @@ from aws.auth import (
     AwsRuntime,
     ensure_aws_profile,
 )
+from aws.mcp_topics import (
+    MCP_DEFAULT_LEASE_TTL_MS,
+    MCP_PROTOCOL_VERSION,
+    MCP_TRANSPORT,
+    build_mcp_descriptor_topic,
+    build_mcp_status_topic,
+    parse_mcp_descriptor_or_status_topic,
+)
 from aws.mqtt import AwsIotWebsocketConnection, AwsMqttConnectionConfig
 from .sparkplug import (
+    DataType,
+    Metric,
     build_device_report_payload,
     build_device_topic,
     build_node_birth_payload,
@@ -446,6 +456,119 @@ def _calculate_redcon(
     return 2
 
 
+@dataclass(slots=True, frozen=True)
+class McpSparkplugSummary:
+    available: bool
+    transport: str
+    mcp_protocol_version: str
+    descriptor_topic: str
+    lease_required: bool
+    lease_ttl_ms: int
+    server_version: str
+
+
+def _build_default_mcp_summary(thing_name: str) -> McpSparkplugSummary:
+    return McpSparkplugSummary(
+        available=False,
+        transport=MCP_TRANSPORT,
+        mcp_protocol_version=MCP_PROTOCOL_VERSION,
+        descriptor_topic=build_mcp_descriptor_topic(thing_name),
+        lease_required=True,
+        lease_ttl_ms=MCP_DEFAULT_LEASE_TTL_MS,
+        server_version="unknown",
+    )
+
+
+def _coerce_bool(value: Any, *, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    return default
+
+
+def _coerce_positive_int(value: Any, *, default: int) -> int:
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int) and value > 0:
+        return value
+    return default
+
+
+def _coerce_non_empty_str(value: Any, *, default: str) -> str:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return default
+
+
+def _derive_mcp_sparkplug_summary(
+    *,
+    thing_name: str,
+    descriptor_payload: dict[str, Any] | None,
+    status_payload: dict[str, Any] | None,
+) -> McpSparkplugSummary:
+    defaults = _build_default_mcp_summary(thing_name)
+    descriptor = descriptor_payload if isinstance(descriptor_payload, dict) else {}
+    status = status_payload if isinstance(status_payload, dict) else {}
+
+    return McpSparkplugSummary(
+        available=_coerce_bool(status.get("available"), default=False),
+        transport=_coerce_non_empty_str(descriptor.get("transport"), default=defaults.transport),
+        mcp_protocol_version=_coerce_non_empty_str(
+            descriptor.get("mcpProtocolVersion"),
+            default=defaults.mcp_protocol_version,
+        ),
+        descriptor_topic=_coerce_non_empty_str(
+            descriptor.get("descriptorTopic"),
+            default=defaults.descriptor_topic,
+        ),
+        lease_required=_coerce_bool(descriptor.get("leaseRequired"), default=defaults.lease_required),
+        lease_ttl_ms=_coerce_positive_int(descriptor.get("leaseTtlMs"), default=defaults.lease_ttl_ms),
+        server_version=_coerce_non_empty_str(
+            descriptor.get("serverVersion"),
+            default=defaults.server_version,
+        ),
+    )
+
+
+def _mcp_summary_metrics(summary: McpSparkplugSummary) -> tuple[Metric, ...]:
+    return (
+        Metric(
+            name="services/mcp/available",
+            datatype=DataType.BOOLEAN,
+            bool_value=summary.available,
+        ),
+        Metric(
+            name="services/mcp/transport",
+            datatype=DataType.STRING,
+            string_value=summary.transport,
+        ),
+        Metric(
+            name="services/mcp/mcpProtocolVersion",
+            datatype=DataType.STRING,
+            string_value=summary.mcp_protocol_version,
+        ),
+        Metric(
+            name="services/mcp/descriptorTopic",
+            datatype=DataType.STRING,
+            string_value=summary.descriptor_topic,
+        ),
+        Metric(
+            name="services/mcp/leaseRequired",
+            datatype=DataType.BOOLEAN,
+            bool_value=summary.lease_required,
+        ),
+        Metric(
+            name="services/mcp/leaseTtlMs",
+            datatype=DataType.INT32,
+            int_value=summary.lease_ttl_ms,
+        ),
+        Metric(
+            name="services/mcp/serverVersion",
+            datatype=DataType.STRING,
+            string_value=summary.server_version,
+        ),
+    )
+
+
 @dataclass(slots=True)
 class BridgeConfig:
     name_fragment: str = DEFAULT_NAME_FRAGMENT
@@ -682,6 +805,8 @@ class AwsShadowUpdate:
     board_video_ready: bool | None = None
     board_video_viewer_connected: bool | None = None
     reported_redcon: int | None = None
+    mcp_descriptor: dict[str, Any] | None = None
+    mcp_status: dict[str, Any] | None = None
     version: int | None = None
 
 
@@ -907,6 +1032,8 @@ class AwsShadowClient:
                     f"$aws/things/{thing_name}/shadow/get/accepted",
                     f"$aws/things/{thing_name}/shadow/get/rejected",
                     f"$aws/things/{thing_name}/shadow/update/accepted",
+                    build_mcp_descriptor_topic(thing_name),
+                    build_mcp_status_topic(thing_name),
                     build_device_topic(
                         self._config.sparkplug_group_id,
                         "DCMD",
@@ -1022,6 +1149,29 @@ class AwsShadowClient:
             payload: dict[str, Any] = json.loads(payload_bytes.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
             LOGGER.warning("Ignoring non-JSON payload on topic %s", topic)
+            return
+
+        mcp_topic = parse_mcp_descriptor_or_status_topic(topic)
+        if mcp_topic is not None:
+            thing_name, kind = mcp_topic
+            if thing_name not in self._managed_thing_names:
+                return
+            if kind == "descriptor":
+                self._enqueue_update(
+                    AwsShadowUpdate(
+                        thing_name=thing_name,
+                        source="mqtt/mcp/descriptor",
+                        mcp_descriptor=payload,
+                    )
+                )
+                return
+            self._enqueue_update(
+                AwsShadowUpdate(
+                    thing_name=thing_name,
+                    source="mqtt/mcp/status",
+                    mcp_status=payload,
+                )
+            )
             return
 
         parts = topic.split("/")
@@ -1229,6 +1379,9 @@ class BleSleepBridge:
         self._sparkplug_device_seq = 0
         self._sparkplug_node_born = False
         self._sparkplug_device_born = False
+        self._mcp_descriptor_payload: dict[str, Any] | None = None
+        self._mcp_status_payload: dict[str, Any] | None = None
+        self._mcp_summary = _build_default_mcp_summary(config.thing_name)
         self._board_shutdown_requested_at: float | None = None
         self._board_shutdown_timeout_logged = False
         if shadow.desired_board_power is False and shadow.board_power:
@@ -1325,6 +1478,7 @@ class BleSleepBridge:
                 redcon=self._shadow.redcon,
                 battery_mv=self._shadow.battery_mv,
                 seq=self._next_sparkplug_device_seq(),
+                extra_metrics=_mcp_summary_metrics(self._mcp_summary),
             ),
         )
         self._sparkplug_device_born = True
@@ -1343,6 +1497,7 @@ class BleSleepBridge:
                 redcon=self._shadow.redcon,
                 battery_mv=self._shadow.battery_mv,
                 seq=self._next_sparkplug_device_seq(),
+                extra_metrics=_mcp_summary_metrics(self._mcp_summary),
             ),
         )
 
@@ -1516,6 +1671,10 @@ class BleSleepBridge:
         )
         await self._publish_static_lifecycle_reflection()
         await self._publish_node_birth()
+        pending_updates = self._drain_runtime_updates()
+        if pending_updates:
+            await self._apply_cloud_shadow_updates(updates=pending_updates)
+            pending_updates = []
         if self._shadow.ble_online:
             await self._publish_device_birth()
         await self._start_scanner()
@@ -1675,6 +1834,37 @@ class BleSleepBridge:
                 include_redcon_if_changed=False,
             )
 
+    def _apply_mcp_mirror_update(self, update: AwsShadowUpdate) -> bool:
+        descriptor_changed = False
+        status_changed = False
+        if update.mcp_descriptor is not None:
+            descriptor_changed = self._mcp_descriptor_payload != update.mcp_descriptor
+            self._mcp_descriptor_payload = update.mcp_descriptor
+        if update.mcp_status is not None:
+            status_changed = self._mcp_status_payload != update.mcp_status
+            self._mcp_status_payload = update.mcp_status
+        if not descriptor_changed and not status_changed:
+            return False
+
+        next_summary = _derive_mcp_sparkplug_summary(
+            thing_name=self._config.thing_name,
+            descriptor_payload=self._mcp_descriptor_payload,
+            status_payload=self._mcp_status_payload,
+        )
+        if next_summary == self._mcp_summary:
+            return False
+
+        self._mcp_summary = next_summary
+        LOGGER.info(
+            "Updated MCP Sparkplug summary thing=%s available=%s transport=%s descriptor_topic=%s lease_ttl_ms=%s",
+            self._config.thing_name,
+            self._mcp_summary.available,
+            self._mcp_summary.transport,
+            self._mcp_summary.descriptor_topic,
+            self._mcp_summary.lease_ttl_ms,
+        )
+        return True
+
     async def _apply_cloud_shadow_updates(
         self,
         updates: list[AwsShadowUpdate] | None = None,
@@ -1700,6 +1890,7 @@ class BleSleepBridge:
 
             previous_redcon = self._shadow.redcon
             previous_battery = self._shadow.battery_mv
+            mcp_summary_changed = self._apply_mcp_mirror_update(update)
             changed = False
             redcon_inputs_changed = False
             if (
@@ -1807,6 +1998,8 @@ class BleSleepBridge:
                     previous_redcon=previous_redcon,
                     previous_battery=previous_battery,
                 )
+            elif mcp_summary_changed and self._sparkplug_device_born:
+                await self._publish_device_data()
 
     async def _process_desired_no_ble_once(self) -> None:
         target_redcon = self._shadow.desired_redcon
@@ -3212,6 +3405,9 @@ class RigFleetBridge:
         self._loop = asyncio.get_running_loop()
         self._activity_event = asyncio.Event()
         await self._publish_node_birth()
+        pending_updates = self._cloud_shadow.drain_updates()
+        if pending_updates:
+            await self._apply_updates(pending_updates)
         await self._normalize_startup()
         if self._managed_things:
             await self._start_scanner()
@@ -3284,6 +3480,9 @@ class RigFleetBridge:
         self._loop = asyncio.get_running_loop()
         self._activity_event = asyncio.Event()
         await self._publish_node_birth()
+        pending_updates = self._cloud_shadow.drain_updates()
+        if pending_updates:
+            await self._apply_updates(pending_updates)
         for managed in self._managed_things:
             bridge = managed.bridge
             await bridge._publish_ble_online_state(

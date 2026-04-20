@@ -51,6 +51,8 @@ class Metric:
     datatype: DataType
     int_value: int | None = None
     long_value: int | None = None
+    bool_value: bool | None = None
+    string_value: str | None = None
     timestamp: int | None = None
 
 
@@ -106,6 +108,10 @@ def encode_metric(metric: Metric) -> bytes:
         _append_varint_field(chunks, 10, metric.int_value)
     elif metric.long_value is not None:
         _append_varint_field(chunks, 11, metric.long_value)
+    elif metric.bool_value is not None:
+        _append_varint_field(chunks, 12, 1 if metric.bool_value else 0)
+    elif metric.string_value is not None:
+        _append_string_field(chunks, 13, metric.string_value)
     else:
         raise ValueError(f"metric {metric.name!r} is missing a value")
     return bytes(chunks)
@@ -139,6 +145,8 @@ def decode_metric(data: bytes) -> Metric:
     timestamp: int | None = None
     int_value: int | None = None
     long_value: int | None = None
+    bool_value: bool | None = None
+    string_value: str | None = None
     while offset < len(data):
         field_number, wire_type, offset = _read_key(data, offset)
         if field_number == 1 and wire_type == 2:
@@ -158,12 +166,22 @@ def decode_metric(data: bytes) -> Metric:
         if field_number == 11 and wire_type == 0:
             long_value, offset = _read_varint(data, offset)
             continue
+        if field_number == 12 and wire_type == 0:
+            raw_bool, offset = _read_varint(data, offset)
+            bool_value = raw_bool != 0
+            continue
+        if field_number == 13 and wire_type == 2:
+            raw, offset = _read_length_delimited(data, offset)
+            string_value = raw.decode("utf-8")
+            continue
         offset = _skip_field(data, offset, wire_type)
     return Metric(
         name=name,
         datatype=datatype,
         int_value=int_value,
         long_value=long_value,
+        bool_value=bool_value,
+        string_value=string_value,
         timestamp=timestamp,
     )
 
@@ -201,6 +219,7 @@ def build_device_report_payload(
     redcon: int,
     battery_mv: int,
     seq: int,
+    extra_metrics: tuple[Metric, ...] = (),
     timestamp: int | None = None,
 ) -> bytes:
     if battery_mv < 0:
@@ -210,6 +229,7 @@ def build_device_report_payload(
         metrics=(
             Metric(name="redcon", datatype=DataType.INT32, int_value=redcon),
             Metric(name="batteryMv", datatype=DataType.INT32, int_value=battery_mv),
+            *extra_metrics,
         ),
         seq=seq,
     )

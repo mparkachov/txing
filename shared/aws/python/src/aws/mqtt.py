@@ -64,6 +64,7 @@ class AwsMqttConnectionConfig:
     keep_alive_seconds: int = 60
     will_topic: str | None = None
     will_payload: bytes | None = None
+    will_retain: bool = False
 
 
 class _AwsIotWebsocketConnectionBase:
@@ -92,7 +93,7 @@ class _AwsIotWebsocketConnectionBase:
                 config.will_topic,
                 mqtt.QoS.AT_LEAST_ONCE,
                 config.will_payload,
-                False,
+                config.will_retain,
             )
 
         self._connection = mqtt_connection_builder.websockets_with_default_aws_signing(
@@ -227,12 +228,14 @@ class AwsIotWebsocketConnection(_AwsIotWebsocketConnectionBase):
         topic: str,
         payload: bytes | str,
         *,
+        retain: bool = False,
         timeout_seconds: float | None = None,
     ) -> Any:
         publish_future, _packet_id = self._connection.publish(
             topic=topic,
             payload=payload,
             qos=mqtt.QoS.AT_LEAST_ONCE,
+            retain=retain,
         )
         return await _await_future(
             publish_future,
@@ -286,12 +289,14 @@ class AwsIotWebsocketSyncConnection(_AwsIotWebsocketConnectionBase):
         topic: str,
         payload: bytes | str,
         *,
+        retain: bool = False,
         timeout_seconds: float | None = None,
     ) -> Any:
         publish_future, _packet_id = self._connection.publish(
             topic=topic,
             payload=payload,
             qos=mqtt.QoS.AT_LEAST_ONCE,
+            retain=retain,
         )
         return _future_result(
             publish_future,

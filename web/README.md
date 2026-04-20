@@ -21,6 +21,8 @@ SPA shell for browsing town rigs and registered devices, then reading the select
 - Current transport split:
   - classic Thing Shadow is the UI read path over MQTT/WSS
   - lifecycle commands use Sparkplug `DCMD.redcon` over MQTT/WSS
+  - board remote API uses MCP over MQTT/WSS under `txings/<device_id>/mcp/...`
+  - web discovers MCP via Sparkplug `services/mcp/*` summary metrics and retained MCP descriptor/status topics
   - board video uses KVS WebRTC signaling from `/<town>/<rig>/<device>/video`
   - Cognito hosted UI redirects, Cognito `/oauth2/token`, Cognito Identity, IoT `AttachPolicy`, and IoT `DescribeEndpoint` still use HTTPS
 - Default identity:
@@ -173,3 +175,9 @@ The stack serves the SPA from CloudFront instead of the raw S3 website endpoint 
 - `off` publishes `DCMD.redcon=4`.
 - The UI reads lifecycle state from shadow `desired.redcon` and `reported.redcon`.
 - The SPA does not write internal desired lifecycle fields such as `desired.board.power`.
+
+## MCP teleop note
+
+- Teleop control uses MCP over MQTT (`txings/<device_id>/mcp/...`) instead of treating raw `cmd_vel` publish as the long-term API.
+- The browser acquires and renews an MCP control lease while sending `cmd_vel.publish`.
+- A raw `<device_id>/board/cmd_vel` publish fallback remains for compatibility during rollout.

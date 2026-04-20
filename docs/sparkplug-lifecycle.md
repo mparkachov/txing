@@ -139,7 +139,8 @@ Semantics:
   - reflects the actual lifecycle battery metric of txing
   - must match the Sparkplug device actual `batteryMv`
 - Direct scalar attributes under `txing.state.reported` are the strict Sparkplug metric reflection surface.
-  - In the current implementation that set is exactly `redcon` and `batteryMv`.
+  - In the current implementation lifecycle reflection metrics are `redcon` and `batteryMv`.
+  - Phase 2 also adds Sparkplug device metrics under `services/mcp/*` as MCP discovery summary (availability, transport, descriptor topic, lease settings, and server/protocol versions).
   - `mcu.*` and `board.*` remain shadow-only operational detail and are not Sparkplug metric reflections.
 - AWS IoT registry attributes hold stable per-device metadata outside the shadow:
   - `attributes.rig`
@@ -304,7 +305,7 @@ The current implementation includes:
 
 The current implementation does not include:
 
-- additional Sparkplug metrics beyond txing `redcon` and `batteryMv`
+- additional writable Sparkplug lifecycle metrics beyond txing `redcon`
 - town lifecycle management through Sparkplug
 - direct shadow lifecycle control as an authoritative path
 - user-facing REDCON selection in UI

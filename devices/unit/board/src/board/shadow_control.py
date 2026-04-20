@@ -19,9 +19,11 @@ from typing import Any
 
 import jsonschema
 from aws.auth import AwsRuntime, build_aws_runtime, ensure_aws_profile, resolve_aws_region
+from aws.mcp_topics import MCP_DEFAULT_LEASE_TTL_MS
 from aws.mqtt import AwsIotWebsocketSyncConnection, AwsMqttConnectionConfig
 
 from .cmd_vel import CmdVelController, DriveState, MAX_SPEED, build_cmd_vel_topic
+from .mcp_service import BoardMcpServer
 from .motor_driver import (
     DEFAULT_DRIVE_CMD_RAW_MAX_SPEED,
     DEFAULT_DRIVE_CMD_RAW_MIN_SPEED,
@@ -128,6 +130,7 @@ DEFAULT_THING_NAME_ENV = "THING_NAME"
 DEFAULT_SCHEMA_FILE_ENV = "SCHEMA_FILE"
 DEFAULT_VIDEO_REGION_ENV = "BOARD_VIDEO_REGION"
 LEGACY_VIDEO_REGION_ENV = "TXING_BOARD_VIDEO_REGION"
+DEFAULT_MCP_LEASE_TTL_MS = MCP_DEFAULT_LEASE_TTL_MS
 
 
 def _env_text(*names: str, default: str) -> str:
@@ -265,6 +268,7 @@ class AwsShadowClient:
         *,
         aws_runtime: AwsRuntime,
         cmd_vel_controller: CmdVelController | None = None,
+        mcp_server: BoardMcpServer | None = None,
     ) -> None:
         self._config = config
         self._aws_runtime = aws_runtime
@@ -282,12 +286,23 @@ class AwsShadowClient:
         self._topic_update_delta = f"{self._topic_prefix}/update/delta"
         self._topic_cmd_vel = build_cmd_vel_topic(config.thing_name)
         self._cmd_vel_controller = cmd_vel_controller
+        self._mcp_server = mcp_server
+        will_topic: str | None = None
+        will_payload: bytes | None = None
+        will_retain = False
+        if self._mcp_server is not None:
+            will_topic = self._mcp_server.status_topic
+            will_payload = self._mcp_server.build_unavailable_status_payload()
+            will_retain = True
         self._connection_config = AwsMqttConnectionConfig(
             endpoint=config.iot_endpoint,
             client_id=config.client_id,
             region_name=config.aws_region,
             connect_timeout_seconds=config.aws_connect_timeout,
             operation_timeout_seconds=config.publish_timeout,
+            will_topic=will_topic,
+            will_payload=will_payload,
+            will_retain=will_retain,
         )
         self._client: AwsIotWebsocketSyncConnection | None = None
 
@@ -357,6 +372,12 @@ class AwsShadowClient:
                     self._on_message,
                     timeout_seconds=timeout_seconds,
                 )
+            if self._mcp_server is not None:
+                client.subscribe(
+                    self._mcp_server.session_c2s_subscription,
+                    self._on_message,
+                    timeout_seconds=timeout_seconds,
+                )
         except Exception as err:
             try:
                 client.disconnect(timeout_seconds=timeout_seconds)
@@ -369,6 +390,11 @@ class AwsShadowClient:
         with self._lock:
             self._client = client
             self._connection_ready = True
+        if self._mcp_server is not None:
+            self._mcp_server.on_connected(
+                client=client,
+                publish_timeout_seconds=self._config.publish_timeout,
+            )
 
         self._request_shadow_get()
 
@@ -437,6 +463,8 @@ class AwsShadowClient:
 
     def close(self) -> None:
         self._disconnect_requested = True
+        if self._mcp_server is not None:
+            self._mcp_server.close()
         with self._lock:
             client = self._client
             self._client = None
@@ -462,6 +490,8 @@ class AwsShadowClient:
                 self._response_done.set()
         if self._cmd_vel_controller is not None:
             self._cmd_vel_controller.handle_disconnect(detail)
+        if self._mcp_server is not None:
+            self._mcp_server.on_disconnected(reason=detail)
         if not self._disconnect_requested:
             LOGGER.warning("AWS IoT MQTT disconnected unexpectedly (%s)", detail)
 
@@ -485,6 +515,10 @@ class AwsShadowClient:
         topic: str,
         payload_bytes: bytes,
     ) -> None:
+        if self._mcp_server is not None and self._mcp_server.handles_topic(topic):
+            self._mcp_server.handle_session_message(topic, payload_bytes)
+            return
+
         try:
             payload = json.loads(payload_bytes.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
@@ -1028,15 +1062,18 @@ def _wait_for_stop_or_halt(
     stop_event: threading.Event,
     shadow_client: AwsShadowClient,
     timeout_seconds: float,
+    mcp_server: BoardMcpServer | None = None,
 ) -> bool:
     deadline = time.monotonic() + timeout_seconds
     while True:
+        if mcp_server is not None:
+            mcp_server.poll()
         if stop_event.is_set() or shadow_client.halt_requested():
             return True
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             return False
-        stop_event.wait(min(0.5, remaining))
+        stop_event.wait(min(0.1, remaining))
 
 
 def _read_video_state(
@@ -1329,10 +1366,16 @@ def main() -> None:
         motor_driver=motor_driver,
     )
     cmd_vel_controller.start()
+    mcp_server = BoardMcpServer(
+        device_id=config.thing_name,
+        cmd_vel_controller=cmd_vel_controller,
+        lease_ttl_ms=DEFAULT_MCP_LEASE_TTL_MS,
+    )
     shadow_client = AwsShadowClient(
         config,
         aws_runtime=aws_runtime,
         cmd_vel_controller=cmd_vel_controller,
+        mcp_server=mcp_server,
     )
     video_supervisor = VideoSenderSupervisor(
         channel_name=config.video_channel_name,
@@ -1352,6 +1395,7 @@ def main() -> None:
 
     try:
         while not stop_event.is_set() and not shadow_client.halt_requested() and not startup_published:
+            mcp_server.poll()
             try:
                 _wait_for_system_clock_sync(
                     stop_event,
@@ -1411,6 +1455,7 @@ def main() -> None:
                     stop_event,
                     shadow_client,
                     config.reconnect_delay,
+                    mcp_server,
                 ):
                     break
 
@@ -1420,6 +1465,7 @@ def main() -> None:
             and not stop_event.is_set()
             and not shadow_client.halt_requested()
         ):
+            mcp_server.poll()
             if last_shadow_publish_monotonic is None:
                 heartbeat_due = True
                 heartbeat_remaining = 0.0
@@ -1447,6 +1493,7 @@ def main() -> None:
                     stop_event,
                     shadow_client,
                     wait_seconds,
+                    mcp_server,
                 ):
                     break
                 continue
@@ -1490,6 +1537,7 @@ def main() -> None:
                     stop_event,
                     shadow_client,
                     config.reconnect_delay,
+                    mcp_server,
                 ):
                     break
 

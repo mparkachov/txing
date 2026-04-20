@@ -73,9 +73,27 @@ Notes:
 
 ## `cmd_vel` contract
 
-Live motion control is out of band from Thing Shadow and uses the MQTT topic `<device_id>/board/cmd_vel`.
+Live motion control is out of band from Thing Shadow.
 
-This topic is a strict ROS `geometry_msgs/Twist` semantic contract:
+Phase 2 introduces a board-hosted MCP server on MQTT:
+
+- descriptor topic: `txings/<device_id>/mcp/descriptor`
+- status topic: `txings/<device_id>/mcp/status`
+- session topics: `txings/<device_id>/mcp/session/{sessionId}/c2s` and `.../s2c`
+
+The MCP tool surface for motion is:
+
+- `control.acquire_lease`
+- `control.renew_lease`
+- `control.release_lease`
+- `cmd_vel.publish`
+- `cmd_vel.stop`
+
+Lease ownership is enforced on board. Motion is stopped when the lease is released, expires, or the board MQTT connection drops.
+
+The legacy raw MQTT topic `<device_id>/board/cmd_vel` is still accepted as a compatibility path during migration, but MCP is the intended remote API.
+
+`cmd_vel.publish` keeps a strict ROS `geometry_msgs/Twist` semantic contract:
 
 - `linear.x` is forward body velocity in `m/s`
 - `angular.z` is yaw rate in `rad/s`

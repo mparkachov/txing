@@ -211,8 +211,11 @@ just aws::things-for-rig rig
 - Subscribes to each managed txing:
   - `$aws/things/<thing>/shadow/get/accepted`
   - `$aws/things/<thing>/shadow/update/accepted`
+  - `txings/<thing>/mcp/descriptor`
+  - `txings/<thing>/mcp/status`
   - `spBv1.0/<group>/DCMD/<edge>/<thing>`
 - On startup, requests the full shadow for each managed txing with `$aws/things/<thing>/shadow/get`.
+- Mirrors retained MCP descriptor/status facts into Sparkplug `services/mcp/*` device metrics while keeping rig as the only Sparkplug publisher for the selected device session.
 - Publishes `NBIRTH` for the Sparkplug node `rig`, but does not maintain AWS IoT shadows for `rig` or `town`.
 - Starts from the built-in BLE UUID configuration and validates it against the peripheral during short rendezvous sessions.
 - Uses AWS IoT thing attribute `bleDeviceId` as the primary persisted fast-reconnect hint.

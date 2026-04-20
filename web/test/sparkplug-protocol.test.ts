@@ -3,6 +3,8 @@ import {
   buildSparkplugRedconCommandPacket,
   buildSparkplugTopics,
   decodeSparkplugPayload,
+  encodeSparkplugPayload,
+  SparkplugDataType,
 } from '../src/sparkplug-protocol'
 
 describe('sparkplug protocol helpers', () => {
@@ -31,6 +33,48 @@ describe('sparkplug protocol helpers', () => {
         datatype: 3,
         intValue: 3,
         longValue: null,
+        boolValue: null,
+        stringValue: null,
+        timestamp: null,
+      },
+    ])
+  })
+
+  test('decodes boolean and string metrics', () => {
+    const payload = encodeSparkplugPayload({
+      timestamp: 100,
+      seq: 2,
+      metrics: [
+        {
+          name: 'services/mcp/available',
+          datatype: SparkplugDataType.Boolean,
+          boolValue: true,
+        },
+        {
+          name: 'services/mcp/transport',
+          datatype: SparkplugDataType.String,
+          stringValue: 'mqtt-jsonrpc',
+        },
+      ],
+    })
+    const decoded = decodeSparkplugPayload(payload)
+    expect(decoded.metrics).toEqual([
+      {
+        name: 'services/mcp/available',
+        datatype: 11,
+        intValue: null,
+        longValue: null,
+        boolValue: true,
+        stringValue: null,
+        timestamp: null,
+      },
+      {
+        name: 'services/mcp/transport',
+        datatype: 12,
+        intValue: null,
+        longValue: null,
+        boolValue: null,
+        stringValue: 'mqtt-jsonrpc',
         timestamp: null,
       },
     ])
