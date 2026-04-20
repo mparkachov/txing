@@ -346,23 +346,23 @@ const parseMcpLeaseState = (value: unknown): McpLeaseState | null => {
     return null
   }
   const leaseToken = value.leaseToken
-  const expiresAtMs = value.expiresAtMs
   const leaseTtlMs = value.leaseTtlMs
   if (typeof leaseToken !== 'string' || !leaseToken) {
     return null
   }
   if (
-    typeof expiresAtMs !== 'number' ||
-    !Number.isFinite(expiresAtMs) ||
     typeof leaseTtlMs !== 'number' ||
     !Number.isFinite(leaseTtlMs) ||
     leaseTtlMs <= 0
   ) {
     return null
   }
+  // Use local wall clock for renewal deadlines to avoid board/browser clock skew.
+  // Server still enforces the real lease validity; this only drives client renew timing.
+  const localExpiresAtMs = Date.now() + Math.round(leaseTtlMs)
   return {
     leaseToken,
-    expiresAtMs,
+    expiresAtMs: localExpiresAtMs,
     leaseTtlMs,
   }
 }
