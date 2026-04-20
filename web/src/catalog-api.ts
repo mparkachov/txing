@@ -1,8 +1,10 @@
 import {
+  DescribeThingCommand,
   DescribeThingGroupCommand,
   IoTClient,
   ListThingGroupsCommand,
   ListThingsInThingGroupCommand,
+  type DescribeThingCommandOutput,
   type DescribeThingGroupCommandOutput,
   type ListThingGroupsCommandOutput,
   type ListThingsInThingGroupCommandOutput,
@@ -12,6 +14,14 @@ import { appConfig } from './config'
 
 type ResolveIdToken = () => Promise<string>
 type IotControlClient = Pick<IoTClient, 'send'>
+export type RigCatalogEntry = {
+  rigName: string
+  description: string | null
+}
+export type DeviceCatalogEntry = {
+  thingName: string
+  deviceName: string | null
+}
 
 const maxResults = 100
 
@@ -22,6 +32,18 @@ const collator = new Intl.Collator(undefined, {
 
 const sortUnique = (values: readonly string[]): string[] =>
   [...new Set(values)].sort((left, right) => collator.compare(left, right))
+
+const normalizeOptionalText = (value: string | null | undefined): string | null => {
+  if (typeof value !== 'string') {
+    return null
+  }
+
+  const normalized = value.trim()
+  return normalized === '' ? null : normalized
+}
+
+const getDeviceDisplayName = (device: DeviceCatalogEntry): string =>
+  device.deviceName ?? device.thingName
 
 export const isRigThingGroupQuery = (queryString: string | null | undefined): boolean =>
   typeof queryString === 'string' &&
@@ -43,7 +65,7 @@ const createIotControlClient = async (resolveIdToken: ResolveIdToken): Promise<I
 
 export const listRigThingGroupsWithClient = async (
   client: IotControlClient,
-): Promise<string[]> => {
+): Promise<RigCatalogEntry[]> => {
   const candidateGroupNames: string[] = []
   let nextToken: string | undefined
 
@@ -64,7 +86,7 @@ export const listRigThingGroupsWithClient = async (
     nextToken = response.nextToken
   } while (nextToken)
 
-  const rigNames: string[] = []
+  const rigEntries: RigCatalogEntry[] = []
   for (const groupName of sortUnique(candidateGroupNames)) {
     const description = (await client.send(
       new DescribeThingGroupCommand({
@@ -73,14 +95,21 @@ export const listRigThingGroupsWithClient = async (
     )) as DescribeThingGroupCommandOutput
 
     if (isRigThingGroupQuery(description.queryString)) {
-      rigNames.push(groupName)
+      rigEntries.push({
+        rigName: groupName,
+        description: normalizeOptionalText(
+          description.thingGroupProperties?.thingGroupDescription,
+        ),
+      })
     }
   }
 
-  return sortUnique(rigNames)
+  return rigEntries.sort((left, right) => collator.compare(left.rigName, right.rigName))
 }
 
-export const listRigThingGroups = async (resolveIdToken: ResolveIdToken): Promise<string[]> => {
+export const listRigThingGroups = async (
+  resolveIdToken: ResolveIdToken,
+): Promise<RigCatalogEntry[]> => {
   const client = await createIotControlClient(resolveIdToken)
   return listRigThingGroupsWithClient(client)
 }
@@ -88,7 +117,7 @@ export const listRigThingGroups = async (resolveIdToken: ResolveIdToken): Promis
 export const listRigDevicesWithClient = async (
   client: IotControlClient,
   rigName: string,
-): Promise<string[]> => {
+): Promise<DeviceCatalogEntry[]> => {
   const deviceIds: string[] = []
   let nextToken: string | undefined
 
@@ -110,13 +139,59 @@ export const listRigDevicesWithClient = async (
     nextToken = response.nextToken
   } while (nextToken)
 
-  return sortUnique(deviceIds)
+  const uniqueDeviceIds = sortUnique(deviceIds)
+  const deviceEntries = await Promise.all(
+    uniqueDeviceIds.map(async (thingName) => {
+      try {
+        return await describeDeviceMetadataWithClient(client, thingName)
+      } catch {
+        return {
+          thingName,
+          deviceName: null,
+        }
+      }
+    }),
+  )
+
+  return deviceEntries.sort((left, right) =>
+    collator.compare(getDeviceDisplayName(left), getDeviceDisplayName(right)),
+  )
 }
 
 export const listRigDevices = async (
   resolveIdToken: ResolveIdToken,
   rigName: string,
-): Promise<string[]> => {
+): Promise<DeviceCatalogEntry[]> => {
   const client = await createIotControlClient(resolveIdToken)
   return listRigDevicesWithClient(client, rigName)
+}
+
+export const describeDeviceMetadataWithClient = async (
+  client: IotControlClient,
+  thingName: string,
+): Promise<DeviceCatalogEntry> => {
+  const response = (await client.send(
+    new DescribeThingCommand({
+      thingName,
+    }),
+  )) as DescribeThingCommandOutput
+
+  const attributes = response.attributes
+  const deviceName =
+    attributes && typeof attributes.deviceName === 'string' && attributes.deviceName.trim() !== ''
+      ? attributes.deviceName.trim()
+      : null
+
+  return {
+    thingName,
+    deviceName,
+  }
+}
+
+export const describeDeviceMetadata = async (
+  resolveIdToken: ResolveIdToken,
+  thingName: string,
+): Promise<DeviceCatalogEntry> => {
+  const client = await createIotControlClient(resolveIdToken)
+  return describeDeviceMetadataWithClient(client, thingName)
 }

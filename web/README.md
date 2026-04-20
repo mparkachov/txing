@@ -17,6 +17,7 @@ SPA shell for browsing town rigs and registered devices, then reading the select
 - On first use, the SPA attaches the stack-managed AWS IoT policy to the authenticated Cognito identity.
 - The browser MQTT client ID uses the Cognito identity ID plus a per-session suffix so multiple tabs or dev remounts do not collide on the same AWS IoT client ID.
 - The SPA lists available rig thing groups and thing names directly from AWS IoT Core with Cognito-backed browser credentials.
+- Town drilldown cards use AWS IoT thing-group descriptions, and rig drilldown cards prefer `attributes.deviceName` over raw `device_id` labels.
 - Current transport split:
   - classic Thing Shadow is the UI read path over MQTT/WSS
   - lifecycle commands use Sparkplug `DCMD.redcon` over MQTT/WSS

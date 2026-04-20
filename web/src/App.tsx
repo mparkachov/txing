@@ -18,7 +18,6 @@ import {
 } from './auth'
 import {
   buildDevicePath,
-  buildDeviceVideoPath,
   buildRigPath,
   buildTownPath,
   describeRouteTown,
@@ -53,7 +52,13 @@ import {
   extractReportedMcuPower,
   extractReportedRedcon,
 } from './app-model'
-import { listRigDevices, listRigThingGroups, isResourceNotFoundError } from './catalog-api'
+import {
+  isResourceNotFoundError,
+  listRigDevices,
+  listRigThingGroups,
+  type DeviceCatalogEntry,
+  type RigCatalogEntry,
+} from './catalog-api'
 import { CmdVelTeleopController } from './cmd-vel-teleop'
 import type { Twist } from './cmd-vel'
 import { appConfig } from './config'
@@ -74,12 +79,12 @@ type ShadowSnapshotView = {
 }
 type RigCatalogState = {
   status: 'idle' | 'loading' | 'ready' | 'error'
-  rigNames: string[]
+  rigs: RigCatalogEntry[]
   error: string
 }
 type DeviceCatalogState = {
   status: 'idle' | 'loading' | 'ready' | 'error' | 'not_found'
-  deviceIds: string[]
+  devices: DeviceCatalogEntry[]
   error: string
 }
 type DeviceRoute = {
@@ -90,17 +95,19 @@ type DeviceRoute = {
 
 const formatJson = (value: unknown): string => JSON.stringify(value, null, 2)
 const cmdVelRepeatIntervalMs = 100
+const txingLogoUrl = 'https://txing.dev/txing-logo.png'
+const appHomePath = '/'
 let shadowApiModulePromise: Promise<typeof import('./shadow-api')> | null = null
 
 const emptyRigCatalogState = (): RigCatalogState => ({
   status: 'idle',
-  rigNames: [],
+  rigs: [],
   error: '',
 })
 
 const emptyDeviceCatalogState = (): DeviceCatalogState => ({
   status: 'idle',
-  deviceIds: [],
+  devices: [],
   error: '',
 })
 
@@ -131,6 +138,150 @@ const isPlainLeftClick = (event: ReactMouseEvent<HTMLAnchorElement>): boolean =>
   !event.ctrlKey &&
   !event.altKey &&
   !event.shiftKey
+
+const formatShadowUpdateTime = (updatedAtMs: number | null): string =>
+  updatedAtMs === null
+    ? '--:--:--'
+    : new Date(updatedAtMs).toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      })
+
+const getCatalogDeviceLabel = (device: DeviceCatalogEntry | null | undefined): string =>
+  device?.deviceName?.trim() ? device.deviceName.trim() : 'Unnamed device'
+
+const getCatalogDescription = (description: string | null | undefined, fallback: string): string =>
+  typeof description === 'string' && description.trim() !== '' ? description.trim() : fallback
+
+type NavigationUserMenuProps = {
+  authUser: AuthUser | null
+  canLoadShadow: boolean
+  isDebugEnabled: boolean
+  isSessionLogVisible: boolean
+  onLoadShadow: () => void
+  onSignOff: () => void
+  onToggleDebug: () => void
+  onToggleSessionLog: () => void
+}
+
+function NavigationUserMenu({
+  authUser,
+  canLoadShadow,
+  isDebugEnabled,
+  isSessionLogVisible,
+  onLoadShadow,
+  onSignOff,
+  onToggleDebug,
+  onToggleSessionLog,
+}: NavigationUserMenuProps) {
+  const [isUserMenuOpen, setIsUserMenuOpen] = useState(false)
+  const userMenuRef = useRef<HTMLDivElement | null>(null)
+  const userMenuIdentity = authUser?.email ?? authUser?.name ?? authUser?.sub ?? 'User'
+  const userMenuInitial = userMenuIdentity.trim().charAt(0).toUpperCase() || 'U'
+
+  useEffect(() => {
+    if (!isUserMenuOpen) {
+      return
+    }
+
+    const handlePointerDown = (event: MouseEvent): void => {
+      if (!userMenuRef.current?.contains(event.target as Node)) {
+        setIsUserMenuOpen(false)
+      }
+    }
+
+    const handleEscape = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        setIsUserMenuOpen(false)
+      }
+    }
+
+    document.addEventListener('mousedown', handlePointerDown)
+    document.addEventListener('keydown', handleEscape)
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown)
+      document.removeEventListener('keydown', handleEscape)
+    }
+  }, [isUserMenuOpen])
+
+  return (
+    <div className="user-menu" ref={userMenuRef}>
+      <button
+        type="button"
+        className="user-menu-trigger"
+        aria-label="Open user menu"
+        aria-haspopup="menu"
+        aria-expanded={isUserMenuOpen}
+        onClick={() => {
+          setIsUserMenuOpen((currentValue) => !currentValue)
+        }}
+      >
+        <span className="user-avatar" aria-hidden="true">
+          {userMenuInitial}
+        </span>
+      </button>
+      {isUserMenuOpen ? (
+        <div className="user-menu-popover" role="menu" aria-label="User actions">
+          <div className="user-menu-header">
+            <span className="user-avatar user-avatar-large" aria-hidden="true">
+              {userMenuInitial}
+            </span>
+            <div className="user-menu-identity">
+              <p className="user-menu-name">{authUser?.name ?? 'Signed in'}</p>
+              <p className="user-menu-email">{authUser?.email ?? authUser?.sub ?? 'Unknown user'}</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            className="user-menu-item"
+            role="menuitem"
+            disabled={!canLoadShadow}
+            onClick={() => {
+              onLoadShadow()
+              setIsUserMenuOpen(false)
+            }}
+          >
+            Load Shadow
+          </button>
+          <button
+            type="button"
+            className="user-menu-item"
+            role="menuitem"
+            onClick={() => {
+              onToggleDebug()
+              setIsUserMenuOpen(false)
+            }}
+          >
+            {isDebugEnabled ? 'Disable Debug' : 'Enable Debug'}
+          </button>
+          <button
+            type="button"
+            className="user-menu-item"
+            role="menuitem"
+            onClick={() => {
+              onToggleSessionLog()
+              setIsUserMenuOpen(false)
+            }}
+          >
+            {isSessionLogVisible ? 'Hide Session Log' : 'Show Session Log'}
+          </button>
+          <button
+            type="button"
+            className="user-menu-item user-menu-item-danger"
+            role="menuitem"
+            onClick={() => {
+              setIsUserMenuOpen(false)
+              onSignOff()
+            }}
+          >
+            Sign Off
+          </button>
+        </div>
+      ) : null}
+    </div>
+  )
+}
 
 function App({ initialAuthError = '' }: AppProps) {
   const [route, setRoute] = useState<AppRoute>(getInitialRoute)
@@ -181,6 +332,21 @@ function App({ initialAuthError = '' }: AppProps) {
     return null
   }, [hasUnsupportedTown, route])
   const selectedRigName = routeRigName ?? null
+  const selectedDeviceEntry = useMemo(() => {
+    if (!selectedDeviceRoute || deviceCatalog.status !== 'ready') {
+      return null
+    }
+
+    return (
+      deviceCatalog.devices.find((device) => device.thingName === selectedDeviceRoute.device) ?? null
+    )
+  }, [deviceCatalog.devices, deviceCatalog.status, selectedDeviceRoute])
+  const selectedDeviceLabel = useMemo(() => {
+    if (!selectedDeviceRoute) {
+      return null
+    }
+    return selectedDeviceEntry ? getCatalogDeviceLabel(selectedDeviceEntry) : 'Device'
+  }, [selectedDeviceEntry, selectedDeviceRoute])
 
   const adminEmailMismatch = useMemo(() => {
     if (!appConfig.adminEmail || !authUser?.email) {
@@ -271,7 +437,7 @@ function App({ initialAuthError = '' }: AppProps) {
   const isSelectedDeviceValid =
     selectedDeviceRoute !== null &&
     deviceCatalog.status === 'ready' &&
-    deviceCatalog.deviceIds.includes(selectedDeviceRoute.device)
+    deviceCatalog.devices.some((device) => device.thingName === selectedDeviceRoute.device)
 
   const activeSessionRoute =
     status === 'signed_in' &&
@@ -482,20 +648,20 @@ function App({ initialAuthError = '' }: AppProps) {
     let cancelled = false
     setRigCatalog({
       status: 'loading',
-      rigNames: [],
+      rigs: [],
       error: '',
     })
 
     const loadRigCatalog = async (): Promise<void> => {
       try {
-        const rigNames = await listRigThingGroups(resolveSessionIdToken)
+        const rigs = await listRigThingGroups(resolveSessionIdToken)
         if (cancelled) {
           return
         }
 
         setRigCatalog({
           status: 'ready',
-          rigNames,
+          rigs,
           error: '',
         })
       } catch (caughtError) {
@@ -504,7 +670,7 @@ function App({ initialAuthError = '' }: AppProps) {
         }
         setRigCatalog({
           status: 'error',
-          rigNames: [],
+          rigs: [],
           error:
             caughtError instanceof Error ? caughtError.message : 'Unable to list rigs',
         })
@@ -532,20 +698,20 @@ function App({ initialAuthError = '' }: AppProps) {
     let cancelled = false
     setDeviceCatalog({
       status: 'loading',
-      deviceIds: [],
+      devices: [],
       error: '',
     })
 
     const loadDeviceCatalog = async (): Promise<void> => {
       try {
-        const deviceIds = await listRigDevices(resolveSessionIdToken, selectedRigName)
+        const devices = await listRigDevices(resolveSessionIdToken, selectedRigName)
         if (cancelled) {
           return
         }
 
         setDeviceCatalog({
           status: 'ready',
-          deviceIds,
+          devices,
           error: '',
         })
       } catch (caughtError) {
@@ -556,7 +722,7 @@ function App({ initialAuthError = '' }: AppProps) {
         if (isResourceNotFoundError(caughtError)) {
           setDeviceCatalog({
             status: 'not_found',
-            deviceIds: [],
+            devices: [],
             error: `Rig '${selectedRigName}' was not found.`,
           })
           return
@@ -564,7 +730,7 @@ function App({ initialAuthError = '' }: AppProps) {
 
         setDeviceCatalog({
           status: 'error',
-          deviceIds: [],
+          devices: [],
           error:
             caughtError instanceof Error ? caughtError.message : 'Unable to list devices',
         })
@@ -839,10 +1005,14 @@ function App({ initialAuthError = '' }: AppProps) {
     setIsBoardVideoExpanded((currentValue) => !currentValue)
   }
 
-  const renderRouteLink = (path: string, label: string): ReactElement => (
+  const renderInlineRouteLink = (
+    path: string,
+    label: string,
+    className = 'navigation-link',
+  ): ReactElement => (
     <a
       href={path}
-      className="catalog-link"
+      className={className}
       onClick={(event) => {
         handleRouteLinkClick(event, path)
       }}
@@ -851,40 +1021,75 @@ function App({ initialAuthError = '' }: AppProps) {
     </a>
   )
 
-  const renderBreadcrumbs = (): ReactElement | null => {
+  const renderCatalogCardLink = (
+    path: string,
+    eyebrow: string,
+    title: string,
+    description?: string,
+    titleClassName = '',
+  ): ReactElement => (
+    <a
+      href={path}
+      className="catalog-card-link"
+      onClick={(event) => {
+        handleRouteLinkClick(event, path)
+      }}
+    >
+      <span className="catalog-card-link-eyebrow">{eyebrow}</span>
+      <span className={`catalog-card-link-title ${titleClassName}`.trim()}>{title}</span>
+      {description ? <span className="catalog-card-link-description">{description}</span> : null}
+    </a>
+  )
+
+  const renderNavigationPath = (): ReactElement | null => {
     if (route.kind === 'root' || route.kind === 'not_found') {
       return null
     }
 
-    const crumbs = [renderRouteLink(buildTownPath(route.town), route.town)]
-    if (route.kind === 'rig' || route.kind === 'device' || route.kind === 'device_video') {
-      crumbs.push(renderRouteLink(buildRigPath(route.town, route.rig), route.rig))
-    }
-    if (route.kind === 'device' || route.kind === 'device_video') {
+    const crumbs: ReactElement[] = [renderInlineRouteLink(buildTownPath(route.town), route.town)]
+    if (route.kind === 'town') {
+      crumbs[0] = (
+        <span key={`crumb-town:${route.town}`} className="navigation-current-link">
+          {route.town}
+        </span>
+      )
+    } else if (route.kind === 'rig') {
+      crumbs.push(<span key={`crumb-rig:${route.rig}`}>{route.rig}</span>)
+    } else if (route.kind === 'device' || route.kind === 'device_video') {
+      crumbs.push(renderInlineRouteLink(buildRigPath(route.town, route.rig), route.rig))
       crumbs.push(
-        renderRouteLink(buildDevicePath(route.town, route.rig, route.device), route.device),
+        renderInlineRouteLink(
+          buildDevicePath(route.town, route.rig, route.device),
+          selectedDeviceLabel ?? route.device,
+        ),
       )
     }
     if (route.kind === 'device_video') {
-      crumbs.push(
-        <span key={`crumb-video:${route.device}`} className="catalog-crumb-current">
-          video
-        </span>,
+      crumbs.push(<span key={`crumb-video:${route.device}`}>video</span>)
+    }
+    if (route.kind === 'rig') {
+      crumbs[crumbs.length - 1] = (
+        <span key={`crumb-rig:${route.rig}`} className="navigation-current-link">
+          {route.rig}
+        </span>
       )
     }
-    if (route.kind === 'device') {
+    if (route.kind === 'device' || route.kind === 'device_video') {
       crumbs[crumbs.length - 1] = (
-        <span key={`crumb-device:${route.device}`} className="catalog-crumb-current">
-          {route.device}
+        <span
+          key={`crumb-device:${route.device}:${route.kind}`}
+          className="navigation-current-link"
+        >
+          {route.kind === 'device' ? selectedDeviceLabel ?? route.device : 'video'}
         </span>
       )
     }
 
     return (
-      <nav className="catalog-breadcrumbs" aria-label="Breadcrumb">
+      <nav className="navigation-path" aria-label="Breadcrumb">
         {crumbs.map((crumb, index) => (
-          <span key={`crumb:${index}`} className="catalog-breadcrumb">
-            {index > 0 ? <span className="catalog-breadcrumb-separator">/</span> : null}
+          <span key={`crumb:${index}`} className="navigation-path-segment">
+            {index > 0 ? <span className="navigation-path-separator">→</span> : null}
             {crumb}
           </span>
         ))}
@@ -930,7 +1135,10 @@ function App({ initialAuthError = '' }: AppProps) {
                   className="status-txing-header-side status-txing-header-side-start status-auth-spacer"
                   aria-hidden="true"
                 />
-                <div className="status-name status-txing-name status-auth-name">Bot</div>
+                <div className="status-auth-lockup">
+                  <img src={txingLogoUrl} alt="txing logo" className="status-auth-logo" />
+                  <div className="status-name status-txing-name status-auth-name">TXING</div>
+                </div>
                 <div className="status-txing-header-side status-txing-header-side-end">
                   <button type="button" onClick={() => void beginSignIn()} className="primary">
                     Sign in
@@ -946,6 +1154,70 @@ function App({ initialAuthError = '' }: AppProps) {
   }
 
   const showDevicePanel = activeSessionRoute !== null
+  const lastShadowUpdateLabel = formatShadowUpdateTime(lastShadowUpdateAtMs)
+  const lastShadowUpdateTitle =
+    lastShadowUpdateAtMs === null
+      ? 'Last shadow update unavailable'
+      : `Last shadow update ${new Date(lastShadowUpdateAtMs).toLocaleString()}`
+
+  const navigationPanel =
+    route.kind !== 'root' ? (
+      <section className="card navigation-panel" aria-label="Navigation panel">
+        <div className="navigation-panel-main">
+          <a
+            href={appHomePath}
+            className="navigation-logo-link"
+            aria-label="Open town browser home"
+            onClick={(event) => {
+              handleRouteLinkClick(event, appHomePath)
+            }}
+          >
+            <img
+              src={txingLogoUrl}
+              alt="txing logo"
+              className="navigation-logo"
+            />
+          </a>
+          <span className="navigation-panel-brand">TXING</span>
+          <div className="navigation-panel-route">
+            {renderNavigationPath() ?? (
+              <span className="navigation-current-link">route not found</span>
+            )}
+          </div>
+        </div>
+        <div className="navigation-panel-actions">
+          {selectedDeviceRoute ? (
+            <time
+              className="status-last-shadow-update navigation-timestamp"
+              dateTime={
+                lastShadowUpdateAtMs === null
+                  ? undefined
+                  : new Date(lastShadowUpdateAtMs).toISOString()
+              }
+              title={lastShadowUpdateTitle}
+            >
+              {lastShadowUpdateLabel}
+            </time>
+          ) : null}
+          <NavigationUserMenu
+            authUser={authUser}
+            canLoadShadow={canLoadShadow}
+            isDebugEnabled={isDebugEnabled}
+            isSessionLogVisible={isSessionLogVisible}
+            onLoadShadow={() => {
+              void loadShadow()
+            }}
+            onSignOff={handleSignOff}
+            onToggleDebug={() => {
+              setIsDebugEnabled((currentValue) => !currentValue)
+            }}
+            onToggleSessionLog={() => {
+              setIsSessionLogVisible((currentValue) => !currentValue)
+            }}
+          />
+        </div>
+      </section>
+    ) : null
 
   let content: ReactElement
   if (route.kind === 'root') {
@@ -960,7 +1232,7 @@ function App({ initialAuthError = '' }: AppProps) {
       <section className="card catalog-card">
         <h1>Route not found</h1>
         <p>The path does not match the supported town / rig / device URL schema.</p>
-        <p>{renderRouteLink(configuredTownPath, 'Open the configured town')}</p>
+        <p>{renderInlineRouteLink(configuredTownPath, 'Open the configured town')}</p>
       </section>
     )
   } else if (hasUnsupportedTown) {
@@ -971,24 +1243,28 @@ function App({ initialAuthError = '' }: AppProps) {
           This deployment is scoped to <strong>{configuredTown}</strong>. The current URL targets{' '}
           <strong>{currentRouteTown}</strong>.
         </p>
-        <p>{renderRouteLink(configuredTownPath, `Open ${configuredTown}`)}</p>
+        <p>{renderInlineRouteLink(configuredTownPath, `Open ${configuredTown}`)}</p>
       </section>
     )
   } else if (route.kind === 'town') {
     content = (
-      <section className="card catalog-card">
-        <h1>{route.town}</h1>
-        <p>Available rigs</p>
+      <section className="catalog-grid-shell">
         {rigCatalog.status === 'loading' ? <p>Loading rigs...</p> : null}
         {rigCatalog.status === 'error' ? <p className="error">{rigCatalog.error}</p> : null}
-        {rigCatalog.status === 'ready' && rigCatalog.rigNames.length === 0 ? (
+        {rigCatalog.status === 'ready' && rigCatalog.rigs.length === 0 ? (
           <p>No rigs are currently registered for this town.</p>
         ) : null}
-        {rigCatalog.rigNames.length > 0 ? (
-          <ul className="catalog-list" aria-label={`Rigs in ${route.town}`}>
-            {rigCatalog.rigNames.map((rigName) => (
-              <li key={rigName} className="catalog-list-item">
-                {renderRouteLink(buildRigPath(route.town, rigName), rigName)}
+        {rigCatalog.rigs.length > 0 ? (
+          <ul className="catalog-list catalog-grid" aria-label={`Rigs in ${route.town}`}>
+            {rigCatalog.rigs.map((rig) => (
+              <li key={rig.rigName} className="catalog-list-item">
+                {renderCatalogCardLink(
+                  buildRigPath(route.town, rig.rigName),
+                  'Rig',
+                  rig.rigName.toUpperCase(),
+                  getCatalogDescription(rig.description, 'No rig description available.'),
+                  'catalog-card-link-title-caps',
+                )}
               </li>
             ))}
           </ul>
@@ -997,21 +1273,22 @@ function App({ initialAuthError = '' }: AppProps) {
     )
   } else if (route.kind === 'rig') {
     content = (
-      <section className="card catalog-card">
-        {renderBreadcrumbs()}
-        <h1>{route.rig}</h1>
-        <p>Registered devices</p>
+      <section className="catalog-grid-shell">
         {deviceCatalog.status === 'loading' ? <p>Loading devices...</p> : null}
         {deviceCatalog.status === 'not_found' ? <p className="error">{deviceCatalog.error}</p> : null}
         {deviceCatalog.status === 'error' ? <p className="error">{deviceCatalog.error}</p> : null}
-        {deviceCatalog.status === 'ready' && deviceCatalog.deviceIds.length === 0 ? (
+        {deviceCatalog.status === 'ready' && deviceCatalog.devices.length === 0 ? (
           <p>No devices are currently assigned to this rig.</p>
         ) : null}
-        {deviceCatalog.deviceIds.length > 0 ? (
-          <ul className="catalog-list" aria-label={`Devices in ${route.rig}`}>
-            {deviceCatalog.deviceIds.map((deviceId) => (
-              <li key={deviceId} className="catalog-list-item">
-                {renderRouteLink(buildDevicePath(route.town, route.rig, deviceId), deviceId)}
+        {deviceCatalog.devices.length > 0 ? (
+          <ul className="catalog-list catalog-grid" aria-label={`Devices in ${route.rig}`}>
+            {deviceCatalog.devices.map((device) => (
+              <li key={device.thingName} className="catalog-list-item">
+                {renderCatalogCardLink(
+                  buildDevicePath(route.town, route.rig, device.thingName),
+                  'Device',
+                  getCatalogDeviceLabel(device),
+                )}
               </li>
             ))}
           </ul>
@@ -1021,8 +1298,7 @@ function App({ initialAuthError = '' }: AppProps) {
   } else if (selectedDeviceRoute && deviceCatalog.status === 'loading') {
     content = (
       <section className="card catalog-card">
-        {renderBreadcrumbs()}
-        <h1>{selectedDeviceRoute.device}</h1>
+        <h1>Loading device</h1>
         <p>Validating device membership for rig {selectedDeviceRoute.rig}...</p>
       </section>
     )
@@ -1031,11 +1307,10 @@ function App({ initialAuthError = '' }: AppProps) {
     (deviceCatalog.status === 'not_found' ||
       deviceCatalog.status === 'error' ||
       (deviceCatalog.status === 'ready' &&
-        !deviceCatalog.deviceIds.includes(selectedDeviceRoute.device)))
+        !deviceCatalog.devices.some((device) => device.thingName === selectedDeviceRoute.device)))
   ) {
     content = (
       <section className="card catalog-card">
-        {renderBreadcrumbs()}
         <h1>Device not found</h1>
         <p>
           {deviceCatalog.status === 'error'
@@ -1043,7 +1318,7 @@ function App({ initialAuthError = '' }: AppProps) {
             : `Device '${selectedDeviceRoute.device}' is not assigned to rig '${selectedDeviceRoute.rig}'.`}
         </p>
         <p>
-          {renderRouteLink(
+          {renderInlineRouteLink(
             buildRigPath(selectedDeviceRoute.town, selectedDeviceRoute.rig),
             `Open ${selectedDeviceRoute.rig}`,
           )}
@@ -1052,102 +1327,56 @@ function App({ initialAuthError = '' }: AppProps) {
     )
   } else if (route.kind === 'device_video' && selectedDeviceRoute) {
     content = (
-      <>
-        <section className="card catalog-card catalog-card-detail">
-          {renderBreadcrumbs()}
-          <div className="catalog-detail-heading">
-            <h1>{selectedDeviceRoute.device} video</h1>
-            <p>
-              Rig <strong>{selectedDeviceRoute.rig}</strong> · Town{' '}
-              <strong>{selectedDeviceRoute.town}</strong>
-            </p>
-          </div>
-        </section>
-        <section className="card catalog-card catalog-card-detail">
-          <VideoPanel
-            channelName={buildBoardVideoChannelName(selectedDeviceRoute.device)}
-            debugEnabled={isDebugEnabled}
-            onRuntimeError={(message: string) => {
-              enqueueRuntimeError(message, 'board-video-viewer')
-            }}
-            resolveIdToken={resolveSessionIdToken}
-          />
-        </section>
-      </>
+      <section className="card catalog-card catalog-card-detail">
+        <VideoPanel
+          channelName={buildBoardVideoChannelName(selectedDeviceRoute.device)}
+          debugEnabled={isDebugEnabled}
+          onRuntimeError={(message: string) => {
+            enqueueRuntimeError(message, 'board-video-viewer')
+          }}
+          resolveIdToken={resolveSessionIdToken}
+        />
+      </section>
     )
   } else if (showDevicePanel && selectedDeviceRoute) {
     content = (
-      <>
-        <section className="card catalog-card catalog-card-detail">
-          {renderBreadcrumbs()}
-          <div className="catalog-detail-heading">
-            <h1>{selectedDeviceRoute.device}</h1>
-            <p>
-              Rig <strong>{selectedDeviceRoute.rig}</strong> · Town{' '}
-              <strong>{selectedDeviceRoute.town}</strong> ·{' '}
-              {renderRouteLink(
-                buildDeviceVideoPath(
-                  selectedDeviceRoute.town,
-                  selectedDeviceRoute.rig,
-                  selectedDeviceRoute.device,
-                ),
-                'open video route',
-              )}
-            </p>
-          </div>
-        </section>
-
-        <TxingPanel
-          authUser={authUser}
-          canLoadShadow={canLoadShadow}
-          canUseBoardVideo={canUseBoardVideo}
-          isBoardVideoExpanded={isBoardVideoExpanded}
-          isDebugEnabled={isDebugEnabled}
-          isSessionLogVisible={isSessionLogVisible}
-          isTxingSwitchDisabled={isTxingSwitchDisabled}
-          isTxingSwitchPending={isTxingSwitchPending}
-          lastShadowUpdateAtMs={lastShadowUpdateAtMs}
-          reportedBoardLeftTrackSpeed={reportedBoardDrive.leftSpeed}
-          reportedBoardOnline={reportedBoardOnline}
-          reportedBoardRightTrackSpeed={reportedBoardDrive.rightSpeed}
-          reportedBatteryMv={reportedBatteryMv}
-          reportedMcuOnline={reportedMcuOnline}
-          reportedRedcon={reportedRedcon}
-          txingSwitchChecked={txingSwitchChecked}
-          videoChannelName={buildBoardVideoChannelName(selectedDeviceRoute.device)}
-          resolveIdToken={resolveSessionIdToken}
-          onBoardVideoRuntimeError={(message) => {
-            enqueueRuntimeError(message, 'board-video-viewer')
-          }}
-          onLoadShadow={() => {
-            void loadShadow()
-          }}
-          onSignOff={handleSignOff}
-          onToggleBoardVideo={handleOpenBoardVideo}
-          onToggleDebug={() => {
-            setIsDebugEnabled((currentValue) => !currentValue)
-          }}
-          onToggleSessionLog={() => {
-            setIsSessionLogVisible((currentValue) => !currentValue)
-          }}
-          onTxingSwitchChange={(checked) => {
-            void handleTxingSwitchChange(checked)
-          }}
-        />
-      </>
+      <TxingPanel
+        canUseBoardVideo={canUseBoardVideo}
+        isBoardVideoExpanded={isBoardVideoExpanded}
+        isDebugEnabled={isDebugEnabled}
+        isTxingSwitchDisabled={isTxingSwitchDisabled}
+        isTxingSwitchPending={isTxingSwitchPending}
+        reportedBoardLeftTrackSpeed={reportedBoardDrive.leftSpeed}
+        reportedBoardOnline={reportedBoardOnline}
+        reportedBoardRightTrackSpeed={reportedBoardDrive.rightSpeed}
+        reportedBatteryMv={reportedBatteryMv}
+        reportedMcuOnline={reportedMcuOnline}
+        reportedRedcon={reportedRedcon}
+        txingSwitchChecked={txingSwitchChecked}
+        videoChannelName={buildBoardVideoChannelName(selectedDeviceRoute.device)}
+        resolveIdToken={resolveSessionIdToken}
+        onBoardVideoRuntimeError={(message) => {
+          enqueueRuntimeError(message, 'board-video-viewer')
+        }}
+        onToggleBoardVideo={handleOpenBoardVideo}
+        onTxingSwitchChange={(checked) => {
+          void handleTxingSwitchChange(checked)
+        }}
+      />
     )
   } else {
     content = (
       <section className="card catalog-card">
         <h1>Device Shadow Admin</h1>
         <p>Waiting for a valid route selection.</p>
-        <p>{renderRouteLink(configuredTownPath, `Open ${configuredTown}`)}</p>
+        <p>{renderInlineRouteLink(configuredTownPath, `Open ${configuredTown}`)}</p>
       </section>
     )
   }
 
   return (
     <main className="page page-signed-in">
+      {navigationPanel}
       {content}
 
       <NotificationTray

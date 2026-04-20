@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import {
+  describeDeviceMetadataWithClient,
   isRigThingGroupQuery,
   listRigDevicesWithClient,
   listRigThingGroupsWithClient,
@@ -45,6 +46,9 @@ describe('catalog api helpers', () => {
         {
           thingGroupName: 'a-rig',
           queryString: 'attributes.rig:a-rig AND attributes.town:*',
+          thingGroupProperties: {
+            thingGroupDescription: 'Alpha description',
+          },
         },
         {
           thingGroupName: 'misc',
@@ -53,14 +57,26 @@ describe('catalog api helpers', () => {
         {
           thingGroupName: 'z-rig',
           queryString: 'attributes.rig:z-rig AND attributes.town:*',
+          thingGroupProperties: {
+            thingGroupDescription: 'Zulu description',
+          },
         },
       ],
     })
 
-    await expect(listRigThingGroupsWithClient(client)).resolves.toEqual(['a-rig', 'z-rig'])
+    await expect(listRigThingGroupsWithClient(client)).resolves.toEqual([
+      {
+        rigName: 'a-rig',
+        description: 'Alpha description',
+      },
+      {
+        rigName: 'z-rig',
+        description: 'Zulu description',
+      },
+    ])
   })
 
-  test('lists rig devices through pagination and stable sorting', async () => {
+  test('lists rig devices through pagination, metadata lookup, and stable sorting', async () => {
     const client = new FakeIotControlClient({
       ListThingsInThingGroupCommand: [
         {
@@ -71,12 +87,59 @@ describe('catalog api helpers', () => {
           things: ['unit-a1', 'unit-b3'],
         },
       ],
+      DescribeThingCommand: [
+        {
+          thingName: 'unit-a1',
+          attributes: {
+            deviceName: 'bot',
+          },
+        },
+        {
+          thingName: 'unit-b3',
+          attributes: {
+            deviceName: 'crawler',
+          },
+        },
+        {
+          thingName: 'unit-z9',
+          attributes: {
+            deviceName: 'zeta',
+          },
+        },
+      ],
     })
 
     await expect(listRigDevicesWithClient(client, 'rig')).resolves.toEqual([
-      'unit-a1',
-      'unit-b3',
-      'unit-z9',
+      {
+        thingName: 'unit-a1',
+        deviceName: 'bot',
+      },
+      {
+        thingName: 'unit-b3',
+        deviceName: 'crawler',
+      },
+      {
+        thingName: 'unit-z9',
+        deviceName: 'zeta',
+      },
     ])
+  })
+
+  test('describes selected device metadata and trims deviceName', async () => {
+    const client = new FakeIotControlClient({
+      DescribeThingCommand: [
+        {
+          thingName: 'unit-kiv3mj',
+          attributes: {
+            deviceName: ' bot ',
+          },
+        },
+      ],
+    })
+
+    await expect(describeDeviceMetadataWithClient(client, 'unit-kiv3mj')).resolves.toEqual({
+      thingName: 'unit-kiv3mj',
+      deviceName: 'bot',
+    })
   })
 })

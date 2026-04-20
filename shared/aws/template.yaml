@@ -710,6 +710,7 @@ Resources:
                 Effect: Allow
                 Action:
                   - iot:ListThingGroups
+                  - iot:DescribeThing
                   - iot:DescribeThingGroup
                   - iot:ListThingsInThingGroup
                 Resource: "*"

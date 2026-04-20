@@ -1,5 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import type { AuthUser } from '../../../web/src/auth'
+import { useMemo } from 'react'
 import {
   describeRedcon,
   getTrackIndicatorPresentation,
@@ -8,15 +7,11 @@ import {
 import VideoPanel from '../../../web/src/VideoPanel'
 
 type TxingPanelProps = {
-  authUser: AuthUser | null
-  canLoadShadow: boolean
   canUseBoardVideo: boolean
   isBoardVideoExpanded: boolean
   isDebugEnabled: boolean
-  isSessionLogVisible: boolean
   isTxingSwitchDisabled: boolean
   isTxingSwitchPending: boolean
-  lastShadowUpdateAtMs: number | null
   reportedBoardLeftTrackSpeed: number | null
   reportedBoardOnline: boolean | null
   reportedBoardRightTrackSpeed: number | null
@@ -27,11 +22,7 @@ type TxingPanelProps = {
   videoChannelName: string
   resolveIdToken: () => Promise<string>
   onBoardVideoRuntimeError: (message: string) => void
-  onLoadShadow: () => void
-  onSignOff: () => void
   onToggleBoardVideo: () => void
-  onToggleDebug: () => void
-  onToggleSessionLog: () => void
   onTxingSwitchChange: (checked: boolean) => void
 }
 
@@ -74,15 +65,6 @@ const formatTrackGaugeValue = (speed: number | null): string => {
   }
   return `${speed > 0 ? '+' : ''}${speed}`
 }
-
-const formatShadowUpdateTime = (updatedAtMs: number | null): string =>
-  updatedAtMs === null
-    ? '--:--:--'
-    : new Date(updatedAtMs).toLocaleTimeString([], {
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-      })
 
 const getBatteryPercent = (batteryMv: number | null): number | null => {
   if (batteryMv === null || Number.isNaN(batteryMv)) {
@@ -196,15 +178,11 @@ function TrackGauge({ side, speed }: TrackGaugeProps) {
 }
 
 function TxingPanel({
-  authUser,
-  canLoadShadow,
   canUseBoardVideo,
   isBoardVideoExpanded,
   isDebugEnabled,
-  isSessionLogVisible,
   isTxingSwitchDisabled,
   isTxingSwitchPending,
-  lastShadowUpdateAtMs,
   reportedBoardLeftTrackSpeed,
   reportedBoardOnline,
   reportedBoardRightTrackSpeed,
@@ -215,53 +193,14 @@ function TxingPanel({
   videoChannelName,
   resolveIdToken,
   onBoardVideoRuntimeError,
-  onLoadShadow,
-  onSignOff,
   onToggleBoardVideo,
-  onToggleDebug,
-  onToggleSessionLog,
   onTxingSwitchChange,
 }: TxingPanelProps) {
-  const [isUserMenuOpen, setIsUserMenuOpen] = useState(false)
-  const userMenuRef = useRef<HTMLDivElement | null>(null)
-
   const batteryPercent = useMemo(() => getBatteryPercent(reportedBatteryMv), [reportedBatteryMv])
   const batteryToneClass = getBatteryToneClass(batteryPercent)
   const boardWifiToneClass = getBoardWifiToneClass(reportedBoardOnline)
   const bleSignalToneClass = getBleSignalToneClass(reportedMcuOnline)
   const txingRedconLabel = describeRedcon(reportedRedcon)
-  const userMenuIdentity = authUser?.email ?? authUser?.name ?? authUser?.sub ?? 'User'
-  const userMenuInitial = userMenuIdentity.trim().charAt(0).toUpperCase() || 'U'
-  const lastShadowUpdateLabel = formatShadowUpdateTime(lastShadowUpdateAtMs)
-  const lastShadowUpdateTitle =
-    lastShadowUpdateAtMs === null
-      ? 'Last shadow update unavailable'
-      : `Last shadow update ${new Date(lastShadowUpdateAtMs).toLocaleString()}`
-
-  useEffect(() => {
-    if (!isUserMenuOpen) {
-      return
-    }
-
-    const handlePointerDown = (event: MouseEvent) => {
-      if (!userMenuRef.current?.contains(event.target as Node)) {
-        setIsUserMenuOpen(false)
-      }
-    }
-
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setIsUserMenuOpen(false)
-      }
-    }
-
-    document.addEventListener('mousedown', handlePointerDown)
-    document.addEventListener('keydown', handleEscape)
-    return () => {
-      document.removeEventListener('mousedown', handlePointerDown)
-      document.removeEventListener('keydown', handleEscape)
-    }
-  }, [isUserMenuOpen])
 
   return (
     <section className="status-hero status-hero-dashboard" aria-label="Bot status">
@@ -273,82 +212,6 @@ function TxingPanel({
         >
           <div className="status-txing-header">
             <div className="status-txing-header-side status-txing-header-side-start">
-              <div className="user-menu" ref={userMenuRef}>
-                <button
-                  type="button"
-                  className="user-menu-trigger"
-                  aria-label="Open user menu"
-                  aria-haspopup="menu"
-                  aria-expanded={isUserMenuOpen}
-                  onClick={() => {
-                    setIsUserMenuOpen((currentValue) => !currentValue)
-                  }}
-                >
-                  <span className="user-avatar" aria-hidden="true">
-                    {userMenuInitial}
-                  </span>
-                </button>
-                {isUserMenuOpen && (
-                  <div className="user-menu-popover" role="menu" aria-label="User actions">
-                    <div className="user-menu-header">
-                      <span className="user-avatar user-avatar-large" aria-hidden="true">
-                        {userMenuInitial}
-                      </span>
-                      <div className="user-menu-identity">
-                        <p className="user-menu-name">{authUser?.name ?? 'Signed in'}</p>
-                        <p className="user-menu-email">
-                          {authUser?.email ?? authUser?.sub ?? 'Unknown user'}
-                        </p>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      className="user-menu-item"
-                      role="menuitem"
-                      disabled={!canLoadShadow}
-                      onClick={() => {
-                        onLoadShadow()
-                        setIsUserMenuOpen(false)
-                      }}
-                    >
-                      Load Shadow
-                    </button>
-                    <button
-                      type="button"
-                      className="user-menu-item"
-                      role="menuitem"
-                      onClick={() => {
-                        onToggleDebug()
-                        setIsUserMenuOpen(false)
-                      }}
-                    >
-                      {isDebugEnabled ? 'Disable Debug' : 'Enable Debug'}
-                    </button>
-                    <button
-                      type="button"
-                      className="user-menu-item"
-                      role="menuitem"
-                      onClick={() => {
-                        onToggleSessionLog()
-                        setIsUserMenuOpen(false)
-                      }}
-                    >
-                      {isSessionLogVisible ? 'Hide Session Log' : 'Show Session Log'}
-                    </button>
-                    <button
-                      type="button"
-                      className="user-menu-item user-menu-item-danger"
-                      role="menuitem"
-                      onClick={() => {
-                        setIsUserMenuOpen(false)
-                        onSignOff()
-                      }}
-                    >
-                      Sign Off
-                    </button>
-                  </div>
-                )}
-              </div>
               <label
                 className={`status-switch ${isTxingSwitchPending ? 'status-switch-pending' : ''}`}
                 aria-label="Wake or sleep bot"
@@ -365,17 +228,6 @@ function TxingPanel({
                   <span className="status-switch-thumb" />
                 </span>
               </label>
-              <time
-                className="status-last-shadow-update"
-                dateTime={
-                  lastShadowUpdateAtMs === null
-                    ? undefined
-                    : new Date(lastShadowUpdateAtMs).toISOString()
-                }
-                title={lastShadowUpdateTitle}
-              >
-                {lastShadowUpdateLabel}
-              </time>
             </div>
             <div
               className="status-txing-title-group"
