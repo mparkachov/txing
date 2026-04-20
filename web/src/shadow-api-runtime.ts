@@ -6,10 +6,15 @@ import { AttachPolicyCommand, IoTClient } from '@aws-sdk/client-iot'
 import * as auth from 'aws-crt/dist.browser/browser/auth'
 import * as iot from 'aws-crt/dist.browser/browser/iot'
 import * as mqtt5 from 'aws-crt/dist.browser/browser/mqtt5'
+import { LatestAsyncValueRunner } from './async-latest'
 import { buildCognitoLogins, createCredentialProvider } from './aws-credentials'
 import { buildCmdVelPublishPacket, isZeroTwist, type Twist } from './cmd-vel'
 import { appConfig } from './config'
 import { resolveIotDataEndpoint } from './iot-endpoint'
+import {
+  isMcpSessionNotInitializedError,
+  isRecoverableMcpLeaseError,
+} from './mcp-errors'
 import {
   buildMcpDescriptorTopic,
   buildMcpSessionC2sTopic,
@@ -215,12 +220,6 @@ const isForbiddenError = (error: unknown): boolean =>
 
 const isNotAuthorizedConnectError = (error: unknown): boolean =>
   error instanceof Error && error.message.toLowerCase().includes('not authorized')
-
-const isInvalidMcpLeaseTokenError = (error: unknown): boolean =>
-  getErrorMessage(error, '').toLowerCase().includes('invalid lease token')
-
-const isMcpSessionNotInitializedError = (error: unknown): boolean =>
-  getErrorMessage(error, '').toLowerCase().includes('mcp session is not initialized')
 
 const runWithForbiddenRetry = async <T>(
   operation: () => Promise<T>,
@@ -439,7 +438,7 @@ class AwsIotShadowSession implements ShadowSession {
   private mcpSessionSubscribed = false
   private mcpInitialized = false
   private warnedMcpFallback = false
-  private cmdVelPublishChain: Promise<void> = Promise.resolve()
+  private readonly cmdVelPublisher: LatestAsyncValueRunner<Twist>
   private readonly handleAttemptingConnect = (): void => {
     if (this.closed) {
       return
@@ -525,6 +524,7 @@ class AwsIotShadowSession implements ShadowSession {
     this.mcpStatusTopic = buildMcpStatusTopic(options.thingName)
     this.mcpDiscovery = normalizeMcpDiscoverySummary(options.thingName)
     this.credentialsProvider = new BrowserCredentialProvider(options.resolveIdToken)
+    this.cmdVelPublisher = new LatestAsyncValueRunner(async (twist) => this.publishCmdVelNow(twist))
   }
 
   async start(): Promise<unknown> {
@@ -571,34 +571,7 @@ class AwsIotShadowSession implements ShadowSession {
   }
 
   async publishCmdVel(twist: Twist): Promise<void> {
-    const run = async (): Promise<void> => {
-      const client = this.client
-      if (!client || !this.isConnected()) {
-        throw new Error('Shadow connection is not ready')
-      }
-
-      try {
-        await this.publishCmdVelViaMcp(twist)
-        this.warnedMcpFallback = false
-        return
-      } catch (caughtError) {
-        if (!this.warnedMcpFallback) {
-          this.warnedMcpFallback = true
-          this.options.onError(
-            `MCP cmd_vel path unavailable, falling back to raw topic: ${getErrorMessage(
-              caughtError,
-              'unknown MCP error',
-            )}`,
-          )
-        }
-      }
-
-      await client.publish(buildCmdVelPublishPacket(this.options.thingName, twist) as mqtt5.PublishPacket)
-    }
-
-    const queued = this.cmdVelPublishChain.then(run, run)
-    this.cmdVelPublishChain = queued.catch(() => undefined)
-    return queued
+    return this.cmdVelPublisher.push(twist)
   }
 
   async waitForSnapshot(
@@ -641,6 +614,7 @@ class AwsIotShadowSession implements ShadowSession {
   }
 
   close(): void {
+    this.cmdVelPublisher.close()
     this.sendMcpStopAndReleaseBestEffort()
     this.closed = true
     this.setConnectionState('idle')
@@ -925,9 +899,23 @@ class AwsIotShadowSession implements ShadowSession {
       if (!this.mcpLease) {
         return
       }
-      await this.callMcpTool('cmd_vel.stop', {
-        leaseToken: this.mcpLease.leaseToken,
-      })
+      try {
+        await this.callMcpTool('cmd_vel.stop', {
+          leaseToken: this.mcpLease.leaseToken,
+        })
+      } catch (caughtError) {
+        if (
+          !isMcpSessionNotInitializedError(caughtError) &&
+          !isRecoverableMcpLeaseError(caughtError)
+        ) {
+          throw caughtError
+        }
+        if (isMcpSessionNotInitializedError(caughtError)) {
+          this.mcpInitialized = false
+        }
+        this.mcpLease = null
+        return
+      }
       await this.releaseMcpControlBestEffort()
       return
     }
@@ -949,7 +937,7 @@ class AwsIotShadowSession implements ShadowSession {
         })
         return
       }
-      if (!isInvalidMcpLeaseTokenError(caughtError)) {
+      if (!isRecoverableMcpLeaseError(caughtError)) {
         throw caughtError
       }
       this.mcpLease = null
@@ -1041,7 +1029,7 @@ class AwsIotShadowSession implements ShadowSession {
           this.mcpLease = acquired
           return acquired
         }
-        if (!isInvalidMcpLeaseTokenError(caughtError)) {
+        if (!isRecoverableMcpLeaseError(caughtError)) {
           throw caughtError
         }
         this.mcpLease = null
@@ -1088,6 +1076,31 @@ class AwsIotShadowSession implements ShadowSession {
     } catch {
       return
     }
+  }
+
+  private async publishCmdVelNow(twist: Twist): Promise<void> {
+    const client = this.client
+    if (!client || !this.isConnected()) {
+      throw new Error('Shadow connection is not ready')
+    }
+
+    try {
+      await this.publishCmdVelViaMcp(twist)
+      this.warnedMcpFallback = false
+      return
+    } catch (caughtError) {
+      if (!this.warnedMcpFallback) {
+        this.warnedMcpFallback = true
+        this.options.onError(
+          `MCP cmd_vel path unavailable, falling back to raw topic: ${getErrorMessage(
+            caughtError,
+            'unknown MCP error',
+          )}`,
+        )
+      }
+    }
+
+    await client.publish(buildCmdVelPublishPacket(this.options.thingName, twist) as mqtt5.PublishPacket)
   }
 
   private sendMcpStopAndReleaseBestEffort(): void {
@@ -1241,6 +1254,7 @@ class AwsIotShadowSession implements ShadowSession {
     this.mcpSessionId = null
     this.mcpRequestSeq = 0
     this.warnedMcpFallback = false
+    this.cmdVelPublisher.clear()
   }
 
   private resolveSnapshotWaiters(shadow: unknown): void {
