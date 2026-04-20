@@ -465,9 +465,10 @@ class BoardMcpServer:
             )
         except Exception as err:
             LOGGER.warning(
-                "Failed to publish MCP response topic=%s session=%s: %s",
+                "Failed to publish MCP response topic=%s session=%s: %s (%r)",
                 build_mcp_session_s2c_topic(self._device_id, session_id),
                 session_id,
+                err,
                 err,
             )
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import ipaddress
 import json
 import logging
@@ -315,6 +316,13 @@ class AwsShadowClient:
         self._disconnect_requested = False
         self._halt_requested = threading.Event()
         self._desired_board_power: bool | None = None
+        self._mcp_dispatcher: ThreadPoolExecutor | None = None
+        if self._mcp_server is not None:
+            # Avoid blocking the MQTT callback thread with synchronous publish/ack waits.
+            self._mcp_dispatcher = ThreadPoolExecutor(
+                max_workers=1,
+                thread_name_prefix="board-mcp-dispatch",
+            )
 
     def ensure_connected(self, *, timeout_seconds: float) -> None:
         with self._lock:
@@ -463,6 +471,10 @@ class AwsShadowClient:
 
     def close(self) -> None:
         self._disconnect_requested = True
+        dispatcher = self._mcp_dispatcher
+        self._mcp_dispatcher = None
+        if dispatcher is not None:
+            dispatcher.shutdown(wait=False, cancel_futures=True)
         if self._mcp_server is not None:
             self._mcp_server.close()
         with self._lock:
@@ -516,7 +528,24 @@ class AwsShadowClient:
         payload_bytes: bytes,
     ) -> None:
         if self._mcp_server is not None and self._mcp_server.handles_topic(topic):
-            self._mcp_server.handle_session_message(topic, payload_bytes)
+            dispatcher = self._mcp_dispatcher
+            if dispatcher is None:
+                LOGGER.warning(
+                    "Dropped MCP message on topic %s because dispatcher is unavailable",
+                    topic,
+                )
+                return
+            try:
+                dispatcher.submit(
+                    self._mcp_server.handle_session_message,
+                    topic,
+                    payload_bytes,
+                )
+            except RuntimeError:
+                LOGGER.warning(
+                    "Dropped MCP message on topic %s because dispatcher is shutting down",
+                    topic,
+                )
             return
 
         try:

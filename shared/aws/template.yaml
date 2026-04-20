@@ -103,6 +103,18 @@ Resources:
             Effect: Allow
             Action: iot:Subscribe
             Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/*/board/cmd_vel
+          - Sid: RigMcpDiscoveryTopics
+            Effect: Allow
+            Action: iot:Receive
+            Resource:
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/*/mcp/descriptor
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/*/mcp/status
+          - Sid: RigMcpDiscoveryTopicFilters
+            Effect: Allow
+            Action: iot:Subscribe
+            Resource:
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/txings/*/mcp/descriptor
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/txings/*/mcp/status
           - Sid: RigThingShadowApi
             Effect: Allow
             Action:
@@ -197,6 +209,22 @@ Resources:
             Effect: Allow
             Action: iot:Subscribe
             Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/*/board/cmd_vel
+          - Sid: DeviceMcpTopics
+            Effect: Allow
+            Action:
+              - iot:Publish
+              - iot:RetainPublish
+              - iot:Receive
+            Resource:
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/*/mcp/descriptor
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/*/mcp/status
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/*/mcp/session/*/c2s
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/*/mcp/session/*/s2c
+          - Sid: DeviceMcpTopicFilters
+            Effect: Allow
+            Action: iot:Subscribe
+            Resource:
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/txings/*/mcp/session/*/c2s
           - Sid: DeviceThingShadowApi
             Effect: Allow
             Action: iot:GetThingShadow
@@ -437,45 +465,24 @@ Resources:
           - Sid: Connect
             Effect: Allow
             Action: iot:Connect
-            Resource:
-              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/device-*
-              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/rig-*
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/*
           - Sid: ThingShadow
             Effect: Allow
             Action:
               - iot:GetThingShadow
               - iot:UpdateThingShadow
             Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/*
-          - Sid: ShadowPublishReceive
+          - Sid: MessagingPublishReceive
             Effect: Allow
             Action:
               - iot:Publish
+              - iot:RetainPublish
               - iot:Receive
-            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/*/shadow/*
-          - Sid: ShadowSubscribe
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/*
+          - Sid: MessagingSubscribe
             Effect: Allow
             Action: iot:Subscribe
-            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/$aws/things/*/shadow/*
-          - Sid: SparkplugPublishReceive
-            Effect: Allow
-            Action:
-              - iot:Publish
-              - iot:Receive
-            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/spBv1.0/*
-          - Sid: SparkplugSubscribe
-            Effect: Allow
-            Action: iot:Subscribe
-            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/spBv1.0/*
-          - Sid: CmdVelPublishReceive
-            Effect: Allow
-            Action:
-              - iot:Publish
-              - iot:Receive
-            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/*/board/cmd_vel
-          - Sid: CmdVelSubscribe
-            Effect: Allow
-            Action: iot:Subscribe
-            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/*/board/cmd_vel
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/*
 
   TxingWebAdminIotPolicy:
     Type: AWS::IoT::Policy
@@ -484,38 +491,18 @@ Resources:
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
-          - Sid: ShadowConnect
-            Effect: Allow
+          - Effect: Allow
             Action: iot:Connect
-            Resource:
-              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/${!cognito-identity.amazonaws.com:sub}
-              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/${!cognito-identity.amazonaws.com:sub}-*
-          - Sid: ShadowPublish
-            Effect: Allow
-            Action: iot:Publish
-            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/*/shadow/*
-          - Sid: ShadowSubscribe
-            Effect: Allow
-            Action: iot:Subscribe
-            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/$aws/things/*/shadow/*
-          - Sid: ShadowReceive
-            Effect: Allow
-            Action: iot:Receive
-            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/*/shadow/*
-          - Sid: SparkplugCommandPublish
-            Effect: Allow
-            Action: iot:Publish
-            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/spBv1.0/*/DCMD/*/*
-          - Sid: CmdVelPublishReceive
-            Effect: Allow
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/*
+          - Effect: Allow
             Action:
               - iot:Publish
+              - iot:RetainPublish
               - iot:Receive
-            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/*/board/cmd_vel
-          - Sid: CmdVelSubscribe
-            Effect: Allow
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/*
+          - Effect: Allow
             Action: iot:Subscribe
-            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/*/board/cmd_vel
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/*
 
   TxingAdminUserPool:
     Type: AWS::Cognito::UserPool
@@ -717,35 +704,18 @@ Resources:
               - Sid: ShadowConnect
                 Effect: Allow
                 Action: iot:Connect
-                Resource:
-                  - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/${!cognito-identity.amazonaws.com:sub}
-                  - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/${!cognito-identity.amazonaws.com:sub}-*
-              - Sid: ShadowPublish
-                Effect: Allow
-                Action: iot:Publish
-                Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/*/shadow/*
-              - Sid: ShadowSubscribe
-                Effect: Allow
-                Action: iot:Subscribe
-                Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/$aws/things/*/shadow/*
-              - Sid: ShadowReceive
-                Effect: Allow
-                Action: iot:Receive
-                Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/*/shadow/*
-              - Sid: SparkplugCommandPublish
-                Effect: Allow
-                Action: iot:Publish
-                Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/spBv1.0/*/DCMD/*/*
-              - Sid: CmdVelPublishReceive
+                Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/*
+              - Sid: IoTPublishReceive
                 Effect: Allow
                 Action:
                   - iot:Publish
+                  - iot:RetainPublish
                   - iot:Receive
-                Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/*/board/cmd_vel
-              - Sid: CmdVelSubscribe
+                Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/*
+              - Sid: IoTSubscribe
                 Effect: Allow
                 Action: iot:Subscribe
-                Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/*/board/cmd_vel
+                Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/*
               - Sid: BoardVideoViewer
                 Effect: Allow
                 Action:
