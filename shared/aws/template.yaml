@@ -115,6 +115,18 @@ Resources:
             Resource:
               - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/txings/*/mcp/descriptor
               - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/txings/*/mcp/status
+          - Sid: RigVideoDiscoveryTopics
+            Effect: Allow
+            Action: iot:Receive
+            Resource:
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/*/video/descriptor
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/*/video/status
+          - Sid: RigVideoDiscoveryTopicFilters
+            Effect: Allow
+            Action: iot:Subscribe
+            Resource:
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/txings/*/video/descriptor
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/txings/*/video/status
           - Sid: RigThingShadowApi
             Effect: Allow
             Action:
@@ -225,6 +237,15 @@ Resources:
             Action: iot:Subscribe
             Resource:
               - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/txings/*/mcp/session/*/c2s
+          - Sid: DeviceVideoTopics
+            Effect: Allow
+            Action:
+              - iot:Publish
+              - iot:RetainPublish
+              - iot:Receive
+            Resource:
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/*/video/descriptor
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/*/video/status
           - Sid: DeviceThingShadowApi
             Effect: Allow
             Action: iot:GetThingShadow

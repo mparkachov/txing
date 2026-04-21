@@ -281,9 +281,13 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertEqual(
             subscribed_topics,
             [
-                ("$aws/things/thing-1/shadow/get/+", 7.5),
+                ("$aws/things/thing-1/shadow/get/accepted", 7.5),
+                ("$aws/things/thing-1/shadow/get/rejected", 7.5),
                 ("$aws/things/thing-1/shadow/update/accepted", 7.5),
-                ("txings/thing-1/+/+", 7.5),
+                ("txings/thing-1/mcp/descriptor", 7.5),
+                ("txings/thing-1/mcp/status", 7.5),
+                ("txings/thing-1/video/descriptor", 7.5),
+                ("txings/thing-1/video/status", 7.5),
                 ("spBv1.0/town/DCMD/rig/thing-1", 7.5),
             ],
         )
@@ -347,7 +351,7 @@ class AwsShadowClientTests(unittest.TestCase):
                 if not topic.endswith("/shadow/get"):
                     return
                 thing_name = topic.split("/")[2]
-                callback = self.subscriptions[f"$aws/things/{thing_name}/shadow/get/+"]
+                callback = self.subscriptions[f"$aws/things/{thing_name}/shadow/get/accepted"]
                 callback(
                     f"$aws/things/{thing_name}/shadow/get/accepted",
                     accepted_payload,
