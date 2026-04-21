@@ -32,8 +32,8 @@ This document defines how shadow structure is governed across the repo.
   - `txing.state.reported.batteryMv`
 - Top-level `txing.state.desired.redcon` is owned by `rig` as the reflected cache of the latest unresolved Sparkplug lifecycle command.
 - `txing.state.desired.board.power` remains an internal rig-to-board graceful-halt actuator only. It is not a public lifecycle API.
-- `board.*` remains board-owned except `board.video.*`, which is reflected into shadow by `rig` from retained MQTT video service topics.
-- Only `board` is allowed to define or evolve board-owned fields, and only `rig` may evolve the reflected `board.video.*` shadow shape.
+- `board.*` remains board-owned, and top-level `video.*` is reflected into shadow by `rig` from retained MQTT video service topics.
+- Only `board` is allowed to define or evolve board-owned fields, and only `rig` may evolve the reflected top-level `video.*` shadow shape.
 - Other components must treat `board.*` as a stable contract and must not add, rename, or repurpose fields.
 
 ## AWS IoT note
@@ -72,16 +72,17 @@ Current implementation note:
 - `state.reported.board.wifi.ipv6` (`ipv6 string`, update payload may temporarily use `null` to delete) is the IPv6 address chosen by the OS for the board's current IPv6 default-route interface when the board control publishes.
 - `state.reported.board.drive.leftSpeed` (`integer`, `-100..100`) is the last applied left track effort reported by `txing-board` as a provisional signed percent scale.
 - `state.reported.board.drive.rightSpeed` (`integer`, `-100..100`) is the last applied right track effort reported by `txing-board` as a provisional signed percent scale.
-- `state.reported.board.video.serviceId` (`"video"`) identifies the rig-reflected board video service record.
-- `state.reported.board.video.available` (`boolean`) indicates whether the board video service is available according to the retained MQTT status feed.
-- `state.reported.board.video.ready` (`boolean`) indicates whether the current plain AWS WebRTC live path is ready for operator use.
-- `state.reported.board.video.status` (`"starting" | "ready" | "error" | "unavailable"`) is the coarse runtime state of the retained board video service feed.
-- `state.reported.board.video.transport` (`"aws-webrtc"`) identifies the live-video transport. The current implementation uses `aws-webrtc` as the only live operator path, specifically as a plain KVS WebRTC signaling session.
-- `state.reported.board.video.codec.video` (`"h264"` or `null`) is the currently configured board video codec.
-- `state.reported.board.video.viewerConnected` (`boolean`) is the best-effort operator-viewer presence flag for the live path. It is informational and does not participate in `reported.redcon`.
-- `state.reported.board.video.lastError` (`string` or `null`) is the last coarse board-side video error surfaced by `txing-board` or its supervised sender path.
-- `state.reported.board.video.updatedAtMs` (`integer | null`) is the latest retained MQTT status timestamp reflected by `rig`; readiness becomes stale when that retained status ages past the rig freshness threshold.
-- `state.reported.board.video.topicRoot`, `descriptorTopic`, `statusTopic`, `channelName`, `region`, and `serverVersion` are retained-service metadata reflected by `rig` from `txings/<device_id>/video/descriptor`.
+- `state.reported.video.serviceId` (`"video"`) identifies the rig-reflected board video service record.
+- `state.reported.video.serverInfo.name` / `version` (`string`) mirror the retained video descriptor server info fields.
+- `state.reported.video.available` (`boolean`) indicates whether the board video service is available according to the retained MQTT status feed.
+- `state.reported.video.ready` (`boolean`) indicates whether the current plain AWS WebRTC live path is ready for operator use.
+- `state.reported.video.status` (`"starting" | "ready" | "error" | "unavailable"`) is the coarse runtime state of the retained board video service feed.
+- `state.reported.video.transport` (`"aws-webrtc"`) identifies the live-video transport. The current implementation uses `aws-webrtc` as the only live operator path, specifically as a plain KVS WebRTC signaling session.
+- `state.reported.video.codec.video` (`"h264"` or `null`) is the currently configured board video codec.
+- `state.reported.video.viewerConnected` (`boolean`) is the best-effort operator-viewer presence flag for the live path. It is informational and does not participate in `reported.redcon`.
+- `state.reported.video.lastError` (`string` or `null`) is the last coarse board-side video error surfaced by `txing-board` or its supervised sender path.
+- `state.reported.video.updatedAtMs` (`integer | null`) is the latest retained MQTT status timestamp reflected by `rig`; readiness becomes stale when that retained status ages past the rig freshness threshold.
+- `state.reported.video.topicRoot`, `descriptorTopic`, `statusTopic`, `channelName`, `region`, and `serverVersion` are retained-service metadata reflected by `rig` from `txings/<device_id>/video/descriptor`.
 - For `reported.redcon`, rig treats retained MCP availability plus fresh retained video readiness as the final readiness inputs once BLE reachability and MCU wake state are satisfied.
 - Current design intent is plain AWS WebRTC only for the live operator path.
 - The current implementation does not assume WebRTC ingestion/storage, multiviewer, or `kvssink`.

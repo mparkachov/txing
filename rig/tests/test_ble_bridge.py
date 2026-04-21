@@ -583,19 +583,19 @@ class RedconTests(unittest.TestCase):
                                 "wifi": {
                                     "online": True,
                                 },
-                                "video": {
-                                    "serviceId": VIDEO_SERVICE_NAME,
-                                    "available": True,
-                                    "ready": True,
-                                    "status": VIDEO_STATUS_READY,
-                                    "transport": "aws-webrtc",
-                                    "codec": {
-                                        "video": "h264",
-                                    },
-                                    "viewerConnected": True,
-                                    "lastError": None,
-                                    "updatedAtMs": 2_000_000_000_000,
+                            },
+                            "video": {
+                                "serviceId": VIDEO_SERVICE_NAME,
+                                "available": True,
+                                "ready": True,
+                                "status": VIDEO_STATUS_READY,
+                                "transport": "aws-webrtc",
+                                "codec": {
+                                    "video": "h264",
                                 },
+                                "viewerConnected": True,
+                                "lastError": None,
+                                "updatedAtMs": 2_000_000_000_000,
                             },
                         },
                     },
@@ -778,8 +778,8 @@ class LifecycleBridgeTests(unittest.TestCase):
         self.assertEqual(len(cloud_shadow.shadow_updates), 2)
         first_patch = cloud_shadow.shadow_updates[0]["reported_root_patch"]
         self.assertEqual(first_patch["redcon"], 2)
-        self.assertIs(first_patch["board"]["video"]["ready"], True)
-        self.assertEqual(first_patch["board"]["video"]["status"], VIDEO_STATUS_READY)
+        self.assertIs(first_patch["video"]["ready"], True)
+        self.assertEqual(first_patch["video"]["status"], VIDEO_STATUS_READY)
         self.assertEqual(cloud_shadow.shadow_updates[1]["reported_root_patch"], {"redcon": 1})
         self.assertEqual(
             [decode_payload(payload).metrics[0].int_value for _topic, payload in cloud_shadow.sparkplug_publishes],
@@ -830,11 +830,7 @@ class LifecycleBridgeTests(unittest.TestCase):
         self.assertEqual(len(cloud_shadow.shadow_updates), 1)
         self.assertEqual(
             cloud_shadow.shadow_updates[0]["reported_root_patch"],
-            {
-                "board": {
-                    "video": shadow.board_video.payload(),
-                }
-            },
+            {"video": shadow.board_video.payload()},
         )
         self.assertEqual(cloud_shadow.sparkplug_publishes, [])
 

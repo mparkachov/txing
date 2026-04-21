@@ -251,9 +251,9 @@ export const extractReportedBoardWifiOnline = (shadow: unknown): boolean | null 
   return isRecord(wifi) && typeof wifi.online === 'boolean' ? wifi.online : null
 }
 
-export const extractReportedBoardVideo = (shadow: unknown): BoardVideoRuntime => {
-  const board = extractReportedBoard(shadow)
-  if (!board) {
+export const extractReportedVideo = (shadow: unknown): BoardVideoRuntime => {
+  const reported = extractReportedState(shadow)
+  if (!reported) {
     return {
       ready: false,
       status: null,
@@ -263,7 +263,7 @@ export const extractReportedBoardVideo = (shadow: unknown): BoardVideoRuntime =>
     }
   }
 
-  const video = board.video
+  const video = reported.video
   if (!isRecord(video)) {
     return {
       ready: false,

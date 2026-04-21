@@ -7,7 +7,7 @@
 - Current live-control target: `p95` operator glass-to-glass latency under `800 ms` on target links
 - Control model: directional commands, not precision teleoperation
 - Field-validation status: manual field validation was completed and accepted the plain-AWS-WebRTC path from a business perspective; no lab-grade metrics dataset is recorded in-repo
-- Current repo implementation: `txing-board` publishes retained video service topics, `rig` reflects `board.video.*` into shadow, and the browser uses AWS KVS signaling + WebRTC for the viewer path
+- Current repo implementation: `txing-board` publishes retained video service topics, `rig` reflects top-level `video.*` into shadow, and the browser uses AWS KVS signaling + WebRTC for the viewer path
 
 Explicit non-goals for this slice:
 
@@ -23,7 +23,7 @@ Explicit non-goals for this slice:
 - The board stays fully headless.
 - `txing-board` remains the only publisher of board power, wifi, and drive state into the shared Thing Shadow.
 - `txing-board` publishes retained video descriptor/status topics under `txings/<device_id>/video/*`.
-- `rig` mirrors those retained video topics into `state.reported.board.video.*` in the Thing Shadow.
+- `rig` mirrors those retained video topics into `state.reported.video.*` in the Thing Shadow.
 - The current implementation uses one live video path only: board camera -> plain AWS WebRTC signaling channel -> operator.
 - The operator watches the plain AWS WebRTC path, not a board-local viewer page.
 - The current implementation does not use WebRTC ingestion/storage, multiviewer, or `kvssink`.
@@ -65,6 +65,10 @@ The current implementation publishes retained board video service topics:
 // txings/<device_id>/video/descriptor
 {
   "serviceId": "video",
+  "serverInfo": {
+    "name": "video",
+    "version": "<board-version>"
+  },
   "topicRoot": "txings/<device_id>/video",
   "descriptorTopic": "txings/<device_id>/video/descriptor",
   "statusTopic": "txings/<device_id>/video/status",
@@ -88,7 +92,7 @@ The current implementation publishes retained board video service topics:
 }
 ```
 
-`rig` mirrors the latest retained descriptor/status into `state.reported.board.video.*` as cache/detail only.
+`rig` mirrors the latest retained descriptor/status into `state.reported.video.*` as cache/detail only.
 
 Notes:
 

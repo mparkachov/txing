@@ -18,8 +18,8 @@
 - `txing-board` is the only process allowed to publish `board.*` updates into the Thing Shadow.
 - The current implementation uses one live operator path only: board camera -> AWS KVS WebRTC signaling channel -> operator.
 - The board does not expose a board-local viewer page, iframe endpoint, or direct browser-to-board media transport.
-- `txing-board` supervises a dedicated local video sender and publishes coarse `board.video.*` readiness, session metadata, viewer presence, and failures into the Thing Shadow.
-- The supervised sender uses the board host's default AWS SDK credential chain for KVS access; it does not publish to AWS IoT directly.
+- `txing-board` supervises a dedicated local video sender and publishes retained video descriptor/status topics for `rig`; `rig` reflects top-level `reported.video.*` into the Thing Shadow.
+- The supervised sender uses the board host's default AWS SDK credential chain for KVS access, and `board.video_service` publishes the retained AWS IoT video topics.
 - The current implementation does not use MediaMTX, `webrtcsink`, `gstwebrtc-api`, `kvssink`, ingestion/storage, or multiviewer.
 
 ## Shared workflow

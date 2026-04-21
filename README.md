@@ -52,10 +52,10 @@ In this repository's current Thing Shadow contract, the rig runtime derives a si
 
 | `state.reported.redcon` | UI color | Meaning | Current derivation |
 | --- | --- | --- | --- |
-| `4` | Green | Sleep state / `Cold Camp` | `reported.mcu.power=false` |
-| `3` | Yellow | Booting / `Torch-Up` | `reported.mcu.power=true`, while the operator video path is not ready yet |
-| `2` | Orange / Amber | On watch / `Ember Watch` | `reported.mcu.power=true`, `reported.board.power=true`, `reported.board.wifi.online=true`, `reported.board.video.ready=true`, and `reported.board.video.viewerConnected=false` |
-| `1` | Red | Ready / `Hot Rig` | same as `2`, plus `reported.board.video.viewerConnected=true` |
+| `4` | Green | Sleep state / `Cold Camp` | BLE unavailable or `reported.mcu.power=false` |
+| `3` | Yellow | Booting / `Torch-Up` | BLE reachable, `reported.mcu.power=true`, and retained MCP status unavailable |
+| `2` | Orange / Amber | On watch / `Ember Watch` | BLE reachable, `reported.mcu.power=true`, retained MCP status available, and retained video status not ready |
+| `1` | Red | Ready / `Hot Rig` | BLE reachable, `reported.mcu.power=true`, retained MCP status available, and `reported.video.ready=true` |
 
 This mapping is intentionally derived from reported state, not desired state. It answers "how far up is the rig right now?" rather than "what was requested?".
 

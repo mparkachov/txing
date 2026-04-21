@@ -51,7 +51,7 @@ rig
   -> publishes NBIRTH/NDEATH for the rig node; NBIRTH carries rig.redcon
   -> publishes DBIRTH/DDATA/DDEATH for txing devices
   -> reflects desired/report lifecycle state into txing AWS shadows only
-  -> reflects retained board video service state into txing.state.reported.board.video.*
+  -> reflects retained board video service state into txing.state.reported.video.*
   -> derives txing reported.redcon from BLE reachability plus retained MCP/video readiness inputs
 
 txing board control
@@ -69,7 +69,7 @@ txing gateway / BLE path
 - AWS shadow is reflection and durable restart cache only.
 - `rig` is the only authority that computes top-level `txing.state.reported.redcon`.
 - `board` remains the source of truth for board power, wifi, and drive operational state.
-- `rig` is the source of truth for the reflected `reported.board.video.*` shadow subtree.
+- `rig` is the source of truth for the reflected `reported.video.*` shadow subtree.
 - `rig` remains the source of truth for `reported.mcu.*`.
 - `mcu.*` and `board.*` are not the intended public lifecycle control API.
 
@@ -163,21 +163,33 @@ Example reflected txing shadow shape:
       "mcu": {
         "power": true
       },
+      "video": {
+        "serviceId": "video",
+        "serverInfo": {
+          "name": "video",
+          "version": "0.2.0"
+        },
+        "topicRoot": "txings/txing/video",
+        "descriptorTopic": "txings/txing/video/descriptor",
+        "statusTopic": "txings/txing/video/status",
+        "available": true,
+        "ready": true,
+        "status": "ready",
+        "transport": "aws-webrtc",
+        "channelName": "txing-board-video",
+        "region": "eu-central-1",
+        "codec": {
+          "video": "h264"
+        },
+        "serverVersion": "0.2.0",
+        "viewerConnected": false,
+        "lastError": null,
+        "updatedAtMs": 1776761234567
+      },
       "board": {
         "power": true,
         "wifi": {
           "online": true
-        },
-        "video": {
-          "serviceId": "video",
-          "available": true,
-          "ready": true,
-          "status": "ready",
-          "transport": "aws-webrtc",
-          "codec": {
-            "video": "h264"
-          },
-          "viewerConnected": false
         }
       }
     }
@@ -214,7 +226,7 @@ The current implementation uses this txing REDCON ladder:
   - MCP is available
   - retained video status is ready and fresh
 
-`reported.board.video.viewerConnected` remains informational only and does not participate in REDCON.
+`reported.video.viewerConnected` remains informational only and does not participate in REDCON.
 
 ## Convergence Behavior
 

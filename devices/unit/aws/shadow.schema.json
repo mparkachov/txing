@@ -110,6 +110,9 @@
         "mcu": {
           "$ref": "#/$defs/reportedMcuState"
         },
+        "video": {
+          "$ref": "#/$defs/reportedVideoState"
+        },
         "board": {
           "$ref": "#/$defs/reportedBoardState"
         }
@@ -123,6 +126,11 @@
         {
           "required": [
             "mcu"
+          ]
+        },
+        {
+          "required": [
+            "video"
           ]
         },
         {
@@ -165,9 +173,6 @@
         },
         "drive": {
           "$ref": "#/$defs/reportedBoardDriveState"
-        },
-        "video": {
-          "$ref": "#/$defs/reportedBoardVideoState"
         }
       }
     },
@@ -217,11 +222,12 @@
         }
       }
     },
-    "reportedBoardVideoState": {
+    "reportedVideoState": {
       "type": "object",
       "additionalProperties": true,
       "required": [
         "serviceId",
+        "serverInfo",
         "available",
         "ready",
         "status",
@@ -236,6 +242,9 @@
           "enum": [
             "video"
           ]
+        },
+        "serverInfo": {
+          "$ref": "#/$defs/reportedVideoServerInfo"
         },
         "available": {
           "type": "boolean"
@@ -296,6 +305,22 @@
           ]
         },
         "serverVersion": {
+          "type": "string"
+        }
+      }
+    },
+    "reportedVideoServerInfo": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "name",
+        "version"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "version": {
           "type": "string"
         }
       }

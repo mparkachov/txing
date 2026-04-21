@@ -46,11 +46,11 @@ import {
   extractReportedBatteryMv,
   extractReportedBoardDrive,
   extractReportedBoardPower,
-  extractReportedBoardVideo,
   extractReportedBoardWifiOnline,
   extractReportedMcuOnline,
   extractReportedMcuPower,
   extractReportedRedcon,
+  extractReportedVideo,
   selectPrimaryReportedRedcon,
 } from './app-model'
 import {
@@ -385,8 +385,8 @@ function App({ initialAuthError = '' }: AppProps) {
     () => extractReportedBoardWifiOnline(shadowDocument),
     [shadowDocument],
   )
-  const reportedBoardVideo = useMemo(
-    () => extractReportedBoardVideo(shadowDocument),
+  const reportedVideo = useMemo(
+    () => extractReportedVideo(shadowDocument),
     [shadowDocument],
   )
   const reportedBoardDrive = useMemo(
@@ -862,7 +862,7 @@ function App({ initialAuthError = '' }: AppProps) {
   })
 
   useEffect(() => {
-    const nextBoardVideoLastError = normalizeRuntimeMessage(reportedBoardVideo.lastError)
+    const nextBoardVideoLastError = normalizeRuntimeMessage(reportedVideo.lastError)
     const nextNotificationMessage = getNextBoardVideoLastErrorNotification(
       lastBoardVideoErrorRef.current,
       nextBoardVideoLastError,
@@ -878,7 +878,7 @@ function App({ initialAuthError = '' }: AppProps) {
       message: nextNotificationMessage,
       dedupeKey: `board-video-shadow:${nextNotificationMessage}`,
     })
-  }, [enqueueNotification, reportedBoardVideo.lastError])
+  }, [enqueueNotification, reportedVideo.lastError])
 
   useEffect(() => {
     if (!canUseBoardVideo && isBoardVideoExpanded) {

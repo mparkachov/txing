@@ -24,6 +24,8 @@ DEFAULT_BOARD_VIDEO_STATUS = VIDEO_STATUS_UNAVAILABLE
 DEFAULT_BOARD_VIDEO_TRANSPORT = VIDEO_TRANSPORT
 DEFAULT_BOARD_VIDEO_CODEC = VIDEO_DEFAULT_CODEC
 DEFAULT_BOARD_VIDEO_VIEWER_CONNECTED = False
+DEFAULT_BOARD_VIDEO_SERVER_NAME = VIDEO_SERVICE_NAME
+DEFAULT_BOARD_VIDEO_SERVER_VERSION = "unknown"
 DEFAULT_REDCON = 4
 DEFAULT_DESIRED_REDCON: int | None = None
 DEFAULT_SHADOW_FILE = Path("/tmp/txing_shadow.json")
@@ -45,22 +47,33 @@ def default_shadow_payload() -> dict[str, Any]:
                     "power": DEFAULT_REPORTED_POWER,
                     "online": DEFAULT_REPORTED_ONLINE,
                 },
+                "video": {
+                    "serviceId": VIDEO_SERVICE_NAME,
+                    "serverInfo": {
+                        "name": DEFAULT_BOARD_VIDEO_SERVER_NAME,
+                        "version": DEFAULT_BOARD_VIDEO_SERVER_VERSION,
+                    },
+                    "topicRoot": "",
+                    "descriptorTopic": "",
+                    "statusTopic": "",
+                    "transport": DEFAULT_BOARD_VIDEO_TRANSPORT,
+                    "channelName": "",
+                    "region": None,
+                    "codec": {
+                        "video": DEFAULT_BOARD_VIDEO_CODEC,
+                    },
+                    "serverVersion": DEFAULT_BOARD_VIDEO_SERVER_VERSION,
+                    "available": DEFAULT_BOARD_VIDEO_AVAILABLE,
+                    "ready": DEFAULT_BOARD_VIDEO_READY,
+                    "status": DEFAULT_BOARD_VIDEO_STATUS,
+                    "viewerConnected": DEFAULT_BOARD_VIDEO_VIEWER_CONNECTED,
+                    "lastError": None,
+                    "updatedAtMs": None,
+                },
                 "board": {
                     "power": DEFAULT_BOARD_POWER,
                     "wifi": {
                         "online": DEFAULT_BOARD_WIFI_ONLINE,
-                    },
-                    "video": {
-                        "serviceId": VIDEO_SERVICE_NAME,
-                        "available": DEFAULT_BOARD_VIDEO_AVAILABLE,
-                        "ready": DEFAULT_BOARD_VIDEO_READY,
-                        "status": DEFAULT_BOARD_VIDEO_STATUS,
-                        "transport": DEFAULT_BOARD_VIDEO_TRANSPORT,
-                        "codec": {
-                            "video": DEFAULT_BOARD_VIDEO_CODEC,
-                        },
-                        "viewerConnected": DEFAULT_BOARD_VIDEO_VIEWER_CONNECTED,
-                        "lastError": None,
                     },
                 },
             },
@@ -157,20 +170,18 @@ def get_reported_board_wifi_online(payload: dict[str, Any]) -> bool:
     return DEFAULT_BOARD_WIFI_ONLINE
 
 
-def get_reported_board_video_ready(payload: dict[str, Any]) -> bool:
+def get_reported_video_ready(payload: dict[str, Any]) -> bool:
     reported = payload.get("state", {}).get("reported", {})
-    board = reported.get("board", {}) if isinstance(reported, dict) else {}
-    video = board.get("video", {}) if isinstance(board, dict) else {}
+    video = reported.get("video", {}) if isinstance(reported, dict) else {}
     value = video.get("ready") if isinstance(video, dict) else None
     if isinstance(value, bool):
         return value
     return DEFAULT_BOARD_VIDEO_READY
 
 
-def get_reported_board_video_viewer_connected(payload: dict[str, Any]) -> bool:
+def get_reported_video_viewer_connected(payload: dict[str, Any]) -> bool:
     reported = payload.get("state", {}).get("reported", {})
-    board = reported.get("board", {}) if isinstance(reported, dict) else {}
-    video = board.get("video", {}) if isinstance(board, dict) else {}
+    video = reported.get("video", {}) if isinstance(reported, dict) else {}
     value = video.get("viewerConnected") if isinstance(video, dict) else None
     if isinstance(value, bool):
         return value

@@ -4,7 +4,7 @@ Python service for the device-side Raspberry Pi board that is power-switched by 
 
 This is not the same Raspberry Pi as `rig/`. The `rig/` Pi remains the BLE/AWS control node. This `board/` service is for the separate Pi mounted on the device itself.
 
-`txing-board` is the only process that publishes `board.*` Thing Shadow updates. For video, it supervises a dedicated local sender helper and publishes coarse AWS WebRTC session state under `reported.board.video`.
+`txing-board` is the only process that publishes `board.*` Thing Shadow updates. For video, it supervises a dedicated local sender helper and publishes retained AWS WebRTC descriptor/status topics for `rig`, which then reflects the combined state under top-level `reported.video`.
 
 The device runtime now connects to AWS IoT Core over SigV4-authenticated MQTT over WebSockets using the standard AWS SDK credential chain. The intended project-local profile layout is `town`, `rig`, and `device`, with `device` assuming the stack output role `DeviceRuntimeRoleArn`.
 
@@ -17,7 +17,8 @@ Current board video is a headless AWS KVS WebRTC path:
 - board camera and encoder
 - repo-owned C++ KVS master sender command on the board
 - `board-video-sender` adapter and state writer
-- `txing-board` shadow publisher
+- `board.video_service` retained MQTT publisher
+- `rig` shadow reflector
 - browser viewer at the SPA `/<town>/<rig>/<device>/video` route
 
 Important:
@@ -42,16 +43,29 @@ The board publishes to the same classic Thing Shadow as `mcu`, but under a sibli
           "ipv4": "192.168.1.25",
           "ipv6": "2001:db8::25"
         },
-        "video": {
-          "status": "ready",
-          "ready": true,
-          "transport": "aws-webrtc",
-          "codec": {
-            "video": "h264"
-          },
-          "viewerConnected": false,
-          "lastError": null
-        }
+      },
+      "video": {
+        "serviceId": "video",
+        "serverInfo": {
+          "name": "video",
+          "version": "0.2.0"
+        },
+        "topicRoot": "txings/unit-local/video",
+        "descriptorTopic": "txings/unit-local/video/descriptor",
+        "statusTopic": "txings/unit-local/video/status",
+        "transport": "aws-webrtc",
+        "channelName": "unit-local-board-video",
+        "region": "eu-central-1",
+        "codec": {
+          "video": "h264"
+        },
+        "serverVersion": "0.2.0",
+        "available": true,
+        "status": "ready",
+        "ready": true,
+        "viewerConnected": false,
+        "lastError": null,
+        "updatedAtMs": 1776761234567
       }
     }
   }
@@ -66,7 +80,7 @@ Notes:
 - `reported.board.wifi.online` reflects the board-side online status while the board OS is up and the board control is running.
 - `reported.board.wifi.ipv4` and `reported.board.wifi.ipv6` are refreshed on each publish loop from the interface the OS selects for the default route in each address family.
 - `reported.board.drive.leftSpeed` and `reported.board.drive.rightSpeed` expose the last applied tank-drive effort in the current provisional signed-percent range `[-100, 100]`.
-- `reported.board.video.viewerConnected` is best-effort board-side viewer presence derived from sender events. The browser does not write it.
+- `reported.video.viewerConnected` is best-effort board-side viewer presence derived from sender events. The browser does not write it.
 - The browser video route is computed as `/<town>/<rig>/<device>/video`.
 - The KVS signaling channel name is computed as `<device_id>-board-video`.
 - Because this Pi can lose power abruptly through the MOSFET, consumers should not treat stale `power=true` or stale `wifi.online=true` as authoritative after a hard power cut.
@@ -451,7 +465,7 @@ What this proves:
 - the device runtime can resolve AWS region, credentials, and the IoT Data-ATS endpoint from the shared config flow
 - the sender can resolve the signaling channel in AWS
 - the sender command starts successfully
-- `txing-board` can publish the initial `reported.board.video` payload
+- `txing-board` can publish the retained video descriptor/status topics that `rig` reflects into `reported.video`
 
 If the command exits with a video startup timeout or an AWS KVS permission error, fix that before moving on to the service install.
 

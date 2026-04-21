@@ -9,7 +9,7 @@ import {
   extractDesiredBoardPower,
   extractReportedMcuOnline,
   extractReportedBoardDrive,
-  extractReportedBoardVideo,
+  extractReportedVideo,
   extractReportedRedcon,
   getTrackIndicatorPresentation,
   getTxingRedconToneClass,
@@ -18,17 +18,15 @@ import {
 
 describe('app model helpers', () => {
   test('extracts board video runtime metadata from shadow state', () => {
-    const runtime = extractReportedBoardVideo({
+    const runtime = extractReportedVideo({
       state: {
         reported: {
-          board: {
-            video: {
-              ready: true,
-              status: 'ready',
-              transport: 'aws-webrtc',
-              viewerConnected: true,
-              lastError: null,
-            },
+          video: {
+            ready: true,
+            status: 'ready',
+            transport: 'aws-webrtc',
+            viewerConnected: true,
+            lastError: null,
           },
         },
       },
@@ -40,17 +38,15 @@ describe('app model helpers', () => {
   })
 
   test('accepts unavailable board video status from reflected shadow cache', () => {
-    const runtime = extractReportedBoardVideo({
+    const runtime = extractReportedVideo({
       state: {
         reported: {
-          board: {
-            video: {
-              ready: false,
-              status: 'unavailable',
-              transport: 'aws-webrtc',
-              viewerConnected: false,
-              lastError: null,
-            },
+          video: {
+            ready: false,
+            status: 'unavailable',
+            transport: 'aws-webrtc',
+            viewerConnected: false,
+            lastError: null,
           },
         },
       },

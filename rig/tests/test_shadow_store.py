@@ -7,8 +7,8 @@ from rig.shadow_store import (
     get_desired_board_power,
     get_desired_redcon,
     get_reported_battery_mv,
-    get_reported_board_video_ready,
-    get_reported_board_video_viewer_connected,
+    get_reported_video_ready,
+    get_reported_video_viewer_connected,
 )
 
 
@@ -26,14 +26,14 @@ class ShadowStoreTests(unittest.TestCase):
             },
         )
         self.assertEqual(get_reported_battery_mv(payload), 3750)
-        self.assertFalse(get_reported_board_video_ready(payload))
-        self.assertFalse(get_reported_board_video_viewer_connected(payload))
+        self.assertFalse(get_reported_video_ready(payload))
+        self.assertFalse(get_reported_video_viewer_connected(payload))
         self.assertEqual(
-            payload["state"]["reported"]["board"]["video"]["serviceId"],
+            payload["state"]["reported"]["video"]["serviceId"],
             "video",
         )
         self.assertEqual(
-            payload["state"]["reported"]["board"]["video"]["status"],
+            payload["state"]["reported"]["video"]["status"],
             "unavailable",
         )
 

@@ -319,13 +319,13 @@ def _extract_reported_board_wifi_online(payload: dict[str, Any]) -> bool | None:
     return value if isinstance(value, bool) else None
 
 
-def _extract_reported_board_video_reflection(
+def _extract_reported_video_reflection(
     payload: dict[str, Any],
 ) -> dict[str, Any] | None:
-    board = _extract_reported_board(payload)
-    if board is None:
+    reported = _extract_reported_root(payload)
+    if reported is None:
         return None
-    video = board.get("video")
+    video = reported.get("video")
     if not isinstance(video, dict):
         return None
     if video.get("serviceId") != VIDEO_SERVICE_NAME:
@@ -597,6 +597,7 @@ def _coerce_video_status(value: Any, *, default: str) -> str:
 @dataclass(slots=True)
 class BoardVideoState:
     service_id: str = VIDEO_SERVICE_NAME
+    server_name: str = VIDEO_SERVICE_NAME
     available: bool = False
     ready: bool = False
     status: str = VIDEO_STATUS_UNAVAILABLE
@@ -614,6 +615,8 @@ class BoardVideoState:
 
     def apply_defaults(self, *, thing_name: str, aws_region: str) -> None:
         topics = build_video_topics(thing_name)
+        if not self.server_name:
+            self.server_name = VIDEO_SERVICE_NAME
         if not self.topic_root:
             self.topic_root = topics.topic_root
         if not self.descriptor_topic:
@@ -663,6 +666,10 @@ class BoardVideoState:
     def payload(self) -> dict[str, Any]:
         return {
             "serviceId": self.service_id,
+            "serverInfo": {
+                "name": self.server_name,
+                "version": self.server_version,
+            },
             "available": self.available,
             "ready": self.ready,
             "status": self.status,
@@ -700,6 +707,12 @@ def _derive_board_video_state(
     status = status_payload if isinstance(status_payload, dict) else {}
 
     state.service_id = VIDEO_SERVICE_NAME
+    server_info = descriptor.get("serverInfo")
+    if isinstance(server_info, dict):
+        state.server_name = _coerce_non_empty_str(
+            server_info.get("name"),
+            default=state.server_name,
+        )
     state.transport = _coerce_non_empty_str(descriptor.get("transport"), default=state.transport)
     state.topic_root = _coerce_non_empty_str(descriptor.get("topicRoot"), default=state.topic_root)
     state.descriptor_topic = _coerce_non_empty_str(
@@ -722,6 +735,11 @@ def _derive_board_video_state(
         descriptor.get("serverVersion"),
         default=state.server_version,
     )
+    if isinstance(server_info, dict):
+        state.server_version = _coerce_non_empty_str(
+            server_info.get("version"),
+            default=state.server_version,
+        )
 
     state.available = _coerce_bool(status.get("available"), default=False)
     state.ready = _coerce_bool(status.get("ready"), default=False)
@@ -744,6 +762,12 @@ def _extract_board_video_state_from_reflection(
     if payload.get("serviceId") != VIDEO_SERVICE_NAME:
         return None
     video = _default_board_video_state(thing_name=thing_name, aws_region=aws_region)
+    server_info = payload.get("serverInfo")
+    if isinstance(server_info, dict):
+        video.server_name = _coerce_non_empty_str(
+            server_info.get("name"),
+            default=video.server_name,
+        )
     video.available = _coerce_bool(payload.get("available"), default=False)
     video.ready = _coerce_bool(payload.get("ready"), default=False)
     video.status = _coerce_video_status(payload.get("status"), default=video.status)
@@ -772,6 +796,11 @@ def _extract_board_video_state_from_reflection(
         payload.get("serverVersion"),
         default=video.server_version,
     )
+    if isinstance(server_info, dict):
+        video.server_version = _coerce_non_empty_str(
+            server_info.get("version"),
+            default=video.server_version,
+        )
     return video
 
 
@@ -998,12 +1027,12 @@ class ShadowState:
                 "power": self.reported_power,
                 "online": self.ble_online,
             },
+            "video": self.board_video.payload(),
             "board": {
                 "power": self.board_power,
                 "wifi": {
                     "online": self.board_wifi_online,
                 },
-                "video": self.board_video.payload(),
             },
         }
         state: dict[str, dict[str, dict[str, Any]]] = {
@@ -2133,11 +2162,7 @@ class BleSleepBridge:
                     aws_region=self._config.aws_region,
                 )
             )
-            reported_root_patch = {
-                "board": {
-                    "video": self._shadow.board_video.payload(),
-                }
-            }
+            reported_root_patch = {"video": self._shadow.board_video.payload()}
         if self._shadow.desired_board_power is False and not self._shadow.board_power:
             self._shadow.set_desired_board_power(None)
             desired_board_power = None
@@ -2334,11 +2359,7 @@ class BleSleepBridge:
                 await self._publish_reported_update(
                     reported_mcu_patch=None,
                     reported_root_patch=(
-                        {
-                            "board": {
-                                "video": self._shadow.board_video.payload(),
-                            }
-                        }
+                        {"video": self._shadow.board_video.payload()}
                         if video_shadow_changed
                         else None
                     ),
@@ -4059,7 +4080,7 @@ def _build_shadow_from_snapshot(
     battery_mv = _extract_reported_battery_mv(snapshot)
     board_power = _extract_reported_board_power(snapshot)
     board_wifi_online = _extract_reported_board_wifi_online(snapshot)
-    board_video_reflection = _extract_reported_board_video_reflection(snapshot)
+    board_video_reflection = _extract_reported_video_reflection(snapshot)
     reported_redcon = _extract_reported_redcon(snapshot)
     ble_uuids = DEFAULT_BLE_GATT_UUIDS.with_device_id(registered_ble_device_id)
 

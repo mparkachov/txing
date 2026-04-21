@@ -15,6 +15,7 @@ import {
   isMcpSessionNotInitializedError,
   isRecoverableMcpLeaseError,
 } from './mcp-errors'
+import { getSteadyMotionLeaseState } from './mcp-lease'
 import {
   buildMcpDescriptorTopic,
   buildMcpSessionC2sTopic,
@@ -443,6 +444,7 @@ class AwsIotShadowSession implements ShadowSession {
   private mcpSessionSubscribed = false
   private mcpInitialized = false
   private warnedMcpFallback = false
+  private mcpLeaseRefreshPromise: Promise<void> | null = null
   private readonly cmdVelPublisher: LatestAsyncValueRunner<Twist>
   private readonly handleAttemptingConnect = (): void => {
     if (this.closed) {
@@ -916,6 +918,7 @@ class AwsIotShadowSession implements ShadowSession {
   private async publishCmdVelViaMcp(twist: Twist): Promise<void> {
     await this.ensureMcpSessionReady()
     if (isZeroTwist(twist)) {
+      await this.publishRawCmdVel(twist)
       if (!this.mcpLease) {
         return
       }
@@ -940,33 +943,24 @@ class AwsIotShadowSession implements ShadowSession {
       return
     }
 
-    let lease = await this.ensureMcpLease()
-    try {
-      await this.callMcpTool('cmd_vel.publish', {
-        leaseToken: lease.leaseToken,
-        twist,
-      })
-    } catch (caughtError) {
-      if (isMcpSessionNotInitializedError(caughtError)) {
-        this.mcpInitialized = false
-        await this.ensureMcpSessionReady()
-        lease = await this.ensureMcpLease()
-        await this.callMcpTool('cmd_vel.publish', {
-          leaseToken: lease.leaseToken,
-          twist,
-        })
-        return
+    const activeLease = this.mcpLease
+    const knownLeaseTtlMs =
+      this.mcpDescriptor?.leaseTtlMs ?? this.mcpDiscovery.leaseTtlMs ?? 5_000
+    const steadyMotionLeaseState = getSteadyMotionLeaseState({
+      lease: activeLease,
+      knownLeaseTtlMs,
+      nowMs: Date.now(),
+    })
+    if (steadyMotionLeaseState.hasUsableLease) {
+      if (steadyMotionLeaseState.shouldRefreshLease) {
+        this.refreshMcpLeaseInBackground()
       }
-      if (!isRecoverableMcpLeaseError(caughtError)) {
-        throw caughtError
-      }
-      this.mcpLease = null
-      lease = await this.ensureMcpLease()
-      await this.callMcpTool('cmd_vel.publish', {
-        leaseToken: lease.leaseToken,
-        twist,
-      })
+      await this.publishRawCmdVel(twist)
+      return
     }
+
+    await this.ensureMcpLease()
+    await this.publishRawCmdVel(twist)
   }
 
   private async ensureMcpSessionReady(): Promise<void> {
@@ -1083,6 +1077,25 @@ class AwsIotShadowSession implements ShadowSession {
     }
   }
 
+  private refreshMcpLeaseInBackground(): void {
+    if (this.mcpLeaseRefreshPromise) {
+      return
+    }
+    this.mcpLeaseRefreshPromise = this.ensureMcpLease()
+      .then(() => undefined)
+      .catch((caughtError) => {
+        this.options.onError(
+          `MCP lease refresh failed during teleop: ${getErrorMessage(
+            caughtError,
+            'unknown MCP lease refresh error',
+          )}`,
+        )
+      })
+      .finally(() => {
+        this.mcpLeaseRefreshPromise = null
+      })
+  }
+
   private async releaseMcpControlBestEffort(): Promise<void> {
     const lease = this.mcpLease
     this.mcpLease = null
@@ -1098,9 +1111,16 @@ class AwsIotShadowSession implements ShadowSession {
     }
   }
 
-  private async publishCmdVelNow(twist: Twist): Promise<void> {
+  private async publishRawCmdVel(twist: Twist): Promise<void> {
     const client = this.client
     if (!client || !this.isConnected()) {
+      throw new Error('Shadow connection is not ready')
+    }
+    await client.publish(buildCmdVelPublishPacket(this.options.thingName, twist) as mqtt5.PublishPacket)
+  }
+
+  private async publishCmdVelNow(twist: Twist): Promise<void> {
+    if (!this.client || !this.isConnected()) {
       throw new Error('Shadow connection is not ready')
     }
 
@@ -1120,7 +1140,7 @@ class AwsIotShadowSession implements ShadowSession {
       }
     }
 
-    await client.publish(buildCmdVelPublishPacket(this.options.thingName, twist) as mqtt5.PublishPacket)
+    await this.publishRawCmdVel(twist)
   }
 
   private sendMcpStopAndReleaseBestEffort(): void {
@@ -1274,6 +1294,7 @@ class AwsIotShadowSession implements ShadowSession {
     this.mcpSessionId = null
     this.mcpRequestSeq = 0
     this.warnedMcpFallback = false
+    this.mcpLeaseRefreshPromise = null
     this.cmdVelPublisher.clear()
   }
 
