@@ -164,6 +164,7 @@ from unit_rig.ble_bridge import (
     _build_shadow_from_snapshot,
     _calculate_redcon,
     _parse_args,
+    _resolve_sparkplug_edge_node_id,
     _run_rig_service,
     _shadow_payload_includes_desired_redcon,
 )
@@ -221,6 +222,24 @@ class ServiceConfigTests(unittest.TestCase):
             self.assertEqual(profile, "rig-service")
             self.assertEqual(os.environ["AWS_PROFILE"], "rig-service")
             self.assertEqual(os.environ["AWS_DEFAULT_PROFILE"], "rig-service")
+
+    def test_resolve_sparkplug_edge_node_id_prefers_rig_identity(self) -> None:
+        self.assertEqual(
+            _resolve_sparkplug_edge_node_id(
+                rig_name="rig-alpha",
+                sparkplug_edge_node_id="legacy-edge",
+            ),
+            "rig-alpha",
+        )
+
+    def test_resolve_sparkplug_edge_node_id_falls_back_when_rig_name_is_blank(self) -> None:
+        self.assertEqual(
+            _resolve_sparkplug_edge_node_id(
+                rig_name="",
+                sparkplug_edge_node_id="legacy-edge",
+            ),
+            "legacy-edge",
+        )
 
 
 class AwsShadowClientTests(unittest.TestCase):

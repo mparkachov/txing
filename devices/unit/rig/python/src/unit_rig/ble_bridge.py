@@ -195,6 +195,20 @@ def _env_text(name: str, default: str) -> str:
     return value or default
 
 
+def _resolve_sparkplug_edge_node_id(
+    *,
+    rig_name: str,
+    sparkplug_edge_node_id: str,
+) -> str:
+    normalized_rig_name = rig_name.strip()
+    normalized_edge_node_id = sparkplug_edge_node_id.strip()
+    if normalized_rig_name:
+        return normalized_rig_name
+    if normalized_edge_node_id:
+        return normalized_edge_node_id
+    return DEFAULT_SPARKPLUG_EDGE_NODE_ID
+
+
 def _default_board_video_channel_name(thing_name: str) -> str:
     return f"{thing_name}-board-video"
 
@@ -4361,6 +4375,20 @@ def main() -> None:
 
     _configure_logging(args, aws_region=aws_region, aws_runtime=aws_runtime)
 
+    resolved_sparkplug_edge_node_id = _resolve_sparkplug_edge_node_id(
+        rig_name=args.rig_name,
+        sparkplug_edge_node_id=args.sparkplug_edge_node_id,
+    )
+    if (
+        args.sparkplug_edge_node_id.strip()
+        and resolved_sparkplug_edge_node_id != args.sparkplug_edge_node_id.strip()
+    ):
+        LOGGER.warning(
+            "Ignoring SPARKPLUG_EDGE_NODE_ID=%s and using rig identity %s for Sparkplug edge node id",
+            args.sparkplug_edge_node_id,
+            resolved_sparkplug_edge_node_id,
+        )
+
     config = BridgeConfig(
         name_fragment=args.name,
         scan_timeout=args.scan_timeout,
@@ -4378,7 +4406,7 @@ def main() -> None:
         lock_file=args.lock_file,
         rig_name=args.rig_name,
         sparkplug_group_id=args.sparkplug_group_id,
-        sparkplug_edge_node_id=args.sparkplug_edge_node_id,
+        sparkplug_edge_node_id=resolved_sparkplug_edge_node_id,
         iot_endpoint=iot_endpoint,
         aws_region=aws_region,
         client_id=args.client_id or f"rig-{os.getpid()}",
