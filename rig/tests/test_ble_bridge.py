@@ -253,6 +253,41 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertEqual(payload.metrics[0].name, "bdSeq")
         self.assertEqual(payload.metrics[0].long_value, 77)
 
+    def test_subscribe_topics_use_compact_startup_filters(self) -> None:
+        subscribed_topics: list[tuple[str, float | None]] = []
+
+        class FakeMqtt:
+            async def subscribe(
+                self,
+                topic: str,
+                callback: object,
+                *,
+                timeout_seconds: float | None = None,
+            ) -> None:
+                del callback
+                subscribed_topics.append((topic, timeout_seconds))
+
+        client = object.__new__(AwsShadowClient)
+        client._config = BridgeConfig(
+            sparkplug_group_id="town",
+            sparkplug_edge_node_id="rig",
+        )
+        client._mqtt = FakeMqtt()
+        client._managed_things = ("thing-1",)
+        client._on_message = object()  # type: ignore[assignment]
+
+        asyncio.run(client._subscribe_topics(timeout_seconds=7.5))
+
+        self.assertEqual(
+            subscribed_topics,
+            [
+                ("$aws/things/thing-1/shadow/get/+", 7.5),
+                ("$aws/things/thing-1/shadow/update/accepted", 7.5),
+                ("txings/thing-1/+/+", 7.5),
+                ("spBv1.0/town/DCMD/rig/thing-1", 7.5),
+            ],
+        )
+
     def test_initial_snapshot_bootstrap_retries_clean_session_cancelled_subscribe(self) -> None:
         instances: list[FakeConnection] = []
         accepted_payload = json.dumps(
@@ -312,7 +347,7 @@ class AwsShadowClientTests(unittest.TestCase):
                 if not topic.endswith("/shadow/get"):
                     return
                 thing_name = topic.split("/")[2]
-                callback = self.subscriptions[f"$aws/things/{thing_name}/shadow/get/accepted"]
+                callback = self.subscriptions[f"$aws/things/{thing_name}/shadow/get/+"]
                 callback(
                     f"$aws/things/{thing_name}/shadow/get/accepted",
                     accepted_payload,

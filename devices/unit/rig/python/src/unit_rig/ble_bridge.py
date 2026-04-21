@@ -55,7 +55,6 @@ from aws.mcp_topics import (
     MCP_PROTOCOL_VERSION,
     MCP_TRANSPORT,
     build_mcp_descriptor_topic,
-    build_mcp_status_topic,
     parse_mcp_descriptor_or_status_topic,
 )
 from aws.video_topics import (
@@ -64,8 +63,6 @@ from aws.video_topics import (
     VIDEO_STATUS_READY,
     VIDEO_STATUS_UNAVAILABLE,
     VIDEO_TRANSPORT,
-    build_video_descriptor_topic,
-    build_video_status_topic,
     build_video_topic_root,
     build_video_topics,
     parse_video_descriptor_or_status_topic,
@@ -1362,13 +1359,9 @@ class AwsShadowClient:
         for thing_name in self._managed_things:
             topics.extend(
                 (
-                    f"$aws/things/{thing_name}/shadow/get/accepted",
-                    f"$aws/things/{thing_name}/shadow/get/rejected",
+                    f"$aws/things/{thing_name}/shadow/get/+",
                     f"$aws/things/{thing_name}/shadow/update/accepted",
-                    build_mcp_descriptor_topic(thing_name),
-                    build_mcp_status_topic(thing_name),
-                    build_video_descriptor_topic(thing_name),
-                    build_video_status_topic(thing_name),
+                    f"txings/{thing_name}/+/+",
                     build_device_topic(
                         self._config.sparkplug_group_id,
                         "DCMD",
