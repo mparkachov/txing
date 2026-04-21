@@ -11,6 +11,9 @@ export type McpSteadyMotionLeaseState = {
 export const getMcpLeaseRenewBeforeMs = (leaseTtlMs: number): number =>
   Math.min(1500, Math.max(300, Math.round(leaseTtlMs * 0.4)))
 
+export const getMcpSteadyMotionHeartbeatIntervalMs = (leaseTtlMs: number): number =>
+  Math.min(2_000, Math.max(1_000, Math.round(leaseTtlMs * 0.4)))
+
 export const getSteadyMotionLeaseState = ({
   lease,
   knownLeaseTtlMs,

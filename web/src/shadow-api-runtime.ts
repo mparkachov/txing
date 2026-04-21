@@ -57,7 +57,7 @@ import {
 
 const forbiddenRetryDelaysMs = [500, 1000, 2000]
 const initialSnapshotTimeoutMs = 20_000
-const mcpRequestTimeoutMs = 4_000
+const mcpRequestTimeoutMs = 8_000
 
 export type ShadowConnectionState = 'idle' | 'connecting' | 'connected' | 'error'
 type ResolveIdToken = () => Promise<string>
@@ -735,6 +735,9 @@ class AwsIotShadowSession implements ShadowSession {
   }
 
   async requestRobotState(): Promise<RobotState> {
+    if (this.pendingMcpRequests.size > 0 && this.latestRobotState) {
+      return this.latestRobotState
+    }
     await this.ensureMcpSessionReady()
     const robotState = parseRobotState(await this.callMcpTool('robot.get_state', {}))
     if (!robotState) {

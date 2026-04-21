@@ -62,6 +62,7 @@ import { CmdVelTeleopController } from './cmd-vel-teleop'
 import type { Twist } from './cmd-vel'
 import { appConfig } from './config'
 import DebugPanel from './DebugPanel'
+import { getMcpSteadyMotionHeartbeatIntervalMs } from './mcp-lease'
 import NotificationLogPanel from './NotificationLogPanel'
 import NotificationTray from './NotificationTray'
 import type { RobotState, ShadowConnectionState, ShadowSession } from './shadow-api'
@@ -93,7 +94,8 @@ type DeviceRoute = {
 }
 
 const formatJson = (value: unknown): string => JSON.stringify(value, null, 2)
-const cmdVelRepeatIntervalMs = 100
+const defaultMcpLeaseTtlMs = 5_000
+const robotStatePollIntervalMs = 5_000
 const txingLogoUrl = 'https://txing.dev/txing-logo.png'
 const appHomePath = '/'
 let shadowApiModulePromise: Promise<typeof import('./shadow-api')> | null = null
@@ -428,6 +430,12 @@ function App({ initialAuthError = '' }: AppProps) {
   const isTxingSwitchDisabled =
     isLoadingShadow || isUpdatingShadow || isTxingSwitchPending || !canToggleTxingSwitch
   const canUseBoardVideo = reportedRedcon === 1
+  const cmdVelRepeatIntervalMs = getMcpSteadyMotionHeartbeatIntervalMs(
+    robotState?.control.leaseTtlMs ?? defaultMcpLeaseTtlMs,
+  )
+  const isRobotMotionActive =
+    (robotState?.motion.leftSpeed ?? 0) !== 0 || (robotState?.motion.rightSpeed ?? 0) !== 0
+  const isRobotControlActive = robotState?.control.leaseHeldByCaller === true
   const reportedBoardLeftTrackSpeed = robotState?.motion.leftSpeed ?? null
   const reportedBoardRightTrackSpeed = robotState?.motion.rightSpeed ?? null
   const robotVideoLastError = robotState?.video.lastError ?? null
@@ -886,7 +894,7 @@ function App({ initialAuthError = '' }: AppProps) {
     if ((!canUseBoardVideo || !isShadowConnected) && isBoardVideoExpanded) {
       setIsBoardVideoExpanded(false)
     }
-  }, [canUseBoardVideo, isBoardVideoExpanded, isShadowConnected])
+  }, [canUseBoardVideo, cmdVelRepeatIntervalMs, isBoardVideoExpanded, isShadowConnected])
 
   const requestRobotState = useEffectEvent(async (): Promise<void> => {
     const shadowSession = shadowSessionRef.current
@@ -910,14 +918,25 @@ function App({ initialAuthError = '' }: AppProps) {
     }
 
     void requestRobotState()
+    if (isRobotMotionActive || isRobotControlActive) {
+      return
+    }
+
     const intervalId = window.setInterval(() => {
       void requestRobotState()
-    }, 1_000)
+    }, robotStatePollIntervalMs)
 
     return () => {
       window.clearInterval(intervalId)
     }
-  }, [canUseBoardVideo, isBoardVideoExpanded, isShadowConnected, requestRobotState])
+  }, [
+    canUseBoardVideo,
+    isBoardVideoExpanded,
+    isRobotControlActive,
+    isRobotMotionActive,
+    isShadowConnected,
+    requestRobotState,
+  ])
 
   useEffect(() => {
     if (!isBoardVideoExpanded || !canUseBoardVideo || !isShadowConnected) {

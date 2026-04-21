@@ -1,11 +1,21 @@
 import { describe, expect, test } from 'bun:test'
-import { getMcpLeaseRenewBeforeMs, getSteadyMotionLeaseState } from '../src/mcp-lease'
+import {
+  getMcpLeaseRenewBeforeMs,
+  getMcpSteadyMotionHeartbeatIntervalMs,
+  getSteadyMotionLeaseState,
+} from '../src/mcp-lease'
 
 describe('mcp lease helpers', () => {
   test('caps the background renew threshold to a practical window', () => {
     expect(getMcpLeaseRenewBeforeMs(5_000)).toBe(1500)
     expect(getMcpLeaseRenewBeforeMs(1_000)).toBe(400)
     expect(getMcpLeaseRenewBeforeMs(200)).toBe(300)
+  })
+
+  test('uses a low-rate steady-motion heartbeat instead of per-frame MCP command spam', () => {
+    expect(getMcpSteadyMotionHeartbeatIntervalMs(5_000)).toBe(2_000)
+    expect(getMcpSteadyMotionHeartbeatIntervalMs(3_000)).toBe(1_200)
+    expect(getMcpSteadyMotionHeartbeatIntervalMs(1_000)).toBe(1_000)
   })
 
   test('treats a healthy active lease as usable without forcing a synchronous refresh', () => {
