@@ -119,6 +119,7 @@ DEFAULT_SPARKPLUG_GROUP_ID_ENV = "SPARKPLUG_GROUP_ID"
 DEFAULT_SPARKPLUG_EDGE_NODE_ID_ENV = "SPARKPLUG_EDGE_NODE_ID"
 DEFAULT_CLOUDWATCH_LOG_GROUP_ENV = "CLOUDWATCH_LOG_GROUP"
 MQTT_RETRYABLE_CLEAN_SESSION_ERROR = "AWS_ERROR_MQTT_CANCELLED_FOR_CLEAN_SESSION"
+MQTT_RETRYABLE_UNEXPECTED_HANGUP_ERROR = "AWS_ERROR_MQTT_UNEXPECTED_HANGUP"
 
 LOGGER = logging.getLogger("rig.ble_bridge")
 
@@ -139,10 +140,14 @@ def _log_important(
     logger.log(level, message, *args, extra={"important": True})
 
 
-def _is_retryable_clean_session_error(error: Exception) -> bool:
+def _is_retryable_bootstrap_mqtt_error(error: Exception) -> bool:
     if isinstance(error, TimeoutError):
         return False
-    return MQTT_RETRYABLE_CLEAN_SESSION_ERROR in str(error)
+    message = str(error)
+    return (
+        MQTT_RETRYABLE_CLEAN_SESSION_ERROR in message
+        or MQTT_RETRYABLE_UNEXPECTED_HANGUP_ERROR in message
+    )
 
 
 def _is_expected_disconnect_error(err: Exception) -> bool:
@@ -1221,11 +1226,19 @@ class AwsShadowClient:
                 except Exception as err:
                     if not self._should_retry_bootstrap(err):
                         raise
+                    retry_delay = min(
+                        self._config.reconnect_delay,
+                        max(0.0, deadline - loop.time()),
+                    )
                     LOGGER.warning(
-                        "AWS IoT shadow bootstrap was interrupted during reconnect; retrying initial subscribe/get"
+                        "AWS IoT shadow bootstrap was interrupted (%s); retrying initial subscribe/get in %.1fs",
+                        err,
+                        retry_delay,
                     )
                     if self.is_connected:
                         await self.disconnect()
+                    if retry_delay > 0:
+                        await asyncio.sleep(retry_delay)
                 finally:
                     self._initial_snapshot_futures = {}
         finally:
@@ -1373,7 +1386,7 @@ class AwsShadowClient:
             )
 
     def _should_retry_bootstrap(self, err: Exception) -> bool:
-        return self._bootstrap_session_reset or _is_retryable_clean_session_error(err)
+        return self._bootstrap_session_reset or _is_retryable_bootstrap_mqtt_error(err)
 
     async def _resubscribe_existing_topics(self) -> None:
         response = await self._mqtt.resubscribe_existing_topics(

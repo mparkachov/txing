@@ -344,6 +344,80 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertEqual(instances[0].disconnect_calls, 1)
         self.assertGreaterEqual(len(instances[0].subscribe_calls), 2)
 
+    def test_initial_snapshot_bootstrap_retries_unexpected_hangup_with_backoff(self) -> None:
+        sleep_calls: list[float] = []
+
+        class FakeConnection:
+            def __init__(self, _config: object, **_kwargs: object) -> None:
+                self.connect_calls = 0
+                self.disconnect_calls = 0
+
+            async def connect(self, *, timeout_seconds: float | None = None) -> None:
+                del timeout_seconds
+                self.connect_calls += 1
+                if self.connect_calls == 1:
+                    raise RuntimeError(
+                        "AWS_ERROR_MQTT_UNEXPECTED_HANGUP: The connection was closed unexpectedly."
+                    )
+
+            async def disconnect(self, *, timeout_seconds: float | None = None) -> None:
+                del timeout_seconds
+                self.disconnect_calls += 1
+
+            async def subscribe(
+                self,
+                topic: str,
+                callback: object,
+                *,
+                timeout_seconds: float | None = None,
+            ) -> None:
+                del topic, callback, timeout_seconds
+                return
+
+            async def publish(
+                self,
+                topic: str,
+                payload: bytes | str,
+                *,
+                retain: bool = False,
+                timeout_seconds: float | None = None,
+            ) -> None:
+                del topic, payload, retain, timeout_seconds
+                return
+
+            async def resubscribe_existing_topics(
+                self,
+                *,
+                timeout_seconds: float | None = None,
+            ) -> dict[str, list[tuple[str, int]]]:
+                del timeout_seconds
+                return {"topics": []}
+
+        class TestAwsShadowClient(AwsShadowClient):
+            async def _request_shadow_get(self, thing_name: str) -> None:
+                assert self._loop is not None
+                future = self._initial_snapshot_futures[thing_name]
+                if not future.done():
+                    future.set_result({"version": 11})
+
+        async def fake_sleep(delay: float) -> None:
+            sleep_calls.append(delay)
+
+        with patch("unit_rig.ble_bridge.AwsIotWebsocketConnection", FakeConnection):
+            client = TestAwsShadowClient(
+                BridgeConfig(reconnect_delay=1.5),
+                aws_runtime=object(),  # type: ignore[arg-type]
+            )
+            with patch("unit_rig.ble_bridge.asyncio.sleep", fake_sleep):
+                with patch("unit_rig.ble_bridge.LOGGER.warning") as log_warning:
+                    snapshots = asyncio.run(
+                        client.connect_and_get_initial_snapshots(["thing-1"], timeout_seconds=5.0)
+                    )
+
+        log_warning.assert_called()
+        self.assertEqual(snapshots["thing-1"]["version"], 11)
+        self.assertEqual(sleep_calls, [1.5])
+
     def test_parse_args_accepts_service_environment_defaults(self) -> None:
         with patch.dict(
             os.environ,
