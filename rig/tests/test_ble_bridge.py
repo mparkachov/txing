@@ -253,6 +253,97 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertEqual(payload.metrics[0].name, "bdSeq")
         self.assertEqual(payload.metrics[0].long_value, 77)
 
+    def test_initial_snapshot_bootstrap_retries_clean_session_cancelled_subscribe(self) -> None:
+        instances: list[FakeConnection] = []
+        accepted_payload = json.dumps(
+            {
+                "state": {
+                    "reported": {
+                        "mcu": {
+                            "power": True,
+                            "online": True,
+                        }
+                    }
+                },
+                "version": 7,
+            }
+        ).encode("utf-8")
+
+        class FakeConnection:
+            def __init__(self, _config: object, **_kwargs: object) -> None:
+                self.connect_calls = 0
+                self.disconnect_calls = 0
+                self.subscribe_calls: list[str] = []
+                self.subscriptions: dict[str, object] = {}
+                instances.append(self)
+
+            async def connect(self, *, timeout_seconds: float | None = None) -> None:
+                del timeout_seconds
+                self.connect_calls += 1
+
+            async def disconnect(self, *, timeout_seconds: float | None = None) -> None:
+                del timeout_seconds
+                self.disconnect_calls += 1
+
+            async def subscribe(
+                self,
+                topic: str,
+                callback: object,
+                *,
+                timeout_seconds: float | None = None,
+            ) -> None:
+                del timeout_seconds
+                self.subscribe_calls.append(topic)
+                if len(self.subscribe_calls) == 1:
+                    raise RuntimeError(
+                        "AWS_ERROR_MQTT_CANCELLED_FOR_CLEAN_SESSION: Old requests from the previous session are cancelled"
+                    )
+                self.subscriptions[topic] = callback
+
+            async def publish(
+                self,
+                topic: str,
+                payload: bytes | str,
+                *,
+                retain: bool = False,
+                timeout_seconds: float | None = None,
+            ) -> None:
+                del payload, retain, timeout_seconds
+                if not topic.endswith("/shadow/get"):
+                    return
+                thing_name = topic.split("/")[2]
+                callback = self.subscriptions[f"$aws/things/{thing_name}/shadow/get/accepted"]
+                callback(
+                    f"$aws/things/{thing_name}/shadow/get/accepted",
+                    accepted_payload,
+                )
+
+            async def resubscribe_existing_topics(
+                self,
+                *,
+                timeout_seconds: float | None = None,
+            ) -> dict[str, list[tuple[str, int]]]:
+                del timeout_seconds
+                return {"topics": []}
+
+        with patch("unit_rig.ble_bridge.AwsIotWebsocketConnection", FakeConnection):
+            client = AwsShadowClient(
+                BridgeConfig(),
+                aws_runtime=object(),  # type: ignore[arg-type]
+            )
+            with patch("unit_rig.ble_bridge.LOGGER.warning") as log_warning:
+                snapshots = asyncio.run(
+                    client.connect_and_get_initial_snapshots(["thing-1"], timeout_seconds=5.0)
+                )
+
+        log_warning.assert_called()
+
+        self.assertEqual(snapshots["thing-1"]["version"], 7)
+        self.assertEqual(len(instances), 1)
+        self.assertEqual(instances[0].connect_calls, 2)
+        self.assertEqual(instances[0].disconnect_calls, 1)
+        self.assertGreaterEqual(len(instances[0].subscribe_calls), 2)
+
     def test_parse_args_accepts_service_environment_defaults(self) -> None:
         with patch.dict(
             os.environ,

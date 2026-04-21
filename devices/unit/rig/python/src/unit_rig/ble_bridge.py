@@ -118,6 +118,7 @@ DEFAULT_RIG_NAME_ENV = "RIG_NAME"
 DEFAULT_SPARKPLUG_GROUP_ID_ENV = "SPARKPLUG_GROUP_ID"
 DEFAULT_SPARKPLUG_EDGE_NODE_ID_ENV = "SPARKPLUG_EDGE_NODE_ID"
 DEFAULT_CLOUDWATCH_LOG_GROUP_ENV = "CLOUDWATCH_LOG_GROUP"
+MQTT_RETRYABLE_CLEAN_SESSION_ERROR = "AWS_ERROR_MQTT_CANCELLED_FOR_CLEAN_SESSION"
 
 LOGGER = logging.getLogger("rig.ble_bridge")
 
@@ -136,6 +137,12 @@ def _log_important(
     level: int = logging.INFO,
 ) -> None:
     logger.log(level, message, *args, extra={"important": True})
+
+
+def _is_retryable_clean_session_error(error: Exception) -> bool:
+    if isinstance(error, TimeoutError):
+        return False
+    return MQTT_RETRYABLE_CLEAN_SESSION_ERROR in str(error)
 
 
 def _is_expected_disconnect_error(err: Exception) -> bool:
@@ -1131,6 +1138,8 @@ class AwsShadowClient:
         self._managed_things: tuple[str, ...] = ()
         self._managed_thing_names: set[str] = set()
         self._initial_snapshot_futures: dict[str, asyncio.Future[dict[str, Any]]] = {}
+        self._bootstrap_in_progress = False
+        self._bootstrap_session_reset = False
 
     @property
     def is_connected(self) -> bool:
@@ -1168,30 +1177,59 @@ class AwsShadowClient:
         timeout_seconds: float,
     ) -> dict[str, dict[str, Any]]:
         self.set_managed_things(thing_names)
-        await self.connect(timeout_seconds)
-        if not self._managed_things:
-            return {}
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout_seconds
+        self._bootstrap_in_progress = True
+        try:
+            while True:
+                self._bootstrap_session_reset = False
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    raise TimeoutError(
+                        "timed out waiting for initial AWS IoT shadow snapshots"
+                    )
+                try:
+                    await self.connect(remaining)
+                    if not self._managed_things:
+                        return {}
 
-        assert self._loop is not None
-        self._initial_snapshot_futures = {
-            thing_name: self._loop.create_future() for thing_name in self._managed_things
-        }
-        deadline = self._loop.time() + timeout_seconds
-        for thing_name in self._managed_things:
-            await self._request_shadow_get(thing_name)
+                    assert self._loop is not None
+                    self._initial_snapshot_futures = {
+                        thing_name: self._loop.create_future()
+                        for thing_name in self._managed_things
+                    }
+                    for thing_name in self._managed_things:
+                        remaining = deadline - self._loop.time()
+                        if remaining <= 0:
+                            raise TimeoutError(
+                                "timed out waiting for initial AWS IoT shadow snapshots"
+                            )
+                        await self._request_shadow_get(thing_name)
 
-        snapshots: dict[str, dict[str, Any]] = {}
-        for thing_name, future in self._initial_snapshot_futures.items():
-            remaining = deadline - self._loop.time()
-            if remaining <= 0:
-                raise TimeoutError(
-                    "timed out waiting for initial AWS IoT shadow snapshots"
-                )
-            snapshots[thing_name] = await asyncio.wait_for(
-                asyncio.shield(future),
-                timeout=remaining,
-            )
-        return snapshots
+                    snapshots: dict[str, dict[str, Any]] = {}
+                    for thing_name, future in self._initial_snapshot_futures.items():
+                        remaining = deadline - self._loop.time()
+                        if remaining <= 0:
+                            raise TimeoutError(
+                                "timed out waiting for initial AWS IoT shadow snapshots"
+                            )
+                        snapshots[thing_name] = await asyncio.wait_for(
+                            asyncio.shield(future),
+                            timeout=remaining,
+                        )
+                    return snapshots
+                except Exception as err:
+                    if not self._should_retry_bootstrap(err):
+                        raise
+                    LOGGER.warning(
+                        "AWS IoT shadow bootstrap was interrupted during reconnect; retrying initial subscribe/get"
+                    )
+                    if self.is_connected:
+                        await self.disconnect()
+                finally:
+                    self._initial_snapshot_futures = {}
+        finally:
+            self._bootstrap_in_progress = False
 
     async def disconnect(self) -> None:
         try:
@@ -1334,6 +1372,9 @@ class AwsShadowClient:
                 timeout_seconds=timeout_seconds,
             )
 
+    def _should_retry_bootstrap(self, err: Exception) -> bool:
+        return self._bootstrap_session_reset or _is_retryable_clean_session_error(err)
+
     async def _resubscribe_existing_topics(self) -> None:
         response = await self._mqtt.resubscribe_existing_topics(
             timeout_seconds=self._config.aws_connect_timeout,
@@ -1382,6 +1423,12 @@ class AwsShadowClient:
         if self._loop and self._connected_event:
             self._loop.call_soon_threadsafe(self._connected_event.set)
         if not session_present:
+            if self._bootstrap_in_progress:
+                self._bootstrap_session_reset = True
+                LOGGER.warning(
+                    "AWS IoT MQTT session reset during initial shadow bootstrap; restarting bootstrap subscriptions"
+                )
+                return
             self._schedule_coroutine(
                 self._resubscribe_existing_topics(),
                 description="Failed to restore MQTT subscriptions after reconnect",
