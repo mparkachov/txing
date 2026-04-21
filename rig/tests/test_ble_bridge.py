@@ -164,6 +164,7 @@ from unit_rig.ble_bridge import (
     _build_shadow_from_snapshot,
     _calculate_redcon,
     _parse_args,
+    _run_rig_service,
     _shadow_payload_includes_desired_redcon,
 )
 from aws.auth import ensure_aws_profile
@@ -368,6 +369,92 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertNotIn("txing thing(s)", adapter)
         self.assertNotIn("managed txings", adapter)
         self.assertNotIn("into txing shadow", adapter)
+
+
+class RigServiceStartupRetryTests(unittest.TestCase):
+    def test_retries_transient_startup_failure(self) -> None:
+        asyncio.run(self._exercise_retries_transient_startup_failure())
+
+    async def _exercise_retries_transient_startup_failure(self) -> None:
+        config = BridgeConfig(reconnect_delay=2.5)
+        sleep_calls: list[float] = []
+        cloud_shadows: list[FakeAwsShadowClient] = []
+        fleet_bridges: list[FakeRigFleetBridge] = []
+
+        class FakeAwsRuntime:
+            def iot_client(self) -> object:
+                return object()
+
+        class FakeAwsShadowClient:
+            def __init__(self, _config: BridgeConfig, _aws_runtime: object) -> None:
+                self.disconnect_calls = 0
+                cloud_shadows.append(self)
+
+            async def connect_and_get_initial_snapshots(
+                self,
+                _thing_names: list[str] | tuple[str, ...],
+                *,
+                timeout_seconds: float,
+            ) -> dict[str, dict[str, object]]:
+                del timeout_seconds
+                if len(cloud_shadows) == 1:
+                    raise RuntimeError("startup failure")
+                return {}
+
+            async def disconnect(self) -> None:
+                self.disconnect_calls += 1
+
+        class FakeRegistryClient:
+            def __init__(self, _iot_client: object) -> None:
+                pass
+
+            def list_rig_things(self, _rig_name: str) -> list[object]:
+                return []
+
+        class FakeRigFleetBridge:
+            def __init__(
+                self,
+                _config: BridgeConfig,
+                *,
+                cloud_shadow: object,
+                registry: object,
+                managed_things: list[object],
+            ) -> None:
+                del cloud_shadow, registry, managed_things
+                self.shutdown_calls = 0
+                fleet_bridges.append(self)
+
+            async def run(self) -> None:
+                raise asyncio.CancelledError
+
+            async def run_no_ble(self) -> None:
+                raise AssertionError("run_no_ble should not be called in this test")
+
+            async def _publish_node_death_for_shutdown(self) -> None:
+                self.shutdown_calls += 1
+
+        async def fake_sleep(delay: float) -> None:
+            sleep_calls.append(delay)
+
+        with patch("unit_rig.ble_bridge.LOGGER.exception") as log_exception:
+            with self.assertRaises(asyncio.CancelledError):
+                await _run_rig_service(
+                    args_no_ble=False,
+                    config=config,
+                    aws_runtime=FakeAwsRuntime(),  # type: ignore[arg-type]
+                    cloud_shadow_factory=FakeAwsShadowClient,
+                    registry_client_factory=FakeRegistryClient,
+                    fleet_bridge_factory=FakeRigFleetBridge,
+                    sleep_func=fake_sleep,
+                )
+
+        log_exception.assert_called_once()
+
+        self.assertEqual(sleep_calls, [config.reconnect_delay])
+        self.assertEqual(len(cloud_shadows), 2)
+        self.assertEqual([shadow.disconnect_calls for shadow in cloud_shadows], [1, 1])
+        self.assertEqual(len(fleet_bridges), 1)
+        self.assertEqual(fleet_bridges[0].shutdown_calls, 1)
 
 
 class RigNodeReflectionTests(unittest.TestCase):

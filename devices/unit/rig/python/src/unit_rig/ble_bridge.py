@@ -13,7 +13,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, Coroutine
+from typing import Any, Awaitable, Callable, Coroutine
 from uuid import UUID
 
 from bleak import BleakClient, BleakScanner
@@ -3902,6 +3902,120 @@ class RigFleetBridge:
             raise
 
 
+async def _disconnect_cloud_shadow(cloud_shadow: Any) -> None:
+    disconnect_task = asyncio.create_task(cloud_shadow.disconnect())
+    try:
+        await asyncio.shield(disconnect_task)
+    except asyncio.CancelledError:
+        await asyncio.shield(disconnect_task)
+        raise
+
+
+async def _run_rig_service(
+    *,
+    args_no_ble: bool,
+    config: BridgeConfig,
+    aws_runtime: AwsRuntime,
+    cloud_shadow_factory: Callable[[BridgeConfig, AwsRuntime], Any] = AwsShadowClient,
+    registry_client_factory: Callable[[Any], Any] = AwsThingRegistryClient,
+    fleet_bridge_factory: Callable[..., RigFleetBridge] = RigFleetBridge,
+    sleep_func: Callable[[float], Awaitable[None]] = asyncio.sleep,
+) -> None:
+    while True:
+        cloud_shadow = cloud_shadow_factory(config, aws_runtime)
+        registry_client = registry_client_factory(aws_runtime.iot_client())
+        fleet_bridge: RigFleetBridge | None = None
+        try:
+            try:
+                registrations = registry_client.list_rig_things(config.rig_name)
+            except ThingGroupNotFoundError:
+                LOGGER.warning(
+                    "Dynamic thing group for rig=%s was not found; starting idle with no managed devices",
+                    config.rig_name,
+                )
+                registrations = []
+            _log_important(
+                LOGGER,
+                "Loaded %s registered device(s) from dynamic thing group for rig=%s",
+                len(registrations),
+                config.rig_name,
+            )
+            snapshots = await cloud_shadow.connect_and_get_initial_snapshots(
+                [registration.thing_name for registration in registrations],
+                timeout_seconds=config.aws_connect_timeout,
+            )
+            managed_things: list[ManagedThing] = []
+            for registration in registrations:
+                thing_name = registration.thing_name
+                device_config = replace(
+                    config,
+                    thing_name=thing_name,
+                    shadow_file=_device_snapshot_file(config.shadow_file, thing_name),
+                )
+                shadow = _build_shadow_from_snapshot(
+                    snapshots[thing_name],
+                    snapshot_file=device_config.shadow_file,
+                    registered_ble_device_id=registration.ble_device_id,
+                    thing_name=thing_name,
+                    aws_region=device_config.aws_region,
+                )
+                shadow.log_state(f"Initialized from AWS IoT shadow snapshot ({thing_name})")
+                managed_things.append(
+                    ManagedThing(
+                        registration=registration,
+                        bridge=BleSleepBridge(
+                            device_config,
+                            shadow,
+                            DeviceCloudProxy(cloud_shadow, thing_name),  # type: ignore[arg-type]
+                        ),
+                    )
+                )
+
+            fleet_bridge = fleet_bridge_factory(
+                config,
+                cloud_shadow=cloud_shadow,
+                registry=registry_client,
+                managed_things=managed_things,
+            )
+            if args_no_ble:
+                while True:
+                    try:
+                        await fleet_bridge.run_no_ble()
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        LOGGER.exception(
+                            "No-BLE loop failed; retrying in %.1fs",
+                            config.reconnect_delay,
+                        )
+                        await sleep_func(config.reconnect_delay)
+                continue
+
+            while True:
+                try:
+                    await fleet_bridge.run()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    LOGGER.exception(
+                        "BLE bridge loop failed; retrying in %.1fs",
+                        config.reconnect_delay,
+                    )
+                    await sleep_func(config.reconnect_delay)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            LOGGER.exception(
+                "Rig startup failed; retrying in %.1fs",
+                config.reconnect_delay,
+            )
+            await sleep_func(config.reconnect_delay)
+        finally:
+            if fleet_bridge is not None:
+                await fleet_bridge._publish_node_death_for_shutdown()
+            await _disconnect_cloud_shadow(cloud_shadow)
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="rig",
@@ -4322,95 +4436,11 @@ def main() -> None:
     )
 
     async def _run_rig() -> None:
-        cloud_shadow = AwsShadowClient(config, aws_runtime)
-        registry_client = AwsThingRegistryClient(aws_runtime.iot_client())
-        fleet_bridge: RigFleetBridge | None = None
-        try:
-            try:
-                registrations = registry_client.list_rig_things(config.rig_name)
-            except ThingGroupNotFoundError:
-                LOGGER.warning(
-                    "Dynamic thing group for rig=%s was not found; starting idle with no managed devices",
-                    config.rig_name,
-                )
-                registrations = []
-            _log_important(
-                LOGGER,
-                "Loaded %s registered device(s) from dynamic thing group for rig=%s",
-                len(registrations),
-                config.rig_name,
-            )
-            snapshots = await cloud_shadow.connect_and_get_initial_snapshots(
-                [registration.thing_name for registration in registrations],
-                timeout_seconds=config.aws_connect_timeout,
-            )
-            managed_things: list[ManagedThing] = []
-            for registration in registrations:
-                thing_name = registration.thing_name
-                device_config = replace(
-                    config,
-                    thing_name=thing_name,
-                    shadow_file=_device_snapshot_file(config.shadow_file, thing_name),
-                )
-                shadow = _build_shadow_from_snapshot(
-                    snapshots[thing_name],
-                    snapshot_file=device_config.shadow_file,
-                    registered_ble_device_id=registration.ble_device_id,
-                    thing_name=thing_name,
-                    aws_region=device_config.aws_region,
-                )
-                shadow.log_state(f"Initialized from AWS IoT shadow snapshot ({thing_name})")
-                managed_things.append(
-                    ManagedThing(
-                        registration=registration,
-                        bridge=BleSleepBridge(
-                            device_config,
-                            shadow,
-                            DeviceCloudProxy(cloud_shadow, thing_name),  # type: ignore[arg-type]
-                        ),
-                    )
-                )
-
-            fleet_bridge = RigFleetBridge(
-                config,
-                cloud_shadow=cloud_shadow,
-                registry=registry_client,
-                managed_things=managed_things,
-            )
-            if args.no_ble:
-                while True:
-                    try:
-                        await fleet_bridge.run_no_ble()
-                    except asyncio.CancelledError:
-                        raise
-                    except Exception:
-                        LOGGER.exception(
-                            "No-BLE loop failed; retrying in %.1fs",
-                            config.reconnect_delay,
-                        )
-                        await asyncio.sleep(config.reconnect_delay)
-                return
-
-            while True:
-                try:
-                    await fleet_bridge.run()
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
-                    LOGGER.exception(
-                        "BLE bridge loop failed; retrying in %.1fs",
-                        config.reconnect_delay,
-                    )
-                    await asyncio.sleep(config.reconnect_delay)
-        finally:
-            if fleet_bridge is not None:
-                await fleet_bridge._publish_node_death_for_shutdown()
-            disconnect_task = asyncio.create_task(cloud_shadow.disconnect())
-            try:
-                await asyncio.shield(disconnect_task)
-            except asyncio.CancelledError:
-                await asyncio.shield(disconnect_task)
-                raise
+        await _run_rig_service(
+            args_no_ble=args.no_ble,
+            config=config,
+            aws_runtime=aws_runtime,
+        )
 
     async def _runner() -> None:
         loop = asyncio.get_running_loop()
