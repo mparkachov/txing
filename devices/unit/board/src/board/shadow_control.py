@@ -56,6 +56,7 @@ from .motor_driver import (
     parse_bool_text,
 )
 from .shadow_store import DEFAULT_SHADOW_FILE, save_shadow
+from .video_service import BoardVideoService
 from .video_sender import (
     DEFAULT_SENDER_COMMAND_ENV,
     VideoSenderSupervisor,
@@ -63,7 +64,6 @@ from .video_sender import (
 from .video_state import (
     DEFAULT_VIDEO_CHANNEL_NAME,
     DEFAULT_VIDEO_STATE_FILE,
-    build_reported_video_state,
 )
 
 LOGGER = logging.getLogger("board.shadow_control")
@@ -117,7 +117,7 @@ DEFAULT_TIME_SYNC_TIMEOUT = 120.0
 DEFAULT_TIME_SYNC_POLL_INTERVAL = 1.0
 DEFAULT_VIDEO_REGION = "eu-central-1"
 DEFAULT_VIDEO_STARTUP_TIMEOUT_SECONDS = 30.0
-DEFAULT_VIDEO_READY_POLL_INTERVAL = 0.5
+DEFAULT_VIDEO_STATUS_HEARTBEAT_SECONDS = 5.0
 DEFAULT_HALT_COMMAND = ("/usr/bin/systemctl", "halt", "--no-wall")
 DEFAULT_TIMEDATECTL_SYNC_COMMAND = (
     "/usr/bin/timedatectl",
@@ -258,10 +258,6 @@ class DefaultRouteAddresses:
     ipv6: str | None
 
 
-class VideoStartupTimeoutError(RuntimeError):
-    pass
-
-
 class AwsShadowClient:
     def __init__(
         self,
@@ -270,6 +266,7 @@ class AwsShadowClient:
         aws_runtime: AwsRuntime,
         cmd_vel_controller: CmdVelController | None = None,
         mcp_server: BoardMcpServer | None = None,
+        video_service: BoardVideoService | None = None,
     ) -> None:
         self._config = config
         self._aws_runtime = aws_runtime
@@ -288,6 +285,7 @@ class AwsShadowClient:
         self._topic_cmd_vel = build_cmd_vel_topic(config.thing_name)
         self._cmd_vel_controller = cmd_vel_controller
         self._mcp_server = mcp_server
+        self._video_service = video_service
         will_topic: str | None = None
         will_payload: bytes | None = None
         will_retain = False
@@ -403,6 +401,11 @@ class AwsShadowClient:
                 client=client,
                 publish_timeout_seconds=self._config.publish_timeout,
             )
+        if self._video_service is not None:
+            self._video_service.on_connected(
+                client=client,
+                publish_timeout_seconds=self._config.publish_timeout,
+            )
 
         self._request_shadow_get()
 
@@ -475,6 +478,8 @@ class AwsShadowClient:
         self._mcp_dispatcher = None
         if dispatcher is not None:
             dispatcher.shutdown(wait=False, cancel_futures=True)
+        if self._video_service is not None:
+            self._video_service.close()
         if self._mcp_server is not None:
             self._mcp_server.close()
         with self._lock:
@@ -502,6 +507,8 @@ class AwsShadowClient:
                 self._response_done.set()
         if self._cmd_vel_controller is not None:
             self._cmd_vel_controller.handle_disconnect(detail)
+        if self._video_service is not None:
+            self._video_service.on_disconnected(reason=detail)
         if self._mcp_server is not None:
             self._mcp_server.on_disconnected(reason=detail)
         if not self._disconnect_requested:
@@ -986,7 +993,6 @@ def _build_board_report(
     addresses: DefaultRouteAddresses,
     power: bool,
     drive_state: DriveState,
-    video_state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     report: dict[str, Any] = {
         "power": power,
@@ -1000,8 +1006,6 @@ def _build_board_report(
             "rightSpeed": drive_state.right_speed,
         },
     }
-    if isinstance(video_state, dict):
-        report["video"] = build_reported_video_state(video_state)
     return report
 
 
@@ -1180,60 +1184,20 @@ def _wait_for_system_clock_sync(
             return
 
 
-def _wait_for_video_ready(
-    stop_event: threading.Event,
-    shadow_client: AwsShadowClient,
-    config: ControlConfig,
-    video_supervisor: VideoSenderSupervisor,
-) -> tuple[DefaultRouteAddresses, dict[str, Any]] | None:
-    deadline = time.monotonic() + config.video_startup_timeout_seconds
-    last_error: str | None = None
-    video_supervisor.start()
+def _publish_video_status(
+    video_service: BoardVideoService,
+    video_state: dict[str, Any],
+) -> None:
+    try:
+        video_service.publish_status(video_state)
+    except Exception as err:
+        raise RuntimeError(f"failed to publish retained video status: {err}") from err
     LOGGER.info(
-        "Started board video supervisor pid=%s state_file=%s",
-        video_supervisor.pid,
-        video_supervisor.state_file,
+        "Published retained video status available=true ready=%s status=%s viewer_connected=%s",
+        video_state.get("ready"),
+        video_state.get("status"),
+        video_state.get("viewerConnected"),
     )
-    LOGGER.info(
-        "Waiting for board video sender readiness before first shadow publish timeout=%.1fs",
-        config.video_startup_timeout_seconds,
-    )
-    while True:
-        if stop_event.is_set() or shadow_client.halt_requested():
-            return None
-
-        default_route_addresses = _detect_default_route_addresses()
-        video_state = _read_video_state(video_supervisor)
-        if video_state.get("ready") is True:
-            LOGGER.info(
-                "Board video sender ready for first shadow publish channel_name=%s",
-                (
-                    video_state.get("session", {}).get("channelName")
-                    if isinstance(video_state.get("session"), dict)
-                    else "-"
-                ),
-            )
-            return default_route_addresses, video_state
-
-        last_error_value = video_state.get("lastError")
-        if isinstance(last_error_value, str) and last_error_value:
-            last_error = last_error_value
-
-        if video_supervisor.return_code() is not None:
-            detail = last_error or f"video sender process exited with code {video_supervisor.return_code()}"
-            raise VideoStartupTimeoutError(detail)
-
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            detail = last_error or "video sender did not report ready"
-            status = video_state.get("status")
-            updated_at = video_state.get("updatedAt")
-            if isinstance(status, str) and status:
-                detail = f"{detail} (status={status!r}, updatedAt={updated_at!r})"
-            raise VideoStartupTimeoutError(
-                f"timed out waiting for video sender readiness after {config.video_startup_timeout_seconds:.1f}s: {detail}"
-            )
-        stop_event.wait(min(DEFAULT_VIDEO_READY_POLL_INTERVAL, remaining))
 
 
 def _publish_board_report(
@@ -1400,11 +1364,17 @@ def main() -> None:
         cmd_vel_controller=cmd_vel_controller,
         lease_ttl_ms=DEFAULT_MCP_LEASE_TTL_MS,
     )
+    video_service = BoardVideoService(
+        device_id=config.thing_name,
+        channel_name=config.video_channel_name,
+        region=config.video_region,
+    )
     shadow_client = AwsShadowClient(
         config,
         aws_runtime=aws_runtime,
         cmd_vel_controller=cmd_vel_controller,
         mcp_server=mcp_server,
+        video_service=video_service,
     )
     video_supervisor = VideoSenderSupervisor(
         channel_name=config.video_channel_name,
@@ -1419,8 +1389,9 @@ def main() -> None:
     halt_requested = False
     startup_published = False
     last_published_drive_state: DriveState | None = None
-    last_published_video_report: dict[str, Any] | None = None
+    last_published_video_state: dict[str, Any] | None = None
     last_shadow_publish_monotonic: float | None = None
+    last_video_status_publish_monotonic: float | None = None
 
     try:
         while not stop_event.is_set() and not shadow_client.halt_requested() and not startup_published:
@@ -1431,21 +1402,22 @@ def main() -> None:
                     config.time_sync_timeout_seconds,
                 )
                 shadow_client.ensure_connected(timeout_seconds=config.aws_connect_timeout)
-                video_ready = _wait_for_video_ready(
-                    stop_event,
-                    shadow_client,
-                    config,
-                    video_supervisor,
+                video_supervisor.start()
+                LOGGER.info(
+                    "Started board video supervisor pid=%s state_file=%s",
+                    video_supervisor.pid,
+                    video_supervisor.state_file,
                 )
-                if video_ready is None:
-                    break
-                default_route_addresses, video_state = video_ready
+                current_video_state = _read_video_state(video_supervisor)
+                _publish_video_status(video_service, current_video_state)
+                last_published_video_state = current_video_state
+                last_video_status_publish_monotonic = time.monotonic()
+                default_route_addresses = _detect_default_route_addresses()
                 drive_state = cmd_vel_controller.get_drive_state()
                 report = _build_board_report(
                     addresses=default_route_addresses,
                     power=True,
                     drive_state=drive_state,
-                    video_state=video_state,
                 )
                 _publish_board_report(
                     shadow_client=shadow_client,
@@ -1456,7 +1428,7 @@ def main() -> None:
                 LOGGER.info(
                     (
                         "Published board shadow update power=%s wifi_online=%s ipv4=%s ipv6=%s "
-                        "drive_left=%s drive_right=%s video_status=%s video_ready=%s"
+                        "drive_left=%s drive_right=%s"
                     ),
                     report.get("power"),
                     report.get("wifi", {}).get("online") if isinstance(report.get("wifi"), dict) else None,
@@ -1464,18 +1436,12 @@ def main() -> None:
                     report.get("wifi", {}).get("ipv6") if isinstance(report.get("wifi"), dict) else "-",
                     report.get("drive", {}).get("leftSpeed") if isinstance(report.get("drive"), dict) else "-",
                     report.get("drive", {}).get("rightSpeed") if isinstance(report.get("drive"), dict) else "-",
-                    report.get("video", {}).get("status") if isinstance(report.get("video"), dict) else "-",
-                    report.get("video", {}).get("ready") if isinstance(report.get("video"), dict) else "-",
                 )
                 startup_published = True
                 last_published_drive_state = drive_state
-                last_published_video_report = report.get("video") if isinstance(report.get("video"), dict) else None
                 last_shadow_publish_monotonic = time.monotonic()
                 if config.once:
                     break
-            except VideoStartupTimeoutError as err:
-                LOGGER.error("Board startup failed: %s", err)
-                raise SystemExit(1) from err
             except RuntimeError as err:
                 LOGGER.warning("Board startup publish failed: %s", err)
                 if config.once:
@@ -1502,22 +1468,31 @@ def main() -> None:
                 elapsed_since_publish = time.monotonic() - last_shadow_publish_monotonic
                 heartbeat_due = elapsed_since_publish >= config.heartbeat_seconds
                 heartbeat_remaining = max(0.0, config.heartbeat_seconds - elapsed_since_publish)
+            if last_video_status_publish_monotonic is None:
+                video_status_due = True
+                video_status_remaining = 0.0
+            else:
+                elapsed_since_video_status = time.monotonic() - last_video_status_publish_monotonic
+                video_status_due = elapsed_since_video_status >= DEFAULT_VIDEO_STATUS_HEARTBEAT_SECONDS
+                video_status_remaining = max(
+                    0.0,
+                    DEFAULT_VIDEO_STATUS_HEARTBEAT_SECONDS - elapsed_since_video_status,
+                )
 
             current_drive_state = cmd_vel_controller.get_drive_state()
             current_video_state = _read_video_state(video_supervisor)
-            current_video_report = (
-                build_reported_video_state(current_video_state)
-                if isinstance(current_video_state, dict)
-                else None
-            )
             drive_changed = (
                 last_published_drive_state is None
                 or current_drive_state.sequence != last_published_drive_state.sequence
             )
-            video_changed = current_video_report != last_published_video_report
+            video_changed = current_video_state != last_published_video_state
 
-            if not heartbeat_due and not drive_changed and not video_changed:
-                wait_seconds = min(DEFAULT_DRIVE_REPORT_POLL_INTERVAL, heartbeat_remaining)
+            if not heartbeat_due and not drive_changed and not video_changed and not video_status_due:
+                wait_seconds = min(
+                    DEFAULT_DRIVE_REPORT_POLL_INTERVAL,
+                    heartbeat_remaining,
+                    video_status_remaining,
+                )
                 if _wait_for_stop_or_halt(
                     stop_event,
                     shadow_client,
@@ -1530,12 +1505,17 @@ def main() -> None:
             try:
                 shadow_client.ensure_connected(timeout_seconds=config.aws_connect_timeout)
                 video_supervisor.ensure_running()
+                if video_changed or video_status_due:
+                    _publish_video_status(video_service, current_video_state)
+                    last_published_video_state = current_video_state
+                    last_video_status_publish_monotonic = time.monotonic()
+                if not heartbeat_due and not drive_changed:
+                    continue
                 default_route_addresses = _detect_default_route_addresses()
                 report = _build_board_report(
                     addresses=default_route_addresses,
                     power=True,
                     drive_state=current_drive_state,
-                    video_state=current_video_state,
                 )
                 _publish_board_report(
                     shadow_client=shadow_client,
@@ -1546,7 +1526,7 @@ def main() -> None:
                 LOGGER.info(
                     (
                         "Published board shadow update power=%s wifi_online=%s ipv4=%s ipv6=%s "
-                        "drive_left=%s drive_right=%s video_status=%s video_ready=%s"
+                        "drive_left=%s drive_right=%s"
                     ),
                     report.get("power"),
                     report.get("wifi", {}).get("online") if isinstance(report.get("wifi"), dict) else None,
@@ -1554,11 +1534,8 @@ def main() -> None:
                     report.get("wifi", {}).get("ipv6") if isinstance(report.get("wifi"), dict) else "-",
                     report.get("drive", {}).get("leftSpeed") if isinstance(report.get("drive"), dict) else "-",
                     report.get("drive", {}).get("rightSpeed") if isinstance(report.get("drive"), dict) else "-",
-                    report.get("video", {}).get("status") if isinstance(report.get("video"), dict) else "-",
-                    report.get("video", {}).get("ready") if isinstance(report.get("video"), dict) else "-",
                 )
                 last_published_drive_state = current_drive_state
-                last_published_video_report = report.get("video") if isinstance(report.get("video"), dict) else None
                 last_shadow_publish_monotonic = time.monotonic()
             except RuntimeError as err:
                 LOGGER.warning("Board shadow publish failed: %s", err)

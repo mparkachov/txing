@@ -39,6 +39,28 @@ describe('app model helpers', () => {
     expect(runtime.viewerConnected).toBe(true)
   })
 
+  test('accepts unavailable board video status from reflected shadow cache', () => {
+    const runtime = extractReportedBoardVideo({
+      state: {
+        reported: {
+          board: {
+            video: {
+              ready: false,
+              status: 'unavailable',
+              transport: 'aws-webrtc',
+              viewerConnected: false,
+              lastError: null,
+            },
+          },
+        },
+      },
+    })
+
+    expect(runtime.ready).toBe(false)
+    expect(runtime.status).toBe('unavailable')
+    expect(runtime.transport).toBe('aws-webrtc')
+  })
+
   test('extracts top-level reported redcon from shadow state', () => {
     expect(
       extractReportedRedcon({

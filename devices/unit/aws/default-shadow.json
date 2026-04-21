@@ -23,6 +23,18 @@
         "drive": {
           "leftSpeed": 0,
           "rightSpeed": 0
+        },
+        "video": {
+          "serviceId": "video",
+          "available": false,
+          "ready": false,
+          "status": "unavailable",
+          "transport": "aws-webrtc",
+          "codec": {
+            "video": "h264"
+          },
+          "viewerConnected": false,
+          "lastError": null
         }
       }
     }

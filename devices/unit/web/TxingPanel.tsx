@@ -9,7 +9,6 @@ import VideoPanel from '../../../web/src/VideoPanel'
 type TxingPanelProps = {
   canUseBoardVideo: boolean
   isBoardVideoExpanded: boolean
-  isMcpConnected: boolean
   isDebugEnabled: boolean
   isTxingSwitchDisabled: boolean
   isTxingSwitchPending: boolean
@@ -28,9 +27,6 @@ type TxingPanelProps = {
 }
 
 type BatteryCurvePoint = readonly [mv: number, percent: number]
-type CameraGlyphProps = {
-  crossed: boolean
-}
 type TrackGaugeProps = {
   side: 'Left' | 'Right'
   speed: number | null
@@ -123,26 +119,6 @@ const getBoardWifiToneClass = (boardWifiOnline: boolean | null): string => {
 const getBleSignalToneClass = (bleStatusOnline: boolean | null): string =>
   bleStatusOnline === true ? 'status-signal-online' : 'status-signal-offline'
 
-function CameraGlyph({ crossed }: CameraGlyphProps) {
-  return (
-    <svg
-      className="status-camera-glyph"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-      focusable="false"
-    >
-      <path d="M4.5 7.5h8.2l1.8-2.1h2.5a2.5 2.5 0 0 1 2.5 2.5v8.2a2.5 2.5 0 0 1-2.5 2.5H6.5A2.5 2.5 0 0 1 4 16.1V8a.5.5 0 0 1 .5-.5Z" />
-      <path d="m14.8 10.4 4.7-2.2v7.5l-4.7-2.2" />
-      {crossed ? <path d="M5 19 19 5" /> : null}
-    </svg>
-  )
-}
-
 function TrackGauge({ side, speed }: TrackGaugeProps) {
   const presentation = getTrackIndicatorPresentation(speed, side)
   const angle = getTrackGaugeAngle(speed)
@@ -181,7 +157,6 @@ function TrackGauge({ side, speed }: TrackGaugeProps) {
 function TxingPanel({
   canUseBoardVideo,
   isBoardVideoExpanded,
-  isMcpConnected,
   isDebugEnabled,
   isTxingSwitchDisabled,
   isTxingSwitchPending,
@@ -266,42 +241,34 @@ function TxingPanel({
               </div>
             </div>
             <div className="status-txing-header-side status-txing-header-side-end">
-              <div className="status-camera-control">
-                <span
-                  className={`status-mcp-indicator ${
-                    isMcpConnected ? 'status-mcp-indicator-connected' : 'status-mcp-indicator-disconnected'
-                  }`}
-                  role="img"
-                  aria-label={isMcpConnected ? 'MCP connected' : 'MCP disconnected'}
-                  title={isMcpConnected ? 'MCP connected' : 'MCP disconnected'}
-                />
+              <div className="status-connect-control">
                 <button
                   type="button"
-                  className={`status-icon-button status-camera-button ${
+                  className={`status-connect-button ${
                     !canUseBoardVideo
-                      ? 'status-camera-button-idle'
+                      ? 'status-connect-button-idle'
                       : isBoardVideoExpanded
-                        ? 'status-camera-button-live'
-                        : 'status-camera-button-ready'
+                        ? 'status-connect-button-live'
+                        : 'status-connect-button-ready'
                   }`}
                   aria-label={
                     canUseBoardVideo
                       ? isBoardVideoExpanded
-                        ? 'Hide board video'
-                        : 'Show board video'
-                      : 'Board video unavailable'
+                        ? 'Disconnect from board video'
+                        : 'Connect to board video'
+                      : 'Board connection unavailable'
                   }
                   title={
                     canUseBoardVideo
                       ? isBoardVideoExpanded
-                        ? 'Hide board video panel'
-                        : 'Show board video panel'
-                      : 'Board video is not ready'
+                        ? 'Disconnect from board video panel'
+                        : 'Connect to board video panel'
+                      : 'Board connection is unavailable'
                   }
                   onClick={onToggleBoardVideo}
                   disabled={!canUseBoardVideo}
                 >
-                  <CameraGlyph crossed={!canUseBoardVideo} />
+                  {isBoardVideoExpanded ? 'Disconnect' : 'Connect'}
                 </button>
               </div>
               <div

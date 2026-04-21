@@ -21,7 +21,6 @@ from board.shadow_control import (
     ControlConfig,
     DefaultRouteAddresses,
     REPO_ROOT,
-    VideoStartupTimeoutError,
     _build_board_report,
     _build_cmd_vel_motor_driver,
     _build_shutdown_board_report,
@@ -32,7 +31,6 @@ from board.shadow_control import (
     _load_validator,
     _validate_shadow_update,
     _wait_for_system_clock_sync,
-    _wait_for_video_ready,
 )
 from board.video_state import DEFAULT_VIDEO_CHANNEL_NAME, build_reported_video_state
 import board.shadow_control as shadow_control
@@ -268,17 +266,16 @@ class ShadowControlContractTests(unittest.TestCase):
         self.assertEqual(payload["state"]["reported"]["board"]["drive"]["leftSpeed"], 0)
         self.assertEqual(payload["state"]["reported"]["board"]["drive"]["rightSpeed"], 0)
 
-    def test_board_report_with_video_matches_schema(self) -> None:
+    def test_board_report_without_video_matches_schema(self) -> None:
         validator = _load_validator(Path(UNIT_AWS_DIR / "shadow.schema.json"))
         report = _build_board_report(
             addresses=type("Addresses", (), {"ipv4": "192.168.1.20", "ipv6": "2001:db8::20"})(),
             power=True,
             drive_state=DriveState(left_speed=20, right_speed=30, sequence=1),
-            video_state=_make_video_state(ready=True),
         )
 
         _validate_shadow_update(validator, {"state": {"reported": {"board": report}}})
-        self.assertNotIn("session", report["video"])
+        self.assertNotIn("video", report)
         self.assertEqual(report["drive"]["leftSpeed"], 20)
         self.assertEqual(report["drive"]["rightSpeed"], 30)
 
@@ -315,29 +312,6 @@ class ShadowControlContractTests(unittest.TestCase):
 
         self.assertNotIn("updatedAt", reported)
 
-    def test_wait_for_video_ready_times_out_when_sender_never_becomes_ready(self) -> None:
-        config = _make_config(video_startup_timeout_seconds=0.0)
-        stop_event = threading.Event()
-        shadow_client = MagicMock()
-        shadow_client.halt_requested.return_value = False
-        video_supervisor = MagicMock()
-        video_supervisor.return_code.return_value = None
-
-        with (
-            patch.object(
-                shadow_control,
-                "_detect_default_route_addresses",
-                return_value=DefaultRouteAddresses(ipv4="192.168.1.20", ipv6=None),
-            ),
-            patch.object(
-                shadow_control,
-                "_read_video_state",
-                return_value=_make_video_state(ready=False, last_error="video sender boot failed"),
-            ),
-        ):
-            with self.assertRaises(VideoStartupTimeoutError):
-                _wait_for_video_ready(stop_event, shadow_client, config, video_supervisor)
-
     def test_wait_for_system_clock_sync_returns_when_clock_becomes_synchronized(self) -> None:
         stop_event = threading.Event()
 
@@ -361,18 +335,18 @@ class ShadowControlContractTests(unittest.TestCase):
         ):
             _wait_for_system_clock_sync(stop_event, 1.0)
 
-    def test_main_once_waits_for_video_ready_before_first_publish(self) -> None:
+    def test_main_once_publishes_shadow_without_waiting_for_video_ready(self) -> None:
         args = _make_args(once=True)
         shadow_client = MagicMock()
         shadow_client.halt_requested.return_value = False
         shadow_client.publish_update.return_value = {"state": {}}
         shadow_client.is_connected.return_value = True
         video_supervisor = MagicMock()
-        video_supervisor.return_code.return_value = None
-        video_supervisor.read_state.side_effect = [
-            _make_video_state(ready=False, last_error="sender warming up"),
-            _make_video_state(ready=True),
-        ]
+        video_supervisor.read_state.return_value = _make_video_state(
+            ready=False,
+            last_error="sender warming up",
+        )
+        video_service = MagicMock()
 
         with (
             patch.object(shadow_control, "_parse_args", return_value=args),
@@ -391,9 +365,9 @@ class ShadowControlContractTests(unittest.TestCase):
                 "_detect_default_route_addresses",
                 return_value=DefaultRouteAddresses(ipv4="192.168.1.20", ipv6="2001:db8::20"),
             ),
+            patch.object(shadow_control, "BoardVideoService", return_value=video_service),
             patch.object(shadow_control, "AwsShadowClient", return_value=shadow_client),
             patch.object(shadow_control, "VideoSenderSupervisor", return_value=video_supervisor) as video_supervisor_cls,
-            patch.object(shadow_control, "DEFAULT_VIDEO_READY_POLL_INTERVAL", 0.0),
         ):
             shadow_control.main()
 
@@ -401,16 +375,15 @@ class ShadowControlContractTests(unittest.TestCase):
             video_supervisor_cls.call_args.kwargs["working_directory"],
             shadow_control.REPO_ROOT,
         )
-        self.assertEqual(video_supervisor.read_state.call_count, 2)
+        self.assertEqual(video_supervisor.read_state.call_count, 1)
         self.assertEqual(shadow_client.publish_update.call_count, 1)
         payload = shadow_client.publish_update.call_args.args[0]
-        self.assertEqual(payload["state"]["reported"]["board"]["video"]["status"], "ready")
-        self.assertIs(payload["state"]["reported"]["board"]["video"]["ready"], True)
-        self.assertNotIn("session", payload["state"]["reported"]["board"]["video"])
+        self.assertNotIn("video", payload["state"]["reported"]["board"])
         self.assertEqual(payload["state"]["reported"]["board"]["drive"]["leftSpeed"], 0)
         self.assertEqual(payload["state"]["reported"]["board"]["drive"]["rightSpeed"], 0)
+        video_service.publish_status.assert_called_once()
 
-    def test_main_publishes_runtime_video_error_after_successful_start(self) -> None:
+    def test_main_republishes_video_status_after_runtime_error_without_shadow_video_publish(self) -> None:
         args = _make_args()
         shadow_client = MagicMock()
         shadow_client.halt_requested.return_value = False
@@ -424,6 +397,7 @@ class ShadowControlContractTests(unittest.TestCase):
             _make_video_state(ready=False, last_error="video sender exited"),
             _make_video_state(ready=False, last_error="video sender exited"),
         ]
+        video_service = MagicMock()
 
         with (
             patch.object(shadow_control, "_parse_args", return_value=args),
@@ -443,35 +417,35 @@ class ShadowControlContractTests(unittest.TestCase):
                 return_value=DefaultRouteAddresses(ipv4="192.168.1.20", ipv6="2001:db8::20"),
             ),
             patch.object(shadow_control, "_wait_for_stop_or_halt", side_effect=[False, True]),
+            patch.object(shadow_control, "BoardVideoService", return_value=video_service),
             patch.object(shadow_control, "AwsShadowClient", return_value=shadow_client),
             patch.object(shadow_control, "VideoSenderSupervisor", return_value=video_supervisor),
-            patch.object(shadow_control, "DEFAULT_VIDEO_READY_POLL_INTERVAL", 0.0),
         ):
             shadow_control.main()
 
-        self.assertEqual(shadow_client.publish_update.call_count, 2)
-        first_payload = shadow_client.publish_update.call_args_list[0].args[0]
-        second_payload = shadow_client.publish_update.call_args_list[1].args[0]
-        self.assertEqual(first_payload["state"]["reported"]["board"]["video"]["status"], "ready")
-        self.assertEqual(second_payload["state"]["reported"]["board"]["video"]["status"], "error")
-        self.assertIs(second_payload["state"]["reported"]["board"]["video"]["ready"], False)
+        self.assertEqual(shadow_client.publish_update.call_count, 1)
+        payload = shadow_client.publish_update.call_args.args[0]
+        self.assertNotIn("video", payload["state"]["reported"]["board"])
+        self.assertEqual(video_service.publish_status.call_count, 2)
+        self.assertIs(video_service.publish_status.call_args_list[0].args[0]["ready"], True)
+        self.assertIs(video_service.publish_status.call_args_list[1].args[0]["ready"], False)
         self.assertEqual(
-            second_payload["state"]["reported"]["board"]["video"]["lastError"],
+            video_service.publish_status.call_args_list[1].args[0]["lastError"],
             "video sender exited",
         )
 
-    def test_main_honors_halt_requested_during_video_startup_gate(self) -> None:
+    def test_main_honors_halt_requested_without_video_startup_gate(self) -> None:
         args = _make_args()
         shadow_client = MagicMock()
         shadow_client.halt_requested.side_effect = [False, False, True, True]
         shadow_client.publish_update.return_value = {"state": {}}
         shadow_client.is_connected.return_value = True
         video_supervisor = MagicMock()
-        video_supervisor.return_code.return_value = None
         video_supervisor.read_state.return_value = _make_video_state(
             ready=False,
             last_error="video sender boot failed",
         )
+        video_service = MagicMock()
 
         with (
             patch.object(shadow_control, "_parse_args", return_value=args),
@@ -491,18 +465,19 @@ class ShadowControlContractTests(unittest.TestCase):
                 return_value=DefaultRouteAddresses(ipv4="192.168.1.20", ipv6="2001:db8::20"),
             ),
             patch.object(shadow_control, "_request_system_halt") as request_system_halt,
+            patch.object(shadow_control, "BoardVideoService", return_value=video_service),
             patch.object(shadow_control, "AwsShadowClient", return_value=shadow_client),
             patch.object(shadow_control, "VideoSenderSupervisor", return_value=video_supervisor),
-            patch.object(shadow_control, "DEFAULT_VIDEO_READY_POLL_INTERVAL", 0.0),
         ):
             shadow_control.main()
 
-        self.assertEqual(shadow_client.publish_update.call_count, 1)
-        payload = shadow_client.publish_update.call_args.args[0]
+        self.assertEqual(shadow_client.publish_update.call_count, 2)
+        payload = shadow_client.publish_update.call_args_list[-1].args[0]
         self.assertIs(payload["state"]["reported"]["board"]["power"], False)
         self.assertIsNone(payload["state"]["desired"]["board"]["power"])
         self.assertEqual(payload["state"]["reported"]["board"]["drive"]["leftSpeed"], 0)
         self.assertEqual(payload["state"]["reported"]["board"]["drive"]["rightSpeed"], 0)
+        video_service.publish_status.assert_called_once()
         request_system_halt.assert_called_once()
 
     def test_main_publishes_drive_state_changes_before_heartbeat(self) -> None:
@@ -539,10 +514,10 @@ class ShadowControlContractTests(unittest.TestCase):
                 return_value=DefaultRouteAddresses(ipv4="192.168.1.20", ipv6="2001:db8::20"),
             ),
             patch.object(shadow_control, "_wait_for_stop_or_halt", side_effect=[True]),
+            patch.object(shadow_control, "BoardVideoService", return_value=MagicMock()),
             patch.object(shadow_control, "AwsShadowClient", return_value=shadow_client),
             patch.object(shadow_control, "VideoSenderSupervisor", return_value=video_supervisor),
             patch.object(shadow_control, "CmdVelController", return_value=cmd_vel_controller),
-            patch.object(shadow_control, "DEFAULT_VIDEO_READY_POLL_INTERVAL", 0.0),
         ):
             shadow_control.main()
 

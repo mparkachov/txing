@@ -1,6 +1,6 @@
 export type BoardVideoRuntime = {
   ready: boolean
-  status: 'starting' | 'ready' | 'error' | null
+  status: 'starting' | 'ready' | 'error' | 'unavailable' | null
   transport: 'aws-webrtc' | null
   viewerConnected: boolean
   lastError: string | null
@@ -279,7 +279,10 @@ export const extractReportedBoardVideo = (shadow: unknown): BoardVideoRuntime =>
   return {
     ready: video.ready === true,
     status:
-      status === 'starting' || status === 'ready' || status === 'error'
+      status === 'starting' ||
+      status === 'ready' ||
+      status === 'error' ||
+      status === 'unavailable'
         ? status
         : null,
     transport: video.transport === 'aws-webrtc' ? 'aws-webrtc' : null,

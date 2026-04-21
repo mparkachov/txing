@@ -1259,6 +1259,28 @@ h1 {
   gap: 0.42rem;
 }
 
+.status-connect-control {
+  display: inline-flex;
+  align-items: center;
+}
+
+.status-connect-button {
+  min-width: 6.8rem;
+  height: 2.7rem;
+  padding: 0 1rem;
+  border-radius: 14px;
+  font-size: 0.88rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  transition:
+    transform 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease,
+    background 140ms ease,
+    box-shadow 140ms ease,
+    opacity 140ms ease;
+}
+
 .status-mcp-indicator {
   width: 0.56rem;
   height: 0.56rem;
@@ -1313,6 +1335,27 @@ h1 {
   color: #b42318;
   border-color: rgba(219, 75, 57, 0.24);
   background: rgba(219, 75, 57, 0.12);
+}
+
+.status-connect-button-ready {
+  color: #2248d4;
+  border-color: rgba(34, 72, 212, 0.2);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(235, 241, 255, 0.98));
+}
+
+.status-connect-button-live {
+  color: #1b9c62;
+  border-color: rgba(27, 156, 98, 0.28);
+  background: rgba(27, 156, 98, 0.12);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.7),
+    0 0 1rem rgba(30, 169, 104, 0.18);
+}
+
+.status-connect-button-idle {
+  color: #607184;
+  border-color: rgba(96, 113, 132, 0.16);
+  background: linear-gradient(180deg, #fafcff 0%, #eef3f9 100%);
 }
 
 .status-camera-glyph {

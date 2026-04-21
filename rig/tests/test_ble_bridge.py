@@ -156,6 +156,7 @@ _install_paho_stub()
 from unit_rig.ble_bridge import (
     AwsShadowClient,
     AwsShadowUpdate,
+    BoardVideoState,
     BleSleepBridge,
     BridgeConfig,
     RigFleetBridge,
@@ -166,6 +167,7 @@ from unit_rig.ble_bridge import (
     _shadow_payload_includes_desired_redcon,
 )
 from aws.auth import ensure_aws_profile
+from aws.video_topics import VIDEO_SERVICE_NAME, VIDEO_STATUS_READY
 from rig.sparkplug import (
     DataType,
     build_device_report_payload,
@@ -582,8 +584,17 @@ class RedconTests(unittest.TestCase):
                                     "online": True,
                                 },
                                 "video": {
+                                    "serviceId": VIDEO_SERVICE_NAME,
+                                    "available": True,
                                     "ready": True,
+                                    "status": VIDEO_STATUS_READY,
+                                    "transport": "aws-webrtc",
+                                    "codec": {
+                                        "video": "h264",
+                                    },
                                     "viewerConnected": True,
+                                    "lastError": None,
+                                    "updatedAtMs": 2_000_000_000_000,
                                 },
                             },
                         },
@@ -749,7 +760,14 @@ class LifecycleBridgeTests(unittest.TestCase):
                     thing_name="txing",
                     source="mqtt/mcp/status+shadow/update",
                     mcp_status={"available": True},
-                    board_video_ready=True,
+                    video_status={
+                        "available": True,
+                        "ready": True,
+                        "status": VIDEO_STATUS_READY,
+                        "viewerConnected": False,
+                        "lastError": None,
+                        "updatedAtMs": 2_000_000_000_000,
+                    },
                 )
             ]
         )
@@ -758,7 +776,10 @@ class LifecycleBridgeTests(unittest.TestCase):
         self.assertTrue(shadow.board_video_ready)
         self.assertEqual(shadow.redcon, 1)
         self.assertEqual(len(cloud_shadow.shadow_updates), 2)
-        self.assertEqual(cloud_shadow.shadow_updates[0]["reported_root_patch"], {"redcon": 2})
+        first_patch = cloud_shadow.shadow_updates[0]["reported_root_patch"]
+        self.assertEqual(first_patch["redcon"], 2)
+        self.assertIs(first_patch["board"]["video"]["ready"], True)
+        self.assertEqual(first_patch["board"]["video"]["status"], VIDEO_STATUS_READY)
         self.assertEqual(cloud_shadow.shadow_updates[1]["reported_root_patch"], {"redcon": 1})
         self.assertEqual(
             [decode_payload(payload).metrics[0].int_value for _topic, payload in cloud_shadow.sparkplug_publishes],
@@ -772,7 +793,12 @@ class LifecycleBridgeTests(unittest.TestCase):
             battery_mv=3795,
             ble_online=True,
             mcp_available=True,
-            board_video_ready=True,
+            board_video=BoardVideoState(
+                available=True,
+                ready=True,
+                status=VIDEO_STATUS_READY,
+                updated_at_ms=2_000_000_000_000,
+            ),
             redcon=1,
         )
         bridge = BleSleepBridge(
@@ -786,16 +812,62 @@ class LifecycleBridgeTests(unittest.TestCase):
             updates=[
                 AwsShadowUpdate(
                     thing_name="txing",
-                    source="shadow/update/accepted",
-                    board_video_viewer_connected=True,
+                    source="mqtt/video/status",
+                    video_status={
+                        "available": True,
+                        "ready": True,
+                        "status": VIDEO_STATUS_READY,
+                        "viewerConnected": True,
+                        "lastError": None,
+                        "updatedAtMs": 2_000_000_000_000,
+                    },
                 )
             ]
         )
 
         self.assertTrue(shadow.board_video_viewer_connected)
         self.assertEqual(shadow.redcon, 1)
-        self.assertEqual(cloud_shadow.shadow_updates, [])
+        self.assertEqual(len(cloud_shadow.shadow_updates), 1)
+        self.assertEqual(
+            cloud_shadow.shadow_updates[0]["reported_root_patch"],
+            {
+                "board": {
+                    "video": shadow.board_video.payload(),
+                }
+            },
+        )
         self.assertEqual(cloud_shadow.sparkplug_publishes, [])
+
+    def test_video_status_stale_drops_redcon_back_to_two(self) -> None:
+        asyncio.run(self._exercise_video_status_stale_drops_redcon())
+
+    async def _exercise_video_status_stale_drops_redcon(self) -> None:
+        cloud_shadow = FakeCloudShadow()
+        shadow = ShadowState(
+            reported_power=True,
+            battery_mv=3795,
+            ble_online=True,
+            mcp_available=True,
+            board_video=BoardVideoState(
+                available=True,
+                ready=True,
+                status=VIDEO_STATUS_READY,
+                updated_at_ms=0,
+            ),
+            redcon=1,
+        )
+        bridge = BleSleepBridge(
+            BridgeConfig(),
+            shadow,
+            cloud_shadow,  # type: ignore[arg-type]
+        )
+        bridge._sparkplug_device_born = True
+
+        await bridge._reconcile_video_status_freshness()
+
+        self.assertEqual(shadow.redcon, 2)
+        self.assertEqual(len(cloud_shadow.shadow_updates), 1)
+        self.assertEqual(cloud_shadow.shadow_updates[0]["reported_root_patch"], {"redcon": 2})
 
     def test_ddeath_clears_desired_state_and_publishes_device_death(self) -> None:
         asyncio.run(self._exercise_ddeath_clears_desired_state())

@@ -96,7 +96,7 @@
       "additionalProperties": false,
       "properties": {
         "redcon": {
-          "description": "Rig-derived readiness summary. 4=MCU sleep state, 3=MCU awake but operator video path not ready, 2=board online and video ready without an active viewer, 1=board online with an active viewer.",
+          "description": "Rig-derived readiness summary. 4=MCU sleep state or BLE unavailable, 3=MCU wakeup state with BLE reachability but MCP unavailable, 2=BLE and MCP ready but video not ready, 1=BLE and MCP ready with video ready.",
           "type": "integer",
           "minimum": 1,
           "maximum": 4
@@ -221,6 +221,8 @@
       "type": "object",
       "additionalProperties": true,
       "required": [
+        "serviceId",
+        "available",
         "ready",
         "status",
         "transport",
@@ -229,6 +231,15 @@
         "lastError"
       ],
       "properties": {
+        "serviceId": {
+          "type": "string",
+          "enum": [
+            "video"
+          ]
+        },
+        "available": {
+          "type": "boolean"
+        },
         "ready": {
           "type": "boolean"
         },
@@ -237,7 +248,8 @@
           "enum": [
             "starting",
             "ready",
-            "error"
+            "error",
+            "unavailable"
           ]
         },
         "transport": {
@@ -257,6 +269,34 @@
             "string",
             "null"
           ]
+        },
+        "updatedAtMs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "topicRoot": {
+          "type": "string"
+        },
+        "descriptorTopic": {
+          "type": "string"
+        },
+        "statusTopic": {
+          "type": "string"
+        },
+        "channelName": {
+          "type": "string"
+        },
+        "region": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "serverVersion": {
+          "type": "string"
         }
       }
     },

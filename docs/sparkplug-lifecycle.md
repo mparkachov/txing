@@ -14,7 +14,7 @@
 
 - Sparkplug is the only authoritative lifecycle intent transport.
 - `DCMD.redcon` is the only writable lifecycle command.
-- The current UI stays simple: one on/off switch and one video button.
+- The current UI stays simple: one on/off switch and one `Connect` / `Disconnect` button.
 - UI lifecycle mapping is:
   - `on` -> request `redcon=3`
   - `off` -> request `redcon=4`
@@ -51,10 +51,12 @@ rig
   -> publishes NBIRTH/NDEATH for the rig node; NBIRTH carries rig.redcon
   -> publishes DBIRTH/DDATA/DDEATH for txing devices
   -> reflects desired/report lifecycle state into txing AWS shadows only
-  -> derives txing reported.redcon from BLE reachability plus MCP/video readiness inputs
+  -> reflects retained board video service state into txing.state.reported.board.video.*
+  -> derives txing reported.redcon from BLE reachability plus retained MCP/video readiness inputs
 
 txing board control
-  -> remains owner of reported.board.*
+  -> remains owner of board power, wifi, and drive shadow fields
+  -> publishes retained board video descriptor/status topics for rig
 
 txing gateway / BLE path
   -> remains owner of reported.mcu.*
@@ -66,7 +68,8 @@ txing gateway / BLE path
 - Sparkplug is the only authoritative lifecycle intent path.
 - AWS shadow is reflection and durable restart cache only.
 - `rig` is the only authority that computes top-level `txing.state.reported.redcon`.
-- `board` remains the source of truth for `reported.board.*`.
+- `board` remains the source of truth for board power, wifi, and drive operational state.
+- `rig` is the source of truth for the reflected `reported.board.video.*` shadow subtree.
 - `rig` remains the source of truth for `reported.mcu.*`.
 - `mcu.*` and `board.*` are not the intended public lifecycle control API.
 
@@ -166,7 +169,14 @@ Example reflected txing shadow shape:
           "online": true
         },
         "video": {
+          "serviceId": "video",
+          "available": true,
           "ready": true,
+          "status": "ready",
+          "transport": "aws-webrtc",
+          "codec": {
+            "video": "h264"
+          },
           "viewerConnected": false
         }
       }
@@ -197,12 +207,12 @@ The current implementation uses this txing REDCON ladder:
   - BLE is reachable
   - MCU is in the wakeup state
   - MCP is available
-  - board video is not yet ready
+  - retained video status is not yet ready
 - `REDCON 1`
   - BLE is reachable
   - MCU is in the wakeup state
   - MCP is available
-  - `reported.board.video.ready=true`
+  - retained video status is ready and fresh
 
 `reported.board.video.viewerConnected` remains informational only and does not participate in REDCON.
 
@@ -281,8 +291,9 @@ A lingering `desired.redcon` after restart is treated as recoverable abnormal st
 UI behavior stays intentionally simple:
 
 - the user has one on/off switch
-- the user has one video button
+- the user has one `Connect` / `Disconnect` button
 - the user does not select REDCON levels directly
+- the `Connect` button is enabled only when the primary displayed REDCON is `1`
 
 Lifecycle mapping:
 
@@ -292,8 +303,8 @@ Lifecycle mapping:
 Actual REDCON still moves according to observed state:
 
 - `3` after wakeup-state convergence
-- `2` when board/video-ready conditions are satisfied
-- `1` when an external viewer connects
+- `2` when retained MCP becomes available
+- `1` when retained video readiness becomes available and fresh
 
 ## Boundaries
 
@@ -312,4 +323,4 @@ The current implementation does not include:
 - direct shadow lifecycle control as an authoritative path
 - user-facing REDCON selection in UI
 - mobility or automatic handoff between rigs
-- redefinition of `REDCON 1` to remove viewer dependency
+- redefinition of lifecycle intent transport away from Sparkplug

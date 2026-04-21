@@ -6,12 +6,23 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from aws.video_topics import (
+    VIDEO_DEFAULT_CODEC,
+    VIDEO_SERVICE_NAME,
+    VIDEO_STATUS_UNAVAILABLE,
+    VIDEO_TRANSPORT,
+)
+
 DEFAULT_REPORTED_POWER = False
 DEFAULT_REPORTED_ONLINE = False
 DEFAULT_BATTERY_MV = 3750
 DEFAULT_BOARD_POWER = False
 DEFAULT_BOARD_WIFI_ONLINE = False
+DEFAULT_BOARD_VIDEO_AVAILABLE = False
 DEFAULT_BOARD_VIDEO_READY = False
+DEFAULT_BOARD_VIDEO_STATUS = VIDEO_STATUS_UNAVAILABLE
+DEFAULT_BOARD_VIDEO_TRANSPORT = VIDEO_TRANSPORT
+DEFAULT_BOARD_VIDEO_CODEC = VIDEO_DEFAULT_CODEC
 DEFAULT_BOARD_VIDEO_VIEWER_CONNECTED = False
 DEFAULT_REDCON = 4
 DEFAULT_DESIRED_REDCON: int | None = None
@@ -40,8 +51,16 @@ def default_shadow_payload() -> dict[str, Any]:
                         "online": DEFAULT_BOARD_WIFI_ONLINE,
                     },
                     "video": {
+                        "serviceId": VIDEO_SERVICE_NAME,
+                        "available": DEFAULT_BOARD_VIDEO_AVAILABLE,
                         "ready": DEFAULT_BOARD_VIDEO_READY,
+                        "status": DEFAULT_BOARD_VIDEO_STATUS,
+                        "transport": DEFAULT_BOARD_VIDEO_TRANSPORT,
+                        "codec": {
+                            "video": DEFAULT_BOARD_VIDEO_CODEC,
+                        },
                         "viewerConnected": DEFAULT_BOARD_VIDEO_VIEWER_CONNECTED,
+                        "lastError": None,
                     },
                 },
             },
@@ -164,4 +183,3 @@ def get_reported_redcon(payload: dict[str, Any]) -> int:
     if isinstance(value, int) and 1 <= value <= 4:
         return value
     return DEFAULT_REDCON
-

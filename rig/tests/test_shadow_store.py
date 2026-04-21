@@ -28,6 +28,14 @@ class ShadowStoreTests(unittest.TestCase):
         self.assertEqual(get_reported_battery_mv(payload), 3750)
         self.assertFalse(get_reported_board_video_ready(payload))
         self.assertFalse(get_reported_board_video_viewer_connected(payload))
+        self.assertEqual(
+            payload["state"]["reported"]["board"]["video"]["serviceId"],
+            "video",
+        )
+        self.assertEqual(
+            payload["state"]["reported"]["board"]["video"]["status"],
+            "unavailable",
+        )
 
     def test_reported_battery_mv_only_reads_top_level_metric_reflection(self) -> None:
         payload = {

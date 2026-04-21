@@ -3,18 +3,14 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import TxingPanel from '../src/TxingPanel'
 
 describe('txing panel', () => {
-  test('renders the redcon dot indicator around the bot label', () => {
+  test('renders the redcon dot indicator around the bot label and connect control', () => {
     const markup = renderToStaticMarkup(
       <TxingPanel
-        authUser={null}
-        canLoadShadow={true}
-        canUseBoardVideo={false}
+        canUseBoardVideo={true}
         isBoardVideoExpanded={false}
         isDebugEnabled={false}
-        isSessionLogVisible={false}
         isTxingSwitchDisabled={false}
         isTxingSwitchPending={false}
-        lastShadowUpdateAtMs={null}
         reportedBoardLeftTrackSpeed={60}
         reportedBoardOnline={true}
         reportedBoardRightTrackSpeed={-30}
@@ -22,14 +18,10 @@ describe('txing panel', () => {
         reportedMcuOnline={true}
         reportedRedcon={2}
         txingSwitchChecked={true}
-        videoChannelName={null}
+        videoChannelName="unit-local-board-video"
         resolveIdToken={async () => 'token'}
         onBoardVideoRuntimeError={() => {}}
-        onLoadShadow={() => {}}
-        onSignOff={() => {}}
         onToggleBoardVideo={() => {}}
-        onToggleDebug={() => {}}
-        onToggleSessionLog={() => {}}
         onTxingSwitchChange={() => {}}
       />,
     )
@@ -56,6 +48,8 @@ describe('txing panel', () => {
     expect(markup).toContain('status-track-gauge-needle status-track-reverse')
     expect(markup).toContain('status-redcon-dot status-redcon-dot-active status-txing-redcon-2')
     expect(markup).toContain('status-redcon-dot status-redcon-dot-inactive')
+    expect(markup).toContain('Connect')
+    expect(markup).not.toContain('status-mcp-indicator')
     expect(markup).not.toContain('status-redcon-dot-active status-txing-redcon-1')
     expect(markup).not.toContain('status-redcon-dot-active status-txing-redcon-3')
     expect(markup).not.toContain('status-redcon-dot-active status-txing-redcon-4')

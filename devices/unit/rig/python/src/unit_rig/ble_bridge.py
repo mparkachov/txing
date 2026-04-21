@@ -36,8 +36,6 @@ except ImportError:
 from .shadow_store import (
     DEFAULT_BATTERY_MV,
     DEFAULT_BOARD_POWER,
-    DEFAULT_BOARD_VIDEO_READY,
-    DEFAULT_BOARD_VIDEO_VIEWER_CONNECTED,
     DEFAULT_BOARD_WIFI_ONLINE,
     DEFAULT_DESIRED_REDCON,
     DEFAULT_REDCON,
@@ -59,6 +57,18 @@ from aws.mcp_topics import (
     build_mcp_descriptor_topic,
     build_mcp_status_topic,
     parse_mcp_descriptor_or_status_topic,
+)
+from aws.video_topics import (
+    VIDEO_DEFAULT_CODEC,
+    VIDEO_SERVICE_NAME,
+    VIDEO_STATUS_READY,
+    VIDEO_STATUS_UNAVAILABLE,
+    VIDEO_TRANSPORT,
+    build_video_descriptor_topic,
+    build_video_status_topic,
+    build_video_topic_root,
+    build_video_topics,
+    parse_video_descriptor_or_status_topic,
 )
 from aws.mqtt import AwsIotWebsocketConnection, AwsMqttConnectionConfig
 from .sparkplug import (
@@ -100,6 +110,7 @@ DEFAULT_AWS_CONNECT_TIMEOUT = 20.0
 DEFAULT_CLOUDWATCH_LOG_GROUP = "/town/rig/txing"
 DEFAULT_MQTT_PUBLISH_TIMEOUT = 10.0
 DEFAULT_BOARD_OFFLINE_TIMEOUT = 45.0
+DEFAULT_VIDEO_STATUS_STALE_AFTER_MS = 15_000
 SHUTDOWN_MQTT_PUBLISH_TIMEOUT = 2.0
 BLE_DISCONNECT_TIMEOUT = 2.0
 DEFAULT_THING_NAME_ENV = "THING_NAME"
@@ -170,6 +181,10 @@ def _default_cloudwatch_log_stream(thing_name: str) -> str:
 def _env_text(name: str, default: str) -> str:
     value = os.environ.get(name, "").strip()
     return value or default
+
+
+def _default_board_video_channel_name(thing_name: str) -> str:
+    return f"{thing_name}-board-video"
 
 
 def _resolve_cloudwatch_region(
@@ -304,26 +319,18 @@ def _extract_reported_board_wifi_online(payload: dict[str, Any]) -> bool | None:
     return value if isinstance(value, bool) else None
 
 
-def _extract_reported_board_video_ready(payload: dict[str, Any]) -> bool | None:
+def _extract_reported_board_video_reflection(
+    payload: dict[str, Any],
+) -> dict[str, Any] | None:
     board = _extract_reported_board(payload)
     if board is None:
         return None
     video = board.get("video")
     if not isinstance(video, dict):
         return None
-    value = video.get("ready")
-    return value if isinstance(value, bool) else None
-
-
-def _extract_reported_board_video_viewer_connected(payload: dict[str, Any]) -> bool | None:
-    board = _extract_reported_board(payload)
-    if board is None:
+    if video.get("serviceId") != VIDEO_SERVICE_NAME:
         return None
-    video = board.get("video")
-    if not isinstance(video, dict):
-        return None
-    value = video.get("viewerConnected")
-    return value if isinstance(value, bool) else None
+    return dict(video)
 
 
 def _extract_reported_online(payload: dict[str, Any]) -> bool | None:
@@ -567,6 +574,207 @@ def _mcp_summary_metrics(summary: McpSparkplugSummary) -> tuple[Metric, ...]:
     )
 
 
+def _coerce_optional_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int) and value >= 0:
+        return value
+    return None
+
+
+def _coerce_optional_str(value: Any) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def _coerce_video_status(value: Any, *, default: str) -> str:
+    if value in {VIDEO_STATUS_READY, "starting", "error", VIDEO_STATUS_UNAVAILABLE}:
+        return str(value)
+    return default
+
+
+@dataclass(slots=True)
+class BoardVideoState:
+    service_id: str = VIDEO_SERVICE_NAME
+    available: bool = False
+    ready: bool = False
+    status: str = VIDEO_STATUS_UNAVAILABLE
+    transport: str = VIDEO_TRANSPORT
+    codec_video: str | None = VIDEO_DEFAULT_CODEC
+    viewer_connected: bool = False
+    last_error: str | None = None
+    updated_at_ms: int | None = None
+    topic_root: str = ""
+    descriptor_topic: str = ""
+    status_topic: str = ""
+    channel_name: str = ""
+    region: str | None = None
+    server_version: str = "unknown"
+
+    def apply_defaults(self, *, thing_name: str, aws_region: str) -> None:
+        topics = build_video_topics(thing_name)
+        if not self.topic_root:
+            self.topic_root = topics.topic_root
+        if not self.descriptor_topic:
+            self.descriptor_topic = topics.descriptor
+        if not self.status_topic:
+            self.status_topic = topics.status
+        if not self.channel_name:
+            self.channel_name = _default_board_video_channel_name(thing_name)
+        if self.region is None and aws_region:
+            self.region = aws_region
+        if not self.transport:
+            self.transport = VIDEO_TRANSPORT
+        if self.codec_video is None:
+            self.codec_video = VIDEO_DEFAULT_CODEC
+
+    def is_fresh(self, now_ms: int, *, stale_after_ms: int = DEFAULT_VIDEO_STATUS_STALE_AFTER_MS) -> bool:
+        if self.updated_at_ms is None:
+            return False
+        return (now_ms - self.updated_at_ms) <= stale_after_ms
+
+    def is_ready_for_redcon(
+        self,
+        now_ms: int,
+        *,
+        stale_after_ms: int = DEFAULT_VIDEO_STATUS_STALE_AFTER_MS,
+    ) -> bool:
+        return (
+            self.available
+            and self.ready
+            and self.status == VIDEO_STATUS_READY
+            and self.is_fresh(now_ms, stale_after_ms=stale_after_ms)
+        )
+
+    def seconds_until_stale(
+        self,
+        now_ms: int,
+        *,
+        stale_after_ms: int = DEFAULT_VIDEO_STATUS_STALE_AFTER_MS,
+    ) -> float | None:
+        if not self.available or not self.ready or self.status != VIDEO_STATUS_READY:
+            return None
+        if self.updated_at_ms is None:
+            return 0.0
+        remaining_ms = stale_after_ms - (now_ms - self.updated_at_ms)
+        return max(0.0, remaining_ms / 1000.0)
+
+    def payload(self) -> dict[str, Any]:
+        return {
+            "serviceId": self.service_id,
+            "available": self.available,
+            "ready": self.ready,
+            "status": self.status,
+            "transport": self.transport,
+            "codec": {
+                "video": self.codec_video,
+            },
+            "viewerConnected": self.viewer_connected,
+            "lastError": self.last_error,
+            "updatedAtMs": self.updated_at_ms,
+            "topicRoot": self.topic_root,
+            "descriptorTopic": self.descriptor_topic,
+            "statusTopic": self.status_topic,
+            "channelName": self.channel_name,
+            "region": self.region,
+            "serverVersion": self.server_version,
+        }
+
+
+def _default_board_video_state(*, thing_name: str, aws_region: str) -> BoardVideoState:
+    state = BoardVideoState()
+    state.apply_defaults(thing_name=thing_name, aws_region=aws_region)
+    return state
+
+
+def _derive_board_video_state(
+    *,
+    thing_name: str,
+    aws_region: str,
+    descriptor_payload: dict[str, Any] | None,
+    status_payload: dict[str, Any] | None,
+) -> BoardVideoState:
+    state = _default_board_video_state(thing_name=thing_name, aws_region=aws_region)
+    descriptor = descriptor_payload if isinstance(descriptor_payload, dict) else {}
+    status = status_payload if isinstance(status_payload, dict) else {}
+
+    state.service_id = VIDEO_SERVICE_NAME
+    state.transport = _coerce_non_empty_str(descriptor.get("transport"), default=state.transport)
+    state.topic_root = _coerce_non_empty_str(descriptor.get("topicRoot"), default=state.topic_root)
+    state.descriptor_topic = _coerce_non_empty_str(
+        descriptor.get("descriptorTopic"),
+        default=state.descriptor_topic,
+    )
+    state.status_topic = _coerce_non_empty_str(
+        descriptor.get("statusTopic"),
+        default=state.status_topic,
+    )
+    state.channel_name = _coerce_non_empty_str(
+        descriptor.get("channelName"),
+        default=state.channel_name,
+    )
+    state.region = _coerce_optional_str(descriptor.get("region")) or state.region
+    codec = descriptor.get("codec")
+    if isinstance(codec, dict):
+        state.codec_video = _coerce_optional_str(codec.get("video")) or state.codec_video
+    state.server_version = _coerce_non_empty_str(
+        descriptor.get("serverVersion"),
+        default=state.server_version,
+    )
+
+    state.available = _coerce_bool(status.get("available"), default=False)
+    state.ready = _coerce_bool(status.get("ready"), default=False)
+    state.status = _coerce_video_status(status.get("status"), default=state.status)
+    state.viewer_connected = _coerce_bool(
+        status.get("viewerConnected"),
+        default=False,
+    )
+    state.last_error = _coerce_optional_str(status.get("lastError"))
+    state.updated_at_ms = _coerce_optional_int(status.get("updatedAtMs"))
+    return state
+
+
+def _extract_board_video_state_from_reflection(
+    payload: dict[str, Any],
+    *,
+    thing_name: str,
+    aws_region: str,
+) -> BoardVideoState | None:
+    if payload.get("serviceId") != VIDEO_SERVICE_NAME:
+        return None
+    video = _default_board_video_state(thing_name=thing_name, aws_region=aws_region)
+    video.available = _coerce_bool(payload.get("available"), default=False)
+    video.ready = _coerce_bool(payload.get("ready"), default=False)
+    video.status = _coerce_video_status(payload.get("status"), default=video.status)
+    video.transport = _coerce_non_empty_str(payload.get("transport"), default=video.transport)
+    codec = payload.get("codec")
+    if isinstance(codec, dict):
+        video.codec_video = _coerce_optional_str(codec.get("video")) or video.codec_video
+    video.viewer_connected = _coerce_bool(payload.get("viewerConnected"), default=False)
+    video.last_error = _coerce_optional_str(payload.get("lastError"))
+    video.updated_at_ms = _coerce_optional_int(payload.get("updatedAtMs"))
+    video.topic_root = _coerce_non_empty_str(payload.get("topicRoot"), default=video.topic_root)
+    video.descriptor_topic = _coerce_non_empty_str(
+        payload.get("descriptorTopic"),
+        default=video.descriptor_topic,
+    )
+    video.status_topic = _coerce_non_empty_str(
+        payload.get("statusTopic"),
+        default=video.status_topic,
+    )
+    video.channel_name = _coerce_non_empty_str(
+        payload.get("channelName"),
+        default=video.channel_name,
+    )
+    video.region = _coerce_optional_str(payload.get("region")) or video.region
+    video.server_version = _coerce_non_empty_str(
+        payload.get("serverVersion"),
+        default=video.server_version,
+    )
+    return video
+
+
 @dataclass(slots=True)
 class BridgeConfig:
     name_fragment: str = DEFAULT_NAME_FRAGMENT
@@ -670,13 +878,26 @@ class ShadowState:
     mcp_available: bool = False
     board_power: bool = False
     board_wifi_online: bool = False
-    board_video_ready: bool = False
-    board_video_viewer_connected: bool = False
+    board_video: BoardVideoState | None = None
     redcon: int = 4
     redcon_one_staged: bool = False
     ble_uuid_search_mode: bool = False
     shadow_version: int | None = None
     snapshot_file: Path = DEFAULT_SHADOW_FILE
+    thing_name: str = DEFAULT_THING_NAME
+    aws_region: str = ""
+
+    def __post_init__(self) -> None:
+        if self.board_video is None:
+            self.board_video = _default_board_video_state(
+                thing_name=self.thing_name,
+                aws_region=self.aws_region,
+            )
+        else:
+            self.board_video.apply_defaults(
+                thing_name=self.thing_name,
+                aws_region=self.aws_region,
+            )
 
     def set_desired_redcon(self, redcon: int | None) -> None:
         self.desired_redcon = redcon
@@ -706,6 +927,14 @@ class ShadowState:
     def ble_device_id(self) -> str | None:
         return self.ble_uuids.device_id
 
+    @property
+    def board_video_ready(self) -> bool:
+        return self.board_video.ready
+
+    @property
+    def board_video_viewer_connected(self) -> bool:
+        return self.board_video.viewer_connected
+
     def set_board_reported(
         self,
         *,
@@ -719,16 +948,23 @@ class ShadowState:
         if wifi_online is not None:
             self.board_wifi_online = wifi_online
         if video_ready is not None:
-            self.board_video_ready = video_ready
+            self.board_video.ready = video_ready
         if video_viewer_connected is not None:
-            self.board_video_viewer_connected = video_viewer_connected
+            self.board_video.viewer_connected = video_viewer_connected
+
+    def set_board_video_state(self, board_video: BoardVideoState) -> None:
+        board_video.apply_defaults(
+            thing_name=self.thing_name,
+            aws_region=self.aws_region,
+        )
+        self.board_video = board_video
 
     def _derive_redcon(self) -> int:
         return _calculate_redcon(
             ble_online=self.ble_online,
             mcu_power=self.reported_power,
             mcp_available=self.mcp_available,
-            board_video_ready=self.board_video_ready,
+            board_video_ready=self.board_video.is_ready_for_redcon(utc_timestamp_ms()),
         )
 
     def reconcile_redcon(self) -> bool:
@@ -767,10 +1003,7 @@ class ShadowState:
                 "wifi": {
                     "online": self.board_wifi_online,
                 },
-                "video": {
-                    "ready": self.board_video_ready,
-                    "viewerConnected": self.board_video_viewer_connected,
-                },
+                "video": self.board_video.payload(),
             },
         }
         state: dict[str, dict[str, dict[str, Any]]] = {
@@ -822,11 +1055,11 @@ class AwsShadowUpdate:
     battery_mv: int | None = None
     board_power: bool | None = None
     board_wifi_online: bool | None = None
-    board_video_ready: bool | None = None
-    board_video_viewer_connected: bool | None = None
     reported_redcon: int | None = None
     mcp_descriptor: dict[str, Any] | None = None
     mcp_status: dict[str, Any] | None = None
+    video_descriptor: dict[str, Any] | None = None
+    video_status: dict[str, Any] | None = None
     version: int | None = None
 
 
@@ -1054,6 +1287,8 @@ class AwsShadowClient:
                     f"$aws/things/{thing_name}/shadow/update/accepted",
                     build_mcp_descriptor_topic(thing_name),
                     build_mcp_status_topic(thing_name),
+                    build_video_descriptor_topic(thing_name),
+                    build_video_status_topic(thing_name),
                     build_device_topic(
                         self._config.sparkplug_group_id,
                         "DCMD",
@@ -1194,6 +1429,29 @@ class AwsShadowClient:
             )
             return
 
+        video_topic = parse_video_descriptor_or_status_topic(topic)
+        if video_topic is not None:
+            thing_name, kind = video_topic
+            if thing_name not in self._managed_thing_names:
+                return
+            if kind == "descriptor":
+                self._enqueue_update(
+                    AwsShadowUpdate(
+                        thing_name=thing_name,
+                        source="mqtt/video/descriptor",
+                        video_descriptor=payload,
+                    )
+                )
+                return
+            self._enqueue_update(
+                AwsShadowUpdate(
+                    thing_name=thing_name,
+                    source="mqtt/video/status",
+                    video_status=payload,
+                )
+            )
+            return
+
         parts = topic.split("/")
         if len(parts) < 6 or parts[0] != "$aws" or parts[1] != "things" or parts[3] != "shadow":
             return
@@ -1223,10 +1481,6 @@ class AwsShadowClient:
                 battery_mv=_extract_reported_battery_mv(payload),
                 board_power=_extract_reported_board_power(payload),
                 board_wifi_online=_extract_reported_board_wifi_online(payload),
-                board_video_ready=_extract_reported_board_video_ready(payload),
-                board_video_viewer_connected=_extract_reported_board_video_viewer_connected(
-                    payload
-                ),
                 reported_redcon=_extract_reported_redcon(payload),
                 version=_extract_shadow_version(payload),
             )
@@ -1249,10 +1503,6 @@ class AwsShadowClient:
                 battery_mv=_extract_reported_battery_mv(payload),
                 board_power=_extract_reported_board_power(payload),
                 board_wifi_online=_extract_reported_board_wifi_online(payload),
-                board_video_ready=_extract_reported_board_video_ready(payload),
-                board_video_viewer_connected=_extract_reported_board_video_viewer_connected(
-                    payload
-                ),
                 reported_redcon=_extract_reported_redcon(payload),
                 version=_extract_shadow_version(payload),
             )
@@ -1382,6 +1632,12 @@ class BleSleepBridge:
     ) -> None:
         self._config = config
         self._shadow = shadow
+        self._shadow.thing_name = config.thing_name
+        self._shadow.aws_region = config.aws_region
+        self._shadow.board_video.apply_defaults(
+            thing_name=config.thing_name,
+            aws_region=config.aws_region,
+        )
         self._cloud_shadow = cloud_shadow
         self._cached_device_id: str | None = shadow.ble_uuids.device_id
         self._known_device = KnownBleDevice(device_id=self._cached_device_id)
@@ -1401,6 +1657,8 @@ class BleSleepBridge:
         self._sparkplug_device_born = False
         self._mcp_descriptor_payload: dict[str, Any] | None = None
         self._mcp_status_payload: dict[str, Any] | None = None
+        self._video_descriptor_payload: dict[str, Any] | None = None
+        self._video_status_payload: dict[str, Any] | None = None
         self._mcp_summary = _build_default_mcp_summary(config.thing_name)
         self._board_shutdown_requested_at: float | None = None
         self._board_shutdown_timeout_logged = False
@@ -1574,6 +1832,9 @@ class BleSleepBridge:
         remaining = self._config.ble_online_stale_after - (loop.time() - last_seen)
         return max(0.0, remaining)
 
+    def _video_status_timeout_seconds(self) -> float | None:
+        return self._shadow.board_video.seconds_until_stale(utc_timestamp_ms())
+
     def _ble_recovered_from_regular_advertising(self) -> bool:
         if self._is_connected():
             return True
@@ -1667,6 +1928,21 @@ class BleSleepBridge:
             ),
         )
 
+    async def _reconcile_video_status_freshness(self) -> None:
+        previous_redcon = self._shadow.redcon
+        if not self._shadow.reconcile_redcon():
+            return
+        await self._publish_reported_update(
+            reported_mcu_patch=None,
+            reported_root_patch={"redcon": self._shadow.redcon},
+            desired_redcon=_SHADOW_UNSET,
+            desired_board_power=_SHADOW_UNSET,
+            context="Published derived reported.redcon after video status freshness change",
+            previous_redcon=previous_redcon,
+            previous_battery=self._shadow.battery_mv,
+            include_redcon_if_changed=False,
+        )
+
     async def run(self) -> None:
         self._loop = asyncio.get_running_loop()
         self._advertisement_event = asyncio.Event()
@@ -1715,6 +1991,7 @@ class BleSleepBridge:
                     )
 
                 await self._reconcile_ble_online_presence()
+                await self._reconcile_video_status_freshness()
 
                 if not self._is_connected():
                     await self._start_scanner()
@@ -1844,13 +2121,33 @@ class BleSleepBridge:
 
     async def _normalize_shadow_for_startup_default(self) -> None:
         self._shadow.reconcile_redcon()
+        reported_root_patch: dict[str, Any] | None = None
+        desired_board_power: bool | None | object = _SHADOW_UNSET
+        if (
+            self._video_status_payload is None
+            or not self._shadow.board_video.is_fresh(utc_timestamp_ms())
+        ):
+            self._shadow.set_board_video_state(
+                _default_board_video_state(
+                    thing_name=self._config.thing_name,
+                    aws_region=self._config.aws_region,
+                )
+            )
+            reported_root_patch = {
+                "board": {
+                    "video": self._shadow.board_video.payload(),
+                }
+            }
         if self._shadow.desired_board_power is False and not self._shadow.board_power:
             self._shadow.set_desired_board_power(None)
+            desired_board_power = None
+        if reported_root_patch is not None or desired_board_power is not _SHADOW_UNSET:
             await self._publish_reported_update(
                 reported_mcu_patch=None,
+                reported_root_patch=reported_root_patch,
                 desired_redcon=_SHADOW_UNSET,
-                desired_board_power=None,
-                context="Cleared stale desired.board.power on startup",
+                desired_board_power=desired_board_power,
+                context="Normalized startup shadow defaults",
                 include_redcon_if_changed=False,
             )
 
@@ -1889,6 +2186,43 @@ class BleSleepBridge:
             )
         return summary_changed, availability_changed
 
+    def _apply_video_mirror_update(self, update: AwsShadowUpdate) -> tuple[bool, bool]:
+        descriptor_changed = False
+        status_changed = False
+        if update.video_descriptor is not None:
+            descriptor_changed = self._video_descriptor_payload != update.video_descriptor
+            self._video_descriptor_payload = update.video_descriptor
+        if update.video_status is not None:
+            status_changed = self._video_status_payload != update.video_status
+            self._video_status_payload = update.video_status
+        if not descriptor_changed and not status_changed:
+            return False, False
+
+        previous_ready_for_redcon = self._shadow.board_video.is_ready_for_redcon(utc_timestamp_ms())
+        next_state = _derive_board_video_state(
+            thing_name=self._config.thing_name,
+            aws_region=self._config.aws_region,
+            descriptor_payload=self._video_descriptor_payload,
+            status_payload=self._video_status_payload,
+        )
+        state_changed = next_state != self._shadow.board_video
+        if not state_changed:
+            return False, False
+
+        self._shadow.set_board_video_state(next_state)
+        LOGGER.info(
+            "Updated video shadow mirror thing=%s available=%s ready=%s status=%s updated_at_ms=%s",
+            self._config.thing_name,
+            next_state.available,
+            next_state.ready,
+            next_state.status,
+            next_state.updated_at_ms,
+        )
+        ready_for_redcon_changed = (
+            previous_ready_for_redcon != self._shadow.board_video.is_ready_for_redcon(utc_timestamp_ms())
+        )
+        return True, ready_for_redcon_changed
+
     async def _apply_cloud_shadow_updates(
         self,
         updates: list[AwsShadowUpdate] | None = None,
@@ -1917,8 +2251,9 @@ class BleSleepBridge:
             mcp_summary_changed, mcp_availability_changed = self._apply_mcp_mirror_update(
                 update
             )
+            video_shadow_changed, video_redcon_changed = self._apply_video_mirror_update(update)
             changed = False
-            redcon_inputs_changed = mcp_availability_changed
+            redcon_inputs_changed = mcp_availability_changed or video_redcon_changed
             if (
                 update.has_desired_redcon
                 and self._shadow.desired_redcon != update.desired_redcon
@@ -1972,22 +2307,6 @@ class BleSleepBridge:
             ):
                 self._shadow.set_board_reported(wifi_online=update.board_wifi_online)
                 changed = True
-            if (
-                update.board_video_ready is not None
-                and self._shadow.board_video_ready != update.board_video_ready
-            ):
-                self._shadow.set_board_reported(video_ready=update.board_video_ready)
-                changed = True
-                redcon_inputs_changed = True
-            if (
-                update.board_video_viewer_connected is not None
-                and self._shadow.board_video_viewer_connected
-                != update.board_video_viewer_connected
-            ):
-                self._shadow.set_board_reported(
-                    video_viewer_connected=update.board_video_viewer_connected
-                )
-                changed = True
 
             if (
                 update.version is not None
@@ -2011,10 +2330,18 @@ class BleSleepBridge:
                     ),
                     include_redcon_if_changed=False,
                 )
-            elif redcon_inputs_changed:
+            elif redcon_inputs_changed or video_shadow_changed:
                 await self._publish_reported_update(
                     reported_mcu_patch=None,
-                    reported_root_patch=None,
+                    reported_root_patch=(
+                        {
+                            "board": {
+                                "video": self._shadow.board_video.payload(),
+                            }
+                        }
+                        if video_shadow_changed
+                        else None
+                    ),
                     desired_redcon=_SHADOW_UNSET,
                     desired_board_power=_SHADOW_UNSET,
                     context=f"Published derived reported.redcon after cloud shadow update ({update.source})",
@@ -3041,8 +3368,15 @@ class BleSleepBridge:
         *,
         wake_on_advertisement: bool = False,
     ) -> list[AwsShadowUpdate]:
+        video_timeout = self._video_status_timeout_seconds()
+        if timeout_seconds is None:
+            effective_timeout = video_timeout
+        elif video_timeout is None:
+            effective_timeout = timeout_seconds
+        else:
+            effective_timeout = min(timeout_seconds, video_timeout)
         updates_task = asyncio.create_task(
-            self._cloud_shadow.wait_for_updates(timeout_seconds=timeout_seconds)
+            self._cloud_shadow.wait_for_updates(timeout_seconds=effective_timeout)
         )
         disconnect_task = asyncio.create_task(self._wait_for_disconnect_event())
         advertisement_task: asyncio.Task[None] | None = None
@@ -3397,9 +3731,12 @@ class RigFleetBridge:
     def _manager_timeout(self) -> float | None:
         timeouts: list[float] = []
         for managed in self._managed_things:
-            timeout = managed.bridge._ble_online_timeout_seconds()
-            if timeout is not None:
-                timeouts.append(timeout)
+            for timeout in (
+                managed.bridge._ble_online_timeout_seconds(),
+                managed.bridge._video_status_timeout_seconds(),
+            ):
+                if timeout is not None:
+                    timeouts.append(timeout)
         if not timeouts:
             return None
         return max(0.0, min(timeouts))
@@ -3714,14 +4051,15 @@ def _build_shadow_from_snapshot(
     *,
     snapshot_file: Path,
     registered_ble_device_id: str | None = None,
+    thing_name: str = DEFAULT_THING_NAME,
+    aws_region: str = "",
 ) -> ShadowState:
     reported_power = _extract_reported_power(snapshot)
     reported_online = _extract_reported_online(snapshot)
     battery_mv = _extract_reported_battery_mv(snapshot)
     board_power = _extract_reported_board_power(snapshot)
     board_wifi_online = _extract_reported_board_wifi_online(snapshot)
-    board_video_ready = _extract_reported_board_video_ready(snapshot)
-    board_video_viewer_connected = _extract_reported_board_video_viewer_connected(snapshot)
+    board_video_reflection = _extract_reported_board_video_reflection(snapshot)
     reported_redcon = _extract_reported_redcon(snapshot)
     ble_uuids = DEFAULT_BLE_GATT_UUIDS.with_device_id(registered_ble_device_id)
 
@@ -3761,15 +4099,17 @@ def _build_shadow_from_snapshot(
             if board_wifi_online is not None
             else DEFAULT_BOARD_WIFI_ONLINE
         ),
-        board_video_ready=(
-            board_video_ready
-            if board_video_ready is not None
-            else DEFAULT_BOARD_VIDEO_READY
-        ),
-        board_video_viewer_connected=(
-            board_video_viewer_connected
-            if board_video_viewer_connected is not None
-            else DEFAULT_BOARD_VIDEO_VIEWER_CONNECTED
+        board_video=(
+            _extract_board_video_state_from_reflection(
+                board_video_reflection,
+                thing_name=thing_name,
+                aws_region=aws_region,
+            )
+            if board_video_reflection is not None
+            else _default_board_video_state(
+                thing_name=thing_name,
+                aws_region=aws_region,
+            )
         ),
         redcon=(
             reported_redcon
@@ -3779,6 +4119,8 @@ def _build_shadow_from_snapshot(
         ble_uuid_search_mode=False,
         shadow_version=_extract_shadow_version(snapshot),
         snapshot_file=snapshot_file,
+        thing_name=thing_name,
+        aws_region=aws_region,
     )
 
 
@@ -3993,6 +4335,8 @@ def main() -> None:
                     snapshots[thing_name],
                     snapshot_file=device_config.shadow_file,
                     registered_ble_device_id=registration.ble_device_id,
+                    thing_name=thing_name,
+                    aws_region=device_config.aws_region,
                 )
                 shadow.log_state(f"Initialized from AWS IoT shadow snapshot ({thing_name})")
                 managed_things.append(

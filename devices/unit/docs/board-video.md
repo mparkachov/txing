@@ -7,7 +7,7 @@
 - Current live-control target: `p95` operator glass-to-glass latency under `800 ms` on target links
 - Control model: directional commands, not precision teleoperation
 - Field-validation status: manual field validation was completed and accepted the plain-AWS-WebRTC path from a business perspective; no lab-grade metrics dataset is recorded in-repo
-- Current repo implementation: `txing-board` publishes `board.video.*`, supervises a dedicated sender state manager, and the browser uses AWS KVS signaling + WebRTC for the viewer path
+- Current repo implementation: `txing-board` publishes retained video service topics, `rig` reflects `board.video.*` into shadow, and the browser uses AWS KVS signaling + WebRTC for the viewer path
 
 Explicit non-goals for this slice:
 
@@ -21,7 +21,9 @@ Explicit non-goals for this slice:
 ## Current Design
 
 - The board stays fully headless.
-- `txing-board` remains the only publisher of `board.*` state into the shared Thing Shadow.
+- `txing-board` remains the only publisher of board power, wifi, and drive state into the shared Thing Shadow.
+- `txing-board` publishes retained video descriptor/status topics under `txings/<device_id>/video/*`.
+- `rig` mirrors those retained video topics into `state.reported.board.video.*` in the Thing Shadow.
 - The current implementation uses one live video path only: board camera -> plain AWS WebRTC signaling channel -> operator.
 - The operator watches the plain AWS WebRTC path, not a board-local viewer page.
 - The current implementation does not use WebRTC ingestion/storage, multiviewer, or `kvssink`.
@@ -34,9 +36,9 @@ Explicit non-goals for this slice:
 
 ```text
 txing-board
-  -> owns board.* shadow state
+  -> owns board power, wifi, and drive shadow state
   -> supervises board video sender state
-  -> reports board.video transport metadata
+  -> publishes retained board video descriptor/status topics
   -> tracks coarse board video readiness and failures
 
 board video sender state manager
@@ -55,36 +57,44 @@ operator client
   -> sends directional commands out of band as strict ROS `geometry_msgs/Twist`
 ```
 
-## Shadow Contract
+## Retained MQTT Contract
 
-The current implementation uses `reported.board.video` to describe the plain AWS WebRTC live path:
+The current implementation publishes retained board video service topics:
 
 ```json
+// txings/<device_id>/video/descriptor
 {
-  "state": {
-    "reported": {
-      "board": {
-        "video": {
-          "ready": true,
-          "status": "ready",
-          "transport": "aws-webrtc",
-          "codec": {
-            "video": "h264"
-          },
-          "viewerConnected": false,
-          "lastError": null
-        }
-      }
-    }
-  }
+  "serviceId": "video",
+  "topicRoot": "txings/<device_id>/video",
+  "descriptorTopic": "txings/<device_id>/video/descriptor",
+  "statusTopic": "txings/<device_id>/video/status",
+  "transport": "aws-webrtc",
+  "channelName": "<device_id>-board-video",
+  "region": "<aws-region>",
+  "serverVersion": "<board-version>"
 }
 ```
+
+```json
+// txings/<device_id>/video/status
+{
+  "serviceId": "video",
+  "available": true,
+  "ready": true,
+  "status": "ready",
+  "viewerConnected": false,
+  "lastError": null,
+  "updatedAtMs": 1776761234567
+}
+```
+
+`rig` mirrors the latest retained descriptor/status into `state.reported.board.video.*` as cache/detail only.
 
 Notes:
 
 - `transport=aws-webrtc` is the current choice.
 - The canonical browser route path is `/<town>/<rig>/<device>/video`, computed by the SPA from the current device assignment.
-- The AWS WebRTC signaling channel name is computed as `<device_id>-board-video`; it is no longer published into Thing Shadow.
+- The AWS WebRTC signaling channel name is computed as `<device_id>-board-video`.
 - The current implementation means plain KVS WebRTC signaling, not ingestion/storage.
 - `board.video.local.*` is no longer part of the active contract.
 - `ready` and `viewerConnected` are coarse runtime signals derived from the supervised sender state, not a full media-quality guarantee.
@@ -96,13 +106,13 @@ Notes:
 
 Responsibilities:
 
-- publish all `board.*` Thing Shadow updates
+- publish board power, wifi, and drive Thing Shadow updates
 - keep handling internal `desired.board.power`
 - refresh board IPv4 and IPv6 on each publish loop
-- publish board video transport metadata
 - supervise the local board video sender state manager
-- gate `board.video.ready` on sender readiness rather than any board-local iframe endpoint
-- surface the last coarse media error through `board.video.lastError`
+- publish retained video descriptor/status topics
+- gate retained video `ready` on sender readiness rather than any board-local iframe endpoint
+- surface the last coarse media error through retained video `lastError`
 
 ### Board Video Sender State Manager
 
