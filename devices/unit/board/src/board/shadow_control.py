@@ -1236,6 +1236,23 @@ def _build_cmd_vel_motor_driver(config: ControlConfig) -> PercentMotorDriverAdap
     )
 
 
+def _build_cmd_vel_controller(
+    config: ControlConfig,
+    *,
+    motor_driver: Any,
+    lease_ttl_ms: int = DEFAULT_MCP_LEASE_TTL_MS,
+) -> CmdVelController:
+    # In strict MCP mode, lease expiry is the authoritative remote-control liveness gate.
+    # Keep the board-side cmd_vel watchdog aligned with that lease window so normal MQTT RPC
+    # jitter does not cause the motors to pulse on and off between valid MCP commands.
+    watchdog_timeout_seconds = max(0.5, lease_ttl_ms / 1000.0)
+    return CmdVelController(
+        thing_name=config.thing_name,
+        motor_driver=motor_driver,
+        watchdog_timeout_seconds=watchdog_timeout_seconds,
+    )
+
+
 def _request_system_halt(command: tuple[str, ...]) -> None:
     command_text = shlex.join(command)
     LOGGER.warning("Requesting system halt via %s", command_text)
@@ -1337,9 +1354,10 @@ def main() -> None:
         initial_addresses.ipv6 or "-",
     )
 
-    cmd_vel_controller = CmdVelController(
-        thing_name=config.thing_name,
+    cmd_vel_controller = _build_cmd_vel_controller(
+        config,
         motor_driver=motor_driver,
+        lease_ttl_ms=DEFAULT_MCP_LEASE_TTL_MS,
     )
     cmd_vel_controller.start()
     video_supervisor = VideoSenderSupervisor(

@@ -15,6 +15,7 @@ import {
   isMcpSessionNotInitializedError,
   isRecoverableMcpLeaseError,
 } from './mcp-errors'
+import { getMcpLeaseRenewBeforeMs } from './mcp-lease'
 import {
   buildMcpDescriptorTopic,
   buildMcpSessionC2sTopic,
@@ -1145,15 +1146,10 @@ class AwsIotShadowSession implements ShadowSession {
     }
 
     const lease = await this.ensureMcpLease()
-    const motionResult = parseMcpMotionCommandResult(
-      await this.callMcpTool('cmd_vel.publish', {
-        leaseToken: lease.leaseToken,
-        twist,
-      }),
-    )
-    if (!motionResult) {
-      throw new Error('MCP cmd_vel.publish returned an invalid payload')
-    }
+    const motionResult = await this.publishCmdVelWithLeaseRetry({
+      lease,
+      twist,
+    })
     this.updateRobotStateFromMotionResult(motionResult, true)
   }
 
@@ -1210,57 +1206,13 @@ class AwsIotShadowSession implements ShadowSession {
     const knownLeaseTtlMs = this.mcpDescriptor?.leaseTtlMs ?? this.mcpDiscovery.leaseTtlMs ?? 5_000
     if (this.mcpLease) {
       const activeLeaseTtlMs = this.mcpLease.leaseTtlMs || knownLeaseTtlMs
-      const renewBeforeMs = Math.min(1500, Math.max(300, Math.round(activeLeaseTtlMs * 0.4)))
+      const renewBeforeMs = getMcpLeaseRenewBeforeMs(activeLeaseTtlMs)
       if (nowMs < this.mcpLease.expiresAtMs - renewBeforeMs) {
         return this.mcpLease
       }
-      try {
-        const renewed = parseMcpLeaseState(
-          await this.callMcpTool('control.renew_lease', {
-            leaseToken: this.mcpLease.leaseToken,
-          }),
-        )
-        if (!renewed) {
-          throw new Error('MCP control.renew_lease returned an invalid payload')
-        }
-        this.mcpLease = renewed
-        return renewed
-      } catch (caughtError) {
-        if (isMcpSessionNotInitializedError(caughtError)) {
-          this.mcpInitialized = false
-          this.mcpLease = null
-          await this.ensureMcpSessionReady()
-          const acquired = parseMcpLeaseState(await this.callMcpTool('control.acquire_lease', {}))
-          if (!acquired) {
-            throw new Error('MCP control.acquire_lease returned an invalid payload')
-          }
-          this.mcpLease = acquired
-          return acquired
-        }
-        if (!isRecoverableMcpLeaseError(caughtError)) {
-          throw caughtError
-        }
-        this.mcpLease = null
-      }
     }
 
-    let acquiredResult: unknown
-    try {
-      acquiredResult = await this.callMcpTool('control.acquire_lease', {})
-    } catch (caughtError) {
-      if (!isMcpSessionNotInitializedError(caughtError)) {
-        throw caughtError
-      }
-      this.mcpInitialized = false
-      await this.ensureMcpSessionReady()
-      acquiredResult = await this.callMcpTool('control.acquire_lease', {})
-    }
-    const acquired = parseMcpLeaseState(acquiredResult)
-    if (!acquired) {
-      throw new Error('MCP control.acquire_lease returned an invalid payload')
-    }
-    this.mcpLease = acquired
-    return acquired
+    return this.acquireMcpLease()
   }
 
   private async warmUpMcpSession(): Promise<void> {
@@ -1283,6 +1235,67 @@ class AwsIotShadowSession implements ShadowSession {
       })
     } catch {
       return
+    }
+  }
+
+  private async acquireMcpLease(): Promise<McpLeaseState> {
+    let acquiredResult: unknown
+    try {
+      acquiredResult = await this.callMcpTool('control.acquire_lease', {})
+    } catch (caughtError) {
+      if (!isMcpSessionNotInitializedError(caughtError)) {
+        throw caughtError
+      }
+      this.mcpInitialized = false
+      await this.ensureMcpSessionReady()
+      acquiredResult = await this.callMcpTool('control.acquire_lease', {})
+    }
+    const acquired = parseMcpLeaseState(acquiredResult)
+    if (!acquired) {
+      throw new Error('MCP control.acquire_lease returned an invalid payload')
+    }
+    this.mcpLease = acquired
+    return acquired
+  }
+
+  private async callCmdVelPublish(
+    leaseToken: string,
+    twist: Twist,
+  ): Promise<McpMotionCommandResult> {
+    const motionResult = parseMcpMotionCommandResult(
+      await this.callMcpTool('cmd_vel.publish', {
+        leaseToken,
+        twist,
+      }),
+    )
+    if (!motionResult) {
+      throw new Error('MCP cmd_vel.publish returned an invalid payload')
+    }
+    return motionResult
+  }
+
+  private async publishCmdVelWithLeaseRetry({
+    lease,
+    twist,
+  }: {
+    lease: McpLeaseState
+    twist: Twist
+  }): Promise<McpMotionCommandResult> {
+    try {
+      return await this.callCmdVelPublish(lease.leaseToken, twist)
+    } catch (caughtError) {
+      if (
+        !isRecoverableMcpLeaseError(caughtError) &&
+        !isMcpSessionNotInitializedError(caughtError)
+      ) {
+        throw caughtError
+      }
+      if (isMcpSessionNotInitializedError(caughtError)) {
+        this.mcpInitialized = false
+      }
+      this.mcpLease = null
+      const refreshedLease = await this.acquireMcpLease()
+      return this.callCmdVelPublish(refreshedLease.leaseToken, twist)
     }
   }
 

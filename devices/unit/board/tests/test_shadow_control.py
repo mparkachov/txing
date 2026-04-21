@@ -13,6 +13,7 @@ from board.shadow_control import (
     AwsShadowClient,
     DEFAULT_AWS_CONNECT_TIMEOUT,
     DEFAULT_HEARTBEAT_SECONDS,
+    DEFAULT_MCP_LEASE_TTL_MS,
     DEFAULT_MQTT_PUBLISH_TIMEOUT,
     DEFAULT_RECONNECT_DELAY,
     DEFAULT_TIME_SYNC_TIMEOUT,
@@ -22,6 +23,7 @@ from board.shadow_control import (
     DefaultRouteAddresses,
     REPO_ROOT,
     _build_board_report,
+    _build_cmd_vel_controller,
     _build_cmd_vel_motor_driver,
     _build_shutdown_board_report,
     _build_shadow_update_with_options,
@@ -280,6 +282,21 @@ class ShadowControlContractTests(unittest.TestCase):
         )
 
         self.assertNotIn("updatedAt", reported)
+
+    def test_cmd_vel_controller_watchdog_aligns_with_mcp_lease_window(self) -> None:
+        motor_driver = MagicMock()
+        controller = _build_cmd_vel_controller(
+            _make_config(),
+            motor_driver=motor_driver,
+            lease_ttl_ms=DEFAULT_MCP_LEASE_TTL_MS,
+        )
+        try:
+            self.assertEqual(
+                controller._watchdog_timeout_seconds,  # noqa: SLF001
+                DEFAULT_MCP_LEASE_TTL_MS / 1000.0,
+            )
+        finally:
+            controller.close()
 
     def test_wait_for_system_clock_sync_returns_when_clock_becomes_synchronized(self) -> None:
         stop_event = threading.Event()
