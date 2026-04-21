@@ -440,20 +440,18 @@ def _calculate_redcon(
     *,
     ble_online: bool,
     mcu_power: bool,
-    board_power: bool,
-    board_wifi_online: bool,
+    mcp_available: bool,
     board_video_ready: bool,
-    board_video_viewer_connected: bool,
 ) -> int:
     if not ble_online:
         return 4
     if not mcu_power:
         return 4
-    if not (board_power and board_wifi_online and board_video_ready):
+    if not mcp_available:
         return 3
-    if board_video_viewer_connected:
-        return 1
-    return 2
+    if not board_video_ready:
+        return 2
+    return 1
 
 
 @dataclass(slots=True, frozen=True)
@@ -669,11 +667,13 @@ class ShadowState:
     battery_mv: int = DEFAULT_BATTERY_MV
     ble_uuids: BleGattUuids = DEFAULT_BLE_GATT_UUIDS
     ble_online: bool = False
+    mcp_available: bool = False
     board_power: bool = False
     board_wifi_online: bool = False
     board_video_ready: bool = False
     board_video_viewer_connected: bool = False
     redcon: int = 4
+    redcon_one_staged: bool = False
     ble_uuid_search_mode: bool = False
     shadow_version: int | None = None
     snapshot_file: Path = DEFAULT_SHADOW_FILE
@@ -699,6 +699,9 @@ class ShadowState:
     def set_ble_online(self, online: bool) -> None:
         self.ble_online = online
 
+    def set_mcp_available(self, available: bool) -> None:
+        self.mcp_available = available
+
     @property
     def ble_device_id(self) -> str | None:
         return self.ble_uuids.device_id
@@ -720,18 +723,35 @@ class ShadowState:
         if video_viewer_connected is not None:
             self.board_video_viewer_connected = video_viewer_connected
 
-    def reconcile_redcon(self) -> bool:
-        derived_redcon = _calculate_redcon(
+    def _derive_redcon(self) -> int:
+        return _calculate_redcon(
             ble_online=self.ble_online,
             mcu_power=self.reported_power,
-            board_power=self.board_power,
-            board_wifi_online=self.board_wifi_online,
+            mcp_available=self.mcp_available,
             board_video_ready=self.board_video_ready,
-            board_video_viewer_connected=self.board_video_viewer_connected,
         )
+
+    def reconcile_redcon(self) -> bool:
+        derived_redcon = self._derive_redcon()
+        if derived_redcon == 1 and self.redcon not in (1, 2):
+            derived_redcon = 2
+            self.redcon_one_staged = True
+        else:
+            self.redcon_one_staged = False
         if self.redcon == derived_redcon:
             return False
         self.redcon = derived_redcon
+        return True
+
+    def promote_redcon_after_stage(self) -> bool:
+        if not self.redcon_one_staged:
+            return False
+        self.redcon_one_staged = False
+        if self.redcon != 2:
+            return False
+        if self._derive_redcon() != 1:
+            return False
+        self.redcon = 1
         return True
 
     def payload(self) -> dict[str, Any]:
@@ -1834,7 +1854,7 @@ class BleSleepBridge:
                 include_redcon_if_changed=False,
             )
 
-    def _apply_mcp_mirror_update(self, update: AwsShadowUpdate) -> bool:
+    def _apply_mcp_mirror_update(self, update: AwsShadowUpdate) -> tuple[bool, bool]:
         descriptor_changed = False
         status_changed = False
         if update.mcp_descriptor is not None:
@@ -1844,26 +1864,30 @@ class BleSleepBridge:
             status_changed = self._mcp_status_payload != update.mcp_status
             self._mcp_status_payload = update.mcp_status
         if not descriptor_changed and not status_changed:
-            return False
+            return False, False
 
         next_summary = _derive_mcp_sparkplug_summary(
             thing_name=self._config.thing_name,
             descriptor_payload=self._mcp_descriptor_payload,
             status_payload=self._mcp_status_payload,
         )
-        if next_summary == self._mcp_summary:
-            return False
+        summary_changed = next_summary != self._mcp_summary
+        availability_changed = self._shadow.mcp_available != next_summary.available
+        if not summary_changed and not availability_changed:
+            return False, False
 
         self._mcp_summary = next_summary
-        LOGGER.info(
-            "Updated MCP Sparkplug summary thing=%s available=%s transport=%s descriptor_topic=%s lease_ttl_ms=%s",
-            self._config.thing_name,
-            self._mcp_summary.available,
-            self._mcp_summary.transport,
-            self._mcp_summary.descriptor_topic,
-            self._mcp_summary.lease_ttl_ms,
-        )
-        return True
+        self._shadow.set_mcp_available(next_summary.available)
+        if summary_changed:
+            LOGGER.info(
+                "Updated MCP Sparkplug summary thing=%s available=%s transport=%s descriptor_topic=%s lease_ttl_ms=%s",
+                self._config.thing_name,
+                self._mcp_summary.available,
+                self._mcp_summary.transport,
+                self._mcp_summary.descriptor_topic,
+                self._mcp_summary.lease_ttl_ms,
+            )
+        return summary_changed, availability_changed
 
     async def _apply_cloud_shadow_updates(
         self,
@@ -1890,9 +1914,11 @@ class BleSleepBridge:
 
             previous_redcon = self._shadow.redcon
             previous_battery = self._shadow.battery_mv
-            mcp_summary_changed = self._apply_mcp_mirror_update(update)
+            mcp_summary_changed, mcp_availability_changed = self._apply_mcp_mirror_update(
+                update
+            )
             changed = False
-            redcon_inputs_changed = False
+            redcon_inputs_changed = mcp_availability_changed
             if (
                 update.has_desired_redcon
                 and self._shadow.desired_redcon != update.desired_redcon
@@ -1940,14 +1966,12 @@ class BleSleepBridge:
                 if not update.board_power:
                     self._board_shutdown_requested_at = None
                 changed = True
-                redcon_inputs_changed = True
             if (
                 update.board_wifi_online is not None
                 and self._shadow.board_wifi_online != update.board_wifi_online
             ):
                 self._shadow.set_board_reported(wifi_online=update.board_wifi_online)
                 changed = True
-                redcon_inputs_changed = True
             if (
                 update.board_video_ready is not None
                 and self._shadow.board_video_ready != update.board_video_ready
@@ -1964,7 +1988,6 @@ class BleSleepBridge:
                     video_viewer_connected=update.board_video_viewer_connected
                 )
                 changed = True
-                redcon_inputs_changed = True
 
             if (
                 update.version is not None
@@ -2504,6 +2527,17 @@ class BleSleepBridge:
             )
         ):
             await self._publish_device_data()
+        if self._shadow.promote_redcon_after_stage():
+            await self._publish_reported_update(
+                reported_mcu_patch=None,
+                reported_root_patch={"redcon": self._shadow.redcon},
+                desired_redcon=_SHADOW_UNSET,
+                desired_board_power=_SHADOW_UNSET,
+                context="Promoted staged REDCON 2 to REDCON 1 after MCP/video readiness confirmation",
+                include_redcon_if_changed=False,
+                previous_redcon=2,
+                previous_battery=self._shadow.battery_mv,
+            )
         return True
 
     async def _publish_ble_online_state(
@@ -3716,6 +3750,7 @@ def _build_shadow_from_snapshot(
             if reported_online is not None
             else DEFAULT_REPORTED_ONLINE
         ),
+        mcp_available=False,
         board_power=(
             board_power
             if board_power is not None

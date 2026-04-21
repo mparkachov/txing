@@ -31,6 +31,10 @@ import {
   type SparkplugTopics,
 } from './sparkplug-protocol'
 import {
+  extractSparkplugDeviceRedconUpdate,
+  type SparkplugRedconSource,
+} from './sparkplug-device-redcon'
+import {
   buildGetShadowPublishPacket,
   buildShadowSubscriptionPacket,
   buildShadowTopics,
@@ -90,6 +94,7 @@ export type ShadowSessionOptions = {
   sparkplugEdgeNodeId: string
   resolveIdToken: ResolveIdToken
   onShadowDocument: (shadow: unknown, operation: ShadowOperation) => void
+  onSparkplugRedconChange: (redcon: number, source: SparkplugRedconSource) => void
   onConnectionStateChange: (state: ShadowConnectionState) => void
   onError: (message: string) => void
 }
@@ -735,6 +740,7 @@ class AwsIotShadowSession implements ShadowSession {
           subscriptions: [
             { topicFilter: this.sparkplugTopics.dbirth, qos: 1 },
             { topicFilter: this.sparkplugTopics.ddata, qos: 1 },
+            { topicFilter: this.sparkplugTopics.ddeath, qos: 1 },
             { topicFilter: this.mcpDescriptorTopic, qos: 1 },
             { topicFilter: this.mcpStatusTopic, qos: 1 },
           ],
@@ -806,6 +812,8 @@ class AwsIotShadowSession implements ShadowSession {
   }
 
   private handleNonShadowMessage(topic: string, payload: unknown): void {
+    this.handleSparkplugDeviceRedcon(topic, payload)
+
     if (this.handleSparkplugMcpDiscovery(topic, payload)) {
       return
     }
@@ -833,6 +841,18 @@ class AwsIotShadowSession implements ShadowSession {
     if (this.mcpSessionId && topic === buildMcpSessionS2cTopic(this.options.thingName, this.mcpSessionId)) {
       this.handleMcpSessionMessage(payload)
     }
+  }
+
+  private handleSparkplugDeviceRedcon(topic: string, payload: unknown): void {
+    const nextRedcon = extractSparkplugDeviceRedconUpdate(
+      topic,
+      normalizePayloadToBytes(payload),
+      this.sparkplugTopics,
+    )
+    if (!nextRedcon) {
+      return
+    }
+    this.options.onSparkplugRedconChange(nextRedcon.redcon, nextRedcon.source)
   }
 
   private handleSparkplugMcpDiscovery(topic: string, payload: unknown): boolean {

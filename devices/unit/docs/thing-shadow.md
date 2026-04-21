@@ -45,7 +45,7 @@ Current implementation note:
 
 - Sparkplug owns lifecycle intent.
 - Shadow is reflection and restart cache.
-- `rig` continues to derive `reported.redcon` from current `reported.mcu.*` and `reported.board.*`, including the current viewer-dependent `REDCON 1` rule.
+- `rig` derives `reported.redcon` from BLE reachability, MCU wake state, retained MCP availability, and `reported.board.video.ready`.
 - Direct scalar attributes under `state.reported` are a strict reflection of the current Sparkplug device metrics only.
 - In the current implementation that direct-metric set is exactly `redcon` and `batteryMv`.
 - `mcu.*` and `board.*` remain additional operational detail and must not be used as alternate Sparkplug metric locations.
@@ -61,10 +61,10 @@ Current implementation note:
 - `state.reported.mcu.power` (`boolean`) is the rig-confirmed MCU power mode.
 - `state.reported.mcu.online` (`boolean`) is rig-observed BLE reachability: it becomes `true` after the device has shown sustained BLE presence, and becomes `false` only after the device has not been seen for the configured presence timeout.
 - `state.reported.redcon` (`integer`, `1..4`) is the rig-derived readiness summary:
-  - `4`: Green / `Cold Camp` / MCU sleep state
-  - `3`: Yellow / `Torch-Up` / MCU wakeup state while the operator video path is not ready
-  - `2`: Orange/Amber / `Ember Watch` / MCU wakeup state with board power, board Wi-Fi/control, and board video ready, but no active viewer
-  - `1`: Red / `Hot Rig` / same as `2`, plus `reported.board.video.viewerConnected=true`
+  - `4`: Green / `Cold Camp` / MCU sleep state or BLE unavailable
+  - `3`: Yellow / `Torch-Up` / MCU wakeup state with BLE reachability, but MCP unavailable
+  - `2`: Orange/Amber / `Ember Watch` / MCU wakeup state with BLE reachability and MCP availability, but `reported.board.video.ready=false`
+  - `1`: Red / `Hot Rig` / MCU wakeup state with BLE reachability, MCP availability, and `reported.board.video.ready=true`
 - `state.reported.batteryMv` (`integer`, millivolts, measured MCU battery estimate observed from the MCU State Report over BLE advertising or GATT).
 - `state.reported.board.power` (`boolean`) is a best-effort board power-state flag; because the board can lose power abruptly through the MOSFET, consumers must not treat stale `true` as authoritative after a hard power cut.
 - `state.reported.board.wifi.online` (`boolean`) is the board-side Wi-Fi/control online flag while the board OS is up and the board control is running.
@@ -76,20 +76,21 @@ Current implementation note:
 - `state.reported.board.video.status` (`"starting" | "ready" | "error"`) is the coarse runtime state of the board video sender path.
 - `state.reported.board.video.transport` (`"aws-webrtc"`) identifies the live-video transport. The current implementation uses `aws-webrtc` as the only live operator path, specifically as a plain KVS WebRTC signaling session.
 - `state.reported.board.video.codec.video` (`"h264"` or `null`) is the currently configured board video codec.
-- `state.reported.board.video.viewerConnected` (`boolean`) is the best-effort operator-viewer presence flag for the live path.
+- `state.reported.board.video.viewerConnected` (`boolean`) is the best-effort operator-viewer presence flag for the live path. It is informational and does not participate in `reported.redcon`.
 - `state.reported.board.video.lastError` (`string` or `null`) is the last coarse board-side video error surfaced by `txing-board` or its supervised sender path.
-- For `reported.redcon`, rig treats `reported.board.power`, `reported.board.wifi.online`, `reported.board.video.ready`, and `reported.board.video.viewerConnected` as the shared board posture inputs.
+- For `reported.redcon`, rig treats retained MCP availability plus `reported.board.video.ready` as the final readiness inputs once BLE reachability and MCU wake state are satisfied.
 - Current design intent is plain AWS WebRTC only for the live operator path.
 - The current implementation does not assume WebRTC ingestion/storage, multiviewer, or `kvssink`.
 - Whether a second direct operator path is needed later is explicitly deferred until future field use.
 
 ## Web admin transport note
 
-- The browser admin SPA consumes the classic `txing` Thing Shadow over AWS IoT MQTT/WSS as its read path.
+- The browser admin SPA uses Sparkplug device traffic as the primary live REDCON read path and keeps the classic `txing` Thing Shadow as the reflected detail/debug document.
 - Browser lifecycle writes no longer target shadow desired power fields.
 - The current on/off switch publishes Sparkplug `DCMD.redcon` over MQTT/WSS:
   - `on` -> `redcon=3`
   - `off` -> `redcon=4`
+- The browser consumes `DBIRTH`, `DDATA`, and `DDEATH` for the selected device and falls back to `state.reported.redcon` only before the first device lifecycle packet arrives.
 - `board` and `rig` continue to publish reflected operational state for `txing`; there are no separate `rig` or `town` shadows.
 - Registry metadata remains out of the shadow path; `attributes.rig` and `attributes.bleDeviceId` are rig-managed.
 - The browser still uses HTTPS for Cognito hosted UI, Cognito token exchange/refresh, Cognito Identity credential bootstrap, and IoT policy attachment. Only shadow document traffic moved to MQTT/WSS.

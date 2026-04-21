@@ -100,15 +100,16 @@ Field semantics:
 - In the current implementation that set is exactly `redcon` and `batteryMv`.
 - `mcu.*` and `board.*` remain shadow-only operational detail and are not alternate locations for Sparkplug metric reflection.
 - `state.reported.redcon` is the rig-derived readiness summary:
-  - `4` -> Green / `Cold Camp` -> `reported.mcu.power=false`
-  - `3` -> Yellow / `Torch-Up` -> `reported.mcu.power=true` while the operator video path is not ready yet
-  - `2` -> Orange/Amber / `Ember Watch` -> `reported.mcu.power=true`, `reported.board.power=true`, `reported.board.wifi.online=true`, `reported.board.video.ready=true`, and `reported.board.video.viewerConnected=false`
-  - `1` -> Red / `Hot Rig` -> same as `2`, plus `reported.board.video.viewerConnected=true`
+  - `4` -> Green / `Cold Camp` -> BLE unavailable or `reported.mcu.power=false`
+  - `3` -> Yellow / `Torch-Up` -> BLE reachable, `reported.mcu.power=true`, and MCP unavailable
+  - `2` -> Orange/Amber / `Ember Watch` -> BLE reachable, `reported.mcu.power=true`, MCP available, and `reported.board.video.ready=false`
+  - `1` -> Red / `Hot Rig` -> BLE reachable, `reported.mcu.power=true`, MCP available, and `reported.board.video.ready=true`
 - `state.reported.batteryMv` is the latest battery reading observed over BLE by rig, surfaced at top-level alongside `redcon`, sourced from the MCU state report carried over either advertising manufacturer data or the GATT State Report characteristic.
 - `state.reported.mcu.power=true` means "MCU is in the wakeup state".
 - `state.reported.mcu.power=false` means "MCU is in the sleep state with periodic BLE rendezvous wakeups".
 - `state.reported.mcu.online` is `true` only after the MCU has shown sustained BLE reachability, either by staying connected or by advertising regularly for the configured recovery window.
-- `rig` reads `state.reported.board.power`, `state.reported.board.wifi.online`, `state.reported.board.video.ready`, and `state.reported.board.video.viewerConnected` from the shared shadow as the board posture inputs for `reported.redcon`.
+- `rig` reads retained MCP availability from `txings/<device_id>/mcp/status` and `state.reported.board.video.ready` from the shared shadow as the readiness inputs for `reported.redcon`.
+- `state.reported.board.video.viewerConnected` remains informational only and does not affect `reported.redcon`.
 - `rig` emits `DBIRTH` when BLE reachability reaches the same sustained-online condition that drives `reported.mcu.online=true`.
 - `rig` emits `DDEATH` when BLE reachability times out, forces `reported.redcon=4`, and clears `desired.redcon` plus internal `desired.board.power` best-effort.
 - AWS IoT registry attributes:
@@ -127,6 +128,7 @@ Namespace and identity:
 Current metrics:
 - Node metric: `rig.redcon`
 - Device metrics: `redcon`, `batteryMv`
+- Device detail metrics: `services/mcp/*`
 - Writable device command metric: `redcon`
 
 Current topics:

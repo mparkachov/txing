@@ -153,6 +153,58 @@ def _make_runtime() -> MagicMock:
 
 
 class ShadowControlContractTests(unittest.TestCase):
+    def test_aws_shadow_connect_initializes_mcp_before_requesting_shadow_snapshot(self) -> None:
+        events: list[str] = []
+
+        class _FakeConnection:
+            def __init__(self, *_args: object, **_kwargs: object) -> None:
+                self.subscriptions: list[str] = []
+
+            def connect(self, *, timeout_seconds: float) -> None:
+                del timeout_seconds
+                events.append("connect")
+
+            def disconnect(self, *, timeout_seconds: float) -> None:
+                del timeout_seconds
+
+            def subscribe(
+                self,
+                topic: str,
+                _handler: object,
+                *,
+                timeout_seconds: float,
+            ) -> None:
+                del timeout_seconds
+                self.subscriptions.append(topic)
+
+            def publish(
+                self,
+                topic: str,
+                payload: str,
+                *,
+                timeout_seconds: float,
+            ) -> None:
+                del payload, timeout_seconds
+                events.append(f"publish:{topic}")
+
+        mcp_server = MagicMock()
+        mcp_server.session_c2s_subscription = "txings/unit-local/mcp/session/+/c2s"
+        mcp_server.status_topic = "txings/unit-local/mcp/status"
+        mcp_server.build_unavailable_status_payload.return_value = b'{"available":false}'
+        mcp_server.on_connected.side_effect = lambda **_kwargs: events.append("mcp-connected")
+
+        with patch.object(shadow_control, "AwsIotWebsocketSyncConnection", _FakeConnection):
+            shadow_client = AwsShadowClient(
+                _make_config(),
+                aws_runtime=_make_runtime(),
+                mcp_server=mcp_server,
+            )
+            shadow_client.ensure_connected(timeout_seconds=1.0)
+
+        self.assertEqual(events[0:2], ["connect", "mcp-connected"])
+        self.assertEqual(events[2], "publish:$aws/things/unit-local/shadow/get")
+        mcp_server.on_connected.assert_called_once()
+
     def test_routes_cmd_vel_messages_to_controller(self) -> None:
         cmd_vel_controller = MagicMock()
         shadow_client = AwsShadowClient(

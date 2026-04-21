@@ -1,4 +1,5 @@
 import type { Twist } from './cmd-vel'
+import type { SparkplugRedconSource } from './sparkplug-device-redcon'
 
 export type ShadowConnectionState = 'idle' | 'connecting' | 'connected' | 'error'
 type ResolveIdToken = () => Promise<string>
@@ -10,6 +11,7 @@ export type ShadowSessionOptions = {
   sparkplugEdgeNodeId: string
   resolveIdToken: ResolveIdToken
   onShadowDocument: (shadow: unknown, operation: 'get' | 'update') => void
+  onSparkplugRedconChange: (redcon: number, source: SparkplugRedconSource) => void
   onConnectionStateChange: (state: ShadowConnectionState) => void
   onError: (message: string) => void
 }

@@ -20,7 +20,7 @@
   - `off` -> request `redcon=4`
 - Users do not directly select REDCON levels.
 - `mcu.*` and `board.*` remain in shadow as supporting operational detail only.
-- The current implementation keeps the viewer-dependent `REDCON 1` rule.
+- The current implementation derives txing REDCON from BLE reachability, MCU wake state, MCP availability, and board video readiness.
 
 ## Identity Model
 
@@ -51,7 +51,7 @@ rig
   -> publishes NBIRTH/NDEATH for the rig node; NBIRTH carries rig.redcon
   -> publishes DBIRTH/DDATA/DDEATH for txing devices
   -> reflects desired/report lifecycle state into txing AWS shadows only
-  -> derives txing reported.redcon from current MCU + board operational detail
+  -> derives txing reported.redcon from BLE reachability plus MCP/video readiness inputs
 
 txing board control
   -> remains owner of reported.board.*
@@ -140,7 +140,7 @@ Semantics:
   - must match the Sparkplug device actual `batteryMv`
 - Direct scalar attributes under `txing.state.reported` are the strict Sparkplug metric reflection surface.
   - In the current implementation lifecycle reflection metrics are `redcon` and `batteryMv`.
-  - Phase 2 also adds Sparkplug device metrics under `services/mcp/*` as MCP discovery summary (availability, transport, descriptor topic, lease settings, and server/protocol versions).
+  - Sparkplug device metrics also include `services/mcp/*` as the MCP discovery summary (availability, transport, descriptor topic, lease settings, and server/protocol versions).
   - `mcu.*` and `board.*` remain shadow-only operational detail and are not Sparkplug metric reflections.
 - AWS IoT registry attributes hold stable per-device metadata outside the shadow:
   - `attributes.rig`
@@ -188,21 +188,23 @@ The current implementation does not maintain AWS IoT things or shadows for `rig`
 The current implementation uses this txing REDCON ladder:
 
 - `REDCON 4`
-  - BLE reachable
-  - MCU in the sleep state
+  - MCU is in the sleep state or BLE is unavailable
 - `REDCON 3`
-  - MCU in the wakeup state
-  - board not yet fully ready for the current video-derived readiness model
+  - BLE is reachable
+  - MCU is in the wakeup state
+  - MCP is not yet available
 - `REDCON 2`
-  - board powered
-  - board Wi-Fi online
-  - board video ready
-  - no external viewer connected
+  - BLE is reachable
+  - MCU is in the wakeup state
+  - MCP is available
+  - board video is not yet ready
 - `REDCON 1`
-  - same as `REDCON 2`
-  - external viewer connected
+  - BLE is reachable
+  - MCU is in the wakeup state
+  - MCP is available
+  - `reported.board.video.ready=true`
 
-The current implementation keeps `REDCON 1` dependent on `reported.board.video.viewerConnected`.
+`reported.board.video.viewerConnected` remains informational only and does not participate in REDCON.
 
 ## Convergence Behavior
 
@@ -217,7 +219,7 @@ Current examples:
 - target `redcon=3`
   - wake txing
   - once MCU is awake, reflect `state.reported.redcon=3`
-  - if board/video conditions later satisfy higher derived levels, reported REDCON may rise naturally to `2` or `1`
+  - if MCP/video conditions later satisfy higher derived levels, reported REDCON may rise naturally to `2` or `1`
   - clear `state.desired.redcon` once actual REDCON reaches the commanded REDCON
 
 The current implementation keeps the current derived-behavior model rather than making REDCON a strict actuator state machine.

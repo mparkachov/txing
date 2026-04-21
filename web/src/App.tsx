@@ -51,6 +51,7 @@ import {
   extractReportedMcuOnline,
   extractReportedMcuPower,
   extractReportedRedcon,
+  selectPrimaryReportedRedcon,
 } from './app-model'
 import {
   isResourceNotFoundError,
@@ -288,6 +289,7 @@ function App({ initialAuthError = '' }: AppProps) {
   const [status, setStatus] = useState<SessionStatus>('loading')
   const [authUser, setAuthUser] = useState<AuthUser | null>(null)
   const [shadowJson, setShadowJson] = useState<string>('{}')
+  const [sparkplugReportedRedcon, setSparkplugReportedRedcon] = useState<number | null>(null)
   const [lastShadowUpdateAtMs, setLastShadowUpdateAtMs] = useState<number | null>(null)
   const [isLoadingShadow, setIsLoadingShadow] = useState(false)
   const [isUpdatingShadow, setIsUpdatingShadow] = useState(false)
@@ -392,9 +394,17 @@ function App({ initialAuthError = '' }: AppProps) {
     () => extractReportedBoardDrive(shadowDocument),
     [shadowDocument],
   )
-  const reportedRedcon = useMemo(
+  const shadowReportedRedcon = useMemo(
     () => extractReportedRedcon(shadowDocument),
     [shadowDocument],
+  )
+  const reportedRedcon = useMemo(
+    () =>
+      selectPrimaryReportedRedcon({
+        sparkplugReportedRedcon,
+        shadowReportedRedcon,
+      }),
+    [shadowReportedRedcon, sparkplugReportedRedcon],
   )
   const desiredRedcon = useMemo(
     () => extractDesiredRedcon(shadowDocument),
@@ -754,6 +764,7 @@ function App({ initialAuthError = '' }: AppProps) {
       setIsUpdatingShadow(false)
       setLastShadowUpdateAtMs(null)
       setShadowJson('{}')
+      setSparkplugReportedRedcon(null)
       setIsBoardVideoExpanded(false)
       setIsMcpConnected(false)
       lastBoardVideoErrorRef.current = null
@@ -764,6 +775,7 @@ function App({ initialAuthError = '' }: AppProps) {
     let cancelled = false
     let shadowSession: ShadowSession | null = null
     setShadowJson('{}')
+    setSparkplugReportedRedcon(null)
     setLastShadowUpdateAtMs(null)
     setIsLoadingShadow(true)
     setIsUpdatingShadow(false)
@@ -792,6 +804,12 @@ function App({ initialAuthError = '' }: AppProps) {
             }
             applyShadowSnapshot(shadow)
             setIsLoadingShadow(false)
+          },
+          onSparkplugRedconChange: (nextRedcon) => {
+            if (cancelled) {
+              return
+            }
+            setSparkplugReportedRedcon(nextRedcon)
           },
           onConnectionStateChange: (nextState) => {
             if (!cancelled) {

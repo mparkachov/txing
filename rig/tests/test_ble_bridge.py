@@ -153,8 +153,9 @@ def _install_paho_stub() -> None:
 _install_bleak_stub()
 _install_paho_stub()
 
-from rig.ble_bridge import (
+from unit_rig.ble_bridge import (
     AwsShadowClient,
+    AwsShadowUpdate,
     BleSleepBridge,
     BridgeConfig,
     RigFleetBridge,
@@ -228,7 +229,7 @@ class AwsShadowClientTests(unittest.TestCase):
                 captured["config"] = config
                 captured["kwargs"] = kwargs
 
-        with patch("rig.ble_bridge.AwsIotWebsocketConnection", FakeConnection):
+        with patch("unit_rig.ble_bridge.AwsIotWebsocketConnection", FakeConnection):
             AwsShadowClient(
                 BridgeConfig(
                     sparkplug_group_id="town",
@@ -514,15 +515,13 @@ class RigFleetScannerTests(unittest.TestCase):
 
 
 class RedconTests(unittest.TestCase):
-    def test_calculates_redcon_from_reported_posture(self) -> None:
+    def test_calculates_redcon_from_ble_mcp_and_video_posture(self) -> None:
         self.assertEqual(
             _calculate_redcon(
                 ble_online=True,
                 mcu_power=False,
-                board_power=False,
-                board_wifi_online=False,
+                mcp_available=False,
                 board_video_ready=False,
-                board_video_viewer_connected=False,
             ),
             4,
         )
@@ -530,10 +529,8 @@ class RedconTests(unittest.TestCase):
             _calculate_redcon(
                 ble_online=True,
                 mcu_power=True,
-                board_power=False,
-                board_wifi_online=False,
+                mcp_available=False,
                 board_video_ready=False,
-                board_video_viewer_connected=False,
             ),
             3,
         )
@@ -541,21 +538,8 @@ class RedconTests(unittest.TestCase):
             _calculate_redcon(
                 ble_online=True,
                 mcu_power=True,
-                board_power=True,
-                board_wifi_online=True,
+                mcp_available=True,
                 board_video_ready=False,
-                board_video_viewer_connected=False,
-            ),
-            3,
-        )
-        self.assertEqual(
-            _calculate_redcon(
-                ble_online=True,
-                mcu_power=True,
-                board_power=True,
-                board_wifi_online=True,
-                board_video_ready=True,
-                board_video_viewer_connected=False,
             ),
             2,
         )
@@ -563,10 +547,8 @@ class RedconTests(unittest.TestCase):
             _calculate_redcon(
                 ble_online=True,
                 mcu_power=True,
-                board_power=True,
-                board_wifi_online=True,
+                mcp_available=True,
                 board_video_ready=True,
-                board_video_viewer_connected=True,
             ),
             1,
         )
@@ -574,10 +556,8 @@ class RedconTests(unittest.TestCase):
             _calculate_redcon(
                 ble_online=False,
                 mcu_power=True,
-                board_power=True,
-                board_wifi_online=True,
+                mcp_available=True,
                 board_video_ready=True,
-                board_video_viewer_connected=True,
             ),
             4,
         )
@@ -719,6 +699,12 @@ class LifecycleBridgeTests(unittest.TestCase):
     def test_redcon_four_requests_internal_board_shutdown_before_sleep(self) -> None:
         asyncio.run(self._exercise_redcon_four_board_shutdown_request())
 
+    def test_mcp_and_video_ready_stage_redcon_through_two_before_one(self) -> None:
+        asyncio.run(self._exercise_mcp_and_video_ready_stage_redcon())
+
+    def test_viewer_connected_no_longer_changes_redcon(self) -> None:
+        asyncio.run(self._exercise_viewer_connected_is_informational())
+
     async def _exercise_redcon_four_board_shutdown_request(self) -> None:
         cloud_shadow = FakeCloudShadow()
         shadow = ShadowState(
@@ -741,6 +727,75 @@ class LifecycleBridgeTests(unittest.TestCase):
         self.assertIs(shadow.desired_board_power, False)
         self.assertEqual(len(cloud_shadow.shadow_updates), 1)
         self.assertIs(cloud_shadow.shadow_updates[0]["desired_board_power"], False)
+
+    async def _exercise_mcp_and_video_ready_stage_redcon(self) -> None:
+        cloud_shadow = FakeCloudShadow()
+        shadow = ShadowState(
+            reported_power=True,
+            battery_mv=3795,
+            ble_online=True,
+            redcon=3,
+        )
+        bridge = BleSleepBridge(
+            BridgeConfig(),
+            shadow,
+            cloud_shadow,  # type: ignore[arg-type]
+        )
+        bridge._sparkplug_device_born = True
+
+        await bridge._apply_cloud_shadow_updates(
+            updates=[
+                AwsShadowUpdate(
+                    thing_name="txing",
+                    source="mqtt/mcp/status+shadow/update",
+                    mcp_status={"available": True},
+                    board_video_ready=True,
+                )
+            ]
+        )
+
+        self.assertTrue(shadow.mcp_available)
+        self.assertTrue(shadow.board_video_ready)
+        self.assertEqual(shadow.redcon, 1)
+        self.assertEqual(len(cloud_shadow.shadow_updates), 2)
+        self.assertEqual(cloud_shadow.shadow_updates[0]["reported_root_patch"], {"redcon": 2})
+        self.assertEqual(cloud_shadow.shadow_updates[1]["reported_root_patch"], {"redcon": 1})
+        self.assertEqual(
+            [decode_payload(payload).metrics[0].int_value for _topic, payload in cloud_shadow.sparkplug_publishes],
+            [2, 1],
+        )
+
+    async def _exercise_viewer_connected_is_informational(self) -> None:
+        cloud_shadow = FakeCloudShadow()
+        shadow = ShadowState(
+            reported_power=True,
+            battery_mv=3795,
+            ble_online=True,
+            mcp_available=True,
+            board_video_ready=True,
+            redcon=1,
+        )
+        bridge = BleSleepBridge(
+            BridgeConfig(),
+            shadow,
+            cloud_shadow,  # type: ignore[arg-type]
+        )
+        bridge._sparkplug_device_born = True
+
+        await bridge._apply_cloud_shadow_updates(
+            updates=[
+                AwsShadowUpdate(
+                    thing_name="txing",
+                    source="shadow/update/accepted",
+                    board_video_viewer_connected=True,
+                )
+            ]
+        )
+
+        self.assertTrue(shadow.board_video_viewer_connected)
+        self.assertEqual(shadow.redcon, 1)
+        self.assertEqual(cloud_shadow.shadow_updates, [])
+        self.assertEqual(cloud_shadow.sparkplug_publishes, [])
 
     def test_ddeath_clears_desired_state_and_publishes_device_death(self) -> None:
         asyncio.run(self._exercise_ddeath_clears_desired_state())

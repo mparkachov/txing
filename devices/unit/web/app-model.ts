@@ -29,6 +29,11 @@ export type TxingPowerTransitionInputs = {
   reportedRedcon: number | null
 }
 
+export type PrimaryReportedRedconInputs = {
+  sparkplugReportedRedcon: number | null
+  shadowReportedRedcon: number | null
+}
+
 type RedconDescriptor = {
   colorName: string
   postureName: string
@@ -145,6 +150,12 @@ export const extractReportedRedcon = (shadow: unknown): number | null => {
   }
   return redcon >= 1 && redcon <= 4 ? redcon : null
 }
+
+export const selectPrimaryReportedRedcon = ({
+  sparkplugReportedRedcon,
+  shadowReportedRedcon,
+}: PrimaryReportedRedconInputs): number | null =>
+  sparkplugReportedRedcon ?? shadowReportedRedcon
 
 export const getTxingRedconToneClass = (redcon: number | null): string => {
   if (redcon === null) {
