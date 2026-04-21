@@ -55,7 +55,7 @@ In this repository's current Thing Shadow contract, the rig runtime derives a si
 | `4` | Green | Sleep state / `Cold Camp` | BLE unavailable or `reported.mcu.power=false` |
 | `3` | Yellow | Booting / `Torch-Up` | BLE reachable, `reported.mcu.power=true`, and retained MCP status unavailable |
 | `2` | Orange / Amber | On watch / `Ember Watch` | BLE reachable, `reported.mcu.power=true`, retained MCP status available, and retained video status not ready |
-| `1` | Red | Ready / `Hot Rig` | BLE reachable, `reported.mcu.power=true`, retained MCP status available, and `reported.video.ready=true` |
+| `1` | Red | Ready / `Hot Rig` | BLE reachable, `reported.mcu.power=true`, retained MCP status available, and retained video status ready |
 
 This mapping is intentionally derived from reported state, not desired state. It answers "how far up is the rig right now?" rather than "what was requested?".
 

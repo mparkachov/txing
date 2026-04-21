@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from board.mcp_service import BoardMcpServer
+from board.cmd_vel import DriveState
 from aws.mcp_topics import build_mcp_session_s2c_topic
 
 
@@ -44,16 +45,22 @@ class _FakeCmdVelController:
     def __init__(self) -> None:
         self.messages: list[dict[str, Any]] = []
         self.stop_reasons: list[str] = []
+        self.drive_state = DriveState(0, 0, 0)
 
     def handle_message(self, payload: Any) -> bool:
         if not isinstance(payload, dict):
             return False
         self.messages.append(payload)
+        self.drive_state = DriveState(40, 40, self.drive_state.sequence + 1)
         return True
 
     def stop(self, *, reason: str, force: bool = False) -> None:
         del force
         self.stop_reasons.append(reason)
+        self.drive_state = DriveState(0, 0, self.drive_state.sequence + 1)
+
+    def get_drive_state(self) -> DriveState:
+        return self.drive_state
 
 
 def _decode_payload(call: _PublishCall) -> dict[str, Any]:
@@ -135,6 +142,7 @@ class BoardMcpServerTests(unittest.TestCase):
         tools = tools_response["result"]["tools"]
         self.assertIn("control.acquire_lease", [tool["name"] for tool in tools])
         self.assertIn("cmd_vel.publish", [tool["name"] for tool in tools])
+        self.assertIn("robot.get_state", [tool["name"] for tool in tools])
 
     def test_lease_and_motion_tool_flow(self) -> None:
         cmd_vel = _FakeCmdVelController()
@@ -191,6 +199,10 @@ class BoardMcpServerTests(unittest.TestCase):
         )
         publish_response = _latest_s2c_payload(client, session_id)
         self.assertIs(publish_response["result"]["structuredContent"]["applied"], True)
+        self.assertEqual(
+            publish_response["result"]["structuredContent"]["motion"],
+            {"leftSpeed": 40, "rightSpeed": 40, "sequence": 1},
+        )
         self.assertEqual(len(cmd_vel.messages), 1)
 
         _send_rpc(
@@ -208,6 +220,10 @@ class BoardMcpServerTests(unittest.TestCase):
         )
         stop_response = _latest_s2c_payload(client, session_id)
         self.assertIs(stop_response["result"]["structuredContent"]["stopped"], True)
+        self.assertEqual(
+            stop_response["result"]["structuredContent"]["motion"],
+            {"leftSpeed": 0, "rightSpeed": 0, "sequence": 2},
+        )
         self.assertIn("cmd_vel.stop", cmd_vel.stop_reasons[-1])
 
         _send_rpc(
@@ -328,6 +344,80 @@ class BoardMcpServerTests(unittest.TestCase):
         self.assertNotEqual(
             second_acquire["result"]["structuredContent"]["leaseToken"],
             first_lease_token,
+        )
+
+    def test_robot_get_state_returns_snapshot_for_initialized_session(self) -> None:
+        cmd_vel = _FakeCmdVelController()
+        client = _FakeMqttClient()
+        server = BoardMcpServer(
+            device_id="unit-local",
+            cmd_vel_controller=cmd_vel,
+            video_state_provider=lambda: {
+                "ready": True,
+                "status": "ready",
+                "viewerConnected": True,
+                "lastError": None,
+            },
+            lease_ttl_ms=5000,
+        )
+        server.on_connected(client=client, publish_timeout_seconds=2.0)
+        session_id = "session-a"
+
+        _send_rpc(
+            server=server,
+            session_id=session_id,
+            payload={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+        )
+        _send_rpc(
+            server=server,
+            session_id=session_id,
+            payload={"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
+        )
+        _send_rpc(
+            server=server,
+            session_id=session_id,
+            payload={
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {"name": "control.acquire_lease", "arguments": {}},
+            },
+        )
+        _send_rpc(
+            server=server,
+            session_id=session_id,
+            payload={
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "tools/call",
+                "params": {"name": "robot.get_state", "arguments": {}},
+            },
+        )
+        state_response = _latest_s2c_payload(client, session_id)["result"]["structuredContent"]
+
+        self.assertEqual(
+            state_response["control"],
+            {
+                "leaseRequired": True,
+                "leaseTtlMs": 5000,
+                "leaseHeldByCaller": True,
+                "leaseOwnerSessionId": session_id,
+                "leaseExpiresAtMs": state_response["control"]["leaseExpiresAtMs"],
+            },
+        )
+        self.assertEqual(
+            state_response["motion"],
+            {"leftSpeed": 0, "rightSpeed": 0, "sequence": 0},
+        )
+        self.assertEqual(
+            state_response["video"],
+            {
+                "available": True,
+                "ready": True,
+                "status": "ready",
+                "viewerConnected": True,
+                "lastError": None,
+            },
         )
 
 

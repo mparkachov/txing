@@ -178,6 +178,6 @@ The stack serves the SPA from CloudFront instead of the raw S3 website endpoint 
 
 ## MCP teleop note
 
-- Teleop control uses MCP over MQTT (`txings/<device_id>/mcp/...`) instead of treating raw `cmd_vel` publish as the long-term API.
+- Teleop control uses MCP over MQTT (`txings/<device_id>/mcp/...`) as the only remote board control API.
 - The browser acquires and renews an MCP control lease while sending `cmd_vel.publish`.
-- A raw `<device_id>/board/cmd_vel` publish fallback remains for compatibility during rollout.
+- The browser reads current motion/video/control state from MCP `robot.get_state`.

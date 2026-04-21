@@ -9,14 +9,6 @@ export type Twist = {
   angular: Vector3
 }
 
-export type CmdVelPublishPacket = {
-  topicName: string
-  qos: 0
-  retain: false
-  payload: Uint8Array
-}
-
-const encoder = new TextEncoder()
 const directionalKeys = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'])
 // Temporary browser teleop defaults; the MQTT contract stays strict ROS Twist semantics.
 export const cmdVelLinearStepMps = 0.1
@@ -37,8 +29,6 @@ export const isCmdVelStopKey = (key: string): boolean => key.toLowerCase() === '
 
 export const isCmdVelControlKey = (key: string): boolean =>
   isCmdVelDirectionalKey(key) || isCmdVelStopKey(key)
-
-export const buildCmdVelTopic = (thingName: string): string => `${thingName}/board/cmd_vel`
 
 export const buildZeroTwist = (): Twist => ({
   linear: createZeroVector(),
@@ -107,13 +97,3 @@ export const twistEquals = (left: Twist, right: Twist): boolean =>
   left.angular.x === right.angular.x &&
   left.angular.y === right.angular.y &&
   left.angular.z === right.angular.z
-
-export const buildCmdVelPublishPacket = (
-  thingName: string,
-  twist: Twist,
-): CmdVelPublishPacket => ({
-  topicName: buildCmdVelTopic(thingName),
-  qos: 0,
-  retain: false,
-  payload: encoder.encode(JSON.stringify(twist)),
-})

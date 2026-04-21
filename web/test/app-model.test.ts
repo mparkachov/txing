@@ -8,8 +8,6 @@ import {
   extractReportedBatteryMv,
   extractDesiredBoardPower,
   extractReportedMcuOnline,
-  extractReportedBoardDrive,
-  extractReportedVideo,
   extractReportedRedcon,
   getTrackIndicatorPresentation,
   getTxingRedconToneClass,
@@ -17,46 +15,6 @@ import {
 } from '../src/app-model'
 
 describe('app model helpers', () => {
-  test('extracts board video runtime metadata from shadow state', () => {
-    const runtime = extractReportedVideo({
-      state: {
-        reported: {
-          video: {
-            ready: true,
-            status: 'ready',
-            transport: 'aws-webrtc',
-            viewerConnected: true,
-            lastError: null,
-          },
-        },
-      },
-    })
-
-    expect(runtime.ready).toBe(true)
-    expect(runtime.transport).toBe('aws-webrtc')
-    expect(runtime.viewerConnected).toBe(true)
-  })
-
-  test('accepts unavailable board video status from reflected shadow cache', () => {
-    const runtime = extractReportedVideo({
-      state: {
-        reported: {
-          video: {
-            ready: false,
-            status: 'unavailable',
-            transport: 'aws-webrtc',
-            viewerConnected: false,
-            lastError: null,
-          },
-        },
-      },
-    })
-
-    expect(runtime.ready).toBe(false)
-    expect(runtime.status).toBe('unavailable')
-    expect(runtime.transport).toBe('aws-webrtc')
-  })
-
   test('extracts top-level reported redcon from shadow state', () => {
     expect(
       extractReportedRedcon({
@@ -92,44 +50,6 @@ describe('app model helpers', () => {
         },
       }),
     ).toBeNull()
-  })
-
-  test('extracts signed board track percentages from shadow state', () => {
-    expect(
-      extractReportedBoardDrive({
-        state: {
-          reported: {
-            board: {
-              drive: {
-                leftSpeed: 60,
-                rightSpeed: -30,
-              },
-            },
-          },
-        },
-      }),
-    ).toEqual({
-      leftSpeed: 60,
-      rightSpeed: -30,
-    })
-
-    expect(
-      extractReportedBoardDrive({
-        state: {
-          reported: {
-            board: {
-              drive: {
-                leftSpeed: 160,
-                rightSpeed: 0,
-              },
-            },
-          },
-        },
-      }),
-    ).toEqual({
-      leftSpeed: null,
-      rightSpeed: 0,
-    })
   })
 
   test('maps redcon values to txing label tone classes and descriptions', () => {

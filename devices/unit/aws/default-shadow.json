@@ -13,39 +13,12 @@
         "power": false,
         "online": false
       },
-      "video": {
-        "serviceId": "video",
-        "serverInfo": {
-          "name": "video",
-          "version": "unknown"
-        },
-        "topicRoot": "",
-        "descriptorTopic": "",
-        "statusTopic": "",
-        "transport": "aws-webrtc",
-        "channelName": "",
-        "region": null,
-        "codec": {
-          "video": "h264"
-        },
-        "serverVersion": "unknown",
-        "available": false,
-        "ready": false,
-        "status": "unavailable",
-        "viewerConnected": false,
-        "lastError": null,
-        "updatedAtMs": null
-      },
       "board": {
         "power": false,
         "wifi": {
           "online": false,
           "ipv4": null,
           "ipv6": null
-        },
-        "drive": {
-          "leftSpeed": 0,
-          "rightSpeed": 0
         }
       }
     }

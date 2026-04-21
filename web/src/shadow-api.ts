@@ -4,6 +4,34 @@ import type { SparkplugRedconSource } from './sparkplug-device-redcon'
 export type ShadowConnectionState = 'idle' | 'connecting' | 'connected' | 'error'
 type ResolveIdToken = () => Promise<string>
 
+export type RobotControlState = {
+  leaseRequired: boolean
+  leaseTtlMs: number | null
+  leaseHeldByCaller: boolean
+  leaseOwnerSessionId: string | null
+  leaseExpiresAtMs: number | null
+}
+
+export type RobotMotionState = {
+  leftSpeed: number | null
+  rightSpeed: number | null
+  sequence: number | null
+}
+
+export type RobotVideoState = {
+  available: boolean
+  ready: boolean
+  status: 'starting' | 'ready' | 'error' | 'unavailable' | null
+  viewerConnected: boolean
+  lastError: string | null
+}
+
+export type RobotState = {
+  control: RobotControlState
+  motion: RobotMotionState
+  video: RobotVideoState
+}
+
 export type ShadowSessionOptions = {
   thingName: string
   awsRegion: string
@@ -12,6 +40,7 @@ export type ShadowSessionOptions = {
   resolveIdToken: ResolveIdToken
   onShadowDocument: (shadow: unknown, operation: 'get' | 'update') => void
   onSparkplugRedconChange: (redcon: number, source: SparkplugRedconSource) => void
+  onRobotStateChange: (state: RobotState | null) => void
   onConnectionStateChange: (state: ShadowConnectionState) => void
   onError: (message: string) => void
 }
@@ -22,12 +51,12 @@ export type ShadowSession = {
   updateShadow: (shadowDocument: unknown) => Promise<unknown>
   publishRedconCommand: (redcon: number) => Promise<void>
   publishCmdVel: (twist: Twist) => Promise<void>
+  requestRobotState: () => Promise<RobotState>
   waitForSnapshot: (
     predicate: (shadow: unknown) => boolean,
     timeoutMs: number,
   ) => Promise<unknown>
   isConnected: () => boolean
-  isMcpConnected: () => boolean
   close: () => void
 }
 
@@ -78,6 +107,11 @@ class LazyShadowSession implements ShadowSession {
     await session.publishCmdVel(twist)
   }
 
+  async requestRobotState(): Promise<RobotState> {
+    const session = await this.getSession()
+    return session.requestRobotState()
+  }
+
   async waitForSnapshot(
     predicate: (shadow: unknown) => boolean,
     timeoutMs: number,
@@ -88,10 +122,6 @@ class LazyShadowSession implements ShadowSession {
 
   isConnected(): boolean {
     return this.session?.isConnected() ?? false
-  }
-
-  isMcpConnected(): boolean {
-    return this.session?.isMcpConnected() ?? false
   }
 
   close(): void {

@@ -50,10 +50,6 @@ class _MotorDriverStub:
 motors = _MotorDriverStub()
 
 
-def build_cmd_vel_topic(thing_name: str) -> str:
-    return f"{thing_name}/board/cmd_vel"
-
-
 def _coerce_axis_value(value: Any) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
@@ -136,7 +132,7 @@ class CmdVelController:
         watchdog_poll_interval: float = 0.05,
     ) -> None:
         self._thing_name = thing_name
-        self._topic = build_cmd_vel_topic(thing_name)
+        self._source = f"mcp:{thing_name}"
         self._motor_driver = motor_driver
         self._max_speed = max_speed
         self._watchdog_timeout_seconds = watchdog_timeout_seconds
@@ -148,10 +144,6 @@ class CmdVelController:
         self._stop_event = threading.Event()
         self._watchdog_thread: threading.Thread | None = None
         self._closed = False
-
-    @property
-    def topic(self) -> str:
-        return self._topic
 
     def get_drive_state(self) -> DriveState:
         with self._lock:
@@ -188,7 +180,7 @@ class CmdVelController:
         if twist is None:
             LOGGER.warning(
                 "Ignored malformed cmd_vel payload on %s: %s",
-                self._topic,
+                self._source,
                 json.dumps(payload, sort_keys=True),
             )
             return False
@@ -202,7 +194,7 @@ class CmdVelController:
         if unsupported_axes:
             LOGGER.warning(
                 "Ignoring unsupported cmd_vel axes on %s: %s",
-                self._topic,
+                self._source,
                 ", ".join(unsupported_axes),
             )
 

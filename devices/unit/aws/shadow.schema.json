@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://txing.local/schemas/txing-shadow.schema.json",
-  "title": "Txing Thing Shadow Contract v23",
+  "title": "Txing Thing Shadow Contract v24",
   "description": "Canonical payload shape for txing Thing Shadow updates and snapshots.",
   "type": "object",
   "additionalProperties": true,
@@ -110,9 +110,6 @@
         "mcu": {
           "$ref": "#/$defs/reportedMcuState"
         },
-        "video": {
-          "$ref": "#/$defs/reportedVideoState"
-        },
         "board": {
           "$ref": "#/$defs/reportedBoardState"
         }
@@ -126,11 +123,6 @@
         {
           "required": [
             "mcu"
-          ]
-        },
-        {
-          "required": [
-            "video"
           ]
         },
         {
@@ -161,8 +153,7 @@
       "additionalProperties": true,
       "required": [
         "power",
-        "wifi",
-        "drive"
+        "wifi"
       ],
       "properties": {
         "power": {
@@ -170,9 +161,6 @@
         },
         "wifi": {
           "$ref": "#/$defs/reportedBoardWifiState"
-        },
-        "drive": {
-          "$ref": "#/$defs/reportedBoardDriveState"
         }
       }
     },
@@ -199,144 +187,6 @@
             "null"
           ],
           "format": "ipv6"
-        }
-      }
-    },
-    "reportedBoardDriveState": {
-      "type": "object",
-      "additionalProperties": true,
-      "required": [
-        "leftSpeed",
-        "rightSpeed"
-      ],
-      "properties": {
-        "leftSpeed": {
-          "type": "integer",
-          "minimum": -100,
-          "maximum": 100
-        },
-        "rightSpeed": {
-          "type": "integer",
-          "minimum": -100,
-          "maximum": 100
-        }
-      }
-    },
-    "reportedVideoState": {
-      "type": "object",
-      "additionalProperties": true,
-      "required": [
-        "serviceId",
-        "serverInfo",
-        "available",
-        "ready",
-        "status",
-        "transport",
-        "codec",
-        "viewerConnected",
-        "lastError"
-      ],
-      "properties": {
-        "serviceId": {
-          "type": "string",
-          "enum": [
-            "video"
-          ]
-        },
-        "serverInfo": {
-          "$ref": "#/$defs/reportedVideoServerInfo"
-        },
-        "available": {
-          "type": "boolean"
-        },
-        "ready": {
-          "type": "boolean"
-        },
-        "status": {
-          "type": "string",
-          "enum": [
-            "starting",
-            "ready",
-            "error",
-            "unavailable"
-          ]
-        },
-        "transport": {
-          "type": "string",
-          "enum": [
-            "aws-webrtc"
-          ]
-        },
-        "codec": {
-          "$ref": "#/$defs/reportedBoardVideoCodecState"
-        },
-        "viewerConnected": {
-          "type": "boolean"
-        },
-        "lastError": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "updatedAtMs": {
-          "type": [
-            "integer",
-            "null"
-          ],
-          "minimum": 0
-        },
-        "topicRoot": {
-          "type": "string"
-        },
-        "descriptorTopic": {
-          "type": "string"
-        },
-        "statusTopic": {
-          "type": "string"
-        },
-        "channelName": {
-          "type": "string"
-        },
-        "region": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "serverVersion": {
-          "type": "string"
-        }
-      }
-    },
-    "reportedVideoServerInfo": {
-      "type": "object",
-      "additionalProperties": true,
-      "required": [
-        "name",
-        "version"
-      ],
-      "properties": {
-        "name": {
-          "type": "string"
-        },
-        "version": {
-          "type": "string"
-        }
-      }
-    },
-    "reportedBoardVideoCodecState": {
-      "type": "object",
-      "additionalProperties": true,
-      "required": [
-        "video"
-      ],
-      "properties": {
-        "video": {
-          "enum": [
-            "h264",
-            null
-          ]
         }
       }
     }

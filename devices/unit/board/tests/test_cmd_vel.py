@@ -11,7 +11,6 @@ from board.cmd_vel import (
     CmdVelController,
     Twist,
     Vector3,
-    build_cmd_vel_topic,
     mix_twist_to_tank_speeds,
     parse_twist_payload,
 )
@@ -42,9 +41,6 @@ class _FlakyMotorDriver:
 
 
 class CmdVelContractTests(unittest.TestCase):
-    def test_builds_topic(self) -> None:
-        self.assertEqual(build_cmd_vel_topic("txing"), "txing/board/cmd_vel")
-
     def test_parses_valid_twist_payload(self) -> None:
         twist = parse_twist_payload(
             {

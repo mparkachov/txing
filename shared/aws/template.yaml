@@ -93,16 +93,6 @@ Resources:
             Effect: Allow
             Action: iot:Subscribe
             Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/spBv1.0/*
-          - Sid: RigCmdVelTopics
-            Effect: Allow
-            Action:
-              - iot:Publish
-              - iot:Receive
-            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/*/board/cmd_vel
-          - Sid: RigCmdVelTopicFilters
-            Effect: Allow
-            Action: iot:Subscribe
-            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/*/board/cmd_vel
           - Sid: RigMcpDiscoveryTopics
             Effect: Allow
             Action: iot:Receive
@@ -211,16 +201,6 @@ Resources:
             Effect: Allow
             Action: iot:Subscribe
             Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/$aws/things/*/shadow/*
-          - Sid: DeviceCmdVelTopics
-            Effect: Allow
-            Action:
-              - iot:Publish
-              - iot:Receive
-            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/*/board/cmd_vel
-          - Sid: DeviceCmdVelTopicFilters
-            Effect: Allow
-            Action: iot:Subscribe
-            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/*/board/cmd_vel
           - Sid: DeviceMcpTopics
             Effect: Allow
             Action:

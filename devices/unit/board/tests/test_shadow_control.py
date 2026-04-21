@@ -8,7 +8,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import MagicMock, patch
 
-from board.cmd_vel import DriveState, build_cmd_vel_topic
+from board.cmd_vel import DriveState
 from board.shadow_control import (
     AwsShadowClient,
     DEFAULT_AWS_CONNECT_TIMEOUT,
@@ -203,31 +203,6 @@ class ShadowControlContractTests(unittest.TestCase):
         self.assertEqual(events[2], "publish:$aws/things/unit-local/shadow/get")
         mcp_server.on_connected.assert_called_once()
 
-    def test_routes_cmd_vel_messages_to_controller(self) -> None:
-        cmd_vel_controller = MagicMock()
-        shadow_client = AwsShadowClient(
-            _make_config(),
-            aws_runtime=MagicMock(),
-            cmd_vel_controller=cmd_vel_controller,
-        )
-
-        shadow_client._on_message(
-            build_cmd_vel_topic("unit-local"),
-            json.dumps(
-                {
-                    "linear": {"x": 1, "y": 0, "z": 0},
-                    "angular": {"x": 0, "y": 0, "z": 0},
-                }
-            ).encode("utf-8"),
-        )
-
-        cmd_vel_controller.handle_message.assert_called_once_with(
-            {
-                "linear": {"x": 1, "y": 0, "z": 0},
-                "angular": {"x": 0, "y": 0, "z": 0},
-            }
-        )
-
     def test_extracts_desired_board_power_from_shadow_snapshot(self) -> None:
         payload = {
             "state": {
@@ -263,21 +238,17 @@ class ShadowControlContractTests(unittest.TestCase):
         self.assertIsNone(payload["state"]["desired"]["board"]["power"])
         self.assertIs(payload["state"]["reported"]["board"]["power"], False)
         self.assertIs(payload["state"]["reported"]["board"]["wifi"]["online"], False)
-        self.assertEqual(payload["state"]["reported"]["board"]["drive"]["leftSpeed"], 0)
-        self.assertEqual(payload["state"]["reported"]["board"]["drive"]["rightSpeed"], 0)
 
     def test_board_report_without_video_matches_schema(self) -> None:
         validator = _load_validator(Path(UNIT_AWS_DIR / "shadow.schema.json"))
         report = _build_board_report(
             addresses=type("Addresses", (), {"ipv4": "192.168.1.20", "ipv6": "2001:db8::20"})(),
             power=True,
-            drive_state=DriveState(left_speed=20, right_speed=30, sequence=1),
         )
 
         _validate_shadow_update(validator, {"state": {"reported": {"board": report}}})
         self.assertNotIn("video", report)
-        self.assertEqual(report["drive"]["leftSpeed"], 20)
-        self.assertEqual(report["drive"]["rightSpeed"], 30)
+        self.assertNotIn("drive", report)
 
     def test_default_shadow_reset_payload_matches_schema(self) -> None:
         validator = _load_validator(Path(UNIT_AWS_DIR / "shadow.schema.json"))
@@ -291,8 +262,6 @@ class ShadowControlContractTests(unittest.TestCase):
         self.assertEqual(payload["state"]["reported"]["redcon"], 4)
         self.assertIs(payload["state"]["reported"]["board"]["power"], False)
         self.assertIs(payload["state"]["reported"]["board"]["wifi"]["online"], False)
-        self.assertEqual(payload["state"]["reported"]["board"]["drive"]["leftSpeed"], 0)
-        self.assertEqual(payload["state"]["reported"]["board"]["drive"]["rightSpeed"], 0)
 
     def test_reported_video_state_omits_runtime_timestamp(self) -> None:
         reported = build_reported_video_state(
@@ -379,8 +348,7 @@ class ShadowControlContractTests(unittest.TestCase):
         self.assertEqual(shadow_client.publish_update.call_count, 1)
         payload = shadow_client.publish_update.call_args.args[0]
         self.assertNotIn("video", payload["state"]["reported"]["board"])
-        self.assertEqual(payload["state"]["reported"]["board"]["drive"]["leftSpeed"], 0)
-        self.assertEqual(payload["state"]["reported"]["board"]["drive"]["rightSpeed"], 0)
+        self.assertNotIn("drive", payload["state"]["reported"]["board"])
         video_service.publish_status.assert_called_once()
 
     def test_main_republishes_video_status_after_runtime_error_without_shadow_video_publish(self) -> None:
@@ -475,12 +443,11 @@ class ShadowControlContractTests(unittest.TestCase):
         payload = shadow_client.publish_update.call_args_list[-1].args[0]
         self.assertIs(payload["state"]["reported"]["board"]["power"], False)
         self.assertIsNone(payload["state"]["desired"]["board"]["power"])
-        self.assertEqual(payload["state"]["reported"]["board"]["drive"]["leftSpeed"], 0)
-        self.assertEqual(payload["state"]["reported"]["board"]["drive"]["rightSpeed"], 0)
+        self.assertNotIn("drive", payload["state"]["reported"]["board"])
         video_service.publish_status.assert_called_once()
         request_system_halt.assert_called_once()
 
-    def test_main_publishes_drive_state_changes_before_heartbeat(self) -> None:
+    def test_main_ignores_drive_state_changes_for_shadow_publishing(self) -> None:
         args = _make_args()
         shadow_client = MagicMock()
         shadow_client.halt_requested.return_value = False
@@ -521,13 +488,9 @@ class ShadowControlContractTests(unittest.TestCase):
         ):
             shadow_control.main()
 
-        self.assertEqual(shadow_client.publish_update.call_count, 2)
+        self.assertEqual(shadow_client.publish_update.call_count, 1)
         first_payload = shadow_client.publish_update.call_args_list[0].args[0]
-        second_payload = shadow_client.publish_update.call_args_list[1].args[0]
-        self.assertEqual(first_payload["state"]["reported"]["board"]["drive"]["leftSpeed"], 0)
-        self.assertEqual(first_payload["state"]["reported"]["board"]["drive"]["rightSpeed"], 0)
-        self.assertEqual(second_payload["state"]["reported"]["board"]["drive"]["leftSpeed"], 20)
-        self.assertEqual(second_payload["state"]["reported"]["board"]["drive"]["rightSpeed"], 40)
+        self.assertNotIn("drive", first_payload["state"]["reported"]["board"])
 
     def test_build_cmd_vel_motor_driver_rejects_operational_range_above_hardware_max(self) -> None:
         with self.assertRaises(ValueError):

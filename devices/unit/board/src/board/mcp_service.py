@@ -6,7 +6,7 @@ import secrets
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from aws.mcp_topics import (
     MCP_DEFAULT_LEASE_TTL_MS,
@@ -20,6 +20,11 @@ from aws.mcp_topics import (
 )
 
 from .cmd_vel import CmdVelController
+from .video_state import (
+    VIDEO_STATUS_ERROR,
+    VIDEO_STATUS_STARTING,
+    normalize_video_state,
+)
 
 LOGGER = logging.getLogger("board.mcp_service")
 
@@ -49,6 +54,7 @@ class BoardMcpServer:
         *,
         device_id: str,
         cmd_vel_controller: CmdVelController,
+        video_state_provider: Callable[[], dict[str, Any]] | None = None,
         lease_ttl_ms: int = MCP_DEFAULT_LEASE_TTL_MS,
         server_version: str = MCP_SERVER_VERSION,
         mcp_protocol_version: str = MCP_PROTOCOL_VERSION,
@@ -57,6 +63,7 @@ class BoardMcpServer:
             raise ValueError("lease_ttl_ms must be positive")
         self._device_id = device_id
         self._cmd_vel_controller = cmd_vel_controller
+        self._video_state_provider = video_state_provider
         self._lease_ttl_ms = lease_ttl_ms
         self._server_version = server_version
         self._mcp_protocol_version = mcp_protocol_version
@@ -329,6 +336,8 @@ class BoardMcpServer:
                 session_id=session_id,
                 lease_token=_require_lease_token(arguments),
             )
+        if tool_name == "robot.get_state":
+            return self._tool_robot_get_state(session_id=session_id)
         raise _JsonRpcError(-32602, f"Unknown MCP tool: {tool_name}")
 
     def _tool_acquire_lease(self, *, session_id: str) -> dict[str, Any]:
@@ -398,9 +407,11 @@ class BoardMcpServer:
         handled = self._cmd_vel_controller.handle_message(twist)
         if not handled:
             raise _JsonRpcError(-32602, "cmd_vel.publish twist payload is malformed")
+        motion = self._build_motion_payload()
         return {
             "applied": True,
             "leaseExpiresAtMs": lease.expires_at_ms,
+            "motion": motion,
         }
 
     def _tool_cmd_vel_stop(
@@ -418,9 +429,28 @@ class BoardMcpServer:
             reason=f"cmd_vel.stop from MCP session {session_id}",
             force=True,
         )
+        motion = self._build_motion_payload()
         return {
             "stopped": True,
             "leaseExpiresAtMs": lease.expires_at_ms,
+            "motion": motion,
+        }
+
+    def _tool_robot_get_state(self, *, session_id: str) -> dict[str, Any]:
+        with self._lock:
+            self._expire_lease_locked(now_monotonic=time.monotonic())
+            lease = self._lease
+            control = {
+                "leaseRequired": True,
+                "leaseTtlMs": self._lease_ttl_ms,
+                "leaseHeldByCaller": lease is not None and lease.owner_session_id == session_id,
+                "leaseOwnerSessionId": lease.owner_session_id if lease is not None else None,
+                "leaseExpiresAtMs": lease.expires_at_ms if lease is not None else None,
+            }
+        return {
+            "control": control,
+            "motion": self._build_motion_payload(),
+            "video": self._build_video_payload(),
         }
 
     def _send_result(
@@ -572,6 +602,53 @@ class BoardMcpServer:
             raise _JsonRpcError(-32013, "Invalid lease token")
         return lease
 
+    def _build_motion_payload(self) -> dict[str, int]:
+        state = self._cmd_vel_controller.get_drive_state()
+        return {
+            "leftSpeed": state.left_speed,
+            "rightSpeed": state.right_speed,
+            "sequence": state.sequence,
+        }
+
+    def _build_video_payload(self) -> dict[str, Any]:
+        payload = self._read_video_state_payload()
+        return {
+            "available": payload["available"],
+            "ready": payload["ready"],
+            "status": payload["status"],
+            "viewerConnected": payload["viewerConnected"],
+            "lastError": payload["lastError"],
+        }
+
+    def _read_video_state_payload(self) -> dict[str, Any]:
+        if self._video_state_provider is None:
+            return {
+                "available": False,
+                "ready": False,
+                "status": VIDEO_STATUS_STARTING,
+                "viewerConnected": False,
+                "lastError": None,
+            }
+        try:
+            payload = self._video_state_provider()
+        except Exception as err:
+            LOGGER.warning("Failed to read board video state for MCP: %s", err)
+            return {
+                "available": False,
+                "ready": False,
+                "status": VIDEO_STATUS_ERROR,
+                "viewerConnected": False,
+                "lastError": str(err),
+            }
+        normalized = normalize_video_state(payload)
+        return {
+            "available": True,
+            "ready": bool(normalized["ready"]),
+            "status": normalized["status"],
+            "viewerConnected": bool(normalized["viewerConnected"]),
+            "lastError": normalized["lastError"],
+        }
+
 
 @dataclass(slots=True, frozen=True)
 class _JsonRpcError(Exception):
@@ -652,6 +729,15 @@ def _tool_definitions() -> list[dict[str, Any]]:
                     "leaseToken": {"type": "string"},
                 },
                 "required": ["leaseToken"],
+                "additionalProperties": False,
+            },
+        },
+        {
+            "name": "robot.get_state",
+            "description": "Return the current board control, motion, and video runtime snapshot.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {},
                 "additionalProperties": False,
             },
         },

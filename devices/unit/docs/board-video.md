@@ -7,7 +7,7 @@
 - Current live-control target: `p95` operator glass-to-glass latency under `800 ms` on target links
 - Control model: directional commands, not precision teleoperation
 - Field-validation status: manual field validation was completed and accepted the plain-AWS-WebRTC path from a business perspective; no lab-grade metrics dataset is recorded in-repo
-- Current repo implementation: `txing-board` publishes retained video service topics, `rig` reflects top-level `video.*` into shadow, and the browser uses AWS KVS signaling + WebRTC for the viewer path
+- Current repo implementation: `txing-board` publishes retained video service topics, `rig` consumes them for REDCON readiness, and the browser uses AWS KVS signaling + WebRTC for the viewer path
 
 Explicit non-goals for this slice:
 
@@ -21,9 +21,8 @@ Explicit non-goals for this slice:
 ## Current Design
 
 - The board stays fully headless.
-- `txing-board` remains the only publisher of board power, wifi, and drive state into the shared Thing Shadow.
+- `txing-board` remains the only publisher of board power and wifi state into the shared Thing Shadow.
 - `txing-board` publishes retained video descriptor/status topics under `txings/<device_id>/video/*`.
-- `rig` mirrors those retained video topics into `state.reported.video.*` in the Thing Shadow.
 - The current implementation uses one live video path only: board camera -> plain AWS WebRTC signaling channel -> operator.
 - The operator watches the plain AWS WebRTC path, not a board-local viewer page.
 - The current implementation does not use WebRTC ingestion/storage, multiviewer, or `kvssink`.
@@ -36,7 +35,7 @@ Explicit non-goals for this slice:
 
 ```text
 txing-board
-  -> owns board power, wifi, and drive shadow state
+  -> owns board power and wifi shadow state
   -> supervises board video sender state
   -> publishes retained board video descriptor/status topics
   -> tracks coarse board video readiness and failures
@@ -54,7 +53,7 @@ native sender command
 operator client
   -> connects as viewer through the KVS WebRTC signaling channel
   -> receives the live path negotiated by AWS signaling / ICE
-  -> sends directional commands out of band as strict ROS `geometry_msgs/Twist`
+  -> sends directional commands through board MCP using strict ROS `geometry_msgs/Twist`
 ```
 
 ## Retained MQTT Contract
@@ -92,7 +91,7 @@ The current implementation publishes retained board video service topics:
 }
 ```
 
-`rig` mirrors the latest retained descriptor/status into `state.reported.video.*` as cache/detail only.
+The retained video topics are used directly by `rig` for REDCON readiness and by board MCP `robot.get_state` for client-visible video runtime state.
 
 Notes:
 
@@ -110,7 +109,7 @@ Notes:
 
 Responsibilities:
 
-- publish board power, wifi, and drive Thing Shadow updates
+- publish board power and wifi Thing Shadow updates
 - keep handling internal `desired.board.power`
 - refresh board IPv4 and IPv6 on each publish loop
 - supervise the local board video sender state manager
@@ -146,7 +145,7 @@ Responsibilities:
 
 - join the plain AWS WebRTC viewer session
 - render the live stream for directional control
-- translate browser key presses into strict ROS `Twist` commands for `txing/board/cmd_vel`
+- translate browser key presses into strict ROS `Twist` commands for MCP `cmd_vel.publish`
 - support the existing browser operator path
 
 Operator scope note:
@@ -156,10 +155,10 @@ Operator scope note:
 
 Control contract notes:
 
-- `txing/board/cmd_vel` uses strict ROS `Twist` semantics, not browser-specific steering semantics.
+- MCP `cmd_vel.publish` uses strict ROS `Twist` semantics, not browser-specific steering semantics.
 - `linear.x` is forward velocity in `m/s` and `angular.z` is yaw rate in `rad/s`.
 - Browser teleop step sizes are a UI policy only. The shared MQTT contract for browser and AI producers remains the strict `Twist` meaning above.
-- Board runtime track status reported in Thing Shadow is a separate provisional contract: `reported.board.drive.leftSpeed` and `rightSpeed` are signed percent values in `[-100, 100]` for this phase.
+- Current motion feedback is read through board MCP `robot.get_state`, not through Thing Shadow.
 
 ## Media Serving
 

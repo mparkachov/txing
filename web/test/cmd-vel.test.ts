@@ -1,8 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import {
   applyCmdVelStep,
-  buildCmdVelPublishPacket,
-  buildCmdVelTopic,
   buildZeroTwist,
   cmdVelAngularStepRadPerSec,
   cmdVelLinearStepMps,
@@ -14,25 +12,7 @@ import {
   isZeroTwist,
 } from '../src/cmd-vel'
 
-const decoder = new TextDecoder()
-
 describe('cmd_vel helpers', () => {
-  test('builds the exact cmd_vel topic and qos0 packet', () => {
-    const packet = buildCmdVelPublishPacket('txing', {
-      linear: { x: 1, y: 0, z: 0 },
-      angular: { x: 0, y: 0, z: -1 },
-    })
-
-    expect(buildCmdVelTopic('txing')).toBe('txing/board/cmd_vel')
-    expect(packet.topicName).toBe('txing/board/cmd_vel')
-    expect(packet.qos).toBe(0)
-    expect(packet.retain).toBe(false)
-    expect(JSON.parse(decoder.decode(packet.payload))).toEqual({
-      linear: { x: 1, y: 0, z: 0 },
-      angular: { x: 0, y: 0, z: -1 },
-    })
-  })
-
   test('applies stepped ROS Twist changes in physical units', () => {
     const afterFirstUp = applyCmdVelStep(buildZeroTwist(), 'ArrowUp')
     const afterSecondUp = applyCmdVelStep(afterFirstUp, 'ArrowUp')

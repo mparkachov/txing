@@ -331,20 +331,6 @@ def _extract_reported_board_wifi_online(payload: dict[str, Any]) -> bool | None:
     return value if isinstance(value, bool) else None
 
 
-def _extract_reported_video_reflection(
-    payload: dict[str, Any],
-) -> dict[str, Any] | None:
-    reported = _extract_reported_root(payload)
-    if reported is None:
-        return None
-    video = reported.get("video")
-    if not isinstance(video, dict):
-        return None
-    if video.get("serviceId") != VIDEO_SERVICE_NAME:
-        return None
-    return dict(video)
-
-
 def _extract_reported_online(payload: dict[str, Any]) -> bool | None:
     mcu = _extract_reported_mcu(payload)
     if mcu is None:
@@ -765,57 +751,6 @@ def _derive_board_video_state(
     return state
 
 
-def _extract_board_video_state_from_reflection(
-    payload: dict[str, Any],
-    *,
-    thing_name: str,
-    aws_region: str,
-) -> BoardVideoState | None:
-    if payload.get("serviceId") != VIDEO_SERVICE_NAME:
-        return None
-    video = _default_board_video_state(thing_name=thing_name, aws_region=aws_region)
-    server_info = payload.get("serverInfo")
-    if isinstance(server_info, dict):
-        video.server_name = _coerce_non_empty_str(
-            server_info.get("name"),
-            default=video.server_name,
-        )
-    video.available = _coerce_bool(payload.get("available"), default=False)
-    video.ready = _coerce_bool(payload.get("ready"), default=False)
-    video.status = _coerce_video_status(payload.get("status"), default=video.status)
-    video.transport = _coerce_non_empty_str(payload.get("transport"), default=video.transport)
-    codec = payload.get("codec")
-    if isinstance(codec, dict):
-        video.codec_video = _coerce_optional_str(codec.get("video")) or video.codec_video
-    video.viewer_connected = _coerce_bool(payload.get("viewerConnected"), default=False)
-    video.last_error = _coerce_optional_str(payload.get("lastError"))
-    video.updated_at_ms = _coerce_optional_int(payload.get("updatedAtMs"))
-    video.topic_root = _coerce_non_empty_str(payload.get("topicRoot"), default=video.topic_root)
-    video.descriptor_topic = _coerce_non_empty_str(
-        payload.get("descriptorTopic"),
-        default=video.descriptor_topic,
-    )
-    video.status_topic = _coerce_non_empty_str(
-        payload.get("statusTopic"),
-        default=video.status_topic,
-    )
-    video.channel_name = _coerce_non_empty_str(
-        payload.get("channelName"),
-        default=video.channel_name,
-    )
-    video.region = _coerce_optional_str(payload.get("region")) or video.region
-    video.server_version = _coerce_non_empty_str(
-        payload.get("serverVersion"),
-        default=video.server_version,
-    )
-    if isinstance(server_info, dict):
-        video.server_version = _coerce_non_empty_str(
-            server_info.get("version"),
-            default=video.server_version,
-        )
-    return video
-
-
 @dataclass(slots=True)
 class BridgeConfig:
     name_fragment: str = DEFAULT_NAME_FRAGMENT
@@ -1039,7 +974,6 @@ class ShadowState:
                 "power": self.reported_power,
                 "online": self.ble_online,
             },
-            "video": self.board_video.payload(),
             "board": {
                 "power": self.board_power,
                 "wifi": {
@@ -2210,11 +2144,9 @@ class BleSleepBridge:
 
     async def _normalize_shadow_for_startup_default(self) -> None:
         self._shadow.reconcile_redcon()
-        reported_root_patch: dict[str, Any] | None = None
         desired_board_power: bool | None | object = _SHADOW_UNSET
-        if (
-            self._video_status_payload is None
-            or not self._shadow.board_video.is_fresh(utc_timestamp_ms())
+        if self._video_status_payload is None or not self._shadow.board_video.is_fresh(
+            utc_timestamp_ms()
         ):
             self._shadow.set_board_video_state(
                 _default_board_video_state(
@@ -2222,14 +2154,12 @@ class BleSleepBridge:
                     aws_region=self._config.aws_region,
                 )
             )
-            reported_root_patch = {"video": self._shadow.board_video.payload()}
         if self._shadow.desired_board_power is False and not self._shadow.board_power:
             self._shadow.set_desired_board_power(None)
             desired_board_power = None
-        if reported_root_patch is not None or desired_board_power is not _SHADOW_UNSET:
+        if desired_board_power is not _SHADOW_UNSET:
             await self._publish_reported_update(
                 reported_mcu_patch=None,
-                reported_root_patch=reported_root_patch,
                 desired_redcon=_SHADOW_UNSET,
                 desired_board_power=desired_board_power,
                 context="Normalized startup shadow defaults",
@@ -2418,11 +2348,6 @@ class BleSleepBridge:
             elif redcon_inputs_changed or video_shadow_changed:
                 await self._publish_reported_update(
                     reported_mcu_patch=None,
-                    reported_root_patch=(
-                        {"video": self._shadow.board_video.payload()}
-                        if video_shadow_changed
-                        else None
-                    ),
                     desired_redcon=_SHADOW_UNSET,
                     desired_board_power=_SHADOW_UNSET,
                     context=f"Published derived reported.redcon after cloud shadow update ({update.source})",
@@ -4254,7 +4179,6 @@ def _build_shadow_from_snapshot(
     battery_mv = _extract_reported_battery_mv(snapshot)
     board_power = _extract_reported_board_power(snapshot)
     board_wifi_online = _extract_reported_board_wifi_online(snapshot)
-    board_video_reflection = _extract_reported_video_reflection(snapshot)
     reported_redcon = _extract_reported_redcon(snapshot)
     ble_uuids = DEFAULT_BLE_GATT_UUIDS.with_device_id(registered_ble_device_id)
 
@@ -4294,17 +4218,9 @@ def _build_shadow_from_snapshot(
             if board_wifi_online is not None
             else DEFAULT_BOARD_WIFI_ONLINE
         ),
-        board_video=(
-            _extract_board_video_state_from_reflection(
-                board_video_reflection,
-                thing_name=thing_name,
-                aws_region=aws_region,
-            )
-            if board_video_reflection is not None
-            else _default_board_video_state(
-                thing_name=thing_name,
-                aws_region=aws_region,
-            )
+        board_video=_default_board_video_state(
+            thing_name=thing_name,
+            aws_region=aws_region,
         ),
         redcon=(
             reported_redcon

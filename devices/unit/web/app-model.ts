@@ -1,16 +1,3 @@
-export type BoardVideoRuntime = {
-  ready: boolean
-  status: 'starting' | 'ready' | 'error' | 'unavailable' | null
-  transport: 'aws-webrtc' | null
-  viewerConnected: boolean
-  lastError: string | null
-}
-
-export type BoardDriveRuntime = {
-  leftSpeed: number | null
-  rightSpeed: number | null
-}
-
 export type TrackIndicatorPresentation = {
   toneClass: 'status-track-forward' | 'status-track-reverse' | 'status-track-idle'
   intensity: number
@@ -65,13 +52,6 @@ const redconDescriptors: Record<1 | 2 | 3 | 4, RedconDescriptor> = {
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null
-
-const clampSignedPercent = (value: unknown): number | null => {
-  if (typeof value !== 'number' || !Number.isInteger(value)) {
-    return null
-  }
-  return value >= -100 && value <= 100 ? value : null
-}
 
 const extractDesiredState = (shadow: unknown): Record<string, unknown> | null => {
   if (!isRecord(shadow)) {
@@ -249,69 +229,6 @@ export const extractReportedBoardWifiOnline = (shadow: unknown): boolean | null 
   }
   const wifi = board.wifi
   return isRecord(wifi) && typeof wifi.online === 'boolean' ? wifi.online : null
-}
-
-export const extractReportedVideo = (shadow: unknown): BoardVideoRuntime => {
-  const reported = extractReportedState(shadow)
-  if (!reported) {
-    return {
-      ready: false,
-      status: null,
-      transport: null,
-      viewerConnected: false,
-      lastError: null,
-    }
-  }
-
-  const video = reported.video
-  if (!isRecord(video)) {
-    return {
-      ready: false,
-      status: null,
-      transport: null,
-      viewerConnected: false,
-      lastError: null,
-    }
-  }
-
-  const status = video.status
-
-  return {
-    ready: video.ready === true,
-    status:
-      status === 'starting' ||
-      status === 'ready' ||
-      status === 'error' ||
-      status === 'unavailable'
-        ? status
-        : null,
-    transport: video.transport === 'aws-webrtc' ? 'aws-webrtc' : null,
-    viewerConnected: video.viewerConnected === true,
-    lastError: typeof video.lastError === 'string' && video.lastError.trim() ? video.lastError : null,
-  }
-}
-
-export const extractReportedBoardDrive = (shadow: unknown): BoardDriveRuntime => {
-  const board = extractReportedBoard(shadow)
-  if (!board) {
-    return {
-      leftSpeed: null,
-      rightSpeed: null,
-    }
-  }
-
-  const drive = board.drive
-  if (!isRecord(drive)) {
-    return {
-      leftSpeed: null,
-      rightSpeed: null,
-    }
-  }
-
-  return {
-    leftSpeed: clampSignedPercent(drive.leftSpeed),
-    rightSpeed: clampSignedPercent(drive.rightSpeed),
-  }
 }
 
 export const getTrackIndicatorPresentation = (

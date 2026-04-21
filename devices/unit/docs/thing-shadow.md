@@ -70,19 +70,8 @@ Current implementation note:
 - `state.reported.board.wifi.online` (`boolean`) is the board-side Wi-Fi/control online flag while the board OS is up and the board control is running.
 - `state.reported.board.wifi.ipv4` (`ipv4 string`, update payload may temporarily use `null` to delete) is the IPv4 address chosen by the OS for the board's current IPv4 default-route interface when the board control publishes.
 - `state.reported.board.wifi.ipv6` (`ipv6 string`, update payload may temporarily use `null` to delete) is the IPv6 address chosen by the OS for the board's current IPv6 default-route interface when the board control publishes.
-- `state.reported.board.drive.leftSpeed` (`integer`, `-100..100`) is the last applied left track effort reported by `txing-board` as a provisional signed percent scale.
-- `state.reported.board.drive.rightSpeed` (`integer`, `-100..100`) is the last applied right track effort reported by `txing-board` as a provisional signed percent scale.
-- `state.reported.video.serviceId` (`"video"`) identifies the rig-reflected board video service record.
-- `state.reported.video.serverInfo.name` / `version` (`string`) mirror the retained video descriptor server info fields.
-- `state.reported.video.available` (`boolean`) indicates whether the board video service is available according to the retained MQTT status feed.
-- `state.reported.video.ready` (`boolean`) indicates whether the current plain AWS WebRTC live path is ready for operator use.
-- `state.reported.video.status` (`"starting" | "ready" | "error" | "unavailable"`) is the coarse runtime state of the retained board video service feed.
-- `state.reported.video.transport` (`"aws-webrtc"`) identifies the live-video transport. The current implementation uses `aws-webrtc` as the only live operator path, specifically as a plain KVS WebRTC signaling session.
-- `state.reported.video.codec.video` (`"h264"` or `null`) is the currently configured board video codec.
-- `state.reported.video.viewerConnected` (`boolean`) is the best-effort operator-viewer presence flag for the live path. It is informational and does not participate in `reported.redcon`.
-- `state.reported.video.lastError` (`string` or `null`) is the last coarse board-side video error surfaced by `txing-board` or its supervised sender path.
-- `state.reported.video.updatedAtMs` (`integer | null`) is the latest retained MQTT status timestamp reflected by `rig`; readiness becomes stale when that retained status ages past the rig freshness threshold.
-- `state.reported.video.topicRoot`, `descriptorTopic`, `statusTopic`, `channelName`, `region`, and `serverVersion` are retained-service metadata reflected by `rig` from `txings/<device_id>/video/descriptor`.
+- Live board motion feedback and board video runtime state are no longer part of the Thing Shadow contract in Phase 3.
+- Current motion state and current video runtime state are read from board MCP `robot.get_state`.
 - For `reported.redcon`, rig treats retained MCP availability plus fresh retained video readiness as the final readiness inputs once BLE reachability and MCU wake state are satisfied.
 - Current design intent is plain AWS WebRTC only for the live operator path.
 - The current implementation does not assume WebRTC ingestion/storage, multiviewer, or `kvssink`.
@@ -100,11 +89,17 @@ Current implementation note:
 - `board` and `rig` continue to publish reflected operational state for `txing`; there are no separate `rig` or `town` shadows.
 - Registry metadata remains out of the shadow path; `attributes.rig` and `attributes.bleDeviceId` are rig-managed.
 - The browser still uses HTTPS for Cognito hosted UI, Cognito token exchange/refresh, Cognito Identity credential bootstrap, and IoT policy attachment. Only shadow document traffic moved to MQTT/WSS.
-- Live board motion control remains out of band and is not part of the Thing Shadow contract. The current browser-to-board control topic is `txing/board/cmd_vel`, carrying raw JSON shaped like ROS `geometry_msgs/Twist`.
-- `txing/board/cmd_vel` is a strict semantic contract, not only a ROS-shaped JSON payload:
+- Live board motion control remains out of band and is not part of the Thing Shadow contract.
+- The remote board control API is MCP only:
+  - `control.acquire_lease`
+  - `control.renew_lease`
+  - `control.release_lease`
+  - `cmd_vel.publish`
+  - `cmd_vel.stop`
+  - `robot.get_state`
+- `cmd_vel.publish` uses strict ROS `geometry_msgs/Twist` semantics:
   - `linear.x` is forward body velocity in `m/s`
   - `angular.z` is yaw rate in `rad/s`
   - `linear.y`, `linear.z`, `angular.x`, and `angular.y` are unsupported on the current differential-drive board and must be `0`
-- The browser teleop implementation is only one producer of this contract. AI clients and any future producers must publish the same strict `Twist` semantics and must not rely on browser-specific key-step behavior.
 
 Unknown fields are allowed for forward compatibility and must be ignored by consumers.

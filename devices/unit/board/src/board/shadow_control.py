@@ -23,7 +23,7 @@ from aws.auth import AwsRuntime, build_aws_runtime, ensure_aws_profile, resolve_
 from aws.mcp_topics import MCP_DEFAULT_LEASE_TTL_MS
 from aws.mqtt import AwsIotWebsocketSyncConnection, AwsMqttConnectionConfig
 
-from .cmd_vel import CmdVelController, DriveState, MAX_SPEED, build_cmd_vel_topic
+from .cmd_vel import CmdVelController, MAX_SPEED
 from .mcp_service import BoardMcpServer
 from .motor_driver import (
     DEFAULT_DRIVE_CMD_RAW_MAX_SPEED,
@@ -111,7 +111,6 @@ DEFAULT_SCHEMA_FILE = DEFAULT_AWS_DIR / "shadow.schema.json"
 DEFAULT_AWS_CONNECT_TIMEOUT = 20.0
 DEFAULT_MQTT_PUBLISH_TIMEOUT = 10.0
 DEFAULT_HEARTBEAT_SECONDS = 60.0
-DEFAULT_DRIVE_REPORT_POLL_INTERVAL = 0.25
 DEFAULT_RECONNECT_DELAY = 5.0
 DEFAULT_TIME_SYNC_TIMEOUT = 120.0
 DEFAULT_TIME_SYNC_POLL_INTERVAL = 1.0
@@ -282,7 +281,6 @@ class AwsShadowClient:
             f"{self._topic_prefix}/update/rejected"
         )
         self._topic_update_delta = f"{self._topic_prefix}/update/delta"
-        self._topic_cmd_vel = build_cmd_vel_topic(config.thing_name)
         self._cmd_vel_controller = cmd_vel_controller
         self._mcp_server = mcp_server
         self._video_service = video_service
@@ -371,7 +369,6 @@ class AwsShadowClient:
                 self._topic_update_accepted,
                 self._topic_update_rejected,
                 self._topic_update_delta,
-                self._topic_cmd_vel,
             ):
                 client.subscribe(
                     topic,
@@ -559,11 +556,6 @@ class AwsShadowClient:
             payload = json.loads(payload_bytes.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
             LOGGER.warning("Ignored non-JSON MQTT message on topic %s", topic)
-            return
-
-        if topic == self._topic_cmd_vel:
-            if self._cmd_vel_controller is not None:
-                self._cmd_vel_controller.handle_message(payload)
             return
 
         if topic == self._topic_get_rejected:
@@ -992,7 +984,6 @@ def _build_board_report(
     *,
     addresses: DefaultRouteAddresses,
     power: bool,
-    drive_state: DriveState,
 ) -> dict[str, Any]:
     report: dict[str, Any] = {
         "power": power,
@@ -1000,10 +991,6 @@ def _build_board_report(
             "online": power,
             "ipv4": addresses.ipv4,
             "ipv6": addresses.ipv6,
-        },
-        "drive": {
-            "leftSpeed": drive_state.left_speed,
-            "rightSpeed": drive_state.right_speed,
         },
     }
     return report
@@ -1016,10 +1003,6 @@ def _build_shutdown_board_report() -> dict[str, Any]:
             "online": False,
             "ipv4": None,
             "ipv6": None,
-        },
-        "drive": {
-            "leftSpeed": 0,
-            "rightSpeed": 0,
         },
     }
 
@@ -1359,9 +1342,20 @@ def main() -> None:
         motor_driver=motor_driver,
     )
     cmd_vel_controller.start()
+    video_supervisor = VideoSenderSupervisor(
+        channel_name=config.video_channel_name,
+        region=config.video_region,
+        sender_command=config.video_sender_command,
+        aws_shared_credentials_file=config.aws_shared_credentials_file,
+        aws_config_file=config.aws_config_file,
+        aws_credentials=aws_runtime.credential_snapshot(),
+        state_file=DEFAULT_VIDEO_STATE_FILE,
+        working_directory=REPO_ROOT,
+    )
     mcp_server = BoardMcpServer(
         device_id=config.thing_name,
         cmd_vel_controller=cmd_vel_controller,
+        video_state_provider=lambda: _read_video_state(video_supervisor),
         lease_ttl_ms=DEFAULT_MCP_LEASE_TTL_MS,
     )
     video_service = BoardVideoService(
@@ -1376,19 +1370,8 @@ def main() -> None:
         mcp_server=mcp_server,
         video_service=video_service,
     )
-    video_supervisor = VideoSenderSupervisor(
-        channel_name=config.video_channel_name,
-        region=config.video_region,
-        sender_command=config.video_sender_command,
-        aws_shared_credentials_file=config.aws_shared_credentials_file,
-        aws_config_file=config.aws_config_file,
-        aws_credentials=aws_runtime.credential_snapshot(),
-        state_file=DEFAULT_VIDEO_STATE_FILE,
-        working_directory=REPO_ROOT,
-    )
     halt_requested = False
     startup_published = False
-    last_published_drive_state: DriveState | None = None
     last_published_video_state: dict[str, Any] | None = None
     last_shadow_publish_monotonic: float | None = None
     last_video_status_publish_monotonic: float | None = None
@@ -1413,11 +1396,9 @@ def main() -> None:
                 last_published_video_state = current_video_state
                 last_video_status_publish_monotonic = time.monotonic()
                 default_route_addresses = _detect_default_route_addresses()
-                drive_state = cmd_vel_controller.get_drive_state()
                 report = _build_board_report(
                     addresses=default_route_addresses,
                     power=True,
-                    drive_state=drive_state,
                 )
                 _publish_board_report(
                     shadow_client=shadow_client,
@@ -1427,18 +1408,14 @@ def main() -> None:
                 )
                 LOGGER.info(
                     (
-                        "Published board shadow update power=%s wifi_online=%s ipv4=%s ipv6=%s "
-                        "drive_left=%s drive_right=%s"
+                        "Published board shadow update power=%s wifi_online=%s ipv4=%s ipv6=%s"
                     ),
                     report.get("power"),
                     report.get("wifi", {}).get("online") if isinstance(report.get("wifi"), dict) else None,
                     report.get("wifi", {}).get("ipv4") if isinstance(report.get("wifi"), dict) else "-",
                     report.get("wifi", {}).get("ipv6") if isinstance(report.get("wifi"), dict) else "-",
-                    report.get("drive", {}).get("leftSpeed") if isinstance(report.get("drive"), dict) else "-",
-                    report.get("drive", {}).get("rightSpeed") if isinstance(report.get("drive"), dict) else "-",
                 )
                 startup_published = True
-                last_published_drive_state = drive_state
                 last_shadow_publish_monotonic = time.monotonic()
                 if config.once:
                     break
@@ -1479,17 +1456,11 @@ def main() -> None:
                     DEFAULT_VIDEO_STATUS_HEARTBEAT_SECONDS - elapsed_since_video_status,
                 )
 
-            current_drive_state = cmd_vel_controller.get_drive_state()
             current_video_state = _read_video_state(video_supervisor)
-            drive_changed = (
-                last_published_drive_state is None
-                or current_drive_state.sequence != last_published_drive_state.sequence
-            )
             video_changed = current_video_state != last_published_video_state
 
-            if not heartbeat_due and not drive_changed and not video_changed and not video_status_due:
+            if not heartbeat_due and not video_changed and not video_status_due:
                 wait_seconds = min(
-                    DEFAULT_DRIVE_REPORT_POLL_INTERVAL,
                     heartbeat_remaining,
                     video_status_remaining,
                 )
@@ -1509,13 +1480,12 @@ def main() -> None:
                     _publish_video_status(video_service, current_video_state)
                     last_published_video_state = current_video_state
                     last_video_status_publish_monotonic = time.monotonic()
-                if not heartbeat_due and not drive_changed:
+                if not heartbeat_due:
                     continue
                 default_route_addresses = _detect_default_route_addresses()
                 report = _build_board_report(
                     addresses=default_route_addresses,
                     power=True,
-                    drive_state=current_drive_state,
                 )
                 _publish_board_report(
                     shadow_client=shadow_client,
@@ -1525,17 +1495,13 @@ def main() -> None:
                 )
                 LOGGER.info(
                     (
-                        "Published board shadow update power=%s wifi_online=%s ipv4=%s ipv6=%s "
-                        "drive_left=%s drive_right=%s"
+                        "Published board shadow update power=%s wifi_online=%s ipv4=%s ipv6=%s"
                     ),
                     report.get("power"),
                     report.get("wifi", {}).get("online") if isinstance(report.get("wifi"), dict) else None,
                     report.get("wifi", {}).get("ipv4") if isinstance(report.get("wifi"), dict) else "-",
                     report.get("wifi", {}).get("ipv6") if isinstance(report.get("wifi"), dict) else "-",
-                    report.get("drive", {}).get("leftSpeed") if isinstance(report.get("drive"), dict) else "-",
-                    report.get("drive", {}).get("rightSpeed") if isinstance(report.get("drive"), dict) else "-",
                 )
-                last_published_drive_state = current_drive_state
                 last_shadow_publish_monotonic = time.monotonic()
             except RuntimeError as err:
                 LOGGER.warning("Board shadow publish failed: %s", err)

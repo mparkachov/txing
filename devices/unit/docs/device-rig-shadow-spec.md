@@ -110,10 +110,8 @@ Field semantics:
 - `state.reported.mcu.power=false` means "MCU is in the sleep state with periodic BLE rendezvous wakeups".
 - `state.reported.mcu.online` is `true` only after the MCU has shown sustained BLE reachability, either by staying connected or by advertising regularly for the configured recovery window.
 - `rig` reads retained MCP availability from `txings/<device_id>/mcp/status` and retained video readiness from `txings/<device_id>/video/status` as the readiness inputs for `reported.redcon`.
-- `state.reported.video.*` is the rig-owned shadow reflection/cache of the latest retained video descriptor/status topics:
-  - `txings/<device_id>/video/descriptor`
-  - `txings/<device_id>/video/status`
-- `state.reported.video.viewerConnected` remains informational only and does not affect `reported.redcon`.
+- Phase 3 removes `state.reported.video.*` from the shadow contract. Video runtime state stays on retained MQTT for rig readiness and on board MCP `robot.get_state` for clients.
+- Phase 3 removes `state.reported.board.drive.*` from the shadow contract. Current motion state is read from board MCP `robot.get_state`.
 - `rig` emits `DBIRTH` when BLE reachability reaches the same sustained-online condition that drives `reported.mcu.online=true`.
 - `rig` emits `DDEATH` when BLE reachability times out, forces `reported.redcon=4`, and clears `desired.redcon` plus internal `desired.board.power` best-effort.
 - AWS IoT registry attributes:

@@ -4,7 +4,7 @@ Python service for the device-side Raspberry Pi board that is power-switched by 
 
 This is not the same Raspberry Pi as `rig/`. The `rig/` Pi remains the BLE/AWS control node. This `board/` service is for the separate Pi mounted on the device itself.
 
-`txing-board` is the only process that publishes `board.*` Thing Shadow updates. For video, it supervises a dedicated local sender helper and publishes retained AWS WebRTC descriptor/status topics for `rig`, which then reflects the combined state under top-level `reported.video`.
+`txing-board` is the only process that publishes `board.*` Thing Shadow updates. For video, it supervises a dedicated local sender helper and publishes retained AWS WebRTC descriptor/status topics for `rig` readiness and for MCP clients.
 
 The device runtime now connects to AWS IoT Core over SigV4-authenticated MQTT over WebSockets using the standard AWS SDK credential chain. The intended project-local profile layout is `town`, `rig`, and `device`, with `device` assuming the stack output role `DeviceRuntimeRoleArn`.
 
@@ -18,7 +18,7 @@ Current board video is a headless AWS KVS WebRTC path:
 - repo-owned C++ KVS master sender command on the board
 - `board-video-sender` adapter and state writer
 - `board.video_service` retained MQTT publisher
-- `rig` shadow reflector
+- `rig` retained-status consumer for REDCON readiness
 - browser viewer at the SPA `/<town>/<rig>/<device>/video` route
 
 Important:
@@ -42,30 +42,7 @@ The board publishes to the same classic Thing Shadow as `mcu`, but under a sibli
           "online": true,
           "ipv4": "192.168.1.25",
           "ipv6": "2001:db8::25"
-        },
-      },
-      "video": {
-        "serviceId": "video",
-        "serverInfo": {
-          "name": "video",
-          "version": "0.2.0"
-        },
-        "topicRoot": "txings/unit-local/video",
-        "descriptorTopic": "txings/unit-local/video/descriptor",
-        "statusTopic": "txings/unit-local/video/status",
-        "transport": "aws-webrtc",
-        "channelName": "unit-local-board-video",
-        "region": "eu-central-1",
-        "codec": {
-          "video": "h264"
-        },
-        "serverVersion": "0.2.0",
-        "available": true,
-        "status": "ready",
-        "ready": true,
-        "viewerConnected": false,
-        "lastError": null,
-        "updatedAtMs": 1776761234567
+        }
       }
     }
   }
@@ -79,8 +56,8 @@ Notes:
 - `reported.board.power=false` is only a best-effort clean-shutdown update.
 - `reported.board.wifi.online` reflects the board-side online status while the board OS is up and the board control is running.
 - `reported.board.wifi.ipv4` and `reported.board.wifi.ipv6` are refreshed on each publish loop from the interface the OS selects for the default route in each address family.
-- `reported.board.drive.leftSpeed` and `reported.board.drive.rightSpeed` expose the last applied tank-drive effort in the current provisional signed-percent range `[-100, 100]`.
-- `reported.video.viewerConnected` is best-effort board-side viewer presence derived from sender events. The browser does not write it.
+- Phase 3 removes `reported.board.drive.*` from the shadow contract.
+- Phase 3 removes top-level `reported.video.*` from the shadow contract.
 - The browser video route is computed as `/<town>/<rig>/<device>/video`.
 - The KVS signaling channel name is computed as `<device_id>-board-video`.
 - Because this Pi can lose power abruptly through the MOSFET, consumers should not treat stale `power=true` or stale `wifi.online=true` as authoritative after a hard power cut.
@@ -102,10 +79,9 @@ The MCP tool surface for motion is:
 - `control.release_lease`
 - `cmd_vel.publish`
 - `cmd_vel.stop`
+- `robot.get_state`
 
 Lease ownership is enforced on board. Motion is stopped when the lease is released, expires, or the board MQTT connection drops.
-
-The legacy raw MQTT topic `<device_id>/board/cmd_vel` is still accepted as a compatibility path during migration, but MCP is the intended remote API.
 
 `cmd_vel.publish` keeps a strict ROS `geometry_msgs/Twist` semantic contract:
 
@@ -115,7 +91,7 @@ The legacy raw MQTT topic `<device_id>/board/cmd_vel` is still accepted as a com
 
 The board converts `linear.x` and `angular.z` to tank-drive motor commands through standard differential-drive kinematics. Browser key-step behavior is not part of this contract; browser teleop and AI clients are equal producers of the same strict `Twist` meaning.
 
-The board also reports the currently applied left and right track effort back into Thing Shadow under `state.reported.board.drive.*`. Those values are best-effort runtime state published by `txing-board`, so they can lag the instantaneous motor command slightly.
+`robot.get_state` is the read surface for current lease state, current applied motion, and current video runtime state. Thing Shadow no longer carries those live runtime fields.
 
 Temporary phase constants currently hardcoded in the board control:
 
@@ -465,7 +441,7 @@ What this proves:
 - the device runtime can resolve AWS region, credentials, and the IoT Data-ATS endpoint from the shared config flow
 - the sender can resolve the signaling channel in AWS
 - the sender command starts successfully
-- `txing-board` can publish the retained video descriptor/status topics that `rig` reflects into `reported.video`
+- `txing-board` can publish the retained video descriptor/status topics that `rig` consumes for REDCON readiness and that MCP clients read through `robot.get_state`
 
 If the command exits with a video startup timeout or an AWS KVS permission error, fix that before moving on to the service install.
 

@@ -51,11 +51,10 @@ rig
   -> publishes NBIRTH/NDEATH for the rig node; NBIRTH carries rig.redcon
   -> publishes DBIRTH/DDATA/DDEATH for txing devices
   -> reflects desired/report lifecycle state into txing AWS shadows only
-  -> reflects retained board video service state into txing.state.reported.video.*
   -> derives txing reported.redcon from BLE reachability plus retained MCP/video readiness inputs
 
 txing board control
-  -> remains owner of board power, wifi, and drive shadow fields
+  -> remains owner of board power and wifi shadow fields
   -> publishes retained board video descriptor/status topics for rig
 
 txing gateway / BLE path
@@ -68,8 +67,7 @@ txing gateway / BLE path
 - Sparkplug is the only authoritative lifecycle intent path.
 - AWS shadow is reflection and durable restart cache only.
 - `rig` is the only authority that computes top-level `txing.state.reported.redcon`.
-- `board` remains the source of truth for board power, wifi, and drive operational state.
-- `rig` is the source of truth for the reflected `reported.video.*` shadow subtree.
+- `board` remains the source of truth for board power and wifi operational state.
 - `rig` remains the source of truth for `reported.mcu.*`.
 - `mcu.*` and `board.*` are not the intended public lifecycle control API.
 
@@ -226,7 +224,7 @@ The current implementation uses this txing REDCON ladder:
   - MCP is available
   - retained video status is ready and fresh
 
-`reported.video.viewerConnected` remains informational only and does not participate in REDCON.
+Retained video status `viewerConnected` remains informational only and does not participate in REDCON.
 
 ## Convergence Behavior
 

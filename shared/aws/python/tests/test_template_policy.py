@@ -19,6 +19,17 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("Sid: DeviceVideoTopics", template)
         self.assertIn("iot:RetainPublish", template)
 
+    def test_legacy_raw_cmd_vel_topic_permissions_are_removed(self) -> None:
+        template = (
+            Path(__file__).resolve().parents[2] / "template.yaml"
+        ).read_text(encoding="utf-8")
+
+        self.assertNotIn("Sid: RigCmdVelTopics", template)
+        self.assertNotIn("Sid: RigCmdVelTopicFilters", template)
+        self.assertNotIn("Sid: DeviceCmdVelTopics", template)
+        self.assertNotIn("Sid: DeviceCmdVelTopicFilters", template)
+        self.assertNotIn("board/cmd_vel", template)
+
 
 if __name__ == "__main__":
     unittest.main()

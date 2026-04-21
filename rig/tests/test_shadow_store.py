@@ -7,13 +7,11 @@ from rig.shadow_store import (
     get_desired_board_power,
     get_desired_redcon,
     get_reported_battery_mv,
-    get_reported_video_ready,
-    get_reported_video_viewer_connected,
 )
 
 
 class ShadowStoreTests(unittest.TestCase):
-    def test_default_shadow_payload_tracks_board_video_defaults(self) -> None:
+    def test_default_shadow_payload_contains_only_shadow_fields_still_in_contract(self) -> None:
         payload = default_shadow_payload()
 
         self.assertIsNone(get_desired_redcon(payload))
@@ -26,16 +24,7 @@ class ShadowStoreTests(unittest.TestCase):
             },
         )
         self.assertEqual(get_reported_battery_mv(payload), 3750)
-        self.assertFalse(get_reported_video_ready(payload))
-        self.assertFalse(get_reported_video_viewer_connected(payload))
-        self.assertEqual(
-            payload["state"]["reported"]["video"]["serviceId"],
-            "video",
-        )
-        self.assertEqual(
-            payload["state"]["reported"]["video"]["status"],
-            "unavailable",
-        )
+        self.assertNotIn("video", payload["state"]["reported"])
 
     def test_reported_battery_mv_only_reads_top_level_metric_reflection(self) -> None:
         payload = {

@@ -30,7 +30,7 @@ Today, the relevant runtime split is:
 - `web` is now route-driven at `/<town>/<rig>/<device>` and `/<town>/<rig>/<device>/video`
 - the active rig and device are selected at runtime from the current route
 - `device` is the AWS IoT thing name and stable `device_id`
-- `cmd_vel` currently exists as a direct MQTT topic at `<device-id>/board/cmd_vel`
+- Phase 3 removes the legacy direct MQTT `<device-id>/board/cmd_vel` path; MCP is now the only remote board control API.
 
 The current lifecycle design treats Sparkplug as authoritative for lifecycle management. The current implemented Sparkplug structure is:
 
@@ -137,7 +137,7 @@ Rationale:
 - it treats MCP as the single per-device remote API endpoint instead of nesting an extra service name under `mcp`
 - the plural `txings/` namespace makes the collection root explicit before the per-device segment begins
 
-This convention applies to the new MCP topic family introduced by Phase 2. It does not by itself rename legacy non-MCP topics such as the current raw `cmd_vel` topic.
+This convention applies to the MCP topic family introduced by Phase 2 and carried forward by Phase 3. The legacy non-MCP raw `cmd_vel` topic was removed in Phase 3.
 
 ## Discoverability
 
@@ -344,7 +344,7 @@ In this design, `web` is responsible for:
 - acquiring and renewing the motion lease during teleop
 - releasing the lease and stopping motion on exit
 
-The web app no longer treats raw MQTT publish to `<device-id>/board/cmd_vel` as the long-term intended remote API.
+Phase 3 removes raw MQTT publish to `<device-id>/board/cmd_vel`; the web app now uses MCP only.
 
 The web app also continues to treat browser URLs as derived route values:
 

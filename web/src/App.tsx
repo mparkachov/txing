@@ -44,13 +44,11 @@ import {
   deriveTxingPoweredOn,
   extractDesiredRedcon,
   extractReportedBatteryMv,
-  extractReportedBoardDrive,
   extractReportedBoardPower,
   extractReportedBoardWifiOnline,
   extractReportedMcuOnline,
   extractReportedMcuPower,
   extractReportedRedcon,
-  extractReportedVideo,
   selectPrimaryReportedRedcon,
 } from './app-model'
 import {
@@ -66,7 +64,7 @@ import { appConfig } from './config'
 import DebugPanel from './DebugPanel'
 import NotificationLogPanel from './NotificationLogPanel'
 import NotificationTray from './NotificationTray'
-import type { ShadowConnectionState, ShadowSession } from './shadow-api'
+import type { RobotState, ShadowConnectionState, ShadowSession } from './shadow-api'
 import TxingPanel from './TxingPanel'
 import VideoPanel from './VideoPanel'
 
@@ -290,6 +288,7 @@ function App({ initialAuthError = '' }: AppProps) {
   const [authUser, setAuthUser] = useState<AuthUser | null>(null)
   const [shadowJson, setShadowJson] = useState<string>('{}')
   const [sparkplugReportedRedcon, setSparkplugReportedRedcon] = useState<number | null>(null)
+  const [robotState, setRobotState] = useState<RobotState | null>(null)
   const [lastShadowUpdateAtMs, setLastShadowUpdateAtMs] = useState<number | null>(null)
   const [isLoadingShadow, setIsLoadingShadow] = useState(false)
   const [isUpdatingShadow, setIsUpdatingShadow] = useState(false)
@@ -385,14 +384,6 @@ function App({ initialAuthError = '' }: AppProps) {
     () => extractReportedBoardWifiOnline(shadowDocument),
     [shadowDocument],
   )
-  const reportedVideo = useMemo(
-    () => extractReportedVideo(shadowDocument),
-    [shadowDocument],
-  )
-  const reportedBoardDrive = useMemo(
-    () => extractReportedBoardDrive(shadowDocument),
-    [shadowDocument],
-  )
   const shadowReportedRedcon = useMemo(
     () => extractReportedRedcon(shadowDocument),
     [shadowDocument],
@@ -437,6 +428,9 @@ function App({ initialAuthError = '' }: AppProps) {
   const isTxingSwitchDisabled =
     isLoadingShadow || isUpdatingShadow || isTxingSwitchPending || !canToggleTxingSwitch
   const canUseBoardVideo = reportedRedcon === 1
+  const reportedBoardLeftTrackSpeed = robotState?.motion.leftSpeed ?? null
+  const reportedBoardRightTrackSpeed = robotState?.motion.rightSpeed ?? null
+  const robotVideoLastError = robotState?.video.lastError ?? null
 
   const isSelectedDeviceValid =
     selectedDeviceRoute !== null &&
@@ -589,6 +583,7 @@ function App({ initialAuthError = '' }: AppProps) {
     if (status === 'signed_in') {
       return
     }
+    setRobotState(null)
     lastBoardVideoErrorRef.current = null
     hasObservedBoardVideoLastErrorRef.current = false
     setNotifications([])
@@ -758,6 +753,7 @@ function App({ initialAuthError = '' }: AppProps) {
       setLastShadowUpdateAtMs(null)
       setShadowJson('{}')
       setSparkplugReportedRedcon(null)
+      setRobotState(null)
       setIsBoardVideoExpanded(false)
       lastBoardVideoErrorRef.current = null
       hasObservedBoardVideoLastErrorRef.current = false
@@ -768,6 +764,7 @@ function App({ initialAuthError = '' }: AppProps) {
     let shadowSession: ShadowSession | null = null
     setShadowJson('{}')
     setSparkplugReportedRedcon(null)
+    setRobotState(null)
     setLastShadowUpdateAtMs(null)
     setIsLoadingShadow(true)
     setIsUpdatingShadow(false)
@@ -801,6 +798,11 @@ function App({ initialAuthError = '' }: AppProps) {
               return
             }
             setSparkplugReportedRedcon(nextRedcon)
+          },
+          onRobotStateChange: (nextRobotState) => {
+            if (!cancelled) {
+              setRobotState(nextRobotState)
+            }
           },
           onConnectionStateChange: (nextState) => {
             if (!cancelled) {
@@ -862,7 +864,7 @@ function App({ initialAuthError = '' }: AppProps) {
   })
 
   useEffect(() => {
-    const nextBoardVideoLastError = normalizeRuntimeMessage(reportedVideo.lastError)
+    const nextBoardVideoLastError = normalizeRuntimeMessage(robotVideoLastError)
     const nextNotificationMessage = getNextBoardVideoLastErrorNotification(
       lastBoardVideoErrorRef.current,
       nextBoardVideoLastError,
@@ -876,15 +878,46 @@ function App({ initialAuthError = '' }: AppProps) {
     enqueueNotification({
       tone: 'error',
       message: nextNotificationMessage,
-      dedupeKey: `board-video-shadow:${nextNotificationMessage}`,
+      dedupeKey: `board-video-mcp:${nextNotificationMessage}`,
     })
-  }, [enqueueNotification, reportedVideo.lastError])
+  }, [enqueueNotification, robotVideoLastError])
 
   useEffect(() => {
-    if (!canUseBoardVideo && isBoardVideoExpanded) {
+    if ((!canUseBoardVideo || !isShadowConnected) && isBoardVideoExpanded) {
       setIsBoardVideoExpanded(false)
     }
-  }, [canUseBoardVideo, isBoardVideoExpanded])
+  }, [canUseBoardVideo, isBoardVideoExpanded, isShadowConnected])
+
+  const requestRobotState = useEffectEvent(async (): Promise<void> => {
+    const shadowSession = shadowSessionRef.current
+    if (!shadowSession || !shadowSession.isConnected()) {
+      return
+    }
+
+    try {
+      await shadowSession.requestRobotState()
+    } catch (caughtError) {
+      enqueueRuntimeError(
+        caughtError instanceof Error ? caughtError.message : 'Unable to read robot state',
+        'robot-state',
+      )
+    }
+  })
+
+  useEffect(() => {
+    if (!isBoardVideoExpanded || !canUseBoardVideo || !isShadowConnected) {
+      return
+    }
+
+    void requestRobotState()
+    const intervalId = window.setInterval(() => {
+      void requestRobotState()
+    }, 1_000)
+
+    return () => {
+      window.clearInterval(intervalId)
+    }
+  }, [canUseBoardVideo, isBoardVideoExpanded, isShadowConnected, requestRobotState])
 
   useEffect(() => {
     if (!isBoardVideoExpanded || !canUseBoardVideo || !isShadowConnected) {
@@ -1358,9 +1391,9 @@ function App({ initialAuthError = '' }: AppProps) {
         isDebugEnabled={isDebugEnabled}
         isTxingSwitchDisabled={isTxingSwitchDisabled}
         isTxingSwitchPending={isTxingSwitchPending}
-        reportedBoardLeftTrackSpeed={reportedBoardDrive.leftSpeed}
+        reportedBoardLeftTrackSpeed={reportedBoardLeftTrackSpeed}
         reportedBoardOnline={reportedBoardOnline}
-        reportedBoardRightTrackSpeed={reportedBoardDrive.rightSpeed}
+        reportedBoardRightTrackSpeed={reportedBoardRightTrackSpeed}
         reportedBatteryMv={reportedBatteryMv}
         reportedMcuOnline={reportedMcuOnline}
         reportedRedcon={reportedRedcon}
