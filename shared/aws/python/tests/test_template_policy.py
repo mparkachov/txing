@@ -47,6 +47,16 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("Sid: DeviceDescribeThing", template)
         self.assertIn("Action: iot:DescribeThing", template)
 
+    def test_device_runtime_policy_allows_sparkplug_command_subscribe(self) -> None:
+        template = (
+            Path(__file__).resolve().parents[2] / "template.yaml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("Sid: DeviceSparkplugMqttTopics", template)
+        self.assertIn("Sid: DeviceSparkplugMqttTopicFilters", template)
+        self.assertIn("topic/spBv1.0/*", template)
+        self.assertIn("topicfilter/spBv1.0/*", template)
+
 
 if __name__ == "__main__":
     unittest.main()
