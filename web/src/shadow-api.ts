@@ -39,6 +39,7 @@ export type ShadowSessionOptions = {
   sparkplugEdgeNodeId: string
   resolveIdToken: ResolveIdToken
   onShadowDocument: (shadow: unknown, operation: 'get' | 'update') => void
+  onSparkplugBatteryMvChange: (batteryMv: number) => void
   onSparkplugRedconChange: (redcon: number, source: SparkplugRedconSource) => void
   onRobotStateChange: (state: RobotState | null) => void
   onConnectionStateChange: (state: ShadowConnectionState) => void

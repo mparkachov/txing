@@ -32,6 +32,7 @@ import {
   type SparkplugTopics,
 } from './sparkplug-protocol'
 import {
+  extractSparkplugDeviceBatteryMv,
   extractSparkplugDeviceRedconUpdate,
   type SparkplugRedconSource,
 } from './sparkplug-device-redcon'
@@ -105,6 +106,7 @@ export type ShadowSessionOptions = {
   sparkplugEdgeNodeId: string
   resolveIdToken: ResolveIdToken
   onShadowDocument: (shadow: unknown, operation: ShadowOperation) => void
+  onSparkplugBatteryMvChange: (batteryMv: number) => void
   onSparkplugRedconChange: (redcon: number, source: SparkplugRedconSource) => void
   onRobotStateChange: (state: RobotState | null) => void
   onConnectionStateChange: (state: ShadowConnectionState) => void
@@ -1009,6 +1011,15 @@ class AwsIotShadowSession implements ShadowSession {
   }
 
   private handleSparkplugDeviceRedcon(topic: string, payload: unknown): void {
+    const batteryMv = extractSparkplugDeviceBatteryMv(
+      topic,
+      normalizePayloadToBytes(payload),
+      this.sparkplugTopics,
+    )
+    if (batteryMv !== null) {
+      this.options.onSparkplugBatteryMvChange(batteryMv)
+    }
+
     const nextRedcon = extractSparkplugDeviceRedconUpdate(
       topic,
       normalizePayloadToBytes(payload),

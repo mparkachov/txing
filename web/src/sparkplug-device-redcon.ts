@@ -11,6 +11,22 @@ export type SparkplugDeviceRedconUpdate = {
   source: SparkplugRedconSource
 }
 
+const decodeSparkplugDeviceMetrics = (
+  topic: string,
+  payload: Uint8Array,
+  topics: Pick<SparkplugTopics, 'dbirth' | 'ddata'>,
+): SparkplugMetric[] | null => {
+  if (topic !== topics.dbirth && topic !== topics.ddata) {
+    return null
+  }
+
+  try {
+    return decodeSparkplugPayload(payload).metrics
+  } catch {
+    return null
+  }
+}
+
 const extractMetricRedcon = (metric: SparkplugMetric | undefined): 1 | 2 | 3 | 4 | null => {
   if (!metric) {
     return null
@@ -43,14 +59,12 @@ export const extractSparkplugDeviceRedconUpdate = (
     return null
   }
 
-  let decoded
-  try {
-    decoded = decodeSparkplugPayload(payload)
-  } catch {
+  const metrics = decodeSparkplugDeviceMetrics(topic, payload, topics)
+  if (!metrics) {
     return null
   }
 
-  const redconMetric = decoded.metrics.find((metric) => metric.name === 'redcon')
+  const redconMetric = metrics.find((metric) => metric.name === 'redcon')
   const redcon = extractMetricRedcon(redconMetric)
   if (redcon === null) {
     return null
@@ -60,4 +74,28 @@ export const extractSparkplugDeviceRedconUpdate = (
     redcon,
     source: topic === topics.dbirth ? 'dbirth' : 'ddata',
   }
+}
+
+export const extractSparkplugDeviceBatteryMv = (
+  topic: string,
+  payload: Uint8Array,
+  topics: Pick<SparkplugTopics, 'dbirth' | 'ddata'>,
+): number | null => {
+  const metrics = decodeSparkplugDeviceMetrics(topic, payload, topics)
+  if (!metrics) {
+    return null
+  }
+
+  const batteryMetric = metrics.find((metric) => metric.name === 'batteryMv')
+  if (!batteryMetric) {
+    return null
+  }
+
+  const rawValue =
+    typeof batteryMetric.intValue === 'number'
+      ? batteryMetric.intValue
+      : typeof batteryMetric.longValue === 'number'
+        ? batteryMetric.longValue
+        : null
+  return Number.isInteger(rawValue) ? rawValue : null
 }

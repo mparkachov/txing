@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import sys
 from tempfile import TemporaryDirectory
+import time
 import types
 import unittest
 from unittest.mock import patch
@@ -706,6 +707,29 @@ class RigFleetScannerTests(unittest.TestCase):
     def test_fleet_bridge_restarts_scanner_after_bridge_disconnects(self) -> None:
         asyncio.run(self._exercise_fleet_bridge_restarts_scanner())
 
+    def test_fleet_bridge_keeps_awake_session_after_redcon_convergence(self) -> None:
+        asyncio.run(self._exercise_fleet_bridge_keeps_awake_session())
+
+    def test_bridge_needs_session_while_awake_and_disconnected(self) -> None:
+        bridge = types.SimpleNamespace(
+            _shadow=types.SimpleNamespace(
+                desired_redcon=None,
+                reported_power=True,
+                clear_desired_redcon_if_converged=lambda: False,
+            ),
+            _cached_device_id="EE:C7:32:0B:1C:6A",
+            _get_fresh_target_device=lambda: None,
+            _is_connected=lambda: False,
+        )
+        fleet_bridge = RigFleetBridge(
+            BridgeConfig(),
+            cloud_shadow=FakeCloudShadow(),  # type: ignore[arg-type]
+            registry=object(),  # type: ignore[arg-type]
+            managed_things=[],
+        )
+
+        self.assertTrue(fleet_bridge._bridge_needs_session(bridge))  # type: ignore[arg-type]
+
     async def _exercise_fleet_connect_waits_for_fresh_target(self) -> None:
         class FakeBridge:
             def __init__(self, events: list[str]) -> None:
@@ -824,6 +848,79 @@ class RigFleetScannerTests(unittest.TestCase):
             await fleet_bridge.run()
 
         self.assertEqual(fleet_bridge.start_calls, 1)
+
+    async def _exercise_fleet_bridge_keeps_awake_session(self) -> None:
+        class FakeBridge:
+            def __init__(self) -> None:
+                self._connected = True
+                self._shadow = types.SimpleNamespace(
+                    desired_redcon=None,
+                    reported_power=True,
+                )
+                self.disconnect_calls: list[dict[str, object]] = []
+
+            async def _process_desired_redcon_once(self) -> None:
+                return
+
+            async def _safe_disconnect(self, **_: object) -> None:
+                self.disconnect_calls.append(dict(_))
+                self._connected = False
+
+            def _is_connected(self) -> bool:
+                return self._connected
+
+            def _should_idle_disconnected_while_sleeping(self) -> bool:
+                return False
+
+        class TestRigFleetBridge(RigFleetBridge):
+            def __init__(self, active_bridge: FakeBridge) -> None:
+                super().__init__(
+                    BridgeConfig(),
+                    cloud_shadow=FakeCloudShadow(),  # type: ignore[arg-type]
+                    registry=object(),  # type: ignore[arg-type]
+                    managed_things=[],
+                )
+                self._test_active_bridge = active_bridge
+                self.start_calls = 0
+
+            async def _publish_node_birth(self) -> None:
+                return
+
+            async def _normalize_startup(self) -> None:
+                return
+
+            async def _clear_converged_targets(self) -> None:
+                return
+
+            async def _reconcile_presence(self) -> None:
+                return
+
+            async def _wait_for_manager_events(
+                self,
+                timeout_seconds: float | None,
+            ) -> list[object]:
+                del timeout_seconds
+                raise asyncio.CancelledError
+
+            async def _start_scanner(self) -> None:
+                self.start_calls += 1
+                self._scanner = object()  # type: ignore[assignment]
+
+            async def _stop_scanner(self) -> None:
+                self._scanner = None
+
+            def _active_bridge(self) -> FakeBridge | None:
+                return self._test_active_bridge
+
+        bridge = FakeBridge()
+        fleet_bridge = TestRigFleetBridge(bridge)
+
+        with self.assertRaises(asyncio.CancelledError):
+            await fleet_bridge.run()
+
+        self.assertEqual(len(bridge.disconnect_calls), 1)
+        self.assertIn("disconnect_timeout_seconds", bridge.disconnect_calls[0])
+        self.assertEqual(fleet_bridge.start_calls, 0)
 
 
 class RedconTests(unittest.TestCase):
@@ -980,6 +1077,9 @@ class WaitForReportedPowerTests(unittest.TestCase):
     def test_wait_for_reported_power_accepts_shadow_state_after_read_failure(self) -> None:
         asyncio.run(self._exercise_wait_for_reported_power_read_failure())
 
+    def test_wait_for_reported_power_bounds_hung_gatt_read(self) -> None:
+        asyncio.run(self._exercise_wait_for_reported_power_hung_read())
+
     async def _exercise_wait_for_reported_power_read_failure(self) -> None:
         shadow = ShadowState(desired_redcon=3, reported_power=False, battery_mv=3729)
         bridge = BleSleepBridge(
@@ -1002,6 +1102,30 @@ class WaitForReportedPowerTests(unittest.TestCase):
         report = await bridge._wait_for_reported_power(True)
 
         self.assertEqual(report, bytes((0x00, 0x91, 0x0E)))
+
+    async def _exercise_wait_for_reported_power_hung_read(self) -> None:
+        shadow = ShadowState(desired_redcon=3, reported_power=False, battery_mv=3729)
+        bridge = BleSleepBridge(
+            BridgeConfig(command_ack_timeout=0.05, command_ack_poll_interval=0.01),
+            shadow,
+            cloud_shadow=object(),  # type: ignore[arg-type]
+        )
+
+        class FakeClient:
+            is_connected = True
+
+        async def hang_read() -> bytes:
+            await asyncio.sleep(10)
+            raise AssertionError("unreachable")
+
+        bridge._client = FakeClient()  # type: ignore[assignment]
+        bridge._read_state_report = hang_read  # type: ignore[method-assign]
+
+        started = time.monotonic()
+        with self.assertRaises(TimeoutError):
+            await bridge._wait_for_reported_power(True)
+
+        self.assertLess(time.monotonic() - started, 0.5)
 
 
 class LifecycleBridgeTests(unittest.TestCase):

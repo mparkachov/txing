@@ -9,7 +9,7 @@ describe('notification log panel', () => {
         notificationLog={[
           {
             id: 'runtime-log-1',
-            tone: 'success',
+            tone: 'neutral',
             message: 'Sparkplug DCMD.redcon -> 3',
             dedupeKey: 'sparkplug-redcon:3',
             createdAtMs: new Date(2026, 3, 13, 14, 49, 36).getTime(),
@@ -26,7 +26,7 @@ describe('notification log panel', () => {
     )
 
     expect(markup).toContain('Session Log')
-    expect(markup).toContain('notification-log-entry notification-log-entry-success')
+    expect(markup).toContain('notification-log-entry notification-log-entry-neutral')
     expect(markup).toContain('notification-log-entry notification-log-entry-error')
     expect(markup).toContain('2026-04-13 14:49:36')
     expect(markup).toContain('Sparkplug DCMD.redcon -&gt; 3')

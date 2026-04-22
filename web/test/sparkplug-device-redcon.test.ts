@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'bun:test'
-import { extractSparkplugDeviceRedconUpdate } from '../src/sparkplug-device-redcon'
+import {
+  extractSparkplugDeviceBatteryMv,
+  extractSparkplugDeviceRedconUpdate,
+} from '../src/sparkplug-device-redcon'
 import {
   buildSparkplugTopics,
   encodeSparkplugPayload,
@@ -29,6 +32,24 @@ describe('sparkplug device redcon extraction', () => {
       redcon: 2,
       source: 'ddata',
     })
+  })
+
+  test('extracts battery millivolts from DBIRTH and DDATA payloads', () => {
+    const topics = buildSparkplugTopics('town', 'rig', 'txing')
+    const payload = encodeSparkplugPayload({
+      timestamp: 101,
+      seq: 7,
+      metrics: [
+        {
+          name: 'batteryMv',
+          datatype: SparkplugDataType.Int32,
+          intValue: 3940,
+        },
+      ],
+    })
+
+    expect(extractSparkplugDeviceBatteryMv(topics.dbirth, payload, topics)).toBe(3940)
+    expect(extractSparkplugDeviceBatteryMv(topics.ddata, payload, topics)).toBe(3940)
   })
 
   test('treats DDEATH as REDCON 4 even without decoding metrics', () => {

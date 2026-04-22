@@ -40,8 +40,6 @@ import {
 } from './app-notifications'
 import {
   buildBoardVideoChannelName,
-  deriveTxingPowerTransitionPending,
-  deriveTxingPoweredOn,
   extractDesiredRedcon,
   extractReportedBatteryMv,
   extractReportedBoardPower,
@@ -66,6 +64,8 @@ import { getMcpSteadyMotionHeartbeatIntervalMs } from './mcp-lease'
 import NotificationLogPanel from './NotificationLogPanel'
 import NotificationTray from './NotificationTray'
 import type { RobotState, ShadowConnectionState, ShadowSession } from './shadow-api'
+import { publishSparkplugRedconCommandWithAck } from './sparkplug-command'
+import SparkplugPanel from './SparkplugPanel'
 import TxingPanel from './TxingPanel'
 import VideoPanel from './VideoPanel'
 
@@ -289,12 +289,14 @@ function App({ initialAuthError = '' }: AppProps) {
   const [status, setStatus] = useState<SessionStatus>('loading')
   const [authUser, setAuthUser] = useState<AuthUser | null>(null)
   const [shadowJson, setShadowJson] = useState<string>('{}')
+  const [sparkplugReportedBatteryMv, setSparkplugReportedBatteryMv] = useState<number | null>(null)
   const [sparkplugReportedRedcon, setSparkplugReportedRedcon] = useState<number | null>(null)
   const [robotState, setRobotState] = useState<RobotState | null>(null)
   const [lastShadowUpdateAtMs, setLastShadowUpdateAtMs] = useState<number | null>(null)
   const [isLoadingShadow, setIsLoadingShadow] = useState(false)
   const [isUpdatingShadow, setIsUpdatingShadow] = useState(false)
   const [isDebugEnabled, setIsDebugEnabled] = useState(false)
+  const [isBotPanelOpen, setIsBotPanelOpen] = useState(false)
   const [isBoardVideoExpanded, setIsBoardVideoExpanded] = useState(false)
   const [isSessionLogVisible, setIsSessionLogVisible] = useState(false)
   const [blockingError, setBlockingError] = useState<string>(initialAuthError)
@@ -312,6 +314,7 @@ function App({ initialAuthError = '' }: AppProps) {
   const [rigCatalog, setRigCatalog] = useState<RigCatalogState>(emptyRigCatalogState)
   const [deviceCatalog, setDeviceCatalog] = useState<DeviceCatalogState>(emptyDeviceCatalogState)
   const shadowSessionRef = useRef<ShadowSession | null>(null)
+  const redconCommandSequenceRef = useRef(0)
   const nextNotificationIdRef = useRef(0)
   const nextNotificationLogIdRef = useRef(0)
   const lastBoardVideoErrorRef = useRef<string | null>(null)
@@ -378,6 +381,7 @@ function App({ initialAuthError = '' }: AppProps) {
     () => extractReportedBatteryMv(shadowDocument),
     [shadowDocument],
   )
+  const primaryReportedBatteryMv = sparkplugReportedBatteryMv ?? reportedBatteryMv
   const reportedBoardPower = useMemo(
     () => extractReportedBoardPower(shadowDocument),
     [shadowDocument],
@@ -403,32 +407,12 @@ function App({ initialAuthError = '' }: AppProps) {
     [shadowDocument],
   )
 
-  const txingPoweredOn = useMemo(
-    () =>
-      deriveTxingPoweredOn({
-        reportedRedcon,
-        reportedMcuPower,
-        reportedBoardPower,
-        reportedBoardWifiOnline: reportedBoardOnline,
-      }),
-    [reportedBoardOnline, reportedBoardPower, reportedMcuPower, reportedRedcon],
-  )
-  const canWake = !txingPoweredOn && reportedMcuOnline === true && desiredRedcon !== 3
-  const canSleep = txingPoweredOn && desiredRedcon !== 4
   const isShadowConnected = shadowConnectionState === 'connected'
-  const txingSwitchChecked = txingPoweredOn
-  const isTxingSwitchPending = useMemo(
-    () =>
-      deriveTxingPowerTransitionPending({
-        desiredRedcon,
-        reportedRedcon,
-      }),
-    [desiredRedcon, reportedRedcon],
-  )
-  const canToggleTxingSwitch = (txingSwitchChecked ? canSleep : canWake) && isShadowConnected
+  const isRedconCommandPending = desiredRedcon !== null && desiredRedcon !== reportedRedcon
+  const isRedconCommandDisabled =
+    isLoadingShadow || isUpdatingShadow || isRedconCommandPending || !isShadowConnected
+  const isRedconSleepCommandDisabled = isLoadingShadow || !isShadowConnected
   const canLoadShadow = !isLoadingShadow && isShadowConnected
-  const isTxingSwitchDisabled =
-    isLoadingShadow || isUpdatingShadow || isTxingSwitchPending || !canToggleTxingSwitch
   const canUseBoardVideo = reportedRedcon === 1
   const cmdVelRepeatIntervalMs = getMcpSteadyMotionHeartbeatIntervalMs(
     robotState?.control.leaseTtlMs ?? defaultMcpLeaseTtlMs,
@@ -448,7 +432,7 @@ function App({ initialAuthError = '' }: AppProps) {
   const activeSessionRoute =
     status === 'signed_in' &&
     !adminEmailMismatch &&
-    route.kind === 'device' &&
+    (route.kind === 'device' || route.kind === 'device_video') &&
     isSelectedDeviceValid
       ? selectedDeviceRoute
       : null
@@ -503,6 +487,15 @@ function App({ initialAuthError = '' }: AppProps) {
     setNotifications((currentNotifications) =>
       enqueueAppNotification(currentNotifications, notification, nowMs, nextNotificationId),
     )
+    nextNotificationLogIdRef.current += 1
+    const nextNotificationLogId = `runtime-log-${nowMs}-${nextNotificationLogIdRef.current}`
+    setNotificationLog((currentNotificationLog) =>
+      appendNotificationLogEntry(currentNotificationLog, notification, nowMs, nextNotificationLogId),
+    )
+  }, [])
+
+  const appendSessionLogEntry = useCallback((notification: AppNotificationInput): void => {
+    const nowMs = Date.now()
     nextNotificationLogIdRef.current += 1
     const nextNotificationLogId = `runtime-log-${nowMs}-${nextNotificationLogIdRef.current}`
     setNotificationLog((currentNotificationLog) =>
@@ -760,8 +753,10 @@ function App({ initialAuthError = '' }: AppProps) {
       setIsUpdatingShadow(false)
       setLastShadowUpdateAtMs(null)
       setShadowJson('{}')
+      setSparkplugReportedBatteryMv(null)
       setSparkplugReportedRedcon(null)
       setRobotState(null)
+      setIsBotPanelOpen(false)
       setIsBoardVideoExpanded(false)
       lastBoardVideoErrorRef.current = null
       hasObservedBoardVideoLastErrorRef.current = false
@@ -771,11 +766,13 @@ function App({ initialAuthError = '' }: AppProps) {
     let cancelled = false
     let shadowSession: ShadowSession | null = null
     setShadowJson('{}')
+    setSparkplugReportedBatteryMv(null)
     setSparkplugReportedRedcon(null)
     setRobotState(null)
     setLastShadowUpdateAtMs(null)
     setIsLoadingShadow(true)
     setIsUpdatingShadow(false)
+    setIsBotPanelOpen(false)
     setIsBoardVideoExpanded(false)
     setShadowConnectionState('connecting')
     lastBoardVideoErrorRef.current = null
@@ -806,6 +803,11 @@ function App({ initialAuthError = '' }: AppProps) {
               return
             }
             setSparkplugReportedRedcon(nextRedcon)
+          },
+          onSparkplugBatteryMvChange: (nextBatteryMv) => {
+            if (!cancelled) {
+              setSparkplugReportedBatteryMv(nextBatteryMv)
+            }
           },
           onRobotStateChange: (nextRobotState) => {
             if (!cancelled) {
@@ -891,10 +893,22 @@ function App({ initialAuthError = '' }: AppProps) {
   }, [enqueueNotification, robotVideoLastError])
 
   useEffect(() => {
-    if ((!canUseBoardVideo || !isShadowConnected) && isBoardVideoExpanded) {
+    if (reportedRedcon === 1) {
+      return
+    }
+    if (isBotPanelOpen) {
+      setIsBotPanelOpen(false)
+    }
+    if (isBoardVideoExpanded) {
       setIsBoardVideoExpanded(false)
     }
-  }, [canUseBoardVideo, cmdVelRepeatIntervalMs, isBoardVideoExpanded, isShadowConnected])
+  }, [isBoardVideoExpanded, isBotPanelOpen, reportedRedcon])
+
+  useEffect(() => {
+    if (!isShadowConnected && isBoardVideoExpanded) {
+      setIsBoardVideoExpanded(false)
+    }
+  }, [isBoardVideoExpanded, isShadowConnected])
 
   const requestRobotState = useEffectEvent(async (): Promise<void> => {
     const shadowSession = shadowSessionRef.current
@@ -1012,47 +1026,53 @@ function App({ initialAuthError = '' }: AppProps) {
     }
   }
 
-  const publishRedconCommand = async (redcon: 3 | 4): Promise<boolean> => {
+  const publishRedconCommand = async (redcon: 1 | 2 | 3 | 4): Promise<boolean> => {
+    const commandSequence = redconCommandSequenceRef.current + 1
+    redconCommandSequenceRef.current = commandSequence
     setIsUpdatingShadow(true)
 
     try {
       const shadowSession = getShadowSession()
-      await shadowSession.publishRedconCommand(redcon)
-      enqueueNotification({
-        tone: 'success',
-        message: `Sparkplug DCMD.redcon -> ${redcon}`,
-        dedupeKey: `sparkplug-redcon:${redcon}`,
-      })
+      await publishSparkplugRedconCommandWithAck(shadowSession, redcon)
+      if (redconCommandSequenceRef.current === commandSequence) {
+        appendSessionLogEntry({
+          tone: 'neutral',
+          message: `Sparkplug DCMD.redcon -> ${redcon}`,
+          dedupeKey: `sparkplug-redcon:${redcon}`,
+        })
+      }
       return true
     } catch (caughtError) {
-      enqueueRuntimeError(
-        caughtError instanceof Error ? caughtError.message : 'Unable to publish Sparkplug command',
-        'sparkplug-redcon',
-      )
+      if (redconCommandSequenceRef.current === commandSequence) {
+        enqueueRuntimeError(
+          caughtError instanceof Error ? caughtError.message : 'Unable to publish Sparkplug command',
+          'sparkplug-redcon',
+        )
+      }
       return false
     } finally {
-      setIsUpdatingShadow(false)
+      if (redconCommandSequenceRef.current === commandSequence) {
+        setIsUpdatingShadow(false)
+      }
     }
   }
 
-  const handleTxingSwitchChange = async (checked: boolean): Promise<void> => {
-    if (isTxingSwitchPending) {
-      return
-    }
-
-    if (checked) {
-      if (!canWake) {
+  const handleRedconSelect = async (redcon: 1 | 2 | 3 | 4): Promise<void> => {
+    if (redcon === 4) {
+      if (isRedconSleepCommandDisabled) {
         return
       }
-      await publishRedconCommand(3)
+      const isWakeTargetPending = desiredRedcon !== null && desiredRedcon !== 4
+      if (reportedRedcon === 4 && !isWakeTargetPending) {
+        return
+      }
+      await publishRedconCommand(4)
       return
     }
-
-    if (!canSleep) {
+    if (isRedconCommandDisabled || reportedRedcon === redcon) {
       return
     }
-
-    await publishRedconCommand(4)
+    await publishRedconCommand(redcon)
   }
 
   const handleSignOff = (): void => {
@@ -1062,11 +1082,15 @@ function App({ initialAuthError = '' }: AppProps) {
     signOut()
   }
 
-  const handleOpenBoardVideo = (): void => {
+  const handleToggleBotPanel = (): void => {
     if (!canUseBoardVideo) {
       return
     }
-    setIsBoardVideoExpanded((currentValue) => !currentValue)
+    setIsBotPanelOpen((currentValue) => {
+      const nextValue = !currentValue
+      setIsBoardVideoExpanded(nextValue)
+      return nextValue
+    })
   }
 
   const renderInlineRouteLink = (
@@ -1217,7 +1241,6 @@ function App({ initialAuthError = '' }: AppProps) {
     )
   }
 
-  const showDevicePanel = activeSessionRoute !== null
   const lastShadowUpdateLabel = formatShadowUpdateTime(lastShadowUpdateAtMs)
   const lastShadowUpdateTitle =
     lastShadowUpdateAtMs === null
@@ -1228,40 +1251,46 @@ function App({ initialAuthError = '' }: AppProps) {
     route.kind !== 'root' ? (
       <section className="card navigation-panel" aria-label="Navigation panel">
         <div className="navigation-panel-main">
-          <a
-            href={appHomePath}
-            className="navigation-logo-link"
-            aria-label="Open town browser home"
-            onClick={(event) => {
-              handleRouteLinkClick(event, appHomePath)
-            }}
-          >
-            <img
-              src={txingLogoUrl}
-              alt="txing logo"
-              className="navigation-logo"
-            />
-          </a>
-          <span className="navigation-panel-brand">TXING</span>
-          <div className="navigation-panel-route">
-            {renderNavigationPath() ?? (
-              <span className="navigation-current-link">route not found</span>
-            )}
+          <div className="navigation-panel-header">
+            <a
+              href={appHomePath}
+              className="navigation-logo-link"
+              aria-label="Open town browser home"
+              onClick={(event) => {
+                handleRouteLinkClick(event, appHomePath)
+              }}
+            >
+              <img
+                src={txingLogoUrl}
+                alt="txing logo"
+                className="navigation-logo"
+              />
+            </a>
+            <span className="navigation-panel-brand">TXING</span>
+            <div className="navigation-panel-route">
+              {renderNavigationPath() ?? (
+                <span className="navigation-current-link">route not found</span>
+              )}
+            </div>
           </div>
         </div>
         <div className="navigation-panel-actions">
-          {selectedDeviceRoute ? (
-            <time
-              className="status-last-shadow-update navigation-timestamp"
-              dateTime={
-                lastShadowUpdateAtMs === null
-                  ? undefined
-                  : new Date(lastShadowUpdateAtMs).toISOString()
-              }
-              title={lastShadowUpdateTitle}
-            >
-              {lastShadowUpdateLabel}
-            </time>
+          {route.kind === 'town' ||
+          route.kind === 'rig' ||
+          route.kind === 'device' ||
+          route.kind === 'device_video' ? (
+            <SparkplugPanel
+              routeKind={route.kind}
+              botRedcon={reportedRedcon}
+              desiredRedcon={desiredRedcon}
+              isBotPanelOpen={isBotPanelOpen}
+              isRedconCommandDisabled={isRedconCommandDisabled}
+              isRedconSleepCommandDisabled={isRedconSleepCommandDisabled}
+              onRedconSelect={(redcon) => {
+                void handleRedconSelect(redcon)
+              }}
+              onToggleBotPanel={handleToggleBotPanel}
+            />
           ) : null}
           <NavigationUserMenu
             authUser={authUser}
@@ -1402,32 +1431,25 @@ function App({ initialAuthError = '' }: AppProps) {
         />
       </section>
     )
-  } else if (showDevicePanel && selectedDeviceRoute) {
+  } else if (route.kind === 'device' && selectedDeviceRoute && isBotPanelOpen) {
     content = (
       <TxingPanel
-        canUseBoardVideo={canUseBoardVideo}
         isBoardVideoExpanded={isBoardVideoExpanded}
         isDebugEnabled={isDebugEnabled}
-        isTxingSwitchDisabled={isTxingSwitchDisabled}
-        isTxingSwitchPending={isTxingSwitchPending}
+        reportedBatteryMv={primaryReportedBatteryMv}
         reportedBoardLeftTrackSpeed={reportedBoardLeftTrackSpeed}
         reportedBoardOnline={reportedBoardOnline}
         reportedBoardRightTrackSpeed={reportedBoardRightTrackSpeed}
-        reportedBatteryMv={reportedBatteryMv}
         reportedMcuOnline={reportedMcuOnline}
-        reportedRedcon={reportedRedcon}
-        txingSwitchChecked={txingSwitchChecked}
         videoChannelName={buildBoardVideoChannelName(selectedDeviceRoute.device)}
         resolveIdToken={resolveSessionIdToken}
         onBoardVideoRuntimeError={(message) => {
           enqueueRuntimeError(message, 'board-video-viewer')
         }}
-        onToggleBoardVideo={handleOpenBoardVideo}
-        onTxingSwitchChange={(checked) => {
-          void handleTxingSwitchChange(checked)
-        }}
       />
     )
+  } else if (route.kind === 'device' && selectedDeviceRoute) {
+    content = <></>
   } else {
     content = (
       <section className="card catalog-card">
@@ -1452,8 +1474,10 @@ function App({ initialAuthError = '' }: AppProps) {
 
       {isSessionLogVisible && <NotificationLogPanel notificationLog={notificationLog} />}
 
-      {isDebugEnabled && showDevicePanel && (
+      {isDebugEnabled && activeSessionRoute !== null && (
         <DebugPanel
+          lastShadowUpdateLabel={lastShadowUpdateLabel}
+          lastShadowUpdateTitle={lastShadowUpdateTitle}
           reportedBoardPower={reportedBoardPower}
           reportedMcuPower={reportedMcuPower}
           shadowJson={shadowJson}

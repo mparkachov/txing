@@ -3125,8 +3125,15 @@ class BleSleepBridge:
                 )
                 return self._cached_or_shadow_state_report(target_power)
 
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                break
+
             try:
-                report = await self._read_state_report()
+                report = await asyncio.wait_for(
+                    self._read_state_report(),
+                    timeout=remaining,
+                )
             except Exception as err:
                 if self._shadow.reported_power == target_power:
                     LOGGER.info(
@@ -3690,6 +3697,10 @@ class RigFleetBridge:
                 )
 
     def _bridge_needs_session(self, bridge: BleSleepBridge) -> bool:
+        if bridge._is_connected():
+            return False
+        if bridge._shadow.reported_power:
+            return True
         target_redcon = bridge._shadow.desired_redcon
         if target_redcon is not None and not bridge._shadow.clear_desired_redcon_if_converged():
             return True
@@ -3770,9 +3781,16 @@ class RigFleetBridge:
         )
         tasks: set[asyncio.Task[Any]] = {updates_task}
         activity_task: asyncio.Task[None] | None = None
+        disconnect_tasks: list[asyncio.Task[None]] = []
         if self._activity_event is not None:
             activity_task = asyncio.create_task(self._activity_event.wait())
             tasks.add(activity_task)
+        for managed in self._managed_things:
+            if managed.bridge._disconnect_event is None:
+                continue
+            disconnect_task = asyncio.create_task(managed.bridge._wait_for_disconnect_event())
+            disconnect_tasks.append(disconnect_task)
+            tasks.add(disconnect_task)
         try:
             done, _pending = await asyncio.wait(
                 tasks,
@@ -3787,6 +3805,7 @@ class RigFleetBridge:
             cleanup_tasks = [updates_task]
             if activity_task is not None:
                 cleanup_tasks.append(activity_task)
+            cleanup_tasks.extend(disconnect_tasks)
             for task in cleanup_tasks:
                 if not task.done():
                     task.cancel()
@@ -3815,7 +3834,10 @@ class RigFleetBridge:
                 active_bridge = self._active_bridge()
                 if active_bridge is not None:
                     await active_bridge._process_desired_redcon_once()
-                    if active_bridge._is_connected() and active_bridge._shadow.desired_redcon is None:
+                    if (
+                        active_bridge._is_connected()
+                        and active_bridge._should_idle_disconnected_while_sleeping()
+                    ):
                         await active_bridge._safe_disconnect()
                     if not active_bridge._is_connected():
                         # Mirror the single-device path: once a session has been

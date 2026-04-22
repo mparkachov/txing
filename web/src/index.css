@@ -112,7 +112,7 @@ body {
 .navigation-panel {
   width: min(100%, var(--page-panel-width));
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 1rem 1.5rem;
   padding: 1rem 1.2rem;
@@ -123,6 +123,13 @@ body {
   align-items: center;
   flex-wrap: nowrap;
   flex: 1 1 auto;
+  gap: 0.8rem;
+  min-width: 0;
+}
+
+.navigation-panel-header {
+  display: flex;
+  align-items: center;
   gap: 0.8rem;
   min-width: 0;
 }
@@ -213,9 +220,231 @@ body {
   margin-left: auto;
 }
 
-.navigation-timestamp {
-  min-width: 7.5rem;
+.sparkplug-strip {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.sparkplug-row {
+  display: inline-grid;
+  grid-template-columns: minmax(0, auto) auto;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.28rem 0.2rem;
+}
+
+.sparkplug-redcon-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.18rem;
+  min-width: 0;
+}
+
+.sparkplug-redcon-segment {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.18rem;
+}
+
+.sparkplug-redcon-button-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
   justify-content: center;
+}
+
+.sparkplug-redcon-button {
+  width: 1.9rem;
+  height: 1.9rem;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid rgba(143, 155, 171, 0.34);
+  background: rgba(227, 233, 241, 0.12);
+  color: #cfd8e3;
+  font-family: "SF Mono", "Consolas", "Liberation Mono", monospace;
+  font-size: 0.78rem;
+  font-weight: 800;
+  line-height: 1;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.42),
+    0 3px 10px rgba(14, 24, 35, 0.08);
+}
+
+.sparkplug-redcon-button-active {
+  color: #fbfdff;
+  background: currentColor;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.34),
+    0 0 0 1px rgba(255, 255, 255, 0.76),
+    0 5px 12px rgba(20, 41, 67, 0.16);
+}
+
+.sparkplug-redcon-button.status-txing-redcon-1.sparkplug-redcon-button-active {
+  background: var(--redcon-1);
+}
+
+.sparkplug-redcon-button.status-txing-redcon-2.sparkplug-redcon-button-active {
+  background: var(--redcon-2);
+}
+
+.sparkplug-redcon-button.status-txing-redcon-3.sparkplug-redcon-button-active {
+  background: var(--redcon-3);
+}
+
+.sparkplug-redcon-button.status-txing-redcon-4.sparkplug-redcon-button-active {
+  background: var(--redcon-4);
+}
+
+.sparkplug-redcon-button-pending {
+  border-color: rgba(225, 180, 40, 0.75);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.42),
+    0 0 0 1px rgba(225, 180, 40, 0.22),
+    0 0 0.8rem rgba(225, 180, 40, 0.18);
+}
+
+.sparkplug-redcon-target-arrow {
+  position: absolute;
+  left: 50%;
+  top: -0.72rem;
+  color: rgba(225, 180, 40, 0.98);
+  font-size: 0.72rem;
+  font-weight: 900;
+  line-height: 1;
+  transform: translateX(-50%);
+  text-shadow:
+    0 0 0.28rem rgba(225, 180, 40, 0.74),
+    0 0 0.6rem rgba(225, 180, 40, 0.42);
+  animation: sparkplug-redcon-target-pulse 1.15s ease-in-out infinite;
+}
+
+.sparkplug-redcon-button:hover:not(:disabled),
+.sparkplug-redcon-button:focus-visible:not(:disabled) {
+  outline: none;
+  transform: translateY(-1px);
+  border-color: rgba(108, 238, 246, 0.55);
+}
+
+.sparkplug-redcon-button:disabled {
+  opacity: 1;
+  cursor: default;
+}
+
+.sparkplug-redcon-button:not(.sparkplug-redcon-button-active):disabled {
+  color: #8b9bad;
+}
+
+.sparkplug-redcon-line {
+  width: 1.05rem;
+  height: 2px;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    rgba(168, 179, 191, 0.18),
+    rgba(168, 179, 191, 0.95),
+    rgba(168, 179, 191, 0.18)
+  );
+}
+
+@keyframes sparkplug-redcon-target-pulse {
+  0%,
+  100% {
+    opacity: 0.58;
+    transform: translateX(-50%) translateY(0);
+  }
+
+  50% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0.08rem);
+  }
+}
+
+.sparkplug-row-controls {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.sparkplug-device-button {
+  width: 2.55rem;
+  height: 2.55rem;
+}
+
+.sparkplug-device-button:disabled {
+  opacity: 0.55;
+  cursor: default;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.54),
+    0 6px 14px rgba(19, 41, 70, 0.04);
+}
+
+.sparkplug-device-button-ready {
+  color: #2248d4;
+  border-color: rgba(34, 72, 212, 0.2);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(235, 241, 255, 0.98));
+}
+
+.sparkplug-device-button-open {
+  color: #1b9c62;
+  border-color: rgba(27, 156, 98, 0.28);
+  background: rgba(27, 156, 98, 0.12);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.7),
+    0 0 1rem rgba(30, 169, 104, 0.18);
+}
+
+.sparkplug-device-glyph {
+  position: relative;
+  display: inline-flex;
+  width: 1.18rem;
+  height: 1rem;
+  align-items: center;
+  justify-content: center;
+}
+
+.sparkplug-device-glyph-screen {
+  position: absolute;
+  inset: 0.02rem 0.06rem 0.16rem;
+  border: 0.12rem solid currentColor;
+  border-radius: 0.18rem;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.sparkplug-device-glyph-details {
+  position: absolute;
+  left: 0.3rem;
+  right: 0.3rem;
+  height: 0.08rem;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.sparkplug-device-glyph-details-top {
+  top: 0.22rem;
+}
+
+.sparkplug-device-glyph-details-middle {
+  top: 0.42rem;
+}
+
+.sparkplug-device-glyph-details-bottom {
+  top: 0.62rem;
+  width: 0.42rem;
+  right: auto;
+}
+
+.sparkplug-device-glyph-base {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: 0.62rem;
+  height: 0.12rem;
+  border-radius: 999px;
+  background: currentColor;
+  transform: translateX(-50%);
 }
 
 .catalog-grid-shell {
@@ -500,6 +729,23 @@ h1 {
   width: min(100%, var(--page-panel-width));
 }
 
+.debug-panel-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  margin-bottom: 0.9rem;
+  flex-wrap: wrap;
+}
+
+.debug-panel-meta-label {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
 .notification-log-panel {
   width: min(100%, var(--page-panel-width));
   display: grid;
@@ -631,6 +877,11 @@ h1 {
 
 .debug-panel .status-devices {
   margin-bottom: 1rem;
+}
+
+.txing-panel-battery {
+  display: inline-flex;
+  align-items: center;
 }
 
 .status-inline-error {
@@ -1495,8 +1746,13 @@ button:disabled {
     gap: 0.7rem;
   }
 
+  .navigation-panel-header {
+    flex-wrap: wrap;
+  }
+
   .navigation-panel-actions {
-    justify-content: space-between;
+    justify-content: flex-end;
+    flex-wrap: wrap;
   }
 
   .navigation-panel-brand {
@@ -1505,6 +1761,26 @@ button:disabled {
 
   .navigation-path {
     font-size: 0.92rem;
+  }
+
+  .sparkplug-row {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    text-align: center;
+  }
+
+  .sparkplug-row-controls {
+    justify-self: center;
+  }
+
+  .sparkplug-redcon-button {
+    width: 1.72rem;
+    height: 1.72rem;
+    font-size: 0.72rem;
+  }
+
+  .sparkplug-redcon-line {
+    width: 0.8rem;
   }
 
   .catalog-grid {

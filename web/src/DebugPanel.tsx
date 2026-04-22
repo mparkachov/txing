@@ -1,4 +1,6 @@
 type DebugPanelProps = {
+  lastShadowUpdateLabel: string
+  lastShadowUpdateTitle: string
   reportedMcuPower: boolean | null
   reportedBoardPower: boolean | null
   shadowJson: string
@@ -15,6 +17,8 @@ const getPowerNodeClass = (power: boolean | null): string => {
 }
 
 function DebugPanel({
+  lastShadowUpdateLabel,
+  lastShadowUpdateTitle,
   reportedMcuPower,
   reportedBoardPower,
   shadowJson,
@@ -34,6 +38,13 @@ function DebugPanel({
           </pre>
           <div className="status-device-label">Board</div>
         </div>
+      </div>
+
+      <div className="debug-panel-meta">
+        <span className="debug-panel-meta-label">Last shadow update</span>
+        <time className="status-last-shadow-update" title={lastShadowUpdateTitle}>
+          {lastShadowUpdateLabel}
+        </time>
       </div>
 
       <label htmlFor="shadow-json" className="editor-label">
