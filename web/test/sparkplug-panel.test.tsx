@@ -9,11 +9,14 @@ describe('sparkplug panel', () => {
         routeKind="town"
         botRedcon={null}
         desiredRedcon={null}
-        isBotPanelOpen={false}
+        detailsToggleAriaLabel="Show rig details"
+        detailsToggleTitle="Show rig details"
+        isDetailsPanelOpen={false}
+        isDetailsPanelToggleEnabled={true}
         isRedconCommandDisabled={false}
         isRedconSleepCommandDisabled={false}
         onRedconSelect={() => {}}
-        onToggleBotPanel={() => {}}
+        onToggleDetailsPanel={() => {}}
       />,
     )
 
@@ -22,8 +25,32 @@ describe('sparkplug panel', () => {
     expect(markup).not.toContain('>BOT<')
     expect(markup).not.toContain('>REDCON<')
     expect(markup).toContain('sparkplug-redcon-button')
+    expect(markup).toContain('aria-label="Show rig details"')
     expect(markup).not.toContain('status-battery-shell')
     expect(markup).not.toContain('status-switch-track')
+  })
+
+  test('renders a rig strip with an enabled device-list details button', () => {
+    const markup = renderToStaticMarkup(
+      <SparkplugPanel
+        routeKind="rig"
+        botRedcon={null}
+        desiredRedcon={null}
+        detailsToggleAriaLabel="Show device details"
+        detailsToggleTitle="Show device details"
+        isDetailsPanelOpen={false}
+        isDetailsPanelToggleEnabled={true}
+        isRedconCommandDisabled={false}
+        isRedconSleepCommandDisabled={false}
+        onRedconSelect={() => {}}
+        onToggleDetailsPanel={() => {}}
+      />,
+    )
+
+    expect(markup).toContain('data-sparkplug-row="rig"')
+    expect(markup).toMatch(
+      /aria-label="Show device details" title="Show device details"(?![^>]*disabled)/,
+    )
   })
 
   test('renders a direct bot redcon control with an always-visible disabled details button outside redcon 1', () => {
@@ -32,11 +59,14 @@ describe('sparkplug panel', () => {
         routeKind="device"
         botRedcon={4}
         desiredRedcon={null}
-        isBotPanelOpen={false}
+        detailsToggleAriaLabel="Show bot device details"
+        detailsToggleTitle="Device details become available at REDCON 1"
+        isDetailsPanelOpen={false}
+        isDetailsPanelToggleEnabled={false}
         isRedconCommandDisabled={false}
         isRedconSleepCommandDisabled={false}
         onRedconSelect={() => {}}
-        onToggleBotPanel={() => {}}
+        onToggleDetailsPanel={() => {}}
       />,
     )
 
@@ -62,11 +92,14 @@ describe('sparkplug panel', () => {
         routeKind="device"
         botRedcon={1}
         desiredRedcon={2}
-        isBotPanelOpen={true}
+        detailsToggleAriaLabel="Hide bot device details"
+        detailsToggleTitle="Hide bot device details"
+        isDetailsPanelOpen={true}
+        isDetailsPanelToggleEnabled={true}
         isRedconCommandDisabled={false}
         isRedconSleepCommandDisabled={false}
         onRedconSelect={() => {}}
-        onToggleBotPanel={() => {}}
+        onToggleDetailsPanel={() => {}}
       />,
     )
 

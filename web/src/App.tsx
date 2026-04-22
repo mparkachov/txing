@@ -296,6 +296,8 @@ function App({ initialAuthError = '' }: AppProps) {
   const [isLoadingShadow, setIsLoadingShadow] = useState(false)
   const [isUpdatingShadow, setIsUpdatingShadow] = useState(false)
   const [isDebugEnabled, setIsDebugEnabled] = useState(false)
+  const [isTownPanelOpen, setIsTownPanelOpen] = useState(false)
+  const [isRigPanelOpen, setIsRigPanelOpen] = useState(false)
   const [isBotPanelOpen, setIsBotPanelOpen] = useState(false)
   const [isBoardVideoExpanded, setIsBoardVideoExpanded] = useState(false)
   const [isSessionLogVisible, setIsSessionLogVisible] = useState(false)
@@ -745,6 +747,18 @@ function App({ initialAuthError = '' }: AppProps) {
   }, [adminEmailMismatch, hasUnsupportedTown, resolveSessionIdToken, selectedRigName, status])
 
   useEffect(() => {
+    setIsTownPanelOpen(false)
+    setIsRigPanelOpen(false)
+  }, [
+    route.kind,
+    route.kind === 'town'
+      ? route.town
+      : route.kind === 'rig' || route.kind === 'device' || route.kind === 'device_video'
+        ? `${route.town}/${route.rig}`
+        : '',
+  ])
+
+  useEffect(() => {
     if (!activeSessionRoute) {
       shadowSessionRef.current?.close()
       shadowSessionRef.current = null
@@ -1093,6 +1107,14 @@ function App({ initialAuthError = '' }: AppProps) {
     })
   }
 
+  const handleToggleTownPanel = (): void => {
+    setIsTownPanelOpen((currentValue) => !currentValue)
+  }
+
+  const handleToggleRigPanel = (): void => {
+    setIsRigPanelOpen((currentValue) => !currentValue)
+  }
+
   const renderInlineRouteLink = (
     path: string,
     label: string,
@@ -1247,6 +1269,51 @@ function App({ initialAuthError = '' }: AppProps) {
       ? 'Last shadow update unavailable'
       : `Last shadow update ${new Date(lastShadowUpdateAtMs).toLocaleString()}`
 
+  const isDetailsPanelOpen =
+    route.kind === 'town'
+      ? isTownPanelOpen
+      : route.kind === 'rig'
+        ? isRigPanelOpen
+        : route.kind === 'device'
+          ? isBotPanelOpen
+          : false
+  const isDetailsPanelToggleEnabled =
+    route.kind === 'town' || route.kind === 'rig'
+      ? true
+      : route.kind === 'device'
+        ? canUseBoardVideo
+        : false
+  const detailsToggleAriaLabel =
+    route.kind === 'town'
+      ? isTownPanelOpen
+        ? 'Hide rig details'
+        : 'Show rig details'
+      : route.kind === 'rig'
+        ? isRigPanelOpen
+          ? 'Hide device details'
+          : 'Show device details'
+        : route.kind === 'device'
+          ? isBotPanelOpen
+            ? 'Hide bot device details'
+            : 'Show bot device details'
+          : null
+  const detailsToggleTitle =
+    route.kind === 'town'
+      ? isTownPanelOpen
+        ? 'Hide rig details'
+        : 'Show rig details'
+      : route.kind === 'rig'
+        ? isRigPanelOpen
+          ? 'Hide device details'
+          : 'Show device details'
+        : route.kind === 'device'
+          ? canUseBoardVideo
+            ? isBotPanelOpen
+              ? 'Hide bot device details'
+              : 'Show bot device details'
+            : 'Bot device details become available at REDCON 1'
+          : null
+
   const navigationPanel =
     route.kind !== 'root' ? (
       <section className="card navigation-panel" aria-label="Navigation panel">
@@ -1283,13 +1350,28 @@ function App({ initialAuthError = '' }: AppProps) {
               routeKind={route.kind}
               botRedcon={reportedRedcon}
               desiredRedcon={desiredRedcon}
-              isBotPanelOpen={isBotPanelOpen}
+              detailsToggleAriaLabel={detailsToggleAriaLabel}
+              detailsToggleTitle={detailsToggleTitle}
+              isDetailsPanelOpen={isDetailsPanelOpen}
+              isDetailsPanelToggleEnabled={isDetailsPanelToggleEnabled}
               isRedconCommandDisabled={isRedconCommandDisabled}
               isRedconSleepCommandDisabled={isRedconSleepCommandDisabled}
               onRedconSelect={(redcon) => {
                 void handleRedconSelect(redcon)
               }}
-              onToggleBotPanel={handleToggleBotPanel}
+              onToggleDetailsPanel={() => {
+                if (route.kind === 'town') {
+                  handleToggleTownPanel()
+                  return
+                }
+                if (route.kind === 'rig') {
+                  handleToggleRigPanel()
+                  return
+                }
+                if (route.kind === 'device') {
+                  handleToggleBotPanel()
+                }
+              }}
             />
           ) : null}
           <NavigationUserMenu
@@ -1340,7 +1422,7 @@ function App({ initialAuthError = '' }: AppProps) {
       </section>
     )
   } else if (route.kind === 'town') {
-    content = (
+    content = isTownPanelOpen ? (
       <section className="catalog-grid-shell">
         {rigCatalog.status === 'loading' ? <p>Loading rigs...</p> : null}
         {rigCatalog.status === 'error' ? <p className="error">{rigCatalog.error}</p> : null}
@@ -1363,9 +1445,11 @@ function App({ initialAuthError = '' }: AppProps) {
           </ul>
         ) : null}
       </section>
+    ) : (
+      <></>
     )
   } else if (route.kind === 'rig') {
-    content = (
+    content = isRigPanelOpen ? (
       <section className="catalog-grid-shell">
         {deviceCatalog.status === 'loading' ? <p>Loading devices...</p> : null}
         {deviceCatalog.status === 'not_found' ? <p className="error">{deviceCatalog.error}</p> : null}
@@ -1387,6 +1471,8 @@ function App({ initialAuthError = '' }: AppProps) {
           </ul>
         ) : null}
       </section>
+    ) : (
+      <></>
     )
   } else if (selectedDeviceRoute && deviceCatalog.status === 'loading') {
     content = (

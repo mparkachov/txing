@@ -4,11 +4,14 @@ type SparkplugPanelProps = {
   routeKind: 'town' | 'rig' | 'device' | 'device_video'
   botRedcon: number | null
   desiredRedcon: number | null
-  isBotPanelOpen: boolean
+  detailsToggleAriaLabel: string | null
+  detailsToggleTitle: string | null
+  isDetailsPanelOpen: boolean
+  isDetailsPanelToggleEnabled: boolean
   isRedconCommandDisabled: boolean
   isRedconSleepCommandDisabled: boolean
   onRedconSelect: (redcon: 1 | 2 | 3 | 4) => void
-  onToggleBotPanel: () => void
+  onToggleDetailsPanel: () => void
 }
 
 type SparkplugNodeKind = 'town' | 'rig' | 'bot'
@@ -93,18 +96,20 @@ function SparkplugPanel({
   routeKind,
   botRedcon,
   desiredRedcon,
-  isBotPanelOpen,
+  detailsToggleAriaLabel,
+  detailsToggleTitle,
+  isDetailsPanelOpen,
+  isDetailsPanelToggleEnabled,
   isRedconCommandDisabled,
   isRedconSleepCommandDisabled,
   onRedconSelect,
-  onToggleBotPanel,
+  onToggleDetailsPanel,
 }: SparkplugPanelProps) {
   const kind = getSparkplugNodeKind(routeKind)
   const isBot = kind === 'bot'
   const rowRedcon = isBot ? botRedcon : 1
   const isInteractive = isBot && (routeKind === 'device' || routeKind === 'device_video')
-  const showBotPanelToggle = routeKind === 'device'
-  const isBotPanelToggleEnabled = botRedcon === 1
+  const showDetailsPanelToggle = detailsToggleAriaLabel !== null && detailsToggleTitle !== null
   const isPending = desiredRedcon !== null && desiredRedcon !== rowRedcon
 
   return (
@@ -119,22 +124,18 @@ function SparkplugPanel({
           redcon={rowRedcon}
         />
         <div className="sparkplug-row-controls">
-          {showBotPanelToggle ? (
+          {showDetailsPanelToggle ? (
             <button
               type="button"
               className={`status-icon-button sparkplug-device-button ${
-                isBotPanelOpen ? 'sparkplug-device-button-open' : 'sparkplug-device-button-ready'
+                isDetailsPanelOpen
+                  ? 'sparkplug-device-button-open'
+                  : 'sparkplug-device-button-ready'
               }`}
-              aria-label={isBotPanelOpen ? 'Hide bot device details' : 'Show bot device details'}
-              title={
-                isBotPanelToggleEnabled
-                  ? isBotPanelOpen
-                    ? 'Hide bot device details'
-                    : 'Show bot device details'
-                  : 'Device details become available at REDCON 1'
-              }
-              disabled={!isBotPanelToggleEnabled}
-              onClick={onToggleBotPanel}
+              aria-label={detailsToggleAriaLabel ?? undefined}
+              title={detailsToggleTitle ?? undefined}
+              disabled={!isDetailsPanelToggleEnabled}
+              onClick={onToggleDetailsPanel}
             >
               <span className="sparkplug-device-glyph" aria-hidden="true">
                 <span className="sparkplug-device-glyph-screen" />

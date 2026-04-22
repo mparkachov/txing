@@ -186,7 +186,6 @@ function TxingPanel({
               <TrackGauge side="Right" speed={reportedBoardRightTrackSpeed} />
             </div>
             <div className="status-txing-header-side status-txing-header-side-end">
-              <BatteryMetric batteryMv={reportedBatteryMv} />
               <div
                 className={`status-signal ${bleSignalToneClass}`}
                 role="img"
@@ -219,6 +218,7 @@ function TxingPanel({
                 <span className="status-wifi-arc status-wifi-arc-small" aria-hidden="true" />
                 <span className="status-wifi-dot" aria-hidden="true" />
               </div>
+              <BatteryMetric batteryMv={reportedBatteryMv} />
             </div>
           </div>
           {isBoardVideoExpanded ? (
