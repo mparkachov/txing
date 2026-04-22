@@ -37,7 +37,6 @@ from .shadow_store import (
     DEFAULT_BATTERY_MV,
     DEFAULT_BOARD_POWER,
     DEFAULT_BOARD_WIFI_ONLINE,
-    DEFAULT_DESIRED_REDCON,
     DEFAULT_REDCON,
     DEFAULT_REPORTED_ONLINE,
     DEFAULT_REPORTED_POWER,
@@ -303,7 +302,10 @@ def _extract_reported_mcu(payload: dict[str, Any]) -> dict[str, Any] | None:
     reported = state.get("reported")
     if not isinstance(reported, dict):
         return None
-    mcu = reported.get("mcu")
+    device = reported.get("device")
+    if not isinstance(device, dict):
+        return None
+    mcu = device.get("mcu")
     return mcu if isinstance(mcu, dict) else None
 
 
@@ -322,7 +324,10 @@ def _extract_reported_board(payload: dict[str, Any]) -> dict[str, Any] | None:
     reported = state.get("reported")
     if not isinstance(reported, dict):
         return None
-    board = reported.get("board")
+    device = reported.get("device")
+    if not isinstance(device, dict):
+        return None
+    board = device.get("board")
     return board if isinstance(board, dict) else None
 
 
@@ -362,58 +367,6 @@ def _normalize_device_id(value: Any) -> str | None:
     return text
 
 
-def _extract_desired_redcon_from_shadow(payload: dict[str, Any]) -> int | None:
-    state = payload.get("state")
-    if not isinstance(state, dict):
-        return None
-    desired = state.get("desired")
-    if not isinstance(desired, dict):
-        return None
-    value = desired.get("redcon")
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int) and 1 <= value <= 4:
-        return value
-    return None
-
-
-def _shadow_payload_includes_desired_redcon(payload: dict[str, Any]) -> bool:
-    state = payload.get("state")
-    if not isinstance(state, dict):
-        return False
-    desired = state.get("desired")
-    if not isinstance(desired, dict):
-        return False
-    return "redcon" in desired
-
-
-def _extract_desired_board_power_from_shadow(payload: dict[str, Any]) -> bool | None:
-    state = payload.get("state")
-    if not isinstance(state, dict):
-        return None
-    desired = state.get("desired")
-    if not isinstance(desired, dict):
-        return None
-    board = desired.get("board")
-    if not isinstance(board, dict):
-        return None
-    value = board.get("power")
-    return value if isinstance(value, bool) else None
-
-
-def _shadow_payload_includes_desired_board_power(payload: dict[str, Any]) -> bool:
-    state = payload.get("state")
-    if not isinstance(state, dict):
-        return False
-    desired = state.get("desired")
-    if not isinstance(desired, dict):
-        return False
-    board = desired.get("board")
-    if not isinstance(board, dict):
-        return False
-    return "power" in board
-
-
 def _extract_reported_power(payload: dict[str, Any]) -> bool | None:
     mcu = _extract_reported_mcu(payload)
     if mcu is None:
@@ -426,7 +379,10 @@ def _extract_reported_battery_mv(payload: dict[str, Any]) -> int | None:
     reported = _extract_reported_root(payload)
     if reported is None:
         return None
-    value = reported.get("batteryMv")
+    device = reported.get("device")
+    if not isinstance(device, dict):
+        return None
+    value = device.get("batteryMv")
     if isinstance(value, bool):
         return None
     if isinstance(value, int) and 0 <= value <= 10000:
@@ -783,6 +739,7 @@ class BridgeConfig:
     lock_file: Path = DEFAULT_LOCK_FILE
     thing_name: str = DEFAULT_THING_NAME
     rig_name: str = DEFAULT_RIG_NAME
+    rig_thing_name: str = ""
     sparkplug_group_id: str = DEFAULT_SPARKPLUG_GROUP_ID
     sparkplug_edge_node_id: str = DEFAULT_SPARKPLUG_EDGE_NODE_ID
     iot_endpoint: str = ""
@@ -859,8 +816,7 @@ class KnownBleDevice:
 
 @dataclass(slots=True)
 class ShadowState:
-    desired_redcon: int | None = None
-    desired_board_power: bool | None = None
+    target_redcon: int | None = None
     reported_power: bool = False
     battery_mv: int = DEFAULT_BATTERY_MV
     ble_uuids: BleGattUuids = DEFAULT_BLE_GATT_UUIDS
@@ -889,11 +845,8 @@ class ShadowState:
                 aws_region=self.aws_region,
             )
 
-    def set_desired_redcon(self, redcon: int | None) -> None:
-        self.desired_redcon = redcon
-
-    def set_desired_board_power(self, power: bool | None) -> None:
-        self.desired_board_power = power
+    def set_target_redcon(self, redcon: int | None) -> None:
+        self.target_redcon = redcon
 
     def set_reported(
         self,
@@ -983,32 +936,27 @@ class ShadowState:
     def payload(self) -> dict[str, Any]:
         reported: dict[str, Any] = {
             "redcon": self.redcon,
-            "batteryMv": self.battery_mv,
-            "mcu": {
-                "power": self.reported_power,
-                "online": self.ble_online,
-            },
-            "board": {
-                "power": self.board_power,
-                "wifi": {
-                    "online": self.board_wifi_online,
+            "device": {
+                "batteryMv": self.battery_mv,
+                "mcu": {
+                    "power": self.reported_power,
+                    "online": self.ble_online,
+                },
+                "board": {
+                    "power": self.board_power,
+                    "wifi": {
+                        "online": self.board_wifi_online,
+                    },
                 },
             },
         }
         state: dict[str, dict[str, dict[str, Any]]] = {
             "reported": reported,
         }
-        desired: dict[str, Any] = {}
-        if self.desired_redcon is not None:
-            desired["redcon"] = self.desired_redcon
-        if self.desired_board_power is not None:
-            desired["board"] = {"power": self.desired_board_power}
-        if desired:
-            state["desired"] = desired
         return {"state": state}
 
-    def clear_desired_redcon_if_converged(self) -> bool:
-        target = self.desired_redcon
+    def clear_target_redcon_if_converged(self) -> bool:
+        target = self.target_redcon
         if target is None:
             return False
         if target == 4 and self.redcon == 4:
@@ -1035,10 +983,7 @@ class ShadowState:
 class AwsShadowUpdate:
     thing_name: str
     source: str
-    has_desired_redcon: bool = False
-    desired_redcon: int | None = None
-    has_desired_board_power: bool = False
-    desired_board_power: bool | None = None
+    command_redcon: int | None = None
     reported_power: bool | None = None
     reported_online: bool | None = None
     battery_mv: int | None = None
@@ -1050,10 +995,6 @@ class AwsShadowUpdate:
     video_descriptor: dict[str, Any] | None = None
     video_status: dict[str, Any] | None = None
     version: int | None = None
-
-
-_SHADOW_UNSET = object()
-
 
 class AwsShadowClient:
     def __init__(self, config: BridgeConfig, aws_runtime: AwsRuntime) -> None:
@@ -1241,27 +1182,18 @@ class AwsShadowClient:
         self,
         *,
         thing_name: str,
-        reported_mcu_patch: dict[str, Any] | None,
+        reported_device_patch: dict[str, Any] | None,
         reported_root_patch: dict[str, Any] | None = None,
-        desired_redcon: int | None | object = _SHADOW_UNSET,
-        desired_board_power: bool | None | object = _SHADOW_UNSET,
         publish_timeout_seconds: float = DEFAULT_MQTT_PUBLISH_TIMEOUT,
     ) -> None:
         state: dict[str, Any] = {}
         reported: dict[str, Any] = {}
         if reported_root_patch is not None:
             reported.update(reported_root_patch)
-        if reported_mcu_patch is not None:
-            reported["mcu"] = reported_mcu_patch
+        if reported_device_patch is not None:
+            reported["device"] = reported_device_patch
         if reported:
             state["reported"] = reported
-        desired: dict[str, Any] = {}
-        if desired_redcon is not _SHADOW_UNSET:
-            desired["redcon"] = desired_redcon
-        if desired_board_power is not _SHADOW_UNSET:
-            desired["board"] = {"power": desired_board_power}
-        if desired:
-            state["desired"] = desired
         if not state:
             return
 
@@ -1431,8 +1363,7 @@ class AwsShadowClient:
                 AwsShadowUpdate(
                     thing_name=thing_name,
                     source="sparkplug/dcmd",
-                    has_desired_redcon=True,
-                    desired_redcon=command.value,
+                    command_redcon=command.value,
                 )
             )
             return
@@ -1507,12 +1438,6 @@ class AwsShadowClient:
             update = AwsShadowUpdate(
                 thing_name=thing_name,
                 source="shadow/get/accepted",
-                has_desired_redcon=_shadow_payload_includes_desired_redcon(payload),
-                desired_redcon=_extract_desired_redcon_from_shadow(payload),
-                has_desired_board_power=_shadow_payload_includes_desired_board_power(
-                    payload
-                ),
-                desired_board_power=_extract_desired_board_power_from_shadow(payload),
                 reported_power=_extract_reported_power(payload),
                 reported_online=_extract_reported_online(payload),
                 battery_mv=_extract_reported_battery_mv(payload),
@@ -1529,12 +1454,6 @@ class AwsShadowClient:
             update = AwsShadowUpdate(
                 thing_name=thing_name,
                 source="shadow/update/accepted",
-                has_desired_redcon=_shadow_payload_includes_desired_redcon(payload),
-                desired_redcon=_extract_desired_redcon_from_shadow(payload),
-                has_desired_board_power=_shadow_payload_includes_desired_board_power(
-                    payload
-                ),
-                desired_board_power=_extract_desired_board_power_from_shadow(payload),
                 reported_power=_extract_reported_power(payload),
                 reported_online=_extract_reported_online(payload),
                 battery_mv=_extract_reported_battery_mv(payload),
@@ -1699,8 +1618,6 @@ class BleSleepBridge:
         self._mcp_summary = _build_default_mcp_summary(config.thing_name)
         self._board_shutdown_requested_at: float | None = None
         self._board_shutdown_timeout_logged = False
-        if shadow.desired_board_power is False and shadow.board_power:
-            self._board_shutdown_requested_at = time.monotonic()
 
     def _set_rig_state(self, next_state: RigBleState, reason: str) -> None:
         if self._state == next_state:
@@ -1883,13 +1800,13 @@ class BleSleepBridge:
             return False
         return (loop.time() - candidate_since) >= self._config.ble_online_recover_after
 
-    def _desired_ble_online_state(self) -> bool:
+    def _target_ble_online_state(self) -> bool:
         if self._shadow.ble_online:
             return self._ble_presence_recent()
         return self._ble_recovered_from_regular_advertising()
 
     def _ble_offline_is_intentional_sleep(self) -> bool:
-        if self._shadow.desired_redcon == 4:
+        if self._shadow.target_redcon == 4:
             return True
         return self._shadow.redcon == 4 and not self._shadow.reported_power
 
@@ -1903,19 +1820,6 @@ class BleSleepBridge:
         if not self._shadow.board_power:
             return True
 
-        if self._shadow.desired_board_power is not False:
-            self._shadow.set_desired_board_power(False)
-            self._board_shutdown_requested_at = time.monotonic()
-            self._board_shutdown_timeout_logged = False
-            await self._publish_reported_update(
-                reported_mcu_patch=None,
-                desired_redcon=_SHADOW_UNSET,
-                desired_board_power=False,
-                context="Requested internal desired.board.power=false for REDCON 4 convergence",
-                include_redcon_if_changed=False,
-            )
-            return False
-
         if self._board_shutdown_requested_at is None:
             self._board_shutdown_requested_at = time.monotonic()
             self._board_shutdown_timeout_logged = False
@@ -1928,34 +1832,16 @@ class BleSleepBridge:
             self._board_shutdown_timeout_logged = True
         return False
 
-    async def _clear_desired_redcon(self, context: str) -> None:
-        if self._shadow.desired_redcon is None:
+    async def _clear_target_redcon(self, context: str) -> None:
+        if self._shadow.target_redcon is None:
             return
-        self._shadow.set_desired_redcon(None)
-        await self._publish_reported_update(
-            reported_mcu_patch=None,
-            desired_redcon=None,
-            desired_board_power=_SHADOW_UNSET,
-            context=context,
-            include_redcon_if_changed=False,
-        )
-
-    async def _clear_desired_board_power(self, context: str) -> None:
-        if self._shadow.desired_board_power is None:
-            return
-        self._shadow.set_desired_board_power(None)
+        self._shadow.set_target_redcon(None)
         self._board_shutdown_requested_at = None
         self._board_shutdown_timeout_logged = False
-        await self._publish_reported_update(
-            reported_mcu_patch=None,
-            desired_redcon=_SHADOW_UNSET,
-            desired_board_power=None,
-            context=context,
-            include_redcon_if_changed=False,
-        )
+        LOGGER.info("%s", context)
 
     async def _reconcile_ble_online_presence(self) -> None:
-        ble_online = self._desired_ble_online_state()
+        ble_online = self._target_ble_online_state()
         await self._publish_ble_online_state(
             online=ble_online,
             context=(
@@ -1970,10 +1856,8 @@ class BleSleepBridge:
         if not self._shadow.reconcile_redcon():
             return
         await self._publish_reported_update(
-            reported_mcu_patch=None,
+            reported_device_patch=None,
             reported_root_patch={"redcon": self._shadow.redcon},
-            desired_redcon=_SHADOW_UNSET,
-            desired_board_power=_SHADOW_UNSET,
             context="Published derived reported.redcon after video status freshness change",
             previous_redcon=previous_redcon,
             previous_battery=self._shadow.battery_mv,
@@ -1995,10 +1879,8 @@ class BleSleepBridge:
             )
         await self._normalize_shadow_for_startup_default()
         await self._publish_reported_update(
-            reported_mcu_patch=None,
+            reported_device_patch=None,
             reported_root_patch={"redcon": self._shadow.redcon},
-            desired_redcon=_SHADOW_UNSET,
-            desired_board_power=_SHADOW_UNSET,
             context="Synchronized reported.redcon on startup",
             include_redcon_if_changed=False,
         )
@@ -2018,13 +1900,9 @@ class BleSleepBridge:
                     await self._apply_cloud_shadow_updates(updates=pending_updates)
                     pending_updates = []
 
-                if self._shadow.clear_desired_redcon_if_converged():
-                    await self._publish_reported_update(
-                        reported_mcu_patch=None,
-                        desired_redcon=None,
-                        desired_board_power=_SHADOW_UNSET,
-                        context="Cleared desired.redcon after convergence",
-                        include_redcon_if_changed=False,
+                if self._shadow.clear_target_redcon_if_converged():
+                    await self._clear_target_redcon(
+                        context="Cleared pending REDCON target after convergence",
                     )
 
                 await self._reconcile_ble_online_presence()
@@ -2067,7 +1945,7 @@ class BleSleepBridge:
                         continue
 
                 try:
-                    await self._process_desired_redcon_once()
+                    await self._process_target_redcon_once()
                 except asyncio.CancelledError:
                     raise
                 except Exception as err:
@@ -2086,7 +1964,7 @@ class BleSleepBridge:
                     continue
 
                 retry_timeout: float | None = None
-                if self._shadow.desired_redcon is not None:
+                if self._shadow.target_redcon is not None:
                     retry_timeout = self._config.reconnect_delay
 
                 pending_updates = await self._wait_for_updates_or_disconnect(
@@ -2121,27 +1999,25 @@ class BleSleepBridge:
         )
         await self._normalize_shadow_for_startup_default()
         await self._publish_reported_update(
-            reported_mcu_patch=None,
+            reported_device_patch=None,
             reported_root_patch={"redcon": self._shadow.redcon},
-            desired_redcon=_SHADOW_UNSET,
-            desired_board_power=_SHADOW_UNSET,
             context="Synchronized reported.redcon on startup (--no-ble)",
             include_redcon_if_changed=False,
         )
         await self._publish_static_lifecycle_reflection()
         await self._publish_node_birth()
-        await self._process_desired_no_ble_once()
+        await self._process_target_no_ble_once()
         try:
             while True:
                 retry_timeout: float | None = None
-                if self._shadow.desired_redcon is not None:
+                if self._shadow.target_redcon is not None:
                     retry_timeout = self._config.reconnect_delay
 
                 updates = await self._cloud_shadow.wait_for_updates(
                     timeout_seconds=retry_timeout
                 )
                 await self._apply_cloud_shadow_updates(updates=updates)
-                await self._process_desired_no_ble_once()
+                await self._process_target_no_ble_once()
         except asyncio.CancelledError:
             await self._publish_node_death_for_shutdown()
             raise
@@ -2158,7 +2034,6 @@ class BleSleepBridge:
 
     async def _normalize_shadow_for_startup_default(self) -> None:
         self._shadow.reconcile_redcon()
-        desired_board_power: bool | None | object = _SHADOW_UNSET
         if self._video_status_payload is None or not self._shadow.board_video.is_fresh(
             utc_timestamp_ms()
         ):
@@ -2168,17 +2043,8 @@ class BleSleepBridge:
                     aws_region=self._config.aws_region,
                 )
             )
-        if self._shadow.desired_board_power is False and not self._shadow.board_power:
-            self._shadow.set_desired_board_power(None)
-            desired_board_power = None
-        if desired_board_power is not _SHADOW_UNSET:
-            await self._publish_reported_update(
-                reported_mcu_patch=None,
-                desired_redcon=_SHADOW_UNSET,
-                desired_board_power=desired_board_power,
-                context="Normalized startup shadow defaults",
-                include_redcon_if_changed=False,
-            )
+        self._board_shutdown_requested_at = None
+        self._board_shutdown_timeout_logged = False
 
     def _apply_mcp_mirror_update(self, update: AwsShadowUpdate) -> tuple[bool, bool]:
         descriptor_changed = False
@@ -2260,7 +2126,7 @@ class BleSleepBridge:
             updates = self._cloud_shadow.drain_updates()
         for update in updates:
             # AWS shadow accepted snapshots can arrive after a newer local publish;
-            # version-ordering prevents an older echo from reintroducing stale desired state.
+            # version-ordering prevents an older echo from reintroducing stale reported state.
             current_version = self._shadow.shadow_version
             if (
                 update.version is not None
@@ -2283,21 +2149,11 @@ class BleSleepBridge:
             video_shadow_changed, video_redcon_changed = self._apply_video_mirror_update(update)
             changed = False
             redcon_inputs_changed = mcp_availability_changed or video_redcon_changed
-            if (
-                update.has_desired_redcon
-                and self._shadow.desired_redcon != update.desired_redcon
-            ):
-                self._shadow.set_desired_redcon(update.desired_redcon)
-                changed = True
-            if (
-                update.has_desired_board_power
-                and self._shadow.desired_board_power != update.desired_board_power
-            ):
-                self._shadow.set_desired_board_power(update.desired_board_power)
-                if update.desired_board_power is False and self._shadow.board_power:
-                    self._board_shutdown_requested_at = time.monotonic()
-                elif update.desired_board_power is not False:
+            if update.command_redcon is not None and self._shadow.target_redcon != update.command_redcon:
+                self._shadow.set_target_redcon(update.command_redcon)
+                if update.command_redcon != 4:
                     self._board_shutdown_requested_at = None
+                    self._board_shutdown_timeout_logged = False
                 changed = True
             if (
                 update.reported_power is not None
@@ -2348,22 +2204,9 @@ class BleSleepBridge:
 
             if changed:
                 self._shadow.log_state(f"Applied cloud shadow update ({update.source})")
-            if update.source == "sparkplug/dcmd" and update.has_desired_redcon:
+            if redcon_inputs_changed or video_shadow_changed:
                 await self._publish_reported_update(
-                    reported_mcu_patch=None,
-                    desired_redcon=self._shadow.desired_redcon,
-                    desired_board_power=_SHADOW_UNSET,
-                    context=(
-                        f"Reflected Sparkplug desired.redcon into device shadow "
-                        f"({self._shadow.desired_redcon})"
-                    ),
-                    include_redcon_if_changed=False,
-                )
-            elif redcon_inputs_changed or video_shadow_changed:
-                await self._publish_reported_update(
-                    reported_mcu_patch=None,
-                    desired_redcon=_SHADOW_UNSET,
-                    desired_board_power=_SHADOW_UNSET,
+                    reported_device_patch=None,
                     context=f"Published derived reported.redcon after cloud shadow update ({update.source})",
                     previous_redcon=previous_redcon,
                     previous_battery=previous_battery,
@@ -2371,14 +2214,14 @@ class BleSleepBridge:
             elif mcp_summary_changed and self._sparkplug_device_born:
                 await self._publish_device_data()
 
-    async def _process_desired_no_ble_once(self) -> None:
-        target_redcon = self._shadow.desired_redcon
+    async def _process_target_no_ble_once(self) -> None:
+        target_redcon = self._shadow.target_redcon
         if target_redcon is None:
             return
 
-        if self._shadow.clear_desired_redcon_if_converged():
-            await self._clear_desired_redcon(
-                context="Cleared desired.redcon in --no-ble mode after convergence",
+        if self._shadow.clear_target_redcon_if_converged():
+            await self._clear_target_redcon(
+                context="Cleared pending REDCON target in --no-ble mode after convergence",
             )
             return
 
@@ -2394,54 +2237,50 @@ class BleSleepBridge:
                 )
                 self._shadow.set_reported(False)
                 await self._publish_reported_update(
-                    reported_mcu_patch={"power": False},
-                    desired_redcon=_SHADOW_UNSET,
-                    desired_board_power=_SHADOW_UNSET,
+                    reported_device_patch={"mcu": {"power": False}},
                     context="Reported updated after dry-run REDCON 4 convergence",
                     previous_redcon=previous_redcon,
                     previous_battery=previous_battery,
                 )
-            if self._shadow.clear_desired_redcon_if_converged():
-                await self._clear_desired_redcon(
-                    context="Cleared desired.redcon after dry-run REDCON 4 convergence",
+            if self._shadow.clear_target_redcon_if_converged():
+                await self._clear_target_redcon(
+                    context="Cleared pending REDCON target after dry-run REDCON 4 convergence",
                 )
             return
 
         if self._shadow.reported_power:
-            if self._shadow.clear_desired_redcon_if_converged():
-                await self._clear_desired_redcon(
-                    context="Cleared desired.redcon in --no-ble mode after wake convergence",
+            if self._shadow.clear_target_redcon_if_converged():
+                await self._clear_target_redcon(
+                    context="Cleared pending REDCON target in --no-ble mode after wake convergence",
                 )
             return
 
         previous_redcon = self._shadow.redcon
         previous_battery = self._shadow.battery_mv
         LOGGER.info(
-            "Dry-run: would wake MCU over BLE for desired.redcon=%s; updating reported power=true",
+            "Dry-run: would wake MCU over BLE for REDCON target=%s; updating reported power=true",
             target_redcon,
         )
         self._shadow.set_reported(True)
         await self._publish_reported_update(
-            reported_mcu_patch={"power": True},
-            desired_redcon=_SHADOW_UNSET,
-            desired_board_power=_SHADOW_UNSET,
+            reported_device_patch={"mcu": {"power": True}},
             context="Reported updated after dry-run wake convergence",
             previous_redcon=previous_redcon,
             previous_battery=previous_battery,
         )
-        if self._shadow.clear_desired_redcon_if_converged():
-            await self._clear_desired_redcon(
-                context="Cleared desired.redcon in --no-ble mode after wake convergence",
+        if self._shadow.clear_target_redcon_if_converged():
+            await self._clear_target_redcon(
+                context="Cleared pending REDCON target in --no-ble mode after wake convergence",
             )
 
-    async def _process_desired_redcon_once(self) -> None:
-        target_redcon = self._shadow.desired_redcon
+    async def _process_target_redcon_once(self) -> None:
+        target_redcon = self._shadow.target_redcon
         if target_redcon is None:
             return
 
-        if self._shadow.clear_desired_redcon_if_converged():
-            await self._clear_desired_redcon(
-                context="Cleared desired.redcon because reported.redcon already converged",
+        if self._shadow.clear_target_redcon_if_converged():
+            await self._clear_target_redcon(
+                context="Cleared pending REDCON target because reported.redcon already converged",
             )
             return
 
@@ -2451,9 +2290,9 @@ class BleSleepBridge:
                 return
 
             if not self._shadow.reported_power:
-                if self._shadow.clear_desired_redcon_if_converged():
-                    await self._clear_desired_redcon(
-                        context="Cleared desired.redcon after REDCON 4 convergence",
+                if self._shadow.clear_target_redcon_if_converged():
+                    await self._clear_target_redcon(
+                        context="Cleared pending REDCON target after REDCON 4 convergence",
                     )
                 return
 
@@ -2487,9 +2326,7 @@ class BleSleepBridge:
                             self._shadow.set_reported(False)
                         self._mark_ble_presence_now()
                         await self._publish_reported_update(
-                            reported_mcu_patch={"power": False},
-                            desired_redcon=_SHADOW_UNSET,
-                            desired_board_power=_SHADOW_UNSET,
+                            reported_device_patch={"mcu": {"power": False}},
                             context="Reported synchronized after BLE REDCON 4 sleep command disconnect",
                             previous_redcon=previous_redcon,
                             previous_battery=previous_battery,
@@ -2504,7 +2341,7 @@ class BleSleepBridge:
                         log_prefix="MCU state report after BLE REDCON 4 command",
                     )
             except Exception:
-                LOGGER.exception("Failed to converge desired.redcon=4; will retry")
+                LOGGER.exception("Failed to converge REDCON target=4; will retry")
                 await self._safe_disconnect()
                 return
 
@@ -2514,22 +2351,22 @@ class BleSleepBridge:
                     "MCU entered sleep mode; disconnecting BLE session until a higher REDCON is requested",
                 )
                 await self._safe_disconnect()
-            if self._shadow.clear_desired_redcon_if_converged():
-                await self._clear_desired_redcon(
-                    context="Cleared desired.redcon after REDCON 4 convergence",
+            if self._shadow.clear_target_redcon_if_converged():
+                await self._clear_target_redcon(
+                    context="Cleared pending REDCON target after REDCON 4 convergence",
                 )
             return
 
         if self._shadow.reported_power:
-            if self._shadow.clear_desired_redcon_if_converged():
-                await self._clear_desired_redcon(
-                    context="Cleared desired.redcon after wake convergence",
+            if self._shadow.clear_target_redcon_if_converged():
+                await self._clear_target_redcon(
+                    context="Cleared pending REDCON target after wake convergence",
                 )
             return
 
         if not self._is_connected():
             LOGGER.info(
-                "Desired REDCON change pending (desired=%s): BLE disconnected, waiting for reconnect",
+                "REDCON target pending (target=%s): BLE disconnected, waiting for reconnect",
                 target_redcon,
             )
             return
@@ -2552,21 +2389,21 @@ class BleSleepBridge:
             )
         except Exception:
             LOGGER.exception(
-                "Failed to converge desired.redcon=%s; will retry",
+                "Failed to converge REDCON target=%s; will retry",
                 target_redcon,
             )
             await self._safe_disconnect()
             return
 
-        if self._shadow.clear_desired_redcon_if_converged():
-            await self._clear_desired_redcon(
-                context="Cleared desired.redcon after wake convergence",
+        if self._shadow.clear_target_redcon_if_converged():
+            await self._clear_target_redcon(
+                context="Cleared pending REDCON target after wake convergence",
             )
 
     def _should_idle_disconnected_while_sleeping(self) -> bool:
         return (
             not self._shadow.reported_power
-            and self._shadow.desired_redcon in (None, 4)
+            and self._shadow.target_redcon in (None, 4)
             and not self._ble_uuid_search_mode
         )
 
@@ -2828,10 +2665,8 @@ class BleSleepBridge:
     async def _publish_reported_update(
         self,
         *,
-        reported_mcu_patch: dict[str, Any] | None,
+        reported_device_patch: dict[str, Any] | None,
         reported_root_patch: dict[str, Any] | None = None,
-        desired_redcon: int | None | object = _SHADOW_UNSET,
-        desired_board_power: bool | None | object = _SHADOW_UNSET,
         context: str,
         publish_timeout_seconds: float = DEFAULT_MQTT_PUBLISH_TIMEOUT,
         include_redcon_if_changed: bool = True,
@@ -2847,18 +2682,14 @@ class BleSleepBridge:
             next_reported_root_patch["redcon"] = self._shadow.redcon
 
         if (
-            reported_mcu_patch is None
+            reported_device_patch is None
             and next_reported_root_patch is None
-            and desired_redcon is _SHADOW_UNSET
-            and desired_board_power is _SHADOW_UNSET
         ):
             return True
         try:
             await self._cloud_shadow.update_shadow(
-                reported_mcu_patch=reported_mcu_patch,
+                reported_device_patch=reported_device_patch,
                 reported_root_patch=next_reported_root_patch,
-                desired_redcon=desired_redcon,
-                desired_board_power=desired_board_power,
                 publish_timeout_seconds=publish_timeout_seconds,
             )
         except Exception:
@@ -2876,10 +2707,8 @@ class BleSleepBridge:
             await self._publish_device_data()
         if self._shadow.promote_redcon_after_stage():
             await self._publish_reported_update(
-                reported_mcu_patch=None,
+                reported_device_patch=None,
                 reported_root_patch={"redcon": self._shadow.redcon},
-                desired_redcon=_SHADOW_UNSET,
-                desired_board_power=_SHADOW_UNSET,
                 context="Promoted staged REDCON 2 to REDCON 1 after MCP/video readiness confirmation",
                 include_redcon_if_changed=False,
                 previous_redcon=2,
@@ -2902,9 +2731,7 @@ class BleSleepBridge:
         previous_battery = self._shadow.battery_mv
         self._shadow.set_ble_online(online)
         published = await self._publish_reported_update(
-            reported_mcu_patch={"online": online},
-            desired_redcon=_SHADOW_UNSET,
-            desired_board_power=_SHADOW_UNSET,
+            reported_device_patch={"mcu": {"online": online}},
             context=context,
             publish_timeout_seconds=publish_timeout_seconds,
             previous_redcon=previous_redcon if online else None,
@@ -2928,27 +2755,11 @@ class BleSleepBridge:
                     )
                 else:
                     await self._publish_device_death()
-                    clear_redcon = (
-                        None if self._shadow.desired_redcon is not None else _SHADOW_UNSET
-                    )
-                    clear_board_power = (
-                        None if self._shadow.desired_board_power is not None else _SHADOW_UNSET
-                    )
-                    if (
-                        clear_redcon is not _SHADOW_UNSET
-                        or clear_board_power is not _SHADOW_UNSET
-                    ):
-                        self._shadow.set_desired_redcon(None)
-                        self._shadow.set_desired_board_power(None)
+                    if self._shadow.target_redcon is not None:
+                        self._shadow.set_target_redcon(None)
                         self._board_shutdown_requested_at = None
                         self._board_shutdown_timeout_logged = False
-                        await self._publish_reported_update(
-                            reported_mcu_patch=None,
-                            desired_redcon=clear_redcon,
-                            desired_board_power=clear_board_power,
-                            context="Cleared desired lifecycle state after DDEATH",
-                            include_redcon_if_changed=False,
-                        )
+                        LOGGER.info("Cleared pending REDCON target after DDEATH")
 
     async def _send_sleep_command(self, *, sleep: bool) -> None:
         if not self._is_connected():
@@ -3025,21 +2836,19 @@ class BleSleepBridge:
             power=reported_power,
             battery_mv=battery_mv,
         )
-        reported_mcu_patch: dict[str, Any] | None = {}
+        reported_device_patch: dict[str, Any] | None = {}
         reported_root_patch: dict[str, Any] | None = {}
         if power_changed:
-            reported_mcu_patch["power"] = reported_power
+            reported_device_patch["mcu"] = {"power": reported_power}
         if battery_changed:
-            reported_root_patch["batteryMv"] = battery_mv
-        if not reported_mcu_patch:
-            reported_mcu_patch = None
+            reported_device_patch["batteryMv"] = battery_mv
+        if not reported_device_patch:
+            reported_device_patch = None
         if not reported_root_patch:
             reported_root_patch = None
         await self._publish_reported_update(
-            reported_mcu_patch=reported_mcu_patch,
+            reported_device_patch=reported_device_patch,
             reported_root_patch=reported_root_patch,
-            desired_redcon=_SHADOW_UNSET,
-            desired_board_power=_SHADOW_UNSET,
             context=context,
             previous_redcon=previous_redcon,
             previous_battery=previous_battery,
@@ -3116,6 +2925,7 @@ class BleSleepBridge:
     async def _wait_for_reported_power(self, target_power: bool) -> bytes:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self._config.command_ack_timeout
+        per_read_timeout = 1.0
 
         while True:
             if self._shadow.reported_power == target_power:
@@ -3132,8 +2942,10 @@ class BleSleepBridge:
             try:
                 report = await asyncio.wait_for(
                     self._read_state_report(),
-                    timeout=remaining,
+                    timeout=min(remaining, per_read_timeout),
                 )
+            except TimeoutError:
+                continue
             except Exception as err:
                 if self._shadow.reported_power == target_power:
                     LOGGER.info(
@@ -3553,6 +3365,7 @@ class RigFleetBridge:
             ),
         )
         self._node_born = True
+        await self._publish_static_lifecycle_reflection()
 
     async def _publish_node_death(
         self,
@@ -3572,6 +3385,13 @@ class RigFleetBridge:
             ),
             timeout_seconds=timeout_seconds,
         )
+        if self._config.rig_thing_name:
+            await self._cloud_shadow.update_shadow(
+                thing_name=self._config.rig_thing_name,
+                reported_device_patch=None,
+                reported_root_patch={"redcon": 4},
+                publish_timeout_seconds=timeout_seconds,
+            )
         self._node_born = False
 
     async def _publish_node_death_for_shutdown(self) -> None:
@@ -3589,7 +3409,13 @@ class RigFleetBridge:
             LOGGER.exception("Failed to publish Sparkplug NDEATH during shutdown")
 
     async def _publish_static_lifecycle_reflection(self) -> None:
-        return
+        if not self._config.rig_thing_name:
+            return
+        await self._cloud_shadow.update_shadow(
+            thing_name=self._config.rig_thing_name,
+            reported_device_patch=None,
+            reported_root_patch={"redcon": 1},
+        )
 
     async def _start_scanner(self) -> None:
         if self._scanner is not None:
@@ -3670,10 +3496,8 @@ class RigFleetBridge:
                 bridge._mark_ble_presence_now()
             await bridge._normalize_shadow_for_startup_default()
             await bridge._publish_reported_update(
-                reported_mcu_patch=None,
+                reported_device_patch=None,
                 reported_root_patch={"redcon": bridge._shadow.redcon},
-                desired_redcon=_SHADOW_UNSET,
-                desired_board_power=_SHADOW_UNSET,
                 context=f"Synchronized reported.redcon on startup ({managed.registration.thing_name})",
                 include_redcon_if_changed=False,
             )
@@ -3687,13 +3511,12 @@ class RigFleetBridge:
     async def _clear_converged_targets(self) -> None:
         for managed in self._managed_things:
             bridge = managed.bridge
-            if bridge._shadow.clear_desired_redcon_if_converged():
-                await bridge._publish_reported_update(
-                    reported_mcu_patch=None,
-                    desired_redcon=None,
-                    desired_board_power=_SHADOW_UNSET,
-                    context=f"Cleared desired.redcon after convergence ({managed.registration.thing_name})",
-                    include_redcon_if_changed=False,
+            if bridge._shadow.clear_target_redcon_if_converged():
+                await bridge._clear_target_redcon(
+                    context=(
+                        f"Cleared pending REDCON target after convergence "
+                        f"({managed.registration.thing_name})"
+                    ),
                 )
 
     def _bridge_needs_session(self, bridge: BleSleepBridge) -> bool:
@@ -3701,8 +3524,8 @@ class RigFleetBridge:
             return False
         if bridge._shadow.reported_power:
             return True
-        target_redcon = bridge._shadow.desired_redcon
-        if target_redcon is not None and not bridge._shadow.clear_desired_redcon_if_converged():
+        target_redcon = bridge._shadow.target_redcon
+        if target_redcon is not None and not bridge._shadow.clear_target_redcon_if_converged():
             return True
         return bridge._cached_device_id is None and bridge._get_fresh_target_device() is not None
 
@@ -3833,7 +3656,7 @@ class RigFleetBridge:
 
                 active_bridge = self._active_bridge()
                 if active_bridge is not None:
-                    await active_bridge._process_desired_redcon_once()
+                    await active_bridge._process_target_redcon_once()
                     if (
                         active_bridge._is_connected()
                         and active_bridge._should_idle_disconnected_while_sleeping()
@@ -3905,11 +3728,11 @@ class RigFleetBridge:
             )
         await self._normalize_startup()
         for managed in self._managed_things:
-            await managed.bridge._process_desired_no_ble_once()
+            await managed.bridge._process_target_no_ble_once()
         try:
             while True:
                 retry_timeout = self._config.reconnect_delay if any(
-                    managed.bridge._shadow.desired_redcon is not None
+                    managed.bridge._shadow.target_redcon is not None
                     for managed in self._managed_things
                 ) else None
                 updates = await self._cloud_shadow.wait_for_updates(
@@ -3917,7 +3740,7 @@ class RigFleetBridge:
                 )
                 await self._apply_updates(updates)
                 for managed in self._managed_things:
-                    await managed.bridge._process_desired_no_ble_once()
+                    await managed.bridge._process_target_no_ble_once()
         except asyncio.CancelledError:
             await self._publish_node_death_for_shutdown()
             raise
@@ -3943,35 +3766,44 @@ async def _run_rig_service(
     sleep_func: Callable[[float], Awaitable[None]] = asyncio.sleep,
 ) -> None:
     while True:
-        cloud_shadow = cloud_shadow_factory(config, aws_runtime)
+        cloud_shadow: Any | None = None
         registry_client = registry_client_factory(aws_runtime.iot_client())
+        rig_registration = registry_client.describe_rig_in_town(
+            town_name=config.sparkplug_group_id,
+            rig_name=config.rig_name,
+        )
+        runtime_config = replace(
+            config,
+            rig_thing_name=rig_registration.thing_name,
+        )
+        cloud_shadow = cloud_shadow_factory(runtime_config, aws_runtime)
         fleet_bridge: RigFleetBridge | None = None
         try:
             try:
-                registrations = registry_client.list_rig_things(config.rig_name)
+                registrations = registry_client.list_rig_things(runtime_config.rig_name)
             except ThingGroupNotFoundError:
                 LOGGER.warning(
                     "Dynamic thing group for rig=%s was not found; starting idle with no managed devices",
-                    config.rig_name,
+                    runtime_config.rig_name,
                 )
                 registrations = []
             _log_important(
                 LOGGER,
                 "Loaded %s registered device(s) from dynamic thing group for rig=%s",
                 len(registrations),
-                config.rig_name,
+                runtime_config.rig_name,
             )
             snapshots = await cloud_shadow.connect_and_get_initial_snapshots(
                 [registration.thing_name for registration in registrations],
-                timeout_seconds=config.aws_connect_timeout,
+                timeout_seconds=runtime_config.aws_connect_timeout,
             )
             managed_things: list[ManagedThing] = []
             for registration in registrations:
                 thing_name = registration.thing_name
                 device_config = replace(
-                    config,
+                    runtime_config,
                     thing_name=thing_name,
-                    shadow_file=_device_snapshot_file(config.shadow_file, thing_name),
+                    shadow_file=_device_snapshot_file(runtime_config.shadow_file, thing_name),
                 )
                 shadow = _build_shadow_from_snapshot(
                     snapshots[thing_name],
@@ -3993,7 +3825,7 @@ async def _run_rig_service(
                 )
 
             fleet_bridge = fleet_bridge_factory(
-                config,
+                runtime_config,
                 cloud_shadow=cloud_shadow,
                 registry=registry_client,
                 managed_things=managed_things,
@@ -4007,9 +3839,9 @@ async def _run_rig_service(
                     except Exception:
                         LOGGER.exception(
                             "No-BLE loop failed; retrying in %.1fs",
-                            config.reconnect_delay,
+                            runtime_config.reconnect_delay,
                         )
-                        await sleep_func(config.reconnect_delay)
+                        await sleep_func(runtime_config.reconnect_delay)
                 continue
 
             while True:
@@ -4020,9 +3852,9 @@ async def _run_rig_service(
                 except Exception:
                     LOGGER.exception(
                         "BLE bridge loop failed; retrying in %.1fs",
-                        config.reconnect_delay,
+                        runtime_config.reconnect_delay,
                     )
-                    await sleep_func(config.reconnect_delay)
+                    await sleep_func(runtime_config.reconnect_delay)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -4034,7 +3866,8 @@ async def _run_rig_service(
         finally:
             if fleet_bridge is not None:
                 await fleet_bridge._publish_node_death_for_shutdown()
-            await _disconnect_cloud_shadow(cloud_shadow)
+            if cloud_shadow is not None:
+                await _disconnect_cloud_shadow(cloud_shadow)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -4087,13 +3920,13 @@ def _parse_args() -> argparse.Namespace:
         "--ble-online-stale-after",
         type=float,
         default=DEFAULT_BLE_ONLINE_STALE_AFTER,
-        help="Seconds without a matching connection or advertisement before reported.mcu.online becomes false (default: 30)",
+        help="Seconds without a matching connection or advertisement before reported.device.mcu.online becomes false (default: 30)",
     )
     parser.add_argument(
         "--ble-online-recover-after",
         type=float,
         default=DEFAULT_BLE_ONLINE_RECOVER_AFTER,
-        help="Seconds of sustained BLE presence required before reported.mcu.online becomes true after being false (default: 30)",
+        help="Seconds of sustained BLE presence required before reported.device.mcu.online becomes true after being false (default: 30)",
     )
     parser.add_argument(
         "--ble-online-recovery-gap",
@@ -4158,7 +3991,7 @@ def _parse_args() -> argparse.Namespace:
         "--board-offline-timeout",
         type=float,
         default=DEFAULT_BOARD_OFFLINE_TIMEOUT,
-        help="Seconds to wait for reported.board.power=false before sleeping the MCU for REDCON 4 (default: 45)",
+        help="Seconds to wait for reported.device.board.power=false before sleeping the MCU for REDCON 4 (default: 45)",
     )
     parser.add_argument(
         "--log-level",
@@ -4197,7 +4030,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--no-ble",
         action="store_true",
-        help="Do not use BLE; still sync desired/reported with AWS shadow",
+        help="Do not use BLE; still sync reported lifecycle state with AWS shadow",
     )
     return parser.parse_args()
 
@@ -4219,16 +4052,7 @@ def _build_shadow_from_snapshot(
     ble_uuids = DEFAULT_BLE_GATT_UUIDS.with_device_id(registered_ble_device_id)
 
     return ShadowState(
-        desired_redcon=(
-            _extract_desired_redcon_from_shadow(snapshot)
-            if _shadow_payload_includes_desired_redcon(snapshot)
-            else DEFAULT_DESIRED_REDCON
-        ),
-        desired_board_power=(
-            _extract_desired_board_power_from_shadow(snapshot)
-            if _shadow_payload_includes_desired_board_power(snapshot)
-            else None
-        ),
+        target_redcon=None,
         reported_power=(
             reported_power if reported_power is not None else DEFAULT_REPORTED_POWER
         ),

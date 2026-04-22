@@ -1,6 +1,6 @@
 # txing board
 
-Python service for the device-side Raspberry Pi board that is power-switched by the MCU and reports runtime state to the shared device Thing Shadow under `state.reported.board`.
+Python service for the device-side Raspberry Pi board that is power-switched by the MCU and reports runtime state to the shared device Thing Shadow under `state.reported.device.board`.
 
 This is not the same Raspberry Pi as `rig/`. The `rig/` Pi remains the BLE/AWS control node. This `board/` service is for the separate Pi mounted on the device itself.
 
@@ -8,7 +8,7 @@ This is not the same Raspberry Pi as `rig/`. The `rig/` Pi remains the BLE/AWS c
 
 The device runtime now connects to AWS IoT Core over SigV4-authenticated MQTT over WebSockets using the standard AWS SDK credential chain. The intended project-local profile layout is `town`, `rig`, and `device`, with `device` assuming the stack output role `DeviceRuntimeRoleArn`.
 
-When the service is managed by `systemd`, run it as `root`. The board control consumes internal `state.desired.board.power=false` requests from the `rig` runtime and requests a local system halt, which requires root privileges. The supervised video sender keeps using the board host's AWS SDK credential chain, and the generated service unit now loads shared AWS defaults from `config/aws.env` plus optional board-local overrides from `config/board.env`.
+When the service is managed by `systemd`, run it as `root`. The board control subscribes to Sparkplug `DCMD.redcon` for its assigned `<town>/<rig>/<device>` topic and requests a local system halt on `redcon=4`, which requires root privileges. The supervised video sender keeps using the board host's AWS SDK credential chain, and the generated service unit now loads shared AWS defaults from `config/aws.env` plus optional board-local overrides from `config/board.env`.
 
 ## Video runtime
 
@@ -36,12 +36,15 @@ The board publishes to the same classic Thing Shadow as `mcu`, but under a sibli
 {
   "state": {
     "reported": {
-      "board": {
-        "power": true,
-        "wifi": {
-          "online": true,
-          "ipv4": "192.168.1.25",
-          "ipv6": "2001:db8::25"
+      "redcon": 3,
+      "device": {
+        "board": {
+          "power": true,
+          "wifi": {
+            "online": true,
+            "ipv4": "192.168.1.25",
+            "ipv6": "2001:db8::25"
+          }
         }
       }
     }
@@ -52,11 +55,11 @@ The board publishes to the same classic Thing Shadow as `mcu`, but under a sibli
 Notes:
 
 - `board.*` is owned by this subproject.
-- `desired.board.power=false` is an internal one-shot shutdown request from the `rig` runtime. The board control clears that desired field on clean shutdown so the request does not persist across the next boot.
-- `reported.board.power=false` is only a best-effort clean-shutdown update.
-- `reported.board.wifi.online` reflects the board-side online status while the board OS is up and the board control is running.
-- `reported.board.wifi.ipv4` and `reported.board.wifi.ipv6` are refreshed on each publish loop from the interface the OS selects for the default route in each address family.
-- Phase 3 removes `reported.board.drive.*` from the shadow contract.
+- `DCMD.redcon=4` is the only shutdown trigger for this service.
+- `reported.device.board.power=false` is only a best-effort clean-shutdown update.
+- `reported.device.board.wifi.online` reflects the board-side online status while the board OS is up and the board control is running.
+- `reported.device.board.wifi.ipv4` and `reported.device.board.wifi.ipv6` are refreshed on each publish loop from the interface the OS selects for the default route in each address family.
+- Phase 3 removes `reported.device.board.drive.*` from the shadow contract.
 - Phase 3 removes top-level `reported.video.*` from the shadow contract.
 - The browser video route is computed as `/<town>/<rig>/<device>/video`.
 - The KVS signaling channel name is computed as `<device_id>-board-video`.
@@ -231,6 +234,25 @@ Prepare the local config files the board will use:
 - `config/board.env` with `THING_NAME`, board video settings, and any board-local motor overrides such as `BOARD_DRIVE_CMD_RAW_MIN_SPEED=50` and `BOARD_DRIVE_CMD_RAW_MAX_SPEED=250`
 - `config/aws.credentials` with the `town` source credentials
 - `config/aws.config` with `[profile device]` assuming `DeviceRuntimeRoleArn`
+
+Adjust these values explicitly:
+
+- `config/aws.env`
+  - `AWS_REGION`
+  - `AWS_STACK_NAME`
+  - `AWS_DEVICE_PROFILE` if you do not want the default local profile name `device`
+  - `AWS_SHARED_CREDENTIALS_FILE` and `AWS_CONFIG_FILE` only if the files are not kept under `config/`
+- `config/board.env`
+  - `THING_NAME`: registered device thing name
+  - `BOARD_VIDEO_REGION`: usually the same as `AWS_REGION`
+  - `BOARD_VIDEO_SENDER_COMMAND`: absolute path to the native KVS sender on the board host
+  - `KVS_DUALSTACK_ENDPOINTS`: usually keep `ON`
+  - `BOARD_DRIVE_CMD_RAW_MIN_SPEED` / `BOARD_DRIVE_CMD_RAW_MAX_SPEED`: measured usable motor range
+  - `BOARD_DRIVE_RAW_MAX_SPEED`, `BOARD_DRIVE_PWM_*`, and `BOARD_DRIVE_*`: only if your hardware wiring differs from the default chassis
+- `config/aws.config`
+  - set `[profile device].role_arn` to the deployed `DeviceRuntimeRoleArn`
+- `config/aws.credentials`
+  - fill the `[town]` account access keys
 
 ### 2. Flash and Boot the Board
 

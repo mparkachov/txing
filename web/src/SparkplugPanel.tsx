@@ -3,7 +3,7 @@ import { describeRedcon, getTxingRedconToneClass } from './app-model'
 type SparkplugPanelProps = {
   routeKind: 'town' | 'rig' | 'device' | 'device_video'
   botRedcon: number | null
-  desiredRedcon: number | null
+  targetRedcon: number | null
   detailsToggleAriaLabel: string | null
   detailsToggleTitle: string | null
   isDetailsPanelOpen: boolean
@@ -95,7 +95,7 @@ function SparkplugRedconControl({
 function SparkplugPanel({
   routeKind,
   botRedcon,
-  desiredRedcon,
+  targetRedcon,
   detailsToggleAriaLabel,
   detailsToggleTitle,
   isDetailsPanelOpen,
@@ -110,7 +110,7 @@ function SparkplugPanel({
   const rowRedcon = isBot ? botRedcon : 1
   const isInteractive = isBot && (routeKind === 'device' || routeKind === 'device_video')
   const showDetailsPanelToggle = detailsToggleAriaLabel !== null && detailsToggleTitle !== null
-  const isPending = desiredRedcon !== null && desiredRedcon !== rowRedcon
+  const isPending = targetRedcon !== null && targetRedcon !== rowRedcon
 
   return (
     <section className="sparkplug-strip" aria-label="Sparkplug status">
@@ -120,7 +120,7 @@ function SparkplugPanel({
           isPending={isRedconCommandDisabled || isPending}
           isSleepCommandDisabled={isRedconSleepCommandDisabled}
           onSelect={onRedconSelect}
-          pendingRedcon={isPending ? desiredRedcon : null}
+          pendingRedcon={isPending ? targetRedcon : null}
           redcon={rowRedcon}
         />
         <div className="sparkplug-row-controls">

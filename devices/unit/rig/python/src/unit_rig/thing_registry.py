@@ -12,15 +12,19 @@ class ThingGroupNotFoundError(RuntimeError):
 
 
 @dataclass(slots=True, frozen=True)
-class DeviceRegistration:
-    device_id: str
+class ThingRegistration:
     thing_name: str
+    thing_type: str
+    name: str
+    short_id: str
     town_name: str
     rig_name: str
-    device_type: str
-    device_name: str
     ble_device_id: str | None = None
     version: int | None = None
+
+    @property
+    def device_id(self) -> str:
+        return self.thing_name
 
 
 def normalize_registry_text(value: Any) -> str | None:
@@ -34,9 +38,9 @@ class AwsThingRegistryClient:
     def __init__(self, client: Any) -> None:
         self._client = client
 
-    def list_rig_things(self, rig_name: str) -> list[DeviceRegistration]:
+    def _list_thing_names_in_group(self, thing_group_name: str) -> list[str]:
         try:
-            self._client.describe_thing_group(thingGroupName=rig_name)
+            self._client.describe_thing_group(thingGroupName=thing_group_name)
         except Exception as exc:
             error_code = (
                 getattr(exc, "response", {})
@@ -45,7 +49,7 @@ class AwsThingRegistryClient:
             )
             if error_code in {"ResourceNotFoundException", "ResourceNotFound"}:
                 raise ThingGroupNotFoundError(
-                    f"Dynamic thing group {rig_name!r} was not found"
+                    f"Dynamic thing group {thing_group_name!r} was not found"
                 ) from exc
             raise
 
@@ -53,7 +57,7 @@ class AwsThingRegistryClient:
         thing_names: list[str] = []
         while True:
             request: dict[str, Any] = {
-                "thingGroupName": rig_name,
+                "thingGroupName": thing_group_name,
                 "maxResults": 100,
             }
             if next_token:
@@ -66,9 +70,13 @@ class AwsThingRegistryClient:
             next_token = normalize_registry_text(response.get("nextToken"))
             if not next_token:
                 break
+        return sorted(set(thing_names))
 
-        registrations: list[DeviceRegistration] = []
-        for thing_name in sorted(set(thing_names)):
+    def list_rig_things(self, rig_name: str) -> list[ThingRegistration]:
+        thing_names = self._list_thing_names_in_group(rig_name)
+
+        registrations: list[ThingRegistration] = []
+        for thing_name in thing_names:
             try:
                 registration = self.describe_thing(thing_name)
             except RuntimeError as exc:
@@ -90,13 +98,51 @@ class AwsThingRegistryClient:
             registrations.append(registration)
         return registrations
 
-    def describe_thing(self, thing_name: str) -> DeviceRegistration:
+    def describe_rig_in_town(
+        self,
+        *,
+        town_name: str,
+        rig_name: str,
+    ) -> ThingRegistration:
+        thing_names = self._list_thing_names_in_group(town_name)
+        for thing_name in thing_names:
+            response = self._client.describe_thing(thingName=thing_name)
+            if normalize_registry_text(response.get("thingTypeName")) != "rig":
+                continue
+            attributes = response.get("attributes") or {}
+            if not isinstance(attributes, dict):
+                continue
+            if normalize_registry_text(attributes.get("town")) != town_name:
+                continue
+            name = normalize_registry_text(attributes.get("name"))
+            short_id = normalize_registry_text(attributes.get("shortId"))
+            if name != rig_name:
+                continue
+            if short_id is None:
+                raise RuntimeError(
+                    f"Rig thing {thing_name!r} is missing required IoT registry attribute 'shortId'"
+                )
+            return ThingRegistration(
+                thing_name=thing_name,
+                thing_type="rig",
+                name=name,
+                short_id=short_id,
+                town_name=town_name,
+                rig_name=rig_name,
+                version=response.get("version"),
+            )
+        raise RuntimeError(
+            f"Rig thing for town={town_name!r} rig={rig_name!r} was not found"
+        )
+
+    def describe_thing(self, thing_name: str) -> ThingRegistration:
         response = self._client.describe_thing(thingName=thing_name)
         attributes = response.get("attributes") or {}
         town_name = normalize_registry_text(attributes.get("town"))
         rig_name = normalize_registry_text(attributes.get("rig"))
-        device_type = normalize_registry_text(attributes.get("deviceType"))
-        device_name = normalize_registry_text(attributes.get("deviceName"))
+        thing_type = normalize_registry_text(response.get("thingTypeName"))
+        name = normalize_registry_text(attributes.get("name"))
+        short_id = normalize_registry_text(attributes.get("shortId"))
         if town_name is None:
             raise RuntimeError(
                 f"Thing {thing_name!r} is missing required IoT registry attribute 'town'"
@@ -105,21 +151,25 @@ class AwsThingRegistryClient:
             raise RuntimeError(
                 f"Thing {thing_name!r} is missing required IoT registry attribute 'rig'"
             )
-        if device_type is None:
+        if thing_type is None:
             raise RuntimeError(
-                f"Thing {thing_name!r} is missing required IoT registry attribute 'deviceType'"
+                f"Thing {thing_name!r} is missing required IoT thing type"
             )
-        if device_name is None:
+        if name is None:
             raise RuntimeError(
-                f"Thing {thing_name!r} is missing required IoT registry attribute 'deviceName'"
+                f"Thing {thing_name!r} is missing required IoT registry attribute 'name'"
             )
-        return DeviceRegistration(
-            device_id=thing_name,
+        if short_id is None:
+            raise RuntimeError(
+                f"Thing {thing_name!r} is missing required IoT registry attribute 'shortId'"
+            )
+        return ThingRegistration(
             thing_name=thing_name,
+            thing_type=thing_type,
+            name=name,
+            short_id=short_id,
             town_name=town_name,
             rig_name=rig_name,
-            device_type=device_type,
-            device_name=device_name,
             ble_device_id=normalize_registry_text(attributes.get("bleDeviceId")),
             version=response.get("version"),
         )
@@ -130,7 +180,7 @@ class AwsThingRegistryClient:
         *,
         ble_device_id: str | None,
         expected_version: int | None = None,
-    ) -> DeviceRegistration:
+    ) -> ThingRegistration:
         attributes: dict[str, str] = {}
         if ble_device_id is not None:
             attributes["bleDeviceId"] = ble_device_id
@@ -154,7 +204,7 @@ class AwsThingRegistryClient:
         town_name: str,
         rig_name: str,
         expected_version: int | None = None,
-    ) -> DeviceRegistration:
+    ) -> ThingRegistration:
         request: dict[str, Any] = {
             "thingName": device_id,
             "attributePayload": {
@@ -170,5 +220,4 @@ class AwsThingRegistryClient:
         self._client.update_thing(**request)
         return self.describe_thing(device_id)
 
-
-ThingRegistration = DeviceRegistration
+DeviceRegistration = ThingRegistration

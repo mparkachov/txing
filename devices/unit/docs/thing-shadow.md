@@ -29,9 +29,9 @@ This document defines how shadow structure is governed across the repo.
 - Top-level direct Sparkplug metric reflections under `txing.state.reported` are owned by `rig`.
 - In the current implementation that strict direct-metric set is exactly:
   - `txing.state.reported.redcon`
-  - `txing.state.reported.batteryMv`
-- Top-level `txing.state.desired.redcon` is owned by `rig` as the reflected cache of the latest unresolved Sparkplug lifecycle command.
-- `txing.state.desired.board.power` remains an internal rig-to-board graceful-halt actuator only. It is not a public lifecycle API.
+  - no other top-level direct metric
+- `txing.state.reported.device.batteryMv` is the nested Sparkplug battery metric reflection.
+- There is no `txing.state.desired` lifecycle surface.
 - `board.*` remains board-owned, and top-level `video.*` is reflected into shadow by `rig` from retained MQTT video service topics.
 - Only `board` is allowed to define or evolve board-owned fields, and only `rig` may evolve the reflected top-level `video.*` shadow shape.
 - Other components must treat `board.*` as a stable contract and must not add, rename, or repurpose fields.
@@ -44,32 +44,39 @@ Schema validation should be done by project code and/or CI checks, while AWS IoT
 Current implementation note:
 
 - Sparkplug owns lifecycle intent.
-- Shadow is reflection and restart cache.
+- Shadow is a reported-only reflection document.
 - `rig` derives `reported.redcon` from BLE reachability, MCU wake state, retained MCP availability, and retained video readiness.
 - Direct scalar attributes under `state.reported` are a strict reflection of the current Sparkplug device metrics only.
-- In the current implementation that direct-metric set is exactly `redcon` and `batteryMv`.
-- `mcu.*` and `board.*` remain additional operational detail and must not be used as alternate Sparkplug metric locations.
+- In the current implementation that direct-metric set is exactly `redcon`.
+- `device.batteryMv`, `device.mcu.*`, and `device.board.*` remain nested operational detail.
 - Stable per-device metadata lives in AWS IoT thing attributes instead:
+  - `attributes.name`
+  - `attributes.shortId`
+  - `attributes.town`
   - `attributes.rig`
   - `attributes.bleDeviceId`
+- Search/index use is narrower:
+  - `attributes.name` is searchable on all txing thing types
+  - `attributes.town` is searchable on `rig` and device things
+  - `attributes.rig` is searchable on device things
+  - `attributes.shortId` and `attributes.bleDeviceId` stay as metadata only
 
 ## Required project fields
 
 - Terminology: `power=true` means the wakeup state, and `power=false` means the sleep state with periodic `5 s` BLE rendezvous wakeups.
-- `state.desired.redcon` (`integer | null`, `1..4`) reflects the latest unresolved Sparkplug lifecycle target for `txing`. `rig` writes it when a valid `DCMD.redcon` arrives and clears it after convergence or `DDEATH`.
-- `state.desired.board.power` (`boolean | null`, update payload may temporarily use `null` to delete) is an internal rig-to-board one-shot graceful-halt request: `false` asks the board Pi to halt locally before `rig` sends the MCU sleep command for `REDCON 4`.
-- `state.reported.mcu.power` (`boolean`) is the rig-confirmed MCU power mode.
-- `state.reported.mcu.online` (`boolean`) is rig-observed BLE reachability: it becomes `true` after the device has shown sustained BLE presence, and becomes `false` only after the device has not been seen for the configured presence timeout.
+- Lifecycle targets are transient in-memory rig state only; a restart requires a fresh Sparkplug command.
+- `state.reported.device.mcu.power` (`boolean`) is the rig-confirmed MCU power mode.
+- `state.reported.device.mcu.online` (`boolean`) is rig-observed BLE reachability: it becomes `true` after the device has shown sustained BLE presence, and becomes `false` only after the device has not been seen for the configured presence timeout.
 - `state.reported.redcon` (`integer`, `1..4`) is the rig-derived readiness summary:
   - `4`: Green / `Cold Camp` / MCU sleep state or BLE unavailable
   - `3`: Yellow / `Torch-Up` / MCU wakeup state with BLE reachability, but MCP unavailable
   - `2`: Orange/Amber / `Ember Watch` / MCU wakeup state with BLE reachability and MCP availability, but retained video status not ready
   - `1`: Red / `Hot Rig` / MCU wakeup state with BLE reachability, MCP availability, and retained video status ready
-- `state.reported.batteryMv` (`integer`, millivolts, measured MCU battery estimate observed from the MCU State Report over BLE advertising or GATT).
-- `state.reported.board.power` (`boolean`) is a best-effort board power-state flag; because the board can lose power abruptly through the MOSFET, consumers must not treat stale `true` as authoritative after a hard power cut.
-- `state.reported.board.wifi.online` (`boolean`) is the board-side Wi-Fi/control online flag while the board OS is up and the board control is running.
-- `state.reported.board.wifi.ipv4` (`ipv4 string`, update payload may temporarily use `null` to delete) is the IPv4 address chosen by the OS for the board's current IPv4 default-route interface when the board control publishes.
-- `state.reported.board.wifi.ipv6` (`ipv6 string`, update payload may temporarily use `null` to delete) is the IPv6 address chosen by the OS for the board's current IPv6 default-route interface when the board control publishes.
+- `state.reported.device.batteryMv` (`integer`, millivolts, measured MCU battery estimate observed from the MCU State Report over BLE advertising or GATT).
+- `state.reported.device.board.power` (`boolean`) is a best-effort board power-state flag; because the board can lose power abruptly through the MOSFET, consumers must not treat stale `true` as authoritative after a hard power cut.
+- `state.reported.device.board.wifi.online` (`boolean`) is the board-side Wi-Fi/control online flag while the board OS is up and the board control is running.
+- `state.reported.device.board.wifi.ipv4` (`ipv4 string`, update payload may temporarily use `null` to delete) is the IPv4 address chosen by the OS for the board's current IPv4 default-route interface when the board control publishes.
+- `state.reported.device.board.wifi.ipv6` (`ipv6 string`, update payload may temporarily use `null` to delete) is the IPv6 address chosen by the OS for the board's current IPv6 default-route interface when the board control publishes.
 - Live board motion feedback and board video runtime state are no longer part of the Thing Shadow contract in Phase 3.
 - Current motion state and current video runtime state are read from board MCP `robot.get_state`.
 - For `reported.redcon`, rig treats retained MCP availability plus fresh retained video readiness as the final readiness inputs once BLE reachability and MCU wake state are satisfied.

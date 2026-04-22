@@ -20,6 +20,7 @@ from typing import Any
 
 import jsonschema
 from aws.auth import AwsRuntime, build_aws_runtime, ensure_aws_profile, resolve_aws_region
+from aws.device_registry import normalize_registry_text
 from aws.mcp_topics import MCP_DEFAULT_LEASE_TTL_MS
 from aws.mqtt import AwsIotWebsocketSyncConnection, AwsMqttConnectionConfig
 
@@ -220,6 +221,8 @@ class ControlConfig:
     thing_name: str
     aws_region: str
     iot_endpoint: str
+    sparkplug_group_id: str
+    sparkplug_edge_node_id: str
     schema_file: Path
     shadow_file: Path
     client_id: str
@@ -257,6 +260,15 @@ class DefaultRouteAddresses:
     ipv6: str | None
 
 
+def _build_sparkplug_device_command_topic(
+    *,
+    group_id: str,
+    edge_node_id: str,
+    thing_name: str,
+) -> str:
+    return f"spBv1.0/{group_id}/DCMD/{edge_node_id}/{thing_name}"
+
+
 class AwsShadowClient:
     def __init__(
         self,
@@ -280,7 +292,11 @@ class AwsShadowClient:
         self._topic_update_rejected = (
             f"{self._topic_prefix}/update/rejected"
         )
-        self._topic_update_delta = f"{self._topic_prefix}/update/delta"
+        self._sparkplug_command_topic = _build_sparkplug_device_command_topic(
+            group_id=config.sparkplug_group_id,
+            edge_node_id=config.sparkplug_edge_node_id,
+            thing_name=config.thing_name,
+        )
         self._cmd_vel_controller = cmd_vel_controller
         self._mcp_server = mcp_server
         self._video_service = video_service
@@ -311,7 +327,6 @@ class AwsShadowClient:
         self._pending_response: dict[str, Any] | None = None
         self._disconnect_requested = False
         self._halt_requested = threading.Event()
-        self._desired_board_power: bool | None = None
         self._mcp_dispatcher: ThreadPoolExecutor | None = None
         if self._mcp_server is not None:
             # Avoid blocking the MQTT callback thread with synchronous publish/ack waits.
@@ -368,7 +383,7 @@ class AwsShadowClient:
                 self._topic_get_rejected,
                 self._topic_update_accepted,
                 self._topic_update_rejected,
-                self._topic_update_delta,
+                self._sparkplug_command_topic,
             ):
                 client.subscribe(
                     topic,
@@ -552,6 +567,13 @@ class AwsShadowClient:
                 )
             return
 
+        if topic == self._sparkplug_command_topic:
+            self._observe_sparkplug_redcon_command(
+                payload_bytes,
+                source=topic,
+            )
+            return
+
         try:
             payload = json.loads(payload_bytes.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
@@ -561,33 +583,6 @@ class AwsShadowClient:
         if topic == self._topic_get_rejected:
             LOGGER.warning("Shadow get rejected: %s", json.dumps(payload, sort_keys=True))
             return
-
-        if topic == self._topic_get_accepted:
-            self._observe_desired_board_power(
-                _extract_desired_board_power_from_shadow(payload),
-                source="shadow/get/accepted",
-            )
-            return
-
-        if topic == self._topic_update_delta:
-            desired_power = _extract_desired_board_power_from_delta(payload)
-            if desired_power is None:
-                LOGGER.debug(
-                    "Ignored shadow delta without desired.board.power: %s",
-                    payload,
-                )
-                return
-            self._observe_desired_board_power(
-                desired_power,
-                source="shadow/update/delta",
-            )
-            return
-
-        if topic == self._topic_update_accepted:
-            self._observe_desired_board_power(
-                _extract_desired_board_power_from_shadow(payload),
-                source="shadow/update/accepted",
-            )
 
         token = payload.get("clientToken")
         if not isinstance(token, str):
@@ -608,6 +603,32 @@ class AwsShadowClient:
 
         self._response_done.set()
 
+    def _observe_sparkplug_redcon_command(
+        self,
+        payload_bytes: bytes,
+        *,
+        source: str,
+    ) -> None:
+        try:
+            redcon = _decode_sparkplug_redcon_command(payload_bytes)
+        except Exception as err:
+            LOGGER.warning("Ignored invalid Sparkplug DCMD payload from %s: %s", source, err)
+            return
+
+        if redcon is None:
+            LOGGER.warning(
+                "Ignored Sparkplug DCMD without a valid redcon metric from %s",
+                source,
+            )
+            return
+        if redcon != 4:
+            LOGGER.info("Ignored Sparkplug DCMD.redcon=%s from %s", redcon, source)
+            return
+        if self._halt_requested.is_set():
+            return
+        LOGGER.warning("Sparkplug DCMD.redcon=4 received from %s; preparing local halt", source)
+        self._halt_requested.set()
+
     def _request_shadow_get(self) -> None:
         with self._lock:
             client = self._client
@@ -625,35 +646,6 @@ class AwsShadowClient:
                 self._topic_get,
                 err,
             )
-
-    def _observe_desired_board_power(
-        self,
-        desired_power: bool | None,
-        *,
-        source: str,
-    ) -> None:
-        if desired_power is None:
-            return
-
-        with self._lock:
-            previous = self._desired_board_power
-            self._desired_board_power = desired_power
-
-        if previous != desired_power:
-            LOGGER.info(
-                "Observed desired.board.power=%s from %s",
-                desired_power,
-                source,
-            )
-
-        if desired_power or self._halt_requested.is_set():
-            return
-
-        LOGGER.warning(
-            "Desired board.power=false received from %s; preparing local halt",
-            source,
-        )
-        self._halt_requested.set()
 
 
 def _parse_args() -> argparse.Namespace:
@@ -735,7 +727,7 @@ def _parse_args() -> argparse.Namespace:
         "--heartbeat-seconds",
         type=float,
         default=DEFAULT_HEARTBEAT_SECONDS,
-        help="Seconds between repeated reported.board.power/wifi updates (default: 60)",
+        help="Seconds between repeated reported.device.board.power/wifi updates (default: 60)",
     )
     parser.add_argument(
         "--aws-connect-timeout",
@@ -868,14 +860,14 @@ def _parse_args() -> argparse.Namespace:
         nargs="+",
         default=list(DEFAULT_HALT_COMMAND),
         help=(
-            "Command used when desired.board.power=false requests a local halt "
+            "Command used when Sparkplug DCMD.redcon=4 requests a local halt "
             "(default: /usr/bin/systemctl halt --no-wall)"
         ),
     )
     parser.add_argument(
         "--once",
         action="store_true",
-        help="Publish a single reported.board update and exit",
+        help="Publish a single reported.device.board update and exit",
     )
     parser.add_argument(
         "--debug",
@@ -954,30 +946,115 @@ def _detect_default_route_addresses() -> DefaultRouteAddresses:
         ipv6=_detect_default_route_address(socket.AF_INET6, DEFAULT_ROUTE_PROBE_IPV6),
     )
 
+def _read_varint(data: bytes, offset: int) -> tuple[int, int]:
+    value = 0
+    shift = 0
+    index = offset
+    while True:
+        if index >= len(data):
+            raise ValueError("unexpected end of buffer while reading varint")
+        byte = data[index]
+        index += 1
+        value |= (byte & 0x7F) << shift
+        if not (byte & 0x80):
+            return value, index
+        shift += 7
+        if shift > 63:
+            raise ValueError("varint is too large")
 
-def _extract_desired_board_power_from_shadow(payload: dict[str, Any]) -> bool | None:
-    state = payload.get("state")
-    if not isinstance(state, dict):
-        return None
-    desired = state.get("desired")
-    if not isinstance(desired, dict):
-        return None
-    board = desired.get("board")
-    if not isinstance(board, dict):
-        return None
-    value = board.get("power")
-    return value if isinstance(value, bool) else None
+
+def _read_key(data: bytes, offset: int) -> tuple[int, int, int]:
+    key, next_offset = _read_varint(data, offset)
+    return key >> 3, key & 0x07, next_offset
 
 
-def _extract_desired_board_power_from_delta(payload: dict[str, Any]) -> bool | None:
-    state = payload.get("state")
-    if not isinstance(state, dict):
-        return None
-    board = state.get("board")
-    if not isinstance(board, dict):
-        return None
-    value = board.get("power")
-    return value if isinstance(value, bool) else None
+def _read_length_delimited(data: bytes, offset: int) -> tuple[bytes, int]:
+    length, next_offset = _read_varint(data, offset)
+    end = next_offset + length
+    if end > len(data):
+        raise ValueError("unexpected end of buffer while reading bytes field")
+    return data[next_offset:end], end
+
+
+def _skip_field(data: bytes, offset: int, wire_type: int) -> int:
+    if wire_type == 0:
+        _, next_offset = _read_varint(data, offset)
+        return next_offset
+    if wire_type == 1:
+        next_offset = offset + 8
+        if next_offset > len(data):
+            raise ValueError("unexpected end of buffer while skipping fixed64 field")
+        return next_offset
+    if wire_type == 2:
+        _, next_offset = _read_length_delimited(data, offset)
+        return next_offset
+    if wire_type == 5:
+        next_offset = offset + 4
+        if next_offset > len(data):
+            raise ValueError("unexpected end of buffer while skipping fixed32 field")
+        return next_offset
+    raise ValueError(f"unsupported wire type {wire_type}")
+
+
+def _decode_sparkplug_redcon_command(payload_bytes: bytes) -> int | None:
+    offset = 0
+    while offset < len(payload_bytes):
+        field_number, wire_type, offset = _read_key(payload_bytes, offset)
+        if field_number != 2 or wire_type != 2:
+            offset = _skip_field(payload_bytes, offset, wire_type)
+            continue
+        metric_bytes, offset = _read_length_delimited(payload_bytes, offset)
+        metric_offset = 0
+        metric_name: str | None = None
+        metric_int_value: int | None = None
+        metric_long_value: int | None = None
+        while metric_offset < len(metric_bytes):
+            metric_field_number, metric_wire_type, metric_offset = _read_key(
+                metric_bytes,
+                metric_offset,
+            )
+            if metric_field_number == 1 and metric_wire_type == 2:
+                raw_name, metric_offset = _read_length_delimited(metric_bytes, metric_offset)
+                metric_name = raw_name.decode("utf-8")
+                continue
+            if metric_field_number == 10 and metric_wire_type == 0:
+                metric_int_value, metric_offset = _read_varint(metric_bytes, metric_offset)
+                continue
+            if metric_field_number == 11 and metric_wire_type == 0:
+                metric_long_value, metric_offset = _read_varint(metric_bytes, metric_offset)
+                continue
+            metric_offset = _skip_field(metric_bytes, metric_offset, metric_wire_type)
+        if metric_name != "redcon":
+            continue
+        value = metric_int_value if metric_int_value is not None else metric_long_value
+        if value is None or not 1 <= value <= 4:
+            return None
+        return value
+    return None
+
+
+def _describe_sparkplug_assignment(
+    aws_runtime: AwsRuntime,
+    *,
+    thing_name: str,
+) -> tuple[str, str]:
+    response = aws_runtime.iot_client().describe_thing(thingName=thing_name)
+    attributes = response.get("attributes") or {}
+    if not isinstance(attributes, dict):
+        raise RuntimeError(
+            f"Thing {thing_name!r} returned invalid IoT registry attributes"
+        )
+    town_name = normalize_registry_text(attributes.get("town"))
+    rig_name = normalize_registry_text(attributes.get("rig"))
+    if town_name is None:
+        raise RuntimeError(
+            f"Thing {thing_name!r} is missing required IoT registry attribute 'town'"
+        )
+    if rig_name is None:
+        raise RuntimeError(
+            f"Thing {thing_name!r} is missing required IoT registry attribute 'rig'"
+        )
+    return town_name, rig_name
 
 
 def _build_board_report(
@@ -1008,26 +1085,15 @@ def _build_shutdown_board_report() -> dict[str, Any]:
 
 
 def _build_shadow_update(report: dict[str, Any]) -> dict[str, Any]:
-    return _build_shadow_update_with_options(report=report, clear_desired_power=False)
-
-
-def _build_shadow_update_with_options(
-    *,
-    report: dict[str, Any],
-    clear_desired_power: bool,
-) -> dict[str, Any]:
-    state: dict[str, Any] = {
-        "reported": {
-            "board": report,
-        }
-    }
-    if clear_desired_power:
-        state["desired"] = {
-            "board": {
-                "power": None,
+    return {
+        "state": {
+            "reported": {
+                "device": {
+                    "board": report,
+                }
             }
         }
-    return {"state": state}
+    }
 
 
 def _load_validator(schema_file: Path) -> jsonschema.Draft202012Validator:
@@ -1043,6 +1109,20 @@ def _load_validator(schema_file: Path) -> jsonschema.Draft202012Validator:
     )
 
 
+def _merge_shadow_documents(
+    base: dict[str, Any],
+    patch: dict[str, Any],
+) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in patch.items():
+        existing = merged.get(key)
+        if isinstance(existing, dict) and isinstance(value, dict):
+            merged[key] = _merge_shadow_documents(existing, value)
+            continue
+        merged[key] = value
+    return merged
+
+
 def _format_validation_path(error: jsonschema.ValidationError) -> str:
     if not error.absolute_path:
         return "<root>"
@@ -1053,8 +1133,18 @@ def _validate_shadow_update(
     validator: jsonschema.Draft202012Validator,
     payload: dict[str, Any],
 ) -> None:
+    effective_payload = _merge_shadow_documents(
+        {
+            "state": {
+                "reported": {
+                    "redcon": 4,
+                }
+            }
+        },
+        payload,
+    )
     errors = sorted(
-        validator.iter_errors(payload),
+        validator.iter_errors(effective_payload),
         key=lambda item: tuple(str(part) for part in item.absolute_path),
     )
     if not errors:
@@ -1189,12 +1279,8 @@ def _publish_board_report(
     validator: jsonschema.Draft202012Validator,
     config: ControlConfig,
     report: dict[str, Any],
-    clear_desired_power: bool = False,
 ) -> dict[str, Any]:
-    payload = _build_shadow_update_with_options(
-        report=report,
-        clear_desired_power=clear_desired_power,
-    )
+    payload = _build_shadow_update(report)
     _validate_shadow_update(validator, payload)
     accepted = shadow_client.publish_update(
         payload,
@@ -1272,6 +1358,10 @@ def main() -> None:
             raise RuntimeError("could not resolve AWS region for AWS IoT access")
         aws_runtime = build_aws_runtime(region_name=aws_region)
         iot_endpoint = aws_runtime.iot_data_endpoint()
+        sparkplug_group_id, sparkplug_edge_node_id = _describe_sparkplug_assignment(
+            aws_runtime,
+            thing_name=args.thing_name,
+        )
         _require_file(args.schema_file, "Thing Shadow schema file")
         video_sender_command = _require_non_empty_option(
             args.video_sender_command,
@@ -1302,6 +1392,8 @@ def main() -> None:
             thing_name=args.thing_name,
             aws_region=aws_region,
             iot_endpoint=iot_endpoint,
+            sparkplug_group_id=sparkplug_group_id,
+            sparkplug_edge_node_id=sparkplug_edge_node_id,
             schema_file=args.schema_file,
             shadow_file=args.shadow_file,
             client_id=client_id,
@@ -1540,10 +1632,9 @@ def main() -> None:
                     validator=validator,
                     config=config,
                     report=report,
-                    clear_desired_power=True,
                 )
                 LOGGER.info(
-                    "Published best-effort clean shutdown board update and cleared desired.board.power"
+                    "Published best-effort clean shutdown board update"
                 )
             except RuntimeError as err:
                 LOGGER.warning("Failed to publish best-effort shutdown board update: %s", err)

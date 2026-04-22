@@ -26,10 +26,9 @@ from board.shadow_control import (
     _build_cmd_vel_controller,
     _build_cmd_vel_motor_driver,
     _build_shutdown_board_report,
-    _build_shadow_update_with_options,
+    _build_shadow_update,
+    _decode_sparkplug_redcon_command,
     _discover_repo_root,
-    _extract_desired_board_power_from_delta,
-    _extract_desired_board_power_from_shadow,
     _load_validator,
     _validate_shadow_update,
     _wait_for_system_clock_sync,
@@ -102,6 +101,8 @@ def _make_config(**overrides: object) -> ControlConfig:
         "thing_name": "unit-local",
         "aws_region": "eu-central-1",
         "iot_endpoint": "example-ats.iot.eu-central-1.amazonaws.com",
+        "sparkplug_group_id": "town",
+        "sparkplug_edge_node_id": "rig",
         "schema_file": Path(UNIT_AWS_DIR / "shadow.schema.json"),
         "shadow_file": Path("/tmp/unit_board_shadow.json"),
         "client_id": "bot-board-test",
@@ -141,11 +142,11 @@ def _make_runtime() -> MagicMock:
     runtime.iot_data_endpoint.return_value = "example-ats.iot.eu-central-1.amazonaws.com"
     runtime.iot_client.return_value.describe_thing.return_value = {
         "thingName": "unit-local",
+        "thingTypeName": "unit",
         "attributes": {
             "town": "town",
             "rig": "rig",
-            "deviceType": "unit",
-            "deviceName": "bot",
+            "name": "bot",
             "shortId": "local00",
         },
     }
@@ -205,41 +206,36 @@ class ShadowControlContractTests(unittest.TestCase):
         self.assertEqual(events[2], "publish:$aws/things/unit-local/shadow/get")
         mcp_server.on_connected.assert_called_once()
 
-    def test_extracts_desired_board_power_from_shadow_snapshot(self) -> None:
-        payload = {
-            "state": {
-                "desired": {
-                    "board": {
-                        "power": False,
-                    }
-                }
-            }
-        }
-
-        self.assertIs(_extract_desired_board_power_from_shadow(payload), False)
-
-    def test_extracts_desired_board_power_from_delta(self) -> None:
-        payload = {
-            "state": {
-                "board": {
-                    "power": False,
-                }
-            }
-        }
-
-        self.assertIs(_extract_desired_board_power_from_delta(payload), False)
-
-    def test_shutdown_update_clears_desired_board_power(self) -> None:
-        validator = _load_validator(Path(UNIT_AWS_DIR / "shadow.schema.json"))
-        payload = _build_shadow_update_with_options(
-            report=_build_shutdown_board_report(),
-            clear_desired_power=True,
+    def test_decodes_sparkplug_redcon_command_metric(self) -> None:
+        payload = bytes(
+            [
+                0x12,
+                0x0C,
+                0x0A,
+                0x06,
+                0x72,
+                0x65,
+                0x64,
+                0x63,
+                0x6F,
+                0x6E,
+                0x20,
+                0x03,
+                0x50,
+                0x03,
+            ]
         )
 
+        self.assertEqual(_decode_sparkplug_redcon_command(payload), 3)
+
+    def test_board_shadow_update_is_reported_only(self) -> None:
+        validator = _load_validator(Path(UNIT_AWS_DIR / "shadow.schema.json"))
+        payload = _build_shadow_update(_build_shutdown_board_report())
+
         _validate_shadow_update(validator, payload)
-        self.assertIsNone(payload["state"]["desired"]["board"]["power"])
-        self.assertIs(payload["state"]["reported"]["board"]["power"], False)
-        self.assertIs(payload["state"]["reported"]["board"]["wifi"]["online"], False)
+        self.assertNotIn("desired", payload["state"])
+        self.assertIs(payload["state"]["reported"]["device"]["board"]["power"], False)
+        self.assertIs(payload["state"]["reported"]["device"]["board"]["wifi"]["online"], False)
 
     def test_board_report_without_video_matches_schema(self) -> None:
         validator = _load_validator(Path(UNIT_AWS_DIR / "shadow.schema.json"))
@@ -248,7 +244,7 @@ class ShadowControlContractTests(unittest.TestCase):
             power=True,
         )
 
-        _validate_shadow_update(validator, {"state": {"reported": {"board": report}}})
+        _validate_shadow_update(validator, {"state": {"reported": {"device": {"board": report}}}})
         self.assertNotIn("video", report)
         self.assertNotIn("drive", report)
 
@@ -259,11 +255,9 @@ class ShadowControlContractTests(unittest.TestCase):
         )
 
         _validate_shadow_update(validator, payload)
-        self.assertIsNone(payload["state"]["desired"]["redcon"])
-        self.assertIsNone(payload["state"]["desired"]["board"]["power"])
         self.assertEqual(payload["state"]["reported"]["redcon"], 4)
-        self.assertIs(payload["state"]["reported"]["board"]["power"], False)
-        self.assertIs(payload["state"]["reported"]["board"]["wifi"]["online"], False)
+        self.assertIs(payload["state"]["reported"]["device"]["board"]["power"], False)
+        self.assertIs(payload["state"]["reported"]["device"]["board"]["wifi"]["online"], False)
 
     def test_reported_video_state_omits_runtime_timestamp(self) -> None:
         reported = build_reported_video_state(
@@ -364,8 +358,8 @@ class ShadowControlContractTests(unittest.TestCase):
         self.assertEqual(video_supervisor.read_state.call_count, 1)
         self.assertEqual(shadow_client.publish_update.call_count, 1)
         payload = shadow_client.publish_update.call_args.args[0]
-        self.assertNotIn("video", payload["state"]["reported"]["board"])
-        self.assertNotIn("drive", payload["state"]["reported"]["board"])
+        self.assertNotIn("video", payload["state"]["reported"]["device"]["board"])
+        self.assertNotIn("drive", payload["state"]["reported"]["device"]["board"])
         video_service.publish_status.assert_called_once()
 
     def test_main_republishes_video_status_after_runtime_error_without_shadow_video_publish(self) -> None:
@@ -410,7 +404,7 @@ class ShadowControlContractTests(unittest.TestCase):
 
         self.assertEqual(shadow_client.publish_update.call_count, 1)
         payload = shadow_client.publish_update.call_args.args[0]
-        self.assertNotIn("video", payload["state"]["reported"]["board"])
+        self.assertNotIn("video", payload["state"]["reported"]["device"]["board"])
         self.assertEqual(video_service.publish_status.call_count, 2)
         self.assertIs(video_service.publish_status.call_args_list[0].args[0]["ready"], True)
         self.assertIs(video_service.publish_status.call_args_list[1].args[0]["ready"], False)
@@ -458,9 +452,9 @@ class ShadowControlContractTests(unittest.TestCase):
 
         self.assertEqual(shadow_client.publish_update.call_count, 2)
         payload = shadow_client.publish_update.call_args_list[-1].args[0]
-        self.assertIs(payload["state"]["reported"]["board"]["power"], False)
-        self.assertIsNone(payload["state"]["desired"]["board"]["power"])
-        self.assertNotIn("drive", payload["state"]["reported"]["board"])
+        self.assertIs(payload["state"]["reported"]["device"]["board"]["power"], False)
+        self.assertNotIn("desired", payload["state"])
+        self.assertNotIn("drive", payload["state"]["reported"]["device"]["board"])
         video_service.publish_status.assert_called_once()
         request_system_halt.assert_called_once()
 
@@ -507,7 +501,7 @@ class ShadowControlContractTests(unittest.TestCase):
 
         self.assertEqual(shadow_client.publish_update.call_count, 1)
         first_payload = shadow_client.publish_update.call_args_list[0].args[0]
-        self.assertNotIn("drive", first_payload["state"]["reported"]["board"])
+        self.assertNotIn("drive", first_payload["state"]["reported"]["device"]["board"])
 
     def test_build_cmd_vel_motor_driver_rejects_operational_range_above_hardware_max(self) -> None:
         with self.assertRaises(ValueError):

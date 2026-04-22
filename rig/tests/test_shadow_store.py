@@ -4,9 +4,10 @@ import unittest
 
 from rig.shadow_store import (
     default_shadow_payload,
-    get_desired_board_power,
-    get_desired_redcon,
     get_reported_battery_mv,
+    get_reported_board_power,
+    get_reported_board_wifi_online,
+    get_reported_redcon,
 )
 
 
@@ -14,43 +15,45 @@ class ShadowStoreTests(unittest.TestCase):
     def test_default_shadow_payload_contains_only_shadow_fields_still_in_contract(self) -> None:
         payload = default_shadow_payload()
 
-        self.assertIsNone(get_desired_redcon(payload))
-        self.assertIsNone(get_desired_board_power(payload))
+        self.assertEqual(get_reported_redcon(payload), 4)
         self.assertEqual(
-            payload["state"]["reported"]["mcu"],
+            payload["state"]["reported"]["device"]["mcu"],
             {
                 "power": False,
                 "online": False,
             },
         )
         self.assertEqual(get_reported_battery_mv(payload), 3750)
-        self.assertNotIn("video", payload["state"]["reported"])
+        self.assertFalse(get_reported_board_power(payload))
+        self.assertFalse(get_reported_board_wifi_online(payload))
+        self.assertNotIn("video", payload["state"]["reported"]["device"]["board"])
 
-    def test_reported_battery_mv_only_reads_top_level_metric_reflection(self) -> None:
+    def test_reported_battery_mv_reads_nested_device_metric_reflection(self) -> None:
         payload = {
             "state": {
                 "reported": {
-                    "mcu": {
+                    "device": {
                         "batteryMv": 3999,
                     },
                 },
             },
         }
 
-        self.assertEqual(get_reported_battery_mv(payload), 3750)
+        self.assertEqual(get_reported_battery_mv(payload), 3999)
 
     def test_default_shadow_payload_does_not_expose_registry_metadata(self) -> None:
         payload = {
             "state": {
                 "reported": {
-                    "bleDeviceId": "AA:BB:CC:DD:EE:FF",
-                    "rig": "rig-a",
+                    "device": {
+                        "bleDeviceId": "AA:BB:CC:DD:EE:FF",
+                    },
                 },
             },
         }
 
-        self.assertNotIn("bleDeviceId", default_shadow_payload()["state"]["reported"])
-        self.assertIn("bleDeviceId", payload["state"]["reported"])
+        self.assertNotIn("bleDeviceId", default_shadow_payload()["state"]["reported"]["device"])
+        self.assertIn("bleDeviceId", payload["state"]["reported"]["device"])
 
 
 if __name__ == "__main__":

@@ -40,7 +40,6 @@ import {
 } from './app-notifications'
 import {
   buildBoardVideoChannelName,
-  extractDesiredRedcon,
   extractReportedBatteryMv,
   extractReportedBoardPower,
   extractReportedBoardWifiOnline,
@@ -52,7 +51,7 @@ import {
 import {
   isResourceNotFoundError,
   listRigDevices,
-  listRigThingGroups,
+  listTownRigs,
   type DeviceCatalogEntry,
   type RigCatalogEntry,
 } from './catalog-api'
@@ -150,10 +149,7 @@ const formatShadowUpdateTime = (updatedAtMs: number | null): string =>
       })
 
 const getCatalogDeviceLabel = (device: DeviceCatalogEntry | null | undefined): string =>
-  device?.deviceName?.trim() ? device.deviceName.trim() : 'Unnamed device'
-
-const getCatalogDescription = (description: string | null | undefined, fallback: string): string =>
-  typeof description === 'string' && description.trim() !== '' ? description.trim() : fallback
+  device?.name?.trim() ? device.name.trim() : 'Unnamed device'
 
 type NavigationUserMenuProps = {
   authUser: AuthUser | null
@@ -315,6 +311,7 @@ function App({ initialAuthError = '' }: AppProps) {
     useState<ShadowConnectionState>('idle')
   const [rigCatalog, setRigCatalog] = useState<RigCatalogState>(emptyRigCatalogState)
   const [deviceCatalog, setDeviceCatalog] = useState<DeviceCatalogState>(emptyDeviceCatalogState)
+  const [pendingTargetRedcon, setPendingTargetRedcon] = useState<1 | 2 | 3 | 4 | null>(null)
   const shadowSessionRef = useRef<ShadowSession | null>(null)
   const redconCommandSequenceRef = useRef(0)
   const nextNotificationIdRef = useRef(0)
@@ -404,13 +401,14 @@ function App({ initialAuthError = '' }: AppProps) {
       }),
     [shadowReportedRedcon, sparkplugReportedRedcon],
   )
-  const desiredRedcon = useMemo(
-    () => extractDesiredRedcon(shadowDocument),
-    [shadowDocument],
-  )
 
   const isShadowConnected = shadowConnectionState === 'connected'
-  const isRedconCommandPending = desiredRedcon !== null && desiredRedcon !== reportedRedcon
+  const isRedconCommandPending =
+    pendingTargetRedcon !== null &&
+    (reportedRedcon === null ||
+      (pendingTargetRedcon === 4
+        ? reportedRedcon !== 4
+        : reportedRedcon > pendingTargetRedcon))
   const isRedconCommandDisabled =
     isLoadingShadow || isUpdatingShadow || isRedconCommandPending || !isShadowConnected
   const isRedconSleepCommandDisabled = isLoadingShadow || !isShadowConnected
@@ -613,6 +611,19 @@ function App({ initialAuthError = '' }: AppProps) {
   }, [notifications])
 
   useEffect(() => {
+    if (pendingTargetRedcon === null || reportedRedcon === null) {
+      return
+    }
+    if (
+      pendingTargetRedcon === 4
+        ? reportedRedcon === 4
+        : reportedRedcon <= pendingTargetRedcon
+    ) {
+      setPendingTargetRedcon(null)
+    }
+  }, [pendingTargetRedcon, reportedRedcon])
+
+  useEffect(() => {
     if (status !== 'signed_in') {
       return
     }
@@ -656,7 +667,7 @@ function App({ initialAuthError = '' }: AppProps) {
 
     const loadRigCatalog = async (): Promise<void> => {
       try {
-        const rigs = await listRigThingGroups(resolveSessionIdToken)
+        const rigs = await listTownRigs(resolveSessionIdToken, route.town)
         if (cancelled) {
           return
         }
@@ -684,7 +695,14 @@ function App({ initialAuthError = '' }: AppProps) {
     return () => {
       cancelled = true
     }
-  }, [adminEmailMismatch, hasUnsupportedTown, resolveSessionIdToken, route.kind, status])
+  }, [
+    adminEmailMismatch,
+    hasUnsupportedTown,
+    resolveSessionIdToken,
+    route.kind,
+    route.kind === 'town' ? route.town : '',
+    status,
+  ])
 
   useEffect(() => {
     if (
@@ -769,6 +787,7 @@ function App({ initialAuthError = '' }: AppProps) {
       setShadowJson('{}')
       setSparkplugReportedBatteryMv(null)
       setSparkplugReportedRedcon(null)
+      setPendingTargetRedcon(null)
       setRobotState(null)
       setIsBotPanelOpen(false)
       setIsBoardVideoExpanded(false)
@@ -782,6 +801,7 @@ function App({ initialAuthError = '' }: AppProps) {
     setShadowJson('{}')
     setSparkplugReportedBatteryMv(null)
     setSparkplugReportedRedcon(null)
+    setPendingTargetRedcon(null)
     setRobotState(null)
     setLastShadowUpdateAtMs(null)
     setIsLoadingShadow(true)
@@ -1049,6 +1069,7 @@ function App({ initialAuthError = '' }: AppProps) {
       const shadowSession = getShadowSession()
       await publishSparkplugRedconCommandWithAck(shadowSession, redcon)
       if (redconCommandSequenceRef.current === commandSequence) {
+        setPendingTargetRedcon(redcon)
         appendSessionLogEntry({
           tone: 'neutral',
           message: `Sparkplug DCMD.redcon -> ${redcon}`,
@@ -1076,7 +1097,8 @@ function App({ initialAuthError = '' }: AppProps) {
       if (isRedconSleepCommandDisabled) {
         return
       }
-      const isWakeTargetPending = desiredRedcon !== null && desiredRedcon !== 4
+      const isWakeTargetPending =
+        pendingTargetRedcon !== null && pendingTargetRedcon !== 4
       if (reportedRedcon === 4 && !isWakeTargetPending) {
         return
       }
@@ -1349,7 +1371,7 @@ function App({ initialAuthError = '' }: AppProps) {
             <SparkplugPanel
               routeKind={route.kind}
               botRedcon={reportedRedcon}
-              desiredRedcon={desiredRedcon}
+              targetRedcon={pendingTargetRedcon}
               detailsToggleAriaLabel={detailsToggleAriaLabel}
               detailsToggleTitle={detailsToggleTitle}
               isDetailsPanelOpen={isDetailsPanelOpen}
@@ -1437,7 +1459,7 @@ function App({ initialAuthError = '' }: AppProps) {
                   buildRigPath(route.town, rig.rigName),
                   'Rig',
                   rig.rigName.toUpperCase(),
-                  getCatalogDescription(rig.description, 'No rig description available.'),
+                  rig.shortId ? `Short ID ${rig.shortId}` : undefined,
                   'catalog-card-link-title-caps',
                 )}
               </li>

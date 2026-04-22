@@ -110,7 +110,7 @@ Notes:
 Responsibilities:
 
 - publish board power and wifi Thing Shadow updates
-- keep handling internal `desired.board.power`
+- halt locally when Sparkplug `DCMD.redcon=4` arrives for the assigned device
 - refresh board IPv4 and IPv6 on each publish loop
 - supervise the local board video sender state manager
 - publish retained video descriptor/status topics

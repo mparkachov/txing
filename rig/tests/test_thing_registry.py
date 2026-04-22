@@ -25,46 +25,60 @@ class FakeIotClient:
         self._things: dict[str, dict[str, object]] = {
             "unit-bbbbbb": {
                 "thingName": "unit-bbbbbb",
+                "thingTypeName": "unit",
                 "attributes": {
                     "town": "berlin",
                     "rig": "rig-a",
-                    "deviceType": "unit",
-                    "deviceName": "bot",
+                    "name": "bot",
+                    "shortId": "bbbbbb",
                     "bleDeviceId": "BB:BB:BB:BB:BB:BB",
                 },
                 "version": 3,
             },
             "unit-aaaaaa": {
                 "thingName": "unit-aaaaaa",
+                "thingTypeName": "unit",
                 "attributes": {
                     "town": "berlin",
                     "rig": "rig-a",
-                    "deviceType": "unit",
-                    "deviceName": "bot",
+                    "name": "bot",
+                    "shortId": "aaaaaa",
                     "bleDeviceId": "AA:AA:AA:AA:AA:AA",
                 },
                 "version": 5,
             },
             "rig-only": {
                 "thingName": "rig-only",
+                "thingTypeName": "unit",
                 "attributes": {
                     "town": "berlin",
                     "bleDeviceId": "missing-rig",
-                    "deviceType": "unit",
-                    "deviceName": "bot",
+                    "name": "bot",
+                    "shortId": "rigonly",
                 },
                 "version": 1,
             },
             "unit-other": {
                 "thingName": "unit-other",
+                "thingTypeName": "unit",
                 "attributes": {
                     "town": "berlin",
                     "rig": "rig-b",
-                    "deviceType": "unit",
-                    "deviceName": "bot",
+                    "name": "bot",
+                    "shortId": "other01",
                     "bleDeviceId": "DD:DD:DD:DD:DD:DD",
                 },
                 "version": 2,
+            },
+            "rig-rig001": {
+                "thingName": "rig-rig001",
+                "thingTypeName": "rig",
+                "attributes": {
+                    "town": "berlin",
+                    "name": "rig-a",
+                    "shortId": "rig001",
+                },
+                "version": 4,
             },
         }
 
@@ -76,6 +90,10 @@ class FakeIotClient:
 
     def list_things_in_thing_group(self, **kwargs: object) -> dict[str, object]:
         self.list_group_requests.append(kwargs)
+        group_name = kwargs["thingGroupName"]
+        assert isinstance(group_name, str)
+        if group_name == "berlin":
+            return {"things": ["rig-rig001", "unit-other"]}
         if "nextToken" not in kwargs:
             return {
                 "things": ["unit-bbbbbb", "unit-aaaaaa"],
@@ -115,22 +133,22 @@ class ThingRegistryTests(unittest.TestCase):
             registrations,
             [
                 DeviceRegistration(
-                    device_id="unit-aaaaaa",
                     thing_name="unit-aaaaaa",
+                    thing_type="unit",
+                    name="bot",
+                    short_id="aaaaaa",
                     town_name="berlin",
                     rig_name="rig-a",
-                    device_type="unit",
-                    device_name="bot",
                     ble_device_id="AA:AA:AA:AA:AA:AA",
                     version=5,
                 ),
                 DeviceRegistration(
-                    device_id="unit-bbbbbb",
                     thing_name="unit-bbbbbb",
+                    thing_type="unit",
+                    name="bot",
+                    short_id="bbbbbb",
                     town_name="berlin",
                     rig_name="rig-a",
-                    device_type="unit",
-                    device_name="bot",
                     ble_device_id="BB:BB:BB:BB:BB:BB",
                     version=3,
                 ),
@@ -194,10 +212,27 @@ class ThingRegistryTests(unittest.TestCase):
         self.assertEqual(registration.device_id, "unit-aaaaaa")
         self.assertEqual(registration.town_name, "berlin")
         self.assertEqual(registration.rig_name, "rig-a")
-        self.assertEqual(registration.device_type, "unit")
-        self.assertEqual(registration.device_name, "bot")
+        self.assertEqual(registration.thing_type, "unit")
+        self.assertEqual(registration.name, "bot")
+        self.assertEqual(registration.short_id, "aaaaaa")
         self.assertEqual(registration.ble_device_id, "CC:CC:CC:CC:CC:CC")
         self.assertEqual(registration.version, 6)
+
+    def test_describe_rig_in_town_returns_matching_rig_thing(self) -> None:
+        client = FakeIotClient()
+        registry = AwsThingRegistryClient(client)
+
+        registration = registry.describe_rig_in_town(
+            town_name="berlin",
+            rig_name="rig-a",
+        )
+
+        self.assertEqual(registration.thing_name, "rig-rig001")
+        self.assertEqual(registration.thing_type, "rig")
+        self.assertEqual(registration.name, "rig-a")
+        self.assertEqual(registration.short_id, "rig001")
+        self.assertEqual(registration.town_name, "berlin")
+        self.assertEqual(registration.rig_name, "rig-a")
 
 
 if __name__ == "__main__":

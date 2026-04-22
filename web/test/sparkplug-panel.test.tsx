@@ -8,7 +8,7 @@ describe('sparkplug panel', () => {
       <SparkplugPanel
         routeKind="town"
         botRedcon={null}
-        desiredRedcon={null}
+        targetRedcon={null}
         detailsToggleAriaLabel="Show rig details"
         detailsToggleTitle="Show rig details"
         isDetailsPanelOpen={false}
@@ -35,7 +35,7 @@ describe('sparkplug panel', () => {
       <SparkplugPanel
         routeKind="rig"
         botRedcon={null}
-        desiredRedcon={null}
+        targetRedcon={null}
         detailsToggleAriaLabel="Show device details"
         detailsToggleTitle="Show device details"
         isDetailsPanelOpen={false}
@@ -58,7 +58,7 @@ describe('sparkplug panel', () => {
       <SparkplugPanel
         routeKind="device"
         botRedcon={4}
-        desiredRedcon={null}
+        targetRedcon={null}
         detailsToggleAriaLabel="Show bot device details"
         detailsToggleTitle="Device details become available at REDCON 1"
         isDetailsPanelOpen={false}
@@ -91,7 +91,7 @@ describe('sparkplug panel', () => {
       <SparkplugPanel
         routeKind="device"
         botRedcon={1}
-        desiredRedcon={2}
+        targetRedcon={2}
         detailsToggleAriaLabel="Hide bot device details"
         detailsToggleTitle="Hide bot device details"
         isDetailsPanelOpen={true}

@@ -12,52 +12,30 @@ DEFAULT_BATTERY_MV = 3750
 DEFAULT_BOARD_POWER = False
 DEFAULT_BOARD_WIFI_ONLINE = False
 DEFAULT_REDCON = 4
-DEFAULT_DESIRED_REDCON: int | None = None
 DEFAULT_SHADOW_FILE = Path("/tmp/txing_shadow.json")
 
 
 def default_shadow_payload() -> dict[str, Any]:
     return {
         "state": {
-            "desired": {
-                "redcon": DEFAULT_DESIRED_REDCON,
-                "board": {
-                    "power": None,
-                },
-            },
             "reported": {
                 "redcon": DEFAULT_REDCON,
-                "batteryMv": DEFAULT_BATTERY_MV,
-                "mcu": {
-                    "power": DEFAULT_REPORTED_POWER,
-                    "online": DEFAULT_REPORTED_ONLINE,
-                },
-                "board": {
-                    "power": DEFAULT_BOARD_POWER,
-                    "wifi": {
-                        "online": DEFAULT_BOARD_WIFI_ONLINE,
+                "device": {
+                    "batteryMv": DEFAULT_BATTERY_MV,
+                    "mcu": {
+                        "power": DEFAULT_REPORTED_POWER,
+                        "online": DEFAULT_REPORTED_ONLINE,
+                    },
+                    "board": {
+                        "power": DEFAULT_BOARD_POWER,
+                        "wifi": {
+                            "online": DEFAULT_BOARD_WIFI_ONLINE,
+                        },
                     },
                 },
             },
         }
     }
-
-
-def get_desired_redcon(payload: dict[str, Any]) -> int | None:
-    desired = payload.get("state", {}).get("desired", {})
-    value = desired.get("redcon") if isinstance(desired, dict) else None
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int) and 1 <= value <= 4:
-        return value
-    return None
-
-
-def get_desired_board_power(payload: dict[str, Any]) -> bool | None:
-    desired = payload.get("state", {}).get("desired", {})
-    board = desired.get("board", {}) if isinstance(desired, dict) else {}
-    value = board.get("power") if isinstance(board, dict) else None
-    return value if isinstance(value, bool) else None
 
 
 def load_shadow(path: Path = DEFAULT_SHADOW_FILE) -> dict[str, Any]:
@@ -94,9 +72,15 @@ def save_shadow(payload: dict[str, Any], path: Path = DEFAULT_SHADOW_FILE) -> No
             pass
 
 
-def get_reported_power(payload: dict[str, Any]) -> bool:
+def _get_reported_device(payload: dict[str, Any]) -> dict[str, Any]:
     reported = payload.get("state", {}).get("reported", {})
-    mcu = reported.get("mcu", {}) if isinstance(reported, dict) else {}
+    device = reported.get("device", {}) if isinstance(reported, dict) else {}
+    return device if isinstance(device, dict) else {}
+
+
+def get_reported_power(payload: dict[str, Any]) -> bool:
+    device = _get_reported_device(payload)
+    mcu = device.get("mcu", {}) if isinstance(device, dict) else {}
     value = mcu.get("power") if isinstance(mcu, dict) else None
     if isinstance(value, bool):
         return value
@@ -104,8 +88,8 @@ def get_reported_power(payload: dict[str, Any]) -> bool:
 
 
 def get_reported_battery_mv(payload: dict[str, Any]) -> int:
-    reported = payload.get("state", {}).get("reported", {})
-    value = reported.get("batteryMv") if isinstance(reported, dict) else None
+    device = _get_reported_device(payload)
+    value = device.get("batteryMv") if isinstance(device, dict) else None
     if isinstance(value, bool):
         return DEFAULT_BATTERY_MV
     if isinstance(value, int) and 0 <= value <= 10000:
@@ -114,8 +98,8 @@ def get_reported_battery_mv(payload: dict[str, Any]) -> int:
 
 
 def get_reported_board_power(payload: dict[str, Any]) -> bool:
-    reported = payload.get("state", {}).get("reported", {})
-    board = reported.get("board", {}) if isinstance(reported, dict) else {}
+    device = _get_reported_device(payload)
+    board = device.get("board", {}) if isinstance(device, dict) else {}
     value = board.get("power") if isinstance(board, dict) else None
     if isinstance(value, bool):
         return value
@@ -123,8 +107,8 @@ def get_reported_board_power(payload: dict[str, Any]) -> bool:
 
 
 def get_reported_board_wifi_online(payload: dict[str, Any]) -> bool:
-    reported = payload.get("state", {}).get("reported", {})
-    board = reported.get("board", {}) if isinstance(reported, dict) else {}
+    device = _get_reported_device(payload)
+    board = device.get("board", {}) if isinstance(device, dict) else {}
     wifi = board.get("wifi", {}) if isinstance(board, dict) else {}
     value = wifi.get("online") if isinstance(wifi, dict) else None
     if isinstance(value, bool):

@@ -50,7 +50,7 @@ rig
   -> owns lifecycle intent and lifecycle convergence
   -> publishes NBIRTH/NDEATH for the rig node; NBIRTH carries rig.redcon
   -> publishes DBIRTH/DDATA/DDEATH for txing devices
-  -> reflects desired/report lifecycle state into txing AWS shadows only
+  -> reflects reported-only lifecycle state into txing AWS shadows only
   -> derives txing reported.redcon from BLE reachability plus retained MCP/video readiness inputs
 
 txing board control
@@ -58,7 +58,7 @@ txing board control
   -> publishes retained board video descriptor/status topics for rig
 
 txing gateway / BLE path
-  -> remains owner of reported.mcu.*
+  -> remains owner of reported.device.mcu.*
   -> determines BLE reachability for DBIRTH/DDEATH
 ```
 
@@ -68,7 +68,7 @@ txing gateway / BLE path
 - AWS shadow is reflection and durable restart cache only.
 - `rig` is the only authority that computes top-level `txing.state.reported.redcon`.
 - `board` remains the source of truth for board power and wifi operational state.
-- `rig` remains the source of truth for `reported.mcu.*`.
+- `rig` remains the source of truth for `reported.device.mcu.*`.
 - `mcu.*` and `board.*` are not the intended public lifecycle control API.
 
 ## Sparkplug Contract
@@ -119,75 +119,53 @@ Current UI mapping:
 
 Txing shadow keeps:
 
-- `state.desired.redcon`
 - `state.reported.redcon`
-- `state.reported.batteryMv`
-- supporting `reported.mcu.*`
-- supporting `reported.board.*`
+- `state.reported.device.batteryMv`
+- supporting `reported.device.mcu.*`
+- supporting `reported.device.board.*`
 
 Semantics:
 
-- `state.desired.redcon`
-  - reflects the latest unresolved Sparkplug lifecycle intent
-  - exists only as transient restart cache
-  - is not an authoritative command ingress
-  - is cleared when `reported.redcon` converges
-  - is also cleared on unexpected-loss `DDEATH`
 - `state.reported.redcon`
   - reflects the actual lifecycle state of txing
   - must match the Sparkplug device actual REDCON
-- `state.reported.batteryMv`
+- `state.reported.device.batteryMv`
   - reflects the actual lifecycle battery metric of txing
   - must match the Sparkplug device actual `batteryMv`
 - Direct scalar attributes under `txing.state.reported` are the strict Sparkplug metric reflection surface.
-  - In the current implementation lifecycle reflection metrics are `redcon` and `batteryMv`.
+  - In the current implementation the only top-level lifecycle reflection metric is `redcon`.
+  - `batteryMv` now lives under `reported.device.batteryMv`.
   - Sparkplug device metrics also include `services/mcp/*` as the MCP discovery summary (availability, transport, descriptor topic, lease settings, and server/protocol versions).
-  - `mcu.*` and `board.*` remain shadow-only operational detail and are not Sparkplug metric reflections.
+  - `device.mcu.*` and `device.board.*` remain shadow-only operational detail and are not alternate top-level Sparkplug metric reflections.
 - AWS IoT registry attributes hold stable per-device metadata outside the shadow:
+  - `attributes.name`
+  - `attributes.shortId`
   - `attributes.rig`
+  - `attributes.town`
   - `attributes.bleDeviceId`
+- The searchable/indexed subset is narrower:
+  - `attributes.name` on all thing types
+  - `attributes.town` on `rig` and device things
+  - `attributes.rig` on device things
+  - `attributes.shortId` and `attributes.bleDeviceId` remain metadata only
 
 Example reflected txing shadow shape:
 
 ```json
 {
   "state": {
-    "desired": {
-      "redcon": 3
-    },
     "reported": {
       "redcon": 2,
-      "batteryMv": 3972,
-      "mcu": {
-        "power": true
-      },
-      "video": {
-        "serviceId": "video",
-        "serverInfo": {
-          "name": "video",
-          "version": "0.2.0"
+      "device": {
+        "batteryMv": 3972,
+        "mcu": {
+          "power": true
         },
-        "topicRoot": "txings/txing/video",
-        "descriptorTopic": "txings/txing/video/descriptor",
-        "statusTopic": "txings/txing/video/status",
-        "available": true,
-        "ready": true,
-        "status": "ready",
-        "transport": "aws-webrtc",
-        "channelName": "txing-board-video",
-        "region": "eu-central-1",
-        "codec": {
-          "video": "h264"
-        },
-        "serverVersion": "0.2.0",
-        "viewerConnected": false,
-        "lastError": null,
-        "updatedAtMs": 1776761234567
-      },
-      "board": {
-        "power": true,
-        "wifi": {
-          "online": true
+        "board": {
+          "power": true,
+          "wifi": {
+            "online": true
+          }
         }
       }
     }
@@ -197,11 +175,13 @@ Example reflected txing shadow shape:
 
 ### Rig And Town Reflection
 
-The current implementation does not maintain AWS IoT things or shadows for `rig` or `town`.
+The current implementation maintains first-class AWS IoT things and reported-only shadows for `rig` and `town`.
 
-- `rig.redcon=1` exists only as a Sparkplug node metric in `NBIRTH`.
-- `town` exists only as the Sparkplug group id.
-- Rig membership comes from the dynamic AWS IoT thing group whose name matches `attributes.rig`.
+- `rig.redcon=1` is published in `NBIRTH` and written into the rig shadow directly by the rig runtime.
+- `rig.redcon=4` is best-effort written on graceful `NDEATH` by the rig runtime.
+- `town.redcon=1` is currently static in the town shadow.
+- Town membership comes from rig things with `thingTypeName=rig` and searchable `attributes.town`.
+- Device membership still comes from the dynamic AWS IoT thing group whose name matches `attributes.rig`.
 
 ## Current REDCON Semantics
 
@@ -235,12 +215,12 @@ Current examples:
 - target `redcon=4`
   - converge txing to the sleep state
   - reflect `state.reported.redcon=4`
-  - clear `state.desired.redcon` on convergence
+  - clear the in-memory pending REDCON target on convergence
 - target `redcon=3`
   - wake txing
   - once MCU is awake, reflect `state.reported.redcon=3`
   - if MCP/video conditions later satisfy higher derived levels, reported REDCON may rise naturally to `2` or `1`
-  - clear `state.desired.redcon` once actual REDCON reaches the commanded REDCON
+  - clear the in-memory pending REDCON target once actual REDCON reaches the commanded REDCON
 
 The current implementation keeps the current derived-behavior model rather than making REDCON a strict actuator state machine.
 
@@ -268,14 +248,14 @@ Txing emits `DDEATH` only for unexpected device loss on the same reachability ti
 
 - no matching advertisement observed for 30 seconds
 
-Intentional GUI-off / `REDCON 4` sleep does not emit `DDEATH`. In that case the rig keeps the device in normal `reported.redcon=4` lifecycle state and only reflects `reported.mcu.online=false` once BLE presence ages out.
+Intentional GUI-off / `REDCON 4` sleep does not emit `DDEATH`. In that case the rig keeps the device in normal `reported.redcon=4` lifecycle state and only reflects `reported.device.mcu.online=false` once BLE presence ages out.
 
 On unexpected-loss `DDEATH`, rig should best-effort:
 
 - force `state.reported.redcon=4`
-- clear `state.desired.redcon`
+- clear any in-memory pending REDCON target
 
-`DDEATH` wins over stale `reported.board.*` detail.
+`DDEATH` wins over stale `reported.device.board.*` detail.
 
 ### Rebirth
 
@@ -289,12 +269,12 @@ When BLE reachability returns:
 
 Rig restart should be conservative:
 
-- check whether `state.desired.redcon` is still present
-- if present, attempt convergence from current observed state
+- start from the current reported state only
+- do not recover a persisted lifecycle target from shadow
 - prefer stability over speed
 - do not optimize for fast convergence
 
-A lingering `desired.redcon` after restart is treated as recoverable abnormal state, not normal steady-state behavior.
+Any pending lifecycle target after restart must come from a fresh Sparkplug command, not from shadow state.
 
 ## UI Behavior
 

@@ -12,7 +12,7 @@ export type TxingReportedPowerInputs = {
 }
 
 export type TxingPowerTransitionInputs = {
-  desiredRedcon: number | null
+  targetRedcon: number | null
   reportedRedcon: number | null
 }
 
@@ -53,18 +53,6 @@ const redconDescriptors: Record<1 | 2 | 3 | 4, RedconDescriptor> = {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null
 
-const extractDesiredState = (shadow: unknown): Record<string, unknown> | null => {
-  if (!isRecord(shadow)) {
-    return null
-  }
-  const state = shadow.state
-  if (!isRecord(state)) {
-    return null
-  }
-  const desired = state.desired
-  return isRecord(desired) ? desired : null
-}
-
 const extractReportedState = (shadow: unknown): Record<string, unknown> | null => {
   if (!isRecord(shadow)) {
     return null
@@ -77,46 +65,31 @@ const extractReportedState = (shadow: unknown): Record<string, unknown> | null =
   return isRecord(reported) ? reported : null
 }
 
-export const extractReportedMcu = (shadow: unknown): Record<string, unknown> | null => {
+export const extractReportedDevice = (shadow: unknown): Record<string, unknown> | null => {
   const reported = extractReportedState(shadow)
   if (!reported) {
     return null
   }
-  const mcu = reported.mcu
+  const device = reported.device
+  return isRecord(device) ? device : null
+}
+
+export const extractReportedMcu = (shadow: unknown): Record<string, unknown> | null => {
+  const device = extractReportedDevice(shadow)
+  if (!device) {
+    return null
+  }
+  const mcu = device.mcu
   return isRecord(mcu) ? mcu : null
 }
 
 export const extractReportedBoard = (shadow: unknown): Record<string, unknown> | null => {
-  const reported = extractReportedState(shadow)
-  if (!reported) {
+  const device = extractReportedDevice(shadow)
+  if (!device) {
     return null
   }
-  const board = reported.board
+  const board = device.board
   return isRecord(board) ? board : null
-}
-
-export const extractDesiredRedcon = (shadow: unknown): number | null => {
-  const desired = extractDesiredState(shadow)
-  if (!desired) {
-    return null
-  }
-  const redcon = desired.redcon
-  if (typeof redcon !== 'number' || !Number.isInteger(redcon)) {
-    return null
-  }
-  return redcon >= 1 && redcon <= 4 ? redcon : null
-}
-
-export const extractDesiredBoardPower = (shadow: unknown): boolean | null => {
-  const desired = extractDesiredState(shadow)
-  if (!desired) {
-    return null
-  }
-  const board = desired.board
-  if (!isRecord(board)) {
-    return null
-  }
-  return typeof board.power === 'boolean' ? board.power : null
 }
 
 export const extractReportedRedcon = (shadow: unknown): number | null => {
@@ -175,19 +148,19 @@ export const deriveTxingPoweredOn = ({
 }
 
 export const deriveTxingPowerTransitionPending = ({
-  desiredRedcon,
+  targetRedcon,
   reportedRedcon,
 }: TxingPowerTransitionInputs): boolean => {
-  if (desiredRedcon === null) {
+  if (targetRedcon === null) {
     return false
   }
   if (reportedRedcon === null) {
     return true
   }
-  if (desiredRedcon === 4) {
+  if (targetRedcon === 4) {
     return reportedRedcon !== 4
   }
-  return reportedRedcon > desiredRedcon
+  return reportedRedcon > targetRedcon
 }
 
 export const extractReportedBoardPower = (shadow: unknown): boolean | null => {
@@ -215,11 +188,11 @@ export const extractReportedMcuOnline = (shadow: unknown): boolean | null => {
 }
 
 export const extractReportedBatteryMv = (shadow: unknown): number | null => {
-  const reported = extractReportedState(shadow)
-  if (!reported) {
+  const device = extractReportedDevice(shadow)
+  if (!device) {
     return null
   }
-  return typeof reported.batteryMv === 'number' ? reported.batteryMv : null
+  return typeof device.batteryMv === 'number' ? device.batteryMv : null
 }
 
 export const extractReportedBoardWifiOnline = (shadow: unknown): boolean | null => {

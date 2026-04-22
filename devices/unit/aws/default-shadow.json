@@ -1,24 +1,20 @@
 {
   "state": {
-    "desired": {
-      "redcon": null,
-      "board": {
-        "power": null
-      }
-    },
     "reported": {
       "redcon": 4,
-      "batteryMv": 3750,
-      "mcu": {
-        "power": false,
-        "online": false
-      },
-      "board": {
-        "power": false,
-        "wifi": {
-          "online": false,
-          "ipv4": null,
-          "ipv6": null
+      "device": {
+        "batteryMv": 3750,
+        "mcu": {
+          "power": false,
+          "online": false
+        },
+        "board": {
+          "power": false,
+          "wifi": {
+            "online": false,
+            "ipv4": null,
+            "ipv6": null
+          }
         }
       }
     }

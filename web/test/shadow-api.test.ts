@@ -134,19 +134,23 @@ describe('shadow protocol helpers', () => {
     const currentShadow = {
       state: {
         reported: {
-          batteryMv: 3729,
-          mcu: {
-            power: false,
-            online: false,
+          device: {
+            batteryMv: 3729,
+            mcu: {
+              power: false,
+              online: false,
+            },
           },
         },
       },
       metadata: {
         reported: {
-          batteryMv: { timestamp: 2 },
-          mcu: {
-            power: { timestamp: 1 },
-            online: { timestamp: 3 },
+          device: {
+            batteryMv: { timestamp: 2 },
+            mcu: {
+              power: { timestamp: 1 },
+              online: { timestamp: 3 },
+            },
           },
         },
       },
@@ -157,15 +161,19 @@ describe('shadow protocol helpers', () => {
     const updateAcceptedPayload = {
       state: {
         reported: {
-          mcu: {
-            online: true,
+          device: {
+            mcu: {
+              online: true,
+            },
           },
         },
       },
       metadata: {
         reported: {
-          mcu: {
-            online: { timestamp: 4 },
+          device: {
+            mcu: {
+              online: { timestamp: 4 },
+            },
           },
         },
       },
@@ -176,19 +184,23 @@ describe('shadow protocol helpers', () => {
     expect(mergeShadowUpdate(currentShadow, updateAcceptedPayload)).toEqual({
       state: {
         reported: {
-          batteryMv: 3729,
-          mcu: {
-            power: false,
-            online: true,
+          device: {
+            batteryMv: 3729,
+            mcu: {
+              power: false,
+              online: true,
+            },
           },
         },
       },
       metadata: {
         reported: {
-          batteryMv: { timestamp: 2 },
-          mcu: {
-            power: { timestamp: 1 },
-            online: { timestamp: 4 },
+          device: {
+            batteryMv: { timestamp: 2 },
+            mcu: {
+              power: { timestamp: 1 },
+              online: { timestamp: 4 },
+            },
           },
         },
       },

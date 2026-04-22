@@ -4,9 +4,7 @@ import {
   describeRedcon,
   deriveTxingPowerTransitionPending,
   deriveTxingPoweredOn,
-  extractDesiredRedcon,
   extractReportedBatteryMv,
-  extractDesiredBoardPower,
   extractReportedMcuOnline,
   extractReportedRedcon,
   getTrackIndicatorPresentation,
@@ -28,12 +26,14 @@ describe('app model helpers', () => {
     expect(extractReportedRedcon({ state: { reported: { redcon: 7 } } })).toBeNull()
   })
 
-  test('extracts top-level reported battery from shadow state', () => {
+  test('extracts nested reported battery from reported.device', () => {
     expect(
       extractReportedBatteryMv({
         state: {
           reported: {
-            batteryMv: 3972,
+            device: {
+              batteryMv: 3972,
+            },
           },
         },
       }),
@@ -43,9 +43,7 @@ describe('app model helpers', () => {
       extractReportedBatteryMv({
         state: {
           reported: {
-            mcu: {
-              batteryMv: 3901,
-            },
+            batteryMv: 3901,
           },
         },
       }),
@@ -84,25 +82,20 @@ describe('app model helpers', () => {
     })
   })
 
-  test('extracts desired board power and reported mcu online from shadow state', () => {
+  test('extracts reported mcu online from nested reported.device state', () => {
     const shadow = {
       state: {
-        desired: {
-          board: {
-            power: false,
-          },
-        },
         reported: {
-          mcu: {
-            online: true,
+          device: {
+            mcu: {
+              online: true,
+            },
           },
         },
       },
     }
 
-    expect(extractDesiredBoardPower(shadow)).toBe(false)
     expect(extractReportedMcuOnline(shadow)).toBe(true)
-    expect(extractDesiredRedcon({ state: { desired: { redcon: 3 } } })).toBe(3)
   })
 
   test('derives txing power from redcon first and falls back to reported flags', () => {
@@ -150,38 +143,38 @@ describe('app model helpers', () => {
     ).toBe(3)
   })
 
-  test('derives txing switch pending from desired redcon and reported posture', () => {
+  test('derives txing switch pending from local target redcon and reported posture', () => {
     expect(
       deriveTxingPowerTransitionPending({
-        desiredRedcon: 3,
+        targetRedcon: 3,
         reportedRedcon: 4,
       }),
     ).toBe(true)
 
     expect(
       deriveTxingPowerTransitionPending({
-        desiredRedcon: 4,
+        targetRedcon: 4,
         reportedRedcon: 2,
       }),
     ).toBe(true)
 
     expect(
       deriveTxingPowerTransitionPending({
-        desiredRedcon: 2,
+        targetRedcon: 2,
         reportedRedcon: 3,
       }),
     ).toBe(true)
 
     expect(
       deriveTxingPowerTransitionPending({
-        desiredRedcon: null,
+        targetRedcon: null,
         reportedRedcon: 4,
       }),
     ).toBe(false)
 
     expect(
       deriveTxingPowerTransitionPending({
-        desiredRedcon: 4,
+        targetRedcon: 4,
         reportedRedcon: 4,
       }),
     ).toBe(false)

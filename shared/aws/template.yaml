@@ -271,174 +271,24 @@ Resources:
             Action: sts:AssumeRole
             Resource: !GetAtt TxingRuntimeRole.Arn
 
-  TxingFleetIndexingRole:
-    Type: AWS::IAM::Role
+  TxingTownThingType:
+    Type: AWS::IoT::ThingType
     Properties:
-      Description: Allows the stack custom resource to enable AWS IoT fleet indexing.
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: lambda.amazonaws.com
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-      Policies:
-        - PolicyName: txing-enable-fleet-indexing
-          PolicyDocument:
-            Version: "2012-10-17"
-            Statement:
-              - Sid: FleetIndexingConfig
-                Effect: Allow
-                Action:
-                  - iot:GetIndexingConfiguration
-                  - iot:UpdateIndexingConfiguration
-                Resource: "*"
+      ThingTypeName: town
+      ThingTypeProperties:
+        ThingTypeDescription: Registered txing town type
+        SearchableAttributes:
+          - name
 
-  TxingFleetIndexingFunction:
-    Type: AWS::Lambda::Function
+  TxingRigThingType:
+    Type: AWS::IoT::ThingType
     Properties:
-      Description: CloudFormation custom resource that enables registry-only AWS IoT fleet indexing and required custom fields.
-      Runtime: python3.12
-      Handler: index.handler
-      Role: !GetAtt TxingFleetIndexingRole.Arn
-      Timeout: 120
-      Code:
-        ZipFile: |
-          import json
-          import logging
-          import time
-          import urllib.request
-
-          import boto3
-
-          LOGGER = logging.getLogger()
-          LOGGER.setLevel(logging.INFO)
-
-
-          def _respond(event, context, status, *, reason=None, data=None):
-              response_body = json.dumps(
-                  {
-                      "Status": status,
-                      "Reason": reason or ("See CloudWatch Log Stream: " + context.log_stream_name),
-                      "PhysicalResourceId": "txing-fleet-indexing",
-                      "StackId": event["StackId"],
-                      "RequestId": event["RequestId"],
-                      "LogicalResourceId": event["LogicalResourceId"],
-                      "NoEcho": False,
-                      "Data": data or {},
-                  }
-              ).encode("utf-8")
-              request = urllib.request.Request(
-                  event["ResponseURL"],
-                  data=response_body,
-                  headers={
-                      "content-type": "",
-                      "content-length": str(len(response_body)),
-                  },
-                  method="PUT",
-              )
-              with urllib.request.urlopen(request) as response:
-                  LOGGER.info("Sent CloudFormation response status=%s", response.status)
-
-
-          def handler(event, context):
-              client = boto3.client("iot")
-              desired_mode = event["ResourceProperties"].get("ThingIndexingMode", "REGISTRY")
-              desired_connectivity_mode = event["ResourceProperties"].get(
-                  "ThingConnectivityIndexingMode",
-                  "OFF",
-              )
-              desired_custom_fields = event["ResourceProperties"].get(
-                  "CustomFields",
-                  [],
-              )
-              if not isinstance(desired_custom_fields, list):
-                  raise TypeError("CustomFields must be a list")
-              normalized_custom_fields = []
-              for item in desired_custom_fields:
-                  if not isinstance(item, dict):
-                      raise TypeError("CustomFields entries must be objects")
-                  name = item.get("name")
-                  field_type = item.get("type")
-                  if not isinstance(name, str) or not name:
-                      raise TypeError("CustomFields name must be a non-empty string")
-                  if not isinstance(field_type, str) or not field_type:
-                      raise TypeError("CustomFields type must be a non-empty string")
-                  normalized_custom_fields.append(
-                      {
-                          "name": name,
-                          "type": field_type,
-                      }
-                  )
-              normalized_custom_fields.sort(key=lambda item: item["name"])
-              try:
-                  if event["RequestType"] in {"Create", "Update"}:
-                      client.update_indexing_configuration(
-                          thingIndexingConfiguration={
-                              "thingIndexingMode": desired_mode,
-                              "thingConnectivityIndexingMode": desired_connectivity_mode,
-                              "customFields": normalized_custom_fields,
-                          }
-                      )
-                      deadline = time.time() + 90
-                      while True:
-                          configuration = client.get_indexing_configuration()
-                          current = configuration.get("thingIndexingConfiguration", {})
-                          current_custom_fields = current.get("customFields", [])
-                          if not isinstance(current_custom_fields, list):
-                              current_custom_fields = []
-                          normalized_current_custom_fields = []
-                          for item in current_custom_fields:
-                              if isinstance(item, dict):
-                                  name = item.get("name")
-                                  field_type = item.get("type")
-                                  if isinstance(name, str) and isinstance(field_type, str):
-                                      normalized_current_custom_fields.append(
-                                          {
-                                              "name": name,
-                                              "type": field_type,
-                                          }
-                                      )
-                          normalized_current_custom_fields.sort(key=lambda item: item["name"])
-                          if (
-                              current.get("thingIndexingMode") == desired_mode
-                              and current.get("thingConnectivityIndexingMode")
-                              == desired_connectivity_mode
-                              and normalized_current_custom_fields == normalized_custom_fields
-                          ):
-                              break
-                          if time.time() >= deadline:
-                              raise TimeoutError(
-                                  "Timed out waiting for AWS IoT fleet indexing configuration"
-                              )
-                          time.sleep(3)
-                  _respond(
-                      event,
-                      context,
-                      "SUCCESS",
-                      data={
-                          "ThingIndexingMode": desired_mode,
-                          "ThingConnectivityIndexingMode": desired_connectivity_mode,
-                          "CustomFields": normalized_custom_fields,
-                      },
-                  )
-              except Exception as exc:
-                  LOGGER.exception("Failed to configure AWS IoT fleet indexing")
-                  _respond(event, context, "FAILED", reason=str(exc))
-
-  TxingFleetIndexingConfiguration:
-    Type: Custom::TxingFleetIndexingConfiguration
-    Properties:
-      ServiceToken: !GetAtt TxingFleetIndexingFunction.Arn
-      ThingIndexingMode: REGISTRY
-      ThingConnectivityIndexingMode: "OFF"
-      CustomFields:
-        - name: attributes.rig
-          type: String
-        - name: attributes.bleDeviceId
-          type: String
+      ThingTypeName: rig
+      ThingTypeProperties:
+        ThingTypeDescription: Registered txing rig type
+        SearchableAttributes:
+          - name
+          - town
 
   TxingBoardVideoSenderManagedPolicy:
     Type: AWS::IAM::ManagedPolicy
@@ -767,9 +617,6 @@ Outputs:
   DeviceBootstrapManagedPolicyArn:
     Description: Attach this managed policy to the bootstrap IAM principal whose access keys are distributed to device endpoint hosts.
     Value: !Ref TxingBootstrapManagedPolicy
-  ThingIndexingMode:
-    Description: AWS IoT fleet indexing mode configured by the stack.
-    Value: !GetAtt TxingFleetIndexingConfiguration.ThingIndexingMode
   BoardVideoSenderManagedPolicyArn:
     Description: Attach this managed policy to the AWS principal used by the board video sender.
     Value: !Ref TxingBoardVideoSenderManagedPolicy

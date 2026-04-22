@@ -2,11 +2,9 @@ import {
   DescribeThingCommand,
   DescribeThingGroupCommand,
   IoTClient,
-  ListThingGroupsCommand,
   ListThingsInThingGroupCommand,
   type DescribeThingCommandOutput,
   type DescribeThingGroupCommandOutput,
-  type ListThingGroupsCommandOutput,
   type ListThingsInThingGroupCommandOutput,
 } from '@aws-sdk/client-iot'
 import { createCredentialProvider } from './aws-credentials'
@@ -15,12 +13,14 @@ import { appConfig } from './config'
 type ResolveIdToken = () => Promise<string>
 type IotControlClient = Pick<IoTClient, 'send'>
 export type RigCatalogEntry = {
+  thingName: string
   rigName: string
-  description: string | null
+  shortId: string | null
 }
 export type DeviceCatalogEntry = {
   thingName: string
-  deviceName: string | null
+  name: string | null
+  shortId: string | null
 }
 
 const maxResults = 100
@@ -42,13 +42,10 @@ const normalizeOptionalText = (value: string | null | undefined): string | null 
   return normalized === '' ? null : normalized
 }
 
-const getDeviceDisplayName = (device: DeviceCatalogEntry): string =>
-  device.deviceName ?? device.thingName
+const getRigDisplayName = (rig: RigCatalogEntry): string => rig.rigName
 
-export const isRigThingGroupQuery = (queryString: string | null | undefined): boolean =>
-  typeof queryString === 'string' &&
-  queryString.includes('attributes.rig:') &&
-  queryString.includes('attributes.town:*')
+const getDeviceDisplayName = (device: DeviceCatalogEntry): string =>
+  device.name ?? device.thingName
 
 export const isResourceNotFoundError = (error: unknown): boolean =>
   error instanceof Error &&
@@ -63,55 +60,84 @@ const createIotControlClient = async (resolveIdToken: ResolveIdToken): Promise<I
   })
 }
 
-export const listRigThingGroupsWithClient = async (
+export const describeThingMetadataWithClient = async (
   client: IotControlClient,
+  thingName: string,
+): Promise<{ thingName: string; thingTypeName: string | null; name: string | null; shortId: string | null }> => {
+  const response = (await client.send(
+    new DescribeThingCommand({
+      thingName,
+    }),
+  )) as DescribeThingCommandOutput
+
+  const attributes = response.attributes
+  return {
+    thingName,
+    thingTypeName: normalizeOptionalText(response.thingTypeName),
+    name: normalizeOptionalText(
+      attributes && typeof attributes.name === 'string' ? attributes.name : null,
+    ),
+    shortId: normalizeOptionalText(
+      attributes && typeof attributes.shortId === 'string' ? attributes.shortId : null,
+    ),
+  }
+}
+
+export const listTownRigsWithClient = async (
+  client: IotControlClient,
+  townName: string,
 ): Promise<RigCatalogEntry[]> => {
-  const candidateGroupNames: string[] = []
+  await client.send(
+    new DescribeThingGroupCommand({
+      thingGroupName: townName,
+    }),
+  ) as DescribeThingGroupCommandOutput
+
+  const rigThingNames: string[] = []
   let nextToken: string | undefined
 
   do {
     const response = (await client.send(
-      new ListThingGroupsCommand({
+      new ListThingsInThingGroupCommand({
+        thingGroupName: townName,
         nextToken,
         maxResults,
       }),
-    )) as ListThingGroupsCommandOutput
+    )) as ListThingsInThingGroupCommandOutput
 
-    for (const group of response.thingGroups ?? []) {
-      if (typeof group.groupName === 'string' && group.groupName.trim() !== '') {
-        candidateGroupNames.push(group.groupName.trim())
+    for (const thingName of response.things ?? []) {
+      if (typeof thingName === 'string' && thingName.trim() !== '') {
+        rigThingNames.push(thingName.trim())
       }
     }
 
     nextToken = response.nextToken
   } while (nextToken)
 
-  const rigEntries: RigCatalogEntry[] = []
-  for (const groupName of sortUnique(candidateGroupNames)) {
-    const description = (await client.send(
-      new DescribeThingGroupCommand({
-        thingGroupName: groupName,
-      }),
-    )) as DescribeThingGroupCommandOutput
+  const rigEntries = await Promise.all(
+    sortUnique(rigThingNames).map(async (thingName) => {
+      const metadata = await describeThingMetadataWithClient(client, thingName)
+      return {
+        thingName,
+        rigName: metadata.name ?? thingName,
+        shortId: metadata.shortId,
+        thingTypeName: metadata.thingTypeName,
+      }
+    }),
+  )
 
-    if (isRigThingGroupQuery(description.queryString)) {
-      rigEntries.push({
-        rigName: groupName,
-        description: normalizeOptionalText(
-          description.thingGroupProperties?.thingGroupDescription,
-        ),
-      })
-    }
-  }
-
-  return rigEntries.sort((left, right) => collator.compare(left.rigName, right.rigName))
+  return rigEntries
+    .filter((rig) => rig.thingTypeName === 'rig')
+    .map(({ thingTypeName: _thingTypeName, ...rig }) => rig)
+    .sort((left, right) => collator.compare(getRigDisplayName(left), getRigDisplayName(right)))
 }
 
-export const listRigThingGroups = async (
+export const listTownRigs = async (
   resolveIdToken: ResolveIdToken,
+  townName: string,
 ): Promise<RigCatalogEntry[]> => {
   const client = await createIotControlClient(resolveIdToken)
-  return listRigThingGroupsWithClient(client)
+  return listTownRigsWithClient(client, townName)
 }
 
 export const listRigDevicesWithClient = async (
@@ -143,11 +169,17 @@ export const listRigDevicesWithClient = async (
   const deviceEntries = await Promise.all(
     uniqueDeviceIds.map(async (thingName) => {
       try {
-        return await describeDeviceMetadataWithClient(client, thingName)
+        const metadata = await describeThingMetadataWithClient(client, thingName)
+        return {
+          thingName,
+          name: metadata.name,
+          shortId: metadata.shortId,
+        }
       } catch {
         return {
           thingName,
-          deviceName: null,
+          name: null,
+          shortId: null,
         }
       }
     }),
@@ -170,21 +202,11 @@ export const describeDeviceMetadataWithClient = async (
   client: IotControlClient,
   thingName: string,
 ): Promise<DeviceCatalogEntry> => {
-  const response = (await client.send(
-    new DescribeThingCommand({
-      thingName,
-    }),
-  )) as DescribeThingCommandOutput
-
-  const attributes = response.attributes
-  const deviceName =
-    attributes && typeof attributes.deviceName === 'string' && attributes.deviceName.trim() !== ''
-      ? attributes.deviceName.trim()
-      : null
-
+  const metadata = await describeThingMetadataWithClient(client, thingName)
   return {
     thingName,
-    deviceName,
+    name: metadata.name,
+    shortId: metadata.shortId,
   }
 }
 

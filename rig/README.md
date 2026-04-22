@@ -8,7 +8,7 @@ Responsibilities:
 - Synchronize classic Thing Shadows for all registered devices assigned to this rig
 - Accept Sparkplug `DCMD.redcon` lifecycle commands and publish `NBIRTH`/`NDEATH`/`DBIRTH`/`DDATA`/`DDEATH`
 - Bridge REDCON-driven wakeup-state and sleep-state changes to the MCU over BLE rendezvous sessions
-- Publish MCU state to `state.reported.mcu.*`
+- Publish MCU state to `state.reported.device.mcu.*`
 - Publish derived readiness at top-level `state.reported.redcon`
 - Load assigned devices from the dynamic AWS IoT thing group named by `RIG_NAME`
 - Persist last known BLE reconnect hints to AWS IoT thing attribute `bleDeviceId`
@@ -88,6 +88,24 @@ $EDITOR config/aws.config
 
 just aws-rig sts get-caller-identity
 ```
+
+Adjust these values explicitly:
+
+- `config/aws.env`
+  - `AWS_REGION`
+  - `AWS_STACK_NAME`
+  - `AWS_COGNITO_DOMAIN_PREFIX`
+  - `AWS_ADMIN_EMAIL`
+  - `AWS_TOWN_PROFILE`, `AWS_RIG_PROFILE`, `AWS_DEVICE_PROFILE` only if you do not want the default local profile names
+  - `AWS_SHARED_CREDENTIALS_FILE` and `AWS_CONFIG_FILE` only if the files are not kept under `config/`
+- `config/rig.env`
+  - `SPARKPLUG_GROUP_ID`: town slug
+  - `RIG_NAME`: rig slug
+  - `CLOUDWATCH_LOG_GROUP` only if you want a non-default log group
+- `config/aws.config`
+  - set `[profile rig].role_arn` to the deployed `RigRuntimeRoleArn`
+- `config/aws.credentials`
+  - fill the `[town]` account access keys
 
 5. Validate AWS access and rig runtime configuration:
 
@@ -190,16 +208,39 @@ just rig::wake thing_name=my-thing region=eu-central-1
 
 `print` prints the current real AWS Thing Shadow document.
 
-`aws::shadow-reset` is the hard reset path for manual whole-device power cuts. It deletes the current txing shadow and reseeds it to the repository's clean offline baseline: `desired.redcon=null`, internal `desired.board.power=null`, `reported.redcon=4`, `reported.mcu.power=false`, `reported.mcu.online=false`, `reported.board.power=false`, and `reported.board.wifi.online=false`.
+`aws::shadow-reset` is the hard reset path for manual whole-device power cuts. It deletes the current txing shadow and reseeds it to the repository's clean offline baseline: `reported.redcon=4`, `reported.device.batteryMv=3750`, `reported.device.mcu.power=false`, `reported.device.mcu.online=false`, `reported.device.board.power=false`, and `reported.device.board.wifi.online=false`.
 
 Use the registry helpers with positional arguments to create/update rig membership and inspect current membership:
 
 ```bash
-just aws::upsert-rig-group rig
+just aws::configure-indexing
+just aws::register-town town
+just aws::register-rig town rig
 just aws::register-device town rig unit
 just aws::assign-device unit-01 town rig
 just aws::things-for-rig rig
 ```
+
+Provision in that order on a fresh AWS environment:
+
+- `aws::deploy` creates the stack-owned AWS resources and the `town` / `rig` thing types.
+- `aws::configure-indexing` enables the searchable/indexed registry fields used by the hierarchy:
+  - `attributes.name`
+  - `attributes.town`
+  - `attributes.rig`
+- `attributes.shortId` and `attributes.bleDeviceId` stay in the IoT registry as metadata only.
+- `aws::register-town`, `aws::register-rig`, and `aws::register-device` then create the actual registry objects and shadows.
+
+For a destructive rebuild:
+
+- delete all registered things (`town-*`, `rig-*`, and device things such as `unit-*`)
+- delete the dynamic town and rig thing groups
+- deprecate all thing types, including stack-owned `town` / `rig` and any device type such as `unit`
+- wait 5 minutes after thing-type deprecation
+- empty the web app S3 bucket
+- then delete the stack
+
+The longer stack bootstrap and deletion flow is documented in `web/README.md`.
 
 ## Runtime behavior
 
@@ -216,7 +257,8 @@ just aws::things-for-rig rig
   - `spBv1.0/<group>/DCMD/<edge>/<thing>`
 - On startup, requests the full shadow for each managed txing with `$aws/things/<thing>/shadow/get`.
 - Mirrors retained MCP descriptor/status facts into Sparkplug `services/mcp/*` device metrics while keeping rig as the only Sparkplug publisher for the selected device session.
-- Publishes `NBIRTH` for the Sparkplug node `rig`, but does not maintain AWS IoT shadows for `rig` or `town`.
+- Publishes `NBIRTH` for the Sparkplug node `rig` and writes the corresponding rig thing shadow `reported.redcon=1` directly from the rig runtime.
+- Publishes `NDEATH` on shutdown and best-effort writes the rig thing shadow `reported.redcon=4` directly from the rig runtime.
 - Starts from the built-in BLE UUID configuration and validates it against the peripheral during short rendezvous sessions.
 - Uses AWS IoT thing attribute `bleDeviceId` as the primary persisted fast-reconnect hint.
 - Keeps a scanner running while disconnected and treats disconnects as normal behavior.
@@ -226,8 +268,8 @@ just aws::things-for-rig rig
 - Uses one canonical 3-byte MCU State Report (`sleep flag` + `batteryMv`) from both BLE paths:
   - advertising manufacturer data while disconnected
   - GATT reads/notifications while connected
-- Reflects each unresolved valid Sparkplug lifecycle command into `state.desired.redcon`.
-- Publishes BLE connection state at `state.reported.mcu.online`:
+- Tracks unresolved Sparkplug lifecycle commands in memory only; device shadows are reported-only.
+- Publishes BLE connection state at `state.reported.device.mcu.online`:
   - `true` only after sustained BLE presence has been confirmed
   - remains `true` while the device is connected or keeps advertising within the presence timeout
   - becomes `false` only after the configured presence timeout expires without a matching connection or advertisement
@@ -238,17 +280,15 @@ just aws::things-for-rig rig
   - `DDEATH` when BLE reachability times out
 - If UUIDs are missing/invalid or do not match GATT, enters BLE UUID search mode and discovers UUIDs from service/characteristic properties.
 - Ignores deprecated shadow metadata fields `state.reported.bleDeviceId` and `state.reported.homeRig`.
-- For `desired.redcon=1..3`, waits for the next advertisement if disconnected, connects if needed, writes the wakeup-state command only when `reported.mcu.power=false`, and clears `desired.redcon` after `reported.redcon` reaches the requested minimum readiness.
-- For `desired.redcon=4`, first writes internal `desired.board.power=false` if the board is still up, waits for board-offline confirmation, then writes the BLE sleep command and clears `desired.redcon` after convergence.
-- Updates top-level `state.reported.batteryMv` only when the observed MCU battery value changes, so the AWS shadow metadata timestamp for `batteryMv` tracks real battery changes instead of unrelated BLE state publishes.
+- For `DCMD.redcon=1..3`, waits for the next advertisement if disconnected, connects if needed, writes the wakeup-state command only when `reported.device.mcu.power=false`, and clears the in-memory target after `reported.redcon` reaches the requested minimum readiness.
+- For `DCMD.redcon=4`, waits for `reported.device.board.power=false`, then writes the BLE sleep command and clears the in-memory target after convergence.
+- Updates `state.reported.device.batteryMv` only when the observed MCU battery value changes, so the AWS shadow metadata timestamp for `batteryMv` tracks real battery changes instead of unrelated BLE state publishes.
 - After a successful BLE association, writes the observed BLE address back to AWS IoT thing attribute `bleDeviceId` if it changed.
 - Publishes reported updates to AWS:
   - `state.reported.redcon`
-  - `state.reported.batteryMv`
-  - `state.reported.mcu.power`
-  - `state.reported.mcu.online`
-- Clears `state.desired.redcon` when REDCON convergence completes.
-- Clears internal `state.desired.board.power` after clean board shutdown and also on `DDEATH`.
+  - `state.reported.device.batteryMv`
+  - `state.reported.device.mcu.power`
+  - `state.reported.device.mcu.online`
 - Does not rely on local shadow cache files; startup state comes from AWS IoT shadow plus IoT thing attributes.
 - Enforces single instance lock at `/tmp/rig.lock` (override with `--lock-file`).
 

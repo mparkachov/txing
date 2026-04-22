@@ -370,7 +370,7 @@ The Thing Shadow is not used for MCP discovery or MCP runtime state.
 That means:
 
 - no new `board.mcp.*` discovery structure is introduced in the shadow for this phase
-- no MCP availability summary is placed in `reported.board.*` for discovery purposes
+- no MCP availability summary is placed in `reported.device.board.*` for discovery purposes
 - shadow remains focused on board operational state, not MCP service discovery
 
 This keeps MCP discovery separate from the existing shadow ownership and lifecycle reflection model.

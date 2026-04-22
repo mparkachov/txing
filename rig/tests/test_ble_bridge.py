@@ -167,7 +167,6 @@ from unit_rig.ble_bridge import (
     _parse_args,
     _resolve_sparkplug_edge_node_id,
     _run_rig_service,
-    _shadow_payload_includes_desired_redcon,
 )
 from aws.auth import ensure_aws_profile
 from aws.video_topics import VIDEO_SERVICE_NAME, VIDEO_STATUS_READY
@@ -200,13 +199,37 @@ class FakeCloudShadow:
 
 
 class ShadowPayloadTests(unittest.TestCase):
-    def test_update_payload_without_desired_redcon_does_not_claim_desired(self) -> None:
-        payload = {"state": {"reported": {"mcu": {"power": True}}}}
-        self.assertFalse(_shadow_payload_includes_desired_redcon(payload))
+    def test_shadow_state_payload_is_reported_only_and_nested(self) -> None:
+        payload = ShadowState(
+            target_redcon=3,
+            reported_power=True,
+            battery_mv=3795,
+            ble_online=True,
+            board_power=True,
+            board_wifi_online=True,
+            redcon=2,
+        ).payload()
 
-    def test_update_payload_with_null_desired_redcon_still_claims_desired(self) -> None:
-        payload = {"state": {"desired": {"redcon": None}}}
-        self.assertTrue(_shadow_payload_includes_desired_redcon(payload))
+        self.assertNotIn("desired", payload["state"])
+        self.assertEqual(
+            payload["state"]["reported"],
+            {
+                "redcon": 2,
+                "device": {
+                    "batteryMv": 3795,
+                    "mcu": {
+                        "power": True,
+                        "online": True,
+                    },
+                    "board": {
+                        "power": True,
+                        "wifi": {
+                            "online": True,
+                        },
+                    },
+                },
+            },
+        )
 
 
 class ServiceConfigTests(unittest.TestCase):
@@ -589,7 +612,8 @@ class AwsShadowClientTests(unittest.TestCase):
 
         self.assertIn("registered device(s) from dynamic thing group", adapter)
         self.assertIn("starting idle with no managed devices", adapter)
-        self.assertIn("into device shadow", adapter)
+        self.assertIn("reported.device.mcu.online", adapter)
+        self.assertIn("reported.device.board.power=false", adapter)
         self.assertNotIn("txing thing(s)", adapter)
         self.assertNotIn("managed txings", adapter)
         self.assertNotIn("into txing shadow", adapter)
@@ -631,6 +655,18 @@ class RigServiceStartupRetryTests(unittest.TestCase):
         class FakeRegistryClient:
             def __init__(self, _iot_client: object) -> None:
                 pass
+
+            def describe_rig_in_town(
+                self,
+                *,
+                town_name: str,
+                rig_name: str,
+            ) -> object:
+                return types.SimpleNamespace(
+                    thing_name="rig-rig001",
+                    town_name=town_name,
+                    rig_name=rig_name,
+                )
 
             def list_rig_things(self, _rig_name: str) -> list[object]:
                 return []
@@ -682,13 +718,13 @@ class RigServiceStartupRetryTests(unittest.TestCase):
 
 
 class RigNodeReflectionTests(unittest.TestCase):
-    def test_rig_node_reflection_no_longer_writes_shadow(self) -> None:
-        asyncio.run(self._exercise_rig_node_reflection_no_shadow_write())
+    def test_rig_node_reflection_writes_rig_shadow_when_configured(self) -> None:
+        asyncio.run(self._exercise_rig_node_reflection_shadow_write())
 
-    async def _exercise_rig_node_reflection_no_shadow_write(self) -> None:
+    async def _exercise_rig_node_reflection_shadow_write(self) -> None:
         cloud_shadow = FakeCloudShadow()
         bridge = RigFleetBridge(
-            BridgeConfig(),
+            BridgeConfig(rig_thing_name="rig-rig001"),
             cloud_shadow=cloud_shadow,  # type: ignore[arg-type]
             registry=object(),  # type: ignore[arg-type]
             managed_things=[],
@@ -696,7 +732,16 @@ class RigNodeReflectionTests(unittest.TestCase):
 
         await bridge._publish_static_lifecycle_reflection()
 
-        self.assertEqual(cloud_shadow.shadow_updates, [])
+        self.assertEqual(
+            cloud_shadow.shadow_updates,
+            [
+                {
+                    "thing_name": "rig-rig001",
+                    "reported_device_patch": None,
+                    "reported_root_patch": {"redcon": 1},
+                }
+            ],
+        )
         self.assertEqual(cloud_shadow.sparkplug_publishes, [])
 
 
@@ -713,9 +758,9 @@ class RigFleetScannerTests(unittest.TestCase):
     def test_bridge_needs_session_while_awake_and_disconnected(self) -> None:
         bridge = types.SimpleNamespace(
             _shadow=types.SimpleNamespace(
-                desired_redcon=None,
+                target_redcon=None,
                 reported_power=True,
-                clear_desired_redcon_if_converged=lambda: False,
+                clear_target_redcon_if_converged=lambda: False,
             ),
             _cached_device_id="EE:C7:32:0B:1C:6A",
             _get_fresh_target_device=lambda: None,
@@ -734,7 +779,7 @@ class RigFleetScannerTests(unittest.TestCase):
         class FakeBridge:
             def __init__(self, events: list[str]) -> None:
                 self._config = types.SimpleNamespace(thing_name="txing", scan_timeout=12.0)
-                self._shadow = types.SimpleNamespace(desired_redcon=3)
+                self._shadow = types.SimpleNamespace(target_redcon=3)
                 self._cached_device_id = "EE:C7:32:0B:1C:6A"
                 self._fresh_target = None
                 self._events = events
@@ -789,11 +834,11 @@ class RigFleetScannerTests(unittest.TestCase):
         class FakeBridge:
             def __init__(self) -> None:
                 self._connected = True
-                self._shadow = types.SimpleNamespace(desired_redcon=4)
+                self._shadow = types.SimpleNamespace(target_redcon=4)
 
-            async def _process_desired_redcon_once(self) -> None:
+            async def _process_target_redcon_once(self) -> None:
                 self._connected = False
-                self._shadow.desired_redcon = None
+                self._shadow.target_redcon = None
 
             async def _safe_disconnect(self, **_: object) -> None:
                 self._connected = False
@@ -854,12 +899,12 @@ class RigFleetScannerTests(unittest.TestCase):
             def __init__(self) -> None:
                 self._connected = True
                 self._shadow = types.SimpleNamespace(
-                    desired_redcon=None,
+                    target_redcon=None,
                     reported_power=True,
                 )
                 self.disconnect_calls: list[dict[str, object]] = []
 
-            async def _process_desired_redcon_once(self) -> None:
+            async def _process_target_redcon_once(self) -> None:
                 return
 
             async def _safe_disconnect(self, **_: object) -> None:
@@ -978,17 +1023,19 @@ class RedconTests(unittest.TestCase):
                     "state": {
                         "reported": {
                             "redcon": 1,
-                            "batteryMv": 3795,
-                            "bleDeviceId": "legacy-top-level-id",
-                            "homeRig": "legacy-rig",
-                            "mcu": {
-                                "power": True,
-                                "online": True,
-                            },
-                            "board": {
-                                "power": True,
-                                "wifi": {
+                            "device": {
+                                "batteryMv": 3795,
+                                "bleDeviceId": "legacy-top-level-id",
+                                "homeRig": "legacy-rig",
+                                "mcu": {
+                                    "power": True,
                                     "online": True,
+                                },
+                                "board": {
+                                    "power": True,
+                                    "wifi": {
+                                        "online": True,
+                                    },
                                 },
                             },
                         },
@@ -1006,9 +1053,9 @@ class RedconTests(unittest.TestCase):
         reported = payload["state"]["reported"]
         self.assertNotIn("bleDeviceId", reported)
         self.assertNotIn("homeRig", reported)
-        self.assertNotIn("video", reported)
+        self.assertNotIn("video", reported["device"]["board"])
         self.assertEqual(
-            reported["mcu"],
+            reported["device"]["mcu"],
             {
                 "power": True,
                 "online": True,
@@ -1024,12 +1071,14 @@ class RedconTests(unittest.TestCase):
                         "state": {
                             "reported": {
                                 "redcon": 4,
-                                "batteryMv": 3795,
-                                "bleDeviceId": "AA:BB:CC:DD:EE:FF",
-                                "mcu": {
-                                    "power": False,
-                                    "ble": {
-                                        "online": True,
+                                "device": {
+                                    "batteryMv": 3795,
+                                    "bleDeviceId": "AA:BB:CC:DD:EE:FF",
+                                    "mcu": {
+                                        "power": False,
+                                        "ble": {
+                                            "online": True,
+                                        },
                                     },
                                 },
                             },
@@ -1043,10 +1092,12 @@ class RedconTests(unittest.TestCase):
                     "state": {
                         "reported": {
                             "redcon": 4,
-                            "batteryMv": 3795,
-                            "mcu": {
-                                "power": False,
-                                "online": False,
+                            "device": {
+                                "batteryMv": 3795,
+                                "mcu": {
+                                    "power": False,
+                                    "online": False,
+                                },
                             },
                         }
                     }
@@ -1057,20 +1108,20 @@ class RedconTests(unittest.TestCase):
         self.assertIsNone(shadow.ble_device_id)
         self.assertFalse(shadow.ble_online)
 
-    def test_desired_redcon_only_converges_after_target_is_reached(self) -> None:
-        shadow = ShadowState(desired_redcon=2, redcon=3)
+    def test_target_redcon_only_converges_after_target_is_reached(self) -> None:
+        shadow = ShadowState(target_redcon=2, redcon=3)
 
-        self.assertFalse(shadow.clear_desired_redcon_if_converged())
+        self.assertFalse(shadow.clear_target_redcon_if_converged())
 
         shadow.redcon = 2
-        self.assertTrue(shadow.clear_desired_redcon_if_converged())
+        self.assertTrue(shadow.clear_target_redcon_if_converged())
 
-        shadow.desired_redcon = 4
+        shadow.target_redcon = 4
         shadow.redcon = 3
-        self.assertFalse(shadow.clear_desired_redcon_if_converged())
+        self.assertFalse(shadow.clear_target_redcon_if_converged())
 
         shadow.redcon = 4
-        self.assertTrue(shadow.clear_desired_redcon_if_converged())
+        self.assertTrue(shadow.clear_target_redcon_if_converged())
 
 
 class WaitForReportedPowerTests(unittest.TestCase):
@@ -1081,7 +1132,7 @@ class WaitForReportedPowerTests(unittest.TestCase):
         asyncio.run(self._exercise_wait_for_reported_power_hung_read())
 
     async def _exercise_wait_for_reported_power_read_failure(self) -> None:
-        shadow = ShadowState(desired_redcon=3, reported_power=False, battery_mv=3729)
+        shadow = ShadowState(target_redcon=3, reported_power=False, battery_mv=3729)
         bridge = BleSleepBridge(
             BridgeConfig(command_ack_timeout=0.2, command_ack_poll_interval=0.01),
             shadow,
@@ -1104,7 +1155,7 @@ class WaitForReportedPowerTests(unittest.TestCase):
         self.assertEqual(report, bytes((0x00, 0x91, 0x0E)))
 
     async def _exercise_wait_for_reported_power_hung_read(self) -> None:
-        shadow = ShadowState(desired_redcon=3, reported_power=False, battery_mv=3729)
+        shadow = ShadowState(target_redcon=3, reported_power=False, battery_mv=3729)
         bridge = BleSleepBridge(
             BridgeConfig(command_ack_timeout=0.05, command_ack_poll_interval=0.01),
             shadow,
@@ -1129,7 +1180,7 @@ class WaitForReportedPowerTests(unittest.TestCase):
 
 
 class LifecycleBridgeTests(unittest.TestCase):
-    def test_redcon_four_requests_internal_board_shutdown_before_sleep(self) -> None:
+    def test_redcon_four_waits_for_board_shutdown_before_sleep(self) -> None:
         asyncio.run(self._exercise_redcon_four_board_shutdown_request())
 
     def test_mcp_and_video_ready_stage_redcon_through_two_before_one(self) -> None:
@@ -1141,7 +1192,7 @@ class LifecycleBridgeTests(unittest.TestCase):
     async def _exercise_redcon_four_board_shutdown_request(self) -> None:
         cloud_shadow = FakeCloudShadow()
         shadow = ShadowState(
-            desired_redcon=4,
+            target_redcon=4,
             reported_power=True,
             battery_mv=3795,
             ble_online=True,
@@ -1154,12 +1205,11 @@ class LifecycleBridgeTests(unittest.TestCase):
             cloud_shadow,  # type: ignore[arg-type]
         )
 
-        await bridge._process_desired_redcon_once()
+        await bridge._process_target_redcon_once()
 
-        self.assertEqual(shadow.desired_redcon, 4)
-        self.assertIs(shadow.desired_board_power, False)
-        self.assertEqual(len(cloud_shadow.shadow_updates), 1)
-        self.assertIs(cloud_shadow.shadow_updates[0]["desired_board_power"], False)
+        self.assertEqual(shadow.target_redcon, 4)
+        self.assertIsNotNone(bridge._board_shutdown_requested_at)
+        self.assertEqual(cloud_shadow.shadow_updates, [])
 
     async def _exercise_mcp_and_video_ready_stage_redcon(self) -> None:
         cloud_shadow = FakeCloudShadow()
@@ -1281,14 +1331,13 @@ class LifecycleBridgeTests(unittest.TestCase):
         self.assertEqual(len(cloud_shadow.shadow_updates), 1)
         self.assertEqual(cloud_shadow.shadow_updates[0]["reported_root_patch"], {"redcon": 2})
 
-    def test_ddeath_clears_desired_state_and_publishes_device_death(self) -> None:
-        asyncio.run(self._exercise_ddeath_clears_desired_state())
+    def test_ddeath_clears_pending_target_and_publishes_device_death(self) -> None:
+        asyncio.run(self._exercise_ddeath_clears_pending_target())
 
-    async def _exercise_ddeath_clears_desired_state(self) -> None:
+    async def _exercise_ddeath_clears_pending_target(self) -> None:
         cloud_shadow = FakeCloudShadow()
         shadow = ShadowState(
-            desired_redcon=3,
-            desired_board_power=False,
+            target_redcon=3,
             reported_power=True,
             battery_mv=3812,
             ble_online=True,
@@ -1309,8 +1358,7 @@ class LifecycleBridgeTests(unittest.TestCase):
 
         self.assertFalse(shadow.ble_online)
         self.assertEqual(shadow.redcon, 4)
-        self.assertIsNone(shadow.desired_redcon)
-        self.assertIsNone(shadow.desired_board_power)
+        self.assertIsNone(shadow.target_redcon)
         self.assertFalse(bridge._sparkplug_device_born)
         self.assertEqual(len(cloud_shadow.sparkplug_publishes), 1)
         self.assertEqual(
@@ -1324,9 +1372,11 @@ class LifecycleBridgeTests(unittest.TestCase):
         self.assertEqual(ddeath.metrics[0].int_value, 4)
         self.assertEqual(ddeath.metrics[1].name, "batteryMv")
         self.assertEqual(ddeath.metrics[1].int_value, 3812)
-        self.assertEqual(len(cloud_shadow.shadow_updates), 2)
-        self.assertIsNone(cloud_shadow.shadow_updates[1]["desired_redcon"])
-        self.assertIsNone(cloud_shadow.shadow_updates[1]["desired_board_power"])
+        self.assertEqual(len(cloud_shadow.shadow_updates), 1)
+        self.assertEqual(
+            cloud_shadow.shadow_updates[0]["reported_device_patch"],
+            {"mcu": {"online": False}},
+        )
 
     def test_intentional_redcon_four_offline_suppresses_ddeath(self) -> None:
         asyncio.run(self._exercise_intentional_redcon_four_offline())
@@ -1334,8 +1384,7 @@ class LifecycleBridgeTests(unittest.TestCase):
     async def _exercise_intentional_redcon_four_offline(self) -> None:
         cloud_shadow = FakeCloudShadow()
         shadow = ShadowState(
-            desired_redcon=4,
-            desired_board_power=False,
+            target_redcon=4,
             reported_power=False,
             battery_mv=3812,
             ble_online=True,
@@ -1356,8 +1405,7 @@ class LifecycleBridgeTests(unittest.TestCase):
 
         self.assertFalse(shadow.ble_online)
         self.assertEqual(shadow.redcon, 4)
-        self.assertEqual(shadow.desired_redcon, 4)
-        self.assertIs(shadow.desired_board_power, False)
+        self.assertEqual(shadow.target_redcon, 4)
         self.assertTrue(bridge._sparkplug_device_born)
         self.assertEqual(cloud_shadow.sparkplug_publishes, [])
         self.assertEqual(len(cloud_shadow.shadow_updates), 1)
@@ -1455,30 +1503,26 @@ class LifecycleBridgeTests(unittest.TestCase):
 
 
 class SnapshotRecoveryTests(unittest.TestCase):
-    def test_restart_does_not_recover_desired_redcon_from_local_cache(self) -> None:
+    def test_restart_does_not_recover_target_redcon_from_local_cache(self) -> None:
         with TemporaryDirectory() as tmpdir:
             snapshot_file = Path(tmpdir) / "shadow.json"
             snapshot_file.write_text(
                 json.dumps(
                     {
                         "state": {
-                            "desired": {
-                                "redcon": 3,
-                                "board": {
-                                    "power": None,
-                                },
-                            },
                             "reported": {
                                 "redcon": 4,
-                                "batteryMv": 3795,
-                                "mcu": {
-                                    "power": False,
-                                    "online": False,
-                                },
-                                "board": {
-                                    "power": False,
-                                    "wifi": {
+                                "device": {
+                                    "batteryMv": 3795,
+                                    "mcu": {
+                                        "power": False,
                                         "online": False,
+                                    },
+                                    "board": {
+                                        "power": False,
+                                        "wifi": {
+                                            "online": False,
+                                        },
                                     },
                                 },
                             },
@@ -1492,10 +1536,12 @@ class SnapshotRecoveryTests(unittest.TestCase):
                     "state": {
                         "reported": {
                             "redcon": 4,
-                            "batteryMv": 3795,
-                            "mcu": {
-                                "power": False,
-                                "online": False,
+                            "device": {
+                                "batteryMv": 3795,
+                                "mcu": {
+                                    "power": False,
+                                    "online": False,
+                                },
                             },
                         }
                     }
@@ -1503,8 +1549,7 @@ class SnapshotRecoveryTests(unittest.TestCase):
                 snapshot_file=snapshot_file,
             )
 
-        self.assertIsNone(shadow.desired_redcon)
-        self.assertIsNone(shadow.desired_board_power)
+        self.assertIsNone(shadow.target_redcon)
 
 
 class SparkplugCodecTests(unittest.TestCase):

@@ -30,6 +30,15 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertNotIn("Sid: DeviceCmdVelTopicFilters", template)
         self.assertNotIn("board/cmd_vel", template)
 
+    def test_template_does_not_define_lambda_helpers(self) -> None:
+        template = (
+            Path(__file__).resolve().parents[2] / "template.yaml"
+        ).read_text(encoding="utf-8")
+
+        self.assertNotIn("AWS::Lambda::Function", template)
+        self.assertNotIn("Custom::TxingFleetIndexingConfiguration", template)
+        self.assertNotIn("txing-rig-lifecycle-reflector", template)
+
 
 if __name__ == "__main__":
     unittest.main()

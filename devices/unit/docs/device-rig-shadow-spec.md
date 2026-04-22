@@ -33,9 +33,9 @@ High-level architecture:
 - `rig` is the source of truth for the `mcu.*` shadow subtree.
 - `rig` is also the source of truth for `video.*` in the shadow, reflecting retained MQTT video service state from the board.
 - `rig` is also the source of truth for the direct Sparkplug metric reflections under top-level `reported`.
-- In the current implementation that strict top-level metric set is exactly `reported.redcon` and `reported.batteryMv`.
-- `rig` is the only component that accepts lifecycle intent from Sparkplug and reflects unresolved intent into `state.desired.redcon`.
-- `state.desired.board.power` remains an internal rig-to-board actuator only.
+- In the current implementation that strict top-level metric set is exactly `reported.redcon`.
+- `rig` is the only component that accepts lifecycle intent from Sparkplug and tracks unresolved intent as in-memory pending REDCON state only.
+- There is no shadow-based board power actuator.
 - Only `rig` may define or evolve the `mcu.*` contract.
 - `mcu` exposes BLE behavior; `rig` translates that behavior into shadow state.
 
@@ -76,18 +76,14 @@ Shadow type: classic (unnamed) Thing Shadow (`$aws/things/txing/shadow/*`)
 ```json
 {
   "state": {
-    "desired": {
-      "redcon": 3,
-      "board": {
-        "power": null
-      }
-    },
     "reported": {
       "redcon": 4,
-      "batteryMv": 3750,
-      "mcu": {
-        "power": false,
-        "online": false
+      "device": {
+        "batteryMv": 3750,
+        "mcu": {
+          "power": false,
+          "online": false
+        }
       }
     }
   }
@@ -95,25 +91,24 @@ Shadow type: classic (unnamed) Thing Shadow (`$aws/things/txing/shadow/*`)
 ```
 
 Field semantics:
-- `state.desired.redcon` is the reflected cache of the latest unresolved Sparkplug `DCMD.redcon` command.
-- `state.desired.board.power=false` is an internal-only graceful-halt request written by `rig` while converging `redcon=4`.
 - Direct scalar attributes under `state.reported` are the strict Sparkplug metric reflection surface.
-- In the current implementation that set is exactly `redcon` and `batteryMv`.
-- `mcu.*` and `board.*` remain shadow-only operational detail and are not alternate locations for Sparkplug metric reflection.
+- In the current implementation that set is exactly `redcon`.
+- `state.reported.device.batteryMv` is the Sparkplug battery metric reflection.
+- `device.mcu.*` and `device.board.*` remain shadow-only operational detail and are not alternate top-level locations for Sparkplug metric reflection.
 - `state.reported.redcon` is the rig-derived readiness summary:
-  - `4` -> Green / `Cold Camp` -> BLE unavailable or `reported.mcu.power=false`
-  - `3` -> Yellow / `Torch-Up` -> BLE reachable, `reported.mcu.power=true`, and retained MCP status unavailable
-  - `2` -> Orange/Amber / `Ember Watch` -> BLE reachable, `reported.mcu.power=true`, retained MCP status available, and retained video status not ready
-  - `1` -> Red / `Hot Rig` -> BLE reachable, `reported.mcu.power=true`, retained MCP status available, and retained video status ready
-- `state.reported.batteryMv` is the latest battery reading observed over BLE by rig, surfaced at top-level alongside `redcon`, sourced from the MCU state report carried over either advertising manufacturer data or the GATT State Report characteristic.
-- `state.reported.mcu.power=true` means "MCU is in the wakeup state".
-- `state.reported.mcu.power=false` means "MCU is in the sleep state with periodic BLE rendezvous wakeups".
-- `state.reported.mcu.online` is `true` only after the MCU has shown sustained BLE reachability, either by staying connected or by advertising regularly for the configured recovery window.
+  - `4` -> Green / `Cold Camp` -> BLE unavailable or `reported.device.mcu.power=false`
+  - `3` -> Yellow / `Torch-Up` -> BLE reachable, `reported.device.mcu.power=true`, and retained MCP status unavailable
+  - `2` -> Orange/Amber / `Ember Watch` -> BLE reachable, `reported.device.mcu.power=true`, retained MCP status available, and retained video status not ready
+  - `1` -> Red / `Hot Rig` -> BLE reachable, `reported.device.mcu.power=true`, retained MCP status available, and retained video status ready
+- `state.reported.device.batteryMv` is the latest battery reading observed over BLE by rig, sourced from the MCU state report carried over either advertising manufacturer data or the GATT State Report characteristic.
+- `state.reported.device.mcu.power=true` means "MCU is in the wakeup state".
+- `state.reported.device.mcu.power=false` means "MCU is in the sleep state with periodic BLE rendezvous wakeups".
+- `state.reported.device.mcu.online` is `true` only after the MCU has shown sustained BLE reachability, either by staying connected or by advertising regularly for the configured recovery window.
 - `rig` reads retained MCP availability from `txings/<device_id>/mcp/status` and retained video readiness from `txings/<device_id>/video/status` as the readiness inputs for `reported.redcon`.
 - Phase 3 removes `state.reported.video.*` from the shadow contract. Video runtime state stays on retained MQTT for rig readiness and on board MCP `robot.get_state` for clients.
-- Phase 3 removes `state.reported.board.drive.*` from the shadow contract. Current motion state is read from board MCP `robot.get_state`.
-- `rig` emits `DBIRTH` when BLE reachability reaches the same sustained-online condition that drives `reported.mcu.online=true`.
-- `rig` emits `DDEATH` when BLE reachability times out, forces `reported.redcon=4`, and clears `desired.redcon` plus internal `desired.board.power` best-effort.
+- Phase 3 removes `state.reported.device.board.drive.*` from the shadow contract. Current motion state is read from board MCP `robot.get_state`.
+- `rig` emits `DBIRTH` when BLE reachability reaches the same sustained-online condition that drives `reported.device.mcu.online=true`.
+- `rig` emits `DDEATH` when BLE reachability times out, forces `reported.redcon=4`, and clears the in-memory pending REDCON target.
 - AWS IoT registry attributes:
   - `attributes.rig` is the authoritative rig assignment used to populate the dynamic AWS IoT thing group that the rig reads on restart.
   - `attributes.bleDeviceId` is the last known BLE identity address written by rig after a successful BLE association and used as the primary reconnect hint on the next restart.
@@ -233,9 +228,9 @@ States:
   - Update battery cache.
   - If `power=false` is already confirmed and no change is pending, disconnect and return to `Idle`.
 - `CommandPending`
-  - `desired.redcon` is present and current `reported.redcon` has not converged yet.
-  - For `redcon=4`, request internal `desired.board.power=false` first if the board is still up.
-  - For `redcon=1..3`, wake the MCU only if `reported.mcu.power=false`.
+  - an in-memory pending REDCON target is present and current `reported.redcon` has not converged yet.
+  - For `redcon=4`, wait for `reported.device.board.power=false` first if the board is still up.
+  - For `redcon=1..3`, wake the MCU only if `reported.device.mcu.power=false`.
 - `CommandSent`
   - Poll State Report until the requested power mode is confirmed or timeout expires.
 - `Disconnect`
@@ -275,29 +270,29 @@ All of the above are tunable constants or CLI-configurable parameters.
   - a BLE connection during a rendezvous window
   - a successful wakeup-state command write
   - a State Report confirmation
-  - `state.reported.mcu.power=true`
-  - `state.desired.redcon` cleared once `reported.redcon <= 3`
-- From `reported.mcu.power=true`, sending `DCMD.redcon=4` eventually results in:
-  - if the board is still up, `state.desired.board.power=false` first
+  - `state.reported.device.mcu.power=true`
+  - the in-memory pending REDCON target cleared once `reported.redcon <= 3`
+- From `reported.device.mcu.power=true`, sending `DCMD.redcon=4` eventually results in:
+  - if the board is still up, wait for `state.reported.device.board.power=false` first
   - board-offline confirmation or continued retry if the board does not go offline yet
   - a successful sleep-state command write
-  - `state.reported.mcu.power=false`
+  - `state.reported.device.mcu.power=false`
   - `state.reported.redcon=4`
-  - `state.desired.redcon` cleared on convergence
+  - the in-memory pending REDCON target cleared on convergence
   - the MCU returning to the sleep state with periodic rendezvous wakeups
-- `state.reported.batteryMv` is refreshed whenever rig observes a changed battery value from the MCU State Report, whether that report arrives in advertising manufacturer data or over GATT.
-- `state.reported.mcu.online` becomes `true` again after rig observes sustained BLE presence for the configured recovery window.
-- `state.reported.mcu.online` remains `true` while the device is connected or continues advertising within the configured presence timeout.
-- `state.reported.mcu.online` becomes `false` only after rig has not observed the device for longer than the presence timeout.
-- `DBIRTH` is emitted when `state.reported.mcu.online` becomes `true`.
-- `DDEATH` is emitted when `state.reported.mcu.online` becomes `false`.
+- `state.reported.device.batteryMv` is refreshed whenever rig observes a changed battery value from the MCU State Report, whether that report arrives in advertising manufacturer data or over GATT.
+- `state.reported.device.mcu.online` becomes `true` again after rig observes sustained BLE presence for the configured recovery window.
+- `state.reported.device.mcu.online` remains `true` while the device is connected or continues advertising within the configured presence timeout.
+- `state.reported.device.mcu.online` becomes `false` only after rig has not observed the device for longer than the presence timeout.
+- `DBIRTH` is emitted when `state.reported.device.mcu.online` becomes `true`.
+- `DDEATH` is emitted when `state.reported.device.mcu.online` becomes `false`.
 
 ## 10. Test Plan
 
 - Sleep-state advertisement presence:
   - Leave the MCU in the sleep state and verify that rig observes the repeated `5 s` advertising windows without requiring UUID rediscovery or a persistent BLE session.
 - Sending wake command successfully:
-  - Publish `DCMD.redcon=3` and verify wakeup-state acknowledgement plus `reported.mcu.power=true`.
+  - Publish `DCMD.redcon=3` and verify wakeup-state acknowledgement plus `reported.device.mcu.power=true`.
 - Behavior when no command is pending:
   - Observe multiple sleep-state rendezvous cycles and verify the MCU returns to low-power idle without a BLE session if rig does not need one.
 - Behavior when the advertisement window is missed:
