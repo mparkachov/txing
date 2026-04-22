@@ -749,6 +749,9 @@ class RigFleetScannerTests(unittest.TestCase):
     def test_fleet_connect_waits_for_fresh_target_before_stopping_scanner(self) -> None:
         asyncio.run(self._exercise_fleet_connect_waits_for_fresh_target())
 
+    def test_fleet_connect_restarts_scanner_before_waiting_for_fresh_target(self) -> None:
+        asyncio.run(self._exercise_fleet_connect_restarts_scanner())
+
     def test_fleet_bridge_restarts_scanner_after_bridge_disconnects(self) -> None:
         asyncio.run(self._exercise_fleet_bridge_restarts_scanner())
 
@@ -829,6 +832,65 @@ class RigFleetScannerTests(unittest.TestCase):
         await fleet_bridge._connect_bridge(bridge)  # type: ignore[arg-type]
 
         self.assertEqual(events, ["wait:12.0", "stop", "ensure"])
+
+    async def _exercise_fleet_connect_restarts_scanner(self) -> None:
+        class FakeBridge:
+            def __init__(self, events: list[str]) -> None:
+                self._config = types.SimpleNamespace(thing_name="txing", scan_timeout=12.0)
+                self._shadow = types.SimpleNamespace(target_redcon=4)
+                self._cached_device_id = "EE:C7:32:0B:1C:6A"
+                self._fresh_target = None
+                self._events = events
+
+            def _get_fresh_target_device(self) -> object | None:
+                return self._fresh_target
+
+            async def _wait_for_target_advertisement(
+                self,
+                *,
+                timeout_seconds: float,
+            ) -> object | None:
+                self._events.append(f"wait:{timeout_seconds}")
+                self._fresh_target = types.SimpleNamespace(address=self._cached_device_id)
+                return self._fresh_target
+
+            async def _ensure_connected(self) -> None:
+                self._events.append("ensure")
+
+        class TestRigFleetBridge(RigFleetBridge):
+            def __init__(self, bridge: FakeBridge, events: list[str]) -> None:
+                super().__init__(
+                    BridgeConfig(),
+                    cloud_shadow=FakeCloudShadow(),  # type: ignore[arg-type]
+                    registry=object(),  # type: ignore[arg-type]
+                    managed_things=[
+                        types.SimpleNamespace(
+                            registration=types.SimpleNamespace(
+                                thing_name="txing",
+                                ble_device_id=bridge._cached_device_id,
+                                version=1,
+                            ),
+                            bridge=bridge,
+                        )
+                    ],
+                )
+                self._events = events
+
+            async def _start_scanner(self) -> None:
+                self._events.append("start")
+                self._scanner = object()  # type: ignore[assignment]
+
+            async def _stop_scanner(self) -> None:
+                self._events.append("stop")
+                self._scanner = None
+
+        events: list[str] = []
+        bridge = FakeBridge(events)
+        fleet_bridge = TestRigFleetBridge(bridge, events)
+
+        await fleet_bridge._connect_bridge(bridge)  # type: ignore[arg-type]
+
+        self.assertEqual(events, ["start", "wait:12.0", "stop", "ensure"])
 
     async def _exercise_fleet_bridge_restarts_scanner(self) -> None:
         class FakeBridge:
