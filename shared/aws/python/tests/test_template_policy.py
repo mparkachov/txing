@@ -39,6 +39,14 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertNotIn("Custom::TxingFleetIndexingConfiguration", template)
         self.assertNotIn("txing-rig-lifecycle-reflector", template)
 
+    def test_device_runtime_policy_allows_describe_thing(self) -> None:
+        template = (
+            Path(__file__).resolve().parents[2] / "template.yaml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("Sid: DeviceDescribeThing", template)
+        self.assertIn("Action: iot:DescribeThing", template)
+
 
 if __name__ == "__main__":
     unittest.main()

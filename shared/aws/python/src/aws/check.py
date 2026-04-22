@@ -300,6 +300,11 @@ def _run_device_connectivity_checks(
         "IoT DescribeEndpoint (Data-ATS)",
         runtime.iot_data_endpoint,
     )
+    _run_aws_check(
+        results,
+        f"IoT DescribeThing on {thing_name}",
+        lambda: runtime.iot_client().describe_thing(thingName=thing_name),
+    )
     if isinstance(endpoint, str) and endpoint:
         _run_aws_check(
             results,

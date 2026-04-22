@@ -19,10 +19,15 @@ class _FakeStsClient:
 class _FakeIotClient:
     def __init__(self) -> None:
         self.describe_group_names: list[str] = []
+        self.describe_thing_names: list[str] = []
 
     def describe_thing_group(self, *, thingGroupName: str) -> dict[str, str]:
         self.describe_group_names.append(thingGroupName)
         return {"thingGroupName": thingGroupName}
+
+    def describe_thing(self, *, thingName: str) -> dict[str, str]:
+        self.describe_thing_names.append(thingName)
+        return {"thingName": thingName}
 
 
 class _FakeLogsClient:
@@ -216,6 +221,7 @@ class AwsCheckTests(unittest.TestCase):
 
         self.assertTrue(all(result.ok for result in results))
         self.assertEqual(runtime.sts.calls, 1)
+        self.assertEqual(runtime.iot.describe_thing_names, ["unit-local"])
         self.assertEqual(runtime.iot_data.thing_names, ["unit-local"])
         self.assertEqual(runtime.kinesisvideo.channel_names, ["unit-local-board-video"])
         self.assertIn(

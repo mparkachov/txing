@@ -230,6 +230,10 @@ Resources:
             Effect: Allow
             Action: iot:GetThingShadow
             Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/*
+          - Sid: DeviceDescribeThing
+            Effect: Allow
+            Action: iot:DescribeThing
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/*
           - Sid: DeviceDescribeEndpoint
             Effect: Allow
             Action: iot:DescribeEndpoint
