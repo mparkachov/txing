@@ -206,6 +206,92 @@ class ShadowControlContractTests(unittest.TestCase):
         self.assertEqual(events[2], "publish:$aws/things/unit-local/shadow/get")
         mcp_server.on_connected.assert_called_once()
 
+    def test_aws_shadow_connect_waits_for_failed_client_close_before_retry(self) -> None:
+        events: list[str] = []
+        first_client_closed = threading.Event()
+        test_case = self
+
+        class _FakeConnection:
+            _next_instance_id = 0
+
+            def __init__(self, *_args: object, **kwargs: object) -> None:
+                type(self)._next_instance_id += 1
+                self.instance_id = type(self)._next_instance_id
+                self._on_connection_closed = kwargs["on_connection_closed"]
+
+            def connect(self, *, timeout_seconds: float) -> None:
+                del timeout_seconds
+                events.append(f"connect:{self.instance_id}")
+
+            def disconnect(self, *, timeout_seconds: float) -> None:
+                del timeout_seconds
+                events.append(f"disconnect:{self.instance_id}")
+
+                def _close() -> None:
+                    if self.instance_id == 1:
+                        first_client_closed.set()
+                    self._on_connection_closed({"instance": self.instance_id})
+
+                threading.Timer(0.05, _close).start()
+
+            def subscribe(
+                self,
+                topic: str,
+                _handler: object,
+                *,
+                timeout_seconds: float,
+            ) -> None:
+                del timeout_seconds
+                events.append(f"subscribe:{self.instance_id}:{topic}")
+                if self.instance_id == 1:
+                    raise RuntimeError(
+                        (
+                            "AWS_ERROR_MQTT_CANCELLED_FOR_CLEAN_SESSION: "
+                            "Old requests from the previous session are cancelled"
+                        )
+                    )
+                test_case.assertTrue(
+                    first_client_closed.is_set(),
+                    "retry started before previous clean-session client closed",
+                )
+
+            def publish(
+                self,
+                topic: str,
+                payload: str,
+                *,
+                timeout_seconds: float,
+            ) -> None:
+                del payload, timeout_seconds
+                events.append(f"publish:{topic}")
+
+        with patch.object(shadow_control, "AwsIotWebsocketSyncConnection", _FakeConnection):
+            shadow_client = AwsShadowClient(
+                _make_config(),
+                aws_runtime=_make_runtime(),
+            )
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "failed to subscribe to shadow update topics",
+            ):
+                shadow_client.ensure_connected(timeout_seconds=1.0)
+            self.assertTrue(
+                first_client_closed.is_set(),
+                "failed startup should wait for on_connection_closed before retrying",
+            )
+            shadow_client.ensure_connected(timeout_seconds=1.0)
+
+        self.assertEqual(
+            events[0:3],
+            [
+                "connect:1",
+                "subscribe:1:$aws/things/unit-local/shadow/get/accepted",
+                "disconnect:1",
+            ],
+        )
+        self.assertIn("connect:2", events)
+        self.assertIn("publish:$aws/things/unit-local/shadow/get", events)
+
     def test_decodes_sparkplug_redcon_command_metric(self) -> None:
         payload = bytes(
             [

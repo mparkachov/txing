@@ -318,6 +318,7 @@ class AwsShadowClient:
             will_retain=will_retain,
         )
         self._client: AwsIotWebsocketSyncConnection | None = None
+        self._client_closed_events: dict[int, threading.Event] = {}
 
         self._lock = threading.Lock()
         self._response_done = threading.Event()
@@ -326,6 +327,7 @@ class AwsShadowClient:
         self._pending_error: RuntimeError | None = None
         self._pending_response: dict[str, Any] | None = None
         self._disconnect_requested = False
+        self._intentional_disconnect_client_ids: set[int] = set()
         self._halt_requested = threading.Event()
         self._mcp_dispatcher: ThreadPoolExecutor | None = None
         if self._mcp_server is not None:
@@ -344,10 +346,7 @@ class AwsShadowClient:
             self._client = None
 
         if previous_client is not None:
-            try:
-                previous_client.disconnect(timeout_seconds=timeout_seconds)
-            except Exception:
-                pass
+            self._disconnect_client(previous_client, timeout_seconds=timeout_seconds)
 
         client_holder: dict[str, AwsIotWebsocketSyncConnection] = {}
         client = AwsIotWebsocketSyncConnection(
@@ -363,10 +362,17 @@ class AwsShadowClient:
             ),
         )
         client_holder["client"] = client
+        with self._lock:
+            self._client = client
+            self._client_closed_events[id(client)] = threading.Event()
 
         try:
             client.connect(timeout_seconds=timeout_seconds)
         except Exception as err:
+            with self._lock:
+                if self._client is client:
+                    self._client = None
+                self._client_closed_events.pop(id(client), None)
             raise RuntimeError(
                 f"failed to connect to AWS IoT endpoint {self._config.iot_endpoint!r}: {err}"
             ) from err
@@ -397,10 +403,7 @@ class AwsShadowClient:
                     timeout_seconds=timeout_seconds,
                 )
         except Exception as err:
-            try:
-                client.disconnect(timeout_seconds=timeout_seconds)
-            except Exception:
-                pass
+            self._disconnect_client(client, timeout_seconds=timeout_seconds)
             raise RuntimeError(
                 f"failed to subscribe to shadow update topics: {err}"
             ) from err
@@ -446,7 +449,7 @@ class AwsShadowClient:
 
         encoded_payload = json.dumps(envelope, sort_keys=True)
         with self._lock:
-            client = self._client
+            client = self._client if self._connection_ready else None
         if client is None:
             with self._lock:
                 self._pending_token = None
@@ -499,17 +502,53 @@ class AwsShadowClient:
             self._client = None
             self._connection_ready = False
         if client is not None:
-            try:
-                client.disconnect(timeout_seconds=self._config.aws_connect_timeout)
-            except Exception:
-                pass
+            self._disconnect_client(
+                client,
+                timeout_seconds=self._config.aws_connect_timeout,
+            )
+
+    def _disconnect_client(
+        self,
+        client: AwsIotWebsocketSyncConnection,
+        *,
+        timeout_seconds: float,
+    ) -> None:
+        with self._lock:
+            closed_event = self._client_closed_events.get(id(client))
+            self._intentional_disconnect_client_ids.add(id(client))
+        try:
+            client.disconnect(timeout_seconds=timeout_seconds)
+        except Exception:
+            if closed_event is None:
+                with self._lock:
+                    self._intentional_disconnect_client_ids.discard(id(client))
+                return
+        if closed_event is None:
+            with self._lock:
+                self._intentional_disconnect_client_ids.discard(id(client))
+            return
+        if closed_event.wait(timeout_seconds):
+            return
+        LOGGER.warning(
+            "Timed out waiting for AWS IoT MQTT client close thing=%s client_id=%s",
+            self._config.thing_name,
+            self._config.client_id,
+        )
+        with self._lock:
+            if self._client is client:
+                self._client = None
+            self._client_closed_events.pop(id(client), None)
+            self._intentional_disconnect_client_ids.discard(id(client))
 
     def _mark_connection_lost(
         self,
         source_client: AwsIotWebsocketSyncConnection,
         detail: str,
     ) -> None:
+        intentional_disconnect = False
         with self._lock:
+            intentional_disconnect = id(source_client) in self._intentional_disconnect_client_ids
+            self._intentional_disconnect_client_ids.discard(id(source_client))
             if self._client is not source_client:
                 return
             self._connection_ready = False
@@ -523,7 +562,7 @@ class AwsShadowClient:
             self._video_service.on_disconnected(reason=detail)
         if self._mcp_server is not None:
             self._mcp_server.on_disconnected(reason=detail)
-        if not self._disconnect_requested:
+        if not self._disconnect_requested and not intentional_disconnect:
             LOGGER.warning("AWS IoT MQTT disconnected unexpectedly (%s)", detail)
 
     def _on_connection_interrupted(
@@ -538,6 +577,10 @@ class AwsShadowClient:
         source_client: AwsIotWebsocketSyncConnection,
         callback_data: Any,
     ) -> None:
+        with self._lock:
+            closed_event = self._client_closed_events.pop(id(source_client), None)
+        if closed_event is not None:
+            closed_event.set()
         detail = f"closed: {callback_data}" if callback_data is not None else "closed"
         self._mark_connection_lost(source_client, detail)
 
@@ -631,7 +674,7 @@ class AwsShadowClient:
 
     def _request_shadow_get(self) -> None:
         with self._lock:
-            client = self._client
+            client = self._client if self._connection_ready else None
         if client is None:
             return
         try:
