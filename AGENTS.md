@@ -27,8 +27,9 @@ Rules:
 - Before starting implementation, run `bd ready`.
 - Claim the task you are working on with `bd update <id> --claim`.
 - Record dependencies with `bd dep add`.
+- On a new clone or machine, run `bd hooks install` before relying on Beads auto import/export. The tracked hook scripts live under `.beads/hooks`, but the git `core.hooksPath` setting is clone-local.
 - Keep implementation tasks open through review and follow-up adjustments. Do not close them just because local code changes are done.
-- When a commit is the completion point, put the task IDs in a `Beads-Close:` commit trailer, for example `Beads-Close: txing-123 txing-123.1`; the repo `post-commit` hook closes those Beads issues after the commit succeeds.
+- When a commit is the completion point, put the task IDs in a `Beads-Close:` commit trailer, for example `Beads-Close: txing-123 txing-123.1`; the repo `post-commit` hook closes those Beads issues, exports `.beads/issues.jsonl`, and amends the just-created commit so code and exported Beads state land in the same final commit. Expect the commit SHA to change once during that automatic amend.
 - If no commit is being made yet, leave the Beads task open. For non-code/admin work with no commit, close the task manually in Beads with a short resolution note once the user confirms completion.
 - Keep Beads workflow rules centralized in this file. Subproject `AGENTS.md` files should reference these shared rules instead of duplicating them.
 - Keep `AGENTS.md` focused on stable instructions, not transient task lists.

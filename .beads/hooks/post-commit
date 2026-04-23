@@ -1,12 +1,21 @@
 #!/usr/bin/env sh
+set -eu
 
-# Close Beads issues only after a successful commit, and only when the
-# commit message explicitly names them via a Beads-Close trailer.
+# Close Beads issues named in a Beads-Close trailer, export the updated
+# JSONL state, and amend the just-created commit so code and issue state
+# land in the same final commit.
 #
 # Example:
 #   feat: wire rig endpoint autodiscovery
 #
 #   Beads-Close: txing-123 txing-123.1
+#
+# The amend changes the commit SHA once. Guard against recursively
+# re-entering the hook on the amend commit.
+
+if [ "${BEADS_POST_COMMIT_AMEND:-}" = "1" ]; then
+  exit 0
+fi
 
 if ! command -v bd >/dev/null 2>&1; then
   exit 0
@@ -49,12 +58,30 @@ if [ -z "$issue_ids" ]; then
   exit 0
 fi
 
-reason="Closed by commit $commit_sha"
-
 # shellcheck disable=SC2086
 set -- $issue_ids
-if ! bd close "$@" --reason "$reason"; then
+if ! bd close "$@" --reason "Closed by Beads-Close trailer"; then
   echo >&2 "beads: failed to close issue(s) from Beads-Close trailer on commit $commit_sha"
+  exit 0
+fi
+
+if ! bd export -o .beads/issues.jsonl; then
+  echo >&2 "beads: failed to export .beads/issues.jsonl after closing issue(s) for commit $commit_sha"
+  exit 0
+fi
+
+if ! git add .beads/issues.jsonl; then
+  echo >&2 "beads: failed to stage .beads/issues.jsonl after closing issue(s) for commit $commit_sha"
+  exit 0
+fi
+
+if git diff --cached --quiet -- .beads/issues.jsonl; then
+  exit 0
+fi
+
+# Avoid interactive signing prompts inside a post-commit hook.
+if ! BEADS_POST_COMMIT_AMEND=1 git -c commit.gpgsign=false commit --amend --no-edit --no-verify >/dev/null; then
+  echo >&2 "beads: failed to amend commit $commit_sha with exported Beads state"
 fi
 
 exit 0

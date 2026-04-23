@@ -53,6 +53,6 @@
 # - github.org
 # - github.repo
 
-export.git-add: false
+export.git-add: true
 
-export.auto: false
+export.auto: true
