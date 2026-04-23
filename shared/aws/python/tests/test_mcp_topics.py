@@ -78,7 +78,7 @@ class McpTopicsContractTests(unittest.TestCase):
     def test_builds_descriptor_payload(self) -> None:
         payload = build_mcp_descriptor_payload(
             device_id="unit-local",
-            server_version="0.2.0",
+            server_version="0.3.0",
             lease_ttl_ms=5000,
         )
         self.assertEqual(payload["serviceId"], "mcp")
@@ -112,7 +112,7 @@ class McpTopicsContractTests(unittest.TestCase):
     def test_builds_descriptor_payload_with_webrtc_transport_before_mqtt(self) -> None:
         payload = build_mcp_descriptor_payload(
             device_id="unit-local",
-            server_version="0.2.0",
+            server_version="0.3.0",
             lease_ttl_ms=5000,
             webrtc_channel_name="unit-local-board-video",
             webrtc_region="eu-central-1",

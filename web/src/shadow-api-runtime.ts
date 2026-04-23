@@ -1232,7 +1232,7 @@ class AwsIotShadowSession implements ShadowSession {
       capabilities: {},
       clientInfo: {
         name: 'txing-web',
-        version: '0.2.0',
+        version: '0.3.0',
       },
     })
     if (!isRecord(initializeResult)) {
