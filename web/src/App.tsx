@@ -1161,7 +1161,7 @@ function App({ initialAuthError = '' }: AppProps) {
                   <div className="status-name status-txing-name status-auth-name">TXING</div>
                 </div>
                 <div className="status-txing-header-side status-txing-header-side-end">
-                  <button type="button" onClick={() => void beginSignIn()} className="primary">
+                  <button type="button" onClick={() => void beginSignIn()} className="status-auth-link">
                     Sign in
                   </button>
                 </div>

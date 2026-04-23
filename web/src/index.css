@@ -878,6 +878,29 @@ h1 {
   padding-bottom: 1.1rem;
 }
 
+.status-txing-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.85rem;
+}
+
+.status-txing-header-side {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  justify-content: center;
+  min-width: 0;
+}
+
+.status-txing-header-side-start {
+  justify-content: flex-start;
+}
+
+.status-txing-header-side-end {
+  justify-content: flex-end;
+}
+
 .status-txing-title-group {
   --status-redcon-pair-gap: 4rem;
   --status-title-gap: 0.42rem;
@@ -905,6 +928,32 @@ h1 {
   display: inline-flex;
   align-items: center;
   gap: 0.85rem;
+}
+
+.status-auth-link {
+  padding: 0.15rem 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--accent);
+  font-size: 0.92rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-decoration: underline;
+  text-decoration-thickness: 0.08em;
+  text-underline-offset: 0.18em;
+}
+
+.status-auth-link:hover,
+.status-auth-link:focus-visible {
+  background: transparent;
+  color: #c8fcff;
+}
+
+.status-auth-link:focus-visible {
+  outline: 2px solid rgba(108, 238, 246, 0.32);
+  outline-offset: 0.25rem;
 }
 
 .status-auth-logo {
@@ -1840,6 +1889,12 @@ button:disabled {
     gap: 0.55rem;
   }
 
+  .status-txing-header {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    gap: 0.75rem;
+  }
+
   .status-txing-title-group {
     --status-redcon-pair-gap: 2.3rem;
     --status-title-gap: 0.3rem;
@@ -1884,6 +1939,25 @@ button:disabled {
   .status-last-shadow-update {
     min-width: 5rem;
     font-size: 0.68rem;
+  }
+
+  .status-auth-header {
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    justify-items: stretch;
+  }
+
+  .status-txing-header-side {
+    min-width: 0;
+  }
+
+  .status-txing-header-side-end {
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
+  .status-auth-header .status-txing-header-side-end {
+    justify-content: flex-end;
+    flex-wrap: nowrap;
   }
 
   .status-devices {
