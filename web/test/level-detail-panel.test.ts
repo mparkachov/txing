@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 import {
   formatCatalogDetailLine,
+  getAutoOpenDeviceDetailPanelState,
   getRouteDetailPanelOpenState,
-  shouldAutoOpenDeviceDetailPanel,
 } from '../src/level-detail-panel'
 
 describe('level detail panel helpers', () => {
@@ -23,42 +23,45 @@ describe('level detail panel helpers', () => {
     })
   })
 
-  test('auto-opens the device detail panel only when the active device reaches redcon 1', () => {
+  test('auto-opens the device detail panel and board video only when the active device reaches redcon 1', () => {
     expect(
-      shouldAutoOpenDeviceDetailPanel({
+      getAutoOpenDeviceDetailPanelState({
         route: { kind: 'device', town: 'berlin', rig: 'alpha', device: 'unit-a1' },
         hasActiveSession: true,
         previousRedcon: 2,
         nextRedcon: 1,
       }),
-    ).toBe(true)
+    ).toEqual({
+      isBotPanelOpen: true,
+      isBoardVideoExpanded: true,
+    })
 
     expect(
-      shouldAutoOpenDeviceDetailPanel({
+      getAutoOpenDeviceDetailPanelState({
         route: { kind: 'device', town: 'berlin', rig: 'alpha', device: 'unit-a1' },
         hasActiveSession: true,
         previousRedcon: 1,
         nextRedcon: 1,
       }),
-    ).toBe(false)
+    ).toBeNull()
 
     expect(
-      shouldAutoOpenDeviceDetailPanel({
+      getAutoOpenDeviceDetailPanelState({
         route: { kind: 'device_video', town: 'berlin', rig: 'alpha', device: 'unit-a1' },
         hasActiveSession: true,
         previousRedcon: 2,
         nextRedcon: 1,
       }),
-    ).toBe(false)
+    ).toBeNull()
 
     expect(
-      shouldAutoOpenDeviceDetailPanel({
+      getAutoOpenDeviceDetailPanelState({
         route: { kind: 'device', town: 'berlin', rig: 'alpha', device: 'unit-a1' },
         hasActiveSession: false,
         previousRedcon: 2,
         nextRedcon: 1,
       }),
-    ).toBe(false)
+    ).toBeNull()
   })
 
   test('formats catalog detail lines as short-id then name when available', () => {

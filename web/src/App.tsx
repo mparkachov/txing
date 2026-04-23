@@ -61,9 +61,10 @@ import { appConfig } from './config'
 import DebugPanel from './DebugPanel'
 import {
   formatCatalogDetailLine,
+  getAutoOpenDeviceDetailPanelState,
   getRouteDetailPanelOpenState,
-  shouldAutoOpenDeviceDetailPanel,
 } from './level-detail-panel'
+import { isExpectedMcpTeardownError } from './mcp-errors'
 import { getMcpSteadyMotionHeartbeatIntervalMs } from './mcp-lease'
 import NotificationLogPanel from './NotificationLogPanel'
 import NotificationTray from './NotificationTray'
@@ -941,15 +942,15 @@ function App({ initialAuthError = '' }: AppProps) {
   }, [currentNotificationObjectId, enqueueNotification, robotVideoLastError])
 
   useEffect(() => {
-    if (
-      shouldAutoOpenDeviceDetailPanel({
-        route,
-        hasActiveSession: activeSessionRoute !== null,
-        previousRedcon: previousReportedRedconRef.current,
-        nextRedcon: reportedRedcon,
-      })
-    ) {
-      setIsBotPanelOpen(true)
+    const nextAutoOpenDeviceDetailPanelState = getAutoOpenDeviceDetailPanelState({
+      route,
+      hasActiveSession: activeSessionRoute !== null,
+      previousRedcon: previousReportedRedconRef.current,
+      nextRedcon: reportedRedcon,
+    })
+    if (nextAutoOpenDeviceDetailPanelState) {
+      setIsBotPanelOpen(nextAutoOpenDeviceDetailPanelState.isBotPanelOpen)
+      setIsBoardVideoExpanded(nextAutoOpenDeviceDetailPanelState.isBoardVideoExpanded)
     }
     previousReportedRedconRef.current = reportedRedcon
   }, [activeSessionRoute, reportedRedcon, route])
@@ -981,6 +982,12 @@ function App({ initialAuthError = '' }: AppProps) {
     try {
       await shadowSession.requestRobotState()
     } catch (caughtError) {
+      if (
+        (!canUseBoardVideo || !isBoardVideoExpanded || !isShadowConnected) &&
+        isExpectedMcpTeardownError(caughtError)
+      ) {
+        return
+      }
       enqueueRuntimeError(
         caughtError instanceof Error ? caughtError.message : 'Unable to read robot state',
         'robot-state',

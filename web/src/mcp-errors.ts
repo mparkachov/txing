@@ -19,3 +19,14 @@ export const isRecoverableMcpLeaseError = (error: unknown): boolean =>
 
 export const isMcpSessionNotInitializedError = (error: unknown): boolean =>
   getMessage(error).toLowerCase().includes('mcp session is not initialized')
+
+export const isMcpServiceUnavailableError = (error: unknown): boolean =>
+  getMessage(error).toLowerCase().includes('mcp service is currently unavailable')
+
+export const isMcpRequestTimeoutError = (error: unknown): boolean =>
+  getMessage(error).toLowerCase().includes('timed out waiting for mcp response')
+
+export const isExpectedMcpTeardownError = (error: unknown): boolean =>
+  isMcpSessionNotInitializedError(error) ||
+  isMcpServiceUnavailableError(error) ||
+  isMcpRequestTimeoutError(error)

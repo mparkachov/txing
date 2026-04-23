@@ -5,6 +5,11 @@ export type RouteDetailPanelOpenState = {
   isRigPanelOpen: boolean
 }
 
+export type DeviceDetailPanelOpenState = {
+  isBotPanelOpen: boolean
+  isBoardVideoExpanded: boolean
+}
+
 export const getRouteDetailPanelOpenState = (
   route: AppRoute,
 ): RouteDetailPanelOpenState => ({
@@ -12,7 +17,7 @@ export const getRouteDetailPanelOpenState = (
   isRigPanelOpen: route.kind === 'rig',
 })
 
-export const shouldAutoOpenDeviceDetailPanel = ({
+export const getAutoOpenDeviceDetailPanelState = ({
   hasActiveSession,
   nextRedcon,
   previousRedcon,
@@ -22,11 +27,21 @@ export const shouldAutoOpenDeviceDetailPanel = ({
   nextRedcon: number | null
   previousRedcon: number | null
   route: AppRoute
-}): boolean =>
-  route.kind === 'device' &&
-  hasActiveSession &&
-  previousRedcon !== 1 &&
-  nextRedcon === 1
+}): DeviceDetailPanelOpenState | null => {
+  if (
+    route.kind !== 'device' ||
+    !hasActiveSession ||
+    previousRedcon === 1 ||
+    nextRedcon !== 1
+  ) {
+    return null
+  }
+
+  return {
+    isBotPanelOpen: true,
+    isBoardVideoExpanded: true,
+  }
+}
 
 export const formatCatalogDetailLine = (
   shortId: string | null | undefined,
