@@ -118,3 +118,8 @@ export const selectPreferredMcpWebRtcTransport = (
     (transport): transport is McpWebRtcTransportDescriptor =>
       transport.type === 'webrtc-datachannel',
   ) ?? null
+
+export const shouldAwaitInitialMcpDescriptor = (
+  descriptor: McpDescriptor | null,
+  available: boolean | null,
+): boolean => descriptor === null && available !== false

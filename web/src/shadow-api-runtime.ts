@@ -18,6 +18,7 @@ import {
 import { getMcpLeaseRenewBeforeMs } from './mcp-lease'
 import {
   parseMcpDescriptor,
+  shouldAwaitInitialMcpDescriptor,
   selectPreferredMcpWebRtcTransport,
   type McpDescriptor,
   type McpTransportKind,
@@ -70,6 +71,7 @@ const forbiddenRetryDelaysMs = [500, 1000, 2000]
 const initialSnapshotTimeoutMs = 20_000
 const mcpRequestTimeoutMs = 8_000
 const mcpWebRtcOpenTimeoutMs = 20_000
+const initialMcpDescriptorWaitTimeoutMs = 2_000
 
 export type ShadowConnectionState = 'idle' | 'connecting' | 'connected' | 'error'
 type ResolveIdToken = () => Promise<string>
@@ -610,6 +612,7 @@ class AwsIotShadowSession implements ShadowSession {
   private mcpWebRtcHandle: McpDataChannelHandle | null = null
   private mcpSessionReadyPromise: Promise<void> | null = null
   private mcpWebRtcUnavailable = false
+  private readonly mcpDescriptorWaiters = new Set<(descriptor: McpDescriptor | null) => void>()
   private readonly cmdVelPublisher: LatestAsyncValueRunner<Twist>
   private readonly handleAttemptingConnect = (): void => {
     if (this.closed) {
@@ -1019,6 +1022,7 @@ class AwsIotShadowSession implements ShadowSession {
       const descriptor = parseMcpDescriptor(parsed)
       if (descriptor) {
         this.mcpDescriptor = descriptor
+        this.resolveMcpDescriptorWaiters()
       }
       if (isRecord(parsed) && typeof parsed.descriptorTopic === 'string' && parsed.descriptorTopic.trim()) {
         this.mcpDiscovery.descriptorTopic = parsed.descriptorTopic
@@ -1262,6 +1266,10 @@ class AwsIotShadowSession implements ShadowSession {
       return
     }
 
+    if (shouldAwaitInitialMcpDescriptor(this.mcpDescriptor, this.mcpDiscovery.available)) {
+      await this.waitForMcpDescriptor(initialMcpDescriptorWaitTimeoutMs)
+    }
+
     const webRtcTransport = this.mcpWebRtcUnavailable
       ? null
       : selectPreferredMcpWebRtcTransport(this.mcpDescriptor)
@@ -1331,11 +1339,43 @@ class AwsIotShadowSession implements ShadowSession {
   }
 
   private async warmUpMcpSession(): Promise<void> {
+    if (shouldAwaitInitialMcpDescriptor(this.mcpDescriptor, this.mcpDiscovery.available)) {
+      return
+    }
     try {
       await this.ensureMcpSessionReady()
     } catch {
       return
     }
+  }
+
+  private resolveMcpDescriptorWaiters(): void {
+    for (const waiter of [...this.mcpDescriptorWaiters]) {
+      this.mcpDescriptorWaiters.delete(waiter)
+      waiter(this.mcpDescriptor)
+    }
+  }
+
+  private async waitForMcpDescriptor(timeoutMs: number): Promise<McpDescriptor | null> {
+    if (this.mcpDescriptor) {
+      return this.mcpDescriptor
+    }
+
+    return new Promise<McpDescriptor | null>((resolve) => {
+      let timeoutId: number | null = null
+      const resolveWithCurrentDescriptor = (): void => {
+        if (timeoutId !== null) {
+          window.clearTimeout(timeoutId)
+        }
+        this.mcpDescriptorWaiters.delete(resolveWithCurrentDescriptor)
+        resolve(this.mcpDescriptor)
+      }
+
+      if (timeoutMs > 0) {
+        timeoutId = window.setTimeout(resolveWithCurrentDescriptor, timeoutMs)
+      }
+      this.mcpDescriptorWaiters.add(resolveWithCurrentDescriptor)
+    })
   }
 
   private async releaseMcpControlBestEffort(): Promise<void> {

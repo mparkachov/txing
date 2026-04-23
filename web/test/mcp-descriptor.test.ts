@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import {
   mcpWebRtcDataChannelLabel,
   parseMcpDescriptor,
+  shouldAwaitInitialMcpDescriptor,
   selectPreferredMcpWebRtcTransport,
 } from '../src/mcp-descriptor'
 
@@ -84,5 +85,28 @@ describe('MCP descriptor transport parsing', () => {
         priority: 100,
       },
     ])
+  })
+
+  test('waits for the initial descriptor before choosing a fallback transport', () => {
+    expect(shouldAwaitInitialMcpDescriptor(null, null)).toBe(true)
+    expect(shouldAwaitInitialMcpDescriptor(null, true)).toBe(true)
+    expect(shouldAwaitInitialMcpDescriptor(null, false)).toBe(false)
+    expect(
+      shouldAwaitInitialMcpDescriptor(
+        parseMcpDescriptor({
+          leaseTtlMs: 5000,
+          transports: [
+            {
+              type: 'webrtc-datachannel',
+              priority: 10,
+              signaling: 'aws-kvs',
+              channelName: 'unit-local-board-video',
+              region: 'eu-central-1',
+            },
+          ],
+        }),
+        true,
+      ),
+    ).toBe(false)
   })
 })
