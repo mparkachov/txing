@@ -58,6 +58,7 @@ function VideoPanel({
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const remoteStreamRef = useRef<MediaStream | null>(null)
   const activeStreamTokenRef = useRef(0)
+  const lastReportedRuntimeErrorRef = useRef<string | null>(null)
   const [viewerState, dispatchViewerUiEvent] = useReducer(
     reduceViewerUiState,
     initialViewerUiState,
@@ -74,6 +75,9 @@ function VideoPanel({
     console.info('[device-video-ui]', message, details)
   })
   const resolveIdTokenForViewer = useEffectEvent(async (): Promise<string> => resolveIdToken())
+  const reportRuntimeError = useEffectEvent((message: string): void => {
+    onRuntimeError?.(message)
+  })
   const drawCanvasSource = useEffectEvent((
     source: CanvasImageSource,
     sourceWidth: number,
@@ -166,10 +170,15 @@ function VideoPanel({
 
   useEffect(() => {
     if (viewerState.status !== 'error' || !viewerState.error) {
+      lastReportedRuntimeErrorRef.current = null
       return
     }
-    onRuntimeError?.(viewerState.error)
-  }, [onRuntimeError, viewerState.error, viewerState.status])
+    if (lastReportedRuntimeErrorRef.current === viewerState.error) {
+      return
+    }
+    lastReportedRuntimeErrorRef.current = viewerState.error
+    reportRuntimeError(viewerState.error)
+  }, [viewerState.error, viewerState.status])
 
   useEffect(() => {
     let cancelled = false

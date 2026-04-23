@@ -8,6 +8,7 @@ describe('txing panel', () => {
       <TxingPanel
         isBoardVideoExpanded={true}
         isDebugEnabled={false}
+        mcpTransport="webrtc-datachannel"
         onToggleDebug={() => {}}
         reportedBatteryMv={3960}
         reportedBoardLeftTrackSpeed={60}
@@ -23,6 +24,9 @@ describe('txing panel', () => {
     expect(markup).toContain('BOT')
     expect(markup).toContain('status-video-overlay')
     expect(markup).toContain('status-video-debug-button')
+    expect(markup).toContain('status-mcp-transport-webrtc')
+    expect(markup).toContain('data-mcp-transport="webrtc-datachannel"')
+    expect(markup).toContain('aria-label="MCP over WebRTC data channel"')
     expect(markup).toContain('aria-label="Enable Debug"')
     expect(markup).toContain('data-track-side="left"')
     expect(markup).toContain('data-track-speed="60"')

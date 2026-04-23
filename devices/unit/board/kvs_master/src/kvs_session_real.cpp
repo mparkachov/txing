@@ -101,6 +101,25 @@ std::optional<std::string> ExtractJsonStringField(std::string_view json, std::st
     return std::nullopt;
 }
 
+bool HasJsonField(std::string_view json, std::string_view key) {
+    const std::string quoted_key = std::string("\"") + std::string(key) + "\"";
+    const std::size_t key_position = json.find(quoted_key);
+    if (key_position == std::string_view::npos) {
+        return false;
+    }
+
+    std::size_t cursor = json.find(':', key_position + quoted_key.size());
+    if (cursor == std::string_view::npos) {
+        return false;
+    }
+
+    ++cursor;
+    while (cursor < json.size() && std::isspace(static_cast<unsigned char>(json[cursor])) != 0) {
+        ++cursor;
+    }
+    return cursor < json.size();
+}
+
 std::string EscapeJsonString(std::string_view value) {
     std::string escaped;
     escaped.reserve(value.size() + 8);
@@ -845,6 +864,9 @@ class RealKvsSession final : public KvsSession {
         if (!WriteAll(session->mcp_ipc_fd, request_frame)) {
             ::close(session->mcp_ipc_fd);
             session->mcp_ipc_fd = -1;
+            return std::nullopt;
+        }
+        if (!HasJsonField(payload, "id")) {
             return std::nullopt;
         }
         const auto response_line = ReadLine(session->mcp_ipc_fd);

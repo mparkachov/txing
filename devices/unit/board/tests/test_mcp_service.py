@@ -168,11 +168,6 @@ class BoardMcpServerTests(unittest.TestCase):
         _send_rpc(
             server=server,
             session_id=session_id,
-            payload={"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
-        )
-        _send_rpc(
-            server=server,
-            session_id=session_id,
             payload={"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
         )
         tools_response = _latest_s2c_payload(client, session_id)

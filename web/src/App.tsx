@@ -65,6 +65,7 @@ import {
   getRouteDetailPanelOpenState,
 } from './level-detail-panel'
 import { isExpectedMcpTeardownError } from './mcp-errors'
+import type { McpTransportKind } from './mcp-descriptor'
 import { getMcpSteadyMotionHeartbeatIntervalMs } from './mcp-lease'
 import NavigationUserMenu from './NavigationUserMenu'
 import NotificationLogPanel from './NotificationLogPanel'
@@ -166,6 +167,7 @@ function App({ initialAuthError = '' }: AppProps) {
   const [sparkplugReportedBatteryMv, setSparkplugReportedBatteryMv] = useState<number | null>(null)
   const [sparkplugReportedRedcon, setSparkplugReportedRedcon] = useState<number | null>(null)
   const [robotState, setRobotState] = useState<RobotState | null>(null)
+  const [mcpTransport, setMcpTransport] = useState<McpTransportKind | null>(null)
   const [lastShadowUpdateAtMs, setLastShadowUpdateAtMs] = useState<number | null>(null)
   const [isLoadingShadow, setIsLoadingShadow] = useState(false)
   const [isUpdatingShadow, setIsUpdatingShadow] = useState(false)
@@ -689,6 +691,7 @@ function App({ initialAuthError = '' }: AppProps) {
     setSparkplugReportedRedcon(null)
     setPendingTargetRedcon(null)
     setRobotState(null)
+    setMcpTransport(null)
     setLastShadowUpdateAtMs(null)
     setIsLoadingShadow(true)
     setIsUpdatingShadow(false)
@@ -732,6 +735,11 @@ function App({ initialAuthError = '' }: AppProps) {
           onRobotStateChange: (nextRobotState) => {
             if (!cancelled) {
               setRobotState(nextRobotState)
+            }
+          },
+          onMcpTransportChange: (nextTransport) => {
+            if (!cancelled) {
+              setMcpTransport(nextTransport)
             }
           },
           onConnectionStateChange: (nextState) => {
@@ -1351,6 +1359,7 @@ function App({ initialAuthError = '' }: AppProps) {
       <TxingPanel
         isBoardVideoExpanded={isBoardVideoExpanded}
         isDebugEnabled={isDebugEnabled}
+        mcpTransport={mcpTransport}
         onToggleDebug={() => {
           setIsDebugEnabled((currentValue) => !currentValue)
         }}

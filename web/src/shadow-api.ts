@@ -1,4 +1,5 @@
 import type { Twist } from './cmd-vel'
+import type { McpTransportKind } from './mcp-descriptor'
 import type { SparkplugRedconSource } from './sparkplug-device-redcon'
 
 export type ShadowConnectionState = 'idle' | 'connecting' | 'connected' | 'error'
@@ -42,6 +43,7 @@ export type ShadowSessionOptions = {
   onSparkplugBatteryMvChange: (batteryMv: number) => void
   onSparkplugRedconChange: (redcon: number, source: SparkplugRedconSource) => void
   onRobotStateChange: (state: RobotState | null) => void
+  onMcpTransportChange: (transport: McpTransportKind | null) => void
   onConnectionStateChange: (state: ShadowConnectionState) => void
   onError: (message: string) => void
 }

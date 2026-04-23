@@ -1,9 +1,11 @@
 import { getTrackIndicatorPresentation } from './app-model'
 import VideoPanel from '../../../web/src/VideoPanel'
+import type { McpTransportKind } from '../../../web/src/mcp-descriptor'
 
 type TxingPanelProps = {
   isBoardVideoExpanded: boolean
   isDebugEnabled: boolean
+  mcpTransport: McpTransportKind | null
   reportedBatteryMv: number | null
   reportedBoardLeftTrackSpeed: number | null
   reportedBoardOnline: boolean | null
@@ -178,9 +180,69 @@ function DebugGlyph() {
   )
 }
 
+function McpTransportGlyph({ transport }: { transport: McpTransportKind | null }) {
+  const label =
+    transport === 'webrtc-datachannel'
+      ? 'MCP over WebRTC data channel'
+      : transport === 'mqtt-jsonrpc'
+        ? 'MCP over MQTT JSON-RPC'
+        : 'MCP transport pending'
+  const toneClass =
+    transport === 'webrtc-datachannel'
+      ? 'status-mcp-transport-webrtc'
+      : transport === 'mqtt-jsonrpc'
+        ? 'status-mcp-transport-mqtt'
+        : 'status-mcp-transport-pending'
+
+  return (
+    <span
+      className={`status-mcp-transport ${toneClass}`}
+      role="img"
+      aria-label={label}
+      title={label}
+      data-mcp-transport={transport ?? 'pending'}
+    >
+      <svg
+        className="status-mcp-transport-glyph"
+        viewBox="0 0 24 24"
+        aria-hidden="true"
+        focusable="false"
+      >
+        {transport === 'mqtt-jsonrpc' ? (
+          <>
+            <path
+              d="M7 9.2a7.5 7.5 0 0 1 10 0M9.7 12a3.8 3.8 0 0 1 4.6 0"
+              fill="none"
+              stroke="currentColor"
+              strokeLinecap="round"
+              strokeWidth="2"
+            />
+            <path d="M12 16.4h.01" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="3" />
+          </>
+        ) : (
+          <>
+            <path
+              d="M8.2 8.4h7.6M8.2 15.6h7.6"
+              fill="none"
+              stroke="currentColor"
+              strokeLinecap="round"
+              strokeWidth="2"
+            />
+            <circle cx="6" cy="8.4" r="1.8" fill="currentColor" />
+            <circle cx="18" cy="8.4" r="1.8" fill="currentColor" />
+            <circle cx="6" cy="15.6" r="1.8" fill="currentColor" />
+            <circle cx="18" cy="15.6" r="1.8" fill="currentColor" />
+          </>
+        )}
+      </svg>
+    </span>
+  )
+}
+
 function TxingPanel({
   isBoardVideoExpanded,
   isDebugEnabled,
+  mcpTransport,
   reportedBatteryMv,
   reportedBoardLeftTrackSpeed,
   reportedBoardOnline,
@@ -210,6 +272,7 @@ function TxingPanel({
         >
           <DebugGlyph />
         </button>
+        <McpTransportGlyph transport={mcpTransport} />
       </div>
       <div className="status-video-overlay-lockup">
         <div className="status-txing-title-group" role="group" aria-label="Bot drive indicators">

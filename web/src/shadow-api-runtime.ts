@@ -69,7 +69,7 @@ import {
 const forbiddenRetryDelaysMs = [500, 1000, 2000]
 const initialSnapshotTimeoutMs = 20_000
 const mcpRequestTimeoutMs = 8_000
-const mcpWebRtcOpenTimeoutMs = 5_000
+const mcpWebRtcOpenTimeoutMs = 20_000
 
 export type ShadowConnectionState = 'idle' | 'connecting' | 'connected' | 'error'
 type ResolveIdToken = () => Promise<string>
@@ -117,6 +117,7 @@ export type ShadowSessionOptions = {
   onSparkplugBatteryMvChange: (batteryMv: number) => void
   onSparkplugRedconChange: (redcon: number, source: SparkplugRedconSource) => void
   onRobotStateChange: (state: RobotState | null) => void
+  onMcpTransportChange: (transport: McpTransportKind | null) => void
   onConnectionStateChange: (state: ShadowConnectionState) => void
   onError: (message: string) => void
 }
@@ -607,6 +608,7 @@ class AwsIotShadowSession implements ShadowSession {
   private mcpInitialized = false
   private activeMcpTransport: McpTransportKind | null = null
   private mcpWebRtcHandle: McpDataChannelHandle | null = null
+  private mcpSessionReadyPromise: Promise<void> | null = null
   private mcpWebRtcUnavailable = false
   private readonly cmdVelPublisher: LatestAsyncValueRunner<Twist>
   private readonly handleAttemptingConnect = (): void => {
@@ -749,11 +751,30 @@ class AwsIotShadowSession implements ShadowSession {
       return this.latestRobotState
     }
     await this.ensureMcpSessionReady()
-    const robotState = parseRobotState(await this.callMcpTool('robot.get_state', {}))
+    const robotState = await this.fetchRobotStateWithSessionRetry()
+    this.setLatestRobotState(robotState)
+    return robotState
+  }
+
+  private async fetchRobotStateWithSessionRetry(): Promise<RobotState> {
+    try {
+      return this.parseRobotStateResult(await this.callMcpTool('robot.get_state', {}))
+    } catch (caughtError) {
+      if (!isMcpSessionNotInitializedError(caughtError)) {
+        throw caughtError
+      }
+      this.mcpInitialized = false
+      this.mcpSessionReadyPromise = null
+      await this.ensureMcpSessionReady()
+      return this.parseRobotStateResult(await this.callMcpTool('robot.get_state', {}))
+    }
+  }
+
+  private parseRobotStateResult(result: unknown): RobotState {
+    const robotState = parseRobotState(result)
     if (!robotState) {
       throw new Error('MCP robot.get_state returned an invalid payload')
     }
-    this.setLatestRobotState(robotState)
     return robotState
   }
 
@@ -1102,6 +1123,14 @@ class AwsIotShadowSession implements ShadowSession {
     this.options.onRobotStateChange(nextState)
   }
 
+  private setActiveMcpTransport(nextTransport: McpTransportKind | null): void {
+    if (this.activeMcpTransport === nextTransport) {
+      return
+    }
+    this.activeMcpTransport = nextTransport
+    this.options.onMcpTransportChange(nextTransport)
+  }
+
   private buildLocalRobotControlState(
     leaseExpiresAtMs: number | null,
     leaseHeldByCaller: boolean,
@@ -1183,6 +1212,20 @@ class AwsIotShadowSession implements ShadowSession {
       return
     }
 
+    if (!this.mcpSessionReadyPromise) {
+      const readyPromise = this.initializeMcpSession()
+      this.mcpSessionReadyPromise = readyPromise
+      void readyPromise.finally(() => {
+        if (this.mcpSessionReadyPromise === readyPromise) {
+          this.mcpSessionReadyPromise = null
+        }
+      }).catch(() => undefined)
+    }
+
+    await this.mcpSessionReadyPromise
+  }
+
+  private async initializeMcpSession(): Promise<void> {
     await this.ensureMcpTransportReady()
     const initializeResult = await this.publishMcpRequest('initialize', {
       protocolVersion: this.mcpDiscovery.mcpProtocolVersion ?? '2025-11-25',
@@ -1195,8 +1238,23 @@ class AwsIotShadowSession implements ShadowSession {
     if (!isRecord(initializeResult)) {
       throw new Error('MCP initialize returned an invalid result payload')
     }
-    await this.publishMcpNotification('notifications/initialized', {})
+    await this.confirmMcpSessionInitialized()
     this.mcpInitialized = true
+  }
+
+  private async confirmMcpSessionInitialized(): Promise<void> {
+    try {
+      await this.publishMcpRequest('tools/list', {})
+    } catch (caughtError) {
+      if (!isMcpSessionNotInitializedError(caughtError)) {
+        throw caughtError
+      }
+      if (this.activeMcpTransport !== 'mqtt-jsonrpc') {
+        throw caughtError
+      }
+      await this.publishMcpNotification('notifications/initialized', {})
+      await this.publishMcpRequest('tools/list', {})
+    }
   }
 
   private async ensureMcpTransportReady(): Promise<void> {
@@ -1222,7 +1280,7 @@ class AwsIotShadowSession implements ShadowSession {
         }
         this.mcpWebRtcHandle = handle
         this.mcpSessionId = handle.sessionId
-        this.activeMcpTransport = 'webrtc-datachannel'
+        this.setActiveMcpTransport('webrtc-datachannel')
         return
       } catch {
         this.mcpWebRtcUnavailable = true
@@ -1255,7 +1313,7 @@ class AwsIotShadowSession implements ShadowSession {
       } as mqtt5.SubscribePacket,
     )
     this.mcpSessionSubscribed = true
-    this.activeMcpTransport = 'mqtt-jsonrpc'
+    this.setActiveMcpTransport('mqtt-jsonrpc')
   }
 
   private async ensureMcpLease(): Promise<McpLeaseState> {
@@ -1568,20 +1626,22 @@ class AwsIotShadowSession implements ShadowSession {
     this.closeMcpWebRtcHandle()
     this.mcpLease = null
     this.mcpInitialized = false
+    this.mcpSessionReadyPromise = null
     this.mcpSessionSubscribed = false
     this.mcpSessionId = null
-    this.activeMcpTransport = null
+    this.setActiveMcpTransport(null)
     this.setLatestRobotState(null)
     this.cmdVelPublisher.clear()
   }
 
   private resetMcpConnectionState(): void {
     this.closeMcpWebRtcHandle()
+    this.mcpSessionReadyPromise = null
     this.mcpLease = null
     this.mcpInitialized = false
     this.mcpSessionSubscribed = false
     this.mcpSessionId = null
-    this.activeMcpTransport = null
+    this.setActiveMcpTransport(null)
     this.mcpWebRtcUnavailable = false
     this.mcpRequestSeq = 0
     this.setLatestRobotState(null)

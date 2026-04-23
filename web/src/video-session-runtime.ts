@@ -58,7 +58,8 @@ export type McpDataChannelHandle = {
   close: () => void
 }
 
-type EndpointMap = Partial<Record<'HTTPS' | 'WSS', string>>
+export type EndpointMap = Partial<Record<'HTTPS' | 'WSS', string>>
+export type ResolvedEndpointMap = Record<'HTTPS' | 'WSS', string>
 type SignalingCredentials = {
   accessKeyId: string
   secretAccessKey: string
@@ -67,6 +68,24 @@ type SignalingCredentials = {
 type InboundVideoStats = RTCInboundRtpStreamStats & {
   mediaType?: string
 }
+export type KvsSignalingMetadata = {
+  channelArn: string
+  endpoints: ResolvedEndpointMap
+}
+type KvsSignalingMetadataCacheEntry = {
+  metadata: KvsSignalingMetadata
+  expiresAtMs: number
+}
+type KvsSignalingMetadataFailureEntry = {
+  error: Error
+  retryAtMs: number
+}
+
+const kvsSignalingMetadataCacheTtlMs = 5 * 60_000
+const kvsSignalingMetadataFailureCooldownMs = 60_000
+const kvsSignalingMetadataCache = new Map<string, KvsSignalingMetadataCacheEntry>()
+const kvsSignalingMetadataFailures = new Map<string, KvsSignalingMetadataFailureEntry>()
+const pendingKvsSignalingMetadataLoads = new Map<string, Promise<KvsSignalingMetadata>>()
 
 const extractCandidateType = (candidate: string): string | null => {
   const match = / typ ([a-z]+)/.exec(candidate)
@@ -141,6 +160,122 @@ const getErrorMessage = (error: unknown, fallback = 'Board video viewer failed')
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
+const getKvsSignalingMetadataCacheKey = (region: string, channelName: string): string =>
+  `${region}\u0000${channelName}`
+
+const toError = (error: unknown, fallback: string): Error =>
+  error instanceof Error ? error : new Error(fallback)
+
+export const clearKvsSignalingMetadataCacheForTests = (): void => {
+  kvsSignalingMetadataCache.clear()
+  kvsSignalingMetadataFailures.clear()
+  pendingKvsSignalingMetadataLoads.clear()
+}
+
+export const resolveCachedKvsSignalingMetadata = async ({
+  channelName,
+  region,
+  loadMetadata,
+  nowMs = () => Date.now(),
+}: {
+  channelName: string
+  region: string
+  loadMetadata: () => Promise<KvsSignalingMetadata>
+  nowMs?: () => number
+}): Promise<KvsSignalingMetadata> => {
+  const cacheKey = getKvsSignalingMetadataCacheKey(region, channelName)
+  const now = nowMs()
+  const cachedMetadata = kvsSignalingMetadataCache.get(cacheKey)
+  if (cachedMetadata && cachedMetadata.expiresAtMs > now) {
+    return cachedMetadata.metadata
+  }
+
+  const cachedFailure = kvsSignalingMetadataFailures.get(cacheKey)
+  if (cachedFailure && cachedFailure.retryAtMs > now) {
+    throw cachedFailure.error
+  }
+
+  const pendingLoad = pendingKvsSignalingMetadataLoads.get(cacheKey)
+  if (pendingLoad) {
+    return pendingLoad
+  }
+
+  const loadPromise = Promise.resolve()
+    .then(loadMetadata)
+    .then((metadata) => {
+      kvsSignalingMetadataCache.set(cacheKey, {
+        metadata,
+        expiresAtMs: nowMs() + kvsSignalingMetadataCacheTtlMs,
+      })
+      kvsSignalingMetadataFailures.delete(cacheKey)
+      return metadata
+    })
+    .catch((caughtError: unknown) => {
+      const error = toError(
+        caughtError,
+        `Unable to resolve KVS signaling channel ${channelName}`,
+      )
+      kvsSignalingMetadataFailures.set(cacheKey, {
+        error,
+        retryAtMs: nowMs() + kvsSignalingMetadataFailureCooldownMs,
+      })
+      throw error
+    })
+    .finally(() => {
+      pendingKvsSignalingMetadataLoads.delete(cacheKey)
+    })
+
+  pendingKvsSignalingMetadataLoads.set(cacheKey, loadPromise)
+  return loadPromise
+}
+
+const resolveKvsSignalingMetadata = async ({
+  channelName,
+  region,
+  kinesisVideoClient,
+}: {
+  channelName: string
+  region: string
+  kinesisVideoClient: KinesisVideoClient
+}): Promise<KvsSignalingMetadata> =>
+  resolveCachedKvsSignalingMetadata({
+    channelName,
+    region,
+    loadMetadata: async () => {
+      const describeResponse = await kinesisVideoClient.send(
+        new DescribeSignalingChannelCommand({
+          ChannelName: channelName,
+        }),
+      )
+      const channelArn = describeResponse.ChannelInfo?.ChannelARN
+      if (!channelArn) {
+        throw new Error(`KVS signaling channel ${channelName} was not found`)
+      }
+
+      const endpointResponse = await kinesisVideoClient.send(
+        new GetSignalingChannelEndpointCommand({
+          ChannelARN: channelArn,
+          SingleMasterChannelEndpointConfiguration: {
+            Protocols: [ChannelProtocol.WSS, ChannelProtocol.HTTPS],
+            Role: 'VIEWER',
+          },
+        }),
+      )
+      const endpoints = mapSignalingEndpoints(endpointResponse.ResourceEndpointList)
+      if (!endpoints.HTTPS || !endpoints.WSS) {
+        throw new Error(`KVS signaling channel ${channelName} did not return HTTPS and WSS endpoints`)
+      }
+
+      return {
+        channelArn,
+        endpoints: {
+          HTTPS: endpoints.HTTPS,
+          WSS: endpoints.WSS,
+        },
+      }
+    },
+  })
+
 export const startBoardVideoViewerRuntime = async (
   options: StartVideoViewerOptions,
 ): Promise<VideoViewerHandle> => {
@@ -171,31 +306,12 @@ export const startBoardVideoViewerRuntime = async (
     region: options.region,
     credentials: credentialProvider,
   })
-  const describeResponse = await kinesisVideoClient.send(
-    new DescribeSignalingChannelCommand({
-      ChannelName: options.channelName,
-    }),
-  )
-  const channelArn = describeResponse.ChannelInfo?.ChannelARN
-  if (!channelArn) {
-    throw new Error(`KVS signaling channel ${options.channelName} was not found`)
-  }
-  logVideoDebug('signaling channel described', { channelArn })
-
-  const endpointResponse = await kinesisVideoClient.send(
-    new GetSignalingChannelEndpointCommand({
-      ChannelARN: channelArn,
-      SingleMasterChannelEndpointConfiguration: {
-        Protocols: [ChannelProtocol.WSS, ChannelProtocol.HTTPS],
-        Role: 'VIEWER',
-      },
-    }),
-  )
-  const endpoints = mapSignalingEndpoints(endpointResponse.ResourceEndpointList)
-  if (!endpoints.HTTPS || !endpoints.WSS) {
-    throw new Error(`KVS signaling channel ${options.channelName} did not return HTTPS and WSS endpoints`)
-  }
-  logVideoDebug('signaling endpoints resolved', endpoints)
+  const { channelArn, endpoints } = await resolveKvsSignalingMetadata({
+    channelName: options.channelName,
+    region: options.region,
+    kinesisVideoClient,
+  })
+  logVideoDebug('signaling metadata resolved', { channelArn, endpoints })
 
   const signalingApiClient = new KinesisVideoSignalingClient({
     region: options.region,
@@ -456,29 +572,11 @@ export const startBoardMcpDataChannelRuntime = async (
     region: options.region,
     credentials: credentialProvider,
   })
-  const describeResponse = await kinesisVideoClient.send(
-    new DescribeSignalingChannelCommand({
-      ChannelName: options.channelName,
-    }),
-  )
-  const channelArn = describeResponse.ChannelInfo?.ChannelARN
-  if (!channelArn) {
-    throw new Error(`KVS signaling channel ${options.channelName} was not found`)
-  }
-
-  const endpointResponse = await kinesisVideoClient.send(
-    new GetSignalingChannelEndpointCommand({
-      ChannelARN: channelArn,
-      SingleMasterChannelEndpointConfiguration: {
-        Protocols: [ChannelProtocol.WSS, ChannelProtocol.HTTPS],
-        Role: 'VIEWER',
-      },
-    }),
-  )
-  const endpoints = mapSignalingEndpoints(endpointResponse.ResourceEndpointList)
-  if (!endpoints.HTTPS || !endpoints.WSS) {
-    throw new Error(`KVS signaling channel ${options.channelName} did not return HTTPS and WSS endpoints`)
-  }
+  const { channelArn, endpoints } = await resolveKvsSignalingMetadata({
+    channelName: options.channelName,
+    region: options.region,
+    kinesisVideoClient,
+  })
 
   const signalingApiClient = new KinesisVideoSignalingClient({
     region: options.region,

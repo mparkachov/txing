@@ -284,6 +284,7 @@ class BoardMcpServer:
         with self._lock:
             self._expire_lease_locked(now_monotonic=time.monotonic())
             if method == "initialize":
+                self._initialized_sessions.add(session_id)
                 return {
                     "protocolVersion": self._mcp_protocol_version,
                     "serverInfo": {
