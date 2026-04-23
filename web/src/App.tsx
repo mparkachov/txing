@@ -64,7 +64,7 @@ import {
   getAutoOpenDeviceDetailPanelState,
   getRouteDetailPanelOpenState,
 } from './level-detail-panel'
-import { isExpectedMcpTeardownError } from './mcp-errors'
+import { shouldSuppressRobotStateTeardownError } from './mcp-errors'
 import type { McpTransportKind } from './mcp-descriptor'
 import { getMcpSteadyMotionHeartbeatIntervalMs } from './mcp-lease'
 import NavigationUserMenu from './NavigationUserMenu'
@@ -863,8 +863,13 @@ function App({ initialAuthError = '' }: AppProps) {
       await shadowSession.requestRobotState()
     } catch (caughtError) {
       if (
-        (!canUseBoardVideo || !isBoardVideoExpanded || !isShadowConnected) &&
-        isExpectedMcpTeardownError(caughtError)
+        shouldSuppressRobotStateTeardownError({
+          error: caughtError,
+          canUseBoardVideo,
+          isBoardVideoExpanded,
+          isShadowConnected,
+          pendingTargetRedcon,
+        })
       ) {
         return
       }
@@ -897,6 +902,7 @@ function App({ initialAuthError = '' }: AppProps) {
     isBoardVideoExpanded,
     isRobotControlActive,
     isRobotMotionActive,
+    pendingTargetRedcon,
     isShadowConnected,
     requestRobotState,
   ])

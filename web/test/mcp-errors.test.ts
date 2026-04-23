@@ -5,6 +5,7 @@ import {
   isMcpServiceUnavailableError,
   isMcpSessionNotInitializedError,
   isRecoverableMcpLeaseError,
+  shouldSuppressRobotStateTeardownError,
 } from '../src/mcp-errors'
 
 describe('MCP error helpers', () => {
@@ -32,5 +33,26 @@ describe('MCP error helpers', () => {
     )
     expect(isExpectedMcpTeardownError(new Error('MCP session is not initialized'))).toBe(true)
     expect(isExpectedMcpTeardownError(new Error('Internal MCP server error'))).toBe(false)
+  })
+
+  test('suppresses robot state teardown errors while REDCON 4 teardown is in flight', () => {
+    expect(
+      shouldSuppressRobotStateTeardownError({
+        error: new Error('Timed out waiting for MCP response to tools/call'),
+        canUseBoardVideo: true,
+        isBoardVideoExpanded: true,
+        isShadowConnected: true,
+        pendingTargetRedcon: 4,
+      }),
+    ).toBe(true)
+    expect(
+      shouldSuppressRobotStateTeardownError({
+        error: new Error('Timed out waiting for MCP response to tools/call'),
+        canUseBoardVideo: true,
+        isBoardVideoExpanded: true,
+        isShadowConnected: true,
+        pendingTargetRedcon: null,
+      }),
+    ).toBe(false)
   })
 })

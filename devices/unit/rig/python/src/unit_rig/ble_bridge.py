@@ -2476,10 +2476,10 @@ class BleSleepBridge:
             )
 
     def _should_idle_disconnected_while_sleeping(self) -> bool:
-        # Keep the BLE recovery loop independent from the device REDCON posture.
-        # Sleep-state rendezvous advertisements are still useful for presence,
-        # reconnect, and the next wake transition.
-        return False
+        target_redcon = self._shadow.target_redcon
+        if target_redcon is not None and target_redcon != 4:
+            return False
+        return not self._shadow.reported_power
 
     async def _start_scanner(self) -> None:
         if self._scanner is not None:

@@ -758,6 +758,9 @@ class RigFleetScannerTests(unittest.TestCase):
     def test_fleet_bridge_keeps_awake_session_after_redcon_convergence(self) -> None:
         asyncio.run(self._exercise_fleet_bridge_keeps_awake_session())
 
+    def test_fleet_bridge_releases_sleep_session_after_redcon_convergence(self) -> None:
+        asyncio.run(self._exercise_fleet_bridge_releases_sleep_session())
+
     def test_bridge_needs_session_while_awake_and_disconnected(self) -> None:
         bridge = types.SimpleNamespace(
             _shadow=types.SimpleNamespace(
@@ -1029,6 +1032,79 @@ class RigFleetScannerTests(unittest.TestCase):
         self.assertIn("disconnect_timeout_seconds", bridge.disconnect_calls[0])
         self.assertEqual(fleet_bridge.start_calls, 0)
 
+    async def _exercise_fleet_bridge_releases_sleep_session(self) -> None:
+        class FakeBridge:
+            def __init__(self) -> None:
+                self._connected = True
+                self._shadow = types.SimpleNamespace(
+                    target_redcon=None,
+                    reported_power=False,
+                )
+                self.disconnect_calls: list[dict[str, object]] = []
+
+            async def _process_target_redcon_once(self) -> None:
+                return
+
+            async def _safe_disconnect(self, **kwargs: object) -> None:
+                self.disconnect_calls.append(dict(kwargs))
+                self._connected = False
+
+            def _is_connected(self) -> bool:
+                return self._connected
+
+            def _should_idle_disconnected_while_sleeping(self) -> bool:
+                return True
+
+        class TestRigFleetBridge(RigFleetBridge):
+            def __init__(self, active_bridge: FakeBridge) -> None:
+                super().__init__(
+                    BridgeConfig(),
+                    cloud_shadow=FakeCloudShadow(),  # type: ignore[arg-type]
+                    registry=object(),  # type: ignore[arg-type]
+                    managed_things=[],
+                )
+                self._test_active_bridge = active_bridge
+                self.start_calls = 0
+
+            async def _publish_node_birth(self) -> None:
+                return
+
+            async def _normalize_startup(self) -> None:
+                return
+
+            async def _clear_converged_targets(self) -> None:
+                return
+
+            async def _reconcile_presence(self) -> None:
+                return
+
+            async def _wait_for_manager_events(
+                self,
+                timeout_seconds: float | None,
+            ) -> list[object]:
+                del timeout_seconds
+                raise asyncio.CancelledError
+
+            async def _start_scanner(self) -> None:
+                self.start_calls += 1
+                self._scanner = object()  # type: ignore[assignment]
+
+            async def _stop_scanner(self) -> None:
+                self._scanner = None
+
+            def _active_bridge(self) -> FakeBridge | None:
+                return self._test_active_bridge if self._test_active_bridge._is_connected() else None
+
+        bridge = FakeBridge()
+        fleet_bridge = TestRigFleetBridge(bridge)
+
+        with self.assertRaises(asyncio.CancelledError):
+            await fleet_bridge.run()
+
+        self.assertEqual(len(bridge.disconnect_calls), 1)
+        self.assertEqual(bridge.disconnect_calls[0], {})
+        self.assertEqual(fleet_bridge.start_calls, 1)
+
 
 class RedconTests(unittest.TestCase):
     def test_calculates_redcon_from_ble_mcp_and_video_posture(self) -> None:
@@ -1077,6 +1153,29 @@ class RedconTests(unittest.TestCase):
             ),
             4,
         )
+
+    def test_sleep_state_idles_disconnected_until_wake_is_requested(self) -> None:
+        bridge = BleSleepBridge(
+            BridgeConfig(),
+            ShadowState(
+                reported_power=False,
+                ble_online=False,
+                redcon=4,
+            ),
+            FakeCloudShadow(),  # type: ignore[arg-type]
+        )
+
+        self.assertTrue(bridge._should_idle_disconnected_while_sleeping())
+
+        bridge._shadow.set_target_redcon(4)
+        self.assertTrue(bridge._should_idle_disconnected_while_sleeping())
+
+        bridge._shadow.set_target_redcon(1)
+        self.assertFalse(bridge._should_idle_disconnected_while_sleeping())
+
+        bridge._shadow.set_target_redcon(None)
+        bridge._shadow.set_reported(True)
+        self.assertFalse(bridge._should_idle_disconnected_while_sleeping())
 
     def test_builds_shadow_state_from_snapshot_using_registry_ble_device_id(self) -> None:
         with TemporaryDirectory() as tmpdir:

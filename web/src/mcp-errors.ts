@@ -30,3 +30,21 @@ export const isExpectedMcpTeardownError = (error: unknown): boolean =>
   isMcpSessionNotInitializedError(error) ||
   isMcpServiceUnavailableError(error) ||
   isMcpRequestTimeoutError(error)
+
+type RobotStateTeardownContext = {
+  error: unknown
+  canUseBoardVideo: boolean
+  isBoardVideoExpanded: boolean
+  isShadowConnected: boolean
+  pendingTargetRedcon: 1 | 2 | 3 | 4 | null
+}
+
+export const shouldSuppressRobotStateTeardownError = ({
+  error,
+  canUseBoardVideo,
+  isBoardVideoExpanded,
+  isShadowConnected,
+  pendingTargetRedcon,
+}: RobotStateTeardownContext): boolean =>
+  isExpectedMcpTeardownError(error) &&
+  (!canUseBoardVideo || !isBoardVideoExpanded || !isShadowConnected || pendingTargetRedcon === 4)
