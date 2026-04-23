@@ -1248,6 +1248,9 @@ class LifecycleBridgeTests(unittest.TestCase):
     def test_redcon_four_keeps_ble_session_available_after_sleep_convergence(self) -> None:
         asyncio.run(self._exercise_redcon_four_keeps_ble_session())
 
+    def test_wake_target_reconnects_when_reported_power_is_stale_true_but_ble_is_offline(self) -> None:
+        asyncio.run(self._exercise_wake_target_reconnects_with_stale_power())
+
     def test_mcp_and_video_ready_stage_redcon_through_two_before_one(self) -> None:
         asyncio.run(self._exercise_mcp_and_video_ready_stage_redcon())
 
@@ -1324,6 +1327,34 @@ class LifecycleBridgeTests(unittest.TestCase):
 
         self.assertEqual(disconnect_calls, [])
         self.assertIsNone(shadow.target_redcon)
+
+    async def _exercise_wake_target_reconnects_with_stale_power(self) -> None:
+        cloud_shadow = FakeCloudShadow()
+        shadow = ShadowState(
+            target_redcon=1,
+            reported_power=True,
+            battery_mv=3795,
+            ble_online=False,
+            board_power=False,
+            redcon=4,
+        )
+        bridge = BleSleepBridge(
+            BridgeConfig(),
+            shadow,
+            cloud_shadow,  # type: ignore[arg-type]
+        )
+
+        with self.assertLogs("rig.ble_bridge", level="INFO") as captured:
+            await bridge._process_target_redcon_once()
+
+        self.assertEqual(shadow.target_redcon, 1)
+        self.assertTrue(
+            any(
+                "REDCON target pending (target=1): BLE disconnected, waiting for reconnect"
+                in line
+                for line in captured.output
+            )
+        )
 
     async def _exercise_mcp_and_video_ready_stage_redcon(self) -> None:
         cloud_shadow = FakeCloudShadow()

@@ -2365,7 +2365,7 @@ class BleSleepBridge:
                 )
             return
 
-        if self._shadow.reported_power:
+        if self._shadow.reported_power and self._shadow.ble_online:
             if self._shadow.clear_target_redcon_if_converged():
                 await self._clear_target_redcon(
                     context="Cleared pending REDCON target after wake convergence",
