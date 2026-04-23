@@ -24,6 +24,7 @@ struct RuntimeConfig {
     std::string region;
     std::string channel_name;
     std::string client_id = "txing-board-kvs-master";
+    std::optional<std::string> mcp_webrtc_socket_path;
     CameraConfig camera;
 };
 

@@ -70,6 +70,8 @@ def _make_args(**overrides: object) -> Namespace:
         "drive_left_inverted": False,
         "drive_right_inverted": False,
         "halt_command": ["/bin/true"],
+        "mcp_webrtc_socket_file": None,
+        "disable_mcp_webrtc": False,
         "once": False,
         "debug": False,
     }
@@ -131,6 +133,7 @@ def _make_config(**overrides: object) -> ControlConfig:
         "drive_left_inverted": False,
         "drive_right_inverted": False,
         "halt_command": ("/bin/true",),
+        "mcp_webrtc_socket_file": None,
         "once": False,
     }
     values.update(overrides)

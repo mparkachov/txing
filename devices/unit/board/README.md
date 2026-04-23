@@ -69,11 +69,19 @@ Notes:
 
 Live motion control is out of band from Thing Shadow.
 
-Phase 2 introduces a board-hosted MCP server on MQTT:
+Phase 2 introduces a board-hosted MCP server with MQTT JSON-RPC as the mandatory fallback transport:
 
 - descriptor topic: `txings/<device_id>/mcp/descriptor`
 - status topic: `txings/<device_id>/mcp/status`
 - session topics: `txings/<device_id>/mcp/session/{sessionId}/c2s` and `.../s2c`
+
+Phase 4 adds optional MCP over the board video WebRTC data channel. When `txing-board` is configured with an MCP WebRTC Unix socket, the descriptor advertises:
+
+- `webrtc-datachannel` on the existing `<device_id>-board-video` AWS KVS channel
+- data-channel label `txing.mcp.v1`
+- MQTT JSON-RPC as the lower-priority fallback transport
+
+The native KVS master forwards data-channel JSON-RPC frames to `txing-board` over the local Unix socket. Use `--disable-mcp-webrtc` for MQTT-only MCP; in that mode the native sender remains video-only and the MCP descriptor stays MQTT-only.
 
 The MCP tool surface for motion is:
 
@@ -84,7 +92,7 @@ The MCP tool surface for motion is:
 - `cmd_vel.stop`
 - `robot.get_state`
 
-Lease ownership is enforced on board. Motion is stopped when the lease is released, expires, or the board MQTT connection drops.
+Lease ownership is enforced on board. Motion is stopped when the lease is released, expires, the board MQTT connection drops, or a WebRTC MCP session owning the lease closes.
 
 `cmd_vel.publish` keeps a strict ROS `geometry_msgs/Twist` semantic contract:
 

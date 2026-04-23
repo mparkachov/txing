@@ -29,7 +29,9 @@ from .video_state import (
 LOGGER = logging.getLogger("board.mcp_service")
 
 MCP_SERVER_VERSION = "0.2.0"
+MCP_WEBRTC_DATA_CHANNEL_LABEL = "txing.mcp.v1"
 _JSONRPC_VERSION = "2.0"
+_ResponseSender = Callable[[bytes], None]
 
 
 def _encode_json(payload: dict[str, Any]) -> bytes:
@@ -58,6 +60,9 @@ class BoardMcpServer:
         lease_ttl_ms: int = MCP_DEFAULT_LEASE_TTL_MS,
         server_version: str = MCP_SERVER_VERSION,
         mcp_protocol_version: str = MCP_PROTOCOL_VERSION,
+        webrtc_channel_name: str | None = None,
+        webrtc_region: str | None = None,
+        webrtc_data_channel_label: str = MCP_WEBRTC_DATA_CHANNEL_LABEL,
     ) -> None:
         if lease_ttl_ms <= 0:
             raise ValueError("lease_ttl_ms must be positive")
@@ -74,6 +79,9 @@ class BoardMcpServer:
             lease_required=True,
             lease_ttl_ms=lease_ttl_ms,
             mcp_protocol_version=mcp_protocol_version,
+            webrtc_channel_name=webrtc_channel_name,
+            webrtc_region=webrtc_region,
+            webrtc_data_channel_label=webrtc_data_channel_label,
         )
         self._lock = threading.Lock()
         self._lease: _LeaseState | None = None
@@ -160,7 +168,15 @@ class BoardMcpServer:
         )
         if session_id is None:
             return False
+        return self.handle_session_payload(session_id=session_id, payload_bytes=payload_bytes)
 
+    def handle_session_payload(
+        self,
+        *,
+        session_id: str,
+        payload_bytes: bytes,
+        response_sender: _ResponseSender | None = None,
+    ) -> bool:
         try:
             message = json.loads(payload_bytes.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
@@ -169,6 +185,7 @@ class BoardMcpServer:
                 request_id=None,
                 code=-32700,
                 message="Invalid JSON payload",
+                response_sender=response_sender,
             )
             return True
 
@@ -178,6 +195,7 @@ class BoardMcpServer:
                 request_id=None,
                 code=-32600,
                 message="Invalid JSON-RPC envelope",
+                response_sender=response_sender,
             )
             return True
 
@@ -189,6 +207,7 @@ class BoardMcpServer:
                 request_id=request_id,
                 code=-32600,
                 message="Missing JSON-RPC method",
+                response_sender=response_sender,
             )
             return True
 
@@ -199,6 +218,7 @@ class BoardMcpServer:
                 request_id=request_id,
                 code=-32602,
                 message="JSON-RPC params must be an object",
+                response_sender=response_sender,
             )
             return True
 
@@ -218,6 +238,7 @@ class BoardMcpServer:
                 request_id=request_id,
                 code=err.code,
                 message=err.message,
+                response_sender=response_sender,
             )
             return True
         except Exception:
@@ -227,6 +248,7 @@ class BoardMcpServer:
                 request_id=request_id,
                 code=-32603,
                 message="Internal MCP server error",
+                response_sender=response_sender,
             )
             return True
 
@@ -234,8 +256,16 @@ class BoardMcpServer:
             session_id=session_id,
             request_id=request_id,
             result=result,
+            response_sender=response_sender,
         )
         return True
+
+    def close_session(self, *, session_id: str, reason: str) -> None:
+        with self._lock:
+            self._initialized_sessions.discard(session_id)
+            if self._lease is None or self._lease.owner_session_id != session_id:
+                return
+            self._clear_lease_locked(reason=reason, publish_status=True)
 
     def _handle_notification(self, *, session_id: str, method: str) -> None:
         if method == "notifications/initialized":
@@ -459,6 +489,7 @@ class BoardMcpServer:
         session_id: str,
         request_id: Any,
         result: dict[str, Any],
+        response_sender: _ResponseSender | None = None,
     ) -> None:
         payload = _encode_json(
             {
@@ -467,7 +498,11 @@ class BoardMcpServer:
                 "result": result,
             }
         )
-        self._publish_session_payload(session_id=session_id, payload=payload)
+        self._send_session_payload(
+            session_id=session_id,
+            payload=payload,
+            response_sender=response_sender,
+        )
 
     def _send_error(
         self,
@@ -476,6 +511,7 @@ class BoardMcpServer:
         request_id: Any,
         code: int,
         message: str,
+        response_sender: _ResponseSender | None = None,
     ) -> None:
         payload = _encode_json(
             {
@@ -487,6 +523,22 @@ class BoardMcpServer:
                 },
             }
         )
+        self._send_session_payload(
+            session_id=session_id,
+            payload=payload,
+            response_sender=response_sender,
+        )
+
+    def _send_session_payload(
+        self,
+        *,
+        session_id: str,
+        payload: bytes,
+        response_sender: _ResponseSender | None,
+    ) -> None:
+        if response_sender is not None:
+            response_sender(payload)
+            return
         self._publish_session_payload(session_id=session_id, payload=payload)
 
     def _publish_session_payload(self, *, session_id: str, payload: bytes) -> None:

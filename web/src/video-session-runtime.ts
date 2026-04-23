@@ -41,6 +41,23 @@ export type VideoViewerHandle = {
   close: () => void
 }
 
+export type StartMcpDataChannelOptions = {
+  channelName: string
+  region: string
+  label: string
+  resolveIdToken: () => Promise<string>
+  openTimeoutMs?: number
+  debugEnabled?: boolean
+  isDebugEnabled?: () => boolean
+}
+
+export type McpDataChannelHandle = {
+  sessionId: string
+  request: (message: Record<string, unknown>, timeoutMs: number) => Promise<unknown>
+  notify: (message: Record<string, unknown>) => Promise<void>
+  close: () => void
+}
+
 type EndpointMap = Partial<Record<'HTTPS' | 'WSS', string>>
 type SignalingCredentials = {
   accessKeyId: string
@@ -120,6 +137,9 @@ const getErrorMessage = (error: unknown, fallback = 'Board video viewer failed')
   }
   return fallback
 }
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
 
 export const startBoardVideoViewerRuntime = async (
   options: StartVideoViewerOptions,
@@ -411,5 +431,290 @@ export const startBoardVideoViewerRuntime = async (
       logVideoDebug('viewer closed')
       options.onUiEvent({ type: 'reset' })
     },
+  }
+}
+
+export const startBoardMcpDataChannelRuntime = async (
+  options: StartMcpDataChannelOptions,
+): Promise<McpDataChannelHandle> => {
+  const logMcpDebug = (message: string, details?: unknown): void => {
+    if ((options.isDebugEnabled?.() ?? options.debugEnabled) !== true) {
+      return
+    }
+    if (details === undefined) {
+      console.info('[device-mcp-webrtc]', message)
+      return
+    }
+    console.info('[device-mcp-webrtc]', message, details)
+  }
+
+  const kvsWebRtcBrowserSdkPromise = loadKvsWebRtcBrowserSdk()
+  const idToken = await options.resolveIdToken()
+  const credentialProvider = createCredentialProvider(idToken)
+  const credentials = await credentialProvider()
+  const kinesisVideoClient = new KinesisVideoClient({
+    region: options.region,
+    credentials: credentialProvider,
+  })
+  const describeResponse = await kinesisVideoClient.send(
+    new DescribeSignalingChannelCommand({
+      ChannelName: options.channelName,
+    }),
+  )
+  const channelArn = describeResponse.ChannelInfo?.ChannelARN
+  if (!channelArn) {
+    throw new Error(`KVS signaling channel ${options.channelName} was not found`)
+  }
+
+  const endpointResponse = await kinesisVideoClient.send(
+    new GetSignalingChannelEndpointCommand({
+      ChannelARN: channelArn,
+      SingleMasterChannelEndpointConfiguration: {
+        Protocols: [ChannelProtocol.WSS, ChannelProtocol.HTTPS],
+        Role: 'VIEWER',
+      },
+    }),
+  )
+  const endpoints = mapSignalingEndpoints(endpointResponse.ResourceEndpointList)
+  if (!endpoints.HTTPS || !endpoints.WSS) {
+    throw new Error(`KVS signaling channel ${options.channelName} did not return HTTPS and WSS endpoints`)
+  }
+
+  const signalingApiClient = new KinesisVideoSignalingClient({
+    region: options.region,
+    endpoint: endpoints.HTTPS,
+    credentials: credentialProvider,
+  })
+  const clientId = crypto.randomUUID()
+  const iceConfigResponse = await signalingApiClient.send(
+    new GetIceServerConfigCommand({
+      ChannelARN: channelArn,
+      ClientId: clientId,
+    }),
+  )
+
+  const peerConnection = new RTCPeerConnection({
+    iceServers: buildRtcIceServers(options.region, iceConfigResponse.IceServerList),
+  })
+  const dataChannel = peerConnection.createDataChannel(options.label)
+  peerConnection.addTransceiver('video', { direction: 'recvonly' })
+  logMcpDebug('peer connection created', { clientId, label: options.label })
+
+  const pendingRequests = new Map<
+    number,
+    {
+      resolve: (result: unknown) => void
+      reject: (error: Error) => void
+      timeoutId: number
+    }
+  >()
+  let closed = false
+  let signalingClient: KvsWebRtcSignalingClient | null = null
+
+  const rejectPending = (error: Error): void => {
+    for (const [requestId, pending] of [...pendingRequests.entries()]) {
+      pendingRequests.delete(requestId)
+      window.clearTimeout(pending.timeoutId)
+      pending.reject(error)
+    }
+  }
+
+  const closePeer = (): void => {
+    if (closed) {
+      return
+    }
+    closed = true
+    rejectPending(new Error('MCP WebRTC data channel closed'))
+    signalingClient?.removeAllListeners()
+    signalingClient?.close()
+    dataChannel.close()
+    peerConnection.getReceivers().forEach((receiver) => {
+      receiver.track?.stop()
+    })
+    peerConnection.close()
+    logMcpDebug('closed')
+  }
+
+  const handleDataChannelMessage = (event: MessageEvent): void => {
+    if (typeof event.data !== 'string') {
+      return
+    }
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(event.data)
+    } catch {
+      return
+    }
+    if (!isRecord(parsed) || typeof parsed.id !== 'number') {
+      return
+    }
+    const pending = pendingRequests.get(parsed.id)
+    if (!pending) {
+      return
+    }
+    pendingRequests.delete(parsed.id)
+    window.clearTimeout(pending.timeoutId)
+    if (isRecord(parsed.error)) {
+      const message =
+        typeof parsed.error.message === 'string'
+          ? parsed.error.message
+          : `MCP request failed with code ${String(parsed.error.code ?? 'unknown')}`
+      pending.reject(new Error(message))
+      return
+    }
+    pending.resolve(parsed.result)
+  }
+
+  dataChannel.addEventListener('message', handleDataChannelMessage)
+  dataChannel.addEventListener('close', () => {
+    if (!closed) {
+      closePeer()
+    }
+  })
+  dataChannel.addEventListener('error', () => {
+    if (!closed) {
+      closePeer()
+    }
+  })
+
+  const { Role, SignalingClient } = await kvsWebRtcBrowserSdkPromise
+  const createdSignalingClient: KvsWebRtcSignalingClient = new SignalingClient({
+    channelARN: channelArn,
+    channelEndpoint: endpoints.WSS,
+    role: Role.VIEWER,
+    region: options.region,
+    clientId,
+    credentials: toSignalingCredentials(credentials),
+  })
+  signalingClient = createdSignalingClient
+
+  peerConnection.addEventListener('icecandidate', ({ candidate }) => {
+    const candidateSdp = candidate?.candidate.trim() ?? ''
+    if (candidate && candidateSdp !== '') {
+      createdSignalingClient.sendIceCandidate(candidate)
+    }
+  })
+  peerConnection.addEventListener('connectionstatechange', () => {
+    if (
+      peerConnection.connectionState === 'failed' ||
+      peerConnection.connectionState === 'disconnected' ||
+      peerConnection.connectionState === 'closed'
+    ) {
+      closePeer()
+    }
+  })
+  peerConnection.addEventListener('track', (event) => {
+    event.track.stop()
+  })
+
+  const openPromise = new Promise<McpDataChannelHandle>((resolve, reject) => {
+    dataChannel.addEventListener(
+      'open',
+      () => {
+        logMcpDebug('data channel open', { clientId })
+        resolve({
+          sessionId: clientId,
+          request: (message, timeoutMs) => {
+            if (closed || dataChannel.readyState !== 'open') {
+              return Promise.reject(new Error('MCP WebRTC data channel is not open'))
+            }
+            const requestId = message.id
+            if (typeof requestId !== 'number') {
+              return Promise.reject(new Error('MCP WebRTC request id must be numeric'))
+            }
+            return new Promise<unknown>((requestResolve, requestReject) => {
+              const timeoutId = window.setTimeout(() => {
+                pendingRequests.delete(requestId)
+                requestReject(new Error('Timed out waiting for MCP WebRTC response'))
+              }, timeoutMs)
+              pendingRequests.set(requestId, {
+                resolve: requestResolve,
+                reject: requestReject,
+                timeoutId,
+              })
+              try {
+                dataChannel.send(JSON.stringify(message))
+              } catch (caughtError) {
+                pendingRequests.delete(requestId)
+                window.clearTimeout(timeoutId)
+                requestReject(
+                  new Error(`Unable to send MCP WebRTC request: ${getErrorMessage(caughtError)}`),
+                )
+              }
+            })
+          },
+          notify: async (message) => {
+            if (closed || dataChannel.readyState !== 'open') {
+              throw new Error('MCP WebRTC data channel is not open')
+            }
+            dataChannel.send(JSON.stringify(message))
+          },
+          close: closePeer,
+        })
+      },
+      { once: true },
+    )
+    dataChannel.addEventListener(
+      'error',
+      () => reject(new Error('MCP WebRTC data channel failed before opening')),
+      { once: true },
+    )
+    dataChannel.addEventListener(
+      'close',
+      () => reject(new Error('MCP WebRTC data channel closed before opening')),
+      { once: true },
+    )
+  })
+
+  createdSignalingClient.on('open', () => {
+    void (async () => {
+      const offer = await peerConnection.createOffer()
+      await peerConnection.setLocalDescription(offer)
+      if (!peerConnection.localDescription) {
+        throw new Error('MCP WebRTC local description was not created')
+      }
+      createdSignalingClient.sendSdpOffer(peerConnection.localDescription)
+    })().catch((error) => {
+      closePeer()
+      logMcpDebug('offer failed', error)
+    })
+  })
+  createdSignalingClient.on('sdpAnswer', (answer: RTCSessionDescriptionInit) => {
+    void peerConnection.setRemoteDescription(answer).catch(() => closePeer())
+  })
+  createdSignalingClient.on('iceCandidate', (candidate: RTCIceCandidateInit) => {
+    void peerConnection.addIceCandidate(candidate).catch(() => undefined)
+  })
+  createdSignalingClient.on('error', () => closePeer())
+  createdSignalingClient.on('close', () => closePeer())
+  createdSignalingClient.open()
+
+  let openTimeoutId: number | null = null
+  const openTimeoutPromise =
+    options.openTimeoutMs && options.openTimeoutMs > 0
+      ? new Promise<McpDataChannelHandle>((_resolve, reject) => {
+          openTimeoutId = window.setTimeout(() => {
+            closePeer()
+            reject(new Error('Timed out opening MCP WebRTC data channel'))
+          }, options.openTimeoutMs)
+        })
+      : null
+
+  try {
+    const handle = await (openTimeoutPromise
+      ? Promise.race([openPromise, openTimeoutPromise])
+      : openPromise)
+    if (openTimeoutId !== null) {
+      window.clearTimeout(openTimeoutId)
+      openTimeoutId = null
+    }
+    return handle
+  } catch (error) {
+    if (openTimeoutId !== null) {
+      window.clearTimeout(openTimeoutId)
+      openTimeoutId = null
+    }
+    closePeer()
+    throw error
   }
 }

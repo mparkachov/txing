@@ -106,7 +106,44 @@ class BoardMcpServerTests(unittest.TestCase):
         self.assertIs(client.publishes[0].retain, True)
         self.assertEqual(client.publishes[1].topic, "txings/unit-local/mcp/status")
         self.assertIs(client.publishes[1].retain, True)
+        descriptor = _decode_payload(client.publishes[0])
+        self.assertEqual(
+            descriptor["transports"],
+            [
+                {
+                    "type": "mqtt-jsonrpc",
+                    "priority": 100,
+                    "topicRoot": "txings/unit-local/mcp",
+                    "sessionTopicPattern": {
+                        "clientToServer": "txings/unit-local/mcp/session/{sessionId}/c2s",
+                        "serverToClient": "txings/unit-local/mcp/session/{sessionId}/s2c",
+                    },
+                }
+            ],
+        )
         self.assertIs(_decode_payload(client.publishes[1])["available"], True)
+
+    def test_descriptor_advertises_webrtc_before_mqtt_when_configured(self) -> None:
+        cmd_vel = _FakeCmdVelController()
+        client = _FakeMqttClient()
+        server = BoardMcpServer(
+            device_id="unit-local",
+            cmd_vel_controller=cmd_vel,
+            webrtc_channel_name="unit-local-board-video",
+            webrtc_region="eu-central-1",
+        )
+
+        server.on_connected(client=client, publish_timeout_seconds=2.0)
+
+        descriptor = _decode_payload(client.publishes[0])
+        self.assertEqual(descriptor["transports"][0]["type"], "webrtc-datachannel")
+        self.assertEqual(descriptor["transports"][0]["priority"], 10)
+        self.assertEqual(descriptor["transports"][0]["signaling"], "aws-kvs")
+        self.assertEqual(descriptor["transports"][0]["channelName"], "unit-local-board-video")
+        self.assertEqual(descriptor["transports"][0]["region"], "eu-central-1")
+        self.assertEqual(descriptor["transports"][0]["label"], "txing.mcp.v1")
+        self.assertEqual(descriptor["transports"][1]["type"], "mqtt-jsonrpc")
+        self.assertEqual(descriptor["transports"][1]["priority"], 100)
 
     def test_initialize_and_tools_list_flow(self) -> None:
         cmd_vel = _FakeCmdVelController()
@@ -419,6 +456,67 @@ class BoardMcpServerTests(unittest.TestCase):
                 "lastError": None,
             },
         )
+
+    def test_handle_session_payload_can_send_responses_without_mqtt(self) -> None:
+        cmd_vel = _FakeCmdVelController()
+        server = BoardMcpServer(
+            device_id="unit-local",
+            cmd_vel_controller=cmd_vel,
+        )
+        responses: list[dict[str, Any]] = []
+
+        handled = server.handle_session_payload(
+            session_id="webrtc-session-a",
+            payload_bytes=json.dumps(
+                {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}
+            ).encode("utf-8"),
+            response_sender=lambda payload: responses.append(json.loads(payload.decode("utf-8"))),
+        )
+
+        self.assertTrue(handled)
+        self.assertEqual(responses[0]["jsonrpc"], "2.0")
+        self.assertEqual(responses[0]["id"], 1)
+        self.assertEqual(responses[0]["result"]["serverInfo"]["name"], "mcp")
+
+    def test_close_session_stops_only_owned_lease(self) -> None:
+        cmd_vel = _FakeCmdVelController()
+        client = _FakeMqttClient()
+        server = BoardMcpServer(
+            device_id="unit-local",
+            cmd_vel_controller=cmd_vel,
+            lease_ttl_ms=5000,
+        )
+        server.on_connected(client=client, publish_timeout_seconds=2.0)
+        owner_session_id = "session-a"
+
+        _send_rpc(
+            server=server,
+            session_id=owner_session_id,
+            payload={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+        )
+        _send_rpc(
+            server=server,
+            session_id=owner_session_id,
+            payload={"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
+        )
+        _send_rpc(
+            server=server,
+            session_id=owner_session_id,
+            payload={
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {"name": "control.acquire_lease", "arguments": {}},
+            },
+        )
+
+        stop_count = len(cmd_vel.stop_reasons)
+        server.close_session(session_id="session-b", reason="peer closed")
+        self.assertEqual(len(cmd_vel.stop_reasons), stop_count)
+
+        server.close_session(session_id=owner_session_id, reason="peer closed")
+        self.assertEqual(len(cmd_vel.stop_reasons), stop_count + 1)
+        self.assertIn("peer closed", cmd_vel.stop_reasons[-1])
 
 
 if __name__ == "__main__":

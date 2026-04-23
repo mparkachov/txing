@@ -169,7 +169,7 @@ Detailed transport metadata is published on a retained MQTT topic:
 txings/<device-id>/mcp/descriptor
 ```
 
-The retained descriptor is the detailed source of truth for connection metadata. It contains the information a client needs to establish an MCP session over MQTT.
+The retained descriptor is the detailed source of truth for connection metadata. Phase 4 keeps the original MQTT fields for backward compatibility and adds an ordered `transports` list. MQTT remains mandatory for every device that advertises MCP. WebRTC data-channel transport is optional and is advertised only when the device also has the board video KVS channel available.
 
 The board is the source of truth for the retained MCP topics:
 
@@ -184,6 +184,7 @@ Expected descriptor fields:
 - `mcpProtocolVersion`
 - `topicRoot`
 - `sessionTopicPattern`
+- `transports`
 - `leaseRequired`
 - `leaseTtlMs`
 - `serverVersion`
@@ -206,11 +207,32 @@ Illustrative descriptor shape:
     "clientToServer": "txings/<device-id>/mcp/session/{sessionId}/c2s",
     "serverToClient": "txings/<device-id>/mcp/session/{sessionId}/s2c"
   },
+  "transports": [
+    {
+      "type": "webrtc-datachannel",
+      "priority": 10,
+      "signaling": "aws-kvs",
+      "channelName": "<device-id>-board-video",
+      "region": "<aws-region>",
+      "label": "txing.mcp.v1"
+    },
+    {
+      "type": "mqtt-jsonrpc",
+      "priority": 100,
+      "topicRoot": "txings/<device-id>/mcp",
+      "sessionTopicPattern": {
+        "clientToServer": "txings/<device-id>/mcp/session/{sessionId}/c2s",
+        "serverToClient": "txings/<device-id>/mcp/session/{sessionId}/s2c"
+      }
+    }
+  ],
   "leaseRequired": true,
   "leaseTtlMs": 5000,
   "serverVersion": "0.1.0"
 }
 ```
+
+Devices without video/WebRTC publish only the MQTT transport. Devices without MCP do not publish MCP availability. Sparkplug `services/mcp/*` remains the compact discovery summary and `descriptorTopic` remains the pointer to this retained metadata.
 
 ### Client discovery flow
 
@@ -221,12 +243,20 @@ The expected discovery flow is:
 3. Client observes Sparkplug metrics for `services/mcp/*`.
 4. Client checks `services/mcp/available`.
 5. Client reads the retained descriptor topic referenced by Sparkplug.
-6. Client opens an MCP session over MQTT using the descriptor metadata.
+6. Client opens an MCP session using the first viable descriptor transport.
 7. Client performs MCP initialization and begins tool use.
 
 ## MCP Transport
 
-The transport is a custom MQTT transport for MCP.
+The baseline transport is a custom MQTT transport for MCP. Phase 4 adds an optional WebRTC data-channel transport on the same AWS KVS signaling channel used for board video, with label `txing.mcp.v1`.
+
+Client preference order is:
+
+1. WebRTC data channel when ICE establishes directly, including host IPv6.
+2. WebRTC data channel when ICE establishes through AWS TURN relay.
+3. MQTT JSON-RPC under `txings/<device-id>/mcp/...`.
+
+Direct and relay WebRTC are both the same MCP transport from the client perspective; ICE decides the candidate pair. If WebRTC setup or a non-lease request fails, the browser falls back to MQTT. If an active WebRTC session fails while a lease is held, the browser clears local lease/session state and does not carry that lease token to MQTT.
 
 The transport must preserve all MCP protocol expectations that are independent of HTTP or stdio:
 

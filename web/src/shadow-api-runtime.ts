@@ -17,6 +17,12 @@ import {
 } from './mcp-errors'
 import { getMcpLeaseRenewBeforeMs } from './mcp-lease'
 import {
+  parseMcpDescriptor,
+  selectPreferredMcpWebRtcTransport,
+  type McpDescriptor,
+  type McpTransportKind,
+} from './mcp-descriptor'
+import {
   buildMcpDescriptorTopic,
   buildMcpSessionC2sTopic,
   buildMcpSessionS2cTopic,
@@ -55,10 +61,15 @@ import {
   type ShadowOperation,
   type ShadowTopics,
 } from './shadow-protocol'
+import {
+  startBoardMcpDataChannel,
+  type McpDataChannelHandle,
+} from './video-session'
 
 const forbiddenRetryDelaysMs = [500, 1000, 2000]
 const initialSnapshotTimeoutMs = 20_000
 const mcpRequestTimeoutMs = 8_000
+const mcpWebRtcOpenTimeoutMs = 5_000
 
 export type ShadowConnectionState = 'idle' | 'connecting' | 'connected' | 'error'
 type ResolveIdToken = () => Promise<string>
@@ -86,9 +97,6 @@ type McpDiscoverySummary = {
   leaseRequired: boolean | null
   leaseTtlMs: number | null
   serverVersion: string | null
-}
-type McpDescriptor = {
-  leaseTtlMs: number
 }
 type McpLeaseState = {
   leaseToken: string
@@ -346,17 +354,14 @@ const metricToString = (metric: SparkplugMetric | undefined): string | null => {
   return null
 }
 
-const parseMcpDescriptor = (value: unknown): McpDescriptor | null => {
-  if (!isRecord(value)) {
-    return null
+const containsMcpLeaseToken = (value: unknown, depth = 0): boolean => {
+  if (depth > 4 || !isRecord(value)) {
+    return false
   }
-  const leaseTtlRaw = value.leaseTtlMs
-  if (typeof leaseTtlRaw !== 'number' || !Number.isFinite(leaseTtlRaw) || leaseTtlRaw <= 0) {
-    return null
+  if (typeof value.leaseToken === 'string' && value.leaseToken.trim()) {
+    return true
   }
-  return {
-    leaseTtlMs: Math.round(leaseTtlRaw),
-  }
+  return Object.values(value).some((child) => containsMcpLeaseToken(child, depth + 1))
 }
 
 const parseMcpLeaseState = (value: unknown): McpLeaseState | null => {
@@ -600,6 +605,9 @@ class AwsIotShadowSession implements ShadowSession {
   private mcpSessionId: string | null = null
   private mcpSessionSubscribed = false
   private mcpInitialized = false
+  private activeMcpTransport: McpTransportKind | null = null
+  private mcpWebRtcHandle: McpDataChannelHandle | null = null
+  private mcpWebRtcUnavailable = false
   private readonly cmdVelPublisher: LatestAsyncValueRunner<Twist>
   private readonly handleAttemptingConnect = (): void => {
     if (this.closed) {
@@ -1175,7 +1183,7 @@ class AwsIotShadowSession implements ShadowSession {
       return
     }
 
-    await this.ensureMcpSessionSubscription()
+    await this.ensureMcpTransportReady()
     const initializeResult = await this.publishMcpRequest('initialize', {
       protocolVersion: this.mcpDiscovery.mcpProtocolVersion ?? '2025-11-25',
       capabilities: {},
@@ -1191,7 +1199,41 @@ class AwsIotShadowSession implements ShadowSession {
     this.mcpInitialized = true
   }
 
-  private async ensureMcpSessionSubscription(): Promise<void> {
+  private async ensureMcpTransportReady(): Promise<void> {
+    if (this.activeMcpTransport && this.mcpSessionId) {
+      return
+    }
+
+    const webRtcTransport = this.mcpWebRtcUnavailable
+      ? null
+      : selectPreferredMcpWebRtcTransport(this.mcpDescriptor)
+    if (webRtcTransport) {
+      try {
+        const handle = await startBoardMcpDataChannel({
+          channelName: webRtcTransport.channelName,
+          region: webRtcTransport.region,
+          label: webRtcTransport.label,
+          resolveIdToken: this.options.resolveIdToken,
+          openTimeoutMs: mcpWebRtcOpenTimeoutMs,
+        })
+        if (this.closed) {
+          handle.close()
+          throw new Error('Shadow session closed')
+        }
+        this.mcpWebRtcHandle = handle
+        this.mcpSessionId = handle.sessionId
+        this.activeMcpTransport = 'webrtc-datachannel'
+        return
+      } catch {
+        this.mcpWebRtcUnavailable = true
+        this.closeMcpWebRtcHandle()
+      }
+    }
+
+    await this.ensureMqttMcpSessionSubscription()
+  }
+
+  private async ensureMqttMcpSessionSubscription(): Promise<void> {
     const client = this.client
     if (!client || !this.isConnected()) {
       throw new Error('Shadow connection is not ready')
@@ -1213,6 +1255,7 @@ class AwsIotShadowSession implements ShadowSession {
       } as mqtt5.SubscribePacket,
     )
     this.mcpSessionSubscribed = true
+    this.activeMcpTransport = 'mqtt-jsonrpc'
   }
 
   private async ensureMcpLease(): Promise<McpLeaseState> {
@@ -1338,29 +1381,37 @@ class AwsIotShadowSession implements ShadowSession {
     name: string,
     argumentsPayload: Record<string, unknown>,
   ): void {
-    const client = this.client
     const sessionId = this.mcpSessionId
-    if (!client || !sessionId || !this.isConnected()) {
+    if (!sessionId) {
       return
     }
     const requestId = this.mcpRequestSeq
     this.mcpRequestSeq = (this.mcpRequestSeq + 1) % 1_000_000_000
+    const message = {
+      jsonrpc: '2.0',
+      id: requestId,
+      method: 'tools/call',
+      params: {
+        name,
+        arguments: argumentsPayload,
+      },
+    }
+
+    if (this.activeMcpTransport === 'webrtc-datachannel' && this.mcpWebRtcHandle) {
+      void this.mcpWebRtcHandle.notify(message).catch(() => undefined)
+      return
+    }
+
+    const client = this.client
+    if (!client || !this.isConnected()) {
+      return
+    }
     void client
       .publish(
         {
           topicName: buildMcpSessionC2sTopic(this.options.thingName, sessionId),
           qos: 1,
-          payload: new TextEncoder().encode(
-            JSON.stringify({
-              jsonrpc: '2.0',
-              id: requestId,
-              method: 'tools/call',
-              params: {
-                name,
-                arguments: argumentsPayload,
-              },
-            }),
-          ),
+          payload: new TextEncoder().encode(JSON.stringify(message)),
         } as mqtt5.PublishPacket,
       )
       .catch(() => undefined)
@@ -1390,66 +1441,101 @@ class AwsIotShadowSession implements ShadowSession {
   }
 
   private async publishMcpNotification(method: string, params: Record<string, unknown>): Promise<void> {
-    const client = this.client
-    if (!client || !this.isConnected() || !this.mcpSessionId) {
+    if (!this.mcpSessionId) {
       throw new Error('MCP session is not ready')
     }
-    await client.publish(
-      {
-        topicName: buildMcpSessionC2sTopic(this.options.thingName, this.mcpSessionId),
-        qos: 1,
-        payload: new TextEncoder().encode(
-          JSON.stringify({
-            jsonrpc: '2.0',
-            method,
-            params,
-          }),
-        ),
-      } as mqtt5.PublishPacket,
-    )
+    const message = {
+      jsonrpc: '2.0',
+      method,
+      params,
+    }
+
+    if (this.activeMcpTransport === 'webrtc-datachannel' && this.mcpWebRtcHandle) {
+      await this.mcpWebRtcHandle.notify(message)
+      return
+    }
+
+    const client = this.client
+    if (!client || !this.isConnected()) {
+      throw new Error('MCP session is not ready')
+    }
+    await client.publish({
+      topicName: buildMcpSessionC2sTopic(this.options.thingName, this.mcpSessionId),
+      qos: 1,
+      payload: new TextEncoder().encode(JSON.stringify(message)),
+    } as mqtt5.PublishPacket)
   }
 
   private async publishMcpRequest(
     method: string,
     params: Record<string, unknown>,
   ): Promise<unknown> {
-    const client = this.client
-    if (!client || !this.isConnected() || !this.mcpSessionId) {
+    if (!this.mcpSessionId) {
       throw new Error('MCP session is not ready')
     }
     const requestId = this.mcpRequestSeq
     this.mcpRequestSeq = (this.mcpRequestSeq + 1) % 1_000_000_000
+    const message = {
+      jsonrpc: '2.0',
+      id: requestId,
+      method,
+      params,
+    }
+
+    if (this.activeMcpTransport === 'webrtc-datachannel' && this.mcpWebRtcHandle) {
+      try {
+        return await this.mcpWebRtcHandle.request(message, mcpRequestTimeoutMs)
+      } catch (caughtError) {
+        const canRetryOverMqtt = !this.mcpLease && !containsMcpLeaseToken(params)
+        this.handleMcpWebRtcFailure()
+        if (!canRetryOverMqtt) {
+          throw caughtError instanceof Error
+            ? caughtError
+            : new Error(getErrorMessage(caughtError, `MCP WebRTC request ${method} failed`))
+        }
+        await this.ensureMqttMcpSessionSubscription()
+        if (method !== 'initialize') {
+          await this.ensureMcpSessionReady()
+        }
+        return this.publishMcpRequest(method, params)
+      }
+    }
+
+    return this.publishMcpRequestOverMqtt(message, method)
+  }
+
+  private async publishMcpRequestOverMqtt(
+    message: Record<string, unknown> & { id: number },
+    method: string,
+  ): Promise<unknown> {
+    const client = this.client
+    if (!client || !this.isConnected() || !this.mcpSessionId) {
+      throw new Error('MCP session is not ready')
+    }
     const packet = {
       topicName: buildMcpSessionC2sTopic(this.options.thingName, this.mcpSessionId),
       qos: 1,
-      payload: new TextEncoder().encode(
-        JSON.stringify({
-          jsonrpc: '2.0',
-          id: requestId,
-          method,
-          params,
-        }),
-      ),
+      payload: new TextEncoder().encode(JSON.stringify(message)),
     } as mqtt5.PublishPacket
 
     return new Promise<unknown>((resolve, reject) => {
       const timeoutId = window.setTimeout(() => {
-        this.pendingMcpRequests.delete(requestId)
+        this.pendingMcpRequests.delete(message.id)
         reject(new Error(`Timed out waiting for MCP response to ${method}`))
       }, mcpRequestTimeoutMs)
 
-      this.pendingMcpRequests.set(requestId, {
+      this.pendingMcpRequests.set(message.id, {
         resolve,
         reject,
         timeoutId,
       })
 
       void client.publish(packet).catch((caughtError) => {
-        const pending = this.pendingMcpRequests.get(requestId)
+        const pending = this.pendingMcpRequests.get(message.id)
         if (!pending) {
           return
         }
-        this.pendingMcpRequests.delete(requestId)
+        this.pendingMcpRequests.delete(message.id)
         window.clearTimeout(pending.timeoutId)
         pending.reject(new Error(`Unable to publish MCP request ${method}: ${getErrorMessage(caughtError)}`))
       })
@@ -1464,11 +1550,39 @@ class AwsIotShadowSession implements ShadowSession {
     }
   }
 
-  private resetMcpConnectionState(): void {
+  private closeMcpWebRtcHandle(): void {
+    if (!this.mcpWebRtcHandle) {
+      return
+    }
+    const handle = this.mcpWebRtcHandle
+    this.mcpWebRtcHandle = null
+    try {
+      handle.close()
+    } catch {
+      return
+    }
+  }
+
+  private handleMcpWebRtcFailure(): void {
+    this.mcpWebRtcUnavailable = true
+    this.closeMcpWebRtcHandle()
     this.mcpLease = null
     this.mcpInitialized = false
     this.mcpSessionSubscribed = false
     this.mcpSessionId = null
+    this.activeMcpTransport = null
+    this.setLatestRobotState(null)
+    this.cmdVelPublisher.clear()
+  }
+
+  private resetMcpConnectionState(): void {
+    this.closeMcpWebRtcHandle()
+    this.mcpLease = null
+    this.mcpInitialized = false
+    this.mcpSessionSubscribed = false
+    this.mcpSessionId = null
+    this.activeMcpTransport = null
+    this.mcpWebRtcUnavailable = false
     this.mcpRequestSeq = 0
     this.setLatestRobotState(null)
     this.cmdVelPublisher.clear()

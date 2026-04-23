@@ -133,6 +133,15 @@ ParsedCli ParseCli(const std::vector<std::string>& arguments, const EnvLookup& l
     if (const auto client_id = LookupValue(options, "client-id", lookup_env, ""); client_id && !client_id->empty()) {
         parsed.config.client_id = *client_id;
     }
+    if (const auto socket_path = LookupValue(
+            options,
+            "mcp-webrtc-socket-path",
+            lookup_env,
+            "BOARD_MCP_WEBRTC_SOCKET_PATH"
+        );
+        socket_path && !socket_path->empty()) {
+        parsed.config.mcp_webrtc_socket_path = *socket_path;
+    }
 
     parsed.config.camera.camera = ParseUnsigned(options, "camera", parsed.config.camera.camera);
     parsed.config.camera.width = ParseUnsigned(options, "width", parsed.config.camera.width);
@@ -161,6 +170,7 @@ std::string UsageText() {
         << "  --region <aws-region>                  or BOARD_VIDEO_REGION\n"
         << "  --channel-name <channel-name>          or BOARD_VIDEO_CHANNEL_NAME\n"
         << "  --client-id <id>                       default: txing-board-kvs-master\n"
+        << "  --mcp-webrtc-socket-path <path>        or BOARD_MCP_WEBRTC_SOCKET_PATH\n"
         << "  --camera <index>                       default: 0\n"
         << "  --width <pixels>                       default: 1920\n"
         << "  --height <pixels>                      default: 1080\n"

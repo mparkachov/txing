@@ -288,6 +288,9 @@ The stack serves the SPA from CloudFront instead of the raw S3 website endpoint 
 
 ## MCP teleop note
 
-- Teleop control uses MCP over MQTT (`txings/<device_id>/mcp/...`) as the only remote board control API.
+- Teleop control uses board MCP as the only remote board control API.
+- MQTT discovery and MQTT MCP (`txings/<device_id>/mcp/...`) remain the fallback for every MCP-capable device.
+- When the retained MCP descriptor advertises `webrtc-datachannel`, the browser tries the existing `<device_id>-board-video` KVS channel with data-channel label `txing.mcp.v1` before MQTT.
+- Direct host IPv6 and AWS TURN relay both count as WebRTC success; ICE chooses the candidate pair.
 - The browser acquires and renews an MCP control lease while sending `cmd_vel.publish`.
 - The browser reads current motion/video/control state from MCP `robot.get_state`.

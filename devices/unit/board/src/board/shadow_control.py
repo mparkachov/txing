@@ -26,6 +26,7 @@ from aws.mqtt import AwsIotWebsocketSyncConnection, AwsMqttConnectionConfig
 
 from .cmd_vel import CmdVelController, MAX_SPEED
 from .mcp_service import BoardMcpServer
+from .mcp_ipc import BoardMcpIpcServer
 from .motor_driver import (
     DEFAULT_DRIVE_CMD_RAW_MAX_SPEED,
     DEFAULT_DRIVE_CMD_RAW_MIN_SPEED,
@@ -118,6 +119,8 @@ DEFAULT_TIME_SYNC_POLL_INTERVAL = 1.0
 DEFAULT_VIDEO_REGION = "eu-central-1"
 DEFAULT_VIDEO_STARTUP_TIMEOUT_SECONDS = 30.0
 DEFAULT_VIDEO_STATUS_HEARTBEAT_SECONDS = 5.0
+DEFAULT_MCP_WEBRTC_SOCKET_FILE = Path("/tmp/txing_board_mcp_webrtc.sock")
+DEFAULT_MCP_WEBRTC_SOCKET_FILE_ENV = "BOARD_MCP_WEBRTC_SOCKET_FILE"
 DEFAULT_HALT_COMMAND = ("/usr/bin/systemctl", "halt", "--no-wall")
 DEFAULT_TIMEDATECTL_SYNC_COMMAND = (
     "/usr/bin/timedatectl",
@@ -251,6 +254,7 @@ class ControlConfig:
     drive_left_inverted: bool
     drive_right_inverted: bool
     halt_command: tuple[str, ...]
+    mcp_webrtc_socket_file: Path | None
     once: bool
 
 
@@ -908,6 +912,23 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--mcp-webrtc-socket-file",
+        type=Path,
+        default=_env_path(
+            DEFAULT_MCP_WEBRTC_SOCKET_FILE_ENV,
+            default=DEFAULT_MCP_WEBRTC_SOCKET_FILE,
+        ),
+        help=(
+            "Unix socket for MCP over WebRTC data-channel bridging "
+            f"(default: ${DEFAULT_MCP_WEBRTC_SOCKET_FILE_ENV} or {DEFAULT_MCP_WEBRTC_SOCKET_FILE})"
+        ),
+    )
+    parser.add_argument(
+        "--disable-mcp-webrtc",
+        action="store_true",
+        help="Disable MCP over the board video WebRTC data channel and advertise MQTT-only MCP",
+    )
+    parser.add_argument(
         "--once",
         action="store_true",
         help="Publish a single reported.device.board update and exit",
@@ -1465,6 +1486,7 @@ def main() -> None:
             drive_left_inverted=args.drive_left_inverted,
             drive_right_inverted=args.drive_right_inverted,
             halt_command=tuple(args.halt_command),
+            mcp_webrtc_socket_file=None if args.disable_mcp_webrtc else args.mcp_webrtc_socket_file,
             once=args.once,
         )
         validator = _load_validator(config.schema_file)
@@ -1504,12 +1526,23 @@ def main() -> None:
         aws_credentials=aws_runtime.credential_snapshot(),
         state_file=DEFAULT_VIDEO_STATE_FILE,
         working_directory=REPO_ROOT,
+        mcp_webrtc_socket_path=config.mcp_webrtc_socket_file,
     )
     mcp_server = BoardMcpServer(
         device_id=config.thing_name,
         cmd_vel_controller=cmd_vel_controller,
         video_state_provider=lambda: _read_video_state(video_supervisor),
         lease_ttl_ms=DEFAULT_MCP_LEASE_TTL_MS,
+        webrtc_channel_name=config.video_channel_name if config.mcp_webrtc_socket_file is not None else None,
+        webrtc_region=config.video_region if config.mcp_webrtc_socket_file is not None else None,
+    )
+    mcp_ipc_server = (
+        BoardMcpIpcServer(
+            socket_path=config.mcp_webrtc_socket_file,
+            mcp_server=mcp_server,
+        )
+        if config.mcp_webrtc_socket_file is not None
+        else None
     )
     video_service = BoardVideoService(
         device_id=config.thing_name,
@@ -1530,6 +1563,8 @@ def main() -> None:
     last_video_status_publish_monotonic: float | None = None
 
     try:
+        if mcp_ipc_server is not None:
+            mcp_ipc_server.start()
         while not stop_event.is_set() and not shadow_client.halt_requested() and not startup_published:
             mcp_server.poll()
             try:
@@ -1682,6 +1717,8 @@ def main() -> None:
             except RuntimeError as err:
                 LOGGER.warning("Failed to publish best-effort shutdown board update: %s", err)
     finally:
+        if mcp_ipc_server is not None:
+            mcp_ipc_server.stop()
         video_supervisor.stop()
         shadow_client.close()
         cmd_vel_controller.close()

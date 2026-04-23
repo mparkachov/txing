@@ -37,6 +37,7 @@ DEFAULT_SENDER_COMMAND_ENV = "BOARD_VIDEO_SENDER_COMMAND"
 DEFAULT_READY_PATTERN_ENV = "BOARD_VIDEO_READY_PATTERN"
 DEFAULT_VIEWER_CONNECTED_PATTERN_ENV = "BOARD_VIDEO_VIEWER_CONNECTED_PATTERN"
 DEFAULT_VIEWER_DISCONNECTED_PATTERN_ENV = "BOARD_VIDEO_VIEWER_DISCONNECTED_PATTERN"
+DEFAULT_MCP_WEBRTC_SOCKET_PATH_ENV = "BOARD_MCP_WEBRTC_SOCKET_PATH"
 DEFAULT_AWS_SHARED_CREDENTIALS_FILE_ENV = "AWS_SHARED_CREDENTIALS_FILE"
 DEFAULT_AWS_CONFIG_FILE_ENV = "AWS_CONFIG_FILE"
 DEFAULT_SSL_CERT_FILE_ENV = "SSL_CERT_FILE"
@@ -224,6 +225,7 @@ def _build_sender_environment(
     region: str,
     channel_name: str,
     credentials: AwsCredentialSnapshot,
+    mcp_webrtc_socket_path: Path | None = None,
 ) -> dict[str, str]:
     environment = os.environ.copy()
     environment[DEFAULT_REGION_ENV] = region
@@ -242,6 +244,10 @@ def _build_sender_environment(
     environment.pop(DEFAULT_KVS_CA_CERT_PATH_ENV, None)
     environment.pop("BOARD_VIDEO_CA_FILE", None)
     environment.pop("TXING_BOARD_VIDEO_CA_FILE", None)
+    if mcp_webrtc_socket_path is not None:
+        environment[DEFAULT_MCP_WEBRTC_SOCKET_PATH_ENV] = str(mcp_webrtc_socket_path)
+    else:
+        environment.pop(DEFAULT_MCP_WEBRTC_SOCKET_PATH_ENV, None)
     return environment
 
 
@@ -255,6 +261,7 @@ class VideoSenderRuntimeConfig:
     ready_pattern: re.Pattern[str] | None
     viewer_connected_pattern: re.Pattern[str] | None
     viewer_disconnected_pattern: re.Pattern[str] | None
+    mcp_webrtc_socket_path: Path | None = None
 
 
 class VideoSenderProcess:
@@ -320,6 +327,7 @@ class VideoSenderProcess:
                 region=self._config.region,
                 channel_name=self._config.channel_name,
                 credentials=credentials,
+                mcp_webrtc_socket_path=self._config.mcp_webrtc_socket_path,
             ),
         )
         LOGGER.info(
@@ -472,6 +480,7 @@ class VideoSenderSupervisor:
         aws_credentials: AwsCredentialSnapshot | None = None,
         state_file: Path = DEFAULT_VIDEO_STATE_FILE,
         working_directory: Path | None = None,
+        mcp_webrtc_socket_path: Path | None = None,
     ) -> None:
         self._channel_name = channel_name
         self._region = region
@@ -480,6 +489,7 @@ class VideoSenderSupervisor:
         self._aws_config_file = aws_config_file
         self._aws_credentials = aws_credentials
         self._state_file = state_file
+        self._mcp_webrtc_socket_path = mcp_webrtc_socket_path
         self._working_directory = (
             working_directory.expanduser().resolve()
             if working_directory is not None
@@ -526,6 +536,13 @@ class VideoSenderSupervisor:
                 [
                     "--aws-config-file",
                     _resolve_path_for_child(self._aws_config_file, cwd=spawn_cwd),
+                ]
+            )
+        if self._mcp_webrtc_socket_path is not None:
+            command.extend(
+                [
+                    "--mcp-webrtc-socket-path",
+                    _resolve_path_for_child(self._mcp_webrtc_socket_path, cwd=spawn_cwd),
                 ]
             )
         self._process = subprocess.Popen(
@@ -658,6 +675,15 @@ def _parse_args() -> argparse.Namespace:
             f"(default: ${DEFAULT_VIEWER_DISCONNECTED_PATTERN_ENV})"
         ),
     )
+    parser.add_argument(
+        "--mcp-webrtc-socket-path",
+        type=Path,
+        default=_optional_env_path(DEFAULT_MCP_WEBRTC_SOCKET_PATH_ENV),
+        help=(
+            "Unix socket path used by the native sender for MCP WebRTC data-channel "
+            f"bridging (default: ${DEFAULT_MCP_WEBRTC_SOCKET_PATH_ENV} or disabled)"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -695,6 +721,7 @@ def main() -> None:
                 args.viewer_disconnected_pattern,
                 env_name=DEFAULT_VIEWER_DISCONNECTED_PATTERN_ENV,
             ),
+            mcp_webrtc_socket_path=args.mcp_webrtc_socket_path,
         )
     )
 

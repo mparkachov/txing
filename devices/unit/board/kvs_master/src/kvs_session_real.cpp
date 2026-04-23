@@ -3,8 +3,11 @@
 #include "kvs_master/markers.hpp"
 
 #include <arpa/inet.h>
+#include <errno.h>
 #include <netdb.h>
 #include <sys/socket.h>
+#include <sys/un.h>
+#include <unistd.h>
 
 #include <array>
 #include <atomic>
@@ -51,6 +54,7 @@ constexpr CHAR kControlPlaneUriEnvVar[] = "CONTROL_PLANE_URI";
 constexpr CHAR kIceTransportPolicyEnvVar[] = "KVS_ICE_TRANSPORT_POLICY";
 constexpr CHAR kVideoStreamId[] = "txingBoardVideo";
 constexpr CHAR kVideoTrackId[] = "txingBoardVideoTrack";
+constexpr CHAR kMcpDataChannelLabel[] = "txing.mcp.v1";
 constexpr char kSystemCaCertPath[] = TXING_KVS_SYSTEM_CA_CERT_PATH;
 constexpr std::size_t kCandidateAddressTokenIndex = 4;
 
@@ -95,6 +99,76 @@ std::optional<std::string> ExtractJsonStringField(std::string_view json, std::st
     }
 
     return std::nullopt;
+}
+
+std::string EscapeJsonString(std::string_view value) {
+    std::string escaped;
+    escaped.reserve(value.size() + 8);
+    for (const char ch : value) {
+        switch (ch) {
+            case '\\':
+                escaped += "\\\\";
+                break;
+            case '"':
+                escaped += "\\\"";
+                break;
+            case '\n':
+                escaped += "\\n";
+                break;
+            case '\r':
+                escaped += "\\r";
+                break;
+            case '\t':
+                escaped += "\\t";
+                break;
+            default:
+                escaped.push_back(ch);
+                break;
+        }
+    }
+    return escaped;
+}
+
+bool WriteAll(int fd, std::string_view payload) {
+    std::size_t offset = 0;
+    while (offset < payload.size()) {
+        const ssize_t written = ::write(fd, payload.data() + offset, payload.size() - offset);
+        if (written < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            return false;
+        }
+        if (written == 0) {
+            return false;
+        }
+        offset += static_cast<std::size_t>(written);
+    }
+    return true;
+}
+
+std::optional<std::string> ReadLine(int fd) {
+    std::string line;
+    char ch = '\0';
+    while (true) {
+        const ssize_t received = ::read(fd, &ch, 1);
+        if (received < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            return std::nullopt;
+        }
+        if (received == 0) {
+            return std::nullopt;
+        }
+        if (ch == '\n') {
+            return line;
+        }
+        line.push_back(ch);
+        if (line.size() > MAX_SIGNALING_MESSAGE_LEN) {
+            return std::nullopt;
+        }
+    }
 }
 
 std::vector<std::string> SplitWhitespaceSeparated(std::string_view value) {
@@ -259,11 +333,14 @@ struct StreamingSession {
     std::string peer_id;
     PRtcPeerConnection peer_connection = nullptr;
     PRtcRtpTransceiver video_transceiver = nullptr;
+    PRtcDataChannel mcp_data_channel = nullptr;
     RtcSessionDescriptionInit answer_description{};
     std::atomic_bool terminate_requested{false};
     std::atomic_bool first_frame{true};
     bool connected = false;
     bool remote_can_trickle = false;
+    int mcp_ipc_fd = -1;
+    std::mutex mcp_ipc_lock;
     UINT64 frame_index = 0;
     UINT64 correlation_id_postfix = 0;
 };
@@ -278,6 +355,7 @@ class RealKvsSession final : public KvsSession {
           secret_access_key_(credentials.secret_access_key),
           session_token_(credentials.session_token),
           ca_cert_path_(ResolveSignalingCaCertPath()),
+          mcp_webrtc_socket_path_(config.mcp_webrtc_socket_path),
           video_bitrate_bps_(config.camera.bitrate) {
         try {
             CreateCredentialProvider();
@@ -680,6 +758,104 @@ class RealKvsSession final : public KvsSession {
         );
     }
 
+    STATUS AddMcpDataChannelHandler(StreamingSession* session) {
+        if (!mcp_webrtc_socket_path_.has_value()) {
+            return STATUS_SUCCESS;
+        }
+        return peerConnectionOnDataChannel(
+            session->peer_connection,
+            reinterpret_cast<UINT64>(session),
+            OnDataChannel
+        );
+    }
+
+    bool EnsureMcpIpcConnected(StreamingSession* session) {
+        if (session == nullptr || !mcp_webrtc_socket_path_.has_value()) {
+            return false;
+        }
+        if (session->mcp_ipc_fd >= 0) {
+            return true;
+        }
+
+        if (mcp_webrtc_socket_path_->size() >= sizeof(sockaddr_un::sun_path)) {
+            std::fprintf(stderr, "WARN kvs_session_real: MCP IPC socket path is too long\n");
+            return false;
+        }
+
+        int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+        if (fd < 0) {
+            std::fprintf(stderr, "WARN kvs_session_real: failed to create MCP IPC socket errno=%d\n", errno);
+            return false;
+        }
+
+        sockaddr_un address{};
+        address.sun_family = AF_UNIX;
+        std::snprintf(address.sun_path, sizeof(address.sun_path), "%s", mcp_webrtc_socket_path_->c_str());
+        if (::connect(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0) {
+            std::fprintf(
+                stderr,
+                "WARN kvs_session_real: failed to connect MCP IPC socket path=%s errno=%d\n",
+                mcp_webrtc_socket_path_->c_str(),
+                errno
+            );
+            ::close(fd);
+            return false;
+        }
+
+        session->mcp_ipc_fd = fd;
+        return true;
+    }
+
+    void CloseMcpIpc(StreamingSession* session, const char* reason) noexcept {
+        if (session == nullptr) {
+            return;
+        }
+        std::lock_guard<std::mutex> lock(session->mcp_ipc_lock);
+        if (session->mcp_ipc_fd < 0) {
+            return;
+        }
+        const std::string close_frame =
+            std::string("{\"type\":\"close\",\"sessionId\":\"") +
+            EscapeJsonString(session->peer_id) +
+            "\",\"reason\":\"" +
+            EscapeJsonString(reason == nullptr ? "MCP WebRTC data channel closed" : reason) +
+            "\"}\n";
+        UNUSED_PARAM(WriteAll(session->mcp_ipc_fd, close_frame));
+        ::close(session->mcp_ipc_fd);
+        session->mcp_ipc_fd = -1;
+    }
+
+    std::optional<std::string> DispatchMcpDataChannelMessage(
+        StreamingSession* session,
+        std::string_view payload
+    ) {
+        if (session == nullptr) {
+            return std::nullopt;
+        }
+        std::lock_guard<std::mutex> lock(session->mcp_ipc_lock);
+        if (!EnsureMcpIpcConnected(session)) {
+            return std::nullopt;
+        }
+        const std::string request_frame =
+            std::string("{\"type\":\"request\",\"sessionId\":\"") +
+            EscapeJsonString(session->peer_id) +
+            "\",\"payload\":\"" +
+            EscapeJsonString(payload) +
+            "\"}\n";
+        if (!WriteAll(session->mcp_ipc_fd, request_frame)) {
+            ::close(session->mcp_ipc_fd);
+            session->mcp_ipc_fd = -1;
+            return std::nullopt;
+        }
+        const auto response_line = ReadLine(session->mcp_ipc_fd);
+        if (!response_line.has_value()) {
+            ::close(session->mcp_ipc_fd);
+            session->mcp_ipc_fd = -1;
+            return std::nullopt;
+        }
+        return ExtractJsonStringField(*response_line, "payload");
+    }
+
     STATUS CreateStreamingSession(const std::string& peer_id, std::shared_ptr<StreamingSession>* session_out) {
         if (session_out == nullptr) {
             return STATUS_NULL_ARG;
@@ -712,6 +888,12 @@ class RealKvsSession final : public KvsSession {
             reinterpret_cast<UINT64>(session.get()),
             OnConnectionStateChange
         );
+        if (STATUS_FAILED(status)) {
+            DestroySession(session);
+            return status;
+        }
+
+        status = AddMcpDataChannelHandler(session.get());
         if (STATUS_FAILED(status)) {
             DestroySession(session);
             return status;
@@ -1109,6 +1291,7 @@ class RealKvsSession final : public KvsSession {
 
         SetSessionConnected(session.get(), false);
         session->terminate_requested.store(true);
+        CloseMcpIpc(session.get(), "MCP WebRTC peer session destroyed");
 
         if (session->peer_connection != nullptr) {
             UNUSED_PARAM(closePeerConnection(session->peer_connection));
@@ -1257,6 +1440,70 @@ class RealKvsSession final : public KvsSession {
         return status;
     }
 
+    static VOID OnDataChannel(UINT64 custom_data, PRtcDataChannel data_channel) {
+        auto* session = reinterpret_cast<StreamingSession*>(custom_data);
+        if (session == nullptr || session->owner == nullptr || data_channel == nullptr) {
+            return;
+        }
+        if (std::string(data_channel->name) != kMcpDataChannelLabel) {
+            std::fprintf(
+                stderr,
+                "INFO kvs_session_real: ignoring unsupported data channel label=%s peer=%s\n",
+                data_channel->name,
+                session->peer_id.c_str()
+            );
+            return;
+        }
+        session->mcp_data_channel = data_channel;
+        const STATUS status = dataChannelOnMessage(data_channel, custom_data, OnDataChannelMessage);
+        if (STATUS_FAILED(status)) {
+            std::fprintf(
+                stderr,
+                "WARN kvs_session_real: failed to register MCP data channel message handler status=%s peer=%s\n",
+                FormatStatus(status).c_str(),
+                session->peer_id.c_str()
+            );
+        }
+    }
+
+    static VOID OnDataChannelMessage(
+        UINT64 custom_data,
+        PRtcDataChannel data_channel,
+        BOOL is_binary,
+        PBYTE message,
+        UINT32 message_len
+    ) {
+        auto* session = reinterpret_cast<StreamingSession*>(custom_data);
+        if (
+            session == nullptr ||
+            session->owner == nullptr ||
+            data_channel == nullptr ||
+            message == nullptr ||
+            is_binary
+        ) {
+            return;
+        }
+        const std::string_view payload(reinterpret_cast<const char*>(message), message_len);
+        const auto response = session->owner->DispatchMcpDataChannelMessage(session, payload);
+        if (!response.has_value()) {
+            return;
+        }
+        const STATUS status = dataChannelSend(
+            data_channel,
+            FALSE,
+            reinterpret_cast<PBYTE>(const_cast<char*>(response->data())),
+            static_cast<UINT32>(response->size())
+        );
+        if (STATUS_FAILED(status)) {
+            std::fprintf(
+                stderr,
+                "WARN kvs_session_real: MCP data channel send failed status=%s peer=%s\n",
+                FormatStatus(status).c_str(),
+                session->peer_id.c_str()
+            );
+        }
+    }
+
     static VOID OnIceCandidate(UINT64 custom_data, PCHAR candidate_json) {
         auto* session = reinterpret_cast<StreamingSession*>(custom_data);
         if (session == nullptr || session->owner == nullptr) {
@@ -1295,6 +1542,7 @@ class RealKvsSession final : public KvsSession {
     std::string secret_access_key_;
     std::optional<std::string> session_token_;
     std::string ca_cert_path_;
+    std::optional<std::string> mcp_webrtc_socket_path_;
     UINT32 video_bitrate_bps_ = 0;
 
     std::optional<std::string> control_plane_url_;

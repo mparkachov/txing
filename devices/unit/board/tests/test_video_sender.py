@@ -87,6 +87,24 @@ class VideoSenderTests(unittest.TestCase):
         self.assertEqual(environment["AWS_SECRET_ACCESS_KEY"], "env-secret")
         self.assertEqual(environment["AWS_SESSION_TOKEN"], "env-token")
 
+    def test_build_sender_environment_exports_mcp_webrtc_socket_when_configured(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            environment = video_sender._build_sender_environment(
+                region="eu-central-1",
+                channel_name="txing-board-video",
+                credentials=AwsCredentialSnapshot(
+                    access_key_id="env-access",
+                    secret_access_key="env-secret",
+                    session_token=None,
+                ),
+                mcp_webrtc_socket_path=Path("/tmp/txing_board_mcp_webrtc.sock"),
+            )
+
+        self.assertEqual(
+            environment["BOARD_MCP_WEBRTC_SOCKET_PATH"],
+            "/tmp/txing_board_mcp_webrtc.sock",
+        )
+
     def test_build_sender_environment_does_not_inject_ca_by_default(self) -> None:
         with patch.dict(os.environ, {"EXISTING": "value"}, clear=True):
             environment = video_sender._build_sender_environment(
@@ -311,10 +329,14 @@ class VideoSenderTests(unittest.TestCase):
                     aws_shared_credentials_file=Path("config/aws.credentials"),
                     aws_config_file=Path("config/aws.config"),
                     working_directory=Path("/stable-repo"),
+                    mcp_webrtc_socket_path=Path("runtime/mcp.sock"),
                 )
                 supervisor.start()
 
         kwargs = popen_mock.call_args.kwargs
+        command = popen_mock.call_args.args[0]
+        self.assertIn("--mcp-webrtc-socket-path", command)
+        self.assertIn(str((Path("/stable-repo") / "runtime/mcp.sock").resolve()), command)
         self.assertEqual(kwargs["cwd"], str(Path("/stable-repo").resolve()))
         environment = kwargs["env"]
         self.assertEqual(environment["AWS_PROFILE"], "txing")

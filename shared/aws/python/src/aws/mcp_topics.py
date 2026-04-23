@@ -6,6 +6,9 @@ from typing import Any
 MCP_TOPIC_NAMESPACE = "txings"
 MCP_SERVICE_NAME = "mcp"
 MCP_TRANSPORT = "mqtt-jsonrpc"
+MCP_WEBRTC_DATA_CHANNEL_TRANSPORT = "webrtc-datachannel"
+MCP_WEBRTC_DATA_CHANNEL_LABEL = "txing.mcp.v1"
+MCP_WEBRTC_SIGNALING = "aws-kvs"
 MCP_PROTOCOL_VERSION = "2025-11-25"
 MCP_DEFAULT_LEASE_TTL_MS = 5000
 
@@ -129,10 +132,39 @@ def build_mcp_descriptor_payload(
     lease_ttl_ms: int = MCP_DEFAULT_LEASE_TTL_MS,
     mcp_protocol_version: str = MCP_PROTOCOL_VERSION,
     transport: str = MCP_TRANSPORT,
+    webrtc_channel_name: str | None = None,
+    webrtc_region: str | None = None,
+    webrtc_data_channel_label: str = MCP_WEBRTC_DATA_CHANNEL_LABEL,
 ) -> dict[str, Any]:
     if lease_ttl_ms <= 0:
         raise ValueError("lease_ttl_ms must be positive")
     topics = build_mcp_topics(device_id)
+    session_topic_pattern = {
+        "clientToServer": topics.session_c2s_pattern,
+        "serverToClient": topics.session_s2c_pattern,
+    }
+    transports: list[dict[str, Any]] = []
+    normalized_webrtc_channel_name = (webrtc_channel_name or "").strip()
+    normalized_webrtc_region = (webrtc_region or "").strip()
+    if normalized_webrtc_channel_name and normalized_webrtc_region:
+        transports.append(
+            {
+                "type": MCP_WEBRTC_DATA_CHANNEL_TRANSPORT,
+                "priority": 10,
+                "signaling": MCP_WEBRTC_SIGNALING,
+                "channelName": normalized_webrtc_channel_name,
+                "region": normalized_webrtc_region,
+                "label": webrtc_data_channel_label,
+            }
+        )
+    transports.append(
+        {
+            "type": MCP_TRANSPORT,
+            "priority": 100,
+            "topicRoot": topics.topic_root,
+            "sessionTopicPattern": session_topic_pattern,
+        }
+    )
     return {
         "serviceId": MCP_SERVICE_NAME,
         "serverInfo": {
@@ -143,10 +175,8 @@ def build_mcp_descriptor_payload(
         "mcpProtocolVersion": mcp_protocol_version,
         "topicRoot": topics.topic_root,
         "descriptorTopic": topics.descriptor,
-        "sessionTopicPattern": {
-            "clientToServer": topics.session_c2s_pattern,
-            "serverToClient": topics.session_s2c_pattern,
-        },
+        "sessionTopicPattern": session_topic_pattern,
+        "transports": transports,
         "leaseRequired": bool(lease_required),
         "leaseTtlMs": int(lease_ttl_ms),
         "serverVersion": server_version,

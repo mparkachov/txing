@@ -23,6 +23,23 @@ export type VideoViewerHandle = {
   close: () => void
 }
 
+export type StartMcpDataChannelOptions = {
+  channelName: string
+  region: string
+  label: string
+  resolveIdToken: () => Promise<string>
+  openTimeoutMs?: number
+  debugEnabled?: boolean
+  isDebugEnabled?: () => boolean
+}
+
+export type McpDataChannelHandle = {
+  sessionId: string
+  request: (message: Record<string, unknown>, timeoutMs: number) => Promise<unknown>
+  notify: (message: Record<string, unknown>) => Promise<void>
+  close: () => void
+}
+
 type EndpointMap = Partial<Record<'HTTPS' | 'WSS', string>>
 type ResourceEndpointLike = {
   Protocol?: string | null
@@ -104,4 +121,11 @@ export const startBoardVideoViewer = async (
 ): Promise<VideoViewerHandle> => {
   const { startBoardVideoViewerRuntime } = await loadVideoSessionRuntime()
   return startBoardVideoViewerRuntime(options)
+}
+
+export const startBoardMcpDataChannel = async (
+  options: StartMcpDataChannelOptions,
+): Promise<McpDataChannelHandle> => {
+  const { startBoardMcpDataChannelRuntime } = await loadVideoSessionRuntime()
+  return startBoardMcpDataChannelRuntime(options)
 }

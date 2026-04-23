@@ -244,6 +244,8 @@ void TestCliParsing() {
             "txing-board-video",
             "--client-id",
             "board-master",
+            "--mcp-webrtc-socket-path",
+            "/tmp/txing_board_mcp_webrtc.sock",
             "--width",
             "1280",
             "--height",
@@ -261,6 +263,10 @@ void TestCliParsing() {
     Expect(parsed.config.region == "eu-central-1", "CLI should parse region");
     Expect(parsed.config.channel_name == "txing-board-video", "CLI should parse channel name");
     Expect(parsed.config.client_id == "board-master", "CLI should parse client id");
+    Expect(
+        parsed.config.mcp_webrtc_socket_path == "/tmp/txing_board_mcp_webrtc.sock",
+        "CLI should parse optional MCP WebRTC socket path"
+    );
     Expect(parsed.config.camera.width == 1280, "CLI should parse width");
     Expect(parsed.config.camera.height == 720, "CLI should parse height");
     Expect(parsed.config.camera.framerate == 15, "CLI should parse framerate");
@@ -282,6 +288,10 @@ void TestUsageText() {
     Expect(
         usage.find("BOARD_VIDEO_CHANNEL_NAME") != std::string::npos,
         "usage text should document the board video channel environment variable"
+    );
+    Expect(
+        usage.find("BOARD_MCP_WEBRTC_SOCKET_PATH") != std::string::npos,
+        "usage text should document the optional MCP WebRTC socket path environment variable"
     );
 }
 

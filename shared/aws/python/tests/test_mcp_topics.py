@@ -5,6 +5,9 @@ import unittest
 from aws.mcp_topics import (
     MCP_PROTOCOL_VERSION,
     MCP_TRANSPORT,
+    MCP_WEBRTC_DATA_CHANNEL_LABEL,
+    MCP_WEBRTC_DATA_CHANNEL_TRANSPORT,
+    MCP_WEBRTC_SIGNALING,
     build_mcp_descriptor_payload,
     build_mcp_descriptor_topic,
     build_mcp_session_c2s_subscription,
@@ -90,7 +93,54 @@ class McpTopicsContractTests(unittest.TestCase):
                 "serverToClient": "txings/unit-local/mcp/session/{sessionId}/s2c",
             },
         )
+        self.assertEqual(
+            payload["transports"],
+            [
+                {
+                    "type": MCP_TRANSPORT,
+                    "priority": 100,
+                    "topicRoot": "txings/unit-local/mcp",
+                    "sessionTopicPattern": {
+                        "clientToServer": "txings/unit-local/mcp/session/{sessionId}/c2s",
+                        "serverToClient": "txings/unit-local/mcp/session/{sessionId}/s2c",
+                    },
+                }
+            ],
+        )
         self.assertEqual(payload["leaseTtlMs"], 5000)
+
+    def test_builds_descriptor_payload_with_webrtc_transport_before_mqtt(self) -> None:
+        payload = build_mcp_descriptor_payload(
+            device_id="unit-local",
+            server_version="0.2.0",
+            lease_ttl_ms=5000,
+            webrtc_channel_name="unit-local-board-video",
+            webrtc_region="eu-central-1",
+        )
+
+        self.assertEqual(payload["transport"], MCP_TRANSPORT)
+        self.assertEqual(
+            payload["transports"],
+            [
+                {
+                    "type": MCP_WEBRTC_DATA_CHANNEL_TRANSPORT,
+                    "priority": 10,
+                    "signaling": MCP_WEBRTC_SIGNALING,
+                    "channelName": "unit-local-board-video",
+                    "region": "eu-central-1",
+                    "label": MCP_WEBRTC_DATA_CHANNEL_LABEL,
+                },
+                {
+                    "type": MCP_TRANSPORT,
+                    "priority": 100,
+                    "topicRoot": "txings/unit-local/mcp",
+                    "sessionTopicPattern": {
+                        "clientToServer": "txings/unit-local/mcp/session/{sessionId}/c2s",
+                        "serverToClient": "txings/unit-local/mcp/session/{sessionId}/s2c",
+                    },
+                },
+            ],
+        )
 
     def test_builds_status_payload(self) -> None:
         payload = build_mcp_status_payload(
