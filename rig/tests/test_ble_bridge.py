@@ -1242,6 +1242,9 @@ class WaitForReportedPowerTests(unittest.TestCase):
 
 
 class LifecycleBridgeTests(unittest.TestCase):
+    def test_pending_wake_is_written_before_full_service_sync(self) -> None:
+        asyncio.run(self._exercise_pending_wake_fast_path())
+
     def test_redcon_four_waits_for_board_shutdown_before_sleep(self) -> None:
         asyncio.run(self._exercise_redcon_four_board_shutdown_request())
 
@@ -1251,11 +1254,72 @@ class LifecycleBridgeTests(unittest.TestCase):
     def test_wake_target_reconnects_when_reported_power_is_stale_true_but_ble_is_offline(self) -> None:
         asyncio.run(self._exercise_wake_target_reconnects_with_stale_power())
 
+    def test_wake_confirmation_loss_accepts_successful_write(self) -> None:
+        asyncio.run(self._exercise_wake_confirmation_loss_accepts_write())
+
     def test_mcp_and_video_ready_stage_redcon_through_two_before_one(self) -> None:
         asyncio.run(self._exercise_mcp_and_video_ready_stage_redcon())
 
     def test_viewer_connected_no_longer_changes_redcon(self) -> None:
         asyncio.run(self._exercise_viewer_connected_is_informational())
+
+    async def _exercise_pending_wake_fast_path(self) -> None:
+        events: list[str] = []
+        cloud_shadow = FakeCloudShadow()
+        shadow = ShadowState(
+            target_redcon=1,
+            reported_power=False,
+            battery_mv=3795,
+            ble_online=False,
+            redcon=4,
+        )
+        bridge = BleSleepBridge(
+            BridgeConfig(),
+            shadow,
+            cloud_shadow,  # type: ignore[arg-type]
+        )
+        loop = asyncio.get_running_loop()
+        device = types.SimpleNamespace(address="EE:C7:32:0B:1C:6A", name="txing")
+        bridge._loop = loop
+        bridge._known_device.device = device
+        bridge._known_device.device_id = device.address
+        bridge._known_device.local_name = device.name
+        bridge._known_device.last_seen_monotonic = loop.time()
+
+        class FakeClient:
+            def __init__(self, _device: object, **_kwargs: object) -> None:
+                self.is_connected = False
+
+            async def connect(self) -> bool:
+                events.append("connect")
+                self.is_connected = True
+                return True
+
+            @property
+            def services(self) -> object:
+                events.append("services")
+                raise RuntimeError("failed to discover services, device disconnected")
+
+            async def write_gatt_char(
+                self,
+                _characteristic: str,
+                _payload: bytes,
+                *,
+                response: bool,
+            ) -> None:
+                del response
+                events.append("write")
+
+            async def disconnect(self) -> bool:
+                events.append("disconnect")
+                self.is_connected = False
+                return True
+
+        with patch("unit_rig.ble_bridge.BleakClient", FakeClient):
+            with self.assertRaisesRegex(RuntimeError, "failed to discover services"):
+                await bridge._ensure_connected()
+
+        self.assertEqual(events[:3], ["connect", "write", "services"])
 
     async def _exercise_redcon_four_board_shutdown_request(self) -> None:
         cloud_shadow = FakeCloudShadow()
@@ -1354,6 +1418,51 @@ class LifecycleBridgeTests(unittest.TestCase):
                 in line
                 for line in captured.output
             )
+        )
+
+    async def _exercise_wake_confirmation_loss_accepts_write(self) -> None:
+        cloud_shadow = FakeCloudShadow()
+        shadow = ShadowState(
+            target_redcon=3,
+            reported_power=False,
+            battery_mv=3795,
+            ble_online=True,
+            board_power=False,
+            redcon=4,
+        )
+        bridge = BleSleepBridge(
+            BridgeConfig(),
+            shadow,
+            cloud_shadow,  # type: ignore[arg-type]
+        )
+        bridge._client = types.SimpleNamespace(is_connected=True)
+        disconnect_calls: list[dict[str, object]] = []
+        wake_commands: list[bool] = []
+
+        async def _fake_send_sleep_command(*, sleep: bool) -> None:
+            wake_commands.append(sleep)
+
+        async def _fake_wait_for_reported_power(expected: bool) -> bytes:
+            self.assertTrue(expected)
+            raise EOFError("wake confirmation lost")
+
+        async def _fake_safe_disconnect(**kwargs: object) -> None:
+            disconnect_calls.append(dict(kwargs))
+
+        bridge._send_sleep_command = _fake_send_sleep_command  # type: ignore[method-assign]
+        bridge._wait_for_reported_power = _fake_wait_for_reported_power  # type: ignore[method-assign]
+        bridge._safe_disconnect = _fake_safe_disconnect  # type: ignore[method-assign]
+
+        await bridge._process_target_redcon_once()
+
+        self.assertEqual(wake_commands, [False])
+        self.assertEqual(disconnect_calls, [])
+        self.assertTrue(shadow.reported_power)
+        self.assertEqual(shadow.redcon, 3)
+        self.assertIsNone(shadow.target_redcon)
+        self.assertEqual(
+            cloud_shadow.shadow_updates[0]["reported_device_patch"],
+            {"mcu": {"power": True}},
         )
 
     async def _exercise_mcp_and_video_ready_stage_redcon(self) -> None:

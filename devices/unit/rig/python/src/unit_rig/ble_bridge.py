@@ -175,6 +175,26 @@ def _is_expected_post_sleep_confirmation_error(err: Exception) -> bool:
     return False
 
 
+def _is_expected_post_wake_confirmation_error(err: Exception) -> bool:
+    if isinstance(err, (EOFError, TimeoutError)):
+        return True
+    if isinstance(err, BleakDBusError):
+        if err.dbus_error in {
+            "org.bluez.Error.DoesNotExist",
+            "org.bluez.Error.NotConnected",
+            "org.bluez.Error.Failed",
+        }:
+            return True
+    if isinstance(err, BleakError):
+        message = str(err).lower()
+        return (
+            "disconnected" in message
+            or "not found" in message
+            or "att error: 0x0e" in message
+        )
+    return False
+
+
 def _is_retryable_gatt_write_error(err: Exception) -> bool:
     if isinstance(err, BleakDBusError):
         return err.dbus_error == "org.bluez.Error.Failed" and "ATT error: 0x0e" in str(
@@ -1847,6 +1867,51 @@ class BleSleepBridge:
         self._board_shutdown_timeout_logged = False
         LOGGER.info("%s", context)
 
+    def _wake_command_needed(self) -> bool:
+        target_redcon = self._shadow.target_redcon
+        if target_redcon is None or target_redcon == 4:
+            return False
+        return not (self._shadow.reported_power and self._shadow.ble_online)
+
+    async def _send_wake_command_for_target(self, *, context: str) -> bool:
+        target_redcon = self._shadow.target_redcon
+        if target_redcon is None or target_redcon == 4:
+            return False
+        self._set_rig_state(
+            RigBleState.COMMAND_PENDING,
+            f"redcon={target_redcon} requested for {self._cached_device_id or '<unknown>'} ({context})",
+        )
+        await self._send_sleep_command(sleep=False)
+        self._set_rig_state(
+            RigBleState.COMMAND_SENT,
+            f"wake command written for {self._cached_device_id or '<unknown>'} ({context})",
+        )
+        return True
+
+    async def _accept_wake_command_without_confirmation(
+        self,
+        *,
+        err: Exception,
+    ) -> None:
+        _log_important(
+            LOGGER,
+            "Wake command was written but confirmation is unavailable; accepting power=true transition error=%s",
+            err.__class__.__name__,
+        )
+        previous_redcon = self._shadow.redcon
+        previous_battery = self._shadow.battery_mv
+        reported_device_patch: dict[str, Any] | None = None
+        if not self._shadow.reported_power:
+            self._shadow.set_reported(True)
+            reported_device_patch = {"mcu": {"power": True}}
+        self._mark_ble_presence_now()
+        await self._publish_reported_update(
+            reported_device_patch=reported_device_patch,
+            context="Reported synchronized after BLE wake command confirmation loss",
+            previous_redcon=previous_redcon,
+            previous_battery=previous_battery,
+        )
+
     async def _reconcile_ble_online_presence(self) -> None:
         ble_online = self._target_ble_online_state()
         await self._publish_ble_online_state(
@@ -2380,16 +2445,18 @@ class BleSleepBridge:
             return
 
         try:
-            self._set_rig_state(
-                RigBleState.COMMAND_PENDING,
-                f"redcon={target_redcon} requested for {self._cached_device_id or '<unknown>'}",
-            )
-            await self._send_sleep_command(sleep=False)
-            self._set_rig_state(
-                RigBleState.COMMAND_SENT,
-                f"wake command written for {self._cached_device_id or '<unknown>'}",
-            )
-            report = await self._wait_for_reported_power(True)
+            await self._send_wake_command_for_target(context="target convergence")
+            try:
+                report = await self._wait_for_reported_power(True)
+            except Exception as err:
+                if _is_expected_post_wake_confirmation_error(err):
+                    await self._accept_wake_command_without_confirmation(err=err)
+                    if self._shadow.clear_target_redcon_if_converged():
+                        await self._clear_target_redcon(
+                            context="Cleared pending REDCON target after wake command confirmation loss",
+                        )
+                    return
+                raise
             await self._sync_reported_from_state_report(
                 report,
                 context="Reported synchronized after BLE REDCON wake command",
@@ -2647,9 +2714,13 @@ class BleSleepBridge:
                 RigBleState.CONNECTED,
                 f"{target_device_id} ({target_name})",
             )
-            await self._ensure_services_discovered(client)
             self._cached_device_id = target_device_id
             self._known_device.device_id = target_device_id
+            if self._wake_command_needed():
+                await self._send_wake_command_for_target(
+                    context="sleep rendezvous fast path",
+                )
+            await self._ensure_services_discovered(client)
             await self._resolve_ble_uuids_for_connected_client(
                 client,
                 device_id=target_device_id,
