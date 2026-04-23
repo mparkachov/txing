@@ -34,6 +34,7 @@ export type StartVideoViewerOptions = {
   onRemoteStream: (stream: MediaStream) => void
   onUiEvent: (event: ViewerUiEvent) => void
   debugEnabled?: boolean
+  isDebugEnabled?: () => boolean
 }
 
 export type VideoViewerHandle = {
@@ -124,7 +125,7 @@ export const startBoardVideoViewerRuntime = async (
   options: StartVideoViewerOptions,
 ): Promise<VideoViewerHandle> => {
   const logVideoDebug = (message: string, details?: unknown): void => {
-    if (options.debugEnabled !== true) {
+    if ((options.isDebugEnabled?.() ?? options.debugEnabled) !== true) {
       return
     }
     if (details === undefined) {

@@ -9,14 +9,9 @@ describe('sparkplug panel', () => {
         routeKind="town"
         botRedcon={null}
         targetRedcon={null}
-        detailsToggleAriaLabel="Show rig details"
-        detailsToggleTitle="Show rig details"
-        isDetailsPanelOpen={false}
-        isDetailsPanelToggleEnabled={true}
         isRedconCommandDisabled={false}
         isRedconSleepCommandDisabled={false}
         onRedconSelect={() => {}}
-        onToggleDetailsPanel={() => {}}
       />,
     )
 
@@ -25,48 +20,37 @@ describe('sparkplug panel', () => {
     expect(markup).not.toContain('>BOT<')
     expect(markup).not.toContain('>REDCON<')
     expect(markup).toContain('sparkplug-redcon-button')
-    expect(markup).toContain('aria-label="Show rig details"')
+    expect(markup).not.toContain('sparkplug-device-button')
     expect(markup).not.toContain('status-battery-shell')
     expect(markup).not.toContain('status-switch-track')
   })
 
-  test('renders a rig strip with an enabled device-list details button', () => {
+  test('renders a rig strip without a manual details button', () => {
     const markup = renderToStaticMarkup(
       <SparkplugPanel
         routeKind="rig"
         botRedcon={null}
         targetRedcon={null}
-        detailsToggleAriaLabel="Show device details"
-        detailsToggleTitle="Show device details"
-        isDetailsPanelOpen={false}
-        isDetailsPanelToggleEnabled={true}
         isRedconCommandDisabled={false}
         isRedconSleepCommandDisabled={false}
         onRedconSelect={() => {}}
-        onToggleDetailsPanel={() => {}}
       />,
     )
 
     expect(markup).toContain('data-sparkplug-row="rig"')
-    expect(markup).toMatch(
-      /aria-label="Show device details" title="Show device details"(?![^>]*disabled)/,
-    )
+    expect(markup).not.toContain('sparkplug-device-button')
+    expect(markup).not.toContain('Show device details')
   })
 
-  test('renders a direct bot redcon control with an always-visible disabled details button outside redcon 1', () => {
+  test('renders a direct bot redcon control without a manual details button outside redcon 1', () => {
     const markup = renderToStaticMarkup(
       <SparkplugPanel
         routeKind="device"
         botRedcon={4}
         targetRedcon={null}
-        detailsToggleAriaLabel="Show bot device details"
-        detailsToggleTitle="Device details become available at REDCON 1"
-        isDetailsPanelOpen={false}
-        isDetailsPanelToggleEnabled={false}
         isRedconCommandDisabled={false}
         isRedconSleepCommandDisabled={false}
         onRedconSelect={() => {}}
-        onToggleDetailsPanel={() => {}}
       />,
     )
 
@@ -81,31 +65,25 @@ describe('sparkplug panel', () => {
     expect(markup).toMatch(
       /aria-label="Set REDCON 4 · Cold Camp · Green"[^>]*aria-pressed="true"(?![^>]*disabled)/,
     )
-    expect(markup).toContain('aria-label="Show bot device details"')
-    expect(markup).toContain('disabled=""')
-    expect(markup).toContain('sparkplug-device-glyph-details')
+    expect(markup).not.toContain('Show bot device details')
+    expect(markup).not.toContain('sparkplug-device-glyph-details')
   })
 
-  test('shows pending target styling and device toggle when bot is at redcon 1', () => {
+  test('shows pending target styling without a manual device toggle when bot is at redcon 1', () => {
     const markup = renderToStaticMarkup(
       <SparkplugPanel
         routeKind="device"
         botRedcon={1}
         targetRedcon={2}
-        detailsToggleAriaLabel="Hide bot device details"
-        detailsToggleTitle="Hide bot device details"
-        isDetailsPanelOpen={true}
-        isDetailsPanelToggleEnabled={true}
         isRedconCommandDisabled={false}
         isRedconSleepCommandDisabled={false}
         onRedconSelect={() => {}}
-        onToggleDetailsPanel={() => {}}
       />,
     )
 
     expect(markup).toContain('sparkplug-redcon-button-pending')
     expect(markup).toContain('sparkplug-redcon-target-arrow')
-    expect(markup).toContain('sparkplug-device-button sparkplug-device-button-open')
-    expect(markup).toContain('aria-label="Hide bot device details"')
+    expect(markup).not.toContain('sparkplug-device-button')
+    expect(markup).not.toContain('Hide bot device details')
   })
 })

@@ -1,6 +1,8 @@
 type DebugPanelProps = {
+  canLoadShadow: boolean
   lastShadowUpdateLabel: string
   lastShadowUpdateTitle: string
+  onLoadShadow: () => void
   reportedMcuPower: boolean | null
   reportedBoardPower: boolean | null
   shadowJson: string
@@ -17,8 +19,10 @@ const getPowerNodeClass = (power: boolean | null): string => {
 }
 
 function DebugPanel({
+  canLoadShadow,
   lastShadowUpdateLabel,
   lastShadowUpdateTitle,
+  onLoadShadow,
   reportedMcuPower,
   reportedBoardPower,
   shadowJson,
@@ -42,9 +46,19 @@ function DebugPanel({
 
       <div className="debug-panel-meta">
         <span className="debug-panel-meta-label">Last shadow update</span>
-        <time className="status-last-shadow-update" title={lastShadowUpdateTitle}>
-          {lastShadowUpdateLabel}
-        </time>
+        <div className="debug-panel-meta-actions">
+          <button
+            type="button"
+            className="debug-panel-load-shadow"
+            disabled={!canLoadShadow}
+            onClick={onLoadShadow}
+          >
+            Load Shadow
+          </button>
+          <time className="status-last-shadow-update" title={lastShadowUpdateTitle}>
+            {lastShadowUpdateLabel}
+          </time>
+        </div>
       </div>
 
       <label htmlFor="shadow-json" className="editor-label">

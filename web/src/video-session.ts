@@ -16,6 +16,7 @@ export type StartVideoViewerOptions = {
   onRemoteStream: (stream: MediaStream) => void
   onUiEvent: (event: ViewerUiEvent) => void
   debugEnabled?: boolean
+  isDebugEnabled?: () => boolean
 }
 
 export type VideoViewerHandle = {

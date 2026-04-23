@@ -229,10 +229,8 @@ body {
 }
 
 .sparkplug-row {
-  display: inline-grid;
-  grid-template-columns: minmax(0, auto) auto;
+  display: inline-flex;
   align-items: center;
-  gap: 0.75rem;
   padding: 0.28rem 0.2rem;
 }
 
@@ -364,101 +362,6 @@ body {
     opacity: 1;
     transform: translateX(-50%) translateY(0.08rem);
   }
-}
-
-.sparkplug-row-controls {
-  display: inline-flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 0.45rem;
-  min-width: 0;
-}
-
-.sparkplug-device-button {
-  width: 2.55rem;
-  height: 2.55rem;
-  border-color: rgba(92, 173, 193, 0.26);
-  background:
-    linear-gradient(180deg, rgba(17, 35, 49, 0.96), rgba(10, 23, 34, 0.96)),
-    linear-gradient(135deg, rgba(108, 238, 246, 0.12), rgba(255, 255, 255, 0));
-  color: #8fa0b2;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.08),
-    0 10px 20px rgba(3, 10, 18, 0.22);
-}
-
-.sparkplug-device-button:disabled {
-  opacity: 0.55;
-  cursor: default;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.06),
-    0 8px 16px rgba(5, 15, 24, 0.12);
-}
-
-.sparkplug-device-button-ready {
-  color: #8fa0b2;
-}
-
-.sparkplug-device-button-open {
-  color: #6ceef6;
-  border-color: rgba(108, 238, 246, 0.34);
-  background:
-    linear-gradient(180deg, rgba(13, 45, 55, 0.98), rgba(7, 25, 34, 0.98)),
-    linear-gradient(135deg, rgba(108, 238, 246, 0.18), rgba(255, 255, 255, 0));
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.1),
-    0 0 1rem rgba(108, 238, 246, 0.18);
-}
-
-.sparkplug-device-glyph {
-  position: relative;
-  display: inline-flex;
-  width: 1.18rem;
-  height: 1rem;
-  align-items: center;
-  justify-content: center;
-}
-
-.sparkplug-device-glyph-screen {
-  position: absolute;
-  inset: 0.02rem 0.06rem 0.16rem;
-  border: 0.12rem solid currentColor;
-  border-radius: 0.18rem;
-  background: rgba(255, 255, 255, 0.12);
-}
-
-.sparkplug-device-glyph-details {
-  position: absolute;
-  left: 0.3rem;
-  right: 0.3rem;
-  height: 0.08rem;
-  border-radius: 999px;
-  background: currentColor;
-}
-
-.sparkplug-device-glyph-details-top {
-  top: 0.22rem;
-}
-
-.sparkplug-device-glyph-details-middle {
-  top: 0.42rem;
-}
-
-.sparkplug-device-glyph-details-bottom {
-  top: 0.62rem;
-  width: 0.42rem;
-  right: auto;
-}
-
-.sparkplug-device-glyph-base {
-  position: absolute;
-  left: 50%;
-  bottom: 0;
-  width: 0.62rem;
-  height: 0.12rem;
-  border-radius: 999px;
-  background: currentColor;
-  transform: translateX(-50%);
 }
 
 .catalog-grid-shell {
@@ -745,6 +648,23 @@ h1 {
   text-transform: uppercase;
 }
 
+.debug-panel-meta-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.debug-panel-load-shadow {
+  min-height: 2.1rem;
+  padding: 0.35rem 0.8rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
 .notification-log-panel {
   width: min(100%, var(--page-panel-width));
   display: grid;
@@ -950,49 +870,12 @@ h1 {
   justify-items: stretch;
   align-content: stretch;
   text-align: left;
-  gap: 1rem;
+  gap: 0;
   padding: 1.05rem;
 }
 
 .status-node-txing-expanded {
   padding-bottom: 1.1rem;
-}
-
-.txing-panel-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.65rem;
-  flex-wrap: wrap;
-}
-
-.txing-panel-action-button {
-  min-height: 2.55rem;
-  padding-inline: 1rem;
-  font-size: 0.88rem;
-  font-weight: 700;
-}
-
-.status-txing-header {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-  align-items: center;
-  gap: 0.85rem;
-}
-
-.status-txing-header-side {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.55rem;
-  justify-content: center;
-  min-width: 0;
-}
-
-.status-txing-header-side-start {
-  justify-content: flex-start;
-}
-
-.status-txing-header-side-end {
-  justify-content: flex-end;
 }
 
 .status-txing-title-group {
@@ -1039,8 +922,6 @@ h1 {
 .status-video-panel {
   display: grid;
   gap: 0.75rem;
-  padding-top: 0.95rem;
-  border-top: 1px solid rgba(207, 218, 232, 0.78);
 }
 
 .status-video-stage {
@@ -1056,6 +937,97 @@ h1 {
   place-items: center;
 }
 
+.status-video-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 1rem;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(4, 12, 19, 0.34), rgba(4, 12, 19, 0) 30%);
+}
+
+.status-video-overlay-bar {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: start;
+  gap: 0.9rem;
+}
+
+.status-video-overlay-side {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+}
+
+.status-video-overlay-side-start {
+  justify-content: flex-start;
+  pointer-events: auto;
+}
+
+.status-video-overlay-side-end {
+  justify-content: flex-end;
+}
+
+.status-video-overlay-lockup,
+.status-video-overlay-metrics {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-height: 2.95rem;
+  padding: 0;
+  filter: drop-shadow(0 0.12rem 0.22rem rgba(0, 0, 0, 0.78));
+}
+
+.status-video-overlay-name {
+  color: rgba(235, 243, 250, 0.96);
+  text-shadow: 0 0.12rem 0.28rem rgba(0, 0, 0, 0.82);
+}
+
+.status-video-debug-button {
+  width: 2.95rem;
+  height: 2.95rem;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  filter: drop-shadow(0 0.12rem 0.22rem rgba(0, 0, 0, 0.78));
+  line-height: 1;
+}
+
+.status-video-debug-button:hover,
+.status-video-debug-button:focus-visible {
+  color: rgba(108, 238, 246, 0.98);
+  background: transparent;
+  outline: 1px solid rgba(108, 238, 246, 0.36);
+  outline-offset: 0.2rem;
+}
+
+.status-video-debug-button-active {
+  color: rgba(108, 238, 246, 0.98);
+  filter:
+    drop-shadow(0 0 0.35rem rgba(108, 238, 246, 0.42))
+    drop-shadow(0 0.12rem 0.22rem rgba(0, 0, 0, 0.78));
+}
+
+.status-video-debug-button-idle {
+  color: rgba(207, 218, 232, 0.76);
+}
+
+.status-video-debug-glyph {
+  width: 1.18rem;
+  height: 1.18rem;
+  display: block;
+  flex: 0 0 auto;
+}
+
 .status-video-preview {
   position: absolute;
   inset: 0;
@@ -1067,6 +1039,7 @@ h1 {
   background: #05080f;
   opacity: 0.001;
   pointer-events: none;
+  z-index: 0;
 }
 
 .status-video-canvas {
@@ -1076,6 +1049,7 @@ h1 {
   height: 100%;
   display: block;
   background: #05080f;
+  z-index: 0;
 }
 
 .status-video-placeholder {
@@ -1087,6 +1061,7 @@ h1 {
   text-align: center;
   color: #d9e2ec;
   font-size: 1.05rem;
+  z-index: 1;
 }
 
 .status-device-label {
@@ -1785,13 +1760,7 @@ button:disabled {
   }
 
   .sparkplug-row {
-    grid-template-columns: 1fr;
-    justify-items: center;
     text-align: center;
-  }
-
-  .sparkplug-row-controls {
-    justify-self: center;
   }
 
   .sparkplug-redcon-button {
@@ -1833,12 +1802,6 @@ button:disabled {
     gap: 0.55rem;
   }
 
-  .status-txing-header {
-    grid-template-columns: 1fr;
-    justify-items: center;
-    gap: 0.75rem;
-  }
-
   .status-txing-title-group {
     --status-redcon-pair-gap: 2.3rem;
     --status-title-gap: 0.3rem;
@@ -1875,18 +1838,9 @@ button:disabled {
     font-size: 0.5rem;
   }
 
-  .status-auth-header {
-    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-    justify-items: stretch;
-  }
-
-  .status-txing-header-side {
-    min-width: 0;
-  }
-
-  .status-txing-header-side-end {
-    justify-content: center;
-    flex-wrap: wrap;
+  .debug-panel-meta-actions {
+    width: 100%;
+    justify-content: space-between;
   }
 
   .status-last-shadow-update {
@@ -1898,13 +1852,29 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 
-  .status-video-panel {
-    padding-top: 0.8rem;
-  }
-
   .status-video-stage {
     min-height: 12rem;
     border-radius: 16px;
+  }
+
+  .status-video-overlay {
+    padding: 0.75rem;
+  }
+
+  .status-video-overlay-bar {
+    grid-template-columns: 1fr;
+    justify-items: stretch;
+  }
+
+  .status-video-overlay-side-start,
+  .status-video-overlay-side-end {
+    justify-content: center;
+  }
+
+  .status-video-overlay-lockup,
+  .status-video-overlay-metrics {
+    justify-content: center;
+    flex-wrap: wrap;
   }
 
   .status-icon-button {

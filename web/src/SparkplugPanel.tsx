@@ -4,14 +4,9 @@ type SparkplugPanelProps = {
   routeKind: 'town' | 'rig' | 'device' | 'device_video'
   botRedcon: number | null
   targetRedcon: number | null
-  detailsToggleAriaLabel: string | null
-  detailsToggleTitle: string | null
-  isDetailsPanelOpen: boolean
-  isDetailsPanelToggleEnabled: boolean
   isRedconCommandDisabled: boolean
   isRedconSleepCommandDisabled: boolean
   onRedconSelect: (redcon: 1 | 2 | 3 | 4) => void
-  onToggleDetailsPanel: () => void
 }
 
 type SparkplugNodeKind = 'town' | 'rig' | 'bot'
@@ -96,20 +91,14 @@ function SparkplugPanel({
   routeKind,
   botRedcon,
   targetRedcon,
-  detailsToggleAriaLabel,
-  detailsToggleTitle,
-  isDetailsPanelOpen,
-  isDetailsPanelToggleEnabled,
   isRedconCommandDisabled,
   isRedconSleepCommandDisabled,
   onRedconSelect,
-  onToggleDetailsPanel,
 }: SparkplugPanelProps) {
   const kind = getSparkplugNodeKind(routeKind)
   const isBot = kind === 'bot'
   const rowRedcon = isBot ? botRedcon : 1
   const isInteractive = isBot && (routeKind === 'device' || routeKind === 'device_video')
-  const showDetailsPanelToggle = detailsToggleAriaLabel !== null && detailsToggleTitle !== null
   const isPending = targetRedcon !== null && targetRedcon !== rowRedcon
 
   return (
@@ -123,30 +112,6 @@ function SparkplugPanel({
           pendingRedcon={isPending ? targetRedcon : null}
           redcon={rowRedcon}
         />
-        <div className="sparkplug-row-controls">
-          {showDetailsPanelToggle ? (
-            <button
-              type="button"
-              className={`status-icon-button sparkplug-device-button ${
-                isDetailsPanelOpen
-                  ? 'sparkplug-device-button-open'
-                  : 'sparkplug-device-button-ready'
-              }`}
-              aria-label={detailsToggleAriaLabel ?? undefined}
-              title={detailsToggleTitle ?? undefined}
-              disabled={!isDetailsPanelToggleEnabled}
-              onClick={onToggleDetailsPanel}
-            >
-              <span className="sparkplug-device-glyph" aria-hidden="true">
-                <span className="sparkplug-device-glyph-screen" />
-                <span className="sparkplug-device-glyph-details sparkplug-device-glyph-details-top" />
-                <span className="sparkplug-device-glyph-details sparkplug-device-glyph-details-middle" />
-                <span className="sparkplug-device-glyph-details sparkplug-device-glyph-details-bottom" />
-                <span className="sparkplug-device-glyph-base" />
-              </span>
-            </button>
-          ) : null}
-        </div>
       </div>
     </section>
   )

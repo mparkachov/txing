@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, useReducer, useRef } from 'react'
+import { useEffect, useEffectEvent, useReducer, useRef, type ReactNode } from 'react'
 import { appConfig } from './config'
 import {
   reduceViewerUiState,
@@ -11,6 +11,7 @@ type VideoPanelProps = {
   channelName: string
   debugEnabled?: boolean
   onRuntimeError?: (message: string) => void
+  overlay?: ReactNode
 }
 type VideoElementWithFrameCallback = HTMLVideoElement & {
   requestVideoFrameCallback?: (callback: VideoFrameRequestCallback) => number
@@ -51,6 +52,7 @@ function VideoPanel({
   channelName,
   debugEnabled = false,
   onRuntimeError,
+  overlay = null,
 }: VideoPanelProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -60,6 +62,7 @@ function VideoPanel({
     reduceViewerUiState,
     initialViewerUiState,
   )
+  const isVideoDebugEnabled = useEffectEvent((): boolean => debugEnabled)
   const logVideoUiDebug = useEffectEvent((message: string, details?: unknown): void => {
     if (!debugEnabled) {
       return
@@ -247,7 +250,7 @@ function VideoPanel({
       channelName,
       region: appConfig.awsRegion,
       resolveIdToken: resolveIdTokenForViewer,
-      debugEnabled,
+      isDebugEnabled: isVideoDebugEnabled,
       onRemoteStream: (stream) => {
         logVideoUiDebug('remote stream attached', {
           streamId: stream.id,
@@ -407,7 +410,7 @@ function VideoPanel({
       }
       logVideoUiDebug('viewer panel effect cleanup', { channelName })
     }
-  }, [channelName, debugEnabled])
+  }, [channelName])
 
   return (
     <div className="status-video-panel">
@@ -424,6 +427,7 @@ function VideoPanel({
         {viewerState.status !== 'streaming' ? (
           <div className="status-video-placeholder">{getViewerStatusLabel(viewerState)}</div>
         ) : null}
+        {overlay ? <div className="status-video-overlay">{overlay}</div> : null}
       </div>
     </div>
   )

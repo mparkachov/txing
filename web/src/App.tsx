@@ -1026,25 +1026,6 @@ function App({ initialAuthError = '' }: AppProps) {
     signOut()
   }
 
-  const handleToggleBotPanel = (): void => {
-    if (!canUseBoardVideo) {
-      return
-    }
-    setIsBotPanelOpen((currentValue) => {
-      const nextValue = !currentValue
-      setIsBoardVideoExpanded(nextValue)
-      return nextValue
-    })
-  }
-
-  const handleToggleTownPanel = (): void => {
-    setIsTownPanelOpen((currentValue) => !currentValue)
-  }
-
-  const handleToggleRigPanel = (): void => {
-    setIsRigPanelOpen((currentValue) => !currentValue)
-  }
-
   const renderInlineRouteLink = (
     path: string,
     label: string,
@@ -1191,51 +1172,6 @@ function App({ initialAuthError = '' }: AppProps) {
       ? 'Last shadow update unavailable'
       : `Last shadow update ${new Date(lastShadowUpdateAtMs).toLocaleString()}`
 
-  const isDetailsPanelOpen =
-    route.kind === 'town'
-      ? isTownPanelOpen
-      : route.kind === 'rig'
-        ? isRigPanelOpen
-        : route.kind === 'device'
-          ? isBotPanelOpen
-          : false
-  const isDetailsPanelToggleEnabled =
-    route.kind === 'town' || route.kind === 'rig'
-      ? true
-      : route.kind === 'device'
-        ? canUseBoardVideo
-        : false
-  const detailsToggleAriaLabel =
-    route.kind === 'town'
-      ? isTownPanelOpen
-        ? 'Hide rig details'
-        : 'Show rig details'
-      : route.kind === 'rig'
-        ? isRigPanelOpen
-          ? 'Hide device details'
-          : 'Show device details'
-        : route.kind === 'device'
-          ? isBotPanelOpen
-            ? 'Hide bot device details'
-            : 'Show bot device details'
-          : null
-  const detailsToggleTitle =
-    route.kind === 'town'
-      ? isTownPanelOpen
-        ? 'Hide rig details'
-        : 'Show rig details'
-      : route.kind === 'rig'
-        ? isRigPanelOpen
-          ? 'Hide device details'
-          : 'Show device details'
-        : route.kind === 'device'
-          ? canUseBoardVideo
-            ? isBotPanelOpen
-              ? 'Hide bot device details'
-              : 'Show bot device details'
-            : 'Bot device details become available at REDCON 1'
-          : null
-
   const navigationPanel =
     route.kind !== 'root' ? (
       <section className="card navigation-panel" aria-label="Navigation panel">
@@ -1272,27 +1208,10 @@ function App({ initialAuthError = '' }: AppProps) {
               routeKind={route.kind}
               botRedcon={reportedRedcon}
               targetRedcon={pendingTargetRedcon}
-              detailsToggleAriaLabel={detailsToggleAriaLabel}
-              detailsToggleTitle={detailsToggleTitle}
-              isDetailsPanelOpen={isDetailsPanelOpen}
-              isDetailsPanelToggleEnabled={isDetailsPanelToggleEnabled}
               isRedconCommandDisabled={isRedconCommandDisabled}
               isRedconSleepCommandDisabled={isRedconSleepCommandDisabled}
               onRedconSelect={(redcon) => {
                 void handleRedconSelect(redcon)
-              }}
-              onToggleDetailsPanel={() => {
-                if (route.kind === 'town') {
-                  handleToggleTownPanel()
-                  return
-                }
-                if (route.kind === 'rig') {
-                  handleToggleRigPanel()
-                  return
-                }
-                if (route.kind === 'device') {
-                  handleToggleBotPanel()
-                }
               }}
             />
           ) : null}
@@ -1430,12 +1349,8 @@ function App({ initialAuthError = '' }: AppProps) {
   } else if (route.kind === 'device' && selectedDeviceRoute && isBotPanelOpen) {
     content = (
       <TxingPanel
-        canLoadShadow={canLoadShadow}
         isBoardVideoExpanded={isBoardVideoExpanded}
         isDebugEnabled={isDebugEnabled}
-        onLoadShadow={() => {
-          void loadShadow()
-        }}
         onToggleDebug={() => {
           setIsDebugEnabled((currentValue) => !currentValue)
         }}
@@ -1479,8 +1394,12 @@ function App({ initialAuthError = '' }: AppProps) {
 
       {isDebugEnabled && activeSessionRoute !== null && (
         <DebugPanel
+          canLoadShadow={canLoadShadow}
           lastShadowUpdateLabel={lastShadowUpdateLabel}
           lastShadowUpdateTitle={lastShadowUpdateTitle}
+          onLoadShadow={() => {
+            void loadShadow()
+          }}
           reportedBoardPower={reportedBoardPower}
           reportedMcuPower={reportedMcuPower}
           shadowJson={shadowJson}
