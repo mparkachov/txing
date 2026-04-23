@@ -335,6 +335,34 @@ class AwsShadowClientTests(unittest.TestCase):
             ],
         )
 
+    def test_wait_for_updates_cancellation_does_not_drop_pending_update(self) -> None:
+        async def exercise() -> None:
+            client = AwsShadowClient.__new__(AwsShadowClient)
+            client._loop = asyncio.get_running_loop()
+            client._updates = asyncio.Queue()
+            client._update_event = asyncio.Event()
+
+            waiter = asyncio.create_task(client.wait_for_updates(timeout_seconds=30.0))
+            await asyncio.sleep(0)
+
+            client._enqueue_update(
+                AwsShadowUpdate(
+                    thing_name="thing-1",
+                    source="sparkplug/dcmd",
+                    command_redcon=1,
+                )
+            )
+            waiter.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await waiter
+
+            updates = await client.wait_for_updates(timeout_seconds=0.1)
+            self.assertEqual(len(updates), 1)
+            self.assertEqual(updates[0].thing_name, "thing-1")
+            self.assertEqual(updates[0].command_redcon, 1)
+
+        asyncio.run(exercise())
+
     def test_initial_snapshot_bootstrap_retries_clean_session_cancelled_subscribe(self) -> None:
         instances: list[FakeConnection] = []
         accepted_payload = json.dumps(

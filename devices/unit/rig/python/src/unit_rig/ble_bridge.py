@@ -1049,6 +1049,7 @@ class AwsShadowClient:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._connected_event: asyncio.Event | None = None
         self._updates: asyncio.Queue[AwsShadowUpdate] | None = None
+        self._update_event: asyncio.Event | None = None
         self._managed_things: tuple[str, ...] = ()
         self._managed_thing_names: set[str] = set()
         self._initial_snapshot_futures: dict[str, asyncio.Future[dict[str, Any]]] = {}
@@ -1068,6 +1069,7 @@ class AwsShadowClient:
         self._loop = asyncio.get_running_loop()
         self._connected_event = asyncio.Event()
         self._updates = asyncio.Queue()
+        self._update_event = asyncio.Event()
         self._initial_snapshot_futures = {}
         try:
             await self._mqtt.connect(timeout_seconds=timeout_seconds)
@@ -1170,6 +1172,13 @@ class AwsShadowClient:
                 updates.append(self._updates.get_nowait())
             except asyncio.QueueEmpty:
                 break
+        if self._update_event is not None:
+            if self._updates.empty():
+                self._update_event.clear()
+                if not self._updates.empty():
+                    self._update_event.set()
+            else:
+                self._update_event.set()
         return updates
 
     async def wait_for_updates(
@@ -1178,25 +1187,23 @@ class AwsShadowClient:
     ) -> list[AwsShadowUpdate]:
         if self._updates is None:
             return []
+        if not self._updates.empty():
+            return self.drain_updates()
+        if self._update_event is None:
+            return []
 
         try:
             if timeout_seconds is None:
-                first = await self._updates.get()
+                await self._update_event.wait()
             else:
-                first = await asyncio.wait_for(
-                    self._updates.get(),
+                await asyncio.wait_for(
+                    self._update_event.wait(),
                     timeout=timeout_seconds,
                 )
         except TimeoutError:
             return []
 
-        updates = [first]
-        while True:
-            try:
-                updates.append(self._updates.get_nowait())
-            except asyncio.QueueEmpty:
-                break
-        return updates
+        return self.drain_updates()
 
     async def update_shadow(
         self,
@@ -1495,7 +1502,14 @@ class AwsShadowClient:
     def _enqueue_update(self, update: AwsShadowUpdate) -> None:
         if self._loop is None or self._updates is None:
             return
-        self._loop.call_soon_threadsafe(self._updates.put_nowait, update)
+
+        def _put_update() -> None:
+            assert self._updates is not None
+            self._updates.put_nowait(update)
+            if self._update_event is not None:
+                self._update_event.set()
+
+        self._loop.call_soon_threadsafe(_put_update)
 
     def _set_initial_snapshot(self, thing_name: str, payload: dict[str, Any]) -> None:
         if self._loop is None:
