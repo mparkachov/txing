@@ -134,6 +134,9 @@ describe('app notification helpers', () => {
     expect(formatRuntimeNotificationLine(createdAtMs, 'Sparkplug DCMD.redcon -> 3')).toBe(
       '2026-04-13 14:49:36: Sparkplug DCMD.redcon -> 3',
     )
+    expect(
+      formatRuntimeNotificationLine(createdAtMs, 'Sparkplug DCMD.redcon -> 3', 'unit-a1'),
+    ).toBe('2026-04-13 14:49:36 unit-a1, Sparkplug DCMD.redcon -> 3')
   })
 
   test('only emits board video lastError notifications for changed non-empty errors', () => {
@@ -172,6 +175,7 @@ describe('app notification helpers', () => {
         tone: 'error',
         message: 'Board video signaling closed',
         dedupeKey: 'board-video-viewer:Board video signaling closed',
+        objectId: 'unit-a1',
       },
       2_000,
       'runtime-log-1',
@@ -184,11 +188,25 @@ describe('app notification helpers', () => {
         message: 'Board video signaling closed',
         dedupeKey: 'board-video-viewer:Board video signaling closed',
         createdAtMs: 2_000,
+        objectId: 'unit-a1',
       },
     ])
     expect(deserializeNotificationLog(serializeNotificationLog(notificationLog))).toEqual(
       notificationLog,
     )
     expect(deserializeNotificationLog('{"invalid":true}')).toEqual([])
+    expect(
+      deserializeNotificationLog(
+        '[{"id":"runtime-log-legacy","tone":"neutral","message":"legacy","dedupeKey":"legacy","createdAtMs":1000}]',
+      ),
+    ).toEqual([
+      {
+        id: 'runtime-log-legacy',
+        tone: 'neutral',
+        message: 'legacy',
+        dedupeKey: 'legacy',
+        createdAtMs: 1_000,
+      },
+    ])
   })
 })

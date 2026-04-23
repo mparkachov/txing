@@ -128,7 +128,11 @@ export const listTownRigsWithClient = async (
 
   return rigEntries
     .filter((rig) => rig.thingTypeName === 'rig')
-    .map(({ thingTypeName: _thingTypeName, ...rig }) => rig)
+    .map((rig) => ({
+      thingName: rig.thingName,
+      rigName: rig.rigName,
+      shortId: rig.shortId,
+    }))
     .sort((left, right) => collator.compare(getRigDisplayName(left), getRigDisplayName(right)))
 }
 

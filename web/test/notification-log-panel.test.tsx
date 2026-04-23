@@ -13,6 +13,7 @@ describe('notification log panel', () => {
             message: 'Sparkplug DCMD.redcon -> 3',
             dedupeKey: 'sparkplug-redcon:3',
             createdAtMs: new Date(2026, 3, 13, 14, 49, 36).getTime(),
+            objectId: 'unit-a1',
           },
           {
             id: 'runtime-log-2',
@@ -29,6 +30,8 @@ describe('notification log panel', () => {
     expect(markup).toContain('notification-log-entry notification-log-entry-neutral')
     expect(markup).toContain('notification-log-entry notification-log-entry-error')
     expect(markup).toContain('2026-04-13 14:49:36')
+    expect(markup).toContain('notification-log-object-id')
+    expect(markup).toContain('unit-a1')
     expect(markup).toContain('Sparkplug DCMD.redcon -&gt; 3')
     expect(markup).toContain('Board video signaling closed')
   })

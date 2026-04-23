@@ -482,8 +482,8 @@ body {
 
 .catalog-card-link {
   display: grid;
-  gap: 0.45rem;
-  min-height: 100%;
+  min-height: 5.5rem;
+  place-items: center;
   padding: 1rem 1.05rem;
   border: 1px solid var(--panel-border);
   border-radius: 18px;
@@ -492,6 +492,7 @@ body {
     inset 0 1px 0 rgba(255, 255, 255, 0.05),
     0 16px 32px rgba(0, 0, 0, 0.18);
   color: var(--text);
+  text-align: center;
   text-decoration: none;
 }
 
@@ -506,28 +507,10 @@ body {
   outline: none;
 }
 
-.catalog-card-link-eyebrow {
-  color: var(--accent);
-  font-size: 0.78rem;
-  font-weight: 800;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-}
-
-.catalog-card-link-title {
-  font-size: 1.15rem;
+.catalog-card-link-line {
+  font-size: 1.05rem;
   font-weight: 700;
-  line-height: 1.2;
-}
-
-.catalog-card-link-title-caps {
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.catalog-card-link-description {
-  color: var(--muted);
-  line-height: 1.45;
+  line-height: 1.35;
 }
 
 .notification-tray {
@@ -856,6 +839,14 @@ h1 {
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+.notification-log-object-id {
+  margin-left: 0.45rem;
+  color: var(--accent);
+  font-family: "SF Mono", "Consolas", "Liberation Mono", monospace;
+  font-size: 0.82rem;
+  font-weight: 700;
 }
 
 .notification-log-message {

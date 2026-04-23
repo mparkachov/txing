@@ -59,6 +59,11 @@ import { CmdVelTeleopController } from './cmd-vel-teleop'
 import type { Twist } from './cmd-vel'
 import { appConfig } from './config'
 import DebugPanel from './DebugPanel'
+import {
+  formatCatalogDetailLine,
+  getRouteDetailPanelOpenState,
+  shouldAutoOpenDeviceDetailPanel,
+} from './level-detail-panel'
 import { getMcpSteadyMotionHeartbeatIntervalMs } from './mcp-lease'
 import NotificationLogPanel from './NotificationLogPanel'
 import NotificationTray from './NotificationTray'
@@ -318,11 +323,24 @@ function App({ initialAuthError = '' }: AppProps) {
   const nextNotificationLogIdRef = useRef(0)
   const lastBoardVideoErrorRef = useRef<string | null>(null)
   const hasObservedBoardVideoLastErrorRef = useRef(false)
+  const previousReportedRedconRef = useRef<number | null>(null)
 
   const hasConfigErrors = appConfig.errors.length > 0
   const configuredTown = appConfig.sparkplugGroupId
   const configuredTownPath = buildTownPath(configuredTown)
   const currentRouteTown = useMemo(() => describeRouteTown(route), [route])
+  const currentNotificationObjectId = useMemo(() => {
+    if (route.kind === 'town') {
+      return route.town
+    }
+    if (route.kind === 'rig') {
+      return route.rig
+    }
+    if (route.kind === 'device' || route.kind === 'device_video') {
+      return route.device
+    }
+    return null
+  }, [route])
   const hasUnsupportedTown =
     currentRouteTown !== null && currentRouteTown !== appConfig.sparkplugGroupId
   const routeRigName =
@@ -518,8 +536,9 @@ function App({ initialAuthError = '' }: AppProps) {
       tone: 'error',
       message: normalizedMessage,
       dedupeKey: `${source}:${normalizedMessage}`,
+      objectId: currentNotificationObjectId,
     })
-  }, [enqueueNotification])
+  }, [currentNotificationObjectId, enqueueNotification])
 
   const applyShadowSnapshot = useCallback((shadow: unknown): void => {
     const snapshotView = createShadowSnapshotView(shadow)
@@ -765,16 +784,10 @@ function App({ initialAuthError = '' }: AppProps) {
   }, [adminEmailMismatch, hasUnsupportedTown, resolveSessionIdToken, selectedRigName, status])
 
   useEffect(() => {
-    setIsTownPanelOpen(false)
-    setIsRigPanelOpen(false)
-  }, [
-    route.kind,
-    route.kind === 'town'
-      ? route.town
-      : route.kind === 'rig' || route.kind === 'device' || route.kind === 'device_video'
-        ? `${route.town}/${route.rig}`
-        : '',
-  ])
+    const nextRouteDetailPanelOpenState = getRouteDetailPanelOpenState(route)
+    setIsTownPanelOpen(nextRouteDetailPanelOpenState.isTownPanelOpen)
+    setIsRigPanelOpen(nextRouteDetailPanelOpenState.isRigPanelOpen)
+  }, [route])
 
   useEffect(() => {
     if (!activeSessionRoute) {
@@ -923,8 +936,23 @@ function App({ initialAuthError = '' }: AppProps) {
       tone: 'error',
       message: nextNotificationMessage,
       dedupeKey: `board-video-mcp:${nextNotificationMessage}`,
+      objectId: currentNotificationObjectId,
     })
-  }, [enqueueNotification, robotVideoLastError])
+  }, [currentNotificationObjectId, enqueueNotification, robotVideoLastError])
+
+  useEffect(() => {
+    if (
+      shouldAutoOpenDeviceDetailPanel({
+        route,
+        hasActiveSession: activeSessionRoute !== null,
+        previousRedcon: previousReportedRedconRef.current,
+        nextRedcon: reportedRedcon,
+      })
+    ) {
+      setIsBotPanelOpen(true)
+    }
+    previousReportedRedconRef.current = reportedRedcon
+  }, [activeSessionRoute, reportedRedcon, route])
 
   useEffect(() => {
     if (reportedRedcon === 1) {
@@ -1074,6 +1102,7 @@ function App({ initialAuthError = '' }: AppProps) {
           tone: 'neutral',
           message: `Sparkplug DCMD.redcon -> ${redcon}`,
           dedupeKey: `sparkplug-redcon:${redcon}`,
+          objectId: currentNotificationObjectId,
         })
       }
       return true
@@ -1153,13 +1182,7 @@ function App({ initialAuthError = '' }: AppProps) {
     </a>
   )
 
-  const renderCatalogCardLink = (
-    path: string,
-    eyebrow: string,
-    title: string,
-    description?: string,
-    titleClassName = '',
-  ): ReactElement => (
+  const renderCatalogCardLink = (path: string, label: string): ReactElement => (
     <a
       href={path}
       className="catalog-card-link"
@@ -1167,9 +1190,7 @@ function App({ initialAuthError = '' }: AppProps) {
         handleRouteLinkClick(event, path)
       }}
     >
-      <span className="catalog-card-link-eyebrow">{eyebrow}</span>
-      <span className={`catalog-card-link-title ${titleClassName}`.trim()}>{title}</span>
-      {description ? <span className="catalog-card-link-description">{description}</span> : null}
+      <span className="catalog-card-link-line">{label}</span>
     </a>
   )
 
@@ -1457,10 +1478,7 @@ function App({ initialAuthError = '' }: AppProps) {
               <li key={rig.rigName} className="catalog-list-item">
                 {renderCatalogCardLink(
                   buildRigPath(route.town, rig.rigName),
-                  'Rig',
-                  rig.rigName.toUpperCase(),
-                  rig.shortId ? `Short ID ${rig.shortId}` : undefined,
-                  'catalog-card-link-title-caps',
+                  formatCatalogDetailLine(rig.shortId, rig.rigName),
                 )}
               </li>
             ))}
@@ -1485,8 +1503,7 @@ function App({ initialAuthError = '' }: AppProps) {
               <li key={device.thingName} className="catalog-list-item">
                 {renderCatalogCardLink(
                   buildDevicePath(route.town, route.rig, device.thingName),
-                  'Device',
-                  getCatalogDeviceLabel(device),
+                  formatCatalogDetailLine(device.shortId, getCatalogDeviceLabel(device)),
                 )}
               </li>
             ))}

@@ -15,12 +15,14 @@ export type AppNotificationLogEntry = {
   message: string;
   dedupeKey: string;
   createdAtMs: number;
+  objectId?: string | null;
 };
 
 export type AppNotificationInput = {
   tone: NotificationTone;
   message: string;
   dedupeKey: string;
+  objectId?: string | null;
 };
 
 export const runtimeNotificationLifetimeMs = 5_000;
@@ -42,7 +44,16 @@ export const formatRuntimeTimestamp = (createdAtMs: number): string => {
 export const formatRuntimeNotificationLine = (
   createdAtMs: number,
   message: string,
-): string => `${formatRuntimeTimestamp(createdAtMs)}: ${message}`;
+  objectId?: string | null,
+): string => {
+  const normalizedObjectId =
+    typeof objectId === "string" && objectId.trim() !== ""
+      ? objectId.trim()
+      : null;
+  return normalizedObjectId
+    ? `${formatRuntimeTimestamp(createdAtMs)} ${normalizedObjectId}, ${message}`
+    : `${formatRuntimeTimestamp(createdAtMs)}: ${message}`;
+};
 
 export const normalizeRuntimeMessage = (
   message: string | null | undefined,
@@ -87,13 +98,21 @@ export const appendNotificationLogEntry = (
   nowMs: number,
   nextId: string,
 ): AppNotificationLogEntry[] => [
-  {
-    id: nextId,
-    tone: notification.tone,
-    message: notification.message,
-    dedupeKey: notification.dedupeKey,
-    createdAtMs: nowMs,
-  },
+  (() => {
+    const objectId =
+      typeof notification.objectId === "string" && notification.objectId.trim() !== ""
+        ? notification.objectId.trim()
+        : null;
+
+    return {
+      id: nextId,
+      tone: notification.tone,
+      message: notification.message,
+      dedupeKey: notification.dedupeKey,
+      createdAtMs: nowMs,
+      ...(objectId ? { objectId } : {}),
+    };
+  })(),
   ...notificationLog,
 ];
 
@@ -139,6 +158,9 @@ const isLogEntryShape = (value: unknown): value is AppNotificationLogEntry => {
     isNotificationTone(candidate.tone) &&
     typeof candidate.message === "string" &&
     typeof candidate.dedupeKey === "string" &&
+    (candidate.objectId === undefined ||
+      candidate.objectId === null ||
+      typeof candidate.objectId === "string") &&
     typeof candidate.createdAtMs === "number" &&
     Number.isFinite(candidate.createdAtMs)
   );

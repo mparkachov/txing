@@ -37,9 +37,18 @@ function NotificationLogPanel({ notificationLog }: NotificationLogPanelProps) {
                 >
                   {formatRuntimeTimestamp(entry.createdAtMs)}
                 </time>
-                <span className="notification-log-separator" aria-hidden="true">
-                  :{' '}
-                </span>
+                {entry.objectId ? (
+                  <>
+                    <span className="notification-log-object-id">{entry.objectId}</span>
+                    <span className="notification-log-separator" aria-hidden="true">
+                      ,{' '}
+                    </span>
+                  </>
+                ) : (
+                  <span className="notification-log-separator" aria-hidden="true">
+                    :{' '}
+                  </span>
+                )}
                 <span>{entry.message}</span>
               </p>
             </article>
