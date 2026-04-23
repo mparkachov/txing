@@ -66,6 +66,7 @@ import {
 } from './level-detail-panel'
 import { isExpectedMcpTeardownError } from './mcp-errors'
 import { getMcpSteadyMotionHeartbeatIntervalMs } from './mcp-lease'
+import NavigationUserMenu from './NavigationUserMenu'
 import NotificationLogPanel from './NotificationLogPanel'
 import NotificationTray from './NotificationTray'
 import type { RobotState, ShadowConnectionState, ShadowSession } from './shadow-api'
@@ -156,135 +157,6 @@ const formatShadowUpdateTime = (updatedAtMs: number | null): string =>
 
 const getCatalogDeviceLabel = (device: DeviceCatalogEntry | null | undefined): string =>
   device?.name?.trim() ? device.name.trim() : 'Unnamed device'
-
-type NavigationUserMenuProps = {
-  authUser: AuthUser | null
-  canLoadShadow: boolean
-  isDebugEnabled: boolean
-  isSessionLogVisible: boolean
-  onLoadShadow: () => void
-  onSignOff: () => void
-  onToggleDebug: () => void
-  onToggleSessionLog: () => void
-}
-
-function NavigationUserMenu({
-  authUser,
-  canLoadShadow,
-  isDebugEnabled,
-  isSessionLogVisible,
-  onLoadShadow,
-  onSignOff,
-  onToggleDebug,
-  onToggleSessionLog,
-}: NavigationUserMenuProps) {
-  const [isUserMenuOpen, setIsUserMenuOpen] = useState(false)
-  const userMenuRef = useRef<HTMLDivElement | null>(null)
-  const userMenuIdentity = authUser?.email ?? authUser?.name ?? authUser?.sub ?? 'User'
-  const userMenuInitial = userMenuIdentity.trim().charAt(0).toUpperCase() || 'U'
-
-  useEffect(() => {
-    if (!isUserMenuOpen) {
-      return
-    }
-
-    const handlePointerDown = (event: MouseEvent): void => {
-      if (!userMenuRef.current?.contains(event.target as Node)) {
-        setIsUserMenuOpen(false)
-      }
-    }
-
-    const handleEscape = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') {
-        setIsUserMenuOpen(false)
-      }
-    }
-
-    document.addEventListener('mousedown', handlePointerDown)
-    document.addEventListener('keydown', handleEscape)
-    return () => {
-      document.removeEventListener('mousedown', handlePointerDown)
-      document.removeEventListener('keydown', handleEscape)
-    }
-  }, [isUserMenuOpen])
-
-  return (
-    <div className="user-menu" ref={userMenuRef}>
-      <button
-        type="button"
-        className="user-menu-trigger"
-        aria-label="Open user menu"
-        aria-haspopup="menu"
-        aria-expanded={isUserMenuOpen}
-        onClick={() => {
-          setIsUserMenuOpen((currentValue) => !currentValue)
-        }}
-      >
-        <span className="user-avatar" aria-hidden="true">
-          {userMenuInitial}
-        </span>
-      </button>
-      {isUserMenuOpen ? (
-        <div className="user-menu-popover" role="menu" aria-label="User actions">
-          <div className="user-menu-header">
-            <span className="user-avatar user-avatar-large" aria-hidden="true">
-              {userMenuInitial}
-            </span>
-            <div className="user-menu-identity">
-              <p className="user-menu-name">{authUser?.name ?? 'Signed in'}</p>
-              <p className="user-menu-email">{authUser?.email ?? authUser?.sub ?? 'Unknown user'}</p>
-            </div>
-          </div>
-          <button
-            type="button"
-            className="user-menu-item"
-            role="menuitem"
-            disabled={!canLoadShadow}
-            onClick={() => {
-              onLoadShadow()
-              setIsUserMenuOpen(false)
-            }}
-          >
-            Load Shadow
-          </button>
-          <button
-            type="button"
-            className="user-menu-item"
-            role="menuitem"
-            onClick={() => {
-              onToggleDebug()
-              setIsUserMenuOpen(false)
-            }}
-          >
-            {isDebugEnabled ? 'Disable Debug' : 'Enable Debug'}
-          </button>
-          <button
-            type="button"
-            className="user-menu-item"
-            role="menuitem"
-            onClick={() => {
-              onToggleSessionLog()
-              setIsUserMenuOpen(false)
-            }}
-          >
-            {isSessionLogVisible ? 'Hide Session Log' : 'Show Session Log'}
-          </button>
-          <button
-            type="button"
-            className="user-menu-item user-menu-item-danger"
-            role="menuitem"
-            onClick={() => {
-              setIsUserMenuOpen(false)
-              onSignOff()
-            }}
-          >
-            Sign Off
-          </button>
-        </div>
-      ) : null}
-    </div>
-  )
-}
 
 function App({ initialAuthError = '' }: AppProps) {
   const [route, setRoute] = useState<AppRoute>(getInitialRoute)
@@ -1426,16 +1298,8 @@ function App({ initialAuthError = '' }: AppProps) {
           ) : null}
           <NavigationUserMenu
             authUser={authUser}
-            canLoadShadow={canLoadShadow}
-            isDebugEnabled={isDebugEnabled}
             isSessionLogVisible={isSessionLogVisible}
-            onLoadShadow={() => {
-              void loadShadow()
-            }}
             onSignOff={handleSignOff}
-            onToggleDebug={() => {
-              setIsDebugEnabled((currentValue) => !currentValue)
-            }}
             onToggleSessionLog={() => {
               setIsSessionLogVisible((currentValue) => !currentValue)
             }}
@@ -1566,8 +1430,15 @@ function App({ initialAuthError = '' }: AppProps) {
   } else if (route.kind === 'device' && selectedDeviceRoute && isBotPanelOpen) {
     content = (
       <TxingPanel
+        canLoadShadow={canLoadShadow}
         isBoardVideoExpanded={isBoardVideoExpanded}
         isDebugEnabled={isDebugEnabled}
+        onLoadShadow={() => {
+          void loadShadow()
+        }}
+        onToggleDebug={() => {
+          setIsDebugEnabled((currentValue) => !currentValue)
+        }}
         reportedBatteryMv={primaryReportedBatteryMv}
         reportedBoardLeftTrackSpeed={reportedBoardLeftTrackSpeed}
         reportedBoardOnline={reportedBoardOnline}

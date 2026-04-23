@@ -2,13 +2,16 @@ import { getTrackIndicatorPresentation } from './app-model'
 import VideoPanel from '../../../web/src/VideoPanel'
 
 type TxingPanelProps = {
+  canLoadShadow: boolean
   isBoardVideoExpanded: boolean
   isDebugEnabled: boolean
+  onLoadShadow: () => void
   reportedBatteryMv: number | null
   reportedBoardLeftTrackSpeed: number | null
   reportedBoardOnline: boolean | null
   reportedBoardRightTrackSpeed: number | null
   reportedMcuOnline: boolean | null
+  onToggleDebug: () => void
   videoChannelName: string
   resolveIdToken: () => Promise<string>
   onBoardVideoRuntimeError: (message: string) => void
@@ -158,13 +161,16 @@ function BatteryMetric({ batteryMv }: { batteryMv: number | null }) {
 }
 
 function TxingPanel({
+  canLoadShadow,
   isBoardVideoExpanded,
   isDebugEnabled,
+  onLoadShadow,
   reportedBatteryMv,
   reportedBoardLeftTrackSpeed,
   reportedBoardOnline,
   reportedBoardRightTrackSpeed,
   reportedMcuOnline,
+  onToggleDebug,
   videoChannelName,
   resolveIdToken,
   onBoardVideoRuntimeError,
@@ -220,6 +226,23 @@ function TxingPanel({
               </div>
               <BatteryMetric batteryMv={reportedBatteryMv} />
             </div>
+          </div>
+          <div className="txing-panel-actions">
+            <button
+              type="button"
+              className="txing-panel-action-button"
+              disabled={!canLoadShadow}
+              onClick={onLoadShadow}
+            >
+              Load Shadow
+            </button>
+            <button
+              type="button"
+              className="txing-panel-action-button"
+              onClick={onToggleDebug}
+            >
+              {isDebugEnabled ? 'Disable Debug' : 'Enable Debug'}
+            </button>
           </div>
           {isBoardVideoExpanded ? (
             <VideoPanel

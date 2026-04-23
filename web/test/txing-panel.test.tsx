@@ -6,8 +6,11 @@ describe('txing panel', () => {
   test('renders device-specific gauges and connectivity indicators without sparkplug controls', () => {
     const markup = renderToStaticMarkup(
       <TxingPanel
+        canLoadShadow={false}
         isBoardVideoExpanded={false}
         isDebugEnabled={false}
+        onLoadShadow={() => {}}
+        onToggleDebug={() => {}}
         reportedBatteryMv={3960}
         reportedBoardLeftTrackSpeed={60}
         reportedBoardOnline={true}
@@ -32,6 +35,9 @@ describe('txing panel', () => {
     expect(markup).toContain('Battery 72 percent at 3960 millivolts')
     expect(markup).toContain('aria-label="BLE online"')
     expect(markup).toContain('aria-label="Board Wi-Fi online"')
+    expect(markup).toContain('Load Shadow')
+    expect(markup).toContain('Enable Debug')
+    expect(markup).toContain('disabled=""')
     expect(markup).not.toContain('Connect')
     expect(markup).not.toContain('status-redcon-dot')
     expect(markup).not.toContain('status-switch-track')
