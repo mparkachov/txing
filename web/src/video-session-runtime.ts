@@ -607,6 +607,7 @@ export const startBoardMcpDataChannelRuntime = async (
     }
   >()
   let closed = false
+  let dataChannelOpened = false
   let signalingClient: KvsWebRtcSignalingClient | null = null
 
   const rejectPending = (error: Error): void => {
@@ -709,6 +710,7 @@ export const startBoardMcpDataChannelRuntime = async (
     dataChannel.addEventListener(
       'open',
       () => {
+        dataChannelOpened = true
         logMcpDebug('data channel open', { clientId })
         resolve({
           sessionId: clientId,
@@ -783,8 +785,18 @@ export const startBoardMcpDataChannelRuntime = async (
   createdSignalingClient.on('iceCandidate', (candidate: RTCIceCandidateInit) => {
     void peerConnection.addIceCandidate(candidate).catch(() => undefined)
   })
-  createdSignalingClient.on('error', () => closePeer())
-  createdSignalingClient.on('close', () => closePeer())
+  createdSignalingClient.on('error', (error) => {
+    logMcpDebug('signaling error', error)
+    if (!dataChannelOpened) {
+      closePeer()
+    }
+  })
+  createdSignalingClient.on('close', () => {
+    logMcpDebug('signaling close')
+    if (!dataChannelOpened) {
+      closePeer()
+    }
+  })
   createdSignalingClient.open()
 
   let openTimeoutId: number | null = null
