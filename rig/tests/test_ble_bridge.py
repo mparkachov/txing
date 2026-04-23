@@ -1245,6 +1245,9 @@ class LifecycleBridgeTests(unittest.TestCase):
     def test_redcon_four_waits_for_board_shutdown_before_sleep(self) -> None:
         asyncio.run(self._exercise_redcon_four_board_shutdown_request())
 
+    def test_redcon_four_keeps_ble_session_available_after_sleep_convergence(self) -> None:
+        asyncio.run(self._exercise_redcon_four_keeps_ble_session())
+
     def test_mcp_and_video_ready_stage_redcon_through_two_before_one(self) -> None:
         asyncio.run(self._exercise_mcp_and_video_ready_stage_redcon())
 
@@ -1272,6 +1275,55 @@ class LifecycleBridgeTests(unittest.TestCase):
         self.assertEqual(shadow.target_redcon, 4)
         self.assertIsNotNone(bridge._board_shutdown_requested_at)
         self.assertEqual(cloud_shadow.shadow_updates, [])
+
+    async def _exercise_redcon_four_keeps_ble_session(self) -> None:
+        cloud_shadow = FakeCloudShadow()
+        shadow = ShadowState(
+            target_redcon=4,
+            reported_power=True,
+            battery_mv=3795,
+            ble_online=True,
+            board_power=False,
+            redcon=3,
+        )
+        bridge = BleSleepBridge(
+            BridgeConfig(),
+            shadow,
+            cloud_shadow,  # type: ignore[arg-type]
+        )
+        bridge._client = types.SimpleNamespace(is_connected=True)
+        disconnect_calls: list[dict[str, object]] = []
+
+        async def _fake_send_sleep_command(*, sleep: bool) -> None:
+            self.assertTrue(sleep)
+
+        async def _fake_wait_for_reported_power(expected: bool) -> bytes | None:
+            self.assertFalse(expected)
+            return b"\x01\xd3\x0e"
+
+        async def _fake_sync_reported_from_state_report(
+            _report: bytes,
+            *,
+            context: str,
+            log_prefix: str,
+        ) -> None:
+            del context, log_prefix
+            shadow.set_reported(False)
+            shadow.redcon = 4
+
+        async def _fake_safe_disconnect(**kwargs: object) -> None:
+            disconnect_calls.append(dict(kwargs))
+            bridge._client = None
+
+        bridge._send_sleep_command = _fake_send_sleep_command  # type: ignore[method-assign]
+        bridge._wait_for_reported_power = _fake_wait_for_reported_power  # type: ignore[method-assign]
+        bridge._sync_reported_from_state_report = _fake_sync_reported_from_state_report  # type: ignore[method-assign]
+        bridge._safe_disconnect = _fake_safe_disconnect  # type: ignore[method-assign]
+
+        await bridge._process_target_redcon_once()
+
+        self.assertEqual(disconnect_calls, [])
+        self.assertIsNone(shadow.target_redcon)
 
     async def _exercise_mcp_and_video_ready_stage_redcon(self) -> None:
         cloud_shadow = FakeCloudShadow()
@@ -1623,6 +1675,29 @@ class SparkplugCodecTests(unittest.TestCase):
         self.assertEqual(command.metric_name, "redcon")
         self.assertEqual(command.value, 3)
         self.assertEqual(command.seq, 5)
+
+    def test_logs_received_sparkplug_dcmd_redcon(self) -> None:
+        updates: list[AwsShadowUpdate] = []
+        client = AwsShadowClient.__new__(AwsShadowClient)
+        client._config = types.SimpleNamespace(
+            sparkplug_group_id="town",
+            sparkplug_edge_node_id="rig",
+        )
+        client._managed_thing_names = {"txing"}
+        client._enqueue_update = updates.append
+
+        with self.assertLogs("rig.ble_bridge", level="INFO") as captured:
+            client._on_message(
+                build_device_topic("town", "DCMD", "rig", "txing"),
+                build_redcon_payload(redcon=1, seq=7),
+            )
+
+        self.assertEqual(len(updates), 1)
+        self.assertEqual(updates[0].source, "sparkplug/dcmd")
+        self.assertEqual(updates[0].command_redcon, 1)
+        self.assertTrue(
+            any("Received Sparkplug DCMD.redcon=1 thing=txing" in line for line in captured.output)
+        )
 
     def test_encodes_node_birth_payload(self) -> None:
         topic = build_node_topic("town", "NBIRTH", "rig")

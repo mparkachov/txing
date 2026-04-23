@@ -1359,6 +1359,13 @@ class AwsShadowClient:
                     topic,
                 )
                 return
+            _log_important(
+                LOGGER,
+                "Received Sparkplug DCMD.redcon=%s thing=%s topic=%s",
+                command.value,
+                thing_name,
+                topic,
+            )
             self._enqueue_update(
                 AwsShadowUpdate(
                     thing_name=thing_name,
@@ -2150,6 +2157,13 @@ class BleSleepBridge:
             changed = False
             redcon_inputs_changed = mcp_availability_changed or video_redcon_changed
             if update.command_redcon is not None and self._shadow.target_redcon != update.command_redcon:
+                _log_important(
+                    LOGGER,
+                    "Applying REDCON target %s -> %s (%s)",
+                    self._shadow.target_redcon,
+                    update.command_redcon,
+                    update.source,
+                )
                 self._shadow.set_target_redcon(update.command_redcon)
                 if update.command_redcon != 4:
                     self._board_shutdown_requested_at = None
@@ -2345,12 +2359,6 @@ class BleSleepBridge:
                 await self._safe_disconnect()
                 return
 
-            if self._is_connected():
-                _log_important(
-                    LOGGER,
-                    "MCU entered sleep mode; disconnecting BLE session until a higher REDCON is requested",
-                )
-                await self._safe_disconnect()
             if self._shadow.clear_target_redcon_if_converged():
                 await self._clear_target_redcon(
                     context="Cleared pending REDCON target after REDCON 4 convergence",
@@ -2401,11 +2409,10 @@ class BleSleepBridge:
             )
 
     def _should_idle_disconnected_while_sleeping(self) -> bool:
-        return (
-            not self._shadow.reported_power
-            and self._shadow.target_redcon in (None, 4)
-            and not self._ble_uuid_search_mode
-        )
+        # Keep the BLE recovery loop independent from the device REDCON posture.
+        # Sleep-state rendezvous advertisements are still useful for presence,
+        # reconnect, and the next wake transition.
+        return False
 
     async def _start_scanner(self) -> None:
         if self._scanner is not None:
