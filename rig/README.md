@@ -5,16 +5,17 @@ Python service for the Raspberry Pi 5 rig runtime.
 Responsibilities:
 - Connect directly to AWS IoT Core over SigV4-authenticated MQTT over WebSockets
 - Act as the `rig` lifecycle runtime in the same process
-- Synchronize classic Thing Shadows for all registered devices assigned to this rig
+- Synchronize named Thing Shadows for all registered devices assigned to this rig
 - Accept Sparkplug `DCMD.redcon` lifecycle commands and publish `NBIRTH`/`NDEATH`/`DBIRTH`/`DDATA`/`DDEATH`
 - Bridge REDCON-driven wakeup-state and sleep-state changes to the MCU over BLE rendezvous sessions
-- Publish MCU state to `state.reported.device.mcu.*`
-- Publish derived readiness at top-level `state.reported.redcon`
+- Publish MCU state to the `mcu` named shadow
+- Publish shared battery state to the `device` named shadow
+- Publish derived readiness to `sparkplug.state.reported.redcon`
 - Load assigned devices from the dynamic AWS IoT thing group named by `RIG_NAME`
 - Persist last known BLE reconnect hints to AWS IoT thing attribute `bleDeviceId`
 
 Shadow contract source of truth:
-- `../devices/unit/aws/shadow.schema.json`
+- `../devices/unit/aws/*-shadow.schema.json`
 - `../devices/unit/docs/device-rig-shadow-spec.md`
 - Design decision: `rig` owns and evolves the `mcu.*` shadow subtree contract.
 
@@ -208,7 +209,7 @@ just rig::wake thing_name=my-thing region=eu-central-1
 
 `print` prints the current real AWS Thing Shadow document.
 
-`aws::shadow-reset` is the hard reset path for manual whole-device power cuts. It deletes the current txing shadow and reseeds it to the repository's clean offline baseline: `reported.redcon=4`, `reported.device.batteryMv=3750`, `reported.device.mcu.power=false`, `reported.device.mcu.online=false`, `reported.device.board.power=false`, and `reported.device.board.wifi.online=false`.
+`aws::shadow-reset` is the hard reset path for manual whole-device power cuts. It deletes the current txing shadow and reseeds it to the repository's clean offline baseline: `sparkplug reported.redcon=4`, `device reported.batteryMv=3750`, `mcu reported.power=false`, `mcu reported.online=false`, `reported.power=false`, and `reported.wifi.online=false`.
 
 Use the registry helpers with positional arguments to create/update rig membership and inspect current membership:
 
@@ -250,15 +251,15 @@ The longer stack bootstrap and deletion flow is documented in `web/README.md`.
 - Operates in event-driven mode from MQTT subscriptions (no fixed-interval cloud polling).
 - On startup, lists txings from the dynamic AWS IoT thing group named by `RIG_NAME`, then `DescribeThing`s each txing to read `attributes.rig` and `attributes.bleDeviceId`.
 - Subscribes to each managed txing:
-  - `$aws/things/<thing>/shadow/get/accepted`
-  - `$aws/things/<thing>/shadow/update/accepted`
+  - `$aws/things/<thing>/shadow/name/<shadow>/get/accepted`
+  - `$aws/things/<thing>/shadow/name/<shadow>/update/accepted`
   - `txings/<thing>/mcp/descriptor`
   - `txings/<thing>/mcp/status`
   - `spBv1.0/<group>/DCMD/<edge>/<thing>`
-- On startup, requests the full shadow for each managed txing with `$aws/things/<thing>/shadow/get`.
+- On startup, requests the `sparkplug`, `device`, `mcu`, and `board` named shadows for each managed txing.
 - Mirrors retained MCP descriptor/status facts into Sparkplug `services/mcp/*` device metrics while keeping rig as the only Sparkplug publisher for the selected device session.
-- Publishes `NBIRTH` for the Sparkplug node `rig` and writes the corresponding rig thing shadow `reported.redcon=1` directly from the rig runtime.
-- Publishes `NDEATH` on shutdown and best-effort writes the rig thing shadow `reported.redcon=4` directly from the rig runtime.
+- Publishes `NBIRTH` for the Sparkplug node `rig` and writes the corresponding rig thing shadow `sparkplug reported.redcon=1` directly from the rig runtime.
+- Publishes `NDEATH` on shutdown and best-effort writes the rig thing shadow `sparkplug reported.redcon=4` directly from the rig runtime.
 - Starts from the built-in BLE UUID configuration and validates it against the peripheral during short rendezvous sessions.
 - Uses AWS IoT thing attribute `bleDeviceId` as the primary persisted fast-reconnect hint.
 - Keeps a scanner running while disconnected and treats disconnects as normal behavior.
@@ -269,7 +270,7 @@ The longer stack bootstrap and deletion flow is documented in `web/README.md`.
   - advertising manufacturer data while disconnected
   - GATT reads/notifications while connected
 - Tracks unresolved Sparkplug lifecycle commands in memory only; device shadows are reported-only.
-- Publishes BLE connection state at `state.reported.device.mcu.online`:
+- Publishes BLE connection state at `state.mcu reported.online`:
   - `true` only after sustained BLE presence has been confirmed
   - remains `true` while the device is connected or keeps advertising within the presence timeout
   - becomes `false` only after the configured presence timeout expires without a matching connection or advertisement
@@ -280,15 +281,15 @@ The longer stack bootstrap and deletion flow is documented in `web/README.md`.
   - `DDEATH` when BLE reachability times out
 - If UUIDs are missing/invalid or do not match GATT, enters BLE UUID search mode and discovers UUIDs from service/characteristic properties.
 - Ignores deprecated shadow metadata fields `state.reported.bleDeviceId` and `state.reported.homeRig`.
-- For `DCMD.redcon=1..3`, waits for the next advertisement if disconnected, connects if needed, writes the wakeup-state command only when `reported.device.mcu.power=false`, and clears the in-memory target after `reported.redcon` reaches the requested minimum readiness.
-- For `DCMD.redcon=4`, waits for `reported.device.board.power=false`, then writes the BLE sleep command and clears the in-memory target after convergence.
-- Updates `state.reported.device.batteryMv` only when the observed MCU battery value changes, so the AWS shadow metadata timestamp for `batteryMv` tracks real battery changes instead of unrelated BLE state publishes.
+- For `DCMD.redcon=1..3`, waits for the next advertisement if disconnected, connects if needed, writes the wakeup-state command only when `mcu reported.power=false`, and clears the in-memory target after `sparkplug reported.redcon` reaches the requested minimum readiness.
+- For `DCMD.redcon=4`, waits for `reported.power=false`, then writes the BLE sleep command and clears the in-memory target after convergence.
+- Updates `state.device reported.batteryMv` only when the observed MCU battery value changes, so the AWS shadow metadata timestamp for `batteryMv` tracks real battery changes instead of unrelated BLE state publishes.
 - After a successful BLE association, writes the observed BLE address back to AWS IoT thing attribute `bleDeviceId` if it changed.
 - Publishes reported updates to AWS:
-  - `state.reported.redcon`
-  - `state.reported.device.batteryMv`
-  - `state.reported.device.mcu.power`
-  - `state.reported.device.mcu.online`
+  - `sparkplug.state.reported.redcon`
+  - `state.device reported.batteryMv`
+  - `state.mcu reported.power`
+  - `state.mcu reported.online`
 - Does not rely on local shadow cache files; startup state comes from AWS IoT shadow plus IoT thing attributes.
 - Enforces single instance lock at `/tmp/rig.lock` (override with `--lock-file`).
 

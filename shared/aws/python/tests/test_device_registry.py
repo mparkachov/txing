@@ -212,21 +212,27 @@ class _FakeIotClient:
 
 class _FakeIotDataClient:
     def __init__(self) -> None:
-        self.shadows: dict[str, bytes] = {}
-        self.get_requests: list[str] = []
-        self.update_requests: list[tuple[str, bytes]] = []
+        self.shadows: dict[tuple[str, str | None], bytes] = {}
+        self.get_requests: list[tuple[str, str | None]] = []
+        self.update_requests: list[tuple[str, str | None, bytes]] = []
 
-    def get_thing_shadow(self, *, thingName: str) -> dict[str, object]:
-        self.get_requests.append(thingName)
+    def get_thing_shadow(self, *, thingName: str, shadowName: str | None = None) -> dict[str, object]:
+        self.get_requests.append((thingName, shadowName))
         try:
-            payload = self.shadows[thingName]
+            payload = self.shadows[(thingName, shadowName)]
         except KeyError as err:
             raise _FakeClientError("ResourceNotFoundException") from err
         return {"payload": payload}
 
-    def update_thing_shadow(self, *, thingName: str, payload: bytes) -> dict[str, object]:
-        self.update_requests.append((thingName, payload))
-        self.shadows[thingName] = payload
+    def update_thing_shadow(
+        self,
+        *,
+        thingName: str,
+        payload: bytes,
+        shadowName: str | None = None,
+    ) -> dict[str, object]:
+        self.update_requests.append((thingName, shadowName, payload))
+        self.shadows[(thingName, shadowName)] = payload
         return {"payload": payload}
 
 
@@ -316,9 +322,9 @@ class DeviceRegistryTests(unittest.TestCase):
             runtime.iot.create_thing_type_requests[0]["thingTypeProperties"]["searchableAttributes"],
             ["name"],
         )
-        self.assertEqual(runtime.iot_data.update_requests[0][0], "town-town01")
+        self.assertEqual(runtime.iot_data.update_requests[0][0:2], ("town-town01", "sparkplug"))
         self.assertEqual(
-            runtime.iot_data.update_requests[0][1],
+            runtime.iot_data.update_requests[0][2],
             b'{"state": {"reported": {"redcon": 1}}}',
         )
 
@@ -364,9 +370,9 @@ class DeviceRegistryTests(unittest.TestCase):
             runtime.iot.create_group_requests[0]["queryString"],
             "attributes.rig:rig-a AND attributes.town:*",
         )
-        self.assertEqual(runtime.iot_data.update_requests[0][0], "rig-rig002")
+        self.assertEqual(runtime.iot_data.update_requests[0][0:2], ("rig-rig002", "sparkplug"))
         self.assertEqual(
-            runtime.iot_data.update_requests[0][1],
+            runtime.iot_data.update_requests[0][2],
             b'{"state": {"reported": {"redcon": 4}}}',
         )
 
@@ -439,9 +445,18 @@ class DeviceRegistryTests(unittest.TestCase):
                 },
             },
         )
-        self.assertEqual(runtime.iot_data.get_requests, ["unit-bbbbbb"])
+        self.assertEqual(
+            runtime.iot_data.get_requests,
+            [
+                ("unit-bbbbbb", "sparkplug"),
+                ("unit-bbbbbb", "device"),
+                ("unit-bbbbbb", "mcu"),
+                ("unit-bbbbbb", "board"),
+            ],
+        )
         self.assertEqual(runtime.iot_data.update_requests[0][0], "unit-bbbbbb")
-        self.assertTrue(runtime.iot_data.update_requests[0][1].startswith(b"{"))
+        self.assertEqual(runtime.iot_data.update_requests[0][1], "sparkplug")
+        self.assertTrue(runtime.iot_data.update_requests[0][2].startswith(b"{"))
         self.assertEqual(
             runtime.kinesisvideo.create_requests[0]["ChannelName"],
             "unit-bbbbbb-board-video",

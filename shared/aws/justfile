@@ -13,7 +13,7 @@ rig_name := "rig"
 policy_name := "town-rig-device-policy"
 log_group_name := "/town/rig/txing"
 local_state_dir := project_root + "/.state/aws"
-default_shadow_file := project_root + "/devices/unit/aws/default-shadow.json"
+default_shadow_file := project_root + "/devices/unit/aws/default-sparkplug-shadow.json"
 localhost_app_url := "http://localhost:5173"
 localhost_alt_app_url := "http://127.0.0.1:5173"
 thing_index_name := "AWS_Things"
@@ -828,7 +828,7 @@ thing_index_name := "AWS_Things"
 
     printf '%s\n' "$result" | jq '.'
 
-@shadow thing_name=thing_name region=region profile=profile:
+@shadow thing_name=thing_name region=region profile=profile shadow_name='sparkplug':
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
@@ -852,10 +852,11 @@ thing_index_name := "AWS_Things"
     aws iot-data get-thing-shadow \
       --endpoint-url "https://$endpoint" \
       --thing-name "{{thing_name}}" \
+      --shadow-name "{{shadow_name}}" \
       "${aws_flags[@]}" \
       /dev/stdout | jq '.'
 
-@shadow-reset thing_name=thing_name region=region profile=profile default_shadow_file=default_shadow_file:
+@shadow-reset thing_name=thing_name region=region profile=profile shadow_name='sparkplug' default_shadow_file='':
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
@@ -868,8 +869,12 @@ thing_index_name := "AWS_Things"
       echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
       exit 1
     fi
-    if [ ! -f "{{default_shadow_file}}" ]; then
-      echo "shadow reset payload {{default_shadow_file}} not found" >&2
+    default_payload="{{default_shadow_file}}"
+    if [ -z "$default_payload" ]; then
+      default_payload="{{aws_dir}}/default-{{shadow_name}}-shadow.json"
+    fi
+    if [ ! -f "$default_payload" ]; then
+      echo "shadow reset payload $default_payload not found" >&2
       exit 1
     fi
 
@@ -885,6 +890,7 @@ thing_index_name := "AWS_Things"
       aws iot-data delete-thing-shadow \
         --endpoint-url "https://$endpoint" \
         --thing-name "{{thing_name}}" \
+        --shadow-name "{{shadow_name}}" \
         "${aws_flags[@]}" \
         /dev/null 2>&1
     )"; then
@@ -897,7 +903,8 @@ thing_index_name := "AWS_Things"
     aws iot-data update-thing-shadow \
       --endpoint-url "https://$endpoint" \
       --thing-name "{{thing_name}}" \
-      --payload "fileb://{{default_shadow_file}}" \
+      --shadow-name "{{shadow_name}}" \
+      --payload "fileb://$default_payload" \
       "${aws_flags[@]}" \
       /dev/stdout | jq '.'
 
@@ -951,7 +958,7 @@ thing_index_name := "AWS_Things"
     aws iot attach-thing-principal --thing-name "{{thing_name}}" --principal "$cert_arn" "${aws_flags[@]}"
     echo "Certificate ARN saved to $cert_arn_file"
 
-@init-shadow thing_name=thing_name region=region profile=profile output_dir=local_state_dir default_shadow_file=default_shadow_file shadow_response_file='':
+@init-shadow thing_name=thing_name region=region profile=profile output_dir=local_state_dir shadow_name='sparkplug' default_shadow_file='' shadow_response_file='':
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
@@ -972,7 +979,11 @@ thing_index_name := "AWS_Things"
 
     shadow_response_file="{{shadow_response_file}}"
     if [ -z "$shadow_response_file" ]; then
-      shadow_response_file="{{output_dir}}/{{thing_name}}.shadow-response.json"
+      shadow_response_file="{{output_dir}}/{{thing_name}}.{{shadow_name}}.shadow-response.json"
+    fi
+    default_payload="{{default_shadow_file}}"
+    if [ -z "$default_payload" ]; then
+      default_payload="{{aws_dir}}/default-{{shadow_name}}-shadow.json"
     fi
 
     mkdir -p "{{output_dir}}"
@@ -981,10 +992,11 @@ thing_index_name := "AWS_Things"
     aws iot-data update-thing-shadow \
       --endpoint-url "https://$endpoint" \
       --thing-name "{{thing_name}}" \
-      --payload "fileb://{{default_shadow_file}}" \
+      --shadow-name "{{shadow_name}}" \
+      --payload "fileb://$default_payload" \
       "${aws_flags[@]}" \
       "$shadow_response_file"
-    echo "Shadow initialized from {{default_shadow_file}}"
+    echo "Named shadow {{shadow_name}} initialized from $default_payload"
 
 @bootstrap CognitoDomainPrefix='' AdminEmail='' stack_name=stack_name template_file=template_file thing_name=thing_name rig_name=rig_name policy_name=policy_name region=region profile=profile output_dir=local_state_dir cert_basename='' cert_arn_file='' default_shadow_file=default_shadow_file shadow_response_file='':
     #!/usr/bin/env bash

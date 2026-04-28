@@ -3,13 +3,13 @@
 ## Scope
 - This directory contains the Python software for the device-side Raspberry Pi board.
 - This board is distinct from the `rig/` Raspberry Pi 5 gateway.
-- The board process connects directly to AWS IoT over SigV4-authenticated MQTT over WebSockets and publishes `state.reported.board` in the shared Thing Shadow.
+- The board process connects directly to AWS IoT over SigV4-authenticated MQTT over WebSockets and publishes the `board` named Thing Shadow.
 
 ## Notes
 - Run Python and `uv` commands from `board/`.
 - Follow repository-level rule: do not create commits unless explicitly requested by the user.
-- Use `../aws/shadow.schema.json` as the canonical shadow JSON structure.
-- `board` owns and evolves the `board.*` shadow subtree contract.
+- Use `../aws/board-shadow.schema.json` as the canonical board shadow JSON structure.
+- `board` owns and evolves the `board` named shadow contract.
 - Use the shared project-local AWS config flow with profiles `town`, `rig`, and `txing`; `board/` stays an internal package name, not the public AWS runtime identity.
 - Hardware assumption: the board power rail is switched by an external low-side n-MOSFET driven from nRF pin `D0` / `P0.02`, so abrupt power loss is possible and `reportedAt` freshness matters more than best-effort shutdown updates.
 

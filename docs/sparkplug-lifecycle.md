@@ -51,14 +51,14 @@ rig
   -> publishes NBIRTH/NDEATH for the rig node; NBIRTH carries rig.redcon
   -> publishes DBIRTH/DDATA/DDEATH for txing devices
   -> reflects reported-only lifecycle state into txing AWS shadows only
-  -> derives txing reported.redcon from BLE reachability plus retained MCP/video readiness inputs
+  -> derives txing sparkplug reported.redcon from BLE reachability plus retained MCP/video readiness inputs
 
 txing board control
   -> remains owner of board power and wifi shadow fields
   -> publishes retained board video descriptor/status topics for rig
 
 txing gateway / BLE path
-  -> remains owner of reported.device.mcu.*
+  -> remains owner of mcu reported.*
   -> determines BLE reachability for DBIRTH/DDEATH
 ```
 
@@ -66,9 +66,9 @@ txing gateway / BLE path
 
 - Sparkplug is the only authoritative lifecycle intent path.
 - AWS shadow is reflection and durable restart cache only.
-- `rig` is the only authority that computes top-level `txing.state.reported.redcon`.
+- `rig` is the only authority that computes `txing` sparkplug named-shadow `state.reported.redcon`.
 - `board` remains the source of truth for board power and wifi operational state.
-- `rig` remains the source of truth for `reported.device.mcu.*`.
+- `rig` remains the source of truth for `mcu reported.*`.
 - `mcu.*` and `board.*` are not the intended public lifecycle control API.
 
 ## Sparkplug Contract
@@ -119,22 +119,22 @@ Current UI mapping:
 
 Txing shadow keeps:
 
-- `state.reported.redcon`
-- `state.reported.device.batteryMv`
-- supporting `reported.device.mcu.*`
-- supporting `reported.device.board.*`
+- `sparkplug.state.reported.redcon`
+- `state.device reported.batteryMv`
+- supporting `mcu reported.*`
+- supporting `reported.*`
 
 Semantics:
 
-- `state.reported.redcon`
+- `sparkplug.state.reported.redcon`
   - reflects the actual lifecycle state of txing
   - must match the Sparkplug device actual REDCON
-- `state.reported.device.batteryMv`
+- `state.device reported.batteryMv`
   - reflects the actual lifecycle battery metric of txing
   - must match the Sparkplug device actual `batteryMv`
 - Direct scalar attributes under `txing.state.reported` are the strict Sparkplug metric reflection surface.
   - In the current implementation the only top-level lifecycle reflection metric is `redcon`.
-  - `batteryMv` now lives under `reported.device.batteryMv`.
+  - `batteryMv` now lives under `device reported.batteryMv`.
   - Sparkplug device metrics also include `services/mcp/*` as the MCP discovery summary (availability, transport, descriptor topic, lease settings, and server/protocol versions).
   - `device.mcu.*` and `device.board.*` remain shadow-only operational detail and are not alternate top-level Sparkplug metric reflections.
 - AWS IoT registry attributes hold stable per-device metadata outside the shadow:
@@ -214,11 +214,11 @@ Current examples:
 
 - target `redcon=4`
   - converge txing to the sleep state
-  - reflect `state.reported.redcon=4`
+  - reflect `sparkplug.state.reported.redcon=4`
   - clear the in-memory pending REDCON target on convergence
 - target `redcon=3`
   - wake txing
-  - once MCU is awake, reflect `state.reported.redcon=3`
+  - once MCU is awake, reflect `sparkplug.state.reported.redcon=3`
   - if MCP/video conditions later satisfy higher derived levels, reported REDCON may rise naturally to `2` or `1`
   - clear the in-memory pending REDCON target once actual REDCON reaches the commanded REDCON
 
@@ -248,14 +248,14 @@ Txing emits `DDEATH` only for unexpected device loss on the same reachability ti
 
 - no matching advertisement observed for 30 seconds
 
-Intentional GUI-off / `REDCON 4` sleep does not emit `DDEATH`. In that case the rig keeps the device in normal `reported.redcon=4` lifecycle state and only reflects `reported.device.mcu.online=false` once BLE presence ages out.
+Intentional GUI-off / `REDCON 4` sleep does not emit `DDEATH`. In that case the rig keeps the device in normal `sparkplug reported.redcon=4` lifecycle state and only reflects `mcu reported.online=false` once BLE presence ages out.
 
 On unexpected-loss `DDEATH`, rig should best-effort:
 
-- force `state.reported.redcon=4`
+- force `sparkplug.state.reported.redcon=4`
 - clear any in-memory pending REDCON target
 
-`DDEATH` wins over stale `reported.device.board.*` detail.
+`DDEATH` wins over stale `reported.*` detail.
 
 ### Rebirth
 

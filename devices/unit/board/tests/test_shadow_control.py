@@ -44,7 +44,7 @@ def _make_args(**overrides: object) -> Namespace:
     values: dict[str, object] = {
         "shadow_file": Path("/tmp/unit_board_shadow.json"),
         "thing_name": "unit-local",
-        "schema_file": Path(UNIT_AWS_DIR / "shadow.schema.json"),
+        "schema_file": Path(UNIT_AWS_DIR / "board-shadow.schema.json"),
         "client_id": None,
         "video_region": DEFAULT_VIDEO_REGION,
         "video_sender_command": "/tmp/bot-board-kvs-master",
@@ -105,7 +105,7 @@ def _make_config(**overrides: object) -> ControlConfig:
         "iot_endpoint": "example-ats.iot.eu-central-1.amazonaws.com",
         "sparkplug_group_id": "town",
         "sparkplug_edge_node_id": "rig",
-        "schema_file": Path(UNIT_AWS_DIR / "shadow.schema.json"),
+        "schema_file": Path(UNIT_AWS_DIR / "board-shadow.schema.json"),
         "shadow_file": Path("/tmp/unit_board_shadow.json"),
         "client_id": "bot-board-test",
         "video_channel_name": DEFAULT_VIDEO_CHANNEL_NAME,
@@ -206,7 +206,7 @@ class ShadowControlContractTests(unittest.TestCase):
             shadow_client.ensure_connected(timeout_seconds=1.0)
 
         self.assertEqual(events[0:2], ["connect", "mcp-connected"])
-        self.assertEqual(events[2], "publish:$aws/things/unit-local/shadow/get")
+        self.assertEqual(events[2], "publish:$aws/things/unit-local/shadow/name/board/get")
         mcp_server.on_connected.assert_called_once()
 
     def test_aws_shadow_connect_waits_for_failed_client_close_before_retry(self) -> None:
@@ -288,12 +288,12 @@ class ShadowControlContractTests(unittest.TestCase):
             events[0:3],
             [
                 "connect:1",
-                "subscribe:1:$aws/things/unit-local/shadow/get/accepted",
+                "subscribe:1:$aws/things/unit-local/shadow/name/board/get/accepted",
                 "disconnect:1",
             ],
         )
         self.assertIn("connect:2", events)
-        self.assertIn("publish:$aws/things/unit-local/shadow/get", events)
+        self.assertIn("publish:$aws/things/unit-local/shadow/name/board/get", events)
 
     def test_decodes_sparkplug_redcon_command_metric(self) -> None:
         payload = bytes(
@@ -318,35 +318,34 @@ class ShadowControlContractTests(unittest.TestCase):
         self.assertEqual(_decode_sparkplug_redcon_command(payload), 3)
 
     def test_board_shadow_update_is_reported_only(self) -> None:
-        validator = _load_validator(Path(UNIT_AWS_DIR / "shadow.schema.json"))
+        validator = _load_validator(Path(UNIT_AWS_DIR / "board-shadow.schema.json"))
         payload = _build_shadow_update(_build_shutdown_board_report())
 
         _validate_shadow_update(validator, payload)
         self.assertNotIn("desired", payload["state"])
-        self.assertIs(payload["state"]["reported"]["device"]["board"]["power"], False)
-        self.assertIs(payload["state"]["reported"]["device"]["board"]["wifi"]["online"], False)
+        self.assertIs(payload["state"]["reported"]["power"], False)
+        self.assertIs(payload["state"]["reported"]["wifi"]["online"], False)
 
     def test_board_report_without_video_matches_schema(self) -> None:
-        validator = _load_validator(Path(UNIT_AWS_DIR / "shadow.schema.json"))
+        validator = _load_validator(Path(UNIT_AWS_DIR / "board-shadow.schema.json"))
         report = _build_board_report(
             addresses=type("Addresses", (), {"ipv4": "192.168.1.20", "ipv6": "2001:db8::20"})(),
             power=True,
         )
 
-        _validate_shadow_update(validator, {"state": {"reported": {"device": {"board": report}}}})
+        _validate_shadow_update(validator, {"state": {"reported": report}})
         self.assertNotIn("video", report)
         self.assertNotIn("drive", report)
 
     def test_default_shadow_reset_payload_matches_schema(self) -> None:
-        validator = _load_validator(Path(UNIT_AWS_DIR / "shadow.schema.json"))
+        validator = _load_validator(Path(UNIT_AWS_DIR / "board-shadow.schema.json"))
         payload = json.loads(
-            Path(UNIT_AWS_DIR / "default-shadow.json").read_text(encoding="utf-8")
+            Path(UNIT_AWS_DIR / "default-board-shadow.json").read_text(encoding="utf-8")
         )
 
         _validate_shadow_update(validator, payload)
-        self.assertEqual(payload["state"]["reported"]["redcon"], 4)
-        self.assertIs(payload["state"]["reported"]["device"]["board"]["power"], False)
-        self.assertIs(payload["state"]["reported"]["device"]["board"]["wifi"]["online"], False)
+        self.assertIs(payload["state"]["reported"]["power"], False)
+        self.assertIs(payload["state"]["reported"]["wifi"]["online"], False)
 
     def test_reported_video_state_omits_runtime_timestamp(self) -> None:
         reported = build_reported_video_state(
@@ -447,8 +446,8 @@ class ShadowControlContractTests(unittest.TestCase):
         self.assertEqual(video_supervisor.read_state.call_count, 1)
         self.assertEqual(shadow_client.publish_update.call_count, 1)
         payload = shadow_client.publish_update.call_args.args[0]
-        self.assertNotIn("video", payload["state"]["reported"]["device"]["board"])
-        self.assertNotIn("drive", payload["state"]["reported"]["device"]["board"])
+        self.assertNotIn("video", payload["state"]["reported"])
+        self.assertNotIn("drive", payload["state"]["reported"])
         video_service.publish_status.assert_called_once()
 
     def test_main_republishes_video_status_after_runtime_error_without_shadow_video_publish(self) -> None:
@@ -493,7 +492,7 @@ class ShadowControlContractTests(unittest.TestCase):
 
         self.assertEqual(shadow_client.publish_update.call_count, 1)
         payload = shadow_client.publish_update.call_args.args[0]
-        self.assertNotIn("video", payload["state"]["reported"]["device"]["board"])
+        self.assertNotIn("video", payload["state"]["reported"])
         self.assertEqual(video_service.publish_status.call_count, 2)
         self.assertIs(video_service.publish_status.call_args_list[0].args[0]["ready"], True)
         self.assertIs(video_service.publish_status.call_args_list[1].args[0]["ready"], False)
@@ -541,9 +540,9 @@ class ShadowControlContractTests(unittest.TestCase):
 
         self.assertEqual(shadow_client.publish_update.call_count, 2)
         payload = shadow_client.publish_update.call_args_list[-1].args[0]
-        self.assertIs(payload["state"]["reported"]["device"]["board"]["power"], False)
+        self.assertIs(payload["state"]["reported"]["power"], False)
         self.assertNotIn("desired", payload["state"])
-        self.assertNotIn("drive", payload["state"]["reported"]["device"]["board"])
+        self.assertNotIn("drive", payload["state"]["reported"])
         video_service.publish_status.assert_called_once()
         request_system_halt.assert_called_once()
 
@@ -590,7 +589,7 @@ class ShadowControlContractTests(unittest.TestCase):
 
         self.assertEqual(shadow_client.publish_update.call_count, 1)
         first_payload = shadow_client.publish_update.call_args_list[0].args[0]
-        self.assertNotIn("drive", first_payload["state"]["reported"]["device"]["board"])
+        self.assertNotIn("drive", first_payload["state"]["reported"])
 
     def test_build_cmd_vel_motor_driver_rejects_operational_range_above_hardware_max(self) -> None:
         with self.assertRaises(ValueError):
@@ -690,7 +689,7 @@ class ShadowControlContractTests(unittest.TestCase):
             board_dir.mkdir(parents=True)
             aws_dir.mkdir(parents=True)
             (board_dir / "pyproject.toml").write_text("", encoding="utf-8")
-            (aws_dir / "shadow.schema.json").write_text("{}", encoding="utf-8")
+            (aws_dir / "board-shadow.schema.json").write_text("{}", encoding="utf-8")
 
             installed_module = (
                 board_dir

@@ -324,9 +324,18 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertEqual(
             subscribed_topics,
             [
-                ("$aws/things/thing-1/shadow/get/accepted", 7.5),
-                ("$aws/things/thing-1/shadow/get/rejected", 7.5),
-                ("$aws/things/thing-1/shadow/update/accepted", 7.5),
+                ("$aws/things/thing-1/shadow/name/sparkplug/get/accepted", 7.5),
+                ("$aws/things/thing-1/shadow/name/sparkplug/get/rejected", 7.5),
+                ("$aws/things/thing-1/shadow/name/sparkplug/update/accepted", 7.5),
+                ("$aws/things/thing-1/shadow/name/device/get/accepted", 7.5),
+                ("$aws/things/thing-1/shadow/name/device/get/rejected", 7.5),
+                ("$aws/things/thing-1/shadow/name/device/update/accepted", 7.5),
+                ("$aws/things/thing-1/shadow/name/mcu/get/accepted", 7.5),
+                ("$aws/things/thing-1/shadow/name/mcu/get/rejected", 7.5),
+                ("$aws/things/thing-1/shadow/name/mcu/update/accepted", 7.5),
+                ("$aws/things/thing-1/shadow/name/board/get/accepted", 7.5),
+                ("$aws/things/thing-1/shadow/name/board/get/rejected", 7.5),
+                ("$aws/things/thing-1/shadow/name/board/update/accepted", 7.5),
                 ("txings/thing-1/mcp/descriptor", 7.5),
                 ("txings/thing-1/mcp/status", 7.5),
                 ("txings/thing-1/video/descriptor", 7.5),
@@ -365,19 +374,12 @@ class AwsShadowClientTests(unittest.TestCase):
 
     def test_initial_snapshot_bootstrap_retries_clean_session_cancelled_subscribe(self) -> None:
         instances: list[FakeConnection] = []
-        accepted_payload = json.dumps(
-            {
-                "state": {
-                    "reported": {
-                        "mcu": {
-                            "power": True,
-                            "online": True,
-                        }
-                    }
-                },
-                "version": 7,
-            }
-        ).encode("utf-8")
+        accepted_payloads = {
+            "sparkplug": {"state": {"reported": {"redcon": 3}}, "version": 7},
+            "device": {"state": {"reported": {"batteryMv": 3729}}, "version": 7},
+            "mcu": {"state": {"reported": {"power": True, "online": True}}, "version": 7},
+            "board": {"state": {"reported": {"power": True, "wifi": {"online": True}}}, "version": 7},
+        }
 
         class FakeConnection:
             def __init__(self, _config: object, **_kwargs: object) -> None:
@@ -419,13 +421,16 @@ class AwsShadowClientTests(unittest.TestCase):
                 timeout_seconds: float | None = None,
             ) -> None:
                 del payload, retain, timeout_seconds
-                if not topic.endswith("/shadow/get"):
+                if "/shadow/name/" not in topic or not topic.endswith("/get"):
                     return
                 thing_name = topic.split("/")[2]
-                callback = self.subscriptions[f"$aws/things/{thing_name}/shadow/get/accepted"]
+                shadow_name = topic.split("/")[5]
+                callback = self.subscriptions[
+                    f"$aws/things/{thing_name}/shadow/name/{shadow_name}/get/accepted"
+                ]
                 callback(
-                    f"$aws/things/{thing_name}/shadow/get/accepted",
-                    accepted_payload,
+                    f"$aws/things/{thing_name}/shadow/name/{shadow_name}/get/accepted",
+                    json.dumps(accepted_payloads[shadow_name]).encode("utf-8"),
                 )
 
             async def resubscribe_existing_topics(
@@ -448,7 +453,7 @@ class AwsShadowClientTests(unittest.TestCase):
 
         log_warning.assert_called()
 
-        self.assertEqual(snapshots["thing-1"]["version"], 7)
+        self.assertTrue(snapshots["thing-1"]["state"]["reported"]["device"]["mcu"]["power"])
         self.assertEqual(len(instances), 1)
         self.assertEqual(instances[0].connect_calls, 2)
         self.assertEqual(instances[0].disconnect_calls, 1)
@@ -504,9 +509,9 @@ class AwsShadowClientTests(unittest.TestCase):
                 return {"topics": []}
 
         class TestAwsShadowClient(AwsShadowClient):
-            async def _request_shadow_get(self, thing_name: str) -> None:
+            async def _request_shadow_get(self, thing_name: str, shadow_name: str) -> None:
                 assert self._loop is not None
-                future = self._initial_snapshot_futures[thing_name]
+                future = self._initial_snapshot_futures[(thing_name, shadow_name)]
                 if not future.done():
                     future.set_result({"version": 11})
 
@@ -525,7 +530,7 @@ class AwsShadowClientTests(unittest.TestCase):
                     )
 
         log_warning.assert_called()
-        self.assertEqual(snapshots["thing-1"]["version"], 11)
+        self.assertEqual(snapshots["thing-1"]["state"]["reported"]["device"], {"mcu": {}, "board": {}, "batteryMv": None})
         self.assertEqual(sleep_calls, [1.5])
 
     def test_parse_args_accepts_service_environment_defaults(self) -> None:

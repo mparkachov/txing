@@ -119,6 +119,16 @@ DEFAULT_SPARKPLUG_EDGE_NODE_ID_ENV = "SPARKPLUG_EDGE_NODE_ID"
 DEFAULT_CLOUDWATCH_LOG_GROUP_ENV = "CLOUDWATCH_LOG_GROUP"
 MQTT_RETRYABLE_CLEAN_SESSION_ERROR = "AWS_ERROR_MQTT_CANCELLED_FOR_CLEAN_SESSION"
 MQTT_RETRYABLE_UNEXPECTED_HANGUP_ERROR = "AWS_ERROR_MQTT_UNEXPECTED_HANGUP"
+SPARKPLUG_SHADOW_NAME = "sparkplug"
+DEVICE_SHADOW_NAME = "device"
+MCU_SHADOW_NAME = "mcu"
+BOARD_SHADOW_NAME = "board"
+DEVICE_NAMED_SHADOWS = (
+    SPARKPLUG_SHADOW_NAME,
+    DEVICE_SHADOW_NAME,
+    MCU_SHADOW_NAME,
+    BOARD_SHADOW_NAME,
+)
 
 LOGGER = logging.getLogger("rig.ble_bridge")
 
@@ -429,6 +439,37 @@ def _extract_reported_redcon(payload: dict[str, Any]) -> int | None:
     if isinstance(value, int) and 1 <= value <= 4:
         return value
     return None
+
+
+def _reported_from_named_shadow(payload: dict[str, Any]) -> dict[str, Any]:
+    state = payload.get("state")
+    if not isinstance(state, dict):
+        return {}
+    reported = state.get("reported")
+    return reported if isinstance(reported, dict) else {}
+
+
+def _combine_named_shadow_snapshots(
+    snapshots: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    sparkplug = _reported_from_named_shadow(
+        snapshots.get(SPARKPLUG_SHADOW_NAME, {})
+    )
+    device = _reported_from_named_shadow(snapshots.get(DEVICE_SHADOW_NAME, {}))
+    mcu = _reported_from_named_shadow(snapshots.get(MCU_SHADOW_NAME, {}))
+    board = _reported_from_named_shadow(snapshots.get(BOARD_SHADOW_NAME, {}))
+    return {
+        "state": {
+            "reported": {
+                "redcon": sparkplug.get("redcon"),
+                "device": {
+                    "batteryMv": device.get("batteryMv"),
+                    "mcu": mcu,
+                    "board": board,
+                },
+            }
+        }
+    }
 
 
 def _calculate_redcon(
@@ -1052,7 +1093,7 @@ class AwsShadowClient:
         self._update_event: asyncio.Event | None = None
         self._managed_things: tuple[str, ...] = ()
         self._managed_thing_names: set[str] = set()
-        self._initial_snapshot_futures: dict[str, asyncio.Future[dict[str, Any]]] = {}
+        self._initial_snapshot_futures: dict[tuple[str, str], asyncio.Future[dict[str, Any]]] = {}
         self._bootstrap_in_progress = False
         self._bootstrap_session_reset = False
 
@@ -1111,28 +1152,35 @@ class AwsShadowClient:
 
                     assert self._loop is not None
                     self._initial_snapshot_futures = {
-                        thing_name: self._loop.create_future()
+                        (thing_name, shadow_name): self._loop.create_future()
                         for thing_name in self._managed_things
+                        for shadow_name in DEVICE_NAMED_SHADOWS
                     }
                     for thing_name in self._managed_things:
-                        remaining = deadline - self._loop.time()
-                        if remaining <= 0:
-                            raise TimeoutError(
-                                "timed out waiting for initial AWS IoT shadow snapshots"
-                            )
-                        await self._request_shadow_get(thing_name)
+                        for shadow_name in DEVICE_NAMED_SHADOWS:
+                            remaining = deadline - self._loop.time()
+                            if remaining <= 0:
+                                raise TimeoutError(
+                                    "timed out waiting for initial AWS IoT shadow snapshots"
+                                )
+                            await self._request_shadow_get(thing_name, shadow_name)
 
                     snapshots: dict[str, dict[str, Any]] = {}
-                    for thing_name, future in self._initial_snapshot_futures.items():
+                    named_snapshots: dict[str, dict[str, dict[str, Any]]] = {
+                        thing_name: {} for thing_name in self._managed_things
+                    }
+                    for (thing_name, shadow_name), future in self._initial_snapshot_futures.items():
                         remaining = deadline - self._loop.time()
                         if remaining <= 0:
                             raise TimeoutError(
                                 "timed out waiting for initial AWS IoT shadow snapshots"
                             )
-                        snapshots[thing_name] = await asyncio.wait_for(
+                        named_snapshots[thing_name][shadow_name] = await asyncio.wait_for(
                             asyncio.shield(future),
                             timeout=remaining,
                         )
+                    for thing_name, thing_snapshots in named_snapshots.items():
+                        snapshots[thing_name] = _combine_named_shadow_snapshots(thing_snapshots)
                     return snapshots
                 except Exception as err:
                     if not self._should_retry_bootstrap(err):
@@ -1213,22 +1261,36 @@ class AwsShadowClient:
         reported_root_patch: dict[str, Any] | None = None,
         publish_timeout_seconds: float = DEFAULT_MQTT_PUBLISH_TIMEOUT,
     ) -> None:
-        state: dict[str, Any] = {}
-        reported: dict[str, Any] = {}
+        publishes: list[tuple[str, dict[str, Any]]] = []
         if reported_root_patch is not None:
-            reported.update(reported_root_patch)
+            sparkplug_reported = {
+                key: value
+                for key, value in reported_root_patch.items()
+                if key == "redcon"
+            }
+            if sparkplug_reported:
+                publishes.append((SPARKPLUG_SHADOW_NAME, sparkplug_reported))
         if reported_device_patch is not None:
-            reported["device"] = reported_device_patch
-        if reported:
-            state["reported"] = reported
-        if not state:
+            if "batteryMv" in reported_device_patch:
+                publishes.append(
+                    (
+                        DEVICE_SHADOW_NAME,
+                        {"batteryMv": reported_device_patch["batteryMv"]},
+                    )
+                )
+            mcu_patch = reported_device_patch.get("mcu")
+            if isinstance(mcu_patch, dict) and mcu_patch:
+                publishes.append((MCU_SHADOW_NAME, mcu_patch))
+        if not publishes:
             return
 
-        await self._publish_json(
-            f"$aws/things/{thing_name}/shadow/update",
-            {"state": state},
-            timeout_seconds=publish_timeout_seconds,
-        )
+        for shadow_name, reported in publishes:
+            await self._publish_named_shadow_update(
+                thing_name,
+                shadow_name,
+                {"state": {"reported": reported}},
+                timeout_seconds=publish_timeout_seconds,
+            )
 
     async def publish_sparkplug(
         self,
@@ -1257,9 +1319,23 @@ class AwsShadowClient:
             timeout_seconds=timeout_seconds,
         )
 
-    async def _request_shadow_get(self, thing_name: str) -> None:
+    async def _publish_named_shadow_update(
+        self,
+        thing_name: str,
+        shadow_name: str,
+        payload: dict[str, Any],
+        *,
+        timeout_seconds: float = DEFAULT_MQTT_PUBLISH_TIMEOUT,
+    ) -> None:
+        await self._publish_json(
+            f"$aws/things/{thing_name}/shadow/name/{shadow_name}/update",
+            payload,
+            timeout_seconds=timeout_seconds,
+        )
+
+    async def _request_shadow_get(self, thing_name: str, shadow_name: str) -> None:
         await self._mqtt.publish(
-            f"$aws/things/{thing_name}/shadow/get",
+            f"$aws/things/{thing_name}/shadow/name/{shadow_name}/get",
             "{}",
             timeout_seconds=DEFAULT_MQTT_PUBLISH_TIMEOUT,
         )
@@ -1267,11 +1343,16 @@ class AwsShadowClient:
     async def _subscribe_topics(self, *, timeout_seconds: float) -> None:
         topics: list[str] = []
         for thing_name in self._managed_things:
+            for shadow_name in DEVICE_NAMED_SHADOWS:
+                topics.extend(
+                    (
+                        f"$aws/things/{thing_name}/shadow/name/{shadow_name}/get/accepted",
+                        f"$aws/things/{thing_name}/shadow/name/{shadow_name}/get/rejected",
+                        f"$aws/things/{thing_name}/shadow/name/{shadow_name}/update/accepted",
+                    )
+                )
             topics.extend(
                 (
-                    f"$aws/things/{thing_name}/shadow/get/accepted",
-                    f"$aws/things/{thing_name}/shadow/get/rejected",
-                    f"$aws/things/{thing_name}/shadow/update/accepted",
                     build_mcp_descriptor_topic(thing_name),
                     build_mcp_status_topic(thing_name),
                     build_video_descriptor_topic(thing_name),
@@ -1455,49 +1536,89 @@ class AwsShadowClient:
             return
 
         parts = topic.split("/")
-        if len(parts) < 6 or parts[0] != "$aws" or parts[1] != "things" or parts[3] != "shadow":
+        if (
+            len(parts) < 8
+            or parts[0] != "$aws"
+            or parts[1] != "things"
+            or parts[3] != "shadow"
+            or parts[4] != "name"
+        ):
             return
         thing_name = parts[2]
         if thing_name not in self._managed_thing_names:
             return
-        operation = "/".join(parts[4:])
+        shadow_name = parts[5]
+        if shadow_name not in DEVICE_NAMED_SHADOWS:
+            return
+        operation = "/".join(parts[6:])
 
         if operation == "get/rejected":
-            error = RuntimeError(f"shadow get rejected for {thing_name}: {payload}")
+            error = RuntimeError(
+                f"shadow get rejected for {thing_name}/{shadow_name}: {payload}"
+            )
             LOGGER.error("%s", error)
-            self._set_initial_snapshot_exception(thing_name, error)
+            self._set_initial_snapshot_exception(thing_name, shadow_name, error)
             return
 
         if operation == "get/accepted":
-            update = AwsShadowUpdate(
+            update = self._build_named_shadow_update(
                 thing_name=thing_name,
+                shadow_name=shadow_name,
                 source="shadow/get/accepted",
-                reported_power=_extract_reported_power(payload),
-                reported_online=_extract_reported_online(payload),
-                battery_mv=_extract_reported_battery_mv(payload),
-                board_power=_extract_reported_board_power(payload),
-                board_wifi_online=_extract_reported_board_wifi_online(payload),
-                reported_redcon=_extract_reported_redcon(payload),
-                version=_extract_shadow_version(payload),
+                payload=payload,
             )
             self._enqueue_update(update)
-            self._set_initial_snapshot(thing_name, payload)
+            self._set_initial_snapshot(thing_name, shadow_name, payload)
             return
 
         if operation == "update/accepted":
-            update = AwsShadowUpdate(
+            self._enqueue_update(
+                self._build_named_shadow_update(
+                    thing_name=thing_name,
+                    shadow_name=shadow_name,
+                    source="shadow/update/accepted",
+                    payload=payload,
+                )
+            )
+            return
+
+    def _build_named_shadow_update(
+        self,
+        *,
+        thing_name: str,
+        shadow_name: str,
+        source: str,
+        payload: dict[str, Any],
+    ) -> AwsShadowUpdate:
+        reported = _reported_from_named_shadow(payload)
+        update = AwsShadowUpdate(
                 thing_name=thing_name,
-                source="shadow/update/accepted",
-                reported_power=_extract_reported_power(payload),
-                reported_online=_extract_reported_online(payload),
-                battery_mv=_extract_reported_battery_mv(payload),
-                board_power=_extract_reported_board_power(payload),
-                board_wifi_online=_extract_reported_board_wifi_online(payload),
-                reported_redcon=_extract_reported_redcon(payload),
+                source=source,
                 version=_extract_shadow_version(payload),
             )
-            self._enqueue_update(update)
-            return
+        if shadow_name == SPARKPLUG_SHADOW_NAME:
+            value = reported.get("redcon")
+            if not isinstance(value, bool) and isinstance(value, int) and 1 <= value <= 4:
+                update.reported_redcon = value
+        elif shadow_name == DEVICE_SHADOW_NAME:
+            value = reported.get("batteryMv")
+            if not isinstance(value, bool) and isinstance(value, int) and 0 <= value <= 10000:
+                update.battery_mv = value
+        elif shadow_name == MCU_SHADOW_NAME:
+            power = reported.get("power")
+            online = reported.get("online")
+            if isinstance(power, bool):
+                update.reported_power = power
+            if isinstance(online, bool):
+                update.reported_online = online
+        elif shadow_name == BOARD_SHADOW_NAME:
+            power = reported.get("power")
+            wifi = reported.get("wifi")
+            if isinstance(power, bool):
+                update.board_power = power
+            if isinstance(wifi, dict) and isinstance(wifi.get("online"), bool):
+                update.board_wifi_online = wifi["online"]
+        return update
 
     def _enqueue_update(self, update: AwsShadowUpdate) -> None:
         if self._loop is None or self._updates is None:
@@ -1511,10 +1632,10 @@ class AwsShadowClient:
 
         self._loop.call_soon_threadsafe(_put_update)
 
-    def _set_initial_snapshot(self, thing_name: str, payload: dict[str, Any]) -> None:
+    def _set_initial_snapshot(self, thing_name: str, shadow_name: str, payload: dict[str, Any]) -> None:
         if self._loop is None:
             return
-        future = self._initial_snapshot_futures.get(thing_name)
+        future = self._initial_snapshot_futures.get((thing_name, shadow_name))
         if future is None:
             return
 
@@ -1524,10 +1645,10 @@ class AwsShadowClient:
 
         self._loop.call_soon_threadsafe(_set)
 
-    def _set_initial_snapshot_exception(self, thing_name: str, error: Exception) -> None:
+    def _set_initial_snapshot_exception(self, thing_name: str, shadow_name: str, error: Exception) -> None:
         if self._loop is None:
             return
-        future = self._initial_snapshot_futures.get(thing_name)
+        future = self._initial_snapshot_futures.get((thing_name, shadow_name))
         if future is None:
             return
 

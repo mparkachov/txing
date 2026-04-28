@@ -431,14 +431,18 @@ class AwsDeviceRegistry:
         thing_name: str,
         *,
         payload: bytes,
+        shadow_name: str | None = None,
     ) -> bool:
+        kwargs = {"thingName": thing_name}
+        if shadow_name is not None:
+            kwargs["shadowName"] = shadow_name
         try:
-            self._iot_data().get_thing_shadow(thingName=thing_name)
+            self._iot_data().get_thing_shadow(**kwargs)
         except Exception as err:
             if not _is_resource_not_found(err):
                 raise
             self._iot_data().update_thing_shadow(
-                thingName=thing_name,
+                **kwargs,
                 payload=payload,
             )
             return True
@@ -450,10 +454,18 @@ class AwsDeviceRegistry:
         *,
         manifest: DeviceManifest,
     ) -> bool:
-        return self.ensure_shadow_initialized(
-            thing_name,
-            payload=manifest.load_default_shadow_bytes(),
-        )
+        aws_dir = manifest.device_dir / "aws"
+        initialized = False
+        for shadow_name in ("sparkplug", "device", "mcu", "board"):
+            initialized = (
+                self.ensure_shadow_initialized(
+                    thing_name,
+                    shadow_name=shadow_name,
+                    payload=(aws_dir / f"default-{shadow_name}-shadow.json").read_bytes(),
+                )
+                or initialized
+            )
+        return initialized
 
     def ensure_reported_only_shadow_initialized(
         self,
@@ -471,7 +483,11 @@ class AwsDeviceRegistry:
             },
             sort_keys=True,
         ).encode("utf-8")
-        return self.ensure_shadow_initialized(thing_name, payload=payload)
+        return self.ensure_shadow_initialized(
+            thing_name,
+            shadow_name="sparkplug",
+            payload=payload,
+        )
 
     def ensure_auxiliary_resources(
         self,

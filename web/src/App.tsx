@@ -46,7 +46,6 @@ import {
   extractReportedMcuOnline,
   extractReportedMcuPower,
   extractReportedRedcon,
-  selectPrimaryReportedRedcon,
 } from './app-model'
 import {
   isResourceNotFoundError,
@@ -164,8 +163,6 @@ function App({ initialAuthError = '' }: AppProps) {
   const [status, setStatus] = useState<SessionStatus>('loading')
   const [authUser, setAuthUser] = useState<AuthUser | null>(null)
   const [shadowJson, setShadowJson] = useState<string>('{}')
-  const [sparkplugReportedBatteryMv, setSparkplugReportedBatteryMv] = useState<number | null>(null)
-  const [sparkplugReportedRedcon, setSparkplugReportedRedcon] = useState<number | null>(null)
   const [robotState, setRobotState] = useState<RobotState | null>(null)
   const [mcpTransport, setMcpTransport] = useState<McpTransportKind | null>(null)
   const [lastShadowUpdateAtMs, setLastShadowUpdateAtMs] = useState<number | null>(null)
@@ -273,7 +270,7 @@ function App({ initialAuthError = '' }: AppProps) {
     () => extractReportedBatteryMv(shadowDocument),
     [shadowDocument],
   )
-  const primaryReportedBatteryMv = sparkplugReportedBatteryMv ?? reportedBatteryMv
+  const primaryReportedBatteryMv = reportedBatteryMv
   const reportedBoardPower = useMemo(
     () => extractReportedBoardPower(shadowDocument),
     [shadowDocument],
@@ -286,14 +283,7 @@ function App({ initialAuthError = '' }: AppProps) {
     () => extractReportedRedcon(shadowDocument),
     [shadowDocument],
   )
-  const reportedRedcon = useMemo(
-    () =>
-      selectPrimaryReportedRedcon({
-        sparkplugReportedRedcon,
-        shadowReportedRedcon,
-      }),
-    [shadowReportedRedcon, sparkplugReportedRedcon],
-  )
+  const reportedRedcon = shadowReportedRedcon
 
   const isShadowConnected = shadowConnectionState === 'connected'
   const isRedconCommandPending =
@@ -673,8 +663,6 @@ function App({ initialAuthError = '' }: AppProps) {
       setIsUpdatingShadow(false)
       setLastShadowUpdateAtMs(null)
       setShadowJson('{}')
-      setSparkplugReportedBatteryMv(null)
-      setSparkplugReportedRedcon(null)
       setPendingTargetRedcon(null)
       setRobotState(null)
       setIsBotPanelOpen(false)
@@ -687,8 +675,6 @@ function App({ initialAuthError = '' }: AppProps) {
     let cancelled = false
     let shadowSession: ShadowSession | null = null
     setShadowJson('{}')
-    setSparkplugReportedBatteryMv(null)
-    setSparkplugReportedRedcon(null)
     setPendingTargetRedcon(null)
     setRobotState(null)
     setMcpTransport(null)
@@ -722,15 +708,10 @@ function App({ initialAuthError = '' }: AppProps) {
             setIsLoadingShadow(false)
           },
           onSparkplugRedconChange: (nextRedcon) => {
-            if (cancelled) {
-              return
-            }
-            setSparkplugReportedRedcon(nextRedcon)
+            void nextRedcon
           },
           onSparkplugBatteryMvChange: (nextBatteryMv) => {
-            if (!cancelled) {
-              setSparkplugReportedBatteryMv(nextBatteryMv)
-            }
+            void nextBatteryMv
           },
           onRobotStateChange: (nextRobotState) => {
             if (!cancelled) {

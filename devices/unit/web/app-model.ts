@@ -16,11 +16,6 @@ export type TxingPowerTransitionInputs = {
   reportedRedcon: number | null
 }
 
-export type PrimaryReportedRedconInputs = {
-  sparkplugReportedRedcon: number | null
-  shadowReportedRedcon: number | null
-}
-
 type RedconDescriptor = {
   colorName: string
   postureName: string
@@ -65,7 +60,26 @@ const extractReportedState = (shadow: unknown): Record<string, unknown> | null =
   return isRecord(reported) ? reported : null
 }
 
+const extractNamedShadowReportedState = (
+  shadow: unknown,
+  shadowName: 'sparkplug' | 'device' | 'mcu' | 'board',
+): Record<string, unknown> | null => {
+  if (!isRecord(shadow) || !isRecord(shadow.namedShadows)) {
+    return null
+  }
+  const namedShadow = shadow.namedShadows[shadowName]
+  if (!isRecord(namedShadow) || !isRecord(namedShadow.state)) {
+    return null
+  }
+  const reported = namedShadow.state.reported
+  return isRecord(reported) ? reported : null
+}
+
 export const extractReportedDevice = (shadow: unknown): Record<string, unknown> | null => {
+  const namedDevice = extractNamedShadowReportedState(shadow, 'device')
+  if (namedDevice) {
+    return namedDevice
+  }
   const reported = extractReportedState(shadow)
   if (!reported) {
     return null
@@ -75,6 +89,10 @@ export const extractReportedDevice = (shadow: unknown): Record<string, unknown> 
 }
 
 export const extractReportedMcu = (shadow: unknown): Record<string, unknown> | null => {
+  const namedMcu = extractNamedShadowReportedState(shadow, 'mcu')
+  if (namedMcu) {
+    return namedMcu
+  }
   const device = extractReportedDevice(shadow)
   if (!device) {
     return null
@@ -84,6 +102,10 @@ export const extractReportedMcu = (shadow: unknown): Record<string, unknown> | n
 }
 
 export const extractReportedBoard = (shadow: unknown): Record<string, unknown> | null => {
+  const namedBoard = extractNamedShadowReportedState(shadow, 'board')
+  if (namedBoard) {
+    return namedBoard
+  }
   const device = extractReportedDevice(shadow)
   if (!device) {
     return null
@@ -93,7 +115,7 @@ export const extractReportedBoard = (shadow: unknown): Record<string, unknown> |
 }
 
 export const extractReportedRedcon = (shadow: unknown): number | null => {
-  const reported = extractReportedState(shadow)
+  const reported = extractNamedShadowReportedState(shadow, 'sparkplug') ?? extractReportedState(shadow)
   if (!reported) {
     return null
   }
@@ -103,12 +125,6 @@ export const extractReportedRedcon = (shadow: unknown): number | null => {
   }
   return redcon >= 1 && redcon <= 4 ? redcon : null
 }
-
-export const selectPrimaryReportedRedcon = ({
-  sparkplugReportedRedcon,
-  shadowReportedRedcon,
-}: PrimaryReportedRedconInputs): number | null =>
-  sparkplugReportedRedcon ?? shadowReportedRedcon
 
 export const getTxingRedconToneClass = (redcon: number | null): string => {
   if (redcon === null) {

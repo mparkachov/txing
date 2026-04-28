@@ -9,7 +9,7 @@ Monorepo root for `txing`.
 - Device-side Raspberry Pi reporter for the current `unit` device type lives in `devices/unit/board/` (Python, direct AWS IoT MQTT shadow reporting).
 - Web admin SPA lives in `web/` (React + Vite).
 - Shared docs live in `docs/`.
-- Thing Shadow contract schema for the current `unit` device type lives in `devices/unit/aws/shadow.schema.json`.
+- Named Thing Shadow contract schemas for the current `unit` device type live in `devices/unit/aws/*-shadow.schema.json`.
 - Thing Shadow guidance for the current `unit` device type lives in `devices/unit/docs/thing-shadow.md`.
 - High-level paths:
   - `AWS IoT Device Shadow -> MQTT -> rig -> BLE -> mcu`
@@ -89,7 +89,7 @@ just aws::shadow
 just aws::shadow-reset
 ```
 
-`aws::shadow-reset` deletes the current classic shadow document and reseeds it from `devices/unit/aws/default-shadow.json`, which represents the clean offline/powered-down state with stale desired power requests removed.
+`aws::shadow-reset shadow_name=<name>` deletes the selected named shadow document and reseeds it from `devices/unit/aws/default-<name>-shadow.json`.
 
 The web admin does not use API Gateway. After Cognito sign-in, the SPA exchanges the user pool token for temporary AWS credentials through a Cognito Identity Pool and calls AWS IoT Thing Shadow directly.
 

@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://txing.local/schemas/txing-sparkplug-shadow.schema.json",
+  "title": "Txing Sparkplug Named Shadow Contract v1",
+  "description": "Named shadow 'sparkplug' lifecycle reflection for a txing device.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["state"],
+  "properties": {
+    "state": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["reported"],
+      "properties": {
+        "reported": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["redcon"],
+          "properties": {
+            "redcon": {
+              "description": "Rig-derived readiness summary. 4=MCU sleep state or BLE unavailable, 3=MCU wakeup state with BLE reachability but MCP unavailable, 2=BLE and MCP ready but video not ready, 1=BLE and MCP ready with video ready.",
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 4
+            }
+          }
+        }
+      }
+    },
+    "clientToken": {
+      "type": "string"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "timestamp": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

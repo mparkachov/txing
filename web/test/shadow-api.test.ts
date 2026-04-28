@@ -23,14 +23,15 @@ describe('shadow protocol helpers', () => {
     )
   })
 
-  test('builds the exact classic shadow topics', () => {
-    expect(buildShadowTopics('txing')).toEqual({
-      get: '$aws/things/txing/shadow/get',
-      getAccepted: '$aws/things/txing/shadow/get/accepted',
-      getRejected: '$aws/things/txing/shadow/get/rejected',
-      update: '$aws/things/txing/shadow/update',
-      updateAccepted: '$aws/things/txing/shadow/update/accepted',
-      updateRejected: '$aws/things/txing/shadow/update/rejected',
+  test('builds the exact named shadow topics', () => {
+    expect(buildShadowTopics('txing', 'board')).toEqual({
+      shadowName: 'board',
+      get: '$aws/things/txing/shadow/name/board/get',
+      getAccepted: '$aws/things/txing/shadow/name/board/get/accepted',
+      getRejected: '$aws/things/txing/shadow/name/board/get/rejected',
+      update: '$aws/things/txing/shadow/name/board/update',
+      updateAccepted: '$aws/things/txing/shadow/name/board/update/accepted',
+      updateRejected: '$aws/things/txing/shadow/name/board/update/rejected',
     })
   })
 
@@ -106,6 +107,7 @@ describe('shadow protocol helpers', () => {
     expect(decodeShadowResponse(topics.getAccepted, acceptedPayload, topics)).toEqual({
       kind: 'getAccepted',
       operation: 'get',
+      shadowName: 'sparkplug',
       payload: {
         clientToken: 'request-1',
         state: {
@@ -122,6 +124,7 @@ describe('shadow protocol helpers', () => {
     expect(decodeShadowResponse(topics.updateRejected, rejectedPayload, topics)).toEqual({
       kind: 'updateRejected',
       operation: 'update',
+      shadowName: 'sparkplug',
       payload: {
         clientToken: 'request-2',
         message: 'Not authorized',

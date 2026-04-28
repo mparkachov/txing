@@ -6,7 +6,7 @@
 ## Notes
 - Run firmware build/test commands from `mcu/`.
 - Follow repository-level rule: do not create commits unless explicitly requested by the user.
-- Use `../aws/shadow.schema.json` as the canonical shadow JSON structure.
+- Use `../aws/*-shadow.schema.json` as the canonical shadow JSON structure.
 - Treat `rig` as owner of the `mcu.*` shadow subtree contract.
 
 ## Shared workflow

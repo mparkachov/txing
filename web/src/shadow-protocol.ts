@@ -1,6 +1,8 @@
 export type ShadowOperation = 'get' | 'update'
+export type ShadowName = 'sparkplug' | 'device' | 'mcu' | 'board'
 export type ShadowResponseKind = 'getAccepted' | 'getRejected' | 'updateAccepted' | 'updateRejected' | 'ignored'
 export type ShadowTopics = {
+  shadowName: ShadowName
   get: string
   getAccepted: string
   getRejected: string
@@ -8,9 +10,11 @@ export type ShadowTopics = {
   updateAccepted: string
   updateRejected: string
 }
+export const namedShadowNames: readonly ShadowName[] = ['sparkplug', 'device', 'mcu', 'board']
 export type DecodedShadowResponse = {
   kind: ShadowResponseKind
   operation: ShadowOperation | null
+  shadowName: ShadowName | null
   payload: unknown
   clientToken: string | null
 }
@@ -45,9 +49,13 @@ export const deriveMqttHostFromIotDataEndpoint = (endpoint: string): string => {
   return new URL(trimmed).hostname
 }
 
-export const buildShadowTopics = (thingName: string): ShadowTopics => {
-  const topicPrefix = `$aws/things/${thingName}/shadow`
+export const buildShadowTopics = (
+  thingName: string,
+  shadowName: ShadowName = 'sparkplug',
+): ShadowTopics => {
+  const topicPrefix = `$aws/things/${thingName}/shadow/name/${shadowName}`
   return {
+    shadowName,
     get: `${topicPrefix}/get`,
     getAccepted: `${topicPrefix}/get/accepted`,
     getRejected: `${topicPrefix}/get/rejected`,
@@ -57,14 +65,24 @@ export const buildShadowTopics = (thingName: string): ShadowTopics => {
   }
 }
 
-export const buildShadowSubscriptionPacket = (topics: ShadowTopics): ShadowSubscriptionPacket => ({
-  subscriptions: [
-    { topicFilter: topics.getAccepted, qos: 1 },
-    { topicFilter: topics.getRejected, qos: 1 },
-    { topicFilter: topics.updateAccepted, qos: 1 },
-    { topicFilter: topics.updateRejected, qos: 1 },
-  ],
-})
+export const buildNamedShadowTopics = (thingName: string): Record<ShadowName, ShadowTopics> =>
+  Object.fromEntries(
+    namedShadowNames.map((shadowName) => [shadowName, buildShadowTopics(thingName, shadowName)]),
+  ) as Record<ShadowName, ShadowTopics>
+
+export const buildShadowSubscriptionPacket = (
+  topics: ShadowTopics | Record<ShadowName, ShadowTopics>,
+): ShadowSubscriptionPacket => {
+  const topicList = 'sparkplug' in topics ? Object.values(topics) : [topics]
+  return {
+    subscriptions: topicList.flatMap((topicSet) => [
+      { topicFilter: topicSet.getAccepted, qos: 1 as const },
+      { topicFilter: topicSet.getRejected, qos: 1 as const },
+      { topicFilter: topicSet.updateAccepted, qos: 1 as const },
+      { topicFilter: topicSet.updateRejected, qos: 1 as const },
+    ]),
+  }
+}
 
 export const createShadowClientToken = (operation: ShadowOperation): string => {
   const randomSegment =
@@ -164,6 +182,7 @@ export const decodeShadowResponse = (
     return {
       kind,
       operation: null,
+      shadowName: null,
       payload: parsedPayload,
       clientToken: null,
     }
@@ -172,6 +191,7 @@ export const decodeShadowResponse = (
   return {
     kind,
     operation: kind.startsWith('get') ? 'get' : 'update',
+    shadowName: topics.shadowName,
     payload: parsedPayload,
     clientToken: extractShadowClientToken(parsedPayload),
   }

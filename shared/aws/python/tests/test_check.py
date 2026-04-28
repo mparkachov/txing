@@ -51,10 +51,10 @@ class _FakeLogsClient:
 
 class _FakeIotDataClient:
     def __init__(self) -> None:
-        self.thing_names: list[str] = []
+        self.thing_names: list[tuple[str, str | None]] = []
 
-    def get_thing_shadow(self, *, thingName: str) -> dict[str, object]:
-        self.thing_names.append(thingName)
+    def get_thing_shadow(self, *, thingName: str, shadowName: str | None = None) -> dict[str, object]:
+        self.thing_names.append((thingName, shadowName))
         return {"payload": b"{}"}
 
 
@@ -222,7 +222,7 @@ class AwsCheckTests(unittest.TestCase):
         self.assertTrue(all(result.ok for result in results))
         self.assertEqual(runtime.sts.calls, 1)
         self.assertEqual(runtime.iot.describe_thing_names, ["unit-local"])
-        self.assertEqual(runtime.iot_data.thing_names, ["unit-local"])
+        self.assertEqual(runtime.iot_data.thing_names, [("unit-local", "board")])
         self.assertEqual(runtime.kinesisvideo.channel_names, ["unit-local-board-video"])
         self.assertIn(
             (

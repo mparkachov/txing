@@ -153,7 +153,7 @@ systemd_unit := "/etc/systemd/system/rig.service"
     fi
     cd "{{rig_dir}}" && "{{built_rig_sparkplug_log}}" --thing-name "{{thing_name}}" --sparkplug-group-id "$sparkplug_group_id" --sparkplug-edge-node-id "$sparkplug_edge_node_id" --message-type ddata
 
-@print:
+@print shadow_name='sparkplug':
     #!/usr/bin/env bash
     set -euo pipefail
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}")"
@@ -168,6 +168,7 @@ systemd_unit := "/etc/systemd/system/rig.service"
       --region "$region" \
       --endpoint-url "https://$endpoint" \
       --thing-name "{{thing_name}}" \
+      --shadow-name "{{shadow_name}}" \
       /dev/stdout | jq '.'
 
 @install-service rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file aws_config_file=aws_config_file cloudwatch_log_group='':

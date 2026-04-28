@@ -19,7 +19,7 @@ SPA shell for browsing town rigs and registered devices, then reading the select
 - The SPA lists rigs from the configured town thing group and devices from rig thing groups directly from AWS IoT Core with Cognito-backed browser credentials.
 - Town and rig drilldown cards prefer IoT registry `attributes.name` over raw thing names.
 - Current transport split:
-  - classic Thing Shadow is the UI read path over MQTT/WSS
+  - named Thing Shadow is the UI read path over MQTT/WSS
   - lifecycle commands use Sparkplug `DCMD.redcon` over MQTT/WSS
   - board remote API uses MCP over MQTT/WSS under `txings/<device_id>/mcp/...`
   - web discovers MCP via Sparkplug `services/mcp/*` summary metrics and retained MCP descriptor/status topics
@@ -283,7 +283,7 @@ The stack serves the SPA from CloudFront instead of the raw S3 website endpoint 
 - The UI switch remains a simple on/off control.
 - `on` publishes `DCMD.redcon=3`.
 - `off` publishes `DCMD.redcon=4`.
-- The UI reads lifecycle state from `reported.redcon` and treats pending commands as local browser state until the reported posture converges.
+- The UI reads lifecycle state from `sparkplug reported.redcon` and treats pending commands as local browser state until the reported posture converges.
 - The SPA does not use or write `state.desired`.
 
 ## MCP teleop note

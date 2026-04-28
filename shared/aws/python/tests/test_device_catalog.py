@@ -29,11 +29,11 @@ class DeviceCatalogTests(unittest.TestCase):
         self.assertEqual(manifest.display_name, "Bot")
         self.assertEqual(
             manifest.shadow_schema,
-            REPO_ROOT / "devices" / "unit" / "aws" / "shadow.schema.json",
+            REPO_ROOT / "devices" / "unit" / "aws" / "sparkplug-shadow.schema.json",
         )
         self.assertEqual(
             manifest.default_shadow,
-            REPO_ROOT / "devices" / "unit" / "aws" / "default-shadow.json",
+            REPO_ROOT / "devices" / "unit" / "aws" / "default-sparkplug-shadow.json",
         )
         self.assertEqual(
             manifest.render_board_video_channel_name(device_id="unit-a7k2p9"),

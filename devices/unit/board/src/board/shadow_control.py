@@ -73,7 +73,7 @@ LOGGER = logging.getLogger("board.shadow_control")
 def _is_repo_root(path: Path) -> bool:
     return (
         (path / "devices" / "unit" / "board" / "pyproject.toml").is_file()
-        and (path / "devices" / "unit" / "aws" / "shadow.schema.json").is_file()
+        and (path / "devices" / "unit" / "aws" / "board-shadow.schema.json").is_file()
     )
 
 
@@ -109,7 +109,8 @@ REPO_ROOT = _discover_repo_root(
 DEFAULT_UNIT_DIR = REPO_ROOT / "devices" / "unit"
 DEFAULT_AWS_DIR = DEFAULT_UNIT_DIR / "aws"
 DEFAULT_THING_NAME = "unit-local"
-DEFAULT_SCHEMA_FILE = DEFAULT_AWS_DIR / "shadow.schema.json"
+DEFAULT_SCHEMA_FILE = DEFAULT_AWS_DIR / "board-shadow.schema.json"
+BOARD_SHADOW_NAME = "board"
 DEFAULT_AWS_CONNECT_TIMEOUT = 20.0
 DEFAULT_MQTT_PUBLISH_TIMEOUT = 10.0
 DEFAULT_HEARTBEAT_SECONDS = 60.0
@@ -285,7 +286,7 @@ class AwsShadowClient:
     ) -> None:
         self._config = config
         self._aws_runtime = aws_runtime
-        self._topic_prefix = f"$aws/things/{config.thing_name}/shadow"
+        self._topic_prefix = f"$aws/things/{config.thing_name}/shadow/name/{BOARD_SHADOW_NAME}"
         self._topic_get = f"{self._topic_prefix}/get"
         self._topic_get_accepted = f"{self._topic_prefix}/get/accepted"
         self._topic_get_rejected = f"{self._topic_prefix}/get/rejected"
@@ -1151,11 +1152,7 @@ def _build_shutdown_board_report() -> dict[str, Any]:
 def _build_shadow_update(report: dict[str, Any]) -> dict[str, Any]:
     return {
         "state": {
-            "reported": {
-                "device": {
-                    "board": report,
-                }
-            }
+            "reported": report,
         }
     }
 
@@ -1197,18 +1194,8 @@ def _validate_shadow_update(
     validator: jsonschema.Draft202012Validator,
     payload: dict[str, Any],
 ) -> None:
-    effective_payload = _merge_shadow_documents(
-        {
-            "state": {
-                "reported": {
-                    "redcon": 4,
-                }
-            }
-        },
-        payload,
-    )
     errors = sorted(
-        validator.iter_errors(effective_payload),
+        validator.iter_errors(payload),
         key=lambda item: tuple(str(part) for part in item.absolute_path),
     )
     if not errors:

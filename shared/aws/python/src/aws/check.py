@@ -312,7 +312,7 @@ def _run_device_connectivity_checks(
             lambda: runtime.client(
                 "iot-data",
                 endpoint_url=f"https://{endpoint}",
-            ).get_thing_shadow(thingName=thing_name),
+            ).get_thing_shadow(thingName=thing_name, shadowName="board"),
         )
     _run_aws_check(
         results,

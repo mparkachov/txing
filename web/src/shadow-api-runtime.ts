@@ -51,14 +51,15 @@ import type {
 } from './shadow-api'
 import {
   buildGetShadowPublishPacket,
+  buildNamedShadowTopics,
   buildShadowSubscriptionPacket,
-  buildShadowTopics,
   buildUpdateShadowPublishPacket,
   createShadowClientToken,
   decodeShadowResponse,
   deriveMqttHostFromIotDataEndpoint,
   parseShadowPayload,
   type DecodedShadowResponse,
+  type ShadowName,
   type ShadowOperation,
   type ShadowTopics,
 } from './shadow-protocol'
@@ -77,6 +78,7 @@ export type ShadowConnectionState = 'idle' | 'connecting' | 'connected' | 'error
 type ResolveIdToken = () => Promise<string>
 type PendingRequest = {
   operation: ShadowOperation
+  shadowName: ShadowName
   resolve: (shadow: unknown) => void
   reject: (error: Error) => void
 }
@@ -585,7 +587,7 @@ class BrowserCredentialProvider extends auth.CredentialsProvider {
 
 class AwsIotShadowSession implements ShadowSession {
   private readonly options: ShadowSessionOptions
-  private readonly topics: ShadowTopics
+  private readonly topics: Record<ShadowName, ShadowTopics>
   private readonly sparkplugTopics: SparkplugTopics
   private readonly mcpDescriptorTopic: string
   private readonly mcpStatusTopic: string
@@ -594,7 +596,7 @@ class AwsIotShadowSession implements ShadowSession {
   private closed = false
   private connectionState: ShadowConnectionState = 'idle'
   private startPromise: Promise<unknown> | null = null
-  private latestShadow: unknown = null
+  private latestShadows: Partial<Record<ShadowName, unknown>> = {}
   private sparkplugCommandSeq = 0
   private suppressConnectionErrors = false
   private readonly pendingRequests = new Map<string, PendingRequest>()
@@ -660,22 +662,26 @@ class AwsIotShadowSession implements ShadowSession {
     }
 
     const topic = event.message.topicName ?? ''
-    const decoded = decodeShadowResponse(topic, event.message.payload, this.topics)
+    const decoded = this.decodeAnyShadowResponse(topic, event.message.payload)
     if (decoded.kind === 'ignored') {
       this.handleNonShadowMessage(topic, event.message.payload)
       return
     }
 
     if (decoded.kind === 'getAccepted' || decoded.kind === 'updateAccepted') {
-      const nextShadow =
+      if (decoded.shadowName === null) {
+        return
+      }
+      const currentShadow = this.latestShadows[decoded.shadowName]
+      this.latestShadows[decoded.shadowName] =
         decoded.kind === 'updateAccepted'
-          ? mergeShadowUpdate(this.latestShadow, decoded.payload)
+          ? mergeShadowUpdate(currentShadow, decoded.payload)
           : decoded.payload
-      this.latestShadow = nextShadow
-      this.options.onShadowDocument(nextShadow, decoded.operation ?? 'get')
-      this.resolveSnapshotWaiters(nextShadow)
+      const assembledShadow = this.assembleShadowSnapshot()
+      this.options.onShadowDocument(assembledShadow, decoded.operation ?? 'get')
+      this.resolveSnapshotWaiters(assembledShadow)
       if (decoded.clientToken) {
-        this.resolvePendingRequest(decoded.clientToken, nextShadow)
+        this.resolvePendingRequest(decoded.clientToken, assembledShadow)
       }
       return
     }
@@ -689,7 +695,7 @@ class AwsIotShadowSession implements ShadowSession {
 
   constructor(options: ShadowSessionOptions) {
     this.options = options
-    this.topics = buildShadowTopics(options.thingName)
+    this.topics = buildNamedShadowTopics(options.thingName)
     this.sparkplugTopics = buildSparkplugTopics(
       options.sparkplugGroupId,
       options.sparkplugEdgeNodeId,
@@ -707,8 +713,9 @@ class AwsIotShadowSession implements ShadowSession {
       throw new Error('Shadow session has already been closed')
     }
 
-    if (this.latestShadow !== null) {
-      return this.latestShadow
+    const assembledShadow = this.assembleShadowSnapshot()
+    if (assembledShadow !== null) {
+      return assembledShadow
     }
 
     if (!this.startPromise) {
@@ -719,15 +726,20 @@ class AwsIotShadowSession implements ShadowSession {
   }
 
   async requestSnapshot(): Promise<unknown> {
-    const clientToken = createShadowClientToken('get')
-    const packet = buildGetShadowPublishPacket(this.topics, clientToken)
-    return this.publishRequest('get', clientToken, packet)
+    const snapshots = await Promise.all(
+      Object.values(this.topics).map((topics) => {
+        const clientToken = createShadowClientToken('get')
+        const packet = buildGetShadowPublishPacket(topics, clientToken)
+        return this.publishRequest('get', topics.shadowName, clientToken, packet)
+      }),
+    )
+    return snapshots[snapshots.length - 1] ?? this.assembleShadowSnapshot()
   }
 
   async updateShadow(shadowDocument: unknown): Promise<unknown> {
     const clientToken = createShadowClientToken('update')
-    const packet = buildUpdateShadowPublishPacket(this.topics, shadowDocument, clientToken)
-    return this.publishRequest('update', clientToken, packet)
+    const packet = buildUpdateShadowPublishPacket(this.topics.sparkplug, shadowDocument, clientToken)
+    return this.publishRequest('update', 'sparkplug', clientToken, packet)
   }
 
   async publishRedconCommand(redcon: number): Promise<void> {
@@ -785,8 +797,9 @@ class AwsIotShadowSession implements ShadowSession {
     predicate: (shadow: unknown) => boolean,
     timeoutMs: number,
   ): Promise<unknown> {
-    if (this.latestShadow !== null && predicate(this.latestShadow)) {
-      return this.latestShadow
+    const assembledShadow = this.assembleShadowSnapshot()
+    if (assembledShadow !== null && predicate(assembledShadow)) {
+      return assembledShadow
     }
 
     return new Promise<unknown>((resolve, reject) => {
@@ -876,7 +889,7 @@ class AwsIotShadowSession implements ShadowSession {
     client.start()
 
     try {
-      return await this.waitForSnapshot(() => true, initialSnapshotTimeoutMs)
+      return await this.waitForSnapshot(() => this.hasCompleteShadowSnapshot(), initialSnapshotTimeoutMs)
     } catch (caughtError) {
       this.disposeClient(client)
       throw caughtError
@@ -960,8 +973,69 @@ class AwsIotShadowSession implements ShadowSession {
     }
   }
 
+  private decodeAnyShadowResponse(topic: string, payload: unknown): DecodedShadowResponse {
+    for (const topics of Object.values(this.topics)) {
+      const decoded = decodeShadowResponse(topic, payload, topics)
+      if (decoded.kind !== 'ignored') {
+        return decoded
+      }
+    }
+    return {
+      kind: 'ignored',
+      operation: null,
+      shadowName: null,
+      payload: parseShadowPayload(payload),
+      clientToken: null,
+    }
+  }
+
+  private assembleShadowSnapshot(): unknown | null {
+    const hasAnyShadow = Object.keys(this.latestShadows).length > 0
+    if (!hasAnyShadow) {
+      return null
+    }
+
+    const reportedOf = (shadowName: ShadowName): Record<string, unknown> => {
+      const shadow = this.latestShadows[shadowName]
+      if (!isRecord(shadow) || !isRecord(shadow.state) || !isRecord(shadow.state.reported)) {
+        return {}
+      }
+      return shadow.state.reported
+    }
+
+    const sparkplug = reportedOf('sparkplug')
+    const device = reportedOf('device')
+    const mcu = reportedOf('mcu')
+    const board = reportedOf('board')
+    return {
+      state: {
+        reported: {
+          redcon: sparkplug.redcon,
+          device: {
+            batteryMv: device.batteryMv,
+            mcu,
+            board,
+          },
+        },
+      },
+      namedShadows: {
+        ...this.latestShadows,
+      },
+    }
+  }
+
+  private hasCompleteShadowSnapshot(): boolean {
+    return (
+      this.latestShadows.sparkplug !== undefined &&
+      this.latestShadows.device !== undefined &&
+      this.latestShadows.mcu !== undefined &&
+      this.latestShadows.board !== undefined
+    )
+  }
+
   private async publishRequest(
     operation: ShadowOperation,
+    shadowName: ShadowName,
     clientToken: string,
     packet: mqtt5.PublishPacket,
   ): Promise<unknown> {
@@ -973,6 +1047,7 @@ class AwsIotShadowSession implements ShadowSession {
     return new Promise<unknown>((resolve, reject) => {
       this.pendingRequests.set(clientToken, {
         operation,
+        shadowName,
         resolve,
         reject,
       })

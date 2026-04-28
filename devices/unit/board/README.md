@@ -1,6 +1,6 @@
 # txing board
 
-Python service for the device-side Raspberry Pi board that is power-switched by the MCU and reports runtime state to the shared device Thing Shadow under `state.reported.device.board`.
+Python service for the device-side Raspberry Pi board that is power-switched by the MCU and reports runtime state to the shared device Thing Shadow under `state.reported`.
 
 This is not the same Raspberry Pi as `rig/`. The `rig/` Pi remains the BLE/AWS control node. This `board/` service is for the separate Pi mounted on the device itself.
 
@@ -30,22 +30,17 @@ Important:
 
 ## Shadow contract
 
-The board publishes to the same classic Thing Shadow as `mcu`, but under a sibling path:
+The board publishes to the `board` named shadow:
 
 ```json
 {
   "state": {
     "reported": {
-      "redcon": 3,
-      "device": {
-        "board": {
-          "power": true,
-          "wifi": {
-            "online": true,
-            "ipv4": "192.168.1.25",
-            "ipv6": "2001:db8::25"
-          }
-        }
+      "power": true,
+      "wifi": {
+        "online": true,
+        "ipv4": "192.168.1.25",
+        "ipv6": "2001:db8::25"
       }
     }
   }
@@ -56,10 +51,10 @@ Notes:
 
 - `board.*` is owned by this subproject.
 - `DCMD.redcon=4` is the only shutdown trigger for this service.
-- `reported.device.board.power=false` is only a best-effort clean-shutdown update.
-- `reported.device.board.wifi.online` reflects the board-side online status while the board OS is up and the board control is running.
-- `reported.device.board.wifi.ipv4` and `reported.device.board.wifi.ipv6` are refreshed on each publish loop from the interface the OS selects for the default route in each address family.
-- Phase 3 removes `reported.device.board.drive.*` from the shadow contract.
+- `reported.power=false` is only a best-effort clean-shutdown update.
+- `reported.wifi.online` reflects the board-side online status while the board OS is up and the board control is running.
+- `reported.wifi.ipv4` and `reported.wifi.ipv6` are refreshed on each publish loop from the interface the OS selects for the default route in each address family.
+- Phase 3 removes `reported.drive.*` from the shadow contract.
 - Phase 3 removes top-level `reported.video.*` from the shadow contract.
 - The browser video route is computed as `/<town>/<rig>/<device>/video`.
 - The KVS signaling channel name is computed as `<device_id>-board-video`.
@@ -492,7 +487,7 @@ If the root AWS credentials are stored elsewhere or you need a different region 
 cd /home/user/txing
 just board::install-service \
   thing_name=unit-local \
-  schema_file=devices/unit/aws/shadow.schema.json \
+  schema_file=devices/unit/aws/board-shadow.schema.json \
   video_region=eu-central-1 \
   video_sender_command="$BOARD_VIDEO_SENDER_COMMAND" \
   aws_shared_credentials_file=/path/to/credentials \

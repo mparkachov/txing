@@ -48,9 +48,9 @@ This README uses military readiness shorthand for the technical posture and plai
 | On watch | `REDCON 2` | Orange / Amber | `Ember Watch` | Local power and local processing are available. The device can observe, decide, buffer, and operate locally, but the high-bandwidth remote link is not necessarily up. |
 | Ready | `REDCON 1` | Red | `Hot Rig` | The device is fully up, the action link is up, and the rig is ready for live interaction, streaming, or cloud-assisted work. |
 
-In this repository's current Thing Shadow contract, the rig runtime derives a single top-level readiness field at `state.reported.redcon` from the reported MCU and board state:
+In this repository's current named-shadow contract, the rig runtime derives readiness at `sparkplug.state.reported.redcon` from the reported MCU and board state:
 
-| `state.reported.redcon` | UI color | Meaning | Current derivation |
+| `sparkplug.state.reported.redcon` | UI color | Meaning | Current derivation |
 | --- | --- | --- | --- |
 | `4` | Green | Sleep state / `Cold Camp` | BLE unavailable or `reported.mcu.power=false` |
 | `3` | Yellow | Booting / `Torch-Up` | BLE reachable, `reported.mcu.power=true`, and retained MCP status unavailable |

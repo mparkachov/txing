@@ -9,7 +9,6 @@ import {
   extractReportedRedcon,
   getTrackIndicatorPresentation,
   getTxingRedconToneClass,
-  selectPrimaryReportedRedcon,
 } from '../src/app-model'
 
 describe('app model helpers', () => {
@@ -24,6 +23,27 @@ describe('app model helpers', () => {
       }),
     ).toBe(2)
     expect(extractReportedRedcon({ state: { reported: { redcon: 7 } } })).toBeNull()
+  })
+
+  test('extracts reported redcon from sparkplug named shadow first', () => {
+    expect(
+      extractReportedRedcon({
+        state: {
+          reported: {
+            redcon: 4,
+          },
+        },
+        namedShadows: {
+          sparkplug: {
+            state: {
+              reported: {
+                redcon: 2,
+              },
+            },
+          },
+        },
+      }),
+    ).toBe(2)
   })
 
   test('extracts nested reported battery from reported.device', () => {
@@ -125,22 +145,6 @@ describe('app model helpers', () => {
         reportedBoardWifiOnline: false,
       }),
     ).toBe(true)
-  })
-
-  test('prefers Sparkplug REDCON and falls back to shadow REDCON before the first device packet', () => {
-    expect(
-      selectPrimaryReportedRedcon({
-        sparkplugReportedRedcon: 1,
-        shadowReportedRedcon: 3,
-      }),
-    ).toBe(1)
-
-    expect(
-      selectPrimaryReportedRedcon({
-        sparkplugReportedRedcon: null,
-        shadowReportedRedcon: 3,
-      }),
-    ).toBe(3)
   })
 
   test('derives txing switch pending from local target redcon and reported posture', () => {

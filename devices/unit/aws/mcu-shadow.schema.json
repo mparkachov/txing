@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://txing.local/schemas/txing-mcu-shadow.schema.json",
+  "title": "Txing MCU Named Shadow Contract v1",
+  "description": "Named shadow 'mcu' MCU state for a txing device.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["state"],
+  "properties": {
+    "state": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["reported"],
+      "properties": {
+        "reported": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["power", "online"],
+          "properties": {
+            "power": {
+              "type": "boolean"
+            },
+            "online": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    },
+    "clientToken": {
+      "type": "string"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "timestamp": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

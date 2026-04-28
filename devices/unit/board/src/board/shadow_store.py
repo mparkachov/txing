@@ -13,7 +13,12 @@ def default_shadow_payload() -> dict[str, Any]:
     return {
         "state": {
             "reported": {
-                "board": {}
+                "power": False,
+                "wifi": {
+                    "online": False,
+                    "ipv4": None,
+                    "ipv6": None,
+                },
             },
         }
     }
