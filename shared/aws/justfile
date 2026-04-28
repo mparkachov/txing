@@ -828,7 +828,7 @@ thing_index_name := "AWS_Things"
 
     printf '%s\n' "$result" | jq '.'
 
-@shadow thing_name=thing_name region=region profile=profile shadow_name='sparkplug':
+@shadow thing_name=thing_name shadow_name='' region=region profile=profile:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
@@ -849,64 +849,113 @@ thing_index_name := "AWS_Things"
 
     endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}" --query endpointAddress --output text)"
 
-    aws iot-data get-thing-shadow \
-      --endpoint-url "https://$endpoint" \
-      --thing-name "{{thing_name}}" \
-      --shadow-name "{{shadow_name}}" \
-      "${aws_flags[@]}" \
-      /dev/stdout | jq '.'
-
-@shadow-reset thing_name=thing_name region=region profile=profile shadow_name='sparkplug' default_shadow_file='':
-    #!/usr/bin/env bash
-    set -euo pipefail
-    cd "{{aws_dir}}"
-
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{profile}}")"
-    region="$AWS_REGION"
-    profile="$AWS_SELECTED_PROFILE"
-
-    if [ -z "$region" ]; then
-      echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
-      exit 1
-    fi
-    default_payload="{{default_shadow_file}}"
-    if [ -z "$default_payload" ]; then
-      default_payload="{{aws_dir}}/default-{{shadow_name}}-shadow.json"
-    fi
-    if [ ! -f "$default_payload" ]; then
-      echo "shadow reset payload $default_payload not found" >&2
-      exit 1
-    fi
-
-    aws_flags=(--region "$region")
-    if [ -n "$profile" ]; then
-      aws_flags+=(--profile "$profile")
-    fi
-
-    endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}" --query endpointAddress --output text)"
-
-    delete_output=""
-    if ! delete_output="$(
-      aws iot-data delete-thing-shadow \
+    shadow_name="{{shadow_name}}"
+    if [ -n "$shadow_name" ]; then
+      aws iot-data get-thing-shadow \
         --endpoint-url "https://$endpoint" \
         --thing-name "{{thing_name}}" \
-        --shadow-name "{{shadow_name}}" \
+        --shadow-name "$shadow_name" \
         "${aws_flags[@]}" \
-        /dev/null 2>&1
-    )"; then
-      if ! printf '%s\n' "$delete_output" | grep -F "ResourceNotFoundException" >/dev/null; then
-        printf '%s\n' "$delete_output" >&2
-        exit 1
-      fi
+        /dev/stdout | jq --arg shadowName "$shadow_name" '{($shadowName): .}'
+      exit 0
     fi
 
-    aws iot-data update-thing-shadow \
-      --endpoint-url "https://$endpoint" \
-      --thing-name "{{thing_name}}" \
-      --shadow-name "{{shadow_name}}" \
-      --payload "fileb://$default_payload" \
-      "${aws_flags[@]}" \
-      /dev/stdout | jq '.'
+    result="{}"
+    for current_shadow_name in sparkplug device mcu board; do
+      payload="$(
+        aws iot-data get-thing-shadow \
+          --endpoint-url "https://$endpoint" \
+          --thing-name "{{thing_name}}" \
+          --shadow-name "$current_shadow_name" \
+          "${aws_flags[@]}" \
+          /dev/stdout 2>/dev/null || true
+      )"
+      if [ -z "$payload" ]; then
+        payload='{"missing":true}'
+      fi
+      result="$(
+        jq \
+          --arg shadowName "$current_shadow_name" \
+          --argjson shadowPayload "$payload" \
+          '. + {($shadowName): $shadowPayload}' \
+          <<<"$result"
+      )"
+    done
+
+    jq '.' <<<"$result"
+
+@shadow-reset thing_name=thing_name shadow_name='' region=region profile=profile payload_file='':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{aws_dir}}"
+
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{profile}}")"
+    region="$AWS_REGION"
+    profile="$AWS_SELECTED_PROFILE"
+
+    if [ -z "$region" ]; then
+      echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
+      exit 1
+    fi
+    aws_flags=(--region "$region")
+    if [ -n "$profile" ]; then
+      aws_flags+=(--profile "$profile")
+    fi
+
+    endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}" --query endpointAddress --output text)"
+
+    shadow_names=()
+    if [ -n "{{shadow_name}}" ]; then
+      shadow_names=("{{shadow_name}}")
+    else
+      shadow_names=(sparkplug device mcu board)
+    fi
+
+    result="{}"
+    for current_shadow_name in "${shadow_names[@]}"; do
+      default_payload="{{payload_file}}"
+      if [ -z "$default_payload" ]; then
+        default_payload="{{project_root}}/devices/unit/aws/default-${current_shadow_name}-shadow.json"
+      fi
+      if [ ! -f "$default_payload" ]; then
+        echo "shadow reset payload $default_payload not found" >&2
+        exit 1
+      fi
+
+      delete_output=""
+      if ! delete_output="$(
+        aws iot-data delete-thing-shadow \
+          --endpoint-url "https://$endpoint" \
+          --thing-name "{{thing_name}}" \
+          --shadow-name "$current_shadow_name" \
+          "${aws_flags[@]}" \
+          /dev/null 2>&1
+      )"; then
+        if ! printf '%s\n' "$delete_output" | grep -F "ResourceNotFoundException" >/dev/null; then
+          printf '%s\n' "$delete_output" >&2
+          exit 1
+        fi
+      fi
+
+      payload="$(
+        aws iot-data update-thing-shadow \
+          --endpoint-url "https://$endpoint" \
+          --thing-name "{{thing_name}}" \
+          --shadow-name "$current_shadow_name" \
+          --payload "fileb://$default_payload" \
+          "${aws_flags[@]}" \
+          /dev/stdout
+      )"
+      result="$(
+        jq \
+          --arg shadowName "$current_shadow_name" \
+          --argjson shadowPayload "$payload" \
+          '. + {($shadowName): $shadowPayload}' \
+          <<<"$result"
+      )"
+    done
+
+    jq '.' <<<"$result"
 
 @cert thing_name=thing_name policy_name=policy_name region=region profile=profile output_dir=local_state_dir cert_basename='' cert_arn_file='':
     #!/usr/bin/env bash
@@ -958,7 +1007,7 @@ thing_index_name := "AWS_Things"
     aws iot attach-thing-principal --thing-name "{{thing_name}}" --principal "$cert_arn" "${aws_flags[@]}"
     echo "Certificate ARN saved to $cert_arn_file"
 
-@init-shadow thing_name=thing_name region=region profile=profile output_dir=local_state_dir shadow_name='sparkplug' default_shadow_file='' shadow_response_file='':
+@init-shadow thing_name=thing_name shadow_name='sparkplug' region=region profile=profile output_dir=local_state_dir payload_file='' shadow_response_file='':
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
@@ -981,9 +1030,9 @@ thing_index_name := "AWS_Things"
     if [ -z "$shadow_response_file" ]; then
       shadow_response_file="{{output_dir}}/{{thing_name}}.{{shadow_name}}.shadow-response.json"
     fi
-    default_payload="{{default_shadow_file}}"
+    default_payload="{{payload_file}}"
     if [ -z "$default_payload" ]; then
-      default_payload="{{aws_dir}}/default-{{shadow_name}}-shadow.json"
+      default_payload="{{project_root}}/devices/unit/aws/default-{{shadow_name}}-shadow.json"
     fi
 
     mkdir -p "{{output_dir}}"
@@ -1023,6 +1072,7 @@ thing_index_name := "AWS_Things"
       "{{cert_arn_file}}"
     just --justfile "{{aws_dir}}/justfile" init-shadow \
       "{{thing_name}}" \
+      "sparkplug" \
       "{{region}}" \
       "{{profile}}" \
       "{{output_dir}}" \

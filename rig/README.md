@@ -141,7 +141,7 @@ sudo journalctl -u rig -f
 ```
 
 The `just rig::install-service` task enables `bluetooth`, writes `/etc/systemd/system/rig.service` for the current user and checkout path, reloads `systemd`, and enables `rig`.
-It points `ExecStart` at the built rig executable in `rig/.venv/bin/rig`, sets `WorkingDirectory` to the repo root, and loads `config/aws.env` plus optional `config/rig.env` through `EnvironmentFile=`. That means shared AWS values such as `AWS_REGION`, `AWS_RIG_PROFILE`, `AWS_SHARED_CREDENTIALS_FILE`, and `AWS_CONFIG_FILE` come from `config/aws.env`, while rig runtime values such as `RIG_NAME`, `SPARKPLUG_GROUP_ID`, and `CLOUDWATCH_LOG_GROUP` come from `config/rig.env` by default. If you pass explicit overrides such as `rig_name=`, `sparkplug_group_id=`, `cloudwatch_log_group=`, `aws_profile=`, `aws_shared_credentials_file=`, or `aws_config_file=` to `just rig::install-service`, those are written as additional `Environment=` lines in the unit and override the file-based defaults. The rig runtime derives the Sparkplug edge node id from the resolved `RIG_NAME` and ignores any separate stale override. The rig runtime discovers the AWS IoT Data-ATS endpoint automatically from the configured AWS region/profile.
+It points `ExecStart` at the built rig executable in `rig/.venv/bin/rig`, sets `WorkingDirectory` to the repo root, and loads `config/aws.env` plus optional `config/rig.env` through `EnvironmentFile=`. That means shared AWS values such as `AWS_REGION`, `AWS_RIG_PROFILE`, `AWS_SHARED_CREDENTIALS_FILE`, and `AWS_CONFIG_FILE` come from `config/aws.env`, while rig runtime values such as `RIG_NAME`, `SPARKPLUG_GROUP_ID`, and `CLOUDWATCH_LOG_GROUP` come from `config/rig.env` by default. Optional recipe overrides are positional in the order shown by `just --summary` or `just --show rig::install-service`; prefer editing the env files for persistent service configuration. The rig runtime derives the Sparkplug edge node id from the resolved `RIG_NAME` and ignores any separate stale override. The rig runtime discovers the AWS IoT Data-ATS endpoint automatically from the configured AWS region/profile.
 
 ## Run rig
 
@@ -201,15 +201,9 @@ Default recipe values:
 - thing name: `txing`
 - region: `eu-central-1`
 
-Override example:
-
-```bash
-just rig::wake thing_name=my-thing region=eu-central-1
-```
-
 `print` prints the current real AWS Thing Shadow document.
 
-`aws::shadow-reset` is the hard reset path for manual whole-device power cuts. It deletes the current txing shadow and reseeds it to the repository's clean offline baseline: `sparkplug reported.redcon=4`, `device reported.batteryMv=3750`, `mcu reported.power=false`, `mcu reported.online=false`, `reported.power=false`, and `reported.wifi.online=false`.
+`aws::shadow-reset <thing>` is the hard reset path for manual whole-device power cuts. It deletes and reseeds all device named shadows to the repository's clean offline baseline: `sparkplug reported.redcon=4`, `device reported.batteryMv=3750`, `mcu reported.power=false`, `mcu reported.online=false`, `board reported.power=false`, and `board reported.wifi.online=false`. Use `aws::shadow-reset <thing> <shadow>` to reset only one named shadow.
 
 Use the registry helpers with positional arguments to create/update rig membership and inspect current membership:
 

@@ -222,7 +222,7 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
         exit 1; \
     }
     if [ -z "{{left}}" ] || [ -z "{{right}}" ]; then \
-        echo "Both left= and right= are required. Example: just board::motor-raw left=240 right=240" >&2; \
+        echo "Both left and right are required. Example: just board::motor-raw 240 240" >&2; \
         exit 1; \
     fi
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "{{aws_profile}}")"
@@ -248,7 +248,7 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
 @motor-stop region=region aws_profile=aws_profile:
     #!/usr/bin/env bash
     set -euo pipefail
-    just motor-raw left=0 right=0 duration=0.25 region="{{region}}" aws_profile="{{aws_profile}}"
+    just motor-raw 0 0 0.25 "{{region}}" "{{aws_profile}}"
 
 @install-service video_sender_command='' thing_name='' schema_file='' video_region='' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file aws_config_file=aws_config_file:
     #!/usr/bin/env bash

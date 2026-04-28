@@ -89,7 +89,7 @@ just aws::shadow
 just aws::shadow-reset
 ```
 
-`aws::shadow-reset shadow_name=<name>` deletes the selected named shadow document and reseeds it from `devices/unit/aws/default-<name>-shadow.json`.
+`aws::shadow-reset <thing>` deletes and reseeds all device named shadows from `devices/unit/aws/default-<shadow>-shadow.json`. Pass `<shadow>` as the second positional argument to reset only one named shadow.
 
 The web admin does not use API Gateway. After Cognito sign-in, the SPA exchanges the user pool token for temporary AWS credentials through a Cognito Identity Pool and calls AWS IoT Thing Shadow directly.
 

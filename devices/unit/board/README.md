@@ -161,14 +161,14 @@ Use raw DRV8835 units only for this helper (`[-480, 480]`, where `240` is approx
 ```bash
 cd /home/user/txing
 sudo systemctl stop board
-just board::motor-raw left=240 right=240
+just board::motor-raw 240 240
 ```
 
 Timed run (auto-stop after one second):
 
 ```bash
 cd /home/user/txing
-just board::motor-raw left=240 right=240 duration=1
+just board::motor-raw 240 240 1
 ```
 
 Explicit stop helper:
