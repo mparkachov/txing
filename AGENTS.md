@@ -14,26 +14,6 @@
 - Create commits only when explicitly requested by the user.
 - Flashing/programming firmware onto hardware must only be performed manually by the user. Agents may prepare artifacts and commands, but must not run flashing steps automatically.
 
-## Task tracking
-Use `bd` for task tracking and execution state.
-
-Rules:
-- Treat Beads as the source of truth for active work. Do not rely on Codex task management, `update_plan`, or markdown checklists as a substitute for Beads status, sequencing, or dependency tracking.
-- Do not keep active implementation plans only in markdown.
-- When `/plan` produces actionable work, convert it into a Beads epic with child tasks before implementation starts.
-- When `/plan` creates an epic, copy the approved plan summary into the epic description so the Beads record captures the implementation intent, constraints, and scope.
-- When creating implementation issues, include a description with the concrete scope, constraints, and intended approach. Do not create bare-title issues when the work needs implementation detail; use the issue description and design fields to capture that context.
-- Before starting implementation, make sure the work has a Beads issue. Use a Beads epic only for `/plan`-driven work that is being broken down into multiple actionable tasks; otherwise a standalone Beads task/bug/feature is sufficient.
-- Before starting implementation, run `bd ready`.
-- Claim the task you are working on with `bd update <id> --claim`.
-- Record dependencies with `bd dep add`.
-- On a new clone or machine, run `bd hooks install` before relying on Beads auto import/export. The tracked hook scripts live under `.beads/hooks`, but the git `core.hooksPath` setting is clone-local.
-- Keep implementation tasks open through review and follow-up adjustments. Do not close them just because local code changes are done.
-- When a commit is the completion point, put the task IDs in a `Beads-Close:` commit trailer, for example `Beads-Close: txing-123 txing-123.1`; the repo `post-commit` hook closes those Beads issues, exports `.beads/issues.jsonl`, and amends the just-created commit so code and exported Beads state land in the same final commit. Expect the commit SHA to change once during that automatic amend.
-- If no commit is being made yet, leave the Beads task open. For non-code/admin work with no commit, close the task manually in Beads with a short resolution note once the user confirms completion.
-- Keep Beads workflow rules centralized in this file. Subproject `AGENTS.md` files should reference these shared rules instead of duplicating them.
-- Keep `AGENTS.md` focused on stable instructions, not transient task lists.
-
 ## Shared contracts
 - Thing Shadow schema source of truth for the current `unit` device type: `devices/unit/aws/shadow.schema.json`.
 - Current rig-era shadow + BLE compatibility contract: `devices/unit/docs/device-rig-shadow-spec.md`.
