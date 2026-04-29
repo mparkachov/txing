@@ -8,7 +8,7 @@
 - Run Python and `uv` commands from `rig/`.
 - Follow repository-level rule: do not create commits unless explicitly requested by the user.
 - Use `../devices/unit/aws/*-shadow.schema.json` as the canonical shadow JSON structure for the current `unit` device type.
-- `rig` owns and evolves the `sparkplug`, `device`, and `mcu` named shadow contracts.
+- `rig` owns Sparkplug MQTT publication plus the `mcu` named shadow contract; the AWS-side `sparkplug` named shadow is witness-owned projection state.
 
 ## Shared workflow
 - Follow the repository-level Beads workflow in `../AGENTS.md`.

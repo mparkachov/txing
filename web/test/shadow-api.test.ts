@@ -3,7 +3,6 @@ import {
   buildGetShadowPublishPacket,
   buildShadowSubscriptionPacket,
   buildShadowTopics,
-  buildUpdateShadowPublishPacket,
   classifyShadowTopic,
   createShadowClientToken,
   decodeShadowResponse,
@@ -56,27 +55,12 @@ describe('shadow protocol helpers', () => {
     ])
   })
 
-  test('builds get and update publish packets with client tokens', () => {
+  test('builds get publish packets with client tokens', () => {
     const topics = buildShadowTopics('txing')
     const getPacket = buildGetShadowPublishPacket(topics, 'get-token')
-    const updatePacket = buildUpdateShadowPublishPacket(
-      topics,
-      {
-        state: {
-          desired: {
-            mcu: {
-              power: true,
-            },
-          },
-        },
-      },
-      'update-token',
-    )
 
     expect(getPacket.topicName).toBe(topics.get)
     expect(decoder.decode(getPacket.payload as Uint8Array)).toContain('"clientToken":"get-token"')
-    expect(updatePacket.topicName).toBe(topics.update)
-    expect(decoder.decode(updatePacket.payload as Uint8Array)).toContain('"clientToken":"update-token"')
   })
 
   test('reduces accepted and rejected shadow messages', () => {

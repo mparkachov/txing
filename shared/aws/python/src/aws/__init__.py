@@ -67,6 +67,12 @@ from .video_topics import (
     build_video_topics,
     parse_video_descriptor_or_status_topic,
 )
+from .sparkplug_shadow import (
+    build_offline_device_shadow_payload,
+    build_offline_node_shadow_payload,
+    build_sparkplug_shadow_payload,
+    build_static_group_shadow_payload,
+)
 
 __all__ = [
     "AWS_CRT_IMPORT_ERROR",
@@ -107,6 +113,10 @@ __all__ = [
     "build_mcp_session_s2c_topic",
     "build_mcp_status_payload",
     "build_mcp_status_topic",
+    "build_offline_device_shadow_payload",
+    "build_offline_node_shadow_payload",
+    "build_sparkplug_shadow_payload",
+    "build_static_group_shadow_payload",
     "build_mcp_topic_root",
     "build_mcp_topics",
     "build_video_descriptor_payload",

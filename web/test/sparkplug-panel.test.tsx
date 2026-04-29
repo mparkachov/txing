@@ -7,7 +7,7 @@ describe('sparkplug panel', () => {
     const markup = renderToStaticMarkup(
       <SparkplugPanel
         routeKind="town"
-        botRedcon={null}
+        sparkplugRedcon={1}
         targetRedcon={null}
         isRedconCommandDisabled={false}
         isRedconSleepCommandDisabled={false}
@@ -29,7 +29,7 @@ describe('sparkplug panel', () => {
     const markup = renderToStaticMarkup(
       <SparkplugPanel
         routeKind="rig"
-        botRedcon={null}
+        sparkplugRedcon={2}
         targetRedcon={null}
         isRedconCommandDisabled={false}
         isRedconSleepCommandDisabled={false}
@@ -46,7 +46,7 @@ describe('sparkplug panel', () => {
     const markup = renderToStaticMarkup(
       <SparkplugPanel
         routeKind="device"
-        botRedcon={4}
+        sparkplugRedcon={4}
         targetRedcon={null}
         isRedconCommandDisabled={false}
         isRedconSleepCommandDisabled={false}
@@ -73,7 +73,7 @@ describe('sparkplug panel', () => {
     const markup = renderToStaticMarkup(
       <SparkplugPanel
         routeKind="device"
-        botRedcon={1}
+        sparkplugRedcon={1}
         targetRedcon={2}
         isRedconCommandDisabled={false}
         isRedconSleepCommandDisabled={false}

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import unittest
 
@@ -73,7 +74,7 @@ class _FakeIotClient:
                     "rig": "rig-a",
                     "name": "bot",
                     "shortId": "aaaaaa",
-                    "capabilitiesSet": "sparkplug,device,mcu,board,video",
+                    "capabilitiesSet": "sparkplug,mcu,board,video",
                 },
                 "version": 1,
             },
@@ -85,7 +86,7 @@ class _FakeIotClient:
                     "rig": "rig-a",
                     "name": "bot",
                     "shortId": "z9x8w7",
-                    "capabilitiesSet": "sparkplug,device,mcu,board,video",
+                    "capabilitiesSet": "sparkplug,mcu,board,video",
                 },
                 "version": 7,
             },
@@ -329,8 +330,19 @@ class DeviceRegistryTests(unittest.TestCase):
         )
         self.assertEqual(runtime.iot_data.update_requests[0][0:2], ("town-town01", "sparkplug"))
         self.assertEqual(
-            runtime.iot_data.update_requests[0][2],
-            b'{"state": {"reported": {"redcon": 1}}}',
+            json.loads(runtime.iot_data.update_requests[0][2]),
+            {
+                "state": {
+                    "reported": {
+                        "session": {
+                            "entityKind": "group",
+                            "groupId": "berlin",
+                            "online": True,
+                        },
+                        "metrics": {"redcon": 1},
+                    }
+                }
+            },
         )
 
     def test_register_rig_creates_new_rig_and_initializes_reported_only_shadow(self) -> None:
@@ -378,8 +390,21 @@ class DeviceRegistryTests(unittest.TestCase):
         )
         self.assertEqual(runtime.iot_data.update_requests[0][0:2], ("rig-rig002", "sparkplug"))
         self.assertEqual(
-            runtime.iot_data.update_requests[0][2],
-            b'{"state": {"reported": {"redcon": 4}}}',
+            json.loads(runtime.iot_data.update_requests[0][2]),
+            {
+                "state": {
+                    "reported": {
+                        "session": {
+                            "entityKind": "node",
+                            "groupId": "berlin",
+                            "edgeNodeId": "rig-a",
+                            "messageType": "NDEATH",
+                            "online": False,
+                        },
+                        "metrics": {},
+                    }
+                }
+            },
         )
 
     def test_register_rig_falls_back_to_registry_when_town_is_not_yet_indexed(self) -> None:
@@ -433,7 +458,7 @@ class DeviceRegistryTests(unittest.TestCase):
                         "rig": "rig-a",
                         "name": "bot",
                         "shortId": "bbbbbb",
-                        "capabilitiesSet": "sparkplug,device,mcu,board,video",
+                        "capabilitiesSet": "sparkplug,mcu,board,video",
                     }
                 },
             },
@@ -456,7 +481,6 @@ class DeviceRegistryTests(unittest.TestCase):
             runtime.iot_data.get_requests,
             [
                 ("unit-bbbbbb", "sparkplug"),
-                ("unit-bbbbbb", "device"),
                 ("unit-bbbbbb", "mcu"),
                 ("unit-bbbbbb", "board"),
                 ("unit-bbbbbb", "video"),

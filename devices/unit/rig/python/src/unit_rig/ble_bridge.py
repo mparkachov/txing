@@ -120,18 +120,11 @@ DEFAULT_CLOUDWATCH_LOG_GROUP_ENV = "CLOUDWATCH_LOG_GROUP"
 MQTT_RETRYABLE_CLEAN_SESSION_ERROR = "AWS_ERROR_MQTT_CANCELLED_FOR_CLEAN_SESSION"
 MQTT_RETRYABLE_UNEXPECTED_HANGUP_ERROR = "AWS_ERROR_MQTT_UNEXPECTED_HANGUP"
 SPARKPLUG_SHADOW_NAME = "sparkplug"
-DEVICE_SHADOW_NAME = "device"
 MCU_SHADOW_NAME = "mcu"
 BOARD_SHADOW_NAME = "board"
 VIDEO_SHADOW_NAME = "video"
-RIG_OWNED_SHADOWS = (
-    SPARKPLUG_SHADOW_NAME,
-    DEVICE_SHADOW_NAME,
-    MCU_SHADOW_NAME,
-)
 KNOWN_NAMED_SHADOWS = (
     SPARKPLUG_SHADOW_NAME,
-    DEVICE_SHADOW_NAME,
     MCU_SHADOW_NAME,
     BOARD_SHADOW_NAME,
     VIDEO_SHADOW_NAME,
@@ -443,18 +436,6 @@ def _extract_shadow_version(payload: dict[str, Any]) -> int | None:
     return None
 
 
-def _extract_reported_redcon(payload: dict[str, Any]) -> int | None:
-    reported = _extract_reported_root(payload)
-    if reported is None:
-        return None
-    value = reported.get("redcon")
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int) and 1 <= value <= 4:
-        return value
-    return None
-
-
 def _reported_from_named_shadow(payload: dict[str, Any]) -> dict[str, Any]:
     state = payload.get("state")
     if not isinstance(state, dict):
@@ -469,15 +450,16 @@ def _combine_named_shadow_snapshots(
     sparkplug = _reported_from_named_shadow(
         snapshots.get(SPARKPLUG_SHADOW_NAME, {})
     )
-    device = _reported_from_named_shadow(snapshots.get(DEVICE_SHADOW_NAME, {}))
+    sparkplug_metrics = sparkplug.get("metrics")
+    if not isinstance(sparkplug_metrics, dict):
+        sparkplug_metrics = {}
     mcu = _reported_from_named_shadow(snapshots.get(MCU_SHADOW_NAME, {}))
     board = _reported_from_named_shadow(snapshots.get(BOARD_SHADOW_NAME, {}))
     return {
         "state": {
             "reported": {
-                "redcon": sparkplug.get("redcon"),
                 "device": {
-                    "batteryMv": device.get("batteryMv"),
+                    "batteryMv": sparkplug_metrics.get("batteryMv"),
                     "mcu": mcu,
                     "board": board,
                 },
@@ -1067,7 +1049,6 @@ class AwsShadowUpdate:
     battery_mv: int | None = None
     board_power: bool | None = None
     board_wifi_online: bool | None = None
-    reported_redcon: int | None = None
     mcp_descriptor: dict[str, Any] | None = None
     mcp_status: dict[str, Any] | None = None
     video_descriptor: dict[str, Any] | None = None
@@ -1312,22 +1293,7 @@ class AwsShadowClient:
         publish_timeout_seconds: float = DEFAULT_MQTT_PUBLISH_TIMEOUT,
     ) -> None:
         publishes: list[tuple[str, dict[str, Any]]] = []
-        if reported_root_patch is not None:
-            sparkplug_reported = {
-                key: value
-                for key, value in reported_root_patch.items()
-                if key == "redcon"
-            }
-            if sparkplug_reported:
-                publishes.append((SPARKPLUG_SHADOW_NAME, sparkplug_reported))
         if reported_device_patch is not None:
-            if "batteryMv" in reported_device_patch:
-                publishes.append(
-                    (
-                        DEVICE_SHADOW_NAME,
-                        {"batteryMv": reported_device_patch["batteryMv"]},
-                    )
-                )
             mcu_patch = reported_device_patch.get("mcu")
             if isinstance(mcu_patch, dict) and mcu_patch:
                 publishes.append((MCU_SHADOW_NAME, mcu_patch))
@@ -1647,11 +1613,8 @@ class AwsShadowClient:
                 version=_extract_shadow_version(payload),
             )
         if shadow_name == SPARKPLUG_SHADOW_NAME:
-            value = reported.get("redcon")
-            if not isinstance(value, bool) and isinstance(value, int) and 1 <= value <= 4:
-                update.reported_redcon = value
-        elif shadow_name == DEVICE_SHADOW_NAME:
-            value = reported.get("batteryMv")
+            metrics = reported.get("metrics")
+            value = metrics.get("batteryMv") if isinstance(metrics, dict) else None
             if not isinstance(value, bool) and isinstance(value, int) and 0 <= value <= 10000:
                 update.battery_mv = value
         elif shadow_name == MCU_SHADOW_NAME:
@@ -2117,7 +2080,6 @@ class BleSleepBridge:
             return
         await self._publish_reported_update(
             reported_device_patch=None,
-            reported_root_patch={"redcon": self._shadow.redcon},
             context="Published derived reported.redcon after video status freshness change",
             previous_redcon=previous_redcon,
             previous_battery=self._shadow.battery_mv,
@@ -2140,7 +2102,6 @@ class BleSleepBridge:
         await self._normalize_shadow_for_startup_default()
         await self._publish_reported_update(
             reported_device_patch=None,
-            reported_root_patch={"redcon": self._shadow.redcon},
             context="Synchronized reported.redcon on startup",
             include_redcon_if_changed=False,
         )
@@ -2260,7 +2221,6 @@ class BleSleepBridge:
         await self._normalize_shadow_for_startup_default()
         await self._publish_reported_update(
             reported_device_patch=None,
-            reported_root_patch={"redcon": self._shadow.redcon},
             context="Synchronized reported.redcon on startup (--no-ble)",
             include_redcon_if_changed=False,
         )
@@ -2948,25 +2908,30 @@ class BleSleepBridge:
         previous_redcon: int | None = None,
         previous_battery: int | None = None,
     ) -> bool:
-        next_reported_root_patch = (
-            dict(reported_root_patch) if reported_root_patch is not None else None
+        if reported_root_patch:
+            LOGGER.debug(
+                "Ignoring deprecated reported_root_patch for thing=%s keys=%s",
+                self._config.thing_name,
+                sorted(reported_root_patch),
+            )
+        redcon_changed = include_redcon_if_changed and self._shadow.reconcile_redcon()
+        state_changed = (
+            (previous_redcon is not None and previous_redcon != self._shadow.redcon)
+            or (previous_battery is not None and previous_battery != self._shadow.battery_mv)
         )
-        if include_redcon_if_changed and self._shadow.reconcile_redcon():
-            if next_reported_root_patch is None:
-                next_reported_root_patch = {}
-            next_reported_root_patch["redcon"] = self._shadow.redcon
 
         if (
             reported_device_patch is None
-            and next_reported_root_patch is None
+            and not redcon_changed
+            and not state_changed
         ):
             return True
         try:
-            await self._cloud_shadow.update_shadow(
-                reported_device_patch=reported_device_patch,
-                reported_root_patch=next_reported_root_patch,
-                publish_timeout_seconds=publish_timeout_seconds,
-            )
+            if reported_device_patch is not None:
+                await self._cloud_shadow.update_shadow(
+                    reported_device_patch=reported_device_patch,
+                    publish_timeout_seconds=publish_timeout_seconds,
+                )
         except Exception:
             LOGGER.exception("Failed to publish reported shadow update; will retry")
             return False
@@ -2983,7 +2948,6 @@ class BleSleepBridge:
         if self._shadow.promote_redcon_after_stage():
             await self._publish_reported_update(
                 reported_device_patch=None,
-                reported_root_patch={"redcon": self._shadow.redcon},
                 context="Promoted staged REDCON 2 to REDCON 1 after MCP/video readiness confirmation",
                 include_redcon_if_changed=False,
                 previous_redcon=2,
@@ -3112,18 +3076,14 @@ class BleSleepBridge:
             battery_mv=battery_mv,
         )
         reported_device_patch: dict[str, Any] | None = {}
-        reported_root_patch: dict[str, Any] | None = {}
         if power_changed:
             reported_device_patch["mcu"] = {"power": reported_power}
         if battery_changed:
             reported_device_patch["batteryMv"] = battery_mv
         if not reported_device_patch:
             reported_device_patch = None
-        if not reported_root_patch:
-            reported_root_patch = None
         await self._publish_reported_update(
             reported_device_patch=reported_device_patch,
-            reported_root_patch=reported_root_patch,
             context=context,
             previous_redcon=previous_redcon,
             previous_battery=previous_battery,
@@ -3660,13 +3620,6 @@ class RigFleetBridge:
             ),
             timeout_seconds=timeout_seconds,
         )
-        if self._config.rig_thing_name:
-            await self._cloud_shadow.update_shadow(
-                thing_name=self._config.rig_thing_name,
-                reported_device_patch=None,
-                reported_root_patch={"redcon": 4},
-                publish_timeout_seconds=timeout_seconds,
-            )
         self._node_born = False
 
     async def _publish_node_death_for_shutdown(self) -> None:
@@ -3684,13 +3637,7 @@ class RigFleetBridge:
             LOGGER.exception("Failed to publish Sparkplug NDEATH during shutdown")
 
     async def _publish_static_lifecycle_reflection(self) -> None:
-        if not self._config.rig_thing_name:
-            return
-        await self._cloud_shadow.update_shadow(
-            thing_name=self._config.rig_thing_name,
-            reported_device_patch=None,
-            reported_root_patch={"redcon": 1},
-        )
+        return
 
     async def _start_scanner(self) -> None:
         if self._scanner is not None:
@@ -3772,7 +3719,6 @@ class RigFleetBridge:
             await bridge._normalize_shadow_for_startup_default()
             await bridge._publish_reported_update(
                 reported_device_patch=None,
-                reported_root_patch={"redcon": bridge._shadow.redcon},
                 context=f"Synchronized reported.redcon on startup ({managed.registration.thing_name})",
                 include_redcon_if_changed=False,
             )
@@ -4337,7 +4283,6 @@ def _build_shadow_from_snapshot(
     battery_mv = _extract_reported_battery_mv(snapshot)
     board_power = _extract_reported_board_power(snapshot)
     board_wifi_online = _extract_reported_board_wifi_online(snapshot)
-    reported_redcon = _extract_reported_redcon(snapshot)
     ble_uuids = DEFAULT_BLE_GATT_UUIDS.with_device_id(
         _extract_reported_ble_device_id(snapshot)
     )
@@ -4373,11 +4318,7 @@ def _build_shadow_from_snapshot(
             thing_name=thing_name,
             aws_region=aws_region,
         ),
-        redcon=(
-            reported_redcon
-            if reported_redcon is not None
-            else DEFAULT_REDCON
-        ),
+        redcon=DEFAULT_REDCON,
         ble_uuid_search_mode=False,
         shadow_version=_extract_shadow_version(snapshot),
         snapshot_file=snapshot_file,

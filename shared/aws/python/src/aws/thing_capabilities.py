@@ -11,7 +11,6 @@ CAPABILITIES_ATTRIBUTE = "capabilitiesSet"
 CAPABILITY_DEFINITION_FILE = Path("shared/aws/thing-type-capabilities.json")
 KNOWN_NAMED_SHADOW_CAPABILITIES = (
     "sparkplug",
-    "device",
     "mcu",
     "board",
     "video",

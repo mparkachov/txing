@@ -30,14 +30,17 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertNotIn("Sid: DeviceCmdVelTopicFilters", template)
         self.assertNotIn("board/cmd_vel", template)
 
-    def test_template_does_not_define_lambda_helpers(self) -> None:
+    def test_template_defines_sparkplug_witness_projection(self) -> None:
         template = (
             Path(__file__).resolve().parents[2] / "template.yaml"
         ).read_text(encoding="utf-8")
 
-        self.assertNotIn("AWS::Lambda::Function", template)
-        self.assertNotIn("Custom::TxingFleetIndexingConfiguration", template)
-        self.assertNotIn("txing-rig-lifecycle-reflector", template)
+        self.assertIn("TxingSparkplugWitnessFunction", template)
+        self.assertIn("AWS::Lambda::Function", template)
+        self.assertIn("TxingSparkplugWitnessTopicRule", template)
+        self.assertIn("TxingSparkplugWitnessInvokePermission", template)
+        self.assertIn("encode(*, 'base64')", template)
+        self.assertIn("iot:SearchIndex", template)
 
     def test_device_runtime_policy_allows_describe_thing(self) -> None:
         template = (

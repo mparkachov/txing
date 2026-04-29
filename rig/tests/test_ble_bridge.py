@@ -182,7 +182,7 @@ from rig.sparkplug import (
     decode_redcon_command,
 )
 
-UNIT_CAPABILITIES = ("sparkplug", "device", "mcu", "board", "video")
+UNIT_CAPABILITIES = ("sparkplug", "mcu", "board", "video")
 
 
 class FakeCloudShadow:
@@ -331,9 +331,6 @@ class AwsShadowClientTests(unittest.TestCase):
                 ("$aws/things/thing-1/shadow/name/sparkplug/get/accepted", 7.5),
                 ("$aws/things/thing-1/shadow/name/sparkplug/get/rejected", 7.5),
                 ("$aws/things/thing-1/shadow/name/sparkplug/update/accepted", 7.5),
-                ("$aws/things/thing-1/shadow/name/device/get/accepted", 7.5),
-                ("$aws/things/thing-1/shadow/name/device/get/rejected", 7.5),
-                ("$aws/things/thing-1/shadow/name/device/update/accepted", 7.5),
                 ("$aws/things/thing-1/shadow/name/mcu/get/accepted", 7.5),
                 ("$aws/things/thing-1/shadow/name/mcu/get/rejected", 7.5),
                 ("$aws/things/thing-1/shadow/name/mcu/update/accepted", 7.5),
@@ -382,8 +379,7 @@ class AwsShadowClientTests(unittest.TestCase):
     def test_initial_snapshot_bootstrap_retries_clean_session_cancelled_subscribe(self) -> None:
         instances: list[FakeConnection] = []
         accepted_payloads = {
-            "sparkplug": {"state": {"reported": {"redcon": 3}}, "version": 7},
-            "device": {"state": {"reported": {"batteryMv": 3729}}, "version": 7},
+            "sparkplug": {"state": {"reported": {"metrics": {"batteryMv": 3729}}}, "version": 7},
             "mcu": {"state": {"reported": {"power": True, "online": True}}, "version": 7},
             "board": {"state": {"reported": {"power": True, "wifi": {"online": True}}}, "version": 7},
             "video": {"state": {"reported": {"descriptor": None, "status": {"available": False}}}, "version": 7},
@@ -779,16 +775,7 @@ class RigNodeReflectionTests(unittest.TestCase):
 
         await bridge._publish_static_lifecycle_reflection()
 
-        self.assertEqual(
-            cloud_shadow.shadow_updates,
-            [
-                {
-                    "thing_name": "rig-rig001",
-                    "reported_device_patch": None,
-                    "reported_root_patch": {"redcon": 1},
-                }
-            ],
-        )
+        self.assertEqual(cloud_shadow.shadow_updates, [])
         self.assertEqual(cloud_shadow.sparkplug_publishes, [])
 
 
@@ -1236,7 +1223,6 @@ class RedconTests(unittest.TestCase):
                 {
                     "state": {
                         "reported": {
-                            "redcon": 1,
                             "device": {
                                 "batteryMv": 3795,
                                 "bleDeviceId": "legacy-top-level-id",
@@ -1261,7 +1247,7 @@ class RedconTests(unittest.TestCase):
 
         self.assertFalse(shadow.board_video_ready)
         self.assertFalse(shadow.board_video_viewer_connected)
-        self.assertEqual(shadow.redcon, 1)
+        self.assertEqual(shadow.redcon, 4)
         self.assertEqual(shadow.ble_device_id, "AA:BB:CC:DD:EE:FF")
         payload = shadow.payload()
         reported = payload["state"]["reported"]
@@ -1654,10 +1640,7 @@ class LifecycleBridgeTests(unittest.TestCase):
         self.assertTrue(shadow.mcp_available)
         self.assertTrue(shadow.board_video_ready)
         self.assertEqual(shadow.redcon, 1)
-        self.assertEqual(len(cloud_shadow.shadow_updates), 2)
-        first_patch = cloud_shadow.shadow_updates[0]["reported_root_patch"]
-        self.assertEqual(first_patch["redcon"], 2)
-        self.assertEqual(cloud_shadow.shadow_updates[1]["reported_root_patch"], {"redcon": 1})
+        self.assertEqual(cloud_shadow.shadow_updates, [])
         self.assertEqual(
             [decode_payload(payload).metrics[0].int_value for _topic, payload in cloud_shadow.sparkplug_publishes],
             [2, 1],
@@ -1735,8 +1718,11 @@ class LifecycleBridgeTests(unittest.TestCase):
         await bridge._reconcile_video_status_freshness()
 
         self.assertEqual(shadow.redcon, 2)
-        self.assertEqual(len(cloud_shadow.shadow_updates), 1)
-        self.assertEqual(cloud_shadow.shadow_updates[0]["reported_root_patch"], {"redcon": 2})
+        self.assertEqual(cloud_shadow.shadow_updates, [])
+        self.assertEqual(
+            [decode_payload(payload).metrics[0].int_value for _topic, payload in cloud_shadow.sparkplug_publishes],
+            [2],
+        )
 
     def test_ddeath_clears_pending_target_and_publishes_device_death(self) -> None:
         asyncio.run(self._exercise_ddeath_clears_pending_target())

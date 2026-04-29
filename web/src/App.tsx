@@ -51,6 +51,8 @@ import {
   isResourceNotFoundError,
   listRigDevices,
   listTownRigs,
+  resolveRigThing,
+  resolveTownThing,
   type DeviceCatalogEntry,
   type RigCatalogEntry,
 } from './catalog-api'
@@ -70,6 +72,7 @@ import NavigationUserMenu from './NavigationUserMenu'
 import NotificationLogPanel from './NotificationLogPanel'
 import NotificationTray from './NotificationTray'
 import type { RobotState, ShadowConnectionState, ShadowSession } from './shadow-api'
+import type { ShadowName } from './shadow-protocol'
 import { publishSparkplugRedconCommandWithAck } from './sparkplug-command'
 import SparkplugPanel from './SparkplugPanel'
 import TxingPanel from './TxingPanel'
@@ -98,6 +101,18 @@ type DeviceRoute = {
   rig: string
   device: string
 }
+type ShadowTarget = {
+  routeKind: 'town' | 'rig' | 'device' | 'device_video'
+  thingName: string
+  capabilitiesSet: readonly ShadowName[]
+  sparkplugGroupId: string
+  sparkplugEdgeNodeId: string
+}
+type ShadowTargetState = {
+  status: 'idle' | 'loading' | 'ready' | 'error'
+  target: ShadowTarget | null
+  error: string
+}
 
 const formatJson = (value: unknown): string => JSON.stringify(value, null, 2)
 const defaultMcpLeaseTtlMs = 5_000
@@ -115,6 +130,12 @@ const emptyRigCatalogState = (): RigCatalogState => ({
 const emptyDeviceCatalogState = (): DeviceCatalogState => ({
   status: 'idle',
   devices: [],
+  error: '',
+})
+
+const emptyShadowTargetState = (): ShadowTargetState => ({
+  status: 'idle',
+  target: null,
   error: '',
 })
 
@@ -188,6 +209,7 @@ function App({ initialAuthError = '' }: AppProps) {
     useState<ShadowConnectionState>('idle')
   const [rigCatalog, setRigCatalog] = useState<RigCatalogState>(emptyRigCatalogState)
   const [deviceCatalog, setDeviceCatalog] = useState<DeviceCatalogState>(emptyDeviceCatalogState)
+  const [shadowTargetState, setShadowTargetState] = useState<ShadowTargetState>(emptyShadowTargetState)
   const [pendingTargetRedcon, setPendingTargetRedcon] = useState<1 | 2 | 3 | 4 | null>(null)
   const shadowSessionRef = useRef<ShadowSession | null>(null)
   const redconCommandSequenceRef = useRef(0)
@@ -315,16 +337,7 @@ function App({ initialAuthError = '' }: AppProps) {
         device.thingName === selectedDeviceRoute.device &&
         (route.kind !== 'device_video' || device.capabilitiesSet.includes('video')),
     )
-
-  const activeSessionRoute =
-    status === 'signed_in' &&
-    !adminEmailMismatch &&
-    (route.kind === 'device' || route.kind === 'device_video') &&
-    isSelectedDeviceValid
-      ? selectedDeviceRoute
-      : null
-  const activeDeviceCapabilities =
-    activeSessionRoute && selectedDeviceEntry ? selectedDeviceEntry.capabilitiesSet : null
+  const activeShadowTarget = shadowTargetState.status === 'ready' ? shadowTargetState.target : null
 
   useEffect(() => {
     const handlePopstate = (): void => {
@@ -655,13 +668,111 @@ function App({ initialAuthError = '' }: AppProps) {
   }, [adminEmailMismatch, hasUnsupportedTown, resolveSessionIdToken, selectedRigName, status])
 
   useEffect(() => {
+    if (status !== 'signed_in' || adminEmailMismatch || hasUnsupportedTown) {
+      setShadowTargetState(emptyShadowTargetState())
+      return
+    }
+
+    if (route.kind === 'root' || route.kind === 'not_found') {
+      setShadowTargetState(emptyShadowTargetState())
+      return
+    }
+
+    if (route.kind === 'device' || route.kind === 'device_video') {
+      if (deviceCatalog.status === 'loading') {
+        setShadowTargetState({
+          status: 'loading',
+          target: null,
+          error: '',
+        })
+        return
+      }
+      if (!selectedDeviceRoute || !selectedDeviceEntry || !isSelectedDeviceValid) {
+        setShadowTargetState(emptyShadowTargetState())
+        return
+      }
+      setShadowTargetState({
+        status: 'ready',
+        target: {
+          routeKind: route.kind,
+          thingName: selectedDeviceRoute.device,
+          capabilitiesSet: selectedDeviceEntry.capabilitiesSet,
+          sparkplugGroupId: selectedDeviceRoute.town,
+          sparkplugEdgeNodeId: selectedDeviceRoute.rig,
+        },
+        error: '',
+      })
+      return
+    }
+
+    let cancelled = false
+    setShadowTargetState({
+      status: 'loading',
+      target: null,
+      error: '',
+    })
+
+    const resolveShadowTarget = async (): Promise<void> => {
+      try {
+        const metadata =
+          route.kind === 'town'
+            ? await resolveTownThing(resolveSessionIdToken, route.town)
+            : await resolveRigThing(resolveSessionIdToken, route.town, route.rig)
+        if (cancelled) {
+          return
+        }
+
+        setShadowTargetState({
+          status: 'ready',
+          target: {
+            routeKind: route.kind,
+            thingName: metadata.thingName,
+            capabilitiesSet: metadata.capabilitiesSet,
+            sparkplugGroupId: route.town,
+            sparkplugEdgeNodeId: route.kind === 'rig' ? route.rig : route.town,
+          },
+          error: '',
+        })
+      } catch (caughtError) {
+        if (cancelled) {
+          return
+        }
+        setShadowTargetState({
+          status: 'error',
+          target: null,
+          error:
+            caughtError instanceof Error
+              ? caughtError.message
+              : 'Unable to resolve route shadow target',
+        })
+      }
+    }
+
+    void resolveShadowTarget()
+
+    return () => {
+      cancelled = true
+    }
+  }, [
+    adminEmailMismatch,
+    deviceCatalog.status,
+    hasUnsupportedTown,
+    isSelectedDeviceValid,
+    resolveSessionIdToken,
+    route,
+    selectedDeviceEntry,
+    selectedDeviceRoute,
+    status,
+  ])
+
+  useEffect(() => {
     const nextRouteDetailPanelOpenState = getRouteDetailPanelOpenState(route)
     setIsTownPanelOpen(nextRouteDetailPanelOpenState.isTownPanelOpen)
     setIsRigPanelOpen(nextRouteDetailPanelOpenState.isRigPanelOpen)
   }, [route])
 
   useEffect(() => {
-    if (!activeSessionRoute || !activeDeviceCapabilities) {
+    if (!activeShadowTarget) {
       shadowSessionRef.current?.close()
       shadowSessionRef.current = null
       setShadowConnectionState('idle')
@@ -701,11 +812,11 @@ function App({ initialAuthError = '' }: AppProps) {
         }
 
         shadowSession = createShadowSession({
-          thingName: activeSessionRoute.device,
+          thingName: activeShadowTarget.thingName,
           awsRegion: appConfig.awsRegion,
-          sparkplugGroupId: activeSessionRoute.town,
-          sparkplugEdgeNodeId: activeSessionRoute.rig,
-          capabilitiesSet: activeDeviceCapabilities,
+          sparkplugGroupId: activeShadowTarget.sparkplugGroupId,
+          sparkplugEdgeNodeId: activeShadowTarget.sparkplugEdgeNodeId,
+          capabilitiesSet: activeShadowTarget.capabilitiesSet,
           resolveIdToken: resolveSessionIdToken,
           onShadowDocument: (shadow) => {
             if (cancelled) {
@@ -713,12 +824,6 @@ function App({ initialAuthError = '' }: AppProps) {
             }
             applyShadowSnapshot(shadow)
             setIsLoadingShadow(false)
-          },
-          onSparkplugRedconChange: (nextRedcon) => {
-            void nextRedcon
-          },
-          onSparkplugBatteryMvChange: (nextBatteryMv) => {
-            void nextBatteryMv
           },
           onRobotStateChange: (nextRobotState) => {
             if (!cancelled) {
@@ -772,8 +877,7 @@ function App({ initialAuthError = '' }: AppProps) {
       shadowSession?.close()
     }
   }, [
-    activeDeviceCapabilities,
-    activeSessionRoute,
+    activeShadowTarget,
     applyShadowSnapshot,
     enqueueRuntimeError,
     resolveSessionIdToken,
@@ -818,7 +922,7 @@ function App({ initialAuthError = '' }: AppProps) {
   useEffect(() => {
     const nextAutoOpenDeviceDetailPanelState = getAutoOpenDeviceDetailPanelState({
       route,
-      hasActiveSession: activeSessionRoute !== null,
+      hasActiveSession: activeShadowTarget !== null,
       previousRedcon: previousReportedRedconRef.current,
       nextRedcon: reportedRedcon,
     })
@@ -827,7 +931,7 @@ function App({ initialAuthError = '' }: AppProps) {
       setIsBoardVideoExpanded(nextAutoOpenDeviceDetailPanelState.isBoardVideoExpanded)
     }
     previousReportedRedconRef.current = reportedRedcon
-  }, [activeSessionRoute, reportedRedcon, route])
+  }, [activeShadowTarget, reportedRedcon, route])
 
   useEffect(() => {
     if (reportedRedcon === 1) {
@@ -1214,7 +1318,7 @@ function App({ initialAuthError = '' }: AppProps) {
           route.kind === 'device_video' ? (
             <SparkplugPanel
               routeKind={route.kind}
-              botRedcon={reportedRedcon}
+              sparkplugRedcon={reportedRedcon}
               targetRedcon={pendingTargetRedcon}
               isRedconCommandDisabled={isRedconCommandDisabled}
               isRedconSleepCommandDisabled={isRedconSleepCommandDisabled}
@@ -1401,7 +1505,7 @@ function App({ initialAuthError = '' }: AppProps) {
 
       {isSessionLogVisible && <NotificationLogPanel notificationLog={notificationLog} />}
 
-      {isDebugEnabled && activeSessionRoute !== null && (
+      {isDebugEnabled && activeShadowTarget !== null && (
         <DebugPanel
           canLoadShadow={canLoadShadow}
           lastShadowUpdateLabel={lastShadowUpdateLabel}

@@ -13,12 +13,12 @@ rig_name := "rig"
 policy_name := "town-rig-device-policy"
 log_group_name := "/town/rig/txing"
 local_state_dir := project_root + "/.state/aws"
-default_shadow_file := project_root + "/devices/unit/aws/default-sparkplug-shadow.json"
+packaged_template_file := local_state_dir + "/packaged-template.yaml"
 localhost_app_url := "http://localhost:5173"
 localhost_alt_app_url := "http://127.0.0.1:5173"
 thing_index_name := "AWS_Things"
 
-@create CognitoDomainPrefix='' AdminEmail='' stack_name=stack_name template_file=template_file region=region profile=profile LocalhostAppUrl=localhost_app_url LocalhostAltAppUrl=localhost_alt_app_url:
+@create CognitoDomainPrefix='' AdminEmail='' stack_name=stack_name template_file=template_file region=region profile=profile packaged_template_file=packaged_template_file LocalhostAppUrl=localhost_app_url LocalhostAltAppUrl=localhost_alt_app_url:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
@@ -39,13 +39,45 @@ thing_index_name := "AWS_Things"
     if [ -n "$profile" ]; then
       aws_flags+=(--profile "$profile")
     fi
+    ensure_artifact_bucket() {
+      local account_id bucket_name
+      account_id="$(aws sts get-caller-identity "${aws_flags[@]}" --query Account --output text)"
+      bucket_name="$(printf 'txing-cfn-%s-%s-%s' "$account_id" "$region" "$stack_name" \
+        | tr '[:upper:]' '[:lower:]' \
+        | tr -cs 'a-z0-9.-' '-' \
+        | sed 's/^-*//; s/-*$//')"
+      bucket_name="${bucket_name:0:63}"
+      bucket_name="${bucket_name%.}"
+      if [ -z "$bucket_name" ]; then
+        echo "failed to derive CloudFormation artifact bucket name" >&2
+        exit 1
+      fi
+      if ! aws s3api head-bucket --bucket "$bucket_name" "${aws_flags[@]}" >/dev/null 2>&1; then
+        if [ "$region" = "us-east-1" ]; then
+          aws s3api create-bucket --bucket "$bucket_name" "${aws_flags[@]}" >/dev/null
+        else
+          aws s3api create-bucket \
+            --bucket "$bucket_name" \
+            --create-bucket-configuration "LocationConstraint=$region" \
+            "${aws_flags[@]}" >/dev/null
+        fi
+      fi
+      printf '%s\n' "$bucket_name"
+    }
+    mkdir -p "$(dirname "{{packaged_template_file}}")"
+    artifact_bucket="$(ensure_artifact_bucket)"
+    aws cloudformation package \
+      --template-file "{{template_file}}" \
+      --s3-bucket "$artifact_bucket" \
+      --output-template-file "{{packaged_template_file}}" \
+      "${aws_flags[@]}"
     params=(
       ParameterKey=CognitoDomainPrefix,ParameterValue="$cognito_domain_prefix"
       ParameterKey=AdminEmail,ParameterValue="$admin_email"
       ParameterKey=LocalhostAppUrl,ParameterValue="{{LocalhostAppUrl}}"
       ParameterKey=LocalhostAltAppUrl,ParameterValue="{{LocalhostAltAppUrl}}"
     )
-    cfn_flags=(--stack-name "$stack_name" --template-body "file://{{template_file}}" --capabilities CAPABILITY_NAMED_IAM --parameters "${params[@]}" "${aws_flags[@]}")
+    cfn_flags=(--stack-name "$stack_name" --template-body "file://{{packaged_template_file}}" --capabilities CAPABILITY_NAMED_IAM --parameters "${params[@]}" "${aws_flags[@]}")
 
     aws cloudformation create-stack "${cfn_flags[@]}"
     aws cloudformation wait stack-create-complete --stack-name "$stack_name" "${aws_flags[@]}"
@@ -55,7 +87,7 @@ thing_index_name := "AWS_Things"
       --query "Stacks[0].Outputs" \
       --output table
 
-@update CognitoDomainPrefix='' AdminEmail='' stack_name=stack_name template_file=template_file region=region profile=profile LocalhostAppUrl=localhost_app_url LocalhostAltAppUrl=localhost_alt_app_url:
+@update CognitoDomainPrefix='' AdminEmail='' stack_name=stack_name template_file=template_file region=region profile=profile packaged_template_file=packaged_template_file LocalhostAppUrl=localhost_app_url LocalhostAltAppUrl=localhost_alt_app_url:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
@@ -76,13 +108,45 @@ thing_index_name := "AWS_Things"
     if [ -n "$profile" ]; then
       aws_flags+=(--profile "$profile")
     fi
+    ensure_artifact_bucket() {
+      local account_id bucket_name
+      account_id="$(aws sts get-caller-identity "${aws_flags[@]}" --query Account --output text)"
+      bucket_name="$(printf 'txing-cfn-%s-%s-%s' "$account_id" "$region" "$stack_name" \
+        | tr '[:upper:]' '[:lower:]' \
+        | tr -cs 'a-z0-9.-' '-' \
+        | sed 's/^-*//; s/-*$//')"
+      bucket_name="${bucket_name:0:63}"
+      bucket_name="${bucket_name%.}"
+      if [ -z "$bucket_name" ]; then
+        echo "failed to derive CloudFormation artifact bucket name" >&2
+        exit 1
+      fi
+      if ! aws s3api head-bucket --bucket "$bucket_name" "${aws_flags[@]}" >/dev/null 2>&1; then
+        if [ "$region" = "us-east-1" ]; then
+          aws s3api create-bucket --bucket "$bucket_name" "${aws_flags[@]}" >/dev/null
+        else
+          aws s3api create-bucket \
+            --bucket "$bucket_name" \
+            --create-bucket-configuration "LocationConstraint=$region" \
+            "${aws_flags[@]}" >/dev/null
+        fi
+      fi
+      printf '%s\n' "$bucket_name"
+    }
+    mkdir -p "$(dirname "{{packaged_template_file}}")"
+    artifact_bucket="$(ensure_artifact_bucket)"
+    aws cloudformation package \
+      --template-file "{{template_file}}" \
+      --s3-bucket "$artifact_bucket" \
+      --output-template-file "{{packaged_template_file}}" \
+      "${aws_flags[@]}"
     params=(
       ParameterKey=CognitoDomainPrefix,ParameterValue="$cognito_domain_prefix"
       ParameterKey=AdminEmail,ParameterValue="$admin_email"
       ParameterKey=LocalhostAppUrl,ParameterValue="{{LocalhostAppUrl}}"
       ParameterKey=LocalhostAltAppUrl,ParameterValue="{{LocalhostAltAppUrl}}"
     )
-    cfn_flags=(--stack-name "$stack_name" --template-body "file://{{template_file}}" --capabilities CAPABILITY_NAMED_IAM --parameters "${params[@]}" "${aws_flags[@]}")
+    cfn_flags=(--stack-name "$stack_name" --template-body "file://{{packaged_template_file}}" --capabilities CAPABILITY_NAMED_IAM --parameters "${params[@]}" "${aws_flags[@]}")
 
     output="$(aws cloudformation update-stack "${cfn_flags[@]}" 2>&1)" || {
       if echo "$output" | grep -q "No updates are to be performed"; then
@@ -101,7 +165,7 @@ thing_index_name := "AWS_Things"
       --query "Stacks[0].Outputs" \
       --output table
 
-@deploy CognitoDomainPrefix='' AdminEmail='' stack_name=stack_name template_file=template_file region=region profile=profile LocalhostAppUrl=localhost_app_url LocalhostAltAppUrl=localhost_alt_app_url:
+@deploy CognitoDomainPrefix='' AdminEmail='' stack_name=stack_name template_file=template_file region=region profile=profile packaged_template_file=packaged_template_file LocalhostAppUrl=localhost_app_url LocalhostAltAppUrl=localhost_alt_app_url:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
@@ -122,10 +186,42 @@ thing_index_name := "AWS_Things"
     if [ -n "$profile" ]; then
       aws_flags+=(--profile "$profile")
     fi
+    ensure_artifact_bucket() {
+      local account_id bucket_name
+      account_id="$(aws sts get-caller-identity "${aws_flags[@]}" --query Account --output text)"
+      bucket_name="$(printf 'txing-cfn-%s-%s-%s' "$account_id" "$region" "$stack_name" \
+        | tr '[:upper:]' '[:lower:]' \
+        | tr -cs 'a-z0-9.-' '-' \
+        | sed 's/^-*//; s/-*$//')"
+      bucket_name="${bucket_name:0:63}"
+      bucket_name="${bucket_name%.}"
+      if [ -z "$bucket_name" ]; then
+        echo "failed to derive CloudFormation artifact bucket name" >&2
+        exit 1
+      fi
+      if ! aws s3api head-bucket --bucket "$bucket_name" "${aws_flags[@]}" >/dev/null 2>&1; then
+        if [ "$region" = "us-east-1" ]; then
+          aws s3api create-bucket --bucket "$bucket_name" "${aws_flags[@]}" >/dev/null
+        else
+          aws s3api create-bucket \
+            --bucket "$bucket_name" \
+            --create-bucket-configuration "LocationConstraint=$region" \
+            "${aws_flags[@]}" >/dev/null
+        fi
+      fi
+      printf '%s\n' "$bucket_name"
+    }
+    mkdir -p "$(dirname "{{packaged_template_file}}")"
+    artifact_bucket="$(ensure_artifact_bucket)"
+    aws cloudformation package \
+      --template-file "{{template_file}}" \
+      --s3-bucket "$artifact_bucket" \
+      --output-template-file "{{packaged_template_file}}" \
+      "${aws_flags[@]}"
 
     deploy_flags=(
       --stack-name "$stack_name"
-      --template-file "{{template_file}}"
+      --template-file "{{packaged_template_file}}"
       --capabilities CAPABILITY_NAMED_IAM
       --parameter-overrides
       "CognitoDomainPrefix=$cognito_domain_prefix"
@@ -190,14 +286,15 @@ thing_index_name := "AWS_Things"
     aws cloudformation delete-stack --stack-name "$stack_name" "${aws_flags[@]}"
     aws cloudformation wait stack-delete-complete --stack-name "$stack_name" "${aws_flags[@]}"
 
-@validate template_file=template_file region=region profile=profile:
+@validate template_file=template_file region=region profile=profile stack_name=stack_name packaged_template_file=packaged_template_file:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
 
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}" "{{stack_name}}")"
     region="$AWS_REGION"
     profile="$AWS_SELECTED_PROFILE"
+    stack_name="$AWS_STACK_NAME"
 
     if [ -z "$region" ]; then
       echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
@@ -208,8 +305,40 @@ thing_index_name := "AWS_Things"
     if [ -n "$profile" ]; then
       aws_flags+=(--profile "$profile")
     fi
+    ensure_artifact_bucket() {
+      local account_id bucket_name
+      account_id="$(aws sts get-caller-identity "${aws_flags[@]}" --query Account --output text)"
+      bucket_name="$(printf 'txing-cfn-%s-%s-%s' "$account_id" "$region" "$stack_name" \
+        | tr '[:upper:]' '[:lower:]' \
+        | tr -cs 'a-z0-9.-' '-' \
+        | sed 's/^-*//; s/-*$//')"
+      bucket_name="${bucket_name:0:63}"
+      bucket_name="${bucket_name%.}"
+      if [ -z "$bucket_name" ]; then
+        echo "failed to derive CloudFormation artifact bucket name" >&2
+        exit 1
+      fi
+      if ! aws s3api head-bucket --bucket "$bucket_name" "${aws_flags[@]}" >/dev/null 2>&1; then
+        if [ "$region" = "us-east-1" ]; then
+          aws s3api create-bucket --bucket "$bucket_name" "${aws_flags[@]}" >/dev/null
+        else
+          aws s3api create-bucket \
+            --bucket "$bucket_name" \
+            --create-bucket-configuration "LocationConstraint=$region" \
+            "${aws_flags[@]}" >/dev/null
+        fi
+      fi
+      printf '%s\n' "$bucket_name"
+    }
+    mkdir -p "$(dirname "{{packaged_template_file}}")"
+    artifact_bucket="$(ensure_artifact_bucket)"
+    aws cloudformation package \
+      --template-file "{{template_file}}" \
+      --s3-bucket "$artifact_bucket" \
+      --output-template-file "{{packaged_template_file}}" \
+      "${aws_flags[@]}"
 
-    aws cloudformation validate-template --template-body "file://{{template_file}}" "${aws_flags[@]}"
+    aws cloudformation validate-template --template-body "file://{{packaged_template_file}}" "${aws_flags[@]}"
 
 @describe stack_name=stack_name region=region profile=profile:
     #!/usr/bin/env bash
@@ -871,7 +1000,7 @@ thing_index_name := "AWS_Things"
     fi
     for allowed_shadow_name in "${allowed_shadow_names[@]}"; do
       case "$allowed_shadow_name" in
-        sparkplug|device|mcu|board|video)
+        sparkplug|mcu|board|video)
           ;;
         ""|*" "*)
           echo "thing {{thing_name}} has malformed capabilitiesSet: $capabilities_set" >&2
@@ -979,7 +1108,7 @@ thing_index_name := "AWS_Things"
     fi
     for allowed_shadow_name in "${allowed_shadow_names[@]}"; do
       case "$allowed_shadow_name" in
-        sparkplug|device|mcu|board|video)
+        sparkplug|mcu|board|video)
           ;;
         ""|*" "*)
           echo "thing {{thing_name}} has malformed capabilitiesSet: $capabilities_set" >&2
@@ -1071,12 +1200,32 @@ thing_index_name := "AWS_Things"
           town:sparkplug)
             default_payload="$(mktemp)"
             payload_temp_files+=("$default_payload")
-            jq -n '{state: {reported: {redcon: 1}}}' >"$default_payload"
+            jq \
+              -n \
+              --arg groupId "$(jq -r '.attributes.name' <<<"$thing_json")" \
+              '{state: {reported: {session: {entityKind: "group", groupId: $groupId, online: true}, metrics: {redcon: 1}}}}' \
+              >"$default_payload"
             ;;
           rig:sparkplug)
             default_payload="$(mktemp)"
             payload_temp_files+=("$default_payload")
-            jq -n '{state: {reported: {redcon: 4}}}' >"$default_payload"
+            jq \
+              -n \
+              --arg groupId "$(jq -r '.attributes.town' <<<"$thing_json")" \
+              --arg edgeNodeId "$(jq -r '.attributes.name' <<<"$thing_json")" \
+              '{state: {reported: {session: {entityKind: "node", groupId: $groupId, edgeNodeId: $edgeNodeId, messageType: "NDEATH", online: false}, metrics: {}}}}' \
+              >"$default_payload"
+            ;;
+          unit:sparkplug)
+            default_payload="$(mktemp)"
+            payload_temp_files+=("$default_payload")
+            jq \
+              -n \
+              --arg groupId "$(jq -r '.attributes.town' <<<"$thing_json")" \
+              --arg edgeNodeId "$(jq -r '.attributes.rig' <<<"$thing_json")" \
+              --arg deviceId "$(jq -r '.thingName' <<<"$thing_json")" \
+              '{state: {reported: {session: {entityKind: "device", groupId: $groupId, edgeNodeId: $edgeNodeId, deviceId: $deviceId, messageType: "DDEATH", online: false}, metrics: {}}}}' \
+              >"$default_payload"
             ;;
           *)
             default_payload="{{project_root}}/devices/${thing_type}/aws/default-${current_shadow_name}-shadow.json"
@@ -1223,7 +1372,7 @@ thing_index_name := "AWS_Things"
     fi
     for allowed_shadow_name in "${allowed_shadow_names[@]}"; do
       case "$allowed_shadow_name" in
-        sparkplug|device|mcu|board|video)
+        sparkplug|mcu|board|video)
           ;;
         ""|*" "*)
           echo "thing {{thing_name}} has malformed capabilitiesSet: $capabilities_set" >&2
@@ -1258,12 +1407,32 @@ thing_index_name := "AWS_Things"
         town:sparkplug)
           payload_temp_file="$(mktemp)"
           default_payload="$payload_temp_file"
-          jq -n '{state: {reported: {redcon: 1}}}' >"$default_payload"
+          jq \
+            -n \
+            --arg groupId "$(jq -r '.attributes.name' <<<"$thing_json")" \
+            '{state: {reported: {session: {entityKind: "group", groupId: $groupId, online: true}, metrics: {redcon: 1}}}}' \
+            >"$default_payload"
           ;;
         rig:sparkplug)
           payload_temp_file="$(mktemp)"
           default_payload="$payload_temp_file"
-          jq -n '{state: {reported: {redcon: 4}}}' >"$default_payload"
+          jq \
+            -n \
+            --arg groupId "$(jq -r '.attributes.town' <<<"$thing_json")" \
+            --arg edgeNodeId "$(jq -r '.attributes.name' <<<"$thing_json")" \
+            '{state: {reported: {session: {entityKind: "node", groupId: $groupId, edgeNodeId: $edgeNodeId, messageType: "NDEATH", online: false}, metrics: {}}}}' \
+            >"$default_payload"
+          ;;
+        unit:sparkplug)
+          payload_temp_file="$(mktemp)"
+          default_payload="$payload_temp_file"
+          jq \
+            -n \
+            --arg groupId "$(jq -r '.attributes.town' <<<"$thing_json")" \
+            --arg edgeNodeId "$(jq -r '.attributes.rig' <<<"$thing_json")" \
+            --arg deviceId "$(jq -r '.thingName' <<<"$thing_json")" \
+            '{state: {reported: {session: {entityKind: "device", groupId: $groupId, edgeNodeId: $edgeNodeId, deviceId: $deviceId, messageType: "DDEATH", online: false}, metrics: {}}}}' \
+            >"$default_payload"
           ;;
         *)
           default_payload="{{project_root}}/devices/${thing_type}/aws/default-{{shadow_name}}-shadow.json"
@@ -1284,7 +1453,7 @@ thing_index_name := "AWS_Things"
       "$shadow_response_file"
     echo "Named shadow {{shadow_name}} initialized from $default_payload"
 
-@bootstrap CognitoDomainPrefix='' AdminEmail='' stack_name=stack_name template_file=template_file thing_name=thing_name rig_name=rig_name policy_name=policy_name region=region profile=profile output_dir=local_state_dir cert_basename='' cert_arn_file='' default_shadow_file=default_shadow_file shadow_response_file='':
+@bootstrap CognitoDomainPrefix='' AdminEmail='' stack_name=stack_name template_file=template_file thing_name=thing_name rig_name=rig_name policy_name=policy_name region=region profile=profile output_dir=local_state_dir cert_basename='' cert_arn_file='' default_shadow_file='' shadow_response_file='':
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"

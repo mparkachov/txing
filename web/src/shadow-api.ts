@@ -1,6 +1,5 @@
 import type { Twist } from './cmd-vel'
 import type { McpTransportKind } from './mcp-descriptor'
-import type { SparkplugRedconSource } from './sparkplug-device-redcon'
 import type { ShadowName } from './shadow-protocol'
 
 export type ShadowConnectionState = 'idle' | 'connecting' | 'connected' | 'error'
@@ -42,8 +41,6 @@ export type ShadowSessionOptions = {
   capabilitiesSet: readonly ShadowName[]
   resolveIdToken: ResolveIdToken
   onShadowDocument: (shadow: unknown, operation: 'get' | 'update') => void
-  onSparkplugBatteryMvChange: (batteryMv: number) => void
-  onSparkplugRedconChange: (redcon: number, source: SparkplugRedconSource) => void
   onRobotStateChange: (state: RobotState | null) => void
   onMcpTransportChange: (transport: McpTransportKind | null) => void
   onConnectionStateChange: (state: ShadowConnectionState) => void
@@ -53,7 +50,6 @@ export type ShadowSessionOptions = {
 export type ShadowSession = {
   start: () => Promise<unknown>
   requestSnapshot: () => Promise<unknown>
-  updateShadow: (shadowDocument: unknown) => Promise<unknown>
   publishRedconCommand: (redcon: number) => Promise<void>
   publishCmdVel: (twist: Twist) => Promise<void>
   requestRobotState: () => Promise<RobotState>
@@ -95,11 +91,6 @@ class LazyShadowSession implements ShadowSession {
   async requestSnapshot(): Promise<unknown> {
     const session = await this.getSession()
     return session.requestSnapshot()
-  }
-
-  async updateShadow(shadowDocument: unknown): Promise<unknown> {
-    const session = await this.getSession()
-    return session.updateShadow(shadowDocument)
   }
 
   async publishRedconCommand(redcon: number): Promise<void> {

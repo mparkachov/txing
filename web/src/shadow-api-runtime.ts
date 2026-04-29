@@ -34,15 +34,8 @@ import { mergeShadowUpdate } from './shadow-merge'
 import {
   buildSparkplugRedconCommandPacket,
   buildSparkplugTopics,
-  decodeSparkplugPayload,
-  type SparkplugMetric,
   type SparkplugTopics,
 } from './sparkplug-protocol'
-import {
-  extractSparkplugDeviceBatteryMv,
-  extractSparkplugDeviceRedconUpdate,
-  type SparkplugRedconSource,
-} from './sparkplug-device-redcon'
 import type {
   RobotControlState,
   RobotMotionState,
@@ -53,7 +46,6 @@ import {
   buildGetShadowPublishPacket,
   buildNamedShadowTopics,
   buildShadowSubscriptionPacket,
-  buildUpdateShadowPublishPacket,
   createShadowClientToken,
   decodeShadowResponse,
   deriveMqttHostFromIotDataEndpoint,
@@ -119,8 +111,6 @@ export type ShadowSessionOptions = {
   capabilitiesSet: readonly ShadowName[]
   resolveIdToken: ResolveIdToken
   onShadowDocument: (shadow: unknown, operation: ShadowOperation) => void
-  onSparkplugBatteryMvChange: (batteryMv: number) => void
-  onSparkplugRedconChange: (redcon: number, source: SparkplugRedconSource) => void
   onRobotStateChange: (state: RobotState | null) => void
   onMcpTransportChange: (transport: McpTransportKind | null) => void
   onConnectionStateChange: (state: ShadowConnectionState) => void
@@ -129,7 +119,6 @@ export type ShadowSessionOptions = {
 export type ShadowSession = {
   start: () => Promise<unknown>
   requestSnapshot: () => Promise<unknown>
-  updateShadow: (shadowDocument: unknown) => Promise<unknown>
   publishRedconCommand: (redcon: number) => Promise<void>
   publishCmdVel: (twist: Twist) => Promise<void>
   requestRobotState: () => Promise<RobotState>
@@ -290,22 +279,6 @@ const getShadowRejectedMessage = (
   return `Thing Shadow ${decodedResponse.operation ?? 'request'} was rejected`
 }
 
-const normalizePayloadToBytes = (payload: unknown): Uint8Array => {
-  if (payload instanceof Uint8Array) {
-    return payload
-  }
-  if (payload instanceof ArrayBuffer) {
-    return new Uint8Array(payload)
-  }
-  if (ArrayBuffer.isView(payload)) {
-    return new Uint8Array(payload.buffer, payload.byteOffset, payload.byteLength)
-  }
-  if (typeof payload === 'string') {
-    return new TextEncoder().encode(payload)
-  }
-  return new Uint8Array()
-}
-
 const normalizeMcpDiscoverySummary = (thingName: string): McpDiscoverySummary => ({
   available: null,
   transport: null,
@@ -321,43 +294,18 @@ const createMcpSessionId = (): string =>
     ? crypto.randomUUID()
     : `session-${Date.now()}-${Math.random().toString(16).slice(2)}`
 
-const metricToBoolean = (metric: SparkplugMetric | undefined): boolean | null => {
-  if (!metric) {
-    return null
+const readNestedValue = (
+  root: Record<string, unknown> | null,
+  path: readonly string[],
+): unknown => {
+  let current: unknown = root
+  for (const segment of path) {
+    if (!isRecord(current)) {
+      return null
+    }
+    current = current[segment]
   }
-  if (typeof metric.boolValue === 'boolean') {
-    return metric.boolValue
-  }
-  if (typeof metric.intValue === 'number') {
-    return metric.intValue !== 0
-  }
-  if (typeof metric.longValue === 'number') {
-    return metric.longValue !== 0
-  }
-  return null
-}
-
-const metricToNumber = (metric: SparkplugMetric | undefined): number | null => {
-  if (!metric) {
-    return null
-  }
-  if (typeof metric.intValue === 'number') {
-    return metric.intValue
-  }
-  if (typeof metric.longValue === 'number') {
-    return metric.longValue
-  }
-  return null
-}
-
-const metricToString = (metric: SparkplugMetric | undefined): string | null => {
-  if (!metric) {
-    return null
-  }
-  if (typeof metric.stringValue === 'string' && metric.stringValue.trim()) {
-    return metric.stringValue
-  }
-  return null
+  return current
 }
 
 const containsMcpLeaseToken = (value: unknown, depth = 0): boolean => {
@@ -679,6 +627,9 @@ class AwsIotShadowSession implements ShadowSession {
         decoded.kind === 'updateAccepted'
           ? mergeShadowUpdate(currentShadow, decoded.payload)
           : decoded.payload
+      if (decoded.shadowName === 'sparkplug') {
+        this.refreshMcpDiscoveryFromSparkplugShadow()
+      }
       const assembledShadow = this.assembleShadowSnapshot()
       this.options.onShadowDocument(assembledShadow, decoded.operation ?? 'get')
       this.resolveSnapshotWaiters(assembledShadow)
@@ -743,16 +694,6 @@ class AwsIotShadowSession implements ShadowSession {
       }),
     )
     return snapshots[snapshots.length - 1] ?? this.assembleShadowSnapshot()
-  }
-
-  async updateShadow(shadowDocument: unknown): Promise<unknown> {
-    const clientToken = createShadowClientToken('update')
-    const sparkplugTopics = this.topics.sparkplug
-    if (!sparkplugTopics) {
-      throw new Error('Thing capabilitiesSet must include sparkplug')
-    }
-    const packet = buildUpdateShadowPublishPacket(sparkplugTopics, shadowDocument, clientToken)
-    return this.publishRequest('update', 'sparkplug', clientToken, packet)
   }
 
   async publishRedconCommand(redcon: number): Promise<void> {
@@ -963,9 +904,6 @@ class AwsIotShadowSession implements ShadowSession {
       await client.subscribe(
         {
           subscriptions: [
-            { topicFilter: this.sparkplugTopics.dbirth, qos: 1 },
-            { topicFilter: this.sparkplugTopics.ddata, qos: 1 },
-            { topicFilter: this.sparkplugTopics.ddeath, qos: 1 },
             { topicFilter: this.mcpDescriptorTopic, qos: 1 },
             { topicFilter: this.mcpStatusTopic, qos: 1 },
           ],
@@ -1011,31 +949,11 @@ class AwsIotShadowSession implements ShadowSession {
       return null
     }
 
-    const reportedOf = (shadowName: ShadowName): Record<string, unknown> => {
-      const shadow = this.latestShadows[shadowName]
-      if (!isRecord(shadow) || !isRecord(shadow.state) || !isRecord(shadow.state.reported)) {
-        return {}
-      }
-      return shadow.state.reported
-    }
-
-    const sparkplug = reportedOf('sparkplug')
-    const device = reportedOf('device')
-    const mcu = reportedOf('mcu')
-    const board = reportedOf('board')
-    const video = reportedOf('video')
+    const sparkplugShadow = this.latestShadows.sparkplug
     return {
-      state: {
-        reported: {
-          redcon: sparkplug.redcon,
-          device: {
-            batteryMv: device.batteryMv,
-            mcu,
-            board,
-            video,
-          },
-        },
-      },
+      ...(isRecord(sparkplugShadow) && isRecord(sparkplugShadow.state)
+        ? { state: sparkplugShadow.state }
+        : {}),
       namedShadows: {
         ...this.latestShadows,
       },
@@ -1101,12 +1019,6 @@ class AwsIotShadowSession implements ShadowSession {
   }
 
   private handleNonShadowMessage(topic: string, payload: unknown): void {
-    this.handleSparkplugDeviceRedcon(topic, payload)
-
-    if (this.handleSparkplugMcpDiscovery(topic, payload)) {
-      return
-    }
-
     if (topic === this.mcpDescriptorTopic) {
       const parsed = parseShadowPayload(payload)
       const descriptor = parseMcpDescriptor(parsed)
@@ -1133,58 +1045,37 @@ class AwsIotShadowSession implements ShadowSession {
     }
   }
 
-  private handleSparkplugDeviceRedcon(topic: string, payload: unknown): void {
-    const batteryMv = extractSparkplugDeviceBatteryMv(
-      topic,
-      normalizePayloadToBytes(payload),
-      this.sparkplugTopics,
-    )
-    if (batteryMv !== null) {
-      this.options.onSparkplugBatteryMvChange(batteryMv)
-    }
-
-    const nextRedcon = extractSparkplugDeviceRedconUpdate(
-      topic,
-      normalizePayloadToBytes(payload),
-      this.sparkplugTopics,
-    )
-    if (!nextRedcon) {
+  private refreshMcpDiscoveryFromSparkplugShadow(): void {
+    const sparkplugShadow = this.latestShadows.sparkplug
+    if (!isRecord(sparkplugShadow) || !isRecord(sparkplugShadow.state)) {
       return
     }
-    this.options.onSparkplugRedconChange(nextRedcon.redcon, nextRedcon.source)
-  }
+    const reported = sparkplugShadow.state.reported
+    const metrics = isRecord(reported) && isRecord(reported.metrics) ? reported.metrics : null
+    const mcpMetrics = readNestedValue(metrics, ['services', 'mcp'])
+    const mcp = isRecord(mcpMetrics) ? mcpMetrics : null
 
-  private handleSparkplugMcpDiscovery(topic: string, payload: unknown): boolean {
-    if (topic !== this.sparkplugTopics.dbirth && topic !== this.sparkplugTopics.ddata) {
-      return false
-    }
-
-    let decoded
-    try {
-      decoded = decodeSparkplugPayload(normalizePayloadToBytes(payload))
-    } catch {
-      return true
-    }
-
-    const metricsByName = new Map<string, SparkplugMetric>()
-    for (const metric of decoded.metrics) {
-      metricsByName.set(metric.name, metric)
-    }
-    if (!metricsByName.has('services/mcp/available')) {
-      return true
-    }
-
-    this.mcpDiscovery.available = metricToBoolean(metricsByName.get('services/mcp/available'))
-    this.mcpDiscovery.transport = metricToString(metricsByName.get('services/mcp/transport'))
-    this.mcpDiscovery.mcpProtocolVersion = metricToString(
-      metricsByName.get('services/mcp/mcpProtocolVersion'),
-    )
+    this.mcpDiscovery.available = typeof mcp?.available === 'boolean' ? mcp.available : null
+    this.mcpDiscovery.transport =
+      typeof mcp?.transport === 'string' && mcp.transport.trim() ? mcp.transport : null
+    this.mcpDiscovery.mcpProtocolVersion =
+      typeof mcp?.mcpProtocolVersion === 'string' && mcp.mcpProtocolVersion.trim()
+        ? mcp.mcpProtocolVersion
+        : null
     this.mcpDiscovery.descriptorTopic =
-      metricToString(metricsByName.get('services/mcp/descriptorTopic')) ?? this.mcpDescriptorTopic
-    this.mcpDiscovery.leaseRequired = metricToBoolean(metricsByName.get('services/mcp/leaseRequired'))
-    this.mcpDiscovery.leaseTtlMs = metricToNumber(metricsByName.get('services/mcp/leaseTtlMs'))
-    this.mcpDiscovery.serverVersion = metricToString(metricsByName.get('services/mcp/serverVersion'))
-    return true
+      typeof mcp?.descriptorTopic === 'string' && mcp.descriptorTopic.trim()
+        ? mcp.descriptorTopic
+        : this.mcpDescriptorTopic
+    this.mcpDiscovery.leaseRequired =
+      typeof mcp?.leaseRequired === 'boolean' ? mcp.leaseRequired : null
+    this.mcpDiscovery.leaseTtlMs =
+      typeof mcp?.leaseTtlMs === 'number' && Number.isFinite(mcp.leaseTtlMs)
+        ? Math.round(mcp.leaseTtlMs)
+        : null
+    this.mcpDiscovery.serverVersion =
+      typeof mcp?.serverVersion === 'string' && mcp.serverVersion.trim()
+        ? mcp.serverVersion
+        : null
   }
 
   private handleMcpSessionMessage(payload: unknown): void {

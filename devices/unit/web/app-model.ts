@@ -62,7 +62,7 @@ const extractReportedState = (shadow: unknown): Record<string, unknown> | null =
 
 const extractNamedShadowReportedState = (
   shadow: unknown,
-  shadowName: 'sparkplug' | 'device' | 'mcu' | 'board' | 'video',
+  shadowName: 'sparkplug' | 'mcu' | 'board' | 'video',
 ): Record<string, unknown> | null => {
   if (!isRecord(shadow) || !isRecord(shadow.namedShadows)) {
     return null
@@ -76,10 +76,6 @@ const extractNamedShadowReportedState = (
 }
 
 export const extractReportedDevice = (shadow: unknown): Record<string, unknown> | null => {
-  const namedDevice = extractNamedShadowReportedState(shadow, 'device')
-  if (namedDevice) {
-    return namedDevice
-  }
   const reported = extractReportedState(shadow)
   if (!reported) {
     return null
@@ -114,12 +110,24 @@ export const extractReportedBoard = (shadow: unknown): Record<string, unknown> |
   return isRecord(board) ? board : null
 }
 
-export const extractReportedRedcon = (shadow: unknown): number | null => {
-  const reported = extractNamedShadowReportedState(shadow, 'sparkplug') ?? extractReportedState(shadow)
+const extractSparkplugReportedState = (shadow: unknown): Record<string, unknown> | null =>
+  extractNamedShadowReportedState(shadow, 'sparkplug') ?? extractReportedState(shadow)
+
+const extractSparkplugMetrics = (shadow: unknown): Record<string, unknown> | null => {
+  const reported = extractSparkplugReportedState(shadow)
   if (!reported) {
     return null
   }
-  const redcon = reported.redcon
+  const metrics = reported.metrics
+  return isRecord(metrics) ? metrics : null
+}
+
+export const extractReportedRedcon = (shadow: unknown): number | null => {
+  const metrics = extractSparkplugMetrics(shadow)
+  if (!metrics) {
+    return null
+  }
+  const redcon = metrics.redcon
   if (typeof redcon !== 'number' || !Number.isInteger(redcon)) {
     return null
   }
@@ -204,11 +212,11 @@ export const extractReportedMcuOnline = (shadow: unknown): boolean | null => {
 }
 
 export const extractReportedBatteryMv = (shadow: unknown): number | null => {
-  const device = extractReportedDevice(shadow)
-  if (!device) {
+  const metrics = extractSparkplugMetrics(shadow)
+  if (!metrics) {
     return null
   }
-  return typeof device.batteryMv === 'number' ? device.batteryMv : null
+  return typeof metrics.batteryMv === 'number' ? metrics.batteryMv : null
 }
 
 export const extractReportedBoardWifiOnline = (shadow: unknown): boolean | null => {

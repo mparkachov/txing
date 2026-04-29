@@ -3,9 +3,11 @@ import {
   DescribeThingGroupCommand,
   IoTClient,
   ListThingsInThingGroupCommand,
+  SearchIndexCommand,
   type DescribeThingCommandOutput,
   type DescribeThingGroupCommandOutput,
   type ListThingsInThingGroupCommandOutput,
+  type SearchIndexCommandOutput,
 } from '@aws-sdk/client-iot'
 import { createCredentialProvider } from './aws-credentials'
 import { appConfig } from './config'
@@ -21,6 +23,13 @@ export type RigCatalogEntry = {
 }
 export type DeviceCatalogEntry = {
   thingName: string
+  name: string | null
+  shortId: string | null
+  capabilitiesSet: readonly ShadowName[]
+}
+export type ThingMetadata = {
+  thingName: string
+  thingTypeName: string | null
   name: string | null
   shortId: string | null
   capabilitiesSet: readonly ShadowName[]
@@ -91,13 +100,7 @@ const createIotControlClient = async (resolveIdToken: ResolveIdToken): Promise<I
 export const describeThingMetadataWithClient = async (
   client: IotControlClient,
   thingName: string,
-): Promise<{
-  thingName: string
-  thingTypeName: string | null
-  name: string | null
-  shortId: string | null
-  capabilitiesSet: readonly ShadowName[]
-}> => {
+): Promise<ThingMetadata> => {
   const response = (await client.send(
     new DescribeThingCommand({
       thingName,
@@ -120,6 +123,52 @@ export const describeThingMetadataWithClient = async (
         : null,
     ),
   }
+}
+
+const searchThingNamesWithClient = async (
+  client: IotControlClient,
+  queryString: string,
+): Promise<string[]> => {
+  const thingNames: string[] = []
+  let nextToken: string | undefined
+
+  do {
+    const response = (await client.send(
+      new SearchIndexCommand({
+        indexName: 'AWS_Things',
+        queryString,
+        maxResults,
+        nextToken,
+      }),
+    )) as SearchIndexCommandOutput
+
+    for (const thing of response.things ?? []) {
+      const nextThingName = normalizeOptionalText(thing.thingName)
+      if (nextThingName) {
+        thingNames.push(nextThingName)
+      }
+    }
+
+    nextToken = response.nextToken
+  } while (nextToken)
+
+  return sortUnique(thingNames)
+}
+
+const resolveSingleThingMetadataWithClient = async (
+  client: IotControlClient,
+  queryString: string,
+  missingMessage: string,
+  multipleMessage: string,
+): Promise<ThingMetadata> => {
+  const thingNames = await searchThingNamesWithClient(client, queryString)
+  if (thingNames.length === 0) {
+    throw new Error(missingMessage)
+  }
+  if (thingNames.length > 1) {
+    throw new Error(multipleMessage)
+  }
+  return describeThingMetadataWithClient(client, thingNames[0])
 }
 
 export const listTownRigsWithClient = async (
@@ -255,4 +304,44 @@ export const describeDeviceMetadata = async (
 ): Promise<DeviceCatalogEntry> => {
   const client = await createIotControlClient(resolveIdToken)
   return describeDeviceMetadataWithClient(client, thingName)
+}
+
+export const resolveTownThingWithClient = async (
+  client: IotControlClient,
+  townName: string,
+): Promise<ThingMetadata> =>
+  resolveSingleThingMetadataWithClient(
+    client,
+    `thingTypeName:town AND attributes.name:${townName}`,
+    `Town '${townName}' was not found.`,
+    `Town '${townName}' matched multiple AWS IoT things.`,
+  )
+
+export const resolveTownThing = async (
+  resolveIdToken: ResolveIdToken,
+  townName: string,
+): Promise<ThingMetadata> => {
+  const client = await createIotControlClient(resolveIdToken)
+  return resolveTownThingWithClient(client, townName)
+}
+
+export const resolveRigThingWithClient = async (
+  client: IotControlClient,
+  townName: string,
+  rigName: string,
+): Promise<ThingMetadata> =>
+  resolveSingleThingMetadataWithClient(
+    client,
+    `thingTypeName:rig AND attributes.name:${rigName} AND attributes.town:${townName}`,
+    `Rig '${rigName}' in town '${townName}' was not found.`,
+    `Rig '${rigName}' in town '${townName}' matched multiple AWS IoT things.`,
+  )
+
+export const resolveRigThing = async (
+  resolveIdToken: ResolveIdToken,
+  townName: string,
+  rigName: string,
+): Promise<ThingMetadata> => {
+  const client = await createIotControlClient(resolveIdToken)
+  return resolveRigThingWithClient(client, townName, rigName)
 }

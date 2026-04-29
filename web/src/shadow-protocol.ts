@@ -1,5 +1,5 @@
 export type ShadowOperation = 'get' | 'update'
-export type ShadowName = 'sparkplug' | 'device' | 'mcu' | 'board' | 'video'
+export type ShadowName = 'sparkplug' | 'mcu' | 'board' | 'video'
 export type ShadowResponseKind = 'getAccepted' | 'getRejected' | 'updateAccepted' | 'updateRejected' | 'ignored'
 export type ShadowTopics = {
   shadowName: ShadowName
@@ -10,7 +10,7 @@ export type ShadowTopics = {
   updateAccepted: string
   updateRejected: string
 }
-export const namedShadowNames: readonly ShadowName[] = ['sparkplug', 'device', 'mcu', 'board', 'video']
+export const namedShadowNames: readonly ShadowName[] = ['sparkplug', 'mcu', 'board', 'video']
 export const isShadowName = (value: string): value is ShadowName =>
   (namedShadowNames as readonly string[]).includes(value)
 export type DecodedShadowResponse = {
@@ -113,25 +113,6 @@ export const buildGetShadowPublishPacket = (
     clientToken,
   }),
 })
-
-export const buildUpdateShadowPublishPacket = (
-  topics: ShadowTopics,
-  shadowDocument: unknown,
-  clientToken: string,
-): ShadowPublishPacket => {
-  if (!isRecord(shadowDocument)) {
-    throw new Error('Thing Shadow update payload must be an object')
-  }
-
-  return {
-    topicName: topics.update,
-    qos: 1,
-    payload: encodeShadowPayload({
-      ...shadowDocument,
-      clientToken,
-    }),
-  }
-}
 
 const payloadToText = (payload: unknown): string => {
   if (typeof payload === 'string') {

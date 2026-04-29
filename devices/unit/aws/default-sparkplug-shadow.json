@@ -1,7 +1,15 @@
 {
   "state": {
     "reported": {
-      "redcon": 4
+      "session": {
+        "entityKind": "device",
+        "groupId": "town",
+        "edgeNodeId": "rig",
+        "deviceId": "unit-local",
+        "messageType": "DDEATH",
+        "online": false
+      },
+      "metrics": {}
     }
   }
 }

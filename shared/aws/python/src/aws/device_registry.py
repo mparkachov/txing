@@ -20,6 +20,11 @@ from .thing_capabilities import (
     encode_capabilities_set,
     parse_capabilities_set,
 )
+from .sparkplug_shadow import (
+    build_offline_device_shadow_payload,
+    build_offline_node_shadow_payload,
+    build_static_group_shadow_payload,
+)
 
 
 THING_INDEX_NAME = "AWS_Things"
@@ -464,34 +469,61 @@ class AwsDeviceRegistry:
         *,
         manifest: DeviceManifest,
         capabilities_set: tuple[str, ...],
+        town_name: str,
+        rig_name: str,
     ) -> bool:
         aws_dir = manifest.device_dir / "aws"
         initialized = False
         for shadow_name in capabilities_set:
+            if shadow_name == "sparkplug":
+                payload = json.dumps(
+                    build_offline_device_shadow_payload(
+                        group_id=town_name,
+                        edge_node_id=rig_name,
+                        device_id=thing_name,
+                    ),
+                    sort_keys=True,
+                ).encode("utf-8")
+            else:
+                payload = (aws_dir / f"default-{shadow_name}-shadow.json").read_bytes()
             initialized = (
                 self.ensure_shadow_initialized(
                     thing_name,
                     shadow_name=shadow_name,
-                    payload=(aws_dir / f"default-{shadow_name}-shadow.json").read_bytes(),
+                    payload=payload,
                 )
                 or initialized
             )
         return initialized
 
-    def ensure_reported_only_shadow_initialized(
+    def ensure_town_shadow_initialized(
         self,
         thing_name: str,
         *,
-        redcon: int,
+        town_name: str,
     ) -> bool:
         payload = json.dumps(
-            {
-                "state": {
-                    "reported": {
-                        "redcon": redcon,
-                    }
-                }
-            },
+            build_static_group_shadow_payload(town_name),
+            sort_keys=True,
+        ).encode("utf-8")
+        return self.ensure_shadow_initialized(
+            thing_name,
+            shadow_name="sparkplug",
+            payload=payload,
+        )
+
+    def ensure_rig_shadow_initialized(
+        self,
+        thing_name: str,
+        *,
+        town_name: str,
+        rig_name: str,
+    ) -> bool:
+        payload = json.dumps(
+            build_offline_node_shadow_payload(
+                group_id=town_name,
+                edge_node_id=rig_name,
+            ),
             sort_keys=True,
         ).encode("utf-8")
         return self.ensure_shadow_initialized(
@@ -555,7 +587,10 @@ class AwsDeviceRegistry:
             },
         )
         self.ensure_town_group(normalized_town_name)
-        self.ensure_reported_only_shadow_initialized(thing_name, redcon=1)
+        self.ensure_town_shadow_initialized(
+            thing_name,
+            town_name=normalized_town_name,
+        )
         return self.describe_thing(thing_name)
 
     def register_rig(
@@ -591,7 +626,11 @@ class AwsDeviceRegistry:
         )
         self.ensure_town_group(normalized_town_name)
         self.ensure_rig_group(normalized_rig_name)
-        self.ensure_reported_only_shadow_initialized(thing_name, redcon=4)
+        self.ensure_rig_shadow_initialized(
+            thing_name,
+            town_name=normalized_town_name,
+            rig_name=normalized_rig_name,
+        )
         return self.describe_thing(thing_name)
 
     def register_device(
@@ -639,6 +678,8 @@ class AwsDeviceRegistry:
             thing_name,
             manifest=manifest,
             capabilities_set=capabilities_set,
+            town_name=normalized_town_name,
+            rig_name=normalized_rig_name,
         )
         self.ensure_auxiliary_resources(thing_name, manifest=manifest)
         return self.describe_device(thing_name)

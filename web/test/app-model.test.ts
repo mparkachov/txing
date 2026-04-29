@@ -17,12 +17,24 @@ describe('app model helpers', () => {
       extractReportedRedcon({
         state: {
           reported: {
-            redcon: 2,
+            metrics: {
+              redcon: 2,
+            },
           },
         },
       }),
     ).toBe(2)
-    expect(extractReportedRedcon({ state: { reported: { redcon: 7 } } })).toBeNull()
+    expect(
+      extractReportedRedcon({
+        state: {
+          reported: {
+            metrics: {
+              redcon: 7,
+            },
+          },
+        },
+      }),
+    ).toBeNull()
   })
 
   test('extracts reported redcon from sparkplug named shadow first', () => {
@@ -37,7 +49,9 @@ describe('app model helpers', () => {
           sparkplug: {
             state: {
               reported: {
-                redcon: 2,
+                metrics: {
+                  redcon: 2,
+                },
               },
             },
           },
@@ -51,7 +65,7 @@ describe('app model helpers', () => {
       extractReportedBatteryMv({
         state: {
           reported: {
-            device: {
+            metrics: {
               batteryMv: 3972,
             },
           },
@@ -63,7 +77,9 @@ describe('app model helpers', () => {
       extractReportedBatteryMv({
         state: {
           reported: {
-            batteryMv: 3901,
+            device: {
+              batteryMv: 3901,
+            },
           },
         },
       }),

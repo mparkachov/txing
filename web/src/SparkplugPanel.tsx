@@ -2,7 +2,7 @@ import { describeRedcon, getTxingRedconToneClass } from './app-model'
 
 type SparkplugPanelProps = {
   routeKind: 'town' | 'rig' | 'device' | 'device_video'
-  botRedcon: number | null
+  sparkplugRedcon: number | null
   targetRedcon: number | null
   isRedconCommandDisabled: boolean
   isRedconSleepCommandDisabled: boolean
@@ -89,7 +89,7 @@ function SparkplugRedconControl({
 
 function SparkplugPanel({
   routeKind,
-  botRedcon,
+  sparkplugRedcon,
   targetRedcon,
   isRedconCommandDisabled,
   isRedconSleepCommandDisabled,
@@ -97,7 +97,7 @@ function SparkplugPanel({
 }: SparkplugPanelProps) {
   const kind = getSparkplugNodeKind(routeKind)
   const isBot = kind === 'bot'
-  const rowRedcon = isBot ? botRedcon : 1
+  const rowRedcon = sparkplugRedcon
   const isInteractive = isBot && (routeKind === 'device' || routeKind === 'device_video')
   const isPending = targetRedcon !== null && targetRedcon !== rowRedcon
 
