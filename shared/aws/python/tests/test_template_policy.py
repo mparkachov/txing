@@ -39,6 +39,11 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("AWS::Lambda::Function", template)
         self.assertIn("TxingSparkplugWitnessTopicRule", template)
         self.assertIn("TxingSparkplugWitnessInvokePermission", template)
+        self.assertIn("RuleName: !Sub ${AWS::StackName}SparkplugWitness", template)
+        self.assertIn(
+            "SourceArn: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:rule/${AWS::StackName}SparkplugWitness",
+            template,
+        )
         self.assertIn("encode(*, 'base64')", template)
         self.assertIn("iot:SearchIndex", template)
 

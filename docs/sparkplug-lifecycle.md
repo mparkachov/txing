@@ -32,7 +32,7 @@
   - Sparkplug edge node id
   - dynamic AWS IoT thing group name for assigned txings
   - node lifecycle uses `NBIRTH`/`NDATA`/`NDEATH`
-  - node metrics such as `rig.redcon` project into `metrics.rig.redcon`
+  - node metrics such as `redcon` project into `metrics.redcon`
 - `txing`
   - Sparkplug device id
   - each physical txing has its own AWS IoT thing
@@ -82,7 +82,7 @@ Rig node lifecycle uses `NBIRTH`, `NDATA`, and `NDEATH`.
 
 - `NBIRTH`
   - carries `bdSeq`
-  - carries `rig.redcon=1`
+  - carries `redcon=1`
 - `NDATA`
   - carries incremental node metric changes when present
 - `NDEATH`
@@ -90,7 +90,7 @@ Rig node lifecycle uses `NBIRTH`, `NDATA`, and `NDEATH`.
 
 Meaning:
 
-- if the rig lifecycle service is up and operating, node `metrics.rig.redcon=1`
+- if the rig lifecycle service is up and operating, node `metrics.redcon=1`
 
 ### Device Metrics
 
@@ -132,7 +132,6 @@ Metric path rules:
 - `redcon` -> `metrics.redcon`
 - `batteryMv` -> `metrics.batteryMv`
 - `services/mcp/available` -> `metrics.services.mcp.available`
-- `rig.redcon` -> `metrics.rig.redcon`
 
 Projection behavior:
 
@@ -225,7 +224,7 @@ The current implementation keeps the derived-behavior model rather than making R
 
 Rig publishes Sparkplug node lifecycle as a proper `NBIRTH` / `NDATA` / `NDEATH` stream:
 
-- `NBIRTH` carries `bdSeq` and `rig.redcon=1`
+- `NBIRTH` carries `bdSeq` and `redcon=1`
 - `NDATA` carries incremental node metrics when needed
 - `NDEATH` carries the matching `bdSeq`
 

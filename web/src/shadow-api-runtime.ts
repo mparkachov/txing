@@ -65,6 +65,7 @@ const initialSnapshotTimeoutMs = 20_000
 const mcpRequestTimeoutMs = 8_000
 const mcpWebRtcOpenTimeoutMs = 20_000
 const initialMcpDescriptorWaitTimeoutMs = 2_000
+const primaryShadowName: ShadowName = 'sparkplug'
 
 export type ShadowConnectionState = 'idle' | 'connecting' | 'connected' | 'error'
 type ResolveIdToken = () => Promise<string>
@@ -696,6 +697,26 @@ class AwsIotShadowSession implements ShadowSession {
     return snapshots[snapshots.length - 1] ?? this.assembleShadowSnapshot()
   }
 
+  private async publishInitialSnapshotRequests(): Promise<void> {
+    const client = this.client
+    if (!client || !this.isConnected()) {
+      throw new Error('Shadow connection is not ready')
+    }
+
+    await Promise.all(
+      Object.values(this.topics).map((topics) => {
+        if (!topics) {
+          throw new Error('Missing named shadow topics')
+        }
+        const packet = buildGetShadowPublishPacket(
+          topics,
+          createShadowClientToken('get'),
+        )
+        return client.publish(packet as mqtt5.PublishPacket)
+      }),
+    )
+  }
+
   async publishRedconCommand(redcon: number): Promise<void> {
     const client = this.client
     if (!client || !this.isConnected()) {
@@ -843,7 +864,7 @@ class AwsIotShadowSession implements ShadowSession {
     client.start()
 
     try {
-      return await this.waitForSnapshot(() => this.hasCompleteShadowSnapshot(), initialSnapshotTimeoutMs)
+      return await this.waitForSnapshot(() => this.hasPrimaryShadowSnapshot(), initialSnapshotTimeoutMs)
     } catch (caughtError) {
       this.disposeClient(client)
       throw caughtError
@@ -913,7 +934,14 @@ class AwsIotShadowSession implements ShadowSession {
         return
       }
       this.setConnectionState('connected')
-      await this.requestSnapshot()
+      void this.publishInitialSnapshotRequests().catch((caughtError) => {
+        if (this.closed || client !== this.client) {
+          return
+        }
+        this.options.onError(
+          `Unable to request initial shadow snapshots: ${getErrorMessage(caughtError)}`,
+        )
+      })
       void this.warmUpMcpSession()
     } catch (caughtError) {
       this.setConnectionState('error')
@@ -960,10 +988,8 @@ class AwsIotShadowSession implements ShadowSession {
     }
   }
 
-  private hasCompleteShadowSnapshot(): boolean {
-    return this.requiredShadowNames.every(
-      (shadowName) => this.latestShadows[shadowName] !== undefined,
-    )
+  private hasPrimaryShadowSnapshot(): boolean {
+    return this.latestShadows[primaryShadowName] !== undefined
   }
 
   private async publishRequest(

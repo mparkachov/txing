@@ -271,7 +271,7 @@ The longer stack bootstrap and deletion flow is documented in `web/README.md`.
   - remains `true` while the device is connected or keeps advertising within the presence timeout
   - becomes `false` only after the configured presence timeout expires without a matching connection or advertisement
 - Publishes Sparkplug lifecycle state:
-  - `NBIRTH`/`NDATA` for node metric `rig.redcon=1`
+  - `NBIRTH`/`NDATA` for node metric `redcon=1`
   - `DBIRTH` when BLE reachability becomes online
   - `DDATA` when either txing Sparkplug report field changes while the device is born: `redcon` or `batteryMv`
   - `DDEATH` when BLE reachability times out

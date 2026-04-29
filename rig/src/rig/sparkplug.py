@@ -249,7 +249,7 @@ def build_node_birth_payload(
         timestamp=timestamp if timestamp is not None else utc_timestamp_ms(),
         metrics=(
             Metric(name="bdSeq", datatype=DataType.UINT64, long_value=bdseq),
-            Metric(name="rig.redcon", datatype=DataType.INT32, int_value=redcon),
+            Metric(name="redcon", datatype=DataType.INT32, int_value=redcon),
         ),
         seq=seq,
     )

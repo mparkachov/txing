@@ -60,6 +60,96 @@ describe('app model helpers', () => {
     ).toBe(2)
   })
 
+  test('extracts node reported redcon from a top-level sparkplug metric', () => {
+    expect(
+      extractReportedRedcon({
+        namedShadows: {
+          sparkplug: {
+            state: {
+              reported: {
+                session: {
+                  entityKind: 'node',
+                  online: true,
+                },
+                metrics: {
+                  redcon: 1,
+                },
+              },
+            },
+          },
+        },
+      }),
+    ).toBe(1)
+  })
+
+  test('keeps legacy support for nested rig redcon metric paths', () => {
+    expect(
+      extractReportedRedcon({
+        namedShadows: {
+          sparkplug: {
+            state: {
+              reported: {
+                session: {
+                  entityKind: 'node',
+                  online: true,
+                },
+                metrics: {
+                  rig: {
+                    redcon: 1,
+                  },
+                },
+              },
+            },
+          },
+        },
+      }),
+    ).toBe(1)
+  })
+
+  test('treats an offline sparkplug session as redcon 4 when metrics are absent', () => {
+    expect(
+      extractReportedRedcon({
+        namedShadows: {
+          sparkplug: {
+            state: {
+              reported: {
+                session: {
+                  entityKind: 'node',
+                  messageType: 'NDEATH',
+                  online: false,
+                },
+                metrics: {},
+              },
+            },
+          },
+        },
+      }),
+    ).toBe(4)
+  })
+
+  test('treats an offline device sparkplug session as redcon 4 when metrics are absent', () => {
+    expect(
+      extractReportedRedcon({
+        namedShadows: {
+          sparkplug: {
+            state: {
+              reported: {
+                session: {
+                  entityKind: 'device',
+                  edgeNodeId: 'rig',
+                  deviceId: 'unit-a1',
+                  messageType: 'DDEATH',
+                  online: false,
+                },
+                metrics: {},
+              },
+            },
+          },
+        },
+      }),
+    ).toBe(4)
+  })
+
   test('extracts nested reported battery from reported.device', () => {
     expect(
       extractReportedBatteryMv({

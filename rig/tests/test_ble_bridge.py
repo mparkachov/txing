@@ -1885,7 +1885,7 @@ class LifecycleBridgeTests(unittest.TestCase):
         self.assertEqual(birth.seq, 0)
         self.assertEqual(
             [(metric.name, metric.long_value, metric.int_value) for metric in birth.metrics],
-            [("bdSeq", 41, None), ("rig.redcon", None, 1)],
+            [("bdSeq", 41, None), ("redcon", None, 1)],
         )
         death = decode_payload(cloud_shadow.sparkplug_publishes[1][1])
         self.assertIsNone(death.seq)
@@ -1993,7 +1993,7 @@ class SparkplugCodecTests(unittest.TestCase):
         self.assertEqual(payload.metrics[0].name, "bdSeq")
         self.assertEqual(payload.metrics[0].datatype, DataType.UINT64)
         self.assertEqual(payload.metrics[0].long_value, 123)
-        self.assertEqual(payload.metrics[1].name, "rig.redcon")
+        self.assertEqual(payload.metrics[1].name, "redcon")
         self.assertEqual(payload.metrics[1].int_value, 1)
 
     def test_encodes_node_death_payload(self) -> None:

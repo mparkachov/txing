@@ -83,7 +83,6 @@ Metric path rules:
 - `redcon` -> `metrics.redcon`
 - `batteryMv` -> `metrics.batteryMv`
 - `services/mcp/available` -> `metrics.services.mcp.available`
-- `rig.redcon` -> `metrics.rig.redcon`
 
 Projection rules:
 
@@ -117,7 +116,7 @@ Namespace and identity:
 
 Current metrics:
 
-- Node metric: `rig.redcon`
+- Node metric: `redcon`
 - Device metrics: `redcon`, `batteryMv`
 - Device detail metrics: `services/mcp/*`
 - Writable device command metric: `redcon`

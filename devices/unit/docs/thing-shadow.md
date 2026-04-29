@@ -74,7 +74,6 @@ Metric names preserve Sparkplug structure by splitting both `.` and `/` into nes
 - `redcon` -> `metrics.redcon`
 - `batteryMv` -> `metrics.batteryMv`
 - `services/mcp/available` -> `metrics.services.mcp.available`
-- `rig.redcon` -> `metrics.rig.redcon`
 
 ## Ownership
 

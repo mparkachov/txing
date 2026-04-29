@@ -122,16 +122,46 @@ const extractSparkplugMetrics = (shadow: unknown): Record<string, unknown> | nul
   return isRecord(metrics) ? metrics : null
 }
 
+const extractSparkplugSession = (shadow: unknown): Record<string, unknown> | null => {
+  const reported = extractSparkplugReportedState(shadow)
+  if (!reported) {
+    return null
+  }
+  const session = reported.session
+  return isRecord(session) ? session : null
+}
+
+const coerceRedcon = (value: unknown): number | null => {
+  if (typeof value !== 'number' || !Number.isInteger(value)) {
+    return null
+  }
+  return value >= 1 && value <= 4 ? value : null
+}
+
 export const extractReportedRedcon = (shadow: unknown): number | null => {
   const metrics = extractSparkplugMetrics(shadow)
-  if (!metrics) {
+  if (metrics) {
+    const deviceRedcon = coerceRedcon(metrics.redcon)
+    if (deviceRedcon !== null) {
+      return deviceRedcon
+    }
+    const rigMetrics = metrics.rig
+    if (isRecord(rigMetrics)) {
+      const rigRedcon = coerceRedcon(rigMetrics.redcon)
+      if (rigRedcon !== null) {
+        return rigRedcon
+      }
+    }
+  }
+
+  const session = extractSparkplugSession(shadow)
+  if (!session) {
     return null
   }
-  const redcon = metrics.redcon
-  if (typeof redcon !== 'number' || !Number.isInteger(redcon)) {
-    return null
+  if (session.online === false) {
+    return 4
   }
-  return redcon >= 1 && redcon <= 4 ? redcon : null
+  return null
 }
 
 export const getTxingRedconToneClass = (redcon: number | null): string => {

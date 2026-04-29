@@ -366,7 +366,7 @@ Resources:
       Action: lambda:InvokeFunction
       FunctionName: !Ref TxingSparkplugWitnessFunction
       Principal: iot.amazonaws.com
-      SourceArn: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:rule/${AWS::StackName}-sparkplug-witness
+      SourceArn: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:rule/${AWS::StackName}SparkplugWitness
 
   TxingSparkplugWitnessTopicRule:
     Type: AWS::IoT::TopicRule

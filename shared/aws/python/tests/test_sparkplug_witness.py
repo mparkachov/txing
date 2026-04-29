@@ -103,7 +103,7 @@ class SparkplugWitnessTests(unittest.TestCase):
     def test_decode_node_birth_normalizes_metric_paths(self) -> None:
         encoded_payload = _encode_payload(
             metrics=[
-                _encode_metric(name="rig.redcon", int_value=2),
+                _encode_metric(name="redcon", int_value=2),
                 _encode_metric(name="bdSeq", long_value=42),
             ]
         )
@@ -117,10 +117,50 @@ class SparkplugWitnessTests(unittest.TestCase):
         self.assertEqual(
             message.metrics,
             {
-                "rig": {
-                    "redcon": 2,
-                },
+                "redcon": 2,
                 "bdSeq": 42,
+            },
+        )
+
+    def test_project_node_birth_replaces_metrics_with_top_level_redcon(self) -> None:
+        encoded_payload = _encode_payload(
+            metrics=[
+                _encode_metric(name="redcon", int_value=1),
+                _encode_metric(name="bdSeq", long_value=42),
+            ]
+        )
+        message = decode_sparkplug_payload(
+            encoded_payload,
+            "spBv1.0/town/NBIRTH/rig",
+        )
+
+        assert message is not None
+        with patch("aws.sparkplug_witness._resolve_thing_name", return_value="rig-main"), patch(
+            "aws.sparkplug_witness._replace_metrics"
+        ) as replace_metrics:
+            projected_thing_name = project_sparkplug_message(message, 1710000000999)
+
+        self.assertEqual(projected_thing_name, "rig-main")
+        replace_metrics.assert_called_once()
+        thing_name, reported_payload = replace_metrics.call_args.args
+        self.assertEqual(thing_name, "rig-main")
+        self.assertEqual(
+            reported_payload,
+            {
+                "session": {
+                    "entityKind": "node",
+                    "groupId": "town",
+                    "edgeNodeId": "rig",
+                    "messageType": "NBIRTH",
+                    "online": True,
+                    "seq": 7,
+                    "sparkplugTimestamp": 1710000000000,
+                    "observedAt": 1710000000999,
+                },
+                "metrics": {
+                    "redcon": 1,
+                    "bdSeq": 42,
+                },
             },
         )
 
