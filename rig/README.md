@@ -177,8 +177,8 @@ From repository root:
 just rig::wake
 just rig::sleep
 just rig::print
-just aws::shadow
-just aws::shadow-reset
+just aws::shadow <thing>
+just aws::shadow-reset <thing>
 ```
 
 From `rig/`:
@@ -203,7 +203,9 @@ Default recipe values:
 
 `print` prints the current real AWS Thing Shadow document.
 
-`aws::shadow-reset <thing>` is the hard reset path for manual whole-device power cuts. It deletes and reseeds all device named shadows to the repository's clean offline baseline: `sparkplug reported.redcon=4`, `device reported.batteryMv=3750`, `mcu reported.power=false`, `mcu reported.online=false`, `board reported.power=false`, and `board reported.wifi.online=false`. Use `aws::shadow-reset <thing> <shadow>` to reset only one named shadow.
+`aws::shadow-reset <thing>` is the hard reset path for manual whole-device power cuts on unit things. It deletes the classic unnamed shadow and reseeds the unit named shadows to the repository's clean offline baseline: `sparkplug reported.redcon=4`, `device reported.batteryMv=3750`, `mcu reported.power=false`, `mcu reported.online=false`, `board reported.power=false`, and `board reported.wifi.online=false`.
+
+For rig and town things, `aws::shadow` and `aws::shadow-reset` use only the `sparkplug` named shadow; a full reset also removes known unit-only named shadows if they were created by an older recipe. Use `aws::shadow-reset <thing> <shadow>` to reset one valid named shadow for that thing type.
 
 Use the registry helpers with positional arguments to create/update rig membership and inspect current membership:
 

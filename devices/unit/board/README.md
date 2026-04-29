@@ -419,7 +419,7 @@ cd /home/user/txing
 just aws-device sts get-caller-identity
 ```
 
-If you want the install recipe to use credential files outside the checkout, pass `aws_shared_credentials_file=` and `aws_config_file=` directly to `just board::install-service`.
+If you want the install recipe to use credential files outside the checkout, pass them as the seventh and eighth positional arguments to `just board::install-service`.
 
 ### 7. Build and Smoke Test
 
@@ -477,8 +477,7 @@ From the repo root on the board:
 ```bash
 cd /home/user/txing
 just board::build
-just board::install-service \
-  video_sender_command="$BOARD_VIDEO_SENDER_COMMAND"
+just board::install-service "$BOARD_VIDEO_SENDER_COMMAND"
 ```
 
 If the root AWS credentials are stored elsewhere or you need a different region or channel:
@@ -486,12 +485,14 @@ If the root AWS credentials are stored elsewhere or you need a different region 
 ```bash
 cd /home/user/txing
 just board::install-service \
-  thing_name=unit-local \
-  schema_file=devices/unit/aws/board-shadow.schema.json \
-  video_region=eu-central-1 \
-  video_sender_command="$BOARD_VIDEO_SENDER_COMMAND" \
-  aws_shared_credentials_file=/path/to/credentials \
-  aws_config_file=/path/to/config
+  "$BOARD_VIDEO_SENDER_COMMAND" \
+  unit-local \
+  devices/unit/aws/board-shadow.schema.json \
+  eu-central-1 \
+  "" \
+  "" \
+  /path/to/credentials \
+  /path/to/config
 ```
 
 The generated unit:

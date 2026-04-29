@@ -848,9 +848,49 @@ thing_index_name := "AWS_Things"
     fi
 
     endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}" --query endpointAddress --output text)"
+    thing_json="$(
+      aws iot describe-thing \
+        --thing-name "{{thing_name}}" \
+        "${aws_flags[@]}" \
+        --output json
+    )"
+    thing_type="$(jq -r '.thingTypeName // empty' <<<"$thing_json")"
+    if [ -z "$thing_type" ]; then
+      echo "thing {{thing_name}} has no thingTypeName; cannot select required named shadows" >&2
+      exit 1
+    fi
+
+    allowed_shadow_names=()
+    case "$thing_type" in
+      town|rig)
+        allowed_shadow_names=(sparkplug)
+        ;;
+      *)
+        device_shadow_dir="{{project_root}}/devices/${thing_type}/aws"
+        for candidate_shadow_name in sparkplug device mcu board; do
+          if [ ! -f "$device_shadow_dir/default-${candidate_shadow_name}-shadow.json" ]; then
+            echo "thing {{thing_name}} has unsupported thing type $thing_type for named shadow defaults" >&2
+            echo "missing $device_shadow_dir/default-${candidate_shadow_name}-shadow.json" >&2
+            exit 1
+          fi
+        done
+        allowed_shadow_names=(sparkplug device mcu board)
+        ;;
+    esac
 
     shadow_name="{{shadow_name}}"
     if [ -n "$shadow_name" ]; then
+      allowed_shadow=0
+      for allowed_shadow_name in "${allowed_shadow_names[@]}"; do
+        if [ "$shadow_name" = "$allowed_shadow_name" ]; then
+          allowed_shadow=1
+          break
+        fi
+      done
+      if [ "$allowed_shadow" -ne 1 ]; then
+        echo "shadow $shadow_name is not required for $thing_type thing {{thing_name}}; required: ${allowed_shadow_names[*]}" >&2
+        exit 1
+      fi
       aws iot-data get-thing-shadow \
         --endpoint-url "https://$endpoint" \
         --thing-name "{{thing_name}}" \
@@ -861,17 +901,24 @@ thing_index_name := "AWS_Things"
     fi
 
     result="{}"
-    for current_shadow_name in sparkplug device mcu board; do
-      payload="$(
+    for current_shadow_name in "${allowed_shadow_names[@]}"; do
+      payload=""
+      get_output=""
+      if ! get_output="$(
         aws iot-data get-thing-shadow \
           --endpoint-url "https://$endpoint" \
           --thing-name "{{thing_name}}" \
           --shadow-name "$current_shadow_name" \
           "${aws_flags[@]}" \
-          /dev/stdout 2>/dev/null || true
-      )"
-      if [ -z "$payload" ]; then
+          /dev/stdout 2>&1
+      )"; then
+        if ! printf '%s\n' "$get_output" | grep -F "ResourceNotFoundException" >/dev/null; then
+          printf '%s\n' "$get_output" >&2
+          exit 1
+        fi
         payload='{"missing":true}'
+      else
+        payload="$get_output"
       fi
       result="$(
         jq \
@@ -903,19 +950,126 @@ thing_index_name := "AWS_Things"
     fi
 
     endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}" --query endpointAddress --output text)"
+    thing_json="$(
+      aws iot describe-thing \
+        --thing-name "{{thing_name}}" \
+        "${aws_flags[@]}" \
+        --output json
+    )"
+    thing_type="$(jq -r '.thingTypeName // empty' <<<"$thing_json")"
+    if [ -z "$thing_type" ]; then
+      echo "thing {{thing_name}} has no thingTypeName; cannot select required named shadows" >&2
+      exit 1
+    fi
 
+    allowed_shadow_names=()
+    case "$thing_type" in
+      town|rig)
+        allowed_shadow_names=(sparkplug)
+        ;;
+      *)
+        device_shadow_dir="{{project_root}}/devices/${thing_type}/aws"
+        for candidate_shadow_name in sparkplug device mcu board; do
+          if [ ! -f "$device_shadow_dir/default-${candidate_shadow_name}-shadow.json" ]; then
+            echo "thing {{thing_name}} has unsupported thing type $thing_type for named shadow defaults" >&2
+            echo "missing $device_shadow_dir/default-${candidate_shadow_name}-shadow.json" >&2
+            exit 1
+          fi
+        done
+        allowed_shadow_names=(sparkplug device mcu board)
+        ;;
+    esac
+
+    payload_file="{{payload_file}}"
     shadow_names=()
     if [ -n "{{shadow_name}}" ]; then
-      shadow_names=("{{shadow_name}}")
+      requested_shadow_name="{{shadow_name}}"
+      allowed_shadow=0
+      for allowed_shadow_name in "${allowed_shadow_names[@]}"; do
+        if [ "$requested_shadow_name" = "$allowed_shadow_name" ]; then
+          allowed_shadow=1
+          break
+        fi
+      done
+      if [ "$allowed_shadow" -ne 1 ]; then
+        echo "shadow $requested_shadow_name is not required for $thing_type thing {{thing_name}}; required: ${allowed_shadow_names[*]}" >&2
+        exit 1
+      fi
+      shadow_names=("$requested_shadow_name")
     else
-      shadow_names=(sparkplug device mcu board)
+      shadow_names=("${allowed_shadow_names[@]}")
+      delete_output=""
+      if ! delete_output="$(
+        aws iot-data delete-thing-shadow \
+          --endpoint-url "https://$endpoint" \
+          --thing-name "{{thing_name}}" \
+          "${aws_flags[@]}" \
+          /dev/null 2>&1
+      )"; then
+        if ! printf '%s\n' "$delete_output" | grep -F "ResourceNotFoundException" >/dev/null; then
+          printf '%s\n' "$delete_output" >&2
+          exit 1
+        fi
+      fi
+      for obsolete_shadow_name in sparkplug device mcu board; do
+        obsolete_shadow=1
+        for allowed_shadow_name in "${allowed_shadow_names[@]}"; do
+          if [ "$obsolete_shadow_name" = "$allowed_shadow_name" ]; then
+            obsolete_shadow=0
+            break
+          fi
+        done
+        if [ "$obsolete_shadow" -eq 0 ]; then
+          continue
+        fi
+        delete_output=""
+        if ! delete_output="$(
+          aws iot-data delete-thing-shadow \
+            --endpoint-url "https://$endpoint" \
+            --thing-name "{{thing_name}}" \
+            --shadow-name "$obsolete_shadow_name" \
+            "${aws_flags[@]}" \
+            /dev/null 2>&1
+        )"; then
+          if ! printf '%s\n' "$delete_output" | grep -F "ResourceNotFoundException" >/dev/null; then
+            printf '%s\n' "$delete_output" >&2
+            exit 1
+          fi
+        fi
+      done
     fi
+    if [ -n "$payload_file" ] && [ "${#shadow_names[@]}" -ne 1 ]; then
+      echo "payload file override is only valid when resetting one named shadow" >&2
+      exit 1
+    fi
+
+    payload_temp_files=()
+    cleanup_payload_temp_files() {
+      if [ "${#payload_temp_files[@]}" -gt 0 ]; then
+        rm -f "${payload_temp_files[@]}"
+      fi
+    }
+    trap cleanup_payload_temp_files EXIT
 
     result="{}"
     for current_shadow_name in "${shadow_names[@]}"; do
-      default_payload="{{payload_file}}"
+      default_payload="$payload_file"
       if [ -z "$default_payload" ]; then
-        default_payload="{{project_root}}/devices/unit/aws/default-${current_shadow_name}-shadow.json"
+        case "$thing_type:$current_shadow_name" in
+          town:sparkplug)
+            default_payload="$(mktemp)"
+            payload_temp_files+=("$default_payload")
+            jq -n '{state: {reported: {redcon: 1}}}' >"$default_payload"
+            ;;
+          rig:sparkplug)
+            default_payload="$(mktemp)"
+            payload_temp_files+=("$default_payload")
+            jq -n '{state: {reported: {redcon: 4}}}' >"$default_payload"
+            ;;
+          *)
+            default_payload="{{project_root}}/devices/${thing_type}/aws/default-${current_shadow_name}-shadow.json"
+            ;;
+        esac
       fi
       if [ ! -f "$default_payload" ]; then
         echo "shadow reset payload $default_payload not found" >&2
@@ -1031,12 +1185,77 @@ thing_index_name := "AWS_Things"
       shadow_response_file="{{output_dir}}/{{thing_name}}.{{shadow_name}}.shadow-response.json"
     fi
     default_payload="{{payload_file}}"
-    if [ -z "$default_payload" ]; then
-      default_payload="{{project_root}}/devices/unit/aws/default-{{shadow_name}}-shadow.json"
-    fi
 
     mkdir -p "{{output_dir}}"
     endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}" --query endpointAddress --output text)"
+    thing_json="$(
+      aws iot describe-thing \
+        --thing-name "{{thing_name}}" \
+        "${aws_flags[@]}" \
+        --output json
+    )"
+    thing_type="$(jq -r '.thingTypeName // empty' <<<"$thing_json")"
+    if [ -z "$thing_type" ]; then
+      echo "thing {{thing_name}} has no thingTypeName; cannot select required named shadows" >&2
+      exit 1
+    fi
+
+    allowed_shadow_names=()
+    case "$thing_type" in
+      town|rig)
+        allowed_shadow_names=(sparkplug)
+        ;;
+      *)
+        device_shadow_dir="{{project_root}}/devices/${thing_type}/aws"
+        for candidate_shadow_name in sparkplug device mcu board; do
+          if [ ! -f "$device_shadow_dir/default-${candidate_shadow_name}-shadow.json" ]; then
+            echo "thing {{thing_name}} has unsupported thing type $thing_type for named shadow defaults" >&2
+            echo "missing $device_shadow_dir/default-${candidate_shadow_name}-shadow.json" >&2
+            exit 1
+          fi
+        done
+        allowed_shadow_names=(sparkplug device mcu board)
+        ;;
+    esac
+    allowed_shadow=0
+    for allowed_shadow_name in "${allowed_shadow_names[@]}"; do
+      if [ "{{shadow_name}}" = "$allowed_shadow_name" ]; then
+        allowed_shadow=1
+        break
+      fi
+    done
+    if [ "$allowed_shadow" -ne 1 ]; then
+      echo "shadow {{shadow_name}} is not required for $thing_type thing {{thing_name}}; required: ${allowed_shadow_names[*]}" >&2
+      exit 1
+    fi
+    payload_temp_file=""
+    cleanup_payload_temp_file() {
+      if [ -n "$payload_temp_file" ]; then
+        rm -f "$payload_temp_file"
+      fi
+    }
+    trap cleanup_payload_temp_file EXIT
+    if [ -z "$default_payload" ]; then
+      case "$thing_type:{{shadow_name}}" in
+        town:sparkplug)
+          payload_temp_file="$(mktemp)"
+          default_payload="$payload_temp_file"
+          jq -n '{state: {reported: {redcon: 1}}}' >"$default_payload"
+          ;;
+        rig:sparkplug)
+          payload_temp_file="$(mktemp)"
+          default_payload="$payload_temp_file"
+          jq -n '{state: {reported: {redcon: 4}}}' >"$default_payload"
+          ;;
+        *)
+          default_payload="{{project_root}}/devices/${thing_type}/aws/default-{{shadow_name}}-shadow.json"
+          ;;
+      esac
+    fi
+    if [ ! -f "$default_payload" ]; then
+      echo "shadow init payload $default_payload not found" >&2
+      exit 1
+    fi
 
     aws iot-data update-thing-shadow \
       --endpoint-url "https://$endpoint" \

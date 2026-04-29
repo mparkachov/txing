@@ -85,11 +85,13 @@ That uses `AWS_COGNITO_DOMAIN_PREFIX`, `AWS_ADMIN_EMAIL`, and `AWS_TOWN_PROFILE`
 Inspect or reset the live Thing Shadow from the repository root:
 
 ```bash
-just aws::shadow
-just aws::shadow-reset
+just aws::shadow <thing>
+just aws::shadow-reset <thing>
 ```
 
-`aws::shadow-reset <thing>` deletes and reseeds all device named shadows from `devices/unit/aws/default-<shadow>-shadow.json`. Pass `<shadow>` as the second positional argument to reset only one named shadow.
+`aws::shadow <thing>` lists the named shadows required for that thing type. Unit things expose `sparkplug`, `device`, `mcu`, and `board`; rig and town things expose only `sparkplug`.
+
+`aws::shadow-reset <thing>` deletes the classic unnamed shadow, removes known named shadows that are not valid for that thing type, and reseeds the required named shadows. Unit things use `devices/<type>/aws/default-<shadow>-shadow.json`; rig and town things reseed only `sparkplug`. Pass `<shadow>` as the second positional argument to reset one valid named shadow only.
 
 The web admin does not use API Gateway. After Cognito sign-in, the SPA exchanges the user pool token for temporary AWS credentials through a Cognito Identity Pool and calls AWS IoT Thing Shadow directly.
 
