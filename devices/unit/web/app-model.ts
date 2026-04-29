@@ -62,7 +62,7 @@ const extractReportedState = (shadow: unknown): Record<string, unknown> | null =
 
 const extractNamedShadowReportedState = (
   shadow: unknown,
-  shadowName: 'sparkplug' | 'device' | 'mcu' | 'board',
+  shadowName: 'sparkplug' | 'device' | 'mcu' | 'board' | 'video',
 ): Record<string, unknown> | null => {
   if (!isRecord(shadow) || !isRecord(shadow.namedShadows)) {
     return null

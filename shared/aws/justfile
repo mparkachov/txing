@@ -819,9 +819,9 @@ thing_index_name := "AWS_Things"
             thingType: ($thing.thingTypeName // null),
             name: ($thing.attributes.name // null),
             shortId: ($thing.attributes.shortId // null),
+            capabilitiesSet: ($thing.attributes.capabilitiesSet // null),
             town: ($thing.attributes.town // null),
-            rig: ($thing.attributes.rig // null),
-            bleDeviceId: ($thing.attributes.bleDeviceId // null)
+            rig: ($thing.attributes.rig // null)
           }]'
       )"
     done
@@ -859,24 +859,30 @@ thing_index_name := "AWS_Things"
       echo "thing {{thing_name}} has no thingTypeName; cannot select required named shadows" >&2
       exit 1
     fi
-
-    allowed_shadow_names=()
-    case "$thing_type" in
-      town|rig)
-        allowed_shadow_names=(sparkplug)
-        ;;
-      *)
-        device_shadow_dir="{{project_root}}/devices/${thing_type}/aws"
-        for candidate_shadow_name in sparkplug device mcu board; do
-          if [ ! -f "$device_shadow_dir/default-${candidate_shadow_name}-shadow.json" ]; then
-            echo "thing {{thing_name}} has unsupported thing type $thing_type for named shadow defaults" >&2
-            echo "missing $device_shadow_dir/default-${candidate_shadow_name}-shadow.json" >&2
-            exit 1
-          fi
-        done
-        allowed_shadow_names=(sparkplug device mcu board)
-        ;;
-    esac
+    capabilities_set="$(jq -r '.attributes.capabilitiesSet // empty' <<<"$thing_json")"
+    if [ -z "$capabilities_set" ]; then
+      echo "thing {{thing_name}} is missing required attribute capabilitiesSet" >&2
+      exit 1
+    fi
+    mapfile -t allowed_shadow_names < <(jq -r '.attributes.capabilitiesSet | split(",")[]' <<<"$thing_json")
+    if [ "${#allowed_shadow_names[@]}" -eq 0 ]; then
+      echo "thing {{thing_name}} has empty capabilitiesSet" >&2
+      exit 1
+    fi
+    for allowed_shadow_name in "${allowed_shadow_names[@]}"; do
+      case "$allowed_shadow_name" in
+        sparkplug|device|mcu|board|video)
+          ;;
+        ""|*" "*)
+          echo "thing {{thing_name}} has malformed capabilitiesSet: $capabilities_set" >&2
+          exit 1
+          ;;
+        *)
+          echo "thing {{thing_name}} has unsupported capability $allowed_shadow_name" >&2
+          exit 1
+          ;;
+      esac
+    done
 
     shadow_name="{{shadow_name}}"
     if [ -n "$shadow_name" ]; then
@@ -961,24 +967,30 @@ thing_index_name := "AWS_Things"
       echo "thing {{thing_name}} has no thingTypeName; cannot select required named shadows" >&2
       exit 1
     fi
-
-    allowed_shadow_names=()
-    case "$thing_type" in
-      town|rig)
-        allowed_shadow_names=(sparkplug)
-        ;;
-      *)
-        device_shadow_dir="{{project_root}}/devices/${thing_type}/aws"
-        for candidate_shadow_name in sparkplug device mcu board; do
-          if [ ! -f "$device_shadow_dir/default-${candidate_shadow_name}-shadow.json" ]; then
-            echo "thing {{thing_name}} has unsupported thing type $thing_type for named shadow defaults" >&2
-            echo "missing $device_shadow_dir/default-${candidate_shadow_name}-shadow.json" >&2
-            exit 1
-          fi
-        done
-        allowed_shadow_names=(sparkplug device mcu board)
-        ;;
-    esac
+    capabilities_set="$(jq -r '.attributes.capabilitiesSet // empty' <<<"$thing_json")"
+    if [ -z "$capabilities_set" ]; then
+      echo "thing {{thing_name}} is missing required attribute capabilitiesSet" >&2
+      exit 1
+    fi
+    mapfile -t allowed_shadow_names < <(jq -r '.attributes.capabilitiesSet | split(",")[]' <<<"$thing_json")
+    if [ "${#allowed_shadow_names[@]}" -eq 0 ]; then
+      echo "thing {{thing_name}} has empty capabilitiesSet" >&2
+      exit 1
+    fi
+    for allowed_shadow_name in "${allowed_shadow_names[@]}"; do
+      case "$allowed_shadow_name" in
+        sparkplug|device|mcu|board|video)
+          ;;
+        ""|*" "*)
+          echo "thing {{thing_name}} has malformed capabilitiesSet: $capabilities_set" >&2
+          exit 1
+          ;;
+        *)
+          echo "thing {{thing_name}} has unsupported capability $allowed_shadow_name" >&2
+          exit 1
+          ;;
+      esac
+    done
 
     payload_file="{{payload_file}}"
     shadow_names=()
@@ -1011,7 +1023,7 @@ thing_index_name := "AWS_Things"
           exit 1
         fi
       fi
-      for obsolete_shadow_name in sparkplug device mcu board; do
+      for obsolete_shadow_name in sparkplug device mcu board video; do
         obsolete_shadow=1
         for allowed_shadow_name in "${allowed_shadow_names[@]}"; do
           if [ "$obsolete_shadow_name" = "$allowed_shadow_name" ]; then
@@ -1199,24 +1211,30 @@ thing_index_name := "AWS_Things"
       echo "thing {{thing_name}} has no thingTypeName; cannot select required named shadows" >&2
       exit 1
     fi
-
-    allowed_shadow_names=()
-    case "$thing_type" in
-      town|rig)
-        allowed_shadow_names=(sparkplug)
-        ;;
-      *)
-        device_shadow_dir="{{project_root}}/devices/${thing_type}/aws"
-        for candidate_shadow_name in sparkplug device mcu board; do
-          if [ ! -f "$device_shadow_dir/default-${candidate_shadow_name}-shadow.json" ]; then
-            echo "thing {{thing_name}} has unsupported thing type $thing_type for named shadow defaults" >&2
-            echo "missing $device_shadow_dir/default-${candidate_shadow_name}-shadow.json" >&2
-            exit 1
-          fi
-        done
-        allowed_shadow_names=(sparkplug device mcu board)
-        ;;
-    esac
+    capabilities_set="$(jq -r '.attributes.capabilitiesSet // empty' <<<"$thing_json")"
+    if [ -z "$capabilities_set" ]; then
+      echo "thing {{thing_name}} is missing required attribute capabilitiesSet" >&2
+      exit 1
+    fi
+    mapfile -t allowed_shadow_names < <(jq -r '.attributes.capabilitiesSet | split(",")[]' <<<"$thing_json")
+    if [ "${#allowed_shadow_names[@]}" -eq 0 ]; then
+      echo "thing {{thing_name}} has empty capabilitiesSet" >&2
+      exit 1
+    fi
+    for allowed_shadow_name in "${allowed_shadow_names[@]}"; do
+      case "$allowed_shadow_name" in
+        sparkplug|device|mcu|board|video)
+          ;;
+        ""|*" "*)
+          echo "thing {{thing_name}} has malformed capabilitiesSet: $capabilities_set" >&2
+          exit 1
+          ;;
+        *)
+          echo "thing {{thing_name}} has unsupported capability $allowed_shadow_name" >&2
+          exit 1
+          ;;
+      esac
+    done
     allowed_shadow=0
     for allowed_shadow_name in "${allowed_shadow_names[@]}"; do
       if [ "{{shadow_name}}" = "$allowed_shadow_name" ]; then

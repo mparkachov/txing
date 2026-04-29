@@ -22,6 +22,10 @@
             },
             "online": {
               "type": "boolean"
+            },
+            "bleDeviceId": {
+              "description": "Last observed BLE identity address for fast reconnect.",
+              "type": ["string", "null"]
             }
           }
         }

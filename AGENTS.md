@@ -26,7 +26,7 @@
 - `txing-board` remains the only publisher of `board.*` Thing Shadow updates.
 - The current implementation uses plain AWS KVS WebRTC signaling as the live operator video path.
 - `board.video_sender` writes local runtime state and probes supervised sender readiness; `board.video_service` publishes retained video descriptor/status topics for `rig`.
-- `rig` consumes retained MQTT video service topics for REDCON derivation, but Phase 3 no longer reflects video runtime state into the Thing Shadow.
+- `rig` consumes retained MQTT video service topics for REDCON derivation; `board` also mirrors video descriptor/status into the `video` named shadow for readers.
 - The browser operator path uses the AWS KVS viewer flow, not a board-local iframe page.
 - The repo ships the native sender in-tree and supervises it as a child process from `board.video_sender`.
 - Browser-to-board motion control uses board MCP tools with a lease hard gate; the legacy raw `<device_id>/board/cmd_vel` path is removed.

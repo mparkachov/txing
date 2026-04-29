@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://txing.local/schemas/txing-video-shadow.schema.json",
+  "title": "Txing Video Named Shadow Contract v1",
+  "description": "Named shadow 'video' mirrors board video descriptor and status topics.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["state"],
+  "properties": {
+    "state": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["reported"],
+      "properties": {
+        "reported": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["descriptor", "status"],
+          "properties": {
+            "descriptor": {
+              "type": ["object", "null"],
+              "additionalProperties": true,
+              "properties": {
+                "serviceId": {
+                  "const": "video"
+                },
+                "transport": {
+                  "const": "aws-webrtc"
+                },
+                "channelName": {
+                  "type": "string"
+                },
+                "region": {
+                  "type": "string"
+                },
+                "statusTopic": {
+                  "type": "string"
+                }
+              }
+            },
+            "status": {
+              "type": "object",
+              "additionalProperties": true,
+              "required": ["serviceId", "available", "ready", "status", "viewerConnected", "lastError"],
+              "properties": {
+                "serviceId": {
+                  "const": "video"
+                },
+                "available": {
+                  "type": "boolean"
+                },
+                "ready": {
+                  "type": "boolean"
+                },
+                "status": {
+                  "enum": ["starting", "ready", "error", "unavailable"]
+                },
+                "viewerConnected": {
+                  "type": "boolean"
+                },
+                "lastError": {
+                  "type": ["string", "null"]
+                },
+                "updatedAtMs": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "clientToken": {
+      "type": "string"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "timestamp": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

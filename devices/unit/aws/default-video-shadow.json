@@ -1,0 +1,15 @@
+{
+  "state": {
+    "reported": {
+      "descriptor": null,
+      "status": {
+        "serviceId": "video",
+        "available": false,
+        "ready": false,
+        "status": "unavailable",
+        "viewerConnected": false,
+        "lastError": null
+      }
+    }
+  }
+}

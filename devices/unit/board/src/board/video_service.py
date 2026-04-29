@@ -60,6 +60,27 @@ class BoardVideoService:
     def status_topic(self) -> str:
         return self._topics.status
 
+    def build_descriptor_payload(self) -> dict[str, Any]:
+        return dict(self._descriptor_payload)
+
+    def build_status_payload(self, video_state: dict[str, Any] | None) -> dict[str, Any]:
+        normalized = normalize_video_state(
+            video_state,
+            channel_name=self._channel_name,
+        )
+        return build_video_status_payload(
+            available=True,
+            ready=bool(normalized["ready"]),
+            status=normalized["status"],
+            viewer_connected=bool(normalized["viewerConnected"]),
+            last_error=(
+                normalized["lastError"]
+                if isinstance(normalized["lastError"], str)
+                else None
+            ),
+            updated_at_ms=_now_ms(),
+        )
+
     def build_unavailable_status_payload(self) -> bytes:
         return _encode_json(
             build_video_status_payload(
@@ -138,21 +159,4 @@ class BoardVideoService:
         )
 
     def _build_status_payload(self, video_state: dict[str, Any] | None) -> bytes:
-        normalized = normalize_video_state(
-            video_state,
-            channel_name=self._channel_name,
-        )
-        return _encode_json(
-            build_video_status_payload(
-                available=True,
-                ready=bool(normalized["ready"]),
-                status=normalized["status"],
-                viewer_connected=bool(normalized["viewerConnected"]),
-                last_error=(
-                    normalized["lastError"]
-                    if isinstance(normalized["lastError"], str)
-                    else None
-                ),
-                updated_at_ms=_now_ms(),
-            )
-        )
+        return _encode_json(self.build_status_payload(video_state))

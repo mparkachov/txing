@@ -25,6 +25,7 @@ def default_shadow_payload() -> dict[str, Any]:
                     "mcu": {
                         "power": DEFAULT_REPORTED_POWER,
                         "online": DEFAULT_REPORTED_ONLINE,
+                        "bleDeviceId": None,
                     },
                     "board": {
                         "power": DEFAULT_BOARD_POWER,

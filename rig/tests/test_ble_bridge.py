@@ -182,6 +182,8 @@ from rig.sparkplug import (
     decode_redcon_command,
 )
 
+UNIT_CAPABILITIES = ("sparkplug", "device", "mcu", "board", "video")
+
 
 class FakeCloudShadow:
     def __init__(self) -> None:
@@ -220,6 +222,7 @@ class ShadowPayloadTests(unittest.TestCase):
                     "mcu": {
                         "power": True,
                         "online": True,
+                        "bleDeviceId": None,
                     },
                     "board": {
                         "power": True,
@@ -317,6 +320,7 @@ class AwsShadowClientTests(unittest.TestCase):
         )
         client._mqtt = FakeMqtt()
         client._managed_things = ("thing-1",)
+        client._managed_capabilities = {"thing-1": UNIT_CAPABILITIES}
         client._on_message = object()  # type: ignore[assignment]
 
         asyncio.run(client._subscribe_topics(timeout_seconds=7.5))
@@ -336,6 +340,9 @@ class AwsShadowClientTests(unittest.TestCase):
                 ("$aws/things/thing-1/shadow/name/board/get/accepted", 7.5),
                 ("$aws/things/thing-1/shadow/name/board/get/rejected", 7.5),
                 ("$aws/things/thing-1/shadow/name/board/update/accepted", 7.5),
+                ("$aws/things/thing-1/shadow/name/video/get/accepted", 7.5),
+                ("$aws/things/thing-1/shadow/name/video/get/rejected", 7.5),
+                ("$aws/things/thing-1/shadow/name/video/update/accepted", 7.5),
                 ("txings/thing-1/mcp/descriptor", 7.5),
                 ("txings/thing-1/mcp/status", 7.5),
                 ("txings/thing-1/video/descriptor", 7.5),
@@ -379,6 +386,7 @@ class AwsShadowClientTests(unittest.TestCase):
             "device": {"state": {"reported": {"batteryMv": 3729}}, "version": 7},
             "mcu": {"state": {"reported": {"power": True, "online": True}}, "version": 7},
             "board": {"state": {"reported": {"power": True, "wifi": {"online": True}}}, "version": 7},
+            "video": {"state": {"reported": {"descriptor": None, "status": {"available": False}}}, "version": 7},
         }
 
         class FakeConnection:
@@ -448,7 +456,10 @@ class AwsShadowClientTests(unittest.TestCase):
             )
             with patch("unit_rig.ble_bridge.LOGGER.warning") as log_warning:
                 snapshots = asyncio.run(
-                    client.connect_and_get_initial_snapshots(["thing-1"], timeout_seconds=5.0)
+                    client.connect_and_get_initial_snapshots(
+                        {"thing-1": UNIT_CAPABILITIES},
+                        timeout_seconds=5.0,
+                    )
                 )
 
         log_warning.assert_called()
@@ -526,7 +537,10 @@ class AwsShadowClientTests(unittest.TestCase):
             with patch("unit_rig.ble_bridge.asyncio.sleep", fake_sleep):
                 with patch("unit_rig.ble_bridge.LOGGER.warning") as log_warning:
                     snapshots = asyncio.run(
-                        client.connect_and_get_initial_snapshots(["thing-1"], timeout_seconds=5.0)
+                        client.connect_and_get_initial_snapshots(
+                            {"thing-1": UNIT_CAPABILITIES},
+                            timeout_seconds=5.0,
+                        )
                     )
 
         log_warning.assert_called()
@@ -818,8 +832,11 @@ class RigFleetScannerTests(unittest.TestCase):
         class FakeBridge:
             def __init__(self, events: list[str]) -> None:
                 self._config = types.SimpleNamespace(thing_name="txing", scan_timeout=12.0)
-                self._shadow = types.SimpleNamespace(target_redcon=3)
                 self._cached_device_id = "EE:C7:32:0B:1C:6A"
+                self._shadow = types.SimpleNamespace(
+                    target_redcon=3,
+                    ble_device_id=self._cached_device_id,
+                )
                 self._fresh_target = None
                 self._events = events
 
@@ -873,8 +890,11 @@ class RigFleetScannerTests(unittest.TestCase):
         class FakeBridge:
             def __init__(self, events: list[str]) -> None:
                 self._config = types.SimpleNamespace(thing_name="txing", scan_timeout=12.0)
-                self._shadow = types.SimpleNamespace(target_redcon=4)
                 self._cached_device_id = "EE:C7:32:0B:1C:6A"
+                self._shadow = types.SimpleNamespace(
+                    target_redcon=4,
+                    ble_device_id=self._cached_device_id,
+                )
                 self._fresh_target = None
                 self._events = events
 
@@ -1210,7 +1230,7 @@ class RedconTests(unittest.TestCase):
         bridge._shadow.set_reported(True)
         self.assertFalse(bridge._should_idle_disconnected_while_sleeping())
 
-    def test_builds_shadow_state_from_snapshot_using_registry_ble_device_id(self) -> None:
+    def test_builds_shadow_state_from_snapshot_using_mcu_shadow_ble_device_id(self) -> None:
         with TemporaryDirectory() as tmpdir:
             shadow = _build_shadow_from_snapshot(
                 {
@@ -1224,6 +1244,7 @@ class RedconTests(unittest.TestCase):
                                 "mcu": {
                                     "power": True,
                                     "online": True,
+                                    "bleDeviceId": "AA:BB:CC:DD:EE:FF",
                                 },
                                 "board": {
                                     "power": True,
@@ -1236,7 +1257,6 @@ class RedconTests(unittest.TestCase):
                     },
                 },
                 snapshot_file=Path(tmpdir) / "shadow.json",
-                registered_ble_device_id="AA:BB:CC:DD:EE:FF",
             )
 
         self.assertFalse(shadow.board_video_ready)
@@ -1253,6 +1273,7 @@ class RedconTests(unittest.TestCase):
             {
                 "power": True,
                 "online": True,
+                "bleDeviceId": "AA:BB:CC:DD:EE:FF",
             },
         )
 

@@ -31,7 +31,7 @@ class FakeIotClient:
                     "rig": "rig-a",
                     "name": "bot",
                     "shortId": "bbbbbb",
-                    "bleDeviceId": "BB:BB:BB:BB:BB:BB",
+                    "capabilitiesSet": "sparkplug,device,mcu,board,video",
                 },
                 "version": 3,
             },
@@ -43,7 +43,7 @@ class FakeIotClient:
                     "rig": "rig-a",
                     "name": "bot",
                     "shortId": "aaaaaa",
-                    "bleDeviceId": "AA:AA:AA:AA:AA:AA",
+                    "capabilitiesSet": "sparkplug,device,mcu,board,video",
                 },
                 "version": 5,
             },
@@ -52,9 +52,9 @@ class FakeIotClient:
                 "thingTypeName": "unit",
                 "attributes": {
                     "town": "berlin",
-                    "bleDeviceId": "missing-rig",
                     "name": "bot",
                     "shortId": "rigonly",
+                    "capabilitiesSet": "sparkplug,device,mcu,board,video",
                 },
                 "version": 1,
             },
@@ -66,7 +66,7 @@ class FakeIotClient:
                     "rig": "rig-b",
                     "name": "bot",
                     "shortId": "other01",
-                    "bleDeviceId": "DD:DD:DD:DD:DD:DD",
+                    "capabilitiesSet": "sparkplug,device,mcu,board,video",
                 },
                 "version": 2,
             },
@@ -77,6 +77,7 @@ class FakeIotClient:
                     "town": "berlin",
                     "name": "rig-a",
                     "shortId": "rig001",
+                    "capabilitiesSet": "sparkplug",
                 },
                 "version": 4,
             },
@@ -137,9 +138,9 @@ class ThingRegistryTests(unittest.TestCase):
                     thing_type="unit",
                     name="bot",
                     short_id="aaaaaa",
+                    capabilities_set=("sparkplug", "device", "mcu", "board", "video"),
                     town_name="berlin",
                     rig_name="rig-a",
-                    ble_device_id="AA:AA:AA:AA:AA:AA",
                     version=5,
                 ),
                 DeviceRegistration(
@@ -147,9 +148,9 @@ class ThingRegistryTests(unittest.TestCase):
                     thing_type="unit",
                     name="bot",
                     short_id="bbbbbb",
+                    capabilities_set=("sparkplug", "device", "mcu", "board", "video"),
                     town_name="berlin",
                     rig_name="rig-a",
-                    ble_device_id="BB:BB:BB:BB:BB:BB",
                     version=3,
                 ),
             ],
@@ -186,38 +187,6 @@ class ThingRegistryTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "missing required IoT registry attribute 'rig'"):
             registry.describe_thing("rig-only")
 
-    def test_update_ble_device_id_only_merges_ble_device_id(self) -> None:
-        client = FakeIotClient()
-        registry = AwsThingRegistryClient(client)
-
-        registration = registry.update_ble_device_id(
-            "unit-aaaaaa",
-            ble_device_id="CC:CC:CC:CC:CC:CC",
-            expected_version=5,
-        )
-
-        self.assertEqual(
-            client.update_requests[0],
-            {
-                "thingName": "unit-aaaaaa",
-                "attributePayload": {
-                    "attributes": {
-                        "bleDeviceId": "CC:CC:CC:CC:CC:CC",
-                    },
-                    "merge": True,
-                },
-                "expectedVersion": 5,
-            },
-        )
-        self.assertEqual(registration.device_id, "unit-aaaaaa")
-        self.assertEqual(registration.town_name, "berlin")
-        self.assertEqual(registration.rig_name, "rig-a")
-        self.assertEqual(registration.thing_type, "unit")
-        self.assertEqual(registration.name, "bot")
-        self.assertEqual(registration.short_id, "aaaaaa")
-        self.assertEqual(registration.ble_device_id, "CC:CC:CC:CC:CC:CC")
-        self.assertEqual(registration.version, 6)
-
     def test_describe_rig_in_town_returns_matching_rig_thing(self) -> None:
         client = FakeIotClient()
         registry = AwsThingRegistryClient(client)
@@ -233,6 +202,7 @@ class ThingRegistryTests(unittest.TestCase):
         self.assertEqual(registration.short_id, "rig001")
         self.assertEqual(registration.town_name, "berlin")
         self.assertEqual(registration.rig_name, "rig-a")
+        self.assertEqual(registration.capabilities_set, ("sparkplug",))
 
 
 if __name__ == "__main__":

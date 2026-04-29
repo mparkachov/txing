@@ -14,6 +14,12 @@ from .device_catalog import (
     discover_repo_root,
     load_device_manifest,
 )
+from .thing_capabilities import (
+    CAPABILITIES_ATTRIBUTE,
+    capabilities_for_thing_type,
+    encode_capabilities_set,
+    parse_capabilities_set,
+)
 
 
 THING_INDEX_NAME = "AWS_Things"
@@ -114,9 +120,9 @@ class ThingRegistration:
     thing_type: str
     name: str
     short_id: str
+    capabilities_set: tuple[str, ...]
     town_name: str | None = None
     rig_name: str | None = None
-    ble_device_id: str | None = None
     version: int | None = None
 
     @property
@@ -163,6 +169,10 @@ class AwsDeviceRegistry:
         )
         name = _require_registry_attribute(attributes, "name", thing_name=thing_name)
         short_id = _require_registry_attribute(attributes, "shortId", thing_name=thing_name)
+        capabilities_set = parse_capabilities_set(
+            attributes.get(CAPABILITIES_ATTRIBUTE),
+            thing_name=thing_name,
+        )
         town_name: str | None = None
         rig_name: str | None = None
         if thing_type == RIG_THING_TYPE:
@@ -175,9 +185,9 @@ class AwsDeviceRegistry:
             thing_type=thing_type,
             name=name,
             short_id=short_id,
+            capabilities_set=capabilities_set,
             town_name=town_name,
             rig_name=rig_name,
-            ble_device_id=normalize_registry_text(attributes.get("bleDeviceId")),
             version=response.get("version"),
         )
 
@@ -453,10 +463,11 @@ class AwsDeviceRegistry:
         thing_name: str,
         *,
         manifest: DeviceManifest,
+        capabilities_set: tuple[str, ...],
     ) -> bool:
         aws_dir = manifest.device_dir / "aws"
         initialized = False
-        for shadow_name in ("sparkplug", "device", "mcu", "board"):
+        for shadow_name in capabilities_set:
             initialized = (
                 self.ensure_shadow_initialized(
                     thing_name,
@@ -522,6 +533,10 @@ class AwsDeviceRegistry:
         town_name: str,
     ) -> ThingRegistration:
         normalized_town_name = _normalize_slug("town", town_name)
+        capabilities_set = capabilities_for_thing_type(
+            TOWN_THING_TYPE,
+            repo_root=self._repo_root,
+        )
         self.ensure_thing_type(
             TOWN_THING_TYPE,
             searchable_attributes=TOWN_THING_SEARCHABLE_ATTRIBUTES,
@@ -535,6 +550,7 @@ class AwsDeviceRegistry:
                 "attributes": {
                     "name": normalized_town_name,
                     "shortId": short_id,
+                    CAPABILITIES_ATTRIBUTE: encode_capabilities_set(capabilities_set),
                 }
             },
         )
@@ -550,6 +566,10 @@ class AwsDeviceRegistry:
     ) -> ThingRegistration:
         normalized_town_name = _normalize_slug("town", town_name)
         normalized_rig_name = _normalize_slug("rig", rig_name)
+        capabilities_set = capabilities_for_thing_type(
+            RIG_THING_TYPE,
+            repo_root=self._repo_root,
+        )
         self.describe_town_by_name(normalized_town_name)
         self.ensure_thing_type(
             RIG_THING_TYPE,
@@ -565,6 +585,7 @@ class AwsDeviceRegistry:
                     "name": normalized_rig_name,
                     "shortId": short_id,
                     "town": normalized_town_name,
+                    CAPABILITIES_ATTRIBUTE: encode_capabilities_set(capabilities_set),
                 }
             },
         )
@@ -584,6 +605,10 @@ class AwsDeviceRegistry:
         normalized_town_name = _normalize_slug("town", town_name)
         normalized_rig_name = _normalize_slug("rig", rig_name)
         normalized_device_type = _normalize_slug("device type", manifest.type)
+        capabilities_set = capabilities_for_thing_type(
+            normalized_device_type,
+            repo_root=self._repo_root,
+        )
         self.describe_town_by_name(normalized_town_name)
         self.describe_rig_by_name(
             town_name=normalized_town_name,
@@ -604,12 +629,17 @@ class AwsDeviceRegistry:
                     "rig": normalized_rig_name,
                     "name": manifest.device_name,
                     "shortId": short_id,
+                    CAPABILITIES_ATTRIBUTE: encode_capabilities_set(capabilities_set),
                 }
             },
         )
         self.ensure_town_group(normalized_town_name)
         self.ensure_rig_group(normalized_rig_name)
-        self.ensure_device_shadow_initialized(thing_name, manifest=manifest)
+        self.ensure_device_shadow_initialized(
+            thing_name,
+            manifest=manifest,
+            capabilities_set=capabilities_set,
+        )
         self.ensure_auxiliary_resources(thing_name, manifest=manifest)
         return self.describe_device(thing_name)
 

@@ -9,7 +9,7 @@ Status note:
 - `rig` now acts as the lifecycle service in the same process.
 - Sparkplug `DCMD.redcon` is the authoritative lifecycle command path.
 - The `txing` Thing Shadow remains the reflected operational document and restart cache.
-- Stable rig assignment and BLE reconnect metadata now live in AWS IoT thing attributes, not in the shadow.
+- Stable rig assignment and capability discovery live in AWS IoT thing attributes. BLE reconnect metadata lives in the `mcu` named shadow.
 - For the broader design context, see `docs/sparkplug-lifecycle.md`.
 
 ## 1. Scope
@@ -26,12 +26,12 @@ Authoritative shadow schemas:
 High-level architecture:
 - Sparkplug host -> AWS IoT MQTT -> rig -> BLE -> mcu
 - rig -> AWS IoT Thing Shadow reflection/cache
-- rig -> AWS IoT thing registry metadata (`attributes.rig`, `attributes.bleDeviceId`)
+- rig -> AWS IoT thing registry metadata (`attributes.rig`, `attributes.capabilitiesSet`)
 
 ## 2. Ownership
 
 - `rig` is the source of truth for the `sparkplug`, `device`, and `mcu` named shadows.
-- Video runtime state is not in Thing Shadow; rig reads retained MQTT video service state from the board.
+- Video runtime state is mirrored into the `video` named shadow for readers, while rig still reads retained MQTT video service state from the board for REDCON derivation.
 - In the current implementation the lifecycle reflection metric is `sparkplug.state.reported.redcon`.
 - `rig` is the only component that accepts lifecycle intent from Sparkplug and tracks unresolved intent as in-memory pending REDCON state only.
 - There is no shadow-based board power actuator.
@@ -52,7 +52,7 @@ Firmware behavior:
 - `power=true`: stay in the wakeup state, continue advertising when disconnected, and keep the BLE link available for a live session
 
 Rig behavior:
-- keep AWS IoT registry attributes for rig assignment and the last known BLE identity
+- keep AWS IoT registry attributes for rig assignment and capabilities, and keep the last known BLE identity in the `mcu` named shadow
 - keep scanning while disconnected
 - while the MCU is in the sleep state, observe the periodic advertising windows to maintain BLE presence and reconnect during a rendezvous window only when a BLE session is needed
 - while the MCU is in the wakeup state, keep a live BLE session available when possible
@@ -81,7 +81,8 @@ Shadow type: named Thing Shadows (`$aws/things/txing/shadow/name/<shadowName>/*`
         "batteryMv": 3750,
         "mcu": {
           "power": false,
-          "online": false
+          "online": false,
+          "bleDeviceId": null
         }
       }
     }
@@ -103,14 +104,15 @@ Field semantics:
 - `state.mcu reported.power=true` means "MCU is in the wakeup state".
 - `state.mcu reported.power=false` means "MCU is in the sleep state with periodic BLE rendezvous wakeups".
 - `state.mcu reported.online` is `true` only after the MCU has shown sustained BLE reachability, either by staying connected or by advertising regularly for the configured recovery window.
+- `state.mcu reported.bleDeviceId` is the last observed BLE identity address and is the fast-reconnect source of truth.
 - `rig` reads retained MCP availability from `txings/<device_id>/mcp/status` and retained video readiness from `txings/<device_id>/video/status` as the readiness inputs for `sparkplug reported.redcon`.
-- Phase 3 removes `state.reported.video.*` from the shadow contract. Video runtime state stays on retained MQTT for rig readiness and on board MCP `robot.get_state` for clients.
+- The `video` named shadow mirrors board video descriptor/status for readers. Retained MQTT remains the rig REDCON input, and board MCP `robot.get_state` remains the browser runtime state path.
 - Phase 3 removes `state.reported.drive.*` from the shadow contract. Current motion state is read from board MCP `robot.get_state`.
 - `rig` emits `DBIRTH` when BLE reachability reaches the same sustained-online condition that drives `mcu reported.online=true`.
 - `rig` emits `DDEATH` when BLE reachability times out, forces `sparkplug reported.redcon=4`, and clears the in-memory pending REDCON target.
 - AWS IoT registry attributes:
   - `attributes.rig` is the authoritative rig assignment used to populate the dynamic AWS IoT thing group that the rig reads on restart.
-  - `attributes.bleDeviceId` is the last known BLE identity address written by rig after a successful BLE association and used as the primary reconnect hint on the next restart.
+  - `attributes.capabilitiesSet` advertises supported named shadows and is generated from `shared/aws/thing-type-capabilities.json` during registration.
   - legacy shadow metadata fields `reported.bleDeviceId` and `reported.homeRig` are ignored by runtime.
 
 ## 4A. Sparkplug Contract

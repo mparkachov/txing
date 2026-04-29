@@ -1,0 +1,5 @@
+{
+  "town": ["sparkplug"],
+  "rig": ["sparkplug"],
+  "unit": ["sparkplug", "device", "mcu", "board", "video"]
+}

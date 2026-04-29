@@ -23,6 +23,7 @@ from aws.auth import AwsRuntime, build_aws_runtime, ensure_aws_profile, resolve_
 from aws.device_registry import normalize_registry_text
 from aws.mcp_topics import MCP_DEFAULT_LEASE_TTL_MS
 from aws.mqtt import AwsIotWebsocketSyncConnection, AwsMqttConnectionConfig
+from aws.thing_capabilities import CAPABILITIES_ATTRIBUTE, parse_capabilities_set
 
 from .cmd_vel import CmdVelController, MAX_SPEED
 from .mcp_service import BoardMcpServer
@@ -110,7 +111,9 @@ DEFAULT_UNIT_DIR = REPO_ROOT / "devices" / "unit"
 DEFAULT_AWS_DIR = DEFAULT_UNIT_DIR / "aws"
 DEFAULT_THING_NAME = "unit-local"
 DEFAULT_SCHEMA_FILE = DEFAULT_AWS_DIR / "board-shadow.schema.json"
+DEFAULT_VIDEO_SCHEMA_FILE = DEFAULT_AWS_DIR / "video-shadow.schema.json"
 BOARD_SHADOW_NAME = "board"
+VIDEO_SHADOW_NAME = "video"
 DEFAULT_AWS_CONNECT_TIMEOUT = 20.0
 DEFAULT_MQTT_PUBLISH_TIMEOUT = 10.0
 DEFAULT_HEARTBEAT_SECONDS = 60.0
@@ -227,7 +230,9 @@ class ControlConfig:
     iot_endpoint: str
     sparkplug_group_id: str
     sparkplug_edge_node_id: str
+    capabilities_set: tuple[str, ...]
     schema_file: Path
+    video_schema_file: Path
     shadow_file: Path
     client_id: str
     video_channel_name: str
@@ -265,6 +270,13 @@ class DefaultRouteAddresses:
     ipv6: str | None
 
 
+@dataclass(frozen=True)
+class SparkplugAssignment:
+    town_name: str
+    rig_name: str
+    capabilities_set: tuple[str, ...]
+
+
 def _build_sparkplug_device_command_topic(
     *,
     group_id: str,
@@ -286,16 +298,10 @@ class AwsShadowClient:
     ) -> None:
         self._config = config
         self._aws_runtime = aws_runtime
-        self._topic_prefix = f"$aws/things/{config.thing_name}/shadow/name/{BOARD_SHADOW_NAME}"
-        self._topic_get = f"{self._topic_prefix}/get"
-        self._topic_get_accepted = f"{self._topic_prefix}/get/accepted"
-        self._topic_get_rejected = f"{self._topic_prefix}/get/rejected"
-        self._topic_update = f"{self._topic_prefix}/update"
-        self._topic_update_accepted = (
-            f"{self._topic_prefix}/update/accepted"
-        )
-        self._topic_update_rejected = (
-            f"{self._topic_prefix}/update/rejected"
+        self._shadow_names = tuple(
+            shadow_name
+            for shadow_name in (BOARD_SHADOW_NAME, VIDEO_SHADOW_NAME)
+            if shadow_name in config.capabilities_set
         )
         self._sparkplug_command_topic = _build_sparkplug_device_command_topic(
             group_id=config.sparkplug_group_id,
@@ -329,6 +335,7 @@ class AwsShadowClient:
         self._response_done = threading.Event()
         self._connection_ready = False
         self._pending_token: str | None = None
+        self._pending_shadow_name: str | None = None
         self._pending_error: RuntimeError | None = None
         self._pending_response: dict[str, Any] | None = None
         self._disconnect_requested = False
@@ -341,6 +348,12 @@ class AwsShadowClient:
                 max_workers=1,
                 thread_name_prefix="board-mcp-dispatch",
             )
+
+    def _shadow_topic_prefix(self, shadow_name: str) -> str:
+        return f"$aws/things/{self._config.thing_name}/shadow/name/{shadow_name}"
+
+    def _shadow_topic(self, shadow_name: str, operation: str) -> str:
+        return f"{self._shadow_topic_prefix(shadow_name)}/{operation}"
 
     def ensure_connected(self, *, timeout_seconds: float) -> None:
         with self._lock:
@@ -389,13 +402,18 @@ class AwsShadowClient:
             self._config.client_id,
         )
         try:
-            for topic in (
-                self._topic_get_accepted,
-                self._topic_get_rejected,
-                self._topic_update_accepted,
-                self._topic_update_rejected,
-                self._sparkplug_command_topic,
-            ):
+            topics: list[str] = []
+            for shadow_name in self._shadow_names:
+                topics.extend(
+                    [
+                        self._shadow_topic(shadow_name, "get/accepted"),
+                        self._shadow_topic(shadow_name, "get/rejected"),
+                        self._shadow_topic(shadow_name, "update/accepted"),
+                        self._shadow_topic(shadow_name, "update/rejected"),
+                    ]
+                )
+            topics.append(self._sparkplug_command_topic)
+            for topic in topics:
                 client.subscribe(
                     topic,
                     self._on_message,
@@ -440,41 +458,51 @@ class AwsShadowClient:
         self,
         payload: dict[str, Any],
         *,
+        shadow_name: str = BOARD_SHADOW_NAME,
         timeout_seconds: float,
     ) -> dict[str, Any]:
+        if shadow_name not in self._shadow_names:
+            raise RuntimeError(
+                f"Thing {self._config.thing_name!r} does not support named shadow {shadow_name!r}"
+            )
         token = f"{self._config.client_id}-{os.getpid()}-{int(datetime.now(UTC).timestamp() * 1000)}"
         envelope = dict(payload)
         envelope["clientToken"] = token
 
         with self._lock:
             self._pending_token = token
+            self._pending_shadow_name = shadow_name
             self._pending_error = None
             self._pending_response = None
             self._response_done.clear()
 
         encoded_payload = json.dumps(envelope, sort_keys=True)
+        update_topic = self._shadow_topic(shadow_name, "update")
         with self._lock:
             client = self._client if self._connection_ready else None
         if client is None:
             with self._lock:
                 self._pending_token = None
+                self._pending_shadow_name = None
             raise RuntimeError("AWS IoT MQTT is not connected")
         try:
             client.publish(
-                self._topic_update,
+                update_topic,
                 encoded_payload,
                 timeout_seconds=timeout_seconds,
             )
         except Exception as err:
             with self._lock:
                 self._pending_token = None
+                self._pending_shadow_name = None
             raise RuntimeError(
-                f"failed to publish shadow update to {self._topic_update}: {err}"
+                f"failed to publish shadow update to {update_topic}: {err}"
             ) from err
 
         if not self._response_done.wait(timeout_seconds):
             with self._lock:
                 self._pending_token = None
+                self._pending_shadow_name = None
             raise RuntimeError(
                 f"timed out waiting for shadow update response after {timeout_seconds:.1f}s"
             )
@@ -483,6 +511,7 @@ class AwsShadowClient:
             error = self._pending_error
             response = self._pending_response
             self._pending_token = None
+            self._pending_shadow_name = None
             self._pending_error = None
             self._pending_response = None
 
@@ -628,8 +657,13 @@ class AwsShadowClient:
             LOGGER.warning("Ignored non-JSON MQTT message on topic %s", topic)
             return
 
-        if topic == self._topic_get_rejected:
-            LOGGER.warning("Shadow get rejected: %s", json.dumps(payload, sort_keys=True))
+        rejected_get_shadow_name = self._match_shadow_topic(topic, "get/rejected")
+        if rejected_get_shadow_name is not None:
+            LOGGER.warning(
+                "Shadow get rejected for %s: %s",
+                rejected_get_shadow_name,
+                json.dumps(payload, sort_keys=True),
+            )
             return
 
         token = payload.get("clientToken")
@@ -639,10 +673,11 @@ class AwsShadowClient:
         with self._lock:
             if token != self._pending_token:
                 return
+            pending_shadow_name = self._pending_shadow_name
 
-            if topic == self._topic_update_accepted:
+            if pending_shadow_name is not None and topic == self._shadow_topic(pending_shadow_name, "update/accepted"):
                 self._pending_response = payload
-            elif topic == self._topic_update_rejected:
+            elif pending_shadow_name is not None and topic == self._shadow_topic(pending_shadow_name, "update/rejected"):
                 self._pending_error = RuntimeError(
                     f"shadow update rejected: {json.dumps(payload, sort_keys=True)}"
                 )
@@ -650,6 +685,12 @@ class AwsShadowClient:
                 return
 
         self._response_done.set()
+
+    def _match_shadow_topic(self, topic: str, operation: str) -> str | None:
+        for shadow_name in self._shadow_names:
+            if topic == self._shadow_topic(shadow_name, operation):
+                return shadow_name
+        return None
 
     def _observe_sparkplug_redcon_command(
         self,
@@ -684,14 +725,14 @@ class AwsShadowClient:
             return
         try:
             client.publish(
-                self._topic_get,
+                self._shadow_topic(BOARD_SHADOW_NAME, "get"),
                 "{}",
                 timeout_seconds=self._config.publish_timeout,
             )
         except Exception as err:
             LOGGER.warning(
                 "Failed to request current shadow snapshot on %s: %s",
-                self._topic_get,
+                self._shadow_topic(BOARD_SHADOW_NAME, "get"),
                 err,
             )
 
@@ -1102,7 +1143,7 @@ def _describe_sparkplug_assignment(
     aws_runtime: AwsRuntime,
     *,
     thing_name: str,
-) -> tuple[str, str]:
+) -> SparkplugAssignment:
     response = aws_runtime.iot_client().describe_thing(thingName=thing_name)
     attributes = response.get("attributes") or {}
     if not isinstance(attributes, dict):
@@ -1119,7 +1160,19 @@ def _describe_sparkplug_assignment(
         raise RuntimeError(
             f"Thing {thing_name!r} is missing required IoT registry attribute 'rig'"
         )
-    return town_name, rig_name
+    capabilities_set = parse_capabilities_set(
+        attributes.get(CAPABILITIES_ATTRIBUTE),
+        thing_name=thing_name,
+    )
+    if BOARD_SHADOW_NAME not in capabilities_set:
+        raise RuntimeError(
+            f"Thing {thing_name!r} capabilitiesSet does not include 'board'"
+        )
+    return SparkplugAssignment(
+        town_name=town_name,
+        rig_name=rig_name,
+        capabilities_set=capabilities_set,
+    )
 
 
 def _build_board_report(
@@ -1341,6 +1394,41 @@ def _publish_board_report(
     return accepted
 
 
+def _build_video_shadow_report(
+    *,
+    video_service: BoardVideoService,
+    video_state: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "descriptor": video_service.build_descriptor_payload(),
+        "status": video_service.build_status_payload(video_state),
+    }
+
+
+def _publish_video_shadow_report(
+    *,
+    shadow_client: AwsShadowClient,
+    validator: jsonschema.Draft202012Validator,
+    config: ControlConfig,
+    video_service: BoardVideoService,
+    video_state: dict[str, Any],
+) -> dict[str, Any] | None:
+    if VIDEO_SHADOW_NAME not in config.capabilities_set:
+        return None
+    payload = _build_shadow_update(
+        _build_video_shadow_report(
+            video_service=video_service,
+            video_state=video_state,
+        )
+    )
+    _validate_shadow_update(validator, payload)
+    return shadow_client.publish_update(
+        payload,
+        shadow_name=VIDEO_SHADOW_NAME,
+        timeout_seconds=config.publish_timeout,
+    )
+
+
 def _build_cmd_vel_motor_driver(config: ControlConfig) -> PercentMotorDriverAdapter:
     if config.drive_cmd_raw_min_speed < 0:
         raise ValueError("drive_cmd_raw_min_speed must be non-negative")
@@ -1409,11 +1497,12 @@ def main() -> None:
             raise RuntimeError("could not resolve AWS region for AWS IoT access")
         aws_runtime = build_aws_runtime(region_name=aws_region)
         iot_endpoint = aws_runtime.iot_data_endpoint()
-        sparkplug_group_id, sparkplug_edge_node_id = _describe_sparkplug_assignment(
+        sparkplug_assignment = _describe_sparkplug_assignment(
             aws_runtime,
             thing_name=args.thing_name,
         )
         _require_file(args.schema_file, "Thing Shadow schema file")
+        _require_file(DEFAULT_VIDEO_SCHEMA_FILE, "Video Thing Shadow schema file")
         video_sender_command = _require_non_empty_option(
             args.video_sender_command,
             "--video-sender-command",
@@ -1443,9 +1532,11 @@ def main() -> None:
             thing_name=args.thing_name,
             aws_region=aws_region,
             iot_endpoint=iot_endpoint,
-            sparkplug_group_id=sparkplug_group_id,
-            sparkplug_edge_node_id=sparkplug_edge_node_id,
+            sparkplug_group_id=sparkplug_assignment.town_name,
+            sparkplug_edge_node_id=sparkplug_assignment.rig_name,
+            capabilities_set=sparkplug_assignment.capabilities_set,
             schema_file=args.schema_file,
+            video_schema_file=DEFAULT_VIDEO_SCHEMA_FILE,
             shadow_file=args.shadow_file,
             client_id=client_id,
             video_channel_name=video_channel_name,
@@ -1476,7 +1567,8 @@ def main() -> None:
             mcp_webrtc_socket_file=None if args.disable_mcp_webrtc else args.mcp_webrtc_socket_file,
             once=args.once,
         )
-        validator = _load_validator(config.schema_file)
+        board_validator = _load_validator(config.schema_file)
+        video_validator = _load_validator(config.video_schema_file)
         motor_driver = _build_cmd_vel_motor_driver(config)
     except (RuntimeError, ValueError) as err:
         print(f"board start failed: {err}", file=sys.stderr)
@@ -1568,6 +1660,13 @@ def main() -> None:
                 )
                 current_video_state = _read_video_state(video_supervisor)
                 _publish_video_status(video_service, current_video_state)
+                _publish_video_shadow_report(
+                    shadow_client=shadow_client,
+                    validator=video_validator,
+                    config=config,
+                    video_service=video_service,
+                    video_state=current_video_state,
+                )
                 last_published_video_state = current_video_state
                 last_video_status_publish_monotonic = time.monotonic()
                 default_route_addresses = _detect_default_route_addresses()
@@ -1577,7 +1676,7 @@ def main() -> None:
                 )
                 _publish_board_report(
                     shadow_client=shadow_client,
-                    validator=validator,
+                    validator=board_validator,
                     config=config,
                     report=report,
                 )
@@ -1653,6 +1752,13 @@ def main() -> None:
                 video_supervisor.ensure_running()
                 if video_changed or video_status_due:
                     _publish_video_status(video_service, current_video_state)
+                    _publish_video_shadow_report(
+                        shadow_client=shadow_client,
+                        validator=video_validator,
+                        config=config,
+                        video_service=video_service,
+                        video_state=current_video_state,
+                    )
                     last_published_video_state = current_video_state
                     last_video_status_publish_monotonic = time.monotonic()
                 if not heartbeat_due:
@@ -1664,7 +1770,7 @@ def main() -> None:
                 )
                 _publish_board_report(
                     shadow_client=shadow_client,
-                    validator=validator,
+                    validator=board_validator,
                     config=config,
                     report=report,
                 )
@@ -1694,7 +1800,7 @@ def main() -> None:
                 report = _build_shutdown_board_report()
                 _publish_board_report(
                     shadow_client=shadow_client,
-                    validator=validator,
+                    validator=board_validator,
                     config=config,
                     report=report,
                 )

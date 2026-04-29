@@ -2,7 +2,8 @@
   "state": {
     "reported": {
       "power": false,
-      "online": false
+      "online": false,
+      "bleDeviceId": null
     }
   }
 }

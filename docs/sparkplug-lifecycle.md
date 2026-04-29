@@ -8,7 +8,7 @@
 - Edge model: `rig` is the Sparkplug edge node
 - Device model: each physical `txing` is one Sparkplug device and one AWS IoT thing
 - Shadow role: reflection and restart cache only, not the authoritative intent transport
-- Registry role: `attributes.rig` and `attributes.bleDeviceId` carry stable per-txing rig assignment and BLE reconnect metadata
+- Registry role: `attributes.rig` carries stable per-txing rig assignment, and `attributes.capabilitiesSet` advertises supported named shadows. BLE reconnect identity lives in the `mcu` named shadow.
 
 ## Current Decisions
 
@@ -142,12 +142,12 @@ Semantics:
   - `attributes.shortId`
   - `attributes.rig`
   - `attributes.town`
-  - `attributes.bleDeviceId`
+  - `attributes.capabilitiesSet`
 - The searchable/indexed subset is narrower:
   - `attributes.name` on all thing types
   - `attributes.town` on `rig` and device things
   - `attributes.rig` on device things
-  - `attributes.shortId` and `attributes.bleDeviceId` remain metadata only
+  - `attributes.shortId` and `attributes.capabilitiesSet` remain non-searchable metadata only
 
 Example reflected txing shadow shape:
 
@@ -159,7 +159,8 @@ Example reflected txing shadow shape:
       "device": {
         "batteryMv": 3972,
         "mcu": {
-          "power": true
+          "power": true,
+          "bleDeviceId": "AA:BB:CC:DD:EE:FF"
         },
         "board": {
           "power": true,

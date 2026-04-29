@@ -4,6 +4,11 @@ from dataclasses import dataclass
 import logging
 from typing import Any
 
+from aws.thing_capabilities import (
+    CAPABILITIES_ATTRIBUTE,
+    parse_capabilities_set,
+)
+
 LOGGER = logging.getLogger("rig.thing_registry")
 
 
@@ -19,7 +24,7 @@ class ThingRegistration:
     short_id: str
     town_name: str
     rig_name: str
-    ble_device_id: str | None = None
+    capabilities_set: tuple[str, ...]
     version: int | None = None
 
     @property
@@ -129,6 +134,10 @@ class AwsThingRegistryClient:
                 short_id=short_id,
                 town_name=town_name,
                 rig_name=rig_name,
+                capabilities_set=parse_capabilities_set(
+                    attributes.get(CAPABILITIES_ATTRIBUTE),
+                    thing_name=thing_name,
+                ),
                 version=response.get("version"),
             )
         raise RuntimeError(
@@ -163,6 +172,13 @@ class AwsThingRegistryClient:
             raise RuntimeError(
                 f"Thing {thing_name!r} is missing required IoT registry attribute 'shortId'"
             )
+        try:
+            capabilities_set = parse_capabilities_set(
+                attributes.get(CAPABILITIES_ATTRIBUTE),
+                thing_name=thing_name,
+            )
+        except RuntimeError as exc:
+            raise RuntimeError(str(exc)) from exc
         return ThingRegistration(
             thing_name=thing_name,
             thing_type=thing_type,
@@ -170,32 +186,9 @@ class AwsThingRegistryClient:
             short_id=short_id,
             town_name=town_name,
             rig_name=rig_name,
-            ble_device_id=normalize_registry_text(attributes.get("bleDeviceId")),
+            capabilities_set=capabilities_set,
             version=response.get("version"),
         )
-
-    def update_ble_device_id(
-        self,
-        thing_name: str,
-        *,
-        ble_device_id: str | None,
-        expected_version: int | None = None,
-    ) -> ThingRegistration:
-        attributes: dict[str, str] = {}
-        if ble_device_id is not None:
-            attributes["bleDeviceId"] = ble_device_id
-
-        request: dict[str, Any] = {
-            "thingName": thing_name,
-            "attributePayload": {
-                "attributes": attributes,
-                "merge": True,
-            },
-        }
-        if expected_version is not None:
-            request["expectedVersion"] = expected_version
-        self._client.update_thing(**request)
-        return self.describe_thing(thing_name)
 
     def assign_device(
         self,

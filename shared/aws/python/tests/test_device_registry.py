@@ -50,6 +50,7 @@ class _FakeIotClient:
                 "attributes": {
                     "name": "berlin",
                     "shortId": "ber001",
+                    "capabilitiesSet": "sparkplug",
                 },
                 "version": 1,
             },
@@ -60,6 +61,7 @@ class _FakeIotClient:
                     "name": "rig-a",
                     "shortId": "rig001",
                     "town": "berlin",
+                    "capabilitiesSet": "sparkplug",
                 },
                 "version": 1,
             },
@@ -71,6 +73,7 @@ class _FakeIotClient:
                     "rig": "rig-a",
                     "name": "bot",
                     "shortId": "aaaaaa",
+                    "capabilitiesSet": "sparkplug,device,mcu,board,video",
                 },
                 "version": 1,
             },
@@ -82,6 +85,7 @@ class _FakeIotClient:
                     "rig": "rig-a",
                     "name": "bot",
                     "shortId": "z9x8w7",
+                    "capabilitiesSet": "sparkplug,device,mcu,board,video",
                 },
                 "version": 7,
             },
@@ -309,6 +313,7 @@ class DeviceRegistryTests(unittest.TestCase):
                     "attributes": {
                         "name": "berlin",
                         "shortId": "town01",
+                        "capabilitiesSet": "sparkplug",
                     }
                 },
             },
@@ -357,6 +362,7 @@ class DeviceRegistryTests(unittest.TestCase):
                         "name": "rig-a",
                         "shortId": "rig002",
                         "town": "berlin",
+                        "capabilitiesSet": "sparkplug",
                     }
                 },
             },
@@ -427,6 +433,7 @@ class DeviceRegistryTests(unittest.TestCase):
                         "rig": "rig-a",
                         "name": "bot",
                         "shortId": "bbbbbb",
+                        "capabilitiesSet": "sparkplug,device,mcu,board,video",
                     }
                 },
             },
@@ -452,6 +459,7 @@ class DeviceRegistryTests(unittest.TestCase):
                 ("unit-bbbbbb", "device"),
                 ("unit-bbbbbb", "mcu"),
                 ("unit-bbbbbb", "board"),
+                ("unit-bbbbbb", "video"),
             ],
         )
         self.assertEqual(runtime.iot_data.update_requests[0][0], "unit-bbbbbb")
@@ -498,20 +506,22 @@ class DeviceRegistryTests(unittest.TestCase):
         runtime.iot._things["town-muc001"] = {
             "thingName": "town-muc001",
             "thingTypeName": "town",
-            "attributes": {
-                "name": "munich",
-                "shortId": "muc001",
-            },
+                "attributes": {
+                    "name": "munich",
+                    "shortId": "muc001",
+                    "capabilitiesSet": "sparkplug",
+                },
             "version": 1,
         }
         runtime.iot._things["rig-rig002"] = {
             "thingName": "rig-rig002",
             "thingTypeName": "rig",
-            "attributes": {
-                "name": "rig-b",
-                "shortId": "rig002",
-                "town": "munich",
-            },
+                "attributes": {
+                    "name": "rig-b",
+                    "shortId": "rig002",
+                    "town": "munich",
+                    "capabilitiesSet": "sparkplug",
+                },
             "version": 1,
         }
         registry = AwsDeviceRegistry(runtime, repo_root=REPO_ROOT)

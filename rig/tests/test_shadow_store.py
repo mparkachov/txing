@@ -21,6 +21,7 @@ class ShadowStoreTests(unittest.TestCase):
             {
                 "power": False,
                 "online": False,
+                "bleDeviceId": None,
             },
         )
         self.assertEqual(get_reported_battery_mv(payload), 3750)
@@ -41,19 +42,21 @@ class ShadowStoreTests(unittest.TestCase):
 
         self.assertEqual(get_reported_battery_mv(payload), 3999)
 
-    def test_default_shadow_payload_does_not_expose_registry_metadata(self) -> None:
+    def test_ble_device_id_lives_under_mcu_state(self) -> None:
         payload = {
             "state": {
                 "reported": {
                     "device": {
-                        "bleDeviceId": "AA:BB:CC:DD:EE:FF",
+                        "mcu": {
+                            "bleDeviceId": "AA:BB:CC:DD:EE:FF",
+                        },
                     },
                 },
             },
         }
 
-        self.assertNotIn("bleDeviceId", default_shadow_payload()["state"]["reported"]["device"])
-        self.assertIn("bleDeviceId", payload["state"]["reported"]["device"])
+        self.assertIn("bleDeviceId", default_shadow_payload()["state"]["reported"]["device"]["mcu"])
+        self.assertIn("bleDeviceId", payload["state"]["reported"]["device"]["mcu"])
 
 
 if __name__ == "__main__":

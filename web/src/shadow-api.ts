@@ -1,6 +1,7 @@
 import type { Twist } from './cmd-vel'
 import type { McpTransportKind } from './mcp-descriptor'
 import type { SparkplugRedconSource } from './sparkplug-device-redcon'
+import type { ShadowName } from './shadow-protocol'
 
 export type ShadowConnectionState = 'idle' | 'connecting' | 'connected' | 'error'
 type ResolveIdToken = () => Promise<string>
@@ -38,6 +39,7 @@ export type ShadowSessionOptions = {
   awsRegion: string
   sparkplugGroupId: string
   sparkplugEdgeNodeId: string
+  capabilitiesSet: readonly ShadowName[]
   resolveIdToken: ResolveIdToken
   onShadowDocument: (shadow: unknown, operation: 'get' | 'update') => void
   onSparkplugBatteryMvChange: (batteryMv: number) => void

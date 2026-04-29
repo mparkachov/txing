@@ -47,6 +47,7 @@ describe('catalog api helpers', () => {
           attributes: {
             name: 'alpha',
             shortId: 'a1',
+            capabilitiesSet: 'sparkplug',
           },
         },
         {
@@ -55,6 +56,7 @@ describe('catalog api helpers', () => {
           attributes: {
             name: 'bravo',
             shortId: 'b3',
+            capabilitiesSet: 'sparkplug',
           },
         },
         {
@@ -63,6 +65,7 @@ describe('catalog api helpers', () => {
           attributes: {
             name: 'zulu',
             shortId: 'z9',
+            capabilitiesSet: 'sparkplug',
           },
         },
       ],
@@ -73,16 +76,19 @@ describe('catalog api helpers', () => {
         thingName: 'rig-a1',
         rigName: 'alpha',
         shortId: 'a1',
+        capabilitiesSet: ['sparkplug'],
       },
       {
         thingName: 'rig-b3',
         rigName: 'bravo',
         shortId: 'b3',
+        capabilitiesSet: ['sparkplug'],
       },
       {
         thingName: 'rig-z9',
         rigName: 'zulu',
         shortId: 'z9',
+        capabilitiesSet: ['sparkplug'],
       },
     ])
   })
@@ -105,6 +111,7 @@ describe('catalog api helpers', () => {
           attributes: {
             name: 'bot',
             shortId: 'a1',
+            capabilitiesSet: 'sparkplug,device,mcu,board,video',
           },
         },
         {
@@ -113,6 +120,7 @@ describe('catalog api helpers', () => {
           attributes: {
             name: 'crawler',
             shortId: 'b3',
+            capabilitiesSet: 'sparkplug,device,mcu,board,video',
           },
         },
         {
@@ -121,6 +129,7 @@ describe('catalog api helpers', () => {
           attributes: {
             name: 'zeta',
             shortId: 'z9',
+            capabilitiesSet: 'sparkplug,device,mcu,board,video',
           },
         },
       ],
@@ -131,16 +140,19 @@ describe('catalog api helpers', () => {
         thingName: 'unit-a1',
         name: 'bot',
         shortId: 'a1',
+        capabilitiesSet: ['sparkplug', 'device', 'mcu', 'board', 'video'],
       },
       {
         thingName: 'unit-b3',
         name: 'crawler',
         shortId: 'b3',
+        capabilitiesSet: ['sparkplug', 'device', 'mcu', 'board', 'video'],
       },
       {
         thingName: 'unit-z9',
         name: 'zeta',
         shortId: 'z9',
+        capabilitiesSet: ['sparkplug', 'device', 'mcu', 'board', 'video'],
       },
     ])
   })
@@ -154,6 +166,7 @@ describe('catalog api helpers', () => {
           attributes: {
             name: ' bot ',
             shortId: 'kiv3mj',
+            capabilitiesSet: 'sparkplug,device,mcu,board,video',
           },
         },
       ],
@@ -163,6 +176,7 @@ describe('catalog api helpers', () => {
       thingName: 'unit-kiv3mj',
       name: 'bot',
       shortId: 'kiv3mj',
+      capabilitiesSet: ['sparkplug', 'device', 'mcu', 'board', 'video'],
     })
   })
 })

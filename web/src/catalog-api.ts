@@ -9,6 +9,7 @@ import {
 } from '@aws-sdk/client-iot'
 import { createCredentialProvider } from './aws-credentials'
 import { appConfig } from './config'
+import { isShadowName, type ShadowName } from './shadow-protocol'
 
 type ResolveIdToken = () => Promise<string>
 type IotControlClient = Pick<IoTClient, 'send'>
@@ -16,11 +17,13 @@ export type RigCatalogEntry = {
   thingName: string
   rigName: string
   shortId: string | null
+  capabilitiesSet: readonly ShadowName[]
 }
 export type DeviceCatalogEntry = {
   thingName: string
   name: string | null
   shortId: string | null
+  capabilitiesSet: readonly ShadowName[]
 }
 
 const maxResults = 100
@@ -40,6 +43,31 @@ const normalizeOptionalText = (value: string | null | undefined): string | null 
 
   const normalized = value.trim()
   return normalized === '' ? null : normalized
+}
+
+export const parseCapabilitiesSet = (value: string | null | undefined): readonly ShadowName[] => {
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new Error('Thing is missing required capabilitiesSet attribute')
+  }
+  const capabilities: ShadowName[] = []
+  const seen = new Set<ShadowName>()
+  for (const rawCapability of value.split(',')) {
+    if (rawCapability.trim() !== rawCapability || rawCapability === '') {
+      throw new Error(`Thing has malformed capabilitiesSet attribute: ${value}`)
+    }
+    if (!isShadowName(rawCapability)) {
+      throw new Error(`Thing has unsupported capability: ${rawCapability}`)
+    }
+    if (seen.has(rawCapability)) {
+      throw new Error(`Thing has duplicate capability: ${rawCapability}`)
+    }
+    seen.add(rawCapability)
+    capabilities.push(rawCapability)
+  }
+  if (!seen.has('sparkplug')) {
+    throw new Error('Thing capabilitiesSet must include sparkplug')
+  }
+  return capabilities
 }
 
 const getRigDisplayName = (rig: RigCatalogEntry): string => rig.rigName
@@ -63,7 +91,13 @@ const createIotControlClient = async (resolveIdToken: ResolveIdToken): Promise<I
 export const describeThingMetadataWithClient = async (
   client: IotControlClient,
   thingName: string,
-): Promise<{ thingName: string; thingTypeName: string | null; name: string | null; shortId: string | null }> => {
+): Promise<{
+  thingName: string
+  thingTypeName: string | null
+  name: string | null
+  shortId: string | null
+  capabilitiesSet: readonly ShadowName[]
+}> => {
   const response = (await client.send(
     new DescribeThingCommand({
       thingName,
@@ -79,6 +113,11 @@ export const describeThingMetadataWithClient = async (
     ),
     shortId: normalizeOptionalText(
       attributes && typeof attributes.shortId === 'string' ? attributes.shortId : null,
+    ),
+    capabilitiesSet: parseCapabilitiesSet(
+      attributes && typeof attributes.capabilitiesSet === 'string'
+        ? attributes.capabilitiesSet
+        : null,
     ),
   }
 }
@@ -121,6 +160,7 @@ export const listTownRigsWithClient = async (
         thingName,
         rigName: metadata.name ?? thingName,
         shortId: metadata.shortId,
+        capabilitiesSet: metadata.capabilitiesSet,
         thingTypeName: metadata.thingTypeName,
       }
     }),
@@ -132,6 +172,7 @@ export const listTownRigsWithClient = async (
       thingName: rig.thingName,
       rigName: rig.rigName,
       shortId: rig.shortId,
+      capabilitiesSet: rig.capabilitiesSet,
     }))
     .sort((left, right) => collator.compare(getRigDisplayName(left), getRigDisplayName(right)))
 }
@@ -172,19 +213,12 @@ export const listRigDevicesWithClient = async (
   const uniqueDeviceIds = sortUnique(deviceIds)
   const deviceEntries = await Promise.all(
     uniqueDeviceIds.map(async (thingName) => {
-      try {
-        const metadata = await describeThingMetadataWithClient(client, thingName)
-        return {
-          thingName,
-          name: metadata.name,
-          shortId: metadata.shortId,
-        }
-      } catch {
-        return {
-          thingName,
-          name: null,
-          shortId: null,
-        }
+      const metadata = await describeThingMetadataWithClient(client, thingName)
+      return {
+        thingName,
+        name: metadata.name,
+        shortId: metadata.shortId,
+        capabilitiesSet: metadata.capabilitiesSet,
       }
     }),
   )
@@ -211,6 +245,7 @@ export const describeDeviceMetadataWithClient = async (
     thingName,
     name: metadata.name,
     shortId: metadata.shortId,
+    capabilitiesSet: metadata.capabilitiesSet,
   }
 }
 

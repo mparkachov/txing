@@ -310,7 +310,11 @@ function App({ initialAuthError = '' }: AppProps) {
   const isSelectedDeviceValid =
     selectedDeviceRoute !== null &&
     deviceCatalog.status === 'ready' &&
-    deviceCatalog.devices.some((device) => device.thingName === selectedDeviceRoute.device)
+    deviceCatalog.devices.some(
+      (device) =>
+        device.thingName === selectedDeviceRoute.device &&
+        (route.kind !== 'device_video' || device.capabilitiesSet.includes('video')),
+    )
 
   const activeSessionRoute =
     status === 'signed_in' &&
@@ -319,6 +323,8 @@ function App({ initialAuthError = '' }: AppProps) {
     isSelectedDeviceValid
       ? selectedDeviceRoute
       : null
+  const activeDeviceCapabilities =
+    activeSessionRoute && selectedDeviceEntry ? selectedDeviceEntry.capabilitiesSet : null
 
   useEffect(() => {
     const handlePopstate = (): void => {
@@ -655,7 +661,7 @@ function App({ initialAuthError = '' }: AppProps) {
   }, [route])
 
   useEffect(() => {
-    if (!activeSessionRoute) {
+    if (!activeSessionRoute || !activeDeviceCapabilities) {
       shadowSessionRef.current?.close()
       shadowSessionRef.current = null
       setShadowConnectionState('idle')
@@ -699,6 +705,7 @@ function App({ initialAuthError = '' }: AppProps) {
           awsRegion: appConfig.awsRegion,
           sparkplugGroupId: activeSessionRoute.town,
           sparkplugEdgeNodeId: activeSessionRoute.rig,
+          capabilitiesSet: activeDeviceCapabilities,
           resolveIdToken: resolveSessionIdToken,
           onShadowDocument: (shadow) => {
             if (cancelled) {
@@ -764,7 +771,13 @@ function App({ initialAuthError = '' }: AppProps) {
       }
       shadowSession?.close()
     }
-  }, [activeSessionRoute, applyShadowSnapshot, enqueueRuntimeError, resolveSessionIdToken])
+  }, [
+    activeDeviceCapabilities,
+    activeSessionRoute,
+    applyShadowSnapshot,
+    enqueueRuntimeError,
+    resolveSessionIdToken,
+  ])
 
   const publishCmdVel = useEffectEvent(async (twist: Twist): Promise<void> => {
     const shadowSession = shadowSessionRef.current

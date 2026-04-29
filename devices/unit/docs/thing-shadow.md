@@ -7,7 +7,7 @@ This document defines the current AWS IoT Thing Shadow contract for the `unit` d
 - The txing device no longer uses the classic unnamed shadow.
 - Sparkplug `DCMD.redcon` is the only authoritative external lifecycle intent path.
 - Shadows are reported-only read models and restart caches; no `desired` lifecycle fields are used.
-- Video runtime state remains outside Thing Shadow and is carried by retained MQTT video topics plus board MCP `robot.get_state`.
+- Video transport remains retained MQTT topics plus board MCP `robot.get_state`; board also mirrors video descriptor/status into the `video` named shadow for readers.
 
 ## Named Shadows
 
@@ -15,8 +15,9 @@ Each txing thing uses these named shadows:
 
 - `sparkplug`: rig-owned lifecycle reflection, `state.reported.redcon`.
 - `device`: rig-owned shared metrics, `state.reported.batteryMv`.
-- `mcu`: rig-owned MCU state, `state.reported.power` and `state.reported.online`.
+- `mcu`: rig-owned MCU state, `state.reported.power`, `state.reported.online`, and `state.reported.bleDeviceId`.
 - `board`: board-owned board state, `state.reported.power` and `state.reported.wifi`.
+- `video`: board-owned mirror of video descriptor/status retained topics.
 
 Schema/default files live under `devices/unit/aws/`:
 
@@ -24,12 +25,13 @@ Schema/default files live under `devices/unit/aws/`:
 - `device-shadow.schema.json`, `default-device-shadow.json`
 - `mcu-shadow.schema.json`, `default-mcu-shadow.json`
 - `board-shadow.schema.json`, `default-board-shadow.json`
+- `video-shadow.schema.json`, `default-video-shadow.json`
 
 ## Ownership
 
 - `rig` calculates REDCON and writes the `sparkplug` named shadow.
 - `rig` writes `device.batteryMv` and the `mcu` named shadow.
-- `board` writes the `board` named shadow.
+- `board` writes the `board` and `video` named shadows.
 - Web reads named shadows and publishes lifecycle commands through Sparkplug MQTT `DCMD.redcon`; it does not write shadow desired state.
 
 ## Field Semantics
@@ -43,8 +45,14 @@ Schema/default files live under `devices/unit/aws/`:
 - `mcu.state.reported.power=true` means the external wakeup state.
 - `mcu.state.reported.power=false` means the external sleep state with periodic `5 s` BLE rendezvous wakeups.
 - `mcu.state.reported.online` is rig-observed BLE reachability.
+- `mcu.state.reported.bleDeviceId` is the last observed BLE identity and fast-reconnect source of truth.
 - `board.state.reported.power` is best-effort board power state; stale `true` must not be treated as authoritative after a hard power cut.
 - `board.state.reported.wifi.online`, `ipv4`, and `ipv6` are refreshed by the board control loop.
+- `video.state.reported.descriptor` and `video.state.reported.status` mirror the retained board video MQTT topics.
+
+## Capability Discovery
+
+`shared/aws/thing-type-capabilities.json` defines the named shadows supported by each thing type. Registration writes the comma-separated `attributes.capabilitiesSet` non-searchable Thing attribute from that definition. Runtime and tooling use `capabilitiesSet` to decide which `$aws/things/<thing>/shadow/name/<shadow>/...` topics to read or reset.
 
 ## AWS IoT Note
 

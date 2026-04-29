@@ -1,5 +1,5 @@
 export type ShadowOperation = 'get' | 'update'
-export type ShadowName = 'sparkplug' | 'device' | 'mcu' | 'board'
+export type ShadowName = 'sparkplug' | 'device' | 'mcu' | 'board' | 'video'
 export type ShadowResponseKind = 'getAccepted' | 'getRejected' | 'updateAccepted' | 'updateRejected' | 'ignored'
 export type ShadowTopics = {
   shadowName: ShadowName
@@ -10,7 +10,9 @@ export type ShadowTopics = {
   updateAccepted: string
   updateRejected: string
 }
-export const namedShadowNames: readonly ShadowName[] = ['sparkplug', 'device', 'mcu', 'board']
+export const namedShadowNames: readonly ShadowName[] = ['sparkplug', 'device', 'mcu', 'board', 'video']
+export const isShadowName = (value: string): value is ShadowName =>
+  (namedShadowNames as readonly string[]).includes(value)
 export type DecodedShadowResponse = {
   kind: ShadowResponseKind
   operation: ShadowOperation | null
@@ -65,15 +67,21 @@ export const buildShadowTopics = (
   }
 }
 
-export const buildNamedShadowTopics = (thingName: string): Record<ShadowName, ShadowTopics> =>
+export const buildNamedShadowTopics = (
+  thingName: string,
+  shadowNames: readonly ShadowName[] = namedShadowNames,
+): Partial<Record<ShadowName, ShadowTopics>> =>
   Object.fromEntries(
-    namedShadowNames.map((shadowName) => [shadowName, buildShadowTopics(thingName, shadowName)]),
-  ) as Record<ShadowName, ShadowTopics>
+    shadowNames.map((shadowName) => [shadowName, buildShadowTopics(thingName, shadowName)]),
+  ) as Partial<Record<ShadowName, ShadowTopics>>
 
 export const buildShadowSubscriptionPacket = (
-  topics: ShadowTopics | Record<ShadowName, ShadowTopics>,
+  topics: ShadowTopics | Partial<Record<ShadowName, ShadowTopics>>,
 ): ShadowSubscriptionPacket => {
-  const topicList = 'sparkplug' in topics ? Object.values(topics) : [topics]
+  const topicList =
+    'getAccepted' in topics
+      ? [topics]
+      : Object.values(topics).filter((topic): topic is ShadowTopics => topic !== undefined)
   return {
     subscriptions: topicList.flatMap((topicSet) => [
       { topicFilter: topicSet.getAccepted, qos: 1 as const },

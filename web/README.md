@@ -180,7 +180,7 @@ Notes:
   - `attributes.name` on all thing types
   - `attributes.town` on `rig` and device things
   - `attributes.rig` on device things
-- `attributes.shortId` and `attributes.bleDeviceId` remain registry metadata only; they are not part of the searchable/indexed surface.
+- `attributes.shortId` and `attributes.capabilitiesSet` remain registry metadata only; they are not part of the searchable/indexed surface.
 - `aws::register-town`, `aws::register-rig`, and `aws::register-device` create the actual registry objects and reported-only shadows. `register-device` also creates the per-device KVS signaling channel.
 - `web::publish` is required if you want the stack output `WebAppUrl` to serve the current SPA build. `aws::deploy` alone does not upload `web/dist`.
 

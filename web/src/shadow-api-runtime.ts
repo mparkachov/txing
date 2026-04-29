@@ -116,6 +116,7 @@ export type ShadowSessionOptions = {
   awsRegion: string
   sparkplugGroupId: string
   sparkplugEdgeNodeId: string
+  capabilitiesSet: readonly ShadowName[]
   resolveIdToken: ResolveIdToken
   onShadowDocument: (shadow: unknown, operation: ShadowOperation) => void
   onSparkplugBatteryMvChange: (batteryMv: number) => void
@@ -587,7 +588,8 @@ class BrowserCredentialProvider extends auth.CredentialsProvider {
 
 class AwsIotShadowSession implements ShadowSession {
   private readonly options: ShadowSessionOptions
-  private readonly topics: Record<ShadowName, ShadowTopics>
+  private readonly topics: Partial<Record<ShadowName, ShadowTopics>>
+  private readonly requiredShadowNames: readonly ShadowName[]
   private readonly sparkplugTopics: SparkplugTopics
   private readonly mcpDescriptorTopic: string
   private readonly mcpStatusTopic: string
@@ -695,7 +697,11 @@ class AwsIotShadowSession implements ShadowSession {
 
   constructor(options: ShadowSessionOptions) {
     this.options = options
-    this.topics = buildNamedShadowTopics(options.thingName)
+    this.requiredShadowNames = options.capabilitiesSet
+    this.topics = buildNamedShadowTopics(options.thingName, this.requiredShadowNames)
+    if (!this.topics.sparkplug) {
+      throw new Error('Thing capabilitiesSet must include sparkplug')
+    }
     this.sparkplugTopics = buildSparkplugTopics(
       options.sparkplugGroupId,
       options.sparkplugEdgeNodeId,
@@ -728,6 +734,9 @@ class AwsIotShadowSession implements ShadowSession {
   async requestSnapshot(): Promise<unknown> {
     const snapshots = await Promise.all(
       Object.values(this.topics).map((topics) => {
+        if (!topics) {
+          throw new Error('Missing named shadow topics')
+        }
         const clientToken = createShadowClientToken('get')
         const packet = buildGetShadowPublishPacket(topics, clientToken)
         return this.publishRequest('get', topics.shadowName, clientToken, packet)
@@ -738,7 +747,11 @@ class AwsIotShadowSession implements ShadowSession {
 
   async updateShadow(shadowDocument: unknown): Promise<unknown> {
     const clientToken = createShadowClientToken('update')
-    const packet = buildUpdateShadowPublishPacket(this.topics.sparkplug, shadowDocument, clientToken)
+    const sparkplugTopics = this.topics.sparkplug
+    if (!sparkplugTopics) {
+      throw new Error('Thing capabilitiesSet must include sparkplug')
+    }
+    const packet = buildUpdateShadowPublishPacket(sparkplugTopics, shadowDocument, clientToken)
     return this.publishRequest('update', 'sparkplug', clientToken, packet)
   }
 
@@ -975,6 +988,9 @@ class AwsIotShadowSession implements ShadowSession {
 
   private decodeAnyShadowResponse(topic: string, payload: unknown): DecodedShadowResponse {
     for (const topics of Object.values(this.topics)) {
+      if (!topics) {
+        continue
+      }
       const decoded = decodeShadowResponse(topic, payload, topics)
       if (decoded.kind !== 'ignored') {
         return decoded
@@ -1007,6 +1023,7 @@ class AwsIotShadowSession implements ShadowSession {
     const device = reportedOf('device')
     const mcu = reportedOf('mcu')
     const board = reportedOf('board')
+    const video = reportedOf('video')
     return {
       state: {
         reported: {
@@ -1015,6 +1032,7 @@ class AwsIotShadowSession implements ShadowSession {
             batteryMv: device.batteryMv,
             mcu,
             board,
+            video,
           },
         },
       },
@@ -1025,11 +1043,8 @@ class AwsIotShadowSession implements ShadowSession {
   }
 
   private hasCompleteShadowSnapshot(): boolean {
-    return (
-      this.latestShadows.sparkplug !== undefined &&
-      this.latestShadows.device !== undefined &&
-      this.latestShadows.mcu !== undefined &&
-      this.latestShadows.board !== undefined
+    return this.requiredShadowNames.every(
+      (shadowName) => this.latestShadows[shadowName] !== undefined,
     )
   }
 
