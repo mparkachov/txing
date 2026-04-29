@@ -54,12 +54,7 @@ Every rig and device thing exposes a `sparkplug` named shadow with:
       },
       "metrics": {
         "redcon": 3,
-        "batteryMv": 3795,
-        "services": {
-          "mcp": {
-            "available": true
-          }
-        }
+        "batteryMv": 3795
       }
     }
   }
@@ -82,7 +77,6 @@ Metric path rules:
 - Witness splits both `.` and `/` into nested metric paths.
 - `redcon` -> `metrics.redcon`
 - `batteryMv` -> `metrics.batteryMv`
-- `services/mcp/available` -> `metrics.services.mcp.available`
 
 Projection rules:
 
@@ -101,6 +95,7 @@ Named shadow ownership outside Sparkplug:
 - `mcu.state.reported.online` is rig-observed BLE reachability.
 - `mcu.state.reported.bleDeviceId` is the last observed BLE identity and fast-reconnect source of truth.
 - `board.state.reported.*` is board-owned operational state.
+- `mcp.state.reported.*` mirrors the retained board MCP topics for readers.
 - `video.state.reported.*` mirrors the retained board video topics for readers.
 
 Rig uses `mcu`, retained MCP topics, and retained video status to derive the Sparkplug device `redcon` metric that it publishes. Readers query the witness-owned Sparkplug projection instead of subscribing to live Sparkplug traffic directly.
@@ -118,7 +113,6 @@ Current metrics:
 
 - Node metric: `redcon`
 - Device metrics: `redcon`, `batteryMv`
-- Device detail metrics: `services/mcp/*`
 - Writable device command metric: `redcon`
 
 Current topics:

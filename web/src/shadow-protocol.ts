@@ -1,5 +1,5 @@
 export type ShadowOperation = 'get' | 'update'
-export type ShadowName = 'sparkplug' | 'mcu' | 'board' | 'video'
+export type ShadowName = 'sparkplug' | 'mcu' | 'board' | 'mcp' | 'video'
 export type ShadowResponseKind = 'getAccepted' | 'getRejected' | 'updateAccepted' | 'updateRejected' | 'ignored'
 export type ShadowTopics = {
   shadowName: ShadowName
@@ -10,7 +10,7 @@ export type ShadowTopics = {
   updateAccepted: string
   updateRejected: string
 }
-export const namedShadowNames: readonly ShadowName[] = ['sparkplug', 'mcu', 'board', 'video']
+export const namedShadowNames: readonly ShadowName[] = ['sparkplug', 'mcu', 'board', 'mcp', 'video']
 export const isShadowName = (value: string): value is ShadowName =>
   (namedShadowNames as readonly string[]).includes(value)
 export type DecodedShadowResponse = {

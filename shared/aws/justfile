@@ -1000,7 +1000,7 @@ thing_index_name := "AWS_Things"
     fi
     for allowed_shadow_name in "${allowed_shadow_names[@]}"; do
       case "$allowed_shadow_name" in
-        sparkplug|mcu|board|video)
+        sparkplug|mcu|board|mcp|video)
           ;;
         ""|*" "*)
           echo "thing {{thing_name}} has malformed capabilitiesSet: $capabilities_set" >&2
@@ -1108,7 +1108,7 @@ thing_index_name := "AWS_Things"
     fi
     for allowed_shadow_name in "${allowed_shadow_names[@]}"; do
       case "$allowed_shadow_name" in
-        sparkplug|mcu|board|video)
+        sparkplug|mcu|board|mcp|video)
           ;;
         ""|*" "*)
           echo "thing {{thing_name}} has malformed capabilitiesSet: $capabilities_set" >&2
@@ -1372,7 +1372,7 @@ thing_index_name := "AWS_Things"
     fi
     for allowed_shadow_name in "${allowed_shadow_names[@]}"; do
       case "$allowed_shadow_name" in
-        sparkplug|mcu|board|video)
+        sparkplug|mcu|board|mcp|video)
           ;;
         ""|*" "*)
           echo "thing {{thing_name}} has malformed capabilitiesSet: $capabilities_set" >&2

@@ -88,7 +88,7 @@ web_dist_dir := web_dir + "/dist"
     cd "{{web_dir}}"
     bun run lint
 
-@write-env thing_name='' sparkplug_group_id='' sparkplug_edge_node_id='' stack_name=stack_name region=region profile=profile:
+@write-env thing_name='' sparkplug_group_id='' sparkplug_edge_node_id='' town_thing_name='' stack_name=stack_name region=region profile=profile:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{web_dir}}"
@@ -160,10 +160,38 @@ web_dist_dir := web_dir + "/dist"
     if [ -n "{{sparkplug_edge_node_id}}" ]; then
       current_sparkplug_edge_node_id="{{sparkplug_edge_node_id}}"
     fi
+    if [ -n "{{town_thing_name}}" ]; then
+      current_town_thing_name="{{town_thing_name}}"
+    else
+      town_search_query="thingTypeName:town AND attributes.name:${current_sparkplug_group_id}"
+      town_match_count="$(aws iot search-index \
+        --query-string "$town_search_query" \
+        --max-results 2 \
+        "${aws_flags[@]}" \
+        --query 'length(things)' \
+        --output text)"
+
+      if [ "$town_match_count" = "0" ]; then
+        echo "Town thing for Sparkplug group '$current_sparkplug_group_id' was not found." >&2
+        exit 1
+      fi
+      if [ "$town_match_count" != "1" ]; then
+        echo "Sparkplug group '$current_sparkplug_group_id' matched multiple town things. Pass town_thing_name=... to disambiguate." >&2
+        exit 1
+      fi
+
+      current_town_thing_name="$(aws iot search-index \
+        --query-string "$town_search_query" \
+        --max-results 1 \
+        "${aws_flags[@]}" \
+        --query 'things[0].thingName' \
+        --output text)"
+    fi
 
     printf '%s\n' \
       "VITE_AWS_REGION=$region" \
       "VITE_DEVICE_THING_NAME=$device_thing_name" \
+      "VITE_TOWN_THING_NAME=$current_town_thing_name" \
       "VITE_SPARKPLUG_GROUP_ID=$current_sparkplug_group_id" \
       "VITE_SPARKPLUG_EDGE_NODE_ID=$current_sparkplug_edge_node_id" \
       "VITE_COGNITO_DOMAIN=$cognito_domain" \

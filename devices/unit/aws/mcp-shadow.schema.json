@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://txing.local/schemas/txing-mcp-shadow.schema.json",
+  "title": "Txing MCP Named Shadow Contract v1",
+  "description": "Named shadow 'mcp' mirrors board MCP descriptor and status topics.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["state"],
+  "properties": {
+    "state": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["reported"],
+      "properties": {
+        "reported": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["descriptor", "status"],
+          "properties": {
+            "descriptor": {
+              "type": ["object", "null"],
+              "additionalProperties": true,
+              "properties": {
+                "serviceId": {
+                  "const": "mcp"
+                },
+                "transport": {
+                  "type": "string"
+                },
+                "descriptorTopic": {
+                  "type": "string"
+                },
+                "mcpProtocolVersion": {
+                  "type": "string"
+                },
+                "leaseRequired": {
+                  "type": "boolean"
+                },
+                "leaseTtlMs": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "serverVersion": {
+                  "type": "string"
+                }
+              }
+            },
+            "status": {
+              "type": "object",
+              "additionalProperties": true,
+              "required": ["serviceId", "available"],
+              "properties": {
+                "serviceId": {
+                  "const": "mcp"
+                },
+                "available": {
+                  "type": "boolean"
+                },
+                "leaseOwnerSessionId": {
+                  "type": "string"
+                },
+                "leaseExpiresAtMs": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "updatedAtMs": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "clientToken": {
+      "type": "string"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "timestamp": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

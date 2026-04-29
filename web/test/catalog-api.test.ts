@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 import {
   describeDeviceMetadataWithClient,
+  describeThingMetadataWithClient,
+  getThingNamedShadowWithClient,
   listRigDevicesWithClient,
   listTownRigsWithClient,
 } from '../src/catalog-api'
@@ -111,7 +113,7 @@ describe('catalog api helpers', () => {
           attributes: {
             name: 'bot',
             shortId: 'a1',
-            capabilitiesSet: 'sparkplug,mcu,board,video',
+            capabilitiesSet: 'sparkplug,mcu,board,mcp,video',
           },
         },
         {
@@ -120,7 +122,7 @@ describe('catalog api helpers', () => {
           attributes: {
             name: 'crawler',
             shortId: 'b3',
-            capabilitiesSet: 'sparkplug,mcu,board,video',
+            capabilitiesSet: 'sparkplug,mcu,board,mcp,video',
           },
         },
         {
@@ -129,7 +131,7 @@ describe('catalog api helpers', () => {
           attributes: {
             name: 'zeta',
             shortId: 'z9',
-            capabilitiesSet: 'sparkplug,mcu,board,video',
+            capabilitiesSet: 'sparkplug,mcu,board,mcp,video',
           },
         },
       ],
@@ -140,19 +142,19 @@ describe('catalog api helpers', () => {
         thingName: 'unit-a1',
         name: 'bot',
         shortId: 'a1',
-        capabilitiesSet: ['sparkplug', 'mcu', 'board', 'video'],
+        capabilitiesSet: ['sparkplug', 'mcu', 'board', 'mcp', 'video'],
       },
       {
         thingName: 'unit-b3',
         name: 'crawler',
         shortId: 'b3',
-        capabilitiesSet: ['sparkplug', 'mcu', 'board', 'video'],
+        capabilitiesSet: ['sparkplug', 'mcu', 'board', 'mcp', 'video'],
       },
       {
         thingName: 'unit-z9',
         name: 'zeta',
         shortId: 'z9',
-        capabilitiesSet: ['sparkplug', 'mcu', 'board', 'video'],
+        capabilitiesSet: ['sparkplug', 'mcu', 'board', 'mcp', 'video'],
       },
     ])
   })
@@ -166,7 +168,7 @@ describe('catalog api helpers', () => {
           attributes: {
             name: ' bot ',
             shortId: 'kiv3mj',
-            capabilitiesSet: 'sparkplug,mcu,board,video',
+            capabilitiesSet: 'sparkplug,mcu,board,mcp,video',
           },
         },
       ],
@@ -176,7 +178,66 @@ describe('catalog api helpers', () => {
       thingName: 'unit-kiv3mj',
       name: 'bot',
       shortId: 'kiv3mj',
-      capabilitiesSet: ['sparkplug', 'mcu', 'board', 'video'],
+      capabilitiesSet: ['sparkplug', 'mcu', 'board', 'mcp', 'video'],
+    })
+  })
+
+  test('describes generic thing metadata including parent registry names', async () => {
+    const client = new FakeIotControlClient({
+      DescribeThingCommand: [
+        {
+          thingName: 'rig-a1',
+          thingTypeName: 'rig',
+          attributes: {
+            name: 'alpha',
+            town: 'berlin',
+            shortId: 'a1',
+            capabilitiesSet: 'sparkplug',
+          },
+        },
+      ],
+    })
+
+    await expect(describeThingMetadataWithClient(client, 'rig-a1')).resolves.toEqual({
+      thingName: 'rig-a1',
+      thingTypeName: 'rig',
+      name: 'alpha',
+      townName: 'berlin',
+      rigName: null,
+      shortId: 'a1',
+      capabilitiesSet: ['sparkplug'],
+    })
+  })
+
+  test('reads a named sparkplug shadow document through the IoT data client', async () => {
+    const client = new FakeIotControlClient({
+      GetThingShadowCommand: [
+        {
+          payload: new TextEncoder().encode(
+            JSON.stringify({
+              state: {
+                reported: {
+                  metrics: {
+                    redcon: 1,
+                    batteryMv: 4112,
+                  },
+                },
+              },
+            }),
+          ),
+        },
+      ],
+    })
+
+    await expect(getThingNamedShadowWithClient(client, 'unit-a1', 'sparkplug')).resolves.toEqual({
+      state: {
+        reported: {
+          metrics: {
+            redcon: 1,
+            batteryMv: 4112,
+          },
+        },
+      },
     })
   })
 })

@@ -153,7 +153,7 @@ def _make_runtime() -> MagicMock:
             "rig": "rig",
             "name": "bot",
             "shortId": "local00",
-            "capabilitiesSet": "sparkplug,mcu,board,video",
+            "capabilitiesSet": "sparkplug,mcu,board,mcp,video",
         },
     }
     return runtime

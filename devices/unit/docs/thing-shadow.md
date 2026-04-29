@@ -18,6 +18,7 @@ Each txing thing uses these named shadows:
 - `sparkplug`: witness-owned projection of Sparkplug device state under `state.reported.session` and `state.reported.metrics`.
 - `mcu`: rig-owned MCU state under `state.reported.power`, `state.reported.online`, and `state.reported.bleDeviceId`.
 - `board`: board-owned board state under `state.reported.power` and `state.reported.wifi`.
+- `mcp`: rig-owned mirror of MCP descriptor/status retained topics.
 - `video`: board-owned mirror of video descriptor/status retained topics.
 
 Schema/default files live under `devices/unit/aws/`:
@@ -25,6 +26,7 @@ Schema/default files live under `devices/unit/aws/`:
 - `sparkplug-shadow.schema.json`, `default-sparkplug-shadow.json`
 - `mcu-shadow.schema.json`, `default-mcu-shadow.json`
 - `board-shadow.schema.json`, `default-board-shadow.json`
+- `mcp-shadow.schema.json`, `default-mcp-shadow.json`
 - `video-shadow.schema.json`, `default-video-shadow.json`
 
 There is no `device` named shadow anymore. Battery now lives in `sparkplug.state.reported.metrics.batteryMv`.
@@ -50,12 +52,7 @@ Witness writes Sparkplug state into the `sparkplug` named shadow with this shape
       },
       "metrics": {
         "redcon": 3,
-        "batteryMv": 3972,
-        "services": {
-          "mcp": {
-            "available": true
-          }
-        }
+        "batteryMv": 3972
       }
     }
   }
@@ -73,7 +70,6 @@ Metric names preserve Sparkplug structure by splitting both `.` and `/` into nes
 
 - `redcon` -> `metrics.redcon`
 - `batteryMv` -> `metrics.batteryMv`
-- `services/mcp/available` -> `metrics.services.mcp.available`
 
 ## Ownership
 
@@ -98,6 +94,7 @@ Metric names preserve Sparkplug structure by splitting both `.` and `/` into nes
 - `mcu.state.reported.bleDeviceId` is the last observed BLE identity and fast-reconnect source of truth.
 - `board.state.reported.power` is best-effort board power state; stale `true` must not be treated as authoritative after a hard power cut.
 - `board.state.reported.wifi.online`, `ipv4`, and `ipv6` are refreshed by the board control loop.
+- `mcp.state.reported.descriptor` and `mcp.state.reported.status` mirror the retained board MCP MQTT topics.
 - `video.state.reported.descriptor` and `video.state.reported.status` mirror the retained board video MQTT topics.
 
 ## Capability Discovery

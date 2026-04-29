@@ -202,7 +202,7 @@ Default recipe values:
 
 `print` prints the current real AWS Thing Shadow document.
 
-`aws::shadow-reset <thing>` is the hard reset path for manual whole-device power cuts on unit things. It deletes the classic unnamed shadow and reseeds the named shadows from the thing's `attributes.capabilitiesSet`: offline `sparkplug session + metrics`, `mcu reported.power=false`, `mcu reported.online=false`, `mcu reported.bleDeviceId=null`, `board reported.power=false`, `board reported.wifi.online=false`, and `video reported.status.available=false`.
+`aws::shadow-reset <thing>` is the hard reset path for manual whole-device power cuts on unit things. It deletes the classic unnamed shadow and reseeds the named shadows from the thing's `attributes.capabilitiesSet`: offline `sparkplug session + metrics`, `mcu reported.power=false`, `mcu reported.online=false`, `mcu reported.bleDeviceId=null`, `board reported.power=false`, `board reported.wifi.online=false`, `mcp reported.status.available=false`, and `video reported.status.available=false`.
 
 For rig and town things, `aws::shadow` and `aws::shadow-reset` use only the `sparkplug` named shadow through `attributes.capabilitiesSet`; a full reset also removes known unit-only named shadows if they were created by an older recipe. Use `aws::shadow-reset <thing> <shadow>` to reset one valid named shadow for that thing.
 
@@ -253,7 +253,7 @@ The longer stack bootstrap and deletion flow is documented in `web/README.md`.
   - `txings/<thing>/mcp/status`
   - `spBv1.0/<group>/DCMD/<edge>/<thing>`
 - On startup, requests the named shadows advertised by each managed txing's `capabilitiesSet`.
-- Mirrors retained MCP descriptor/status facts into Sparkplug `services/mcp/*` device metrics while keeping rig as the only Sparkplug publisher for the selected device session.
+- Mirrors retained MCP descriptor/status facts into the `mcp` named shadow while keeping rig as the only Sparkplug publisher for the selected device session.
 - Publishes `NBIRTH`, `NDATA`, and `NDEATH` for the Sparkplug node `rig`.
 - Publishes Sparkplug device and node state only on MQTT; the AWS-side `sparkplug` named shadow is updated by witness.
 - Starts from the built-in BLE UUID configuration and validates it against the peripheral during short rendezvous sessions.

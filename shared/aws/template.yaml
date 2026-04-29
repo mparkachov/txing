@@ -647,6 +647,11 @@ Resources:
                   - iot:ListThingsInThingGroup
                   - iot:SearchIndex
                 Resource: "*"
+              - Sid: AllowDirectThingShadowReads
+                Effect: Allow
+                Action:
+                  - iot:GetThingShadow
+                Resource: "*"
               - Sid: ShadowConnect
                 Effect: Allow
                 Action: iot:Connect

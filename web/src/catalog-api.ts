@@ -9,12 +9,19 @@ import {
   type ListThingsInThingGroupCommandOutput,
   type SearchIndexCommandOutput,
 } from '@aws-sdk/client-iot'
+import {
+  GetThingShadowCommand,
+  IoTDataPlaneClient,
+  type GetThingShadowCommandOutput,
+} from '@aws-sdk/client-iot-data-plane'
 import { createCredentialProvider } from './aws-credentials'
 import { appConfig } from './config'
+import { resolveIotDataEndpoint } from './iot-endpoint'
 import { isShadowName, type ShadowName } from './shadow-protocol'
 
 type ResolveIdToken = () => Promise<string>
 type IotControlClient = Pick<IoTClient, 'send'>
+type IotDataClient = Pick<IoTDataPlaneClient, 'send'>
 export type RigCatalogEntry = {
   thingName: string
   rigName: string
@@ -31,6 +38,8 @@ export type ThingMetadata = {
   thingName: string
   thingTypeName: string | null
   name: string | null
+  townName: string | null
+  rigName: string | null
   shortId: string | null
   capabilitiesSet: readonly ShadowName[]
 }
@@ -44,6 +53,8 @@ const collator = new Intl.Collator(undefined, {
 
 const sortUnique = (values: readonly string[]): string[] =>
   [...new Set(values)].sort((left, right) => collator.compare(left, right))
+
+const payloadDecoder = new TextDecoder()
 
 const normalizeOptionalText = (value: string | null | undefined): string | null => {
   if (typeof value !== 'string') {
@@ -97,6 +108,30 @@ const createIotControlClient = async (resolveIdToken: ResolveIdToken): Promise<I
   })
 }
 
+const createIotDataClient = async (resolveIdToken: ResolveIdToken): Promise<IotDataClient> => {
+  const idToken = await resolveIdToken()
+  const endpoint = await resolveIotDataEndpoint({
+    region: appConfig.awsRegion,
+    idToken,
+  })
+  return new IoTDataPlaneClient({
+    region: appConfig.awsRegion,
+    endpoint,
+    credentials: createCredentialProvider(idToken),
+  })
+}
+
+const decodeShadowPayload = (payload: Uint8Array | undefined): unknown => {
+  if (!(payload instanceof Uint8Array)) {
+    return {}
+  }
+  const text = payloadDecoder.decode(payload).trim()
+  if (!text) {
+    return {}
+  }
+  return JSON.parse(text)
+}
+
 export const describeThingMetadataWithClient = async (
   client: IotControlClient,
   thingName: string,
@@ -114,6 +149,12 @@ export const describeThingMetadataWithClient = async (
     name: normalizeOptionalText(
       attributes && typeof attributes.name === 'string' ? attributes.name : null,
     ),
+    townName: normalizeOptionalText(
+      attributes && typeof attributes.town === 'string' ? attributes.town : null,
+    ),
+    rigName: normalizeOptionalText(
+      attributes && typeof attributes.rig === 'string' ? attributes.rig : null,
+    ),
     shortId: normalizeOptionalText(
       attributes && typeof attributes.shortId === 'string' ? attributes.shortId : null,
     ),
@@ -123,6 +164,38 @@ export const describeThingMetadataWithClient = async (
         : null,
     ),
   }
+}
+
+export const describeThingMetadata = async (
+  resolveIdToken: ResolveIdToken,
+  thingName: string,
+): Promise<ThingMetadata> => {
+  const client = await createIotControlClient(resolveIdToken)
+  return describeThingMetadataWithClient(client, thingName)
+}
+
+export const getThingNamedShadowWithClient = async (
+  client: IotDataClient,
+  thingName: string,
+  shadowName: ShadowName = 'sparkplug',
+): Promise<unknown> => {
+  const response = (await client.send(
+    new GetThingShadowCommand({
+      thingName,
+      shadowName,
+    }),
+  )) as GetThingShadowCommandOutput
+
+  return decodeShadowPayload(response.payload)
+}
+
+export const getThingNamedShadow = async (
+  resolveIdToken: ResolveIdToken,
+  thingName: string,
+  shadowName: ShadowName = 'sparkplug',
+): Promise<unknown> => {
+  const client = await createIotDataClient(resolveIdToken)
+  return getThingNamedShadowWithClient(client, thingName, shadowName)
 }
 
 const searchThingNamesWithClient = async (

@@ -8,26 +8,29 @@ SPA shell for browsing town rigs and registered devices, then reading the select
 - Cognito native authentication via hosted UI (email + password).
 - After sign-in, the SPA exchanges the Cognito ID token for temporary AWS credentials through a Cognito Identity Pool.
 - The primary operator routes are:
-  - `/<town>` -> rig list
-  - `/<town>/<rig>` -> device list
-  - `/<town>/<rig>/<device>` -> device detail
-  - `/<town>/<rig>/<device>/video` -> device-scoped board video viewer
-- Thing Shadow reads and reflection updates go directly from the SPA to AWS IoT Core over MQTT/WSS with SigV4-signed websocket handshakes.
+  - `/<townThingName>` -> rig list
+  - `/<townThingName>/<rigThingName>` -> device list
+  - `/<townThingName>/<rigThingName>/<deviceThingName>` -> device detail
+  - `/<townThingName>/<rigThingName>/<deviceThingName>/video` -> device-scoped board video viewer
+- Current-route breadcrumbs and Sparkplug state load directly from AWS IoT over HTTPS using `DescribeThing` plus `GetThingShadow`.
+- Device-scoped live shadow updates and reflection updates use AWS IoT Core over MQTT/WSS with SigV4-signed websocket handshakes.
 - Lifecycle on/off writes publish Sparkplug `DCMD.redcon` over the same MQTT/WSS connection.
 - On first use, the SPA attaches the stack-managed AWS IoT policy to the authenticated Cognito identity.
 - The browser MQTT client ID uses the Cognito identity ID plus a per-session suffix so multiple tabs or dev remounts do not collide on the same AWS IoT client ID.
 - The SPA lists rigs from the configured town thing group and devices from rig thing groups directly from AWS IoT Core with Cognito-backed browser credentials.
 - Town and rig drilldown cards prefer IoT registry `attributes.name` over raw thing names.
 - Current transport split:
-  - named Thing Shadow is the UI read path over MQTT/WSS
+  - route header metadata and initial Sparkplug state use direct AWS IoT reads
+  - device live shadow updates use named Thing Shadow over MQTT/WSS
   - lifecycle commands use Sparkplug `DCMD.redcon` over MQTT/WSS
   - board remote API uses MCP over MQTT/WSS under `txings/<device_id>/mcp/...`
-  - web discovers MCP via Sparkplug `services/mcp/*` summary metrics and retained MCP descriptor/status topics
+  - web discovers MCP from the `mcp` named shadow mirror and retained MCP descriptor/status topics
   - board video uses KVS WebRTC signaling from `/<town>/<rig>/<device>/video`
   - Cognito hosted UI redirects, Cognito `/oauth2/token`, Cognito Identity, IoT `AttachPolicy`, and IoT `DescribeEndpoint` still use HTTPS
 - Default identity:
   - configured town comes from `config/rig.env`
-  - direct `/<town>/<rig>/<device>` routes choose the active rig and device at runtime
+  - direct `/<townThingName>/<rigThingName>/<deviceThingName>` routes choose the active rig and device at runtime
+  - town and rig breadcrumbs render IoT registry `attributes.name`, while URLs stay on stable thing names
   - `VITE_DEVICE_THING_NAME` and `VITE_SPARKPLUG_EDGE_NODE_ID` remain optional legacy values only
 
 ## Prerequisites
@@ -102,6 +105,7 @@ cp web/.env.example web/.env.local
 Then fill `web/.env.local`:
 
 - `VITE_AWS_REGION`
+- `VITE_TOWN_THING_NAME`
 - `VITE_SPARKPLUG_GROUP_ID`
 - `VITE_COGNITO_DOMAIN`
 - `VITE_COGNITO_CLIENT_ID`
@@ -115,7 +119,7 @@ Then fill `web/.env.local`:
 
 The SPA derives the Cognito callback/logout URL from the page it is currently loaded from, so no deployed redirect URI env vars are needed.
 The SPA now resolves the AWS IoT Data-ATS endpoint dynamically at runtime with Cognito-backed AWS credentials, so no endpoint env var is required.
-When the browser lands on `/` after sign-in, it canonicalizes to the configured town route from `VITE_SPARKPLUG_GROUP_ID`.
+When the browser lands on `/` after sign-in, it canonicalizes to the configured town route from `VITE_TOWN_THING_NAME`.
 
 3. Start Vite:
 
@@ -196,7 +200,7 @@ After deploy, generate local Vite env automatically:
 just web::write-env
 ```
 
-This writes `web/.env.local` from stack outputs plus the configured town from `config/rig.env`, and it keeps writing the current device / rig identity as optional legacy compatibility values.
+This writes `web/.env.local` from stack outputs, resolves the configured town thing name from `config/rig.env`, and keeps writing the current device / rig identity as optional legacy compatibility values.
 
 Relevant outputs:
 
@@ -208,14 +212,14 @@ Relevant outputs:
 - `WebIotPolicyName` -> `VITE_IOT_POLICY_NAME`
 - `WebExpectedAdminEmail` -> `VITE_ADMIN_EMAIL`
 
-`web::write-env` writes `VITE_AWS_REGION`, `VITE_SPARKPLUG_GROUP_ID`, and the Cognito stack outputs. It also keeps writing `VITE_DEVICE_THING_NAME` and `VITE_SPARKPLUG_EDGE_NODE_ID` as optional legacy compatibility values only. The app resolves the AWS IoT Data-ATS endpoint dynamically at runtime and reuses it for both shadow and Sparkplug MQTT/WSS connections.
+`web::write-env` writes `VITE_AWS_REGION`, `VITE_TOWN_THING_NAME`, `VITE_SPARKPLUG_GROUP_ID`, and the Cognito stack outputs. It also keeps writing `VITE_DEVICE_THING_NAME` and `VITE_SPARKPLUG_EDGE_NODE_ID` as optional legacy compatibility values only. The app resolves the AWS IoT Data-ATS endpoint dynamically at runtime and reuses it for both shadow and Sparkplug MQTT/WSS connections.
 
 ## Video URL schema
 
-- Canonical board video route: `/<town>/<rig>/<device>/video`
-- `town` must match the deployment-scoped `VITE_SPARKPLUG_GROUP_ID`
-- `rig` is the AWS IoT dynamic thing-group name and Sparkplug edge node id
-- `device` is the AWS IoT thing name / stable `device_id`
+- Canonical board video route: `/<townThingName>/<rigThingName>/<deviceThingName>/video`
+- `townThingName` must match the deployment-scoped `VITE_TOWN_THING_NAME`
+- `rigThingName` is the AWS IoT thing name for the selected rig
+- `deviceThingName` is the AWS IoT thing name / stable `device_id`
 - The SPA computes this route from current device assignment and web origin; it is not configured in stack outputs, board env files, or Thing Shadow
 - The KVS signaling channel is also computed from the device id: `<device_id>-board-video`
 

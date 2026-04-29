@@ -48,13 +48,14 @@ import {
   extractReportedRedcon,
 } from './app-model'
 import {
+  describeThingMetadata,
+  getThingNamedShadow,
   isResourceNotFoundError,
   listRigDevices,
   listTownRigs,
-  resolveRigThing,
-  resolveTownThing,
   type DeviceCatalogEntry,
   type RigCatalogEntry,
+  type ThingMetadata,
 } from './catalog-api'
 import { CmdVelTeleopController } from './cmd-vel-teleop'
 import type { Twist } from './cmd-vel'
@@ -113,6 +114,12 @@ type ShadowTargetState = {
   target: ShadowTarget | null
   error: string
 }
+type RouteHeaderState = {
+  status: 'idle' | 'loading' | 'ready' | 'error'
+  metadata: ThingMetadata | null
+  sparkplugShadow: unknown | null
+  error: string
+}
 
 const formatJson = (value: unknown): string => JSON.stringify(value, null, 2)
 const defaultMcpLeaseTtlMs = 5_000
@@ -136,6 +143,13 @@ const emptyDeviceCatalogState = (): DeviceCatalogState => ({
 const emptyShadowTargetState = (): ShadowTargetState => ({
   status: 'idle',
   target: null,
+  error: '',
+})
+
+const emptyRouteHeaderState = (): RouteHeaderState => ({
+  status: 'idle',
+  metadata: null,
+  sparkplugShadow: null,
   error: '',
 })
 
@@ -207,9 +221,12 @@ function App({ initialAuthError = '' }: AppProps) {
   })
   const [shadowConnectionState, setShadowConnectionState] =
     useState<ShadowConnectionState>('idle')
+  const [routeHeaderState, setRouteHeaderState] =
+    useState<RouteHeaderState>(emptyRouteHeaderState)
   const [rigCatalog, setRigCatalog] = useState<RigCatalogState>(emptyRigCatalogState)
   const [deviceCatalog, setDeviceCatalog] = useState<DeviceCatalogState>(emptyDeviceCatalogState)
   const [shadowTargetState, setShadowTargetState] = useState<ShadowTargetState>(emptyShadowTargetState)
+  const [shadowBootstrapError, setShadowBootstrapError] = useState('')
   const [pendingTargetRedcon, setPendingTargetRedcon] = useState<1 | 2 | 3 | 4 | null>(null)
   const shadowSessionRef = useRef<ShadowSession | null>(null)
   const redconCommandSequenceRef = useRef(0)
@@ -218,10 +235,12 @@ function App({ initialAuthError = '' }: AppProps) {
   const lastBoardVideoErrorRef = useRef<string | null>(null)
   const hasObservedBoardVideoLastErrorRef = useRef(false)
   const previousReportedRedconRef = useRef<number | null>(null)
+  const hasReceivedShadowSnapshotRef = useRef(false)
 
   const hasConfigErrors = appConfig.errors.length > 0
-  const configuredTown = appConfig.sparkplugGroupId
-  const configuredTownPath = buildTownPath(configuredTown)
+  const configuredTownThingName = appConfig.townThingName
+  const configuredTownLabel = appConfig.sparkplugGroupId || configuredTownThingName
+  const configuredTownPath = buildTownPath(configuredTownThingName)
   const currentRouteTown = useMemo(() => describeRouteTown(route), [route])
   const currentNotificationObjectId = useMemo(() => {
     if (route.kind === 'town') {
@@ -236,19 +255,37 @@ function App({ initialAuthError = '' }: AppProps) {
     return null
   }, [route])
   const hasUnsupportedTown =
-    currentRouteTown !== null && currentRouteTown !== appConfig.sparkplugGroupId
-  const routeRigName =
-    !hasUnsupportedTown &&
-    (route.kind === 'rig' || route.kind === 'device' || route.kind === 'device_video')
-      ? route.rig
-      : null
+    currentRouteTown !== null && currentRouteTown !== configuredTownThingName
+  const currentRouteThingName =
+    route.kind === 'town'
+      ? route.town
+      : route.kind === 'rig'
+        ? route.rig
+        : route.kind === 'device' || route.kind === 'device_video'
+          ? route.device
+          : null
   const selectedDeviceRoute = useMemo<DeviceRoute | null>(() => {
     if (!hasUnsupportedTown && (route.kind === 'device' || route.kind === 'device_video')) {
       return route
     }
     return null
   }, [hasUnsupportedTown, route])
-  const selectedRigName = routeRigName ?? null
+  const routeHeaderMetadata =
+    routeHeaderState.status === 'ready' ? routeHeaderState.metadata : null
+  const routeSparkplugShadow =
+    routeHeaderState.status === 'ready' ? routeHeaderState.sparkplugShadow : null
+  const currentTownCatalogName =
+    route.kind === 'town'
+      ? routeHeaderMetadata?.name ?? null
+      : route.kind === 'rig' || route.kind === 'device' || route.kind === 'device_video'
+        ? routeHeaderMetadata?.townName ?? null
+        : null
+  const currentRigCatalogName =
+    route.kind === 'rig'
+      ? routeHeaderMetadata?.name ?? null
+      : route.kind === 'device' || route.kind === 'device_video'
+        ? routeHeaderMetadata?.rigName ?? null
+        : null
   const selectedDeviceEntry = useMemo(() => {
     if (!selectedDeviceRoute || deviceCatalog.status !== 'ready') {
       return null
@@ -259,11 +296,34 @@ function App({ initialAuthError = '' }: AppProps) {
     )
   }, [deviceCatalog.devices, deviceCatalog.status, selectedDeviceRoute])
   const selectedDeviceLabel = useMemo(() => {
+    if (route.kind === 'device' || route.kind === 'device_video') {
+      return routeHeaderMetadata?.name?.trim() || null
+    }
     if (!selectedDeviceRoute) {
       return null
     }
     return selectedDeviceEntry ? getCatalogDeviceLabel(selectedDeviceEntry) : 'Device'
-  }, [selectedDeviceEntry, selectedDeviceRoute])
+  }, [route.kind, routeHeaderMetadata?.name, selectedDeviceEntry, selectedDeviceRoute])
+  const navigationTownLabel =
+    route.kind === 'town'
+      ? routeHeaderMetadata?.name ?? route.town
+      : route.kind === 'rig'
+        ? routeHeaderMetadata?.townName ?? route.town
+        : route.kind === 'device' || route.kind === 'device_video'
+          ? routeHeaderMetadata?.townName ?? route.town
+          : null
+  const navigationRigLabel =
+    route.kind === 'rig'
+      ? routeHeaderMetadata?.name ?? route.rig
+      : route.kind === 'device' || route.kind === 'device_video'
+        ? routeHeaderMetadata?.rigName ?? route.rig
+        : null
+  const isNavigationReady =
+    route.kind !== 'root' &&
+    route.kind !== 'not_found' &&
+    !hasUnsupportedTown &&
+    routeHeaderState.status === 'ready'
+  const hasShadowBootstrapFailure = shadowBootstrapError !== '' && lastShadowUpdateAtMs === null
 
   const adminEmailMismatch = useMemo(() => {
     if (!appConfig.adminEmail || !authUser?.email) {
@@ -279,31 +339,32 @@ function App({ initialAuthError = '' }: AppProps) {
       return null
     }
   }, [shadowJson])
+  const displayShadowDocument = lastShadowUpdateAtMs !== null ? shadowDocument : routeSparkplugShadow
 
   const reportedMcuPower = useMemo(
-    () => extractReportedMcuPower(shadowDocument),
-    [shadowDocument],
+    () => extractReportedMcuPower(displayShadowDocument),
+    [displayShadowDocument],
   )
   const reportedMcuOnline = useMemo(
-    () => extractReportedMcuOnline(shadowDocument),
-    [shadowDocument],
+    () => extractReportedMcuOnline(displayShadowDocument),
+    [displayShadowDocument],
   )
   const reportedBatteryMv = useMemo(
-    () => extractReportedBatteryMv(shadowDocument),
-    [shadowDocument],
+    () => extractReportedBatteryMv(displayShadowDocument),
+    [displayShadowDocument],
   )
   const primaryReportedBatteryMv = reportedBatteryMv
   const reportedBoardPower = useMemo(
-    () => extractReportedBoardPower(shadowDocument),
-    [shadowDocument],
+    () => extractReportedBoardPower(displayShadowDocument),
+    [displayShadowDocument],
   )
   const reportedBoardOnline = useMemo(
-    () => extractReportedBoardWifiOnline(shadowDocument),
-    [shadowDocument],
+    () => extractReportedBoardWifiOnline(displayShadowDocument),
+    [displayShadowDocument],
   )
   const shadowReportedRedcon = useMemo(
-    () => extractReportedRedcon(shadowDocument),
-    [shadowDocument],
+    () => extractReportedRedcon(displayShadowDocument),
+    [displayShadowDocument],
   )
   const reportedRedcon = shadowReportedRedcon
 
@@ -331,12 +392,10 @@ function App({ initialAuthError = '' }: AppProps) {
 
   const isSelectedDeviceValid =
     selectedDeviceRoute !== null &&
-    deviceCatalog.status === 'ready' &&
-    deviceCatalog.devices.some(
-      (device) =>
-        device.thingName === selectedDeviceRoute.device &&
-        (route.kind !== 'device_video' || device.capabilitiesSet.includes('video')),
-    )
+    routeHeaderMetadata?.thingTypeName === 'unit' &&
+    routeHeaderMetadata.townName !== null &&
+    routeHeaderMetadata.rigName !== null &&
+    (route.kind !== 'device_video' || routeHeaderMetadata.capabilitiesSet.includes('video'))
   const activeShadowTarget = shadowTargetState.status === 'ready' ? shadowTargetState.target : null
 
   useEffect(() => {
@@ -554,10 +613,103 @@ function App({ initialAuthError = '' }: AppProps) {
     if (
       status !== 'signed_in' ||
       adminEmailMismatch ||
+      !currentRouteThingName ||
+      hasUnsupportedTown
+    ) {
+      setRouteHeaderState(emptyRouteHeaderState())
+      return
+    }
+
+    let cancelled = false
+    setRouteHeaderState({
+      status: 'loading',
+      metadata: null,
+      sparkplugShadow: null,
+      error: '',
+    })
+
+    const loadRouteHeader = async (): Promise<void> => {
+      try {
+        const [metadata, sparkplugShadow] = await Promise.all([
+          describeThingMetadata(resolveSessionIdToken, currentRouteThingName),
+          getThingNamedShadow(resolveSessionIdToken, currentRouteThingName, 'sparkplug'),
+        ])
+        if (cancelled) {
+          return
+        }
+        if (route.kind === 'town' && metadata.thingTypeName !== 'town') {
+          throw new Error(`Thing '${currentRouteThingName}' is not a town.`)
+        }
+        if (route.kind === 'rig' && metadata.thingTypeName !== 'rig') {
+          throw new Error(`Thing '${currentRouteThingName}' is not a rig.`)
+        }
+        if (
+          (route.kind === 'device' || route.kind === 'device_video') &&
+          metadata.thingTypeName !== 'unit'
+        ) {
+          throw new Error(`Thing '${currentRouteThingName}' is not a unit device.`)
+        }
+
+        setRouteHeaderState({
+          status: 'ready',
+          metadata,
+          sparkplugShadow,
+          error: '',
+        })
+      } catch (caughtError) {
+        if (cancelled) {
+          return
+        }
+        setRouteHeaderState({
+          status: 'error',
+          metadata: null,
+          sparkplugShadow: null,
+          error:
+            caughtError instanceof Error
+              ? caughtError.message
+              : 'Unable to resolve route header state',
+        })
+      }
+    }
+
+    void loadRouteHeader()
+
+    return () => {
+      cancelled = true
+    }
+  }, [
+    adminEmailMismatch,
+    currentRouteThingName,
+    hasUnsupportedTown,
+    resolveSessionIdToken,
+    route.kind,
+    status,
+  ])
+
+  useEffect(() => {
+    if (
+      status !== 'signed_in' ||
+      adminEmailMismatch ||
       route.kind !== 'town' ||
       hasUnsupportedTown
     ) {
       setRigCatalog(emptyRigCatalogState())
+      return
+    }
+    if (routeHeaderState.status === 'error') {
+      setRigCatalog({
+        status: 'error',
+        rigs: [],
+        error: routeHeaderState.error,
+      })
+      return
+    }
+    if (routeHeaderState.status !== 'ready' || !currentTownCatalogName) {
+      setRigCatalog({
+        status: 'loading',
+        rigs: [],
+        error: '',
+      })
       return
     }
 
@@ -570,7 +722,7 @@ function App({ initialAuthError = '' }: AppProps) {
 
     const loadRigCatalog = async (): Promise<void> => {
       try {
-        const rigs = await listTownRigs(resolveSessionIdToken, route.town)
+        const rigs = await listTownRigs(resolveSessionIdToken, currentTownCatalogName)
         if (cancelled) {
           return
         }
@@ -601,9 +753,11 @@ function App({ initialAuthError = '' }: AppProps) {
   }, [
     adminEmailMismatch,
     hasUnsupportedTown,
+    currentTownCatalogName,
     resolveSessionIdToken,
     route.kind,
-    route.kind === 'town' ? route.town : '',
+    routeHeaderState.error,
+    routeHeaderState.status,
     status,
   ])
 
@@ -611,10 +765,19 @@ function App({ initialAuthError = '' }: AppProps) {
     if (
       status !== 'signed_in' ||
       adminEmailMismatch ||
-      !selectedRigName ||
+      route.kind !== 'rig' ||
+      !currentRigCatalogName ||
       hasUnsupportedTown
     ) {
       setDeviceCatalog(emptyDeviceCatalogState())
+      return
+    }
+    if (routeHeaderState.status === 'error') {
+      setDeviceCatalog({
+        status: 'error',
+        devices: [],
+        error: routeHeaderState.error,
+      })
       return
     }
 
@@ -627,7 +790,7 @@ function App({ initialAuthError = '' }: AppProps) {
 
     const loadDeviceCatalog = async (): Promise<void> => {
       try {
-        const devices = await listRigDevices(resolveSessionIdToken, selectedRigName)
+        const devices = await listRigDevices(resolveSessionIdToken, currentRigCatalogName)
         if (cancelled) {
           return
         }
@@ -646,7 +809,7 @@ function App({ initialAuthError = '' }: AppProps) {
           setDeviceCatalog({
             status: 'not_found',
             devices: [],
-            error: `Rig '${selectedRigName}' was not found.`,
+            error: `Rig '${navigationRigLabel ?? currentRigCatalogName}' was not found.`,
           })
           return
         }
@@ -665,7 +828,17 @@ function App({ initialAuthError = '' }: AppProps) {
     return () => {
       cancelled = true
     }
-  }, [adminEmailMismatch, hasUnsupportedTown, resolveSessionIdToken, selectedRigName, status])
+  }, [
+    adminEmailMismatch,
+    hasUnsupportedTown,
+    currentRigCatalogName,
+    navigationRigLabel,
+    resolveSessionIdToken,
+    route.kind,
+    routeHeaderState.error,
+    routeHeaderState.status,
+    status,
+  ])
 
   useEffect(() => {
     if (status !== 'signed_in' || adminEmailMismatch || hasUnsupportedTown) {
@@ -673,94 +846,60 @@ function App({ initialAuthError = '' }: AppProps) {
       return
     }
 
-    if (route.kind === 'root' || route.kind === 'not_found') {
+    if (
+      route.kind === 'root' ||
+      route.kind === 'not_found' ||
+      route.kind === 'town' ||
+      route.kind === 'rig'
+    ) {
       setShadowTargetState(emptyShadowTargetState())
       return
     }
-
-    if (route.kind === 'device' || route.kind === 'device_video') {
-      if (deviceCatalog.status === 'loading') {
-        setShadowTargetState({
-          status: 'loading',
-          target: null,
-          error: '',
-        })
-        return
-      }
-      if (!selectedDeviceRoute || !selectedDeviceEntry || !isSelectedDeviceValid) {
-        setShadowTargetState(emptyShadowTargetState())
-        return
-      }
+    if (routeHeaderState.status === 'error') {
       setShadowTargetState({
-        status: 'ready',
-        target: {
-          routeKind: route.kind,
-          thingName: selectedDeviceRoute.device,
-          capabilitiesSet: selectedDeviceEntry.capabilitiesSet,
-          sparkplugGroupId: selectedDeviceRoute.town,
-          sparkplugEdgeNodeId: selectedDeviceRoute.rig,
-        },
+        status: 'error',
+        target: null,
+        error: routeHeaderState.error,
+      })
+      return
+    }
+    if (routeHeaderState.status !== 'ready' || !routeHeaderMetadata) {
+      setShadowTargetState({
+        status: 'loading',
+        target: null,
         error: '',
       })
       return
     }
+    if (
+      !selectedDeviceRoute ||
+      !isSelectedDeviceValid ||
+      !routeHeaderMetadata.townName ||
+      !routeHeaderMetadata.rigName
+    ) {
+      setShadowTargetState(emptyShadowTargetState())
+      return
+    }
 
-    let cancelled = false
     setShadowTargetState({
-      status: 'loading',
-      target: null,
+      status: 'ready',
+      target: {
+        routeKind: route.kind,
+        thingName: selectedDeviceRoute.device,
+        capabilitiesSet: routeHeaderMetadata.capabilitiesSet,
+        sparkplugGroupId: routeHeaderMetadata.townName,
+        sparkplugEdgeNodeId: routeHeaderMetadata.rigName,
+      },
       error: '',
     })
-
-    const resolveShadowTarget = async (): Promise<void> => {
-      try {
-        const metadata =
-          route.kind === 'town'
-            ? await resolveTownThing(resolveSessionIdToken, route.town)
-            : await resolveRigThing(resolveSessionIdToken, route.town, route.rig)
-        if (cancelled) {
-          return
-        }
-
-        setShadowTargetState({
-          status: 'ready',
-          target: {
-            routeKind: route.kind,
-            thingName: metadata.thingName,
-            capabilitiesSet: metadata.capabilitiesSet,
-            sparkplugGroupId: route.town,
-            sparkplugEdgeNodeId: route.kind === 'rig' ? route.rig : route.town,
-          },
-          error: '',
-        })
-      } catch (caughtError) {
-        if (cancelled) {
-          return
-        }
-        setShadowTargetState({
-          status: 'error',
-          target: null,
-          error:
-            caughtError instanceof Error
-              ? caughtError.message
-              : 'Unable to resolve route shadow target',
-        })
-      }
-    }
-
-    void resolveShadowTarget()
-
-    return () => {
-      cancelled = true
-    }
   }, [
     adminEmailMismatch,
-    deviceCatalog.status,
     hasUnsupportedTown,
     isSelectedDeviceValid,
-    resolveSessionIdToken,
     route,
-    selectedDeviceEntry,
+    routeHeaderMetadata,
+    routeHeaderState.error,
+    routeHeaderState.status,
     selectedDeviceRoute,
     status,
   ])
@@ -775,6 +914,8 @@ function App({ initialAuthError = '' }: AppProps) {
     if (!activeShadowTarget) {
       shadowSessionRef.current?.close()
       shadowSessionRef.current = null
+      hasReceivedShadowSnapshotRef.current = false
+      setShadowBootstrapError('')
       setShadowConnectionState('idle')
       setIsLoadingShadow(false)
       setIsUpdatingShadow(false)
@@ -791,7 +932,9 @@ function App({ initialAuthError = '' }: AppProps) {
 
     let cancelled = false
     let shadowSession: ShadowSession | null = null
+    hasReceivedShadowSnapshotRef.current = false
     setShadowJson('{}')
+    setShadowBootstrapError('')
     setPendingTargetRedcon(null)
     setRobotState(null)
     setMcpTransport(null)
@@ -822,6 +965,8 @@ function App({ initialAuthError = '' }: AppProps) {
             if (cancelled) {
               return
             }
+            hasReceivedShadowSnapshotRef.current = true
+            setShadowBootstrapError('')
             applyShadowSnapshot(shadow)
             setIsLoadingShadow(false)
           },
@@ -842,6 +987,9 @@ function App({ initialAuthError = '' }: AppProps) {
           },
           onError: (message) => {
             if (!cancelled) {
+              if (!hasReceivedShadowSnapshotRef.current) {
+                setShadowBootstrapError(message)
+              }
               enqueueRuntimeError(message, 'shadow-session')
             }
           },
@@ -859,11 +1007,12 @@ function App({ initialAuthError = '' }: AppProps) {
         if (cancelled) {
           return
         }
+        const message =
+          caughtError instanceof Error ? caughtError.message : 'Unable to open Thing Shadow session'
         setIsLoadingShadow(false)
-        enqueueRuntimeError(
-          caughtError instanceof Error ? caughtError.message : 'Unable to open Thing Shadow session',
-          'shadow-session',
-        )
+        setShadowConnectionState('error')
+        setShadowBootstrapError(message)
+        enqueueRuntimeError(message, 'shadow-session')
       }
     }
 
@@ -1002,7 +1151,6 @@ function App({ initialAuthError = '' }: AppProps) {
     isRobotMotionActive,
     pendingTargetRedcon,
     isShadowConnected,
-    requestRobotState,
   ])
 
   useEffect(() => {
@@ -1060,7 +1208,7 @@ function App({ initialAuthError = '' }: AppProps) {
       document.removeEventListener('visibilitychange', handleVisibilityChange)
       teleopController.deactivate()
     }
-  }, [canUseBoardVideo, isBoardVideoExpanded, isShadowConnected])
+  }, [canUseBoardVideo, cmdVelRepeatIntervalMs, isBoardVideoExpanded, isShadowConnected])
 
   const loadShadow = async (): Promise<void> => {
     setIsLoadingShadow(true)
@@ -1171,21 +1319,25 @@ function App({ initialAuthError = '' }: AppProps) {
       return null
     }
 
-    const crumbs: ReactElement[] = [renderInlineRouteLink(buildTownPath(route.town), route.town)]
+    const townLabel = navigationTownLabel ?? route.town
+    const crumbs: ReactElement[] = [renderInlineRouteLink(buildTownPath(route.town), townLabel)]
     if (route.kind === 'town') {
       crumbs[0] = (
         <span key={`crumb-town:${route.town}`} className="navigation-current-link">
-          {route.town}
+          {townLabel}
         </span>
       )
     } else if (route.kind === 'rig') {
-      crumbs.push(<span key={`crumb-rig:${route.rig}`}>{route.rig}</span>)
+      const rigLabel = navigationRigLabel ?? route.rig
+      crumbs.push(<span key={`crumb-rig:${route.rig}`}>{rigLabel}</span>)
     } else if (route.kind === 'device' || route.kind === 'device_video') {
-      crumbs.push(renderInlineRouteLink(buildRigPath(route.town, route.rig), route.rig))
+      const rigLabel = navigationRigLabel ?? route.rig
+      const deviceLabel = selectedDeviceLabel ?? route.device
+      crumbs.push(renderInlineRouteLink(buildRigPath(route.town, route.rig), rigLabel))
       crumbs.push(
         renderInlineRouteLink(
           buildDevicePath(route.town, route.rig, route.device),
-          selectedDeviceLabel ?? route.device,
+          deviceLabel,
         ),
       )
     }
@@ -1193,19 +1345,21 @@ function App({ initialAuthError = '' }: AppProps) {
       crumbs.push(<span key={`crumb-video:${route.device}`}>video</span>)
     }
     if (route.kind === 'rig') {
+      const rigLabel = navigationRigLabel ?? route.rig
       crumbs[crumbs.length - 1] = (
         <span key={`crumb-rig:${route.rig}`} className="navigation-current-link">
-          {route.rig}
+          {rigLabel}
         </span>
       )
     }
     if (route.kind === 'device' || route.kind === 'device_video') {
+      const deviceLabel = selectedDeviceLabel ?? route.device
       crumbs[crumbs.length - 1] = (
         <span
           key={`crumb-device:${route.device}:${route.kind}`}
           className="navigation-current-link"
         >
-          {route.kind === 'device' ? selectedDeviceLabel ?? route.device : 'video'}
+          {route.kind === 'device' ? deviceLabel : 'video'}
         </span>
       )
     }
@@ -1283,9 +1437,24 @@ function App({ initialAuthError = '' }: AppProps) {
     lastShadowUpdateAtMs === null
       ? 'Last shadow update unavailable'
       : `Last shadow update ${new Date(lastShadowUpdateAtMs).toLocaleString()}`
+  const isRouteSessionPending =
+    !hasUnsupportedTown &&
+    (route.kind === 'town' ||
+      route.kind === 'rig' ||
+      route.kind === 'device' ||
+      route.kind === 'device_video') &&
+    routeHeaderState.status === 'loading'
+  const routeLoadingLabel =
+    route.kind === 'town'
+      ? navigationTownLabel ?? 'town'
+      : route.kind === 'rig'
+        ? navigationRigLabel ?? 'rig'
+        : route.kind === 'device' || route.kind === 'device_video'
+          ? selectedDeviceLabel ?? 'device'
+          : 'route'
 
   const navigationPanel =
-    route.kind !== 'root' ? (
+    route.kind !== 'root' && isNavigationReady ? (
       <section className="card navigation-panel" aria-label="Navigation panel">
         <div className="navigation-panel-main">
           <div className="navigation-panel-header">
@@ -1360,10 +1529,26 @@ function App({ initialAuthError = '' }: AppProps) {
       <section className="card catalog-card">
         <h1>Unsupported town</h1>
         <p>
-          This deployment is scoped to <strong>{configuredTown}</strong>. The current URL targets{' '}
+          This deployment is scoped to <strong>{configuredTownLabel}</strong> (
+          <code>{configuredTownThingName}</code>). The current URL targets town thing{' '}
           <strong>{currentRouteTown}</strong>.
         </p>
-        <p>{renderInlineRouteLink(configuredTownPath, `Open ${configuredTown}`)}</p>
+        <p>{renderInlineRouteLink(configuredTownPath, `Open ${configuredTownLabel}`)}</p>
+      </section>
+    )
+  } else if (routeHeaderState.status === 'error') {
+    content = (
+      <section className="card catalog-card">
+        <h1>Route unavailable</h1>
+        <p>{routeHeaderState.error}</p>
+        <p>{renderInlineRouteLink(configuredTownPath, `Open ${configuredTownLabel}`)}</p>
+      </section>
+    )
+  } else if (isRouteSessionPending) {
+    content = (
+      <section className="card catalog-card">
+        <h1>Loading route</h1>
+        <p>Resolving {routeLoadingLabel} metadata and current Sparkplug state...</p>
       </section>
     )
   } else if (route.kind === 'town') {
@@ -1375,11 +1560,14 @@ function App({ initialAuthError = '' }: AppProps) {
           <p>No rigs are currently registered for this town.</p>
         ) : null}
         {rigCatalog.rigs.length > 0 ? (
-          <ul className="catalog-list catalog-grid" aria-label={`Rigs in ${route.town}`}>
+          <ul
+            className="catalog-list catalog-grid"
+            aria-label={`Rigs in ${navigationTownLabel ?? route.town}`}
+          >
             {rigCatalog.rigs.map((rig) => (
-              <li key={rig.rigName} className="catalog-list-item">
+              <li key={rig.thingName} className="catalog-list-item">
                 {renderCatalogCardLink(
-                  buildRigPath(route.town, rig.rigName),
+                  buildRigPath(route.town, rig.thingName),
                   formatCatalogDetailLine(rig.shortId, rig.rigName),
                 )}
               </li>
@@ -1400,7 +1588,10 @@ function App({ initialAuthError = '' }: AppProps) {
           <p>No devices are currently assigned to this rig.</p>
         ) : null}
         {deviceCatalog.devices.length > 0 ? (
-          <ul className="catalog-list catalog-grid" aria-label={`Devices in ${route.rig}`}>
+          <ul
+            className="catalog-list catalog-grid"
+            aria-label={`Devices in ${navigationRigLabel ?? route.rig}`}
+          >
             {deviceCatalog.devices.map((device) => (
               <li key={device.thingName} className="catalog-list-item">
                 {renderCatalogCardLink(
@@ -1415,32 +1606,19 @@ function App({ initialAuthError = '' }: AppProps) {
     ) : (
       <></>
     )
-  } else if (selectedDeviceRoute && deviceCatalog.status === 'loading') {
+  } else if (selectedDeviceRoute && !isSelectedDeviceValid) {
     content = (
       <section className="card catalog-card">
-        <h1>Loading device</h1>
-        <p>Validating device membership for rig {selectedDeviceRoute.rig}...</p>
-      </section>
-    )
-  } else if (
-    selectedDeviceRoute &&
-    (deviceCatalog.status === 'not_found' ||
-      deviceCatalog.status === 'error' ||
-      (deviceCatalog.status === 'ready' &&
-        !deviceCatalog.devices.some((device) => device.thingName === selectedDeviceRoute.device)))
-  ) {
-    content = (
-      <section className="card catalog-card">
-        <h1>Device not found</h1>
+        <h1>Device unavailable</h1>
         <p>
-          {deviceCatalog.status === 'error'
-            ? deviceCatalog.error
-            : `Device '${selectedDeviceRoute.device}' is not assigned to rig '${selectedDeviceRoute.rig}'.`}
+          {route.kind === 'device_video'
+            ? `Thing '${selectedDeviceRoute.device}' does not expose board video for this route.`
+            : `Thing '${selectedDeviceRoute.device}' could not be opened as a unit device route.`}
         </p>
         <p>
           {renderInlineRouteLink(
             buildRigPath(selectedDeviceRoute.town, selectedDeviceRoute.rig),
-            `Open ${selectedDeviceRoute.rig}`,
+            `Open ${navigationRigLabel ?? selectedDeviceRoute.rig}`,
           )}
         </p>
       </section>
@@ -1486,14 +1664,27 @@ function App({ initialAuthError = '' }: AppProps) {
       <section className="card catalog-card">
         <h1>Device Shadow Admin</h1>
         <p>Waiting for a valid route selection.</p>
-        <p>{renderInlineRouteLink(configuredTownPath, `Open ${configuredTown}`)}</p>
+        <p>{renderInlineRouteLink(configuredTownPath, `Open ${configuredTownLabel}`)}</p>
       </section>
     )
   }
 
+  const shadowAvailabilityNotice =
+    hasShadowBootstrapFailure && activeShadowTarget !== null ? (
+      <section className="card catalog-card">
+        <h1>Live shadow connection unavailable</h1>
+        <p>{shadowBootstrapError}</p>
+        <p>
+          Showing route labels and current Sparkplug state from direct AWS IoT reads. Live controls
+          stay disabled until the MQTT shadow session connects.
+        </p>
+      </section>
+    ) : null
+
   return (
     <main className="page page-signed-in">
       {navigationPanel}
+      {shadowAvailabilityNotice}
       {content}
 
       <NotificationTray

@@ -13,6 +13,7 @@ KNOWN_NAMED_SHADOW_CAPABILITIES = (
     "sparkplug",
     "mcu",
     "board",
+    "mcp",
     "video",
 )
 

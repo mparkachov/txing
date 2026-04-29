@@ -1,0 +1,12 @@
+{
+  "state": {
+    "reported": {
+      "descriptor": null,
+      "status": {
+        "serviceId": "mcp",
+        "available": false,
+        "updatedAtMs": 0
+      }
+    }
+  }
+}

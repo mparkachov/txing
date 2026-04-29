@@ -295,20 +295,6 @@ const createMcpSessionId = (): string =>
     ? crypto.randomUUID()
     : `session-${Date.now()}-${Math.random().toString(16).slice(2)}`
 
-const readNestedValue = (
-  root: Record<string, unknown> | null,
-  path: readonly string[],
-): unknown => {
-  let current: unknown = root
-  for (const segment of path) {
-    if (!isRecord(current)) {
-      return null
-    }
-    current = current[segment]
-  }
-  return current
-}
-
 const containsMcpLeaseToken = (value: unknown, depth = 0): boolean => {
   if (depth > 4 || !isRecord(value)) {
     return false
@@ -628,8 +614,8 @@ class AwsIotShadowSession implements ShadowSession {
         decoded.kind === 'updateAccepted'
           ? mergeShadowUpdate(currentShadow, decoded.payload)
           : decoded.payload
-      if (decoded.shadowName === 'sparkplug') {
-        this.refreshMcpDiscoveryFromSparkplugShadow()
+      if (decoded.shadowName === 'mcp') {
+        this.refreshMcpDiscoveryFromMcpShadow()
       }
       const assembledShadow = this.assembleShadowSnapshot()
       this.options.onShadowDocument(assembledShadow, decoded.operation ?? 'get')
@@ -1071,36 +1057,41 @@ class AwsIotShadowSession implements ShadowSession {
     }
   }
 
-  private refreshMcpDiscoveryFromSparkplugShadow(): void {
-    const sparkplugShadow = this.latestShadows.sparkplug
-    if (!isRecord(sparkplugShadow) || !isRecord(sparkplugShadow.state)) {
+  private refreshMcpDiscoveryFromMcpShadow(): void {
+    const mcpShadow = this.latestShadows.mcp
+    if (!isRecord(mcpShadow) || !isRecord(mcpShadow.state)) {
       return
     }
-    const reported = sparkplugShadow.state.reported
-    const metrics = isRecord(reported) && isRecord(reported.metrics) ? reported.metrics : null
-    const mcpMetrics = readNestedValue(metrics, ['services', 'mcp'])
-    const mcp = isRecord(mcpMetrics) ? mcpMetrics : null
+    const reported = mcpShadow.state.reported
+    if (!isRecord(reported)) {
+      return
+    }
+    const descriptor = isRecord(reported.descriptor) ? reported.descriptor : null
+    const status = isRecord(reported.status) ? reported.status : null
 
-    this.mcpDiscovery.available = typeof mcp?.available === 'boolean' ? mcp.available : null
+    this.mcpDiscovery.available =
+      typeof status?.available === 'boolean' ? status.available : null
     this.mcpDiscovery.transport =
-      typeof mcp?.transport === 'string' && mcp.transport.trim() ? mcp.transport : null
+      typeof descriptor?.transport === 'string' && descriptor.transport.trim()
+        ? descriptor.transport
+        : null
     this.mcpDiscovery.mcpProtocolVersion =
-      typeof mcp?.mcpProtocolVersion === 'string' && mcp.mcpProtocolVersion.trim()
-        ? mcp.mcpProtocolVersion
+      typeof descriptor?.mcpProtocolVersion === 'string' && descriptor.mcpProtocolVersion.trim()
+        ? descriptor.mcpProtocolVersion
         : null
     this.mcpDiscovery.descriptorTopic =
-      typeof mcp?.descriptorTopic === 'string' && mcp.descriptorTopic.trim()
-        ? mcp.descriptorTopic
+      typeof descriptor?.descriptorTopic === 'string' && descriptor.descriptorTopic.trim()
+        ? descriptor.descriptorTopic
         : this.mcpDescriptorTopic
     this.mcpDiscovery.leaseRequired =
-      typeof mcp?.leaseRequired === 'boolean' ? mcp.leaseRequired : null
+      typeof descriptor?.leaseRequired === 'boolean' ? descriptor.leaseRequired : null
     this.mcpDiscovery.leaseTtlMs =
-      typeof mcp?.leaseTtlMs === 'number' && Number.isFinite(mcp.leaseTtlMs)
-        ? Math.round(mcp.leaseTtlMs)
+      typeof descriptor?.leaseTtlMs === 'number' && Number.isFinite(descriptor.leaseTtlMs)
+        ? Math.round(descriptor.leaseTtlMs)
         : null
     this.mcpDiscovery.serverVersion =
-      typeof mcp?.serverVersion === 'string' && mcp.serverVersion.trim()
-        ? mcp.serverVersion
+      typeof descriptor?.serverVersion === 'string' && descriptor.serverVersion.trim()
+        ? descriptor.serverVersion
         : null
   }
 

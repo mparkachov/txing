@@ -76,7 +76,7 @@ class SparkplugWitnessTests(unittest.TestCase):
             metrics=[
                 _encode_metric(name="redcon", int_value=1),
                 _encode_metric(name="batteryMv", int_value=3795),
-                _encode_metric(name="services/mcp/available", bool_value=True),
+                _encode_metric(name="services/demo/available", bool_value=True),
             ]
         )
 
@@ -93,7 +93,7 @@ class SparkplugWitnessTests(unittest.TestCase):
                 "redcon": 1,
                 "batteryMv": 3795,
                 "services": {
-                    "mcp": {
+                    "demo": {
                         "available": True,
                     }
                 },
@@ -226,7 +226,7 @@ class SparkplugWitnessTests(unittest.TestCase):
     def test_project_device_data_merges_nested_metrics_without_dropping_others(self) -> None:
         encoded_payload = _encode_payload(
             metrics=[
-                _encode_metric(name="services/mcp/available", bool_value=True),
+                _encode_metric(name="services/demo/available", bool_value=True),
             ]
         )
         message = decode_sparkplug_payload(
@@ -246,7 +246,7 @@ class SparkplugWitnessTests(unittest.TestCase):
             reported_payload["metrics"],
             {
                 "services": {
-                    "mcp": {
+                    "demo": {
                         "available": True,
                     }
                 }

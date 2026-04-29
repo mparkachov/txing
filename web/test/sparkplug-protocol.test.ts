@@ -46,12 +46,12 @@ describe('sparkplug protocol helpers', () => {
       seq: 2,
       metrics: [
         {
-          name: 'services/mcp/available',
+          name: 'services/demo/available',
           datatype: SparkplugDataType.Boolean,
           boolValue: true,
         },
         {
-          name: 'services/mcp/transport',
+          name: 'services/demo/transport',
           datatype: SparkplugDataType.String,
           stringValue: 'mqtt-jsonrpc',
         },
@@ -60,7 +60,7 @@ describe('sparkplug protocol helpers', () => {
     const decoded = decodeSparkplugPayload(payload)
     expect(decoded.metrics).toEqual([
       {
-        name: 'services/mcp/available',
+        name: 'services/demo/available',
         datatype: 11,
         intValue: null,
         longValue: null,
@@ -69,7 +69,7 @@ describe('sparkplug protocol helpers', () => {
         timestamp: null,
       },
       {
-        name: 'services/mcp/transport',
+        name: 'services/demo/transport',
         datatype: 12,
         intValue: null,
         longValue: null,

@@ -1,5 +1,5 @@
 {
   "town": ["sparkplug"],
   "rig": ["sparkplug"],
-  "unit": ["sparkplug", "mcu", "board", "video"]
+  "unit": ["sparkplug", "mcu", "board", "mcp", "video"]
 }

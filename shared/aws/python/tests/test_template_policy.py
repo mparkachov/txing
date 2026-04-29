@@ -46,6 +46,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         )
         self.assertIn("encode(*, 'base64')", template)
         self.assertIn("iot:SearchIndex", template)
+        self.assertIn("iot:GetThingShadow", template)
 
     def test_device_runtime_policy_allows_describe_thing(self) -> None:
         template = (

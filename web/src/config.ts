@@ -31,6 +31,7 @@ const buildConfig = () => {
   const cognitoIdentityPoolId = requireEnv('VITE_COGNITO_IDENTITY_POOL_ID') ?? ''
   const iotPolicyName = requireEnv('VITE_IOT_POLICY_NAME') ?? ''
   const thingName = requireEnv('VITE_DEVICE_THING_NAME') ?? ''
+  const townThingName = requireEnv('VITE_TOWN_THING_NAME') ?? ''
   const sparkplugGroupId = requireEnv('VITE_SPARKPLUG_GROUP_ID') ?? ''
   const sparkplugEdgeNodeId = requireEnv('VITE_SPARKPLUG_EDGE_NODE_ID') ?? ''
 
@@ -54,6 +55,9 @@ const buildConfig = () => {
   if (!iotPolicyName) {
     errors.push('Missing VITE_IOT_POLICY_NAME')
   }
+  if (!townThingName) {
+    errors.push('Missing VITE_TOWN_THING_NAME')
+  }
   if (!sparkplugGroupId) {
     errors.push('Missing VITE_SPARKPLUG_GROUP_ID')
   }
@@ -66,6 +70,7 @@ const buildConfig = () => {
     awsRegion,
     cognitoIdentityPoolId,
     thingName,
+    townThingName,
     sparkplugGroupId,
     sparkplugEdgeNodeId,
     adminEmail,
