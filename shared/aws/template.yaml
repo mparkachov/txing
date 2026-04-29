@@ -373,7 +373,7 @@ Resources:
     DependsOn:
       - TxingSparkplugWitnessInvokePermission
     Properties:
-      RuleName: !Sub ${AWS::StackName}-sparkplug-witness
+      RuleName: !Sub ${AWS::StackName}SparkplugWitness
       TopicRulePayload:
         RuleDisabled: false
         AwsIotSqlVersion: "2016-03-23"
