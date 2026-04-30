@@ -52,15 +52,12 @@ describe('sparkplug device redcon extraction', () => {
     expect(extractSparkplugDeviceBatteryMv(topics.ddata, payload, topics)).toBe(3940)
   })
 
-  test('treats DDEATH as REDCON 4 even without decoding metrics', () => {
+  test('treats DDEATH as unavailable even if the payload cannot be decoded', () => {
     const topics = buildSparkplugTopics('town', 'rig', 'txing')
 
     expect(
       extractSparkplugDeviceRedconUpdate(topics.ddeath, new Uint8Array([0xde, 0xad]), topics),
-    ).toEqual({
-      redcon: 4,
-      source: 'ddeath',
-    })
+    ).toBeNull()
   })
 
   test('ignores Sparkplug device payloads without a valid redcon metric', () => {

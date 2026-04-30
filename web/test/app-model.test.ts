@@ -4,12 +4,15 @@ import {
   describeRedcon,
   deriveTxingPowerTransitionPending,
   deriveTxingPoweredOn,
+  extractIsSparkplugDeviceUnavailable,
   extractReportedBatteryMv,
   extractReportedMcuOnline,
   extractReportedRedcon,
+  extractSparkplugMessageType,
   hasReachedTargetRedcon,
   getTrackIndicatorPresentation,
   getTxingRedconToneClass,
+  shouldClearPendingTargetRedcon,
 } from '../src/app-model'
 
 describe('app model helpers', () => {
@@ -119,7 +122,7 @@ describe('app model helpers', () => {
     ).toBe(4)
   })
 
-  test('reads device death redcon only from sparkplug payload metrics', () => {
+  test('treats device death redcon as unavailable even if a legacy metric is present', () => {
     expect(
       extractReportedRedcon({
         namedShadows: {
@@ -143,7 +146,7 @@ describe('app model helpers', () => {
           },
         },
       }),
-    ).toBe(4)
+    ).toBeNull()
   })
 
   test('does not derive redcon from sparkplug message type when metric is absent', () => {
@@ -171,6 +174,55 @@ describe('app model helpers', () => {
     ).toBeNull()
   })
 
+  test('extracts sparkplug message type and device availability separately', () => {
+    const deviceDeathShadow = {
+      namedShadows: {
+        sparkplug: {
+          state: {
+            reported: {
+              topic: {
+                namespace: 'spBv1.0',
+                groupId: 'town',
+                edgeNodeId: 'rig',
+                deviceId: 'unit-a1',
+                messageType: 'DDEATH',
+              },
+              payload: {
+                metrics: {},
+              },
+            },
+          },
+        },
+      },
+    }
+
+    expect(extractSparkplugMessageType(deviceDeathShadow)).toBe('DDEATH')
+    expect(extractIsSparkplugDeviceUnavailable(deviceDeathShadow)).toBe(true)
+    expect(
+      extractIsSparkplugDeviceUnavailable({
+        namedShadows: {
+          sparkplug: {
+            state: {
+              reported: {
+                topic: {
+                  namespace: 'spBv1.0',
+                  groupId: 'town',
+                  edgeNodeId: 'rig',
+                  messageType: 'NDEATH',
+                },
+                payload: {
+                  metrics: {
+                    redcon: 4,
+                  },
+                },
+              },
+            },
+          },
+        },
+      }),
+    ).toBe(false)
+  })
+
   test('extracts nested reported battery from reported.device', () => {
     expect(
       extractReportedBatteryMv({
@@ -192,6 +244,33 @@ describe('app model helpers', () => {
           reported: {
             device: {
               batteryMv: 3901,
+            },
+          },
+        },
+      }),
+    ).toBeNull()
+  })
+
+  test('treats device death battery as unavailable even if a legacy metric is present', () => {
+    expect(
+      extractReportedBatteryMv({
+        namedShadows: {
+          sparkplug: {
+            state: {
+              reported: {
+                topic: {
+                  namespace: 'spBv1.0',
+                  groupId: 'town',
+                  edgeNodeId: 'rig',
+                  deviceId: 'unit-a1',
+                  messageType: 'DDEATH',
+                },
+                payload: {
+                  metrics: {
+                    batteryMv: 3901,
+                  },
+                },
+              },
             },
           },
         },
@@ -274,6 +353,16 @@ describe('app model helpers', () => {
         reportedBoardWifiOnline: false,
       }),
     ).toBe(true)
+
+    expect(
+      deriveTxingPoweredOn({
+        isSparkplugDeviceUnavailable: true,
+        reportedRedcon: null,
+        reportedMcuPower: true,
+        reportedBoardPower: true,
+        reportedBoardWifiOnline: true,
+      }),
+    ).toBe(false)
   })
 
   test('derives txing switch pending from local target redcon and reported posture', () => {
@@ -309,6 +398,32 @@ describe('app model helpers', () => {
       deriveTxingPowerTransitionPending({
         targetRedcon: 4,
         reportedRedcon: 4,
+      }),
+    ).toBe(false)
+  })
+
+  test('clears pending redcon state on convergence or device death', () => {
+    expect(
+      shouldClearPendingTargetRedcon({
+        pendingTargetRedcon: 3,
+        reportedRedcon: 3,
+        isSparkplugDeviceUnavailable: false,
+      }),
+    ).toBe(true)
+
+    expect(
+      shouldClearPendingTargetRedcon({
+        pendingTargetRedcon: 4,
+        reportedRedcon: null,
+        isSparkplugDeviceUnavailable: true,
+      }),
+    ).toBe(true)
+
+    expect(
+      shouldClearPendingTargetRedcon({
+        pendingTargetRedcon: 2,
+        reportedRedcon: 4,
+        isSparkplugDeviceUnavailable: false,
       }),
     ).toBe(false)
   })

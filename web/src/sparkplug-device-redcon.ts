@@ -4,7 +4,7 @@ import {
   type SparkplugTopics,
 } from './sparkplug-protocol'
 
-export type SparkplugRedconSource = 'dbirth' | 'ddata' | 'ddeath'
+export type SparkplugRedconSource = 'dbirth' | 'ddata'
 
 export type SparkplugDeviceRedconUpdate = {
   redcon: 1 | 2 | 3 | 4
@@ -49,10 +49,7 @@ export const extractSparkplugDeviceRedconUpdate = (
   topics: Pick<SparkplugTopics, 'dbirth' | 'ddata' | 'ddeath'>,
 ): SparkplugDeviceRedconUpdate | null => {
   if (topic === topics.ddeath) {
-    return {
-      redcon: 4,
-      source: 'ddeath',
-    }
+    return null
   }
 
   if (topic !== topics.dbirth && topic !== topics.ddata) {

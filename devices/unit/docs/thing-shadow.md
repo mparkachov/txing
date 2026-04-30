@@ -70,7 +70,7 @@ Projection rules:
 - `NBIRTH` and `DBIRTH` replace `payload.metrics`.
 - `NDATA` and `DDATA` deep-merge changed metric paths into `payload.metrics`.
 - `NDEATH` and `DDEATH` replace `payload.metrics` with the actual Sparkplug death payload and still update `topic` plus `projection.observedAt`.
-- The current rig publishes `redcon=4` in both node and device death payloads, so readers rely on `payload.metrics.redcon` rather than inferring REDCON from `messageType`.
+- Node death keeps node metrics such as `redcon=4`, but device death does not. For device lifecycle semantics, readers must treat `topic.messageType = DDEATH` as unavailable and ignore any legacy device metrics that may still appear during rollout.
 - Witness does not write the static town shadow.
 
 Metric names preserve Sparkplug structure by splitting both `.` and `/` into nested path segments:
@@ -104,12 +104,15 @@ Town remains a compatibility exception outside witness ownership:
 
 ## Field Semantics
 
+- Lifecycle semantics are defined canonically in the root [README](../../../README.md).
 - `sparkplug.state.reported.topic.messageType` is the last observed Sparkplug message type for that thing.
 - `sparkplug.state.reported.payload.metrics.redcon` is the projected Sparkplug readiness metric:
-  - `4`: Green / `Cold Camp` / MCU sleep state or BLE unavailable
+  - valid only for born device states (`DBIRTH` / `DDATA`)
+  - `4`: Green / `Cold Camp` / MCU sleep state with BLE presence still online
   - `3`: Yellow / `Torch-Up` / MCU wakeup state with BLE reachability, but MCP unavailable
   - `2`: Orange/Amber / `Ember Watch` / MCU wakeup state with BLE reachability and MCP availability, but retained video status not ready
   - `1`: Red / `Hot Rig` / MCU wakeup state with BLE reachability, MCP availability, and retained video status ready
+- `sparkplug.state.reported.topic.messageType = DDEATH` means the rig currently considers the device unavailable and `payload.metrics.redcon` is not defined for that device state.
 - `sparkplug.state.reported.payload.metrics.batteryMv` is the latest Sparkplug battery metric.
 - `mcu.state.reported.power=true` means the external wakeup state.
 - `mcu.state.reported.power=false` means the external sleep state with periodic `5 s` BLE rendezvous wakeups.

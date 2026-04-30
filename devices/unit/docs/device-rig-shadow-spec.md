@@ -76,7 +76,7 @@ Projection rules:
 - `NBIRTH` and `DBIRTH` replace `payload.metrics`.
 - `NDATA` and `DDATA` deep-merge changed metric paths.
 - `NDEATH` and `DDEATH` replace `payload.metrics` with the actual death payload while still updating `topic` and `projection`.
-- The current rig publishes `redcon=4` in both node and device death payloads.
+- Node death keeps node metrics such as `redcon=4`, but device death does not. Device lifecycle semantics are defined canonically in the root [README](../../../README.md): device `DDEATH` means unavailable, while device `redcon` is valid only for `DBIRTH` / `DDATA`.
 
 There is no separate `device` named shadow.
 
@@ -133,10 +133,16 @@ Current topics:
 
 ## REDCON Semantics
 
-The current implementation uses this txing REDCON ladder:
+The root [README](../../../README.md) is the canonical lifecycle contract. In brief:
+
+- `DDEATH` means the device is unavailable because the rig currently considers `mcu.state.reported.online=false`.
+- `DBIRTH` / `DDATA` with `redcon=4` means the device is still alive and parked in the sleep state.
+
+The born-state REDCON ladder is:
 
 - `4`
-  - MCU is in the sleep state or BLE is unavailable
+  - MCU is in the sleep state
+  - BLE presence is still online through the rendezvous advertisements
 - `3`
   - BLE is reachable
   - MCU is in the wakeup state

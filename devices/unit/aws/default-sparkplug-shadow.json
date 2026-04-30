@@ -9,9 +9,7 @@
         "deviceId": "unit-local"
       },
       "payload": {
-        "metrics": {
-          "redcon": 4
-        }
+        "metrics": {}
       }
     }
   }

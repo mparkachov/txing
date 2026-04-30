@@ -174,6 +174,7 @@ from aws.auth import ensure_aws_profile
 from aws.video_topics import VIDEO_SERVICE_NAME, VIDEO_STATUS_READY
 from rig.sparkplug import (
     DataType,
+    build_device_death_payload,
     build_device_report_payload,
     build_device_topic,
     build_node_birth_payload,
@@ -1983,21 +1984,17 @@ class LifecycleBridgeTests(unittest.TestCase):
         )
         ddeath = decode_payload(cloud_shadow.sparkplug_publishes[0][1])
         self.assertEqual(ddeath.seq, 0)
-        self.assertEqual(len(ddeath.metrics), 2)
-        self.assertEqual(ddeath.metrics[0].name, "redcon")
-        self.assertEqual(ddeath.metrics[0].int_value, 4)
-        self.assertEqual(ddeath.metrics[1].name, "batteryMv")
-        self.assertEqual(ddeath.metrics[1].int_value, 3812)
+        self.assertEqual(len(ddeath.metrics), 0)
         self.assertEqual(len(cloud_shadow.shadow_updates), 1)
         self.assertEqual(
             cloud_shadow.shadow_updates[0]["reported_device_patch"],
             {"mcu": {"online": False}},
         )
 
-    def test_intentional_redcon_four_offline_suppresses_ddeath(self) -> None:
-        asyncio.run(self._exercise_intentional_redcon_four_offline())
+    def test_redcon_four_offline_publishes_ddeath_without_metrics(self) -> None:
+        asyncio.run(self._exercise_redcon_four_offline_publishes_ddeath())
 
-    async def _exercise_intentional_redcon_four_offline(self) -> None:
+    async def _exercise_redcon_four_offline_publishes_ddeath(self) -> None:
         cloud_shadow = FakeCloudShadow()
         shadow = ShadowState(
             target_redcon=4,
@@ -2021,12 +2018,15 @@ class LifecycleBridgeTests(unittest.TestCase):
 
         self.assertFalse(shadow.ble_online)
         self.assertEqual(shadow.redcon, 4)
-        self.assertEqual(shadow.target_redcon, 4)
-        self.assertTrue(bridge._sparkplug_device_born)
-        self.assertEqual(cloud_shadow.sparkplug_publishes, [])
+        self.assertIsNone(shadow.target_redcon)
+        self.assertFalse(bridge._sparkplug_device_born)
+        self.assertEqual(len(cloud_shadow.sparkplug_publishes), 1)
+        ddeath = decode_payload(cloud_shadow.sparkplug_publishes[0][1])
+        self.assertEqual(ddeath.seq, 0)
+        self.assertEqual(len(ddeath.metrics), 0)
         self.assertEqual(len(cloud_shadow.shadow_updates), 1)
 
-    def test_steady_state_redcon_four_offline_suppresses_ddeath(self) -> None:
+    def test_steady_state_redcon_four_offline_publishes_ddeath(self) -> None:
         asyncio.run(self._exercise_steady_state_redcon_four_offline())
 
     async def _exercise_steady_state_redcon_four_offline(self) -> None:
@@ -2051,13 +2051,15 @@ class LifecycleBridgeTests(unittest.TestCase):
         )
 
         self.assertFalse(shadow.ble_online)
-        self.assertTrue(bridge._sparkplug_device_born)
-        self.assertEqual(cloud_shadow.sparkplug_publishes, [])
+        self.assertFalse(bridge._sparkplug_device_born)
+        self.assertEqual(len(cloud_shadow.sparkplug_publishes), 1)
+        ddeath = decode_payload(cloud_shadow.sparkplug_publishes[0][1])
+        self.assertEqual(len(ddeath.metrics), 0)
 
-    def test_online_recovery_after_intentional_sleep_does_not_duplicate_dbirth(self) -> None:
-        asyncio.run(self._exercise_intentional_sleep_online_recovery())
+    def test_online_recovery_after_device_death_republishes_dbirth(self) -> None:
+        asyncio.run(self._exercise_device_death_online_recovery())
 
-    async def _exercise_intentional_sleep_online_recovery(self) -> None:
+    async def _exercise_device_death_online_recovery(self) -> None:
         cloud_shadow = FakeCloudShadow()
         shadow = ShadowState(
             reported_power=False,
@@ -2070,16 +2072,45 @@ class LifecycleBridgeTests(unittest.TestCase):
             shadow,
             cloud_shadow,  # type: ignore[arg-type]
         )
-        bridge._sparkplug_device_born = True
+        bridge._sparkplug_device_born = False
 
         await bridge._publish_ble_online_state(
             online=True,
-            context="unit-test intentional sleep recovery",
+            context="unit-test device recovery",
             force=True,
         )
 
         self.assertTrue(shadow.ble_online)
-        self.assertEqual(cloud_shadow.sparkplug_publishes, [])
+        self.assertTrue(bridge._sparkplug_device_born)
+        self.assertEqual(len(cloud_shadow.sparkplug_publishes), 1)
+        self.assertEqual(
+            cloud_shadow.sparkplug_publishes[0][0],
+            "spBv1.0/town/DBIRTH/rig/txing",
+        )
+        dbirth = decode_payload(cloud_shadow.sparkplug_publishes[0][1])
+        self.assertEqual(dbirth.metrics[0].name, "redcon")
+        self.assertEqual(dbirth.metrics[0].int_value, 4)
+        self.assertEqual(dbirth.metrics[1].name, "batteryMv")
+        self.assertEqual(dbirth.metrics[1].int_value, 3812)
+
+    def test_sleeping_advertisements_keep_device_online_until_presence_timeout(self) -> None:
+        async def exercise() -> None:
+            bridge = BleSleepBridge(
+                BridgeConfig(),
+                ShadowState(
+                    reported_power=False,
+                    ble_online=True,
+                    redcon=4,
+                ),
+                FakeCloudShadow(),  # type: ignore[arg-type]
+            )
+            bridge._loop = asyncio.get_running_loop()
+            bridge._known_device.online_candidate_since_monotonic = bridge._loop.time() - 60.0
+            bridge._mark_ble_presence_now()
+
+            self.assertTrue(bridge._target_ble_online_state())
+
+        asyncio.run(exercise())
 
     def test_node_death_publishes_once_after_birth(self) -> None:
         asyncio.run(self._exercise_node_death_once_after_birth())
@@ -2263,6 +2294,11 @@ class SparkplugCodecTests(unittest.TestCase):
         self.assertEqual(payload.metrics[0].int_value, 2)
         self.assertEqual(payload.metrics[1].name, "batteryMv")
         self.assertEqual(payload.metrics[1].int_value, 3777)
+
+        death_payload = decode_payload(build_device_death_payload(seq=12))
+
+        self.assertEqual(death_payload.seq, 12)
+        self.assertEqual(len(death_payload.metrics), 0)
 
 
 if __name__ == "__main__":

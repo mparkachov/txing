@@ -236,6 +236,19 @@ def build_device_report_payload(
     return encode_payload(payload)
 
 
+def build_device_death_payload(
+    *,
+    seq: int,
+    timestamp: int | None = None,
+) -> bytes:
+    payload = Payload(
+        timestamp=timestamp if timestamp is not None else utc_timestamp_ms(),
+        metrics=(),
+        seq=seq,
+    )
+    return encode_payload(payload)
+
+
 def build_node_birth_payload(
     *,
     redcon: int,

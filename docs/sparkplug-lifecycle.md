@@ -99,7 +99,7 @@ Projection behavior:
 Current rig death payload policy:
 
 - `NDEATH` carries `bdSeq` and `redcon=4`
-- `DDEATH` carries `redcon=4` and the last `batteryMv`
+- `DDEATH` carries no device metrics; `payload.metrics` is an empty object in the witness projection
 
 Town remains a compatibility exception outside witness ownership:
 
@@ -119,10 +119,16 @@ Town remains a compatibility exception outside witness ownership:
 
 ## Current REDCON Semantics
 
-The current implementation uses this txing REDCON ladder:
+The root [README](../README.md) is the canonical lifecycle contract. In brief:
+
+- `DDEATH` means the device is unavailable and `redcon` is not defined.
+- `DBIRTH` / `DDATA` with `redcon=4` means the device is alive but in the sleep state.
+
+The born-state REDCON ladder is:
 
 - `REDCON 4`
-  - MCU is in the sleep state or BLE is unavailable
+  - MCU is in the sleep state
+  - BLE presence is still online through the rendezvous advertisements
 - `REDCON 3`
   - BLE is reachable
   - MCU is in the wakeup state

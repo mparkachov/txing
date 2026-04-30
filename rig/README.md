@@ -275,6 +275,7 @@ The longer stack bootstrap and deletion flow is documented in `web/README.md`.
   - `DBIRTH` when BLE reachability becomes online
   - `DDATA` when either txing Sparkplug report field changes while the device is born: `redcon` or `batteryMv`
   - `DDEATH` when BLE reachability times out
+  - keeps a sleeping device born at `redcon=4` while rendezvous advertisements continue to satisfy BLE presence
 - If UUIDs are missing/invalid or do not match GATT, enters BLE UUID search mode and discovers UUIDs from service/characteristic properties.
 - Ignores deprecated top-level shadow metadata fields `state.reported.bleDeviceId` and `state.reported.homeRig`.
 - For `DCMD.redcon=1..3`, waits for the next advertisement if disconnected, connects if needed, writes the wakeup-state command only when `mcu reported.power=false`, and clears the in-memory target after the published Sparkplug `redcon` reaches the requested minimum readiness.
@@ -285,6 +286,7 @@ The longer stack bootstrap and deletion flow is documented in `web/README.md`.
   - `state.mcu reported.power`
   - `state.mcu reported.online`
   - `state.mcu reported.bleDeviceId`
+- Lifecycle semantics are defined canonically in the root [README](../README.md).
 - Does not rely on local shadow cache files; startup state comes from AWS IoT named shadows plus IoT thing attributes.
 - Enforces single instance lock at `/tmp/rig.lock` (override with `--lock-file`).
 

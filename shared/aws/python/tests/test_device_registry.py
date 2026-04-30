@@ -504,9 +504,7 @@ class DeviceRegistryTests(unittest.TestCase):
                             "deviceId": "unit-bbbbbb",
                         },
                         "payload": {
-                            "metrics": {
-                                "redcon": 4,
-                            },
+                            "metrics": {},
                         },
                     }
                 }

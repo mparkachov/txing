@@ -1297,7 +1297,7 @@ thing_index_name := "AWS_Things"
               --arg groupId "$(jq -r '.attributes.town' <<<"$thing_json")" \
               --arg edgeNodeId "$(jq -r '.attributes.rig' <<<"$thing_json")" \
               --arg deviceId "$(jq -r '.thingName' <<<"$thing_json")" \
-              '{state: {reported: {topic: {namespace: "spBv1.0", groupId: $groupId, messageType: "DDEATH", edgeNodeId: $edgeNodeId, deviceId: $deviceId}, payload: {metrics: {redcon: 4}}}}}' \
+              '{state: {reported: {topic: {namespace: "spBv1.0", groupId: $groupId, messageType: "DDEATH", edgeNodeId: $edgeNodeId, deviceId: $deviceId}, payload: {metrics: {}}}}}' \
               >"$default_payload"
             ;;
           *)
@@ -1506,7 +1506,7 @@ thing_index_name := "AWS_Things"
             --arg groupId "$(jq -r '.attributes.town' <<<"$thing_json")" \
             --arg edgeNodeId "$(jq -r '.attributes.rig' <<<"$thing_json")" \
             --arg deviceId "$(jq -r '.thingName' <<<"$thing_json")" \
-            '{state: {reported: {topic: {namespace: "spBv1.0", groupId: $groupId, messageType: "DDEATH", edgeNodeId: $edgeNodeId, deviceId: $deviceId}, payload: {metrics: {redcon: 4}}}}}' \
+            '{state: {reported: {topic: {namespace: "spBv1.0", groupId: $groupId, messageType: "DDEATH", edgeNodeId: $edgeNodeId, deviceId: $deviceId}, payload: {metrics: {}}}}}' \
             >"$default_payload"
           ;;
         *)

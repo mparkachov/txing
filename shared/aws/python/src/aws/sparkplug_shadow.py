@@ -72,8 +72,6 @@ def build_offline_device_shadow_payload(
             "deviceId": device_id,
         },
         payload={
-            "metrics": {
-                "redcon": 4,
-            },
+            "metrics": {},
         },
     )

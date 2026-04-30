@@ -76,6 +76,7 @@ from aws.mqtt import AwsIotWebsocketConnection, AwsMqttConnectionConfig
 from .sparkplug import (
     DataType,
     Metric,
+    build_device_death_payload,
     build_device_report_payload,
     build_device_topic,
     build_node_birth_payload,
@@ -1976,11 +1977,7 @@ class BleSleepBridge:
                 self._config.sparkplug_edge_node_id,
                 self._config.thing_name,
             ),
-            build_device_report_payload(
-                redcon=4,
-                battery_mv=self._shadow.battery_mv,
-                seq=self._next_sparkplug_device_seq(),
-            ),
+            build_device_death_payload(seq=self._next_sparkplug_device_seq()),
         )
         self._sparkplug_device_born = False
 
@@ -2047,11 +2044,6 @@ class BleSleepBridge:
         if self._shadow.ble_online:
             return self._ble_presence_recent()
         return self._ble_recovered_from_regular_advertising()
-
-    def _ble_offline_is_intentional_sleep(self) -> bool:
-        if self._shadow.target_redcon == 4:
-            return True
-        return self._shadow.redcon == 4 and not self._shadow.reported_power
 
     def _board_shutdown_wait_expired(self) -> bool:
         requested_at = self._board_shutdown_requested_at
@@ -3097,17 +3089,12 @@ class BleSleepBridge:
                 if not self._sparkplug_device_born:
                     await self._publish_device_birth()
             else:
-                if self._ble_offline_is_intentional_sleep():
-                    LOGGER.info(
-                        "Suppressing DDEATH; BLE offline reflects intentional REDCON 4 sleep state"
-                    )
-                else:
-                    await self._publish_device_death()
-                    if self._shadow.target_redcon is not None:
-                        self._shadow.set_target_redcon(None)
-                        self._board_shutdown_requested_at = None
-                        self._board_shutdown_timeout_logged = False
-                        LOGGER.info("Cleared pending REDCON target after DDEATH")
+                await self._publish_device_death()
+                if self._shadow.target_redcon is not None:
+                    self._shadow.set_target_redcon(None)
+                    self._board_shutdown_requested_at = None
+                    self._board_shutdown_timeout_logged = False
+                    LOGGER.info("Cleared pending REDCON target after DDEATH")
 
     async def _send_sleep_command(self, *, sleep: bool) -> None:
         if not self._is_connected():

@@ -40,6 +40,7 @@ import {
 } from './app-notifications'
 import {
   buildBoardVideoChannelName,
+  extractIsSparkplugDeviceUnavailable,
   extractReportedBatteryMv,
   extractReportedBoardPower,
   extractReportedBoardWifiOnline,
@@ -47,6 +48,7 @@ import {
   extractReportedMcuPower,
   extractReportedRedcon,
   hasReachedTargetRedcon,
+  shouldClearPendingTargetRedcon,
 } from './app-model'
 import {
   describeThingMetadata,
@@ -379,11 +381,17 @@ function App({ initialAuthError = '' }: AppProps) {
     () => extractReportedRedcon(displayShadowDocument),
     [displayShadowDocument],
   )
+  const isSparkplugDeviceUnavailable = useMemo(
+    () => extractIsSparkplugDeviceUnavailable(displayShadowDocument),
+    [displayShadowDocument],
+  )
   const reportedRedcon = shadowReportedRedcon
   const currentThingSparkplugCommandTarget = useMemo(
     () => resolveThingSparkplugRedconCommandTarget(routeHeaderMetadata),
     [routeHeaderMetadata],
   )
+  const isSparkplugDeviceCommandAvailable =
+    currentThingSparkplugCommandTarget !== null && !isSparkplugDeviceUnavailable
   const shouldRenderCatalogPanel = shouldRenderRouteCatalogPanel({
     thingTypeName: currentThingTypeName,
     reportedRedcon,
@@ -392,14 +400,15 @@ function App({ initialAuthError = '' }: AppProps) {
   const isShadowConnected = shadowConnectionState === 'connected'
   const isRedconCommandPending =
     pendingTargetRedcon !== null &&
+    !isSparkplugDeviceUnavailable &&
     (reportedRedcon === null ||
       (pendingTargetRedcon === 4
         ? reportedRedcon !== 4
         : reportedRedcon > pendingTargetRedcon))
   const isRedconCommandDisabled =
-    currentThingSparkplugCommandTarget === null || isUpdatingShadow || isRedconCommandPending
+    !isSparkplugDeviceCommandAvailable || isUpdatingShadow || isRedconCommandPending
   const isRedconSleepCommandDisabled =
-    currentThingSparkplugCommandTarget === null || isUpdatingShadow
+    !isSparkplugDeviceCommandAvailable || isUpdatingShadow
   const canLoadShadow = !isLoadingShadow && isShadowConnected
   const canUseBoardVideo = reportedRedcon === 1
   const cmdVelRepeatIntervalMs = getMcpSteadyMotionHeartbeatIntervalMs(
@@ -575,6 +584,12 @@ function App({ initialAuthError = '' }: AppProps) {
         }
 
         const nextShadow = await refreshRouteSparkplugShadow(thingName)
+        if (extractIsSparkplugDeviceUnavailable(nextShadow)) {
+          if (redconCommandSequenceRef.current === commandSequence) {
+            setPendingTargetRedcon(null)
+          }
+          return
+        }
         if (
           hasReachedTargetRedcon({
             targetRedcon,
@@ -663,18 +678,16 @@ function App({ initialAuthError = '' }: AppProps) {
   }, [notifications])
 
   useEffect(() => {
-    if (pendingTargetRedcon === null || reportedRedcon === null) {
-      return
-    }
     if (
-      hasReachedTargetRedcon({
-        targetRedcon: pendingTargetRedcon,
+      shouldClearPendingTargetRedcon({
+        pendingTargetRedcon,
         reportedRedcon,
+        isSparkplugDeviceUnavailable,
       })
     ) {
       setPendingTargetRedcon(null)
     }
-  }, [pendingTargetRedcon, reportedRedcon])
+  }, [isSparkplugDeviceUnavailable, pendingTargetRedcon, reportedRedcon])
 
   useEffect(() => {
     if (status !== 'signed_in') {
@@ -1609,7 +1622,7 @@ function App({ initialAuthError = '' }: AppProps) {
             <SparkplugPanel
               sparkplugRedcon={reportedRedcon}
               targetRedcon={pendingTargetRedcon}
-              isInteractive={currentThingSparkplugCommandTarget !== null}
+              isInteractive={isSparkplugDeviceCommandAvailable}
               isRedconCommandDisabled={isRedconCommandDisabled}
               isRedconSleepCommandDisabled={isRedconSleepCommandDisabled}
               onRedconSelect={(redcon) => {

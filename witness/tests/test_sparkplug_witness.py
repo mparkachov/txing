@@ -287,10 +287,7 @@ class SparkplugWitnessTests(unittest.TestCase):
         encoded_payload = _encode_payload(
             timestamp=None,
             seq=None,
-            metrics=[
-                _encode_metric(name="redcon", int_value=4),
-                _encode_metric(name="batteryMv", int_value=3795),
-            ],
+            metrics=[],
         )
         message = decode_sparkplug_payload(
             encoded_payload,
@@ -318,10 +315,7 @@ class SparkplugWitnessTests(unittest.TestCase):
                 "payload": {
                     "timestamp": None,
                     "seq": None,
-                    "metrics": {
-                        "redcon": 4,
-                        "batteryMv": 3795,
-                    },
+                    "metrics": {},
                 },
                 "projection": {
                     "observedAt": 1710000002999,

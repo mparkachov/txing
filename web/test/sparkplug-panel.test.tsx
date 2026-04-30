@@ -40,6 +40,8 @@ describe('sparkplug panel', () => {
     expect(markup).toContain('data-sparkplug-mode="readonly"')
     expect(markup).not.toContain('sparkplug-device-button')
     expect(markup).not.toContain('Show device details')
+    expect(markup).toContain('aria-label="REDCON 4 · Cold Camp · Green"')
+    expect(markup).toMatch(/aria-label="REDCON 4 · Cold Camp · Green"[^>]*disabled/)
   })
 
   test('renders an interactive redcon control without route-specific affordances', () => {

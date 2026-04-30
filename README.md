@@ -48,14 +48,22 @@ This README uses military readiness shorthand for the technical posture and plai
 | On watch | `REDCON 2` | Orange / Amber | `Ember Watch` | Local power and local processing are available. The device can observe, decide, buffer, and operate locally, but the high-bandwidth remote link is not necessarily up. |
 | Ready | `REDCON 1` | Red | `Hot Rig` | The device is fully up, the action link is up, and the rig is ready for live interaction, streaming, or cloud-assisted work. |
 
-In this repository's current named-shadow contract, the rig runtime derives readiness at `sparkplug.state.reported.redcon` from the reported MCU and board state:
+This repository's lifecycle contract is:
 
-| `sparkplug.state.reported.redcon` | UI color | Meaning | Current derivation |
-| --- | --- | --- | --- |
-| `4` | Green | Sleep state / `Cold Camp` | BLE unavailable or `reported.mcu.power=false` |
-| `3` | Yellow | Booting / `Torch-Up` | BLE reachable, `reported.mcu.power=true`, and retained MCP status unavailable |
-| `2` | Orange / Amber | On watch / `Ember Watch` | BLE reachable, `reported.mcu.power=true`, retained MCP status available, and retained video status not ready |
-| `1` | Red | Ready / `Hot Rig` | BLE reachable, `reported.mcu.power=true`, retained MCP status available, and retained video status ready |
+| Sparkplug device projection | Public state | Meaning |
+| --- | --- | --- |
+| `topic.messageType = DDEATH` | Unavailable | The rig currently considers `mcu.online=false`. Device metrics are unavailable in this state, so `redcon` is not defined. |
+| `topic.messageType in {DBIRTH, DDATA}` and `payload.metrics.redcon = 4` | Sleep state / `Cold Camp` | The device is still alive and born, but it is parked in the sleep state and only exposes the watch-layer rendezvous path. |
+| `topic.messageType in {DBIRTH, DDATA}` and `payload.metrics.redcon = 3` | Booting / `Torch-Up` | BLE is reachable, the MCU is in the wakeup state, and MCP is not yet available. |
+| `topic.messageType in {DBIRTH, DDATA}` and `payload.metrics.redcon = 2` | On watch / `Ember Watch` | BLE is reachable, the MCU is in the wakeup state, MCP is available, and retained video status is not yet ready. |
+| `topic.messageType in {DBIRTH, DDATA}` and `payload.metrics.redcon = 1` | Ready / `Hot Rig` | BLE is reachable, the MCU is in the wakeup state, MCP is available, and retained video status is ready. |
+
+The born/dead rule is exact:
+
+- device is born iff the rig currently considers `mcu.online=true`
+- device is dead iff the rig currently considers `mcu.online=false`
+- the existing BLE hysteresis stays in place, so `mcu.online=false` only happens after the current `30 s` no-advertisement / no-connection timeout
+- a sleeping device stays born as long as its periodic rendezvous advertisements keep BLE presence online
 
 This mapping is intentionally derived from reported state, not desired state. It answers "how far up is the rig right now?" rather than "what was requested?".
 

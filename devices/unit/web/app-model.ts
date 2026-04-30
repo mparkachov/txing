@@ -5,6 +5,7 @@ export type TrackIndicatorPresentation = {
 }
 
 export type TxingReportedPowerInputs = {
+  isSparkplugDeviceUnavailable?: boolean
   reportedRedcon: number | null
   reportedMcuPower: boolean | null
   reportedBoardPower: boolean | null
@@ -19,6 +20,12 @@ export type TxingPowerTransitionInputs = {
 export type TxingTargetRedconInputs = {
   targetRedcon: number | null
   reportedRedcon: number | null
+}
+
+export type PendingTargetResolutionInputs = {
+  pendingTargetRedcon: number | null
+  reportedRedcon: number | null
+  isSparkplugDeviceUnavailable: boolean
 }
 
 type RedconDescriptor = {
@@ -118,6 +125,15 @@ export const extractReportedBoard = (shadow: unknown): Record<string, unknown> |
 const extractSparkplugReportedState = (shadow: unknown): Record<string, unknown> | null =>
   extractNamedShadowReportedState(shadow, 'sparkplug') ?? extractReportedState(shadow)
 
+const extractSparkplugTopic = (shadow: unknown): Record<string, unknown> | null => {
+  const reported = extractSparkplugReportedState(shadow)
+  if (!reported) {
+    return null
+  }
+  const topic = reported.topic
+  return isRecord(topic) ? topic : null
+}
+
 const extractSparkplugPayload = (shadow: unknown): Record<string, unknown> | null => {
   const reported = extractSparkplugReportedState(shadow)
   if (!reported) {
@@ -143,7 +159,26 @@ const coerceRedcon = (value: unknown): number | null => {
   return value >= 1 && value <= 4 ? value : null
 }
 
+export const extractSparkplugMessageType = (shadow: unknown): string | null => {
+  const topic = extractSparkplugTopic(shadow)
+  return topic && typeof topic.messageType === 'string' ? topic.messageType : null
+}
+
+const extractSparkplugDeviceMessageType = (shadow: unknown): string | null => {
+  const topic = extractSparkplugTopic(shadow)
+  if (!topic || typeof topic.deviceId !== 'string' || topic.deviceId.length === 0) {
+    return null
+  }
+  return typeof topic.messageType === 'string' ? topic.messageType : null
+}
+
+export const extractIsSparkplugDeviceUnavailable = (shadow: unknown): boolean =>
+  extractSparkplugDeviceMessageType(shadow) === 'DDEATH'
+
 export const extractReportedRedcon = (shadow: unknown): number | null => {
+  if (extractIsSparkplugDeviceUnavailable(shadow)) {
+    return null
+  }
   const metrics = extractSparkplugMetrics(shadow)
   if (metrics) {
     const redcon = coerceRedcon(metrics.redcon)
@@ -176,11 +211,15 @@ export const describeRedcon = (redcon: number | null): string => {
 }
 
 export const deriveTxingPoweredOn = ({
+  isSparkplugDeviceUnavailable,
   reportedRedcon,
   reportedMcuPower,
   reportedBoardPower,
   reportedBoardWifiOnline,
 }: TxingReportedPowerInputs): boolean => {
+  if (isSparkplugDeviceUnavailable) {
+    return false
+  }
   if (reportedRedcon !== null) {
     return reportedRedcon < 4
   }
@@ -200,6 +239,23 @@ export const deriveTxingPowerTransitionPending = ({
   }
   return !hasReachedTargetRedcon({
     targetRedcon,
+    reportedRedcon,
+  })
+}
+
+export const shouldClearPendingTargetRedcon = ({
+  pendingTargetRedcon,
+  reportedRedcon,
+  isSparkplugDeviceUnavailable,
+}: PendingTargetResolutionInputs): boolean => {
+  if (pendingTargetRedcon === null) {
+    return false
+  }
+  if (isSparkplugDeviceUnavailable) {
+    return true
+  }
+  return hasReachedTargetRedcon({
+    targetRedcon: pendingTargetRedcon,
     reportedRedcon,
   })
 }
@@ -245,6 +301,9 @@ export const extractReportedMcuOnline = (shadow: unknown): boolean | null => {
 }
 
 export const extractReportedBatteryMv = (shadow: unknown): number | null => {
+  if (extractIsSparkplugDeviceUnavailable(shadow)) {
+    return null
+  }
   const metrics = extractSparkplugMetrics(shadow)
   if (!metrics) {
     return null
