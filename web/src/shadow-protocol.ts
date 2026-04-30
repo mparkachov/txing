@@ -78,17 +78,35 @@ export const buildNamedShadowTopics = (
 export const buildShadowSubscriptionPacket = (
   topics: ShadowTopics | Partial<Record<ShadowName, ShadowTopics>>,
 ): ShadowSubscriptionPacket => {
-  const topicList =
-    'getAccepted' in topics
-      ? [topics]
-      : Object.values(topics).filter((topic): topic is ShadowTopics => topic !== undefined)
+  if ('getAccepted' in topics) {
+    return {
+      subscriptions: [
+        { topicFilter: topics.getAccepted, qos: 1 as const },
+        { topicFilter: topics.getRejected, qos: 1 as const },
+        { topicFilter: topics.updateAccepted, qos: 1 as const },
+        { topicFilter: topics.updateRejected, qos: 1 as const },
+      ],
+    }
+  }
+
+  const topicList = Object.values(topics).filter(
+    (topic): topic is ShadowTopics => topic !== undefined,
+  )
+  if (topicList.length === 0) {
+    return { subscriptions: [] }
+  }
+
+  const wildcardPrefix = topicList[0].get.replace(
+    `/shadow/name/${topicList[0].shadowName}/get`,
+    '/shadow/name/+',
+  )
   return {
-    subscriptions: topicList.flatMap((topicSet) => [
-      { topicFilter: topicSet.getAccepted, qos: 1 as const },
-      { topicFilter: topicSet.getRejected, qos: 1 as const },
-      { topicFilter: topicSet.updateAccepted, qos: 1 as const },
-      { topicFilter: topicSet.updateRejected, qos: 1 as const },
-    ]),
+    subscriptions: [
+      { topicFilter: `${wildcardPrefix}/get/accepted`, qos: 1 as const },
+      { topicFilter: `${wildcardPrefix}/get/rejected`, qos: 1 as const },
+      { topicFilter: `${wildcardPrefix}/update/accepted`, qos: 1 as const },
+      { topicFilter: `${wildcardPrefix}/update/rejected`, qos: 1 as const },
+    ],
   }
 }
 

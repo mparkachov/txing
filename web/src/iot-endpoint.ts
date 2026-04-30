@@ -16,6 +16,16 @@ type ResolveIotDataEndpointOptions = {
 const resolvedEndpointsByRegion = new Map<string, string>()
 const pendingEndpointsByRegion = new Map<string, Promise<string>>()
 
+export const buildIotDataEndpointUrl = (endpointAddress: string): string => {
+  const normalizedEndpointAddress = endpointAddress.trim()
+  if (!normalizedEndpointAddress) {
+    throw new Error('AWS IoT data endpoint must not be empty')
+  }
+  return normalizedEndpointAddress.includes('://')
+    ? normalizedEndpointAddress
+    : `https://${normalizedEndpointAddress}`
+}
+
 const buildDefaultClient = (region: string, idToken: string): EndpointAddressClient =>
   new IoTClient({
     region,

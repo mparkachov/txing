@@ -1688,6 +1688,10 @@ class DeviceCloudProxy:
     ) -> None:
         await self._client.publish_sparkplug(topic, payload, **kwargs)
 
+    async def update_named_shadow_reported(self, **kwargs: object) -> None:
+        kwargs.setdefault("thing_name", self._thing_name)
+        await self._client.update_named_shadow_reported(**kwargs)
+
 
 class InstanceLock:
     def __init__(self, path: Path) -> None:

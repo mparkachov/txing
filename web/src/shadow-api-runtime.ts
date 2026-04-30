@@ -1,15 +1,11 @@
-import {
-  GetIdCommand,
-  CognitoIdentityClient,
-} from '@aws-sdk/client-cognito-identity'
-import { AttachPolicyCommand, IoTClient } from '@aws-sdk/client-iot'
 import * as auth from 'aws-crt/dist.browser/browser/auth'
 import * as iot from 'aws-crt/dist.browser/browser/iot'
 import * as mqtt5 from 'aws-crt/dist.browser/browser/mqtt5'
 import { LatestAsyncValueRunner } from './async-latest'
-import { buildCognitoLogins, createCredentialProvider } from './aws-credentials'
+import { createCredentialProvider } from './aws-credentials'
 import { isZeroTwist, type Twist } from './cmd-vel'
 import { appConfig } from './config'
+import { ensureIotPolicyAttached, getIdentityId } from './iot-policy-attach'
 import { resolveIotDataEndpoint } from './iot-endpoint'
 import {
   isMcpSessionNotInitializedError,
@@ -131,99 +127,73 @@ export type ShadowSession = {
   close: () => void
 }
 
-let attachedIdentityId: string | null = null
-let pendingAttachment: Promise<void> | null = null
-let cachedIdentityIdToken: string | null = null
-let cachedIdentityId: string | null = null
-let pendingIdentityId: Promise<string> | null = null
-
-const cognitoIdentityClient = new CognitoIdentityClient({
-  region: appConfig.awsRegion,
-})
-
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
-const getIdentityId = async (idToken: string): Promise<string> => {
-  if (cachedIdentityIdToken === idToken && cachedIdentityId) {
-    return cachedIdentityId
-  }
-
-  if (cachedIdentityIdToken === idToken && pendingIdentityId) {
-    return pendingIdentityId
-  }
-
-  const identityRequest = cognitoIdentityClient
-    .send(
-      new GetIdCommand({
-        IdentityPoolId: appConfig.cognitoIdentityPoolId,
-        Logins: buildCognitoLogins(idToken),
-      }),
-    )
-    .then((response) => {
-      if (!response.IdentityId) {
-        throw new Error('Cognito identity ID was not returned')
-      }
-
-      cachedIdentityIdToken = idToken
-      cachedIdentityId = response.IdentityId
-      return response.IdentityId
-    })
-    .finally(() => {
-      if (cachedIdentityIdToken === idToken) {
-        pendingIdentityId = null
-      }
-    })
-
-  cachedIdentityIdToken = idToken
-  pendingIdentityId = identityRequest
-  return identityRequest
+const formatMqtt5ReasonCode = (
+  enumType: Record<string, string | number>,
+  reasonCode: number,
+): string => {
+  const enumLabel = enumType[reasonCode]
+  return typeof enumLabel === 'string' ? `${enumLabel} (${reasonCode})` : `${reasonCode}`
 }
 
-const ensureIotPolicyAttached = async (idToken: string): Promise<boolean> => {
-  const identityId = await getIdentityId(idToken)
+const ensureSuccessfulSuback = (
+  suback: mqtt5.SubackPacket,
+  subscriptions: readonly { topicFilter: string }[],
+  context: string,
+): void => {
+  const failures = subscriptions.flatMap((subscription, index) => {
+    const reasonCode = suback.reasonCodes[index]
+    if (
+      typeof reasonCode === 'number' &&
+      mqtt5.isSuccessfulSubackReasonCode(reasonCode)
+    ) {
+      return []
+    }
+    const reasonSuffix =
+      typeof reasonCode === 'number'
+        ? formatMqtt5ReasonCode(mqtt5.SubackReasonCode, reasonCode)
+        : 'missing reason code'
+    return [`${subscription.topicFilter} (${reasonSuffix})`]
+  })
 
-  if (attachedIdentityId === identityId) {
-    return false
+  if (failures.length === 0) {
+    return
   }
 
-  if (!pendingAttachment) {
-    pendingAttachment = (async () => {
-      const iotClient = new IoTClient({
-        region: appConfig.awsRegion,
-        credentials: createCredentialProvider(idToken),
-      })
+  const reasonStringSuffix =
+    typeof suback.reasonString === 'string' && suback.reasonString.trim()
+      ? `: ${suback.reasonString.trim()}`
+      : ''
+  throw new Error(`${context} subscribe rejected for ${failures.join(', ')}${reasonStringSuffix}`)
+}
 
-      await iotClient.send(
-        new AttachPolicyCommand({
-          policyName: appConfig.iotPolicyName,
-          target: identityId,
-        }),
-      )
-
-      attachedIdentityId = identityId
-    })()
-      .catch((caughtError) => {
-        if (
-          caughtError instanceof Error &&
-          (caughtError.name === 'ResourceAlreadyExistsException' ||
-            caughtError.message.toLowerCase().includes('already'))
-        ) {
-          attachedIdentityId = identityId
-          return
-        }
-
-        throw caughtError
-      })
-      .finally(() => {
-        pendingAttachment = null
-      })
+const ensureSuccessfulPuback = (
+  result: mqtt5.PublishCompletionResult,
+  topicName: string,
+  context: string,
+): void => {
+  if (!result) {
+    return
   }
 
-  await pendingAttachment
-  return true
+  if (mqtt5.isSuccessfulPubackReasonCode(result.reasonCode)) {
+    return
+  }
+
+  const reasonStringSuffix =
+    typeof result.reasonString === 'string' && result.reasonString.trim()
+      ? `: ${result.reasonString.trim()}`
+      : ''
+  throw new Error(
+    `${context} publish rejected for ${topicName} (${formatMqtt5ReasonCode(
+      mqtt5.PubackReasonCode,
+      result.reasonCode,
+    )})${reasonStringSuffix}`,
+  )
 }
 
 const getErrorMessage = (error: unknown, fallback = 'Thing Shadow request failed'): string => {
@@ -690,7 +660,7 @@ class AwsIotShadowSession implements ShadowSession {
     }
 
     await Promise.all(
-      Object.values(this.topics).map((topics) => {
+      Object.values(this.topics).map(async (topics) => {
         if (!topics) {
           throw new Error('Missing named shadow topics')
         }
@@ -698,7 +668,12 @@ class AwsIotShadowSession implements ShadowSession {
           topics,
           createShadowClientToken('get'),
         )
-        return client.publish(packet as mqtt5.PublishPacket)
+        const result = await client.publish(packet as mqtt5.PublishPacket)
+        ensureSuccessfulPuback(
+          result,
+          packet.topicName,
+          `Initial shadow get for ${topics.shadowName}`,
+        )
       }),
     )
   }
@@ -715,7 +690,8 @@ class AwsIotShadowSession implements ShadowSession {
       this.sparkplugCommandSeq,
     )
     this.sparkplugCommandSeq = (this.sparkplugCommandSeq + 1) % 256
-    await client.publish(packet as mqtt5.PublishPacket)
+    const result = await client.publish(packet as mqtt5.PublishPacket)
+    ensureSuccessfulPuback(result, packet.topicName, 'Sparkplug DCMD.redcon')
   }
 
   async publishCmdVel(twist: Twist): Promise<void> {
@@ -907,14 +883,26 @@ class AwsIotShadowSession implements ShadowSession {
     }
 
     try {
-      await client.subscribe(buildShadowSubscriptionPacket(this.topics) as mqtt5.SubscribePacket)
-      await client.subscribe(
-        {
-          subscriptions: [
-            { topicFilter: this.mcpDescriptorTopic, qos: 1 },
-            { topicFilter: this.mcpStatusTopic, qos: 1 },
-          ],
-        } as mqtt5.SubscribePacket,
+      const shadowSubscriptionPacket = buildShadowSubscriptionPacket(
+        this.topics,
+      ) as mqtt5.SubscribePacket
+      const shadowSuback = await client.subscribe(shadowSubscriptionPacket)
+      ensureSuccessfulSuback(
+        shadowSuback,
+        shadowSubscriptionPacket.subscriptions,
+        'Thing shadow',
+      )
+      const mcpDiscoverySubscriptionPacket = {
+        subscriptions: [
+          { topicFilter: this.mcpDescriptorTopic, qos: 1 as const },
+          { topicFilter: this.mcpStatusTopic, qos: 1 as const },
+        ],
+      } as mqtt5.SubscribePacket
+      const mcpDiscoverySuback = await client.subscribe(mcpDiscoverySubscriptionPacket)
+      ensureSuccessfulSuback(
+        mcpDiscoverySuback,
+        mcpDiscoverySubscriptionPacket.subscriptions,
+        'MCP discovery',
       )
       if (this.closed || client !== this.client) {
         return
@@ -997,12 +985,30 @@ class AwsIotShadowSession implements ShadowSession {
         reject,
       })
 
-      void client.publish(packet).catch((caughtError) => {
-        this.rejectPendingRequest(
-          clientToken,
-          new Error(`Unable to publish shadow ${operation}: ${getErrorMessage(caughtError)}`),
-        )
-      })
+      void client
+        .publish(packet)
+        .then((result) => {
+          try {
+            ensureSuccessfulPuback(
+              result,
+              packet.topicName,
+              `Shadow ${operation}`,
+            )
+          } catch (caughtError) {
+            this.rejectPendingRequest(
+              clientToken,
+              caughtError instanceof Error
+                ? caughtError
+                : new Error(`Shadow ${operation} publish was rejected`),
+            )
+          }
+        })
+        .catch((caughtError) => {
+          this.rejectPendingRequest(
+            clientToken,
+            new Error(`Unable to publish shadow ${operation}: ${getErrorMessage(caughtError)}`),
+          )
+        })
     })
   }
 

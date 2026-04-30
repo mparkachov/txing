@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import {
   describeDeviceMetadataWithClient,
   describeThingMetadataWithClient,
+  formatThingShadowReadError,
   getThingNamedShadowWithClient,
   listRigDevicesWithClient,
   listTownRigsWithClient,
@@ -239,5 +240,20 @@ describe('catalog api helpers', () => {
         },
       },
     })
+  })
+
+  test('formats forbidden direct shadow reads with a redeploy hint', () => {
+    expect(
+      formatThingShadowReadError(
+        {
+          name: 'UnknownError',
+          $metadata: {
+            httpStatusCode: 403,
+          },
+        },
+        'town-a1',
+        'sparkplug',
+      ),
+    ).toContain('iot:GetThingShadow')
   })
 })

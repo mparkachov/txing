@@ -1,4 +1,5 @@
 import { appConfig, getRuntimeAppUrl } from './config'
+import { clearCredentialProviderCache } from './aws-credentials'
 
 export type AuthTokens = {
   accessToken: string
@@ -83,6 +84,7 @@ export const clearAuthState = (): void => {
   sessionStorage.removeItem(TOKEN_KEY)
   sessionStorage.removeItem(STATE_KEY)
   sessionStorage.removeItem(VERIFIER_KEY)
+  clearCredentialProviderCache()
 }
 
 export const getStoredTokens = (): AuthTokens | null => {

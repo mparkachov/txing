@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import {
   buildGetShadowPublishPacket,
+  buildNamedShadowTopics,
   buildShadowSubscriptionPacket,
   buildShadowTopics,
   classifyShadowTopic,
@@ -52,6 +53,18 @@ describe('shadow protocol helpers', () => {
       topics.getRejected,
       topics.updateAccepted,
       topics.updateRejected,
+    ])
+  })
+
+  test('collapses multi-shadow subscriptions into wildcard named-shadow filters', () => {
+    const topics = buildNamedShadowTopics('unit-a1', ['sparkplug', 'mcu', 'board', 'mcp', 'video'])
+    const packet = buildShadowSubscriptionPacket(topics)
+
+    expect(packet.subscriptions.map((subscription) => subscription.topicFilter)).toEqual([
+      '$aws/things/unit-a1/shadow/name/+/get/accepted',
+      '$aws/things/unit-a1/shadow/name/+/get/rejected',
+      '$aws/things/unit-a1/shadow/name/+/update/accepted',
+      '$aws/things/unit-a1/shadow/name/+/update/rejected',
     ])
   })
 

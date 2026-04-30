@@ -3,6 +3,7 @@ import {
   formatCatalogDetailLine,
   getAutoOpenDeviceDetailPanelState,
   getRouteDetailPanelOpenState,
+  shouldRenderRouteCatalogPanel,
 } from '../src/level-detail-panel'
 
 describe('level detail panel helpers', () => {
@@ -62,6 +63,39 @@ describe('level detail panel helpers', () => {
         nextRedcon: 1,
       }),
     ).toBeNull()
+  })
+
+  test('shows town and rig catalog detail panels only when reported redcon is 1', () => {
+    expect(
+      shouldRenderRouteCatalogPanel({
+        thingTypeName: 'town',
+        reportedRedcon: 1,
+      }),
+    ).toBe(true)
+    expect(
+      shouldRenderRouteCatalogPanel({
+        thingTypeName: 'rig',
+        reportedRedcon: 1,
+      }),
+    ).toBe(true)
+    expect(
+      shouldRenderRouteCatalogPanel({
+        thingTypeName: 'town',
+        reportedRedcon: null,
+      }),
+    ).toBe(false)
+    expect(
+      shouldRenderRouteCatalogPanel({
+        thingTypeName: 'rig',
+        reportedRedcon: 4,
+      }),
+    ).toBe(false)
+    expect(
+      shouldRenderRouteCatalogPanel({
+        thingTypeName: 'unit',
+        reportedRedcon: 1,
+      }),
+    ).toBe(false)
   })
 
   test('formats catalog detail lines as short-id then name when available', () => {

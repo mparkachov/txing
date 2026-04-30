@@ -1,28 +1,17 @@
 import { describeRedcon, getTxingRedconToneClass } from './app-model'
 
 type SparkplugPanelProps = {
-  routeKind: 'town' | 'rig' | 'device' | 'device_video'
   sparkplugRedcon: number | null
   targetRedcon: number | null
+  isInteractive: boolean
   isRedconCommandDisabled: boolean
   isRedconSleepCommandDisabled: boolean
   onRedconSelect: (redcon: 1 | 2 | 3 | 4) => void
 }
 
-type SparkplugNodeKind = 'town' | 'rig' | 'bot'
 type RedconLevel = 1 | 2 | 3 | 4
 
 const orderedRedconLevels: readonly RedconLevel[] = [4, 3, 2, 1]
-
-const getSparkplugNodeKind = (routeKind: SparkplugPanelProps['routeKind']): SparkplugNodeKind => {
-  if (routeKind === 'town') {
-    return 'town'
-  }
-  if (routeKind === 'rig') {
-    return 'rig'
-  }
-  return 'bot'
-}
 
 function SparkplugRedconControl({
   isInteractive,
@@ -88,22 +77,22 @@ function SparkplugRedconControl({
 }
 
 function SparkplugPanel({
-  routeKind,
   sparkplugRedcon,
   targetRedcon,
+  isInteractive,
   isRedconCommandDisabled,
   isRedconSleepCommandDisabled,
   onRedconSelect,
 }: SparkplugPanelProps) {
-  const kind = getSparkplugNodeKind(routeKind)
-  const isBot = kind === 'bot'
   const rowRedcon = sparkplugRedcon
-  const isInteractive = isBot && (routeKind === 'device' || routeKind === 'device_video')
   const isPending = targetRedcon !== null && targetRedcon !== rowRedcon
 
   return (
     <section className="sparkplug-strip" aria-label="Sparkplug status">
-      <div className="sparkplug-row" data-sparkplug-row={kind}>
+      <div
+        className="sparkplug-row"
+        data-sparkplug-mode={isInteractive ? 'interactive' : 'readonly'}
+      >
         <SparkplugRedconControl
           isInteractive={isInteractive}
           isPending={isRedconCommandDisabled || isPending}

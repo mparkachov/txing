@@ -49,6 +49,7 @@ import {
 } from './app-model'
 import {
   describeThingMetadata,
+  formatThingShadowReadError,
   getThingNamedShadow,
   isResourceNotFoundError,
   listRigDevices,
@@ -65,6 +66,7 @@ import {
   formatCatalogDetailLine,
   getAutoOpenDeviceDetailPanelState,
   getRouteDetailPanelOpenState,
+  shouldRenderRouteCatalogPanel,
 } from './level-detail-panel'
 import { shouldSuppressRobotStateTeardownError } from './mcp-errors'
 import type { McpTransportKind } from './mcp-descriptor'
@@ -74,7 +76,10 @@ import NotificationLogPanel from './NotificationLogPanel'
 import NotificationTray from './NotificationTray'
 import type { RobotState, ShadowConnectionState, ShadowSession } from './shadow-api'
 import type { ShadowName } from './shadow-protocol'
-import { publishSparkplugRedconCommandWithAck } from './sparkplug-command'
+import {
+  publishDirectSparkplugRedconCommand,
+  resolveThingSparkplugRedconCommandTarget,
+} from './sparkplug-command'
 import SparkplugPanel from './SparkplugPanel'
 import TxingPanel from './TxingPanel'
 import VideoPanel from './VideoPanel'
@@ -118,6 +123,7 @@ type RouteHeaderState = {
   status: 'idle' | 'loading' | 'ready' | 'error'
   metadata: ThingMetadata | null
   sparkplugShadow: unknown | null
+  shadowWarning: string
   error: string
 }
 
@@ -150,6 +156,7 @@ const emptyRouteHeaderState = (): RouteHeaderState => ({
   status: 'idle',
   metadata: null,
   sparkplugShadow: null,
+  shadowWarning: '',
   error: '',
 })
 
@@ -189,6 +196,11 @@ const formatShadowUpdateTime = (updatedAtMs: number | null): string =>
         minute: '2-digit',
         second: '2-digit',
       })
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+
+const formatRedconDiagnostic = (redcon: number | null): string =>
+  redcon === null ? 'current Sparkplug REDCON is unavailable' : `current Sparkplug REDCON is ${redcon}`
 
 const getCatalogDeviceLabel = (device: DeviceCatalogEntry | null | undefined): string =>
   device?.name?.trim() ? device.name.trim() : 'Unnamed device'
@@ -274,6 +286,9 @@ function App({ initialAuthError = '' }: AppProps) {
     routeHeaderState.status === 'ready' ? routeHeaderState.metadata : null
   const routeSparkplugShadow =
     routeHeaderState.status === 'ready' ? routeHeaderState.sparkplugShadow : null
+  const routeHeaderShadowWarning =
+    routeHeaderState.status === 'ready' ? routeHeaderState.shadowWarning : ''
+  const currentThingTypeName = routeHeaderMetadata?.thingTypeName ?? null
   const currentTownCatalogName =
     route.kind === 'town'
       ? routeHeaderMetadata?.name ?? null
@@ -367,6 +382,14 @@ function App({ initialAuthError = '' }: AppProps) {
     [displayShadowDocument],
   )
   const reportedRedcon = shadowReportedRedcon
+  const currentThingSparkplugCommandTarget = useMemo(
+    () => resolveThingSparkplugRedconCommandTarget(routeHeaderMetadata),
+    [routeHeaderMetadata],
+  )
+  const shouldRenderCatalogPanel = shouldRenderRouteCatalogPanel({
+    thingTypeName: currentThingTypeName,
+    reportedRedcon,
+  })
 
   const isShadowConnected = shadowConnectionState === 'connected'
   const isRedconCommandPending =
@@ -376,8 +399,9 @@ function App({ initialAuthError = '' }: AppProps) {
         ? reportedRedcon !== 4
         : reportedRedcon > pendingTargetRedcon))
   const isRedconCommandDisabled =
-    isLoadingShadow || isUpdatingShadow || isRedconCommandPending || !isShadowConnected
-  const isRedconSleepCommandDisabled = isLoadingShadow || !isShadowConnected
+    currentThingSparkplugCommandTarget === null || isUpdatingShadow || isRedconCommandPending
+  const isRedconSleepCommandDisabled =
+    currentThingSparkplugCommandTarget === null || isUpdatingShadow
   const canLoadShadow = !isLoadingShadow && isShadowConnected
   const canUseBoardVideo = reportedRedcon === 1
   const cmdVelRepeatIntervalMs = getMcpSteadyMotionHeartbeatIntervalMs(
@@ -503,6 +527,87 @@ function App({ initialAuthError = '' }: AppProps) {
     return refreshedTokens.idToken
   }, [])
 
+  const refreshRouteSparkplugShadow = useCallback(
+    async (thingName: string): Promise<unknown | null> => {
+      try {
+        const nextShadow = await getThingNamedShadow(resolveSessionIdToken, thingName, 'sparkplug')
+        setRouteHeaderState((currentState) => {
+          if (
+            currentState.status !== 'ready' ||
+            currentState.metadata?.thingName !== thingName
+          ) {
+            return currentState
+          }
+          return {
+            ...currentState,
+            sparkplugShadow: nextShadow,
+            shadowWarning: '',
+          }
+        })
+        return nextShadow
+      } catch (caughtError) {
+        const nextWarning = formatThingShadowReadError(caughtError, thingName, 'sparkplug')
+        setRouteHeaderState((currentState) => {
+          if (
+            currentState.status !== 'ready' ||
+            currentState.metadata?.thingName !== thingName
+          ) {
+            return currentState
+          }
+          return {
+            ...currentState,
+            shadowWarning: nextWarning,
+          }
+        })
+        return null
+      }
+    },
+    [resolveSessionIdToken],
+  )
+
+  const waitForRouteSparkplugRedcon = useCallback(
+    async (
+      thingName: string,
+      targetRedcon: 1 | 2 | 3 | 4,
+      commandSequence: number,
+    ): Promise<void> => {
+      const deadlineMs = Date.now() + 20_000
+      let lastObservedRedcon: number | null = null
+
+      while (Date.now() < deadlineMs) {
+        if (redconCommandSequenceRef.current !== commandSequence) {
+          return
+        }
+
+        const nextShadow = await refreshRouteSparkplugShadow(thingName)
+        const nextRedcon = extractReportedRedcon(nextShadow)
+        lastObservedRedcon = nextRedcon
+        if (
+          nextRedcon !== null &&
+          (targetRedcon === 4 ? nextRedcon === 4 : nextRedcon <= targetRedcon)
+        ) {
+          if (redconCommandSequenceRef.current === commandSequence) {
+            setPendingTargetRedcon(null)
+          }
+          return
+        }
+
+        await sleep(1_000)
+      }
+
+      if (redconCommandSequenceRef.current !== commandSequence) {
+        return
+      }
+
+      setPendingTargetRedcon(null)
+      enqueueRuntimeError(
+        `Timed out waiting for sparkplug shadow to reflect DCMD.redcon=${targetRedcon}; ${formatRedconDiagnostic(lastObservedRedcon)}`,
+        'sparkplug-redcon-shadow',
+      )
+    },
+    [enqueueRuntimeError, refreshRouteSparkplugShadow],
+  )
+
   const getShadowSession = (): ShadowSession => {
     const shadowSession = shadowSessionRef.current
     if (!shadowSession || !isShadowConnected) {
@@ -625,15 +730,13 @@ function App({ initialAuthError = '' }: AppProps) {
       status: 'loading',
       metadata: null,
       sparkplugShadow: null,
+      shadowWarning: '',
       error: '',
     })
 
     const loadRouteHeader = async (): Promise<void> => {
       try {
-        const [metadata, sparkplugShadow] = await Promise.all([
-          describeThingMetadata(resolveSessionIdToken, currentRouteThingName),
-          getThingNamedShadow(resolveSessionIdToken, currentRouteThingName, 'sparkplug'),
-        ])
+        const metadata = await describeThingMetadata(resolveSessionIdToken, currentRouteThingName)
         if (cancelled) {
           return
         }
@@ -650,10 +753,30 @@ function App({ initialAuthError = '' }: AppProps) {
           throw new Error(`Thing '${currentRouteThingName}' is not a unit device.`)
         }
 
+        let sparkplugShadow: unknown | null = null
+        let shadowWarning = ''
+        try {
+          sparkplugShadow = await getThingNamedShadow(
+            resolveSessionIdToken,
+            currentRouteThingName,
+            'sparkplug',
+          )
+        } catch (caughtShadowError) {
+          shadowWarning = formatThingShadowReadError(
+            caughtShadowError,
+            currentRouteThingName,
+            'sparkplug',
+          )
+        }
+        if (cancelled) {
+          return
+        }
+
         setRouteHeaderState({
           status: 'ready',
           metadata,
           sparkplugShadow,
+          shadowWarning,
           error: '',
         })
       } catch (caughtError) {
@@ -664,6 +787,7 @@ function App({ initialAuthError = '' }: AppProps) {
           status: 'error',
           metadata: null,
           sparkplugShadow: null,
+          shadowWarning: '',
           error:
             caughtError instanceof Error
               ? caughtError.message
@@ -915,6 +1039,7 @@ function App({ initialAuthError = '' }: AppProps) {
       shadowSessionRef.current?.close()
       shadowSessionRef.current = null
       hasReceivedShadowSnapshotRef.current = false
+      previousReportedRedconRef.current = null
       setShadowBootstrapError('')
       setShadowConnectionState('idle')
       setIsLoadingShadow(false)
@@ -933,6 +1058,7 @@ function App({ initialAuthError = '' }: AppProps) {
     let cancelled = false
     let shadowSession: ShadowSession | null = null
     hasReceivedShadowSnapshotRef.current = false
+    previousReportedRedconRef.current = null
     setShadowJson('{}')
     setShadowBootstrapError('')
     setPendingTargetRedcon(null)
@@ -1228,13 +1354,22 @@ function App({ initialAuthError = '' }: AppProps) {
   }
 
   const publishRedconCommand = async (redcon: 1 | 2 | 3 | 4): Promise<boolean> => {
+    const commandTarget = currentThingSparkplugCommandTarget
+    if (!commandTarget) {
+      return false
+    }
+
     const commandSequence = redconCommandSequenceRef.current + 1
     redconCommandSequenceRef.current = commandSequence
     setIsUpdatingShadow(true)
 
     try {
-      const shadowSession = getShadowSession()
-      await publishSparkplugRedconCommandWithAck(shadowSession, redcon)
+      await publishDirectSparkplugRedconCommand(
+        resolveSessionIdToken,
+        commandTarget,
+        redcon,
+        commandSequence - 1,
+      )
       if (redconCommandSequenceRef.current === commandSequence) {
         setPendingTargetRedcon(redcon)
         appendSessionLogEntry({
@@ -1243,6 +1378,7 @@ function App({ initialAuthError = '' }: AppProps) {
           dedupeKey: `sparkplug-redcon:${redcon}`,
           objectId: currentNotificationObjectId,
         })
+        void waitForRouteSparkplugRedcon(commandTarget.deviceId, redcon, commandSequence)
       }
       return true
     } catch (caughtError) {
@@ -1481,14 +1617,11 @@ function App({ initialAuthError = '' }: AppProps) {
           </div>
         </div>
         <div className="navigation-panel-actions">
-          {route.kind === 'town' ||
-          route.kind === 'rig' ||
-          route.kind === 'device' ||
-          route.kind === 'device_video' ? (
+          {currentRouteThingName !== null ? (
             <SparkplugPanel
-              routeKind={route.kind}
               sparkplugRedcon={reportedRedcon}
               targetRedcon={pendingTargetRedcon}
+              isInteractive={currentThingSparkplugCommandTarget !== null}
               isRedconCommandDisabled={isRedconCommandDisabled}
               isRedconSleepCommandDisabled={isRedconSleepCommandDisabled}
               onRedconSelect={(redcon) => {
@@ -1551,8 +1684,8 @@ function App({ initialAuthError = '' }: AppProps) {
         <p>Resolving {routeLoadingLabel} metadata and current Sparkplug state...</p>
       </section>
     )
-  } else if (route.kind === 'town') {
-    content = isTownPanelOpen ? (
+  } else if (currentThingTypeName === 'town' && route.kind === 'town') {
+    content = isTownPanelOpen && shouldRenderCatalogPanel ? (
       <section className="catalog-grid-shell">
         {rigCatalog.status === 'loading' ? <p>Loading rigs...</p> : null}
         {rigCatalog.status === 'error' ? <p className="error">{rigCatalog.error}</p> : null}
@@ -1578,8 +1711,8 @@ function App({ initialAuthError = '' }: AppProps) {
     ) : (
       <></>
     )
-  } else if (route.kind === 'rig') {
-    content = isRigPanelOpen ? (
+  } else if (currentThingTypeName === 'rig' && route.kind === 'rig') {
+    content = isRigPanelOpen && shouldRenderCatalogPanel ? (
       <section className="catalog-grid-shell">
         {deviceCatalog.status === 'loading' ? <p>Loading devices...</p> : null}
         {deviceCatalog.status === 'not_found' ? <p className="error">{deviceCatalog.error}</p> : null}
@@ -1606,7 +1739,7 @@ function App({ initialAuthError = '' }: AppProps) {
     ) : (
       <></>
     )
-  } else if (selectedDeviceRoute && !isSelectedDeviceValid) {
+  } else if (currentThingTypeName === 'unit' && selectedDeviceRoute && !isSelectedDeviceValid) {
     content = (
       <section className="card catalog-card">
         <h1>Device unavailable</h1>
@@ -1623,7 +1756,7 @@ function App({ initialAuthError = '' }: AppProps) {
         </p>
       </section>
     )
-  } else if (route.kind === 'device_video' && selectedDeviceRoute) {
+  } else if (currentThingTypeName === 'unit' && route.kind === 'device_video' && selectedDeviceRoute) {
     content = (
       <section className="card catalog-card catalog-card-detail">
         <VideoPanel
@@ -1636,7 +1769,7 @@ function App({ initialAuthError = '' }: AppProps) {
         />
       </section>
     )
-  } else if (route.kind === 'device' && selectedDeviceRoute && isBotPanelOpen) {
+  } else if (currentThingTypeName === 'unit' && route.kind === 'device' && selectedDeviceRoute && isBotPanelOpen) {
     content = (
       <TxingPanel
         isBoardVideoExpanded={isBoardVideoExpanded}
@@ -1657,7 +1790,7 @@ function App({ initialAuthError = '' }: AppProps) {
         }}
       />
     )
-  } else if (route.kind === 'device' && selectedDeviceRoute) {
+  } else if (currentThingTypeName === 'unit' && route.kind === 'device' && selectedDeviceRoute) {
     content = <></>
   } else {
     content = (
@@ -1675,8 +1808,21 @@ function App({ initialAuthError = '' }: AppProps) {
         <h1>Live shadow connection unavailable</h1>
         <p>{shadowBootstrapError}</p>
         <p>
-          Showing route labels and current Sparkplug state from direct AWS IoT reads. Live controls
-          stay disabled until the MQTT shadow session connects.
+          Showing route labels and current Sparkplug state from direct AWS IoT reads. Sparkplug
+          REDCON commands still publish directly; unit detail telemetry remains limited until the
+          live shadow session reconnects.
+        </p>
+      </section>
+    ) : null
+  const routeHeaderShadowNotice =
+    routeHeaderShadowWarning !== '' ? (
+      <section className="card catalog-card">
+        <h1>Current Sparkplug state unavailable</h1>
+        <p>{routeHeaderShadowWarning}</p>
+        <p>
+          Route labels come from the registry metadata. The top panel stays generic to the
+          current thing, while type-specific detail content remains gated by the current
+          Sparkplug REDCON state.
         </p>
       </section>
     ) : null
@@ -1684,6 +1830,7 @@ function App({ initialAuthError = '' }: AppProps) {
   return (
     <main className="page page-signed-in">
       {navigationPanel}
+      {routeHeaderShadowNotice}
       {shadowAvailabilityNotice}
       {content}
 

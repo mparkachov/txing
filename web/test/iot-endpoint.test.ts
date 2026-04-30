@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'bun:test'
-import { resetIotDataEndpointCacheForTest, resolveIotDataEndpoint } from '../src/iot-endpoint'
+import {
+  buildIotDataEndpointUrl,
+  resetIotDataEndpointCacheForTest,
+  resolveIotDataEndpoint,
+} from '../src/iot-endpoint'
 
 describe('IoT endpoint resolution', () => {
   test('resolves the IoT Data-ATS endpoint once per region and caches it', async () => {
@@ -43,5 +47,14 @@ describe('IoT endpoint resolution', () => {
         }),
       }),
     ).rejects.toThrow('AWS IoT DescribeEndpoint did not return a valid endpointAddress')
+  })
+
+  test('normalizes the direct HTTPS IoT data endpoint URL', () => {
+    expect(
+      buildIotDataEndpointUrl('a1b2c3d4e5f6g7-ats.iot.eu-central-1.amazonaws.com'),
+    ).toBe('https://a1b2c3d4e5f6g7-ats.iot.eu-central-1.amazonaws.com')
+    expect(
+      buildIotDataEndpointUrl('https://a1b2c3d4e5f6g7-ats.iot.eu-central-1.amazonaws.com'),
+    ).toBe('https://a1b2c3d4e5f6g7-ats.iot.eu-central-1.amazonaws.com')
   })
 })

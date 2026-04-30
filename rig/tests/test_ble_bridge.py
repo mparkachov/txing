@@ -160,6 +160,7 @@ from unit_rig.ble_bridge import (
     BoardVideoState,
     BleSleepBridge,
     BridgeConfig,
+    DeviceCloudProxy,
     RigFleetBridge,
     ShadowState,
     _build_shadow_from_snapshot,
@@ -188,16 +189,44 @@ UNIT_CAPABILITIES = ("sparkplug", "mcu", "board", "video")
 class FakeCloudShadow:
     def __init__(self) -> None:
         self.shadow_updates: list[dict[str, object]] = []
+        self.named_shadow_updates: list[dict[str, object]] = []
         self.sparkplug_publishes: list[tuple[str, bytes]] = []
 
     async def update_shadow(self, **kwargs: object) -> None:
         self.shadow_updates.append(kwargs)
+
+    async def update_named_shadow_reported(self, **kwargs: object) -> None:
+        self.named_shadow_updates.append(kwargs)
 
     async def publish_sparkplug(self, topic: str, payload: bytes, **_: object) -> None:
         self.sparkplug_publishes.append((topic, payload))
 
     def drain_updates(self) -> list[object]:
         return []
+
+
+class DeviceCloudProxyTests(unittest.TestCase):
+    def test_forwards_named_shadow_reported_updates_with_default_thing_name(self) -> None:
+        cloud_shadow = FakeCloudShadow()
+        proxy = DeviceCloudProxy(cloud_shadow, "unit-123")  # type: ignore[arg-type]
+
+        asyncio.run(
+            proxy.update_named_shadow_reported(
+                shadow_name="mcp",
+                reported_patch={"status": {"available": True}},
+            )
+        )
+
+        self.assertEqual(
+            cloud_shadow.named_shadow_updates,
+            [
+                {
+                    "thing_name": "unit-123",
+                    "shadow_name": "mcp",
+                    "reported_patch": {"status": {"available": True}},
+                }
+            ],
+        )
 
 
 class ShadowPayloadTests(unittest.TestCase):
@@ -1641,6 +1670,19 @@ class LifecycleBridgeTests(unittest.TestCase):
         self.assertTrue(shadow.board_video_ready)
         self.assertEqual(shadow.redcon, 1)
         self.assertEqual(cloud_shadow.shadow_updates, [])
+        self.assertEqual(
+            cloud_shadow.named_shadow_updates,
+            [
+                {
+                    "thing_name": "txing",
+                    "shadow_name": "mcp",
+                    "reported_patch": {
+                        "descriptor": None,
+                        "status": {"available": True},
+                    },
+                }
+            ],
+        )
         self.assertEqual(
             [decode_payload(payload).metrics[0].int_value for _topic, payload in cloud_shadow.sparkplug_publishes],
             [2, 1],

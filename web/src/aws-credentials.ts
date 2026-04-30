@@ -27,3 +27,8 @@ export const createCredentialProvider = (idToken: string): CognitoCredentialProv
   cachedCredentialProvider = provider
   return provider
 }
+
+export const clearCredentialProviderCache = (): void => {
+  cachedCredentialProviderToken = null
+  cachedCredentialProvider = null
+}

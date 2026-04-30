@@ -14,9 +14,10 @@ import {
   IoTDataPlaneClient,
   type GetThingShadowCommandOutput,
 } from '@aws-sdk/client-iot-data-plane'
-import { createCredentialProvider } from './aws-credentials'
+import { clearCredentialProviderCache, createCredentialProvider } from './aws-credentials'
 import { appConfig } from './config'
-import { resolveIotDataEndpoint } from './iot-endpoint'
+import { ensureIotPolicyAttached } from './iot-policy-attach'
+import { buildIotDataEndpointUrl, resolveIotDataEndpoint } from './iot-endpoint'
 import { isShadowName, type ShadowName } from './shadow-protocol'
 
 type ResolveIdToken = () => Promise<string>
@@ -100,23 +101,71 @@ export const isResourceNotFoundError = (error: unknown): boolean =>
   (error.name === 'ResourceNotFoundException' ||
     error.message.toLowerCase().includes('not found'))
 
-const createIotControlClient = async (resolveIdToken: ResolveIdToken): Promise<IotControlClient> => {
-  const idToken = await resolveIdToken()
-  return new IoTClient({
+const hasHttpStatusCode = (error: unknown, statusCode: number): boolean =>
+  typeof error === 'object' &&
+  error !== null &&
+  '$metadata' in error &&
+  typeof (error as { $metadata?: { httpStatusCode?: unknown } }).$metadata?.httpStatusCode === 'number' &&
+  (error as { $metadata: { httpStatusCode: number } }).$metadata.httpStatusCode === statusCode
+
+export const isThingShadowReadForbiddenError = (error: unknown): boolean =>
+  hasHttpStatusCode(error, 403) ||
+  (error instanceof Error &&
+    (error.name === 'ForbiddenException' ||
+      error.name === 'UnknownError' ||
+      error.message.toLowerCase().includes('forbidden') ||
+      error.message.toLowerCase().includes('not authorized')))
+
+const runWithFreshCredentialRetry = async <T>(
+  resolveIdToken: ResolveIdToken,
+  operation: (idToken: string) => Promise<T>,
+  shouldRetry: (error: unknown) => boolean = isThingShadowReadForbiddenError,
+): Promise<T> => {
+  const runOnce = async (): Promise<T> => operation(await resolveIdToken())
+
+  try {
+    return await runOnce()
+  } catch (caughtError) {
+    if (!shouldRetry(caughtError)) {
+      throw caughtError
+    }
+  }
+
+  clearCredentialProviderCache()
+  return runOnce()
+}
+
+export const formatThingShadowReadError = (
+  error: unknown,
+  thingName: string,
+  shadowName: ShadowName = 'sparkplug',
+): string => {
+  if (isThingShadowReadForbiddenError(error)) {
+    return `Direct AWS IoT read of ${thingName}/${shadowName} is forbidden for the authenticated web identity. Redeploy shared/aws so the web authenticated role includes iot:GetThingShadow, then sign in again.`
+  }
+  if (isResourceNotFoundError(error)) {
+    return `Thing '${thingName}' is missing the named shadow '${shadowName}'.`
+  }
+  if (error instanceof Error && error.message.trim()) {
+    return error.message
+  }
+  return `Unable to read named shadow '${shadowName}' for thing '${thingName}'.`
+}
+
+const createIotControlClient = (idToken: string): IotControlClient =>
+  new IoTClient({
     region: appConfig.awsRegion,
     credentials: createCredentialProvider(idToken),
   })
-}
 
-const createIotDataClient = async (resolveIdToken: ResolveIdToken): Promise<IotDataClient> => {
-  const idToken = await resolveIdToken()
+const createIotDataClient = async (idToken: string): Promise<IotDataClient> => {
   const endpoint = await resolveIotDataEndpoint({
     region: appConfig.awsRegion,
     idToken,
   })
   return new IoTDataPlaneClient({
     region: appConfig.awsRegion,
-    endpoint,
+    endpoint: buildIotDataEndpointUrl(endpoint),
     credentials: createCredentialProvider(idToken),
   })
 }
@@ -170,8 +219,10 @@ export const describeThingMetadata = async (
   resolveIdToken: ResolveIdToken,
   thingName: string,
 ): Promise<ThingMetadata> => {
-  const client = await createIotControlClient(resolveIdToken)
-  return describeThingMetadataWithClient(client, thingName)
+  return runWithFreshCredentialRetry(resolveIdToken, async (idToken) => {
+    const client = createIotControlClient(idToken)
+    return describeThingMetadataWithClient(client, thingName)
+  })
 }
 
 export const getThingNamedShadowWithClient = async (
@@ -194,8 +245,11 @@ export const getThingNamedShadow = async (
   thingName: string,
   shadowName: ShadowName = 'sparkplug',
 ): Promise<unknown> => {
-  const client = await createIotDataClient(resolveIdToken)
-  return getThingNamedShadowWithClient(client, thingName, shadowName)
+  return runWithFreshCredentialRetry(resolveIdToken, async (idToken) => {
+    await ensureIotPolicyAttached(idToken)
+    const client = await createIotDataClient(idToken)
+    return getThingNamedShadowWithClient(client, thingName, shadowName)
+  })
 }
 
 const searchThingNamesWithClient = async (
@@ -303,8 +357,10 @@ export const listTownRigs = async (
   resolveIdToken: ResolveIdToken,
   townName: string,
 ): Promise<RigCatalogEntry[]> => {
-  const client = await createIotControlClient(resolveIdToken)
-  return listTownRigsWithClient(client, townName)
+  return runWithFreshCredentialRetry(resolveIdToken, async (idToken) => {
+    const client = createIotControlClient(idToken)
+    return listTownRigsWithClient(client, townName)
+  })
 }
 
 export const listRigDevicesWithClient = async (
@@ -354,8 +410,10 @@ export const listRigDevices = async (
   resolveIdToken: ResolveIdToken,
   rigName: string,
 ): Promise<DeviceCatalogEntry[]> => {
-  const client = await createIotControlClient(resolveIdToken)
-  return listRigDevicesWithClient(client, rigName)
+  return runWithFreshCredentialRetry(resolveIdToken, async (idToken) => {
+    const client = createIotControlClient(idToken)
+    return listRigDevicesWithClient(client, rigName)
+  })
 }
 
 export const describeDeviceMetadataWithClient = async (
@@ -375,8 +433,10 @@ export const describeDeviceMetadata = async (
   resolveIdToken: ResolveIdToken,
   thingName: string,
 ): Promise<DeviceCatalogEntry> => {
-  const client = await createIotControlClient(resolveIdToken)
-  return describeDeviceMetadataWithClient(client, thingName)
+  return runWithFreshCredentialRetry(resolveIdToken, async (idToken) => {
+    const client = createIotControlClient(idToken)
+    return describeDeviceMetadataWithClient(client, thingName)
+  })
 }
 
 export const resolveTownThingWithClient = async (
@@ -394,8 +454,10 @@ export const resolveTownThing = async (
   resolveIdToken: ResolveIdToken,
   townName: string,
 ): Promise<ThingMetadata> => {
-  const client = await createIotControlClient(resolveIdToken)
-  return resolveTownThingWithClient(client, townName)
+  return runWithFreshCredentialRetry(resolveIdToken, async (idToken) => {
+    const client = createIotControlClient(idToken)
+    return resolveTownThingWithClient(client, townName)
+  })
 }
 
 export const resolveRigThingWithClient = async (
@@ -415,6 +477,8 @@ export const resolveRigThing = async (
   townName: string,
   rigName: string,
 ): Promise<ThingMetadata> => {
-  const client = await createIotControlClient(resolveIdToken)
-  return resolveRigThingWithClient(client, townName, rigName)
+  return runWithFreshCredentialRetry(resolveIdToken, async (idToken) => {
+    const client = createIotControlClient(idToken)
+    return resolveRigThingWithClient(client, townName, rigName)
+  })
 }

@@ -448,6 +448,9 @@ Resources:
           - Effect: Allow
             Action: iot:Subscribe
             Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/*
+          - Effect: Allow
+            Action: iot:GetThingShadow
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/*
 
   TxingAdminUserPool:
     Type: AWS::Cognito::UserPool

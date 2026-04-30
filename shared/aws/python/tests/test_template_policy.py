@@ -48,6 +48,29 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("iot:SearchIndex", template)
         self.assertIn("iot:GetThingShadow", template)
 
+    def test_template_grants_direct_shadow_read_in_both_web_permission_layers(self) -> None:
+        template = (
+            Path(__file__).resolve().parents[2] / "template.yaml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("TxingWebAdminIotPolicy", template)
+        self.assertIn(
+            "PolicyName: !Sub ${AWS::StackName}-web-admin-iot-policy",
+            template,
+        )
+        self.assertIn(
+            "Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/*",
+            template,
+        )
+        self.assertIn(
+            "Sid: AllowDirectThingShadowReads",
+            template,
+        )
+        self.assertIn(
+            "PolicyName: iot-shadow-direct-access-txing",
+            template,
+        )
+
     def test_device_runtime_policy_allows_describe_thing(self) -> None:
         template = (
             Path(__file__).resolve().parents[2] / "template.yaml"
