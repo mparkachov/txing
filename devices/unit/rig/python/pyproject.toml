@@ -1,6 +1,6 @@
 [project]
 name = "unit-rig"
-version = "0.3.0"
+version = "0.4.0"
 description = "Unit device-type runtime adapter for the txing rig host"
 requires-python = ">=3.12"
 dependencies = [

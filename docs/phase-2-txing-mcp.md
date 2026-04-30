@@ -198,7 +198,7 @@ Illustrative descriptor shape:
   "serviceId": "mcp",
   "serverInfo": {
     "name": "mcp",
-    "version": "0.1.0"
+    "version": "0.4.0"
   },
   "transport": "mqtt-jsonrpc",
   "mcpProtocolVersion": "2025-11-25",
@@ -228,7 +228,7 @@ Illustrative descriptor shape:
   ],
   "leaseRequired": true,
   "leaseTtlMs": 5000,
-  "serverVersion": "0.1.0"
+  "serverVersion": "0.4.0"
 }
 ```
 

@@ -1,6 +1,6 @@
 [project]
 name = "board"
-version = "0.3.0"
+version = "0.4.0"
 description = "Device-side Raspberry Pi board control for txing"
 readme = "README.md"
 authors = [

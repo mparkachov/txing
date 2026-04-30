@@ -1,6 +1,6 @@
 [project]
 name = "rig"
-version = "0.3.0"
+version = "0.4.0"
 description = "Rig lifecycle service for Raspberry Pi 5 using direct AWS IoT MQTT and BLE MCU communication"
 readme = "README.md"
 authors = [
