@@ -30,22 +30,15 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertNotIn("Sid: DeviceCmdVelTopicFilters", template)
         self.assertNotIn("board/cmd_vel", template)
 
-    def test_template_defines_sparkplug_witness_projection(self) -> None:
+    def test_template_no_longer_embeds_sparkplug_witness_projection(self) -> None:
         template = (
             Path(__file__).resolve().parents[2] / "template.yaml"
         ).read_text(encoding="utf-8")
 
-        self.assertIn("TxingSparkplugWitnessFunction", template)
-        self.assertIn("AWS::Lambda::Function", template)
-        self.assertIn("TxingSparkplugWitnessTopicRule", template)
-        self.assertIn("TxingSparkplugWitnessInvokePermission", template)
-        self.assertIn("RuleName: !Sub ${AWS::StackName}SparkplugWitness", template)
-        self.assertIn(
-            "SourceArn: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:rule/${AWS::StackName}SparkplugWitness",
-            template,
-        )
-        self.assertIn("encode(*, 'base64')", template)
-        self.assertIn("iot:SearchIndex", template)
+        self.assertNotIn("TxingSparkplugWitnessFunction", template)
+        self.assertNotIn("TxingSparkplugWitnessTopicRule", template)
+        self.assertNotIn("TxingSparkplugWitnessInvokePermission", template)
+        self.assertNotIn("sparkplug-witness", template)
         self.assertIn("iot:GetThingShadow", template)
 
     def test_template_grants_direct_shadow_read_in_both_web_permission_layers(self) -> None:

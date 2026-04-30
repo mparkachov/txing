@@ -334,12 +334,11 @@ class DeviceRegistryTests(unittest.TestCase):
             {
                 "state": {
                     "reported": {
-                        "session": {
-                            "entityKind": "group",
-                            "groupId": "berlin",
-                            "online": True,
+                        "payload": {
+                            "metrics": {
+                                "redcon": 1,
+                            },
                         },
-                        "metrics": {"redcon": 1},
                     }
                 }
             },
@@ -394,14 +393,17 @@ class DeviceRegistryTests(unittest.TestCase):
             {
                 "state": {
                     "reported": {
-                        "session": {
-                            "entityKind": "node",
+                        "topic": {
+                            "namespace": "spBv1.0",
                             "groupId": "berlin",
-                            "edgeNodeId": "rig-a",
                             "messageType": "NDEATH",
-                            "online": False,
+                            "edgeNodeId": "rig-a",
                         },
-                        "metrics": {},
+                        "payload": {
+                            "metrics": {
+                                "redcon": 4,
+                            },
+                        },
                     }
                 }
             },
@@ -489,7 +491,27 @@ class DeviceRegistryTests(unittest.TestCase):
         )
         self.assertEqual(runtime.iot_data.update_requests[0][0], "unit-bbbbbb")
         self.assertEqual(runtime.iot_data.update_requests[0][1], "sparkplug")
-        self.assertTrue(runtime.iot_data.update_requests[0][2].startswith(b"{"))
+        self.assertEqual(
+            json.loads(runtime.iot_data.update_requests[0][2]),
+            {
+                "state": {
+                    "reported": {
+                        "topic": {
+                            "namespace": "spBv1.0",
+                            "groupId": "berlin",
+                            "messageType": "DDEATH",
+                            "edgeNodeId": "rig-a",
+                            "deviceId": "unit-bbbbbb",
+                        },
+                        "payload": {
+                            "metrics": {
+                                "redcon": 4,
+                            },
+                        },
+                    }
+                }
+            },
+        )
         self.assertEqual(
             runtime.kinesisvideo.create_requests[0]["ChannelName"],
             "unit-bbbbbb-board-video",

@@ -259,13 +259,19 @@ def build_node_birth_payload(
 def build_node_death_payload(
     *,
     bdseq: int,
+    redcon: int = 4,
     timestamp: int | None = None,
 ) -> bytes:
     if bdseq < 0:
         raise ValueError("bdseq must not be negative")
+    if not 1 <= redcon <= 4:
+        raise ValueError(f"redcon must be between 1 and 4, got {redcon}")
     payload = Payload(
         timestamp=timestamp if timestamp is not None else utc_timestamp_ms(),
-        metrics=(Metric(name="bdSeq", datatype=DataType.UINT64, long_value=bdseq),),
+        metrics=(
+            Metric(name="bdSeq", datatype=DataType.UINT64, long_value=bdseq),
+            Metric(name="redcon", datatype=DataType.INT32, int_value=redcon),
+        ),
     )
     return encode_payload(payload)
 

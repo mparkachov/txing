@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://txing.local/schemas/txing-sparkplug-shadow.schema.json",
-  "title": "Txing Sparkplug Named Shadow Contract v1",
+  "title": "Txing Sparkplug Named Shadow Contract v2",
   "description": "Named shadow 'sparkplug' AWS-side materialized Sparkplug view for a txing entity.",
   "type": "object",
   "additionalProperties": true,
@@ -15,20 +15,23 @@
         "reported": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["session", "metrics"],
+          "required": ["topic", "payload"],
           "properties": {
-            "session": {
+            "topic": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["entityKind", "groupId", "online"],
+              "required": ["namespace", "groupId", "messageType", "edgeNodeId", "deviceId"],
               "properties": {
-                "entityKind": {
-                  "type": "string",
-                  "enum": ["group", "node", "device"]
+                "namespace": {
+                  "const": "spBv1.0"
                 },
                 "groupId": {
                   "type": "string",
                   "minLength": 1
+                },
+                "messageType": {
+                  "type": "string",
+                  "enum": ["NBIRTH", "NDATA", "NDEATH", "DBIRTH", "DDATA", "DDEATH"]
                 },
                 "edgeNodeId": {
                   "type": "string",
@@ -37,57 +40,37 @@
                 "deviceId": {
                   "type": "string",
                   "minLength": 1
-                },
-                "messageType": {
-                  "type": "string",
-                  "enum": ["NBIRTH", "NDATA", "NDEATH", "DBIRTH", "DDATA", "DDEATH"]
-                },
-                "online": {
-                  "type": "boolean"
+                }
+              }
+            },
+            "payload": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["metrics"],
+              "properties": {
+                "timestamp": {
+                  "type": "integer",
+                  "minimum": 0
                 },
                 "seq": {
                   "type": "integer",
                   "minimum": 0
                 },
-                "sparkplugTimestamp": {
-                  "type": "integer",
-                  "minimum": 0
-                },
+                "metrics": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            },
+            "projection": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
                 "observedAt": {
                   "type": "integer",
                   "minimum": 0
                 }
-              },
-              "allOf": [
-                {
-                  "if": {
-                    "properties": {
-                      "entityKind": {
-                        "const": "node"
-                      }
-                    }
-                  },
-                  "then": {
-                    "required": ["edgeNodeId", "messageType"]
-                  }
-                },
-                {
-                  "if": {
-                    "properties": {
-                      "entityKind": {
-                        "const": "device"
-                      }
-                    }
-                  },
-                  "then": {
-                    "required": ["edgeNodeId", "deviceId", "messageType"]
-                  }
-                }
-              ]
-            },
-            "metrics": {
-              "type": "object",
-              "additionalProperties": true
+              }
             }
           }
         }

@@ -324,9 +324,11 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertEqual(will_topic, "spBv1.0/town/NDEATH/rig")
         payload = decode_payload(will_payload)
         self.assertIsNone(payload.seq)
-        self.assertEqual(len(payload.metrics), 1)
+        self.assertEqual(len(payload.metrics), 2)
         self.assertEqual(payload.metrics[0].name, "bdSeq")
         self.assertEqual(payload.metrics[0].long_value, 77)
+        self.assertEqual(payload.metrics[1].name, "redcon")
+        self.assertEqual(payload.metrics[1].int_value, 4)
 
     def test_subscribe_topics_use_compact_startup_filters(self) -> None:
         subscribed_topics: list[tuple[str, float | None]] = []
@@ -1933,7 +1935,7 @@ class LifecycleBridgeTests(unittest.TestCase):
         self.assertIsNone(death.seq)
         self.assertEqual(
             [(metric.name, metric.long_value, metric.int_value) for metric in death.metrics],
-            [("bdSeq", 41, None)],
+            [("bdSeq", 41, None), ("redcon", None, 4)],
         )
 
 
@@ -2044,9 +2046,11 @@ class SparkplugCodecTests(unittest.TestCase):
 
         self.assertEqual(topic, "spBv1.0/town/NDEATH/rig")
         self.assertIsNone(payload.seq)
-        self.assertEqual(len(payload.metrics), 1)
+        self.assertEqual(len(payload.metrics), 2)
         self.assertEqual(payload.metrics[0].name, "bdSeq")
         self.assertEqual(payload.metrics[0].long_value, 123)
+        self.assertEqual(payload.metrics[1].name, "redcon")
+        self.assertEqual(payload.metrics[1].int_value, 4)
 
     def test_builds_phase_one_device_topics_and_payload_sequences(self) -> None:
         self.assertEqual(

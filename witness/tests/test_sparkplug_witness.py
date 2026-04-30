@@ -4,7 +4,11 @@ import base64
 import unittest
 from unittest.mock import patch
 
-from aws.sparkplug_witness import decode_sparkplug_payload, lambda_handler, project_sparkplug_message
+from witness.sparkplug_witness import (
+    decode_sparkplug_payload,
+    lambda_handler,
+    project_sparkplug_message,
+)
 
 
 def _encode_varint(value: int) -> bytes:
@@ -56,17 +60,19 @@ def _encode_metric(
 
 def _encode_payload(
     *,
-    timestamp: int = 1710000000000,
-    seq: int = 7,
+    timestamp: int | None = 1710000000000,
+    seq: int | None = 7,
     metrics: list[bytes],
 ) -> str:
     payload = bytearray()
-    payload.extend(_encode_key(1, 0))
-    payload.extend(_encode_varint(timestamp))
+    if timestamp is not None:
+        payload.extend(_encode_key(1, 0))
+        payload.extend(_encode_varint(timestamp))
     for metric in metrics:
         payload.extend(_encode_length_delimited(2, metric))
-    payload.extend(_encode_key(3, 0))
-    payload.extend(_encode_varint(seq))
+    if seq is not None:
+        payload.extend(_encode_key(3, 0))
+        payload.extend(_encode_varint(seq))
     return base64.b64encode(bytes(payload)).decode("ascii")
 
 
@@ -86,7 +92,8 @@ class SparkplugWitnessTests(unittest.TestCase):
         )
 
         assert message is not None
-        self.assertEqual(message.entity_kind, "device")
+        self.assertEqual(message.device_id, "unit-1")
+        self.assertEqual(message.message_type, "DBIRTH")
         self.assertEqual(
             message.metrics,
             {
@@ -100,7 +107,7 @@ class SparkplugWitnessTests(unittest.TestCase):
             },
         )
 
-    def test_decode_node_birth_normalizes_metric_paths(self) -> None:
+    def test_decode_node_birth_omits_device_id_and_normalizes_metric_paths(self) -> None:
         encoded_payload = _encode_payload(
             metrics=[
                 _encode_metric(name="redcon", int_value=2),
@@ -114,6 +121,7 @@ class SparkplugWitnessTests(unittest.TestCase):
         )
 
         assert message is not None
+        self.assertIsNone(message.device_id)
         self.assertEqual(
             message.metrics,
             {
@@ -122,7 +130,7 @@ class SparkplugWitnessTests(unittest.TestCase):
             },
         )
 
-    def test_project_node_birth_replaces_metrics_with_top_level_redcon(self) -> None:
+    def test_project_node_birth_replaces_metrics_with_topic_payload_projection(self) -> None:
         encoded_payload = _encode_payload(
             metrics=[
                 _encode_metric(name="redcon", int_value=1),
@@ -135,8 +143,8 @@ class SparkplugWitnessTests(unittest.TestCase):
         )
 
         assert message is not None
-        with patch("aws.sparkplug_witness._resolve_thing_name", return_value="rig-main"), patch(
-            "aws.sparkplug_witness._replace_metrics"
+        with patch("witness.sparkplug_witness._resolve_thing_name", return_value="rig-main"), patch(
+            "witness.sparkplug_witness._replace_metrics"
         ) as replace_metrics:
             projected_thing_name = project_sparkplug_message(message, 1710000000999)
 
@@ -147,19 +155,22 @@ class SparkplugWitnessTests(unittest.TestCase):
         self.assertEqual(
             reported_payload,
             {
-                "session": {
-                    "entityKind": "node",
+                "topic": {
+                    "namespace": "spBv1.0",
                     "groupId": "town",
-                    "edgeNodeId": "rig",
                     "messageType": "NBIRTH",
-                    "online": True,
-                    "seq": 7,
-                    "sparkplugTimestamp": 1710000000000,
-                    "observedAt": 1710000000999,
+                    "edgeNodeId": "rig",
                 },
-                "metrics": {
-                    "redcon": 1,
-                    "bdSeq": 42,
+                "payload": {
+                    "timestamp": 1710000000000,
+                    "seq": 7,
+                    "metrics": {
+                        "redcon": 1,
+                        "bdSeq": 42,
+                    },
+                },
+                "projection": {
+                    "observedAt": 1710000000999,
                 },
             },
         )
@@ -193,8 +204,8 @@ class SparkplugWitnessTests(unittest.TestCase):
         )
 
         assert message is not None
-        with patch("aws.sparkplug_witness._resolve_thing_name", return_value="unit-1"), patch(
-            "aws.sparkplug_witness._replace_metrics"
+        with patch("witness.sparkplug_witness._resolve_thing_name", return_value="unit-1"), patch(
+            "witness.sparkplug_witness._replace_metrics"
         ) as replace_metrics:
             projected_thing_name = project_sparkplug_message(message, 1710000000999)
 
@@ -205,20 +216,23 @@ class SparkplugWitnessTests(unittest.TestCase):
         self.assertEqual(
             reported_payload,
             {
-                "session": {
-                    "entityKind": "device",
+                "topic": {
+                    "namespace": "spBv1.0",
                     "groupId": "town",
+                    "messageType": "DBIRTH",
                     "edgeNodeId": "rig",
                     "deviceId": "unit-1",
-                    "messageType": "DBIRTH",
-                    "online": True,
-                    "seq": 7,
-                    "sparkplugTimestamp": 1710000000000,
-                    "observedAt": 1710000000999,
                 },
-                "metrics": {
-                    "redcon": 1,
-                    "batteryMv": 3795,
+                "payload": {
+                    "timestamp": 1710000000000,
+                    "seq": 7,
+                    "metrics": {
+                        "redcon": 1,
+                        "batteryMv": 3795,
+                    },
+                },
+                "projection": {
+                    "observedAt": 1710000000999,
                 },
             },
         )
@@ -235,41 +249,138 @@ class SparkplugWitnessTests(unittest.TestCase):
         )
 
         assert message is not None
-        with patch("aws.sparkplug_witness._resolve_thing_name", return_value="unit-1"), patch(
-            "aws.sparkplug_witness._merge_metrics"
+        with patch("witness.sparkplug_witness._resolve_thing_name", return_value="unit-1"), patch(
+            "witness.sparkplug_witness._merge_metrics"
         ) as merge_metrics:
             project_sparkplug_message(message, 1710000001999)
 
         merge_metrics.assert_called_once()
         _, reported_payload = merge_metrics.call_args.args
         self.assertEqual(
-            reported_payload["metrics"],
+            reported_payload,
             {
-                "services": {
-                    "demo": {
-                        "available": True,
-                    }
-                }
+                "topic": {
+                    "namespace": "spBv1.0",
+                    "groupId": "town",
+                    "messageType": "DDATA",
+                    "edgeNodeId": "rig",
+                    "deviceId": "unit-1",
+                },
+                "payload": {
+                    "timestamp": 1710000000000,
+                    "seq": 7,
+                    "metrics": {
+                        "services": {
+                            "demo": {
+                                "available": True,
+                            }
+                        }
+                    },
+                },
+                "projection": {
+                    "observedAt": 1710000001999,
+                },
             },
         )
 
-    def test_project_device_death_clears_metrics_and_marks_offline(self) -> None:
-        encoded_payload = _encode_payload(metrics=[])
+    def test_project_device_death_replaces_metrics_with_death_payload(self) -> None:
+        encoded_payload = _encode_payload(
+            timestamp=None,
+            seq=None,
+            metrics=[
+                _encode_metric(name="redcon", int_value=4),
+                _encode_metric(name="batteryMv", int_value=3795),
+            ],
+        )
         message = decode_sparkplug_payload(
             encoded_payload,
             "spBv1.0/town/DDEATH/rig/unit-1",
         )
 
         assert message is not None
-        with patch("aws.sparkplug_witness._resolve_thing_name", return_value="unit-1"), patch(
-            "aws.sparkplug_witness._clear_metrics"
-        ) as clear_metrics:
+        with patch("witness.sparkplug_witness._resolve_thing_name", return_value="unit-1"), patch(
+            "witness.sparkplug_witness._replace_metrics"
+        ) as replace_metrics:
             project_sparkplug_message(message, 1710000002999)
 
-        clear_metrics.assert_called_once()
-        _, reported_payload = clear_metrics.call_args.args
-        self.assertFalse(reported_payload["session"]["online"])
-        self.assertEqual(reported_payload["metrics"], {})
+        replace_metrics.assert_called_once()
+        _, reported_payload = replace_metrics.call_args.args
+        self.assertEqual(
+            reported_payload,
+            {
+                "topic": {
+                    "namespace": "spBv1.0",
+                    "groupId": "town",
+                    "messageType": "DDEATH",
+                    "edgeNodeId": "rig",
+                    "deviceId": "unit-1",
+                },
+                "payload": {
+                    "timestamp": None,
+                    "seq": None,
+                    "metrics": {
+                        "redcon": 4,
+                        "batteryMv": 3795,
+                    },
+                },
+                "projection": {
+                    "observedAt": 1710000002999,
+                },
+            },
+        )
+
+    def test_project_node_death_replaces_metrics_with_death_payload(self) -> None:
+        encoded_payload = _encode_payload(
+            timestamp=None,
+            seq=None,
+            metrics=[
+                _encode_metric(name="bdSeq", long_value=42),
+                _encode_metric(name="redcon", int_value=4),
+            ],
+        )
+        message = decode_sparkplug_payload(
+            encoded_payload,
+            "spBv1.0/town/NDEATH/rig",
+        )
+
+        assert message is not None
+        with patch("witness.sparkplug_witness._resolve_thing_name", return_value="rig-main"), patch(
+            "witness.sparkplug_witness._replace_metrics"
+        ) as replace_metrics:
+            project_sparkplug_message(message, 1710000003999)
+
+        replace_metrics.assert_called_once()
+        _, reported_payload = replace_metrics.call_args.args
+        self.assertEqual(
+            reported_payload,
+            {
+                "topic": {
+                    "namespace": "spBv1.0",
+                    "groupId": "town",
+                    "messageType": "NDEATH",
+                    "edgeNodeId": "rig",
+                },
+                "payload": {
+                    "timestamp": None,
+                    "seq": None,
+                    "metrics": {
+                        "bdSeq": 42,
+                        "redcon": 4,
+                    },
+                },
+                "projection": {
+                    "observedAt": 1710000003999,
+                },
+            },
+        )
+
+    def test_rejects_invalid_topic_arity_and_message_pairings(self) -> None:
+        encoded_payload = _encode_payload(metrics=[])
+        self.assertIsNone(decode_sparkplug_payload(encoded_payload, "spBv1.0/town/DBIRTH/rig"))
+        self.assertIsNone(
+            decode_sparkplug_payload(encoded_payload, "spBv1.0/town/NBIRTH/rig/unit-1")
+        )
+        self.assertIsNone(decode_sparkplug_payload(encoded_payload, "spBv1.0/town//rig"))
 
     def test_lambda_handler_ignores_unsupported_topics(self) -> None:
         result = lambda_handler(

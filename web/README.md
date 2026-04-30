@@ -287,7 +287,7 @@ The stack serves the SPA from CloudFront instead of the raw S3 website endpoint 
 - The UI switch remains a simple on/off control.
 - `on` publishes `DCMD.redcon=3`.
 - `off` publishes `DCMD.redcon=4`.
-- The UI reads lifecycle state from `namedShadows.sparkplug.state.reported.metrics.redcon` and treats pending commands as local browser state until the projected posture converges.
+- The UI reads lifecycle state from `namedShadows.sparkplug.state.reported.payload.metrics.redcon` and treats pending commands as local browser state until the projected posture converges.
 - The SPA does not use or write `state.desired`.
 
 ## MCP teleop note

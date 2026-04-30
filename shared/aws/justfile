@@ -1152,7 +1152,7 @@ thing_index_name := "AWS_Things"
           exit 1
         fi
       fi
-      for obsolete_shadow_name in sparkplug device mcu board video; do
+      for obsolete_shadow_name in sparkplug device mcu board mcp video; do
         obsolete_shadow=1
         for allowed_shadow_name in "${allowed_shadow_names[@]}"; do
           if [ "$obsolete_shadow_name" = "$allowed_shadow_name" ]; then
@@ -1202,8 +1202,7 @@ thing_index_name := "AWS_Things"
             payload_temp_files+=("$default_payload")
             jq \
               -n \
-              --arg groupId "$(jq -r '.attributes.name' <<<"$thing_json")" \
-              '{state: {reported: {session: {entityKind: "group", groupId: $groupId, online: true}, metrics: {redcon: 1}}}}' \
+              '{state: {reported: {payload: {metrics: {redcon: 1}}}}}' \
               >"$default_payload"
             ;;
           rig:sparkplug)
@@ -1213,7 +1212,7 @@ thing_index_name := "AWS_Things"
               -n \
               --arg groupId "$(jq -r '.attributes.town' <<<"$thing_json")" \
               --arg edgeNodeId "$(jq -r '.attributes.name' <<<"$thing_json")" \
-              '{state: {reported: {session: {entityKind: "node", groupId: $groupId, edgeNodeId: $edgeNodeId, messageType: "NDEATH", online: false}, metrics: {}}}}' \
+              '{state: {reported: {topic: {namespace: "spBv1.0", groupId: $groupId, messageType: "NDEATH", edgeNodeId: $edgeNodeId}, payload: {metrics: {redcon: 4}}}}}' \
               >"$default_payload"
             ;;
           unit:sparkplug)
@@ -1224,7 +1223,7 @@ thing_index_name := "AWS_Things"
               --arg groupId "$(jq -r '.attributes.town' <<<"$thing_json")" \
               --arg edgeNodeId "$(jq -r '.attributes.rig' <<<"$thing_json")" \
               --arg deviceId "$(jq -r '.thingName' <<<"$thing_json")" \
-              '{state: {reported: {session: {entityKind: "device", groupId: $groupId, edgeNodeId: $edgeNodeId, deviceId: $deviceId, messageType: "DDEATH", online: false}, metrics: {}}}}' \
+              '{state: {reported: {topic: {namespace: "spBv1.0", groupId: $groupId, messageType: "DDEATH", edgeNodeId: $edgeNodeId, deviceId: $deviceId}, payload: {metrics: {redcon: 4}}}}}' \
               >"$default_payload"
             ;;
           *)
@@ -1409,8 +1408,7 @@ thing_index_name := "AWS_Things"
           default_payload="$payload_temp_file"
           jq \
             -n \
-            --arg groupId "$(jq -r '.attributes.name' <<<"$thing_json")" \
-            '{state: {reported: {session: {entityKind: "group", groupId: $groupId, online: true}, metrics: {redcon: 1}}}}' \
+            '{state: {reported: {payload: {metrics: {redcon: 1}}}}}' \
             >"$default_payload"
           ;;
         rig:sparkplug)
@@ -1420,7 +1418,7 @@ thing_index_name := "AWS_Things"
             -n \
             --arg groupId "$(jq -r '.attributes.town' <<<"$thing_json")" \
             --arg edgeNodeId "$(jq -r '.attributes.name' <<<"$thing_json")" \
-            '{state: {reported: {session: {entityKind: "node", groupId: $groupId, edgeNodeId: $edgeNodeId, messageType: "NDEATH", online: false}, metrics: {}}}}' \
+            '{state: {reported: {topic: {namespace: "spBv1.0", groupId: $groupId, messageType: "NDEATH", edgeNodeId: $edgeNodeId}, payload: {metrics: {redcon: 4}}}}}' \
             >"$default_payload"
           ;;
         unit:sparkplug)
@@ -1431,7 +1429,7 @@ thing_index_name := "AWS_Things"
             --arg groupId "$(jq -r '.attributes.town' <<<"$thing_json")" \
             --arg edgeNodeId "$(jq -r '.attributes.rig' <<<"$thing_json")" \
             --arg deviceId "$(jq -r '.thingName' <<<"$thing_json")" \
-            '{state: {reported: {session: {entityKind: "device", groupId: $groupId, edgeNodeId: $edgeNodeId, deviceId: $deviceId, messageType: "DDEATH", online: false}, metrics: {}}}}' \
+            '{state: {reported: {topic: {namespace: "spBv1.0", groupId: $groupId, messageType: "DDEATH", edgeNodeId: $edgeNodeId, deviceId: $deviceId}, payload: {metrics: {redcon: 4}}}}}' \
             >"$default_payload"
           ;;
         *)

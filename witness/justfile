@@ -1,0 +1,86 @@
+set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+
+witness_dir := source_directory()
+project_root := witness_dir + "/.."
+root_justfile := project_root + "/justfile"
+
+stack_name := ""
+base_stack_name := ""
+template_file := "template.yaml"
+region := ""
+profile := ""
+local_state_dir := project_root + "/.state/witness"
+packaged_template_file := local_state_dir + "/packaged-template.yaml"
+
+@deploy stack_name=stack_name base_stack_name=base_stack_name template_file=template_file region=region profile=profile packaged_template_file=packaged_template_file:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{witness_dir}}"
+
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}" "{{base_stack_name}}")"
+    base_stack_name="$AWS_STACK_NAME"
+    region="$AWS_REGION"
+    profile="$AWS_SELECTED_PROFILE"
+    witness_stack_name="{{stack_name}}"
+    if [ -z "$witness_stack_name" ]; then
+      witness_stack_name="${base_stack_name}-witness"
+    fi
+
+    if [ -z "$region" ]; then
+      echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
+      exit 1
+    fi
+
+    aws_flags=(--region "$region")
+    if [ -n "$profile" ]; then
+      aws_flags+=(--profile "$profile")
+    fi
+    ensure_artifact_bucket() {
+      local account_id bucket_name
+      account_id="$(aws sts get-caller-identity "${aws_flags[@]}" --query Account --output text)"
+      bucket_name="$(printf 'txing-cfn-%s-%s-%s' "$account_id" "$region" "$witness_stack_name" \
+        | tr '[:upper:]' '[:lower:]' \
+        | tr -cs 'a-z0-9.-' '-' \
+        | sed 's/^-*//; s/-*$//')"
+      bucket_name="${bucket_name:0:63}"
+      bucket_name="${bucket_name%.}"
+      if [ -z "$bucket_name" ]; then
+        echo "failed to derive CloudFormation artifact bucket name" >&2
+        exit 1
+      fi
+      if ! aws s3api head-bucket --bucket "$bucket_name" "${aws_flags[@]}" >/dev/null 2>&1; then
+        if [ "$region" = "us-east-1" ]; then
+          aws s3api create-bucket --bucket "$bucket_name" "${aws_flags[@]}" >/dev/null
+        else
+          aws s3api create-bucket \
+            --bucket "$bucket_name" \
+            --create-bucket-configuration "LocationConstraint=$region" \
+            "${aws_flags[@]}" >/dev/null
+        fi
+      fi
+      printf '%s\n' "$bucket_name"
+    }
+
+    mkdir -p "$(dirname "{{packaged_template_file}}")"
+    artifact_bucket="$(ensure_artifact_bucket)"
+    aws cloudformation package \
+      --template-file "{{template_file}}" \
+      --s3-bucket "$artifact_bucket" \
+      --output-template-file "{{packaged_template_file}}" \
+      "${aws_flags[@]}"
+
+    aws cloudformation deploy \
+      --stack-name "$witness_stack_name" \
+      --template-file "{{packaged_template_file}}" \
+      --capabilities CAPABILITY_NAMED_IAM \
+      --no-fail-on-empty-changeset \
+      "${aws_flags[@]}"
+
+    aws cloudformation describe-stacks \
+      --stack-name "$witness_stack_name" \
+      "${aws_flags[@]}" \
+      --query "Stacks[0].Outputs" \
+      --output table
+
+@test:
+    uv run --project "{{witness_dir}}" python -m unittest discover -s "{{witness_dir}}/tests" -p 'test_*.py'

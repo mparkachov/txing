@@ -4,18 +4,17 @@ This document defines the current AWS IoT Thing Shadow contract for the `unit` d
 
 ## Status
 
-- The txing device no longer uses the classic unnamed shadow.
+- The txing device does not use the classic unnamed shadow.
 - Sparkplug MQTT is the source protocol for lifecycle state.
 - The `sparkplug` named shadow is an AWS-side materialized Sparkplug view only; it is not intent storage.
 - Sparkplug `DCMD.redcon` is the only authoritative external lifecycle command path.
 - Shadows are reported-only read models and restart caches; no lifecycle flow uses `state.desired`.
-- Video transport remains retained MQTT topics plus board MCP `robot.get_state`; board also mirrors video descriptor/status into the `video` named shadow for readers.
 
 ## Named Shadows
 
 Each txing thing uses these named shadows:
 
-- `sparkplug`: witness-owned projection of Sparkplug device state under `state.reported.session` and `state.reported.metrics`.
+- `sparkplug`: witness-owned projection of Sparkplug topic identity, Sparkplug payload facts, and projection metadata.
 - `mcu`: rig-owned MCU state under `state.reported.power`, `state.reported.online`, and `state.reported.bleDeviceId`.
 - `board`: board-owned board state under `state.reported.power` and `state.reported.wifi`.
 - `mcp`: rig-owned mirror of MCP descriptor/status retained topics.
@@ -29,7 +28,7 @@ Schema/default files live under `devices/unit/aws/`:
 - `mcp-shadow.schema.json`, `default-mcp-shadow.json`
 - `video-shadow.schema.json`, `default-video-shadow.json`
 
-There is no `device` named shadow anymore. Battery now lives in `sparkplug.state.reported.metrics.batteryMv`.
+There is no `device` named shadow. Battery lives in `sparkplug.state.reported.payload.metrics.batteryMv`.
 
 ## Sparkplug Projection
 
@@ -39,20 +38,23 @@ Witness writes Sparkplug state into the `sparkplug` named shadow with this shape
 {
   "state": {
     "reported": {
-      "session": {
-        "entityKind": "device",
+      "topic": {
+        "namespace": "spBv1.0",
         "groupId": "town",
-        "edgeNodeId": "rig",
-        "deviceId": "unit-local",
         "messageType": "DDATA",
-        "online": true,
-        "seq": 7,
-        "sparkplugTimestamp": 1714380000000,
-        "observedAt": 1714380001234
+        "edgeNodeId": "rig",
+        "deviceId": "unit-local"
       },
-      "metrics": {
-        "redcon": 3,
-        "batteryMv": 3972
+      "payload": {
+        "timestamp": 1714380000000,
+        "seq": 7,
+        "metrics": {
+          "redcon": 3,
+          "batteryMv": 3972
+        }
+      },
+      "projection": {
+        "observedAt": 1714380001234
       }
     }
   }
@@ -61,45 +63,66 @@ Witness writes Sparkplug state into the `sparkplug` named shadow with this shape
 
 Projection rules:
 
-- `NBIRTH` and `DBIRTH` replace `metrics` and set `session.online=true`.
-- `NDATA` and `DDATA` deep-merge the changed metric paths into `metrics`.
-- `NDEATH` and `DDEATH` clear `metrics` to `{}` and set `session.online=false`.
+- `topic` is derived only from the Sparkplug MQTT topic.
+- `payload.timestamp` is the Sparkplug payload timestamp when present.
+- `payload.seq` is the Sparkplug payload sequence when present.
+- `projection.observedAt` is the AWS IoT Rule timestamp.
+- `NBIRTH` and `DBIRTH` replace `payload.metrics`.
+- `NDATA` and `DDATA` deep-merge changed metric paths into `payload.metrics`.
+- `NDEATH` and `DDEATH` replace `payload.metrics` with the actual Sparkplug death payload and still update `topic` plus `projection.observedAt`.
+- The current rig publishes `redcon=4` in both node and device death payloads, so readers rely on `payload.metrics.redcon` rather than inferring REDCON from `messageType`.
 - Witness does not write the static town shadow.
 
 Metric names preserve Sparkplug structure by splitting both `.` and `/` into nested path segments:
 
-- `redcon` -> `metrics.redcon`
-- `batteryMv` -> `metrics.batteryMv`
+- `redcon` -> `payload.metrics.redcon`
+- `batteryMv` -> `payload.metrics.batteryMv`
+
+Town remains a compatibility exception outside witness ownership:
+
+```json
+{
+  "state": {
+    "reported": {
+      "payload": {
+        "metrics": {
+          "redcon": 1
+        }
+      }
+    }
+  }
+}
+```
 
 ## Ownership
 
 - `rig` publishes Sparkplug `NBIRTH`/`NDATA`/`NDEATH`/`DBIRTH`/`DDATA`/`DDEATH`.
 - Witness reads Sparkplug MQTT and updates the `sparkplug` named shadow directly.
-- `rig` writes the `mcu` named shadow.
+- `rig` writes the `mcu` and `mcp` named shadows.
 - `board` writes the `board` and `video` named shadows.
-- Web reads all Sparkplug lifecycle state from `namedShadows.sparkplug.state.reported` and publishes lifecycle commands through Sparkplug MQTT `DCMD.redcon`.
+- Web reads Sparkplug lifecycle state from `namedShadows.sparkplug.state.reported` and publishes lifecycle commands through Sparkplug MQTT `DCMD.redcon`.
 
 ## Field Semantics
 
-- `sparkplug.state.reported.session` describes the last observed Sparkplug lifecycle envelope for that thing.
-- `sparkplug.state.reported.metrics.redcon` is the projected Sparkplug readiness metric:
+- `sparkplug.state.reported.topic.messageType` is the last observed Sparkplug message type for that thing.
+- `sparkplug.state.reported.payload.metrics.redcon` is the projected Sparkplug readiness metric:
   - `4`: Green / `Cold Camp` / MCU sleep state or BLE unavailable
   - `3`: Yellow / `Torch-Up` / MCU wakeup state with BLE reachability, but MCP unavailable
   - `2`: Orange/Amber / `Ember Watch` / MCU wakeup state with BLE reachability and MCP availability, but retained video status not ready
   - `1`: Red / `Hot Rig` / MCU wakeup state with BLE reachability, MCP availability, and retained video status ready
-- `sparkplug.state.reported.metrics.batteryMv` is the latest Sparkplug battery metric.
+- `sparkplug.state.reported.payload.metrics.batteryMv` is the latest Sparkplug battery metric.
 - `mcu.state.reported.power=true` means the external wakeup state.
 - `mcu.state.reported.power=false` means the external sleep state with periodic `5 s` BLE rendezvous wakeups.
 - `mcu.state.reported.online` is rig-observed BLE reachability.
 - `mcu.state.reported.bleDeviceId` is the last observed BLE identity and fast-reconnect source of truth.
 - `board.state.reported.power` is best-effort board power state; stale `true` must not be treated as authoritative after a hard power cut.
 - `board.state.reported.wifi.online`, `ipv4`, and `ipv6` are refreshed by the board control loop.
-- `mcp.state.reported.descriptor` and `mcp.state.reported.status` mirror the retained board MCP MQTT topics.
-- `video.state.reported.descriptor` and `video.state.reported.status` mirror the retained board video MQTT topics.
+- `mcp.state.reported.descriptor` and `mcp.state.reported.status` mirror retained board MCP MQTT topics.
+- `video.state.reported.descriptor` and `video.state.reported.status` mirror retained board video MQTT topics.
 
 ## Capability Discovery
 
-`shared/aws/thing-type-capabilities.json` defines the named shadows supported by each thing type. Registration writes the comma-separated `attributes.capabilitiesSet` non-searchable Thing attribute from that definition. Runtime and tooling use `capabilitiesSet` to decide which `$aws/things/<thing>/shadow/name/<shadow>/...` topics to read or reset.
+`shared/aws/thing-type-capabilities.json` defines the named shadows supported by each thing type. Registration writes the comma-separated `attributes.capabilitiesSet` Thing attribute from that definition. Runtime and tooling use `capabilitiesSet` to decide which `$aws/things/<thing>/shadow/name/<shadow>/...` topics to read or reset.
 
 ## AWS IoT Note
 

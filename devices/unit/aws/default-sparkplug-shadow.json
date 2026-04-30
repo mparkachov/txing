@@ -1,15 +1,18 @@
 {
   "state": {
     "reported": {
-      "session": {
-        "entityKind": "device",
+      "topic": {
+        "namespace": "spBv1.0",
         "groupId": "town",
-        "edgeNodeId": "rig",
-        "deviceId": "unit-local",
         "messageType": "DDEATH",
-        "online": false
+        "edgeNodeId": "rig",
+        "deviceId": "unit-local"
       },
-      "metrics": {}
+      "payload": {
+        "metrics": {
+          "redcon": 4
+        }
+      }
     }
   }
 }

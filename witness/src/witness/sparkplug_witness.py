@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import json
 import logging
 from dataclasses import dataclass
@@ -8,8 +9,6 @@ from functools import lru_cache
 from typing import Any
 
 import boto3
-
-from .sparkplug_shadow import build_sparkplug_shadow_payload
 
 
 LOGGER = logging.getLogger(__name__)
@@ -31,14 +30,6 @@ class SparkplugMessage:
     seq: int | None
     sparkplug_timestamp: int | None
     metrics: dict[str, Any]
-
-    @property
-    def entity_kind(self) -> str:
-        return "device" if self.device_id is not None else "node"
-
-    @property
-    def online(self) -> bool:
-        return self.message_type not in CLEAR_METRICS_MESSAGE_TYPES
 
 
 def _read_varint(data: bytes, start_offset: int) -> tuple[int, int]:
@@ -140,39 +131,60 @@ def _assign_metric_path(root: dict[str, Any], metric_name: str, value: Any) -> N
     current[parts[-1]] = value
 
 
-def decode_sparkplug_payload(payload_base64: str, mqtt_topic: str) -> SparkplugMessage | None:
+def _parse_topic(mqtt_topic: str) -> tuple[str, str, str, str | None] | None:
     parts = mqtt_topic.split("/")
-    if len(parts) not in (4, 5) or parts[0] != SPARKPLUG_NAMESPACE:
+    if len(parts) not in (4, 5):
+        return None
+    if parts[0] != SPARKPLUG_NAMESPACE:
+        return None
+    if any(part == "" for part in parts):
         return None
 
     _, group_id, message_type, edge_node_id, *device_parts = parts
     device_id = device_parts[0] if device_parts else None
-    if device_id is None and message_type not in NODE_MESSAGE_TYPES:
-        return None
-    if device_id is not None and message_type not in DEVICE_MESSAGE_TYPES:
+    if device_id is None:
+        if message_type not in NODE_MESSAGE_TYPES:
+            return None
+    else:
+        if message_type not in DEVICE_MESSAGE_TYPES:
+            return None
+    return group_id, message_type, edge_node_id, device_id
+
+
+def decode_sparkplug_payload(payload_base64: str, mqtt_topic: str) -> SparkplugMessage | None:
+    topic_parts = _parse_topic(mqtt_topic)
+    if topic_parts is None:
         return None
 
-    payload = base64.b64decode(payload_base64)
+    try:
+        payload = base64.b64decode(payload_base64, validate=True)
+    except (binascii.Error, ValueError):
+        return None
+
+    group_id, message_type, edge_node_id, device_id = topic_parts
     offset = 0
     sparkplug_timestamp: int | None = None
     seq: int | None = None
     metrics: dict[str, Any] = {}
-    while offset < len(payload):
-        field_number, wire_type, offset = _read_key(payload, offset)
-        if field_number == 1 and wire_type == 0:
-            sparkplug_timestamp, offset = _read_varint(payload, offset)
-            continue
-        if field_number == 2 and wire_type == 2:
-            metric_bytes, offset = _read_length_delimited(payload, offset)
-            decoded_metric = _decode_metric(metric_bytes)
-            if decoded_metric is not None:
-                metric_name, metric_value = decoded_metric
-                _assign_metric_path(metrics, metric_name, metric_value)
-            continue
-        if field_number == 3 and wire_type == 0:
-            seq, offset = _read_varint(payload, offset)
-            continue
-        offset = _skip_field(payload, offset, wire_type)
+    try:
+        while offset < len(payload):
+            field_number, wire_type, offset = _read_key(payload, offset)
+            if field_number == 1 and wire_type == 0:
+                sparkplug_timestamp, offset = _read_varint(payload, offset)
+                continue
+            if field_number == 2 and wire_type == 2:
+                metric_bytes, offset = _read_length_delimited(payload, offset)
+                decoded_metric = _decode_metric(metric_bytes)
+                if decoded_metric is not None:
+                    metric_name, metric_value = decoded_metric
+                    _assign_metric_path(metrics, metric_name, metric_value)
+                continue
+            if field_number == 3 and wire_type == 0:
+                seq, offset = _read_varint(payload, offset)
+                continue
+            offset = _skip_field(payload, offset, wire_type)
+    except ValueError:
+        return None
 
     return SparkplugMessage(
         group_id=group_id,
@@ -183,6 +195,36 @@ def decode_sparkplug_payload(payload_base64: str, mqtt_topic: str) -> SparkplugM
         sparkplug_timestamp=sparkplug_timestamp,
         metrics=metrics,
     )
+
+
+def _build_reported_payload(
+    message: SparkplugMessage,
+    observed_at: int,
+    *,
+    metrics: dict[str, Any],
+) -> dict[str, Any]:
+    topic: dict[str, Any] = {
+        "namespace": SPARKPLUG_NAMESPACE,
+        "groupId": message.group_id,
+        "messageType": message.message_type,
+        "edgeNodeId": message.edge_node_id,
+    }
+    if message.device_id is not None:
+        topic["deviceId"] = message.device_id
+
+    payload: dict[str, Any] = {
+        "timestamp": message.sparkplug_timestamp,
+        "seq": message.seq,
+        "metrics": metrics,
+    }
+
+    return {
+        "topic": topic,
+        "payload": payload,
+        "projection": {
+            "observedAt": observed_at,
+        },
+    }
 
 
 @lru_cache(maxsize=1)
@@ -247,7 +289,9 @@ def _replace_metrics(thing_name: str, reported_payload: dict[str, Any]) -> None:
         {
             "state": {
                 "reported": {
-                    "metrics": None,
+                    "payload": {
+                        "metrics": None,
+                    }
                 }
             }
         },
@@ -259,47 +303,21 @@ def _merge_metrics(thing_name: str, reported_payload: dict[str, Any]) -> None:
     _update_named_shadow(thing_name, {"state": {"reported": reported_payload}})
 
 
-def _clear_metrics(thing_name: str, reported_payload: dict[str, Any]) -> None:
-    _update_named_shadow(
-        thing_name,
-        {
-            "state": {
-                "reported": {
-                    "metrics": None,
-                }
-            }
-        },
-    )
-    _update_named_shadow(thing_name, {"state": {"reported": reported_payload}})
-
-
 def project_sparkplug_message(message: SparkplugMessage, observed_at: int) -> str:
     thing_name = _resolve_thing_name(message)
-    reported_payload = build_sparkplug_shadow_payload(
-        session={
-            "entityKind": message.entity_kind,
-            "groupId": message.group_id,
-            "edgeNodeId": message.edge_node_id,
-            **({"deviceId": message.device_id} if message.device_id is not None else {}),
-            "messageType": message.message_type,
-            "online": message.online,
-            **({"seq": message.seq} if message.seq is not None else {}),
-            **(
-                {"sparkplugTimestamp": message.sparkplug_timestamp}
-                if message.sparkplug_timestamp is not None
-                else {}
-            ),
-            "observedAt": observed_at,
-        },
-        metrics=message.metrics if message.online else {},
-    )["state"]["reported"]
+    reported_payload = _build_reported_payload(
+        message,
+        observed_at,
+        metrics=message.metrics,
+    )
 
-    if message.message_type in REPLACE_METRICS_MESSAGE_TYPES:
+    if (
+        message.message_type in REPLACE_METRICS_MESSAGE_TYPES
+        or message.message_type in CLEAR_METRICS_MESSAGE_TYPES
+    ):
         _replace_metrics(thing_name, reported_payload)
     elif message.message_type in MERGE_METRICS_MESSAGE_TYPES:
         _merge_metrics(thing_name, reported_payload)
-    elif message.message_type in CLEAR_METRICS_MESSAGE_TYPES:
-        _clear_metrics(thing_name, reported_payload)
     else:
         return "ignored"
     return thing_name

@@ -17,8 +17,10 @@ describe('app model helpers', () => {
       extractReportedRedcon({
         state: {
           reported: {
-            metrics: {
-              redcon: 2,
+            payload: {
+              metrics: {
+                redcon: 2,
+              },
             },
           },
         },
@@ -28,8 +30,10 @@ describe('app model helpers', () => {
       extractReportedRedcon({
         state: {
           reported: {
-            metrics: {
-              redcon: 7,
+            payload: {
+              metrics: {
+                redcon: 7,
+              },
             },
           },
         },
@@ -49,8 +53,10 @@ describe('app model helpers', () => {
           sparkplug: {
             state: {
               reported: {
-                metrics: {
-                  redcon: 2,
+                payload: {
+                  metrics: {
+                    redcon: 2,
+                  },
                 },
               },
             },
@@ -67,34 +73,14 @@ describe('app model helpers', () => {
           sparkplug: {
             state: {
               reported: {
-                session: {
-                  entityKind: 'node',
-                  online: true,
+                topic: {
+                  namespace: 'spBv1.0',
+                  groupId: 'town',
+                  messageType: 'NDATA',
+                  edgeNodeId: 'rig',
                 },
-                metrics: {
-                  redcon: 1,
-                },
-              },
-            },
-          },
-        },
-      }),
-    ).toBe(1)
-  })
-
-  test('keeps legacy support for nested rig redcon metric paths', () => {
-    expect(
-      extractReportedRedcon({
-        namedShadows: {
-          sparkplug: {
-            state: {
-              reported: {
-                session: {
-                  entityKind: 'node',
-                  online: true,
-                },
-                metrics: {
-                  rig: {
+                payload: {
+                  metrics: {
                     redcon: 1,
                   },
                 },
@@ -106,19 +92,24 @@ describe('app model helpers', () => {
     ).toBe(1)
   })
 
-  test('treats an offline sparkplug session as redcon 4 when metrics are absent', () => {
+  test('reads node death redcon only from sparkplug payload metrics', () => {
     expect(
       extractReportedRedcon({
         namedShadows: {
           sparkplug: {
             state: {
               reported: {
-                session: {
-                  entityKind: 'node',
+                topic: {
+                  namespace: 'spBv1.0',
+                  groupId: 'town',
                   messageType: 'NDEATH',
-                  online: false,
+                  edgeNodeId: 'rig',
                 },
-                metrics: {},
+                payload: {
+                  metrics: {
+                    redcon: 4,
+                  },
+                },
               },
             },
           },
@@ -127,27 +118,56 @@ describe('app model helpers', () => {
     ).toBe(4)
   })
 
-  test('treats an offline device sparkplug session as redcon 4 when metrics are absent', () => {
+  test('reads device death redcon only from sparkplug payload metrics', () => {
     expect(
       extractReportedRedcon({
         namedShadows: {
           sparkplug: {
             state: {
               reported: {
-                session: {
-                  entityKind: 'device',
+                topic: {
+                  namespace: 'spBv1.0',
+                  groupId: 'town',
                   edgeNodeId: 'rig',
                   deviceId: 'unit-a1',
                   messageType: 'DDEATH',
-                  online: false,
                 },
-                metrics: {},
+                payload: {
+                  metrics: {
+                    redcon: 4,
+                  },
+                },
               },
             },
           },
         },
       }),
     ).toBe(4)
+  })
+
+  test('does not derive redcon from sparkplug message type when metric is absent', () => {
+    expect(
+      extractReportedRedcon({
+        namedShadows: {
+          sparkplug: {
+            state: {
+              reported: {
+                topic: {
+                  namespace: 'spBv1.0',
+                  groupId: 'town',
+                  edgeNodeId: 'rig',
+                  deviceId: 'unit-a1',
+                  messageType: 'DDEATH',
+                },
+                payload: {
+                  metrics: {},
+                },
+              },
+            },
+          },
+        },
+      }),
+    ).toBeNull()
   })
 
   test('extracts nested reported battery from reported.device', () => {
@@ -155,8 +175,10 @@ describe('app model helpers', () => {
       extractReportedBatteryMv({
         state: {
           reported: {
-            metrics: {
-              batteryMv: 3972,
+            payload: {
+              metrics: {
+                batteryMv: 3972,
+              },
             },
           },
         },

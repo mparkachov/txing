@@ -202,7 +202,7 @@ Default recipe values:
 
 `print` prints the current real AWS Thing Shadow document.
 
-`aws::shadow-reset <thing>` is the hard reset path for manual whole-device power cuts on unit things. It deletes the classic unnamed shadow and reseeds the named shadows from the thing's `attributes.capabilitiesSet`: offline `sparkplug session + metrics`, `mcu reported.power=false`, `mcu reported.online=false`, `mcu reported.bleDeviceId=null`, `board reported.power=false`, `board reported.wifi.online=false`, `mcp reported.status.available=false`, and `video reported.status.available=false`.
+`aws::shadow-reset <thing>` is the hard reset path for manual whole-device power cuts on unit things. It deletes the classic unnamed shadow and reseeds the named shadows from the thing's `attributes.capabilitiesSet`: offline `sparkplug topic + payload`, `mcu reported.power=false`, `mcu reported.online=false`, `mcu reported.bleDeviceId=null`, `board reported.power=false`, `board reported.wifi.online=false`, `mcp reported.status.available=false`, and `video reported.status.available=false`.
 
 For rig and town things, `aws::shadow` and `aws::shadow-reset` use only the `sparkplug` named shadow through `attributes.capabilitiesSet`; a full reset also removes known unit-only named shadows if they were created by an older recipe. Use `aws::shadow-reset <thing> <shadow>` to reset one valid named shadow for that thing.
 
@@ -279,7 +279,7 @@ The longer stack bootstrap and deletion flow is documented in `web/README.md`.
 - Ignores deprecated top-level shadow metadata fields `state.reported.bleDeviceId` and `state.reported.homeRig`.
 - For `DCMD.redcon=1..3`, waits for the next advertisement if disconnected, connects if needed, writes the wakeup-state command only when `mcu reported.power=false`, and clears the in-memory target after the published Sparkplug `redcon` reaches the requested minimum readiness.
 - For `DCMD.redcon=4`, waits for `mcu reported.power=false`, then writes the BLE sleep command and clears the in-memory target after convergence.
-- Battery changes are published only through Sparkplug `batteryMv`; witness mirrors them into `sparkplug.state.reported.metrics.batteryMv`.
+- Battery changes are published only through Sparkplug `batteryMv`; witness mirrors them into `sparkplug.state.reported.payload.metrics.batteryMv`.
 - After a successful BLE association, writes the observed BLE address back to `mcu.state.reported.bleDeviceId` if it changed.
 - Publishes reported updates to AWS:
   - `state.mcu reported.power`

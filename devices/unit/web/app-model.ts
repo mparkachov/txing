@@ -113,22 +113,22 @@ export const extractReportedBoard = (shadow: unknown): Record<string, unknown> |
 const extractSparkplugReportedState = (shadow: unknown): Record<string, unknown> | null =>
   extractNamedShadowReportedState(shadow, 'sparkplug') ?? extractReportedState(shadow)
 
-const extractSparkplugMetrics = (shadow: unknown): Record<string, unknown> | null => {
+const extractSparkplugPayload = (shadow: unknown): Record<string, unknown> | null => {
   const reported = extractSparkplugReportedState(shadow)
   if (!reported) {
     return null
   }
-  const metrics = reported.metrics
-  return isRecord(metrics) ? metrics : null
+  const payload = reported.payload
+  return isRecord(payload) ? payload : null
 }
 
-const extractSparkplugSession = (shadow: unknown): Record<string, unknown> | null => {
-  const reported = extractSparkplugReportedState(shadow)
-  if (!reported) {
+const extractSparkplugMetrics = (shadow: unknown): Record<string, unknown> | null => {
+  const payload = extractSparkplugPayload(shadow)
+  if (!payload) {
     return null
   }
-  const session = reported.session
-  return isRecord(session) ? session : null
+  const metrics = payload.metrics
+  return isRecord(metrics) ? metrics : null
 }
 
 const coerceRedcon = (value: unknown): number | null => {
@@ -141,25 +141,10 @@ const coerceRedcon = (value: unknown): number | null => {
 export const extractReportedRedcon = (shadow: unknown): number | null => {
   const metrics = extractSparkplugMetrics(shadow)
   if (metrics) {
-    const deviceRedcon = coerceRedcon(metrics.redcon)
-    if (deviceRedcon !== null) {
-      return deviceRedcon
+    const redcon = coerceRedcon(metrics.redcon)
+    if (redcon !== null) {
+      return redcon
     }
-    const rigMetrics = metrics.rig
-    if (isRecord(rigMetrics)) {
-      const rigRedcon = coerceRedcon(rigMetrics.redcon)
-      if (rigRedcon !== null) {
-        return rigRedcon
-      }
-    }
-  }
-
-  const session = extractSparkplugSession(shadow)
-  if (!session) {
-    return null
-  }
-  if (session.online === false) {
-    return 4
   }
   return null
 }
