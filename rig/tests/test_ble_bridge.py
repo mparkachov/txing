@@ -860,6 +860,9 @@ class RigFleetScannerTests(unittest.TestCase):
     def test_fleet_connect_restarts_scanner_before_waiting_for_fresh_target(self) -> None:
         asyncio.run(self._exercise_fleet_connect_restarts_scanner())
 
+    def test_fleet_connect_restarts_scanner_when_bridge_returns_disconnected(self) -> None:
+        asyncio.run(self._exercise_fleet_connect_restarts_scanner_after_fast_sleep())
+
     def test_fleet_bridge_restarts_scanner_after_bridge_disconnects(self) -> None:
         asyncio.run(self._exercise_fleet_bridge_restarts_scanner())
 
@@ -900,6 +903,7 @@ class RigFleetScannerTests(unittest.TestCase):
                 )
                 self._fresh_target = None
                 self._events = events
+                self._connected = True
 
             def _get_fresh_target_device(self) -> object | None:
                 return self._fresh_target
@@ -915,6 +919,9 @@ class RigFleetScannerTests(unittest.TestCase):
 
             async def _ensure_connected(self) -> None:
                 self._events.append("ensure")
+
+            def _is_connected(self) -> bool:
+                return self._connected
 
         class TestRigFleetBridge(RigFleetBridge):
             def __init__(self, bridge: FakeBridge, events: list[str]) -> None:
@@ -958,6 +965,7 @@ class RigFleetScannerTests(unittest.TestCase):
                 )
                 self._fresh_target = None
                 self._events = events
+                self._connected = True
 
             def _get_fresh_target_device(self) -> object | None:
                 return self._fresh_target
@@ -973,6 +981,9 @@ class RigFleetScannerTests(unittest.TestCase):
 
             async def _ensure_connected(self) -> None:
                 self._events.append("ensure")
+
+            def _is_connected(self) -> bool:
+                return self._connected
 
         class TestRigFleetBridge(RigFleetBridge):
             def __init__(self, bridge: FakeBridge, events: list[str]) -> None:
@@ -1008,6 +1019,64 @@ class RigFleetScannerTests(unittest.TestCase):
         await fleet_bridge._connect_bridge(bridge)  # type: ignore[arg-type]
 
         self.assertEqual(events, ["start", "wait:12.0", "stop", "ensure"])
+
+    async def _exercise_fleet_connect_restarts_scanner_after_fast_sleep(self) -> None:
+        class FakeBridge:
+            def __init__(self, events: list[str]) -> None:
+                self._config = types.SimpleNamespace(thing_name="txing", scan_timeout=12.0)
+                self._cached_device_id = "EE:C7:32:0B:1C:6A"
+                self._shadow = types.SimpleNamespace(
+                    target_redcon=4,
+                    ble_device_id=self._cached_device_id,
+                )
+                self._fresh_target = types.SimpleNamespace(address=self._cached_device_id)
+                self._events = events
+                self._connected = False
+
+            def _get_fresh_target_device(self) -> object | None:
+                return self._fresh_target
+
+            async def _ensure_connected(self) -> None:
+                self._events.append("ensure")
+                self._connected = False
+
+            def _is_connected(self) -> bool:
+                return self._connected
+
+        class TestRigFleetBridge(RigFleetBridge):
+            def __init__(self, bridge: FakeBridge, events: list[str]) -> None:
+                super().__init__(
+                    BridgeConfig(),
+                    cloud_shadow=FakeCloudShadow(),  # type: ignore[arg-type]
+                    registry=object(),  # type: ignore[arg-type]
+                    managed_things=[
+                        types.SimpleNamespace(
+                            registration=types.SimpleNamespace(
+                                thing_name="txing",
+                                ble_device_id=bridge._cached_device_id,
+                                version=1,
+                            ),
+                            bridge=bridge,
+                        )
+                    ],
+                )
+                self._events = events
+
+            async def _start_scanner(self) -> None:
+                self._events.append("start")
+                self._scanner = object()  # type: ignore[assignment]
+
+            async def _stop_scanner(self) -> None:
+                self._events.append("stop")
+                self._scanner = None
+
+        events: list[str] = []
+        bridge = FakeBridge(events)
+        fleet_bridge = TestRigFleetBridge(bridge, events)
+
+        await fleet_bridge._connect_bridge(bridge)  # type: ignore[arg-type]
+
+        self.assertEqual(events, ["stop", "ensure", "start"])
 
     async def _exercise_fleet_bridge_restarts_scanner(self) -> None:
         class FakeBridge:
@@ -1458,6 +1527,9 @@ class LifecycleBridgeTests(unittest.TestCase):
     def test_pending_wake_is_written_before_full_service_sync(self) -> None:
         asyncio.run(self._exercise_pending_wake_fast_path())
 
+    def test_pending_sleep_accepts_disconnect_before_full_service_sync(self) -> None:
+        asyncio.run(self._exercise_pending_sleep_fast_path())
+
     def test_redcon_four_waits_for_board_shutdown_before_sleep(self) -> None:
         asyncio.run(self._exercise_redcon_four_board_shutdown_request())
 
@@ -1533,6 +1605,70 @@ class LifecycleBridgeTests(unittest.TestCase):
                 await bridge._ensure_connected()
 
         self.assertEqual(events[:3], ["connect", "write", "services"])
+
+    async def _exercise_pending_sleep_fast_path(self) -> None:
+        events: list[str] = []
+        cloud_shadow = FakeCloudShadow()
+        shadow = ShadowState(
+            target_redcon=4,
+            reported_power=True,
+            battery_mv=3795,
+            ble_online=False,
+            board_power=False,
+            redcon=3,
+        )
+        bridge = BleSleepBridge(
+            BridgeConfig(),
+            shadow,
+            cloud_shadow,  # type: ignore[arg-type]
+        )
+        loop = asyncio.get_running_loop()
+        device = types.SimpleNamespace(address="EE:C7:32:0B:1C:6A", name="txing")
+        bridge._loop = loop
+        bridge._known_device.device = device
+        bridge._known_device.device_id = device.address
+        bridge._known_device.local_name = device.name
+        bridge._known_device.last_seen_monotonic = loop.time()
+
+        class FakeClient:
+            def __init__(self, _device: object, **_kwargs: object) -> None:
+                self.is_connected = False
+
+            async def connect(self) -> bool:
+                events.append("connect")
+                self.is_connected = True
+                return True
+
+            @property
+            def services(self) -> object:
+                events.append("services")
+                raise RuntimeError("failed to discover services, device disconnected")
+
+            async def write_gatt_char(
+                self,
+                _characteristic: str,
+                _payload: bytes,
+                *,
+                response: bool,
+            ) -> None:
+                del response
+                events.append("write")
+
+            async def disconnect(self) -> bool:
+                events.append("disconnect")
+                self.is_connected = False
+                return True
+
+        with patch("unit_rig.ble_bridge.BleakClient", FakeClient):
+            await bridge._ensure_connected()
+
+        self.assertEqual(events[:4], ["connect", "write", "services", "disconnect"])
+        self.assertFalse(shadow.reported_power)
+        self.assertEqual(shadow.redcon, 4)
+        self.assertEqual(
+            cloud_shadow.shadow_updates[-1]["reported_device_patch"],
+            {"mcu": {"power": False}},
+        )
 
     async def _exercise_redcon_four_board_shutdown_request(self) -> None:
         cloud_shadow = FakeCloudShadow()

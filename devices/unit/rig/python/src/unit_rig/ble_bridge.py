@@ -177,7 +177,7 @@ def _is_expected_disconnect_error(err: Exception) -> bool:
 
 
 def _is_expected_post_sleep_confirmation_error(err: Exception) -> bool:
-    if isinstance(err, EOFError):
+    if isinstance(err, (EOFError, TimeoutError)):
         return True
     if isinstance(err, BleakDBusError):
         if err.dbus_error in {
@@ -187,6 +187,16 @@ def _is_expected_post_sleep_confirmation_error(err: Exception) -> bool:
             return True
         if err.dbus_error == "org.bluez.Error.Failed":
             return "ATT error: 0x0e" in str(err)
+    if isinstance(err, BleakError):
+        message = str(err).lower()
+        return (
+            "disconnected" in message
+            or "not found" in message
+            or "att error: 0x0e" in message
+        )
+    if isinstance(err, RuntimeError):
+        message = str(err).lower()
+        return "failed to discover services" in message and "disconnected" in message
     return False
 
 
@@ -2079,6 +2089,13 @@ class BleSleepBridge:
             return False
         return not (self._shadow.reported_power and self._shadow.ble_online)
 
+    def _sleep_command_needed(self) -> bool:
+        return (
+            self._shadow.target_redcon == 4
+            and not self._shadow.board_power
+            and self._shadow.reported_power
+        )
+
     async def _send_wake_command_for_target(self, *, context: str) -> bool:
         target_redcon = self._shadow.target_redcon
         if target_redcon is None or target_redcon == 4:
@@ -2114,6 +2131,33 @@ class BleSleepBridge:
         await self._publish_reported_update(
             reported_device_patch=reported_device_patch,
             context="Reported synchronized after BLE wake command confirmation loss",
+            previous_redcon=previous_redcon,
+            previous_battery=previous_battery,
+        )
+
+    async def _accept_sleep_command_without_confirmation(
+        self,
+        *,
+        err: Exception,
+        log_message: str,
+        context: str,
+    ) -> None:
+        _log_important(
+            LOGGER,
+            "%s; accepting power=false transition error=%s",
+            log_message,
+            err.__class__.__name__,
+        )
+        previous_redcon = self._shadow.redcon
+        previous_battery = self._shadow.battery_mv
+        reported_device_patch: dict[str, Any] | None = None
+        if self._shadow.reported_power:
+            self._shadow.set_reported(False)
+            reported_device_patch = {"mcu": {"power": False}}
+        self._mark_ble_presence_now()
+        await self._publish_reported_update(
+            reported_device_patch=reported_device_patch,
+            context=context,
             previous_redcon=previous_redcon,
             previous_battery=previous_battery,
         )
@@ -2607,20 +2651,10 @@ class BleSleepBridge:
                     report = await self._wait_for_reported_power(False)
                 except Exception as err:
                     if _is_expected_post_sleep_confirmation_error(err):
-                        _log_important(
-                            LOGGER,
-                            "MCU disconnected immediately after REDCON 4 sleep command; accepting power=false transition",
-                        )
-                        previous_redcon = self._shadow.redcon
-                        previous_battery = self._shadow.battery_mv
-                        if self._shadow.reported_power:
-                            self._shadow.set_reported(False)
-                        self._mark_ble_presence_now()
-                        await self._publish_reported_update(
-                            reported_device_patch={"mcu": {"power": False}},
+                        await self._accept_sleep_command_without_confirmation(
+                            err=err,
+                            log_message="MCU disconnected immediately after REDCON 4 sleep command",
                             context="Reported synchronized after BLE REDCON 4 sleep command disconnect",
-                            previous_redcon=previous_redcon,
-                            previous_battery=previous_battery,
                         )
                         report = None
                     else:
@@ -2910,6 +2944,7 @@ class BleSleepBridge:
             disconnected_callback=self._handle_disconnect,
         )
         self._client = client
+        sleep_fast_path_attempted = False
         try:
             self._set_rig_state(
                 RigBleState.CONNECTING,
@@ -2932,6 +2967,17 @@ class BleSleepBridge:
                 await self._send_wake_command_for_target(
                     context="sleep rendezvous fast path",
                 )
+            elif self._sleep_command_needed():
+                sleep_fast_path_attempted = True
+                self._set_rig_state(
+                    RigBleState.COMMAND_PENDING,
+                    f"redcon=4 requested for {self._cached_device_id or '<unknown>'} (connect fast path)",
+                )
+                await self._send_sleep_command(sleep=True)
+                self._set_rig_state(
+                    RigBleState.COMMAND_SENT,
+                    f"sleep command written for {self._cached_device_id or '<unknown>'} (connect fast path)",
+                )
             await self._ensure_services_discovered(client)
             await self._resolve_ble_uuids_for_connected_client(
                 client,
@@ -2947,7 +2993,15 @@ class BleSleepBridge:
                 force=True,
             )
             self._has_device_sync = True
-        except Exception:
+        except Exception as err:
+            if sleep_fast_path_attempted and _is_expected_post_sleep_confirmation_error(err):
+                await self._safe_disconnect()
+                await self._accept_sleep_command_without_confirmation(
+                    err=err,
+                    log_message="MCU disconnected before BLE service sync after REDCON 4 sleep command",
+                    context="Reported synchronized after BLE REDCON 4 sleep command disconnect during connect",
+                )
+                return
             await self._safe_disconnect()
             await self._start_scanner()
             raise
@@ -3870,6 +3924,8 @@ class RigFleetBridge:
             raise
         managed = self._managed_by_name[bridge._config.thing_name]
         await self._persist_ble_device_id_after_connect(managed)
+        if not bridge._is_connected():
+            await self._start_scanner()
 
     def _manager_timeout(self) -> float | None:
         timeouts: list[float] = []
