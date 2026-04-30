@@ -11,7 +11,7 @@ profile := ""
 thing_name := "unit-local"
 rig_name := "rig"
 policy_name := "town-rig-device-policy"
-log_group_name := "/town/rig/txing"
+log_group_name := ""
 local_state_dir := project_root + "/.state/aws"
 packaged_template_file := local_state_dir + "/packaged-template.yaml"
 localhost_app_url := "http://localhost:5173"
@@ -430,6 +430,15 @@ thing_index_name := "AWS_Things"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{profile}}")"
     region="$AWS_REGION"
     profile="$AWS_SELECTED_PROFILE"
+    effective_rig_name="$RIG_NAME"
+    sparkplug_group_id="$SPARKPLUG_GROUP_ID"
+    effective_log_group_name="$CLOUDWATCH_LOG_GROUP"
+    if [ -n "{{rig_name}}" ]; then
+      effective_rig_name="{{rig_name}}"
+    fi
+    if [ -n "{{log_group_name}}" ]; then
+      effective_log_group_name="{{log_group_name}}"
+    fi
 
     if [ -z "$region" ]; then
       echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
@@ -486,7 +495,7 @@ thing_index_name := "AWS_Things"
     }
 
     echo "Checking Python service AWS runtimes..."
-    if ! run_python_service_check rig "{{profile}}" --rig-name "{{rig_name}}" --log-group-name "{{log_group_name}}"; then
+    if ! run_python_service_check rig "{{profile}}" --rig-name "$effective_rig_name" --log-group-name "$effective_log_group_name"; then
       failures=$((failures + 1))
     fi
     if ! run_python_service_check device "{{device_profile}}" --thing-name "$device_thing_name"; then
@@ -499,6 +508,37 @@ thing_index_name := "AWS_Things"
     aws_flags=(--region "$region")
     if [ -n "$profile" ]; then
       aws_flags+=(--profile "$profile")
+    fi
+    resolve_rig_log_group_name() {
+      local town_thing_name rig_thing_name
+      town_thing_name="$(
+        aws iot search-index \
+          --index-name "{{thing_index_name}}" \
+          --query-string "thingTypeName:town AND attributes.name:${sparkplug_group_id}" \
+          --query 'things[0].thingName' \
+          --output text \
+          "${aws_flags[@]}" 2>/dev/null || true
+      )"
+      rig_thing_name="$(
+        aws iot search-index \
+          --index-name "{{thing_index_name}}" \
+          --query-string "thingTypeName:rig AND attributes.name:${effective_rig_name} AND attributes.town:${sparkplug_group_id}" \
+          --query 'things[0].thingName' \
+          --output text \
+          "${aws_flags[@]}" 2>/dev/null || true
+      )"
+      if [ -z "$town_thing_name" ] || [ "$town_thing_name" = "None" ] || [ -z "$rig_thing_name" ] || [ "$rig_thing_name" = "None" ]; then
+        return 1
+      fi
+      printf 'txing/%s/%s\n' "$town_thing_name" "$rig_thing_name"
+    }
+    if [ -z "$effective_log_group_name" ]; then
+      if effective_log_group_name="$(resolve_rig_log_group_name)"; then
+        echo "ok: Resolved rig CloudWatch log group $effective_log_group_name from AWS IoT registry"
+      else
+        echo "fail: Could not resolve canonical rig CloudWatch log group from AWS IoT registry"
+        failures=$((failures + 1))
+      fi
     fi
 
     thing_indexing_mode="$(
@@ -536,26 +576,26 @@ thing_index_name := "AWS_Things"
 
     thing_group_query="$(
       aws iot describe-thing-group \
-        --thing-group-name "{{rig_name}}" \
+        --thing-group-name "$effective_rig_name" \
         "${aws_flags[@]}" \
         --query "queryString" \
         --output text 2>/dev/null || true
     )"
-    expected_thing_group_query="attributes.rig:{{rig_name}} AND attributes.town:*"
+    expected_thing_group_query="attributes.rig:${effective_rig_name} AND attributes.town:*"
     if [ "$thing_group_query" = "$expected_thing_group_query" ]; then
-      echo "ok: Dynamic thing group {{rig_name}} query matches the registered-device filter"
+      echo "ok: Dynamic thing group $effective_rig_name query matches the registered-device filter"
     else
-      echo "fail: Dynamic thing group {{rig_name}} query is '$thing_group_query' (expected $expected_thing_group_query)"
+      echo "fail: Dynamic thing group $effective_rig_name query is '$thing_group_query' (expected $expected_thing_group_query)"
       failures=$((failures + 1))
     fi
 
     if group_listing="$(
       aws iot list-things-in-thing-group \
-        --thing-group-name "{{rig_name}}" \
+        --thing-group-name "$effective_rig_name" \
         "${aws_flags[@]}" 2>/dev/null
     )"; then
       assigned_count="$(printf '%s' "$group_listing" | jq '.things | length')"
-      echo "ok: Dynamic thing group membership query succeeded ($assigned_count assigned thing(s) for {{rig_name}})"
+      echo "ok: Dynamic thing group membership query succeeded ($assigned_count assigned thing(s) for $effective_rig_name)"
     else
       echo "fail: Dynamic thing group membership query failed"
       failures=$((failures + 1))
@@ -586,32 +626,60 @@ thing_index_name := "AWS_Things"
     fi
 
     check_stream="aws-check-$(date -u +%Y%m%dT%H%M%SZ)-$$"
-    create_stream_output=""
-    if create_stream_output="$(
-      aws logs create-log-stream \
-        --log-group-name "{{log_group_name}}" \
-        --log-stream-name "$check_stream" \
-        "${aws_flags[@]}" 2>&1
-    )"; then
-      echo "ok: CloudWatch log group {{log_group_name}} exists"
-      echo "ok: CloudWatch CreateLogStream on {{log_group_name}}"
-    else
-      if printf '%s' "$create_stream_output" | grep -Eq 'ResourceNotFoundException|log group does not exist'; then
-        echo "fail: CloudWatch log group {{log_group_name}} not found"
-      else
-        echo "fail: CloudWatch CreateLogStream on {{log_group_name}}"
-        echo "$create_stream_output"
+    if [ -n "$effective_log_group_name" ]; then
+      create_group_output="$(
+        aws logs create-log-group \
+          --log-group-name "$effective_log_group_name" \
+          "${aws_flags[@]}" 2>&1
+      )" || {
+        if ! printf '%s' "$create_group_output" | grep -q 'ResourceAlreadyExistsException'; then
+          echo "fail: CloudWatch CreateLogGroup on $effective_log_group_name"
+          echo "$create_group_output"
+          failures=$((failures + 1))
+          check_stream=""
+        fi
+      }
+      if [ -n "$check_stream" ]; then
+        echo "ok: CloudWatch CreateLogGroup on $effective_log_group_name"
+        retention_output="$(
+          aws logs put-retention-policy \
+            --log-group-name "$effective_log_group_name" \
+            --retention-in-days 30 \
+            "${aws_flags[@]}" 2>&1
+        )" || {
+          echo "fail: CloudWatch PutRetentionPolicy on $effective_log_group_name"
+          echo "$retention_output"
+          failures=$((failures + 1))
+          check_stream=""
+        }
       fi
-      failures=$((failures + 1))
-      check_stream=""
+      if [ -n "$check_stream" ]; then
+        echo "ok: CloudWatch PutRetentionPolicy on $effective_log_group_name (30 days)"
+        create_stream_output="$(
+          aws logs create-log-stream \
+            --log-group-name "$effective_log_group_name" \
+            --log-stream-name "$check_stream" \
+            "${aws_flags[@]}" 2>&1
+        )" || {
+          if ! printf '%s' "$create_stream_output" | grep -q 'ResourceAlreadyExistsException'; then
+            echo "fail: CloudWatch CreateLogStream on $effective_log_group_name"
+            echo "$create_stream_output"
+            failures=$((failures + 1))
+            check_stream=""
+          fi
+        }
+      fi
+      if [ -n "$check_stream" ]; then
+        echo "ok: CloudWatch CreateLogStream on $effective_log_group_name"
+      fi
     fi
 
-    if [ -n "$check_stream" ]; then
+    if [ -n "$check_stream" ] && [ -n "$effective_log_group_name" ]; then
       log_event_ts_ms="$(( $(date +%s) * 1000 ))"
       check_cmd \
-        "CloudWatch PutLogEvents on {{log_group_name}}" \
+        "CloudWatch PutLogEvents on $effective_log_group_name" \
         aws logs put-log-events \
-        --log-group-name "{{log_group_name}}" \
+        --log-group-name "$effective_log_group_name" \
         --log-stream-name "$check_stream" \
         --log-events "timestamp=${log_event_ts_ms},message=aws-check" \
         "${aws_flags[@]}"

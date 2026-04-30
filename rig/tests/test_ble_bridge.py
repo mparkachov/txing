@@ -166,6 +166,7 @@ from unit_rig.ble_bridge import (
     _build_shadow_from_snapshot,
     _calculate_redcon,
     _parse_args,
+    _resolve_cloudwatch_log_group_name,
     _resolve_sparkplug_edge_node_id,
     _run_rig_service,
 )
@@ -227,6 +228,48 @@ class DeviceCloudProxyTests(unittest.TestCase):
                 }
             ],
         )
+
+
+class CloudWatchLogGroupResolutionTests(unittest.TestCase):
+    def test_returns_explicit_cloudwatch_log_group_override(self) -> None:
+        self.assertEqual(
+            _resolve_cloudwatch_log_group_name(
+                aws_runtime=object(),  # type: ignore[arg-type]
+                configured_log_group="custom/group",
+                sparkplug_group_id="town",
+                rig_name="rig",
+            ),
+            "custom/group",
+        )
+
+    def test_resolves_canonical_cloudwatch_log_group_from_thing_ids(self) -> None:
+        class FakeRegistry:
+            def __init__(self, _runtime: object) -> None:
+                pass
+
+            def describe_town_by_name(self, town_name: str) -> object:
+                return types.SimpleNamespace(
+                    thing_name="town-3xvtqf",
+                    name=town_name,
+                )
+
+            def describe_rig_by_name(self, *, town_name: str, rig_name: str) -> object:
+                return types.SimpleNamespace(
+                    thing_name="rig-rig001",
+                    town_name=town_name,
+                    name=rig_name,
+                )
+
+        with patch("unit_rig.ble_bridge.AwsDeviceRegistry", FakeRegistry):
+            self.assertEqual(
+                _resolve_cloudwatch_log_group_name(
+                    aws_runtime=object(),  # type: ignore[arg-type]
+                    configured_log_group="",
+                    sparkplug_group_id="town",
+                    rig_name="rig",
+                ),
+                "txing/town-3xvtqf/rig-rig001",
+            )
 
 
 class ShadowPayloadTests(unittest.TestCase):

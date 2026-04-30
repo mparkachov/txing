@@ -49,6 +49,8 @@ from aws.auth import (
     AwsRuntime,
     ensure_aws_profile,
 )
+from aws.device_registry import AwsDeviceRegistry
+from aws.log_groups import DEFAULT_LOG_RETENTION_DAYS, build_rig_log_group_name
 from aws.mcp_topics import (
     MCP_DEFAULT_LEASE_TTL_MS,
     MCP_PROTOCOL_VERSION,
@@ -107,7 +109,7 @@ DEFAULT_RIG_NAME = "rig"
 DEFAULT_SPARKPLUG_GROUP_ID = "town"
 DEFAULT_SPARKPLUG_EDGE_NODE_ID = "rig"
 DEFAULT_AWS_CONNECT_TIMEOUT = 20.0
-DEFAULT_CLOUDWATCH_LOG_GROUP = "/town/rig/txing"
+DEFAULT_CLOUDWATCH_LOG_GROUP = ""
 DEFAULT_MQTT_PUBLISH_TIMEOUT = 10.0
 DEFAULT_BOARD_OFFLINE_TIMEOUT = 45.0
 DEFAULT_VIDEO_STATUS_STALE_AFTER_MS = 15_000
@@ -265,27 +267,72 @@ def _probe_cloudwatch_stream(
     log_stream_name: str,
 ) -> str | None:
     try:
+        logs_client.create_log_group(logGroupName=log_group_name)
+    except BotoClientError as err:
+        error = err.response.get("Error", {})
+        code = error.get("Code", "Unknown")
+        if code != "ResourceAlreadyExistsException":
+            return (
+                f"CloudWatch log group preflight failed ({code}): "
+                f"{error.get('Message', str(err))}"
+            )
+    except Exception as err:
+        return f"CloudWatch log group preflight failed: {err}"
+
+    try:
+        logs_client.put_retention_policy(
+            logGroupName=log_group_name,
+            retentionInDays=DEFAULT_LOG_RETENTION_DAYS,
+        )
+    except BotoClientError as err:
+        error = err.response.get("Error", {})
+        code = error.get("Code", "Unknown")
+        return (
+            f"CloudWatch retention preflight failed ({code}): "
+            f"{error.get('Message', str(err))}"
+        )
+    except Exception as err:
+        return f"CloudWatch retention preflight failed: {err}"
+
+    try:
         logs_client.create_log_stream(
             logGroupName=log_group_name,
             logStreamName=log_stream_name,
         )
-        return None
     except BotoClientError as err:
         error = err.response.get("Error", {})
         code = error.get("Code", "Unknown")
         if code == "ResourceAlreadyExistsException":
             return None
-        if code == "ResourceNotFoundException":
-            return (
-                f"CloudWatch log group {log_group_name!r} not found for current AWS "
-                "account/region credentials"
-            )
         return (
             f"CloudWatch log stream preflight failed ({code}): "
             f"{error.get('Message', str(err))}"
         )
     except Exception as err:
         return f"CloudWatch log stream preflight failed: {err}"
+    return None
+
+
+def _resolve_cloudwatch_log_group_name(
+    *,
+    aws_runtime: AwsRuntime,
+    configured_log_group: str,
+    sparkplug_group_id: str,
+    rig_name: str,
+) -> str:
+    log_group_name = configured_log_group.strip()
+    if log_group_name:
+        return log_group_name
+    registry = AwsDeviceRegistry(aws_runtime)
+    town_registration = registry.describe_town_by_name(sparkplug_group_id)
+    rig_registration = registry.describe_rig_by_name(
+        town_name=sparkplug_group_id,
+        rig_name=rig_name,
+    )
+    return build_rig_log_group_name(
+        town_thing_name=town_registration.thing_name,
+        rig_thing_name=rig_registration.thing_name,
+    )
 
 
 @dataclass(slots=True, frozen=True)
@@ -4254,7 +4301,10 @@ def _parse_args() -> argparse.Namespace:
             DEFAULT_CLOUDWATCH_LOG_GROUP_ENV,
             DEFAULT_CLOUDWATCH_LOG_GROUP,
         ),
-        help="CloudWatch Logs group name for rig logs (default: /town/rig/txing)",
+        help=(
+            "CloudWatch Logs group name for rig logs "
+            "(default: auto-resolve txing/<town-thing-name>/<rig-thing-name>)"
+        ),
     )
     parser.add_argument(
         "--cloudwatch-log-stream",
@@ -4458,6 +4508,23 @@ def main() -> None:
     except RuntimeError as err:
         print(f"rig start failed: {err}", file=sys.stderr)
         raise SystemExit(2) from err
+
+    if not args.no_cloudwatch_logs:
+        try:
+            args.cloudwatch_log_group = _resolve_cloudwatch_log_group_name(
+                aws_runtime=aws_runtime,
+                configured_log_group=args.cloudwatch_log_group,
+                sparkplug_group_id=args.sparkplug_group_id,
+                rig_name=args.rig_name,
+            )
+        except Exception as err:
+            print(
+                "rig start warning: failed to resolve canonical CloudWatch log group "
+                f"for town={args.sparkplug_group_id} rig={args.rig_name}: {err}; "
+                "CloudWatch log streaming disabled",
+                file=sys.stderr,
+            )
+            args.no_cloudwatch_logs = True
 
     _configure_logging(args, aws_region=aws_region, aws_runtime=aws_runtime)
 

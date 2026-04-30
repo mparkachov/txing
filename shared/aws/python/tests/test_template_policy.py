@@ -41,6 +41,26 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertNotIn("sparkplug-witness", template)
         self.assertIn("iot:GetThingShadow", template)
 
+    def test_template_uses_dynamic_txing_log_group_prefix_for_rig_logs(self) -> None:
+        template = (
+            Path(__file__).resolve().parents[2] / "template.yaml"
+        ).read_text(encoding="utf-8")
+
+        self.assertNotIn("LogGroupName: /town/rig/txing", template)
+        self.assertIn("logs:CreateLogGroup", template)
+        self.assertIn("logs:PutRetentionPolicy", template)
+        self.assertIn("iot:SearchIndex", template)
+        self.assertIn("iot:ListThings", template)
+        self.assertIn(
+            "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:txing/*",
+            template,
+        )
+        self.assertIn("Value: txing/<town-thing-name>/<rig-thing-name>", template)
+        self.assertIn(
+            "Value: txing/<town-thing-name>/<rig-thing-name>/<device-thing-name>",
+            template,
+        )
+
     def test_template_grants_direct_shadow_read_in_both_web_permission_layers(self) -> None:
         template = (
             Path(__file__).resolve().parents[2] / "template.yaml"

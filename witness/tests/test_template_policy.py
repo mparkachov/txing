@@ -10,13 +10,17 @@ class WitnessTemplatePolicyTests(unittest.TestCase):
             Path(__file__).resolve().parents[1] / "template.yaml"
         ).read_text(encoding="utf-8")
 
+        self.assertIn("WitnessRuleName", template)
+        self.assertIn("AllowedPattern: '^[a-zA-Z0-9_]+$'", template)
         self.assertIn("TxingSparkplugWitnessFunction", template)
         self.assertIn("AWS::Lambda::Function", template)
         self.assertIn("TxingSparkplugWitnessTopicRule", template)
         self.assertIn("TxingSparkplugWitnessInvokePermission", template)
-        self.assertIn("RuleName: !Sub ${AWS::StackName}-sparkplug-witness", template)
+        self.assertIn("LogGroupName: !Sub /aws/lambda/${AWS::StackName}", template)
+        self.assertIn("FunctionName: !Ref AWS::StackName", template)
+        self.assertIn("RuleName: !Ref WitnessRuleName", template)
         self.assertIn(
-            "SourceArn: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:rule/${AWS::StackName}-sparkplug-witness",
+            "SourceArn: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:rule/${WitnessRuleName}",
             template,
         )
         self.assertIn("encode(*, 'base64')", template)

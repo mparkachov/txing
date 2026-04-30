@@ -82,7 +82,7 @@ _project-aws-env scope='rig' region='' profile='' stack_name='' cognito_domain_p
     rig_name="${RIG_NAME:-rig}"
     sparkplug_group_id="${SPARKPLUG_GROUP_ID:-town}"
     sparkplug_edge_node_id="${SPARKPLUG_EDGE_NODE_ID:-rig}"
-    cloudwatch_log_group="${CLOUDWATCH_LOG_GROUP:-/town/rig/txing}"
+    cloudwatch_log_group="${CLOUDWATCH_LOG_GROUP:-}"
     thing_name="${THING_NAME:-unit-local}"
     schema_file="$(resolve_path "${SCHEMA_FILE:-devices/unit/aws/board-shadow.schema.json}")"
     board_video_region="${BOARD_VIDEO_REGION:-eu-central-1}"

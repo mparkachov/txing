@@ -22,28 +22,24 @@ Parameters:
     Description: Alternate local dev origin.
 
 Resources:
-  TxingGatewayLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: /town/rig/txing
-      RetentionInDays: 30
-
   TxingGatewayLogsManagedPolicy:
     Type: AWS::IAM::ManagedPolicy
     Properties:
-      Description: Legacy direct-principal policy for CloudWatch logs and IoT registry/thing-group control-plane access.
+      Description: Legacy direct-principal policy for dynamic txing CloudWatch logs and IoT registry/thing-group control-plane access.
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
           - Sid: GatewayCloudWatchLogsWrite
             Effect: Allow
             Action:
+              - logs:CreateLogGroup
               - logs:CreateLogStream
               - logs:DescribeLogStreams
+              - logs:PutRetentionPolicy
               - logs:PutLogEvents
             Resource:
-              - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/town/rig/txing
-              - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/town/rig/txing:log-stream:*
+              - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:txing/*
+              - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:txing/*:log-stream:*
           - Sid: GatewayThingRegistryReadWrite
             Effect: Allow
             Action:
@@ -55,7 +51,9 @@ Resources:
             Action:
               - iot:DescribeThingGroup
               - iot:ListThingsInThingGroup
+              - iot:ListThings
               - iot:GetIndexingConfiguration
+              - iot:SearchIndex
             Resource: "*"
 
   TxingRigRuntimeManagedPolicy:
@@ -135,7 +133,9 @@ Resources:
             Action:
               - iot:DescribeThingGroup
               - iot:ListThingsInThingGroup
+              - iot:ListThings
               - iot:GetIndexingConfiguration
+              - iot:SearchIndex
             Resource: "*"
           - Sid: RigDescribeEndpoint
             Effect: Allow
@@ -144,12 +144,14 @@ Resources:
           - Sid: RigCloudWatchLogsWrite
             Effect: Allow
             Action:
+              - logs:CreateLogGroup
               - logs:CreateLogStream
               - logs:DescribeLogStreams
+              - logs:PutRetentionPolicy
               - logs:PutLogEvents
             Resource:
-              - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/town/rig/txing
-              - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/town/rig/txing:log-stream:*
+              - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:txing/*
+              - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:txing/*:log-stream:*
 
   TxingRigRuntimeRole:
     Type: AWS::IAM::Role
@@ -605,12 +607,12 @@ Resources:
         authenticated: !GetAtt TxingAdminIdentityPoolAuthenticatedRole.Arn
 
 Outputs:
-  RigLogGroupName:
-    Description: CloudWatch Logs group used by the rig process.
-    Value: !Ref TxingGatewayLogGroup
-  RigLogGroupArn:
-    Description: ARN of the CloudWatch Logs group used by the rig process.
-    Value: !GetAtt TxingGatewayLogGroup.Arn
+  RigLogGroupPattern:
+    Description: Canonical CloudWatch Logs group pattern used by rig processes.
+    Value: txing/<town-thing-name>/<rig-thing-name>
+  DeviceLogGroupPattern:
+    Description: Canonical CloudWatch Logs group pattern reserved for device-scoped logs.
+    Value: txing/<town-thing-name>/<rig-thing-name>/<device-thing-name>
   RigLogsManagedPolicyArn:
     Description: Legacy direct-principal managed policy for CloudWatch logs and IoT registry/thing-group access.
     Value: !Ref TxingGatewayLogsManagedPolicy

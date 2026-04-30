@@ -34,7 +34,7 @@ The documented repo workflow keeps AWS settings inside the checkout under `../co
 `just` recipes load `../config/aws.env` first and then optional `../config/rig.env` before invoking AWS CLI or `rig`.
 Use `just aws-rig ...` for AWS CLI commands with the rig/runtime profile and `just aws-town ...` for AWS CLI commands with the town account profile.
 The recommended field setup is: the `town` profile in `../config/aws.credentials` holds access keys for the AWS account that owns the resources, and the `rig` profile in `../config/aws.config` assumes the stack output role `RigRuntimeRoleArn`.
-Put rig-specific runtime defaults in `../config/rig.env`: `RIG_NAME`, `SPARKPLUG_GROUP_ID`, and `CLOUDWATCH_LOG_GROUP`. The Sparkplug edge node id is derived from `RIG_NAME`.
+Put rig-specific runtime defaults in `../config/rig.env`: `RIG_NAME` and `SPARKPLUG_GROUP_ID`. `CLOUDWATCH_LOG_GROUP` is optional; by default rig resolves the canonical `txing/<town-thing-name>/<rig-thing-name>` path from AWS IoT. The Sparkplug edge node id is derived from `RIG_NAME`.
 When rig starts under `systemd`, it loads `../config/aws.env` first and then optional `../config/rig.env`, while still falling back from `AWS_RIG_PROFILE` to the standard `AWS_PROFILE` env used by the AWS SDK chain.
 
 ## Install on a new Raspberry Pi 5 (64-bit OS)
@@ -101,7 +101,7 @@ Adjust these values explicitly:
 - `config/rig.env`
   - `SPARKPLUG_GROUP_ID`: town slug
   - `RIG_NAME`: rig slug
-  - `CLOUDWATCH_LOG_GROUP` only if you want a non-default log group
+  - `CLOUDWATCH_LOG_GROUP` only if you want to override the canonical `txing/<town-thing-name>/<rig-thing-name>` group
 - `config/aws.config`
   - set `[profile rig].role_arn` to the deployed `RigRuntimeRoleArn`
 - `config/aws.credentials`
@@ -140,7 +140,7 @@ sudo journalctl -u rig -f
 ```
 
 The `just rig::install-service` task enables `bluetooth`, writes `/etc/systemd/system/rig.service` for the current user and checkout path, reloads `systemd`, and enables `rig`.
-It points `ExecStart` at the built rig executable in `rig/.venv/bin/rig`, sets `WorkingDirectory` to the repo root, and loads `config/aws.env` plus optional `config/rig.env` through `EnvironmentFile=`. That means shared AWS values such as `AWS_REGION`, `AWS_RIG_PROFILE`, `AWS_SHARED_CREDENTIALS_FILE`, and `AWS_CONFIG_FILE` come from `config/aws.env`, while rig runtime values such as `RIG_NAME`, `SPARKPLUG_GROUP_ID`, and `CLOUDWATCH_LOG_GROUP` come from `config/rig.env` by default. Optional recipe overrides are positional in the order shown by `just --summary` or `just --show rig::install-service`; prefer editing the env files for persistent service configuration. The rig runtime derives the Sparkplug edge node id from the resolved `RIG_NAME` and ignores any separate stale override. The rig runtime discovers the AWS IoT Data-ATS endpoint automatically from the configured AWS region/profile.
+It points `ExecStart` at the built rig executable in `rig/.venv/bin/rig`, sets `WorkingDirectory` to the repo root, and loads `config/aws.env` plus optional `config/rig.env` through `EnvironmentFile=`. That means shared AWS values such as `AWS_REGION`, `AWS_RIG_PROFILE`, `AWS_SHARED_CREDENTIALS_FILE`, and `AWS_CONFIG_FILE` come from `config/aws.env`, while rig runtime values such as `RIG_NAME`, `SPARKPLUG_GROUP_ID`, and any optional `CLOUDWATCH_LOG_GROUP` override come from `config/rig.env` by default. Optional recipe overrides are positional in the order shown by `just --summary` or `just --show rig::install-service`; prefer editing the env files for persistent service configuration. The rig runtime derives the Sparkplug edge node id from the resolved `RIG_NAME`, resolves the canonical CloudWatch log-group name from the registered `town-*` and `rig-*` thing IDs, and discovers the AWS IoT Data-ATS endpoint automatically from the configured AWS region/profile.
 
 ## Run rig
 
@@ -151,12 +151,12 @@ just run
 ```
 
 By default this reads `../config/aws.env` first and then optional `../config/rig.env`, exports the project-local AWS credential/config file paths from there, and autodiscovers the AWS IoT Data-ATS endpoint from the configured AWS region/profile:
-- CloudWatch log group: `/town/rig/txing` (direct upload from process)
+- CloudWatch log group: `txing/<town-thing-name>/<rig-thing-name>` (direct upload from process)
 
 Default logging behavior:
 - stdout/journal (`systemd`): only important lifecycle `INFO` + all `WARNING/ERROR`
-- CloudWatch Logs (`/town/rig/txing`): full operational logs (no CloudWatch agent required)
-- If CloudWatch preflight fails (missing log group or AWS credentials/permissions mismatch), rig continues with stdout logging and prints a startup warning. Run `just rig::check`.
+- CloudWatch Logs (`txing/<town-thing-name>/<rig-thing-name>`): full operational logs (no CloudWatch agent required)
+- If CloudWatch preflight fails (registry lookup, AWS credentials, or log-write permissions mismatch), rig continues with stdout logging and prints a startup warning. Run `just rig::check`.
 
 Dry-run mode (no BLE writes, still syncs AWS shadow and Sparkplug lifecycle traffic):
 
@@ -307,7 +307,7 @@ Common overrides:
 - `--scan-mode active`
 - `--client-id rig-pi5`
 - `--debug` (verbose stdout logging)
-- `--cloudwatch-log-group /town/rig/txing`
+- `--cloudwatch-log-group txing/<town-thing-name>/<rig-thing-name>`
 - `--cloudwatch-log-stream <stream-name>`
 - `--cloudwatch-region <aws-region>` (override region; default: same as AWS region)
 - `--no-cloudwatch-logs`
@@ -321,6 +321,6 @@ Authentication selection uses the standard AWS SDK environment, not rig-specific
 Rig runtime selection is normally loaded from `config/rig.env`:
 - `RIG_NAME`
 - `SPARKPLUG_GROUP_ID`
-- `CLOUDWATCH_LOG_GROUP`
+- `CLOUDWATCH_LOG_GROUP` (optional override)
 
 When the shared AWS config from `config/aws.env` is loaded, rig also accepts `AWS_RIG_PROFILE` as the repo-local profile selector and maps it onto `AWS_PROFILE` before constructing the AWS SDK session.

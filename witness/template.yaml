@@ -1,11 +1,16 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: Sparkplug witness projection for txing
 
+Parameters:
+  WitnessRuleName:
+    Type: String
+    AllowedPattern: '^[a-zA-Z0-9_]+$'
+
 Resources:
   TxingWitnessLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: !Sub /aws/lambda/${AWS::StackName}-sparkplug-witness
+      LogGroupName: !Sub /aws/lambda/${AWS::StackName}
       RetentionInDays: 30
 
   TxingWitnessRole:
@@ -52,7 +57,7 @@ Resources:
       - TxingWitnessLogGroup
     Properties:
       Description: Projects Sparkplug MQTT state into sparkplug named shadows.
-      FunctionName: !Sub ${AWS::StackName}-sparkplug-witness
+      FunctionName: !Ref AWS::StackName
       Role: !GetAtt TxingWitnessRole.Arn
       Runtime: python3.12
       Handler: witness.sparkplug_witness.lambda_handler
@@ -66,14 +71,14 @@ Resources:
       Action: lambda:InvokeFunction
       FunctionName: !Ref TxingSparkplugWitnessFunction
       Principal: iot.amazonaws.com
-      SourceArn: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:rule/${AWS::StackName}-sparkplug-witness
+      SourceArn: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:rule/${WitnessRuleName}
 
   TxingSparkplugWitnessTopicRule:
     Type: AWS::IoT::TopicRule
     DependsOn:
       - TxingSparkplugWitnessInvokePermission
     Properties:
-      RuleName: !Sub ${AWS::StackName}-sparkplug-witness
+      RuleName: !Ref WitnessRuleName
       TopicRulePayload:
         RuleDisabled: false
         AwsIotSqlVersion: "2016-03-23"

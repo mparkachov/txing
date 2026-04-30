@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from .auth import AwsRuntime, build_aws_runtime, ensure_aws_profile
+from .device_registry import AwsDeviceRegistry
+from .log_groups import DEFAULT_LOG_RETENTION_DAYS, build_rig_log_group_name
 
 
 _SCOPE_LABELS = {
@@ -148,12 +150,19 @@ def validate_service_environment(
             ("rig_name", "Rig name", "RIG_NAME"),
             ("sparkplug_group_id", "Sparkplug group ID", "SPARKPLUG_GROUP_ID"),
             ("sparkplug_edge_node_id", "Sparkplug edge node ID", "SPARKPLUG_EDGE_NODE_ID"),
-            ("log_group_name", "CloudWatch log group", "CLOUDWATCH_LOG_GROUP"),
         ):
             result, value = _check_text_env(environment, label, env_name)
             results.append(result)
             if value is not None:
                 resolved[key] = value
+        env_name, value = _first_non_empty(environment, "CLOUDWATCH_LOG_GROUP")
+        if value is None:
+            results.append(
+                _ok("CloudWatch log group (auto-resolved from AWS IoT registry)")
+            )
+        else:
+            results.append(_ok(f"CloudWatch log group ({env_name})"))
+            resolved["log_group_name"] = value
         return results, resolved
 
     result, schema_file = _check_file_env(environment, "Shadow schema file", "SCHEMA_FILE")
@@ -224,6 +233,41 @@ def _probe_cloudwatch_logs(
     )
 
     try:
+        logs_client.create_log_group(logGroupName=log_group_name)
+    except Exception as err:
+        error_code = getattr(err, "response", {}).get("Error", {}).get("Code")
+        if error_code != "ResourceAlreadyExistsException":
+            return [
+                _fail(
+                    f"CloudWatch CreateLogGroup on {log_group_name} "
+                    f"({_format_exception(err)})"
+                )
+            ]
+
+    results.append(_ok(f"CloudWatch CreateLogGroup on {log_group_name}"))
+
+    try:
+        logs_client.put_retention_policy(
+            logGroupName=log_group_name,
+            retentionInDays=DEFAULT_LOG_RETENTION_DAYS,
+        )
+    except Exception as err:
+        results.append(
+            _fail(
+                f"CloudWatch PutRetentionPolicy on {log_group_name} "
+                f"({_format_exception(err)})"
+            )
+        )
+        return results
+
+    results.append(
+        _ok(
+            "CloudWatch PutRetentionPolicy on "
+            f"{log_group_name} ({DEFAULT_LOG_RETENTION_DAYS} days)"
+        )
+    )
+
+    try:
         logs_client.create_log_stream(
             logGroupName=log_group_name,
             logStreamName=stream_name,
@@ -264,11 +308,33 @@ def _probe_cloudwatch_logs(
     return results
 
 
+def _resolve_rig_log_group_name(
+    runtime: AwsRuntime,
+    *,
+    sparkplug_group_id: str,
+    rig_name: str,
+    log_group_name: str | None,
+) -> str:
+    if log_group_name is not None and log_group_name.strip():
+        return log_group_name.strip()
+    registry = AwsDeviceRegistry(runtime)
+    town_registration = registry.describe_town_by_name(sparkplug_group_id)
+    rig_registration = registry.describe_rig_by_name(
+        town_name=sparkplug_group_id,
+        rig_name=rig_name,
+    )
+    return build_rig_log_group_name(
+        town_thing_name=town_registration.thing_name,
+        rig_thing_name=rig_registration.thing_name,
+    )
+
+
 def _run_rig_connectivity_checks(
     runtime: AwsRuntime,
     *,
+    sparkplug_group_id: str,
     rig_name: str,
-    log_group_name: str,
+    log_group_name: str | None,
 ) -> list[CheckResult]:
     results: list[CheckResult] = []
     _run_aws_check(results, "STS caller identity", runtime.sts_client().get_caller_identity)
@@ -282,7 +348,21 @@ def _run_rig_connectivity_checks(
         f"IoT DescribeThingGroup on {rig_name}",
         lambda: runtime.iot_client().describe_thing_group(thingGroupName=rig_name),
     )
-    results.extend(_probe_cloudwatch_logs(runtime, log_group_name=log_group_name))
+    resolved_log_group_name = _run_aws_check(
+        results,
+        "Resolve CloudWatch log group",
+        lambda: _resolve_rig_log_group_name(
+            runtime,
+            sparkplug_group_id=sparkplug_group_id,
+            rig_name=rig_name,
+            log_group_name=log_group_name,
+        ),
+    )
+    if not isinstance(resolved_log_group_name, str) or not resolved_log_group_name:
+        return results
+    results.extend(
+        _probe_cloudwatch_logs(runtime, log_group_name=resolved_log_group_name)
+    )
     return results
 
 
@@ -352,8 +432,9 @@ def run_service_check(
         results.extend(
             _run_rig_connectivity_checks(
                 runtime,
+                sparkplug_group_id=resolved["sparkplug_group_id"],
                 rig_name=rig_name or resolved["rig_name"],
-                log_group_name=log_group_name or resolved["log_group_name"],
+                log_group_name=log_group_name or resolved.get("log_group_name"),
             )
         )
         return results

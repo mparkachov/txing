@@ -20,20 +20,74 @@ class _FakeIotClient:
     def __init__(self) -> None:
         self.describe_group_names: list[str] = []
         self.describe_thing_names: list[str] = []
+        self.search_queries: list[str] = []
 
     def describe_thing_group(self, *, thingGroupName: str) -> dict[str, str]:
         self.describe_group_names.append(thingGroupName)
         return {"thingGroupName": thingGroupName}
 
-    def describe_thing(self, *, thingName: str) -> dict[str, str]:
+    def describe_thing(self, *, thingName: str) -> dict[str, object]:
         self.describe_thing_names.append(thingName)
+        if thingName == "town-3xvtqf":
+            return {
+                "thingName": thingName,
+                "thingTypeName": "town",
+                "attributes": {
+                    "name": "town",
+                    "shortId": "3xvtqf",
+                    "capabilitiesSet": "sparkplug",
+                },
+            }
+        if thingName == "rig-rig001":
+            return {
+                "thingName": thingName,
+                "thingTypeName": "rig",
+                "attributes": {
+                    "name": "rig",
+                    "shortId": "rig001",
+                    "town": "town",
+                    "capabilitiesSet": "sparkplug",
+                },
+            }
         return {"thingName": thingName}
+
+    def search_index(
+        self,
+        *,
+        indexName: str,
+        queryString: str,
+        maxResults: int,
+        nextToken: str | None = None,
+    ) -> dict[str, object]:
+        del indexName, maxResults, nextToken
+        self.search_queries.append(queryString)
+        if queryString == "thingTypeName:town AND attributes.name:town":
+            return {"things": [{"thingName": "town-3xvtqf"}]}
+        if (
+            queryString
+            == "thingTypeName:rig AND attributes.name:rig AND attributes.town:town"
+        ):
+            return {"things": [{"thingName": "rig-rig001"}]}
+        return {"things": []}
 
 
 class _FakeLogsClient:
     def __init__(self) -> None:
+        self.created_groups: list[str] = []
+        self.retention_policies: list[tuple[str, int]] = []
         self.created_streams: list[tuple[str, str]] = []
         self.events: list[tuple[str, str, list[dict[str, object]]]] = []
+
+    def create_log_group(self, *, logGroupName: str) -> None:
+        self.created_groups.append(logGroupName)
+
+    def put_retention_policy(
+        self,
+        *,
+        logGroupName: str,
+        retentionInDays: int,
+    ) -> None:
+        self.retention_policies.append((logGroupName, retentionInDays))
 
     def create_log_stream(self, *, logGroupName: str, logStreamName: str) -> None:
         self.created_streams.append((logGroupName, logStreamName))
@@ -128,13 +182,14 @@ class AwsCheckTests(unittest.TestCase):
                     "RIG_NAME": "rig",
                     "SPARKPLUG_GROUP_ID": "town",
                     "SPARKPLUG_EDGE_NODE_ID": "rig",
-                    "CLOUDWATCH_LOG_GROUP": "/town/rig/txing",
                 },
             )
 
         self.assertTrue(all(result.ok for result in results))
         self.assertEqual(resolved["aws_region"], "eu-central-1")
         self.assertEqual(resolved["rig_name"], "rig")
+        self.assertEqual(resolved["sparkplug_group_id"], "town")
+        self.assertNotIn("log_group_name", resolved)
 
     def test_validate_device_environment_reports_missing_values(self) -> None:
         results, _resolved = validate_service_environment(
@@ -179,7 +234,6 @@ class AwsCheckTests(unittest.TestCase):
                     "RIG_NAME": "rig",
                     "SPARKPLUG_GROUP_ID": "town",
                     "SPARKPLUG_EDGE_NODE_ID": "rig",
-                    "CLOUDWATCH_LOG_GROUP": "/town/rig/txing",
                 },
                 aws_runtime=runtime,
             )
@@ -187,10 +241,28 @@ class AwsCheckTests(unittest.TestCase):
         self.assertTrue(all(result.ok for result in results))
         self.assertEqual(runtime.sts.calls, 1)
         self.assertEqual(runtime.iot.describe_group_names, ["rig"])
+        self.assertEqual(
+            runtime.iot.search_queries,
+            [
+                "thingTypeName:town AND attributes.name:town",
+                "thingTypeName:rig AND attributes.name:rig AND attributes.town:town",
+            ],
+        )
+        self.assertEqual(runtime.logs.created_groups, ["txing/town-3xvtqf/rig-rig001"])
+        self.assertEqual(
+            runtime.logs.retention_policies,
+            [("txing/town-3xvtqf/rig-rig001", 30)],
+        )
         self.assertEqual(len(runtime.logs.created_streams), 1)
-        self.assertEqual(runtime.logs.created_streams[0][0], "/town/rig/txing")
+        self.assertEqual(
+            runtime.logs.created_streams[0][0],
+            "txing/town-3xvtqf/rig-rig001",
+        )
         self.assertEqual(len(runtime.logs.events), 1)
-        self.assertEqual(runtime.logs.events[0][0], "/town/rig/txing")
+        self.assertEqual(
+            runtime.logs.events[0][0],
+            "txing/town-3xvtqf/rig-rig001",
+        )
         self.assertIsInstance(runtime.logs.events[0][2][0]["timestamp"], int)
 
     def test_run_device_service_check_uses_discovered_endpoint_and_video_region(self) -> None:

@@ -701,7 +701,7 @@ class ShadowControlContractTests(unittest.TestCase):
         )
         self.assertIn('device_thing_name="$THING_NAME"', justfile)
         self.assertIn('if [ -n "{{thing_name}}" ]; then', justfile)
-        self.assertIn('if ! run_python_service_check rig "{{profile}}" --rig-name "{{rig_name}}" --log-group-name "{{log_group_name}}"; then', justfile)
+        self.assertIn('if ! run_python_service_check rig "{{profile}}" --rig-name "$effective_rig_name" --log-group-name "$effective_log_group_name"; then', justfile)
         self.assertIn('if ! run_python_service_check device "{{device_profile}}" --thing-name "$device_thing_name"; then', justfile)
         self.assertIn('--thing-name "$device_thing_name" \\', justfile)
         self.assertNotIn('@check thing_name=thing_name', justfile)

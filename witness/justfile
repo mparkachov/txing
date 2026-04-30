@@ -25,6 +25,12 @@ packaged_template_file := local_state_dir + "/packaged-template.yaml"
     if [ -z "$witness_stack_name" ]; then
       witness_stack_name="${base_stack_name}-witness"
     fi
+    witness_rule_name="$(printf '%s' "$witness_stack_name" | tr -cs '[:alnum:]_' '_' | sed 's/^_*//; s/_*$//')"
+    witness_rule_name="${witness_rule_name:0:128}"
+    if [ -z "$witness_rule_name" ]; then
+      echo "failed to derive witness IoT rule name" >&2
+      exit 1
+    fi
 
     if [ -z "$region" ]; then
       echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
@@ -73,6 +79,7 @@ packaged_template_file := local_state_dir + "/packaged-template.yaml"
       --stack-name "$witness_stack_name" \
       --template-file "{{packaged_template_file}}" \
       --capabilities CAPABILITY_NAMED_IAM \
+      --parameter-overrides "WitnessRuleName=$witness_rule_name" \
       --no-fail-on-empty-changeset \
       "${aws_flags[@]}"
 
