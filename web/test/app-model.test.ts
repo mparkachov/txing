@@ -7,6 +7,7 @@ import {
   extractReportedBatteryMv,
   extractReportedMcuOnline,
   extractReportedRedcon,
+  hasReachedTargetRedcon,
   getTrackIndicatorPresentation,
   getTxingRedconToneClass,
 } from '../src/app-model'
@@ -308,6 +309,43 @@ describe('app model helpers', () => {
       deriveTxingPowerTransitionPending({
         targetRedcon: 4,
         reportedRedcon: 4,
+      }),
+    ).toBe(false)
+  })
+
+  test('detects when the reported sparkplug redcon has reached the target', () => {
+    expect(
+      hasReachedTargetRedcon({
+        targetRedcon: 1,
+        reportedRedcon: 3,
+      }),
+    ).toBe(false)
+
+    expect(
+      hasReachedTargetRedcon({
+        targetRedcon: 1,
+        reportedRedcon: 1,
+      }),
+    ).toBe(true)
+
+    expect(
+      hasReachedTargetRedcon({
+        targetRedcon: 4,
+        reportedRedcon: 3,
+      }),
+    ).toBe(false)
+
+    expect(
+      hasReachedTargetRedcon({
+        targetRedcon: 4,
+        reportedRedcon: 4,
+      }),
+    ).toBe(true)
+
+    expect(
+      hasReachedTargetRedcon({
+        targetRedcon: 2,
+        reportedRedcon: null,
       }),
     ).toBe(false)
   })

@@ -16,6 +16,11 @@ export type TxingPowerTransitionInputs = {
   reportedRedcon: number | null
 }
 
+export type TxingTargetRedconInputs = {
+  targetRedcon: number | null
+  reportedRedcon: number | null
+}
+
 type RedconDescriptor = {
   colorName: string
   postureName: string
@@ -193,13 +198,26 @@ export const deriveTxingPowerTransitionPending = ({
   if (targetRedcon === null) {
     return false
   }
+  return !hasReachedTargetRedcon({
+    targetRedcon,
+    reportedRedcon,
+  })
+}
+
+export const hasReachedTargetRedcon = ({
+  targetRedcon,
+  reportedRedcon,
+}: TxingTargetRedconInputs): boolean => {
+  if (targetRedcon === null) {
+    return false
+  }
   if (reportedRedcon === null) {
-    return true
+    return false
   }
   if (targetRedcon === 4) {
-    return reportedRedcon !== 4
+    return reportedRedcon === 4
   }
-  return reportedRedcon > targetRedcon
+  return reportedRedcon <= targetRedcon
 }
 
 export const extractReportedBoardPower = (shadow: unknown): boolean | null => {

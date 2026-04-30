@@ -46,6 +46,7 @@ import {
   extractReportedMcuOnline,
   extractReportedMcuPower,
   extractReportedRedcon,
+  hasReachedTargetRedcon,
 } from './app-model'
 import {
   describeThingMetadata,
@@ -198,9 +199,6 @@ const formatShadowUpdateTime = (updatedAtMs: number | null): string =>
       })
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
-
-const formatRedconDiagnostic = (redcon: number | null): string =>
-  redcon === null ? 'current Sparkplug REDCON is unavailable' : `current Sparkplug REDCON is ${redcon}`
 
 const getCatalogDeviceLabel = (device: DeviceCatalogEntry | null | undefined): string =>
   device?.name?.trim() ? device.name.trim() : 'Unnamed device'
@@ -571,20 +569,17 @@ function App({ initialAuthError = '' }: AppProps) {
       targetRedcon: 1 | 2 | 3 | 4,
       commandSequence: number,
     ): Promise<void> => {
-      const deadlineMs = Date.now() + 20_000
-      let lastObservedRedcon: number | null = null
-
-      while (Date.now() < deadlineMs) {
+      while (true) {
         if (redconCommandSequenceRef.current !== commandSequence) {
           return
         }
 
         const nextShadow = await refreshRouteSparkplugShadow(thingName)
-        const nextRedcon = extractReportedRedcon(nextShadow)
-        lastObservedRedcon = nextRedcon
         if (
-          nextRedcon !== null &&
-          (targetRedcon === 4 ? nextRedcon === 4 : nextRedcon <= targetRedcon)
+          hasReachedTargetRedcon({
+            targetRedcon,
+            reportedRedcon: extractReportedRedcon(nextShadow),
+          })
         ) {
           if (redconCommandSequenceRef.current === commandSequence) {
             setPendingTargetRedcon(null)
@@ -594,18 +589,8 @@ function App({ initialAuthError = '' }: AppProps) {
 
         await sleep(1_000)
       }
-
-      if (redconCommandSequenceRef.current !== commandSequence) {
-        return
-      }
-
-      setPendingTargetRedcon(null)
-      enqueueRuntimeError(
-        `Timed out waiting for sparkplug shadow to reflect DCMD.redcon=${targetRedcon}; ${formatRedconDiagnostic(lastObservedRedcon)}`,
-        'sparkplug-redcon-shadow',
-      )
     },
-    [enqueueRuntimeError, refreshRouteSparkplugShadow],
+    [refreshRouteSparkplugShadow],
   )
 
   const getShadowSession = (): ShadowSession => {
@@ -682,9 +667,10 @@ function App({ initialAuthError = '' }: AppProps) {
       return
     }
     if (
-      pendingTargetRedcon === 4
-        ? reportedRedcon === 4
-        : reportedRedcon <= pendingTargetRedcon
+      hasReachedTargetRedcon({
+        targetRedcon: pendingTargetRedcon,
+        reportedRedcon,
+      })
     ) {
       setPendingTargetRedcon(null)
     }
@@ -1036,6 +1022,7 @@ function App({ initialAuthError = '' }: AppProps) {
 
   useEffect(() => {
     if (!activeShadowTarget) {
+      redconCommandSequenceRef.current += 1
       shadowSessionRef.current?.close()
       shadowSessionRef.current = null
       hasReceivedShadowSnapshotRef.current = false
@@ -1057,6 +1044,7 @@ function App({ initialAuthError = '' }: AppProps) {
 
     let cancelled = false
     let shadowSession: ShadowSession | null = null
+    redconCommandSequenceRef.current += 1
     hasReceivedShadowSnapshotRef.current = false
     previousReportedRedconRef.current = null
     setShadowJson('{}')
