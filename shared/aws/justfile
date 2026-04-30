@@ -1061,7 +1061,10 @@ thing_index_name := "AWS_Things"
       echo "thing {{thing_name}} is missing required attribute capabilitiesSet" >&2
       exit 1
     fi
-    mapfile -t allowed_shadow_names < <(jq -r '.attributes.capabilitiesSet | split(",")[]' <<<"$thing_json")
+    allowed_shadow_names=()
+    while IFS= read -r allowed_shadow_name; do
+      allowed_shadow_names+=("$allowed_shadow_name")
+    done < <(jq -r '.attributes.capabilitiesSet | split(",")[]' <<<"$thing_json")
     if [ "${#allowed_shadow_names[@]}" -eq 0 ]; then
       echo "thing {{thing_name}} has empty capabilitiesSet" >&2
       exit 1
@@ -1169,7 +1172,10 @@ thing_index_name := "AWS_Things"
       echo "thing {{thing_name}} is missing required attribute capabilitiesSet" >&2
       exit 1
     fi
-    mapfile -t allowed_shadow_names < <(jq -r '.attributes.capabilitiesSet | split(",")[]' <<<"$thing_json")
+    allowed_shadow_names=()
+    while IFS= read -r allowed_shadow_name; do
+      allowed_shadow_names+=("$allowed_shadow_name")
+    done < <(jq -r '.attributes.capabilitiesSet | split(",")[]' <<<"$thing_json")
     if [ "${#allowed_shadow_names[@]}" -eq 0 ]; then
       echo "thing {{thing_name}} has empty capabilitiesSet" >&2
       exit 1
@@ -1432,7 +1438,10 @@ thing_index_name := "AWS_Things"
       echo "thing {{thing_name}} is missing required attribute capabilitiesSet" >&2
       exit 1
     fi
-    mapfile -t allowed_shadow_names < <(jq -r '.attributes.capabilitiesSet | split(",")[]' <<<"$thing_json")
+    allowed_shadow_names=()
+    while IFS= read -r allowed_shadow_name; do
+      allowed_shadow_names+=("$allowed_shadow_name")
+    done < <(jq -r '.attributes.capabilitiesSet | split(",")[]' <<<"$thing_json")
     if [ "${#allowed_shadow_names[@]}" -eq 0 ]; then
       echo "thing {{thing_name}} has empty capabilitiesSet" >&2
       exit 1
