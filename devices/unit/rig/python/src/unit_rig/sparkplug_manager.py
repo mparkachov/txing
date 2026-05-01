@@ -731,12 +731,13 @@ class SparkplugManager:
         await self._bus.publish(build_command_topic(device.thing_name), command.to_json())
 
     async def publish_node_birth(self) -> None:
+        topic = build_node_topic(
+            self._config.sparkplug_group_id,
+            "NBIRTH",
+            self._config.sparkplug_edge_node_id,
+        )
         await self._cloud_client.publish_sparkplug(
-            build_node_topic(
-                self._config.sparkplug_group_id,
-                "NBIRTH",
-                self._config.sparkplug_edge_node_id,
-            ),
+            topic,
             build_node_birth_payload(
                 redcon=1,
                 bdseq=self._config.sparkplug_node_bdseq,
@@ -744,21 +745,32 @@ class SparkplugManager:
             ),
         )
         self._node_born = True
+        LOGGER.info(
+            "Published Sparkplug NBIRTH topic=%s bdSeq=%s",
+            topic,
+            self._config.sparkplug_node_bdseq,
+        )
 
     async def publish_node_death(self) -> None:
         if not self._node_born:
             return
+        topic = build_node_topic(
+            self._config.sparkplug_group_id,
+            "NDEATH",
+            self._config.sparkplug_edge_node_id,
+        )
         await self._cloud_client.publish_sparkplug(
-            build_node_topic(
-                self._config.sparkplug_group_id,
-                "NDEATH",
-                self._config.sparkplug_edge_node_id,
-            ),
+            topic,
             build_node_death_payload(
                 bdseq=self._config.sparkplug_node_bdseq,
             ),
         )
         self._node_born = False
+        LOGGER.info(
+            "Published Sparkplug NDEATH topic=%s bdSeq=%s",
+            topic,
+            self._config.sparkplug_node_bdseq,
+        )
 
     async def subscribe_local_state(self) -> None:
         await self._bus.subscribe(f"{STATE_TOPIC_PREFIX}/+", self._handle_state_message)
@@ -816,6 +828,13 @@ async def run_sparkplug_manager(
         aws_runtime=aws_runtime,
         bus=bus,
         cloud_client=cloud_client,
+    )
+    LOGGER.info(
+        "Starting Sparkplug manager rig=%s group=%s edgeNode=%s managed_things=%s",
+        config.rig_name,
+        config.sparkplug_group_id,
+        config.sparkplug_edge_node_id,
+        len(registrations),
     )
     await manager.subscribe_local_state()
     await manager.set_registrations(registrations, snapshots=snapshots)
