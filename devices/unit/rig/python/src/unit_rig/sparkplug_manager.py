@@ -829,6 +829,11 @@ def _parse_args() -> argparse.Namespace:
         default=None,
     )
     parser.add_argument(
+        "--iot-endpoint",
+        default=_env_text("AWS_IOT_ENDPOINT", ""),
+        help="Pre-resolved AWS IoT Data-ATS endpoint. Defaults to AWS_IOT_ENDPOINT.",
+    )
+    parser.add_argument(
         "--aws-connect-timeout",
         type=float,
         default=DEFAULT_AWS_CONNECT_TIMEOUT,
@@ -841,22 +846,17 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> None:
-    args = _parse_args()
-    if boto3 is None:
-        print("rig-sparkplug-manager start failed: boto3 is required", flush=True)
-        raise SystemExit(2)
-    ensure_aws_profile("AWS_RIG_PROFILE")
-    aws_region = resolve_aws_region()
-    if not aws_region:
-        print("rig-sparkplug-manager start failed: AWS region is not configured", flush=True)
-        raise SystemExit(2)
-    aws_runtime = build_aws_runtime(region_name=aws_region)
+def _build_bridge_config(
+    args: argparse.Namespace,
+    *,
+    aws_runtime: AwsRuntime,
+    aws_region: str,
+) -> BridgeConfig:
     resolved_edge_node_id = _resolve_sparkplug_edge_node_id(
         rig_name=args.rig_name,
         sparkplug_edge_node_id=args.sparkplug_edge_node_id,
     )
-    config = BridgeConfig(
+    return BridgeConfig(
         rig_name=args.rig_name,
         sparkplug_group_id=args.sparkplug_group_id,
         sparkplug_edge_node_id=resolved_edge_node_id,
@@ -866,9 +866,25 @@ def main() -> None:
         aws_connect_timeout=args.aws_connect_timeout,
         reconnect_delay=args.reconnect_delay,
     )
+
+
+def main() -> None:
+    args = _parse_args()
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+    if boto3 is None:
+        print("rig-sparkplug-manager start failed: boto3 is required", flush=True)
+        raise SystemExit(2)
+    ensure_aws_profile("AWS_RIG_PROFILE")
+    aws_region = resolve_aws_region()
+    if not aws_region:
+        print("rig-sparkplug-manager start failed: AWS region is not configured", flush=True)
+        raise SystemExit(2)
+    aws_runtime = build_aws_runtime(
+        region_name=aws_region,
+        iot_data_endpoint=args.iot_endpoint.strip() or None,
     )
 
     async def _runner() -> None:
@@ -883,13 +899,35 @@ def main() -> None:
                 loop.add_signal_handler(sig, _request_shutdown)
             except NotImplementedError:
                 break
-        manager_task = asyncio.create_task(
-            run_sparkplug_manager(
-                config=config,
-                aws_runtime=aws_runtime,
-                bus=GreengrassLocalPubSub(),
-            )
-        )
+        async def _manager_loop() -> None:
+            while not shutdown_event.is_set():
+                try:
+                    config = _build_bridge_config(
+                        args,
+                        aws_runtime=aws_runtime,
+                        aws_region=aws_region,
+                    )
+                    await run_sparkplug_manager(
+                        config=config,
+                        aws_runtime=aws_runtime,
+                        bus=GreengrassLocalPubSub(),
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    LOGGER.exception(
+                        "Sparkplug manager failed; retrying in %.1f seconds",
+                        args.reconnect_delay,
+                    )
+                    try:
+                        await asyncio.wait_for(
+                            shutdown_event.wait(),
+                            timeout=args.reconnect_delay,
+                        )
+                    except TimeoutError:
+                        continue
+
+        manager_task = asyncio.create_task(_manager_loop())
         shutdown_task = asyncio.create_task(shutdown_event.wait())
         done, pending = await asyncio.wait(
             {manager_task, shutdown_task},

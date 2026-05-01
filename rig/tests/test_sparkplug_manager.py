@@ -25,6 +25,8 @@ from unit_rig.sparkplug_manager import (
     ManagedDeviceState,
     SparkplugManager,
     SparkplugMqttSessionConfig,
+    _build_bridge_config,
+    _parse_args,
     run_sparkplug_manager,
 )
 from unit_rig.thing_registry import ThingRegistration
@@ -100,6 +102,14 @@ class FailingBirthOnceDeviceSession(FakeDeviceSession):
 class FakeAwsRuntime:
     def iot_client(self) -> object:
         return object()
+
+    def iot_data_endpoint(self) -> str:
+        return "endpoint"
+
+
+class EndpointShouldNotBeDiscoveredRuntime(FakeAwsRuntime):
+    def iot_data_endpoint(self) -> str:
+        raise AssertionError("endpoint discovery should not be called")
 
 
 class FakeRegistryClient:
@@ -236,6 +246,34 @@ class DeviceSparkplugMqttSessionTests(unittest.TestCase):
 
 
 class SparkplugManagerTests(unittest.TestCase):
+    def test_parse_args_accepts_pre_resolved_iot_endpoint_from_environment(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "RIG_NAME": "rig-prod",
+                "SPARKPLUG_GROUP_ID": "town-prod",
+                "SPARKPLUG_EDGE_NODE_ID": "rig-prod",
+                "AWS_IOT_ENDPOINT": "abc123-ats.iot.eu-central-1.amazonaws.com",
+            },
+            clear=True,
+        ):
+            with patch("sys.argv", ["rig-sparkplug-manager"]):
+                args = _parse_args()
+
+        self.assertEqual(args.iot_endpoint, "abc123-ats.iot.eu-central-1.amazonaws.com")
+
+    def test_build_bridge_config_uses_runtime_endpoint(self) -> None:
+        with patch("sys.argv", ["rig-sparkplug-manager"]):
+            args = _parse_args()
+
+        config = _build_bridge_config(
+            args,
+            aws_runtime=FakeAwsRuntime(),  # type: ignore[arg-type]
+            aws_region="eu-central-1",
+        )
+
+        self.assertEqual(config.iot_endpoint, "endpoint")
+
     def test_manager_republishes_inventory_for_late_connectivity_adapter(self) -> None:
         async def exercise() -> ConnectivityInventory:
             bus = InMemoryLocalPubSub()

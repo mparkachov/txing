@@ -450,25 +450,52 @@ aws_shared_credentials_file := ""
     #!/usr/bin/env bash
     set -euo pipefail
     sudo systemctl restart bluetooth
-    if ! systemctl list-unit-files --no-legend "{{greengrass_lite_target}}" 2>/dev/null | grep -F "{{greengrass_lite_target}}" >/dev/null; then \
+    if ! systemctl cat "{{greengrass_lite_target}}" >/dev/null 2>&1; then \
         echo "Greengrass Lite target {{greengrass_lite_target}} is not installed. Run 'just rig::install-service' first." >&2; \
         exit 1; \
     fi
-    mapfile -t greengrass_units < <(
-      systemctl list-units \
-        --all \
-        --plain \
-        --no-legend \
-        'ggl.*.service' \
-        'ggl.*.socket' \
-        | awk '{print $1}' \
-        | sort -u
+    unit_exists() {
+      systemctl cat "$1" >/dev/null 2>&1
+    }
+    stop_unit_if_present() {
+      local unit="$1"
+      if unit_exists "$unit"; then
+        sudo systemctl stop "$unit" || true
+      fi
+    }
+    stop_units_by_pattern() {
+      local units=()
+      mapfile -t units < <(
+        systemctl list-units --all --plain --no-legend "$@" \
+          | awk '{print $1}' \
+          | sort -u
+      )
+      if [ "${#units[@]}" -gt 0 ]; then
+        sudo systemctl stop "${units[@]}" || true
+      fi
+    }
+    component_units=(
+      ggl.dev.txing.rig.SparkplugManager.service
+      ggl.dev.txing.rig.ConnectivityBle.service
     )
-    if [ "${#greengrass_units[@]}" -gt 0 ]; then
-      sudo systemctl restart "${greengrass_units[@]}"
-    fi
-    sudo systemctl restart "{{greengrass_lite_target}}"
-    sudo systemctl --no-pager --full status "{{greengrass_lite_target}}"
+    for unit in "${component_units[@]}"; do
+      stop_unit_if_present "$unit"
+    done
+    sudo systemctl stop "{{greengrass_lite_target}}" || true
+    stop_units_by_pattern \
+      'ggl.core.*.service' \
+      'ggl.aws.greengrass.TokenExchangeService.service'
+    stop_units_by_pattern 'ggl.*.socket'
+    sudo systemctl reset-failed "{{greengrass_lite_target}}" 'ggl.*.service' 'ggl.*.socket' || true
+    sudo systemctl start "{{greengrass_lite_target}}"
+    status_units=("{{greengrass_lite_target}}")
+    for unit in "${component_units[@]}"; do
+      if unit_exists "$unit"; then
+        sudo systemctl restart "$unit"
+        status_units+=("$unit")
+      fi
+    done
+    sudo systemctl --no-pager --full status "${status_units[@]}"
 
 @deploy rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' component_version='' adapter_id='ble-main' name_fragment='txing' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file: build
     #!/usr/bin/env bash
@@ -480,6 +507,12 @@ aws_shared_credentials_file := ""
         fi; \
     done
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}" "" "" "" "{{aws_shared_credentials_file}}")"
+    region="$AWS_REGION"
+    profile="$AWS_SELECTED_PROFILE"
+    aws_flags=(--region "$region")
+    if [ -n "$profile" ]; then \
+        aws_flags+=(--profile "$profile"); \
+    fi
     if ! systemctl is-active --quiet "{{greengrass_lite_target}}"; then \
         echo "Greengrass Lite target {{greengrass_lite_target}} is not active. Run 'just rig::install-service' first." >&2; \
         exit 1; \
@@ -508,6 +541,7 @@ aws_shared_credentials_file := ""
     if [ -z "$resolved_component_version" ]; then \
         resolved_component_version="0.1.$(date +%s)"; \
     fi
+    iot_data_endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}" --query endpointAddress --output text)"
     deploy_root="{{rig_dir}}/build/greengrass-local"
     staging_root="$(mktemp -d "${TMPDIR:-/tmp}/txing-greengrass-stage.XXXXXX")"
     cleanup_staging_root() {
@@ -582,6 +616,7 @@ aws_shared_credentials_file := ""
               export RIG_NAME="$rig_name"
               export SPARKPLUG_GROUP_ID="$sparkplug_group_id"
               export SPARKPLUG_EDGE_NODE_ID="$sparkplug_edge_node_id"
+              export AWS_IOT_ENDPOINT="$iot_data_endpoint"
               export PYTHONPATH="{artifacts:path}/python"
               exec python3 -m rig.sparkplug_manager
         Artifacts:
