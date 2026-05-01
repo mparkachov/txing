@@ -258,7 +258,6 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
     }
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "{{aws_profile}}" "" "" "" "{{aws_shared_credentials_file}}")"
     project_root="$TXING_PROJECT_ROOT"
-    env_file="$AWS_ENV_FILE"
     thing_name="$THING_NAME"
     schema_file="$SCHEMA_FILE"
     video_region="$BOARD_VIDEO_REGION"
@@ -292,16 +291,36 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
     if [ -n "$video_sender_command" ]; then \
         service_env+=("Environment=\"BOARD_VIDEO_SENDER_COMMAND=$video_sender_command\""); \
     fi; \
-    if [ -n "{{region}}" ] && [ -n "$region" ]; then \
+    if [ -n "$region" ]; then \
         service_env+=("Environment=\"AWS_REGION=$region\""); \
+        service_env+=("Environment=\"AWS_DEFAULT_REGION=$region\""); \
     fi; \
     if [ -n "$aws_profile" ]; then \
         service_env+=("Environment=\"AWS_PROFILE=$aws_profile\""); \
         service_env+=("Environment=\"AWS_DEFAULT_PROFILE=$aws_profile\""); \
     fi; \
-    if [ -n "{{aws_shared_credentials_file}}" ] && [ -n "$aws_shared_credentials_file" ]; then \
+    if [ -n "$aws_shared_credentials_file" ]; then \
         service_env+=("Environment=\"AWS_SHARED_CREDENTIALS_FILE=$aws_shared_credentials_file\""); \
     fi; \
+    for env_name in \
+        KVS_DUALSTACK_ENDPOINTS \
+        BOARD_DRIVE_RAW_MAX_SPEED \
+        BOARD_DRIVE_CMD_RAW_MIN_SPEED \
+        BOARD_DRIVE_CMD_RAW_MAX_SPEED \
+        BOARD_DRIVE_PWM_HZ \
+        BOARD_DRIVE_PWM_CHIP \
+        BOARD_DRIVE_LEFT_PWM_CHANNEL \
+        BOARD_DRIVE_RIGHT_PWM_CHANNEL \
+        BOARD_DRIVE_GPIO_CHIP \
+        BOARD_DRIVE_LEFT_DIR_GPIO \
+        BOARD_DRIVE_RIGHT_DIR_GPIO \
+        BOARD_DRIVE_LEFT_INVERTED \
+        BOARD_DRIVE_RIGHT_INVERTED; do \
+        env_value="${!env_name:-}"; \
+        if [ -n "$env_value" ]; then \
+            service_env+=("Environment=\"$env_name=$env_value\""); \
+        fi; \
+    done; \
     { \
         printf '%s\n' \
             '[Unit]' \
@@ -311,8 +330,7 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
             '' \
             '[Service]' \
             'Type=simple' \
-            "WorkingDirectory=$project_root" \
-            "EnvironmentFile=$env_file"; \
+            "WorkingDirectory=$project_root"; \
         printf '%s\n' "${service_env[@]}"; \
         printf '%s\n' \
             'ExecStart={{built_board}} --heartbeat-seconds 60' \
