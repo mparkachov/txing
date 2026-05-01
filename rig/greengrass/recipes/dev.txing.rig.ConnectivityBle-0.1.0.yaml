@@ -1,0 +1,37 @@
+RecipeFormatVersion: '2020-01-25'
+ComponentName: dev.txing.rig.ConnectivityBle
+ComponentVersion: '0.1.0'
+ComponentType: aws.greengrass.generic
+ComponentDescription: txing rig BLE connectivity adapter for MCU rendezvous and GATT power control.
+ComponentPublisher: txing
+ComponentConfiguration:
+  DefaultConfiguration:
+    AdapterId: ble-main
+    RigName: rig
+    NameFragment: txing
+    accessControl:
+      aws.greengrass.ipc.pubsub:
+        dev.txing.rig.ConnectivityBle:pubsub:1:
+          policyDescription: Allows the BLE connectivity adapter to exchange local connectivity messages with the Sparkplug manager.
+          operations:
+            - aws.greengrass#PublishToTopic
+            - aws.greengrass#SubscribeToTopic
+          resources:
+            - dev/txing/rig/v1/connectivity/#
+Manifests:
+  - Platform:
+      os: linux
+      architecture: aarch64
+    Lifecycle:
+      install:
+        Script: |-
+          python3 -m venv "{work:path}/venv"
+          "{work:path}/venv/bin/python" -m pip install --no-index --find-links "{artifacts:decompressedPath}/rig-greengrass/wheels" "{artifacts:decompressedPath}/rig-greengrass/wheels"/rig-*.whl
+      run:
+        RequiresPrivilege: true
+        Script: |-
+          export RIG_NAME="{configuration:/RigName}"
+          exec "{work:path}/venv/bin/rig-connectivity-ble" --adapter-id "{configuration:/AdapterId}" --name "{configuration:/NameFragment}"
+    Artifacts:
+      - Uri: s3://REPLACE_WITH_TXING_GREENGRASS_ARTIFACT_BUCKET/rig-greengrass/0.1.0/rig-greengrass.zip
+        Unarchive: ZIP

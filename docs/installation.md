@@ -33,7 +33,11 @@ The rig is the always-on Raspberry Pi coordinator that owns Sparkplug publicatio
 ```bash
 sudo apt update
 sudo apt full-upgrade -y
-sudo apt install -y git curl jq awscli bluez just
+sudo apt install -y \
+  git curl jq awscli bluez just ca-certificates python3-venv \
+  build-essential pkg-config cmake libssl-dev libcurl4-openssl-dev \
+  uuid-dev libzip-dev libsqlite3-dev libyaml-dev libsystemd-dev \
+  libevent-dev liburiparser-dev cgroup-tools
 sudo systemctl enable --now bluetooth
 ```
 
@@ -79,17 +83,87 @@ cd "$TXING_HOME"
 just rig::check
 ```
 
-### 4. Build And Install The Service
+### 4. Prepare Greengrass Lite Configuration
 
-`rig` requires Python `3.12+`.
+Production rig supervision is AWS IoT Greengrass Nucleus Lite, not a custom
+`rig.service` Python systemd unit. The rig build clones Greengrass Lite from
+upstream `main`, compiles it locally, installs its standard systemd units, and
+starts the default `greengrass-lite.target`.
+
+Before installing the service, the rig host must have:
+
+- the shared stack deployed and `just aws::configure-indexing` applied
+- the rig thing registered in AWS IoT
+- a Greengrass core certificate, private key, and Amazon Root CA copied under
+  `/var/lib/greengrass/credentials`
+- the certificate attached to the rig thing and to the stack-created IoT policy
+- `/etc/greengrass/config.yaml` configured for that rig thing
+
+Resolve the endpoints and role alias from the town account:
 
 ```bash
 cd "$TXING_HOME"
-python3 --version
+just aws-town iot describe-endpoint --endpoint-type iot:Data-ATS
+just aws-town iot describe-endpoint --endpoint-type iot:CredentialProvider
+just aws-town cloudformation describe-stacks \
+  --stack-name <shared-stack-name> \
+  --query "Stacks[0].Outputs[?OutputKey=='GreengrassTokenExchangeRoleAlias'].OutputValue | [0]" \
+  --output text
+```
+
+Use those values in `/etc/greengrass/config.yaml`:
+
+```yaml
+system:
+  privateKeyPath: "/var/lib/greengrass/credentials/rig.private.key"
+  certificateFilePath: "/var/lib/greengrass/credentials/rig.cert.pem"
+  rootCaPath: "/var/lib/greengrass/credentials/AmazonRootCA1.pem"
+  rootPath: "/var/lib/greengrass"
+  thingName: "rig"
+services:
+  aws.greengrass.NucleusLite:
+    componentType: "NUCLEUS"
+    configuration:
+      awsRegion: "eu-central-1"
+      iotCredEndpoint: "<credential-provider-endpoint>"
+      iotDataEndpoint: "<data-ats-endpoint>"
+      iotRoleAlias: "<GreengrassTokenExchangeRoleAlias>"
+      runWithDefault:
+        posixUser: "gg_component:gg_component"
+      greengrassDataPlanePort: "8443"
+      platformOverride: {}
+```
+
+Replace `thingName`, `awsRegion`, endpoints, role alias, and credential paths
+with the actual rig values.
+
+### 5. Build And Install The Greengrass Service
+
+The rig Python runtime requires Python `3.12+`; Raspberry Pi OS Trixie satisfies
+that requirement.
+
+```bash
+cd "$TXING_HOME"
+just rig::build-native
 just rig::build
 just rig::install-service
-sudo journalctl -u rig -f
 ```
+
+`just rig::install-service` removes the legacy `rig.service` if present and
+installs and starts the standard Greengrass Lite systemd units from the native
+build. It creates the default `ggcore` and `gg_component` users if they are
+missing, keeps `/var/lib/greengrass` owned by `ggcore:ggcore`, and starts
+`greengrass-lite.target` through the upstream `misc/run_nucleus` script.
+
+Inspect Greengrass service health with:
+
+```bash
+sudo systemctl status --with-dependencies greengrass-lite.target
+sudo journalctl -a -f
+```
+
+Deploy `dev.txing.rig.SparkplugManager` and `dev.txing.rig.ConnectivityBle` as
+Greengrass components. The recipe templates live in `rig/greengrass/recipes`.
 
 Useful foreground commands:
 

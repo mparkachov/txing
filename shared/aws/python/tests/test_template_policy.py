@@ -102,6 +102,33 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("topic/spBv1.0/*", template)
         self.assertIn("topicfilter/spBv1.0/*", template)
 
+    def test_template_defines_greengrass_token_exchange_resources(self) -> None:
+        template = (
+            Path(__file__).resolve().parents[2] / "template.yaml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("TxingGreengrassTokenExchangeRole:", template)
+        self.assertIn("Service: credentials.iot.amazonaws.com", template)
+        self.assertIn("TxingGreengrassTokenExchangeRoleAlias:", template)
+        self.assertIn("Type: AWS::IoT::RoleAlias", template)
+        self.assertIn("CredentialDurationSeconds: 3600", template)
+        self.assertIn("iot:AssumeRoleWithCertificate", template)
+        self.assertIn("greengrass:*", template)
+        self.assertIn("TxingGreengrassArtifactsBucket:", template)
+        self.assertIn("Sid: RigGreengrassArtifactObjectRead", template)
+        self.assertIn("GreengrassTokenExchangeRoleAliasArn:", template)
+        self.assertIn("GreengrassArtifactsBucketName:", template)
+
+    def test_aws_justfile_enables_thing_connectivity_indexing(self) -> None:
+        justfile = (
+            Path(__file__).resolve().parents[2] / "justfile"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('"thingConnectivityIndexingMode":"STATUS"', justfile)
+        self.assertIn('[ "$thing_connectivity_indexing_mode" = "STATUS" ]', justfile)
+        self.assertNotIn('"thingConnectivityIndexingMode":"OFF"', justfile)
+        self.assertNotIn("REGISTRY/OFF", justfile)
+
 
 if __name__ == "__main__":
     unittest.main()

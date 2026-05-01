@@ -51,9 +51,13 @@ just aws::describe
 The shared stack owns:
 
 - IAM roles and policies for the runtimes and web app
+- Greengrass token exchange role, AWS IoT role alias, and artifact bucket
 - Cognito resources
 - CloudFront and S3 for the SPA
 - stack-owned IoT thing types `town` and `rig`
+
+Rig Greengrass component recipe templates live in `rig/greengrass/recipes`; the
+root of the repository does not own a separate Greengrass package.
 
 ### 2. Deploy Witness
 
@@ -75,6 +79,11 @@ It owns:
 ```bash
 just aws::configure-indexing
 ```
+
+This enables registry indexing plus AWS IoT connectivity status indexing
+(`thingConnectivityIndexingMode=STATUS`). The stack template defines the IAM,
+role-alias, and policy resources, but AWS IoT fleet indexing itself is configured
+through the AWS IoT `UpdateIndexingConfiguration` API.
 
 Current searchable registry attributes:
 
@@ -221,13 +230,14 @@ just aws-town cloudformation delete-stack --stack-name <shared-stack-name>-witne
 
 ### 7. Delete The Shared Stack
 
-`just aws::delete` empties the current web bucket before deleting the shared stack:
+`just aws::delete` empties the current web app and Greengrass artifact buckets
+before deleting the shared stack:
 
 ```bash
 just aws::delete
 ```
 
-If you delete the stack manually instead, empty the web app bucket first.
+If you delete the stack manually instead, empty both buckets first.
 
 ## Rebuild Order After Cleanup
 

@@ -268,6 +268,14 @@ thing_index_name := "AWS_Things"
     if [ -n "$web_bucket_name" ] && [ "$web_bucket_name" != "None" ]; then
       aws s3 rm "s3://$web_bucket_name" --recursive "${aws_flags[@]}" || true
     fi
+    greengrass_artifacts_bucket_name="$(aws cloudformation describe-stacks \
+      --stack-name "$stack_name" \
+      "${aws_flags[@]}" \
+      --query "Stacks[0].Outputs[?OutputKey=='GreengrassArtifactsBucketName'].OutputValue | [0]" \
+      --output text 2>/dev/null || true)"
+    if [ -n "$greengrass_artifacts_bucket_name" ] && [ "$greengrass_artifacts_bucket_name" != "None" ]; then
+      aws s3 rm "s3://$greengrass_artifacts_bucket_name" --recursive "${aws_flags[@]}" || true
+    fi
 
     principals="$(aws iot list-thing-principals --thing-name "{{thing_name}}" "${aws_flags[@]}" --query principals --output text 2>/dev/null || true)"
     if [ -n "$principals" ] && [ "$principals" != "None" ]; then
@@ -559,10 +567,10 @@ thing_index_name := "AWS_Things"
         --query "thingIndexingConfiguration.customFields[].name" \
         --output text 2>/dev/null || true
     )"
-    if [ "$thing_indexing_mode" = "REGISTRY" ] && [ "$thing_connectivity_indexing_mode" = "OFF" ]; then
-      echo "ok: AWS IoT fleet indexing is enabled in REGISTRY mode"
+    if [ "$thing_indexing_mode" = "REGISTRY" ] && [ "$thing_connectivity_indexing_mode" = "STATUS" ]; then
+      echo "ok: AWS IoT fleet indexing is enabled in REGISTRY mode with connectivity status"
     else
-      echo "fail: AWS IoT fleet indexing is not configured as REGISTRY/OFF"
+      echo "fail: AWS IoT fleet indexing is not configured as REGISTRY/STATUS"
       failures=$((failures + 1))
     fi
     if printf '%s\n' "$indexing_custom_fields" | tr '\t' '\n' | grep -Fx "attributes.name" >/dev/null \
@@ -836,7 +844,7 @@ thing_index_name := "AWS_Things"
       aws_flags+=(--profile "$profile")
     fi
 
-    thing_indexing_configuration='{"thingIndexingMode":"REGISTRY","thingConnectivityIndexingMode":"OFF","customFields":[{"name":"attributes.name","type":"String"},{"name":"attributes.town","type":"String"},{"name":"attributes.rig","type":"String"}]}'
+    thing_indexing_configuration='{"thingIndexingMode":"REGISTRY","thingConnectivityIndexingMode":"STATUS","customFields":[{"name":"attributes.name","type":"String"},{"name":"attributes.town","type":"String"},{"name":"attributes.rig","type":"String"}]}'
 
     aws iot update-indexing-configuration \
       "${aws_flags[@]}" \
@@ -863,7 +871,7 @@ thing_index_name := "AWS_Things"
           --output text 2>/dev/null || true
       )"
       if [ "$thing_indexing_mode" = "REGISTRY" ] \
-        && [ "$thing_connectivity_indexing_mode" = "OFF" ] \
+        && [ "$thing_connectivity_indexing_mode" = "STATUS" ] \
         && printf '%s\n' "$indexing_custom_fields" | tr '\t' '\n' | grep -Fx "attributes.name" >/dev/null \
         && printf '%s\n' "$indexing_custom_fields" | tr '\t' '\n' | grep -Fx "attributes.town" >/dev/null \
         && printf '%s\n' "$indexing_custom_fields" | tr '\t' '\n' | grep -Fx "attributes.rig" >/dev/null; then

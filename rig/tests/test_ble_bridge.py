@@ -643,7 +643,7 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertFalse(hasattr(args, "ca_file"))
         self.assertEqual(args.cloudwatch_log_group, "/town/rig/txing-prod")
 
-    def test_justfile_install_service_exports_multi_device_environment(self) -> None:
+    def test_justfile_install_service_uses_greengrass_supervision(self) -> None:
         justfile = (Path(__file__).resolve().parents[2] / "rig" / "justfile").read_text(
             encoding="utf-8"
         )
@@ -653,21 +653,34 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertIn('just --justfile "{{root_justfile}}" _project-aws-env rig', justfile)
         self.assertIn('command aws "$@"', justfile)
         self.assertNotIn('describe-log-groups', justfile)
-        self.assertIn(
-            'aws_profile="$AWS_SELECTED_PROFILE"',
-            justfile,
-        )
-        self.assertIn(
-            'aws_shared_credentials_file="$AWS_SHARED_CREDENTIALS_FILE"',
-            justfile,
-        )
-        self.assertIn(
-            'aws_config_file="$AWS_CONFIG_FILE"',
-            justfile,
-        )
-        self.assertIn('env_file="$AWS_ENV_FILE"', justfile)
-        self.assertIn('rig_env_file="$RIG_ENV_FILE"', justfile)
-        self.assertIn('project_root="$TXING_PROJECT_ROOT"', justfile)
+        self.assertIn("legacy_systemd_unit", justfile)
+        self.assertIn('greengrass_lite_dir := rig_dir + "/greengrass-lite"', justfile)
+        self.assertIn('greengrass_lite_target := "greengrass-lite.target"', justfile)
+        self.assertIn("default_greengrass_lite_repository", justfile)
+        self.assertIn("https://github.com/aws-greengrass/aws-greengrass-lite.git", justfile)
+        self.assertIn("default_greengrass_lite_ref", justfile)
+        self.assertIn("@clone-greengrass-lite:", justfile)
+        self.assertIn('git clone --branch "{{default_greengrass_lite_ref}}"', justfile)
+        self.assertIn("@build-native:", justfile)
+        self.assertIn("Greengrass Lite native build is supported only on Linux", justfile)
+        self.assertIn('-S "{{greengrass_lite_dir}}"', justfile)
+        self.assertIn('-B "{{greengrass_lite_build_dir}}"', justfile)
+        self.assertIn("-DGGL_SYSTEMD_SYSTEM_USER=ggcore", justfile)
+        self.assertIn("-DGGL_SYSTEMD_SYSTEM_GROUP=ggcore", justfile)
+        self.assertIn("-DGGL_SYSTEMD_SYSTEM_DIR=/lib/systemd/system", justfile)
+        self.assertIn('cmake --build "{{greengrass_lite_build_dir}}"', justfile)
+        self.assertIn('sudo cmake --install "{{greengrass_lite_build_dir}}"', justfile)
+        self.assertIn('sudo "{{greengrass_lite_dir}}/misc/run_nucleus"', justfile)
+        self.assertIn('sudo systemctl enable --now bluetooth', justfile)
+        self.assertIn('sudo systemctl disable --now rig.service || true', justfile)
+        self.assertIn('sudo rm -f "{{legacy_systemd_unit}}"', justfile)
+        self.assertIn("Greengrass Lite native build is missing", justfile)
+        self.assertIn("Missing built rig entrypoint", justfile)
+        self.assertIn("Run 'just rig::build' before 'just rig::install-service'", justfile)
+        self.assertIn("Create /etc/greengrass/config.yaml", justfile)
+        self.assertIn("standard Greengrass Lite systemd target", justfile)
+        self.assertIn('dev.txing.rig.SparkplugManager', justfile)
+        self.assertIn('dev.txing.rig.ConnectivityBle', justfile)
         self.assertNotIn('Environment="THING_NAME={{thing_name}}"', justfile)
         self.assertIn('rig_name="$RIG_NAME"', justfile)
         self.assertNotIn('Environment="RIG_THING_NAME={{rig_thing_name}}"', justfile)
@@ -678,28 +691,37 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertIn('--scope rig', justfile)
         self.assertNotIn('AWS_ENDPOINT_FILE', justfile)
         self.assertNotIn('IOT_ENDPOINT_FILE', justfile)
-        self.assertIn('EnvironmentFile=$env_file', justfile)
-        self.assertIn('EnvironmentFile=-$rig_env_file', justfile)
-        self.assertIn('region="$AWS_REGION"', justfile)
-        self.assertIn('[ -n "{{region}}" ]', justfile)
-        self.assertIn('AWS_REGION=$region', justfile)
+        self.assertNotIn('EnvironmentFile=$env_file', justfile)
+        self.assertNotIn('EnvironmentFile=-$rig_env_file', justfile)
         self.assertIn('[ -n "{{rig_name}}" ]', justfile)
-        self.assertIn('RIG_NAME=$rig_name', justfile)
         self.assertIn('[ -n "{{sparkplug_group_id}}" ]', justfile)
-        self.assertIn('SPARKPLUG_GROUP_ID=$sparkplug_group_id', justfile)
         self.assertIn('[ -n "{{sparkplug_edge_node_id}}" ]', justfile)
-        self.assertIn('SPARKPLUG_EDGE_NODE_ID=$sparkplug_edge_node_id', justfile)
-        self.assertIn('[ -n "{{aws_profile}}" ]', justfile)
-        self.assertIn('AWS_PROFILE=$aws_profile', justfile)
-        self.assertIn('[ -n "{{aws_shared_credentials_file}}" ]', justfile)
-        self.assertIn('AWS_SHARED_CREDENTIALS_FILE=$aws_shared_credentials_file', justfile)
-        self.assertIn('[ -n "{{aws_config_file}}" ]', justfile)
-        self.assertIn('AWS_CONFIG_FILE=$aws_config_file', justfile)
-        self.assertIn('cloudwatch_log_group="$CLOUDWATCH_LOG_GROUP"', justfile)
-        self.assertIn('[ -n "{{cloudwatch_log_group}}" ]', justfile)
-        self.assertIn('CLOUDWATCH_LOG_GROUP=$cloudwatch_log_group', justfile)
-        self.assertIn('WorkingDirectory=$project_root', justfile)
-        self.assertIn('ExecStart={{built_rig}}', justfile)
+        self.assertNotIn('WorkingDirectory=$project_root', justfile)
+        self.assertNotIn('ExecStart={{built_rig}}', justfile)
+
+    def test_greengrass_templates_are_rig_local(self) -> None:
+        repo_root = Path(__file__).resolve().parents[2]
+
+        self.assertFalse((repo_root / "greengrass" / "README.md").exists())
+        self.assertTrue((repo_root / "rig" / "greengrass" / "README.md").exists())
+        self.assertTrue(
+            (
+                repo_root
+                / "rig"
+                / "greengrass"
+                / "recipes"
+                / "dev.txing.rig.SparkplugManager-0.1.0.yaml"
+            ).exists()
+        )
+        self.assertTrue(
+            (
+                repo_root
+                / "rig"
+                / "greengrass"
+                / "recipes"
+                / "dev.txing.rig.ConnectivityBle-0.1.0.yaml"
+            ).exists()
+        )
 
     def test_root_justfile_sources_optional_rig_env_for_rig_scope(self) -> None:
         justfile = (Path(__file__).resolve().parents[2] / "justfile").read_text(

@@ -3,16 +3,23 @@ set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 rig_dir := source_directory()
 python_executable := "python3"
 built_rig := rig_dir + "/.venv/bin/rig"
+built_rig_connectivity_ble := rig_dir + "/.venv/bin/rig-connectivity-ble"
+built_rig_sparkplug_manager := rig_dir + "/.venv/bin/rig-sparkplug-manager"
 built_rig_sparkplug_cmd := rig_dir + "/.venv/bin/rig-sparkplug-cmd"
 built_rig_sparkplug_log := rig_dir + "/.venv/bin/rig-sparkplug-log"
 project_root := rig_dir + "/.."
 root_justfile := project_root + "/justfile"
+greengrass_lite_dir := rig_dir + "/greengrass-lite"
+greengrass_lite_build_dir := greengrass_lite_dir + "/build"
+greengrass_lite_target := "greengrass-lite.target"
+default_greengrass_lite_repository := env_var_or_default("TXING_RIG_GREENGRASS_LITE_REPOSITORY", "https://github.com/aws-greengrass/aws-greengrass-lite.git")
+default_greengrass_lite_ref := env_var_or_default("TXING_RIG_GREENGRASS_LITE_REF", "main")
 thing_name := "unit-local"
 region := ""
 aws_profile := ""
 aws_shared_credentials_file := ""
 aws_config_file := ""
-systemd_unit := "/etc/systemd/system/rig.service"
+legacy_systemd_unit := "/etc/systemd/system/rig.service"
 
 @sync:
     cd "{{rig_dir}}" && uv sync --python "{{python_executable}}" --no-managed-python --no-python-downloads
@@ -20,6 +27,8 @@ systemd_unit := "/etc/systemd/system/rig.service"
 @build:
     cd "{{rig_dir}}" && uv sync --frozen --no-editable --compile-bytecode --python "{{python_executable}}" --no-managed-python --no-python-downloads --refresh-package rig --reinstall-package rig --refresh-package aws --reinstall-package aws --refresh-package unit-rig --reinstall-package unit-rig
     test -x "{{built_rig}}"
+    test -x "{{built_rig_connectivity_ble}}"
+    test -x "{{built_rig_sparkplug_manager}}"
     test -x "{{built_rig_sparkplug_cmd}}"
     test -x "{{built_rig_sparkplug_log}}"
 
@@ -48,6 +57,43 @@ systemd_unit := "/etc/systemd/system/rig.service"
       --scope rig \
       --rig-name "$rig_name" \
       --log-group-name "$cloudwatch_log_group"
+
+@clone-greengrass-lite:
+    if [ ! -d "{{greengrass_lite_dir}}/.git" ]; then \
+        git clone --branch "{{default_greengrass_lite_ref}}" --depth 1 "{{default_greengrass_lite_repository}}" "{{greengrass_lite_dir}}"; \
+    else \
+        git -C "{{greengrass_lite_dir}}" remote set-url origin "{{default_greengrass_lite_repository}}"; \
+        git -C "{{greengrass_lite_dir}}" fetch --force --tags origin; \
+        if git -C "{{greengrass_lite_dir}}" show-ref --verify --quiet "refs/remotes/origin/{{default_greengrass_lite_ref}}"; then \
+            git -C "{{greengrass_lite_dir}}" checkout -B "{{default_greengrass_lite_ref}}" "origin/{{default_greengrass_lite_ref}}"; \
+            git -C "{{greengrass_lite_dir}}" reset --hard "origin/{{default_greengrass_lite_ref}}"; \
+        else \
+            git -C "{{greengrass_lite_dir}}" checkout "{{default_greengrass_lite_ref}}"; \
+        fi; \
+    fi
+
+@clean-native:
+    rm -rf "{{greengrass_lite_build_dir}}"
+
+@distclean-native:
+    just clean-native
+    rm -rf "{{greengrass_lite_dir}}"
+
+@build-native:
+    if [ "$(uname -s)" != "Linux" ]; then \
+        echo "Greengrass Lite native build is supported only on Linux targets such as Raspberry Pi OS Lite." >&2; \
+        exit 1; \
+    fi
+    just clone-greengrass-lite
+    cmake \
+      -S "{{greengrass_lite_dir}}" \
+      -B "{{greengrass_lite_build_dir}}" \
+      -DCMAKE_BUILD_TYPE=MinSizeRel \
+      -DGGL_SYSTEMD_SYSTEM_USER=ggcore \
+      -DGGL_SYSTEMD_SYSTEM_GROUP=ggcore \
+      -DGGL_SYSTEMD_SYSTEM_DIR=/lib/systemd/system
+    cmake --build "{{greengrass_lite_build_dir}}" --config MinSizeRel --parallel
+    test -x "{{greengrass_lite_build_dir}}/bin/ggl-cli"
 
 @run:
     #!/usr/bin/env bash
@@ -174,22 +220,16 @@ systemd_unit := "/etc/systemd/system/rig.service"
 @install-service rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file aws_config_file=aws_config_file cloudwatch_log_group='':
     #!/usr/bin/env bash
     set -euo pipefail
-    test -x "{{built_rig}}" || { \
-        echo "Missing built rig executable at {{built_rig}}. Run 'just build' first." >&2; \
-        exit 1; \
-    }
+    for built_entrypoint in "{{built_rig}}" "{{built_rig_connectivity_ble}}" "{{built_rig_sparkplug_manager}}"; do \
+        if [ ! -x "$built_entrypoint" ]; then \
+            echo "Missing built rig entrypoint at $built_entrypoint. Run 'just rig::build' before 'just rig::install-service'." >&2; \
+            exit 1; \
+        fi; \
+    done
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}" "" "" "" "{{aws_shared_credentials_file}}" "{{aws_config_file}}")"
-    project_root="$TXING_PROJECT_ROOT"
-    env_file="$AWS_ENV_FILE"
-    rig_env_file="$RIG_ENV_FILE"
-    region="$AWS_REGION"
-    aws_profile="$AWS_SELECTED_PROFILE"
-    aws_shared_credentials_file="$AWS_SHARED_CREDENTIALS_FILE"
-    aws_config_file="$AWS_CONFIG_FILE"
     rig_name="$RIG_NAME"
     sparkplug_group_id="$SPARKPLUG_GROUP_ID"
     sparkplug_edge_node_id="$SPARKPLUG_EDGE_NODE_ID"
-    cloudwatch_log_group="$CLOUDWATCH_LOG_GROUP"
     if [ -n "{{rig_name}}" ]; then \
         rig_name="{{rig_name}}"; \
     fi; \
@@ -199,57 +239,42 @@ systemd_unit := "/etc/systemd/system/rig.service"
     if [ -n "{{sparkplug_edge_node_id}}" ]; then \
         sparkplug_edge_node_id="{{sparkplug_edge_node_id}}"; \
     fi; \
-    if [ -n "{{cloudwatch_log_group}}" ]; then \
-        cloudwatch_log_group="{{cloudwatch_log_group}}"; \
-    fi; \
     sudo systemctl enable --now bluetooth
-    run_user="$(id -un)"; \
-    service_env=(); \
-    if [ -n "{{rig_name}}" ]; then \
-        service_env+=("Environment=\"RIG_NAME=$rig_name\""); \
-    fi; \
-    if [ -n "{{sparkplug_group_id}}" ]; then \
-        service_env+=("Environment=\"SPARKPLUG_GROUP_ID=$sparkplug_group_id\""); \
-    fi; \
-    if [ -n "{{sparkplug_edge_node_id}}" ]; then \
-        service_env+=("Environment=\"SPARKPLUG_EDGE_NODE_ID=$sparkplug_edge_node_id\""); \
-    fi; \
-    if [ -n "{{cloudwatch_log_group}}" ]; then \
-        service_env+=("Environment=\"CLOUDWATCH_LOG_GROUP=$cloudwatch_log_group\""); \
-    fi; \
-    if [ -n "{{region}}" ] && [ -n "$region" ]; then \
-        service_env+=("Environment=\"AWS_REGION=$region\""); \
-    fi; \
-    if [ -n "{{aws_profile}}" ] && [ -n "$aws_profile" ]; then \
-        service_env+=("Environment=\"AWS_PROFILE=$aws_profile\""); \
-    fi; \
-    if [ -n "{{aws_shared_credentials_file}}" ] && [ -n "$aws_shared_credentials_file" ]; then \
-        service_env+=("Environment=\"AWS_SHARED_CREDENTIALS_FILE=$aws_shared_credentials_file\""); \
-    fi; \
-    if [ -n "{{aws_config_file}}" ] && [ -n "$aws_config_file" ]; then \
-        service_env+=("Environment=\"AWS_CONFIG_FILE=$aws_config_file\""); \
-    fi; \
-    { \
-        printf '%s\n' \
-            '[Unit]' \
-            'Description=txing rig lifecycle runtime' \
-            'After=network-online.target bluetooth.target' \
-            'Wants=network-online.target bluetooth.target' \
-            '' \
-            '[Service]' \
-            'Type=simple' \
-            "User=$run_user" \
-            "WorkingDirectory=$project_root" \
-            "EnvironmentFile=$env_file" \
-            "EnvironmentFile=-$rig_env_file"; \
-        printf '%s\n' "${service_env[@]}"; \
-        printf '%s\n' \
-            'ExecStart={{built_rig}}' \
-            'Restart=always' \
-            'RestartSec=3' \
-            '' \
-            '[Install]' \
-            'WantedBy=multi-user.target'; \
-    } | sudo tee "{{systemd_unit}}" >/dev/null
-    sudo systemctl daemon-reload
-    sudo systemctl enable --now rig
+    if systemctl list-unit-files --no-legend rig.service 2>/dev/null | grep -F "rig.service" >/dev/null; then \
+        sudo systemctl disable --now rig.service || true; \
+    fi
+    if [ -f "{{legacy_systemd_unit}}" ]; then \
+        sudo rm -f "{{legacy_systemd_unit}}"; \
+        sudo systemctl daemon-reload; \
+    fi
+    if [ ! -d "{{greengrass_lite_build_dir}}" ]; then \
+        echo "Greengrass Lite native build is missing at {{greengrass_lite_build_dir}}." >&2; \
+        echo "Run 'just rig::build-native' before 'just rig::install-service'." >&2; \
+        exit 1; \
+    fi
+    if ! getent group ggcore >/dev/null; then \
+        sudo groupadd --system ggcore; \
+    fi
+    if ! id -u ggcore >/dev/null 2>&1; then \
+        sudo useradd --system --gid ggcore --home-dir /var/lib/greengrass --shell /usr/sbin/nologin ggcore; \
+    fi
+    if ! getent group gg_component >/dev/null; then \
+        sudo groupadd --system gg_component; \
+    fi
+    if ! id -u gg_component >/dev/null 2>&1; then \
+        sudo useradd --system --gid gg_component --home-dir /var/lib/greengrass/component --shell /usr/sbin/nologin gg_component; \
+    fi
+    sudo mkdir -p /var/lib/greengrass /etc/greengrass
+    sudo chown -R ggcore:ggcore /var/lib/greengrass
+    sudo cmake --install "{{greengrass_lite_build_dir}}" --config MinSizeRel
+    config_paths=(/etc/greengrass/config.yaml /etc/greengrass/config.d/*.yaml /etc/greengrass/config.d/*.yml)
+    for required_key in privateKeyPath certificateFilePath rootCaPath thingName iotRoleAlias; do \
+        if ! sudo grep -R -Eq "$required_key:" "${config_paths[@]}" 2>/dev/null; then \
+            echo "Greengrass Lite configuration is missing required key '$required_key'." >&2; \
+            echo "Create /etc/greengrass/config.yaml with the rig thing certificate paths, AWS IoT endpoints, role alias, and posixUser before starting the service." >&2; \
+            exit 1; \
+        fi; \
+    done
+    sudo "{{greengrass_lite_dir}}/misc/run_nucleus"
+    printf 'txing rig is supervised by the standard Greengrass Lite systemd target %s\n' "{{greengrass_lite_target}}"
+    printf 'Deploy components dev.txing.rig.SparkplugManager and dev.txing.rig.ConnectivityBle with RigName=%s SparkplugGroupId=%s SparkplugEdgeNodeId=%s\n' "$rig_name" "$sparkplug_group_id" "$sparkplug_edge_node_id"

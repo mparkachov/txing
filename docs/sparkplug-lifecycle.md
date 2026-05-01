@@ -4,17 +4,30 @@
 
 - Scope: current lifecycle control through Sparkplug with one writable metric: `redcon`
 - Group model: `town` is the Sparkplug group id
-- Edge model: `rig` is the Sparkplug edge node
+- Edge model: `rig` is the Sparkplug edge node and Greengrass Lite core
 - Device model: each physical `txing` is one Sparkplug device and one AWS IoT thing
 - Sparkplug MQTT is the source protocol
 - The `sparkplug` named shadow is the AWS-side materialized Sparkplug view, not device intent storage
 - `DCMD.redcon` is the only writable lifecycle command path
 
+## Hard Edge Node Requirement
+
+The rig is not a Sparkplug device. The rig is the Sparkplug edge node, and in
+production that edge node is the Greengrass Lite core running
+`dev.txing.rig.SparkplugManager`.
+
+- `spBv1.0/<town>/NBIRTH/<rig>` means the Greengrass Lite rig edge node is born.
+- `spBv1.0/<town>/NDEATH/<rig>` means the Greengrass Lite rig edge node is dead.
+- `spBv1.0/<town>/DBIRTH/<rig>/...` and `spBv1.0/<town>/DDEATH/<rig>/...` must never represent the rig itself.
+- `DBIRTH`, `DDATA`, and `DDEATH` are only for txing/unit things managed by the rig.
+- Witness projects node `NBIRTH` and `NDEATH` messages onto the registered rig thing's `sparkplug` named shadow.
+- Greengrass core/device/component status and AWS IoT MQTT lifecycle events are observability signals only; they do not replace Sparkplug `NBIRTH` and `NDEATH`.
+
 ## Authority and Ownership
 
 - Sparkplug is the only authoritative lifecycle intent transport.
 - AWS shadow is reflection and durable restart cache only.
-- `rig` is the only authority that publishes Sparkplug lifecycle state for rig and txing entities.
+- `rig` is the only authority that publishes Sparkplug node lifecycle for the rig edge node and device lifecycle for managed txing entities.
 - Witness is the only authority that writes the AWS-side `sparkplug` named shadow projection for rig and unit things.
 - `board` remains the source of truth for board power, wifi, and video operational state.
 - `rig` remains the source of truth for `mcu` and `mcp` named shadows.
@@ -32,6 +45,9 @@ Supported message types:
 - Device: `DBIRTH`, `DDATA`, `DDEATH`
 
 Topic identity is not inferred from Sparkplug metrics. It comes only from the MQTT topic.
+For the rig thing, witness resolves node topics by matching
+`edgeNodeId=<rig>` and `groupId=<town>` to the registered rig thing. For managed
+txing/unit things, witness uses the device id segment in the device topic.
 
 ## Shadow Projection Model
 

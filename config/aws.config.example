@@ -1,7 +1,8 @@
 # Copy this file to `config/aws.config`.
 # `town` is the direct profile for the AWS account that owns the resources.
-# `rig` assumes the runtime role created by the stack output `RigRuntimeRoleArn`
-# using `town` as its source credentials.
+# `rig` is for legacy/local foreground commands. Production Greengrass
+# components use the stack output `GreengrassTokenExchangeRoleAlias`.
+# The local profile assumes `RigRuntimeRoleArn` using `town` as its source credentials.
 # `device` assumes the runtime role created by the stack output for registered device hosts
 # using `town` as its source credentials.
 

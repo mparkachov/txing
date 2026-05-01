@@ -22,6 +22,22 @@ Parameters:
     Description: Alternate local dev origin.
 
 Resources:
+  TxingGreengrassArtifactsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+
   TxingGatewayLogsManagedPolicy:
     Type: AWS::IAM::ManagedPolicy
     Properties:
@@ -59,7 +75,7 @@ Resources:
   TxingRigRuntimeManagedPolicy:
     Type: AWS::IAM::ManagedPolicy
     Properties:
-      Description: Attach to the town-scoped rig runtime IAM role used by rig MQTT/WSS and control-plane calls.
+      Description: Attach to the town-scoped rig runtime IAM role or Greengrass Token Exchange role used by rig MQTT/WSS and control-plane calls.
       ManagedPolicyName: !Sub ${AWS::StackName}-rig-runtime
       PolicyDocument:
         Version: "2012-10-17"
@@ -152,11 +168,21 @@ Resources:
             Resource:
               - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:txing/*
               - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:txing/*:log-stream:*
+          - Sid: RigGreengrassArtifactBucketRead
+            Effect: Allow
+            Action:
+              - s3:GetBucketLocation
+              - s3:ListBucket
+            Resource: !GetAtt TxingGreengrassArtifactsBucket.Arn
+          - Sid: RigGreengrassArtifactObjectRead
+            Effect: Allow
+            Action: s3:GetObject
+            Resource: !Sub ${TxingGreengrassArtifactsBucket.Arn}/*
 
   TxingRigRuntimeRole:
     Type: AWS::IAM::Role
     Properties:
-      Description: Town-scoped runtime IAM role assumed by rig hosts for SigV4 MQTT/WSS and AWS control-plane access.
+      Description: Town-scoped runtime IAM role assumed by legacy rig hosts for SigV4 MQTT/WSS and AWS control-plane access; Greengrass rigs should attach the managed policy to the token exchange role.
       RoleName: !Sub ${AWS::StackName}-rig-runtime
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
@@ -167,6 +193,28 @@ Resources:
             Action: sts:AssumeRole
       ManagedPolicyArns:
         - !Ref TxingRigRuntimeManagedPolicy
+
+  TxingGreengrassTokenExchangeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: Token exchange IAM role assumed by AWS IoT Credentials Provider for Greengrass Lite rig components.
+      RoleName: !Sub ${AWS::StackName}-gg-token-exchange
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: credentials.iot.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Ref TxingRigRuntimeManagedPolicy
+
+  TxingGreengrassTokenExchangeRoleAlias:
+    Type: AWS::IoT::RoleAlias
+    Properties:
+      RoleAlias: !Sub ${AWS::StackName}-gg-token-exchange
+      RoleArn: !GetAtt TxingGreengrassTokenExchangeRole.Arn
+      CredentialDurationSeconds: 3600
 
   TxingRigBootstrapManagedPolicy:
     Type: AWS::IAM::ManagedPolicy
@@ -348,6 +396,14 @@ Resources:
             Effect: Allow
             Action: iot:Subscribe
             Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/*
+          - Sid: GreengrassControlPlane
+            Effect: Allow
+            Action: greengrass:*
+            Resource: "*"
+          - Sid: GreengrassTokenExchangeAssumeRole
+            Effect: Allow
+            Action: iot:AssumeRoleWithCertificate
+            Resource: !GetAtt TxingGreengrassTokenExchangeRoleAlias.RoleAliasArn
 
   TxingWebAdminIotPolicy:
     Type: AWS::IoT::Policy
@@ -625,6 +681,24 @@ Outputs:
   RigRuntimeManagedPolicyArn:
     Description: Managed policy attached to the town-scoped rig runtime role.
     Value: !Ref TxingRigRuntimeManagedPolicy
+  GreengrassRigTokenExchangeManagedPolicyArn:
+    Description: Attach this managed policy to the Greengrass token exchange role used by rig components.
+    Value: !Ref TxingRigRuntimeManagedPolicy
+  GreengrassTokenExchangeRoleArn:
+    Description: IAM role assumed by AWS IoT Credentials Provider for Greengrass Lite rig components.
+    Value: !GetAtt TxingGreengrassTokenExchangeRole.Arn
+  GreengrassTokenExchangeRoleName:
+    Description: Name of the Greengrass Lite rig token exchange IAM role.
+    Value: !Ref TxingGreengrassTokenExchangeRole
+  GreengrassTokenExchangeRoleAlias:
+    Description: AWS IoT role alias configured as the Greengrass Lite iotRoleAlias.
+    Value: !Ref TxingGreengrassTokenExchangeRoleAlias
+  GreengrassTokenExchangeRoleAliasArn:
+    Description: AWS IoT role alias ARN allowed by the core device certificate policy.
+    Value: !GetAtt TxingGreengrassTokenExchangeRoleAlias.RoleAliasArn
+  GreengrassArtifactsBucketName:
+    Description: Private bucket for Greengrass component artifacts referenced by txing recipes.
+    Value: !Ref TxingGreengrassArtifactsBucket
   RigBootstrapManagedPolicyArn:
     Description: Attach this managed policy to the bootstrap IAM principal whose access keys are distributed to rigs.
     Value: !Ref TxingRigBootstrapManagedPolicy
@@ -644,7 +718,7 @@ Outputs:
     Description: Attach this managed policy to the AWS principal used by the board video sender.
     Value: !Ref TxingBoardVideoSenderManagedPolicy
   PolicyName:
-    Description: IoT policy retained for certificate-authenticated board or legacy device clients.
+    Description: IoT policy for certificate-authenticated Greengrass cores, board hosts, or legacy device clients.
     Value: !Ref TxingGatewayPolicy
   WebIotPolicyName:
     Description: IoT policy attached to authenticated Cognito identities for browser shadow access.
