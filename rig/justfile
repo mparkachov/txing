@@ -525,41 +525,51 @@ aws_shared_credentials_file := ""
     unit_exists() {
       systemctl cat "$1" >/dev/null 2>&1
     }
-    stop_unit_if_present() {
+    start_unit_if_present() {
       local unit="$1"
       if unit_exists "$unit"; then
-        sudo systemctl stop "$unit" || true
+        sudo systemctl start "$unit" || true
       fi
     }
-    stop_units_by_pattern() {
-      local units=()
-      mapfile -t units < <(
-        systemctl list-units --all --plain --no-legend "$@" \
-          | awk '{print $1}' \
-          | sort -u
-      )
-      if [ "${#units[@]}" -gt 0 ]; then
-        sudo systemctl stop "${units[@]}" || true
+    wait_active_if_present() {
+      local unit="$1"
+      if ! unit_exists "$unit"; then
+        return 0
       fi
+      for _attempt in $(seq 1 30); do
+        if systemctl is-active --quiet "$unit"; then
+          return 0
+        fi
+        sleep 1
+      done
+      return 1
     }
     component_units=(
       ggl.dev.txing.rig.SparkplugManager.service
       ggl.dev.txing.rig.ConnectivityBle.service
     )
-    for unit in "${component_units[@]}"; do
-      stop_unit_if_present "$unit"
-    done
     sudo systemctl stop "{{greengrass_lite_target}}" || true
-    stop_units_by_pattern \
-      'ggl.core.*.service' \
-      'ggl.aws.greengrass.TokenExchangeService.service'
-    stop_units_by_pattern 'ggl.*.socket'
     sudo systemctl reset-failed "{{greengrass_lite_target}}" 'ggl.*.service' 'ggl.*.socket' || true
     sudo systemctl start "{{greengrass_lite_target}}"
-    status_units=("{{greengrass_lite_target}}")
+    core_units=(
+      ggl.core.ggconfigd.service
+      ggl.core.ggipcd.service
+      ggl.core.iotcored.service
+      ggl.core.tesd.service
+      ggl.aws.greengrass.TokenExchangeService.service
+    )
+    for unit in "${core_units[@]}"; do
+      wait_active_if_present "$unit" || true
+    done
     for unit in "${component_units[@]}"; do
       if unit_exists "$unit"; then
-        sudo systemctl restart "$unit"
+        start_unit_if_present "$unit"
+        wait_active_if_present "$unit" || true
+      fi
+    done
+    status_units=("{{greengrass_lite_target}}")
+    for unit in "${core_units[@]}" "${component_units[@]}"; do
+      if unit_exists "$unit"; then
         status_units+=("$unit")
       fi
     done

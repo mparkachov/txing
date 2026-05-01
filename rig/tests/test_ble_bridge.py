@@ -737,12 +737,20 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertIn('sudo systemctl restart bluetooth', justfile)
         self.assertIn("Greengrass Lite target {{greengrass_lite_target}} is not installed", justfile)
         self.assertIn("unit_exists() {", justfile)
-        self.assertIn("stop_units_by_pattern() {", justfile)
+        self.assertIn("start_unit_if_present() {", justfile)
+        self.assertIn("wait_active_if_present() {", justfile)
         self.assertIn("ggl.dev.txing.rig.SparkplugManager.service", justfile)
         self.assertIn("ggl.dev.txing.rig.ConnectivityBle.service", justfile)
+        self.assertIn("ggl.core.ggipcd.service", justfile)
+        self.assertIn("ggl.core.iotcored.service", justfile)
+        self.assertIn("ggl.core.tesd.service", justfile)
         self.assertIn("'ggl.*.service'", justfile)
         self.assertIn("'ggl.*.socket'", justfile)
+        self.assertIn('sudo systemctl stop "{{greengrass_lite_target}}"', justfile)
         self.assertIn('sudo systemctl start "{{greengrass_lite_target}}"', justfile)
+        self.assertIn('sudo systemctl start "$unit" || true', justfile)
+        self.assertNotIn("stop_units_by_pattern() {", justfile)
+        self.assertNotIn('sudo systemctl restart "$unit"', justfile)
         self.assertNotIn('sudo systemctl restart "${greengrass_units[@]}"', justfile)
         self.assertNotIn("greengrass_units < <(", justfile)
         self.assertIn("@deploy", justfile)
@@ -2233,6 +2241,26 @@ class LifecycleBridgeTests(unittest.TestCase):
             bridge._known_device.online_candidate_since_monotonic = bridge._loop.time() - 60.0
             bridge._mark_ble_presence_now()
 
+            self.assertTrue(bridge._target_ble_online_state())
+
+        asyncio.run(exercise())
+
+    def test_sleeping_device_recovers_online_after_two_rendezvous_advertisements(self) -> None:
+        async def exercise() -> None:
+            bridge = BleSleepBridge(
+                BridgeConfig(),
+                ShadowState(
+                    reported_power=False,
+                    ble_online=False,
+                    redcon=4,
+                ),
+                FakeCloudShadow(),  # type: ignore[arg-type]
+            )
+            bridge._loop = asyncio.get_running_loop()
+            bridge._known_device.online_candidate_since_monotonic = bridge._loop.time() - 5.0
+            bridge._mark_ble_presence_now()
+
+            self.assertEqual(bridge._config.ble_online_recover_after, 4.0)
             self.assertTrue(bridge._target_ble_online_state())
 
         asyncio.run(exercise())
