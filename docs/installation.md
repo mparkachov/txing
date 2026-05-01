@@ -6,23 +6,15 @@ This guide covers host setup. AWS bring-up and teardown live in [aws.md](./aws.m
 
 - The repository checkout is local to each host.
 - Project-local AWS config stays under `config/`.
-- `config/aws.env` is shared across the repo.
-- `config/rig.env` is for the rig host.
-- `config/board.env` is for the device board host.
+- `config/aws.env` is the single non-secret AWS/runtime config file.
 - `config/aws.credentials` holds the source `town` credentials.
-- `config/aws.config` holds the `rig` and `device` role assumptions.
 
 Initialize the local config files on the machine where you are setting up a runtime:
 
 ```bash
 cp config/aws.env.example config/aws.env
 cp config/aws.credentials.example config/aws.credentials
-cp config/aws.config.example config/aws.config
-cp config/rig.env.example config/rig.env
-cp config/board.env.example config/board.env
 ```
-
-Only keep the host-specific env file that the machine actually needs.
 
 ## Rig Host
 
@@ -65,14 +57,15 @@ Edit:
 - `config/aws.env`
   - `AWS_REGION`
   - `AWS_STACK_NAME`
+  - `TXING_TOWN_NAME`
+  - `TXING_RIG_NAME`
+  - `TXING_DEVICE_NAME`
+  - `TXING_DEVICE_TYPE`
   - `AWS_COGNITO_DOMAIN_PREFIX`
   - `AWS_ADMIN_EMAIL`
-- `config/rig.env`
   - `SPARKPLUG_GROUP_ID`
   - `RIG_NAME`
   - optional `CLOUDWATCH_LOG_GROUP`
-- `config/aws.config`
-  - `[profile rig].role_arn = <RigRuntimeRoleArn>`
 - `config/aws.credentials`
   - fill the `[town]` access keys
 
@@ -92,8 +85,8 @@ starts the default `greengrass-lite.target`.
 
 Before installing the service, the rig host must have:
 
-- the shared stack deployed and `just aws::configure-indexing` applied
-- the rig thing registered in AWS IoT
+- the AWS stacks deployed with `just aws::deploy`, `just aws::town-deploy`, and `just aws::rig-deploy`
+- the configured rig thing registered in AWS IoT by `just aws::rig-deploy`
 - a Greengrass core certificate, private key, and Amazon Root CA copied under
   `/var/lib/greengrass/credentials`
 - the certificate attached to the rig thing and to the stack-created IoT policy
@@ -106,7 +99,7 @@ cd "$TXING_HOME"
 just aws-town iot describe-endpoint --endpoint-type iot:Data-ATS
 just aws-town iot describe-endpoint --endpoint-type iot:CredentialProvider
 just aws-town cloudformation describe-stacks \
-  --stack-name <shared-stack-name> \
+  --stack-name <rig-stack-name> \
   --query "Stacks[0].Outputs[?OutputKey=='GreengrassTokenExchangeRoleAlias'].OutputValue | [0]" \
   --output text
 ```
@@ -229,12 +222,11 @@ Populate:
 
 - `config/aws.env`
 - `config/aws.credentials`
-- `config/aws.config`
-- `config/board.env`
 
-Board-specific values to set in `config/board.env`:
+Board-specific values to set in `config/aws.env`:
 
-- `THING_NAME`
+- `TXING_DEVICE_NAME`
+- `TXING_DEVICE_TYPE`
 - `BOARD_VIDEO_REGION`
 - `BOARD_VIDEO_SENDER_COMMAND`
 - `KVS_DUALSTACK_ENDPOINTS=ON`
@@ -247,8 +239,6 @@ If you are using the current default chassis, the measured bring-up values are:
 BOARD_DRIVE_CMD_RAW_MIN_SPEED=50
 BOARD_DRIVE_CMD_RAW_MAX_SPEED=250
 ```
-
-In `config/aws.config`, set `[profile device].role_arn = <DeviceRuntimeRoleArn>`.
 
 ### 4. Enable PWM Overlay
 
@@ -300,7 +290,7 @@ sudo ./.venv/bin/board \
   --video-sender-command "$BOARD_VIDEO_SENDER_COMMAND"
 ```
 
-Replace `<aws-region>` with the same value you configured as `BOARD_VIDEO_REGION` in `config/board.env`.
+Replace `<aws-region>` with the same value you configured as `BOARD_VIDEO_REGION` in `config/aws.env`.
 
 Then install the service:
 
@@ -314,7 +304,7 @@ sudo journalctl -u board -f
 The generated unit:
 
 - runs `board` as `root`
-- loads `config/aws.env` and optional `config/board.env`
+- loads `config/aws.env`
 - enables `NetworkManager-wait-online.service`
 - waits for clock synchronization before starting the AWS-backed video sender
 

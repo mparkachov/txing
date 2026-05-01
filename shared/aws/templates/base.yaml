@@ -1,0 +1,457 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: txing base AWS environment.
+
+Parameters:
+  CognitoDomainPrefix:
+    Type: String
+    AllowedPattern: "^[a-z0-9-]{1,63}$"
+  AdminEmail:
+    Type: String
+    AllowedPattern: "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+  LocalhostAppUrl:
+    Type: String
+  LocalhostAltAppUrl:
+    Type: String
+
+Resources:
+  TxingGreengrassArtifactsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+
+  TxingGatewayLogsManagedPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Dynamic txing CloudWatch logs and IoT registry/thing-group access.
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: GatewayCloudWatchLogsWrite
+            Effect: Allow
+            Action:
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:DescribeLogStreams
+              - logs:PutRetentionPolicy
+              - logs:PutLogEvents
+            Resource:
+              - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:txing/*
+              - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:txing/*:log-stream:*
+          - Sid: GatewayThingRegistryReadWrite
+            Effect: Allow
+            Action:
+              - iot:DescribeThing
+              - iot:UpdateThing
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/*
+          - Sid: GatewayThingGroupRead
+            Effect: Allow
+            Action:
+              - iot:DescribeThingGroup
+              - iot:ListThingsInThingGroup
+              - iot:ListThings
+              - iot:GetIndexingConfiguration
+              - iot:SearchIndex
+            Resource: "*"
+
+  TxingGatewayPolicy:
+    Type: AWS::IoT::Policy
+    Properties:
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: Connect
+            Effect: Allow
+            Action: iot:Connect
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/*
+          - Sid: ThingShadow
+            Effect: Allow
+            Action:
+              - iot:GetThingShadow
+              - iot:UpdateThingShadow
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/*
+          - Sid: MessagingPublishReceive
+            Effect: Allow
+            Action:
+              - iot:Publish
+              - iot:RetainPublish
+              - iot:Receive
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/*
+          - Sid: MessagingSubscribe
+            Effect: Allow
+            Action: iot:Subscribe
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/*
+          - Sid: GreengrassControlPlane
+            Effect: Allow
+            Action: greengrass:*
+            Resource: "*"
+          - Sid: GreengrassTokenExchangeAssumeRole
+            Effect: Allow
+            Action: iot:AssumeRoleWithCertificate
+            Resource: "*"
+
+  TxingWebAdminIotPolicy:
+    Type: AWS::IoT::Policy
+    Properties:
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: iot:Connect
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/*
+          - Effect: Allow
+            Action:
+              - iot:Publish
+              - iot:RetainPublish
+              - iot:Receive
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/*
+          - Effect: Allow
+            Action: iot:Subscribe
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/*
+          - Sid: AllowDirectThingShadowReads
+            Effect: Allow
+            Action: iot:GetThingShadow
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/*
+
+  TxingWitnessRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: Executes the Sparkplug witness projection from MQTT topics into named shadows.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: sparkplug-witness
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: WitnessShadowUpdate
+                Effect: Allow
+                Action: iot:UpdateThingShadow
+                Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/*
+              - Sid: WitnessSearchIndex
+                Effect: Allow
+                Action: iot:SearchIndex
+                Resource: "*"
+              - Sid: WitnessDescribeEndpoint
+                Effect: Allow
+                Action: iot:DescribeEndpoint
+                Resource: "*"
+              - Sid: WitnessCloudWatchLogsWrite
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+
+  TxingSparkplugWitnessFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: Projects Sparkplug MQTT state into sparkplug named shadows.
+      Role: !GetAtt TxingWitnessRole.Arn
+      Runtime: python3.12
+      Handler: witness.sparkplug_witness.lambda_handler
+      MemorySize: 256
+      Timeout: 30
+      Code: ../../../witness/src
+
+  TxingSparkplugWitnessInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref TxingSparkplugWitnessFunction
+      Principal: iot.amazonaws.com
+
+  TxingSparkplugWitnessTopicRule:
+    Type: AWS::IoT::TopicRule
+    DependsOn:
+      - TxingSparkplugWitnessInvokePermission
+    Properties:
+      TopicRulePayload:
+        RuleDisabled: false
+        AwsIotSqlVersion: "2016-03-23"
+        Sql: >-
+          SELECT topic() AS mqttTopic, encode(*, 'base64') AS payloadBase64, timestamp() AS observedAt
+          FROM 'spBv1.0/+/+/#'
+        Actions:
+          - Lambda:
+              FunctionArn: !GetAtt TxingSparkplugWitnessFunction.Arn
+
+  TxingAdminUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      AutoVerifiedAttributes:
+        - email
+      UsernameAttributes:
+        - email
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+      MfaConfiguration: "OFF"
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - Name: verified_email
+            Priority: 1
+      Schema:
+        - Name: email
+          Required: true
+          Mutable: true
+      UserPoolTags:
+        project: txing
+        app: web-admin
+        admin-email: !Ref AdminEmail
+
+  TxingWebBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+
+  TxingWebOriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub ${AWS::StackName}-txing-web
+        Description: Signs CloudFront requests to the txing web bucket.
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  TxingWebDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: txing shadow admin SPA
+        DefaultRootObject: index.html
+        HttpVersion: http2
+        IPV6Enabled: true
+        Origins:
+          - Id: txing-web-origin
+            DomainName: !GetAtt TxingWebBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt TxingWebOriginAccessControl.Id
+            S3OriginConfig: {}
+        DefaultCacheBehavior:
+          TargetOriginId: txing-web-origin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          CachedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          Compress: true
+          ForwardedValues:
+            QueryString: false
+            Cookies:
+              Forward: none
+        CustomErrorResponses:
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+            ErrorCachingMinTTL: 0
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+            ErrorCachingMinTTL: 0
+        PriceClass: PriceClass_100
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+
+  TxingWebBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref TxingWebBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowCloudFrontRead
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub "${TxingWebBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${TxingWebDistribution}
+
+  TxingAdminUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref TxingAdminUserPool
+      ClientName: txing-shadow-admin-spa
+      GenerateSecret: false
+      PreventUserExistenceErrors: ENABLED
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows:
+        - code
+      AllowedOAuthScopes:
+        - openid
+        - email
+        - profile
+      SupportedIdentityProviders:
+        - COGNITO
+      CallbackURLs:
+        - !Sub https://${TxingWebDistribution.DomainName}/
+        - !Sub "${LocalhostAppUrl}/"
+        - !Sub "${LocalhostAltAppUrl}/"
+      LogoutURLs:
+        - !Sub https://${TxingWebDistribution.DomainName}/
+        - !Sub "${LocalhostAppUrl}/"
+        - !Sub "${LocalhostAltAppUrl}/"
+      AccessTokenValidity: 60
+      IdTokenValidity: 60
+      RefreshTokenValidity: 30
+      TokenValidityUnits:
+        AccessToken: minutes
+        IdToken: minutes
+        RefreshToken: days
+      ExplicitAuthFlows:
+        - ALLOW_REFRESH_TOKEN_AUTH
+
+  TxingAdminUserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      UserPoolId: !Ref TxingAdminUserPool
+      Domain: !Ref CognitoDomainPrefix
+
+  TxingAdminIdentityPool:
+    Type: AWS::Cognito::IdentityPool
+    Properties:
+      IdentityPoolName: txing_shadow_admin
+      AllowUnauthenticatedIdentities: false
+      CognitoIdentityProviders:
+        - ClientId: !Ref TxingAdminUserPoolClient
+          ProviderName: !Sub cognito-idp.${AWS::Region}.amazonaws.com/${TxingAdminUserPool}
+          ServerSideTokenCheck: true
+
+  TxingAdminIdentityPoolAuthenticatedRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: IAM role assumed by authenticated txing web admin identities.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: cognito-identity.amazonaws.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                cognito-identity.amazonaws.com:aud: !Ref TxingAdminIdentityPool
+              ForAnyValue:StringLike:
+                cognito-identity.amazonaws.com:amr: authenticated
+      Policies:
+        - PolicyName: iot-shadow-direct-access-txing
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: AllowAttachWebIotPolicy
+                Effect: Allow
+                Action: iot:AttachPolicy
+                Resource: "*"
+              - Sid: AllowDescribeIotEndpoint
+                Effect: Allow
+                Action: iot:DescribeEndpoint
+                Resource: "*"
+              - Sid: AllowThingCatalogListing
+                Effect: Allow
+                Action:
+                  - iot:ListThingGroups
+                  - iot:DescribeThing
+                  - iot:DescribeThingGroup
+                  - iot:ListThingsInThingGroup
+                  - iot:SearchIndex
+                Resource: "*"
+              - Sid: AllowDirectThingShadowReads
+                Effect: Allow
+                Action: iot:GetThingShadow
+                Resource: "*"
+              - Sid: ShadowConnect
+                Effect: Allow
+                Action: iot:Connect
+                Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/*
+              - Sid: IoTPublishReceive
+                Effect: Allow
+                Action:
+                  - iot:Publish
+                  - iot:RetainPublish
+                  - iot:Receive
+                Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/*
+              - Sid: IoTSubscribe
+                Effect: Allow
+                Action: iot:Subscribe
+                Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/*
+              - Sid: BoardVideoViewer
+                Effect: Allow
+                Action:
+                  - kinesisvideo:DescribeSignalingChannel
+                  - kinesisvideo:GetSignalingChannelEndpoint
+                  - kinesisvideo:GetIceServerConfig
+                  - kinesisvideo:ConnectAsViewer
+                Resource: "*"
+
+  TxingAdminIdentityPoolRoleAttachment:
+    Type: AWS::Cognito::IdentityPoolRoleAttachment
+    Properties:
+      IdentityPoolId: !Ref TxingAdminIdentityPool
+      Roles:
+        authenticated: !GetAtt TxingAdminIdentityPoolAuthenticatedRole.Arn
+
+Outputs:
+  RigLogGroupPattern:
+    Value: txing/<town-thing-name>/<rig-thing-name>
+  DeviceLogGroupPattern:
+    Value: txing/<town-thing-name>/<rig-thing-name>/<device-thing-name>
+  RigLogsManagedPolicyArn:
+    Value: !Ref TxingGatewayLogsManagedPolicy
+  PolicyName:
+    Value: !Ref TxingGatewayPolicy
+  WebIotPolicyName:
+    Value: !Ref TxingWebAdminIotPolicy
+  WebCognitoUserPoolId:
+    Value: !Ref TxingAdminUserPool
+  WebCognitoUserPoolClientId:
+    Value: !Ref TxingAdminUserPoolClient
+  WebCognitoIdentityPoolId:
+    Value: !Ref TxingAdminIdentityPool
+  WebCognitoDomain:
+    Value: !Sub https://${CognitoDomainPrefix}.auth.${AWS::Region}.amazoncognito.com
+  WebAppBucketName:
+    Value: !Ref TxingWebBucket
+  WebAppDistributionId:
+    Value: !Ref TxingWebDistribution
+  WebAppDistributionDomainName:
+    Value: !GetAtt TxingWebDistribution.DomainName
+  WebAppUrl:
+    Value: !Sub https://${TxingWebDistribution.DomainName}/
+  WebExpectedAdminEmail:
+    Value: !Ref AdminEmail
+  GreengrassArtifactsBucketName:
+    Value: !Ref TxingGreengrassArtifactsBucket

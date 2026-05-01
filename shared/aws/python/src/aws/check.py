@@ -110,15 +110,6 @@ def _validate_common_environment(
     if shared_credentials_file is not None:
         resolved["aws_shared_credentials_file"] = shared_credentials_file
 
-    result, aws_config_file = _check_file_env(
-        environment,
-        "AWS config file",
-        "AWS_CONFIG_FILE",
-    )
-    results.append(result)
-    if aws_config_file is not None:
-        resolved["aws_config_file"] = aws_config_file
-
     if require_thing_name:
         result, thing_name = _check_text_env(environment, "Thing name", "THING_NAME")
         results.append(result)

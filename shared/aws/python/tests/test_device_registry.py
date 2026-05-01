@@ -180,6 +180,8 @@ class _FakeIotClient:
                 continue
             if "thingTypeName:rig" in query_string and thing_type_name != "rig":
                 continue
+            if "thingTypeName:unit" in query_string and thing_type_name != "unit":
+                continue
             if "attributes.name:berlin" in query_string and attributes.get("name") != "berlin":
                 continue
             if "attributes.name:munich" in query_string and attributes.get("name") != "munich":
@@ -188,9 +190,17 @@ class _FakeIotClient:
                 continue
             if "attributes.name:rig-b" in query_string and attributes.get("name") != "rig-b":
                 continue
+            if "attributes.name:bot" in query_string and attributes.get("name") != "bot":
+                continue
+            if "attributes.name:rover" in query_string and attributes.get("name") != "rover":
+                continue
             if "attributes.town:berlin" in query_string and attributes.get("town") != "berlin":
                 continue
             if "attributes.town:munich" in query_string and attributes.get("town") != "munich":
+                continue
+            if "attributes.rig:rig-a" in query_string and attributes.get("rig") != "rig-a":
+                continue
+            if "attributes.rig:rig-b" in query_string and attributes.get("rig") != "rig-b":
                 continue
             matches.append(thing_name)
         if self.search_visible_thing_names is not None:
@@ -344,6 +354,25 @@ class DeviceRegistryTests(unittest.TestCase):
             },
         )
 
+    def test_ensure_town_reuses_existing_town_without_duplicate_thing(self) -> None:
+        runtime = _FakeRuntime()
+        registry = AwsDeviceRegistry(runtime, repo_root=REPO_ROOT)
+
+        first = registry.ensure_town(town_name="Berlin")
+        second = registry.ensure_town(town_name="Berlin")
+
+        self.assertEqual(first.thing_name, "town-ber001")
+        self.assertEqual(second.thing_name, "town-ber001")
+        self.assertEqual(runtime.iot.create_thing_requests, [])
+        self.assertEqual(
+            [request["thingGroupName"] for request in runtime.iot.create_group_requests],
+            ["berlin"],
+        )
+        self.assertEqual(
+            [request["thingGroupName"] for request in runtime.iot.update_group_requests],
+            ["berlin"],
+        )
+
     def test_register_rig_creates_new_rig_and_initializes_reported_only_shadow(self) -> None:
         runtime = _FakeRuntime()
         registry = AwsDeviceRegistry(
@@ -407,6 +436,22 @@ class DeviceRegistryTests(unittest.TestCase):
                     }
                 }
             },
+        )
+
+    def test_ensure_rig_reuses_existing_rig_without_duplicate_thing(self) -> None:
+        runtime = _FakeRuntime()
+        runtime.iot.groups.update({"berlin", "rig-a"})
+        registry = AwsDeviceRegistry(runtime, repo_root=REPO_ROOT)
+
+        first = registry.ensure_rig(town_name="Berlin", rig_name="Rig-A")
+        second = registry.ensure_rig(town_name="Berlin", rig_name="Rig-A")
+
+        self.assertEqual(first.thing_name, "rig-rig001")
+        self.assertEqual(second.thing_name, "rig-rig001")
+        self.assertEqual(runtime.iot.create_thing_requests, [])
+        self.assertEqual(
+            [request["thingGroupName"] for request in runtime.iot.update_group_requests],
+            ["berlin", "rig-a", "berlin", "rig-a"],
         )
 
     def test_register_rig_falls_back_to_registry_when_town_is_not_yet_indexed(self) -> None:
@@ -513,6 +558,76 @@ class DeviceRegistryTests(unittest.TestCase):
         self.assertEqual(
             runtime.kinesisvideo.create_requests[0]["ChannelName"],
             "unit-bbbbbb-board-video",
+        )
+
+    def test_ensure_device_reuses_existing_configured_device_without_duplicate_thing(self) -> None:
+        runtime = _FakeRuntime()
+        runtime.iot.groups.update({"berlin", "rig-a"})
+        runtime.iot._things["unit-rover1"] = {
+            "thingName": "unit-rover1",
+            "thingTypeName": "unit",
+            "attributes": {
+                "town": "berlin",
+                "rig": "rig-a",
+                "name": "rover",
+                "shortId": "rover1",
+                "capabilitiesSet": "sparkplug,mcu,board,mcp,video",
+            },
+            "version": 1,
+        }
+        registry = AwsDeviceRegistry(runtime, repo_root=REPO_ROOT)
+
+        first = registry.ensure_device(
+            town_name="Berlin",
+            rig_name="Rig-A",
+            device_type="unit",
+            device_name="rover",
+        )
+        second = registry.ensure_device(
+            town_name="Berlin",
+            rig_name="Rig-A",
+            device_type="unit",
+            device_name="rover",
+        )
+
+        self.assertEqual(first.thing_name, "unit-rover1")
+        self.assertEqual(second.thing_name, "unit-rover1")
+        self.assertEqual(runtime.iot.create_thing_requests, [])
+        self.assertEqual(
+            runtime.kinesisvideo.create_requests[0]["ChannelName"],
+            "unit-rover1-board-video",
+        )
+        self.assertEqual(len(runtime.kinesisvideo.create_requests), 1)
+
+    def test_ensure_device_creates_missing_device_with_configured_name(self) -> None:
+        runtime = _FakeRuntime()
+        runtime.iot.groups.update({"berlin", "rig-a"})
+        registry = AwsDeviceRegistry(
+            runtime,
+            repo_root=REPO_ROOT,
+            random_source=_SequenceRandom("cccccc"),
+        )
+
+        registration = registry.ensure_device(
+            town_name="Berlin",
+            rig_name="Rig-A",
+            device_type="unit",
+            device_name="rover",
+        )
+
+        self.assertEqual(registration.thing_name, "unit-cccccc")
+        self.assertEqual(registration.name, "rover")
+        self.assertEqual(
+            runtime.iot.create_thing_requests[0]["attributePayload"],
+            {
+                "attributes": {
+                    "town": "berlin",
+                    "rig": "rig-a",
+                    "name": "rover",
+                    "shortId": "cccccc",
+                    "capabilitiesSet": "sparkplug,mcu,board,mcp,video",
+                }
+            },
         )
 
     def test_register_device_falls_back_to_registry_when_town_and_rig_are_not_yet_indexed(self) -> None:

@@ -4,11 +4,19 @@ from pathlib import Path
 import unittest
 
 
+AWS_DIR = Path(__file__).resolve().parents[2]
+REPO_ROOT = AWS_DIR.parents[1]
+
+
+def _template_text() -> str:
+    template_paths = [AWS_DIR / "template.yaml"]
+    template_paths.extend(sorted((AWS_DIR / "templates").glob("*.yaml")))
+    return "\n".join(path.read_text(encoding="utf-8") for path in template_paths)
+
+
 class AwsTemplatePolicyTests(unittest.TestCase):
     def test_rig_and_device_video_topics_are_authorized(self) -> None:
-        template = (
-            Path(__file__).resolve().parents[2] / "template.yaml"
-        ).read_text(encoding="utf-8")
+        template = _template_text()
 
         self.assertIn("Sid: RigVideoDiscoveryTopics", template)
         self.assertIn("Sid: RigVideoDiscoveryTopicFilters", template)
@@ -20,9 +28,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("iot:RetainPublish", template)
 
     def test_legacy_raw_cmd_vel_topic_permissions_are_removed(self) -> None:
-        template = (
-            Path(__file__).resolve().parents[2] / "template.yaml"
-        ).read_text(encoding="utf-8")
+        template = _template_text()
 
         self.assertNotIn("Sid: RigCmdVelTopics", template)
         self.assertNotIn("Sid: RigCmdVelTopicFilters", template)
@@ -30,21 +36,17 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertNotIn("Sid: DeviceCmdVelTopicFilters", template)
         self.assertNotIn("board/cmd_vel", template)
 
-    def test_template_no_longer_embeds_sparkplug_witness_projection(self) -> None:
-        template = (
-            Path(__file__).resolve().parents[2] / "template.yaml"
-        ).read_text(encoding="utf-8")
+    def test_base_nested_template_embeds_sparkplug_witness_projection(self) -> None:
+        template = _template_text()
 
-        self.assertNotIn("TxingSparkplugWitnessFunction", template)
-        self.assertNotIn("TxingSparkplugWitnessTopicRule", template)
-        self.assertNotIn("TxingSparkplugWitnessInvokePermission", template)
-        self.assertNotIn("sparkplug-witness", template)
+        self.assertIn("TxingSparkplugWitnessFunction", template)
+        self.assertIn("TxingSparkplugWitnessTopicRule", template)
+        self.assertIn("TxingSparkplugWitnessInvokePermission", template)
+        self.assertIn("sparkplug-witness", template)
         self.assertIn("iot:GetThingShadow", template)
 
     def test_template_uses_dynamic_txing_log_group_prefix_for_rig_logs(self) -> None:
-        template = (
-            Path(__file__).resolve().parents[2] / "template.yaml"
-        ).read_text(encoding="utf-8")
+        template = _template_text()
 
         self.assertNotIn("LogGroupName: /town/rig/txing", template)
         self.assertIn("logs:CreateLogGroup", template)
@@ -62,15 +64,10 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         )
 
     def test_template_grants_direct_shadow_read_in_both_web_permission_layers(self) -> None:
-        template = (
-            Path(__file__).resolve().parents[2] / "template.yaml"
-        ).read_text(encoding="utf-8")
+        template = _template_text()
 
         self.assertIn("TxingWebAdminIotPolicy", template)
-        self.assertIn(
-            "PolicyName: !Sub ${AWS::StackName}-web-admin-iot-policy",
-            template,
-        )
+        self.assertIn("WebIotPolicyName:", template)
         self.assertIn(
             "Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/*",
             template,
@@ -85,17 +82,13 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         )
 
     def test_device_runtime_policy_allows_describe_thing(self) -> None:
-        template = (
-            Path(__file__).resolve().parents[2] / "template.yaml"
-        ).read_text(encoding="utf-8")
+        template = _template_text()
 
         self.assertIn("Sid: DeviceDescribeThing", template)
         self.assertIn("Action: iot:DescribeThing", template)
 
     def test_device_runtime_policy_allows_sparkplug_command_subscribe(self) -> None:
-        template = (
-            Path(__file__).resolve().parents[2] / "template.yaml"
-        ).read_text(encoding="utf-8")
+        template = _template_text()
 
         self.assertIn("Sid: DeviceSparkplugMqttTopics", template)
         self.assertIn("Sid: DeviceSparkplugMqttTopicFilters", template)
@@ -103,9 +96,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("topicfilter/spBv1.0/*", template)
 
     def test_template_defines_greengrass_token_exchange_resources(self) -> None:
-        template = (
-            Path(__file__).resolve().parents[2] / "template.yaml"
-        ).read_text(encoding="utf-8")
+        template = _template_text()
 
         self.assertIn("TxingGreengrassTokenExchangeRole:", template)
         self.assertIn("Service: credentials.iot.amazonaws.com", template)
@@ -119,10 +110,52 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("GreengrassTokenExchangeRoleAliasArn:", template)
         self.assertIn("GreengrassArtifactsBucketName:", template)
 
+    def test_global_resources_use_cloudformation_generated_names(self) -> None:
+        template = _template_text()
+
+        self.assertIn("Type: AWS::IAM::Role", template)
+        self.assertIn("Type: AWS::IAM::ManagedPolicy", template)
+        self.assertIn("Type: AWS::IoT::RoleAlias", template)
+        self.assertIn("Type: AWS::IoT::Policy", template)
+        self.assertNotIn("\n      RoleName:", template)
+        self.assertNotIn("\n      ManagedPolicyName:", template)
+        self.assertNotIn("\n      RoleAlias:", template)
+        self.assertNotIn("PolicyName: town-rig-device-policy", template)
+        self.assertNotIn("PolicyName: !Sub ${AWS::StackName}-web-admin-iot-policy", template)
+
+    def test_root_template_uses_nested_stacks(self) -> None:
+        root_template = (AWS_DIR / "template.yaml").read_text(encoding="utf-8")
+
+        self.assertIn("Type: AWS::CloudFormation::Stack", root_template)
+        self.assertIn("TemplateURL: templates/base.yaml", root_template)
+
+    def test_aws_recipes_are_stateless_and_staged(self) -> None:
+        checked_paths = [
+            REPO_ROOT / "justfile",
+            AWS_DIR / "justfile",
+            AWS_DIR / "scripts" / "aws_lib.sh",
+        ]
+        text = "\n".join(path.read_text(encoding="utf-8") for path in checked_paths)
+
+        self.assertIn("@deploy", text)
+        self.assertIn("@town-deploy", text)
+        self.assertIn("@rig-deploy", text)
+        self.assertIn("@device-deploy", text)
+        self.assertIn("stack_output()", text)
+        self.assertIn("resolve_town_thing_name()", text)
+        self.assertIn("resolve_rig_thing_name()", text)
+        self.assertIn("resolve_device_thing_name()", text)
+        self.assertIn("assume_stack_role()", text)
+        self.assertNotIn(".state", text)
+        self.assertNotIn("local_state_dir", text)
+        self.assertNotIn("packaged_template_file", text)
+        self.assertNotIn("config/aws.config", text)
+        self.assertNotIn("aws_config_file", text)
+        self.assertNotIn("config/rig.env", text)
+        self.assertNotIn("config/board.env", text)
+
     def test_aws_justfile_enables_thing_connectivity_indexing(self) -> None:
-        justfile = (
-            Path(__file__).resolve().parents[2] / "justfile"
-        ).read_text(encoding="utf-8")
+        justfile = (AWS_DIR / "scripts" / "aws_lib.sh").read_text(encoding="utf-8")
 
         self.assertIn('"thingConnectivityIndexingMode":"STATUS"', justfile)
         self.assertIn('[ "$thing_connectivity_indexing_mode" = "STATUS" ]', justfile)

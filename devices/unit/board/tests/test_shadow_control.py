@@ -642,9 +642,8 @@ class ShadowControlContractTests(unittest.TestCase):
         self.assertIn('eval "$(just --justfile "{{root_justfile}}" _project-aws-env device', justfile)
         self.assertIn('project_root="$TXING_PROJECT_ROOT"', justfile)
         self.assertIn('env_file="$AWS_ENV_FILE"', justfile)
-        self.assertIn('board_env_file="$BOARD_ENV_FILE"', justfile)
         self.assertIn('EnvironmentFile=$env_file', justfile)
-        self.assertIn('EnvironmentFile=-$board_env_file', justfile)
+        self.assertNotIn('EnvironmentFile=-$board_env_file', justfile)
         self.assertIn('WorkingDirectory=$project_root', justfile)
         self.assertIn('[ -n "{{thing_name}}" ]', justfile)
         self.assertIn('THING_NAME={{thing_name}}', justfile)
@@ -662,8 +661,8 @@ class ShadowControlContractTests(unittest.TestCase):
         self.assertIn('AWS_DEFAULT_PROFILE=$aws_profile', justfile)
         self.assertIn('[ -n "{{aws_shared_credentials_file}}" ] && [ -n "$aws_shared_credentials_file" ]', justfile)
         self.assertIn('AWS_SHARED_CREDENTIALS_FILE=$aws_shared_credentials_file', justfile)
-        self.assertIn('[ -n "{{aws_config_file}}" ] && [ -n "$aws_config_file" ]', justfile)
-        self.assertIn('AWS_CONFIG_FILE=$aws_config_file', justfile)
+        self.assertNotIn('aws_config_file', justfile)
+        self.assertNotIn('AWS_CONFIG_FILE=$aws_config_file', justfile)
         self.assertNotIn('AWS_TXING_PROFILE=$AWS_TXING_PROFILE', justfile)
         self.assertNotIn('lg_wd_override="{{lg_wd}}"', justfile)
         self.assertNotIn('lg_wd_configured="$lg_wd_override"', justfile)
@@ -676,16 +675,14 @@ class ShadowControlContractTests(unittest.TestCase):
         self.assertIn('sudo "--preserve-env=$preserve_env_csv"', justfile)
         self.assertNotIn('LG_WD', justfile)
 
-    def test_root_justfile_sources_optional_board_env_for_device_scope(self) -> None:
+    def test_root_justfile_sources_consolidated_aws_env_for_device_scope(self) -> None:
         justfile = Path(REPO_ROOT / "justfile").read_text(encoding="utf-8")
 
         self.assertIn("_project-aws-env scope='rig'", justfile)
-        self.assertIn('board_env_file=\'\'', justfile)
         self.assertIn('env_file="$(resolve_path "$(choose_value "{{env_file}}" "config/aws.env")")"', justfile)
-        self.assertIn('if [ "{{scope}}" = "device" ]; then', justfile)
-        self.assertIn('board_env_file="$(resolve_path "$(choose_value "{{board_env_file}}" "${BOARD_ENV_FILE:-config/board.env}")")"', justfile)
-        self.assertIn('source "$board_env_file"', justfile)
-        self.assertIn('export_line BOARD_ENV_FILE "$board_env_file"', justfile)
+        self.assertIn('source "$env_file"', justfile)
+        self.assertIn('printf \'unset BOARD_ENV_FILE\\n\'', justfile)
+        self.assertNotIn("config/board.env", justfile)
         self.assertNotIn('export_line BOARD_VIDEO_VIEWER_URL', justfile)
         self.assertNotIn('export_line LG_WD "$lg_wd"', justfile)
         self.assertIn('export_line BOARD_DRIVE_CMD_RAW_MIN_SPEED "$board_drive_cmd_raw_min_speed"', justfile)
@@ -696,14 +693,12 @@ class ShadowControlContractTests(unittest.TestCase):
 
         self.assertIn("@check thing_name=''", justfile)
         self.assertIn(
-            'eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "{{device_profile}}")"',
+            'eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "{{profile}}")"',
             justfile,
         )
-        self.assertIn('device_thing_name="$THING_NAME"', justfile)
-        self.assertIn('if [ -n "{{thing_name}}" ]; then', justfile)
-        self.assertIn('if ! run_python_service_check rig "{{profile}}" --rig-name "$effective_rig_name" --log-group-name "$effective_log_group_name"; then', justfile)
-        self.assertIn('if ! run_python_service_check device "{{device_profile}}" --thing-name "$device_thing_name"; then', justfile)
-        self.assertIn('--thing-name "$device_thing_name" \\', justfile)
+        self.assertIn('--scope rig', justfile)
+        self.assertIn('--scope device', justfile)
+        self.assertIn('--thing-name "${thing_name:-$THING_NAME}"', justfile)
         self.assertNotIn('@check thing_name=thing_name', justfile)
 
     def test_repo_root_detection_uses_board_working_directory(self) -> None:

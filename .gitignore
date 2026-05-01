@@ -12,9 +12,6 @@
 __pycache__/
 *.py[cod]
 
-# Local generated AWS helper state
-/.state/
-
 # Project-local AWS config: keep examples only
 /config/*
 !/config/*.example

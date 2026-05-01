@@ -723,20 +723,16 @@ class AwsShadowClientTests(unittest.TestCase):
             ).exists()
         )
 
-    def test_root_justfile_sources_optional_rig_env_for_rig_scope(self) -> None:
+    def test_root_justfile_sources_consolidated_aws_env_for_rig_scope(self) -> None:
         justfile = (Path(__file__).resolve().parents[2] / "justfile").read_text(
             encoding="utf-8"
         )
 
         self.assertIn("_project-aws-env scope='rig'", justfile)
-        self.assertIn("rig_env_file=''", justfile)
-        self.assertIn('if [ "{{scope}}" = "rig" ]; then', justfile)
-        self.assertIn(
-            'rig_env_file="$(resolve_path "$(choose_value "{{rig_env_file}}" "${RIG_ENV_FILE:-config/rig.env}")")"',
-            justfile,
-        )
-        self.assertIn('source "$rig_env_file"', justfile)
-        self.assertIn('export_line RIG_ENV_FILE "$rig_env_file"', justfile)
+        self.assertIn('env_file="$(resolve_path "$(choose_value "{{env_file}}" "config/aws.env")")"', justfile)
+        self.assertIn('source "$env_file"', justfile)
+        self.assertIn('printf \'unset RIG_ENV_FILE\\n\'', justfile)
+        self.assertNotIn("config/rig.env", justfile)
 
     def test_unit_rig_adapter_uses_generic_device_wording(self) -> None:
         adapter = (

@@ -25,7 +25,6 @@ systemd_unit := "/etc/systemd/system/board.service"
 region := ""
 aws_profile := ""
 aws_shared_credentials_file := ""
-aws_config_file := ""
 default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_SYSTEM_DEPENDENCIES", "ON")
 
 @sync:
@@ -250,21 +249,19 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
     set -euo pipefail
     just motor-raw 0 0 0.25 "{{region}}" "{{aws_profile}}"
 
-@install-service video_sender_command='' thing_name='' schema_file='' video_region='' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file aws_config_file=aws_config_file:
+@install-service video_sender_command='' thing_name='' schema_file='' video_region='' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file:
     #!/usr/bin/env bash
     set -euo pipefail
     test -x "{{built_board}}" || { \
         echo "Missing built board executable at {{built_board}}. Run 'just build' first." >&2; \
         exit 1; \
     }
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "{{aws_profile}}" "" "" "" "{{aws_shared_credentials_file}}" "{{aws_config_file}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "{{aws_profile}}" "" "" "" "{{aws_shared_credentials_file}}")"
     project_root="$TXING_PROJECT_ROOT"
     env_file="$AWS_ENV_FILE"
-    board_env_file="$BOARD_ENV_FILE"
     region="$AWS_REGION"
     aws_profile="$AWS_SELECTED_PROFILE"
     aws_shared_credentials_file="$AWS_SHARED_CREDENTIALS_FILE"
-    aws_config_file="$AWS_CONFIG_FILE"
     sudo systemctl enable NetworkManager-wait-online.service
     service_env=(); \
     if [ -n "{{thing_name}}" ]; then \
@@ -289,9 +286,6 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
     if [ -n "{{aws_shared_credentials_file}}" ] && [ -n "$aws_shared_credentials_file" ]; then \
         service_env+=("Environment=\"AWS_SHARED_CREDENTIALS_FILE=$aws_shared_credentials_file\""); \
     fi; \
-    if [ -n "{{aws_config_file}}" ] && [ -n "$aws_config_file" ]; then \
-        service_env+=("Environment=\"AWS_CONFIG_FILE=$aws_config_file\""); \
-    fi; \
     { \
         printf '%s\n' \
             '[Unit]' \
@@ -302,8 +296,7 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
             '[Service]' \
             'Type=simple' \
             "WorkingDirectory=$project_root" \
-            "EnvironmentFile=$env_file" \
-            "EnvironmentFile=-$board_env_file"; \
+            "EnvironmentFile=$env_file"; \
         printf '%s\n' "${service_env[@]}"; \
         printf '%s\n' \
             'ExecStart={{built_board}} --heartbeat-seconds 60' \

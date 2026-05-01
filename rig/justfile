@@ -18,7 +18,6 @@ thing_name := "unit-local"
 region := ""
 aws_profile := ""
 aws_shared_credentials_file := ""
-aws_config_file := ""
 legacy_systemd_unit := "/etc/systemd/system/rig.service"
 
 @sync:
@@ -217,7 +216,7 @@ legacy_systemd_unit := "/etc/systemd/system/rig.service"
       --shadow-name "{{shadow_name}}" \
       /dev/stdout | jq '.'
 
-@install-service rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file aws_config_file=aws_config_file cloudwatch_log_group='':
+@install-service rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file cloudwatch_log_group='':
     #!/usr/bin/env bash
     set -euo pipefail
     for built_entrypoint in "{{built_rig}}" "{{built_rig_connectivity_ble}}" "{{built_rig_sparkplug_manager}}"; do \
@@ -226,7 +225,7 @@ legacy_systemd_unit := "/etc/systemd/system/rig.service"
             exit 1; \
         fi; \
     done
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}" "" "" "" "{{aws_shared_credentials_file}}" "{{aws_config_file}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}" "" "" "" "{{aws_shared_credentials_file}}")"
     rig_name="$RIG_NAME"
     sparkplug_group_id="$SPARKPLUG_GROUP_ID"
     sparkplug_edge_node_id="$SPARKPLUG_EDGE_NODE_ID"

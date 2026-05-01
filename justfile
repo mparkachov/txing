@@ -3,7 +3,7 @@ set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 root_dir := source_directory()
 
 [private]
-_project-aws-env scope='rig' region='' profile='' stack_name='' cognito_domain_prefix='' admin_email='' aws_shared_credentials_file='' aws_config_file='' env_file='' rig_env_file='' board_env_file='':
+_project-aws-env scope='rig' region='' profile='' stack_name='' cognito_domain_prefix='' admin_email='' aws_shared_credentials_file='' env_file='':
     #!/usr/bin/env bash
     set -euo pipefail
 
@@ -41,51 +41,39 @@ _project-aws-env scope='rig' region='' profile='' stack_name='' cognito_domain_p
       # shellcheck disable=SC1090
       source "$env_file"
     fi
+    unset AWS_CONFIG_FILE RIG_ENV_FILE BOARD_ENV_FILE
 
-    rig_env_file=""
-    if [ "{{scope}}" = "rig" ]; then
-      rig_env_file="$(resolve_path "$(choose_value "{{rig_env_file}}" "${RIG_ENV_FILE:-config/rig.env}")")"
-      if [ -f "$rig_env_file" ]; then
-        # shellcheck disable=SC1090
-        source "$rig_env_file"
-      fi
-    fi
+    normalize_slug() {
+      printf '%s\n' "$1" \
+        | tr '[:upper:]' '[:lower:]' \
+        | tr -cs 'a-z0-9-' '-' \
+        | sed 's/^-*//; s/-*$//'
+    }
 
-    board_env_file=""
-    if [ "{{scope}}" = "device" ]; then
-      board_env_file="$(resolve_path "$(choose_value "{{board_env_file}}" "${BOARD_ENV_FILE:-config/board.env}")")"
-      if [ -f "$board_env_file" ]; then
-        # shellcheck disable=SC1090
-        source "$board_env_file"
-      fi
-    fi
-
-    aws_town_profile_default="${AWS_TOWN_PROFILE:-town}"
-    aws_rig_profile_default="${AWS_RIG_PROFILE:-rig}"
-    aws_device_profile_default="${AWS_DEVICE_PROFILE:-device}"
-    aws_selected_profile_default="$aws_rig_profile_default"
-    if [ "{{scope}}" = "town" ]; then
-      aws_selected_profile_default="$aws_town_profile_default"
-    elif [ "{{scope}}" = "device" ]; then
-      aws_selected_profile_default="$aws_device_profile_default"
-    fi
+    aws_source_profile_default="${AWS_SOURCE_PROFILE:-${AWS_TOWN_PROFILE:-town}}"
+    aws_selected_profile_default="$aws_source_profile_default"
 
     aws_region="$(choose_value "{{region}}" "${AWS_REGION:-eu-central-1}")"
     aws_stack_name="$(choose_value "{{stack_name}}" "${AWS_STACK_NAME:-txing-iot}")"
     aws_cognito_domain_prefix="$(choose_value "{{cognito_domain_prefix}}" "${AWS_COGNITO_DOMAIN_PREFIX:-txing-iot}")"
     aws_admin_email="$(choose_value "{{admin_email}}" "${AWS_ADMIN_EMAIL:-admin@example.com}")"
-    aws_town_profile="$aws_town_profile_default"
-    aws_rig_profile="$aws_rig_profile_default"
+    aws_source_profile="$aws_source_profile_default"
+    aws_town_profile="$aws_source_profile"
     aws_selected_profile="$(choose_value "{{profile}}" "$aws_selected_profile_default")"
     aws_shared_credentials_file="$(resolve_path "$(choose_value "{{aws_shared_credentials_file}}" "${AWS_SHARED_CREDENTIALS_FILE:-config/aws.credentials}")")"
-    aws_config_file="$(resolve_path "$(choose_value "{{aws_config_file}}" "${AWS_CONFIG_FILE:-config/aws.config}")")"
-    rig_name="${RIG_NAME:-rig}"
-    sparkplug_group_id="${SPARKPLUG_GROUP_ID:-town}"
-    sparkplug_edge_node_id="${SPARKPLUG_EDGE_NODE_ID:-rig}"
+    txing_town_name="$(normalize_slug "${TXING_TOWN_NAME:-${SPARKPLUG_GROUP_ID:-town}}")"
+    txing_rig_name="$(normalize_slug "${TXING_RIG_NAME:-${RIG_NAME:-rig}}")"
+    txing_device_name="$(normalize_slug "${TXING_DEVICE_NAME:-bot}")"
+    txing_device_type="$(normalize_slug "${TXING_DEVICE_TYPE:-unit}")"
+    txing_town_stack_name="${TXING_TOWN_STACK_NAME:-${aws_stack_name}-${txing_town_name}}"
+    txing_rig_stack_name="${TXING_RIG_STACK_NAME:-${txing_town_stack_name}-${txing_rig_name}}"
+    txing_device_stack_name="${TXING_DEVICE_STACK_NAME:-${txing_rig_stack_name}-${txing_device_name}}"
+    rig_name="${RIG_NAME:-$txing_rig_name}"
+    sparkplug_group_id="${SPARKPLUG_GROUP_ID:-$txing_town_name}"
+    sparkplug_edge_node_id="${SPARKPLUG_EDGE_NODE_ID:-$txing_rig_name}"
     cloudwatch_log_group="${CLOUDWATCH_LOG_GROUP:-}"
-    thing_name="${THING_NAME:-unit-local}"
-    schema_file="$(resolve_path "${SCHEMA_FILE:-devices/unit/aws/board-shadow.schema.json}")"
-    board_video_region="${BOARD_VIDEO_REGION:-eu-central-1}"
+    schema_file="$(resolve_path "${SCHEMA_FILE:-devices/${txing_device_type}/aws/board-shadow.schema.json}")"
+    board_video_region="${BOARD_VIDEO_REGION:-$aws_region}"
     board_video_sender_command="${BOARD_VIDEO_SENDER_COMMAND:-}"
     kvs_dualstack_endpoints="${KVS_DUALSTACK_ENDPOINTS:-}"
     board_drive_raw_max_speed="${BOARD_DRIVE_RAW_MAX_SPEED:-}"
@@ -100,29 +88,49 @@ _project-aws-env scope='rig' region='' profile='' stack_name='' cognito_domain_p
     board_drive_right_dir_gpio="${BOARD_DRIVE_RIGHT_DIR_GPIO:-}"
     board_drive_left_inverted="${BOARD_DRIVE_LEFT_INVERTED:-}"
     board_drive_right_inverted="${BOARD_DRIVE_RIGHT_INVERTED:-}"
+    thing_name="${THING_NAME:-}"
+    if [ -z "$thing_name" ] && [ "{{scope}}" = "device" ] && command -v aws >/dev/null 2>&1; then
+      aws_lookup_flags=(--region "$aws_region")
+      if [ -n "$aws_selected_profile" ]; then
+        aws_lookup_flags+=(--profile "$aws_selected_profile")
+      fi
+      AWS_SHARED_CREDENTIALS_FILE="$aws_shared_credentials_file" \
+      thing_name="$(
+        aws iot search-index \
+          --index-name AWS_Things \
+          --query-string "thingTypeName:${txing_device_type} AND attributes.name:${txing_device_name} AND attributes.town:${txing_town_name} AND attributes.rig:${txing_rig_name}" \
+          --query 'things[0].thingName' \
+          --output text \
+          "${aws_lookup_flags[@]}" 2>/dev/null || true
+      )"
+      if [ "$thing_name" = "None" ]; then
+        thing_name=""
+      fi
+    fi
+    thing_name="${thing_name:-$txing_device_name}"
 
     export_line TXING_PROJECT_ROOT "$project_root"
     export_line AWS_ENV_FILE "$env_file"
-    if [ -n "$rig_env_file" ]; then
-      export_line RIG_ENV_FILE "$rig_env_file"
-    else
-      printf 'unset RIG_ENV_FILE\n'
-    fi
-    if [ -n "$board_env_file" ]; then
-      export_line BOARD_ENV_FILE "$board_env_file"
-    else
-      printf 'unset BOARD_ENV_FILE\n'
-    fi
+    printf 'unset RIG_ENV_FILE\n'
+    printf 'unset BOARD_ENV_FILE\n'
+    printf 'unset AWS_CONFIG_FILE\n'
     export_line AWS_REGION "$aws_region"
     export_line AWS_STACK_NAME "$aws_stack_name"
     export_line AWS_COGNITO_DOMAIN_PREFIX "$aws_cognito_domain_prefix"
     export_line AWS_ADMIN_EMAIL "$aws_admin_email"
+    export_line AWS_SOURCE_PROFILE "$aws_source_profile"
     export_line AWS_TOWN_PROFILE "$aws_town_profile"
-    export_line AWS_RIG_PROFILE "$aws_rig_profile"
-    export_line AWS_DEVICE_PROFILE "$aws_device_profile_default"
+    export_line AWS_RIG_PROFILE "$aws_source_profile"
+    export_line AWS_DEVICE_PROFILE "$aws_source_profile"
     export_line AWS_SELECTED_PROFILE "$aws_selected_profile"
     export_line AWS_SHARED_CREDENTIALS_FILE "$aws_shared_credentials_file"
-    export_line AWS_CONFIG_FILE "$aws_config_file"
+    export_line TXING_TOWN_NAME "$txing_town_name"
+    export_line TXING_RIG_NAME "$txing_rig_name"
+    export_line TXING_DEVICE_NAME "$txing_device_name"
+    export_line TXING_DEVICE_TYPE "$txing_device_type"
+    export_line TXING_TOWN_STACK_NAME "$txing_town_stack_name"
+    export_line TXING_RIG_STACK_NAME "$txing_rig_stack_name"
+    export_line TXING_DEVICE_STACK_NAME "$txing_device_stack_name"
     export_line RIG_NAME "$rig_name"
     export_line SPARKPLUG_GROUP_ID "$sparkplug_group_id"
     export_line SPARKPLUG_EDGE_NODE_ID "$sparkplug_edge_node_id"

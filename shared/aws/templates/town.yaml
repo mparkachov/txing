@@ -1,0 +1,15 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: txing town layer marker stack.
+
+Parameters:
+  TownName:
+    Type: String
+    AllowedPattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+
+Resources:
+  TownLayerMarker:
+    Type: AWS::CloudFormation::WaitConditionHandle
+
+Outputs:
+  TownName:
+    Value: !Ref TownName

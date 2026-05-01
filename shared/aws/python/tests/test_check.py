@@ -164,13 +164,11 @@ class _FakeRuntime:
 
 
 class AwsCheckTests(unittest.TestCase):
-    def test_validate_rig_environment_accepts_profile_selector_and_files(self) -> None:
+    def test_validate_rig_environment_accepts_profile_selector_and_credentials_file(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             temp_path = Path(tempdir)
             shared_credentials_file = temp_path / "aws.credentials"
             shared_credentials_file.write_text("[town]\n", encoding="utf-8")
-            aws_config_file = temp_path / "aws.config"
-            aws_config_file.write_text("[profile rig]\n", encoding="utf-8")
 
             results, resolved = validate_service_environment(
                 "rig",
@@ -178,7 +176,6 @@ class AwsCheckTests(unittest.TestCase):
                     "AWS_REGION": "eu-central-1",
                     "AWS_RIG_PROFILE": "rig",
                     "AWS_SHARED_CREDENTIALS_FILE": str(shared_credentials_file),
-                    "AWS_CONFIG_FILE": str(aws_config_file),
                     "RIG_NAME": "rig",
                     "SPARKPLUG_GROUP_ID": "town",
                     "SPARKPLUG_EDGE_NODE_ID": "rig",
@@ -197,7 +194,6 @@ class AwsCheckTests(unittest.TestCase):
             {
                 "AWS_REGION": "eu-central-1",
                 "AWS_SHARED_CREDENTIALS_FILE": "/missing/aws.credentials",
-                "AWS_CONFIG_FILE": "/missing/aws.config",
                 "THING_NAME": "unit-local",
                 "SCHEMA_FILE": "/missing/schema.json",
                 "BOARD_VIDEO_REGION": "eu-central-1",
@@ -211,7 +207,6 @@ class AwsCheckTests(unittest.TestCase):
             failure_messages,
         )
         self.assertIn("AWS shared credentials file missing or not a file (/missing/aws.credentials)", failure_messages)
-        self.assertIn("AWS config file missing or not a file (/missing/aws.config)", failure_messages)
         self.assertIn("Shadow schema file missing or not a file (/missing/schema.json)", failure_messages)
         self.assertIn("Board video sender command missing ($BOARD_VIDEO_SENDER_COMMAND)", failure_messages)
 
@@ -220,8 +215,6 @@ class AwsCheckTests(unittest.TestCase):
             temp_path = Path(tempdir)
             shared_credentials_file = temp_path / "aws.credentials"
             shared_credentials_file.write_text("[town]\n", encoding="utf-8")
-            aws_config_file = temp_path / "aws.config"
-            aws_config_file.write_text("[profile rig]\n", encoding="utf-8")
             runtime = _FakeRuntime(endpoint="abc123-ats.iot.eu-central-1.amazonaws.com")
 
             results = run_service_check(
@@ -230,7 +223,6 @@ class AwsCheckTests(unittest.TestCase):
                     "AWS_REGION": "eu-central-1",
                     "AWS_RIG_PROFILE": "rig",
                     "AWS_SHARED_CREDENTIALS_FILE": str(shared_credentials_file),
-                    "AWS_CONFIG_FILE": str(aws_config_file),
                     "RIG_NAME": "rig",
                     "SPARKPLUG_GROUP_ID": "town",
                     "SPARKPLUG_EDGE_NODE_ID": "rig",
@@ -270,8 +262,6 @@ class AwsCheckTests(unittest.TestCase):
             temp_path = Path(tempdir)
             shared_credentials_file = temp_path / "aws.credentials"
             shared_credentials_file.write_text("[town]\n", encoding="utf-8")
-            aws_config_file = temp_path / "aws.config"
-            aws_config_file.write_text("[profile device]\n", encoding="utf-8")
             schema_file = temp_path / "schema.json"
             schema_file.write_text("{}", encoding="utf-8")
             runtime = _FakeRuntime(endpoint="abc123-ats.iot.eu-central-1.amazonaws.com")
@@ -282,7 +272,6 @@ class AwsCheckTests(unittest.TestCase):
                     "AWS_REGION": "eu-central-1",
                     "AWS_DEVICE_PROFILE": "device",
                     "AWS_SHARED_CREDENTIALS_FILE": str(shared_credentials_file),
-                    "AWS_CONFIG_FILE": str(aws_config_file),
                     "THING_NAME": "unit-local",
                     "SCHEMA_FILE": str(schema_file),
                     "BOARD_VIDEO_REGION": "us-east-1",
