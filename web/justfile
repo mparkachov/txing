@@ -1,4 +1,5 @@
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+set quiet := true
 
 web_dir := source_directory()
 project_root := web_dir + "/.."

@@ -1,4 +1,5 @@
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+set quiet := true
 
 board_dir := source_directory()
 python_executable := "python3"

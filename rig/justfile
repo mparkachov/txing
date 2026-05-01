@@ -1,4 +1,5 @@
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+set quiet := true
 
 rig_dir := source_directory()
 python_executable := "python3"
@@ -698,7 +699,7 @@ aws_shared_credentials_file := ""
               export AWS_IOT_ENDPOINT="$iot_data_endpoint"
               export TXING_DEVICE_TYPE="unit"
               export TXING_DEVICE_DIR="{artifacts:path}/devices/unit"
-              export TXING_DEVICE_MANIFEST="$TXING_DEVICE_DIR/manifest.toml"
+              export TXING_DEVICE_MANIFEST="{artifacts:path}/devices/unit/manifest.toml"
               export PYTHONPATH="{artifacts:path}/python"
               exec python3 -m unit_rig.sparkplug_manager
         Artifacts:
@@ -732,12 +733,12 @@ aws_shared_credentials_file := ""
             RequiresPrivilege: true
             Script: |-
               export RIG_NAME="$rig_name"
-              export THING_NAME="$THING_NAME"
+              export THING_NAME="${THING_NAME:-unit-local}"
               export SPARKPLUG_GROUP_ID="$sparkplug_group_id"
               export SPARKPLUG_EDGE_NODE_ID="$sparkplug_edge_node_id"
               export TXING_DEVICE_TYPE="unit"
               export TXING_DEVICE_DIR="{artifacts:path}/devices/unit"
-              export TXING_DEVICE_MANIFEST="$TXING_DEVICE_DIR/manifest.toml"
+              export TXING_DEVICE_MANIFEST="{artifacts:path}/devices/unit/manifest.toml"
               export PYTHONPATH="{artifacts:path}/python"
               exec python3 -m unit_rig.connectivity_ble --adapter-id "{{adapter_id}}" --name "{{name_fragment}}"
         Artifacts:

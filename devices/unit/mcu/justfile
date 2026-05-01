@@ -1,4 +1,5 @@
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+set quiet := true
 
 mcu_dir := source_directory()
 firmware_manifest := mcu_dir + "/Cargo.toml"

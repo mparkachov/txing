@@ -35,7 +35,7 @@ Manifests:
           export SPARKPLUG_EDGE_NODE_ID="{configuration:/SparkplugEdgeNodeId}"
           export TXING_DEVICE_TYPE="unit"
           export TXING_DEVICE_DIR="{artifacts:decompressedPath}/rig-greengrass/devices/unit"
-          export TXING_DEVICE_MANIFEST="$TXING_DEVICE_DIR/manifest.toml"
+          export TXING_DEVICE_MANIFEST="{artifacts:decompressedPath}/rig-greengrass/devices/unit/manifest.toml"
           export PYTHONPATH="{artifacts:decompressedPath}/rig-greengrass/python"
           exec python3 -m unit_rig.sparkplug_manager
     Artifacts:
