@@ -17,6 +17,10 @@ Resources:
             Effect: Allow
             Action: iot:Connect
             Resource:
+              # Per-device Sparkplug sessions intentionally use the managed
+              # thing name as MQTT client id so AWS IoT thing connectivity
+              # status tracks DBIRTH/DDEATH session state.
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/*
               - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/rig-*
               - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/rig-cmd-*
               - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/rig-log-*

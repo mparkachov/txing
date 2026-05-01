@@ -183,8 +183,7 @@ aws_shared_credentials_file := ""
       )"
     fi
     if [ -n "$managed_device_thing" ] && [ "$managed_device_thing" != "None" ]; then
-      safe_device_thing="$(printf '%s' "$managed_device_thing" | sed 's/[^A-Za-z0-9_-]/-/g')"
-      device_client_id="rig-${rig_name}-sp-${safe_device_thing}"
+      device_client_id="$managed_device_thing"
       device_will_topic="spBv1.0/${sparkplug_group_id}/DDEATH/${sparkplug_edge_node_id}/${managed_device_thing}"
       uv run --project "{{project_root}}/shared/aws/python" python - "$iot_data_endpoint" "$region" "$tes_response" "$device_client_id" "$device_will_topic" <<'PY'
     import json

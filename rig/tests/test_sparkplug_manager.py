@@ -222,7 +222,7 @@ class DeviceSparkplugMqttSessionTests(unittest.TestCase):
                 aws_region="eu-central-1",
                 sparkplug_group_id="town",
                 sparkplug_edge_node_id="rig",
-                client_id="rig-rig-sp-unit-1",
+                client_id="unit-1",
             ),
             thing_name="unit-1",
             aws_runtime=object(),  # type: ignore[arg-type]
@@ -271,7 +271,7 @@ class DeviceSparkplugMqttSessionTests(unittest.TestCase):
                 aws_region="eu-central-1",
                 sparkplug_group_id="town",
                 sparkplug_edge_node_id="rig",
-                client_id="rig-rig-sp-unit-1",
+                client_id="unit-1",
             ),
             thing_name="unit-1",
             aws_runtime=object(),  # type: ignore[arg-type]
@@ -317,6 +317,23 @@ class SparkplugManagerTests(unittest.TestCase):
         )
 
         self.assertEqual(config.iot_endpoint, "endpoint")
+
+    def test_device_session_client_id_is_managed_thing_name(self) -> None:
+        manager = SparkplugManager(
+            BridgeConfig(
+                iot_endpoint="endpoint",
+                aws_region="eu-central-1",
+                rig_name="rig",
+            ),
+            aws_runtime=object(),  # type: ignore[arg-type]
+            bus=InMemoryLocalPubSub(),
+            cloud_client=FakeCloudClient(),  # type: ignore[arg-type]
+            session_factory=FakeDeviceSession,  # type: ignore[arg-type]
+        )
+
+        config = manager._device_session_config("unit-cd5xu6")
+
+        self.assertEqual(config.client_id, "unit-cd5xu6")
 
     def test_manager_republishes_inventory_for_late_connectivity_adapter(self) -> None:
         async def exercise() -> ConnectivityInventory:

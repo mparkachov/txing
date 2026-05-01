@@ -110,6 +110,13 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("GreengrassTokenExchangeRoleAliasArn:", template)
         self.assertIn("GreengrassArtifactsBucketName:", template)
 
+    def test_rig_runtime_can_connect_with_managed_device_client_ids(self) -> None:
+        template = _template_text()
+
+        self.assertIn("Sid: RigMqttConnect", template)
+        self.assertIn("client/*", template)
+        self.assertIn("thing connectivity", template)
+
     def test_global_resources_use_cloudformation_generated_names(self) -> None:
         template = _template_text()
 

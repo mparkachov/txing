@@ -422,13 +422,12 @@ class SparkplugManager:
         return seq
 
     def _device_session_config(self, thing_name: str) -> SparkplugMqttSessionConfig:
-        safe_thing = "".join(ch if ch.isalnum() or ch in "-_" else "-" for ch in thing_name)
         return SparkplugMqttSessionConfig(
             endpoint=self._config.iot_endpoint,
             aws_region=self._config.aws_region,
             sparkplug_group_id=self._config.sparkplug_group_id,
             sparkplug_edge_node_id=self._config.sparkplug_edge_node_id,
-            client_id=f"rig-{self._config.rig_name}-sp-{safe_thing}",
+            client_id=thing_name,
             connect_timeout=self._config.aws_connect_timeout,
             reconnect_delay=self._config.reconnect_delay,
         )
