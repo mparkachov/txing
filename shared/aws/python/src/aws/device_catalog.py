@@ -181,6 +181,7 @@ class DeviceManifest:
     device_name: str
     display_name: str
     capabilities: tuple[str, ...]
+    compatible_rig_types: tuple[str, ...]
     shadows: dict[str, DeviceShadowContract]
     rig_processes: tuple[RigProcessContract, ...]
     web: DeviceWebContract
@@ -328,6 +329,11 @@ def _load_manifest(
         _require_text_list(raw, "capabilities", manifest_file=manifest_file),
         manifest_file=manifest_file,
     )
+    compatible_rig_types = _require_text_list(
+        raw,
+        "compatible_rig_types",
+        manifest_file=manifest_file,
+    )
     shadows = _load_shadow_contracts(
         raw,
         manifest_file=manifest_file,
@@ -360,6 +366,7 @@ def _load_manifest(
         device_name=device_name,
         display_name=display_name,
         capabilities=capabilities,
+        compatible_rig_types=compatible_rig_types,
         shadows=shadows,
         rig_processes=rig_processes,
         web=web,

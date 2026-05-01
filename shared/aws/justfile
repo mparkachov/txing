@@ -71,7 +71,8 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
       --region "$AWS_REGION" \
       ensure-rig \
       --town "$TXING_TOWN_NAME" \
-      --rig "$TXING_RIG_NAME"
+      --rig "$TXING_RIG_NAME" \
+      --rig-type "$TXING_RIG_TYPE"
     describe_stack_outputs "$TXING_RIG_STACK_NAME"
 
 @device-deploy stack_name=stack_name template_file=device_template_file region=region profile=profile:

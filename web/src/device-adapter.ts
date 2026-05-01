@@ -22,8 +22,10 @@ export type DeviceAutoOpenState = {
 }
 
 export type DeviceDetailRenderProps = {
+  callMcpTool: (name: string, args?: Record<string, unknown>) => Promise<unknown>
   isBoardVideoExpanded: boolean
   isDebugEnabled: boolean
+  isShadowConnected: boolean
   mcpTransport: McpTransportKind | null
   onBoardVideoRuntimeError: (message: string) => void
   onToggleDebug: () => void
@@ -31,8 +33,10 @@ export type DeviceDetailRenderProps = {
   reportedBoardLeftTrackSpeed: number | null
   reportedBoardOnline: boolean | null
   reportedBoardRightTrackSpeed: number | null
+  reportedRedcon: number | null
   reportedMcuOnline: boolean | null
   resolveIdToken: () => Promise<string>
+  shadow: unknown
   videoChannelName: string
 }
 

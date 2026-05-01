@@ -22,7 +22,7 @@ class DeviceCatalogTests(unittest.TestCase):
         self.assertEqual(discover_repo_root(Path(__file__)), REPO_ROOT)
 
     def test_lists_only_loadable_device_types(self) -> None:
-        self.assertEqual(list_loadable_device_types(repo_root=REPO_ROOT), ["unit"])
+        self.assertEqual(list_loadable_device_types(repo_root=REPO_ROOT), ["time", "unit"])
 
     def test_loads_unit_manifest(self) -> None:
         manifest = load_device_manifest("unit", repo_root=REPO_ROOT)
@@ -34,6 +34,7 @@ class DeviceCatalogTests(unittest.TestCase):
             manifest.capabilities,
             ("sparkplug", "mcu", "board", "mcp", "video"),
         )
+        self.assertEqual(manifest.compatible_rig_types, ("unit",))
         self.assertEqual(
             manifest.shadow_schema,
             REPO_ROOT / "devices" / "unit" / "aws" / "sparkplug-shadow.schema.json",
@@ -57,6 +58,33 @@ class DeviceCatalogTests(unittest.TestCase):
         self.assertEqual(manifest.rig_processes[0].argv[:4], ("uv", "run", "--project", "rig/python"))
         self.assertEqual(manifest.web_adapter, "web/unit-adapter.tsx")
 
+    def test_loads_time_manifest(self) -> None:
+        manifest = load_device_manifest("time", repo_root=REPO_ROOT)
+
+        self.assertEqual(manifest.type, "time")
+        self.assertEqual(manifest.device_name, "clock")
+        self.assertEqual(manifest.display_name, "Time")
+        self.assertEqual(manifest.capabilities, ("sparkplug", "mcp", "time"))
+        self.assertEqual(manifest.compatible_rig_types, ("aws",))
+        self.assertEqual(
+            [contract.name for contract in manifest.shadows.values()],
+            ["sparkplug", "mcp", "time"],
+        )
+        self.assertEqual(
+            [process.name for process in manifest.rig_processes],
+            ["time-sparkplug-manager", "time-aws-connectivity"],
+        )
+        self.assertEqual(
+            manifest.rig_processes[0].argv,
+            ("uv", "run", "--project", "rig/python", "time-rig-sparkplug-manager"),
+        )
+        self.assertEqual(manifest.render_board_video_channel_name(device_id="clock"), None)
+        self.assertEqual(manifest.web_adapter, "web/time-adapter.tsx")
+        for shadow_name in ("sparkplug", "mcp", "time"):
+            contract = manifest.shadow_contract(shadow_name)
+            self.assertIsInstance(json.loads(contract.schema.read_text(encoding="utf-8")), dict)
+            self.assertIsInstance(json.loads(contract.default.read_text(encoding="utf-8")), dict)
+
     def test_template_is_not_loadable(self) -> None:
         with self.assertRaises(DeviceTypeNotFoundError):
             load_device_manifest("template", repo_root=REPO_ROOT)
@@ -70,9 +98,14 @@ class DeviceCatalogTests(unittest.TestCase):
             capabilities["unit"],
             ("sparkplug", "mcu", "board", "mcp", "video"),
         )
+        self.assertEqual(capabilities["time"], ("sparkplug", "mcp", "time"))
         self.assertEqual(
             capabilities_for_thing_type("unit", repo_root=REPO_ROOT),
             ("sparkplug", "mcu", "board", "mcp", "video"),
+        )
+        self.assertEqual(
+            capabilities_for_thing_type("time", repo_root=REPO_ROOT),
+            ("sparkplug", "mcp", "time"),
         )
 
     def test_manifest_capabilities_are_device_defined(self) -> None:
@@ -102,6 +135,7 @@ type = "sensor"
 device_name = "sensor"
 display_name = "Sensor"
 capabilities = ["sparkplug", "sensor-data"]
+compatible_rig_types = ["sensor-rig"]
 
 [shadows.sparkplug]
 schema = "aws/sparkplug-shadow.schema.json"
@@ -120,6 +154,7 @@ adapter = "web/sensor-adapter.tsx"
             manifest = load_device_manifest("sensor", repo_root=repo_root)
 
         self.assertEqual(manifest.capabilities, ("sparkplug", "sensor-data"))
+        self.assertEqual(manifest.compatible_rig_types, ("sensor-rig",))
         self.assertEqual(manifest.shadow_contract("sensor-data").name, "sensor-data")
 
 

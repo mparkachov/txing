@@ -1165,6 +1165,17 @@ function App({ initialAuthError = '' }: AppProps) {
     }
   })
 
+  const callDeviceMcpTool = useCallback(
+    async (name: string, args: Record<string, unknown> = {}): Promise<unknown> => {
+      const shadowSession = shadowSessionRef.current
+      if (!shadowSession || !isShadowConnected) {
+        throw new Error('Shadow connection is not ready')
+      }
+      return shadowSession.callMcpTool(name, args)
+    },
+    [isShadowConnected],
+  )
+
   useEffect(() => {
     const nextBoardVideoLastError = normalizeRuntimeMessage(robotVideoLastError)
     const nextNotificationMessage = getNextBoardVideoLastErrorNotification(
@@ -1778,8 +1789,10 @@ function App({ initialAuthError = '' }: AppProps) {
   ) {
     content = (
       currentDeviceAdapter.renderDetail({
+        callMcpTool: callDeviceMcpTool,
         isBoardVideoExpanded,
         isDebugEnabled,
+        isShadowConnected,
         mcpTransport,
         onToggleDebug: () => {
           setIsDebugEnabled((currentValue) => !currentValue)
@@ -1788,9 +1801,11 @@ function App({ initialAuthError = '' }: AppProps) {
         reportedBoardLeftTrackSpeed,
         reportedBoardOnline,
         reportedBoardRightTrackSpeed,
+        reportedRedcon,
         reportedMcuOnline,
         videoChannelName: currentDeviceAdapter.buildVideoChannelName(selectedDeviceRoute.device),
         resolveIdToken: resolveSessionIdToken,
+        shadow: displayShadowDocument,
         onBoardVideoRuntimeError: (message) => {
           enqueueRuntimeError(message, 'board-video-viewer')
         },

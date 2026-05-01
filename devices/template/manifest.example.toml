@@ -2,6 +2,7 @@ type = "example"
 device_name = "example-device"
 display_name = "Example Device"
 capabilities = ["sparkplug"]
+compatible_rig_types = ["example-rig"]
 
 [shadows.sparkplug]
 schema = "aws/sparkplug-shadow.schema.json"

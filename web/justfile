@@ -13,6 +13,7 @@ web_dist_dir := web_dir + "/dist"
     cd "{{web_dir}}"
     bun install
     ln -snf ../../../web/node_modules "{{project_root}}/devices/unit/web/node_modules"
+    ln -snf ../../../web/node_modules "{{project_root}}/devices/time/web/node_modules"
 
 @dev:
     cd "{{web_dir}}"

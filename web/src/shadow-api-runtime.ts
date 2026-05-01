@@ -118,6 +118,7 @@ export type ShadowSession = {
   requestSnapshot: () => Promise<unknown>
   publishRedconCommand: (redcon: number) => Promise<void>
   publishCmdVel: (twist: Twist) => Promise<void>
+  callMcpTool: (name: string, args?: Record<string, unknown>) => Promise<unknown>
   requestRobotState: () => Promise<RobotState>
   waitForSnapshot: (
     predicate: (shadow: unknown) => boolean,
@@ -698,6 +699,14 @@ class AwsIotShadowSession implements ShadowSession {
     return this.cmdVelPublisher.push(twist)
   }
 
+  async callMcpTool(
+    name: string,
+    argumentsPayload: Record<string, unknown> = {},
+  ): Promise<unknown> {
+    await this.ensureMcpSessionReady()
+    return this.callMcpToolInternal(name, argumentsPayload)
+  }
+
   async requestRobotState(): Promise<RobotState> {
     if (this.pendingMcpRequests.size > 0 && this.latestRobotState) {
       return this.latestRobotState
@@ -710,7 +719,7 @@ class AwsIotShadowSession implements ShadowSession {
 
   private async fetchRobotStateWithSessionRetry(): Promise<RobotState> {
     try {
-      return this.parseRobotStateResult(await this.callMcpTool('robot.get_state', {}))
+      return this.parseRobotStateResult(await this.callMcpToolInternal('robot.get_state', {}))
     } catch (caughtError) {
       if (!isMcpSessionNotInitializedError(caughtError)) {
         throw caughtError
@@ -718,7 +727,7 @@ class AwsIotShadowSession implements ShadowSession {
       this.mcpInitialized = false
       this.mcpSessionReadyPromise = null
       await this.ensureMcpSessionReady()
-      return this.parseRobotStateResult(await this.callMcpTool('robot.get_state', {}))
+      return this.parseRobotStateResult(await this.callMcpToolInternal('robot.get_state', {}))
     }
   }
 
@@ -1173,7 +1182,7 @@ class AwsIotShadowSession implements ShadowSession {
       const leaseToken = this.mcpLease.leaseToken
       try {
         const motionResult = parseMcpMotionCommandResult(
-          await this.callMcpTool('cmd_vel.stop', {
+          await this.callMcpToolInternal('cmd_vel.stop', {
             leaseToken,
           }),
         )
@@ -1389,7 +1398,7 @@ class AwsIotShadowSession implements ShadowSession {
       return
     }
     try {
-      await this.callMcpTool('control.release_lease', {
+      await this.callMcpToolInternal('control.release_lease', {
         leaseToken: lease.leaseToken,
       })
     } catch {
@@ -1400,14 +1409,14 @@ class AwsIotShadowSession implements ShadowSession {
   private async acquireMcpLease(): Promise<McpLeaseState> {
     let acquiredResult: unknown
     try {
-      acquiredResult = await this.callMcpTool('control.acquire_lease', {})
+      acquiredResult = await this.callMcpToolInternal('control.acquire_lease', {})
     } catch (caughtError) {
       if (!isMcpSessionNotInitializedError(caughtError)) {
         throw caughtError
       }
       this.mcpInitialized = false
       await this.ensureMcpSessionReady()
-      acquiredResult = await this.callMcpTool('control.acquire_lease', {})
+      acquiredResult = await this.callMcpToolInternal('control.acquire_lease', {})
     }
     const acquired = parseMcpLeaseState(acquiredResult)
     if (!acquired) {
@@ -1422,7 +1431,7 @@ class AwsIotShadowSession implements ShadowSession {
     twist: Twist,
   ): Promise<McpMotionCommandResult> {
     const motionResult = parseMcpMotionCommandResult(
-      await this.callMcpTool('cmd_vel.publish', {
+      await this.callMcpToolInternal('cmd_vel.publish', {
         leaseToken,
         twist,
       }),
@@ -1519,7 +1528,10 @@ class AwsIotShadowSession implements ShadowSession {
       .catch(() => undefined)
   }
 
-  private async callMcpTool(name: string, argumentsPayload: Record<string, unknown>): Promise<unknown> {
+  private async callMcpToolInternal(
+    name: string,
+    argumentsPayload: Record<string, unknown>,
+  ): Promise<unknown> {
     const result = await this.publishMcpRequest('tools/call', {
       name,
       arguments: argumentsPayload,

@@ -54,6 +54,73 @@
   --notification-error-bg: rgba(180, 35, 24, 0.13);
 }
 
+.time-device-panel {
+  display: grid;
+  gap: 1rem;
+  width: min(100%, 58rem);
+  margin: 0 auto;
+  padding: 1rem;
+}
+
+.time-device-clock {
+  display: grid;
+  gap: 0.35rem;
+  padding: 1rem;
+  border: 1px solid rgba(148, 163, 184, 0.32);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.68);
+}
+
+.time-device-clock-label,
+.time-device-metric-label {
+  color: #9ca3af;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.time-device-clock-value {
+  overflow-wrap: anywhere;
+  color: #e5f0ff;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 2rem;
+  line-height: 1.1;
+}
+
+.time-device-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: 0.75rem;
+}
+
+.time-device-metric {
+  display: grid;
+  gap: 0.35rem;
+  min-width: 0;
+  padding: 0.8rem;
+  border: 1px solid rgba(148, 163, 184, 0.26);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.055);
+}
+
+.time-device-metric-value {
+  overflow-wrap: anywhere;
+  color: #f8fafc;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.94rem;
+  line-height: 1.35;
+}
+
+.time-device-error {
+  margin: 0;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid rgba(248, 113, 113, 0.46);
+  border-radius: 8px;
+  background: rgba(127, 29, 29, 0.22);
+  color: #fecaca;
+}
+
 * {
   box-sizing: border-box;
 }

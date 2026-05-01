@@ -51,6 +51,18 @@ _project-aws-env scope='rig' region='' profile='' stack_name='' cognito_domain_p
         | sed 's/^-*//; s/-*$//'
     }
 
+    normalize_required_slug() {
+      local label="$1"
+      local raw="$2"
+      local normalized
+      normalized="$(normalize_slug "$raw")"
+      if [ -z "$normalized" ]; then
+        echo "Missing required $label. Set it explicitly in config/aws.env." >&2
+        exit 1
+      fi
+      printf '%s\n' "$normalized"
+    }
+
     aws_source_profile_default="${AWS_SOURCE_PROFILE:-${AWS_TOWN_PROFILE:-town}}"
     aws_selected_profile_default="$aws_source_profile_default"
 
@@ -62,10 +74,11 @@ _project-aws-env scope='rig' region='' profile='' stack_name='' cognito_domain_p
     aws_town_profile="$aws_source_profile"
     aws_selected_profile="$(choose_value "{{profile}}" "$aws_selected_profile_default")"
     aws_shared_credentials_file="$(resolve_path "$(choose_value "{{aws_shared_credentials_file}}" "${AWS_SHARED_CREDENTIALS_FILE:-config/aws.credentials}")")"
-    txing_town_name="$(normalize_slug "${TXING_TOWN_NAME:-${SPARKPLUG_GROUP_ID:-town}}")"
-    txing_rig_name="$(normalize_slug "${TXING_RIG_NAME:-${RIG_NAME:-rig}}")"
-    txing_device_name="$(normalize_slug "${TXING_DEVICE_NAME:-bot}")"
-    txing_device_type="$(normalize_slug "${TXING_DEVICE_TYPE:-unit}")"
+    txing_town_name="$(normalize_required_slug TXING_TOWN_NAME "${TXING_TOWN_NAME:-${SPARKPLUG_GROUP_ID:-}}")"
+    txing_rig_name="$(normalize_required_slug TXING_RIG_NAME "${TXING_RIG_NAME:-${RIG_NAME:-}}")"
+    txing_rig_type="$(normalize_required_slug TXING_RIG_TYPE "${TXING_RIG_TYPE:-${RIG_TYPE:-}}")"
+    txing_device_name="$(normalize_required_slug TXING_DEVICE_NAME "${TXING_DEVICE_NAME:-}")"
+    txing_device_type="$(normalize_required_slug TXING_DEVICE_TYPE "${TXING_DEVICE_TYPE:-}")"
     txing_town_stack_name="${TXING_TOWN_STACK_NAME:-${aws_stack_name}-${txing_town_name}}"
     txing_rig_stack_name="${TXING_RIG_STACK_NAME:-${txing_town_stack_name}-${txing_rig_name}}"
     txing_device_stack_name="${TXING_DEVICE_STACK_NAME:-${txing_rig_stack_name}-${txing_device_name}}"
@@ -171,12 +184,14 @@ _project-aws-env scope='rig' region='' profile='' stack_name='' cognito_domain_p
     export_line AWS_SHARED_CREDENTIALS_FILE "$aws_shared_credentials_file"
     export_line TXING_TOWN_NAME "$txing_town_name"
     export_line TXING_RIG_NAME "$txing_rig_name"
+    export_line TXING_RIG_TYPE "$txing_rig_type"
     export_line TXING_DEVICE_NAME "$txing_device_name"
     export_line TXING_DEVICE_TYPE "$txing_device_type"
     export_line TXING_TOWN_STACK_NAME "$txing_town_stack_name"
     export_line TXING_RIG_STACK_NAME "$txing_rig_stack_name"
     export_line TXING_DEVICE_STACK_NAME "$txing_device_stack_name"
     export_line RIG_NAME "$rig_name"
+    export_line RIG_TYPE "$txing_rig_type"
     export_line SPARKPLUG_GROUP_ID "$sparkplug_group_id"
     export_line SPARKPLUG_EDGE_NODE_ID "$sparkplug_edge_node_id"
     export_line CLOUDWATCH_LOG_GROUP "$cloudwatch_log_group"
@@ -283,6 +298,7 @@ mod rig 'rig/justfile'
 mod aws 'shared/aws/justfile'
 mod witness 'witness/justfile'
 mod unit 'devices/unit/justfile'
+mod time 'devices/time/justfile'
 mod web 'web/justfile'
 
 @default:

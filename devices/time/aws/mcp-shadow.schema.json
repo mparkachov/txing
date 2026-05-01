@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "state": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "reported": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "descriptor": {
+              "type": ["object", "null"],
+              "additionalProperties": true,
+              "properties": {
+                "serviceId": {
+                  "const": "mcp"
+                },
+                "transport": {
+                  "type": "string"
+                },
+                "descriptorTopic": {
+                  "type": "string"
+                },
+                "mcpProtocolVersion": {
+                  "type": "string"
+                },
+                "leaseRequired": {
+                  "type": "boolean"
+                },
+                "leaseTtlMs": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "serverVersion": {
+                  "type": "string"
+                }
+              }
+            },
+            "status": {
+              "type": "object",
+              "additionalProperties": true,
+              "properties": {
+                "serviceId": {
+                  "const": "mcp"
+                },
+                "available": {
+                  "type": "boolean"
+                },
+                "updatedAtMs": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

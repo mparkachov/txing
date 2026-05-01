@@ -15,7 +15,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 class DeviceProcessContractTests(unittest.TestCase):
-    def test_generic_rig_sources_do_not_import_unit_runtime(self) -> None:
+    def test_generic_rig_sources_do_not_import_device_runtime(self) -> None:
         rig_src = REPO_ROOT / "rig" / "src" / "rig"
         source_text = "\n".join(
             path.read_text(encoding="utf-8")
@@ -23,6 +23,7 @@ class DeviceProcessContractTests(unittest.TestCase):
         )
 
         self.assertNotIn("unit_rig", source_text)
+        self.assertNotIn("time_rig", source_text)
 
     def test_builds_invocation_from_manifest_without_importing_device_runtime(self) -> None:
         manifest = load_device_manifest("unit", repo_root=REPO_ROOT)
@@ -49,6 +50,29 @@ class DeviceProcessContractTests(unittest.TestCase):
             invocation.env["TXING_DEVICE_MANIFEST"],
             str(REPO_ROOT / "devices" / "unit" / "manifest.toml"),
         )
+
+    def test_builds_time_invocation_from_manifest_process_contract(self) -> None:
+        manifest = load_device_manifest("time", repo_root=REPO_ROOT)
+
+        invocation = build_device_process_invocation(
+            manifest,
+            "time-aws-connectivity",
+            base_environment={
+                "RIG_NAME": "aws",
+                "THING_NAME": "clock",
+                "SPARKPLUG_GROUP_ID": "town",
+                "SPARKPLUG_EDGE_NODE_ID": "aws",
+                "AWS_REGION": "eu-central-1",
+            },
+        )
+
+        self.assertEqual(invocation.device_type, "time")
+        self.assertEqual(invocation.process_name, "time-aws-connectivity")
+        self.assertEqual(
+            invocation.argv,
+            ("uv", "run", "--project", "rig/python", "time-rig-aws-connectivity"),
+        )
+        self.assertEqual(invocation.cwd, REPO_ROOT / "devices" / "time")
 
     def test_reports_missing_required_process_environment(self) -> None:
         manifest = load_device_manifest("unit", repo_root=REPO_ROOT)

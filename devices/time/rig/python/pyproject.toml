@@ -1,0 +1,24 @@
+[project]
+name = "time-rig"
+version = "0.5.0"
+description = "Time device-type runtime adapter for the txing aws rig"
+requires-python = ">=3.12"
+dependencies = [
+    "awsiotsdk>=1.22,<2",
+    "boto3>=1.34,<2",
+    "aws",
+    "rig",
+]
+
+[project.scripts]
+time-rig = "time_rig:main"
+time-rig-aws-connectivity = "time_rig.aws_connectivity:main"
+time-rig-sparkplug-manager = "time_rig.sparkplug_manager:main"
+
+[build-system]
+requires = ["uv_build>=0.10.6,<0.11.0"]
+build-backend = "uv_build"
+
+[tool.uv.sources]
+aws = { path = "../../../../shared/aws/python" }
+rig = { path = "../../../../rig" }

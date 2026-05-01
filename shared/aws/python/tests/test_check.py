@@ -46,6 +46,7 @@ class _FakeIotClient:
                     "name": "rig",
                     "shortId": "rig001",
                     "town": "town",
+                    "rigType": "unit",
                     "capabilitiesSet": "sparkplug",
                 },
             }

@@ -52,6 +52,7 @@ export type ShadowSession = {
   requestSnapshot: () => Promise<unknown>
   publishRedconCommand: (redcon: number) => Promise<void>
   publishCmdVel: (twist: Twist) => Promise<void>
+  callMcpTool: (name: string, args?: Record<string, unknown>) => Promise<unknown>
   requestRobotState: () => Promise<RobotState>
   waitForSnapshot: (
     predicate: (shadow: unknown) => boolean,
@@ -101,6 +102,11 @@ class LazyShadowSession implements ShadowSession {
   async publishCmdVel(twist: Twist): Promise<void> {
     const session = await this.getSession()
     await session.publishCmdVel(twist)
+  }
+
+  async callMcpTool(name: string, args: Record<string, unknown> = {}): Promise<unknown> {
+    const session = await this.getSession()
+    return session.callMcpTool(name, args)
   }
 
   async requestRobotState(): Promise<RobotState> {

@@ -2,6 +2,7 @@ type = "unit"
 device_name = "bot"
 display_name = "Bot"
 capabilities = ["sparkplug", "mcu", "board", "mcp", "video"]
+compatible_rig_types = ["unit"]
 
 [shadows.sparkplug]
 schema = "aws/sparkplug-shadow.schema.json"

@@ -1,0 +1,124 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: txing virtual time device Lambda runtime
+
+Parameters:
+  ThingName:
+    Type: String
+    Default: clock
+  ScheduleExpression:
+    Type: String
+    Default: rate(1 minute)
+  ActiveTtlMs:
+    Type: Number
+    Default: 300000
+
+Resources:
+  TimeDeviceLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/txing-time-${ThingName}
+      RetentionInDays: 14
+
+  TimeDeviceFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: TimeDeviceRuntime
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !GetAtt TimeDeviceLogGroup.Arn
+                  - !Sub ${TimeDeviceLogGroup.Arn}:*
+              - Effect: Allow
+                Action:
+                  - iot:Publish
+                  - iot:RetainPublish
+                  - iot:GetRetainedMessage
+                Resource:
+                  - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/${ThingName}/time/*
+                  - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/${ThingName}/mcp/*
+              - Effect: Allow
+                Action:
+                  - iot:DescribeEndpoint
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - iot:UpdateThingShadow
+                  - iot:GetThingShadow
+                Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/${ThingName}
+
+  TimeDeviceFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub txing-time-${ThingName}
+      Runtime: python3.12
+      Handler: time_device.lambda_handler.lambda_handler
+      CodeUri: ../lambda/python/src
+      Role: !GetAtt TimeDeviceFunctionRole.Arn
+      Timeout: 300
+      MemorySize: 128
+      Environment:
+        Variables:
+          THING_NAME: !Ref ThingName
+          ACTIVE_TTL_MS: !Ref ActiveTtlMs
+          SERVER_VERSION: '0.5.0'
+
+  TimeDeviceScheduleRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Wake the virtual time device once per minute.
+      ScheduleExpression: !Ref ScheduleExpression
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt TimeDeviceFunction.Arn
+          Id: TimeDeviceFunction
+
+  TimeDeviceSchedulePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref TimeDeviceFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt TimeDeviceScheduleRule.Arn
+
+  TimeDeviceMcpTopicRule:
+    Type: AWS::IoT::TopicRule
+    Properties:
+      TopicRulePayload:
+        AwsIotSqlVersion: '2016-03-23'
+        RuleDisabled: false
+        Sql: !Sub SELECT topic() AS mqttTopic, * FROM 'txings/${ThingName}/mcp/session/+/c2s'
+        Actions:
+          - Lambda:
+              FunctionArn: !GetAtt TimeDeviceFunction.Arn
+
+  TimeDeviceMcpRulePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref TimeDeviceFunction
+      Principal: iot.amazonaws.com
+      SourceArn: !GetAtt TimeDeviceMcpTopicRule.Arn
+
+Outputs:
+  TimeDeviceFunctionName:
+    Value: !Ref TimeDeviceFunction
+  TimeDeviceScheduleRuleName:
+    Value: !Ref TimeDeviceScheduleRule
+  TimeDeviceMcpTopicRuleArn:
+    Value: !GetAtt TimeDeviceMcpTopicRule.Arn

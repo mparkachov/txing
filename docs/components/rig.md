@@ -1,6 +1,8 @@
 # Rig
 
-The rig is the always-on Raspberry Pi coordinator. It bridges Sparkplug lifecycle intent from AWS IoT to BLE rendezvous sessions with the MCU and mirrors board MCP availability for readers.
+The rig is the always-on coordinator and Sparkplug edge node. The current
+`unit` rig type bridges Sparkplug lifecycle intent from AWS IoT to BLE
+rendezvous sessions with the MCU and mirrors board MCP availability for readers.
 
 ## Current Responsibilities
 
@@ -68,9 +70,10 @@ just rig::debug
 ```
 
 `just rig::check` validates AWS control-plane access plus certificate-backed
-AWS IoT connectivity from `config/certs/rig/`. It intentionally does not inspect
-systemd or `/var/lib/greengrass`; `just rig::install-service` owns creating the
-installed Greengrass filesystem state.
+AWS IoT connectivity from `config/certs/rig/`. It also checks that the configured
+rig identity is internally consistent, the AWS IoT rig thing has the configured
+`rigType`, and host services required by the selected rig type are installed,
+enabled, and active.
 
 Useful options:
 
@@ -93,19 +96,35 @@ sudo systemctl status --with-dependencies greengrass-lite.target
 `rig::build-native` builds Greengrass Lite with `GG_LOG_LEVEL=INFO` so the
 standard Greengrass daemons do not flood journald with debug traces.
 
-The install target no longer creates or removes a custom `rig.service`. It
-enables `bluetooth`, resolves the configured rig thing and Greengrass token
-exchange settings from AWS, writes `/etc/greengrass/config.yaml`, installs the
-native Greengrass Lite build using the upstream CMake install target, and starts
-the standard `greengrass-lite.target` through Greengrass Lite's
-`misc/run_nucleus` script. Rig behavior comes from Greengrass deployments of
-`dev.txing.device.unit.SparkplugManager` and connectivity adapter components.
+The install target no longer creates or removes a custom `rig.service`, and it
+does not enable rig-type-specific host services. It resolves the configured rig
+thing and Greengrass token exchange settings from AWS, writes
+`/etc/greengrass/config.yaml`, installs the native Greengrass Lite build using
+the upstream CMake install target, and starts the standard
+`greengrass-lite.target` through Greengrass Lite's `misc/run_nucleus` script.
+Rig behavior comes from Greengrass deployments selected by the configured
+`RIG_TYPE`.
+
+## Rig Type Host Requirements
+
+`RIG_TYPE=unit` requires the host Bluetooth service because the connectivity
+component uses BLE rendezvous with the MCU. Install and enable it manually:
+
+```bash
+sudo apt install -y bluez
+sudo systemctl enable --now bluetooth.service
+```
+
+`RIG_TYPE=aws` has no extra host service dependency beyond Greengrass Lite.
+
+Run `just rig::check` after configuring the host. It fails if a required service
+for the configured rig type is missing, disabled, or inactive.
 
 Use `just rig::deploy` after changing or pulling rig code; it depends
 on `just rig::build` and then stages a new local component artifact under
 `rig/build/greengrass-local`. That staging directory is intentionally kept until
 the next deploy because Greengrass Lite copies artifacts asynchronously. Use
-`just rig::restart` only when you want to restart Bluetooth and the existing
-Greengrass Lite systemd units without changing the deployed component version.
+`just rig::restart` only when you want to restart the existing Greengrass Lite
+systemd units without changing the deployed component version.
 
 Host setup details live in [installation.md](../installation.md). AWS bootstrap and registry steps live in [aws.md](../aws.md).

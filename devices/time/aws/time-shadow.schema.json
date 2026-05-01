@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "state": {
+      "type": "object",
+      "properties": {
+        "reported": {
+          "type": "object",
+          "properties": {
+            "currentTimeIso": {
+              "type": ["string", "null"]
+            },
+            "mode": {
+              "type": "string",
+              "enum": ["sleep", "active"]
+            },
+            "activeUntilMs": {
+              "type": ["integer", "null"]
+            },
+            "lastCommandId": {
+              "type": ["string", "null"]
+            },
+            "observedAtMs": {
+              "type": "integer"
+            },
+            "seq": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      }
+    }
+  }
+}

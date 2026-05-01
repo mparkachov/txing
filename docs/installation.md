@@ -18,7 +18,9 @@ cp config/aws.credentials.example config/aws.credentials
 
 ## Rig Host
 
-The rig is the always-on Raspberry Pi coordinator that owns Sparkplug publication, BLE wake/sleep control, and the `mcu` / `mcp` named-shadow updates.
+The rig is the always-on coordinator that owns Sparkplug publication. The
+current `unit` rig type also owns BLE wake/sleep control and `mcu` / `mcp`
+named-shadow updates.
 
 ### 1. Install OS Packages
 
@@ -30,11 +32,10 @@ to `cmake: command not found`.
 sudo apt update
 sudo apt full-upgrade -y
 sudo apt install -y \
-  git curl jq awscli bluez just ca-certificates python3-venv \
+  git curl jq awscli just ca-certificates python3-venv \
   build-essential pkg-config cmake libssl-dev libcurl4-openssl-dev \
   uuid-dev libzip-dev libsqlite3-dev libyaml-dev libsystemd-dev \
   libevent-dev liburiparser-dev cgroup-tools
-sudo systemctl enable --now bluetooth
 ```
 
 Verify the required native tools are on `PATH`:
@@ -43,6 +44,14 @@ Verify the required native tools are on `PATH`:
 cmake --version
 cc --version
 pkg-config --version
+```
+
+For `RIG_TYPE=unit`, install and enable Bluetooth manually before deploying the
+unit connectivity component:
+
+```bash
+sudo apt install -y bluez
+sudo systemctl enable --now bluetooth.service
 ```
 
 Install `uv`:
@@ -71,6 +80,7 @@ Edit:
   - `AWS_STACK_NAME`
   - `TXING_TOWN_NAME`
   - `TXING_RIG_NAME`
+  - `TXING_RIG_TYPE`
   - `TXING_DEVICE_NAME`
   - `TXING_DEVICE_TYPE`
   - `AWS_COGNITO_DOMAIN_PREFIX`
@@ -81,17 +91,10 @@ Edit:
 - `config/aws.credentials`
   - fill the `[town]` access keys
 
-Validate access and the rig certificate path used by Greengrass:
-
-```bash
-cd "$TXING_HOME"
-just rig::check
-```
-
-`just rig::check` does not inspect systemd or `/var/lib/greengrass`. It uses the
-certificate material under `config/certs/rig/` to verify AWS IoT MQTT mTLS
-connectivity and AWS IoT Credentials Provider role-alias access, matching the
-certificate inputs later installed by `just rig::install-service`.
+After the AWS rig resources and certificate material exist, `just rig::check`
+verifies AWS IoT MQTT mTLS connectivity, AWS IoT Credentials Provider role-alias
+access, rig identity consistency, the registered rig thing `rigType`, and
+rig-type-specific host services.
 
 ### 4. Prepare Greengrass Lite Configuration
 
@@ -115,6 +118,7 @@ the certificate, public key, private key, certificate ARN, and Amazon Root CA 1 
 ```bash
 cd "$TXING_HOME"
 just aws::cert
+just rig::check
 ```
 
 `just rig::install-service` copies `config/certs/rig/rig.cert.pem` and
@@ -146,20 +150,23 @@ If the host already has debug-built Greengrass Lite binaries installed, rerun
 
 `just rig::install-service` installs and starts the standard Greengrass Lite
 systemd units from the native build. It does not manage the old custom
-`rig.service`; remove that unit manually before using the Greengrass structure
+`rig.service` and it does not enable rig-type-specific host dependencies such as
+Bluetooth. Remove `rig.service` manually before using the Greengrass structure
 if it still exists on an older host. The recipe creates the default `ggcore` and
 `gg_component` users if they are missing, keeps `/var/lib/greengrass` owned by
 `ggcore:ggcore`, and starts `greengrass-lite.target` through the upstream
 `misc/run_nucleus` script.
 
-`just rig::deploy` packages the current rig Python source and dependencies with
-`uv`, stages Greengrass Lite recipes and artifacts under
-`rig/build/greengrass-local`, and deploys `dev.txing.device.unit.SparkplugManager` plus
-`dev.txing.device.unit.ConnectivityBle` with `ggl-cli deploy`. The staging directory is
-kept after `ggl-cli` returns because Greengrass Lite copies artifacts
-asynchronously. It depends on `just rig::build`, so after changing rig code or
-pulling new code, run `just rig::deploy`. A Greengrass service restart alone
-restarts the previously deployed component artifact.
+`just rig::deploy` packages the current rig Python source and the component set
+for the configured `RIG_TYPE`, stages Greengrass Lite recipes and artifacts under
+`rig/build/greengrass-local`, and deploys them with `ggl-cli deploy`. For
+`RIG_TYPE=unit` it deploys the unit Sparkplug and BLE components. For
+`RIG_TYPE=aws` it deploys the virtual AWS/time Sparkplug and AWS IoT MQTT
+connectivity components. The staging directory is kept after `ggl-cli` returns
+because Greengrass Lite copies artifacts asynchronously. It depends on
+`just rig::build`, so after changing rig code or pulling new code, run
+`just rig::deploy`. A Greengrass service restart alone restarts the previously
+deployed component artifact.
 
 Inspect Greengrass service health with:
 
@@ -167,10 +174,11 @@ Inspect Greengrass service health with:
 sudo systemctl status --with-dependencies greengrass-lite.target
 sudo journalctl -a -f
 sudo journalctl -a -f -u ggl.dev.txing.device.unit.SparkplugManager.service -u ggl.dev.txing.device.unit.ConnectivityBle.service
+sudo journalctl -a -f -u ggl.dev.txing.device.time.SparkplugManager.service -u ggl.dev.txing.device.time.AwsConnectivity.service
 ```
 
-Restart the installed Bluetooth and Greengrass Lite systemd units without
-deploying a new component artifact with:
+Restart the installed Greengrass Lite systemd units without deploying a new
+component artifact with:
 
 ```bash
 just rig::restart

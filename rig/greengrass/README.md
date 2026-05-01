@@ -56,12 +56,14 @@ writes `/etc/greengrass/config.yaml`.
 Use `just rig::check` to validate the certificate material in
 `config/certs/rig/` before install or deployment. The check performs AWS IoT MQTT
 mTLS and AWS IoT Credentials Provider role-alias probes with the local rig
-certificate; it does not inspect systemd or `/var/lib/greengrass`.
+certificate. It also validates rig identity consistency, the configured
+registry `rigType`, and host services required by that rig type.
 
 `just rig::install-service` uses the upstream CMake install target and
 Greengrass Lite `misc/run_nucleus` script; it does not create or rename txing
-systemd units and does not remove the old custom `rig.service`. The standard
-systemd entrypoint is `greengrass-lite.target`.
+systemd units, does not enable rig-type-specific host dependencies, and does not
+remove the old custom `rig.service`. The standard systemd entrypoint is
+`greengrass-lite.target`.
 
 After code changes or `git pull`, run:
 
@@ -72,10 +74,9 @@ just rig::deploy
 `deploy` depends on `rig::build`, so a separate build step is not
 required for the normal edit/pull/deploy loop.
 
-Use `just rig::restart` to restart Bluetooth and the Greengrass Lite systemd
-units without deploying new code. Do not expect restart to pick up a new local
-build; restart only re-runs the component version already deployed into
-Greengrass.
+Use `just rig::restart` to restart the Greengrass Lite systemd units without
+deploying new code. Do not expect restart to pick up a new local build; restart
+only re-runs the component version already deployed into Greengrass.
 
 AWS prerequisites are in `shared/aws/template.yaml`: the stack creates the
 Greengrass artifact bucket, token exchange IAM role, AWS IoT role alias, and

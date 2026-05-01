@@ -1,0 +1,83 @@
+set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+set quiet := true
+
+time_dir := source_directory()
+project_root := time_dir + "/../.."
+root_justfile := project_root + "/justfile"
+
+@processes:
+    cd "{{project_root}}" && uv run --project rig rig-device-process --device-type time list
+
+@run-process process:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export TXING_DEVICE_TYPE="${TXING_DEVICE_TYPE:-time}"
+    export TXING_DEVICE_NAME="${TXING_DEVICE_NAME:-clock}"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig)"
+    cd "{{project_root}}" && uv run --project rig rig-device-process --device-type time run --process "{{process}}"
+
+@test:
+    uv run --project "{{time_dir}}/rig/python" python -m unittest discover -s "{{time_dir}}/rig/python/tests"
+    uv run --project "{{time_dir}}/lambda/python" python -m unittest discover -s "{{time_dir}}/lambda/python/tests"
+
+@deploy-lambda thing_name='' stack_name='' artifact_bucket='' schedule_expression='rate(1 minute)' active_ttl_ms='300000' region='' profile='':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export TXING_DEVICE_TYPE="${TXING_DEVICE_TYPE:-time}"
+    export TXING_DEVICE_NAME="${TXING_DEVICE_NAME:-clock}"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "{{profile}}")"
+    region="$AWS_REGION"
+    profile="$AWS_SELECTED_PROFILE"
+    aws_flags=(--region "$region")
+    if [ -n "$profile" ]; then
+      aws_flags+=(--profile "$profile")
+    fi
+    resolved_thing_name="$THING_NAME"
+    if [ -n "{{thing_name}}" ]; then
+      resolved_thing_name="{{thing_name}}"
+    fi
+    resolved_stack_name="${TXING_DEVICE_STACK_NAME}-time-runtime"
+    if [ -n "{{stack_name}}" ]; then
+      resolved_stack_name="{{stack_name}}"
+    fi
+    account_id="$(aws sts get-caller-identity "${aws_flags[@]}" --query Account --output text)"
+    resolved_artifact_bucket="{{artifact_bucket}}"
+    if [ -z "$resolved_artifact_bucket" ]; then
+      resolved_artifact_bucket="txing-time-lambda-${account_id}-${region}"
+    fi
+    if ! aws s3api head-bucket --bucket "$resolved_artifact_bucket" >/dev/null 2>&1; then
+      if [ "$region" = "us-east-1" ]; then
+        aws s3api create-bucket --bucket "$resolved_artifact_bucket" "${aws_flags[@]}"
+      else
+        aws s3api create-bucket \
+          --bucket "$resolved_artifact_bucket" \
+          --create-bucket-configuration LocationConstraint="$region" \
+          "${aws_flags[@]}"
+      fi
+    fi
+    packaged_template="$(mktemp "${TMPDIR:-/tmp}/txing-time-template.XXXXXX.yaml")"
+    cleanup_packaged_template() {
+      rm -f "$packaged_template"
+    }
+    trap cleanup_packaged_template EXIT
+    (
+      cd "{{time_dir}}/aws"
+      aws cloudformation package \
+        --template-file template.yaml \
+        --s3-bucket "$resolved_artifact_bucket" \
+        --output-template-file "$packaged_template" \
+        "${aws_flags[@]}"
+    )
+    aws cloudformation deploy \
+      --template-file "$packaged_template" \
+      --stack-name "$resolved_stack_name" \
+      --capabilities CAPABILITY_IAM \
+      --parameter-overrides \
+        ThingName="$resolved_thing_name" \
+        ScheduleExpression="{{schedule_expression}}" \
+        ActiveTtlMs="{{active_ttl_ms}}" \
+      "${aws_flags[@]}"
+    printf 'deployed time Lambda runtime stack %s for ThingName=%s schedule=%s\n' "$resolved_stack_name" "$resolved_thing_name" "{{schedule_expression}}"
+
+@default:
+    @just --list

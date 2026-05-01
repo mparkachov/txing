@@ -47,6 +47,7 @@ aws_shared_credentials_file := ""
       aws_flags+=(--profile "$profile")
     fi
     rig_name="$RIG_NAME"
+    selected_rig_type="$RIG_TYPE"
     sparkplug_group_id="$SPARKPLUG_GROUP_ID"
     sparkplug_edge_node_id="$SPARKPLUG_EDGE_NODE_ID"
     cloudwatch_log_group="$CLOUDWATCH_LOG_GROUP"
@@ -55,6 +56,67 @@ aws_shared_credentials_file := ""
     fi
     if [ -n "{{cloudwatch_log_group}}" ]; then
       cloudwatch_log_group="{{cloudwatch_log_group}}"
+    fi
+    failures=0
+    fail_check() {
+      echo "fail: $*" >&2
+      failures=$((failures + 1))
+    }
+    if [ "$rig_name" != "$TXING_RIG_NAME" ]; then
+      fail_check "RIG_NAME=$rig_name must match TXING_RIG_NAME=$TXING_RIG_NAME"
+    else
+      echo "ok: RIG_NAME matches TXING_RIG_NAME ($rig_name)"
+    fi
+    if [ "$sparkplug_group_id" != "$TXING_TOWN_NAME" ]; then
+      fail_check "SPARKPLUG_GROUP_ID=$sparkplug_group_id must match TXING_TOWN_NAME=$TXING_TOWN_NAME"
+    else
+      echo "ok: SPARKPLUG_GROUP_ID matches TXING_TOWN_NAME ($sparkplug_group_id)"
+    fi
+    if [ "$sparkplug_edge_node_id" != "$rig_name" ]; then
+      fail_check "SPARKPLUG_EDGE_NODE_ID=$sparkplug_edge_node_id must match RIG_NAME=$rig_name"
+    else
+      echo "ok: SPARKPLUG_EDGE_NODE_ID matches RIG_NAME ($rig_name)"
+    fi
+    case "$selected_rig_type" in
+      unit|aws)
+        echo "ok: configured RIG_TYPE=$selected_rig_type"
+        ;;
+      *)
+        fail_check "unsupported RIG_TYPE=$selected_rig_type; supported rig types: unit, aws"
+        ;;
+    esac
+    check_enabled_active_service() {
+      local service="$1"
+      if ! command -v systemctl >/dev/null 2>&1; then
+        fail_check "systemctl is required to verify host service $service"
+        return
+      fi
+      if ! systemctl cat "$service" >/dev/null 2>&1; then
+        fail_check "required host service $service is not installed"
+        return
+      fi
+      if ! systemctl is-enabled --quiet "$service"; then
+        fail_check "required host service $service is not enabled"
+      else
+        echo "ok: host service $service is enabled"
+      fi
+      if ! systemctl is-active --quiet "$service"; then
+        fail_check "required host service $service is not active"
+      else
+        echo "ok: host service $service is active"
+      fi
+    }
+    case "$selected_rig_type" in
+      unit)
+        check_enabled_active_service bluetooth.service
+        ;;
+      aws)
+        echo "ok: rig type aws has no extra host service prerequisites"
+        ;;
+    esac
+    if [ "$failures" -ne 0 ]; then
+      echo "rig configuration check failed with $failures issue(s)." >&2
+      exit 1
     fi
     cert_dir="{{project_root}}/config/certs/rig"
     cert_path="$cert_dir/rig.cert.pem"
@@ -94,6 +156,22 @@ aws_shared_credentials_file := ""
       exit 1
     fi
     rig_thing_name="$rig_thing_names"
+    registered_rig_type="$(
+      aws iot describe-thing \
+        --thing-name "$rig_thing_name" \
+        "${aws_flags[@]}" \
+        --query 'attributes.rigType' \
+        --output text
+    )"
+    if [ -z "$registered_rig_type" ] || [ "$registered_rig_type" = "None" ]; then
+      echo "fail: rig thing $rig_thing_name is missing required registry attribute rigType" >&2
+      exit 1
+    fi
+    if [ "$registered_rig_type" != "$selected_rig_type" ]; then
+      echo "fail: rig thing $rig_thing_name has rigType=$registered_rig_type but config has RIG_TYPE=$selected_rig_type" >&2
+      exit 1
+    fi
+    echo "ok: rig thing $rig_thing_name has rigType=$registered_rig_type"
     cert_arn="$(tr -d '[:space:]' <"$cert_arn_path")"
     if [ -z "$cert_arn" ]; then
       echo "fail: rig certificate ARN file is empty: $cert_arn_path" >&2
@@ -405,6 +483,7 @@ aws_shared_credentials_file := ""
         aws_flags+=(--profile "$profile"); \
     fi
     rig_name="$RIG_NAME"
+    selected_rig_type="$RIG_TYPE"
     sparkplug_group_id="$SPARKPLUG_GROUP_ID"
     sparkplug_edge_node_id="$SPARKPLUG_EDGE_NODE_ID"
     if [ -n "{{rig_name}}" ]; then \
@@ -416,7 +495,6 @@ aws_shared_credentials_file := ""
     if [ -n "{{sparkplug_edge_node_id}}" ]; then \
         sparkplug_edge_node_id="{{sparkplug_edge_node_id}}"; \
     fi; \
-    sudo systemctl enable --now bluetooth
     if [ ! -d "{{greengrass_lite_build_dir}}" ]; then \
         echo "Greengrass Lite native build is missing at {{greengrass_lite_build_dir}}." >&2; \
         echo "Run 'just rig::build-native' before 'just rig::install-service'." >&2; \
@@ -511,12 +589,11 @@ aws_shared_credentials_file := ""
     sudo cmake --install "{{greengrass_lite_build_dir}}" --config MinSizeRel
     sudo "{{greengrass_lite_dir}}/misc/run_nucleus"
     printf 'txing rig is supervised by the standard Greengrass Lite systemd target %s\n' "{{greengrass_lite_target}}"
-    printf 'Deploy unit device processes unit-sparkplug-manager and unit-connectivity-ble with RigName=%s SparkplugGroupId=%s SparkplugEdgeNodeId=%s\n' "$rig_name" "$sparkplug_group_id" "$sparkplug_edge_node_id"
+    printf 'Deploy rig type %s components with RigName=%s SparkplugGroupId=%s SparkplugEdgeNodeId=%s\n' "$selected_rig_type" "$rig_name" "$sparkplug_group_id" "$sparkplug_edge_node_id"
 
 @restart:
     #!/usr/bin/env bash
     set -euo pipefail
-    sudo systemctl restart bluetooth
     if ! systemctl cat "{{greengrass_lite_target}}" >/dev/null 2>&1; then \
         echo "Greengrass Lite target {{greengrass_lite_target}} is not installed. Run 'just rig::install-service' first." >&2; \
         exit 1; \
@@ -546,6 +623,8 @@ aws_shared_credentials_file := ""
     component_units=(
       ggl.dev.txing.device.unit.SparkplugManager.service
       ggl.dev.txing.device.unit.ConnectivityBle.service
+      ggl.dev.txing.device.time.SparkplugManager.service
+      ggl.dev.txing.device.time.AwsConnectivity.service
     )
     sudo systemctl stop "{{greengrass_lite_target}}" || true
     sudo systemctl reset-failed "{{greengrass_lite_target}}" 'ggl.*.service' 'ggl.*.socket' || true
@@ -603,6 +682,7 @@ aws_shared_credentials_file := ""
         exit 1; \
     fi
     rig_name="$RIG_NAME"
+    selected_rig_type="$RIG_TYPE"
     sparkplug_group_id="$SPARKPLUG_GROUP_ID"
     sparkplug_edge_node_id="$SPARKPLUG_EDGE_NODE_ID"
     if [ -n "{{rig_name}}" ]; then \
@@ -618,6 +698,36 @@ aws_shared_credentials_file := ""
     if [ -z "$resolved_component_version" ]; then \
         resolved_component_version="0.5.0"; \
     fi
+    case "$selected_rig_type" in
+      unit)
+        device_type="unit"
+        device_python_project="{{project_root}}/devices/unit/rig/python"
+        device_wheel_prefix="unit_rig"
+        sparkplug_component="dev.txing.device.unit.SparkplugManager"
+        connectivity_component="dev.txing.device.unit.ConnectivityBle"
+        sparkplug_module="unit_rig.sparkplug_manager"
+        connectivity_module="unit_rig.connectivity_ble"
+        connectivity_description="txing rig BLE connectivity adapter for MCU rendezvous and GATT power control."
+        connectivity_requires_privilege="true"
+        connectivity_extra_args=(--adapter-id "{{adapter_id}}" --name "{{name_fragment}}")
+        ;;
+      aws)
+        device_type="time"
+        device_python_project="{{project_root}}/devices/time/rig/python"
+        device_wheel_prefix="time_rig"
+        sparkplug_component="dev.txing.device.time.SparkplugManager"
+        connectivity_component="dev.txing.device.time.AwsConnectivity"
+        sparkplug_module="time_rig.sparkplug_manager"
+        connectivity_module="time_rig.aws_connectivity"
+        connectivity_description="txing virtual time AWS IoT MQTT connectivity bridge."
+        connectivity_requires_privilege="false"
+        connectivity_extra_args=()
+        ;;
+      *)
+        echo "Unsupported rig type '$selected_rig_type'. Supported rig types: unit, aws." >&2
+        exit 1
+        ;;
+    esac
     iot_data_endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}" --query endpointAddress --output text)"
     deploy_root="{{rig_dir}}/build/greengrass-local"
     staging_root="$(mktemp -d "${TMPDIR:-/tmp}/txing-greengrass-stage.XXXXXX")"
@@ -633,10 +743,10 @@ aws_shared_credentials_file := ""
     rm -rf "$deploy_root"
     mkdir -p "$recipe_dir" "$artifacts_dir" "$wheelhouse_dir" "$python_tree_dir"
     uv build --wheel --out-dir "$wheelhouse_dir" "{{project_root}}/shared/aws/python" >/dev/null
-    uv build --wheel --out-dir "$wheelhouse_dir" "{{project_root}}/devices/unit/rig/python" >/dev/null
+    uv build --wheel --out-dir "$wheelhouse_dir" "$device_python_project" >/dev/null
     uv build --wheel --out-dir "$wheelhouse_dir" "{{rig_dir}}" >/dev/null
     uv export \
-      --project "{{rig_dir}}" \
+      --project "$device_python_project" \
       --format requirements.txt \
       --no-dev \
       --no-editable \
@@ -650,23 +760,23 @@ aws_shared_credentials_file := ""
       --find-links "$wheelhouse_dir" \
       --requirements "$requirements_file" \
       "$wheelhouse_dir"/aws-*.whl \
-      "$wheelhouse_dir"/unit_rig-*.whl \
+      "$wheelhouse_dir"/"$device_wheel_prefix"-*.whl \
       "$wheelhouse_dir"/rig-*.whl >/dev/null
-    for component_name in dev.txing.device.unit.SparkplugManager dev.txing.device.unit.ConnectivityBle; do \
+    for component_name in "$sparkplug_component" "$connectivity_component"; do \
         component_artifact_dir="$artifacts_dir/$component_name/$resolved_component_version"; \
         mkdir -p "$component_artifact_dir/python"; \
         cp -a "$python_tree_dir/." "$component_artifact_dir/python/"; \
-        mkdir -p "$component_artifact_dir/devices/unit"; \
-        cp "{{project_root}}/devices/unit/manifest.toml" "$component_artifact_dir/devices/unit/"; \
-        cp -a "{{project_root}}/devices/unit/aws" "$component_artifact_dir/devices/unit/aws"; \
+        mkdir -p "$component_artifact_dir/devices/$device_type"; \
+        cp "{{project_root}}/devices/$device_type/manifest.toml" "$component_artifact_dir/devices/$device_type/"; \
+        cp -a "{{project_root}}/devices/$device_type/aws" "$component_artifact_dir/devices/$device_type/aws"; \
         printf 'txing local Greengrass artifact for %s %s\n' "$component_name" "$resolved_component_version" >"$component_artifact_dir/txing-local-artifact.txt"; \
     done
-    cat >"$recipe_dir/dev.txing.device.unit.SparkplugManager-$resolved_component_version.yaml" <<EOF
+    cat >"$recipe_dir/$sparkplug_component-$resolved_component_version.yaml" <<EOF
     RecipeFormatVersion: '2020-01-25'
-    ComponentName: dev.txing.device.unit.SparkplugManager
+    ComponentName: $sparkplug_component
     ComponentVersion: '$resolved_component_version'
     ComponentType: aws.greengrass.generic
-    ComponentDescription: txing rig Sparkplug lifecycle manager with per-device AWS IoT MQTT sessions.
+    ComponentDescription: txing rig Sparkplug lifecycle manager for rig type $selected_rig_type.
     ComponentPublisher: txing
     ComponentDependencies:
       aws.greengrass.TokenExchangeService:
@@ -676,7 +786,7 @@ aws_shared_credentials_file := ""
       DefaultConfiguration:
         accessControl:
           aws.greengrass.ipc.pubsub:
-            dev.txing.device.unit.SparkplugManager:pubsub:1:
+            $sparkplug_component:pubsub:1:
               policyDescription: Allows the Sparkplug manager to exchange local connectivity messages with rig adapters.
               operations:
                 - aws.greengrass#PublishToTopic
@@ -697,28 +807,44 @@ aws_shared_credentials_file := ""
               export SPARKPLUG_GROUP_ID="$sparkplug_group_id"
               export SPARKPLUG_EDGE_NODE_ID="$sparkplug_edge_node_id"
               export AWS_IOT_ENDPOINT="$iot_data_endpoint"
-              export TXING_DEVICE_TYPE="unit"
-              export TXING_DEVICE_DIR="{artifacts:path}/devices/unit"
-              export TXING_DEVICE_MANIFEST="{artifacts:path}/devices/unit/manifest.toml"
+              export TXING_RIG_TYPE="$selected_rig_type"
+              export RIG_TYPE="$selected_rig_type"
+              export TXING_DEVICE_TYPE="$device_type"
+              export TXING_DEVICE_DIR="{artifacts:path}/devices/$device_type"
+              export TXING_DEVICE_MANIFEST="{artifacts:path}/devices/$device_type/manifest.toml"
               export PYTHONPATH="{artifacts:path}/python"
-              exec python3 -m unit_rig.sparkplug_manager
+              exec python3 -m $sparkplug_module
         Artifacts:
           - Uri: "s3://txing-local-greengrass/txing-local-artifact.txt"
             Unarchive: "NONE"
     EOF
-    cat >"$recipe_dir/dev.txing.device.unit.ConnectivityBle-$resolved_component_version.yaml" <<EOF
+    if [ "$connectivity_requires_privilege" = "true" ]; then
+      connectivity_privilege_line="        RequiresPrivilege: true"
+    else
+      connectivity_privilege_line=""
+    fi
+    connectivity_command="exec python3 -m $connectivity_module"
+    for arg in "${connectivity_extra_args[@]}"; do
+      printf -v quoted_arg '%q' "$arg"
+      connectivity_command="$connectivity_command $quoted_arg"
+    done
+    cat >"$recipe_dir/$connectivity_component-$resolved_component_version.yaml" <<EOF
     RecipeFormatVersion: '2020-01-25'
-    ComponentName: dev.txing.device.unit.ConnectivityBle
+    ComponentName: $connectivity_component
     ComponentVersion: '$resolved_component_version'
     ComponentType: aws.greengrass.generic
-    ComponentDescription: txing rig BLE connectivity adapter for MCU rendezvous and GATT power control.
+    ComponentDescription: $connectivity_description
     ComponentPublisher: txing
+    ComponentDependencies:
+      aws.greengrass.TokenExchangeService:
+        VersionRequirement: '>=0.0.0'
+        DependencyType: HARD
     ComponentConfiguration:
       DefaultConfiguration:
         accessControl:
           aws.greengrass.ipc.pubsub:
-            dev.txing.device.unit.ConnectivityBle:pubsub:1:
-              policyDescription: Allows the BLE connectivity adapter to exchange local connectivity messages with the Sparkplug manager.
+            $connectivity_component:pubsub:1:
+              policyDescription: Allows the connectivity adapter to exchange local connectivity messages with the Sparkplug manager.
               operations:
                 - aws.greengrass#PublishToTopic
                 - aws.greengrass#SubscribeToTopic
@@ -730,17 +856,19 @@ aws_shared_credentials_file := ""
           runtime: aws_nucleus_lite
         Lifecycle:
           run:
-            RequiresPrivilege: true
+    $connectivity_privilege_line
             Script: |-
               export RIG_NAME="$rig_name"
-              export THING_NAME="${THING_NAME:-unit-local}"
+              export THING_NAME="${THING_NAME:-$device_type-local}"
               export SPARKPLUG_GROUP_ID="$sparkplug_group_id"
               export SPARKPLUG_EDGE_NODE_ID="$sparkplug_edge_node_id"
-              export TXING_DEVICE_TYPE="unit"
-              export TXING_DEVICE_DIR="{artifacts:path}/devices/unit"
-              export TXING_DEVICE_MANIFEST="{artifacts:path}/devices/unit/manifest.toml"
+              export TXING_RIG_TYPE="$selected_rig_type"
+              export RIG_TYPE="$selected_rig_type"
+              export TXING_DEVICE_TYPE="$device_type"
+              export TXING_DEVICE_DIR="{artifacts:path}/devices/$device_type"
+              export TXING_DEVICE_MANIFEST="{artifacts:path}/devices/$device_type/manifest.toml"
               export PYTHONPATH="{artifacts:path}/python"
-              exec python3 -m unit_rig.connectivity_ble --adapter-id "{{adapter_id}}" --name "{{name_fragment}}"
+              $connectivity_command
         Artifacts:
           - Uri: "s3://txing-local-greengrass/txing-local-artifact.txt"
             Unarchive: "NONE"
@@ -748,7 +876,7 @@ aws_shared_credentials_file := ""
     sudo "$ggl_cli" deploy \
       --recipe-dir "$recipe_dir" \
       --artifacts-dir "$artifacts_dir" \
-      --add-component "dev.txing.device.unit.SparkplugManager=$resolved_component_version" \
-      --add-component "dev.txing.device.unit.ConnectivityBle=$resolved_component_version"
-    printf 'deployed Greengrass components version %s for RigName=%s SparkplugGroupId=%s SparkplugEdgeNodeId=%s\n' "$resolved_component_version" "$rig_name" "$sparkplug_group_id" "$sparkplug_edge_node_id"
-    printf 'inspect logs with: sudo journalctl -a -f -u ggl.dev.txing.device.unit.SparkplugManager.service -u ggl.dev.txing.device.unit.ConnectivityBle.service\n'
+      --add-component "$sparkplug_component=$resolved_component_version" \
+      --add-component "$connectivity_component=$resolved_component_version"
+    printf 'deployed Greengrass components version %s for RigName=%s RigType=%s SparkplugGroupId=%s SparkplugEdgeNodeId=%s\n' "$resolved_component_version" "$rig_name" "$selected_rig_type" "$sparkplug_group_id" "$sparkplug_edge_node_id"
+    printf 'inspect logs with: sudo journalctl -a -f -u ggl.%s.service -u ggl.%s.service\n' "$sparkplug_component" "$connectivity_component"

@@ -1,0 +1,52 @@
+type = "time"
+device_name = "clock"
+display_name = "Time"
+capabilities = ["sparkplug", "mcp", "time"]
+compatible_rig_types = ["aws"]
+
+[shadows.sparkplug]
+schema = "aws/sparkplug-shadow.schema.json"
+default = "aws/default-sparkplug-shadow.json"
+
+[shadows.mcp]
+schema = "aws/mcp-shadow.schema.json"
+default = "aws/default-mcp-shadow.json"
+
+[shadows.time]
+schema = "aws/time-shadow.schema.json"
+default = "aws/default-time-shadow.json"
+
+[[rig.processes]]
+name = "time-sparkplug-manager"
+command = "uv"
+args = ["run", "--project", "rig/python", "time-rig-sparkplug-manager"]
+cwd = "."
+environment = [
+  "TXING_DEVICE_TYPE",
+  "TXING_DEVICE_DIR",
+  "TXING_DEVICE_MANIFEST",
+  "RIG_NAME",
+  "THING_NAME",
+  "SPARKPLUG_GROUP_ID",
+  "SPARKPLUG_EDGE_NODE_ID",
+  "AWS_REGION",
+]
+
+[[rig.processes]]
+name = "time-aws-connectivity"
+command = "uv"
+args = ["run", "--project", "rig/python", "time-rig-aws-connectivity"]
+cwd = "."
+environment = [
+  "TXING_DEVICE_TYPE",
+  "TXING_DEVICE_DIR",
+  "TXING_DEVICE_MANIFEST",
+  "RIG_NAME",
+  "THING_NAME",
+  "SPARKPLUG_GROUP_ID",
+  "SPARKPLUG_EDGE_NODE_ID",
+  "AWS_REGION",
+]
+
+[web]
+adapter = "web/time-adapter.tsx"

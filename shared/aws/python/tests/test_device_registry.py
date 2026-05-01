@@ -5,7 +5,7 @@ from pathlib import Path
 import unittest
 
 from aws.device_catalog import DeviceTypeNotFoundError
-from aws.device_registry import AwsDeviceRegistry
+from aws.device_registry import AwsDeviceRegistry, DeviceRegistryError
 
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -62,6 +62,19 @@ class _FakeIotClient:
                     "name": "rig-a",
                     "shortId": "rig001",
                     "town": "berlin",
+                    "rigType": "unit",
+                    "capabilitiesSet": "sparkplug",
+                },
+                "version": 1,
+            },
+            "rig-aws001": {
+                "thingName": "rig-aws001",
+                "thingTypeName": "rig",
+                "attributes": {
+                    "name": "aws",
+                    "shortId": "aws001",
+                    "town": "berlin",
+                    "rigType": "aws",
                     "capabilitiesSet": "sparkplug",
                 },
                 "version": 1,
@@ -189,6 +202,8 @@ class _FakeIotClient:
             if "attributes.name:rig-a" in query_string and attributes.get("name") != "rig-a":
                 continue
             if "attributes.name:rig-b" in query_string and attributes.get("name") != "rig-b":
+                continue
+            if "attributes.name:aws" in query_string and attributes.get("name") != "aws":
                 continue
             if "attributes.name:bot" in query_string and attributes.get("name") != "bot":
                 continue
@@ -385,6 +400,7 @@ class DeviceRegistryTests(unittest.TestCase):
         registration = registry.register_rig(
             town_name="Berlin",
             rig_name="Rig-A",
+            rig_type="unit",
         )
 
         self.assertEqual(registration.thing_name, "rig-rig002")
@@ -392,6 +408,7 @@ class DeviceRegistryTests(unittest.TestCase):
         self.assertEqual(registration.name, "rig-a")
         self.assertEqual(registration.short_id, "rig002")
         self.assertEqual(registration.town_name, "berlin")
+        self.assertEqual(registration.rig_type, "unit")
         self.assertEqual(
             runtime.iot.create_thing_requests[0],
             {
@@ -402,6 +419,7 @@ class DeviceRegistryTests(unittest.TestCase):
                         "name": "rig-a",
                         "shortId": "rig002",
                         "town": "berlin",
+                        "rigType": "unit",
                         "capabilitiesSet": "sparkplug",
                     }
                 },
@@ -443,16 +461,27 @@ class DeviceRegistryTests(unittest.TestCase):
         runtime.iot.groups.update({"berlin", "rig-a"})
         registry = AwsDeviceRegistry(runtime, repo_root=REPO_ROOT)
 
-        first = registry.ensure_rig(town_name="Berlin", rig_name="Rig-A")
-        second = registry.ensure_rig(town_name="Berlin", rig_name="Rig-A")
+        first = registry.ensure_rig(town_name="Berlin", rig_name="Rig-A", rig_type="unit")
+        second = registry.ensure_rig(town_name="Berlin", rig_name="Rig-A", rig_type="unit")
 
         self.assertEqual(first.thing_name, "rig-rig001")
         self.assertEqual(second.thing_name, "rig-rig001")
+        self.assertEqual(first.rig_type, "unit")
         self.assertEqual(runtime.iot.create_thing_requests, [])
         self.assertEqual(
             [request["thingGroupName"] for request in runtime.iot.update_group_requests],
             ["berlin", "rig-a", "berlin", "rig-a"],
         )
+
+    def test_registered_rig_requires_explicit_rig_type_attribute(self) -> None:
+        runtime = _FakeRuntime()
+        attributes = runtime.iot._things["rig-rig001"]["attributes"]
+        assert isinstance(attributes, dict)
+        attributes.pop("rigType")
+        registry = AwsDeviceRegistry(runtime, repo_root=REPO_ROOT)
+
+        with self.assertRaisesRegex(DeviceRegistryError, "rigType"):
+            registry.describe_thing("rig-rig001")
 
     def test_register_rig_falls_back_to_registry_when_town_is_not_yet_indexed(self) -> None:
         runtime = _FakeRuntime()
@@ -467,10 +496,45 @@ class DeviceRegistryTests(unittest.TestCase):
         registration = registry.register_rig(
             town_name="Berlin",
             rig_name="Rig-A",
+            rig_type="unit",
         )
 
         self.assertEqual(registration.thing_name, "rig-rig002")
         self.assertEqual(runtime.iot.list_things_requests, [{"maxResults": 100}])
+
+    def test_register_device_rejects_device_type_incompatible_with_rig_type(self) -> None:
+        runtime = _FakeRuntime()
+        runtime.iot.groups.update({"berlin", "rig-a"})
+        registry = AwsDeviceRegistry(
+            runtime,
+            repo_root=REPO_ROOT,
+            random_source=_SequenceRandom("aaaaaa"),
+        )
+
+        with self.assertRaisesRegex(DeviceRegistryError, "compatible with rig type"):
+            registry.register_device(
+                town_name="Berlin",
+                rig_name="Rig-A",
+                device_type="time",
+            )
+
+    def test_register_time_device_accepts_aws_rig_type(self) -> None:
+        runtime = _FakeRuntime()
+        runtime.iot.groups.update({"berlin", "aws"})
+        registry = AwsDeviceRegistry(
+            runtime,
+            repo_root=REPO_ROOT,
+            random_source=_SequenceRandom("tm0001"),
+        )
+
+        registration = registry.register_device(
+            town_name="Berlin",
+            rig_name="aws",
+            device_type="time",
+        )
+
+        self.assertEqual(registration.thing_type, "time")
+        self.assertEqual(registration.rig_name, "aws")
 
     def test_register_device_creates_new_unit_device_and_initializes_resources(self) -> None:
         runtime = _FakeRuntime()
@@ -680,6 +744,7 @@ class DeviceRegistryTests(unittest.TestCase):
                     "name": "rig-b",
                     "shortId": "rig002",
                     "town": "munich",
+                    "rigType": "unit",
                     "capabilitiesSet": "sparkplug",
                 },
             "version": 1,

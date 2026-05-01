@@ -19,7 +19,7 @@ cp config/aws.credentials.example config/aws.credentials
 
 `config/aws.env` is the single non-secret deployment and runtime config file.
 It defines the AWS region/source profile, base stack name, town/rig/device
-identities, device type, Cognito admin settings, and board/rig runtime defaults.
+identities, device type, Cognito admin settings, and board/rig runtime config.
 
 `config/aws.credentials` contains the source AWS access keys only. Do not create
 repo-local generated AWS profile files; recipes resolve stack outputs and AWS IoT
@@ -45,12 +45,13 @@ through the AWS IoT API after the stack deploy.
 configured town thing, town thing type/group, and town `sparkplug` shadow.
 
 `just aws::rig-deploy` deploys the rig layer and idempotently ensures the
-configured rig thing, rig dynamic group, rig `sparkplug` shadow, Greengrass token
-exchange role alias, and rig runtime IAM.
+configured rig thing, its `rigType` registry attribute, rig dynamic group, rig
+`sparkplug` shadow, Greengrass token exchange role alias, and rig runtime IAM.
 
 `just aws::device-deploy` deploys the device layer and idempotently ensures the
 configured device thing, device type, rig enrollment attributes, named shadows,
-and KVS signaling channel.
+and KVS signaling channel. Device enrollment validates the device manifest's
+compatible rig types against the target rig's `rigType`.
 
 ## Web Admin
 

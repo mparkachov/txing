@@ -50,6 +50,7 @@ DEVICE_THING_SEARCHABLE_ATTRIBUTES = (
     "town",
     "rig",
 )
+RIG_TYPE_ATTRIBUTE = "rigType"
 
 
 class DeviceRegistryError(RuntimeError):
@@ -128,6 +129,7 @@ class ThingRegistration:
     capabilities_set: tuple[str, ...]
     town_name: str | None = None
     rig_name: str | None = None
+    rig_type: str | None = None
     version: int | None = None
 
     @property
@@ -180,8 +182,14 @@ class AwsDeviceRegistry:
         )
         town_name: str | None = None
         rig_name: str | None = None
+        rig_type: str | None = None
         if thing_type == RIG_THING_TYPE:
             town_name = _require_registry_attribute(attributes, "town", thing_name=thing_name)
+            rig_type = _require_registry_attribute(
+                attributes,
+                RIG_TYPE_ATTRIBUTE,
+                thing_name=thing_name,
+            )
         elif thing_type != TOWN_THING_TYPE:
             town_name = _require_registry_attribute(attributes, "town", thing_name=thing_name)
             rig_name = _require_registry_attribute(attributes, "rig", thing_name=thing_name)
@@ -193,6 +201,7 @@ class AwsDeviceRegistry:
             capabilities_set=capabilities_set,
             town_name=town_name,
             rig_name=rig_name,
+            rig_type=rig_type,
             version=response.get("version"),
         )
 
@@ -577,6 +586,47 @@ class AwsDeviceRegistry:
             payload=payload,
         )
 
+    def ensure_rig_attributes(
+        self,
+        registration: ThingRegistration,
+        *,
+        town_name: str,
+        rig_name: str,
+        rig_type: str,
+    ) -> None:
+        request: dict[str, Any] = {
+            "thingName": registration.thing_name,
+            "attributePayload": {
+                "attributes": {
+                    "name": rig_name,
+                    "town": town_name,
+                    RIG_TYPE_ATTRIBUTE: rig_type,
+                },
+                "merge": True,
+            },
+        }
+        if registration.version is not None:
+            request["expectedVersion"] = registration.version
+        self._iot_client.update_thing(**request)
+
+    def ensure_device_rig_compatibility(
+        self,
+        *,
+        manifest: DeviceManifest,
+        rig_registration: ThingRegistration,
+    ) -> None:
+        rig_type = rig_registration.rig_type
+        if rig_type is None:
+            raise DeviceRegistryError(
+                f"Rig {rig_registration.name!r} is missing required rigType"
+            )
+        if rig_type not in manifest.compatible_rig_types:
+            allowed = ", ".join(manifest.compatible_rig_types)
+            raise DeviceRegistryError(
+                f"Device type {manifest.type!r} is compatible with rig type(s) "
+                f"{allowed}, but rig {rig_registration.name!r} has rigType {rig_type!r}"
+            )
+
     def ensure_auxiliary_resources(
         self,
         thing_name: str,
@@ -667,9 +717,11 @@ class AwsDeviceRegistry:
         *,
         town_name: str,
         rig_name: str,
+        rig_type: str,
     ) -> ThingRegistration:
         normalized_town_name = _normalize_slug("town", town_name)
         normalized_rig_name = _normalize_slug("rig", rig_name)
+        normalized_rig_type = _normalize_slug("rig type", rig_type)
         capabilities_set = capabilities_for_thing_type(
             RIG_THING_TYPE,
             repo_root=self._repo_root,
@@ -678,7 +730,7 @@ class AwsDeviceRegistry:
         self.ensure_thing_type(
             RIG_THING_TYPE,
             searchable_attributes=RIG_THING_SEARCHABLE_ATTRIBUTES,
-            description="Registered txing rig type",
+            description="Registered txing rig thing type",
         )
         thing_name, short_id = self._allocate_thing_name(RIG_THING_TYPE)
         self._iot_client.create_thing(
@@ -689,6 +741,7 @@ class AwsDeviceRegistry:
                     "name": normalized_rig_name,
                     "shortId": short_id,
                     "town": normalized_town_name,
+                    RIG_TYPE_ATTRIBUTE: normalized_rig_type,
                     CAPABILITIES_ATTRIBUTE: encode_capabilities_set(capabilities_set),
                 }
             },
@@ -707,9 +760,11 @@ class AwsDeviceRegistry:
         *,
         town_name: str,
         rig_name: str,
+        rig_type: str,
     ) -> ThingRegistration:
         normalized_town_name = _normalize_slug("town", town_name)
         normalized_rig_name = _normalize_slug("rig", rig_name)
+        normalized_rig_type = _normalize_slug("rig type", rig_type)
         try:
             registration = self.describe_rig_by_name(
                 town_name=normalized_town_name,
@@ -721,15 +776,22 @@ class AwsDeviceRegistry:
             return self.register_rig(
                 town_name=normalized_town_name,
                 rig_name=normalized_rig_name,
+                rig_type=normalized_rig_type,
             )
         self.ensure_thing_type(
             RIG_THING_TYPE,
             searchable_attributes=RIG_THING_SEARCHABLE_ATTRIBUTES,
-            description="Registered txing rig type",
+            description="Registered txing rig thing type",
         )
         self.describe_town_by_name(normalized_town_name)
         self.ensure_town_group(normalized_town_name)
         self.ensure_rig_group(normalized_rig_name)
+        self.ensure_rig_attributes(
+            registration,
+            town_name=normalized_town_name,
+            rig_name=normalized_rig_name,
+            rig_type=normalized_rig_type,
+        )
         self.ensure_rig_shadow_initialized(
             registration.thing_name,
             town_name=normalized_town_name,
@@ -755,9 +817,13 @@ class AwsDeviceRegistry:
         )
         capabilities_set = manifest.capabilities
         self.describe_town_by_name(normalized_town_name)
-        self.describe_rig_by_name(
+        rig_registration = self.describe_rig_by_name(
             town_name=normalized_town_name,
             rig_name=normalized_rig_name,
+        )
+        self.ensure_device_rig_compatibility(
+            manifest=manifest,
+            rig_registration=rig_registration,
         )
         thing_name, short_id = self._allocate_thing_name(normalized_device_type)
         self.ensure_thing_type(
@@ -821,9 +887,13 @@ class AwsDeviceRegistry:
                 device_name=normalized_device_name,
             )
         self.describe_town_by_name(normalized_town_name)
-        self.describe_rig_by_name(
+        rig_registration = self.describe_rig_by_name(
             town_name=normalized_town_name,
             rig_name=normalized_rig_name,
+        )
+        self.ensure_device_rig_compatibility(
+            manifest=manifest,
+            rig_registration=rig_registration,
         )
         self.ensure_thing_type(
             normalized_device_type,
@@ -853,9 +923,14 @@ class AwsDeviceRegistry:
         normalized_rig_name = _normalize_slug("rig", rig_name)
         registration = self.describe_device(device_id)
         self.describe_town_by_name(normalized_town_name)
-        self.describe_rig_by_name(
+        rig_registration = self.describe_rig_by_name(
             town_name=normalized_town_name,
             rig_name=normalized_rig_name,
+        )
+        manifest = load_device_manifest(registration.thing_type, repo_root=self._repo_root)
+        self.ensure_device_rig_compatibility(
+            manifest=manifest,
+            rig_registration=rig_registration,
         )
         self.ensure_town_group(normalized_town_name)
         self.ensure_rig_group(normalized_rig_name)
@@ -915,6 +990,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     register_rig_parser.add_argument("--town", required=True)
     register_rig_parser.add_argument("--rig", required=True)
+    register_rig_parser.add_argument("--rig-type", required=True)
 
     ensure_rig_parser = subparsers.add_parser(
         "ensure-rig",
@@ -922,6 +998,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     ensure_rig_parser.add_argument("--town", required=True)
     ensure_rig_parser.add_argument("--rig", required=True)
+    ensure_rig_parser.add_argument("--rig-type", required=True)
 
     register_device_parser = subparsers.add_parser(
         "register-device",
@@ -987,11 +1064,13 @@ def main(argv: list[str] | None = None) -> int:
         registration = registry.register_rig(
             town_name=args.town,
             rig_name=args.rig,
+            rig_type=args.rig_type,
         )
     elif args.command == "ensure-rig":
         registration = registry.ensure_rig(
             town_name=args.town,
             rig_name=args.rig,
+            rig_type=args.rig_type,
         )
     elif args.command in {"register-device", "register"}:
         registration = registry.register_device(
