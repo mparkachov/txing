@@ -1,0 +1,131 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: txing device AWS runtime layer.
+
+Resources:
+  TxingRuntimeManagedPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Device endpoint runtime policy for SigV4 MQTT/WSS and board video.
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DeviceMqttConnect
+            Effect: Allow
+            Action: iot:Connect
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/device-*
+          - Sid: DeviceShadowMqttTopics
+            Effect: Allow
+            Action:
+              - iot:Publish
+              - iot:Receive
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/*/shadow/*
+          - Sid: DeviceShadowMqttTopicFilters
+            Effect: Allow
+            Action: iot:Subscribe
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/$aws/things/*/shadow/*
+          - Sid: DeviceSparkplugMqttTopics
+            Effect: Allow
+            Action: iot:Receive
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/spBv1.0/*
+          - Sid: DeviceSparkplugMqttTopicFilters
+            Effect: Allow
+            Action: iot:Subscribe
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/spBv1.0/*
+          - Sid: DeviceMcpTopics
+            Effect: Allow
+            Action:
+              - iot:Publish
+              - iot:RetainPublish
+              - iot:Receive
+            Resource:
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/*/mcp/descriptor
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/*/mcp/status
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/*/mcp/session/*/c2s
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/*/mcp/session/*/s2c
+          - Sid: DeviceMcpTopicFilters
+            Effect: Allow
+            Action: iot:Subscribe
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/txings/*/mcp/session/*/c2s
+          - Sid: DeviceVideoTopics
+            Effect: Allow
+            Action:
+              - iot:Publish
+              - iot:RetainPublish
+              - iot:Receive
+            Resource:
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/*/video/descriptor
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/*/video/status
+          - Sid: DeviceThingShadowApi
+            Effect: Allow
+            Action: iot:GetThingShadow
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/*
+          - Sid: DeviceDescribeThing
+            Effect: Allow
+            Action: iot:DescribeThing
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/*
+          - Sid: DeviceDescribeEndpoint
+            Effect: Allow
+            Action: iot:DescribeEndpoint
+            Resource: "*"
+          - Sid: DeviceBoardVideoMaster
+            Effect: Allow
+            Action:
+              - kinesisvideo:DescribeSignalingChannel
+              - kinesisvideo:GetSignalingChannelEndpoint
+              - kinesisvideo:GetIceServerConfig
+              - kinesisvideo:ConnectAsMaster
+            Resource: "*"
+
+  TxingRuntimeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: Town-scoped IAM role assumed by registered device endpoint hosts.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:root
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Ref TxingRuntimeManagedPolicy
+
+  TxingBootstrapManagedPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Grants only sts:AssumeRole for the device runtime role.
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AssumeDeviceRuntimeRole
+            Effect: Allow
+            Action: sts:AssumeRole
+            Resource: !GetAtt TxingRuntimeRole.Arn
+
+  TxingBoardVideoSenderManagedPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Attach to the AWS principal used by per-device board video senders.
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: BoardVideoMaster
+            Effect: Allow
+            Action:
+              - kinesisvideo:DescribeSignalingChannel
+              - kinesisvideo:GetSignalingChannelEndpoint
+              - kinesisvideo:GetIceServerConfig
+              - kinesisvideo:ConnectAsMaster
+            Resource: "*"
+
+Outputs:
+  DeviceRuntimeRoleArn:
+    Value: !GetAtt TxingRuntimeRole.Arn
+  DeviceRuntimeRoleName:
+    Value: !Ref TxingRuntimeRole
+  DeviceRuntimeManagedPolicyArn:
+    Value: !Ref TxingRuntimeManagedPolicy
+  DeviceBootstrapManagedPolicyArn:
+    Value: !Ref TxingBootstrapManagedPolicy
+  BoardVideoSenderManagedPolicyArn:
+    Value: !Ref TxingBoardVideoSenderManagedPolicy

@@ -9,10 +9,8 @@ base_stack_name := ""
 template_file := "template.yaml"
 region := ""
 profile := ""
-local_state_dir := project_root + "/.state/witness"
-packaged_template_file := local_state_dir + "/packaged-template.yaml"
 
-@deploy stack_name=stack_name base_stack_name=base_stack_name template_file=template_file region=region profile=profile packaged_template_file=packaged_template_file:
+@deploy stack_name=stack_name base_stack_name=base_stack_name template_file=template_file region=region profile=profile:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{witness_dir}}"
@@ -67,17 +65,18 @@ packaged_template_file := local_state_dir + "/packaged-template.yaml"
       printf '%s\n' "$bucket_name"
     }
 
-    mkdir -p "$(dirname "{{packaged_template_file}}")"
     artifact_bucket="$(ensure_artifact_bucket)"
+    packaged_template="$(mktemp "${TMPDIR:-/tmp}/txing-witness-cfn.XXXXXX.yaml")"
+    trap 'rm -f "$packaged_template"' EXIT
     aws cloudformation package \
       --template-file "{{template_file}}" \
       --s3-bucket "$artifact_bucket" \
-      --output-template-file "{{packaged_template_file}}" \
+      --output-template-file "$packaged_template" \
       "${aws_flags[@]}"
 
     aws cloudformation deploy \
       --stack-name "$witness_stack_name" \
-      --template-file "{{packaged_template_file}}" \
+      --template-file "$packaged_template" \
       --capabilities CAPABILITY_NAMED_IAM \
       --parameter-overrides "WitnessRuleName=$witness_rule_name" \
       --no-fail-on-empty-changeset \

@@ -643,7 +643,7 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertFalse(hasattr(args, "ca_file"))
         self.assertEqual(args.cloudwatch_log_group, "/town/rig/txing-prod")
 
-    def test_justfile_install_service_exports_multi_device_environment(self) -> None:
+    def test_justfile_install_service_uses_greengrass_supervision(self) -> None:
         justfile = (Path(__file__).resolve().parents[2] / "rig" / "justfile").read_text(
             encoding="utf-8"
         )
@@ -653,21 +653,53 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertIn('just --justfile "{{root_justfile}}" _project-aws-env rig', justfile)
         self.assertIn('command aws "$@"', justfile)
         self.assertNotIn('describe-log-groups', justfile)
-        self.assertIn(
-            'aws_profile="$AWS_SELECTED_PROFILE"',
-            justfile,
-        )
-        self.assertIn(
-            'aws_shared_credentials_file="$AWS_SHARED_CREDENTIALS_FILE"',
-            justfile,
-        )
-        self.assertIn(
-            'aws_config_file="$AWS_CONFIG_FILE"',
-            justfile,
-        )
-        self.assertIn('env_file="$AWS_ENV_FILE"', justfile)
-        self.assertIn('rig_env_file="$RIG_ENV_FILE"', justfile)
-        self.assertIn('project_root="$TXING_PROJECT_ROOT"', justfile)
+        self.assertNotIn("legacy_systemd_unit", justfile)
+        self.assertIn('greengrass_lite_dir := rig_dir + "/greengrass-lite"', justfile)
+        self.assertIn('greengrass_lite_target := "greengrass-lite.target"', justfile)
+        self.assertIn("default_greengrass_lite_repository", justfile)
+        self.assertIn("https://github.com/aws-greengrass/aws-greengrass-lite.git", justfile)
+        self.assertIn("default_greengrass_lite_ref", justfile)
+        self.assertIn("@clone-greengrass-lite:", justfile)
+        self.assertIn('git clone --branch "{{default_greengrass_lite_ref}}"', justfile)
+        self.assertIn("@build-native:", justfile)
+        self.assertIn("Greengrass Lite native build is supported only on Linux", justfile)
+        self.assertIn('-S "{{greengrass_lite_dir}}"', justfile)
+        self.assertIn('-B "{{greengrass_lite_build_dir}}"', justfile)
+        self.assertIn("-DGG_LOG_LEVEL=INFO", justfile)
+        self.assertIn("-DGGL_SYSTEMD_SYSTEM_USER=ggcore", justfile)
+        self.assertIn("-DGGL_SYSTEMD_SYSTEM_GROUP=ggcore", justfile)
+        self.assertIn("-DGGL_SYSTEMD_SYSTEM_DIR=/lib/systemd/system", justfile)
+        self.assertIn('cmake --build "{{greengrass_lite_build_dir}}"', justfile)
+        self.assertIn('sudo cmake --install "{{greengrass_lite_build_dir}}"', justfile)
+        self.assertIn('sudo "{{greengrass_lite_dir}}/misc/run_nucleus"', justfile)
+        self.assertIn('sudo systemctl enable --now bluetooth', justfile)
+        self.assertNotIn('sudo systemctl disable --now rig.service', justfile)
+        self.assertNotIn('sudo rm -f "{{legacy_systemd_unit}}"', justfile)
+        self.assertIn("Greengrass Lite native build is missing", justfile)
+        self.assertIn("Missing built rig entrypoint", justfile)
+        self.assertIn("Run 'just rig::build' before 'just rig::install-service'", justfile)
+        self.assertIn("config/certs/rig/rig.cert.pem", justfile)
+        self.assertIn("config/certs/rig/rig.private.key", justfile)
+        self.assertIn("Run 'just aws::cert' before 'just rig::install-service'", justfile)
+        self.assertIn("aws iot search-index", justfile)
+        self.assertIn("thingTypeName:rig AND attributes.name:${rig_name}", justfile)
+        self.assertIn("aws iot describe-endpoint --endpoint-type iot:Data-ATS", justfile)
+        self.assertIn("aws iot describe-endpoint --endpoint-type iot:CredentialProvider", justfile)
+        self.assertIn("GreengrassTokenExchangeRoleAlias", justfile)
+        self.assertIn("sudo install -d -o ggcore -g ggcore -m 700 /var/lib/greengrass/credentials", justfile)
+        self.assertIn("sudo install -o ggcore -g ggcore -m 600 \"$rig_cert_path\"", justfile)
+        self.assertIn("curl -fsSL https://www.amazontrust.com/repository/AmazonRootCA1.pem", justfile)
+        self.assertIn("sudo install -o ggcore -g ggcore -m 644 \"$root_ca_temp\"", justfile)
+        self.assertIn('cat >"$greengrass_config_temp" <<EOF', justfile)
+        self.assertIn('privateKeyPath: "/var/lib/greengrass/credentials/rig.private.key"', justfile)
+        self.assertIn('thingName: "$rig_thing_name"', justfile)
+        self.assertIn('iotDataEndpoint: "$iot_data_endpoint"', justfile)
+        self.assertIn('iotCredEndpoint: "$iot_cred_endpoint"', justfile)
+        self.assertIn('iotRoleAlias: "$iot_role_alias"', justfile)
+        self.assertIn('sudo install -m 644 "$greengrass_config_temp" /etc/greengrass/config.yaml', justfile)
+        self.assertIn("standard Greengrass Lite systemd target", justfile)
+        self.assertIn('dev.txing.rig.SparkplugManager', justfile)
+        self.assertIn('dev.txing.rig.ConnectivityBle', justfile)
         self.assertNotIn('Environment="THING_NAME={{thing_name}}"', justfile)
         self.assertIn('rig_name="$RIG_NAME"', justfile)
         self.assertNotIn('Environment="RIG_THING_NAME={{rig_thing_name}}"', justfile)
@@ -676,45 +708,146 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertIn('sparkplug_edge_node_id="$SPARKPLUG_EDGE_NODE_ID"', justfile)
         self.assertIn('python -m aws.check', justfile)
         self.assertIn('--scope rig', justfile)
+        self.assertIn('cert_dir="{{project_root}}/config/certs/rig"', justfile)
+        self.assertIn('root_ca_path="$cert_dir/AmazonRootCA1.pem"', justfile)
+        self.assertIn("aws iot list-principal-things", justfile)
+        self.assertIn("certificate is attached to rig thing", justfile)
+        self.assertIn("mqtt_connection_builder.mtls_from_path", justfile)
+        self.assertIn("ok: AWS IoT MQTT mTLS connect", justfile)
+        self.assertIn("--endpoint-type iot:CredentialProvider", justfile)
+        self.assertIn("role-aliases/$iot_role_alias/credentials", justfile)
+        self.assertIn("x-amzn-iot-thingname: $rig_thing_name", justfile)
+        self.assertIn("ok: AWS IoT Credentials Provider mTLS role alias", justfile)
+        self.assertIn("AWS IoT SigV4 MQTT connect with device Last Will", justfile)
+        self.assertIn('device_client_id="$managed_device_thing"', justfile)
+        self.assertIn(
+            'device_will_topic="spBv1.0/${sparkplug_group_id}/DDEATH/${sparkplug_edge_node_id}/${managed_device_thing}"',
+            justfile,
+        )
         self.assertNotIn('AWS_ENDPOINT_FILE', justfile)
         self.assertNotIn('IOT_ENDPOINT_FILE', justfile)
-        self.assertIn('EnvironmentFile=$env_file', justfile)
-        self.assertIn('EnvironmentFile=-$rig_env_file', justfile)
-        self.assertIn('region="$AWS_REGION"', justfile)
-        self.assertIn('[ -n "{{region}}" ]', justfile)
-        self.assertIn('AWS_REGION=$region', justfile)
+        self.assertNotIn('EnvironmentFile=$env_file', justfile)
+        self.assertNotIn('EnvironmentFile=-$rig_env_file', justfile)
         self.assertIn('[ -n "{{rig_name}}" ]', justfile)
-        self.assertIn('RIG_NAME=$rig_name', justfile)
         self.assertIn('[ -n "{{sparkplug_group_id}}" ]', justfile)
-        self.assertIn('SPARKPLUG_GROUP_ID=$sparkplug_group_id', justfile)
         self.assertIn('[ -n "{{sparkplug_edge_node_id}}" ]', justfile)
-        self.assertIn('SPARKPLUG_EDGE_NODE_ID=$sparkplug_edge_node_id', justfile)
-        self.assertIn('[ -n "{{aws_profile}}" ]', justfile)
-        self.assertIn('AWS_PROFILE=$aws_profile', justfile)
-        self.assertIn('[ -n "{{aws_shared_credentials_file}}" ]', justfile)
-        self.assertIn('AWS_SHARED_CREDENTIALS_FILE=$aws_shared_credentials_file', justfile)
-        self.assertIn('[ -n "{{aws_config_file}}" ]', justfile)
-        self.assertIn('AWS_CONFIG_FILE=$aws_config_file', justfile)
-        self.assertIn('cloudwatch_log_group="$CLOUDWATCH_LOG_GROUP"', justfile)
-        self.assertIn('[ -n "{{cloudwatch_log_group}}" ]', justfile)
-        self.assertIn('CLOUDWATCH_LOG_GROUP=$cloudwatch_log_group', justfile)
-        self.assertIn('WorkingDirectory=$project_root', justfile)
-        self.assertIn('ExecStart={{built_rig}}', justfile)
+        self.assertNotIn('WorkingDirectory=$project_root', justfile)
+        self.assertNotIn('ExecStart={{built_rig}}', justfile)
+        self.assertIn("@restart:", justfile)
+        self.assertIn('sudo systemctl restart bluetooth', justfile)
+        self.assertIn("Greengrass Lite target {{greengrass_lite_target}} is not installed", justfile)
+        self.assertIn("unit_exists() {", justfile)
+        self.assertIn("start_unit_if_present() {", justfile)
+        self.assertIn("wait_active_if_present() {", justfile)
+        self.assertIn("ggl.dev.txing.rig.SparkplugManager.service", justfile)
+        self.assertIn("ggl.dev.txing.rig.ConnectivityBle.service", justfile)
+        self.assertIn("ggl.core.ggipcd.service", justfile)
+        self.assertIn("ggl.core.iotcored.service", justfile)
+        self.assertIn("ggl.core.tesd.service", justfile)
+        self.assertIn("'ggl.*.service'", justfile)
+        self.assertIn("'ggl.*.socket'", justfile)
+        self.assertIn('sudo systemctl stop "{{greengrass_lite_target}}"', justfile)
+        self.assertIn('sudo systemctl start "{{greengrass_lite_target}}"', justfile)
+        self.assertIn('sudo systemctl start "$unit" || true', justfile)
+        self.assertNotIn("stop_units_by_pattern() {", justfile)
+        self.assertNotIn('sudo systemctl restart "$unit"', justfile)
+        self.assertNotIn('sudo systemctl restart "${greengrass_units[@]}"', justfile)
+        self.assertNotIn("greengrass_units < <(", justfile)
+        self.assertIn("@deploy", justfile)
+        self.assertIn("aws_shared_credentials_file=aws_shared_credentials_file: build", justfile)
+        self.assertIn("Run 'just rig::build' before 'just rig::deploy'", justfile)
+        self.assertIn("Greengrass Lite target {{greengrass_lite_target}} is not active", justfile)
+        self.assertIn("ggl-cli", justfile)
+        self.assertIn('resolved_component_version="0.5.0"', justfile)
+        self.assertIn('deploy_root="{{rig_dir}}/build/greengrass-local"', justfile)
+        self.assertIn('staging_root="$(mktemp -d "${TMPDIR:-/tmp}/txing-greengrass-stage.XXXXXX")"', justfile)
+        self.assertIn('trap cleanup_staging_root EXIT', justfile)
+        self.assertIn('rm -rf "$deploy_root"', justfile)
+        self.assertIn('uv build --wheel --out-dir "$wheelhouse_dir"', justfile)
+        self.assertIn('uv export \\', justfile)
+        self.assertIn('uv pip install \\', justfile)
+        self.assertIn('--target "$python_tree_dir"', justfile)
+        self.assertIn('--find-links "$wheelhouse_dir"', justfile)
+        self.assertIn('--requirements "$requirements_file"', justfile)
+        self.assertIn('cp -a "$python_tree_dir/." "$component_artifact_dir/python/"', justfile)
+        self.assertIn('txing-local-artifact.txt', justfile)
+        self.assertIn('Artifacts:', justfile)
+        self.assertIn('Uri: "s3://txing-local-greengrass/txing-local-artifact.txt"', justfile)
+        self.assertIn('Unarchive: "NONE"', justfile)
+        self.assertNotIn("txing-greengrass-deploy", justfile)
+        self.assertNotIn("cleanup_deploy_root", justfile)
+        self.assertIn('runtime: aws_nucleus_lite', justfile)
+        self.assertIn('unset AWS_PROFILE AWS_DEFAULT_PROFILE AWS_SHARED_CREDENTIALS_FILE', justfile)
+        self.assertIn('export AWS_IOT_ENDPOINT="$iot_data_endpoint"', justfile)
+        self.assertIn('export PYTHONPATH="{artifacts:path}/python"', justfile)
+        self.assertIn('exec python3 -m rig.sparkplug_manager', justfile)
+        self.assertIn('exec python3 -m rig.connectivity_ble', justfile)
+        self.assertIn("dev/txing/rig/v1/connectivity/*", justfile)
+        self.assertNotIn("dev/txing/rig/v1/connectivity/#", justfile)
+        self.assertNotIn("python\" -m pip download", justfile)
+        self.assertIn('--add-component "dev.txing.rig.SparkplugManager=$resolved_component_version"', justfile)
+        self.assertIn('--add-component "dev.txing.rig.ConnectivityBle=$resolved_component_version"', justfile)
 
-    def test_root_justfile_sources_optional_rig_env_for_rig_scope(self) -> None:
+    def test_greengrass_templates_are_rig_local(self) -> None:
+        repo_root = Path(__file__).resolve().parents[2]
+
+        self.assertFalse((repo_root / "greengrass" / "README.md").exists())
+        self.assertTrue((repo_root / "rig" / "greengrass" / "README.md").exists())
+        self.assertTrue(
+            (
+                repo_root
+                / "rig"
+                / "greengrass"
+                / "recipes"
+                / "dev.txing.rig.SparkplugManager-0.5.0.yaml"
+            ).exists()
+        )
+        self.assertTrue(
+            (
+                repo_root
+                / "rig"
+                / "greengrass"
+                / "recipes"
+                / "dev.txing.rig.ConnectivityBle-0.5.0.yaml"
+            ).exists()
+        )
+        for recipe_path in (repo_root / "rig" / "greengrass" / "recipes").glob("dev.txing.rig.*.yaml"):
+            recipe = recipe_path.read_text()
+            self.assertIn("dev/txing/rig/v1/connectivity/*", recipe)
+            self.assertNotIn("dev/txing/rig/v1/connectivity/#", recipe)
+        sparkplug_recipe = (
+            repo_root
+            / "rig"
+            / "greengrass"
+            / "recipes"
+            / "dev.txing.rig.SparkplugManager-0.5.0.yaml"
+        ).read_text(encoding="utf-8")
+        ble_recipe = (
+            repo_root
+            / "rig"
+            / "greengrass"
+            / "recipes"
+            / "dev.txing.rig.ConnectivityBle-0.5.0.yaml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("runtime: aws_nucleus_lite", sparkplug_recipe)
+        self.assertIn("runtime: aws_nucleus_lite", ble_recipe)
+        self.assertIn('export PYTHONPATH="{artifacts:decompressedPath}/rig-greengrass/python"', sparkplug_recipe)
+        self.assertIn("exec python3 -m rig.sparkplug_manager", sparkplug_recipe)
+        self.assertIn('export PYTHONPATH="{artifacts:decompressedPath}/rig-greengrass/python"', ble_recipe)
+        self.assertIn("exec python3 -m rig.connectivity_ble", ble_recipe)
+        self.assertNotIn("pip install", sparkplug_recipe)
+        self.assertNotIn("pip install", ble_recipe)
+
+    def test_root_justfile_sources_consolidated_aws_env_for_rig_scope(self) -> None:
         justfile = (Path(__file__).resolve().parents[2] / "justfile").read_text(
             encoding="utf-8"
         )
 
         self.assertIn("_project-aws-env scope='rig'", justfile)
-        self.assertIn("rig_env_file=''", justfile)
-        self.assertIn('if [ "{{scope}}" = "rig" ]; then', justfile)
-        self.assertIn(
-            'rig_env_file="$(resolve_path "$(choose_value "{{rig_env_file}}" "${RIG_ENV_FILE:-config/rig.env}")")"',
-            justfile,
-        )
-        self.assertIn('source "$rig_env_file"', justfile)
-        self.assertIn('export_line RIG_ENV_FILE "$rig_env_file"', justfile)
+        self.assertIn('env_file="$(resolve_path "$(choose_value "{{env_file}}" "config/aws.env")")"', justfile)
+        self.assertIn('source "$env_file"', justfile)
+        self.assertIn('printf \'unset RIG_ENV_FILE\\n\'', justfile)
+        self.assertNotIn("config/rig.env", justfile)
 
     def test_unit_rig_adapter_uses_generic_device_wording(self) -> None:
         adapter = (
@@ -2108,6 +2241,26 @@ class LifecycleBridgeTests(unittest.TestCase):
             bridge._known_device.online_candidate_since_monotonic = bridge._loop.time() - 60.0
             bridge._mark_ble_presence_now()
 
+            self.assertTrue(bridge._target_ble_online_state())
+
+        asyncio.run(exercise())
+
+    def test_sleeping_device_recovers_online_after_two_rendezvous_advertisements(self) -> None:
+        async def exercise() -> None:
+            bridge = BleSleepBridge(
+                BridgeConfig(),
+                ShadowState(
+                    reported_power=False,
+                    ble_online=False,
+                    redcon=4,
+                ),
+                FakeCloudShadow(),  # type: ignore[arg-type]
+            )
+            bridge._loop = asyncio.get_running_loop()
+            bridge._known_device.online_candidate_since_monotonic = bridge._loop.time() - 5.0
+            bridge._mark_ble_presence_now()
+
+            self.assertEqual(bridge._config.ble_online_recover_after, 4.0)
             self.assertTrue(bridge._target_ble_online_state())
 
         asyncio.run(exercise())

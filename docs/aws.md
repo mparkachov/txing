@@ -1,117 +1,66 @@
 # AWS
 
-This guide covers fresh AWS bring-up, runtime registration, shadow reset, and destructive rebuild back to an empty account state.
+This guide covers the staged AWS bring-up for a clean txing environment. The AWS
+flow is intentionally stateless: recipes do not write repo-local operational
+state, generated AWS config files, or hidden certificate paths.
 
-Prefer the AWS CLI for control-plane work. The `just aws-town ...`, `just aws-rig ...`, and `just aws-device ...` recipes are thin wrappers around `aws` with the repo-local profile setup applied.
+Prefer the AWS CLI for control-plane work. The `just aws-town ...`,
+`just aws-rig ...`, and `just aws-device ...` recipes are thin wrappers around
+`aws` with `config/aws.env` and `config/aws.credentials` applied.
 
-## Local Config Files
+## Local Config
 
-Initialize and edit:
+Initialize and edit only these files:
 
 ```bash
 cp config/aws.env.example config/aws.env
 cp config/aws.credentials.example config/aws.credentials
-cp config/aws.config.example config/aws.config
-cp config/rig.env.example config/rig.env
-cp config/board.env.example config/board.env
 ```
 
-Shared files:
+`config/aws.env` is the single non-secret deployment and runtime config file.
+It defines the AWS region/source profile, base stack name, town/rig/device
+identities, device type, Cognito admin settings, and board/rig runtime defaults.
 
-- `config/aws.env`
-  - `AWS_REGION`
-  - `AWS_STACK_NAME`
-  - `AWS_COGNITO_DOMAIN_PREFIX`
-  - `AWS_ADMIN_EMAIL`
-- `config/aws.credentials`
-  - `[town]` access keys for the owning AWS account
-- `config/aws.config`
-  - `[profile rig].role_arn = <RigRuntimeRoleArn>`
-  - `[profile device].role_arn = <DeviceRuntimeRoleArn>`
+`config/aws.credentials` contains the source AWS access keys only. Do not create
+repo-local generated AWS profile files; recipes resolve stack outputs and AWS IoT
+registry values live.
 
-Host-specific files:
+## Bring-Up Order
 
-- `config/rig.env`
-  - `SPARKPLUG_GROUP_ID`
-  - `RIG_NAME`
-- `config/board.env`
-  - `THING_NAME`
-  - `BOARD_VIDEO_REGION`
-  - `BOARD_VIDEO_SENDER_COMMAND`
-
-## Fresh Bring-Up
-
-### 1. Deploy The Shared Stack
+Run the setup in this order:
 
 ```bash
 just aws::deploy
-just aws::describe
+just aws::town-deploy
+just aws::rig-deploy
+just aws::device-deploy
 ```
 
-The shared stack owns:
+`just aws::deploy` deploys the base root stack and nested base template. It owns
+web/Cognito infrastructure, common IoT policies, common artifact buckets, and the
+Sparkplug witness Lambda/topic rule. It also configures AWS IoT fleet indexing
+through the AWS IoT API after the stack deploy.
 
-- IAM roles and policies for the runtimes and web app
-- Cognito resources
-- CloudFront and S3 for the SPA
-- stack-owned IoT thing types `town` and `rig`
+`just aws::town-deploy` deploys the town layer and idempotently ensures the
+configured town thing, town thing type/group, and town `sparkplug` shadow.
 
-### 2. Deploy Witness
+`just aws::rig-deploy` deploys the rig layer and idempotently ensures the
+configured rig thing, rig dynamic group, rig `sparkplug` shadow, Greengrass token
+exchange role alias, and rig runtime IAM.
 
-Witness is a separate stack:
+`just aws::device-deploy` deploys the device layer and idempotently ensures the
+configured device thing, device type, rig enrollment attributes, named shadows,
+and KVS signaling channel.
 
-```bash
-just witness::deploy
-```
+## Web Admin
 
-It owns:
-
-- the Sparkplug witness Lambda
-- the witness IAM role
-- the witness log group
-- the IoT topic rule that projects Sparkplug into the `sparkplug` named shadow
-
-### 3. Configure Thing Indexing
-
-```bash
-just aws::configure-indexing
-```
-
-Current searchable registry attributes:
-
-- `attributes.name`
-- `attributes.town`
-- `attributes.rig`
-
-`attributes.shortId` and `attributes.capabilitiesSet` remain non-searchable metadata.
-
-### 4. Register Town, Rig, And Devices
-
-```bash
-just aws::register-town town
-just aws::register-rig town rig
-just aws::register-device town rig unit
-```
-
-Current capabilities come from
-[`shared/aws/thing-type-capabilities.json`](../shared/aws/thing-type-capabilities.json):
-
-- `town` -> `sparkplug`
-- `rig` -> `sparkplug`
-- `unit` -> `sparkplug,mcu,board,mcp,video`
-
-Notes:
-
-- there is no `device` named shadow
-- `register-device` also creates the per-device KVS signaling channel
-- registration seeds the named shadows from `devices/<thing-type>/aws/default-<shadow>-shadow.json`
-
-### 5. Create The Web Admin User
+Create or update the Cognito admin user after `aws::deploy`:
 
 ```bash
 just aws::create-admin-user '<strong-password>'
 ```
 
-### 6. Generate And Publish The SPA
+Generate and publish the SPA:
 
 ```bash
 just web::write-env
@@ -119,127 +68,90 @@ just web::build
 just web::publish
 ```
 
-`web::write-env` resolves the current stack outputs and writes `web/.env.local`.
+`web::write-env` is allowed to write `web/.env.local` because it is a web build
+input derived from live stack outputs.
 
-### 7. Validate Runtime Access
+## Runtime Checks
+
+Validate runtime access:
 
 ```bash
 just rig::check
 just board::check
 ```
 
-## Shadow Inspection And Reseed
+Production rig services run as Greengrass Lite components. Local command wrappers
+use `config/aws.env` and live AWS resolution; they do not depend on generated
+local AWS config files.
 
-Inspect the named shadows required by a thing's `attributes.capabilitiesSet`:
+## Important Naming Rule
 
-```bash
-just aws::shadow <thing>
-just aws::shadow <thing> sparkplug
-```
+IAM roles, IAM managed policies, IoT role aliases, and IoT policies use
+CloudFormation-generated physical names. Do not depend on old fixed names such as
+`town-rig-runtime` or `town-rig-device-policy`; use stack outputs or AWS API
+lookups.
 
-Reset the advertised named shadows:
+## Shadow Inspection
 
-```bash
-just aws::shadow-reset <thing>
-just aws::shadow-reset <thing> sparkplug
-```
-
-Current behavior:
-
-- unit things reseed `sparkplug`, `mcu`, `board`, `mcp`, and `video`
-- rig and town things reseed only `sparkplug`
-- the reset path deletes the classic unnamed shadow and removes known named shadows that are not valid for the thing's current `capabilitiesSet`
-
-Use this after manual power cuts or when you want to force the runtime mirrors back to their default offline state.
-
-## Complete Cleanup And Re-Create From Scratch
-
-This is the destructive path back to an empty AWS state.
-
-### 1. Stop All Runtimes
-
-Stop `rig` and every `board` instance first so they do not immediately recreate registry state or retained topics while you are deleting resources.
-
-### 2. Delete Registered Things
-
-Delete:
-
-- all `town-*` things
-- all `rig-*` things
-- all device things such as `unit-*`
-
-Use the AWS CLI directly if you are doing a full teardown sweep:
+Inspect shadows for the configured device by default:
 
 ```bash
-just aws-town iot list-things --output table
-just aws-town iot delete-thing --thing-name <thing-name>
+just aws::shadow
+just aws::shadow '' sparkplug
 ```
 
-### 3. Delete Dynamic Thing Groups
-
-Delete the runtime-created thing groups:
-
-- the town group, for example `town`
-- each rig group, for example `rig`
+Inspect a specific thing:
 
 ```bash
-just aws-town iot list-thing-groups --output table
-just aws-town iot delete-dynamic-thing-group --thing-group-name <group-name>
+just aws::shadow <thing-name>
+just aws::shadow <thing-name> sparkplug
 ```
 
-### 4. Delete Device KVS Signaling Channels
-
-Each registered device creates a signaling channel named `<device-id>-board-video`.
+Reset a named shadow. Responses go to stdout unless you pass an explicit output
+path to `init-shadow`.
 
 ```bash
-just aws-town kinesisvideo list-signaling-channels --output table
-just aws-town kinesisvideo delete-signaling-channel --channel-arn <channel-arn>
+just aws::shadow-reset <thing-name> sparkplug
+just aws::init-shadow <thing-name> sparkplug
 ```
 
-### 5. Deprecate Thing Types
+## Certificates
 
-Deprecate every type that was used:
-
-- stack-owned: `town`, `rig`
-- device types created outside the stack, for example `unit`
+`aws::cert` is parameterless and rig-focused. It resolves the configured rig
+thing from AWS IoT registry indexing, creates a new active AWS IoT certificate,
+attaches the base stack IoT policy, attaches the certificate to the rig thing,
+and writes material under `config/certs/rig/`.
 
 ```bash
-just aws-town iot deprecate-thing-type --thing-type-name town
-just aws-town iot deprecate-thing-type --thing-type-name rig
-just aws-town iot deprecate-thing-type --thing-type-name unit
+just aws::cert
 ```
 
-Wait five minutes after deprecating thing types before deleting the shared stack.
+Generated files:
 
-### 6. Delete Witness
+- `config/certs/rig/rig.cert.pem`
+- `config/certs/rig/rig.public.key`
+- `config/certs/rig/rig.private.key`
+- `config/certs/rig/rig.cert.arn`
+- `config/certs/rig/AmazonRootCA1.pem`
 
-Witness is not deleted by `just aws::delete`.
+`config/certs/` is explicitly ignored by git. The recipe refuses to overwrite
+existing material; move or delete the files first if you intentionally rotate the
+rig certificate. `just rig::install-service` installs the generated certificate
+and private key into `/var/lib/greengrass/credentials` and installs Amazon Root
+CA 1 for Greengrass.
+
+## Cleanup
+
+For a full teardown, delete resources in reverse dependency order:
 
 ```bash
-just aws-town cloudformation delete-stack --stack-name <shared-stack-name>-witness
+just aws-town cloudformation delete-stack --stack-name "$TXING_DEVICE_STACK_NAME"
+just aws-town cloudformation delete-stack --stack-name "$TXING_RIG_STACK_NAME"
+just aws-town cloudformation delete-stack --stack-name "$TXING_TOWN_STACK_NAME"
+just aws-town cloudformation delete-stack --stack-name "$AWS_STACK_NAME"
 ```
 
-### 7. Delete The Shared Stack
-
-`just aws::delete` empties the current web bucket before deleting the shared stack:
-
-```bash
-just aws::delete
-```
-
-If you delete the stack manually instead, empty the web app bucket first.
-
-## Rebuild Order After Cleanup
-
-After a destructive cleanup, recreate in this order:
-
-1. `just aws::deploy`
-2. `just witness::deploy`
-3. `just aws::configure-indexing`
-4. `just aws::register-town town`
-5. `just aws::register-rig town rig`
-6. `just aws::register-device town rig unit`
-7. `just aws::create-admin-user '<strong-password>'`
-8. `just web::write-env`
-9. `just web::build`
-10. `just web::publish`
+Before deleting stacks manually, empty the web and artifact buckets shown in base
+stack outputs. Also delete generated IoT things, dynamic thing groups, KVS
+signaling channels, and deprecate/delete thing types if you want the account back
+to a fully empty state.

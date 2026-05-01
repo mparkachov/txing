@@ -1,0 +1,40 @@
+RecipeFormatVersion: '2020-01-25'
+ComponentName: dev.txing.rig.SparkplugManager
+ComponentVersion: '0.5.0'
+ComponentType: aws.greengrass.generic
+ComponentDescription: txing rig Sparkplug lifecycle manager with per-device AWS IoT MQTT sessions.
+ComponentPublisher: txing
+ComponentDependencies:
+  aws.greengrass.TokenExchangeService:
+    VersionRequirement: '>=0.0.0'
+    DependencyType: HARD
+ComponentConfiguration:
+  DefaultConfiguration:
+    RigName: rig
+    SparkplugGroupId: town
+    SparkplugEdgeNodeId: rig
+    accessControl:
+      aws.greengrass.ipc.pubsub:
+        dev.txing.rig.SparkplugManager:pubsub:1:
+          policyDescription: Allows the Sparkplug manager to exchange local connectivity messages with rig adapters.
+          operations:
+            - aws.greengrass#PublishToTopic
+            - aws.greengrass#SubscribeToTopic
+          resources:
+            - dev/txing/rig/v1/connectivity/*
+Manifests:
+  - Platform:
+      os: linux
+      architecture: aarch64
+      runtime: aws_nucleus_lite
+    Lifecycle:
+      run:
+        Script: |-
+          export RIG_NAME="{configuration:/RigName}"
+          export SPARKPLUG_GROUP_ID="{configuration:/SparkplugGroupId}"
+          export SPARKPLUG_EDGE_NODE_ID="{configuration:/SparkplugEdgeNodeId}"
+          export PYTHONPATH="{artifacts:decompressedPath}/rig-greengrass/python"
+          exec python3 -m rig.sparkplug_manager
+    Artifacts:
+      - Uri: s3://REPLACE_WITH_TXING_GREENGRASS_ARTIFACT_BUCKET/rig-greengrass/0.5.0/rig-greengrass.zip
+        Unarchive: ZIP

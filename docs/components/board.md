@@ -109,7 +109,7 @@ sudo journalctl -u board -f
 
 The generated unit:
 
-- loads `config/aws.env` and optional `config/board.env`
+- loads `config/aws.env`
 - enables `NetworkManager-wait-online.service`
 - waits for time synchronization before starting the AWS-backed sender
 - starts `board` with `--heartbeat-seconds 60`

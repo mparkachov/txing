@@ -162,6 +162,20 @@ class AwsAuthTests(unittest.TestCase):
         self.assertEqual(client.endpoint_type, aws_auth.AWS_IOT_DATA_ENDPOINT_TYPE)
         self.assertEqual(session.last_client_request, ("iot", "eu-central-1", {}))
 
+    def test_iot_data_endpoint_uses_override_without_describe_endpoint(self) -> None:
+        client = _FakeIotClient({"endpointAddress": "unused.iot.eu-central-1.amazonaws.com"})
+        runtime = aws_auth.AwsRuntime(
+            session=_FakeEndpointSession(client),
+            region_name="eu-central-1",
+            iot_data_endpoint_override="abc123-ats.iot.eu-central-1.amazonaws.com",
+        )
+
+        self.assertEqual(
+            runtime.iot_data_endpoint(),
+            "abc123-ats.iot.eu-central-1.amazonaws.com",
+        )
+        self.assertEqual(client.describe_calls, 0)
+
     def test_iot_data_endpoint_rejects_missing_endpoint_address(self) -> None:
         runtime = aws_auth.AwsRuntime(
             session=_FakeEndpointSession(_FakeIotClient({})),

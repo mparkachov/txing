@@ -1,0 +1,175 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: txing rig AWS runtime layer.
+
+Parameters:
+  GreengrassArtifactsBucketName:
+    Type: String
+
+Resources:
+  TxingRigRuntimeManagedPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Rig runtime policy for SigV4 MQTT/WSS, registry reads, shadows, logs, and Greengrass artifacts.
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: RigMqttConnect
+            Effect: Allow
+            Action: iot:Connect
+            Resource:
+              # Per-device Sparkplug sessions intentionally use the managed
+              # thing name as MQTT client id so AWS IoT thing connectivity
+              # status tracks DBIRTH/DDEATH session state.
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/*
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/rig-*
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/rig-cmd-*
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/rig-log-*
+          - Sid: RigShadowMqttTopics
+            Effect: Allow
+            Action:
+              - iot:Publish
+              - iot:Receive
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/*/shadow/*
+          - Sid: RigShadowMqttTopicFilters
+            Effect: Allow
+            Action: iot:Subscribe
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/$aws/things/*/shadow/*
+          - Sid: RigSparkplugMqttTopics
+            Effect: Allow
+            Action:
+              - iot:Publish
+              - iot:Receive
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/spBv1.0/*
+          - Sid: RigSparkplugMqttTopicFilters
+            Effect: Allow
+            Action: iot:Subscribe
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/spBv1.0/*
+          - Sid: RigVideoDiscoveryTopics
+            Effect: Allow
+            Action: iot:Receive
+            Resource:
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/*/mcp/descriptor
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/*/mcp/status
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/*/video/descriptor
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/*/video/status
+          - Sid: RigVideoDiscoveryTopicFilters
+            Effect: Allow
+            Action: iot:Subscribe
+            Resource:
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/txings/*/mcp/descriptor
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/txings/*/mcp/status
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/txings/*/video/descriptor
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/txings/*/video/status
+          - Sid: RigThingShadowApi
+            Effect: Allow
+            Action:
+              - iot:GetThingShadow
+              - iot:UpdateThingShadow
+              - iot:DeleteThingShadow
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/*
+          - Sid: RigThingRegistryReadWrite
+            Effect: Allow
+            Action:
+              - iot:DescribeThing
+              - iot:UpdateThing
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/*
+          - Sid: RigThingGroupRead
+            Effect: Allow
+            Action:
+              - iot:DescribeThingGroup
+              - iot:ListThingsInThingGroup
+              - iot:ListThings
+              - iot:GetIndexingConfiguration
+              - iot:SearchIndex
+            Resource: "*"
+          - Sid: RigDescribeEndpoint
+            Effect: Allow
+            Action: iot:DescribeEndpoint
+            Resource: "*"
+          - Sid: RigCloudWatchLogsWrite
+            Effect: Allow
+            Action:
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:DescribeLogStreams
+              - logs:PutRetentionPolicy
+              - logs:PutLogEvents
+            Resource:
+              - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:txing/*
+              - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:txing/*:log-stream:*
+          - Sid: RigGreengrassArtifactBucketRead
+            Effect: Allow
+            Action:
+              - s3:GetBucketLocation
+              - s3:ListBucket
+            Resource: !Sub arn:${AWS::Partition}:s3:::${GreengrassArtifactsBucketName}
+          - Sid: RigGreengrassArtifactObjectRead
+            Effect: Allow
+            Action: s3:GetObject
+            Resource: !Sub arn:${AWS::Partition}:s3:::${GreengrassArtifactsBucketName}/*
+
+  TxingRigRuntimeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: Town-scoped runtime IAM role assumed by rig hosts for SigV4 MQTT/WSS and control-plane access.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:root
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Ref TxingRigRuntimeManagedPolicy
+
+  TxingGreengrassTokenExchangeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: Token exchange IAM role assumed by AWS IoT Credentials Provider for Greengrass Lite rig components.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: credentials.iot.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Ref TxingRigRuntimeManagedPolicy
+
+  TxingGreengrassTokenExchangeRoleAlias:
+    Type: AWS::IoT::RoleAlias
+    Properties:
+      RoleArn: !GetAtt TxingGreengrassTokenExchangeRole.Arn
+      CredentialDurationSeconds: 3600
+
+  TxingRigBootstrapManagedPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Grants only sts:AssumeRole for the town rig runtime role.
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AssumeRigRuntimeRole
+            Effect: Allow
+            Action: sts:AssumeRole
+            Resource: !GetAtt TxingRigRuntimeRole.Arn
+
+Outputs:
+  RigRuntimeRoleArn:
+    Value: !GetAtt TxingRigRuntimeRole.Arn
+  RigRuntimeRoleName:
+    Value: !Ref TxingRigRuntimeRole
+  RigRuntimeManagedPolicyArn:
+    Value: !Ref TxingRigRuntimeManagedPolicy
+  GreengrassRigTokenExchangeManagedPolicyArn:
+    Value: !Ref TxingRigRuntimeManagedPolicy
+  GreengrassTokenExchangeRoleArn:
+    Value: !GetAtt TxingGreengrassTokenExchangeRole.Arn
+  GreengrassTokenExchangeRoleName:
+    Value: !Ref TxingGreengrassTokenExchangeRole
+  GreengrassTokenExchangeRoleAlias:
+    Value: !Ref TxingGreengrassTokenExchangeRoleAlias
+  GreengrassTokenExchangeRoleAliasArn:
+    Value: !GetAtt TxingGreengrassTokenExchangeRoleAlias.RoleAliasArn
+  RigBootstrapManagedPolicyArn:
+    Value: !Ref TxingRigBootstrapManagedPolicy

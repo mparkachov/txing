@@ -25,7 +25,6 @@ systemd_unit := "/etc/systemd/system/board.service"
 region := ""
 aws_profile := ""
 aws_shared_credentials_file := ""
-aws_config_file := ""
 default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_SYSTEM_DEPENDENCIES", "ON")
 
 @sync:
@@ -250,48 +249,78 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
     set -euo pipefail
     just motor-raw 0 0 0.25 "{{region}}" "{{aws_profile}}"
 
-@install-service video_sender_command='' thing_name='' schema_file='' video_region='' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file aws_config_file=aws_config_file:
+@install-service video_sender_command='' thing_name='' schema_file='' video_region='' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file:
     #!/usr/bin/env bash
     set -euo pipefail
     test -x "{{built_board}}" || { \
         echo "Missing built board executable at {{built_board}}. Run 'just build' first." >&2; \
         exit 1; \
     }
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "{{aws_profile}}" "" "" "" "{{aws_shared_credentials_file}}" "{{aws_config_file}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "{{aws_profile}}" "" "" "" "{{aws_shared_credentials_file}}")"
     project_root="$TXING_PROJECT_ROOT"
-    env_file="$AWS_ENV_FILE"
-    board_env_file="$BOARD_ENV_FILE"
+    thing_name="$THING_NAME"
+    schema_file="$SCHEMA_FILE"
+    video_region="$BOARD_VIDEO_REGION"
+    video_sender_command="$BOARD_VIDEO_SENDER_COMMAND"
     region="$AWS_REGION"
     aws_profile="$AWS_SELECTED_PROFILE"
     aws_shared_credentials_file="$AWS_SHARED_CREDENTIALS_FILE"
-    aws_config_file="$AWS_CONFIG_FILE"
     sudo systemctl enable NetworkManager-wait-online.service
     service_env=(); \
     if [ -n "{{thing_name}}" ]; then \
-        service_env+=("Environment=\"THING_NAME={{thing_name}}\""); \
+        thing_name="{{thing_name}}"; \
+    fi; \
+    if [ -n "$thing_name" ]; then \
+        service_env+=("Environment=\"THING_NAME=$thing_name\""); \
     fi; \
     if [ -n "{{schema_file}}" ]; then \
-        service_env+=("Environment=\"SCHEMA_FILE={{schema_file}}\""); \
+        schema_file="{{schema_file}}"; \
+    fi; \
+    if [ -n "$schema_file" ]; then \
+        service_env+=("Environment=\"SCHEMA_FILE=$schema_file\""); \
     fi; \
     if [ -n "{{video_region}}" ]; then \
-        service_env+=("Environment=\"BOARD_VIDEO_REGION={{video_region}}\""); \
+        video_region="{{video_region}}"; \
+    fi; \
+    if [ -n "$video_region" ]; then \
+        service_env+=("Environment=\"BOARD_VIDEO_REGION=$video_region\""); \
     fi; \
     if [ -n "{{video_sender_command}}" ]; then \
-        service_env+=("Environment=\"BOARD_VIDEO_SENDER_COMMAND={{video_sender_command}}\""); \
+        video_sender_command="{{video_sender_command}}"; \
     fi; \
-    if [ -n "{{region}}" ] && [ -n "$region" ]; then \
+    if [ -n "$video_sender_command" ]; then \
+        service_env+=("Environment=\"BOARD_VIDEO_SENDER_COMMAND=$video_sender_command\""); \
+    fi; \
+    if [ -n "$region" ]; then \
         service_env+=("Environment=\"AWS_REGION=$region\""); \
+        service_env+=("Environment=\"AWS_DEFAULT_REGION=$region\""); \
     fi; \
     if [ -n "$aws_profile" ]; then \
         service_env+=("Environment=\"AWS_PROFILE=$aws_profile\""); \
         service_env+=("Environment=\"AWS_DEFAULT_PROFILE=$aws_profile\""); \
     fi; \
-    if [ -n "{{aws_shared_credentials_file}}" ] && [ -n "$aws_shared_credentials_file" ]; then \
+    if [ -n "$aws_shared_credentials_file" ]; then \
         service_env+=("Environment=\"AWS_SHARED_CREDENTIALS_FILE=$aws_shared_credentials_file\""); \
     fi; \
-    if [ -n "{{aws_config_file}}" ] && [ -n "$aws_config_file" ]; then \
-        service_env+=("Environment=\"AWS_CONFIG_FILE=$aws_config_file\""); \
-    fi; \
+    for env_name in \
+        KVS_DUALSTACK_ENDPOINTS \
+        BOARD_DRIVE_RAW_MAX_SPEED \
+        BOARD_DRIVE_CMD_RAW_MIN_SPEED \
+        BOARD_DRIVE_CMD_RAW_MAX_SPEED \
+        BOARD_DRIVE_PWM_HZ \
+        BOARD_DRIVE_PWM_CHIP \
+        BOARD_DRIVE_LEFT_PWM_CHANNEL \
+        BOARD_DRIVE_RIGHT_PWM_CHANNEL \
+        BOARD_DRIVE_GPIO_CHIP \
+        BOARD_DRIVE_LEFT_DIR_GPIO \
+        BOARD_DRIVE_RIGHT_DIR_GPIO \
+        BOARD_DRIVE_LEFT_INVERTED \
+        BOARD_DRIVE_RIGHT_INVERTED; do \
+        env_value="${!env_name:-}"; \
+        if [ -n "$env_value" ]; then \
+            service_env+=("Environment=\"$env_name=$env_value\""); \
+        fi; \
+    done; \
     { \
         printf '%s\n' \
             '[Unit]' \
@@ -301,9 +330,7 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
             '' \
             '[Service]' \
             'Type=simple' \
-            "WorkingDirectory=$project_root" \
-            "EnvironmentFile=$env_file" \
-            "EnvironmentFile=-$board_env_file"; \
+            "WorkingDirectory=$project_root"; \
         printf '%s\n' "${service_env[@]}"; \
         printf '%s\n' \
             'ExecStart={{built_board}} --heartbeat-seconds 60' \

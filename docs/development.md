@@ -8,7 +8,7 @@ For the system overview, see [../README.md](../README.md). For the documentation
 - `devices/unit/board/`: Python runtime for the device-side Raspberry Pi board
 - `rig/`: Python runtime for the always-on rig coordinator
 - `web/`: React + Vite admin/operator SPA
-- `witness/`: Sparkplug-to-shadow projection Lambda stack
+- `witness/`: Sparkplug-to-shadow projection Lambda source and tests
 - `shared/aws/`: shared AWS CLI helpers, CloudFormation, and registry utilities
 - `devices/unit/aws/`: named-shadow schemas and default payloads for `unit`
 - `devices/unit/docs/`: unit-specific contracts
@@ -31,9 +31,6 @@ The default workflow keeps AWS config in the checkout:
 ```bash
 cp config/aws.env.example config/aws.env
 cp config/aws.credentials.example config/aws.credentials
-cp config/aws.config.example config/aws.config
-cp config/rig.env.example config/rig.env
-cp config/board.env.example config/board.env
 ```
 
 Profile wrappers:
@@ -58,7 +55,10 @@ just rig::wake
 just board::run
 just web::dev
 just web::write-env
-just witness::deploy
+just aws::deploy
+just aws::town-deploy
+just aws::rig-deploy
+just aws::device-deploy
 just aws::shadow <thing>
 just aws::shadow-reset <thing>
 ```
@@ -133,7 +133,6 @@ Witness:
 
 ```bash
 just witness::test
-just witness::deploy
 ```
 
 ## Contracts

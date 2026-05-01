@@ -3,16 +3,21 @@ set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 rig_dir := source_directory()
 python_executable := "python3"
 built_rig := rig_dir + "/.venv/bin/rig"
+built_rig_connectivity_ble := rig_dir + "/.venv/bin/rig-connectivity-ble"
+built_rig_sparkplug_manager := rig_dir + "/.venv/bin/rig-sparkplug-manager"
 built_rig_sparkplug_cmd := rig_dir + "/.venv/bin/rig-sparkplug-cmd"
 built_rig_sparkplug_log := rig_dir + "/.venv/bin/rig-sparkplug-log"
 project_root := rig_dir + "/.."
 root_justfile := project_root + "/justfile"
+greengrass_lite_dir := rig_dir + "/greengrass-lite"
+greengrass_lite_build_dir := greengrass_lite_dir + "/build"
+greengrass_lite_target := "greengrass-lite.target"
+default_greengrass_lite_repository := env_var_or_default("TXING_RIG_GREENGRASS_LITE_REPOSITORY", "https://github.com/aws-greengrass/aws-greengrass-lite.git")
+default_greengrass_lite_ref := env_var_or_default("TXING_RIG_GREENGRASS_LITE_REF", "main")
 thing_name := "unit-local"
 region := ""
 aws_profile := ""
 aws_shared_credentials_file := ""
-aws_config_file := ""
-systemd_unit := "/etc/systemd/system/rig.service"
 
 @sync:
     cd "{{rig_dir}}" && uv sync --python "{{python_executable}}" --no-managed-python --no-python-downloads
@@ -20,6 +25,8 @@ systemd_unit := "/etc/systemd/system/rig.service"
 @build:
     cd "{{rig_dir}}" && uv sync --frozen --no-editable --compile-bytecode --python "{{python_executable}}" --no-managed-python --no-python-downloads --refresh-package rig --reinstall-package rig --refresh-package aws --reinstall-package aws --refresh-package unit-rig --reinstall-package unit-rig
     test -x "{{built_rig}}"
+    test -x "{{built_rig_connectivity_ble}}"
+    test -x "{{built_rig_sparkplug_manager}}"
     test -x "{{built_rig_sparkplug_cmd}}"
     test -x "{{built_rig_sparkplug_log}}"
 
@@ -30,11 +37,19 @@ systemd_unit := "/etc/systemd/system/rig.service"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig)"
     command aws "$@"
 
-@check rig_name='' cloudwatch_log_group='' region=region aws_profile=aws_profile:
+@check rig_name='' cloudwatch_log_group='' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file:
     #!/usr/bin/env bash
     set -euo pipefail
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}" "" "" "" "{{aws_shared_credentials_file}}")"
+    region="$AWS_REGION"
+    profile="$AWS_SELECTED_PROFILE"
+    aws_flags=(--region "$region")
+    if [ -n "$profile" ]; then
+      aws_flags+=(--profile "$profile")
+    fi
     rig_name="$RIG_NAME"
+    sparkplug_group_id="$SPARKPLUG_GROUP_ID"
+    sparkplug_edge_node_id="$SPARKPLUG_EDGE_NODE_ID"
     cloudwatch_log_group="$CLOUDWATCH_LOG_GROUP"
     if [ -n "{{rig_name}}" ]; then
       rig_name="{{rig_name}}"
@@ -42,12 +57,215 @@ systemd_unit := "/etc/systemd/system/rig.service"
     if [ -n "{{cloudwatch_log_group}}" ]; then
       cloudwatch_log_group="{{cloudwatch_log_group}}"
     fi
+    cert_dir="{{project_root}}/config/certs/rig"
+    cert_path="$cert_dir/rig.cert.pem"
+    private_key_path="$cert_dir/rig.private.key"
+    cert_arn_path="$cert_dir/rig.cert.arn"
+    root_ca_path="$cert_dir/AmazonRootCA1.pem"
+    for required_file in "$cert_path" "$private_key_path" "$cert_arn_path"; do
+      if [ ! -f "$required_file" ]; then
+        echo "fail: missing rig certificate material $required_file. Run 'just aws::cert'." >&2
+        exit 1
+      fi
+    done
+    if [ ! -f "$root_ca_path" ]; then
+      install -d -m 700 "$cert_dir"
+      curl -fsSL https://www.amazontrust.com/repository/AmazonRootCA1.pem -o "$root_ca_path"
+      chmod 644 "$root_ca_path"
+    fi
 
     uv run --project "{{project_root}}/shared/aws/python" \
       python -m aws.check \
       --scope rig \
       --rig-name "$rig_name" \
       --log-group-name "$cloudwatch_log_group"
+
+    rig_thing_names="$(
+      aws iot search-index \
+        --index-name AWS_Things \
+        --query-string "thingTypeName:rig AND attributes.name:${rig_name} AND attributes.town:${sparkplug_group_id}" \
+        --max-results 2 \
+        "${aws_flags[@]}" \
+        --query 'things[].thingName' \
+        --output text
+    )"
+    rig_thing_count="$(wc -w <<<"$rig_thing_names" | tr -d ' ')"
+    if [ "$rig_thing_count" != "1" ]; then
+      echo "fail: expected exactly one rig thing for rig=${rig_name} town=${sparkplug_group_id}, found $rig_thing_count: $rig_thing_names" >&2
+      exit 1
+    fi
+    rig_thing_name="$rig_thing_names"
+    cert_arn="$(tr -d '[:space:]' <"$cert_arn_path")"
+    if [ -z "$cert_arn" ]; then
+      echo "fail: rig certificate ARN file is empty: $cert_arn_path" >&2
+      exit 1
+    fi
+    principal_things="$(
+      aws iot list-principal-things \
+        --principal "$cert_arn" \
+        "${aws_flags[@]}" \
+        --query 'things[]' \
+        --output text
+    )"
+    if ! tr '[:space:]' '\n' <<<"$principal_things" | grep -Fx "$rig_thing_name" >/dev/null; then
+      echo "fail: certificate $cert_arn is not attached to rig thing $rig_thing_name" >&2
+      exit 1
+    fi
+    echo "ok: certificate is attached to rig thing $rig_thing_name"
+
+    iot_data_endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}" --query endpointAddress --output text)"
+    mqtt_client_id="rig-check-${rig_name}-$$"
+    uv run --project "{{project_root}}/shared/aws/python" python - "$iot_data_endpoint" "$cert_path" "$private_key_path" "$root_ca_path" "$mqtt_client_id" <<'PY'
+    import sys
+
+    from awsiot import mqtt_connection_builder
+
+    endpoint, cert_path, private_key_path, root_ca_path, client_id = sys.argv[1:]
+    connection = mqtt_connection_builder.mtls_from_path(
+        endpoint=endpoint,
+        cert_filepath=cert_path,
+        pri_key_filepath=private_key_path,
+        ca_filepath=root_ca_path,
+        client_id=client_id,
+        clean_session=True,
+        keep_alive_secs=30,
+    )
+    try:
+        connection.connect().result(timeout=15)
+        connection.disconnect().result(timeout=15)
+    except Exception as err:
+        print(f"fail: AWS IoT MQTT mTLS connect ({err})", file=sys.stderr)
+        raise SystemExit(1) from err
+    print(f"ok: AWS IoT MQTT mTLS connect ({client_id})")
+    PY
+
+    iot_cred_endpoint="$(aws iot describe-endpoint --endpoint-type iot:CredentialProvider "${aws_flags[@]}" --query endpointAddress --output text)"
+    iot_role_alias="$(
+      aws cloudformation describe-stacks \
+        --stack-name "$TXING_RIG_STACK_NAME" \
+        "${aws_flags[@]}" \
+        --query "Stacks[0].Outputs[?OutputKey=='GreengrassTokenExchangeRoleAlias'].OutputValue | [0]" \
+        --output text
+    )"
+    if [ -z "$iot_role_alias" ] || [ "$iot_role_alias" = "None" ]; then
+      echo "fail: could not resolve GreengrassTokenExchangeRoleAlias from stack $TXING_RIG_STACK_NAME" >&2
+      exit 1
+    fi
+    tes_response="$(mktemp "${TMPDIR:-/tmp}/txing-tes-check.XXXXXX.json")"
+    trap 'rm -f "$tes_response"' EXIT
+    curl -fsS \
+      --cert "$cert_path" \
+      --key "$private_key_path" \
+      --cacert "$root_ca_path" \
+      -H "x-amzn-iot-thingname: $rig_thing_name" \
+      "https://$iot_cred_endpoint/role-aliases/$iot_role_alias/credentials" \
+      -o "$tes_response"
+    jq -e '.credentials.accessKeyId and .credentials.secretAccessKey and .credentials.sessionToken' "$tes_response" >/dev/null
+    echo "ok: AWS IoT Credentials Provider mTLS role alias ($iot_role_alias)"
+    managed_device_thing="$(
+      aws iot search-index \
+        --index-name AWS_Things \
+        --query-string "thingTypeName:${TXING_DEVICE_TYPE} AND attributes.name:${TXING_DEVICE_NAME} AND attributes.town:${sparkplug_group_id} AND attributes.rig:${rig_name}" \
+        --max-results 1 \
+        "${aws_flags[@]}" \
+        --query 'things[0].thingName' \
+        --output text
+    )"
+    if [ -z "$managed_device_thing" ] || [ "$managed_device_thing" = "None" ]; then
+      managed_device_thing="$(
+        aws iot search-index \
+          --index-name AWS_Things \
+          --query-string "thingTypeName:${TXING_DEVICE_TYPE} AND attributes.town:${sparkplug_group_id} AND attributes.rig:${rig_name}" \
+          --max-results 1 \
+          "${aws_flags[@]}" \
+          --query 'things[0].thingName' \
+          --output text
+      )"
+    fi
+    if [ -n "$managed_device_thing" ] && [ "$managed_device_thing" != "None" ]; then
+      device_client_id="$managed_device_thing"
+      device_will_topic="spBv1.0/${sparkplug_group_id}/DDEATH/${sparkplug_edge_node_id}/${managed_device_thing}"
+      uv run --project "{{project_root}}/shared/aws/python" python - "$iot_data_endpoint" "$region" "$tes_response" "$device_client_id" "$device_will_topic" <<'PY'
+    import json
+    import sys
+
+    from awscrt import auth, mqtt
+    from awsiot import mqtt_connection_builder
+
+    endpoint, region, tes_response_path, client_id, will_topic = sys.argv[1:]
+    with open(tes_response_path, "r", encoding="utf-8") as handle:
+        credentials = json.load(handle)["credentials"]
+    credentials_provider = auth.AwsCredentialsProvider.new_static(
+        credentials["accessKeyId"],
+        credentials["secretAccessKey"],
+        credentials.get("sessionToken"),
+    )
+    connection = mqtt_connection_builder.websockets_with_default_aws_signing(
+        region=region,
+        credentials_provider=credentials_provider,
+        endpoint=endpoint,
+        client_id=client_id,
+        port=443,
+        clean_session=True,
+        keep_alive_secs=30,
+        will=mqtt.Will(will_topic, mqtt.QoS.AT_LEAST_ONCE, b"", False),
+    )
+    try:
+        connection.connect().result(timeout=15)
+        connection.disconnect().result(timeout=15)
+    except Exception as err:
+        print(
+            f"fail: AWS IoT SigV4 MQTT connect with device Last Will "
+            f"client_id={client_id} will_topic={will_topic} ({err})",
+            file=sys.stderr,
+        )
+        raise SystemExit(1) from err
+    print(
+        f"ok: AWS IoT SigV4 MQTT connect with device Last Will "
+        f"client_id={client_id} will_topic={will_topic}"
+    )
+    PY
+    else
+      echo "skip: no managed ${TXING_DEVICE_TYPE} device found for rig=${rig_name} town=${sparkplug_group_id}; skipped per-device SigV4 MQTT check"
+    fi
+
+@clone-greengrass-lite:
+    if [ ! -d "{{greengrass_lite_dir}}/.git" ]; then \
+        git clone --branch "{{default_greengrass_lite_ref}}" --depth 1 "{{default_greengrass_lite_repository}}" "{{greengrass_lite_dir}}"; \
+    else \
+        git -C "{{greengrass_lite_dir}}" remote set-url origin "{{default_greengrass_lite_repository}}"; \
+        git -C "{{greengrass_lite_dir}}" fetch --force --tags origin; \
+        if git -C "{{greengrass_lite_dir}}" show-ref --verify --quiet "refs/remotes/origin/{{default_greengrass_lite_ref}}"; then \
+            git -C "{{greengrass_lite_dir}}" checkout -B "{{default_greengrass_lite_ref}}" "origin/{{default_greengrass_lite_ref}}"; \
+            git -C "{{greengrass_lite_dir}}" reset --hard "origin/{{default_greengrass_lite_ref}}"; \
+        else \
+            git -C "{{greengrass_lite_dir}}" checkout "{{default_greengrass_lite_ref}}"; \
+        fi; \
+    fi
+
+@clean-native:
+    rm -rf "{{greengrass_lite_build_dir}}"
+
+@distclean-native:
+    just clean-native
+    rm -rf "{{greengrass_lite_dir}}"
+
+@build-native:
+    if [ "$(uname -s)" != "Linux" ]; then \
+        echo "Greengrass Lite native build is supported only on Linux targets such as Raspberry Pi OS Lite." >&2; \
+        exit 1; \
+    fi
+    just clone-greengrass-lite
+    cmake \
+      -S "{{greengrass_lite_dir}}" \
+      -B "{{greengrass_lite_build_dir}}" \
+      -DCMAKE_BUILD_TYPE=MinSizeRel \
+      -DGG_LOG_LEVEL=INFO \
+      -DGGL_SYSTEMD_SYSTEM_USER=ggcore \
+      -DGGL_SYSTEMD_SYSTEM_GROUP=ggcore \
+      -DGGL_SYSTEMD_SYSTEM_DIR=/lib/systemd/system
+    cmake --build "{{greengrass_lite_build_dir}}" --config MinSizeRel --parallel
+    test -x "{{greengrass_lite_build_dir}}/bin/ggl-cli"
 
 @run:
     #!/usr/bin/env bash
@@ -171,25 +389,25 @@ systemd_unit := "/etc/systemd/system/rig.service"
       --shadow-name "{{shadow_name}}" \
       /dev/stdout | jq '.'
 
-@install-service rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file aws_config_file=aws_config_file cloudwatch_log_group='':
+@install-service rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file cloudwatch_log_group='':
     #!/usr/bin/env bash
     set -euo pipefail
-    test -x "{{built_rig}}" || { \
-        echo "Missing built rig executable at {{built_rig}}. Run 'just build' first." >&2; \
-        exit 1; \
-    }
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}" "" "" "" "{{aws_shared_credentials_file}}" "{{aws_config_file}}")"
-    project_root="$TXING_PROJECT_ROOT"
-    env_file="$AWS_ENV_FILE"
-    rig_env_file="$RIG_ENV_FILE"
+    for built_entrypoint in "{{built_rig}}" "{{built_rig_connectivity_ble}}" "{{built_rig_sparkplug_manager}}"; do \
+        if [ ! -x "$built_entrypoint" ]; then \
+            echo "Missing built rig entrypoint at $built_entrypoint. Run 'just rig::build' before 'just rig::install-service'." >&2; \
+            exit 1; \
+        fi; \
+    done
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}" "" "" "" "{{aws_shared_credentials_file}}")"
     region="$AWS_REGION"
-    aws_profile="$AWS_SELECTED_PROFILE"
-    aws_shared_credentials_file="$AWS_SHARED_CREDENTIALS_FILE"
-    aws_config_file="$AWS_CONFIG_FILE"
+    profile="$AWS_SELECTED_PROFILE"
+    aws_flags=(--region "$region")
+    if [ -n "$profile" ]; then \
+        aws_flags+=(--profile "$profile"); \
+    fi
     rig_name="$RIG_NAME"
     sparkplug_group_id="$SPARKPLUG_GROUP_ID"
     sparkplug_edge_node_id="$SPARKPLUG_EDGE_NODE_ID"
-    cloudwatch_log_group="$CLOUDWATCH_LOG_GROUP"
     if [ -n "{{rig_name}}" ]; then \
         rig_name="{{rig_name}}"; \
     fi; \
@@ -199,57 +417,327 @@ systemd_unit := "/etc/systemd/system/rig.service"
     if [ -n "{{sparkplug_edge_node_id}}" ]; then \
         sparkplug_edge_node_id="{{sparkplug_edge_node_id}}"; \
     fi; \
-    if [ -n "{{cloudwatch_log_group}}" ]; then \
-        cloudwatch_log_group="{{cloudwatch_log_group}}"; \
-    fi; \
     sudo systemctl enable --now bluetooth
-    run_user="$(id -un)"; \
-    service_env=(); \
+    if [ ! -d "{{greengrass_lite_build_dir}}" ]; then \
+        echo "Greengrass Lite native build is missing at {{greengrass_lite_build_dir}}." >&2; \
+        echo "Run 'just rig::build-native' before 'just rig::install-service'." >&2; \
+        exit 1; \
+    fi
+    if ! getent group ggcore >/dev/null; then \
+        sudo groupadd --system ggcore; \
+    fi
+    if ! id -u ggcore >/dev/null 2>&1; then \
+        sudo useradd --system --gid ggcore --home-dir /var/lib/greengrass --shell /usr/sbin/nologin ggcore; \
+    fi
+    if ! getent group gg_component >/dev/null; then \
+        sudo groupadd --system gg_component; \
+    fi
+    if ! id -u gg_component >/dev/null 2>&1; then \
+        sudo useradd --system --gid gg_component --home-dir /var/lib/greengrass/component --shell /usr/sbin/nologin gg_component; \
+    fi
+    rig_cert_path="{{project_root}}/config/certs/rig/rig.cert.pem"
+    rig_private_key_path="{{project_root}}/config/certs/rig/rig.private.key"
+    if [ ! -f "$rig_cert_path" ] || [ ! -f "$rig_private_key_path" ]; then \
+        echo "Rig certificate material is missing under {{project_root}}/config/certs/rig." >&2; \
+        echo "Run 'just aws::cert' before 'just rig::install-service'." >&2; \
+        exit 1; \
+    fi
+    rig_thing_names="$(
+        aws iot search-index \
+          --index-name AWS_Things \
+          --query-string "thingTypeName:rig AND attributes.name:${rig_name} AND attributes.town:${sparkplug_group_id}" \
+          --max-results 2 \
+          "${aws_flags[@]}" \
+          --query 'things[].thingName' \
+          --output text
+    )"
+    rig_thing_count="$(wc -w <<<"$rig_thing_names" | tr -d ' ')"
+    if [ "$rig_thing_count" != "1" ]; then \
+        echo "Expected exactly one rig thing for rig=${rig_name} town=${sparkplug_group_id}, found $rig_thing_count: $rig_thing_names" >&2; \
+        exit 1; \
+    fi
+    rig_thing_name="$rig_thing_names"
+    iot_data_endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}" --query endpointAddress --output text)"
+    iot_cred_endpoint="$(aws iot describe-endpoint --endpoint-type iot:CredentialProvider "${aws_flags[@]}" --query endpointAddress --output text)"
+    iot_role_alias="$(
+        aws cloudformation describe-stacks \
+          --stack-name "$TXING_RIG_STACK_NAME" \
+          "${aws_flags[@]}" \
+          --query "Stacks[0].Outputs[?OutputKey=='GreengrassTokenExchangeRoleAlias'].OutputValue | [0]" \
+          --output text
+    )"
+    if [ -z "$iot_role_alias" ] || [ "$iot_role_alias" = "None" ]; then \
+        echo "Could not resolve GreengrassTokenExchangeRoleAlias from stack $TXING_RIG_STACK_NAME." >&2; \
+        exit 1; \
+    fi
+    temp_files=()
+    cleanup_temp_files() {
+        if [ "${#temp_files[@]}" -gt 0 ]; then
+            rm -f "${temp_files[@]}"
+        fi
+    }
+    trap cleanup_temp_files EXIT
+    sudo mkdir -p /var/lib/greengrass /etc/greengrass
+    sudo install -d -o ggcore -g ggcore -m 700 /var/lib/greengrass/credentials
+    sudo install -o ggcore -g ggcore -m 600 "$rig_cert_path" /var/lib/greengrass/credentials/rig.cert.pem
+    sudo install -o ggcore -g ggcore -m 600 "$rig_private_key_path" /var/lib/greengrass/credentials/rig.private.key
+    root_ca_temp="$(mktemp "${TMPDIR:-/tmp}/txing-amazon-root-ca.XXXXXX.pem")"
+    temp_files+=("$root_ca_temp")
+    curl -fsSL https://www.amazontrust.com/repository/AmazonRootCA1.pem -o "$root_ca_temp"
+    sudo install -o ggcore -g ggcore -m 644 "$root_ca_temp" /var/lib/greengrass/credentials/AmazonRootCA1.pem
+    greengrass_config_temp="$(mktemp "${TMPDIR:-/tmp}/txing-greengrass-config.XXXXXX.yaml")"
+    temp_files+=("$greengrass_config_temp")
+    cat >"$greengrass_config_temp" <<EOF
+    system:
+      privateKeyPath: "/var/lib/greengrass/credentials/rig.private.key"
+      certificateFilePath: "/var/lib/greengrass/credentials/rig.cert.pem"
+      rootCaPath: "/var/lib/greengrass/credentials/AmazonRootCA1.pem"
+      rootPath: "/var/lib/greengrass"
+      thingName: "$rig_thing_name"
+    services:
+      aws.greengrass.NucleusLite:
+        componentType: "NUCLEUS"
+        configuration:
+          awsRegion: "$region"
+          iotCredEndpoint: "$iot_cred_endpoint"
+          iotDataEndpoint: "$iot_data_endpoint"
+          iotRoleAlias: "$iot_role_alias"
+          runWithDefault:
+            posixUser: "gg_component:gg_component"
+          greengrassDataPlanePort: "8443"
+          platformOverride: {}
+    EOF
+    sudo install -m 644 "$greengrass_config_temp" /etc/greengrass/config.yaml
+    sudo chown -R ggcore:ggcore /var/lib/greengrass
+    sudo cmake --install "{{greengrass_lite_build_dir}}" --config MinSizeRel
+    sudo "{{greengrass_lite_dir}}/misc/run_nucleus"
+    printf 'txing rig is supervised by the standard Greengrass Lite systemd target %s\n' "{{greengrass_lite_target}}"
+    printf 'Deploy components dev.txing.rig.SparkplugManager and dev.txing.rig.ConnectivityBle with RigName=%s SparkplugGroupId=%s SparkplugEdgeNodeId=%s\n' "$rig_name" "$sparkplug_group_id" "$sparkplug_edge_node_id"
+
+@restart:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    sudo systemctl restart bluetooth
+    if ! systemctl cat "{{greengrass_lite_target}}" >/dev/null 2>&1; then \
+        echo "Greengrass Lite target {{greengrass_lite_target}} is not installed. Run 'just rig::install-service' first." >&2; \
+        exit 1; \
+    fi
+    unit_exists() {
+      systemctl cat "$1" >/dev/null 2>&1
+    }
+    start_unit_if_present() {
+      local unit="$1"
+      if unit_exists "$unit"; then
+        sudo systemctl start "$unit" || true
+      fi
+    }
+    wait_active_if_present() {
+      local unit="$1"
+      if ! unit_exists "$unit"; then
+        return 0
+      fi
+      for _attempt in $(seq 1 30); do
+        if systemctl is-active --quiet "$unit"; then
+          return 0
+        fi
+        sleep 1
+      done
+      return 1
+    }
+    component_units=(
+      ggl.dev.txing.rig.SparkplugManager.service
+      ggl.dev.txing.rig.ConnectivityBle.service
+    )
+    sudo systemctl stop "{{greengrass_lite_target}}" || true
+    sudo systemctl reset-failed "{{greengrass_lite_target}}" 'ggl.*.service' 'ggl.*.socket' || true
+    sudo systemctl start "{{greengrass_lite_target}}"
+    core_units=(
+      ggl.core.ggconfigd.service
+      ggl.core.ggipcd.service
+      ggl.core.iotcored.service
+      ggl.core.tesd.service
+      ggl.aws.greengrass.TokenExchangeService.service
+    )
+    for unit in "${core_units[@]}"; do
+      wait_active_if_present "$unit" || true
+    done
+    for unit in "${component_units[@]}"; do
+      if unit_exists "$unit"; then
+        start_unit_if_present "$unit"
+        wait_active_if_present "$unit" || true
+      fi
+    done
+    status_units=("{{greengrass_lite_target}}")
+    for unit in "${core_units[@]}" "${component_units[@]}"; do
+      if unit_exists "$unit"; then
+        status_units+=("$unit")
+      fi
+    done
+    sudo systemctl --no-pager --full status "${status_units[@]}"
+
+@deploy rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' component_version='' adapter_id='ble-main' name_fragment='txing' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file: build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for built_entrypoint in "{{built_rig}}" "{{built_rig_connectivity_ble}}" "{{built_rig_sparkplug_manager}}"; do \
+        if [ ! -x "$built_entrypoint" ]; then \
+            echo "Missing built rig entrypoint at $built_entrypoint. Run 'just rig::build' before 'just rig::deploy'." >&2; \
+            exit 1; \
+        fi; \
+    done
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}" "" "" "" "{{aws_shared_credentials_file}}")"
+    region="$AWS_REGION"
+    profile="$AWS_SELECTED_PROFILE"
+    aws_flags=(--region "$region")
+    if [ -n "$profile" ]; then \
+        aws_flags+=(--profile "$profile"); \
+    fi
+    if ! systemctl is-active --quiet "{{greengrass_lite_target}}"; then \
+        echo "Greengrass Lite target {{greengrass_lite_target}} is not active. Run 'just rig::install-service' first." >&2; \
+        exit 1; \
+    fi
+    ggl_cli="$(command -v ggl-cli || true)"
+    if [ -z "$ggl_cli" ] && [ -x /usr/local/bin/ggl-cli ]; then \
+        ggl_cli=/usr/local/bin/ggl-cli; \
+    fi
+    if [ -z "$ggl_cli" ]; then \
+        echo "Missing ggl-cli. Run 'just rig::install-service' to install Greengrass Lite." >&2; \
+        exit 1; \
+    fi
+    rig_name="$RIG_NAME"
+    sparkplug_group_id="$SPARKPLUG_GROUP_ID"
+    sparkplug_edge_node_id="$SPARKPLUG_EDGE_NODE_ID"
     if [ -n "{{rig_name}}" ]; then \
-        service_env+=("Environment=\"RIG_NAME=$rig_name\""); \
+        rig_name="{{rig_name}}"; \
     fi; \
     if [ -n "{{sparkplug_group_id}}" ]; then \
-        service_env+=("Environment=\"SPARKPLUG_GROUP_ID=$sparkplug_group_id\""); \
+        sparkplug_group_id="{{sparkplug_group_id}}"; \
     fi; \
     if [ -n "{{sparkplug_edge_node_id}}" ]; then \
-        service_env+=("Environment=\"SPARKPLUG_EDGE_NODE_ID=$sparkplug_edge_node_id\""); \
+        sparkplug_edge_node_id="{{sparkplug_edge_node_id}}"; \
     fi; \
-    if [ -n "{{cloudwatch_log_group}}" ]; then \
-        service_env+=("Environment=\"CLOUDWATCH_LOG_GROUP=$cloudwatch_log_group\""); \
-    fi; \
-    if [ -n "{{region}}" ] && [ -n "$region" ]; then \
-        service_env+=("Environment=\"AWS_REGION=$region\""); \
-    fi; \
-    if [ -n "{{aws_profile}}" ] && [ -n "$aws_profile" ]; then \
-        service_env+=("Environment=\"AWS_PROFILE=$aws_profile\""); \
-    fi; \
-    if [ -n "{{aws_shared_credentials_file}}" ] && [ -n "$aws_shared_credentials_file" ]; then \
-        service_env+=("Environment=\"AWS_SHARED_CREDENTIALS_FILE=$aws_shared_credentials_file\""); \
-    fi; \
-    if [ -n "{{aws_config_file}}" ] && [ -n "$aws_config_file" ]; then \
-        service_env+=("Environment=\"AWS_CONFIG_FILE=$aws_config_file\""); \
-    fi; \
-    { \
-        printf '%s\n' \
-            '[Unit]' \
-            'Description=txing rig lifecycle runtime' \
-            'After=network-online.target bluetooth.target' \
-            'Wants=network-online.target bluetooth.target' \
-            '' \
-            '[Service]' \
-            'Type=simple' \
-            "User=$run_user" \
-            "WorkingDirectory=$project_root" \
-            "EnvironmentFile=$env_file" \
-            "EnvironmentFile=-$rig_env_file"; \
-        printf '%s\n' "${service_env[@]}"; \
-        printf '%s\n' \
-            'ExecStart={{built_rig}}' \
-            'Restart=always' \
-            'RestartSec=3' \
-            '' \
-            '[Install]' \
-            'WantedBy=multi-user.target'; \
-    } | sudo tee "{{systemd_unit}}" >/dev/null
-    sudo systemctl daemon-reload
-    sudo systemctl enable --now rig
+    resolved_component_version="{{component_version}}"
+    if [ -z "$resolved_component_version" ]; then \
+        resolved_component_version="0.5.0"; \
+    fi
+    iot_data_endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}" --query endpointAddress --output text)"
+    deploy_root="{{rig_dir}}/build/greengrass-local"
+    staging_root="$(mktemp -d "${TMPDIR:-/tmp}/txing-greengrass-stage.XXXXXX")"
+    cleanup_staging_root() {
+        rm -rf "$staging_root"
+    }
+    trap cleanup_staging_root EXIT
+    recipe_dir="$deploy_root/recipes"
+    artifacts_dir="$deploy_root/artifacts"
+    wheelhouse_dir="$staging_root/wheelhouse"
+    python_tree_dir="$staging_root/python"
+    requirements_file="$staging_root/requirements.txt"
+    rm -rf "$deploy_root"
+    mkdir -p "$recipe_dir" "$artifacts_dir" "$wheelhouse_dir" "$python_tree_dir"
+    uv build --wheel --out-dir "$wheelhouse_dir" "{{project_root}}/shared/aws/python" >/dev/null
+    uv build --wheel --out-dir "$wheelhouse_dir" "{{project_root}}/devices/unit/rig/python" >/dev/null
+    uv build --wheel --out-dir "$wheelhouse_dir" "{{rig_dir}}" >/dev/null
+    uv export \
+      --project "{{rig_dir}}" \
+      --format requirements.txt \
+      --no-dev \
+      --no-editable \
+      --no-hashes \
+      | awk 'NF && $0 !~ /^[[:space:]]*#/ && $0 !~ /^\./ && $0 !~ /^\.\.\//' >"$requirements_file"
+    uv pip install \
+      --python "{{python_executable}}" \
+      --target "$python_tree_dir" \
+      --compile-bytecode \
+      --reinstall \
+      --find-links "$wheelhouse_dir" \
+      --requirements "$requirements_file" \
+      "$wheelhouse_dir"/aws-*.whl \
+      "$wheelhouse_dir"/unit_rig-*.whl \
+      "$wheelhouse_dir"/rig-*.whl >/dev/null
+    for component_name in dev.txing.rig.SparkplugManager dev.txing.rig.ConnectivityBle; do \
+        component_artifact_dir="$artifacts_dir/$component_name/$resolved_component_version"; \
+        mkdir -p "$component_artifact_dir/python"; \
+        cp -a "$python_tree_dir/." "$component_artifact_dir/python/"; \
+        printf 'txing local Greengrass artifact for %s %s\n' "$component_name" "$resolved_component_version" >"$component_artifact_dir/txing-local-artifact.txt"; \
+    done
+    cat >"$recipe_dir/dev.txing.rig.SparkplugManager-$resolved_component_version.yaml" <<EOF
+    RecipeFormatVersion: '2020-01-25'
+    ComponentName: dev.txing.rig.SparkplugManager
+    ComponentVersion: '$resolved_component_version'
+    ComponentType: aws.greengrass.generic
+    ComponentDescription: txing rig Sparkplug lifecycle manager with per-device AWS IoT MQTT sessions.
+    ComponentPublisher: txing
+    ComponentDependencies:
+      aws.greengrass.TokenExchangeService:
+        VersionRequirement: '>=0.0.0'
+        DependencyType: HARD
+    ComponentConfiguration:
+      DefaultConfiguration:
+        accessControl:
+          aws.greengrass.ipc.pubsub:
+            dev.txing.rig.SparkplugManager:pubsub:1:
+              policyDescription: Allows the Sparkplug manager to exchange local connectivity messages with rig adapters.
+              operations:
+                - aws.greengrass#PublishToTopic
+                - aws.greengrass#SubscribeToTopic
+              resources:
+                - dev/txing/rig/v1/connectivity/*
+    Manifests:
+      - Platform:
+          os: linux
+          runtime: aws_nucleus_lite
+        Lifecycle:
+          run:
+            Script: |-
+              export AWS_REGION="$AWS_REGION"
+              export AWS_DEFAULT_REGION="$AWS_REGION"
+              unset AWS_PROFILE AWS_DEFAULT_PROFILE AWS_SHARED_CREDENTIALS_FILE
+              export RIG_NAME="$rig_name"
+              export SPARKPLUG_GROUP_ID="$sparkplug_group_id"
+              export SPARKPLUG_EDGE_NODE_ID="$sparkplug_edge_node_id"
+              export AWS_IOT_ENDPOINT="$iot_data_endpoint"
+              export PYTHONPATH="{artifacts:path}/python"
+              exec python3 -m rig.sparkplug_manager
+        Artifacts:
+          - Uri: "s3://txing-local-greengrass/txing-local-artifact.txt"
+            Unarchive: "NONE"
+    EOF
+    cat >"$recipe_dir/dev.txing.rig.ConnectivityBle-$resolved_component_version.yaml" <<EOF
+    RecipeFormatVersion: '2020-01-25'
+    ComponentName: dev.txing.rig.ConnectivityBle
+    ComponentVersion: '$resolved_component_version'
+    ComponentType: aws.greengrass.generic
+    ComponentDescription: txing rig BLE connectivity adapter for MCU rendezvous and GATT power control.
+    ComponentPublisher: txing
+    ComponentConfiguration:
+      DefaultConfiguration:
+        accessControl:
+          aws.greengrass.ipc.pubsub:
+            dev.txing.rig.ConnectivityBle:pubsub:1:
+              policyDescription: Allows the BLE connectivity adapter to exchange local connectivity messages with the Sparkplug manager.
+              operations:
+                - aws.greengrass#PublishToTopic
+                - aws.greengrass#SubscribeToTopic
+              resources:
+                - dev/txing/rig/v1/connectivity/*
+    Manifests:
+      - Platform:
+          os: linux
+          runtime: aws_nucleus_lite
+        Lifecycle:
+          run:
+            RequiresPrivilege: true
+            Script: |-
+              export RIG_NAME="$rig_name"
+              export PYTHONPATH="{artifacts:path}/python"
+              exec python3 -m rig.connectivity_ble --adapter-id "{{adapter_id}}" --name "{{name_fragment}}"
+        Artifacts:
+          - Uri: "s3://txing-local-greengrass/txing-local-artifact.txt"
+            Unarchive: "NONE"
+    EOF
+    sudo "$ggl_cli" deploy \
+      --recipe-dir "$recipe_dir" \
+      --artifacts-dir "$artifacts_dir" \
+      --add-component "dev.txing.rig.SparkplugManager=$resolved_component_version" \
+      --add-component "dev.txing.rig.ConnectivityBle=$resolved_component_version"
+    printf 'deployed Greengrass components version %s for RigName=%s SparkplugGroupId=%s SparkplugEdgeNodeId=%s\n' "$resolved_component_version" "$rig_name" "$sparkplug_group_id" "$sparkplug_edge_node_id"
+    printf 'inspect logs with: sudo journalctl -a -f -u ggl.dev.txing.rig.SparkplugManager.service -u ggl.dev.txing.rig.ConnectivityBle.service\n'

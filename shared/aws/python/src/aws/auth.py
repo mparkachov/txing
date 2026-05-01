@@ -152,11 +152,16 @@ class AwsCredentialsBridge:
 class AwsRuntime:
     session: Any
     region_name: str
+    iot_data_endpoint_override: str | None = None
     _credentials_bridge: AwsCredentialsBridge = field(init=False)
     _iot_data_endpoint: str | None = field(init=False, default=None)
 
     def __post_init__(self) -> None:
         self._credentials_bridge = AwsCredentialsBridge(self.session)
+        if self.iot_data_endpoint_override is not None:
+            self._iot_data_endpoint = _normalize_iot_endpoint_address(
+                self.iot_data_endpoint_override
+            )
 
     def client(
         self,
@@ -202,10 +207,15 @@ class AwsRuntime:
         return self._credentials_bridge.snapshot()
 
 
-def build_aws_runtime(*, region_name: str) -> AwsRuntime:
+def build_aws_runtime(
+    *,
+    region_name: str,
+    iot_data_endpoint: str | None = None,
+) -> AwsRuntime:
     if boto3 is None:
         raise RuntimeError("boto3 is required for AWS API access") from BOTO3_IMPORT_ERROR
     return AwsRuntime(
         session=boto3.session.Session(region_name=region_name),
         region_name=region_name,
+        iot_data_endpoint_override=iot_data_endpoint,
     )

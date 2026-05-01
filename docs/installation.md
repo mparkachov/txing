@@ -6,23 +6,15 @@ This guide covers host setup. AWS bring-up and teardown live in [aws.md](./aws.m
 
 - The repository checkout is local to each host.
 - Project-local AWS config stays under `config/`.
-- `config/aws.env` is shared across the repo.
-- `config/rig.env` is for the rig host.
-- `config/board.env` is for the device board host.
+- `config/aws.env` is the single non-secret AWS/runtime config file.
 - `config/aws.credentials` holds the source `town` credentials.
-- `config/aws.config` holds the `rig` and `device` role assumptions.
 
 Initialize the local config files on the machine where you are setting up a runtime:
 
 ```bash
 cp config/aws.env.example config/aws.env
 cp config/aws.credentials.example config/aws.credentials
-cp config/aws.config.example config/aws.config
-cp config/rig.env.example config/rig.env
-cp config/board.env.example config/board.env
 ```
-
-Only keep the host-specific env file that the machine actually needs.
 
 ## Rig Host
 
@@ -30,11 +22,27 @@ The rig is the always-on Raspberry Pi coordinator that owns Sparkplug publicatio
 
 ### 1. Install OS Packages
 
+`just rig::build-native` compiles Greengrass Lite locally. Install the native
+build toolchain before running it; otherwise the first failure will be similar
+to `cmake: command not found`.
+
 ```bash
 sudo apt update
 sudo apt full-upgrade -y
-sudo apt install -y git curl jq awscli bluez just
+sudo apt install -y \
+  git curl jq awscli bluez just ca-certificates python3-venv \
+  build-essential pkg-config cmake libssl-dev libcurl4-openssl-dev \
+  uuid-dev libzip-dev libsqlite3-dev libyaml-dev libsystemd-dev \
+  libevent-dev liburiparser-dev cgroup-tools
 sudo systemctl enable --now bluetooth
+```
+
+Verify the required native tools are on `PATH`:
+
+```bash
+cmake --version
+cc --version
+pkg-config --version
 ```
 
 Install `uv`:
@@ -61,34 +69,111 @@ Edit:
 - `config/aws.env`
   - `AWS_REGION`
   - `AWS_STACK_NAME`
+  - `TXING_TOWN_NAME`
+  - `TXING_RIG_NAME`
+  - `TXING_DEVICE_NAME`
+  - `TXING_DEVICE_TYPE`
   - `AWS_COGNITO_DOMAIN_PREFIX`
   - `AWS_ADMIN_EMAIL`
-- `config/rig.env`
   - `SPARKPLUG_GROUP_ID`
   - `RIG_NAME`
   - optional `CLOUDWATCH_LOG_GROUP`
-- `config/aws.config`
-  - `[profile rig].role_arn = <RigRuntimeRoleArn>`
 - `config/aws.credentials`
   - fill the `[town]` access keys
 
-Validate access:
+Validate access and the rig certificate path used by Greengrass:
 
 ```bash
 cd "$TXING_HOME"
 just rig::check
 ```
 
-### 4. Build And Install The Service
+`just rig::check` does not inspect systemd or `/var/lib/greengrass`. It uses the
+certificate material under `config/certs/rig/` to verify AWS IoT MQTT mTLS
+connectivity and AWS IoT Credentials Provider role-alias access, matching the
+certificate inputs later installed by `just rig::install-service`.
 
-`rig` requires Python `3.12+`.
+### 4. Prepare Greengrass Lite Configuration
+
+Production rig supervision is AWS IoT Greengrass Nucleus Lite, not a custom
+`rig.service` Python systemd unit. The rig build clones Greengrass Lite from
+upstream `main`, compiles it locally, installs its standard systemd units, and
+starts the default `greengrass-lite.target`.
+
+Before installing the service, the rig host must have:
+
+- the AWS stacks deployed with `just aws::deploy`, `just aws::town-deploy`, and `just aws::rig-deploy`
+- the configured rig thing registered in AWS IoT by `just aws::rig-deploy`
+- rig certificate material generated with `just aws::cert` under
+  `config/certs/rig/`
+
+Create the rig certificate material. The recipe resolves the configured rig
+thing from AWS IoT registry indexing, attaches the stack IoT policy, and writes
+the certificate, public key, private key, certificate ARN, and Amazon Root CA 1 under
+`config/certs/rig/`. That directory is explicitly ignored by git.
 
 ```bash
 cd "$TXING_HOME"
-python3 --version
+just aws::cert
+```
+
+`just rig::install-service` copies `config/certs/rig/rig.cert.pem` and
+`config/certs/rig/rig.private.key` into
+`/var/lib/greengrass/credentials`, downloads Amazon Root CA 1 into that same
+directory, creates `ggcore`/`gg_component` if needed, and changes
+`/var/lib/greengrass` ownership to `ggcore:ggcore`. It also generates
+`/etc/greengrass/config.yaml` automatically by resolving the configured rig
+thing through AWS IoT registry indexing, resolving the AWS IoT data and
+credential-provider endpoints, and reading the
+`GreengrassTokenExchangeRoleAlias` output from the rig stack.
+
+### 5. Build And Install The Greengrass Service
+
+The rig Python runtime requires Python `3.12+`; Raspberry Pi OS Trixie satisfies
+that requirement.
+
+```bash
+cd "$TXING_HOME"
+just rig::build-native
 just rig::build
 just rig::install-service
-sudo journalctl -u rig -f
+just rig::deploy
+```
+
+`just rig::build-native` compiles Greengrass Lite with `GG_LOG_LEVEL=INFO`.
+If the host already has debug-built Greengrass Lite binaries installed, rerun
+`just rig::build-native` and `just rig::install-service` to replace them.
+
+`just rig::install-service` installs and starts the standard Greengrass Lite
+systemd units from the native build. It does not manage the old custom
+`rig.service`; remove that unit manually before using the Greengrass structure
+if it still exists on an older host. The recipe creates the default `ggcore` and
+`gg_component` users if they are missing, keeps `/var/lib/greengrass` owned by
+`ggcore:ggcore`, and starts `greengrass-lite.target` through the upstream
+`misc/run_nucleus` script.
+
+`just rig::deploy` packages the current rig Python source and dependencies with
+`uv`, stages Greengrass Lite recipes and artifacts under
+`rig/build/greengrass-local`, and deploys `dev.txing.rig.SparkplugManager` plus
+`dev.txing.rig.ConnectivityBle` with `ggl-cli deploy`. The staging directory is
+kept after `ggl-cli` returns because Greengrass Lite copies artifacts
+asynchronously. It depends on `just rig::build`, so after changing rig code or
+pulling new code, run `just rig::deploy`. A Greengrass service restart alone
+restarts the previously deployed component artifact.
+
+Inspect Greengrass service health with:
+
+```bash
+sudo systemctl status --with-dependencies greengrass-lite.target
+sudo journalctl -a -f
+sudo journalctl -a -f -u ggl.dev.txing.rig.SparkplugManager.service -u ggl.dev.txing.rig.ConnectivityBle.service
+```
+
+Restart the installed Bluetooth and Greengrass Lite systemd units without
+deploying a new component artifact with:
+
+```bash
+just rig::restart
 ```
 
 Useful foreground commands:
@@ -155,12 +240,11 @@ Populate:
 
 - `config/aws.env`
 - `config/aws.credentials`
-- `config/aws.config`
-- `config/board.env`
 
-Board-specific values to set in `config/board.env`:
+Board-specific values to set in `config/aws.env`:
 
-- `THING_NAME`
+- `TXING_DEVICE_NAME`
+- `TXING_DEVICE_TYPE`
 - `BOARD_VIDEO_REGION`
 - `BOARD_VIDEO_SENDER_COMMAND`
 - `KVS_DUALSTACK_ENDPOINTS=ON`
@@ -173,8 +257,6 @@ If you are using the current default chassis, the measured bring-up values are:
 BOARD_DRIVE_CMD_RAW_MIN_SPEED=50
 BOARD_DRIVE_CMD_RAW_MAX_SPEED=250
 ```
-
-In `config/aws.config`, set `[profile device].role_arn = <DeviceRuntimeRoleArn>`.
 
 ### 4. Enable PWM Overlay
 
@@ -226,7 +308,7 @@ sudo ./.venv/bin/board \
   --video-sender-command "$BOARD_VIDEO_SENDER_COMMAND"
 ```
 
-Replace `<aws-region>` with the same value you configured as `BOARD_VIDEO_REGION` in `config/board.env`.
+Replace `<aws-region>` with the same value you configured as `BOARD_VIDEO_REGION` in `config/aws.env`.
 
 Then install the service:
 
@@ -240,7 +322,7 @@ sudo journalctl -u board -f
 The generated unit:
 
 - runs `board` as `root`
-- loads `config/aws.env` and optional `config/board.env`
+- loads `config/aws.env`
 - enables `NetworkManager-wait-online.service`
 - waits for clock synchronization before starting the AWS-backed video sender
 

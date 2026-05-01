@@ -270,10 +270,14 @@ class AwsDeviceRegistry:
         thing_type: str,
         name: str,
         town_name: str | None = None,
+        rig_name: str | None = None,
     ) -> list[ThingRegistration]:
         normalized_name = _normalize_slug("name", name)
         normalized_town_name = (
             _normalize_slug("town", town_name) if town_name is not None else None
+        )
+        normalized_rig_name = (
+            _normalize_slug("rig", rig_name) if rig_name is not None else None
         )
         matches: list[ThingRegistration] = []
         for registration in self._list_registry_things():
@@ -282,6 +286,8 @@ class AwsDeviceRegistry:
             if registration.name != normalized_name:
                 continue
             if normalized_town_name is not None and registration.town_name != normalized_town_name:
+                continue
+            if normalized_rig_name is not None and registration.rig_name != normalized_rig_name:
                 continue
             matches.append(registration)
         return matches
@@ -325,6 +331,46 @@ class AwsDeviceRegistry:
         if len(matches) > 1:
             raise DeviceRegistryError(
                 f"Rig {normalized_rig_name!r} in town {normalized_town_name!r} matched multiple AWS IoT things"
+            )
+        return matches[0]
+
+    def describe_device_by_name(
+        self,
+        *,
+        town_name: str,
+        rig_name: str,
+        device_type: str,
+        device_name: str,
+    ) -> DeviceRegistration:
+        normalized_town_name = _normalize_slug("town", town_name)
+        normalized_rig_name = _normalize_slug("rig", rig_name)
+        normalized_device_type = _normalize_slug("device type", device_type)
+        normalized_device_name = _normalize_slug("device", device_name)
+        matches = self._search_index(
+            "thingTypeName:"
+            f"{normalized_device_type} AND attributes.name:{normalized_device_name} "
+            f"AND attributes.town:{normalized_town_name} AND attributes.rig:{normalized_rig_name}"
+        )
+        if not matches:
+            matches = self._find_things_in_registry(
+                thing_type=normalized_device_type,
+                name=normalized_device_name,
+                town_name=normalized_town_name,
+                rig_name=normalized_rig_name,
+            )
+        if not matches:
+            raise DeviceRegistryError(
+                "Device "
+                f"{normalized_device_name!r} of type {normalized_device_type!r} "
+                f"in town {normalized_town_name!r} / rig {normalized_rig_name!r} "
+                "is not registered in AWS IoT"
+            )
+        if len(matches) > 1:
+            raise DeviceRegistryError(
+                "Device "
+                f"{normalized_device_name!r} of type {normalized_device_type!r} "
+                f"in town {normalized_town_name!r} / rig {normalized_rig_name!r} "
+                "matched multiple AWS IoT things"
             )
         return matches[0]
 
@@ -593,6 +639,30 @@ class AwsDeviceRegistry:
         )
         return self.describe_thing(thing_name)
 
+    def ensure_town(
+        self,
+        *,
+        town_name: str,
+    ) -> ThingRegistration:
+        normalized_town_name = _normalize_slug("town", town_name)
+        try:
+            registration = self.describe_town_by_name(normalized_town_name)
+        except DeviceRegistryError as err:
+            if "is not registered" not in str(err):
+                raise
+            return self.register_town(town_name=normalized_town_name)
+        self.ensure_thing_type(
+            TOWN_THING_TYPE,
+            searchable_attributes=TOWN_THING_SEARCHABLE_ATTRIBUTES,
+            description="Registered txing town type",
+        )
+        self.ensure_town_group(normalized_town_name)
+        self.ensure_town_shadow_initialized(
+            registration.thing_name,
+            town_name=normalized_town_name,
+        )
+        return self.describe_thing(registration.thing_name)
+
     def register_rig(
         self,
         *,
@@ -633,17 +703,57 @@ class AwsDeviceRegistry:
         )
         return self.describe_thing(thing_name)
 
+    def ensure_rig(
+        self,
+        *,
+        town_name: str,
+        rig_name: str,
+    ) -> ThingRegistration:
+        normalized_town_name = _normalize_slug("town", town_name)
+        normalized_rig_name = _normalize_slug("rig", rig_name)
+        try:
+            registration = self.describe_rig_by_name(
+                town_name=normalized_town_name,
+                rig_name=normalized_rig_name,
+            )
+        except DeviceRegistryError as err:
+            if "is not registered" not in str(err):
+                raise
+            return self.register_rig(
+                town_name=normalized_town_name,
+                rig_name=normalized_rig_name,
+            )
+        self.ensure_thing_type(
+            RIG_THING_TYPE,
+            searchable_attributes=RIG_THING_SEARCHABLE_ATTRIBUTES,
+            description="Registered txing rig type",
+        )
+        self.describe_town_by_name(normalized_town_name)
+        self.ensure_town_group(normalized_town_name)
+        self.ensure_rig_group(normalized_rig_name)
+        self.ensure_rig_shadow_initialized(
+            registration.thing_name,
+            town_name=normalized_town_name,
+            rig_name=normalized_rig_name,
+        )
+        return self.describe_thing(registration.thing_name)
+
     def register_device(
         self,
         *,
         town_name: str,
         rig_name: str,
         device_type: str,
+        device_name: str | None = None,
     ) -> DeviceRegistration:
         manifest = load_device_manifest(device_type, repo_root=self._repo_root)
         normalized_town_name = _normalize_slug("town", town_name)
         normalized_rig_name = _normalize_slug("rig", rig_name)
         normalized_device_type = _normalize_slug("device type", manifest.type)
+        normalized_device_name = _normalize_slug(
+            "device",
+            device_name if device_name is not None else manifest.device_name,
+        )
         capabilities_set = capabilities_for_thing_type(
             normalized_device_type,
             repo_root=self._repo_root,
@@ -666,7 +776,7 @@ class AwsDeviceRegistry:
                 "attributes": {
                     "town": normalized_town_name,
                     "rig": normalized_rig_name,
-                    "name": manifest.device_name,
+                    "name": normalized_device_name,
                     "shortId": short_id,
                     CAPABILITIES_ATTRIBUTE: encode_capabilities_set(capabilities_set),
                 }
@@ -683,6 +793,61 @@ class AwsDeviceRegistry:
         )
         self.ensure_auxiliary_resources(thing_name, manifest=manifest)
         return self.describe_device(thing_name)
+
+    def ensure_device(
+        self,
+        *,
+        town_name: str,
+        rig_name: str,
+        device_type: str,
+        device_name: str,
+    ) -> DeviceRegistration:
+        manifest = load_device_manifest(device_type, repo_root=self._repo_root)
+        normalized_town_name = _normalize_slug("town", town_name)
+        normalized_rig_name = _normalize_slug("rig", rig_name)
+        normalized_device_type = _normalize_slug("device type", manifest.type)
+        normalized_device_name = _normalize_slug("device", device_name)
+        capabilities_set = capabilities_for_thing_type(
+            normalized_device_type,
+            repo_root=self._repo_root,
+        )
+        try:
+            registration = self.describe_device_by_name(
+                town_name=normalized_town_name,
+                rig_name=normalized_rig_name,
+                device_type=normalized_device_type,
+                device_name=normalized_device_name,
+            )
+        except DeviceRegistryError as err:
+            if "is not registered" not in str(err):
+                raise
+            return self.register_device(
+                town_name=normalized_town_name,
+                rig_name=normalized_rig_name,
+                device_type=normalized_device_type,
+                device_name=normalized_device_name,
+            )
+        self.describe_town_by_name(normalized_town_name)
+        self.describe_rig_by_name(
+            town_name=normalized_town_name,
+            rig_name=normalized_rig_name,
+        )
+        self.ensure_thing_type(
+            normalized_device_type,
+            searchable_attributes=DEVICE_THING_SEARCHABLE_ATTRIBUTES,
+            description=f"Registered txing device type {normalized_device_type}",
+        )
+        self.ensure_town_group(normalized_town_name)
+        self.ensure_rig_group(normalized_rig_name)
+        self.ensure_device_shadow_initialized(
+            registration.thing_name,
+            manifest=manifest,
+            capabilities_set=capabilities_set,
+            town_name=normalized_town_name,
+            rig_name=normalized_rig_name,
+        )
+        self.ensure_auxiliary_resources(registration.thing_name, manifest=manifest)
+        return self.describe_device(registration.thing_name)
 
     def assign_device(
         self,
@@ -745,12 +910,25 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     register_town_parser.add_argument("--town", required=True)
 
+    ensure_town_parser = subparsers.add_parser(
+        "ensure-town",
+        help="Create or update the configured town thing, group, and shadow",
+    )
+    ensure_town_parser.add_argument("--town", required=True)
+
     register_rig_parser = subparsers.add_parser(
         "register-rig",
         help="Create a new registered rig thing and initialize its shadow",
     )
     register_rig_parser.add_argument("--town", required=True)
     register_rig_parser.add_argument("--rig", required=True)
+
+    ensure_rig_parser = subparsers.add_parser(
+        "ensure-rig",
+        help="Create or update the configured rig thing, group, and shadow",
+    )
+    ensure_rig_parser.add_argument("--town", required=True)
+    ensure_rig_parser.add_argument("--rig", required=True)
 
     register_device_parser = subparsers.add_parser(
         "register-device",
@@ -759,6 +937,16 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     register_device_parser.add_argument("--town", required=True)
     register_device_parser.add_argument("--rig", required=True)
     register_device_parser.add_argument("--device-type", required=True)
+    register_device_parser.add_argument("--device-name", default="")
+
+    ensure_device_parser = subparsers.add_parser(
+        "ensure-device",
+        help="Create or update the configured device thing, shadows, and KVS resources",
+    )
+    ensure_device_parser.add_argument("--town", required=True)
+    ensure_device_parser.add_argument("--rig", required=True)
+    ensure_device_parser.add_argument("--device-type", required=True)
+    ensure_device_parser.add_argument("--device-name", required=True)
 
     register_alias_parser = subparsers.add_parser(
         "register",
@@ -767,6 +955,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     register_alias_parser.add_argument("--town", required=True)
     register_alias_parser.add_argument("--rig", required=True)
     register_alias_parser.add_argument("--device-type", required=True)
+    register_alias_parser.add_argument("--device-name", default="")
 
     assign_parser = subparsers.add_parser(
         "assign-device",
@@ -799,8 +988,15 @@ def main(argv: list[str] | None = None) -> int:
     registry = _build_registry(region_name=region_name, repo_root=repo_root)
     if args.command == "register-town":
         registration = registry.register_town(town_name=args.town)
+    elif args.command == "ensure-town":
+        registration = registry.ensure_town(town_name=args.town)
     elif args.command == "register-rig":
         registration = registry.register_rig(
+            town_name=args.town,
+            rig_name=args.rig,
+        )
+    elif args.command == "ensure-rig":
+        registration = registry.ensure_rig(
             town_name=args.town,
             rig_name=args.rig,
         )
@@ -809,6 +1005,14 @@ def main(argv: list[str] | None = None) -> int:
             town_name=args.town,
             rig_name=args.rig,
             device_type=args.device_type,
+            device_name=args.device_name or None,
+        )
+    elif args.command == "ensure-device":
+        registration = registry.ensure_device(
+            town_name=args.town,
+            rig_name=args.rig,
+            device_type=args.device_type,
+            device_name=args.device_name,
         )
     elif args.command in {"assign-device", "assign"}:
         registration = registry.assign_device(

@@ -100,7 +100,7 @@ DEFAULT_COMMAND_ACK_TIMEOUT = 2.0
 DEFAULT_COMMAND_ACK_POLL_INTERVAL = 0.1
 DEFAULT_DEVICE_STALE_AFTER = 0.75
 DEFAULT_BLE_ONLINE_STALE_AFTER = 30.0
-DEFAULT_BLE_ONLINE_RECOVER_AFTER = 30.0
+DEFAULT_BLE_ONLINE_RECOVER_AFTER = 4.0
 DEFAULT_BLE_ONLINE_RECOVERY_GAP = 12.0
 DEFAULT_ADVERTISEMENT_LOG_INTERVAL = 5.0
 DEFAULT_SCAN_MODE = "active"
@@ -4260,7 +4260,7 @@ def _parse_args() -> argparse.Namespace:
         "--ble-online-recover-after",
         type=float,
         default=DEFAULT_BLE_ONLINE_RECOVER_AFTER,
-        help="Seconds of sustained BLE presence required before reported.device.mcu.online becomes true after being false (default: 30)",
+        help="Seconds of sustained BLE presence required before reported.device.mcu.online becomes true after being false (default: 4)",
     )
     parser.add_argument(
         "--ble-online-recovery-gap",

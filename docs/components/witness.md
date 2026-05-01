@@ -1,6 +1,6 @@
 # Witness
 
-Witness is the standalone Sparkplug projection component.
+Witness is the Sparkplug projection Lambda deployed by the base AWS stack.
 
 ## Responsibilities
 
@@ -13,14 +13,11 @@ Witness is the only authority that writes the `sparkplug` named shadow for rig a
 ## Deploy
 
 ```bash
-just witness::deploy
+just aws::deploy
 ```
 
-Default stack naming:
-
-- witness stack: `${AWS_STACK_NAME}-witness`
-- Lambda function: `${AWS_STACK_NAME}-witness`
-- log group: `/aws/lambda/${AWS_STACK_NAME}-witness`
+The `witness/` directory owns source and tests. The primary deployment flow does
+not use a separate witness stack.
 
 The deeper projection semantics are documented in:
 
