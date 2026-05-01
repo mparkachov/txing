@@ -260,6 +260,9 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
     project_root="$TXING_PROJECT_ROOT"
     env_file="$AWS_ENV_FILE"
     thing_name="$THING_NAME"
+    schema_file="$SCHEMA_FILE"
+    video_region="$BOARD_VIDEO_REGION"
+    video_sender_command="$BOARD_VIDEO_SENDER_COMMAND"
     region="$AWS_REGION"
     aws_profile="$AWS_SELECTED_PROFILE"
     aws_shared_credentials_file="$AWS_SHARED_CREDENTIALS_FILE"
@@ -272,13 +275,22 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
         service_env+=("Environment=\"THING_NAME=$thing_name\""); \
     fi; \
     if [ -n "{{schema_file}}" ]; then \
-        service_env+=("Environment=\"SCHEMA_FILE={{schema_file}}\""); \
+        schema_file="{{schema_file}}"; \
+    fi; \
+    if [ -n "$schema_file" ]; then \
+        service_env+=("Environment=\"SCHEMA_FILE=$schema_file\""); \
     fi; \
     if [ -n "{{video_region}}" ]; then \
-        service_env+=("Environment=\"BOARD_VIDEO_REGION={{video_region}}\""); \
+        video_region="{{video_region}}"; \
+    fi; \
+    if [ -n "$video_region" ]; then \
+        service_env+=("Environment=\"BOARD_VIDEO_REGION=$video_region\""); \
     fi; \
     if [ -n "{{video_sender_command}}" ]; then \
-        service_env+=("Environment=\"BOARD_VIDEO_SENDER_COMMAND={{video_sender_command}}\""); \
+        video_sender_command="{{video_sender_command}}"; \
+    fi; \
+    if [ -n "$video_sender_command" ]; then \
+        service_env+=("Environment=\"BOARD_VIDEO_SENDER_COMMAND=$video_sender_command\""); \
     fi; \
     if [ -n "{{region}}" ] && [ -n "$region" ]; then \
         service_env+=("Environment=\"AWS_REGION=$region\""); \
