@@ -244,6 +244,50 @@ class DeviceSparkplugMqttSessionTests(unittest.TestCase):
         self.assertFalse(session.connected)
         self.assertFalse(session.born)
 
+    def test_device_session_failed_initial_connect_does_not_disconnect_unconnected_connection(
+        self,
+    ) -> None:
+        instances: list[object] = []
+
+        class FailingConnection:
+            def __init__(self, config: object, **kwargs: object) -> None:
+                self.config = config
+                self.kwargs = kwargs
+                self.disconnect_calls = 0
+                instances.append(self)
+
+            async def connect(self, *, timeout_seconds: float | None = None) -> None:
+                del timeout_seconds
+                raise RuntimeError("connect rejected")
+
+            async def disconnect(self, *, timeout_seconds: float | None = None) -> None:
+                del timeout_seconds
+                self.disconnect_calls += 1
+                raise AssertionError("disconnect before connect")
+
+        session = DeviceSparkplugMqttSession(
+            SparkplugMqttSessionConfig(
+                endpoint="endpoint",
+                aws_region="eu-central-1",
+                sparkplug_group_id="town",
+                sparkplug_edge_node_id="rig",
+                client_id="rig-rig-sp-unit-1",
+            ),
+            thing_name="unit-1",
+            aws_runtime=object(),  # type: ignore[arg-type]
+            connection_factory=FailingConnection,
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "connect rejected"):
+            asyncio.run(session.publish_birth(redcon=4, battery_mv=3795))
+        asyncio.run(session.teardown(explicit_death=False))
+
+        connection = instances[0]
+        self.assertEqual(connection.disconnect_calls, 0)
+        self.assertFalse(session.connected)
+        self.assertFalse(session.born)
+        self.assertIn("on_connection_failure", connection.kwargs)
+
 
 class SparkplugManagerTests(unittest.TestCase):
     def test_parse_args_accepts_pre_resolved_iot_endpoint_from_environment(self) -> None:

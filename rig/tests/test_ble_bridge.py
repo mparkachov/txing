@@ -717,6 +717,12 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertIn("role-aliases/$iot_role_alias/credentials", justfile)
         self.assertIn("x-amzn-iot-thingname: $rig_thing_name", justfile)
         self.assertIn("ok: AWS IoT Credentials Provider mTLS role alias", justfile)
+        self.assertIn("AWS IoT SigV4 MQTT connect with device Last Will", justfile)
+        self.assertIn('device_client_id="rig-${rig_name}-sp-${safe_device_thing}"', justfile)
+        self.assertIn(
+            'device_will_topic="spBv1.0/${sparkplug_group_id}/DDEATH/${sparkplug_edge_node_id}/${managed_device_thing}"',
+            justfile,
+        )
         self.assertNotIn('AWS_ENDPOINT_FILE', justfile)
         self.assertNotIn('IOT_ENDPOINT_FILE', justfile)
         self.assertNotIn('EnvironmentFile=$env_file', justfile)

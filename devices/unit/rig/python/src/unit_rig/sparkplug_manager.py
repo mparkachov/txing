@@ -114,6 +114,7 @@ class DeviceSparkplugMqttSession:
         self._connection_factory = connection_factory
         self._connection: Any | None = None
         self._connected = False
+        self._disconnectable = False
         self._born = False
         self._seq = 0
 
@@ -154,6 +155,7 @@ class DeviceSparkplugMqttSession:
             mqtt_config,
             aws_runtime=self._aws_runtime,
             on_connection_interrupted=self._on_connection_interrupted,
+            on_connection_failure=self._on_connection_failure,
             on_connection_closed=self._on_connection_closed,
         )
 
@@ -162,6 +164,16 @@ class DeviceSparkplugMqttSession:
             "Device Sparkplug MQTT session interrupted thing=%s error=%s",
             self._thing_name,
             error,
+        )
+        self._connected = False
+        self._born = False
+
+    def _on_connection_failure(self, callback_data: Any) -> None:
+        LOGGER.warning(
+            "Device Sparkplug MQTT session connection failed thing=%s client_id=%s reason=%s",
+            self._thing_name,
+            self._config.client_id,
+            getattr(callback_data, "error", callback_data),
         )
         self._connected = False
         self._born = False
@@ -178,9 +190,35 @@ class DeviceSparkplugMqttSession:
     async def connect(self) -> None:
         if self._connected:
             return
-        self._connection = self._build_connection()
-        await self._connection.connect(timeout_seconds=self._config.connect_timeout)
+        will_topic = build_device_topic(
+            self._config.sparkplug_group_id,
+            "DDEATH",
+            self._config.sparkplug_edge_node_id,
+            self._thing_name,
+        )
+        LOGGER.info(
+            "Connecting Device Sparkplug MQTT session thing=%s client_id=%s will_topic=%s",
+            self._thing_name,
+            self._config.client_id,
+            will_topic,
+        )
+        connection = self._build_connection()
+        self._connection = connection
+        try:
+            await connection.connect(timeout_seconds=self._config.connect_timeout)
+        except Exception:
+            self._connected = False
+            self._born = False
+            self._disconnectable = False
+            self._connection = None
+            raise
         self._connected = True
+        self._disconnectable = True
+        LOGGER.info(
+            "Connected Device Sparkplug MQTT session thing=%s client_id=%s",
+            self._thing_name,
+            self._config.client_id,
+        )
 
     async def publish_birth(self, *, redcon: int, battery_mv: int) -> None:
         await self.connect()
@@ -238,11 +276,17 @@ class DeviceSparkplugMqttSession:
     async def disconnect(self) -> None:
         if self._connection is None:
             self._connected = False
+            self._disconnectable = False
+            return
+        if not self._disconnectable:
+            self._connected = False
+            self._connection = None
             return
         try:
             await self._connection.disconnect(timeout_seconds=self._config.connect_timeout)
         finally:
             self._connected = False
+            self._disconnectable = False
             self._connection = None
 
     async def teardown(self, *, explicit_death: bool) -> None:

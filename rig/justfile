@@ -49,6 +49,7 @@ aws_shared_credentials_file := ""
     fi
     rig_name="$RIG_NAME"
     sparkplug_group_id="$SPARKPLUG_GROUP_ID"
+    sparkplug_edge_node_id="$SPARKPLUG_EDGE_NODE_ID"
     cloudwatch_log_group="$CLOUDWATCH_LOG_GROUP"
     if [ -n "{{rig_name}}" ]; then
       rig_name="{{rig_name}}"
@@ -161,6 +162,73 @@ aws_shared_credentials_file := ""
       -o "$tes_response"
     jq -e '.credentials.accessKeyId and .credentials.secretAccessKey and .credentials.sessionToken' "$tes_response" >/dev/null
     echo "ok: AWS IoT Credentials Provider mTLS role alias ($iot_role_alias)"
+    managed_device_thing="$(
+      aws iot search-index \
+        --index-name AWS_Things \
+        --query-string "thingTypeName:${TXING_DEVICE_TYPE} AND attributes.name:${TXING_DEVICE_NAME} AND attributes.town:${sparkplug_group_id} AND attributes.rig:${rig_name}" \
+        --max-results 1 \
+        "${aws_flags[@]}" \
+        --query 'things[0].thingName' \
+        --output text
+    )"
+    if [ -z "$managed_device_thing" ] || [ "$managed_device_thing" = "None" ]; then
+      managed_device_thing="$(
+        aws iot search-index \
+          --index-name AWS_Things \
+          --query-string "thingTypeName:${TXING_DEVICE_TYPE} AND attributes.town:${sparkplug_group_id} AND attributes.rig:${rig_name}" \
+          --max-results 1 \
+          "${aws_flags[@]}" \
+          --query 'things[0].thingName' \
+          --output text
+      )"
+    fi
+    if [ -n "$managed_device_thing" ] && [ "$managed_device_thing" != "None" ]; then
+      safe_device_thing="$(printf '%s' "$managed_device_thing" | sed 's/[^A-Za-z0-9_-]/-/g')"
+      device_client_id="rig-${rig_name}-sp-${safe_device_thing}"
+      device_will_topic="spBv1.0/${sparkplug_group_id}/DDEATH/${sparkplug_edge_node_id}/${managed_device_thing}"
+      uv run --project "{{project_root}}/shared/aws/python" python - "$iot_data_endpoint" "$region" "$tes_response" "$device_client_id" "$device_will_topic" <<'PY'
+    import json
+    import sys
+
+    from awscrt import auth, mqtt
+    from awsiot import mqtt_connection_builder
+
+    endpoint, region, tes_response_path, client_id, will_topic = sys.argv[1:]
+    with open(tes_response_path, "r", encoding="utf-8") as handle:
+        credentials = json.load(handle)["credentials"]
+    credentials_provider = auth.AwsCredentialsProvider.new_static(
+        credentials["accessKeyId"],
+        credentials["secretAccessKey"],
+        credentials.get("sessionToken"),
+    )
+    connection = mqtt_connection_builder.websockets_with_default_aws_signing(
+        region=region,
+        credentials_provider=credentials_provider,
+        endpoint=endpoint,
+        client_id=client_id,
+        port=443,
+        clean_session=True,
+        keep_alive_secs=30,
+        will=mqtt.Will(will_topic, mqtt.QoS.AT_LEAST_ONCE, b"", False),
+    )
+    try:
+        connection.connect().result(timeout=15)
+        connection.disconnect().result(timeout=15)
+    except Exception as err:
+        print(
+            f"fail: AWS IoT SigV4 MQTT connect with device Last Will "
+            f"client_id={client_id} will_topic={will_topic} ({err})",
+            file=sys.stderr,
+        )
+        raise SystemExit(1) from err
+    print(
+        f"ok: AWS IoT SigV4 MQTT connect with device Last Will "
+        f"client_id={client_id} will_topic={will_topic}"
+    )
+    PY
+    else
+      echo "skip: no managed ${TXING_DEVICE_TYPE} device found for rig=${rig_name} town=${sparkplug_group_id}; skipped per-device SigV4 MQTT check"
+    fi
 
 @clone-greengrass-lite:
     if [ ! -d "{{greengrass_lite_dir}}/.git" ]; then \
