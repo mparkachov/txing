@@ -148,13 +148,13 @@ if it still exists on an older host. The recipe creates the default `ggcore` and
 `ggcore:ggcore`, and starts `greengrass-lite.target` through the upstream
 `misc/run_nucleus` script.
 
-`just rig::deploy` packages the current rig Python source and
-third-party wheels into a temporary local Greengrass artifact set, generates
+`just rig::deploy` packages the current rig Python source and dependencies into
+a temporary local Greengrass artifact Python tree using `uv`, generates
 Greengrass Lite-compatible recipes with the configured rig identity, and deploys
 `dev.txing.rig.SparkplugManager` plus `dev.txing.rig.ConnectivityBle` with
 `ggl-cli deploy`. It depends on `just rig::build`, so after changing rig code or
-pulling new code, run `just rig::deploy`. A Greengrass service
-restart alone restarts the previously deployed component artifact.
+pulling new code, run `just rig::deploy`. A Greengrass service restart alone
+restarts the previously deployed component artifact.
 
 Inspect Greengrass service health with:
 

@@ -28,16 +28,13 @@ Manifests:
       architecture: aarch64
       runtime: aws_nucleus_lite
     Lifecycle:
-      install:
-        Script: |-
-          python3 -m venv "{work:path}/venv"
-          "{work:path}/venv/bin/python" -m pip install --no-index --find-links "{artifacts:decompressedPath}/rig-greengrass/wheels" "{artifacts:decompressedPath}/rig-greengrass/wheels"/rig-*.whl
       run:
         Script: |-
           export RIG_NAME="{configuration:/RigName}"
           export SPARKPLUG_GROUP_ID="{configuration:/SparkplugGroupId}"
           export SPARKPLUG_EDGE_NODE_ID="{configuration:/SparkplugEdgeNodeId}"
-          exec "{work:path}/venv/bin/rig-sparkplug-manager"
+          export PYTHONPATH="{artifacts:decompressedPath}/rig-greengrass/python"
+          exec python3 -m rig.sparkplug_manager
     Artifacts:
       - Uri: s3://REPLACE_WITH_TXING_GREENGRASS_ARTIFACT_BUCKET/rig-greengrass/0.1.0/rig-greengrass.zip
         Unarchive: ZIP
