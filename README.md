@@ -94,14 +94,20 @@ That means the regional coordinator is not itself a `txing` in the current imple
 
 This repository contains one sample implementation of the `txing` concept:
 
-- `mcu/`: the current watch layer
-- `board/`: the current action layer
-- `rig/`: the current Raspberry Pi support component that acts as the `rig` lifecycle runtime and bridges cloud intent to the watch link
-- `web/`: one operator/admin surface
-- `docs/`: shared contracts, schema, and Sparkplug lifecycle notes for this implementation
+- `devices/unit/mcu/`: the current watch layer
+- `devices/unit/board/`: the current action layer
+- `rig/`: the current Raspberry Pi coordinator that acts as the `rig` lifecycle runtime and bridges cloud intent to the watch link
+- `witness/`: the Sparkplug-to-shadow projection component
+- `web/`: the operator/admin surface
+- `docs/`: repo-level setup, workflow, and component documentation
+- `devices/unit/docs/`: unit-specific contracts for Thing Shadow, Sparkplug, BLE, and board video
 
 In this implementation, the watch link is BLE and the action link is Wi-Fi. Those are examples, not the definition of `txing`.
 
-For the current Sparkplug lifecycle design around `town`, `rig`, and `txing`, see [docs/sparkplug-lifecycle.md](./docs/sparkplug-lifecycle.md).
+Documentation entry points:
 
-For build, deploy, and local development workflows, see [development.md](./development.md).
+- [docs/README.md](./docs/README.md)
+- [docs/sparkplug-lifecycle.md](./docs/sparkplug-lifecycle.md)
+- [docs/development.md](./docs/development.md)
+- [docs/installation.md](./docs/installation.md)
+- [docs/aws.md](./docs/aws.md)
