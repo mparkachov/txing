@@ -517,20 +517,28 @@ class SparkplugManager:
 
         if device.reachable():
             session = self._ensure_session(device)
-            if not session.connected or not session.born:
-                await session.publish_birth(
-                    redcon=device.redcon,
-                    battery_mv=device.battery_mv,
-                )
-            elif redcon_changed or previous_battery != device.battery_mv:
-                await session.publish_data(
-                    redcon=device.redcon,
-                    battery_mv=device.battery_mv,
-                )
-            if device.promote_redcon_after_stage():
-                await session.publish_data(
-                    redcon=device.redcon,
-                    battery_mv=device.battery_mv,
+            try:
+                if not session.connected or not session.born:
+                    await session.publish_birth(
+                        redcon=device.redcon,
+                        battery_mv=device.battery_mv,
+                    )
+                elif redcon_changed or previous_battery != device.battery_mv:
+                    await session.publish_data(
+                        redcon=device.redcon,
+                        battery_mv=device.battery_mv,
+                    )
+                if device.promote_redcon_after_stage():
+                    await session.publish_data(
+                        redcon=device.redcon,
+                        battery_mv=device.battery_mv,
+                    )
+            except Exception as err:
+                await self._handle_device_session_error(
+                    device,
+                    session,
+                    action="publish connectivity state",
+                    error=err,
                 )
         elif previous_reachable:
             session = device.mqtt_session
@@ -539,6 +547,32 @@ class SparkplugManager:
 
         if previous_redcon != device.redcon:
             device.clear_target_if_converged()
+
+    async def _handle_device_session_error(
+        self,
+        device: ManagedDeviceState,
+        session: DeviceSparkplugMqttSession,
+        *,
+        action: str,
+        error: Exception,
+    ) -> None:
+        LOGGER.warning(
+            "Device Sparkplug MQTT %s failed thing=%s redcon=%s reachable=%s error=%s: %s",
+            action,
+            device.thing_name,
+            device.redcon,
+            device.reachable(),
+            type(error).__name__,
+            error,
+        )
+        try:
+            await session.teardown(explicit_death=False)
+        except Exception:
+            LOGGER.debug(
+                "Device Sparkplug MQTT cleanup after failure failed thing=%s",
+                device.thing_name,
+                exc_info=True,
+            )
 
     async def _publish_mcu_shadow_from_state(
         self,
@@ -569,15 +603,23 @@ class SparkplugManager:
             redcon_changed = device.reconcile_redcon()
             session = device.mqtt_session
             if session is not None and session.connected and session.born:
-                if redcon_changed or previous_battery != device.battery_mv:
-                    await session.publish_data(
-                        redcon=device.redcon,
-                        battery_mv=device.battery_mv,
-                    )
-                if device.promote_redcon_after_stage():
-                    await session.publish_data(
-                        redcon=device.redcon,
-                        battery_mv=device.battery_mv,
+                try:
+                    if redcon_changed or previous_battery != device.battery_mv:
+                        await session.publish_data(
+                            redcon=device.redcon,
+                            battery_mv=device.battery_mv,
+                        )
+                    if device.promote_redcon_after_stage():
+                        await session.publish_data(
+                            redcon=device.redcon,
+                            battery_mv=device.battery_mv,
+                        )
+                except Exception as err:
+                    await self._handle_device_session_error(
+                        device,
+                        session,
+                        action="publish cloud update",
+                        error=err,
                     )
             if previous_redcon != device.redcon:
                 device.clear_target_if_converged()

@@ -98,6 +98,35 @@ class GreengrassLocalPubSubTests(unittest.TestCase):
             [("dev/txing/rig/v1/connectivity/state/unit-1", b"payload")],
         )
 
+    def test_subscribe_logs_handler_failure(self) -> None:
+        async def exercise() -> list[str]:
+            client = FakeGreengrassIpcClient()
+            bus = GreengrassLocalPubSub(client=client)
+
+            def handler(_topic: str, _payload: bytes) -> None:
+                raise RuntimeError("boom")
+
+            await bus.subscribe("dev/txing/rig/v1/connectivity/state/+", handler)
+            assert client.on_stream_event is not None
+            with self.assertLogs("rig.local_pubsub", level="ERROR") as logs:
+                client.on_stream_event(
+                    SubscriptionResponseMessage(
+                        binary_message=BinaryMessage(
+                            message=b"payload",
+                            context=MessageContext(
+                                topic="dev/txing/rig/v1/connectivity/state/unit-1"
+                            ),
+                        )
+                    )
+                )
+                await asyncio.sleep(0)
+                await asyncio.sleep(0)
+            return logs.output
+
+        [log_line] = asyncio.run(exercise())
+        self.assertIn("Greengrass local pub/sub handler failed", log_line)
+        self.assertIn("dev/txing/rig/v1/connectivity/state/unit-1", log_line)
+
 
 if __name__ == "__main__":
     unittest.main()

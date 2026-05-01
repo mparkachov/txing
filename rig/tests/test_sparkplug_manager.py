@@ -79,6 +79,24 @@ class FakeDeviceSession:
         self.disconnects += 1
 
 
+class FailingBirthOnceDeviceSession(FakeDeviceSession):
+    def __init__(
+        self,
+        config: SparkplugMqttSessionConfig,
+        *,
+        thing_name: str,
+        aws_runtime: object,
+    ) -> None:
+        super().__init__(config, thing_name=thing_name, aws_runtime=aws_runtime)
+        self.fail_birth = True
+
+    async def publish_birth(self, *, redcon: int, battery_mv: int) -> None:
+        if self.fail_birth:
+            self.fail_birth = False
+            raise RuntimeError("transient connect hangup")
+        await super().publish_birth(redcon=redcon, battery_mv=battery_mv)
+
+
 class FakeAwsRuntime:
     def iot_client(self) -> object:
         return object()
@@ -345,6 +363,33 @@ class SparkplugManagerTests(unittest.TestCase):
             [update["thing_name"] for update in cloud.named_shadow_updates],
             ["unit-1", "unit-2", "unit-1"],
         )
+
+    def test_device_birth_failure_is_retried_on_next_connectivity_state(self) -> None:
+        async def exercise() -> FailingBirthOnceDeviceSession:
+            manager = SparkplugManager(
+                BridgeConfig(iot_endpoint="endpoint", aws_region="eu-central-1"),
+                aws_runtime=object(),  # type: ignore[arg-type]
+                bus=InMemoryLocalPubSub(),
+                cloud_client=FakeCloudClient(),  # type: ignore[arg-type]
+                session_factory=FailingBirthOnceDeviceSession,  # type: ignore[arg-type]
+            )
+            await manager.set_registrations([registration("unit-1")])
+            await manager.apply_connectivity_state(online_state("unit-1", power=True))
+            session = manager.devices["unit-1"].mqtt_session
+            assert isinstance(session, FailingBirthOnceDeviceSession)
+            self.assertFalse(session.born)
+            self.assertEqual(session.disconnects, 1)
+            self.assertEqual(session.deaths, 0)
+
+            await manager.apply_connectivity_state(online_state("unit-1", power=True))
+            return session
+
+        session = asyncio.run(exercise())
+        self.assertEqual(session.births, [(3, 3800)])
+        self.assertTrue(session.connected)
+        self.assertTrue(session.born)
+        self.assertEqual(session.disconnects, 1)
+        self.assertEqual(session.deaths, 0)
 
     def test_redcon_four_reachable_sleep_state_remains_born(self) -> None:
         async def exercise() -> FakeDeviceSession:

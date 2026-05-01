@@ -27,6 +27,13 @@ async def _invoke_handler(handler: MessageHandler, topic: str, payload: bytes) -
         await result
 
 
+async def _invoke_logged_handler(handler: MessageHandler, topic: str, payload: bytes) -> None:
+    try:
+        await _invoke_handler(handler, topic, payload)
+    except Exception:
+        LOGGER.exception("Greengrass local pub/sub handler failed topic=%s", topic)
+
+
 @dataclass(slots=True)
 class _InMemorySubscription:
     bus: InMemoryLocalPubSub
@@ -110,7 +117,7 @@ class GreengrassLocalPubSub:
                 return
             loop.call_soon_threadsafe(
                 lambda: asyncio.create_task(
-                    _invoke_handler(handler, message_topic, payload)
+                    _invoke_logged_handler(handler, message_topic, payload)
                 )
             )
 
