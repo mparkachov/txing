@@ -508,17 +508,19 @@ aws_shared_credentials_file := ""
     if [ -z "$resolved_component_version" ]; then \
         resolved_component_version="0.1.$(date +%s)"; \
     fi
-    deploy_root="$(mktemp -d "${TMPDIR:-/tmp}/txing-greengrass-deploy.XXXXXX")"
-    cleanup_deploy_root() {
-        rm -rf "$deploy_root"
+    deploy_root="{{rig_dir}}/build/greengrass-local"
+    staging_root="$(mktemp -d "${TMPDIR:-/tmp}/txing-greengrass-stage.XXXXXX")"
+    cleanup_staging_root() {
+        rm -rf "$staging_root"
     }
-    trap cleanup_deploy_root EXIT
+    trap cleanup_staging_root EXIT
     recipe_dir="$deploy_root/recipes"
     artifacts_dir="$deploy_root/artifacts"
-    wheelhouse_dir="$deploy_root/wheelhouse"
-    python_tree_dir="$deploy_root/python"
-    requirements_file="$deploy_root/requirements.txt"
-    mkdir -p "$recipe_dir" "$wheelhouse_dir" "$python_tree_dir"
+    wheelhouse_dir="$staging_root/wheelhouse"
+    python_tree_dir="$staging_root/python"
+    requirements_file="$staging_root/requirements.txt"
+    rm -rf "$deploy_root"
+    mkdir -p "$recipe_dir" "$artifacts_dir" "$wheelhouse_dir" "$python_tree_dir"
     uv build --wheel --out-dir "$wheelhouse_dir" "{{project_root}}/shared/aws/python" >/dev/null
     uv build --wheel --out-dir "$wheelhouse_dir" "{{project_root}}/devices/unit/rig/python" >/dev/null
     uv build --wheel --out-dir "$wheelhouse_dir" "{{rig_dir}}" >/dev/null

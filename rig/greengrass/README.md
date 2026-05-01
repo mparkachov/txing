@@ -26,7 +26,10 @@ Lifecycle boundary:
 `just rig::deploy` is the local Greengrass Lite development path. It
 builds wheels for `rig`, `unit-rig`, `aws`, uses `uv pip install --target` to
 assemble a self-contained artifact Python tree for the target platform,
-generates concrete local recipes, and runs `ggl-cli deploy`.
+generates concrete local recipes under `rig/build/greengrass-local`, and runs
+`ggl-cli deploy`. The generated recipe/artifact tree is kept until the next
+deploy because Greengrass Lite copies artifacts asynchronously after the CLI
+returns.
 The checked-in recipe files are publishing templates; local deployment does not
 use their placeholder S3 URIs.
 

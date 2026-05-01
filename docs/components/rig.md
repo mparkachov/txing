@@ -99,7 +99,9 @@ the standard `greengrass-lite.target` through Greengrass Lite's
 `dev.txing.rig.SparkplugManager` and connectivity adapter components.
 
 Use `just rig::deploy` after changing or pulling rig code; it depends
-on `just rig::build` and then deploys a new local component artifact. Use
+on `just rig::build` and then stages a new local component artifact under
+`rig/build/greengrass-local`. That staging directory is intentionally kept until
+the next deploy because Greengrass Lite copies artifacts asynchronously. Use
 `just rig::restart` only when you want to restart Bluetooth and the existing
 Greengrass Lite systemd units without changing the deployed component version.
 
