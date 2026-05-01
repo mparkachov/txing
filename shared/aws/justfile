@@ -357,12 +357,14 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
     public_key_path="$cert_dir/rig.public.key"
     private_key_path="$cert_dir/rig.private.key"
     cert_arn_path="$cert_dir/rig.cert.arn"
+    root_ca_path="$cert_dir/AmazonRootCA1.pem"
     install -d -m 700 "$cert_dir"
     if [ -e "$cert_path" ] || [ -e "$public_key_path" ] || [ -e "$private_key_path" ] || [ -e "$cert_arn_path" ]; then
       echo "Certificate material already exists under $cert_dir." >&2
       echo "Move or delete those files before issuing a replacement certificate." >&2
       exit 1
     fi
+    curl -fsSL https://www.amazontrust.com/repository/AmazonRootCA1.pem -o "$root_ca_path"
     cert_arn="$(
       aws iot create-keys-and-certificate \
         --set-as-active \
@@ -377,6 +379,7 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
     aws iot attach-thing-principal --thing-name "$effective_thing_name" --principal "$cert_arn" "${aws_flags[@]}"
     printf '%s\n' "$cert_arn" >"$cert_arn_path"
     chmod 600 "$cert_path" "$public_key_path" "$private_key_path" "$cert_arn_path"
+    chmod 644 "$root_ca_path"
     jq -n \
       --arg thingName "$effective_thing_name" \
       --arg policyName "$effective_policy_name" \
@@ -385,7 +388,8 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
       --arg publicKey "$public_key_path" \
       --arg privateKey "$private_key_path" \
       --arg certificateArnFile "$cert_arn_path" \
-      '{thingName: $thingName, policyName: $policyName, certificateArn: $certificateArn, certificatePem: $certificatePem, publicKey: $publicKey, privateKey: $privateKey, certificateArnFile: $certificateArnFile}'
+      --arg rootCaFile "$root_ca_path" \
+      '{thingName: $thingName, policyName: $policyName, certificateArn: $certificateArn, certificatePem: $certificatePem, publicKey: $publicKey, privateKey: $privateKey, certificateArnFile: $certificateArnFile, rootCaFile: $rootCaFile}'
 
 @init-shadow thing_name='' shadow_name='sparkplug' region=region profile=profile payload_file='' shadow_response_file='':
     #!/usr/bin/env bash

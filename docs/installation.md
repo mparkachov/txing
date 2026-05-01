@@ -81,12 +81,17 @@ Edit:
 - `config/aws.credentials`
   - fill the `[town]` access keys
 
-Validate access:
+Validate access and the rig certificate path used by Greengrass:
 
 ```bash
 cd "$TXING_HOME"
 just rig::check
 ```
+
+`just rig::check` does not inspect systemd or `/var/lib/greengrass`. It uses the
+certificate material under `config/certs/rig/` to verify AWS IoT MQTT mTLS
+connectivity and AWS IoT Credentials Provider role-alias access, matching the
+certificate inputs later installed by `just rig::install-service`.
 
 ### 4. Prepare Greengrass Lite Configuration
 
@@ -104,7 +109,7 @@ Before installing the service, the rig host must have:
 
 Create the rig certificate material. The recipe resolves the configured rig
 thing from AWS IoT registry indexing, attaches the stack IoT policy, and writes
-the certificate, public key, private key, and certificate ARN under
+the certificate, public key, private key, certificate ARN, and Amazon Root CA 1 under
 `config/certs/rig/`. That directory is explicitly ignored by git.
 
 ```bash
@@ -132,6 +137,7 @@ cd "$TXING_HOME"
 just rig::build-native
 just rig::build
 just rig::install-service
+just rig::deploy
 ```
 
 `just rig::install-service` installs and starts the standard Greengrass Lite
@@ -142,15 +148,28 @@ if it still exists on an older host. The recipe creates the default `ggcore` and
 `ggcore:ggcore`, and starts `greengrass-lite.target` through the upstream
 `misc/run_nucleus` script.
 
+`just rig::deploy` packages the current rig Python source and
+third-party wheels into a temporary local Greengrass artifact set, generates
+Greengrass Lite-compatible recipes with the configured rig identity, and deploys
+`dev.txing.rig.SparkplugManager` plus `dev.txing.rig.ConnectivityBle` with
+`ggl-cli deploy`. It depends on `just rig::build`, so after changing rig code or
+pulling new code, run `just rig::deploy`. A Greengrass service
+restart alone restarts the previously deployed component artifact.
+
 Inspect Greengrass service health with:
 
 ```bash
 sudo systemctl status --with-dependencies greengrass-lite.target
 sudo journalctl -a -f
+sudo journalctl -a -f -u ggl.dev.txing.rig.SparkplugManager.service -u ggl.dev.txing.rig.ConnectivityBle.service
 ```
 
-Deploy `dev.txing.rig.SparkplugManager` and `dev.txing.rig.ConnectivityBle` as
-Greengrass components. The recipe templates live in `rig/greengrass/recipes`.
+Restart the installed Bluetooth and Greengrass Lite systemd units without
+deploying a new component artifact with:
+
+```bash
+just rig::restart
+```
 
 Useful foreground commands:
 

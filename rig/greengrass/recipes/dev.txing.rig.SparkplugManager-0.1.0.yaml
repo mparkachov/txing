@@ -6,7 +6,7 @@ ComponentDescription: txing rig Sparkplug lifecycle manager with per-device AWS 
 ComponentPublisher: txing
 ComponentDependencies:
   aws.greengrass.TokenExchangeService:
-    VersionRequirement: '^2.0.0'
+    VersionRequirement: '>=0.0.0'
     DependencyType: HARD
 ComponentConfiguration:
   DefaultConfiguration:
@@ -26,6 +26,7 @@ Manifests:
   - Platform:
       os: linux
       architecture: aarch64
+      runtime: aws_nucleus_lite
     Lifecycle:
       install:
         Script: |-

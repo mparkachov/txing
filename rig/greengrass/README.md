@@ -23,19 +23,21 @@ Lifecycle boundary:
   operational signals, but Sparkplug `NBIRTH` and `NDEATH` remain the
   authoritative txing rig lifecycle.
 
-The recipes expect an offline artifact ZIP named `rig-greengrass.zip` with a
-`wheels/` directory containing the built `rig`, `unit-rig`, `aws`, and third
-party wheels for Linux `aarch64`. Replace the placeholder S3 URI in each recipe
-when publishing the components.
+`just rig::deploy` is the local Greengrass Lite development path. It
+builds wheels for `rig`, `unit-rig`, `aws`, downloads third-party wheels for the
+target platform, generates concrete local recipes, and runs `ggl-cli deploy`.
+The checked-in recipe files are publishing templates; local deployment does not
+use their placeholder S3 URIs.
 
 Native Greengrass Lite is built and installed through:
 
 ```bash
-sudo apt install -y cmake build-essential pkg-config libssl-dev libcurl4-openssl-dev uuid-dev libzip-dev libsqlite3-dev libyaml-dev libsystemd-dev libevent-dev liburiparser-dev cgroup-tools
+sudo apt install -y cmake build-essential pkg-config python3-venv libssl-dev libcurl4-openssl-dev uuid-dev libzip-dev libsqlite3-dev libyaml-dev libsystemd-dev libevent-dev liburiparser-dev cgroup-tools
 cmake --version
 just rig::build-native
 just rig::build
 just rig::install-service
+just rig::deploy
 ```
 
 Run the package install before `just rig::build-native`; the native build invokes
@@ -47,10 +49,29 @@ copies `config/certs/rig/rig.cert.pem` and `rig.private.key` into
 thing, AWS IoT endpoints, and Greengrass token exchange role alias from AWS, and
 writes `/etc/greengrass/config.yaml`.
 
+Use `just rig::check` to validate the certificate material in
+`config/certs/rig/` before install or deployment. The check performs AWS IoT MQTT
+mTLS and AWS IoT Credentials Provider role-alias probes with the local rig
+certificate; it does not inspect systemd or `/var/lib/greengrass`.
+
 `just rig::install-service` uses the upstream CMake install target and
 Greengrass Lite `misc/run_nucleus` script; it does not create or rename txing
 systemd units and does not remove the old custom `rig.service`. The standard
 systemd entrypoint is `greengrass-lite.target`.
+
+After code changes or `git pull`, run:
+
+```bash
+just rig::deploy
+```
+
+`deploy` depends on `rig::build`, so a separate build step is not
+required for the normal edit/pull/deploy loop.
+
+Use `just rig::restart` to restart Bluetooth and the Greengrass Lite systemd
+units without deploying new code. Do not expect restart to pick up a new local
+build; restart only re-runs the component version already deployed into
+Greengrass.
 
 AWS prerequisites are in `shared/aws/template.yaml`: the stack creates the
 Greengrass artifact bucket, token exchange IAM role, AWS IoT role alias, and

@@ -22,6 +22,7 @@ Manifests:
   - Platform:
       os: linux
       architecture: aarch64
+      runtime: aws_nucleus_lite
     Lifecycle:
       install:
         Script: |-

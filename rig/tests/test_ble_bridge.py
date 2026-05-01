@@ -707,6 +707,16 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertIn('sparkplug_edge_node_id="$SPARKPLUG_EDGE_NODE_ID"', justfile)
         self.assertIn('python -m aws.check', justfile)
         self.assertIn('--scope rig', justfile)
+        self.assertIn('cert_dir="{{project_root}}/config/certs/rig"', justfile)
+        self.assertIn('root_ca_path="$cert_dir/AmazonRootCA1.pem"', justfile)
+        self.assertIn("aws iot list-principal-things", justfile)
+        self.assertIn("certificate is attached to rig thing", justfile)
+        self.assertIn("mqtt_connection_builder.mtls_from_path", justfile)
+        self.assertIn("ok: AWS IoT MQTT mTLS connect", justfile)
+        self.assertIn("--endpoint-type iot:CredentialProvider", justfile)
+        self.assertIn("role-aliases/$iot_role_alias/credentials", justfile)
+        self.assertIn("x-amzn-iot-thingname: $rig_thing_name", justfile)
+        self.assertIn("ok: AWS IoT Credentials Provider mTLS role alias", justfile)
         self.assertNotIn('AWS_ENDPOINT_FILE', justfile)
         self.assertNotIn('IOT_ENDPOINT_FILE', justfile)
         self.assertNotIn('EnvironmentFile=$env_file', justfile)
@@ -716,6 +726,27 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertIn('[ -n "{{sparkplug_edge_node_id}}" ]', justfile)
         self.assertNotIn('WorkingDirectory=$project_root', justfile)
         self.assertNotIn('ExecStart={{built_rig}}', justfile)
+        self.assertIn("@restart:", justfile)
+        self.assertIn('sudo systemctl restart bluetooth', justfile)
+        self.assertIn("Greengrass Lite target {{greengrass_lite_target}} is not installed", justfile)
+        self.assertIn("'ggl.*.service'", justfile)
+        self.assertIn("'ggl.*.socket'", justfile)
+        self.assertIn('sudo systemctl restart "${greengrass_units[@]}"', justfile)
+        self.assertIn('sudo systemctl restart "{{greengrass_lite_target}}"', justfile)
+        self.assertIn("@deploy", justfile)
+        self.assertIn("aws_shared_credentials_file=aws_shared_credentials_file: build", justfile)
+        self.assertIn("Run 'just rig::build' before 'just rig::deploy'", justfile)
+        self.assertIn("Greengrass Lite target {{greengrass_lite_target}} is not active", justfile)
+        self.assertIn("ggl-cli", justfile)
+        self.assertIn('resolved_component_version="0.1.$(date +%s)"', justfile)
+        self.assertIn('uv build --wheel --out-dir "$wheelhouse_dir"', justfile)
+        self.assertIn("python\" -m pip download --dest \"$wheelhouse_dir\"", justfile)
+        self.assertIn('runtime: aws_nucleus_lite', justfile)
+        self.assertIn('unset AWS_PROFILE AWS_DEFAULT_PROFILE AWS_SHARED_CREDENTIALS_FILE', justfile)
+        self.assertIn('exec "{work:path}/venv/bin/rig-sparkplug-manager"', justfile)
+        self.assertIn('exec "{work:path}/venv/bin/rig-connectivity-ble"', justfile)
+        self.assertIn('--add-component "dev.txing.rig.SparkplugManager=$resolved_component_version"', justfile)
+        self.assertIn('--add-component "dev.txing.rig.ConnectivityBle=$resolved_component_version"', justfile)
 
     def test_greengrass_templates_are_rig_local(self) -> None:
         repo_root = Path(__file__).resolve().parents[2]
@@ -740,6 +771,22 @@ class AwsShadowClientTests(unittest.TestCase):
                 / "dev.txing.rig.ConnectivityBle-0.1.0.yaml"
             ).exists()
         )
+        sparkplug_recipe = (
+            repo_root
+            / "rig"
+            / "greengrass"
+            / "recipes"
+            / "dev.txing.rig.SparkplugManager-0.1.0.yaml"
+        ).read_text(encoding="utf-8")
+        ble_recipe = (
+            repo_root
+            / "rig"
+            / "greengrass"
+            / "recipes"
+            / "dev.txing.rig.ConnectivityBle-0.1.0.yaml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("runtime: aws_nucleus_lite", sparkplug_recipe)
+        self.assertIn("runtime: aws_nucleus_lite", ble_recipe)
 
     def test_root_justfile_sources_consolidated_aws_env_for_rig_scope(self) -> None:
         justfile = (Path(__file__).resolve().parents[2] / "justfile").read_text(

@@ -67,6 +67,11 @@ just rig::run
 just rig::debug
 ```
 
+`just rig::check` validates AWS control-plane access plus certificate-backed
+AWS IoT connectivity from `config/certs/rig/`. It intentionally does not inspect
+systemd or `/var/lib/greengrass`; `just rig::install-service` owns creating the
+installed Greengrass filesystem state.
+
 Useful options:
 
 - `just rig::wake`
@@ -81,6 +86,7 @@ Useful options:
 just rig::build-native
 just rig::build
 just rig::install-service
+just rig::deploy
 sudo systemctl status --with-dependencies greengrass-lite.target
 ```
 
@@ -91,5 +97,10 @@ native Greengrass Lite build using the upstream CMake install target, and starts
 the standard `greengrass-lite.target` through Greengrass Lite's
 `misc/run_nucleus` script. Rig behavior comes from Greengrass deployments of
 `dev.txing.rig.SparkplugManager` and connectivity adapter components.
+
+Use `just rig::deploy` after changing or pulling rig code; it depends
+on `just rig::build` and then deploys a new local component artifact. Use
+`just rig::restart` only when you want to restart Bluetooth and the existing
+Greengrass Lite systemd units without changing the deployed component version.
 
 Host setup details live in [installation.md](../installation.md). AWS bootstrap and registry steps live in [aws.md](../aws.md).
