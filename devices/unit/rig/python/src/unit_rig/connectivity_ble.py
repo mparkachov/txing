@@ -166,6 +166,15 @@ class ConnectivityBleCloudProxy:
             seq=self._seq,
         )
         await self._bus.publish(build_state_topic(thing_name), state.to_json())
+        LOGGER.info(
+            "Published connectivity state thing=%s presence=%s control=%s power=%s bleDeviceId=%s seq=%s",
+            thing_name,
+            state.presence,
+            state.control_availability,
+            state.power,
+            state.native_identity.get("bleDeviceId"),
+            state.seq,
+        )
 
     async def _publish_command_result(self, result: ConnectivityCommandResult) -> None:
         await self._bus.publish(
@@ -193,6 +202,7 @@ class ConnectivityBleService:
         )
         self._inventory_event = asyncio.Event()
         self._inventory: ConnectivityInventory | None = None
+        self._inventory_signature: tuple[object, ...] | None = None
         self._fleet_task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
@@ -212,8 +222,42 @@ class ConnectivityBleService:
                 await asyncio.gather(self._fleet_task, return_exceptions=True)
 
     async def _handle_inventory_message(self, _topic: str, payload: bytes) -> None:
-        self._inventory = ConnectivityInventory.from_payload(payload)
-        self._inventory_event.set()
+        inventory = ConnectivityInventory.from_payload(payload)
+        signature = self._inventory_device_signature(inventory)
+        should_restart = (
+            self._inventory_signature != signature
+            or self._fleet_task is None
+            or self._fleet_task.done()
+        )
+        self._inventory = inventory
+        self._inventory_signature = signature
+        LOGGER.info(
+            "Received connectivity inventory seq=%s devices=%s restart=%s",
+            inventory.seq,
+            len(inventory.devices),
+            should_restart,
+        )
+        if should_restart:
+            self._inventory_event.set()
+
+    @staticmethod
+    def _inventory_device_signature(
+        inventory: ConnectivityInventory,
+    ) -> tuple[object, ...]:
+        return tuple(
+            (
+                device.thing_name,
+                device.transport,
+                tuple(
+                    sorted(
+                        (key, repr(value))
+                        for key, value in device.native_identity.items()
+                    )
+                ),
+                device.sleep_model,
+            )
+            for device in inventory.devices
+        )
 
     async def _handle_command_message(self, topic: str, payload: bytes) -> None:
         thing_name = parse_command_topic(topic)
@@ -254,6 +298,10 @@ class ConnectivityBleService:
         if inventory is None:
             return
         managed_things = self._build_managed_things(inventory)
+        LOGGER.info(
+            "Starting BLE fleet for managed things=%s",
+            [managed.registration.thing_name for managed in managed_things],
+        )
         for managed in managed_things:
             await self._cloud_proxy.publish_state(managed.registration.thing_name)
 

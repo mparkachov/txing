@@ -82,6 +82,54 @@ class ConnectivityBleCloudProxyTests(unittest.TestCase):
 
 
 class ConnectivityBleServiceTests(unittest.TestCase):
+    def test_duplicate_inventory_does_not_restart_running_fleet(self) -> None:
+        async def exercise() -> tuple[bool, bool]:
+            service = ConnectivityBleService(
+                BridgeConfig(rig_name="rig", sparkplug_group_id="town"),
+                bus=InMemoryLocalPubSub(),
+            )
+            inventory = ConnectivityInventory(
+                adapter_id="manager",
+                seq=1,
+                issued_at_ms=1714380000000,
+                devices=(
+                    ConnectivityDeviceConfig(
+                        thing_name="unit-ble",
+                        transport=TRANSPORT_BLE_GATT,
+                        native_identity={"bleDeviceId": "AA:BB"},
+                        sleep_model=SLEEP_MODEL_BLE_RENDEZVOUS,
+                    ),
+                ),
+            )
+
+            await service._handle_inventory_message(
+                INVENTORY_TOPIC,
+                inventory.to_json().encode(),
+            )
+            first_restart = service._inventory_event.is_set()
+            service._inventory_event.clear()
+
+            blocker = asyncio.Event()
+            service._fleet_task = asyncio.create_task(blocker.wait())
+            await service._handle_inventory_message(
+                INVENTORY_TOPIC,
+                ConnectivityInventory(
+                    adapter_id="manager",
+                    seq=2,
+                    issued_at_ms=1714380005000,
+                    devices=inventory.devices,
+                ).to_json().encode(),
+            )
+            second_restart = service._inventory_event.is_set()
+            service._fleet_task.cancel()
+            await asyncio.gather(service._fleet_task, return_exceptions=True)
+            return first_restart, second_restart
+
+        first_restart, second_restart = asyncio.run(exercise())
+
+        self.assertTrue(first_restart)
+        self.assertFalse(second_restart)
+
     def test_inventory_builds_only_ble_managed_things(self) -> None:
         service = ConnectivityBleService(
             BridgeConfig(rig_name="rig", sparkplug_group_id="town"),

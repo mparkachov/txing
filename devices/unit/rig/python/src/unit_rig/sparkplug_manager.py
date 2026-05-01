@@ -84,6 +84,7 @@ from .sparkplug import (
 from .thing_registry import AwsThingRegistryClient, DeviceRegistration, ThingGroupNotFoundError
 
 LOGGER = logging.getLogger("rig.sparkplug_manager")
+DEFAULT_INVENTORY_PUBLISH_INTERVAL = 10.0
 
 
 @dataclass(slots=True, frozen=True)
@@ -466,25 +467,31 @@ class SparkplugManager:
 
     async def publish_inventory(self) -> None:
         self._inventory_seq += 1
+        device_configs = tuple(
+            ConnectivityDeviceConfig(
+                thing_name=device.thing_name,
+                transport=TRANSPORT_BLE_GATT,
+                native_identity=(
+                    {"bleDeviceId": device.ble_device_id}
+                    if device.ble_device_id
+                    else {}
+                ),
+                sleep_model=SLEEP_MODEL_BLE_RENDEZVOUS,
+            )
+            for device in self._devices.values()
+        )
         inventory = ConnectivityInventory(
             adapter_id="sparkplug-manager",
             seq=self._inventory_seq,
             issued_at_ms=utc_timestamp_ms(),
-            devices=tuple(
-                ConnectivityDeviceConfig(
-                    thing_name=device.thing_name,
-                    transport=TRANSPORT_BLE_GATT,
-                    native_identity=(
-                        {"bleDeviceId": device.ble_device_id}
-                        if device.ble_device_id
-                        else {}
-                    ),
-                    sleep_model=SLEEP_MODEL_BLE_RENDEZVOUS,
-                )
-                for device in self._devices.values()
-            ),
+            devices=device_configs,
         )
         await self._bus.publish(INVENTORY_TOPIC, inventory.to_json())
+        LOGGER.info(
+            "Published connectivity inventory seq=%s devices=%s",
+            self._inventory_seq,
+            len(device_configs),
+        )
 
     async def apply_connectivity_state(self, state: ConnectivityState) -> None:
         device = self._devices.get(state.thing_name)
@@ -700,6 +707,7 @@ async def run_sparkplug_manager(
     bus: LocalPubSub,
     registry_client: AwsThingRegistryClient | None = None,
     cloud_client: AwsShadowClient | None = None,
+    inventory_publish_interval: float = DEFAULT_INVENTORY_PUBLISH_INTERVAL,
 ) -> None:
     registry_client = registry_client or AwsThingRegistryClient(aws_runtime.iot_client())
     try:
@@ -727,13 +735,31 @@ async def run_sparkplug_manager(
     await manager.subscribe_local_state()
     await manager.set_registrations(registrations, snapshots=snapshots)
     await manager.publish_node_birth()
+    inventory_task: asyncio.Task[None] | None = None
+    if inventory_publish_interval > 0:
+        inventory_task = asyncio.create_task(
+            _republish_inventory_loop(manager, interval=inventory_publish_interval)
+        )
     try:
         while True:
             updates = await cloud_client.wait_for_updates(timeout_seconds=None)
             await manager.apply_cloud_updates(updates)
     except asyncio.CancelledError:
+        if inventory_task is not None:
+            inventory_task.cancel()
+            await asyncio.gather(inventory_task, return_exceptions=True)
         await manager.shutdown()
         raise
+
+
+async def _republish_inventory_loop(
+    manager: SparkplugManager,
+    *,
+    interval: float,
+) -> None:
+    while True:
+        await asyncio.sleep(interval)
+        await manager.publish_inventory()
 
 
 def _parse_args() -> argparse.Namespace:

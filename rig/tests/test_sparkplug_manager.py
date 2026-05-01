@@ -7,8 +7,10 @@ from unittest.mock import patch
 
 from rig.connectivity_protocol import (
     CONTROL_EVENTUAL,
+    INVENTORY_TOPIC,
     PRESENCE_OFFLINE,
     PRESENCE_ONLINE,
+    ConnectivityInventory,
     ConnectivityState,
     SLEEP_MODEL_BLE_RENDEZVOUS,
     SLEEP_MODEL_MATTER_ICD,
@@ -216,6 +218,45 @@ class DeviceSparkplugMqttSessionTests(unittest.TestCase):
 
 
 class SparkplugManagerTests(unittest.TestCase):
+    def test_manager_republishes_inventory_for_late_connectivity_adapter(self) -> None:
+        async def exercise() -> ConnectivityInventory:
+            bus = InMemoryLocalPubSub()
+            cloud = FakeLifecycleCloud()
+            task = asyncio.create_task(
+                run_sparkplug_manager(
+                    config=BridgeConfig(
+                        iot_endpoint="endpoint",
+                        aws_region="eu-central-1",
+                        rig_name="rig",
+                        sparkplug_group_id="town",
+                        sparkplug_edge_node_id="rig",
+                    ),
+                    aws_runtime=FakeAwsRuntime(),  # type: ignore[arg-type]
+                    bus=bus,
+                    registry_client=FakeRegistryClient([registration("unit-1")]),  # type: ignore[arg-type]
+                    cloud_client=cloud,  # type: ignore[arg-type]
+                    inventory_publish_interval=0.01,
+                )
+            )
+            await asyncio.wait_for(cloud.node_birth_published.wait(), timeout=1.0)
+
+            received: asyncio.Queue[bytes] = asyncio.Queue()
+
+            def handler(_topic: str, payload: bytes) -> None:
+                received.put_nowait(payload)
+
+            await bus.subscribe(INVENTORY_TOPIC, handler)
+            payload = await asyncio.wait_for(received.get(), timeout=1.0)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+            return ConnectivityInventory.from_payload(payload)
+
+        inventory = asyncio.run(exercise())
+
+        self.assertGreaterEqual(inventory.seq, 2)
+        self.assertEqual([device.thing_name for device in inventory.devices], ["unit-1"])
+
     def test_manager_service_publishes_only_node_birth_and_death_for_rig(self) -> None:
         async def exercise() -> FakeLifecycleCloud:
             cloud = FakeLifecycleCloud()
