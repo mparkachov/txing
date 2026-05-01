@@ -758,7 +758,7 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertIn("Run 'just rig::build' before 'just rig::deploy'", justfile)
         self.assertIn("Greengrass Lite target {{greengrass_lite_target}} is not active", justfile)
         self.assertIn("ggl-cli", justfile)
-        self.assertIn('resolved_component_version="0.1.$(date +%s)"', justfile)
+        self.assertIn('resolved_component_version="0.5.0"', justfile)
         self.assertIn('deploy_root="{{rig_dir}}/build/greengrass-local"', justfile)
         self.assertIn('staging_root="$(mktemp -d "${TMPDIR:-/tmp}/txing-greengrass-stage.XXXXXX")"', justfile)
         self.assertIn('trap cleanup_staging_root EXIT', justfile)
@@ -799,7 +799,7 @@ class AwsShadowClientTests(unittest.TestCase):
                 / "rig"
                 / "greengrass"
                 / "recipes"
-                / "dev.txing.rig.SparkplugManager-0.1.0.yaml"
+                / "dev.txing.rig.SparkplugManager-0.5.0.yaml"
             ).exists()
         )
         self.assertTrue(
@@ -808,7 +808,7 @@ class AwsShadowClientTests(unittest.TestCase):
                 / "rig"
                 / "greengrass"
                 / "recipes"
-                / "dev.txing.rig.ConnectivityBle-0.1.0.yaml"
+                / "dev.txing.rig.ConnectivityBle-0.5.0.yaml"
             ).exists()
         )
         for recipe_path in (repo_root / "rig" / "greengrass" / "recipes").glob("dev.txing.rig.*.yaml"):
@@ -820,14 +820,14 @@ class AwsShadowClientTests(unittest.TestCase):
             / "rig"
             / "greengrass"
             / "recipes"
-            / "dev.txing.rig.SparkplugManager-0.1.0.yaml"
+            / "dev.txing.rig.SparkplugManager-0.5.0.yaml"
         ).read_text(encoding="utf-8")
         ble_recipe = (
             repo_root
             / "rig"
             / "greengrass"
             / "recipes"
-            / "dev.txing.rig.ConnectivityBle-0.1.0.yaml"
+            / "dev.txing.rig.ConnectivityBle-0.5.0.yaml"
         ).read_text(encoding="utf-8")
         self.assertIn("runtime: aws_nucleus_lite", sparkplug_recipe)
         self.assertIn("runtime: aws_nucleus_lite", ble_recipe)

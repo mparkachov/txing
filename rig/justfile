@@ -617,7 +617,7 @@ aws_shared_credentials_file := ""
     fi; \
     resolved_component_version="{{component_version}}"
     if [ -z "$resolved_component_version" ]; then \
-        resolved_component_version="0.1.$(date +%s)"; \
+        resolved_component_version="0.5.0"; \
     fi
     iot_data_endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}" --query endpointAddress --output text)"
     deploy_root="{{rig_dir}}/build/greengrass-local"

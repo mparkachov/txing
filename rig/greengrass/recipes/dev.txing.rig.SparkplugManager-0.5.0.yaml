@@ -1,6 +1,6 @@
 RecipeFormatVersion: '2020-01-25'
 ComponentName: dev.txing.rig.SparkplugManager
-ComponentVersion: '0.1.0'
+ComponentVersion: '0.5.0'
 ComponentType: aws.greengrass.generic
 ComponentDescription: txing rig Sparkplug lifecycle manager with per-device AWS IoT MQTT sessions.
 ComponentPublisher: txing
@@ -36,5 +36,5 @@ Manifests:
           export PYTHONPATH="{artifacts:decompressedPath}/rig-greengrass/python"
           exec python3 -m rig.sparkplug_manager
     Artifacts:
-      - Uri: s3://REPLACE_WITH_TXING_GREENGRASS_ARTIFACT_BUCKET/rig-greengrass/0.1.0/rig-greengrass.zip
+      - Uri: s3://REPLACE_WITH_TXING_GREENGRASS_ARTIFACT_BUCKET/rig-greengrass/0.5.0/rig-greengrass.zip
         Unarchive: ZIP
