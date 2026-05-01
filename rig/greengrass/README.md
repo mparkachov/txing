@@ -43,11 +43,14 @@ Run the package install before `just rig::build-native`; the native build invoke
 
 Run `just aws::cert` before `just rig::install-service`. The install recipe
 copies `config/certs/rig/rig.cert.pem` and `rig.private.key` into
-`/var/lib/greengrass/credentials` and downloads Amazon Root CA 1.
+`/var/lib/greengrass/credentials`, downloads Amazon Root CA 1, resolves the rig
+thing, AWS IoT endpoints, and Greengrass token exchange role alias from AWS, and
+writes `/etc/greengrass/config.yaml`.
 
 `just rig::install-service` uses the upstream CMake install target and
 Greengrass Lite `misc/run_nucleus` script; it does not create or rename txing
-systemd units. The standard systemd entrypoint is `greengrass-lite.target`.
+systemd units and does not remove the old custom `rig.service`. The standard
+systemd entrypoint is `greengrass-lite.target`.
 
 AWS prerequisites are in `shared/aws/template.yaml`: the stack creates the
 Greengrass artifact bucket, token exchange IAM role, AWS IoT role alias, and

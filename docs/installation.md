@@ -101,7 +101,6 @@ Before installing the service, the rig host must have:
 - the configured rig thing registered in AWS IoT by `just aws::rig-deploy`
 - rig certificate material generated with `just aws::cert` under
   `config/certs/rig/`
-- `/etc/greengrass/config.yaml` configured for that rig thing
 
 Create the rig certificate material. The recipe resolves the configured rig
 thing from AWS IoT registry indexing, attaches the stack IoT policy, and writes
@@ -117,45 +116,11 @@ just aws::cert
 `config/certs/rig/rig.private.key` into
 `/var/lib/greengrass/credentials`, downloads Amazon Root CA 1 into that same
 directory, creates `ggcore`/`gg_component` if needed, and changes
-`/var/lib/greengrass` ownership to `ggcore:ggcore`.
-
-Resolve the endpoints and role alias from the town account:
-
-```bash
-cd "$TXING_HOME"
-just aws-town iot describe-endpoint --endpoint-type iot:Data-ATS
-just aws-town iot describe-endpoint --endpoint-type iot:CredentialProvider
-just aws-town cloudformation describe-stacks \
-  --stack-name <rig-stack-name> \
-  --query "Stacks[0].Outputs[?OutputKey=='GreengrassTokenExchangeRoleAlias'].OutputValue | [0]" \
-  --output text
-```
-
-Use those values in `/etc/greengrass/config.yaml`:
-
-```yaml
-system:
-  privateKeyPath: "/var/lib/greengrass/credentials/rig.private.key"
-  certificateFilePath: "/var/lib/greengrass/credentials/rig.cert.pem"
-  rootCaPath: "/var/lib/greengrass/credentials/AmazonRootCA1.pem"
-  rootPath: "/var/lib/greengrass"
-  thingName: "rig"
-services:
-  aws.greengrass.NucleusLite:
-    componentType: "NUCLEUS"
-    configuration:
-      awsRegion: "eu-central-1"
-      iotCredEndpoint: "<credential-provider-endpoint>"
-      iotDataEndpoint: "<data-ats-endpoint>"
-      iotRoleAlias: "<GreengrassTokenExchangeRoleAlias>"
-      runWithDefault:
-        posixUser: "gg_component:gg_component"
-      greengrassDataPlanePort: "8443"
-      platformOverride: {}
-```
-
-Replace `thingName`, `awsRegion`, endpoints, role alias, and credential paths
-with the actual rig values.
+`/var/lib/greengrass` ownership to `ggcore:ggcore`. It also generates
+`/etc/greengrass/config.yaml` automatically by resolving the configured rig
+thing through AWS IoT registry indexing, resolving the AWS IoT data and
+credential-provider endpoints, and reading the
+`GreengrassTokenExchangeRoleAlias` output from the rig stack.
 
 ### 5. Build And Install The Greengrass Service
 
@@ -169,11 +134,13 @@ just rig::build
 just rig::install-service
 ```
 
-`just rig::install-service` removes the legacy `rig.service` if present and
-installs and starts the standard Greengrass Lite systemd units from the native
-build. It creates the default `ggcore` and `gg_component` users if they are
-missing, keeps `/var/lib/greengrass` owned by `ggcore:ggcore`, and starts
-`greengrass-lite.target` through the upstream `misc/run_nucleus` script.
+`just rig::install-service` installs and starts the standard Greengrass Lite
+systemd units from the native build. It does not manage the old custom
+`rig.service`; remove that unit manually before using the Greengrass structure
+if it still exists on an older host. The recipe creates the default `ggcore` and
+`gg_component` users if they are missing, keeps `/var/lib/greengrass` owned by
+`ggcore:ggcore`, and starts `greengrass-lite.target` through the upstream
+`misc/run_nucleus` script.
 
 Inspect Greengrass service health with:
 

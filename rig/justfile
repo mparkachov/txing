@@ -18,7 +18,6 @@ thing_name := "unit-local"
 region := ""
 aws_profile := ""
 aws_shared_credentials_file := ""
-legacy_systemd_unit := "/etc/systemd/system/rig.service"
 
 @sync:
     cd "{{rig_dir}}" && uv sync --python "{{python_executable}}" --no-managed-python --no-python-downloads
@@ -226,6 +225,12 @@ legacy_systemd_unit := "/etc/systemd/system/rig.service"
         fi; \
     done
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}" "" "" "" "{{aws_shared_credentials_file}}")"
+    region="$AWS_REGION"
+    profile="$AWS_SELECTED_PROFILE"
+    aws_flags=(--region "$region")
+    if [ -n "$profile" ]; then \
+        aws_flags+=(--profile "$profile"); \
+    fi
     rig_name="$RIG_NAME"
     sparkplug_group_id="$SPARKPLUG_GROUP_ID"
     sparkplug_edge_node_id="$SPARKPLUG_EDGE_NODE_ID"
@@ -239,13 +244,6 @@ legacy_systemd_unit := "/etc/systemd/system/rig.service"
         sparkplug_edge_node_id="{{sparkplug_edge_node_id}}"; \
     fi; \
     sudo systemctl enable --now bluetooth
-    if systemctl list-unit-files --no-legend rig.service 2>/dev/null | grep -F "rig.service" >/dev/null; then \
-        sudo systemctl disable --now rig.service || true; \
-    fi
-    if [ -f "{{legacy_systemd_unit}}" ]; then \
-        sudo rm -f "{{legacy_systemd_unit}}"; \
-        sudo systemctl daemon-reload; \
-    fi
     if [ ! -d "{{greengrass_lite_build_dir}}" ]; then \
         echo "Greengrass Lite native build is missing at {{greengrass_lite_build_dir}}." >&2; \
         echo "Run 'just rig::build-native' before 'just rig::install-service'." >&2; \
@@ -270,24 +268,74 @@ legacy_systemd_unit := "/etc/systemd/system/rig.service"
         echo "Run 'just aws::cert' before 'just rig::install-service'." >&2; \
         exit 1; \
     fi
+    rig_thing_names="$(
+        aws iot search-index \
+          --index-name AWS_Things \
+          --query-string "thingTypeName:rig AND attributes.name:${rig_name} AND attributes.town:${sparkplug_group_id}" \
+          --max-results 2 \
+          "${aws_flags[@]}" \
+          --query 'things[].thingName' \
+          --output text
+    )"
+    rig_thing_count="$(wc -w <<<"$rig_thing_names" | tr -d ' ')"
+    if [ "$rig_thing_count" != "1" ]; then \
+        echo "Expected exactly one rig thing for rig=${rig_name} town=${sparkplug_group_id}, found $rig_thing_count: $rig_thing_names" >&2; \
+        exit 1; \
+    fi
+    rig_thing_name="$rig_thing_names"
+    iot_data_endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}" --query endpointAddress --output text)"
+    iot_cred_endpoint="$(aws iot describe-endpoint --endpoint-type iot:CredentialProvider "${aws_flags[@]}" --query endpointAddress --output text)"
+    iot_role_alias="$(
+        aws cloudformation describe-stacks \
+          --stack-name "$TXING_RIG_STACK_NAME" \
+          "${aws_flags[@]}" \
+          --query "Stacks[0].Outputs[?OutputKey=='GreengrassTokenExchangeRoleAlias'].OutputValue | [0]" \
+          --output text
+    )"
+    if [ -z "$iot_role_alias" ] || [ "$iot_role_alias" = "None" ]; then \
+        echo "Could not resolve GreengrassTokenExchangeRoleAlias from stack $TXING_RIG_STACK_NAME." >&2; \
+        exit 1; \
+    fi
+    temp_files=()
+    cleanup_temp_files() {
+        if [ "${#temp_files[@]}" -gt 0 ]; then
+            rm -f "${temp_files[@]}"
+        fi
+    }
+    trap cleanup_temp_files EXIT
     sudo mkdir -p /var/lib/greengrass /etc/greengrass
     sudo install -d -o ggcore -g ggcore -m 700 /var/lib/greengrass/credentials
     sudo install -o ggcore -g ggcore -m 600 "$rig_cert_path" /var/lib/greengrass/credentials/rig.cert.pem
     sudo install -o ggcore -g ggcore -m 600 "$rig_private_key_path" /var/lib/greengrass/credentials/rig.private.key
     root_ca_temp="$(mktemp "${TMPDIR:-/tmp}/txing-amazon-root-ca.XXXXXX.pem")"
-    trap 'rm -f "$root_ca_temp"' EXIT
+    temp_files+=("$root_ca_temp")
     curl -fsSL https://www.amazontrust.com/repository/AmazonRootCA1.pem -o "$root_ca_temp"
     sudo install -o ggcore -g ggcore -m 644 "$root_ca_temp" /var/lib/greengrass/credentials/AmazonRootCA1.pem
+    greengrass_config_temp="$(mktemp "${TMPDIR:-/tmp}/txing-greengrass-config.XXXXXX.yaml")"
+    temp_files+=("$greengrass_config_temp")
+    cat >"$greengrass_config_temp" <<EOF
+    system:
+      privateKeyPath: "/var/lib/greengrass/credentials/rig.private.key"
+      certificateFilePath: "/var/lib/greengrass/credentials/rig.cert.pem"
+      rootCaPath: "/var/lib/greengrass/credentials/AmazonRootCA1.pem"
+      rootPath: "/var/lib/greengrass"
+      thingName: "$rig_thing_name"
+    services:
+      aws.greengrass.NucleusLite:
+        componentType: "NUCLEUS"
+        configuration:
+          awsRegion: "$region"
+          iotCredEndpoint: "$iot_cred_endpoint"
+          iotDataEndpoint: "$iot_data_endpoint"
+          iotRoleAlias: "$iot_role_alias"
+          runWithDefault:
+            posixUser: "gg_component:gg_component"
+          greengrassDataPlanePort: "8443"
+          platformOverride: {}
+    EOF
+    sudo install -m 644 "$greengrass_config_temp" /etc/greengrass/config.yaml
     sudo chown -R ggcore:ggcore /var/lib/greengrass
     sudo cmake --install "{{greengrass_lite_build_dir}}" --config MinSizeRel
-    config_paths=(/etc/greengrass/config.yaml /etc/greengrass/config.d/*.yaml /etc/greengrass/config.d/*.yml)
-    for required_key in privateKeyPath certificateFilePath rootCaPath thingName iotRoleAlias; do \
-        if ! sudo grep -R -Eq "$required_key:" "${config_paths[@]}" 2>/dev/null; then \
-            echo "Greengrass Lite configuration is missing required key '$required_key'." >&2; \
-            echo "Create /etc/greengrass/config.yaml with the rig thing certificate paths, AWS IoT endpoints, role alias, and posixUser before starting the service." >&2; \
-            exit 1; \
-        fi; \
-    done
     sudo "{{greengrass_lite_dir}}/misc/run_nucleus"
     printf 'txing rig is supervised by the standard Greengrass Lite systemd target %s\n' "{{greengrass_lite_target}}"
     printf 'Deploy components dev.txing.rig.SparkplugManager and dev.txing.rig.ConnectivityBle with RigName=%s SparkplugGroupId=%s SparkplugEdgeNodeId=%s\n' "$rig_name" "$sparkplug_group_id" "$sparkplug_edge_node_id"

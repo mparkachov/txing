@@ -84,11 +84,12 @@ just rig::install-service
 sudo systemctl status --with-dependencies greengrass-lite.target
 ```
 
-The install target no longer creates a custom `rig.service`. It removes that
-legacy unit if present, enables `bluetooth`, installs the native Greengrass Lite
-build using the upstream CMake install target, and starts the standard
-`greengrass-lite.target` through Greengrass Lite's `misc/run_nucleus` script.
-Rig behavior comes from Greengrass deployments of `dev.txing.rig.SparkplugManager`
-and connectivity adapter components.
+The install target no longer creates or removes a custom `rig.service`. It
+enables `bluetooth`, resolves the configured rig thing and Greengrass token
+exchange settings from AWS, writes `/etc/greengrass/config.yaml`, installs the
+native Greengrass Lite build using the upstream CMake install target, and starts
+the standard `greengrass-lite.target` through Greengrass Lite's
+`misc/run_nucleus` script. Rig behavior comes from Greengrass deployments of
+`dev.txing.rig.SparkplugManager` and connectivity adapter components.
 
 Host setup details live in [installation.md](../installation.md). AWS bootstrap and registry steps live in [aws.md](../aws.md).
