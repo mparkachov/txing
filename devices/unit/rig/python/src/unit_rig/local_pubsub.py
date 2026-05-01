@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import logging
 from collections import defaultdict
 from dataclasses import dataclass
@@ -104,11 +105,13 @@ class GreengrassLocalPubSub:
         loop = asyncio.get_running_loop()
 
         def _on_stream_event(event: object) -> None:
-            payload = _extract_ipc_payload(event)
-            if payload is None:
+            message_topic, payload = _extract_ipc_message(event, default_topic=topic)
+            if message_topic is None or payload is None:
                 return
             loop.call_soon_threadsafe(
-                lambda: asyncio.create_task(_invoke_handler(handler, topic, payload))
+                lambda: asyncio.create_task(
+                    _invoke_handler(handler, message_topic, payload)
+                )
             )
 
         def _on_stream_error(error: Exception) -> bool:
@@ -129,15 +132,44 @@ class GreengrassLocalPubSub:
         return result
 
 
-def _extract_ipc_payload(event: object) -> bytes | None:
-    message = getattr(event, "message", None)
-    binary_message = getattr(message, "binary_message", None)
+def _extract_ipc_message(
+    event: object,
+    *,
+    default_topic: str,
+) -> tuple[str | None, bytes | None]:
+    binary_message = getattr(event, "binary_message", None)
+    json_message = getattr(event, "json_message", None)
+    if binary_message is None and json_message is None:
+        message = getattr(event, "message", None)
+        binary_message = getattr(message, "binary_message", None)
+        json_message = getattr(message, "json_message", None)
+
+    message = binary_message if binary_message is not None else json_message
+    if message is None:
+        return None, None
+
+    context = getattr(message, "context", None)
+    context_topic = getattr(context, "topic", None)
+    topic = (
+        context_topic
+        if isinstance(context_topic, str) and context_topic
+        else default_topic
+    )
+
     if binary_message is None:
-        return None
+        payload_object = getattr(json_message, "message", None)
+        if payload_object is None:
+            return topic, None
+        return topic, json.dumps(payload_object, separators=(",", ":")).encode(
+            "utf-8"
+        )
+
     payload = getattr(binary_message, "message", None)
     if payload is None:
-        return None
-    return bytes(payload)
+        return topic, None
+    if isinstance(payload, str):
+        return topic, payload.encode("utf-8")
+    return topic, bytes(payload)
 
 
 def _topic_matches(subscription: str, topic: str) -> bool:

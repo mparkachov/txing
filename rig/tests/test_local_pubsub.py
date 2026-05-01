@@ -3,7 +3,25 @@ from __future__ import annotations
 import asyncio
 import unittest
 
-from rig.local_pubsub import InMemoryLocalPubSub
+from awsiot.greengrasscoreipc.model import (
+    BinaryMessage,
+    MessageContext,
+    SubscriptionResponseMessage,
+)
+
+from rig.local_pubsub import GreengrassLocalPubSub, InMemoryLocalPubSub
+
+
+class FakeGreengrassIpcClient:
+    def __init__(self) -> None:
+        self.on_stream_event = None
+
+    def publish_to_topic(self, **_kwargs: object) -> object:
+        return object()
+
+    def subscribe_to_topic(self, **kwargs: object) -> object:
+        self.on_stream_event = kwargs["on_stream_event"]
+        return object()
 
 
 class InMemoryLocalPubSubTests(unittest.TestCase):
@@ -48,6 +66,37 @@ class InMemoryLocalPubSubTests(unittest.TestCase):
             return received
 
         self.assertEqual(asyncio.run(exercise()), [b"one"])
+
+
+class GreengrassLocalPubSubTests(unittest.TestCase):
+    def test_subscribe_delivers_binary_payload_with_actual_context_topic(self) -> None:
+        async def exercise() -> list[tuple[str, bytes]]:
+            client = FakeGreengrassIpcClient()
+            bus = GreengrassLocalPubSub(client=client)
+            received: list[tuple[str, bytes]] = []
+
+            def handler(topic: str, payload: bytes) -> None:
+                received.append((topic, payload))
+
+            await bus.subscribe("dev/txing/rig/v1/connectivity/state/+", handler)
+            assert client.on_stream_event is not None
+            client.on_stream_event(
+                SubscriptionResponseMessage(
+                    binary_message=BinaryMessage(
+                        message=b"payload",
+                        context=MessageContext(
+                            topic="dev/txing/rig/v1/connectivity/state/unit-1"
+                        ),
+                    )
+                )
+            )
+            await asyncio.sleep(0)
+            return received
+
+        self.assertEqual(
+            asyncio.run(exercise()),
+            [("dev/txing/rig/v1/connectivity/state/unit-1", b"payload")],
+        )
 
 
 if __name__ == "__main__":
