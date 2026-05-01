@@ -757,6 +757,8 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertIn('export PYTHONPATH="{artifacts:path}/python"', justfile)
         self.assertIn('exec python3 -m rig.sparkplug_manager', justfile)
         self.assertIn('exec python3 -m rig.connectivity_ble', justfile)
+        self.assertIn("dev/txing/rig/v1/connectivity/*", justfile)
+        self.assertNotIn("dev/txing/rig/v1/connectivity/#", justfile)
         self.assertNotIn("python\" -m pip download", justfile)
         self.assertIn('--add-component "dev.txing.rig.SparkplugManager=$resolved_component_version"', justfile)
         self.assertIn('--add-component "dev.txing.rig.ConnectivityBle=$resolved_component_version"', justfile)
@@ -784,6 +786,10 @@ class AwsShadowClientTests(unittest.TestCase):
                 / "dev.txing.rig.ConnectivityBle-0.1.0.yaml"
             ).exists()
         )
+        for recipe_path in (repo_root / "rig" / "greengrass" / "recipes").glob("dev.txing.rig.*.yaml"):
+            recipe = recipe_path.read_text()
+            self.assertIn("dev/txing/rig/v1/connectivity/*", recipe)
+            self.assertNotIn("dev/txing/rig/v1/connectivity/#", recipe)
         sparkplug_recipe = (
             repo_root
             / "rig"
