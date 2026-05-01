@@ -106,6 +106,50 @@ _project-aws-env scope='rig' region='' profile='' stack_name='' cognito_domain_p
       if [ "$thing_name" = "None" ]; then
         thing_name=""
       fi
+      if [ -z "$thing_name" ]; then
+        thing_names="$(
+          AWS_SHARED_CREDENTIALS_FILE="$aws_shared_credentials_file" \
+          aws iot list-things \
+            --thing-type-name "$txing_device_type" \
+            --query "things[?attributes.name=='${txing_device_name}' && attributes.town=='${txing_town_name}' && attributes.rig=='${txing_rig_name}'].thingName" \
+            --output text \
+            "${aws_lookup_flags[@]}" 2>/dev/null || true
+        )"
+        thing_count="$(wc -w <<<"$thing_names" | tr -d ' ')"
+        if [ "$thing_count" = "1" ]; then
+          thing_name="$thing_names"
+        fi
+      fi
+      if [ -z "$thing_name" ]; then
+        thing_names="$(
+          AWS_SHARED_CREDENTIALS_FILE="$aws_shared_credentials_file" \
+          aws iot search-index \
+            --index-name AWS_Things \
+            --query-string "thingTypeName:${txing_device_type} AND attributes.town:${txing_town_name} AND attributes.rig:${txing_rig_name}" \
+            --max-results 2 \
+            --query 'things[].thingName' \
+            --output text \
+            "${aws_lookup_flags[@]}" 2>/dev/null || true
+        )"
+        thing_count="$(wc -w <<<"$thing_names" | tr -d ' ')"
+        if [ "$thing_count" = "1" ]; then
+          thing_name="$thing_names"
+        fi
+      fi
+      if [ -z "$thing_name" ]; then
+        thing_names="$(
+          AWS_SHARED_CREDENTIALS_FILE="$aws_shared_credentials_file" \
+          aws iot list-things \
+            --thing-type-name "$txing_device_type" \
+            --query "things[?attributes.town=='${txing_town_name}' && attributes.rig=='${txing_rig_name}'].thingName" \
+            --output text \
+            "${aws_lookup_flags[@]}" 2>/dev/null || true
+        )"
+        thing_count="$(wc -w <<<"$thing_names" | tr -d ' ')"
+        if [ "$thing_count" = "1" ]; then
+          thing_name="$thing_names"
+        fi
+      fi
     fi
     thing_name="${thing_name:-$txing_device_name}"
 

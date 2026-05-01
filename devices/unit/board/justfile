@@ -259,13 +259,17 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "{{aws_profile}}" "" "" "" "{{aws_shared_credentials_file}}")"
     project_root="$TXING_PROJECT_ROOT"
     env_file="$AWS_ENV_FILE"
+    thing_name="$THING_NAME"
     region="$AWS_REGION"
     aws_profile="$AWS_SELECTED_PROFILE"
     aws_shared_credentials_file="$AWS_SHARED_CREDENTIALS_FILE"
     sudo systemctl enable NetworkManager-wait-online.service
     service_env=(); \
     if [ -n "{{thing_name}}" ]; then \
-        service_env+=("Environment=\"THING_NAME={{thing_name}}\""); \
+        thing_name="{{thing_name}}"; \
+    fi; \
+    if [ -n "$thing_name" ]; then \
+        service_env+=("Environment=\"THING_NAME=$thing_name\""); \
     fi; \
     if [ -n "{{schema_file}}" ]; then \
         service_env+=("Environment=\"SCHEMA_FILE={{schema_file}}\""); \
