@@ -38,18 +38,7 @@ import {
   type AppNotificationInput,
   type AppNotificationLogEntry,
 } from './app-notifications'
-import {
-  buildBoardVideoChannelName,
-  extractIsSparkplugDeviceUnavailable,
-  extractReportedBatteryMv,
-  extractReportedBoardPower,
-  extractReportedBoardWifiOnline,
-  extractReportedMcuOnline,
-  extractReportedMcuPower,
-  extractReportedRedcon,
-  hasReachedTargetRedcon,
-  shouldClearPendingTargetRedcon,
-} from './app-model'
+import { getDeviceWebAdapter } from './device-registry'
 import {
   describeThingMetadata,
   formatThingShadowReadError,
@@ -67,7 +56,6 @@ import { appConfig } from './config'
 import DebugPanel from './DebugPanel'
 import {
   formatCatalogDetailLine,
-  getAutoOpenDeviceDetailPanelState,
   getRouteDetailPanelOpenState,
   shouldRenderRouteCatalogPanel,
 } from './level-detail-panel'
@@ -84,8 +72,12 @@ import {
   resolveThingSparkplugRedconCommandTarget,
 } from './sparkplug-command'
 import SparkplugPanel from './SparkplugPanel'
-import TxingPanel from './TxingPanel'
-import VideoPanel from './VideoPanel'
+import {
+  extractIsSparkplugDeviceUnavailable,
+  extractReportedRedcon,
+  hasReachedTargetRedcon,
+  shouldClearPendingTargetRedcon,
+} from './sparkplug-model'
 
 type SessionStatus = 'loading' | 'authenticating' | 'signed_out' | 'signed_in'
 type AppProps = {
@@ -355,28 +347,24 @@ function App({ initialAuthError = '' }: AppProps) {
     }
   }, [shadowJson])
   const displayShadowDocument = lastShadowUpdateAtMs !== null ? shadowDocument : routeSparkplugShadow
+  const currentDeviceAdapter = useMemo(
+    () => getDeviceWebAdapter(currentThingTypeName),
+    [currentThingTypeName],
+  )
+  const isDeviceThingType =
+    currentThingTypeName !== null &&
+    currentThingTypeName !== 'town' &&
+    currentThingTypeName !== 'rig'
+  const deviceTelemetry = useMemo(
+    () => currentDeviceAdapter?.extractTelemetry(displayShadowDocument) ?? null,
+    [currentDeviceAdapter, displayShadowDocument],
+  )
 
-  const reportedMcuPower = useMemo(
-    () => extractReportedMcuPower(displayShadowDocument),
-    [displayShadowDocument],
-  )
-  const reportedMcuOnline = useMemo(
-    () => extractReportedMcuOnline(displayShadowDocument),
-    [displayShadowDocument],
-  )
-  const reportedBatteryMv = useMemo(
-    () => extractReportedBatteryMv(displayShadowDocument),
-    [displayShadowDocument],
-  )
-  const primaryReportedBatteryMv = reportedBatteryMv
-  const reportedBoardPower = useMemo(
-    () => extractReportedBoardPower(displayShadowDocument),
-    [displayShadowDocument],
-  )
-  const reportedBoardOnline = useMemo(
-    () => extractReportedBoardWifiOnline(displayShadowDocument),
-    [displayShadowDocument],
-  )
+  const reportedMcuPower = deviceTelemetry?.reportedMcuPower ?? null
+  const reportedMcuOnline = deviceTelemetry?.reportedMcuOnline ?? null
+  const primaryReportedBatteryMv = deviceTelemetry?.reportedBatteryMv ?? null
+  const reportedBoardPower = deviceTelemetry?.reportedBoardPower ?? null
+  const reportedBoardOnline = deviceTelemetry?.reportedBoardOnline ?? null
   const shadowReportedRedcon = useMemo(
     () => extractReportedRedcon(displayShadowDocument),
     [displayShadowDocument],
@@ -410,7 +398,7 @@ function App({ initialAuthError = '' }: AppProps) {
   const isRedconSleepCommandDisabled =
     !isSparkplugDeviceCommandAvailable || isUpdatingShadow
   const canLoadShadow = !isLoadingShadow && isShadowConnected
-  const canUseBoardVideo = reportedRedcon === 1
+  const canUseBoardVideo = currentDeviceAdapter?.canUseBoardVideo(reportedRedcon) ?? false
   const cmdVelRepeatIntervalMs = getMcpSteadyMotionHeartbeatIntervalMs(
     robotState?.control.leaseTtlMs ?? defaultMcpLeaseTtlMs,
   )
@@ -423,10 +411,12 @@ function App({ initialAuthError = '' }: AppProps) {
 
   const isSelectedDeviceValid =
     selectedDeviceRoute !== null &&
-    routeHeaderMetadata?.thingTypeName === 'unit' &&
+    routeHeaderMetadata !== null &&
+    isDeviceThingType &&
     routeHeaderMetadata.townName !== null &&
     routeHeaderMetadata.rigName !== null &&
-    (route.kind !== 'device_video' || routeHeaderMetadata.capabilitiesSet.includes('video'))
+    (route.kind !== 'device_video' ||
+      (currentDeviceAdapter !== null && routeHeaderMetadata.capabilitiesSet.includes('video')))
   const activeShadowTarget = shadowTargetState.status === 'ready' ? shadowTargetState.target : null
 
   useEffect(() => {
@@ -747,9 +737,9 @@ function App({ initialAuthError = '' }: AppProps) {
         }
         if (
           (route.kind === 'device' || route.kind === 'device_video') &&
-          metadata.thingTypeName !== 'unit'
+          (metadata.thingTypeName === 'town' || metadata.thingTypeName === 'rig')
         ) {
-          throw new Error(`Thing '${currentRouteThingName}' is not a unit device.`)
+          throw new Error(`Thing '${currentRouteThingName}' is not a device.`)
         }
 
         let sparkplugShadow: unknown | null = null
@@ -1196,21 +1186,25 @@ function App({ initialAuthError = '' }: AppProps) {
   }, [currentNotificationObjectId, enqueueNotification, robotVideoLastError])
 
   useEffect(() => {
-    const nextAutoOpenDeviceDetailPanelState = getAutoOpenDeviceDetailPanelState({
-      route,
+    if (route.kind !== 'device' && route.kind !== 'device_video') {
+      previousReportedRedconRef.current = reportedRedcon
+      return
+    }
+    const nextAutoOpenDeviceDetailPanelState = currentDeviceAdapter?.getAutoOpenState({
       hasActiveSession: activeShadowTarget !== null,
       previousRedcon: previousReportedRedconRef.current,
       nextRedcon: reportedRedcon,
-    })
+      routeKind: route.kind,
+    }) ?? null
     if (nextAutoOpenDeviceDetailPanelState) {
-      setIsBotPanelOpen(nextAutoOpenDeviceDetailPanelState.isBotPanelOpen)
+      setIsBotPanelOpen(nextAutoOpenDeviceDetailPanelState.isDetailPanelOpen)
       setIsBoardVideoExpanded(nextAutoOpenDeviceDetailPanelState.isBoardVideoExpanded)
     }
     previousReportedRedconRef.current = reportedRedcon
-  }, [activeShadowTarget, reportedRedcon, route])
+  }, [activeShadowTarget, currentDeviceAdapter, reportedRedcon, route])
 
   useEffect(() => {
-    if (reportedRedcon === 1) {
+    if (!currentDeviceAdapter?.shouldCloseDetail(reportedRedcon)) {
       return
     }
     if (isBotPanelOpen) {
@@ -1219,7 +1213,7 @@ function App({ initialAuthError = '' }: AppProps) {
     if (isBoardVideoExpanded) {
       setIsBoardVideoExpanded(false)
     }
-  }, [isBoardVideoExpanded, isBotPanelOpen, reportedRedcon])
+  }, [currentDeviceAdapter, isBoardVideoExpanded, isBotPanelOpen, reportedRedcon])
 
   useEffect(() => {
     if (!isShadowConnected && isBoardVideoExpanded) {
@@ -1740,14 +1734,14 @@ function App({ initialAuthError = '' }: AppProps) {
     ) : (
       <></>
     )
-  } else if (currentThingTypeName === 'unit' && selectedDeviceRoute && !isSelectedDeviceValid) {
+  } else if (isDeviceThingType && selectedDeviceRoute && !isSelectedDeviceValid) {
     content = (
       <section className="card catalog-card">
         <h1>Device unavailable</h1>
         <p>
           {route.kind === 'device_video'
             ? `Thing '${selectedDeviceRoute.device}' does not expose board video for this route.`
-            : `Thing '${selectedDeviceRoute.device}' could not be opened as a unit device route.`}
+            : `Thing '${selectedDeviceRoute.device}' could not be opened as a device route.`}
         </p>
         <p>
           {renderInlineRouteLink(
@@ -1757,42 +1751,69 @@ function App({ initialAuthError = '' }: AppProps) {
         </p>
       </section>
     )
-  } else if (currentThingTypeName === 'unit' && route.kind === 'device_video' && selectedDeviceRoute) {
+  } else if (
+    isDeviceThingType &&
+    currentDeviceAdapter !== null &&
+    route.kind === 'device_video' &&
+    selectedDeviceRoute
+  ) {
     content = (
       <section className="card catalog-card catalog-card-detail">
-        <VideoPanel
-          channelName={buildBoardVideoChannelName(selectedDeviceRoute.device)}
-          debugEnabled={isDebugEnabled}
-          onRuntimeError={(message: string) => {
+        {currentDeviceAdapter.renderVideo({
+          videoChannelName: currentDeviceAdapter.buildVideoChannelName(selectedDeviceRoute.device),
+          debugEnabled: isDebugEnabled,
+          onRuntimeError: (message: string) => {
             enqueueRuntimeError(message, 'board-video-viewer')
-          }}
-          resolveIdToken={resolveSessionIdToken}
-        />
+          },
+          resolveIdToken: resolveSessionIdToken,
+        })}
       </section>
     )
-  } else if (currentThingTypeName === 'unit' && route.kind === 'device' && selectedDeviceRoute && isBotPanelOpen) {
+  } else if (
+    isDeviceThingType &&
+    currentDeviceAdapter !== null &&
+    route.kind === 'device' &&
+    selectedDeviceRoute &&
+    isBotPanelOpen
+  ) {
     content = (
-      <TxingPanel
-        isBoardVideoExpanded={isBoardVideoExpanded}
-        isDebugEnabled={isDebugEnabled}
-        mcpTransport={mcpTransport}
-        onToggleDebug={() => {
+      currentDeviceAdapter.renderDetail({
+        isBoardVideoExpanded,
+        isDebugEnabled,
+        mcpTransport,
+        onToggleDebug: () => {
           setIsDebugEnabled((currentValue) => !currentValue)
-        }}
-        reportedBatteryMv={primaryReportedBatteryMv}
-        reportedBoardLeftTrackSpeed={reportedBoardLeftTrackSpeed}
-        reportedBoardOnline={reportedBoardOnline}
-        reportedBoardRightTrackSpeed={reportedBoardRightTrackSpeed}
-        reportedMcuOnline={reportedMcuOnline}
-        videoChannelName={buildBoardVideoChannelName(selectedDeviceRoute.device)}
-        resolveIdToken={resolveSessionIdToken}
-        onBoardVideoRuntimeError={(message) => {
+        },
+        reportedBatteryMv: primaryReportedBatteryMv,
+        reportedBoardLeftTrackSpeed,
+        reportedBoardOnline,
+        reportedBoardRightTrackSpeed,
+        reportedMcuOnline,
+        videoChannelName: currentDeviceAdapter.buildVideoChannelName(selectedDeviceRoute.device),
+        resolveIdToken: resolveSessionIdToken,
+        onBoardVideoRuntimeError: (message) => {
           enqueueRuntimeError(message, 'board-video-viewer')
-        }}
-      />
+        },
+      })
     )
-  } else if (currentThingTypeName === 'unit' && route.kind === 'device' && selectedDeviceRoute) {
+  } else if (
+    isDeviceThingType &&
+    currentDeviceAdapter !== null &&
+    route.kind === 'device' &&
+    selectedDeviceRoute
+  ) {
     content = <></>
+  } else if (isDeviceThingType && selectedDeviceRoute) {
+    content = (
+      <section className="card catalog-card">
+        <h1>Unsupported device type</h1>
+        <p>
+          Thing <strong>{selectedDeviceRoute.device}</strong> has device type{' '}
+          <strong>{currentThingTypeName}</strong>, but this web build has no registered detail
+          adapter for that type.
+        </p>
+      </section>
+    )
   } else {
     content = (
       <section className="card catalog-card">
@@ -1810,7 +1831,7 @@ function App({ initialAuthError = '' }: AppProps) {
         <p>{shadowBootstrapError}</p>
         <p>
           Showing route labels and current Sparkplug state from direct AWS IoT reads. Sparkplug
-          REDCON commands still publish directly; unit detail telemetry remains limited until the
+          REDCON commands still publish directly; device detail telemetry remains limited until the
           live shadow session reconnects.
         </p>
       </section>

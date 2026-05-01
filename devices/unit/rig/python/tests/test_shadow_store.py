@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from rig.shadow_store import (
+from unit_rig.shadow_store import (
     default_shadow_payload,
     get_reported_battery_mv,
     get_reported_board_power,

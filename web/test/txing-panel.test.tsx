@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
-import TxingPanel from '../src/TxingPanel'
+import TxingPanel from '../../devices/unit/web/TxingPanel'
 
 describe('txing panel', () => {
   test('renders device-specific gauges and connectivity indicators without sparkplug controls', () => {

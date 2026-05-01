@@ -4,14 +4,12 @@ For the system overview, see [../README.md](../README.md). For the documentation
 
 ## Repository Layout
 
-- `devices/unit/mcu/`: Rust firmware for the current `unit` watch layer
-- `devices/unit/board/`: Python runtime for the device-side Raspberry Pi board
+- `devices/unit/`: self-contained current `unit` device type, including MCU, board runtime, rig process implementation, AWS shadow contracts, docs, and web detail adapter
 - `rig/`: Python runtime for the always-on rig coordinator
 - `web/`: React + Vite admin/operator SPA
 - `witness/`: Sparkplug-to-shadow projection Lambda source and tests
 - `shared/aws/`: shared AWS CLI helpers, CloudFormation, and registry utilities
-- `devices/unit/aws/`: named-shadow schemas and default payloads for `unit`
-- `devices/unit/docs/`: unit-specific contracts
+- `devices/template/`: scaffold for a new device type using the language-neutral manifest/process/web contracts
 
 ## Base Tooling
 
@@ -49,10 +47,10 @@ Common commands:
 
 ```bash
 just --list
-just mcu::build
+just unit::mcu::build
 just rig::run
 just rig::wake
-just board::run
+just unit::board::run
 just web::dev
 just web::write-env
 just aws::deploy
@@ -65,10 +63,9 @@ just aws::shadow-reset <thing>
 
 Root modules:
 
-- `rig::...` -> `rig/justfile`
-- `board::...` -> `devices/unit/board/justfile`
+- `rig::...` -> generic rig host tooling in `rig/justfile`
+- `unit::...` -> current device type tooling in `devices/unit/justfile`
 - `aws::...` -> `shared/aws/justfile`
-- `mcu::...` -> `devices/unit/mcu/justfile`
 - `web::...` -> `web/justfile`
 - `witness::...` -> `witness/justfile`
 
@@ -93,15 +90,15 @@ just aws::shadow-reset <thing>
 just aws::shadow-reset <thing> mcp
 ```
 
-`aws::shadow-reset` deletes the classic unnamed shadow, removes known named shadows that are not valid for the thing's current `capabilitiesSet`, and reseeds the valid named shadows from `devices/<type>/aws/default-<shadow>-shadow.json`.
+`aws::shadow-reset` deletes the classic unnamed shadow, removes known named shadows that are not valid for the thing's current `capabilitiesSet`, and reseeds device named shadows from the default payloads declared in `devices/<type>/manifest.toml`.
 
 ## Common Development Loops
 
 MCU:
 
 ```bash
-just mcu::check
-just mcu::build
+just unit::mcu::check
+just unit::mcu::build
 ```
 
 Rig:
@@ -115,10 +112,10 @@ just rig::debug
 Board:
 
 ```bash
-just board::check
-just board::build-native
-just board::build
-just board::once
+just unit::board::check
+just unit::board::build-native
+just unit::board::build
+just unit::board::once
 ```
 
 Web:

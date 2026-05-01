@@ -183,6 +183,32 @@ describe('catalog api helpers', () => {
     })
   })
 
+  test('describes unknown device types with custom shadow capabilities', async () => {
+    const client = new FakeIotControlClient({
+      DescribeThingCommand: [
+        {
+          thingName: 'sensor-a1',
+          thingTypeName: 'sensor',
+          attributes: {
+            name: 'sensor',
+            shortId: 'a1',
+            capabilitiesSet: 'sparkplug,sensor-data',
+          },
+        },
+      ],
+    })
+
+    await expect(describeThingMetadataWithClient(client, 'sensor-a1')).resolves.toEqual({
+      thingName: 'sensor-a1',
+      thingTypeName: 'sensor',
+      name: 'sensor',
+      townName: null,
+      rigName: null,
+      shortId: 'a1',
+      capabilitiesSet: ['sparkplug', 'sensor-data'],
+    })
+  })
+
   test('describes generic thing metadata including parent registry names', async () => {
     const client = new FakeIotControlClient({
       DescribeThingCommand: [

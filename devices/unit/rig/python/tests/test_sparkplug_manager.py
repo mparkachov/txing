@@ -5,7 +5,7 @@ import types
 import unittest
 from unittest.mock import patch
 
-from rig.connectivity_protocol import (
+from unit_rig.connectivity_protocol import (
     CONTROL_EVENTUAL,
     INVENTORY_TOPIC,
     PRESENCE_OFFLINE,
@@ -17,8 +17,8 @@ from rig.connectivity_protocol import (
     TRANSPORT_BLE_GATT,
     TRANSPORT_MATTER,
 )
-from rig.local_pubsub import InMemoryLocalPubSub
-from rig.sparkplug import decode_payload
+from unit_rig.local_pubsub import InMemoryLocalPubSub
+from unit_rig.sparkplug import decode_payload
 from unit_rig.ble_bridge import AwsShadowUpdate, BridgeConfig
 from unit_rig.sparkplug_manager import (
     DeviceSparkplugMqttSession,
@@ -359,13 +359,13 @@ class SparkplugManagerTests(unittest.TestCase):
             },
             clear=True,
         ):
-            with patch("sys.argv", ["rig-sparkplug-manager"]):
+            with patch("sys.argv", ["unit-rig-sparkplug-manager"]):
                 args = _parse_args()
 
         self.assertEqual(args.iot_endpoint, "abc123-ats.iot.eu-central-1.amazonaws.com")
 
     def test_build_bridge_config_uses_runtime_endpoint(self) -> None:
-        with patch("sys.argv", ["rig-sparkplug-manager"]):
+        with patch("sys.argv", ["unit-rig-sparkplug-manager"]):
             args = _parse_args()
 
         config = _build_bridge_config(

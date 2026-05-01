@@ -84,18 +84,18 @@ This is why the read-only-rootfs setup keeps `/tmp` and `/var/tmp` on tmpfs. The
 ## Build And Run
 
 ```bash
-just board::check
-just board::build-native
-just board::build
-just board::run
-just board::once
+just unit::board::check
+just unit::board::build-native
+just unit::board::build
+just unit::board::run
+just unit::board::once
 ```
 
 Manual motor bring-up:
 
 ```bash
-just board::motor-raw 240 240
-just board::motor-stop
+just unit::board::motor-raw 240 240
+just unit::board::motor-stop
 ```
 
 ## Service Install
@@ -103,7 +103,7 @@ just board::motor-stop
 The service must run as `root`.
 
 ```bash
-just board::install-service "$BOARD_VIDEO_SENDER_COMMAND"
+just unit::board::install-service "$BOARD_VIDEO_SENDER_COMMAND"
 sudo journalctl -u board -f
 ```
 

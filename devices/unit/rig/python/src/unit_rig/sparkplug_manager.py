@@ -83,7 +83,7 @@ from .sparkplug import (
 )
 from .thing_registry import AwsThingRegistryClient, DeviceRegistration, ThingGroupNotFoundError
 
-LOGGER = logging.getLogger("rig.sparkplug_manager")
+LOGGER = logging.getLogger("unit_rig.sparkplug_manager")
 DEFAULT_INVENTORY_PUBLISH_INTERVAL = 10.0
 
 
@@ -926,7 +926,7 @@ async def _republish_inventory_loop(
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        prog="rig-sparkplug-manager",
+        prog="unit-rig-sparkplug-manager",
         description="txing Greengrass Sparkplug lifecycle manager",
     )
     parser.add_argument(
@@ -995,12 +995,12 @@ def main() -> None:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     if boto3 is None:
-        print("rig-sparkplug-manager start failed: boto3 is required", flush=True)
+        print("unit-rig-sparkplug-manager start failed: boto3 is required", flush=True)
         raise SystemExit(2)
     ensure_aws_profile("AWS_RIG_PROFILE")
     aws_region = resolve_aws_region()
     if not aws_region:
-        print("rig-sparkplug-manager start failed: AWS region is not configured", flush=True)
+        print("unit-rig-sparkplug-manager start failed: AWS region is not configured", flush=True)
         raise SystemExit(2)
     aws_runtime = build_aws_runtime(
         region_name=aws_region,

@@ -13,7 +13,7 @@ import {
   getTrackIndicatorPresentation,
   getTxingRedconToneClass,
   shouldClearPendingTargetRedcon,
-} from '../src/app-model'
+} from '../../devices/unit/web/app-model'
 
 describe('app model helpers', () => {
   test('extracts top-level reported redcon from shadow state', () => {

@@ -11,9 +11,20 @@ dependencies = [
     "watchtower>=3.3,<4",
 ]
 
+[project.scripts]
+unit-rig = "unit_rig:main"
+unit-rig-connectivity-ble = "unit_rig.connectivity_ble:main"
+unit-rig-sparkplug-manager = "unit_rig.sparkplug_manager:main"
+
 [build-system]
 requires = ["uv_build>=0.10.6,<0.11.0"]
 build-backend = "uv_build"
+
+[tool.uv.extra-build-dependencies]
+pyobjc-core = ["setuptools<81"]
+pyobjc-framework-cocoa = ["setuptools<81"]
+pyobjc-framework-corebluetooth = ["setuptools<81"]
+pyobjc-framework-libdispatch = ["setuptools<81"]
 
 [tool.uv.sources]
 aws = { path = "../../../../shared/aws/python" }

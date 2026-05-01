@@ -518,7 +518,6 @@ class AwsDeviceRegistry:
         town_name: str,
         rig_name: str,
     ) -> bool:
-        aws_dir = manifest.device_dir / "aws"
         initialized = False
         for shadow_name in capabilities_set:
             if shadow_name == "sparkplug":
@@ -531,7 +530,7 @@ class AwsDeviceRegistry:
                     sort_keys=True,
                 ).encode("utf-8")
             else:
-                payload = (aws_dir / f"default-{shadow_name}-shadow.json").read_bytes()
+                payload = manifest.load_default_shadow_bytes(shadow_name)
             initialized = (
                 self.ensure_shadow_initialized(
                     thing_name,
@@ -754,10 +753,7 @@ class AwsDeviceRegistry:
             "device",
             device_name if device_name is not None else manifest.device_name,
         )
-        capabilities_set = capabilities_for_thing_type(
-            normalized_device_type,
-            repo_root=self._repo_root,
-        )
+        capabilities_set = manifest.capabilities
         self.describe_town_by_name(normalized_town_name)
         self.describe_rig_by_name(
             town_name=normalized_town_name,
@@ -807,10 +803,7 @@ class AwsDeviceRegistry:
         normalized_rig_name = _normalize_slug("rig", rig_name)
         normalized_device_type = _normalize_slug("device type", manifest.type)
         normalized_device_name = _normalize_slug("device", device_name)
-        capabilities_set = capabilities_for_thing_type(
-            normalized_device_type,
-            repo_root=self._repo_root,
-        )
+        capabilities_set = manifest.capabilities
         try:
             registration = self.describe_device_by_name(
                 town_name=normalized_town_name,

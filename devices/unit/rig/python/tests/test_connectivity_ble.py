@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import unittest
 
-from rig.connectivity_protocol import (
+from unit_rig.connectivity_protocol import (
     COMMAND_ACCEPTED,
     INVENTORY_TOPIC,
     ConnectivityCommand,
@@ -18,7 +18,7 @@ from rig.connectivity_protocol import (
     build_command_topic,
     build_state_topic,
 )
-from rig.local_pubsub import InMemoryLocalPubSub
+from unit_rig.local_pubsub import InMemoryLocalPubSub
 from unit_rig.ble_bridge import BridgeConfig, ShadowState
 from unit_rig.connectivity_ble import ConnectivityBleCloudProxy, ConnectivityBleService
 

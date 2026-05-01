@@ -4,20 +4,11 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .device_catalog import discover_repo_root
+from .device_catalog import discover_repo_root, list_loadable_device_types, load_device_manifest
 
 
 CAPABILITIES_ATTRIBUTE = "capabilitiesSet"
 CAPABILITY_DEFINITION_FILE = Path("shared/aws/thing-type-capabilities.json")
-KNOWN_NAMED_SHADOW_CAPABILITIES = (
-    "sparkplug",
-    "mcu",
-    "board",
-    "mcp",
-    "video",
-)
-
-
 class ThingCapabilitiesError(RuntimeError):
     pass
 
@@ -50,10 +41,6 @@ def parse_capabilities_set(
         if capability != raw_part:
             raise ThingCapabilitiesError(
                 f"Thing {thing_name!r} has malformed {CAPABILITIES_ATTRIBUTE!r}: {value!r}"
-            )
-        if capability not in KNOWN_NAMED_SHADOW_CAPABILITIES:
-            raise ThingCapabilitiesError(
-                f"Thing {thing_name!r} has unsupported capability {capability!r}"
             )
         if capability in seen:
             raise ThingCapabilitiesError(
@@ -107,6 +94,9 @@ def load_thing_type_capabilities(
             encode_capabilities_set(raw_capabilities),
             thing_name=f"thing type {thing_type}",
         )
+    for device_type in list_loadable_device_types(repo_root=root):
+        manifest = load_device_manifest(device_type, repo_root=root)
+        definitions[manifest.type] = manifest.capabilities
     return definitions
 
 
@@ -115,7 +105,8 @@ def capabilities_for_thing_type(
     *,
     repo_root: Path | None = None,
 ) -> tuple[str, ...]:
-    definitions = load_thing_type_capabilities(repo_root=repo_root)
+    root = discover_repo_root(repo_root)
+    definitions = load_thing_type_capabilities(repo_root=root)
     try:
         return definitions[thing_type]
     except KeyError as err:

@@ -320,7 +320,11 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
             >"$payload_file"
           ;;
         *)
-          default_payload="{{project_root}}/devices/${thing_type}/aws/default-{{shadow_name}}-shadow.json"
+          default_payload="$(
+            uv run --project "{{aws_dir}}/python" \
+              python -c 'from pathlib import Path; import sys; from aws.device_catalog import load_device_manifest; print(load_device_manifest(sys.argv[1], repo_root=Path(sys.argv[3])).shadow_contract(sys.argv[2]).default)' \
+              "$thing_type" "{{shadow_name}}" "{{project_root}}"
+          )"
           if [ ! -f "$default_payload" ]; then
             echo "shadow reset payload $default_payload not found" >&2
             exit 1
@@ -428,7 +432,11 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
             >"$payload_file"
           ;;
         *)
-          default_payload="{{project_root}}/devices/${thing_type}/aws/default-{{shadow_name}}-shadow.json"
+          default_payload="$(
+            uv run --project "{{aws_dir}}/python" \
+              python -c 'from pathlib import Path; import sys; from aws.device_catalog import load_device_manifest; print(load_device_manifest(sys.argv[1], repo_root=Path(sys.argv[3])).shadow_contract(sys.argv[2]).default)' \
+              "$thing_type" "{{shadow_name}}" "{{project_root}}"
+          )"
           if [ ! -f "$default_payload" ]; then
             echo "shadow init payload $default_payload not found" >&2
             exit 1

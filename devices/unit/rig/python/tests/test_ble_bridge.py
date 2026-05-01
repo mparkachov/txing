@@ -172,7 +172,7 @@ from unit_rig.ble_bridge import (
 )
 from aws.auth import ensure_aws_profile
 from aws.video_topics import VIDEO_SERVICE_NAME, VIDEO_STATUS_READY
-from rig.sparkplug import (
+from unit_rig.sparkplug import (
     DataType,
     build_device_death_payload,
     build_device_report_payload,
@@ -644,7 +644,7 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertEqual(args.cloudwatch_log_group, "/town/rig/txing-prod")
 
     def test_justfile_install_service_uses_greengrass_supervision(self) -> None:
-        justfile = (Path(__file__).resolve().parents[2] / "rig" / "justfile").read_text(
+        justfile = (Path(__file__).resolve().parents[5] / "rig" / "justfile").read_text(
             encoding="utf-8"
         )
 
@@ -698,8 +698,8 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertIn('iotRoleAlias: "$iot_role_alias"', justfile)
         self.assertIn('sudo install -m 644 "$greengrass_config_temp" /etc/greengrass/config.yaml', justfile)
         self.assertIn("standard Greengrass Lite systemd target", justfile)
-        self.assertIn('dev.txing.rig.SparkplugManager', justfile)
-        self.assertIn('dev.txing.rig.ConnectivityBle', justfile)
+        self.assertIn('dev.txing.device.unit.SparkplugManager', justfile)
+        self.assertIn('dev.txing.device.unit.ConnectivityBle', justfile)
         self.assertNotIn('Environment="THING_NAME={{thing_name}}"', justfile)
         self.assertIn('rig_name="$RIG_NAME"', justfile)
         self.assertNotIn('Environment="RIG_THING_NAME={{rig_thing_name}}"', justfile)
@@ -739,8 +739,8 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertIn("unit_exists() {", justfile)
         self.assertIn("start_unit_if_present() {", justfile)
         self.assertIn("wait_active_if_present() {", justfile)
-        self.assertIn("ggl.dev.txing.rig.SparkplugManager.service", justfile)
-        self.assertIn("ggl.dev.txing.rig.ConnectivityBle.service", justfile)
+        self.assertIn("ggl.dev.txing.device.unit.SparkplugManager.service", justfile)
+        self.assertIn("ggl.dev.txing.device.unit.ConnectivityBle.service", justfile)
         self.assertIn("ggl.core.ggipcd.service", justfile)
         self.assertIn("ggl.core.iotcored.service", justfile)
         self.assertIn("ggl.core.tesd.service", justfile)
@@ -780,16 +780,16 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertIn('unset AWS_PROFILE AWS_DEFAULT_PROFILE AWS_SHARED_CREDENTIALS_FILE', justfile)
         self.assertIn('export AWS_IOT_ENDPOINT="$iot_data_endpoint"', justfile)
         self.assertIn('export PYTHONPATH="{artifacts:path}/python"', justfile)
-        self.assertIn('exec python3 -m rig.sparkplug_manager', justfile)
-        self.assertIn('exec python3 -m rig.connectivity_ble', justfile)
+        self.assertIn('exec python3 -m unit_rig.sparkplug_manager', justfile)
+        self.assertIn('exec python3 -m unit_rig.connectivity_ble', justfile)
         self.assertIn("dev/txing/rig/v1/connectivity/*", justfile)
         self.assertNotIn("dev/txing/rig/v1/connectivity/#", justfile)
         self.assertNotIn("python\" -m pip download", justfile)
-        self.assertIn('--add-component "dev.txing.rig.SparkplugManager=$resolved_component_version"', justfile)
-        self.assertIn('--add-component "dev.txing.rig.ConnectivityBle=$resolved_component_version"', justfile)
+        self.assertIn('--add-component "dev.txing.device.unit.SparkplugManager=$resolved_component_version"', justfile)
+        self.assertIn('--add-component "dev.txing.device.unit.ConnectivityBle=$resolved_component_version"', justfile)
 
     def test_greengrass_templates_are_rig_local(self) -> None:
-        repo_root = Path(__file__).resolve().parents[2]
+        repo_root = Path(__file__).resolve().parents[5]
 
         self.assertFalse((repo_root / "greengrass" / "README.md").exists())
         self.assertTrue((repo_root / "rig" / "greengrass" / "README.md").exists())
@@ -799,7 +799,7 @@ class AwsShadowClientTests(unittest.TestCase):
                 / "rig"
                 / "greengrass"
                 / "recipes"
-                / "dev.txing.rig.SparkplugManager-0.5.0.yaml"
+                / "dev.txing.device.unit.SparkplugManager-0.5.0.yaml"
             ).exists()
         )
         self.assertTrue(
@@ -808,10 +808,10 @@ class AwsShadowClientTests(unittest.TestCase):
                 / "rig"
                 / "greengrass"
                 / "recipes"
-                / "dev.txing.rig.ConnectivityBle-0.5.0.yaml"
+                / "dev.txing.device.unit.ConnectivityBle-0.5.0.yaml"
             ).exists()
         )
-        for recipe_path in (repo_root / "rig" / "greengrass" / "recipes").glob("dev.txing.rig.*.yaml"):
+        for recipe_path in (repo_root / "rig" / "greengrass" / "recipes").glob("dev.txing.device.unit.*.yaml"):
             recipe = recipe_path.read_text()
             self.assertIn("dev/txing/rig/v1/connectivity/*", recipe)
             self.assertNotIn("dev/txing/rig/v1/connectivity/#", recipe)
@@ -820,26 +820,26 @@ class AwsShadowClientTests(unittest.TestCase):
             / "rig"
             / "greengrass"
             / "recipes"
-            / "dev.txing.rig.SparkplugManager-0.5.0.yaml"
+            / "dev.txing.device.unit.SparkplugManager-0.5.0.yaml"
         ).read_text(encoding="utf-8")
         ble_recipe = (
             repo_root
             / "rig"
             / "greengrass"
             / "recipes"
-            / "dev.txing.rig.ConnectivityBle-0.5.0.yaml"
+            / "dev.txing.device.unit.ConnectivityBle-0.5.0.yaml"
         ).read_text(encoding="utf-8")
         self.assertIn("runtime: aws_nucleus_lite", sparkplug_recipe)
         self.assertIn("runtime: aws_nucleus_lite", ble_recipe)
         self.assertIn('export PYTHONPATH="{artifacts:decompressedPath}/rig-greengrass/python"', sparkplug_recipe)
-        self.assertIn("exec python3 -m rig.sparkplug_manager", sparkplug_recipe)
+        self.assertIn("exec python3 -m unit_rig.sparkplug_manager", sparkplug_recipe)
         self.assertIn('export PYTHONPATH="{artifacts:decompressedPath}/rig-greengrass/python"', ble_recipe)
-        self.assertIn("exec python3 -m rig.connectivity_ble", ble_recipe)
+        self.assertIn("exec python3 -m unit_rig.connectivity_ble", ble_recipe)
         self.assertNotIn("pip install", sparkplug_recipe)
         self.assertNotIn("pip install", ble_recipe)
 
     def test_root_justfile_sources_consolidated_aws_env_for_rig_scope(self) -> None:
-        justfile = (Path(__file__).resolve().parents[2] / "justfile").read_text(
+        justfile = (Path(__file__).resolve().parents[5] / "justfile").read_text(
             encoding="utf-8"
         )
 
@@ -851,7 +851,7 @@ class AwsShadowClientTests(unittest.TestCase):
 
     def test_unit_rig_adapter_uses_generic_device_wording(self) -> None:
         adapter = (
-            Path(__file__).resolve().parents[2]
+            Path(__file__).resolve().parents[5]
             / "devices"
             / "unit"
             / "rig"
@@ -1891,7 +1891,7 @@ class LifecycleBridgeTests(unittest.TestCase):
             cloud_shadow,  # type: ignore[arg-type]
         )
 
-        with self.assertLogs("rig.ble_bridge", level="INFO") as captured:
+        with self.assertLogs("unit_rig.ble_bridge", level="INFO") as captured:
             await bridge._process_target_redcon_once()
 
         self.assertEqual(shadow.target_redcon, 1)
@@ -2372,7 +2372,7 @@ class SparkplugCodecTests(unittest.TestCase):
         client._managed_thing_names = {"txing"}
         client._enqueue_update = updates.append
 
-        with self.assertLogs("rig.ble_bridge", level="INFO") as captured:
+        with self.assertLogs("unit_rig.ble_bridge", level="INFO") as captured:
             client._on_message(
                 build_device_topic("town", "DCMD", "rig", "txing"),
                 build_redcon_payload(redcon=1, seq=7),

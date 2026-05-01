@@ -43,7 +43,8 @@ export const resolveThingSparkplugRedconCommandTarget = (
 ): SparkplugRedconCommandTarget | null => {
   if (
     !metadata ||
-    metadata.thingTypeName !== 'unit' ||
+    metadata.thingTypeName === 'town' ||
+    metadata.thingTypeName === 'rig' ||
     !metadata.townName ||
     !metadata.rigName
   ) {

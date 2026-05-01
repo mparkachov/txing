@@ -2,8 +2,8 @@ from __future__ import annotations
 
 
 def main() -> int | None:
-    from unit_rig.ble_bridge import main as bridge_main
+    from .device_process import main as device_process_main
 
-    return bridge_main()
+    return device_process_main()
 
 __all__ = ["main"]

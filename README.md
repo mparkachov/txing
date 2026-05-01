@@ -94,8 +94,8 @@ That means the regional coordinator is not itself a `txing` in the current imple
 
 This repository contains one sample implementation of the `txing` concept:
 
-- `devices/unit/mcu/`: the current watch layer
-- `devices/unit/board/`: the current action layer
+- `devices/unit/`: the current self-contained device type implementation
+- `devices/template/`: scaffold for future device types using manifest-declared processes and web adapters
 - `rig/`: the current Raspberry Pi coordinator that acts as the `rig` lifecycle runtime and bridges cloud intent to the watch link
 - `witness/`: the Sparkplug-to-shadow projection component
 - `web/`: the operator/admin surface

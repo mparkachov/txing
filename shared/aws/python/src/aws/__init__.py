@@ -17,7 +17,6 @@ from .mqtt import (
 )
 from .thing_capabilities import (
     CAPABILITIES_ATTRIBUTE,
-    KNOWN_NAMED_SHADOW_CAPABILITIES,
     ThingCapabilitiesError,
     capabilities_for_thing_type,
     encode_capabilities_set,
@@ -95,7 +94,6 @@ __all__ = [
     "MCP_WEBRTC_DATA_CHANNEL_TRANSPORT",
     "MCP_WEBRTC_SIGNALING",
     "McpTopics",
-    "KNOWN_NAMED_SHADOW_CAPABILITIES",
     "ThingCapabilitiesError",
     "VIDEO_DEFAULT_CODEC",
     "VIDEO_SERVICE_NAME",

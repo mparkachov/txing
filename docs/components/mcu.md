@@ -19,10 +19,10 @@ The MCU-specific integration contract is
 Run from the repo root:
 
 ```bash
-just mcu::check
-just mcu::build
-just mcu::bin
-just mcu::uf2
+just unit::mcu::check
+just unit::mcu::build
+just unit::mcu::bin
+just unit::mcu::uf2
 ```
 
 Or from `devices/unit/mcu/`:
@@ -39,9 +39,9 @@ just uf2
 Current manual flash paths:
 
 ```bash
-just mcu::flash-probe
-just mcu::flash-uf2
-just mcu::log
+just unit::mcu::flash-probe
+just unit::mcu::flash-uf2
+just unit::mcu::log
 ```
 
 Notes:

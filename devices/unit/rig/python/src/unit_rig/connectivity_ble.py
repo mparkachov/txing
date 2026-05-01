@@ -53,7 +53,7 @@ from .local_pubsub import GreengrassLocalPubSub, LocalPubSub
 from .sparkplug import utc_timestamp_ms
 from .thing_registry import ThingRegistration
 
-LOGGER = logging.getLogger("rig.connectivity_ble")
+LOGGER = logging.getLogger("unit_rig.connectivity_ble")
 DEFAULT_ADAPTER_ID = "ble-main"
 
 
@@ -380,7 +380,7 @@ class ConnectivityBleService:
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        prog="rig-connectivity-ble",
+        prog="unit-rig-connectivity-ble",
         description="txing Greengrass BLE connectivity adapter",
     )
     parser.add_argument("--adapter-id", default=DEFAULT_ADAPTER_ID)
@@ -411,7 +411,7 @@ def main() -> None:
     try:
         lock.acquire()
     except RuntimeError as err:
-        print(f"rig-connectivity-ble start failed: {err}", flush=True)
+        print(f"unit-rig-connectivity-ble start failed: {err}", flush=True)
         raise SystemExit(2) from err
 
     async def _runner() -> None:

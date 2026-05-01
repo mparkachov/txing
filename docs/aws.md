@@ -77,7 +77,7 @@ Validate runtime access:
 
 ```bash
 just rig::check
-just board::check
+just unit::board::check
 ```
 
 Production rig services run as Greengrass Lite components. Local command wrappers

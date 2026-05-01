@@ -125,7 +125,7 @@ Town remains a compatibility exception outside witness ownership:
 
 ## Capability Discovery
 
-`shared/aws/thing-type-capabilities.json` defines the named shadows supported by each thing type. Registration writes the comma-separated `attributes.capabilitiesSet` Thing attribute from that definition. Runtime and tooling use `capabilitiesSet` to decide which `$aws/things/<thing>/shadow/name/<shadow>/...` topics to read or reset.
+`devices/unit/manifest.toml` defines the named shadows supported by the `unit` device type and points at each shadow schema/default payload. Registration writes the comma-separated `attributes.capabilitiesSet` Thing attribute from that manifest. Runtime and tooling use `capabilitiesSet` to decide which `$aws/things/<thing>/shadow/name/<shadow>/...` topics to read or reset.
 
 ## AWS IoT Note
 

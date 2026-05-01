@@ -1,10 +1,62 @@
 type = "unit"
 device_name = "bot"
 display_name = "Bot"
-shadow_schema = "devices/unit/aws/sparkplug-shadow.schema.json"
-default_shadow = "devices/unit/aws/default-sparkplug-shadow.json"
-rig_adapter = "unit_rig.ble_bridge"
-web_adapter = "unit"
+capabilities = ["sparkplug", "mcu", "board", "mcp", "video"]
+
+[shadows.sparkplug]
+schema = "aws/sparkplug-shadow.schema.json"
+default = "aws/default-sparkplug-shadow.json"
+
+[shadows.mcu]
+schema = "aws/mcu-shadow.schema.json"
+default = "aws/default-mcu-shadow.json"
+
+[shadows.board]
+schema = "aws/board-shadow.schema.json"
+default = "aws/default-board-shadow.json"
+
+[shadows.mcp]
+schema = "aws/mcp-shadow.schema.json"
+default = "aws/default-mcp-shadow.json"
+
+[shadows.video]
+schema = "aws/video-shadow.schema.json"
+default = "aws/default-video-shadow.json"
+
+[[rig.processes]]
+name = "unit-connectivity-ble"
+command = "uv"
+args = ["run", "--project", "rig/python", "unit-rig-connectivity-ble"]
+cwd = "."
+environment = [
+  "TXING_DEVICE_TYPE",
+  "TXING_DEVICE_DIR",
+  "TXING_DEVICE_MANIFEST",
+  "RIG_NAME",
+  "THING_NAME",
+  "SPARKPLUG_GROUP_ID",
+  "SPARKPLUG_EDGE_NODE_ID",
+  "AWS_REGION",
+]
+
+[[rig.processes]]
+name = "unit-sparkplug-manager"
+command = "uv"
+args = ["run", "--project", "rig/python", "unit-rig-sparkplug-manager"]
+cwd = "."
+environment = [
+  "TXING_DEVICE_TYPE",
+  "TXING_DEVICE_DIR",
+  "TXING_DEVICE_MANIFEST",
+  "RIG_NAME",
+  "THING_NAME",
+  "SPARKPLUG_GROUP_ID",
+  "SPARKPLUG_EDGE_NODE_ID",
+  "AWS_REGION",
+]
+
+[web]
+adapter = "web/unit-adapter.tsx"
 
 [resources.board_video]
 channel_name = "{device_id}-board-video"

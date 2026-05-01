@@ -4,17 +4,17 @@ This directory contains recipe templates for the Raspberry Pi 5 rig runtime on
 AWS IoT Greengrass Nucleus Lite. Greengrass is a rig implementation detail, so
 the templates live under `rig/`.
 
-Components:
+Unit device process components:
 
-- `dev.txing.rig.SparkplugManager`: AWS registry, shadows, Sparkplug, and
+- `dev.txing.device.unit.SparkplugManager`: AWS registry, shadows, Sparkplug, and
   per-device AWS IoT MQTT sessions.
-- `dev.txing.rig.ConnectivityBle`: BLE adapter for MCU rendezvous and GATT
+- `dev.txing.device.unit.ConnectivityBle`: BLE adapter for MCU rendezvous and GATT
   wake/sleep control.
 
 Lifecycle boundary:
 
 - `rig = Sparkplug edge node = Greengrass Lite core`.
-- `dev.txing.rig.SparkplugManager` is the only txing component that publishes
+- `dev.txing.device.unit.SparkplugManager` is the only txing component that publishes
   rig edge-node `NBIRTH` and `NDEATH`.
 - Connectivity adapters never publish Sparkplug node lifecycle.
 - Managed txing/unit things use device `DBIRTH` and `DDEATH`; the rig itself
@@ -24,7 +24,7 @@ Lifecycle boundary:
   authoritative txing rig lifecycle.
 
 `just rig::deploy` is the local Greengrass Lite development path. It
-builds wheels for `rig`, `unit-rig`, `aws`, uses `uv pip install --target` to
+builds wheels for generic `rig`, `unit-rig`, and `aws`, uses `uv pip install --target` to
 assemble a self-contained artifact Python tree for the target platform,
 generates concrete local recipes under `rig/build/greengrass-local`, and runs
 `ggl-cli deploy`. The generated recipe/artifact tree is kept until the next

@@ -136,7 +136,7 @@ KNOWN_NAMED_SHADOWS = (
     VIDEO_SHADOW_NAME,
 )
 
-LOGGER = logging.getLogger("rig.ble_bridge")
+LOGGER = logging.getLogger("unit_rig.ble_bridge")
 
 
 class ImportantOrWarningFilter(logging.Filter):

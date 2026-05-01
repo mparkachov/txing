@@ -221,7 +221,7 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
         exit 1; \
     }
     if [ -z "{{left}}" ] || [ -z "{{right}}" ]; then \
-        echo "Both left and right are required. Example: just board::motor-raw 240 240" >&2; \
+        echo "Both left and right are required. Example: just unit::board::motor-raw 240 240" >&2; \
         exit 1; \
     fi
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "{{aws_profile}}")"

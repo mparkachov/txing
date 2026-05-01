@@ -1,5 +1,5 @@
 export type ShadowOperation = 'get' | 'update'
-export type ShadowName = 'sparkplug' | 'mcu' | 'board' | 'mcp' | 'video'
+export type ShadowName = string
 export type ShadowResponseKind = 'getAccepted' | 'getRejected' | 'updateAccepted' | 'updateRejected' | 'ignored'
 export type ShadowTopics = {
   shadowName: ShadowName
@@ -11,8 +11,9 @@ export type ShadowTopics = {
   updateRejected: string
 }
 export const namedShadowNames: readonly ShadowName[] = ['sparkplug', 'mcu', 'board', 'mcp', 'video']
+const shadowNamePattern = /^[A-Za-z0-9:_-]+$/
 export const isShadowName = (value: string): value is ShadowName =>
-  (namedShadowNames as readonly string[]).includes(value)
+  shadowNamePattern.test(value)
 export type DecodedShadowResponse = {
   kind: ShadowResponseKind
   operation: ShadowOperation | null
@@ -75,10 +76,14 @@ export const buildNamedShadowTopics = (
     shadowNames.map((shadowName) => [shadowName, buildShadowTopics(thingName, shadowName)]),
   ) as Partial<Record<ShadowName, ShadowTopics>>
 
+const isSingleShadowTopics = (
+  topics: ShadowTopics | Partial<Record<ShadowName, ShadowTopics>>,
+): topics is ShadowTopics => typeof (topics as ShadowTopics).getAccepted === 'string'
+
 export const buildShadowSubscriptionPacket = (
   topics: ShadowTopics | Partial<Record<ShadowName, ShadowTopics>>,
 ): ShadowSubscriptionPacket => {
-  if ('getAccepted' in topics) {
+  if (isSingleShadowTopics(topics)) {
     return {
       subscriptions: [
         { topicFilter: topics.getAccepted, qos: 1 as const },

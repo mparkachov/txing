@@ -40,7 +40,7 @@ describe('sparkplug command ack helper', () => {
     )
   })
 
-  test('resolves a direct Sparkplug command target only for unit things', () => {
+  test('resolves a direct Sparkplug command target for device things', () => {
     expect(
       resolveThingSparkplugRedconCommandTarget({
         thingName: 'unit-a1',
@@ -52,6 +52,19 @@ describe('sparkplug command ack helper', () => {
       groupId: 'town',
       edgeNodeId: 'rig',
       deviceId: 'unit-a1',
+    })
+
+    expect(
+      resolveThingSparkplugRedconCommandTarget({
+        thingName: 'sensor-a1',
+        thingTypeName: 'sensor',
+        townName: 'town',
+        rigName: 'rig',
+      }),
+    ).toEqual({
+      groupId: 'town',
+      edgeNodeId: 'rig',
+      deviceId: 'sensor-a1',
     })
 
     expect(

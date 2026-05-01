@@ -8,7 +8,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Awaitable, Callable, DefaultDict, Protocol
 
-LOGGER = logging.getLogger("rig.local_pubsub")
+LOGGER = logging.getLogger("unit_rig.local_pubsub")
 
 MessageHandler = Callable[[str, bytes], Awaitable[None] | None]
 

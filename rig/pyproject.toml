@@ -9,17 +9,13 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "awsiotsdk>=1.22,<2",
-    "bleak>=0.22,<1",
     "boto3>=1.34,<2",
     "aws",
-    "unit-rig",
-    "watchtower>=3.3,<4",
 ]
 
 [project.scripts]
 rig = "rig:main"
-rig-connectivity-ble = "rig.connectivity_ble:main"
-rig-sparkplug-manager = "rig.sparkplug_manager:main"
+rig-device-process = "rig.device_process:main"
 rig-sparkplug-cmd = "rig.sparkplug_cmd:main"
 rig-sparkplug-log = "rig.sparkplug_log:main"
 
@@ -27,12 +23,5 @@ rig-sparkplug-log = "rig.sparkplug_log:main"
 requires = ["uv_build>=0.10.6,<0.11.0"]
 build-backend = "uv_build"
 
-[tool.uv.extra-build-dependencies]
-pyobjc-core = ["setuptools<81"]
-pyobjc-framework-cocoa = ["setuptools<81"]
-pyobjc-framework-corebluetooth = ["setuptools<81"]
-pyobjc-framework-libdispatch = ["setuptools<81"]
-
 [tool.uv.sources]
 aws = { path = "../shared/aws/python" }
-unit-rig = { path = "../devices/unit/rig/python" }

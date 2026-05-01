@@ -9,7 +9,7 @@ from aws.thing_capabilities import (
     parse_capabilities_set,
 )
 
-LOGGER = logging.getLogger("rig.thing_registry")
+LOGGER = logging.getLogger("unit_rig.thing_registry")
 
 
 class ThingGroupNotFoundError(RuntimeError):

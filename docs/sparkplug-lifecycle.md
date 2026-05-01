@@ -14,7 +14,7 @@
 
 The rig is not a Sparkplug device. The rig is the Sparkplug edge node, and in
 production that edge node is the Greengrass Lite core running
-`dev.txing.rig.SparkplugManager`.
+the unit device Sparkplug process component.
 
 - `spBv1.0/<town>/NBIRTH/<rig>` means the Greengrass Lite rig edge node is born.
 - `spBv1.0/<town>/NDEATH/<rig>` means the Greengrass Lite rig edge node is dead.

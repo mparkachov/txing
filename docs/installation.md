@@ -154,8 +154,8 @@ if it still exists on an older host. The recipe creates the default `ggcore` and
 
 `just rig::deploy` packages the current rig Python source and dependencies with
 `uv`, stages Greengrass Lite recipes and artifacts under
-`rig/build/greengrass-local`, and deploys `dev.txing.rig.SparkplugManager` plus
-`dev.txing.rig.ConnectivityBle` with `ggl-cli deploy`. The staging directory is
+`rig/build/greengrass-local`, and deploys `dev.txing.device.unit.SparkplugManager` plus
+`dev.txing.device.unit.ConnectivityBle` with `ggl-cli deploy`. The staging directory is
 kept after `ggl-cli` returns because Greengrass Lite copies artifacts
 asynchronously. It depends on `just rig::build`, so after changing rig code or
 pulling new code, run `just rig::deploy`. A Greengrass service restart alone
@@ -166,7 +166,7 @@ Inspect Greengrass service health with:
 ```bash
 sudo systemctl status --with-dependencies greengrass-lite.target
 sudo journalctl -a -f
-sudo journalctl -a -f -u ggl.dev.txing.rig.SparkplugManager.service -u ggl.dev.txing.rig.ConnectivityBle.service
+sudo journalctl -a -f -u ggl.dev.txing.device.unit.SparkplugManager.service -u ggl.dev.txing.device.unit.ConnectivityBle.service
 ```
 
 Restart the installed Bluetooth and Greengrass Lite systemd units without
@@ -272,7 +272,7 @@ Build the repo-owned KVS sender:
 
 ```bash
 cd "$TXING_HOME"
-just board::build-native
+just unit::board::build-native
 ```
 
 Point `BOARD_VIDEO_SENDER_COMMAND` at the built binary, typically:
@@ -286,14 +286,14 @@ Build the Python runtime:
 ```bash
 cd "$TXING_HOME"
 python3 --version
-just board::build
+just unit::board::build
 ```
 
 Validate the board runtime AWS access:
 
 ```bash
 cd "$TXING_HOME"
-just board::check
+just unit::board::check
 ```
 
 ### 6. Smoke Test And Install The Service
@@ -314,7 +314,7 @@ Then install the service:
 
 ```bash
 cd "$TXING_HOME"
-just board::install-service "$BOARD_VIDEO_SENDER_COMMAND"
+just unit::board::install-service "$BOARD_VIDEO_SENDER_COMMAND"
 sudo systemctl status board
 sudo journalctl -u board -f
 ```
@@ -386,8 +386,8 @@ Useful board commands:
 
 ```bash
 cd "$TXING_HOME"
-just board::run
-just board::once
-just board::motor-raw 240 240
-just board::motor-stop
+just unit::board::run
+just unit::board::once
+just unit::board::motor-raw 240 240
+just unit::board::motor-stop
 ```

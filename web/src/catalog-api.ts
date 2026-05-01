@@ -77,7 +77,7 @@ export const parseCapabilitiesSet = (value: string | null | undefined): readonly
       throw new Error(`Thing has malformed capabilitiesSet attribute: ${value}`)
     }
     if (!isShadowName(rawCapability)) {
-      throw new Error(`Thing has unsupported capability: ${rawCapability}`)
+      throw new Error(`Thing has invalid shadow capability name: ${rawCapability}`)
     }
     if (seen.has(rawCapability)) {
       throw new Error(`Thing has duplicate capability: ${rawCapability}`)

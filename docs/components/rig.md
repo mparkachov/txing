@@ -22,12 +22,12 @@ itself must never be represented by Sparkplug device `DBIRTH` or `DDEATH`.
 The rig now has a Greengrass-oriented component split in addition to the legacy
 single-process CLI:
 
-- `dev.txing.rig.SparkplugManager`
+- `dev.txing.device.unit.SparkplugManager`
   - owns AWS registry discovery, shadows, retained MCP/video reads, REDCON derivation, and Sparkplug lifecycle
   - defines Greengrass service running plus direct AWS IoT MQTT connectivity as the rig edge-node `NBIRTH` condition
   - publishes explicit rig edge-node `NDEATH` on graceful shutdown and configures `NDEATH` as MQTT Last Will
   - uses direct per-device AWS IoT MQTT sessions so `DBIRTH` and `DDEATH` are coupled to each device session lifecycle
-- `dev.txing.rig.ConnectivityBle`
+- `dev.txing.device.unit.ConnectivityBle`
   - owns BLE scanning, rendezvous presence, one-at-a-time GATT sessions, and MCU wake/sleep state reports
   - communicates with the manager only through local Greengrass pub/sub topics under `dev/txing/rig/v1/connectivity/#`
   - never publishes Sparkplug node lifecycle
@@ -99,7 +99,7 @@ exchange settings from AWS, writes `/etc/greengrass/config.yaml`, installs the
 native Greengrass Lite build using the upstream CMake install target, and starts
 the standard `greengrass-lite.target` through Greengrass Lite's
 `misc/run_nucleus` script. Rig behavior comes from Greengrass deployments of
-`dev.txing.rig.SparkplugManager` and connectivity adapter components.
+`dev.txing.device.unit.SparkplugManager` and connectivity adapter components.
 
 Use `just rig::deploy` after changing or pulling rig code; it depends
 on `just rig::build` and then stages a new local component artifact under

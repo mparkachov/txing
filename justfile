@@ -279,10 +279,9 @@ _project-aws-env scope='rig' region='' profile='' stack_name='' cognito_domain_p
     command aws "$@"
 
 mod rig 'rig/justfile'
-mod board 'devices/unit/board/justfile'
 mod aws 'shared/aws/justfile'
 mod witness 'witness/justfile'
-mod mcu 'devices/unit/mcu/justfile'
+mod unit 'devices/unit/justfile'
 mod web 'web/justfile'
 
 @default:

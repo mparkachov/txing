@@ -1,4 +1,4 @@
-import { describeRedcon, getTxingRedconToneClass } from './app-model'
+import { describeRedcon, getTxingRedconToneClass } from './sparkplug-model'
 
 type SparkplugPanelProps = {
   sparkplugRedcon: number | null

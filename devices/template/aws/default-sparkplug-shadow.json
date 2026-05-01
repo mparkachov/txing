@@ -1,0 +1,11 @@
+{
+  "state": {
+    "reported": {
+      "payload": {
+        "metrics": {
+          "redcon": 4
+        }
+      }
+    }
+  }
+}

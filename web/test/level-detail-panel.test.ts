@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import {
   formatCatalogDetailLine,
-  getAutoOpenDeviceDetailPanelState,
   getRouteDetailPanelOpenState,
   shouldRenderRouteCatalogPanel,
 } from '../src/level-detail-panel'
@@ -22,47 +21,6 @@ describe('level detail panel helpers', () => {
       isTownPanelOpen: false,
       isRigPanelOpen: false,
     })
-  })
-
-  test('auto-opens the device detail panel and board video only when the active device reaches redcon 1', () => {
-    expect(
-      getAutoOpenDeviceDetailPanelState({
-        route: { kind: 'device', town: 'berlin', rig: 'alpha', device: 'unit-a1' },
-        hasActiveSession: true,
-        previousRedcon: 2,
-        nextRedcon: 1,
-      }),
-    ).toEqual({
-      isBotPanelOpen: true,
-      isBoardVideoExpanded: true,
-    })
-
-    expect(
-      getAutoOpenDeviceDetailPanelState({
-        route: { kind: 'device', town: 'berlin', rig: 'alpha', device: 'unit-a1' },
-        hasActiveSession: true,
-        previousRedcon: 1,
-        nextRedcon: 1,
-      }),
-    ).toBeNull()
-
-    expect(
-      getAutoOpenDeviceDetailPanelState({
-        route: { kind: 'device_video', town: 'berlin', rig: 'alpha', device: 'unit-a1' },
-        hasActiveSession: true,
-        previousRedcon: 2,
-        nextRedcon: 1,
-      }),
-    ).toBeNull()
-
-    expect(
-      getAutoOpenDeviceDetailPanelState({
-        route: { kind: 'device', town: 'berlin', rig: 'alpha', device: 'unit-a1' },
-        hasActiveSession: false,
-        previousRedcon: 2,
-        nextRedcon: 1,
-      }),
-    ).toBeNull()
   })
 
   test('shows town and rig catalog detail panels only when reported redcon is 1', () => {
