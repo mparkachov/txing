@@ -90,6 +90,9 @@ just rig::deploy
 sudo systemctl status --with-dependencies greengrass-lite.target
 ```
 
+`rig::build-native` builds Greengrass Lite with `GG_LOG_LEVEL=INFO` so the
+standard Greengrass daemons do not flood journald with debug traces.
+
 The install target no longer creates or removes a custom `rig.service`. It
 enables `bluetooth`, resolves the configured rig thing and Greengrass token
 exchange settings from AWS, writes `/etc/greengrass/config.yaml`, installs the

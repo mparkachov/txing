@@ -140,6 +140,10 @@ just rig::install-service
 just rig::deploy
 ```
 
+`just rig::build-native` compiles Greengrass Lite with `GG_LOG_LEVEL=INFO`.
+If the host already has debug-built Greengrass Lite binaries installed, rerun
+`just rig::build-native` and `just rig::install-service` to replace them.
+
 `just rig::install-service` installs and starts the standard Greengrass Lite
 systemd units from the native build. It does not manage the old custom
 `rig.service`; remove that unit manually before using the Greengrass structure

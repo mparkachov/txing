@@ -665,6 +665,7 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertIn("Greengrass Lite native build is supported only on Linux", justfile)
         self.assertIn('-S "{{greengrass_lite_dir}}"', justfile)
         self.assertIn('-B "{{greengrass_lite_build_dir}}"', justfile)
+        self.assertIn("-DGG_LOG_LEVEL=INFO", justfile)
         self.assertIn("-DGGL_SYSTEMD_SYSTEM_USER=ggcore", justfile)
         self.assertIn("-DGGL_SYSTEMD_SYSTEM_GROUP=ggcore", justfile)
         self.assertIn("-DGGL_SYSTEMD_SYSTEM_DIR=/lib/systemd/system", justfile)

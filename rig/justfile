@@ -260,6 +260,7 @@ aws_shared_credentials_file := ""
       -S "{{greengrass_lite_dir}}" \
       -B "{{greengrass_lite_build_dir}}" \
       -DCMAKE_BUILD_TYPE=MinSizeRel \
+      -DGG_LOG_LEVEL=INFO \
       -DGGL_SYSTEMD_SYSTEM_USER=ggcore \
       -DGGL_SYSTEMD_SYSTEM_GROUP=ggcore \
       -DGGL_SYSTEMD_SYSTEM_DIR=/lib/systemd/system
