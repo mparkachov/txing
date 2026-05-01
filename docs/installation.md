@@ -99,9 +99,8 @@ Before installing the service, the rig host must have:
 
 - the AWS stacks deployed with `just aws::deploy`, `just aws::town-deploy`, and `just aws::rig-deploy`
 - the configured rig thing registered in AWS IoT by `just aws::rig-deploy`
-- a Greengrass core certificate, private key, and Amazon Root CA copied under
-  `/var/lib/greengrass/credentials`
-- the certificate attached to the rig thing and to the stack-created IoT policy
+- rig certificate material generated with `just aws::cert` under
+  `config/certs/rig/`
 - `/etc/greengrass/config.yaml` configured for that rig thing
 
 Create the rig certificate material. The recipe resolves the configured rig
@@ -114,18 +113,11 @@ cd "$TXING_HOME"
 just aws::cert
 ```
 
-Copy the generated credential files into the Greengrass credentials directory:
-
-```bash
-sudo install -d -m 700 /var/lib/greengrass/credentials
-sudo install -m 600 config/certs/rig/rig.cert.pem /var/lib/greengrass/credentials/rig.cert.pem
-sudo install -m 600 config/certs/rig/rig.private.key /var/lib/greengrass/credentials/rig.private.key
-curl -fsSL https://www.amazontrust.com/repository/AmazonRootCA1.pem -o /tmp/AmazonRootCA1.pem
-sudo install -m 644 /tmp/AmazonRootCA1.pem /var/lib/greengrass/credentials/AmazonRootCA1.pem
-```
-
-`just rig::install-service` creates `ggcore`/`gg_component` if needed and
-changes `/var/lib/greengrass` ownership to `ggcore:ggcore`.
+`just rig::install-service` copies `config/certs/rig/rig.cert.pem` and
+`config/certs/rig/rig.private.key` into
+`/var/lib/greengrass/credentials`, downloads Amazon Root CA 1 into that same
+directory, creates `ggcore`/`gg_component` if needed, and changes
+`/var/lib/greengrass` ownership to `ggcore:ggcore`.
 
 Resolve the endpoints and role alias from the town account:
 

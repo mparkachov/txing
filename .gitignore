@@ -18,3 +18,6 @@ __pycache__/
 
 # Generated AWS IoT certificates and private keys
 /config/certs/
+
+# Native dependency checkouts/build artifacts
+/rig/greengrass-lite/

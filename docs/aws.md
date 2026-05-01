@@ -135,7 +135,9 @@ Generated files:
 
 `config/certs/` is explicitly ignored by git. The recipe refuses to overwrite
 existing material; move or delete the files first if you intentionally rotate the
-rig certificate.
+rig certificate. `just rig::install-service` installs the generated certificate
+and private key into `/var/lib/greengrass/credentials` and downloads Amazon Root
+CA 1 for Greengrass.
 
 ## Cleanup
 

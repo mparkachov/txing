@@ -41,6 +41,10 @@ just rig::install-service
 Run the package install before `just rig::build-native`; the native build invokes
 `cmake` directly.
 
+Run `just aws::cert` before `just rig::install-service`. The install recipe
+copies `config/certs/rig/rig.cert.pem` and `rig.private.key` into
+`/var/lib/greengrass/credentials` and downloads Amazon Root CA 1.
+
 `just rig::install-service` uses the upstream CMake install target and
 Greengrass Lite `misc/run_nucleus` script; it does not create or rename txing
 systemd units. The standard systemd entrypoint is `greengrass-lite.target`.

@@ -263,7 +263,21 @@ legacy_systemd_unit := "/etc/systemd/system/rig.service"
     if ! id -u gg_component >/dev/null 2>&1; then \
         sudo useradd --system --gid gg_component --home-dir /var/lib/greengrass/component --shell /usr/sbin/nologin gg_component; \
     fi
+    rig_cert_path="{{project_root}}/config/certs/rig/rig.cert.pem"
+    rig_private_key_path="{{project_root}}/config/certs/rig/rig.private.key"
+    if [ ! -f "$rig_cert_path" ] || [ ! -f "$rig_private_key_path" ]; then \
+        echo "Rig certificate material is missing under {{project_root}}/config/certs/rig." >&2; \
+        echo "Run 'just aws::cert' before 'just rig::install-service'." >&2; \
+        exit 1; \
+    fi
     sudo mkdir -p /var/lib/greengrass /etc/greengrass
+    sudo install -d -o ggcore -g ggcore -m 700 /var/lib/greengrass/credentials
+    sudo install -o ggcore -g ggcore -m 600 "$rig_cert_path" /var/lib/greengrass/credentials/rig.cert.pem
+    sudo install -o ggcore -g ggcore -m 600 "$rig_private_key_path" /var/lib/greengrass/credentials/rig.private.key
+    root_ca_temp="$(mktemp "${TMPDIR:-/tmp}/txing-amazon-root-ca.XXXXXX.pem")"
+    trap 'rm -f "$root_ca_temp"' EXIT
+    curl -fsSL https://www.amazontrust.com/repository/AmazonRootCA1.pem -o "$root_ca_temp"
+    sudo install -o ggcore -g ggcore -m 644 "$root_ca_temp" /var/lib/greengrass/credentials/AmazonRootCA1.pem
     sudo chown -R ggcore:ggcore /var/lib/greengrass
     sudo cmake --install "{{greengrass_lite_build_dir}}" --config MinSizeRel
     config_paths=(/etc/greengrass/config.yaml /etc/greengrass/config.d/*.yaml /etc/greengrass/config.d/*.yml)
