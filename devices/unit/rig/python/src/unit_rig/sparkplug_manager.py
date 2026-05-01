@@ -113,6 +113,7 @@ class DeviceSparkplugMqttSession:
         self._aws_runtime = aws_runtime
         self._connection_factory = connection_factory
         self._connection: Any | None = None
+        self._operation_lock = asyncio.Lock()
         self._connected = False
         self._disconnectable = False
         self._born = False
@@ -187,9 +188,11 @@ class DeviceSparkplugMqttSession:
         self._connected = False
         self._born = False
 
-    async def connect(self) -> None:
+    async def _connect_unlocked(self) -> None:
         if self._connected:
             return
+        if self._connection is not None:
+            await self._disconnect_unlocked()
         will_topic = build_device_topic(
             self._config.sparkplug_group_id,
             "DDEATH",
@@ -220,60 +223,92 @@ class DeviceSparkplugMqttSession:
             self._config.client_id,
         )
 
+    async def connect(self) -> None:
+        async with self._operation_lock:
+            await self._connect_unlocked()
+
     async def publish_birth(self, *, redcon: int, battery_mv: int) -> None:
-        await self.connect()
-        assert self._connection is not None
-        await self._connection.publish(
-            build_device_topic(
+        async with self._operation_lock:
+            if self._connected and self._born:
+                return
+            await self._connect_unlocked()
+            assert self._connection is not None
+            topic = build_device_topic(
                 self._config.sparkplug_group_id,
                 "DBIRTH",
                 self._config.sparkplug_edge_node_id,
                 self._thing_name,
-            ),
-            build_device_report_payload(
-                redcon=redcon,
-                battery_mv=battery_mv,
-                seq=self._next_seq(),
-            ),
-            timeout_seconds=self._config.publish_timeout,
+            )
+            await self._connection.publish(
+                topic,
+                build_device_report_payload(
+                    redcon=redcon,
+                    battery_mv=battery_mv,
+                    seq=self._next_seq(),
+                ),
+                timeout_seconds=self._config.publish_timeout,
+            )
+            self._born = True
+        LOGGER.info(
+            "Published Sparkplug DBIRTH thing=%s topic=%s redcon=%s",
+            self._thing_name,
+            topic,
+            redcon,
         )
-        self._born = True
 
     async def publish_data(self, *, redcon: int, battery_mv: int) -> None:
-        if not self._connected or not self._born or self._connection is None:
-            return
-        await self._connection.publish(
-            build_device_topic(
+        async with self._operation_lock:
+            if not self._connected or not self._born or self._connection is None:
+                return
+            topic = build_device_topic(
                 self._config.sparkplug_group_id,
                 "DDATA",
                 self._config.sparkplug_edge_node_id,
                 self._thing_name,
-            ),
-            build_device_report_payload(
-                redcon=redcon,
-                battery_mv=battery_mv,
-                seq=self._next_seq(),
-            ),
-            timeout_seconds=self._config.publish_timeout,
+            )
+            await self._connection.publish(
+                topic,
+                build_device_report_payload(
+                    redcon=redcon,
+                    battery_mv=battery_mv,
+                    seq=self._next_seq(),
+                ),
+                timeout_seconds=self._config.publish_timeout,
+            )
+        LOGGER.info(
+            "Published Sparkplug DDATA thing=%s topic=%s redcon=%s",
+            self._thing_name,
+            topic,
+            redcon,
         )
 
-    async def publish_death(self) -> None:
+    async def _publish_death_unlocked(self) -> None:
         if not self._connected or self._connection is None:
             self._born = False
             return
+        topic = build_device_topic(
+            self._config.sparkplug_group_id,
+            "DDEATH",
+            self._config.sparkplug_edge_node_id,
+            self._thing_name,
+        )
         await self._connection.publish(
-            build_device_topic(
-                self._config.sparkplug_group_id,
-                "DDEATH",
-                self._config.sparkplug_edge_node_id,
-                self._thing_name,
-            ),
+            topic,
             build_device_death_payload(seq=self._next_seq()),
             timeout_seconds=self._config.publish_timeout,
         )
         self._born = False
+        LOGGER.info(
+            "Published Sparkplug DDEATH thing=%s topic=%s",
+            self._thing_name,
+            topic,
+        )
 
-    async def disconnect(self) -> None:
+    async def publish_death(self) -> None:
+        async with self._operation_lock:
+            await self._publish_death_unlocked()
+
+    async def _disconnect_unlocked(self) -> None:
         if self._connection is None:
             self._connected = False
             self._disconnectable = False
@@ -289,10 +324,15 @@ class DeviceSparkplugMqttSession:
             self._disconnectable = False
             self._connection = None
 
+    async def disconnect(self) -> None:
+        async with self._operation_lock:
+            await self._disconnect_unlocked()
+
     async def teardown(self, *, explicit_death: bool) -> None:
-        if explicit_death:
-            await self.publish_death()
-        await self.disconnect()
+        async with self._operation_lock:
+            if explicit_death:
+                await self._publish_death_unlocked()
+            await self._disconnect_unlocked()
 
 
 @dataclass(slots=True)
@@ -316,6 +356,7 @@ class ManagedDeviceState:
     redcon: int = 4
     redcon_one_staged: bool = False
     mqtt_session: DeviceSparkplugMqttSession | None = None
+    operation_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     @property
     def thing_name(self) -> str:
@@ -466,8 +507,9 @@ class SparkplugManager:
         device = self._devices.pop(thing_name, None)
         if device is None:
             return
-        if device.mqtt_session is not None:
-            await device.mqtt_session.teardown(explicit_death=True)
+        async with device.operation_lock:
+            if device.mqtt_session is not None:
+                await device.mqtt_session.teardown(explicit_death=True)
 
     def _apply_snapshot(
         self,
@@ -542,6 +584,14 @@ class SparkplugManager:
             LOGGER.debug("Ignoring connectivity state for unmanaged thing=%s", state.thing_name)
             return
 
+        async with device.operation_lock:
+            await self._apply_connectivity_state_locked(device, state)
+
+    async def _apply_connectivity_state_locked(
+        self,
+        device: ManagedDeviceState,
+        state: ConnectivityState,
+    ) -> None:
         previous_reachable = device.reachable()
         previous_redcon = device.redcon
         previous_battery = device.battery_mv
@@ -640,32 +690,40 @@ class SparkplugManager:
             device = self._devices.get(update.thing_name)
             if device is None:
                 continue
-            previous_redcon = device.redcon
-            previous_battery = device.battery_mv
-            await self._apply_cloud_update(device, update)
-            redcon_changed = device.reconcile_redcon()
-            session = device.mqtt_session
-            if session is not None and session.connected and session.born:
-                try:
-                    if redcon_changed or previous_battery != device.battery_mv:
-                        await session.publish_data(
-                            redcon=device.redcon,
-                            battery_mv=device.battery_mv,
-                        )
-                    if device.promote_redcon_after_stage():
-                        await session.publish_data(
-                            redcon=device.redcon,
-                            battery_mv=device.battery_mv,
-                        )
-                except Exception as err:
-                    await self._handle_device_session_error(
-                        device,
-                        session,
-                        action="publish cloud update",
-                        error=err,
+            async with device.operation_lock:
+                await self._apply_cloud_update_locked(device, update)
+
+    async def _apply_cloud_update_locked(
+        self,
+        device: ManagedDeviceState,
+        update: AwsShadowUpdate,
+    ) -> None:
+        previous_redcon = device.redcon
+        previous_battery = device.battery_mv
+        await self._apply_cloud_update(device, update)
+        redcon_changed = device.reconcile_redcon()
+        session = device.mqtt_session
+        if session is not None and session.connected and session.born:
+            try:
+                if redcon_changed or previous_battery != device.battery_mv:
+                    await session.publish_data(
+                        redcon=device.redcon,
+                        battery_mv=device.battery_mv,
                     )
-            if previous_redcon != device.redcon:
-                device.clear_target_if_converged()
+                if device.promote_redcon_after_stage():
+                    await session.publish_data(
+                        redcon=device.redcon,
+                        battery_mv=device.battery_mv,
+                    )
+            except Exception as err:
+                await self._handle_device_session_error(
+                    device,
+                    session,
+                    action="publish cloud update",
+                    error=err,
+                )
+        if previous_redcon != device.redcon:
+            device.clear_target_if_converged()
 
     async def _apply_cloud_update(
         self,

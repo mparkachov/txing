@@ -244,6 +244,64 @@ class DeviceSparkplugMqttSessionTests(unittest.TestCase):
         self.assertFalse(session.connected)
         self.assertFalse(session.born)
 
+    def test_device_session_birth_is_single_flight(self) -> None:
+        async def exercise() -> object:
+            instances: list[object] = []
+
+            class SlowConnection:
+                def __init__(self, config: object, **kwargs: object) -> None:
+                    self.config = config
+                    self.kwargs = kwargs
+                    self.connect_calls = 0
+                    self.publishes: list[tuple[str, bytes]] = []
+                    instances.append(self)
+
+                async def connect(self, *, timeout_seconds: float | None = None) -> None:
+                    del timeout_seconds
+                    self.connect_calls += 1
+                    await asyncio.sleep(0.01)
+
+                async def publish(
+                    self,
+                    topic: str,
+                    payload: bytes,
+                    *,
+                    timeout_seconds: float | None = None,
+                ) -> None:
+                    del timeout_seconds
+                    self.publishes.append((topic, payload))
+
+                async def disconnect(self, *, timeout_seconds: float | None = None) -> None:
+                    del timeout_seconds
+
+            session = DeviceSparkplugMqttSession(
+                SparkplugMqttSessionConfig(
+                    endpoint="endpoint",
+                    aws_region="eu-central-1",
+                    sparkplug_group_id="town",
+                    sparkplug_edge_node_id="rig",
+                    client_id="unit-1",
+                ),
+                thing_name="unit-1",
+                aws_runtime=object(),  # type: ignore[arg-type]
+                connection_factory=SlowConnection,
+            )
+
+            await asyncio.gather(
+                session.publish_birth(redcon=4, battery_mv=3795),
+                session.publish_birth(redcon=4, battery_mv=3795),
+            )
+            self.assertEqual(len(instances), 1)
+            return instances[0]
+
+        connection = asyncio.run(exercise())
+
+        self.assertEqual(connection.connect_calls, 1)
+        self.assertEqual(
+            [topic for topic, _payload in connection.publishes],
+            ["spBv1.0/town/DBIRTH/rig/unit-1"],
+        )
+
     def test_device_session_failed_initial_connect_does_not_disconnect_unconnected_connection(
         self,
     ) -> None:
