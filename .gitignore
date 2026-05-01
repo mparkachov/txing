@@ -15,3 +15,6 @@ __pycache__/
 # Project-local AWS config: keep examples only
 /config/*
 !/config/*.example
+
+# Generated AWS IoT certificates and private keys
+/config/certs/

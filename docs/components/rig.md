@@ -53,6 +53,12 @@ The current contract sources are:
 
 ## Build And Run
 
+`rig::build-native` requires the Greengrass Lite native toolchain on the rig
+host. On Raspberry Pi OS Lite/Trixie, install at least `cmake`,
+`build-essential`, `pkg-config`, `libssl-dev`, `libcurl4-openssl-dev`,
+`uuid-dev`, `libzip-dev`, `libsqlite3-dev`, `libyaml-dev`, `libsystemd-dev`,
+`libevent-dev`, `liburiparser-dev`, and `cgroup-tools`.
+
 ```bash
 just rig::check
 just rig::build-native

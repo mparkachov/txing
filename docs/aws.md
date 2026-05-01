@@ -117,16 +117,25 @@ just aws::init-shadow <thing-name> sparkplug
 
 ## Certificates
 
-Certificate material must be written only to an explicit caller-provided
-directory:
+`aws::cert` is parameterless and rig-focused. It resolves the configured rig
+thing from AWS IoT registry indexing, creates a new active AWS IoT certificate,
+attaches the base stack IoT policy, attaches the certificate to the rig thing,
+and writes material under `config/certs/rig/`.
 
 ```bash
-just aws::cert output_dir=/tmp/txing-device-cert
+just aws::cert
 ```
 
-If `thing_name` is omitted, the recipe resolves the configured device thing from
-AWS IoT registry indexing. If `policy_name` is omitted, it uses the base stack
-`PolicyName` output.
+Generated files:
+
+- `config/certs/rig/rig.cert.pem`
+- `config/certs/rig/rig.public.key`
+- `config/certs/rig/rig.private.key`
+- `config/certs/rig/rig.cert.arn`
+
+`config/certs/` is explicitly ignored by git. The recipe refuses to overwrite
+existing material; move or delete the files first if you intentionally rotate the
+rig certificate.
 
 ## Cleanup
 

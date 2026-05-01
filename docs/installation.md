@@ -22,6 +22,10 @@ The rig is the always-on Raspberry Pi coordinator that owns Sparkplug publicatio
 
 ### 1. Install OS Packages
 
+`just rig::build-native` compiles Greengrass Lite locally. Install the native
+build toolchain before running it; otherwise the first failure will be similar
+to `cmake: command not found`.
+
 ```bash
 sudo apt update
 sudo apt full-upgrade -y
@@ -31,6 +35,14 @@ sudo apt install -y \
   uuid-dev libzip-dev libsqlite3-dev libyaml-dev libsystemd-dev \
   libevent-dev liburiparser-dev cgroup-tools
 sudo systemctl enable --now bluetooth
+```
+
+Verify the required native tools are on `PATH`:
+
+```bash
+cmake --version
+cc --version
+pkg-config --version
 ```
 
 Install `uv`:
@@ -91,6 +103,29 @@ Before installing the service, the rig host must have:
   `/var/lib/greengrass/credentials`
 - the certificate attached to the rig thing and to the stack-created IoT policy
 - `/etc/greengrass/config.yaml` configured for that rig thing
+
+Create the rig certificate material. The recipe resolves the configured rig
+thing from AWS IoT registry indexing, attaches the stack IoT policy, and writes
+the certificate, public key, private key, and certificate ARN under
+`config/certs/rig/`. That directory is explicitly ignored by git.
+
+```bash
+cd "$TXING_HOME"
+just aws::cert
+```
+
+Copy the generated credential files into the Greengrass credentials directory:
+
+```bash
+sudo install -d -m 700 /var/lib/greengrass/credentials
+sudo install -m 600 config/certs/rig/rig.cert.pem /var/lib/greengrass/credentials/rig.cert.pem
+sudo install -m 600 config/certs/rig/rig.private.key /var/lib/greengrass/credentials/rig.private.key
+curl -fsSL https://www.amazontrust.com/repository/AmazonRootCA1.pem -o /tmp/AmazonRootCA1.pem
+sudo install -m 644 /tmp/AmazonRootCA1.pem /var/lib/greengrass/credentials/AmazonRootCA1.pem
+```
+
+`just rig::install-service` creates `ggcore`/`gg_component` if needed and
+changes `/var/lib/greengrass` ownership to `ggcore:ggcore`.
 
 Resolve the endpoints and role alias from the town account:
 

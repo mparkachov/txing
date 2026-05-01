@@ -343,31 +343,26 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
       "${aws_flags[@]}" \
       /dev/stdout | jq '.'
 
-@cert thing_name='' policy_name='' region=region profile=profile output_dir='' cert_basename='' cert_arn_file='':
+@cert:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
     source "{{aws_lib}}"
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "{{profile}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env town)"
     txing_aws_init
-    if [ -z "{{output_dir}}" ]; then
-      echo "output_dir is required; certificate material must be written only to an explicit caller-provided directory" >&2
+    effective_thing_name="$(resolve_rig_thing_name)"
+    effective_policy_name="$(stack_output "$AWS_STACK_NAME" PolicyName)"
+    cert_dir="{{project_root}}/config/certs/rig"
+    cert_path="$cert_dir/rig.cert.pem"
+    public_key_path="$cert_dir/rig.public.key"
+    private_key_path="$cert_dir/rig.private.key"
+    cert_arn_path="$cert_dir/rig.cert.arn"
+    install -d -m 700 "$cert_dir"
+    if [ -e "$cert_path" ] || [ -e "$public_key_path" ] || [ -e "$private_key_path" ] || [ -e "$cert_arn_path" ]; then
+      echo "Certificate material already exists under $cert_dir." >&2
+      echo "Move or delete those files before issuing a replacement certificate." >&2
       exit 1
     fi
-    effective_thing_name="{{thing_name}}"
-    if [ -z "$effective_thing_name" ]; then
-      effective_thing_name="$(resolve_device_thing_name)"
-    fi
-    effective_policy_name="{{policy_name}}"
-    if [ -z "$effective_policy_name" ]; then
-      effective_policy_name="$(stack_output "$AWS_STACK_NAME" PolicyName)"
-    fi
-    cert_basename="{{cert_basename}}"
-    cert_basename="${cert_basename:-$effective_thing_name}"
-    mkdir -p "{{output_dir}}"
-    cert_path="{{output_dir}}/${cert_basename}.cert.pem"
-    public_key_path="{{output_dir}}/${cert_basename}.public.key"
-    private_key_path="{{output_dir}}/${cert_basename}.private.key"
     cert_arn="$(
       aws iot create-keys-and-certificate \
         --set-as-active \
@@ -380,9 +375,8 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
     )"
     aws iot attach-policy --policy-name "$effective_policy_name" --target "$cert_arn" "${aws_flags[@]}"
     aws iot attach-thing-principal --thing-name "$effective_thing_name" --principal "$cert_arn" "${aws_flags[@]}"
-    if [ -n "{{cert_arn_file}}" ]; then
-      printf '%s\n' "$cert_arn" >"{{cert_arn_file}}"
-    fi
+    printf '%s\n' "$cert_arn" >"$cert_arn_path"
+    chmod 600 "$cert_path" "$public_key_path" "$private_key_path" "$cert_arn_path"
     jq -n \
       --arg thingName "$effective_thing_name" \
       --arg policyName "$effective_policy_name" \
@@ -390,7 +384,8 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
       --arg certificatePem "$cert_path" \
       --arg publicKey "$public_key_path" \
       --arg privateKey "$private_key_path" \
-      '{thingName: $thingName, policyName: $policyName, certificateArn: $certificateArn, certificatePem: $certificatePem, publicKey: $publicKey, privateKey: $privateKey}'
+      --arg certificateArnFile "$cert_arn_path" \
+      '{thingName: $thingName, policyName: $policyName, certificateArn: $certificateArn, certificatePem: $certificatePem, publicKey: $publicKey, privateKey: $privateKey, certificateArnFile: $certificateArnFile}'
 
 @init-shadow thing_name='' shadow_name='sparkplug' region=region profile=profile payload_file='' shadow_response_file='':
     #!/usr/bin/env bash

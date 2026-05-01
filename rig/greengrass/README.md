@@ -31,10 +31,15 @@ when publishing the components.
 Native Greengrass Lite is built and installed through:
 
 ```bash
+sudo apt install -y cmake build-essential pkg-config libssl-dev libcurl4-openssl-dev uuid-dev libzip-dev libsqlite3-dev libyaml-dev libsystemd-dev libevent-dev liburiparser-dev cgroup-tools
+cmake --version
 just rig::build-native
 just rig::build
 just rig::install-service
 ```
+
+Run the package install before `just rig::build-native`; the native build invokes
+`cmake` directly.
 
 `just rig::install-service` uses the upstream CMake install target and
 Greengrass Lite `misc/run_nucleus` script; it does not create or rename txing

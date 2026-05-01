@@ -154,6 +154,18 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertNotIn("config/rig.env", text)
         self.assertNotIn("config/board.env", text)
 
+    def test_cert_recipe_is_parameterless_and_writes_ignored_config_certs(self) -> None:
+        justfile = (AWS_DIR / "justfile").read_text(encoding="utf-8")
+        gitignore = (REPO_ROOT / ".gitignore").read_text(encoding="utf-8")
+
+        self.assertIn("@cert:", justfile)
+        self.assertIn("effective_thing_name=\"$(resolve_rig_thing_name)\"", justfile)
+        self.assertIn('cert_dir="{{project_root}}/config/certs/rig"', justfile)
+        self.assertIn("Certificate material already exists", justfile)
+        self.assertIn("/config/certs/", gitignore)
+        self.assertNotIn("@cert thing_name", justfile)
+        self.assertNotIn("output_dir", justfile)
+
     def test_aws_justfile_enables_thing_connectivity_indexing(self) -> None:
         justfile = (AWS_DIR / "scripts" / "aws_lib.sh").read_text(encoding="utf-8")
 
