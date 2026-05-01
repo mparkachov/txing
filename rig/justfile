@@ -545,6 +545,7 @@ aws_shared_credentials_file := ""
         component_artifact_dir="$artifacts_dir/$component_name/$resolved_component_version"; \
         mkdir -p "$component_artifact_dir/python"; \
         cp -a "$python_tree_dir/." "$component_artifact_dir/python/"; \
+        printf 'txing local Greengrass artifact for %s %s\n' "$component_name" "$resolved_component_version" >"$component_artifact_dir/txing-local-artifact.txt"; \
     done
     cat >"$recipe_dir/dev.txing.rig.SparkplugManager-$resolved_component_version.yaml" <<EOF
     RecipeFormatVersion: '2020-01-25'
@@ -583,6 +584,9 @@ aws_shared_credentials_file := ""
               export SPARKPLUG_EDGE_NODE_ID="$sparkplug_edge_node_id"
               export PYTHONPATH="{artifacts:path}/python"
               exec python3 -m rig.sparkplug_manager
+        Artifacts:
+          - Uri: "s3://txing-local-greengrass/txing-local-artifact.txt"
+            Unarchive: "NONE"
     EOF
     cat >"$recipe_dir/dev.txing.rig.ConnectivityBle-$resolved_component_version.yaml" <<EOF
     RecipeFormatVersion: '2020-01-25'
@@ -613,6 +617,9 @@ aws_shared_credentials_file := ""
               export RIG_NAME="$rig_name"
               export PYTHONPATH="{artifacts:path}/python"
               exec python3 -m rig.connectivity_ble --adapter-id "{{adapter_id}}" --name "{{name_fragment}}"
+        Artifacts:
+          - Uri: "s3://txing-local-greengrass/txing-local-artifact.txt"
+            Unarchive: "NONE"
     EOF
     sudo "$ggl_cli" deploy \
       --recipe-dir "$recipe_dir" \
