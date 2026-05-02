@@ -125,6 +125,7 @@ type RouteHeaderState = {
 const formatJson = (value: unknown): string => JSON.stringify(value, null, 2)
 const defaultMcpLeaseTtlMs = 5_000
 const robotStatePollIntervalMs = 5_000
+const routeSparkplugPollIntervalMs = 2_000
 const txingLogoUrl = 'https://txing.dev/txing-logo.png'
 const appHomePath = '/'
 let shadowApiModulePromise: Promise<typeof import('./shadow-api')> | null = null
@@ -288,12 +289,7 @@ function App({ initialAuthError = '' }: AppProps) {
       : route.kind === 'rig' || route.kind === 'device' || route.kind === 'device_video'
         ? routeHeaderMetadata?.townName ?? null
         : null
-  const currentRigCatalogName =
-    route.kind === 'rig'
-      ? routeHeaderMetadata?.name ?? null
-      : route.kind === 'device' || route.kind === 'device_video'
-        ? routeHeaderMetadata?.rigName ?? null
-        : null
+  const currentRigCatalogThingName = route.kind === 'rig' ? route.rig : null
   const selectedDeviceEntry = useMemo(() => {
     if (!selectedDeviceRoute || deviceCatalog.status !== 'ready') {
       return null
@@ -877,7 +873,7 @@ function App({ initialAuthError = '' }: AppProps) {
       status !== 'signed_in' ||
       adminEmailMismatch ||
       route.kind !== 'rig' ||
-      !currentRigCatalogName ||
+      !currentRigCatalogThingName ||
       hasUnsupportedTown
     ) {
       setDeviceCatalog(emptyDeviceCatalogState())
@@ -901,7 +897,7 @@ function App({ initialAuthError = '' }: AppProps) {
 
     const loadDeviceCatalog = async (): Promise<void> => {
       try {
-        const devices = await listRigDevices(resolveSessionIdToken, currentRigCatalogName)
+        const devices = await listRigDevices(resolveSessionIdToken, currentRigCatalogThingName)
         if (cancelled) {
           return
         }
@@ -920,7 +916,7 @@ function App({ initialAuthError = '' }: AppProps) {
           setDeviceCatalog({
             status: 'not_found',
             devices: [],
-            error: `Rig '${navigationRigLabel ?? currentRigCatalogName}' was not found.`,
+            error: `Rig '${navigationRigLabel ?? currentRigCatalogThingName}' was not found.`,
           })
           return
         }
@@ -942,11 +938,46 @@ function App({ initialAuthError = '' }: AppProps) {
   }, [
     adminEmailMismatch,
     hasUnsupportedTown,
-    currentRigCatalogName,
+    currentRigCatalogThingName,
     navigationRigLabel,
     resolveSessionIdToken,
     route.kind,
     routeHeaderState.error,
+    routeHeaderState.status,
+    status,
+  ])
+
+  useEffect(() => {
+    if (
+      status !== 'signed_in' ||
+      adminEmailMismatch ||
+      hasUnsupportedTown ||
+      !currentRouteThingName ||
+      routeHeaderState.status !== 'ready'
+    ) {
+      return
+    }
+    if (route.kind !== 'town' && route.kind !== 'rig') {
+      return
+    }
+
+    let cancelled = false
+    const intervalId = window.setInterval(() => {
+      if (!cancelled) {
+        void refreshRouteSparkplugShadow(currentRouteThingName)
+      }
+    }, routeSparkplugPollIntervalMs)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(intervalId)
+    }
+  }, [
+    adminEmailMismatch,
+    currentRouteThingName,
+    hasUnsupportedTown,
+    refreshRouteSparkplugShadow,
+    route.kind,
     routeHeaderState.status,
     status,
   ])

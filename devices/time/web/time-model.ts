@@ -69,11 +69,30 @@ export const parseTimeNowResult = (result: unknown): TimeNowResult | null => {
   }
 }
 
-export const formatTimeValue = (value: string | null): string => value ?? '--'
+const browserTimeFormatter = new Intl.DateTimeFormat(undefined, {
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  hour12: false,
+  timeZoneName: 'short',
+})
+
+const formatDate = (date: Date): string => browserTimeFormatter.format(date)
+
+export const formatTimeValue = (value: string | null): string => {
+  if (value === null) {
+    return '--'
+  }
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : formatDate(date)
+}
 
 export const formatEpochMs = (value: number | null): string => {
   if (value === null) {
     return '--'
   }
-  return new Date(value).toISOString()
+  return formatDate(new Date(value))
 }

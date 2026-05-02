@@ -66,7 +66,7 @@ function TimePanel({
   return (
     <section className="time-device-panel" aria-label="Time device status">
       <div className="time-device-clock" aria-label="Current time">
-        <span className="time-device-clock-label">UTC</span>
+        <span className="time-device-clock-label">Browser time</span>
         <span className="time-device-clock-value">
           {formatTimeValue(activeTime?.currentTimeIso ?? reportedState.currentTimeIso)}
         </span>
@@ -88,14 +88,6 @@ function TimePanel({
           <span className="time-device-metric-label">Active until</span>
           <span className="time-device-metric-value">
             {formatEpochMs(reportedState.activeUntilMs)}
-          </span>
-        </div>
-        <div className="time-device-metric">
-          <span className="time-device-metric-label">Live time</span>
-          <span className="time-device-metric-value">
-            {shouldPollMcp
-              ? formatTimeValue(activeTime?.currentTimeIso ?? null)
-              : 'unavailable'}
           </span>
         </div>
       </div>
