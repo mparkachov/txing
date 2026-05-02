@@ -44,7 +44,8 @@ just aws::device-deploy <rig-id> unit bot
 web/Cognito infrastructure, common IoT policies, common artifact buckets, and the
 Sparkplug witness Lambda/topic rule. It also configures AWS IoT fleet indexing
 through the AWS IoT API after the stack deploy, then syncs the hardcoded SSM
-type catalog under `/txing`.
+type catalog under `/txing` as separate leaf parameters such as
+`/txing/town/cloud/time/kind` and `/txing/town/cloud/time/capabilities`.
 
 `just aws::town-deploy <town-name>` deploys the town layer and idempotently
 ensures the town thing, town thing type/group, and town `sparkplug` shadow. It
@@ -58,8 +59,9 @@ rig runtime IAM.
 `just aws::device-deploy <rig-id> <device-type> <device-name>` deploys the
 device layer and idempotently ensures the device thing, device type, rig
 enrollment attributes, named shadows, and optional resources. Device enrollment
-validates compatibility by requiring `/txing/town/<rigType>/<deviceType>` in
-SSM. Instance data stays in AWS IoT thing attributes, not SSM.
+validates compatibility by requiring the SSM leaf
+`/txing/town/<rigType>/<deviceType>/kind`. Instance data stays in AWS IoT thing
+attributes, not SSM.
 
 ## Web Admin
 
@@ -160,7 +162,26 @@ just aws-town cloudformation delete-stack --stack-name "$TXING_TOWN_STACK_NAME"
 just aws-town cloudformation delete-stack --stack-name "$AWS_STACK_NAME"
 ```
 
-Before deleting stacks manually, empty the web and artifact buckets shown in base
-stack outputs. Also delete generated IoT things, dynamic thing groups, KVS
-signaling channels, and deprecate/delete thing types if you want the account back
-to a fully empty state.
+The base stack has delete-time cleanup custom resources for disposable S3 bucket
+contents and IoT policy attachments created outside CloudFormation, such as rig
+certificates and browser Cognito identities. You should not need to manually
+empty `WebAppBucketName` or `GreengrassArtifactsBucketName`, and the base IoT
+policies should be detached from their principals before CloudFormation deletes
+the policy resources.
+
+CloudFormation packaging buckets are intentionally created outside the stack so
+`aws cloudformation package` can upload templates before a stack exists. Delete
+those unmanaged artifact buckets explicitly after stack teardown:
+
+```bash
+just aws::delete-packaging-buckets
+```
+
+This removes the shared `txing-cfn-<account>-<region>-<stack>` bucket and the
+legacy `txing-time-lambda-<account>-<region>` bucket if either exists. Current
+time Lambda deployment reuses the shared `txing-cfn-*` packaging bucket by
+default.
+
+Generated IoT things, dynamic thing groups, KVS signaling channels, and
+deprecated thing types are still instance resources. Delete those separately if
+you want the account back to a fully empty state.

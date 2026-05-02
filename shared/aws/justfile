@@ -175,6 +175,33 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
       "${aws_flags[@]}"
     aws cloudformation validate-template --template-body "file://$packaged_template" "${aws_flags[@]}"
 
+@packaging-buckets region=region profile=profile stack_name=stack_name:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{aws_dir}}"
+    source "{{aws_lib}}"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{region}}" "{{profile}}" "{{stack_name}}")"
+    txing_aws_init
+    for bucket in "$(artifact_bucket_name)" "$(legacy_time_lambda_artifact_bucket_name)"; do
+      if aws s3api head-bucket --bucket "$bucket" "${aws_flags[@]}" >/dev/null 2>&1; then
+        echo "exists: $bucket"
+      else
+        echo "missing: $bucket"
+      fi
+    done
+
+@delete-packaging-buckets include_legacy_time_lambda='true' region=region profile=profile stack_name=stack_name:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{aws_dir}}"
+    source "{{aws_lib}}"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{region}}" "{{profile}}" "{{stack_name}}")"
+    txing_aws_init
+    delete_s3_bucket_if_exists "$(artifact_bucket_name)"
+    if [ "{{include_legacy_time_lambda}}" = "true" ]; then
+      delete_s3_bucket_if_exists "$(legacy_time_lambda_artifact_bucket_name)"
+    fi
+
 @describe stack_name=stack_name region=region profile=profile:
     #!/usr/bin/env bash
     set -euo pipefail

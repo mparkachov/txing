@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 import unittest
 
 from aws.device_registry import AwsDeviceRegistry, DeviceRegistryError
-from aws.type_catalog import build_type_records
+from aws.type_catalog import SsmTypeCatalog, build_type_records
 
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -32,11 +31,12 @@ class _SequenceRandom:
 
 class _FakeSsmClient:
     def __init__(self, records: dict[str, dict[str, object]] | None = None) -> None:
-        self.parameters = {
-            path: json.dumps(record)
-            for path, record in (records or build_type_records(repo_root=REPO_ROOT)).items()
-        }
+        self.parameters: dict[str, str] = {}
         self.put_requests: list[dict[str, object]] = []
+        catalog = SsmTypeCatalog(self, repo_root=REPO_ROOT)
+        for path, record in (records or build_type_records(repo_root=REPO_ROOT)).items():
+            catalog.put_record(path, record)
+        self.put_requests.clear()
 
     def get_parameter(self, *, Name: str) -> dict[str, object]:
         try:
@@ -45,9 +45,25 @@ class _FakeSsmClient:
             raise _FakeClientError("ParameterNotFound") from err
         return {"Parameter": {"Name": Name, "Value": value}}
 
+    def get_parameters_by_path(self, **kwargs: object) -> dict[str, object]:
+        path = str(kwargs["Path"]).rstrip("/")
+        prefix = f"{path}/"
+        return {
+            "Parameters": [
+                {"Name": name, "Value": self.parameters[name]}
+                for name in sorted(self.parameters)
+                if name.startswith(prefix)
+            ]
+        }
+
     def put_parameter(self, **kwargs: object) -> None:
         self.put_requests.append(kwargs)
         self.parameters[str(kwargs["Name"])] = str(kwargs["Value"])
+
+    def delete_parameters(self, *, Names: list[str]) -> dict[str, object]:
+        for name in Names:
+            self.parameters.pop(name, None)
+        return {"DeletedParameters": Names, "InvalidParameters": []}
 
 
 class _FakeIotClient:

@@ -19,7 +19,19 @@ from .thing_capabilities import capabilities_for_thing_type
 TYPE_CATALOG_ROOT = "/txing"
 TYPE_CATALOG_URI = "ssm:/txing"
 SCHEMA_VERSION = "1.0"
-
+TYPE_CATALOG_MANAGED_ROOT = "/txing/town"
+RECORD_KIND_VALUES = {"townType", "rigType", "deviceType"}
+LIST_LEAF_FIELDS = {
+    "capabilities",
+    "hostServices",
+    "requiredAttributes",
+    "searchableAttributes",
+}
+REQUIRED_LIST_LEAF_FIELDS = {
+    "capabilities",
+    "requiredAttributes",
+    "searchableAttributes",
+}
 
 class TypeCatalogError(RuntimeError):
     pass
@@ -199,6 +211,156 @@ def build_type_records(*, repo_root: Path | None = None) -> dict[str, dict[str, 
     return dict(sorted(records.items()))
 
 
+def _parameter_name(path: str, leaf_path: tuple[str, ...]) -> str:
+    return "/".join((normalize_catalog_path(path), *leaf_path))
+
+
+def _encode_list_leaf(values: list[Any], *, parameter_name: str) -> str | None:
+    if not values:
+        return None
+    encoded: list[str] = []
+    for value in values:
+        if not isinstance(value, str):
+            raise TypeCatalogError(f"SSM type catalog leaf {parameter_name!r} must contain strings")
+        text = value.strip()
+        if not text:
+            raise TypeCatalogError(f"SSM type catalog leaf {parameter_name!r} contains an empty item")
+        if "," in text:
+            raise TypeCatalogError(
+                f"SSM type catalog leaf {parameter_name!r} item {text!r} must not contain ','"
+            )
+        encoded.append(text)
+    return ",".join(encoded)
+
+
+def _flatten_record_parameters(path: str, record: dict[str, Any]) -> dict[str, str]:
+    normalized_path = normalize_catalog_path(path)
+    parameters: dict[str, str] = {}
+
+    def walk(leaf_path: tuple[str, ...], value: Any) -> None:
+        if not leaf_path:
+            if not isinstance(value, dict):
+                raise TypeCatalogError(f"SSM type catalog record {normalized_path!r} must be an object")
+            for key, child in sorted(value.items()):
+                if not isinstance(key, str) or not key:
+                    raise TypeCatalogError(
+                        f"SSM type catalog record {normalized_path!r} contains an invalid key"
+                    )
+                walk((key,), child)
+            return
+        parameter_name = _parameter_name(normalized_path, leaf_path)
+        if isinstance(value, dict):
+            for key, child in sorted(value.items()):
+                if not isinstance(key, str) or not key:
+                    raise TypeCatalogError(
+                        f"SSM type catalog leaf {parameter_name!r} contains an invalid key"
+                    )
+                walk((*leaf_path, key), child)
+        elif isinstance(value, list):
+            encoded = _encode_list_leaf(value, parameter_name=parameter_name)
+            if encoded is not None:
+                parameters[parameter_name] = encoded
+        elif isinstance(value, str):
+            if value == "":
+                raise TypeCatalogError(f"SSM type catalog leaf {parameter_name!r} must be non-empty")
+            parameters[parameter_name] = value
+        else:
+            raise TypeCatalogError(
+                f"SSM type catalog leaf {parameter_name!r} must be a string, list, or object"
+            )
+
+    walk((), record)
+    return dict(sorted(parameters.items()))
+
+
+def _parse_list_leaf(parameter_name: str, value: str) -> list[str]:
+    if not value.strip():
+        return []
+    items = [item.strip() for item in value.split(",")]
+    if any(not item for item in items):
+        raise TypeCatalogError(f"SSM type catalog leaf {parameter_name!r} contains an empty list item")
+    return items
+
+
+def _assign_record_leaf(
+    record: dict[str, Any],
+    *,
+    parameter_name: str,
+    leaf_path: tuple[str, ...],
+    value: str,
+) -> None:
+    cursor = record
+    for part in leaf_path[:-1]:
+        existing = cursor.setdefault(part, {})
+        if not isinstance(existing, dict):
+            raise TypeCatalogError(f"SSM type catalog leaf {parameter_name!r} collides with another leaf")
+        cursor = existing
+    leaf_name = leaf_path[-1]
+    if len(leaf_path) == 1 and leaf_name in LIST_LEAF_FIELDS:
+        decoded: Any = _parse_list_leaf(parameter_name, value)
+    else:
+        decoded = value
+    cursor[leaf_name] = decoded
+
+
+def _reconstruct_record_from_parameters(
+    path: str,
+    parameters: Iterable[dict[str, str]],
+) -> dict[str, Any]:
+    normalized_path = normalize_catalog_path(path)
+    prefix = f"{normalized_path}/"
+    parameter_list = list(parameters)
+    child_record_prefixes = tuple(
+        f"{name.removesuffix('/kind')}/"
+        for parameter in parameter_list
+        if isinstance((name := parameter.get("Name")), str)
+        and parameter.get("Value") in RECORD_KIND_VALUES
+        and name.endswith("/kind")
+        and name.removesuffix("/kind") != normalized_path
+        and name.removesuffix("/kind").startswith(prefix)
+    )
+    record: dict[str, Any] = {}
+    for parameter in parameter_list:
+        name = parameter.get("Name")
+        value = parameter.get("Value")
+        if not isinstance(name, str) or not isinstance(value, str):
+            continue
+        if not name.startswith(prefix):
+            continue
+        if any(name.startswith(child_prefix) for child_prefix in child_record_prefixes):
+            continue
+        relative_name = name[len(prefix) :]
+        if not relative_name:
+            continue
+        leaf_path = tuple(relative_name.split("/"))
+        if not leaf_path:
+            continue
+        _assign_record_leaf(
+            record,
+            parameter_name=name,
+            leaf_path=leaf_path,
+            value=value,
+        )
+
+    kind = record.get("kind")
+    if kind not in RECORD_KIND_VALUES:
+        raise TypeCatalogError(
+            f"Missing SSM type catalog record {normalized_path!r}; run aws::type-sync"
+        )
+    record.setdefault("path", normalized_path)
+    if kind == "rigType":
+        record.setdefault("hostServices", [])
+    for field_name in REQUIRED_LIST_LEAF_FIELDS:
+        value = record.get(field_name)
+        if not isinstance(value, list) or not value or any(
+            not isinstance(item, str) or not item.strip() for item in value
+        ):
+            raise TypeCatalogError(
+                f"SSM type catalog record {normalized_path!r} is missing {field_name}"
+            )
+    return record
+
+
 class SsmTypeCatalog:
     def __init__(self, ssm_client: Any, *, repo_root: Path | None = None) -> None:
         self._ssm = ssm_client
@@ -208,54 +370,25 @@ class SsmTypeCatalog:
         return build_type_records(repo_root=self._repo_root)
 
     def put_record(self, path: str, record: dict[str, Any]) -> None:
-        self._ssm.put_parameter(
-            Name=normalize_catalog_path(path),
-            Value=json.dumps(record, sort_keys=True, separators=(",", ":")),
-            Type="String",
-            Overwrite=True,
-        )
+        for name, value in _flatten_record_parameters(path, record).items():
+            self._ssm.put_parameter(
+                Name=name,
+                Value=value,
+                Type="String",
+                Overwrite=True,
+            )
 
     def sync(self) -> dict[str, dict[str, Any]]:
         records = self.expected_records()
+        self._delete_managed_parameters(records.keys())
         for path, record in records.items():
             self.put_record(path, record)
         return records
 
-    def get_record(self, path: str) -> dict[str, Any]:
-        normalized_path = normalize_catalog_path(path)
-        try:
-            response = self._ssm.get_parameter(Name=normalized_path)
-        except Exception as err:
-            code = getattr(err, "response", {}).get("Error", {}).get("Code")
-            if code in {"ParameterNotFound", "ResourceNotFoundException", "NotFoundException"}:
-                raise TypeCatalogError(
-                    f"Missing SSM type catalog record {normalized_path!r}; run aws::type-sync"
-                ) from err
-            raise
-        parameter = response.get("Parameter") or {}
-        value = parameter.get("Value")
-        if not isinstance(value, str) or not value.strip():
-            raise TypeCatalogError(f"SSM type catalog record {normalized_path!r} is empty")
-        try:
-            record = json.loads(value)
-        except json.JSONDecodeError as err:
-            raise TypeCatalogError(
-                f"SSM type catalog record {normalized_path!r} is not valid JSON: {err}"
-            ) from err
-        if not isinstance(record, dict):
-            raise TypeCatalogError(f"SSM type catalog record {normalized_path!r} must be a JSON object")
-        return record
-
-    def get_rig_type(self, rig_type: str) -> dict[str, Any]:
-        return self.get_record(rig_type_path(rig_type))
-
-    def get_device_type(self, rig_type: str, device_type: str) -> dict[str, Any]:
-        return self.get_record(device_type_path(rig_type, device_type))
-
-    def list_records(self, path: str = TYPE_CATALOG_ROOT) -> list[tuple[str, dict[str, Any]]]:
+    def _read_parameters_by_path(self, path: str) -> list[dict[str, str]]:
         normalized_path = normalize_catalog_path(path)
         next_token: str | None = None
-        rows: list[tuple[str, dict[str, Any]]] = []
+        parameters: list[dict[str, str]] = []
         while True:
             request: dict[str, Any] = {
                 "Path": normalized_path,
@@ -268,12 +401,56 @@ class SsmTypeCatalog:
             for parameter in response.get("Parameters", []):
                 name = parameter.get("Name")
                 value = parameter.get("Value")
-                if not isinstance(name, str) or not isinstance(value, str):
-                    continue
-                rows.append((name, json.loads(value)))
+                if isinstance(name, str) and isinstance(value, str):
+                    parameters.append({"Name": name, "Value": value})
             next_token = response.get("NextToken")
             if not isinstance(next_token, str) or not next_token:
                 break
+        return sorted(parameters, key=lambda parameter: parameter["Name"])
+
+    def _delete_managed_parameters(self, record_paths: Iterable[str]) -> None:
+        names = {normalize_catalog_path(path) for path in record_paths}
+        names.update(
+            parameter["Name"]
+            for parameter in self._read_parameters_by_path(TYPE_CATALOG_MANAGED_ROOT)
+        )
+        ordered_names = sorted(names)
+        for index in range(0, len(ordered_names), 10):
+            chunk = ordered_names[index : index + 10]
+            if chunk:
+                self._ssm.delete_parameters(Names=chunk)
+
+    def get_record(self, path: str) -> dict[str, Any]:
+        normalized_path = normalize_catalog_path(path)
+        return _reconstruct_record_from_parameters(
+            normalized_path,
+            self._read_parameters_by_path(normalized_path),
+        )
+
+    def get_rig_type(self, rig_type: str) -> dict[str, Any]:
+        return self.get_record(rig_type_path(rig_type))
+
+    def get_device_type(self, rig_type: str, device_type: str) -> dict[str, Any]:
+        return self.get_record(device_type_path(rig_type, device_type))
+
+    def list_records(self, path: str = TYPE_CATALOG_ROOT) -> list[tuple[str, dict[str, Any]]]:
+        normalized_path = normalize_catalog_path(path)
+        parameters = self._read_parameters_by_path(normalized_path)
+        record_paths: set[str] = set()
+        prefix = f"{normalized_path}/"
+        if normalized_path == TYPE_CATALOG_ROOT:
+            prefix = f"{TYPE_CATALOG_ROOT}/"
+        for parameter in parameters:
+            name = parameter["Name"]
+            value = parameter["Value"]
+            if value not in RECORD_KIND_VALUES or not name.endswith("/kind"):
+                continue
+            record_path = name.removesuffix("/kind")
+            if record_path == normalized_path or record_path.startswith(prefix):
+                record_paths.add(record_path)
+        rows: list[tuple[str, dict[str, Any]]] = []
+        for record_path in record_paths:
+            rows.append((record_path, _reconstruct_record_from_parameters(record_path, parameters)))
         return sorted(rows, key=lambda item: item[0])
 
 

@@ -122,7 +122,8 @@ Edit:
   - fill the `[town]` access keys
 
 Concrete towns, rigs, and devices are AWS IoT things. The SSM catalog under
-`/txing` stores only supported types and compatibility.
+`/txing` stores only supported types and compatibility as leaf parameters, for
+example `/txing/town/cloud/time/kind`.
 
 After the AWS rig resources and certificate material exist, `just rig::check`
 verifies AWS IoT MQTT mTLS connectivity, AWS IoT Credentials Provider role-alias

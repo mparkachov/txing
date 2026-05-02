@@ -121,6 +121,28 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("GreengrassTokenExchangeRoleAliasArn:", template)
         self.assertIn("GreengrassArtifactsBucketName:", template)
 
+    def test_base_stack_cleans_disposable_buckets_on_delete(self) -> None:
+        template = _template_text()
+
+        self.assertIn("TxingStackCleanupFunction:", template)
+        self.assertIn("Type: Custom::TxingS3BucketCleanup", template)
+        self.assertIn("TxingGreengrassArtifactsBucketCleanup:", template)
+        self.assertIn("TxingWebBucketCleanup:", template)
+        self.assertIn('paginator = s3.get_paginator("list_object_versions")', template)
+        self.assertIn('object_paginator = s3.get_paginator("list_objects_v2")', template)
+        self.assertIn("s3:DeleteObjectVersion", template)
+
+    def test_base_stack_detaches_iot_policy_targets_on_delete(self) -> None:
+        template = _template_text()
+
+        self.assertIn("TxingIotPolicyAttachmentCleanup:", template)
+        self.assertIn("Type: Custom::TxingIotPolicyAttachmentCleanup", template)
+        self.assertIn("CleanupType: IotPolicyAttachments", template)
+        self.assertIn("iot:ListTargetsForPolicy", template)
+        self.assertIn("iot:DetachPolicy", template)
+        self.assertIn("iot.list_targets_for_policy", template)
+        self.assertIn("iot.detach_policy", template)
+
     def test_rig_runtime_can_connect_with_managed_device_client_ids(self) -> None:
         template = _template_text()
 
@@ -152,6 +174,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
             REPO_ROOT / "justfile",
             AWS_DIR / "justfile",
             AWS_DIR / "scripts" / "aws_lib.sh",
+            REPO_ROOT / "devices" / "time" / "justfile",
         ]
         text = "\n".join(path.read_text(encoding="utf-8") for path in checked_paths)
 
@@ -164,6 +187,11 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("resolve_rig_thing_name()", text)
         self.assertIn("resolve_device_thing_name()", text)
         self.assertIn("assume_stack_role()", text)
+        self.assertIn("@delete-packaging-buckets", text)
+        self.assertIn("delete_s3_bucket_if_exists", text)
+        self.assertIn("legacy_time_lambda_artifact_bucket_name", text)
+        self.assertIn('resolved_artifact_bucket="$(ensure_artifact_bucket)"', text)
+        self.assertNotIn('resolved_artifact_bucket="txing-time-lambda-${account_id}-${region}"', text)
         self.assertNotIn(".state", text)
         self.assertNotIn("local_state_dir", text)
         self.assertNotIn("packaged_template_file", text)

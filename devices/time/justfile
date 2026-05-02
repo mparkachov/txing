@@ -4,6 +4,7 @@ set quiet := true
 time_dir := source_directory()
 project_root := time_dir + "/../.."
 root_justfile := project_root + "/justfile"
+aws_lib := project_root + "/shared/aws/scripts/aws_lib.sh"
 
 @processes:
     cd "{{project_root}}" && uv run --project rig rig-device-process --device-type time list
@@ -22,6 +23,7 @@ root_justfile := project_root + "/justfile"
 @deploy-lambda thing_id stack_name='' artifact_bucket='' schedule_expression='rate(1 minute)' active_ttl_ms='300000' region='' profile='':
     #!/usr/bin/env bash
     set -euo pipefail
+    source "{{aws_lib}}"
     export TXING_THING_ID="{{thing_id}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "{{profile}}")"
     region="$AWS_REGION"
@@ -35,19 +37,18 @@ root_justfile := project_root + "/justfile"
     if [ -n "{{stack_name}}" ]; then
       resolved_stack_name="{{stack_name}}"
     fi
-    account_id="$(aws sts get-caller-identity "${aws_flags[@]}" --query Account --output text)"
     resolved_artifact_bucket="{{artifact_bucket}}"
     if [ -z "$resolved_artifact_bucket" ]; then
-      resolved_artifact_bucket="txing-time-lambda-${account_id}-${region}"
+      resolved_artifact_bucket="$(ensure_artifact_bucket)"
     fi
-    if ! aws s3api head-bucket --bucket "$resolved_artifact_bucket" >/dev/null 2>&1; then
+    if ! aws s3api head-bucket --bucket "$resolved_artifact_bucket" "${aws_flags[@]}" >/dev/null 2>&1; then
       if [ "$region" = "us-east-1" ]; then
-        aws s3api create-bucket --bucket "$resolved_artifact_bucket" "${aws_flags[@]}"
+        aws s3api create-bucket --bucket "$resolved_artifact_bucket" "${aws_flags[@]}" >/dev/null
       else
         aws s3api create-bucket \
           --bucket "$resolved_artifact_bucket" \
           --create-bucket-configuration LocationConstraint="$region" \
-          "${aws_flags[@]}"
+          "${aws_flags[@]}" >/dev/null
       fi
     fi
     packaged_template="$(mktemp "${TMPDIR:-/tmp}/txing-time-template.XXXXXX.yaml")"

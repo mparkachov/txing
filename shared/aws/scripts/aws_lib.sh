@@ -119,18 +119,28 @@ assume_stack_role() {
   aws_flags=(--region "$AWS_REGION")
 }
 
-ensure_artifact_bucket() {
+artifact_bucket_name() {
   local account_id
-  local bucket_name
   account_id="$(aws sts get-caller-identity "${aws_flags[@]}" --query Account --output text)"
+  printf 'txing-cfn-%s-%s-%s' "$account_id" "$AWS_REGION" "$AWS_STACK_NAME" \
+    | tr '[:upper:]' '[:lower:]' \
+    | tr -cs 'a-z0-9.-' '-' \
+    | sed 's/^-*//; s/-*$//' \
+    | cut -c1-63 \
+    | sed 's/[.]*$//'
+}
+
+legacy_time_lambda_artifact_bucket_name() {
+  local account_id
+  account_id="$(aws sts get-caller-identity "${aws_flags[@]}" --query Account --output text)"
+  printf 'txing-time-lambda-%s-%s\n' "$account_id" "$AWS_REGION"
+}
+
+ensure_artifact_bucket() {
+  local bucket_name
   bucket_name="$(
-    printf 'txing-cfn-%s-%s-%s' "$account_id" "$AWS_REGION" "$AWS_STACK_NAME" \
-      | tr '[:upper:]' '[:lower:]' \
-      | tr -cs 'a-z0-9.-' '-' \
-      | sed 's/^-*//; s/-*$//'
+    artifact_bucket_name
   )"
-  bucket_name="${bucket_name:0:63}"
-  bucket_name="${bucket_name%.}"
   if [ -z "$bucket_name" ]; then
     echo "failed to derive CloudFormation artifact bucket name" >&2
     return 1
@@ -146,6 +156,57 @@ ensure_artifact_bucket() {
     fi
   fi
   printf '%s\n' "$bucket_name"
+}
+
+empty_s3_bucket() {
+  local bucket_name="$1"
+  local page
+  local delete_batch
+  local delete_count
+  if ! aws s3api head-bucket --bucket "$bucket_name" "${aws_flags[@]}" >/dev/null 2>&1; then
+    echo "skip: bucket $bucket_name does not exist or is not accessible"
+    return 0
+  fi
+  while true; do
+    page="$(aws s3api list-object-versions --bucket "$bucket_name" "${aws_flags[@]}" --output json)"
+    delete_batch="$(
+      jq -c '{Objects: (((.Versions // []) + (.DeleteMarkers // [])) | map({Key, VersionId})), Quiet: true}' <<<"$page"
+    )"
+    delete_count="$(jq -r '.Objects | length' <<<"$delete_batch")"
+    if [ "$delete_count" = "0" ]; then
+      break
+    fi
+    aws s3api delete-objects \
+      --bucket "$bucket_name" \
+      --delete "$delete_batch" \
+      "${aws_flags[@]}" >/dev/null
+  done
+  while true; do
+    page="$(aws s3api list-objects-v2 --bucket "$bucket_name" "${aws_flags[@]}" --output json)"
+    delete_batch="$(
+      jq -c '{Objects: ((.Contents // []) | map({Key})), Quiet: true}' <<<"$page"
+    )"
+    delete_count="$(jq -r '.Objects | length' <<<"$delete_batch")"
+    if [ "$delete_count" = "0" ]; then
+      break
+    fi
+    aws s3api delete-objects \
+      --bucket "$bucket_name" \
+      --delete "$delete_batch" \
+      "${aws_flags[@]}" >/dev/null
+  done
+  echo "emptied bucket $bucket_name"
+}
+
+delete_s3_bucket_if_exists() {
+  local bucket_name="$1"
+  if ! aws s3api head-bucket --bucket "$bucket_name" "${aws_flags[@]}" >/dev/null 2>&1; then
+    echo "skip: bucket $bucket_name does not exist or is not accessible"
+    return 0
+  fi
+  empty_s3_bucket "$bucket_name"
+  aws s3api delete-bucket --bucket "$bucket_name" "${aws_flags[@]}"
+  echo "deleted bucket $bucket_name"
 }
 
 deploy_template() {

@@ -30,7 +30,7 @@ Device enrollment is still device-specific:
 just aws::device-deploy <rig-id> time clock
 ```
 
-Enrollment checks the `/txing/town/cloud/time` compatibility record before
+Enrollment checks the `/txing/town/cloud/time/kind` compatibility leaf before
 creating the device thing.
 
 The Lambda runtime is deployed separately with:

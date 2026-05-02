@@ -123,6 +123,241 @@ Resources:
             Action: iot:GetThingShadow
             Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/*
 
+  TxingStackCleanupRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: Deletes disposable txing stack data and out-of-band IoT policy attachments during stack deletion.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: stack-cleanup
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: CleanupLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+              - Sid: EmptyDisposableBuckets
+                Effect: Allow
+                Action:
+                  - s3:ListBucket
+                  - s3:ListBucketVersions
+                Resource:
+                  - !GetAtt TxingGreengrassArtifactsBucket.Arn
+                  - !GetAtt TxingWebBucket.Arn
+              - Sid: DeleteDisposableBucketObjects
+                Effect: Allow
+                Action:
+                  - s3:DeleteObject
+                  - s3:DeleteObjectVersion
+                Resource:
+                  - !Sub "${TxingGreengrassArtifactsBucket.Arn}/*"
+                  - !Sub "${TxingWebBucket.Arn}/*"
+              - Sid: DetachOutOfBandIotPolicyTargets
+                Effect: Allow
+                Action:
+                  - iot:DetachPolicy
+                  - iot:ListTargetsForPolicy
+                Resource: "*"
+
+  TxingStackCleanupFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: CloudFormation custom resource cleanup for disposable txing resources.
+      Role: !GetAtt TxingStackCleanupRole.Arn
+      Runtime: python3.12
+      Handler: index.lambda_handler
+      MemorySize: 128
+      Timeout: 300
+      Code:
+        ZipFile: |
+          import json
+          import logging
+          import urllib.request
+
+          import boto3
+
+
+          LOGGER = logging.getLogger(__name__)
+          LOGGER.setLevel(logging.INFO)
+          s3 = boto3.client("s3")
+          iot = boto3.client("iot")
+
+
+          def _send_response(event, context, status, data=None, reason=None):
+              body = json.dumps(
+                  {
+                      "Status": status,
+                      "Reason": reason or f"See CloudWatch log stream: {context.log_stream_name}",
+                      "PhysicalResourceId": event.get("PhysicalResourceId")
+                      or f"{event['StackId']}/{event['LogicalResourceId']}",
+                      "StackId": event["StackId"],
+                      "RequestId": event["RequestId"],
+                      "LogicalResourceId": event["LogicalResourceId"],
+                      "NoEcho": False,
+                      "Data": data or {},
+                  }
+              ).encode("utf-8")
+              request = urllib.request.Request(
+                  event["ResponseURL"],
+                  data=body,
+                  method="PUT",
+                  headers={
+                      "content-type": "",
+                      "content-length": str(len(body)),
+                  },
+              )
+              with urllib.request.urlopen(request, timeout=20) as response:
+                  response.read()
+
+
+          def _error_code(error):
+              return getattr(error, "response", {}).get("Error", {}).get("Code")
+
+
+          def _ignore_missing_bucket(error):
+              return _error_code(error) in {"NoSuchBucket", "404", "NotFound"}
+
+
+          def _delete_objects(bucket, objects):
+              if not objects:
+                  return 0
+              deleted = 0
+              for offset in range(0, len(objects), 1000):
+                  chunk = objects[offset : offset + 1000]
+                  response = s3.delete_objects(
+                      Bucket=bucket,
+                      Delete={"Objects": chunk, "Quiet": True},
+                  )
+                  errors = response.get("Errors", [])
+                  if errors:
+                      raise RuntimeError(f"Failed to delete objects from {bucket}: {errors}")
+                  deleted += len(chunk)
+              return deleted
+
+
+          def _empty_bucket(bucket):
+              deleted = 0
+              try:
+                  paginator = s3.get_paginator("list_object_versions")
+                  for page in paginator.paginate(Bucket=bucket):
+                      versioned_objects = [
+                          {"Key": item["Key"], "VersionId": item["VersionId"]}
+                          for item in page.get("Versions", [])
+                      ]
+                      delete_markers = [
+                          {"Key": item["Key"], "VersionId": item["VersionId"]}
+                          for item in page.get("DeleteMarkers", [])
+                      ]
+                      deleted += _delete_objects(bucket, versioned_objects + delete_markers)
+
+                  object_paginator = s3.get_paginator("list_objects_v2")
+                  for page in object_paginator.paginate(Bucket=bucket):
+                      objects = [{"Key": item["Key"]} for item in page.get("Contents", [])]
+                      deleted += _delete_objects(bucket, objects)
+              except Exception as error:
+                  if _ignore_missing_bucket(error):
+                      return {"deletedObjects": deleted, "missing": True}
+                  raise
+              return {"deletedObjects": deleted, "missing": False}
+
+
+          def _detach_policy_targets(policy_name):
+              targets = []
+              marker = None
+              while True:
+                  request = {
+                      "policyName": policy_name,
+                      "pageSize": 250,
+                  }
+                  if marker:
+                      request["marker"] = marker
+                  try:
+                      response = iot.list_targets_for_policy(**request)
+                  except Exception as error:
+                      if _error_code(error) in {"ResourceNotFoundException", "NotFoundException"}:
+                          return {"detachedTargets": 0, "missing": True}
+                      raise
+                  targets.extend(response.get("targets", []))
+                  marker = response.get("nextMarker")
+                  if not marker:
+                      break
+
+              detached = 0
+              for target in sorted(set(targets)):
+                  try:
+                      iot.detach_policy(policyName=policy_name, target=target)
+                  except Exception as error:
+                      code = _error_code(error)
+                      message = str(error).lower()
+                      if code not in {"ResourceNotFoundException", "NotFoundException"} and "not attached" not in message:
+                          raise
+                  detached += 1
+              return {"detachedTargets": detached, "missing": False}
+
+
+          def _handle_delete(properties):
+              cleanup_type = properties.get("CleanupType")
+              if cleanup_type == "S3Bucket":
+                  return _empty_bucket(properties["BucketName"])
+              if cleanup_type == "IotPolicyAttachments":
+                  results = {}
+                  for policy_name in properties.get("PolicyNames", []):
+                      results[policy_name] = _detach_policy_targets(policy_name)
+                  return {"policies": results}
+              raise ValueError(f"Unsupported CleanupType: {cleanup_type!r}")
+
+
+          def lambda_handler(event, context):
+              LOGGER.info("event=%s", json.dumps(event, sort_keys=True))
+              try:
+                  data = {}
+                  if event.get("RequestType") == "Delete":
+                      data = _handle_delete(event.get("ResourceProperties", {}))
+                  _send_response(event, context, "SUCCESS", data)
+              except Exception as error:
+                  LOGGER.exception("custom cleanup failed")
+                  _send_response(event, context, "FAILED", reason=str(error))
+
+  TxingGreengrassArtifactsBucketCleanup:
+    Type: Custom::TxingS3BucketCleanup
+    DependsOn:
+      - TxingGreengrassArtifactsBucket
+    Properties:
+      ServiceToken: !GetAtt TxingStackCleanupFunction.Arn
+      CleanupType: S3Bucket
+      BucketName: !Ref TxingGreengrassArtifactsBucket
+
+  TxingWebBucketCleanup:
+    Type: Custom::TxingS3BucketCleanup
+    DependsOn:
+      - TxingWebBucket
+    Properties:
+      ServiceToken: !GetAtt TxingStackCleanupFunction.Arn
+      CleanupType: S3Bucket
+      BucketName: !Ref TxingWebBucket
+
+  TxingIotPolicyAttachmentCleanup:
+    Type: Custom::TxingIotPolicyAttachmentCleanup
+    DependsOn:
+      - TxingGatewayPolicy
+      - TxingWebAdminIotPolicy
+    Properties:
+      ServiceToken: !GetAtt TxingStackCleanupFunction.Arn
+      CleanupType: IotPolicyAttachments
+      PolicyNames:
+        - !Ref TxingGatewayPolicy
+        - !Ref TxingWebAdminIotPolicy
+
   TxingWitnessRole:
     Type: AWS::IAM::Role
     Properties:
