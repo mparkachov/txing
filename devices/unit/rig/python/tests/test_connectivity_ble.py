@@ -23,6 +23,27 @@ from unit_rig.ble_bridge import BridgeConfig, ShadowState
 from unit_rig.connectivity_ble import ConnectivityBleCloudProxy, ConnectivityBleService
 
 
+class FakeSubscription:
+    def __init__(self) -> None:
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class FakeLocalPubSub:
+    def __init__(self) -> None:
+        self.subscriptions: list[FakeSubscription] = []
+
+    async def publish(self, _topic: str, _payload: bytes | str) -> None:
+        return None
+
+    async def subscribe(self, _topic: str, _handler: object) -> FakeSubscription:
+        subscription = FakeSubscription()
+        self.subscriptions.append(subscription)
+        return subscription
+
+
 class ConnectivityBleCloudProxyTests(unittest.TestCase):
     def test_command_becomes_redcon_update_and_ack(self) -> None:
         async def exercise() -> tuple[int | None, list[bytes]]:
@@ -82,6 +103,21 @@ class ConnectivityBleCloudProxyTests(unittest.TestCase):
 
 
 class ConnectivityBleServiceTests(unittest.TestCase):
+    def test_start_closes_local_pubsub_subscriptions_on_cancel(self) -> None:
+        async def exercise() -> list[bool]:
+            bus = FakeLocalPubSub()
+            service = ConnectivityBleService(
+                BridgeConfig(rig_name="rig", sparkplug_group_id="town"),
+                bus=bus,  # type: ignore[arg-type]
+            )
+            task = asyncio.create_task(service.start())
+            await asyncio.sleep(0)
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            return [subscription.closed for subscription in bus.subscriptions]
+
+        self.assertEqual(asyncio.run(exercise()), [True, True])
+
     def test_duplicate_inventory_does_not_restart_running_fleet(self) -> None:
         async def exercise() -> tuple[bool, bool]:
             service = ConnectivityBleService(

@@ -818,6 +818,7 @@ aws_shared_credentials_file := ""
         device_wheel_prefix="unit_rig"
         sparkplug_component="dev.txing.device.unit.SparkplugManager"
         connectivity_component="dev.txing.device.unit.ConnectivityBle"
+        legacy_components=(dev.txing.rig.SparkplugManager dev.txing.rig.ConnectivityBle)
         sparkplug_module="unit_rig.sparkplug_manager"
         connectivity_module="unit_rig.connectivity_ble"
         connectivity_description="txing rig BLE connectivity adapter for MCU rendezvous and GATT power control."
@@ -830,6 +831,7 @@ aws_shared_credentials_file := ""
         device_wheel_prefix="time_rig"
         sparkplug_component="dev.txing.device.time.SparkplugManager"
         connectivity_component="dev.txing.device.time.AwsConnectivity"
+        legacy_components=()
         sparkplug_module="time_rig.sparkplug_manager"
         connectivity_module="time_rig.aws_connectivity"
         connectivity_description="txing virtual time AWS IoT MQTT connectivity bridge."
@@ -993,10 +995,18 @@ aws_shared_credentials_file := ""
           - Uri: "s3://txing-local-greengrass/txing-local-artifact.txt"
             Unarchive: "NONE"
     EOF
-    sudo "$ggl_cli" deploy \
+    deploy_args=(
       --recipe-dir "$recipe_dir" \
       --artifacts-dir "$artifacts_dir" \
       --add-component "$sparkplug_component=$resolved_component_version" \
       --add-component "$connectivity_component=$resolved_component_version"
+    )
+    for legacy_component in "${legacy_components[@]}"; do
+      legacy_unit="ggl.$legacy_component.service"
+      if systemctl cat "$legacy_unit" >/dev/null 2>&1; then
+        deploy_args+=(--remove-component "$legacy_component")
+      fi
+    done
+    sudo "$ggl_cli" deploy "${deploy_args[@]}"
     printf 'deployed Greengrass components version %s for RigName=%s RigType=%s SparkplugGroupId=%s SparkplugEdgeNodeId=%s\n' "$resolved_component_version" "$rig_name" "$selected_rig_type" "$sparkplug_group_id" "$sparkplug_edge_node_id"
     printf 'inspect rig logs with: just rig::log\n'

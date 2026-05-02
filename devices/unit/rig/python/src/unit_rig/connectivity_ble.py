@@ -206,17 +206,26 @@ class ConnectivityBleService:
         self._fleet_task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
-        await self._bus.subscribe(INVENTORY_TOPIC, self._handle_inventory_message)
-        await self._bus.subscribe(f"{COMMAND_TOPIC_PREFIX}/+", self._handle_command_message)
-        heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+        subscriptions: list[object] = []
+        heartbeat_task: asyncio.Task[None] | None = None
         try:
+            subscriptions.append(
+                await self._bus.subscribe(INVENTORY_TOPIC, self._handle_inventory_message)
+            )
+            subscriptions.append(
+                await self._bus.subscribe(f"{COMMAND_TOPIC_PREFIX}/+", self._handle_command_message)
+            )
+            heartbeat_task = asyncio.create_task(self._heartbeat_loop())
             while True:
                 await self._inventory_event.wait()
                 self._inventory_event.clear()
                 await self._restart_fleet()
         finally:
-            heartbeat_task.cancel()
-            await asyncio.gather(heartbeat_task, return_exceptions=True)
+            for subscription in subscriptions:
+                _close_resource(subscription)
+            if heartbeat_task is not None:
+                heartbeat_task.cancel()
+                await asyncio.gather(heartbeat_task, return_exceptions=True)
             if self._fleet_task is not None:
                 self._fleet_task.cancel()
                 await asyncio.gather(self._fleet_task, return_exceptions=True)
@@ -393,6 +402,12 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _close_resource(resource: object) -> None:
+    close = getattr(resource, "close", None)
+    if callable(close):
+        close()
+
+
 def main() -> None:
     args = _parse_args()
     logging.basicConfig(
@@ -426,24 +441,27 @@ def main() -> None:
                 loop.add_signal_handler(sig, _request_shutdown)
             except NotImplementedError:
                 break
-        service_task = asyncio.create_task(
-            ConnectivityBleService(
-                config,
-                bus=GreengrassLocalPubSub(),
-                adapter_id=args.adapter_id,
-                no_ble=args.no_ble,
-            ).start()
+        bus = GreengrassLocalPubSub()
+        service = ConnectivityBleService(
+            config,
+            bus=bus,
+            adapter_id=args.adapter_id,
+            no_ble=args.no_ble,
         )
-        shutdown_task = asyncio.create_task(shutdown_event.wait())
-        done, pending = await asyncio.wait(
-            {service_task, shutdown_task},
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-        for task in pending:
-            task.cancel()
-        await asyncio.gather(*pending, return_exceptions=True)
-        for task in done:
-            task.result()
+        try:
+            service_task = asyncio.create_task(service.start())
+            shutdown_task = asyncio.create_task(shutdown_event.wait())
+            done, pending = await asyncio.wait(
+                {service_task, shutdown_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+            for task in done:
+                task.result()
+        finally:
+            bus.close()
 
     try:
         asyncio.run(_runner())

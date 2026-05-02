@@ -79,6 +79,21 @@ class InMemoryLocalPubSub:
             self._handlers.pop(topic, None)
 
 
+@dataclass(slots=True)
+class _GreengrassSubscription:
+    subscription: object
+    closed: bool = False
+
+    def close(self) -> None:
+        if self.closed:
+            return
+        self.closed = True
+        close_target = _subscription_close_target(self.subscription)
+        close = getattr(close_target, "close", None)
+        if callable(close):
+            _wait_for_close(close())
+
+
 class GreengrassLocalPubSub:
     def __init__(self, client: object | None = None) -> None:
         if client is None:
@@ -135,8 +150,29 @@ class GreengrassLocalPubSub:
             on_stream_closed=_on_stream_closed,
         )
         if inspect.isawaitable(result):
-            return await result
-        return result
+            result = await result
+        return _GreengrassSubscription(result)
+
+    def close(self) -> None:
+        close = getattr(self._client, "close", None)
+        if callable(close):
+            _wait_for_close(close())
+
+
+def _subscription_close_target(subscription: object) -> object:
+    if isinstance(subscription, tuple) and len(subscription) >= 2:
+        return subscription[1]
+    return subscription
+
+
+def _wait_for_close(result: object) -> None:
+    result_method = getattr(result, "result", None)
+    if not callable(result_method):
+        return
+    try:
+        result_method(timeout=5)
+    except TypeError:
+        result_method()
 
 
 def _extract_ipc_message(

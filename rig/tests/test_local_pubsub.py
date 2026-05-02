@@ -15,12 +15,26 @@ from rig.local_pubsub import GreengrassLocalPubSub, InMemoryLocalPubSub
 class FakeGreengrassIpcClient:
     def __init__(self) -> None:
         self.on_stream_event = None
+        self.closed = False
 
     def publish_to_topic(self, **_kwargs: object) -> object:
         return object()
 
     def subscribe_to_topic(self, **kwargs: object) -> object:
         self.on_stream_event = kwargs["on_stream_event"]
+        return object(), FakeGreengrassIpcOperation()
+
+    def close(self) -> object:
+        self.closed = True
+        return object()
+
+
+class FakeGreengrassIpcOperation:
+    def __init__(self) -> None:
+        self.closed = False
+
+    def close(self) -> object:
+        self.closed = True
         return object()
 
 
@@ -126,6 +140,19 @@ class GreengrassLocalPubSubTests(unittest.TestCase):
         [log_line] = asyncio.run(exercise())
         self.assertIn("Greengrass local pub/sub handler failed", log_line)
         self.assertIn("dev/txing/rig/v1/connectivity/state/unit-1", log_line)
+
+    def test_subscription_and_client_can_close(self) -> None:
+        async def exercise() -> tuple[bool, bool]:
+            client = FakeGreengrassIpcClient()
+            bus = GreengrassLocalPubSub(client=client)
+
+            subscription = await bus.subscribe("topic/#", lambda _topic, _payload: None)
+            operation = subscription.subscription[1]  # type: ignore[attr-defined,index]
+            subscription.close()  # type: ignore[attr-defined]
+            bus.close()
+            return operation.closed, client.closed
+
+        self.assertEqual(asyncio.run(exercise()), (True, True))
 
 
 if __name__ == "__main__":

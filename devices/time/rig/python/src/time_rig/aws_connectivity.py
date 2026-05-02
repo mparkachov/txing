@@ -77,11 +77,17 @@ class TimeAwsConnectivityBridge:
         self._managed_things: set[str] = set()
         self._seq = 0
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._local_subscriptions: list[object] = []
 
     async def start(self) -> None:
         await self.connect()
-        await self._bus.subscribe(INVENTORY_TOPIC, self._handle_inventory)
-        await self._bus.subscribe(f"{COMMAND_TOPIC_PREFIX}/+", self._handle_local_command)
+        if not self._local_subscriptions:
+            self._local_subscriptions.append(
+                await self._bus.subscribe(INVENTORY_TOPIC, self._handle_inventory)
+            )
+            self._local_subscriptions.append(
+                await self._bus.subscribe(f"{COMMAND_TOPIC_PREFIX}/+", self._handle_local_command)
+            )
 
     async def connect(self) -> None:
         if self._connection is not None:
@@ -113,6 +119,9 @@ class TimeAwsConnectivityBridge:
         LOGGER.info("Connected time AWS connectivity bridge endpoint=%s", self._config.endpoint)
 
     async def close(self) -> None:
+        for subscription in self._local_subscriptions:
+            _close_resource(subscription)
+        self._local_subscriptions.clear()
         if self._connection is None:
             return
         try:
@@ -219,6 +228,12 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _close_resource(resource: object) -> None:
+    close = getattr(resource, "close", None)
+    if callable(close):
+        close()
+
+
 def main() -> None:
     args = _parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -247,6 +262,7 @@ def main() -> None:
         async def _bridge_loop() -> None:
             while not shutdown_event.is_set():
                 bridge: TimeAwsConnectivityBridge | None = None
+                bus: GreengrassLocalPubSub | None = None
                 try:
                     aws_runtime = build_aws_runtime(
                         region_name=aws_region,
@@ -258,9 +274,10 @@ def main() -> None:
                         client_id=args.client_id,
                         adapter_id=args.adapter_id,
                     )
+                    bus = GreengrassLocalPubSub()
                     bridge = TimeAwsConnectivityBridge(
                         config,
-                        bus=GreengrassLocalPubSub(),
+                        bus=bus,
                         aws_runtime=aws_runtime,
                     )
                     await bridge.start()
@@ -282,6 +299,8 @@ def main() -> None:
                 finally:
                     if bridge is not None:
                         await bridge.close()
+                    if bus is not None:
+                        bus.close()
 
         bridge_task = asyncio.create_task(_bridge_loop())
         shutdown_task = asyncio.create_task(shutdown_event.wait())

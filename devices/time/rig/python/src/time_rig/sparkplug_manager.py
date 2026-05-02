@@ -119,6 +119,7 @@ class TimeSparkplugManager:
         self._node_seq = 0
         self._node_born = False
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._state_subscription: object | None = None
 
     @property
     def devices(self) -> dict[str, TimeManagedDevice]:
@@ -191,6 +192,9 @@ class TimeSparkplugManager:
             if device.born:
                 await self.publish_device_death(device)
         await self.publish_node_death()
+        if self._state_subscription is not None:
+            _close_resource(self._state_subscription)
+            self._state_subscription = None
         if self._connection is None:
             return
         try:
@@ -200,7 +204,11 @@ class TimeSparkplugManager:
 
     async def start(self) -> None:
         await self.connect()
-        await self._bus.subscribe(f"{STATE_TOPIC_PREFIX}/+", self._handle_state_message)
+        if self._state_subscription is None:
+            self._state_subscription = await self._bus.subscribe(
+                f"{STATE_TOPIC_PREFIX}/+",
+                self._handle_state_message,
+            )
         await self.publish_node_birth()
         await self.publish_inventory()
 
@@ -450,6 +458,12 @@ async def run_time_sparkplug_manager(
         await manager.close()
 
 
+def _close_resource(resource: object) -> None:
+    close = getattr(resource, "close", None)
+    if callable(close):
+        close()
+
+
 def _env_text(name: str, default: str) -> str:
     value = os.getenv(name, "").strip()
     return value or default
@@ -512,11 +526,15 @@ def main() -> None:
                         client_id=args.client_id,
                         reconnect_delay=args.reconnect_delay,
                     )
-                    await run_time_sparkplug_manager(
-                        config=config,
-                        aws_runtime=aws_runtime,
-                        bus=GreengrassLocalPubSub(),
-                    )
+                    bus = GreengrassLocalPubSub()
+                    try:
+                        await run_time_sparkplug_manager(
+                            config=config,
+                            aws_runtime=aws_runtime,
+                            bus=bus,
+                        )
+                    finally:
+                        bus.close()
                 except asyncio.CancelledError:
                     raise
                 except Exception:

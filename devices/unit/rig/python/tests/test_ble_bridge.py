@@ -801,8 +801,10 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertNotIn("python\" -m pip download", justfile)
         self.assertIn('sparkplug_component="dev.txing.device.unit.SparkplugManager"', justfile)
         self.assertIn('connectivity_component="dev.txing.device.unit.ConnectivityBle"', justfile)
+        self.assertIn('legacy_components=(dev.txing.rig.SparkplugManager dev.txing.rig.ConnectivityBle)', justfile)
         self.assertIn('--add-component "$sparkplug_component=$resolved_component_version"', justfile)
         self.assertIn('--add-component "$connectivity_component=$resolved_component_version"', justfile)
+        self.assertIn('--remove-component "$legacy_component"', justfile)
 
     def test_greengrass_templates_are_rig_local(self) -> None:
         repo_root = Path(__file__).resolve().parents[5]

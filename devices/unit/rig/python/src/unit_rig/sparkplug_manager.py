@@ -448,6 +448,7 @@ class SparkplugManager:
         self._command_seq = 0
         self._node_seq = 0
         self._node_born = False
+        self._state_subscription: object | None = None
 
     @property
     def devices(self) -> Mapping[str, ManagedDeviceState]:
@@ -832,7 +833,12 @@ class SparkplugManager:
         )
 
     async def subscribe_local_state(self) -> None:
-        await self._bus.subscribe(f"{STATE_TOPIC_PREFIX}/+", self._handle_state_message)
+        if self._state_subscription is not None:
+            return
+        self._state_subscription = await self._bus.subscribe(
+            f"{STATE_TOPIC_PREFIX}/+",
+            self._handle_state_message,
+        )
 
     async def _handle_state_message(self, topic: str, payload: bytes) -> None:
         thing_name = parse_state_topic(topic)
@@ -853,6 +859,9 @@ class SparkplugManager:
             if device.mqtt_session is not None:
                 await device.mqtt_session.teardown(explicit_death=True)
         await self.publish_node_death()
+        if self._state_subscription is not None:
+            _close_resource(self._state_subscription)
+            self._state_subscription = None
         await self._cloud_client.disconnect()
 
 
@@ -891,24 +900,23 @@ async def run_sparkplug_manager(
         config.sparkplug_edge_node_id,
         len(registrations),
     )
-    await manager.subscribe_local_state()
-    await manager.set_registrations(registrations, snapshots=snapshots)
-    await manager.publish_node_birth()
     inventory_task: asyncio.Task[None] | None = None
-    if inventory_publish_interval > 0:
-        inventory_task = asyncio.create_task(
-            _republish_inventory_loop(manager, interval=inventory_publish_interval)
-        )
     try:
+        await manager.subscribe_local_state()
+        await manager.set_registrations(registrations, snapshots=snapshots)
+        await manager.publish_node_birth()
+        if inventory_publish_interval > 0:
+            inventory_task = asyncio.create_task(
+                _republish_inventory_loop(manager, interval=inventory_publish_interval)
+            )
         while True:
             updates = await cloud_client.wait_for_updates(timeout_seconds=None)
             await manager.apply_cloud_updates(updates)
-    except asyncio.CancelledError:
+    finally:
         if inventory_task is not None:
             inventory_task.cancel()
             await asyncio.gather(inventory_task, return_exceptions=True)
         await manager.shutdown()
-        raise
 
 
 async def _republish_inventory_loop(
@@ -965,6 +973,12 @@ def _parse_args() -> argparse.Namespace:
         default=DEFAULT_RECONNECT_DELAY,
     )
     return parser.parse_args()
+
+
+def _close_resource(resource: object) -> None:
+    close = getattr(resource, "close", None)
+    if callable(close):
+        close()
 
 
 def _build_bridge_config(
@@ -1029,11 +1043,15 @@ def main() -> None:
                         aws_runtime=aws_runtime,
                         aws_region=aws_region,
                     )
-                    await run_sparkplug_manager(
-                        config=config,
-                        aws_runtime=aws_runtime,
-                        bus=GreengrassLocalPubSub(),
-                    )
+                    bus = GreengrassLocalPubSub()
+                    try:
+                        await run_sparkplug_manager(
+                            config=config,
+                            aws_runtime=aws_runtime,
+                            bus=bus,
+                        )
+                    finally:
+                        bus.close()
                 except asyncio.CancelledError:
                     raise
                 except Exception:
