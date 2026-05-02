@@ -27,6 +27,17 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("Sid: DeviceVideoTopics", template)
         self.assertIn("iot:RetainPublish", template)
 
+    def test_rig_time_service_topics_are_authorized(self) -> None:
+        template = _template_text()
+
+        self.assertIn("Sid: RigTimeServiceTopics", template)
+        self.assertIn("Sid: RigTimeServiceTopicFilters", template)
+        self.assertIn("topic/txings/*/time/command", template)
+        self.assertIn("topic/txings/*/time/state", template)
+        self.assertIn("topic/txings/*/time/command-result", template)
+        self.assertIn("topicfilter/txings/*/time/state", template)
+        self.assertIn("topicfilter/txings/*/time/command-result", template)
+
     def test_legacy_raw_cmd_vel_topic_permissions_are_removed(self) -> None:
         template = _template_text()
 

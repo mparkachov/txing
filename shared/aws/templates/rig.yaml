@@ -60,6 +60,22 @@ Resources:
               - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/txings/*/mcp/status
               - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/txings/*/video/descriptor
               - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/txings/*/video/status
+          - Sid: RigTimeServiceTopics
+            Effect: Allow
+            Action:
+              - iot:Publish
+              - iot:RetainPublish
+              - iot:Receive
+            Resource:
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/*/time/command
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/*/time/state
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/*/time/command-result
+          - Sid: RigTimeServiceTopicFilters
+            Effect: Allow
+            Action: iot:Subscribe
+            Resource:
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/txings/*/time/state
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/txings/*/time/command-result
           - Sid: RigThingShadowApi
             Effect: Allow
             Action:
