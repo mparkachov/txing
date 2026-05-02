@@ -464,6 +464,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--sparkplug-edge-node-id", default=_env_text("SPARKPLUG_EDGE_NODE_ID", DEFAULT_RIG_NAME))
     parser.add_argument("--client-id", default=os.getenv("CLIENT_ID", "time-sparkplug-manager"))
     parser.add_argument("--iot-endpoint", default=os.getenv("AWS_IOT_ENDPOINT", ""))
+    parser.add_argument("--reconnect-delay", type=float, default=DEFAULT_RECONNECT_DELAY)
     return parser.parse_args()
 
 
@@ -479,15 +480,6 @@ def main() -> None:
         print("time-rig-sparkplug-manager start failed: AWS region is not configured", flush=True)
         raise SystemExit(2)
     aws_runtime = build_aws_runtime(region_name=aws_region, iot_data_endpoint=args.iot_endpoint or None)
-    config = TimeSparkplugConfig(
-        endpoint=aws_runtime.iot_data_endpoint(),
-        aws_region=aws_region,
-        rig_name=args.rig_name,
-        sparkplug_group_id=args.sparkplug_group_id,
-        sparkplug_edge_node_id=args.sparkplug_edge_node_id,
-        client_id=args.client_id,
-    )
-
     async def _runner() -> None:
         loop = asyncio.get_running_loop()
         shutdown_event = asyncio.Event()
@@ -500,13 +492,40 @@ def main() -> None:
                 loop.add_signal_handler(sig, _request_shutdown)
             except NotImplementedError:
                 break
-        task = asyncio.create_task(
-            run_time_sparkplug_manager(
-                config=config,
-                aws_runtime=aws_runtime,
-                bus=GreengrassLocalPubSub(),
-            )
-        )
+
+        async def _manager_loop() -> None:
+            while not shutdown_event.is_set():
+                try:
+                    config = TimeSparkplugConfig(
+                        endpoint=aws_runtime.iot_data_endpoint(),
+                        aws_region=aws_region,
+                        rig_name=args.rig_name,
+                        sparkplug_group_id=args.sparkplug_group_id,
+                        sparkplug_edge_node_id=args.sparkplug_edge_node_id,
+                        client_id=args.client_id,
+                        reconnect_delay=args.reconnect_delay,
+                    )
+                    await run_time_sparkplug_manager(
+                        config=config,
+                        aws_runtime=aws_runtime,
+                        bus=GreengrassLocalPubSub(),
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    LOGGER.exception(
+                        "Time Sparkplug manager failed; retrying in %.1f seconds",
+                        args.reconnect_delay,
+                    )
+                    try:
+                        await asyncio.wait_for(
+                            shutdown_event.wait(),
+                            timeout=args.reconnect_delay,
+                        )
+                    except TimeoutError:
+                        continue
+
+        task = asyncio.create_task(_manager_loop())
         shutdown_task = asyncio.create_task(shutdown_event.wait())
         done, pending = await asyncio.wait({task, shutdown_task}, return_when=asyncio.FIRST_COMPLETED)
         for pending_task in pending:
