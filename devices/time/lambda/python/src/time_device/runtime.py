@@ -4,6 +4,7 @@ import base64
 from dataclasses import dataclass
 from datetime import UTC, datetime
 import json
+import logging
 import os
 from typing import Any, Mapping
 
@@ -29,6 +30,10 @@ COMMAND_STATUS_FAILED = "failed"
 DEFAULT_ACTIVE_TTL_MS = 300_000
 DEFAULT_LEASE_TTL_MS = 5_000
 DEFAULT_SERVER_VERSION = "0.5.0"
+TIME_DEVICE_SEARCH_QUERY = "thingTypeName:time AND attributes.kind:deviceType"
+TIME_DEVICE_SEARCH_PAGE_SIZE = 100
+
+LOGGER = logging.getLogger(__name__)
 
 
 def utc_now_ms() -> int:
@@ -619,15 +624,112 @@ def _env_int(name: str, default: int) -> int:
     return int(value)
 
 
-def build_runtime_from_env() -> TimeDeviceRuntime:
+def _region_name_from_env() -> str | None:
+    return os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or None
+
+
+def _require_boto3() -> Any:
     if boto3 is None:
         raise RuntimeError("boto3 is required")
-    thing_name = os.getenv("THING_NAME", "clock").strip() or "clock"
-    region_name = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or None
-    iot_data_client = boto3.client("iot-data", region_name=region_name)
+    return boto3
+
+
+def build_iot_client_from_env() -> Any:
+    return _require_boto3().client("iot", region_name=_region_name_from_env())
+
+
+def build_iot_data_client_from_env() -> Any:
+    return _require_boto3().client("iot-data", region_name=_region_name_from_env())
+
+
+def build_runtime_from_env(
+    *,
+    thing_name: str,
+    iot_data_client: Any | None = None,
+) -> TimeDeviceRuntime:
+    if iot_data_client is None:
+        iot_data_client = build_iot_data_client_from_env()
     return TimeDeviceRuntime(
         thing_name=thing_name,
         iot_data_client=iot_data_client,
+        active_ttl_ms=_env_int("ACTIVE_TTL_MS", DEFAULT_ACTIVE_TTL_MS),
+        server_version=os.getenv("SERVER_VERSION", DEFAULT_SERVER_VERSION),
+    )
+
+
+def discover_time_thing_names(iot_client: Any) -> list[str]:
+    thing_names: list[str] = []
+    next_token: str | None = None
+    while True:
+        request: dict[str, Any] = {
+            "indexName": "AWS_Things",
+            "queryString": TIME_DEVICE_SEARCH_QUERY,
+            "maxResults": TIME_DEVICE_SEARCH_PAGE_SIZE,
+        }
+        if next_token:
+            request["nextToken"] = next_token
+        response = iot_client.search_index(**request)
+        things = response.get("things", [])
+        if not isinstance(things, list):
+            things = []
+        for thing in things:
+            if not isinstance(thing, Mapping):
+                continue
+            thing_name = thing.get("thingName")
+            if isinstance(thing_name, str) and thing_name.strip():
+                thing_names.append(thing_name.strip())
+        token = response.get("nextToken")
+        next_token = token.strip() if isinstance(token, str) else None
+        if not next_token:
+            return thing_names
+
+
+def handle_scheduled_wake_for_time_devices(
+    event: Mapping[str, Any] | None,
+    *,
+    iot_client: Any,
+    iot_data_client: Any,
+    active_ttl_ms: int,
+    server_version: str,
+) -> dict[str, Any]:
+    thing_names = discover_time_thing_names(iot_client)
+    processed: list[dict[str, Any]] = []
+    failed: list[dict[str, str]] = []
+    for thing_name in thing_names:
+        runtime = TimeDeviceRuntime(
+            thing_name=thing_name,
+            iot_data_client=iot_data_client,
+            active_ttl_ms=active_ttl_ms,
+            server_version=server_version,
+        )
+        try:
+            processed.append(runtime.handle_scheduled_wake(event))
+        except Exception as err:
+            LOGGER.exception("time scheduled wake failed thingName=%s", thing_name)
+            failed.append(
+                {
+                    "thingName": thing_name,
+                    "errorType": type(err).__name__,
+                    "error": str(err),
+                }
+            )
+    return {
+        "eventType": "schedule",
+        "thingCount": len(thing_names),
+        "processedCount": len(processed),
+        "failedCount": len(failed),
+        "processed": processed,
+        "failed": failed,
+    }
+
+
+def handle_scheduled_wake_for_time_devices_from_env(
+    event: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    return handle_scheduled_wake_for_time_devices(
+        event,
+        iot_client=build_iot_client_from_env(),
+        iot_data_client=build_iot_data_client_from_env(),
         active_ttl_ms=_env_int("ACTIVE_TTL_MS", DEFAULT_ACTIVE_TTL_MS),
         server_version=os.getenv("SERVER_VERSION", DEFAULT_SERVER_VERSION),
     )

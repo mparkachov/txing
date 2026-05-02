@@ -4,6 +4,12 @@ Description: txing time device type catalog for cloud rigs.
 Parameters:
   TypeCatalogServiceToken:
     Type: String
+  TimeRuntimeScheduleExpression:
+    Type: String
+    Default: rate(1 minute)
+  TimeRuntimeActiveTtlMs:
+    Type: Number
+    Default: 300000
 
 Resources:
   TimeTypeCatalog:
@@ -40,3 +46,120 @@ Resources:
         shadows/time/default: aws/default-time-shadow.json
         shadows/time/defaultPayload: '{"state":{"reported":{"currentTimeIso":null,"mode":"sleep","activeUntilMs":null,"lastCommandId":null,"observedAtMs":0,"seq":0}}}'
         web/adapter: web/time-adapter.tsx
+
+  TimeRuntimeLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${AWS::StackName}-time-runtime
+      RetentionInDays: 14
+
+  TimeRuntimeFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: Executes the generic txing time device runtime for all time things.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: time-runtime
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: TimeRuntimeLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !GetAtt TimeRuntimeLogGroup.Arn
+                  - !Sub ${TimeRuntimeLogGroup.Arn}:*
+              - Sid: TimeRuntimeTopics
+                Effect: Allow
+                Action:
+                  - iot:Publish
+                  - iot:RetainPublish
+                  - iot:GetRetainedMessage
+                Resource:
+                  - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/*/time/*
+                  - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/*/mcp/*
+              - Sid: TimeRuntimeShadows
+                Effect: Allow
+                Action:
+                  - iot:GetThingShadow
+                  - iot:UpdateThingShadow
+                Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/*
+              - Sid: TimeRuntimeFleetIndexing
+                Effect: Allow
+                Action: iot:SearchIndex
+                Resource: "*"
+              - Sid: TimeRuntimeDescribeEndpoint
+                Effect: Allow
+                Action: iot:DescribeEndpoint
+                Resource: "*"
+
+  TimeRuntimeFunction:
+    Type: AWS::Lambda::Function
+    DependsOn:
+      - TimeRuntimeLogGroup
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-time-runtime
+      Description: Generic txing time device runtime for scheduled state projection and MCP requests.
+      Runtime: python3.12
+      Handler: time_device.lambda_handler.lambda_handler
+      Code: ../../../../devices/time/lambda/python/src
+      Role: !GetAtt TimeRuntimeFunctionRole.Arn
+      Timeout: 300
+      MemorySize: 128
+      Environment:
+        Variables:
+          ACTIVE_TTL_MS: !Ref TimeRuntimeActiveTtlMs
+          SERVER_VERSION: "0.5.0"
+
+  TimeRuntimeScheduleRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Wake every registered time device once per minute.
+      ScheduleExpression: !Ref TimeRuntimeScheduleExpression
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt TimeRuntimeFunction.Arn
+          Id: TimeRuntimeFunction
+
+  TimeRuntimeSchedulePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref TimeRuntimeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt TimeRuntimeScheduleRule.Arn
+
+  TimeRuntimeMcpTopicRule:
+    Type: AWS::IoT::TopicRule
+    Properties:
+      TopicRulePayload:
+        AwsIotSqlVersion: "2016-03-23"
+        RuleDisabled: false
+        Sql: SELECT topic() AS mqttTopic, * FROM 'txings/+/mcp/session/+/c2s'
+        Actions:
+          - Lambda:
+              FunctionArn: !GetAtt TimeRuntimeFunction.Arn
+
+  TimeRuntimeMcpRulePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref TimeRuntimeFunction
+      Principal: iot.amazonaws.com
+      SourceArn: !GetAtt TimeRuntimeMcpTopicRule.Arn
+
+Outputs:
+  TimeRuntimeFunctionName:
+    Value: !Ref TimeRuntimeFunction
+  TimeRuntimeScheduleRuleName:
+    Value: !Ref TimeRuntimeScheduleRule
+  TimeRuntimeMcpTopicRuleArn:
+    Value: !GetAtt TimeRuntimeMcpTopicRule.Arn

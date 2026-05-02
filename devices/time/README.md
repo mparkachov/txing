@@ -33,8 +33,11 @@ just aws::device-deploy <rig-id> time clock
 Enrollment checks the `/txing/town/cloud/time/kind` compatibility leaf before
 creating the device thing.
 
-The Lambda runtime is deployed separately with:
+The time Lambda runtime is generic and owned by the shared `cloud-time` type
+stack. Deploy or update it with the shared AWS stack:
 
 ```sh
-just time::deploy-lambda <thing-id>
+just aws::deploy
 ```
+
+Existing per-device time Lambda stacks are legacy cleanup only.

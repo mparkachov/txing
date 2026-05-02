@@ -8,11 +8,13 @@ from unittest.mock import patch
 from time_device.runtime import (
     TIME_MODE_ACTIVE,
     TIME_MODE_SLEEP,
+    TIME_DEVICE_SEARCH_QUERY,
     TimeDeviceRuntime,
     build_mcp_session_s2c_topic,
     build_time_command_result_topic,
     build_time_command_topic,
     build_time_state_topic,
+    handle_scheduled_wake_for_time_devices,
 )
 
 
@@ -52,6 +54,17 @@ class FakeIotDataClient:
             reported = state["reported"]
             assert isinstance(reported, dict)
             self.time_reported = dict(reported)
+
+
+class FakeIotClient:
+    def __init__(self, pages: list[dict[str, object]]) -> None:
+        self.pages = pages
+        self.requests: list[dict[str, object]] = []
+
+    def search_index(self, **kwargs: object) -> dict[str, object]:
+        self.requests.append(kwargs)
+        page = len(self.requests) - 1
+        return self.pages[page]
 
 
 def decode_payload(value: object) -> dict[str, object]:
@@ -207,6 +220,72 @@ class TimeDeviceRuntimeTests(unittest.TestCase):
             item for item in iot.published if item["topic"] == build_time_state_topic("clock")
         )
         self.assertFalse(decode_payload(state_publish["payload"])["mcpAvailable"])
+
+    def test_scheduled_wake_processes_paginated_time_things(self) -> None:
+        iot = FakeIotClient(
+            [
+                {
+                    "things": [{"thingName": "clock-a"}],
+                    "nextToken": "page-2",
+                },
+                {
+                    "things": [{"thingName": "clock-b"}],
+                },
+            ]
+        )
+        iot_data = FakeIotDataClient()
+
+        with patch("time_device.runtime.utc_now_ms", return_value=1714380000000):
+            result = handle_scheduled_wake_for_time_devices(
+                {},
+                iot_client=iot,
+                iot_data_client=iot_data,
+                active_ttl_ms=300_000,
+                server_version="test",
+            )
+
+        self.assertEqual(result["thingCount"], 2)
+        self.assertEqual(result["processedCount"], 2)
+        self.assertEqual(result["failedCount"], 0)
+        self.assertEqual(iot.requests[0]["queryString"], TIME_DEVICE_SEARCH_QUERY)
+        self.assertEqual(iot.requests[1]["nextToken"], "page-2")
+        self.assertTrue(
+            any(item["topic"] == build_time_state_topic("clock-a") for item in iot_data.published)
+        )
+        self.assertTrue(
+            any(item["topic"] == build_time_state_topic("clock-b") for item in iot_data.published)
+        )
+
+    def test_scheduled_wake_reports_one_device_failure_and_continues(self) -> None:
+        iot = FakeIotClient(
+            [
+                {
+                    "things": [{"thingName": "clock-a"}, {"thingName": "clock-b"}],
+                }
+            ]
+        )
+
+        with patch.object(
+            TimeDeviceRuntime,
+            "handle_scheduled_wake",
+            autospec=True,
+            side_effect=[RuntimeError("boom"), {"thingName": "clock-b", "mode": TIME_MODE_SLEEP}],
+        ):
+            with self.assertLogs("time_device.runtime", level="ERROR"):
+                result = handle_scheduled_wake_for_time_devices(
+                    {},
+                    iot_client=iot,
+                    iot_data_client=object(),
+                    active_ttl_ms=300_000,
+                    server_version="test",
+                )
+
+        self.assertEqual(result["thingCount"], 2)
+        self.assertEqual(result["processedCount"], 1)
+        self.assertEqual(result["failedCount"], 1)
+        self.assertEqual(result["processed"][0]["thingName"], "clock-b")
+        self.assertEqual(result["failed"][0]["thingName"], "clock-a")
+        self.assertEqual(result["failed"][0]["errorType"], "RuntimeError")
 
 
 if __name__ == "__main__":

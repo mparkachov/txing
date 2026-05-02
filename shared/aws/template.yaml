@@ -165,3 +165,9 @@ Outputs:
     Value: !GetAtt EnlistLayer.Outputs.EnlistFunctionName
   EnlistFunctionArn:
     Value: !GetAtt EnlistLayer.Outputs.EnlistFunctionArn
+  TimeRuntimeFunctionName:
+    Value: !GetAtt CloudTimeTypeCatalog.Outputs.TimeRuntimeFunctionName
+  TimeRuntimeScheduleRuleName:
+    Value: !GetAtt CloudTimeTypeCatalog.Outputs.TimeRuntimeScheduleRuleName
+  TimeRuntimeMcpTopicRuleArn:
+    Value: !GetAtt CloudTimeTypeCatalog.Outputs.TimeRuntimeMcpTopicRuleArn
