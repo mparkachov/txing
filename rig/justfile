@@ -15,6 +15,8 @@ greengrass_lite_target := "greengrass-lite.target"
 greengrass_core_units := "ggl.core.ggconfigd.service ggl.core.ggipcd.service ggl.core.iotcored.service ggl.core.tesd.service ggl.aws.greengrass.TokenExchangeService.service"
 unit_rig_component_units := "ggl.dev.txing.device.unit.SparkplugManager.service ggl.dev.txing.device.unit.ConnectivityBle.service"
 aws_rig_component_units := "ggl.dev.txing.device.time.SparkplugManager.service ggl.dev.txing.device.time.AwsConnectivity.service"
+legacy_unit_rig_component_units := "ggl.dev.txing.rig.SparkplugManager.service ggl.dev.txing.rig.ConnectivityBle.service"
+legacy_unit_rig_components := "dev.txing.rig.SparkplugManager dev.txing.rig.ConnectivityBle"
 default_greengrass_lite_repository := env_var_or_default("TXING_RIG_GREENGRASS_LITE_REPOSITORY", "https://github.com/aws-greengrass/aws-greengrass-lite.git")
 default_greengrass_lite_ref := env_var_or_default("TXING_RIG_GREENGRASS_LITE_REF", "main")
 thing_name := "unit-local"
@@ -669,7 +671,8 @@ aws_shared_credentials_file := ""
         ;;
     esac
     stop_units=()
-    for unit in "${component_units[@]}"; do
+    legacy_units=({{legacy_unit_rig_component_units}})
+    for unit in "${component_units[@]}" "${legacy_units[@]}"; do
       if unit_exists "$unit"; then
         stop_units+=("$unit")
       fi
@@ -680,7 +683,7 @@ aws_shared_credentials_file := ""
     sudo systemctl stop "{{greengrass_lite_target}}"
     core_units=({{greengrass_core_units}})
     status_units=("{{greengrass_lite_target}}")
-    for unit in "${core_units[@]}" "${component_units[@]}"; do
+    for unit in "${core_units[@]}" "${component_units[@]}" "${legacy_units[@]}"; do
       if unit_exists "$unit"; then
         status_units+=("$unit")
       fi
@@ -728,7 +731,8 @@ aws_shared_credentials_file := ""
     esac
     core_units=({{greengrass_core_units}})
     log_units=("{{greengrass_lite_target}}")
-    for unit in "${core_units[@]}" "${component_units[@]}"; do
+    legacy_units=({{legacy_unit_rig_component_units}})
+    for unit in "${core_units[@]}" "${component_units[@]}" "${legacy_units[@]}"; do
       if unit_exists "$unit"; then
         log_units+=("$unit")
       fi
@@ -754,6 +758,40 @@ aws_shared_credentials_file := ""
     printf '  %s\n' "${log_units[@]}"
     sudo journalctl "${journal_flags[@]}" "${journal_unit_args[@]}"
 
+@remove-legacy-components:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! systemctl cat "{{greengrass_lite_target}}" >/dev/null 2>&1; then \
+        echo "Greengrass Lite target {{greengrass_lite_target}} is not installed. Run 'just rig::install-service' first." >&2; \
+        exit 1; \
+    fi
+    ggl_cli="$(command -v ggl-cli || true)"
+    if [ -z "$ggl_cli" ] && [ -x /usr/local/bin/ggl-cli ]; then \
+        ggl_cli=/usr/local/bin/ggl-cli; \
+    fi
+    if [ -z "$ggl_cli" ]; then \
+        echo "Missing ggl-cli. Run 'just rig::install-service' to install Greengrass Lite." >&2; \
+        exit 1; \
+    fi
+    unit_exists() {
+      systemctl cat "$1" >/dev/null 2>&1
+    }
+    legacy_units=({{legacy_unit_rig_component_units}})
+    stop_units=()
+    for unit in "${legacy_units[@]}"; do
+      if unit_exists "$unit"; then
+        stop_units+=("$unit")
+      fi
+    done
+    if [ "${#stop_units[@]}" -gt 0 ]; then
+      sudo systemctl stop "${stop_units[@]}" || true
+    fi
+    remove_args=()
+    for legacy_component in {{legacy_unit_rig_components}}; do
+      remove_args+=(--remove-component "$legacy_component")
+    done
+    sudo "$ggl_cli" deploy "${remove_args[@]}"
+
 @deploy rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' component_version='' adapter_id='ble-main' name_fragment='txing' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file: build
     #!/usr/bin/env bash
     set -euo pipefail
@@ -767,7 +805,7 @@ aws_shared_credentials_file := ""
       case "$positional_arg" in
         *=*)
           echo "rig::deploy arguments are positional; '$positional_arg' was treated as an argument value, not a named option." >&2
-          echo "Use TXING_RIG_COMPONENT_VERSION=0.5.1 just rig::deploy, or pass positional args as: just rig::deploy '' '' '' 0.5.1" >&2
+          echo "Component version is generated automatically; set TXING_RIG_COMPONENT_VERSION only when you need to pin it for debugging." >&2
           exit 1
           ;;
       esac
@@ -807,9 +845,32 @@ aws_shared_credentials_file := ""
     if [ -n "{{sparkplug_edge_node_id}}" ]; then \
         sparkplug_edge_node_id="{{sparkplug_edge_node_id}}"; \
     fi; \
-    resolved_component_version="${TXING_RIG_COMPONENT_VERSION:-{{component_version}}}"
-    if [ -z "$resolved_component_version" ]; then \
-        resolved_component_version="0.5.0"; \
+    explicit_component_version="${TXING_RIG_COMPONENT_VERSION:-{{component_version}}}"
+    if [ -n "$explicit_component_version" ]; then \
+        resolved_component_version="$explicit_component_version"; \
+    else
+        git_short_sha="$(git -C "{{project_root}}" rev-parse --short=12 HEAD 2>/dev/null || true)"
+        if [ -n "$git_short_sha" ]; then
+            git_status="$(git -C "{{project_root}}" status --porcelain --untracked-files=all 2>/dev/null || true)"
+            dirty_suffix=""
+            if [ -n "$git_status" ]; then
+                dirty_hash="$(
+                    {
+                        printf '%s\n' "$git_status"
+                        git -C "{{project_root}}" diff --binary --ignore-submodules -- 2>/dev/null || true
+                        git -C "{{project_root}}" diff --cached --binary --ignore-submodules -- 2>/dev/null || true
+                        while IFS= read -r -d '' untracked_file; do
+                            printf 'untracked:%s\n' "$untracked_file"
+                            git -C "{{project_root}}" hash-object -- "$untracked_file" 2>/dev/null || true
+                        done < <(git -C "{{project_root}}" ls-files --others --exclude-standard -z 2>/dev/null || true)
+                    } | git -C "{{project_root}}" hash-object --stdin | cut -c1-12
+                )"
+                dirty_suffix=".d$dirty_hash"
+            fi
+            resolved_component_version="0.5.0-local.g$git_short_sha$dirty_suffix"
+        else
+            resolved_component_version="0.5.0-local.nogit.$(date -u +%s)"
+        fi
     fi
     case "$selected_rig_type" in
       raspi)

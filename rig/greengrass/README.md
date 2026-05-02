@@ -72,9 +72,12 @@ just rig::deploy <rig-id>
 ```
 
 `deploy` depends on `rig::build`, so a separate build step is not
-required for the normal edit/pull/deploy loop.
+required for the normal edit/pull/deploy loop. The recipe generates a local
+Greengrass component version from the current short Git SHA, adding a dirty-tree
+hash when local changes are present, so checked-out code is deployed without
+manually changing version numbers.
 
-To force a new Greengrass component version from local artifacts:
+To pin a Greengrass component version while debugging:
 
 ```bash
 TXING_RIG_COMPONENT_VERSION=0.5.1 just rig::deploy <rig-id>
