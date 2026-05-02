@@ -18,6 +18,8 @@ class TimeDeviceTemplateTests(unittest.TestCase):
         self.assertIn("txings/${ThingName}/mcp/session/+/c2s", template)
         self.assertIn("iot:GetRetainedMessage", template)
         self.assertIn("iot:GetThingShadow", template)
+        self.assertIn("thing/${ThingName}/time", template)
+        self.assertIn("thing/${ThingName}/mcp", template)
         self.assertNotIn("AWS::DynamoDB::Table", template)
         self.assertNotIn("dynamodb:", template)
 

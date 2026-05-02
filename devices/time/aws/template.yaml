@@ -60,7 +60,10 @@ Resources:
                 Action:
                   - iot:UpdateThingShadow
                   - iot:GetThingShadow
-                Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/${ThingName}
+                Resource:
+                  - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/${ThingName}
+                  - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/${ThingName}/time
+                  - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/${ThingName}/mcp
 
   TimeDeviceFunction:
     Type: AWS::Serverless::Function
