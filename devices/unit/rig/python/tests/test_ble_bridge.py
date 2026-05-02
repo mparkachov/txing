@@ -776,6 +776,8 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertIn("Greengrass Lite target {{greengrass_lite_target}} is not installed", justfile)
         self.assertIn("Starting installed Greengrass Lite target {{greengrass_lite_target}} before deploy", justfile)
         self.assertIn("wait_active_unit() {", justfile)
+        self.assertIn("wait_unit_present() {", justfile)
+        self.assertIn("reset_failed_if_present() {", justfile)
         self.assertIn("ggl-cli", justfile)
         self.assertIn('explicit_component_version="{{component_version}}"', justfile)
         self.assertNotIn("TXING_RIG_COMPONENT_VERSION", justfile)
@@ -820,6 +822,9 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertIn('--add-component "$connectivity_component=$resolved_component_version"', justfile)
         self.assertIn('--remove-component "$legacy_component"', justfile)
         self.assertIn('deployed_units=("ggl.$sparkplug_component.service" "ggl.$connectivity_component.service")', justfile)
+        self.assertIn('if ! wait_unit_present "$deployed_unit"; then', justfile)
+        self.assertIn("was not loaded after waiting for Greengrass deployment", justfile)
+        self.assertIn('reset_failed_if_present "$deployed_unit"', justfile)
         self.assertIn('sudo systemctl restart "$deployed_unit"', justfile)
         self.assertIn("did not become active", justfile)
 

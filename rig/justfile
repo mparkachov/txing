@@ -837,6 +837,26 @@ aws_shared_credentials_file := ""
       done
       return 1
     }
+    wait_unit_present() {
+      local unit="$1"
+      local attempts=60
+      local attempt=0
+      while [ "$attempt" -lt "$attempts" ]; do
+        sudo systemctl daemon-reload || true
+        if systemctl cat "$unit" >/dev/null 2>&1; then
+          return 0
+        fi
+        attempt=$((attempt + 1))
+        sleep 1
+      done
+      return 1
+    }
+    reset_failed_if_present() {
+      local unit="$1"
+      if systemctl cat "$unit" >/dev/null 2>&1; then
+        sudo systemctl reset-failed "$unit" || true
+      fi
+    }
     if ! systemctl is-active --quiet "{{greengrass_lite_target}}"; then \
         echo "Starting installed Greengrass Lite target {{greengrass_lite_target}} before deploy."; \
         sudo systemctl start "{{greengrass_lite_target}}"; \
@@ -1089,18 +1109,19 @@ aws_shared_credentials_file := ""
     sudo "$ggl_cli" deploy "${deploy_args[@]}"
     deployed_units=("ggl.$sparkplug_component.service" "ggl.$connectivity_component.service")
     sudo systemctl daemon-reload || true
-    sudo systemctl reset-failed "{{greengrass_lite_target}}" "${deployed_units[@]}" || true
+    reset_failed_if_present "{{greengrass_lite_target}}"
     if ! systemctl is-active --quiet "{{greengrass_lite_target}}"; then
       sudo systemctl start "{{greengrass_lite_target}}"
       wait_active_unit "{{greengrass_lite_target}}"
     fi
     activation_failures=0
     for deployed_unit in "${deployed_units[@]}"; do
-      if ! systemctl cat "$deployed_unit" >/dev/null 2>&1; then
-        echo "warning: expected deployed unit $deployed_unit is not present yet." >&2
+      if ! wait_unit_present "$deployed_unit"; then
+        echo "warning: expected deployed unit $deployed_unit was not loaded after waiting for Greengrass deployment." >&2
         activation_failures=$((activation_failures + 1))
         continue
       fi
+      reset_failed_if_present "$deployed_unit"
       sudo systemctl restart "$deployed_unit"
       if ! wait_active_unit "$deployed_unit"; then
         echo "warning: deployed unit $deployed_unit did not become active." >&2
