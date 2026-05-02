@@ -202,6 +202,16 @@ because Greengrass Lite copies artifacts asynchronously. It depends on
 `just rig::deploy`. A Greengrass service restart alone restarts the previously
 deployed component artifact.
 
+When you need a new Greengrass component version for a local redeploy, set the
+version as an environment variable before the recipe:
+
+```bash
+TXING_RIG_COMPONENT_VERSION=0.5.1 just rig::deploy
+```
+
+Do not run `just rig::deploy component_version=0.5.1`; `just` treats arguments
+after a recipe as positional values.
+
 Inspect Greengrass service health with:
 
 ```bash

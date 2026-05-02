@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 import unittest
 
 from rig.connectivity_protocol import (
@@ -160,6 +161,18 @@ class TimeAwsConnectivityBridgeTests(unittest.TestCase):
 
         self.assertEqual(result.command_id, "cmd-1")
         self.assertEqual(result.status, "succeeded")
+
+    def test_component_entrypoint_retries_startup_failures(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[1]
+            / "src"
+            / "time_rig"
+            / "aws_connectivity.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('parser.add_argument("--reconnect-delay"', source)
+        self.assertIn("while not shutdown_event.is_set():", source)
+        self.assertIn("Time AWS connectivity bridge failed; retrying", source)
 
 
 if __name__ == "__main__":

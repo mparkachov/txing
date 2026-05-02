@@ -127,4 +127,13 @@ the next deploy because Greengrass Lite copies artifacts asynchronously. Use
 `just rig::restart` only when you want to restart the existing Greengrass Lite
 systemd units without changing the deployed component version.
 
+For local redeploys that must force a new Greengrass component version, set:
+
+```bash
+TXING_RIG_COMPONENT_VERSION=0.5.1 just rig::deploy
+```
+
+Do not pass `component_version=...` after the recipe name; `just` treats that as
+the first positional recipe argument.
+
 Host setup details live in [installation.md](../installation.md). AWS bootstrap and registry steps live in [aws.md](../aws.md).

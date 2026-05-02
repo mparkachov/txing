@@ -43,6 +43,7 @@ from .time_topics import (
 LOGGER = logging.getLogger("time_rig.aws_connectivity")
 DEFAULT_CONNECT_TIMEOUT = 20.0
 DEFAULT_OPERATION_TIMEOUT = 10.0
+DEFAULT_RECONNECT_DELAY = 5.0
 DEFAULT_CLIENT_ID = "time-aws-connectivity"
 DEFAULT_ADAPTER_ID = "time-aws"
 TIME_STATE_SUBSCRIPTION = "txings/+/time/state"
@@ -214,6 +215,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--client-id", default=os.getenv("CLIENT_ID", DEFAULT_CLIENT_ID))
     parser.add_argument("--adapter-id", default=os.getenv("ADAPTER_ID", DEFAULT_ADAPTER_ID))
     parser.add_argument("--iot-endpoint", default=os.getenv("AWS_IOT_ENDPOINT", ""))
+    parser.add_argument("--reconnect-delay", type=float, default=DEFAULT_RECONNECT_DELAY)
     return parser.parse_args()
 
 
@@ -229,13 +231,6 @@ def main() -> None:
         print("time-rig-aws-connectivity start failed: AWS region is not configured", flush=True)
         raise SystemExit(2)
     aws_runtime = build_aws_runtime(region_name=aws_region, iot_data_endpoint=args.iot_endpoint or None)
-    config = TimeAwsConnectivityConfig(
-        endpoint=aws_runtime.iot_data_endpoint(),
-        aws_region=aws_region,
-        client_id=args.client_id,
-        adapter_id=args.adapter_id,
-    )
-
     async def _runner() -> None:
         loop = asyncio.get_running_loop()
         shutdown_event = asyncio.Event()
@@ -248,16 +243,53 @@ def main() -> None:
                 loop.add_signal_handler(sig, _request_shutdown)
             except NotImplementedError:
                 break
-        bridge = TimeAwsConnectivityBridge(
-            config,
-            bus=GreengrassLocalPubSub(),
-            aws_runtime=aws_runtime,
+
+        async def _bridge_loop() -> None:
+            while not shutdown_event.is_set():
+                bridge: TimeAwsConnectivityBridge | None = None
+                try:
+                    config = TimeAwsConnectivityConfig(
+                        endpoint=aws_runtime.iot_data_endpoint(),
+                        aws_region=aws_region,
+                        client_id=args.client_id,
+                        adapter_id=args.adapter_id,
+                    )
+                    bridge = TimeAwsConnectivityBridge(
+                        config,
+                        bus=GreengrassLocalPubSub(),
+                        aws_runtime=aws_runtime,
+                    )
+                    await bridge.start()
+                    await shutdown_event.wait()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    LOGGER.exception(
+                        "Time AWS connectivity bridge failed; retrying in %.1f seconds",
+                        args.reconnect_delay,
+                    )
+                    try:
+                        await asyncio.wait_for(
+                            shutdown_event.wait(),
+                            timeout=args.reconnect_delay,
+                        )
+                    except TimeoutError:
+                        continue
+                finally:
+                    if bridge is not None:
+                        await bridge.close()
+
+        bridge_task = asyncio.create_task(_bridge_loop())
+        shutdown_task = asyncio.create_task(shutdown_event.wait())
+        done, pending = await asyncio.wait(
+            {bridge_task, shutdown_task},
+            return_when=asyncio.FIRST_COMPLETED,
         )
-        await bridge.start()
-        try:
-            await shutdown_event.wait()
-        finally:
-            await bridge.close()
+        for pending_task in pending:
+            pending_task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
+        for done_task in done:
+            done_task.result()
 
     asyncio.run(_runner())
 

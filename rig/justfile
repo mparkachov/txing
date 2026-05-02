@@ -779,6 +779,15 @@ aws_shared_credentials_file := ""
             exit 1; \
         fi; \
     done
+    for positional_arg in "{{rig_name}}" "{{sparkplug_group_id}}" "{{sparkplug_edge_node_id}}" "{{component_version}}" "{{adapter_id}}" "{{name_fragment}}"; do
+      case "$positional_arg" in
+        *=*)
+          echo "rig::deploy arguments are positional; '$positional_arg' was treated as an argument value, not a named option." >&2
+          echo "Use TXING_RIG_COMPONENT_VERSION=0.5.1 just rig::deploy, or pass positional args as: just rig::deploy '' '' '' 0.5.1" >&2
+          exit 1
+          ;;
+      esac
+    done
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}" "" "" "" "{{aws_shared_credentials_file}}")"
     region="$AWS_REGION"
     profile="$AWS_SELECTED_PROFILE"
@@ -811,7 +820,7 @@ aws_shared_credentials_file := ""
     if [ -n "{{sparkplug_edge_node_id}}" ]; then \
         sparkplug_edge_node_id="{{sparkplug_edge_node_id}}"; \
     fi; \
-    resolved_component_version="{{component_version}}"
+    resolved_component_version="${TXING_RIG_COMPONENT_VERSION:-{{component_version}}}"
     if [ -z "$resolved_component_version" ]; then \
         resolved_component_version="0.5.0"; \
     fi

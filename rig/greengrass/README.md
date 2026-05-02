@@ -74,6 +74,15 @@ just rig::deploy
 `deploy` depends on `rig::build`, so a separate build step is not
 required for the normal edit/pull/deploy loop.
 
+To force a new Greengrass component version from local artifacts:
+
+```bash
+TXING_RIG_COMPONENT_VERSION=0.5.1 just rig::deploy
+```
+
+Do not run `just rig::deploy component_version=0.5.1`; values after the recipe
+name are positional recipe arguments.
+
 Use `just rig::restart` to restart the Greengrass Lite systemd units without
 deploying new code. Do not expect restart to pick up a new local build; restart
 only re-runs the component version already deployed into Greengrass.
