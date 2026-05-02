@@ -483,6 +483,34 @@ class DeviceRegistryTests(unittest.TestCase):
         with self.assertRaisesRegex(DeviceRegistryError, "rigType"):
             registry.describe_thing("rig-rig001")
 
+    def test_ensure_rig_migrates_existing_rig_missing_rig_type(self) -> None:
+        runtime = _FakeRuntime()
+        runtime.iot.groups.update({"berlin", "rig-a"})
+        attributes = runtime.iot._things["rig-rig001"]["attributes"]
+        assert isinstance(attributes, dict)
+        attributes.pop("rigType")
+        registry = AwsDeviceRegistry(runtime, repo_root=REPO_ROOT)
+
+        registration = registry.ensure_rig(
+            town_name="Berlin",
+            rig_name="Rig-A",
+            rig_type="unit",
+        )
+
+        self.assertEqual(registration.thing_name, "rig-rig001")
+        self.assertEqual(registration.rig_type, "unit")
+        self.assertEqual(
+            runtime.iot.update_thing_requests[0]["attributePayload"],
+            {
+                "attributes": {
+                    "name": "rig-a",
+                    "town": "berlin",
+                    "rigType": "unit",
+                },
+                "merge": True,
+            },
+        )
+
     def test_register_rig_falls_back_to_registry_when_town_is_not_yet_indexed(self) -> None:
         runtime = _FakeRuntime()
         runtime.iot.groups.add("berlin")

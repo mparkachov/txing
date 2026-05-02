@@ -163,6 +163,14 @@ class AwsDeviceRegistry:
         return self._iot_data_client
 
     def describe_thing(self, thing_name: str) -> ThingRegistration:
+        return self._describe_thing(thing_name)
+
+    def _describe_thing(
+        self,
+        thing_name: str,
+        *,
+        allow_missing_rig_type: bool = False,
+    ) -> ThingRegistration:
         response = self._iot_client.describe_thing(thingName=thing_name)
         attributes = response.get("attributes") or {}
         if not isinstance(attributes, dict):
@@ -185,11 +193,14 @@ class AwsDeviceRegistry:
         rig_type: str | None = None
         if thing_type == RIG_THING_TYPE:
             town_name = _require_registry_attribute(attributes, "town", thing_name=thing_name)
-            rig_type = _require_registry_attribute(
-                attributes,
-                RIG_TYPE_ATTRIBUTE,
-                thing_name=thing_name,
-            )
+            if allow_missing_rig_type:
+                rig_type = normalize_registry_text(attributes.get(RIG_TYPE_ATTRIBUTE))
+            else:
+                rig_type = _require_registry_attribute(
+                    attributes,
+                    RIG_TYPE_ATTRIBUTE,
+                    thing_name=thing_name,
+                )
         elif thing_type != TOWN_THING_TYPE:
             town_name = _require_registry_attribute(attributes, "town", thing_name=thing_name)
             rig_name = _require_registry_attribute(attributes, "rig", thing_name=thing_name)
@@ -228,7 +239,12 @@ class AwsDeviceRegistry:
             f"failed to allocate unique thing name for type {normalized_thing_type!r}"
         )
 
-    def _search_index(self, query_string: str) -> list[ThingRegistration]:
+    def _search_index(
+        self,
+        query_string: str,
+        *,
+        allow_missing_rig_type: bool = False,
+    ) -> list[ThingRegistration]:
         next_token: str | None = None
         thing_names: list[str] = []
         while True:
@@ -249,9 +265,19 @@ class AwsDeviceRegistry:
             next_token = normalize_registry_text(response.get("nextToken"))
             if next_token is None:
                 break
-        return [self.describe_thing(thing_name) for thing_name in sorted(set(thing_names))]
+        return [
+            self._describe_thing(
+                thing_name,
+                allow_missing_rig_type=allow_missing_rig_type,
+            )
+            for thing_name in sorted(set(thing_names))
+        ]
 
-    def _list_registry_things(self) -> list[ThingRegistration]:
+    def _list_registry_things(
+        self,
+        *,
+        allow_missing_rig_type: bool = False,
+    ) -> list[ThingRegistration]:
         next_token: str | None = None
         registrations: list[ThingRegistration] = []
         while True:
@@ -267,7 +293,12 @@ class AwsDeviceRegistry:
                 thing_name = normalize_registry_text(thing.get("thingName"))
                 if thing_name is None:
                     continue
-                registrations.append(self.describe_thing(thing_name))
+                registrations.append(
+                    self._describe_thing(
+                        thing_name,
+                        allow_missing_rig_type=allow_missing_rig_type,
+                    )
+                )
             next_token = normalize_registry_text(response.get("nextToken"))
             if next_token is None:
                 break
@@ -280,6 +311,7 @@ class AwsDeviceRegistry:
         name: str,
         town_name: str | None = None,
         rig_name: str | None = None,
+        allow_missing_rig_type: bool = False,
     ) -> list[ThingRegistration]:
         normalized_name = _normalize_slug("name", name)
         normalized_town_name = (
@@ -289,7 +321,9 @@ class AwsDeviceRegistry:
             _normalize_slug("rig", rig_name) if rig_name is not None else None
         )
         matches: list[ThingRegistration] = []
-        for registration in self._list_registry_things():
+        for registration in self._list_registry_things(
+            allow_missing_rig_type=allow_missing_rig_type,
+        ):
             if registration.thing_type != thing_type:
                 continue
             if registration.name != normalized_name:
@@ -321,17 +355,25 @@ class AwsDeviceRegistry:
             )
         return matches[0]
 
-    def describe_rig_by_name(self, *, town_name: str, rig_name: str) -> ThingRegistration:
+    def describe_rig_by_name(
+        self,
+        *,
+        town_name: str,
+        rig_name: str,
+        allow_missing_rig_type: bool = False,
+    ) -> ThingRegistration:
         normalized_town_name = _normalize_slug("town", town_name)
         normalized_rig_name = _normalize_slug("rig", rig_name)
         matches = self._search_index(
-            f"thingTypeName:{RIG_THING_TYPE} AND attributes.name:{normalized_rig_name} AND attributes.town:{normalized_town_name}"
+            f"thingTypeName:{RIG_THING_TYPE} AND attributes.name:{normalized_rig_name} AND attributes.town:{normalized_town_name}",
+            allow_missing_rig_type=allow_missing_rig_type,
         )
         if not matches:
             matches = self._find_things_in_registry(
                 thing_type=RIG_THING_TYPE,
                 name=normalized_rig_name,
                 town_name=normalized_town_name,
+                allow_missing_rig_type=allow_missing_rig_type,
             )
         if not matches:
             raise DeviceRegistryError(
@@ -769,6 +811,7 @@ class AwsDeviceRegistry:
             registration = self.describe_rig_by_name(
                 town_name=normalized_town_name,
                 rig_name=normalized_rig_name,
+                allow_missing_rig_type=True,
             )
         except DeviceRegistryError as err:
             if "is not registered" not in str(err):
