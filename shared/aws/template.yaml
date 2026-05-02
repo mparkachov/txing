@@ -90,6 +90,18 @@ Resources:
     Properties:
       TemplateURL: templates/device.yaml
 
+  EnlistLayer:
+    Type: AWS::CloudFormation::Stack
+    DependsOn:
+      - BaseEnvironment
+      - TownTypeCatalog
+      - RaspiTypeCatalog
+      - RaspiUnitTypeCatalog
+      - CloudTypeCatalog
+      - CloudTimeTypeCatalog
+    Properties:
+      TemplateURL: templates/enlist.yaml
+
 Outputs:
   RigLogGroupPattern:
     Value: !GetAtt BaseEnvironment.Outputs.RigLogGroupPattern
@@ -149,3 +161,7 @@ Outputs:
     Value: !GetAtt DeviceRuntimeLayer.Outputs.DeviceBootstrapManagedPolicyArn
   BoardVideoSenderManagedPolicyArn:
     Value: !GetAtt DeviceRuntimeLayer.Outputs.BoardVideoSenderManagedPolicyArn
+  EnlistFunctionName:
+    Value: !GetAtt EnlistLayer.Outputs.EnlistFunctionName
+  EnlistFunctionArn:
+    Value: !GetAtt EnlistLayer.Outputs.EnlistFunctionArn

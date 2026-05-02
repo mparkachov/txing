@@ -6,12 +6,12 @@ export type RouteDetailPanelOpenState = {
 }
 
 export const shouldRenderRouteCatalogPanel = ({
-  thingTypeName,
+  thingKind,
   reportedRedcon,
 }: {
-  thingTypeName: string | null | undefined
+  thingKind: string | null | undefined
   reportedRedcon: number | null
-}): boolean => (thingTypeName === 'town' || thingTypeName === 'rig') && reportedRedcon === 1
+}): boolean => (thingKind === 'townType' || thingKind === 'rigType') && reportedRedcon === 1
 
 export const getRouteDetailPanelOpenState = (
   route: AppRoute,

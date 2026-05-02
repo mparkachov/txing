@@ -281,6 +281,7 @@ function App({ initialAuthError = '' }: AppProps) {
   const routeHeaderShadowWarning =
     routeHeaderState.status === 'ready' ? routeHeaderState.shadowWarning : ''
   const currentThingTypeName = routeHeaderMetadata?.thingTypeName ?? null
+  const currentThingKind = routeHeaderMetadata?.kind ?? null
   const currentTownCatalogName =
     route.kind === 'town'
       ? routeHeaderMetadata?.name ?? null
@@ -351,10 +352,7 @@ function App({ initialAuthError = '' }: AppProps) {
     () => getDeviceWebAdapter(currentThingTypeName),
     [currentThingTypeName],
   )
-  const isDeviceThingType =
-    currentThingTypeName !== null &&
-    currentThingTypeName !== 'town' &&
-    currentThingTypeName !== 'rig'
+  const isDeviceThingType = currentThingKind === 'deviceType'
   const deviceTelemetry = useMemo(
     () => currentDeviceAdapter?.extractTelemetry(displayShadowDocument) ?? null,
     [currentDeviceAdapter, displayShadowDocument],
@@ -381,7 +379,7 @@ function App({ initialAuthError = '' }: AppProps) {
   const isSparkplugDeviceCommandAvailable =
     currentThingSparkplugCommandTarget !== null && !isSparkplugDeviceUnavailable
   const shouldRenderCatalogPanel = shouldRenderRouteCatalogPanel({
-    thingTypeName: currentThingTypeName,
+    thingKind: currentThingKind,
     reportedRedcon,
   })
 
@@ -729,15 +727,15 @@ function App({ initialAuthError = '' }: AppProps) {
         if (cancelled) {
           return
         }
-        if (route.kind === 'town' && metadata.thingTypeName !== 'town') {
+        if (route.kind === 'town' && metadata.kind !== 'townType') {
           throw new Error(`Thing '${currentRouteThingName}' is not a town.`)
         }
-        if (route.kind === 'rig' && metadata.thingTypeName !== 'rig') {
+        if (route.kind === 'rig' && metadata.kind !== 'rigType') {
           throw new Error(`Thing '${currentRouteThingName}' is not a rig.`)
         }
         if (
           (route.kind === 'device' || route.kind === 'device_video') &&
-          (metadata.thingTypeName === 'town' || metadata.thingTypeName === 'rig')
+          metadata.kind !== 'deviceType'
         ) {
           throw new Error(`Thing '${currentRouteThingName}' is not a device.`)
         }
@@ -1690,7 +1688,7 @@ function App({ initialAuthError = '' }: AppProps) {
         <p>Resolving {routeLoadingLabel} metadata and current Sparkplug state...</p>
       </section>
     )
-  } else if (currentThingTypeName === 'town' && route.kind === 'town') {
+  } else if (currentThingKind === 'townType' && route.kind === 'town') {
     content = isTownPanelOpen && shouldRenderCatalogPanel ? (
       <section className="catalog-grid-shell">
         {rigCatalog.status === 'loading' ? <p>Loading rigs...</p> : null}
@@ -1717,7 +1715,7 @@ function App({ initialAuthError = '' }: AppProps) {
     ) : (
       <></>
     )
-  } else if (currentThingTypeName === 'rig' && route.kind === 'rig') {
+  } else if (currentThingKind === 'rigType' && route.kind === 'rig') {
     content = isRigPanelOpen && shouldRenderCatalogPanel ? (
       <section className="catalog-grid-shell">
         {deviceCatalog.status === 'loading' ? <p>Loading devices...</p> : null}

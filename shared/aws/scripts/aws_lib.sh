@@ -234,13 +234,41 @@ deploy_template() {
   rm -rf "$packaged_template_dir"
 }
 
+invoke_enlist_payload_file() {
+  local payload_file="$1"
+  local function_name
+  local response_file
+  local invoke_metadata_file
+  function_name="$(stack_output "$AWS_STACK_NAME" EnlistFunctionName)"
+  response_file="$(mktemp "${TMPDIR:-/tmp}/txing-enlist-response.XXXXXX")"
+  invoke_metadata_file="$(mktemp "${TMPDIR:-/tmp}/txing-enlist-metadata.XXXXXX")"
+  aws lambda invoke \
+    --function-name "$function_name" \
+    --cli-binary-format raw-in-base64-out \
+    --payload "fileb://$payload_file" \
+    "$response_file" \
+    "${aws_flags[@]}" >"$invoke_metadata_file"
+  if jq -e '.FunctionError? // empty' "$invoke_metadata_file" >/dev/null; then
+    cat "$response_file" >&2
+    rm -f "$response_file" "$invoke_metadata_file"
+    return 1
+  fi
+  if ! jq -e '.ok == true' "$response_file" >/dev/null; then
+    cat "$response_file" >&2
+    rm -f "$response_file" "$invoke_metadata_file"
+    return 1
+  fi
+  cat "$response_file"
+  rm -f "$response_file" "$invoke_metadata_file"
+}
+
 configure_indexing_and_wait() {
   local thing_indexing_configuration
   local deadline
   local thing_indexing_mode
   local thing_connectivity_indexing_mode
   local indexing_custom_fields
-  thing_indexing_configuration='{"thingIndexingMode":"REGISTRY","thingConnectivityIndexingMode":"STATUS","customFields":[{"name":"attributes.name","type":"String"},{"name":"attributes.townId","type":"String"},{"name":"attributes.rigId","type":"String"}]}'
+  thing_indexing_configuration='{"thingIndexingMode":"REGISTRY","thingConnectivityIndexingMode":"STATUS","customFields":[{"name":"attributes.name","type":"String"},{"name":"attributes.kind","type":"String"},{"name":"attributes.townId","type":"String"},{"name":"attributes.rigId","type":"String"}]}'
   aws iot update-indexing-configuration \
     "${aws_flags[@]}" \
     --thing-indexing-configuration "$thing_indexing_configuration"
@@ -267,6 +295,7 @@ configure_indexing_and_wait() {
     if [ "$thing_indexing_mode" = "REGISTRY" ] \
       && [ "$thing_connectivity_indexing_mode" = "STATUS" ] \
       && printf '%s\n' "$indexing_custom_fields" | tr '\t' '\n' | grep -Fx "attributes.name" >/dev/null \
+      && printf '%s\n' "$indexing_custom_fields" | tr '\t' '\n' | grep -Fx "attributes.kind" >/dev/null \
       && printf '%s\n' "$indexing_custom_fields" | tr '\t' '\n' | grep -Fx "attributes.townId" >/dev/null \
       && printf '%s\n' "$indexing_custom_fields" | tr '\t' '\n' | grep -Fx "attributes.rigId" >/dev/null; then
       break

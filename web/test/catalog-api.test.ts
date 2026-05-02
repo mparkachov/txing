@@ -12,12 +12,14 @@ type FakeResponse = Record<string, unknown>
 
 class FakeIotControlClient {
   private readonly responses: Map<string, FakeResponse[]>
+  readonly commands: Array<{ constructor: { name: string }; input?: Record<string, unknown> }> = []
 
   constructor(responses: Record<string, FakeResponse[]>) {
     this.responses = new Map(Object.entries(responses))
   }
 
-  async send(command: { constructor: { name: string } }): Promise<unknown> {
+  async send(command: { constructor: { name: string }; input?: Record<string, unknown> }): Promise<unknown> {
+    this.commands.push(command)
     const bucket = this.responses.get(command.constructor.name)
     if (!bucket || bucket.length === 0) {
       throw new Error(`Missing fake response for ${command.constructor.name}`)
@@ -31,10 +33,7 @@ describe('catalog api helpers', () => {
     const client = new FakeIotControlClient({
       SearchIndexCommand: [
         {
-          things: [{ thingName: 'raspi-a1' }, { thingName: 'raspi-b3' }],
-        },
-        {
-          things: [{ thingName: 'cloud-z9' }],
+          things: [{ thingName: 'raspi-a1' }, { thingName: 'raspi-b3' }, { thingName: 'cloud-z9' }],
         },
       ],
       DescribeThingCommand: [
@@ -44,6 +43,8 @@ describe('catalog api helpers', () => {
           attributes: {
             name: 'berlin',
             shortId: 'berlin',
+            kind: 'townType',
+            capabilities: 'sparkplug',
           },
         },
         {
@@ -53,6 +54,8 @@ describe('catalog api helpers', () => {
             name: 'zulu',
             shortId: 'z9',
             townId: 'town-berlin',
+            kind: 'rigType',
+            capabilities: 'sparkplug',
           },
         },
         {
@@ -62,6 +65,8 @@ describe('catalog api helpers', () => {
             name: 'alpha',
             shortId: 'a1',
             townId: 'town-berlin',
+            kind: 'rigType',
+            capabilities: 'sparkplug',
           },
         },
         {
@@ -71,6 +76,8 @@ describe('catalog api helpers', () => {
             name: 'bravo',
             shortId: 'b3',
             townId: 'town-berlin',
+            kind: 'rigType',
+            capabilities: 'sparkplug',
           },
         },
         {
@@ -79,6 +86,8 @@ describe('catalog api helpers', () => {
           attributes: {
             name: 'berlin',
             shortId: 'berlin',
+            kind: 'townType',
+            capabilities: 'sparkplug',
           },
         },
         {
@@ -87,6 +96,8 @@ describe('catalog api helpers', () => {
           attributes: {
             name: 'berlin',
             shortId: 'berlin',
+            kind: 'townType',
+            capabilities: 'sparkplug',
           },
         },
         {
@@ -95,6 +106,8 @@ describe('catalog api helpers', () => {
           attributes: {
             name: 'berlin',
             shortId: 'berlin',
+            kind: 'townType',
+            capabilities: 'sparkplug',
           },
         },
       ],
@@ -120,6 +133,9 @@ describe('catalog api helpers', () => {
         capabilities: ['sparkplug'],
       },
     ])
+    expect(client.commands[1].input?.queryString).toBe(
+      'attributes.kind:rigType AND attributes.townId:town-berlin',
+    )
   })
 
   test('lists rig devices through pagination, metadata lookup, and stable sorting', async () => {
@@ -142,6 +158,8 @@ describe('catalog api helpers', () => {
             shortId: 'a1',
             townId: 'town-berlin',
             rigId: 'raspi-a1',
+            kind: 'deviceType',
+            capabilities: 'sparkplug,mcu,board,mcp,video',
           },
         },
         {
@@ -152,6 +170,8 @@ describe('catalog api helpers', () => {
             shortId: 'b3',
             townId: 'town-berlin',
             rigId: 'raspi-a1',
+            kind: 'deviceType',
+            capabilities: 'sparkplug,mcu,board,mcp,video',
           },
         },
         {
@@ -162,6 +182,8 @@ describe('catalog api helpers', () => {
             shortId: 'z9',
             townId: 'town-berlin',
             rigId: 'raspi-a1',
+            kind: 'deviceType',
+            capabilities: 'sparkplug,mcu,board,mcp,video',
           },
         },
         {
@@ -170,6 +192,8 @@ describe('catalog api helpers', () => {
           attributes: {
             name: 'berlin',
             shortId: 'berlin',
+            kind: 'townType',
+            capabilities: 'sparkplug',
           },
         },
         {
@@ -178,6 +202,8 @@ describe('catalog api helpers', () => {
           attributes: {
             name: 'berlin',
             shortId: 'berlin',
+            kind: 'townType',
+            capabilities: 'sparkplug',
           },
         },
         {
@@ -186,6 +212,8 @@ describe('catalog api helpers', () => {
           attributes: {
             name: 'berlin',
             shortId: 'berlin',
+            kind: 'townType',
+            capabilities: 'sparkplug',
           },
         },
         {
@@ -195,6 +223,8 @@ describe('catalog api helpers', () => {
             name: 'alpha',
             shortId: 'a1',
             townId: 'town-berlin',
+            kind: 'rigType',
+            capabilities: 'sparkplug',
           },
         },
         {
@@ -204,6 +234,8 @@ describe('catalog api helpers', () => {
             name: 'alpha',
             shortId: 'a1',
             townId: 'town-berlin',
+            kind: 'rigType',
+            capabilities: 'sparkplug',
           },
         },
         {
@@ -213,6 +245,8 @@ describe('catalog api helpers', () => {
             name: 'alpha',
             shortId: 'a1',
             townId: 'town-berlin',
+            kind: 'rigType',
+            capabilities: 'sparkplug',
           },
         },
       ],
@@ -238,6 +272,9 @@ describe('catalog api helpers', () => {
         capabilities: ['sparkplug', 'mcu', 'board', 'mcp', 'video'],
       },
     ])
+    expect(client.commands[0].input?.queryString).toBe(
+      'attributes.kind:deviceType AND attributes.rigId:raspi-a1',
+    )
   })
 
   test('describes selected device metadata and trims name', async () => {
@@ -251,6 +288,8 @@ describe('catalog api helpers', () => {
             shortId: 'kiv3mj',
             townId: 'town-berlin',
             rigId: 'raspi-a1',
+            kind: 'deviceType',
+            capabilities: 'sparkplug,mcu,board,mcp,video',
           },
         },
         {
@@ -259,6 +298,8 @@ describe('catalog api helpers', () => {
           attributes: {
             name: 'berlin',
             shortId: 'berlin',
+            kind: 'townType',
+            capabilities: 'sparkplug',
           },
         },
         {
@@ -268,6 +309,8 @@ describe('catalog api helpers', () => {
             name: 'alpha',
             shortId: 'a1',
             townId: 'town-berlin',
+            kind: 'rigType',
+            capabilities: 'sparkplug',
           },
         },
       ],
@@ -290,6 +333,7 @@ describe('catalog api helpers', () => {
           attributes: {
             name: 'sensor',
             shortId: 'a1',
+            kind: 'deviceType',
             capabilities: 'sparkplug,sensor-data',
           },
         },
@@ -299,6 +343,7 @@ describe('catalog api helpers', () => {
     await expect(describeThingMetadataWithClient(client, 'sensor-a1')).resolves.toEqual({
       thingName: 'sensor-a1',
       thingTypeName: 'sensor',
+      kind: 'deviceType',
       name: 'sensor',
       townId: null,
       rigId: null,
@@ -319,6 +364,8 @@ describe('catalog api helpers', () => {
             name: 'alpha',
             townId: 'town-berlin',
             shortId: 'a1',
+            kind: 'rigType',
+            capabilities: 'sparkplug',
           },
         },
         {
@@ -327,6 +374,8 @@ describe('catalog api helpers', () => {
           attributes: {
             name: 'berlin',
             shortId: 'berlin',
+            kind: 'townType',
+            capabilities: 'sparkplug',
           },
         },
       ],
@@ -335,6 +384,7 @@ describe('catalog api helpers', () => {
     await expect(describeThingMetadataWithClient(client, 'raspi-a1')).resolves.toEqual({
       thingName: 'raspi-a1',
       thingTypeName: 'raspi',
+      kind: 'rigType',
       name: 'alpha',
       townId: 'town-berlin',
       rigId: 'raspi-a1',

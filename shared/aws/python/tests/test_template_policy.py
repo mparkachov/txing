@@ -159,6 +159,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
             template,
         )
         self.assertIn('"attributes.name"', template)
+        self.assertIn('"attributes.kind"', template)
         self.assertIn('"attributes.townId"', template)
         self.assertIn('"attributes.rigId"', template)
         self.assertNotIn('"attributes.rigType"', template)
@@ -192,6 +193,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
             "RaspiUnitTypeCatalog",
             "CloudTypeCatalog",
             "CloudTimeTypeCatalog",
+            "EnlistLayer",
             "RigRuntimeLayer",
             "DeviceRuntimeLayer",
         ):
@@ -202,6 +204,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
             "templates/types/raspi-unit.yaml",
             "templates/types/cloud.yaml",
             "templates/types/cloud-time.yaml",
+            "templates/enlist.yaml",
             "templates/rig.yaml",
             "templates/device.yaml",
         ):
@@ -220,8 +223,41 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("CatalogBasePath: /txing/town/cloud/time", template)
         self.assertIn("CatalogBasePath: /txing/town/raspi/unit", template)
         self.assertIn("kind: deviceType", template)
+        self.assertIn("EnlistFunctionName:", root_template)
+        self.assertIn("EnlistFunctionArn:", root_template)
         self.assertIn("RigTypeCatalogRead", template)
         self.assertIn("ssm:GetParametersByPath", template)
+
+    def test_enlist_stack_defines_lambda_and_minimal_permissions(self) -> None:
+        root_template = (AWS_DIR / "template.yaml").read_text(encoding="utf-8")
+        enlist_template = (AWS_DIR / "templates" / "enlist.yaml").read_text(encoding="utf-8")
+
+        self.assertIn("EnlistLayer:", root_template)
+        self.assertIn("TemplateURL: templates/enlist.yaml", root_template)
+        self.assertIn("TxingEnlistFunction:", enlist_template)
+        self.assertIn("Handler: aws.enlist.lambda_handler", enlist_template)
+        self.assertIn("TxingDischargeThingsOnDelete:", enlist_template)
+        self.assertIn("Type: Custom::TxingDischargeThings", enlist_template)
+        self.assertIn("CleanupType: TxingDischargeThings", enlist_template)
+        self.assertIn("EnlistFunctionName:", enlist_template)
+        self.assertIn("EnlistFunctionArn:", enlist_template)
+        for action in (
+            "iot:CreateThing",
+            "iot:DeleteThing",
+            "iot:DeleteThingShadow",
+            "iot:DescribeThing",
+            "iot:DetachThingPrincipal",
+            "iot:ListThingPrincipals",
+            "iot:UpdateThing",
+            "iot:SearchIndex",
+            "iot:GetThingShadow",
+            "iot:UpdateThingShadow",
+            "ssm:GetParametersByPath",
+            "kinesisvideo:CreateSignalingChannel",
+            "kinesisvideo:DeleteSignalingChannel",
+            "kinesisvideo:DescribeSignalingChannel",
+        ):
+            self.assertIn(action, enlist_template)
 
     def test_rig_runtime_can_connect_with_managed_device_client_ids(self) -> None:
         template = _template_text()
@@ -262,6 +298,13 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("@town-deploy", text)
         self.assertIn("@rig-deploy", text)
         self.assertIn("@device-deploy", text)
+        self.assertIn("@enlist", text)
+        self.assertIn("@discharge", text)
+        self.assertIn("@delete", text)
+        self.assertIn("aws lambda invoke", text)
+        self.assertIn("aws cloudformation delete-stack", text)
+        self.assertIn("stack-delete-complete", text)
+        self.assertIn("EnlistFunctionName", text)
         self.assertIn("stack_output()", text)
         self.assertIn("resolve_town_thing_name()", text)
         self.assertIn("resolve_rig_thing_name()", text)
@@ -280,6 +323,10 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertNotIn("config/rig.env", text)
         self.assertNotIn("config/board.env", text)
         self.assertNotIn("python -m aws.type_catalog \\\n      --region \"$AWS_REGION\" \\\n      sync", text)
+        self.assertNotIn("python -m aws.device_registry", text)
+        self.assertNotIn("ensure-town", text)
+        self.assertNotIn("ensure-rig", text)
+        self.assertNotIn("ensure-device", text)
 
     def test_cert_recipe_is_parameterless_and_writes_ignored_config_certs(self) -> None:
         justfile = (AWS_DIR / "justfile").read_text(encoding="utf-8")

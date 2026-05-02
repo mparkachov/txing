@@ -39,12 +39,11 @@ const createIotDataClient = async (
 }
 
 export const resolveThingSparkplugRedconCommandTarget = (
-  metadata: Pick<ThingMetadata, 'thingName' | 'thingTypeName' | 'townId' | 'rigId'> | null,
+  metadata: Pick<ThingMetadata, 'thingName' | 'kind' | 'townId' | 'rigId'> | null,
 ): SparkplugRedconCommandTarget | null => {
   if (
     !metadata ||
-    metadata.thingTypeName === 'town' ||
-    metadata.thingTypeName === 'rig' ||
+    metadata.kind !== 'deviceType' ||
     !metadata.townId ||
     !metadata.rigId
   ) {

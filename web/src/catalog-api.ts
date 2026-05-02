@@ -34,6 +34,7 @@ export type DeviceCatalogEntry = {
 export type ThingMetadata = {
   thingName: string
   thingTypeName: string | null
+  kind: string | null
   name: string | null
   townId: string | null
   rigId: string | null
@@ -44,14 +45,9 @@ export type ThingMetadata = {
 }
 
 const maxResults = 100
-const rigThingTypes = ['raspi', 'cloud'] as const
-const thingTypeCapabilities: Record<string, readonly ShadowName[]> = {
-  town: ['sparkplug'],
-  raspi: ['sparkplug'],
-  cloud: ['sparkplug'],
-  unit: ['sparkplug', 'mcu', 'board', 'mcp', 'video'],
-  time: ['sparkplug', 'mcp', 'time'],
-}
+export const townTypeKind = 'townType'
+export const rigTypeKind = 'rigType'
+export const deviceTypeKind = 'deviceType'
 
 const collator = new Intl.Collator(undefined, {
   numeric: true,
@@ -97,21 +93,7 @@ export const parseCapabilitiesSet = (value: string | null | undefined): readonly
   return capabilities
 }
 
-const isRigThingType = (thingTypeName: string | null | undefined): boolean =>
-  typeof thingTypeName === 'string' && rigThingTypes.includes(thingTypeName as (typeof rigThingTypes)[number])
-
-const capabilitiesForThingType = (
-  thingTypeName: string | null,
-  attributeCapabilities: string | null,
-): readonly ShadowName[] => {
-  if (thingTypeName && thingTypeCapabilities[thingTypeName]) {
-    return thingTypeCapabilities[thingTypeName]
-  }
-  if (attributeCapabilities !== null) {
-    return parseCapabilitiesSet(attributeCapabilities)
-  }
-  return ['sparkplug']
-}
+const isRigKind = (kind: string | null | undefined): boolean => kind === rigTypeKind
 
 const getRigDisplayName = (rig: RigCatalogEntry): string => rig.rigName
 
@@ -215,6 +197,9 @@ export const describeThingMetadataWithClient = async (
 
   const attributes = response.attributes
   const thingTypeName = normalizeOptionalText(response.thingTypeName)
+  const kind = normalizeOptionalText(
+    attributes && typeof attributes.kind === 'string' ? attributes.kind : null,
+  )
   const townId = normalizeOptionalText(
     attributes && typeof attributes.townId === 'string' ? attributes.townId : null,
   )
@@ -242,24 +227,24 @@ export const describeThingMetadataWithClient = async (
     } catch {
       rigName = rigId
     }
-  } else if (isRigThingType(thingTypeName)) {
+  } else if (isRigKind(kind)) {
     rigName = normalizeOptionalText(attributes?.name) ?? thingName
   }
   return {
     thingName,
     thingTypeName,
+    kind,
     name: normalizeOptionalText(
       attributes && typeof attributes.name === 'string' ? attributes.name : null,
     ),
     townId,
-    rigId: isRigThingType(thingTypeName) ? thingName : rigId,
+    rigId: isRigKind(kind) ? thingName : rigId,
     townName,
     rigName,
     shortId: normalizeOptionalText(
       attributes && typeof attributes.shortId === 'string' ? attributes.shortId : null,
     ),
-    capabilities: capabilitiesForThingType(
-      thingTypeName,
+    capabilities: parseCapabilitiesSet(
       attributes && typeof attributes.capabilities === 'string'
         ? attributes.capabilities
         : null,
@@ -358,16 +343,10 @@ export const listTownRigsWithClient = async (
     townName.startsWith('town-')
       ? await describeThingMetadataWithClient(client, townName)
       : await resolveTownThingWithClient(client, townName)
-  const rigThingNames = (
-    await Promise.all(
-      rigThingTypes.map((rigType) =>
-        searchThingNamesWithClient(
-          client,
-          `thingTypeName:${rigType} AND attributes.townId:${townMetadata.thingName}`,
-        ),
-      ),
-    )
-  ).flat()
+  const rigThingNames = await searchThingNamesWithClient(
+    client,
+    `attributes.kind:${rigTypeKind} AND attributes.townId:${townMetadata.thingName}`,
+  )
 
   const rigEntries = await Promise.all(
     sortUnique(rigThingNames).map(async (thingName) => {
@@ -377,13 +356,13 @@ export const listTownRigsWithClient = async (
         rigName: metadata.name ?? thingName,
         shortId: metadata.shortId,
         capabilities: metadata.capabilities,
-        thingTypeName: metadata.thingTypeName,
+        kind: metadata.kind,
       }
     }),
   )
 
   return rigEntries
-    .filter((rig) => isRigThingType(rig.thingTypeName))
+    .filter((rig) => isRigKind(rig.kind))
     .map((rig) => ({
       thingName: rig.thingName,
       rigName: rig.rigName,
@@ -409,7 +388,7 @@ export const listRigDevicesWithClient = async (
 ): Promise<DeviceCatalogEntry[]> => {
   const deviceIds = await searchThingNamesWithClient(
     client,
-    `attributes.rigId:${rigName} AND attributes.townId:*`,
+    `attributes.kind:${deviceTypeKind} AND attributes.rigId:${rigName}`,
   )
 
   const uniqueDeviceIds = sortUnique(deviceIds)
@@ -469,7 +448,7 @@ export const resolveTownThingWithClient = async (
 ): Promise<ThingMetadata> =>
   resolveSingleThingMetadataWithClient(
     client,
-    `thingTypeName:town AND attributes.name:${townName}`,
+    `attributes.kind:${townTypeKind} AND attributes.name:${townName}`,
     `Town '${townName}' was not found.`,
     `Town '${townName}' matched multiple AWS IoT things.`,
   )
@@ -494,16 +473,10 @@ export const resolveRigThingWithClient = async (
       ? await describeThingMetadataWithClient(client, townName)
       : await resolveTownThingWithClient(client, townName)
   const thingNames = sortUnique(
-    (
-      await Promise.all(
-        rigThingTypes.map((rigType) =>
-          searchThingNamesWithClient(
-            client,
-            `thingTypeName:${rigType} AND attributes.name:${rigName} AND attributes.townId:${townMetadata.thingName}`,
-          ),
-        ),
-      )
-    ).flat(),
+    await searchThingNamesWithClient(
+      client,
+      `attributes.kind:${rigTypeKind} AND attributes.name:${rigName} AND attributes.townId:${townMetadata.thingName}`,
+    ),
   )
   if (thingNames.length === 0) {
     throw new Error(`Rig '${rigName}' in town '${townName}' was not found.`)

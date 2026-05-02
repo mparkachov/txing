@@ -214,6 +214,7 @@ Resources:
           IOT_FLEET_INDEXING_PHYSICAL_ID = "txing-iot-fleet-indexing"
           IOT_FLEET_INDEXING_CUSTOM_FIELDS = [
               "attributes.name",
+              "attributes.kind",
               "attributes.townId",
               "attributes.rigId",
           ]

@@ -44,7 +44,7 @@ describe('sparkplug command ack helper', () => {
     expect(
       resolveThingSparkplugRedconCommandTarget({
         thingName: 'unit-a1',
-        thingTypeName: 'unit',
+        kind: 'deviceType',
         townId: 'town-a1',
         rigId: 'rig-a1',
       }),
@@ -57,7 +57,7 @@ describe('sparkplug command ack helper', () => {
     expect(
       resolveThingSparkplugRedconCommandTarget({
         thingName: 'sensor-a1',
-        thingTypeName: 'sensor',
+        kind: 'deviceType',
         townId: 'town-a1',
         rigId: 'rig-a1',
       }),
@@ -70,7 +70,7 @@ describe('sparkplug command ack helper', () => {
     expect(
       resolveThingSparkplugRedconCommandTarget({
         thingName: 'rig-a1',
-        thingTypeName: 'rig',
+        kind: 'rigType',
         townId: 'town-a1',
         rigId: 'rig-a1',
       }),

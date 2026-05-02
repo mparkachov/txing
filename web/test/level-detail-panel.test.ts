@@ -26,31 +26,31 @@ describe('level detail panel helpers', () => {
   test('shows town and rig catalog detail panels only when reported redcon is 1', () => {
     expect(
       shouldRenderRouteCatalogPanel({
-        thingTypeName: 'town',
+        thingKind: 'townType',
         reportedRedcon: 1,
       }),
     ).toBe(true)
     expect(
       shouldRenderRouteCatalogPanel({
-        thingTypeName: 'rig',
+        thingKind: 'rigType',
         reportedRedcon: 1,
       }),
     ).toBe(true)
     expect(
       shouldRenderRouteCatalogPanel({
-        thingTypeName: 'town',
+        thingKind: 'townType',
         reportedRedcon: null,
       }),
     ).toBe(false)
     expect(
       shouldRenderRouteCatalogPanel({
-        thingTypeName: 'rig',
+        thingKind: 'rigType',
         reportedRedcon: 4,
       }),
     ).toBe(false)
     expect(
       shouldRenderRouteCatalogPanel({
-        thingTypeName: 'unit',
+        thingKind: 'deviceType',
         reportedRedcon: 1,
       }),
     ).toBe(false)

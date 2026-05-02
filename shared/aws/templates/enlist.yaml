@@ -1,0 +1,105 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: txing enlist Lambda for town, rig, and device enrollment.
+
+Resources:
+  TxingEnlistLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${AWS::StackName}-enlist
+      RetentionInDays: 14
+
+  TxingEnlistRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: Executes txing town, rig, and device enlistment.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: txing-enlist
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: EnlistLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !GetAtt TxingEnlistLogGroup.Arn
+                  - !Sub ${TxingEnlistLogGroup.Arn}:*
+              - Sid: EnlistThingRegistryWrite
+                Effect: Allow
+                Action:
+                  - iot:CreateThing
+                  - iot:DescribeThing
+                  - iot:DeleteThing
+                  - iot:UpdateThing
+                Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/*
+              - Sid: EnlistThingPrincipalCleanup
+                Effect: Allow
+                Action:
+                  - iot:DetachThingPrincipal
+                  - iot:ListThingPrincipals
+                Resource: "*"
+              - Sid: EnlistFleetRegistryRead
+                Effect: Allow
+                Action:
+                  - iot:GetIndexingConfiguration
+                  - iot:SearchIndex
+                Resource: "*"
+              - Sid: EnlistThingShadowWrite
+                Effect: Allow
+                Action:
+                  - iot:DeleteThingShadow
+                  - iot:GetThingShadow
+                  - iot:UpdateThingShadow
+                Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/*
+              - Sid: EnlistTypeCatalogRead
+                Effect: Allow
+                Action: ssm:GetParametersByPath
+                Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/txing/*
+              - Sid: EnlistDescribeEndpoint
+                Effect: Allow
+                Action: iot:DescribeEndpoint
+                Resource: "*"
+              - Sid: EnlistBoardVideoChannels
+                Effect: Allow
+                Action:
+                  - kinesisvideo:CreateSignalingChannel
+                  - kinesisvideo:DeleteSignalingChannel
+                  - kinesisvideo:DescribeSignalingChannel
+                Resource: "*"
+
+  TxingEnlistFunction:
+    Type: AWS::Lambda::Function
+    DependsOn:
+      - TxingEnlistLogGroup
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-enlist
+      Description: Enlists txing towns, rigs, devices, and assignments.
+      Runtime: python3.12
+      Handler: aws.enlist.lambda_handler
+      Code: ../python/src
+      Role: !GetAtt TxingEnlistRole.Arn
+      Timeout: 60
+      MemorySize: 256
+
+  TxingDischargeThingsOnDelete:
+    Type: Custom::TxingDischargeThings
+    DependsOn:
+      - TxingEnlistFunction
+    Properties:
+      ServiceToken: !GetAtt TxingEnlistFunction.Arn
+      CleanupType: TxingDischargeThings
+      PhysicalResourceId: txing-discharge-things-on-delete
+
+Outputs:
+  EnlistFunctionName:
+    Value: !Ref TxingEnlistFunction
+  EnlistFunctionArn:
+    Value: !GetAtt TxingEnlistFunction.Arn

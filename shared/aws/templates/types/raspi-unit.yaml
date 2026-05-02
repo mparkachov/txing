@@ -32,13 +32,18 @@ Resources:
         searchableAttributes: name,townId,rigId
         shadows/sparkplug/schema: aws/sparkplug-shadow.schema.json
         shadows/sparkplug/default: aws/default-sparkplug-shadow.json
+        shadows/sparkplug/defaultPayload: '{"state":{"reported":{"topic":{"namespace":"spBv1.0","groupId":"town","messageType":"DDEATH","edgeNodeId":"rig","deviceId":"unit-local"},"payload":{"metrics":{}}}}}'
         shadows/mcu/schema: aws/mcu-shadow.schema.json
         shadows/mcu/default: aws/default-mcu-shadow.json
+        shadows/mcu/defaultPayload: '{"state":{"reported":{"power":false,"online":false,"bleDeviceId":null}}}'
         shadows/board/schema: aws/board-shadow.schema.json
         shadows/board/default: aws/default-board-shadow.json
+        shadows/board/defaultPayload: '{"state":{"reported":{"power":false,"wifi":{"online":false,"ipv4":null,"ipv6":null}}}}'
         shadows/mcp/schema: aws/mcp-shadow.schema.json
         shadows/mcp/default: aws/default-mcp-shadow.json
+        shadows/mcp/defaultPayload: '{"state":{"reported":{"descriptor":null,"status":{"serviceId":"mcp","available":false,"updatedAtMs":0}}}}'
         shadows/video/schema: aws/video-shadow.schema.json
         shadows/video/default: aws/default-video-shadow.json
+        shadows/video/defaultPayload: '{"state":{"reported":{"descriptor":null,"status":{"serviceId":"video","available":false,"ready":false,"status":"unavailable","viewerConnected":false,"lastError":null}}}}'
         web/adapter: web/unit-adapter.tsx
         resources/boardVideo/channelName: "{device_id}-board-video"

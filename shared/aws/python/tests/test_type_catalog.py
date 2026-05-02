@@ -128,10 +128,15 @@ class TypeCatalogTests(unittest.TestCase):
             ssm.parameters["/txing/town/cloud/time/web/adapter"],
             "web/time-adapter.tsx",
         )
+        self.assertIn(
+            '"mode"',
+            ssm.parameters["/txing/town/cloud/time/shadows/time/defaultPayload"],
+        )
         self.assertFalse(
             any(
                 _is_json_object_or_array_value(str(request["Value"]))
                 for request in ssm.put_requests
+                if not str(request["Name"]).endswith("/defaultPayload")
             )
         )
 
@@ -149,12 +154,14 @@ class TypeCatalogTests(unittest.TestCase):
         self.assertEqual(cloud_record["hostServices"], [])
         self.assertEqual(time_record["capabilities"], ["sparkplug", "mcp", "time"])
         self.assertEqual(
-            time_record["shadows"]["time"],
-            {
-                "schema": "aws/time-shadow.schema.json",
-                "default": "aws/default-time-shadow.json",
-            },
+            time_record["shadows"]["time"]["schema"],
+            "aws/time-shadow.schema.json",
         )
+        self.assertEqual(
+            time_record["shadows"]["time"]["default"],
+            "aws/default-time-shadow.json",
+        )
+        self.assertIn('"mode"', time_record["shadows"]["time"]["defaultPayload"])
 
     def test_list_records_groups_leaf_parameters_by_kind_marker(self) -> None:
         ssm = _FakeSsmClient()

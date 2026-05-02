@@ -38,6 +38,26 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
     set -euo pipefail
     just --justfile "{{aws_dir}}/justfile" deploy "{{CognitoDomainPrefix}}" "{{AdminEmail}}" "{{stack_name}}" "{{template_file}}" "{{region}}" "{{profile}}"
 
+@delete stack_name=stack_name region=region profile=profile wait='true' delete_packaging_buckets='true' include_legacy_time_lambda='true':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{aws_dir}}"
+    source "{{aws_lib}}"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{region}}" "{{profile}}" "{{stack_name}}")"
+    txing_aws_init
+    echo "Deleting CloudFormation stack $AWS_STACK_NAME"
+    aws cloudformation delete-stack --stack-name "$AWS_STACK_NAME" "${aws_flags[@]}"
+    if [ "{{wait}}" = "true" ]; then
+      aws cloudformation wait stack-delete-complete --stack-name "$AWS_STACK_NAME" "${aws_flags[@]}"
+      echo "Deleted CloudFormation stack $AWS_STACK_NAME"
+    fi
+    if [ "{{delete_packaging_buckets}}" = "true" ]; then
+      delete_s3_bucket_if_exists "$(artifact_bucket_name)"
+      if [ "{{include_legacy_time_lambda}}" = "true" ]; then
+        delete_s3_bucket_if_exists "$(legacy_time_lambda_artifact_bucket_name)"
+      fi
+    fi
+
 @type-list path='/txing' region=region profile=profile:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -65,16 +85,12 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
     source "{{aws_lib}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{region}}" "{{profile}}" "{{stack_name}}")"
     txing_aws_init
-    town_name="{{town_name}}"
-    town_slug="$(printf '%s\n' "$town_name" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9-' '-' | sed 's/^-*//; s/-*$//')"
-    registration="$(
-      uv run --project "{{aws_dir}}/python" \
-      python -m aws.device_registry \
-      --region "$AWS_REGION" \
-      ensure-town \
-        --town "$town_slug"
-    )"
-    jq -r '"town id: \(.thing_name)"' <<<"$registration"
+    payload_file="$(mktemp "${TMPDIR:-/tmp}/txing-enlist-town.XXXXXX")"
+    trap 'rm -f "$payload_file"' EXIT
+    jq -n --arg townName "{{town_name}}" \
+      '{action:"enlistTown", townName:$townName}' >"$payload_file"
+    registration="$(invoke_enlist_payload_file "$payload_file")"
+    jq -r '"town id: \(.thingName)"' <<<"$registration"
     jq '.' <<<"$registration"
 
 @rig-deploy town_id rig_type rig_name stack_name=stack_name region=region profile=profile:
@@ -84,19 +100,15 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
     source "{{aws_lib}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{region}}" "{{profile}}" "{{stack_name}}")"
     txing_aws_init
-    town_id="{{town_id}}"
-    rig_type="{{rig_type}}"
-    rig_name="$(printf '%s\n' "{{rig_name}}" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9-' '-' | sed 's/^-*//; s/-*$//')"
-    registration="$(
-      uv run --project "{{aws_dir}}/python" \
-      python -m aws.device_registry \
-      --region "$AWS_REGION" \
-      ensure-rig \
-        --town-id "$town_id" \
-        --rig-type "$rig_type" \
-        --rig "$rig_name"
-    )"
-    jq -r '"rig id: \(.thing_name)"' <<<"$registration"
+    payload_file="$(mktemp "${TMPDIR:-/tmp}/txing-enlist-rig.XXXXXX")"
+    trap 'rm -f "$payload_file"' EXIT
+    jq -n \
+      --arg townId "{{town_id}}" \
+      --arg rigType "{{rig_type}}" \
+      --arg rigName "{{rig_name}}" \
+      '{action:"enlistRig", townId:$townId, rigType:$rigType, rigName:$rigName}' >"$payload_file"
+    registration="$(invoke_enlist_payload_file "$payload_file")"
+    jq -r '"rig id: \(.thingName)"' <<<"$registration"
     jq '.' <<<"$registration"
 
 @device-deploy rig_id device_type device_name stack_name=stack_name region=region profile=profile:
@@ -106,20 +118,39 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
     source "{{aws_lib}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{region}}" "{{profile}}" "{{stack_name}}")"
     txing_aws_init
-    rig_id="{{rig_id}}"
-    device_type="{{device_type}}"
-    device_name="$(printf '%s\n' "{{device_name}}" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9-' '-' | sed 's/^-*//; s/-*$//')"
-    registration="$(
-      uv run --project "{{aws_dir}}/python" \
-      python -m aws.device_registry \
-      --region "$AWS_REGION" \
-      ensure-device \
-        --rig-id "$rig_id" \
-        --device-type "$device_type" \
-        --device-name "$device_name"
-    )"
-    jq -r '"device id: \(.thing_name)"' <<<"$registration"
+    payload_file="$(mktemp "${TMPDIR:-/tmp}/txing-enlist-device.XXXXXX")"
+    trap 'rm -f "$payload_file"' EXIT
+    jq -n \
+      --arg rigId "{{rig_id}}" \
+      --arg deviceType "{{device_type}}" \
+      --arg deviceName "{{device_name}}" \
+      '{action:"enlistDevice", rigId:$rigId, deviceType:$deviceType, deviceName:$deviceName}' >"$payload_file"
+    registration="$(invoke_enlist_payload_file "$payload_file")"
+    jq -r '"device id: \(.thingName)"' <<<"$registration"
     jq '.' <<<"$registration"
+
+@enlist payload_file stack_name=stack_name region=region profile=profile:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{aws_dir}}"
+    source "{{aws_lib}}"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{region}}" "{{profile}}" "{{stack_name}}")"
+    txing_aws_init
+    invoke_enlist_payload_file "{{payload_file}}" | jq '.'
+
+@discharge thing_id stack_name=stack_name region=region profile=profile:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{aws_dir}}"
+    source "{{aws_lib}}"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{region}}" "{{profile}}" "{{stack_name}}")"
+    txing_aws_init
+    payload_file="$(mktemp "${TMPDIR:-/tmp}/txing-discharge-thing.XXXXXX")"
+    trap 'rm -f "$payload_file"' EXIT
+    jq -n \
+      --arg thingId "{{thing_id}}" \
+      '{action:"dischargeThing", thingId:$thingId}' >"$payload_file"
+    invoke_enlist_payload_file "$payload_file" | jq '.'
 
 @configure-indexing region=region profile=profile:
     #!/usr/bin/env bash
@@ -508,26 +539,24 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
       trap 'rm -f "$payload_file"' EXIT
       thing_json="$(aws iot describe-thing --thing-name "$effective_thing_name" "${aws_flags[@]}" --output json)"
       thing_type="$(jq -r '.thingTypeName // empty' <<<"$thing_json")"
-      case "$thing_type:{{shadow_name}}" in
-        town:sparkplug)
+      thing_kind="$(jq -r '.attributes.kind // empty' <<<"$thing_json")"
+      case "$thing_kind:{{shadow_name}}" in
+        townType:sparkplug)
           jq -n '{state: {reported: {payload: {metrics: {redcon: 1}}}}}' >"$payload_file"
           ;;
-        rig:sparkplug)
-          town_json="$(aws iot describe-thing --thing-name "$(jq -r '.attributes.townId' <<<"$thing_json")" "${aws_flags[@]}" --output json)"
+        rigType:sparkplug)
           jq \
             -n \
-            --arg groupId "$(jq -r '.attributes.name' <<<"$town_json")" \
-            --arg edgeNodeId "$(jq -r '.attributes.name' <<<"$thing_json")" \
+            --arg groupId "$(jq -r '.attributes.townId' <<<"$thing_json")" \
+            --arg edgeNodeId "$(jq -r '.thingName' <<<"$thing_json")" \
             '{state: {reported: {topic: {namespace: "spBv1.0", groupId: $groupId, messageType: "NDEATH", edgeNodeId: $edgeNodeId}, payload: {metrics: {redcon: 4}}}}}' \
             >"$payload_file"
           ;;
-        *:sparkplug)
-          rig_json="$(aws iot describe-thing --thing-name "$(jq -r '.attributes.rigId' <<<"$thing_json")" "${aws_flags[@]}" --output json)"
-          town_json="$(aws iot describe-thing --thing-name "$(jq -r '.attributes.townId' <<<"$thing_json")" "${aws_flags[@]}" --output json)"
+        deviceType:sparkplug)
           jq \
             -n \
-            --arg groupId "$(jq -r '.attributes.name' <<<"$town_json")" \
-            --arg edgeNodeId "$(jq -r '.attributes.name' <<<"$rig_json")" \
+            --arg groupId "$(jq -r '.attributes.townId' <<<"$thing_json")" \
+            --arg edgeNodeId "$(jq -r '.attributes.rigId' <<<"$thing_json")" \
             --arg deviceId "$(jq -r '.thingName' <<<"$thing_json")" \
             '{state: {reported: {topic: {namespace: "spBv1.0", groupId: $groupId, messageType: "DDEATH", edgeNodeId: $edgeNodeId, deviceId: $deviceId}, payload: {metrics: {}}}}}' \
             >"$payload_file"
@@ -563,9 +592,10 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
     source "{{aws_lib}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{region}}" "{{profile}}")"
     txing_aws_init
-    uv run --project "{{aws_dir}}/python" \
-      python -m aws.device_registry \
-      --region "$AWS_REGION" \
-      assign-device \
-      --device-id "{{device_id}}" \
-      --rig-id "{{rig_id}}"
+    payload_file="$(mktemp "${TMPDIR:-/tmp}/txing-enlist-assign.XXXXXX")"
+    trap 'rm -f "$payload_file"' EXIT
+    jq -n \
+      --arg deviceId "{{device_id}}" \
+      --arg rigId "{{rig_id}}" \
+      '{action:"assignDevice", deviceId:$deviceId, rigId:$rigId}' >"$payload_file"
+    invoke_enlist_payload_file "$payload_file" | jq '.'

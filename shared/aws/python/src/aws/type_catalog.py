@@ -172,6 +172,7 @@ def _device_record(manifest: DeviceManifest, *, rig_type: str) -> dict[str, Any]
                 shadow_name: {
                     "schema": str(contract.schema.relative_to(manifest.device_dir)),
                     "default": str(contract.default.relative_to(manifest.device_dir)),
+                    "defaultPayload": contract.default.read_text(encoding="utf-8").strip(),
                 }
                 for shadow_name, contract in manifest.shadows.items()
             },

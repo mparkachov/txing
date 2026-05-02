@@ -32,8 +32,11 @@ Resources:
         searchableAttributes: name,townId,rigId
         shadows/sparkplug/schema: aws/sparkplug-shadow.schema.json
         shadows/sparkplug/default: aws/default-sparkplug-shadow.json
+        shadows/sparkplug/defaultPayload: '{"state":{"reported":{"payload":{"metrics":{"redcon":4}}}}}'
         shadows/mcp/schema: aws/mcp-shadow.schema.json
         shadows/mcp/default: aws/default-mcp-shadow.json
+        shadows/mcp/defaultPayload: '{"state":{"reported":{"descriptor":null,"status":{"serviceId":"mcp","available":false,"updatedAtMs":0}}}}'
         shadows/time/schema: aws/time-shadow.schema.json
         shadows/time/default: aws/default-time-shadow.json
+        shadows/time/defaultPayload: '{"state":{"reported":{"currentTimeIso":null,"mode":"sleep","activeUntilMs":null,"lastCommandId":null,"observedAtMs":0,"seq":0}}}'
         web/adapter: web/time-adapter.tsx
