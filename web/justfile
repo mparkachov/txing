@@ -16,11 +16,19 @@ web_dist_dir := web_dir + "/dist"
     ln -snf ../../../web/node_modules "{{project_root}}/devices/time/web/node_modules"
 
 @dev:
+    #!/usr/bin/env bash
+    set -euo pipefail
     cd "{{web_dir}}"
+    eval "$(just --justfile "{{root_justfile}}" _project-version-env)"
+    export VITE_TXING_VERSION="$TXING_VERSION"
     bun run dev
 
 @build:
+    #!/usr/bin/env bash
+    set -euo pipefail
     cd "{{web_dir}}"
+    eval "$(just --justfile "{{root_justfile}}" _project-version-env)"
+    export VITE_TXING_VERSION="$TXING_VERSION"
     bun run build
 
 @publish stack_name=stack_name region=region profile=profile web_dist_dir=web_dist_dir:
@@ -99,6 +107,7 @@ web_dist_dir := web_dir + "/dist"
     stack_name="$AWS_STACK_NAME"
     region="$AWS_REGION"
     profile="$AWS_SELECTED_PROFILE"
+    txing_version="$TXING_VERSION"
 
     aws_flags=(--region "$region")
     if [ -n "$profile" ]; then
@@ -173,6 +182,7 @@ web_dist_dir := web_dir + "/dist"
       "VITE_TOWN_THING_NAME=$current_town_thing_name" \
       "VITE_SPARKPLUG_GROUP_ID=$current_sparkplug_group_id" \
       "VITE_SPARKPLUG_EDGE_NODE_ID=$current_sparkplug_edge_node_id" \
+      "VITE_TXING_VERSION=$txing_version" \
       "VITE_COGNITO_DOMAIN=$cognito_domain" \
       "VITE_COGNITO_CLIENT_ID=$cognito_client_id" \
       "VITE_COGNITO_USER_POOL_ID=$cognito_user_pool_id" \

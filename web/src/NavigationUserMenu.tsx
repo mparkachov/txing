@@ -3,6 +3,7 @@ import type { AuthUser } from './auth'
 
 type NavigationUserMenuProps = {
   authUser: AuthUser | null
+  txingVersion: string
   defaultOpen?: boolean
   isSessionLogVisible: boolean
   onSignOff: () => void
@@ -11,6 +12,7 @@ type NavigationUserMenuProps = {
 
 function NavigationUserMenu({
   authUser,
+  txingVersion,
   defaultOpen = false,
   isSessionLogVisible,
   onSignOff,
@@ -72,6 +74,10 @@ function NavigationUserMenu({
               <p className="user-menu-name">{authUser?.name ?? 'Signed in'}</p>
               <p className="user-menu-email">{authUser?.email ?? authUser?.sub ?? 'Unknown user'}</p>
             </div>
+          </div>
+          <div className="user-menu-version" role="presentation">
+            <span>About</span>
+            <code>{txingVersion}</code>
           </div>
           <button
             type="button"

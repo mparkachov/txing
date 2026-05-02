@@ -289,6 +289,42 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("Type: AWS::CloudFormation::Stack", root_template)
         self.assertIn("TemplateURL: templates/base.yaml", root_template)
 
+    def test_global_version_is_parameterized_through_root_and_time_runtime(self) -> None:
+        root_template = (AWS_DIR / "template.yaml").read_text(encoding="utf-8")
+        cloud_time_template = (AWS_DIR / "templates" / "types" / "cloud-time.yaml").read_text(
+            encoding="utf-8"
+        )
+        aws_justfile = (AWS_DIR / "justfile").read_text(encoding="utf-8")
+        root_justfile = (REPO_ROOT / "justfile").read_text(encoding="utf-8")
+
+        self.assertEqual((REPO_ROOT / "VERSION").read_text(encoding="utf-8").strip(), "0.6.0")
+        self.assertIn("_project-version-env:", root_justfile)
+        self.assertIn("export_line TXING_VERSION_BASE", root_justfile)
+        self.assertIn("export_line TXING_VERSION", root_justfile)
+        self.assertIn("TxingVersion:", root_template)
+        self.assertIn("TimeRuntimeVersion: !Ref TxingVersion", root_template)
+        self.assertIn("Value: !Ref TxingVersion", root_template)
+        self.assertIn("TimeRuntimeVersion:", cloud_time_template)
+        self.assertIn("SERVER_VERSION: !Ref TimeRuntimeVersion", cloud_time_template)
+        self.assertNotIn('SERVER_VERSION: "0.5.0"', cloud_time_template)
+        self.assertIn('"TxingVersion=$TXING_VERSION"', aws_justfile)
+
+    def test_static_manifests_use_base_version_only(self) -> None:
+        version = (REPO_ROOT / "VERSION").read_text(encoding="utf-8").strip()
+        manifest_expectations = {
+            REPO_ROOT / "rig" / "pyproject.toml": f'version = "{version}"',
+            REPO_ROOT / "shared" / "aws" / "python" / "pyproject.toml": f'version = "{version}"',
+            REPO_ROOT / "devices" / "time" / "lambda" / "python" / "pyproject.toml": f'version = "{version}"',
+            REPO_ROOT / "devices" / "time" / "rig" / "python" / "pyproject.toml": f'version = "{version}"',
+            REPO_ROOT / "devices" / "unit" / "rig" / "python" / "pyproject.toml": f'version = "{version}"',
+            REPO_ROOT / "devices" / "unit" / "board" / "pyproject.toml": f'version = "{version}"',
+            REPO_ROOT / "devices" / "unit" / "mcu" / "Cargo.toml": f'version = "{version}"',
+            REPO_ROOT / "web" / "package.json": f'"version": "{version}"',
+        }
+        for path, expected in manifest_expectations.items():
+            self.assertIn(expected, path.read_text(encoding="utf-8"), path)
+            self.assertNotIn(f"{version}+", path.read_text(encoding="utf-8"), path)
+
     def test_aws_recipes_are_stateless_and_staged(self) -> None:
         checked_paths = [
             REPO_ROOT / "justfile",

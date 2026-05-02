@@ -10,6 +10,10 @@ Parameters:
   TimeRuntimeActiveTtlMs:
     Type: Number
     Default: 300000
+  TimeRuntimeVersion:
+    Type: String
+    Default: 0.6.0
+    AllowedPattern: "^[0-9]+\\.[0-9]+\\.[0-9]+(\\+[A-Za-z0-9.]+)?$"
 
 Resources:
   TimeTypeCatalog:
@@ -117,7 +121,7 @@ Resources:
       Environment:
         Variables:
           ACTIVE_TTL_MS: !Ref TimeRuntimeActiveTtlMs
-          SERVER_VERSION: "0.5.0"
+          SERVER_VERSION: !Ref TimeRuntimeVersion
 
   TimeRuntimeScheduleRule:
     Type: AWS::Events::Rule
@@ -163,3 +167,5 @@ Outputs:
     Value: !Ref TimeRuntimeScheduleRule
   TimeRuntimeMcpTopicRuleArn:
     Value: !GetAtt TimeRuntimeMcpTopicRule.Arn
+  TimeRuntimeVersion:
+    Value: !Ref TimeRuntimeVersion

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import secrets
 import threading
 import time
@@ -28,7 +29,7 @@ from .video_state import (
 
 LOGGER = logging.getLogger("board.mcp_service")
 
-MCP_SERVER_VERSION = "0.5.0"
+DEFAULT_MCP_SERVER_VERSION = "0.6.0"
 MCP_WEBRTC_DATA_CHANNEL_LABEL = "txing.mcp.v1"
 _JSONRPC_VERSION = "2.0"
 _ResponseSender = Callable[[bytes], None]
@@ -40,6 +41,10 @@ def _encode_json(payload: dict[str, Any]) -> bytes:
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
+
+
+def _server_version_from_env() -> str:
+    return os.getenv("TXING_VERSION", "").strip() or DEFAULT_MCP_SERVER_VERSION
 
 
 @dataclass(slots=True, frozen=True)
@@ -58,7 +63,7 @@ class BoardMcpServer:
         cmd_vel_controller: CmdVelController,
         video_state_provider: Callable[[], dict[str, Any]] | None = None,
         lease_ttl_ms: int = MCP_DEFAULT_LEASE_TTL_MS,
-        server_version: str = MCP_SERVER_VERSION,
+        server_version: str | None = None,
         mcp_protocol_version: str = MCP_PROTOCOL_VERSION,
         webrtc_channel_name: str | None = None,
         webrtc_region: str | None = None,
@@ -70,12 +75,13 @@ class BoardMcpServer:
         self._cmd_vel_controller = cmd_vel_controller
         self._video_state_provider = video_state_provider
         self._lease_ttl_ms = lease_ttl_ms
-        self._server_version = server_version
+        effective_server_version = server_version or _server_version_from_env()
+        self._server_version = effective_server_version
         self._mcp_protocol_version = mcp_protocol_version
         self._topics = build_mcp_topics(device_id)
         self._descriptor_payload = build_mcp_descriptor_payload(
             device_id=device_id,
-            server_version=server_version,
+            server_version=effective_server_version,
             lease_required=True,
             lease_ttl_ms=lease_ttl_ms,
             mcp_protocol_version=mcp_protocol_version,

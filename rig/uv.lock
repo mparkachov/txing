@@ -4,7 +4,7 @@ requires-python = ">=3.12"
 
 [[package]]
 name = "aws"
-version = "0.5.0"
+version = "0.6.0"
 source = { directory = "../shared/aws/python" }
 dependencies = [
     { name = "awsiotsdk" },
@@ -102,7 +102,7 @@ wheels = [
 
 [[package]]
 name = "rig"
-version = "0.5.0"
+version = "0.6.0"
 source = { editable = "." }
 dependencies = [
     { name = "aws" },

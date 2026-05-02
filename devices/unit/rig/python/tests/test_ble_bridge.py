@@ -788,12 +788,11 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertIn("ggl-cli", justfile)
         self.assertIn('explicit_component_version="{{component_version}}"', justfile)
         self.assertNotIn("TXING_RIG_COMPONENT_VERSION", justfile)
-        self.assertIn('git_short_sha="$(git -C "{{project_root}}" rev-parse --short=12 HEAD', justfile)
-        self.assertIn('git_status="$(git -C "{{project_root}}" status --porcelain --untracked-files=all', justfile)
-        self.assertIn('resolved_component_version="0.5.0+g$git_short_sha$dirty_suffix"', justfile)
-        self.assertIn('resolved_component_version="0.5.0+nogit.$(date -u +%s)"', justfile)
+        self.assertNotIn('git_short_sha="$(git -C "{{project_root}}" rev-parse --short=12 HEAD', justfile)
+        self.assertNotIn('git_status="$(git -C "{{project_root}}" status --porcelain --untracked-files=all', justfile)
+        self.assertIn('resolved_component_version="$TXING_VERSION"', justfile)
         self.assertIn("Greengrass Lite local component versions must not contain '-'", justfile)
-        self.assertIn("0.5.0+g<sha>", justfile)
+        self.assertIn("0.6.0+g<sha>", justfile)
         self.assertIn("rig::deploy arguments are positional", justfile)
         self.assertIn("Component version is generated automatically", justfile)
         self.assertIn('deploy_root="{{rig_dir}}/build/greengrass-local"', justfile)
@@ -815,6 +814,8 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertNotIn("cleanup_deploy_root", justfile)
         self.assertIn('runtime: aws_nucleus_lite', justfile)
         self.assertIn('unset AWS_PROFILE AWS_DEFAULT_PROFILE AWS_SHARED_CREDENTIALS_FILE', justfile)
+        self.assertIn('export TXING_VERSION_BASE="$TXING_VERSION_BASE"', justfile)
+        self.assertIn('export TXING_VERSION="$resolved_component_version"', justfile)
         self.assertIn('export AWS_IOT_ENDPOINT="$iot_data_endpoint"', justfile)
         self.assertIn('export PYTHONPATH="{artifacts:path}/python"', justfile)
         self.assertIn('sparkplug_module="unit_rig.sparkplug_manager"', justfile)
@@ -862,7 +863,7 @@ class AwsShadowClientTests(unittest.TestCase):
                 / "rig"
                 / "greengrass"
                 / "recipes"
-                / "dev.txing.device.unit.SparkplugManager-0.5.0.yaml"
+                / "dev.txing.device.unit.SparkplugManager-0.6.0.yaml"
             ).exists()
         )
         self.assertTrue(
@@ -871,7 +872,7 @@ class AwsShadowClientTests(unittest.TestCase):
                 / "rig"
                 / "greengrass"
                 / "recipes"
-                / "dev.txing.device.unit.ConnectivityBle-0.5.0.yaml"
+                / "dev.txing.device.unit.ConnectivityBle-0.6.0.yaml"
             ).exists()
         )
         for recipe_path in (repo_root / "rig" / "greengrass" / "recipes").glob("dev.txing.device.unit.*.yaml"):
@@ -883,14 +884,14 @@ class AwsShadowClientTests(unittest.TestCase):
             / "rig"
             / "greengrass"
             / "recipes"
-            / "dev.txing.device.unit.SparkplugManager-0.5.0.yaml"
+            / "dev.txing.device.unit.SparkplugManager-0.6.0.yaml"
         ).read_text(encoding="utf-8")
         ble_recipe = (
             repo_root
             / "rig"
             / "greengrass"
             / "recipes"
-            / "dev.txing.device.unit.ConnectivityBle-0.5.0.yaml"
+            / "dev.txing.device.unit.ConnectivityBle-0.6.0.yaml"
         ).read_text(encoding="utf-8")
         self.assertIn("runtime: aws_nucleus_lite", sparkplug_recipe)
         self.assertIn("runtime: aws_nucleus_lite", ble_recipe)
@@ -907,6 +908,11 @@ class AwsShadowClientTests(unittest.TestCase):
         )
 
         self.assertIn("_project-aws-env scope='aws'", justfile)
+        self.assertIn("_project-version-env:", justfile)
+        self.assertIn('version_base="$(tr -d \'[:space:]\' < "$project_root/VERSION")"', justfile)
+        self.assertIn("TXING_VERSION_BASE", justfile)
+        self.assertIn("TXING_VERSION", justfile)
+        self.assertIn('txing_version="$version_base+nogit.$(date -u +%s)"', justfile)
         self.assertIn("aws|town|rig|device", justfile)
         self.assertIn('env_file="$(resolve_path "$(choose_value "{{ env_file }}" "config/aws.env")")"', justfile)
         self.assertIn('source "$env_file"', justfile)

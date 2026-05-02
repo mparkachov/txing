@@ -21,6 +21,8 @@ class TimeDeviceTemplateTests(unittest.TestCase):
         self.assertIn("iot:GetRetainedMessage", template)
         self.assertIn("iot:GetThingShadow", template)
         self.assertIn("iot:SearchIndex", template)
+        self.assertIn("TimeRuntimeVersion:", template)
+        self.assertIn("SERVER_VERSION: !Ref TimeRuntimeVersion", template)
         self.assertIn("topic/txings/*/time/*", template)
         self.assertIn("topic/txings/*/mcp/*", template)
         self.assertIn("Code: ../../../../devices/time/lambda/python/src", template)

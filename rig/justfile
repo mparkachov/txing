@@ -29,6 +29,9 @@ aws_shared_credentials_file := ""
     cd "{{rig_dir}}" && uv sync --python "{{python_executable}}" --no-managed-python --no-python-downloads
 
 @build:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval "$(just --justfile "{{root_justfile}}" _project-version-env)"
     cd "{{rig_dir}}" && uv sync --frozen --no-editable --compile-bytecode --python "{{python_executable}}" --no-managed-python --no-python-downloads --refresh-package rig --reinstall-package rig --refresh-package aws --reinstall-package aws
     test -x "{{built_rig}}"
     test -x "{{built_rig_device_process}}"
@@ -905,32 +908,11 @@ aws_shared_credentials_file := ""
     if [ -n "$explicit_component_version" ]; then \
         resolved_component_version="$explicit_component_version"; \
     else
-        git_short_sha="$(git -C "{{project_root}}" rev-parse --short=12 HEAD 2>/dev/null || true)"
-        if [ -n "$git_short_sha" ]; then
-            git_status="$(git -C "{{project_root}}" status --porcelain --untracked-files=all 2>/dev/null || true)"
-            dirty_suffix=""
-            if [ -n "$git_status" ]; then
-                dirty_hash="$(
-                    {
-                        printf '%s\n' "$git_status"
-                        git -C "{{project_root}}" diff --binary --ignore-submodules -- 2>/dev/null || true
-                        git -C "{{project_root}}" diff --cached --binary --ignore-submodules -- 2>/dev/null || true
-                        while IFS= read -r -d '' untracked_file; do
-                            printf 'untracked:%s\n' "$untracked_file"
-                            git -C "{{project_root}}" hash-object -- "$untracked_file" 2>/dev/null || true
-                        done < <(git -C "{{project_root}}" ls-files --others --exclude-standard -z 2>/dev/null || true)
-                    } | git -C "{{project_root}}" hash-object --stdin | cut -c1-12
-                )"
-                dirty_suffix=".d$dirty_hash"
-            fi
-            resolved_component_version="0.5.0+g$git_short_sha$dirty_suffix"
-        else
-            resolved_component_version="0.5.0+nogit.$(date -u +%s)"
-        fi
+        resolved_component_version="$TXING_VERSION"
     fi
     case "$resolved_component_version" in
       *-*)
-        echo "Greengrass Lite local component versions must not contain '-' because its recipe filename scanner splits on the last hyphen. Use a version like 0.5.0+g<sha> or 0.5.1." >&2
+        echo "Greengrass Lite local component versions must not contain '-' because its recipe filename scanner splits on the last hyphen. Use a version like 0.6.0+g<sha> or 0.6.1." >&2
         exit 1
         ;;
     esac
@@ -1040,6 +1022,8 @@ aws_shared_credentials_file := ""
             Script: |-
               export AWS_REGION="$AWS_REGION"
               export AWS_DEFAULT_REGION="$AWS_REGION"
+              export TXING_VERSION_BASE="$TXING_VERSION_BASE"
+              export TXING_VERSION="$resolved_component_version"
               unset AWS_PROFILE AWS_DEFAULT_PROFILE AWS_SHARED_CREDENTIALS_FILE
               export RIG_NAME="$rig_name"
               export TXING_RIG_ID="$TXING_RIG_ID"
@@ -1100,6 +1084,8 @@ aws_shared_credentials_file := ""
             Script: |-
               export AWS_REGION="$AWS_REGION"
               export AWS_DEFAULT_REGION="$AWS_REGION"
+              export TXING_VERSION_BASE="$TXING_VERSION_BASE"
+              export TXING_VERSION="$resolved_component_version"
               unset AWS_PROFILE AWS_DEFAULT_PROFILE AWS_SHARED_CREDENTIALS_FILE
               export RIG_NAME="$rig_name"
               export TXING_RIG_ID="$TXING_RIG_ID"

@@ -34,6 +34,7 @@ const buildConfig = () => {
   const townThingName = requireEnv('VITE_TOWN_THING_NAME') ?? ''
   const sparkplugGroupId = requireEnv('VITE_SPARKPLUG_GROUP_ID') ?? ''
   const sparkplugEdgeNodeId = requireEnv('VITE_SPARKPLUG_EDGE_NODE_ID') ?? ''
+  const txingVersion = requireEnv('VITE_TXING_VERSION') ?? '0.6.0'
 
   const errors: string[] = []
 
@@ -73,6 +74,7 @@ const buildConfig = () => {
     townThingName,
     sparkplugGroupId,
     sparkplugEdgeNodeId,
+    txingVersion,
     adminEmail,
     cognitoDomain,
     cognitoClientId: requireEnv('VITE_COGNITO_CLIENT_ID') ?? '',

@@ -1666,6 +1666,7 @@ function App({ initialAuthError = '' }: AppProps) {
           ) : null}
           <NavigationUserMenu
             authUser={authUser}
+            txingVersion={appConfig.txingVersion}
             isSessionLogVisible={isSessionLogVisible}
             onSignOff={handleSignOff}
             onToggleSessionLog={() => {

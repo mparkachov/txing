@@ -4,6 +4,61 @@ set quiet
 root_dir := source_directory()
 
 [private]
+_project-version-env:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    project_root="{{ root_dir }}"
+
+    export_line() {
+      local name="$1"
+      local value="$2"
+      printf 'export %s=%q\n' "$name" "$value"
+    }
+
+    version_base="$(tr -d '[:space:]' < "$project_root/VERSION")"
+    if ! [[ "$version_base" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      echo "VERSION must contain a base semantic version like 0.6.0." >&2
+      exit 1
+    fi
+
+    git_short_sha="$(git -C "$project_root" rev-parse --short=12 HEAD 2>/dev/null || true)"
+    if [ -n "$git_short_sha" ]; then
+      git_status="$(git -C "$project_root" status --porcelain --untracked-files=all 2>/dev/null || true)"
+      dirty_suffix=""
+      if [ -n "$git_status" ]; then
+        dirty_hash="$(
+          {
+            printf '%s\n' "$git_status"
+            git -C "$project_root" diff --binary --ignore-submodules -- 2>/dev/null || true
+            git -C "$project_root" diff --cached --binary --ignore-submodules -- 2>/dev/null || true
+            while IFS= read -r -d '' untracked_file; do
+              printf 'untracked:%s\n' "$untracked_file"
+              git -C "$project_root" hash-object -- "$untracked_file" 2>/dev/null || true
+            done < <(git -C "$project_root" ls-files --others --exclude-standard -z 2>/dev/null || true)
+          } | git -C "$project_root" hash-object --stdin | cut -c1-12
+        )"
+        dirty_suffix=".d$dirty_hash"
+      fi
+      txing_version="$version_base+g$git_short_sha$dirty_suffix"
+      txing_git_sha="$git_short_sha"
+    else
+      txing_version="$version_base+nogit.$(date -u +%s)"
+      txing_git_sha=""
+    fi
+
+    case "$txing_version" in
+      *-*)
+        echo "TXING_VERSION must not contain '-' because Greengrass Lite recipe filename scanning splits on the last hyphen." >&2
+        exit 1
+        ;;
+    esac
+
+    export_line TXING_VERSION_BASE "$version_base"
+    export_line TXING_VERSION "$txing_version"
+    export_line TXING_GIT_SHA "$txing_git_sha"
+
+[private]
 _project-aws-env scope='aws' region='' profile='' stack_name='' cognito_domain_prefix='' admin_email='' aws_shared_credentials_file='' env_file='':
     #!/usr/bin/env bash
     set -euo pipefail
@@ -85,6 +140,8 @@ _project-aws-env scope='aws' region='' profile='' stack_name='' cognito_domain_p
         exit 1
         ;;
     esac
+
+    eval "$(just --justfile "$project_root/justfile" _project-version-env)"
 
     aws_region="$(require_value AWS_REGION "$(choose_value "{{ region }}" "${AWS_REGION:-}")")"
     aws_stack_name="$(choose_value "{{ stack_name }}" "${AWS_STACK_NAME:-txing-iot}")"
@@ -186,6 +243,9 @@ _project-aws-env scope='aws' region='' profile='' stack_name='' cognito_domain_p
     thing_name="$txing_thing_id"
 
     export_line TXING_PROJECT_ROOT "$project_root"
+    export_line TXING_VERSION_BASE "$TXING_VERSION_BASE"
+    export_line TXING_VERSION "$TXING_VERSION"
+    export_line TXING_GIT_SHA "$TXING_GIT_SHA"
     export_line AWS_ENV_FILE "$env_file"
     printf 'unset RIG_ENV_FILE\n'
     printf 'unset BOARD_ENV_FILE\n'

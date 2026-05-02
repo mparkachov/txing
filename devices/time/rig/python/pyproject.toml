@@ -1,6 +1,6 @@
 [project]
 name = "time-rig"
-version = "0.5.0"
+version = "0.6.0"
 description = "Time device-type runtime adapter for the txing aws rig"
 requires-python = ">=3.12"
 dependencies = [

@@ -16,6 +16,10 @@ Parameters:
   LocalhostAltAppUrl:
     Type: String
     Default: http://127.0.0.1:5173
+  TxingVersion:
+    Type: String
+    Description: Effective txing repo version deployed with this stack.
+    AllowedPattern: "^[0-9]+\\.[0-9]+\\.[0-9]+(\\+[A-Za-z0-9.]+)?$"
 
 Resources:
   BaseEnvironment:
@@ -75,6 +79,7 @@ Resources:
       TemplateURL: templates/types/cloud-time.yaml
       Parameters:
         TypeCatalogServiceToken: !GetAtt BaseEnvironment.Outputs.CustomResourceServiceToken
+        TimeRuntimeVersion: !Ref TxingVersion
 
   RigRuntimeLayer:
     Type: AWS::CloudFormation::Stack
@@ -103,6 +108,8 @@ Resources:
       TemplateURL: templates/enlist.yaml
 
 Outputs:
+  TxingVersion:
+    Value: !Ref TxingVersion
   RigLogGroupPattern:
     Value: !GetAtt BaseEnvironment.Outputs.RigLogGroupPattern
   DeviceLogGroupPattern:

@@ -33,6 +33,9 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
     cd "{{board_dir}}" && uv sync --python "{{python_executable}}" --no-managed-python --no-python-downloads
 
 @build:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval "$(just --justfile "{{root_justfile}}" _project-version-env)"
     cd "{{board_dir}}" && uv sync --frozen --no-editable --compile-bytecode --python "{{python_executable}}" --no-managed-python --no-python-downloads --refresh-package board --reinstall-package board --refresh-package aws --reinstall-package aws
     test -x "{{built_board}}"
     test -x "{{built_board_video_sender}}"
@@ -260,6 +263,7 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
     }
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "{{aws_profile}}" "" "" "" "{{aws_shared_credentials_file}}")"
     project_root="$TXING_PROJECT_ROOT"
+    txing_version="$TXING_VERSION"
     thing_name="$THING_NAME"
     schema_file="$SCHEMA_FILE"
     video_region="$BOARD_VIDEO_REGION"
@@ -274,6 +278,9 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
     fi; \
     if [ -n "$thing_name" ]; then \
         service_env+=("Environment=\"THING_NAME=$thing_name\""); \
+    fi; \
+    if [ -n "$txing_version" ]; then \
+        service_env+=("Environment=\"TXING_VERSION=$txing_version\""); \
     fi; \
     if [ -n "{{schema_file}}" ]; then \
         schema_file="{{schema_file}}"; \

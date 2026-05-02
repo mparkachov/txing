@@ -1,6 +1,6 @@
 [project]
 name = "aws"
-version = "0.5.0"
+version = "0.6.0"
 description = "Shared AWS runtime helpers for txing subprojects"
 requires-python = ">=3.12"
 dependencies = [

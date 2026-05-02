@@ -29,7 +29,7 @@ COMMAND_STATUS_SUCCEEDED = "succeeded"
 COMMAND_STATUS_FAILED = "failed"
 DEFAULT_ACTIVE_TTL_MS = 300_000
 DEFAULT_LEASE_TTL_MS = 5_000
-DEFAULT_SERVER_VERSION = "0.5.0"
+DEFAULT_SERVER_VERSION = "0.6.0"
 TIME_DEVICE_SEARCH_QUERY = "thingTypeName:time AND attributes.kind:deviceType"
 TIME_DEVICE_SEARCH_PAGE_SIZE = 100
 
@@ -624,6 +624,14 @@ def _env_int(name: str, default: int) -> int:
     return int(value)
 
 
+def _server_version_from_env() -> str:
+    return (
+        os.getenv("SERVER_VERSION", "").strip()
+        or os.getenv("TXING_VERSION", "").strip()
+        or DEFAULT_SERVER_VERSION
+    )
+
+
 def _region_name_from_env() -> str | None:
     return os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or None
 
@@ -653,7 +661,7 @@ def build_runtime_from_env(
         thing_name=thing_name,
         iot_data_client=iot_data_client,
         active_ttl_ms=_env_int("ACTIVE_TTL_MS", DEFAULT_ACTIVE_TTL_MS),
-        server_version=os.getenv("SERVER_VERSION", DEFAULT_SERVER_VERSION),
+        server_version=_server_version_from_env(),
     )
 
 
@@ -731,5 +739,5 @@ def handle_scheduled_wake_for_time_devices_from_env(
         iot_client=build_iot_client_from_env(),
         iot_data_client=build_iot_data_client_from_env(),
         active_ttl_ms=_env_int("ACTIVE_TTL_MS", DEFAULT_ACTIVE_TTL_MS),
-        server_version=os.getenv("SERVER_VERSION", DEFAULT_SERVER_VERSION),
+        server_version=_server_version_from_env(),
     )

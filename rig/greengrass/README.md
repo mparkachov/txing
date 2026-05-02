@@ -74,7 +74,7 @@ just rig::deploy <rig-id>
 `deploy` depends on `rig::build`, so a separate build step is not
 required for the normal edit/pull/deploy loop. The recipe generates a local
 Greengrass component version from the current short Git SHA, for example
-`0.5.0+g4e1261afdf2b`, adding a dirty-tree hash when local changes are present,
+`0.6.0+g4e1261afdf2b`, adding a dirty-tree hash when local changes are present,
 so checked-out code is deployed without manually changing version numbers.
 Generated versions intentionally avoid `-` because Greengrass Lite's local
 recipe filename scanner splits recipe names on the last hyphen.

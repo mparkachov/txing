@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 import time
 from typing import Any
@@ -17,7 +18,7 @@ from .video_state import normalize_video_state
 
 LOGGER = logging.getLogger("board.video_service")
 
-VIDEO_SERVER_VERSION = "0.5.0"
+DEFAULT_VIDEO_SERVER_VERSION = "0.6.0"
 
 
 def _encode_json(payload: dict[str, Any]) -> bytes:
@@ -28,6 +29,10 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
+def _server_version_from_env() -> str:
+    return os.getenv("TXING_VERSION", "").strip() or DEFAULT_VIDEO_SERVER_VERSION
+
+
 class BoardVideoService:
     def __init__(
         self,
@@ -35,17 +40,18 @@ class BoardVideoService:
         device_id: str,
         channel_name: str,
         region: str,
-        server_version: str = VIDEO_SERVER_VERSION,
+        server_version: str | None = None,
     ) -> None:
         self._device_id = device_id
         self._channel_name = channel_name
         self._region = region
+        effective_server_version = server_version or _server_version_from_env()
         self._topics = build_video_topics(device_id)
         self._descriptor_payload = build_video_descriptor_payload(
             device_id=device_id,
             channel_name=channel_name,
             region=region,
-            server_version=server_version,
+            server_version=effective_server_version,
         )
         self._lock = threading.Lock()
         self._client: Any = None

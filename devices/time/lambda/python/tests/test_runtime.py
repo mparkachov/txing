@@ -10,6 +10,7 @@ from time_device.runtime import (
     TIME_MODE_SLEEP,
     TIME_DEVICE_SEARCH_QUERY,
     TimeDeviceRuntime,
+    build_runtime_from_env,
     build_mcp_session_s2c_topic,
     build_time_command_result_topic,
     build_time_command_topic,
@@ -105,6 +106,26 @@ class TimeDeviceRuntimeTests(unittest.TestCase):
             active_ttl_ms=300_000,
         )
         return runtime, iot
+
+    def test_runtime_from_env_uses_global_version_with_server_override(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {"TXING_VERSION": "0.6.0+g123456789abc"},
+            clear=True,
+        ):
+            runtime = build_runtime_from_env(thing_name="clock", iot_data_client=object())
+        self.assertEqual(runtime.server_version, "0.6.0+g123456789abc")
+
+        with patch.dict(
+            "os.environ",
+            {
+                "TXING_VERSION": "0.6.0+g123456789abc",
+                "SERVER_VERSION": "0.6.0+gfeedfacefeed",
+            },
+            clear=True,
+        ):
+            runtime = build_runtime_from_env(thing_name="clock", iot_data_client=object())
+        self.assertEqual(runtime.server_version, "0.6.0+gfeedfacefeed")
 
     def test_minute_wake_publishes_current_time_and_sleep_state(self) -> None:
         runtime, iot = self.make_runtime()

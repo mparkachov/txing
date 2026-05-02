@@ -1,6 +1,6 @@
 [project]
 name = "witness"
-version = "0.5.0"
+version = "0.6.0"
 description = "Sparkplug witness projection for txing"
 requires-python = ">=3.12"
 dependencies = [

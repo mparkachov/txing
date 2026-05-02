@@ -5,6 +5,7 @@ import time
 import unittest
 from dataclasses import dataclass
 from typing import Any
+from unittest.mock import patch
 
 from board.mcp_service import BoardMcpServer
 from board.cmd_vel import DriveState
@@ -107,6 +108,7 @@ class BoardMcpServerTests(unittest.TestCase):
         self.assertEqual(client.publishes[1].topic, "txings/unit-local/mcp/status")
         self.assertIs(client.publishes[1].retain, True)
         descriptor = _decode_payload(client.publishes[0])
+        self.assertEqual(descriptor["serverVersion"], "0.6.0")
         self.assertEqual(
             descriptor["transports"],
             [
@@ -144,6 +146,20 @@ class BoardMcpServerTests(unittest.TestCase):
         self.assertEqual(descriptor["transports"][0]["label"], "txing.mcp.v1")
         self.assertEqual(descriptor["transports"][1]["type"], "mqtt-jsonrpc")
         self.assertEqual(descriptor["transports"][1]["priority"], 100)
+
+    def test_descriptor_uses_global_txing_version_from_environment(self) -> None:
+        cmd_vel = _FakeCmdVelController()
+        client = _FakeMqttClient()
+        with patch.dict("os.environ", {"TXING_VERSION": "0.6.0+g123456789abc"}):
+            server = BoardMcpServer(
+                device_id="unit-local",
+                cmd_vel_controller=cmd_vel,
+            )
+
+        server.on_connected(client=client, publish_timeout_seconds=2.0)
+
+        descriptor = _decode_payload(client.publishes[0])
+        self.assertEqual(descriptor["serverVersion"], "0.6.0+g123456789abc")
 
     def test_initialize_and_tools_list_flow(self) -> None:
         cmd_vel = _FakeCmdVelController()

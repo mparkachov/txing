@@ -29,6 +29,7 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
       --parameter-overrides \
       "CognitoDomainPrefix=$AWS_COGNITO_DOMAIN_PREFIX" \
       "AdminEmail=$AWS_ADMIN_EMAIL" \
+      "TxingVersion=$TXING_VERSION" \
       "LocalhostAppUrl={{LocalhostAppUrl}}" \
       "LocalhostAltAppUrl={{LocalhostAltAppUrl}}"
     describe_stack_outputs "$AWS_STACK_NAME"
