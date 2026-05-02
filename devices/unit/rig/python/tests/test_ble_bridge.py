@@ -817,6 +817,16 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertIn('--add-component "$connectivity_component=$resolved_component_version"', justfile)
         self.assertIn('--remove-component "$legacy_component"', justfile)
 
+    def test_greengrass_module_entrypoints_call_main(self) -> None:
+        repo_root = Path(__file__).resolve().parents[5]
+        for module_path in (
+            repo_root / "devices/unit/rig/python/src/unit_rig/connectivity_ble.py",
+            repo_root / "devices/unit/rig/python/src/unit_rig/sparkplug_manager.py",
+        ):
+            module_source = module_path.read_text(encoding="utf-8")
+            self.assertIn('if __name__ == "__main__":', module_source)
+            self.assertIn("    main()", module_source)
+
     def test_greengrass_templates_are_rig_local(self) -> None:
         repo_root = Path(__file__).resolve().parents[5]
 

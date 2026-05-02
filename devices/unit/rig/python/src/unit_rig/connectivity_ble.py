@@ -467,3 +467,7 @@ def main() -> None:
         asyncio.run(_runner())
     finally:
         lock.release()
+
+
+if __name__ == "__main__":
+    main()

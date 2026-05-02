@@ -1080,3 +1080,7 @@ def main() -> None:
             task.result()
 
     asyncio.run(_runner())
+
+
+if __name__ == "__main__":
+    main()
