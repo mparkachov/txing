@@ -1171,15 +1171,27 @@ class RealKvsSession final : public KvsSession {
 
         switch (received_message->signalingMessage.messageType) {
             case SIGNALING_MESSAGE_TYPE_OFFER: {
+                std::shared_ptr<StreamingSession> replaced_session;
                 {
                     std::lock_guard<std::mutex> lock(state_lock_);
-                    if (sessions_by_peer_.find(peer_id) != sessions_by_peer_.end()) {
-                        return STATUS_INVALID_OPERATION;
+                    auto existing_session = sessions_by_peer_.find(peer_id);
+                    if (existing_session != sessions_by_peer_.end()) {
+                        replaced_session = existing_session->second;
+                        sessions_by_peer_.erase(existing_session);
                     }
                     if (sessions_by_peer_.size() >= kMaxConcurrentStreamingSessions) {
                         pending_ice_by_peer_.erase(peer_id);
                         return STATUS_SUCCESS;
                     }
+                }
+
+                if (replaced_session) {
+                    std::fprintf(
+                        stderr,
+                        "INFO kvs_session_real: replacing existing session for renewed offer peer=%s\n",
+                        peer_id.c_str()
+                    );
+                    DestroySession(replaced_session);
                 }
 
                 std::shared_ptr<StreamingSession> session;
@@ -1195,13 +1207,15 @@ class RealKvsSession final : public KvsSession {
                 }
 
                 std::deque<PendingIceMessage> pending_messages;
+                std::shared_ptr<StreamingSession> late_replaced_session;
                 bool destroy_session = false;
                 STATUS post_insert_status = STATUS_SUCCESS;
                 {
                     std::lock_guard<std::mutex> lock(state_lock_);
-                    if (sessions_by_peer_.find(peer_id) != sessions_by_peer_.end()) {
-                        destroy_session = true;
-                        post_insert_status = STATUS_INVALID_OPERATION;
+                    auto existing_session = sessions_by_peer_.find(peer_id);
+                    if (existing_session != sessions_by_peer_.end()) {
+                        late_replaced_session = existing_session->second;
+                        existing_session->second = session;
                     } else if (sessions_by_peer_.size() >= kMaxConcurrentStreamingSessions) {
                         pending_ice_by_peer_.erase(peer_id);
                         destroy_session = true;
@@ -1214,6 +1228,15 @@ class RealKvsSession final : public KvsSession {
                         }
                         sessions_by_peer_.emplace(peer_id, session);
                     }
+                }
+
+                if (late_replaced_session) {
+                    std::fprintf(
+                        stderr,
+                        "INFO kvs_session_real: replacing concurrent session for renewed offer peer=%s\n",
+                        peer_id.c_str()
+                    );
+                    DestroySession(late_replaced_session);
                 }
 
                 if (destroy_session) {

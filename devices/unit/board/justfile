@@ -22,7 +22,8 @@ aws_kvs_sdk_state_file := aws_kvs_sdk_install_dir + "/.txing-sdk-build-state"
 default_aws_kvs_sdk_repository := env_var_or_default("TXING_BOARD_AWS_KVS_WEBRTC_SDK_REPOSITORY", "https://github.com/awslabs/amazon-kinesis-video-streams-webrtc-sdk-c.git")
 default_aws_kvs_sdk_ref := env_var_or_default("TXING_BOARD_AWS_KVS_WEBRTC_SDK_REF", "main")
 default_system_ca_cert_path := env_var_or_default("TXING_BOARD_KVS_SYSTEM_CA_CERT_PATH", "/etc/ssl/certs/Starfield_Services_Root_Certificate_Authority_-_G2.pem")
-systemd_unit := "/etc/systemd/system/board.service"
+systemd_service := "board.service"
+systemd_unit := "/etc/systemd/system/" + systemd_service
 region := ""
 aws_profile := ""
 aws_shared_credentials_file := ""
@@ -343,3 +344,60 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
     } | sudo tee "{{systemd_unit}}" >/dev/null
     sudo systemctl daemon-reload
     sudo systemctl enable --now board
+
+@start:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! systemctl cat "{{systemd_service}}" >/dev/null 2>&1; then \
+        echo "Board service {{systemd_service}} is not installed. Run 'just board::install-service' first." >&2; \
+        exit 1; \
+    fi
+    sudo systemctl reset-failed "{{systemd_service}}" || true
+    sudo systemctl start "{{systemd_service}}"
+    sudo systemctl --no-pager --full status "{{systemd_service}}"
+
+@stop:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! systemctl cat "{{systemd_service}}" >/dev/null 2>&1; then \
+        echo "Board service {{systemd_service}} is not installed. Run 'just board::install-service' first." >&2; \
+        exit 1; \
+    fi
+    sudo systemctl stop "{{systemd_service}}"
+    sudo systemctl --no-pager --full status "{{systemd_service}}" || true
+
+@restart: stop start
+
+@log lines='200' follow='true':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case "{{lines}}" in
+      ''|*[!0-9]*)
+        echo "lines must be a positive integer." >&2
+        exit 1
+        ;;
+    esac
+    if [ "{{lines}}" -le 0 ]; then
+      echo "lines must be a positive integer." >&2
+      exit 1
+    fi
+    if ! systemctl cat "{{systemd_service}}" >/dev/null 2>&1; then \
+        echo "Board service {{systemd_service}} is not installed. Run 'just board::install-service' first." >&2; \
+        exit 1; \
+    fi
+    journal_flags=(-a -n "{{lines}}")
+    case "{{follow}}" in
+      true|1|yes|on)
+        journal_flags+=(-f)
+        ;;
+      false|0|no|off)
+        journal_flags+=(--no-pager)
+        ;;
+      *)
+        echo "follow must be true or false." >&2
+        exit 1
+        ;;
+    esac
+    printf 'showing board logs for units:\n'
+    printf '  %s\n' "{{systemd_service}}"
+    sudo journalctl "${journal_flags[@]}" -u "{{systemd_service}}"
