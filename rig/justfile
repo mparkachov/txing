@@ -12,7 +12,8 @@ root_justfile := project_root + "/justfile"
 greengrass_lite_dir := rig_dir + "/greengrass-lite"
 greengrass_lite_build_dir := greengrass_lite_dir + "/build"
 greengrass_lite_target := "greengrass-lite.target"
-greengrass_core_units := "ggl.core.ggconfigd.service ggl.core.ggipcd.service ggl.core.iotcored.service ggl.core.tesd.service ggl.aws.greengrass.TokenExchangeService.service"
+greengrass_core_units := "ggl.core.ggconfigd.service ggl.core.ggipcd.service ggl.core.iotcored.service ggl.core.tesd.service ggl.aws.greengrass.TokenExchangeService.service ggl.core.ggdeploymentd.service"
+greengrass_core_sockets := "ggl.gg_deployment.socket"
 unit_rig_component_units := "ggl.dev.txing.device.unit.SparkplugManager.service ggl.dev.txing.device.unit.ConnectivityBle.service"
 aws_rig_component_units := "ggl.dev.txing.device.time.SparkplugManager.service ggl.dev.txing.device.time.AwsConnectivity.service"
 legacy_unit_rig_component_units := "ggl.dev.txing.rig.SparkplugManager.service ggl.dev.txing.rig.ConnectivityBle.service"
@@ -626,7 +627,9 @@ aws_shared_credentials_file := ""
     sudo systemctl reset-failed "${reset_units[@]}" || true
     sudo systemctl start "{{greengrass_lite_target}}"
     core_units=({{greengrass_core_units}})
-    for unit in "${core_units[@]}"; do
+    core_sockets=({{greengrass_core_sockets}})
+    for unit in "${core_sockets[@]}" "${core_units[@]}"; do
+      start_unit_if_present "$unit"
       wait_active_if_present "$unit" || true
     done
     for unit in "${component_units[@]}"; do
@@ -636,7 +639,7 @@ aws_shared_credentials_file := ""
       fi
     done
     status_units=("{{greengrass_lite_target}}")
-    for unit in "${core_units[@]}" "${component_units[@]}"; do
+    for unit in "${core_sockets[@]}" "${core_units[@]}" "${component_units[@]}"; do
       if unit_exists "$unit"; then
         status_units+=("$unit")
       fi
@@ -682,8 +685,9 @@ aws_shared_credentials_file := ""
     fi
     sudo systemctl stop "{{greengrass_lite_target}}"
     core_units=({{greengrass_core_units}})
+    core_sockets=({{greengrass_core_sockets}})
     status_units=("{{greengrass_lite_target}}")
-    for unit in "${core_units[@]}" "${component_units[@]}" "${legacy_units[@]}"; do
+    for unit in "${core_sockets[@]}" "${core_units[@]}" "${component_units[@]}" "${legacy_units[@]}"; do
       if unit_exists "$unit"; then
         status_units+=("$unit")
       fi
@@ -730,9 +734,10 @@ aws_shared_credentials_file := ""
         ;;
     esac
     core_units=({{greengrass_core_units}})
+    core_sockets=({{greengrass_core_sockets}})
     log_units=("{{greengrass_lite_target}}")
     legacy_units=({{legacy_unit_rig_component_units}})
-    for unit in "${core_units[@]}" "${component_units[@]}" "${legacy_units[@]}"; do
+    for unit in "${core_sockets[@]}" "${core_units[@]}" "${component_units[@]}" "${legacy_units[@]}"; do
       if unit_exists "$unit"; then
         log_units+=("$unit")
       fi
@@ -862,6 +867,19 @@ aws_shared_credentials_file := ""
         sudo systemctl start "{{greengrass_lite_target}}"; \
         wait_active_unit "{{greengrass_lite_target}}"; \
     fi
+    deployment_runtime_units=(ggl.gg_deployment.socket ggl.core.ggdeploymentd.service)
+    for deployment_runtime_unit in "${deployment_runtime_units[@]}"; do
+      if ! systemctl cat "$deployment_runtime_unit" >/dev/null 2>&1; then
+        echo "Greengrass Lite deployment runtime $deployment_runtime_unit is not installed. Run 'just rig::build-native' and 'just rig::install-service' to install the current Greengrass Lite service set." >&2
+        exit 1
+      fi
+      sudo systemctl start "$deployment_runtime_unit"
+      if ! wait_active_unit "$deployment_runtime_unit"; then
+        echo "Greengrass Lite deployment runtime $deployment_runtime_unit did not become active." >&2
+        echo "Inspect it with: sudo journalctl -a --no-pager -u ggl.core.ggdeploymentd.service -u ggl.gg_deployment.socket -n 200" >&2
+        exit 1
+      fi
+    done
     ggl_cli="$(command -v ggl-cli || true)"
     if [ -z "$ggl_cli" ] && [ -x /usr/local/bin/ggl-cli ]; then \
         ggl_cli=/usr/local/bin/ggl-cli; \
@@ -1108,12 +1126,19 @@ aws_shared_credentials_file := ""
     done
     sudo "$ggl_cli" deploy "${deploy_args[@]}"
     deployed_units=("ggl.$sparkplug_component.service" "ggl.$connectivity_component.service")
+    core_units=({{greengrass_core_units}})
+    core_sockets=({{greengrass_core_sockets}})
     sudo systemctl daemon-reload || true
     reset_failed_if_present "{{greengrass_lite_target}}"
-    if ! systemctl is-active --quiet "{{greengrass_lite_target}}"; then
-      sudo systemctl start "{{greengrass_lite_target}}"
-      wait_active_unit "{{greengrass_lite_target}}"
-    fi
+    echo "Restarting {{greengrass_lite_target}} to apply local Greengrass deployment."
+    sudo systemctl restart "{{greengrass_lite_target}}"
+    wait_active_unit "{{greengrass_lite_target}}"
+    for core_unit in "${core_sockets[@]}" "${core_units[@]}"; do
+      if systemctl cat "$core_unit" >/dev/null 2>&1; then
+        sudo systemctl start "$core_unit" || true
+        wait_active_unit "$core_unit" || true
+      fi
+    done
     activation_failures=0
     for deployed_unit in "${deployed_units[@]}"; do
       if ! wait_unit_present "$deployed_unit"; then
@@ -1122,7 +1147,7 @@ aws_shared_credentials_file := ""
         continue
       fi
       reset_failed_if_present "$deployed_unit"
-      sudo systemctl restart "$deployed_unit"
+      sudo systemctl start "$deployed_unit" || true
       if ! wait_active_unit "$deployed_unit"; then
         echo "warning: deployed unit $deployed_unit did not become active." >&2
         activation_failures=$((activation_failures + 1))
