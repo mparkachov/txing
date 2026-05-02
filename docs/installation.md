@@ -164,7 +164,7 @@ directory, creates `ggcore`/`gg_component` if needed, and changes
 `/etc/greengrass/config.yaml` automatically by resolving the configured rig
 thing through AWS IoT registry indexing, resolving the AWS IoT data and
 credential-provider endpoints, and reading the
-`GreengrassTokenExchangeRoleAlias` output from the rig stack.
+`GreengrassTokenExchangeRoleAlias` output from the base AWS stack.
 
 ### 5. Build And Install The Greengrass Service
 

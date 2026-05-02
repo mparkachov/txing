@@ -695,7 +695,7 @@ class ShadowControlContractTests(unittest.TestCase):
 
         self.assertIn("_project-aws-env scope='aws'", justfile)
         self.assertIn("aws|town|rig|device", justfile)
-        self.assertIn('env_file="$(resolve_path "$(choose_value "{{env_file}}" "config/aws.env")")"', justfile)
+        self.assertIn('env_file="$(resolve_path "$(choose_value "{{ env_file }}" "config/aws.env")")"', justfile)
         self.assertIn('source "$env_file"', justfile)
         self.assertIn('printf \'unset BOARD_ENV_FILE\\n\'', justfile)
         self.assertNotIn("config/board.env", justfile)

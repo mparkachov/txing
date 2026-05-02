@@ -28,6 +28,68 @@ Resources:
         LocalhostAppUrl: !Ref LocalhostAppUrl
         LocalhostAltAppUrl: !Ref LocalhostAltAppUrl
 
+  TownTypeCatalog:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: BaseEnvironment
+    Properties:
+      TemplateURL: templates/types/town.yaml
+      Parameters:
+        TypeCatalogServiceToken: !GetAtt BaseEnvironment.Outputs.CustomResourceServiceToken
+
+  RaspiTypeCatalog:
+    Type: AWS::CloudFormation::Stack
+    DependsOn:
+      - BaseEnvironment
+      - TownTypeCatalog
+    Properties:
+      TemplateURL: templates/types/raspi.yaml
+      Parameters:
+        TypeCatalogServiceToken: !GetAtt BaseEnvironment.Outputs.CustomResourceServiceToken
+
+  RaspiUnitTypeCatalog:
+    Type: AWS::CloudFormation::Stack
+    DependsOn:
+      - BaseEnvironment
+      - RaspiTypeCatalog
+    Properties:
+      TemplateURL: templates/types/raspi-unit.yaml
+      Parameters:
+        TypeCatalogServiceToken: !GetAtt BaseEnvironment.Outputs.CustomResourceServiceToken
+
+  CloudTypeCatalog:
+    Type: AWS::CloudFormation::Stack
+    DependsOn:
+      - BaseEnvironment
+      - TownTypeCatalog
+    Properties:
+      TemplateURL: templates/types/cloud.yaml
+      Parameters:
+        TypeCatalogServiceToken: !GetAtt BaseEnvironment.Outputs.CustomResourceServiceToken
+
+  CloudTimeTypeCatalog:
+    Type: AWS::CloudFormation::Stack
+    DependsOn:
+      - BaseEnvironment
+      - CloudTypeCatalog
+    Properties:
+      TemplateURL: templates/types/cloud-time.yaml
+      Parameters:
+        TypeCatalogServiceToken: !GetAtt BaseEnvironment.Outputs.CustomResourceServiceToken
+
+  RigRuntimeLayer:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: BaseEnvironment
+    Properties:
+      TemplateURL: templates/rig.yaml
+      Parameters:
+        GreengrassArtifactsBucketName: !GetAtt BaseEnvironment.Outputs.GreengrassArtifactsBucketName
+
+  DeviceRuntimeLayer:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: BaseEnvironment
+    Properties:
+      TemplateURL: templates/device.yaml
+
 Outputs:
   RigLogGroupPattern:
     Value: !GetAtt BaseEnvironment.Outputs.RigLogGroupPattern
@@ -59,3 +121,31 @@ Outputs:
     Value: !GetAtt BaseEnvironment.Outputs.WebExpectedAdminEmail
   GreengrassArtifactsBucketName:
     Value: !GetAtt BaseEnvironment.Outputs.GreengrassArtifactsBucketName
+  RigRuntimeRoleArn:
+    Value: !GetAtt RigRuntimeLayer.Outputs.RigRuntimeRoleArn
+  RigRuntimeRoleName:
+    Value: !GetAtt RigRuntimeLayer.Outputs.RigRuntimeRoleName
+  RigRuntimeManagedPolicyArn:
+    Value: !GetAtt RigRuntimeLayer.Outputs.RigRuntimeManagedPolicyArn
+  GreengrassRigTokenExchangeManagedPolicyArn:
+    Value: !GetAtt RigRuntimeLayer.Outputs.GreengrassRigTokenExchangeManagedPolicyArn
+  GreengrassTokenExchangeRoleArn:
+    Value: !GetAtt RigRuntimeLayer.Outputs.GreengrassTokenExchangeRoleArn
+  GreengrassTokenExchangeRoleName:
+    Value: !GetAtt RigRuntimeLayer.Outputs.GreengrassTokenExchangeRoleName
+  GreengrassTokenExchangeRoleAlias:
+    Value: !GetAtt RigRuntimeLayer.Outputs.GreengrassTokenExchangeRoleAlias
+  GreengrassTokenExchangeRoleAliasArn:
+    Value: !GetAtt RigRuntimeLayer.Outputs.GreengrassTokenExchangeRoleAliasArn
+  RigBootstrapManagedPolicyArn:
+    Value: !GetAtt RigRuntimeLayer.Outputs.RigBootstrapManagedPolicyArn
+  DeviceRuntimeRoleArn:
+    Value: !GetAtt DeviceRuntimeLayer.Outputs.DeviceRuntimeRoleArn
+  DeviceRuntimeRoleName:
+    Value: !GetAtt DeviceRuntimeLayer.Outputs.DeviceRuntimeRoleName
+  DeviceRuntimeManagedPolicyArn:
+    Value: !GetAtt DeviceRuntimeLayer.Outputs.DeviceRuntimeManagedPolicyArn
+  DeviceBootstrapManagedPolicyArn:
+    Value: !GetAtt DeviceRuntimeLayer.Outputs.DeviceBootstrapManagedPolicyArn
+  BoardVideoSenderManagedPolicyArn:
+    Value: !GetAtt DeviceRuntimeLayer.Outputs.BoardVideoSenderManagedPolicyArn

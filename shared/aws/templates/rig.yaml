@@ -89,15 +89,16 @@ Resources:
               - iot:DescribeThing
               - iot:UpdateThing
             Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/*
-          - Sid: RigThingGroupRead
+          - Sid: RigFleetRegistryRead
             Effect: Allow
             Action:
-              - iot:DescribeThingGroup
-              - iot:ListThingsInThingGroup
-              - iot:ListThings
               - iot:GetIndexingConfiguration
               - iot:SearchIndex
             Resource: "*"
+          - Sid: RigTypeCatalogRead
+            Effect: Allow
+            Action: ssm:GetParametersByPath
+            Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/txing/*
           - Sid: RigDescribeEndpoint
             Effect: Allow
             Action: iot:DescribeEndpoint

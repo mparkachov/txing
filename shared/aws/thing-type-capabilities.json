@@ -1,4 +1,5 @@
 {
   "town": ["sparkplug"],
-  "rig": ["sparkplug"]
+  "raspi": ["sparkplug"],
+  "cloud": ["sparkplug"]
 }

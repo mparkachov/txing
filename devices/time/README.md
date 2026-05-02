@@ -2,14 +2,14 @@
 
 `time` is a software-only txing device type. Its device runtime is an AWS Lambda
 invoked by EventBridge and AWS IoT MQTT topics. It is compatible with rigs whose
-IoT registry `rigType` attribute is `cloud`.
+AWS IoT ThingType is `cloud`.
 
 The Lambda stores its small active/sleep bookkeeping state in the `time` named
 shadow for the device thing.
 
 Rig enrollment and Greengrass deployment are not owned by this device package.
-The shared AWS deployment syncs the hardcoded SSM type catalog at `/txing`, then
-AWS IoT thing IDs identify concrete instances:
+The shared AWS deployment creates the nested ThingType stacks and the SSM type
+catalog at `/txing`, then AWS IoT thing IDs identify concrete instances:
 
 ```sh
 just aws::deploy

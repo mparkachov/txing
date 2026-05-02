@@ -89,6 +89,7 @@ only re-runs the component version already deployed into Greengrass.
 
 AWS prerequisites are in `shared/aws/template.yaml`: the stack creates the
 Greengrass artifact bucket, token exchange IAM role, AWS IoT role alias, and
-certificate policy permissions for `iot:AssumeRoleWithCertificate`. AWS IoT
-fleet indexing must also be configured with `just aws::configure-indexing` so
-thing connectivity status is available in `AWS_Things`.
+certificate policy permissions for `iot:AssumeRoleWithCertificate`. The base
+stack configures AWS IoT fleet indexing through a CloudFormation custom resource
+so thing connectivity status is available in `AWS_Things`. Use
+`just aws::configure-indexing` only as an explicit repair or verification command.

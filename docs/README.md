@@ -25,11 +25,13 @@ This repository now documents the current implementation directly rather than ke
 
 ## Current Named-Shadow Capabilities
 
-Registration writes `attributes.capabilities` from shared thing definitions
-for `town`/`rig` and from each device type manifest:
+The CloudFormation-managed SSM type catalog under `/txing` declares
+capabilities for each AWS IoT ThingType:
 
 - `town`: `sparkplug`
-- `rig`: `sparkplug`
+- `raspi`: `sparkplug`
+- `cloud`: `sparkplug`
 - `unit`: `sparkplug`, `mcu`, `board`, `mcp`, `video`
+- `time`: `sparkplug`, `mcp`, `time`
 
 There is no `device` named shadow in the current implementation.

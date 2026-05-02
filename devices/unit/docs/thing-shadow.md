@@ -125,7 +125,12 @@ Town remains a compatibility exception outside witness ownership:
 
 ## Capability Discovery
 
-`devices/unit/manifest.toml` defines the named shadows supported by the `unit` device type and points at each shadow schema/default payload. Registration writes the comma-separated `attributes.capabilities` Thing attribute from that manifest. Runtime and tooling use `capabilities` to decide which `$aws/things/<thing>/shadow/name/<shadow>/...` topics to read or reset.
+`devices/unit/manifest.toml` defines the named shadows supported by the `unit`
+device type and points at each shadow schema/default payload. The shared AWS
+deploy publishes those type capabilities into SSM leaf parameters under
+`/txing/town/raspi/unit`. Runtime and tooling use the thing's AWS IoT ThingType
+plus that SSM type catalog to decide which
+`$aws/things/<thing>/shadow/name/<shadow>/...` topics to read or reset.
 
 ## AWS IoT Note
 

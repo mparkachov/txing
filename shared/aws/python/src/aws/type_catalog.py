@@ -122,7 +122,7 @@ def _town_record(repo_root: Path) -> dict[str, Any]:
             "defaultName": "town",
             "capabilities": list(capabilities_for_thing_type("town", repo_root=repo_root)),
             "searchableAttributes": ["name"],
-            "requiredAttributes": ["name", "shortId", "capabilities"],
+            "requiredAttributes": ["name", "shortId"],
         }
     )
     return record
@@ -133,18 +133,16 @@ def _rig_record(definition: RigTypeDefinition) -> dict[str, Any]:
     record.update(
         {
             "path": rig_type_path(definition.rig_type),
-            "thingType": "rig",
+            "thingType": definition.rig_type,
             "rigType": definition.rig_type,
             "displayName": definition.display_name,
             "defaultName": definition.default_name,
             "capabilities": list(definition.capabilities),
-            "searchableAttributes": ["name", "townId", "rigType"],
+            "searchableAttributes": ["name", "townId"],
             "requiredAttributes": [
                 "name",
                 "shortId",
                 "townId",
-                "rigType",
-                "capabilities",
             ],
             "hostServices": list(definition.host_services),
         }
@@ -163,14 +161,12 @@ def _device_record(manifest: DeviceManifest, *, rig_type: str) -> dict[str, Any]
             "defaultName": manifest.device_name,
             "rigType": rig_type,
             "capabilities": list(manifest.capabilities),
-            "searchableAttributes": ["name", "townId", "rigId", "deviceType"],
+            "searchableAttributes": ["name", "townId", "rigId"],
             "requiredAttributes": [
                 "name",
                 "shortId",
                 "townId",
                 "rigId",
-                "deviceType",
-                "capabilities",
             ],
             "shadows": {
                 shadow_name: {
@@ -345,7 +341,7 @@ def _reconstruct_record_from_parameters(
     kind = record.get("kind")
     if kind not in RECORD_KIND_VALUES:
         raise TypeCatalogError(
-            f"Missing SSM type catalog record {normalized_path!r}; run aws::type-sync"
+            f"Missing SSM type catalog record {normalized_path!r}; run aws::deploy"
         )
     record.setdefault("path", normalized_path)
     if kind == "rigType":
@@ -364,7 +360,7 @@ def _reconstruct_record_from_parameters(
 class SsmTypeCatalog:
     def __init__(self, ssm_client: Any, *, repo_root: Path | None = None) -> None:
         self._ssm = ssm_client
-        self._repo_root = discover_repo_root(repo_root)
+        self._repo_root = repo_root
 
     def expected_records(self) -> dict[str, dict[str, Any]]:
         return build_type_records(repo_root=self._repo_root)
@@ -485,7 +481,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--repo-root", default="")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    subparsers.add_parser("sync", help="Write the hardcoded /txing type catalog to SSM")
+    subparsers.add_parser("sync", help="Write the hardcoded /txing type catalog to SSM for tests or repair")
     list_parser = subparsers.add_parser("list", help="List SSM type catalog records")
     list_parser.add_argument("path", nargs="?", default=TYPE_CATALOG_ROOT)
     describe_parser = subparsers.add_parser("describe", help="Show one SSM type catalog record")

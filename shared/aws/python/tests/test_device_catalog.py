@@ -93,7 +93,8 @@ class DeviceCatalogTests(unittest.TestCase):
         capabilities = load_thing_type_capabilities(repo_root=REPO_ROOT)
 
         self.assertEqual(capabilities["town"], ("sparkplug",))
-        self.assertEqual(capabilities["rig"], ("sparkplug",))
+        self.assertEqual(capabilities["raspi"], ("sparkplug",))
+        self.assertEqual(capabilities["cloud"], ("sparkplug",))
         self.assertEqual(
             capabilities["unit"],
             ("sparkplug", "mcu", "board", "mcp", "video"),

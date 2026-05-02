@@ -129,7 +129,7 @@ _project-aws-env scope='aws' region='' profile='' stack_name='' cognito_domain_p
         txing_thing_id="$(normalize_required_slug TXING_THING_ID "$txing_thing_id")"
         device_json="$(describe_thing_json "$txing_thing_id")"
         txing_device_name="$(normalize_required_slug "device name" "$(jq_string "$device_json" '.attributes.name')")"
-        txing_device_type="$(normalize_required_slug "device type" "$(jq_string "$device_json" '.attributes.deviceType')")"
+        txing_device_type="$(normalize_required_slug "device type" "$(jq_string "$device_json" '.thingTypeName')")"
         txing_rig_id="$(normalize_required_slug TXING_RIG_ID "$(jq_string "$device_json" '.attributes.rigId')")"
         txing_town_id="$(normalize_required_slug TXING_TOWN_ID "$(jq_string "$device_json" '.attributes.townId')")"
       else
@@ -138,7 +138,7 @@ _project-aws-env scope='aws' region='' profile='' stack_name='' cognito_domain_p
 
       rig_json="$(describe_thing_json "$txing_rig_id")"
       txing_rig_name="$(normalize_required_slug "rig name" "$(jq_string "$rig_json" '.attributes.name')")"
-      txing_rig_type="$(normalize_required_slug "rig type" "$(jq_string "$rig_json" '.attributes.rigType')")"
+      txing_rig_type="$(normalize_required_slug "rig type" "$(jq_string "$rig_json" '.thingTypeName')")"
       txing_town_id="$(normalize_required_slug TXING_TOWN_ID "$(jq_string "$rig_json" '.attributes.townId')")"
 
       town_json="$(describe_thing_json "$txing_town_id")"
@@ -149,17 +149,8 @@ _project-aws-env scope='aws' region='' profile='' stack_name='' cognito_domain_p
     fi
 
     txing_town_stack_name="${TXING_TOWN_STACK_NAME:-}"
-    if [ -z "$txing_town_stack_name" ] && [ -n "$txing_town_name" ]; then
-      txing_town_stack_name="${aws_stack_name}-${txing_town_name}"
-    fi
     txing_rig_stack_name="${TXING_RIG_STACK_NAME:-}"
-    if [ -z "$txing_rig_stack_name" ] && [ -n "$txing_town_id" ] && [ -n "$txing_rig_name" ]; then
-      txing_rig_stack_name="${aws_stack_name}-${txing_town_id}-${txing_rig_name}"
-    fi
     txing_device_stack_name="${TXING_DEVICE_STACK_NAME:-}"
-    if [ -z "$txing_device_stack_name" ] && [ -n "$txing_rig_id" ] && [ -n "$txing_device_name" ]; then
-      txing_device_stack_name="${aws_stack_name}-${txing_rig_id}-${txing_device_name}"
-    fi
 
     rig_name="$txing_rig_id"
     rig_id="$txing_rig_id"

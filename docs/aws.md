@@ -40,28 +40,27 @@ just aws::rig-deploy <town-id> raspi server
 just aws::device-deploy <rig-id> unit bot
 ```
 
-`just aws::deploy` deploys the base root stack and nested base template. It owns
-web/Cognito infrastructure, common IoT policies, common artifact buckets, and the
-Sparkplug witness Lambda/topic rule. It also configures AWS IoT fleet indexing
-through the AWS IoT API after the stack deploy, then syncs the hardcoded SSM
-type catalog under `/txing` as separate leaf parameters such as
-`/txing/town/cloud/time/kind` and `/txing/town/cloud/time/capabilities`.
+`just aws::deploy` deploys the base root stack. That root stack owns web/Cognito
+infrastructure, common IoT policies, artifact buckets, the Sparkplug witness,
+Fleet Indexing, shared rig/device runtime IAM, AWS IoT ThingTypes, and the SSM
+type catalog. The type catalog is CloudFormation-managed under `/txing` as leaf
+parameters such as `/txing/town/cloud/time/kind` and
+`/txing/town/cloud/time/capabilities`.
 
-`just aws::town-deploy <town-name>` deploys the town layer and idempotently
-ensures the town thing, town thing type/group, and town `sparkplug` shadow. It
-prints the generated town thing ID.
+`just aws::town-deploy <town-name>` idempotently creates or updates only the
+town thing with ThingType `town` and its `sparkplug` shadow. It prints the
+generated town thing ID.
 
-`just aws::rig-deploy <town-id> <rig-type> <rig-name>` deploys the rig layer and
-idempotently ensures the rig thing, its `rigType` registry attribute, rig
-dynamic group, rig `sparkplug` shadow, Greengrass token exchange role alias, and
-rig runtime IAM.
+`just aws::rig-deploy <town-id> <rig-type> <rig-name>` idempotently creates or
+updates only the rig thing with ThingType `raspi` or `cloud` plus the rig
+`sparkplug` shadow. Shared Greengrass token exchange and runtime IAM are base
+stack outputs.
 
-`just aws::device-deploy <rig-id> <device-type> <device-name>` deploys the
-device layer and idempotently ensures the device thing, device type, rig
-enrollment attributes, named shadows, and optional resources. Device enrollment
-validates compatibility by requiring the SSM leaf
-`/txing/town/<rigType>/<deviceType>/kind`. Instance data stays in AWS IoT thing
-attributes, not SSM.
+`just aws::device-deploy <rig-id> <device-type> <device-name>` idempotently
+creates or updates only the device thing, named shadows, and optional
+per-instance resources. Device enrollment validates compatibility by requiring
+the SSM leaf `/txing/town/<rig-type>/<device-type>/kind`. Concrete instance data
+stays in AWS IoT thing attributes and named shadows, not SSM.
 
 ## Web Admin
 
@@ -156,9 +155,6 @@ CA 1 for Greengrass.
 For a full teardown, delete resources in reverse dependency order:
 
 ```bash
-just aws-town cloudformation delete-stack --stack-name "$TXING_DEVICE_STACK_NAME"
-just aws-town cloudformation delete-stack --stack-name "$TXING_RIG_STACK_NAME"
-just aws-town cloudformation delete-stack --stack-name "$TXING_TOWN_STACK_NAME"
 just aws-town cloudformation delete-stack --stack-name "$AWS_STACK_NAME"
 ```
 
@@ -182,6 +178,6 @@ legacy `txing-time-lambda-<account>-<region>` bucket if either exists. Current
 time Lambda deployment reuses the shared `txing-cfn-*` packaging bucket by
 default.
 
-Generated IoT things, dynamic thing groups, KVS signaling channels, and
-deprecated thing types are still instance resources. Delete those separately if
-you want the account back to a fully empty state.
+Generated IoT things, per-device time Lambda stacks, and KVS signaling channels
+are still instance resources. Delete those separately if you want the account
+back to a fully empty state.

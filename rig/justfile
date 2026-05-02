@@ -149,18 +149,18 @@ aws_shared_credentials_file := ""
       aws iot describe-thing \
         --thing-name "$rig_thing_name" \
         "${aws_flags[@]}" \
-        --query 'attributes.rigType' \
+        --query 'thingTypeName' \
         --output text
     )"
     if [ -z "$registered_rig_type" ] || [ "$registered_rig_type" = "None" ]; then
-      echo "fail: rig thing $rig_thing_name is missing required registry attribute rigType" >&2
+      echo "fail: rig thing $rig_thing_name is missing required ThingTypeName" >&2
       exit 1
     fi
     if [ "$registered_rig_type" != "$selected_rig_type" ]; then
-      echo "fail: rig thing $rig_thing_name has rigType=$registered_rig_type but resolved RIG_TYPE=$selected_rig_type" >&2
+      echo "fail: rig thing $rig_thing_name has ThingTypeName=$registered_rig_type but resolved RIG_TYPE=$selected_rig_type" >&2
       exit 1
     fi
-    echo "ok: rig thing $rig_thing_name has rigType=$registered_rig_type"
+    echo "ok: rig thing $rig_thing_name has ThingTypeName=$registered_rig_type"
     cert_arn="$(tr -d '[:space:]' <"$cert_arn_path")"
     if [ -z "$cert_arn" ]; then
       echo "fail: rig certificate ARN file is empty: $cert_arn_path" >&2
@@ -208,16 +208,16 @@ aws_shared_credentials_file := ""
     iot_cred_endpoint="$(aws iot describe-endpoint --endpoint-type iot:CredentialProvider "${aws_flags[@]}" --query endpointAddress --output text)"
     iot_role_alias="$(
       aws cloudformation describe-stacks \
-        --stack-name "$TXING_RIG_STACK_NAME" \
+        --stack-name "$AWS_STACK_NAME" \
         "${aws_flags[@]}" \
         --query "Stacks[0].Outputs[?OutputKey=='GreengrassTokenExchangeRoleAlias'].OutputValue | [0]" \
         --output text
     )"
     if [ -z "$iot_role_alias" ] || [ "$iot_role_alias" = "None" ]; then
-      echo "fail: could not resolve GreengrassTokenExchangeRoleAlias from stack $TXING_RIG_STACK_NAME" >&2
+      echo "fail: could not resolve GreengrassTokenExchangeRoleAlias from stack $AWS_STACK_NAME" >&2
       exit 1
     fi
-    tes_response="$(mktemp "${TMPDIR:-/tmp}/txing-tes-check.XXXXXX.json")"
+    tes_response="$(mktemp "${TMPDIR:-/tmp}/txing-tes-check.XXXXXX")"
     trap 'rm -f "$tes_response"' EXIT
     curl -fsS \
       --cert "$cert_path" \
@@ -516,13 +516,13 @@ aws_shared_credentials_file := ""
     iot_cred_endpoint="$(aws iot describe-endpoint --endpoint-type iot:CredentialProvider "${aws_flags[@]}" --query endpointAddress --output text)"
     iot_role_alias="$(
         aws cloudformation describe-stacks \
-          --stack-name "$TXING_RIG_STACK_NAME" \
+          --stack-name "$AWS_STACK_NAME" \
           "${aws_flags[@]}" \
           --query "Stacks[0].Outputs[?OutputKey=='GreengrassTokenExchangeRoleAlias'].OutputValue | [0]" \
           --output text
     )"
     if [ -z "$iot_role_alias" ] || [ "$iot_role_alias" = "None" ]; then \
-        echo "Could not resolve GreengrassTokenExchangeRoleAlias from stack $TXING_RIG_STACK_NAME." >&2; \
+        echo "Could not resolve GreengrassTokenExchangeRoleAlias from stack $AWS_STACK_NAME." >&2; \
         exit 1; \
     fi
     temp_files=()
@@ -536,11 +536,11 @@ aws_shared_credentials_file := ""
     sudo install -d -o ggcore -g ggcore -m 700 /var/lib/greengrass/credentials
     sudo install -o ggcore -g ggcore -m 600 "$rig_cert_path" /var/lib/greengrass/credentials/rig.cert.pem
     sudo install -o ggcore -g ggcore -m 600 "$rig_private_key_path" /var/lib/greengrass/credentials/rig.private.key
-    root_ca_temp="$(mktemp "${TMPDIR:-/tmp}/txing-amazon-root-ca.XXXXXX.pem")"
+    root_ca_temp="$(mktemp "${TMPDIR:-/tmp}/txing-amazon-root-ca.XXXXXX")"
     temp_files+=("$root_ca_temp")
     curl -fsSL https://www.amazontrust.com/repository/AmazonRootCA1.pem -o "$root_ca_temp"
     sudo install -o ggcore -g ggcore -m 644 "$root_ca_temp" /var/lib/greengrass/credentials/AmazonRootCA1.pem
-    greengrass_config_temp="$(mktemp "${TMPDIR:-/tmp}/txing-greengrass-config.XXXXXX.yaml")"
+    greengrass_config_temp="$(mktemp "${TMPDIR:-/tmp}/txing-greengrass-config.XXXXXX")"
     temp_files+=("$greengrass_config_temp")
     cat >"$greengrass_config_temp" <<EOF
     system:

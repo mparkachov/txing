@@ -33,7 +33,7 @@ Resources:
   TxingGatewayLogsManagedPolicy:
     Type: AWS::IAM::ManagedPolicy
     Properties:
-      Description: Dynamic txing CloudWatch logs and IoT registry/thing-group access.
+      Description: Dynamic txing CloudWatch logs and IoT fleet registry access.
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -54,12 +54,9 @@ Resources:
               - iot:DescribeThing
               - iot:UpdateThing
             Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/*
-          - Sid: GatewayThingGroupRead
+          - Sid: GatewayFleetRegistryRead
             Effect: Allow
             Action:
-              - iot:DescribeThingGroup
-              - iot:ListThingsInThingGroup
-              - iot:ListThings
               - iot:GetIndexingConfiguration
               - iot:SearchIndex
             Resource: "*"
@@ -126,7 +123,7 @@ Resources:
   TxingStackCleanupRole:
     Type: AWS::IAM::Role
     Properties:
-      Description: Deletes disposable txing stack data and out-of-band IoT policy attachments during stack deletion.
+      Description: Handles txing base-stack custom resources for cleanup and Fleet Indexing.
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -168,11 +165,32 @@ Resources:
                   - iot:DetachPolicy
                   - iot:ListTargetsForPolicy
                 Resource: "*"
+              - Sid: ConfigureIotFleetIndexing
+                Effect: Allow
+                Action:
+                  - iot:UpdateIndexingConfiguration
+                  - iot:GetIndexingConfiguration
+                Resource: "*"
+              - Sid: ManageTxingThingTypes
+                Effect: Allow
+                Action:
+                  - iot:CreateThingType
+                  - iot:DescribeThingType
+                  - iot:UpdateThingType
+                  - iot:DeprecateThingType
+                Resource: "*"
+              - Sid: ManageTxingTypeCatalog
+                Effect: Allow
+                Action:
+                  - ssm:PutParameter
+                  - ssm:DeleteParameter
+                  - ssm:GetParametersByPath
+                Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/txing/*
 
   TxingStackCleanupFunction:
     Type: AWS::Lambda::Function
     Properties:
-      Description: CloudFormation custom resource cleanup for disposable txing resources.
+      Description: CloudFormation custom resources for txing cleanup and Fleet Indexing.
       Role: !GetAtt TxingStackCleanupRole.Arn
       Runtime: python3.12
       Handler: index.lambda_handler
@@ -182,6 +200,7 @@ Resources:
         ZipFile: |
           import json
           import logging
+          import time
           import urllib.request
 
           import boto3
@@ -191,14 +210,29 @@ Resources:
           LOGGER.setLevel(logging.INFO)
           s3 = boto3.client("s3")
           iot = boto3.client("iot")
+          ssm = boto3.client("ssm")
+          IOT_FLEET_INDEXING_PHYSICAL_ID = "txing-iot-fleet-indexing"
+          IOT_FLEET_INDEXING_CUSTOM_FIELDS = [
+              "attributes.name",
+              "attributes.townId",
+              "attributes.rigId",
+          ]
 
 
-          def _send_response(event, context, status, data=None, reason=None):
+          def _send_response(
+              event,
+              context,
+              status,
+              data=None,
+              reason=None,
+              physical_resource_id=None,
+          ):
               body = json.dumps(
                   {
                       "Status": status,
                       "Reason": reason or f"See CloudWatch log stream: {context.log_stream_name}",
-                      "PhysicalResourceId": event.get("PhysicalResourceId")
+                      "PhysicalResourceId": physical_resource_id
+                      or event.get("PhysicalResourceId")
                       or f"{event['StackId']}/{event['LogicalResourceId']}",
                       "StackId": event["StackId"],
                       "RequestId": event["RequestId"],
@@ -305,6 +339,199 @@ Resources:
               return {"detachedTargets": detached, "missing": False}
 
 
+          def _fleet_indexing_configuration():
+              return {
+                  "thingIndexingMode": "REGISTRY",
+                  "thingConnectivityIndexingMode": "STATUS",
+                  "customFields": [
+                      {"name": name, "type": "String"}
+                      for name in IOT_FLEET_INDEXING_CUSTOM_FIELDS
+                  ],
+              }
+
+
+          def _fleet_indexing_matches(configuration):
+              fields = {
+                  item.get("name"): item.get("type")
+                  for item in configuration.get("customFields", [])
+              }
+              return (
+                  configuration.get("thingIndexingMode") == "REGISTRY"
+                  and configuration.get("thingConnectivityIndexingMode") == "STATUS"
+                  and all(fields.get(name) == "String" for name in IOT_FLEET_INDEXING_CUSTOM_FIELDS)
+              )
+
+
+          def _configure_iot_fleet_indexing():
+              expected = _fleet_indexing_configuration()
+              iot.update_indexing_configuration(thingIndexingConfiguration=expected)
+              deadline = time.monotonic() + 120
+              while True:
+                  response = iot.get_indexing_configuration()
+                  configuration = response.get("thingIndexingConfiguration", {})
+                  if _fleet_indexing_matches(configuration):
+                      return {
+                          "thingIndexingMode": configuration.get("thingIndexingMode"),
+                          "thingConnectivityIndexingMode": configuration.get(
+                              "thingConnectivityIndexingMode"
+                          ),
+                          "customFields": ",".join(IOT_FLEET_INDEXING_CUSTOM_FIELDS),
+                      }
+                  if time.monotonic() >= deadline:
+                      raise TimeoutError("Timed out waiting for AWS IoT fleet indexing configuration")
+                  time.sleep(3)
+
+
+          def _as_string_list(value):
+              if value is None:
+                  return []
+              if isinstance(value, str):
+                  return [item.strip() for item in value.split(",") if item.strip()]
+              if isinstance(value, list):
+                  return [str(item).strip() for item in value if str(item).strip()]
+              raise TypeError(f"Expected list or comma-separated string, got {type(value).__name__}")
+
+
+          def _thing_type_properties(properties):
+              return {
+                  "thingTypeDescription": properties.get("ThingTypeDescription", ""),
+                  "searchableAttributes": _as_string_list(properties.get("SearchableAttributes")),
+              }
+
+
+          def _ensure_thing_type(properties):
+              thing_type_name = properties["ThingTypeName"]
+              thing_type_properties = _thing_type_properties(properties)
+              try:
+                  iot.create_thing_type(
+                      thingTypeName=thing_type_name,
+                      thingTypeProperties=thing_type_properties,
+                  )
+                  return "created"
+              except Exception as error:
+                  if _error_code(error) != "ResourceAlreadyExistsException":
+                      raise
+
+              description = iot.describe_thing_type(thingTypeName=thing_type_name)
+              metadata = description.get("thingTypeMetadata", {})
+              if metadata.get("deprecated"):
+                  iot.deprecate_thing_type(
+                      thingTypeName=thing_type_name,
+                      undoDeprecate=True,
+                  )
+              current_properties = description.get("thingTypeProperties", {})
+              if (
+                  current_properties.get("thingTypeDescription", "")
+                  == thing_type_properties["thingTypeDescription"]
+                  and sorted(current_properties.get("searchableAttributes", []))
+                  == sorted(thing_type_properties["searchableAttributes"])
+              ):
+                  return "existing"
+              iot.update_thing_type(
+                  thingTypeName=thing_type_name,
+                  thingTypeProperties=thing_type_properties,
+              )
+              return "updated"
+
+
+          def _catalog_parameter_name(base_path, leaf_name):
+              base = str(base_path).rstrip("/")
+              leaf = str(leaf_name).strip("/")
+              if not base.startswith("/txing/") and base != "/txing":
+                  raise ValueError(f"Type catalog path must be under /txing: {base_path!r}")
+              if not leaf:
+                  raise ValueError("Type catalog leaf name must not be empty")
+              return f"{base}/{leaf}"
+
+
+          def _put_type_catalog_parameters(properties):
+              base_path = properties["CatalogBasePath"]
+              catalog_parameters = properties.get("CatalogParameters", {})
+              if not isinstance(catalog_parameters, dict):
+                  raise TypeError("CatalogParameters must be a map")
+
+              try:
+                  ssm.delete_parameter(Name=str(base_path).rstrip("/"))
+              except Exception as error:
+                  if _error_code(error) != "ParameterNotFound":
+                      raise
+
+              written = []
+              for leaf_name, value in sorted(catalog_parameters.items()):
+                  name = _catalog_parameter_name(base_path, leaf_name)
+                  ssm.put_parameter(
+                      Name=name,
+                      Type="String",
+                      Value=str(value),
+                      Overwrite=True,
+                  )
+                  written.append(name)
+              return written
+
+
+          def _delete_type_catalog_parameters(properties):
+              base_path = properties.get("CatalogBasePath")
+              if not base_path:
+                  return {"deletedParameters": 0}
+
+              normalized_base_path = str(base_path).rstrip("/")
+              if not normalized_base_path.startswith("/txing/") and normalized_base_path != "/txing":
+                  raise ValueError(f"Type catalog path must be under /txing: {base_path!r}")
+
+              parameter_names = set()
+              next_token = None
+              while True:
+                  request = {
+                      "Path": normalized_base_path,
+                      "Recursive": True,
+                      "WithDecryption": False,
+                  }
+                  if next_token:
+                      request["NextToken"] = next_token
+                  response = ssm.get_parameters_by_path(**request)
+                  for parameter in response.get("Parameters", []):
+                      name = parameter.get("Name")
+                      if isinstance(name, str):
+                          parameter_names.add(name)
+                  next_token = response.get("NextToken")
+                  if not next_token:
+                      break
+              parameter_names.add(normalized_base_path)
+
+              deleted = 0
+              for name in sorted(parameter_names, reverse=True):
+                  try:
+                      ssm.delete_parameter(Name=name)
+                  except Exception as error:
+                      if _error_code(error) != "ParameterNotFound":
+                          raise
+                  else:
+                      deleted += 1
+              return {"deletedParameters": deleted, "thingTypeDeletion": "skipped"}
+
+
+          def _ensure_type_catalog(properties):
+              thing_type_status = _ensure_thing_type(properties)
+              written_parameters = _put_type_catalog_parameters(properties)
+              return {
+                  "thingType": properties["ThingTypeName"],
+                  "thingTypeStatus": thing_type_status,
+                  "catalogBasePath": properties["CatalogBasePath"],
+                  "catalogParameterCount": len(written_parameters),
+              }
+
+
+          def _handle_create_or_update(properties):
+              cleanup_type = properties.get("CleanupType")
+              if cleanup_type == "IotFleetIndexing":
+                  return _configure_iot_fleet_indexing()
+              if cleanup_type == "TypeCatalog":
+                  return _ensure_type_catalog(properties)
+              if cleanup_type in {"S3Bucket", "IotPolicyAttachments"}:
+                  return {}
+              raise ValueError(f"Unsupported CleanupType: {cleanup_type!r}")
+
+
           def _handle_delete(properties):
               cleanup_type = properties.get("CleanupType")
               if cleanup_type == "S3Bucket":
@@ -314,19 +541,52 @@ Resources:
                   for policy_name in properties.get("PolicyNames", []):
                       results[policy_name] = _detach_policy_targets(policy_name)
                   return {"policies": results}
+              if cleanup_type == "IotFleetIndexing":
+                  return {"skipped": True}
+              if cleanup_type == "TypeCatalog":
+                  return _delete_type_catalog_parameters(properties)
               raise ValueError(f"Unsupported CleanupType: {cleanup_type!r}")
 
 
           def lambda_handler(event, context):
               LOGGER.info("event=%s", json.dumps(event, sort_keys=True))
+              properties = event.get("ResourceProperties", {})
+              physical_resource_id = properties.get("PhysicalResourceId")
+              if properties.get("CleanupType") == "IotFleetIndexing":
+                  physical_resource_id = physical_resource_id or IOT_FLEET_INDEXING_PHYSICAL_ID
+              if properties.get("CleanupType") == "TypeCatalog":
+                  physical_resource_id = physical_resource_id or (
+                      "txing-type-catalog-" + properties["ThingTypeName"]
+                  )
               try:
                   data = {}
                   if event.get("RequestType") == "Delete":
-                      data = _handle_delete(event.get("ResourceProperties", {}))
-                  _send_response(event, context, "SUCCESS", data)
+                      data = _handle_delete(properties)
+                  else:
+                      data = _handle_create_or_update(properties)
+                  _send_response(
+                      event,
+                      context,
+                      "SUCCESS",
+                      data,
+                      physical_resource_id=physical_resource_id,
+                  )
               except Exception as error:
                   LOGGER.exception("custom cleanup failed")
-                  _send_response(event, context, "FAILED", reason=str(error))
+                  _send_response(
+                      event,
+                      context,
+                      "FAILED",
+                      reason=str(error),
+                      physical_resource_id=physical_resource_id,
+                  )
+
+  TxingIotFleetIndexing:
+    Type: Custom::TxingIotFleetIndexing
+    Properties:
+      ServiceToken: !GetAtt TxingStackCleanupFunction.Arn
+      CleanupType: IotFleetIndexing
+      PhysicalResourceId: txing-iot-fleet-indexing
 
   TxingGreengrassArtifactsBucketCleanup:
     Type: Custom::TxingS3BucketCleanup
@@ -618,10 +878,7 @@ Resources:
               - Sid: AllowThingCatalogListing
                 Effect: Allow
                 Action:
-                  - iot:ListThingGroups
                   - iot:DescribeThing
-                  - iot:DescribeThingGroup
-                  - iot:ListThingsInThingGroup
                   - iot:SearchIndex
                 Resource: "*"
               - Sid: AllowDirectThingShadowReads
@@ -690,3 +947,5 @@ Outputs:
     Value: !Ref AdminEmail
   GreengrassArtifactsBucketName:
     Value: !Ref TxingGreengrassArtifactsBucket
+  CustomResourceServiceToken:
+    Value: !GetAtt TxingStackCleanupFunction.Arn

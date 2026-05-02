@@ -27,20 +27,14 @@ class FakeIotControlClient {
 }
 
 describe('catalog api helpers', () => {
-  test('lists rigs from the configured town group through pagination and metadata lookup', async () => {
+  test('lists rigs from the configured town through fleet index and metadata lookup', async () => {
     const client = new FakeIotControlClient({
-      DescribeThingGroupCommand: [
+      SearchIndexCommand: [
         {
-          thingGroupName: 'town-berlin',
-        },
-      ],
-      ListThingsInThingGroupCommand: [
-        {
-          things: ['rig-z9', 'rig-a1'],
-          nextToken: 'page-2',
+          things: [{ thingName: 'raspi-a1' }, { thingName: 'raspi-b3' }],
         },
         {
-          things: ['rig-a1', 'rig-b3'],
+          things: [{ thingName: 'cloud-z9' }],
         },
       ],
       DescribeThingCommand: [
@@ -50,40 +44,33 @@ describe('catalog api helpers', () => {
           attributes: {
             name: 'berlin',
             shortId: 'berlin',
-            capabilities: 'sparkplug',
           },
         },
         {
-          thingName: 'rig-a1',
-          thingTypeName: 'rig',
-          attributes: {
-            name: 'alpha',
-            shortId: 'a1',
-            townId: 'town-berlin',
-            rigType: 'raspi',
-            capabilities: 'sparkplug',
-          },
-        },
-        {
-          thingName: 'rig-b3',
-          thingTypeName: 'rig',
-          attributes: {
-            name: 'bravo',
-            shortId: 'b3',
-            townId: 'town-berlin',
-            rigType: 'raspi',
-            capabilities: 'sparkplug',
-          },
-        },
-        {
-          thingName: 'rig-z9',
-          thingTypeName: 'rig',
+          thingName: 'cloud-z9',
+          thingTypeName: 'cloud',
           attributes: {
             name: 'zulu',
             shortId: 'z9',
             townId: 'town-berlin',
-            rigType: 'cloud',
-            capabilities: 'sparkplug',
+          },
+        },
+        {
+          thingName: 'raspi-a1',
+          thingTypeName: 'raspi',
+          attributes: {
+            name: 'alpha',
+            shortId: 'a1',
+            townId: 'town-berlin',
+          },
+        },
+        {
+          thingName: 'raspi-b3',
+          thingTypeName: 'raspi',
+          attributes: {
+            name: 'bravo',
+            shortId: 'b3',
+            townId: 'town-berlin',
           },
         },
         {
@@ -92,7 +79,6 @@ describe('catalog api helpers', () => {
           attributes: {
             name: 'berlin',
             shortId: 'berlin',
-            capabilities: 'sparkplug',
           },
         },
         {
@@ -101,7 +87,6 @@ describe('catalog api helpers', () => {
           attributes: {
             name: 'berlin',
             shortId: 'berlin',
-            capabilities: 'sparkplug',
           },
         },
         {
@@ -110,7 +95,6 @@ describe('catalog api helpers', () => {
           attributes: {
             name: 'berlin',
             shortId: 'berlin',
-            capabilities: 'sparkplug',
           },
         },
       ],
@@ -118,19 +102,19 @@ describe('catalog api helpers', () => {
 
     await expect(listTownRigsWithClient(client, 'town-berlin')).resolves.toEqual([
       {
-        thingName: 'rig-a1',
+        thingName: 'raspi-a1',
         rigName: 'alpha',
         shortId: 'a1',
         capabilities: ['sparkplug'],
       },
       {
-        thingName: 'rig-b3',
+        thingName: 'raspi-b3',
         rigName: 'bravo',
         shortId: 'b3',
         capabilities: ['sparkplug'],
       },
       {
-        thingName: 'rig-z9',
+        thingName: 'cloud-z9',
         rigName: 'zulu',
         shortId: 'z9',
         capabilities: ['sparkplug'],
@@ -140,13 +124,13 @@ describe('catalog api helpers', () => {
 
   test('lists rig devices through pagination, metadata lookup, and stable sorting', async () => {
     const client = new FakeIotControlClient({
-      ListThingsInThingGroupCommand: [
+      SearchIndexCommand: [
         {
-          things: ['unit-z9', 'unit-a1'],
+          things: [{ thingName: 'unit-z9' }, { thingName: 'unit-a1' }],
           nextToken: 'page-2',
         },
         {
-          things: ['unit-a1', 'unit-b3'],
+          things: [{ thingName: 'unit-a1' }, { thingName: 'unit-b3' }],
         },
       ],
       DescribeThingCommand: [
@@ -157,9 +141,7 @@ describe('catalog api helpers', () => {
             name: 'bot',
             shortId: 'a1',
             townId: 'town-berlin',
-            rigId: 'rig-a1',
-            deviceType: 'unit',
-            capabilities: 'sparkplug,mcu,board,mcp,video',
+            rigId: 'raspi-a1',
           },
         },
         {
@@ -169,9 +151,7 @@ describe('catalog api helpers', () => {
             name: 'crawler',
             shortId: 'b3',
             townId: 'town-berlin',
-            rigId: 'rig-a1',
-            deviceType: 'unit',
-            capabilities: 'sparkplug,mcu,board,mcp,video',
+            rigId: 'raspi-a1',
           },
         },
         {
@@ -181,9 +161,7 @@ describe('catalog api helpers', () => {
             name: 'zeta',
             shortId: 'z9',
             townId: 'town-berlin',
-            rigId: 'rig-a1',
-            deviceType: 'unit',
-            capabilities: 'sparkplug,mcu,board,mcp,video',
+            rigId: 'raspi-a1',
           },
         },
         {
@@ -192,7 +170,6 @@ describe('catalog api helpers', () => {
           attributes: {
             name: 'berlin',
             shortId: 'berlin',
-            capabilities: 'sparkplug',
           },
         },
         {
@@ -201,7 +178,6 @@ describe('catalog api helpers', () => {
           attributes: {
             name: 'berlin',
             shortId: 'berlin',
-            capabilities: 'sparkplug',
           },
         },
         {
@@ -210,46 +186,39 @@ describe('catalog api helpers', () => {
           attributes: {
             name: 'berlin',
             shortId: 'berlin',
-            capabilities: 'sparkplug',
           },
         },
         {
-          thingName: 'rig-a1',
-          thingTypeName: 'rig',
+          thingName: 'raspi-a1',
+          thingTypeName: 'raspi',
           attributes: {
             name: 'alpha',
             shortId: 'a1',
             townId: 'town-berlin',
-            rigType: 'raspi',
-            capabilities: 'sparkplug',
           },
         },
         {
-          thingName: 'rig-a1',
-          thingTypeName: 'rig',
+          thingName: 'raspi-a1',
+          thingTypeName: 'raspi',
           attributes: {
             name: 'alpha',
             shortId: 'a1',
             townId: 'town-berlin',
-            rigType: 'raspi',
-            capabilities: 'sparkplug',
           },
         },
         {
-          thingName: 'rig-a1',
-          thingTypeName: 'rig',
+          thingName: 'raspi-a1',
+          thingTypeName: 'raspi',
           attributes: {
             name: 'alpha',
             shortId: 'a1',
             townId: 'town-berlin',
-            rigType: 'raspi',
-            capabilities: 'sparkplug',
           },
         },
       ],
     })
 
-    await expect(listRigDevicesWithClient(client, 'rig')).resolves.toEqual([
+    await expect(listRigDevicesWithClient(client, 'raspi-a1')).resolves.toEqual([
       {
         thingName: 'unit-a1',
         name: 'bot',
@@ -281,9 +250,7 @@ describe('catalog api helpers', () => {
             name: ' bot ',
             shortId: 'kiv3mj',
             townId: 'town-berlin',
-            rigId: 'rig-a1',
-            deviceType: 'unit',
-            capabilities: 'sparkplug,mcu,board,mcp,video',
+            rigId: 'raspi-a1',
           },
         },
         {
@@ -292,18 +259,15 @@ describe('catalog api helpers', () => {
           attributes: {
             name: 'berlin',
             shortId: 'berlin',
-            capabilities: 'sparkplug',
           },
         },
         {
-          thingName: 'rig-a1',
-          thingTypeName: 'rig',
+          thingName: 'raspi-a1',
+          thingTypeName: 'raspi',
           attributes: {
             name: 'alpha',
             shortId: 'a1',
             townId: 'town-berlin',
-            rigType: 'raspi',
-            capabilities: 'sparkplug',
           },
         },
       ],
@@ -349,14 +313,12 @@ describe('catalog api helpers', () => {
     const client = new FakeIotControlClient({
       DescribeThingCommand: [
         {
-          thingName: 'rig-a1',
-          thingTypeName: 'rig',
+          thingName: 'raspi-a1',
+          thingTypeName: 'raspi',
           attributes: {
             name: 'alpha',
             townId: 'town-berlin',
-            rigType: 'raspi',
             shortId: 'a1',
-            capabilities: 'sparkplug',
           },
         },
         {
@@ -365,18 +327,17 @@ describe('catalog api helpers', () => {
           attributes: {
             name: 'berlin',
             shortId: 'berlin',
-            capabilities: 'sparkplug',
           },
         },
       ],
     })
 
-    await expect(describeThingMetadataWithClient(client, 'rig-a1')).resolves.toEqual({
-      thingName: 'rig-a1',
-      thingTypeName: 'rig',
+    await expect(describeThingMetadataWithClient(client, 'raspi-a1')).resolves.toEqual({
+      thingName: 'raspi-a1',
+      thingTypeName: 'raspi',
       name: 'alpha',
       townId: 'town-berlin',
-      rigId: 'rig-a1',
+      rigId: 'raspi-a1',
       townName: 'berlin',
       rigName: 'alpha',
       shortId: 'a1',

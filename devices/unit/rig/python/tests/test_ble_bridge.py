@@ -861,7 +861,7 @@ class AwsShadowClientTests(unittest.TestCase):
 
         self.assertIn("_project-aws-env scope='aws'", justfile)
         self.assertIn("aws|town|rig|device", justfile)
-        self.assertIn('env_file="$(resolve_path "$(choose_value "{{env_file}}" "config/aws.env")")"', justfile)
+        self.assertIn('env_file="$(resolve_path "$(choose_value "{{ env_file }}" "config/aws.env")")"', justfile)
         self.assertIn('source "$env_file"', justfile)
         self.assertIn('printf \'unset RIG_ENV_FILE\\n\'', justfile)
         self.assertNotIn("config/rig.env", justfile)
@@ -878,8 +878,7 @@ class AwsShadowClientTests(unittest.TestCase):
             / "ble_bridge.py"
         ).read_text(encoding="utf-8")
 
-        self.assertIn("registered device(s) from dynamic thing group", adapter)
-        self.assertIn("starting idle with no managed devices", adapter)
+        self.assertIn("registered device(s) from fleet index", adapter)
         self.assertIn("reported.device.mcu.online", adapter)
         self.assertIn("reported.device.board.power=false", adapter)
         self.assertNotIn("txing thing(s)", adapter)

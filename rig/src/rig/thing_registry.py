@@ -4,16 +4,11 @@ from dataclasses import dataclass
 import logging
 from typing import Any
 
-from aws.thing_capabilities import (
-    CAPABILITIES_ATTRIBUTE,
-    parse_capabilities_set,
-)
+from aws.thing_capabilities import encode_capabilities_set, parse_capabilities_set
+from aws.type_catalog import SsmTypeCatalog, TypeCatalogError, device_type_path, rig_type_path, town_type_path
 
 LOGGER = logging.getLogger("rig.thing_registry")
-
-
-class ThingGroupNotFoundError(RuntimeError):
-    pass
+THING_INDEX_NAME = "AWS_Things"
 
 
 @dataclass(slots=True, frozen=True)
@@ -42,36 +37,57 @@ def normalize_registry_text(value: Any) -> str | None:
 
 
 class AwsThingRegistryClient:
-    def __init__(self, client: Any) -> None:
+    def __init__(self, client: Any, *, type_catalog: SsmTypeCatalog) -> None:
         self._client = client
+        self._type_catalog = type_catalog
 
-    def _list_thing_names_in_group(self, thing_group_name: str) -> list[str]:
+    def _record_capabilities(self, path: str, record: dict[str, Any]) -> tuple[str, ...]:
+        capabilities = record.get("capabilities")
+        if not isinstance(capabilities, list) or any(not isinstance(item, str) for item in capabilities):
+            raise RuntimeError(f"SSM type catalog record {path!r} is missing capabilities")
+        return parse_capabilities_set(
+            encode_capabilities_set(capabilities),
+            thing_name=f"type catalog {path}",
+        )
+
+    def _is_rig_type(self, thing_type: str) -> bool:
         try:
-            self._client.describe_thing_group(thingGroupName=thing_group_name)
-        except Exception as exc:
-            error_code = (
-                getattr(exc, "response", {})
-                .get("Error", {})
-                .get("Code")
-            )
-            if error_code in {"ResourceNotFoundException", "ResourceNotFound"}:
-                raise ThingGroupNotFoundError(
-                    f"Dynamic thing group {thing_group_name!r} was not found"
-                ) from exc
-            raise
+            self._type_catalog.get_rig_type(thing_type)
+        except TypeCatalogError:
+            return False
+        return True
 
+    def _capabilities_for_town(self) -> tuple[str, ...]:
+        path = town_type_path()
+        return self._record_capabilities(path, self._type_catalog.get_record(path))
+
+    def _capabilities_for_rig_type(self, rig_type: str) -> tuple[str, ...]:
+        path = rig_type_path(rig_type)
+        return self._record_capabilities(path, self._type_catalog.get_rig_type(rig_type))
+
+    def _capabilities_for_device_type(self, *, rig_type: str, device_type: str) -> tuple[str, ...]:
+        path = device_type_path(rig_type, device_type)
+        return self._record_capabilities(
+            path,
+            self._type_catalog.get_device_type(rig_type, device_type),
+        )
+
+    def _search_index_thing_names(self, query_string: str) -> list[str]:
         next_token: str | None = None
         thing_names: list[str] = []
         while True:
             request: dict[str, Any] = {
-                "thingGroupName": thing_group_name,
+                "indexName": THING_INDEX_NAME,
+                "queryString": query_string,
                 "maxResults": 100,
             }
             if next_token:
                 request["nextToken"] = next_token
-            response = self._client.list_things_in_thing_group(**request)
-            for item in response.get("things", []):
-                thing_name = normalize_registry_text(item)
+            response = self._client.search_index(**request)
+            for thing in response.get("things", []):
+                if not isinstance(thing, dict):
+                    continue
+                thing_name = normalize_registry_text(thing.get("thingName"))
                 if thing_name:
                     thing_names.append(thing_name)
             next_token = normalize_registry_text(response.get("nextToken"))
@@ -80,7 +96,9 @@ class AwsThingRegistryClient:
         return sorted(set(thing_names))
 
     def list_rig_things(self, rig_id: str) -> list[ThingRegistration]:
-        thing_names = self._list_thing_names_in_group(rig_id)
+        thing_names = self._search_index_thing_names(
+            f"attributes.rigId:{rig_id} AND attributes.townId:*"
+        )
 
         registrations: list[ThingRegistration] = []
         for thing_name in thing_names:
@@ -88,7 +106,7 @@ class AwsThingRegistryClient:
                 registration = self.describe_thing(thing_name)
             except RuntimeError as exc:
                 LOGGER.warning(
-                    "Skipping thing=%s from dynamic group=%s: %s",
+                    "Skipping thing=%s from fleet index rig=%s: %s",
                     thing_name,
                     rig_id,
                     exc,
@@ -96,7 +114,7 @@ class AwsThingRegistryClient:
                 continue
             if registration.rig_id != rig_id:
                 LOGGER.warning(
-                    "Skipping thing=%s from dynamic group=%s because attributes.rigId=%s",
+                    "Skipping thing=%s from fleet index rig=%s because attributes.rigId=%s",
                     thing_name,
                     rig_id,
                     registration.rig_id,
@@ -107,7 +125,7 @@ class AwsThingRegistryClient:
 
     def describe_rig(self, rig_id: str) -> ThingRegistration:
         registration = self.describe_thing(rig_id)
-        if registration.thing_type != "rig":
+        if not self._is_rig_type(registration.thing_type):
             raise RuntimeError(f"Thing {rig_id!r} is not a rig")
         return registration
 
@@ -131,14 +149,11 @@ class AwsThingRegistryClient:
             raise RuntimeError(
                 f"Thing {thing_name!r} is missing required IoT registry attribute 'shortId'"
             )
-        try:
-            capabilities_set = parse_capabilities_set(
-                attributes.get(CAPABILITIES_ATTRIBUTE),
-                thing_name=thing_name,
-            )
-        except RuntimeError as exc:
-            raise RuntimeError(str(exc)) from exc
-        if thing_type == "rig":
+        if thing_type == "town":
+            capabilities_set = self._capabilities_for_town()
+            town_name = name
+            rig_name = ""
+        elif self._is_rig_type(thing_type):
             if town_id is None:
                 raise RuntimeError(
                     f"Thing {thing_name!r} is missing required IoT registry attribute 'townId'"
@@ -146,6 +161,7 @@ class AwsThingRegistryClient:
             rig_id = thing_name
             rig_name = name
             town_name = town_id
+            capabilities_set = self._capabilities_for_rig_type(thing_type)
         else:
             if town_id is None:
                 raise RuntimeError(
@@ -157,6 +173,11 @@ class AwsThingRegistryClient:
                 )
             town_name = town_id
             rig_name = rig_id
+            rig_registration = self.describe_thing(rig_id)
+            capabilities_set = self._capabilities_for_device_type(
+                rig_type=rig_registration.thing_type,
+                device_type=thing_type,
+            )
         return ThingRegistration(
             thing_name=thing_name,
             thing_type=thing_type,

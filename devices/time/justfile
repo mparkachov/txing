@@ -33,7 +33,7 @@ aws_lib := project_root + "/shared/aws/scripts/aws_lib.sh"
       aws_flags+=(--profile "$profile")
     fi
     resolved_thing_name="$THING_NAME"
-    resolved_stack_name="${TXING_DEVICE_STACK_NAME}-time-runtime"
+    resolved_stack_name="${TXING_DEVICE_STACK_NAME:-$AWS_STACK_NAME-$resolved_thing_name}-time-runtime"
     if [ -n "{{stack_name}}" ]; then
       resolved_stack_name="{{stack_name}}"
     fi
@@ -51,9 +51,10 @@ aws_lib := project_root + "/shared/aws/scripts/aws_lib.sh"
           "${aws_flags[@]}" >/dev/null
       fi
     fi
-    packaged_template="$(mktemp "${TMPDIR:-/tmp}/txing-time-template.XXXXXX.yaml")"
+    packaged_template_dir="$(mktemp -d "${TMPDIR:-/tmp}/txing-time-template.XXXXXX")"
+    packaged_template="$packaged_template_dir/template.yaml"
     cleanup_packaged_template() {
-      rm -f "$packaged_template"
+      rm -rf "$packaged_template_dir"
     }
     trap cleanup_packaged_template EXIT
     (

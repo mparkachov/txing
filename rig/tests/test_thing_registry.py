@@ -2,37 +2,27 @@ from __future__ import annotations
 
 import unittest
 
+from aws.type_catalog import SsmTypeCatalog, build_type_records
 from rig.thing_registry import (
     AwsThingRegistryClient,
     DeviceRegistration,
-    ThingGroupNotFoundError,
 )
-
-
-class FakeClientError(Exception):
-    def __init__(self, code: str) -> None:
-        super().__init__(code)
-        self.response = {"Error": {"Code": code}}
 
 
 class FakeIotClient:
     def __init__(self) -> None:
-        self.describe_group_requests: list[str] = []
-        self.list_group_requests: list[dict[str, object]] = []
+        self.search_requests: list[dict[str, object]] = []
         self.describe_requests: list[str] = []
         self.update_requests: list[dict[str, object]] = []
-        self.missing_groups: set[str] = set()
         self._things: dict[str, dict[str, object]] = {
             "unit-bbbbbb": {
                 "thingName": "unit-bbbbbb",
                 "thingTypeName": "unit",
                 "attributes": {
                     "townId": "town-berlin",
-                    "rigId": "rig-rig001",
-                    "deviceType": "unit",
+                    "rigId": "raspi-rig001",
                     "name": "bot",
                     "shortId": "bbbbbb",
-                    "capabilities": "sparkplug,mcu,board,mcp,video",
                 },
                 "version": 3,
             },
@@ -41,11 +31,9 @@ class FakeIotClient:
                 "thingTypeName": "unit",
                 "attributes": {
                     "townId": "town-berlin",
-                    "rigId": "rig-rig001",
-                    "deviceType": "unit",
+                    "rigId": "raspi-rig001",
                     "name": "bot",
                     "shortId": "aaaaaa",
-                    "capabilities": "sparkplug,mcu,board,mcp,video",
                 },
                 "version": 5,
             },
@@ -56,7 +44,6 @@ class FakeIotClient:
                     "townId": "town-berlin",
                     "name": "bot",
                     "shortId": "rigonly",
-                    "capabilities": "sparkplug,mcu,board,mcp,video",
                 },
                 "version": 1,
             },
@@ -66,47 +53,35 @@ class FakeIotClient:
                 "attributes": {
                     "townId": "town-berlin",
                     "rigId": "rig-other",
-                    "deviceType": "unit",
                     "name": "bot",
                     "shortId": "other01",
-                    "capabilities": "sparkplug,mcu,board,mcp,video",
                 },
                 "version": 2,
             },
-            "rig-rig001": {
-                "thingName": "rig-rig001",
-                "thingTypeName": "rig",
+            "raspi-rig001": {
+                "thingName": "raspi-rig001",
+                "thingTypeName": "raspi",
                 "attributes": {
                     "name": "rig-a",
                     "shortId": "rig001",
                     "townId": "town-berlin",
-                    "rigType": "raspi",
-                    "capabilities": "sparkplug",
                 },
                 "version": 4,
             },
         }
 
-    def describe_thing_group(self, *, thingGroupName: str) -> dict[str, object]:
-        self.describe_group_requests.append(thingGroupName)
-        if thingGroupName in self.missing_groups:
-            raise FakeClientError("ResourceNotFoundException")
-        return {"thingGroupName": thingGroupName}
-
-    def list_things_in_thing_group(self, **kwargs: object) -> dict[str, object]:
-        self.list_group_requests.append(kwargs)
-        group_name = kwargs["thingGroupName"]
-        assert isinstance(group_name, str)
-        if group_name == "town-berlin":
-            return {"things": ["rig-rig001", "unit-other"]}
-        if "nextToken" not in kwargs:
+    def search_index(self, **kwargs: object) -> dict[str, object]:
+        self.search_requests.append(kwargs)
+        query = str(kwargs["queryString"])
+        if query == "attributes.rigId:raspi-rig001 AND attributes.townId:*":
             return {
-                "things": ["unit-bbbbbb", "unit-aaaaaa"],
-                "nextToken": "page-2",
+                "things": [
+                    {"thingName": "unit-bbbbbb"},
+                    {"thingName": "unit-aaaaaa"},
+                    {"thingName": "rig-only"},
+                ]
             }
-        return {
-            "things": ["unit-aaaaaa", "rig-only", "unit-other"]
-        }
+        return {"things": []}
 
     def describe_thing(self, *, thingName: str) -> dict[str, object]:
         self.describe_requests.append(thingName)
@@ -127,12 +102,43 @@ class FakeIotClient:
         current["version"] = int(current["version"]) + 1
 
 
-class ThingRegistryTests(unittest.TestCase):
-    def test_list_rig_things_uses_thing_group_membership_and_describe_thing(self) -> None:
-        client = FakeIotClient()
-        registry = AwsThingRegistryClient(client)
+class FakeSsmClient:
+    def __init__(self) -> None:
+        self.parameters: dict[str, str] = {}
+        catalog = SsmTypeCatalog(self)
+        for path, record in build_type_records().items():
+            catalog.put_record(path, record)
 
-        registrations = registry.list_rig_things("rig-rig001")
+    def get_parameters_by_path(self, **kwargs: object) -> dict[str, object]:
+        path = str(kwargs["Path"]).rstrip("/")
+        prefix = f"{path}/"
+        return {
+            "Parameters": [
+                {"Name": name, "Value": value}
+                for name, value in sorted(self.parameters.items())
+                if name.startswith(prefix)
+            ]
+        }
+
+    def put_parameter(self, **kwargs: object) -> None:
+        self.parameters[str(kwargs["Name"])] = str(kwargs["Value"])
+
+    def delete_parameters(self, *, Names: list[str]) -> dict[str, object]:
+        for name in Names:
+            self.parameters.pop(name, None)
+        return {"DeletedParameters": Names, "InvalidParameters": []}
+
+
+def make_registry(client: FakeIotClient) -> AwsThingRegistryClient:
+    return AwsThingRegistryClient(client, type_catalog=SsmTypeCatalog(FakeSsmClient()))
+
+
+class ThingRegistryTests(unittest.TestCase):
+    def test_list_rig_things_uses_fleet_index_and_describe_thing(self) -> None:
+        client = FakeIotClient()
+        registry = make_registry(client)
+
+        registrations = registry.list_rig_things("raspi-rig001")
 
         self.assertEqual(
             registrations,
@@ -144,9 +150,9 @@ class ThingRegistryTests(unittest.TestCase):
                     short_id="aaaaaa",
                     capabilities_set=("sparkplug", "mcu", "board", "mcp", "video"),
                     town_name="town-berlin",
-                    rig_name="rig-rig001",
+                    rig_name="raspi-rig001",
                     town_id="town-berlin",
-                    rig_id="rig-rig001",
+                    rig_id="raspi-rig001",
                     version=5,
                 ),
                 DeviceRegistration(
@@ -156,59 +162,49 @@ class ThingRegistryTests(unittest.TestCase):
                     short_id="bbbbbb",
                     capabilities_set=("sparkplug", "mcu", "board", "mcp", "video"),
                     town_name="town-berlin",
-                    rig_name="rig-rig001",
+                    rig_name="raspi-rig001",
                     town_id="town-berlin",
-                    rig_id="rig-rig001",
+                    rig_id="raspi-rig001",
                     version=3,
                 ),
             ],
         )
-        self.assertEqual(client.describe_group_requests, ["rig-rig001"])
         self.assertEqual(
-            client.list_group_requests,
+            client.search_requests,
             [
-                {"thingGroupName": "rig-rig001", "maxResults": 100},
                 {
-                    "thingGroupName": "rig-rig001",
+                    "indexName": "AWS_Things",
+                    "queryString": "attributes.rigId:raspi-rig001 AND attributes.townId:*",
                     "maxResults": 100,
-                    "nextToken": "page-2",
                 },
             ],
         )
         self.assertEqual(
             client.describe_requests,
-            ["rig-only", "unit-aaaaaa", "unit-bbbbbb", "unit-other"],
+            ["rig-only", "unit-aaaaaa", "raspi-rig001", "unit-bbbbbb", "raspi-rig001"],
         )
-
-    def test_list_rig_things_raises_when_dynamic_group_is_missing(self) -> None:
-        client = FakeIotClient()
-        client.missing_groups.add("rig-missing")
-        registry = AwsThingRegistryClient(client)
-
-        with self.assertRaises(ThingGroupNotFoundError):
-            registry.list_rig_things("rig-missing")
 
     def test_describe_thing_requires_rig_id_attribute(self) -> None:
         client = FakeIotClient()
-        registry = AwsThingRegistryClient(client)
+        registry = make_registry(client)
 
         with self.assertRaisesRegex(RuntimeError, "missing required IoT registry attribute 'rigId'"):
             registry.describe_thing("rig-only")
 
     def test_describe_rig_returns_matching_rig_thing(self) -> None:
         client = FakeIotClient()
-        registry = AwsThingRegistryClient(client)
+        registry = make_registry(client)
 
-        registration = registry.describe_rig("rig-rig001")
+        registration = registry.describe_rig("raspi-rig001")
 
-        self.assertEqual(registration.thing_name, "rig-rig001")
-        self.assertEqual(registration.thing_type, "rig")
+        self.assertEqual(registration.thing_name, "raspi-rig001")
+        self.assertEqual(registration.thing_type, "raspi")
         self.assertEqual(registration.name, "rig-a")
         self.assertEqual(registration.short_id, "rig001")
         self.assertEqual(registration.town_name, "town-berlin")
         self.assertEqual(registration.rig_name, "rig-a")
         self.assertEqual(registration.town_id, "town-berlin")
-        self.assertEqual(registration.rig_id, "rig-rig001")
+        self.assertEqual(registration.rig_id, "raspi-rig001")
         self.assertEqual(registration.capabilities_set, ("sparkplug",))
 
 

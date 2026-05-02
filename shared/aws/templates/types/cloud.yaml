@@ -1,0 +1,30 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: txing cloud rig type catalog.
+
+Parameters:
+  TypeCatalogServiceToken:
+    Type: String
+
+Resources:
+  CloudTypeCatalog:
+    Type: Custom::TxingTypeCatalog
+    Properties:
+      ServiceToken: !Ref TypeCatalogServiceToken
+      CleanupType: TypeCatalog
+      PhysicalResourceId: txing-type-catalog-cloud
+      ThingTypeName: cloud
+      ThingTypeDescription: txing cloud rig type
+      SearchableAttributes:
+        - name
+        - townId
+      CatalogBasePath: /txing/town/cloud
+      CatalogParameters:
+        kind: rigType
+        schemaVersion: "1.0"
+        thingType: cloud
+        rigType: cloud
+        displayName: Cloud Rig
+        defaultName: aws
+        capabilities: sparkplug
+        requiredAttributes: name,shortId,townId
+        searchableAttributes: name,townId

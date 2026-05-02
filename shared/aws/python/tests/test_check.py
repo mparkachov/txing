@@ -18,13 +18,8 @@ class _FakeStsClient:
 
 class _FakeIotClient:
     def __init__(self) -> None:
-        self.describe_group_names: list[str] = []
         self.describe_thing_names: list[str] = []
         self.search_queries: list[str] = []
-
-    def describe_thing_group(self, *, thingGroupName: str) -> dict[str, str]:
-        self.describe_group_names.append(thingGroupName)
-        return {"thingGroupName": thingGroupName}
 
     def describe_thing(self, *, thingName: str) -> dict[str, object]:
         self.describe_thing_names.append(thingName)
@@ -35,19 +30,16 @@ class _FakeIotClient:
                 "attributes": {
                     "name": "town",
                     "shortId": "3xvtqf",
-                    "capabilities": "sparkplug",
                 },
             }
-        if thingName == "rig-rig001":
+        if thingName == "raspi-rig001":
             return {
                 "thingName": thingName,
-                "thingTypeName": "rig",
+                "thingTypeName": "raspi",
                 "attributes": {
                     "name": "rig",
                     "shortId": "rig001",
                     "townId": "town-3xvtqf",
-                    "rigType": "raspi",
-                    "capabilities": "sparkplug",
                 },
             }
         return {"thingName": thingName}
@@ -64,8 +56,8 @@ class _FakeIotClient:
         self.search_queries.append(queryString)
         if queryString == "thingTypeName:town AND attributes.name:town":
             return {"things": [{"thingName": "town-3xvtqf"}]}
-        if queryString == "thingTypeName:rig AND attributes.name:rig AND attributes.townId:town-3xvtqf":
-            return {"things": [{"thingName": "rig-rig001"}]}
+        if queryString == "thingTypeName:raspi AND attributes.name:rig AND attributes.townId:town-3xvtqf":
+            return {"things": [{"thingName": "raspi-rig001"}]}
         return {"things": []}
 
 
@@ -181,7 +173,7 @@ class AwsCheckTests(unittest.TestCase):
                     "AWS_REGION": "eu-central-1",
                     "AWS_RIG_PROFILE": "rig",
                     "AWS_SHARED_CREDENTIALS_FILE": str(shared_credentials_file),
-                    "TXING_RIG_ID": "rig-rig001",
+                    "TXING_RIG_ID": "raspi-rig001",
                     "RIG_NAME": "rig",
                     "SPARKPLUG_GROUP_ID": "town",
                     "SPARKPLUG_EDGE_NODE_ID": "rig",
@@ -190,7 +182,7 @@ class AwsCheckTests(unittest.TestCase):
 
         self.assertTrue(all(result.ok for result in results))
         self.assertEqual(resolved["aws_region"], "eu-central-1")
-        self.assertEqual(resolved["rig_id"], "rig-rig001")
+        self.assertEqual(resolved["rig_id"], "raspi-rig001")
         self.assertEqual(resolved["rig_name"], "rig")
         self.assertEqual(resolved["sparkplug_group_id"], "town")
         self.assertNotIn("log_group_name", resolved)
@@ -230,7 +222,7 @@ class AwsCheckTests(unittest.TestCase):
                     "AWS_REGION": "eu-central-1",
                     "AWS_RIG_PROFILE": "rig",
                     "AWS_SHARED_CREDENTIALS_FILE": str(shared_credentials_file),
-                    "TXING_RIG_ID": "rig-rig001",
+                    "TXING_RIG_ID": "raspi-rig001",
                     "RIG_NAME": "rig",
                     "SPARKPLUG_GROUP_ID": "town",
                     "SPARKPLUG_EDGE_NODE_ID": "rig",
@@ -240,22 +232,25 @@ class AwsCheckTests(unittest.TestCase):
 
         self.assertTrue(all(result.ok for result in results))
         self.assertEqual(runtime.sts.calls, 1)
-        self.assertEqual(runtime.iot.describe_group_names, ["rig-rig001"])
         self.assertEqual(runtime.iot.search_queries, [])
-        self.assertEqual(runtime.logs.created_groups, ["txing/town-3xvtqf/rig-rig001"])
+        self.assertEqual(
+            runtime.iot.describe_thing_names,
+            ["raspi-rig001", "raspi-rig001", "town-3xvtqf"],
+        )
+        self.assertEqual(runtime.logs.created_groups, ["txing/town-3xvtqf/raspi-rig001"])
         self.assertEqual(
             runtime.logs.retention_policies,
-            [("txing/town-3xvtqf/rig-rig001", 30)],
+            [("txing/town-3xvtqf/raspi-rig001", 30)],
         )
         self.assertEqual(len(runtime.logs.created_streams), 1)
         self.assertEqual(
             runtime.logs.created_streams[0][0],
-            "txing/town-3xvtqf/rig-rig001",
+            "txing/town-3xvtqf/raspi-rig001",
         )
         self.assertEqual(len(runtime.logs.events), 1)
         self.assertEqual(
             runtime.logs.events[0][0],
-            "txing/town-3xvtqf/rig-rig001",
+            "txing/town-3xvtqf/raspi-rig001",
         )
         self.assertIsInstance(runtime.logs.events[0][2][0]["timestamp"], int)
 

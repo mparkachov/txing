@@ -1,0 +1,44 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: txing unit device type catalog for Raspberry Pi rigs.
+
+Parameters:
+  TypeCatalogServiceToken:
+    Type: String
+
+Resources:
+  UnitTypeCatalog:
+    Type: Custom::TxingTypeCatalog
+    Properties:
+      ServiceToken: !Ref TypeCatalogServiceToken
+      CleanupType: TypeCatalog
+      PhysicalResourceId: txing-type-catalog-unit
+      ThingTypeName: unit
+      ThingTypeDescription: txing unit device type
+      SearchableAttributes:
+        - name
+        - townId
+        - rigId
+      CatalogBasePath: /txing/town/raspi/unit
+      CatalogParameters:
+        kind: deviceType
+        schemaVersion: "1.0"
+        thingType: unit
+        deviceType: unit
+        rigType: raspi
+        displayName: Bot
+        defaultName: bot
+        capabilities: sparkplug,mcu,board,mcp,video
+        requiredAttributes: name,shortId,townId,rigId
+        searchableAttributes: name,townId,rigId
+        shadows/sparkplug/schema: aws/sparkplug-shadow.schema.json
+        shadows/sparkplug/default: aws/default-sparkplug-shadow.json
+        shadows/mcu/schema: aws/mcu-shadow.schema.json
+        shadows/mcu/default: aws/default-mcu-shadow.json
+        shadows/board/schema: aws/board-shadow.schema.json
+        shadows/board/default: aws/default-board-shadow.json
+        shadows/mcp/schema: aws/mcp-shadow.schema.json
+        shadows/mcp/default: aws/default-mcp-shadow.json
+        shadows/video/schema: aws/video-shadow.schema.json
+        shadows/video/default: aws/default-video-shadow.json
+        web/adapter: web/unit-adapter.tsx
+        resources/boardVideo/channelName: "{device_id}-board-video"

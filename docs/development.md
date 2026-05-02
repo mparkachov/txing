@@ -71,13 +71,16 @@ Root modules:
 
 ## Current Named Shadows
 
-Named shadows are selected from `attributes.capabilities`.
+Named shadows are selected from the thing's AWS IoT ThingType and the
+CloudFormation-managed SSM type catalog under `/txing`.
 
 Current capabilities:
 
 - `town`: `sparkplug`
-- `rig`: `sparkplug`
+- `raspi`: `sparkplug`
+- `cloud`: `sparkplug`
 - `unit`: `sparkplug`, `mcu`, `board`, `mcp`, `video`
+- `time`: `sparkplug`, `mcp`, `time`
 
 There is no `device` named shadow in the current implementation.
 
@@ -90,7 +93,10 @@ just aws::shadow-reset <thing>
 just aws::shadow-reset <thing> mcp
 ```
 
-`aws::shadow-reset` deletes the classic unnamed shadow, removes known named shadows that are not valid for the thing's current `capabilities`, and reseeds device named shadows from the default payloads declared in `devices/<type>/manifest.toml`.
+`aws::shadow-reset` deletes the classic unnamed shadow, removes known named
+shadows that are not valid for the thing's type catalog capabilities, and
+reseeds device named shadows from the default payloads declared in
+`devices/<type>/manifest.toml`.
 
 ## Common Development Loops
 

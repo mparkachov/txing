@@ -24,6 +24,7 @@ from aws.auth import (
 )
 from aws.mcp_topics import build_mcp_descriptor_topic, build_mcp_status_topic
 from aws.mqtt import AwsIotWebsocketConnection, AwsMqttConnectionConfig
+from aws.type_catalog import SsmTypeCatalog
 from aws.video_topics import build_video_descriptor_topic, build_video_status_topic
 
 from .ble_bridge import (
@@ -81,7 +82,7 @@ from .sparkplug import (
     build_node_topic,
     utc_timestamp_ms,
 )
-from .thing_registry import AwsThingRegistryClient, DeviceRegistration, ThingGroupNotFoundError
+from .thing_registry import AwsThingRegistryClient, DeviceRegistration
 
 LOGGER = logging.getLogger("unit_rig.sparkplug_manager")
 DEFAULT_INVENTORY_PUBLISH_INTERVAL = 10.0
@@ -864,15 +865,11 @@ async def run_sparkplug_manager(
     cloud_client: AwsShadowClient | None = None,
     inventory_publish_interval: float = DEFAULT_INVENTORY_PUBLISH_INTERVAL,
 ) -> None:
-    registry_client = registry_client or AwsThingRegistryClient(aws_runtime.iot_client())
-    try:
-        registrations = registry_client.list_rig_things(config.rig_id or config.rig_name)
-    except ThingGroupNotFoundError:
-        LOGGER.warning(
-            "Dynamic thing group for rig=%s was not found; starting with no managed devices",
-            config.rig_id or config.rig_name,
-        )
-        registrations = []
+    registry_client = registry_client or AwsThingRegistryClient(
+        aws_runtime.iot_client(),
+        type_catalog=SsmTypeCatalog(aws_runtime.client("ssm")),
+    )
+    registrations = registry_client.list_rig_things(config.rig_id or config.rig_name)
     cloud_client = cloud_client or AwsShadowClient(config, aws_runtime)
     snapshots = await cloud_client.connect_and_get_initial_snapshots(
         {

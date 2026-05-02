@@ -31,22 +31,12 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
       "AdminEmail=$AWS_ADMIN_EMAIL" \
       "LocalhostAppUrl={{LocalhostAppUrl}}" \
       "LocalhostAltAppUrl={{LocalhostAltAppUrl}}"
-    configure_indexing_and_wait
-    uv run --project "{{aws_dir}}/python" \
-      python -m aws.type_catalog \
-      --region "$AWS_REGION" \
-      sync
     describe_stack_outputs "$AWS_STACK_NAME"
 
-@type-sync region=region profile=profile:
+@type-sync CognitoDomainPrefix='' AdminEmail='' stack_name=stack_name template_file=template_file region=region profile=profile:
     #!/usr/bin/env bash
     set -euo pipefail
-    cd "{{aws_dir}}"
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{region}}" "{{profile}}")"
-    uv run --project "{{aws_dir}}/python" \
-      python -m aws.type_catalog \
-      --region "$AWS_REGION" \
-      sync
+    just --justfile "{{aws_dir}}/justfile" deploy "{{CognitoDomainPrefix}}" "{{AdminEmail}}" "{{stack_name}}" "{{template_file}}" "{{region}}" "{{profile}}"
 
 @type-list path='/txing' region=region profile=profile:
     #!/usr/bin/env bash
@@ -68,7 +58,7 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
       --region "$AWS_REGION" \
       describe "{{path}}"
 
-@town-deploy town_name stack_name=stack_name template_file=town_template_file region=region profile=profile:
+@town-deploy town_name stack_name=stack_name region=region profile=profile:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
@@ -77,12 +67,6 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
     txing_aws_init
     town_name="{{town_name}}"
     town_slug="$(printf '%s\n' "$town_name" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9-' '-' | sed 's/^-*//; s/-*$//')"
-    TXING_TOWN_STACK_NAME="${TXING_TOWN_STACK_NAME:-$AWS_STACK_NAME-$town_slug}"
-    deploy_template \
-      "$TXING_TOWN_STACK_NAME" \
-      "{{template_file}}" \
-      --parameter-overrides \
-      "TownName=$town_slug"
     registration="$(
       uv run --project "{{aws_dir}}/python" \
       python -m aws.device_registry \
@@ -92,9 +76,8 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
     )"
     jq -r '"town id: \(.thing_name)"' <<<"$registration"
     jq '.' <<<"$registration"
-    describe_stack_outputs "$TXING_TOWN_STACK_NAME"
 
-@rig-deploy town_id rig_type rig_name stack_name=stack_name template_file=rig_template_file region=region profile=profile:
+@rig-deploy town_id rig_type rig_name stack_name=stack_name region=region profile=profile:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
@@ -104,13 +87,6 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
     town_id="{{town_id}}"
     rig_type="{{rig_type}}"
     rig_name="$(printf '%s\n' "{{rig_name}}" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9-' '-' | sed 's/^-*//; s/-*$//')"
-    TXING_RIG_STACK_NAME="${TXING_RIG_STACK_NAME:-$AWS_STACK_NAME-$town_id-$rig_name}"
-    greengrass_artifacts_bucket_name="$(stack_output "$AWS_STACK_NAME" GreengrassArtifactsBucketName)"
-    deploy_template \
-      "$TXING_RIG_STACK_NAME" \
-      "{{template_file}}" \
-      --parameter-overrides \
-      "GreengrassArtifactsBucketName=$greengrass_artifacts_bucket_name"
     registration="$(
       uv run --project "{{aws_dir}}/python" \
       python -m aws.device_registry \
@@ -122,9 +98,8 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
     )"
     jq -r '"rig id: \(.thing_name)"' <<<"$registration"
     jq '.' <<<"$registration"
-    describe_stack_outputs "$TXING_RIG_STACK_NAME"
 
-@device-deploy rig_id device_type device_name stack_name=stack_name template_file=device_template_file region=region profile=profile:
+@device-deploy rig_id device_type device_name stack_name=stack_name region=region profile=profile:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
@@ -134,8 +109,6 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
     rig_id="{{rig_id}}"
     device_type="{{device_type}}"
     device_name="$(printf '%s\n' "{{device_name}}" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9-' '-' | sed 's/^-*//; s/-*$//')"
-    TXING_DEVICE_STACK_NAME="${TXING_DEVICE_STACK_NAME:-$AWS_STACK_NAME-$rig_id-$device_name}"
-    deploy_template "$TXING_DEVICE_STACK_NAME" "{{template_file}}"
     registration="$(
       uv run --project "{{aws_dir}}/python" \
       python -m aws.device_registry \
@@ -147,7 +120,6 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
     )"
     jq -r '"device id: \(.thing_name)"' <<<"$registration"
     jq '.' <<<"$registration"
-    describe_stack_outputs "$TXING_DEVICE_STACK_NAME"
 
 @configure-indexing region=region profile=profile:
     #!/usr/bin/env bash
@@ -166,8 +138,9 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{region}}" "{{profile}}" "{{stack_name}}")"
     txing_aws_init
     artifact_bucket="$(ensure_artifact_bucket)"
-    packaged_template="$(mktemp "${TMPDIR:-/tmp}/txing-cfn.XXXXXX.yaml")"
-    trap 'rm -f "$packaged_template"' EXIT
+    packaged_template_dir="$(mktemp -d "${TMPDIR:-/tmp}/txing-cfn.XXXXXX")"
+    packaged_template="$packaged_template_dir/template.yaml"
+    trap 'rm -rf "$packaged_template_dir"' EXIT
     aws cloudformation package \
       --template-file "{{template_file}}" \
       --s3-bucket "$artifact_bucket" \
@@ -218,7 +191,7 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
     source "{{aws_lib}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{region}}" "{{profile}}" "{{stack_name}}")"
     txing_aws_init
-    for stack in "$AWS_STACK_NAME" "$TXING_TOWN_STACK_NAME" "$TXING_RIG_STACK_NAME" "$TXING_DEVICE_STACK_NAME"; do
+    for stack in "$AWS_STACK_NAME"; do
       echo "== $stack =="
       describe_stack_outputs "$stack"
     done
@@ -309,10 +282,11 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{profile}}")"
     txing_aws_init
     thing_names="$(
-      aws iot list-things-in-thing-group \
-        --thing-group-name "$TXING_RIG_ID" \
+      aws iot search-index \
+        --index-name AWS_Things \
+        --query-string "attributes.rigId:$TXING_RIG_ID AND attributes.townId:*" \
         "${aws_flags[@]}" \
-        --query "things" \
+        --query "things[].thingName" \
         --output text
     )"
     if [ -z "$thing_names" ] || [ "$thing_names" = "None" ]; then
@@ -331,10 +305,8 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
             thingType: ($thing.thingTypeName // null),
             name: ($thing.attributes.name // null),
             shortId: ($thing.attributes.shortId // null),
-            capabilities: ($thing.attributes.capabilities // null),
             townId: ($thing.attributes.townId // null),
-            rigId: ($thing.attributes.rigId // null),
-            deviceType: ($thing.attributes.deviceType // null)
+            rigId: ($thing.attributes.rigId // null)
           }]'
       )"
     done
@@ -362,7 +334,22 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
       exit 0
     fi
     thing_json="$(aws iot describe-thing --thing-name "$effective_thing_name" "${aws_flags[@]}" --output json)"
-    capabilities_set="$(jq -r '.attributes.capabilities // empty' <<<"$thing_json")"
+    thing_type="$(jq -r '.thingTypeName // empty' <<<"$thing_json")"
+    if [ "$thing_type" = "town" ]; then
+      catalog_path="/txing/town"
+    elif [ -n "$(jq -r '.attributes.rigId // empty' <<<"$thing_json")" ]; then
+      rig_json="$(aws iot describe-thing --thing-name "$(jq -r '.attributes.rigId' <<<"$thing_json")" "${aws_flags[@]}" --output json)"
+      catalog_path="/txing/town/$(jq -r '.thingTypeName' <<<"$rig_json")/$thing_type"
+    else
+      catalog_path="/txing/town/$thing_type"
+    fi
+    capabilities_set="$(
+      uv run --project "{{aws_dir}}/python" \
+        python -m aws.type_catalog \
+        --region "$AWS_REGION" \
+        describe "$catalog_path" \
+        | jq -r '.capabilities | join(",")'
+    )"
     result="{}"
     while IFS= read -r current_shadow_name; do
       [ -n "$current_shadow_name" ] || continue
@@ -396,7 +383,7 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
     endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}" --query endpointAddress --output text)"
     payload_file="{{payload_file}}"
     if [ -z "$payload_file" ]; then
-      payload_file="$(mktemp "${TMPDIR:-/tmp}/txing-shadow.XXXXXX.json")"
+      payload_file="$(mktemp "${TMPDIR:-/tmp}/txing-shadow.XXXXXX")"
       trap 'rm -f "$payload_file"' EXIT
       thing_json="$(aws iot describe-thing --thing-name "$effective_thing_name" "${aws_flags[@]}" --output json)"
       thing_type="$(jq -r '.thingTypeName // empty' <<<"$thing_json")"
@@ -404,7 +391,7 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
         town:sparkplug)
           jq -n '{state: {reported: {payload: {metrics: {redcon: 1}}}}}' >"$payload_file"
           ;;
-        rig:sparkplug)
+        raspi:sparkplug|cloud:sparkplug)
           town_json="$(aws iot describe-thing --thing-name "$(jq -r '.attributes.townId' <<<"$thing_json")" "${aws_flags[@]}" --output json)"
           jq \
             -n \
@@ -517,7 +504,7 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
     endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}" --query endpointAddress --output text)"
     payload_file="{{payload_file}}"
     if [ -z "$payload_file" ]; then
-      payload_file="$(mktemp "${TMPDIR:-/tmp}/txing-shadow.XXXXXX.json")"
+      payload_file="$(mktemp "${TMPDIR:-/tmp}/txing-shadow.XXXXXX")"
       trap 'rm -f "$payload_file"' EXIT
       thing_json="$(aws iot describe-thing --thing-name "$effective_thing_name" "${aws_flags[@]}" --output json)"
       thing_type="$(jq -r '.thingTypeName // empty' <<<"$thing_json")"

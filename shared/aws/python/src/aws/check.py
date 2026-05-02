@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from .auth import AwsRuntime, build_aws_runtime, ensure_aws_profile
-from .device_registry import AwsDeviceRegistry
 from .log_groups import DEFAULT_LOG_RETENTION_DAYS, build_rig_log_group_name
 
 
@@ -311,14 +310,23 @@ def _resolve_rig_log_group_name(
 ) -> str:
     if log_group_name is not None and log_group_name.strip():
         return log_group_name.strip()
-    registry = AwsDeviceRegistry(runtime)
-    rig_registration = registry.describe_thing(rig_id)
-    if rig_registration.town_id is None:
+    rig_response = runtime.iot_client().describe_thing(thingName=rig_id)
+    rig_attributes = rig_response.get("attributes") or {}
+    if not isinstance(rig_attributes, dict):
+        raise RuntimeError(f"Rig {rig_id!r} returned invalid attributes")
+    town_id = rig_attributes.get("townId")
+    if not isinstance(town_id, str) or not town_id.strip():
         raise RuntimeError(f"Rig {rig_id!r} is missing townId")
-    town_registration = registry.describe_thing(rig_registration.town_id)
+    town_response = runtime.iot_client().describe_thing(thingName=town_id.strip())
+    town_name = town_response.get("thingName")
+    rig_name = rig_response.get("thingName")
+    if not isinstance(town_name, str) or not town_name:
+        raise RuntimeError(f"Town {town_id!r} returned invalid thingName")
+    if not isinstance(rig_name, str) or not rig_name:
+        raise RuntimeError(f"Rig {rig_id!r} returned invalid thingName")
     return build_rig_log_group_name(
-        town_thing_name=town_registration.thing_name,
-        rig_thing_name=rig_registration.thing_name,
+        town_thing_name=town_name,
+        rig_thing_name=rig_name,
     )
 
 
@@ -338,8 +346,8 @@ def _run_rig_connectivity_checks(
     )
     _run_aws_check(
         results,
-        f"IoT DescribeThingGroup on {rig_id}",
-        lambda: runtime.iot_client().describe_thing_group(thingGroupName=rig_id),
+        f"IoT DescribeThing on {rig_id}",
+        lambda: runtime.iot_client().describe_thing(thingName=rig_id),
     )
     resolved_log_group_name = _run_aws_check(
         results,
@@ -466,7 +474,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--thing-name", default="", help="Override thing name for AWS probes")
     parser.add_argument("--rig-id", default="", help="Override rig thing name for AWS probes")
-    parser.add_argument("--rig-name", default="", help="Override rig thing-group name for AWS probes")
+    parser.add_argument("--rig-name", default="", help="Override rig display name for AWS probes")
     parser.add_argument(
         "--log-group-name",
         default="",

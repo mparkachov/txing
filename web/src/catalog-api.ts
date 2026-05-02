@@ -1,12 +1,8 @@
 import {
   DescribeThingCommand,
-  DescribeThingGroupCommand,
   IoTClient,
-  ListThingsInThingGroupCommand,
   SearchIndexCommand,
   type DescribeThingCommandOutput,
-  type DescribeThingGroupCommandOutput,
-  type ListThingsInThingGroupCommandOutput,
   type SearchIndexCommandOutput,
 } from '@aws-sdk/client-iot'
 import {
@@ -48,6 +44,14 @@ export type ThingMetadata = {
 }
 
 const maxResults = 100
+const rigThingTypes = ['raspi', 'cloud'] as const
+const thingTypeCapabilities: Record<string, readonly ShadowName[]> = {
+  town: ['sparkplug'],
+  raspi: ['sparkplug'],
+  cloud: ['sparkplug'],
+  unit: ['sparkplug', 'mcu', 'board', 'mcp', 'video'],
+  time: ['sparkplug', 'mcp', 'time'],
+}
 
 const collator = new Intl.Collator(undefined, {
   numeric: true,
@@ -91,6 +95,22 @@ export const parseCapabilitiesSet = (value: string | null | undefined): readonly
     throw new Error('Thing capabilities must include sparkplug')
   }
   return capabilities
+}
+
+const isRigThingType = (thingTypeName: string | null | undefined): boolean =>
+  typeof thingTypeName === 'string' && rigThingTypes.includes(thingTypeName as (typeof rigThingTypes)[number])
+
+const capabilitiesForThingType = (
+  thingTypeName: string | null,
+  attributeCapabilities: string | null,
+): readonly ShadowName[] => {
+  if (thingTypeName && thingTypeCapabilities[thingTypeName]) {
+    return thingTypeCapabilities[thingTypeName]
+  }
+  if (attributeCapabilities !== null) {
+    return parseCapabilitiesSet(attributeCapabilities)
+  }
+  return ['sparkplug']
 }
 
 const getRigDisplayName = (rig: RigCatalogEntry): string => rig.rigName
@@ -194,6 +214,7 @@ export const describeThingMetadataWithClient = async (
   )) as DescribeThingCommandOutput
 
   const attributes = response.attributes
+  const thingTypeName = normalizeOptionalText(response.thingTypeName)
   const townId = normalizeOptionalText(
     attributes && typeof attributes.townId === 'string' ? attributes.townId : null,
   )
@@ -221,23 +242,24 @@ export const describeThingMetadataWithClient = async (
     } catch {
       rigName = rigId
     }
-  } else if (response.thingTypeName === 'rig') {
+  } else if (isRigThingType(thingTypeName)) {
     rigName = normalizeOptionalText(attributes?.name) ?? thingName
   }
   return {
     thingName,
-    thingTypeName: normalizeOptionalText(response.thingTypeName),
+    thingTypeName,
     name: normalizeOptionalText(
       attributes && typeof attributes.name === 'string' ? attributes.name : null,
     ),
     townId,
-    rigId: response.thingTypeName === 'rig' ? thingName : rigId,
+    rigId: isRigThingType(thingTypeName) ? thingName : rigId,
     townName,
     rigName,
     shortId: normalizeOptionalText(
       attributes && typeof attributes.shortId === 'string' ? attributes.shortId : null,
     ),
-    capabilities: parseCapabilitiesSet(
+    capabilities: capabilitiesForThingType(
+      thingTypeName,
       attributes && typeof attributes.capabilities === 'string'
         ? attributes.capabilities
         : null,
@@ -332,42 +354,20 @@ export const listTownRigsWithClient = async (
   client: IotControlClient,
   townName: string,
 ): Promise<RigCatalogEntry[]> => {
-  let townGroupName = townName
-  try {
-    const townMetadata =
-      townName.startsWith('town-')
-        ? await describeThingMetadataWithClient(client, townName)
-        : await resolveTownThingWithClient(client, townName)
-    townGroupName = townMetadata.thingName
-  } catch {
-    townGroupName = townName
-  }
-  await client.send(
-    new DescribeThingGroupCommand({
-      thingGroupName: townGroupName,
-    }),
-  ) as DescribeThingGroupCommandOutput
-
-  const rigThingNames: string[] = []
-  let nextToken: string | undefined
-
-  do {
-    const response = (await client.send(
-      new ListThingsInThingGroupCommand({
-        thingGroupName: townGroupName,
-        nextToken,
-        maxResults,
-      }),
-    )) as ListThingsInThingGroupCommandOutput
-
-    for (const thingName of response.things ?? []) {
-      if (typeof thingName === 'string' && thingName.trim() !== '') {
-        rigThingNames.push(thingName.trim())
-      }
-    }
-
-    nextToken = response.nextToken
-  } while (nextToken)
+  const townMetadata =
+    townName.startsWith('town-')
+      ? await describeThingMetadataWithClient(client, townName)
+      : await resolveTownThingWithClient(client, townName)
+  const rigThingNames = (
+    await Promise.all(
+      rigThingTypes.map((rigType) =>
+        searchThingNamesWithClient(
+          client,
+          `thingTypeName:${rigType} AND attributes.townId:${townMetadata.thingName}`,
+        ),
+      ),
+    )
+  ).flat()
 
   const rigEntries = await Promise.all(
     sortUnique(rigThingNames).map(async (thingName) => {
@@ -383,7 +383,7 @@ export const listTownRigsWithClient = async (
   )
 
   return rigEntries
-    .filter((rig) => rig.thingTypeName === 'rig')
+    .filter((rig) => isRigThingType(rig.thingTypeName))
     .map((rig) => ({
       thingName: rig.thingName,
       rigName: rig.rigName,
@@ -407,26 +407,10 @@ export const listRigDevicesWithClient = async (
   client: IotControlClient,
   rigName: string,
 ): Promise<DeviceCatalogEntry[]> => {
-  const deviceIds: string[] = []
-  let nextToken: string | undefined
-
-  do {
-    const response = (await client.send(
-      new ListThingsInThingGroupCommand({
-        thingGroupName: rigName,
-        nextToken,
-        maxResults,
-      }),
-    )) as ListThingsInThingGroupCommandOutput
-
-    for (const thingName of response.things ?? []) {
-      if (typeof thingName === 'string' && thingName.trim() !== '') {
-        deviceIds.push(thingName.trim())
-      }
-    }
-
-    nextToken = response.nextToken
-  } while (nextToken)
+  const deviceIds = await searchThingNamesWithClient(
+    client,
+    `attributes.rigId:${rigName} AND attributes.townId:*`,
+  )
 
   const uniqueDeviceIds = sortUnique(deviceIds)
   const deviceEntries = await Promise.all(
@@ -509,12 +493,25 @@ export const resolveRigThingWithClient = async (
     townName.startsWith('town-')
       ? await describeThingMetadataWithClient(client, townName)
       : await resolveTownThingWithClient(client, townName)
-  return resolveSingleThingMetadataWithClient(
-    client,
-    `thingTypeName:rig AND attributes.name:${rigName} AND attributes.townId:${townMetadata.thingName}`,
-    `Rig '${rigName}' in town '${townName}' was not found.`,
-    `Rig '${rigName}' in town '${townName}' matched multiple AWS IoT things.`,
+  const thingNames = sortUnique(
+    (
+      await Promise.all(
+        rigThingTypes.map((rigType) =>
+          searchThingNamesWithClient(
+            client,
+            `thingTypeName:${rigType} AND attributes.name:${rigName} AND attributes.townId:${townMetadata.thingName}`,
+          ),
+        ),
+      )
+    ).flat(),
   )
+  if (thingNames.length === 0) {
+    throw new Error(`Rig '${rigName}' in town '${townName}' was not found.`)
+  }
+  if (thingNames.length > 1) {
+    throw new Error(`Rig '${rigName}' in town '${townName}' matched multiple AWS IoT things.`)
+  }
+  return describeThingMetadataWithClient(client, thingNames[0])
 }
 
 export const resolveRigThing = async (

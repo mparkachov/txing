@@ -70,11 +70,6 @@ class _FakeIotClient:
     def __init__(self) -> None:
         self.create_thing_requests: list[dict[str, object]] = []
         self.update_thing_requests: list[dict[str, object]] = []
-        self.create_group_requests: list[dict[str, object]] = []
-        self.update_group_requests: list[dict[str, object]] = []
-        self.create_thing_type_requests: list[dict[str, object]] = []
-        self.thing_types: dict[str, dict[str, object]] = {}
-        self.groups: set[str] = set()
         self._things: dict[str, dict[str, object]] = {
             "town-ber001": {
                 "thingName": "town-ber001",
@@ -82,31 +77,26 @@ class _FakeIotClient:
                 "attributes": {
                     "name": "berlin",
                     "shortId": "ber001",
-                    "capabilities": "sparkplug",
                 },
                 "version": 1,
             },
-            "rig-ras001": {
-                "thingName": "rig-ras001",
-                "thingTypeName": "rig",
+            "raspi-ras001": {
+                "thingName": "raspi-ras001",
+                "thingTypeName": "raspi",
                 "attributes": {
                     "name": "server",
                     "shortId": "ras001",
                     "townId": "town-ber001",
-                    "rigType": "raspi",
-                    "capabilities": "sparkplug",
                 },
                 "version": 1,
             },
-            "rig-cld001": {
-                "thingName": "rig-cld001",
-                "thingTypeName": "rig",
+            "cloud-cld001": {
+                "thingName": "cloud-cld001",
+                "thingTypeName": "cloud",
                 "attributes": {
                     "name": "aws",
                     "shortId": "cld001",
                     "townId": "town-ber001",
-                    "rigType": "cloud",
-                    "capabilities": "sparkplug",
                 },
                 "version": 1,
             },
@@ -117,9 +107,7 @@ class _FakeIotClient:
                     "name": "bot",
                     "shortId": "aaaaaa",
                     "townId": "town-ber001",
-                    "rigId": "rig-ras001",
-                    "deviceType": "unit",
-                    "capabilities": "sparkplug,mcu,board,mcp,video",
+                    "rigId": "raspi-ras001",
                 },
                 "version": 1,
             },
@@ -158,30 +146,6 @@ class _FakeIotClient:
         current["version"] = int(current["version"]) + 1
         return {"thingName": thing_name}
 
-    def describe_thing_type(self, *, thingTypeName: str) -> dict[str, object]:
-        if thingTypeName not in self.thing_types:
-            raise _FakeClientError("ResourceNotFoundException")
-        return {"thingTypeProperties": dict(self.thing_types[thingTypeName])}
-
-    def create_thing_type(self, **kwargs: object) -> dict[str, object]:
-        self.create_thing_type_requests.append(kwargs)
-        self.thing_types[str(kwargs["thingTypeName"])] = dict(kwargs["thingTypeProperties"])  # type: ignore[arg-type]
-        return {"thingTypeName": kwargs["thingTypeName"]}
-
-    def describe_thing_group(self, *, thingGroupName: str) -> dict[str, object]:
-        if thingGroupName not in self.groups:
-            raise _FakeClientError("ResourceNotFoundException")
-        return {"thingGroupName": thingGroupName}
-
-    def create_dynamic_thing_group(self, **kwargs: object) -> dict[str, object]:
-        self.create_group_requests.append(kwargs)
-        self.groups.add(str(kwargs["thingGroupName"]))
-        return {"thingGroupName": kwargs["thingGroupName"]}
-
-    def update_dynamic_thing_group(self, **kwargs: object) -> dict[str, object]:
-        self.update_group_requests.append(kwargs)
-        return {"thingGroupName": kwargs["thingGroupName"]}
-
     def search_index(self, **kwargs: object) -> dict[str, object]:
         query = str(kwargs["queryString"])
         matches: list[str] = []
@@ -191,13 +155,15 @@ class _FakeIotClient:
             thing_type = thing["thingTypeName"]
             if "thingTypeName:town" in query and thing_type != "town":
                 continue
-            if "thingTypeName:rig" in query and thing_type != "rig":
-                continue
             if "thingTypeName:unit" in query and thing_type != "unit":
                 continue
             if "thingTypeName:time" in query and thing_type != "time":
                 continue
-            for key in ("name", "townId", "rigId", "rigType", "deviceType"):
+            if "thingTypeName:raspi" in query and thing_type != "raspi":
+                continue
+            if "thingTypeName:cloud" in query and thing_type != "cloud":
+                continue
+            for key in ("name", "townId", "rigId"):
                 marker = f"attributes.{key}:"
                 if marker in query:
                     expected = query.split(marker, 1)[1].split()[0]
@@ -275,7 +241,7 @@ class _FakeRuntime:
 
 
 class DeviceRegistryTests(unittest.TestCase):
-    def test_register_town_writes_new_capabilities_attribute_and_id_group(self) -> None:
+    def test_register_town_writes_minimal_instance_attributes(self) -> None:
         runtime = _FakeRuntime()
         registry = AwsDeviceRegistry(
             runtime,
@@ -292,17 +258,12 @@ class DeviceRegistryTests(unittest.TestCase):
             {
                 "name": "berlin",
                 "shortId": "town01",
-                "capabilities": "sparkplug",
             },
         )
         self.assertNotIn("capabilitiesSet", attributes)
-        self.assertEqual(runtime.iot.create_group_requests[0]["thingGroupName"], "town-town01")
-        self.assertEqual(
-            runtime.iot.create_group_requests[0]["queryString"],
-            "thingTypeName:rig AND attributes.townId:town-town01",
-        )
+        self.assertEqual(runtime.ssm.put_requests, [])
 
-    def test_register_cloud_rig_copies_type_catalog_parameters_to_iot_attributes(self) -> None:
+    def test_register_cloud_rig_uses_rig_type_as_thing_type(self) -> None:
         runtime = _FakeRuntime()
         registry = AwsDeviceRegistry(
             runtime,
@@ -316,7 +277,8 @@ class DeviceRegistryTests(unittest.TestCase):
             rig_name="AWS",
         )
 
-        self.assertEqual(registration.thing_name, "rig-rig002")
+        self.assertEqual(registration.thing_name, "cloud-rig002")
+        self.assertEqual(runtime.iot.create_thing_requests[0]["thingTypeName"], "cloud")
         attributes = runtime.iot.create_thing_requests[0]["attributePayload"]["attributes"]  # type: ignore[index]
         self.assertEqual(
             attributes,
@@ -324,12 +286,9 @@ class DeviceRegistryTests(unittest.TestCase):
                 "name": "aws",
                 "shortId": "rig002",
                 "townId": "town-ber001",
-                "rigType": "cloud",
-                "capabilities": "sparkplug",
             },
         )
-        self.assertEqual(runtime.iot.create_group_requests[0]["thingGroupName"], "town-ber001")
-        self.assertEqual(runtime.iot.create_group_requests[1]["thingGroupName"], "rig-rig002")
+        self.assertEqual(runtime.ssm.put_requests, [])
 
     def test_device_enrollment_is_checked_through_ssm_path_compatibility(self) -> None:
         runtime = _FakeRuntime()
@@ -340,28 +299,28 @@ class DeviceRegistryTests(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(DeviceRegistryError, "not compatible"):
-            registry.register_device(rig_id="rig-ras001", device_type="time")
+            registry.register_device(rig_id="raspi-ras001", device_type="time")
 
-        registration = registry.register_device(rig_id="rig-cld001", device_type="time")
+        registration = registry.register_device(rig_id="cloud-cld001", device_type="time")
 
         self.assertEqual(registration.thing_name, "time-time01")
+        self.assertEqual(runtime.iot.create_thing_requests[0]["thingTypeName"], "time")
         attributes = runtime.iot.create_thing_requests[0]["attributePayload"]["attributes"]  # type: ignore[index]
         self.assertEqual(attributes["townId"], "town-ber001")
-        self.assertEqual(attributes["rigId"], "rig-cld001")
-        self.assertEqual(attributes["deviceType"], "time")
-        self.assertEqual(attributes["capabilities"], "sparkplug,mcp,time")
+        self.assertEqual(attributes["rigId"], "cloud-cld001")
+        self.assertNotIn("deviceType", attributes)
+        self.assertNotIn("capabilities", attributes)
+        self.assertEqual(runtime.ssm.put_requests, [])
 
     def test_assign_device_validates_target_rig_type_before_updating_parent_ids(self) -> None:
         runtime = _FakeRuntime()
-        runtime.iot._things["rig-ras002"] = {
-            "thingName": "rig-ras002",
-            "thingTypeName": "rig",
+        runtime.iot._things["raspi-ras002"] = {
+            "thingName": "raspi-ras002",
+            "thingTypeName": "raspi",
             "attributes": {
                 "name": "server-b",
                 "shortId": "ras002",
                 "townId": "town-ber001",
-                "rigType": "raspi",
-                "capabilities": "sparkplug",
             },
             "version": 1,
         }
@@ -372,28 +331,24 @@ class DeviceRegistryTests(unittest.TestCase):
                 "name": "clock",
                 "shortId": "zzzzzz",
                 "townId": "town-ber001",
-                "rigId": "rig-cld001",
-                "deviceType": "time",
-                "capabilities": "sparkplug,mcp,time",
+                "rigId": "cloud-cld001",
             },
             "version": 2,
         }
         registry = AwsDeviceRegistry(runtime, repo_root=REPO_ROOT)
 
         with self.assertRaisesRegex(DeviceRegistryError, "not compatible"):
-            registry.assign_device("time-zzzzzz", rig_id="rig-ras002")
+            registry.assign_device("time-zzzzzz", rig_id="raspi-ras002")
 
-        registration = registry.assign_device("unit-aaaaaa", rig_id="rig-ras002")
+        registration = registry.assign_device("unit-aaaaaa", rig_id="raspi-ras002")
 
-        self.assertEqual(registration.rig_id, "rig-ras002")
+        self.assertEqual(registration.rig_id, "raspi-ras002")
         self.assertEqual(
             runtime.iot.update_thing_requests[-1]["attributePayload"],
             {
                 "attributes": {
                     "townId": "town-ber001",
-                    "rigId": "rig-ras002",
-                    "deviceType": "unit",
-                    "capabilities": "sparkplug,mcu,board,mcp,video",
+                    "rigId": "raspi-ras002",
                 },
                 "merge": True,
             },
@@ -406,7 +361,7 @@ class DeviceRegistryTests(unittest.TestCase):
         registry = AwsDeviceRegistry(runtime, repo_root=REPO_ROOT)
 
         with self.assertRaisesRegex(DeviceRegistryError, "/txing/town/cloud/time"):
-            registry.register_device(rig_id="rig-cld001", device_type="time")
+            registry.register_device(rig_id="cloud-cld001", device_type="time")
 
 
 if __name__ == "__main__":

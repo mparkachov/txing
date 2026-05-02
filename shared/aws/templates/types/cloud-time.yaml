@@ -1,0 +1,39 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: txing time device type catalog for cloud rigs.
+
+Parameters:
+  TypeCatalogServiceToken:
+    Type: String
+
+Resources:
+  TimeTypeCatalog:
+    Type: Custom::TxingTypeCatalog
+    Properties:
+      ServiceToken: !Ref TypeCatalogServiceToken
+      CleanupType: TypeCatalog
+      PhysicalResourceId: txing-type-catalog-time
+      ThingTypeName: time
+      ThingTypeDescription: txing time device type
+      SearchableAttributes:
+        - name
+        - townId
+        - rigId
+      CatalogBasePath: /txing/town/cloud/time
+      CatalogParameters:
+        kind: deviceType
+        schemaVersion: "1.0"
+        thingType: time
+        deviceType: time
+        rigType: cloud
+        displayName: Time
+        defaultName: clock
+        capabilities: sparkplug,mcp,time
+        requiredAttributes: name,shortId,townId,rigId
+        searchableAttributes: name,townId,rigId
+        shadows/sparkplug/schema: aws/sparkplug-shadow.schema.json
+        shadows/sparkplug/default: aws/default-sparkplug-shadow.json
+        shadows/mcp/schema: aws/mcp-shadow.schema.json
+        shadows/mcp/default: aws/default-mcp-shadow.json
+        shadows/time/schema: aws/time-shadow.schema.json
+        shadows/time/default: aws/default-time-shadow.json
+        web/adapter: web/time-adapter.tsx

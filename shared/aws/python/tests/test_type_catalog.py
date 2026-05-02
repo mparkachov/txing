@@ -81,6 +81,10 @@ class TypeCatalogTests(unittest.TestCase):
         self.assertEqual(records["/txing/town/cloud"]["defaultName"], "aws")
         self.assertEqual(records["/txing/town/raspi/unit"]["defaultName"], "bot")
         self.assertEqual(records["/txing/town/cloud/time"]["defaultName"], "clock")
+        self.assertEqual(records["/txing/town/raspi"]["thingType"], "raspi")
+        self.assertEqual(records["/txing/town/cloud"]["thingType"], "cloud")
+        self.assertEqual(records["/txing/town/raspi"]["requiredAttributes"], ["name", "shortId", "townId"])
+        self.assertEqual(records["/txing/town/cloud/time"]["requiredAttributes"], ["name", "shortId", "townId", "rigId"])
         self.assertEqual(records["/txing/town/raspi/unit"]["rigType"], "raspi")
         self.assertEqual(records["/txing/town/cloud/time"]["rigType"], "cloud")
 

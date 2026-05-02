@@ -23,7 +23,7 @@ from aws.auth import AwsRuntime, build_aws_runtime, ensure_aws_profile, resolve_
 from aws.device_registry import normalize_registry_text
 from aws.mcp_topics import MCP_DEFAULT_LEASE_TTL_MS
 from aws.mqtt import AwsIotWebsocketSyncConnection, AwsMqttConnectionConfig
-from aws.thing_capabilities import CAPABILITIES_ATTRIBUTE, parse_capabilities_set
+from aws.device_catalog import load_device_manifest
 
 from .cmd_vel import CmdVelController, MAX_SPEED
 from .mcp_service import BoardMcpServer
@@ -1150,6 +1150,9 @@ def _describe_sparkplug_assignment(
         raise RuntimeError(
             f"Thing {thing_name!r} returned invalid IoT registry attributes"
         )
+    thing_type = normalize_registry_text(response.get("thingTypeName"))
+    if thing_type is None:
+        raise RuntimeError(f"Thing {thing_name!r} is missing required IoT thing type")
     town_name = normalize_registry_text(attributes.get("townId"))
     rig_name = normalize_registry_text(attributes.get("rigId"))
     if town_name is None:
@@ -1160,10 +1163,7 @@ def _describe_sparkplug_assignment(
         raise RuntimeError(
             f"Thing {thing_name!r} is missing required IoT registry attribute 'rigId'"
         )
-    capabilities_set = parse_capabilities_set(
-        attributes.get(CAPABILITIES_ATTRIBUTE),
-        thing_name=thing_name,
-    )
+    capabilities_set = load_device_manifest(thing_type).capabilities
     if BOARD_SHADOW_NAME not in capabilities_set:
         raise RuntimeError(
             f"Thing {thing_name!r} capabilities does not include 'board'"

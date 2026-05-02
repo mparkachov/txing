@@ -16,6 +16,7 @@ except ImportError:
 
 from aws.auth import build_aws_runtime, ensure_aws_profile, resolve_aws_region
 from aws.mqtt import AwsIotWebsocketConnection, AwsMqttConnectionConfig
+from aws.type_catalog import SsmTypeCatalog
 from rig.connectivity_protocol import (
     CONTROL_IMMEDIATE,
     CONTROL_UNAVAILABLE,
@@ -44,7 +45,7 @@ from rig.sparkplug import (
     decode_redcon_command,
     utc_timestamp_ms,
 )
-from rig.thing_registry import AwsThingRegistryClient, ThingGroupNotFoundError, ThingRegistration
+from rig.thing_registry import AwsThingRegistryClient, ThingRegistration
 
 LOGGER = logging.getLogger("time_rig.sparkplug_manager")
 DEFAULT_RIG_NAME = "aws"
@@ -415,12 +416,11 @@ async def run_time_sparkplug_manager(
     registry_client: AwsThingRegistryClient | None = None,
     connection_factory: Callable[..., Any] = AwsIotWebsocketConnection,
 ) -> None:
-    registry_client = registry_client or AwsThingRegistryClient(aws_runtime.iot_client())
-    try:
-        registrations = registry_client.list_rig_things(config.rig_id or config.rig_name)
-    except ThingGroupNotFoundError:
-        LOGGER.warning("Dynamic thing group for rig=%s was not found", config.rig_id or config.rig_name)
-        registrations = []
+    registry_client = registry_client or AwsThingRegistryClient(
+        aws_runtime.iot_client(),
+        type_catalog=SsmTypeCatalog(aws_runtime.client("ssm")),
+    )
+    registrations = registry_client.list_rig_things(config.rig_id or config.rig_name)
     manager = TimeSparkplugManager(
         config,
         bus=bus,

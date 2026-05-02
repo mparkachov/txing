@@ -1,0 +1,28 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: txing town type catalog.
+
+Parameters:
+  TypeCatalogServiceToken:
+    Type: String
+
+Resources:
+  TownTypeCatalog:
+    Type: Custom::TxingTypeCatalog
+    Properties:
+      ServiceToken: !Ref TypeCatalogServiceToken
+      CleanupType: TypeCatalog
+      PhysicalResourceId: txing-type-catalog-town
+      ThingTypeName: town
+      ThingTypeDescription: txing town type
+      SearchableAttributes:
+        - name
+      CatalogBasePath: /txing/town
+      CatalogParameters:
+        kind: townType
+        schemaVersion: "1.0"
+        thingType: town
+        displayName: Town
+        defaultName: town
+        capabilities: sparkplug
+        requiredAttributes: name,shortId
+        searchableAttributes: name

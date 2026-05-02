@@ -214,9 +214,11 @@ deploy_template() {
   local template_file="$2"
   shift 2
   local artifact_bucket
+  local packaged_template_dir
   local packaged_template
   artifact_bucket="$(ensure_artifact_bucket)"
-  packaged_template="$(mktemp "${TMPDIR:-/tmp}/txing-cfn.XXXXXX.yaml")"
+  packaged_template_dir="$(mktemp -d "${TMPDIR:-/tmp}/txing-cfn.XXXXXX")"
+  packaged_template="$packaged_template_dir/template.yaml"
   aws cloudformation package \
     --template-file "$template_file" \
     --s3-bucket "$artifact_bucket" \
@@ -229,7 +231,7 @@ deploy_template() {
     --no-fail-on-empty-changeset \
     "$@" \
     "${aws_flags[@]}"
-  rm -f "$packaged_template"
+  rm -rf "$packaged_template_dir"
 }
 
 configure_indexing_and_wait() {
@@ -238,7 +240,7 @@ configure_indexing_and_wait() {
   local thing_indexing_mode
   local thing_connectivity_indexing_mode
   local indexing_custom_fields
-  thing_indexing_configuration='{"thingIndexingMode":"REGISTRY","thingConnectivityIndexingMode":"STATUS","customFields":[{"name":"attributes.name","type":"String"},{"name":"attributes.townId","type":"String"},{"name":"attributes.rigId","type":"String"},{"name":"attributes.rigType","type":"String"},{"name":"attributes.deviceType","type":"String"}]}'
+  thing_indexing_configuration='{"thingIndexingMode":"REGISTRY","thingConnectivityIndexingMode":"STATUS","customFields":[{"name":"attributes.name","type":"String"},{"name":"attributes.townId","type":"String"},{"name":"attributes.rigId","type":"String"}]}'
   aws iot update-indexing-configuration \
     "${aws_flags[@]}" \
     --thing-indexing-configuration "$thing_indexing_configuration"
@@ -266,9 +268,7 @@ configure_indexing_and_wait() {
       && [ "$thing_connectivity_indexing_mode" = "STATUS" ] \
       && printf '%s\n' "$indexing_custom_fields" | tr '\t' '\n' | grep -Fx "attributes.name" >/dev/null \
       && printf '%s\n' "$indexing_custom_fields" | tr '\t' '\n' | grep -Fx "attributes.townId" >/dev/null \
-      && printf '%s\n' "$indexing_custom_fields" | tr '\t' '\n' | grep -Fx "attributes.rigId" >/dev/null \
-      && printf '%s\n' "$indexing_custom_fields" | tr '\t' '\n' | grep -Fx "attributes.rigType" >/dev/null \
-      && printf '%s\n' "$indexing_custom_fields" | tr '\t' '\n' | grep -Fx "attributes.deviceType" >/dev/null; then
+      && printf '%s\n' "$indexing_custom_fields" | tr '\t' '\n' | grep -Fx "attributes.rigId" >/dev/null; then
       break
     fi
     if [ "$(date +%s)" -ge "$deadline" ]; then

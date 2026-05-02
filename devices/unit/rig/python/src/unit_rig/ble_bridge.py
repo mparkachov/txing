@@ -42,7 +42,7 @@ from .shadow_store import (
     DEFAULT_REPORTED_POWER,
     DEFAULT_SHADOW_FILE,
 )
-from .thing_registry import AwsThingRegistryClient, DeviceRegistration, ThingGroupNotFoundError
+from .thing_registry import AwsThingRegistryClient, DeviceRegistration
 from aws.auth import (
     build_aws_runtime,
     resolve_aws_region,
@@ -51,6 +51,7 @@ from aws.auth import (
 )
 from aws.device_registry import AwsDeviceRegistry
 from aws.log_groups import DEFAULT_LOG_RETENTION_DAYS, build_rig_log_group_name
+from aws.type_catalog import SsmTypeCatalog
 from aws.mcp_topics import (
     MCP_DEFAULT_LEASE_TTL_MS,
     MCP_PROTOCOL_VERSION,
@@ -4093,13 +4094,19 @@ async def _run_rig_service(
     config: BridgeConfig,
     aws_runtime: AwsRuntime,
     cloud_shadow_factory: Callable[[BridgeConfig, AwsRuntime], Any] = AwsShadowClient,
-    registry_client_factory: Callable[[Any], Any] = AwsThingRegistryClient,
+    registry_client_factory: Callable[..., Any] = AwsThingRegistryClient,
     fleet_bridge_factory: Callable[..., RigFleetBridge] = RigFleetBridge,
     sleep_func: Callable[[float], Awaitable[None]] = asyncio.sleep,
 ) -> None:
     while True:
         cloud_shadow: Any | None = None
-        registry_client = registry_client_factory(aws_runtime.iot_client())
+        if registry_client_factory is AwsThingRegistryClient:
+            registry_client = registry_client_factory(
+                aws_runtime.iot_client(),
+                type_catalog=SsmTypeCatalog(aws_runtime.client("ssm")),
+            )
+        else:
+            registry_client = registry_client_factory(aws_runtime.iot_client())
         rig_registration = registry_client.describe_rig(config.rig_id)
         runtime_config = replace(
             config,
@@ -4108,17 +4115,10 @@ async def _run_rig_service(
         cloud_shadow = cloud_shadow_factory(runtime_config, aws_runtime)
         fleet_bridge: RigFleetBridge | None = None
         try:
-            try:
-                registrations = registry_client.list_rig_things(runtime_config.rig_thing_name)
-            except ThingGroupNotFoundError:
-                LOGGER.warning(
-                    "Dynamic thing group for rig=%s was not found; starting idle with no managed devices",
-                    runtime_config.rig_thing_name,
-                )
-                registrations = []
+            registrations = registry_client.list_rig_things(runtime_config.rig_thing_name)
             _log_important(
                 LOGGER,
-                "Loaded %s registered device(s) from dynamic thing group for rig=%s",
+                "Loaded %s registered device(s) from fleet index for rig=%s",
                 len(registrations),
                 runtime_config.rig_thing_name,
             )
@@ -4543,7 +4543,7 @@ def main() -> None:
 
     try:
         if boto3 is None:
-            raise RuntimeError("boto3 is required for IoT registry and thing-group access")
+            raise RuntimeError("boto3 is required for IoT registry and fleet index access")
         ensure_aws_profile("AWS_RIG_PROFILE")
         aws_region = resolve_aws_region()
         if not aws_region:

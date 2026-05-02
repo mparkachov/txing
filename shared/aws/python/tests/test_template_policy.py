@@ -11,6 +11,7 @@ REPO_ROOT = AWS_DIR.parents[1]
 def _template_text() -> str:
     template_paths = [AWS_DIR / "template.yaml"]
     template_paths.extend(sorted((AWS_DIR / "templates").glob("*.yaml")))
+    template_paths.extend(sorted((AWS_DIR / "templates" / "types").glob("*.yaml")))
     return "\n".join(path.read_text(encoding="utf-8") for path in template_paths)
 
 
@@ -63,7 +64,6 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("logs:CreateLogGroup", template)
         self.assertIn("logs:PutRetentionPolicy", template)
         self.assertIn("iot:SearchIndex", template)
-        self.assertIn("iot:ListThings", template)
         self.assertIn(
             "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:txing/*",
             template,
@@ -143,6 +143,86 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("iot.list_targets_for_policy", template)
         self.assertIn("iot.detach_policy", template)
 
+    def test_base_stack_configures_iot_fleet_indexing(self) -> None:
+        template = _template_text()
+
+        self.assertIn("TxingIotFleetIndexing:", template)
+        self.assertIn("Type: Custom::TxingIotFleetIndexing", template)
+        self.assertIn("CleanupType: IotFleetIndexing", template)
+        self.assertIn("PhysicalResourceId: txing-iot-fleet-indexing", template)
+        self.assertIn("iot:UpdateIndexingConfiguration", template)
+        self.assertIn("iot:GetIndexingConfiguration", template)
+        self.assertIn("iot.update_indexing_configuration", template)
+        self.assertIn('configuration.get("thingIndexingMode") == "REGISTRY"', template)
+        self.assertIn(
+            'configuration.get("thingConnectivityIndexingMode") == "STATUS"',
+            template,
+        )
+        self.assertIn('"attributes.name"', template)
+        self.assertIn('"attributes.townId"', template)
+        self.assertIn('"attributes.rigId"', template)
+        self.assertNotIn('"attributes.rigType"', template)
+        self.assertNotIn('"attributes.deviceType"', template)
+
+    def test_base_stack_custom_resource_manages_type_catalog(self) -> None:
+        template = _template_text()
+
+        self.assertIn("CustomResourceServiceToken:", template)
+        self.assertIn("CleanupType: TypeCatalog", template)
+        self.assertIn("iot:CreateThingType", template)
+        self.assertIn("iot:DescribeThingType", template)
+        self.assertIn("iot:UpdateThingType", template)
+        self.assertIn("ssm:PutParameter", template)
+        self.assertIn("ssm:DeleteParameter", template)
+        self.assertIn("ssm:GetParametersByPath", template)
+        self.assertIn("iot.create_thing_type", template)
+        self.assertIn("iot.update_thing_type", template)
+        self.assertIn("ssm.get_parameters_by_path", template)
+        self.assertIn("parameter_names.add(normalized_base_path)", template)
+        self.assertIn("ssm.put_parameter", template)
+        self.assertIn("Overwrite=True", template)
+
+    def test_root_stack_owns_type_catalog_and_runtime_layers(self) -> None:
+        root_template = (AWS_DIR / "template.yaml").read_text(encoding="utf-8")
+        template = _template_text()
+
+        for logical_id in (
+            "TownTypeCatalog",
+            "RaspiTypeCatalog",
+            "RaspiUnitTypeCatalog",
+            "CloudTypeCatalog",
+            "CloudTimeTypeCatalog",
+            "RigRuntimeLayer",
+            "DeviceRuntimeLayer",
+        ):
+            self.assertIn(f"  {logical_id}:", root_template)
+        for template_url in (
+            "templates/types/town.yaml",
+            "templates/types/raspi.yaml",
+            "templates/types/raspi-unit.yaml",
+            "templates/types/cloud.yaml",
+            "templates/types/cloud-time.yaml",
+            "templates/rig.yaml",
+            "templates/device.yaml",
+        ):
+            self.assertIn(f"TemplateURL: {template_url}", root_template)
+
+        self.assertIn("Type: Custom::TxingTypeCatalog", template)
+        self.assertIn(
+            "TypeCatalogServiceToken: !GetAtt BaseEnvironment.Outputs.CustomResourceServiceToken",
+            root_template,
+        )
+        self.assertIn("ThingTypeName: town", template)
+        self.assertIn("ThingTypeName: raspi", template)
+        self.assertIn("ThingTypeName: cloud", template)
+        self.assertIn("ThingTypeName: unit", template)
+        self.assertIn("ThingTypeName: time", template)
+        self.assertIn("CatalogBasePath: /txing/town/cloud/time", template)
+        self.assertIn("CatalogBasePath: /txing/town/raspi/unit", template)
+        self.assertIn("kind: deviceType", template)
+        self.assertIn("RigTypeCatalogRead", template)
+        self.assertIn("ssm:GetParametersByPath", template)
+
     def test_rig_runtime_can_connect_with_managed_device_client_ids(self) -> None:
         template = _template_text()
 
@@ -199,6 +279,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertNotIn("aws_config_file", text)
         self.assertNotIn("config/rig.env", text)
         self.assertNotIn("config/board.env", text)
+        self.assertNotIn("python -m aws.type_catalog \\\n      --region \"$AWS_REGION\" \\\n      sync", text)
 
     def test_cert_recipe_is_parameterless_and_writes_ignored_config_certs(self) -> None:
         justfile = (AWS_DIR / "justfile").read_text(encoding="utf-8")
@@ -216,12 +297,18 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertNotIn("output_dir", justfile)
 
     def test_aws_justfile_enables_thing_connectivity_indexing(self) -> None:
-        justfile = (AWS_DIR / "scripts" / "aws_lib.sh").read_text(encoding="utf-8")
+        justfile = (AWS_DIR / "justfile").read_text(encoding="utf-8")
+        deploy_recipe = justfile.split("@deploy ", 1)[1].split("\n@", 1)[0]
+        configure_recipe = justfile.split("@configure-indexing ", 1)[1].split("\n@", 1)[0]
+        aws_lib = (AWS_DIR / "scripts" / "aws_lib.sh").read_text(encoding="utf-8")
 
-        self.assertIn('"thingConnectivityIndexingMode":"STATUS"', justfile)
-        self.assertIn('[ "$thing_connectivity_indexing_mode" = "STATUS" ]', justfile)
-        self.assertNotIn('"thingConnectivityIndexingMode":"OFF"', justfile)
-        self.assertNotIn("REGISTRY/OFF", justfile)
+        self.assertNotIn("configure_indexing_and_wait", deploy_recipe)
+        self.assertIn("@configure-indexing", justfile)
+        self.assertIn("configure_indexing_and_wait", configure_recipe)
+        self.assertIn('"thingConnectivityIndexingMode":"STATUS"', aws_lib)
+        self.assertIn('[ "$thing_connectivity_indexing_mode" = "STATUS" ]', aws_lib)
+        self.assertNotIn('"thingConnectivityIndexingMode":"OFF"', aws_lib)
+        self.assertNotIn("REGISTRY/OFF", aws_lib)
 
 
 if __name__ == "__main__":

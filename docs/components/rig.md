@@ -41,9 +41,9 @@ single-process CLI:
 
 ## Current Runtime Model
 
-- managed devices come from the dynamic IoT thing group named by `TXING_RIG_ID`
-- startup reads each device `DescribeThing` result, including `attributes.capabilities`
-- named-shadow subscriptions are selected from that `capabilities`
+- managed devices come from AWS IoT Fleet Indexing with `attributes.rigId=<TXING_RIG_ID>`
+- startup reads each device `DescribeThing` result, its ThingType, and the SSM type catalog
+- named-shadow subscriptions are selected from type catalog capabilities
 - Sparkplug lifecycle state is published only on MQTT; the AWS read model is witness-owned
 - Greengrass core/device/component status is service observability only; it is not the txing lifecycle source of truth
 - `mcu.state.reported.power=true` means the wakeup state
@@ -73,8 +73,8 @@ just rig::debug
 
 `just rig::check` validates AWS control-plane access plus certificate-backed
 AWS IoT connectivity from `config/certs/rig/`. It also checks that the configured
-rig identity is internally consistent, the AWS IoT rig thing has the configured
-`rigType`, and host services required by the selected rig type are installed,
+rig identity is internally consistent, the AWS IoT rig thing has a supported
+rig ThingType, and host services required by the selected rig type are installed,
 enabled, and active.
 
 Useful options:
