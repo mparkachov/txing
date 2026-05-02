@@ -15,10 +15,10 @@ For the system overview, see [../README.md](../README.md). For the documentation
 
 Repo-wide tooling:
 
-- `uv`
-- `just`
+- `uv` installed with `pipx`
+- latest `just` installed from `https://just.systems/install.sh`
 - `jq`
-- `aws`
+- AWS CLI v2 installed from AWS, not from the OS package repository
 
 Host-specific setup, including board read-only rootfs, lives in [installation.md](./installation.md).
 

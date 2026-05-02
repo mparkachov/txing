@@ -12,6 +12,9 @@ root_justfile := project_root + "/justfile"
 greengrass_lite_dir := rig_dir + "/greengrass-lite"
 greengrass_lite_build_dir := greengrass_lite_dir + "/build"
 greengrass_lite_target := "greengrass-lite.target"
+greengrass_core_units := "ggl.core.ggconfigd.service ggl.core.ggipcd.service ggl.core.iotcored.service ggl.core.tesd.service ggl.aws.greengrass.TokenExchangeService.service"
+unit_rig_component_units := "ggl.dev.txing.device.unit.SparkplugManager.service ggl.dev.txing.device.unit.ConnectivityBle.service"
+aws_rig_component_units := "ggl.dev.txing.device.time.SparkplugManager.service ggl.dev.txing.device.time.AwsConnectivity.service"
 default_greengrass_lite_repository := env_var_or_default("TXING_RIG_GREENGRASS_LITE_REPOSITORY", "https://github.com/aws-greengrass/aws-greengrass-lite.git")
 default_greengrass_lite_ref := env_var_or_default("TXING_RIG_GREENGRASS_LITE_REF", "main")
 thing_name := "unit-local"
@@ -591,9 +594,11 @@ aws_shared_credentials_file := ""
     printf 'txing rig is supervised by the standard Greengrass Lite systemd target %s\n' "{{greengrass_lite_target}}"
     printf 'Deploy rig type %s components with RigName=%s SparkplugGroupId=%s SparkplugEdgeNodeId=%s\n' "$selected_rig_type" "$rig_name" "$sparkplug_group_id" "$sparkplug_edge_node_id"
 
-@restart:
+@start:
     #!/usr/bin/env bash
     set -euo pipefail
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig)"
+    selected_rig_type="$RIG_TYPE"
     if ! systemctl cat "{{greengrass_lite_target}}" >/dev/null 2>&1; then \
         echo "Greengrass Lite target {{greengrass_lite_target}} is not installed. Run 'just rig::install-service' first." >&2; \
         exit 1; \
@@ -620,22 +625,27 @@ aws_shared_credentials_file := ""
       done
       return 1
     }
-    component_units=(
-      ggl.dev.txing.device.unit.SparkplugManager.service
-      ggl.dev.txing.device.unit.ConnectivityBle.service
-      ggl.dev.txing.device.time.SparkplugManager.service
-      ggl.dev.txing.device.time.AwsConnectivity.service
-    )
-    sudo systemctl stop "{{greengrass_lite_target}}" || true
-    sudo systemctl reset-failed "{{greengrass_lite_target}}" 'ggl.*.service' 'ggl.*.socket' || true
+    case "$selected_rig_type" in
+      unit)
+        component_units=({{unit_rig_component_units}})
+        ;;
+      aws)
+        component_units=({{aws_rig_component_units}})
+        ;;
+      *)
+        echo "Unsupported RIG_TYPE=$selected_rig_type. Supported rig types: unit, aws." >&2
+        exit 1
+        ;;
+    esac
+    reset_units=("{{greengrass_lite_target}}")
+    for unit in "${component_units[@]}"; do
+      if unit_exists "$unit"; then
+        reset_units+=("$unit")
+      fi
+    done
+    sudo systemctl reset-failed "${reset_units[@]}" || true
     sudo systemctl start "{{greengrass_lite_target}}"
-    core_units=(
-      ggl.core.ggconfigd.service
-      ggl.core.ggipcd.service
-      ggl.core.iotcored.service
-      ggl.core.tesd.service
-      ggl.aws.greengrass.TokenExchangeService.service
-    )
+    core_units=({{greengrass_core_units}})
     for unit in "${core_units[@]}"; do
       wait_active_if_present "$unit" || true
     done
@@ -652,6 +662,113 @@ aws_shared_credentials_file := ""
       fi
     done
     sudo systemctl --no-pager --full status "${status_units[@]}"
+
+@stop:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig)"
+    selected_rig_type="$RIG_TYPE"
+    if ! systemctl cat "{{greengrass_lite_target}}" >/dev/null 2>&1; then \
+        echo "Greengrass Lite target {{greengrass_lite_target}} is not installed. Run 'just rig::install-service' first." >&2; \
+        exit 1; \
+    fi
+    unit_exists() {
+      systemctl cat "$1" >/dev/null 2>&1
+    }
+    case "$selected_rig_type" in
+      unit)
+        component_units=({{unit_rig_component_units}})
+        ;;
+      aws)
+        component_units=({{aws_rig_component_units}})
+        ;;
+      *)
+        echo "Unsupported RIG_TYPE=$selected_rig_type. Supported rig types: unit, aws." >&2
+        exit 1
+        ;;
+    esac
+    stop_units=()
+    for unit in "${component_units[@]}"; do
+      if unit_exists "$unit"; then
+        stop_units+=("$unit")
+      fi
+    done
+    if [ "${#stop_units[@]}" -gt 0 ]; then
+      sudo systemctl stop "${stop_units[@]}" || true
+    fi
+    sudo systemctl stop "{{greengrass_lite_target}}"
+    core_units=({{greengrass_core_units}})
+    status_units=("{{greengrass_lite_target}}")
+    for unit in "${core_units[@]}" "${component_units[@]}"; do
+      if unit_exists "$unit"; then
+        status_units+=("$unit")
+      fi
+    done
+    sudo systemctl --no-pager --full status "${status_units[@]}" || true
+
+@restart: stop start
+
+@log lines='200' follow='true':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig)"
+    selected_rig_type="$RIG_TYPE"
+    case "{{lines}}" in
+      ''|*[!0-9]*)
+        echo "lines must be a positive integer." >&2
+        exit 1
+        ;;
+    esac
+    if [ "{{lines}}" -le 0 ]; then
+      echo "lines must be a positive integer." >&2
+      exit 1
+    fi
+    if ! systemctl cat "{{greengrass_lite_target}}" >/dev/null 2>&1; then \
+        echo "Greengrass Lite target {{greengrass_lite_target}} is not installed. Run 'just rig::install-service' first." >&2; \
+        exit 1; \
+    fi
+    unit_exists() {
+      systemctl cat "$1" >/dev/null 2>&1
+    }
+    case "$selected_rig_type" in
+      unit)
+        component_units=({{unit_rig_component_units}})
+        ;;
+      aws)
+        component_units=({{aws_rig_component_units}})
+        ;;
+      *)
+        echo "Unsupported RIG_TYPE=$selected_rig_type. Supported rig types: unit, aws." >&2
+        exit 1
+        ;;
+    esac
+    core_units=({{greengrass_core_units}})
+    log_units=("{{greengrass_lite_target}}")
+    for unit in "${core_units[@]}" "${component_units[@]}"; do
+      if unit_exists "$unit"; then
+        log_units+=("$unit")
+      fi
+    done
+    journal_unit_args=()
+    for unit in "${log_units[@]}"; do
+      journal_unit_args+=(-u "$unit")
+    done
+    journal_flags=(-a -n "{{lines}}")
+    case "{{follow}}" in
+      true|1|yes|on)
+        journal_flags+=(-f)
+        ;;
+      false|0|no|off)
+        journal_flags+=(--no-pager)
+        ;;
+      *)
+        echo "follow must be true or false." >&2
+        exit 1
+        ;;
+    esac
+    printf 'showing rig logs for RIG_TYPE=%s units:\n' "$selected_rig_type"
+    printf '  %s\n' "${log_units[@]}"
+    sudo journalctl "${journal_flags[@]}" "${journal_unit_args[@]}"
 
 @deploy rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' component_version='' adapter_id='ble-main' name_fragment='txing' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file: build
     #!/usr/bin/env bash
@@ -879,4 +996,4 @@ aws_shared_credentials_file := ""
       --add-component "$sparkplug_component=$resolved_component_version" \
       --add-component "$connectivity_component=$resolved_component_version"
     printf 'deployed Greengrass components version %s for RigName=%s RigType=%s SparkplugGroupId=%s SparkplugEdgeNodeId=%s\n' "$resolved_component_version" "$rig_name" "$selected_rig_type" "$sparkplug_group_id" "$sparkplug_edge_node_id"
-    printf 'inspect logs with: sudo journalctl -a -f -u ggl.%s.service -u ggl.%s.service\n' "$sparkplug_component" "$connectivity_component"
+    printf 'inspect rig logs with: just rig::log\n'

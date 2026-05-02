@@ -7,6 +7,8 @@ state, generated AWS config files, or hidden certificate paths.
 Prefer the AWS CLI for control-plane work. The `just aws-town ...`,
 `just aws-rig ...`, and `just aws-device ...` recipes are thin wrappers around
 `aws` with `config/aws.env` and `config/aws.credentials` applied.
+Install AWS CLI v2 using the official AWS installer; do not use the OS
+repository `awscli` package.
 
 ## Local Config
 

@@ -32,7 +32,7 @@ to `cmake: command not found`.
 sudo apt update
 sudo apt full-upgrade -y
 sudo apt install -y \
-  git curl jq awscli just ca-certificates python3-venv \
+  git curl jq ca-certificates python3-venv pipx unzip \
   build-essential pkg-config cmake libssl-dev libcurl4-openssl-dev \
   uuid-dev libzip-dev libsqlite3-dev libyaml-dev libsystemd-dev \
   libevent-dev liburiparser-dev cgroup-tools
@@ -46,6 +46,40 @@ cc --version
 pkg-config --version
 ```
 
+Install the latest `just` release from the official site, not from the Ubuntu
+package repository:
+
+```bash
+mkdir -p "$HOME/.local/bin"
+curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh \
+  | bash -s -- --to "$HOME/.local/bin"
+if ! grep -qxF 'export PATH="$HOME/.local/bin:$PATH"' "$HOME/.profile"; then
+  echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.profile"
+fi
+export PATH="$HOME/.local/bin:$PATH"
+just --version
+```
+
+Install AWS CLI v2 from AWS, not from the OS package repository:
+
+```bash
+case "$(uname -m)" in
+  x86_64|amd64) aws_cli_arch="x86_64" ;;
+  aarch64|arm64) aws_cli_arch="aarch64" ;;
+  *) echo "Unsupported AWS CLI architecture: $(uname -m)" >&2; exit 1 ;;
+esac
+curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-${aws_cli_arch}.zip" -o /tmp/awscliv2.zip
+rm -rf /tmp/aws
+if ! command -v unzip >/dev/null 2>&1; then
+  sudo apt update
+  sudo apt install -y unzip
+fi
+unzip -q /tmp/awscliv2.zip -d /tmp
+sudo /tmp/aws/install --update
+rm -rf /tmp/aws /tmp/awscliv2.zip
+aws --version
+```
+
 For `RIG_TYPE=unit`, install and enable Bluetooth manually before deploying the
 unit connectivity component:
 
@@ -54,12 +88,12 @@ sudo apt install -y bluez
 sudo systemctl enable --now bluetooth.service
 ```
 
-Install `uv`:
+Install `uv` with `pipx`:
 
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.profile
-source ~/.profile
+pipx ensurepath
+export PATH="$HOME/.local/bin:$PATH"
+pipx install uv
 uv --version
 ```
 
@@ -221,18 +255,52 @@ Keep the board root filesystem writable until the runtime, native sender, and se
 sudo apt update
 sudo apt full-upgrade -y
 sudo apt install -y \
-  git curl jq awscli just cmake pkg-config build-essential \
+  git curl jq cmake pkg-config build-essential pipx unzip \
   libssl-dev libcurl4-openssl-dev liblog4cplus-dev libsrtp2-dev \
   libusrsctp-dev libwebsockets-dev zlib1g-dev libcamera-dev \
-  ca-certificates python3-lgpio network-manager
+  ca-certificates python3-venv python3-lgpio network-manager
 ```
 
-Install `uv`:
+Install the latest `just` release from the official site, not from the Ubuntu
+package repository:
 
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.profile
-source ~/.profile
+mkdir -p "$HOME/.local/bin"
+curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh \
+  | bash -s -- --to "$HOME/.local/bin"
+if ! grep -qxF 'export PATH="$HOME/.local/bin:$PATH"' "$HOME/.profile"; then
+  echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.profile"
+fi
+export PATH="$HOME/.local/bin:$PATH"
+just --version
+```
+
+Install AWS CLI v2 from AWS, not from the OS package repository:
+
+```bash
+case "$(uname -m)" in
+  x86_64|amd64) aws_cli_arch="x86_64" ;;
+  aarch64|arm64) aws_cli_arch="aarch64" ;;
+  *) echo "Unsupported AWS CLI architecture: $(uname -m)" >&2; exit 1 ;;
+esac
+curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-${aws_cli_arch}.zip" -o /tmp/awscliv2.zip
+rm -rf /tmp/aws
+if ! command -v unzip >/dev/null 2>&1; then
+  sudo apt update
+  sudo apt install -y unzip
+fi
+unzip -q /tmp/awscliv2.zip -d /tmp
+sudo /tmp/aws/install --update
+rm -rf /tmp/aws /tmp/awscliv2.zip
+aws --version
+```
+
+Install `uv` with `pipx`:
+
+```bash
+pipx ensurepath
+export PATH="$HOME/.local/bin:$PATH"
+pipx install uv
 uv --version
 ```
 

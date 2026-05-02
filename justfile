@@ -63,6 +63,23 @@ _project-aws-env scope='rig' region='' profile='' stack_name='' cognito_domain_p
       printf '%s\n' "$normalized"
     }
 
+    normalize_optional_slug() {
+      local raw="$1"
+      if [ -z "$raw" ]; then
+        return 0
+      fi
+      normalize_slug "$raw"
+    }
+
+    scope="{{scope}}"
+    case "$scope" in
+      town|rig|device) ;;
+      *)
+        echo "Unsupported AWS environment scope '$scope'. Supported scopes: town, rig, device." >&2
+        exit 1
+        ;;
+    esac
+
     aws_source_profile_default="${AWS_SOURCE_PROFILE:-${AWS_TOWN_PROFILE:-town}}"
     aws_selected_profile_default="$aws_source_profile_default"
 
@@ -75,18 +92,45 @@ _project-aws-env scope='rig' region='' profile='' stack_name='' cognito_domain_p
     aws_selected_profile="$(choose_value "{{profile}}" "$aws_selected_profile_default")"
     aws_shared_credentials_file="$(resolve_path "$(choose_value "{{aws_shared_credentials_file}}" "${AWS_SHARED_CREDENTIALS_FILE:-config/aws.credentials}")")"
     txing_town_name="$(normalize_required_slug TXING_TOWN_NAME "${TXING_TOWN_NAME:-${SPARKPLUG_GROUP_ID:-}}")"
-    txing_rig_name="$(normalize_required_slug TXING_RIG_NAME "${TXING_RIG_NAME:-${RIG_NAME:-}}")"
-    txing_rig_type="$(normalize_required_slug TXING_RIG_TYPE "${TXING_RIG_TYPE:-${RIG_TYPE:-}}")"
-    txing_device_name="$(normalize_required_slug TXING_DEVICE_NAME "${TXING_DEVICE_NAME:-}")"
-    txing_device_type="$(normalize_required_slug TXING_DEVICE_TYPE "${TXING_DEVICE_TYPE:-}")"
+    case "$scope" in
+      rig|device)
+        txing_rig_name="$(normalize_required_slug TXING_RIG_NAME "${TXING_RIG_NAME:-${RIG_NAME:-}}")"
+        txing_rig_type="$(normalize_required_slug TXING_RIG_TYPE "${TXING_RIG_TYPE:-${RIG_TYPE:-}}")"
+        ;;
+      town)
+        txing_rig_name="$(normalize_optional_slug "${TXING_RIG_NAME:-${RIG_NAME:-}}")"
+        txing_rig_type="$(normalize_optional_slug "${TXING_RIG_TYPE:-${RIG_TYPE:-}}")"
+        ;;
+    esac
+    if [ "$scope" = "device" ]; then
+      txing_device_name="$(normalize_required_slug TXING_DEVICE_NAME "${TXING_DEVICE_NAME:-}")"
+      txing_device_type="$(normalize_required_slug TXING_DEVICE_TYPE "${TXING_DEVICE_TYPE:-}")"
+    else
+      txing_device_name="$(normalize_optional_slug "${TXING_DEVICE_NAME:-}")"
+      txing_device_type="$(normalize_optional_slug "${TXING_DEVICE_TYPE:-}")"
+    fi
     txing_town_stack_name="${TXING_TOWN_STACK_NAME:-${aws_stack_name}-${txing_town_name}}"
-    txing_rig_stack_name="${TXING_RIG_STACK_NAME:-${txing_town_stack_name}-${txing_rig_name}}"
-    txing_device_stack_name="${TXING_DEVICE_STACK_NAME:-${txing_rig_stack_name}-${txing_device_name}}"
+    if [ -n "$txing_rig_name" ]; then
+      txing_rig_stack_name="${TXING_RIG_STACK_NAME:-${txing_town_stack_name}-${txing_rig_name}}"
+    else
+      txing_rig_stack_name="${TXING_RIG_STACK_NAME:-}"
+    fi
+    if [ -n "$txing_device_name" ] && [ -n "$txing_rig_stack_name" ]; then
+      txing_device_stack_name="${TXING_DEVICE_STACK_NAME:-${txing_rig_stack_name}-${txing_device_name}}"
+    else
+      txing_device_stack_name="${TXING_DEVICE_STACK_NAME:-}"
+    fi
     rig_name="${RIG_NAME:-$txing_rig_name}"
     sparkplug_group_id="${SPARKPLUG_GROUP_ID:-$txing_town_name}"
     sparkplug_edge_node_id="${SPARKPLUG_EDGE_NODE_ID:-$txing_rig_name}"
     cloudwatch_log_group="${CLOUDWATCH_LOG_GROUP:-}"
-    schema_file="$(resolve_path "${SCHEMA_FILE:-devices/${txing_device_type}/aws/board-shadow.schema.json}")"
+    if [ -n "${SCHEMA_FILE:-}" ]; then
+      schema_file="$(resolve_path "$SCHEMA_FILE")"
+    elif [ -n "$txing_device_type" ]; then
+      schema_file="$(resolve_path "devices/${txing_device_type}/aws/board-shadow.schema.json")"
+    else
+      schema_file=""
+    fi
     board_video_region="${BOARD_VIDEO_REGION:-$aws_region}"
     board_video_sender_command="${BOARD_VIDEO_SENDER_COMMAND:-}"
     kvs_dualstack_endpoints="${KVS_DUALSTACK_ENDPOINTS:-}"

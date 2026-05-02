@@ -58,7 +58,7 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
     set -euo pipefail
     cd "{{aws_dir}}"
     source "{{aws_lib}}"
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}" "{{stack_name}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{profile}}" "{{stack_name}}")"
     txing_aws_init
     greengrass_artifacts_bucket_name="$(stack_output "$AWS_STACK_NAME" GreengrassArtifactsBucketName)"
     deploy_template \
@@ -80,7 +80,7 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
     set -euo pipefail
     cd "{{aws_dir}}"
     source "{{aws_lib}}"
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}" "{{stack_name}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "{{profile}}" "{{stack_name}}")"
     txing_aws_init
     deploy_template "$TXING_DEVICE_STACK_NAME" "{{template_file}}"
     uv run --project "{{aws_dir}}/python" \
