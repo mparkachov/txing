@@ -77,14 +77,17 @@ Greengrass component version from the current short Git SHA, adding a dirty-tree
 hash when local changes are present, so checked-out code is deployed without
 manually changing version numbers.
 
-To pin a Greengrass component version while debugging:
+Manual component version pinning is intentionally outside the normal workflow.
+If needed while debugging Greengrass artifact caching, pass the internal fifth
+positional argument:
 
 ```bash
-TXING_RIG_COMPONENT_VERSION=0.5.1 just rig::deploy <rig-id>
+just rig::deploy <rig-id> '' '' '' 0.5.1
 ```
 
 Do not run `just rig::deploy component_version=0.5.1`; values after the recipe
-name are positional recipe arguments.
+name are positional recipe arguments. Normal deploys should leave the internal
+component version empty.
 
 Use `just rig::restart` to restart the Greengrass Lite systemd units without
 deploying new code. Do not expect restart to pick up a new local build; restart

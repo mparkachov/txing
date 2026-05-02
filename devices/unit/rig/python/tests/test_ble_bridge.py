@@ -773,9 +773,12 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertIn("@deploy", justfile)
         self.assertIn("aws_shared_credentials_file=aws_shared_credentials_file: build", justfile)
         self.assertIn("Run 'just rig::build' before 'just rig::deploy'", justfile)
-        self.assertIn("Greengrass Lite target {{greengrass_lite_target}} is not active", justfile)
+        self.assertIn("Greengrass Lite target {{greengrass_lite_target}} is not installed", justfile)
+        self.assertIn("Starting installed Greengrass Lite target {{greengrass_lite_target}} before deploy", justfile)
+        self.assertIn("wait_active_unit() {", justfile)
         self.assertIn("ggl-cli", justfile)
-        self.assertIn('explicit_component_version="${TXING_RIG_COMPONENT_VERSION:-{{component_version}}}"', justfile)
+        self.assertIn('explicit_component_version="{{component_version}}"', justfile)
+        self.assertNotIn("TXING_RIG_COMPONENT_VERSION", justfile)
         self.assertIn('git_short_sha="$(git -C "{{project_root}}" rev-parse --short=12 HEAD', justfile)
         self.assertIn('git_status="$(git -C "{{project_root}}" status --porcelain --untracked-files=all', justfile)
         self.assertIn('resolved_component_version="0.5.0-local.g$git_short_sha$dirty_suffix"', justfile)
@@ -816,6 +819,9 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertIn('--add-component "$sparkplug_component=$resolved_component_version"', justfile)
         self.assertIn('--add-component "$connectivity_component=$resolved_component_version"', justfile)
         self.assertIn('--remove-component "$legacy_component"', justfile)
+        self.assertIn('deployed_units=("ggl.$sparkplug_component.service" "ggl.$connectivity_component.service")', justfile)
+        self.assertIn('sudo systemctl restart "$deployed_unit"', justfile)
+        self.assertIn("did not become active", justfile)
 
     def test_greengrass_module_entrypoints_call_main(self) -> None:
         repo_root = Path(__file__).resolve().parents[5]
