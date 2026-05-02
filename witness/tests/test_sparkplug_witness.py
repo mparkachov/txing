@@ -8,6 +8,7 @@ from witness.sparkplug_witness import (
     decode_sparkplug_payload,
     lambda_handler,
     project_sparkplug_message,
+    _resolve_thing_name,
 )
 
 
@@ -77,6 +78,53 @@ def _encode_payload(
 
 
 class SparkplugWitnessTests(unittest.TestCase):
+    def test_resolve_node_message_accepts_current_rig_type_model(self) -> None:
+        class FakeIotClient:
+            def describe_thing(self, *, thingName: str) -> dict[str, object]:
+                if thingName == "town-1":
+                    return {"thingName": thingName, "thingTypeName": "town", "attributes": {"kind": "townType"}}
+                if thingName == "cloud-1":
+                    return {
+                        "thingName": thingName,
+                        "thingTypeName": "cloud",
+                        "attributes": {
+                            "kind": "rigType",
+                            "townId": "town-1",
+                        },
+                    }
+                raise AssertionError(f"unexpected thing: {thingName}")
+
+        encoded_payload = _encode_payload(metrics=[_encode_metric(name="redcon", int_value=1)])
+        message = decode_sparkplug_payload(encoded_payload, "spBv1.0/town-1/NBIRTH/cloud-1")
+
+        assert message is not None
+        with patch("witness.sparkplug_witness._iot_client", return_value=FakeIotClient()):
+            self.assertEqual(_resolve_thing_name(message), "cloud-1")
+
+    def test_resolve_node_message_rejects_non_rig_kind(self) -> None:
+        class FakeIotClient:
+            def describe_thing(self, *, thingName: str) -> dict[str, object]:
+                if thingName == "town-1":
+                    return {"thingName": thingName, "thingTypeName": "town", "attributes": {"kind": "townType"}}
+                if thingName == "time-1":
+                    return {
+                        "thingName": thingName,
+                        "thingTypeName": "time",
+                        "attributes": {
+                            "kind": "deviceType",
+                            "townId": "town-1",
+                        },
+                    }
+                raise AssertionError(f"unexpected thing: {thingName}")
+
+        encoded_payload = _encode_payload(metrics=[_encode_metric(name="redcon", int_value=1)])
+        message = decode_sparkplug_payload(encoded_payload, "spBv1.0/town-1/NBIRTH/time-1")
+
+        assert message is not None
+        with patch("witness.sparkplug_witness._iot_client", return_value=FakeIotClient()):
+            with self.assertRaisesRegex(RuntimeError, "does not identify a rig thing"):
+                _resolve_thing_name(message)
+
     def test_decode_device_birth_projects_nested_metrics(self) -> None:
         encoded_payload = _encode_payload(
             metrics=[

@@ -973,11 +973,15 @@ aws_shared_credentials_file := ""
           run:
     $connectivity_privilege_line
             Script: |-
+              export AWS_REGION="$AWS_REGION"
+              export AWS_DEFAULT_REGION="$AWS_REGION"
+              unset AWS_PROFILE AWS_DEFAULT_PROFILE AWS_SHARED_CREDENTIALS_FILE
               export RIG_NAME="$rig_name"
               export TXING_RIG_ID="$TXING_RIG_ID"
               export RIG_ID="$TXING_RIG_ID"
               export SPARKPLUG_GROUP_ID="$sparkplug_group_id"
               export SPARKPLUG_EDGE_NODE_ID="$sparkplug_edge_node_id"
+              export AWS_IOT_ENDPOINT="$iot_data_endpoint"
               export TXING_RIG_TYPE="$selected_rig_type"
               export RIG_TYPE="$selected_rig_type"
               export TXING_DEVICE_TYPE="$device_type"

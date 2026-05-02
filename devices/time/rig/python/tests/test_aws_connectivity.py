@@ -173,6 +173,9 @@ class TimeAwsConnectivityBridgeTests(unittest.TestCase):
         self.assertIn('parser.add_argument("--reconnect-delay"', source)
         self.assertIn("while not shutdown_event.is_set():", source)
         self.assertIn("Time AWS connectivity bridge failed; retrying", source)
+        loop_start = source.index("while not shutdown_event.is_set():")
+        runtime_start = source.index("aws_runtime = build_aws_runtime", loop_start)
+        self.assertLess(loop_start, runtime_start)
 
 
 if __name__ == "__main__":

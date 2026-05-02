@@ -643,6 +643,10 @@ Resources:
                 Effect: Allow
                 Action: iot:SearchIndex
                 Resource: "*"
+              - Sid: WitnessDescribeThings
+                Effect: Allow
+                Action: iot:DescribeThing
+                Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/*
               - Sid: WitnessDescribeEndpoint
                 Effect: Allow
                 Action: iot:DescribeEndpoint

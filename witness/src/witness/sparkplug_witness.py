@@ -18,6 +18,7 @@ NODE_MESSAGE_TYPES = {"NBIRTH", "NDATA", "NDEATH"}
 REPLACE_METRICS_MESSAGE_TYPES = {"DBIRTH", "NBIRTH"}
 MERGE_METRICS_MESSAGE_TYPES = {"DDATA", "NDATA"}
 CLEAR_METRICS_MESSAGE_TYPES = {"DDEATH", "NDEATH"}
+RIG_KIND_ATTRIBUTE = "rigType"
 
 
 @dataclass(frozen=True, slots=True)
@@ -260,7 +261,11 @@ def _resolve_thing_name(message: SparkplugMessage) -> str:
 
     rig_response = _iot_client().describe_thing(thingName=message.edge_node_id)
     attributes = rig_response.get("attributes") or {}
-    if rig_response.get("thingTypeName") != "rig":
+    if not isinstance(attributes, dict):
+        raise RuntimeError(
+            f"Rig thing {message.edge_node_id!r} returned invalid attributes"
+        )
+    if attributes.get("kind") != RIG_KIND_ATTRIBUTE:
         raise RuntimeError(
             f"Sparkplug edge node id {message.edge_node_id!r} does not identify a rig thing"
         )

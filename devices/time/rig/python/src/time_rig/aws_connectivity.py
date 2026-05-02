@@ -230,7 +230,7 @@ def main() -> None:
     if not aws_region:
         print("time-rig-aws-connectivity start failed: AWS region is not configured", flush=True)
         raise SystemExit(2)
-    aws_runtime = build_aws_runtime(region_name=aws_region, iot_data_endpoint=args.iot_endpoint or None)
+
     async def _runner() -> None:
         loop = asyncio.get_running_loop()
         shutdown_event = asyncio.Event()
@@ -248,6 +248,10 @@ def main() -> None:
             while not shutdown_event.is_set():
                 bridge: TimeAwsConnectivityBridge | None = None
                 try:
+                    aws_runtime = build_aws_runtime(
+                        region_name=aws_region,
+                        iot_data_endpoint=args.iot_endpoint or None,
+                    )
                     config = TimeAwsConnectivityConfig(
                         endpoint=aws_runtime.iot_data_endpoint(),
                         aws_region=aws_region,

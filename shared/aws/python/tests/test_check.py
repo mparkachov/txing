@@ -42,6 +42,32 @@ class _FakeIotClient:
                     "townId": "town-3xvtqf",
                 },
             }
+        if thingName == "unit-local":
+            return {
+                "thingName": thingName,
+                "thingTypeName": "unit",
+                "attributes": {
+                    "name": "bot",
+                    "shortId": "local",
+                    "capabilities": "sparkplug,mcu,board,mcp,video",
+                    "deviceType": "unit",
+                    "rigId": "raspi-rig001",
+                    "townId": "town-3xvtqf",
+                },
+            }
+        if thingName == "time-clock":
+            return {
+                "thingName": thingName,
+                "thingTypeName": "time",
+                "attributes": {
+                    "name": "clock",
+                    "shortId": "clock",
+                    "capabilities": "sparkplug,mcp,time",
+                    "deviceType": "time",
+                    "rigId": "cloud-rig001",
+                    "townId": "town-3xvtqf",
+                },
+            }
         return {"thingName": thingName}
 
     def search_index(
@@ -280,7 +306,16 @@ class AwsCheckTests(unittest.TestCase):
         self.assertTrue(all(result.ok for result in results))
         self.assertEqual(runtime.sts.calls, 1)
         self.assertEqual(runtime.iot.describe_thing_names, ["unit-local"])
-        self.assertEqual(runtime.iot_data.thing_names, [("unit-local", "board")])
+        self.assertEqual(
+            runtime.iot_data.thing_names,
+            [
+                ("unit-local", "sparkplug"),
+                ("unit-local", "mcu"),
+                ("unit-local", "board"),
+                ("unit-local", "mcp"),
+                ("unit-local", "video"),
+            ],
+        )
         self.assertEqual(runtime.kinesisvideo.channel_names, ["unit-local-board-video"])
         self.assertIn(
             (
@@ -294,6 +329,37 @@ class AwsCheckTests(unittest.TestCase):
             ("kinesisvideo", "us-east-1", {}),
             runtime.client_calls,
         )
+
+    def test_run_time_device_service_check_uses_catalog_attrs_without_board_requirements(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            temp_path = Path(tempdir)
+            shared_credentials_file = temp_path / "aws.credentials"
+            shared_credentials_file.write_text("[town]\n", encoding="utf-8")
+            runtime = _FakeRuntime(endpoint="abc123-ats.iot.eu-central-1.amazonaws.com")
+
+            results = run_service_check(
+                "device",
+                environment={
+                    "AWS_REGION": "eu-central-1",
+                    "AWS_DEVICE_PROFILE": "device",
+                    "AWS_SHARED_CREDENTIALS_FILE": str(shared_credentials_file),
+                    "THING_NAME": "time-clock",
+                    "TXING_DEVICE_TYPE": "time",
+                },
+                aws_runtime=runtime,
+            )
+
+        self.assertTrue(all(result.ok for result in results), [result.message for result in results])
+        self.assertEqual(runtime.iot.describe_thing_names, ["time-clock"])
+        self.assertEqual(
+            runtime.iot_data.thing_names,
+            [
+                ("time-clock", "sparkplug"),
+                ("time-clock", "mcp"),
+                ("time-clock", "time"),
+            ],
+        )
+        self.assertEqual(runtime.kinesisvideo.channel_names, [])
 
 
 if __name__ == "__main__":

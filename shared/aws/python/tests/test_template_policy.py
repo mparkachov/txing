@@ -56,6 +56,8 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("TxingSparkplugWitnessInvokePermission", template)
         self.assertIn("sparkplug-witness", template)
         self.assertIn("iot:GetThingShadow", template)
+        self.assertIn("Sid: WitnessDescribeThings", template)
+        self.assertIn("Action: iot:DescribeThing", template)
 
     def test_template_uses_dynamic_txing_log_group_prefix_for_rig_logs(self) -> None:
         template = _template_text()

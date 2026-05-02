@@ -9,6 +9,7 @@ from typing import Any, Mapping, Sequence
 
 from .auth import AwsRuntime, build_aws_runtime, ensure_aws_profile
 from .log_groups import DEFAULT_LOG_RETENTION_DAYS, build_rig_log_group_name
+from .thing_capabilities import ThingCapabilitiesError, parse_capabilities_set
 
 
 _SCOPE_LABELS = {
@@ -159,19 +160,25 @@ def validate_service_environment(
             resolved["log_group_name"] = value
         return results, resolved
 
-    result, schema_file = _check_file_env(environment, "Shadow schema file", "SCHEMA_FILE")
-    results.append(result)
-    if schema_file is not None:
-        resolved["schema_file"] = schema_file
+    device_type_env_name, device_type = _first_non_empty(environment, "TXING_DEVICE_TYPE", "DEVICE_TYPE")
+    if device_type is not None:
+        results.append(_ok(f"Device type ({device_type_env_name})"))
+        resolved["device_type"] = device_type
 
-    for key, label, env_name in (
-        ("video_region", "Board video region", "BOARD_VIDEO_REGION"),
-        ("video_sender_command", "Board video sender command", "BOARD_VIDEO_SENDER_COMMAND"),
-    ):
-        result, value = _check_text_env(environment, label, env_name)
+    if device_type in (None, "", "unit"):
+        result, schema_file = _check_file_env(environment, "Shadow schema file", "SCHEMA_FILE")
         results.append(result)
-        if value is not None:
-            resolved[key] = value
+        if schema_file is not None:
+            resolved["schema_file"] = schema_file
+
+        for key, label, env_name in (
+            ("video_region", "Board video region", "BOARD_VIDEO_REGION"),
+            ("video_sender_command", "Board video sender command", "BOARD_VIDEO_SENDER_COMMAND"),
+        ):
+            result, value = _check_text_env(environment, label, env_name)
+            results.append(result)
+            if value is not None:
+                resolved[key] = value
     return results, resolved
 
 
@@ -370,8 +377,9 @@ def _run_device_connectivity_checks(
     runtime: AwsRuntime,
     *,
     thing_name: str,
-    video_channel_name: str,
-    video_region: str,
+    device_type: str | None,
+    video_channel_name: str | None,
+    video_region: str | None,
 ) -> list[CheckResult]:
     results: list[CheckResult] = []
     _run_aws_check(results, "STS caller identity", runtime.sts_client().get_caller_identity)
@@ -380,28 +388,52 @@ def _run_device_connectivity_checks(
         "IoT DescribeEndpoint (Data-ATS)",
         runtime.iot_data_endpoint,
     )
-    _run_aws_check(
+    thing = _run_aws_check(
         results,
         f"IoT DescribeThing on {thing_name}",
         lambda: runtime.iot_client().describe_thing(thingName=thing_name),
     )
+    capabilities: tuple[str, ...] = ()
+    if isinstance(thing, Mapping):
+        attributes = thing.get("attributes")
+        if isinstance(attributes, Mapping):
+            raw_capabilities = attributes.get("capabilities")
+            if isinstance(raw_capabilities, str) and raw_capabilities.strip():
+                try:
+                    capabilities = tuple(parse_capabilities_set(raw_capabilities, thing_name=thing_name))
+                except ThingCapabilitiesError as error:
+                    results.append(_fail(f"IoT capabilities attribute on {thing_name} ({error})"))
+        if not capabilities:
+            thing_type_name = thing.get("thingTypeName")
+            if isinstance(thing_type_name, str) and thing_type_name:
+                device_type = device_type or thing_type_name
+    if not capabilities and device_type in (None, "", "unit"):
+        capabilities = ("board",)
     if isinstance(endpoint, str) and endpoint:
-        _run_aws_check(
-            results,
-            f"IoT Data GetThingShadow on {thing_name}",
-            lambda: runtime.client(
-                "iot-data",
-                endpoint_url=f"https://{endpoint}",
-            ).get_thing_shadow(thingName=thing_name, shadowName="board"),
-        )
-    _run_aws_check(
-        results,
-        f"KinesisVideo DescribeSignalingChannel on {video_channel_name}",
-        lambda: runtime.client(
-            "kinesisvideo",
-            region_name=video_region,
-        ).describe_signaling_channel(ChannelName=video_channel_name),
-    )
+        iot_data = runtime.client("iot-data", endpoint_url=f"https://{endpoint}")
+        for shadow_name in capabilities:
+            _run_aws_check(
+                results,
+                f"IoT Data GetThingShadow on {thing_name}/{shadow_name}",
+                lambda shadow_name=shadow_name: iot_data.get_thing_shadow(
+                    thingName=thing_name,
+                    shadowName=shadow_name,
+                ),
+            )
+    if "video" in capabilities:
+        if not video_region:
+            results.append(_fail("Board video region missing ($BOARD_VIDEO_REGION)"))
+        elif not video_channel_name:
+            results.append(_fail("Board video channel name is empty"))
+        else:
+            _run_aws_check(
+                results,
+                f"KinesisVideo DescribeSignalingChannel on {video_channel_name}",
+                lambda: runtime.client(
+                    "kinesisvideo",
+                    region_name=video_region,
+                ).describe_signaling_channel(ChannelName=video_channel_name),
+            )
     return results
 
 
@@ -445,8 +477,9 @@ def run_service_check(
         _run_device_connectivity_checks(
             runtime,
             thing_name=resolved_thing_name,
+            device_type=resolved.get("device_type"),
             video_channel_name=video_channel_name or _build_video_channel_name(resolved_thing_name),
-            video_region=resolved["video_region"],
+            video_region=resolved.get("video_region"),
         )
     )
     return results

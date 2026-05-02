@@ -25,6 +25,8 @@ class WitnessTemplatePolicyTests(unittest.TestCase):
         )
         self.assertIn("encode(*, 'base64')", template)
         self.assertIn("iot:SearchIndex", template)
+        self.assertIn("iot:DescribeThing", template)
+        self.assertIn("WitnessDescribeThings", template)
         self.assertIn("iot:UpdateThingShadow", template)
         self.assertIn("iot:DescribeEndpoint", template)
 
