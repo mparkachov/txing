@@ -123,19 +123,22 @@ Run `just rig::check <rig-id>` after configuring the host. It fails if a require
 service for the configured rig type is missing, disabled, or inactive.
 
 Use `just rig::deploy <rig-id>` after changing or pulling rig code; it depends
-on `just rig::build` and then stages a new local component artifact under
+on `just rig::build`, generates a local component version from the current short
+Git SHA, and then stages a new local component artifact under
 `rig/build/greengrass-local`. That staging directory is intentionally kept until
 the next deploy because Greengrass Lite copies artifacts asynchronously. Use
 `just rig::restart` only when you want to restart the existing Greengrass Lite
 systemd units without changing the deployed component version.
 
-For local redeploys that must force a new Greengrass component version, set:
+For local redeploys that must force a specific Greengrass component version,
+pass the internal fifth positional argument:
 
 ```bash
-TXING_RIG_COMPONENT_VERSION=0.5.1 just rig::deploy <rig-id>
+just rig::deploy <rig-id> '' '' '' 0.5.1
 ```
 
 Do not pass `component_version=...` after the recipe name; `just` treats that as
-the first positional recipe argument.
+the first positional recipe argument. Avoid `-` in local component versions
+because Greengrass Lite splits local recipe filenames on the last hyphen.
 
 Host setup details live in [installation.md](../installation.md). AWS bootstrap and registry steps live in [aws.md](../aws.md).

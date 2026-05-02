@@ -200,18 +200,20 @@ For `RIG_TYPE=cloud` it deploys the virtual time Sparkplug and AWS IoT MQTT
 connectivity components. The staging directory is kept after `ggl-cli` returns
 because Greengrass Lite copies artifacts asynchronously. It depends on
 `just rig::build`, so after changing rig code or pulling new code, run
-`just rig::deploy`. A Greengrass service restart alone restarts the previously
-deployed component artifact.
+`just rig::deploy`. The recipe generates the local Greengrass component version
+from the current short Git SHA. A Greengrass service restart alone restarts the
+previously deployed component artifact.
 
-When you need a new Greengrass component version for a local redeploy, set the
-version as an environment variable before the recipe:
+When you need to force a specific Greengrass component version for a local
+redeploy, pass the internal fifth positional argument:
 
 ```bash
-TXING_RIG_COMPONENT_VERSION=0.5.1 just rig::deploy <rig-id>
+just rig::deploy <rig-id> '' '' '' 0.5.1
 ```
 
 Do not run `just rig::deploy component_version=0.5.1`; `just` treats arguments
-after a recipe as positional values.
+after a recipe as positional values. Avoid `-` in local component versions
+because Greengrass Lite splits local recipe filenames on the last hyphen.
 
 Inspect Greengrass service health with:
 

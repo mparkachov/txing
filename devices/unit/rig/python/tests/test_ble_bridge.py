@@ -790,8 +790,10 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertNotIn("TXING_RIG_COMPONENT_VERSION", justfile)
         self.assertIn('git_short_sha="$(git -C "{{project_root}}" rev-parse --short=12 HEAD', justfile)
         self.assertIn('git_status="$(git -C "{{project_root}}" status --porcelain --untracked-files=all', justfile)
-        self.assertIn('resolved_component_version="0.5.0-local.g$git_short_sha$dirty_suffix"', justfile)
-        self.assertIn('resolved_component_version="0.5.0-local.nogit.$(date -u +%s)"', justfile)
+        self.assertIn('resolved_component_version="0.5.0+g$git_short_sha$dirty_suffix"', justfile)
+        self.assertIn('resolved_component_version="0.5.0+nogit.$(date -u +%s)"', justfile)
+        self.assertIn("Greengrass Lite local component versions must not contain '-'", justfile)
+        self.assertIn("0.5.0+g<sha>", justfile)
         self.assertIn("rig::deploy arguments are positional", justfile)
         self.assertIn("Component version is generated automatically", justfile)
         self.assertIn('deploy_root="{{rig_dir}}/build/greengrass-local"', justfile)
@@ -829,8 +831,6 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertIn('--add-component "$connectivity_component=$resolved_component_version"', justfile)
         self.assertIn('--remove-component "$legacy_component"', justfile)
         self.assertIn('deployed_units=("ggl.$sparkplug_component.service" "ggl.$connectivity_component.service")', justfile)
-        self.assertIn("Restarting {{greengrass_lite_target}} to apply local Greengrass deployment", justfile)
-        self.assertIn('sudo systemctl restart "{{greengrass_lite_target}}"', justfile)
         self.assertIn('core_sockets=({{greengrass_core_sockets}})', justfile)
         self.assertIn('for core_unit in "${core_sockets[@]}" "${core_units[@]}"; do', justfile)
         self.assertIn('sudo systemctl start "$core_unit" || true', justfile)
@@ -839,6 +839,7 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertIn('reset_failed_if_present "$deployed_unit"', justfile)
         self.assertIn('sudo systemctl start "$deployed_unit" || true', justfile)
         self.assertIn("did not become active", justfile)
+        self.assertIn("inspect Greengrass deployment processing with:", justfile)
 
     def test_greengrass_module_entrypoints_call_main(self) -> None:
         repo_root = Path(__file__).resolve().parents[5]

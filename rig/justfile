@@ -923,11 +923,17 @@ aws_shared_credentials_file := ""
                 )"
                 dirty_suffix=".d$dirty_hash"
             fi
-            resolved_component_version="0.5.0-local.g$git_short_sha$dirty_suffix"
+            resolved_component_version="0.5.0+g$git_short_sha$dirty_suffix"
         else
-            resolved_component_version="0.5.0-local.nogit.$(date -u +%s)"
+            resolved_component_version="0.5.0+nogit.$(date -u +%s)"
         fi
     fi
+    case "$resolved_component_version" in
+      *-*)
+        echo "Greengrass Lite local component versions must not contain '-' because its recipe filename scanner splits on the last hyphen. Use a version like 0.5.0+g<sha> or 0.5.1." >&2
+        exit 1
+        ;;
+    esac
     case "$selected_rig_type" in
       raspi)
         device_type="unit"
@@ -1129,9 +1135,6 @@ aws_shared_credentials_file := ""
     core_units=({{greengrass_core_units}})
     core_sockets=({{greengrass_core_sockets}})
     sudo systemctl daemon-reload || true
-    reset_failed_if_present "{{greengrass_lite_target}}"
-    echo "Restarting {{greengrass_lite_target}} to apply local Greengrass deployment."
-    sudo systemctl restart "{{greengrass_lite_target}}"
     wait_active_unit "{{greengrass_lite_target}}"
     for core_unit in "${core_sockets[@]}" "${core_units[@]}"; do
       if systemctl cat "$core_unit" >/dev/null 2>&1; then
@@ -1156,6 +1159,7 @@ aws_shared_credentials_file := ""
     printf 'deployed Greengrass components version %s for RigName=%s RigType=%s SparkplugGroupId=%s SparkplugEdgeNodeId=%s\n' "$resolved_component_version" "$rig_name" "$selected_rig_type" "$sparkplug_group_id" "$sparkplug_edge_node_id"
     printf 'inspect rig logs with: just rig::log\n'
     if [ "$activation_failures" -ne 0 ]; then
+      echo "inspect Greengrass deployment processing with: sudo journalctl -a --no-pager -u ggl.core.ggdeploymentd.service -u ggl.gg_deployment.socket -n 200" >&2
       echo "Greengrass deploy completed, but $activation_failures deployed unit(s) did not stay active." >&2
       exit 1
     fi
