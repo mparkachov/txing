@@ -326,6 +326,14 @@ bool IsSignalingCallFailure(STATUS status) {
         status == STATUS_SIGNALING_DESCRIBE_MEDIA_CALL_FAILED;
 }
 
+bool IsRemoteIceCandidateIgnorableFailure(STATUS status) {
+    return status == STATUS_ICE_CANDIDATE_MISSING_CANDIDATE ||
+        status == STATUS_ICE_CANDIDATE_STRING_MISSING_IP ||
+        status == STATUS_NULL_ARG ||
+        status == STATUS_INVALID_ARG ||
+        status == STATUS_INVALID_OPERATION;
+}
+
 std::string ResolveSignalingCaCertPath() {
     const std::string path = kSystemCaCertPath;
     std::ifstream ca_bundle(path);
@@ -360,6 +368,7 @@ struct StreamingSession {
     bool remote_can_trickle = false;
     int mcp_ipc_fd = -1;
     std::mutex mcp_ipc_lock;
+    std::mutex peer_connection_lock;
     UINT64 frame_index = 0;
     UINT64 correlation_id_postfix = 0;
 };
@@ -455,6 +464,10 @@ class RealKvsSession final : public KvsSession {
         bool srtp_pending = false;
 
         for (const auto& session : sessions) {
+            std::lock_guard<std::mutex> peer_lock(session->peer_connection_lock);
+            if (session->terminate_requested.load() || session->video_transceiver == nullptr) {
+                continue;
+            }
             frame.index = static_cast<UINT32>(++session->frame_index);
             const STATUS status = writeFrame(session->video_transceiver, &frame);
             if (status == STATUS_SUCCESS) {
@@ -999,6 +1012,11 @@ class RealKvsSession final : public KvsSession {
             return status;
         }
 
+        std::lock_guard<std::mutex> peer_lock(session->peer_connection_lock);
+        if (session->terminate_requested.load() || session->peer_connection == nullptr) {
+            return STATUS_SUCCESS;
+        }
+
         return setRemoteDescription(session->peer_connection, &answer_description);
     }
 
@@ -1052,8 +1070,18 @@ class RealKvsSession final : public KvsSession {
         }
 
         std::string mutable_candidate = *candidate_sdp;
+        std::lock_guard<std::mutex> peer_lock(session->peer_connection_lock);
+        if (session->terminate_requested.load() || session->peer_connection == nullptr) {
+            std::fprintf(
+                stderr,
+                "INFO kvs_session_real: skipping remote ICE candidate for closing peer %s\n",
+                session->peer_id.c_str()
+            );
+            return STATUS_SUCCESS;
+        }
+
         STATUS status = addIceCandidate(session->peer_connection, mutable_candidate.data());
-        if (status == STATUS_ICE_CANDIDATE_MISSING_CANDIDATE || status == STATUS_ICE_CANDIDATE_STRING_MISSING_IP) {
+        if (IsRemoteIceCandidateIgnorableFailure(status)) {
             std::fprintf(
                 stderr,
                 "INFO kvs_session_real: skipping unsupported remote ICE candidate status=%s peer=%s candidate=%s\n",
@@ -1248,7 +1276,13 @@ class RealKvsSession final : public KvsSession {
 
         if (candidate_json == nullptr) {
             if (!session->remote_can_trickle) {
-                ThrowIfFailed(createAnswer(session->peer_connection, &session->answer_description), "createAnswer");
+                {
+                    std::lock_guard<std::mutex> peer_lock(session->peer_connection_lock);
+                    if (session->terminate_requested.load() || session->peer_connection == nullptr) {
+                        return;
+                    }
+                    ThrowIfFailed(createAnswer(session->peer_connection, &session->answer_description), "createAnswer");
+                }
                 ThrowIfFailed(SendAnswer(session), "send answer");
             }
             return;
@@ -1315,6 +1349,7 @@ class RealKvsSession final : public KvsSession {
         session->terminate_requested.store(true);
         CloseMcpIpc(session.get(), "MCP WebRTC peer session destroyed");
 
+        std::lock_guard<std::mutex> peer_lock(session->peer_connection_lock);
         if (session->peer_connection != nullptr) {
             UNUSED_PARAM(closePeerConnection(session->peer_connection));
             UNUSED_PARAM(freePeerConnection(&session->peer_connection));
@@ -1457,9 +1492,16 @@ class RealKvsSession final : public KvsSession {
 
         STATUS status = self->HandleSignalingMessage(received_message);
         if (STATUS_FAILED(status)) {
-            self->ReportError("signaling message processing failed (status=%s)", FormatStatus(status).c_str());
+            std::fprintf(
+                stderr,
+                "WARN kvs_session_real: signaling message processing failed with status %s; keeping sender alive\n",
+                FormatStatus(status).c_str()
+            );
+            if (IsSignalingCallFailure(status)) {
+                self->RequestSignalingRecreate();
+            }
         }
-        return status;
+        return STATUS_SUCCESS;
     }
 
     static VOID OnDataChannel(UINT64 custom_data, PRtcDataChannel data_channel) {
