@@ -39,9 +39,12 @@ aws_shared_credentials_file := ""
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig)"
     command aws "$@"
 
-@check rig_name='' cloudwatch_log_group='' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file:
+@check rig_id='' cloudwatch_log_group='' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file:
     #!/usr/bin/env bash
     set -euo pipefail
+    if [ -n "{{rig_id}}" ]; then
+      export TXING_RIG_ID="{{rig_id}}"
+    fi
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}" "" "" "" "{{aws_shared_credentials_file}}")"
     region="$AWS_REGION"
     profile="$AWS_SELECTED_PROFILE"
@@ -54,9 +57,6 @@ aws_shared_credentials_file := ""
     sparkplug_group_id="$SPARKPLUG_GROUP_ID"
     sparkplug_edge_node_id="$SPARKPLUG_EDGE_NODE_ID"
     cloudwatch_log_group="$CLOUDWATCH_LOG_GROUP"
-    if [ -n "{{rig_name}}" ]; then
-      rig_name="{{rig_name}}"
-    fi
     if [ -n "{{cloudwatch_log_group}}" ]; then
       cloudwatch_log_group="{{cloudwatch_log_group}}"
     fi
@@ -65,27 +65,27 @@ aws_shared_credentials_file := ""
       echo "fail: $*" >&2
       failures=$((failures + 1))
     }
-    if [ "$rig_name" != "$TXING_RIG_NAME" ]; then
-      fail_check "RIG_NAME=$rig_name must match TXING_RIG_NAME=$TXING_RIG_NAME"
+    if [ "$rig_name" != "$TXING_RIG_ID" ]; then
+      fail_check "RIG_NAME=$rig_name must match TXING_RIG_ID=$TXING_RIG_ID"
     else
-      echo "ok: RIG_NAME matches TXING_RIG_NAME ($rig_name)"
+      echo "ok: RIG_NAME matches TXING_RIG_ID ($rig_name)"
     fi
-    if [ "$sparkplug_group_id" != "$TXING_TOWN_NAME" ]; then
-      fail_check "SPARKPLUG_GROUP_ID=$sparkplug_group_id must match TXING_TOWN_NAME=$TXING_TOWN_NAME"
+    if [ "$sparkplug_group_id" != "$TXING_TOWN_ID" ]; then
+      fail_check "SPARKPLUG_GROUP_ID=$sparkplug_group_id must match TXING_TOWN_ID=$TXING_TOWN_ID"
     else
-      echo "ok: SPARKPLUG_GROUP_ID matches TXING_TOWN_NAME ($sparkplug_group_id)"
+      echo "ok: SPARKPLUG_GROUP_ID matches TXING_TOWN_ID ($sparkplug_group_id)"
     fi
-    if [ "$sparkplug_edge_node_id" != "$rig_name" ]; then
-      fail_check "SPARKPLUG_EDGE_NODE_ID=$sparkplug_edge_node_id must match RIG_NAME=$rig_name"
+    if [ "$sparkplug_edge_node_id" != "$TXING_RIG_ID" ]; then
+      fail_check "SPARKPLUG_EDGE_NODE_ID=$sparkplug_edge_node_id must match TXING_RIG_ID=$TXING_RIG_ID"
     else
-      echo "ok: SPARKPLUG_EDGE_NODE_ID matches RIG_NAME ($rig_name)"
+      echo "ok: SPARKPLUG_EDGE_NODE_ID matches TXING_RIG_ID ($sparkplug_edge_node_id)"
     fi
     case "$selected_rig_type" in
-      unit|aws)
+      raspi|cloud)
         echo "ok: configured RIG_TYPE=$selected_rig_type"
         ;;
       *)
-        fail_check "unsupported RIG_TYPE=$selected_rig_type; supported rig types: unit, aws"
+        fail_check "unsupported RIG_TYPE=$selected_rig_type; supported rig types: raspi, cloud"
         ;;
     esac
     check_enabled_active_service() {
@@ -110,11 +110,11 @@ aws_shared_credentials_file := ""
       fi
     }
     case "$selected_rig_type" in
-      unit)
+      raspi)
         check_enabled_active_service bluetooth.service
         ;;
-      aws)
-        echo "ok: rig type aws has no extra host service prerequisites"
+      cloud)
+        echo "ok: rig type cloud has no extra host service prerequisites"
         ;;
     esac
     if [ "$failures" -ne 0 ]; then
@@ -141,24 +141,10 @@ aws_shared_credentials_file := ""
     uv run --project "{{project_root}}/shared/aws/python" \
       python -m aws.check \
       --scope rig \
-      --rig-name "$rig_name" \
+      --rig-id "$TXING_RIG_ID" \
       --log-group-name "$cloudwatch_log_group"
 
-    rig_thing_names="$(
-      aws iot search-index \
-        --index-name AWS_Things \
-        --query-string "thingTypeName:rig AND attributes.name:${rig_name} AND attributes.town:${sparkplug_group_id}" \
-        --max-results 2 \
-        "${aws_flags[@]}" \
-        --query 'things[].thingName' \
-        --output text
-    )"
-    rig_thing_count="$(wc -w <<<"$rig_thing_names" | tr -d ' ')"
-    if [ "$rig_thing_count" != "1" ]; then
-      echo "fail: expected exactly one rig thing for rig=${rig_name} town=${sparkplug_group_id}, found $rig_thing_count: $rig_thing_names" >&2
-      exit 1
-    fi
-    rig_thing_name="$rig_thing_names"
+    rig_thing_name="$TXING_RIG_ID"
     registered_rig_type="$(
       aws iot describe-thing \
         --thing-name "$rig_thing_name" \
@@ -171,7 +157,7 @@ aws_shared_credentials_file := ""
       exit 1
     fi
     if [ "$registered_rig_type" != "$selected_rig_type" ]; then
-      echo "fail: rig thing $rig_thing_name has rigType=$registered_rig_type but config has RIG_TYPE=$selected_rig_type" >&2
+      echo "fail: rig thing $rig_thing_name has rigType=$registered_rig_type but resolved RIG_TYPE=$selected_rig_type" >&2
       exit 1
     fi
     echo "ok: rig thing $rig_thing_name has rigType=$registered_rig_type"
@@ -245,7 +231,7 @@ aws_shared_credentials_file := ""
     managed_device_thing="$(
       aws iot search-index \
         --index-name AWS_Things \
-        --query-string "thingTypeName:${TXING_DEVICE_TYPE} AND attributes.name:${TXING_DEVICE_NAME} AND attributes.town:${sparkplug_group_id} AND attributes.rig:${rig_name}" \
+        --query-string "attributes.rigId:${TXING_RIG_ID}" \
         --max-results 1 \
         "${aws_flags[@]}" \
         --query 'things[0].thingName' \
@@ -255,7 +241,7 @@ aws_shared_credentials_file := ""
       managed_device_thing="$(
         aws iot search-index \
           --index-name AWS_Things \
-          --query-string "thingTypeName:${TXING_DEVICE_TYPE} AND attributes.town:${sparkplug_group_id} AND attributes.rig:${rig_name}" \
+          --query-string "attributes.rigId:${TXING_RIG_ID}" \
           --max-results 1 \
           "${aws_flags[@]}" \
           --query 'things[0].thingName' \
@@ -469,7 +455,7 @@ aws_shared_credentials_file := ""
       --shadow-name "{{shadow_name}}" \
       /dev/stdout | jq '.'
 
-@install-service rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file cloudwatch_log_group='':
+@install-service rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file cloudwatch_log_group='':
     #!/usr/bin/env bash
     set -euo pipefail
     for built_entrypoint in "{{built_rig}}" "{{built_rig_device_process}}"; do \
@@ -478,6 +464,9 @@ aws_shared_credentials_file := ""
             exit 1; \
         fi; \
     done
+    if [ -n "{{rig_id}}" ]; then
+      export TXING_RIG_ID="{{rig_id}}"
+    fi
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}" "" "" "" "{{aws_shared_credentials_file}}")"
     region="$AWS_REGION"
     profile="$AWS_SELECTED_PROFILE"
@@ -522,21 +511,7 @@ aws_shared_credentials_file := ""
         echo "Run 'just aws::cert' before 'just rig::install-service'." >&2; \
         exit 1; \
     fi
-    rig_thing_names="$(
-        aws iot search-index \
-          --index-name AWS_Things \
-          --query-string "thingTypeName:rig AND attributes.name:${rig_name} AND attributes.town:${sparkplug_group_id}" \
-          --max-results 2 \
-          "${aws_flags[@]}" \
-          --query 'things[].thingName' \
-          --output text
-    )"
-    rig_thing_count="$(wc -w <<<"$rig_thing_names" | tr -d ' ')"
-    if [ "$rig_thing_count" != "1" ]; then \
-        echo "Expected exactly one rig thing for rig=${rig_name} town=${sparkplug_group_id}, found $rig_thing_count: $rig_thing_names" >&2; \
-        exit 1; \
-    fi
-    rig_thing_name="$rig_thing_names"
+    rig_thing_name="$TXING_RIG_ID"
     iot_data_endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}" --query endpointAddress --output text)"
     iot_cred_endpoint="$(aws iot describe-endpoint --endpoint-type iot:CredentialProvider "${aws_flags[@]}" --query endpointAddress --output text)"
     iot_role_alias="$(
@@ -594,9 +569,12 @@ aws_shared_credentials_file := ""
     printf 'txing rig is supervised by the standard Greengrass Lite systemd target %s\n' "{{greengrass_lite_target}}"
     printf 'Deploy rig type %s components with RigName=%s SparkplugGroupId=%s SparkplugEdgeNodeId=%s\n' "$selected_rig_type" "$rig_name" "$sparkplug_group_id" "$sparkplug_edge_node_id"
 
-@start:
+@start rig_id='':
     #!/usr/bin/env bash
     set -euo pipefail
+    if [ -n "{{rig_id}}" ]; then
+      export TXING_RIG_ID="{{rig_id}}"
+    fi
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig)"
     selected_rig_type="$RIG_TYPE"
     if ! systemctl cat "{{greengrass_lite_target}}" >/dev/null 2>&1; then \
@@ -626,14 +604,14 @@ aws_shared_credentials_file := ""
       return 1
     }
     case "$selected_rig_type" in
-      unit)
+      raspi)
         component_units=({{unit_rig_component_units}})
         ;;
-      aws)
+      cloud)
         component_units=({{aws_rig_component_units}})
         ;;
       *)
-        echo "Unsupported RIG_TYPE=$selected_rig_type. Supported rig types: unit, aws." >&2
+        echo "Unsupported RIG_TYPE=$selected_rig_type. Supported rig types: raspi, cloud." >&2
         exit 1
         ;;
     esac
@@ -663,9 +641,12 @@ aws_shared_credentials_file := ""
     done
     sudo systemctl --no-pager --full status "${status_units[@]}"
 
-@stop:
+@stop rig_id='':
     #!/usr/bin/env bash
     set -euo pipefail
+    if [ -n "{{rig_id}}" ]; then
+      export TXING_RIG_ID="{{rig_id}}"
+    fi
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig)"
     selected_rig_type="$RIG_TYPE"
     if ! systemctl cat "{{greengrass_lite_target}}" >/dev/null 2>&1; then \
@@ -676,14 +657,14 @@ aws_shared_credentials_file := ""
       systemctl cat "$1" >/dev/null 2>&1
     }
     case "$selected_rig_type" in
-      unit)
+      raspi)
         component_units=({{unit_rig_component_units}})
         ;;
-      aws)
+      cloud)
         component_units=({{aws_rig_component_units}})
         ;;
       *)
-        echo "Unsupported RIG_TYPE=$selected_rig_type. Supported rig types: unit, aws." >&2
+        echo "Unsupported RIG_TYPE=$selected_rig_type. Supported rig types: raspi, cloud." >&2
         exit 1
         ;;
     esac
@@ -708,9 +689,12 @@ aws_shared_credentials_file := ""
 
 @restart: stop start
 
-@log lines='200' follow='true':
+@log rig_id='' lines='200' follow='true':
     #!/usr/bin/env bash
     set -euo pipefail
+    if [ -n "{{rig_id}}" ]; then
+      export TXING_RIG_ID="{{rig_id}}"
+    fi
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig)"
     selected_rig_type="$RIG_TYPE"
     case "{{lines}}" in
@@ -731,14 +715,14 @@ aws_shared_credentials_file := ""
       systemctl cat "$1" >/dev/null 2>&1
     }
     case "$selected_rig_type" in
-      unit)
+      raspi)
         component_units=({{unit_rig_component_units}})
         ;;
-      aws)
+      cloud)
         component_units=({{aws_rig_component_units}})
         ;;
       *)
-        echo "Unsupported RIG_TYPE=$selected_rig_type. Supported rig types: unit, aws." >&2
+        echo "Unsupported RIG_TYPE=$selected_rig_type. Supported rig types: raspi, cloud." >&2
         exit 1
         ;;
     esac
@@ -770,7 +754,7 @@ aws_shared_credentials_file := ""
     printf '  %s\n' "${log_units[@]}"
     sudo journalctl "${journal_flags[@]}" "${journal_unit_args[@]}"
 
-@deploy rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' component_version='' adapter_id='ble-main' name_fragment='txing' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file: build
+@deploy rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' component_version='' adapter_id='ble-main' name_fragment='txing' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file: build
     #!/usr/bin/env bash
     set -euo pipefail
     for built_entrypoint in "{{built_rig}}" "{{built_rig_device_process}}"; do \
@@ -779,7 +763,7 @@ aws_shared_credentials_file := ""
             exit 1; \
         fi; \
     done
-    for positional_arg in "{{rig_name}}" "{{sparkplug_group_id}}" "{{sparkplug_edge_node_id}}" "{{component_version}}" "{{adapter_id}}" "{{name_fragment}}"; do
+    for positional_arg in "{{rig_id}}" "{{rig_name}}" "{{sparkplug_group_id}}" "{{sparkplug_edge_node_id}}" "{{component_version}}" "{{adapter_id}}" "{{name_fragment}}"; do
       case "$positional_arg" in
         *=*)
           echo "rig::deploy arguments are positional; '$positional_arg' was treated as an argument value, not a named option." >&2
@@ -788,6 +772,9 @@ aws_shared_credentials_file := ""
           ;;
       esac
     done
+    if [ -n "{{rig_id}}" ]; then
+      export TXING_RIG_ID="{{rig_id}}"
+    fi
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}" "" "" "" "{{aws_shared_credentials_file}}")"
     region="$AWS_REGION"
     profile="$AWS_SELECTED_PROFILE"
@@ -825,7 +812,7 @@ aws_shared_credentials_file := ""
         resolved_component_version="0.5.0"; \
     fi
     case "$selected_rig_type" in
-      unit)
+      raspi)
         device_type="unit"
         device_python_project="{{project_root}}/devices/unit/rig/python"
         device_wheel_prefix="unit_rig"
@@ -837,7 +824,7 @@ aws_shared_credentials_file := ""
         connectivity_requires_privilege="true"
         connectivity_extra_args=(--adapter-id "{{adapter_id}}" --name "{{name_fragment}}")
         ;;
-      aws)
+      cloud)
         device_type="time"
         device_python_project="{{project_root}}/devices/time/rig/python"
         device_wheel_prefix="time_rig"
@@ -850,7 +837,7 @@ aws_shared_credentials_file := ""
         connectivity_extra_args=()
         ;;
       *)
-        echo "Unsupported rig type '$selected_rig_type'. Supported rig types: unit, aws." >&2
+        echo "Unsupported rig type '$selected_rig_type'. Supported rig types: raspi, cloud." >&2
         exit 1
         ;;
     esac
@@ -930,6 +917,8 @@ aws_shared_credentials_file := ""
               export AWS_DEFAULT_REGION="$AWS_REGION"
               unset AWS_PROFILE AWS_DEFAULT_PROFILE AWS_SHARED_CREDENTIALS_FILE
               export RIG_NAME="$rig_name"
+              export TXING_RIG_ID="$TXING_RIG_ID"
+              export RIG_ID="$TXING_RIG_ID"
               export SPARKPLUG_GROUP_ID="$sparkplug_group_id"
               export SPARKPLUG_EDGE_NODE_ID="$sparkplug_edge_node_id"
               export AWS_IOT_ENDPOINT="$iot_data_endpoint"
@@ -985,7 +974,8 @@ aws_shared_credentials_file := ""
     $connectivity_privilege_line
             Script: |-
               export RIG_NAME="$rig_name"
-              export THING_NAME="${THING_NAME:-$device_type-local}"
+              export TXING_RIG_ID="$TXING_RIG_ID"
+              export RIG_ID="$TXING_RIG_ID"
               export SPARKPLUG_GROUP_ID="$sparkplug_group_id"
               export SPARKPLUG_EDGE_NODE_ID="$sparkplug_edge_node_id"
               export TXING_RIG_TYPE="$selected_rig_type"

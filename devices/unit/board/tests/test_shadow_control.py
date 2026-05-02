@@ -149,11 +149,12 @@ def _make_runtime() -> MagicMock:
         "thingName": "unit-local",
         "thingTypeName": "unit",
         "attributes": {
-            "town": "town",
-            "rig": "rig",
+            "townId": "town-local",
+            "rigId": "rig-local",
+            "deviceType": "unit",
             "name": "bot",
             "shortId": "local00",
-            "capabilitiesSet": "sparkplug,mcu,board,mcp,video",
+            "capabilities": "sparkplug,mcu,board,mcp,video",
         },
     }
     return runtime
@@ -692,30 +693,32 @@ class ShadowControlContractTests(unittest.TestCase):
     def test_root_justfile_sources_consolidated_aws_env_for_device_scope(self) -> None:
         justfile = Path(REPO_ROOT / "justfile").read_text(encoding="utf-8")
 
-        self.assertIn("_project-aws-env scope='rig'", justfile)
+        self.assertIn("_project-aws-env scope='aws'", justfile)
+        self.assertIn("aws|town|rig|device", justfile)
         self.assertIn('env_file="$(resolve_path "$(choose_value "{{env_file}}" "config/aws.env")")"', justfile)
         self.assertIn('source "$env_file"', justfile)
         self.assertIn('printf \'unset BOARD_ENV_FILE\\n\'', justfile)
         self.assertNotIn("config/board.env", justfile)
         self.assertNotIn('export_line BOARD_VIDEO_VIEWER_URL', justfile)
         self.assertNotIn('export_line LG_WD "$lg_wd"', justfile)
-        self.assertIn("aws iot list-things \\", justfile)
-        self.assertIn("attributes.name=='${txing_device_name}'", justfile)
-        self.assertIn("attributes.town=='${txing_town_name}' && attributes.rig=='${txing_rig_name}'", justfile)
+        self.assertIn("describe_thing_json() {", justfile)
+        self.assertIn("txing_thing_id=\"$(normalize_required_slug TXING_THING_ID", justfile)
+        self.assertIn("'.attributes.townId'", justfile)
+        self.assertIn("'.attributes.rigId'", justfile)
         self.assertIn('export_line BOARD_DRIVE_CMD_RAW_MIN_SPEED "$board_drive_cmd_raw_min_speed"', justfile)
         self.assertIn('export_line BOARD_DRIVE_CMD_RAW_MAX_SPEED "$board_drive_cmd_raw_max_speed"', justfile)
 
     def test_shared_aws_check_uses_device_scope_defaults_for_thing_and_video_channel(self) -> None:
         justfile = Path(REPO_ROOT / "shared" / "aws" / "justfile").read_text(encoding="utf-8")
 
-        self.assertIn("@check thing_name=''", justfile)
+        self.assertIn("@check rig_id='' thing_id=''", justfile)
         self.assertIn(
-            'eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "{{profile}}")"',
+            'eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{profile}}")"',
             justfile,
         )
         self.assertIn('--scope rig', justfile)
         self.assertIn('--scope device', justfile)
-        self.assertIn('--thing-name "${thing_name:-$THING_NAME}"', justfile)
+        self.assertIn('--thing-name "$THING_NAME"', justfile)
         self.assertNotIn('@check thing_name=thing_name', justfile)
 
     def test_repo_root_detection_uses_board_working_directory(self) -> None:

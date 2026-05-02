@@ -19,9 +19,11 @@ cp config/aws.env.example config/aws.env
 cp config/aws.credentials.example config/aws.credentials
 ```
 
-`config/aws.env` is the single non-secret deployment and runtime config file.
-It defines the AWS region/source profile, base stack name, town/rig/device
-identities, device type, Cognito admin settings, and board/rig runtime config.
+`config/aws.env` is the single non-secret AWS access/config file. It defines
+the AWS region/source profile, base stack name, optional selected generated
+thing IDs (`TXING_TOWN_ID`, `TXING_RIG_ID`, `TXING_THING_ID`), Cognito admin
+settings, and local board/rig runtime settings. It does not define an SSM
+catalog root; the type catalog root is always `/txing`.
 
 `config/aws.credentials` contains the source AWS access keys only. Do not create
 repo-local generated AWS profile files; recipes resolve stack outputs and AWS IoT
@@ -33,27 +35,31 @@ Run the setup in this order:
 
 ```bash
 just aws::deploy
-just aws::town-deploy
-just aws::rig-deploy
-just aws::device-deploy
+just aws::town-deploy town
+just aws::rig-deploy <town-id> raspi server
+just aws::device-deploy <rig-id> unit bot
 ```
 
 `just aws::deploy` deploys the base root stack and nested base template. It owns
 web/Cognito infrastructure, common IoT policies, common artifact buckets, and the
 Sparkplug witness Lambda/topic rule. It also configures AWS IoT fleet indexing
-through the AWS IoT API after the stack deploy.
+through the AWS IoT API after the stack deploy, then syncs the hardcoded SSM
+type catalog under `/txing`.
 
-`just aws::town-deploy` deploys the town layer and idempotently ensures the
-configured town thing, town thing type/group, and town `sparkplug` shadow.
+`just aws::town-deploy <town-name>` deploys the town layer and idempotently
+ensures the town thing, town thing type/group, and town `sparkplug` shadow. It
+prints the generated town thing ID.
 
-`just aws::rig-deploy` deploys the rig layer and idempotently ensures the
-configured rig thing, its `rigType` registry attribute, rig dynamic group, rig
-`sparkplug` shadow, Greengrass token exchange role alias, and rig runtime IAM.
+`just aws::rig-deploy <town-id> <rig-type> <rig-name>` deploys the rig layer and
+idempotently ensures the rig thing, its `rigType` registry attribute, rig
+dynamic group, rig `sparkplug` shadow, Greengrass token exchange role alias, and
+rig runtime IAM.
 
-`just aws::device-deploy` deploys the device layer and idempotently ensures the
-configured device thing, device type, rig enrollment attributes, named shadows,
-and KVS signaling channel. Device enrollment validates the device manifest's
-compatible rig types against the target rig's `rigType`.
+`just aws::device-deploy <rig-id> <device-type> <device-name>` deploys the
+device layer and idempotently ensures the device thing, device type, rig
+enrollment attributes, named shadows, and optional resources. Device enrollment
+validates compatibility by requiring `/txing/town/<rigType>/<deviceType>` in
+SSM. Instance data stays in AWS IoT thing attributes, not SSM.
 
 ## Web Admin
 
@@ -79,7 +85,7 @@ input derived from live stack outputs.
 Validate runtime access:
 
 ```bash
-just rig::check
+just rig::check <rig-id>
 just unit::board::check
 ```
 
@@ -120,13 +126,13 @@ just aws::init-shadow <thing-name> sparkplug
 
 ## Certificates
 
-`aws::cert` is parameterless and rig-focused. It resolves the configured rig
-thing from AWS IoT registry indexing, creates a new active AWS IoT certificate,
+`aws::cert` is rig-focused. It resolves the rig thing by generated thing ID,
+creates a new active AWS IoT certificate,
 attaches the base stack IoT policy, attaches the certificate to the rig thing,
 and writes material under `config/certs/rig/`.
 
 ```bash
-just aws::cert
+just aws::cert <rig-id>
 ```
 
 Generated files:

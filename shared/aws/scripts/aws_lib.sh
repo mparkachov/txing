@@ -69,21 +69,30 @@ _resolve_unique_thing_name() {
 }
 
 resolve_town_thing_name() {
-  _resolve_unique_thing_name \
-    "Town $TXING_TOWN_NAME" \
-    "thingTypeName:town AND attributes.name:${TXING_TOWN_NAME}"
+  if [ -n "${TXING_TOWN_ID:-}" ]; then
+    printf '%s\n' "$TXING_TOWN_ID"
+    return 0
+  fi
+  echo "TXING_TOWN_ID is required" >&2
+  return 1
 }
 
 resolve_rig_thing_name() {
-  _resolve_unique_thing_name \
-    "Rig $TXING_RIG_NAME in town $TXING_TOWN_NAME" \
-    "thingTypeName:rig AND attributes.name:${TXING_RIG_NAME} AND attributes.town:${TXING_TOWN_NAME}"
+  if [ -n "${TXING_RIG_ID:-}" ]; then
+    printf '%s\n' "$TXING_RIG_ID"
+    return 0
+  fi
+  echo "TXING_RIG_ID is required" >&2
+  return 1
 }
 
 resolve_device_thing_name() {
-  _resolve_unique_thing_name \
-    "Device $TXING_DEVICE_NAME in rig $TXING_RIG_NAME" \
-    "thingTypeName:${TXING_DEVICE_TYPE} AND attributes.name:${TXING_DEVICE_NAME} AND attributes.town:${TXING_TOWN_NAME} AND attributes.rig:${TXING_RIG_NAME}"
+  if [ -n "${TXING_THING_ID:-}" ]; then
+    printf '%s\n' "$TXING_THING_ID"
+    return 0
+  fi
+  echo "TXING_THING_ID is required" >&2
+  return 1
 }
 
 assume_stack_role() {
@@ -168,7 +177,7 @@ configure_indexing_and_wait() {
   local thing_indexing_mode
   local thing_connectivity_indexing_mode
   local indexing_custom_fields
-  thing_indexing_configuration='{"thingIndexingMode":"REGISTRY","thingConnectivityIndexingMode":"STATUS","customFields":[{"name":"attributes.name","type":"String"},{"name":"attributes.town","type":"String"},{"name":"attributes.rig","type":"String"}]}'
+  thing_indexing_configuration='{"thingIndexingMode":"REGISTRY","thingConnectivityIndexingMode":"STATUS","customFields":[{"name":"attributes.name","type":"String"},{"name":"attributes.townId","type":"String"},{"name":"attributes.rigId","type":"String"},{"name":"attributes.rigType","type":"String"},{"name":"attributes.deviceType","type":"String"}]}'
   aws iot update-indexing-configuration \
     "${aws_flags[@]}" \
     --thing-indexing-configuration "$thing_indexing_configuration"
@@ -195,8 +204,10 @@ configure_indexing_and_wait() {
     if [ "$thing_indexing_mode" = "REGISTRY" ] \
       && [ "$thing_connectivity_indexing_mode" = "STATUS" ] \
       && printf '%s\n' "$indexing_custom_fields" | tr '\t' '\n' | grep -Fx "attributes.name" >/dev/null \
-      && printf '%s\n' "$indexing_custom_fields" | tr '\t' '\n' | grep -Fx "attributes.town" >/dev/null \
-      && printf '%s\n' "$indexing_custom_fields" | tr '\t' '\n' | grep -Fx "attributes.rig" >/dev/null; then
+      && printf '%s\n' "$indexing_custom_fields" | tr '\t' '\n' | grep -Fx "attributes.townId" >/dev/null \
+      && printf '%s\n' "$indexing_custom_fields" | tr '\t' '\n' | grep -Fx "attributes.rigId" >/dev/null \
+      && printf '%s\n' "$indexing_custom_fields" | tr '\t' '\n' | grep -Fx "attributes.rigType" >/dev/null \
+      && printf '%s\n' "$indexing_custom_fields" | tr '\t' '\n' | grep -Fx "attributes.deviceType" >/dev/null; then
       break
     fi
     if [ "$(date +%s)" -ge "$deadline" ]; then

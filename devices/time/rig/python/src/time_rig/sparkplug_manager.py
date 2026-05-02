@@ -63,6 +63,7 @@ class TimeSparkplugConfig:
     endpoint: str
     aws_region: str
     rig_name: str = DEFAULT_RIG_NAME
+    rig_id: str = ""
     sparkplug_group_id: str = DEFAULT_SPARKPLUG_GROUP_ID
     sparkplug_edge_node_id: str = DEFAULT_RIG_NAME
     client_id: str = "time-sparkplug-manager"
@@ -416,9 +417,9 @@ async def run_time_sparkplug_manager(
 ) -> None:
     registry_client = registry_client or AwsThingRegistryClient(aws_runtime.iot_client())
     try:
-        registrations = registry_client.list_rig_things(config.rig_name)
+        registrations = registry_client.list_rig_things(config.rig_id or config.rig_name)
     except ThingGroupNotFoundError:
-        LOGGER.warning("Dynamic thing group for rig=%s was not found", config.rig_name)
+        LOGGER.warning("Dynamic thing group for rig=%s was not found", config.rig_id or config.rig_name)
         registrations = []
     manager = TimeSparkplugManager(
         config,
@@ -460,6 +461,7 @@ def _parse_args() -> argparse.Namespace:
         description="Sparkplug lifecycle manager for virtual time devices.",
     )
     parser.add_argument("--rig-name", default=_env_text("RIG_NAME", DEFAULT_RIG_NAME))
+    parser.add_argument("--rig-id", default=_env_text("TXING_RIG_ID", _env_text("RIG_ID", "")))
     parser.add_argument("--sparkplug-group-id", default=_env_text("SPARKPLUG_GROUP_ID", DEFAULT_SPARKPLUG_GROUP_ID))
     parser.add_argument("--sparkplug-edge-node-id", default=_env_text("SPARKPLUG_EDGE_NODE_ID", DEFAULT_RIG_NAME))
     parser.add_argument("--client-id", default=os.getenv("CLIENT_ID", "time-sparkplug-manager"))
@@ -500,6 +502,7 @@ def main() -> None:
                         endpoint=aws_runtime.iot_data_endpoint(),
                         aws_region=aws_region,
                         rig_name=args.rig_name,
+                        rig_id=args.rig_id,
                         sparkplug_group_id=args.sparkplug_group_id,
                         sparkplug_edge_node_id=args.sparkplug_edge_node_id,
                         client_id=args.client_id,

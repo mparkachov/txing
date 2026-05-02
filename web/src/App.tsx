@@ -105,7 +105,7 @@ type DeviceRoute = {
 type ShadowTarget = {
   routeKind: 'town' | 'rig' | 'device' | 'device_video'
   thingName: string
-  capabilitiesSet: readonly ShadowName[]
+  capabilities: readonly ShadowName[]
   sparkplugGroupId: string
   sparkplugEdgeNodeId: string
 }
@@ -413,10 +413,10 @@ function App({ initialAuthError = '' }: AppProps) {
     selectedDeviceRoute !== null &&
     routeHeaderMetadata !== null &&
     isDeviceThingType &&
-    routeHeaderMetadata.townName !== null &&
-    routeHeaderMetadata.rigName !== null &&
+    routeHeaderMetadata.townId !== null &&
+    routeHeaderMetadata.rigId !== null &&
     (route.kind !== 'device_video' ||
-      (currentDeviceAdapter !== null && routeHeaderMetadata.capabilitiesSet.includes('video')))
+      (currentDeviceAdapter !== null && routeHeaderMetadata.capabilities.includes('video')))
   const activeShadowTarget = shadowTargetState.status === 'ready' ? shadowTargetState.target : null
 
   useEffect(() => {
@@ -987,8 +987,8 @@ function App({ initialAuthError = '' }: AppProps) {
     if (
       !selectedDeviceRoute ||
       !isSelectedDeviceValid ||
-      !routeHeaderMetadata.townName ||
-      !routeHeaderMetadata.rigName
+      !routeHeaderMetadata.townId ||
+      !routeHeaderMetadata.rigId
     ) {
       setShadowTargetState(emptyShadowTargetState())
       return
@@ -999,9 +999,9 @@ function App({ initialAuthError = '' }: AppProps) {
       target: {
         routeKind: route.kind,
         thingName: selectedDeviceRoute.device,
-        capabilitiesSet: routeHeaderMetadata.capabilitiesSet,
-        sparkplugGroupId: routeHeaderMetadata.townName,
-        sparkplugEdgeNodeId: routeHeaderMetadata.rigName,
+        capabilities: routeHeaderMetadata.capabilities,
+        sparkplugGroupId: routeHeaderMetadata.townId,
+        sparkplugEdgeNodeId: routeHeaderMetadata.rigId,
       },
       error: '',
     })
@@ -1076,7 +1076,7 @@ function App({ initialAuthError = '' }: AppProps) {
           awsRegion: appConfig.awsRegion,
           sparkplugGroupId: activeShadowTarget.sparkplugGroupId,
           sparkplugEdgeNodeId: activeShadowTarget.sparkplugEdgeNodeId,
-          capabilitiesSet: activeShadowTarget.capabilitiesSet,
+          capabilities: activeShadowTarget.capabilities,
           resolveIdToken: resolveSessionIdToken,
           onShadowDocument: (shadow) => {
             if (cancelled) {

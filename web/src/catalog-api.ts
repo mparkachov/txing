@@ -27,22 +27,24 @@ export type RigCatalogEntry = {
   thingName: string
   rigName: string
   shortId: string | null
-  capabilitiesSet: readonly ShadowName[]
+  capabilities: readonly ShadowName[]
 }
 export type DeviceCatalogEntry = {
   thingName: string
   name: string | null
   shortId: string | null
-  capabilitiesSet: readonly ShadowName[]
+  capabilities: readonly ShadowName[]
 }
 export type ThingMetadata = {
   thingName: string
   thingTypeName: string | null
   name: string | null
+  townId: string | null
+  rigId: string | null
   townName: string | null
   rigName: string | null
   shortId: string | null
-  capabilitiesSet: readonly ShadowName[]
+  capabilities: readonly ShadowName[]
 }
 
 const maxResults = 100
@@ -68,13 +70,13 @@ const normalizeOptionalText = (value: string | null | undefined): string | null 
 
 export const parseCapabilitiesSet = (value: string | null | undefined): readonly ShadowName[] => {
   if (typeof value !== 'string' || value.trim() === '') {
-    throw new Error('Thing is missing required capabilitiesSet attribute')
+    throw new Error('Thing is missing required capabilities attribute')
   }
   const capabilities: ShadowName[] = []
   const seen = new Set<ShadowName>()
   for (const rawCapability of value.split(',')) {
     if (rawCapability.trim() !== rawCapability || rawCapability === '') {
-      throw new Error(`Thing has malformed capabilitiesSet attribute: ${value}`)
+      throw new Error(`Thing has malformed capabilities attribute: ${value}`)
     }
     if (!isShadowName(rawCapability)) {
       throw new Error(`Thing has invalid shadow capability name: ${rawCapability}`)
@@ -86,7 +88,7 @@ export const parseCapabilitiesSet = (value: string | null | undefined): readonly
     capabilities.push(rawCapability)
   }
   if (!seen.has('sparkplug')) {
-    throw new Error('Thing capabilitiesSet must include sparkplug')
+    throw new Error('Thing capabilities must include sparkplug')
   }
   return capabilities
 }
@@ -192,24 +194,52 @@ export const describeThingMetadataWithClient = async (
   )) as DescribeThingCommandOutput
 
   const attributes = response.attributes
+  const townId = normalizeOptionalText(
+    attributes && typeof attributes.townId === 'string' ? attributes.townId : null,
+  )
+  const rigId = normalizeOptionalText(
+    attributes && typeof attributes.rigId === 'string' ? attributes.rigId : null,
+  )
+  let townName = townId
+  let rigName = rigId
+  if (townId) {
+    try {
+      const townResponse = (await client.send(
+        new DescribeThingCommand({ thingName: townId }),
+      )) as DescribeThingCommandOutput
+      townName = normalizeOptionalText(townResponse.attributes?.name) ?? townId
+    } catch {
+      townName = townId
+    }
+  }
+  if (rigId) {
+    try {
+      const rigResponse = (await client.send(
+        new DescribeThingCommand({ thingName: rigId }),
+      )) as DescribeThingCommandOutput
+      rigName = normalizeOptionalText(rigResponse.attributes?.name) ?? rigId
+    } catch {
+      rigName = rigId
+    }
+  } else if (response.thingTypeName === 'rig') {
+    rigName = normalizeOptionalText(attributes?.name) ?? thingName
+  }
   return {
     thingName,
     thingTypeName: normalizeOptionalText(response.thingTypeName),
     name: normalizeOptionalText(
       attributes && typeof attributes.name === 'string' ? attributes.name : null,
     ),
-    townName: normalizeOptionalText(
-      attributes && typeof attributes.town === 'string' ? attributes.town : null,
-    ),
-    rigName: normalizeOptionalText(
-      attributes && typeof attributes.rig === 'string' ? attributes.rig : null,
-    ),
+    townId,
+    rigId: response.thingTypeName === 'rig' ? thingName : rigId,
+    townName,
+    rigName,
     shortId: normalizeOptionalText(
       attributes && typeof attributes.shortId === 'string' ? attributes.shortId : null,
     ),
-    capabilitiesSet: parseCapabilitiesSet(
-      attributes && typeof attributes.capabilitiesSet === 'string'
-        ? attributes.capabilitiesSet
+    capabilities: parseCapabilitiesSet(
+      attributes && typeof attributes.capabilities === 'string'
+        ? attributes.capabilities
         : null,
     ),
   }
@@ -302,9 +332,19 @@ export const listTownRigsWithClient = async (
   client: IotControlClient,
   townName: string,
 ): Promise<RigCatalogEntry[]> => {
+  let townGroupName = townName
+  try {
+    const townMetadata =
+      townName.startsWith('town-')
+        ? await describeThingMetadataWithClient(client, townName)
+        : await resolveTownThingWithClient(client, townName)
+    townGroupName = townMetadata.thingName
+  } catch {
+    townGroupName = townName
+  }
   await client.send(
     new DescribeThingGroupCommand({
-      thingGroupName: townName,
+      thingGroupName: townGroupName,
     }),
   ) as DescribeThingGroupCommandOutput
 
@@ -314,7 +354,7 @@ export const listTownRigsWithClient = async (
   do {
     const response = (await client.send(
       new ListThingsInThingGroupCommand({
-        thingGroupName: townName,
+        thingGroupName: townGroupName,
         nextToken,
         maxResults,
       }),
@@ -336,7 +376,7 @@ export const listTownRigsWithClient = async (
         thingName,
         rigName: metadata.name ?? thingName,
         shortId: metadata.shortId,
-        capabilitiesSet: metadata.capabilitiesSet,
+        capabilities: metadata.capabilities,
         thingTypeName: metadata.thingTypeName,
       }
     }),
@@ -348,7 +388,7 @@ export const listTownRigsWithClient = async (
       thingName: rig.thingName,
       rigName: rig.rigName,
       shortId: rig.shortId,
-      capabilitiesSet: rig.capabilitiesSet,
+      capabilities: rig.capabilities,
     }))
     .sort((left, right) => collator.compare(getRigDisplayName(left), getRigDisplayName(right)))
 }
@@ -396,7 +436,7 @@ export const listRigDevicesWithClient = async (
         thingName,
         name: metadata.name,
         shortId: metadata.shortId,
-        capabilitiesSet: metadata.capabilitiesSet,
+        capabilities: metadata.capabilities,
       }
     }),
   )
@@ -425,7 +465,7 @@ export const describeDeviceMetadataWithClient = async (
     thingName,
     name: metadata.name,
     shortId: metadata.shortId,
-    capabilitiesSet: metadata.capabilitiesSet,
+    capabilities: metadata.capabilities,
   }
 }
 
@@ -464,13 +504,18 @@ export const resolveRigThingWithClient = async (
   client: IotControlClient,
   townName: string,
   rigName: string,
-): Promise<ThingMetadata> =>
-  resolveSingleThingMetadataWithClient(
+): Promise<ThingMetadata> => {
+  const townMetadata =
+    townName.startsWith('town-')
+      ? await describeThingMetadataWithClient(client, townName)
+      : await resolveTownThingWithClient(client, townName)
+  return resolveSingleThingMetadataWithClient(
     client,
-    `thingTypeName:rig AND attributes.name:${rigName} AND attributes.town:${townName}`,
+    `thingTypeName:rig AND attributes.name:${rigName} AND attributes.townId:${townMetadata.thingName}`,
     `Rig '${rigName}' in town '${townName}' was not found.`,
     `Rig '${rigName}' in town '${townName}' matched multiple AWS IoT things.`,
   )
+}
 
 export const resolveRigThing = async (
   resolveIdToken: ResolveIdToken,

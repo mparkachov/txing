@@ -137,6 +137,10 @@ def validate_service_environment(
     )
 
     if scope == "rig":
+        result, rig_id = _check_text_env(environment, "Rig id", "TXING_RIG_ID", "RIG_ID")
+        results.append(result)
+        if rig_id is not None:
+            resolved["rig_id"] = rig_id
         for key, label, env_name in (
             ("rig_name", "Rig name", "RIG_NAME"),
             ("sparkplug_group_id", "Sparkplug group ID", "SPARKPLUG_GROUP_ID"),
@@ -302,18 +306,16 @@ def _probe_cloudwatch_logs(
 def _resolve_rig_log_group_name(
     runtime: AwsRuntime,
     *,
-    sparkplug_group_id: str,
-    rig_name: str,
+    rig_id: str,
     log_group_name: str | None,
 ) -> str:
     if log_group_name is not None and log_group_name.strip():
         return log_group_name.strip()
     registry = AwsDeviceRegistry(runtime)
-    town_registration = registry.describe_town_by_name(sparkplug_group_id)
-    rig_registration = registry.describe_rig_by_name(
-        town_name=sparkplug_group_id,
-        rig_name=rig_name,
-    )
+    rig_registration = registry.describe_thing(rig_id)
+    if rig_registration.town_id is None:
+        raise RuntimeError(f"Rig {rig_id!r} is missing townId")
+    town_registration = registry.describe_thing(rig_registration.town_id)
     return build_rig_log_group_name(
         town_thing_name=town_registration.thing_name,
         rig_thing_name=rig_registration.thing_name,
@@ -323,7 +325,7 @@ def _resolve_rig_log_group_name(
 def _run_rig_connectivity_checks(
     runtime: AwsRuntime,
     *,
-    sparkplug_group_id: str,
+    rig_id: str,
     rig_name: str,
     log_group_name: str | None,
 ) -> list[CheckResult]:
@@ -336,16 +338,15 @@ def _run_rig_connectivity_checks(
     )
     _run_aws_check(
         results,
-        f"IoT DescribeThingGroup on {rig_name}",
-        lambda: runtime.iot_client().describe_thing_group(thingGroupName=rig_name),
+        f"IoT DescribeThingGroup on {rig_id}",
+        lambda: runtime.iot_client().describe_thing_group(thingGroupName=rig_id),
     )
     resolved_log_group_name = _run_aws_check(
         results,
         "Resolve CloudWatch log group",
         lambda: _resolve_rig_log_group_name(
             runtime,
-            sparkplug_group_id=sparkplug_group_id,
-            rig_name=rig_name,
+            rig_id=rig_id,
             log_group_name=log_group_name,
         ),
     )
@@ -401,6 +402,7 @@ def run_service_check(
     *,
     environment: Mapping[str, str] | None = None,
     thing_name: str | None = None,
+    rig_id: str | None = None,
     rig_name: str | None = None,
     log_group_name: str | None = None,
     video_channel_name: str | None = None,
@@ -423,7 +425,7 @@ def run_service_check(
         results.extend(
             _run_rig_connectivity_checks(
                 runtime,
-                sparkplug_group_id=resolved["sparkplug_group_id"],
+                rig_id=rig_id or resolved["rig_id"],
                 rig_name=rig_name or resolved["rig_name"],
                 log_group_name=log_group_name or resolved.get("log_group_name"),
             )
@@ -463,6 +465,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Python runtime scope to validate",
     )
     parser.add_argument("--thing-name", default="", help="Override thing name for AWS probes")
+    parser.add_argument("--rig-id", default="", help="Override rig thing name for AWS probes")
     parser.add_argument("--rig-name", default="", help="Override rig thing-group name for AWS probes")
     parser.add_argument(
         "--log-group-name",
@@ -482,6 +485,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         results = run_service_check(
             scope,
             thing_name=args.thing_name or None,
+            rig_id=args.rig_id or None,
             rig_name=args.rig_name or None,
             log_group_name=args.log_group_name or None,
         )

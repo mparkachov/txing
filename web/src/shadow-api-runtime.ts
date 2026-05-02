@@ -105,7 +105,7 @@ export type ShadowSessionOptions = {
   awsRegion: string
   sparkplugGroupId: string
   sparkplugEdgeNodeId: string
-  capabilitiesSet: readonly ShadowName[]
+  capabilities: readonly ShadowName[]
   resolveIdToken: ResolveIdToken
   onShadowDocument: (shadow: unknown, operation: ShadowOperation) => void
   onRobotStateChange: (state: RobotState | null) => void
@@ -606,10 +606,10 @@ class AwsIotShadowSession implements ShadowSession {
 
   constructor(options: ShadowSessionOptions) {
     this.options = options
-    this.requiredShadowNames = options.capabilitiesSet
+    this.requiredShadowNames = options.capabilities
     this.topics = buildNamedShadowTopics(options.thingName, this.requiredShadowNames)
     if (!this.topics.sparkplug) {
-      throw new Error('Thing capabilitiesSet must include sparkplug')
+      throw new Error('Thing capabilities must include sparkplug')
     }
     this.sparkplugTopics = buildSparkplugTopics(
       options.sparkplugGroupId,

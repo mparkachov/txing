@@ -152,6 +152,7 @@ web_dist_dir := web_dir + "/dist"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "")"
     current_sparkplug_group_id="$SPARKPLUG_GROUP_ID"
     current_sparkplug_edge_node_id="$SPARKPLUG_EDGE_NODE_ID"
+    current_town_thing_name="$SPARKPLUG_GROUP_ID"
 
     if [ -n "{{thing_name}}" ]; then
       device_thing_name="{{thing_name}}"
@@ -164,30 +165,6 @@ web_dist_dir := web_dir + "/dist"
     fi
     if [ -n "{{town_thing_name}}" ]; then
       current_town_thing_name="{{town_thing_name}}"
-    else
-      town_search_query="thingTypeName:town AND attributes.name:${current_sparkplug_group_id}"
-      town_match_count="$(aws iot search-index \
-        --query-string "$town_search_query" \
-        --max-results 2 \
-        "${aws_flags[@]}" \
-        --query 'length(things)' \
-        --output text)"
-
-      if [ "$town_match_count" = "0" ]; then
-        echo "Town thing for Sparkplug group '$current_sparkplug_group_id' was not found." >&2
-        exit 1
-      fi
-      if [ "$town_match_count" != "1" ]; then
-        echo "Sparkplug group '$current_sparkplug_group_id' matched multiple town things. Pass town_thing_name=... to disambiguate." >&2
-        exit 1
-      fi
-
-      current_town_thing_name="$(aws iot search-index \
-        --query-string "$town_search_query" \
-        --max-results 1 \
-        "${aws_flags[@]}" \
-        --query 'things[0].thingName' \
-        --output text)"
     fi
 
     printf '%s\n' \

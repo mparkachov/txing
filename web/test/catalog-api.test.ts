@@ -31,7 +31,7 @@ describe('catalog api helpers', () => {
     const client = new FakeIotControlClient({
       DescribeThingGroupCommand: [
         {
-          thingGroupName: 'berlin',
+          thingGroupName: 'town-berlin',
         },
       ],
       ListThingsInThingGroupCommand: [
@@ -45,12 +45,23 @@ describe('catalog api helpers', () => {
       ],
       DescribeThingCommand: [
         {
+          thingName: 'town-berlin',
+          thingTypeName: 'town',
+          attributes: {
+            name: 'berlin',
+            shortId: 'berlin',
+            capabilities: 'sparkplug',
+          },
+        },
+        {
           thingName: 'rig-a1',
           thingTypeName: 'rig',
           attributes: {
             name: 'alpha',
             shortId: 'a1',
-            capabilitiesSet: 'sparkplug',
+            townId: 'town-berlin',
+            rigType: 'raspi',
+            capabilities: 'sparkplug',
           },
         },
         {
@@ -59,7 +70,9 @@ describe('catalog api helpers', () => {
           attributes: {
             name: 'bravo',
             shortId: 'b3',
-            capabilitiesSet: 'sparkplug',
+            townId: 'town-berlin',
+            rigType: 'raspi',
+            capabilities: 'sparkplug',
           },
         },
         {
@@ -68,30 +81,59 @@ describe('catalog api helpers', () => {
           attributes: {
             name: 'zulu',
             shortId: 'z9',
-            capabilitiesSet: 'sparkplug',
+            townId: 'town-berlin',
+            rigType: 'cloud',
+            capabilities: 'sparkplug',
+          },
+        },
+        {
+          thingName: 'town-berlin',
+          thingTypeName: 'town',
+          attributes: {
+            name: 'berlin',
+            shortId: 'berlin',
+            capabilities: 'sparkplug',
+          },
+        },
+        {
+          thingName: 'town-berlin',
+          thingTypeName: 'town',
+          attributes: {
+            name: 'berlin',
+            shortId: 'berlin',
+            capabilities: 'sparkplug',
+          },
+        },
+        {
+          thingName: 'town-berlin',
+          thingTypeName: 'town',
+          attributes: {
+            name: 'berlin',
+            shortId: 'berlin',
+            capabilities: 'sparkplug',
           },
         },
       ],
     })
 
-    await expect(listTownRigsWithClient(client, 'berlin')).resolves.toEqual([
+    await expect(listTownRigsWithClient(client, 'town-berlin')).resolves.toEqual([
       {
         thingName: 'rig-a1',
         rigName: 'alpha',
         shortId: 'a1',
-        capabilitiesSet: ['sparkplug'],
+        capabilities: ['sparkplug'],
       },
       {
         thingName: 'rig-b3',
         rigName: 'bravo',
         shortId: 'b3',
-        capabilitiesSet: ['sparkplug'],
+        capabilities: ['sparkplug'],
       },
       {
         thingName: 'rig-z9',
         rigName: 'zulu',
         shortId: 'z9',
-        capabilitiesSet: ['sparkplug'],
+        capabilities: ['sparkplug'],
       },
     ])
   })
@@ -114,7 +156,10 @@ describe('catalog api helpers', () => {
           attributes: {
             name: 'bot',
             shortId: 'a1',
-            capabilitiesSet: 'sparkplug,mcu,board,mcp,video',
+            townId: 'town-berlin',
+            rigId: 'rig-a1',
+            deviceType: 'unit',
+            capabilities: 'sparkplug,mcu,board,mcp,video',
           },
         },
         {
@@ -123,7 +168,10 @@ describe('catalog api helpers', () => {
           attributes: {
             name: 'crawler',
             shortId: 'b3',
-            capabilitiesSet: 'sparkplug,mcu,board,mcp,video',
+            townId: 'town-berlin',
+            rigId: 'rig-a1',
+            deviceType: 'unit',
+            capabilities: 'sparkplug,mcu,board,mcp,video',
           },
         },
         {
@@ -132,7 +180,70 @@ describe('catalog api helpers', () => {
           attributes: {
             name: 'zeta',
             shortId: 'z9',
-            capabilitiesSet: 'sparkplug,mcu,board,mcp,video',
+            townId: 'town-berlin',
+            rigId: 'rig-a1',
+            deviceType: 'unit',
+            capabilities: 'sparkplug,mcu,board,mcp,video',
+          },
+        },
+        {
+          thingName: 'town-berlin',
+          thingTypeName: 'town',
+          attributes: {
+            name: 'berlin',
+            shortId: 'berlin',
+            capabilities: 'sparkplug',
+          },
+        },
+        {
+          thingName: 'town-berlin',
+          thingTypeName: 'town',
+          attributes: {
+            name: 'berlin',
+            shortId: 'berlin',
+            capabilities: 'sparkplug',
+          },
+        },
+        {
+          thingName: 'town-berlin',
+          thingTypeName: 'town',
+          attributes: {
+            name: 'berlin',
+            shortId: 'berlin',
+            capabilities: 'sparkplug',
+          },
+        },
+        {
+          thingName: 'rig-a1',
+          thingTypeName: 'rig',
+          attributes: {
+            name: 'alpha',
+            shortId: 'a1',
+            townId: 'town-berlin',
+            rigType: 'raspi',
+            capabilities: 'sparkplug',
+          },
+        },
+        {
+          thingName: 'rig-a1',
+          thingTypeName: 'rig',
+          attributes: {
+            name: 'alpha',
+            shortId: 'a1',
+            townId: 'town-berlin',
+            rigType: 'raspi',
+            capabilities: 'sparkplug',
+          },
+        },
+        {
+          thingName: 'rig-a1',
+          thingTypeName: 'rig',
+          attributes: {
+            name: 'alpha',
+            shortId: 'a1',
+            townId: 'town-berlin',
+            rigType: 'raspi',
+            capabilities: 'sparkplug',
           },
         },
       ],
@@ -143,19 +254,19 @@ describe('catalog api helpers', () => {
         thingName: 'unit-a1',
         name: 'bot',
         shortId: 'a1',
-        capabilitiesSet: ['sparkplug', 'mcu', 'board', 'mcp', 'video'],
+        capabilities: ['sparkplug', 'mcu', 'board', 'mcp', 'video'],
       },
       {
         thingName: 'unit-b3',
         name: 'crawler',
         shortId: 'b3',
-        capabilitiesSet: ['sparkplug', 'mcu', 'board', 'mcp', 'video'],
+        capabilities: ['sparkplug', 'mcu', 'board', 'mcp', 'video'],
       },
       {
         thingName: 'unit-z9',
         name: 'zeta',
         shortId: 'z9',
-        capabilitiesSet: ['sparkplug', 'mcu', 'board', 'mcp', 'video'],
+        capabilities: ['sparkplug', 'mcu', 'board', 'mcp', 'video'],
       },
     ])
   })
@@ -169,7 +280,30 @@ describe('catalog api helpers', () => {
           attributes: {
             name: ' bot ',
             shortId: 'kiv3mj',
-            capabilitiesSet: 'sparkplug,mcu,board,mcp,video',
+            townId: 'town-berlin',
+            rigId: 'rig-a1',
+            deviceType: 'unit',
+            capabilities: 'sparkplug,mcu,board,mcp,video',
+          },
+        },
+        {
+          thingName: 'town-berlin',
+          thingTypeName: 'town',
+          attributes: {
+            name: 'berlin',
+            shortId: 'berlin',
+            capabilities: 'sparkplug',
+          },
+        },
+        {
+          thingName: 'rig-a1',
+          thingTypeName: 'rig',
+          attributes: {
+            name: 'alpha',
+            shortId: 'a1',
+            townId: 'town-berlin',
+            rigType: 'raspi',
+            capabilities: 'sparkplug',
           },
         },
       ],
@@ -179,7 +313,7 @@ describe('catalog api helpers', () => {
       thingName: 'unit-kiv3mj',
       name: 'bot',
       shortId: 'kiv3mj',
-      capabilitiesSet: ['sparkplug', 'mcu', 'board', 'mcp', 'video'],
+      capabilities: ['sparkplug', 'mcu', 'board', 'mcp', 'video'],
     })
   })
 
@@ -192,7 +326,7 @@ describe('catalog api helpers', () => {
           attributes: {
             name: 'sensor',
             shortId: 'a1',
-            capabilitiesSet: 'sparkplug,sensor-data',
+            capabilities: 'sparkplug,sensor-data',
           },
         },
       ],
@@ -202,10 +336,12 @@ describe('catalog api helpers', () => {
       thingName: 'sensor-a1',
       thingTypeName: 'sensor',
       name: 'sensor',
+      townId: null,
+      rigId: null,
       townName: null,
       rigName: null,
       shortId: 'a1',
-      capabilitiesSet: ['sparkplug', 'sensor-data'],
+      capabilities: ['sparkplug', 'sensor-data'],
     })
   })
 
@@ -217,9 +353,19 @@ describe('catalog api helpers', () => {
           thingTypeName: 'rig',
           attributes: {
             name: 'alpha',
-            town: 'berlin',
+            townId: 'town-berlin',
+            rigType: 'raspi',
             shortId: 'a1',
-            capabilitiesSet: 'sparkplug',
+            capabilities: 'sparkplug',
+          },
+        },
+        {
+          thingName: 'town-berlin',
+          thingTypeName: 'town',
+          attributes: {
+            name: 'berlin',
+            shortId: 'berlin',
+            capabilities: 'sparkplug',
           },
         },
       ],
@@ -229,10 +375,12 @@ describe('catalog api helpers', () => {
       thingName: 'rig-a1',
       thingTypeName: 'rig',
       name: 'alpha',
+      townId: 'town-berlin',
+      rigId: 'rig-a1',
       townName: 'berlin',
-      rigName: null,
+      rigName: 'alpha',
       shortId: 'a1',
-      capabilitiesSet: ['sparkplug'],
+      capabilities: ['sparkplug'],
     })
   })
 

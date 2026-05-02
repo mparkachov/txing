@@ -25,7 +25,7 @@ This repository now documents the current implementation directly rather than ke
 
 ## Current Named-Shadow Capabilities
 
-Registration writes `attributes.capabilitiesSet` from shared thing definitions
+Registration writes `attributes.capabilities` from shared thing definitions
 for `town`/`rig` and from each device type manifest:
 
 - `town`: `sparkplug`

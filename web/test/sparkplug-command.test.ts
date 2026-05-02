@@ -45,12 +45,12 @@ describe('sparkplug command ack helper', () => {
       resolveThingSparkplugRedconCommandTarget({
         thingName: 'unit-a1',
         thingTypeName: 'unit',
-        townName: 'town',
-        rigName: 'rig',
+        townId: 'town-a1',
+        rigId: 'rig-a1',
       }),
     ).toEqual({
-      groupId: 'town',
-      edgeNodeId: 'rig',
+      groupId: 'town-a1',
+      edgeNodeId: 'rig-a1',
       deviceId: 'unit-a1',
     })
 
@@ -58,12 +58,12 @@ describe('sparkplug command ack helper', () => {
       resolveThingSparkplugRedconCommandTarget({
         thingName: 'sensor-a1',
         thingTypeName: 'sensor',
-        townName: 'town',
-        rigName: 'rig',
+        townId: 'town-a1',
+        rigId: 'rig-a1',
       }),
     ).toEqual({
-      groupId: 'town',
-      edgeNodeId: 'rig',
+      groupId: 'town-a1',
+      edgeNodeId: 'rig-a1',
       deviceId: 'sensor-a1',
     })
 
@@ -71,8 +71,8 @@ describe('sparkplug command ack helper', () => {
       resolveThingSparkplugRedconCommandTarget({
         thingName: 'rig-a1',
         thingTypeName: 'rig',
-        townName: 'town',
-        rigName: null,
+        townId: 'town-a1',
+        rigId: 'rig-a1',
       }),
     ).toBeNull()
   })

@@ -1,8 +1,10 @@
 # Rig
 
 The rig is the always-on coordinator and Sparkplug edge node. The current
-`unit` rig type bridges Sparkplug lifecycle intent from AWS IoT to BLE
-rendezvous sessions with the MCU and mirrors board MCP availability for readers.
+`raspi` rig type bridges Sparkplug lifecycle intent from AWS IoT to BLE
+rendezvous sessions with the `unit` MCU and mirrors board MCP availability for
+readers. The `cloud` rig type runs the virtual `time` device components on
+Greengrass Lite without host hardware.
 
 ## Current Responsibilities
 
@@ -39,9 +41,9 @@ single-process CLI:
 
 ## Current Runtime Model
 
-- managed devices come from the dynamic IoT thing group named by `RIG_NAME`
-- startup reads each device `DescribeThing` result, including `attributes.capabilitiesSet`
-- named-shadow subscriptions are selected from that `capabilitiesSet`
+- managed devices come from the dynamic IoT thing group named by `TXING_RIG_ID`
+- startup reads each device `DescribeThing` result, including `attributes.capabilities`
+- named-shadow subscriptions are selected from that `capabilities`
 - Sparkplug lifecycle state is published only on MQTT; the AWS read model is witness-owned
 - Greengrass core/device/component status is service observability only; it is not the txing lifecycle source of truth
 - `mcu.state.reported.power=true` means the wakeup state
@@ -62,7 +64,7 @@ host. On Raspberry Pi OS Lite/Trixie, install at least `cmake`,
 `libevent-dev`, `liburiparser-dev`, and `cgroup-tools`.
 
 ```bash
-just rig::check
+just rig::check <rig-id>
 just rig::build-native
 just rig::build
 just rig::run
@@ -88,8 +90,8 @@ Useful options:
 ```bash
 just rig::build-native
 just rig::build
-just rig::install-service
-just rig::deploy
+just rig::install-service <rig-id>
+just rig::deploy <rig-id>
 sudo systemctl status --with-dependencies greengrass-lite.target
 ```
 
@@ -107,7 +109,7 @@ Rig behavior comes from Greengrass deployments selected by the configured
 
 ## Rig Type Host Requirements
 
-`RIG_TYPE=unit` requires the host Bluetooth service because the connectivity
+`RIG_TYPE=raspi` requires the host Bluetooth service because the connectivity
 component uses BLE rendezvous with the MCU. Install and enable it manually:
 
 ```bash
@@ -115,12 +117,12 @@ sudo apt install -y bluez
 sudo systemctl enable --now bluetooth.service
 ```
 
-`RIG_TYPE=aws` has no extra host service dependency beyond Greengrass Lite.
+`RIG_TYPE=cloud` has no extra host service dependency beyond Greengrass Lite.
 
-Run `just rig::check` after configuring the host. It fails if a required service
-for the configured rig type is missing, disabled, or inactive.
+Run `just rig::check <rig-id>` after configuring the host. It fails if a required
+service for the configured rig type is missing, disabled, or inactive.
 
-Use `just rig::deploy` after changing or pulling rig code; it depends
+Use `just rig::deploy <rig-id>` after changing or pulling rig code; it depends
 on `just rig::build` and then stages a new local component artifact under
 `rig/build/greengrass-local`. That staging directory is intentionally kept until
 the next deploy because Greengrass Lite copies artifacts asynchronously. Use
@@ -130,7 +132,7 @@ systemd units without changing the deployed component version.
 For local redeploys that must force a new Greengrass component version, set:
 
 ```bash
-TXING_RIG_COMPONENT_VERSION=0.5.1 just rig::deploy
+TXING_RIG_COMPONENT_VERSION=0.5.1 just rig::deploy <rig-id>
 ```
 
 Do not pass `component_version=...` after the recipe name; `just` treats that as

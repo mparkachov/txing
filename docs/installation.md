@@ -80,7 +80,7 @@ rm -rf /tmp/aws /tmp/awscliv2.zip
 aws --version
 ```
 
-For `RIG_TYPE=unit`, install and enable Bluetooth manually before deploying the
+For `RIG_TYPE=raspi`, install and enable Bluetooth manually before deploying the
 unit connectivity component:
 
 ```bash
@@ -105,25 +105,24 @@ git clone <repo-url> "$TXING_HOME"
 cd "$TXING_HOME"
 ```
 
-### 3. Configure AWS And Rig Identity
+### 3. Configure AWS Access
 
 Edit:
 
 - `config/aws.env`
   - `AWS_REGION`
   - `AWS_STACK_NAME`
-  - `TXING_TOWN_NAME`
-  - `TXING_RIG_NAME`
-  - `TXING_RIG_TYPE`
-  - `TXING_DEVICE_NAME`
-  - `TXING_DEVICE_TYPE`
+  - optional `TXING_TOWN_ID`
+  - optional `TXING_RIG_ID`
+  - optional `TXING_THING_ID`
   - `AWS_COGNITO_DOMAIN_PREFIX`
   - `AWS_ADMIN_EMAIL`
-  - `SPARKPLUG_GROUP_ID`
-  - `RIG_NAME`
   - optional `CLOUDWATCH_LOG_GROUP`
 - `config/aws.credentials`
   - fill the `[town]` access keys
+
+Concrete towns, rigs, and devices are AWS IoT things. The SSM catalog under
+`/txing` stores only supported types and compatibility.
 
 After the AWS rig resources and certificate material exist, `just rig::check`
 verifies AWS IoT MQTT mTLS connectivity, AWS IoT Credentials Provider role-alias
@@ -139,8 +138,9 @@ starts the default `greengrass-lite.target`.
 
 Before installing the service, the rig host must have:
 
-- the AWS stacks deployed with `just aws::deploy`, `just aws::town-deploy`, and `just aws::rig-deploy`
-- the configured rig thing registered in AWS IoT by `just aws::rig-deploy`
+- the AWS stacks and type catalog deployed with `just aws::deploy`
+- a town thing created with `just aws::town-deploy town`
+- a rig thing created with `just aws::rig-deploy <town-id> raspi server` or `just aws::rig-deploy <town-id> cloud aws`
 - rig certificate material generated with `just aws::cert` under
   `config/certs/rig/`
 
@@ -151,8 +151,8 @@ the certificate, public key, private key, certificate ARN, and Amazon Root CA 1 
 
 ```bash
 cd "$TXING_HOME"
-just aws::cert
-just rig::check
+just aws::cert <rig-id>
+just rig::check <rig-id>
 ```
 
 `just rig::install-service` copies `config/certs/rig/rig.cert.pem` and
@@ -174,8 +174,8 @@ that requirement.
 cd "$TXING_HOME"
 just rig::build-native
 just rig::build
-just rig::install-service
-just rig::deploy
+just rig::install-service <rig-id>
+just rig::deploy <rig-id>
 ```
 
 `just rig::build-native` compiles Greengrass Lite with `GG_LOG_LEVEL=INFO`.
@@ -191,11 +191,11 @@ if it still exists on an older host. The recipe creates the default `ggcore` and
 `ggcore:ggcore`, and starts `greengrass-lite.target` through the upstream
 `misc/run_nucleus` script.
 
-`just rig::deploy` packages the current rig Python source and the component set
-for the configured `RIG_TYPE`, stages Greengrass Lite recipes and artifacts under
-`rig/build/greengrass-local`, and deploys them with `ggl-cli deploy`. For
-`RIG_TYPE=unit` it deploys the unit Sparkplug and BLE components. For
-`RIG_TYPE=aws` it deploys the virtual AWS/time Sparkplug and AWS IoT MQTT
+`just rig::deploy <rig-id>` packages the current rig Python source and the
+component set for the rig thing's `rigType`, stages Greengrass Lite recipes and
+artifacts under `rig/build/greengrass-local`, and deploys them with `ggl-cli
+deploy`. For `RIG_TYPE=raspi` it deploys the unit Sparkplug and BLE components.
+For `RIG_TYPE=cloud` it deploys the virtual time Sparkplug and AWS IoT MQTT
 connectivity components. The staging directory is kept after `ggl-cli` returns
 because Greengrass Lite copies artifacts asynchronously. It depends on
 `just rig::build`, so after changing rig code or pulling new code, run
@@ -206,7 +206,7 @@ When you need a new Greengrass component version for a local redeploy, set the
 version as an environment variable before the recipe:
 
 ```bash
-TXING_RIG_COMPONENT_VERSION=0.5.1 just rig::deploy
+TXING_RIG_COMPONENT_VERSION=0.5.1 just rig::deploy <rig-id>
 ```
 
 Do not run `just rig::deploy component_version=0.5.1`; `just` treats arguments
@@ -329,8 +329,7 @@ Populate:
 
 Board-specific values to set in `config/aws.env`:
 
-- `TXING_DEVICE_NAME`
-- `TXING_DEVICE_TYPE`
+- `TXING_THING_ID` for board commands that operate on one enrolled device
 - `BOARD_VIDEO_REGION`
 - `BOARD_VIDEO_SENDER_COMMAND`
 - `KVS_DUALSTACK_ENDPOINTS=ON`

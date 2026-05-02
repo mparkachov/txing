@@ -12,7 +12,6 @@ import boto3
 
 
 LOGGER = logging.getLogger(__name__)
-THING_INDEX_NAME = "AWS_Things"
 SPARKPLUG_NAMESPACE = "spBv1.0"
 DEVICE_MESSAGE_TYPES = {"DBIRTH", "DDATA", "DDEATH"}
 NODE_MESSAGE_TYPES = {"NBIRTH", "NDATA", "NDEATH"}
@@ -253,26 +252,23 @@ def _resolve_thing_name(message: SparkplugMessage) -> str:
     if message.device_id is not None:
         return message.device_id
 
-    response = _iot_client().search_index(
-        indexName=THING_INDEX_NAME,
-        queryString=(
-            f"thingTypeName:rig AND attributes.name:{message.edge_node_id}"
-            f" AND attributes.town:{message.group_id}"
-        ),
-        maxResults=10,
-    )
-    matches = [
-        thing.get("thingName")
-        for thing in response.get("things", [])
-        if isinstance(thing, dict) and isinstance(thing.get("thingName"), str)
-    ]
-    unique_matches = sorted(set(matches))
-    if len(unique_matches) != 1:
+    town_response = _iot_client().describe_thing(thingName=message.group_id)
+    if town_response.get("thingTypeName") != "town":
         raise RuntimeError(
-            f"Expected exactly one rig thing for group={message.group_id!r} edge={message.edge_node_id!r}, "
-            f"got {unique_matches!r}"
+            f"Sparkplug group id {message.group_id!r} does not identify a town thing"
         )
-    return unique_matches[0]
+
+    rig_response = _iot_client().describe_thing(thingName=message.edge_node_id)
+    attributes = rig_response.get("attributes") or {}
+    if rig_response.get("thingTypeName") != "rig":
+        raise RuntimeError(
+            f"Sparkplug edge node id {message.edge_node_id!r} does not identify a rig thing"
+        )
+    if attributes.get("townId") != message.group_id:
+        raise RuntimeError(
+            f"Rig thing {message.edge_node_id!r} is not assigned to town {message.group_id!r}"
+        )
+    return message.edge_node_id
 
 
 def _update_named_shadow(thing_name: str, payload: dict[str, Any]) -> None:

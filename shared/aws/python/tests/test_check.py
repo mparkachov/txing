@@ -35,7 +35,7 @@ class _FakeIotClient:
                 "attributes": {
                     "name": "town",
                     "shortId": "3xvtqf",
-                    "capabilitiesSet": "sparkplug",
+                    "capabilities": "sparkplug",
                 },
             }
         if thingName == "rig-rig001":
@@ -45,9 +45,9 @@ class _FakeIotClient:
                 "attributes": {
                     "name": "rig",
                     "shortId": "rig001",
-                    "town": "town",
-                    "rigType": "unit",
-                    "capabilitiesSet": "sparkplug",
+                    "townId": "town-3xvtqf",
+                    "rigType": "raspi",
+                    "capabilities": "sparkplug",
                 },
             }
         return {"thingName": thingName}
@@ -64,10 +64,7 @@ class _FakeIotClient:
         self.search_queries.append(queryString)
         if queryString == "thingTypeName:town AND attributes.name:town":
             return {"things": [{"thingName": "town-3xvtqf"}]}
-        if (
-            queryString
-            == "thingTypeName:rig AND attributes.name:rig AND attributes.town:town"
-        ):
+        if queryString == "thingTypeName:rig AND attributes.name:rig AND attributes.townId:town-3xvtqf":
             return {"things": [{"thingName": "rig-rig001"}]}
         return {"things": []}
 
@@ -127,6 +124,10 @@ class _FakeKinesisVideoClient:
         }
 
 
+class _FakeSsmClient:
+    pass
+
+
 class _FakeRuntime:
     def __init__(self, *, endpoint: str) -> None:
         self.endpoint = endpoint
@@ -135,6 +136,7 @@ class _FakeRuntime:
         self.logs = _FakeLogsClient()
         self.iot_data = _FakeIotDataClient()
         self.kinesisvideo = _FakeKinesisVideoClient()
+        self.ssm = _FakeSsmClient()
         self.client_calls: list[tuple[str, str | None, dict[str, object]]] = []
 
     def sts_client(self) -> _FakeStsClient:
@@ -161,6 +163,8 @@ class _FakeRuntime:
             return self.iot_data
         if service_name == "kinesisvideo":
             return self.kinesisvideo
+        if service_name == "ssm":
+            return self.ssm
         raise AssertionError(f"unexpected client request: {service_name}")
 
 
@@ -177,6 +181,7 @@ class AwsCheckTests(unittest.TestCase):
                     "AWS_REGION": "eu-central-1",
                     "AWS_RIG_PROFILE": "rig",
                     "AWS_SHARED_CREDENTIALS_FILE": str(shared_credentials_file),
+                    "TXING_RIG_ID": "rig-rig001",
                     "RIG_NAME": "rig",
                     "SPARKPLUG_GROUP_ID": "town",
                     "SPARKPLUG_EDGE_NODE_ID": "rig",
@@ -185,6 +190,7 @@ class AwsCheckTests(unittest.TestCase):
 
         self.assertTrue(all(result.ok for result in results))
         self.assertEqual(resolved["aws_region"], "eu-central-1")
+        self.assertEqual(resolved["rig_id"], "rig-rig001")
         self.assertEqual(resolved["rig_name"], "rig")
         self.assertEqual(resolved["sparkplug_group_id"], "town")
         self.assertNotIn("log_group_name", resolved)
@@ -224,6 +230,7 @@ class AwsCheckTests(unittest.TestCase):
                     "AWS_REGION": "eu-central-1",
                     "AWS_RIG_PROFILE": "rig",
                     "AWS_SHARED_CREDENTIALS_FILE": str(shared_credentials_file),
+                    "TXING_RIG_ID": "rig-rig001",
                     "RIG_NAME": "rig",
                     "SPARKPLUG_GROUP_ID": "town",
                     "SPARKPLUG_EDGE_NODE_ID": "rig",
@@ -233,14 +240,8 @@ class AwsCheckTests(unittest.TestCase):
 
         self.assertTrue(all(result.ok for result in results))
         self.assertEqual(runtime.sts.calls, 1)
-        self.assertEqual(runtime.iot.describe_group_names, ["rig"])
-        self.assertEqual(
-            runtime.iot.search_queries,
-            [
-                "thingTypeName:town AND attributes.name:town",
-                "thingTypeName:rig AND attributes.name:rig AND attributes.town:town",
-            ],
-        )
+        self.assertEqual(runtime.iot.describe_group_names, ["rig-rig001"])
+        self.assertEqual(runtime.iot.search_queries, [])
         self.assertEqual(runtime.logs.created_groups, ["txing/town-3xvtqf/rig-rig001"])
         self.assertEqual(
             runtime.logs.retention_policies,

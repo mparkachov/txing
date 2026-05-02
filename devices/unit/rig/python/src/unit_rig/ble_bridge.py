@@ -118,6 +118,7 @@ SHUTDOWN_MQTT_PUBLISH_TIMEOUT = 2.0
 BLE_DISCONNECT_TIMEOUT = 2.0
 DEFAULT_THING_NAME_ENV = "THING_NAME"
 DEFAULT_RIG_NAME_ENV = "RIG_NAME"
+DEFAULT_RIG_ID_ENV = "TXING_RIG_ID"
 DEFAULT_SPARKPLUG_GROUP_ID_ENV = "SPARKPLUG_GROUP_ID"
 DEFAULT_SPARKPLUG_EDGE_NODE_ID_ENV = "SPARKPLUG_EDGE_NODE_ID"
 DEFAULT_CLOUDWATCH_LOG_GROUP_ENV = "CLOUDWATCH_LOG_GROUP"
@@ -328,18 +329,16 @@ def _resolve_cloudwatch_log_group_name(
     *,
     aws_runtime: AwsRuntime,
     configured_log_group: str,
-    sparkplug_group_id: str,
-    rig_name: str,
+    rig_id: str,
 ) -> str:
     log_group_name = configured_log_group.strip()
     if log_group_name:
         return log_group_name
     registry = AwsDeviceRegistry(aws_runtime)
-    town_registration = registry.describe_town_by_name(sparkplug_group_id)
-    rig_registration = registry.describe_rig_by_name(
-        town_name=sparkplug_group_id,
-        rig_name=rig_name,
-    )
+    rig_registration = registry.describe_thing(rig_id)
+    if rig_registration.town_id is None:
+        raise RuntimeError(f"Rig {rig_id!r} is missing townId")
+    town_registration = registry.describe_thing(rig_registration.town_id)
     return build_rig_log_group_name(
         town_thing_name=town_registration.thing_name,
         rig_thing_name=rig_registration.thing_name,
@@ -835,6 +834,7 @@ class BridgeConfig:
     lock_file: Path = DEFAULT_LOCK_FILE
     thing_name: str = DEFAULT_THING_NAME
     rig_name: str = DEFAULT_RIG_NAME
+    rig_id: str = ""
     rig_thing_name: str = ""
     sparkplug_group_id: str = DEFAULT_SPARKPLUG_GROUP_ID
     sparkplug_edge_node_id: str = DEFAULT_SPARKPLUG_EDGE_NODE_ID
@@ -4100,10 +4100,7 @@ async def _run_rig_service(
     while True:
         cloud_shadow: Any | None = None
         registry_client = registry_client_factory(aws_runtime.iot_client())
-        rig_registration = registry_client.describe_rig_in_town(
-            town_name=config.sparkplug_group_id,
-            rig_name=config.rig_name,
-        )
+        rig_registration = registry_client.describe_rig(config.rig_id)
         runtime_config = replace(
             config,
             rig_thing_name=rig_registration.thing_name,
@@ -4112,18 +4109,18 @@ async def _run_rig_service(
         fleet_bridge: RigFleetBridge | None = None
         try:
             try:
-                registrations = registry_client.list_rig_things(runtime_config.rig_name)
+                registrations = registry_client.list_rig_things(runtime_config.rig_thing_name)
             except ThingGroupNotFoundError:
                 LOGGER.warning(
                     "Dynamic thing group for rig=%s was not found; starting idle with no managed devices",
-                    runtime_config.rig_name,
+                    runtime_config.rig_thing_name,
                 )
                 registrations = []
             _log_important(
                 LOGGER,
                 "Loaded %s registered device(s) from dynamic thing group for rig=%s",
                 len(registrations),
-                runtime_config.rig_name,
+                runtime_config.rig_thing_name,
             )
             snapshots = await cloud_shadow.connect_and_get_initial_snapshots(
                 {
@@ -4295,7 +4292,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--rig-name",
         default=_env_text(DEFAULT_RIG_NAME_ENV, DEFAULT_RIG_NAME),
-        help="Dynamic AWS IoT thing group name for devices assigned to this rig (default: rig)",
+        help="Sparkplug edge node friendly name (default: rig)",
+    )
+    parser.add_argument(
+        "--rig-id",
+        default=_env_text(DEFAULT_RIG_ID_ENV, _env_text("RIG_ID", "")),
+        help="AWS IoT rig thing name used for registry/group lookup",
     )
     parser.add_argument(
         "--sparkplug-group-id",
@@ -4557,8 +4559,7 @@ def main() -> None:
             args.cloudwatch_log_group = _resolve_cloudwatch_log_group_name(
                 aws_runtime=aws_runtime,
                 configured_log_group=args.cloudwatch_log_group,
-                sparkplug_group_id=args.sparkplug_group_id,
-                rig_name=args.rig_name,
+                rig_id=args.rig_id,
             )
         except Exception as err:
             print(
@@ -4601,6 +4602,7 @@ def main() -> None:
         shadow_file=args.shadow_file,
         lock_file=args.lock_file,
         rig_name=args.rig_name,
+        rig_id=args.rig_id,
         sparkplug_group_id=args.sparkplug_group_id,
         sparkplug_edge_node_id=resolved_sparkplug_edge_node_id,
         iot_endpoint=iot_endpoint,

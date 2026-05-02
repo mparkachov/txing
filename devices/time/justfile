@@ -12,7 +12,6 @@ root_justfile := project_root + "/justfile"
     #!/usr/bin/env bash
     set -euo pipefail
     export TXING_DEVICE_TYPE="${TXING_DEVICE_TYPE:-time}"
-    export TXING_DEVICE_NAME="${TXING_DEVICE_NAME:-clock}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig)"
     cd "{{project_root}}" && uv run --project rig rig-device-process --device-type time run --process "{{process}}"
 
@@ -20,11 +19,10 @@ root_justfile := project_root + "/justfile"
     uv run --project "{{time_dir}}/rig/python" python -m unittest discover -s "{{time_dir}}/rig/python/tests"
     uv run --project "{{time_dir}}/lambda/python" python -m unittest discover -s "{{time_dir}}/lambda/python/tests"
 
-@deploy-lambda thing_name='' stack_name='' artifact_bucket='' schedule_expression='rate(1 minute)' active_ttl_ms='300000' region='' profile='':
+@deploy-lambda thing_id stack_name='' artifact_bucket='' schedule_expression='rate(1 minute)' active_ttl_ms='300000' region='' profile='':
     #!/usr/bin/env bash
     set -euo pipefail
-    export TXING_DEVICE_TYPE="${TXING_DEVICE_TYPE:-time}"
-    export TXING_DEVICE_NAME="${TXING_DEVICE_NAME:-clock}"
+    export TXING_THING_ID="{{thing_id}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "{{profile}}")"
     region="$AWS_REGION"
     profile="$AWS_SELECTED_PROFILE"
@@ -33,9 +31,6 @@ root_justfile := project_root + "/justfile"
       aws_flags+=(--profile "$profile")
     fi
     resolved_thing_name="$THING_NAME"
-    if [ -n "{{thing_name}}" ]; then
-      resolved_thing_name="{{thing_name}}"
-    fi
     resolved_stack_name="${TXING_DEVICE_STACK_NAME}-time-runtime"
     if [ -n "{{stack_name}}" ]; then
       resolved_stack_name="{{stack_name}}"

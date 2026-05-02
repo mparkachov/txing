@@ -40,20 +40,20 @@ sudo apt install -y cmake build-essential pkg-config python3-venv libssl-dev lib
 cmake --version
 just rig::build-native
 just rig::build
-just rig::install-service
-just rig::deploy
+just rig::install-service <rig-id>
+just rig::deploy <rig-id>
 ```
 
 Run the package install before `just rig::build-native`; the native build invokes
 `cmake` directly.
 
-Run `just aws::cert` before `just rig::install-service`. The install recipe
+Run `just aws::cert <rig-id>` before `just rig::install-service <rig-id>`. The install recipe
 copies `config/certs/rig/rig.cert.pem` and `rig.private.key` into
 `/var/lib/greengrass/credentials`, downloads Amazon Root CA 1, resolves the rig
 thing, AWS IoT endpoints, and Greengrass token exchange role alias from AWS, and
 writes `/etc/greengrass/config.yaml`.
 
-Use `just rig::check` to validate the certificate material in
+Use `just rig::check <rig-id>` to validate the certificate material in
 `config/certs/rig/` before install or deployment. The check performs AWS IoT MQTT
 mTLS and AWS IoT Credentials Provider role-alias probes with the local rig
 certificate. It also validates rig identity consistency, the configured
@@ -68,7 +68,7 @@ remove the old custom `rig.service`. The standard systemd entrypoint is
 After code changes or `git pull`, run:
 
 ```bash
-just rig::deploy
+just rig::deploy <rig-id>
 ```
 
 `deploy` depends on `rig::build`, so a separate build step is not
@@ -77,7 +77,7 @@ required for the normal edit/pull/deploy loop.
 To force a new Greengrass component version from local artifacts:
 
 ```bash
-TXING_RIG_COMPONENT_VERSION=0.5.1 just rig::deploy
+TXING_RIG_COMPONENT_VERSION=0.5.1 just rig::deploy <rig-id>
 ```
 
 Do not run `just rig::deploy component_version=0.5.1`; values after the recipe

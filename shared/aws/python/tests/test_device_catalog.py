@@ -34,7 +34,7 @@ class DeviceCatalogTests(unittest.TestCase):
             manifest.capabilities,
             ("sparkplug", "mcu", "board", "mcp", "video"),
         )
-        self.assertEqual(manifest.compatible_rig_types, ("unit",))
+        self.assertEqual(manifest.compatible_rig_types, ("raspi",))
         self.assertEqual(
             manifest.shadow_schema,
             REPO_ROOT / "devices" / "unit" / "aws" / "sparkplug-shadow.schema.json",
@@ -65,7 +65,7 @@ class DeviceCatalogTests(unittest.TestCase):
         self.assertEqual(manifest.device_name, "clock")
         self.assertEqual(manifest.display_name, "Time")
         self.assertEqual(manifest.capabilities, ("sparkplug", "mcp", "time"))
-        self.assertEqual(manifest.compatible_rig_types, ("aws",))
+        self.assertEqual(manifest.compatible_rig_types, ("cloud",))
         self.assertEqual(
             [contract.name for contract in manifest.shadows.values()],
             ["sparkplug", "mcp", "time"],

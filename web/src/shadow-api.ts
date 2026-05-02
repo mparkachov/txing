@@ -38,7 +38,7 @@ export type ShadowSessionOptions = {
   awsRegion: string
   sparkplugGroupId: string
   sparkplugEdgeNodeId: string
-  capabilitiesSet: readonly ShadowName[]
+  capabilities: readonly ShadowName[]
   resolveIdToken: ResolveIdToken
   onShadowDocument: (shadow: unknown, operation: 'get' | 'update') => void
   onRobotStateChange: (state: RobotState | null) => void

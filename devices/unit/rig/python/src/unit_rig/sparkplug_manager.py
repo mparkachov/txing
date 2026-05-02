@@ -866,11 +866,11 @@ async def run_sparkplug_manager(
 ) -> None:
     registry_client = registry_client or AwsThingRegistryClient(aws_runtime.iot_client())
     try:
-        registrations = registry_client.list_rig_things(config.rig_name)
+        registrations = registry_client.list_rig_things(config.rig_id or config.rig_name)
     except ThingGroupNotFoundError:
         LOGGER.warning(
             "Dynamic thing group for rig=%s was not found; starting with no managed devices",
-            config.rig_name,
+            config.rig_id or config.rig_name,
         )
         registrations = []
     cloud_client = cloud_client or AwsShadowClient(config, aws_runtime)
@@ -934,6 +934,10 @@ def _parse_args() -> argparse.Namespace:
         default=_env_text(DEFAULT_RIG_NAME_ENV, DEFAULT_RIG_NAME),
     )
     parser.add_argument(
+        "--rig-id",
+        default=_env_text("TXING_RIG_ID", _env_text("RIG_ID", "")),
+    )
+    parser.add_argument(
         "--sparkplug-group-id",
         default=_env_text(DEFAULT_SPARKPLUG_GROUP_ID_ENV, DEFAULT_SPARKPLUG_GROUP_ID),
     )
@@ -978,6 +982,7 @@ def _build_bridge_config(
     )
     return BridgeConfig(
         rig_name=args.rig_name,
+        rig_id=args.rig_id,
         sparkplug_group_id=args.sparkplug_group_id,
         sparkplug_edge_node_id=resolved_edge_node_id,
         iot_endpoint=aws_runtime.iot_data_endpoint(),

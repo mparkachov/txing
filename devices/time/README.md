@@ -2,35 +2,39 @@
 
 `time` is a software-only txing device type. Its device runtime is an AWS Lambda
 invoked by EventBridge and AWS IoT MQTT topics. It is compatible with rigs whose
-IoT registry `rigType` attribute is `aws`.
+IoT registry `rigType` attribute is `cloud`.
 
 The Lambda stores its small active/sleep bookkeeping state in the `time` named
 shadow for the device thing.
 
 Rig enrollment and Greengrass deployment are not owned by this device package.
-Configure the normal `config/aws.env` rig identity, for example:
+The shared AWS deployment syncs the hardcoded SSM type catalog at `/txing`, then
+AWS IoT thing IDs identify concrete instances:
 
 ```sh
-TXING_RIG_NAME=aws
-RIG_NAME=aws
-TXING_RIG_TYPE=aws
-SPARKPLUG_EDGE_NODE_ID=aws
+just aws::deploy
+just aws::town-deploy town
+just aws::rig-deploy <town-id> cloud aws
 ```
 
 Then use the normal rig path:
 
 ```sh
-just aws::rig-deploy
-just rig::install-service
-just rig::deploy
+just rig::install-service <rig-id>
+just rig::deploy <rig-id>
 ```
 
-Device enrollment is still device-specific. Set `TXING_DEVICE_TYPE=time` and
-`TXING_DEVICE_NAME=clock`, then run `just aws::device-deploy`. Enrollment checks
-the `time` manifest compatibility against the target rig's `rigType`.
+Device enrollment is still device-specific:
+
+```sh
+just aws::device-deploy <rig-id> time clock
+```
+
+Enrollment checks the `/txing/town/cloud/time` compatibility record before
+creating the device thing.
 
 The Lambda runtime is deployed separately with:
 
 ```sh
-just time::deploy-lambda
+just time::deploy-lambda <thing-id>
 ```

@@ -54,9 +54,9 @@ just unit::board::run
 just web::dev
 just web::write-env
 just aws::deploy
-just aws::town-deploy
-just aws::rig-deploy
-just aws::device-deploy
+just aws::town-deploy town
+just aws::rig-deploy <town-id> raspi server
+just aws::device-deploy <rig-id> unit bot
 just aws::shadow <thing>
 just aws::shadow-reset <thing>
 ```
@@ -71,7 +71,7 @@ Root modules:
 
 ## Current Named Shadows
 
-Named shadows are selected from `attributes.capabilitiesSet`.
+Named shadows are selected from `attributes.capabilities`.
 
 Current capabilities:
 
@@ -90,7 +90,7 @@ just aws::shadow-reset <thing>
 just aws::shadow-reset <thing> mcp
 ```
 
-`aws::shadow-reset` deletes the classic unnamed shadow, removes known named shadows that are not valid for the thing's current `capabilitiesSet`, and reseeds device named shadows from the default payloads declared in `devices/<type>/manifest.toml`.
+`aws::shadow-reset` deletes the classic unnamed shadow, removes known named shadows that are not valid for the thing's current `capabilities`, and reseeds device named shadows from the default payloads declared in `devices/<type>/manifest.toml`.
 
 ## Common Development Loops
 
@@ -104,7 +104,7 @@ just unit::mcu::build
 Rig:
 
 ```bash
-just rig::check
+just rig::check <rig-id>
 just rig::build
 just rig::debug
 ```

@@ -27,11 +27,12 @@ class FakeIotClient:
                 "thingName": "unit-bbbbbb",
                 "thingTypeName": "unit",
                 "attributes": {
-                    "town": "berlin",
-                    "rig": "rig-a",
+                    "townId": "town-berlin",
+                    "rigId": "rig-rig001",
+                    "deviceType": "unit",
                     "name": "bot",
                     "shortId": "bbbbbb",
-                    "capabilitiesSet": "sparkplug,mcu,board,mcp,video",
+                    "capabilities": "sparkplug,mcu,board,mcp,video",
                 },
                 "version": 3,
             },
@@ -39,11 +40,12 @@ class FakeIotClient:
                 "thingName": "unit-aaaaaa",
                 "thingTypeName": "unit",
                 "attributes": {
-                    "town": "berlin",
-                    "rig": "rig-a",
+                    "townId": "town-berlin",
+                    "rigId": "rig-rig001",
+                    "deviceType": "unit",
                     "name": "bot",
                     "shortId": "aaaaaa",
-                    "capabilitiesSet": "sparkplug,mcu,board,mcp,video",
+                    "capabilities": "sparkplug,mcu,board,mcp,video",
                 },
                 "version": 5,
             },
@@ -51,10 +53,10 @@ class FakeIotClient:
                 "thingName": "rig-only",
                 "thingTypeName": "unit",
                 "attributes": {
-                    "town": "berlin",
+                    "townId": "town-berlin",
                     "name": "bot",
                     "shortId": "rigonly",
-                    "capabilitiesSet": "sparkplug,mcu,board,mcp,video",
+                    "capabilities": "sparkplug,mcu,board,mcp,video",
                 },
                 "version": 1,
             },
@@ -62,11 +64,12 @@ class FakeIotClient:
                 "thingName": "unit-other",
                 "thingTypeName": "unit",
                 "attributes": {
-                    "town": "berlin",
-                    "rig": "rig-b",
+                    "townId": "town-berlin",
+                    "rigId": "rig-other",
+                    "deviceType": "unit",
                     "name": "bot",
                     "shortId": "other01",
-                    "capabilitiesSet": "sparkplug,mcu,board,mcp,video",
+                    "capabilities": "sparkplug,mcu,board,mcp,video",
                 },
                 "version": 2,
             },
@@ -74,10 +77,11 @@ class FakeIotClient:
                 "thingName": "rig-rig001",
                 "thingTypeName": "rig",
                 "attributes": {
-                    "town": "berlin",
                     "name": "rig-a",
                     "shortId": "rig001",
-                    "capabilitiesSet": "sparkplug",
+                    "townId": "town-berlin",
+                    "rigType": "raspi",
+                    "capabilities": "sparkplug",
                 },
                 "version": 4,
             },
@@ -93,7 +97,7 @@ class FakeIotClient:
         self.list_group_requests.append(kwargs)
         group_name = kwargs["thingGroupName"]
         assert isinstance(group_name, str)
-        if group_name == "berlin":
+        if group_name == "town-berlin":
             return {"things": ["rig-rig001", "unit-other"]}
         if "nextToken" not in kwargs:
             return {
@@ -128,7 +132,7 @@ class ThingRegistryTests(unittest.TestCase):
         client = FakeIotClient()
         registry = AwsThingRegistryClient(client)
 
-        registrations = registry.list_rig_things("rig-a")
+        registrations = registry.list_rig_things("rig-rig001")
 
         self.assertEqual(
             registrations,
@@ -139,8 +143,10 @@ class ThingRegistryTests(unittest.TestCase):
                     name="bot",
                     short_id="aaaaaa",
                     capabilities_set=("sparkplug", "mcu", "board", "mcp", "video"),
-                    town_name="berlin",
-                    rig_name="rig-a",
+                    town_name="town-berlin",
+                    rig_name="rig-rig001",
+                    town_id="town-berlin",
+                    rig_id="rig-rig001",
                     version=5,
                 ),
                 DeviceRegistration(
@@ -149,19 +155,21 @@ class ThingRegistryTests(unittest.TestCase):
                     name="bot",
                     short_id="bbbbbb",
                     capabilities_set=("sparkplug", "mcu", "board", "mcp", "video"),
-                    town_name="berlin",
-                    rig_name="rig-a",
+                    town_name="town-berlin",
+                    rig_name="rig-rig001",
+                    town_id="town-berlin",
+                    rig_id="rig-rig001",
                     version=3,
                 ),
             ],
         )
-        self.assertEqual(client.describe_group_requests, ["rig-a"])
+        self.assertEqual(client.describe_group_requests, ["rig-rig001"])
         self.assertEqual(
             client.list_group_requests,
             [
-                {"thingGroupName": "rig-a", "maxResults": 100},
+                {"thingGroupName": "rig-rig001", "maxResults": 100},
                 {
-                    "thingGroupName": "rig-a",
+                    "thingGroupName": "rig-rig001",
                     "maxResults": 100,
                     "nextToken": "page-2",
                 },
@@ -180,28 +188,27 @@ class ThingRegistryTests(unittest.TestCase):
         with self.assertRaises(ThingGroupNotFoundError):
             registry.list_rig_things("rig-missing")
 
-    def test_describe_thing_requires_rig_attribute(self) -> None:
+    def test_describe_thing_requires_rig_id_attribute(self) -> None:
         client = FakeIotClient()
         registry = AwsThingRegistryClient(client)
 
-        with self.assertRaisesRegex(RuntimeError, "missing required IoT registry attribute 'rig'"):
+        with self.assertRaisesRegex(RuntimeError, "missing required IoT registry attribute 'rigId'"):
             registry.describe_thing("rig-only")
 
-    def test_describe_rig_in_town_returns_matching_rig_thing(self) -> None:
+    def test_describe_rig_returns_matching_rig_thing(self) -> None:
         client = FakeIotClient()
         registry = AwsThingRegistryClient(client)
 
-        registration = registry.describe_rig_in_town(
-            town_name="berlin",
-            rig_name="rig-a",
-        )
+        registration = registry.describe_rig("rig-rig001")
 
         self.assertEqual(registration.thing_name, "rig-rig001")
         self.assertEqual(registration.thing_type, "rig")
         self.assertEqual(registration.name, "rig-a")
         self.assertEqual(registration.short_id, "rig001")
-        self.assertEqual(registration.town_name, "berlin")
+        self.assertEqual(registration.town_name, "town-berlin")
         self.assertEqual(registration.rig_name, "rig-a")
+        self.assertEqual(registration.town_id, "town-berlin")
+        self.assertEqual(registration.rig_id, "rig-rig001")
         self.assertEqual(registration.capabilities_set, ("sparkplug",))
 
 

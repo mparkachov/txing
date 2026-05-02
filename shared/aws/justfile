@@ -21,7 +21,7 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
     set -euo pipefail
     cd "{{aws_dir}}"
     source "{{aws_lib}}"
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}" "{{stack_name}}" "{{CognitoDomainPrefix}}" "{{AdminEmail}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{region}}" "{{profile}}" "{{stack_name}}" "{{CognitoDomainPrefix}}" "{{AdminEmail}}")"
     txing_aws_init
     deploy_template \
       "$AWS_STACK_NAME" \
@@ -32,65 +32,121 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
       "LocalhostAppUrl={{LocalhostAppUrl}}" \
       "LocalhostAltAppUrl={{LocalhostAltAppUrl}}"
     configure_indexing_and_wait
+    uv run --project "{{aws_dir}}/python" \
+      python -m aws.type_catalog \
+      --region "$AWS_REGION" \
+      sync
     describe_stack_outputs "$AWS_STACK_NAME"
 
-@town-deploy stack_name=stack_name template_file=town_template_file region=region profile=profile:
+@type-sync region=region profile=profile:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{aws_dir}}"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{region}}" "{{profile}}")"
+    uv run --project "{{aws_dir}}/python" \
+      python -m aws.type_catalog \
+      --region "$AWS_REGION" \
+      sync
+
+@type-list path='/txing' region=region profile=profile:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{aws_dir}}"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{region}}" "{{profile}}")"
+    uv run --project "{{aws_dir}}/python" \
+      python -m aws.type_catalog \
+      --region "$AWS_REGION" \
+      list "{{path}}"
+
+@type-describe path region=region profile=profile:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{aws_dir}}"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{region}}" "{{profile}}")"
+    uv run --project "{{aws_dir}}/python" \
+      python -m aws.type_catalog \
+      --region "$AWS_REGION" \
+      describe "{{path}}"
+
+@town-deploy town_name stack_name=stack_name template_file=town_template_file region=region profile=profile:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
     source "{{aws_lib}}"
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}" "{{stack_name}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{region}}" "{{profile}}" "{{stack_name}}")"
     txing_aws_init
+    town_name="{{town_name}}"
+    town_slug="$(printf '%s\n' "$town_name" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9-' '-' | sed 's/^-*//; s/-*$//')"
+    TXING_TOWN_STACK_NAME="${TXING_TOWN_STACK_NAME:-$AWS_STACK_NAME-$town_slug}"
     deploy_template \
       "$TXING_TOWN_STACK_NAME" \
       "{{template_file}}" \
       --parameter-overrides \
-      "TownName=$TXING_TOWN_NAME"
-    uv run --project "{{aws_dir}}/python" \
+      "TownName=$town_slug"
+    registration="$(
+      uv run --project "{{aws_dir}}/python" \
       python -m aws.device_registry \
       --region "$AWS_REGION" \
       ensure-town \
-      --town "$TXING_TOWN_NAME"
+        --town "$town_slug"
+    )"
+    jq -r '"town id: \(.thing_name)"' <<<"$registration"
+    jq '.' <<<"$registration"
     describe_stack_outputs "$TXING_TOWN_STACK_NAME"
 
-@rig-deploy stack_name=stack_name template_file=rig_template_file region=region profile=profile:
+@rig-deploy town_id rig_type rig_name stack_name=stack_name template_file=rig_template_file region=region profile=profile:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
     source "{{aws_lib}}"
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{profile}}" "{{stack_name}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{region}}" "{{profile}}" "{{stack_name}}")"
     txing_aws_init
+    town_id="{{town_id}}"
+    rig_type="{{rig_type}}"
+    rig_name="$(printf '%s\n' "{{rig_name}}" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9-' '-' | sed 's/^-*//; s/-*$//')"
+    TXING_RIG_STACK_NAME="${TXING_RIG_STACK_NAME:-$AWS_STACK_NAME-$town_id-$rig_name}"
     greengrass_artifacts_bucket_name="$(stack_output "$AWS_STACK_NAME" GreengrassArtifactsBucketName)"
     deploy_template \
       "$TXING_RIG_STACK_NAME" \
       "{{template_file}}" \
       --parameter-overrides \
       "GreengrassArtifactsBucketName=$greengrass_artifacts_bucket_name"
-    uv run --project "{{aws_dir}}/python" \
+    registration="$(
+      uv run --project "{{aws_dir}}/python" \
       python -m aws.device_registry \
       --region "$AWS_REGION" \
       ensure-rig \
-      --town "$TXING_TOWN_NAME" \
-      --rig "$TXING_RIG_NAME" \
-      --rig-type "$TXING_RIG_TYPE"
+        --town-id "$town_id" \
+        --rig-type "$rig_type" \
+        --rig "$rig_name"
+    )"
+    jq -r '"rig id: \(.thing_name)"' <<<"$registration"
+    jq '.' <<<"$registration"
     describe_stack_outputs "$TXING_RIG_STACK_NAME"
 
-@device-deploy stack_name=stack_name template_file=device_template_file region=region profile=profile:
+@device-deploy rig_id device_type device_name stack_name=stack_name template_file=device_template_file region=region profile=profile:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
     source "{{aws_lib}}"
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "{{profile}}" "{{stack_name}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{region}}" "{{profile}}" "{{stack_name}}")"
     txing_aws_init
+    rig_id="{{rig_id}}"
+    device_type="{{device_type}}"
+    device_name="$(printf '%s\n' "{{device_name}}" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9-' '-' | sed 's/^-*//; s/-*$//')"
+    TXING_DEVICE_STACK_NAME="${TXING_DEVICE_STACK_NAME:-$AWS_STACK_NAME-$rig_id-$device_name}"
     deploy_template "$TXING_DEVICE_STACK_NAME" "{{template_file}}"
-    uv run --project "{{aws_dir}}/python" \
+    registration="$(
+      uv run --project "{{aws_dir}}/python" \
       python -m aws.device_registry \
       --region "$AWS_REGION" \
       ensure-device \
-      --town "$TXING_TOWN_NAME" \
-      --rig "$TXING_RIG_NAME" \
-      --device-type "$TXING_DEVICE_TYPE" \
-      --device-name "$TXING_DEVICE_NAME"
+        --rig-id "$rig_id" \
+        --device-type "$device_type" \
+        --device-name "$device_name"
+    )"
+    jq -r '"device id: \(.thing_name)"' <<<"$registration"
+    jq '.' <<<"$registration"
     describe_stack_outputs "$TXING_DEVICE_STACK_NAME"
 
 @configure-indexing region=region profile=profile:
@@ -98,7 +154,7 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
     set -euo pipefail
     cd "{{aws_dir}}"
     source "{{aws_lib}}"
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{region}}" "{{profile}}")"
     txing_aws_init
     configure_indexing_and_wait
 
@@ -107,7 +163,7 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
     set -euo pipefail
     cd "{{aws_dir}}"
     source "{{aws_lib}}"
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}" "{{stack_name}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{region}}" "{{profile}}" "{{stack_name}}")"
     txing_aws_init
     artifact_bucket="$(ensure_artifact_bucket)"
     packaged_template="$(mktemp "${TMPDIR:-/tmp}/txing-cfn.XXXXXX.yaml")"
@@ -124,7 +180,7 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
     set -euo pipefail
     cd "{{aws_dir}}"
     source "{{aws_lib}}"
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}" "{{stack_name}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{region}}" "{{profile}}" "{{stack_name}}")"
     txing_aws_init
     describe_stack_outputs "$AWS_STACK_NAME"
 
@@ -133,7 +189,7 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
     set -euo pipefail
     cd "{{aws_dir}}"
     source "{{aws_lib}}"
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}" "{{stack_name}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{region}}" "{{profile}}" "{{stack_name}}")"
     txing_aws_init
     for stack in "$AWS_STACK_NAME" "$TXING_TOWN_STACK_NAME" "$TXING_RIG_STACK_NAME" "$TXING_DEVICE_STACK_NAME"; do
       echo "== $stack =="
@@ -145,7 +201,7 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
     set -euo pipefail
     cd "{{aws_dir}}"
     source "{{aws_lib}}"
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}" "{{stack_name}}" "" "{{AdminEmail}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{region}}" "{{profile}}" "{{stack_name}}" "" "{{AdminEmail}}")"
     txing_aws_init
     user_pool_id="$(stack_output "$AWS_STACK_NAME" WebCognitoUserPoolId)"
     if aws cognito-idp admin-get-user \
@@ -170,11 +226,14 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
       "${aws_flags[@]}" >/dev/null
     echo "Admin user password set."
 
-@check thing_name='' rig_name='' log_group_name='' region=region profile=profile:
+@check rig_id='' thing_id='' log_group_name='' region=region profile=profile:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
     source "{{aws_lib}}"
+    if [ -n "{{rig_id}}" ]; then
+      export TXING_RIG_ID="{{rig_id}}"
+    fi
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{profile}}")"
     txing_aws_init
     failures=0
@@ -186,12 +245,17 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
         failures=$((failures + 1))
       fi
     done
-    if ! uv run --project "{{aws_dir}}/python" python -m aws.check --scope rig --rig-name "${rig_name:-$RIG_NAME}" --log-group-name "${log_group_name:-$CLOUDWATCH_LOG_GROUP}"; then
+    if ! uv run --project "{{aws_dir}}/python" python -m aws.check --scope rig --rig-id "$TXING_RIG_ID" --log-group-name "${log_group_name:-$CLOUDWATCH_LOG_GROUP}"; then
       failures=$((failures + 1))
     fi
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "{{profile}}")"
-    if ! uv run --project "{{aws_dir}}/python" python -m aws.check --scope device --thing-name "${thing_name:-$THING_NAME}"; then
-      failures=$((failures + 1))
+    if [ -n "{{thing_id}}" ] || [ -n "${TXING_THING_ID:-}" ]; then
+      if [ -n "{{thing_id}}" ]; then
+        export TXING_THING_ID="{{thing_id}}"
+      fi
+      eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "{{profile}}")"
+      if ! uv run --project "{{aws_dir}}/python" python -m aws.check --scope device --thing-name "$THING_NAME"; then
+        failures=$((failures + 1))
+      fi
     fi
     thing_indexing_mode="$(aws iot get-indexing-configuration "${aws_flags[@]}" --query "thingIndexingConfiguration.thingIndexingMode" --output text 2>/dev/null || true)"
     thing_connectivity_indexing_mode="$(aws iot get-indexing-configuration "${aws_flags[@]}" --query "thingIndexingConfiguration.thingConnectivityIndexingMode" --output text 2>/dev/null || true)"
@@ -207,17 +271,19 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
     fi
     echo "AWS check passed."
 
-@things-for-rig rig_name='' region=region profile=profile:
+@things-for-rig rig_id='' region=region profile=profile:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
     source "{{aws_lib}}"
+    if [ -n "{{rig_id}}" ]; then
+      export TXING_RIG_ID="{{rig_id}}"
+    fi
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{profile}}")"
     txing_aws_init
-    effective_rig_name="${rig_name:-$RIG_NAME}"
     thing_names="$(
       aws iot list-things-in-thing-group \
-        --thing-group-name "$effective_rig_name" \
+        --thing-group-name "$TXING_RIG_ID" \
         "${aws_flags[@]}" \
         --query "things" \
         --output text
@@ -238,9 +304,10 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
             thingType: ($thing.thingTypeName // null),
             name: ($thing.attributes.name // null),
             shortId: ($thing.attributes.shortId // null),
-            capabilitiesSet: ($thing.attributes.capabilitiesSet // null),
-            town: ($thing.attributes.town // null),
-            rig: ($thing.attributes.rig // null)
+            capabilities: ($thing.attributes.capabilities // null),
+            townId: ($thing.attributes.townId // null),
+            rigId: ($thing.attributes.rigId // null),
+            deviceType: ($thing.attributes.deviceType // null)
           }]'
       )"
     done
@@ -251,6 +318,9 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
     set -euo pipefail
     cd "{{aws_dir}}"
     source "{{aws_lib}}"
+    if [ -n "{{thing_name}}" ]; then
+      export TXING_THING_ID="{{thing_name}}"
+    fi
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "{{profile}}")"
     txing_aws_init
     effective_thing_name="${thing_name:-$THING_NAME}"
@@ -265,7 +335,7 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
       exit 0
     fi
     thing_json="$(aws iot describe-thing --thing-name "$effective_thing_name" "${aws_flags[@]}" --output json)"
-    capabilities_set="$(jq -r '.attributes.capabilitiesSet // empty' <<<"$thing_json")"
+    capabilities_set="$(jq -r '.attributes.capabilities // empty' <<<"$thing_json")"
     result="{}"
     while IFS= read -r current_shadow_name; do
       [ -n "$current_shadow_name" ] || continue
@@ -290,6 +360,9 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
     set -euo pipefail
     cd "{{aws_dir}}"
     source "{{aws_lib}}"
+    if [ -n "{{thing_name}}" ]; then
+      export TXING_THING_ID="{{thing_name}}"
+    fi
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "{{profile}}")"
     txing_aws_init
     effective_thing_name="${thing_name:-$THING_NAME}"
@@ -305,18 +378,21 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
           jq -n '{state: {reported: {payload: {metrics: {redcon: 1}}}}}' >"$payload_file"
           ;;
         rig:sparkplug)
+          town_json="$(aws iot describe-thing --thing-name "$(jq -r '.attributes.townId' <<<"$thing_json")" "${aws_flags[@]}" --output json)"
           jq \
             -n \
-            --arg groupId "$(jq -r '.attributes.town' <<<"$thing_json")" \
+            --arg groupId "$(jq -r '.attributes.name' <<<"$town_json")" \
             --arg edgeNodeId "$(jq -r '.attributes.name' <<<"$thing_json")" \
             '{state: {reported: {topic: {namespace: "spBv1.0", groupId: $groupId, messageType: "NDEATH", edgeNodeId: $edgeNodeId}, payload: {metrics: {redcon: 4}}}}}' \
             >"$payload_file"
           ;;
         *:sparkplug)
+          rig_json="$(aws iot describe-thing --thing-name "$(jq -r '.attributes.rigId' <<<"$thing_json")" "${aws_flags[@]}" --output json)"
+          town_json="$(aws iot describe-thing --thing-name "$(jq -r '.attributes.townId' <<<"$thing_json")" "${aws_flags[@]}" --output json)"
           jq \
             -n \
-            --arg groupId "$(jq -r '.attributes.town' <<<"$thing_json")" \
-            --arg edgeNodeId "$(jq -r '.attributes.rig' <<<"$thing_json")" \
+            --arg groupId "$(jq -r '.attributes.name' <<<"$town_json")" \
+            --arg edgeNodeId "$(jq -r '.attributes.name' <<<"$rig_json")" \
             --arg deviceId "$(jq -r '.thingName' <<<"$thing_json")" \
             '{state: {reported: {topic: {namespace: "spBv1.0", groupId: $groupId, messageType: "DDEATH", edgeNodeId: $edgeNodeId, deviceId: $deviceId}, payload: {metrics: {}}}}}' \
             >"$payload_file"
@@ -349,14 +425,17 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
       "${aws_flags[@]}" \
       /dev/stdout | jq '.'
 
-@cert:
+@cert rig_id='':
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
     source "{{aws_lib}}"
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env town)"
+    if [ -n "{{rig_id}}" ]; then
+      export TXING_RIG_ID="{{rig_id}}"
+    fi
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig)"
     txing_aws_init
-    effective_thing_name="$(resolve_rig_thing_name)"
+    effective_thing_name="$TXING_RIG_ID"
     effective_policy_name="$(stack_output "$AWS_STACK_NAME" PolicyName)"
     cert_dir="{{project_root}}/config/certs/rig"
     cert_path="$cert_dir/rig.cert.pem"
@@ -402,6 +481,9 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
     set -euo pipefail
     cd "{{aws_dir}}"
     source "{{aws_lib}}"
+    if [ -n "{{thing_name}}" ]; then
+      export TXING_THING_ID="{{thing_name}}"
+    fi
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "{{profile}}")"
     txing_aws_init
     effective_thing_name="${thing_name:-$THING_NAME}"
@@ -417,18 +499,21 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
           jq -n '{state: {reported: {payload: {metrics: {redcon: 1}}}}}' >"$payload_file"
           ;;
         rig:sparkplug)
+          town_json="$(aws iot describe-thing --thing-name "$(jq -r '.attributes.townId' <<<"$thing_json")" "${aws_flags[@]}" --output json)"
           jq \
             -n \
-            --arg groupId "$(jq -r '.attributes.town' <<<"$thing_json")" \
+            --arg groupId "$(jq -r '.attributes.name' <<<"$town_json")" \
             --arg edgeNodeId "$(jq -r '.attributes.name' <<<"$thing_json")" \
             '{state: {reported: {topic: {namespace: "spBv1.0", groupId: $groupId, messageType: "NDEATH", edgeNodeId: $edgeNodeId}, payload: {metrics: {redcon: 4}}}}}' \
             >"$payload_file"
           ;;
         *:sparkplug)
+          rig_json="$(aws iot describe-thing --thing-name "$(jq -r '.attributes.rigId' <<<"$thing_json")" "${aws_flags[@]}" --output json)"
+          town_json="$(aws iot describe-thing --thing-name "$(jq -r '.attributes.townId' <<<"$thing_json")" "${aws_flags[@]}" --output json)"
           jq \
             -n \
-            --arg groupId "$(jq -r '.attributes.town' <<<"$thing_json")" \
-            --arg edgeNodeId "$(jq -r '.attributes.rig' <<<"$thing_json")" \
+            --arg groupId "$(jq -r '.attributes.name' <<<"$town_json")" \
+            --arg edgeNodeId "$(jq -r '.attributes.name' <<<"$rig_json")" \
             --arg deviceId "$(jq -r '.thingName' <<<"$thing_json")" \
             '{state: {reported: {topic: {namespace: "spBv1.0", groupId: $groupId, messageType: "DDEATH", edgeNodeId: $edgeNodeId, deviceId: $deviceId}, payload: {metrics: {}}}}}' \
             >"$payload_file"
@@ -457,23 +542,16 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
       "${aws_flags[@]}" \
       "$response_target"
 
-@assign-device device_id='' town='' rig='' region=region profile=profile:
+@assign-device device_id rig_id region=region profile=profile:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
     source "{{aws_lib}}"
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{region}}" "{{profile}}")"
     txing_aws_init
-    effective_device_id="{{device_id}}"
-    if [ -z "$effective_device_id" ]; then
-      effective_device_id="$(resolve_device_thing_name)"
-    fi
-    effective_town="${town:-$TXING_TOWN_NAME}"
-    effective_rig="${rig:-$TXING_RIG_NAME}"
     uv run --project "{{aws_dir}}/python" \
       python -m aws.device_registry \
       --region "$AWS_REGION" \
       assign-device \
-      --device-id "$effective_device_id" \
-      --town "$effective_town" \
-      --rig "$effective_rig"
+      --device-id "{{device_id}}" \
+      --rig-id "{{rig_id}}"

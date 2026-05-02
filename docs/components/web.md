@@ -28,7 +28,7 @@ The video route is derived from the selected route and web origin. It is not sto
 - board control: MCP over MQTT/WSS, with WebRTC data-channel preference when advertised
 - board video: AWS KVS WebRTC
 
-The app expects `capabilitiesSet` to include `sparkplug` and uses it to decide which named shadows should exist for a selected thing.
+The app expects `capabilities` to include `sparkplug` and uses it to decide which named shadows should exist for a selected thing.
 
 ## Local Development
 

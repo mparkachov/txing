@@ -7,7 +7,8 @@ ComponentPublisher: txing
 ComponentConfiguration:
   DefaultConfiguration:
     AdapterId: ble-main
-    RigName: rig
+    RigId: REPLACE_WITH_RIG_THING_ID
+    TownId: REPLACE_WITH_TOWN_THING_ID
     NameFragment: txing
     accessControl:
       aws.greengrass.ipc.pubsub:
@@ -27,10 +28,12 @@ Manifests:
       run:
         RequiresPrivilege: true
         Script: |-
-          export RIG_NAME="{configuration:/RigName}"
-          export THING_NAME="${THING_NAME:-unit-local}"
-          export SPARKPLUG_GROUP_ID="${SPARKPLUG_GROUP_ID:-town}"
-          export SPARKPLUG_EDGE_NODE_ID="${SPARKPLUG_EDGE_NODE_ID:-rig}"
+          export RIG_NAME="{configuration:/RigId}"
+          export RIG_ID="{configuration:/RigId}"
+          export TXING_RIG_ID="{configuration:/RigId}"
+          export TXING_TOWN_ID="{configuration:/TownId}"
+          export SPARKPLUG_GROUP_ID="{configuration:/TownId}"
+          export SPARKPLUG_EDGE_NODE_ID="{configuration:/RigId}"
           export TXING_DEVICE_TYPE="unit"
           export TXING_DEVICE_DIR="{artifacts:decompressedPath}/rig-greengrass/devices/unit"
           export TXING_DEVICE_MANIFEST="{artifacts:decompressedPath}/rig-greengrass/devices/unit/manifest.toml"

@@ -2,7 +2,7 @@ type = "time"
 device_name = "clock"
 display_name = "Time"
 capabilities = ["sparkplug", "mcp", "time"]
-compatible_rig_types = ["aws"]
+compatible_rig_types = ["cloud"]
 
 [shadows.sparkplug]
 schema = "aws/sparkplug-shadow.schema.json"

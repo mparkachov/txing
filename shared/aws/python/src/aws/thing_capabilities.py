@@ -7,7 +7,7 @@ from typing import Any
 from .device_catalog import discover_repo_root, list_loadable_device_types, load_device_manifest
 
 
-CAPABILITIES_ATTRIBUTE = "capabilitiesSet"
+CAPABILITIES_ATTRIBUTE = "capabilities"
 CAPABILITY_DEFINITION_FILE = Path("shared/aws/thing-type-capabilities.json")
 class ThingCapabilitiesError(RuntimeError):
     pass

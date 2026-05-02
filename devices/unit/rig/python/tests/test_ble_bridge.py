@@ -237,8 +237,7 @@ class CloudWatchLogGroupResolutionTests(unittest.TestCase):
             _resolve_cloudwatch_log_group_name(
                 aws_runtime=object(),  # type: ignore[arg-type]
                 configured_log_group="custom/group",
-                sparkplug_group_id="town",
-                rig_name="rig",
+                rig_id="rig-rig001",
             ),
             "custom/group",
         )
@@ -248,17 +247,15 @@ class CloudWatchLogGroupResolutionTests(unittest.TestCase):
             def __init__(self, _runtime: object) -> None:
                 pass
 
-            def describe_town_by_name(self, town_name: str) -> object:
+            def describe_thing(self, thing_name: str) -> object:
+                if thing_name == "rig-rig001":
+                    return types.SimpleNamespace(
+                        thing_name="rig-rig001",
+                        town_id="town-3xvtqf",
+                    )
                 return types.SimpleNamespace(
                     thing_name="town-3xvtqf",
-                    name=town_name,
-                )
-
-            def describe_rig_by_name(self, *, town_name: str, rig_name: str) -> object:
-                return types.SimpleNamespace(
-                    thing_name="rig-rig001",
-                    town_name=town_name,
-                    name=rig_name,
+                    name="town",
                 )
 
         with patch("unit_rig.ble_bridge.AwsDeviceRegistry", FakeRegistry):
@@ -266,8 +263,7 @@ class CloudWatchLogGroupResolutionTests(unittest.TestCase):
                 _resolve_cloudwatch_log_group_name(
                     aws_runtime=object(),  # type: ignore[arg-type]
                     configured_log_group="",
-                    sparkplug_group_id="town",
-                    rig_name="rig",
+                    rig_id="rig-rig001",
                 ),
                 "txing/town-3xvtqf/rig-rig001",
             )
@@ -681,8 +677,9 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertIn("config/certs/rig/rig.cert.pem", justfile)
         self.assertIn("config/certs/rig/rig.private.key", justfile)
         self.assertIn("Run 'just aws::cert' before 'just rig::install-service'", justfile)
-        self.assertIn("aws iot search-index", justfile)
-        self.assertIn("thingTypeName:rig AND attributes.name:${rig_name}", justfile)
+        self.assertIn('rig_thing_name="$TXING_RIG_ID"', justfile)
+        self.assertIn('export TXING_RIG_ID="$TXING_RIG_ID"', justfile)
+        self.assertIn('--query-string "attributes.rigId:${TXING_RIG_ID}"', justfile)
         self.assertIn("aws iot describe-endpoint --endpoint-type iot:Data-ATS", justfile)
         self.assertIn("aws iot describe-endpoint --endpoint-type iot:CredentialProvider", justfile)
         self.assertIn("GreengrassTokenExchangeRoleAlias", justfile)
@@ -733,8 +730,8 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertIn('[ -n "{{sparkplug_edge_node_id}}" ]', justfile)
         self.assertNotIn('WorkingDirectory=$project_root', justfile)
         self.assertNotIn('ExecStart={{built_rig}}', justfile)
-        self.assertIn("@start:", justfile)
-        self.assertIn("@stop:", justfile)
+        self.assertIn("@start rig_id='':", justfile)
+        self.assertIn("@stop rig_id='':", justfile)
         self.assertIn("@restart: stop start", justfile)
         self.assertNotIn('sudo systemctl restart bluetooth', justfile)
         self.assertIn('check_enabled_active_service bluetooth.service', justfile)
@@ -758,7 +755,7 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertIn('sudo systemctl stop "{{greengrass_lite_target}}"', justfile)
         self.assertIn('sudo systemctl start "{{greengrass_lite_target}}"', justfile)
         self.assertIn('sudo systemctl start "$unit" || true', justfile)
-        self.assertIn("@log lines='200' follow='true':", justfile)
+        self.assertIn("@log rig_id='' lines='200' follow='true':", justfile)
         self.assertIn('printf \'showing rig logs for RIG_TYPE=%s units:\\n\' "$selected_rig_type"', justfile)
         self.assertIn('sudo journalctl "${journal_flags[@]}" "${journal_unit_args[@]}"', justfile)
         self.assertIn("inspect rig logs with: just rig::log", justfile)
@@ -862,7 +859,8 @@ class AwsShadowClientTests(unittest.TestCase):
             encoding="utf-8"
         )
 
-        self.assertIn("_project-aws-env scope='rig'", justfile)
+        self.assertIn("_project-aws-env scope='aws'", justfile)
+        self.assertIn("aws|town|rig|device", justfile)
         self.assertIn('env_file="$(resolve_path "$(choose_value "{{env_file}}" "config/aws.env")")"', justfile)
         self.assertIn('source "$env_file"', justfile)
         self.assertIn('printf \'unset RIG_ENV_FILE\\n\'', justfile)
@@ -894,7 +892,7 @@ class RigServiceStartupRetryTests(unittest.TestCase):
         asyncio.run(self._exercise_retries_transient_startup_failure())
 
     async def _exercise_retries_transient_startup_failure(self) -> None:
-        config = BridgeConfig(reconnect_delay=2.5)
+        config = BridgeConfig(reconnect_delay=2.5, rig_id="rig-rig001")
         sleep_calls: list[float] = []
         cloud_shadows: list[FakeAwsShadowClient] = []
         fleet_bridges: list[FakeRigFleetBridge] = []
@@ -926,16 +924,11 @@ class RigServiceStartupRetryTests(unittest.TestCase):
             def __init__(self, _iot_client: object) -> None:
                 pass
 
-            def describe_rig_in_town(
-                self,
-                *,
-                town_name: str,
-                rig_name: str,
-            ) -> object:
+            def describe_rig(self, rig_id: str) -> object:
                 return types.SimpleNamespace(
-                    thing_name="rig-rig001",
-                    town_name=town_name,
-                    rig_name=rig_name,
+                    thing_name=rig_id,
+                    town_name="town-berlin",
+                    rig_name="server",
                 )
 
             def list_rig_things(self, _rig_name: str) -> list[object]:

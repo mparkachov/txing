@@ -10,9 +10,8 @@ ComponentDependencies:
     DependencyType: HARD
 ComponentConfiguration:
   DefaultConfiguration:
-    RigName: rig
-    SparkplugGroupId: town
-    SparkplugEdgeNodeId: rig
+    RigId: REPLACE_WITH_RIG_THING_ID
+    TownId: REPLACE_WITH_TOWN_THING_ID
     accessControl:
       aws.greengrass.ipc.pubsub:
         dev.txing.device.unit.SparkplugManager:pubsub:1:
@@ -30,9 +29,12 @@ Manifests:
     Lifecycle:
       run:
         Script: |-
-          export RIG_NAME="{configuration:/RigName}"
-          export SPARKPLUG_GROUP_ID="{configuration:/SparkplugGroupId}"
-          export SPARKPLUG_EDGE_NODE_ID="{configuration:/SparkplugEdgeNodeId}"
+          export RIG_NAME="{configuration:/RigId}"
+          export RIG_ID="{configuration:/RigId}"
+          export TXING_RIG_ID="{configuration:/RigId}"
+          export TXING_TOWN_ID="{configuration:/TownId}"
+          export SPARKPLUG_GROUP_ID="{configuration:/TownId}"
+          export SPARKPLUG_EDGE_NODE_ID="{configuration:/RigId}"
           export TXING_DEVICE_TYPE="unit"
           export TXING_DEVICE_DIR="{artifacts:decompressedPath}/rig-greengrass/devices/unit"
           export TXING_DEVICE_MANIFEST="{artifacts:decompressedPath}/rig-greengrass/devices/unit/manifest.toml"

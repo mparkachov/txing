@@ -176,8 +176,8 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         justfile = (AWS_DIR / "justfile").read_text(encoding="utf-8")
         gitignore = (REPO_ROOT / ".gitignore").read_text(encoding="utf-8")
 
-        self.assertIn("@cert:", justfile)
-        self.assertIn("effective_thing_name=\"$(resolve_rig_thing_name)\"", justfile)
+        self.assertIn("@cert rig_id='':", justfile)
+        self.assertIn('effective_thing_name="$TXING_RIG_ID"', justfile)
         self.assertIn('cert_dir="{{project_root}}/config/certs/rig"', justfile)
         self.assertIn('root_ca_path="$cert_dir/AmazonRootCA1.pem"', justfile)
         self.assertIn("https://www.amazontrust.com/repository/AmazonRootCA1.pem", justfile)

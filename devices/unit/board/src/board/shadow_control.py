@@ -1150,15 +1150,15 @@ def _describe_sparkplug_assignment(
         raise RuntimeError(
             f"Thing {thing_name!r} returned invalid IoT registry attributes"
         )
-    town_name = normalize_registry_text(attributes.get("town"))
-    rig_name = normalize_registry_text(attributes.get("rig"))
+    town_name = normalize_registry_text(attributes.get("townId"))
+    rig_name = normalize_registry_text(attributes.get("rigId"))
     if town_name is None:
         raise RuntimeError(
-            f"Thing {thing_name!r} is missing required IoT registry attribute 'town'"
+            f"Thing {thing_name!r} is missing required IoT registry attribute 'townId'"
         )
     if rig_name is None:
         raise RuntimeError(
-            f"Thing {thing_name!r} is missing required IoT registry attribute 'rig'"
+            f"Thing {thing_name!r} is missing required IoT registry attribute 'rigId'"
         )
     capabilities_set = parse_capabilities_set(
         attributes.get(CAPABILITIES_ATTRIBUTE),
@@ -1166,7 +1166,7 @@ def _describe_sparkplug_assignment(
     )
     if BOARD_SHADOW_NAME not in capabilities_set:
         raise RuntimeError(
-            f"Thing {thing_name!r} capabilitiesSet does not include 'board'"
+            f"Thing {thing_name!r} capabilities does not include 'board'"
         )
     return SparkplugAssignment(
         town_name=town_name,

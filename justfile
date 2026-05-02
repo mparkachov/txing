@@ -1,14 +1,14 @@
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
-set quiet := true
+set quiet
 
 root_dir := source_directory()
 
 [private]
-_project-aws-env scope='rig' region='' profile='' stack_name='' cognito_domain_prefix='' admin_email='' aws_shared_credentials_file='' env_file='':
+_project-aws-env scope='aws' region='' profile='' stack_name='' cognito_domain_prefix='' admin_email='' aws_shared_credentials_file='' env_file='':
     #!/usr/bin/env bash
     set -euo pipefail
 
-    project_root="{{root_dir}}"
+    project_root="{{ root_dir }}"
 
     resolve_path() {
       local candidate="$1"
@@ -37,7 +37,7 @@ _project-aws-env scope='rig' region='' profile='' stack_name='' cognito_domain_p
       printf 'export %s=%q\n' "$name" "$value"
     }
 
-    env_file="$(resolve_path "$(choose_value "{{env_file}}" "config/aws.env")")"
+    env_file="$(resolve_path "$(choose_value "{{ env_file }}" "config/aws.env")")"
     if [ -f "$env_file" ]; then
       # shellcheck disable=SC1090
       source "$env_file"
@@ -51,16 +51,22 @@ _project-aws-env scope='rig' region='' profile='' stack_name='' cognito_domain_p
         | sed 's/^-*//; s/-*$//'
     }
 
+    require_value() {
+      local label="$1"
+      local value="$2"
+      if [ -z "$value" ]; then
+        echo "Missing required $label." >&2
+        exit 1
+      fi
+      printf '%s\n' "$value"
+    }
+
     normalize_required_slug() {
       local label="$1"
       local raw="$2"
       local normalized
       normalized="$(normalize_slug "$raw")"
-      if [ -z "$normalized" ]; then
-        echo "Missing required $label. Set it explicitly in config/aws.env." >&2
-        exit 1
-      fi
-      printf '%s\n' "$normalized"
+      require_value "$label" "$normalized"
     }
 
     normalize_optional_slug() {
@@ -71,63 +77,103 @@ _project-aws-env scope='rig' region='' profile='' stack_name='' cognito_domain_p
       normalize_slug "$raw"
     }
 
-    scope="{{scope}}"
+    scope="{{ scope }}"
     case "$scope" in
-      town|rig|device) ;;
+      aws|town|rig|device) ;;
       *)
-        echo "Unsupported AWS environment scope '$scope'. Supported scopes: town, rig, device." >&2
+        echo "Unsupported AWS environment scope '$scope'. Supported scopes: aws, town, rig, device." >&2
         exit 1
         ;;
     esac
 
-    aws_source_profile_default="${AWS_SOURCE_PROFILE:-${AWS_TOWN_PROFILE:-town}}"
-    aws_selected_profile_default="$aws_source_profile_default"
-
-    aws_region="$(choose_value "{{region}}" "${AWS_REGION:-eu-central-1}")"
-    aws_stack_name="$(choose_value "{{stack_name}}" "${AWS_STACK_NAME:-txing-iot}")"
-    aws_cognito_domain_prefix="$(choose_value "{{cognito_domain_prefix}}" "${AWS_COGNITO_DOMAIN_PREFIX:-txing-iot}")"
-    aws_admin_email="$(choose_value "{{admin_email}}" "${AWS_ADMIN_EMAIL:-admin@example.com}")"
-    aws_source_profile="$aws_source_profile_default"
+    aws_region="$(require_value AWS_REGION "$(choose_value "{{ region }}" "${AWS_REGION:-}")")"
+    aws_stack_name="$(choose_value "{{ stack_name }}" "${AWS_STACK_NAME:-txing-iot}")"
+    aws_cognito_domain_prefix="$(choose_value "{{ cognito_domain_prefix }}" "${AWS_COGNITO_DOMAIN_PREFIX:-txing-iot}")"
+    aws_admin_email="$(choose_value "{{ admin_email }}" "${AWS_ADMIN_EMAIL:-admin@example.com}")"
+    aws_source_profile="${AWS_SOURCE_PROFILE:-${AWS_TOWN_PROFILE:-${AWS_PROFILE:-}}}"
     aws_town_profile="$aws_source_profile"
-    aws_selected_profile="$(choose_value "{{profile}}" "$aws_selected_profile_default")"
-    aws_shared_credentials_file="$(resolve_path "$(choose_value "{{aws_shared_credentials_file}}" "${AWS_SHARED_CREDENTIALS_FILE:-config/aws.credentials}")")"
-    txing_town_name="$(normalize_required_slug TXING_TOWN_NAME "${TXING_TOWN_NAME:-${SPARKPLUG_GROUP_ID:-}}")"
-    case "$scope" in
-      rig|device)
-        txing_rig_name="$(normalize_required_slug TXING_RIG_NAME "${TXING_RIG_NAME:-${RIG_NAME:-}}")"
-        txing_rig_type="$(normalize_required_slug TXING_RIG_TYPE "${TXING_RIG_TYPE:-${RIG_TYPE:-}}")"
-        ;;
-      town)
-        txing_rig_name="$(normalize_optional_slug "${TXING_RIG_NAME:-${RIG_NAME:-}}")"
-        txing_rig_type="$(normalize_optional_slug "${TXING_RIG_TYPE:-${RIG_TYPE:-}}")"
-        ;;
-    esac
-    if [ "$scope" = "device" ]; then
-      txing_device_name="$(normalize_required_slug TXING_DEVICE_NAME "${TXING_DEVICE_NAME:-}")"
-      txing_device_type="$(normalize_required_slug TXING_DEVICE_TYPE "${TXING_DEVICE_TYPE:-}")"
-    else
-      txing_device_name="$(normalize_optional_slug "${TXING_DEVICE_NAME:-}")"
-      txing_device_type="$(normalize_optional_slug "${TXING_DEVICE_TYPE:-}")"
+    aws_selected_profile="$(choose_value "{{ profile }}" "${AWS_SELECTED_PROFILE:-$aws_source_profile}")"
+    aws_shared_credentials_file="$(resolve_path "$(choose_value "{{ aws_shared_credentials_file }}" "${AWS_SHARED_CREDENTIALS_FILE:-config/aws.credentials}")")"
+
+    aws_lookup_flags=(--region "$aws_region")
+    if [ -n "$aws_selected_profile" ]; then
+      aws_lookup_flags+=(--profile "$aws_selected_profile")
     fi
-    txing_town_stack_name="${TXING_TOWN_STACK_NAME:-${aws_stack_name}-${txing_town_name}}"
-    if [ -n "$txing_rig_name" ]; then
-      txing_rig_stack_name="${TXING_RIG_STACK_NAME:-${txing_town_stack_name}-${txing_rig_name}}"
-    else
-      txing_rig_stack_name="${TXING_RIG_STACK_NAME:-}"
+
+    describe_thing_json() {
+      local thing_id="$1"
+      AWS_SHARED_CREDENTIALS_FILE="$aws_shared_credentials_file" \
+      aws iot describe-thing \
+        --thing-name "$thing_id" \
+        "${aws_lookup_flags[@]}" \
+        --output json
+    }
+
+    jq_string() {
+      local json="$1"
+      local query="$2"
+      jq -r "$query // empty" <<<"$json"
+    }
+
+    txing_town_id="$(normalize_optional_slug "${TXING_TOWN_ID:-}")"
+    txing_rig_id="$(normalize_optional_slug "${TXING_RIG_ID:-}")"
+    txing_thing_id="$(normalize_optional_slug "${TXING_THING_ID:-}")"
+    txing_town_name=""
+    txing_rig_name=""
+    txing_rig_type=""
+    txing_device_name=""
+    txing_device_type=""
+
+    if [ "$scope" = "rig" ] || [ "$scope" = "device" ]; then
+      if [ "$scope" = "device" ]; then
+        txing_thing_id="$(normalize_required_slug TXING_THING_ID "$txing_thing_id")"
+        device_json="$(describe_thing_json "$txing_thing_id")"
+        txing_device_name="$(normalize_required_slug "device name" "$(jq_string "$device_json" '.attributes.name')")"
+        txing_device_type="$(normalize_required_slug "device type" "$(jq_string "$device_json" '.attributes.deviceType')")"
+        txing_rig_id="$(normalize_required_slug TXING_RIG_ID "$(jq_string "$device_json" '.attributes.rigId')")"
+        txing_town_id="$(normalize_required_slug TXING_TOWN_ID "$(jq_string "$device_json" '.attributes.townId')")"
+      else
+        txing_rig_id="$(normalize_required_slug TXING_RIG_ID "$txing_rig_id")"
+      fi
+
+      rig_json="$(describe_thing_json "$txing_rig_id")"
+      txing_rig_name="$(normalize_required_slug "rig name" "$(jq_string "$rig_json" '.attributes.name')")"
+      txing_rig_type="$(normalize_required_slug "rig type" "$(jq_string "$rig_json" '.attributes.rigType')")"
+      txing_town_id="$(normalize_required_slug TXING_TOWN_ID "$(jq_string "$rig_json" '.attributes.townId')")"
+
+      town_json="$(describe_thing_json "$txing_town_id")"
+      txing_town_name="$(normalize_required_slug "town name" "$(jq_string "$town_json" '.attributes.name')")"
+    elif [ "$scope" = "town" ] && [ -n "$txing_town_id" ]; then
+      town_json="$(describe_thing_json "$txing_town_id")"
+      txing_town_name="$(normalize_required_slug "town name" "$(jq_string "$town_json" '.attributes.name')")"
     fi
-    if [ -n "$txing_device_name" ] && [ -n "$txing_rig_stack_name" ]; then
-      txing_device_stack_name="${TXING_DEVICE_STACK_NAME:-${txing_rig_stack_name}-${txing_device_name}}"
-    else
-      txing_device_stack_name="${TXING_DEVICE_STACK_NAME:-}"
+
+    txing_town_stack_name="${TXING_TOWN_STACK_NAME:-}"
+    if [ -z "$txing_town_stack_name" ] && [ -n "$txing_town_name" ]; then
+      txing_town_stack_name="${aws_stack_name}-${txing_town_name}"
     fi
-    rig_name="${RIG_NAME:-$txing_rig_name}"
-    sparkplug_group_id="${SPARKPLUG_GROUP_ID:-$txing_town_name}"
-    sparkplug_edge_node_id="${SPARKPLUG_EDGE_NODE_ID:-$txing_rig_name}"
+    txing_rig_stack_name="${TXING_RIG_STACK_NAME:-}"
+    if [ -z "$txing_rig_stack_name" ] && [ -n "$txing_town_id" ] && [ -n "$txing_rig_name" ]; then
+      txing_rig_stack_name="${aws_stack_name}-${txing_town_id}-${txing_rig_name}"
+    fi
+    txing_device_stack_name="${TXING_DEVICE_STACK_NAME:-}"
+    if [ -z "$txing_device_stack_name" ] && [ -n "$txing_rig_id" ] && [ -n "$txing_device_name" ]; then
+      txing_device_stack_name="${aws_stack_name}-${txing_rig_id}-${txing_device_name}"
+    fi
+
+    rig_name="$txing_rig_id"
+    rig_id="$txing_rig_id"
+    sparkplug_group_id="$txing_town_id"
+    sparkplug_edge_node_id="$txing_rig_id"
     cloudwatch_log_group="${CLOUDWATCH_LOG_GROUP:-}"
     if [ -n "${SCHEMA_FILE:-}" ]; then
       schema_file="$(resolve_path "$SCHEMA_FILE")"
     elif [ -n "$txing_device_type" ]; then
-      schema_file="$(resolve_path "devices/${txing_device_type}/aws/board-shadow.schema.json")"
+      if [ -f "$project_root/devices/${txing_device_type}/aws/board-shadow.schema.json" ]; then
+        schema_file="$(resolve_path "devices/${txing_device_type}/aws/board-shadow.schema.json")"
+      else
+        schema_file=""
+      fi
     else
       schema_file=""
     fi
@@ -146,70 +192,7 @@ _project-aws-env scope='rig' region='' profile='' stack_name='' cognito_domain_p
     board_drive_right_dir_gpio="${BOARD_DRIVE_RIGHT_DIR_GPIO:-}"
     board_drive_left_inverted="${BOARD_DRIVE_LEFT_INVERTED:-}"
     board_drive_right_inverted="${BOARD_DRIVE_RIGHT_INVERTED:-}"
-    thing_name="${THING_NAME:-}"
-    if [ -z "$thing_name" ] && [ "{{scope}}" = "device" ] && command -v aws >/dev/null 2>&1; then
-      aws_lookup_flags=(--region "$aws_region")
-      if [ -n "$aws_selected_profile" ]; then
-        aws_lookup_flags+=(--profile "$aws_selected_profile")
-      fi
-      AWS_SHARED_CREDENTIALS_FILE="$aws_shared_credentials_file" \
-      thing_name="$(
-        aws iot search-index \
-          --index-name AWS_Things \
-          --query-string "thingTypeName:${txing_device_type} AND attributes.name:${txing_device_name} AND attributes.town:${txing_town_name} AND attributes.rig:${txing_rig_name}" \
-          --query 'things[0].thingName' \
-          --output text \
-          "${aws_lookup_flags[@]}" 2>/dev/null || true
-      )"
-      if [ "$thing_name" = "None" ]; then
-        thing_name=""
-      fi
-      if [ -z "$thing_name" ]; then
-        thing_names="$(
-          AWS_SHARED_CREDENTIALS_FILE="$aws_shared_credentials_file" \
-          aws iot list-things \
-            --thing-type-name "$txing_device_type" \
-            --query "things[?attributes.name=='${txing_device_name}' && attributes.town=='${txing_town_name}' && attributes.rig=='${txing_rig_name}'].thingName" \
-            --output text \
-            "${aws_lookup_flags[@]}" 2>/dev/null || true
-        )"
-        thing_count="$(wc -w <<<"$thing_names" | tr -d ' ')"
-        if [ "$thing_count" = "1" ]; then
-          thing_name="$thing_names"
-        fi
-      fi
-      if [ -z "$thing_name" ]; then
-        thing_names="$(
-          AWS_SHARED_CREDENTIALS_FILE="$aws_shared_credentials_file" \
-          aws iot search-index \
-            --index-name AWS_Things \
-            --query-string "thingTypeName:${txing_device_type} AND attributes.town:${txing_town_name} AND attributes.rig:${txing_rig_name}" \
-            --max-results 2 \
-            --query 'things[].thingName' \
-            --output text \
-            "${aws_lookup_flags[@]}" 2>/dev/null || true
-        )"
-        thing_count="$(wc -w <<<"$thing_names" | tr -d ' ')"
-        if [ "$thing_count" = "1" ]; then
-          thing_name="$thing_names"
-        fi
-      fi
-      if [ -z "$thing_name" ]; then
-        thing_names="$(
-          AWS_SHARED_CREDENTIALS_FILE="$aws_shared_credentials_file" \
-          aws iot list-things \
-            --thing-type-name "$txing_device_type" \
-            --query "things[?attributes.town=='${txing_town_name}' && attributes.rig=='${txing_rig_name}'].thingName" \
-            --output text \
-            "${aws_lookup_flags[@]}" 2>/dev/null || true
-        )"
-        thing_count="$(wc -w <<<"$thing_names" | tr -d ' ')"
-        if [ "$thing_count" = "1" ]; then
-          thing_name="$thing_names"
-        fi
-      fi
-    fi
-    thing_name="${thing_name:-$txing_device_name}"
+    thing_name="$txing_thing_id"
 
     export_line TXING_PROJECT_ROOT "$project_root"
     export_line AWS_ENV_FILE "$env_file"
@@ -226,15 +209,16 @@ _project-aws-env scope='rig' region='' profile='' stack_name='' cognito_domain_p
     export_line AWS_DEVICE_PROFILE "$aws_source_profile"
     export_line AWS_SELECTED_PROFILE "$aws_selected_profile"
     export_line AWS_SHARED_CREDENTIALS_FILE "$aws_shared_credentials_file"
-    export_line TXING_TOWN_NAME "$txing_town_name"
-    export_line TXING_RIG_NAME "$txing_rig_name"
+    export_line TXING_TOWN_ID "$txing_town_id"
+    export_line TXING_RIG_ID "$txing_rig_id"
+    export_line TXING_THING_ID "$txing_thing_id"
     export_line TXING_RIG_TYPE "$txing_rig_type"
-    export_line TXING_DEVICE_NAME "$txing_device_name"
     export_line TXING_DEVICE_TYPE "$txing_device_type"
     export_line TXING_TOWN_STACK_NAME "$txing_town_stack_name"
     export_line TXING_RIG_STACK_NAME "$txing_rig_stack_name"
     export_line TXING_DEVICE_STACK_NAME "$txing_device_stack_name"
     export_line RIG_NAME "$rig_name"
+    export_line RIG_ID "$rig_id"
     export_line RIG_TYPE "$txing_rig_type"
     export_line SPARKPLUG_GROUP_ID "$sparkplug_group_id"
     export_line SPARKPLUG_EDGE_NODE_ID "$sparkplug_edge_node_id"
@@ -321,21 +305,21 @@ _project-aws-env scope='rig' region='' profile='' stack_name='' cognito_domain_p
 @aws-rig *args:
     #!/usr/bin/env bash
     set -euo pipefail
-    eval "$(just --justfile "{{root_dir}}/justfile" _project-aws-env rig)"
+    eval "$(just --justfile "{{ root_dir }}/justfile" _project-aws-env rig)"
     command aws "$@"
 
 [positional-arguments]
 @aws-town *args:
     #!/usr/bin/env bash
     set -euo pipefail
-    eval "$(just --justfile "{{root_dir}}/justfile" _project-aws-env town)"
+    eval "$(just --justfile "{{ root_dir }}/justfile" _project-aws-env town)"
     command aws "$@"
 
 [positional-arguments]
 @aws-device *args:
     #!/usr/bin/env bash
     set -euo pipefail
-    eval "$(just --justfile "{{root_dir}}/justfile" _project-aws-env device)"
+    eval "$(just --justfile "{{ root_dir }}/justfile" _project-aws-env device)"
     command aws "$@"
 
 mod rig 'rig/justfile'
