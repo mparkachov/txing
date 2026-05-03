@@ -377,8 +377,12 @@ aws_shared_credentials_file := ""
     cd "{{connectedhomeip_dir}}"
     export PW_ENVIRONMENT_ROOT="{{connectedhomeip_dir}}/.environment"
     export PW_ENVSETUP_QUIET=1
+    # Project CHIP's activation script expects unset optional environment
+    # variables, so keep this wrapper strict but source upstream with nounset off.
+    set +u
     # shellcheck disable=SC1091
     source scripts/activate.sh
+    set -u
     gn gen --check --fail-on-unused-args --root=examples/chip-tool "{{connectedhomeip_build_dir}}" --args='is_debug=false'
     ninja -C "{{connectedhomeip_build_dir}}" -j "${CHIP_TOOL_JOBS:-$(nproc)}"
     test -x "{{built_chip_tool}}"
