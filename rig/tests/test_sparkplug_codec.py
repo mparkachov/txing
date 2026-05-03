@@ -34,6 +34,25 @@ class SparkplugCodecMetricTypeTests(unittest.TestCase):
             "mqtt-jsonrpc",
         )
 
+    def test_encodes_double_weather_metric_values(self) -> None:
+        payload = decode_payload(
+            build_device_report_payload(
+                redcon=4,
+                battery_mv=3500,
+                seq=12,
+                extra_metrics=(
+                    Metric(
+                        name="measuredTemperature",
+                        datatype=DataType.DOUBLE,
+                        double_value=21.625,
+                    ),
+                ),
+            )
+        )
+
+        metrics_by_name = {metric.name: metric for metric in payload.metrics}
+        self.assertEqual(metrics_by_name["measuredTemperature"].double_value, 21.625)
+
 
 if __name__ == "__main__":
     unittest.main()

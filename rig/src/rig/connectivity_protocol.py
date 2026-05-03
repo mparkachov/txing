@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
@@ -162,6 +163,18 @@ def _optional_int(payload: Mapping[str, Any], field_name: str) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int):
         raise ConnectivityProtocolError(f"{field_name} must be an integer")
     return value
+
+
+def _optional_float(payload: Mapping[str, Any], field_name: str) -> float | None:
+    value = payload.get(field_name)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ConnectivityProtocolError(f"{field_name} must be a number")
+    number = float(value)
+    if not math.isfinite(number):
+        raise ConnectivityProtocolError(f"{field_name} must be finite")
+    return number
 
 
 def _required_int(payload: Mapping[str, Any], field_name: str) -> int:
@@ -339,6 +352,28 @@ class ConnectivityCommand:
 
 
 @dataclass(slots=True, frozen=True)
+class WeatherMeasurements:
+    measured_temperature: float | None = None
+    measured_pressure: float | None = None
+    measured_humidity: float | None = None
+
+    def to_payload(self) -> dict[str, float | None]:
+        return {
+            "measuredTemperature": self.measured_temperature,
+            "measuredPressure": self.measured_pressure,
+            "measuredHumidity": self.measured_humidity,
+        }
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> WeatherMeasurements:
+        return cls(
+            measured_temperature=_optional_float(payload, "measuredTemperature"),
+            measured_pressure=_optional_float(payload, "measuredPressure"),
+            measured_humidity=_optional_float(payload, "measuredHumidity"),
+        )
+
+
+@dataclass(slots=True, frozen=True)
 class ConnectivityState:
     adapter_id: str
     thing_name: str
@@ -352,6 +387,7 @@ class ConnectivityState:
     observed_at_ms: int
     seq: int = 0
     schema_version: str = SCHEMA_VERSION
+    weather: WeatherMeasurements | None = None
 
     @property
     def reachable(self) -> bool:
@@ -391,6 +427,8 @@ class ConnectivityState:
             "observedAtMs": int(self.observed_at_ms),
             "seq": int(self.seq),
         }
+        if self.weather is not None:
+            payload["weather"] = self.weather.to_payload()
         return payload
 
     def to_json(self) -> str:
@@ -431,6 +469,13 @@ class ConnectivityState:
             battery_mv=_optional_int(decoded, "batteryMv"),
             observed_at_ms=_required_int(decoded, "observedAtMs"),
             seq=_optional_int(decoded, "seq") or 0,
+            weather=(
+                WeatherMeasurements.from_payload(
+                    _require_mapping(decoded.get("weather"), field_name="weather")
+                )
+                if decoded.get("weather") is not None
+                else None
+            ),
         )
 
 

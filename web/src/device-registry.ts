@@ -1,10 +1,12 @@
 import timeDeviceAdapter from '../../devices/time/web/time-adapter'
 import unitDeviceAdapter from '../../devices/unit/web/unit-adapter'
+import weatherDeviceAdapter from '../../devices/weather/web/weather-adapter'
 import type { DeviceWebAdapter } from './device-adapter'
 
 const installedDeviceAdapters: readonly DeviceWebAdapter[] = [
   timeDeviceAdapter,
   unitDeviceAdapter,
+  weatherDeviceAdapter,
 ]
 
 const adaptersByType = new Map(

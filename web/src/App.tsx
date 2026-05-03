@@ -373,7 +373,9 @@ function App({ initialAuthError = '' }: AppProps) {
     [routeHeaderMetadata],
   )
   const isSparkplugDeviceCommandAvailable =
-    currentThingSparkplugCommandTarget !== null && !isSparkplugDeviceUnavailable
+    currentThingSparkplugCommandTarget !== null &&
+    (currentDeviceAdapter?.canUseSparkplugCommands() ?? false) &&
+    !isSparkplugDeviceUnavailable
   const shouldRenderCatalogPanel = shouldRenderRouteCatalogPanel({
     thingKind: currentThingKind,
     reportedRedcon,

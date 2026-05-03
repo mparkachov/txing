@@ -73,6 +73,7 @@ class TypeCatalogTests(unittest.TestCase):
                 "/txing/town",
                 "/txing/town/raspi",
                 "/txing/town/raspi/unit",
+                "/txing/town/raspi/weather",
                 "/txing/town/cloud",
                 "/txing/town/cloud/time",
             },
@@ -80,12 +81,14 @@ class TypeCatalogTests(unittest.TestCase):
         self.assertEqual(records["/txing/town/raspi"]["defaultName"], "server")
         self.assertEqual(records["/txing/town/cloud"]["defaultName"], "aws")
         self.assertEqual(records["/txing/town/raspi/unit"]["defaultName"], "bot")
+        self.assertEqual(records["/txing/town/raspi/weather"]["defaultName"], "outside")
         self.assertEqual(records["/txing/town/cloud/time"]["defaultName"], "clock")
         self.assertEqual(records["/txing/town/raspi"]["thingType"], "raspi")
         self.assertEqual(records["/txing/town/cloud"]["thingType"], "cloud")
         self.assertEqual(records["/txing/town/raspi"]["requiredAttributes"], ["name", "shortId", "townId"])
         self.assertEqual(records["/txing/town/cloud/time"]["requiredAttributes"], ["name", "shortId", "townId", "rigId"])
         self.assertEqual(records["/txing/town/raspi/unit"]["rigType"], "raspi")
+        self.assertEqual(records["/txing/town/raspi/weather"]["rigType"], "raspi")
         self.assertEqual(records["/txing/town/cloud/time"]["rigType"], "cloud")
 
     def test_records_are_json_serializable(self) -> None:
@@ -119,6 +122,10 @@ class TypeCatalogTests(unittest.TestCase):
         self.assertEqual(
             ssm.parameters["/txing/town/cloud/time/capabilities"],
             "sparkplug,mcp,time",
+        )
+        self.assertEqual(
+            ssm.parameters["/txing/town/raspi/weather/capabilities"],
+            "sparkplug",
         )
         self.assertEqual(
             ssm.parameters["/txing/town/cloud/time/shadows/time/schema"],
@@ -171,6 +178,10 @@ class TypeCatalogTests(unittest.TestCase):
         self.assertEqual(
             [path for path, _record in catalog.list_records("/txing/town/cloud")],
             ["/txing/town/cloud", "/txing/town/cloud/time"],
+        )
+        self.assertEqual(
+            [path for path, _record in catalog.list_records("/txing/town/raspi")],
+            ["/txing/town/raspi", "/txing/town/raspi/unit", "/txing/town/raspi/weather"],
         )
 
     def test_required_list_leaf_must_not_be_empty(self) -> None:

@@ -4,6 +4,7 @@ import base64
 import binascii
 import json
 import logging
+import struct
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
@@ -56,6 +57,20 @@ def _read_length_delimited(data: bytes, start_offset: int) -> tuple[bytes, int]:
     return data[next_offset:end_offset], end_offset
 
 
+def _read_fixed32(data: bytes, start_offset: int) -> tuple[float, int]:
+    end_offset = start_offset + 4
+    if end_offset > len(data):
+        raise ValueError("Unexpected end of Sparkplug payload")
+    return struct.unpack("<f", data[start_offset:end_offset])[0], end_offset
+
+
+def _read_fixed64(data: bytes, start_offset: int) -> tuple[float, int]:
+    end_offset = start_offset + 8
+    if end_offset > len(data):
+        raise ValueError("Unexpected end of Sparkplug payload")
+    return struct.unpack("<d", data[start_offset:end_offset])[0], end_offset
+
+
 def _read_key(data: bytes, start_offset: int) -> tuple[int, int, int]:
     key, next_offset = _read_varint(data, start_offset)
     return key >> 3, key & 0x07, next_offset
@@ -80,6 +95,8 @@ def _decode_metric(metric_bytes: bytes) -> tuple[str, Any] | None:
     name = ""
     int_value: int | None = None
     long_value: int | None = None
+    float_value: float | None = None
+    double_value: float | None = None
     bool_value: bool | None = None
     string_value: str | None = None
     while offset < len(metric_bytes):
@@ -94,11 +111,27 @@ def _decode_metric(metric_bytes: bytes) -> tuple[str, Any] | None:
         if field_number == 11 and wire_type == 0:
             long_value, offset = _read_varint(metric_bytes, offset)
             continue
+        if field_number == 12 and wire_type == 5:
+            float_value, offset = _read_fixed32(metric_bytes, offset)
+            continue
+        if field_number == 13 and wire_type == 1:
+            double_value, offset = _read_fixed64(metric_bytes, offset)
+            continue
+        # Backward compatibility for txing releases that encoded BOOLEAN on field 12.
         if field_number == 12 and wire_type == 0:
             raw_bool, offset = _read_varint(metric_bytes, offset)
             bool_value = raw_bool != 0
             continue
+        # Backward compatibility for txing releases that encoded STRING on field 13.
         if field_number == 13 and wire_type == 2:
+            raw_string, offset = _read_length_delimited(metric_bytes, offset)
+            string_value = raw_string.decode("utf-8")
+            continue
+        if field_number == 14 and wire_type == 0:
+            raw_bool, offset = _read_varint(metric_bytes, offset)
+            bool_value = raw_bool != 0
+            continue
+        if field_number == 15 and wire_type == 2:
             raw_string, offset = _read_length_delimited(metric_bytes, offset)
             string_value = raw_string.decode("utf-8")
             continue
@@ -112,6 +145,10 @@ def _decode_metric(metric_bytes: bytes) -> tuple[str, Any] | None:
         return name, int_value
     if long_value is not None:
         return name, long_value
+    if float_value is not None:
+        return name, float_value
+    if double_value is not None:
+        return name, double_value
     if string_value is not None:
         return name, string_value
     return None

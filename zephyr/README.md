@@ -21,6 +21,10 @@ these tools; they do not install or upgrade Homebrew packages.
 brew install uv just git cmake ninja gperf python python-tk ccache dtc libmagic wget open-ocd
 ```
 
+The uv environment defaults to Homebrew `python3.13`, because current pyOCD
+flashing dependencies do not publish macOS wheels for CPython 3.14 yet. Override
+with `TXING_ZEPHYR_PYTHON=/path/to/python` if needed.
+
 The initial `check` target builds a sample and does not use QEMU. Install QEMU
 manually later if you need Zephyr emulation:
 

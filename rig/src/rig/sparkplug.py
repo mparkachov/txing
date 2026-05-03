@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 from enum import IntEnum
+import struct
 
 SPARKPLUG_NAMESPACE = "spBv1.0"
 
@@ -51,6 +52,8 @@ class Metric:
     datatype: DataType
     int_value: int | None = None
     long_value: int | None = None
+    float_value: float | None = None
+    double_value: float | None = None
     bool_value: bool | None = None
     string_value: str | None = None
     timestamp: int | None = None
@@ -108,10 +111,14 @@ def encode_metric(metric: Metric) -> bytes:
         _append_varint_field(chunks, 10, metric.int_value)
     elif metric.long_value is not None:
         _append_varint_field(chunks, 11, metric.long_value)
+    elif metric.float_value is not None:
+        _append_fixed32_field(chunks, 12, metric.float_value)
+    elif metric.double_value is not None:
+        _append_fixed64_field(chunks, 13, metric.double_value)
     elif metric.bool_value is not None:
-        _append_varint_field(chunks, 12, 1 if metric.bool_value else 0)
+        _append_varint_field(chunks, 14, 1 if metric.bool_value else 0)
     elif metric.string_value is not None:
-        _append_string_field(chunks, 13, metric.string_value)
+        _append_string_field(chunks, 15, metric.string_value)
     else:
         raise ValueError(f"metric {metric.name!r} is missing a value")
     return bytes(chunks)
@@ -145,6 +152,8 @@ def decode_metric(data: bytes) -> Metric:
     timestamp: int | None = None
     int_value: int | None = None
     long_value: int | None = None
+    float_value: float | None = None
+    double_value: float | None = None
     bool_value: bool | None = None
     string_value: str | None = None
     while offset < len(data):
@@ -166,11 +175,27 @@ def decode_metric(data: bytes) -> Metric:
         if field_number == 11 and wire_type == 0:
             long_value, offset = _read_varint(data, offset)
             continue
+        if field_number == 12 and wire_type == 5:
+            float_value, offset = _read_fixed32(data, offset)
+            continue
+        if field_number == 13 and wire_type == 1:
+            double_value, offset = _read_fixed64(data, offset)
+            continue
+        # Backward compatibility for txing releases that encoded BOOLEAN on field 12.
         if field_number == 12 and wire_type == 0:
             raw_bool, offset = _read_varint(data, offset)
             bool_value = raw_bool != 0
             continue
+        # Backward compatibility for txing releases that encoded STRING on field 13.
         if field_number == 13 and wire_type == 2:
+            raw, offset = _read_length_delimited(data, offset)
+            string_value = raw.decode("utf-8")
+            continue
+        if field_number == 14 and wire_type == 0:
+            raw_bool, offset = _read_varint(data, offset)
+            bool_value = raw_bool != 0
+            continue
+        if field_number == 15 and wire_type == 2:
             raw, offset = _read_length_delimited(data, offset)
             string_value = raw.decode("utf-8")
             continue
@@ -180,6 +205,8 @@ def decode_metric(data: bytes) -> Metric:
         datatype=datatype,
         int_value=int_value,
         long_value=long_value,
+        float_value=float_value,
+        double_value=double_value,
         bool_value=bool_value,
         string_value=string_value,
         timestamp=timestamp,
@@ -308,6 +335,16 @@ def _append_bytes_field(chunks: bytearray, field_number: int, value: bytes) -> N
     chunks.extend(value)
 
 
+def _append_fixed32_field(chunks: bytearray, field_number: int, value: float) -> None:
+    _append_key(chunks, field_number, 5)
+    chunks.extend(struct.pack("<f", float(value)))
+
+
+def _append_fixed64_field(chunks: bytearray, field_number: int, value: float) -> None:
+    _append_key(chunks, field_number, 1)
+    chunks.extend(struct.pack("<d", float(value)))
+
+
 def _append_varint(chunks: bytearray, value: int) -> None:
     if value < 0:
         raise ValueError(f"Sparkplug varint values must be non-negative, got {value}")
@@ -350,6 +387,20 @@ def _read_length_delimited(data: bytes, offset: int) -> tuple[bytes, int]:
     if end > len(data):
         raise ValueError("unexpected end of buffer while reading bytes field")
     return data[next_offset:end], end
+
+
+def _read_fixed32(data: bytes, offset: int) -> tuple[float, int]:
+    end = offset + 4
+    if end > len(data):
+        raise ValueError("unexpected end of buffer while reading fixed32 field")
+    return struct.unpack("<f", data[offset:end])[0], end
+
+
+def _read_fixed64(data: bytes, offset: int) -> tuple[float, int]:
+    end = offset + 8
+    if end > len(data):
+        raise ValueError("unexpected end of buffer while reading fixed64 field")
+    return struct.unpack("<d", data[offset:end])[0], end
 
 
 def _skip_field(data: bytes, offset: int, wire_type: int) -> int:

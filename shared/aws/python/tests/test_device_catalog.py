@@ -22,7 +22,10 @@ class DeviceCatalogTests(unittest.TestCase):
         self.assertEqual(discover_repo_root(Path(__file__)), REPO_ROOT)
 
     def test_lists_only_loadable_device_types(self) -> None:
-        self.assertEqual(list_loadable_device_types(repo_root=REPO_ROOT), ["time", "unit"])
+        self.assertEqual(
+            list_loadable_device_types(repo_root=REPO_ROOT),
+            ["time", "unit", "weather"],
+        )
 
     def test_loads_unit_manifest(self) -> None:
         manifest = load_device_manifest("unit", repo_root=REPO_ROOT)
@@ -85,6 +88,21 @@ class DeviceCatalogTests(unittest.TestCase):
             self.assertIsInstance(json.loads(contract.schema.read_text(encoding="utf-8")), dict)
             self.assertIsInstance(json.loads(contract.default.read_text(encoding="utf-8")), dict)
 
+    def test_loads_weather_manifest(self) -> None:
+        manifest = load_device_manifest("weather", repo_root=REPO_ROOT)
+
+        self.assertEqual(manifest.type, "weather")
+        self.assertEqual(manifest.device_name, "outside")
+        self.assertEqual(manifest.display_name, "Weather")
+        self.assertEqual(manifest.capabilities, ("sparkplug",))
+        self.assertEqual(manifest.compatible_rig_types, ("raspi",))
+        self.assertEqual(
+            [process.name for process in manifest.rig_processes],
+            ["weather-matter-watch", "weather-sparkplug-manager"],
+        )
+        self.assertEqual(manifest.render_board_video_channel_name(device_id="outside"), None)
+        self.assertEqual(manifest.web_adapter, "web/weather-adapter.tsx")
+
     def test_template_is_not_loadable(self) -> None:
         with self.assertRaises(DeviceTypeNotFoundError):
             load_device_manifest("template", repo_root=REPO_ROOT)
@@ -100,6 +118,7 @@ class DeviceCatalogTests(unittest.TestCase):
             ("sparkplug", "mcu", "board", "mcp", "video"),
         )
         self.assertEqual(capabilities["time"], ("sparkplug", "mcp", "time"))
+        self.assertEqual(capabilities["weather"], ("sparkplug",))
         self.assertEqual(
             capabilities_for_thing_type("unit", repo_root=REPO_ROOT),
             ("sparkplug", "mcu", "board", "mcp", "video"),
@@ -107,6 +126,10 @@ class DeviceCatalogTests(unittest.TestCase):
         self.assertEqual(
             capabilities_for_thing_type("time", repo_root=REPO_ROOT),
             ("sparkplug", "mcp", "time"),
+        )
+        self.assertEqual(
+            capabilities_for_thing_type("weather", repo_root=REPO_ROOT),
+            ("sparkplug",),
         )
 
     def test_manifest_capabilities_are_device_defined(self) -> None:

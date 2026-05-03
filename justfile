@@ -379,6 +379,7 @@ mod aws 'shared/aws/justfile'
 mod witness 'witness/justfile'
 mod unit 'devices/unit/justfile'
 mod time 'devices/time/justfile'
+mod weather 'devices/weather/justfile'
 mod web 'web/justfile'
 mod zephyr 'zephyr/justfile'
 

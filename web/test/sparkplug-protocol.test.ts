@@ -33,6 +33,8 @@ describe('sparkplug protocol helpers', () => {
         datatype: 3,
         intValue: 3,
         longValue: null,
+        floatValue: null,
+        doubleValue: null,
         boolValue: null,
         stringValue: null,
         timestamp: null,
@@ -64,6 +66,8 @@ describe('sparkplug protocol helpers', () => {
         datatype: 11,
         intValue: null,
         longValue: null,
+        floatValue: null,
+        doubleValue: null,
         boolValue: true,
         stringValue: null,
         timestamp: null,
@@ -73,8 +77,38 @@ describe('sparkplug protocol helpers', () => {
         datatype: 12,
         intValue: null,
         longValue: null,
+        floatValue: null,
+        doubleValue: null,
         boolValue: null,
         stringValue: 'mqtt-jsonrpc',
+        timestamp: null,
+      },
+    ])
+  })
+
+  test('encodes and decodes double weather metrics', () => {
+    const payload = encodeSparkplugPayload({
+      timestamp: 100,
+      seq: 3,
+      metrics: [
+        {
+          name: 'measuredTemperature',
+          datatype: SparkplugDataType.Double,
+          doubleValue: 21.625,
+        },
+      ],
+    })
+    const decoded = decodeSparkplugPayload(payload)
+    expect(decoded.metrics).toEqual([
+      {
+        name: 'measuredTemperature',
+        datatype: 10,
+        intValue: null,
+        longValue: null,
+        floatValue: null,
+        doubleValue: 21.625,
+        boolValue: null,
+        stringValue: null,
         timestamp: null,
       },
     ])

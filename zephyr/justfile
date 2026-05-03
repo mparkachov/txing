@@ -2,7 +2,7 @@ set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 set quiet := true
 
 zephyr_dir := source_directory()
-python_executable := "python3"
+python_executable := env_var_or_default("TXING_ZEPHYR_PYTHON", "python3.13")
 uv_cache_dir := zephyr_dir + "/.uv-cache"
 toolchain_script := zephyr_dir + "/scripts/toolchain.py"
 

@@ -5,13 +5,22 @@ describe('device web adapter registry', () => {
   test('registers installed device detail adapters and returns null for unknown device types', () => {
     const timeAdapter = getDeviceWebAdapter('time')
     const unitAdapter = getDeviceWebAdapter('unit')
+    const weatherAdapter = getDeviceWebAdapter('weather')
 
     expect(timeAdapter?.type).toBe('time')
     expect(timeAdapter?.canUseBoardVideo(1)).toBe(false)
+    expect(timeAdapter?.canUseSparkplugCommands()).toBe(true)
     expect(unitAdapter?.type).toBe('unit')
     expect(unitAdapter?.buildVideoChannelName('unit-a1')).toBe('unit-a1-board-video')
+    expect(unitAdapter?.canUseSparkplugCommands()).toBe(true)
+    expect(weatherAdapter?.type).toBe('weather')
+    expect(weatherAdapter?.canUseSparkplugCommands()).toBe(false)
     expect(getDeviceWebAdapter('sensor')).toBeNull()
-    expect(listDeviceWebAdapters().map((adapter) => adapter.type)).toEqual(['time', 'unit'])
+    expect(listDeviceWebAdapters().map((adapter) => adapter.type)).toEqual([
+      'time',
+      'unit',
+      'weather',
+    ])
   })
 
   test('keeps unit auto-open behavior behind the adapter', () => {

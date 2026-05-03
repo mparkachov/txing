@@ -11,6 +11,13 @@ Unit device process components:
 - `dev.txing.device.unit.ConnectivityBle`: BLE adapter for MCU rendezvous and GATT
   wake/sleep control.
 
+Weather device process components:
+
+- `dev.txing.device.weather.SparkplugManager`: Sparkplug B lifecycle for weather
+  things assigned to the raspi rig.
+- `dev.txing.device.weather.MatterWatch`: observe-only Matter watcher. It idles
+  until `WeatherThingName` and `MatterNodeId` are configured in deployment.
+
 Lifecycle boundary:
 
 - `rig = Sparkplug edge node = Greengrass Lite core`.
@@ -23,13 +30,14 @@ Lifecycle boundary:
   operational signals, but Sparkplug `NBIRTH` and `NDEATH` remain the
   authoritative txing rig lifecycle.
 
-`just rig::deploy` is the local Greengrass Lite development path. It
-builds wheels for generic `rig`, `unit-rig`, and `aws`, uses `uv pip install --target` to
-assemble a self-contained artifact Python tree for the target platform,
-generates concrete local recipes under `rig/build/greengrass-local`, and runs
-`ggl-cli deploy`. The generated recipe/artifact tree is kept until the next
-deploy because Greengrass Lite copies artifacts asynchronously after the CLI
-returns.
+`just rig::deploy` is the local Greengrass Lite development path. For raspi rigs
+it deploys both current `unit` and `weather` component families. It builds wheels
+for generic `rig`, device runtime packages, and `aws`, uses `uv pip install
+--target` to assemble a self-contained artifact Python tree for the target
+platform, builds the weather C++20 Matter watcher, generates concrete local
+recipes under `rig/build/greengrass-local`, and runs `ggl-cli deploy`. The
+generated recipe/artifact tree is kept until the next deploy because Greengrass
+Lite copies artifacts asynchronously after the CLI returns.
 The checked-in recipe files are publishing templates; local deployment does not
 use their placeholder S3 URIs.
 
@@ -90,6 +98,23 @@ just rig::deploy <rig-id> '' '' '' 0.5.1
 Do not run `just rig::deploy component_version=0.5.1`; values after the recipe
 name are positional recipe arguments. Normal deploys should leave the internal
 component version empty.
+
+To activate the weather watcher during raspi deploy, pass the weather thing name
+and manually commissioned Matter node id in the eighth and ninth positional
+arguments:
+
+```bash
+just rig::deploy <rig-id> '' '' '' '' ble-main txing <weather-thing-name> <matter-node-id>
+```
+
+Leave those values empty to deploy the weather components in idle mode. The
+Matter watcher defaults to `chip-tool` from `PATH`; pass a custom executable path
+as the tenth positional argument if your commissioned fabric uses a locally built
+Project CHIP tool:
+
+```bash
+just rig::deploy <rig-id> '' '' '' '' ble-main txing <weather-thing-name> <matter-node-id> /path/to/chip-tool
+```
 
 Use `just rig::restart` to restart the Greengrass Lite systemd units without
 deploying new code. Do not expect restart to pick up a new local build; restart

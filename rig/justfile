@@ -15,6 +15,8 @@ greengrass_lite_target := "greengrass-lite.target"
 greengrass_core_units := "ggl.core.ggconfigd.service ggl.core.ggipcd.service ggl.core.iotcored.service ggl.core.tesd.service ggl.aws.greengrass.TokenExchangeService.service ggl.core.ggdeploymentd.service"
 greengrass_core_sockets := "ggl.gg_deployment.socket"
 unit_rig_component_units := "ggl.dev.txing.device.unit.SparkplugManager.service ggl.dev.txing.device.unit.ConnectivityBle.service"
+weather_rig_component_units := "ggl.dev.txing.device.weather.SparkplugManager.service ggl.dev.txing.device.weather.MatterWatch.service"
+raspi_rig_component_units := unit_rig_component_units + " " + weather_rig_component_units
 aws_rig_component_units := "ggl.dev.txing.device.time.SparkplugManager.service ggl.dev.txing.device.time.AwsConnectivity.service"
 legacy_unit_rig_component_units := "ggl.dev.txing.rig.SparkplugManager.service ggl.dev.txing.rig.ConnectivityBle.service"
 legacy_unit_rig_components := "dev.txing.rig.SparkplugManager dev.txing.rig.ConnectivityBle"
@@ -611,7 +613,7 @@ aws_shared_credentials_file := ""
     }
     case "$selected_rig_type" in
       raspi)
-        component_units=({{unit_rig_component_units}})
+        component_units=({{raspi_rig_component_units}})
         ;;
       cloud)
         component_units=({{aws_rig_component_units}})
@@ -666,7 +668,7 @@ aws_shared_credentials_file := ""
     }
     case "$selected_rig_type" in
       raspi)
-        component_units=({{unit_rig_component_units}})
+        component_units=({{raspi_rig_component_units}})
         ;;
       cloud)
         component_units=({{aws_rig_component_units}})
@@ -726,7 +728,7 @@ aws_shared_credentials_file := ""
     }
     case "$selected_rig_type" in
       raspi)
-        component_units=({{unit_rig_component_units}})
+        component_units=({{raspi_rig_component_units}})
         ;;
       cloud)
         component_units=({{aws_rig_component_units}})
@@ -800,7 +802,7 @@ aws_shared_credentials_file := ""
     done
     sudo "$ggl_cli" deploy "${remove_args[@]}"
 
-@deploy rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' component_version='' adapter_id='ble-main' name_fragment='txing' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file: build
+@deploy rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' component_version='' adapter_id='ble-main' name_fragment='txing' weather_thing_name='' weather_matter_node_id='' weather_chip_tool='chip-tool' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file: build
     #!/usr/bin/env bash
     set -euo pipefail
     for built_entrypoint in "{{built_rig}}" "{{built_rig_device_process}}"; do \
@@ -809,7 +811,7 @@ aws_shared_credentials_file := ""
             exit 1; \
         fi; \
     done
-    for positional_arg in "{{rig_id}}" "{{rig_name}}" "{{sparkplug_group_id}}" "{{sparkplug_edge_node_id}}" "{{component_version}}" "{{adapter_id}}" "{{name_fragment}}"; do
+    for positional_arg in "{{rig_id}}" "{{rig_name}}" "{{sparkplug_group_id}}" "{{sparkplug_edge_node_id}}" "{{component_version}}" "{{adapter_id}}" "{{name_fragment}}" "{{weather_thing_name}}" "{{weather_matter_node_id}}" "{{weather_chip_tool}}"; do
       case "$positional_arg" in
         *=*)
           echo "rig::deploy arguments are positional; '$positional_arg' was treated as an argument value, not a named option." >&2
@@ -964,6 +966,20 @@ aws_shared_credentials_file := ""
     mkdir -p "$recipe_dir" "$artifacts_dir" "$wheelhouse_dir" "$python_tree_dir"
     uv build --wheel --out-dir "$wheelhouse_dir" "{{project_root}}/shared/aws/python" >/dev/null
     uv build --wheel --out-dir "$wheelhouse_dir" "$device_python_project" >/dev/null
+    if [ "$selected_rig_type" = "raspi" ]; then
+      weather_python_project="{{project_root}}/devices/weather/rig/python"
+      weather_sparkplug_component="dev.txing.device.weather.SparkplugManager"
+      weather_matter_component="dev.txing.device.weather.MatterWatch"
+      weather_native_project="{{project_root}}/devices/weather/rig/matter_watch"
+      weather_native_build_dir="{{rig_dir}}/build/weather-matter-watch"
+      weather_thing_name="{{weather_thing_name}}"
+      weather_matter_node_id="{{weather_matter_node_id}}"
+      weather_chip_tool="{{weather_chip_tool}}"
+      uv build --wheel --out-dir "$wheelhouse_dir" "$weather_python_project" >/dev/null
+      cmake -S "$weather_native_project" -B "$weather_native_build_dir" -DCMAKE_BUILD_TYPE=MinSizeRel >/dev/null
+      cmake --build "$weather_native_build_dir" --config MinSizeRel --parallel >/dev/null
+      test -x "$weather_native_build_dir/weather-matter-watch"
+    fi
     uv build --wheel --out-dir "$wheelhouse_dir" "{{rig_dir}}" >/dev/null
     uv export \
       --project "$device_python_project" \
@@ -972,6 +988,14 @@ aws_shared_credentials_file := ""
       --no-editable \
       --no-hashes \
       | awk 'NF && $0 !~ /^[[:space:]]*#/ && $0 !~ /^\./ && $0 !~ /^\.\.\//' >"$requirements_file"
+    install_wheels=(
+      "$wheelhouse_dir"/aws-*.whl
+      "$wheelhouse_dir"/"$device_wheel_prefix"-*.whl
+      "$wheelhouse_dir"/rig-*.whl
+    )
+    if [ "$selected_rig_type" = "raspi" ]; then
+      install_wheels+=("$wheelhouse_dir"/weather_rig-*.whl)
+    fi
     uv pip install \
       --python "{{python_executable}}" \
       --target "$python_tree_dir" \
@@ -979,9 +1003,7 @@ aws_shared_credentials_file := ""
       --reinstall \
       --find-links "$wheelhouse_dir" \
       --requirements "$requirements_file" \
-      "$wheelhouse_dir"/aws-*.whl \
-      "$wheelhouse_dir"/"$device_wheel_prefix"-*.whl \
-      "$wheelhouse_dir"/rig-*.whl >/dev/null
+      "${install_wheels[@]}" >/dev/null
     for component_name in "$sparkplug_component" "$connectivity_component"; do \
         component_artifact_dir="$artifacts_dir/$component_name/$resolved_component_version"; \
         mkdir -p "$component_artifact_dir/python"; \
@@ -991,6 +1013,19 @@ aws_shared_credentials_file := ""
         cp -a "{{project_root}}/devices/$device_type/aws" "$component_artifact_dir/devices/$device_type/aws"; \
         printf 'txing local Greengrass artifact for %s %s\n' "$component_name" "$resolved_component_version" >"$component_artifact_dir/txing-local-artifact.txt"; \
     done
+    if [ "$selected_rig_type" = "raspi" ]; then
+      for component_name in "$weather_sparkplug_component" "$weather_matter_component"; do
+        component_artifact_dir="$artifacts_dir/$component_name/$resolved_component_version"
+        mkdir -p "$component_artifact_dir/python"
+        cp -a "$python_tree_dir/." "$component_artifact_dir/python/"
+        mkdir -p "$component_artifact_dir/devices/weather"
+        cp "{{project_root}}/devices/weather/manifest.toml" "$component_artifact_dir/devices/weather/"
+        cp -a "{{project_root}}/devices/weather/aws" "$component_artifact_dir/devices/weather/aws"
+        mkdir -p "$component_artifact_dir/bin"
+        cp "$weather_native_build_dir/weather-matter-watch" "$component_artifact_dir/bin/weather-matter-watch"
+        printf 'txing local Greengrass artifact for %s %s\n' "$component_name" "$resolved_component_version" >"$component_artifact_dir/txing-local-artifact.txt"
+      done
+    fi
     cat >"$recipe_dir/$sparkplug_component-$resolved_component_version.yaml" <<EOF
     RecipeFormatVersion: '2020-01-25'
     ComponentName: $sparkplug_component
@@ -1104,12 +1139,130 @@ aws_shared_credentials_file := ""
           - Uri: "s3://txing-local-greengrass/txing-local-artifact.txt"
             Unarchive: "NONE"
     EOF
+    if [ "$selected_rig_type" = "raspi" ]; then
+      cat >"$recipe_dir/$weather_sparkplug_component-$resolved_component_version.yaml" <<EOF
+    RecipeFormatVersion: '2020-01-25'
+    ComponentName: $weather_sparkplug_component
+    ComponentVersion: '$resolved_component_version'
+    ComponentType: aws.greengrass.generic
+    ComponentDescription: txing weather Sparkplug lifecycle manager for Matter weather devices.
+    ComponentPublisher: txing
+    ComponentDependencies:
+      aws.greengrass.TokenExchangeService:
+        VersionRequirement: '>=0.0.0'
+        DependencyType: HARD
+    ComponentConfiguration:
+      DefaultConfiguration:
+        accessControl:
+          aws.greengrass.ipc.pubsub:
+            $weather_sparkplug_component:pubsub:1:
+              policyDescription: Allows the weather Sparkplug manager to consume local Matter connectivity state.
+              operations:
+                - aws.greengrass#PublishToTopic
+                - aws.greengrass#SubscribeToTopic
+              resources:
+                - dev/txing/rig/v1/connectivity/*
+    Manifests:
+      - Platform:
+          os: linux
+          runtime: aws_nucleus_lite
+        Lifecycle:
+          run:
+            Script: |-
+              export AWS_REGION="$AWS_REGION"
+              export AWS_DEFAULT_REGION="$AWS_REGION"
+              export TXING_VERSION_BASE="$TXING_VERSION_BASE"
+              export TXING_VERSION="$resolved_component_version"
+              unset AWS_PROFILE AWS_DEFAULT_PROFILE AWS_SHARED_CREDENTIALS_FILE
+              export RIG_NAME="$rig_name"
+              export TXING_RIG_ID="$TXING_RIG_ID"
+              export RIG_ID="$TXING_RIG_ID"
+              export SPARKPLUG_GROUP_ID="$sparkplug_group_id"
+              export SPARKPLUG_EDGE_NODE_ID="$sparkplug_edge_node_id"
+              export AWS_IOT_ENDPOINT="$iot_data_endpoint"
+              export TXING_RIG_TYPE="$selected_rig_type"
+              export RIG_TYPE="$selected_rig_type"
+              export TXING_DEVICE_TYPE="weather"
+              export TXING_DEVICE_DIR="{artifacts:path}/devices/weather"
+              export TXING_DEVICE_MANIFEST="{artifacts:path}/devices/weather/manifest.toml"
+              export PYTHONPATH="{artifacts:path}/python"
+              exec python3 -m weather_rig.sparkplug_manager
+        Artifacts:
+          - Uri: "s3://txing-local-greengrass/txing-local-artifact.txt"
+            Unarchive: "NONE"
+    EOF
+      cat >"$recipe_dir/$weather_matter_component-$resolved_component_version.yaml" <<EOF
+    RecipeFormatVersion: '2020-01-25'
+    ComponentName: $weather_matter_component
+    ComponentVersion: '$resolved_component_version'
+    ComponentType: aws.greengrass.generic
+    ComponentDescription: txing observe-only Matter watcher for weather devices.
+    ComponentPublisher: txing
+    ComponentConfiguration:
+      DefaultConfiguration:
+        WeatherThingName: "$weather_thing_name"
+        MatterNodeId: "$weather_matter_node_id"
+        ChipTool: "$weather_chip_tool"
+        SampleIntervalSeconds: 30
+        TemperatureEndpoint: 1
+        HumidityEndpoint: 2
+        PressureEndpoint: 3
+        PowerEndpoint: 0
+        accessControl:
+          aws.greengrass.ipc.pubsub:
+            $weather_matter_component:pubsub:1:
+              policyDescription: Allows the weather Matter watcher to publish local connectivity state.
+              operations:
+                - aws.greengrass#PublishToTopic
+              resources:
+                - dev/txing/rig/v1/connectivity/*
+    Manifests:
+      - Platform:
+          os: linux
+          runtime: aws_nucleus_lite
+        Lifecycle:
+          run:
+            Script: |-
+              export TXING_VERSION_BASE="$TXING_VERSION_BASE"
+              export TXING_VERSION="$resolved_component_version"
+              export RIG_NAME="$rig_name"
+              export TXING_RIG_ID="$TXING_RIG_ID"
+              export RIG_ID="$TXING_RIG_ID"
+              export TXING_RIG_TYPE="$selected_rig_type"
+              export RIG_TYPE="$selected_rig_type"
+              export TXING_DEVICE_TYPE="weather"
+              export TXING_DEVICE_DIR="{artifacts:path}/devices/weather"
+              export TXING_DEVICE_MANIFEST="{artifacts:path}/devices/weather/manifest.toml"
+              export WEATHER_THING_NAME="{configuration:/WeatherThingName}"
+              export WEATHER_MATTER_NODE_ID="{configuration:/MatterNodeId}"
+              export WEATHER_CHIP_TOOL="{configuration:/ChipTool}"
+              export WEATHER_SAMPLE_INTERVAL_SECONDS="{configuration:/SampleIntervalSeconds}"
+              export WEATHER_TEMPERATURE_ENDPOINT="{configuration:/TemperatureEndpoint}"
+              export WEATHER_HUMIDITY_ENDPOINT="{configuration:/HumidityEndpoint}"
+              export WEATHER_PRESSURE_ENDPOINT="{configuration:/PressureEndpoint}"
+              export WEATHER_POWER_ENDPOINT="{configuration:/PowerEndpoint}"
+              export WEATHER_CHIP_TOOL_STORAGE_DIR="{artifacts:path}/chip-tool-storage"
+              export WEATHER_MATTER_WATCH_BINARY="{artifacts:path}/bin/weather-matter-watch"
+              export PYTHONPATH="{artifacts:path}/python"
+              mkdir -p "{artifacts:path}/chip-tool-storage"
+              exec python3 -m weather_rig.matter_watch
+        Artifacts:
+          - Uri: "s3://txing-local-greengrass/txing-local-artifact.txt"
+            Unarchive: "NONE"
+    EOF
+    fi
     deploy_args=(
       --recipe-dir "$recipe_dir" \
       --artifacts-dir "$artifacts_dir" \
       --add-component "$sparkplug_component=$resolved_component_version" \
       --add-component "$connectivity_component=$resolved_component_version"
     )
+    if [ "$selected_rig_type" = "raspi" ]; then
+      deploy_args+=(
+        --add-component "$weather_sparkplug_component=$resolved_component_version"
+        --add-component "$weather_matter_component=$resolved_component_version"
+      )
+    fi
     for legacy_component in "${legacy_components[@]}"; do
       legacy_unit="ggl.$legacy_component.service"
       if systemctl cat "$legacy_unit" >/dev/null 2>&1; then
@@ -1118,6 +1271,9 @@ aws_shared_credentials_file := ""
     done
     sudo "$ggl_cli" deploy "${deploy_args[@]}"
     deployed_units=("ggl.$sparkplug_component.service" "ggl.$connectivity_component.service")
+    if [ "$selected_rig_type" = "raspi" ]; then
+      deployed_units+=("ggl.$weather_sparkplug_component.service" "ggl.$weather_matter_component.service")
+    fi
     core_units=({{greengrass_core_units}})
     core_sockets=({{greengrass_core_sockets}})
     sudo systemctl daemon-reload || true

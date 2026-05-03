@@ -3,6 +3,8 @@ export const SPARKPLUG_NAMESPACE = 'spBv1.0'
 export const SparkplugDataType = {
   Int32: 3,
   UInt64: 8,
+  Float: 9,
+  Double: 10,
   Boolean: 11,
   String: 12,
 } as const
@@ -14,6 +16,8 @@ export type SparkplugMetric = {
   datatype: SparkplugDataType
   intValue: number | null
   longValue: number | null
+  floatValue: number | null
+  doubleValue: number | null
   boolValue: boolean | null
   stringValue: string | null
   timestamp: number | null
@@ -82,11 +86,31 @@ const appendVarintField = (bytes: number[], fieldNumber: number, value: number):
   appendVarint(bytes, value)
 }
 
+const appendFixed32Field = (bytes: number[], fieldNumber: number, value: number): void => {
+  appendKey(bytes, fieldNumber, 5)
+  const raw = new ArrayBuffer(4)
+  new DataView(raw).setFloat32(0, value, true)
+  for (const byte of new Uint8Array(raw)) {
+    bytes.push(byte)
+  }
+}
+
+const appendFixed64Field = (bytes: number[], fieldNumber: number, value: number): void => {
+  appendKey(bytes, fieldNumber, 1)
+  const raw = new ArrayBuffer(8)
+  new DataView(raw).setFloat64(0, value, true)
+  for (const byte of new Uint8Array(raw)) {
+    bytes.push(byte)
+  }
+}
+
 const encodeSparkplugMetric = (metric: {
   name: string
   datatype: SparkplugDataType
   intValue?: number
   longValue?: number
+  floatValue?: number
+  doubleValue?: number
   boolValue?: boolean
   stringValue?: string
   timestamp?: number
@@ -101,10 +125,14 @@ const encodeSparkplugMetric = (metric: {
     appendVarintField(bytes, 10, metric.intValue)
   } else if (typeof metric.longValue === 'number') {
     appendVarintField(bytes, 11, metric.longValue)
+  } else if (typeof metric.floatValue === 'number') {
+    appendFixed32Field(bytes, 12, metric.floatValue)
+  } else if (typeof metric.doubleValue === 'number') {
+    appendFixed64Field(bytes, 13, metric.doubleValue)
   } else if (typeof metric.boolValue === 'boolean') {
-    appendVarintField(bytes, 12, metric.boolValue ? 1 : 0)
+    appendVarintField(bytes, 14, metric.boolValue ? 1 : 0)
   } else if (typeof metric.stringValue === 'string') {
-    appendStringField(bytes, 13, metric.stringValue)
+    appendStringField(bytes, 15, metric.stringValue)
   } else {
     throw new Error(`Sparkplug metric ${metric.name} is missing a value`)
   }
@@ -119,6 +147,8 @@ export const encodeSparkplugPayload = (options: {
     datatype: SparkplugDataType
     intValue?: number
     longValue?: number
+    floatValue?: number
+    doubleValue?: number
     boolValue?: boolean
     stringValue?: string
     timestamp?: number
@@ -170,6 +200,30 @@ const readLengthDelimited = (
   }
 }
 
+const readFixed32 = (
+  bytes: Uint8Array,
+  startOffset: number,
+): { value: number; nextOffset: number } => {
+  const endOffset = startOffset + 4
+  if (endOffset > bytes.byteLength) {
+    throw new Error('Unexpected end of Sparkplug payload while reading fixed32 field')
+  }
+  const view = new DataView(bytes.buffer, bytes.byteOffset + startOffset, 4)
+  return { value: view.getFloat32(0, true), nextOffset: endOffset }
+}
+
+const readFixed64 = (
+  bytes: Uint8Array,
+  startOffset: number,
+): { value: number; nextOffset: number } => {
+  const endOffset = startOffset + 8
+  if (endOffset > bytes.byteLength) {
+    throw new Error('Unexpected end of Sparkplug payload while reading fixed64 field')
+  }
+  const view = new DataView(bytes.buffer, bytes.byteOffset + startOffset, 8)
+  return { value: view.getFloat64(0, true), nextOffset: endOffset }
+}
+
 const skipField = (bytes: Uint8Array, startOffset: number, wireType: number): number => {
   if (wireType === 0) {
     return readVarint(bytes, startOffset).nextOffset
@@ -192,6 +246,8 @@ const decodeSparkplugMetric = (bytes: Uint8Array): SparkplugMetric => {
   let datatype: SparkplugDataType = SparkplugDataType.Int32
   let intValue: number | null = null
   let longValue: number | null = null
+  let floatValue: number | null = null
+  let doubleValue: number | null = null
   let boolValue: boolean | null = null
   let stringValue: string | null = null
   let timestamp: number | null = null
@@ -232,13 +288,39 @@ const decodeSparkplugMetric = (bytes: Uint8Array): SparkplugMetric => {
       offset = field.nextOffset
       continue
     }
+    if (fieldNumber === 12 && wireType === 5) {
+      const field = readFixed32(bytes, offset)
+      floatValue = field.value
+      offset = field.nextOffset
+      continue
+    }
+    if (fieldNumber === 13 && wireType === 1) {
+      const field = readFixed64(bytes, offset)
+      doubleValue = field.value
+      offset = field.nextOffset
+      continue
+    }
+    // Backward compatibility for txing releases that encoded BOOLEAN on field 12.
     if (fieldNumber === 12 && wireType === 0) {
       const field = readVarint(bytes, offset)
       boolValue = field.value !== 0
       offset = field.nextOffset
       continue
     }
+    // Backward compatibility for txing releases that encoded STRING on field 13.
     if (fieldNumber === 13 && wireType === 2) {
+      const field = readLengthDelimited(bytes, offset)
+      stringValue = textDecoder.decode(field.value)
+      offset = field.nextOffset
+      continue
+    }
+    if (fieldNumber === 14 && wireType === 0) {
+      const field = readVarint(bytes, offset)
+      boolValue = field.value !== 0
+      offset = field.nextOffset
+      continue
+    }
+    if (fieldNumber === 15 && wireType === 2) {
       const field = readLengthDelimited(bytes, offset)
       stringValue = textDecoder.decode(field.value)
       offset = field.nextOffset
@@ -252,6 +334,8 @@ const decodeSparkplugMetric = (bytes: Uint8Array): SparkplugMetric => {
     datatype,
     intValue,
     longValue,
+    floatValue,
+    doubleValue,
     boolValue,
     stringValue,
     timestamp,

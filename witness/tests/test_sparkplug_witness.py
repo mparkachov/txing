@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import struct
 import unittest
 from unittest.mock import patch
 
@@ -40,8 +41,10 @@ def _encode_metric(
     name: str,
     int_value: int | None = None,
     long_value: int | None = None,
+    double_value: float | None = None,
     bool_value: bool | None = None,
     string_value: str | None = None,
+    canonical_fields: bool = False,
 ) -> bytes:
     payload = bytearray()
     payload.extend(_encode_length_delimited(1, name.encode("utf-8")))
@@ -51,11 +54,19 @@ def _encode_metric(
     if long_value is not None:
         payload.extend(_encode_key(11, 0))
         payload.extend(_encode_varint(long_value))
+    if double_value is not None:
+        payload.extend(_encode_key(13, 1))
+        payload.extend(struct.pack("<d", double_value))
     if bool_value is not None:
-        payload.extend(_encode_key(12, 0))
+        payload.extend(_encode_key(14 if canonical_fields else 12, 0))
         payload.extend(_encode_varint(1 if bool_value else 0))
     if string_value is not None:
-        payload.extend(_encode_length_delimited(13, string_value.encode("utf-8")))
+        payload.extend(
+            _encode_length_delimited(
+                15 if canonical_fields else 13,
+                string_value.encode("utf-8"),
+            )
+        )
     return bytes(payload)
 
 
@@ -154,6 +165,25 @@ class SparkplugWitnessTests(unittest.TestCase):
                 },
             },
         )
+
+    def test_decode_weather_double_and_canonical_bool_metrics(self) -> None:
+        encoded_payload = _encode_payload(
+            metrics=[
+                _encode_metric(name="redcon", int_value=4),
+                _encode_metric(name="measuredTemperature", double_value=21.625),
+                _encode_metric(name="services/demo/available", bool_value=True, canonical_fields=True),
+            ]
+        )
+
+        message = decode_sparkplug_payload(
+            encoded_payload,
+            "spBv1.0/town/DBIRTH/rig/weather-1",
+        )
+
+        assert message is not None
+        self.assertEqual(message.metrics["redcon"], 4)
+        self.assertEqual(message.metrics["measuredTemperature"], 21.625)
+        self.assertEqual(message.metrics["services"]["demo"]["available"], True)
 
     def test_decode_node_birth_omits_device_id_and_normalizes_metric_paths(self) -> None:
         encoded_payload = _encode_payload(

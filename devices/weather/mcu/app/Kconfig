@@ -1,0 +1,14 @@
+#
+# Copyright (c) 2026 txing contributors
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+
+mainmenu "txing weather Matter application"
+
+rsource "../../../common/mcu/matter/Kconfig.common"
+
+source "$(ZEPHYR_CONNECTEDHOMEIP_MODULE_DIR)/config/nrfconnect/chip-module/Kconfig.features"
+source "$(ZEPHYR_CONNECTEDHOMEIP_MODULE_DIR)/config/nrfconnect/chip-module/Kconfig.defaults"
+source "$(ZEPHYR_NRF_MODULE_DIR)/samples/matter/common/src/Kconfig"
+source "Kconfig.zephyr"

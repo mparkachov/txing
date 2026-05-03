@@ -60,6 +60,16 @@ Resources:
       Parameters:
         TypeCatalogServiceToken: !GetAtt BaseEnvironment.Outputs.CustomResourceServiceToken
 
+  RaspiWeatherTypeCatalog:
+    Type: AWS::CloudFormation::Stack
+    DependsOn:
+      - BaseEnvironment
+      - RaspiTypeCatalog
+    Properties:
+      TemplateURL: templates/types/raspi-weather.yaml
+      Parameters:
+        TypeCatalogServiceToken: !GetAtt BaseEnvironment.Outputs.CustomResourceServiceToken
+
   CloudTypeCatalog:
     Type: AWS::CloudFormation::Stack
     DependsOn:
@@ -102,6 +112,7 @@ Resources:
       - TownTypeCatalog
       - RaspiTypeCatalog
       - RaspiUnitTypeCatalog
+      - RaspiWeatherTypeCatalog
       - CloudTypeCatalog
       - CloudTimeTypeCatalog
     Properties:

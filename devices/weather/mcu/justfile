@@ -1,0 +1,24 @@
+set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+set quiet := true
+
+mcu_dir := source_directory()
+project_root := mcu_dir + "/../../.."
+uv_cache_dir := project_root + "/zephyr/.uv-cache"
+script := mcu_dir + "/scripts/weather_mcu.py"
+
+@check:
+    cd "{{mcu_dir}}" && UV_CACHE_DIR="{{uv_cache_dir}}" uv run --project "{{project_root}}/zephyr" --no-sync python "{{script}}" check
+
+@build: check
+
+@flash:
+    cd "{{mcu_dir}}" && UV_CACHE_DIR="{{uv_cache_dir}}" uv run --project "{{project_root}}/zephyr" --no-sync python "{{script}}" flash
+
+@verify:
+    cd "{{mcu_dir}}" && UV_CACHE_DIR="{{uv_cache_dir}}" uv run --project "{{project_root}}/zephyr" --no-sync python "{{script}}" verify
+
+@clean:
+    rm -rf "{{mcu_dir}}/build"
+
+@default:
+    @just --list

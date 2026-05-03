@@ -13,6 +13,7 @@ from rig.connectivity_protocol import (
     ConnectivityInventory,
     ConnectivityProtocolError,
     ConnectivityState,
+    WeatherMeasurements,
     PRESENCE_ONLINE,
     SLEEP_MODEL_BLE_RENDEZVOUS,
     SLEEP_MODEL_MATTER_ICD,
@@ -89,6 +90,32 @@ class ConnectivityProtocolTests(unittest.TestCase):
         self.assertEqual(matter_state.transport, TRANSPORT_MATTER)
         self.assertEqual(matter_state.sleep_model, SLEEP_MODEL_MATTER_ICD)
         self.assertTrue(matter_state.reachable)
+
+    def test_weather_state_round_trips_matter_measurements(self) -> None:
+        weather_state = ConnectivityState(
+            adapter_id="weather-matter-watch",
+            thing_name="weather-123",
+            transport=TRANSPORT_MATTER,
+            native_identity={"matterNodeId": 4660},
+            presence=PRESENCE_ONLINE,
+            control_availability="unavailable",
+            power=None,
+            sleep_model=SLEEP_MODEL_MATTER_ICD,
+            battery_mv=3512,
+            observed_at_ms=1714380000002,
+            seq=9,
+            weather=WeatherMeasurements(
+                measured_temperature=21.625,
+                measured_pressure=100.8,
+                measured_humidity=44.5,
+            ),
+        )
+
+        decoded = ConnectivityState.from_payload(weather_state.to_json())
+
+        self.assertEqual(decoded, weather_state)
+        payload = json.loads(weather_state.to_json())
+        self.assertEqual(payload["weather"]["measuredTemperature"], 21.625)
 
     def test_inventory_round_trips_multiple_device_transports(self) -> None:
         inventory = ConnectivityInventory(
