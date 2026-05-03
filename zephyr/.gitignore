@@ -1,0 +1,9 @@
+.venv/
+.uv-cache/
+.home/
+workspace/
+sdk/
+downloads/
+build/
+__pycache__/
+*.py[cod]

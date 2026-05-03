@@ -380,6 +380,7 @@ mod witness 'witness/justfile'
 mod unit 'devices/unit/justfile'
 mod time 'devices/time/justfile'
 mod web 'web/justfile'
+mod zephyr 'zephyr/justfile'
 
 @default:
     @just --list

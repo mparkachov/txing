@@ -1,0 +1,12 @@
+[project]
+name = "txing-zephyr-toolchain"
+version = "0.1.0"
+description = "Local nRF Connect SDK and Zephyr toolchain recipe for txing"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "west>=1.4.0,<2",
+]
+
+[tool.uv]
+package = false
