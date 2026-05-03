@@ -19,8 +19,8 @@ built_chip_tool := connectedhomeip_build_dir + "/chip-tool"
 native_python_dir := rig_dir + "/build/python"
 native_python_shim_dir := native_python_dir + "/shim"
 native_uv_cache_dir := rig_dir + "/build/uv-cache"
-greengrass_core_units := "ggl.core.ggconfigd.service ggl.core.ggipcd.service ggl.core.iotcored.service ggl.core.tesd.service ggl.aws.greengrass.TokenExchangeService.service ggl.core.ggdeploymentd.service"
-greengrass_core_sockets := "ggl.gg_deployment.socket"
+greengrass_core_units := "ggl.core.ggconfigd.service ggl.core.ggipcd.service ggl.core.iotcored.service ggl.core.tesd.service ggl.aws.greengrass.TokenExchangeService.service ggl.core.ggdeploymentd.service ggl.core.gg-fleet-statusd.service ggl.core.ggpubsubd.service ggl.core.gghealthd.service"
+greengrass_core_sockets := "ggl.gg_config.socket ggl.gg_deployment.socket ggl.gg_fleet_status.socket ggl.aws_iot_mqtt.socket ggl.aws_iot_tes.socket ggl.gg_pubsub.socket ggl.ipc_component.socket ggl.gg-ipc.socket.socket ggl.gg_health.socket"
 unit_rig_component_units := "ggl.dev.txing.device.unit.SparkplugManager.service ggl.dev.txing.device.unit.ConnectivityBle.service"
 weather_rig_component_units := "ggl.dev.txing.device.weather.SparkplugManager.service ggl.dev.txing.device.weather.MatterWatch.service"
 raspi_rig_component_units := unit_rig_component_units + " " + weather_rig_component_units
@@ -654,7 +654,17 @@ aws_shared_credentials_file := ""
         fi
     }
     trap cleanup_temp_files EXIT
-    sudo mkdir -p /var/lib/greengrass /etc/greengrass
+    sudo mkdir -p /var/lib/greengrass /etc/greengrass /etc/tmpfiles.d
+    sudo install -d -o ggcore -g ggcore -m 775 /run/greengrass
+    sudo install -d -o ggcore -g ggcore -m 770 /etc/greengrass/config.d
+    greengrass_tmpfiles_temp="$(mktemp "${TMPDIR:-/tmp}/txing-greengrass-tmpfiles.XXXXXX")"
+    temp_files+=("$greengrass_tmpfiles_temp")
+    cat >"$greengrass_tmpfiles_temp" <<'EOF'
+    d /run/greengrass 0775 ggcore ggcore -
+    d /etc/greengrass/config.d 0770 ggcore ggcore -
+    EOF
+    sudo install -m 644 "$greengrass_tmpfiles_temp" /etc/tmpfiles.d/txing-greengrass-lite.conf
+    sudo systemd-tmpfiles --create /etc/tmpfiles.d/txing-greengrass-lite.conf
     sudo install -d -o ggcore -g ggcore -m 700 /var/lib/greengrass/credentials
     sudo install -o ggcore -g ggcore -m 600 "$rig_cert_path" /var/lib/greengrass/credentials/rig.cert.pem
     sudo install -o ggcore -g ggcore -m 600 "$rig_private_key_path" /var/lib/greengrass/credentials/rig.private.key
@@ -737,17 +747,19 @@ aws_shared_credentials_file := ""
         exit 1
         ;;
     esac
+    sudo install -d -o ggcore -g ggcore -m 775 /run/greengrass || true
+    sudo install -d -o ggcore -g ggcore -m 770 /etc/greengrass/config.d || true
+    core_units=({{greengrass_core_units}})
+    core_sockets=({{greengrass_core_sockets}})
     reset_units=("{{greengrass_lite_target}}")
-    for unit in "${component_units[@]}"; do
+    for unit in "${core_sockets[@]}" "${core_units[@]}" "${component_units[@]}"; do
       if unit_exists "$unit"; then
         reset_units+=("$unit")
       fi
     done
     sudo systemctl reset-failed "${reset_units[@]}" || true
     sudo systemctl start "{{greengrass_lite_target}}"
-    core_units=({{greengrass_core_units}})
-    core_sockets=({{greengrass_core_sockets}})
-    for unit in "${core_sockets[@]}" "${core_units[@]}"; do
+    for unit in "${core_sockets[@]}"; do
       start_unit_if_present "$unit"
       wait_active_if_present "$unit" || true
     done
@@ -995,21 +1007,51 @@ aws_shared_credentials_file := ""
       fi
     }
     if ! systemctl is-active --quiet "{{greengrass_lite_target}}"; then
-      echo "Starting Greengrass core runtime before deploy; component target {{greengrass_lite_target}} will be activated after deployment."
+      echo "Starting Greengrass deployment sockets before deploy; component target {{greengrass_lite_target}} will be activated after deployment."
     fi
+    sudo install -d -o ggcore -g ggcore -m 775 /run/greengrass || true
+    sudo install -d -o ggcore -g ggcore -m 770 /etc/greengrass/config.d || true
     core_units=({{greengrass_core_units}})
     core_sockets=({{greengrass_core_sockets}})
-    core_runtime_units=("${core_sockets[@]}" "${core_units[@]}")
+    core_runtime_units=("${core_sockets[@]}")
+    is_deployment_required_core_unit() {
+      case "$1" in
+        ggl.gg_config.socket|ggl.gg_deployment.socket)
+          return 0
+          ;;
+        *)
+          return 1
+          ;;
+      esac
+    }
+    for core_runtime_unit in "${core_sockets[@]}" "${core_units[@]}"; do
+      reset_failed_if_present "$core_runtime_unit"
+    done
     for core_runtime_unit in "${core_runtime_units[@]}"; do
       if ! systemctl cat "$core_runtime_unit" >/dev/null 2>&1; then
-        echo "Greengrass Lite core runtime $core_runtime_unit is not installed. Run 'just rig::build-native' and 'just rig::install-service' to install the current Greengrass Lite service set." >&2
-        exit 1
+        if is_deployment_required_core_unit "$core_runtime_unit"; then
+          echo "Greengrass Lite deployment runtime $core_runtime_unit is not installed. Run 'just rig::build-native' and 'just rig::install-service' to install the current Greengrass Lite service set." >&2
+          exit 1
+        fi
+        echo "warning: optional Greengrass Lite socket $core_runtime_unit is not installed; continuing." >&2
+        continue
       fi
-      sudo systemctl start "$core_runtime_unit"
+      if ! sudo systemctl start "$core_runtime_unit"; then
+        if is_deployment_required_core_unit "$core_runtime_unit"; then
+          echo "Greengrass Lite deployment runtime $core_runtime_unit failed to start." >&2
+          echo "Inspect it with: sudo journalctl -a --no-pager -u $core_runtime_unit -u ggl.gg_config.socket -u ggl.gg_deployment.socket -u ggl.core.ggdeploymentd.service -n 200" >&2
+          exit 1
+        fi
+        echo "warning: Greengrass Lite socket $core_runtime_unit failed to start; continuing." >&2
+        continue
+      fi
       if ! wait_active_unit "$core_runtime_unit"; then
-        echo "Greengrass Lite core runtime $core_runtime_unit did not become active." >&2
-        echo "Inspect it with: sudo journalctl -a --no-pager -u $core_runtime_unit -u ggl.core.ggdeploymentd.service -u ggl.gg_deployment.socket -n 200" >&2
-        exit 1
+        if is_deployment_required_core_unit "$core_runtime_unit"; then
+          echo "Greengrass Lite deployment runtime $core_runtime_unit did not become active." >&2
+          echo "Inspect it with: sudo journalctl -a --no-pager -u $core_runtime_unit -u ggl.gg_config.socket -u ggl.gg_deployment.socket -u ggl.core.ggdeploymentd.service -n 200" >&2
+          exit 1
+        fi
+        echo "warning: Greengrass Lite socket $core_runtime_unit did not report active before deploy; continuing." >&2
       fi
     done
     ggl_cli="$(command -v ggl-cli || true)"
@@ -1451,10 +1493,10 @@ aws_shared_credentials_file := ""
     sudo systemctl daemon-reload || true
     sudo systemctl start "{{greengrass_lite_target}}" || true
     wait_active_unit "{{greengrass_lite_target}}" || true
-    for core_unit in "${core_sockets[@]}" "${core_units[@]}"; do
-      if systemctl cat "$core_unit" >/dev/null 2>&1; then
-        sudo systemctl start "$core_unit" || true
-        wait_active_unit "$core_unit" || true
+    for core_socket in "${core_sockets[@]}"; do
+      if systemctl cat "$core_socket" >/dev/null 2>&1; then
+        sudo systemctl start "$core_socket" || true
+        wait_active_unit "$core_socket" || true
       fi
     done
     activation_failures=0
