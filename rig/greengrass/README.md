@@ -62,6 +62,10 @@ Run the package install before `just rig::build-native`; the native build invoke
 `cmake` directly. `build-native` also checks out Nordic's `sdk-connectedhomeip`
 under `rig/connectedhomeip` at the NCS `v3.3.0` Matter revision and builds a
 local `chip-tool` for the rig. The checkout and build output are ignored by git.
+Debian 13 Trixie uses Python 3.13 as `/usr/bin/python3`; this Matter revision's
+Python dependencies still require Python 3.11 or 3.12, so the recipe provisions
+a uv-managed Python 3.12 under `rig/build/python` when no compatible system
+Python is available.
 
 Use the local Matter controller with:
 

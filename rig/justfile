@@ -14,7 +14,10 @@ greengrass_lite_build_dir := greengrass_lite_dir + "/build"
 greengrass_lite_target := "greengrass-lite.target"
 connectedhomeip_dir := rig_dir + "/connectedhomeip"
 connectedhomeip_build_dir := connectedhomeip_dir + "/out/txing-chip-tool"
+connectedhomeip_environment_dir := connectedhomeip_dir + "/.environment"
 built_chip_tool := connectedhomeip_build_dir + "/chip-tool"
+native_python_dir := rig_dir + "/build/python"
+native_uv_cache_dir := rig_dir + "/build/uv-cache"
 greengrass_core_units := "ggl.core.ggconfigd.service ggl.core.ggipcd.service ggl.core.iotcored.service ggl.core.tesd.service ggl.aws.greengrass.TokenExchangeService.service ggl.core.ggdeploymentd.service"
 greengrass_core_sockets := "ggl.gg_deployment.socket"
 unit_rig_component_units := "ggl.dev.txing.device.unit.SparkplugManager.service ggl.dev.txing.device.unit.ConnectivityBle.service"
@@ -340,7 +343,7 @@ aws_shared_credentials_file := ""
     ./scripts/checkout_submodules.py --shallow --platform linux
 
 @clean-native:
-    rm -rf "{{greengrass_lite_build_dir}}" "{{connectedhomeip_build_dir}}"
+    rm -rf "{{greengrass_lite_build_dir}}" "{{connectedhomeip_build_dir}}" "{{connectedhomeip_environment_dir}}" "{{native_python_dir}}" "{{native_uv_cache_dir}}"
 
 @distclean-native:
     just clean-native
@@ -373,10 +376,51 @@ aws_shared_credentials_file := ""
       echo "chip-tool native build is supported only on Linux targets such as Raspberry Pi OS Lite." >&2
       exit 1
     fi
+    choose_chip_tool_python() {
+      local candidates=()
+      if [ -n "${CHIP_TOOL_PYTHON:-}" ]; then
+        candidates+=("$CHIP_TOOL_PYTHON")
+      fi
+      candidates+=(python3.12 python3.11)
+      local candidate
+      for candidate in "${candidates[@]}"; do
+        if ! command -v "$candidate" >/dev/null 2>&1; then
+          continue
+        fi
+        if "$candidate" -c 'import sys; raise SystemExit(0 if sys.version_info[:2] in ((3, 11), (3, 12)) else 1)' >/dev/null; then
+          command -v "$candidate"
+          return 0
+        fi
+      done
+      if ! command -v uv >/dev/null 2>&1; then
+        echo "Project CHIP v3.3.0 Python dependencies do not build with Python 3.13." >&2
+        echo "Install uv so this recipe can provision Python 3.12 locally, or set CHIP_TOOL_PYTHON=/path/to/python3.12." >&2
+        return 1
+      fi
+      mkdir -p "{{native_python_dir}}" "{{native_uv_cache_dir}}"
+      UV_CACHE_DIR="{{native_uv_cache_dir}}" \
+        uv python install 3.12 \
+          --install-dir "{{native_python_dir}}" \
+          --compile-bytecode
+      local managed_python
+      managed_python="$(
+        UV_CACHE_DIR="{{native_uv_cache_dir}}" \
+        UV_PYTHON_INSTALL_DIR="{{native_python_dir}}" \
+          uv python find 3.12 --managed-python --no-project
+      )"
+      if [ -z "$managed_python" ]; then
+        echo "uv installed Python 3.12, but no executable was found under {{native_python_dir}}." >&2
+        return 1
+      fi
+      printf '%s\n' "$managed_python"
+    }
+    chip_tool_python="$(choose_chip_tool_python)"
     just clone-connectedhomeip
     cd "{{connectedhomeip_dir}}"
-    export PW_ENVIRONMENT_ROOT="{{connectedhomeip_dir}}/.environment"
+    export PW_ENVIRONMENT_ROOT="{{connectedhomeip_environment_dir}}"
     export PW_ENVSETUP_QUIET=1
+    export PW_BOOTSTRAP_PYTHON="$chip_tool_python"
+    export PYTHON="$chip_tool_python"
     # Project CHIP's activation script expects unset optional environment
     # variables, so keep this wrapper strict but source upstream with nounset off.
     set +u
