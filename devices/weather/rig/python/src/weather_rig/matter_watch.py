@@ -137,6 +137,14 @@ async def publish_watcher_line(
     payload = json.loads(line)
     if not isinstance(payload, dict):
         raise ValueError("weather matter watcher output must be a JSON object")
+    if payload.get("status") != "online":
+        error = payload.get("error")
+        LOGGER.warning(
+            "Weather Matter watcher reported offline thing=%s node=%s error=%s",
+            config.thing_name,
+            config.matter_node_id,
+            error.strip() if isinstance(error, str) and error.strip() else "unknown",
+        )
     state = state_from_watcher_payload(payload, config=config, seq=seq)
     await bus.publish(build_state_topic(config.thing_name), state.to_json())
 

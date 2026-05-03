@@ -72,6 +72,39 @@ class WeatherMatterWatchTests(unittest.TestCase):
         self.assertEqual(state.thing_name, "weather-1")
         self.assertEqual(state.battery_mv, 3512)
 
+    def test_publish_watcher_line_logs_offline_error(self) -> None:
+        async def exercise() -> ConnectivityState:
+            bus = InMemoryLocalPubSub()
+            states: list[ConnectivityState] = []
+
+            async def state_handler(_topic: str, payload: bytes) -> None:
+                states.append(ConnectivityState.from_payload(payload))
+
+            await bus.subscribe(build_state_topic("weather-1"), state_handler)
+            with self.assertLogs("weather_rig.matter_watch", level="WARNING") as logs:
+                await publish_watcher_line(
+                    json.dumps(
+                        {
+                            "status": "offline",
+                            "error": "command exited with status 256",
+                        }
+                    ),
+                    config=WeatherMatterWatchConfig(
+                        thing_name="weather-1",
+                        matter_node_id="1001",
+                    ),
+                    bus=bus,
+                    seq=2,
+                )
+
+            self.assertIn("command exited with status 256", "\n".join(logs.output))
+            return states[0]
+
+        state = asyncio.run(exercise())
+
+        self.assertEqual(state.presence, "offline")
+        self.assertIsNone(state.weather)
+
 
 if __name__ == "__main__":
     unittest.main()
