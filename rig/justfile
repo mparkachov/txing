@@ -1089,6 +1089,7 @@ aws_shared_credentials_file := ""
       weather_thing_name="{{weather_thing_name}}"
       weather_matter_node_id="{{weather_matter_node_id}}"
       weather_chip_tool="{{weather_chip_tool}}"
+      weather_chip_tool_config="$weather_chip_tool"
       if [ "$weather_chip_tool" = "chip-tool" ] && [ -x "{{built_chip_tool}}" ]; then
         weather_chip_tool="{{built_chip_tool}}"
       fi
@@ -1107,8 +1108,10 @@ aws_shared_credentials_file := ""
               echo "Run 'just rig::build-native' on this rig or pass a chip-tool executable path as the tenth positional rig::deploy argument." >&2
               exit 1
             fi
+            weather_chip_tool="$(command -v "$weather_chip_tool")"
             ;;
         esac
+        weather_chip_tool_config="{artifacts:path}/bin/chip-tool"
       fi
       uv build --wheel --out-dir "$wheelhouse_dir" "$weather_python_project" >/dev/null
       cmake -S "$weather_native_project" -B "$weather_native_build_dir" -DCMAKE_BUILD_TYPE=MinSizeRel >/dev/null
@@ -1158,6 +1161,11 @@ aws_shared_credentials_file := ""
         cp -a "{{project_root}}/devices/weather/aws" "$component_artifact_dir/devices/weather/aws"
         mkdir -p "$component_artifact_dir/bin"
         cp "$weather_native_build_dir/weather-matter-watch" "$component_artifact_dir/bin/weather-matter-watch"
+        chmod 755 "$component_artifact_dir/bin/weather-matter-watch"
+        if [ "$component_name" = "$weather_matter_component" ] && [ -n "$weather_matter_node_id" ]; then
+          cp "$weather_chip_tool" "$component_artifact_dir/bin/chip-tool"
+          chmod 755 "$component_artifact_dir/bin/chip-tool"
+        fi
         printf 'txing local Greengrass artifact for %s %s\n' "$component_name" "$resolved_component_version" >"$component_artifact_dir/txing-local-artifact.txt"
       done
     fi
@@ -1337,7 +1345,7 @@ aws_shared_credentials_file := ""
       DefaultConfiguration:
         WeatherThingName: "$weather_thing_name"
         MatterNodeId: "$weather_matter_node_id"
-        ChipTool: "$weather_chip_tool"
+        ChipTool: "$weather_chip_tool_config"
         SampleIntervalSeconds: 30
         TemperatureEndpoint: 1
         HumidityEndpoint: 2

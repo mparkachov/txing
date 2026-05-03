@@ -138,7 +138,9 @@ just rig::deploy <rig-id> '' '' '' '' ble-main txing <weather-thing-name> <matte
 
 When weather is enabled with a Matter node id, `rig::deploy` checks that the
 configured or locally built `chip-tool` exists before installing the Greengrass
-component.
+component, copies that executable into the local MatterWatch component artifact,
+and points the component at the artifact-local copy. The Greengrass runtime user
+does not need execute access to the developer checkout under `rig/connectedhomeip`.
 
 The Matter watcher stores its `chip-tool` controller fabric under the component
 work directory, exposed to the process as `WEATHER_CHIP_TOOL_STORAGE_DIR`.
