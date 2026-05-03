@@ -1379,7 +1379,7 @@ aws_shared_credentials_file := ""
               export WEATHER_CHIP_TOOL_STORAGE_DIR="{work:path}/chip-tool-storage"
               export WEATHER_MATTER_WATCH_BINARY="{artifacts:path}/bin/weather-matter-watch"
               export PYTHONPATH="{artifacts:path}/python"
-              mkdir -p "$WEATHER_CHIP_TOOL_STORAGE_DIR"
+              mkdir -p "\$WEATHER_CHIP_TOOL_STORAGE_DIR"
               exec python3 -m weather_rig.matter_watch
         Artifacts:
           - Uri: "s3://txing-local-greengrass/txing-local-artifact.txt"
