@@ -961,6 +961,19 @@ aws_shared_credentials_file := ""
       done
       return 1
     }
+    wait_inactive_unit() {
+      local unit="$1"
+      local attempts=20
+      local attempt=0
+      while [ "$attempt" -lt "$attempts" ]; do
+        if ! systemctl is-active --quiet "$unit"; then
+          return 0
+        fi
+        attempt=$((attempt + 1))
+        sleep 0.5
+      done
+      return 1
+    }
     wait_unit_present() {
       local unit="$1"
       local attempts=60
@@ -1414,11 +1427,27 @@ aws_shared_credentials_file := ""
         deploy_args+=(--remove-component "$legacy_component")
       fi
     done
-    sudo "$ggl_cli" deploy "${deploy_args[@]}"
     deployed_units=("ggl.$sparkplug_component.service" "ggl.$connectivity_component.service")
     if [ "$selected_rig_type" = "raspi" ]; then
       deployed_units+=("ggl.$weather_sparkplug_component.service" "ggl.$weather_matter_component.service")
     fi
+    quiesce_units=()
+    legacy_units=({{legacy_unit_rig_component_units}})
+    for unit in "${deployed_units[@]}" "${legacy_units[@]}"; do
+      if systemctl cat "$unit" >/dev/null 2>&1; then
+        quiesce_units+=("$unit")
+      fi
+    done
+    if [ "${#quiesce_units[@]}" -gt 0 ]; then
+      printf 'Stopping running Greengrass component units before deploy: %s\n' "${quiesce_units[*]}"
+      sudo systemctl stop "${quiesce_units[@]}" || true
+      for unit in "${quiesce_units[@]}"; do
+        if ! wait_inactive_unit "$unit"; then
+          echo "warning: component unit $unit did not become inactive before deploy." >&2
+        fi
+      done
+    fi
+    sudo "$ggl_cli" deploy "${deploy_args[@]}"
     sudo systemctl daemon-reload || true
     sudo systemctl start "{{greengrass_lite_target}}" || true
     wait_active_unit "{{greengrass_lite_target}}" || true
