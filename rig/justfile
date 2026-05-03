@@ -354,7 +354,7 @@ aws_shared_credentials_file := ""
     #!/usr/bin/env bash
     set -euo pipefail
     if [ "$(uname -s)" != "Linux" ]; then \
-        echo "Native rig dependencies are supported only on Linux targets such as Raspberry Pi OS Lite." >&2; \
+        echo "Greengrass Lite native build is supported only on Linux targets such as Raspberry Pi OS Lite." >&2; \
         exit 1; \
     fi
     just clone-greengrass-lite
@@ -1089,7 +1089,6 @@ aws_shared_credentials_file := ""
       weather_thing_name="{{weather_thing_name}}"
       weather_matter_node_id="{{weather_matter_node_id}}"
       weather_chip_tool="{{weather_chip_tool}}"
-      weather_chip_tool_config="$weather_chip_tool"
       if [ "$weather_chip_tool" = "chip-tool" ] && [ -x "{{built_chip_tool}}" ]; then
         weather_chip_tool="{{built_chip_tool}}"
       fi
@@ -1111,7 +1110,6 @@ aws_shared_credentials_file := ""
             weather_chip_tool="$(command -v "$weather_chip_tool")"
             ;;
         esac
-        weather_chip_tool_config="{artifacts:path}/bin/chip-tool"
       fi
       uv build --wheel --out-dir "$wheelhouse_dir" "$weather_python_project" >/dev/null
       cmake -S "$weather_native_project" -B "$weather_native_build_dir" -DCMAKE_BUILD_TYPE=MinSizeRel >/dev/null
@@ -1345,7 +1343,7 @@ aws_shared_credentials_file := ""
       DefaultConfiguration:
         WeatherThingName: "$weather_thing_name"
         MatterNodeId: "$weather_matter_node_id"
-        ChipTool: "$weather_chip_tool_config"
+        ChipTool: "$weather_chip_tool"
         SampleIntervalSeconds: 30
         TemperatureEndpoint: 1
         HumidityEndpoint: 2
@@ -1378,7 +1376,11 @@ aws_shared_credentials_file := ""
               export TXING_DEVICE_MANIFEST="{artifacts:path}/devices/weather/manifest.toml"
               export WEATHER_THING_NAME="{configuration:/WeatherThingName}"
               export WEATHER_MATTER_NODE_ID="{configuration:/MatterNodeId}"
-              export WEATHER_CHIP_TOOL="{configuration:/ChipTool}"
+              if [ -x "{artifacts:path}/bin/chip-tool" ]; then
+                export WEATHER_CHIP_TOOL="{artifacts:path}/bin/chip-tool"
+              else
+                export WEATHER_CHIP_TOOL="{configuration:/ChipTool}"
+              fi
               export WEATHER_SAMPLE_INTERVAL_SECONDS="{configuration:/SampleIntervalSeconds}"
               export WEATHER_TEMPERATURE_ENDPOINT="{configuration:/TemperatureEndpoint}"
               export WEATHER_HUMIDITY_ENDPOINT="{configuration:/HumidityEndpoint}"

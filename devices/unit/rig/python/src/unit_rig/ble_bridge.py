@@ -3775,9 +3775,8 @@ class RigFleetBridge:
             return
 
         generic_candidates: list[BleSleepBridge] = []
-        single_device = len(self._managed_things) == 1
         for managed in self._managed_things:
-            if managed.bridge._cached_device_id is not None and not single_device:
+            if managed.bridge._cached_device_id is not None:
                 continue
             matched_by = managed.bridge._match_scan_candidate(device, adv)
             if matched_by in {"serviceUuid", "name", "manufacturer"}:

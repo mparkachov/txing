@@ -35,7 +35,11 @@ Manifests:
           export TXING_DEVICE_MANIFEST="{artifacts:decompressedPath}/rig-greengrass/devices/weather/manifest.toml"
           export WEATHER_THING_NAME="{configuration:/WeatherThingName}"
           export WEATHER_MATTER_NODE_ID="{configuration:/MatterNodeId}"
-          export WEATHER_CHIP_TOOL="{configuration:/ChipTool}"
+          if [ -x "{artifacts:decompressedPath}/rig-greengrass/bin/chip-tool" ]; then
+            export WEATHER_CHIP_TOOL="{artifacts:decompressedPath}/rig-greengrass/bin/chip-tool"
+          else
+            export WEATHER_CHIP_TOOL="{configuration:/ChipTool}"
+          fi
           export WEATHER_SAMPLE_INTERVAL_SECONDS="{configuration:/SampleIntervalSeconds}"
           export WEATHER_TEMPERATURE_ENDPOINT="{configuration:/TemperatureEndpoint}"
           export WEATHER_HUMIDITY_ENDPOINT="{configuration:/HumidityEndpoint}"

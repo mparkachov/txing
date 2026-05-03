@@ -154,6 +154,9 @@ def _install_paho_stub() -> None:
 _install_bleak_stub()
 _install_paho_stub()
 
+from bleak.backends.device import BLEDevice
+from bleak.backends.scanner import AdvertisementData
+
 from unit_rig.ble_bridge import (
     AwsShadowClient,
     AwsShadowUpdate,
@@ -743,7 +746,7 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertIn("aws_rig_component_units :=", justfile)
         self.assertIn("legacy_unit_rig_component_units :=", justfile)
         self.assertIn("legacy_unit_rig_components :=", justfile)
-        self.assertIn("component_units=({{unit_rig_component_units}})", justfile)
+        self.assertIn("component_units=({{raspi_rig_component_units}})", justfile)
         self.assertIn("component_units=({{aws_rig_component_units}})", justfile)
         self.assertIn("ggl.dev.txing.device.unit.SparkplugManager.service", justfile)
         self.assertIn("ggl.dev.txing.device.unit.ConnectivityBle.service", justfile)
@@ -1089,6 +1092,75 @@ class RigFleetScannerTests(unittest.TestCase):
         )
 
         self.assertTrue(fleet_bridge._bridge_needs_session(bridge))  # type: ignore[arg-type]
+
+    def test_shared_scanner_ignores_generic_name_match_when_device_id_is_known(self) -> None:
+        class FakeBridge:
+            def __init__(self) -> None:
+                self._cached_device_id = "EE:C7:32:0B:1C:6A"
+                self.handled = 0
+
+            def _match_scan_candidate(self, _device: object, _adv: object) -> str:
+                return "name"
+
+            def _handle_scan_detection(self, _device: object, _adv: object) -> None:
+                self.handled += 1
+
+        bridge = FakeBridge()
+        fleet_bridge = RigFleetBridge(
+            BridgeConfig(),
+            cloud_shadow=FakeCloudShadow(),  # type: ignore[arg-type]
+            registry=object(),  # type: ignore[arg-type]
+            managed_things=[
+                types.SimpleNamespace(
+                    registration=types.SimpleNamespace(
+                        thing_name="unit-1",
+                        ble_device_id=bridge._cached_device_id,
+                        version=1,
+                    ),
+                    bridge=bridge,
+                )
+            ],
+        )
+
+        fleet_bridge._handle_scan_detection(
+            BLEDevice("C7:C8:FB:A5:62:8A", "TxingWeather"),
+            AdvertisementData(local_name="TxingWeather"),
+        )
+
+        self.assertEqual(bridge.handled, 0)
+
+    def test_shared_scanner_uses_exact_device_id_when_device_id_is_known(self) -> None:
+        class FakeBridge:
+            def __init__(self) -> None:
+                self._cached_device_id = "EE:C7:32:0B:1C:6A"
+                self.handled = 0
+
+            def _handle_scan_detection(self, _device: object, _adv: object) -> None:
+                self.handled += 1
+
+        bridge = FakeBridge()
+        fleet_bridge = RigFleetBridge(
+            BridgeConfig(),
+            cloud_shadow=FakeCloudShadow(),  # type: ignore[arg-type]
+            registry=object(),  # type: ignore[arg-type]
+            managed_things=[
+                types.SimpleNamespace(
+                    registration=types.SimpleNamespace(
+                        thing_name="unit-1",
+                        ble_device_id=bridge._cached_device_id,
+                        version=1,
+                    ),
+                    bridge=bridge,
+                )
+            ],
+        )
+
+        fleet_bridge._handle_scan_detection(
+            BLEDevice("EE:C7:32:0B:1C:6A", "TxingUnit"),
+            AdvertisementData(local_name="TxingUnit"),
+        )
+
+        self.assertEqual(bridge.handled, 1)
 
     async def _exercise_fleet_connect_waits_for_fresh_target(self) -> None:
         class FakeBridge:

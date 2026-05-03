@@ -5,6 +5,7 @@ import unittest
 
 from rig.connectivity_protocol import (
     CONTROL_UNAVAILABLE,
+    PRESENCE_OFFLINE,
     PRESENCE_ONLINE,
     ConnectivityState,
     WeatherMeasurements,
@@ -103,6 +104,52 @@ class WeatherSparkplugManagerTests(unittest.TestCase):
         self.assertEqual(metrics["measuredTemperature"].double_value, 21.625)
         self.assertEqual(metrics["measuredPressure"].double_value, 100.8)
         self.assertEqual(metrics["measuredHumidity"].double_value, 44.5)
+
+    def test_offline_payload_omits_missing_battery_and_weather_metrics(self) -> None:
+        async def exercise() -> tuple[str, bytes]:
+            bus = InMemoryLocalPubSub()
+            manager = WeatherSparkplugManager(
+                WeatherSparkplugConfig(
+                    endpoint="endpoint",
+                    aws_region="eu-central-1",
+                    rig_name="server",
+                    sparkplug_group_id="town",
+                    sparkplug_edge_node_id="server",
+                ),
+                bus=bus,
+                aws_runtime=object(),
+                connection_factory=FakeConnection,
+            )
+            await manager.set_registrations([registration("weather-1")])
+            await manager.connect()
+            await manager.apply_connectivity_state(
+                ConnectivityState(
+                    adapter_id="weather-matter-watch",
+                    thing_name="weather-1",
+                    transport="matter",
+                    native_identity={"matterNodeId": "0x1234"},
+                    presence=PRESENCE_OFFLINE,
+                    control_availability=CONTROL_UNAVAILABLE,
+                    power=None,
+                    sleep_model="matter-icd",
+                    battery_mv=None,
+                    observed_at_ms=1714380000000,
+                    weather=None,
+                )
+            )
+            assert manager._connection is not None
+            return manager._connection.published[0]  # type: ignore[union-attr]
+
+        topic, payload = asyncio.run(exercise())
+
+        self.assertEqual(topic, "spBv1.0/town/DBIRTH/server/weather-1")
+        decoded = decode_payload(payload)
+        metrics = {metric.name: metric for metric in decoded.metrics}
+        self.assertEqual(metrics["redcon"].int_value, 4)
+        self.assertNotIn("batteryMv", metrics)
+        self.assertNotIn("measuredTemperature", metrics)
+        self.assertNotIn("measuredPressure", metrics)
+        self.assertNotIn("measuredHumidity", metrics)
 
     def test_ignores_non_weather_registrations(self) -> None:
         async def exercise() -> list[str]:

@@ -30,12 +30,13 @@ from rig.local_pubsub import GreengrassLocalPubSub, LocalPubSub
 from rig.sparkplug import (
     DataType,
     Metric,
+    Payload,
     build_device_death_payload,
-    build_device_report_payload,
     build_device_topic,
     build_node_birth_payload,
     build_node_death_payload,
     build_node_topic,
+    encode_payload,
     utc_timestamp_ms,
 )
 from rig.thing_registry import AwsThingRegistryClient, ThingRegistration
@@ -278,7 +279,6 @@ class WeatherSparkplugManager:
         if self._connection is None:
             raise RuntimeError("weather Sparkplug manager is not connected")
         state = device.last_state
-        battery_mv = state.battery_mv if state is not None and state.battery_mv is not None else 0
         topic = build_device_topic(
             self._config.sparkplug_group_id,
             message_type,
@@ -287,19 +287,23 @@ class WeatherSparkplugManager:
         )
         await self._connection.publish(
             topic,
-            build_device_report_payload(
-                redcon=WEATHER_REDCON,
-                battery_mv=battery_mv,
-                seq=device.next_seq(),
-                extra_metrics=_weather_metrics(state),
+            encode_payload(
+                Payload(
+                    timestamp=utc_timestamp_ms(),
+                    metrics=_weather_report_metrics(state),
+                    seq=device.next_seq(),
+                )
             ),
             timeout_seconds=self._config.operation_timeout,
         )
         LOGGER.info(
-            "Published weather Sparkplug %s thing=%s redcon=%s",
+            "Published weather Sparkplug %s thing=%s redcon=%s presence=%s hasWeather=%s hasBattery=%s",
             message_type,
             device.thing_name,
             WEATHER_REDCON,
+            state.presence if state is not None else "unknown",
+            state is not None and state.weather is not None,
+            state is not None and state.battery_mv is not None,
         )
 
     async def publish_device_death(self, device: WeatherManagedDevice) -> None:
@@ -329,6 +333,22 @@ class WeatherSparkplugManager:
             async with device.operation_lock:
                 if device.born and now_ms - device.last_reported_at_ms > self._config.stale_after_ms:
                     await self.publish_device_death(device)
+
+
+def _weather_report_metrics(state: ConnectivityState | None) -> tuple[Metric, ...]:
+    metrics = [
+        Metric(name="redcon", datatype=DataType.INT32, int_value=WEATHER_REDCON),
+    ]
+    if state is not None and state.battery_mv is not None:
+        metrics.append(
+            Metric(
+                name="batteryMv",
+                datatype=DataType.INT32,
+                int_value=state.battery_mv,
+            )
+        )
+    metrics.extend(_weather_metrics(state))
+    return tuple(metrics)
 
 
 def _weather_metrics(state: ConnectivityState | None) -> tuple[Metric, ...]:
