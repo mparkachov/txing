@@ -986,16 +986,18 @@ aws_shared_credentials_file := ""
         sudo systemctl start "{{greengrass_lite_target}}"; \
         wait_active_unit "{{greengrass_lite_target}}"; \
     fi
-    deployment_runtime_units=(ggl.gg_deployment.socket ggl.core.ggdeploymentd.service)
-    for deployment_runtime_unit in "${deployment_runtime_units[@]}"; do
-      if ! systemctl cat "$deployment_runtime_unit" >/dev/null 2>&1; then
-        echo "Greengrass Lite deployment runtime $deployment_runtime_unit is not installed. Run 'just rig::build-native' and 'just rig::install-service' to install the current Greengrass Lite service set." >&2
+    core_units=({{greengrass_core_units}})
+    core_sockets=({{greengrass_core_sockets}})
+    core_runtime_units=("${core_sockets[@]}" "${core_units[@]}")
+    for core_runtime_unit in "${core_runtime_units[@]}"; do
+      if ! systemctl cat "$core_runtime_unit" >/dev/null 2>&1; then
+        echo "Greengrass Lite core runtime $core_runtime_unit is not installed. Run 'just rig::build-native' and 'just rig::install-service' to install the current Greengrass Lite service set." >&2
         exit 1
       fi
-      sudo systemctl start "$deployment_runtime_unit"
-      if ! wait_active_unit "$deployment_runtime_unit"; then
-        echo "Greengrass Lite deployment runtime $deployment_runtime_unit did not become active." >&2
-        echo "Inspect it with: sudo journalctl -a --no-pager -u ggl.core.ggdeploymentd.service -u ggl.gg_deployment.socket -n 200" >&2
+      sudo systemctl start "$core_runtime_unit"
+      if ! wait_active_unit "$core_runtime_unit"; then
+        echo "Greengrass Lite core runtime $core_runtime_unit did not become active." >&2
+        echo "Inspect it with: sudo journalctl -a --no-pager -u $core_runtime_unit -u ggl.core.ggdeploymentd.service -u ggl.gg_deployment.socket -n 200" >&2
         exit 1
       fi
     done
@@ -1419,8 +1421,6 @@ aws_shared_credentials_file := ""
     if [ "$selected_rig_type" = "raspi" ]; then
       deployed_units+=("ggl.$weather_sparkplug_component.service" "ggl.$weather_matter_component.service")
     fi
-    core_units=({{greengrass_core_units}})
-    core_sockets=({{greengrass_core_sockets}})
     sudo systemctl daemon-reload || true
     wait_active_unit "{{greengrass_lite_target}}"
     for core_unit in "${core_sockets[@]}" "${core_units[@]}"; do

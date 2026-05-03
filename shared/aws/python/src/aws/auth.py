@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import logging
 import os
-from typing import Any
+import time
+from typing import Any, Callable, Mapping
+import urllib.request
 
 try:
     import boto3
@@ -22,6 +25,21 @@ else:
     AWS_CRT_IMPORT_ERROR = None
 
 AWS_IOT_DATA_ENDPOINT_TYPE = "iot:Data-ATS"
+AWS_CONTAINER_CREDENTIALS_FULL_URI_ENV = "AWS_CONTAINER_CREDENTIALS_FULL_URI"
+AWS_CONTAINER_CREDENTIALS_RELATIVE_URI_ENV = "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI"
+AWS_CONTAINER_AUTHORIZATION_TOKEN_ENV = "AWS_CONTAINER_AUTHORIZATION_TOKEN"
+AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE_ENV = "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE"
+TXING_CONTAINER_CREDENTIALS_WAIT_SECONDS_ENV = (
+    "TXING_AWS_CONTAINER_CREDENTIALS_WAIT_SECONDS"
+)
+TXING_CONTAINER_CREDENTIALS_WAIT_INTERVAL_SECONDS_ENV = (
+    "TXING_AWS_CONTAINER_CREDENTIALS_WAIT_INTERVAL_SECONDS"
+)
+DEFAULT_CONTAINER_CREDENTIALS_WAIT_SECONDS = 60.0
+DEFAULT_CONTAINER_CREDENTIALS_WAIT_INTERVAL_SECONDS = 1.0
+DEFAULT_CONTAINER_CREDENTIALS_REQUEST_TIMEOUT_SECONDS = 2.0
+ECS_CONTAINER_CREDENTIALS_HOST = "http://169.254.170.2"
+LOGGER = logging.getLogger(__name__)
 
 
 def ensure_aws_profile(*profile_env_names: str) -> str | None:
@@ -67,6 +85,146 @@ class AwsCredentialSnapshot:
     secret_access_key: str
     session_token: str | None
     expiration: datetime | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class AwsContainerCredentialsEndpoint:
+    url: str
+    authorization_token: str | None = field(default=None, repr=False)
+
+
+def _env_text(env: Mapping[str, str], name: str) -> str:
+    return env.get(name, "").strip()
+
+
+def _parse_float_env(name: str, default: float) -> float:
+    raw_value = os.getenv(name, "").strip()
+    if not raw_value:
+        return default
+    try:
+        value = float(raw_value)
+    except ValueError:
+        LOGGER.warning("Ignoring invalid %s=%r; using %.1f", name, raw_value, default)
+        return default
+    return max(0.0, value)
+
+
+def _container_authorization_token(env: Mapping[str, str]) -> str | None:
+    token = _env_text(env, AWS_CONTAINER_AUTHORIZATION_TOKEN_ENV)
+    if token:
+        return token
+
+    token_file = _env_text(env, AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE_ENV)
+    if not token_file:
+        return None
+    try:
+        with open(token_file, "r", encoding="utf-8") as file:
+            token = file.read().strip()
+    except OSError as err:
+        raise RuntimeError(
+            f"failed to read {AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE_ENV}={token_file}: {err}"
+        ) from err
+    return token or None
+
+
+def container_credentials_endpoint_from_env(
+    env: Mapping[str, str] | None = None,
+) -> AwsContainerCredentialsEndpoint | None:
+    env = os.environ if env is None else env
+    url = _env_text(env, AWS_CONTAINER_CREDENTIALS_FULL_URI_ENV)
+    if not url:
+        relative_uri = _env_text(env, AWS_CONTAINER_CREDENTIALS_RELATIVE_URI_ENV)
+        if relative_uri:
+            if not relative_uri.startswith("/"):
+                relative_uri = f"/{relative_uri}"
+            url = f"{ECS_CONTAINER_CREDENTIALS_HOST}{relative_uri}"
+    if not url:
+        return None
+    return AwsContainerCredentialsEndpoint(
+        url=url,
+        authorization_token=_container_authorization_token(env),
+    )
+
+
+def _probe_container_credentials_endpoint(
+    endpoint: AwsContainerCredentialsEndpoint,
+    *,
+    request_timeout_seconds: float,
+    opener: Callable[..., Any] | None,
+) -> None:
+    request = urllib.request.Request(endpoint.url, method="GET")
+    if endpoint.authorization_token:
+        request.add_header("Authorization", endpoint.authorization_token)
+    open_url = opener or urllib.request.urlopen
+    with open_url(request, timeout=request_timeout_seconds) as response:
+        response.read(1)
+
+
+def wait_for_container_credentials_endpoint(
+    *,
+    env: Mapping[str, str] | None = None,
+    timeout_seconds: float | None = None,
+    interval_seconds: float | None = None,
+    request_timeout_seconds: float = DEFAULT_CONTAINER_CREDENTIALS_REQUEST_TIMEOUT_SECONDS,
+    opener: Callable[..., Any] | None = None,
+    sleep: Callable[[float], None] | None = None,
+) -> bool:
+    endpoint = container_credentials_endpoint_from_env(env)
+    if endpoint is None:
+        return False
+
+    timeout_seconds = (
+        _parse_float_env(
+            TXING_CONTAINER_CREDENTIALS_WAIT_SECONDS_ENV,
+            DEFAULT_CONTAINER_CREDENTIALS_WAIT_SECONDS,
+        )
+        if timeout_seconds is None
+        else max(0.0, timeout_seconds)
+    )
+    interval_seconds = (
+        _parse_float_env(
+            TXING_CONTAINER_CREDENTIALS_WAIT_INTERVAL_SECONDS_ENV,
+            DEFAULT_CONTAINER_CREDENTIALS_WAIT_INTERVAL_SECONDS,
+        )
+        if interval_seconds is None
+        else max(0.0, interval_seconds)
+    )
+    request_timeout_seconds = max(0.1, request_timeout_seconds)
+    sleep = sleep or time.sleep
+    deadline = time.monotonic() + timeout_seconds
+    attempts = 0
+    last_error: Exception | None = None
+
+    while True:
+        attempts += 1
+        try:
+            _probe_container_credentials_endpoint(
+                endpoint,
+                request_timeout_seconds=request_timeout_seconds,
+                opener=opener,
+            )
+            if attempts > 1:
+                LOGGER.info(
+                    "AWS container credentials endpoint became reachable after %s attempt(s)",
+                    attempts,
+                )
+            return True
+        except Exception as err:
+            last_error = err
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            if attempts == 1:
+                LOGGER.info(
+                    "Waiting for AWS container credentials endpoint %s",
+                    endpoint.url,
+                )
+            sleep(min(interval_seconds, remaining))
+
+    raise RuntimeError(
+        "AWS container credentials endpoint is not reachable after "
+        f"{timeout_seconds:.1f}s ({endpoint.url}): {last_error}"
+    ) from last_error
 
 
 def _normalize_expiration(value: Any) -> datetime | None:
@@ -121,6 +279,7 @@ class AwsCredentialsBridge:
         self._provider: Any | None = None
 
     def snapshot(self) -> AwsCredentialSnapshot:
+        wait_for_container_credentials_endpoint()
         return freeze_session_credentials(self._session)
 
     def _get_awscrt_credentials(self) -> Any:
@@ -170,6 +329,7 @@ class AwsRuntime:
         region_name: str | None = None,
         **kwargs: Any,
     ) -> Any:
+        wait_for_container_credentials_endpoint()
         return self.session.client(
             service_name,
             region_name=region_name or self.region_name,

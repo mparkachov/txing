@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import os
+from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
+import urllib.error
 
 from aws import auth as aws_auth
 
@@ -116,6 +118,32 @@ class _FakeEndpointSession:
         return self._client
 
 
+class _FakeCredentialsEndpointResponse:
+    def __enter__(self) -> "_FakeCredentialsEndpointResponse":
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def read(self, _size: int = -1) -> bytes:
+        return b'{ "AccessKeyId": "AKIA" }'
+
+
+class _CredentialsEndpointProbe:
+    def __init__(self, *, failures: int = 0) -> None:
+        self.failures = failures
+        self.requests = []
+        self.timeouts: list[float] = []
+
+    def __call__(self, request, *, timeout: float):  # type: ignore[no-untyped-def]
+        self.requests.append(request)
+        self.timeouts.append(timeout)
+        if self.failures:
+            self.failures -= 1
+            raise urllib.error.URLError(ConnectionRefusedError(111, "refused"))
+        return _FakeCredentialsEndpointResponse()
+
+
 class AwsAuthTests(unittest.TestCase):
     def test_freeze_session_credentials_reads_current_boto3_values(self) -> None:
         session = _RotatingSession()
@@ -193,6 +221,101 @@ class AwsAuthTests(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "empty endpointAddress"):
             runtime.iot_data_endpoint()
+
+    def test_container_credentials_wait_noops_without_endpoint_env(self) -> None:
+        probe = _CredentialsEndpointProbe()
+
+        ready = aws_auth.wait_for_container_credentials_endpoint(
+            env={},
+            opener=probe,
+        )
+
+        self.assertFalse(ready)
+        self.assertEqual(probe.requests, [])
+
+    def test_container_credentials_wait_sends_authorization_token(self) -> None:
+        probe = _CredentialsEndpointProbe()
+
+        ready = aws_auth.wait_for_container_credentials_endpoint(
+            env={
+                "AWS_CONTAINER_CREDENTIALS_FULL_URI": "http://localhost:1234/creds",
+                "AWS_CONTAINER_AUTHORIZATION_TOKEN": "Bearer token",
+            },
+            timeout_seconds=0,
+            opener=probe,
+        )
+
+        self.assertTrue(ready)
+        self.assertEqual(len(probe.requests), 1)
+        request = probe.requests[0]
+        self.assertEqual(request.full_url, "http://localhost:1234/creds")
+        self.assertEqual(request.get_header("Authorization"), "Bearer token")
+
+    def test_container_credentials_wait_reads_authorization_token_file(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            token_file = os.path.join(temp_dir, "token")
+            with open(token_file, "w", encoding="utf-8") as file:
+                file.write("TokenFromFile\n")
+            probe = _CredentialsEndpointProbe()
+
+            ready = aws_auth.wait_for_container_credentials_endpoint(
+                env={
+                    "AWS_CONTAINER_CREDENTIALS_FULL_URI": "http://localhost:1234/creds",
+                    "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE": token_file,
+                },
+                timeout_seconds=0,
+                opener=probe,
+            )
+
+        self.assertTrue(ready)
+        self.assertEqual(probe.requests[0].get_header("Authorization"), "TokenFromFile")
+
+    def test_container_credentials_wait_retries_connection_refused(self) -> None:
+        probe = _CredentialsEndpointProbe(failures=2)
+        sleeps: list[float] = []
+
+        ready = aws_auth.wait_for_container_credentials_endpoint(
+            env={
+                "AWS_CONTAINER_CREDENTIALS_FULL_URI": "http://localhost:1234/creds",
+            },
+            timeout_seconds=5,
+            interval_seconds=0.25,
+            opener=probe,
+            sleep=sleeps.append,
+        )
+
+        self.assertTrue(ready)
+        self.assertEqual(len(probe.requests), 3)
+        self.assertEqual(sleeps, [0.25, 0.25])
+
+    def test_container_credentials_wait_raises_after_timeout(self) -> None:
+        probe = _CredentialsEndpointProbe(failures=1)
+
+        with self.assertRaisesRegex(RuntimeError, "not reachable"):
+            aws_auth.wait_for_container_credentials_endpoint(
+                env={
+                    "AWS_CONTAINER_CREDENTIALS_FULL_URI": "http://localhost:1234/creds",
+                },
+                timeout_seconds=0,
+                opener=probe,
+            )
+
+    def test_runtime_client_waits_for_container_credentials_endpoint(self) -> None:
+        client = _FakeIotClient({"endpointAddress": "unused.iot.eu-central-1.amazonaws.com"})
+        runtime = aws_auth.AwsRuntime(
+            session=_FakeEndpointSession(client),
+            region_name="eu-central-1",
+        )
+        waits = []
+
+        def fake_wait() -> bool:
+            waits.append(True)
+            return True
+
+        with patch.object(aws_auth, "wait_for_container_credentials_endpoint", fake_wait):
+            runtime.client("iot")
+
+        self.assertEqual(waits, [True])
 
 
 if __name__ == "__main__":
