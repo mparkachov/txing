@@ -17,6 +17,7 @@ connectedhomeip_build_dir := connectedhomeip_dir + "/out/txing-chip-tool"
 connectedhomeip_environment_dir := connectedhomeip_dir + "/.environment"
 built_chip_tool := connectedhomeip_build_dir + "/chip-tool"
 native_python_dir := rig_dir + "/build/python"
+native_python_shim_dir := native_python_dir + "/shim"
 native_uv_cache_dir := rig_dir + "/build/uv-cache"
 greengrass_core_units := "ggl.core.ggconfigd.service ggl.core.ggipcd.service ggl.core.iotcored.service ggl.core.tesd.service ggl.aws.greengrass.TokenExchangeService.service ggl.core.ggdeploymentd.service"
 greengrass_core_sockets := "ggl.gg_deployment.socket"
@@ -417,10 +418,22 @@ aws_shared_credentials_file := ""
     chip_tool_python="$(choose_chip_tool_python)"
     just clone-connectedhomeip
     cd "{{connectedhomeip_dir}}"
+    rm -rf "{{native_python_shim_dir}}"
+    mkdir -p "{{native_python_shim_dir}}"
+    ln -sf "$chip_tool_python" "{{native_python_shim_dir}}/python3"
+    ln -sf "$chip_tool_python" "{{native_python_shim_dir}}/python"
+    export PATH="{{native_python_shim_dir}}:$(dirname "$chip_tool_python"):$PATH"
     export PW_ENVIRONMENT_ROOT="{{connectedhomeip_environment_dir}}"
     export PW_ENVSETUP_QUIET=1
     export PW_BOOTSTRAP_PYTHON="$chip_tool_python"
     export PYTHON="$chip_tool_python"
+    echo "using chip-tool Python: $chip_tool_python ($("$chip_tool_python" --version 2>&1))"
+    echo "using bootstrap python3: $(command -v python3) ($(python3 --version 2>&1))"
+    existing_pigweed_python="{{connectedhomeip_environment_dir}}/pigweed-venv/bin/python"
+    if [ -x "$existing_pigweed_python" ] && ! "$existing_pigweed_python" -c 'import sys; raise SystemExit(0 if sys.version_info[:2] in ((3, 11), (3, 12)) else 1)' >/dev/null; then
+      echo "removing incompatible Project CHIP environment created with $("$existing_pigweed_python" --version 2>&1)"
+      rm -rf "{{connectedhomeip_environment_dir}}"
+    fi
     # Project CHIP's activation script expects unset optional environment
     # variables, so keep this wrapper strict but source upstream with nounset off.
     set +u

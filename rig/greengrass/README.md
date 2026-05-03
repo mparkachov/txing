@@ -65,7 +65,9 @@ local `chip-tool` for the rig. The checkout and build output are ignored by git.
 Debian 13 Trixie uses Python 3.13 as `/usr/bin/python3`; this Matter revision's
 Python dependencies still require Python 3.11 or 3.12, so the recipe provisions
 a uv-managed Python 3.12 under `rig/build/python` when no compatible system
-Python is available.
+Python is available. During Project CHIP bootstrap, the recipe also prepends a
+local shim directory so upstream Pigweed setup sees that interpreter as
+`python3`.
 
 Use the local Matter controller with:
 
