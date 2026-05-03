@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import json
 import logging
 import os
 import time
@@ -37,7 +38,7 @@ TXING_CONTAINER_CREDENTIALS_WAIT_INTERVAL_SECONDS_ENV = (
 )
 DEFAULT_CONTAINER_CREDENTIALS_WAIT_SECONDS = 60.0
 DEFAULT_CONTAINER_CREDENTIALS_WAIT_INTERVAL_SECONDS = 1.0
-DEFAULT_CONTAINER_CREDENTIALS_REQUEST_TIMEOUT_SECONDS = 2.0
+DEFAULT_CONTAINER_CREDENTIALS_REQUEST_TIMEOUT_SECONDS = 10.0
 ECS_CONTAINER_CREDENTIALS_HOST = "http://169.254.170.2"
 LOGGER = logging.getLogger(__name__)
 
@@ -146,21 +147,77 @@ def container_credentials_endpoint_from_env(
     )
 
 
-def _probe_container_credentials_endpoint(
+def _container_credentials_request(
+    endpoint: AwsContainerCredentialsEndpoint,
+) -> urllib.request.Request:
+    request = urllib.request.Request(endpoint.url, method="GET")
+    if endpoint.authorization_token:
+        request.add_header("Authorization", endpoint.authorization_token)
+    return request
+
+
+def _parse_expiration(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return _normalize_expiration(value)
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    if not normalized:
+        return None
+    if normalized.endswith("Z"):
+        normalized = f"{normalized[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    return _normalize_expiration(parsed)
+
+
+def _credential_payload_to_snapshot(payload: Mapping[str, Any]) -> AwsCredentialSnapshot:
+    credentials = payload.get("credentials")
+    if isinstance(credentials, Mapping):
+        payload = credentials
+
+    access_key_id = payload.get("AccessKeyId") or payload.get("accessKeyId")
+    secret_access_key = payload.get("SecretAccessKey") or payload.get("secretAccessKey")
+    session_token = (
+        payload.get("Token")
+        or payload.get("SessionToken")
+        or payload.get("sessionToken")
+        or payload.get("token")
+    )
+    expiration = payload.get("Expiration") or payload.get("expiration")
+    if not isinstance(access_key_id, str) or not access_key_id.strip():
+        raise RuntimeError("AWS container credentials response is missing AccessKeyId")
+    if not isinstance(secret_access_key, str) or not secret_access_key.strip():
+        raise RuntimeError("AWS container credentials response is missing SecretAccessKey")
+    if session_token is not None and not isinstance(session_token, str):
+        raise RuntimeError("AWS container credentials response has invalid session token")
+
+    return AwsCredentialSnapshot(
+        access_key_id=access_key_id.strip(),
+        secret_access_key=secret_access_key.strip(),
+        session_token=session_token.strip() if isinstance(session_token, str) else None,
+        expiration=_parse_expiration(expiration),
+    )
+
+
+def _fetch_container_credentials_once(
     endpoint: AwsContainerCredentialsEndpoint,
     *,
     request_timeout_seconds: float,
     opener: Callable[..., Any] | None,
-) -> None:
-    request = urllib.request.Request(endpoint.url, method="GET")
-    if endpoint.authorization_token:
-        request.add_header("Authorization", endpoint.authorization_token)
+) -> AwsCredentialSnapshot:
+    request = _container_credentials_request(endpoint)
     open_url = opener or urllib.request.urlopen
     with open_url(request, timeout=request_timeout_seconds) as response:
-        response.read(1)
+        payload = json.loads(response.read().decode("utf-8"))
+    if not isinstance(payload, Mapping):
+        raise RuntimeError("AWS container credentials response is not an object")
+    return _credential_payload_to_snapshot(payload)
 
 
-def wait_for_container_credentials_endpoint(
+def fetch_container_credentials_snapshot(
     *,
     env: Mapping[str, str] | None = None,
     timeout_seconds: float | None = None,
@@ -168,10 +225,10 @@ def wait_for_container_credentials_endpoint(
     request_timeout_seconds: float = DEFAULT_CONTAINER_CREDENTIALS_REQUEST_TIMEOUT_SECONDS,
     opener: Callable[..., Any] | None = None,
     sleep: Callable[[float], None] | None = None,
-) -> bool:
+) -> AwsCredentialSnapshot | None:
     endpoint = container_credentials_endpoint_from_env(env)
     if endpoint is None:
-        return False
+        return None
 
     timeout_seconds = (
         _parse_float_env(
@@ -198,17 +255,17 @@ def wait_for_container_credentials_endpoint(
     while True:
         attempts += 1
         try:
-            _probe_container_credentials_endpoint(
+            snapshot = _fetch_container_credentials_once(
                 endpoint,
                 request_timeout_seconds=request_timeout_seconds,
                 opener=opener,
             )
             if attempts > 1:
                 LOGGER.info(
-                    "AWS container credentials endpoint became reachable after %s attempt(s)",
+                    "AWS container credentials endpoint returned credentials after %s attempt(s)",
                     attempts,
                 )
-            return True
+            return snapshot
         except Exception as err:
             last_error = err
             remaining = deadline - time.monotonic()
@@ -222,9 +279,31 @@ def wait_for_container_credentials_endpoint(
             sleep(min(interval_seconds, remaining))
 
     raise RuntimeError(
-        "AWS container credentials endpoint is not reachable after "
+        "AWS container credentials endpoint did not return credentials after "
         f"{timeout_seconds:.1f}s ({endpoint.url}): {last_error}"
     ) from last_error
+
+
+def wait_for_container_credentials_endpoint(
+    *,
+    env: Mapping[str, str] | None = None,
+    timeout_seconds: float | None = None,
+    interval_seconds: float | None = None,
+    request_timeout_seconds: float = DEFAULT_CONTAINER_CREDENTIALS_REQUEST_TIMEOUT_SECONDS,
+    opener: Callable[..., Any] | None = None,
+    sleep: Callable[[float], None] | None = None,
+) -> bool:
+    return (
+        fetch_container_credentials_snapshot(
+            env=env,
+            timeout_seconds=timeout_seconds,
+            interval_seconds=interval_seconds,
+            request_timeout_seconds=request_timeout_seconds,
+            opener=opener,
+            sleep=sleep,
+        )
+        is not None
+    )
 
 
 def _normalize_expiration(value: Any) -> datetime | None:
@@ -279,7 +358,9 @@ class AwsCredentialsBridge:
         self._provider: Any | None = None
 
     def snapshot(self) -> AwsCredentialSnapshot:
-        wait_for_container_credentials_endpoint()
+        snapshot = fetch_container_credentials_snapshot()
+        if snapshot is not None:
+            return snapshot
         return freeze_session_credentials(self._session)
 
     def _get_awscrt_credentials(self) -> Any:
@@ -329,7 +410,20 @@ class AwsRuntime:
         region_name: str | None = None,
         **kwargs: Any,
     ) -> Any:
-        wait_for_container_credentials_endpoint()
+        snapshot = fetch_container_credentials_snapshot()
+        explicit_credential_keys = {
+            "aws_access_key_id",
+            "aws_secret_access_key",
+            "aws_session_token",
+        }
+        if snapshot is not None and explicit_credential_keys.isdisjoint(kwargs):
+            kwargs = {
+                **kwargs,
+                "aws_access_key_id": snapshot.access_key_id,
+                "aws_secret_access_key": snapshot.secret_access_key,
+            }
+            if snapshot.session_token:
+                kwargs["aws_session_token"] = snapshot.session_token
         return self.session.client(
             service_name,
             region_name=region_name or self.region_name,

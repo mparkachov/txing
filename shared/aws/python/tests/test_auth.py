@@ -119,6 +119,16 @@ class _FakeEndpointSession:
 
 
 class _FakeCredentialsEndpointResponse:
+    def __init__(self, payload: bytes | None = None) -> None:
+        self._payload = payload or (
+            b'{'
+            b'"AccessKeyId": "AKIA", '
+            b'"SecretAccessKey": "secret", '
+            b'"Token": "token", '
+            b'"Expiration": "2026-05-03T22:00:00Z"'
+            b'}'
+        )
+
     def __enter__(self) -> "_FakeCredentialsEndpointResponse":
         return self
 
@@ -126,12 +136,13 @@ class _FakeCredentialsEndpointResponse:
         return None
 
     def read(self, _size: int = -1) -> bytes:
-        return b'{ "AccessKeyId": "AKIA" }'
+        return self._payload
 
 
 class _CredentialsEndpointProbe:
-    def __init__(self, *, failures: int = 0) -> None:
+    def __init__(self, *, failures: int = 0, payload: bytes | None = None) -> None:
         self.failures = failures
+        self.payload = payload
         self.requests = []
         self.timeouts: list[float] = []
 
@@ -141,10 +152,15 @@ class _CredentialsEndpointProbe:
         if self.failures:
             self.failures -= 1
             raise urllib.error.URLError(ConnectionRefusedError(111, "refused"))
-        return _FakeCredentialsEndpointResponse()
+        return _FakeCredentialsEndpointResponse(self.payload)
 
 
 class AwsAuthTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._env_patcher = patch.dict(os.environ, {}, clear=True)
+        self._env_patcher.start()
+        self.addCleanup(self._env_patcher.stop)
+
     def test_freeze_session_credentials_reads_current_boto3_values(self) -> None:
         session = _RotatingSession()
 
@@ -291,7 +307,7 @@ class AwsAuthTests(unittest.TestCase):
     def test_container_credentials_wait_raises_after_timeout(self) -> None:
         probe = _CredentialsEndpointProbe(failures=1)
 
-        with self.assertRaisesRegex(RuntimeError, "not reachable"):
+        with self.assertRaisesRegex(RuntimeError, "did not return credentials"):
             aws_auth.wait_for_container_credentials_endpoint(
                 env={
                     "AWS_CONTAINER_CREDENTIALS_FULL_URI": "http://localhost:1234/creds",
@@ -300,22 +316,100 @@ class AwsAuthTests(unittest.TestCase):
                 opener=probe,
             )
 
-    def test_runtime_client_waits_for_container_credentials_endpoint(self) -> None:
-        client = _FakeIotClient({"endpointAddress": "unused.iot.eu-central-1.amazonaws.com"})
-        runtime = aws_auth.AwsRuntime(
-            session=_FakeEndpointSession(client),
-            region_name="eu-central-1",
+    def test_fetch_container_credentials_snapshot_reads_nested_payload(self) -> None:
+        probe = _CredentialsEndpointProbe(
+            payload=(
+                b'{'
+                b'"credentials": {'
+                b'"accessKeyId": "AKIA2", '
+                b'"secretAccessKey": "secret-2", '
+                b'"sessionToken": "token-2", '
+                b'"expiration": "2026-05-03T22:00:00Z"'
+                b'}'
+                b'}'
+            )
         )
-        waits = []
 
-        def fake_wait() -> bool:
-            waits.append(True)
-            return True
+        snapshot = aws_auth.fetch_container_credentials_snapshot(
+            env={
+                "AWS_CONTAINER_CREDENTIALS_FULL_URI": "http://localhost:1234/creds",
+            },
+            timeout_seconds=0,
+            opener=probe,
+        )
 
-        with patch.object(aws_auth, "wait_for_container_credentials_endpoint", fake_wait):
+        self.assertIsNotNone(snapshot)
+        assert snapshot is not None
+        self.assertEqual(snapshot.access_key_id, "AKIA2")
+        self.assertEqual(snapshot.secret_access_key, "secret-2")
+        self.assertEqual(snapshot.session_token, "token-2")
+        self.assertEqual(
+            snapshot.expiration,
+            datetime(2026, 5, 3, 22, 0, tzinfo=timezone.utc),
+        )
+
+    def test_runtime_client_injects_container_credentials_snapshot(self) -> None:
+        client = _FakeIotClient({"endpointAddress": "unused.iot.eu-central-1.amazonaws.com"})
+        session = _FakeEndpointSession(client)
+        runtime = aws_auth.AwsRuntime(session=session, region_name="eu-central-1")
+        snapshot = aws_auth.AwsCredentialSnapshot(
+            access_key_id="AKIA",
+            secret_access_key="secret",
+            session_token="token",
+        )
+
+        with patch.object(
+            aws_auth,
+            "fetch_container_credentials_snapshot",
+            return_value=snapshot,
+        ):
             runtime.client("iot")
 
-        self.assertEqual(waits, [True])
+        self.assertEqual(
+            session.last_client_request,
+            (
+                "iot",
+                "eu-central-1",
+                {
+                    "aws_access_key_id": "AKIA",
+                    "aws_secret_access_key": "secret",
+                    "aws_session_token": "token",
+                },
+            ),
+        )
+
+    def test_runtime_client_preserves_explicit_credentials(self) -> None:
+        client = _FakeIotClient({"endpointAddress": "unused.iot.eu-central-1.amazonaws.com"})
+        session = _FakeEndpointSession(client)
+        runtime = aws_auth.AwsRuntime(session=session, region_name="eu-central-1")
+        snapshot = aws_auth.AwsCredentialSnapshot(
+            access_key_id="AKIA",
+            secret_access_key="secret",
+            session_token="token",
+        )
+
+        with patch.object(
+            aws_auth,
+            "fetch_container_credentials_snapshot",
+            return_value=snapshot,
+        ):
+            runtime.client(
+                "iot",
+                aws_access_key_id="manual",
+                aws_secret_access_key="manual-secret",
+            )
+
+        self.assertEqual(
+            session.last_client_request,
+            (
+                "iot",
+                "eu-central-1",
+                {
+                    "aws_access_key_id": "manual",
+                    "aws_secret_access_key": "manual-secret",
+                },
+            ),
+        )
 
 
 if __name__ == "__main__":

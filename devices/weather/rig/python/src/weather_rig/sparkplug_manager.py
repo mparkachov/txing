@@ -17,13 +17,8 @@ from aws.auth import build_aws_runtime, ensure_aws_profile, resolve_aws_region
 from aws.mqtt import AwsIotWebsocketConnection, AwsMqttConnectionConfig
 from aws.type_catalog import SsmTypeCatalog
 from rig.connectivity_protocol import (
-    INVENTORY_TOPIC,
     STATE_TOPIC_PREFIX,
-    TRANSPORT_MATTER,
-    ConnectivityDeviceConfig,
-    ConnectivityInventory,
     ConnectivityState,
-    SLEEP_MODEL_MATTER_ICD,
     parse_state_topic,
 )
 from rig.local_pubsub import GreengrassLocalPubSub, LocalPubSub
@@ -47,7 +42,6 @@ DEFAULT_SPARKPLUG_GROUP_ID = "town"
 DEFAULT_CONNECT_TIMEOUT = 20.0
 DEFAULT_OPERATION_TIMEOUT = 10.0
 DEFAULT_RECONNECT_DELAY = 5.0
-DEFAULT_INVENTORY_INTERVAL = 10.0
 DEFAULT_STALE_AFTER_MS = 130_000
 DEFAULT_NODE_BDSEQ = 1
 WEATHER_REDCON = 4
@@ -65,7 +59,6 @@ class WeatherSparkplugConfig:
     connect_timeout: float = DEFAULT_CONNECT_TIMEOUT
     operation_timeout: float = DEFAULT_OPERATION_TIMEOUT
     reconnect_delay: float = DEFAULT_RECONNECT_DELAY
-    inventory_interval: float = DEFAULT_INVENTORY_INTERVAL
     stale_after_ms: int = DEFAULT_STALE_AFTER_MS
     sparkplug_node_bdseq: int = DEFAULT_NODE_BDSEQ
 
@@ -105,7 +98,6 @@ class WeatherSparkplugManager:
         self._connection_factory = connection_factory
         self._connection: Any | None = None
         self._devices: dict[str, WeatherManagedDevice] = {}
-        self._inventory_seq = 0
         self._node_seq = 0
         self._node_born = False
         self._state_subscription: object | None = None
@@ -129,7 +121,6 @@ class WeatherSparkplugManager:
             await self.publish_device_death(self._devices.pop(removed))
         for thing_name, registration in next_registrations.items():
             self._devices.setdefault(thing_name, WeatherManagedDevice(registration=registration))
-        await self.publish_inventory()
 
     async def connect(self) -> None:
         if self._connection is not None:
@@ -183,25 +174,6 @@ class WeatherSparkplugManager:
                 self._handle_state_message,
             )
         await self.publish_node_birth()
-        await self.publish_inventory()
-
-    async def publish_inventory(self) -> None:
-        self._inventory_seq += 1
-        inventory = ConnectivityInventory(
-            adapter_id="weather-sparkplug-manager",
-            seq=self._inventory_seq,
-            issued_at_ms=utc_timestamp_ms(),
-            devices=tuple(
-                ConnectivityDeviceConfig(
-                    thing_name=device.thing_name,
-                    transport=TRANSPORT_MATTER,
-                    native_identity={"thingType": "weather"},
-                    sleep_model=SLEEP_MODEL_MATTER_ICD,
-                )
-                for device in self._devices.values()
-            ),
-        )
-        await self._bus.publish(INVENTORY_TOPIC, inventory.to_json())
 
     async def publish_node_birth(self) -> None:
         if self._connection is None:
@@ -404,17 +376,12 @@ async def run_weather_sparkplug_manager(
     await manager.set_registrations(registrations)
     await manager.start()
 
-    async def inventory_loop() -> None:
-        while True:
-            await asyncio.sleep(config.inventory_interval)
-            await manager.publish_inventory()
-
     async def stale_loop() -> None:
         while True:
             await asyncio.sleep(5.0)
             await manager.check_stale_devices()
 
-    tasks = [asyncio.create_task(inventory_loop()), asyncio.create_task(stale_loop())]
+    tasks = [asyncio.create_task(stale_loop())]
     try:
         await asyncio.Future()
     finally:

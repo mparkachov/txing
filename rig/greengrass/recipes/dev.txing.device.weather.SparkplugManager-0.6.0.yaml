@@ -15,10 +15,9 @@ ComponentConfiguration:
         dev.txing.device.weather.SparkplugManager:pubsub:1:
           policyDescription: Allows the weather Sparkplug manager to consume local Matter connectivity state.
           operations:
-            - aws.greengrass#PublishToTopic
             - aws.greengrass#SubscribeToTopic
           resources:
-            - dev/txing/rig/v1/connectivity/*
+            - dev/txing/rig/v1/connectivity/state/*
 Manifests:
   - Platform:
       os: linux

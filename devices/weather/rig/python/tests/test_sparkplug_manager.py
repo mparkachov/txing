@@ -5,6 +5,7 @@ import unittest
 
 from rig.connectivity_protocol import (
     CONTROL_UNAVAILABLE,
+    INVENTORY_TOPIC,
     PRESENCE_OFFLINE,
     PRESENCE_ONLINE,
     ConnectivityState,
@@ -177,6 +178,26 @@ class WeatherSparkplugManagerTests(unittest.TestCase):
             return list(manager.devices)
 
         self.assertEqual(asyncio.run(exercise()), ["weather-1"])
+
+    def test_does_not_publish_connectivity_inventory(self) -> None:
+        async def exercise() -> list[bytes]:
+            bus = InMemoryLocalPubSub()
+            published: list[bytes] = []
+            await bus.subscribe(
+                INVENTORY_TOPIC,
+                lambda _topic, payload: published.append(payload),
+            )
+            manager = WeatherSparkplugManager(
+                WeatherSparkplugConfig(endpoint="endpoint", aws_region="eu-central-1"),
+                bus=bus,
+                aws_runtime=object(),
+                connection_factory=FakeConnection,
+            )
+            await manager.set_registrations([registration("weather-1")])
+            await manager.start()
+            return published
+
+        self.assertEqual(asyncio.run(exercise()), [])
 
 
 if __name__ == "__main__":
