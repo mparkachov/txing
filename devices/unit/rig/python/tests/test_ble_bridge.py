@@ -780,7 +780,11 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertIn("aws_shared_credentials_file=aws_shared_credentials_file: build", justfile)
         self.assertIn("Run 'just rig::build' before 'just rig::deploy'", justfile)
         self.assertIn("Greengrass Lite target {{greengrass_lite_target}} is not installed", justfile)
-        self.assertIn("Starting installed Greengrass Lite target {{greengrass_lite_target}} before deploy", justfile)
+        self.assertIn(
+            "Starting Greengrass core runtime before deploy; component target {{greengrass_lite_target}} will be activated after deployment.",
+            justfile,
+        )
+        self.assertIn('sudo systemctl start "{{greengrass_lite_target}}" || true', justfile)
         self.assertIn("wait_active_unit() {", justfile)
         self.assertIn("wait_unit_present() {", justfile)
         self.assertIn("reset_failed_if_present() {", justfile)

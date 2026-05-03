@@ -981,10 +981,8 @@ aws_shared_credentials_file := ""
         sudo systemctl reset-failed "$unit" || true
       fi
     }
-    if ! systemctl is-active --quiet "{{greengrass_lite_target}}"; then \
-        echo "Starting installed Greengrass Lite target {{greengrass_lite_target}} before deploy."; \
-        sudo systemctl start "{{greengrass_lite_target}}"; \
-        wait_active_unit "{{greengrass_lite_target}}"; \
+    if ! systemctl is-active --quiet "{{greengrass_lite_target}}"; then
+      echo "Starting Greengrass core runtime before deploy; component target {{greengrass_lite_target}} will be activated after deployment."
     fi
     core_units=({{greengrass_core_units}})
     core_sockets=({{greengrass_core_sockets}})
@@ -1422,7 +1420,8 @@ aws_shared_credentials_file := ""
       deployed_units+=("ggl.$weather_sparkplug_component.service" "ggl.$weather_matter_component.service")
     fi
     sudo systemctl daemon-reload || true
-    wait_active_unit "{{greengrass_lite_target}}"
+    sudo systemctl start "{{greengrass_lite_target}}" || true
+    wait_active_unit "{{greengrass_lite_target}}" || true
     for core_unit in "${core_sockets[@]}" "${core_units[@]}"; do
       if systemctl cat "$core_unit" >/dev/null 2>&1; then
         sudo systemctl start "$core_unit" || true
