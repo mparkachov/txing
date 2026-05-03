@@ -21,3 +21,4 @@ __pycache__/
 
 # Native dependency checkouts/build artifacts
 /rig/greengrass-lite/
+/rig/connectedhomeip/

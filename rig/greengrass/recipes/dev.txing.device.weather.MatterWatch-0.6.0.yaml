@@ -41,7 +41,7 @@ Manifests:
           export WEATHER_HUMIDITY_ENDPOINT="{configuration:/HumidityEndpoint}"
           export WEATHER_PRESSURE_ENDPOINT="{configuration:/PressureEndpoint}"
           export WEATHER_POWER_ENDPOINT="{configuration:/PowerEndpoint}"
-          export WEATHER_CHIP_TOOL_STORAGE_DIR="{artifacts:decompressedPath}/rig-greengrass/chip-tool-storage"
+          export WEATHER_CHIP_TOOL_STORAGE_DIR="{work:path}/chip-tool-storage"
           export WEATHER_MATTER_WATCH_BINARY="{artifacts:decompressedPath}/rig-greengrass/bin/weather-matter-watch"
           export PYTHONPATH="{artifacts:decompressedPath}/rig-greengrass/python"
           mkdir -p "$WEATHER_CHIP_TOOL_STORAGE_DIR"

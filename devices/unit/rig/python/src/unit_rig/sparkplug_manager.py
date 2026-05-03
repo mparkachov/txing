@@ -88,6 +88,14 @@ LOGGER = logging.getLogger("unit_rig.sparkplug_manager")
 DEFAULT_INVENTORY_PUBLISH_INTERVAL = 10.0
 
 
+def _unit_registrations(registrations: Iterable[DeviceRegistration]) -> list[DeviceRegistration]:
+    return [
+        registration
+        for registration in registrations
+        if registration.thing_type == "unit"
+    ]
+
+
 @dataclass(slots=True, frozen=True)
 class SparkplugMqttSessionConfig:
     endpoint: str
@@ -878,7 +886,9 @@ async def run_sparkplug_manager(
         aws_runtime.iot_client(),
         type_catalog=SsmTypeCatalog(aws_runtime.client("ssm")),
     )
-    registrations = registry_client.list_rig_things(config.rig_id or config.rig_name)
+    registrations = _unit_registrations(
+        registry_client.list_rig_things(config.rig_id or config.rig_name)
+    )
     cloud_client = cloud_client or AwsShadowClient(config, aws_runtime)
     snapshots = await cloud_client.connect_and_get_initial_snapshots(
         {

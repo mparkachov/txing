@@ -125,6 +125,7 @@ class FakeLifecycleCloud(FakeCloudClient):
     def __init__(self) -> None:
         super().__init__()
         self.events: list[str] = []
+        self.snapshot_requests: dict[str, tuple[str, ...]] = {}
         self.node_birth_published = asyncio.Event()
 
     async def connect_and_get_initial_snapshots(
@@ -135,6 +136,7 @@ class FakeLifecycleCloud(FakeCloudClient):
     ) -> dict[str, dict[str, object]]:
         del timeout_seconds
         self.events.append("connect")
+        self.snapshot_requests = dict(thing_capabilities)
         return {thing_name: {} for thing_name in thing_capabilities}
 
     async def publish_sparkplug(self, topic: str, payload: bytes, **kwargs: object) -> None:
@@ -153,15 +155,20 @@ class FakeLifecycleCloud(FakeCloudClient):
         return []
 
 
-def registration(thing_name: str) -> ThingRegistration:
+def registration(
+    thing_name: str,
+    *,
+    thing_type: str = "unit",
+    capabilities_set: tuple[str, ...] = ("sparkplug", "mcu", "board", "mcp", "video"),
+) -> ThingRegistration:
     return ThingRegistration(
         thing_name=thing_name,
-        thing_type="unit",
+        thing_type=thing_type,
         name=thing_name,
         short_id=thing_name,
         town_name="town",
         rig_name="rig",
-        capabilities_set=("sparkplug", "mcu", "board", "mcp", "video"),
+        capabilities_set=capabilities_set,
     )
 
 
@@ -394,7 +401,7 @@ class SparkplugManagerTests(unittest.TestCase):
         self.assertEqual(config.client_id, "unit-cd5xu6")
 
     def test_manager_republishes_inventory_for_late_connectivity_adapter(self) -> None:
-        async def exercise() -> ConnectivityInventory:
+        async def exercise() -> tuple[ConnectivityInventory, FakeLifecycleCloud]:
             bus = InMemoryLocalPubSub()
             cloud = FakeLifecycleCloud()
             task = asyncio.create_task(
@@ -408,7 +415,16 @@ class SparkplugManagerTests(unittest.TestCase):
                     ),
                     aws_runtime=FakeAwsRuntime(),  # type: ignore[arg-type]
                     bus=bus,
-                    registry_client=FakeRegistryClient([registration("unit-1")]),  # type: ignore[arg-type]
+                    registry_client=FakeRegistryClient(
+                        [
+                            registration("unit-1"),
+                            registration(
+                                "weather-1",
+                                thing_type="weather",
+                                capabilities_set=("sparkplug",),
+                            ),
+                        ]
+                    ),  # type: ignore[arg-type]
                     cloud_client=cloud,  # type: ignore[arg-type]
                     inventory_publish_interval=0.01,
                 )
@@ -425,12 +441,13 @@ class SparkplugManagerTests(unittest.TestCase):
             task.cancel()
             with self.assertRaises(asyncio.CancelledError):
                 await task
-            return ConnectivityInventory.from_payload(payload)
+            return ConnectivityInventory.from_payload(payload), cloud
 
-        inventory = asyncio.run(exercise())
+        inventory, cloud = asyncio.run(exercise())
 
         self.assertGreaterEqual(inventory.seq, 2)
         self.assertEqual([device.thing_name for device in inventory.devices], ["unit-1"])
+        self.assertEqual(list(cloud.snapshot_requests), ["unit-1"])
 
     def test_manager_service_publishes_only_node_birth_and_death_for_rig(self) -> None:
         async def exercise() -> FakeLifecycleCloud:

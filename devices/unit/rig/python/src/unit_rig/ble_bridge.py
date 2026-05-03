@@ -4115,7 +4115,11 @@ async def _run_rig_service(
         cloud_shadow = cloud_shadow_factory(runtime_config, aws_runtime)
         fleet_bridge: RigFleetBridge | None = None
         try:
-            registrations = registry_client.list_rig_things(runtime_config.rig_thing_name)
+            registrations = [
+                registration
+                for registration in registry_client.list_rig_things(runtime_config.rig_thing_name)
+                if registration.thing_type == "unit"
+            ]
             _log_important(
                 LOGGER,
                 "Loaded %s registered device(s) from fleet index for rig=%s",

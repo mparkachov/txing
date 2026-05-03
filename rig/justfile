@@ -12,6 +12,9 @@ root_justfile := project_root + "/justfile"
 greengrass_lite_dir := rig_dir + "/greengrass-lite"
 greengrass_lite_build_dir := greengrass_lite_dir + "/build"
 greengrass_lite_target := "greengrass-lite.target"
+connectedhomeip_dir := rig_dir + "/connectedhomeip"
+connectedhomeip_build_dir := connectedhomeip_dir + "/out/txing-chip-tool"
+built_chip_tool := connectedhomeip_build_dir + "/chip-tool"
 greengrass_core_units := "ggl.core.ggconfigd.service ggl.core.ggipcd.service ggl.core.iotcored.service ggl.core.tesd.service ggl.aws.greengrass.TokenExchangeService.service ggl.core.ggdeploymentd.service"
 greengrass_core_sockets := "ggl.gg_deployment.socket"
 unit_rig_component_units := "ggl.dev.txing.device.unit.SparkplugManager.service ggl.dev.txing.device.unit.ConnectivityBle.service"
@@ -22,6 +25,8 @@ legacy_unit_rig_component_units := "ggl.dev.txing.rig.SparkplugManager.service g
 legacy_unit_rig_components := "dev.txing.rig.SparkplugManager dev.txing.rig.ConnectivityBle"
 default_greengrass_lite_repository := env_var_or_default("TXING_RIG_GREENGRASS_LITE_REPOSITORY", "https://github.com/aws-greengrass/aws-greengrass-lite.git")
 default_greengrass_lite_ref := env_var_or_default("TXING_RIG_GREENGRASS_LITE_REF", "main")
+default_connectedhomeip_repository := env_var_or_default("TXING_RIG_CONNECTEDHOMEIP_REPOSITORY", "https://github.com/nrfconnect/sdk-connectedhomeip.git")
+default_connectedhomeip_ref := env_var_or_default("TXING_RIG_CONNECTEDHOMEIP_REF", "v3.3.0")
 thing_name := "unit-local"
 region := ""
 aws_profile := ""
@@ -317,16 +322,35 @@ aws_shared_credentials_file := ""
         fi; \
     fi
 
+@clone-connectedhomeip:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ ! -d "{{connectedhomeip_dir}}/.git" ]; then
+      git clone --branch "{{default_connectedhomeip_ref}}" --depth 1 "{{default_connectedhomeip_repository}}" "{{connectedhomeip_dir}}"
+    else
+      if ! git -C "{{connectedhomeip_dir}}" diff --quiet --ignore-submodules -- || ! git -C "{{connectedhomeip_dir}}" diff --cached --quiet --ignore-submodules --; then
+        echo "connectedhomeip checkout has local changes; clean it or remove {{connectedhomeip_dir}} before rebuilding." >&2
+        exit 1
+      fi
+      git -C "{{connectedhomeip_dir}}" remote set-url origin "{{default_connectedhomeip_repository}}"
+      git -C "{{connectedhomeip_dir}}" fetch --force --tags origin "{{default_connectedhomeip_ref}}"
+      git -C "{{connectedhomeip_dir}}" checkout --detach FETCH_HEAD
+    fi
+    cd "{{connectedhomeip_dir}}"
+    ./scripts/checkout_submodules.py --shallow --platform linux
+
 @clean-native:
-    rm -rf "{{greengrass_lite_build_dir}}"
+    rm -rf "{{greengrass_lite_build_dir}}" "{{connectedhomeip_build_dir}}"
 
 @distclean-native:
     just clean-native
-    rm -rf "{{greengrass_lite_dir}}"
+    rm -rf "{{greengrass_lite_dir}}" "{{connectedhomeip_dir}}"
 
 @build-native:
+    #!/usr/bin/env bash
+    set -euo pipefail
     if [ "$(uname -s)" != "Linux" ]; then \
-        echo "Greengrass Lite native build is supported only on Linux targets such as Raspberry Pi OS Lite." >&2; \
+        echo "Native rig dependencies are supported only on Linux targets such as Raspberry Pi OS Lite." >&2; \
         exit 1; \
     fi
     just clone-greengrass-lite
@@ -340,6 +364,35 @@ aws_shared_credentials_file := ""
       -DGGL_SYSTEMD_SYSTEM_DIR=/lib/systemd/system
     cmake --build "{{greengrass_lite_build_dir}}" --config MinSizeRel --parallel
     test -x "{{greengrass_lite_build_dir}}/bin/ggl-cli"
+    just build-chip-tool
+
+@build-chip-tool:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ "$(uname -s)" != "Linux" ]; then
+      echo "chip-tool native build is supported only on Linux targets such as Raspberry Pi OS Lite." >&2
+      exit 1
+    fi
+    just clone-connectedhomeip
+    cd "{{connectedhomeip_dir}}"
+    export PW_ENVIRONMENT_ROOT="{{connectedhomeip_dir}}/.environment"
+    export PW_ENVSETUP_QUIET=1
+    # shellcheck disable=SC1091
+    source scripts/activate.sh
+    gn gen --check --fail-on-unused-args --root=examples/chip-tool "{{connectedhomeip_build_dir}}" --args='is_debug=false'
+    ninja -C "{{connectedhomeip_build_dir}}" -j "${CHIP_TOOL_JOBS:-$(nproc)}"
+    test -x "{{built_chip_tool}}"
+
+[positional-arguments]
+@chip-tool *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ ! -x "{{built_chip_tool}}" ]; then
+      echo "Missing built chip-tool at {{built_chip_tool}}." >&2
+      echo "Run 'just rig::build-native' on the rig first." >&2
+      exit 1
+    fi
+    exec "{{built_chip_tool}}" "$@"
 
 @run:
     #!/usr/bin/env bash
@@ -975,6 +1028,27 @@ aws_shared_credentials_file := ""
       weather_thing_name="{{weather_thing_name}}"
       weather_matter_node_id="{{weather_matter_node_id}}"
       weather_chip_tool="{{weather_chip_tool}}"
+      if [ "$weather_chip_tool" = "chip-tool" ] && [ -x "{{built_chip_tool}}" ]; then
+        weather_chip_tool="{{built_chip_tool}}"
+      fi
+      if [ -n "$weather_matter_node_id" ]; then
+        case "$weather_chip_tool" in
+          */*)
+            if [ ! -x "$weather_chip_tool" ]; then
+              echo "Missing executable chip-tool at $weather_chip_tool." >&2
+              echo "Run 'just rig::build-native' on this rig or pass a chip-tool executable path as the tenth positional rig::deploy argument." >&2
+              exit 1
+            fi
+            ;;
+          *)
+            if ! command -v "$weather_chip_tool" >/dev/null 2>&1; then
+              echo "Missing chip-tool command '$weather_chip_tool' on PATH." >&2
+              echo "Run 'just rig::build-native' on this rig or pass a chip-tool executable path as the tenth positional rig::deploy argument." >&2
+              exit 1
+            fi
+            ;;
+        esac
+      fi
       uv build --wheel --out-dir "$wheelhouse_dir" "$weather_python_project" >/dev/null
       cmake -S "$weather_native_project" -B "$weather_native_build_dir" -DCMAKE_BUILD_TYPE=MinSizeRel >/dev/null
       cmake --build "$weather_native_build_dir" --config MinSizeRel --parallel >/dev/null
@@ -1241,10 +1315,10 @@ aws_shared_credentials_file := ""
               export WEATHER_HUMIDITY_ENDPOINT="{configuration:/HumidityEndpoint}"
               export WEATHER_PRESSURE_ENDPOINT="{configuration:/PressureEndpoint}"
               export WEATHER_POWER_ENDPOINT="{configuration:/PowerEndpoint}"
-              export WEATHER_CHIP_TOOL_STORAGE_DIR="{artifacts:path}/chip-tool-storage"
+              export WEATHER_CHIP_TOOL_STORAGE_DIR="{work:path}/chip-tool-storage"
               export WEATHER_MATTER_WATCH_BINARY="{artifacts:path}/bin/weather-matter-watch"
               export PYTHONPATH="{artifacts:path}/python"
-              mkdir -p "{artifacts:path}/chip-tool-storage"
+              mkdir -p "$WEATHER_CHIP_TOOL_STORAGE_DIR"
               exec python3 -m weather_rig.matter_watch
         Artifacts:
           - Uri: "s3://txing-local-greengrass/txing-local-artifact.txt"

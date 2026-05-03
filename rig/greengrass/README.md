@@ -18,6 +18,12 @@ Weather device process components:
 - `dev.txing.device.weather.MatterWatch`: observe-only Matter watcher. It idles
   until `WeatherThingName` and `MatterNodeId` are configured in deployment.
 
+Matter support is additive to the existing BLE stack. A raspi rig can run the
+unit BLE components and the weather Matter components together, but Matter over
+Thread needs IP reachability to the Thread network through a Thread Border
+Router. Raspberry Pi 5 hardware does not include an 802.15.4 Thread radio by
+itself.
+
 Lifecycle boundary:
 
 - `rig = Sparkplug edge node = Greengrass Lite core`.
@@ -44,7 +50,7 @@ use their placeholder S3 URIs.
 Native Greengrass Lite is built and installed through:
 
 ```bash
-sudo apt install -y cmake build-essential pkg-config python3-venv libssl-dev libcurl4-openssl-dev uuid-dev libzip-dev libsqlite3-dev libyaml-dev libsystemd-dev libevent-dev liburiparser-dev cgroup-tools
+sudo apt install -y cmake build-essential pkg-config python3-venv python3-dev python3-pip git curl ninja-build unzip default-jre libssl-dev libcurl4-openssl-dev libdbus-1-dev libglib2.0-dev libavahi-client-dev libgirepository1.0-dev libcairo2-dev libreadline-dev uuid-dev libzip-dev libsqlite3-dev libyaml-dev libsystemd-dev libevent-dev liburiparser-dev cgroup-tools bluez pi-bluetooth avahi-utils
 cmake --version
 just rig::build-native
 just rig::build
@@ -53,7 +59,15 @@ just rig::deploy <rig-id>
 ```
 
 Run the package install before `just rig::build-native`; the native build invokes
-`cmake` directly.
+`cmake` directly. `build-native` also checks out Nordic's `sdk-connectedhomeip`
+under `rig/connectedhomeip` at the NCS `v3.3.0` Matter revision and builds a
+local `chip-tool` for the rig. The checkout and build output are ignored by git.
+
+Use the local Matter controller with:
+
+```bash
+just rig::chip-tool --help
+```
 
 Run `just aws::cert <rig-id>` before `just rig::install-service <rig-id>`. The install recipe
 copies `config/certs/rig/rig.cert.pem` and `rig.private.key` into
@@ -108,13 +122,22 @@ just rig::deploy <rig-id> '' '' '' '' ble-main txing <weather-thing-name> <matte
 ```
 
 Leave those values empty to deploy the weather components in idle mode. The
-Matter watcher defaults to `chip-tool` from `PATH`; pass a custom executable path
-as the tenth positional argument if your commissioned fabric uses a locally built
-Project CHIP tool:
+Matter watcher uses the `chip-tool` built by `just rig::build-native` when it is
+available. Pass a custom executable path as the tenth positional argument only if
+you want to use a different Project CHIP tool:
 
 ```bash
 just rig::deploy <rig-id> '' '' '' '' ble-main txing <weather-thing-name> <matter-node-id> /path/to/chip-tool
 ```
+
+When weather is enabled with a Matter node id, `rig::deploy` checks that the
+configured or locally built `chip-tool` exists before installing the Greengrass
+component.
+
+The Matter watcher stores its `chip-tool` controller fabric under the component
+work directory, exposed to the process as `WEATHER_CHIP_TOOL_STORAGE_DIR`.
+Commission the weather node with the same storage directory before expecting the
+watcher to read attributes.
 
 Use `just rig::restart` to restart the Greengrass Lite systemd units without
 deploying new code. Do not expect restart to pick up a new local build; restart
