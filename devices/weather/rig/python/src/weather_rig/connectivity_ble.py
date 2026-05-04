@@ -218,7 +218,7 @@ class WeatherBleDeviceSession:
                     )
                     await _sleep_until_stop(self._stop_event, self._config.reconnect_delay)
                     continue
-                await self._run_advertising_presence(device)
+                await self._run_connected(device)
             except asyncio.CancelledError:
                 raise
             except Exception:

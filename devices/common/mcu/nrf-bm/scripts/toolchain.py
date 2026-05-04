@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import argparse
+import binascii
 import hashlib
 import os
 import platform
 import shutil
+import struct
 import subprocess
 import sys
 import tarfile
@@ -36,11 +38,20 @@ VENV_PYTHON = NRF_BM_DIR / ".venv" / "bin" / "python"
 LOCAL_HOME = NRF_BM_DIR / ".home"
 WEATHER_MCU_DIR = PROJECT_ROOT / "devices" / "weather" / "mcu"
 WEATHER_BAREMETAL_DIR = WEATHER_MCU_DIR / "baremetal"
-WEATHER_BUILD_DIR = WEATHER_MCU_DIR / "build" / "baremetal-advertising"
+WEATHER_BUILD_DIR = WEATHER_MCU_DIR / "build" / "baremetal-weather"
 WEATHER_APP_HEX = WEATHER_BUILD_DIR / "baremetal" / "zephyr" / "zephyr.hex"
 WEATHER_APP_ELF = WEATHER_BUILD_DIR / "baremetal" / "zephyr" / "zephyr.elf"
+WEATHER_FACTORY_HEX = WEATHER_BUILD_DIR / "txing_weather_factory.hex"
 OPENOCD_CFG = WEATHER_MCU_DIR / "support" / "openocd-nrf54l-cmsis-dap.cfg"
 BUILD_RECIPE_STAMP = WEATHER_BUILD_DIR / ".txing-nrf-bm-weather-build-recipe"
+FACTORY_DATA_ADDRESS = int(os.environ.get("WEATHER_FACTORY_DATA_ADDRESS", "0x000f0000"), 0)
+FACTORY_DATA_MAGIC = b"TXW1"
+FACTORY_DATA_VERSION = 1
+FACTORY_THING_NAME_SIZE = 26
+FACTORY_DATA_STRUCT = struct.Struct("<4sBB26sI")
+RTT_RAM_START = int(os.environ.get("WEATHER_RTT_RAM_START", "0x20000000"), 0)
+RTT_RAM_SIZE = int(os.environ.get("WEATHER_RTT_RAM_SIZE", "0x3b800"), 0)
+RTT_PORT = int(os.environ.get("WEATHER_RTT_PORT", "5555"), 0)
 
 
 REQUIRED_COMMANDS = (
@@ -62,6 +73,39 @@ def log(message: str) -> None:
 
 def fail(message: str) -> None:
     raise SystemExit(message)
+
+
+def validate_thing_name(value: str) -> str:
+    thing_name = value.strip()
+    if not thing_name:
+        fail("AWS thing id must not be empty")
+    try:
+        encoded = thing_name.encode("ascii")
+    except UnicodeEncodeError:
+        fail("AWS thing id must be ASCII so it fits in BLE advertising data")
+    if len(encoded) > FACTORY_THING_NAME_SIZE:
+        fail(
+            "AWS thing id is too long for BLE local-name advertising "
+            f"({len(encoded)} > {FACTORY_THING_NAME_SIZE} bytes): {thing_name!r}"
+        )
+    if any(byte < 0x21 or byte > 0x7E for byte in encoded):
+        fail("AWS thing id must contain only printable non-space ASCII characters")
+    return thing_name
+
+
+def build_factory_data(thing_name: str) -> bytes:
+    normalized = validate_thing_name(thing_name)
+    encoded = normalized.encode("ascii")
+    name_field = encoded.ljust(FACTORY_THING_NAME_SIZE, b"\0")
+    without_crc = FACTORY_DATA_STRUCT.pack(
+        FACTORY_DATA_MAGIC,
+        FACTORY_DATA_VERSION,
+        len(encoded),
+        name_field,
+        0,
+    )[:-4]
+    crc = binascii.crc32(without_crc) & 0xFFFFFFFF
+    return without_crc + struct.pack("<I", crc)
 
 
 def run(
@@ -321,13 +365,11 @@ def verify_local_install() -> None:
 
 
 def weather_recipe_digest() -> str:
-    files = [
-        WEATHER_BAREMETAL_DIR / "CMakeLists.txt",
-        WEATHER_BAREMETAL_DIR / "Kconfig",
-        WEATHER_BAREMETAL_DIR / "prj.conf",
-        WEATHER_BAREMETAL_DIR / "sample.yaml",
-        WEATHER_BAREMETAL_DIR / "src" / "main.c",
-    ]
+    files = sorted(
+        path
+        for path in WEATHER_BAREMETAL_DIR.rglob("*")
+        if path.is_file() and "__pycache__" not in path.parts
+    )
     digest = hashlib.sha256()
     for path in files:
         if not path.exists():
@@ -376,6 +418,31 @@ def softdevice_hex() -> Path:
     return path
 
 
+def write_factory_hex(thing_name: str) -> Path:
+    from intelhex import IntelHex
+
+    WEATHER_FACTORY_HEX.parent.mkdir(parents=True, exist_ok=True)
+    factory = IntelHex()
+    factory.puts(FACTORY_DATA_ADDRESS, build_factory_data(thing_name))
+    factory.write_hex_file(str(WEATHER_FACTORY_HEX))
+    return WEATHER_FACTORY_HEX
+
+
+def ensure_app_does_not_overlap_factory() -> None:
+    from intelhex import IntelHex
+
+    image = IntelHex(str(WEATHER_APP_HEX))
+    factory_start = FACTORY_DATA_ADDRESS
+    factory_end = FACTORY_DATA_ADDRESS + FACTORY_DATA_STRUCT.size
+    for start, end in image.segments():
+        if start < factory_end and end > factory_start:
+            fail(
+                "bare-metal app HEX overlaps weather factory data slot: "
+                f"segment 0x{start:08x}-0x{end - 1:08x}, "
+                f"factory 0x{factory_start:08x}-0x{factory_end - 1:08x}"
+            )
+
+
 def build_weather_advertising(*, pristine: bool) -> None:
     verify_local_install()
     if pristine or not build_is_current():
@@ -413,6 +480,7 @@ def build_weather_advertising(*, pristine: bool) -> None:
             "build completed, but no expected application ELF was created: "
             f"{WEATHER_APP_ELF}"
         )
+    ensure_app_does_not_overlap_factory()
     softdevice_hex()
     BUILD_RECIPE_STAMP.write_text(build_recipe_stamp(), encoding="utf-8")
     log(f"ok: built {WEATHER_APP_HEX}")
@@ -450,10 +518,50 @@ def tcl_braced_path(path: Path) -> str:
     return "{" + str(path).replace("}", "\\}") + "}"
 
 
-def flash_hex(path: Path) -> None:
+def flash_hexes(paths: list[Path]) -> None:
     verify_local_install()
-    if not path.exists():
-        fail(f"missing flash image: {path}")
+    for path in paths:
+        if not path.exists():
+            fail(f"missing flash image: {path}")
+    if not OPENOCD_CFG.exists():
+        fail(f"missing OpenOCD config: {OPENOCD_CFG}")
+
+    args = [
+        openocd_command(),
+        "-s",
+        str(openocd_scripts_dir()),
+        "-f",
+        str(OPENOCD_CFG),
+        "-c",
+        "init",
+        "-c",
+        "reset init",
+    ]
+    for path in paths:
+        args.extend(
+            [
+                "-c",
+                f"txing-nrf54l-load {tcl_braced_path(path)}",
+                "-c",
+                f"verify_image {tcl_braced_path(path)}",
+            ]
+        )
+    args.extend(["-c", "reset run", "-c", "shutdown"])
+    run(args, cwd=PROJECT_ROOT, env=local_env())
+
+
+def flash_hex(path: Path) -> None:
+    flash_hexes([path])
+
+
+def flash_weather(thing_name: str) -> None:
+    build_weather_advertising(pristine=False)
+    factory_hex = write_factory_hex(thing_name)
+    flash_hexes([WEATHER_APP_HEX, factory_hex])
+
+
+def start_weather_rtt_server() -> None:
+    verify_local_install()
     if not OPENOCD_CFG.exists():
         fail(f"missing OpenOCD config: {OPENOCD_CFG}")
     run(
@@ -466,15 +574,19 @@ def flash_hex(path: Path) -> None:
             "-c",
             "init",
             "-c",
-            "reset init",
-            "-c",
-            f"txing-nrf54l-load {tcl_braced_path(path)}",
-            "-c",
-            f"verify_image {tcl_braced_path(path)}",
-            "-c",
             "reset run",
             "-c",
-            "shutdown",
+            "sleep 500",
+            "-c",
+            "halt",
+            "-c",
+            f'rtt setup 0x{RTT_RAM_START:08x} 0x{RTT_RAM_SIZE:x} "SEGGER RTT"',
+            "-c",
+            "rtt start",
+            "-c",
+            "resume",
+            "-c",
+            f"rtt server start {RTT_PORT} 0",
         ],
         cwd=PROJECT_ROOT,
         env=local_env(),
@@ -505,6 +617,10 @@ def paths() -> None:
     print(f"weather_build={WEATHER_BUILD_DIR}")
     print(f"weather_app_hex={WEATHER_APP_HEX}")
     print(f"weather_app_elf={WEATHER_APP_ELF}")
+    print(f"weather_factory_hex={WEATHER_FACTORY_HEX}")
+    print(f"weather_factory_address=0x{FACTORY_DATA_ADDRESS:08x}")
+    print(f"weather_rtt_ram=0x{RTT_RAM_START:08x}+0x{RTT_RAM_SIZE:x}")
+    print(f"weather_rtt_port={RTT_PORT}")
     print(f"softdevice_hex={softdevice_hex() if BM_MANIFEST_DIR.exists() else ''}")
     print(f"openocd_cfg={OPENOCD_CFG}")
 
@@ -518,23 +634,37 @@ def main() -> None:
         choices=(
             "install",
             "check",
+            "build-weather",
             "build-weather-advertising",
+            "flash-weather",
             "flash-weather-advertising",
             "flash-weather-softdevice",
+            "rtt-weather",
             "paths",
         ),
+    )
+    parser.add_argument(
+        "thing_name",
+        nargs="?",
+        help="AWS IoT thing id to store in weather factory data during BM flash",
     )
     args = parser.parse_args()
     if args.command == "install":
         install()
     elif args.command == "check":
         check()
-    elif args.command == "build-weather-advertising":
+    elif args.command in {"build-weather", "build-weather-advertising"}:
         build_weather_advertising(pristine=False)
+    elif args.command == "flash-weather":
+        if not args.thing_name:
+            fail("flash-weather requires an AWS thing id, e.g. `just weather::mcu::bm-flash weather-q8zbgb`")
+        flash_weather(args.thing_name)
     elif args.command == "flash-weather-advertising":
         flash_hex(WEATHER_APP_HEX)
     elif args.command == "flash-weather-softdevice":
         flash_hex(softdevice_hex())
+    elif args.command == "rtt-weather":
+        start_weather_rtt_server()
     else:
         paths()
 

@@ -13,16 +13,22 @@ nrf_bm_justfile := project_root + "/devices/common/mcu/nrf-bm/justfile"
 @build: check
 
 @bm-check:
-    just --justfile "{{nrf_bm_justfile}}" build-weather-advertising
+    just --justfile "{{nrf_bm_justfile}}" build-weather
 
 @bm-install:
     just --justfile "{{nrf_bm_justfile}}" install
+
+@bm-flash thing_id:
+    just --justfile "{{nrf_bm_justfile}}" flash-weather "{{thing_id}}"
 
 @bm-flash-app:
     just --justfile "{{nrf_bm_justfile}}" flash-weather-advertising
 
 @bm-flash-softdevice:
     just --justfile "{{nrf_bm_justfile}}" flash-weather-softdevice
+
+@bm-rtt:
+    just --justfile "{{nrf_bm_justfile}}" rtt-weather
 
 @bm-paths:
     just --justfile "{{nrf_bm_justfile}}" paths

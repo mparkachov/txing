@@ -17,7 +17,13 @@ toolchain_script := nrf_bm_dir + "/scripts/toolchain.py"
     cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{uv_cache_dir}}" uv run --project "{{nrf_bm_dir}}" --no-sync python "{{toolchain_script}}" check
 
 @build-weather-advertising:
-    cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{uv_cache_dir}}" uv run --project "{{nrf_bm_dir}}" --no-sync python "{{toolchain_script}}" build-weather-advertising
+    cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{uv_cache_dir}}" uv run --project "{{nrf_bm_dir}}" --no-sync python "{{toolchain_script}}" build-weather
+
+@build-weather:
+    cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{uv_cache_dir}}" uv run --project "{{nrf_bm_dir}}" --no-sync python "{{toolchain_script}}" build-weather
+
+@flash-weather thing_id:
+    cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{uv_cache_dir}}" uv run --project "{{nrf_bm_dir}}" --no-sync python "{{toolchain_script}}" flash-weather "{{thing_id}}"
 
 @flash-weather-advertising:
     cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{uv_cache_dir}}" uv run --project "{{nrf_bm_dir}}" --no-sync python "{{toolchain_script}}" flash-weather-advertising
@@ -25,11 +31,14 @@ toolchain_script := nrf_bm_dir + "/scripts/toolchain.py"
 @flash-weather-softdevice:
     cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{uv_cache_dir}}" uv run --project "{{nrf_bm_dir}}" --no-sync python "{{toolchain_script}}" flash-weather-softdevice
 
+@rtt-weather:
+    cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{uv_cache_dir}}" uv run --project "{{nrf_bm_dir}}" --no-sync python "{{toolchain_script}}" rtt-weather
+
 @paths:
     cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{uv_cache_dir}}" uv run --project "{{nrf_bm_dir}}" --no-sync python "{{toolchain_script}}" paths
 
 @clean-build:
-    rm -rf "{{nrf_bm_dir}}/../../../weather/mcu/build/baremetal-advertising"
+    rm -rf "{{nrf_bm_dir}}/../../../weather/mcu/build/baremetal-weather"
 
 @default:
     @just --list
