@@ -375,7 +375,10 @@ function App({ initialAuthError = '' }: AppProps) {
     () => resolveThingSparkplugRedconCommandTarget(routeHeaderMetadata),
     [routeHeaderMetadata],
   )
-  const commandableRedconLevels = routeHeaderMetadata?.redconCommandLevels ?? []
+  const commandableRedconLevels = useMemo(
+    () => routeHeaderMetadata?.redconCommandLevels ?? [],
+    [routeHeaderMetadata?.redconCommandLevels],
+  )
   const commandableRedconLevelSet = useMemo(
     () => new Set<RedconCommandLevel>(commandableRedconLevels),
     [commandableRedconLevels],
@@ -582,6 +585,12 @@ function App({ initialAuthError = '' }: AppProps) {
         if (extractIsSparkplugDeviceUnavailable(nextShadow)) {
           if (redconCommandSequenceRef.current === commandSequence) {
             setPendingTargetRedcon(null)
+            if (targetRedcon !== 4) {
+              enqueueRuntimeError(
+                `Sparkplug DCMD.redcon -> ${targetRedcon} failed: device became unavailable`,
+                'sparkplug-redcon-convergence',
+              )
+            }
           }
           return
         }
@@ -710,9 +719,19 @@ function App({ initialAuthError = '' }: AppProps) {
         isSparkplugDeviceUnavailable,
       })
     ) {
+      if (
+        isSparkplugDeviceUnavailable &&
+        pendingTargetRedcon !== null &&
+        pendingTargetRedcon !== 4
+      ) {
+        enqueueRuntimeError(
+          `Sparkplug DCMD.redcon -> ${pendingTargetRedcon} failed: device became unavailable`,
+          'sparkplug-redcon-convergence',
+        )
+      }
       setPendingTargetRedcon(null)
     }
-  }, [isSparkplugDeviceUnavailable, pendingTargetRedcon, reportedRedcon])
+  }, [enqueueRuntimeError, isSparkplugDeviceUnavailable, pendingTargetRedcon, reportedRedcon])
 
   useEffect(() => {
     if (status !== 'signed_in') {
