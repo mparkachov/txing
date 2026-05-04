@@ -504,6 +504,76 @@ class WeatherBleDeviceSessionTests(unittest.TestCase):
 
         self.assertFalse(state.reachable)
 
+    def test_advertising_presence_tolerates_missed_scan_timeout(self) -> None:
+        async def exercise() -> list[ConnectivityState]:
+            bus = InMemoryLocalPubSub()
+            received: list[bytes] = []
+            await bus.subscribe(build_state_topic("weather-1"), lambda _t, p: received.append(p))
+
+            session = WeatherBleDeviceSession(
+                thing_name="weather-1",
+                config=WeatherBleConfig(
+                    scan_timeout=0.01,
+                    presence_timeout=0.12,
+                    reconnect_delay=30.0,
+                    state_report_interval=60.0,
+                ),
+                bus=bus,
+                client_factory=FakeClient,  # type: ignore[arg-type]
+            )
+            task = asyncio.create_task(session.run())
+            session.observe_advertisement(_weather_advertisement("weather-1"))
+            while not received:
+                await asyncio.sleep(0)
+            await asyncio.sleep(0.04)
+            session.stop()
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            return [ConnectivityState.from_payload(payload) for payload in received]
+
+        states = asyncio.run(exercise())
+
+        self.assertTrue(states)
+        self.assertTrue(all(state.reachable for state in states))
+
+    def test_advertising_presence_expires_after_presence_timeout(self) -> None:
+        async def exercise() -> list[ConnectivityState]:
+            bus = InMemoryLocalPubSub()
+            received: list[bytes] = []
+            await bus.subscribe(build_state_topic("weather-1"), lambda _t, p: received.append(p))
+
+            session = WeatherBleDeviceSession(
+                thing_name="weather-1",
+                config=WeatherBleConfig(
+                    scan_timeout=0.01,
+                    presence_timeout=0.03,
+                    reconnect_delay=30.0,
+                    state_report_interval=60.0,
+                ),
+                bus=bus,
+                client_factory=FakeClient,  # type: ignore[arg-type]
+            )
+            task = asyncio.create_task(session.run())
+            session.observe_advertisement(_weather_advertisement("weather-1"))
+
+            async def wait_for_offline() -> None:
+                while True:
+                    states = [ConnectivityState.from_payload(payload) for payload in received]
+                    if any(not state.reachable for state in states):
+                        return
+                    await asyncio.sleep(0.001)
+
+            await asyncio.wait_for(wait_for_offline(), timeout=1.0)
+            session.stop()
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            return [ConnectivityState.from_payload(payload) for payload in received]
+
+        states = asyncio.run(exercise())
+
+        self.assertTrue(states[0].reachable)
+        self.assertFalse(states[-1].reachable)
+
     def test_command_writes_gatt_and_publishes_success(self) -> None:
         async def exercise() -> tuple[list[ConnectivityCommandResult], list[tuple[str, bytes, bool]]]:
             bus = InMemoryLocalPubSub()

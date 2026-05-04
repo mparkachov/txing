@@ -8,6 +8,7 @@ ComponentConfiguration:
   DefaultConfiguration:
     AdapterId: weather-ble-main
     ConnectTimeout: 8.0
+    PresenceTimeout: 20.0
     RigId: REPLACE_WITH_RIG_THING_ID
     TownId: REPLACE_WITH_TOWN_THING_ID
     accessControl:
@@ -39,7 +40,7 @@ Manifests:
           export TXING_DEVICE_DIR="{artifacts:decompressedPath}/rig-greengrass/devices/weather"
           export TXING_DEVICE_MANIFEST="{artifacts:decompressedPath}/rig-greengrass/devices/weather/manifest.toml"
           export PYTHONPATH="{artifacts:decompressedPath}/rig-greengrass/python"
-          exec python3 -m weather_rig.connectivity_ble --adapter-id "{configuration:/AdapterId}" --connect-timeout "{configuration:/ConnectTimeout}"
+          exec python3 -m weather_rig.connectivity_ble --adapter-id "{configuration:/AdapterId}" --connect-timeout "{configuration:/ConnectTimeout}" --presence-timeout "{configuration:/PresenceTimeout}"
     Artifacts:
       - Uri: s3://REPLACE_WITH_TXING_GREENGRASS_ARTIFACT_BUCKET/rig-greengrass/0.6.0/rig-greengrass.zip
         Unarchive: ZIP

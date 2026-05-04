@@ -54,6 +54,7 @@ LOGGER = logging.getLogger("weather_rig.connectivity_ble")
 DEFAULT_ADAPTER_ID = "weather-ble-main"
 WEATHER_INVENTORY_ADAPTER_ID = "weather-sparkplug-manager"
 DEFAULT_SCAN_TIMEOUT = 8.0
+DEFAULT_PRESENCE_TIMEOUT = 20.0
 DEFAULT_RECONNECT_DELAY = 2.0
 DEFAULT_CONNECT_TIMEOUT = 8.0
 DEFAULT_COMMAND_TIMEOUT = 8.0
@@ -82,6 +83,7 @@ MEASUREMENT_STRUCT = struct.Struct("<BiIHH")
 class WeatherBleConfig:
     adapter_id: str = DEFAULT_ADAPTER_ID
     scan_timeout: float = DEFAULT_SCAN_TIMEOUT
+    presence_timeout: float = DEFAULT_PRESENCE_TIMEOUT
     reconnect_delay: float = DEFAULT_RECONNECT_DELAY
     connect_timeout: float = DEFAULT_CONNECT_TIMEOUT
     command_timeout: float = DEFAULT_COMMAND_TIMEOUT
@@ -297,15 +299,18 @@ class WeatherBleDeviceSession:
             advertisement = self._last_advertisement
             if advertisement is None or not _advertisement_is_fresh(
                 advertisement,
-                max_age_ms=max(int(self._config.scan_timeout * 1000), 1000),
+                max_age_ms=_presence_timeout_ms(self._config),
             ):
+                expired_address = advertisement.address if advertisement else "-"
+                expired_name = advertisement.name if advertisement else "-"
                 LOGGER.info(
                     "Weather BLE advertisement expired thing=%s timeout=%.1fs lastAddress=%s lastName=%s",
                     self.thing_name,
-                    self._config.scan_timeout,
-                    advertisement.address if advertisement else "-",
-                    advertisement.name if advertisement else "-",
+                    self._config.presence_timeout,
+                    expired_address,
+                    expired_name,
                 )
+                self._last_advertisement = None
                 await self._publish_connectivity(
                     presence=PRESENCE_OFFLINE,
                     control_availability=CONTROL_UNAVAILABLE,
@@ -1003,6 +1008,10 @@ def _advertisement_is_fresh(
     return utc_timestamp_ms() - advertisement.observed_at_ms <= max_age_ms
 
 
+def _presence_timeout_ms(config: WeatherBleConfig) -> int:
+    return max(int(config.presence_timeout * 1000), int(config.scan_timeout * 1000), 1)
+
+
 async def _sleep_until_stop(stop_event: asyncio.Event, delay: float) -> None:
     try:
         await asyncio.wait_for(stop_event.wait(), timeout=delay)
@@ -1023,6 +1032,7 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--adapter-id", default=os.getenv("WEATHER_BLE_ADAPTER_ID", DEFAULT_ADAPTER_ID))
     parser.add_argument("--scan-timeout", type=float, default=float(os.getenv("WEATHER_BLE_SCAN_TIMEOUT", DEFAULT_SCAN_TIMEOUT)))
+    parser.add_argument("--presence-timeout", type=float, default=float(os.getenv("WEATHER_BLE_PRESENCE_TIMEOUT", DEFAULT_PRESENCE_TIMEOUT)))
     parser.add_argument("--reconnect-delay", type=float, default=float(os.getenv("WEATHER_BLE_RECONNECT_DELAY", DEFAULT_RECONNECT_DELAY)))
     parser.add_argument("--connect-timeout", type=float, default=float(os.getenv("WEATHER_BLE_CONNECT_TIMEOUT", DEFAULT_CONNECT_TIMEOUT)))
     parser.add_argument("--command-timeout", type=float, default=float(os.getenv("WEATHER_BLE_COMMAND_TIMEOUT", DEFAULT_COMMAND_TIMEOUT)))
@@ -1037,6 +1047,7 @@ def main() -> None:
     config = WeatherBleConfig(
         adapter_id=args.adapter_id,
         scan_timeout=args.scan_timeout,
+        presence_timeout=args.presence_timeout,
         reconnect_delay=args.reconnect_delay,
         connect_timeout=args.connect_timeout,
         command_timeout=args.command_timeout,
@@ -1044,9 +1055,10 @@ def main() -> None:
         no_ble=args.no_ble,
     )
     LOGGER.info(
-        "Starting weather BLE adapter adapterId=%s scanTimeout=%.1fs reconnectDelay=%.1fs connectTimeout=%.1fs commandTimeout=%.1fs stateReportInterval=%.1fs noBle=%s",
+        "Starting weather BLE adapter adapterId=%s scanTimeout=%.1fs presenceTimeout=%.1fs reconnectDelay=%.1fs connectTimeout=%.1fs commandTimeout=%.1fs stateReportInterval=%.1fs noBle=%s",
         config.adapter_id,
         config.scan_timeout,
+        config.presence_timeout,
         config.reconnect_delay,
         config.connect_timeout,
         config.command_timeout,
