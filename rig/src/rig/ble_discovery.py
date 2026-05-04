@@ -14,8 +14,12 @@ except ImportError:  # pragma: no cover - startup validation covers real deploym
 
 from rig.connectivity_protocol import (
     INVENTORY_TOPIC,
+    BLE_SCAN_CONTROL_TOPIC,
+    BLE_SCAN_PAUSE,
+    BLE_SCAN_RESUME,
     TRANSPORT_BLE_GATT,
     BleAdvertisement,
+    BleScanControl,
     ConnectivityInventory,
     build_ble_advertisement_topic,
 )
@@ -62,6 +66,9 @@ class BleDiscoveryService:
         self._unmatched_names: set[str] = set()
         self._seq = 0
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._scanner: Any | None = None
+        self._scan_control_event = asyncio.Event()
+        self._scan_pause_deadlines_by_adapter_id: dict[str, int] = {}
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -72,30 +79,32 @@ class BleDiscoveryService:
             INVENTORY_TOPIC,
             self._handle_inventory,
         )
+        scan_control_subscription = await self._bus.subscribe(
+            BLE_SCAN_CONTROL_TOPIC,
+            self._handle_scan_control,
+        )
         try:
             while not self._stop_event.is_set():
-                scanner: Any | None = None
                 try:
-                    scanner = self._scanner_factory(
-                        detection_callback=self._handle_detection,
-                        scanning_mode=self._scan_mode,
-                        bluez={"filters": {"DuplicateData": True}},
-                    )
-                    await _maybe_await(scanner.start())
-                    LOGGER.info("Started shared BLE discovery scanner mode=%s", self._scan_mode)
-                    await self._stop_event.wait()
+                    self._expire_scan_pauses()
+                    if self._is_scan_paused():
+                        await self._stop_active_scanner()
+                        await self._wait_for_stop_or_scan_control(self._scan_pause_wait_seconds())
+                        continue
+                    await self._start_active_scanner()
+                    await self._wait_for_stop_or_scan_control(1.0)
                 except asyncio.CancelledError:
                     raise
                 except Exception:
+                    await self._stop_active_scanner()
                     LOGGER.exception(
                         "Shared BLE discovery scanner failed; retrying in %.1f seconds",
                         self._restart_delay,
                     )
                     await _sleep_until_stop(self._stop_event, self._restart_delay)
-                finally:
-                    if scanner is not None:
-                        await _stop_scanner(scanner)
         finally:
+            await self._stop_active_scanner()
+            _close_resource(scan_control_subscription)
             _close_resource(inventory_subscription)
             await self._drain_publish_tasks()
 
@@ -147,6 +156,103 @@ class BleDiscoveryService:
                 len(self._target_addresses),
                 ",".join(sorted(self._target_names)) or "-",
             )
+
+    async def _handle_scan_control(self, _topic: str, payload: bytes) -> None:
+        try:
+            control = BleScanControl.from_payload(payload)
+        except Exception as err:
+            LOGGER.warning("Invalid BLE scan control ignored: %s", err)
+            return
+
+        if control.action == BLE_SCAN_PAUSE:
+            deadline_ms = control.deadline_ms or utc_timestamp_ms() + 10_000
+            previous_deadline_ms = self._scan_pause_deadlines_by_adapter_id.get(
+                control.adapter_id,
+                0,
+            )
+            self._scan_pause_deadlines_by_adapter_id[control.adapter_id] = max(
+                previous_deadline_ms,
+                deadline_ms,
+            )
+            LOGGER.info(
+                "Paused shared BLE discovery scanner requestedBy=%s reason=%s deadlineMs=%s",
+                control.adapter_id,
+                control.reason,
+                self._scan_pause_deadlines_by_adapter_id[control.adapter_id],
+            )
+        elif control.action == BLE_SCAN_RESUME:
+            self._scan_pause_deadlines_by_adapter_id.pop(control.adapter_id, None)
+            LOGGER.info(
+                "Resumed shared BLE discovery scanner requestedBy=%s reason=%s",
+                control.adapter_id,
+                control.reason,
+            )
+        self._scan_control_event.set()
+
+    async def _start_active_scanner(self) -> None:
+        if self._scanner is not None:
+            return
+        scanner = self._scanner_factory(
+            detection_callback=self._handle_detection,
+            scanning_mode=self._scan_mode,
+            bluez={"filters": {"DuplicateData": True}},
+        )
+        await _maybe_await(scanner.start())
+        self._scanner = scanner
+        LOGGER.info("Started shared BLE discovery scanner mode=%s", self._scan_mode)
+
+    async def _stop_active_scanner(self) -> None:
+        scanner = self._scanner
+        self._scanner = None
+        if scanner is not None:
+            await _stop_scanner(scanner)
+
+    async def _wait_for_stop_or_scan_control(self, timeout: float) -> None:
+        stop_task = asyncio.create_task(self._stop_event.wait())
+        control_task = asyncio.create_task(self._scan_control_event.wait())
+        try:
+            done, pending = await asyncio.wait(
+                {stop_task, control_task},
+                timeout=max(timeout, 0.0),
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for task in pending:
+                task.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
+            for task in done:
+                task.result()
+            if control_task in done:
+                self._scan_control_event.clear()
+        finally:
+            for task in (stop_task, control_task):
+                if not task.done():
+                    task.cancel()
+
+    def _expire_scan_pauses(self) -> None:
+        now_ms = utc_timestamp_ms()
+        expired_adapter_ids = [
+            adapter_id
+            for adapter_id, deadline_ms in self._scan_pause_deadlines_by_adapter_id.items()
+            if deadline_ms <= now_ms
+        ]
+        for adapter_id in expired_adapter_ids:
+            self._scan_pause_deadlines_by_adapter_id.pop(adapter_id, None)
+        if expired_adapter_ids:
+            LOGGER.info(
+                "Expired shared BLE discovery scanner pause requests adapters=%s",
+                ",".join(sorted(expired_adapter_ids)),
+            )
+
+    def _is_scan_paused(self) -> bool:
+        return bool(self._scan_pause_deadlines_by_adapter_id)
+
+    def _scan_pause_wait_seconds(self) -> float:
+        if not self._scan_pause_deadlines_by_adapter_id:
+            return 1.0
+        now_ms = utc_timestamp_ms()
+        next_deadline_ms = min(self._scan_pause_deadlines_by_adapter_id.values())
+        return min(max((next_deadline_ms - now_ms) / 1000.0, 0.05), 1.0)
 
     def _handle_detection(self, device: Any, advertisement_data: Any) -> None:
         loop = self._loop

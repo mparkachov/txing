@@ -18,6 +18,9 @@ except ImportError:  # pragma: no cover - startup validation covers real deploym
 
 from rig.connectivity_protocol import (
     BLE_ADVERTISEMENT_TOPIC_PREFIX,
+    BLE_SCAN_CONTROL_TOPIC,
+    BLE_SCAN_PAUSE,
+    BLE_SCAN_RESUME,
     COMMAND_ACCEPTED,
     COMMAND_FAILED,
     COMMAND_SUCCEEDED,
@@ -28,6 +31,7 @@ from rig.connectivity_protocol import (
     PRESENCE_OFFLINE,
     PRESENCE_ONLINE,
     BleAdvertisement,
+    BleScanControl,
     ConnectivityCommand,
     ConnectivityCommandResult,
     ConnectivityHeartbeat,
@@ -55,6 +59,8 @@ DEFAULT_CONNECT_TIMEOUT = 8.0
 DEFAULT_COMMAND_TIMEOUT = 8.0
 DEFAULT_HEARTBEAT_INTERVAL = 10.0
 DEFAULT_STATE_REPORT_INTERVAL = 30.0
+DEFAULT_SCAN_PAUSE_SETTLE = 0.25
+DEFAULT_SCAN_PAUSE_MARGIN = 2.0
 
 WEATHER_SERVICE_UUID = "f6b4b000-7b32-4d2d-9f4b-4ff0a2b8f100"
 WEATHER_COMMAND_UUID = "f6b4b001-7b32-4d2d-9f4b-4ff0a2b8f100"
@@ -118,6 +124,14 @@ def encode_redcon_command(target_redcon: int) -> bytes:
     return COMMAND_STRUCT.pack(PROTOCOL_VERSION, target_redcon)
 
 
+def _command_deadline_expired(command: ConnectivityCommand) -> bool:
+    return command.deadline_ms is not None and utc_timestamp_ms() >= command.deadline_ms
+
+
+def _command_deadline_expired_message(command: ConnectivityCommand) -> str:
+    return f"weather BLE command deadline expired deadlineMs={command.deadline_ms}"
+
+
 def parse_state_report(data: bytes | bytearray | memoryview) -> WeatherBleState:
     payload = bytes(data)
     if len(payload) < STATE_STRUCT.size:
@@ -179,6 +193,13 @@ class WeatherBleDeviceSession:
         self._advertisement_event.set()
 
     async def enqueue_command(self, command: ConnectivityCommand) -> None:
+        if _command_deadline_expired(command):
+            await self._publish_command_result(
+                command,
+                status=COMMAND_FAILED,
+                message=_command_deadline_expired_message(command),
+            )
+            return
         await self._command_queue.put(command)
 
     def observe_advertisement(self, advertisement: BleAdvertisement) -> None:
@@ -212,6 +233,7 @@ class WeatherBleDeviceSession:
             return
 
         while not self._stop_event.is_set():
+            await self._fail_expired_queued_commands()
             try:
                 device = await self._discover_device()
                 if device is None:
@@ -255,6 +277,7 @@ class WeatherBleDeviceSession:
                         weather=None,
                         battery_mv=None,
                     )
+                await self._fail_expired_queued_commands()
                 await _sleep_until_stop(self._stop_event, self._config.reconnect_delay)
 
     async def _run_advertising_presence(self, device: Any) -> None:
@@ -311,6 +334,24 @@ class WeatherBleDeviceSession:
                 return
             await self._publish_command_result(command, status=COMMAND_FAILED, message=message)
 
+    async def _fail_expired_queued_commands(self) -> None:
+        pending: list[ConnectivityCommand] = []
+        while True:
+            try:
+                command = self._command_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            if _command_deadline_expired(command):
+                await self._publish_command_result(
+                    command,
+                    status=COMMAND_FAILED,
+                    message=_command_deadline_expired_message(command),
+                )
+            else:
+                pending.append(command)
+        for command in pending:
+            await self._command_queue.put(command)
+
     async def _discover_device(self) -> Any | None:
         deadline = asyncio.get_running_loop().time() + self._config.scan_timeout
         while not self._stop_event.is_set():
@@ -355,7 +396,23 @@ class WeatherBleDeviceSession:
     async def _run_connected(self, device: Any) -> None:
         client = self._create_client(device)
         connected = False
+        scan_paused = False
         try:
+            await self._publish_scan_control(
+                action=BLE_SCAN_PAUSE,
+                reason=f"connect:{self.thing_name}",
+                deadline_ms=utc_timestamp_ms()
+                + int(
+                    (
+                        self._config.connect_timeout
+                        + self._config.command_timeout
+                        + DEFAULT_SCAN_PAUSE_MARGIN
+                    )
+                    * 1000
+                ),
+            )
+            scan_paused = True
+            await _sleep_until_stop(self._stop_event, DEFAULT_SCAN_PAUSE_SETTLE)
             LOGGER.info(
                 "Connecting weather BLE thing=%s address=%s timeout=%.1fs",
                 self.thing_name,
@@ -372,6 +429,13 @@ class WeatherBleDeviceSession:
             )
             await self._publish_state_report(self._last_state)
             await self._start_notifications(client)
+            await self._drain_ready_commands(client)
+            await self._publish_scan_control(
+                action=BLE_SCAN_RESUME,
+                reason=f"connected:{self.thing_name}",
+                deadline_ms=None,
+            )
+            scan_paused = False
             state_report_interval = self._config.state_report_interval
             next_state_report_at = (
                 asyncio.get_running_loop().time() + state_report_interval
@@ -392,10 +456,23 @@ class WeatherBleDeviceSession:
                     command = await asyncio.wait_for(self._command_queue.get(), timeout=timeout)
                 except TimeoutError:
                     continue
+                if _command_deadline_expired(command):
+                    await self._publish_command_result(
+                        command,
+                        status=COMMAND_FAILED,
+                        message=_command_deadline_expired_message(command),
+                    )
+                    continue
                 await self._execute_command(client, command)
                 if next_state_report_at is not None:
                     next_state_report_at = asyncio.get_running_loop().time() + state_report_interval
         finally:
+            if scan_paused:
+                await self._publish_scan_control(
+                    action=BLE_SCAN_RESUME,
+                    reason=f"connect-finished:{self.thing_name}",
+                    deadline_ms=None,
+                )
             if connected:
                 await _client_disconnect(client)
             else:
@@ -442,6 +519,13 @@ class WeatherBleDeviceSession:
 
     async def _execute_command(self, client: Any, command: ConnectivityCommand) -> None:
         target_redcon = normalize_target_redcon(command.power)
+        LOGGER.info(
+            "Writing weather BLE command thing=%s commandId=%s targetRedcon=%s timeout=%.1fs",
+            self.thing_name,
+            command.command_id,
+            target_redcon,
+            self._config.command_timeout,
+        )
         try:
             await asyncio.wait_for(
                 client.write_gatt_char(
@@ -452,10 +536,18 @@ class WeatherBleDeviceSession:
                 timeout=self._config.command_timeout,
             )
         except Exception as err:
+            message = str(err) or type(err).__name__
+            LOGGER.warning(
+                "Weather BLE command failed thing=%s commandId=%s targetRedcon=%s error=%s",
+                self.thing_name,
+                command.command_id,
+                target_redcon,
+                message,
+            )
             await self._publish_command_result(
                 command,
                 status=COMMAND_FAILED,
-                message=str(err),
+                message=message,
             )
             return
         self._last_state = WeatherBleState(
@@ -464,7 +556,52 @@ class WeatherBleDeviceSession:
             bme280_valid=self._last_state.bme280_valid,
         )
         await self._publish_state_report(self._last_state)
+        LOGGER.info(
+            "Weather BLE command succeeded thing=%s commandId=%s targetRedcon=%s",
+            self.thing_name,
+            command.command_id,
+            target_redcon,
+        )
         await self._publish_command_result(command, status=COMMAND_SUCCEEDED, message=None)
+
+    async def _drain_ready_commands(self, client: Any) -> None:
+        while True:
+            try:
+                command = self._command_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                return
+            if _command_deadline_expired(command):
+                await self._publish_command_result(
+                    command,
+                    status=COMMAND_FAILED,
+                    message=_command_deadline_expired_message(command),
+                )
+                continue
+            await self._execute_command(client, command)
+
+    async def _publish_scan_control(
+        self,
+        *,
+        action: str,
+        reason: str,
+        deadline_ms: int | None,
+    ) -> None:
+        await self._bus.publish(
+            BLE_SCAN_CONTROL_TOPIC,
+            BleScanControl(
+                adapter_id=self._config.adapter_id,
+                action=action,
+                reason=reason,
+                observed_at_ms=utc_timestamp_ms(),
+                deadline_ms=deadline_ms,
+            ).to_json(),
+        )
+        LOGGER.info(
+            "Published weather BLE scan control action=%s reason=%s deadlineMs=%s",
+            action,
+            reason,
+            deadline_ms,
+        )
 
     async def _handle_state_bytes(self, payload: bytes | bytearray | memoryview) -> None:
         try:
@@ -561,6 +698,13 @@ class WeatherBleDeviceSession:
                 message=message,
                 observed_at_ms=utc_timestamp_ms(),
             ).to_json(),
+        )
+        LOGGER.info(
+            "Published weather BLE command result thing=%s commandId=%s status=%s message=%s",
+            command.thing_name,
+            command.command_id,
+            status,
+            message or "-",
         )
 
 
@@ -678,10 +822,25 @@ class WeatherConnectivityBleService:
             session = self._sessions.get(thing_name)
             if session is None:
                 raise RuntimeError(f"weather BLE thing {thing_name!r} is not in inventory")
+            if _command_deadline_expired(command):
+                await self._publish_command_result(
+                    command,
+                    status=COMMAND_FAILED,
+                    message=_command_deadline_expired_message(command),
+                )
+                return
             await self._publish_command_result(
                 command,
                 status=COMMAND_ACCEPTED,
                 message=None,
+            )
+            LOGGER.info(
+                "Accepted weather BLE command thing=%s commandId=%s power=%s reason=%s deadlineMs=%s",
+                command.thing_name,
+                command.command_id,
+                command.power,
+                command.reason,
+                command.deadline_ms,
             )
             await session.enqueue_command(command)
         except Exception as err:
@@ -713,6 +872,13 @@ class WeatherConnectivityBleService:
                 message=message,
                 observed_at_ms=utc_timestamp_ms(),
             ).to_json(),
+        )
+        LOGGER.info(
+            "Published weather BLE command result thing=%s commandId=%s status=%s message=%s",
+            command.thing_name,
+            command.command_id,
+            status,
+            message or "-",
         )
 
     async def _heartbeat_loop(self) -> None:

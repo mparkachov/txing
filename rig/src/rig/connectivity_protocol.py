@@ -16,6 +16,7 @@ HEARTBEAT_TOPIC_PREFIX = f"{LOCAL_TOPIC_ROOT}/heartbeat"
 
 BLE_DISCOVERY_TOPIC_ROOT = "dev/txing/rig/v1/ble"
 BLE_ADVERTISEMENT_TOPIC_PREFIX = f"{BLE_DISCOVERY_TOPIC_ROOT}/advertisement"
+BLE_SCAN_CONTROL_TOPIC = f"{BLE_DISCOVERY_TOPIC_ROOT}/scan-control"
 
 TRANSPORT_BLE_GATT = "ble-gatt"
 TRANSPORT_MATTER = "matter"
@@ -37,6 +38,9 @@ COMMAND_PENDING = "pending"
 COMMAND_ACCEPTED = "accepted"
 COMMAND_SUCCEEDED = "succeeded"
 COMMAND_FAILED = "failed"
+
+BLE_SCAN_PAUSE = "pause"
+BLE_SCAN_RESUME = "resume"
 
 VALID_TRANSPORTS = {
     TRANSPORT_BLE_GATT,
@@ -63,6 +67,10 @@ VALID_COMMAND_STATUS = {
     COMMAND_ACCEPTED,
     COMMAND_SUCCEEDED,
     COMMAND_FAILED,
+}
+VALID_BLE_SCAN_CONTROL_ACTIONS = {
+    BLE_SCAN_PAUSE,
+    BLE_SCAN_RESUME,
 }
 
 
@@ -119,6 +127,54 @@ def parse_command_result_topic(topic: str) -> str | None:
 
 def parse_heartbeat_topic(topic: str) -> str | None:
     return parse_suffixed_topic(topic, HEARTBEAT_TOPIC_PREFIX)
+
+
+@dataclass(slots=True, frozen=True)
+class BleScanControl:
+    adapter_id: str
+    action: str
+    reason: str
+    observed_at_ms: int
+    deadline_ms: int | None = None
+    seq: int = 0
+    schema_version: str = SCHEMA_VERSION
+
+    def to_payload(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "schemaVersion": self.schema_version,
+            "adapterId": _topic_segment(self.adapter_id, field_name="adapter_id"),
+            "action": _validate_choice(
+                self.action,
+                VALID_BLE_SCAN_CONTROL_ACTIONS,
+                field_name="action",
+            ),
+            "reason": str(self.reason),
+            "observedAtMs": int(self.observed_at_ms),
+            "seq": int(self.seq),
+        }
+        if self.deadline_ms is not None:
+            payload["deadlineMs"] = int(self.deadline_ms)
+        return payload
+
+    def to_json(self) -> str:
+        return _json_dumps(self.to_payload())
+
+    @classmethod
+    def from_payload(cls, payload: bytes | str | Mapping[str, Any]) -> BleScanControl:
+        decoded = _json_loads(payload)
+        _validate_schema(decoded)
+        return cls(
+            adapter_id=_required_str(decoded, "adapterId"),
+            action=_validate_choice(
+                _required_str(decoded, "action"),
+                VALID_BLE_SCAN_CONTROL_ACTIONS,
+                field_name="action",
+            ),
+            reason=_required_str(decoded, "reason"),
+            observed_at_ms=_required_int(decoded, "observedAtMs"),
+            deadline_ms=_optional_int(decoded, "deadlineMs"),
+            seq=_optional_int(decoded, "seq") or 0,
+        )
 
 
 def build_ble_advertisement_topic(address: str) -> str:

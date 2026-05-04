@@ -4,11 +4,15 @@ import json
 import unittest
 
 from rig.connectivity_protocol import (
+    BLE_ADVERTISEMENT_TOPIC_PREFIX,
+    BLE_SCAN_PAUSE,
+    BLE_SCAN_RESUME,
+    BLE_SCAN_CONTROL_TOPIC,
     COMMAND_RESULT_TOPIC_PREFIX,
     COMMAND_TOPIC_PREFIX,
     CONTROL_EVENTUAL,
-    BLE_ADVERTISEMENT_TOPIC_PREFIX,
     BleAdvertisement,
+    BleScanControl,
     ConnectivityCommand,
     ConnectivityCommandResult,
     ConnectivityDeviceConfig,
@@ -82,6 +86,30 @@ class ConnectivityProtocolTests(unittest.TestCase):
         decoded = BleAdvertisement.from_payload(advertisement.to_json())
 
         self.assertEqual(decoded, advertisement)
+
+    def test_ble_scan_control_round_trips_pause_and_resume(self) -> None:
+        pause = BleScanControl(
+            adapter_id="weather-ble-main",
+            action=BLE_SCAN_PAUSE,
+            reason="connect:weather-1",
+            observed_at_ms=1714380000000,
+            deadline_ms=1714380008000,
+            seq=7,
+        )
+        resume = BleScanControl(
+            adapter_id="weather-ble-main",
+            action=BLE_SCAN_RESUME,
+            reason="connected:weather-1",
+            observed_at_ms=1714380001000,
+            seq=8,
+        )
+
+        self.assertEqual(BleScanControl.from_payload(pause.to_json()), pause)
+        self.assertEqual(BleScanControl.from_payload(resume.to_json()), resume)
+        self.assertEqual(
+            BLE_SCAN_CONTROL_TOPIC,
+            "dev/txing/rig/v1/ble/scan-control",
+        )
 
     def test_state_payload_supports_ble_and_matter_shapes(self) -> None:
         ble_state = ConnectivityState(

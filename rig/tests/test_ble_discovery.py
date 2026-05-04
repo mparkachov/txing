@@ -7,7 +7,11 @@ from dataclasses import dataclass
 from rig.ble_discovery import BleDiscoveryService
 from rig.connectivity_protocol import (
     BLE_ADVERTISEMENT_TOPIC_PREFIX,
+    BLE_SCAN_CONTROL_TOPIC,
+    BLE_SCAN_PAUSE,
+    BLE_SCAN_RESUME,
     BleAdvertisement,
+    BleScanControl,
     ConnectivityDeviceConfig,
     ConnectivityInventory,
     SLEEP_MODEL_BLE_CONNECTED_IDLE,
@@ -129,6 +133,60 @@ class BleDiscoveryServiceTests(unittest.TestCase):
             return len(payloads)
 
         self.assertEqual(asyncio.run(exercise()), 1)
+
+    def test_scan_control_pauses_and_resumes_shared_scanner(self) -> None:
+        async def exercise() -> tuple[int, int]:
+            bus = InMemoryLocalPubSub()
+            scanners: list[FakeScanner] = []
+
+            class FakeScanner:
+                def __init__(self, *, detection_callback: object, **_kwargs: object) -> None:
+                    del detection_callback
+                    self.started = False
+                    self.stopped = False
+                    scanners.append(self)
+
+                async def start(self) -> None:
+                    self.started = True
+
+                async def stop(self) -> None:
+                    self.stopped = True
+
+            service = BleDiscoveryService(bus=bus, scanner_factory=FakeScanner)
+            task = asyncio.create_task(service.run())
+            while not scanners or not scanners[0].started:
+                await asyncio.sleep(0)
+            await bus.publish(
+                BLE_SCAN_CONTROL_TOPIC,
+                BleScanControl(
+                    adapter_id="weather-ble-main",
+                    action=BLE_SCAN_PAUSE,
+                    reason="connect:weather-1",
+                    observed_at_ms=1000,
+                    deadline_ms=9999999999999,
+                ).to_json(),
+            )
+            while not scanners[0].stopped:
+                await asyncio.sleep(0)
+            await bus.publish(
+                BLE_SCAN_CONTROL_TOPIC,
+                BleScanControl(
+                    adapter_id="weather-ble-main",
+                    action=BLE_SCAN_RESUME,
+                    reason="connected:weather-1",
+                    observed_at_ms=1001,
+                ).to_json(),
+            )
+            while len(scanners) < 2 or not scanners[1].started:
+                await asyncio.sleep(0)
+            service.stop()
+            await task
+            return len(scanners), sum(scanner.stopped for scanner in scanners)
+
+        scanner_count, stopped_count = asyncio.run(exercise())
+
+        self.assertEqual(scanner_count, 2)
+        self.assertEqual(stopped_count, 2)
 
     def test_throttles_duplicate_advertisements_by_address(self) -> None:
         async def exercise() -> int:

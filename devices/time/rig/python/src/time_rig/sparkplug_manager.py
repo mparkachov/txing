@@ -32,11 +32,14 @@ from rig.connectivity_protocol import (
     build_command_topic,
     parse_state_topic,
 )
+from rig.device_sparkplug_session import (
+    DeviceSparkplugMqttSession,
+    SparkplugMqttSessionConfig,
+)
 from rig.local_pubsub import GreengrassLocalPubSub, LocalPubSub
 from rig.sparkplug import (
     DataType,
     Metric,
-    build_device_death_payload,
     build_device_report_payload,
     build_device_topic,
     build_node_birth_payload,
@@ -83,20 +86,15 @@ class TimeManagedDevice:
     last_state: ConnectivityState | None = None
     born: bool = False
     redcon: int = 4
-    seq: int = 0
     last_reported_at_ms: int = 0
     last_command_redcon: int | None = None
     stale: bool = False
     operation_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    mqtt_session: DeviceSparkplugMqttSession | None = None
 
     @property
     def thing_name(self) -> str:
         return self.registration.thing_name
-
-    def next_seq(self) -> int:
-        seq = self.seq
-        self.seq = (self.seq + 1) % 256
-        return seq
 
 
 class TimeSparkplugManager:
@@ -107,11 +105,13 @@ class TimeSparkplugManager:
         bus: LocalPubSub,
         aws_runtime: Any,
         connection_factory: Callable[..., Any] = AwsIotWebsocketConnection,
+        session_factory: Callable[..., DeviceSparkplugMqttSession] = DeviceSparkplugMqttSession,
     ) -> None:
         self._config = config
         self._bus = bus
         self._aws_runtime = aws_runtime
         self._connection_factory = connection_factory
+        self._session_factory = session_factory
         self._connection: Any | None = None
         self._devices: dict[str, TimeManagedDevice] = {}
         self._inventory_seq = 0
@@ -134,6 +134,27 @@ class TimeSparkplugManager:
         seq = self._command_seq
         self._command_seq += 1
         return seq
+
+    def _device_session_config(self, thing_name: str) -> SparkplugMqttSessionConfig:
+        return SparkplugMqttSessionConfig(
+            endpoint=self._config.endpoint,
+            aws_region=self._config.aws_region,
+            sparkplug_group_id=self._config.sparkplug_group_id,
+            sparkplug_edge_node_id=self._config.sparkplug_edge_node_id,
+            client_id=thing_name,
+            connect_timeout=self._config.connect_timeout,
+            publish_timeout=self._config.operation_timeout,
+            reconnect_delay=self._config.reconnect_delay,
+        )
+
+    def _ensure_session(self, device: TimeManagedDevice) -> DeviceSparkplugMqttSession:
+        if device.mqtt_session is None:
+            device.mqtt_session = self._session_factory(
+                self._device_session_config(device.thing_name),
+                thing_name=device.thing_name,
+                aws_runtime=self._aws_runtime,
+            )
+        return device.mqtt_session
 
     async def set_registrations(self, registrations: Iterable[ThingRegistration]) -> None:
         next_registrations = {
@@ -189,7 +210,7 @@ class TimeSparkplugManager:
 
     async def close(self) -> None:
         for device in list(self._devices.values()):
-            if device.born:
+            if device.born or device.mqtt_session is not None:
                 await self.publish_device_death(device)
         await self.publish_node_death()
         if self._state_subscription is not None:
@@ -290,68 +311,106 @@ class TimeSparkplugManager:
             next_redcon = redcon_from_connectivity_state(state)
             changed = next_redcon != device.redcon
             device.redcon = next_redcon
-            if not device.born:
-                await self.publish_device_birth(device)
-            elif changed or device.redcon in (1, 4):
-                await self.publish_device_data(device)
+            if not state.reachable:
+                if device.born or device.mqtt_session is not None:
+                    await self.publish_device_death(device)
+                return
+            session = self._ensure_session(device)
+            try:
+                if not session.connected or not session.born or not device.born:
+                    await self.publish_device_birth(device)
+                elif changed or device.redcon in (1, 4):
+                    await self.publish_device_data(device)
+            except Exception as err:
+                await self._handle_device_session_error(
+                    device,
+                    session,
+                    action="publish connectivity state",
+                    error=err,
+                )
 
     async def publish_device_birth(self, device: TimeManagedDevice) -> None:
-        await self._publish_device_report(device, message_type="DBIRTH")
-        device.born = True
+        session = self._ensure_session(device)
+        await session.publish_birth_payload(
+            lambda seq: self._build_device_report_payload(device, seq=seq)
+        )
+        device.born = session.born
+        LOGGER.info(
+            "Published time Sparkplug DBIRTH thing=%s clientId=%s redcon=%s",
+            device.thing_name,
+            device.thing_name,
+            device.redcon,
+        )
 
     async def publish_device_data(self, device: TimeManagedDevice) -> None:
-        if not device.born:
+        session = self._ensure_session(device)
+        if not device.born or not session.connected or not session.born:
             await self.publish_device_birth(device)
             return
-        await self._publish_device_report(device, message_type="DDATA")
+        published = await session.publish_data_payload(
+            lambda seq: self._build_device_report_payload(device, seq=seq)
+        )
+        if not published:
+            await self.publish_device_birth(device)
+            return
+        LOGGER.info(
+            "Published time Sparkplug DDATA thing=%s clientId=%s redcon=%s",
+            device.thing_name,
+            device.thing_name,
+            device.redcon,
+        )
 
-    async def _publish_device_report(self, device: TimeManagedDevice, *, message_type: str) -> None:
-        if self._connection is None:
-            raise RuntimeError("time Sparkplug manager is not connected")
+    def _build_device_report_payload(self, device: TimeManagedDevice, *, seq: int) -> bytes:
         state = device.last_state
         current_time_iso = ""
         if state is not None:
             raw = state.native_identity.get("currentTimeIso")
             if isinstance(raw, str):
                 current_time_iso = raw
-        topic = build_device_topic(
-            self._config.sparkplug_group_id,
-            message_type,
-            self._config.sparkplug_edge_node_id,
-            device.thing_name,
-        )
-        await self._connection.publish(
-            topic,
-            build_device_report_payload(
-                redcon=device.redcon,
-                battery_mv=0,
-                seq=device.next_seq(),
-                extra_metrics=(
-                    Metric(
-                        name="currentTimeIso",
-                        datatype=DataType.STRING,
-                        string_value=current_time_iso,
-                    ),
+        return build_device_report_payload(
+            redcon=device.redcon,
+            battery_mv=0,
+            seq=seq,
+            extra_metrics=(
+                Metric(
+                    name="currentTimeIso",
+                    datatype=DataType.STRING,
+                    string_value=current_time_iso,
                 ),
             ),
-            timeout_seconds=self._config.operation_timeout,
         )
-        LOGGER.info("Published time Sparkplug %s thing=%s redcon=%s", message_type, device.thing_name, device.redcon)
+
+    async def _handle_device_session_error(
+        self,
+        device: TimeManagedDevice,
+        session: DeviceSparkplugMqttSession,
+        *,
+        action: str,
+        error: Exception,
+    ) -> None:
+        LOGGER.warning(
+            "Time device Sparkplug MQTT %s failed thing=%s redcon=%s reachable=%s error=%s: %s",
+            action,
+            device.thing_name,
+            device.redcon,
+            bool(device.last_state and device.last_state.reachable),
+            type(error).__name__,
+            error,
+        )
+        device.born = False
+        try:
+            await session.teardown(explicit_death=False)
+        except Exception:
+            LOGGER.debug(
+                "Time device Sparkplug MQTT cleanup after failure failed thing=%s",
+                device.thing_name,
+                exc_info=True,
+            )
 
     async def publish_device_death(self, device: TimeManagedDevice) -> None:
-        if self._connection is None:
-            return
-        topic = build_device_topic(
-            self._config.sparkplug_group_id,
-            "DDEATH",
-            self._config.sparkplug_edge_node_id,
-            device.thing_name,
-        )
-        await self._connection.publish(
-            topic,
-            build_device_death_payload(seq=device.next_seq()),
-            timeout_seconds=self._config.operation_timeout,
-        )
+        session = device.mqtt_session
+        if session is not None:
+            await session.teardown(explicit_death=device.born)
         device.born = False
         device.stale = True
 

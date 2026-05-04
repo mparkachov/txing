@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 from rig.connectivity_protocol import (
     COMMAND_ACCEPTED,
+    COMMAND_FAILED,
     COMMAND_SUCCEEDED,
     INVENTORY_TOPIC,
     BleAdvertisement,
@@ -409,6 +410,39 @@ class WeatherBleDeviceSessionTests(unittest.TestCase):
 
         self.assertEqual(results[0].status, COMMAND_SUCCEEDED)
         self.assertEqual(writes, [(WEATHER_COMMAND_UUID, encode_redcon_command(3), True)])
+
+    def test_expired_command_publishes_failed_result_without_gatt_write(self) -> None:
+        async def exercise() -> list[ConnectivityCommandResult]:
+            bus = InMemoryLocalPubSub()
+            results: list[ConnectivityCommandResult] = []
+            await bus.subscribe(
+                build_command_result_topic("weather-1"),
+                lambda _t, p: results.append(ConnectivityCommandResult.from_payload(p)),
+            )
+
+            session = WeatherBleDeviceSession(
+                thing_name="weather-1",
+                config=WeatherBleConfig(scan_timeout=0.01, reconnect_delay=0.01),
+                bus=bus,
+                client_factory=FakeClient,  # type: ignore[arg-type]
+            )
+            await session.enqueue_command(
+                ConnectivityCommand(
+                    command_id="cmd-expired",
+                    thing_name="weather-1",
+                    power=True,
+                    reason="redcon=3",
+                    issued_at_ms=1714380000000,
+                    deadline_ms=utc_timestamp_ms() - 1,
+                )
+            )
+            return results
+
+        results = asyncio.run(exercise())
+
+        self.assertEqual(FakeClient.instances, [])
+        self.assertEqual(results[0].status, COMMAND_FAILED)
+        self.assertIn("deadline expired", results[0].message or "")
 
     def test_measurement_notification_publishes_weather(self) -> None:
         async def exercise() -> ConnectivityState:

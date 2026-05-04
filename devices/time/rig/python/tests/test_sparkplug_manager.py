@@ -15,7 +15,12 @@ from rig.connectivity_protocol import (
     build_command_topic,
 )
 from rig.local_pubsub import InMemoryLocalPubSub
-from rig.sparkplug import build_redcon_payload, decode_payload
+from rig.sparkplug import (
+    build_device_death_payload,
+    build_device_topic,
+    build_redcon_payload,
+    decode_payload,
+)
 from rig.thing_registry import ThingRegistration
 from time_rig.sparkplug_manager import (
     TimeSparkplugConfig,
@@ -54,6 +59,69 @@ class FakeConnection:
 
     async def disconnect(self, *, timeout_seconds: float | None = None) -> None:
         del timeout_seconds
+
+
+class FakeDeviceSession:
+    instances: list["FakeDeviceSession"] = []
+
+    def __init__(
+        self,
+        config: object,
+        *,
+        thing_name: str,
+        aws_runtime: object,
+        **_kwargs: object,
+    ) -> None:
+        del aws_runtime
+        self.config = config
+        self.thing_name = thing_name
+        self.connected = False
+        self.born = False
+        self.published: list[tuple[str, bytes]] = []
+        self._seq = 0
+        FakeDeviceSession.instances.append(self)
+
+    def _next_seq(self) -> int:
+        seq = self._seq
+        self._seq = (self._seq + 1) % 256
+        return seq
+
+    async def publish_birth_payload(self, payload_factory: object) -> None:
+        if self.connected and self.born:
+            return
+        self.connected = True
+        self.born = True
+        topic = build_device_topic(
+            self.config.sparkplug_group_id,
+            "DBIRTH",
+            self.config.sparkplug_edge_node_id,
+            self.thing_name,
+        )
+        self.published.append((topic, payload_factory(self._next_seq())))
+
+    async def publish_data_payload(self, payload_factory: object) -> bool:
+        if not self.connected or not self.born:
+            return False
+        topic = build_device_topic(
+            self.config.sparkplug_group_id,
+            "DDATA",
+            self.config.sparkplug_edge_node_id,
+            self.thing_name,
+        )
+        self.published.append((topic, payload_factory(self._next_seq())))
+        return True
+
+    async def teardown(self, *, explicit_death: bool) -> None:
+        if explicit_death:
+            topic = build_device_topic(
+                self.config.sparkplug_group_id,
+                "DDEATH",
+                self.config.sparkplug_edge_node_id,
+                self.thing_name,
+            )
+            self.published.append((topic, build_device_death_payload(seq=self._next_seq())))
+        self.connected = False
+        self.born = False
 
 
 def registration(thing_name: str) -> ThingRegistration:
@@ -95,6 +163,9 @@ def connectivity_state(
 
 
 class TimeSparkplugManagerTests(unittest.TestCase):
+    def setUp(self) -> None:
+        FakeDeviceSession.instances = []
+
     def test_redcon_mapping_matches_time_connectivity_states(self) -> None:
         self.assertEqual(redcon_from_connectivity_state(connectivity_state(power=False)), 4)
         self.assertEqual(
@@ -121,7 +192,7 @@ class TimeSparkplugManagerTests(unittest.TestCase):
         )
 
     def test_birth_payload_includes_redcon_and_current_time_metric(self) -> None:
-        async def exercise() -> tuple[str, bytes]:
+        async def exercise() -> tuple[FakeDeviceSession, str, bytes]:
             bus = InMemoryLocalPubSub()
             manager = TimeSparkplugManager(
                 TimeSparkplugConfig(
@@ -134,17 +205,20 @@ class TimeSparkplugManagerTests(unittest.TestCase):
                 bus=bus,
                 aws_runtime=object(),
                 connection_factory=FakeConnection,
+                session_factory=FakeDeviceSession,
             )
             await manager.set_registrations([registration("clock")])
             await manager.connect()
             await manager.apply_connectivity_state(
                 connectivity_state(power=True, control_availability=CONTROL_IMMEDIATE)
             )
-            assert manager._connection is not None
-            return manager._connection.published[0]  # type: ignore[union-attr]
+            session = FakeDeviceSession.instances[0]
+            topic, payload = session.published[0]
+            return session, topic, payload
 
-        topic, payload = asyncio.run(exercise())
+        session, topic, payload = asyncio.run(exercise())
 
+        self.assertEqual(session.config.client_id, "clock")
         self.assertEqual(topic, "spBv1.0/town/DBIRTH/aws/clock")
         decoded = decode_payload(payload)
         metrics = {metric.name: metric for metric in decoded.metrics}
@@ -166,6 +240,7 @@ class TimeSparkplugManagerTests(unittest.TestCase):
                 bus=bus,
                 aws_runtime=object(),
                 connection_factory=FakeConnection,
+                session_factory=FakeDeviceSession,
             )
             await manager.set_registrations([registration("clock")])
             await manager.connect()
@@ -173,8 +248,7 @@ class TimeSparkplugManagerTests(unittest.TestCase):
                 connectivity_state(observed_at_ms=1714380000000)
             )
             await manager.check_stale_devices(now_ms=1714380010001)
-            assert manager._connection is not None
-            return [topic for topic, _payload in manager._connection.published]  # type: ignore[union-attr]
+            return [topic for topic, _payload in FakeDeviceSession.instances[0].published]
 
         topics = asyncio.run(exercise())
 
@@ -200,6 +274,7 @@ class TimeSparkplugManagerTests(unittest.TestCase):
                 bus=bus,
                 aws_runtime=object(),
                 connection_factory=FakeConnection,
+                session_factory=FakeDeviceSession,
             )
             await manager.set_registrations([registration("clock")])
             await manager.connect()

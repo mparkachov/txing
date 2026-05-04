@@ -127,6 +127,7 @@ const formatJson = (value: unknown): string => JSON.stringify(value, null, 2)
 const defaultMcpLeaseTtlMs = 5_000
 const robotStatePollIntervalMs = 5_000
 const routeSparkplugPollIntervalMs = 2_000
+const routeSparkplugRedconCommandTimeoutMs = 60_000
 const txingLogoUrl = 'https://txing.dev/txing-logo.png'
 const appHomePath = '/'
 let shadowApiModulePromise: Promise<typeof import('./shadow-api')> | null = null
@@ -570,6 +571,7 @@ function App({ initialAuthError = '' }: AppProps) {
       targetRedcon: 1 | 2 | 3 | 4,
       commandSequence: number,
     ): Promise<void> => {
+      const deadlineMs = Date.now() + routeSparkplugRedconCommandTimeoutMs
       while (true) {
         if (redconCommandSequenceRef.current !== commandSequence) {
           return
@@ -594,10 +596,23 @@ function App({ initialAuthError = '' }: AppProps) {
           return
         }
 
+        if (Date.now() >= deadlineMs) {
+          if (redconCommandSequenceRef.current === commandSequence) {
+            setPendingTargetRedcon(null)
+            enqueueRuntimeError(
+              `Sparkplug DCMD.redcon -> ${targetRedcon} did not converge within ${
+                routeSparkplugRedconCommandTimeoutMs / 1000
+              }s`,
+              'sparkplug-redcon-convergence',
+            )
+          }
+          return
+        }
+
         await sleep(1_000)
       }
     },
-    [refreshRouteSparkplugShadow],
+    [enqueueRuntimeError, refreshRouteSparkplugShadow],
   )
 
   const getShadowSession = (): ShadowSession => {

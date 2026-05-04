@@ -29,12 +29,15 @@ from rig.connectivity_protocol import (
     build_command_topic,
     parse_state_topic,
 )
+from rig.device_sparkplug_session import (
+    DeviceSparkplugMqttSession,
+    SparkplugMqttSessionConfig,
+)
 from rig.local_pubsub import GreengrassLocalPubSub, LocalPubSub
 from rig.sparkplug import (
     DataType,
     Metric,
     Payload,
-    build_device_death_payload,
     build_device_topic,
     build_node_birth_payload,
     build_node_death_payload,
@@ -54,6 +57,7 @@ DEFAULT_RECONNECT_DELAY = 5.0
 DEFAULT_STALE_AFTER_MS = 130_000
 DEFAULT_NODE_BDSEQ = 1
 DEFAULT_INVENTORY_PUBLISH_INTERVAL = 10.0
+WEATHER_COMMAND_DEADLINE_MS = 45_000
 WEATHER_INVENTORY_ADAPTER_ID = "weather-sparkplug-manager"
 WEATHER_IDLE_REDCON = 4
 WEATHER_ACTIVE_REDCON = 3
@@ -80,21 +84,16 @@ class WeatherManagedDevice:
     registration: ThingRegistration
     last_state: ConnectivityState | None = None
     born: bool = False
-    seq: int = 0
     last_reported_at_ms: int = 0
     stale: bool = False
     redcon: int = WEATHER_IDLE_REDCON
     target_redcon: int | None = None
     operation_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    mqtt_session: DeviceSparkplugMqttSession | None = None
 
     @property
     def thing_name(self) -> str:
         return self.registration.thing_name
-
-    def next_seq(self) -> int:
-        seq = self.seq
-        self.seq = (self.seq + 1) % 256
-        return seq
 
 
 class WeatherSparkplugManager:
@@ -105,11 +104,13 @@ class WeatherSparkplugManager:
         bus: LocalPubSub,
         aws_runtime: Any,
         connection_factory: Callable[..., Any] = AwsIotWebsocketConnection,
+        session_factory: Callable[..., DeviceSparkplugMqttSession] = DeviceSparkplugMqttSession,
     ) -> None:
         self._config = config
         self._bus = bus
         self._aws_runtime = aws_runtime
         self._connection_factory = connection_factory
+        self._session_factory = session_factory
         self._connection: Any | None = None
         self._devices: dict[str, WeatherManagedDevice] = {}
         self._node_seq = 0
@@ -132,6 +133,27 @@ class WeatherSparkplugManager:
         seq = self._command_seq
         self._command_seq += 1
         return seq
+
+    def _device_session_config(self, thing_name: str) -> SparkplugMqttSessionConfig:
+        return SparkplugMqttSessionConfig(
+            endpoint=self._config.endpoint,
+            aws_region=self._config.aws_region,
+            sparkplug_group_id=self._config.sparkplug_group_id,
+            sparkplug_edge_node_id=self._config.sparkplug_edge_node_id,
+            client_id=thing_name,
+            connect_timeout=self._config.connect_timeout,
+            publish_timeout=self._config.operation_timeout,
+            reconnect_delay=self._config.reconnect_delay,
+        )
+
+    def _ensure_session(self, device: WeatherManagedDevice) -> DeviceSparkplugMqttSession:
+        if device.mqtt_session is None:
+            device.mqtt_session = self._session_factory(
+                self._device_session_config(device.thing_name),
+                thing_name=device.thing_name,
+                aws_runtime=self._aws_runtime,
+            )
+        return device.mqtt_session
 
     async def set_registrations(self, registrations: Iterable[ThingRegistration]) -> None:
         next_registrations = {
@@ -177,7 +199,7 @@ class WeatherSparkplugManager:
 
     async def close(self) -> None:
         for device in list(self._devices.values()):
-            if device.born:
+            if device.born or device.mqtt_session is not None:
                 await self.publish_device_death(device)
         await self.publish_node_death()
         if self._state_subscription is not None:
@@ -295,53 +317,65 @@ class WeatherSparkplugManager:
             device.stale = False
             device.redcon = next_redcon
             if not state.reachable:
-                if was_born:
+                if was_born or device.mqtt_session is not None:
                     await self.publish_device_death(device)
                 return
-            if not device.born:
-                await self.publish_device_birth(device)
-            elif _weather_report_changed(
-                previous_redcon=previous_redcon,
-                previous_state=previous_state,
-                redcon=next_redcon,
-                state=state,
-            ):
-                await self.publish_device_data(device)
+            session = self._ensure_session(device)
+            try:
+                if not session.connected or not session.born or not device.born:
+                    await self.publish_device_birth(device)
+                elif _weather_report_changed(
+                    previous_redcon=previous_redcon,
+                    previous_state=previous_state,
+                    redcon=next_redcon,
+                    state=state,
+                ):
+                    await self.publish_device_data(device)
+            except Exception as err:
+                await self._handle_device_session_error(
+                    device,
+                    session,
+                    action="publish connectivity state",
+                    error=err,
+                )
 
     async def publish_device_birth(self, device: WeatherManagedDevice) -> None:
-        await self._publish_device_report(device, message_type="DBIRTH")
-        device.born = True
+        session = self._ensure_session(device)
+        await session.publish_birth_payload(
+            lambda seq: self._build_device_report_payload(device, seq=seq)
+        )
+        device.born = session.born
+        self._log_device_report(device, message_type="DBIRTH")
 
     async def publish_device_data(self, device: WeatherManagedDevice) -> None:
-        if not device.born:
+        session = self._ensure_session(device)
+        if not device.born or not session.connected or not session.born:
             await self.publish_device_birth(device)
             return
-        await self._publish_device_report(device, message_type="DDATA")
+        published = await session.publish_data_payload(
+            lambda seq: self._build_device_report_payload(device, seq=seq)
+        )
+        if not published:
+            await self.publish_device_birth(device)
+            return
+        self._log_device_report(device, message_type="DDATA")
 
-    async def _publish_device_report(self, device: WeatherManagedDevice, *, message_type: str) -> None:
-        if self._connection is None:
-            raise RuntimeError("weather Sparkplug manager is not connected")
+    def _build_device_report_payload(self, device: WeatherManagedDevice, *, seq: int) -> bytes:
         state = device.last_state
-        topic = build_device_topic(
-            self._config.sparkplug_group_id,
-            message_type,
-            self._config.sparkplug_edge_node_id,
-            device.thing_name,
+        return encode_payload(
+            Payload(
+                timestamp=utc_timestamp_ms(),
+                metrics=_weather_report_metrics(device.redcon, state),
+                seq=seq,
+            )
         )
-        await self._connection.publish(
-            topic,
-            encode_payload(
-                Payload(
-                    timestamp=utc_timestamp_ms(),
-                    metrics=_weather_report_metrics(device.redcon, state),
-                    seq=device.next_seq(),
-                )
-            ),
-            timeout_seconds=self._config.operation_timeout,
-        )
+
+    def _log_device_report(self, device: WeatherManagedDevice, *, message_type: str) -> None:
+        state = device.last_state
         LOGGER.info(
-            "Published weather Sparkplug %s thing=%s redcon=%s presence=%s hasWeather=%s hasBattery=%s",
+            "Published weather Sparkplug %s thing=%s clientId=%s redcon=%s presence=%s hasWeather=%s hasBattery=%s",
             message_type,
+            device.thing_name,
             device.thing_name,
             device.redcon,
             state.presence if state is not None else "unknown",
@@ -349,22 +383,40 @@ class WeatherSparkplugManager:
             state is not None and state.battery_mv is not None,
         )
 
-    async def publish_device_death(self, device: WeatherManagedDevice) -> None:
-        if self._connection is None:
-            return
-        topic = build_device_topic(
-            self._config.sparkplug_group_id,
-            "DDEATH",
-            self._config.sparkplug_edge_node_id,
+    async def _handle_device_session_error(
+        self,
+        device: WeatherManagedDevice,
+        session: DeviceSparkplugMqttSession,
+        *,
+        action: str,
+        error: Exception,
+    ) -> None:
+        LOGGER.warning(
+            "Weather device Sparkplug MQTT %s failed thing=%s redcon=%s reachable=%s error=%s: %s",
+            action,
             device.thing_name,
+            device.redcon,
+            bool(device.last_state and device.last_state.reachable),
+            type(error).__name__,
+            error,
         )
-        await self._connection.publish(
-            topic,
-            build_device_death_payload(seq=device.next_seq()),
-            timeout_seconds=self._config.operation_timeout,
-        )
+        device.born = False
+        try:
+            await session.teardown(explicit_death=False)
+        except Exception:
+            LOGGER.debug(
+                "Weather device Sparkplug MQTT cleanup after failure failed thing=%s",
+                device.thing_name,
+                exc_info=True,
+            )
+
+    async def publish_device_death(self, device: WeatherManagedDevice) -> None:
+        session = device.mqtt_session
+        if session is not None:
+            await session.teardown(explicit_death=device.born)
         LOGGER.info(
-            "Published weather Sparkplug DDEATH thing=%s lastPresence=%s",
+            "Published weather Sparkplug DDEATH thing=%s clientId=%s lastPresence=%s",
+            device.thing_name,
             device.thing_name,
             device.last_state.presence if device.last_state is not None else "unknown",
         )
@@ -417,6 +469,7 @@ class WeatherSparkplugManager:
             timeout_seconds=self._config.operation_timeout,
         )
         self._dcmd_subscribed = True
+        LOGGER.info("Subscribed weather Sparkplug DCMD topic=%s", topic)
 
     async def _handle_dcmd_message(self, topic: str, payload: bytes) -> None:
         thing_name = _parse_weather_dcmd_topic(
@@ -434,20 +487,40 @@ class WeatherSparkplugManager:
         if device is None:
             LOGGER.debug("Ignoring weather DCMD for unmanaged thing=%s", thing_name)
             return
-        target_redcon = WEATHER_ACTIVE_REDCON if command.value < WEATHER_IDLE_REDCON else WEATHER_IDLE_REDCON
+        target_redcon = (
+            WEATHER_ACTIVE_REDCON
+            if command.value < WEATHER_IDLE_REDCON
+            else WEATHER_IDLE_REDCON
+        )
+        issued_at_ms = utc_timestamp_ms()
+        connectivity_command = ConnectivityCommand(
+            command_id=str(uuid4()),
+            thing_name=device.thing_name,
+            power=target_redcon < WEATHER_IDLE_REDCON,
+            reason=f"redcon={command.value}",
+            issued_at_ms=issued_at_ms,
+            deadline_ms=issued_at_ms + WEATHER_COMMAND_DEADLINE_MS,
+            seq=self._next_command_seq(),
+        )
+        LOGGER.info(
+            "Received weather Sparkplug DCMD.redcon=%s thing=%s targetRedcon=%s commandId=%s",
+            command.value,
+            thing_name,
+            target_redcon,
+            connectivity_command.command_id,
+        )
         async with device.operation_lock:
             device.target_redcon = target_redcon
             await self._bus.publish(
                 build_command_topic(device.thing_name),
-                ConnectivityCommand(
-                    command_id=str(uuid4()),
-                    thing_name=device.thing_name,
-                    power=target_redcon < WEATHER_IDLE_REDCON,
-                    reason=f"redcon={command.value}",
-                    issued_at_ms=utc_timestamp_ms(),
-                    deadline_ms=utc_timestamp_ms() + 10_000,
-                    seq=self._next_command_seq(),
-                ).to_json(),
+                connectivity_command.to_json(),
+            )
+            LOGGER.info(
+                "Published weather connectivity command thing=%s power=%s reason=%s deadlineMs=%s",
+                device.thing_name,
+                connectivity_command.power,
+                connectivity_command.reason,
+                connectivity_command.deadline_ms,
             )
 
 

@@ -18,7 +18,12 @@ from rig.connectivity_protocol import (
     build_command_topic,
 )
 from rig.local_pubsub import InMemoryLocalPubSub
-from rig.sparkplug import build_device_topic, build_redcon_payload, decode_payload
+from rig.sparkplug import (
+    build_device_death_payload,
+    build_device_topic,
+    build_redcon_payload,
+    decode_payload,
+)
 from rig.thing_registry import ThingRegistration
 from weather_rig.sparkplug_manager import (
     WeatherSparkplugConfig,
@@ -56,6 +61,69 @@ class FakeConnection:
         del timeout_seconds
 
 
+class FakeDeviceSession:
+    instances: list["FakeDeviceSession"] = []
+
+    def __init__(
+        self,
+        config: object,
+        *,
+        thing_name: str,
+        aws_runtime: object,
+        **_kwargs: object,
+    ) -> None:
+        del aws_runtime
+        self.config = config
+        self.thing_name = thing_name
+        self.connected = False
+        self.born = False
+        self.published: list[tuple[str, bytes]] = []
+        self._seq = 0
+        FakeDeviceSession.instances.append(self)
+
+    def _next_seq(self) -> int:
+        seq = self._seq
+        self._seq = (self._seq + 1) % 256
+        return seq
+
+    async def publish_birth_payload(self, payload_factory: object) -> None:
+        if self.connected and self.born:
+            return
+        self.connected = True
+        self.born = True
+        topic = build_device_topic(
+            self.config.sparkplug_group_id,
+            "DBIRTH",
+            self.config.sparkplug_edge_node_id,
+            self.thing_name,
+        )
+        self.published.append((topic, payload_factory(self._next_seq())))
+
+    async def publish_data_payload(self, payload_factory: object) -> bool:
+        if not self.connected or not self.born:
+            return False
+        topic = build_device_topic(
+            self.config.sparkplug_group_id,
+            "DDATA",
+            self.config.sparkplug_edge_node_id,
+            self.thing_name,
+        )
+        self.published.append((topic, payload_factory(self._next_seq())))
+        return True
+
+    async def teardown(self, *, explicit_death: bool) -> None:
+        if explicit_death:
+            topic = build_device_topic(
+                self.config.sparkplug_group_id,
+                "DDEATH",
+                self.config.sparkplug_edge_node_id,
+                self.thing_name,
+            )
+            self.published.append((topic, build_device_death_payload(seq=self._next_seq())))
+        self.connected = False
+        self.born = False
+
+
 def registration(thing_name: str) -> ThingRegistration:
     return ThingRegistration(
         thing_name=thing_name,
@@ -89,8 +157,11 @@ def weather_state() -> ConnectivityState:
 
 
 class WeatherSparkplugManagerTests(unittest.TestCase):
+    def setUp(self) -> None:
+        FakeDeviceSession.instances = []
+
     def test_birth_payload_includes_redcon_four_and_weather_metrics(self) -> None:
-        async def exercise() -> tuple[str, bytes]:
+        async def exercise() -> tuple[FakeDeviceSession, str, bytes]:
             bus = InMemoryLocalPubSub()
             manager = WeatherSparkplugManager(
                 WeatherSparkplugConfig(
@@ -103,15 +174,18 @@ class WeatherSparkplugManagerTests(unittest.TestCase):
                 bus=bus,
                 aws_runtime=object(),
                 connection_factory=FakeConnection,
+                session_factory=FakeDeviceSession,
             )
             await manager.set_registrations([registration("weather-1")])
             await manager.connect()
             await manager.apply_connectivity_state(weather_state())
-            assert manager._connection is not None
-            return manager._connection.published[0]  # type: ignore[union-attr]
+            session = FakeDeviceSession.instances[0]
+            topic, payload = session.published[0]
+            return session, topic, payload
 
-        topic, payload = asyncio.run(exercise())
+        session, topic, payload = asyncio.run(exercise())
 
+        self.assertEqual(session.config.client_id, "weather-1")
         self.assertEqual(topic, "spBv1.0/town/DBIRTH/server/weather-1")
         decoded = decode_payload(payload)
         metrics = {metric.name: metric for metric in decoded.metrics}
@@ -135,6 +209,7 @@ class WeatherSparkplugManagerTests(unittest.TestCase):
                 bus=bus,
                 aws_runtime=object(),
                 connection_factory=FakeConnection,
+                session_factory=FakeDeviceSession,
             )
             await manager.set_registrations([registration("weather-1")])
             await manager.connect()
@@ -157,8 +232,7 @@ class WeatherSparkplugManagerTests(unittest.TestCase):
                     ),
                 )
             )
-            assert manager._connection is not None
-            return manager._connection.published[0]  # type: ignore[union-attr]
+            return FakeDeviceSession.instances[0].published[0]
 
         topic, payload = asyncio.run(exercise())
 
@@ -183,6 +257,7 @@ class WeatherSparkplugManagerTests(unittest.TestCase):
                 bus=bus,
                 aws_runtime=object(),
                 connection_factory=FakeConnection,
+                session_factory=FakeDeviceSession,
             )
             await manager.set_registrations([registration("weather-1")])
             await manager.connect()
@@ -202,8 +277,7 @@ class WeatherSparkplugManagerTests(unittest.TestCase):
                     weather=None,
                 )
             )
-            assert manager._connection is not None
-            return manager._connection.published  # type: ignore[union-attr]
+            return FakeDeviceSession.instances[0].published
 
         published = asyncio.run(exercise())
 
@@ -224,6 +298,7 @@ class WeatherSparkplugManagerTests(unittest.TestCase):
                 bus=bus,
                 aws_runtime=object(),
                 connection_factory=FakeConnection,
+                session_factory=FakeDeviceSession,
             )
             state = weather_state()
             refreshed_state = replace(
@@ -235,9 +310,8 @@ class WeatherSparkplugManagerTests(unittest.TestCase):
             await manager.connect()
             await manager.apply_connectivity_state(state)
             await manager.apply_connectivity_state(refreshed_state)
-            assert manager._connection is not None
             device = manager.devices["weather-1"]
-            return manager._connection.published, device.last_reported_at_ms, device.born
+            return FakeDeviceSession.instances[0].published, device.last_reported_at_ms, device.born
 
         published, last_reported_at_ms, born = asyncio.run(exercise())
 
@@ -262,6 +336,7 @@ class WeatherSparkplugManagerTests(unittest.TestCase):
                 bus=bus,
                 aws_runtime=object(),
                 connection_factory=FakeConnection,
+                session_factory=FakeDeviceSession,
             )
             state = weather_state()
             changed_state = replace(
@@ -274,8 +349,7 @@ class WeatherSparkplugManagerTests(unittest.TestCase):
             await manager.connect()
             await manager.apply_connectivity_state(state)
             await manager.apply_connectivity_state(changed_state)
-            assert manager._connection is not None
-            return manager._connection.published
+            return FakeDeviceSession.instances[0].published
 
         published = asyncio.run(exercise())
 
