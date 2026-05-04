@@ -54,6 +54,7 @@ class BleDiscoveryService:
         self._last_publish_by_key: dict[str, float] = {}
         self._target_addresses: set[str] = set()
         self._target_names: set[str] = set()
+        self._targets_by_adapter_id: dict[str, tuple[set[str], set[str]]] = {}
         self._seq = 0
         self._loop: asyncio.AbstractEventLoop | None = None
 
@@ -113,13 +114,29 @@ class BleDiscoveryService:
             if isinstance(ble_local_name, str) and ble_local_name.strip():
                 target_names.add(ble_local_name.strip())
 
-        self._target_addresses = target_addresses
-        self._target_names = target_names
+        previous_targets = (self._target_addresses, self._target_names)
+        self._targets_by_adapter_id[inventory.adapter_id] = (
+            target_addresses,
+            target_names,
+        )
+        self._target_addresses = set()
+        self._target_names = set()
+        for addresses, names in self._targets_by_adapter_id.values():
+            self._target_addresses.update(addresses)
+            self._target_names.update(names)
         self._last_publish_by_key = {
             key: value
             for key, value in self._last_publish_by_key.items()
-            if key in target_addresses or key in target_names
+            if key in self._target_addresses or key in self._target_names
         }
+        current_targets = (self._target_addresses, self._target_names)
+        if previous_targets != current_targets:
+            LOGGER.info(
+                "Updated shared BLE discovery targets adapters=%s addresses=%d names=%d",
+                ",".join(sorted(self._targets_by_adapter_id)),
+                len(self._target_addresses),
+                len(self._target_names),
+            )
 
     def _handle_detection(self, device: Any, advertisement_data: Any) -> None:
         loop = self._loop

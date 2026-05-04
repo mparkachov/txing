@@ -8,6 +8,11 @@ from rig.ble_discovery import BleDiscoveryService
 from rig.connectivity_protocol import (
     BLE_ADVERTISEMENT_TOPIC_PREFIX,
     BleAdvertisement,
+    ConnectivityDeviceConfig,
+    ConnectivityInventory,
+    SLEEP_MODEL_BLE_CONNECTED_IDLE,
+    SLEEP_MODEL_BLE_RENDEZVOUS,
+    TRANSPORT_BLE_GATT,
 )
 from rig.local_pubsub import InMemoryLocalPubSub
 
@@ -143,6 +148,58 @@ class BleDiscoveryServiceTests(unittest.TestCase):
             return len(payloads)
 
         self.assertEqual(asyncio.run(exercise()), 1)
+
+    def test_inventory_targets_are_union_across_adapters(self) -> None:
+        async def exercise() -> tuple[int, set[str], set[str]]:
+            bus = InMemoryLocalPubSub()
+            payloads: list[bytes] = []
+            await bus.subscribe(
+                f"{BLE_ADVERTISEMENT_TOPIC_PREFIX}/+",
+                lambda _topic, payload: payloads.append(payload),
+            )
+            service = BleDiscoveryService(bus=bus)
+            service._loop = asyncio.get_running_loop()
+            await service._handle_inventory(
+                "",
+                ConnectivityInventory(
+                    adapter_id="weather-sparkplug-manager",
+                    devices=(
+                        ConnectivityDeviceConfig(
+                            thing_name="weather-1",
+                            transport=TRANSPORT_BLE_GATT,
+                            native_identity={"bleLocalName": "weather-1"},
+                            sleep_model=SLEEP_MODEL_BLE_CONNECTED_IDLE,
+                        ),
+                    ),
+                    seq=1,
+                    issued_at_ms=1000,
+                ).to_json().encode("utf-8"),
+            )
+            await service._handle_inventory(
+                "",
+                ConnectivityInventory(
+                    adapter_id="unit-sparkplug-manager",
+                    devices=(
+                        ConnectivityDeviceConfig(
+                            thing_name="unit-1",
+                            transport=TRANSPORT_BLE_GATT,
+                            native_identity={"bleDeviceId": "aa:bb:cc:dd:ee:ff"},
+                            sleep_model=SLEEP_MODEL_BLE_RENDEZVOUS,
+                        ),
+                    ),
+                    seq=1,
+                    issued_at_ms=1001,
+                ).to_json().encode("utf-8"),
+            )
+
+            await service._publish_detection(FakeDevice(), FakeAdvertisementData())
+            return len(payloads), service._target_addresses, service._target_names
+
+        publish_count, addresses, names = asyncio.run(exercise())
+
+        self.assertEqual(publish_count, 1)
+        self.assertEqual(addresses, {"AA:BB:CC:DD:EE:FF"})
+        self.assertEqual(names, {"weather-1", "unit-1"})
 
 
 if __name__ == "__main__":
