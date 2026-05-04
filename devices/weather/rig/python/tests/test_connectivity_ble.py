@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 from rig.connectivity_protocol import (
     COMMAND_ACCEPTED,
-    COMMAND_SUCCEEDED,
+    COMMAND_FAILED,
     INVENTORY_TOPIC,
     BleAdvertisement,
     ConnectivityCommand,
@@ -29,7 +29,6 @@ from weather_rig.connectivity_ble import (
     PROTOCOL_VERSION,
     STATE_FLAG_BME280_VALID,
     STATE_STRUCT,
-    WEATHER_COMMAND_UUID,
     WEATHER_SERVICE_UUID,
     WeatherBleConfig,
     WeatherBleDeviceSession,
@@ -108,34 +107,28 @@ class WeatherBleProtocolTests(unittest.TestCase):
 
 
 class WeatherBleDeviceSessionTests(unittest.TestCase):
-    def test_connects_by_thing_name_and_publishes_online_idle_state(self) -> None:
-        async def exercise() -> tuple[ConnectivityState, FakeClient]:
+    def test_matches_by_thing_name_and_publishes_online_idle_state(self) -> None:
+        async def exercise() -> ConnectivityState:
             bus = InMemoryLocalPubSub()
             received: list[bytes] = []
             await bus.subscribe(build_state_topic("weather-1"), lambda _t, p: received.append(p))
-            client_holder: list[FakeClient] = []
-
-            def client_factory(device: FakeDevice) -> FakeClient:
-                client = FakeClient(device)
-                client_holder.append(client)
-                return client
 
             session = WeatherBleDeviceSession(
                 thing_name="weather-1",
                 config=WeatherBleConfig(scan_timeout=0.01, reconnect_delay=0.01),
                 bus=bus,
-                client_factory=client_factory,  # type: ignore[arg-type]
+                client_factory=FakeClient,  # type: ignore[arg-type]
             )
             task = asyncio.create_task(session.run())
             session.observe_advertisement(_weather_advertisement("weather-1"))
-            while len(received) < 2:
+            while not received:
                 await asyncio.sleep(0)
             session.stop()
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
-            return ConnectivityState.from_payload(received[1]), client_holder[0]
+            return ConnectivityState.from_payload(received[0])
 
-        state, client = asyncio.run(exercise())
+        state = asyncio.run(exercise())
 
         self.assertEqual(state.thing_name, "weather-1")
         self.assertEqual(state.transport, TRANSPORT_BLE_GATT)
@@ -143,7 +136,6 @@ class WeatherBleDeviceSessionTests(unittest.TestCase):
         self.assertTrue(state.reachable)
         self.assertFalse(state.power)
         self.assertIn("weather-1", state.native_identity["bleLocalName"])
-        self.assertEqual(client.writes, [])
 
     def test_exact_thing_name_is_sufficient_for_discovery(self) -> None:
         async def exercise() -> ConnectivityState:
@@ -164,43 +156,64 @@ class WeatherBleDeviceSessionTests(unittest.TestCase):
                     service_uuids=("0000180f-0000-1000-8000-00805f9b34fb",),
                 )
             )
-            while len(received) < 2:
+            while not received:
                 await asyncio.sleep(0)
             session.stop()
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
-            return ConnectivityState.from_payload(received[1])
+            return ConnectivityState.from_payload(received[0])
 
         state = asyncio.run(exercise())
 
         self.assertTrue(state.reachable)
         self.assertEqual(state.native_identity["bleAddress"], "AA:BB:CC:DD:EE:FF")
 
-    def test_command_write_publishes_succeeded_result(self) -> None:
-        async def exercise() -> tuple[list[ConnectivityCommandResult], list[tuple[str, bytes, bool]]]:
+    def test_repeated_matching_advertisements_refresh_online_state(self) -> None:
+        async def exercise() -> list[ConnectivityState]:
+            bus = InMemoryLocalPubSub()
+            received: list[bytes] = []
+            await bus.subscribe(build_state_topic("weather-1"), lambda _t, p: received.append(p))
+
+            session = WeatherBleDeviceSession(
+                thing_name="weather-1",
+                config=WeatherBleConfig(scan_timeout=0.2, reconnect_delay=0.01),
+                bus=bus,
+                client_factory=FakeClient,  # type: ignore[arg-type]
+            )
+            task = asyncio.create_task(session.run())
+            session.observe_advertisement(_weather_advertisement("weather-1", seq=1))
+            while len(received) < 1:
+                await asyncio.sleep(0)
+            session.observe_advertisement(_weather_advertisement("weather-1", seq=2))
+            while len(received) < 2:
+                await asyncio.sleep(0)
+            session.stop()
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            return [ConnectivityState.from_payload(payload) for payload in received[:2]]
+
+        states = asyncio.run(exercise())
+
+        self.assertEqual([state.seq for state in states], [1, 2])
+        self.assertTrue(all(state.reachable for state in states))
+
+    def test_command_publishes_failed_result_in_advertising_only_mode(self) -> None:
+        async def exercise() -> list[ConnectivityCommandResult]:
             bus = InMemoryLocalPubSub()
             results: list[ConnectivityCommandResult] = []
             await bus.subscribe(
                 build_command_result_topic("weather-1"),
                 lambda _t, p: results.append(ConnectivityCommandResult.from_payload(p)),
             )
-            client_holder: list[FakeClient] = []
-
-            def client_factory(device: FakeDevice) -> FakeClient:
-                client = FakeClient(device)
-                client_holder.append(client)
-                return client
 
             session = WeatherBleDeviceSession(
                 thing_name="weather-1",
                 config=WeatherBleConfig(scan_timeout=0.01, reconnect_delay=0.01),
                 bus=bus,
-                client_factory=client_factory,  # type: ignore[arg-type]
+                client_factory=FakeClient,  # type: ignore[arg-type]
             )
             task = asyncio.create_task(session.run())
             session.observe_advertisement(_weather_advertisement("weather-1"))
-            while not client_holder:
-                await asyncio.sleep(0)
             await session.enqueue_command(
                 ConnectivityCommand(
                     command_id="cmd-1",
@@ -215,12 +228,12 @@ class WeatherBleDeviceSessionTests(unittest.TestCase):
             session.stop()
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
-            return results, client_holder[0].writes
+            return results
 
-        results, writes = asyncio.run(exercise())
+        results = asyncio.run(exercise())
 
-        self.assertEqual(results[0].status, COMMAND_SUCCEEDED)
-        self.assertEqual(writes[0], (WEATHER_COMMAND_UUID, encode_redcon_command(3), True))
+        self.assertEqual(results[0].status, COMMAND_FAILED)
+        self.assertIn("advertising-only", results[0].message or "")
 
 
 class WeatherConnectivityBleServiceTests(unittest.TestCase):

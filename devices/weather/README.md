@@ -1,6 +1,6 @@
 # Weather Txing
 
-`weather` is a BLE connected-idle txing type for an outside weather node:
+`weather` is a BLE-advertised txing type for an outside weather node:
 
 - MCU: Seeed Studio XIAO nRF54L15
 - Sensor: Grove BME280 on I2C
@@ -11,14 +11,13 @@
 The device is registered in AWS through the existing AWS device flow. During
 manual flashing, `weather::mcu::flash <aws-thing-id>` stores that Thing ID in
 MCU factory data. Firmware advertises the Thing ID as its BLE local name, and
-the Raspberry Pi 5 rig connects over its built-in BLE adapter.
+the Raspberry Pi 5 rig uses that local name as the presence identity.
 
 Sparkplug behavior:
 
-- BLE connected idle publishes DBIRTH/DDATA with `redcon=4`.
-- `DCMD.redcon=3`, `2`, or `1` wakes active mode and reports actual `redcon=3`.
-- Active mode turns the LED on and reports BME280 data every second.
-- Returning to `DCMD.redcon=4` stops telemetry and keeps the BLE connection idle.
+- Fresh Thing-name advertisements publish DBIRTH/DDATA with `redcon=4`.
+- Missing advertisements publish DDEATH after the presence timeout.
+- Weather measurements and REDCON commands require a future weather GATT service.
 
 The weather implementation does not use Matter, Thread, `chip-tool`, online
 provisioning, MCP, or video.

@@ -42,3 +42,22 @@ The BLE contract is defined in `app/src/weather_ble_protocol.*`:
 
 Agents must not run the flash target. Use it only manually with the intended
 board connected.
+
+## Bare-metal advertising milestone
+
+`baremetal/` contains an advertising-only S115 scaffold for replacing the Zephyr
+firmware. It reads the same `TXW1` factory record and advertises the AWS IoT
+Thing name as the primary BLE local name. It does not yet implement the weather
+GATT service, BME280, or sleep-state rendezvous cycle.
+
+Build it with Nordic's `sdk-nrf-bm` workspace:
+
+```sh
+PATH="$HOME/Downloads/nrf-bm-tools/bin:$PWD/zephyr/.venv/bin:$PATH" \
+ZEPHYR_SDK_INSTALL_DIR="$PWD/zephyr/sdk/zephyr-sdk-0.17.4" \
+ZEPHYR_TOOLCHAIN_VARIANT=zephyr \
+NRF_BM_ROOT="$HOME/Downloads/nrf-bm-v2.0.0" \
+just --justfile devices/weather/mcu/justfile bm-check
+```
+
+Do not flash from automation; use the generated artifacts manually.

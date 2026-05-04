@@ -1,0 +1,27 @@
+menu "txing weather bare-metal advertising firmware"
+
+config TXING_WEATHER_FACTORY_DATA_ADDR
+	hex "Weather factory data flash address"
+	default 0x000f0000
+
+config TXING_WEATHER_ADV_INTERVAL_625US
+	int "Advertising interval in 625 us units"
+	default 160
+	help
+	  160 is 100 ms.
+
+config TXING_WEATHER_ADV_TX_POWER_DBM
+	int "Advertising transmit power in dBm"
+	default 8
+
+config TXING_WEATHER_INVALID_NAME
+	string "Fallback local name when factory data is invalid"
+	default "TxingWeatherInvalid"
+
+module=TXING_WEATHER_BM_ADV
+module-str=txing weather bare-metal advertising firmware
+source "$(ZEPHYR_BASE)/subsys/logging/Kconfig.template.log_config"
+
+endmenu
+
+source "Kconfig.zephyr"

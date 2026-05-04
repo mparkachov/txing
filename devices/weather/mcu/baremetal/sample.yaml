@@ -1,0 +1,9 @@
+sample:
+  name: txing weather bare-metal advertising
+  description: Advertising-only S115 firmware for txing weather devices.
+tests:
+  sample.txing.weather_bm_adv:
+    platform_allow:
+      - bm_nrf54l15dk/nrf54l15/cpuapp/s115_softdevice
+    integration_platforms:
+      - bm_nrf54l15dk/nrf54l15/cpuapp/s115_softdevice

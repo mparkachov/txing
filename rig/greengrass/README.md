@@ -106,8 +106,9 @@ component version empty.
 
 Weather things are discovered from the normal AWS registry assignment. The
 weather Sparkplug manager publishes BLE inventory using the registered AWS Thing
-ID as the expected BLE local name, and the weather BLE component connects to that
-advertisement and keeps the link open in connected-idle mode.
+ID as the expected BLE local name, and the weather BLE component treats fresh
+matching advertisements as device presence. Weather GATT telemetry/control is a
+separate firmware/runtime layer.
 
 Use `just rig::restart` to restart the Greengrass Lite systemd units without
 deploying new code. Do not expect restart to pick up a new local build; restart
