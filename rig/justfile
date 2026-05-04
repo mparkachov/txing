@@ -891,6 +891,11 @@ aws_shared_credentials_file := ""
       done
       return 1
     }
+    loaded_unit_matches_version() {
+      local unit="$1"
+      local version="$2"
+      systemctl cat "$unit" | grep -F -- "-v $version" >/dev/null 2>&1
+    }
     reset_failed_if_present() {
       local unit="$1"
       if systemctl cat "$unit" >/dev/null 2>&1; then
@@ -1397,6 +1402,12 @@ aws_shared_credentials_file := ""
     for deployed_unit in "${deployed_units[@]}"; do
       if ! wait_unit_present "$deployed_unit"; then
         echo "warning: expected deployed unit $deployed_unit was not loaded after waiting for Greengrass deployment." >&2
+        activation_failures=$((activation_failures + 1))
+        continue
+      fi
+      if ! loaded_unit_matches_version "$deployed_unit" "$resolved_component_version"; then
+        echo "warning: expected deployed unit $deployed_unit to load version $resolved_component_version, but systemd still points at a different component version." >&2
+        echo "Inspect it with: sudo systemctl cat $deployed_unit" >&2
         activation_failures=$((activation_failures + 1))
         continue
       fi
