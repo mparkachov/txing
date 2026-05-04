@@ -49,6 +49,7 @@ DEFAULT_ADAPTER_ID = "weather-ble-main"
 WEATHER_INVENTORY_ADAPTER_ID = "weather-sparkplug-manager"
 DEFAULT_SCAN_TIMEOUT = 8.0
 DEFAULT_RECONNECT_DELAY = 2.0
+DEFAULT_CONNECT_TIMEOUT = 20.0
 DEFAULT_COMMAND_TIMEOUT = 8.0
 DEFAULT_HEARTBEAT_INTERVAL = 10.0
 
@@ -73,6 +74,7 @@ class WeatherBleConfig:
     adapter_id: str = DEFAULT_ADAPTER_ID
     scan_timeout: float = DEFAULT_SCAN_TIMEOUT
     reconnect_delay: float = DEFAULT_RECONNECT_DELAY
+    connect_timeout: float = DEFAULT_CONNECT_TIMEOUT
     command_timeout: float = DEFAULT_COMMAND_TIMEOUT
     heartbeat_interval: float = DEFAULT_HEARTBEAT_INTERVAL
     no_ble: bool = False
@@ -221,12 +223,24 @@ class WeatherBleDeviceSession:
                 await self._run_connected(device)
             except asyncio.CancelledError:
                 raise
-            except Exception:
-                LOGGER.exception(
-                    "Weather BLE session failed thing=%s; retrying in %.1f seconds",
-                    self.thing_name,
-                    self._config.reconnect_delay,
+            except Exception as err:
+                message = (
+                    "Weather BLE session failed thing=%s error=%s; retrying in %.1f seconds"
                 )
+                if isinstance(err, TimeoutError):
+                    LOGGER.warning(
+                        message,
+                        self.thing_name,
+                        type(err).__name__,
+                        self._config.reconnect_delay,
+                    )
+                else:
+                    LOGGER.exception(
+                        message,
+                        self.thing_name,
+                        type(err).__name__,
+                        self._config.reconnect_delay,
+                    )
                 await self._publish_connectivity(
                     presence=PRESENCE_OFFLINE,
                     control_availability=CONTROL_UNAVAILABLE,
@@ -327,14 +341,16 @@ class WeatherBleDeviceSession:
         )
 
     async def _run_connected(self, device: Any) -> None:
-        client = self._client_factory(device)
+        client = self._create_client(device)
+        connected = False
         try:
             LOGGER.info(
                 "Connecting weather BLE thing=%s address=%s",
                 self.thing_name,
                 _device_address(device) or "-",
             )
-            await _client_connect(client, timeout=self._config.command_timeout)
+            await _client_connect(client, timeout=self._config.connect_timeout)
+            connected = True
             self._ble_address = _device_address(device)
             LOGGER.info(
                 "Connected weather BLE thing=%s address=%s",
@@ -350,14 +366,20 @@ class WeatherBleDeviceSession:
                     continue
                 await self._execute_command(client, command)
         finally:
-            await _client_disconnect(client)
-            await self._publish_connectivity(
-                presence=PRESENCE_OFFLINE,
-                control_availability=CONTROL_UNAVAILABLE,
-                power=False,
-                weather=None,
-                battery_mv=self._last_state.battery_mv,
-            )
+            if connected or _client_is_connected(client):
+                await _client_disconnect(client)
+                await self._publish_connectivity(
+                    presence=PRESENCE_OFFLINE,
+                    control_availability=CONTROL_UNAVAILABLE,
+                    power=False,
+                    weather=None,
+                    battery_mv=self._last_state.battery_mv,
+                )
+
+    def _create_client(self, device: Any) -> Any:
+        if self._client_factory is _default_client:
+            return _default_client(device, timeout=self._config.connect_timeout)
+        return self._client_factory(device)
 
     async def _start_notifications(self, client: Any) -> None:
         try:
@@ -689,10 +711,14 @@ class WeatherConnectivityBleService:
         self._tasks.clear()
 
 
-def _default_client(device: Any) -> Any:
+def _default_client(device: Any, *, timeout: float = DEFAULT_CONNECT_TIMEOUT) -> Any:
     if BleakClient is None:
         raise RuntimeError("bleak is required for weather BLE connectivity")
-    return BleakClient(_device_address(device) or device)
+    return BleakClient(
+        _device_address(device) or device,
+        services=(WEATHER_SERVICE_UUID,),
+        timeout=timeout,
+    )
 
 
 async def _client_connect(client: Any, *, timeout: float) -> None:
@@ -763,6 +789,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--adapter-id", default=os.getenv("WEATHER_BLE_ADAPTER_ID", DEFAULT_ADAPTER_ID))
     parser.add_argument("--scan-timeout", type=float, default=float(os.getenv("WEATHER_BLE_SCAN_TIMEOUT", DEFAULT_SCAN_TIMEOUT)))
     parser.add_argument("--reconnect-delay", type=float, default=float(os.getenv("WEATHER_BLE_RECONNECT_DELAY", DEFAULT_RECONNECT_DELAY)))
+    parser.add_argument("--connect-timeout", type=float, default=float(os.getenv("WEATHER_BLE_CONNECT_TIMEOUT", DEFAULT_CONNECT_TIMEOUT)))
     parser.add_argument("--command-timeout", type=float, default=float(os.getenv("WEATHER_BLE_COMMAND_TIMEOUT", DEFAULT_COMMAND_TIMEOUT)))
     parser.add_argument("--no-ble", action="store_true")
     return parser.parse_args()
@@ -775,6 +802,7 @@ def main() -> None:
         adapter_id=args.adapter_id,
         scan_timeout=args.scan_timeout,
         reconnect_delay=args.reconnect_delay,
+        connect_timeout=args.connect_timeout,
         command_timeout=args.command_timeout,
         no_ble=args.no_ble,
     )
