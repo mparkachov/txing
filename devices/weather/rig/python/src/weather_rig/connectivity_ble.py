@@ -178,6 +178,17 @@ class WeatherBleDeviceSession:
     def observe_advertisement(self, advertisement: BleAdvertisement) -> None:
         if not _advertisement_matches_weather_device(advertisement, self.thing_name):
             return
+        previous_address = (
+            self._last_advertisement.address if self._last_advertisement else None
+        )
+        if previous_address != advertisement.address:
+            LOGGER.info(
+                "Observed weather BLE advertisement thing=%s address=%s name=%s rssi=%s",
+                self.thing_name,
+                advertisement.address,
+                advertisement.name or "-",
+                advertisement.rssi,
+            )
         self._last_advertisement = advertisement
         self._ble_address = advertisement.address
         self._advertisement_event.set()
@@ -242,19 +253,40 @@ class WeatherBleDeviceSession:
 
             remaining = deadline - asyncio.get_running_loop().time()
             if remaining <= 0:
+                self._log_no_fresh_advertisement()
                 return None
             self._advertisement_event.clear()
             try:
                 await asyncio.wait_for(self._advertisement_event.wait(), timeout=remaining)
             except TimeoutError:
+                self._log_no_fresh_advertisement()
                 return None
         return None
+
+    def _log_no_fresh_advertisement(self) -> None:
+        LOGGER.info(
+            "No fresh weather BLE advertisement thing=%s timeout=%.1fs lastAddress=%s lastName=%s",
+            self.thing_name,
+            self._config.scan_timeout,
+            self._last_advertisement.address if self._last_advertisement else "-",
+            self._last_advertisement.name if self._last_advertisement else "-",
+        )
 
     async def _run_connected(self, device: Any) -> None:
         client = self._client_factory(device)
         try:
+            LOGGER.info(
+                "Connecting weather BLE thing=%s address=%s",
+                self.thing_name,
+                _device_address(device) or "-",
+            )
             await _client_connect(client, timeout=self._config.command_timeout)
             self._ble_address = _device_address(device)
+            LOGGER.info(
+                "Connected weather BLE thing=%s address=%s",
+                self.thing_name,
+                self._ble_address or "-",
+            )
             await self._publish_state_report(self._last_state)
             await self._start_notifications(client)
             while not self._stop_event.is_set() and _client_is_connected(client):
@@ -645,11 +677,7 @@ def _advertisement_matches_weather_device(
     advertisement: BleAdvertisement,
     thing_name: str,
 ) -> bool:
-    if advertisement.name != thing_name:
-        return False
-    if not advertisement.service_uuids:
-        return True
-    return WEATHER_SERVICE_UUID.lower() in {uuid.lower() for uuid in advertisement.service_uuids}
+    return advertisement.name == thing_name
 
 
 def _advertisement_is_fresh(

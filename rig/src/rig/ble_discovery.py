@@ -28,6 +28,7 @@ DEFAULT_ADAPTER_ID = "shared-ble-scanner"
 DEFAULT_SCAN_MODE = "active"
 DEFAULT_RESTART_DELAY = 2.0
 DEFAULT_PUBLISH_INTERVAL = 2.0
+DEFAULT_UNMATCHED_LOG_INTERVAL = 15.0
 
 
 class BleDiscoveryService:
@@ -55,6 +56,10 @@ class BleDiscoveryService:
         self._target_addresses: set[str] = set()
         self._target_names: set[str] = set()
         self._targets_by_adapter_id: dict[str, tuple[set[str], set[str]]] = {}
+        self._logged_publish_keys: set[str] = set()
+        self._last_unmatched_log_at = 0.0
+        self._unmatched_count = 0
+        self._unmatched_names: set[str] = set()
         self._seq = 0
         self._loop: asyncio.AbstractEventLoop | None = None
 
@@ -131,11 +136,16 @@ class BleDiscoveryService:
         }
         current_targets = (self._target_addresses, self._target_names)
         if previous_targets != current_targets:
+            self._logged_publish_keys = {
+                key
+                for key in self._logged_publish_keys
+                if key in self._target_addresses or key in self._target_names
+            }
             LOGGER.info(
-                "Updated shared BLE discovery targets adapters=%s addresses=%d names=%d",
+                "Updated shared BLE discovery targets adapters=%s addresses=%d names=%s",
                 ",".join(sorted(self._targets_by_adapter_id)),
                 len(self._target_addresses),
-                len(self._target_names),
+                ",".join(sorted(self._target_names)) or "-",
             )
 
     def _handle_detection(self, device: Any, advertisement_data: Any) -> None:
@@ -175,6 +185,7 @@ class BleDiscoveryService:
         )
         publish_key = self._publish_key(advertisement)
         if not self._publish_all and publish_key is None:
+            self._record_unmatched_advertisement(advertisement)
             return
         now = asyncio.get_running_loop().time()
         throttle_key = publish_key or _normalize_address(address)
@@ -186,6 +197,15 @@ class BleDiscoveryService:
         ):
             return
         self._last_publish_by_key[throttle_key] = now
+        if publish_key is not None and publish_key not in self._logged_publish_keys:
+            self._logged_publish_keys.add(publish_key)
+            LOGGER.info(
+                "Matched shared BLE advertisement key=%s address=%s name=%s rssi=%s",
+                publish_key,
+                advertisement.address,
+                advertisement.name or "-",
+                advertisement.rssi,
+            )
         await self._bus.publish(
             build_ble_advertisement_topic(address),
             advertisement.to_json(),
@@ -201,6 +221,27 @@ class BleDiscoveryService:
             return name
 
         return None
+
+    def _record_unmatched_advertisement(self, advertisement: BleAdvertisement) -> None:
+        if not self._target_addresses and not self._target_names:
+            return
+        self._unmatched_count += 1
+        if advertisement.name:
+            self._unmatched_names.add(advertisement.name)
+        now = asyncio.get_running_loop().time()
+        if (now - self._last_unmatched_log_at) < DEFAULT_UNMATCHED_LOG_INTERVAL:
+            return
+        self._last_unmatched_log_at = now
+        sample_names = ",".join(sorted(self._unmatched_names)[:5]) or "-"
+        LOGGER.info(
+            "Shared BLE scanner has no target match yet targets=%s addressTargets=%d unmatched=%d sampleNames=%s",
+            ",".join(sorted(self._target_names)) or "-",
+            len(self._target_addresses),
+            self._unmatched_count,
+            sample_names,
+        )
+        self._unmatched_count = 0
+        self._unmatched_names.clear()
 
     async def _drain_publish_tasks(self) -> None:
         if not self._publish_tasks:

@@ -72,13 +72,14 @@ def _weather_advertisement(
     thing_name: str,
     *,
     address: str = "AA:BB:CC:DD:EE:FF",
+    service_uuids: tuple[str, ...] = (WEATHER_SERVICE_UUID,),
     seq: int = 1,
 ) -> BleAdvertisement:
     return BleAdvertisement(
         adapter_id="shared-ble-scanner",
         address=address,
         name=thing_name,
-        service_uuids=(WEATHER_SERVICE_UUID,),
+        service_uuids=service_uuids,
         observed_at_ms=utc_timestamp_ms(),
         seq=seq,
     )
@@ -143,6 +144,37 @@ class WeatherBleDeviceSessionTests(unittest.TestCase):
         self.assertFalse(state.power)
         self.assertIn("weather-1", state.native_identity["bleLocalName"])
         self.assertEqual(client.writes, [])
+
+    def test_exact_thing_name_is_sufficient_for_discovery(self) -> None:
+        async def exercise() -> ConnectivityState:
+            bus = InMemoryLocalPubSub()
+            received: list[bytes] = []
+            await bus.subscribe(build_state_topic("weather-1"), lambda _t, p: received.append(p))
+
+            session = WeatherBleDeviceSession(
+                thing_name="weather-1",
+                config=WeatherBleConfig(scan_timeout=0.01, reconnect_delay=0.01),
+                bus=bus,
+                client_factory=FakeClient,  # type: ignore[arg-type]
+            )
+            task = asyncio.create_task(session.run())
+            session.observe_advertisement(
+                _weather_advertisement(
+                    "weather-1",
+                    service_uuids=("0000180f-0000-1000-8000-00805f9b34fb",),
+                )
+            )
+            while len(received) < 2:
+                await asyncio.sleep(0)
+            session.stop()
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            return ConnectivityState.from_payload(received[1])
+
+        state = asyncio.run(exercise())
+
+        self.assertTrue(state.reachable)
+        self.assertEqual(state.native_identity["bleAddress"], "AA:BB:CC:DD:EE:FF")
 
     def test_command_write_publishes_succeeded_result(self) -> None:
         async def exercise() -> tuple[list[ConnectivityCommandResult], list[tuple[str, bytes, bool]]]:
