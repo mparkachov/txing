@@ -14,6 +14,9 @@ STATE_TOPIC_PREFIX = f"{LOCAL_TOPIC_ROOT}/state"
 COMMAND_RESULT_TOPIC_PREFIX = f"{LOCAL_TOPIC_ROOT}/command-result"
 HEARTBEAT_TOPIC_PREFIX = f"{LOCAL_TOPIC_ROOT}/heartbeat"
 
+BLE_DISCOVERY_TOPIC_ROOT = "dev/txing/rig/v1/ble"
+BLE_ADVERTISEMENT_TOPIC_PREFIX = f"{BLE_DISCOVERY_TOPIC_ROOT}/advertisement"
+
 TRANSPORT_BLE_GATT = "ble-gatt"
 TRANSPORT_MATTER = "matter"
 
@@ -118,6 +121,14 @@ def parse_heartbeat_topic(topic: str) -> str | None:
     return parse_suffixed_topic(topic, HEARTBEAT_TOPIC_PREFIX)
 
 
+def build_ble_advertisement_topic(address: str) -> str:
+    return f"{BLE_ADVERTISEMENT_TOPIC_PREFIX}/{_topic_segment(address, field_name='address')}"
+
+
+def parse_ble_advertisement_topic(topic: str) -> str | None:
+    return parse_suffixed_topic(topic, BLE_ADVERTISEMENT_TOPIC_PREFIX)
+
+
 def _require_mapping(value: Any, *, field_name: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
         raise ConnectivityProtocolError(f"{field_name} must be an object")
@@ -179,6 +190,36 @@ def _optional_float(payload: Mapping[str, Any], field_name: str) -> float | None
     return number
 
 
+def _optional_str_list(payload: Mapping[str, Any], field_name: str) -> tuple[str, ...]:
+    value = payload.get(field_name)
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise ConnectivityProtocolError(f"{field_name} must be a list")
+    result: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            raise ConnectivityProtocolError(f"{field_name} entries must be strings")
+        text = item.strip()
+        if text:
+            result.append(text.lower())
+    return tuple(result)
+
+
+def _optional_str_dict(payload: Mapping[str, Any], field_name: str) -> dict[str, str]:
+    value = payload.get(field_name)
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise ConnectivityProtocolError(f"{field_name} must be an object")
+    result: dict[str, str] = {}
+    for key, item in value.items():
+        if not isinstance(key, str) or not isinstance(item, str):
+            raise ConnectivityProtocolError(f"{field_name} keys and values must be strings")
+        result[key.strip()] = item.strip()
+    return result
+
+
 def _required_int(payload: Mapping[str, Any], field_name: str) -> int:
     value = _optional_int(payload, field_name)
     if value is None:
@@ -219,6 +260,55 @@ def _json_loads(payload: bytes | str | Mapping[str, Any]) -> Mapping[str, Any]:
     except json.JSONDecodeError as err:
         raise ConnectivityProtocolError("payload must be valid JSON") from err
     return _require_mapping(decoded, field_name="payload")
+
+
+@dataclass(slots=True, frozen=True)
+class BleAdvertisement:
+    adapter_id: str
+    address: str
+    observed_at_ms: int
+    seq: int
+    name: str | None = None
+    rssi: int | None = None
+    service_uuids: tuple[str, ...] = ()
+    manufacturer_data: dict[str, str] = field(default_factory=dict)
+    service_data: dict[str, str] = field(default_factory=dict)
+    tx_power: int | None = None
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "schemaVersion": SCHEMA_VERSION,
+            "adapterId": _topic_segment(self.adapter_id, field_name="adapter_id"),
+            "address": _topic_segment(self.address, field_name="address"),
+            "name": self.name,
+            "rssi": self.rssi,
+            "serviceUuids": [uuid.lower() for uuid in self.service_uuids],
+            "manufacturerData": dict(self.manufacturer_data),
+            "serviceData": dict(self.service_data),
+            "txPower": self.tx_power,
+            "observedAtMs": self.observed_at_ms,
+            "seq": self.seq,
+        }
+
+    def to_json(self) -> str:
+        return _json_dumps(self.to_payload())
+
+    @classmethod
+    def from_payload(cls, payload: bytes | str | Mapping[str, Any]) -> BleAdvertisement:
+        decoded = _json_loads(payload)
+        _validate_schema(decoded)
+        return cls(
+            adapter_id=_required_str(decoded, "adapterId"),
+            address=_required_str(decoded, "address"),
+            name=_optional_str(decoded, "name"),
+            rssi=_optional_int(decoded, "rssi"),
+            service_uuids=_optional_str_list(decoded, "serviceUuids"),
+            manufacturer_data=_optional_str_dict(decoded, "manufacturerData"),
+            service_data=_optional_str_dict(decoded, "serviceData"),
+            tx_power=_optional_int(decoded, "txPower"),
+            observed_at_ms=_required_int(decoded, "observedAtMs"),
+            seq=_required_int(decoded, "seq"),
+        )
 
 
 @dataclass(slots=True, frozen=True)

@@ -1,0 +1,32 @@
+RecipeFormatVersion: '2020-01-25'
+ComponentName: dev.txing.rig.BleDiscovery
+ComponentVersion: '0.6.0'
+ComponentType: aws.greengrass.generic
+ComponentDescription: txing shared BLE advertisement discovery adapter.
+ComponentPublisher: txing
+ComponentConfiguration:
+  DefaultConfiguration:
+    AdapterId: shared-ble-scanner
+    ScanMode: active
+    accessControl:
+      aws.greengrass.ipc.pubsub:
+        dev.txing.rig.BleDiscovery:pubsub:1:
+          policyDescription: Allows the shared BLE scanner to publish local advertisement state.
+          operations:
+            - aws.greengrass#PublishToTopic
+          resources:
+            - dev/txing/rig/v1/ble/*
+Manifests:
+  - Platform:
+      os: linux
+      architecture: aarch64
+      runtime: aws_nucleus_lite
+    Lifecycle:
+      run:
+        RequiresPrivilege: true
+        Script: |-
+          export PYTHONPATH="{artifacts:decompressedPath}/rig-greengrass/python"
+          exec python3 -m rig.ble_discovery --adapter-id "{configuration:/AdapterId}" --scan-mode "{configuration:/ScanMode}"
+    Artifacts:
+      - Uri: s3://REPLACE_WITH_TXING_GREENGRASS_ARTIFACT_BUCKET/rig-greengrass/0.6.0/rig-greengrass.zip
+        Unarchive: ZIP

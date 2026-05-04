@@ -18,6 +18,7 @@ ComponentConfiguration:
             - aws.greengrass#SubscribeToTopic
           resources:
             - dev/txing/rig/v1/connectivity/*
+            - dev/txing/rig/v1/ble/*
 Manifests:
   - Platform:
       os: linux

@@ -29,6 +29,7 @@ from .ble_bridge import (
     _env_text,
 )
 from .connectivity_protocol import (
+    BLE_ADVERTISEMENT_TOPIC_PREFIX,
     COMMAND_ACCEPTED,
     COMMAND_FAILED,
     CONTROL_EVENTUAL,
@@ -37,6 +38,7 @@ from .connectivity_protocol import (
     PRESENCE_OFFLINE,
     PRESENCE_ONLINE,
     COMMAND_TOPIC_PREFIX,
+    BleAdvertisement,
     ConnectivityCommand,
     ConnectivityCommandResult,
     ConnectivityHeartbeat,
@@ -47,6 +49,7 @@ from .connectivity_protocol import (
     build_command_result_topic,
     build_heartbeat_topic,
     build_state_topic,
+    parse_ble_advertisement_topic,
     parse_command_topic,
 )
 from .local_pubsub import GreengrassLocalPubSub, LocalPubSub
@@ -208,6 +211,7 @@ class ConnectivityBleService:
         self._inventory: ConnectivityInventory | None = None
         self._inventory_signature: tuple[object, ...] | None = None
         self._fleet_task: asyncio.Task[None] | None = None
+        self._fleet: RigFleetBridge | None = None
 
     async def start(self) -> None:
         subscriptions: list[object] = []
@@ -218,6 +222,12 @@ class ConnectivityBleService:
             )
             subscriptions.append(
                 await self._bus.subscribe(f"{COMMAND_TOPIC_PREFIX}/+", self._handle_command_message)
+            )
+            subscriptions.append(
+                await self._bus.subscribe(
+                    f"{BLE_ADVERTISEMENT_TOPIC_PREFIX}/+",
+                    self._handle_ble_advertisement_message,
+                )
             )
             heartbeat_task = asyncio.create_task(self._heartbeat_loop())
             while True:
@@ -233,6 +243,7 @@ class ConnectivityBleService:
             if self._fleet_task is not None:
                 self._fleet_task.cancel()
                 await asyncio.gather(self._fleet_task, return_exceptions=True)
+            self._fleet = None
 
     async def _handle_inventory_message(self, _topic: str, payload: bytes) -> None:
         inventory = ConnectivityInventory.from_payload(payload)
@@ -322,11 +333,25 @@ class ConnectivityBleService:
             except Exception:
                 return
 
+    async def _handle_ble_advertisement_message(self, topic: str, payload: bytes) -> None:
+        if parse_ble_advertisement_topic(topic) is None:
+            return
+        fleet = self._fleet
+        if fleet is None or self._no_ble:
+            return
+        try:
+            advertisement = BleAdvertisement.from_payload(payload)
+        except Exception as err:
+            LOGGER.warning("Invalid shared BLE advertisement topic=%s error=%s", topic, err)
+            return
+        fleet.handle_shared_advertisement(advertisement)
+
     async def _restart_fleet(self) -> None:
         if self._fleet_task is not None:
             self._fleet_task.cancel()
             await asyncio.gather(self._fleet_task, return_exceptions=True)
             self._fleet_task = None
+            self._fleet = None
 
         inventory = self._inventory
         if inventory is None:
@@ -344,7 +369,9 @@ class ConnectivityBleService:
             cloud_shadow=self._cloud_proxy,  # type: ignore[arg-type]
             registry=object(),  # type: ignore[arg-type]
             managed_things=managed_things,
+            use_internal_scanner=False,
         )
+        self._fleet = fleet
         self._fleet_task = asyncio.create_task(
             fleet.run_no_ble() if self._no_ble else fleet.run()
         )

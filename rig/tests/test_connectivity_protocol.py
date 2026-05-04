@@ -7,6 +7,8 @@ from rig.connectivity_protocol import (
     COMMAND_RESULT_TOPIC_PREFIX,
     COMMAND_TOPIC_PREFIX,
     CONTROL_EVENTUAL,
+    BLE_ADVERTISEMENT_TOPIC_PREFIX,
+    BleAdvertisement,
     ConnectivityCommand,
     ConnectivityCommandResult,
     ConnectivityDeviceConfig,
@@ -14,6 +16,7 @@ from rig.connectivity_protocol import (
     ConnectivityProtocolError,
     ConnectivityState,
     WeatherMeasurements,
+    build_ble_advertisement_topic,
     PRESENCE_ONLINE,
     SLEEP_MODEL_BLE_CONNECTED_IDLE,
     SLEEP_MODEL_BLE_RENDEZVOUS,
@@ -24,6 +27,7 @@ from rig.connectivity_protocol import (
     build_command_result_topic,
     build_command_topic,
     build_state_topic,
+    parse_ble_advertisement_topic,
     parse_command_result_topic,
     parse_command_topic,
     parse_state_topic,
@@ -50,6 +54,34 @@ class ConnectivityProtocolTests(unittest.TestCase):
             parse_command_result_topic(f"{COMMAND_RESULT_TOPIC_PREFIX}/unit-123"),
             "unit-123",
         )
+        self.assertEqual(
+            build_ble_advertisement_topic("AA:BB:CC:DD:EE:FF"),
+            "dev/txing/rig/v1/ble/advertisement/AA:BB:CC:DD:EE:FF",
+        )
+        self.assertEqual(
+            parse_ble_advertisement_topic(
+                f"{BLE_ADVERTISEMENT_TOPIC_PREFIX}/AA:BB:CC:DD:EE:FF"
+            ),
+            "AA:BB:CC:DD:EE:FF",
+        )
+
+    def test_ble_advertisement_round_trips_shared_scanner_payload(self) -> None:
+        advertisement = BleAdvertisement(
+            adapter_id="shared-ble-scanner",
+            address="AA:BB:CC:DD:EE:FF",
+            name="weather-1",
+            rssi=-61,
+            service_uuids=("f6b4b000-7b32-4d2d-9f4b-4ff0a2b8f100",),
+            manufacturer_data={"65535": "545801"},
+            service_data={"f6b4b000-7b32-4d2d-9f4b-4ff0a2b8f100": "01"},
+            tx_power=4,
+            observed_at_ms=1714380000000,
+            seq=5,
+        )
+
+        decoded = BleAdvertisement.from_payload(advertisement.to_json())
+
+        self.assertEqual(decoded, advertisement)
 
     def test_state_payload_supports_ble_and_matter_shapes(self) -> None:
         ble_state = ConnectivityState(

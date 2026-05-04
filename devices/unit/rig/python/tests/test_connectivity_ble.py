@@ -5,7 +5,9 @@ import unittest
 
 from unit_rig.connectivity_protocol import (
     COMMAND_ACCEPTED,
+    BLE_ADVERTISEMENT_TOPIC_PREFIX,
     INVENTORY_TOPIC,
+    BleAdvertisement,
     ConnectivityCommand,
     ConnectivityDeviceConfig,
     ConnectivityInventory,
@@ -16,6 +18,7 @@ from unit_rig.connectivity_protocol import (
     TRANSPORT_BLE_GATT,
     TRANSPORT_MATTER,
     build_command_result_topic,
+    build_ble_advertisement_topic,
     build_command_topic,
     build_state_topic,
 )
@@ -117,7 +120,45 @@ class ConnectivityBleServiceTests(unittest.TestCase):
             await asyncio.gather(task, return_exceptions=True)
             return [subscription.closed for subscription in bus.subscriptions]
 
-        self.assertEqual(asyncio.run(exercise()), [True, True])
+        self.assertEqual(asyncio.run(exercise()), [True, True, True])
+
+    def test_shared_ble_advertisement_is_forwarded_to_running_fleet(self) -> None:
+        class FakeFleet:
+            def __init__(self) -> None:
+                self.advertisements: list[BleAdvertisement] = []
+
+            def handle_shared_advertisement(self, advertisement: BleAdvertisement) -> None:
+                self.advertisements.append(advertisement)
+
+        async def exercise() -> list[BleAdvertisement]:
+            service = ConnectivityBleService(
+                BridgeConfig(rig_name="rig", sparkplug_group_id="town"),
+                bus=InMemoryLocalPubSub(),
+            )
+            fleet = FakeFleet()
+            service._fleet = fleet  # type: ignore[assignment]
+            advertisement = BleAdvertisement(
+                adapter_id="shared-ble-scanner",
+                address="AA:BB:CC:DD:EE:FF",
+                name="txing",
+                service_uuids=("f6b4a000-7b32-4d2d-9f4b-4ff0a2b8f100",),
+                observed_at_ms=1714380000000,
+                seq=7,
+            )
+            await service._handle_ble_advertisement_message(
+                build_ble_advertisement_topic(advertisement.address),
+                advertisement.to_json().encode(),
+            )
+            await service._handle_ble_advertisement_message(
+                f"{BLE_ADVERTISEMENT_TOPIC_PREFIX}/bad",
+                b"not-json",
+            )
+            return fleet.advertisements
+
+        advertisements = asyncio.run(exercise())
+
+        self.assertEqual(len(advertisements), 1)
+        self.assertEqual(advertisements[0].address, "AA:BB:CC:DD:EE:FF")
 
     def test_duplicate_inventory_does_not_restart_running_fleet(self) -> None:
         async def exercise() -> tuple[bool, bool]:

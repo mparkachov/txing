@@ -224,6 +224,7 @@ source = { directory = "../../../../rig" }
 dependencies = [
     { name = "aws" },
     { name = "awsiotsdk" },
+    { name = "bleak" },
     { name = "boto3" },
 ]
 
@@ -231,6 +232,7 @@ dependencies = [
 requires-dist = [
     { name = "aws", directory = "../../../../shared/aws/python" },
     { name = "awsiotsdk", specifier = ">=1.22,<2" },
+    { name = "bleak", specifier = ">=0.22,<1" },
     { name = "boto3", specifier = ">=1.34,<2" },
 ]
 

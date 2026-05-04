@@ -9,6 +9,7 @@ from rig.connectivity_protocol import (
     COMMAND_ACCEPTED,
     COMMAND_SUCCEEDED,
     INVENTORY_TOPIC,
+    BleAdvertisement,
     ConnectivityCommand,
     ConnectivityCommandResult,
     ConnectivityDeviceConfig,
@@ -22,12 +23,14 @@ from rig.connectivity_protocol import (
     build_state_topic,
 )
 from rig.local_pubsub import InMemoryLocalPubSub
+from rig.sparkplug import utc_timestamp_ms
 from weather_rig.connectivity_ble import (
     MEASUREMENT_STRUCT,
     PROTOCOL_VERSION,
     STATE_FLAG_BME280_VALID,
     STATE_STRUCT,
     WEATHER_COMMAND_UUID,
+    WEATHER_SERVICE_UUID,
     WeatherBleConfig,
     WeatherBleDeviceSession,
     WeatherConnectivityBleService,
@@ -65,6 +68,22 @@ class FakeClient:
         self.notifications[uuid] = handler
 
 
+def _weather_advertisement(
+    thing_name: str,
+    *,
+    address: str = "AA:BB:CC:DD:EE:FF",
+    seq: int = 1,
+) -> BleAdvertisement:
+    return BleAdvertisement(
+        adapter_id="shared-ble-scanner",
+        address=address,
+        name=thing_name,
+        service_uuids=(WEATHER_SERVICE_UUID,),
+        observed_at_ms=utc_timestamp_ms(),
+        seq=seq,
+    )
+
+
 class WeatherBleProtocolTests(unittest.TestCase):
     def test_command_normalizes_redcon_one_and_two_to_three(self) -> None:
         self.assertEqual(encode_redcon_command(1), struct.pack("<BB", PROTOCOL_VERSION, 3))
@@ -95,9 +114,6 @@ class WeatherBleDeviceSessionTests(unittest.TestCase):
             await bus.subscribe(build_state_topic("weather-1"), lambda _t, p: received.append(p))
             client_holder: list[FakeClient] = []
 
-            async def discover(**_kwargs: object) -> list[FakeDevice]:
-                return [FakeDevice("weather-1")]
-
             def client_factory(device: FakeDevice) -> FakeClient:
                 client = FakeClient(device)
                 client_holder.append(client)
@@ -107,10 +123,10 @@ class WeatherBleDeviceSessionTests(unittest.TestCase):
                 thing_name="weather-1",
                 config=WeatherBleConfig(scan_timeout=0.01, reconnect_delay=0.01),
                 bus=bus,
-                scanner_factory=discover,
-                client_factory=client_factory,
+                client_factory=client_factory,  # type: ignore[arg-type]
             )
             task = asyncio.create_task(session.run())
+            session.observe_advertisement(_weather_advertisement("weather-1"))
             while len(received) < 2:
                 await asyncio.sleep(0)
             session.stop()
@@ -138,9 +154,6 @@ class WeatherBleDeviceSessionTests(unittest.TestCase):
             )
             client_holder: list[FakeClient] = []
 
-            async def discover(**_kwargs: object) -> list[FakeDevice]:
-                return [FakeDevice("weather-1")]
-
             def client_factory(device: FakeDevice) -> FakeClient:
                 client = FakeClient(device)
                 client_holder.append(client)
@@ -150,10 +163,10 @@ class WeatherBleDeviceSessionTests(unittest.TestCase):
                 thing_name="weather-1",
                 config=WeatherBleConfig(scan_timeout=0.01, reconnect_delay=0.01),
                 bus=bus,
-                scanner_factory=discover,
-                client_factory=client_factory,
+                client_factory=client_factory,  # type: ignore[arg-type]
             )
             task = asyncio.create_task(session.run())
+            session.observe_advertisement(_weather_advertisement("weather-1"))
             while not client_holder:
                 await asyncio.sleep(0)
             await session.enqueue_command(

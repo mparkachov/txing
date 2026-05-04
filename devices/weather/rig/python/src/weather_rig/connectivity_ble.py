@@ -10,12 +10,12 @@ from dataclasses import dataclass
 from typing import Any, Callable, Iterable
 
 try:
-    from bleak import BleakClient, BleakScanner
+    from bleak import BleakClient
 except ImportError:  # pragma: no cover - startup validation covers real deployments
     BleakClient = None
-    BleakScanner = None
 
 from rig.connectivity_protocol import (
+    BLE_ADVERTISEMENT_TOPIC_PREFIX,
     COMMAND_ACCEPTED,
     COMMAND_FAILED,
     COMMAND_SUCCEEDED,
@@ -25,6 +25,7 @@ from rig.connectivity_protocol import (
     INVENTORY_TOPIC,
     PRESENCE_OFFLINE,
     PRESENCE_ONLINE,
+    BleAdvertisement,
     ConnectivityCommand,
     ConnectivityCommandResult,
     ConnectivityHeartbeat,
@@ -36,6 +37,7 @@ from rig.connectivity_protocol import (
     build_command_result_topic,
     build_heartbeat_topic,
     build_state_topic,
+    parse_ble_advertisement_topic,
     parse_command_topic,
 )
 from rig.local_pubsub import GreengrassLocalPubSub, LocalPubSub
@@ -89,6 +91,13 @@ class WeatherBleMeasurement:
     measured_pressure: float
     measured_humidity: float
     battery_mv: int | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class _DiscoveredWeatherDevice:
+    name: str
+    address: str
+    details: dict[str, Any]
 
 
 def normalize_target_redcon(power: bool) -> int:
@@ -145,25 +154,33 @@ class WeatherBleDeviceSession:
         thing_name: str,
         config: WeatherBleConfig,
         bus: LocalPubSub,
-        scanner_factory: Callable[..., Any] | None = None,
         client_factory: Callable[..., Any] | None = None,
     ) -> None:
         self.thing_name = thing_name
         self._config = config
         self._bus = bus
-        self._scanner_factory = scanner_factory or _default_discover
         self._client_factory = client_factory or _default_client
         self._command_queue: asyncio.Queue[ConnectivityCommand] = asyncio.Queue()
         self._stop_event = asyncio.Event()
+        self._advertisement_event = asyncio.Event()
         self._seq = 0
         self._last_state = WeatherBleState(redcon=REDCON_IDLE)
         self._ble_address: str | None = None
+        self._last_advertisement: BleAdvertisement | None = None
 
     def stop(self) -> None:
         self._stop_event.set()
+        self._advertisement_event.set()
 
     async def enqueue_command(self, command: ConnectivityCommand) -> None:
         await self._command_queue.put(command)
+
+    def observe_advertisement(self, advertisement: BleAdvertisement) -> None:
+        if not _advertisement_matches_weather_device(advertisement, self.thing_name):
+            return
+        self._last_advertisement = advertisement
+        self._ble_address = advertisement.address
+        self._advertisement_event.set()
 
     async def run(self) -> None:
         if self._config.no_ble:
@@ -209,16 +226,28 @@ class WeatherBleDeviceSession:
                 await _sleep_until_stop(self._stop_event, self._config.reconnect_delay)
 
     async def _discover_device(self) -> Any | None:
-        devices = await _call_discover(
-            self._scanner_factory,
-            timeout=self._config.scan_timeout,
-            service_uuids=[WEATHER_SERVICE_UUID],
-        )
-        for device in devices:
-            name = _device_name(device)
-            if name == self.thing_name:
-                self._ble_address = _device_address(device)
-                return device
+        deadline = asyncio.get_running_loop().time() + self._config.scan_timeout
+        while not self._stop_event.is_set():
+            advertisement = self._last_advertisement
+            if advertisement is not None and _advertisement_is_fresh(
+                advertisement,
+                max_age_ms=max(int(self._config.scan_timeout * 1000), 1000),
+            ):
+                self._ble_address = advertisement.address
+                return _DiscoveredWeatherDevice(
+                    name=self.thing_name,
+                    address=advertisement.address,
+                    details={"local_name": advertisement.name},
+                )
+
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                return None
+            self._advertisement_event.clear()
+            try:
+                await asyncio.wait_for(self._advertisement_event.wait(), timeout=remaining)
+            except TimeoutError:
+                return None
         return None
 
     async def _run_connected(self, device: Any) -> None:
@@ -427,6 +456,12 @@ class WeatherConnectivityBleService:
             subscriptions.append(
                 await self._bus.subscribe(f"{COMMAND_TOPIC_PREFIX}/+", self._handle_command)
             )
+            subscriptions.append(
+                await self._bus.subscribe(
+                    f"{BLE_ADVERTISEMENT_TOPIC_PREFIX}/+",
+                    self._handle_ble_advertisement,
+                )
+            )
             heartbeat_task = asyncio.create_task(self._heartbeat_loop())
             await asyncio.Future()
         finally:
@@ -473,6 +508,17 @@ class WeatherConnectivityBleService:
             )
             self._sessions[thing_name] = session
             self._tasks[thing_name] = asyncio.create_task(session.run())
+
+    async def _handle_ble_advertisement(self, topic: str, payload: bytes) -> None:
+        if parse_ble_advertisement_topic(topic) is None:
+            return
+        try:
+            advertisement = BleAdvertisement.from_payload(payload)
+        except Exception as err:
+            LOGGER.warning("Invalid shared BLE advertisement topic=%s error=%s", topic, err)
+            return
+        for session in self._sessions.values():
+            session.observe_advertisement(advertisement)
 
     async def _handle_command(self, topic: str, payload: bytes) -> None:
         thing_name = parse_command_topic(topic)
@@ -557,26 +603,10 @@ class WeatherConnectivityBleService:
         self._tasks.clear()
 
 
-async def _call_discover(scanner_factory: Callable[..., Any], **kwargs: Any) -> list[Any]:
-    try:
-        result = scanner_factory(**kwargs)
-    except TypeError:
-        result = scanner_factory(kwargs.get("timeout"))
-    if hasattr(result, "__await__"):
-        result = await result
-    return list(result or [])
-
-
-def _default_discover(**kwargs: Any) -> Any:
-    if BleakScanner is None:
-        raise RuntimeError("bleak is required for weather BLE connectivity")
-    return BleakScanner.discover(**kwargs)
-
-
 def _default_client(device: Any) -> Any:
     if BleakClient is None:
         raise RuntimeError("bleak is required for weather BLE connectivity")
-    return BleakClient(device)
+    return BleakClient(_device_address(device) or device)
 
 
 async def _client_connect(client: Any, *, timeout: float) -> None:
@@ -606,21 +636,28 @@ def _client_is_connected(client: Any) -> bool:
     return bool(value() if callable(value) else value)
 
 
-def _device_name(device: Any) -> str | None:
-    name = getattr(device, "name", None)
-    if isinstance(name, str) and name.strip():
-        return name.strip()
-    details = getattr(device, "details", None)
-    if isinstance(details, dict):
-        local_name = details.get("local_name") or details.get("name")
-        if isinstance(local_name, str) and local_name.strip():
-            return local_name.strip()
-    return None
-
-
 def _device_address(device: Any) -> str | None:
     address = getattr(device, "address", None)
     return address if isinstance(address, str) and address.strip() else None
+
+
+def _advertisement_matches_weather_device(
+    advertisement: BleAdvertisement,
+    thing_name: str,
+) -> bool:
+    if advertisement.name != thing_name:
+        return False
+    if not advertisement.service_uuids:
+        return True
+    return WEATHER_SERVICE_UUID.lower() in {uuid.lower() for uuid in advertisement.service_uuids}
+
+
+def _advertisement_is_fresh(
+    advertisement: BleAdvertisement,
+    *,
+    max_age_ms: int,
+) -> bool:
+    return utc_timestamp_ms() - advertisement.observed_at_ms <= max_age_ms
 
 
 async def _sleep_until_stop(stop_event: asyncio.Event, delay: float) -> None:

@@ -86,6 +86,7 @@ from .sparkplug import (
     decode_redcon_command,
     utc_timestamp_ms,
 )
+from .connectivity_protocol import BleAdvertisement
 
 TXING_SERVICE_UUID = "f6b4a000-7b32-4d2d-9f4b-4ff0a2b8f100"
 SLEEP_COMMAND_UUID = "f6b4a001-7b32-4d2d-9f4b-4ff0a2b8f100"
@@ -3635,6 +3636,44 @@ class ManagedThing:
     bridge: BleSleepBridge
 
 
+@dataclass(slots=True)
+class _SharedBleDevice:
+    address: str
+    name: str | None = None
+    details: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class _SharedAdvertisementData:
+    local_name: str | None
+    manufacturer_data: dict[int, bytes]
+    service_data: dict[str, bytes]
+    service_uuids: list[str]
+    rssi: int | None = None
+    tx_power: int | None = None
+
+
+def _decode_manufacturer_data(payload: Mapping[str, str]) -> dict[int, bytes]:
+    result: dict[int, bytes] = {}
+    for key, value in payload.items():
+        try:
+            manufacturer_id = int(key, 0)
+            result[manufacturer_id] = bytes.fromhex(value)
+        except ValueError:
+            LOGGER.debug("Ignoring invalid shared BLE manufacturer data key=%s", key)
+    return result
+
+
+def _decode_service_data(payload: Mapping[str, str]) -> dict[str, bytes]:
+    result: dict[str, bytes] = {}
+    for key, value in payload.items():
+        try:
+            result[key] = bytes.fromhex(value)
+        except ValueError:
+            LOGGER.debug("Ignoring invalid shared BLE service data uuid=%s", key)
+    return result
+
+
 def _device_snapshot_file(base_path: Path, thing_name: str) -> Path:
     if base_path.suffix:
         cache_dir = base_path.parent / base_path.stem
@@ -3651,11 +3690,13 @@ class RigFleetBridge:
         cloud_shadow: AwsShadowClient,
         registry: AwsThingRegistryClient,
         managed_things: list[ManagedThing],
+        use_internal_scanner: bool = True,
     ) -> None:
         self._config = config
         self._cloud_shadow = cloud_shadow
         self._registry = registry
         self._managed_things = managed_things
+        self._use_internal_scanner = use_internal_scanner
         self._managed_by_name = {
             managed.registration.thing_name: managed for managed in managed_things
         }
@@ -3737,6 +3778,8 @@ class RigFleetBridge:
         return
 
     async def _start_scanner(self) -> None:
+        if not self._use_internal_scanner:
+            return
         if self._scanner is not None:
             return
         self._scanner = BleakScanner(
@@ -3748,6 +3791,8 @@ class RigFleetBridge:
         _log_important(LOGGER, "Started shared BLE scanner mode=%s", self._config.scan_mode)
 
     async def _stop_scanner(self) -> None:
+        if not self._use_internal_scanner:
+            return
         scanner = self._scanner
         self._scanner = None
         if scanner is None:
@@ -3793,6 +3838,22 @@ class RigFleetBridge:
                 adv.local_name or device.name or "<unnamed>",
                 len(generic_candidates),
             )
+
+    def handle_shared_advertisement(self, advertisement: BleAdvertisement) -> None:
+        device = _SharedBleDevice(
+            address=advertisement.address,
+            name=advertisement.name,
+            details={"local_name": advertisement.name},
+        )
+        adv = _SharedAdvertisementData(
+            local_name=advertisement.name,
+            manufacturer_data=_decode_manufacturer_data(advertisement.manufacturer_data),
+            service_data=_decode_service_data(advertisement.service_data),
+            service_uuids=list(advertisement.service_uuids),
+            rssi=advertisement.rssi,
+            tx_power=advertisement.tx_power,
+        )
+        self._handle_scan_detection(device, adv)  # type: ignore[arg-type]
 
     async def _apply_updates(self, updates: list[AwsShadowUpdate]) -> None:
         grouped: dict[str, list[AwsShadowUpdate]] = {}
