@@ -25,6 +25,7 @@ from rig.connectivity_protocol import (
 from rig.local_pubsub import InMemoryLocalPubSub
 from rig.sparkplug import utc_timestamp_ms
 from weather_rig.connectivity_ble import (
+    BleakError,
     MEASUREMENT_STRUCT,
     PROTOCOL_VERSION,
     STATE_FLAG_BME280_VALID,
@@ -72,6 +73,23 @@ class FakeClient:
         self.notifications[uuid] = handler
 
 
+class FailingClient:
+    instances: list[FailingClient] = []
+
+    def __init__(self, _device: FakeDevice) -> None:
+        self.is_connected = False
+        self.connect_kwargs: dict[str, object] | None = None
+        self.disconnect_count = 0
+        self.instances.append(self)
+
+    async def connect(self, **kwargs: object) -> None:
+        self.connect_kwargs = kwargs
+        raise BleakError("failed to discover services, device disconnected")
+
+    async def disconnect(self) -> None:
+        self.disconnect_count += 1
+
+
 def _weather_advertisement(
     thing_name: str,
     *,
@@ -114,6 +132,7 @@ class WeatherBleProtocolTests(unittest.TestCase):
 class WeatherBleDeviceSessionTests(unittest.TestCase):
     def setUp(self) -> None:
         FakeClient.instances.clear()
+        FailingClient.instances.clear()
 
     def test_matches_by_thing_name_and_publishes_online_idle_state(self) -> None:
         async def exercise() -> ConnectivityState:
@@ -202,6 +221,36 @@ class WeatherBleDeviceSessionTests(unittest.TestCase):
         self.assertEqual([state.seq for state in states], [1, 2])
         self.assertTrue(all(state.reachable for state in states))
         self.assertEqual(states[1].battery_mv, 3300)
+
+    def test_failed_connect_publishes_one_offline_without_extra_disconnect(self) -> None:
+        async def exercise() -> tuple[list[ConnectivityState], FailingClient]:
+            bus = InMemoryLocalPubSub()
+            received: list[bytes] = []
+            await bus.subscribe(build_state_topic("weather-1"), lambda _t, p: received.append(p))
+
+            session = WeatherBleDeviceSession(
+                thing_name="weather-1",
+                config=WeatherBleConfig(scan_timeout=0.01, reconnect_delay=30.0),
+                bus=bus,
+                client_factory=FailingClient,  # type: ignore[arg-type]
+            )
+            task = asyncio.create_task(session.run())
+            session.observe_advertisement(_weather_advertisement("weather-1"))
+            while not received:
+                await asyncio.sleep(0)
+            session.stop()
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            return [ConnectivityState.from_payload(payload) for payload in received], FailingClient.instances[0]
+
+        with self.assertLogs("weather_rig.connectivity_ble", level="WARNING") as logs:
+            states, client = asyncio.run(exercise())
+
+        self.assertEqual(len(states), 1)
+        self.assertFalse(states[0].reachable)
+        self.assertEqual(client.disconnect_count, 0)
+        self.assertEqual(client.connect_kwargs, {"dangerous_use_bleak_cache": True})
+        self.assertIn("BleakError", logs.output[0])
 
     def test_command_writes_gatt_and_publishes_success(self) -> None:
         async def exercise() -> tuple[list[ConnectivityCommandResult], list[tuple[str, bytes, bool]]]:

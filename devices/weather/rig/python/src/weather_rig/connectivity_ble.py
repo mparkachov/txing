@@ -11,8 +11,10 @@ from typing import Any, Callable, Iterable
 
 try:
     from bleak import BleakClient
+    from bleak.exc import BleakError
 except ImportError:  # pragma: no cover - startup validation covers real deployments
     BleakClient = None
+    BleakError = RuntimeError
 
 from rig.connectivity_protocol import (
     BLE_ADVERTISEMENT_TOPIC_PREFIX,
@@ -227,12 +229,13 @@ class WeatherBleDeviceSession:
                 message = (
                     "Weather BLE session failed thing=%s error=%s; retrying in %.1f seconds"
                 )
-                if isinstance(err, TimeoutError):
+                if _is_transient_ble_error(err):
                     LOGGER.warning(
-                        message,
+                        message + ": %s",
                         self.thing_name,
                         type(err).__name__,
                         self._config.reconnect_delay,
+                        err,
                     )
                 else:
                     LOGGER.exception(
@@ -726,7 +729,13 @@ def _default_client(device: Any, *, timeout: float = DEFAULT_CONNECT_TIMEOUT) ->
 async def _client_connect(client: Any, *, timeout: float) -> None:
     connect = getattr(client, "connect", None)
     if callable(connect):
-        await asyncio.wait_for(connect(), timeout=timeout)
+        try:
+            result = connect(dangerous_use_bleak_cache=True)
+        except TypeError as err:
+            if "dangerous_use_bleak_cache" not in str(err):
+                raise
+            result = connect()
+        await asyncio.wait_for(result, timeout=timeout)
         return
     enter = getattr(client, "__aenter__", None)
     if callable(enter):
@@ -759,10 +768,16 @@ def _client_is_connected(client: Any) -> bool:
 
 
 async def _cleanup_client_after_failed_connect(client: Any) -> None:
+    if not _client_is_connected(client):
+        return
     try:
         await asyncio.wait_for(_client_disconnect(client), timeout=5.0)
     except Exception:
         LOGGER.debug("Weather BLE cleanup after failed connect failed", exc_info=True)
+
+
+def _is_transient_ble_error(err: Exception) -> bool:
+    return isinstance(err, (TimeoutError, BleakError))
 
 
 def _device_address(device: Any) -> str | None:
