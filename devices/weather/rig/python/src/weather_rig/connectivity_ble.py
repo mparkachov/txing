@@ -201,6 +201,7 @@ class WeatherBleDeviceSession:
             )
             return
         await self._command_queue.put(command)
+        self._advertisement_event.set()
 
     def observe_advertisement(self, advertisement: BleAdvertisement) -> None:
         if not _advertisement_matches_weather_device(advertisement, self.thing_name):
@@ -246,8 +247,9 @@ class WeatherBleDeviceSession:
                     )
                     await _sleep_until_stop(self._stop_event, self._config.reconnect_delay)
                     continue
-                await self._publish_state_report(self._last_state)
-                await self._run_connected(device)
+                should_connect = await self._run_advertising_presence(device)
+                if should_connect:
+                    await self._run_connected(device)
             except asyncio.CancelledError:
                 raise
             except Exception as err:
@@ -272,7 +274,7 @@ class WeatherBleDeviceSession:
                 await self._fail_expired_queued_commands()
                 await _sleep_until_stop(self._stop_event, self._config.reconnect_delay)
 
-    async def _run_advertising_presence(self, device: Any) -> None:
+    async def _run_advertising_presence(self, device: Any) -> bool:
         self._ble_address = _device_address(device)
         last_reported_adv_seq = self._last_advertisement.seq if self._last_advertisement else None
         LOGGER.info(
@@ -281,11 +283,17 @@ class WeatherBleDeviceSession:
             self._ble_address or "-",
         )
         await self._publish_state_report(self._last_state)
+        state_report_interval = self._config.state_report_interval
+        next_state_report_at = (
+            asyncio.get_running_loop().time() + state_report_interval
+            if state_report_interval > 0
+            else None
+        )
 
         while not self._stop_event.is_set():
-            await self._fail_queued_commands(
-                "weather advertising-only firmware does not support BLE commands"
-            )
+            await self._fail_expired_queued_commands()
+            if not self._command_queue.empty():
+                return True
             advertisement = self._last_advertisement
             if advertisement is None or not _advertisement_is_fresh(
                 advertisement,
@@ -305,18 +313,27 @@ class WeatherBleDeviceSession:
                     weather=None,
                     battery_mv=self._last_state.battery_mv,
                 )
-                return
+                return False
             if advertisement.seq != last_reported_adv_seq:
                 last_reported_adv_seq = advertisement.seq
                 await self._publish_state_report(self._last_state)
+                if next_state_report_at is not None:
+                    next_state_report_at = asyncio.get_running_loop().time() + state_report_interval
+                    continue
+            timeout = min(max(self._config.scan_timeout, 0.1), 1.0)
+            if next_state_report_at is not None:
+                now = asyncio.get_running_loop().time()
+                if now >= next_state_report_at:
+                    await self._publish_state_report(self._last_state)
+                    next_state_report_at = now + state_report_interval
+                    continue
+                timeout = min(timeout, max(next_state_report_at - now, 0.001))
             self._advertisement_event.clear()
             try:
-                await asyncio.wait_for(
-                    self._advertisement_event.wait(),
-                    timeout=min(max(self._config.scan_timeout, 0.1), 1.0),
-                )
+                await asyncio.wait_for(self._advertisement_event.wait(), timeout=timeout)
             except TimeoutError:
                 continue
+        return False
 
     async def _fail_queued_commands(self, message: str) -> None:
         while True:
