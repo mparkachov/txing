@@ -896,6 +896,21 @@ aws_shared_credentials_file := ""
       local version="$2"
       systemctl cat "$unit" | grep -F -- "-v $version" >/dev/null 2>&1
     }
+    wait_unit_version() {
+      local unit="$1"
+      local version="$2"
+      local attempts=90
+      local attempt=0
+      while [ "$attempt" -lt "$attempts" ]; do
+        sudo systemctl daemon-reload || true
+        if loaded_unit_matches_version "$unit" "$version"; then
+          return 0
+        fi
+        attempt=$((attempt + 1))
+        sleep 1
+      done
+      return 1
+    }
     reset_failed_if_present() {
       local unit="$1"
       if systemctl cat "$unit" >/dev/null 2>&1; then
@@ -1405,8 +1420,8 @@ aws_shared_credentials_file := ""
         activation_failures=$((activation_failures + 1))
         continue
       fi
-      if ! loaded_unit_matches_version "$deployed_unit" "$resolved_component_version"; then
-        echo "warning: expected deployed unit $deployed_unit to load version $resolved_component_version, but systemd still points at a different component version." >&2
+      if ! wait_unit_version "$deployed_unit" "$resolved_component_version"; then
+        echo "warning: expected deployed unit $deployed_unit to load version $resolved_component_version, but systemd still points at a different component version after waiting." >&2
         echo "Inspect it with: sudo systemctl cat $deployed_unit" >&2
         activation_failures=$((activation_failures + 1))
         continue
@@ -1418,10 +1433,10 @@ aws_shared_credentials_file := ""
         activation_failures=$((activation_failures + 1))
       fi
     done
-    printf 'deployed Greengrass components version %s for RigName=%s RigType=%s SparkplugGroupId=%s SparkplugEdgeNodeId=%s\n' "$resolved_component_version" "$rig_name" "$selected_rig_type" "$sparkplug_group_id" "$sparkplug_edge_node_id"
-    printf 'inspect rig logs with: just rig::log\n'
     if [ "$activation_failures" -ne 0 ]; then
       echo "inspect Greengrass deployment processing with: sudo journalctl -a --no-pager -u ggl.core.ggdeploymentd.service -u ggl.gg_deployment.socket -n 200" >&2
       echo "Greengrass deploy completed, but $activation_failures deployed unit(s) did not stay active." >&2
       exit 1
     fi
+    printf 'deployed Greengrass components version %s for RigName=%s RigType=%s SparkplugGroupId=%s SparkplugEdgeNodeId=%s\n' "$resolved_component_version" "$rig_name" "$selected_rig_type" "$sparkplug_group_id" "$sparkplug_edge_node_id"
+    printf 'inspect rig logs with: just rig::log\n'

@@ -790,6 +790,7 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertIn("wait_inactive_unit() {", justfile)
         self.assertIn("wait_unit_present() {", justfile)
         self.assertIn("loaded_unit_matches_version() {", justfile)
+        self.assertIn("wait_unit_version() {", justfile)
         self.assertIn("reset_failed_if_present() {", justfile)
         self.assertIn("core_units=({{greengrass_core_units}})", justfile)
         self.assertIn("core_sockets=({{greengrass_core_sockets}})", justfile)
@@ -864,10 +865,10 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertIn('if ! wait_unit_present "$deployed_unit"; then', justfile)
         self.assertIn("was not loaded after waiting for Greengrass deployment", justfile)
         self.assertIn(
-            'if ! loaded_unit_matches_version "$deployed_unit" "$resolved_component_version"; then',
+            'if ! wait_unit_version "$deployed_unit" "$resolved_component_version"; then',
             justfile,
         )
-        self.assertIn("systemd still points at a different component version", justfile)
+        self.assertIn("systemd still points at a different component version after waiting", justfile)
         self.assertIn('reset_failed_if_present "$deployed_unit"', justfile)
         self.assertIn('sudo systemctl start "$deployed_unit" || true', justfile)
         self.assertIn("did not become active", justfile)
