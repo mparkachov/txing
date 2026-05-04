@@ -672,6 +672,7 @@ class WeatherConnectivityBleServiceTests(unittest.TestCase):
                     power=True,
                     reason="redcon=3",
                     issued_at_ms=1714380000000,
+                    seq=9,
                 ).to_json().encode(),
             )
             await service._stop_all_sessions()
@@ -681,6 +682,7 @@ class WeatherConnectivityBleServiceTests(unittest.TestCase):
 
         self.assertEqual(sessions, [])
         self.assertEqual(results[0].status, COMMAND_ACCEPTED)
+        self.assertEqual(results[0].seq, 9)
 
     def test_unit_inventory_and_command_are_ignored(self) -> None:
         class FakeSession:

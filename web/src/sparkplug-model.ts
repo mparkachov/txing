@@ -9,6 +9,13 @@ export type PendingTargetResolutionInputs = {
   isSparkplugDeviceUnavailable: boolean
 }
 
+export type SparkplugRedconCommandStatus = {
+  status: 'accepted' | 'succeeded' | 'failed'
+  seq: number | null
+  targetRedcon: number | null
+  message: string | null
+}
+
 type RedconDescriptor = {
   colorName: string
   postureName: string
@@ -105,6 +112,13 @@ const coerceRedcon = (value: unknown): number | null => {
   return value >= 1 && value <= 4 ? value : null
 }
 
+const coerceNonNegativeInteger = (value: unknown): number | null => {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
+    return null
+  }
+  return value
+}
+
 export const extractSparkplugMessageType = (shadow: unknown): string | null => {
   const topic = extractSparkplugTopic(shadow)
   return topic && typeof topic.messageType === 'string' ? topic.messageType : null
@@ -133,6 +147,28 @@ export const extractReportedRedcon = (shadow: unknown): number | null => {
     }
   }
   return null
+}
+
+export const extractSparkplugRedconCommandStatus = (
+  shadow: unknown,
+): SparkplugRedconCommandStatus | null => {
+  const metrics = extractSparkplugMetrics(shadow)
+  if (!metrics || typeof metrics.redconCommandStatus !== 'string') {
+    return null
+  }
+  const status = metrics.redconCommandStatus
+  if (status !== 'accepted' && status !== 'succeeded' && status !== 'failed') {
+    return null
+  }
+  return {
+    status,
+    seq: coerceNonNegativeInteger(metrics.redconCommandSeq),
+    targetRedcon: coerceRedcon(metrics.redconCommandTarget),
+    message:
+      typeof metrics.redconCommandMessage === 'string'
+        ? metrics.redconCommandMessage
+        : null,
+  }
 }
 
 export const getTxingRedconToneClass = (redcon: number | null): string => {

@@ -689,6 +689,7 @@ class WeatherBleDeviceSession:
                 status=status,
                 message=message,
                 observed_at_ms=utc_timestamp_ms(),
+                seq=command.seq,
             ).to_json(),
         )
         LOGGER.info(
@@ -863,6 +864,7 @@ class WeatherConnectivityBleService:
                 status=status,
                 message=message,
                 observed_at_ms=utc_timestamp_ms(),
+                seq=command.seq,
             ).to_json(),
         )
         LOGGER.info(

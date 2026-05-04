@@ -76,6 +76,7 @@ import SparkplugPanel from './SparkplugPanel'
 import {
   extractIsSparkplugDeviceUnavailable,
   extractReportedRedcon,
+  extractSparkplugRedconCommandStatus,
   hasReachedTargetRedcon,
   shouldClearPendingTargetRedcon,
 } from './sparkplug-model'
@@ -592,6 +593,23 @@ function App({ initialAuthError = '' }: AppProps) {
         ) {
           if (redconCommandSequenceRef.current === commandSequence) {
             setPendingTargetRedcon(null)
+          }
+          return
+        }
+        const commandStatus = extractSparkplugRedconCommandStatus(nextShadow)
+        if (
+          commandStatus?.status === 'failed' &&
+          commandStatus.seq === commandSequence - 1 &&
+          commandStatus.targetRedcon === targetRedcon
+        ) {
+          if (redconCommandSequenceRef.current === commandSequence) {
+            setPendingTargetRedcon(null)
+            enqueueRuntimeError(
+              `Sparkplug DCMD.redcon -> ${targetRedcon} failed: ${
+                commandStatus.message ?? 'device command failed'
+              }`,
+              'sparkplug-redcon-convergence',
+            )
           }
           return
         }

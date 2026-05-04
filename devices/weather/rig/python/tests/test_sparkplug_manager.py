@@ -5,16 +5,19 @@ import unittest
 from dataclasses import replace
 
 from rig.connectivity_protocol import (
+    COMMAND_FAILED,
     CONTROL_EVENTUAL,
     INVENTORY_TOPIC,
     PRESENCE_OFFLINE,
     PRESENCE_ONLINE,
     ConnectivityCommand,
+    ConnectivityCommandResult,
     ConnectivityInventory,
     ConnectivityState,
     SLEEP_MODEL_BLE_CONNECTED_IDLE,
     TRANSPORT_BLE_GATT,
     WeatherMeasurements,
+    build_command_result_topic,
     build_command_topic,
 )
 from rig.local_pubsub import InMemoryLocalPubSub
@@ -445,6 +448,7 @@ class WeatherSparkplugManagerTests(unittest.TestCase):
 
         self.assertTrue(command.power)
         self.assertEqual(command.reason, "redcon=3")
+        self.assertEqual(command.seq, 9)
 
         command = asyncio.run(exercise(2))
 
@@ -482,6 +486,117 @@ class WeatherSparkplugManagerTests(unittest.TestCase):
 
         self.assertFalse(command.power)
         self.assertEqual(command.reason, "redcon=4")
+        self.assertEqual(command.seq, 10)
+
+    def test_command_result_failure_publishes_sparkplug_ddata_status(self) -> None:
+        async def exercise() -> tuple[list[tuple[str, bytes]], ConnectivityCommand]:
+            bus = InMemoryLocalPubSub()
+            commands: list[ConnectivityCommand] = []
+            await bus.subscribe(
+                build_command_topic("weather-1"),
+                lambda _topic, payload: commands.append(ConnectivityCommand.from_payload(payload)),
+            )
+            manager = WeatherSparkplugManager(
+                WeatherSparkplugConfig(
+                    endpoint="endpoint",
+                    aws_region="eu-central-1",
+                    rig_name="server",
+                    sparkplug_group_id="town",
+                    sparkplug_edge_node_id="server",
+                ),
+                bus=bus,
+                aws_runtime=object(),
+                connection_factory=FakeConnection,
+                session_factory=FakeDeviceSession,
+            )
+            await manager.set_registrations([registration("weather-1")])
+            await manager.connect()
+            await manager.apply_connectivity_state(weather_state())
+            await manager._handle_dcmd_message(
+                build_device_topic("town", "DCMD", "server", "weather-1"),
+                build_redcon_payload(redcon=3, seq=12),
+            )
+            command = commands[0]
+            await manager.apply_connectivity_command_result(
+                ConnectivityCommandResult(
+                    adapter_id="weather-ble-main",
+                    command_id=command.command_id,
+                    thing_name="weather-1",
+                    status=COMMAND_FAILED,
+                    message="weather BLE command deadline expired",
+                    observed_at_ms=1714380045000,
+                    seq=command.seq,
+                )
+            )
+            return FakeDeviceSession.instances[0].published, command
+
+        published, command = asyncio.run(exercise())
+
+        self.assertEqual(
+            [topic for topic, _payload in published],
+            [
+                "spBv1.0/town/DBIRTH/server/weather-1",
+                "spBv1.0/town/DDATA/server/weather-1",
+            ],
+        )
+        ddata = decode_payload(published[1][1])
+        metrics = {metric.name: metric for metric in ddata.metrics}
+        self.assertEqual(metrics["redcon"].int_value, 4)
+        self.assertEqual(metrics["redconCommandStatus"].string_value, COMMAND_FAILED)
+        self.assertEqual(metrics["redconCommandSeq"].int_value, 12)
+        self.assertEqual(metrics["redconCommandTarget"].int_value, 3)
+        self.assertEqual(metrics["redconCommandMessage"].string_value, "weather BLE command deadline expired")
+        self.assertEqual(metrics["redconCommandId"].string_value, command.command_id)
+
+    def test_command_result_subscription_publishes_sparkplug_ddata_status(self) -> None:
+        async def exercise() -> list[tuple[str, bytes]]:
+            bus = InMemoryLocalPubSub()
+            commands: list[ConnectivityCommand] = []
+            await bus.subscribe(
+                build_command_topic("weather-1"),
+                lambda _topic, payload: commands.append(ConnectivityCommand.from_payload(payload)),
+            )
+            manager = WeatherSparkplugManager(
+                WeatherSparkplugConfig(
+                    endpoint="endpoint",
+                    aws_region="eu-central-1",
+                    rig_name="server",
+                    sparkplug_group_id="town",
+                    sparkplug_edge_node_id="server",
+                ),
+                bus=bus,
+                aws_runtime=object(),
+                connection_factory=FakeConnection,
+                session_factory=FakeDeviceSession,
+            )
+            await manager.set_registrations([registration("weather-1")])
+            await manager.start()
+            await manager.apply_connectivity_state(weather_state())
+            await manager._handle_dcmd_message(
+                build_device_topic("town", "DCMD", "server", "weather-1"),
+                build_redcon_payload(redcon=3, seq=13),
+            )
+            command = commands[0]
+            await bus.publish(
+                build_command_result_topic("weather-1"),
+                ConnectivityCommandResult(
+                    adapter_id="weather-ble-main",
+                    command_id=command.command_id,
+                    thing_name="weather-1",
+                    status=COMMAND_FAILED,
+                    message="failed to discover services",
+                    observed_at_ms=1714380045000,
+                    seq=command.seq,
+                ).to_json(),
+            )
+            return FakeDeviceSession.instances[0].published
+
+        published = asyncio.run(exercise())
+
+        self.assertEqual(published[-1][0], "spBv1.0/town/DDATA/server/weather-1")
+        metrics = {metric.name: metric for metric in decode_payload(published[-1][1]).metrics}
+        self.assertEqual(metrics["redconCommandSeq"].int_value, 13)
+        self.assertEqual(metrics["redconCommandMessage"].string_value, "failed to discover services")
 
 
 if __name__ == "__main__":

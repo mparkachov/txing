@@ -18,15 +18,20 @@ from aws.auth import build_aws_runtime, ensure_aws_profile, resolve_aws_region
 from aws.mqtt import AwsIotWebsocketConnection, AwsMqttConnectionConfig
 from aws.type_catalog import SsmTypeCatalog
 from rig.connectivity_protocol import (
+    COMMAND_ACCEPTED,
+    COMMAND_FAILED,
     INVENTORY_TOPIC,
+    COMMAND_RESULT_TOPIC_PREFIX,
     STATE_TOPIC_PREFIX,
     ConnectivityCommand,
+    ConnectivityCommandResult,
     ConnectivityDeviceConfig,
     ConnectivityInventory,
     ConnectivityState,
     SLEEP_MODEL_BLE_CONNECTED_IDLE,
     TRANSPORT_BLE_GATT,
     build_command_topic,
+    parse_command_result_topic,
     parse_state_topic,
 )
 from rig.device_sparkplug_session import (
@@ -83,17 +88,29 @@ class WeatherSparkplugConfig:
 class WeatherManagedDevice:
     registration: ThingRegistration
     last_state: ConnectivityState | None = None
+    last_command_result: WeatherCommandResultReport | None = None
     born: bool = False
     last_reported_at_ms: int = 0
     stale: bool = False
     redcon: int = WEATHER_IDLE_REDCON
     target_redcon: int | None = None
+    pending_command_targets: dict[str, int] = field(default_factory=dict)
     operation_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     mqtt_session: DeviceSparkplugMqttSession | None = None
 
     @property
     def thing_name(self) -> str:
         return self.registration.thing_name
+
+
+@dataclass(slots=True, frozen=True)
+class WeatherCommandResultReport:
+    command_id: str
+    status: str
+    target_redcon: int | None
+    message: str | None
+    observed_at_ms: int
+    seq: int
 
 
 class WeatherSparkplugManager:
@@ -118,6 +135,7 @@ class WeatherSparkplugManager:
         self._inventory_seq = 0
         self._node_born = False
         self._state_subscription: object | None = None
+        self._command_result_subscription: object | None = None
         self._dcmd_subscribed = False
 
     @property
@@ -205,6 +223,9 @@ class WeatherSparkplugManager:
         if self._state_subscription is not None:
             _close_resource(self._state_subscription)
             self._state_subscription = None
+        if self._command_result_subscription is not None:
+            _close_resource(self._command_result_subscription)
+            self._command_result_subscription = None
         if self._connection is None:
             return
         try:
@@ -218,6 +239,11 @@ class WeatherSparkplugManager:
             self._state_subscription = await self._bus.subscribe(
                 f"{STATE_TOPIC_PREFIX}/+",
                 self._handle_state_message,
+            )
+        if self._command_result_subscription is None:
+            self._command_result_subscription = await self._bus.subscribe(
+                f"{COMMAND_RESULT_TOPIC_PREFIX}/+",
+                self._handle_command_result_message,
             )
         await self.publish_inventory()
         await self.publish_node_birth()
@@ -339,6 +365,62 @@ class WeatherSparkplugManager:
                     error=err,
                 )
 
+    async def _handle_command_result_message(self, topic: str, payload: bytes) -> None:
+        thing_name = parse_command_result_topic(topic)
+        if thing_name is None:
+            return
+        result = ConnectivityCommandResult.from_payload(payload)
+        if result.thing_name != thing_name:
+            LOGGER.warning(
+                "Ignoring weather connectivity command result topic/payload mismatch topic=%s payloadThing=%s",
+                topic,
+                result.thing_name,
+            )
+            return
+        await self.apply_connectivity_command_result(result)
+
+    async def apply_connectivity_command_result(self, result: ConnectivityCommandResult) -> None:
+        device = self._devices.get(result.thing_name)
+        if device is None:
+            LOGGER.debug(
+                "Ignoring command result for unmanaged weather thing=%s",
+                result.thing_name,
+            )
+            return
+        if result.status == COMMAND_ACCEPTED:
+            return
+        async with device.operation_lock:
+            target_redcon = device.pending_command_targets.pop(result.command_id, None)
+            if result.status == COMMAND_FAILED and target_redcon == device.target_redcon:
+                device.target_redcon = None
+            device.last_command_result = WeatherCommandResultReport(
+                command_id=result.command_id,
+                status=result.status,
+                target_redcon=target_redcon,
+                message=result.message,
+                observed_at_ms=result.observed_at_ms,
+                seq=result.seq,
+            )
+            LOGGER.info(
+                "Received weather connectivity command result thing=%s commandId=%s status=%s targetRedcon=%s seq=%s",
+                device.thing_name,
+                result.command_id,
+                result.status,
+                target_redcon if target_redcon is not None else "-",
+                result.seq,
+            )
+            if not device.born or device.mqtt_session is None:
+                return
+            try:
+                await self.publish_device_data(device)
+            except Exception as err:
+                await self._handle_device_session_error(
+                    device,
+                    device.mqtt_session,
+                    action="publish command result",
+                    error=err,
+                )
+
     async def publish_device_birth(self, device: WeatherManagedDevice) -> None:
         session = self._ensure_session(device)
         await session.publish_birth_payload(
@@ -365,7 +447,10 @@ class WeatherSparkplugManager:
         return encode_payload(
             Payload(
                 timestamp=utc_timestamp_ms(),
-                metrics=_weather_report_metrics(device.redcon, state),
+                metrics=(
+                    _weather_report_metrics(device.redcon, state)
+                    + _weather_command_result_metrics(device.last_command_result)
+                ),
                 seq=seq,
             )
         )
@@ -493,6 +578,11 @@ class WeatherSparkplugManager:
             else WEATHER_IDLE_REDCON
         )
         issued_at_ms = utc_timestamp_ms()
+        if command.seq is None:
+            command_seq = self._next_command_seq()
+        else:
+            command_seq = command.seq
+            self._command_seq = max(self._command_seq, command_seq + 1)
         connectivity_command = ConnectivityCommand(
             command_id=str(uuid4()),
             thing_name=device.thing_name,
@@ -500,7 +590,7 @@ class WeatherSparkplugManager:
             reason=f"redcon={command.value}",
             issued_at_ms=issued_at_ms,
             deadline_ms=issued_at_ms + WEATHER_COMMAND_DEADLINE_MS,
-            seq=self._next_command_seq(),
+            seq=command_seq,
         )
         LOGGER.info(
             "Received weather Sparkplug DCMD.redcon=%s thing=%s targetRedcon=%s commandId=%s",
@@ -511,6 +601,7 @@ class WeatherSparkplugManager:
         )
         async with device.operation_lock:
             device.target_redcon = target_redcon
+            device.pending_command_targets[connectivity_command.command_id] = target_redcon
             await self._bus.publish(
                 build_command_topic(device.thing_name),
                 connectivity_command.to_json(),
@@ -540,6 +631,52 @@ def _weather_report_metrics(
             )
         )
     metrics.extend(_weather_metrics(state))
+    return tuple(metrics)
+
+
+def _weather_command_result_metrics(
+    command_result: WeatherCommandResultReport | None,
+) -> tuple[Metric, ...]:
+    if command_result is None:
+        return ()
+    metrics = [
+        Metric(
+            name="redconCommandStatus",
+            datatype=DataType.STRING,
+            string_value=command_result.status,
+        ),
+        Metric(
+            name="redconCommandSeq",
+            datatype=DataType.INT32,
+            int_value=command_result.seq,
+        ),
+        Metric(
+            name="redconCommandObservedAt",
+            datatype=DataType.UINT64,
+            long_value=command_result.observed_at_ms,
+        ),
+        Metric(
+            name="redconCommandId",
+            datatype=DataType.STRING,
+            string_value=command_result.command_id,
+        ),
+    ]
+    if command_result.target_redcon is not None:
+        metrics.append(
+            Metric(
+                name="redconCommandTarget",
+                datatype=DataType.INT32,
+                int_value=command_result.target_redcon,
+            )
+        )
+    if command_result.message:
+        metrics.append(
+            Metric(
+                name="redconCommandMessage",
+                datatype=DataType.STRING,
+                string_value=command_result.message,
+            )
+        )
     return tuple(metrics)
 
 
