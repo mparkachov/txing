@@ -90,6 +90,27 @@ class FailingClient:
         self.disconnect_count += 1
 
 
+class SlowConnectClient:
+    instances: list[SlowConnectClient] = []
+
+    def __init__(self, _device: FakeDevice) -> None:
+        self.is_connected = False
+        self.connect_kwargs: dict[str, object] | None = None
+        self.cancelled = False
+        self.instances.append(self)
+
+    async def connect(self, **kwargs: object) -> None:
+        self.connect_kwargs = kwargs
+        try:
+            await asyncio.sleep(30.0)
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
+
+    async def disconnect(self) -> None:
+        self.is_connected = False
+
+
 def _weather_advertisement(
     thing_name: str,
     *,
@@ -133,6 +154,7 @@ class WeatherBleDeviceSessionTests(unittest.TestCase):
     def setUp(self) -> None:
         FakeClient.instances.clear()
         FailingClient.instances.clear()
+        SlowConnectClient.instances.clear()
 
     def test_matches_by_thing_name_and_publishes_online_idle_state(self) -> None:
         async def exercise() -> ConnectivityState:
@@ -286,6 +308,43 @@ class WeatherBleDeviceSessionTests(unittest.TestCase):
         self.assertEqual(client.disconnect_count, 0)
         self.assertEqual(client.connect_kwargs, {"dangerous_use_bleak_cache": True})
         self.assertIn("BleakError", logs.output[0])
+
+    def test_slow_connect_is_limited_by_configured_timeout(self) -> None:
+        async def exercise() -> tuple[list[ConnectivityState], SlowConnectClient]:
+            bus = InMemoryLocalPubSub()
+            received: list[bytes] = []
+            await bus.subscribe(build_state_topic("weather-1"), lambda _t, p: received.append(p))
+
+            session = WeatherBleDeviceSession(
+                thing_name="weather-1",
+                config=WeatherBleConfig(
+                    scan_timeout=0.2,
+                    reconnect_delay=30.0,
+                    connect_timeout=0.01,
+                ),
+                bus=bus,
+                client_factory=SlowConnectClient,  # type: ignore[arg-type]
+            )
+            task = asyncio.create_task(session.run())
+            session.observe_advertisement(_weather_advertisement("weather-1"))
+
+            async def wait_for_connect_timeout() -> None:
+                while not SlowConnectClient.instances or not SlowConnectClient.instances[0].cancelled:
+                    await asyncio.sleep(0)
+
+            await asyncio.wait_for(wait_for_connect_timeout(), timeout=1.0)
+            session.stop()
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            return [ConnectivityState.from_payload(payload) for payload in received], SlowConnectClient.instances[0]
+
+        with self.assertLogs("weather_rig.connectivity_ble", level="WARNING") as logs:
+            states, client = asyncio.run(exercise())
+
+        self.assertTrue(states[0].reachable)
+        self.assertEqual(client.connect_kwargs, {"dangerous_use_bleak_cache": True})
+        self.assertTrue(client.cancelled)
+        self.assertIn("TimeoutError", "\n".join(logs.output))
 
     def test_missing_advertisement_publishes_offline_presence(self) -> None:
         async def exercise() -> ConnectivityState:

@@ -1308,6 +1308,7 @@ aws_shared_credentials_file := ""
     ComponentConfiguration:
       DefaultConfiguration:
         AdapterId: weather-ble-main
+        ConnectTimeout: 8.0
         accessControl:
           aws.greengrass.ipc.pubsub:
             $weather_connectivity_component:pubsub:1:
@@ -1337,7 +1338,7 @@ aws_shared_credentials_file := ""
               export TXING_DEVICE_DIR="{artifacts:path}/devices/weather"
               export TXING_DEVICE_MANIFEST="{artifacts:path}/devices/weather/manifest.toml"
               export PYTHONPATH="{artifacts:path}/python"
-              exec python3 -m weather_rig.connectivity_ble --adapter-id "{configuration:/AdapterId}"
+              exec python3 -m weather_rig.connectivity_ble --adapter-id "{configuration:/AdapterId}" --connect-timeout "{configuration:/ConnectTimeout}"
         Artifacts:
           - Uri: "s3://txing-local-greengrass/txing-local-artifact.txt"
             Unarchive: "NONE"

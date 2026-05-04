@@ -321,6 +321,61 @@ def _update_named_shadow(thing_name: str, payload: dict[str, Any]) -> None:
     )
 
 
+def _read_named_shadow(thing_name: str) -> dict[str, Any] | None:
+    try:
+        response = _iot_data_client().get_thing_shadow(
+            thingName=thing_name,
+            shadowName="sparkplug",
+        )
+    except Exception as err:
+        LOGGER.warning("Unable to read sparkplug shadow thing=%s: %s", thing_name, err)
+        return None
+    payload = response.get("payload")
+    if hasattr(payload, "read"):
+        payload = payload.read()
+    if isinstance(payload, str):
+        raw_payload = payload.encode("utf-8")
+    elif isinstance(payload, bytes | bytearray):
+        raw_payload = bytes(payload)
+    else:
+        return None
+    try:
+        decoded = json.loads(raw_payload)
+    except (TypeError, ValueError):
+        return None
+    return decoded if isinstance(decoded, dict) else None
+
+
+def _reported_metrics_from_shadow(shadow: dict[str, Any] | None) -> dict[str, Any] | None:
+    if shadow is None:
+        return None
+    state = shadow.get("state")
+    if not isinstance(state, dict):
+        return None
+    reported = state.get("reported")
+    if not isinstance(reported, dict):
+        return None
+    payload = reported.get("payload")
+    if not isinstance(payload, dict):
+        return None
+    metrics = payload.get("metrics")
+    return metrics if isinstance(metrics, dict) else None
+
+
+def _metric_patch_is_noop(current: dict[str, Any], patch: dict[str, Any]) -> bool:
+    for key, value in patch.items():
+        current_value = current.get(key)
+        if isinstance(value, dict):
+            if not isinstance(current_value, dict):
+                return False
+            if not _metric_patch_is_noop(current_value, value):
+                return False
+            continue
+        if current_value != value:
+            return False
+    return True
+
+
 def _replace_metrics(thing_name: str, reported_payload: dict[str, Any]) -> None:
     _update_named_shadow(
         thing_name,
@@ -338,6 +393,15 @@ def _replace_metrics(thing_name: str, reported_payload: dict[str, Any]) -> None:
 
 
 def _merge_metrics(thing_name: str, reported_payload: dict[str, Any]) -> None:
+    patch_metrics = reported_payload.get("payload", {}).get("metrics")
+    current_metrics = _reported_metrics_from_shadow(_read_named_shadow(thing_name))
+    if (
+        isinstance(patch_metrics, dict)
+        and current_metrics is not None
+        and _metric_patch_is_noop(current_metrics, patch_metrics)
+    ):
+        LOGGER.debug("Skipping unchanged Sparkplug metric shadow merge thing=%s", thing_name)
+        return
     _update_named_shadow(thing_name, {"state": {"reported": reported_payload}})
 
 

@@ -55,7 +55,9 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("TxingSparkplugWitnessTopicRule", template)
         self.assertIn("TxingSparkplugWitnessInvokePermission", template)
         self.assertIn("sparkplug-witness", template)
-        self.assertIn("iot:GetThingShadow", template)
+        self.assertIn("Sid: WitnessShadowUpdate", template)
+        self.assertIn("- iot:GetThingShadow", template)
+        self.assertIn("- iot:UpdateThingShadow", template)
         self.assertIn("Sid: WitnessDescribeThings", template)
         self.assertIn("Action: iot:DescribeThing", template)
 

@@ -853,6 +853,8 @@ class AwsShadowClientTests(unittest.TestCase):
         )
         self.assertIn('--add-component "$sparkplug_component=$resolved_component_version"', justfile)
         self.assertIn('--add-component "$connectivity_component=$resolved_component_version"', justfile)
+        self.assertIn("ConnectTimeout: 8.0", justfile)
+        self.assertIn('--connect-timeout "{configuration:/ConnectTimeout}"', justfile)
         self.assertIn('--remove-component "$legacy_component"', justfile)
         self.assertIn('deployed_units=("ggl.$sparkplug_component.service" "ggl.$connectivity_component.service")', justfile)
         self.assertIn('core_sockets=({{greengrass_core_sockets}})', justfile)
@@ -916,12 +918,21 @@ class AwsShadowClientTests(unittest.TestCase):
             / "recipes"
             / "dev.txing.device.unit.ConnectivityBle-0.6.0.yaml"
         ).read_text(encoding="utf-8")
+        weather_ble_recipe = (
+            repo_root
+            / "rig"
+            / "greengrass"
+            / "recipes"
+            / "dev.txing.device.weather.ConnectivityBle-0.6.0.yaml"
+        ).read_text(encoding="utf-8")
         self.assertIn("runtime: aws_nucleus_lite", sparkplug_recipe)
         self.assertIn("runtime: aws_nucleus_lite", ble_recipe)
         self.assertIn('export PYTHONPATH="{artifacts:decompressedPath}/rig-greengrass/python"', sparkplug_recipe)
         self.assertIn("exec python3 -m unit_rig.sparkplug_manager", sparkplug_recipe)
         self.assertIn('export PYTHONPATH="{artifacts:decompressedPath}/rig-greengrass/python"', ble_recipe)
         self.assertIn("exec python3 -m unit_rig.connectivity_ble", ble_recipe)
+        self.assertIn("ConnectTimeout: 8.0", weather_ble_recipe)
+        self.assertIn('--connect-timeout "{configuration:/ConnectTimeout}"', weather_ble_recipe)
         self.assertNotIn("pip install", sparkplug_recipe)
         self.assertNotIn("pip install", ble_recipe)
 

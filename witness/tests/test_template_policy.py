@@ -27,7 +27,9 @@ class WitnessTemplatePolicyTests(unittest.TestCase):
         self.assertIn("iot:SearchIndex", template)
         self.assertIn("iot:DescribeThing", template)
         self.assertIn("WitnessDescribeThings", template)
-        self.assertIn("iot:UpdateThingShadow", template)
+        self.assertIn("Sid: WitnessShadowUpdate", template)
+        self.assertIn("- iot:GetThingShadow", template)
+        self.assertIn("- iot:UpdateThingShadow", template)
         self.assertIn("iot:DescribeEndpoint", template)
 
 

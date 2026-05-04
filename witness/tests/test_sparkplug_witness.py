@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import struct
 import unittest
 from unittest.mock import patch
@@ -86,6 +87,33 @@ def _encode_payload(
         payload.extend(_encode_key(3, 0))
         payload.extend(_encode_varint(seq))
     return base64.b64encode(bytes(payload)).decode("ascii")
+
+
+class FakeIotDataClient:
+    def __init__(self, shadow: dict[str, object] | None = None) -> None:
+        self.shadow = shadow
+        self.update_calls: list[tuple[str, str, dict[str, object]]] = []
+
+    def get_thing_shadow(self, *, thingName: str, shadowName: str) -> dict[str, bytes]:
+        del thingName, shadowName
+        if self.shadow is None:
+            raise RuntimeError("shadow not found")
+        return {"payload": json.dumps(self.shadow).encode("utf-8")}
+
+    def update_thing_shadow(
+        self,
+        *,
+        thingName: str,
+        shadowName: str,
+        payload: bytes,
+    ) -> None:
+        self.update_calls.append(
+            (
+                thingName,
+                shadowName,
+                json.loads(payload),
+            )
+        )
 
 
 class SparkplugWitnessTests(unittest.TestCase):
@@ -360,6 +388,77 @@ class SparkplugWitnessTests(unittest.TestCase):
                 },
             },
         )
+
+    def test_project_device_data_skips_shadow_update_when_metrics_are_unchanged(self) -> None:
+        encoded_payload = _encode_payload(
+            timestamp=1710000030000,
+            seq=8,
+            metrics=[_encode_metric(name="redcon", int_value=4)],
+        )
+        message = decode_sparkplug_payload(
+            encoded_payload,
+            "spBv1.0/town/DDATA/rig/weather-1",
+        )
+        fake_iot_data = FakeIotDataClient(
+            {
+                "state": {
+                    "reported": {
+                        "payload": {
+                            "metrics": {
+                                "redcon": 4,
+                            }
+                        }
+                    }
+                }
+            }
+        )
+
+        assert message is not None
+        with patch("witness.sparkplug_witness._resolve_thing_name", return_value="weather-1"), patch(
+            "witness.sparkplug_witness._iot_data_client",
+            return_value=fake_iot_data,
+        ):
+            projected_thing_name = project_sparkplug_message(message, 1710000030999)
+
+        self.assertEqual(projected_thing_name, "weather-1")
+        self.assertEqual(fake_iot_data.update_calls, [])
+
+    def test_project_device_data_updates_shadow_when_metric_changes(self) -> None:
+        encoded_payload = _encode_payload(
+            timestamp=1710000030000,
+            seq=8,
+            metrics=[_encode_metric(name="redcon", int_value=3)],
+        )
+        message = decode_sparkplug_payload(
+            encoded_payload,
+            "spBv1.0/town/DDATA/rig/weather-1",
+        )
+        fake_iot_data = FakeIotDataClient(
+            {
+                "state": {
+                    "reported": {
+                        "payload": {
+                            "metrics": {
+                                "redcon": 4,
+                            }
+                        }
+                    }
+                }
+            }
+        )
+
+        assert message is not None
+        with patch("witness.sparkplug_witness._resolve_thing_name", return_value="weather-1"), patch(
+            "witness.sparkplug_witness._iot_data_client",
+            return_value=fake_iot_data,
+        ):
+            projected_thing_name = project_sparkplug_message(message, 1710000030999)
+
+        self.assertEqual(projected_thing_name, "weather-1")
+        self.assertEqual(len(fake_iot_data.update_calls), 1)
+        thing_name, shadow_name, payload = fake_iot_data.update_calls[0]
+        self.assertEqual((thing_name, shadow_name), ("weather-1", "sparkplug"))
+        self.assertEqual(payload["state"]["reported"]["payload"]["metrics"]["redcon"], 3)
 
     def test_project_device_death_replaces_metrics_with_death_payload(self) -> None:
         encoded_payload = _encode_payload(

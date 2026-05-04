@@ -357,9 +357,10 @@ class WeatherBleDeviceSession:
         connected = False
         try:
             LOGGER.info(
-                "Connecting weather BLE thing=%s address=%s",
+                "Connecting weather BLE thing=%s address=%s timeout=%.1fs",
                 self.thing_name,
                 _device_address(device) or "-",
+                self._config.connect_timeout,
             )
             await _client_connect(client, timeout=self._config.connect_timeout)
             connected = True
@@ -864,6 +865,16 @@ def main() -> None:
         command_timeout=args.command_timeout,
         state_report_interval=args.state_report_interval,
         no_ble=args.no_ble,
+    )
+    LOGGER.info(
+        "Starting weather BLE adapter adapterId=%s scanTimeout=%.1fs reconnectDelay=%.1fs connectTimeout=%.1fs commandTimeout=%.1fs stateReportInterval=%.1fs noBle=%s",
+        config.adapter_id,
+        config.scan_timeout,
+        config.reconnect_delay,
+        config.connect_timeout,
+        config.command_timeout,
+        config.state_report_interval,
+        config.no_ble,
     )
 
     async def _runner() -> None:

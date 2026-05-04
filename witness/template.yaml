@@ -31,7 +31,9 @@ Resources:
             Statement:
               - Sid: WitnessShadowUpdate
                 Effect: Allow
-                Action: iot:UpdateThingShadow
+                Action:
+                  - iot:GetThingShadow
+                  - iot:UpdateThingShadow
                 Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/*
               - Sid: WitnessSearchIndex
                 Effect: Allow
