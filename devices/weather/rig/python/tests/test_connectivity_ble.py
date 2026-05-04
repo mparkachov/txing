@@ -209,18 +209,18 @@ class WeatherBleDeviceSessionTests(unittest.TestCase):
             )
             task = asyncio.create_task(session.run())
             session.observe_advertisement(_weather_advertisement("weather-1", seq=1))
-            while len(received) < 2:
+            while len(received) < 3:
                 await asyncio.sleep(0)
             session.stop()
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
-            return [ConnectivityState.from_payload(payload) for payload in received[:2]]
+            return [ConnectivityState.from_payload(payload) for payload in received[:3]]
 
         states = asyncio.run(exercise())
 
-        self.assertEqual([state.seq for state in states], [1, 2])
+        self.assertEqual([state.seq for state in states], [1, 2, 3])
         self.assertTrue(all(state.reachable for state in states))
-        self.assertEqual(states[1].battery_mv, 3300)
+        self.assertEqual(states[2].battery_mv, 3300)
 
     def test_connected_session_refreshes_online_state_while_idle(self) -> None:
         async def exercise() -> list[ConnectivityState]:
@@ -242,22 +242,22 @@ class WeatherBleDeviceSessionTests(unittest.TestCase):
             session.observe_advertisement(_weather_advertisement("weather-1", seq=1))
 
             async def wait_for_reports() -> None:
-                while len(received) < 3:
+                while len(received) < 4:
                     await asyncio.sleep(0.001)
 
             await asyncio.wait_for(wait_for_reports(), timeout=1.0)
             session.stop()
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
-            return [ConnectivityState.from_payload(payload) for payload in received[:3]]
+            return [ConnectivityState.from_payload(payload) for payload in received[:4]]
 
         states = asyncio.run(exercise())
 
-        self.assertEqual([state.seq for state in states], [1, 2, 3])
+        self.assertEqual([state.seq for state in states], [1, 2, 3, 4])
         self.assertTrue(all(state.reachable for state in states))
         self.assertEqual(states[-1].battery_mv, 3300)
 
-    def test_failed_connect_publishes_one_offline_without_extra_disconnect(self) -> None:
+    def test_failed_connect_keeps_advertising_presence_without_extra_disconnect(self) -> None:
         async def exercise() -> tuple[list[ConnectivityState], FailingClient]:
             bus = InMemoryLocalPubSub()
             received: list[bytes] = []
@@ -271,7 +271,7 @@ class WeatherBleDeviceSessionTests(unittest.TestCase):
             )
             task = asyncio.create_task(session.run())
             session.observe_advertisement(_weather_advertisement("weather-1"))
-            while not received:
+            while not received or not FailingClient.instances or FailingClient.instances[0].connect_kwargs is None:
                 await asyncio.sleep(0)
             session.stop()
             task.cancel()
@@ -282,10 +282,34 @@ class WeatherBleDeviceSessionTests(unittest.TestCase):
             states, client = asyncio.run(exercise())
 
         self.assertEqual(len(states), 1)
-        self.assertFalse(states[0].reachable)
+        self.assertTrue(states[0].reachable)
         self.assertEqual(client.disconnect_count, 0)
         self.assertEqual(client.connect_kwargs, {"dangerous_use_bleak_cache": True})
         self.assertIn("BleakError", logs.output[0])
+
+    def test_missing_advertisement_publishes_offline_presence(self) -> None:
+        async def exercise() -> ConnectivityState:
+            bus = InMemoryLocalPubSub()
+            received: list[bytes] = []
+            await bus.subscribe(build_state_topic("weather-1"), lambda _t, p: received.append(p))
+
+            session = WeatherBleDeviceSession(
+                thing_name="weather-1",
+                config=WeatherBleConfig(scan_timeout=0.01, reconnect_delay=30.0),
+                bus=bus,
+                client_factory=FakeClient,  # type: ignore[arg-type]
+            )
+            task = asyncio.create_task(session.run())
+            while not received:
+                await asyncio.sleep(0)
+            session.stop()
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            return ConnectivityState.from_payload(received[0])
+
+        state = asyncio.run(exercise())
+
+        self.assertFalse(state.reachable)
 
     def test_command_writes_gatt_and_publishes_success(self) -> None:
         async def exercise() -> tuple[list[ConnectivityCommandResult], list[tuple[str, bytes, bool]]]:

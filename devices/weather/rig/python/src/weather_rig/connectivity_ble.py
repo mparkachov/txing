@@ -51,7 +51,7 @@ DEFAULT_ADAPTER_ID = "weather-ble-main"
 WEATHER_INVENTORY_ADAPTER_ID = "weather-sparkplug-manager"
 DEFAULT_SCAN_TIMEOUT = 8.0
 DEFAULT_RECONNECT_DELAY = 2.0
-DEFAULT_CONNECT_TIMEOUT = 20.0
+DEFAULT_CONNECT_TIMEOUT = 8.0
 DEFAULT_COMMAND_TIMEOUT = 8.0
 DEFAULT_HEARTBEAT_INTERVAL = 10.0
 DEFAULT_STATE_REPORT_INTERVAL = 30.0
@@ -224,6 +224,7 @@ class WeatherBleDeviceSession:
                     )
                     await _sleep_until_stop(self._stop_event, self._config.reconnect_delay)
                     continue
+                await self._publish_state_report(self._last_state)
                 await self._run_connected(device)
             except asyncio.CancelledError:
                 raise
@@ -246,13 +247,14 @@ class WeatherBleDeviceSession:
                         type(err).__name__,
                         self._config.reconnect_delay,
                     )
-                await self._publish_connectivity(
-                    presence=PRESENCE_OFFLINE,
-                    control_availability=CONTROL_UNAVAILABLE,
-                    power=False,
-                    weather=None,
-                    battery_mv=None,
-                )
+                if not self._last_advertisement_is_fresh():
+                    await self._publish_connectivity(
+                        presence=PRESENCE_OFFLINE,
+                        control_availability=CONTROL_UNAVAILABLE,
+                        power=False,
+                        weather=None,
+                        battery_mv=None,
+                    )
                 await _sleep_until_stop(self._stop_event, self._config.reconnect_delay)
 
     async def _run_advertising_presence(self, device: Any) -> None:
@@ -313,10 +315,8 @@ class WeatherBleDeviceSession:
         deadline = asyncio.get_running_loop().time() + self._config.scan_timeout
         while not self._stop_event.is_set():
             advertisement = self._last_advertisement
-            if advertisement is not None and _advertisement_is_fresh(
-                advertisement,
-                max_age_ms=max(int(self._config.scan_timeout * 1000), 1000),
-            ):
+            if self._last_advertisement_is_fresh():
+                assert advertisement is not None
                 self._ble_address = advertisement.address
                 return _DiscoveredWeatherDevice(
                     name=self.thing_name,
@@ -343,6 +343,13 @@ class WeatherBleDeviceSession:
             self._config.scan_timeout,
             self._last_advertisement.address if self._last_advertisement else "-",
             self._last_advertisement.name if self._last_advertisement else "-",
+        )
+
+    def _last_advertisement_is_fresh(self) -> bool:
+        advertisement = self._last_advertisement
+        return advertisement is not None and _advertisement_is_fresh(
+            advertisement,
+            max_age_ms=max(int(self._config.scan_timeout * 1000), 1000),
         )
 
     async def _run_connected(self, device: Any) -> None:
@@ -390,13 +397,6 @@ class WeatherBleDeviceSession:
         finally:
             if connected:
                 await _client_disconnect(client)
-                await self._publish_connectivity(
-                    presence=PRESENCE_OFFLINE,
-                    control_availability=CONTROL_UNAVAILABLE,
-                    power=False,
-                    weather=None,
-                    battery_mv=self._last_state.battery_mv,
-                )
             else:
                 await _cleanup_client_after_failed_connect(client)
 

@@ -287,17 +287,25 @@ class WeatherSparkplugManager:
             return
         async with device.operation_lock:
             was_born = device.born
+            previous_state = device.last_state
+            previous_redcon = device.redcon
+            next_redcon = _weather_redcon_from_state(state)
             device.last_state = state
             device.last_reported_at_ms = state.observed_at_ms
             device.stale = False
-            device.redcon = _weather_redcon_from_state(state)
+            device.redcon = next_redcon
             if not state.reachable:
                 if was_born:
                     await self.publish_device_death(device)
                 return
             if not device.born:
                 await self.publish_device_birth(device)
-            else:
+            elif _weather_report_changed(
+                previous_redcon=previous_redcon,
+                previous_state=previous_state,
+                redcon=next_redcon,
+                state=state,
+            ):
                 await self.publish_device_data(device)
 
     async def publish_device_birth(self, device: WeatherManagedDevice) -> None:
@@ -466,6 +474,19 @@ def _weather_redcon_from_state(state: ConnectivityState | None) -> int:
     if state is None or not state.reachable:
         return WEATHER_IDLE_REDCON
     return WEATHER_ACTIVE_REDCON if state.power else WEATHER_IDLE_REDCON
+
+
+def _weather_report_changed(
+    *,
+    previous_redcon: int,
+    previous_state: ConnectivityState | None,
+    redcon: int,
+    state: ConnectivityState | None,
+) -> bool:
+    return _weather_report_metrics(previous_redcon, previous_state) != _weather_report_metrics(
+        redcon,
+        state,
+    )
 
 
 def _parse_weather_dcmd_topic(

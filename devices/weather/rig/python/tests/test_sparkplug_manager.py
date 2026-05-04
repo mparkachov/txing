@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import unittest
+from dataclasses import replace
 
 from rig.connectivity_protocol import (
     CONTROL_EVENTUAL,
@@ -208,6 +209,86 @@ class WeatherSparkplugManagerTests(unittest.TestCase):
 
         self.assertEqual(published[0][0], "spBv1.0/town/DBIRTH/server/weather-1")
         self.assertEqual(published[1][0], "spBv1.0/town/DDEATH/server/weather-1")
+
+    def test_unchanged_online_refresh_does_not_publish_ddata(self) -> None:
+        async def exercise() -> tuple[list[tuple[str, bytes]], int, bool]:
+            bus = InMemoryLocalPubSub()
+            manager = WeatherSparkplugManager(
+                WeatherSparkplugConfig(
+                    endpoint="endpoint",
+                    aws_region="eu-central-1",
+                    rig_name="server",
+                    sparkplug_group_id="town",
+                    sparkplug_edge_node_id="server",
+                ),
+                bus=bus,
+                aws_runtime=object(),
+                connection_factory=FakeConnection,
+            )
+            state = weather_state()
+            refreshed_state = replace(
+                state,
+                observed_at_ms=state.observed_at_ms + 30_000,
+                seq=state.seq + 1,
+            )
+            await manager.set_registrations([registration("weather-1")])
+            await manager.connect()
+            await manager.apply_connectivity_state(state)
+            await manager.apply_connectivity_state(refreshed_state)
+            assert manager._connection is not None
+            device = manager.devices["weather-1"]
+            return manager._connection.published, device.last_reported_at_ms, device.born
+
+        published, last_reported_at_ms, born = asyncio.run(exercise())
+
+        self.assertEqual(
+            [topic for topic, _payload in published],
+            ["spBv1.0/town/DBIRTH/server/weather-1"],
+        )
+        self.assertEqual(last_reported_at_ms, 1714380030000)
+        self.assertTrue(born)
+
+    def test_changed_weather_state_publishes_ddata(self) -> None:
+        async def exercise() -> list[tuple[str, bytes]]:
+            bus = InMemoryLocalPubSub()
+            manager = WeatherSparkplugManager(
+                WeatherSparkplugConfig(
+                    endpoint="endpoint",
+                    aws_region="eu-central-1",
+                    rig_name="server",
+                    sparkplug_group_id="town",
+                    sparkplug_edge_node_id="server",
+                ),
+                bus=bus,
+                aws_runtime=object(),
+                connection_factory=FakeConnection,
+            )
+            state = weather_state()
+            changed_state = replace(
+                state,
+                battery_mv=3513,
+                observed_at_ms=state.observed_at_ms + 30_000,
+                seq=state.seq + 1,
+            )
+            await manager.set_registrations([registration("weather-1")])
+            await manager.connect()
+            await manager.apply_connectivity_state(state)
+            await manager.apply_connectivity_state(changed_state)
+            assert manager._connection is not None
+            return manager._connection.published
+
+        published = asyncio.run(exercise())
+
+        self.assertEqual(
+            [topic for topic, _payload in published],
+            [
+                "spBv1.0/town/DBIRTH/server/weather-1",
+                "spBv1.0/town/DDATA/server/weather-1",
+            ],
+        )
+        ddata = decode_payload(published[1][1])
+        metrics = {metric.name: metric for metric in ddata.metrics}
+        self.assertEqual(metrics["batteryMv"].int_value, 3513)
 
     def test_ignores_non_weather_registrations(self) -> None:
         async def exercise() -> list[str]:
