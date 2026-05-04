@@ -382,6 +382,7 @@ mod time 'devices/time/justfile'
 mod weather 'devices/weather/justfile'
 mod web 'web/justfile'
 mod zephyr 'zephyr/justfile'
+mod common 'devices/common/justfile'
 
 @default:
     @just --list

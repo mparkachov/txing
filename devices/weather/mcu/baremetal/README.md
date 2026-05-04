@@ -15,32 +15,23 @@ image makes `btmon` or `bluetoothctl` show the AWS IoT Thing name, for example
 
 ## SDK
 
-Use Nordic's nRF Connect SDK Bare Metal workspace, not the Zephyr workspace
-under this repository:
+Use the repo-local nRF Connect SDK Bare Metal workspace:
 
 ```sh
-west init -m https://github.com/nrfconnect/sdk-nrf-bm --mr v2.0.0 ~/Downloads/nrf-bm-v2.0.0
-cd ~/Downloads/nrf-bm-v2.0.0
-west update
+just common::nrf_bm::install
 ```
 
-This workspace also uses a small tool venv for CMake and Ninja:
+It checks out Nordic's BM workspace under:
 
-```sh
-python3 -m venv ~/Downloads/nrf-bm-tools
-~/Downloads/nrf-bm-tools/bin/pip install 'cmake<4' ninja
+```text
+devices/common/mcu/nrf-bm/workspace
 ```
 
-Then build from this repository. `ZEPHYR_SDK_INSTALL_DIR` points at the Zephyr
-SDK already used by the repo's Zephyr workspace.
+Then build from this repository:
 
 ```sh
 cd /Users/Maxim/Developer/txing
-PATH="$HOME/Downloads/nrf-bm-tools/bin:$PWD/zephyr/.venv/bin:$PATH" \
-ZEPHYR_SDK_INSTALL_DIR="$PWD/zephyr/sdk/zephyr-sdk-0.17.4" \
-ZEPHYR_TOOLCHAIN_VARIANT=zephyr \
-NRF_BM_ROOT="$HOME/Downloads/nrf-bm-v2.0.0" \
-just --justfile devices/weather/mcu/justfile bm-check
+just weather::mcu::bm-check
 ```
 
 The provisional board target is:
@@ -55,9 +46,8 @@ used only to select the nRF54L15 CPU application core and S115 SoftDevice.
 
 ## Manual Flashing Only
 
-Agents must not flash this firmware. After a successful build, manually combine
-the application image with the S115 SoftDevice and the existing factory-data
-record as needed for the board programming flow.
+Agents must not flash this firmware. The application expects the existing
+`TXW1` factory-data record to remain in flash.
 
 Current build outputs:
 
@@ -66,8 +56,27 @@ Application HEX:
 devices/weather/mcu/build/baremetal-advertising/baremetal/zephyr/zephyr.hex
 
 S115 HEX:
-~/Downloads/nrf-bm-v2.0.0/nrf-bm/components/softdevice/nrf54l/s115/s115_nrf54l15_10.0.0_softdevice.hex
+devices/common/mcu/nrf-bm/workspace/nrf-bm/components/softdevice/nrf54l/s115/s115_nrf54l15_10.0.0_softdevice.hex
 ```
+
+Flash the application with the repo-local BM wrapper:
+
+```sh
+just weather::mcu::bm-flash-app
+```
+
+On a clean board, flash S115 first:
+
+```sh
+just weather::mcu::bm-flash-softdevice
+```
+
+The BM flash targets do not write the `TXW1` factory record. Preserve the
+existing record, or write it with the Zephyr-era flashing flow before using the
+advertising-only BM image on a clean board.
+
+Agents must not run flash targets. Use them only manually with the intended
+board connected.
 
 After manual flashing, check advertising with:
 

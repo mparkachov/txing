@@ -1,0 +1,35 @@
+set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+set quiet := true
+
+nrf_bm_dir := source_directory()
+python_executable := env_var_or_default("TXING_NRF_BM_PYTHON", "python3.13")
+uv_cache_dir := nrf_bm_dir + "/.uv-cache"
+toolchain_script := nrf_bm_dir + "/scripts/toolchain.py"
+
+@sync:
+    cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{uv_cache_dir}}" uv sync --python "{{python_executable}}" --no-managed-python --no-python-downloads
+
+@install:
+    cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{uv_cache_dir}}" uv sync --python "{{python_executable}}" --no-managed-python --no-python-downloads
+    cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{uv_cache_dir}}" uv run --project "{{nrf_bm_dir}}" --no-sync python "{{toolchain_script}}" install
+
+@check:
+    cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{uv_cache_dir}}" uv run --project "{{nrf_bm_dir}}" --no-sync python "{{toolchain_script}}" check
+
+@build-weather-advertising:
+    cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{uv_cache_dir}}" uv run --project "{{nrf_bm_dir}}" --no-sync python "{{toolchain_script}}" build-weather-advertising
+
+@flash-weather-advertising:
+    cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{uv_cache_dir}}" uv run --project "{{nrf_bm_dir}}" --no-sync python "{{toolchain_script}}" flash-weather-advertising
+
+@flash-weather-softdevice:
+    cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{uv_cache_dir}}" uv run --project "{{nrf_bm_dir}}" --no-sync python "{{toolchain_script}}" flash-weather-softdevice
+
+@paths:
+    cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{uv_cache_dir}}" uv run --project "{{nrf_bm_dir}}" --no-sync python "{{toolchain_script}}" paths
+
+@clean-build:
+    rm -rf "{{nrf_bm_dir}}/../../../weather/mcu/build/baremetal-advertising"
+
+@default:
+    @just --list

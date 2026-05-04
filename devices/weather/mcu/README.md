@@ -53,11 +53,20 @@ GATT service, BME280, or sleep-state rendezvous cycle.
 Build it with Nordic's `sdk-nrf-bm` workspace:
 
 ```sh
-PATH="$HOME/Downloads/nrf-bm-tools/bin:$PWD/zephyr/.venv/bin:$PATH" \
-ZEPHYR_SDK_INSTALL_DIR="$PWD/zephyr/sdk/zephyr-sdk-0.17.4" \
-ZEPHYR_TOOLCHAIN_VARIANT=zephyr \
-NRF_BM_ROOT="$HOME/Downloads/nrf-bm-v2.0.0" \
-just --justfile devices/weather/mcu/justfile bm-check
+just common::nrf_bm::install
+just weather::mcu::bm-check
 ```
 
-Do not flash from automation; use the generated artifacts manually.
+Manual flashing uses the repo-local OpenOCD config:
+
+```sh
+just weather::mcu::bm-flash-softdevice  # clean board only
+just weather::mcu::bm-flash-app
+```
+
+The BM flash targets do not write the `TXW1` factory record. Preserve the
+existing record, or write it with the Zephyr-era flashing flow before using the
+advertising-only BM image on a clean board.
+
+Agents must not run flash targets. Use them only manually with the intended
+board connected.
