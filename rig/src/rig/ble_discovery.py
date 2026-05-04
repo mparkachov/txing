@@ -12,7 +12,13 @@ try:
 except ImportError:  # pragma: no cover - startup validation covers real deployments
     BleakScanner = None
 
-from rig.connectivity_protocol import BleAdvertisement, build_ble_advertisement_topic
+from rig.connectivity_protocol import (
+    INVENTORY_TOPIC,
+    TRANSPORT_BLE_GATT,
+    BleAdvertisement,
+    ConnectivityInventory,
+    build_ble_advertisement_topic,
+)
 from rig.local_pubsub import GreengrassLocalPubSub, LocalPubSub
 from rig.sparkplug import utc_timestamp_ms
 
@@ -21,15 +27,7 @@ LOGGER = logging.getLogger("rig.ble_discovery")
 DEFAULT_ADAPTER_ID = "shared-ble-scanner"
 DEFAULT_SCAN_MODE = "active"
 DEFAULT_RESTART_DELAY = 2.0
-DEFAULT_PUBLISH_INTERVAL = 0.5
-TXING_UNIT_SERVICE_UUID = "f6b4a000-7b32-4d2d-9f4b-4ff0a2b8f100"
-TXING_WEATHER_SERVICE_UUID = "f6b4b000-7b32-4d2d-9f4b-4ff0a2b8f100"
-TXING_SERVICE_UUIDS = {
-    TXING_UNIT_SERVICE_UUID,
-    TXING_WEATHER_SERVICE_UUID,
-}
-TXING_MFG_ID = "65535"
-TXING_MFG_MAGIC_HEX = "5458"
+DEFAULT_PUBLISH_INTERVAL = 2.0
 
 
 class BleDiscoveryService:
@@ -53,7 +51,9 @@ class BleDiscoveryService:
         self._scanner_factory = scanner_factory or _default_scanner_factory
         self._stop_event = asyncio.Event()
         self._publish_tasks: set[asyncio.Task[None]] = set()
-        self._last_publish_by_address: dict[str, float] = {}
+        self._last_publish_by_key: dict[str, float] = {}
+        self._target_addresses: set[str] = set()
+        self._target_names: set[str] = set()
         self._seq = 0
         self._loop: asyncio.AbstractEventLoop | None = None
 
@@ -62,30 +62,64 @@ class BleDiscoveryService:
 
     async def run(self) -> None:
         self._loop = asyncio.get_running_loop()
-        while not self._stop_event.is_set():
-            scanner: Any | None = None
-            try:
-                scanner = self._scanner_factory(
-                    detection_callback=self._handle_detection,
-                    scanning_mode=self._scan_mode,
-                    bluez={"filters": {"DuplicateData": True}},
-                )
-                await _maybe_await(scanner.start())
-                LOGGER.info("Started shared BLE discovery scanner mode=%s", self._scan_mode)
-                await self._stop_event.wait()
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                LOGGER.exception(
-                    "Shared BLE discovery scanner failed; retrying in %.1f seconds",
-                    self._restart_delay,
-                )
-                await _sleep_until_stop(self._stop_event, self._restart_delay)
-            finally:
-                if scanner is not None:
-                    await _stop_scanner(scanner)
+        inventory_subscription = await self._bus.subscribe(
+            INVENTORY_TOPIC,
+            self._handle_inventory,
+        )
+        try:
+            while not self._stop_event.is_set():
+                scanner: Any | None = None
+                try:
+                    scanner = self._scanner_factory(
+                        detection_callback=self._handle_detection,
+                        scanning_mode=self._scan_mode,
+                        bluez={"filters": {"DuplicateData": True}},
+                    )
+                    await _maybe_await(scanner.start())
+                    LOGGER.info("Started shared BLE discovery scanner mode=%s", self._scan_mode)
+                    await self._stop_event.wait()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    LOGGER.exception(
+                        "Shared BLE discovery scanner failed; retrying in %.1f seconds",
+                        self._restart_delay,
+                    )
+                    await _sleep_until_stop(self._stop_event, self._restart_delay)
+                finally:
+                    if scanner is not None:
+                        await _stop_scanner(scanner)
+        finally:
+            _close_resource(inventory_subscription)
+            await self._drain_publish_tasks()
 
-        await self._drain_publish_tasks()
+    async def _handle_inventory(self, _topic: str, payload: bytes) -> None:
+        try:
+            inventory = ConnectivityInventory.from_payload(payload)
+        except Exception as err:
+            LOGGER.warning("Invalid BLE discovery inventory ignored: %s", err)
+            return
+
+        target_addresses: set[str] = set()
+        target_names: set[str] = set()
+        for device in inventory.devices:
+            if device.transport != TRANSPORT_BLE_GATT:
+                continue
+            target_names.add(device.thing_name)
+            ble_device_id = device.native_identity.get("bleDeviceId")
+            if isinstance(ble_device_id, str) and ble_device_id.strip():
+                target_addresses.add(_normalize_address(ble_device_id))
+            ble_local_name = device.native_identity.get("bleLocalName")
+            if isinstance(ble_local_name, str) and ble_local_name.strip():
+                target_names.add(ble_local_name.strip())
+
+        self._target_addresses = target_addresses
+        self._target_names = target_names
+        self._last_publish_by_key = {
+            key: value
+            for key, value in self._last_publish_by_key.items()
+            if key in target_addresses or key in target_names
+        }
 
     def _handle_detection(self, device: Any, advertisement_data: Any) -> None:
         loop = self._loop
@@ -122,21 +156,34 @@ class BleDiscoveryService:
             observed_at_ms=utc_timestamp_ms(),
             seq=self._seq,
         )
-        if not self._publish_all and not _is_txing_candidate(advertisement):
+        publish_key = self._publish_key(advertisement)
+        if not self._publish_all and publish_key is None:
             return
         now = asyncio.get_running_loop().time()
-        last_publish = self._last_publish_by_address.get(address)
+        throttle_key = publish_key or _normalize_address(address)
+        last_publish = self._last_publish_by_key.get(throttle_key)
         if (
             last_publish is not None
             and self._publish_interval > 0
             and (now - last_publish) < self._publish_interval
         ):
             return
-        self._last_publish_by_address[address] = now
+        self._last_publish_by_key[throttle_key] = now
         await self._bus.publish(
             build_ble_advertisement_topic(address),
             advertisement.to_json(),
         )
+
+    def _publish_key(self, advertisement: BleAdvertisement) -> str | None:
+        address = _normalize_address(advertisement.address)
+        if address in self._target_addresses:
+            return address
+
+        name = advertisement.name
+        if name is not None and name in self._target_names:
+            return name
+
+        return None
 
     async def _drain_publish_tasks(self) -> None:
         if not self._publish_tasks:
@@ -217,21 +264,14 @@ def _service_data_payload(value: Any) -> dict[str, str]:
     return result
 
 
-def _is_txing_candidate(advertisement: BleAdvertisement) -> bool:
-    service_uuids = {uuid.lower() for uuid in advertisement.service_uuids}
-    if service_uuids & TXING_SERVICE_UUIDS:
-        return True
+def _normalize_address(address: str) -> str:
+    return address.strip().upper()
 
-    manufacturer_payload = advertisement.manufacturer_data.get(TXING_MFG_ID)
-    if manufacturer_payload is not None and manufacturer_payload.startswith(TXING_MFG_MAGIC_HEX):
-        return True
 
-    name = (advertisement.name or "").lower()
-    return (
-        "txing" in name
-        or name.startswith("weather-")
-        or name.startswith("unit-")
-    )
+def _close_resource(resource: object) -> None:
+    close = getattr(resource, "close", None)
+    if callable(close):
+        close()
 
 
 async def _sleep_until_stop(stop_event: asyncio.Event, delay: float) -> None:

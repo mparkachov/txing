@@ -8,15 +8,17 @@ ComponentConfiguration:
   DefaultConfiguration:
     AdapterId: shared-ble-scanner
     ScanMode: active
-    PublishInterval: 0.5
+    PublishInterval: 2.0
     accessControl:
       aws.greengrass.ipc.pubsub:
         dev.txing.rig.BleDiscovery:pubsub:1:
           policyDescription: Allows the shared BLE scanner to publish local advertisement state.
           operations:
             - aws.greengrass#PublishToTopic
+            - aws.greengrass#SubscribeToTopic
           resources:
             - dev/txing/rig/v1/ble/*
+            - dev/txing/rig/v1/connectivity/inventory
 Manifests:
   - Platform:
       os: linux

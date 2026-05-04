@@ -63,6 +63,7 @@ class BleDiscoveryServiceTests(unittest.TestCase):
             service = BleDiscoveryService(
                 bus=bus,
                 adapter_id="shared-ble-scanner",
+                publish_all=True,
                 scanner_factory=FakeScanner,
             )
             task = asyncio.create_task(service.run())
@@ -85,7 +86,7 @@ class BleDiscoveryServiceTests(unittest.TestCase):
             "01",
         )
 
-    def test_filters_non_txing_advertisements(self) -> None:
+    def test_ignores_advertisements_before_inventory_targets_are_known(self) -> None:
         async def exercise() -> int:
             bus = InMemoryLocalPubSub()
             payloads: list[bytes] = []
@@ -108,6 +109,22 @@ class BleDiscoveryServiceTests(unittest.TestCase):
 
         self.assertEqual(asyncio.run(exercise()), 0)
 
+    def test_publishes_matching_inventory_target(self) -> None:
+        async def exercise() -> int:
+            bus = InMemoryLocalPubSub()
+            payloads: list[bytes] = []
+            await bus.subscribe(
+                f"{BLE_ADVERTISEMENT_TOPIC_PREFIX}/+",
+                lambda _topic, payload: payloads.append(payload),
+            )
+            service = BleDiscoveryService(bus=bus)
+            service._loop = asyncio.get_running_loop()
+            service._target_names.add("weather-1")
+            await service._publish_detection(FakeDevice(), FakeAdvertisementData())
+            return len(payloads)
+
+        self.assertEqual(asyncio.run(exercise()), 1)
+
     def test_throttles_duplicate_advertisements_by_address(self) -> None:
         async def exercise() -> int:
             bus = InMemoryLocalPubSub()
@@ -118,6 +135,7 @@ class BleDiscoveryServiceTests(unittest.TestCase):
             )
             service = BleDiscoveryService(bus=bus, publish_interval=60.0)
             service._loop = asyncio.get_running_loop()
+            service._target_names.add("weather-1")
             device = FakeDevice()
             advertisement = FakeAdvertisementData()
             await service._publish_detection(device, advertisement)
