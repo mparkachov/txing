@@ -90,6 +90,9 @@ class TypeCatalogTests(unittest.TestCase):
         self.assertEqual(records["/txing/town/raspi/unit"]["rigType"], "raspi")
         self.assertEqual(records["/txing/town/raspi/weather"]["rigType"], "raspi")
         self.assertEqual(records["/txing/town/cloud/time"]["rigType"], "cloud")
+        self.assertEqual(records["/txing/town/raspi/unit"]["redconCommandLevels"], ["4", "3", "2", "1"])
+        self.assertEqual(records["/txing/town/raspi/weather"]["redconCommandLevels"], ["4", "3"])
+        self.assertEqual(records["/txing/town/cloud/time"]["redconCommandLevels"], ["4", "1"])
 
     def test_records_are_json_serializable(self) -> None:
         records = build_type_records(repo_root=REPO_ROOT)
@@ -128,6 +131,10 @@ class TypeCatalogTests(unittest.TestCase):
             "sparkplug",
         )
         self.assertEqual(
+            ssm.parameters["/txing/town/raspi/weather/redconCommandLevels"],
+            "4,3",
+        )
+        self.assertEqual(
             ssm.parameters["/txing/town/cloud/time/shadows/time/schema"],
             "aws/time-shadow.schema.json",
         )
@@ -160,6 +167,7 @@ class TypeCatalogTests(unittest.TestCase):
         self.assertNotIn("time", cloud_record)
         self.assertEqual(cloud_record["hostServices"], [])
         self.assertEqual(time_record["capabilities"], ["sparkplug", "mcp", "time"])
+        self.assertEqual(time_record["redconCommandLevels"], ["4", "1"])
         self.assertEqual(
             time_record["shadows"]["time"]["schema"],
             "aws/time-shadow.schema.json",

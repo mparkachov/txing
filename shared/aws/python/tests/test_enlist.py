@@ -311,6 +311,7 @@ class EnlistServiceTests(unittest.TestCase):
         self.assertEqual(result["attributes"]["deviceType"], "time")
         self.assertEqual(result["attributes"]["webAdapter"], "web/time-adapter.tsx")
         self.assertEqual(result["attributes"]["capabilities"], "sparkplug,mcp,time")
+        self.assertEqual(result["attributes"]["redconCommandLevels"], "4,1")
         self.assertEqual(result["initializedShadows"], ["sparkplug", "mcp", "time"])
         time_shadow = json.loads(self.runtime.iot_data.shadows[(result["thingName"], "time")])
         self.assertEqual(time_shadow["state"]["reported"]["mode"], "sleep")
@@ -322,6 +323,7 @@ class EnlistServiceTests(unittest.TestCase):
         result = self._enlist_device(raspi["thingName"], "unit", "bot")
 
         self.assertEqual(result["thingTypeName"], "unit")
+        self.assertEqual(result["attributes"]["redconCommandLevels"], "4,3,2,1")
         self.assertEqual(
             result["initializedShadows"],
             ["sparkplug", "mcu", "board", "mcp", "video"],
@@ -344,6 +346,7 @@ class EnlistServiceTests(unittest.TestCase):
         self.assertFalse(second["created"])
         self.assertEqual(second["initializedShadows"], [])
         self.assertEqual(second["attributes"]["webAdapter"], "web/time-adapter.tsx")
+        self.assertEqual(second["attributes"]["redconCommandLevels"], "4,1")
         self.assertEqual(len(self.runtime.iot_data.update_calls), update_count)
         self.assertEqual(
             self.runtime.iot_data.shadows[(thing_name, "mcp")],

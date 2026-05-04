@@ -6,6 +6,7 @@ import {
   getThingNamedShadowWithClient,
   listRigDevicesWithClient,
   listTownRigsWithClient,
+  parseRedconCommandLevels,
 } from '../src/catalog-api'
 
 type FakeResponse = Record<string, unknown>
@@ -335,6 +336,7 @@ describe('catalog api helpers', () => {
             shortId: 'a1',
             kind: 'deviceType',
             capabilities: 'sparkplug,sensor-data',
+            redconCommandLevels: '4,3',
           },
         },
       ],
@@ -351,6 +353,7 @@ describe('catalog api helpers', () => {
       rigName: null,
       shortId: 'a1',
       capabilities: ['sparkplug', 'sensor-data'],
+      redconCommandLevels: [4, 3],
     })
   })
 
@@ -392,7 +395,16 @@ describe('catalog api helpers', () => {
       rigName: 'alpha',
       shortId: 'a1',
       capabilities: ['sparkplug'],
+      redconCommandLevels: [],
     })
+  })
+
+  test('parses commandable REDCON levels from thing metadata attributes', () => {
+    expect(parseRedconCommandLevels('4,3')).toEqual([4, 3])
+    expect(parseRedconCommandLevels(null)).toEqual([])
+    expect(() => parseRedconCommandLevels('4, 3')).toThrow('malformed')
+    expect(() => parseRedconCommandLevels('4,5')).toThrow('invalid')
+    expect(() => parseRedconCommandLevels('3,3')).toThrow('duplicate')
   })
 
   test('reads a named sparkplug shadow document through the IoT data client', async () => {

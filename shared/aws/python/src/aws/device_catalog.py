@@ -104,6 +104,35 @@ def _require_text_list(
     return tuple(values)
 
 
+def _optional_redcon_command_levels(
+    payload: dict[str, Any],
+    key: str,
+    *,
+    manifest_file: Path,
+) -> tuple[int, ...]:
+    value = payload.get(key)
+    if value is None:
+        return ()
+    if not isinstance(value, list) or not value:
+        raise DeviceManifestError(
+            f"{manifest_file} field {key!r} must be a non-empty integer array when set"
+        )
+    levels: list[int] = []
+    seen: set[int] = set()
+    for item in value:
+        if not isinstance(item, int) or item < 1 or item > 4:
+            raise DeviceManifestError(
+                f"{manifest_file} field {key!r} must contain REDCON levels 1 through 4"
+            )
+        if item in seen:
+            raise DeviceManifestError(
+                f"{manifest_file} field {key!r} contains duplicate REDCON level {item}"
+            )
+        seen.add(item)
+        levels.append(item)
+    return tuple(levels)
+
+
 def _validate_capabilities(
     capabilities: tuple[str, ...],
     *,
@@ -182,6 +211,7 @@ class DeviceManifest:
     display_name: str
     capabilities: tuple[str, ...]
     compatible_rig_types: tuple[str, ...]
+    redcon_command_levels: tuple[int, ...]
     shadows: dict[str, DeviceShadowContract]
     rig_processes: tuple[RigProcessContract, ...]
     web: DeviceWebContract
@@ -334,6 +364,11 @@ def _load_manifest(
         "compatible_rig_types",
         manifest_file=manifest_file,
     )
+    redcon_command_levels = _optional_redcon_command_levels(
+        raw,
+        "redcon_command_levels",
+        manifest_file=manifest_file,
+    )
     shadows = _load_shadow_contracts(
         raw,
         manifest_file=manifest_file,
@@ -367,6 +402,7 @@ def _load_manifest(
         display_name=display_name,
         capabilities=capabilities,
         compatible_rig_types=compatible_rig_types,
+        redcon_command_levels=redcon_command_levels,
         shadows=shadows,
         rig_processes=rig_processes,
         web=web,

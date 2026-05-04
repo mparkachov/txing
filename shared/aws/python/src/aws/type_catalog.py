@@ -24,6 +24,7 @@ RECORD_KIND_VALUES = {"townType", "rigType", "deviceType"}
 LIST_LEAF_FIELDS = {
     "capabilities",
     "hostServices",
+    "redconCommandLevels",
     "requiredAttributes",
     "searchableAttributes",
 }
@@ -161,6 +162,9 @@ def _device_record(manifest: DeviceManifest, *, rig_type: str) -> dict[str, Any]
             "defaultName": manifest.device_name,
             "rigType": rig_type,
             "capabilities": list(manifest.capabilities),
+            "redconCommandLevels": [
+                str(level) for level in manifest.redcon_command_levels
+            ],
             "searchableAttributes": ["name", "townId", "rigId"],
             "requiredAttributes": [
                 "name",

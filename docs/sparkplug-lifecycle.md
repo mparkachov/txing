@@ -160,6 +160,11 @@ The born-state REDCON ladder is:
   - MCP is available
   - retained video status is ready and fresh
 
+Commandable REDCON levels are a txing type capability, exposed as the comma-separated
+`redconCommandLevels` thing attribute from each device manifest's `redcon_command_levels`.
+The UI still displays the current Sparkplug REDCON even when that level is not commandable,
+but it only enables switching to levels listed for the thing type.
+
 ## Convergence Behavior
 
 Rig receives target REDCON only through Sparkplug.

@@ -28,6 +28,7 @@ Resources:
         displayName: Bot
         defaultName: bot
         capabilities: sparkplug,mcu,board,mcp,video
+        redconCommandLevels: 4,3,2,1
         requiredAttributes: name,shortId,townId,rigId
         searchableAttributes: name,townId,rigId
         shadows/sparkplug/schema: aws/sparkplug-shadow.schema.json

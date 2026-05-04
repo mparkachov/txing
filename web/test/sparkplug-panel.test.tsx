@@ -11,6 +11,7 @@ describe('sparkplug panel', () => {
         isInteractive={false}
         isRedconCommandDisabled={false}
         isRedconSleepCommandDisabled={false}
+        commandableRedconLevels={[1, 2, 3, 4]}
         onRedconSelect={() => {}}
       />,
     )
@@ -33,6 +34,7 @@ describe('sparkplug panel', () => {
         isInteractive={false}
         isRedconCommandDisabled={false}
         isRedconSleepCommandDisabled={false}
+        commandableRedconLevels={[1, 2, 3, 4]}
         onRedconSelect={() => {}}
       />,
     )
@@ -52,6 +54,7 @@ describe('sparkplug panel', () => {
         isInteractive={true}
         isRedconCommandDisabled={false}
         isRedconSleepCommandDisabled={false}
+        commandableRedconLevels={[1, 2, 3, 4]}
         onRedconSelect={() => {}}
       />,
     )
@@ -71,6 +74,27 @@ describe('sparkplug panel', () => {
     expect(markup).not.toContain('sparkplug-device-glyph-details')
   })
 
+  test('renders current REDCON while only enabling commandable levels', () => {
+    const markup = renderToStaticMarkup(
+      <SparkplugPanel
+        sparkplugRedcon={4}
+        targetRedcon={null}
+        isInteractive={true}
+        isRedconCommandDisabled={false}
+        isRedconSleepCommandDisabled={false}
+        commandableRedconLevels={[4, 3]}
+        onRedconSelect={() => {}}
+      />,
+    )
+
+    expect(markup).toMatch(/aria-label="Set REDCON 3 · Torch-Up · Yellow"[^>]*(?!disabled)/)
+    expect(markup).toMatch(/aria-label="REDCON 2 · Ember Watch · Orange"[^>]*disabled/)
+    expect(markup).toMatch(/aria-label="REDCON 1 · Hot Rig · Red"[^>]*disabled/)
+    expect(markup).toMatch(
+      /aria-label="Set REDCON 4 · Cold Camp · Green"[^>]*aria-pressed="true"/,
+    )
+  })
+
   test('shows pending target styling for the generic current-thing panel', () => {
     const markup = renderToStaticMarkup(
       <SparkplugPanel
@@ -79,6 +103,7 @@ describe('sparkplug panel', () => {
         isInteractive={true}
         isRedconCommandDisabled={false}
         isRedconSleepCommandDisabled={false}
+        commandableRedconLevels={[1, 2, 3, 4]}
         onRedconSelect={() => {}}
       />,
     )

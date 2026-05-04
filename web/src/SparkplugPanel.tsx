@@ -6,6 +6,7 @@ type SparkplugPanelProps = {
   isInteractive: boolean
   isRedconCommandDisabled: boolean
   isRedconSleepCommandDisabled: boolean
+  commandableRedconLevels: readonly RedconLevel[]
   onRedconSelect: (redcon: 1 | 2 | 3 | 4) => void
 }
 
@@ -20,6 +21,7 @@ function SparkplugRedconControl({
   onSelect,
   pendingRedcon,
   redcon,
+  commandableRedconLevels,
 }: {
   isInteractive: boolean
   isPending: boolean
@@ -27,7 +29,9 @@ function SparkplugRedconControl({
   onSelect: (redcon: RedconLevel) => void
   pendingRedcon: number | null
   redcon: number | null
+  commandableRedconLevels: readonly RedconLevel[]
 }) {
+  const commandableLevels = new Set(commandableRedconLevels)
   return (
     <div
       className="sparkplug-redcon-control"
@@ -36,9 +40,11 @@ function SparkplugRedconControl({
     >
       {orderedRedconLevels.map((level, index) => {
         const isActive = redcon === level
+        const isCommandable = commandableLevels.has(level)
         const isTargetPending = pendingRedcon === level && pendingRedcon !== redcon
         const isDisabled =
           !isInteractive ||
+          !isCommandable ||
           (level === 4
             ? isSleepCommandDisabled
             : isPending || isActive)
@@ -55,7 +61,11 @@ function SparkplugRedconControl({
                 className={`sparkplug-redcon-button ${getTxingRedconToneClass(level)} ${
                   isActive ? 'sparkplug-redcon-button-active' : ''
                 } ${isTargetPending ? 'sparkplug-redcon-button-pending' : ''}`}
-                aria-label={isInteractive ? `Set ${describeRedcon(level)}` : describeRedcon(level)}
+                aria-label={
+                  isInteractive && isCommandable
+                    ? `Set ${describeRedcon(level)}`
+                    : describeRedcon(level)
+                }
                 aria-pressed={isActive}
                 title={describeRedcon(level)}
                 disabled={isDisabled}
@@ -82,6 +92,7 @@ function SparkplugPanel({
   isInteractive,
   isRedconCommandDisabled,
   isRedconSleepCommandDisabled,
+  commandableRedconLevels,
   onRedconSelect,
 }: SparkplugPanelProps) {
   const rowRedcon = sparkplugRedcon
@@ -100,6 +111,7 @@ function SparkplugPanel({
           onSelect={onRedconSelect}
           pendingRedcon={isPending ? targetRedcon : null}
           redcon={rowRedcon}
+          commandableRedconLevels={commandableRedconLevels}
         />
       </div>
     </section>

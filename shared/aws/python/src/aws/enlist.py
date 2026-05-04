@@ -368,14 +368,21 @@ class EnlistService:
         type_path = _require_text(record, "path", context=context)
         display_name = _require_text(record, "displayName", context=context)
         capabilities = encode_capabilities_set(list(_capabilities(record, context=context)))
+        attributes = {
+            "name": name,
+            "shortId": short_id,
+            "kind": kind,
+            "typePath": type_path,
+            "displayName": display_name,
+            "capabilities": capabilities,
+        }
+        if record.get("redconCommandLevels") is not None:
+            attributes["redconCommandLevels"] = ",".join(
+                _list_value(record, "redconCommandLevels", context=context)
+            )
         return _iot_attributes(
             {
-                "name": name,
-                "shortId": short_id,
-                "kind": kind,
-                "typePath": type_path,
-                "displayName": display_name,
-                "capabilities": capabilities,
+                **attributes,
             }
         )
 

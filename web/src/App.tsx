@@ -47,6 +47,7 @@ import {
   listRigDevices,
   listTownRigs,
   type DeviceCatalogEntry,
+  type RedconCommandLevel,
   type RigCatalogEntry,
   type ThingMetadata,
 } from './catalog-api'
@@ -372,9 +373,14 @@ function App({ initialAuthError = '' }: AppProps) {
     () => resolveThingSparkplugRedconCommandTarget(routeHeaderMetadata),
     [routeHeaderMetadata],
   )
+  const commandableRedconLevels = routeHeaderMetadata?.redconCommandLevels ?? []
+  const commandableRedconLevelSet = useMemo(
+    () => new Set<RedconCommandLevel>(commandableRedconLevels),
+    [commandableRedconLevels],
+  )
   const isSparkplugDeviceCommandAvailable =
     currentThingSparkplugCommandTarget !== null &&
-    (currentDeviceAdapter?.canUseSparkplugCommands() ?? false) &&
+    commandableRedconLevels.length > 0 &&
     !isSparkplugDeviceUnavailable
   const shouldRenderCatalogPanel = shouldRenderRouteCatalogPanel({
     thingKind: currentThingKind,
@@ -1434,6 +1440,9 @@ function App({ initialAuthError = '' }: AppProps) {
   }
 
   const handleRedconSelect = async (redcon: 1 | 2 | 3 | 4): Promise<void> => {
+    if (!commandableRedconLevelSet.has(redcon)) {
+      return
+    }
     if (redcon === 4) {
       if (isRedconSleepCommandDisabled) {
         return
@@ -1661,6 +1670,7 @@ function App({ initialAuthError = '' }: AppProps) {
               isInteractive={isSparkplugDeviceCommandAvailable}
               isRedconCommandDisabled={isRedconCommandDisabled}
               isRedconSleepCommandDisabled={isRedconSleepCommandDisabled}
+              commandableRedconLevels={commandableRedconLevels}
               onRedconSelect={(redcon) => {
                 void handleRedconSelect(redcon)
               }}

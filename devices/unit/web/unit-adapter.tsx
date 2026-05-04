@@ -14,7 +14,6 @@ const unitDeviceAdapter: DeviceWebAdapter = {
   type: 'unit',
   displayName: 'Unit',
   buildVideoChannelName: buildBoardVideoChannelName,
-  canUseSparkplugCommands: () => true,
   canUseBoardVideo: (reportedRedcon) => reportedRedcon === 1,
   extractTelemetry: (shadow) => ({
     reportedBatteryMv: extractReportedBatteryMv(shadow),

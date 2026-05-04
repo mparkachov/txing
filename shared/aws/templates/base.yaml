@@ -218,6 +218,13 @@ Resources:
               "attributes.townId",
               "attributes.rigId",
           ]
+          SSM_THROTTLE_ERROR_CODES = {
+              "ThrottlingException",
+              "ThrottledException",
+              "TooManyRequestsException",
+              "RequestLimitExceeded",
+              "RateExceededException",
+          }
 
 
           def _send_response(
@@ -257,6 +264,34 @@ Resources:
 
           def _error_code(error):
               return getattr(error, "response", {}).get("Error", {}).get("Code")
+
+
+          def _is_ssm_throttle(error):
+              code = _error_code(error)
+              message = str(error).lower()
+              return (
+                  code in SSM_THROTTLE_ERROR_CODES
+                  or "throttl" in message
+                  or "rate exceeded" in message
+              )
+
+
+          def _ssm_call(description, operation, **kwargs):
+              for attempt in range(8):
+                  try:
+                      return operation(**kwargs)
+                  except Exception as error:
+                      if not _is_ssm_throttle(error) or attempt == 7:
+                          raise
+                      delay = min(15.0, 0.75 * (2 ** attempt))
+                      LOGGER.warning(
+                          "SSM %s throttled; retrying attempt %s/8 in %.1fs: %s",
+                          description,
+                          attempt + 2,
+                          delay,
+                          error,
+                      )
+                      time.sleep(delay)
 
 
           def _ignore_missing_bucket(error):
@@ -445,6 +480,33 @@ Resources:
               return f"{base}/{leaf}"
 
 
+          def _catalog_existing_parameters(base_path):
+              existing = {}
+              next_token = None
+              while True:
+                  request = {
+                      "Path": str(base_path).rstrip("/"),
+                      "Recursive": True,
+                      "WithDecryption": False,
+                  }
+                  if next_token:
+                      request["NextToken"] = next_token
+                  response = _ssm_call(
+                      "list existing type catalog parameters",
+                      ssm.get_parameters_by_path,
+                      **request,
+                  )
+                  for parameter in response.get("Parameters", []):
+                      name = parameter.get("Name")
+                      value = parameter.get("Value")
+                      if isinstance(name, str) and isinstance(value, str):
+                          existing[name] = value
+                  next_token = response.get("NextToken")
+                  if not next_token:
+                      break
+              return existing
+
+
           def _put_type_catalog_parameters(properties):
               base_path = properties["CatalogBasePath"]
               catalog_parameters = properties.get("CatalogParameters", {})
@@ -452,18 +514,29 @@ Resources:
                   raise TypeError("CatalogParameters must be a map")
 
               try:
-                  ssm.delete_parameter(Name=str(base_path).rstrip("/"))
+                  _ssm_call(
+                      "delete legacy type catalog base parameter",
+                      ssm.delete_parameter,
+                      Name=str(base_path).rstrip("/"),
+                  )
               except Exception as error:
                   if _error_code(error) != "ParameterNotFound":
                       raise
 
+              existing_parameters = _catalog_existing_parameters(base_path)
               written = []
               for leaf_name, value in sorted(catalog_parameters.items()):
                   name = _catalog_parameter_name(base_path, leaf_name)
-                  ssm.put_parameter(
+                  value_text = str(value)
+                  if existing_parameters.get(name) == value_text:
+                      written.append(name)
+                      continue
+                  _ssm_call(
+                      "put type catalog parameter",
+                      ssm.put_parameter,
                       Name=name,
                       Type="String",
-                      Value=str(value),
+                      Value=value_text,
                       Overwrite=True,
                   )
                   written.append(name)
@@ -489,7 +562,11 @@ Resources:
                   }
                   if next_token:
                       request["NextToken"] = next_token
-                  response = ssm.get_parameters_by_path(**request)
+                  response = _ssm_call(
+                      "list type catalog parameters for deletion",
+                      ssm.get_parameters_by_path,
+                      **request,
+                  )
                   for parameter in response.get("Parameters", []):
                       name = parameter.get("Name")
                       if isinstance(name, str):
@@ -502,7 +579,11 @@ Resources:
               deleted = 0
               for name in sorted(parameter_names, reverse=True):
                   try:
-                      ssm.delete_parameter(Name=name)
+                      _ssm_call(
+                          "delete type catalog parameter",
+                          ssm.delete_parameter,
+                          Name=name,
+                      )
                   except Exception as error:
                       if _error_code(error) != "ParameterNotFound":
                           raise

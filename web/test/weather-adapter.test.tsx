@@ -30,7 +30,6 @@ describe('weather adapter', () => {
       measuredPressure: 100.8,
       measuredHumidity: 44.5,
     })
-    expect(weatherDeviceAdapter.canUseSparkplugCommands()).toBe(false)
     expect(weatherDeviceAdapter.extractTelemetry(shadow).reportedBatteryMv).toBe(3512)
   })
 })

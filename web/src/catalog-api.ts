@@ -42,7 +42,9 @@ export type ThingMetadata = {
   rigName: string | null
   shortId: string | null
   capabilities: readonly ShadowName[]
+  redconCommandLevels: readonly RedconCommandLevel[]
 }
+export type RedconCommandLevel = 1 | 2 | 3 | 4
 
 const maxResults = 100
 export const townTypeKind = 'townType'
@@ -91,6 +93,32 @@ export const parseCapabilitiesSet = (value: string | null | undefined): readonly
     throw new Error('Thing capabilities must include sparkplug')
   }
   return capabilities
+}
+
+export const parseRedconCommandLevels = (
+  value: string | null | undefined,
+): readonly RedconCommandLevel[] => {
+  if (typeof value !== 'string' || value.trim() === '') {
+    return []
+  }
+  const levels: RedconCommandLevel[] = []
+  const seen = new Set<RedconCommandLevel>()
+  for (const rawLevel of value.split(',')) {
+    if (rawLevel.trim() !== rawLevel || rawLevel === '') {
+      throw new Error(`Thing has malformed redconCommandLevels attribute: ${value}`)
+    }
+    const level = Number(rawLevel)
+    if (!Number.isInteger(level) || level < 1 || level > 4) {
+      throw new Error(`Thing has invalid redconCommandLevels entry: ${rawLevel}`)
+    }
+    const typedLevel = level as RedconCommandLevel
+    if (seen.has(typedLevel)) {
+      throw new Error(`Thing has duplicate redconCommandLevels entry: ${rawLevel}`)
+    }
+    seen.add(typedLevel)
+    levels.push(typedLevel)
+  }
+  return levels
 }
 
 const isRigKind = (kind: string | null | undefined): boolean => kind === rigTypeKind
@@ -247,6 +275,11 @@ export const describeThingMetadataWithClient = async (
     capabilities: parseCapabilitiesSet(
       attributes && typeof attributes.capabilities === 'string'
         ? attributes.capabilities
+        : null,
+    ),
+    redconCommandLevels: parseRedconCommandLevels(
+      attributes && typeof attributes.redconCommandLevels === 'string'
+        ? attributes.redconCommandLevels
         : null,
     ),
   }

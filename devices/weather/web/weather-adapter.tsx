@@ -6,7 +6,6 @@ const weatherDeviceAdapter: DeviceWebAdapter = {
   type: 'weather',
   displayName: 'Weather',
   buildVideoChannelName: (deviceId) => `${deviceId}-weather`,
-  canUseSparkplugCommands: () => false,
   canUseBoardVideo: () => false,
   extractTelemetry: (shadow) => {
     const reportedState = extractWeatherReportedState(shadow)

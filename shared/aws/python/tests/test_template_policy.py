@@ -185,6 +185,9 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("ssm.get_parameters_by_path", template)
         self.assertIn("parameter_names.add(normalized_base_path)", template)
         self.assertIn("ssm.put_parameter", template)
+        self.assertIn("SSM_THROTTLE_ERROR_CODES", template)
+        self.assertIn("_ssm_call", template)
+        self.assertIn("existing_parameters.get(name) == value_text", template)
         self.assertIn("Overwrite=True", template)
 
     def test_root_stack_owns_type_catalog_and_runtime_layers(self) -> None:
