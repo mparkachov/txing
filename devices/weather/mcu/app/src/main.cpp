@@ -281,10 +281,10 @@ int start_valid_advertising(const txing::weather::FactoryData &factory)
 	const std::size_t name_len = std::strlen(name);
 	const bt_data ad[] = {
 		BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
-		BT_DATA_BYTES(BT_DATA_UUID128_ALL, TXING_WEATHER_SERVICE_UUID_VAL),
+		BT_DATA(BT_DATA_NAME_COMPLETE, name, static_cast<std::uint8_t>(name_len)),
 	};
 	const bt_data sd[] = {
-		BT_DATA(BT_DATA_NAME_COMPLETE, name, static_cast<std::uint8_t>(name_len)),
+		BT_DATA_BYTES(BT_DATA_UUID128_ALL, TXING_WEATHER_SERVICE_UUID_VAL),
 	};
 	return bt_le_adv_start(BT_LE_ADV_CONN_FAST_1, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
 }
