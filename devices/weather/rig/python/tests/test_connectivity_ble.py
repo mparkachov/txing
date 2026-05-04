@@ -112,6 +112,25 @@ class SlowConnectClient:
         self.is_connected = False
 
 
+class DelayedTimeoutClient:
+    instances: list[DelayedTimeoutClient] = []
+
+    def __init__(self, _device: FakeDevice) -> None:
+        self.is_connected = False
+        self.connect_kwargs: dict[str, object] | None = None
+        self.failed = False
+        self.instances.append(self)
+
+    async def connect(self, **kwargs: object) -> None:
+        self.connect_kwargs = kwargs
+        await asyncio.sleep(1.05)
+        self.failed = True
+        raise TimeoutError
+
+    async def disconnect(self) -> None:
+        self.is_connected = False
+
+
 def _weather_advertisement(
     thing_name: str,
     *,
@@ -156,6 +175,7 @@ class WeatherBleDeviceSessionTests(unittest.TestCase):
         FakeClient.instances.clear()
         FailingClient.instances.clear()
         SlowConnectClient.instances.clear()
+        DelayedTimeoutClient.instances.clear()
 
     def test_matches_by_thing_name_and_publishes_online_idle_state(self) -> None:
         async def exercise() -> ConnectivityState:
@@ -345,6 +365,44 @@ class WeatherBleDeviceSessionTests(unittest.TestCase):
         self.assertTrue(states[0].reachable)
         self.assertEqual(client.connect_kwargs, {"dangerous_use_bleak_cache": True})
         self.assertTrue(client.cancelled)
+        self.assertIn("TimeoutError", "\n".join(logs.output))
+
+    def test_connect_failure_after_advertisement_window_does_not_publish_offline(self) -> None:
+        async def exercise() -> list[ConnectivityState]:
+            bus = InMemoryLocalPubSub()
+            received: list[bytes] = []
+            await bus.subscribe(build_state_topic("weather-1"), lambda _t, p: received.append(p))
+
+            session = WeatherBleDeviceSession(
+                thing_name="weather-1",
+                config=WeatherBleConfig(
+                    scan_timeout=0.01,
+                    reconnect_delay=30.0,
+                    connect_timeout=2.0,
+                ),
+                bus=bus,
+                client_factory=DelayedTimeoutClient,  # type: ignore[arg-type]
+            )
+            task = asyncio.create_task(session.run())
+            session.observe_advertisement(_weather_advertisement("weather-1"))
+
+            async def wait_for_timeout() -> None:
+                while not DelayedTimeoutClient.instances:
+                    await asyncio.sleep(0)
+                while not DelayedTimeoutClient.instances[0].failed:
+                    await asyncio.sleep(0.01)
+
+            await asyncio.wait_for(wait_for_timeout(), timeout=2.0)
+            session.stop()
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            return [ConnectivityState.from_payload(payload) for payload in received]
+
+        with self.assertLogs("weather_rig.connectivity_ble", level="WARNING") as logs:
+            states = asyncio.run(exercise())
+
+        self.assertTrue(states)
+        self.assertTrue(all(state.reachable for state in states))
         self.assertIn("TimeoutError", "\n".join(logs.output))
 
     def test_missing_advertisement_publishes_offline_presence(self) -> None:

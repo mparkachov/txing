@@ -269,14 +269,6 @@ class WeatherBleDeviceSession:
                         type(err).__name__,
                         self._config.reconnect_delay,
                     )
-                if not self._last_advertisement_is_fresh():
-                    await self._publish_connectivity(
-                        presence=PRESENCE_OFFLINE,
-                        control_availability=CONTROL_UNAVAILABLE,
-                        power=False,
-                        weather=None,
-                        battery_mv=None,
-                    )
                 await self._fail_expired_queued_commands()
                 await _sleep_until_stop(self._stop_event, self._config.reconnect_delay)
 
