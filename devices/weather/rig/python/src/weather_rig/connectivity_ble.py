@@ -54,6 +54,7 @@ DEFAULT_RECONNECT_DELAY = 2.0
 DEFAULT_CONNECT_TIMEOUT = 20.0
 DEFAULT_COMMAND_TIMEOUT = 8.0
 DEFAULT_HEARTBEAT_INTERVAL = 10.0
+DEFAULT_STATE_REPORT_INTERVAL = 30.0
 
 WEATHER_SERVICE_UUID = "f6b4b000-7b32-4d2d-9f4b-4ff0a2b8f100"
 WEATHER_COMMAND_UUID = "f6b4b001-7b32-4d2d-9f4b-4ff0a2b8f100"
@@ -79,6 +80,7 @@ class WeatherBleConfig:
     connect_timeout: float = DEFAULT_CONNECT_TIMEOUT
     command_timeout: float = DEFAULT_COMMAND_TIMEOUT
     heartbeat_interval: float = DEFAULT_HEARTBEAT_INTERVAL
+    state_report_interval: float = DEFAULT_STATE_REPORT_INTERVAL
     no_ble: bool = False
 
 
@@ -362,12 +364,29 @@ class WeatherBleDeviceSession:
             )
             await self._publish_state_report(self._last_state)
             await self._start_notifications(client)
+            state_report_interval = self._config.state_report_interval
+            next_state_report_at = (
+                asyncio.get_running_loop().time() + state_report_interval
+                if state_report_interval > 0
+                else None
+            )
             while not self._stop_event.is_set() and _client_is_connected(client):
+                if next_state_report_at is None:
+                    timeout = 1.0
+                else:
+                    now = asyncio.get_running_loop().time()
+                    if now >= next_state_report_at:
+                        await self._publish_state_report(self._last_state)
+                        next_state_report_at = now + state_report_interval
+                        continue
+                    timeout = min(1.0, next_state_report_at - now)
                 try:
-                    command = await asyncio.wait_for(self._command_queue.get(), timeout=1.0)
+                    command = await asyncio.wait_for(self._command_queue.get(), timeout=timeout)
                 except TimeoutError:
                     continue
                 await self._execute_command(client, command)
+                if next_state_report_at is not None:
+                    next_state_report_at = asyncio.get_running_loop().time() + state_report_interval
         finally:
             if connected:
                 await _client_disconnect(client)
@@ -829,6 +848,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--reconnect-delay", type=float, default=float(os.getenv("WEATHER_BLE_RECONNECT_DELAY", DEFAULT_RECONNECT_DELAY)))
     parser.add_argument("--connect-timeout", type=float, default=float(os.getenv("WEATHER_BLE_CONNECT_TIMEOUT", DEFAULT_CONNECT_TIMEOUT)))
     parser.add_argument("--command-timeout", type=float, default=float(os.getenv("WEATHER_BLE_COMMAND_TIMEOUT", DEFAULT_COMMAND_TIMEOUT)))
+    parser.add_argument("--state-report-interval", type=float, default=float(os.getenv("WEATHER_BLE_STATE_REPORT_INTERVAL", DEFAULT_STATE_REPORT_INTERVAL)))
     parser.add_argument("--no-ble", action="store_true")
     return parser.parse_args()
 
@@ -842,6 +862,7 @@ def main() -> None:
         reconnect_delay=args.reconnect_delay,
         connect_timeout=args.connect_timeout,
         command_timeout=args.command_timeout,
+        state_report_interval=args.state_report_interval,
         no_ble=args.no_ble,
     )
 

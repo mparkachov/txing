@@ -41,10 +41,11 @@ LOG_MODULE_REGISTER(txing_weather_bm, CONFIG_TXING_WEATHER_BM_LOG_LEVEL);
 
 #define WEATHER_SAMPLE_INTERVAL_MS 1000u
 #define WEATHER_DIAG_INTERVAL_MS 10000u
+#define WEATHER_IDLE_CONN_PARAM_FALLBACK_DELAY_MS 30000u
 
-#define WEATHER_CONN_INTERVAL_1000_MS 800u
-#define WEATHER_CONN_LATENCY 4u
-#define WEATHER_CONN_SUPERVISION_12S 1200u
+#define WEATHER_IDLE_CONN_INTERVAL_1000_MS 800u
+#define WEATHER_IDLE_CONN_LATENCY 4u
+#define WEATHER_IDLE_CONN_SUPERVISION_12S 1200u
 
 struct weather_factory_data {
 	uint32_t magic;
@@ -76,6 +77,10 @@ static struct weather_state g_state = {
 };
 static struct weather_measurement g_measurement;
 static bool g_measurement_valid;
+static bool g_idle_conn_params_requested;
+static bool g_state_notify_enabled;
+static bool g_measurement_notify_enabled;
+static int64_t g_connected_at_ms;
 
 static uint32_t crc32(const uint8_t *data, size_t size)
 {
@@ -372,19 +377,45 @@ static uint32_t start_advertising(void)
 	return sd_ble_gap_adv_start(g_adv_handle, CONFIG_NRF_SDH_BLE_CONN_TAG);
 }
 
-static void request_connected_idle_params(uint16_t conn_handle)
+static bool request_connected_idle_params(uint16_t conn_handle)
 {
 	ble_gap_conn_params_t params = {
-		.min_conn_interval = WEATHER_CONN_INTERVAL_1000_MS,
-		.max_conn_interval = WEATHER_CONN_INTERVAL_1000_MS,
-		.slave_latency = WEATHER_CONN_LATENCY,
-		.conn_sup_timeout = WEATHER_CONN_SUPERVISION_12S,
+		.min_conn_interval = WEATHER_IDLE_CONN_INTERVAL_1000_MS,
+		.max_conn_interval = WEATHER_IDLE_CONN_INTERVAL_1000_MS,
+		.slave_latency = WEATHER_IDLE_CONN_LATENCY,
+		.conn_sup_timeout = WEATHER_IDLE_CONN_SUPERVISION_12S,
 	};
 	uint32_t nrf_err = sd_ble_gap_conn_param_update(conn_handle, &params);
 
 	if (nrf_err != NRF_SUCCESS) {
 		LOG_DBG("Failed to request connection params, nrf_error %#x", nrf_err);
+		return false;
 	}
+	LOG_INF("Requested connected-idle params interval=1000ms latency=%u supervision=12s",
+		WEATHER_IDLE_CONN_LATENCY);
+	return true;
+}
+
+static void request_idle_params_if_ready(void)
+{
+	if (g_conn_handle == BLE_CONN_HANDLE_INVALID || g_idle_conn_params_requested) {
+		return;
+	}
+	if ((k_uptime_get() - g_connected_at_ms) < WEATHER_IDLE_CONN_PARAM_FALLBACK_DELAY_MS) {
+		return;
+	}
+	g_idle_conn_params_requested = request_connected_idle_params(g_conn_handle);
+}
+
+static void request_idle_params_if_gatt_ready(void)
+{
+	if (g_conn_handle == BLE_CONN_HANDLE_INVALID || g_idle_conn_params_requested) {
+		return;
+	}
+	if (!g_state_notify_enabled || !g_measurement_notify_enabled) {
+		return;
+	}
+	g_idle_conn_params_requested = request_connected_idle_params(g_conn_handle);
 }
 
 static void set_redcon(uint8_t redcon, bool notify)
@@ -418,6 +449,30 @@ static void handle_command_write(const ble_gatts_evt_write_t *write)
 	set_redcon(target_redcon, true);
 }
 
+static bool cccd_notify_enabled(const ble_gatts_evt_write_t *write)
+{
+	uint16_t cccd_value;
+
+	if (write->len < 2u) {
+		return false;
+	}
+	cccd_value = (uint16_t)write->data[0] | ((uint16_t)write->data[1] << 8u);
+	return (cccd_value & BLE_GATT_HVX_NOTIFICATION) != 0u;
+}
+
+static void handle_cccd_write(const ble_gatts_evt_write_t *write)
+{
+	if (write->handle == g_state_handles.cccd_handle) {
+		g_state_notify_enabled = cccd_notify_enabled(write);
+		LOG_INF("State notifications enabled=%d", g_state_notify_enabled);
+		request_idle_params_if_gatt_ready();
+	} else if (write->handle == g_measurement_handles.cccd_handle) {
+		g_measurement_notify_enabled = cccd_notify_enabled(write);
+		LOG_INF("Measurement notifications enabled=%d", g_measurement_notify_enabled);
+		request_idle_params_if_gatt_ready();
+	}
+}
+
 static void handle_ble_evt(const ble_evt_t *evt, void *ctx)
 {
 	uint32_t nrf_err;
@@ -425,27 +480,49 @@ static void handle_ble_evt(const ble_evt_t *evt, void *ctx)
 	(void)ctx;
 
 	switch (evt->header.evt_id) {
-	case BLE_GAP_EVT_CONNECTED:
+	case BLE_GAP_EVT_CONNECTED: {
+		const ble_gap_conn_params_t *params =
+			&evt->evt.gap_evt.params.connected.conn_params;
+
 		g_conn_handle = evt->evt.gap_evt.conn_handle;
-		LOG_INF("Peer connected");
+		g_connected_at_ms = k_uptime_get();
+		g_idle_conn_params_requested = false;
+		g_state_notify_enabled = false;
+		g_measurement_notify_enabled = false;
+		LOG_INF("Peer connected; initial interval=%u..%u latency=%u supervision=%u; delaying connected-idle params for GATT discovery",
+			params->min_conn_interval, params->max_conn_interval,
+			params->slave_latency, params->conn_sup_timeout);
 		nrf_err = sd_ble_gatts_sys_attr_set(g_conn_handle, NULL, 0, 0);
 		if (nrf_err != NRF_SUCCESS) {
 			LOG_DBG("Failed to set system attributes, nrf_error %#x", nrf_err);
 		}
-		request_connected_idle_params(g_conn_handle);
 		publish_state(false);
 		publish_measurement(false);
 		break;
+	}
 
 	case BLE_GAP_EVT_DISCONNECTED:
 		LOG_INF("Peer disconnected; restarting advertising");
 		set_redcon(WEATHER_REDCON_IDLE, false);
 		g_conn_handle = BLE_CONN_HANDLE_INVALID;
+		g_idle_conn_params_requested = false;
+		g_state_notify_enabled = false;
+		g_measurement_notify_enabled = false;
 		nrf_err = start_advertising();
 		if (nrf_err != NRF_SUCCESS) {
 			LOG_ERR("Failed to restart advertising, nrf_error %#x", nrf_err);
 		}
 		break;
+
+	case BLE_GAP_EVT_CONN_PARAM_UPDATE: {
+		const ble_gap_conn_params_t *params =
+			&evt->evt.gap_evt.params.conn_param_update.conn_params;
+
+		LOG_INF("Connection params updated interval=%u..%u latency=%u supervision=%u",
+			params->min_conn_interval, params->max_conn_interval,
+			params->slave_latency, params->conn_sup_timeout);
+		break;
+	}
 
 	case BLE_GAP_EVT_SCAN_REQ_REPORT: {
 		const ble_gap_evt_scan_req_report_t *report =
@@ -459,7 +536,17 @@ static void handle_ble_evt(const ble_evt_t *evt, void *ctx)
 	}
 
 	case BLE_GATTS_EVT_WRITE:
+		LOG_INF("GATTS write handle=%u len=%u op=%u",
+			evt->evt.gatts_evt.params.write.handle,
+			evt->evt.gatts_evt.params.write.len,
+			evt->evt.gatts_evt.params.write.op);
+		handle_cccd_write(&evt->evt.gatts_evt.params.write);
 		handle_command_write(&evt->evt.gatts_evt.params.write);
+		break;
+
+	case BLE_GATTS_EVT_HVN_TX_COMPLETE:
+		LOG_DBG("GATTS HVN TX complete count=%u",
+			evt->evt.gatts_evt.params.hvn_tx_complete.count);
 		break;
 
 	case BLE_GATTS_EVT_SYS_ATTR_MISSING:
@@ -624,6 +711,7 @@ idle:
 			next_sample_ms = now_ms + WEATHER_SAMPLE_INTERVAL_MS;
 			sample_weather_if_active();
 		}
+		request_idle_params_if_ready();
 		if (now_ms >= next_diag_ms) {
 			next_diag_ms = now_ms + WEATHER_DIAG_INTERVAL_MS;
 			LOG_INF("diag name=%s factory_ok=%d softdevice=%d ble=%d gap_name=%d service=%d adv=%d conn=%u redcon=%u bme280=%d",

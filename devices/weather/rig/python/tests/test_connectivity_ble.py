@@ -222,6 +222,41 @@ class WeatherBleDeviceSessionTests(unittest.TestCase):
         self.assertTrue(all(state.reachable for state in states))
         self.assertEqual(states[1].battery_mv, 3300)
 
+    def test_connected_session_refreshes_online_state_while_idle(self) -> None:
+        async def exercise() -> list[ConnectivityState]:
+            bus = InMemoryLocalPubSub()
+            received: list[bytes] = []
+            await bus.subscribe(build_state_topic("weather-1"), lambda _t, p: received.append(p))
+
+            session = WeatherBleDeviceSession(
+                thing_name="weather-1",
+                config=WeatherBleConfig(
+                    scan_timeout=0.2,
+                    reconnect_delay=0.01,
+                    state_report_interval=0.01,
+                ),
+                bus=bus,
+                client_factory=FakeClient,  # type: ignore[arg-type]
+            )
+            task = asyncio.create_task(session.run())
+            session.observe_advertisement(_weather_advertisement("weather-1", seq=1))
+
+            async def wait_for_reports() -> None:
+                while len(received) < 3:
+                    await asyncio.sleep(0.001)
+
+            await asyncio.wait_for(wait_for_reports(), timeout=1.0)
+            session.stop()
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            return [ConnectivityState.from_payload(payload) for payload in received[:3]]
+
+        states = asyncio.run(exercise())
+
+        self.assertEqual([state.seq for state in states], [1, 2, 3])
+        self.assertTrue(all(state.reachable for state in states))
+        self.assertEqual(states[-1].battery_mv, 3300)
+
     def test_failed_connect_publishes_one_offline_without_extra_disconnect(self) -> None:
         async def exercise() -> tuple[list[ConnectivityState], FailingClient]:
             bus = InMemoryLocalPubSub()

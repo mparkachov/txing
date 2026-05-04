@@ -355,6 +355,11 @@ class WeatherSparkplugManager:
             build_device_death_payload(seq=device.next_seq()),
             timeout_seconds=self._config.operation_timeout,
         )
+        LOGGER.info(
+            "Published weather Sparkplug DDEATH thing=%s lastPresence=%s",
+            device.thing_name,
+            device.last_state.presence if device.last_state is not None else "unknown",
+        )
         device.born = False
         device.stale = True
 
@@ -366,7 +371,14 @@ class WeatherSparkplugManager:
             if now_ms - device.last_reported_at_ms <= self._config.stale_after_ms:
                 continue
             async with device.operation_lock:
-                if device.born and now_ms - device.last_reported_at_ms > self._config.stale_after_ms:
+                stale_age_ms = now_ms - device.last_reported_at_ms
+                if device.born and stale_age_ms > self._config.stale_after_ms:
+                    LOGGER.warning(
+                        "Weather Sparkplug device stale thing=%s ageMs=%s staleAfterMs=%s",
+                        device.thing_name,
+                        stale_age_ms,
+                        self._config.stale_after_ms,
+                    )
                     await self.publish_device_death(device)
 
 
