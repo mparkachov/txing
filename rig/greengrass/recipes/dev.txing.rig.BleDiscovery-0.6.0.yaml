@@ -8,6 +8,7 @@ ComponentConfiguration:
   DefaultConfiguration:
     AdapterId: shared-ble-scanner
     ScanMode: active
+    PublishInterval: 0.5
     accessControl:
       aws.greengrass.ipc.pubsub:
         dev.txing.rig.BleDiscovery:pubsub:1:
@@ -26,7 +27,7 @@ Manifests:
         RequiresPrivilege: true
         Script: |-
           export PYTHONPATH="{artifacts:decompressedPath}/rig-greengrass/python"
-          exec python3 -m rig.ble_discovery --adapter-id "{configuration:/AdapterId}" --scan-mode "{configuration:/ScanMode}"
+          exec python3 -m rig.ble_discovery --adapter-id "{configuration:/AdapterId}" --scan-mode "{configuration:/ScanMode}" --publish-interval "{configuration:/PublishInterval}"
     Artifacts:
       - Uri: s3://REPLACE_WITH_TXING_GREENGRASS_ARTIFACT_BUCKET/rig-greengrass/0.6.0/rig-greengrass.zip
         Unarchive: ZIP

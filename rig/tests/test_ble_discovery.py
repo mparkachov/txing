@@ -85,6 +85,47 @@ class BleDiscoveryServiceTests(unittest.TestCase):
             "01",
         )
 
+    def test_filters_non_txing_advertisements(self) -> None:
+        async def exercise() -> int:
+            bus = InMemoryLocalPubSub()
+            payloads: list[bytes] = []
+            await bus.subscribe(
+                f"{BLE_ADVERTISEMENT_TOPIC_PREFIX}/+",
+                lambda _topic, payload: payloads.append(payload),
+            )
+            service = BleDiscoveryService(bus=bus)
+            service._loop = asyncio.get_running_loop()
+            await service._publish_detection(
+                FakeDevice(name="keyboard"),
+                FakeAdvertisementData(
+                    local_name="keyboard",
+                    service_uuids=["00001812-0000-1000-8000-00805f9b34fb"],
+                    manufacturer_data={76: b"\x01"},
+                    service_data={},
+                ),
+            )
+            return len(payloads)
+
+        self.assertEqual(asyncio.run(exercise()), 0)
+
+    def test_throttles_duplicate_advertisements_by_address(self) -> None:
+        async def exercise() -> int:
+            bus = InMemoryLocalPubSub()
+            payloads: list[bytes] = []
+            await bus.subscribe(
+                f"{BLE_ADVERTISEMENT_TOPIC_PREFIX}/+",
+                lambda _topic, payload: payloads.append(payload),
+            )
+            service = BleDiscoveryService(bus=bus, publish_interval=60.0)
+            service._loop = asyncio.get_running_loop()
+            device = FakeDevice()
+            advertisement = FakeAdvertisementData()
+            await service._publish_detection(device, advertisement)
+            await service._publish_detection(device, advertisement)
+            return len(payloads)
+
+        self.assertEqual(asyncio.run(exercise()), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1095,6 +1095,7 @@ aws_shared_credentials_file := ""
       DefaultConfiguration:
         AdapterId: shared-ble-scanner
         ScanMode: active
+        PublishInterval: 0.5
         accessControl:
           aws.greengrass.ipc.pubsub:
             $ble_discovery_component:pubsub:1:
@@ -1119,7 +1120,7 @@ aws_shared_credentials_file := ""
               export TXING_RIG_TYPE="$selected_rig_type"
               export RIG_TYPE="$selected_rig_type"
               export PYTHONPATH="{artifacts:path}/python"
-              exec python3 -m rig.ble_discovery --adapter-id "{configuration:/AdapterId}" --scan-mode "{configuration:/ScanMode}"
+              exec python3 -m rig.ble_discovery --adapter-id "{configuration:/AdapterId}" --scan-mode "{configuration:/ScanMode}" --publish-interval "{configuration:/PublishInterval}"
         Artifacts:
           - Uri: "s3://txing-local-greengrass/txing-local-artifact.txt"
             Unarchive: "NONE"

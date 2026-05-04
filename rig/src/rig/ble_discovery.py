@@ -21,6 +21,15 @@ LOGGER = logging.getLogger("rig.ble_discovery")
 DEFAULT_ADAPTER_ID = "shared-ble-scanner"
 DEFAULT_SCAN_MODE = "active"
 DEFAULT_RESTART_DELAY = 2.0
+DEFAULT_PUBLISH_INTERVAL = 0.5
+TXING_UNIT_SERVICE_UUID = "f6b4a000-7b32-4d2d-9f4b-4ff0a2b8f100"
+TXING_WEATHER_SERVICE_UUID = "f6b4b000-7b32-4d2d-9f4b-4ff0a2b8f100"
+TXING_SERVICE_UUIDS = {
+    TXING_UNIT_SERVICE_UUID,
+    TXING_WEATHER_SERVICE_UUID,
+}
+TXING_MFG_ID = "65535"
+TXING_MFG_MAGIC_HEX = "5458"
 
 
 class BleDiscoveryService:
@@ -31,15 +40,20 @@ class BleDiscoveryService:
         adapter_id: str = DEFAULT_ADAPTER_ID,
         scan_mode: str = DEFAULT_SCAN_MODE,
         restart_delay: float = DEFAULT_RESTART_DELAY,
+        publish_interval: float = DEFAULT_PUBLISH_INTERVAL,
+        publish_all: bool = False,
         scanner_factory: Callable[..., Any] | None = None,
     ) -> None:
         self._bus = bus
         self._adapter_id = adapter_id
         self._scan_mode = scan_mode
         self._restart_delay = restart_delay
+        self._publish_interval = publish_interval
+        self._publish_all = publish_all
         self._scanner_factory = scanner_factory or _default_scanner_factory
         self._stop_event = asyncio.Event()
         self._publish_tasks: set[asyncio.Task[None]] = set()
+        self._last_publish_by_address: dict[str, float] = {}
         self._seq = 0
         self._loop: asyncio.AbstractEventLoop | None = None
 
@@ -108,6 +122,17 @@ class BleDiscoveryService:
             observed_at_ms=utc_timestamp_ms(),
             seq=self._seq,
         )
+        if not self._publish_all and not _is_txing_candidate(advertisement):
+            return
+        now = asyncio.get_running_loop().time()
+        last_publish = self._last_publish_by_address.get(address)
+        if (
+            last_publish is not None
+            and self._publish_interval > 0
+            and (now - last_publish) < self._publish_interval
+        ):
+            return
+        self._last_publish_by_address[address] = now
         await self._bus.publish(
             build_ble_advertisement_topic(address),
             advertisement.to_json(),
@@ -192,6 +217,23 @@ def _service_data_payload(value: Any) -> dict[str, str]:
     return result
 
 
+def _is_txing_candidate(advertisement: BleAdvertisement) -> bool:
+    service_uuids = {uuid.lower() for uuid in advertisement.service_uuids}
+    if service_uuids & TXING_SERVICE_UUIDS:
+        return True
+
+    manufacturer_payload = advertisement.manufacturer_data.get(TXING_MFG_ID)
+    if manufacturer_payload is not None and manufacturer_payload.startswith(TXING_MFG_MAGIC_HEX):
+        return True
+
+    name = (advertisement.name or "").lower()
+    return (
+        "txing" in name
+        or name.startswith("weather-")
+        or name.startswith("unit-")
+    )
+
+
 async def _sleep_until_stop(stop_event: asyncio.Event, delay: float) -> None:
     try:
         await asyncio.wait_for(stop_event.wait(), timeout=delay)
@@ -207,6 +249,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--adapter-id", default=os.getenv("BLE_DISCOVERY_ADAPTER_ID", DEFAULT_ADAPTER_ID))
     parser.add_argument("--scan-mode", default=os.getenv("BLE_DISCOVERY_SCAN_MODE", DEFAULT_SCAN_MODE))
     parser.add_argument("--restart-delay", type=float, default=float(os.getenv("BLE_DISCOVERY_RESTART_DELAY", DEFAULT_RESTART_DELAY)))
+    parser.add_argument("--publish-interval", type=float, default=float(os.getenv("BLE_DISCOVERY_PUBLISH_INTERVAL", DEFAULT_PUBLISH_INTERVAL)))
+    parser.add_argument("--publish-all", action="store_true", default=os.getenv("BLE_DISCOVERY_PUBLISH_ALL", "").lower() in {"1", "true", "yes"})
     return parser.parse_args()
 
 
@@ -232,6 +276,8 @@ def main() -> None:
             adapter_id=args.adapter_id,
             scan_mode=args.scan_mode,
             restart_delay=args.restart_delay,
+            publish_interval=args.publish_interval,
+            publish_all=args.publish_all,
         )
         try:
             service_task = asyncio.create_task(service.run())
