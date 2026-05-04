@@ -1,6 +1,6 @@
 # Weather Txing
 
-`weather` is a watch-only txing type for an outside weather node:
+`weather` is a BLE connected-idle txing type for an outside weather node:
 
 - MCU: Seeed Studio XIAO nRF54L15
 - Sensor: Grove BME280 on I2C
@@ -8,24 +8,17 @@
 - Rig type: `raspi`
 - Capability: `sparkplug`
 
-The board exposes Matter clusters over Thread. The rig observes an already
-commissioned Matter node and publishes Sparkplug B metrics:
+The device is registered in AWS through the existing AWS device flow. During
+manual flashing, `weather::mcu::flash <aws-thing-id>` stores that Thing ID in
+MCU factory data. Firmware advertises the Thing ID as its BLE local name, and
+the Raspberry Pi 5 rig connects over its built-in BLE adapter.
 
-- `redcon`: fixed at `4`
-- `batteryMv`: projection of Matter `PowerSource.BatVoltage` in mV
-- `measuredTemperature`: Celsius
-- `measuredPressure`: kPa
-- `measuredHumidity`: percent relative humidity
+Sparkplug behavior:
 
-The MCU firmware exposes standard Matter clusters only:
+- BLE connected idle publishes DBIRTH/DDATA with `redcon=4`.
+- `DCMD.redcon=3`, `2`, or `1` wakes active mode and reports actual `redcon=3`.
+- Active mode turns the LED on and reports BME280 data every second.
+- Returning to `DCMD.redcon=4` stops telemetry and keeps the BLE connection idle.
 
-- `TemperatureMeasurement.MeasuredValue`
-- `RelativeHumidityMeasurement.MeasuredValue`
-- `PressureMeasurement.MeasuredValue`
-- `PowerSource.BatVoltage`
-
-Sparkplug metric names are rig-side aliases, not custom Matter attributes.
-
-The first version does not support MCP, video, BLE control, or Sparkplug DCMD
-commands. Commission the Matter device manually, then deploy the raspi rig with
-the weather thing name and Matter node id.
+The weather implementation does not use Matter, Thread, `chip-tool`, online
+provisioning, MCP, or video.

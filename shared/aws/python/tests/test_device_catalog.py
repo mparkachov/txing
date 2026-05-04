@@ -98,7 +98,7 @@ class DeviceCatalogTests(unittest.TestCase):
         self.assertEqual(manifest.compatible_rig_types, ("raspi",))
         self.assertEqual(
             [process.name for process in manifest.rig_processes],
-            ["weather-matter-watch", "weather-sparkplug-manager"],
+            ["weather-connectivity-ble", "weather-sparkplug-manager"],
         )
         self.assertEqual(manifest.render_board_video_channel_name(device_id="outside"), None)
         self.assertEqual(manifest.web_adapter, "web/weather-adapter.tsx")

@@ -15,6 +15,7 @@ from rig.connectivity_protocol import (
     ConnectivityState,
     WeatherMeasurements,
     PRESENCE_ONLINE,
+    SLEEP_MODEL_BLE_CONNECTED_IDLE,
     SLEEP_MODEL_BLE_RENDEZVOUS,
     SLEEP_MODEL_MATTER_ICD,
     STATE_TOPIC_PREFIX,
@@ -91,16 +92,16 @@ class ConnectivityProtocolTests(unittest.TestCase):
         self.assertEqual(matter_state.sleep_model, SLEEP_MODEL_MATTER_ICD)
         self.assertTrue(matter_state.reachable)
 
-    def test_weather_state_round_trips_matter_measurements(self) -> None:
+    def test_weather_state_round_trips_ble_connected_idle_measurements(self) -> None:
         weather_state = ConnectivityState(
-            adapter_id="weather-matter-watch",
+            adapter_id="weather-ble-main",
             thing_name="weather-123",
-            transport=TRANSPORT_MATTER,
-            native_identity={"matterNodeId": 4660},
+            transport=TRANSPORT_BLE_GATT,
+            native_identity={"bleLocalName": "weather-123"},
             presence=PRESENCE_ONLINE,
-            control_availability="unavailable",
-            power=None,
-            sleep_model=SLEEP_MODEL_MATTER_ICD,
+            control_availability=CONTROL_EVENTUAL,
+            power=True,
+            sleep_model=SLEEP_MODEL_BLE_CONNECTED_IDLE,
             battery_mv=3512,
             observed_at_ms=1714380000002,
             seq=9,

@@ -4,4 +4,4 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 
-rsource "../../../common/mcu/matter/Kconfig.sysbuild.common"
+source "share/sysbuild/Kconfig"

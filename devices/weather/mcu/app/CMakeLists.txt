@@ -6,19 +6,20 @@
 
 cmake_minimum_required(VERSION 3.20.0)
 
-set(TXING_MATTER_ROOT ${CMAKE_CURRENT_LIST_DIR}/../../../common/mcu/matter)
-
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 
-project(txing-weather-matter)
+project(txing-weather-ble-connected-idle)
 
-include(${TXING_MATTER_ROOT}/cmake/txing_matter.cmake)
+set(TXING_WEATHER_FACTORY_DATA_ADDR "0x000f0000" CACHE STRING "Address of txing weather factory data")
 
-txing_matter_configure_app(
-  ZAP_FILE ${CMAKE_CURRENT_LIST_DIR}/src/default_zap/weather-station.zap
-  IDL_FILE ${CMAKE_CURRENT_LIST_DIR}/src/default_zap/weather-station.matter
-  ZAP_GENERATED_DIR ${ZEPHYR_NRF_MODULE_DIR}/applications/matter_weather_station/src/default_zap/zap-generated
-  APP_SOURCES
-    src/main.cpp
-    src/weather_device.cpp
+target_sources(app PRIVATE
+  src/main.cpp
+  src/weather_ble_protocol.cpp
+  src/weather_factory_data.cpp
+  src/weather_device.cpp
+)
+
+target_compile_options(app PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-std=gnu++20>)
+target_compile_definitions(app PRIVATE
+  TXING_WEATHER_FACTORY_DATA_ADDR=${TXING_WEATHER_FACTORY_DATA_ADDR}
 )

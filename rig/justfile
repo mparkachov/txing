@@ -12,25 +12,18 @@ root_justfile := project_root + "/justfile"
 greengrass_lite_dir := rig_dir + "/greengrass-lite"
 greengrass_lite_build_dir := greengrass_lite_dir + "/build"
 greengrass_lite_target := "greengrass-lite.target"
-connectedhomeip_dir := rig_dir + "/connectedhomeip"
-connectedhomeip_build_dir := connectedhomeip_dir + "/out/txing-chip-tool"
-connectedhomeip_environment_dir := connectedhomeip_dir + "/.environment"
-built_chip_tool := connectedhomeip_build_dir + "/chip-tool"
 native_python_dir := rig_dir + "/build/python"
-native_python_shim_dir := native_python_dir + "/shim"
 native_uv_cache_dir := rig_dir + "/build/uv-cache"
 greengrass_core_units := "ggl.core.ggconfigd.service ggl.core.ggipcd.service ggl.core.iotcored.service ggl.core.tesd.service ggl.aws.greengrass.TokenExchangeService.service ggl.core.ggdeploymentd.service ggl.core.gg-fleet-statusd.service ggl.core.ggpubsubd.service ggl.core.gghealthd.service"
 greengrass_core_sockets := "ggl.gg_config.socket ggl.gg_deployment.socket ggl.gg_fleet_status.socket ggl.aws_iot_mqtt.socket ggl.aws_iot_tes.socket ggl.gg_pubsub.socket ggl.ipc_component.socket ggl.gg-ipc.socket.socket ggl.gg_health.socket"
 unit_rig_component_units := "ggl.dev.txing.device.unit.SparkplugManager.service ggl.dev.txing.device.unit.ConnectivityBle.service"
-weather_rig_component_units := "ggl.dev.txing.device.weather.SparkplugManager.service ggl.dev.txing.device.weather.MatterWatch.service"
+weather_rig_component_units := "ggl.dev.txing.device.weather.SparkplugManager.service ggl.dev.txing.device.weather.ConnectivityBle.service"
 raspi_rig_component_units := unit_rig_component_units + " " + weather_rig_component_units
 aws_rig_component_units := "ggl.dev.txing.device.time.SparkplugManager.service ggl.dev.txing.device.time.AwsConnectivity.service"
-legacy_unit_rig_component_units := "ggl.dev.txing.rig.SparkplugManager.service ggl.dev.txing.rig.ConnectivityBle.service"
+legacy_unit_rig_component_units := "ggl.dev.txing.rig.SparkplugManager.service ggl.dev.txing.rig.ConnectivityBle.service ggl.dev.txing.device.weather.MatterWatch.service"
 legacy_unit_rig_components := "dev.txing.rig.SparkplugManager dev.txing.rig.ConnectivityBle"
 default_greengrass_lite_repository := env_var_or_default("TXING_RIG_GREENGRASS_LITE_REPOSITORY", "https://github.com/aws-greengrass/aws-greengrass-lite.git")
 default_greengrass_lite_ref := env_var_or_default("TXING_RIG_GREENGRASS_LITE_REF", "main")
-default_connectedhomeip_repository := env_var_or_default("TXING_RIG_CONNECTEDHOMEIP_REPOSITORY", "https://github.com/nrfconnect/sdk-connectedhomeip.git")
-default_connectedhomeip_ref := env_var_or_default("TXING_RIG_CONNECTEDHOMEIP_REF", "v3.3.0")
 thing_name := "unit-local"
 region := ""
 aws_profile := ""
@@ -326,29 +319,12 @@ aws_shared_credentials_file := ""
         fi; \
     fi
 
-@clone-connectedhomeip:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if [ ! -d "{{connectedhomeip_dir}}/.git" ]; then
-      git clone --branch "{{default_connectedhomeip_ref}}" --depth 1 "{{default_connectedhomeip_repository}}" "{{connectedhomeip_dir}}"
-    else
-      if ! git -C "{{connectedhomeip_dir}}" diff --quiet --ignore-submodules -- || ! git -C "{{connectedhomeip_dir}}" diff --cached --quiet --ignore-submodules --; then
-        echo "connectedhomeip checkout has local changes; clean it or remove {{connectedhomeip_dir}} before rebuilding." >&2
-        exit 1
-      fi
-      git -C "{{connectedhomeip_dir}}" remote set-url origin "{{default_connectedhomeip_repository}}"
-      git -C "{{connectedhomeip_dir}}" fetch --force --tags origin "{{default_connectedhomeip_ref}}"
-      git -C "{{connectedhomeip_dir}}" checkout --detach FETCH_HEAD
-    fi
-    cd "{{connectedhomeip_dir}}"
-    ./scripts/checkout_submodules.py --shallow --platform linux
-
 @clean-native:
-    rm -rf "{{greengrass_lite_build_dir}}" "{{connectedhomeip_build_dir}}" "{{connectedhomeip_environment_dir}}" "{{native_python_dir}}" "{{native_uv_cache_dir}}"
+    rm -rf "{{greengrass_lite_build_dir}}" "{{native_python_dir}}" "{{native_uv_cache_dir}}"
 
 @distclean-native:
     just clean-native
-    rm -rf "{{greengrass_lite_dir}}" "{{connectedhomeip_dir}}"
+    rm -rf "{{greengrass_lite_dir}}"
 
 @build-native:
     #!/usr/bin/env bash
@@ -368,92 +344,6 @@ aws_shared_credentials_file := ""
       -DGGL_SYSTEMD_SYSTEM_DIR=/lib/systemd/system
     cmake --build "{{greengrass_lite_build_dir}}" --config MinSizeRel --parallel
     test -x "{{greengrass_lite_build_dir}}/bin/ggl-cli"
-    just build-chip-tool
-
-@build-chip-tool:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if [ "$(uname -s)" != "Linux" ]; then
-      echo "chip-tool native build is supported only on Linux targets such as Raspberry Pi OS Lite." >&2
-      exit 1
-    fi
-    choose_chip_tool_python() {
-      local candidates=()
-      if [ -n "${CHIP_TOOL_PYTHON:-}" ]; then
-        candidates+=("$CHIP_TOOL_PYTHON")
-      fi
-      candidates+=(python3.12 python3.11)
-      local candidate
-      for candidate in "${candidates[@]}"; do
-        if ! command -v "$candidate" >/dev/null 2>&1; then
-          continue
-        fi
-        if "$candidate" -c 'import sys; raise SystemExit(0 if sys.version_info[:2] in ((3, 11), (3, 12)) else 1)' >/dev/null; then
-          command -v "$candidate"
-          return 0
-        fi
-      done
-      if ! command -v uv >/dev/null 2>&1; then
-        echo "Project CHIP v3.3.0 Python dependencies do not build with Python 3.13." >&2
-        echo "Install uv so this recipe can provision Python 3.12 locally, or set CHIP_TOOL_PYTHON=/path/to/python3.12." >&2
-        return 1
-      fi
-      mkdir -p "{{native_python_dir}}" "{{native_uv_cache_dir}}"
-      UV_CACHE_DIR="{{native_uv_cache_dir}}" \
-        uv python install 3.12 \
-          --install-dir "{{native_python_dir}}" \
-          --compile-bytecode
-      local managed_python
-      managed_python="$(
-        UV_CACHE_DIR="{{native_uv_cache_dir}}" \
-        UV_PYTHON_INSTALL_DIR="{{native_python_dir}}" \
-          uv python find 3.12 --managed-python --no-project
-      )"
-      if [ -z "$managed_python" ]; then
-        echo "uv installed Python 3.12, but no executable was found under {{native_python_dir}}." >&2
-        return 1
-      fi
-      printf '%s\n' "$managed_python"
-    }
-    chip_tool_python="$(choose_chip_tool_python)"
-    just clone-connectedhomeip
-    cd "{{connectedhomeip_dir}}"
-    rm -rf "{{native_python_shim_dir}}"
-    mkdir -p "{{native_python_shim_dir}}"
-    ln -sf "$chip_tool_python" "{{native_python_shim_dir}}/python3"
-    ln -sf "$chip_tool_python" "{{native_python_shim_dir}}/python"
-    export PATH="{{native_python_shim_dir}}:$(dirname "$chip_tool_python"):$PATH"
-    export PW_ENVIRONMENT_ROOT="{{connectedhomeip_environment_dir}}"
-    export PW_ENVSETUP_QUIET=1
-    export PW_BOOTSTRAP_PYTHON="$chip_tool_python"
-    export PYTHON="$chip_tool_python"
-    echo "using chip-tool Python: $chip_tool_python ($("$chip_tool_python" --version 2>&1))"
-    echo "using bootstrap python3: $(command -v python3) ($(python3 --version 2>&1))"
-    existing_pigweed_python="{{connectedhomeip_environment_dir}}/pigweed-venv/bin/python"
-    if [ -x "$existing_pigweed_python" ] && ! "$existing_pigweed_python" -c 'import sys; raise SystemExit(0 if sys.version_info[:2] in ((3, 11), (3, 12)) else 1)' >/dev/null; then
-      echo "removing incompatible Project CHIP environment created with $("$existing_pigweed_python" --version 2>&1)"
-      rm -rf "{{connectedhomeip_environment_dir}}"
-    fi
-    # Project CHIP's activation script expects unset optional environment
-    # variables, so keep this wrapper strict but source upstream with nounset off.
-    set +u
-    # shellcheck disable=SC1091
-    source scripts/activate.sh
-    set -u
-    gn gen --check --fail-on-unused-args --root=examples/chip-tool "{{connectedhomeip_build_dir}}" --args='is_debug=false'
-    ninja -C "{{connectedhomeip_build_dir}}" -j "${CHIP_TOOL_JOBS:-$(nproc)}"
-    test -x "{{built_chip_tool}}"
-
-[positional-arguments]
-@chip-tool *args:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if [ ! -x "{{built_chip_tool}}" ]; then
-      echo "Missing built chip-tool at {{built_chip_tool}}." >&2
-      echo "Run 'just rig::build-native' on the rig first." >&2
-      exit 1
-    fi
-    exec "{{built_chip_tool}}" "$@"
 
 @run:
     #!/usr/bin/env bash
@@ -928,7 +818,7 @@ aws_shared_credentials_file := ""
     done
     sudo "$ggl_cli" deploy "${remove_args[@]}"
 
-@deploy rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' component_version='' adapter_id='ble-main' name_fragment='txing' weather_thing_name='' weather_matter_node_id='' weather_chip_tool='chip-tool' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file: build
+@deploy rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' component_version='' adapter_id='ble-main' name_fragment='txing' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file: build
     #!/usr/bin/env bash
     set -euo pipefail
     for built_entrypoint in "{{built_rig}}" "{{built_rig_device_process}}"; do \
@@ -937,7 +827,7 @@ aws_shared_credentials_file := ""
             exit 1; \
         fi; \
     done
-    for positional_arg in "{{rig_id}}" "{{rig_name}}" "{{sparkplug_group_id}}" "{{sparkplug_edge_node_id}}" "{{component_version}}" "{{adapter_id}}" "{{name_fragment}}" "{{weather_thing_name}}" "{{weather_matter_node_id}}" "{{weather_chip_tool}}"; do
+    for positional_arg in "{{rig_id}}" "{{rig_name}}" "{{sparkplug_group_id}}" "{{sparkplug_edge_node_id}}" "{{component_version}}" "{{adapter_id}}" "{{name_fragment}}"; do
       case "$positional_arg" in
         *=*)
           echo "rig::deploy arguments are positional; '$positional_arg' was treated as an argument value, not a named option." >&2
@@ -1094,7 +984,7 @@ aws_shared_credentials_file := ""
         device_wheel_prefix="unit_rig"
         sparkplug_component="dev.txing.device.unit.SparkplugManager"
         connectivity_component="dev.txing.device.unit.ConnectivityBle"
-        legacy_components=(dev.txing.rig.SparkplugManager dev.txing.rig.ConnectivityBle)
+        legacy_components=(dev.txing.rig.SparkplugManager dev.txing.rig.ConnectivityBle dev.txing.device.weather.MatterWatch)
         sparkplug_module="unit_rig.sparkplug_manager"
         connectivity_module="unit_rig.connectivity_ble"
         connectivity_description="txing rig BLE connectivity adapter for MCU rendezvous and GATT power control."
@@ -1138,38 +1028,8 @@ aws_shared_credentials_file := ""
     if [ "$selected_rig_type" = "raspi" ]; then
       weather_python_project="{{project_root}}/devices/weather/rig/python"
       weather_sparkplug_component="dev.txing.device.weather.SparkplugManager"
-      weather_matter_component="dev.txing.device.weather.MatterWatch"
-      weather_native_project="{{project_root}}/devices/weather/rig/matter_watch"
-      weather_native_build_dir="{{rig_dir}}/build/weather-matter-watch"
-      weather_thing_name="{{weather_thing_name}}"
-      weather_matter_node_id="{{weather_matter_node_id}}"
-      weather_chip_tool="{{weather_chip_tool}}"
-      if [ "$weather_chip_tool" = "chip-tool" ] && [ -x "{{built_chip_tool}}" ]; then
-        weather_chip_tool="{{built_chip_tool}}"
-      fi
-      if [ -n "$weather_matter_node_id" ]; then
-        case "$weather_chip_tool" in
-          */*)
-            if [ ! -x "$weather_chip_tool" ]; then
-              echo "Missing executable chip-tool at $weather_chip_tool." >&2
-              echo "Run 'just rig::build-native' on this rig or pass a chip-tool executable path as the tenth positional rig::deploy argument." >&2
-              exit 1
-            fi
-            ;;
-          *)
-            if ! command -v "$weather_chip_tool" >/dev/null 2>&1; then
-              echo "Missing chip-tool command '$weather_chip_tool' on PATH." >&2
-              echo "Run 'just rig::build-native' on this rig or pass a chip-tool executable path as the tenth positional rig::deploy argument." >&2
-              exit 1
-            fi
-            weather_chip_tool="$(command -v "$weather_chip_tool")"
-            ;;
-        esac
-      fi
+      weather_connectivity_component="dev.txing.device.weather.ConnectivityBle"
       uv build --wheel --out-dir "$wheelhouse_dir" "$weather_python_project" >/dev/null
-      cmake -S "$weather_native_project" -B "$weather_native_build_dir" -DCMAKE_BUILD_TYPE=MinSizeRel >/dev/null
-      cmake --build "$weather_native_build_dir" --config MinSizeRel --parallel >/dev/null
-      test -x "$weather_native_build_dir/weather-matter-watch"
     fi
     uv build --wheel --out-dir "$wheelhouse_dir" "{{rig_dir}}" >/dev/null
     uv export \
@@ -1205,20 +1065,13 @@ aws_shared_credentials_file := ""
         printf 'txing local Greengrass artifact for %s %s\n' "$component_name" "$resolved_component_version" >"$component_artifact_dir/txing-local-artifact.txt"; \
     done
     if [ "$selected_rig_type" = "raspi" ]; then
-      for component_name in "$weather_sparkplug_component" "$weather_matter_component"; do
+      for component_name in "$weather_sparkplug_component" "$weather_connectivity_component"; do
         component_artifact_dir="$artifacts_dir/$component_name/$resolved_component_version"
         mkdir -p "$component_artifact_dir/python"
         cp -a "$python_tree_dir/." "$component_artifact_dir/python/"
         mkdir -p "$component_artifact_dir/devices/weather"
         cp "{{project_root}}/devices/weather/manifest.toml" "$component_artifact_dir/devices/weather/"
         cp -a "{{project_root}}/devices/weather/aws" "$component_artifact_dir/devices/weather/aws"
-        mkdir -p "$component_artifact_dir/bin"
-        cp "$weather_native_build_dir/weather-matter-watch" "$component_artifact_dir/bin/weather-matter-watch"
-        chmod 755 "$component_artifact_dir/bin/weather-matter-watch"
-        if [ "$component_name" = "$weather_matter_component" ] && [ -n "$weather_matter_node_id" ]; then
-          cp "$weather_chip_tool" "$component_artifact_dir/bin/chip-tool"
-          chmod 755 "$component_artifact_dir/bin/chip-tool"
-        fi
         printf 'txing local Greengrass artifact for %s %s\n' "$component_name" "$resolved_component_version" >"$component_artifact_dir/txing-local-artifact.txt"
       done
     fi
@@ -1341,7 +1194,7 @@ aws_shared_credentials_file := ""
     ComponentName: $weather_sparkplug_component
     ComponentVersion: '$resolved_component_version'
     ComponentType: aws.greengrass.generic
-    ComponentDescription: txing weather Sparkplug lifecycle manager for Matter weather devices.
+    ComponentDescription: txing weather Sparkplug lifecycle manager for BLE connected-idle weather devices.
     ComponentPublisher: txing
     ComponentDependencies:
       aws.greengrass.TokenExchangeService:
@@ -1352,11 +1205,12 @@ aws_shared_credentials_file := ""
         accessControl:
           aws.greengrass.ipc.pubsub:
             $weather_sparkplug_component:pubsub:1:
-              policyDescription: Allows the weather Sparkplug manager to consume local Matter connectivity state.
+              policyDescription: Allows the weather Sparkplug manager to exchange local connectivity messages with weather adapters.
               operations:
+                - aws.greengrass#PublishToTopic
                 - aws.greengrass#SubscribeToTopic
               resources:
-                - dev/txing/rig/v1/connectivity/state/*
+                - dev/txing/rig/v1/connectivity/*
     Manifests:
       - Platform:
           os: linux
@@ -1386,29 +1240,27 @@ aws_shared_credentials_file := ""
           - Uri: "s3://txing-local-greengrass/txing-local-artifact.txt"
             Unarchive: "NONE"
     EOF
-      cat >"$recipe_dir/$weather_matter_component-$resolved_component_version.yaml" <<EOF
+      cat >"$recipe_dir/$weather_connectivity_component-$resolved_component_version.yaml" <<EOF
     RecipeFormatVersion: '2020-01-25'
-    ComponentName: $weather_matter_component
+    ComponentName: $weather_connectivity_component
     ComponentVersion: '$resolved_component_version'
     ComponentType: aws.greengrass.generic
-    ComponentDescription: txing observe-only Matter watcher for weather devices.
+    ComponentDescription: txing weather BLE connected-idle adapter for BME280 weather devices.
     ComponentPublisher: txing
+    ComponentDependencies:
+      aws.greengrass.TokenExchangeService:
+        VersionRequirement: '>=0.0.0'
+        DependencyType: HARD
     ComponentConfiguration:
       DefaultConfiguration:
-        WeatherThingName: "$weather_thing_name"
-        MatterNodeId: "$weather_matter_node_id"
-        ChipTool: "$weather_chip_tool"
-        SampleIntervalSeconds: 30
-        TemperatureEndpoint: 1
-        HumidityEndpoint: 2
-        PressureEndpoint: 3
-        PowerEndpoint: 0
+        AdapterId: weather-ble-main
         accessControl:
           aws.greengrass.ipc.pubsub:
-            $weather_matter_component:pubsub:1:
-              policyDescription: Allows the weather Matter watcher to publish local connectivity state.
+            $weather_connectivity_component:pubsub:1:
+              policyDescription: Allows the weather BLE adapter to exchange local connectivity messages with the weather Sparkplug manager.
               operations:
                 - aws.greengrass#PublishToTopic
+                - aws.greengrass#SubscribeToTopic
               resources:
                 - dev/txing/rig/v1/connectivity/*
     Manifests:
@@ -1417,6 +1269,7 @@ aws_shared_credentials_file := ""
           runtime: aws_nucleus_lite
         Lifecycle:
           run:
+            RequiresPrivilege: true
             Script: |-
               export TXING_VERSION_BASE="$TXING_VERSION_BASE"
               export TXING_VERSION="$resolved_component_version"
@@ -1428,23 +1281,8 @@ aws_shared_credentials_file := ""
               export TXING_DEVICE_TYPE="weather"
               export TXING_DEVICE_DIR="{artifacts:path}/devices/weather"
               export TXING_DEVICE_MANIFEST="{artifacts:path}/devices/weather/manifest.toml"
-              export WEATHER_THING_NAME="{configuration:/WeatherThingName}"
-              export WEATHER_MATTER_NODE_ID="{configuration:/MatterNodeId}"
-              if [ -x "{artifacts:path}/bin/chip-tool" ]; then
-                export WEATHER_CHIP_TOOL="{artifacts:path}/bin/chip-tool"
-              else
-                export WEATHER_CHIP_TOOL="{configuration:/ChipTool}"
-              fi
-              export WEATHER_SAMPLE_INTERVAL_SECONDS="{configuration:/SampleIntervalSeconds}"
-              export WEATHER_TEMPERATURE_ENDPOINT="{configuration:/TemperatureEndpoint}"
-              export WEATHER_HUMIDITY_ENDPOINT="{configuration:/HumidityEndpoint}"
-              export WEATHER_PRESSURE_ENDPOINT="{configuration:/PressureEndpoint}"
-              export WEATHER_POWER_ENDPOINT="{configuration:/PowerEndpoint}"
-              export WEATHER_CHIP_TOOL_STORAGE_DIR="{work:path}/chip-tool-storage"
-              export WEATHER_MATTER_WATCH_BINARY="{artifacts:path}/bin/weather-matter-watch"
               export PYTHONPATH="{artifacts:path}/python"
-              mkdir -p "\$WEATHER_CHIP_TOOL_STORAGE_DIR"
-              exec python3 -m weather_rig.matter_watch
+              exec python3 -m weather_rig.connectivity_ble --adapter-id "{configuration:/AdapterId}"
         Artifacts:
           - Uri: "s3://txing-local-greengrass/txing-local-artifact.txt"
             Unarchive: "NONE"
@@ -1459,7 +1297,7 @@ aws_shared_credentials_file := ""
     if [ "$selected_rig_type" = "raspi" ]; then
       deploy_args+=(
         --add-component "$weather_sparkplug_component=$resolved_component_version"
-        --add-component "$weather_matter_component=$resolved_component_version"
+        --add-component "$weather_connectivity_component=$resolved_component_version"
       )
     fi
     for legacy_component in "${legacy_components[@]}"; do
@@ -1470,7 +1308,7 @@ aws_shared_credentials_file := ""
     done
     deployed_units=("ggl.$sparkplug_component.service" "ggl.$connectivity_component.service")
     if [ "$selected_rig_type" = "raspi" ]; then
-      deployed_units+=("ggl.$weather_sparkplug_component.service" "ggl.$weather_matter_component.service")
+      deployed_units+=("ggl.$weather_sparkplug_component.service" "ggl.$weather_connectivity_component.service")
     fi
     quiesce_units=()
     legacy_units=({{legacy_unit_rig_component_units}})

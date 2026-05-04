@@ -15,14 +15,12 @@ Weather device process components:
 
 - `dev.txing.device.weather.SparkplugManager`: Sparkplug B lifecycle for weather
   things assigned to the raspi rig.
-- `dev.txing.device.weather.MatterWatch`: observe-only Matter watcher. It idles
-  until `WeatherThingName` and `MatterNodeId` are configured in deployment.
+- `dev.txing.device.weather.ConnectivityBle`: BLE connected-idle adapter for
+  nRF54L15 weather devices.
 
-Matter support is additive to the existing BLE stack. A raspi rig can run the
-unit BLE components and the weather Matter components together, but Matter over
-Thread needs IP reachability to the Thread network through a Thread Border
-Router. Raspberry Pi 5 hardware does not include an 802.15.4 Thread radio by
-itself.
+Weather devices use the Raspberry Pi 5 built-in BLE controller. The weather rig
+path does not require Matter, Thread, `chip-tool`, a Thread border router, or a
+separate radio dongle.
 
 Lifecycle boundary:
 
@@ -40,10 +38,10 @@ Lifecycle boundary:
 it deploys both current `unit` and `weather` component families. It builds wheels
 for generic `rig`, device runtime packages, and `aws`, uses `uv pip install
 --target` to assemble a self-contained artifact Python tree for the target
-platform, builds the weather C++20 Matter watcher, generates concrete local
-recipes under `rig/build/greengrass-local`, and runs `ggl-cli deploy`. The
-generated recipe/artifact tree is kept until the next deploy because Greengrass
-Lite copies artifacts asynchronously after the CLI returns.
+platform, generates concrete local recipes under `rig/build/greengrass-local`,
+and runs `ggl-cli deploy`. The generated recipe/artifact tree is kept until the
+next deploy because Greengrass Lite copies artifacts asynchronously after the CLI
+returns.
 The checked-in recipe files are publishing templates; local deployment does not
 use their placeholder S3 URIs.
 
@@ -59,21 +57,8 @@ just rig::deploy <rig-id>
 ```
 
 Run the package install before `just rig::build-native`; the native build invokes
-`cmake` directly. `build-native` also checks out Nordic's `sdk-connectedhomeip`
-under `rig/connectedhomeip` at the NCS `v3.3.0` Matter revision and builds a
-local `chip-tool` for the rig. The checkout and build output are ignored by git.
-Debian 13 Trixie uses Python 3.13 as `/usr/bin/python3`; this Matter revision's
-Python dependencies still require Python 3.11 or 3.12, so the recipe provisions
-a uv-managed Python 3.12 under `rig/build/python` when no compatible system
-Python is available. During Project CHIP bootstrap, the recipe also prepends a
-local shim directory so upstream Pigweed setup sees that interpreter as
-`python3`.
-
-Use the local Matter controller with:
-
-```bash
-just rig::chip-tool --help
-```
+`cmake` directly for Greengrass Lite and no longer builds a local Matter
+controller.
 
 Run `just aws::cert <rig-id>` before `just rig::install-service <rig-id>`. The install recipe
 copies `config/certs/rig/rig.cert.pem` and `rig.private.key` into
@@ -119,33 +104,10 @@ Do not run `just rig::deploy component_version=0.5.1`; values after the recipe
 name are positional recipe arguments. Normal deploys should leave the internal
 component version empty.
 
-To activate the weather watcher during raspi deploy, pass the weather thing name
-and manually commissioned Matter node id in the eighth and ninth positional
-arguments:
-
-```bash
-just rig::deploy <rig-id> '' '' '' '' ble-main txing <weather-thing-name> <matter-node-id>
-```
-
-Leave those values empty to deploy the weather components in idle mode. The
-Matter watcher uses the `chip-tool` built by `just rig::build-native` when it is
-available. Pass a custom executable path as the tenth positional argument only if
-you want to use a different Project CHIP tool:
-
-```bash
-just rig::deploy <rig-id> '' '' '' '' ble-main txing <weather-thing-name> <matter-node-id> /path/to/chip-tool
-```
-
-When weather is enabled with a Matter node id, `rig::deploy` checks that the
-configured or locally built `chip-tool` exists before installing the Greengrass
-component, copies that executable into the local MatterWatch component artifact,
-and points the component at the artifact-local copy. The Greengrass runtime user
-does not need execute access to the developer checkout under `rig/connectedhomeip`.
-
-The Matter watcher stores its `chip-tool` controller fabric under the component
-work directory, exposed to the process as `WEATHER_CHIP_TOOL_STORAGE_DIR`.
-Commission the weather node with the same storage directory before expecting the
-watcher to read attributes.
+Weather things are discovered from the normal AWS registry assignment. The
+weather Sparkplug manager publishes BLE inventory using the registered AWS Thing
+ID as the expected BLE local name, and the weather BLE component connects to that
+advertisement and keeps the link open in connected-idle mode.
 
 Use `just rig::restart` to restart the Greengrass Lite systemd units without
 deploying new code. Do not expect restart to pick up a new local build; restart

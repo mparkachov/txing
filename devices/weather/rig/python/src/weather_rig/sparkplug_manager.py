@@ -7,6 +7,7 @@ import os
 import signal
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable
+from uuid import uuid4
 
 try:
     import boto3
@@ -17,8 +18,15 @@ from aws.auth import build_aws_runtime, ensure_aws_profile, resolve_aws_region
 from aws.mqtt import AwsIotWebsocketConnection, AwsMqttConnectionConfig
 from aws.type_catalog import SsmTypeCatalog
 from rig.connectivity_protocol import (
+    INVENTORY_TOPIC,
     STATE_TOPIC_PREFIX,
+    ConnectivityCommand,
+    ConnectivityDeviceConfig,
+    ConnectivityInventory,
     ConnectivityState,
+    SLEEP_MODEL_BLE_CONNECTED_IDLE,
+    TRANSPORT_BLE_GATT,
+    build_command_topic,
     parse_state_topic,
 )
 from rig.local_pubsub import GreengrassLocalPubSub, LocalPubSub
@@ -31,6 +39,7 @@ from rig.sparkplug import (
     build_node_birth_payload,
     build_node_death_payload,
     build_node_topic,
+    decode_redcon_command,
     encode_payload,
     utc_timestamp_ms,
 )
@@ -44,7 +53,9 @@ DEFAULT_OPERATION_TIMEOUT = 10.0
 DEFAULT_RECONNECT_DELAY = 5.0
 DEFAULT_STALE_AFTER_MS = 130_000
 DEFAULT_NODE_BDSEQ = 1
-WEATHER_REDCON = 4
+DEFAULT_INVENTORY_PUBLISH_INTERVAL = 10.0
+WEATHER_IDLE_REDCON = 4
+WEATHER_ACTIVE_REDCON = 3
 
 
 @dataclass(slots=True, frozen=True)
@@ -71,6 +82,8 @@ class WeatherManagedDevice:
     seq: int = 0
     last_reported_at_ms: int = 0
     stale: bool = False
+    redcon: int = WEATHER_IDLE_REDCON
+    target_redcon: int | None = None
     operation_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     @property
@@ -99,8 +112,11 @@ class WeatherSparkplugManager:
         self._connection: Any | None = None
         self._devices: dict[str, WeatherManagedDevice] = {}
         self._node_seq = 0
+        self._command_seq = 0
+        self._inventory_seq = 0
         self._node_born = False
         self._state_subscription: object | None = None
+        self._dcmd_subscribed = False
 
     @property
     def devices(self) -> dict[str, WeatherManagedDevice]:
@@ -109,6 +125,11 @@ class WeatherSparkplugManager:
     def _next_node_seq(self) -> int:
         seq = self._node_seq
         self._node_seq = (self._node_seq + 1) % 256
+        return seq
+
+    def _next_command_seq(self) -> int:
+        seq = self._command_seq
+        self._command_seq += 1
         return seq
 
     async def set_registrations(self, registrations: Iterable[ThingRegistration]) -> None:
@@ -121,6 +142,7 @@ class WeatherSparkplugManager:
             await self.publish_device_death(self._devices.pop(removed))
         for thing_name, registration in next_registrations.items():
             self._devices.setdefault(thing_name, WeatherManagedDevice(registration=registration))
+        await self.publish_inventory()
 
     async def connect(self) -> None:
         if self._connection is not None:
@@ -145,6 +167,7 @@ class WeatherSparkplugManager:
             aws_runtime=self._aws_runtime,
         )
         await self._connection.connect(timeout_seconds=self._config.connect_timeout)
+        await self._subscribe_device_commands()
         LOGGER.info(
             "Connected weather Sparkplug manager endpoint=%s edgeNode=%s",
             self._config.endpoint,
@@ -173,7 +196,32 @@ class WeatherSparkplugManager:
                 f"{STATE_TOPIC_PREFIX}/+",
                 self._handle_state_message,
             )
+        await self.publish_inventory()
         await self.publish_node_birth()
+
+    async def publish_inventory(self) -> None:
+        self._inventory_seq += 1
+        devices = tuple(
+            ConnectivityDeviceConfig(
+                thing_name=device.thing_name,
+                transport=TRANSPORT_BLE_GATT,
+                native_identity={"bleLocalName": device.thing_name},
+                sleep_model=SLEEP_MODEL_BLE_CONNECTED_IDLE,
+            )
+            for device in self._devices.values()
+        )
+        inventory = ConnectivityInventory(
+            adapter_id="weather-sparkplug-manager",
+            devices=devices,
+            seq=self._inventory_seq,
+            issued_at_ms=utc_timestamp_ms(),
+        )
+        await self._bus.publish(INVENTORY_TOPIC, inventory.to_json())
+        LOGGER.info(
+            "Published weather connectivity inventory seq=%s devices=%s",
+            self._inventory_seq,
+            len(devices),
+        )
 
     async def publish_node_birth(self) -> None:
         if self._connection is None:
@@ -229,9 +277,15 @@ class WeatherSparkplugManager:
             LOGGER.debug("Ignoring state for unmanaged weather thing=%s", state.thing_name)
             return
         async with device.operation_lock:
+            was_born = device.born
             device.last_state = state
             device.last_reported_at_ms = state.observed_at_ms
             device.stale = False
+            device.redcon = _weather_redcon_from_state(state)
+            if not state.reachable:
+                if was_born:
+                    await self.publish_device_death(device)
+                return
             if not device.born:
                 await self.publish_device_birth(device)
             else:
@@ -262,7 +316,7 @@ class WeatherSparkplugManager:
             encode_payload(
                 Payload(
                     timestamp=utc_timestamp_ms(),
-                    metrics=_weather_report_metrics(state),
+                    metrics=_weather_report_metrics(device.redcon, state),
                     seq=device.next_seq(),
                 )
             ),
@@ -272,7 +326,7 @@ class WeatherSparkplugManager:
             "Published weather Sparkplug %s thing=%s redcon=%s presence=%s hasWeather=%s hasBattery=%s",
             message_type,
             device.thing_name,
-            WEATHER_REDCON,
+            device.redcon,
             state.presence if state is not None else "unknown",
             state is not None and state.weather is not None,
             state is not None and state.battery_mv is not None,
@@ -307,9 +361,73 @@ class WeatherSparkplugManager:
                     await self.publish_device_death(device)
 
 
-def _weather_report_metrics(state: ConnectivityState | None) -> tuple[Metric, ...]:
+    async def _subscribe_device_commands(self) -> None:
+        if self._dcmd_subscribed or self._connection is None:
+            return
+        subscribe = getattr(self._connection, "subscribe", None)
+        if not callable(subscribe):
+            LOGGER.debug("weather Sparkplug connection has no subscribe method; DCMD disabled")
+            self._dcmd_subscribed = True
+            return
+        topic = build_device_topic(
+            self._config.sparkplug_group_id,
+            "DCMD",
+            self._config.sparkplug_edge_node_id,
+            "+",
+        )
+        loop = asyncio.get_running_loop()
+
+        def _on_message(message_topic: str, payload: bytes) -> None:
+            loop.call_soon_threadsafe(
+                lambda: asyncio.create_task(self._handle_dcmd_message(message_topic, payload))
+            )
+
+        await subscribe(
+            topic,
+            _on_message,
+            timeout_seconds=self._config.operation_timeout,
+        )
+        self._dcmd_subscribed = True
+
+    async def _handle_dcmd_message(self, topic: str, payload: bytes) -> None:
+        thing_name = _parse_weather_dcmd_topic(
+            topic,
+            group_id=self._config.sparkplug_group_id,
+            edge_node_id=self._config.sparkplug_edge_node_id,
+        )
+        if thing_name is None:
+            return
+        command = decode_redcon_command(payload)
+        if command is None:
+            LOGGER.warning("Ignoring weather DCMD without valid redcon topic=%s", topic)
+            return
+        device = self._devices.get(thing_name)
+        if device is None:
+            LOGGER.debug("Ignoring weather DCMD for unmanaged thing=%s", thing_name)
+            return
+        target_redcon = WEATHER_ACTIVE_REDCON if command.value < WEATHER_IDLE_REDCON else WEATHER_IDLE_REDCON
+        async with device.operation_lock:
+            device.target_redcon = target_redcon
+            await self._bus.publish(
+                build_command_topic(device.thing_name),
+                ConnectivityCommand(
+                    command_id=str(uuid4()),
+                    thing_name=device.thing_name,
+                    power=target_redcon < WEATHER_IDLE_REDCON,
+                    reason=f"redcon={command.value}",
+                    issued_at_ms=utc_timestamp_ms(),
+                    deadline_ms=utc_timestamp_ms() + 10_000,
+                    seq=self._next_command_seq(),
+                ).to_json(),
+            )
+
+
+def _weather_report_metrics(
+    redcon: int,
+    state: ConnectivityState | None,
+) -> tuple[Metric, ...]:
     metrics = [
-        Metric(name="redcon", datatype=DataType.INT32, int_value=WEATHER_REDCON),
+        Metric(name="redcon", datatype=DataType.INT32, int_value=redcon),
     ]
     if state is not None and state.battery_mv is not None:
         metrics.append(
@@ -321,6 +439,27 @@ def _weather_report_metrics(state: ConnectivityState | None) -> tuple[Metric, ..
         )
     metrics.extend(_weather_metrics(state))
     return tuple(metrics)
+
+
+def _weather_redcon_from_state(state: ConnectivityState | None) -> int:
+    if state is None or not state.reachable:
+        return WEATHER_IDLE_REDCON
+    return WEATHER_ACTIVE_REDCON if state.power else WEATHER_IDLE_REDCON
+
+
+def _parse_weather_dcmd_topic(
+    topic: str,
+    *,
+    group_id: str,
+    edge_node_id: str,
+) -> str | None:
+    prefix = f"spBv1.0/{group_id}/DCMD/{edge_node_id}/"
+    if not topic.startswith(prefix):
+        return None
+    suffix = topic[len(prefix) :]
+    if not suffix or "/" in suffix:
+        return None
+    return suffix
 
 
 def _weather_metrics(state: ConnectivityState | None) -> tuple[Metric, ...]:
@@ -361,6 +500,7 @@ async def run_weather_sparkplug_manager(
     bus: LocalPubSub,
     registry_client: AwsThingRegistryClient | None = None,
     connection_factory: Callable[..., Any] = AwsIotWebsocketConnection,
+    inventory_publish_interval: float = DEFAULT_INVENTORY_PUBLISH_INTERVAL,
 ) -> None:
     registry_client = registry_client or AwsThingRegistryClient(
         aws_runtime.iot_client(),
@@ -381,7 +521,14 @@ async def run_weather_sparkplug_manager(
             await asyncio.sleep(5.0)
             await manager.check_stale_devices()
 
+    async def inventory_loop() -> None:
+        while True:
+            await asyncio.sleep(inventory_publish_interval)
+            await manager.publish_inventory()
+
     tasks = [asyncio.create_task(stale_loop())]
+    if inventory_publish_interval > 0:
+        tasks.append(asyncio.create_task(inventory_loop()))
     try:
         await asyncio.Future()
     finally:
@@ -405,7 +552,7 @@ def _env_text(name: str, default: str) -> str:
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="weather-rig-sparkplug-manager",
-        description="Sparkplug lifecycle manager for Matter weather devices.",
+        description="Sparkplug lifecycle manager for BLE connected-idle weather devices.",
     )
     parser.add_argument("--rig-name", default=_env_text("RIG_NAME", DEFAULT_RIG_NAME))
     parser.add_argument("--rig-id", default=_env_text("TXING_RIG_ID", _env_text("RIG_ID", "")))

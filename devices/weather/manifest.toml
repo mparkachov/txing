@@ -9,9 +9,9 @@ schema = "aws/sparkplug-shadow.schema.json"
 default = "aws/default-sparkplug-shadow.json"
 
 [[rig.processes]]
-name = "weather-matter-watch"
+name = "weather-connectivity-ble"
 command = "uv"
-args = ["run", "--project", "rig/python", "weather-rig-matter-watch"]
+args = ["run", "--project", "rig/python", "weather-rig-connectivity-ble"]
 cwd = "."
 environment = [
   "TXING_DEVICE_TYPE",
@@ -22,9 +22,10 @@ environment = [
   "SPARKPLUG_GROUP_ID",
   "SPARKPLUG_EDGE_NODE_ID",
   "AWS_REGION",
-  "WEATHER_THING_NAME",
-  "WEATHER_MATTER_NODE_ID",
-  "WEATHER_CHIP_TOOL",
+  "WEATHER_BLE_ADAPTER_ID",
+  "WEATHER_BLE_SCAN_TIMEOUT",
+  "WEATHER_BLE_RECONNECT_DELAY",
+  "WEATHER_BLE_COMMAND_TIMEOUT",
 ]
 
 [[rig.processes]]

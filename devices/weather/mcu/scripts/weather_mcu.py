@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import argparse
+import binascii
 import hashlib
-import json
 import os
 import re
 import shlex
 import shutil
+import struct
 import subprocess
 import sys
 import time
@@ -22,44 +23,32 @@ PROJECT_ROOT = MCU_DIR.parents[2]
 ZEPHYR_DIR = PROJECT_ROOT / "zephyr"
 WORKSPACE_DIR = ZEPHYR_DIR / "workspace"
 ZEPHYR_BASE = WORKSPACE_DIR / "zephyr"
-MATTER_DIR = WORKSPACE_DIR / "modules" / "lib" / "matter"
-MATTER_BUILD_REQUIREMENTS = MATTER_DIR / "scripts" / "setup" / "requirements.build.txt"
-CLANG_FORMAT_REQUIREMENT = "clang-format==22.1.4"
 PYOCD_REQUIREMENT = "pyocd>=0.44,<0.45"
 PYOCD_MIN_VERSION = (0, 44, 0)
 PYOCD_MAX_VERSION = (0, 45, 0)
 OPENOCD_BOARD_SUPPORT_DIR = ZEPHYR_BASE / "boards" / "seeed" / "xiao_nrf54l15" / "support"
 OPENOCD_CFG_FILE = OPENOCD_BOARD_SUPPORT_DIR / "openocd.cfg"
-PIGWEED_CIPD_CONFIG = (
-    MATTER_DIR
-    / "third_party"
-    / "pigweed"
-    / "repo"
-    / "pw_env_setup"
-    / "py"
-    / "pw_env_setup"
-    / "cipd_setup"
-    / "pigweed.json"
-)
 SDK_DIR = ZEPHYR_DIR / "sdk" / "zephyr-sdk-0.17.4"
 LOCAL_HOME = ZEPHYR_DIR / ".home"
 BUILD_ROOT = MCU_DIR / "build"
-PIGWEED_ENV_DIR = BUILD_ROOT / "matter-pigweed-env"
-PIGWEED_CLANG_FORMAT = PIGWEED_ENV_DIR / "cipd" / "packages" / "pigweed" / "bin" / "clang-format"
 APP_DIR = MCU_DIR / "app"
-COMMON_MATTER_DIR = PROJECT_ROOT / "devices" / "common" / "mcu" / "matter"
 GENERATED_DIR = BUILD_ROOT / "generated"
 GENERATED_KEY_DIR = GENERATED_DIR / "keys"
 BUILD_DIR = BUILD_ROOT / BUILD_NAME
 BUILD_RECIPE_STAMP = BUILD_DIR / ".txing-weather-build-recipe"
 MERGED_HEX_FILE = BUILD_DIR / "txing_weather_merged.hex"
+FACTORY_HEX_FILE = BUILD_DIR / "txing_weather_factory.hex"
 FLASH_CHUNK_DIR = BUILD_DIR / "flash-chunks"
 FLASH_VERIFY_DIR = BUILD_DIR / "flash-verify"
 DEV_SIGNING_KEY_FILE = GENERATED_KEY_DIR / "txing_weather_dev_ed25519.pem"
 SYSBUILD_EXTRA_CONF_FILE = GENERATED_DIR / "sysbuild-extra.conf"
-COMMON_CONF_FILE = COMMON_MATTER_DIR / "config" / "thread_sed.conf"
 OVERLAY_FILE = MCU_DIR / "config" / "xiao_nrf54l15_bme280.overlay"
 CONF_FILE = MCU_DIR / "config" / "xiao_nrf54l15_cpuapp.conf"
+FACTORY_DATA_ADDRESS = int(os.environ.get("WEATHER_FACTORY_DATA_ADDRESS", "0x000f0000"), 0)
+FACTORY_DATA_MAGIC = b"TXW1"
+FACTORY_DATA_VERSION = 1
+FACTORY_THING_NAME_SIZE = 26
+FACTORY_DATA_STRUCT = struct.Struct("<4sBB26sI")
 
 
 def log(message: str) -> None:
@@ -68,6 +57,49 @@ def log(message: str) -> None:
 
 def fail(message: str) -> None:
     raise SystemExit(message)
+
+
+def validate_thing_name(value: str) -> str:
+    thing_name = value.strip()
+    if not thing_name:
+        fail("AWS thing id must not be empty")
+    try:
+        encoded = thing_name.encode("ascii")
+    except UnicodeEncodeError:
+        fail("AWS thing id must be ASCII so it fits in BLE advertising data")
+    if len(encoded) > FACTORY_THING_NAME_SIZE:
+        fail(
+            "AWS thing id is too long for BLE local-name advertising "
+            f"({len(encoded)} > {FACTORY_THING_NAME_SIZE} bytes): {thing_name!r}"
+        )
+    if any(byte < 0x21 or byte > 0x7E for byte in encoded):
+        fail("AWS thing id must contain only printable non-space ASCII characters")
+    return thing_name
+
+
+def build_factory_data(thing_name: str) -> bytes:
+    normalized = validate_thing_name(thing_name)
+    encoded = normalized.encode("ascii")
+    name_field = encoded.ljust(FACTORY_THING_NAME_SIZE, b"\0")
+    without_crc = FACTORY_DATA_STRUCT.pack(
+        FACTORY_DATA_MAGIC,
+        FACTORY_DATA_VERSION,
+        len(encoded),
+        name_field,
+        0,
+    )[:-4]
+    crc = binascii.crc32(without_crc) & 0xFFFFFFFF
+    return without_crc + struct.pack("<I", crc)
+
+
+def write_factory_hex(thing_name: str) -> Path:
+    from intelhex import IntelHex
+
+    FACTORY_HEX_FILE.parent.mkdir(parents=True, exist_ok=True)
+    factory = IntelHex()
+    factory.puts(FACTORY_DATA_ADDRESS, build_factory_data(thing_name))
+    factory.write_hex_file(str(FACTORY_HEX_FILE))
+    return FACTORY_HEX_FILE
 
 
 def west_command() -> list[str]:
@@ -85,8 +117,6 @@ def local_env() -> dict[str, str]:
     env["ZEPHYR_SDK_INSTALL_DIR"] = str(SDK_DIR)
     env["ZEPHYR_TOOLCHAIN_VARIANT"] = "zephyr"
     env["PATH"] = f"{ZEPHYR_DIR / '.venv' / 'bin'}{os.pathsep}{env.get('PATH', '')}"
-    if PIGWEED_CLANG_FORMAT.exists():
-        env["PW_ENVIRONMENT_ROOT"] = str(PIGWEED_ENV_DIR)
     env.pop("ZEPHYR_SDK_INSTALL_DIRS", None)
     return env
 
@@ -141,10 +171,10 @@ def env_int(name: str, *, default: int) -> int:
 
 
 def verify_toolchain() -> None:
-    missing_tools = [tool for tool in ("cmake", "ninja", "gn") if shutil.which(tool) is None]
+    missing_tools = [tool for tool in ("cmake", "ninja") if shutil.which(tool) is None]
     if missing_tools:
         fail(
-            "missing required host tool(s) for the Matter weather firmware build: "
+            "missing required host tool(s) for the weather BLE firmware build: "
             + ", ".join(missing_tools)
             + "\nInstall them manually with Homebrew; see devices/weather/mcu/README.md."
         )
@@ -152,86 +182,12 @@ def verify_toolchain() -> None:
         WORKSPACE_DIR / ".west",
         ZEPHYR_BASE,
         APP_DIR / "CMakeLists.txt",
-        COMMON_MATTER_DIR / "cmake" / "txing_matter.cmake",
-        MATTER_BUILD_REQUIREMENTS,
         SDK_DIR / "arm-zephyr-eabi" / "bin" / "arm-zephyr-eabi-gcc",
         ZEPHYR_DIR / ".venv" / "bin" / "python",
     )
     for path in required_paths:
         if not path.exists():
             fail(f"missing required Zephyr/NCS toolchain path: {path}\nRun `just zephyr::install` first.")
-
-
-def ensure_matter_python_requirements() -> None:
-    python = ZEPHYR_DIR / ".venv" / "bin" / "python"
-    result = run_capture(
-        [
-            str(python),
-            "-c",
-            "import clang_format, click, coloredlogs, jinja2, lark, python_path",
-        ],
-        cwd=MCU_DIR,
-        check=False,
-    )
-    if result.returncode == 0:
-        return
-    run(
-        [
-            "uv",
-            "pip",
-            "install",
-            "--python",
-            str(python),
-            "--no-managed-python",
-            "--no-python-downloads",
-            "--strict",
-            "--requirements",
-            str(MATTER_BUILD_REQUIREMENTS),
-            CLANG_FORMAT_REQUIREMENT,
-        ],
-        cwd=ZEPHYR_DIR,
-    )
-
-
-def pigweed_clang_revision() -> str | None:
-    if not PIGWEED_CIPD_CONFIG.exists():
-        return None
-    config = json.loads(PIGWEED_CIPD_CONFIG.read_text(encoding="utf-8"))
-    clang_package = next(
-        (
-            package
-            for package in config.get("packages", [])
-            if package.get("path", "").startswith("fuchsia/third_party/clang/")
-        ),
-        None,
-    )
-    if clang_package is None:
-        return None
-    tag = clang_package.get("tags", [""])[0]
-    prefix, _, revision = tag.partition(":")
-    if prefix != "git_revision" or not revision:
-        return None
-    return revision
-
-
-def ensure_clang_format_wrapper() -> None:
-    revision = pigweed_clang_revision()
-    real_clang_format = ZEPHYR_DIR / ".venv" / "bin" / "clang-format"
-    if revision is None or not real_clang_format.exists():
-        return
-
-    PIGWEED_CLANG_FORMAT.parent.mkdir(parents=True, exist_ok=True)
-    wrapper = f"""#!/usr/bin/env bash
-if [ "${{1:-}}" = "--version" ]; then
-  echo "Fuchsia clang-format version txing-local ({revision})"
-  exit 0
-fi
-exec "{real_clang_format}" "$@"
-"""
-    if PIGWEED_CLANG_FORMAT.exists() and PIGWEED_CLANG_FORMAT.read_text(encoding="utf-8") == wrapper:
-        return
-    PIGWEED_CLANG_FORMAT.write_text(wrapper, encoding="utf-8")
-    PIGWEED_CLANG_FORMAT.chmod(0o755)
 
 
 def parse_version(value: str) -> tuple[int, ...]:
@@ -259,7 +215,7 @@ def ensure_flash_python_requirements() -> None:
         log(
             "updating pyOCD from "
             f"{result.stdout.strip()} to {PYOCD_REQUIREMENT}; "
-            "older pyOCD releases are unreliable on XIAO nRF54L15 Matter images"
+            "older pyOCD releases are unreliable on XIAO nRF54L15 images"
         )
     else:
         log(f"installing {PYOCD_REQUIREMENT} into zephyr/.venv")
@@ -334,7 +290,7 @@ SB_CONFIG_BOOT_SIGNATURE_KEY_FILE="{DEV_SIGNING_KEY_FILE}"
 
 
 def recipe_input_paths() -> list[Path]:
-    roots = (APP_DIR, COMMON_MATTER_DIR, MCU_DIR / "config")
+    roots = (APP_DIR, MCU_DIR / "config")
     paths: list[Path] = []
     for root in roots:
         for path in root.rglob("*"):
@@ -353,8 +309,7 @@ def recipe_stamp() -> str:
     return "\n".join(
         (
             "source=devices/weather/mcu/app",
-            "common=devices/common/mcu/matter",
-            "recipe=txing-weather-direct-matter-bme280-v1",
+            "recipe=txing-weather-ble-connected-idle-v1",
             f"board={BOARD}",
             f"source_sha256={digest.hexdigest()}",
             "",
@@ -372,7 +327,7 @@ def app_image_dirs() -> tuple[Path, ...]:
     return (
         BUILD_DIR / "app",
         BUILD_DIR / "txing_weather",
-        BUILD_DIR / "txing-weather-matter",
+        BUILD_DIR / "txing-weather-ble-connected-idle",
         BUILD_DIR / "source",
         BUILD_DIR,
     )
@@ -393,8 +348,6 @@ def app_image_file(name: str) -> Path:
 
 def build(*, pristine: bool) -> None:
     verify_toolchain()
-    ensure_matter_python_requirements()
-    ensure_clang_format_wrapper()
     ensure_dev_signing_key()
     ensure_generated_sysbuild_extra_conf()
     if pristine or not build_is_current():
@@ -411,9 +364,10 @@ def build(*, pristine: bool) -> None:
                 "-d",
                 str(BUILD_DIR),
                 "--",
-                f"-DEXTRA_CONF_FILE={COMMON_CONF_FILE};{CONF_FILE}",
+                f"-DEXTRA_CONF_FILE={CONF_FILE}",
                 f"-DEXTRA_DTC_OVERLAY_FILE={OVERLAY_FILE}",
                 f"-DSB_EXTRA_CONF_FILE={SYSBUILD_EXTRA_CONF_FILE}",
+                f"-DTXING_WEATHER_FACTORY_DATA_ADDR=0x{FACTORY_DATA_ADDRESS:08x}",
             ],
             cwd=ZEPHYR_BASE,
         )
@@ -425,7 +379,7 @@ def build(*, pristine: bool) -> None:
     log(f"ok: built {elf}")
 
 
-def merge_flash_hex() -> Path:
+def merge_flash_hex(thing_name: str | None = None) -> Path:
     from intelhex import IntelHex
 
     bootloader_hex = BUILD_DIR / "mcuboot" / "zephyr" / "zephyr.hex"
@@ -437,6 +391,9 @@ def merge_flash_hex() -> Path:
     merged = IntelHex()
     merged.merge(IntelHex(str(bootloader_hex)), overlap="error")
     merged.merge(IntelHex(str(app_hex)), overlap="error")
+    if thing_name is not None:
+        factory_hex = write_factory_hex(thing_name)
+        merged.merge(IntelHex(str(factory_hex)), overlap="error")
     merged.write_hex_file(str(MERGED_HEX_FILE))
     return MERGED_HEX_FILE
 
@@ -559,7 +516,7 @@ def flash_openocd(merged_hex: Path) -> None:
 
     frequency = os.environ.get("OPENOCD_FREQUENCY", "100")
     # Zephyr's board helper uses 0x101: write-enable plus one 128-bit write
-    # buffer. The larger Matter image has been observed to fail mid-image with
+    # buffer. Larger application images have been observed to fail mid-image with
     # that buffered path, so default to unbuffered RRAM writes.
     rramc_config = os.environ.get("OPENOCD_RRAMC_CONFIG", "0x1")
     run(
@@ -661,7 +618,7 @@ def flash_pyocd(merged_hex: Path) -> None:
 
 def verify_flash() -> None:
     build(pristine=False)
-    merged_hex = merge_flash_hex()
+    merged_hex = merge_flash_hex(os.environ.get("WEATHER_THING_NAME") or None)
     ensure_flash_python_requirements()
 
     pyocd = ZEPHYR_DIR / ".venv" / "bin" / "pyocd"
@@ -711,9 +668,10 @@ def verify_flash() -> None:
     log(f"ok: verified {len(compare_bins)} pyOCD chunks against {merged_hex}")
 
 
-def flash() -> None:
+def flash(thing_name: str) -> None:
+    validate_thing_name(thing_name)
     build(pristine=False)
-    merged_hex = merge_flash_hex()
+    merged_hex = merge_flash_hex(thing_name)
     runner = os.environ.get("WEATHER_MCU_FLASH_RUNNER", "pyocd").lower()
     if runner == "openocd":
         flash_openocd(merged_hex)
@@ -724,12 +682,21 @@ def flash() -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Build txing weather firmware with the local Zephyr/NCS recipe.")
+    parser = argparse.ArgumentParser(description="Build txing weather BLE firmware.")
     parser.add_argument("command", choices=("check", "build", "flash", "verify"))
+    parser.add_argument(
+        "thing_name",
+        nargs="?",
+        help="AWS IoT thing id to store in weather factory data during flash",
+    )
     args = parser.parse_args()
     if args.command == "flash":
-        flash()
+        if not args.thing_name:
+            fail("flash requires an AWS thing id, e.g. `just weather::mcu::flash weather-q8zbgb`")
+        flash(args.thing_name)
     elif args.command == "verify":
+        if args.thing_name:
+            os.environ["WEATHER_THING_NAME"] = validate_thing_name(args.thing_name)
         verify_flash()
     else:
         build(pristine=False)

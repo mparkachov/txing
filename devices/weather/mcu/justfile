@@ -11,11 +11,11 @@ script := mcu_dir + "/scripts/weather_mcu.py"
 
 @build: check
 
-@flash:
-    cd "{{mcu_dir}}" && UV_CACHE_DIR="{{uv_cache_dir}}" uv run --project "{{project_root}}/zephyr" --no-sync python "{{script}}" flash
+@flash thing_id:
+    cd "{{mcu_dir}}" && UV_CACHE_DIR="{{uv_cache_dir}}" uv run --project "{{project_root}}/zephyr" --no-sync python "{{script}}" flash "{{thing_id}}"
 
-@verify:
-    cd "{{mcu_dir}}" && UV_CACHE_DIR="{{uv_cache_dir}}" uv run --project "{{project_root}}/zephyr" --no-sync python "{{script}}" verify
+@verify thing_id='':
+    cd "{{mcu_dir}}" && UV_CACHE_DIR="{{uv_cache_dir}}" uv run --project "{{project_root}}/zephyr" --no-sync python "{{script}}" verify "{{thing_id}}"
 
 @clean:
     rm -rf "{{mcu_dir}}/build"
