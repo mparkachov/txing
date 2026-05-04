@@ -343,10 +343,15 @@ class WeatherBleDeviceSessionTests(unittest.TestCase):
         self.assertEqual(FakeClient.instances, [])
 
     def test_failed_connect_keeps_advertising_presence_without_extra_disconnect(self) -> None:
-        async def exercise() -> tuple[list[ConnectivityState], FailingClient]:
+        async def exercise() -> tuple[list[ConnectivityState], FailingClient, list[ConnectivityCommandResult]]:
             bus = InMemoryLocalPubSub()
             received: list[bytes] = []
             await bus.subscribe(build_state_topic("weather-1"), lambda _t, p: received.append(p))
+            results: list[ConnectivityCommandResult] = []
+            await bus.subscribe(
+                build_command_result_topic("weather-1"),
+                lambda _t, p: results.append(ConnectivityCommandResult.from_payload(p)),
+            )
 
             session = WeatherBleDeviceSession(
                 thing_name="weather-1",
@@ -369,18 +374,26 @@ class WeatherBleDeviceSessionTests(unittest.TestCase):
             )
             while not FailingClient.instances or FailingClient.instances[0].connect_kwargs is None:
                 await asyncio.sleep(0)
+            while not results:
+                await asyncio.sleep(0)
             session.stop()
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
-            return [ConnectivityState.from_payload(payload) for payload in received], FailingClient.instances[0]
+            return (
+                [ConnectivityState.from_payload(payload) for payload in received],
+                FailingClient.instances[0],
+                results,
+            )
 
         with self.assertLogs("weather_rig.connectivity_ble", level="WARNING") as logs:
-            states, client = asyncio.run(exercise())
+            states, client, results = asyncio.run(exercise())
 
         self.assertEqual(len(states), 1)
         self.assertTrue(states[0].reachable)
         self.assertEqual(client.disconnect_count, 0)
         self.assertEqual(client.connect_kwargs, {"dangerous_use_bleak_cache": True})
+        self.assertEqual(results[0].status, COMMAND_FAILED)
+        self.assertIn("failed to discover services", results[0].message or "")
         self.assertIn("BleakError", logs.output[0])
 
     def test_slow_connect_is_limited_by_configured_timeout(self) -> None:

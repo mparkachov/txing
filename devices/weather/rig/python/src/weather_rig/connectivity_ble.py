@@ -134,6 +134,13 @@ def _command_deadline_expired_message(command: ConnectivityCommand) -> str:
     return f"weather BLE command deadline expired deadlineMs={command.deadline_ms}"
 
 
+def _connect_failed_message(error: Exception) -> str:
+    message = str(error).strip()
+    if not message:
+        message = type(error).__name__
+    return f"weather BLE connection failed before command write: {message}"
+
+
 def parse_state_report(data: bytes | bytearray | memoryview) -> WeatherBleState:
     payload = bytes(data)
     if len(payload) < STATE_STRUCT.size:
@@ -273,6 +280,7 @@ class WeatherBleDeviceSession:
                         type(err).__name__,
                         self._config.reconnect_delay,
                     )
+                await self._fail_queued_commands(_connect_failed_message(err))
                 await self._fail_expired_queued_commands()
                 await _sleep_until_stop(self._stop_event, self._config.reconnect_delay)
 
