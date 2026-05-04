@@ -2,6 +2,7 @@
 #include "weather_protocol.h"
 
 #include <ble.h>
+#include <ble_gatt.h>
 #include <ble_gap.h>
 #include <bm/bluetooth/ble_adv_data.h>
 #include <bm/softdevice_handler/nrf_sdh.h>
@@ -467,6 +468,21 @@ static void handle_ble_evt(const ble_evt_t *evt, void *ctx)
 			LOG_DBG("Failed to set missing system attributes, nrf_error %#x", nrf_err);
 		}
 		break;
+
+	case BLE_GATTS_EVT_EXCHANGE_MTU_REQUEST: {
+		const uint16_t client_rx_mtu =
+			evt->evt.gatts_evt.params.exchange_mtu_request.client_rx_mtu;
+
+		nrf_err = sd_ble_gatts_exchange_mtu_reply(evt->evt.gatts_evt.conn_handle,
+							  BLE_GATT_ATT_MTU_DEFAULT);
+		if (nrf_err != NRF_SUCCESS) {
+			LOG_DBG("Failed to reply to ATT MTU request, nrf_error %#x", nrf_err);
+		} else {
+			LOG_INF("ATT MTU exchange client_rx=%u server_rx=%u", client_rx_mtu,
+				BLE_GATT_ATT_MTU_DEFAULT);
+		}
+		break;
+	}
 
 	case BLE_GATTC_EVT_TIMEOUT:
 		(void)sd_ble_gap_disconnect(evt->evt.gattc_evt.conn_handle,

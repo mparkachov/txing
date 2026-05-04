@@ -366,7 +366,7 @@ class WeatherBleDeviceSession:
                     continue
                 await self._execute_command(client, command)
         finally:
-            if connected or _client_is_connected(client):
+            if connected:
                 await _client_disconnect(client)
                 await self._publish_connectivity(
                     presence=PRESENCE_OFFLINE,
@@ -375,6 +375,8 @@ class WeatherBleDeviceSession:
                     weather=None,
                     battery_mv=self._last_state.battery_mv,
                 )
+            else:
+                await _cleanup_client_after_failed_connect(client)
 
     def _create_client(self, device: Any) -> Any:
         if self._client_factory is _default_client:
@@ -744,8 +746,23 @@ async def _client_disconnect(client: Any) -> None:
 
 
 def _client_is_connected(client: Any) -> bool:
+    backend = getattr(client, "_backend", None)
+    if backend is not None:
+        backend_value = getattr(backend, "is_connected", None)
+        if backend_value is not None and not callable(backend_value):
+            return bool(backend_value)
+
     value = getattr(client, "is_connected", True)
-    return bool(value() if callable(value) else value)
+    if callable(value):
+        return True
+    return bool(value)
+
+
+async def _cleanup_client_after_failed_connect(client: Any) -> None:
+    try:
+        await asyncio.wait_for(_client_disconnect(client), timeout=5.0)
+    except Exception:
+        LOGGER.debug("Weather BLE cleanup after failed connect failed", exc_info=True)
 
 
 def _device_address(device: Any) -> str | None:
