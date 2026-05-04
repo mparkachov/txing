@@ -86,6 +86,7 @@ from .thing_registry import AwsThingRegistryClient, DeviceRegistration
 
 LOGGER = logging.getLogger("unit_rig.sparkplug_manager")
 DEFAULT_INVENTORY_PUBLISH_INTERVAL = 10.0
+UNIT_INVENTORY_ADAPTER_ID = "unit-sparkplug-manager"
 
 
 def _unit_registrations(registrations: Iterable[DeviceRegistration]) -> list[DeviceRegistration]:
@@ -576,7 +577,7 @@ class SparkplugManager:
             for device in self._devices.values()
         )
         inventory = ConnectivityInventory(
-            adapter_id="sparkplug-manager",
+            adapter_id=UNIT_INVENTORY_ADAPTER_ID,
             seq=self._inventory_seq,
             issued_at_ms=utc_timestamp_ms(),
             devices=device_configs,

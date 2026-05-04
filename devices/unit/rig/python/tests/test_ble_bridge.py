@@ -847,7 +847,10 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertNotIn("python\" -m pip download", justfile)
         self.assertIn('sparkplug_component="dev.txing.device.unit.SparkplugManager"', justfile)
         self.assertIn('connectivity_component="dev.txing.device.unit.ConnectivityBle"', justfile)
-        self.assertIn('legacy_components=(dev.txing.rig.SparkplugManager dev.txing.rig.ConnectivityBle)', justfile)
+        self.assertIn(
+            'legacy_components=(dev.txing.rig.SparkplugManager dev.txing.rig.ConnectivityBle dev.txing.device.weather.MatterWatch)',
+            justfile,
+        )
         self.assertIn('--add-component "$sparkplug_component=$resolved_component_version"', justfile)
         self.assertIn('--add-component "$connectivity_component=$resolved_component_version"', justfile)
         self.assertIn('--remove-component "$legacy_component"', justfile)

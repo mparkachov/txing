@@ -54,6 +54,7 @@ DEFAULT_RECONNECT_DELAY = 5.0
 DEFAULT_STALE_AFTER_MS = 130_000
 DEFAULT_NODE_BDSEQ = 1
 DEFAULT_INVENTORY_PUBLISH_INTERVAL = 10.0
+WEATHER_INVENTORY_ADAPTER_ID = "weather-sparkplug-manager"
 WEATHER_IDLE_REDCON = 4
 WEATHER_ACTIVE_REDCON = 3
 
@@ -211,7 +212,7 @@ class WeatherSparkplugManager:
             for device in self._devices.values()
         )
         inventory = ConnectivityInventory(
-            adapter_id="weather-sparkplug-manager",
+            adapter_id=WEATHER_INVENTORY_ADAPTER_ID,
             devices=devices,
             seq=self._inventory_seq,
             issued_at_ms=utc_timestamp_ms(),
@@ -272,6 +273,14 @@ class WeatherSparkplugManager:
         await self.apply_connectivity_state(state)
 
     async def apply_connectivity_state(self, state: ConnectivityState) -> None:
+        if state.sleep_model != SLEEP_MODEL_BLE_CONNECTED_IDLE:
+            LOGGER.debug(
+                "Ignoring non-weather connectivity state thing=%s adapterId=%s sleepModel=%s",
+                state.thing_name,
+                state.adapter_id,
+                state.sleep_model,
+            )
+            return
         device = self._devices.get(state.thing_name)
         if device is None:
             LOGGER.debug("Ignoring state for unmanaged weather thing=%s", state.thing_name)

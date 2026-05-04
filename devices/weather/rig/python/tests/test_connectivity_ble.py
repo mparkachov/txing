@@ -15,6 +15,7 @@ from rig.connectivity_protocol import (
     ConnectivityInventory,
     ConnectivityState,
     SLEEP_MODEL_BLE_CONNECTED_IDLE,
+    SLEEP_MODEL_BLE_RENDEZVOUS,
     TRANSPORT_BLE_GATT,
     build_command_result_topic,
     build_command_topic,
@@ -237,6 +238,65 @@ class WeatherConnectivityBleServiceTests(unittest.TestCase):
 
         self.assertEqual(sessions, [])
         self.assertEqual(results[0].status, COMMAND_ACCEPTED)
+
+    def test_unit_inventory_and_command_are_ignored(self) -> None:
+        class FakeSession:
+            def __init__(self, *, thing_name: str, **_kwargs: object) -> None:
+                self.thing_name = thing_name
+
+            async def run(self) -> None:
+                await asyncio.Future()
+
+            def stop(self) -> None:
+                return None
+
+            async def enqueue_command(self, _command: ConnectivityCommand) -> None:
+                raise AssertionError("unit command must not be routed to weather session")
+
+        async def exercise() -> tuple[list[str], list[ConnectivityCommandResult]]:
+            bus = InMemoryLocalPubSub()
+            service = WeatherConnectivityBleService(
+                WeatherBleConfig(),
+                bus=bus,
+                session_factory=FakeSession,  # type: ignore[arg-type]
+            )
+            results: list[ConnectivityCommandResult] = []
+            await bus.subscribe(
+                build_command_result_topic("unit-1"),
+                lambda _t, p: results.append(ConnectivityCommandResult.from_payload(p)),
+            )
+            await service._handle_inventory(
+                INVENTORY_TOPIC,
+                ConnectivityInventory(
+                    adapter_id="unit-sparkplug-manager",
+                    seq=1,
+                    issued_at_ms=1714380000000,
+                    devices=(
+                        ConnectivityDeviceConfig(
+                            thing_name="unit-1",
+                            transport=TRANSPORT_BLE_GATT,
+                            sleep_model=SLEEP_MODEL_BLE_RENDEZVOUS,
+                            native_identity={"bleDeviceId": "AA:BB"},
+                        ),
+                    ),
+                ).to_json().encode(),
+            )
+            await service._handle_command(
+                build_command_topic("unit-1"),
+                ConnectivityCommand(
+                    command_id="cmd-unit",
+                    thing_name="unit-1",
+                    power=True,
+                    reason="redcon=3",
+                    issued_at_ms=1714380000000,
+                ).to_json().encode(),
+            )
+            return list(service._sessions), results
+
+        sessions, results = asyncio.run(exercise())
+
+        self.assertEqual(sessions, [])
+        self.assertEqual(results, [])
 
 
 if __name__ == "__main__":

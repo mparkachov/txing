@@ -11,6 +11,7 @@ from unit_rig.connectivity_protocol import (
     ConnectivityInventory,
     ConnectivityState,
     SLEEP_MODEL_BLE_RENDEZVOUS,
+    SLEEP_MODEL_BLE_CONNECTED_IDLE,
     SLEEP_MODEL_MATTER_ICD,
     TRANSPORT_BLE_GATT,
     TRANSPORT_MATTER,
@@ -166,6 +167,32 @@ class ConnectivityBleServiceTests(unittest.TestCase):
         self.assertTrue(first_restart)
         self.assertFalse(second_restart)
 
+    def test_weather_inventory_is_ignored(self) -> None:
+        async def exercise() -> bool:
+            service = ConnectivityBleService(
+                BridgeConfig(rig_name="rig", sparkplug_group_id="town"),
+                bus=InMemoryLocalPubSub(),
+            )
+            await service._handle_inventory_message(
+                INVENTORY_TOPIC,
+                ConnectivityInventory(
+                    adapter_id="weather-sparkplug-manager",
+                    seq=1,
+                    issued_at_ms=1714380000000,
+                    devices=(
+                        ConnectivityDeviceConfig(
+                            thing_name="weather-1",
+                            transport=TRANSPORT_BLE_GATT,
+                            native_identity={"bleLocalName": "weather-1"},
+                            sleep_model=SLEEP_MODEL_BLE_CONNECTED_IDLE,
+                        ),
+                    ),
+                ).to_json().encode(),
+            )
+            return service._inventory_event.is_set()
+
+        self.assertFalse(asyncio.run(exercise()))
+
     def test_inventory_builds_only_ble_managed_things(self) -> None:
         service = ConnectivityBleService(
             BridgeConfig(rig_name="rig", sparkplug_group_id="town"),
@@ -187,6 +214,12 @@ class ConnectivityBleServiceTests(unittest.TestCase):
                     transport=TRANSPORT_MATTER,
                     native_identity={"matterNodeId": 57},
                     sleep_model=SLEEP_MODEL_MATTER_ICD,
+                ),
+                ConnectivityDeviceConfig(
+                    thing_name="weather-ble",
+                    transport=TRANSPORT_BLE_GATT,
+                    native_identity={"bleLocalName": "weather-ble"},
+                    sleep_model=SLEEP_MODEL_BLE_CONNECTED_IDLE,
                 ),
             ),
         )

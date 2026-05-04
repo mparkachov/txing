@@ -55,6 +55,7 @@ from .thing_registry import ThingRegistration
 
 LOGGER = logging.getLogger("unit_rig.connectivity_ble")
 DEFAULT_ADAPTER_ID = "ble-main"
+UNIT_INVENTORY_ADAPTER_IDS = {"sparkplug-manager", "unit-sparkplug-manager"}
 
 
 class ConnectivityBleCloudProxy:
@@ -72,6 +73,9 @@ class ConnectivityBleCloudProxy:
 
     def set_shadow(self, thing_name: str, shadow: ShadowState) -> None:
         self._shadows[thing_name] = shadow
+
+    def has_shadow(self, thing_name: str) -> bool:
+        return thing_name in self._shadows
 
     async def enqueue_command(self, command: ConnectivityCommand) -> None:
         target_redcon = 3 if command.power else 4
@@ -232,6 +236,14 @@ class ConnectivityBleService:
 
     async def _handle_inventory_message(self, _topic: str, payload: bytes) -> None:
         inventory = ConnectivityInventory.from_payload(payload)
+        if not self._is_relevant_inventory(inventory):
+            LOGGER.debug(
+                "Ignoring non-unit connectivity inventory adapterId=%s seq=%s devices=%s",
+                inventory.adapter_id,
+                inventory.seq,
+                len(inventory.devices),
+            )
+            return
         signature = self._inventory_device_signature(inventory)
         should_restart = (
             self._inventory_signature != signature
@@ -248,6 +260,13 @@ class ConnectivityBleService:
         )
         if should_restart:
             self._inventory_event.set()
+
+    @staticmethod
+    def _is_relevant_inventory(inventory: ConnectivityInventory) -> bool:
+        return inventory.adapter_id in UNIT_INVENTORY_ADAPTER_IDS or any(
+            device.sleep_model == SLEEP_MODEL_BLE_RENDEZVOUS
+            for device in inventory.devices
+        )
 
     @staticmethod
     def _inventory_device_signature(
@@ -278,6 +297,12 @@ class ConnectivityBleService:
                 raise ValueError(
                     f"command topic thing={thing_name} differs from payload thing={command.thing_name}"
                 )
+            if not self._cloud_proxy.has_shadow(command.thing_name):
+                LOGGER.debug(
+                    "Ignoring connectivity command for unmanaged unit thing=%s",
+                    command.thing_name,
+                )
+                return
             await self._cloud_proxy.enqueue_command(command)
         except Exception as err:
             LOGGER.warning("Invalid connectivity command topic=%s error=%s", topic, err)
@@ -331,6 +356,8 @@ class ConnectivityBleService:
         managed: list[ManagedThing] = []
         for device in inventory.devices:
             if device.transport != TRANSPORT_BLE_GATT:
+                continue
+            if device.sleep_model != SLEEP_MODEL_BLE_RENDEZVOUS:
                 continue
             thing_name = device.thing_name
             ble_device_id = device.native_identity.get("bleDeviceId")

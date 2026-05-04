@@ -44,6 +44,7 @@ from rig.sparkplug import utc_timestamp_ms
 LOGGER = logging.getLogger("weather_rig.connectivity_ble")
 
 DEFAULT_ADAPTER_ID = "weather-ble-main"
+WEATHER_INVENTORY_ADAPTER_ID = "weather-sparkplug-manager"
 DEFAULT_SCAN_TIMEOUT = 8.0
 DEFAULT_RECONNECT_DELAY = 2.0
 DEFAULT_COMMAND_TIMEOUT = 8.0
@@ -414,6 +415,7 @@ class WeatherConnectivityBleService:
         self._session_factory = session_factory
         self._sessions: dict[str, WeatherBleDeviceSession] = {}
         self._tasks: dict[str, asyncio.Task[None]] = {}
+        self._known_thing_names: set[str] = set()
 
     async def start(self) -> None:
         subscriptions: list[object] = []
@@ -437,12 +439,21 @@ class WeatherConnectivityBleService:
 
     async def _handle_inventory(self, _topic: str, payload: bytes) -> None:
         inventory = ConnectivityInventory.from_payload(payload)
+        if inventory.adapter_id != WEATHER_INVENTORY_ADAPTER_ID:
+            LOGGER.debug(
+                "Ignoring non-weather connectivity inventory adapterId=%s seq=%s devices=%s",
+                inventory.adapter_id,
+                inventory.seq,
+                len(inventory.devices),
+            )
+            return
         wanted = tuple(
             device.thing_name
             for device in inventory.devices
             if device.transport == TRANSPORT_BLE_GATT
             and device.sleep_model == SLEEP_MODEL_BLE_CONNECTED_IDLE
         )
+        self._known_thing_names = set(wanted)
         await self._reconcile_sessions(wanted)
 
     async def _reconcile_sessions(self, wanted: Iterable[str]) -> None:
@@ -473,6 +484,12 @@ class WeatherConnectivityBleService:
                 raise ValueError(
                     f"command topic thing={thing_name} differs from payload thing={command.thing_name}"
                 )
+            if command.thing_name not in self._known_thing_names:
+                LOGGER.debug(
+                    "Ignoring weather BLE command for unmanaged thing=%s",
+                    command.thing_name,
+                )
+                return
             session = self._sessions.get(thing_name)
             if session is None:
                 raise RuntimeError(f"weather BLE thing {thing_name!r} is not in inventory")
