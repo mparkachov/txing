@@ -331,6 +331,87 @@ class WeatherBleDeviceSessionTests(unittest.TestCase):
 
 
 class WeatherConnectivityBleServiceTests(unittest.TestCase):
+    def test_start_stop_cancels_sessions_before_closing_subscriptions(self) -> None:
+        async def exercise() -> list[str]:
+            events: list[str] = []
+
+            @dataclass(slots=True)
+            class TrackingSubscription:
+                inner: object
+                topic: str
+
+                def close(self) -> None:
+                    events.append(f"close:{self.topic}")
+                    close = getattr(self.inner, "close", None)
+                    if callable(close):
+                        close()
+
+            class TrackingBus(InMemoryLocalPubSub):
+                async def publish(self, topic: str, payload: bytes | str) -> None:
+                    events.append(f"publish:{topic}")
+                    await super().publish(topic, payload)
+
+                async def subscribe(self, topic: str, handler: object) -> TrackingSubscription:  # type: ignore[override]
+                    inner = await super().subscribe(topic, handler)  # type: ignore[arg-type]
+                    events.append(f"subscribe:{topic}")
+                    return TrackingSubscription(inner=inner, topic=topic)
+
+            class FakeSession:
+                def __init__(self, *, thing_name: str, **_kwargs: object) -> None:
+                    self.thing_name = thing_name
+
+                async def run(self) -> None:
+                    events.append("session-run")
+                    try:
+                        await asyncio.Future()
+                    except asyncio.CancelledError:
+                        events.append("session-cancelled")
+                        raise
+
+                def stop(self) -> None:
+                    events.append("session-stop")
+
+                async def enqueue_command(self, _command: ConnectivityCommand) -> None:
+                    raise AssertionError("command routing is not part of this test")
+
+            bus = TrackingBus()
+            service = WeatherConnectivityBleService(
+                WeatherBleConfig(heartbeat_interval=60.0),
+                bus=bus,
+                session_factory=FakeSession,  # type: ignore[arg-type]
+            )
+            task = asyncio.create_task(service.start())
+            while sum(event.startswith("subscribe:") for event in events) < 3:
+                await asyncio.sleep(0)
+            await service._handle_inventory(
+                INVENTORY_TOPIC,
+                ConnectivityInventory(
+                    adapter_id="weather-sparkplug-manager",
+                    seq=1,
+                    issued_at_ms=1714380000000,
+                    devices=(
+                        ConnectivityDeviceConfig(
+                            thing_name="weather-1",
+                            transport=TRANSPORT_BLE_GATT,
+                            sleep_model=SLEEP_MODEL_BLE_CONNECTED_IDLE,
+                            native_identity={"bleLocalName": "weather-1"},
+                        ),
+                    ),
+                ).to_json().encode(),
+            )
+            while "session-run" not in events:
+                await asyncio.sleep(0)
+            service.stop()
+            await asyncio.wait_for(task, timeout=1.0)
+            return events
+
+        events = asyncio.run(exercise())
+        first_close = next(
+            index for index, event in enumerate(events) if event.startswith("close:")
+        )
+
+        self.assertLess(events.index("session-cancelled"), first_close)
+
     def test_inventory_starts_session_and_command_is_accepted(self) -> None:
         class FakeSession:
             def __init__(self, *, thing_name: str, **_kwargs: object) -> None:

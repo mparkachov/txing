@@ -558,6 +558,12 @@ class WeatherConnectivityBleService:
         self._sessions: dict[str, WeatherBleDeviceSession] = {}
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._known_thing_names: set[str] = set()
+        self._stop_event = asyncio.Event()
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        for session in self._sessions.values():
+            session.stop()
 
     async def start(self) -> None:
         subscriptions: list[object] = []
@@ -576,14 +582,14 @@ class WeatherConnectivityBleService:
                 )
             )
             heartbeat_task = asyncio.create_task(self._heartbeat_loop())
-            await asyncio.Future()
+            await self._stop_event.wait()
         finally:
-            for subscription in subscriptions:
-                _close_resource(subscription)
             if heartbeat_task is not None:
                 heartbeat_task.cancel()
                 await asyncio.gather(heartbeat_task, return_exceptions=True)
             await self._stop_all_sessions()
+            for subscription in subscriptions:
+                _close_resource(subscription)
 
     async def _handle_inventory(self, _topic: str, payload: bytes) -> None:
         inventory = ConnectivityInventory.from_payload(payload)
@@ -853,6 +859,8 @@ def main() -> None:
                 break
         bus = GreengrassLocalPubSub()
         service = WeatherConnectivityBleService(config, bus=bus)
+        service_task: asyncio.Task[None] | None = None
+        shutdown_task: asyncio.Task[bool] | None = None
         try:
             service_task = asyncio.create_task(service.start())
             shutdown_task = asyncio.create_task(shutdown_event.wait())
@@ -860,12 +868,26 @@ def main() -> None:
                 {service_task, shutdown_task},
                 return_when=asyncio.FIRST_COMPLETED,
             )
+            if shutdown_task in done and not service_task.done():
+                service.stop()
+                await service_task
+            else:
+                service_task.result()
             for task in pending:
-                task.cancel()
-            await asyncio.gather(*pending, return_exceptions=True)
-            for task in done:
-                task.result()
+                if task is not service_task:
+                    task.cancel()
+            await asyncio.gather(
+                *(task for task in pending if task is not service_task),
+                return_exceptions=True,
+            )
         finally:
+            service.stop()
+            if service_task is not None and not service_task.done():
+                service_task.cancel()
+                await asyncio.gather(service_task, return_exceptions=True)
+            if shutdown_task is not None and not shutdown_task.done():
+                shutdown_task.cancel()
+                await asyncio.gather(shutdown_task, return_exceptions=True)
             bus.close()
 
     asyncio.run(_runner())
