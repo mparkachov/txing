@@ -550,6 +550,16 @@ class WeatherBleDeviceSessionTests(unittest.TestCase):
                 )
             )
 
+            while (
+                not TimeoutOnceThenSuccessClient.instances
+                or not TimeoutOnceThenSuccessClient.instances[0].cancelled
+            ):
+                await asyncio.sleep(0)
+            await asyncio.sleep(0.03)
+            self.assertEqual(TimeoutOnceThenSuccessClient.attempts, 1)
+            self.assertEqual(results, [])
+            session.observe_advertisement(_weather_advertisement("weather-1", seq=2))
+
             async def wait_for_success() -> None:
                 while not results or results[-1].status != COMMAND_SUCCEEDED:
                     await asyncio.sleep(0)
@@ -602,6 +612,13 @@ class WeatherBleDeviceSessionTests(unittest.TestCase):
                     issued_at_ms=1714380000000,
                 )
             )
+
+            while DiscoveryDisconnectOnceThenSuccessClient.attempts < 1:
+                await asyncio.sleep(0)
+            await asyncio.sleep(0.03)
+            self.assertEqual(DiscoveryDisconnectOnceThenSuccessClient.attempts, 1)
+            self.assertEqual(results, [])
+            session.observe_advertisement(_weather_advertisement("weather-1", seq=2))
 
             async def wait_for_success() -> None:
                 while not results or results[-1].status != COMMAND_SUCCEEDED:

@@ -111,6 +111,7 @@ class WeatherBleMeasurement:
 class _DiscoveredWeatherDevice:
     name: str
     address: str
+    seq: int
     details: dict[str, Any]
 
 
@@ -206,6 +207,7 @@ class WeatherBleDeviceSession:
         self._ble_address: str | None = None
         self._last_advertisement: BleAdvertisement | None = None
         self._last_connect_error_message: str | None = None
+        self._connect_attempt_advertisement_seq: int | None = None
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -295,6 +297,7 @@ class WeatherBleDeviceSession:
                 connect_failed_message = _connect_failed_message(err)
                 if _should_retry_connection_error(err):
                     self._last_connect_error_message = connect_failed_message
+                    self._discard_failed_connect_advertisement()
                 else:
                     await self._fail_queued_commands(connect_failed_message)
                 await self._fail_expired_queued_commands()
@@ -411,6 +414,7 @@ class WeatherBleDeviceSession:
                 return _DiscoveredWeatherDevice(
                     name=self.thing_name,
                     address=advertisement.address,
+                    seq=advertisement.seq,
                     details={"local_name": advertisement.name},
                 )
 
@@ -446,6 +450,7 @@ class WeatherBleDeviceSession:
         client = self._create_client(device)
         connected = False
         scan_paused = False
+        self._connect_attempt_advertisement_seq = _device_seq(device)
         try:
             await self._publish_scan_control(
                 action=BLE_SCAN_PAUSE,
@@ -470,6 +475,7 @@ class WeatherBleDeviceSession:
             )
             await _client_connect(client, timeout=self._config.connect_timeout)
             connected = True
+            self._connect_attempt_advertisement_seq = None
             self._ble_address = _device_address(device)
             LOGGER.info(
                 "Connected weather BLE thing=%s address=%s",
@@ -529,6 +535,16 @@ class WeatherBleDeviceSession:
                 await _client_disconnect(client)
             else:
                 await _cleanup_client_after_failed_connect(client)
+
+    def _discard_failed_connect_advertisement(self) -> None:
+        attempted_seq = self._connect_attempt_advertisement_seq
+        self._connect_attempt_advertisement_seq = None
+        advertisement = self._last_advertisement
+        if attempted_seq is None or advertisement is None:
+            return
+        if advertisement.seq == attempted_seq:
+            self._last_advertisement = None
+            self._advertisement_event.clear()
 
     def _create_client(self, device: Any) -> Any:
         if self._client_factory is _default_client:
@@ -1039,6 +1055,11 @@ def _should_retry_connection_error(err: Exception) -> bool:
 def _device_address(device: Any) -> str | None:
     address = getattr(device, "address", None)
     return address if isinstance(address, str) and address.strip() else None
+
+
+def _device_seq(device: Any) -> int | None:
+    seq = getattr(device, "seq", None)
+    return seq if isinstance(seq, int) else None
 
 
 def _advertisement_matches_weather_device(
