@@ -66,7 +66,7 @@ the host is configured that way.
 Important event types are:
 
 ```text
-adv connected services notify state measurement command wake-ok sleep-ok disconnect error summary
+adv connect-retry connected services notify state measurement command wake-ok sleep-ok disconnect error summary
 ```
 
 `idle` and `soak` fail on any unexpected link drop. The CLI uses the Bleak
@@ -80,6 +80,7 @@ Expected cleanup disconnects are emitted as `disconnect unexpected=0`.
 Connection setup events include timing fields:
 
 ```text
+connect-retry attempt=... attempts=...
 connected connectMs=...
 services servicesMs=...
 wake-ok latencyMs=...
@@ -92,6 +93,16 @@ timeout argument, for example:
 
 ```sh
 just weather::ble-debug::inspect weather-q8zbgb 60
+```
+
+Connect, service discovery, initial state read, and notification setup are
+retried up to three times by default. This covers transient BlueZ/CoreBluetooth
+startup failures without changing the idle/soak stability rule: after setup,
+any unexpected disconnect still fails the command.
+
+```sh
+just weather::ble-debug::soak weather-q8zbgb 5 20 20 10 60 5
+uv run --project devices/weather/ble-debug weather-ble-debug soak --name weather-q8zbgb --connect-attempts 5
 ```
 
 Summarize one or more captured stdout logs:

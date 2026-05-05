@@ -18,20 +18,20 @@ stability_matrix_script := ble_debug_dir + "/scripts/run_stability_matrix.py"
 @scan name timeout="30":
     uv run --project "{{ble_debug_dir}}" weather-ble-debug scan --name "{{name}}" --timeout "{{timeout}}"
 
-@inspect name timeout="30":
-    uv run --project "{{ble_debug_dir}}" weather-ble-debug inspect --name "{{name}}" --timeout "{{timeout}}"
+@inspect name timeout="30" connect_attempts="3":
+    uv run --project "{{ble_debug_dir}}" weather-ble-debug inspect --name "{{name}}" --timeout "{{timeout}}" --connect-attempts "{{connect_attempts}}"
 
-@idle name duration="300" timeout="30":
-    uv run --project "{{ble_debug_dir}}" weather-ble-debug idle --name "{{name}}" --duration "{{duration}}" --timeout "{{timeout}}"
+@idle name duration="300" timeout="30" connect_attempts="3":
+    uv run --project "{{ble_debug_dir}}" weather-ble-debug idle --name "{{name}}" --duration "{{duration}}" --timeout "{{timeout}}" --connect-attempts "{{connect_attempts}}"
 
-@wake name deadline="10" active_seconds="30" timeout="30":
-    uv run --project "{{ble_debug_dir}}" weather-ble-debug wake --name "{{name}}" --deadline "{{deadline}}" --active-seconds "{{active_seconds}}" --timeout "{{timeout}}"
+@wake name deadline="10" active_seconds="30" timeout="30" connect_attempts="3":
+    uv run --project "{{ble_debug_dir}}" weather-ble-debug wake --name "{{name}}" --deadline "{{deadline}}" --active-seconds "{{active_seconds}}" --timeout "{{timeout}}" --connect-attempts "{{connect_attempts}}"
 
-@sleep name deadline="10" timeout="30":
-    uv run --project "{{ble_debug_dir}}" weather-ble-debug sleep --name "{{name}}" --deadline "{{deadline}}" --timeout "{{timeout}}"
+@sleep name deadline="10" timeout="30" connect_attempts="3":
+    uv run --project "{{ble_debug_dir}}" weather-ble-debug sleep --name "{{name}}" --deadline "{{deadline}}" --timeout "{{timeout}}" --connect-attempts "{{connect_attempts}}"
 
-@soak name cycles="50" active_seconds="20" idle_seconds="20" deadline="10" timeout="30":
-    uv run --project "{{ble_debug_dir}}" weather-ble-debug soak --name "{{name}}" --cycles "{{cycles}}" --active-seconds "{{active_seconds}}" --idle-seconds "{{idle_seconds}}" --deadline "{{deadline}}" --timeout "{{timeout}}"
+@soak name cycles="50" active_seconds="20" idle_seconds="20" deadline="10" timeout="30" connect_attempts="3":
+    uv run --project "{{ble_debug_dir}}" weather-ble-debug soak --name "{{name}}" --cycles "{{cycles}}" --active-seconds "{{active_seconds}}" --idle-seconds "{{idle_seconds}}" --deadline "{{deadline}}" --timeout "{{timeout}}" --connect-attempts "{{connect_attempts}}"
 
 @summarize *logs:
     uv run --project "{{ble_debug_dir}}" weather-ble-debug-summarize {{logs}}

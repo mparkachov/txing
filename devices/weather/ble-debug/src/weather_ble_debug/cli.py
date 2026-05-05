@@ -128,11 +128,13 @@ class WeatherBleDebugClient:
         client_factory: Callable[..., Any] | None = None,
         stack: BleStackConfig | None = None,
         adapter: str | None = None,
+        connect_attempts: int = 3,
     ) -> None:
         self.name = name
         self.timeout = timeout
         self.sink = sink or EventSink()
         self.stack = stack or detect_ble_stack(adapter=adapter)
+        self.connect_attempts = max(1, connect_attempts)
         self.scanner_factory = scanner_factory or _default_scanner
         self.client_factory = client_factory or _default_client
         self.client: Any | None = None
@@ -145,12 +147,36 @@ class WeatherBleDebugClient:
         self._disconnect_event: asyncio.Event | None = None
         self._intentional_disconnect = False
         self._disconnect_reported = False
+        self._connecting = False
 
     async def connect(self) -> None:
-        self._loop = asyncio.get_running_loop()
-        self._disconnect_event = asyncio.Event()
-        self._intentional_disconnect = False
-        self._disconnect_reported = False
+        last_error = "connect failed"
+        for attempt in range(1, self.connect_attempts + 1):
+            self._loop = asyncio.get_running_loop()
+            self._disconnect_event = asyncio.Event()
+            self._intentional_disconnect = False
+            self._disconnect_reported = False
+            self._connecting = False
+            try:
+                await self._connect_once(attempt=attempt)
+                return
+            except Exception as err:
+                self._connecting = False
+                await self.disconnect(emit=False)
+                last_error = str(err) or type(err).__name__
+                if attempt >= self.connect_attempts:
+                    if isinstance(err, DebugError):
+                        raise
+                    raise DebugError("connect", last_error) from err
+                self.sink.emit(
+                    "connect-retry",
+                    attempt=attempt,
+                    attempts=self.connect_attempts,
+                    message=last_error,
+                )
+        raise DebugError("connect", last_error)
+
+    async def _connect_once(self, *, attempt: int) -> None:
         advertisement = await discover_target(
             name=self.name,
             timeout=self.timeout,
@@ -160,28 +186,25 @@ class WeatherBleDebugClient:
         )
         client = self._create_client(advertisement.device)
         self.client = client
-        try:
-            connect_started = time.monotonic()
-            await _await_maybe(client.connect())
-            connect_ms = int(round((time.monotonic() - connect_started) * 1000))
-            self.sink.emit(
-                "connected",
-                name=self.name,
-                address=advertisement.address,
-                **self.stack.event_fields(),
-                connectMs=connect_ms,
-            )
-            services_started = time.monotonic()
-            services = await ensure_services(client)
-            services_ms = int(round((time.monotonic() - services_started) * 1000))
-            self._emit_services(services, services_ms=services_ms)
-            await self._read_initial_state()
-            await self._start_notifications()
-        except Exception as err:
-            await self.disconnect(emit=False)
-            if isinstance(err, DebugError):
-                raise
-            raise DebugError("connect", str(err) or type(err).__name__) from err
+        connect_started = time.monotonic()
+        self._connecting = True
+        await _await_maybe(client.connect())
+        connect_ms = int(round((time.monotonic() - connect_started) * 1000))
+        self.sink.emit(
+            "connected",
+            name=self.name,
+            address=advertisement.address,
+            **self.stack.event_fields(),
+            attempt=attempt,
+            connectMs=connect_ms,
+        )
+        services_started = time.monotonic()
+        services = await ensure_services(client)
+        services_ms = int(round((time.monotonic() - services_started) * 1000))
+        self._emit_services(services, services_ms=services_ms)
+        await self._read_initial_state()
+        await self._start_notifications()
+        self._connecting = False
 
     async def disconnect(self, *, emit: bool = True) -> None:
         if self.client is None:
@@ -377,6 +400,8 @@ class WeatherBleDebugClient:
         self._disconnect_reported = True
         if self._disconnect_event is not None:
             self._disconnect_event.set()
+        if self._connecting:
+            return
         self.sink.emit("disconnect", name=self.name, unexpected=1)
 
     async def _queue_get_or_disconnect(
@@ -538,6 +563,7 @@ async def run_inspect(args: argparse.Namespace, sink: EventSink) -> None:
         timeout=args.timeout,
         sink=sink,
         adapter=args.adapter,
+        connect_attempts=args.connect_attempts,
     )
     await session.connect()
     try:
@@ -552,6 +578,7 @@ async def run_idle(args: argparse.Namespace, sink: EventSink) -> None:
         timeout=args.timeout,
         sink=sink,
         adapter=args.adapter,
+        connect_attempts=args.connect_attempts,
     )
     await session.connect()
     try:
@@ -567,6 +594,7 @@ async def run_wake(args: argparse.Namespace, sink: EventSink) -> None:
         timeout=args.timeout,
         sink=sink,
         adapter=args.adapter,
+        connect_attempts=args.connect_attempts,
     )
     await session.connect()
     try:
@@ -583,6 +611,7 @@ async def run_sleep(args: argparse.Namespace, sink: EventSink) -> None:
         timeout=args.timeout,
         sink=sink,
         adapter=args.adapter,
+        connect_attempts=args.connect_attempts,
     )
     await session.connect()
     try:
@@ -598,6 +627,7 @@ async def run_soak(args: argparse.Namespace, sink: EventSink) -> None:
         timeout=args.timeout,
         sink=sink,
         adapter=args.adapter,
+        connect_attempts=args.connect_attempts,
     )
     await session.connect()
     try:
@@ -646,22 +676,27 @@ def build_parser() -> argparse.ArgumentParser:
 
     inspect_parser = subparsers.add_parser("inspect")
     _add_name_timeout(inspect_parser)
+    _add_connect_attempts(inspect_parser)
 
     idle_parser = subparsers.add_parser("idle")
     _add_name_timeout(idle_parser)
+    _add_connect_attempts(idle_parser)
     idle_parser.add_argument("--duration", type=float, default=300.0)
 
     wake_parser = subparsers.add_parser("wake")
     _add_name_timeout(wake_parser)
+    _add_connect_attempts(wake_parser)
     wake_parser.add_argument("--deadline", type=float, default=10.0)
     wake_parser.add_argument("--active-seconds", type=float, default=30.0)
 
     sleep_parser = subparsers.add_parser("sleep")
     _add_name_timeout(sleep_parser)
+    _add_connect_attempts(sleep_parser)
     sleep_parser.add_argument("--deadline", type=float, default=10.0)
 
     soak_parser = subparsers.add_parser("soak")
     _add_name_timeout(soak_parser)
+    _add_connect_attempts(soak_parser)
     soak_parser.add_argument("--cycles", type=int, default=50)
     soak_parser.add_argument("--active-seconds", type=float, default=20.0)
     soak_parser.add_argument("--idle-seconds", type=float, default=20.0)
@@ -676,6 +711,15 @@ def _add_name_timeout(parser: argparse.ArgumentParser) -> None:
         "--adapter",
         default=os.environ.get("WEATHER_BLE_DEBUG_ADAPTER"),
         help="Linux/BlueZ adapter, for example hci0. Defaults to the BlueZ default adapter.",
+    )
+
+
+def _add_connect_attempts(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--connect-attempts",
+        type=int,
+        default=int(os.environ.get("WEATHER_BLE_DEBUG_CONNECT_ATTEMPTS", "3")),
+        help="Initial connect/service-discovery attempts before failing.",
     )
 
 

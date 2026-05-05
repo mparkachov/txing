@@ -30,6 +30,12 @@ Expected sequence:
 5. CLI subscribes to state and measurement notifications.
 6. CLI writes REDCON commands when asked.
 
+The host setup phase is retried up to the configured `--connect-attempts`
+count. A retry covers failures before the command has reached the idle or soak
+observation phase: connection establishment, service discovery, initial state
+read, and notification subscription. Once setup succeeds, unexpected
+disconnects remain hard failures.
+
 The CLI uses Bleak's CoreBluetooth backend on macOS and BlueZ D-Bus backend on
 Linux, including Raspberry Pi OS / Debian Trixie. CoreBluetooth does not expose
 HCI-level connection parameters through Bleak. The CLI can prove observable
@@ -152,6 +158,10 @@ CoreBluetooth service-discovery phase that Bleak performs inside
 paired with `btmon` for HCI-level timing. Compare the CLI timeout with RTT
 `Peer connected` and `Peer disconnected reason=...` logs to distinguish a
 peripheral link drop from a client-side connect timeout.
+
+`connect-retry` means one setup attempt failed before the test entered
+idle/wake/soak behavior. This is useful on BlueZ where the first service
+discovery attempt can occasionally fail while later attempts succeed.
 
 `error stage=services` means GATT service discovery did not expose all required
 characteristics.

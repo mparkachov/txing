@@ -144,10 +144,22 @@ class NoNotifyOnWriteFakeClient(FakeClient):
         self.writes.append((uuid, payload, response))
 
 
+class FailFirstConnectFakeClient(FakeClient):
+    failures_remaining = 1
+
+    async def connect(self) -> None:
+        if FailFirstConnectFakeClient.failures_remaining:
+            FailFirstConnectFakeClient.failures_remaining -= 1
+            self.trigger_unexpected_disconnect()
+            raise RuntimeError("failed to discover services, device disconnected")
+        await super().connect()
+
+
 class WeatherBleDebugCliTests(unittest.TestCase):
     def setUp(self) -> None:
         FakeScanner.instances.clear()
         FakeClient.instances.clear()
+        FailFirstConnectFakeClient.failures_remaining = 1
 
     def test_format_event_uses_key_value_fields(self) -> None:
         line = format_event("adv", name="weather-1", rssi=-42, empty=None)
@@ -275,6 +287,28 @@ class WeatherBleDebugCliTests(unittest.TestCase):
         client = asyncio.run(exercise())
 
         self.assertEqual(client.client_kwargs, {"adapter": "hci1"})
+
+    def test_connect_retries_initial_service_discovery_failure(self) -> None:
+        async def exercise() -> tuple[list[str], list[FailFirstConnectFakeClient]]:
+            lines: list[str] = []
+            session = WeatherBleDebugClient(
+                name="weather-1",
+                timeout=0.1,
+                sink=EventSink(lines.append),
+                scanner_factory=FakeScanner,
+                client_factory=FailFirstConnectFakeClient,
+                connect_attempts=2,
+            )
+            await session.connect()
+            await session.disconnect()
+            return lines, FailFirstConnectFakeClient.instances
+
+        lines, clients = asyncio.run(exercise())
+
+        self.assertEqual(len(clients), 2)
+        self.assertTrue(any("connect-retry " in line and "attempt=1" in line for line in lines))
+        self.assertTrue(any("connected " in line and "attempt=2" in line for line in lines))
+        self.assertFalse(any("disconnect " in line and "unexpected=1" in line for line in lines))
 
     def test_unexpected_disconnect_fails_idle_observation(self) -> None:
         async def exercise() -> tuple[str, str, list[str]]:
