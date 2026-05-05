@@ -213,10 +213,14 @@ class WeatherBleDebugClient:
         self.client = None
         self._intentional_disconnect = True
         disconnect = getattr(client, "disconnect", None)
+        disconnect_error: str | None = None
         if callable(disconnect):
-            await _await_maybe(disconnect())
+            try:
+                await _await_maybe(disconnect())
+            except Exception as err:
+                disconnect_error = type(err).__name__
         if emit:
-            self.sink.emit("disconnect", name=self.name, unexpected=0)
+            self.sink.emit("disconnect", name=self.name, unexpected=0, error=disconnect_error)
 
     async def write_redcon(self, redcon: int) -> None:
         client = self._require_client()
@@ -257,12 +261,17 @@ class WeatherBleDebugClient:
             remaining = end - time.monotonic()
             if remaining <= 0:
                 raise DebugError(stage, message)
-            state = await self._queue_get_or_disconnect(
-                self.state_queue,
-                timeout=remaining,
-                stage=stage,
-                timeout_message=message,
-            )
+            try:
+                state = await self._queue_get_or_disconnect(
+                    self.state_queue,
+                    timeout=min(remaining, 0.5),
+                    stage=stage,
+                    timeout_message=message,
+                )
+            except DebugError as err:
+                if str(err) != message:
+                    raise
+                state = await self._read_state(stage=stage)
             if state.redcon == redcon:
                 return state
 
@@ -323,11 +332,10 @@ class WeatherBleDebugClient:
         return self.client
 
     async def _read_initial_state(self) -> None:
-        client = self._require_client()
-        state = parse_state(await _await_maybe(client.read_gatt_char(WEATHER_STATE_UUID)))
-        self._record_state(state)
+        state = await self._read_state(stage="connect")
         if not state.bme280_valid:
             return
+        client = self._require_client()
         try:
             measurement = parse_measurement(
                 await _await_maybe(client.read_gatt_char(WEATHER_MEASUREMENT_UUID))
@@ -335,6 +343,16 @@ class WeatherBleDebugClient:
         except Exception:
             return
         self._record_measurement(measurement)
+
+    async def _read_state(self, *, stage: str) -> WeatherState:
+        client = self._require_client()
+        try:
+            state = parse_state(await _await_maybe(client.read_gatt_char(WEATHER_STATE_UUID)))
+        except EOFError as err:
+            self._record_unexpected_disconnect()
+            raise DebugError(stage, "unexpected disconnect: EOFError") from err
+        self._record_state(state)
+        return state
 
     async def _start_notifications(self) -> None:
         client = self._require_client()

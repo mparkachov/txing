@@ -90,6 +90,7 @@ class FakeClient:
         self.services = FakeServices()
         self.notifications: dict[str, Any] = {}
         self.writes: list[tuple[str, bytes, bool]] = []
+        self.current_redcon = REDCON_IDLE
         self.instances.append(self)
 
     async def connect(self) -> None:
@@ -105,7 +106,7 @@ class FakeClient:
 
     async def read_gatt_char(self, uuid: str) -> bytes:
         if uuid == WEATHER_STATE_UUID:
-            return encode_state_for_test(redcon=REDCON_IDLE, battery_mv=3300)
+            return encode_state_for_test(redcon=self.current_redcon, battery_mv=3300)
         return encode_measurement_for_test(
             temperature_c=20.0,
             pressure_kpa=100.0,
@@ -119,6 +120,7 @@ class FakeClient:
     async def write_gatt_char(self, uuid: str, payload: bytes, *, response: bool) -> None:
         self.writes.append((uuid, payload, response))
         target_redcon = payload[1]
+        self.current_redcon = target_redcon
         self.notifications[WEATHER_STATE_UUID](
             WEATHER_STATE_UUID,
             encode_state_for_test(
@@ -142,6 +144,17 @@ class FakeClient:
 class NoNotifyOnWriteFakeClient(FakeClient):
     async def write_gatt_char(self, uuid: str, payload: bytes, *, response: bool) -> None:
         self.writes.append((uuid, payload, response))
+        self.current_redcon = payload[1]
+
+
+class StaleNoNotifyOnWriteFakeClient(FakeClient):
+    async def write_gatt_char(self, uuid: str, payload: bytes, *, response: bool) -> None:
+        self.writes.append((uuid, payload, response))
+
+
+class DisconnectRaisesFakeClient(FakeClient):
+    async def disconnect(self) -> None:
+        raise EOFError()
 
 
 class FailFirstConnectFakeClient(FakeClient):
@@ -288,6 +301,26 @@ class WeatherBleDebugCliTests(unittest.TestCase):
 
         self.assertEqual(client.client_kwargs, {"adapter": "hci1"})
 
+    def test_disconnect_cleanup_error_does_not_raise(self) -> None:
+        async def exercise() -> list[str]:
+            lines: list[str] = []
+            session = WeatherBleDebugClient(
+                name="weather-1",
+                timeout=0.1,
+                sink=EventSink(lines.append),
+                scanner_factory=FakeScanner,
+                client_factory=DisconnectRaisesFakeClient,
+            )
+            await session.connect()
+            await session.disconnect()
+            return lines
+
+        lines = asyncio.run(exercise())
+
+        self.assertTrue(
+            any("disconnect " in line and "unexpected=0" in line and "error=EOFError" in line for line in lines)
+        )
+
     def test_connect_retries_initial_service_discovery_failure(self) -> None:
         async def exercise() -> tuple[list[str], list[FailFirstConnectFakeClient]]:
             lines: list[str] = []
@@ -358,6 +391,26 @@ class WeatherBleDebugCliTests(unittest.TestCase):
         self.assertEqual(stage, "wake")
         self.assertIn("measurement deadline expired", message)
 
+    def test_sleep_accepts_direct_state_read_after_missed_notification(self) -> None:
+        async def exercise() -> list[str]:
+            lines: list[str] = []
+            session = WeatherBleDebugClient(
+                name="weather-1",
+                timeout=0.1,
+                sink=EventSink(lines.append),
+                scanner_factory=FakeScanner,
+                client_factory=NoNotifyOnWriteFakeClient,
+            )
+            await session.connect()
+            NoNotifyOnWriteFakeClient.instances[0].current_redcon = REDCON_ACTIVE
+            await session.sleep(deadline=1.0)
+            await session.disconnect()
+            return lines
+
+        lines = asyncio.run(exercise())
+
+        self.assertTrue(any("sleep-ok" in line for line in lines))
+
     def test_sleep_waits_for_fresh_state_after_command(self) -> None:
         async def exercise() -> tuple[str, str]:
             session = WeatherBleDebugClient(
@@ -365,9 +418,10 @@ class WeatherBleDebugCliTests(unittest.TestCase):
                 timeout=0.1,
                 sink=EventSink(lambda _line: None),
                 scanner_factory=FakeScanner,
-                client_factory=NoNotifyOnWriteFakeClient,
+                client_factory=StaleNoNotifyOnWriteFakeClient,
             )
             await session.connect()
+            StaleNoNotifyOnWriteFakeClient.instances[0].current_redcon = REDCON_ACTIVE
             try:
                 await session.sleep(deadline=0.001)
             except DebugError as err:
