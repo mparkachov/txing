@@ -51,6 +51,8 @@ time through the debug firmware profile:
 baseline-100-0-6  interval=100 ms latency=0 supervision=6 s  fallback=10 s initial=250 ms
 stable-100-0-10  interval=100 ms latency=0 supervision=10 s fallback=10 s initial=250 ms
 stable-200-0-10  interval=200 ms latency=0 supervision=10 s fallback=10 s initial=250 ms
+stable-200-0-20  interval=200 ms latency=0 supervision=20 s fallback=10 s initial=250 ms
+stable-400-0-20  interval=400 ms latency=0 supervision=20 s fallback=10 s initial=250 ms
 fast-50-0-10     interval=50 ms  latency=0 supervision=10 s fallback=10 s initial=250 ms
 fast-50-0-6      interval=50 ms  latency=0 supervision=6 s  fallback=10 s initial=250 ms
 ```

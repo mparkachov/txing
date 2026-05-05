@@ -65,6 +65,8 @@ PROFILES: dict[str, FirmwareProfile] = {
         FirmwareProfile("baseline-100-0-6", 100, 0, 6000, 10000),
         FirmwareProfile("stable-100-0-10", 100, 0, 10000, 10000),
         FirmwareProfile("stable-200-0-10", 200, 0, 10000, 10000),
+        FirmwareProfile("stable-200-0-20", 200, 0, 20000, 10000),
+        FirmwareProfile("stable-400-0-20", 400, 0, 20000, 10000),
         FirmwareProfile("fast-50-0-10", 50, 0, 10000, 10000),
         FirmwareProfile("fast-50-0-6", 50, 0, 6000, 10000),
     )
