@@ -1,0 +1,52 @@
+menu "txing weather BLE debug SoftDevice firmware"
+
+config TXING_WEATHER_FACTORY_DATA_ADDR
+	hex "Weather factory data flash address"
+	default 0x000f0000
+
+config TXING_WEATHER_ADV_INTERVAL_625US
+	int "Advertising interval in 625 us units"
+	default 160
+	help
+	  160 is 100 ms.
+
+config TXING_WEATHER_ADV_TX_POWER_DBM
+	int "Advertising transmit power in dBm"
+	default 8
+
+config TXING_WEATHER_IDLE_CONN_INTERVAL_MS
+	int "Connected idle connection interval in milliseconds"
+	default 100
+	help
+	  Requested minimum and maximum BLE connection interval after GATT setup.
+	  The value must map exactly to BLE 1.25 ms interval units.
+
+config TXING_WEATHER_IDLE_CONN_LATENCY
+	int "Connected idle peripheral latency"
+	default 0
+
+config TXING_WEATHER_IDLE_CONN_SUPERVISION_TIMEOUT_MS
+	int "Connected idle supervision timeout in milliseconds"
+	default 6000
+	help
+	  Requested BLE supervision timeout after GATT setup. The value must map
+	  exactly to BLE 10 ms timeout units.
+
+config TXING_WEATHER_IDLE_CONN_PARAM_FALLBACK_DELAY_MS
+	int "Connected idle connection parameter fallback delay in milliseconds"
+	default 10000
+	help
+	  Fallback delay before requesting the idle connection parameters when the
+	  central has not subscribed to all debug notifications yet.
+
+config TXING_WEATHER_INVALID_NAME
+	string "Fallback local name when factory data is invalid"
+	default "TxingWeatherInvalid"
+
+module=TXING_WEATHER_BLE_DEBUG
+module-str=txing weather BLE debug SoftDevice firmware
+source "$(ZEPHYR_BASE)/subsys/logging/Kconfig.template.log_config"
+
+endmenu
+
+source "Kconfig.zephyr"

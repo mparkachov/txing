@@ -1,0 +1,16 @@
+[project]
+name = "weather-ble-debug"
+version = "0.6.0"
+description = "BLE debug CLI for txing weather firmware on macOS CoreBluetooth and Linux BlueZ"
+requires-python = ">=3.12"
+dependencies = [
+    "bleak>=0.22,<1",
+]
+
+[project.scripts]
+weather-ble-debug = "weather_ble_debug.cli:main"
+weather-ble-debug-summarize = "weather_ble_debug.summarize:main"
+
+[build-system]
+requires = ["uv_build>=0.10.6,<0.11.0"]
+build-backend = "uv_build"

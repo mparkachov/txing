@@ -1,0 +1,77 @@
+# Weather BLE Debug S115 Firmware
+
+This is a separate SoftDevice S115 bare-metal debug firmware variant for the
+weather MCU. It is built with the same repo-local `sdk-nrf-bm` toolchain as the
+production weather bare-metal firmware, but it lives under
+`devices/weather/ble-debug/firmware/` so connection behavior can be changed
+without touching production code.
+
+The `sdk-nrf-bm` build still uses Zephyr's CMake, Kconfig, logging, and kernel
+utility APIs. The BLE stack is S115 SoftDevice, not Zephyr Bluetooth.
+
+## Behavior
+
+- Reads the existing `TXW1` factory record at `0x000f0000`.
+- Advertises the factory Thing name as the complete local name.
+- Exposes the txing weather service and command/state/measurement
+  characteristics.
+- Remains connected in REDCON `4` idle state.
+- Turns the XIAO user LED on immediately for REDCON `3`.
+- Normalizes requested REDCON `1` and `2` to actual REDCON `3`.
+- Sends a state notification immediately after every accepted command.
+- Sends one BME280 measurement notification per second while active.
+- Turns the user LED off and stops measurements for REDCON `4`.
+- Restarts connectable advertising after disconnect.
+
+Debug idle connection parameters are intentionally conservative:
+
+```text
+interval=100 ms
+latency=0
+supervision=6 s
+```
+
+## Build
+
+Install the shared BM toolchain once:
+
+```sh
+just weather::ble-debug::firmware-install
+```
+
+Build this debug firmware:
+
+```sh
+just weather::ble-debug::firmware-check
+```
+
+Print paths:
+
+```sh
+just weather::ble-debug::firmware-paths
+```
+
+## Manual Flashing Only
+
+Agents must not run flash targets.
+
+Manual-only targets are provided for the user:
+
+```sh
+just weather::ble-debug::firmware-flash weather-q8zbgb
+just weather::ble-debug::firmware-flash-app-factory weather-q8zbgb
+just weather::ble-debug::firmware-flash-app
+just weather::ble-debug::firmware-flash-softdevice
+just weather::ble-debug::firmware-verify weather-q8zbgb
+just weather::ble-debug::firmware-verify-app-factory weather-q8zbgb
+just weather::ble-debug::firmware-rtt
+```
+
+`firmware-flash weather-q8zbgb` erases RRAM and writes S115, the debug
+application, and a matching factory data record.
+`firmware-flash-app-factory weather-q8zbgb` preserves S115 and writes the debug
+application plus factory data; this is the normal candidate-sweep mode.
+`firmware-flash-app` writes only the application image without erasing or
+rewriting SoftDevice/factory data. These targets use the fast OpenOCD
+SoftDevice-native flash path and a merged HEX; they do not use pyOCD chunked
+programming.

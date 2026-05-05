@@ -1,0 +1,86 @@
+set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+set quiet := true
+
+ble_debug_dir := source_directory()
+project_root := ble_debug_dir + "/../../.."
+nrf_bm_dir := project_root + "/devices/common/mcu/nrf-bm"
+nrf_bm_uv_cache_dir := nrf_bm_dir + "/.uv-cache"
+python_executable := env_var_or_default("TXING_NRF_BM_PYTHON", "python3.13")
+firmware_script := ble_debug_dir + "/scripts/firmware.py"
+stability_matrix_script := ble_debug_dir + "/scripts/run_stability_matrix.py"
+
+@test:
+    uv run --project "{{ble_debug_dir}}" python -m unittest discover -s "{{ble_debug_dir}}/tests" -p 'test_*.py'
+
+@cli *args:
+    uv run --project "{{ble_debug_dir}}" weather-ble-debug {{args}}
+
+@scan name timeout="30":
+    uv run --project "{{ble_debug_dir}}" weather-ble-debug scan --name "{{name}}" --timeout "{{timeout}}"
+
+@inspect name timeout="30":
+    uv run --project "{{ble_debug_dir}}" weather-ble-debug inspect --name "{{name}}" --timeout "{{timeout}}"
+
+@idle name duration="300" timeout="30":
+    uv run --project "{{ble_debug_dir}}" weather-ble-debug idle --name "{{name}}" --duration "{{duration}}" --timeout "{{timeout}}"
+
+@wake name deadline="10" active_seconds="30" timeout="30":
+    uv run --project "{{ble_debug_dir}}" weather-ble-debug wake --name "{{name}}" --deadline "{{deadline}}" --active-seconds "{{active_seconds}}" --timeout "{{timeout}}"
+
+@sleep name deadline="10" timeout="30":
+    uv run --project "{{ble_debug_dir}}" weather-ble-debug sleep --name "{{name}}" --deadline "{{deadline}}" --timeout "{{timeout}}"
+
+@soak name cycles="50" active_seconds="20" idle_seconds="20" deadline="10" timeout="30":
+    uv run --project "{{ble_debug_dir}}" weather-ble-debug soak --name "{{name}}" --cycles "{{cycles}}" --active-seconds "{{active_seconds}}" --idle-seconds "{{idle_seconds}}" --deadline "{{deadline}}" --timeout "{{timeout}}"
+
+@summarize *logs:
+    uv run --project "{{ble_debug_dir}}" weather-ble-debug-summarize {{logs}}
+
+@stability-matrix name="weather-q8zbgb" *args:
+    uv run --project "{{ble_debug_dir}}" python "{{stability_matrix_script}}" --name "{{name}}" {{args}}
+
+@firmware-profiles:
+    cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{nrf_bm_uv_cache_dir}}" uv run --project "{{nrf_bm_dir}}" --no-sync python "{{firmware_script}}" profiles
+
+@firmware-check profile="baseline-100-0-6":
+    cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{nrf_bm_uv_cache_dir}}" uv run --project "{{nrf_bm_dir}}" --no-sync python "{{firmware_script}}" check --profile "{{profile}}"
+
+@firmware-install profile="baseline-100-0-6":
+    cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{nrf_bm_uv_cache_dir}}" uv sync --python "{{python_executable}}" --no-managed-python --no-python-downloads
+    cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{nrf_bm_uv_cache_dir}}" uv run --project "{{nrf_bm_dir}}" --no-sync python "{{firmware_script}}" install --profile "{{profile}}"
+
+@firmware-build profile="baseline-100-0-6":
+    cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{nrf_bm_uv_cache_dir}}" uv run --project "{{nrf_bm_dir}}" --no-sync python "{{firmware_script}}" build --profile "{{profile}}"
+
+@firmware-flash thing_id profile="baseline-100-0-6":
+    cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{nrf_bm_uv_cache_dir}}" uv run --project "{{nrf_bm_dir}}" --no-sync python "{{firmware_script}}" flash "{{thing_id}}" --profile "{{profile}}"
+
+@firmware-flash-app profile="baseline-100-0-6":
+    cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{nrf_bm_uv_cache_dir}}" uv run --project "{{nrf_bm_dir}}" --no-sync python "{{firmware_script}}" flash-app --profile "{{profile}}"
+
+@firmware-flash-app-factory thing_id profile="baseline-100-0-6":
+    cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{nrf_bm_uv_cache_dir}}" uv run --project "{{nrf_bm_dir}}" --no-sync python "{{firmware_script}}" flash-app-factory "{{thing_id}}" --profile "{{profile}}"
+
+@firmware-flash-softdevice:
+    cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{nrf_bm_uv_cache_dir}}" uv run --project "{{nrf_bm_dir}}" --no-sync python "{{firmware_script}}" flash-softdevice
+
+@firmware-verify thing_id='' profile="baseline-100-0-6":
+    cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{nrf_bm_uv_cache_dir}}" uv run --project "{{nrf_bm_dir}}" --no-sync python "{{firmware_script}}" verify "{{thing_id}}" --profile "{{profile}}"
+
+@firmware-verify-app profile="baseline-100-0-6":
+    cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{nrf_bm_uv_cache_dir}}" uv run --project "{{nrf_bm_dir}}" --no-sync python "{{firmware_script}}" verify-app --profile "{{profile}}"
+
+@firmware-verify-app-factory thing_id profile="baseline-100-0-6":
+    cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{nrf_bm_uv_cache_dir}}" uv run --project "{{nrf_bm_dir}}" --no-sync python "{{firmware_script}}" verify-app-factory "{{thing_id}}" --profile "{{profile}}"
+
+@firmware-rtt:
+    cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{nrf_bm_uv_cache_dir}}" uv run --project "{{nrf_bm_dir}}" --no-sync python "{{firmware_script}}" rtt
+
+@firmware-paths profile="baseline-100-0-6":
+    cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{nrf_bm_uv_cache_dir}}" uv run --project "{{nrf_bm_dir}}" --no-sync python "{{firmware_script}}" paths --profile "{{profile}}"
+
+@firmware-clean:
+    rm -rf "{{ble_debug_dir}}/build"
+
+@default:
+    @just --list
