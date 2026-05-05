@@ -211,6 +211,7 @@ class WeatherBleDebugClient:
             return
         client = self.client
         self.client = None
+        already_reported_unexpected = self._disconnect_reported
         self._intentional_disconnect = True
         disconnect = getattr(client, "disconnect", None)
         disconnect_error: str | None = None
@@ -219,7 +220,7 @@ class WeatherBleDebugClient:
                 await _await_maybe(disconnect())
             except Exception as err:
                 disconnect_error = type(err).__name__
-        if emit:
+        if emit and not already_reported_unexpected:
             self.sink.emit("disconnect", name=self.name, unexpected=0, error=disconnect_error)
 
     async def write_redcon(self, redcon: int) -> None:

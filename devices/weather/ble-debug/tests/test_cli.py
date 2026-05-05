@@ -369,6 +369,27 @@ class WeatherBleDebugCliTests(unittest.TestCase):
         self.assertEqual(message, "unexpected disconnect")
         self.assertTrue(any("disconnect " in line and "unexpected=1" in line for line in lines))
 
+    def test_cleanup_after_unexpected_disconnect_does_not_emit_expected_disconnect(self) -> None:
+        async def exercise() -> list[str]:
+            lines: list[str] = []
+            session = WeatherBleDebugClient(
+                name="weather-1",
+                timeout=0.1,
+                sink=EventSink(lines.append),
+                scanner_factory=FakeScanner,
+                client_factory=FakeClient,
+            )
+            await session.connect()
+            FakeClient.instances[0].trigger_unexpected_disconnect()
+            await asyncio.sleep(0)
+            await session.disconnect()
+            return lines
+
+        lines = asyncio.run(exercise())
+
+        self.assertTrue(any("disconnect " in line and "unexpected=1" in line for line in lines))
+        self.assertFalse(any("disconnect " in line and "unexpected=0" in line for line in lines))
+
     def test_wake_deadline_expires_without_measurement(self) -> None:
         async def exercise() -> tuple[str, str]:
             session = WeatherBleDebugClient(
