@@ -85,7 +85,7 @@ class FailingClient:
 
     async def connect(self, **kwargs: object) -> None:
         self.connect_kwargs = kwargs
-        raise BleakError("failed to discover services, device disconnected")
+        raise BleakError("unhandled BLE setup failure")
 
     async def disconnect(self) -> None:
         self.disconnect_count += 1
@@ -167,6 +167,37 @@ class TimeoutOnceThenSuccessClient:
         self.notifications[uuid] = handler
 
 
+class DiscoveryDisconnectOnceThenSuccessClient:
+    attempts = 0
+    instances: list[DiscoveryDisconnectOnceThenSuccessClient] = []
+
+    def __init__(self, _device: FakeDevice) -> None:
+        self.is_connected = False
+        self.connect_kwargs: dict[str, object] | None = None
+        self.writes: list[tuple[str, bytes, bool]] = []
+        self.notifications: dict[str, object] = {}
+        self.instances.append(self)
+
+    async def connect(self, **kwargs: object) -> None:
+        self.connect_kwargs = kwargs
+        type(self).attempts += 1
+        if type(self).attempts == 1:
+            raise BleakError("failed to discover services, device disconnected")
+        self.is_connected = True
+
+    async def disconnect(self) -> None:
+        self.is_connected = False
+
+    async def read_gatt_char(self, _uuid: str) -> bytes:
+        return STATE_STRUCT.pack(PROTOCOL_VERSION, 4, 0, 3300)
+
+    async def write_gatt_char(self, uuid: str, payload: bytes, *, response: bool) -> None:
+        self.writes.append((uuid, payload, response))
+
+    async def start_notify(self, uuid: str, handler: object) -> None:
+        self.notifications[uuid] = handler
+
+
 def _weather_advertisement(
     thing_name: str,
     *,
@@ -214,6 +245,8 @@ class WeatherBleDeviceSessionTests(unittest.TestCase):
         DelayedTimeoutClient.instances.clear()
         TimeoutOnceThenSuccessClient.attempts = 0
         TimeoutOnceThenSuccessClient.instances.clear()
+        DiscoveryDisconnectOnceThenSuccessClient.attempts = 0
+        DiscoveryDisconnectOnceThenSuccessClient.instances.clear()
 
     def test_matches_by_thing_name_and_publishes_online_idle_state(self) -> None:
         async def exercise() -> ConnectivityState:
@@ -380,7 +413,7 @@ class WeatherBleDeviceSessionTests(unittest.TestCase):
         self.assertTrue(all(state.reachable for state in states))
         self.assertEqual(FakeClient.instances, [])
 
-    def test_failed_connect_keeps_advertising_presence_without_extra_disconnect(self) -> None:
+    def test_fatal_failed_connect_keeps_advertising_presence_without_extra_disconnect(self) -> None:
         async def exercise() -> tuple[list[ConnectivityState], FailingClient, list[ConnectivityCommandResult]]:
             bus = InMemoryLocalPubSub()
             received: list[bytes] = []
@@ -431,7 +464,7 @@ class WeatherBleDeviceSessionTests(unittest.TestCase):
         self.assertEqual(client.disconnect_count, 0)
         self.assertEqual(client.connect_kwargs, {})
         self.assertEqual(results[0].status, COMMAND_FAILED)
-        self.assertIn("failed to discover services", results[0].message or "")
+        self.assertIn("unhandled BLE setup failure", results[0].message or "")
         self.assertIn("BleakError", logs.output[0])
 
     def test_slow_connect_is_limited_by_configured_timeout(self) -> None:
@@ -534,6 +567,58 @@ class WeatherBleDeviceSessionTests(unittest.TestCase):
         self.assertTrue(TimeoutOnceThenSuccessClient.instances[0].cancelled)
         self.assertEqual(results[-1].status, COMMAND_SUCCEEDED)
         self.assertIn("TimeoutError", "\n".join(logs.output))
+
+    def test_service_discovery_disconnect_retries_command_until_deadline(self) -> None:
+        async def exercise() -> list[ConnectivityCommandResult]:
+            bus = InMemoryLocalPubSub()
+            received: list[bytes] = []
+            await bus.subscribe(build_state_topic("weather-1"), lambda _t, p: received.append(p))
+            results: list[ConnectivityCommandResult] = []
+            await bus.subscribe(
+                build_command_result_topic("weather-1"),
+                lambda _t, p: results.append(ConnectivityCommandResult.from_payload(p)),
+            )
+
+            session = WeatherBleDeviceSession(
+                thing_name="weather-1",
+                config=WeatherBleConfig(
+                    scan_timeout=0.2,
+                    reconnect_delay=0.01,
+                    connect_timeout=0.05,
+                ),
+                bus=bus,
+                client_factory=DiscoveryDisconnectOnceThenSuccessClient,  # type: ignore[arg-type]
+            )
+            task = asyncio.create_task(session.run())
+            session.observe_advertisement(_weather_advertisement("weather-1"))
+            while not received:
+                await asyncio.sleep(0)
+            await session.enqueue_command(
+                ConnectivityCommand(
+                    command_id="cmd-1",
+                    thing_name="weather-1",
+                    power=True,
+                    reason="redcon=3",
+                    issued_at_ms=1714380000000,
+                )
+            )
+
+            async def wait_for_success() -> None:
+                while not results or results[-1].status != COMMAND_SUCCEEDED:
+                    await asyncio.sleep(0)
+
+            await asyncio.wait_for(wait_for_success(), timeout=1.0)
+            session.stop()
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            return results
+
+        with self.assertLogs("weather_rig.connectivity_ble", level="WARNING") as logs:
+            results = asyncio.run(exercise())
+
+        self.assertEqual(DiscoveryDisconnectOnceThenSuccessClient.attempts, 2)
+        self.assertEqual([result.status for result in results], [COMMAND_SUCCEEDED])
+        self.assertIn("failed to discover services", "\n".join(logs.output))
 
     def test_connect_failure_after_advertisement_window_does_not_publish_offline(self) -> None:
         async def exercise() -> list[ConnectivityState]:

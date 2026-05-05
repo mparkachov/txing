@@ -130,7 +130,16 @@ def _command_deadline_expired(command: ConnectivityCommand) -> bool:
     return command.deadline_ms is not None and utc_timestamp_ms() >= command.deadline_ms
 
 
-def _command_deadline_expired_message(command: ConnectivityCommand) -> str:
+def _command_deadline_expired_message(
+    command: ConnectivityCommand,
+    *,
+    last_connect_error: str | None = None,
+) -> str:
+    if last_connect_error:
+        return (
+            "weather BLE command deadline expired after connection failures: "
+            f"{last_connect_error} deadlineMs={command.deadline_ms}"
+        )
     return f"weather BLE command deadline expired deadlineMs={command.deadline_ms}"
 
 
@@ -196,6 +205,7 @@ class WeatherBleDeviceSession:
         self._last_state = WeatherBleState(redcon=REDCON_IDLE)
         self._ble_address: str | None = None
         self._last_advertisement: BleAdvertisement | None = None
+        self._last_connect_error_message: str | None = None
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -209,6 +219,8 @@ class WeatherBleDeviceSession:
                 message=_command_deadline_expired_message(command),
             )
             return
+        if self._command_queue.empty():
+            self._last_connect_error_message = None
         await self._command_queue.put(command)
         self._advertisement_event.set()
 
@@ -280,8 +292,11 @@ class WeatherBleDeviceSession:
                         type(err).__name__,
                         self._config.reconnect_delay,
                     )
-                if not _should_retry_connection_error(err):
-                    await self._fail_queued_commands(_connect_failed_message(err))
+                connect_failed_message = _connect_failed_message(err)
+                if _should_retry_connection_error(err):
+                    self._last_connect_error_message = connect_failed_message
+                else:
+                    await self._fail_queued_commands(connect_failed_message)
                 await self._fail_expired_queued_commands()
                 await _sleep_until_stop(self._stop_event, self._config.reconnect_delay)
 
@@ -350,30 +365,41 @@ class WeatherBleDeviceSession:
         return False
 
     async def _fail_queued_commands(self, message: str) -> None:
+        failed_any = False
         while True:
             try:
                 command = self._command_queue.get_nowait()
             except asyncio.QueueEmpty:
+                if failed_any:
+                    self._last_connect_error_message = None
                 return
+            failed_any = True
             await self._publish_command_result(command, status=COMMAND_FAILED, message=message)
 
     async def _fail_expired_queued_commands(self) -> None:
         pending: list[ConnectivityCommand] = []
+        failed_any = False
         while True:
             try:
                 command = self._command_queue.get_nowait()
             except asyncio.QueueEmpty:
                 break
             if _command_deadline_expired(command):
+                failed_any = True
                 await self._publish_command_result(
                     command,
                     status=COMMAND_FAILED,
-                    message=_command_deadline_expired_message(command),
+                    message=_command_deadline_expired_message(
+                        command,
+                        last_connect_error=self._last_connect_error_message,
+                    ),
                 )
             else:
                 pending.append(command)
         for command in pending:
             await self._command_queue.put(command)
+        if failed_any and not pending:
+            self._last_connect_error_message = None
 
     async def _discover_device(self) -> Any | None:
         deadline = asyncio.get_running_loop().time() + self._config.scan_timeout
@@ -483,7 +509,10 @@ class WeatherBleDeviceSession:
                     await self._publish_command_result(
                         command,
                         status=COMMAND_FAILED,
-                        message=_command_deadline_expired_message(command),
+                        message=_command_deadline_expired_message(
+                            command,
+                            last_connect_error=self._last_connect_error_message,
+                        ),
                     )
                     continue
                 await self._execute_command(client, command)
@@ -578,6 +607,7 @@ class WeatherBleDeviceSession:
             battery_mv=self._last_state.battery_mv,
             bme280_valid=self._last_state.bme280_valid,
         )
+        self._last_connect_error_message = None
         await self._publish_state_report(self._last_state)
         LOGGER.info(
             "Weather BLE command succeeded thing=%s commandId=%s targetRedcon=%s",
@@ -597,7 +627,10 @@ class WeatherBleDeviceSession:
                 await self._publish_command_result(
                     command,
                     status=COMMAND_FAILED,
-                    message=_command_deadline_expired_message(command),
+                    message=_command_deadline_expired_message(
+                        command,
+                        last_connect_error=self._last_connect_error_message,
+                    ),
                 )
                 continue
             await self._execute_command(client, command)
@@ -992,7 +1025,15 @@ def _is_transient_ble_error(err: Exception) -> bool:
 
 
 def _should_retry_connection_error(err: Exception) -> bool:
-    return isinstance(err, TimeoutError)
+    if isinstance(err, TimeoutError):
+        return True
+    if not isinstance(err, BleakError):
+        return False
+    message = str(err).lower()
+    return (
+        "failed to discover services" in message
+        or "device disconnected" in message
+    )
 
 
 def _device_address(device: Any) -> str | None:
