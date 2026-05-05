@@ -27,6 +27,7 @@ constexpr char kInvalidName[] = "TxingWeatherInvalid";
 constexpr std::uint16_t kIdleConnInterval = 800; // 1000 ms in 1.25 ms units.
 constexpr std::uint16_t kIdleConnLatency = 4;
 constexpr std::uint16_t kIdleSupervisionTimeout = 1200; // 12 seconds.
+constexpr int kIdleConnParamFallbackDelaySeconds = 30;
 
 #define TXING_WEATHER_SERVICE_UUID_VAL BT_UUID_128_ENCODE(0xf6b4b000, 0x7b32, 0x4d2d, 0x9f4b, 0x4ff0a2b8f100)
 #define TXING_WEATHER_COMMAND_UUID_VAL BT_UUID_128_ENCODE(0xf6b4b001, 0x7b32, 0x4d2d, 0x9f4b, 0x4ff0a2b8f100)
@@ -62,6 +63,10 @@ struct RuntimeState
 RuntimeState gRuntime{};
 bt_conn *gConnection = nullptr;
 extern const bt_gatt_attr attr_weather_service[];
+bool gIdleConnParamsRequested = false;
+bool gStateNotifyEnabled = false;
+bool gMeasurementNotifyEnabled = false;
+k_work_delayable gIdleConnParamWork{};
 
 std::int32_t sensor_value_to_centi(const sensor_value &value)
 {
@@ -82,6 +87,38 @@ void set_led(bool on)
 			gpio_pin_set_dt(&kLed, on ? 1 : 0);
 		}
 	}
+}
+
+void request_connected_idle_params()
+{
+	if (gConnection == nullptr || gIdleConnParamsRequested) {
+		return;
+	}
+
+	const bt_le_conn_param params = {
+		.interval_min = kIdleConnInterval,
+		.interval_max = kIdleConnInterval,
+		.latency = kIdleConnLatency,
+		.timeout = kIdleSupervisionTimeout,
+	};
+	const int err = bt_conn_le_param_update(gConnection, &params);
+	if (err != 0) {
+		return;
+	}
+	gIdleConnParamsRequested = true;
+}
+
+void request_idle_params_if_gatt_ready()
+{
+	if (gStateNotifyEnabled && gMeasurementNotifyEnabled) {
+		request_connected_idle_params();
+	}
+}
+
+void idle_conn_param_work_handler(k_work *work)
+{
+	(void)work;
+	request_connected_idle_params();
 }
 
 txing::weather::StateReport current_state_report()
@@ -211,6 +248,20 @@ ssize_t write_command(
 	return len;
 }
 
+void state_ccc_changed(const bt_gatt_attr *attr, std::uint16_t value)
+{
+	(void)attr;
+	gStateNotifyEnabled = (value & BT_GATT_CCC_NOTIFY) != 0;
+	request_idle_params_if_gatt_ready();
+}
+
+void measurement_ccc_changed(const bt_gatt_attr *attr, std::uint16_t value)
+{
+	(void)attr;
+	gMeasurementNotifyEnabled = (value & BT_GATT_CCC_NOTIFY) != 0;
+	request_idle_params_if_gatt_ready();
+}
+
 BT_GATT_SERVICE_DEFINE(weather_service,
 	BT_GATT_PRIMARY_SERVICE(&kWeatherServiceUuid.uuid),
 	BT_GATT_CHARACTERISTIC(
@@ -229,7 +280,7 @@ BT_GATT_SERVICE_DEFINE(weather_service,
 		nullptr,
 		nullptr
 	),
-	BT_GATT_CCC(nullptr, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
+	BT_GATT_CCC(state_ccc_changed, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
 	BT_GATT_CHARACTERISTIC(
 		&kWeatherMeasurementUuid.uuid,
 		BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY,
@@ -238,7 +289,7 @@ BT_GATT_SERVICE_DEFINE(weather_service,
 		nullptr,
 		nullptr
 	),
-	BT_GATT_CCC(nullptr, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE)
+	BT_GATT_CCC(measurement_ccc_changed, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE)
 );
 
 void connected(bt_conn *conn, std::uint8_t err)
@@ -250,19 +301,20 @@ void connected(bt_conn *conn, std::uint8_t err)
 		bt_conn_unref(gConnection);
 	}
 	gConnection = bt_conn_ref(conn);
-	const bt_le_conn_param params = {
-		.interval_min = kIdleConnInterval,
-		.interval_max = kIdleConnInterval,
-		.latency = kIdleConnLatency,
-		.timeout = kIdleSupervisionTimeout,
-	};
-	bt_conn_le_param_update(conn, &params);
+	gIdleConnParamsRequested = false;
+	gStateNotifyEnabled = false;
+	gMeasurementNotifyEnabled = false;
+	k_work_reschedule(&gIdleConnParamWork, K_SECONDS(kIdleConnParamFallbackDelaySeconds));
 }
 
 void disconnected(bt_conn *conn, std::uint8_t reason)
 {
 	(void)conn;
 	(void)reason;
+	k_work_cancel_delayable(&gIdleConnParamWork);
+	gIdleConnParamsRequested = false;
+	gStateNotifyEnabled = false;
+	gMeasurementNotifyEnabled = false;
 	if (gConnection != nullptr) {
 		bt_conn_unref(gConnection);
 		gConnection = nullptr;
@@ -313,6 +365,7 @@ int main()
 	if (err != 0) {
 		return err;
 	}
+	k_work_init_delayable(&gIdleConnParamWork, idle_conn_param_work_handler);
 	if (!factory_valid) {
 		start_invalid_advertising();
 		for (;;) {

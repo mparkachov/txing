@@ -391,7 +391,7 @@ class WeatherBleDeviceSessionTests(unittest.TestCase):
         self.assertEqual(len(states), 1)
         self.assertTrue(states[0].reachable)
         self.assertEqual(client.disconnect_count, 0)
-        self.assertEqual(client.connect_kwargs, {"dangerous_use_bleak_cache": True})
+        self.assertEqual(client.connect_kwargs, {})
         self.assertEqual(results[0].status, COMMAND_FAILED)
         self.assertIn("failed to discover services", results[0].message or "")
         self.assertIn("BleakError", logs.output[0])
@@ -440,7 +440,7 @@ class WeatherBleDeviceSessionTests(unittest.TestCase):
             states, client = asyncio.run(exercise())
 
         self.assertTrue(states[0].reachable)
-        self.assertEqual(client.connect_kwargs, {"dangerous_use_bleak_cache": True})
+        self.assertEqual(client.connect_kwargs, {})
         self.assertTrue(client.cancelled)
         self.assertIn("TimeoutError", "\n".join(logs.output))
 

@@ -937,7 +937,6 @@ def _default_client(device: Any, *, timeout: float = DEFAULT_CONNECT_TIMEOUT) ->
         raise RuntimeError("bleak is required for weather BLE connectivity")
     return BleakClient(
         _device_address(device) or device,
-        services=(WEATHER_SERVICE_UUID,),
         timeout=timeout,
     )
 
@@ -945,12 +944,7 @@ def _default_client(device: Any, *, timeout: float = DEFAULT_CONNECT_TIMEOUT) ->
 async def _client_connect(client: Any, *, timeout: float) -> None:
     connect = getattr(client, "connect", None)
     if callable(connect):
-        try:
-            result = connect(dangerous_use_bleak_cache=True)
-        except TypeError as err:
-            if "dangerous_use_bleak_cache" not in str(err):
-                raise
-            result = connect()
+        result = connect()
         await asyncio.wait_for(result, timeout=timeout)
         return
     enter = getattr(client, "__aenter__", None)
