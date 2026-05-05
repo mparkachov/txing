@@ -280,7 +280,8 @@ class WeatherBleDeviceSession:
                         type(err).__name__,
                         self._config.reconnect_delay,
                     )
-                await self._fail_queued_commands(_connect_failed_message(err))
+                if not _should_retry_connection_error(err):
+                    await self._fail_queued_commands(_connect_failed_message(err))
                 await self._fail_expired_queued_commands()
                 await _sleep_until_stop(self._stop_event, self._config.reconnect_delay)
 
@@ -988,6 +989,10 @@ async def _cleanup_client_after_failed_connect(client: Any) -> None:
 
 def _is_transient_ble_error(err: Exception) -> bool:
     return isinstance(err, (TimeoutError, BleakError))
+
+
+def _should_retry_connection_error(err: Exception) -> bool:
+    return isinstance(err, TimeoutError)
 
 
 def _device_address(device: Any) -> str | None:

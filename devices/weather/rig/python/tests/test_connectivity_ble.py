@@ -131,6 +131,42 @@ class DelayedTimeoutClient:
         self.is_connected = False
 
 
+class TimeoutOnceThenSuccessClient:
+    attempts = 0
+    instances: list[TimeoutOnceThenSuccessClient] = []
+
+    def __init__(self, _device: FakeDevice) -> None:
+        self.is_connected = False
+        self.connect_kwargs: dict[str, object] | None = None
+        self.cancelled = False
+        self.writes: list[tuple[str, bytes, bool]] = []
+        self.notifications: dict[str, object] = {}
+        self.instances.append(self)
+
+    async def connect(self, **kwargs: object) -> None:
+        self.connect_kwargs = kwargs
+        type(self).attempts += 1
+        if type(self).attempts == 1:
+            try:
+                await asyncio.sleep(30.0)
+            except asyncio.CancelledError:
+                self.cancelled = True
+                raise
+        self.is_connected = True
+
+    async def disconnect(self) -> None:
+        self.is_connected = False
+
+    async def read_gatt_char(self, _uuid: str) -> bytes:
+        return STATE_STRUCT.pack(PROTOCOL_VERSION, 4, 0, 3300)
+
+    async def write_gatt_char(self, uuid: str, payload: bytes, *, response: bool) -> None:
+        self.writes.append((uuid, payload, response))
+
+    async def start_notify(self, uuid: str, handler: object) -> None:
+        self.notifications[uuid] = handler
+
+
 def _weather_advertisement(
     thing_name: str,
     *,
@@ -176,6 +212,8 @@ class WeatherBleDeviceSessionTests(unittest.TestCase):
         FailingClient.instances.clear()
         SlowConnectClient.instances.clear()
         DelayedTimeoutClient.instances.clear()
+        TimeoutOnceThenSuccessClient.attempts = 0
+        TimeoutOnceThenSuccessClient.instances.clear()
 
     def test_matches_by_thing_name_and_publishes_online_idle_state(self) -> None:
         async def exercise() -> ConnectivityState:
@@ -442,6 +480,59 @@ class WeatherBleDeviceSessionTests(unittest.TestCase):
         self.assertTrue(states[0].reachable)
         self.assertEqual(client.connect_kwargs, {})
         self.assertTrue(client.cancelled)
+        self.assertIn("TimeoutError", "\n".join(logs.output))
+
+    def test_connect_timeout_retries_command_until_deadline(self) -> None:
+        async def exercise() -> list[ConnectivityCommandResult]:
+            bus = InMemoryLocalPubSub()
+            received: list[bytes] = []
+            await bus.subscribe(build_state_topic("weather-1"), lambda _t, p: received.append(p))
+            results: list[ConnectivityCommandResult] = []
+            await bus.subscribe(
+                build_command_result_topic("weather-1"),
+                lambda _t, p: results.append(ConnectivityCommandResult.from_payload(p)),
+            )
+
+            session = WeatherBleDeviceSession(
+                thing_name="weather-1",
+                config=WeatherBleConfig(
+                    scan_timeout=0.2,
+                    reconnect_delay=0.01,
+                    connect_timeout=0.01,
+                ),
+                bus=bus,
+                client_factory=TimeoutOnceThenSuccessClient,  # type: ignore[arg-type]
+            )
+            task = asyncio.create_task(session.run())
+            session.observe_advertisement(_weather_advertisement("weather-1"))
+            while not received:
+                await asyncio.sleep(0)
+            await session.enqueue_command(
+                ConnectivityCommand(
+                    command_id="cmd-1",
+                    thing_name="weather-1",
+                    power=True,
+                    reason="redcon=3",
+                    issued_at_ms=1714380000000,
+                )
+            )
+
+            async def wait_for_success() -> None:
+                while not results or results[-1].status != COMMAND_SUCCEEDED:
+                    await asyncio.sleep(0)
+
+            await asyncio.wait_for(wait_for_success(), timeout=1.0)
+            session.stop()
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            return results
+
+        with self.assertLogs("weather_rig.connectivity_ble", level="WARNING") as logs:
+            results = asyncio.run(exercise())
+
+        self.assertEqual(TimeoutOnceThenSuccessClient.attempts, 2)
+        self.assertTrue(TimeoutOnceThenSuccessClient.instances[0].cancelled)
+        self.assertEqual(results[-1].status, COMMAND_SUCCEEDED)
         self.assertIn("TimeoutError", "\n".join(logs.output))
 
     def test_connect_failure_after_advertisement_window_does_not_publish_offline(self) -> None:
