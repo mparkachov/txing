@@ -48,16 +48,19 @@ notification subscriptions are ready. The exact request is selected at build
 time through the debug firmware profile:
 
 ```text
-baseline-100-0-6  interval=100 ms latency=0 supervision=6 s  fallback=10 s
-stable-100-0-10  interval=100 ms latency=0 supervision=10 s fallback=10 s
-stable-200-0-10  interval=200 ms latency=0 supervision=10 s fallback=10 s
-fast-50-0-10     interval=50 ms  latency=0 supervision=10 s fallback=10 s
-fast-50-0-6      interval=50 ms  latency=0 supervision=6 s  fallback=10 s
+baseline-100-0-6  interval=100 ms latency=0 supervision=6 s  fallback=10 s initial=250 ms
+stable-100-0-10  interval=100 ms latency=0 supervision=10 s fallback=10 s initial=250 ms
+stable-200-0-10  interval=200 ms latency=0 supervision=10 s fallback=10 s initial=250 ms
+fast-50-0-10     interval=50 ms  latency=0 supervision=10 s fallback=10 s initial=250 ms
+fast-50-0-6      interval=50 ms  latency=0 supervision=6 s  fallback=10 s initial=250 ms
 ```
 
-The firmware first waits for state and measurement notification subscriptions.
-If the central does not subscribe, the fallback delay eventually requests the
-same connected-idle parameters anyway.
+The firmware requests these parameters when state and measurement notification
+subscriptions are ready. If GATT discovery is still in progress, the initial
+delay requests the same parameters early so Linux/BlueZ does not have to finish
+service discovery under the central's short initial supervision timeout. If the
+initial request is disabled, the fallback delay eventually requests the same
+connected-idle parameters anyway.
 
 ## GATT Contract
 

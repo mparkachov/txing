@@ -39,6 +39,16 @@ config TXING_WEATHER_IDLE_CONN_PARAM_FALLBACK_DELAY_MS
 	  Fallback delay before requesting the idle connection parameters when the
 	  central has not subscribed to all debug notifications yet.
 
+config TXING_WEATHER_IDLE_CONN_PARAM_INITIAL_DELAY_MS
+	int "Connected idle connection parameter initial delay in milliseconds"
+	default 250
+	help
+	  Delay after connection before requesting the selected debug connection
+	  parameters even if GATT discovery has not finished yet. This gives Linux
+	  BlueZ a longer supervision timeout before service discovery can time out
+	  on a weak link. Set negative to disable the initial request and use only
+	  the GATT-ready or fallback paths.
+
 config TXING_WEATHER_INVALID_NAME
 	string "Fallback local name when factory data is invalid"
 	default "TxingWeatherInvalid"

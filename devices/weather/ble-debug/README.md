@@ -147,12 +147,17 @@ just weather::ble-debug::firmware-check fast-50-0-6
 Profiles are:
 
 ```text
-baseline-100-0-6  interval=100 ms latency=0 supervision=6 s fallback=10 s
-stable-100-0-10  interval=100 ms latency=0 supervision=10 s fallback=10 s
-stable-200-0-10  interval=200 ms latency=0 supervision=10 s fallback=10 s
-fast-50-0-10     interval=50 ms  latency=0 supervision=10 s fallback=10 s
-fast-50-0-6      interval=50 ms  latency=0 supervision=6 s fallback=10 s
+baseline-100-0-6  interval=100 ms latency=0 supervision=6 s fallback=10 s initial=250 ms
+stable-100-0-10  interval=100 ms latency=0 supervision=10 s fallback=10 s initial=250 ms
+stable-200-0-10  interval=200 ms latency=0 supervision=10 s fallback=10 s initial=250 ms
+fast-50-0-10     interval=50 ms  latency=0 supervision=10 s fallback=10 s initial=250 ms
+fast-50-0-6      interval=50 ms  latency=0 supervision=6 s fallback=10 s initial=250 ms
 ```
+
+The selected connected-idle parameters are requested as soon as GATT
+notifications are ready, or after the profile's initial delay if service
+discovery is still in progress. This is important on Linux/BlueZ where a weak
+link can otherwise drop during service discovery before the 10 second fallback.
 
 Manual-only flash, verify, and RTT targets are available for the user:
 

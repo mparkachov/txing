@@ -29,7 +29,13 @@ Debug idle connection parameters are intentionally conservative:
 interval=100 ms
 latency=0
 supervision=6 s
+initial_request_delay=250 ms
 ```
+
+The firmware requests those parameters either after the central subscribes to
+debug notifications or after the initial request delay, whichever happens
+first. The early request gives Raspberry Pi / BlueZ service discovery a longer
+supervision timeout before the link can drop on weak RSSI.
 
 ## Build
 

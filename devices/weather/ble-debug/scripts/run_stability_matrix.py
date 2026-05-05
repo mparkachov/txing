@@ -34,6 +34,7 @@ class FirmwareProfile:
     idle_latency: int
     supervision_timeout_ms: int
     idle_param_fallback_delay_ms: int
+    idle_param_initial_delay_ms: int
 
 
 @dataclass(slots=True)
@@ -61,6 +62,7 @@ def load_profiles() -> dict[str, FirmwareProfile]:
             idle_latency=profile.idle_latency,
             supervision_timeout_ms=profile.supervision_timeout_ms,
             idle_param_fallback_delay_ms=profile.idle_param_fallback_delay_ms,
+            idle_param_initial_delay_ms=profile.idle_param_initial_delay_ms,
         )
         for name, profile in module.PROFILES.items()
     }
@@ -662,7 +664,8 @@ def append_profile_metadata(report_path: Path, profile: FirmwareProfile) -> None
             f"- interval: `{profile.idle_interval_ms} ms`\n"
             f"- latency: `{profile.idle_latency}`\n"
             f"- supervision: `{profile.supervision_timeout_ms} ms`\n"
-            f"- fallback delay: `{profile.idle_param_fallback_delay_ms} ms`\n\n"
+            f"- fallback delay: `{profile.idle_param_fallback_delay_ms} ms`\n"
+            f"- initial delay: `{profile.idle_param_initial_delay_ms} ms`\n\n"
         ),
     )
 

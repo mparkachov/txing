@@ -404,11 +404,17 @@ static bool request_connected_idle_params(uint16_t conn_handle)
 
 static void request_idle_params_if_ready(void)
 {
+	const int64_t elapsed_ms = k_uptime_get() - g_connected_at_ms;
+
 	if (g_conn_handle == BLE_CONN_HANDLE_INVALID || g_idle_conn_params_requested) {
 		return;
 	}
-	if ((k_uptime_get() - g_connected_at_ms) <
-	    CONFIG_TXING_WEATHER_IDLE_CONN_PARAM_FALLBACK_DELAY_MS) {
+	if (CONFIG_TXING_WEATHER_IDLE_CONN_PARAM_INITIAL_DELAY_MS >= 0 &&
+	    elapsed_ms >= CONFIG_TXING_WEATHER_IDLE_CONN_PARAM_INITIAL_DELAY_MS) {
+		g_idle_conn_params_requested = request_connected_idle_params(g_conn_handle);
+		return;
+	}
+	if (elapsed_ms < CONFIG_TXING_WEATHER_IDLE_CONN_PARAM_FALLBACK_DELAY_MS) {
 		return;
 	}
 	g_idle_conn_params_requested = request_connected_idle_params(g_conn_handle);
@@ -496,9 +502,10 @@ static void handle_ble_evt(const ble_evt_t *evt, void *ctx)
 		g_idle_conn_params_requested = false;
 		g_state_notify_enabled = false;
 		g_measurement_notify_enabled = false;
-		LOG_INF("Peer connected; initial interval=%u..%u latency=%u supervision=%u; delaying connected-idle params for GATT discovery",
-			params->min_conn_interval, params->max_conn_interval,
-			params->slave_latency, params->conn_sup_timeout);
+			LOG_INF("Peer connected; initial interval=%u..%u latency=%u supervision=%u; requesting connected-idle params after %ums or when GATT is ready",
+				params->min_conn_interval, params->max_conn_interval,
+				params->slave_latency, params->conn_sup_timeout,
+				CONFIG_TXING_WEATHER_IDLE_CONN_PARAM_INITIAL_DELAY_MS);
 		nrf_err = sd_ble_gatts_sys_attr_set(g_conn_handle, NULL, 0, 0);
 		if (nrf_err != NRF_SUCCESS) {
 			LOG_DBG("Failed to set system attributes, nrf_error %#x", nrf_err);

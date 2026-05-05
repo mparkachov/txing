@@ -34,6 +34,7 @@ class FirmwareProfile:
     idle_latency: int
     supervision_timeout_ms: int
     idle_param_fallback_delay_ms: int
+    idle_param_initial_delay_ms: int = 250
 
     def conf_text(self) -> str:
         return "\n".join(
@@ -48,6 +49,10 @@ class FirmwareProfile:
                 (
                     "CONFIG_TXING_WEATHER_IDLE_CONN_PARAM_FALLBACK_DELAY_MS="
                     f"{self.idle_param_fallback_delay_ms}"
+                ),
+                (
+                    "CONFIG_TXING_WEATHER_IDLE_CONN_PARAM_INITIAL_DELAY_MS="
+                    f"{self.idle_param_initial_delay_ms}"
                 ),
                 "",
             )
@@ -361,6 +366,7 @@ def build_recipe_stamp(module, profile: FirmwareProfile) -> str:
             f"idle_latency={profile.idle_latency}",
             f"supervision_timeout_ms={profile.supervision_timeout_ms}",
             f"idle_param_fallback_delay_ms={profile.idle_param_fallback_delay_ms}",
+            f"idle_param_initial_delay_ms={profile.idle_param_initial_delay_ms}",
             f"weather_baremetal_sha256={module.weather_recipe_digest()}",
             "",
         )
@@ -468,6 +474,7 @@ def print_profiles() -> None:
                     f"idle_latency={profile.idle_latency}",
                     f"supervision_timeout_ms={profile.supervision_timeout_ms}",
                     f"idle_param_fallback_delay_ms={profile.idle_param_fallback_delay_ms}",
+                    f"idle_param_initial_delay_ms={profile.idle_param_initial_delay_ms}",
                 )
             )
         )
