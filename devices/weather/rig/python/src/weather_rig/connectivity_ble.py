@@ -6,6 +6,7 @@ import logging
 import os
 import signal
 import struct
+import warnings
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable
 
@@ -475,8 +476,9 @@ class WeatherBleDeviceSession:
             )
             await _client_connect(client, timeout=self._config.connect_timeout)
             connected = True
-            self._connect_attempt_advertisement_seq = None
             self._ble_address = _device_address(device)
+            await _ensure_client_services(client, timeout=self._config.command_timeout)
+            self._connect_attempt_advertisement_seq = None
             LOGGER.info(
                 "Connected weather BLE thing=%s address=%s",
                 self.thing_name,
@@ -605,6 +607,22 @@ class WeatherBleDeviceSession:
             )
         except Exception as err:
             message = str(err) or type(err).__name__
+            if _should_retry_connection_error(err):
+                LOGGER.warning(
+                    "Weather BLE command deferred thing=%s commandId=%s targetRedcon=%s error=%s",
+                    self.thing_name,
+                    command.command_id,
+                    target_redcon,
+                    message,
+                )
+                self._last_connect_error_message = _connect_failed_message(err)
+                if (
+                    self._connect_attempt_advertisement_seq is None
+                    and self._last_advertisement is not None
+                ):
+                    self._connect_attempt_advertisement_seq = self._last_advertisement.seq
+                await self._command_queue.put(command)
+                raise
             LOGGER.warning(
                 "Weather BLE command failed thing=%s commandId=%s targetRedcon=%s error=%s",
                 self.thing_name,
@@ -1002,6 +1020,27 @@ async def _client_connect(client: Any, *, timeout: float) -> None:
         await asyncio.wait_for(enter(), timeout=timeout)
 
 
+async def _ensure_client_services(client: Any, *, timeout: float) -> None:
+    try:
+        getattr(client, "services")
+        return
+    except AttributeError:
+        pass
+    except Exception as err:
+        if not _is_service_discovery_missing_error(err):
+            raise
+
+    get_services = getattr(client, "get_services", None)
+    if not callable(get_services):
+        return
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", FutureWarning)
+        result = get_services()
+    if hasattr(result, "__await__"):
+        await asyncio.wait_for(result, timeout=timeout)
+
+
 async def _client_disconnect(client: Any) -> None:
     disconnect = getattr(client, "disconnect", None)
     if callable(disconnect):
@@ -1049,7 +1088,12 @@ def _should_retry_connection_error(err: Exception) -> bool:
     return (
         "failed to discover services" in message
         or "device disconnected" in message
+        or _is_service_discovery_missing_error(err)
     )
+
+
+def _is_service_discovery_missing_error(err: Exception) -> bool:
+    return "service discovery has not been performed yet" in str(err).lower()
 
 
 def _device_address(device: Any) -> str | None:

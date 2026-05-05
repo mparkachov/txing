@@ -24,6 +24,10 @@
 namespace
 {
 constexpr char kInvalidName[] = "TxingWeatherInvalid";
+constexpr std::uint16_t kSetupConnIntervalMin = 24; // 30 ms in 1.25 ms units.
+constexpr std::uint16_t kSetupConnIntervalMax = 40; // 50 ms in 1.25 ms units.
+constexpr std::uint16_t kSetupConnLatency = 0;
+constexpr std::uint16_t kSetupSupervisionTimeout = 400; // 4 seconds.
 constexpr std::uint16_t kIdleConnInterval = 800; // 1000 ms in 1.25 ms units.
 constexpr std::uint16_t kIdleConnLatency = 4;
 constexpr std::uint16_t kIdleSupervisionTimeout = 1200; // 12 seconds.
@@ -87,6 +91,21 @@ void set_led(bool on)
 			gpio_pin_set_dt(&kLed, on ? 1 : 0);
 		}
 	}
+}
+
+void request_connected_setup_params()
+{
+	if (gConnection == nullptr) {
+		return;
+	}
+
+	const bt_le_conn_param params = {
+		.interval_min = kSetupConnIntervalMin,
+		.interval_max = kSetupConnIntervalMax,
+		.latency = kSetupConnLatency,
+		.timeout = kSetupSupervisionTimeout,
+	};
+	(void)bt_conn_le_param_update(gConnection, &params);
 }
 
 void request_connected_idle_params()
@@ -304,6 +323,7 @@ void connected(bt_conn *conn, std::uint8_t err)
 	gIdleConnParamsRequested = false;
 	gStateNotifyEnabled = false;
 	gMeasurementNotifyEnabled = false;
+	request_connected_setup_params();
 	k_work_reschedule(&gIdleConnParamWork, K_SECONDS(kIdleConnParamFallbackDelaySeconds));
 }
 

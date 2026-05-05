@@ -198,6 +198,73 @@ class DiscoveryDisconnectOnceThenSuccessClient:
         self.notifications[uuid] = handler
 
 
+class ExplicitServiceDiscoveryClient:
+    instances: list[ExplicitServiceDiscoveryClient] = []
+
+    def __init__(self, _device: FakeDevice) -> None:
+        self.is_connected = False
+        self.services_ready = False
+        self.get_services_count = 0
+        self.writes: list[tuple[str, bytes, bool]] = []
+        self.notifications: dict[str, object] = {}
+        self.instances.append(self)
+
+    async def connect(self, **_kwargs: object) -> None:
+        self.is_connected = True
+
+    @property
+    def services(self) -> object:
+        if not self.services_ready:
+            raise BleakError("Service Discovery has not been performed yet")
+        return object()
+
+    async def get_services(self) -> object:
+        self.get_services_count += 1
+        self.services_ready = True
+        return object()
+
+    async def disconnect(self) -> None:
+        self.is_connected = False
+
+    async def read_gatt_char(self, _uuid: str) -> bytes:
+        return STATE_STRUCT.pack(PROTOCOL_VERSION, 4, 0, 3300)
+
+    async def write_gatt_char(self, uuid: str, payload: bytes, *, response: bool) -> None:
+        self.writes.append((uuid, payload, response))
+
+    async def start_notify(self, uuid: str, handler: object) -> None:
+        self.notifications[uuid] = handler
+
+
+class CommandWriteDiscoveryMissingOnceThenSuccessClient:
+    attempts = 0
+    instances: list[CommandWriteDiscoveryMissingOnceThenSuccessClient] = []
+
+    def __init__(self, _device: FakeDevice) -> None:
+        self.is_connected = False
+        self.writes: list[tuple[str, bytes, bool]] = []
+        self.notifications: dict[str, object] = {}
+        self.instances.append(self)
+
+    async def connect(self, **_kwargs: object) -> None:
+        self.is_connected = True
+
+    async def disconnect(self) -> None:
+        self.is_connected = False
+
+    async def read_gatt_char(self, _uuid: str) -> bytes:
+        return STATE_STRUCT.pack(PROTOCOL_VERSION, 4, 0, 3300)
+
+    async def write_gatt_char(self, uuid: str, payload: bytes, *, response: bool) -> None:
+        type(self).attempts += 1
+        if type(self).attempts == 1:
+            raise BleakError("Service Discovery has not been performed yet")
+        self.writes.append((uuid, payload, response))
+
+    async def start_notify(self, uuid: str, handler: object) -> None:
+        self.notifications[uuid] = handler
+
+
 def _weather_advertisement(
     thing_name: str,
     *,
@@ -247,6 +314,9 @@ class WeatherBleDeviceSessionTests(unittest.TestCase):
         TimeoutOnceThenSuccessClient.instances.clear()
         DiscoveryDisconnectOnceThenSuccessClient.attempts = 0
         DiscoveryDisconnectOnceThenSuccessClient.instances.clear()
+        ExplicitServiceDiscoveryClient.instances.clear()
+        CommandWriteDiscoveryMissingOnceThenSuccessClient.attempts = 0
+        CommandWriteDiscoveryMissingOnceThenSuccessClient.instances.clear()
 
     def test_matches_by_thing_name_and_publishes_online_idle_state(self) -> None:
         async def exercise() -> ConnectivityState:
@@ -636,6 +706,107 @@ class WeatherBleDeviceSessionTests(unittest.TestCase):
         self.assertEqual(DiscoveryDisconnectOnceThenSuccessClient.attempts, 2)
         self.assertEqual([result.status for result in results], [COMMAND_SUCCEEDED])
         self.assertIn("failed to discover services", "\n".join(logs.output))
+
+    def test_connect_explicitly_performs_service_discovery_before_command_write(self) -> None:
+        async def exercise() -> tuple[list[ConnectivityCommandResult], ExplicitServiceDiscoveryClient]:
+            bus = InMemoryLocalPubSub()
+            received: list[bytes] = []
+            await bus.subscribe(build_state_topic("weather-1"), lambda _t, p: received.append(p))
+            results: list[ConnectivityCommandResult] = []
+            await bus.subscribe(
+                build_command_result_topic("weather-1"),
+                lambda _t, p: results.append(ConnectivityCommandResult.from_payload(p)),
+            )
+
+            session = WeatherBleDeviceSession(
+                thing_name="weather-1",
+                config=WeatherBleConfig(scan_timeout=0.01, reconnect_delay=0.01),
+                bus=bus,
+                client_factory=ExplicitServiceDiscoveryClient,  # type: ignore[arg-type]
+            )
+            task = asyncio.create_task(session.run())
+            session.observe_advertisement(_weather_advertisement("weather-1"))
+            while not received:
+                await asyncio.sleep(0)
+            await session.enqueue_command(
+                ConnectivityCommand(
+                    command_id="cmd-1",
+                    thing_name="weather-1",
+                    power=True,
+                    reason="redcon=3",
+                    issued_at_ms=1714380000000,
+                )
+            )
+            while not results:
+                await asyncio.sleep(0)
+            session.stop()
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            return results, ExplicitServiceDiscoveryClient.instances[0]
+
+        results, client = asyncio.run(exercise())
+
+        self.assertEqual(results[0].status, COMMAND_SUCCEEDED)
+        self.assertEqual(client.get_services_count, 1)
+        self.assertEqual(client.writes, [(WEATHER_COMMAND_UUID, encode_redcon_command(3), True)])
+
+    def test_command_write_missing_service_discovery_retries_until_fresh_advertisement(self) -> None:
+        async def exercise() -> list[ConnectivityCommandResult]:
+            bus = InMemoryLocalPubSub()
+            received: list[bytes] = []
+            await bus.subscribe(build_state_topic("weather-1"), lambda _t, p: received.append(p))
+            results: list[ConnectivityCommandResult] = []
+            await bus.subscribe(
+                build_command_result_topic("weather-1"),
+                lambda _t, p: results.append(ConnectivityCommandResult.from_payload(p)),
+            )
+
+            session = WeatherBleDeviceSession(
+                thing_name="weather-1",
+                config=WeatherBleConfig(
+                    scan_timeout=0.2,
+                    reconnect_delay=0.01,
+                    connect_timeout=0.05,
+                ),
+                bus=bus,
+                client_factory=CommandWriteDiscoveryMissingOnceThenSuccessClient,  # type: ignore[arg-type]
+            )
+            task = asyncio.create_task(session.run())
+            session.observe_advertisement(_weather_advertisement("weather-1"))
+            while not received:
+                await asyncio.sleep(0)
+            await session.enqueue_command(
+                ConnectivityCommand(
+                    command_id="cmd-1",
+                    thing_name="weather-1",
+                    power=True,
+                    reason="redcon=3",
+                    issued_at_ms=1714380000000,
+                )
+            )
+
+            while CommandWriteDiscoveryMissingOnceThenSuccessClient.attempts < 1:
+                await asyncio.sleep(0)
+            await asyncio.sleep(0.03)
+            self.assertEqual(results, [])
+            session.observe_advertisement(_weather_advertisement("weather-1", seq=2))
+
+            async def wait_for_success() -> None:
+                while not results or results[-1].status != COMMAND_SUCCEEDED:
+                    await asyncio.sleep(0)
+
+            await asyncio.wait_for(wait_for_success(), timeout=1.0)
+            session.stop()
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            return results
+
+        with self.assertLogs("weather_rig.connectivity_ble", level="WARNING") as logs:
+            results = asyncio.run(exercise())
+
+        self.assertEqual(CommandWriteDiscoveryMissingOnceThenSuccessClient.attempts, 2)
+        self.assertEqual([result.status for result in results], [COMMAND_SUCCEEDED])
+        self.assertIn("Service Discovery has not been performed yet", "\n".join(logs.output))
 
     def test_connect_failure_after_advertisement_window_does_not_publish_offline(self) -> None:
         async def exercise() -> list[ConnectivityState]:
