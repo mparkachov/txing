@@ -148,6 +148,12 @@ static int read_calibration(void)
 	return 0;
 }
 
+static int init_failed(int err)
+{
+	weather_bme280_reset();
+	return err;
+}
+
 static int32_t compensate_temperature(int32_t adc_t)
 {
 	int32_t var1;
@@ -239,24 +245,24 @@ int weather_bme280_init(void)
 
 	err = twim_read(REG_ID, &chip_id, sizeof(chip_id));
 	if (err != 0) {
-		return err;
+		return init_failed(err);
 	}
 	if (chip_id != BME280_CHIP_ID) {
-		return -ENODEV;
+		return init_failed(-ENODEV);
 	}
 
 	err = read_calibration();
 	if (err != 0) {
-		return err;
+		return init_failed(err);
 	}
 
 	err = twim_write_u8(REG_CTRL_HUM, 0x01u);
 	if (err != 0) {
-		return err;
+		return init_failed(err);
 	}
 	err = twim_write_u8(REG_CONFIG, 0x00u);
 	if (err != 0) {
-		return err;
+		return init_failed(err);
 	}
 
 	g_ready = true;

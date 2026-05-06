@@ -48,21 +48,28 @@ notification subscriptions are ready. The exact request is selected at build
 time through the debug firmware profile:
 
 ```text
-baseline-100-0-6  interval=100 ms latency=0 supervision=6 s  fallback=10 s initial=250 ms
-stable-100-0-10  interval=100 ms latency=0 supervision=10 s fallback=10 s initial=250 ms
-stable-200-0-10  interval=200 ms latency=0 supervision=10 s fallback=10 s initial=250 ms
-stable-200-0-20  interval=200 ms latency=0 supervision=20 s fallback=10 s initial=250 ms
-stable-400-0-20  interval=400 ms latency=0 supervision=20 s fallback=10 s initial=250 ms
-fast-50-0-10     interval=50 ms  latency=0 supervision=10 s fallback=10 s initial=250 ms
-fast-50-0-6      interval=50 ms  latency=0 supervision=6 s  fallback=10 s initial=250 ms
+lowpower-1000-4-20 idle=1000 ms latency=4 supervision=20 s fallback=10 s initial=250 ms active=100/0/10 s
+lowpower-500-4-20  idle=500 ms  latency=4 supervision=20 s fallback=10 s initial=250 ms active=100/0/10 s
+baseline-100-0-6   idle=100 ms  latency=0 supervision=6 s  fallback=10 s initial=250 ms active=100/0/10 s
+stable-100-0-10    idle=100 ms  latency=0 supervision=10 s fallback=10 s initial=250 ms active=100/0/10 s
+stable-200-0-10    idle=200 ms  latency=0 supervision=10 s fallback=10 s initial=250 ms active=100/0/10 s
+stable-200-0-20    idle=200 ms  latency=0 supervision=20 s fallback=10 s initial=250 ms active=100/0/10 s
+stable-400-0-20    idle=400 ms  latency=0 supervision=20 s fallback=10 s initial=250 ms active=100/0/10 s
+fast-50-0-10       idle=50 ms   latency=0 supervision=10 s fallback=10 s initial=250 ms active=100/0/10 s
+fast-50-0-6        idle=50 ms   latency=0 supervision=6 s  fallback=10 s initial=250 ms active=100/0/10 s
 ```
 
-The firmware requests these parameters when state and measurement notification
-subscriptions are ready. If GATT discovery is still in progress, the initial
-delay requests the same parameters early so Linux/BlueZ does not have to finish
-service discovery under the central's short initial supervision timeout. If the
-initial request is disabled, the fallback delay eventually requests the same
-connected-idle parameters anyway.
+The firmware requests the active parameters as setup parameters shortly after
+connect, so Linux/BlueZ does not have to finish service discovery under the
+central's short initial supervision timeout and does not have to discover GATT
+through a 1000 ms / latency 4 idle interval. The selected connected-idle
+parameters are requested only after state and measurement notification
+subscriptions are ready, or after a REDCON `4` sleep command on an already
+subscribed connection.
+
+For current work, `lowpower-1000-4-20` is the default because REDCON `4` is a
+connected-idle power state. REDCON `3` switches to the active profile shown in
+the table so wake and 1 Hz telemetry remain responsive.
 
 ## GATT Contract
 
@@ -101,7 +108,9 @@ State flags:
 `battery_mv` is reported from the XIAO battery divider when available. The
 debug app enables the divider on P1.15, samples AIN7/P1.14, applies the 2:1
 divider correction, and publishes the result in both state and measurement
-payloads. A value of `0` means unavailable and is omitted by the CLI.
+payloads. In the default low-power configuration the divider and SAADC are
+only used while active; REDCON `4` leaves them shut down. A value of `0` means
+unavailable and is omitted by the CLI.
 
 Board-level signal mapping used by the debug app:
 
@@ -111,12 +120,37 @@ BME280 Grove SDA    D4 / P1.10
 BME280 Grove SCL    D5 / P1.11
 VBAT ADC input      AIN7 / P1.14
 VBAT divider enable P1.15        active high
+Sense PDM/IMU power P0.01        active high, forced low by this app
 ```
 
 D0/P1.04 is avoided for `power` because the BM board configuration also uses
 P1.04 as UART TX. The OpenOCD XIAO board support used for flashing does not
 define this firmware runtime GPIO mapping; the debug app uses its own explicit
 pin constants.
+
+The connected-idle firmware path also disables scan request events, periodic
+idle diagnostics, and idle battery reporting by default. The current
+power-measurement image compiles logging/RTT/console backends out and
+overrides the BM board defconfig's enable-all nrfx list so only CLOCK, POWER,
+GRTC, SYSTICK, RRAMC, TWIM, and SAADC remain. The SoftDevice random auto-seed path
+stays enabled through PSA/CRACEN because S115 on nRF54L15 needs it for reliable
+BLE startup. Re-enable the observability Kconfig flags only when investigating
+a specific failure, because they intentionally trade current draw for
+observability.
+
+The production unit firmware has a dedicated board-low-power pin setup for
+unused LEDs, IMU/mic rails, and external flash. This XIAO debug firmware follows
+the same principle: the unused XIAO Sense PDM/IMU rail P0.01 is driven low at
+boot in every BLE profile. RF-switch helper pins P2.03 and P2.05 are not touched
+while BLE is running because the antenna path may depend on them.
+
+The `floor-systemoff-5s` app profile is intentionally outside the BLE contract.
+It starts no BLE stack and has no advertisement, service discovery, command, or
+telemetry behavior. It exists only to measure board floor current: `power`
+D1/P1.05, VBAT enable P1.15, and XIAO Sense PDM/IMU power P0.01 are held low,
+the RF-switch helper pins are parked, sensor pins are released, the user LED is
+on for the first 5 seconds, and the app turns the LED off, disables RAM
+retention, and enters nRF54 System OFF.
 
 ## Expected Timelines
 
@@ -183,9 +217,10 @@ UUID before the timeout.
 connection long enough for discovery. On macOS this includes the
 CoreBluetooth service-discovery phase that Bleak performs inside
 `BleakClient.connect()`. On Linux this is the BlueZ D-Bus client path and can be
-paired with `btmon` for HCI-level timing. Compare the CLI timeout with RTT
-`Peer connected` and `Peer disconnected reason=...` logs to distinguish a
-peripheral link drop from a client-side connect timeout.
+paired with `btmon` for HCI-level timing. If you temporarily build a logging
+image, compare the CLI timeout with `Peer connected` and
+`Peer disconnected reason=...` logs to distinguish a peripheral link drop from
+a client-side connect timeout.
 
 `connect-retry` means one setup attempt failed before the test entered
 idle/wake/soak behavior. This is useful on BlueZ where the first service

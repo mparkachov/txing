@@ -133,10 +133,12 @@ Build the debug firmware:
 just weather::ble-debug::firmware-check
 ```
 
-List and build named connection-parameter profiles:
+List and build named firmware profiles:
 
 ```sh
 just weather::ble-debug::firmware-profiles
+just weather::ble-debug::firmware-check lowpower-1000-4-20
+just weather::ble-debug::firmware-check lowpower-500-4-20
 just weather::ble-debug::firmware-check baseline-100-0-6
 just weather::ble-debug::firmware-check stable-100-0-10
 just weather::ble-debug::firmware-check stable-200-0-10
@@ -144,33 +146,38 @@ just weather::ble-debug::firmware-check stable-200-0-20
 just weather::ble-debug::firmware-check stable-400-0-20
 just weather::ble-debug::firmware-check fast-50-0-10
 just weather::ble-debug::firmware-check fast-50-0-6
+just weather::ble-debug::firmware-check floor-systemoff-5s
 ```
 
 Profiles are:
 
 ```text
-baseline-100-0-6  interval=100 ms latency=0 supervision=6 s fallback=10 s initial=250 ms
-stable-100-0-10  interval=100 ms latency=0 supervision=10 s fallback=10 s initial=250 ms
-stable-200-0-10  interval=200 ms latency=0 supervision=10 s fallback=10 s initial=250 ms
-stable-200-0-20  interval=200 ms latency=0 supervision=20 s fallback=10 s initial=250 ms
-stable-400-0-20  interval=400 ms latency=0 supervision=20 s fallback=10 s initial=250 ms
-fast-50-0-10     interval=50 ms  latency=0 supervision=10 s fallback=10 s initial=250 ms
-fast-50-0-6      interval=50 ms  latency=0 supervision=6 s fallback=10 s initial=250 ms
+lowpower-1000-4-20 idle=1000 ms latency=4 supervision=20 s fallback=10 s initial=250 ms active=100/0/10 s
+lowpower-500-4-20  idle=500 ms  latency=4 supervision=20 s fallback=10 s initial=250 ms active=100/0/10 s
+baseline-100-0-6   idle=100 ms  latency=0 supervision=6 s  fallback=10 s initial=250 ms active=100/0/10 s
+stable-100-0-10    idle=100 ms  latency=0 supervision=10 s fallback=10 s initial=250 ms active=100/0/10 s
+stable-200-0-10    idle=200 ms  latency=0 supervision=10 s fallback=10 s initial=250 ms active=100/0/10 s
+stable-200-0-20    idle=200 ms  latency=0 supervision=20 s fallback=10 s initial=250 ms active=100/0/10 s
+stable-400-0-20    idle=400 ms  latency=0 supervision=20 s fallback=10 s initial=250 ms active=100/0/10 s
+fast-50-0-10       idle=50 ms   latency=0 supervision=10 s fallback=10 s initial=250 ms active=100/0/10 s
+fast-50-0-6        idle=50 ms   latency=0 supervision=6 s  fallback=10 s initial=250 ms active=100/0/10 s
+floor-systemoff-5s no BLE, no sensors, no battery ADC; waits 5 s, then enters nRF54 System OFF
 ```
 
-The selected connected-idle parameters are requested as soon as GATT
-notifications are ready, or after the profile's initial delay if service
-discovery is still in progress. This is important on Linux/BlueZ where a weak
-link can otherwise drop during service discovery before the 10 second fallback.
+The active parameters are also used as setup parameters shortly after connect,
+so GATT discovery is not forced through a long low-power interval. The selected
+connected-idle parameters are requested only after state and measurement
+notifications are ready, or after a REDCON `4` sleep command on an already
+subscribed connection.
+The default no-argument firmware profile is `lowpower-1000-4-20`.
 
-Manual-only flash, verify, and RTT targets are available for the user. The
-firmware is split into three independently writable regions:
+Manual-only flash and verify targets are available for the user. The firmware
+is split into three independently writable regions:
 
 ```sh
 just weather::ble-debug::firmware-softdevice
 just weather::ble-debug::firmware-nve weather-q8zbgb
-just weather::ble-debug::firmware-app baseline-100-0-6
-just weather::ble-debug::firmware-rtt
+just weather::ble-debug::firmware-app lowpower-1000-4-20
 ```
 
 Agents must not run flash targets.
@@ -189,7 +196,7 @@ The regions are:
 - `firmware-nve <thing>`: writes only the `TXW1` NVE/factory record containing
   the advertised Thing name.
 - `firmware-app <profile>`: writes only the debug app built with that BLE
-  connection-parameter profile. The app also owns runtime GPIO behavior:
+  idle and active connection-parameter profile. The app also owns runtime GPIO behavior:
   `power` on D1/P1.05 mirrors the user LED, stays low at boot and in REDCON
   `4`, and goes high immediately for REDCON `3` before BME280 initialization.
   It also samples the XIAO battery divider on AIN7/P1.14 with P1.15 as the
@@ -197,6 +204,35 @@ The regions are:
 
 Profiles such as `baseline-100-0-6` and `stable-200-0-20` affect only
 `firmware-app`; they do not change S115 or NVE data.
+
+For board floor-current measurements, use `floor-systemoff-5s`:
+
+```sh
+just weather::ble-debug::firmware-app floor-systemoff-5s
+just weather::ble-debug::firmware-verify-app floor-systemoff-5s
+```
+
+That app profile does not start SoftDevice, BLE, advertising, GATT, BME280, or
+the battery ADC. It keeps `power` D1/P1.05 and the VBAT divider enable P1.15
+low, drives the XIAO Sense PDM/IMU rail P0.01 low, parks the RF-switch helper
+pins, releases the sensor pins, turns the user LED on for 5 seconds after boot,
+then turns the LED off, disables RAM retention, and enters nRF54 System OFF
+through `NRF_REGULATORS->SYSTEMOFF`. Measure after the LED turns off. For the
+lowest realistic floor-current reading, disconnect the debugger/probe and power
+the board through the measurement fixture after flashing.
+
+For connected-idle current measurements, start with `lowpower-1000-4-20`. In
+REDCON `4`, the app leaves BME280 and the battery ADC shut down, disables
+scan-request events, compiles out Zephyr logging/RTT/console backends, and
+idles the CPU with the S115 WFE sequence until a BLE interrupt arrives. Battery
+sampling is only performed while active unless
+`CONFIG_TXING_WEATHER_IDLE_BATTERY_REPORT_ENABLE=y` is explicitly enabled. The
+app also overrides the BM board defconfig's enable-all nrfx list and keeps only
+CLOCK, POWER, GRTC, SYSTICK, RRAMC, TWIM, and SAADC.
+
+The SoftDevice random auto-seed path remains enabled through PSA/CRACEN. It is
+required for reliable S115 BLE startup on nRF54L15; disabling it can leave the
+device non-advertising.
 
 Runtime pin ownership in the app image:
 
@@ -206,22 +242,29 @@ BME280 Grove SDA    D4 / P1.10
 BME280 Grove SCL    D5 / P1.11
 VBAT ADC input      AIN7 / P1.14
 VBAT divider enable P1.15        active high
+Sense PDM/IMU power P0.01        active high, forced low by app
 ```
 
 D0/P1.04 is deliberately not used for `power`. The XIAO connector maps D0 to
-P1.04, but the BM board configuration also aliases P1.04 as UART TX. The debug
-app logs over RTT and disables the BM UARTE console, while D1/P1.05 keeps the
-external power-control contract unambiguous.
+P1.04, but the BM board configuration also aliases P1.04 as UART TX. The power
+measurement app compiles out logging and disables the BM UARTE console, while
+D1/P1.05 keeps the external power-control contract unambiguous.
+
+This mirrors the production unit firmware's board-low-power step, which parks
+unused LEDs, IMU/mic rails, and external flash before entering its sleep-state
+loop. The weather BLE image does not touch XIAO RF-switch helper pins P2.03 and
+P2.05 while BLE is running, because they may be part of the radio path; the
+`floor-systemoff-5s` profile parks them because it never starts BLE.
 
 For a new or unknown board, program and verify all three regions:
 
 ```sh
 just weather::ble-debug::firmware-softdevice
 just weather::ble-debug::firmware-nve weather-q8zbgb
-just weather::ble-debug::firmware-app stable-200-0-20
+just weather::ble-debug::firmware-app lowpower-1000-4-20
 just weather::ble-debug::firmware-verify-softdevice
 just weather::ble-debug::firmware-verify-nve weather-q8zbgb
-just weather::ble-debug::firmware-verify-app stable-200-0-20
+just weather::ble-debug::firmware-verify-app lowpower-1000-4-20
 ```
 
 For profile sweeps on a board with known-good S115 and NVE, only rewrite the
@@ -341,6 +384,8 @@ just weather::ble-debug::summarize /tmp/weather-ble-debug-results/$candidate/*.l
 Run candidates in this order:
 
 ```text
+lowpower-1000-4-20
+lowpower-500-4-20
 baseline-100-0-6
 stable-100-0-10
 stable-200-0-10

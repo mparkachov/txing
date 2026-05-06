@@ -14,6 +14,29 @@ config TXING_WEATHER_ADV_TX_POWER_DBM
 	int "Advertising transmit power in dBm"
 	default 8
 
+config TXING_WEATHER_SCAN_REQ_NOTIFY
+	bool "Enable scan request events"
+	default n
+	help
+	  Enable only when debugging advertisement/scanner behavior. Scan request
+	  events wake the application and generate logs while advertising.
+
+config TXING_WEATHER_ACTIVE_CONN_INTERVAL_MS
+	int "Connected active connection interval in milliseconds"
+	default 100
+	help
+	  Requested BLE connection interval while REDCON is active.
+
+config TXING_WEATHER_ACTIVE_CONN_LATENCY
+	int "Connected active peripheral latency"
+	default 0
+
+config TXING_WEATHER_ACTIVE_CONN_SUPERVISION_TIMEOUT_MS
+	int "Connected active supervision timeout in milliseconds"
+	default 10000
+	help
+	  Requested BLE supervision timeout while REDCON is active.
+
 config TXING_WEATHER_IDLE_CONN_INTERVAL_MS
 	int "Connected idle connection interval in milliseconds"
 	default 100
@@ -48,6 +71,40 @@ config TXING_WEATHER_IDLE_CONN_PARAM_INITIAL_DELAY_MS
 	  BlueZ a longer supervision timeout before service discovery can time out
 	  on a weak link. Set negative to disable the initial request and use only
 	  the GATT-ready or fallback paths.
+
+config TXING_WEATHER_IDLE_DIAG_ENABLE
+	bool "Enable periodic idle diagnostics"
+	default n
+	help
+	  Keep disabled for current measurements. Periodic diagnostics wake the CPU
+	  and keep log traffic alive while the device is otherwise idle.
+
+config TXING_WEATHER_IDLE_BATTERY_REPORT_ENABLE
+	bool "Sample and notify battery periodically while idle"
+	default n
+	help
+	  Keep disabled for current measurements. Battery is still sampled during
+	  active REDCON measurement streaming.
+
+config TXING_WEATHER_IDLE_LOG_FLUSH_ENABLE
+	bool "Flush deferred logs from the idle loop"
+	default n
+	help
+	  Enable only when watching RTT logs. Disabled by default so connected idle
+	  can sleep until a BLE interrupt instead of waking only to drain logs.
+
+config TXING_WEATHER_SYSTEM_OFF_TEST
+	bool "Run floor-current System OFF test instead of BLE firmware"
+	default n
+	help
+	  Build a measurement-only image that does not start SoftDevice, BLE,
+	  BME280, battery ADC, or advertising. It waits briefly after boot with
+	  the board power output off, then enters nRF54 System OFF.
+
+config TXING_WEATHER_SYSTEM_OFF_TEST_DELAY_MS
+	int "Delay before entering System OFF in the floor-current test"
+	default 5000
+	depends on TXING_WEATHER_SYSTEM_OFF_TEST
 
 config TXING_WEATHER_INVALID_NAME
 	string "Fallback local name when factory data is invalid"

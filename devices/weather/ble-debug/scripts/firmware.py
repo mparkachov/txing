@@ -19,7 +19,7 @@ PRODUCTION_WEATHER_MCU_DIR = PROJECT_ROOT / "devices" / "weather" / "mcu"
 FIRMWARE_DIR = BLE_DEBUG_DIR / "firmware"
 BUILD_DIR = BLE_DEBUG_DIR / "build" / "baremetal-weather-ble-debug"
 GENERATED_DIR = BLE_DEBUG_DIR / ".generated"
-DEFAULT_PROFILE = "baseline-100-0-6"
+DEFAULT_PROFILE = "lowpower-1000-4-20"
 DEFAULT_FLASH_RETRIES = 3
 DEFAULT_FLASH_RETRY_DELAY_SECONDS = 2.0
 
@@ -32,11 +32,23 @@ class FirmwareProfile:
     supervision_timeout_ms: int
     idle_param_fallback_delay_ms: int
     idle_param_initial_delay_ms: int = 250
+    active_interval_ms: int = 100
+    active_latency: int = 0
+    active_supervision_timeout_ms: int = 10000
+    mode: str = "ble"
+    extra_config: tuple[str, ...] = ()
 
     def conf_text(self) -> str:
         return "\n".join(
             (
                 f"# Generated for weather BLE debug profile {self.name}",
+                f"# mode={self.mode}",
+                f"CONFIG_TXING_WEATHER_ACTIVE_CONN_INTERVAL_MS={self.active_interval_ms}",
+                f"CONFIG_TXING_WEATHER_ACTIVE_CONN_LATENCY={self.active_latency}",
+                (
+                    "CONFIG_TXING_WEATHER_ACTIVE_CONN_SUPERVISION_TIMEOUT_MS="
+                    f"{self.active_supervision_timeout_ms}"
+                ),
                 f"CONFIG_TXING_WEATHER_IDLE_CONN_INTERVAL_MS={self.idle_interval_ms}",
                 f"CONFIG_TXING_WEATHER_IDLE_CONN_LATENCY={self.idle_latency}",
                 (
@@ -51,6 +63,7 @@ class FirmwareProfile:
                     "CONFIG_TXING_WEATHER_IDLE_CONN_PARAM_INITIAL_DELAY_MS="
                     f"{self.idle_param_initial_delay_ms}"
                 ),
+                *self.extra_config,
                 "",
             )
         )
@@ -59,6 +72,8 @@ class FirmwareProfile:
 PROFILES: dict[str, FirmwareProfile] = {
     profile.name: profile
     for profile in (
+        FirmwareProfile("lowpower-1000-4-20", 1000, 4, 20000, 10000),
+        FirmwareProfile("lowpower-500-4-20", 500, 4, 20000, 10000),
         FirmwareProfile("baseline-100-0-6", 100, 0, 6000, 10000),
         FirmwareProfile("stable-100-0-10", 100, 0, 10000, 10000),
         FirmwareProfile("stable-200-0-10", 200, 0, 10000, 10000),
@@ -66,6 +81,18 @@ PROFILES: dict[str, FirmwareProfile] = {
         FirmwareProfile("stable-400-0-20", 400, 0, 20000, 10000),
         FirmwareProfile("fast-50-0-10", 50, 0, 10000, 10000),
         FirmwareProfile("fast-50-0-6", 50, 0, 6000, 10000),
+        FirmwareProfile(
+            "floor-systemoff-5s",
+            1000,
+            4,
+            20000,
+            10000,
+            mode="system-off-test",
+            extra_config=(
+                "CONFIG_TXING_WEATHER_SYSTEM_OFF_TEST=y",
+                "CONFIG_TXING_WEATHER_SYSTEM_OFF_TEST_DELAY_MS=5000",
+            ),
+        ),
     )
 }
 
@@ -381,6 +408,11 @@ def build_recipe_stamp(module, profile: FirmwareProfile) -> str:
             f"supervision_timeout_ms={profile.supervision_timeout_ms}",
             f"idle_param_fallback_delay_ms={profile.idle_param_fallback_delay_ms}",
             f"idle_param_initial_delay_ms={profile.idle_param_initial_delay_ms}",
+            f"active_interval_ms={profile.active_interval_ms}",
+            f"active_latency={profile.active_latency}",
+            f"active_supervision_timeout_ms={profile.active_supervision_timeout_ms}",
+            f"mode={profile.mode}",
+            "extra_config=" + ",".join(profile.extra_config),
             f"weather_baremetal_sha256={module.weather_recipe_digest()}",
             "",
         )
@@ -499,6 +531,10 @@ def print_profiles() -> None:
                     f"supervision_timeout_ms={profile.supervision_timeout_ms}",
                     f"idle_param_fallback_delay_ms={profile.idle_param_fallback_delay_ms}",
                     f"idle_param_initial_delay_ms={profile.idle_param_initial_delay_ms}",
+                    f"active_interval_ms={profile.active_interval_ms}",
+                    f"active_latency={profile.active_latency}",
+                    f"active_supervision_timeout_ms={profile.active_supervision_timeout_ms}",
+                    f"mode={profile.mode}",
                 )
             )
         )

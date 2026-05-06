@@ -9,6 +9,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#ifndef CONFIG_TXING_WEATHER_BLE_DEBUG_LOG_LEVEL
+#define CONFIG_TXING_WEATHER_BLE_DEBUG_LOG_LEVEL 0
+#endif
+
 LOG_MODULE_REGISTER(txing_weather_battery, CONFIG_TXING_WEATHER_BLE_DEBUG_LOG_LEVEL);
 
 #define XIAO_VBAT_AIN_PIN NRF_PIN_PORT_TO_PIN_NUMBER(14, 1)
@@ -28,6 +32,13 @@ static void vbat_enable(bool enabled)
 	nrf_gpio_pin_write(XIAO_VBAT_ENABLE_PIN,
 			   enabled ? XIAO_VBAT_ENABLE_ACTIVE_STATE :
 				     !XIAO_VBAT_ENABLE_ACTIVE_STATE);
+}
+
+static int init_failed(int err)
+{
+	nrfx_saadc_uninit();
+	vbat_enable(false);
+	return err;
 }
 
 int weather_battery_init(void)
@@ -60,24 +71,38 @@ int weather_battery_init(void)
 
 	err = nrfx_saadc_channel_config(&channel);
 	if (err != 0) {
-		return err;
+		return init_failed(err);
 	}
 
 	channels_mask = nrfx_saadc_channels_configured_get();
 	err = nrfx_saadc_simple_mode_set(channels_mask, BATTERY_SAADC_RESOLUTION,
 					 NRF_SAADC_OVERSAMPLE_8X, NULL);
 	if (err != 0) {
-		return err;
+		return init_failed(err);
 	}
 
 	err = nrfx_saadc_offset_calibrate(NULL);
 	if (err != 0) {
-		return err;
+		return init_failed(err);
 	}
 
 	g_ready = true;
 	LOG_INF("Battery ADC initialized input=AIN7/P1.14 enable=P1.15 divider=2");
 	return 0;
+}
+
+void weather_battery_shutdown(void)
+{
+	if (g_ready) {
+		nrfx_saadc_uninit();
+		g_ready = false;
+	}
+	vbat_enable(false);
+	nrf_gpio_cfg_default(XIAO_VBAT_AIN_PIN);
+#if NRF_GPIO_HAS_SEL
+	nrf_gpio_pin_control_select(XIAO_VBAT_ENABLE_PIN, NRF_GPIO_PIN_SEL_GPIO);
+#endif
+	nrf_gpio_cfg_output(XIAO_VBAT_ENABLE_PIN);
 }
 
 uint16_t weather_battery_sample_mv(void)

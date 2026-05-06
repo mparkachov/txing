@@ -9,16 +9,30 @@
 #include <bm/softdevice_handler/nrf_sdh.h>
 #include <bm/softdevice_handler/nrf_sdh_ble.h>
 #include <hal/nrf_gpio.h>
+#include <hal/nrf_regulators.h>
 #include <nrf_error.h>
+#include <nrf_soc.h>
+
+#if defined(CONFIG_HAS_NORDIC_RAM_CTRL)
+#include <helpers/nrfx_ram_ctrl.h>
+#endif
 
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/logging/log_ctrl.h>
+#include <zephyr/sys/util.h>
 
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+
+#ifndef CONFIG_TXING_WEATHER_BLE_DEBUG_LOG_LEVEL
+#define CONFIG_TXING_WEATHER_BLE_DEBUG_LOG_LEVEL 0
+#endif
+#ifndef CONFIG_TXING_WEATHER_SYSTEM_OFF_TEST_DELAY_MS
+#define CONFIG_TXING_WEATHER_SYSTEM_OFF_TEST_DELAY_MS 5000
+#endif
 
 LOG_MODULE_REGISTER(txing_weather_ble_debug, CONFIG_TXING_WEATHER_BLE_DEBUG_LOG_LEVEL);
 
@@ -43,6 +57,18 @@ LOG_MODULE_REGISTER(txing_weather_ble_debug, CONFIG_TXING_WEATHER_BLE_DEBUG_LOG_
 #define XIAO_POWER_PIN NRF_PIN_PORT_TO_PIN_NUMBER(5, 1)
 #define XIAO_POWER_ACTIVE_STATE 1u
 #define XIAO_POWER_DRIVE NRF_GPIO_PIN_H0H1
+/* XIAO Sense rail for onboard PDM/IMU. The weather app does not use it. */
+#define XIAO_SENSE_POWER_PIN NRF_PIN_PORT_TO_PIN_NUMBER(1, 0)
+#define XIAO_SENSE_POWER_ACTIVE_STATE 1u
+/*
+ * XIAO board RF-switch helper rails. Do not disable these in BLE profiles;
+ * the radio path may depend on them. They are safe to park in the system-off
+ * floor-current profile because that profile never starts BLE.
+ */
+#define XIAO_RFSW_POWER_PIN NRF_PIN_PORT_TO_PIN_NUMBER(3, 2)
+#define XIAO_RFSW_POWER_ACTIVE_STATE 1u
+#define XIAO_RFSW_CTL_PIN NRF_PIN_PORT_TO_PIN_NUMBER(5, 2)
+#define XIAO_RFSW_CTL_ACTIVE_STATE 0u
 
 #define WEATHER_SAMPLE_INTERVAL_MS 1000u
 #define WEATHER_DIAG_INTERVAL_MS 10000u
@@ -52,11 +78,19 @@ LOG_MODULE_REGISTER(txing_weather_ble_debug, CONFIG_TXING_WEATHER_BLE_DEBUG_LOG_
 #define WEATHER_IDLE_CONN_INTERVAL_UNITS ((CONFIG_TXING_WEATHER_IDLE_CONN_INTERVAL_MS * 4u) / 5u)
 #define WEATHER_IDLE_CONN_SUPERVISION_UNITS                                                  \
 	(CONFIG_TXING_WEATHER_IDLE_CONN_SUPERVISION_TIMEOUT_MS / 10u)
+#define WEATHER_ACTIVE_CONN_INTERVAL_UNITS                                                   \
+	((CONFIG_TXING_WEATHER_ACTIVE_CONN_INTERVAL_MS * 4u) / 5u)
+#define WEATHER_ACTIVE_CONN_SUPERVISION_UNITS                                                \
+	(CONFIG_TXING_WEATHER_ACTIVE_CONN_SUPERVISION_TIMEOUT_MS / 10u)
 
 _Static_assert((CONFIG_TXING_WEATHER_IDLE_CONN_INTERVAL_MS * 4u) % 5u == 0u,
 	       "idle connection interval must map to exact BLE 1.25 ms units");
 _Static_assert(CONFIG_TXING_WEATHER_IDLE_CONN_SUPERVISION_TIMEOUT_MS % 10u == 0u,
 	       "idle supervision timeout must map to exact BLE 10 ms units");
+_Static_assert((CONFIG_TXING_WEATHER_ACTIVE_CONN_INTERVAL_MS * 4u) % 5u == 0u,
+	       "active connection interval must map to exact BLE 1.25 ms units");
+_Static_assert(CONFIG_TXING_WEATHER_ACTIVE_CONN_SUPERVISION_TIMEOUT_MS % 10u == 0u,
+	       "active supervision timeout must map to exact BLE 10 ms units");
 
 struct weather_factory_data {
 	uint32_t magic;
@@ -88,6 +122,7 @@ static struct weather_state g_state = {
 };
 static struct weather_measurement g_measurement;
 static bool g_measurement_valid;
+static bool g_setup_conn_params_requested;
 static bool g_idle_conn_params_requested;
 static bool g_state_notify_enabled;
 static bool g_measurement_notify_enabled;
@@ -97,12 +132,59 @@ static int64_t g_power_on_at_ms;
 static int64_t g_next_bme280_init_attempt_ms;
 static bool g_battery_ready;
 
+static void gpio_drive_output(uint32_t pin, uint32_t level, nrf_gpio_pin_drive_t drive)
+{
+#if NRF_GPIO_HAS_SEL
+	nrf_gpio_pin_control_select(pin, NRF_GPIO_PIN_SEL_GPIO);
+#endif
+	nrf_gpio_pin_write(pin, level);
+	nrf_gpio_cfg(pin, NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT,
+		     NRF_GPIO_PIN_NOPULL, drive, NRF_GPIO_PIN_NOSENSE);
+}
+
+static void xiao_sense_power_off(void)
+{
+	gpio_drive_output(XIAO_SENSE_POWER_PIN, !XIAO_SENSE_POWER_ACTIVE_STATE,
+			  NRF_GPIO_PIN_S0S1);
+}
+
+static void xiao_floor_only_rf_switch_off(void)
+{
+	gpio_drive_output(XIAO_RFSW_POWER_PIN, !XIAO_RFSW_POWER_ACTIVE_STATE,
+			  NRF_GPIO_PIN_S0S1);
+	gpio_drive_output(XIAO_RFSW_CTL_PIN, !XIAO_RFSW_CTL_ACTIVE_STATE, NRF_GPIO_PIN_S0S1);
+}
+
 static void sample_battery(void)
 {
 	if (!g_battery_ready) {
-		return;
+		if (weather_battery_init() != 0) {
+			return;
+		}
+		g_battery_ready = true;
 	}
 	g_state.battery_mv = weather_battery_sample_mv();
+}
+
+static void battery_shutdown(void)
+{
+	weather_battery_shutdown();
+	g_battery_ready = false;
+}
+
+static void idle_log_flush(void)
+{
+#if IS_ENABLED(CONFIG_LOG)
+	log_flush();
+#endif
+}
+
+static void softdevice_wait_for_event(void)
+{
+	/* S115 migration guide replacement for deprecated sd_app_evt_wait(). */
+	__WFE();
+	__SEV();
+	__WFE();
 }
 
 static uint32_t crc32(const uint8_t *data, size_t size)
@@ -173,25 +255,88 @@ static void power_set(bool on)
 		g_power_on_at_ms = 0;
 		g_next_bme280_init_attempt_ms = 0;
 		weather_bme280_reset();
+		battery_shutdown();
 	}
 	g_power_on = on;
 	if (changed) {
-		LOG_INF("Power output enabled=%d pin=D1/P1.05 out=%u in=%u", g_power_on,
-			nrf_gpio_pin_out_read(XIAO_POWER_PIN), nrf_gpio_pin_read(XIAO_POWER_PIN));
+		LOG_INF("Power output enabled=%d pin=D1/P1.05 out=%u", g_power_on,
+			nrf_gpio_pin_out_read(XIAO_POWER_PIN));
 	}
 }
 
 static void power_init(void)
 {
 	nrf_gpio_pin_write(XIAO_LED_PIN, !XIAO_LED_ACTIVE_STATE);
-	nrf_gpio_pin_write(XIAO_POWER_PIN, !XIAO_POWER_ACTIVE_STATE);
-#if NRF_GPIO_HAS_SEL
-	nrf_gpio_pin_control_select(XIAO_POWER_PIN, NRF_GPIO_PIN_SEL_GPIO);
-#endif
+	xiao_sense_power_off();
+	gpio_drive_output(XIAO_POWER_PIN, !XIAO_POWER_ACTIVE_STATE, XIAO_POWER_DRIVE);
 	nrf_gpio_cfg_output(XIAO_LED_PIN);
-	nrf_gpio_cfg(XIAO_POWER_PIN, NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_CONNECT,
-		     NRF_GPIO_PIN_NOPULL, XIAO_POWER_DRIVE, NRF_GPIO_PIN_NOSENSE);
 	power_set(false);
+}
+
+static void floor_measurement_shutdown_pins(void)
+{
+	weather_bme280_reset();
+	battery_shutdown();
+
+	nrf_gpio_pin_write(XIAO_LED_PIN, !XIAO_LED_ACTIVE_STATE);
+	nrf_gpio_cfg_default(XIAO_LED_PIN);
+
+	xiao_sense_power_off();
+	xiao_floor_only_rf_switch_off();
+	gpio_drive_output(XIAO_POWER_PIN, !XIAO_POWER_ACTIVE_STATE, NRF_GPIO_PIN_S0S1);
+	g_power_on = false;
+	g_power_on_at_ms = 0;
+	g_next_bme280_init_attempt_ms = 0;
+}
+
+static void disable_ram_retention_for_system_off(void)
+{
+#if defined(CONFIG_HAS_NORDIC_RAM_CTRL)
+	uint8_t *ram_start;
+	size_t ram_size = 0u;
+
+#if defined(NRF_MEMORY_RAM_BASE)
+	ram_start = (uint8_t *)NRF_MEMORY_RAM_BASE;
+#else
+	ram_start = (uint8_t *)NRF_MEMORY_RAM0_BASE;
+#endif
+
+#if defined(NRF_MEMORY_RAM_SIZE)
+	ram_size += NRF_MEMORY_RAM_SIZE;
+#endif
+#if defined(NRF_MEMORY_RAM0_SIZE)
+	ram_size += NRF_MEMORY_RAM0_SIZE;
+#endif
+#if defined(NRF_MEMORY_RAM1_SIZE)
+	ram_size += NRF_MEMORY_RAM1_SIZE;
+#endif
+#if defined(NRF_MEMORY_RAM2_SIZE)
+	ram_size += NRF_MEMORY_RAM2_SIZE;
+#endif
+
+	if (ram_size > 0u) {
+		nrfx_ram_ctrl_retention_enable_set(ram_start, ram_size, false);
+	}
+#endif
+}
+
+static void enter_system_off(void)
+{
+	unsigned int key = irq_lock();
+
+	ARG_UNUSED(key);
+	floor_measurement_shutdown_pins();
+	disable_ram_retention_for_system_off();
+	nrf_regulators_system_off(NRF_REGULATORS);
+}
+
+static void run_system_off_test(void)
+{
+	floor_measurement_shutdown_pins();
+	nrf_gpio_pin_write(XIAO_LED_PIN, XIAO_LED_ACTIVE_STATE);
+	nrf_gpio_cfg_output(XIAO_LED_PIN);
+	k_sleep(K_MSEC(CONFIG_TXING_WEATHER_SYSTEM_OFF_TEST_DELAY_MS));
+	enter_system_off();
 }
 
 static uint32_t set_gap_device_name(const char *name)
@@ -410,7 +555,8 @@ static uint32_t start_advertising(void)
 	g_adv_params.interval = CONFIG_TXING_WEATHER_ADV_INTERVAL_625US;
 	g_adv_params.duration = 0;
 	g_adv_params.filter_policy = BLE_GAP_ADV_FP_ANY;
-	g_adv_params.scan_req_notification = 1;
+	g_adv_params.scan_req_notification =
+		IS_ENABLED(CONFIG_TXING_WEATHER_SCAN_REQ_NOTIFY) ? 1 : 0;
 
 	nrf_err = sd_ble_gap_adv_set_configure(&g_adv_handle, &g_gap_adv_data, &g_adv_params);
 	if (nrf_err != NRF_SUCCESS) {
@@ -427,48 +573,74 @@ static uint32_t start_advertising(void)
 	return sd_ble_gap_adv_start(g_adv_handle, CONFIG_NRF_SDH_BLE_CONN_TAG);
 }
 
-static bool request_connected_idle_params(uint16_t conn_handle)
+static bool request_conn_params(uint16_t conn_handle, uint16_t interval_units, uint16_t latency,
+				uint16_t supervision_units, const char *mode)
 {
 	ble_gap_conn_params_t params = {
-		.min_conn_interval = WEATHER_IDLE_CONN_INTERVAL_UNITS,
-		.max_conn_interval = WEATHER_IDLE_CONN_INTERVAL_UNITS,
-		.slave_latency = CONFIG_TXING_WEATHER_IDLE_CONN_LATENCY,
-		.conn_sup_timeout = WEATHER_IDLE_CONN_SUPERVISION_UNITS,
+		.min_conn_interval = interval_units,
+		.max_conn_interval = interval_units,
+		.slave_latency = latency,
+		.conn_sup_timeout = supervision_units,
 	};
 	uint32_t nrf_err = sd_ble_gap_conn_param_update(conn_handle, &params);
 
 	if (nrf_err != NRF_SUCCESS) {
-		LOG_DBG("Failed to request connection params, nrf_error %#x", nrf_err);
+		LOG_DBG("Failed to request %s connection params, nrf_error %#x", mode, nrf_err);
 		return false;
 	}
-	LOG_INF("Requested debug idle params interval=%ums latency=%u supervision=%ums",
-		CONFIG_TXING_WEATHER_IDLE_CONN_INTERVAL_MS,
-		CONFIG_TXING_WEATHER_IDLE_CONN_LATENCY,
-		CONFIG_TXING_WEATHER_IDLE_CONN_SUPERVISION_TIMEOUT_MS);
+	LOG_INF("Requested %s params intervalUnits=%u latency=%u supervisionUnits=%u", mode,
+		interval_units, latency, supervision_units);
 	return true;
 }
 
-static void request_idle_params_if_ready(void)
+static bool request_connected_idle_params(uint16_t conn_handle)
+{
+	return request_conn_params(conn_handle, WEATHER_IDLE_CONN_INTERVAL_UNITS,
+				   CONFIG_TXING_WEATHER_IDLE_CONN_LATENCY,
+				   WEATHER_IDLE_CONN_SUPERVISION_UNITS, "idle");
+}
+
+static bool request_connected_active_params(uint16_t conn_handle)
+{
+	return request_conn_params(conn_handle, WEATHER_ACTIVE_CONN_INTERVAL_UNITS,
+				   CONFIG_TXING_WEATHER_ACTIVE_CONN_LATENCY,
+				   WEATHER_ACTIVE_CONN_SUPERVISION_UNITS, "active");
+}
+
+static bool request_connected_setup_params(uint16_t conn_handle)
+{
+	return request_conn_params(conn_handle, WEATHER_ACTIVE_CONN_INTERVAL_UNITS,
+				   CONFIG_TXING_WEATHER_ACTIVE_CONN_LATENCY,
+				   WEATHER_ACTIVE_CONN_SUPERVISION_UNITS, "setup");
+}
+
+static void request_setup_params_if_ready(void)
 {
 	const int64_t elapsed_ms = k_uptime_get() - g_connected_at_ms;
 
-	if (g_conn_handle == BLE_CONN_HANDLE_INVALID || g_idle_conn_params_requested) {
+	if (g_conn_handle == BLE_CONN_HANDLE_INVALID || g_setup_conn_params_requested) {
+		return;
+	}
+	if (g_state.redcon < WEATHER_REDCON_IDLE) {
 		return;
 	}
 	if (CONFIG_TXING_WEATHER_IDLE_CONN_PARAM_INITIAL_DELAY_MS >= 0 &&
 	    elapsed_ms >= CONFIG_TXING_WEATHER_IDLE_CONN_PARAM_INITIAL_DELAY_MS) {
-		g_idle_conn_params_requested = request_connected_idle_params(g_conn_handle);
+		g_setup_conn_params_requested = request_connected_setup_params(g_conn_handle);
 		return;
 	}
 	if (elapsed_ms < CONFIG_TXING_WEATHER_IDLE_CONN_PARAM_FALLBACK_DELAY_MS) {
 		return;
 	}
-	g_idle_conn_params_requested = request_connected_idle_params(g_conn_handle);
+	g_setup_conn_params_requested = request_connected_setup_params(g_conn_handle);
 }
 
 static void request_idle_params_if_gatt_ready(void)
 {
 	if (g_conn_handle == BLE_CONN_HANDLE_INVALID || g_idle_conn_params_requested) {
+		return;
+	}
+	if (g_state.redcon < WEATHER_REDCON_IDLE) {
 		return;
 	}
 	if (!g_state_notify_enabled || !g_measurement_notify_enabled) {
@@ -487,6 +659,15 @@ static void set_redcon(uint8_t redcon, bool notify)
 		g_measurement_valid = false;
 	}
 	power_set(active);
+	if (g_conn_handle != BLE_CONN_HANDLE_INVALID) {
+		if (active) {
+			(void)request_connected_active_params(g_conn_handle);
+			g_setup_conn_params_requested = true;
+			g_idle_conn_params_requested = false;
+		} else {
+			g_idle_conn_params_requested = request_connected_idle_params(g_conn_handle);
+		}
+	}
 	publish_state(notify);
 	LOG_INF("Weather state redcon=%u active=%d power=%d bme280_valid=%d", g_state.redcon,
 		active, g_power_on, g_state.bme280_valid);
@@ -545,13 +726,14 @@ static void handle_ble_evt(const ble_evt_t *evt, void *ctx)
 
 		g_conn_handle = evt->evt.gap_evt.conn_handle;
 		g_connected_at_ms = k_uptime_get();
+		g_setup_conn_params_requested = false;
 		g_idle_conn_params_requested = false;
 		g_state_notify_enabled = false;
 		g_measurement_notify_enabled = false;
-			LOG_INF("Peer connected; initial interval=%u..%u latency=%u supervision=%u; requesting connected-idle params after %ums or when GATT is ready",
-				params->min_conn_interval, params->max_conn_interval,
-				params->slave_latency, params->conn_sup_timeout,
-				CONFIG_TXING_WEATHER_IDLE_CONN_PARAM_INITIAL_DELAY_MS);
+		LOG_INF("Peer connected; initial interval=%u..%u latency=%u supervision=%u; requesting setup params after %ums; requesting idle params when GATT is ready",
+			params->min_conn_interval, params->max_conn_interval,
+			params->slave_latency, params->conn_sup_timeout,
+			CONFIG_TXING_WEATHER_IDLE_CONN_PARAM_INITIAL_DELAY_MS);
 		nrf_err = sd_ble_gatts_sys_attr_set(g_conn_handle, NULL, 0, 0);
 		if (nrf_err != NRF_SUCCESS) {
 			LOG_DBG("Failed to set system attributes, nrf_error %#x", nrf_err);
@@ -564,8 +746,9 @@ static void handle_ble_evt(const ble_evt_t *evt, void *ctx)
 	case BLE_GAP_EVT_DISCONNECTED:
 		LOG_INF("Peer disconnected reason=%#x; restarting advertising",
 			evt->evt.gap_evt.params.disconnected.reason);
-		set_redcon(WEATHER_REDCON_IDLE, false);
 		g_conn_handle = BLE_CONN_HANDLE_INVALID;
+		set_redcon(WEATHER_REDCON_IDLE, false);
+		g_setup_conn_params_requested = false;
 		g_idle_conn_params_requested = false;
 		g_state_notify_enabled = false;
 		g_measurement_notify_enabled = false;
@@ -639,13 +822,16 @@ static void handle_ble_evt(const ble_evt_t *evt, void *ctx)
 	}
 
 	case BLE_GAP_EVT_SCAN_REQ_REPORT: {
-		const ble_gap_evt_scan_req_report_t *report =
-			&evt->evt.gap_evt.params.scan_req_report;
+		if (IS_ENABLED(CONFIG_TXING_WEATHER_SCAN_REQ_NOTIFY)) {
+			const ble_gap_evt_scan_req_report_t *report =
+				&evt->evt.gap_evt.params.scan_req_report;
 
-		LOG_INF("Scan request received rssi=%d peer=%02x:%02x:%02x:%02x:%02x:%02x",
-			report->rssi, report->peer_addr.addr[5], report->peer_addr.addr[4],
-			report->peer_addr.addr[3], report->peer_addr.addr[2],
-			report->peer_addr.addr[1], report->peer_addr.addr[0]);
+			LOG_INF("Scan request received rssi=%d peer=%02x:%02x:%02x:%02x:%02x:%02x",
+				report->rssi, report->peer_addr.addr[5],
+				report->peer_addr.addr[4], report->peer_addr.addr[3],
+				report->peer_addr.addr[2], report->peer_addr.addr[1],
+				report->peer_addr.addr[0]);
+		}
 		break;
 	}
 
@@ -772,6 +958,28 @@ static void sample_weather_if_active(void)
 		g_measurement.humidity_centi_percent, g_measurement.battery_mv);
 }
 
+static bool is_active_connected(void)
+{
+	return g_conn_handle != BLE_CONN_HANDLE_INVALID && g_state.redcon < WEATHER_REDCON_IDLE;
+}
+
+static bool setup_param_request_pending(int64_t now_ms)
+{
+	const int64_t elapsed_ms = now_ms - g_connected_at_ms;
+
+	if (g_conn_handle == BLE_CONN_HANDLE_INVALID || g_setup_conn_params_requested) {
+		return false;
+	}
+	if (CONFIG_TXING_WEATHER_IDLE_CONN_PARAM_INITIAL_DELAY_MS >= 0 &&
+	    elapsed_ms < CONFIG_TXING_WEATHER_IDLE_CONN_PARAM_INITIAL_DELAY_MS) {
+		return true;
+	}
+	if (elapsed_ms < CONFIG_TXING_WEATHER_IDLE_CONN_PARAM_FALLBACK_DELAY_MS) {
+		return false;
+	}
+	return true;
+}
+
 int main(void)
 {
 	int err;
@@ -787,8 +995,15 @@ int main(void)
 	int64_t next_diag_ms;
 	int64_t next_battery_ms;
 
+	if (IS_ENABLED(CONFIG_TXING_WEATHER_SYSTEM_OFF_TEST)) {
+		run_system_off_test();
+	}
+
 	LOG_INF("txing weather BLE debug SoftDevice connected-idle firmware started");
-	LOG_INF("Debug BLE params interval=%ums latency=%u supervision=%ums fallback_delay=%ums",
+	LOG_INF("Debug BLE params setup=%ums/%u/%ums idle=%ums/%u/%ums fallback_delay=%ums",
+		CONFIG_TXING_WEATHER_ACTIVE_CONN_INTERVAL_MS,
+		CONFIG_TXING_WEATHER_ACTIVE_CONN_LATENCY,
+		CONFIG_TXING_WEATHER_ACTIVE_CONN_SUPERVISION_TIMEOUT_MS,
 		CONFIG_TXING_WEATHER_IDLE_CONN_INTERVAL_MS,
 		CONFIG_TXING_WEATHER_IDLE_CONN_LATENCY,
 		CONFIG_TXING_WEATHER_IDLE_CONN_SUPERVISION_TIMEOUT_MS,
@@ -807,14 +1022,7 @@ int main(void)
 	LOG_INF("Power output initialized pin=D1/P1.05 active=%u mirrored_to_user_led=1",
 		XIAO_POWER_ACTIVE_STATE);
 	LOG_INF("BME280 initializes only after power is enabled");
-	err = weather_battery_init();
-	if (err != 0) {
-		LOG_WRN("Battery ADC unavailable err=%d", err);
-	} else {
-		g_battery_ready = true;
-		sample_battery();
-		LOG_INF("Battery measurement initialized mv=%u", g_state.battery_mv);
-	}
+	battery_shutdown();
 
 	err = nrf_sdh_enable_request();
 	if (err) {
@@ -823,6 +1031,11 @@ int main(void)
 	}
 	softdevice_enabled = true;
 	LOG_INF("SoftDevice enabled");
+
+	nrf_err = sd_power_mode_set(NRF_POWER_MODE_LOWPWR);
+	if (nrf_err != NRF_SUCCESS) {
+		LOG_WRN("Failed to set SoftDevice low power mode, nrf_error %#x", nrf_err);
+	}
 
 	err = nrf_sdh_ble_enable(CONFIG_NRF_SDH_BLE_CONN_TAG);
 	if (err) {
@@ -864,28 +1077,47 @@ idle:
 
 	while (true) {
 		const int64_t now_ms = k_uptime_get();
+		const bool active = is_active_connected();
 
-		if (now_ms >= next_battery_ms) {
+		if (IS_ENABLED(CONFIG_TXING_WEATHER_IDLE_BATTERY_REPORT_ENABLE) &&
+		    now_ms >= next_battery_ms) {
 			next_battery_ms = now_ms + WEATHER_DIAG_INTERVAL_MS;
 			sample_battery();
 			if (g_conn_handle != BLE_CONN_HANDLE_INVALID) {
 				publish_state(true);
 			}
 		}
-		if (now_ms >= next_sample_ms) {
+		if (active && now_ms >= next_sample_ms) {
 			next_sample_ms = now_ms + WEATHER_SAMPLE_INTERVAL_MS;
 			sample_weather_if_active();
 		}
-		request_idle_params_if_ready();
-		if (now_ms >= next_diag_ms) {
+		if (!active) {
+			request_setup_params_if_ready();
+		}
+		if (IS_ENABLED(CONFIG_TXING_WEATHER_IDLE_DIAG_ENABLE) && now_ms >= next_diag_ms) {
 			next_diag_ms = now_ms + WEATHER_DIAG_INTERVAL_MS;
 			LOG_INF("diag name=%s factory_ok=%d softdevice=%d ble=%d gap_name=%d service=%d adv=%d conn=%u redcon=%u power=%d bme280=%d battery_mv=%u",
 				local_name, factory_ok, softdevice_enabled, ble_enabled, gap_name_set,
 				service_started, advertising_started, g_conn_handle, g_state.redcon,
 				g_power_on, weather_bme280_ready(), g_state.battery_mv);
 		}
-		log_flush();
-		k_sleep(K_MSEC(100));
+		if (active) {
+			int64_t wait_ms = next_sample_ms - k_uptime_get();
+
+			if (wait_ms < 1) {
+				wait_ms = 1;
+			} else if (wait_ms > WEATHER_SAMPLE_INTERVAL_MS) {
+				wait_ms = WEATHER_SAMPLE_INTERVAL_MS;
+			}
+			k_sleep(K_MSEC(wait_ms));
+		} else if (setup_param_request_pending(k_uptime_get())) {
+			k_sleep(K_MSEC(50));
+		} else {
+			if (IS_ENABLED(CONFIG_TXING_WEATHER_IDLE_LOG_FLUSH_ENABLE)) {
+				idle_log_flush();
+			}
+			softdevice_wait_for_event();
+		}
 	}
 
 	return 0;

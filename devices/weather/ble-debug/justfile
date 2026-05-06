@@ -42,14 +42,14 @@ stability_matrix_script := ble_debug_dir + "/scripts/run_stability_matrix.py"
 @firmware-profiles:
     cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{nrf_bm_uv_cache_dir}}" uv run --project "{{nrf_bm_dir}}" --no-sync python "{{firmware_script}}" profiles
 
-@firmware-check profile="baseline-100-0-6":
+@firmware-check profile="lowpower-1000-4-20":
     cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{nrf_bm_uv_cache_dir}}" uv run --project "{{nrf_bm_dir}}" --no-sync python "{{firmware_script}}" check --profile "{{profile}}"
 
-@firmware-install profile="baseline-100-0-6":
+@firmware-install profile="lowpower-1000-4-20":
     cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{nrf_bm_uv_cache_dir}}" uv sync --python "{{python_executable}}" --no-managed-python --no-python-downloads
     cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{nrf_bm_uv_cache_dir}}" uv run --project "{{nrf_bm_dir}}" --no-sync python "{{firmware_script}}" install --profile "{{profile}}"
 
-@firmware-build profile="baseline-100-0-6":
+@firmware-build profile="lowpower-1000-4-20":
     cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{nrf_bm_uv_cache_dir}}" uv run --project "{{nrf_bm_dir}}" --no-sync python "{{firmware_script}}" build --profile "{{profile}}"
 
 @firmware-softdevice:
@@ -58,7 +58,7 @@ stability_matrix_script := ble_debug_dir + "/scripts/run_stability_matrix.py"
 @firmware-nve thing_id:
     cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{nrf_bm_uv_cache_dir}}" uv run --project "{{nrf_bm_dir}}" --no-sync python "{{firmware_script}}" flash-nve "{{thing_id}}"
 
-@firmware-app profile="baseline-100-0-6":
+@firmware-app profile="lowpower-1000-4-20":
     cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{nrf_bm_uv_cache_dir}}" uv run --project "{{nrf_bm_dir}}" --no-sync python "{{firmware_script}}" flash-app --profile "{{profile}}"
 
 @firmware-verify-softdevice:
@@ -67,13 +67,13 @@ stability_matrix_script := ble_debug_dir + "/scripts/run_stability_matrix.py"
 @firmware-verify-nve thing_id:
     cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{nrf_bm_uv_cache_dir}}" uv run --project "{{nrf_bm_dir}}" --no-sync python "{{firmware_script}}" verify-nve "{{thing_id}}"
 
-@firmware-verify-app profile="baseline-100-0-6":
+@firmware-verify-app profile="lowpower-1000-4-20":
     cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{nrf_bm_uv_cache_dir}}" uv run --project "{{nrf_bm_dir}}" --no-sync python "{{firmware_script}}" verify-app --profile "{{profile}}"
 
 @firmware-rtt:
     cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{nrf_bm_uv_cache_dir}}" uv run --project "{{nrf_bm_dir}}" --no-sync python "{{firmware_script}}" rtt
 
-@firmware-paths profile="baseline-100-0-6":
+@firmware-paths profile="lowpower-1000-4-20":
     cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{nrf_bm_uv_cache_dir}}" uv run --project "{{nrf_bm_dir}}" --no-sync python "{{firmware_script}}" paths --profile "{{profile}}"
 
 @firmware-clean:

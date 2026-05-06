@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 int weather_battery_init(void);
+void weather_battery_shutdown(void);
 uint16_t weather_battery_sample_mv(void);
 
 #endif
