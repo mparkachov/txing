@@ -122,6 +122,19 @@ def tcl_braced_path(module, path: Path) -> str:
     return "{" + str(path) + "}"
 
 
+def tcl_braced_literal(module, value: str, *, name: str) -> str:
+    if "}" in value:
+        module.fail(f"cannot pass {name} containing '}}' to OpenOCD Tcl command: {value!r}")
+    return "{" + value + "}"
+
+
+def openocd_adapter_args(module) -> list[str]:
+    serial = os.environ.get("OPENOCD_ADAPTER_SERIAL") or os.environ.get("OPENOCD_SERIAL")
+    if not serial:
+        return []
+    return ["-c", f"adapter serial {tcl_braced_literal(module, serial, name='adapter serial')}"]
+
+
 def openocd_load_command(module, path: Path) -> str:
     return (
         f"if {{[catch {{txing-nrf54l-load {tcl_braced_path(module, path)}}} result]}} {{ "
@@ -207,6 +220,7 @@ def flash_openocd_fast(module, paths: list[Path], *, erase_all: bool, label: str
     command = [
         str(openocd),
         *openocd_script_args(module),
+        *openocd_adapter_args(module),
         "-f",
         str(cfg_file),
         "-c",
@@ -326,6 +340,7 @@ def verify_openocd_fast(module, paths: list[Path], *, label: str) -> None:
         [
             str(openocd),
             *openocd_script_args(module),
+            *openocd_adapter_args(module),
             "-f",
             str(cfg_file),
             "-c",

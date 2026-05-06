@@ -226,6 +226,9 @@ int weather_bme280_init(void)
 	uint8_t chip_id = 0u;
 	int err;
 
+	g_ready = false;
+	memset(&g_calibration, 0, sizeof(g_calibration));
+
 	if (!nrfx_twim_init_check(&g_twim)) {
 		err = nrfx_twim_init(&g_twim, &config, NULL, NULL);
 		if (err != 0) {
@@ -258,6 +261,18 @@ int weather_bme280_init(void)
 
 	g_ready = true;
 	return 0;
+}
+
+void weather_bme280_reset(void)
+{
+	if (nrfx_twim_init_check(&g_twim)) {
+		nrfx_twim_uninit(&g_twim);
+	}
+	nrf_gpio_cfg_default(XIAO_I2C_SCL_PIN);
+	nrf_gpio_cfg_default(XIAO_I2C_SDA_PIN);
+	memset(&g_calibration, 0, sizeof(g_calibration));
+	g_ready = false;
+	g_t_fine = 0;
 }
 
 bool weather_bme280_ready(void)

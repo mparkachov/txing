@@ -5,6 +5,7 @@ project(txing_weather_ble_debug)
 
 target_sources(app PRIVATE
   src/main.c
+  src/weather_battery.c
   src/weather_bme280.c
   src/weather_protocol.c
 )

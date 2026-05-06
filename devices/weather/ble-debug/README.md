@@ -189,10 +189,29 @@ The regions are:
 - `firmware-nve <thing>`: writes only the `TXW1` NVE/factory record containing
   the advertised Thing name.
 - `firmware-app <profile>`: writes only the debug app built with that BLE
-  connection-parameter profile.
+  connection-parameter profile. The app also owns runtime GPIO behavior:
+  `power` on D1/P1.05 mirrors the user LED, stays low at boot and in REDCON
+  `4`, and goes high immediately for REDCON `3` before BME280 initialization.
+  It also samples the XIAO battery divider on AIN7/P1.14 with P1.15 as the
+  active-high VBAT enable and reports it as `batteryMv`.
 
 Profiles such as `baseline-100-0-6` and `stable-200-0-20` affect only
 `firmware-app`; they do not change S115 or NVE data.
+
+Runtime pin ownership in the app image:
+
+```text
+power output        D1 / P1.05   active high, high-drive, mirrors user LED
+BME280 Grove SDA    D4 / P1.10
+BME280 Grove SCL    D5 / P1.11
+VBAT ADC input      AIN7 / P1.14
+VBAT divider enable P1.15        active high
+```
+
+D0/P1.04 is deliberately not used for `power`. The XIAO connector maps D0 to
+P1.04, but the BM board configuration also aliases P1.04 as UART TX. The debug
+app logs over RTT and disables the BM UARTE console, while D1/P1.05 keeps the
+external power-control contract unambiguous.
 
 For a new or unknown board, program and verify all three regions:
 
@@ -223,6 +242,23 @@ The debug flash targets use the same fast OpenOCD path as the SoftDevice-native
 weather firmware: Zephyr's XIAO nRF54L15 OpenOCD board support, unbuffered
 RRAMC writes, and one merged HEX per flash operation. They do not use the
 Zephyr-era pyOCD chunked programming path.
+
+If OpenOCD reports `unable to find a matching CMSIS-DAP device`, the host did
+not see a usable debug probe. Check that the XIAO debug probe USB is connected,
+that no other OpenOCD/pyOCD/debug session owns it, and that the probe appears
+to the OS before retrying:
+
+```sh
+system_profiler SPUSBDataType | grep -Ei -A8 'cmsis|dap|seeed|xiao'
+ls /dev/cu.* /dev/tty.* 2>/dev/null | grep -Ei 'usb|modem'
+ps aux | grep -Ei 'openocd|pyocd|JLinkGDBServer' | grep -v grep
+```
+
+When more than one CMSIS-DAP probe is attached, select the intended one:
+
+```sh
+OPENOCD_ADAPTER_SERIAL=811D579C just weather::ble-debug::firmware-softdevice
+```
 
 Flash targets retry transient OpenOCD write failures up to 3 times after the
 first failed attempt. Override this with:

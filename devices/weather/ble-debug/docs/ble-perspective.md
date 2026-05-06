@@ -98,27 +98,50 @@ State flags:
 0x02 bme280_valid
 ```
 
+`battery_mv` is reported from the XIAO battery divider when available. The
+debug app enables the divider on P1.15, samples AIN7/P1.14, applies the 2:1
+divider correction, and publishes the result in both state and measurement
+payloads. A value of `0` means unavailable and is omitted by the CLI.
+
+Board-level signal mapping used by the debug app:
+
+```text
+power output        D1 / P1.05   active high, high-drive, mirrors user LED
+BME280 Grove SDA    D4 / P1.10
+BME280 Grove SCL    D5 / P1.11
+VBAT ADC input      AIN7 / P1.14
+VBAT divider enable P1.15        active high
+```
+
+D0/P1.04 is avoided for `power` because the BM board configuration also uses
+P1.04 as UART TX. The OpenOCD XIAO board support used for flashing does not
+define this firmware runtime GPIO mapping; the debug app uses its own explicit
+pin constants.
+
 ## Expected Timelines
 
 Idle:
 
 - device remains connected
 - state is REDCON `4`
+- `power` output D1/P1.05 is low
 - user LED is off
 - measurement notifications do not arrive
 
 Wake:
 
 - CLI writes command payload `01 03`
-- firmware turns user LED on immediately
+- firmware drives high-drive `power` output D1/P1.05 high and turns user LED on
+  immediately
 - firmware notifies state REDCON `3`
+- firmware initializes BME280 after `power` is high
 - first BME280 measurement should arrive within 10 seconds
 - additional measurements should arrive once per second
 
 Sleep:
 
 - CLI writes command payload `01 04`
-- firmware turns user LED off immediately
+- firmware drives `power` output D1/P1.05 low and turns user LED off immediately
 - firmware notifies state REDCON `4`
 - measurement notifications stop
 

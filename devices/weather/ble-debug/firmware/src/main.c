@@ -1,3 +1,4 @@
+#include "weather_battery.h"
 #include "weather_bme280.h"
 #include "weather_protocol.h"
 
@@ -38,9 +39,15 @@ LOG_MODULE_REGISTER(txing_weather_ble_debug, CONFIG_TXING_WEATHER_BLE_DEBUG_LOG_
 
 #define XIAO_LED_PIN NRF_PIN_PORT_TO_PIN_NUMBER(0, 2)
 #define XIAO_LED_ACTIVE_STATE 0u
+/* XIAO D1. D0 maps to P1.04, which the BM board config also uses for UART TX. */
+#define XIAO_POWER_PIN NRF_PIN_PORT_TO_PIN_NUMBER(5, 1)
+#define XIAO_POWER_ACTIVE_STATE 1u
+#define XIAO_POWER_DRIVE NRF_GPIO_PIN_H0H1
 
 #define WEATHER_SAMPLE_INTERVAL_MS 1000u
 #define WEATHER_DIAG_INTERVAL_MS 10000u
+#define WEATHER_POWER_SETTLE_MS 100u
+#define WEATHER_BME280_INIT_RETRY_MS 1000u
 
 #define WEATHER_IDLE_CONN_INTERVAL_UNITS ((CONFIG_TXING_WEATHER_IDLE_CONN_INTERVAL_MS * 4u) / 5u)
 #define WEATHER_IDLE_CONN_SUPERVISION_UNITS                                                  \
@@ -85,6 +92,18 @@ static bool g_idle_conn_params_requested;
 static bool g_state_notify_enabled;
 static bool g_measurement_notify_enabled;
 static int64_t g_connected_at_ms;
+static bool g_power_on;
+static int64_t g_power_on_at_ms;
+static int64_t g_next_bme280_init_attempt_ms;
+static bool g_battery_ready;
+
+static void sample_battery(void)
+{
+	if (!g_battery_ready) {
+		return;
+	}
+	g_state.battery_mv = weather_battery_sample_mv();
+}
 
 static uint32_t crc32(const uint8_t *data, size_t size)
 {
@@ -137,15 +156,42 @@ static bool read_factory_name(char *name, size_t name_size)
 	return true;
 }
 
-static void led_set(bool on)
+static void power_set(bool on)
 {
+	const bool changed = g_power_on != on;
+
 	nrf_gpio_pin_write(XIAO_LED_PIN, on ? XIAO_LED_ACTIVE_STATE : !XIAO_LED_ACTIVE_STATE);
+	nrf_gpio_pin_write(XIAO_POWER_PIN,
+			   on ? XIAO_POWER_ACTIVE_STATE : !XIAO_POWER_ACTIVE_STATE);
+
+	if (on) {
+		if (!g_power_on) {
+			g_power_on_at_ms = k_uptime_get();
+			g_next_bme280_init_attempt_ms = g_power_on_at_ms + WEATHER_POWER_SETTLE_MS;
+		}
+	} else {
+		g_power_on_at_ms = 0;
+		g_next_bme280_init_attempt_ms = 0;
+		weather_bme280_reset();
+	}
+	g_power_on = on;
+	if (changed) {
+		LOG_INF("Power output enabled=%d pin=D1/P1.05 out=%u in=%u", g_power_on,
+			nrf_gpio_pin_out_read(XIAO_POWER_PIN), nrf_gpio_pin_read(XIAO_POWER_PIN));
+	}
 }
 
-static void led_init(void)
+static void power_init(void)
 {
+	nrf_gpio_pin_write(XIAO_LED_PIN, !XIAO_LED_ACTIVE_STATE);
+	nrf_gpio_pin_write(XIAO_POWER_PIN, !XIAO_POWER_ACTIVE_STATE);
+#if NRF_GPIO_HAS_SEL
+	nrf_gpio_pin_control_select(XIAO_POWER_PIN, NRF_GPIO_PIN_SEL_GPIO);
+#endif
 	nrf_gpio_cfg_output(XIAO_LED_PIN);
-	led_set(false);
+	nrf_gpio_cfg(XIAO_POWER_PIN, NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_CONNECT,
+		     NRF_GPIO_PIN_NOPULL, XIAO_POWER_DRIVE, NRF_GPIO_PIN_NOSENSE);
+	power_set(false);
 }
 
 static uint32_t set_gap_device_name(const char *name)
@@ -440,10 +486,10 @@ static void set_redcon(uint8_t redcon, bool notify)
 		g_state.bme280_valid = false;
 		g_measurement_valid = false;
 	}
-	led_set(active);
+	power_set(active);
 	publish_state(notify);
-	LOG_INF("Weather state redcon=%u active=%d bme280_valid=%d", g_state.redcon, active,
-		g_state.bme280_valid);
+	LOG_INF("Weather state redcon=%u active=%d power=%d bme280_valid=%d", g_state.redcon,
+		active, g_power_on, g_state.bme280_valid);
 }
 
 static void handle_command_write(const ble_gatts_evt_write_t *write)
@@ -662,6 +708,33 @@ static void handle_ble_evt(const ble_evt_t *evt, void *ctx)
 }
 NRF_SDH_BLE_OBSERVER(sdh_ble, handle_ble_evt, NULL, USER_LOW);
 
+static bool ensure_bme280_ready(void)
+{
+	const int64_t now_ms = k_uptime_get();
+	int err;
+
+	if (!g_power_on) {
+		return false;
+	}
+	if (weather_bme280_ready()) {
+		return true;
+	}
+	if (now_ms < g_next_bme280_init_attempt_ms) {
+		return false;
+	}
+
+	g_next_bme280_init_attempt_ms = now_ms + WEATHER_BME280_INIT_RETRY_MS;
+	err = weather_bme280_init();
+	if (err != 0) {
+		LOG_WRN("BME280 unavailable after power on err=%d", err);
+		return false;
+	}
+
+	g_next_bme280_init_attempt_ms = 0;
+	LOG_INF("BME280 initialized after power on");
+	return true;
+}
+
 static void sample_weather_if_active(void)
 {
 	struct weather_bme280_sample sample;
@@ -670,7 +743,8 @@ static void sample_weather_if_active(void)
 	if (g_conn_handle == BLE_CONN_HANDLE_INVALID || g_state.redcon >= WEATHER_REDCON_IDLE) {
 		return;
 	}
-	if (!weather_bme280_ready()) {
+	sample_battery();
+	if (!ensure_bme280_ready()) {
 		g_state.bme280_valid = false;
 		publish_state(true);
 		return;
@@ -693,9 +767,9 @@ static void sample_weather_if_active(void)
 
 	publish_state(true);
 	publish_measurement(true);
-	LOG_INF("Weather sample temp_centi=%d pressure_pa=%u humidity_centi=%u",
+	LOG_INF("Weather sample temp_centi=%d pressure_pa=%u humidity_centi=%u battery_mv=%u",
 		g_measurement.temperature_centi_c, g_measurement.pressure_pa,
-		g_measurement.humidity_centi_percent);
+		g_measurement.humidity_centi_percent, g_measurement.battery_mv);
 }
 
 int main(void)
@@ -709,9 +783,9 @@ int main(void)
 	bool gap_name_set = false;
 	bool service_started = false;
 	bool advertising_started = false;
-	int bme280_err;
 	int64_t next_sample_ms;
 	int64_t next_diag_ms;
+	int64_t next_battery_ms;
 
 	LOG_INF("txing weather BLE debug SoftDevice connected-idle firmware started");
 	LOG_INF("Debug BLE params interval=%ums latency=%u supervision=%ums fallback_delay=%ums",
@@ -729,14 +803,17 @@ int main(void)
 		LOG_INF("Factory thing name %s", local_name);
 	}
 
-	led_init();
-	LOG_INF("XIAO LED initialized");
-
-	bme280_err = weather_bme280_init();
-	if (bme280_err != 0) {
-		LOG_WRN("BME280 unavailable err=%d", bme280_err);
+	power_init();
+	LOG_INF("Power output initialized pin=D1/P1.05 active=%u mirrored_to_user_led=1",
+		XIAO_POWER_ACTIVE_STATE);
+	LOG_INF("BME280 initializes only after power is enabled");
+	err = weather_battery_init();
+	if (err != 0) {
+		LOG_WRN("Battery ADC unavailable err=%d", err);
 	} else {
-		LOG_INF("BME280 initialized");
+		g_battery_ready = true;
+		sample_battery();
+		LOG_INF("Battery measurement initialized mv=%u", g_state.battery_mv);
 	}
 
 	err = nrf_sdh_enable_request();
@@ -783,10 +860,18 @@ int main(void)
 idle:
 	next_sample_ms = k_uptime_get() + WEATHER_SAMPLE_INTERVAL_MS;
 	next_diag_ms = k_uptime_get() + WEATHER_DIAG_INTERVAL_MS;
+	next_battery_ms = k_uptime_get() + WEATHER_DIAG_INTERVAL_MS;
 
 	while (true) {
 		const int64_t now_ms = k_uptime_get();
 
+		if (now_ms >= next_battery_ms) {
+			next_battery_ms = now_ms + WEATHER_DIAG_INTERVAL_MS;
+			sample_battery();
+			if (g_conn_handle != BLE_CONN_HANDLE_INVALID) {
+				publish_state(true);
+			}
+		}
 		if (now_ms >= next_sample_ms) {
 			next_sample_ms = now_ms + WEATHER_SAMPLE_INTERVAL_MS;
 			sample_weather_if_active();
@@ -794,10 +879,10 @@ idle:
 		request_idle_params_if_ready();
 		if (now_ms >= next_diag_ms) {
 			next_diag_ms = now_ms + WEATHER_DIAG_INTERVAL_MS;
-			LOG_INF("diag name=%s factory_ok=%d softdevice=%d ble=%d gap_name=%d service=%d adv=%d conn=%u redcon=%u bme280=%d",
+			LOG_INF("diag name=%s factory_ok=%d softdevice=%d ble=%d gap_name=%d service=%d adv=%d conn=%u redcon=%u power=%d bme280=%d battery_mv=%u",
 				local_name, factory_ok, softdevice_enabled, ble_enabled, gap_name_set,
 				service_started, advertising_started, g_conn_handle, g_state.redcon,
-				weather_bme280_ready());
+				g_power_on, weather_bme280_ready(), g_state.battery_mv);
 		}
 		log_flush();
 		k_sleep(K_MSEC(100));

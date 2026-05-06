@@ -11,6 +11,7 @@ struct weather_bme280_sample {
 };
 
 int weather_bme280_init(void);
+void weather_bme280_reset(void);
 bool weather_bme280_ready(void);
 int weather_bme280_sample(struct weather_bme280_sample *sample);
 
