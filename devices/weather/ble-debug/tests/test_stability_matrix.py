@@ -20,16 +20,16 @@ class WeatherBleDebugStabilityMatrixTests(unittest.TestCase):
         path = self._write_log(
             "\n".join(
                 (
-                    "flash attempt 1/4 label=app_factory_flash",
+                    "flash attempt 1/4 label=nve",
                     "Error: Failed to write memory at 0x00000a88",
                     "RRAMC ACCESSERRORADDR: 0x00000000",
                     "RRAMC CONFIG: 0x00000001",
                     "RRAMC BUFSTATUS: 0x00000000",
-                    "flash retry 1/3 label=app_factory_flash exit=1 nextDelaySec=2",
-                    "flash attempt 2/4 label=app_factory_flash",
+                    "flash retry 1/3 label=nve exit=1 nextDelaySec=2",
+                    "flash attempt 2/4 label=nve",
                     "40637 bytes written at address 0x00000000",
                     "36 bytes written at address 0x000f0000",
-                    "flash succeeded label=app_factory_flash attempts=2",
+                    "flash succeeded label=nve attempts=2",
                 )
             )
         )
@@ -40,7 +40,7 @@ class WeatherBleDebugStabilityMatrixTests(unittest.TestCase):
         self.assertIn("flashAttemptsObserved=2/4", joined)
         self.assertIn("failedWriteCount=1 addresses=0x00000a88", joined)
         self.assertIn("rramc accessError=0x00000000 config=0x00000001", joined)
-        self.assertIn("flashSuccess=app_factory_flash:attempts2", joined)
+        self.assertIn("flashSuccess=nve:attempts2", joined)
 
     def _write_log(self, text: str) -> Path:
         temp_dir = tempfile.TemporaryDirectory()

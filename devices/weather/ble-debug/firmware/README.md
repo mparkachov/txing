@@ -64,20 +64,18 @@ Agents must not run flash targets.
 Manual-only targets are provided for the user:
 
 ```sh
-just weather::ble-debug::firmware-flash weather-q8zbgb
-just weather::ble-debug::firmware-flash-app-factory weather-q8zbgb
-just weather::ble-debug::firmware-flash-app
-just weather::ble-debug::firmware-flash-softdevice
-just weather::ble-debug::firmware-verify weather-q8zbgb
-just weather::ble-debug::firmware-verify-app-factory weather-q8zbgb
+just weather::ble-debug::firmware-softdevice
+just weather::ble-debug::firmware-nve weather-q8zbgb
+just weather::ble-debug::firmware-app baseline-100-0-6
+just weather::ble-debug::firmware-verify-softdevice
+just weather::ble-debug::firmware-verify-nve weather-q8zbgb
+just weather::ble-debug::firmware-verify-app baseline-100-0-6
 just weather::ble-debug::firmware-rtt
 ```
 
-`firmware-flash weather-q8zbgb` erases RRAM and writes S115, the debug
-application, and a matching factory data record.
-`firmware-flash-app-factory weather-q8zbgb` preserves S115 and writes the debug
-application plus factory data; this is the normal candidate-sweep mode.
-`firmware-flash-app` writes only the application image without erasing or
-rewriting SoftDevice/factory data. These targets use the fast OpenOCD
-SoftDevice-native flash path and a merged HEX; they do not use pyOCD chunked
-programming.
+`firmware-softdevice` writes only S115. `firmware-nve weather-q8zbgb` writes
+only the `TXW1` NVE/factory record containing the advertised Thing name.
+`firmware-app baseline-100-0-6` writes only the application image built with
+that BLE parameter profile. These targets use the fast OpenOCD
+SoftDevice-native flash path and merged HEX files; they do not use pyOCD
+chunked programming.

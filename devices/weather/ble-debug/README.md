@@ -163,19 +163,61 @@ notifications are ready, or after the profile's initial delay if service
 discovery is still in progress. This is important on Linux/BlueZ where a weak
 link can otherwise drop during service discovery before the 10 second fallback.
 
-Manual-only flash, verify, and RTT targets are available for the user:
+Manual-only flash, verify, and RTT targets are available for the user. The
+firmware is split into three independently writable regions:
 
 ```sh
-just weather::ble-debug::firmware-flash weather-q8zbgb baseline-100-0-6
-just weather::ble-debug::firmware-flash-app-factory weather-q8zbgb baseline-100-0-6
-just weather::ble-debug::firmware-flash-app baseline-100-0-6
-just weather::ble-debug::firmware-flash-softdevice
-just weather::ble-debug::firmware-verify weather-q8zbgb baseline-100-0-6
-just weather::ble-debug::firmware-verify-app-factory weather-q8zbgb baseline-100-0-6
+just weather::ble-debug::firmware-softdevice
+just weather::ble-debug::firmware-nve weather-q8zbgb
+just weather::ble-debug::firmware-app baseline-100-0-6
 just weather::ble-debug::firmware-rtt
 ```
 
 Agents must not run flash targets.
+
+Use the same split for read-only verification:
+
+```sh
+just weather::ble-debug::firmware-verify-softdevice
+just weather::ble-debug::firmware-verify-nve weather-q8zbgb
+just weather::ble-debug::firmware-verify-app stable-200-0-20
+```
+
+The regions are:
+
+- `firmware-softdevice`: writes only S115.
+- `firmware-nve <thing>`: writes only the `TXW1` NVE/factory record containing
+  the advertised Thing name.
+- `firmware-app <profile>`: writes only the debug app built with that BLE
+  connection-parameter profile.
+
+Profiles such as `baseline-100-0-6` and `stable-200-0-20` affect only
+`firmware-app`; they do not change S115 or NVE data.
+
+For a new or unknown board, program and verify all three regions:
+
+```sh
+just weather::ble-debug::firmware-softdevice
+just weather::ble-debug::firmware-nve weather-q8zbgb
+just weather::ble-debug::firmware-app stable-200-0-20
+just weather::ble-debug::firmware-verify-softdevice
+just weather::ble-debug::firmware-verify-nve weather-q8zbgb
+just weather::ble-debug::firmware-verify-app stable-200-0-20
+```
+
+For profile sweeps on a board with known-good S115 and NVE, only rewrite the
+app profile:
+
+```sh
+just weather::ble-debug::firmware-app stable-400-0-20
+just weather::ble-debug::firmware-verify-app stable-400-0-20
+```
+
+To print the generated NVE/factory record path and flash address:
+
+```sh
+just weather::ble-debug::firmware-paths stable-200-0-20 | grep weather_factory
+```
 
 The debug flash targets use the same fast OpenOCD path as the SoftDevice-native
 weather firmware: Zephyr's XIAO nRF54L15 OpenOCD board support, unbuffered
@@ -186,18 +228,16 @@ Flash targets retry transient OpenOCD write failures up to 3 times after the
 first failed attempt. Override this with:
 
 ```sh
-WEATHER_BLE_DEBUG_FLASH_RETRIES=1 just weather::ble-debug::firmware-flash-app-factory weather-q8zbgb baseline-100-0-6
+WEATHER_BLE_DEBUG_FLASH_RETRIES=1 just weather::ble-debug::firmware-app baseline-100-0-6
 WEATHER_BLE_DEBUG_FLASH_RETRY_DELAY_SECONDS=5 just weather::ble-debug::stability-matrix weather-q8zbgb --no-confirm
 ```
 
-The stability matrix defaults to `--flash-mode app-factory`: it preserves the
-existing S115 SoftDevice and writes only the selected debug app profile plus the
-matching factory record. This is the normal mode for candidate sweeps.
-
-`firmware-flash` is a clean full-image flash: it erases RRAM, then writes S115,
-the selected debug app profile, and the matching factory record. Use it only
-when S115 also needs to be rewritten. Use `firmware-flash-app` only when you
-explicitly want an app-only update without touching SoftDevice/factory data.
+The stability matrix defaults to `--flash-mode app`: it assumes S115 and NVE
+were prepared once and rewrites only the selected debug app profile for each
+candidate. On a clean or newly swapped physical board, run
+`firmware-softdevice` and `firmware-nve <thing>` before running the matrix. A
+board with a valid app but no working S115 will not advertise, and the CLI will
+report `no matching advertisement`.
 
 ## Manual Full Matrix Runner
 
@@ -230,10 +270,10 @@ just weather::ble-debug::stability-matrix weather-q8zbgb --dry-run --no-confirm
 # Run only the 30 minute sweep, without the top-two confirmation runs.
 just weather::ble-debug::stability-matrix weather-q8zbgb --no-confirm
 
-# Flash only the application image, leaving SoftDevice/factory data untouched.
+# Flash only the application image, leaving SoftDevice/NVE untouched.
 just weather::ble-debug::stability-matrix weather-q8zbgb --flash-mode app
 
-# Erase and rewrite S115 + app + factory for every candidate.
+# Erase and rewrite S115 + app + NVE for every candidate.
 just weather::ble-debug::stability-matrix weather-q8zbgb --flash-mode full
 
 # Use a custom output folder.

@@ -252,7 +252,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--results-root", type=Path, default=DEFAULT_RESULTS_ROOT)
     parser.add_argument("--run-id")
     parser.add_argument("--profiles", nargs="+", default=list(PROFILES))
-    parser.add_argument("--flash-mode", choices=("app-factory", "app", "full"), default="app-factory")
+    parser.add_argument("--flash-mode", choices=("app", "full"), default="app")
     parser.add_argument("--no-verify", action="store_true")
     parser.add_argument("--settle-seconds", type=float, default=5.0)
     parser.add_argument("--scan-timeout", type=int, default=30)
@@ -321,18 +321,34 @@ def validate_profiles(names: list[str]) -> list[FirmwareProfile]:
 
 def flash_command(name: str, profile: str, flash_mode: str) -> list[str]:
     if flash_mode == "app":
-        return ["just", "weather::ble-debug::firmware-flash-app", profile]
-    if flash_mode == "app-factory":
-        return ["just", "weather::ble-debug::firmware-flash-app-factory", name, profile]
-    return ["just", "weather::ble-debug::firmware-flash", name, profile]
+        return ["just", "weather::ble-debug::firmware-app", profile]
+    return [
+        "bash",
+        "-lc",
+        " && ".join(
+            (
+                "just weather::ble-debug::firmware-softdevice",
+                f"just weather::ble-debug::firmware-nve {shlex.quote(name)}",
+                f"just weather::ble-debug::firmware-app {shlex.quote(profile)}",
+            )
+        ),
+    ]
 
 
 def verify_command(name: str, profile: str, flash_mode: str) -> list[str]:
     if flash_mode == "app":
         return ["just", "weather::ble-debug::firmware-verify-app", profile]
-    if flash_mode == "app-factory":
-        return ["just", "weather::ble-debug::firmware-verify-app-factory", name, profile]
-    return ["just", "weather::ble-debug::firmware-verify", name, profile]
+    return [
+        "bash",
+        "-lc",
+        " && ".join(
+            (
+                "just weather::ble-debug::firmware-verify-softdevice",
+                f"just weather::ble-debug::firmware-verify-nve {shlex.quote(name)}",
+                f"just weather::ble-debug::firmware-verify-app {shlex.quote(profile)}",
+            )
+        ),
+    ]
 
 
 def run_logged(

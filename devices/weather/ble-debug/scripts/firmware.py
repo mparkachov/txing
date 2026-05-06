@@ -20,9 +20,6 @@ FIRMWARE_DIR = BLE_DEBUG_DIR / "firmware"
 BUILD_DIR = BLE_DEBUG_DIR / "build" / "baremetal-weather-ble-debug"
 GENERATED_DIR = BLE_DEBUG_DIR / ".generated"
 DEFAULT_PROFILE = "baseline-100-0-6"
-FULL_FLASH_HEX = BUILD_DIR / "txing_weather_ble_debug_full_flash.hex"
-APP_FLASH_HEX = BUILD_DIR / "txing_weather_ble_debug_app_flash.hex"
-SOFTDEVICE_FLASH_HEX = BUILD_DIR / "txing_weather_ble_debug_softdevice_flash.hex"
 DEFAULT_FLASH_RETRIES = 3
 DEFAULT_FLASH_RETRY_DELAY_SECONDS = 2.0
 
@@ -448,22 +445,32 @@ def check(module, profile: FirmwareProfile) -> None:
     build_debug_firmware(module, profile, pristine=False)
 
 
-def verify_flash(module, profile: FirmwareProfile, thing_name: str | None) -> None:
-    build_debug_firmware(module, profile, pristine=False)
-    paths = [module.softdevice_hex(), module.WEATHER_APP_HEX]
-    if thing_name:
-        paths.append(module.write_factory_hex(thing_name))
-    verify_openocd_fast(module, paths, label="full_flash")
+def flash_nve(module, thing_name: str) -> None:
+    factory_hex = module.write_factory_hex(thing_name)
+    flash_openocd_fast(module, [factory_hex], erase_all=False, label="nve")
 
 
-def verify_app_flash(module, profile: FirmwareProfile, thing_name: str | None) -> None:
+def verify_nve(module, thing_name: str) -> None:
+    factory_hex = module.write_factory_hex(thing_name)
+    verify_openocd_fast(module, [factory_hex], label="nve")
+
+
+def flash_softdevice(module) -> None:
+    flash_openocd_fast(
+        module,
+        [module.softdevice_hex()],
+        erase_all=False,
+        label="softdevice",
+    )
+
+
+def verify_softdevice(module) -> None:
+    verify_openocd_fast(module, [module.softdevice_hex()], label="softdevice")
+
+
+def verify_app_flash(module, profile: FirmwareProfile) -> None:
     build_debug_firmware(module, profile, pristine=False)
-    paths = [module.WEATHER_APP_HEX]
-    label = "app_flash"
-    if thing_name:
-        paths.append(module.write_factory_hex(thing_name))
-        label = "app_factory_flash"
-    verify_openocd_fast(module, paths, label=label)
+    verify_openocd_fast(module, [module.WEATHER_APP_HEX], label="app_flash")
 
 
 def print_profiles() -> None:
@@ -498,9 +505,6 @@ def print_paths(module, profile: FirmwareProfile) -> None:
     print(f"openocd_cfg={openocd_cfg_file(module)}")
     print(f"weather_profile={profile.name}")
     print(f"weather_profile_conf={GENERATED_DIR / (profile.name + '.conf')}")
-    print(f"weather_ble_debug_full_flash_hex={FULL_FLASH_HEX}")
-    print(f"weather_ble_debug_app_flash_hex={APP_FLASH_HEX}")
-    print(f"weather_ble_debug_softdevice_flash_hex={SOFTDEVICE_FLASH_HEX}")
 
 
 def main() -> None:
@@ -513,13 +517,12 @@ def main() -> None:
             "install",
             "check",
             "build",
-            "flash",
             "flash-app",
-            "flash-app-factory",
             "flash-softdevice",
-            "verify",
+            "flash-nve",
             "verify-app",
-            "verify-app-factory",
+            "verify-softdevice",
+            "verify-nve",
             "rtt",
             "paths",
             "profiles",
@@ -539,17 +542,6 @@ def main() -> None:
         check(module, profile)
     elif args.command == "build":
         build_debug_firmware(module, profile, pristine=False)
-    elif args.command == "flash":
-        if not args.thing_name:
-            module.fail("flash requires a weather Thing ID")
-        build_debug_firmware(module, profile, pristine=False)
-        factory_hex = module.write_factory_hex(args.thing_name)
-        flash_openocd_fast(
-            module,
-            [module.softdevice_hex(), module.WEATHER_APP_HEX, factory_hex],
-            erase_all=True,
-            label="full_flash",
-        )
     elif args.command == "flash-app":
         build_debug_firmware(module, profile, pristine=False)
         flash_openocd_fast(
@@ -558,29 +550,20 @@ def main() -> None:
             erase_all=False,
             label="app_flash",
         )
-    elif args.command == "flash-app-factory":
-        if not args.thing_name:
-            module.fail("flash-app-factory requires a weather Thing ID")
-        build_debug_firmware(module, profile, pristine=False)
-        factory_hex = module.write_factory_hex(args.thing_name)
-        flash_openocd_fast(
-            module,
-            [module.WEATHER_APP_HEX, factory_hex],
-            erase_all=False,
-            label="app_factory_flash",
-        )
     elif args.command == "flash-softdevice":
-        run_flash_with_retries(
-            module,
-            label="softdevice_flash",
-            operation=lambda: module.flash_hex(module.softdevice_hex()),
-        )
-    elif args.command == "verify":
-        verify_flash(module, profile, args.thing_name)
+        flash_softdevice(module)
+    elif args.command == "flash-nve":
+        if not args.thing_name:
+            module.fail("flash-nve requires a weather Thing ID")
+        flash_nve(module, args.thing_name)
     elif args.command == "verify-app":
-        verify_app_flash(module, profile, None)
-    elif args.command == "verify-app-factory":
-        verify_app_flash(module, profile, args.thing_name)
+        verify_app_flash(module, profile)
+    elif args.command == "verify-softdevice":
+        verify_softdevice(module)
+    elif args.command == "verify-nve":
+        if not args.thing_name:
+            module.fail("verify-nve requires a weather Thing ID")
+        verify_nve(module, args.thing_name)
     elif args.command == "rtt":
         module.start_weather_rtt_server()
     elif args.command == "profiles":

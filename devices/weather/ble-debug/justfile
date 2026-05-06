@@ -52,26 +52,23 @@ stability_matrix_script := ble_debug_dir + "/scripts/run_stability_matrix.py"
 @firmware-build profile="baseline-100-0-6":
     cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{nrf_bm_uv_cache_dir}}" uv run --project "{{nrf_bm_dir}}" --no-sync python "{{firmware_script}}" build --profile "{{profile}}"
 
-@firmware-flash thing_id profile="baseline-100-0-6":
-    cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{nrf_bm_uv_cache_dir}}" uv run --project "{{nrf_bm_dir}}" --no-sync python "{{firmware_script}}" flash "{{thing_id}}" --profile "{{profile}}"
-
-@firmware-flash-app profile="baseline-100-0-6":
-    cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{nrf_bm_uv_cache_dir}}" uv run --project "{{nrf_bm_dir}}" --no-sync python "{{firmware_script}}" flash-app --profile "{{profile}}"
-
-@firmware-flash-app-factory thing_id profile="baseline-100-0-6":
-    cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{nrf_bm_uv_cache_dir}}" uv run --project "{{nrf_bm_dir}}" --no-sync python "{{firmware_script}}" flash-app-factory "{{thing_id}}" --profile "{{profile}}"
-
-@firmware-flash-softdevice:
+@firmware-softdevice:
     cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{nrf_bm_uv_cache_dir}}" uv run --project "{{nrf_bm_dir}}" --no-sync python "{{firmware_script}}" flash-softdevice
 
-@firmware-verify thing_id='' profile="baseline-100-0-6":
-    cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{nrf_bm_uv_cache_dir}}" uv run --project "{{nrf_bm_dir}}" --no-sync python "{{firmware_script}}" verify "{{thing_id}}" --profile "{{profile}}"
+@firmware-nve thing_id:
+    cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{nrf_bm_uv_cache_dir}}" uv run --project "{{nrf_bm_dir}}" --no-sync python "{{firmware_script}}" flash-nve "{{thing_id}}"
+
+@firmware-app profile="baseline-100-0-6":
+    cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{nrf_bm_uv_cache_dir}}" uv run --project "{{nrf_bm_dir}}" --no-sync python "{{firmware_script}}" flash-app --profile "{{profile}}"
+
+@firmware-verify-softdevice:
+    cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{nrf_bm_uv_cache_dir}}" uv run --project "{{nrf_bm_dir}}" --no-sync python "{{firmware_script}}" verify-softdevice
+
+@firmware-verify-nve thing_id:
+    cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{nrf_bm_uv_cache_dir}}" uv run --project "{{nrf_bm_dir}}" --no-sync python "{{firmware_script}}" verify-nve "{{thing_id}}"
 
 @firmware-verify-app profile="baseline-100-0-6":
     cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{nrf_bm_uv_cache_dir}}" uv run --project "{{nrf_bm_dir}}" --no-sync python "{{firmware_script}}" verify-app --profile "{{profile}}"
-
-@firmware-verify-app-factory thing_id profile="baseline-100-0-6":
-    cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{nrf_bm_uv_cache_dir}}" uv run --project "{{nrf_bm_dir}}" --no-sync python "{{firmware_script}}" verify-app-factory "{{thing_id}}" --profile "{{profile}}"
 
 @firmware-rtt:
     cd "{{nrf_bm_dir}}" && UV_CACHE_DIR="{{nrf_bm_uv_cache_dir}}" uv run --project "{{nrf_bm_dir}}" --no-sync python "{{firmware_script}}" rtt
