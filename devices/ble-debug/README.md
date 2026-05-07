@@ -1,9 +1,10 @@
 # BLE Debug Device
 
-`ble-debug` is a standalone XIAO nRF54L15 BLE idle power probe. V1 is deliberately
-advertising-only: no connection handling, no GATT service, no wake/sleep command,
-no telemetry, no BME280, no battery sampling, no factory/NVE data, no S115, no
-SoftDevice, no nRF-BM, and no PlatformIO.
+`ble-debug` is a standalone XIAO nRF54L15 BLE idle power probe. Most profiles
+are advertising-only. The `gatt-1280-*` profiles add a minimal connectable
+weather GATT surface for idle connection testing. There is still no real
+wake/sleep behavior, no telemetry stream, no BME280, no battery sampling, no
+factory/NVE data, no S115, no SoftDevice, no nRF-BM, and no PlatformIO.
 
 The only supported build path uses:
 
@@ -66,6 +67,9 @@ just ble-debug::mcu::build named-1280
 just ble-debug::mcu::build service-1280
 just ble-debug::mcu::build service-1280-tx4
 just ble-debug::mcu::build service-1280-tx8
+just ble-debug::mcu::build gatt-1280-tx0
+just ble-debug::mcu::build gatt-1280-tx4
+just ble-debug::mcu::build gatt-1280-tx8
 just ble-debug::mcu::build service-320
 ```
 
@@ -114,7 +118,8 @@ All profiles:
 2. Disables `pdm_imu_pwr` and `vbat_pwr`.
 3. Leaves `rfsw_pwr` and `rfsw_ctl` unchanged for the BLE radio path.
 4. Starts Zephyr Bluetooth.
-5. Advertises indefinitely.
+5. Advertises indefinitely, except connectable advertising pauses during a
+   connection and restarts after disconnect.
 
 This Zephyr revision has a broken nRF54L static TX-power default path for the
 lowest power values, so the app enables dynamic TX power control and programs
@@ -132,6 +137,9 @@ Profiles are ordered from lowest current toward easiest detection:
 | `service-1280` | 1.28 s | 0 dBm | yes | name + weather UUID scan response |
 | `service-1280-tx4` | 1.28 s | +4 dBm | yes | name + weather UUID scan response |
 | `service-1280-tx8` | 1.28 s | +8 dBm | yes | name + weather UUID scan response |
+| `gatt-1280-tx0` | 1.28 s | 0 dBm | connectable | name + weather UUID scan response + weather GATT |
+| `gatt-1280-tx4` | 1.28 s | +4 dBm | connectable | name + weather UUID scan response + weather GATT |
+| `gatt-1280-tx8` | 1.28 s | +8 dBm | connectable | name + weather UUID scan response + weather GATT |
 | `service-320` | 320 ms | 0 dBm | yes | name + weather UUID scan response |
 
 All profiles include flags and the complete local name:
@@ -145,8 +153,22 @@ Use those when you need active scanners to report `service=1`. The lowest
 current profiles intentionally omit scan response and service UUID because those
 increase current.
 
-Connection, GATT, wake/sleep commands, telemetry, BME280, and battery
-measurement are intentionally out of scope for V1.
+The `gatt-1280-*` profiles expose the existing weather BLE UUIDs:
+
+```text
+service      f6b4b000-7b32-4d2d-9f4b-4ff0a2b8f100
+command      f6b4b001-7b32-4d2d-9f4b-4ff0a2b8f100  write with response
+state        f6b4b002-7b32-4d2d-9f4b-4ff0a2b8f100  read + notify
+measurement  f6b4b003-7b32-4d2d-9f4b-4ff0a2b8f100  read + notify
+```
+
+The GATT profile stays in idle state. State reads return REDCON `4` with no
+BME280 data and zero battery voltage. Command writes accept valid protocol
+payloads so central-side write paths can be tested, but REDCON `3` does not
+wake the board, enable D1 `power`, or produce measurements.
+
+Real wake/sleep behavior, telemetry, BME280, and battery measurement remain out
+of scope for this profile.
 
 ## Measurement Flow
 
@@ -177,6 +199,15 @@ just ble-debug::mcu::flash-check service-1280-tx4
 
 just ble-debug::mcu::build service-1280-tx8
 just ble-debug::mcu::flash-check service-1280-tx8
+
+just ble-debug::mcu::build gatt-1280-tx0
+just ble-debug::mcu::flash-check gatt-1280-tx0
+
+just ble-debug::mcu::build gatt-1280-tx4
+just ble-debug::mcu::flash-check gatt-1280-tx4
+
+just ble-debug::mcu::build gatt-1280-tx8
+just ble-debug::mcu::flash-check gatt-1280-tx8
 ```
 
 ## Generated State

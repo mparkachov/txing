@@ -35,57 +35,100 @@ PROFILE_CONFIGS = {
 		"description": "10.24 s, -46 dBm, non-scannable, name only",
 		"interval": "0x4000",
 		"tx_power": "-46",
+		"connectable": "0",
 		"scannable": "0",
 		"include_uuid": "0",
+		"gatt": "0",
 	},
 	"tx-minus20": {
 		"description": "10.24 s, -20 dBm, non-scannable, name only",
 		"interval": "0x4000",
 		"tx_power": "-20",
+		"connectable": "0",
 		"scannable": "0",
 		"include_uuid": "0",
+		"gatt": "0",
 	},
 	"tx-0": {
 		"description": "10.24 s, 0 dBm, non-scannable, name only",
 		"interval": "0x4000",
 		"tx_power": "0",
+		"connectable": "0",
 		"scannable": "0",
 		"include_uuid": "0",
+		"gatt": "0",
 	},
 	"named-1280": {
 		"description": "1.28 s, 0 dBm, non-scannable, name only",
 		"interval": "0x0800",
 		"tx_power": "0",
+		"connectable": "0",
 		"scannable": "0",
 		"include_uuid": "0",
+		"gatt": "0",
 	},
 	"service-1280": {
 		"description": "1.28 s, 0 dBm, scannable, weather UUID in scan response",
 		"interval": "0x0800",
 		"tx_power": "0",
+		"connectable": "0",
 		"scannable": "1",
 		"include_uuid": "1",
+		"gatt": "0",
 	},
 	"service-1280-tx4": {
 		"description": "1.28 s, +4 dBm, scannable, weather UUID in scan response",
 		"interval": "0x0800",
 		"tx_power": "4",
+		"connectable": "0",
 		"scannable": "1",
 		"include_uuid": "1",
+		"gatt": "0",
 	},
 	"service-1280-tx8": {
 		"description": "1.28 s, +8 dBm, scannable, weather UUID in scan response",
 		"interval": "0x0800",
 		"tx_power": "8",
+		"connectable": "0",
 		"scannable": "1",
 		"include_uuid": "1",
+		"gatt": "0",
+	},
+	"gatt-1280-tx0": {
+		"description": "1.28 s, 0 dBm, connectable, minimal weather GATT service",
+		"interval": "0x0800",
+		"tx_power": "0",
+		"connectable": "1",
+		"scannable": "1",
+		"include_uuid": "1",
+		"gatt": "1",
+	},
+	"gatt-1280-tx4": {
+		"description": "1.28 s, +4 dBm, connectable, minimal weather GATT service",
+		"interval": "0x0800",
+		"tx_power": "4",
+		"connectable": "1",
+		"scannable": "1",
+		"include_uuid": "1",
+		"gatt": "1",
+	},
+	"gatt-1280-tx8": {
+		"description": "1.28 s, +8 dBm, connectable, minimal weather GATT service",
+		"interval": "0x0800",
+		"tx_power": "8",
+		"connectable": "1",
+		"scannable": "1",
+		"include_uuid": "1",
+		"gatt": "1",
 	},
 	"service-320": {
 		"description": "320 ms, 0 dBm, scannable, weather UUID in scan response",
 		"interval": "0x0200",
 		"tx_power": "0",
+		"connectable": "0",
 		"scannable": "1",
 		"include_uuid": "1",
+		"gatt": "0",
 	},
 }
 
@@ -324,6 +367,10 @@ def configure(profile: str) -> None:
 	selected_build_dir = build_dir(profile)
 	selected_build_dir.mkdir(parents=True, exist_ok=True)
 	module_arg = ";".join(str(path) for path in ZEPHYR_MODULES)
+	conf_files = [MCU_DIR / "zephyr" / "prj.conf"]
+	if profile_config["gatt"] == "1":
+		conf_files.append(MCU_DIR / "zephyr" / "prj-gatt.conf")
+	conf_file_arg = ";".join(str(path) for path in conf_files)
 	run(
 		[
 			"cmake",
@@ -341,10 +388,13 @@ def configure(profile: str) -> None:
 			f"-DGEN_KOBJECT_LIST={ZEPHYR_BASE / 'scripts' / 'build' / 'gen_kobject_list.py'}",
 			f"-DBUILD_VERSION={BUILD_VERSION}",
 			f"-DUSER_CACHE_DIR={ZEPHYR_CACHE_DIR}",
+			f"-DCONF_FILE={conf_file_arg}",
 			f"-DBLE_DEBUG_ADV_INTERVAL={profile_config['interval']}",
 			f"-DBLE_DEBUG_ADV_TX_POWER_DBM={profile_config['tx_power']}",
+			f"-DBLE_DEBUG_ADV_CONNECTABLE={profile_config['connectable']}",
 			f"-DBLE_DEBUG_ADV_SCANNABLE={profile_config['scannable']}",
 			f"-DBLE_DEBUG_ADV_INCLUDE_UUID={profile_config['include_uuid']}",
+			f"-DBLE_DEBUG_GATT={profile_config['gatt']}",
 			"-DZEPHYR_TOOLCHAIN_VARIANT=cross-compile",
 			f"-DCROSS_COMPILE={cross_compile_prefix()}",
 			"-DUSE_CCACHE=0",
@@ -427,8 +477,10 @@ def paths(profile: str) -> None:
 	print(f"profileDescription: {PROFILE_CONFIGS[profile]['description']}")
 	print(f"advInterval: {PROFILE_CONFIGS[profile]['interval']}")
 	print(f"advTxPowerDbm: {PROFILE_CONFIGS[profile]['tx_power']}")
+	print(f"advConnectable: {PROFILE_CONFIGS[profile]['connectable']}")
 	print(f"advScannable: {PROFILE_CONFIGS[profile]['scannable']}")
 	print(f"advIncludeUuid: {PROFILE_CONFIGS[profile]['include_uuid']}")
+	print(f"gatt: {PROFILE_CONFIGS[profile]['gatt']}")
 	print_path("venv", VENV_DIR)
 	print_path("python", python_executable())
 	print_path("pipCache", PIP_CACHE_DIR)
