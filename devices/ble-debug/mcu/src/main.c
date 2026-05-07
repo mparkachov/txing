@@ -17,6 +17,7 @@
 #include <zephyr/devicetree.h>
 #if BLE_DEBUG_GATT
 #include <zephyr/drivers/adc.h>
+#include <nrfx_saadc.h>
 #endif
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/regulator.h>
@@ -81,6 +82,7 @@
 #define WEATHER_STATE_PAYLOAD_SIZE 5U
 #define WEATHER_BATTERY_ADC_SETTLE_MS 100U
 #define WEATHER_STATE_NOTIFY_INTERVAL_SECONDS 10U
+#define WEATHER_IDLE_DISCONNECT_DELAY_MS 500U
 
 #if BLE_DEBUG_ADV_CONNECTABLE
 #define BLE_DEBUG_ADV_OPTIONS BT_LE_ADV_OPT_CONN
@@ -123,6 +125,7 @@ static const struct bt_le_adv_param adv_params =
 			     BLE_DEBUG_ADV_INTERVAL, NULL);
 
 static int start_advertising(void);
+static void disable_xiao_load_regulators(void);
 
 #if BLE_DEBUG_GATT
 struct gatt_payload {
@@ -151,10 +154,28 @@ static const struct bt_uuid_128 weather_state_uuid =
 	BT_UUID_INIT_128(WEATHER_STATE_UUID_VAL);
 
 static void set_weather_power(bool active);
+static void suspend_battery_adc(void);
+static void cancel_idle_disconnect(void);
+static void schedule_idle_disconnect(struct bt_conn *conn);
+
+static void resume_battery_adc(void)
+{
+	if (!nrfx_saadc_init_check()) {
+		(void)nrfx_saadc_init(0);
+	}
+}
+
+static void suspend_battery_adc(void)
+{
+	if (nrfx_saadc_init_check()) {
+		nrfx_saadc_uninit();
+	}
+}
 
 static uint16_t sample_battery_mv(void)
 {
 	uint16_t buf;
+	uint16_t result = 0U;
 	int32_t val_mv;
 	struct adc_sequence sequence = {
 		.buffer = &buf,
@@ -165,6 +186,8 @@ static uint16_t sample_battery_mv(void)
 	if (!adc_is_ready_dt(&battery_adc)) {
 		return 0U;
 	}
+
+	resume_battery_adc();
 
 #if DT_NODE_HAS_STATUS(DT_NODELABEL(vbat_pwr), okay)
 	if (device_is_ready(vbat_pwr_reg)) {
@@ -200,12 +223,7 @@ static uint16_t sample_battery_mv(void)
 		val_mv = UINT16_MAX;
 	}
 
-#if DT_NODE_HAS_STATUS(DT_NODELABEL(vbat_pwr), okay)
-	if (device_is_ready(vbat_pwr_reg)) {
-		(void)regulator_disable(vbat_pwr_reg);
-	}
-#endif
-	return (uint16_t)val_mv;
+	result = (uint16_t)val_mv;
 
 out:
 #if DT_NODE_HAS_STATUS(DT_NODELABEL(vbat_pwr), okay)
@@ -213,7 +231,8 @@ out:
 		(void)regulator_disable(vbat_pwr_reg);
 	}
 #endif
-	return 0U;
+	suspend_battery_adc();
+	return result;
 }
 
 static void encode_weather_state(uint8_t redcon, uint16_t battery_mv)
@@ -287,12 +306,51 @@ static void state_notify_work_handler(struct k_work *work)
 
 K_WORK_DELAYABLE_DEFINE(state_notify_work, state_notify_work_handler);
 
+static struct bt_conn *idle_disconnect_conn;
+
+static void idle_disconnect_work_handler(struct k_work *work)
+{
+	struct bt_conn *conn = idle_disconnect_conn;
+
+	ARG_UNUSED(work);
+
+	idle_disconnect_conn = NULL;
+	if (conn == NULL) {
+		return;
+	}
+
+	(void)bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+	bt_conn_unref(conn);
+}
+
+K_WORK_DELAYABLE_DEFINE(idle_disconnect_work, idle_disconnect_work_handler);
+
+static void cancel_idle_disconnect(void)
+{
+	(void)k_work_cancel_delayable(&idle_disconnect_work);
+	if (idle_disconnect_conn != NULL) {
+		bt_conn_unref(idle_disconnect_conn);
+		idle_disconnect_conn = NULL;
+	}
+}
+
+static void schedule_idle_disconnect(struct bt_conn *conn)
+{
+	cancel_idle_disconnect();
+	if (conn == NULL) {
+		return;
+	}
+
+	idle_disconnect_conn = bt_conn_ref(conn);
+	(void)k_work_schedule(&idle_disconnect_work,
+			      K_MSEC(WEATHER_IDLE_DISCONNECT_DELAY_MS));
+}
+
 static ssize_t write_command(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 			     const void *buf, uint16_t len, uint16_t offset, uint8_t flags)
 {
 	uint8_t target_redcon;
 
-	ARG_UNUSED(conn);
 	ARG_UNUSED(attr);
 	ARG_UNUSED(flags);
 
@@ -308,10 +366,14 @@ static ssize_t write_command(struct bt_conn *conn, const struct bt_gatt_attr *at
 	refresh_weather_payloads();
 	notify_weather_state();
 	if (current_redcon == WEATHER_REDCON_ACTIVE) {
+		cancel_idle_disconnect();
 		(void)k_work_reschedule(&state_notify_work,
 					 K_SECONDS(WEATHER_STATE_NOTIFY_INTERVAL_SECONDS));
 	} else {
 		(void)k_work_cancel_delayable(&state_notify_work);
+		disable_xiao_load_regulators();
+		suspend_battery_adc();
+		schedule_idle_disconnect(conn);
 	}
 
 	return len;
@@ -439,6 +501,9 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 	current_redcon = WEATHER_REDCON_IDLE;
 	set_weather_power(false);
 	(void)k_work_cancel_delayable(&state_notify_work);
+	cancel_idle_disconnect();
+	disable_xiao_load_regulators();
+	suspend_battery_adc();
 	encode_weather_state(WEATHER_REDCON_IDLE, 0U);
 #endif
 	k_work_submit(&advertise_work);
@@ -457,6 +522,9 @@ int main(void)
 	configure_output_inactive(&led);
 	configure_output_inactive(&power);
 	disable_xiao_load_regulators();
+#if BLE_DEBUG_GATT
+	suspend_battery_adc();
+#endif
 
 	err = bt_enable(NULL);
 	if (err < 0) {

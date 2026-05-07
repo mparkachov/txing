@@ -2,6 +2,7 @@ set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 set quiet := true
 
 mod mcu 'mcu/justfile'
+mod rig 'rig/justfile'
 
 @default:
     @just --list

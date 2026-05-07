@@ -166,13 +166,17 @@ off. Writing command payload `<BB>` with protocol version `1` and REDCON `3`
 switches to wakeup state, turns the user LED and D1 `power` on, sends state
 notification immediately, and sends refreshed state notifications every 10
 seconds while active. Requested REDCON `1` or `2` is normalized to REDCON `3`.
-Writing REDCON `4` switches user LED and D1 `power` off and stops periodic state
-updates. Disconnect also returns the board to REDCON `4`, switches user LED and
-D1 `power` off, and restarts advertising.
+Writing REDCON `4` switches user LED and D1 `power` off, sends an idle state
+notification, stops periodic state updates, and then the device terminates the
+BLE connection so it can return to advertising idle. A later disconnect also
+returns the board to REDCON `4`, switches user LED and D1 `power` off, and
+restarts advertising.
 
 State payload is `<BBBH>`: protocol version, actual REDCON, flags, and battery
 millivolts. There is intentionally no measurement payload, because this physical
-device has no BME280 or other environmental sensor.
+device has no BME280 or other environmental sensor. Battery sampling explicitly
+enables the VBAT divider and ADC only for the sample, then disables both again
+so REDCON `4` can return to the same advertising-idle current as a fresh boot.
 
 ## Current Measurement Flow
 
@@ -183,6 +187,56 @@ device has no BME280 or other environmental sensor.
 5. Run a BLE scan long enough for the selected interval and confirm `weather-q8zbgb`.
 6. Measure idle current while the device is advertising, with user LED and D1 `power` off.
 7. For `gatt-1280-*`, write REDCON `3` from the BLE tool to measure wakeup-state current with user LED and D1 `power` on.
+
+## Wake/Sleep Cycle Test
+
+The `rig` helper is a macOS/Linux manual test tool. It uses `uv` and keeps its
+own Python environment under `devices/ble-debug/rig/.venv`.
+
+Prepare the Python environment:
+
+```sh
+just ble-debug::rig::install
+```
+
+Run one quick cycle:
+
+```sh
+just ble-debug::rig::test 1
+```
+
+Run one hour:
+
+```sh
+just ble-debug::rig::test 60
+```
+
+Each repetition connects, writes REDCON `3`, requires the device to enter wakeup
+state within 10 seconds, keeps it awake for 30 seconds, requires at least three
+active battery state updates, writes REDCON `4`, checks that sleep state is
+reported, waits for the device to terminate the connection, and then leaves the
+device in advertising idle for the rest of the minute. This default proves the
+MCU owns the sleep transition and measures the low-power sleep current that
+matched the advertising-only profiles.
+
+The `starting`, `cycle-start`, `connected`, and `wake-ok` events include enough
+wall-clock and elapsed timing to separate scan/connect time from REDCON command
+latency.
+
+To intentionally measure connected REDCON `4` current instead:
+
+```sh
+just ble-debug::rig::test 1 weather-q8zbgb --keep-connected-during-sleep
+```
+
+Useful overrides:
+
+```sh
+just ble-debug::rig::test 60 weather-q8zbgb --wake-deadline 10 --min-battery 3
+just ble-debug::rig::test 60 weather-q8zbgb --no-require-service
+```
+
+Agents must not run this command because it attaches to local BLE hardware.
 
 Recommended detectability ladder:
 

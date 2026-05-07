@@ -1,0 +1,21 @@
+[project]
+name = "ble-debug-rig"
+version = "0.6.0"
+description = "BLE wake/sleep cycle tester for the txing BLE debug device"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "bleak>=0.22,<1",
+]
+
+[project.scripts]
+ble-debug-rig-test = "ble_debug_rig.cycle_test:main"
+
+[build-system]
+requires = ["uv_build>=0.10.6,<0.12.0"]
+build-backend = "uv_build"
+
+[tool.uv.extra-build-dependencies]
+pyobjc-core = ["setuptools<81"]
+pyobjc-framework-cocoa = ["setuptools<81"]
+pyobjc-framework-corebluetooth = ["setuptools<81"]
+pyobjc-framework-libdispatch = ["setuptools<81"]

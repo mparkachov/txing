@@ -11,5 +11,6 @@
 
 ## Hardware Rules
 - Agents may run build/setup commands such as `just ble-debug::mcu::submodules`, `just ble-debug::mcu::install`, `just ble-debug::mcu::check`, `just ble-debug::mcu::build`, `just ble-debug::mcu::flash-check`, `just ble-debug::mcu::paths`, and `just ble-debug::mcu::clean`.
-- Agents must not run `just ble-debug::mcu::flash`, OpenOCD, pyOCD, RTT, serial monitors, BLE scanner commands, or other hardware-attached commands.
+- Agents may run `just ble-debug::rig::install` because it only prepares the local Python environment.
+- Agents must not run `just ble-debug::mcu::flash`, `just ble-debug::rig::test`, OpenOCD, pyOCD, RTT, serial monitors, BLE scanner commands, or other hardware-attached commands.
 - Flashing and hardware verification are manual user actions.
