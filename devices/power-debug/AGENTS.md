@@ -9,6 +9,6 @@
 - It must not include legacy external build stacks, BLE, S115, SoftDevice, nRF-BM, repo NCS wrappers, production radio stacks, manufacturing data, BME280, battery measurement, or production device contracts.
 
 ## Hardware Rules
-- Agents may run build/setup commands such as `just power-debug::mcu::submodules`, `just power-debug::mcu::install`, `just power-debug::mcu::check`, `just power-debug::mcu::build`, `just power-debug::mcu::flash-command`, `just power-debug::mcu::paths`, and `just power-debug::mcu::clean`.
+- Agents may run build/setup commands such as `just power-debug::mcu::submodules`, `just power-debug::mcu::install`, `just power-debug::mcu::check`, `just power-debug::mcu::build`, `just power-debug::mcu::flash-check`, `just power-debug::mcu::paths`, and `just power-debug::mcu::clean`.
 - Agents must not run `just power-debug::mcu::flash`, OpenOCD, pyOCD, RTT, serial monitors, or other hardware-attached commands.
 - Flashing and hardware verification are manual user actions.

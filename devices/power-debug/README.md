@@ -76,12 +76,15 @@ Manual flash only:
 just power-debug::mcu::flash
 ```
 
+`flash` does not rebuild. Run `just power-debug::mcu::build` first when the
+source changed.
+
 Agents must not run `flash` or any other hardware-attached command.
 
-To print the exact command without touching hardware:
+To check the exact flash command without touching hardware:
 
 ```sh
-just power-debug::mcu::flash-command
+just power-debug::mcu::flash-check
 ```
 
 The flash command intentionally starts with plain `openocd`, so `brew upgrade`
