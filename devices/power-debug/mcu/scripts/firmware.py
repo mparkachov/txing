@@ -10,14 +10,15 @@ import venv
 from pathlib import Path
 
 
-POWER_DEBUG_DIR = Path(__file__).resolve().parents[1]
-PROJECT_ROOT = POWER_DEBUG_DIR.parents[1]
+MCU_DIR = Path(__file__).resolve().parents[1]
+DEVICE_DIR = MCU_DIR.parent
+PROJECT_ROOT = MCU_DIR.parents[2]
 COMMON_MCU_DIR = PROJECT_ROOT / "devices" / "common" / "mcu"
 
-VENV_DIR = POWER_DEBUG_DIR / ".native-venv"
-PIP_CACHE_DIR = POWER_DEBUG_DIR / ".native-pip-cache"
-ZEPHYR_CACHE_DIR = POWER_DEBUG_DIR / ".native-zephyr-cache"
-CCACHE_DIR = POWER_DEBUG_DIR / ".native-ccache"
+VENV_DIR = MCU_DIR / ".venv"
+PIP_CACHE_DIR = MCU_DIR / ".pip-cache"
+ZEPHYR_CACHE_DIR = MCU_DIR / ".zephyr-cache"
+CCACHE_DIR = MCU_DIR / ".ccache"
 
 ZEPHYR_BASE = COMMON_MCU_DIR / "zephyr"
 SEEED_PLATFORM = COMMON_MCU_DIR / "seeed-platform"
@@ -28,7 +29,7 @@ OPENOCD_CFG = OPENOCD_SUPPORT_DIR / "openocd.cfg"
 
 BOARD = "xiao_nrf54l15/nrf54l15/cpuapp"
 BUILD_VERSION = "zephyr-v40201-homebrew"
-BUILD_DIR = POWER_DEBUG_DIR / "build" / "zephyr-xiao_nrf54l15_cpuapp-brew"
+BUILD_DIR = MCU_DIR / "build" / "zephyr-xiao_nrf54l15_cpuapp-brew"
 FIRMWARE_ELF = BUILD_DIR / "zephyr" / "zephyr.elf"
 FIRMWARE_HEX = BUILD_DIR / "zephyr" / "zephyr.hex"
 
@@ -113,7 +114,7 @@ def command_env() -> dict[str, str]:
 def run(
 	args: list[str | Path],
 	*,
-	cwd: Path = POWER_DEBUG_DIR,
+	cwd: Path = MCU_DIR,
 	check: bool = True,
 	capture_output: bool = False,
 ) -> subprocess.CompletedProcess[str]:
@@ -142,7 +143,7 @@ def ensure_submodules_present() -> None:
 		paths = "\n".join(f"  - {path}" for path in missing)
 		raise SystemExit(
 			"missing power-debug Zephyr submodules. Run:\n"
-			"  just power-debug::firmware-submodules\n"
+			"  just power-debug::mcu::submodules\n"
 			"Missing paths:\n"
 			f"{paths}"
 		)
@@ -167,7 +168,7 @@ def ensure_python_environment() -> None:
 	if not python_executable().exists():
 		raise SystemExit(
 			"missing power-debug Python environment. Run: "
-			"just power-debug::firmware-install"
+			"just power-debug::mcu::install"
 		)
 
 
@@ -196,7 +197,7 @@ def ensure_toolchain() -> None:
 
 	result = subprocess.run(
 		[str(gcc), "--version"],
-		cwd=POWER_DEBUG_DIR,
+		cwd=MCU_DIR,
 		env=command_env(),
 		text=True,
 		check=False,
@@ -249,7 +250,7 @@ def configure() -> None:
 		[
 			"cmake",
 			"-S",
-			POWER_DEBUG_DIR / "zephyr",
+			MCU_DIR / "zephyr",
 			"-B",
 			BUILD_DIR,
 			"-G",
@@ -279,7 +280,7 @@ def build() -> None:
 
 def flash_openocd_command() -> list[Path | str]:
 	if not FIRMWARE_HEX.exists():
-		raise SystemExit("missing firmware hex. Run: just power-debug::firmware-check")
+		raise SystemExit("missing firmware hex. Run: just power-debug::mcu::check")
 	if not OPENOCD_CFG.exists():
 		raise SystemExit(f"missing Seeed OpenOCD config: {OPENOCD_CFG}")
 	return [
@@ -328,7 +329,8 @@ def print_path(label: str, path: Path) -> None:
 
 def paths() -> None:
 	print(f"projectRoot: {PROJECT_ROOT}")
-	print(f"deviceDir: {POWER_DEBUG_DIR}")
+	print(f"deviceDir: {DEVICE_DIR}")
+	print(f"mcuDir: {MCU_DIR}")
 	print(f"board: {BOARD}")
 	print(f"buildVersion: {BUILD_VERSION}")
 	print_path("venv", VENV_DIR)

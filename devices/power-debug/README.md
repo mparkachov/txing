@@ -30,13 +30,13 @@ brew install arm-none-eabi-gcc arm-none-eabi-binutils open-ocd
 Initialize repo-local firmware submodules:
 
 ```sh
-just power-debug::firmware-submodules
+just power-debug::mcu::submodules
 ```
 
 Create the Zephyr Python environment and validate the Homebrew toolchain:
 
 ```sh
-just power-debug::firmware-install
+just power-debug::mcu::install
 ```
 
 The default toolchain prefix is detected from `/opt/homebrew/bin/arm-none-eabi-`,
@@ -52,19 +52,20 @@ export POWER_DEBUG_CROSS_COMPILE=/opt/homebrew/bin/arm-none-eabi-
 Build the firmware:
 
 ```sh
-just power-debug::firmware-check
+just power-debug::mcu::check
+just power-debug::mcu::build
 ```
 
 Inspect resolved paths:
 
 ```sh
-just power-debug::firmware-paths
+just power-debug::mcu::paths
 ```
 
 The build output is:
 
 ```text
-devices/power-debug/build/zephyr-xiao_nrf54l15_cpuapp-brew/zephyr/zephyr.hex
+devices/power-debug/mcu/build/zephyr-xiao_nrf54l15_cpuapp-brew/zephyr/zephyr.hex
 ```
 
 ## Flash
@@ -72,15 +73,15 @@ devices/power-debug/build/zephyr-xiao_nrf54l15_cpuapp-brew/zephyr/zephyr.hex
 Manual flash only:
 
 ```sh
-just power-debug::firmware-flash
+just power-debug::mcu::flash
 ```
 
-Agents must not run `firmware-flash` or any other hardware-attached command.
+Agents must not run `flash` or any other hardware-attached command.
 
 To print the exact command without touching hardware:
 
 ```sh
-just power-debug::firmware-flash-command
+just power-debug::mcu::flash-command
 ```
 
 The flash command intentionally starts with plain `openocd`, so `brew upgrade`
@@ -111,8 +112,8 @@ vbat_pwr
 
 ## Measurement Flow
 
-1. Build with `just power-debug::firmware-check`.
-2. Flash manually with `just power-debug::firmware-flash`.
+1. Build with `just power-debug::mcu::check`.
+2. Flash manually with `just power-debug::mcu::flash`.
 3. Disconnect USB and debug wiring.
 4. Power through the battery pads and multimeter.
 5. Measure after the LED and D1 `power` pin turn off.
@@ -125,15 +126,15 @@ same board and measurement setup.
 Generated files stay under:
 
 ```text
-devices/power-debug/.native-venv/
-devices/power-debug/.native-pip-cache/
-devices/power-debug/.native-zephyr-cache/
-devices/power-debug/.native-ccache/
-devices/power-debug/build/
+devices/power-debug/mcu/.venv/
+devices/power-debug/mcu/.pip-cache/
+devices/power-debug/mcu/.zephyr-cache/
+devices/power-debug/mcu/.ccache/
+devices/power-debug/mcu/build/
 ```
 
 Clean build output:
 
 ```sh
-just power-debug::firmware-clean
+just power-debug::mcu::clean
 ```

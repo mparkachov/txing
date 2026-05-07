@@ -1,32 +1,7 @@
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 set quiet := true
 
-power_debug_dir := source_directory()
-firmware_script := power_debug_dir + "/scripts/firmware.py"
-
-@firmware-install:
-    python3 "{{firmware_script}}" install
-
-@firmware-submodules:
-    python3 "{{firmware_script}}" submodules
-
-@firmware-check:
-    python3 "{{firmware_script}}" check
-
-@firmware-build:
-    python3 "{{firmware_script}}" build
-
-@firmware-flash:
-    python3 "{{firmware_script}}" flash
-
-@firmware-flash-command:
-    python3 "{{firmware_script}}" flash-command
-
-@firmware-paths:
-    python3 "{{firmware_script}}" paths
-
-@firmware-clean:
-    python3 "{{firmware_script}}" clean
+mod mcu 'mcu/justfile'
 
 @default:
     @just --list

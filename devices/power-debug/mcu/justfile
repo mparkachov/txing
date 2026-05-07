@@ -1,0 +1,32 @@
+set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+set quiet := true
+
+mcu_dir := source_directory()
+firmware_script := mcu_dir + "/scripts/firmware.py"
+
+@install:
+    python3 "{{firmware_script}}" install
+
+@submodules:
+    python3 "{{firmware_script}}" submodules
+
+@check:
+    python3 "{{firmware_script}}" check
+
+@build:
+    python3 "{{firmware_script}}" build
+
+@flash:
+    python3 "{{firmware_script}}" flash
+
+@flash-command:
+    python3 "{{firmware_script}}" flash-command
+
+@paths:
+    python3 "{{firmware_script}}" paths
+
+@clean:
+    python3 "{{firmware_script}}" clean
+
+@default:
+    @just --list
