@@ -64,6 +64,8 @@ just ble-debug::mcu::build tx-minus20
 just ble-debug::mcu::build tx-0
 just ble-debug::mcu::build named-1280
 just ble-debug::mcu::build service-1280
+just ble-debug::mcu::build service-1280-tx4
+just ble-debug::mcu::build service-1280-tx8
 just ble-debug::mcu::build service-320
 ```
 
@@ -128,6 +130,8 @@ Profiles are ordered from lowest current toward easiest detection:
 | `tx-0` | 10.24 s | 0 dBm | no | name only |
 | `named-1280` | 1.28 s | 0 dBm | no | name only |
 | `service-1280` | 1.28 s | 0 dBm | yes | name + weather UUID scan response |
+| `service-1280-tx4` | 1.28 s | +4 dBm | yes | name + weather UUID scan response |
+| `service-1280-tx8` | 1.28 s | +8 dBm | yes | name + weather UUID scan response |
 | `service-320` | 320 ms | 0 dBm | yes | name + weather UUID scan response |
 
 All profiles include flags and the complete local name:
@@ -167,6 +171,12 @@ just ble-debug::mcu::flash-check named-1280
 
 just ble-debug::mcu::build service-1280
 just ble-debug::mcu::flash-check service-1280
+
+just ble-debug::mcu::build service-1280-tx4
+just ble-debug::mcu::flash-check service-1280-tx4
+
+just ble-debug::mcu::build service-1280-tx8
+just ble-debug::mcu::flash-check service-1280-tx8
 ```
 
 ## Generated State

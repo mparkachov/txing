@@ -66,6 +66,20 @@ PROFILE_CONFIGS = {
 		"scannable": "1",
 		"include_uuid": "1",
 	},
+	"service-1280-tx4": {
+		"description": "1.28 s, +4 dBm, scannable, weather UUID in scan response",
+		"interval": "0x0800",
+		"tx_power": "4",
+		"scannable": "1",
+		"include_uuid": "1",
+	},
+	"service-1280-tx8": {
+		"description": "1.28 s, +8 dBm, scannable, weather UUID in scan response",
+		"interval": "0x0800",
+		"tx_power": "8",
+		"scannable": "1",
+		"include_uuid": "1",
+	},
 	"service-320": {
 		"description": "320 ms, 0 dBm, scannable, weather UUID in scan response",
 		"interval": "0x0200",
