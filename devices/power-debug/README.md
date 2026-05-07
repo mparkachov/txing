@@ -1,15 +1,18 @@
 # Power Debug Device
 
 `power-debug` is a standalone XIAO nRF54L15 power-floor probe. It intentionally
-uses the Seeed PlatformIO Zephyr stack instead of the repo nRF Connect SDK
-workspace, nRF-BM wrappers, S115, SoftDevice, BLE, factory data, BME280, battery
-measurement, or production weather firmware code.
+stays separate from the repo nRF Connect SDK workspace, nRF-BM wrappers, S115,
+SoftDevice, BLE, factory data, BME280, battery measurement, and production
+weather firmware code.
 
-The goal is to reproduce the Seeed low-power behavior with a repo-local setup:
-all PlatformIO packages, the Seeed board definition, Zephyr framework files, and
-the GNU Arm Embedded toolchain are installed under `devices/power-debug/`.
+The current known-good path is the Seeed PlatformIO Zephyr build. A second native
+Zephyr path is provided to remove the PlatformIO build dependency while keeping
+the same Zephyr version, Seeed board definition, and GNU Arm Embedded compiler.
 
-## Commands
+## PlatformIO Reference Build
+
+This is the preserved known-good build path. It keeps all PlatformIO state under
+`devices/power-debug/`.
 
 Install PlatformIO into this subproject:
 
@@ -33,7 +36,100 @@ just power-debug::firmware-flash
 Agents must not run `firmware-flash`, `pio run -t upload`, OpenOCD, pyOCD, RTT,
 or any other hardware-attached command.
 
-## Repo-Local Toolchain Layout
+## Native Zephyr Build
+
+The native path uses git submodules under `devices/common/mcu/`:
+
+```text
+devices/common/mcu/zephyr                       Zephyr 4.2.1
+devices/common/mcu/seeed-platform              Seeed board platform
+devices/common/mcu/modules/hal/cmsis           Zephyr CMSIS module
+devices/common/mcu/modules/hal/cmsis_6         Zephyr CMSIS_6 module
+devices/common/mcu/modules/hal/nordic          Zephyr Nordic HAL module
+devices/common/mcu/modules/lib/picolibc        Zephyr picolibc module
+```
+
+Initialize those submodules:
+
+```sh
+just power-debug::firmware-native-submodules
+```
+
+Create the native Zephyr Python environment:
+
+```sh
+just power-debug::firmware-native-install
+```
+
+The native build intentionally refuses to use Homebrew/system `arm-none-eabi-gcc`
+because the known-good compiler is GNU Arm Embedded GCC `8.2.1`. Put that
+toolchain at:
+
+```text
+devices/common/mcu/toolchain-gccarmnoneeabi/
+```
+
+If that path is absent, the wrapper falls back to the repo-local PlatformIO
+package with the same GCC version:
+
+```text
+devices/power-debug/.platformio-core/packages/toolchain-gccarmnoneeabi/
+```
+
+You can also set:
+
+```sh
+export GNUARMEMB_TOOLCHAIN_PATH=/Users/Maxim/Developer/txing/devices/common/mcu/toolchain-gccarmnoneeabi
+```
+
+The expected compiler binary is:
+
+```text
+$GNUARMEMB_TOOLCHAIN_PATH/bin/arm-none-eabi-gcc
+```
+
+Build with native Zephyr/CMake/Ninja:
+
+```sh
+just power-debug::firmware-native-check
+just power-debug::firmware-native-paths
+```
+
+Manual native flash only:
+
+```sh
+just power-debug::firmware-native-flash
+```
+
+The native flash recipe does not use Zephyr's generated `flash` target because
+that target requires a west workspace. It builds the native image and then calls
+the Seeed XIAO OpenOCD configuration directly with the generated
+`zephyr/zephyr.hex`.
+
+To print the exact OpenOCD command without touching hardware:
+
+```sh
+just power-debug::firmware-native-flash-command
+```
+
+Native flash uses the repo-local OpenOCD package installed by the PlatformIO
+reference setup:
+
+```text
+devices/power-debug/.platformio-core/packages/tool-openocd/bin/openocd
+```
+
+If needed, override it with repo-local paths only:
+
+```sh
+export POWER_DEBUG_OPENOCD=/Users/Maxim/Developer/txing/devices/power-debug/.platformio-core/packages/tool-openocd/bin/openocd
+export POWER_DEBUG_OPENOCD_SCRIPTS=/Users/Maxim/Developer/txing/devices/power-debug/.platformio-core/packages/tool-openocd/openocd/scripts
+```
+
+Agents must not run `firmware-native-flash` or any other hardware-attached
+command.
+
+## PlatformIO Toolchain Layout
 
 The wrapper forces PlatformIO state into this subproject:
 
@@ -61,6 +157,40 @@ devices/power-debug/platformio.ini
 platform = https://github.com/Seeed-Studio/platform-seeedboards.git
 framework = zephyr
 board = seeed-xiao-nrf54l15
+```
+
+## Native Toolchain Layout
+
+The native wrapper uses:
+
+```text
+devices/power-debug/.native-venv/               local Python environment
+devices/power-debug/.native-pip-cache/          local pip cache
+devices/power-debug/.native-zephyr-cache/       local Zephyr cache
+devices/power-debug/.native-ccache/             local ccache dir if ccache is present
+devices/power-debug/build/zephyr-xiao_nrf54l15_cpuapp/
+devices/common/mcu/zephyr/                      Zephyr submodule
+devices/common/mcu/seeed-platform/              Seeed board submodule
+devices/common/mcu/modules/...                  Zephyr module submodules
+devices/common/mcu/toolchain-gccarmnoneeabi/    expected GCC 8.2.1 toolchain
+devices/power-debug/.platformio-core/packages/toolchain-gccarmnoneeabi/
+                                                fallback repo-local GCC 8.2.1 package
+devices/power-debug/.platformio-core/packages/tool-openocd/
+                                                repo-local OpenOCD for manual native flash
+```
+
+Native CMake is configured with:
+
+```text
+BOARD=xiao_nrf54l15/nrf54l15/cpuapp
+ZEPHYR_BASE=devices/common/mcu/zephyr
+BOARD_ROOT=devices/common/mcu/seeed-platform/zephyr
+ZEPHYR_CACHE_DIR=devices/power-debug/.native-zephyr-cache
+ZEPHYR_TOOLCHAIN_VARIANT=gnuarmemb
+USE_CCACHE=0
+CCACHE_DISABLE=1
+CCACHE_PROGRAM=CCACHE_PROGRAM-NOTFOUND
+CCACHE_DIR=devices/power-debug/.native-ccache
 ```
 
 ## Firmware Behavior
@@ -103,7 +233,19 @@ sample on the same board and measurement setup.
   `.platformio-core/` on first run. In the validated local build this resolved
   to Seeed Studio platform `1.0.0+sha.9572144`, Zephyr `4.2.1`, and
   `toolchain-gccarmnoneeabi` `1.80201.181220`.
+- `firmware-native-check` does not use PlatformIO. It uses the Zephyr and Seeed
+  git submodules under `devices/common/mcu/` plus a repo-local or explicitly
+  provided GNU Arm Embedded GCC `8.2.1` path under this repository.
+- If `devices/common/mcu/toolchain-gccarmnoneeabi/` is absent,
+  `firmware-native-check` falls back to the repo-local PlatformIO GCC package.
+- `firmware-native-flash` bypasses `cmake --build --target flash` and `west
+  flash`; this repository intentionally is not a west workspace.
 - `firmware-clean` removes only `.pio/` build output. It does not remove the
   installed PlatformIO packages.
-- To fully reset the repo-local toolchain, remove `.venv/`, `.platformio-core/`,
-  `.home/`, and `.pip-cache/`.
+- `firmware-native-clean` removes only native Zephyr build output.
+- To fully reset the PlatformIO reference toolchain, remove `.venv/`,
+  `.platformio-core/`, `.home/`, and `.pip-cache/`.
+- To reset the native wrapper environment, remove `.native-venv/` and
+  `.native-pip-cache/`. To reset Zephyr's native CMake cache, remove
+  `.native-zephyr-cache/`. Do not remove the shared submodules unless you intend
+  to re-run `firmware-native-submodules`.

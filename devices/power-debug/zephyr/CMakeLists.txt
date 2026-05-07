@@ -1,4 +1,8 @@
-set(BOARD_ROOT "$ENV{ZEPHYR_BASE}/../../platforms/Seeed Studio/zephyr")
+if(DEFINED ENV{POWER_DEBUG_BOARD_ROOT})
+	set(BOARD_ROOT "$ENV{POWER_DEBUG_BOARD_ROOT}")
+elseif(NOT DEFINED BOARD_ROOT AND EXISTS "$ENV{ZEPHYR_BASE}/../../platforms/Seeed Studio/zephyr")
+	set(BOARD_ROOT "$ENV{ZEPHYR_BASE}/../../platforms/Seeed Studio/zephyr")
+endif()
 
 cmake_minimum_required(VERSION 3.13.1)
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})

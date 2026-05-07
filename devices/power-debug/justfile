@@ -22,5 +22,29 @@ firmware_script := power_debug_dir + "/scripts/firmware.py"
 @firmware-clean:
     python3 "{{firmware_script}}" clean
 
+@firmware-native-submodules:
+    python3 "{{firmware_script}}" native-submodules
+
+@firmware-native-install:
+    python3 "{{firmware_script}}" native-install
+
+@firmware-native-check:
+    python3 "{{firmware_script}}" native-check
+
+@firmware-native-build:
+    python3 "{{firmware_script}}" native-build
+
+@firmware-native-flash:
+    python3 "{{firmware_script}}" native-flash
+
+@firmware-native-flash-command:
+    python3 "{{firmware_script}}" native-flash-command
+
+@firmware-native-paths:
+    python3 "{{firmware_script}}" native-paths
+
+@firmware-native-clean:
+    python3 "{{firmware_script}}" native-clean
+
 @default:
     @just --list

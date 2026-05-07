@@ -6,3 +6,7 @@ build/
 .pip-cache/
 .platformio-core/
 .venv/
+.native-pip-cache/
+.native-zephyr-cache/
+.native-ccache/
+.native-venv/
