@@ -46,5 +46,26 @@ firmware_script := power_debug_dir + "/scripts/firmware.py"
 @firmware-native-clean:
     python3 "{{firmware_script}}" native-clean
 
+@firmware-brew-install:
+    python3 "{{firmware_script}}" brew-install
+
+@firmware-brew-check:
+    python3 "{{firmware_script}}" brew-check
+
+@firmware-brew-build:
+    python3 "{{firmware_script}}" brew-build
+
+@firmware-brew-flash:
+    python3 "{{firmware_script}}" brew-flash
+
+@firmware-brew-flash-command:
+    python3 "{{firmware_script}}" brew-flash-command
+
+@firmware-brew-paths:
+    python3 "{{firmware_script}}" brew-paths
+
+@firmware-brew-clean:
+    python3 "{{firmware_script}}" brew-clean
+
 @default:
     @just --list
