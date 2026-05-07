@@ -3,6 +3,10 @@
 		power = &power_pin;
 	};
 
+	zephyr,user {
+		io-channels = <&adc 7>;
+	};
+
 	power_outputs {
 		compatible = "gpio-leds";
 

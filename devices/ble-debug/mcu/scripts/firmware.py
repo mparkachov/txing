@@ -95,7 +95,7 @@ PROFILE_CONFIGS = {
 		"gatt": "0",
 	},
 	"gatt-1280-tx0": {
-		"description": "1.28 s, 0 dBm, connectable, minimal weather GATT service",
+		"description": "1.28 s, 0 dBm, connectable, weather GATT wake + battery",
 		"interval": "0x0800",
 		"tx_power": "0",
 		"connectable": "1",
@@ -104,7 +104,7 @@ PROFILE_CONFIGS = {
 		"gatt": "1",
 	},
 	"gatt-1280-tx4": {
-		"description": "1.28 s, +4 dBm, connectable, minimal weather GATT service",
+		"description": "1.28 s, +4 dBm, connectable, weather GATT wake + battery",
 		"interval": "0x0800",
 		"tx_power": "4",
 		"connectable": "1",
@@ -113,7 +113,7 @@ PROFILE_CONFIGS = {
 		"gatt": "1",
 	},
 	"gatt-1280-tx8": {
-		"description": "1.28 s, +8 dBm, connectable, minimal weather GATT service",
+		"description": "1.28 s, +8 dBm, connectable, weather GATT wake + battery",
 		"interval": "0x0800",
 		"tx_power": "8",
 		"connectable": "1",

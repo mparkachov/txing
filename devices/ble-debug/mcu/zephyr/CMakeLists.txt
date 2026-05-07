@@ -13,7 +13,7 @@ set(BLE_DEBUG_ADV_TX_POWER_DBM "-46" CACHE STRING "BLE advertising TX power in d
 set(BLE_DEBUG_ADV_CONNECTABLE "0" CACHE STRING "Enable connectable advertising")
 set(BLE_DEBUG_ADV_SCANNABLE "0" CACHE STRING "Enable scannable advertising")
 set(BLE_DEBUG_ADV_INCLUDE_UUID "0" CACHE STRING "Include weather service UUID in scan response")
-set(BLE_DEBUG_GATT "0" CACHE STRING "Enable minimal weather GATT service")
+set(BLE_DEBUG_GATT "0" CACHE STRING "Enable weather GATT wake and battery debug service")
 
 target_compile_definitions(app PRIVATE
 	BLE_DEBUG_ADV_INTERVAL=${BLE_DEBUG_ADV_INTERVAL}

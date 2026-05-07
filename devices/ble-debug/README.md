@@ -1,10 +1,10 @@
 # BLE Debug Device
 
-`ble-debug` is a standalone XIAO nRF54L15 BLE idle power probe. Most profiles
-are advertising-only. The `gatt-1280-*` profiles add a minimal connectable
-weather GATT surface for idle connection testing. There is still no real
-wake/sleep behavior, no telemetry stream, no BME280, no battery sampling, no
-factory/NVE data, no S115, no SoftDevice, no nRF-BM, and no PlatformIO.
+`ble-debug` is a standalone XIAO nRF54L15 BLE power probe. Most profiles are
+advertising-only. The `gatt-1280-*` profiles add only the minimal GATT surface
+needed to test wake/sleep power behavior and battery reporting. This physical
+device has no sensor measurement characteristic. There is still no factory/NVE
+data, no S115, no SoftDevice, no nRF-BM, and no PlatformIO.
 
 The only supported build path uses:
 
@@ -159,25 +159,30 @@ The `gatt-1280-*` profiles expose the existing weather BLE UUIDs:
 service      f6b4b000-7b32-4d2d-9f4b-4ff0a2b8f100
 command      f6b4b001-7b32-4d2d-9f4b-4ff0a2b8f100  write with response
 state        f6b4b002-7b32-4d2d-9f4b-4ff0a2b8f100  read + notify
-measurement  f6b4b003-7b32-4d2d-9f4b-4ff0a2b8f100  read + notify
 ```
 
-The GATT profile stays in idle state. State reads return REDCON `4` with no
-BME280 data and zero battery voltage. Command writes accept valid protocol
-payloads so central-side write paths can be tested, but REDCON `3` does not
-wake the board, enable D1 `power`, or produce measurements.
+The GATT profiles start in REDCON `4` sleep state with user LED and D1 `power`
+off. Writing command payload `<BB>` with protocol version `1` and REDCON `3`
+switches to wakeup state, turns the user LED and D1 `power` on, sends state
+notification immediately, and sends refreshed state notifications every 10
+seconds while active. Requested REDCON `1` or `2` is normalized to REDCON `3`.
+Writing REDCON `4` switches user LED and D1 `power` off and stops periodic state
+updates. Disconnect also returns the board to REDCON `4`, switches user LED and
+D1 `power` off, and restarts advertising.
 
-Real wake/sleep behavior, telemetry, BME280, and battery measurement remain out
-of scope for this profile.
+State payload is `<BBBH>`: protocol version, actual REDCON, flags, and battery
+millivolts. There is intentionally no measurement payload, because this physical
+device has no BME280 or other environmental sensor.
 
-## Measurement Flow
+## Current Measurement Flow
 
 1. Build with `just ble-debug::mcu::check <profile>`.
 2. Flash manually with `just ble-debug::mcu::flash <profile>`.
 3. Disconnect USB and debug wiring.
 4. Power through the battery pads and multimeter.
 5. Run a BLE scan long enough for the selected interval and confirm `weather-q8zbgb`.
-6. Measure current while the device is advertising, with user LED and D1 `power` off.
+6. Measure idle current while the device is advertising, with user LED and D1 `power` off.
+7. For `gatt-1280-*`, write REDCON `3` from the BLE tool to measure wakeup-state current with user LED and D1 `power` on.
 
 Recommended detectability ladder:
 
