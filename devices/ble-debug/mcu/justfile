@@ -10,20 +10,20 @@ firmware_script := mcu_dir + "/scripts/firmware.py"
 @submodules:
     python3 "{{firmware_script}}" submodules
 
-@check:
-    python3 "{{firmware_script}}" check
+@check profile="low-current":
+    python3 "{{firmware_script}}" check "{{profile}}"
 
-@build:
-    python3 "{{firmware_script}}" build
+@build profile="low-current":
+    python3 "{{firmware_script}}" build "{{profile}}"
 
-@flash:
-    python3 "{{firmware_script}}" flash
+@flash profile="low-current":
+    python3 "{{firmware_script}}" flash "{{profile}}"
 
-@flash-check:
-    python3 "{{firmware_script}}" flash-check
+@flash-check profile="low-current":
+    python3 "{{firmware_script}}" flash-check "{{profile}}"
 
-@paths:
-    python3 "{{firmware_script}}" paths
+@paths profile="low-current":
+    python3 "{{firmware_script}}" paths "{{profile}}"
 
 @clean:
     python3 "{{firmware_script}}" clean

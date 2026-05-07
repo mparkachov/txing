@@ -29,9 +29,51 @@ OPENOCD_CFG = OPENOCD_SUPPORT_DIR / "openocd.cfg"
 
 BOARD = "xiao_nrf54l15/nrf54l15/cpuapp"
 BUILD_VERSION = "zephyr-v40201-homebrew"
-BUILD_DIR = MCU_DIR / "build" / "zephyr-xiao_nrf54l15_cpuapp-brew"
-FIRMWARE_ELF = BUILD_DIR / "zephyr" / "zephyr.elf"
-FIRMWARE_HEX = BUILD_DIR / "zephyr" / "zephyr.hex"
+DEFAULT_PROFILE = "low-current"
+PROFILE_CONFIGS = {
+	"low-current": {
+		"description": "10.24 s, -46 dBm, non-scannable, name only",
+		"interval": "0x4000",
+		"tx_power": "-46",
+		"scannable": "0",
+		"include_uuid": "0",
+	},
+	"tx-minus20": {
+		"description": "10.24 s, -20 dBm, non-scannable, name only",
+		"interval": "0x4000",
+		"tx_power": "-20",
+		"scannable": "0",
+		"include_uuid": "0",
+	},
+	"tx-0": {
+		"description": "10.24 s, 0 dBm, non-scannable, name only",
+		"interval": "0x4000",
+		"tx_power": "0",
+		"scannable": "0",
+		"include_uuid": "0",
+	},
+	"named-1280": {
+		"description": "1.28 s, 0 dBm, non-scannable, name only",
+		"interval": "0x0800",
+		"tx_power": "0",
+		"scannable": "0",
+		"include_uuid": "0",
+	},
+	"service-1280": {
+		"description": "1.28 s, 0 dBm, scannable, weather UUID in scan response",
+		"interval": "0x0800",
+		"tx_power": "0",
+		"scannable": "1",
+		"include_uuid": "1",
+	},
+	"service-320": {
+		"description": "320 ms, 0 dBm, scannable, weather UUID in scan response",
+		"interval": "0x0200",
+		"tx_power": "0",
+		"scannable": "1",
+		"include_uuid": "1",
+	},
+}
 
 SUBMODULE_PATHS = [
 	COMMON_MCU_DIR / "zephyr",
@@ -47,6 +89,26 @@ ZEPHYR_MODULES = [
 	COMMON_MCU_DIR / "modules" / "hal" / "nordic",
 	COMMON_MCU_DIR / "modules" / "lib" / "picolibc",
 ]
+
+
+def normalize_profile(profile: str | None) -> str:
+	selected = profile or os.environ.get("BLE_DEBUG_PROFILE") or DEFAULT_PROFILE
+	if selected not in PROFILE_CONFIGS:
+		options = ", ".join(PROFILE_CONFIGS)
+		raise SystemExit(f"unknown ble-debug profile '{selected}'. Options: {options}")
+	return selected
+
+
+def build_dir(profile: str) -> Path:
+	return MCU_DIR / "build" / f"zephyr-xiao_nrf54l15_cpuapp-brew-{profile}"
+
+
+def firmware_elf(profile: str) -> Path:
+	return build_dir(profile) / "zephyr" / "zephyr.elf"
+
+
+def firmware_hex(profile: str) -> Path:
+	return build_dir(profile) / "zephyr" / "zephyr.hex"
 
 
 def python_executable() -> Path:
@@ -242,9 +304,11 @@ def ensure_ready() -> None:
 	ensure_toolchain()
 
 
-def configure() -> None:
+def configure(profile: str) -> None:
 	ensure_ready()
-	BUILD_DIR.mkdir(parents=True, exist_ok=True)
+	profile_config = PROFILE_CONFIGS[profile]
+	selected_build_dir = build_dir(profile)
+	selected_build_dir.mkdir(parents=True, exist_ok=True)
 	module_arg = ";".join(str(path) for path in ZEPHYR_MODULES)
 	run(
 		[
@@ -252,7 +316,7 @@ def configure() -> None:
 			"-S",
 			MCU_DIR / "zephyr",
 			"-B",
-			BUILD_DIR,
+			selected_build_dir,
 			"-G",
 			"Ninja",
 			f"-DBOARD={BOARD}",
@@ -263,6 +327,10 @@ def configure() -> None:
 			f"-DGEN_KOBJECT_LIST={ZEPHYR_BASE / 'scripts' / 'build' / 'gen_kobject_list.py'}",
 			f"-DBUILD_VERSION={BUILD_VERSION}",
 			f"-DUSER_CACHE_DIR={ZEPHYR_CACHE_DIR}",
+			f"-DBLE_DEBUG_ADV_INTERVAL={profile_config['interval']}",
+			f"-DBLE_DEBUG_ADV_TX_POWER_DBM={profile_config['tx_power']}",
+			f"-DBLE_DEBUG_ADV_SCANNABLE={profile_config['scannable']}",
+			f"-DBLE_DEBUG_ADV_INCLUDE_UUID={profile_config['include_uuid']}",
 			"-DZEPHYR_TOOLCHAIN_VARIANT=cross-compile",
 			f"-DCROSS_COMPILE={cross_compile_prefix()}",
 			"-DUSE_CCACHE=0",
@@ -273,14 +341,15 @@ def configure() -> None:
 	)
 
 
-def build() -> None:
-	configure()
-	run(["cmake", "--build", BUILD_DIR])
+def build(profile: str) -> None:
+	configure(profile)
+	run(["cmake", "--build", build_dir(profile)])
 
 
-def flash_openocd_command() -> list[Path | str]:
-	if not FIRMWARE_HEX.exists():
-		raise SystemExit("missing firmware hex. Run: just ble-debug::mcu::check")
+def flash_openocd_command(profile: str) -> list[Path | str]:
+	selected_hex = firmware_hex(profile)
+	if not selected_hex.exists():
+		raise SystemExit(f"missing firmware hex. Run: just ble-debug::mcu::check {profile}")
 	if not OPENOCD_CFG.exists():
 		raise SystemExit(f"missing Seeed OpenOCD config: {OPENOCD_CFG}")
 	return [
@@ -296,9 +365,9 @@ def flash_openocd_command() -> list[Path | str]:
 		"-c",
 		"reset init",
 		"-c",
-		f"nrf54l-load {FIRMWARE_HEX}",
+		f"nrf54l-load {selected_hex}",
 		"-c",
-		f"verify_image {FIRMWARE_HEX}",
+		f"verify_image {selected_hex}",
 		"-c",
 		"reset run",
 		"-c",
@@ -306,32 +375,46 @@ def flash_openocd_command() -> list[Path | str]:
 	]
 
 
-def flash() -> None:
-	run(flash_openocd_command())
+def flash(profile: str) -> None:
+	run(flash_openocd_command(profile))
 
 
-def flash_check() -> None:
+def flash_check(profile: str) -> None:
 	ensure_ready()
-	command = [str(part) for part in flash_openocd_command()]
+	command = [str(part) for part in flash_openocd_command(profile)]
 	print(" ".join(shlex.quote(part) for part in command))
 
 
 def clean() -> None:
-	if BUILD_DIR.exists():
-		print(f"removing {BUILD_DIR}", flush=True)
-		shutil.rmtree(BUILD_DIR)
+	build_root = MCU_DIR / "build"
+	for profile in PROFILE_CONFIGS:
+		selected_build_dir = build_dir(profile)
+		if selected_build_dir.exists():
+			print(f"removing {selected_build_dir}", flush=True)
+			shutil.rmtree(selected_build_dir)
+
+	legacy_build_dir = build_root / "zephyr-xiao_nrf54l15_cpuapp-brew"
+	if legacy_build_dir.exists():
+		print(f"removing {legacy_build_dir}", flush=True)
+		shutil.rmtree(legacy_build_dir)
 
 
 def print_path(label: str, path: Path) -> None:
 	print(f"{label}: {path} exists={int(path.exists())}")
 
 
-def paths() -> None:
+def paths(profile: str) -> None:
 	print(f"projectRoot: {PROJECT_ROOT}")
 	print(f"deviceDir: {DEVICE_DIR}")
 	print(f"mcuDir: {MCU_DIR}")
 	print(f"board: {BOARD}")
 	print(f"buildVersion: {BUILD_VERSION}")
+	print(f"profile: {profile}")
+	print(f"profileDescription: {PROFILE_CONFIGS[profile]['description']}")
+	print(f"advInterval: {PROFILE_CONFIGS[profile]['interval']}")
+	print(f"advTxPowerDbm: {PROFILE_CONFIGS[profile]['tx_power']}")
+	print(f"advScannable: {PROFILE_CONFIGS[profile]['scannable']}")
+	print(f"advIncludeUuid: {PROFILE_CONFIGS[profile]['include_uuid']}")
 	print_path("venv", VENV_DIR)
 	print_path("python", python_executable())
 	print_path("pipCache", PIP_CACHE_DIR)
@@ -342,9 +425,9 @@ def paths() -> None:
 	print_path("boardRoot", BOARD_ROOT)
 	print_path("boardDir", BOARD_DIR)
 	print_path("openocdCfg", OPENOCD_CFG)
-	print_path("buildDir", BUILD_DIR)
-	print_path("firmwareElf", FIRMWARE_ELF)
-	print_path("firmwareHex", FIRMWARE_HEX)
+	print_path("buildDir", build_dir(profile))
+	print_path("firmwareElf", firmware_elf(profile))
+	print_path("firmwareHex", firmware_hex(profile))
 	print("toolchainVariant: cross-compile")
 	print(f"crossCompile: {cross_compile_prefix()}")
 	print_path("gcc", tool_path("gcc"))
@@ -373,20 +456,26 @@ def main() -> None:
 			"clean",
 		],
 	)
+	parser.add_argument(
+		"profile",
+		nargs="?",
+		help=f"advertising profile; default is {DEFAULT_PROFILE}",
+	)
 	args = parser.parse_args()
+	profile = normalize_profile(args.profile)
 
 	if args.command == "submodules":
 		submodules()
 	elif args.command == "install":
 		install()
 	elif args.command in {"check", "build"}:
-		build()
+		build(profile)
 	elif args.command == "flash":
-		flash()
+		flash(profile)
 	elif args.command == "flash-check":
-		flash_check()
+		flash_check(profile)
 	elif args.command == "paths":
-		paths()
+		paths(profile)
 	elif args.command == "clean":
 		clean()
 
