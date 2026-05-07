@@ -156,6 +156,18 @@ def native_openocd_scripts_dir() -> Path:
 	return scripts
 
 
+def brew_openocd_executable() -> str:
+	openocd = "openocd"
+	if shutil.which(openocd) is None:
+		raise SystemExit(
+			"missing OpenOCD for brew power-debug flash.\n"
+			"Install manually with:\n"
+			"  brew install open-ocd\n"
+			"Then ensure openocd is available in PATH."
+		)
+	return openocd
+
+
 def native_env() -> dict[str, str]:
 	local = os.environ.copy()
 	toolchain = native_toolchain_dir()
@@ -504,6 +516,8 @@ def native_flash_openocd_command() -> list[Path | str]:
 	return flash_openocd_command(
 		firmware_hex=NATIVE_FIRMWARE_HEX,
 		build_command="just power-debug::firmware-native-check",
+		openocd=native_openocd_executable(),
+		openocd_scripts=native_openocd_scripts_dir(),
 	)
 
 
@@ -511,22 +525,33 @@ def brew_flash_openocd_command() -> list[Path | str]:
 	return flash_openocd_command(
 		firmware_hex=BREW_FIRMWARE_HEX,
 		build_command="just power-debug::firmware-brew-check",
+		openocd=brew_openocd_executable(),
+		openocd_scripts=None,
 	)
 
 
-def flash_openocd_command(*, firmware_hex: Path, build_command: str) -> list[Path | str]:
+def flash_openocd_command(
+	*,
+	firmware_hex: Path,
+	build_command: str,
+	openocd: Path | str,
+	openocd_scripts: Path | None,
+) -> list[Path | str]:
 	if not firmware_hex.exists():
 		raise SystemExit(
 			f"missing firmware hex. Run: {build_command}"
 		)
 	if not NATIVE_OPENOCD_CFG.exists():
 		raise SystemExit(f"missing Seeed OpenOCD config: {NATIVE_OPENOCD_CFG}")
-	openocd = native_openocd_executable()
-	openocd_scripts = native_openocd_scripts_dir()
-	return [
+	command: list[Path | str] = [
 		openocd,
-		"-s",
-		openocd_scripts,
+	]
+	if openocd_scripts is not None:
+		command.extend([
+			"-s",
+			openocd_scripts,
+		])
+	command.extend([
 		"-s",
 		NATIVE_OPENOCD_SUPPORT_DIR,
 		"-f",
@@ -545,7 +570,8 @@ def flash_openocd_command(*, firmware_hex: Path, build_command: str) -> list[Pat
 		"reset run",
 		"-c",
 		"shutdown",
-	]
+	])
+	return command
 
 
 def native_flash_command() -> None:
@@ -662,8 +688,8 @@ def brew_paths() -> None:
 	print_path("brewLd", brew_tool_path("ld"))
 	print_path("brewObjcopy", brew_tool_path("objcopy"))
 	print_path("brewSize", brew_tool_path("size"))
-	print_path("repoLocalOpenocd", PIO_OPENOCD)
-	print_path("repoLocalOpenocdScripts", PIO_OPENOCD_SCRIPTS)
+	print(f"openocdCommand: {brew_openocd_executable()}")
+	print(f"openocdInPath: {shutil.which(brew_openocd_executable())}")
 	for module in NATIVE_ZEPHYR_MODULES:
 		print_path("module", module)
 

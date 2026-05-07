@@ -3,7 +3,7 @@
 ## Scope
 - Keep changes isolated under `devices/power-debug/` unless the user explicitly asks for a shared firmware/toolchain change.
 - Do not read from, copy from, execute from, or depend on files outside `/Users/Maxim/Developer/txing`; external examples or toolchain files must be pasted by the user or explicitly vendored into this repository first.
-- Exception: the Homebrew toolchain variant may execute only the user-installed `arm-none-eabi-*` binaries resolved by `CROSS_COMPILE`/`POWER_DEBUG_BREW_CROSS_COMPILE`, normally `/opt/homebrew/bin/arm-none-eabi-*` on Apple Silicon macOS.
+- Exception: the Homebrew toolchain variant may resolve the user-installed `arm-none-eabi-*` binaries from `CROSS_COMPILE`/`POWER_DEBUG_BREW_CROSS_COMPILE`, normally `/opt/homebrew/bin/arm-none-eabi-*` on Apple Silicon macOS. Its manual flash command uses `openocd` from `PATH`.
 - All PlatformIO state for the reference build must live under `devices/power-debug/`.
 - The native Zephyr build must use only repo-local submodules under `devices/common/mcu/`, repo-local generated state under `devices/power-debug/`, plus a repo-local GNU Arm Embedded toolchain path. The repo-local PlatformIO GCC/OpenOCD packages are allowed as fallback host tools. Do not use global Zephyr, global NCS, global PlatformIO packages, or files outside this repository.
 - This subproject is for XIAO nRF54L15 board-floor power measurements only.

@@ -145,7 +145,7 @@ CROSS_COMPILE=/opt/homebrew/bin/arm-none-eabi-
 Install the toolchain manually:
 
 ```sh
-brew install arm-none-eabi-gcc arm-none-eabi-binutils
+brew install arm-none-eabi-gcc arm-none-eabi-binutils open-ocd
 ```
 
 Then initialize the same native Zephyr Python environment and validate the
@@ -182,6 +182,14 @@ or `/usr/local/bin/arm-none-eabi-`. Override it only when needed:
 
 ```sh
 export POWER_DEBUG_BREW_CROSS_COMPILE=/opt/homebrew/bin/arm-none-eabi-
+```
+
+Homebrew flash uses the first `openocd` available in `PATH`, not the PlatformIO
+OpenOCD package and not a hardcoded Cellar path. After `brew upgrade`, the same
+command picks up whichever `openocd` your shell resolves:
+
+```text
+openocd
 ```
 
 The Homebrew path currently depends on module picolibc. It is not a general
@@ -270,8 +278,8 @@ CROSS_COMPILE=/opt/homebrew/bin/arm-none-eabi-
 The image:
 
 1. Boots.
-2. Turns the XIAO user LED on for 5 seconds.
-3. Turns the user LED off.
+2. Turns the XIAO user LED and D1 `power` GPIO on for 5 seconds.
+3. Turns the user LED and D1 `power` GPIO off.
 4. Disables `pdm_imu_pwr`, `rfsw_pwr`, and `vbat_pwr`.
 5. Suspends the console if present.
 6. Clears the reset cause.
@@ -326,7 +334,8 @@ GCC `8.2.1` native images before treating the Homebrew image as equivalent.
 - `firmware-native-flash` bypasses `cmake --build --target flash` and `west
   flash`; this repository intentionally is not a west workspace.
 - `firmware-brew-flash` uses the same direct OpenOCD flow as
-  `firmware-native-flash`, but flashes the Homebrew-built `zephyr.hex`.
+  `firmware-native-flash`, but resolves `openocd` from `PATH` and flashes the
+  Homebrew-built `zephyr.hex`.
 - `firmware-clean` removes only `.pio/` build output. It does not remove the
   installed PlatformIO packages.
 - `firmware-native-clean` removes only native Zephyr build output.

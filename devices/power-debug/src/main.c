@@ -9,6 +9,7 @@
 #include <zephyr/sys/util.h>
 
 static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
+static const struct gpio_dt_spec power = GPIO_DT_SPEC_GET(DT_ALIAS(power), gpios);
 
 #define DEFINE_REGULATOR_DEVICE(name)                                                \
 	COND_CODE_1(DT_NODE_HAS_STATUS(DT_NODELABEL(name), okay),                    \
@@ -54,9 +55,11 @@ static void suspend_console(void)
 int main(void)
 {
 	(void)gpio_pin_configure_dt(&led, GPIO_OUTPUT_ACTIVE);
+	(void)gpio_pin_configure_dt(&power, GPIO_OUTPUT_ACTIVE);
 	k_sleep(K_SECONDS(5));
 
 	(void)gpio_pin_configure_dt(&led, GPIO_OUTPUT_INACTIVE);
+	(void)gpio_pin_configure_dt(&power, GPIO_OUTPUT_INACTIVE);
 	disable_xiao_load_regulators();
 	suspend_console();
 	hwinfo_clear_reset_cause();
