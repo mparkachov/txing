@@ -1,11 +1,6 @@
 .pytest_cache/
 __pycache__/
 build/
-.home/
-.pio/
-.pip-cache/
-.platformio-core/
-.venv/
 .native-pip-cache/
 .native-zephyr-cache/
 .native-ccache/

@@ -7,6 +7,9 @@ firmware_script := power_debug_dir + "/scripts/firmware.py"
 @firmware-install:
     python3 "{{firmware_script}}" install
 
+@firmware-submodules:
+    python3 "{{firmware_script}}" submodules
+
 @firmware-check:
     python3 "{{firmware_script}}" check
 
@@ -16,56 +19,14 @@ firmware_script := power_debug_dir + "/scripts/firmware.py"
 @firmware-flash:
     python3 "{{firmware_script}}" flash
 
+@firmware-flash-command:
+    python3 "{{firmware_script}}" flash-command
+
 @firmware-paths:
     python3 "{{firmware_script}}" paths
 
 @firmware-clean:
     python3 "{{firmware_script}}" clean
-
-@firmware-native-submodules:
-    python3 "{{firmware_script}}" native-submodules
-
-@firmware-native-install:
-    python3 "{{firmware_script}}" native-install
-
-@firmware-native-check:
-    python3 "{{firmware_script}}" native-check
-
-@firmware-native-build:
-    python3 "{{firmware_script}}" native-build
-
-@firmware-native-flash:
-    python3 "{{firmware_script}}" native-flash
-
-@firmware-native-flash-command:
-    python3 "{{firmware_script}}" native-flash-command
-
-@firmware-native-paths:
-    python3 "{{firmware_script}}" native-paths
-
-@firmware-native-clean:
-    python3 "{{firmware_script}}" native-clean
-
-@firmware-brew-install:
-    python3 "{{firmware_script}}" brew-install
-
-@firmware-brew-check:
-    python3 "{{firmware_script}}" brew-check
-
-@firmware-brew-build:
-    python3 "{{firmware_script}}" brew-build
-
-@firmware-brew-flash:
-    python3 "{{firmware_script}}" brew-flash
-
-@firmware-brew-flash-command:
-    python3 "{{firmware_script}}" brew-flash-command
-
-@firmware-brew-paths:
-    python3 "{{firmware_script}}" brew-paths
-
-@firmware-brew-clean:
-    python3 "{{firmware_script}}" brew-clean
 
 @default:
     @just --list
