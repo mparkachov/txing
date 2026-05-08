@@ -74,6 +74,11 @@ On Ubuntu-class hosts, install:
 sudo apt install build-essential clang libclang-dev libc6-dev
 ```
 
+The real component command must run under a Greengrass component lifecycle, or
+with the same IPC environment that the Greengrass nucleus provides:
+`AWS_GG_NUCLEUS_DOMAIN_SOCKET_FILEPATH_FOR_COMPONENT` and `SVCUID`. Direct shell
+runs without those variables intentionally fail before the SDK starts.
+
 For an SDK-free component smoke test:
 
 ```sh
