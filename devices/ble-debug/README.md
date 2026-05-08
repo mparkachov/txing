@@ -293,8 +293,12 @@ Built-in connection profiles:
 | `central-default` | central-chosen | central-chosen | central-chosen |
 | `fast-50-0-10` | 50 ms | 0 | 10 s |
 | `fast-50-0-20` | 50 ms | 0 | 20 s |
+| `stable-75-0-20` | 75 ms | 0 | 20 s |
 | `stable-100-0-10` | 100 ms | 0 | 10 s |
 | `stable-100-0-20` | 100 ms | 0 | 20 s |
+| `stable-100-0-30` | 100 ms | 0 | 30 s |
+| `stable-125-0-20` | 125 ms | 0 | 20 s |
+| `stable-150-0-20` | 150 ms | 0 | 20 s |
 | `stable-200-0-10` | 200 ms | 0 | 10 s |
 | `stable-200-0-20` | 200 ms | 0 | 20 s |
 | `slow-500-0-20` | 500 ms | 0 | 20 s |
@@ -317,9 +321,21 @@ Default behavior is eight hours total:
 
 Each matrix trial runs five one-minute wake/sleep cycles. The MCU-side variable
 is the connection parameter request sent inside the extended REDCON `3` command.
-The central-side variable is a BlueZ-style scan/connect profile: name-vs-service
-matching, scan timeout, connect timeout, connect attempts, retry delay, and
-disconnect deadline. The script does not mutate global BlueZ adapter settings.
+The default matrix now focuses around the area that first looked stable on the
+Pi: 75, 100, 125, 150, and 200 ms intervals with 20 s supervision, plus 100 ms
+with 30 s supervision and `central-default` as a baseline. The central-side
+variable is a BlueZ-style scan/connect profile: name-vs-service matching, scan
+timeout, connect timeout, connect attempts, retry delay, and disconnect
+deadline. The default central profiles compare conservative and balanced
+timeouts with both name-only and service-required matching. The script does not
+mutate global BlueZ adapter settings.
+
+After a failed trial the runner waits 10 seconds before trying the next
+candidate. Override that when needed:
+
+```sh
+just ble-debug::rig::overnight weather-q8zbgb --failure-recovery-delay 20
+```
 
 Output files:
 
@@ -329,11 +345,17 @@ Output files:
 /tmp/ble-debug-overnight-results/<timestamp>/report.md
 ```
 
+The report ranks only candidates that actually ran. Untested candidates are
+listed separately so interrupted overnight runs do not make untouched candidates
+look better than failed candidates. The ranked table includes pass ratio, mean
+cycles before failure, primary failure stage, wake/connect p95, unexpected
+disconnect count, and RSSI avg/min/max.
+
 Useful overrides:
 
 ```sh
 just ble-debug::rig::overnight weather-q8zbgb --output-dir /tmp/ble-debug-night
-just ble-debug::rig::overnight weather-q8zbgb --connection-profiles stable-200-0-20,slow-500-0-20
+just ble-debug::rig::overnight weather-q8zbgb --connection-profiles stable-75-0-20,stable-100-0-20,stable-125-0-20
 just ble-debug::rig::overnight weather-q8zbgb --central-profiles bluez-conservative-name,bluez-balanced-name
 ```
 

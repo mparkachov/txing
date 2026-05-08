@@ -6,6 +6,7 @@ import json
 import platform
 import shlex
 import time
+from collections import Counter
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,6 +24,12 @@ from .cycle_test import (
 
 DEFAULT_NAME = "weather-q8zbgb"
 DEFAULT_OUTPUT_ROOT = Path("/tmp/ble-debug-overnight-results")
+DEFAULT_CENTRAL_PROFILE_NAMES = [
+    "bluez-conservative-name",
+    "bluez-conservative-service",
+    "bluez-balanced-name",
+    "bluez-balanced-service",
+]
 
 
 @dataclass(frozen=True)
@@ -51,19 +58,28 @@ class TrialCapture:
     unexpected_disconnects: int = 0
     wake_latencies_ms: list[int] = field(default_factory=list)
     connect_ms: list[int] = field(default_factory=list)
+    rssi_values: list[int] = field(default_factory=list)
+    failure_stages: Counter[str] = field(default_factory=Counter)
+    disconnect_phases: Counter[str] = field(default_factory=Counter)
 
     def __call__(self, line: str) -> None:
         event, fields = parse_event_line(line)
         if event == "summary" and fields.get("command") == "cycle":
             self.passed_cycles += 1
+        elif event == "adv":
+            append_int(self.rssi_values, fields.get("rssi"))
         elif event == "wake-ok":
             append_int(self.wake_latencies_ms, fields.get("latencyMs"))
         elif event == "connected":
             append_int(self.connect_ms, fields.get("connectMs"))
         elif event == "disconnect" and fields.get("unexpected") == "1":
             self.unexpected_disconnects += 1
+            self.disconnect_phases[fields.get("phase") or "unknown"] += 1
         elif event == "error":
             self.errors += 1
+            self.failure_stages[
+                normalize_failure_stage(fields.get("stage") or "", fields.get("message") or "")
+            ] += 1
 
 
 @dataclass
@@ -77,9 +93,13 @@ class TrialResult:
     unexpected_disconnects: int
     wake_latencies_ms: list[int]
     connect_ms: list[int]
+    rssi_values: list[int]
+    failure_stages: dict[str, int]
+    disconnect_phases: dict[str, int]
     success: bool
     error_stage: str = ""
     error_message: str = ""
+    failure_stage: str = ""
     elapsed_sec: float = 0.0
 
 
@@ -95,6 +115,10 @@ class CandidateStats:
     unexpected_disconnects: int = 0
     wake_latencies_ms: list[int] = field(default_factory=list)
     connect_ms: list[int] = field(default_factory=list)
+    rssi_values: list[int] = field(default_factory=list)
+    failure_stages: Counter[str] = field(default_factory=Counter)
+    disconnect_phases: Counter[str] = field(default_factory=Counter)
+    failed_trial_cycles: list[int] = field(default_factory=list)
 
     def record(self, result: TrialResult) -> None:
         self.trials += 1
@@ -104,14 +128,38 @@ class CandidateStats:
         self.unexpected_disconnects += result.unexpected_disconnects
         self.wake_latencies_ms.extend(result.wake_latencies_ms)
         self.connect_ms.extend(result.connect_ms)
+        self.rssi_values.extend(result.rssi_values)
+        self.failure_stages.update(result.failure_stages)
+        self.disconnect_phases.update(result.disconnect_phases)
         if result.success:
             self.successful_trials += 1
         else:
             self.failed_trials += 1
+            self.failed_trial_cycles.append(result.passed_cycles)
+            if result.failure_stage and not result.failure_stages:
+                self.failure_stages[result.failure_stage] += 1
 
     @property
     def failure_count(self) -> int:
         return self.failed_trials + self.errors + self.unexpected_disconnects
+
+    @property
+    def pass_ratio(self) -> float:
+        if self.requested_cycles <= 0:
+            return 0.0
+        return self.passed_cycles / self.requested_cycles
+
+    @property
+    def mean_cycles_before_failure(self) -> float | None:
+        if not self.failed_trial_cycles:
+            return None
+        return sum(self.failed_trial_cycles) / len(self.failed_trial_cycles)
+
+    @property
+    def primary_failure_stage(self) -> str:
+        if not self.failure_stages:
+            return ""
+        return self.failure_stages.most_common(1)[0][0]
 
     @property
     def wake_p95_ms(self) -> int:
@@ -121,13 +169,31 @@ class CandidateStats:
     def connect_p95_ms(self) -> int:
         return percentile(self.connect_ms, 95, default=999999)
 
-    def rank_key(self) -> tuple[float, float, int, int, int, int]:
-        trials = max(1, self.trials)
-        failure_rate = self.failure_count / trials
-        disconnect_rate = self.unexpected_disconnects / trials
+    @property
+    def rssi_min(self) -> int | None:
+        return min(self.rssi_values) if self.rssi_values else None
+
+    @property
+    def rssi_max(self) -> int | None:
+        return max(self.rssi_values) if self.rssi_values else None
+
+    @property
+    def rssi_avg(self) -> float | None:
+        if not self.rssi_values:
+            return None
+        return sum(self.rssi_values) / len(self.rssi_values)
+
+    def rank_key(self) -> tuple[object, ...]:
+        if self.trials <= 0:
+            return (1, self.candidate.order)
+        failed = int(self.failure_count > 0 or self.passed_cycles < self.requested_cycles)
         return (
-            failure_rate,
-            disconnect_rate,
+            0,
+            failed,
+            -self.pass_ratio,
+            self.unexpected_disconnects,
+            self.errors,
+            self.failed_trials,
             -self.passed_cycles,
             self.wake_p95_ms,
             self.connect_p95_ms,
@@ -144,12 +210,20 @@ class CandidateStats:
             "failedTrials": self.failed_trials,
             "requestedCycles": self.requested_cycles,
             "passedCycles": self.passed_cycles,
+            "passRatio": self.pass_ratio,
             "errors": self.errors,
             "unexpectedDisconnects": self.unexpected_disconnects,
+            "failureStage": self.primary_failure_stage or None,
+            "failureStages": dict(self.failure_stages),
+            "disconnectPhases": dict(self.disconnect_phases),
+            "meanCyclesBeforeFailure": self.mean_cycles_before_failure,
             "wakeP95Ms": self.wake_p95_ms if self.wake_latencies_ms else None,
             "wakeMaxMs": max(self.wake_latencies_ms) if self.wake_latencies_ms else None,
             "connectP95Ms": self.connect_p95_ms if self.connect_ms else None,
             "connectMaxMs": max(self.connect_ms) if self.connect_ms else None,
+            "rssiMin": self.rssi_min,
+            "rssiAvg": self.rssi_avg,
+            "rssiMax": self.rssi_max,
         }
 
 
@@ -189,6 +263,39 @@ def append_int(values: list[int], raw_value: str | None) -> None:
         values.append(int(raw_value))
     except ValueError:
         return
+
+
+def normalize_failure_stage(stage: str, message: str) -> str:
+    raw_stage = (stage or "").strip()
+    raw_message = (message or "").strip().lower()
+    if raw_stage.startswith("cycle ") and ": " in raw_stage:
+        raw_stage = raw_stage.split(": ", 1)[1]
+
+    stage_text = raw_stage.lower()
+    if "active" in stage_text or "active battery" in raw_message:
+        return "active"
+    if "wake" in stage_text:
+        return "wake"
+    if "sleep" in stage_text or "redcon 4" in raw_message:
+        return "sleep"
+    if "battery" in stage_text:
+        return "battery"
+    if "discover" in stage_text or "advertisement" in raw_message:
+        return "discover"
+    if (
+        "connect" in stage_text
+        or "services" in stage_text
+        or "failed to discover services" in raw_message
+        or "timeouterror" in raw_message
+    ):
+        return "connect"
+    if "disconnect" in stage_text or "unexpected disconnect" in raw_message:
+        return "disconnect"
+    if "eoferror" in raw_message:
+        return "transport"
+    if stage_text:
+        return stage_text
+    return "unknown"
 
 
 def percentile(values: list[int], pct: int, *, default: int) -> int:
@@ -255,13 +362,13 @@ def default_central_profiles() -> list[CentralProfile]:
 
 def default_connection_profiles() -> list[str]:
     return [
-        "stable-200-0-20",
-        "slow-500-0-20",
         "stable-100-0-20",
+        "stable-75-0-20",
+        "stable-125-0-20",
+        "stable-150-0-20",
+        "stable-100-0-30",
+        "stable-200-0-20",
         "fast-50-0-20",
-        "stable-200-0-10",
-        "stable-100-0-10",
-        "fast-50-0-10",
         "central-default",
     ]
 
@@ -288,7 +395,7 @@ def build_candidates(args: argparse.Namespace) -> list[Candidate]:
     central_profiles = default_central_profiles()
     requested_central_names = parse_csv(
         args.central_profiles,
-        [profile.name for profile in central_profiles],
+        DEFAULT_CENTRAL_PROFILE_NAMES,
     )
     central_by_name = {profile.name: profile for profile in central_profiles}
     unknown_central = [name for name in requested_central_names if name not in central_by_name]
@@ -387,6 +494,20 @@ async def run_trial(
         if capture in EVENT_SINKS:
             EVENT_SINKS.remove(capture)
 
+    failure_stage = ""
+    if error_stage or error_message:
+        failure_stage = normalize_failure_stage(error_stage, error_message)
+    elif capture.failure_stages:
+        failure_stage = capture.failure_stages.most_common(1)[0][0]
+    if success and (
+        capture.errors > 0
+        or capture.unexpected_disconnects > 0
+        or capture.passed_cycles < cycles
+    ):
+        success = False
+        if not failure_stage:
+            failure_stage = "incomplete"
+
     result = TrialResult(
         candidate=candidate.name,
         conn_profile=candidate.conn_profile,
@@ -397,9 +518,13 @@ async def run_trial(
         unexpected_disconnects=capture.unexpected_disconnects,
         wake_latencies_ms=list(capture.wake_latencies_ms),
         connect_ms=list(capture.connect_ms),
+        rssi_values=list(capture.rssi_values),
+        failure_stages=dict(capture.failure_stages),
+        disconnect_phases=dict(capture.disconnect_phases),
         success=success,
         error_stage=error_stage,
         error_message=error_message,
+        failure_stage=failure_stage,
         elapsed_sec=time.monotonic() - started,
     )
     emit(
@@ -415,8 +540,14 @@ async def run_trial(
         unexpectedDisconnects=result.unexpected_disconnects,
         wakeP95Ms=percentile(result.wake_latencies_ms, 95, default=0),
         connectP95Ms=percentile(result.connect_ms, 95, default=0),
+        rssiMin=min(result.rssi_values) if result.rssi_values else "n/a",
+        rssiAvg=round(sum(result.rssi_values) / len(result.rssi_values), 1)
+        if result.rssi_values
+        else "n/a",
+        rssiMax=max(result.rssi_values) if result.rssi_values else "n/a",
         elapsedSec=int(result.elapsed_sec),
         errorStage=error_stage,
+        failureStage=failure_stage,
         message=error_message,
     )
     return result
@@ -427,6 +558,34 @@ def choose_best(stats_by_candidate: dict[str, CandidateStats]) -> CandidateStats
     if not populated:
         return None
     return min(populated, key=lambda stats: stats.rank_key())
+
+
+def sorted_tested_stats(stats_by_candidate: dict[str, CandidateStats]) -> list[CandidateStats]:
+    return sorted(
+        (stats for stats in stats_by_candidate.values() if stats.trials > 0),
+        key=lambda stats: stats.rank_key(),
+    )
+
+
+def sorted_untested_stats(stats_by_candidate: dict[str, CandidateStats]) -> list[CandidateStats]:
+    return sorted(
+        (stats for stats in stats_by_candidate.values() if stats.trials <= 0),
+        key=lambda stats: stats.candidate.order,
+    )
+
+
+def format_ratio(value: float) -> str:
+    return f"{value:.2f}"
+
+
+def format_float(value: float | None) -> str:
+    return "n/a" if value is None else f"{value:.1f}"
+
+
+def format_rssi(stats: CandidateStats) -> str:
+    if stats.rssi_avg is None or stats.rssi_min is None or stats.rssi_max is None:
+        return "n/a"
+    return f"{stats.rssi_avg:.1f} ({stats.rssi_min}..{stats.rssi_max})"
 
 
 def write_summary(
@@ -456,6 +615,7 @@ def write_summary(
             "minBattery": args.min_battery,
             "wakeDeadline": args.wake_deadline,
             "sleepDeadline": args.sleep_deadline,
+            "failureRecoveryDelay": getattr(args, "failure_recovery_delay", 0.0),
         },
         "candidates": [
             {
@@ -466,7 +626,15 @@ def write_summary(
             for candidate in candidates
         ],
         "best": best.to_dict() if best is not None else None,
-        "stats": [stats.to_dict() for stats in sorted(stats_by_candidate.values(), key=lambda s: s.rank_key())],
+        "testedStats": [stats.to_dict() for stats in sorted_tested_stats(stats_by_candidate)],
+        "untestedStats": [stats.to_dict() for stats in sorted_untested_stats(stats_by_candidate)],
+        "stats": [
+            stats.to_dict()
+            for stats in (
+                sorted_tested_stats(stats_by_candidate)
+                + sorted_untested_stats(stats_by_candidate)
+            )
+        ],
     }
     (output_dir / "summary.json").write_text(
         json.dumps(summary, indent=2, sort_keys=True) + "\n",
@@ -498,41 +666,74 @@ def write_report(
                 f"- Connection profile: `{best.candidate.conn_profile}`",
                 f"- Central profile: `{best.candidate.central_profile.name}`",
                 f"- Passed cycles: `{best.passed_cycles}`",
+                f"- Pass ratio: `{format_ratio(best.pass_ratio)}`",
                 f"- Failed trials: `{best.failed_trials}`",
                 f"- Unexpected disconnects: `{best.unexpected_disconnects}`",
+                f"- Primary failure stage: `{best.primary_failure_stage or 'n/a'}`",
                 f"- Wake p95 ms: `{best.wake_p95_ms if best.wake_latencies_ms else 'n/a'}`",
                 f"- Connect p95 ms: `{best.connect_p95_ms if best.connect_ms else 'n/a'}`",
+                f"- RSSI avg/min/max: `{format_rssi(best)}`",
                 "",
             ]
         )
 
-    lines.extend(["## Ranked Candidates", ""])
+    tested = sorted_tested_stats(stats_by_candidate)
+    untested = sorted_untested_stats(stats_by_candidate)
+
+    lines.extend(["## Ranked Tested Candidates", ""])
     lines.append(
-        "| Candidate | Trials | Passed cycles | Failed trials | Errors | Unexpected disconnects | Wake p95 | Connect p95 |"
+        "| Candidate | Trials | Pass ratio | Passed / Requested | Failed trials | Errors | Unexpected disconnects | Failure stage | Mean cycles before failure | Wake p95 | Connect p95 | RSSI avg (min..max) |"
     )
-    lines.append("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
-    for stats in sorted(stats_by_candidate.values(), key=lambda item: item.rank_key()):
+    lines.append("| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: | --- |")
+    if not tested:
+        lines.append("| n/a | 0 | 0.00 | 0 / 0 | 0 | 0 | 0 | n/a | n/a | n/a | n/a | n/a |")
+    for stats in tested:
         lines.append(
             "| "
             + " | ".join(
                 [
                     f"`{stats.candidate.name}`",
                     str(stats.trials),
-                    str(stats.passed_cycles),
+                    format_ratio(stats.pass_ratio),
+                    f"{stats.passed_cycles} / {stats.requested_cycles}",
                     str(stats.failed_trials),
                     str(stats.errors),
                     str(stats.unexpected_disconnects),
+                    stats.primary_failure_stage or "n/a",
+                    format_float(stats.mean_cycles_before_failure),
                     str(stats.wake_p95_ms if stats.wake_latencies_ms else "n/a"),
                     str(stats.connect_p95_ms if stats.connect_ms else "n/a"),
+                    format_rssi(stats),
                 ]
             )
             + " |"
         )
     lines.append("")
+
+    if untested:
+        lines.extend(["## Untested Candidates", ""])
+        lines.append("| Candidate | Connection profile | Central profile |")
+        lines.append("| --- | --- | --- |")
+        for stats in untested:
+            lines.append(
+                "| "
+                + " | ".join(
+                    [
+                        f"`{stats.candidate.name}`",
+                        f"`{stats.candidate.conn_profile}`",
+                        f"`{stats.candidate.central_profile.name}`",
+                    ]
+                )
+                + " |"
+            )
+        lines.append("")
     (output_dir / "report.md").write_text("\n".join(lines), encoding="utf-8")
 
 
 async def run_overnight(args: argparse.Namespace) -> int:
+    if args.failure_recovery_delay < 0:
+        raise CycleError("args", "failure-recovery-delay must be zero or greater")
+
     output_dir = Path(args.output_dir) if args.output_dir else DEFAULT_OUTPUT_ROOT / timestamp_for_path()
     output_dir.mkdir(parents=True, exist_ok=True)
     sink = FileSink(output_dir / "overnight.log")
@@ -556,6 +757,7 @@ async def run_overnight(args: argparse.Namespace) -> int:
             matrixHours=args.matrix_hours,
             confirmHours=args.confirm_hours,
             trialCycles=args.trial_cycles,
+            failureRecoveryDelay=args.failure_recovery_delay,
             candidates=len(candidates),
         )
         for candidate in candidates:
@@ -609,6 +811,19 @@ async def run_overnight(args: argparse.Namespace) -> int:
                 phase="matrix",
             )
             write_report(output_dir, best=best, stats_by_candidate=stats_by_candidate)
+            if (
+                not result.success
+                and args.failure_recovery_delay > 0
+                and time.monotonic() + args.failure_recovery_delay < matrix_deadline
+            ):
+                emit(
+                    "trial-recovery",
+                    phase="matrix",
+                    candidate=candidate.name,
+                    delaySec=args.failure_recovery_delay,
+                    failureStage=result.failure_stage or result.error_stage or "unknown",
+                )
+                await asyncio.sleep(args.failure_recovery_delay)
             candidate_index += 1
 
         best = choose_best(stats_by_candidate)
@@ -703,6 +918,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--min-battery", type=int, default=3)
     parser.add_argument("--wake-deadline", type=float, default=10.0)
     parser.add_argument("--sleep-deadline", type=float, default=10.0)
+    parser.add_argument(
+        "--failure-recovery-delay",
+        type=float,
+        default=10.0,
+        help="seconds to wait after a failed trial before starting the next candidate",
+    )
     parser.add_argument(
         "--connection-profiles",
         help="comma-separated subset of built-in connection profiles for the matrix",

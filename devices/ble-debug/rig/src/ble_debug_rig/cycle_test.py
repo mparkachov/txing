@@ -39,8 +39,12 @@ CONNECTION_PROFILES = {
     "central-default": None,
     "fast-50-0-10": (50, 0, 10000),
     "fast-50-0-20": (50, 0, 20000),
+    "stable-75-0-20": (75, 0, 20000),
     "stable-100-0-10": (100, 0, 10000),
     "stable-100-0-20": (100, 0, 20000),
+    "stable-100-0-30": (100, 0, 30000),
+    "stable-125-0-20": (125, 0, 20000),
+    "stable-150-0-20": (150, 0, 20000),
     "stable-200-0-10": (200, 0, 10000),
     "stable-200-0-20": (200, 0, 20000),
     "slow-500-0-20": (500, 0, 20000),
@@ -252,6 +256,8 @@ class BleCycleSession:
         self.started_monotonic = time.monotonic()
         self.client: BleakClient | None = None
         self.closing = False
+        self.connecting = False
+        self.activity = "idle"
         self.expecting_device_disconnect = False
         self.disconnected = asyncio.Event()
         self.unexpected_disconnect = False
@@ -265,9 +271,12 @@ class BleCycleSession:
         last_error: Exception | None = None
         for attempt in range(1, self.args.connect_attempts + 1):
             try:
+                self.activity = "discover"
                 device = await self.discover()
                 started = time.monotonic()
                 self.closing = False
+                self.connecting = True
+                self.activity = "connect"
                 self.expecting_device_disconnect = False
                 self.disconnected.clear()
                 self.unexpected_disconnect = False
@@ -288,11 +297,17 @@ class BleCycleSession:
                     connectMs=int((time.monotonic() - started) * 1000),
                     sinceStartMs=self.since_start_ms(),
                 )
+                self.activity = "services"
                 await self._discover_services()
+                self.activity = "notify"
                 await self._start_notify()
                 await self.read_state()
+                self.connecting = False
+                self.activity = "connected"
                 return
             except Exception as exc:  # noqa: BLE001 - surfaced directly to manual test output.
+                self.connecting = False
+                self.activity = "connect-retry"
                 last_error = exc
                 await self._disconnect_after_failed_attempt()
                 if attempt < self.args.connect_attempts:
@@ -401,7 +416,9 @@ class BleCycleSession:
                 await self.connect()
 
             self._drain_state_queue()
+            self.activity = "wake-command"
             wake_command_at = await self.write_redcon(REDCON_ACTIVE, conn_params)
+            self.activity = "wake"
             wake_state = await self.wait_for_redcon(
                 REDCON_ACTIVE,
                 stage=f"cycle {cycle}: wake",
@@ -419,6 +436,7 @@ class BleCycleSession:
                 **connection_fields(conn_params),
             )
 
+            self.activity = "active"
             battery_states = await self.collect_active_battery_states(
                 cycle=cycle,
                 first_state=wake_state,
@@ -437,7 +455,9 @@ class BleCycleSession:
             all_battery_mv.extend(battery_values)
 
             self.expecting_device_disconnect = not self.args.keep_connected_during_sleep
+            self.activity = "sleep-command"
             sleep_command_at = await self.write_redcon(REDCON_IDLE)
+            self.activity = "sleep"
             sleep_state = await self.wait_for_redcon(
                 REDCON_IDLE,
                 stage=f"cycle {cycle}: sleep",
@@ -453,13 +473,16 @@ class BleCycleSession:
 
             cycle_deadline = cycle_started + self.args.cycle_seconds
             if self.args.keep_connected_during_sleep:
+                self.activity = "sleep-window"
                 await self.monitor_sleep_window(cycle=cycle, until=cycle_deadline)
             else:
+                self.activity = "sleep-disconnect"
                 await self.wait_for_device_disconnect(
                     cycle=cycle,
                     after_monotonic=sleep_state.monotonic,
                     deadline_seconds=self.args.disconnect_deadline,
                 )
+                self.activity = "advertising-idle"
                 await self.sleep_disconnected_window(cycle=cycle, until=cycle_deadline)
 
             emit(
@@ -504,6 +527,13 @@ class BleCycleSession:
         while time.monotonic() < active_until:
             try:
                 state = await self.next_state(timeout=min(1.0, max(0.0, active_until - time.monotonic())))
+            except CycleError as exc:
+                if exc.stage == "disconnect":
+                    raise CycleError(
+                        "active",
+                        f"cycle {cycle}: unexpected disconnect during active battery window",
+                    ) from exc
+                raise
             except TimeoutError:
                 continue
             if state.redcon == REDCON_IDLE and state.monotonic < active_until:
@@ -517,6 +547,13 @@ class BleCycleSession:
         while time.monotonic() < until:
             try:
                 state = await self.next_state(timeout=min(1.0, max(0.0, until - time.monotonic())))
+            except CycleError as exc:
+                if exc.stage == "disconnect":
+                    raise CycleError(
+                        "sleep",
+                        f"cycle {cycle}: unexpected disconnect during connected sleep window",
+                    ) from exc
+                raise
             except TimeoutError:
                 continue
             if state.redcon == REDCON_ACTIVE or state.active:
@@ -616,9 +653,17 @@ class BleCycleSession:
     def _on_disconnect(self, client: BleakClient) -> None:
         del client
         unexpected = not (self.closing or self.expecting_device_disconnect)
+        if self.closing:
+            phase = "closing"
+        elif self.expecting_device_disconnect:
+            phase = "expected-sleep-disconnect"
+        elif self.connecting:
+            phase = "connect"
+        else:
+            phase = self.activity
         self.unexpected_disconnect = unexpected
         self.client = None
-        emit("disconnect", name=self.args.name, unexpected=int(unexpected))
+        emit("disconnect", name=self.args.name, unexpected=int(unexpected), phase=phase)
         if self.loop is not None:
             self.loop.call_soon_threadsafe(self.disconnected.set)
 
