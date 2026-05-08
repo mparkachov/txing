@@ -9,6 +9,7 @@ dependencies = [
 
 [project.scripts]
 ble-debug-rig-test = "ble_debug_rig.cycle_test:main"
+ble-debug-rig-overnight = "ble_debug_rig.overnight:main"
 
 [build-system]
 requires = ["uv_build>=0.10.6,<0.12.0"]

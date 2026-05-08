@@ -1,10 +1,10 @@
 # BLE Debug Device
 
 `ble-debug` is a standalone XIAO nRF54L15 BLE power probe. Most profiles are
-advertising-only. The `gatt-1280-*` profiles add only the minimal GATT surface
-needed to test wake/sleep power behavior and battery reporting. This physical
-device has no sensor measurement characteristic. There is still no factory/NVE
-data, no S115, no SoftDevice, no nRF-BM, and no PlatformIO.
+advertising-only. The `gatt-*` profiles add only the minimal GATT surface needed
+to test wake/sleep power behavior and battery reporting. This physical device
+has no sensor measurement characteristic. There is still no factory/NVE data,
+no S115, no SoftDevice, no nRF-BM, and no PlatformIO.
 
 The only supported build path uses:
 
@@ -22,8 +22,9 @@ openocd from PATH                              manual flashing only
 There is no alternate external build path in this subproject.
 
 MCU profiles live in `devices/ble-debug/mcu/conf/mcu.yaml`. The default profile is
-`gatt-1280-tx8`, because the +8 dBm GATT profile has been the most detectable
-profile in long Raspberry Pi runs so far.
+`gatt-320-tx8`, because the default should favor first-connect reliability over
+minimum idle current. Build a slower profile explicitly when measuring lowest
+advertising current.
 
 ## Setup
 
@@ -74,6 +75,7 @@ just ble-debug::mcu::build service-1280-tx8
 just ble-debug::mcu::build gatt-1280-tx0
 just ble-debug::mcu::build gatt-1280-tx4
 just ble-debug::mcu::build gatt-1280-tx8
+just ble-debug::mcu::build gatt-320-tx8
 just ble-debug::mcu::build service-320
 ```
 
@@ -96,6 +98,7 @@ Manual flash only:
 
 ```sh
 just ble-debug::mcu::flash
+just ble-debug::mcu::flash gatt-320-tx8
 just ble-debug::mcu::flash gatt-1280-tx8
 just ble-debug::mcu::flash service-1280
 ```
@@ -147,6 +150,7 @@ detection:
 | `gatt-1280-tx0` | 1.28 s | 0 dBm | connectable | name + weather UUID scan response + weather GATT |
 | `gatt-1280-tx4` | 1.28 s | +4 dBm | connectable | name + weather UUID scan response + weather GATT |
 | `gatt-1280-tx8` | 1.28 s | +8 dBm | connectable | name + weather UUID scan response + weather GATT |
+| `gatt-320-tx8` | 320 ms | +8 dBm | connectable | conservative first-connect default |
 | `service-320` | 320 ms | 0 dBm | yes | name + weather UUID scan response |
 
 All profiles include flags and the complete local name:
@@ -160,7 +164,7 @@ Use those when you need active scanners to report `service=1`. The lowest
 current profiles intentionally omit scan response and service UUID because those
 increase current.
 
-The `gatt-1280-*` profiles expose the existing weather BLE UUIDs:
+The `gatt-*` profiles expose the existing weather BLE UUIDs:
 
 ```text
 service      f6b4b000-7b32-4d2d-9f4b-4ff0a2b8f100
@@ -173,6 +177,20 @@ off. Writing command payload `<BB>` with protocol version `1` and REDCON `3`
 switches to wakeup state, turns the user LED and D1 `power` on, sends state
 notification immediately, and sends refreshed state notifications every 10
 seconds while active. Requested REDCON `1` or `2` is normalized to REDCON `3`.
+
+Wake can also use extended command payload `<BBHHH>`:
+
+```text
+protocol version
+REDCON target
+connection interval ms
+connection latency
+connection supervision timeout ms
+```
+
+When the extended payload is used with REDCON `3`, the peripheral requests those
+connected BLE parameters immediately during wake. The central still owns the
+final decision and may accept, modify, or reject the requested parameters.
 Writing REDCON `4` switches user LED and D1 `power` off, sends an idle state
 notification, stops periodic state updates, and then the device terminates the
 BLE connection so it can return to advertising idle. A later disconnect also
@@ -193,7 +211,7 @@ so REDCON `4` can return to the same advertising-idle current as a fresh boot.
 4. Power through the battery pads and multimeter.
 5. Run a BLE scan long enough for the selected interval and confirm `weather-q8zbgb`.
 6. Measure idle current while the device is advertising, with user LED and D1 `power` off.
-7. For `gatt-1280-*`, write REDCON `3` from the BLE tool to measure wakeup-state current with user LED and D1 `power` on.
+7. For `gatt-*`, write REDCON `3` from the BLE tool to measure wakeup-state current with user LED and D1 `power` on.
 
 ## Wake/Sleep Cycle Test
 
@@ -243,7 +261,89 @@ just ble-debug::rig::test 60 weather-q8zbgb --wake-deadline 10 --min-battery 3
 just ble-debug::rig::test 60 weather-q8zbgb --no-require-service
 ```
 
+Connected BLE parameter testing does not require reflashing. By default the rig
+uses `central-default`, which sends the original two-byte command and lets the
+central choose connection parameters. To request one parameter set on every wake:
+
+```sh
+just ble-debug::rig::test 180 weather-q8zbgb --conn-profile stable-100-0-20
+```
+
+To sweep multiple parameter sets in one long run, rotate through profiles every
+20 cycles:
+
+```sh
+just ble-debug::rig::test 180 weather-q8zbgb \
+  --conn-profile stable-100-0-10,stable-100-0-20,stable-200-0-20 \
+  --conn-profile-cycles 20
+```
+
+To define a one-off profile from the command line:
+
+```sh
+just ble-debug::rig::test 60 weather-q8zbgb \
+  --conn-params pi-test=150,0,20000 \
+  --conn-profile pi-test
+```
+
+Built-in connection profiles:
+
+| Profile | Interval | Latency | Supervision |
+| --- | ---: | ---: | ---: |
+| `central-default` | central-chosen | central-chosen | central-chosen |
+| `fast-50-0-10` | 50 ms | 0 | 10 s |
+| `fast-50-0-20` | 50 ms | 0 | 20 s |
+| `stable-100-0-10` | 100 ms | 0 | 10 s |
+| `stable-100-0-20` | 100 ms | 0 | 20 s |
+| `stable-200-0-10` | 200 ms | 0 | 10 s |
+| `stable-200-0-20` | 200 ms | 0 | 20 s |
+| `slow-500-0-20` | 500 ms | 0 | 20 s |
+
 Agents must not run this command because it attaches to local BLE hardware.
+
+## Overnight Matrix Test
+
+The overnight runner is for manual Raspberry Pi or macOS tests. It catches test
+failures, keeps going, and writes analysis files under `/tmp` by default:
+
+```sh
+just ble-debug::rig::overnight
+```
+
+Default behavior is eight hours total:
+
+1. Seven hours of round-robin matrix trials.
+2. One hour confirming the best observed candidate.
+
+Each matrix trial runs five one-minute wake/sleep cycles. The MCU-side variable
+is the connection parameter request sent inside the extended REDCON `3` command.
+The central-side variable is a BlueZ-style scan/connect profile: name-vs-service
+matching, scan timeout, connect timeout, connect attempts, retry delay, and
+disconnect deadline. The script does not mutate global BlueZ adapter settings.
+
+Output files:
+
+```text
+/tmp/ble-debug-overnight-results/<timestamp>/overnight.log
+/tmp/ble-debug-overnight-results/<timestamp>/summary.json
+/tmp/ble-debug-overnight-results/<timestamp>/report.md
+```
+
+Useful overrides:
+
+```sh
+just ble-debug::rig::overnight weather-q8zbgb --output-dir /tmp/ble-debug-night
+just ble-debug::rig::overnight weather-q8zbgb --connection-profiles stable-200-0-20,slow-500-0-20
+just ble-debug::rig::overnight weather-q8zbgb --central-profiles bluez-conservative-name,bluez-balanced-name
+```
+
+To inspect the matrix without touching BLE hardware:
+
+```sh
+just ble-debug::rig::overnight weather-q8zbgb --dry-run
+```
+
+Agents must not run overnight tests because they attach to local BLE hardware.
 
 Recommended detectability ladder:
 
@@ -274,6 +374,9 @@ just ble-debug::mcu::flash-check gatt-1280-tx4
 
 just ble-debug::mcu::build gatt-1280-tx8
 just ble-debug::mcu::flash-check gatt-1280-tx8
+
+just ble-debug::mcu::build gatt-320-tx8
+just ble-debug::mcu::flash-check gatt-320-tx8
 ```
 
 ## Generated State

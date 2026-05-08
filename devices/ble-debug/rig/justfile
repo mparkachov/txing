@@ -12,3 +12,6 @@ python_executable := env_var_or_default("BLE_DEBUG_RIG_PYTHON", "python3.13")
 
 @test repetitions="1" name="weather-q8zbgb" *args:
     cd "{{rig_dir}}" && uv run --python "{{python_executable}}" --no-managed-python --no-python-downloads ble-debug-rig-test "{{repetitions}}" --name "{{name}}" {{args}}
+
+@overnight name="weather-q8zbgb" *args:
+    cd "{{rig_dir}}" && uv run --python "{{python_executable}}" --no-managed-python --no-python-downloads ble-debug-rig-overnight --name "{{name}}" {{args}}

@@ -80,9 +80,16 @@
 #define WEATHER_REDCON_IDLE 4U
 #define WEATHER_STATE_FLAG_ACTIVE 0x01U
 #define WEATHER_STATE_PAYLOAD_SIZE 5U
+#define WEATHER_COMMAND_BASE_SIZE 2U
+#define WEATHER_COMMAND_CONN_PARAM_SIZE 8U
 #define WEATHER_BATTERY_ADC_SETTLE_MS 100U
 #define WEATHER_STATE_NOTIFY_INTERVAL_SECONDS 10U
 #define WEATHER_IDLE_DISCONNECT_DELAY_MS 500U
+#define WEATHER_CONN_INTERVAL_MIN_UNITS 6U
+#define WEATHER_CONN_INTERVAL_MAX_UNITS 3200U
+#define WEATHER_CONN_LATENCY_MAX 499U
+#define WEATHER_CONN_SUPERVISION_MIN_UNITS 10U
+#define WEATHER_CONN_SUPERVISION_MAX_UNITS 3200U
 
 #if BLE_DEBUG_ADV_CONNECTABLE
 #define BLE_DEBUG_ADV_OPTIONS BT_LE_ADV_OPT_CONN
@@ -134,6 +141,14 @@ struct gatt_payload {
 	size_t len;
 };
 
+struct weather_command {
+	uint8_t redcon;
+	bool has_conn_params;
+	uint16_t conn_interval_ms;
+	uint16_t conn_latency;
+	uint16_t conn_supervision_ms;
+};
+
 static uint8_t current_redcon = WEATHER_REDCON_IDLE;
 static uint8_t weather_state_payload[WEATHER_STATE_PAYLOAD_SIZE] = {
 	WEATHER_PROTOCOL_VERSION,
@@ -158,6 +173,8 @@ static void set_weather_power(bool active);
 static void suspend_battery_adc(void);
 static void cancel_idle_disconnect(void);
 static void schedule_idle_disconnect(struct bt_conn *conn);
+static void request_connection_params(struct bt_conn *conn,
+				      const struct weather_command *command);
 
 static void resume_battery_adc(void)
 {
@@ -258,11 +275,49 @@ static void refresh_weather_payloads(void)
 	encode_weather_state(current_redcon, battery_mv);
 }
 
-static bool decode_weather_command(const uint8_t *data, size_t len, uint8_t *target_redcon)
+static uint16_t conn_interval_units_from_ms(uint16_t interval_ms)
+{
+	return (uint16_t)(((uint32_t)interval_ms * 4U + 2U) / 5U);
+}
+
+static uint16_t conn_supervision_units_from_ms(uint16_t supervision_ms)
+{
+	return (uint16_t)((uint32_t)supervision_ms / 10U);
+}
+
+static bool validate_connection_params(uint16_t interval_ms, uint16_t latency,
+				       uint16_t supervision_ms)
+{
+	const uint16_t interval_units = conn_interval_units_from_ms(interval_ms);
+	const uint16_t supervision_units =
+		conn_supervision_units_from_ms(supervision_ms);
+	const uint32_t minimum_supervision_ms =
+		(uint32_t)interval_ms * (uint32_t)(latency + 1U) * 2U;
+
+	if (interval_units < WEATHER_CONN_INTERVAL_MIN_UNITS ||
+	    interval_units > WEATHER_CONN_INTERVAL_MAX_UNITS) {
+		return false;
+	}
+	if (latency > WEATHER_CONN_LATENCY_MAX) {
+		return false;
+	}
+	if (supervision_units < WEATHER_CONN_SUPERVISION_MIN_UNITS ||
+	    supervision_units > WEATHER_CONN_SUPERVISION_MAX_UNITS) {
+		return false;
+	}
+	if ((uint32_t)supervision_ms <= minimum_supervision_ms) {
+		return false;
+	}
+	return true;
+}
+
+static bool decode_weather_command(const uint8_t *data, size_t len,
+				   struct weather_command *command)
 {
 	uint8_t redcon;
 
-	if (data == NULL || target_redcon == NULL || len < 2U) {
+	if (data == NULL || command == NULL ||
+	    (len != WEATHER_COMMAND_BASE_SIZE && len != WEATHER_COMMAND_CONN_PARAM_SIZE)) {
 		return false;
 	}
 	if (data[0] != WEATHER_PROTOCOL_VERSION) {
@@ -277,8 +332,40 @@ static bool decode_weather_command(const uint8_t *data, size_t len, uint8_t *tar
 		return false;
 	}
 
-	*target_redcon = redcon;
+	command->redcon = redcon;
+	command->has_conn_params = false;
+	command->conn_interval_ms = 0U;
+	command->conn_latency = 0U;
+	command->conn_supervision_ms = 0U;
+
+	if (len == WEATHER_COMMAND_CONN_PARAM_SIZE) {
+		command->conn_interval_ms = sys_get_le16(&data[2]);
+		command->conn_latency = sys_get_le16(&data[4]);
+		command->conn_supervision_ms = sys_get_le16(&data[6]);
+		if (!validate_connection_params(command->conn_interval_ms,
+						command->conn_latency,
+						command->conn_supervision_ms)) {
+			return false;
+		}
+		command->has_conn_params = true;
+	}
 	return true;
+}
+
+static void request_connection_params(struct bt_conn *conn,
+				      const struct weather_command *command)
+{
+	struct bt_le_conn_param params;
+
+	if (conn == NULL || command == NULL || !command->has_conn_params) {
+		return;
+	}
+
+	params.interval_min = conn_interval_units_from_ms(command->conn_interval_ms);
+	params.interval_max = params.interval_min;
+	params.latency = command->conn_latency;
+	params.timeout = conn_supervision_units_from_ms(command->conn_supervision_ms);
+	(void)bt_conn_le_param_update(conn, &params);
 }
 
 static ssize_t read_state(struct bt_conn *conn, const struct bt_gatt_attr *attr,
@@ -351,7 +438,7 @@ static void schedule_idle_disconnect(struct bt_conn *conn)
 static ssize_t write_command(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 			     const void *buf, uint16_t len, uint16_t offset, uint8_t flags)
 {
-	uint8_t target_redcon;
+	struct weather_command command;
 
 	ARG_UNUSED(attr);
 	ARG_UNUSED(flags);
@@ -359,14 +446,15 @@ static ssize_t write_command(struct bt_conn *conn, const struct bt_gatt_attr *at
 	if (offset != 0U) {
 		return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
 	}
-	if (!decode_weather_command(buf, len, &target_redcon)) {
+	if (!decode_weather_command(buf, len, &command)) {
 		return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
 	}
 
-	current_redcon = target_redcon;
+	current_redcon = command.redcon;
 	if (current_redcon == WEATHER_REDCON_ACTIVE) {
 		cancel_idle_disconnect();
 		set_weather_power(true);
+		request_connection_params(conn, &command);
 		refresh_weather_payloads();
 		notify_weather_state();
 		(void)k_work_reschedule(&state_notify_work,

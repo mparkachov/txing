@@ -10,7 +10,7 @@ import sys
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 
 try:
     from bleak import BleakClient, BleakScanner
@@ -30,7 +30,21 @@ REDCON_IDLE = 4
 STATE_ACTIVE_FLAG = 0x01
 
 COMMAND_STRUCT = struct.Struct("<BB")
+COMMAND_WITH_CONN_PARAMS_STRUCT = struct.Struct("<BBHHH")
 STATE_STRUCT = struct.Struct("<BBBH")
+
+EVENT_SINKS: list[Callable[[str], None]] = []
+
+CONNECTION_PROFILES = {
+    "central-default": None,
+    "fast-50-0-10": (50, 0, 10000),
+    "fast-50-0-20": (50, 0, 20000),
+    "stable-100-0-10": (100, 0, 10000),
+    "stable-100-0-20": (100, 0, 20000),
+    "stable-200-0-10": (200, 0, 10000),
+    "stable-200-0-20": (200, 0, 20000),
+    "slow-500-0-20": (500, 0, 20000),
+}
 
 
 class CycleError(Exception):
@@ -45,6 +59,14 @@ class WeatherState:
     redcon: int
     active: bool
     battery_mv: int | None
+
+
+@dataclass(frozen=True)
+class ConnectionParams:
+    name: str
+    interval_ms: int
+    latency: int
+    supervision_ms: int
 
 
 def iso_now() -> str:
@@ -62,7 +84,13 @@ def format_field(value: object) -> str:
 
 def emit(event: str, **fields: object) -> None:
     suffix = "".join(f" {key}={format_field(value)}" for key, value in fields.items())
-    print(f"{iso_now()} {event}{suffix}", flush=True)
+    line = f"{iso_now()} {event}{suffix}"
+    print(line, flush=True)
+    for sink in tuple(EVENT_SINKS):
+        try:
+            sink(line)
+        except Exception:
+            pass
 
 
 async def await_maybe(value: Any) -> Any:
@@ -86,8 +114,116 @@ def parse_state(payload: bytes | bytearray | memoryview) -> WeatherState:
     )
 
 
-def encode_command(redcon: int) -> bytes:
-    return COMMAND_STRUCT.pack(PROTOCOL_VERSION, redcon)
+def encode_command(redcon: int, conn_params: ConnectionParams | None = None) -> bytes:
+    if conn_params is None or redcon != REDCON_ACTIVE:
+        return COMMAND_STRUCT.pack(PROTOCOL_VERSION, redcon)
+    return COMMAND_WITH_CONN_PARAMS_STRUCT.pack(
+        PROTOCOL_VERSION,
+        redcon,
+        conn_params.interval_ms,
+        conn_params.latency,
+        conn_params.supervision_ms,
+    )
+
+
+def validate_connection_params(
+    *,
+    name: str,
+    interval_ms: int,
+    latency: int,
+    supervision_ms: int,
+) -> ConnectionParams:
+    if interval_ms < 8 or interval_ms > 4000:
+        raise CycleError("args", f"{name}: interval_ms must be 8..4000")
+    if latency < 0 or latency > 499:
+        raise CycleError("args", f"{name}: latency must be 0..499")
+    if supervision_ms < 100 or supervision_ms > 32000:
+        raise CycleError("args", f"{name}: supervision_ms must be 100..32000")
+    if supervision_ms <= interval_ms * (latency + 1) * 2:
+        raise CycleError(
+            "args",
+            f"{name}: supervision_ms must be > interval_ms * (latency + 1) * 2",
+        )
+    return ConnectionParams(
+        name=name,
+        interval_ms=interval_ms,
+        latency=latency,
+        supervision_ms=supervision_ms,
+    )
+
+
+def parse_custom_connection_profile(value: str) -> tuple[str, ConnectionParams]:
+    if "=" not in value:
+        raise CycleError(
+            "args",
+            "--conn-params must use NAME=INTERVAL_MS,LATENCY,SUPERVISION_MS",
+        )
+    name, raw_params = value.split("=", 1)
+    name = name.strip()
+    parts = [part.strip() for part in raw_params.split(",")]
+    if not name or len(parts) != 3:
+        raise CycleError(
+            "args",
+            "--conn-params must use NAME=INTERVAL_MS,LATENCY,SUPERVISION_MS",
+        )
+    try:
+        interval_ms, latency, supervision_ms = (int(part, 10) for part in parts)
+    except ValueError as exc:
+        raise CycleError("args", f"{name}: connection params must be integers") from exc
+    return name, validate_connection_params(
+        name=name,
+        interval_ms=interval_ms,
+        latency=latency,
+        supervision_ms=supervision_ms,
+    )
+
+
+def resolve_connection_profiles(args: argparse.Namespace) -> list[ConnectionParams | None]:
+    custom_profiles = dict(CONNECTION_PROFILES)
+    for raw_custom in args.conn_params or []:
+        name, params = parse_custom_connection_profile(raw_custom)
+        custom_profiles[name] = (
+            params.interval_ms,
+            params.latency,
+            params.supervision_ms,
+        )
+
+    requested: list[str] = []
+    for raw_profile in args.conn_profile or []:
+        requested.extend(part.strip() for part in raw_profile.split(",") if part.strip())
+    if not requested:
+        requested = ["central-default"]
+
+    resolved: list[ConnectionParams | None] = []
+    for name in requested:
+        if name not in custom_profiles:
+            options = ", ".join(sorted(custom_profiles))
+            raise CycleError("args", f"unknown connection profile {name!r}. Options: {options}")
+        values = custom_profiles[name]
+        if values is None:
+            resolved.append(None)
+            continue
+        interval_ms, latency, supervision_ms = values
+        resolved.append(
+            validate_connection_params(
+                name=name,
+                interval_ms=interval_ms,
+                latency=latency,
+                supervision_ms=supervision_ms,
+            )
+        )
+    return resolved
+
+
+def connection_fields(conn_params: ConnectionParams | None) -> dict[str, object]:
+    if conn_params is None:
+        return {"connProfile": "central-default"}
+    return {
+        "connProfile": conn_params.name,
+        "connIntervalMs": conn_params.interval_ms,
+        "connLatency": conn_params.latency,
+        "connSupervisionMs": conn_params.supervision_ms,
+    }
 
 
 def get_backend_name() -> str:
@@ -235,11 +371,15 @@ class BleCycleSession:
         self._record_state(state)
         return state
 
-    async def write_redcon(self, redcon: int) -> float:
-        payload = encode_command(redcon)
+    async def write_redcon(
+        self,
+        redcon: int,
+        conn_params: ConnectionParams | None = None,
+    ) -> float:
+        payload = encode_command(redcon, conn_params)
         started = time.monotonic()
         await await_maybe(self._client().write_gatt_char(self.command_char, payload, response=True))
-        emit("command", redcon=redcon, payload=payload.hex())
+        emit("command", redcon=redcon, payload=payload.hex(), **connection_fields(conn_params))
         return started
 
     async def run_cycles(self) -> None:
@@ -249,12 +389,19 @@ class BleCycleSession:
 
         for cycle in range(1, self.args.repetitions + 1):
             cycle_started = time.monotonic()
-            emit("cycle-start", cycle=cycle, cycles=self.args.repetitions, sinceStartMs=self.since_start_ms())
+            conn_params = self.connection_params_for_cycle(cycle)
+            emit(
+                "cycle-start",
+                cycle=cycle,
+                cycles=self.args.repetitions,
+                sinceStartMs=self.since_start_ms(),
+                **connection_fields(conn_params),
+            )
             if not self._is_connected():
                 await self.connect()
 
             self._drain_state_queue()
-            wake_command_at = await self.write_redcon(REDCON_ACTIVE)
+            wake_command_at = await self.write_redcon(REDCON_ACTIVE, conn_params)
             wake_state = await self.wait_for_redcon(
                 REDCON_ACTIVE,
                 stage=f"cycle {cycle}: wake",
@@ -269,6 +416,7 @@ class BleCycleSession:
                 cycleElapsedMs=int((wake_state.monotonic - cycle_started) * 1000),
                 sinceStartMs=int((wake_state.monotonic - self.started_monotonic) * 1000),
                 batteryMv=wake_state.battery_mv or 0,
+                **connection_fields(conn_params),
             )
 
             battery_states = await self.collect_active_battery_states(
@@ -323,6 +471,7 @@ class BleCycleSession:
                 batteryMinMv=min(battery_values),
                 batteryMaxMv=max(battery_values),
                 sleepLink="connected" if self.args.keep_connected_during_sleep else "disconnected",
+                **connection_fields(conn_params),
             )
 
         emit(
@@ -335,6 +484,11 @@ class BleCycleSession:
             batteryMaxMv=max(all_battery_mv) if all_battery_mv else 0,
             sleepLink="connected" if self.args.keep_connected_during_sleep else "disconnected",
         )
+
+    def connection_params_for_cycle(self, cycle: int) -> ConnectionParams | None:
+        profiles = self.args.resolved_conn_profiles
+        block = max(1, self.args.conn_profile_cycles)
+        return profiles[((cycle - 1) // block) % len(profiles)]
 
     async def collect_active_battery_states(
         self,
@@ -535,6 +689,29 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--connect-attempts", type=int, default=3)
     parser.add_argument("--retry-delay", type=float, default=2.0)
     parser.add_argument(
+        "--conn-profile",
+        action="append",
+        help=(
+            "connection parameter profile to request on REDCON 3. Can be repeated "
+            "or comma-separated. Built-ins: "
+            + ", ".join(sorted(CONNECTION_PROFILES))
+        ),
+    )
+    parser.add_argument(
+        "--conn-params",
+        action="append",
+        help=(
+            "add custom connection profile as NAME=INTERVAL_MS,LATENCY,SUPERVISION_MS, "
+            "for example pi=100,0,20000"
+        ),
+    )
+    parser.add_argument(
+        "--conn-profile-cycles",
+        type=int,
+        default=1,
+        help="number of test cycles to run before rotating to the next --conn-profile",
+    )
+    parser.add_argument(
         "--disconnect-deadline",
         type=float,
         default=5.0,
@@ -567,6 +744,9 @@ async def run(args: argparse.Namespace) -> int:
         raise CycleError("args", "wake-seconds must be less than cycle-seconds")
     if args.min_battery <= 0:
         raise CycleError("args", "min-battery must be greater than zero")
+    if args.conn_profile_cycles <= 0:
+        raise CycleError("args", "conn-profile-cycles must be greater than zero")
+    args.resolved_conn_profiles = resolve_connection_profiles(args)
 
     emit(
         "starting",
@@ -576,6 +756,11 @@ async def run(args: argparse.Namespace) -> int:
         wakeSeconds=args.wake_seconds,
         cycleSeconds=args.cycle_seconds,
         minBattery=args.min_battery,
+        connProfiles=",".join(
+            profile.name if profile is not None else "central-default"
+            for profile in args.resolved_conn_profiles
+        ),
+        connProfileCycles=args.conn_profile_cycles,
     )
     session = BleCycleSession(args)
     try:
