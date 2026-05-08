@@ -1,4 +1,4 @@
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -39,6 +39,18 @@ impl EventEmitter {
 
     pub fn add_file_sink(&mut self, path: impl AsRef<Path>) -> std::io::Result<()> {
         let file = Arc::new(Mutex::new(File::create(path)?));
+        self.add_sink(move |line| {
+            if let Ok(mut file) = file.lock() {
+                let _ = writeln!(file, "{line}");
+            }
+        });
+        Ok(())
+    }
+
+    pub fn add_file_sink_append(&mut self, path: impl AsRef<Path>) -> std::io::Result<()> {
+        let file = Arc::new(Mutex::new(
+            OpenOptions::new().create(true).append(true).open(path)?,
+        ));
         self.add_sink(move |line| {
             if let Ok(mut file) = file.lock() {
                 let _ = writeln!(file, "{line}");

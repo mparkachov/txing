@@ -25,11 +25,15 @@ rig_dir := source_directory()
     fi
     cli_args=({{args}})
     profiles=()
+    output_dir=""
     for ((i = 0; i < ${#cli_args[@]}; i++)); do
       token="${cli_args[$i]}"
       case "$token" in
         --conn-profile=*)
           profiles+=("${token#--conn-profile=}")
+          ;;
+        --output-dir=*)
+          output_dir="${token#--output-dir=}"
           ;;
         --conn-profile)
           i=$((i + 1))
@@ -39,6 +43,14 @@ rig_dir := source_directory()
           fi
           profiles+=("${cli_args[$i]}")
           ;;
+        --output-dir)
+          i=$((i + 1))
+          if [ "$i" -ge "${#cli_args[@]}" ]; then
+            echo "--output-dir requires a value" >&2
+            exit 2
+          fi
+          output_dir="${cli_args[$i]}"
+          ;;
       esac
     done
     if [ "${#profiles[@]}" -eq 0 ]; then
@@ -47,16 +59,23 @@ rig_dir := source_directory()
     profiles_csv="$(IFS=,; echo "${profiles[*]}")"
     root="/tmp/rust-debug-rig-test-results"
     mkdir -p "$root"
-    run_dir="$(mktemp -d "$root/$(date +%Y%m%d-%H%M%S)-XXXXXX")"
+    if [ -n "$output_dir" ]; then
+      run_dir="$output_dir"
+      mkdir -p "$run_dir"
+    else
+      run_dir="$(mktemp -d "$root/$(date +%Y%m%d-%H%M%S)-XXXXXX")"
+    fi
     echo "rust-debug physical BLE suite: $repetitions test(s) per conn-profile"
     echo "connProfiles=$profiles_csv"
-    echo "default outputDir=$run_dir"
+    echo "outputDir=$run_dir"
+    echo "log=$run_dir/cycle.log"
+    : > "$run_dir/cycle.log"
     RUST_DEBUG_RIG_RUN_OUTPUT_DIR="$run_dir" \
       RUST_DEBUG_RIG_TEST_REPETITIONS="$repetitions" \
       RUST_DEBUG_RIG_TEST_PROFILES="$profiles_csv" \
       RUST_DEBUG_RIG_NAME="{{name}}" \
       RUST_DEBUG_RIG_TEST_ARGS="{{args}}" \
-      cargo test --manifest-path "{{rig_dir}}/Cargo.toml" --features ble-real physical_ble_ -- --ignored --nocapture --test-threads=1
+      cargo test --manifest-path "{{rig_dir}}/Cargo.toml" --lib --features ble-real physical_ble_ -- --ignored --format terse --test-threads=1
 
 @run-test repetitions="5" name="weather-q8zbgb" *args:
     cargo run --manifest-path "{{rig_dir}}/Cargo.toml" --features ble-real -- test --repetitions "{{repetitions}}" --name "{{name}}" {{args}}

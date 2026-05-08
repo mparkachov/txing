@@ -4,8 +4,6 @@ use crate::ble::BleCentral;
 #[cfg(feature = "ble-real")]
 use crate::btleplug_ble::BtleplugBleCentral;
 use crate::component::BleConnectivityComponent;
-#[cfg(feature = "ble-real")]
-use crate::cycle::run_logged_cycle_test;
 use crate::cycle::{CycleConfig, TimeMode, run_cycle_test};
 use crate::event::EventEmitter;
 use crate::overnight::{Candidate, OvernightConfig, run_overnight};
@@ -202,18 +200,35 @@ async fn run_physical_ble_cycle(test_name: &str, conn_profile: &str, index: usiz
     let mut config = focused_physical_config_from_env(conn_profile);
     apply_physical_extra_args(&mut config);
     config.repetitions = 1;
-    let output_dir = physical_output_dir(test_name);
+    let output_dir = physical_output_dir();
+    std::fs::create_dir_all(&output_dir).unwrap();
+    let log_path = output_dir.join("cycle.log");
+    let mut events = EventEmitter::quiet();
+    events.add_file_sink_append(&log_path).unwrap();
+    events.emit(
+        "test-start",
+        &[
+            ("test", test_name.to_string()),
+            ("suite", conn_profile.to_string()),
+            ("index", index.to_string()),
+            ("log", log_path.display().to_string()),
+            ("outputDir", output_dir.display().to_string()),
+        ],
+    );
     let mut central = BtleplugBleCentral::new();
-    let run = run_logged_cycle_test(&mut central, &mut config, TimeMode::Real, output_dir, false)
+    let summary = run_cycle_test(&mut central, &mut config, TimeMode::Real, &mut events)
         .await
         .unwrap();
-    println!("test={test_name}");
-    println!("suite={conn_profile}");
-    println!("index={index}");
-    println!("log={}", run.log_path.display());
-    println!("outputDir={}", run.output_dir.display());
-    println!("passedCycles={}", run.summary.passed_cycles);
-    assert_eq!(run.summary.passed_cycles, 1);
+    events.emit(
+        "test-end",
+        &[
+            ("test", test_name.to_string()),
+            ("suite", conn_profile.to_string()),
+            ("index", index.to_string()),
+            ("passedCycles", summary.passed_cycles.to_string()),
+        ],
+    );
+    assert_eq!(summary.passed_cycles, 1);
 }
 
 #[cfg(feature = "ble-real")]
@@ -297,24 +312,25 @@ fn apply_physical_extra_args(config: &mut CycleConfig) {
 }
 
 #[cfg(feature = "ble-real")]
-fn physical_output_dir(test_name: &str) -> Option<std::path::PathBuf> {
+fn physical_output_dir() -> std::path::PathBuf {
     if let Some(path) = std::env::var_os("RUST_DEBUG_RIG_OUTPUT_DIR") {
-        return Some(std::path::PathBuf::from(path).join(test_name));
+        return std::path::PathBuf::from(path);
     }
     let args = std::env::var("RUST_DEBUG_RIG_TEST_ARGS").unwrap_or_default();
     let mut tokens = args.split_whitespace();
     while let Some(token) = tokens.next() {
         if let Some(value) = token.strip_prefix("--output-dir=") {
-            return Some(std::path::PathBuf::from(value).join(test_name));
+            return std::path::PathBuf::from(value);
         }
         if token == "--output-dir" {
-            return tokens
-                .next()
-                .map(|value| std::path::PathBuf::from(value).join(test_name));
+            if let Some(value) = tokens.next() {
+                return std::path::PathBuf::from(value);
+            }
         }
     }
     std::env::var_os("RUST_DEBUG_RIG_RUN_OUTPUT_DIR")
-        .map(|path| std::path::PathBuf::from(path).join(test_name))
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::env::temp_dir().join("rust-debug-rig-test-results"))
 }
 
 #[cfg(feature = "ble-real")]
