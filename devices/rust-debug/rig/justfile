@@ -1,0 +1,28 @@
+set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+set quiet := true
+
+rig_dir := source_directory()
+
+@default:
+    @just --list
+
+@check:
+    cargo test --manifest-path "{{rig_dir}}/Cargo.toml"
+
+@sim-test repetitions="1" name="weather-q8zbgb" *args:
+    cargo run --manifest-path "{{rig_dir}}/Cargo.toml" -- sim-test --repetitions "{{repetitions}}" --name "{{name}}" {{args}}
+
+@sim-overnight name="weather-q8zbgb" *args:
+    cargo run --manifest-path "{{rig_dir}}/Cargo.toml" -- sim-overnight --name "{{name}}" {{args}}
+
+@test repetitions="1" name="weather-q8zbgb" *args:
+    cargo run --manifest-path "{{rig_dir}}/Cargo.toml" -- test --repetitions "{{repetitions}}" --name "{{name}}" {{args}}
+
+@overnight name="weather-q8zbgb" *args:
+    cargo run --manifest-path "{{rig_dir}}/Cargo.toml" -- overnight --name "{{name}}" {{args}}
+
+@overnight-wall-clock name="weather-q8zbgb" *args:
+    cargo run --manifest-path "{{rig_dir}}/Cargo.toml" -- overnight --name "{{name}}" {{args}}
+
+@component adapter_id="rust-debug-ble-main" *args:
+    cargo run --manifest-path "{{rig_dir}}/Cargo.toml" --features greengrass-sdk -- component --adapter-id "{{adapter_id}}" {{args}}
