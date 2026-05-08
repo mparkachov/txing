@@ -1,0 +1,70 @@
+defaultProfile: gatt-1280-tx8
+
+defaults:
+  interval: "0x0800"
+  txPowerDbm: 8
+  connectable: true
+  scannable: true
+  includeUuid: true
+  gatt: true
+
+profiles:
+  low-current:
+    description: 10.24 s, -46 dBm, non-scannable, name only
+    interval: "0x4000"
+    txPowerDbm: -46
+    connectable: false
+    scannable: false
+    includeUuid: false
+    gatt: false
+  tx-minus20:
+    description: 10.24 s, -20 dBm, non-scannable, name only
+    interval: "0x4000"
+    txPowerDbm: -20
+    connectable: false
+    scannable: false
+    includeUuid: false
+    gatt: false
+  tx-0:
+    description: 10.24 s, 0 dBm, non-scannable, name only
+    interval: "0x4000"
+    txPowerDbm: 0
+    connectable: false
+    scannable: false
+    includeUuid: false
+    gatt: false
+  named-1280:
+    description: 1.28 s, 0 dBm, non-scannable, name only
+    txPowerDbm: 0
+    connectable: false
+    scannable: false
+    includeUuid: false
+    gatt: false
+  service-1280:
+    description: 1.28 s, 0 dBm, scannable, weather UUID in scan response
+    txPowerDbm: 0
+    connectable: false
+    gatt: false
+  service-1280-tx4:
+    description: 1.28 s, +4 dBm, scannable, weather UUID in scan response
+    txPowerDbm: 4
+    connectable: false
+    gatt: false
+  service-1280-tx8:
+    description: 1.28 s, +8 dBm, scannable, weather UUID in scan response
+    connectable: false
+    gatt: false
+  gatt-1280-tx0:
+    description: 1.28 s, 0 dBm, connectable, weather GATT wake + battery
+    txPowerDbm: 0
+  gatt-1280-tx4:
+    description: 1.28 s, +4 dBm, connectable, weather GATT wake + battery
+    txPowerDbm: 4
+  gatt-1280-tx8:
+    description: 1.28 s, +8 dBm, connectable, weather GATT wake + battery
+  service-320:
+    description: 320 ms, 0 dBm, scannable, weather UUID in scan response
+    interval: "0x0200"
+    txPowerDbm: 0
+    connectable: false
+    gatt: false

@@ -126,6 +126,7 @@ static const struct bt_le_adv_param adv_params =
 
 static int start_advertising(void);
 static void disable_xiao_load_regulators(void);
+static void enter_ble_idle_hardware_state(void);
 
 #if BLE_DEBUG_GATT
 struct gatt_payload {
@@ -184,6 +185,7 @@ static uint16_t sample_battery_mv(void)
 	int err;
 
 	if (!adc_is_ready_dt(&battery_adc)) {
+		suspend_battery_adc();
 		return 0U;
 	}
 
@@ -362,17 +364,18 @@ static ssize_t write_command(struct bt_conn *conn, const struct bt_gatt_attr *at
 	}
 
 	current_redcon = target_redcon;
-	set_weather_power(current_redcon == WEATHER_REDCON_ACTIVE);
-	refresh_weather_payloads();
-	notify_weather_state();
 	if (current_redcon == WEATHER_REDCON_ACTIVE) {
 		cancel_idle_disconnect();
+		set_weather_power(true);
+		refresh_weather_payloads();
+		notify_weather_state();
 		(void)k_work_reschedule(&state_notify_work,
 					 K_SECONDS(WEATHER_STATE_NOTIFY_INTERVAL_SECONDS));
 	} else {
-		(void)k_work_cancel_delayable(&state_notify_work);
-		disable_xiao_load_regulators();
-		suspend_battery_adc();
+		enter_ble_idle_hardware_state();
+		refresh_weather_payloads();
+		notify_weather_state();
+		enter_ble_idle_hardware_state();
 		schedule_idle_disconnect(conn);
 	}
 
@@ -432,6 +435,16 @@ static void disable_xiao_load_regulators(void)
 #if DT_NODE_HAS_STATUS(DT_NODELABEL(vbat_pwr), okay)
 	disable_regulator(vbat_pwr_reg);
 #endif
+}
+
+static void enter_ble_idle_hardware_state(void)
+{
+#if BLE_DEBUG_GATT
+	set_weather_power(false);
+	(void)k_work_cancel_delayable(&state_notify_work);
+	suspend_battery_adc();
+#endif
+	disable_xiao_load_regulators();
 }
 
 static int set_adv_tx_power(int8_t dbm)
@@ -499,11 +512,8 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 	ARG_UNUSED(reason);
 #if BLE_DEBUG_GATT
 	current_redcon = WEATHER_REDCON_IDLE;
-	set_weather_power(false);
-	(void)k_work_cancel_delayable(&state_notify_work);
 	cancel_idle_disconnect();
-	disable_xiao_load_regulators();
-	suspend_battery_adc();
+	enter_ble_idle_hardware_state();
 	encode_weather_state(WEATHER_REDCON_IDLE, 0U);
 #endif
 	k_work_submit(&advertise_work);
@@ -521,10 +531,7 @@ int main(void)
 
 	configure_output_inactive(&led);
 	configure_output_inactive(&power);
-	disable_xiao_load_regulators();
-#if BLE_DEBUG_GATT
-	suspend_battery_adc();
-#endif
+	enter_ble_idle_hardware_state();
 
 	err = bt_enable(NULL);
 	if (err < 0) {

@@ -29,108 +29,17 @@ OPENOCD_CFG = OPENOCD_SUPPORT_DIR / "openocd.cfg"
 
 BOARD = "xiao_nrf54l15/nrf54l15/cpuapp"
 BUILD_VERSION = "zephyr-v40201-homebrew"
-DEFAULT_PROFILE = "low-current"
-PROFILE_CONFIGS = {
-	"low-current": {
-		"description": "10.24 s, -46 dBm, non-scannable, name only",
-		"interval": "0x4000",
-		"tx_power": "-46",
-		"connectable": "0",
-		"scannable": "0",
-		"include_uuid": "0",
-		"gatt": "0",
-	},
-	"tx-minus20": {
-		"description": "10.24 s, -20 dBm, non-scannable, name only",
-		"interval": "0x4000",
-		"tx_power": "-20",
-		"connectable": "0",
-		"scannable": "0",
-		"include_uuid": "0",
-		"gatt": "0",
-	},
-	"tx-0": {
-		"description": "10.24 s, 0 dBm, non-scannable, name only",
-		"interval": "0x4000",
-		"tx_power": "0",
-		"connectable": "0",
-		"scannable": "0",
-		"include_uuid": "0",
-		"gatt": "0",
-	},
-	"named-1280": {
-		"description": "1.28 s, 0 dBm, non-scannable, name only",
-		"interval": "0x0800",
-		"tx_power": "0",
-		"connectable": "0",
-		"scannable": "0",
-		"include_uuid": "0",
-		"gatt": "0",
-	},
-	"service-1280": {
-		"description": "1.28 s, 0 dBm, scannable, weather UUID in scan response",
-		"interval": "0x0800",
-		"tx_power": "0",
-		"connectable": "0",
-		"scannable": "1",
-		"include_uuid": "1",
-		"gatt": "0",
-	},
-	"service-1280-tx4": {
-		"description": "1.28 s, +4 dBm, scannable, weather UUID in scan response",
-		"interval": "0x0800",
-		"tx_power": "4",
-		"connectable": "0",
-		"scannable": "1",
-		"include_uuid": "1",
-		"gatt": "0",
-	},
-	"service-1280-tx8": {
-		"description": "1.28 s, +8 dBm, scannable, weather UUID in scan response",
-		"interval": "0x0800",
-		"tx_power": "8",
-		"connectable": "0",
-		"scannable": "1",
-		"include_uuid": "1",
-		"gatt": "0",
-	},
-	"gatt-1280-tx0": {
-		"description": "1.28 s, 0 dBm, connectable, weather GATT wake + battery",
-		"interval": "0x0800",
-		"tx_power": "0",
-		"connectable": "1",
-		"scannable": "1",
-		"include_uuid": "1",
-		"gatt": "1",
-	},
-	"gatt-1280-tx4": {
-		"description": "1.28 s, +4 dBm, connectable, weather GATT wake + battery",
-		"interval": "0x0800",
-		"tx_power": "4",
-		"connectable": "1",
-		"scannable": "1",
-		"include_uuid": "1",
-		"gatt": "1",
-	},
-	"gatt-1280-tx8": {
-		"description": "1.28 s, +8 dBm, connectable, weather GATT wake + battery",
-		"interval": "0x0800",
-		"tx_power": "8",
-		"connectable": "1",
-		"scannable": "1",
-		"include_uuid": "1",
-		"gatt": "1",
-	},
-	"service-320": {
-		"description": "320 ms, 0 dBm, scannable, weather UUID in scan response",
-		"interval": "0x0200",
-		"tx_power": "0",
-		"connectable": "0",
-		"scannable": "1",
-		"include_uuid": "1",
-		"gatt": "0",
-	},
-}
+CONFIG_PATH = MCU_DIR / "conf" / "mcu.yaml"
+REQUIRED_PROFILE_FIELDS = (
+	"description",
+	"interval",
+	"txPowerDbm",
+	"connectable",
+	"scannable",
+	"includeUuid",
+	"gatt",
+)
+_CONFIG_CACHE: dict[str, object] | None = None
 
 SUBMODULE_PATHS = [
 	COMMON_MCU_DIR / "zephyr",
@@ -148,10 +57,147 @@ ZEPHYR_MODULES = [
 ]
 
 
+def parse_yaml_scalar(raw: str) -> object:
+	value = raw.strip()
+	if (
+		(len(value) >= 2)
+		and ((value[0] == value[-1] == '"') or (value[0] == value[-1] == "'"))
+	):
+		return value[1:-1]
+	if value.lower() == "true":
+		return True
+	if value.lower() == "false":
+		return False
+	return value
+
+
+def split_yaml_key_value(text: str, line_number: int) -> tuple[str, object]:
+	if ":" not in text:
+		raise SystemExit(f"{CONFIG_PATH}:{line_number}: expected key: value")
+	key, raw_value = text.split(":", 1)
+	key = key.strip()
+	if not key:
+		raise SystemExit(f"{CONFIG_PATH}:{line_number}: empty key")
+	return key, parse_yaml_scalar(raw_value)
+
+
+def load_raw_mcu_config() -> dict[str, object]:
+	if not CONFIG_PATH.exists():
+		raise SystemExit(f"missing BLE debug MCU config: {CONFIG_PATH}")
+
+	config: dict[str, object] = {"defaults": {}, "profiles": {}}
+	section: str | None = None
+	current_profile: str | None = None
+	with CONFIG_PATH.open("r", encoding="utf-8") as handle:
+		for line_number, raw_line in enumerate(handle, start=1):
+			line = raw_line.split("#", 1)[0].rstrip()
+			if not line.strip():
+				continue
+			if line.startswith("\t"):
+				raise SystemExit(f"{CONFIG_PATH}:{line_number}: use spaces, not tabs")
+
+			indent = len(line) - len(line.lstrip(" "))
+			text = line.strip()
+			if indent == 0:
+				current_profile = None
+				if text in {"defaults:", "profiles:"}:
+					section = text[:-1]
+					continue
+				key, value = split_yaml_key_value(text, line_number)
+				config[key] = value
+				section = None
+			elif indent == 2 and section == "defaults":
+				key, value = split_yaml_key_value(text, line_number)
+				defaults = config["defaults"]
+				assert isinstance(defaults, dict)
+				defaults[key] = value
+			elif indent == 2 and section == "profiles":
+				if not text.endswith(":"):
+					raise SystemExit(f"{CONFIG_PATH}:{line_number}: expected profile:")
+				current_profile = text[:-1].strip()
+				if not current_profile:
+					raise SystemExit(f"{CONFIG_PATH}:{line_number}: empty profile name")
+				profiles = config["profiles"]
+				assert isinstance(profiles, dict)
+				profiles[current_profile] = {}
+			elif indent == 4 and section == "profiles" and current_profile is not None:
+				key, value = split_yaml_key_value(text, line_number)
+				profiles = config["profiles"]
+				assert isinstance(profiles, dict)
+				profile_config = profiles[current_profile]
+				assert isinstance(profile_config, dict)
+				profile_config[key] = value
+			else:
+				raise SystemExit(f"{CONFIG_PATH}:{line_number}: unsupported indentation")
+	return config
+
+
+def load_mcu_config() -> dict[str, object]:
+	global _CONFIG_CACHE
+
+	if _CONFIG_CACHE is not None:
+		return _CONFIG_CACHE
+
+	raw_config = load_raw_mcu_config()
+	default_profile = str(raw_config.get("defaultProfile", "")).strip()
+	defaults = raw_config.get("defaults", {})
+	profiles = raw_config.get("profiles", {})
+	if not default_profile:
+		raise SystemExit(f"{CONFIG_PATH}: missing defaultProfile")
+	if not isinstance(defaults, dict) or not isinstance(profiles, dict) or not profiles:
+		raise SystemExit(f"{CONFIG_PATH}: expected defaults and profiles mappings")
+
+	merged_profiles: dict[str, dict[str, object]] = {}
+	for name, profile_config in profiles.items():
+		if not isinstance(name, str) or not isinstance(profile_config, dict):
+			raise SystemExit(f"{CONFIG_PATH}: invalid profile entry {name!r}")
+		merged = {**defaults, **profile_config}
+		missing = [field for field in REQUIRED_PROFILE_FIELDS if field not in merged]
+		if missing:
+			raise SystemExit(
+				f"{CONFIG_PATH}: profile {name!r} missing fields: {', '.join(missing)}"
+			)
+		merged_profiles[name] = merged
+	if default_profile not in merged_profiles:
+		raise SystemExit(f"{CONFIG_PATH}: defaultProfile {default_profile!r} is not defined")
+
+	_CONFIG_CACHE = {
+		"defaultProfile": default_profile,
+		"profiles": merged_profiles,
+	}
+	return _CONFIG_CACHE
+
+
+def default_profile() -> str:
+	return str(load_mcu_config()["defaultProfile"])
+
+
+def profile_configs() -> dict[str, dict[str, object]]:
+	profiles = load_mcu_config()["profiles"]
+	assert isinstance(profiles, dict)
+	return profiles
+
+
+def profile_config(profile: str) -> dict[str, object]:
+	profiles = profile_configs()
+	return profiles[profile]
+
+
+def cmake_bool(value: object) -> str:
+	if isinstance(value, bool):
+		return "1" if value else "0"
+	text = str(value).strip().lower()
+	if text in {"1", "true", "yes", "on"}:
+		return "1"
+	if text in {"0", "false", "no", "off"}:
+		return "0"
+	raise SystemExit(f"expected boolean profile value, got {value!r}")
+
+
 def normalize_profile(profile: str | None) -> str:
-	selected = profile or os.environ.get("BLE_DEBUG_PROFILE") or DEFAULT_PROFILE
-	if selected not in PROFILE_CONFIGS:
-		options = ", ".join(PROFILE_CONFIGS)
+	selected = profile or os.environ.get("BLE_DEBUG_PROFILE") or default_profile()
+	if selected not in profile_configs():
+		options = ", ".join(profile_configs())
 		raise SystemExit(f"unknown ble-debug profile '{selected}'. Options: {options}")
 	return selected
 
@@ -363,12 +409,12 @@ def ensure_ready() -> None:
 
 def configure(profile: str) -> None:
 	ensure_ready()
-	profile_config = PROFILE_CONFIGS[profile]
+	cfg = profile_config(profile)
 	selected_build_dir = build_dir(profile)
 	selected_build_dir.mkdir(parents=True, exist_ok=True)
 	module_arg = ";".join(str(path) for path in ZEPHYR_MODULES)
 	conf_files = [MCU_DIR / "zephyr" / "prj.conf"]
-	if profile_config["gatt"] == "1":
+	if cmake_bool(cfg["gatt"]) == "1":
 		conf_files.append(MCU_DIR / "zephyr" / "prj-gatt.conf")
 	conf_file_arg = ";".join(str(path) for path in conf_files)
 	run(
@@ -389,12 +435,12 @@ def configure(profile: str) -> None:
 			f"-DBUILD_VERSION={BUILD_VERSION}",
 			f"-DUSER_CACHE_DIR={ZEPHYR_CACHE_DIR}",
 			f"-DCONF_FILE={conf_file_arg}",
-			f"-DBLE_DEBUG_ADV_INTERVAL={profile_config['interval']}",
-			f"-DBLE_DEBUG_ADV_TX_POWER_DBM={profile_config['tx_power']}",
-			f"-DBLE_DEBUG_ADV_CONNECTABLE={profile_config['connectable']}",
-			f"-DBLE_DEBUG_ADV_SCANNABLE={profile_config['scannable']}",
-			f"-DBLE_DEBUG_ADV_INCLUDE_UUID={profile_config['include_uuid']}",
-			f"-DBLE_DEBUG_GATT={profile_config['gatt']}",
+			f"-DBLE_DEBUG_ADV_INTERVAL={cfg['interval']}",
+			f"-DBLE_DEBUG_ADV_TX_POWER_DBM={cfg['txPowerDbm']}",
+			f"-DBLE_DEBUG_ADV_CONNECTABLE={cmake_bool(cfg['connectable'])}",
+			f"-DBLE_DEBUG_ADV_SCANNABLE={cmake_bool(cfg['scannable'])}",
+			f"-DBLE_DEBUG_ADV_INCLUDE_UUID={cmake_bool(cfg['includeUuid'])}",
+			f"-DBLE_DEBUG_GATT={cmake_bool(cfg['gatt'])}",
 			"-DZEPHYR_TOOLCHAIN_VARIANT=cross-compile",
 			f"-DCROSS_COMPILE={cross_compile_prefix()}",
 			"-DUSE_CCACHE=0",
@@ -451,7 +497,7 @@ def flash_check(profile: str) -> None:
 
 def clean() -> None:
 	build_root = MCU_DIR / "build"
-	for profile in PROFILE_CONFIGS:
+	for profile in profile_configs():
 		selected_build_dir = build_dir(profile)
 		if selected_build_dir.exists():
 			print(f"removing {selected_build_dir}", flush=True)
@@ -468,19 +514,22 @@ def print_path(label: str, path: Path) -> None:
 
 
 def paths(profile: str) -> None:
+	cfg = profile_config(profile)
 	print(f"projectRoot: {PROJECT_ROOT}")
 	print(f"deviceDir: {DEVICE_DIR}")
 	print(f"mcuDir: {MCU_DIR}")
 	print(f"board: {BOARD}")
 	print(f"buildVersion: {BUILD_VERSION}")
+	print(f"config: {CONFIG_PATH}")
+	print(f"defaultProfile: {default_profile()}")
 	print(f"profile: {profile}")
-	print(f"profileDescription: {PROFILE_CONFIGS[profile]['description']}")
-	print(f"advInterval: {PROFILE_CONFIGS[profile]['interval']}")
-	print(f"advTxPowerDbm: {PROFILE_CONFIGS[profile]['tx_power']}")
-	print(f"advConnectable: {PROFILE_CONFIGS[profile]['connectable']}")
-	print(f"advScannable: {PROFILE_CONFIGS[profile]['scannable']}")
-	print(f"advIncludeUuid: {PROFILE_CONFIGS[profile]['include_uuid']}")
-	print(f"gatt: {PROFILE_CONFIGS[profile]['gatt']}")
+	print(f"profileDescription: {cfg['description']}")
+	print(f"advInterval: {cfg['interval']}")
+	print(f"advTxPowerDbm: {cfg['txPowerDbm']}")
+	print(f"advConnectable: {cmake_bool(cfg['connectable'])}")
+	print(f"advScannable: {cmake_bool(cfg['scannable'])}")
+	print(f"advIncludeUuid: {cmake_bool(cfg['includeUuid'])}")
+	print(f"gatt: {cmake_bool(cfg['gatt'])}")
 	print_path("venv", VENV_DIR)
 	print_path("python", python_executable())
 	print_path("pipCache", PIP_CACHE_DIR)
@@ -525,7 +574,7 @@ def main() -> None:
 	parser.add_argument(
 		"profile",
 		nargs="?",
-		help=f"advertising profile; default is {DEFAULT_PROFILE}",
+		help=f"advertising profile; default is {default_profile()}",
 	)
 	args = parser.parse_args()
 	profile = normalize_profile(args.profile)

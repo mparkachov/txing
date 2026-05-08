@@ -21,6 +21,10 @@ openocd from PATH                              manual flashing only
 
 There is no alternate external build path in this subproject.
 
+MCU profiles live in `devices/ble-debug/mcu/conf/mcu.yaml`. The default profile is
+`gatt-1280-tx8`, because the +8 dBm GATT profile has been the most detectable
+profile in long Raspberry Pi runs so far.
+
 ## Setup
 
 Install host tools manually:
@@ -51,14 +55,14 @@ export BLE_DEBUG_CROSS_COMPILE=/opt/homebrew/bin/arm-none-eabi-
 
 ## Build
 
-Build the default lowest-current firmware:
+Build the default firmware:
 
 ```sh
 just ble-debug::mcu::check
 just ble-debug::mcu::build
 ```
 
-Build a specific advertising profile:
+Build a specific profile from `mcu/conf/mcu.yaml`:
 
 ```sh
 just ble-debug::mcu::build tx-minus20
@@ -92,6 +96,7 @@ Manual flash only:
 
 ```sh
 just ble-debug::mcu::flash
+just ble-debug::mcu::flash gatt-1280-tx8
 just ble-debug::mcu::flash service-1280
 ```
 
@@ -126,7 +131,9 @@ lowest power values, so the app enables dynamic TX power control and programs
 the advertising handle with the Zephyr vendor HCI command before advertising
 starts.
 
-Profiles are ordered from lowest current toward easiest detection:
+Profiles are configured in `devices/ble-debug/mcu/conf/mcu.yaml`. The table below
+summarizes the current profiles, ordered from lowest current toward easiest
+detection:
 
 | Profile | Interval | TX power | Scannable | Payload |
 | --- | ---: | ---: | --- | --- |
