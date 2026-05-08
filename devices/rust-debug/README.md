@@ -44,9 +44,14 @@ just rust-debug::rig::test
 just rust-debug::rig::test 60 weather-q8zbgb --conn-profile stable-100-0-20
 ```
 
-`just rust-debug::rig::test` runs an ignored Rust test through `cargo test`.
-Detailed cycle logs are written under `/tmp/rust-debug-rig-test-results/` and
-the test output prints the exact `cycle.log` path. For direct CLI debugging
+`just rust-debug::rig::test N` uses the requested `--conn-profile` values as
+test suites and generates `N` ignored Rust test cases per suite during the Cargo
+build. Each generated test runs one physical BLE wake/sleep cycle, serially. The
+focused physical test default is a 50 second cycle (`wakeSeconds=30`,
+`cycleSeconds=50`) to stay below Rust's 60 second long-test warning in normal
+passing cases. Detailed cycle logs are written under
+`/tmp/rust-debug-rig-test-results/`, with one `cycle.log` per generated test
+case, and the test output prints each exact log path. For direct CLI debugging
 without the Rust test harness, use:
 
 ```sh

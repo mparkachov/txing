@@ -198,40 +198,42 @@ async fn ignored_wall_clock_simulated_cycle_soak() {
 }
 
 #[cfg(feature = "ble-real")]
-#[tokio::test]
-#[ignore = "requires a physical BLE weather-q8zbgb device and host Bluetooth access"]
-async fn physical_ble_focused_cycle() {
-    let mut config = focused_physical_config_from_env();
+async fn run_physical_ble_cycle(test_name: &str, conn_profile: &str, index: usize) {
+    let mut config = focused_physical_config_from_env(conn_profile);
     apply_physical_extra_args(&mut config);
-    let output_dir = physical_output_dir();
+    config.repetitions = 1;
+    let output_dir = physical_output_dir(test_name);
     let mut central = BtleplugBleCentral::new();
     let run = run_logged_cycle_test(&mut central, &mut config, TimeMode::Real, output_dir, false)
         .await
         .unwrap();
+    println!("test={test_name}");
+    println!("suite={conn_profile}");
+    println!("index={index}");
     println!("log={}", run.log_path.display());
     println!("outputDir={}", run.output_dir.display());
     println!("passedCycles={}", run.summary.passed_cycles);
-    assert_eq!(run.summary.passed_cycles, config.repetitions);
+    assert_eq!(run.summary.passed_cycles, 1);
 }
 
 #[cfg(feature = "ble-real")]
-fn focused_physical_config_from_env() -> CycleConfig {
+include!(concat!(env!("OUT_DIR"), "/physical_ble_tests.rs"));
+
+#[cfg(feature = "ble-real")]
+fn focused_physical_config_from_env(conn_profile: &str) -> CycleConfig {
     let name = std::env::var("RUST_DEBUG_RIG_NAME").unwrap_or_else(|_| "weather-q8zbgb".into());
     let mut config = CycleConfig::default_for_name(name).unwrap();
-    config.repetitions = env_parse("RUST_DEBUG_RIG_REPETITIONS", 5);
-    config.conn_profile = vec![env_string("RUST_DEBUG_RIG_CONN_PROFILE", "fast-50-0-20")];
+    config.repetitions = 1;
+    config.wake_seconds = env_parse("RUST_DEBUG_RIG_WAKE_SECONDS", 30.0);
+    config.cycle_seconds = env_parse("RUST_DEBUG_RIG_CYCLE_SECONDS", 50.0);
     config.scan_timeout = env_parse("RUST_DEBUG_RIG_SCAN_TIMEOUT", 120.0);
     config.connect_timeout = env_parse("RUST_DEBUG_RIG_CONNECT_TIMEOUT", 60.0);
     config.connect_attempts = env_parse("RUST_DEBUG_RIG_CONNECT_ATTEMPTS", 5);
     config.retry_delay = env_parse("RUST_DEBUG_RIG_RETRY_DELAY", 5.0);
     config.disconnect_deadline = env_parse("RUST_DEBUG_RIG_DISCONNECT_DEADLINE", 10.0);
+    config.conn_profile = vec![conn_profile.to_string()];
     config.require_service = false;
     config
-}
-
-#[cfg(feature = "ble-real")]
-fn env_string(name: &str, default: &str) -> String {
-    std::env::var(name).unwrap_or_else(|_| default.to_string())
 }
 
 #[cfg(feature = "ble-real")]
@@ -258,11 +260,11 @@ fn apply_physical_extra_args(config: &mut CycleConfig) {
         let mut next_value = || inline_value.or_else(|| tokens.next());
         match flag {
             "--conn-profile" => {
-                if let Some(value) = next_value() {
-                    config.conn_profile = vec![value.to_string()];
-                }
+                let _ = next_value();
             }
-            "--repetitions" => set_u32(&mut config.repetitions, next_value()),
+            "--repetitions" => {
+                let _ = next_value();
+            }
             "--name" => {
                 if let Some(value) = next_value() {
                     config.name = value.to_string();
@@ -279,6 +281,11 @@ fn apply_physical_extra_args(config: &mut CycleConfig) {
             "--sleep-deadline" => set_f64(&mut config.sleep_deadline, next_value()),
             "--min-battery" => set_usize(&mut config.min_battery, next_value()),
             "--conn-profile-cycles" => set_u32(&mut config.conn_profile_cycles, next_value()),
+            "--conn-params" => {
+                if let Some(value) = next_value() {
+                    config.conn_params.push(value.to_string());
+                }
+            }
             "--output-dir" => {
                 let _ = next_value();
             }
@@ -290,21 +297,24 @@ fn apply_physical_extra_args(config: &mut CycleConfig) {
 }
 
 #[cfg(feature = "ble-real")]
-fn physical_output_dir() -> Option<std::path::PathBuf> {
+fn physical_output_dir(test_name: &str) -> Option<std::path::PathBuf> {
     if let Some(path) = std::env::var_os("RUST_DEBUG_RIG_OUTPUT_DIR") {
-        return Some(std::path::PathBuf::from(path));
+        return Some(std::path::PathBuf::from(path).join(test_name));
     }
-    let args = std::env::var("RUST_DEBUG_RIG_TEST_ARGS").ok()?;
+    let args = std::env::var("RUST_DEBUG_RIG_TEST_ARGS").unwrap_or_default();
     let mut tokens = args.split_whitespace();
     while let Some(token) = tokens.next() {
         if let Some(value) = token.strip_prefix("--output-dir=") {
-            return Some(std::path::PathBuf::from(value));
+            return Some(std::path::PathBuf::from(value).join(test_name));
         }
         if token == "--output-dir" {
-            return tokens.next().map(std::path::PathBuf::from);
+            return tokens
+                .next()
+                .map(|value| std::path::PathBuf::from(value).join(test_name));
         }
     }
-    None
+    std::env::var_os("RUST_DEBUG_RIG_RUN_OUTPUT_DIR")
+        .map(|path| std::path::PathBuf::from(path).join(test_name))
 }
 
 #[cfg(feature = "ble-real")]
