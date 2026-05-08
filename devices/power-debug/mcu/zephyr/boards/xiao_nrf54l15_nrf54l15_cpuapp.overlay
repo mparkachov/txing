@@ -1,0 +1,25 @@
+/ {
+	aliases {
+		power = &power_pin;
+	};
+
+	power_outputs {
+		compatible = "gpio-leds";
+
+		power_pin: power-pin {
+			gpios = <&gpio1 5 GPIO_ACTIVE_HIGH>; /* XIAO D1 */
+		};
+	};
+};
+
+&pdm_imu_pwr {
+	/delete-property/ regulator-boot-on;
+};
+
+&rfsw_pwr {
+	/delete-property/ regulator-boot-on;
+};
+
+&vbat_pwr {
+	/delete-property/ regulator-boot-on;
+};

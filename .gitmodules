@@ -1,0 +1,18 @@
+[submodule "devices/common/mcu/zephyr"]
+	path = devices/common/mcu/zephyr
+	url = https://github.com/zephyrproject-rtos/zephyr.git
+[submodule "devices/common/mcu/seeed-platform"]
+	path = devices/common/mcu/seeed-platform
+	url = https://github.com/Seeed-Studio/platform-seeedboards.git
+[submodule "devices/common/mcu/modules/hal/nordic"]
+	path = devices/common/mcu/modules/hal/nordic
+	url = https://github.com/zephyrproject-rtos/hal_nordic.git
+[submodule "devices/common/mcu/modules/hal/cmsis"]
+	path = devices/common/mcu/modules/hal/cmsis
+	url = https://github.com/zephyrproject-rtos/cmsis.git
+[submodule "devices/common/mcu/modules/hal/cmsis_6"]
+	path = devices/common/mcu/modules/hal/cmsis_6
+	url = https://github.com/zephyrproject-rtos/CMSIS_6.git
+[submodule "devices/common/mcu/modules/lib/picolibc"]
+	path = devices/common/mcu/modules/lib/picolibc
+	url = https://github.com/zephyrproject-rtos/picolibc.git
