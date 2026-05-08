@@ -17,7 +17,9 @@ Sparkplug behavior:
 
 - Fresh Thing-name advertisements publish DBIRTH/DDATA with `redcon=4`.
 - Missing advertisements publish DDEATH after the presence timeout.
-- Weather measurements and REDCON commands require a future weather GATT service.
+- Weather measurements and REDCON commands are modeled through the weather BLE
+  GATT contract, but this device type is currently parked while BLE behavior is
+  rebuilt separately.
 
 The weather implementation does not use Matter, Thread, `chip-tool`, online
 provisioning, MCP, or video.

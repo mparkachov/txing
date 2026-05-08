@@ -1,9 +1,0 @@
-sample:
-  name: txing weather BLE debug SoftDevice firmware
-  description: S115 connected-idle BLE debug firmware for txing weather devices.
-tests:
-  sample.txing.weather_ble_debug:
-    platform_allow:
-      - bm_nrf54l15dk/nrf54l15/cpuapp/s115_softdevice
-    integration_platforms:
-      - bm_nrf54l15dk/nrf54l15/cpuapp/s115_softdevice

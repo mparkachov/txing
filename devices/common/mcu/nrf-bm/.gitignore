@@ -1,8 +1,0 @@
-.venv/
-.uv-cache/
-.home/
-workspace/
-sdk/
-downloads/
-__pycache__/
-*.py[cod]

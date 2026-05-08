@@ -1,7 +1,5 @@
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 set quiet := true
 
-mod nrf_bm 'mcu/nrf-bm/justfile'
-
 @default:
     @just --list
