@@ -31,3 +31,6 @@ rig_dir := source_directory()
 
 @mock-component adapter_id="rust-debug-ble-main" *args:
     cargo run --manifest-path "{{rig_dir}}/Cargo.toml" -- mock-component --adapter-id "{{adapter_id}}" {{args}}
+
+@greengrass-doctor *args:
+    cargo run --manifest-path "{{rig_dir}}/Cargo.toml" -- greengrass-doctor {{args}}

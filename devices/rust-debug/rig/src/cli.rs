@@ -10,7 +10,7 @@ use crate::error::Result;
 #[cfg(not(feature = "ble-real"))]
 use crate::error::RigError;
 use crate::event::EventEmitter;
-use crate::greengrass::{run_greengrass_component, run_mock_component};
+use crate::greengrass::{run_greengrass_component, run_greengrass_doctor, run_mock_component};
 use crate::overnight::{Candidate, OvernightConfig, run_overnight};
 use crate::sim_ble::SimBleCentral;
 
@@ -30,6 +30,7 @@ enum Command {
     SimOvernight(OvernightArgs),
     Component(ComponentArgs),
     MockComponent(ComponentArgs),
+    GreengrassDoctor(GreengrassDoctorArgs),
 }
 
 #[derive(Debug, Args)]
@@ -110,6 +111,12 @@ pub struct ComponentArgs {
     adapter_id: String,
 }
 
+#[derive(Debug, Args)]
+pub struct GreengrassDoctorArgs {
+    #[arg(long)]
+    no_connect: bool,
+}
+
 pub async fn run() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
@@ -135,6 +142,9 @@ pub async fn run() -> Result<()> {
         }
         Command::MockComponent(args) => {
             run_mock_component(&args.adapter_id)?;
+        }
+        Command::GreengrassDoctor(args) => {
+            run_greengrass_doctor(args.no_connect)?;
         }
     }
     Ok(())

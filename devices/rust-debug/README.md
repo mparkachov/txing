@@ -79,6 +79,17 @@ with the same IPC environment that the Greengrass nucleus provides:
 `AWS_GG_NUCLEUS_DOMAIN_SOCKET_FILEPATH_FOR_COMPONENT` and `SVCUID`. Direct shell
 runs without those variables intentionally fail before the SDK starts.
 
+To distinguish a missing lifecycle environment from a real IPC socket
+permission/user issue, run:
+
+```sh
+just rust-debug::rig::greengrass-doctor
+```
+
+If the IPC environment is present, the doctor prints the current user/group,
+socket metadata, and a Unix socket connection probe result without printing the
+`SVCUID` secret value.
+
 For an SDK-free component smoke test:
 
 ```sh
