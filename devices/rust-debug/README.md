@@ -56,10 +56,17 @@ and DBus access must be available.
 
 The AWS Greengrass Component SDK crate builds bundled C sources through Rust
 build scripts. In the current 1.0.3 crate, that SDK path is Linux-only for this
-project because the crate compiles `epoll` sources. The default macOS/Linux test
-build uses the mock Greengrass service; build the real component path on Linux
-with:
+project because the crate compiles `epoll` sources. The real BLE backend is also
+an explicit `ble-real` Cargo feature so the Greengrass component build does not
+pull Linux DBus development headers just to start.
+
+The default macOS/Linux test build uses the mock Greengrass service; build the
+real component path on Linux with:
 
 ```sh
 just rust-debug::rig::component
 ```
+
+Physical BLE commands enable `ble-real`. On Linux, those commands require the
+usual BlueZ/DBus development files, for example `libdbus-1-dev` and
+`pkg-config` on Ubuntu.

@@ -6,7 +6,7 @@ description = "Rust BLE rig experiment for txing rust-debug"
 
 [dependencies]
 async-trait = "0.1"
-btleplug = "0.12"
+btleplug = { version = "0.12", optional = true }
 clap = { version = "4.5", features = ["derive"] }
 futures = "0.3"
 serde = { version = "1", features = ["derive"] }
@@ -22,4 +22,5 @@ tempfile = "3"
 
 [features]
 default = []
+ble-real = ["dep:btleplug"]
 greengrass-sdk = ["dep:aws-greengrass-component-sdk"]

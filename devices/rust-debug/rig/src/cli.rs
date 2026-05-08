@@ -3,9 +3,12 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand};
 
 use crate::ble::BleCentral;
+#[cfg(feature = "ble-real")]
 use crate::btleplug_ble::BtleplugBleCentral;
 use crate::cycle::{CycleConfig, TimeMode, run_cycle_test};
 use crate::error::Result;
+#[cfg(not(feature = "ble-real"))]
+use crate::error::RigError;
 use crate::event::EventEmitter;
 use crate::greengrass::run_greengrass_component;
 use crate::overnight::{Candidate, OvernightConfig, run_overnight};
@@ -110,19 +113,14 @@ pub async fn run() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::Test(args) => {
-            let mut central = BtleplugBleCentral::new();
-            run_cycle_command(args, TimeMode::Real, &mut central).await?;
+            run_real_cycle_command(args).await?;
         }
         Command::SimTest(args) => {
             let mut central = SimBleCentral::default();
             run_cycle_command(args, TimeMode::Virtual, &mut central).await?;
         }
         Command::Overnight(args) => {
-            let config = overnight_config(args);
-            let mut factory = |_candidate: &Candidate| -> Box<dyn BleCentral + Send> {
-                Box::new(BtleplugBleCentral::new())
-            };
-            let _ = run_overnight(config, TimeMode::Real, &mut factory).await?;
+            run_real_overnight_command(args).await?;
         }
         Command::SimOvernight(args) => {
             let config = overnight_config(args);
@@ -136,6 +134,38 @@ pub async fn run() -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(feature = "ble-real")]
+async fn run_real_cycle_command(args: CycleArgs) -> Result<()> {
+    let mut central = BtleplugBleCentral::new();
+    run_cycle_command(args, TimeMode::Real, &mut central).await
+}
+
+#[cfg(not(feature = "ble-real"))]
+async fn run_real_cycle_command(_args: CycleArgs) -> Result<()> {
+    Err(RigError::new(
+        "ble",
+        "build with --features ble-real to run physical BLE cycle tests",
+    ))
+}
+
+#[cfg(feature = "ble-real")]
+async fn run_real_overnight_command(args: OvernightArgs) -> Result<()> {
+    let config = overnight_config(args);
+    let mut factory = |_candidate: &Candidate| -> Box<dyn BleCentral + Send> {
+        Box::new(BtleplugBleCentral::new())
+    };
+    let _ = run_overnight(config, TimeMode::Real, &mut factory).await?;
+    Ok(())
+}
+
+#[cfg(not(feature = "ble-real"))]
+async fn run_real_overnight_command(_args: OvernightArgs) -> Result<()> {
+    Err(RigError::new(
+        "ble",
+        "build with --features ble-real to run physical BLE overnight tests",
+    ))
 }
 
 async fn run_cycle_command(

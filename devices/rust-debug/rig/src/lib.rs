@@ -1,4 +1,5 @@
 pub mod ble;
+#[cfg(feature = "ble-real")]
 pub mod btleplug_ble;
 pub mod cli;
 pub mod component;
