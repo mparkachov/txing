@@ -742,6 +742,18 @@ async def run_overnight(args: argparse.Namespace) -> int:
     stats_by_candidate: dict[str, CandidateStats] = {}
     candidates: list[Candidate] = []
     best: CandidateStats | None = None
+
+    def write_outputs(phase: str) -> None:
+        write_summary(
+            output_dir,
+            args=args,
+            candidates=candidates,
+            stats_by_candidate=stats_by_candidate,
+            best=best,
+            phase=phase,
+        )
+        write_report(output_dir, best=best, stats_by_candidate=stats_by_candidate)
+
     try:
         candidates = build_candidates(args)
         stats_by_candidate = {
@@ -774,16 +786,10 @@ async def run_overnight(args: argparse.Namespace) -> int:
                 requireService=int(candidate.central_profile.require_service),
             )
 
+        write_outputs("planned")
+
         if args.dry_run:
-            write_summary(
-                output_dir,
-                args=args,
-                candidates=candidates,
-                stats_by_candidate=stats_by_candidate,
-                best=None,
-                phase="dry-run",
-            )
-            write_report(output_dir, best=None, stats_by_candidate=stats_by_candidate)
+            write_outputs("dry-run")
             emit("summary", command="overnight", phase="dry-run", outputDir=output_dir)
             return 0
 
@@ -802,15 +808,7 @@ async def run_overnight(args: argparse.Namespace) -> int:
             result = await run_trial(args, candidate, args.trial_cycles, phase="matrix")
             stats_by_candidate[candidate.name].record(result)
             best = choose_best(stats_by_candidate)
-            write_summary(
-                output_dir,
-                args=args,
-                candidates=candidates,
-                stats_by_candidate=stats_by_candidate,
-                best=best,
-                phase="matrix",
-            )
-            write_report(output_dir, best=best, stats_by_candidate=stats_by_candidate)
+            write_outputs("matrix")
             if (
                 not result.success
                 and args.failure_recovery_delay > 0
@@ -855,15 +853,7 @@ async def run_overnight(args: argparse.Namespace) -> int:
             stats_by_candidate[best.candidate.name].record(result)
             best = choose_best(stats_by_candidate)
 
-        write_summary(
-            output_dir,
-            args=args,
-            candidates=candidates,
-            stats_by_candidate=stats_by_candidate,
-            best=best,
-            phase="complete",
-        )
-        write_report(output_dir, best=best, stats_by_candidate=stats_by_candidate)
+        write_outputs("complete")
         emit(
             "summary",
             command="overnight",
@@ -873,17 +863,21 @@ async def run_overnight(args: argparse.Namespace) -> int:
             best=best.candidate.name if best is not None else "",
         )
         return 0
+    except asyncio.CancelledError:
+        emit("error", stage="signal", message="interrupted")
+        write_outputs("interrupted")
+        emit(
+            "summary",
+            command="overnight",
+            outputDir=output_dir,
+            report=output_dir / "report.md",
+            summaryJson=output_dir / "summary.json",
+            interrupted=1,
+        )
+        return 130
     except Exception as exc:  # noqa: BLE001 - leave an analysis file instead of a traceback.
         emit("error", stage="overnight", message=str(exc) or exc.__class__.__name__)
-        write_summary(
-            output_dir,
-            args=args,
-            candidates=candidates,
-            stats_by_candidate=stats_by_candidate,
-            best=best,
-            phase="failed",
-        )
-        write_report(output_dir, best=best, stats_by_candidate=stats_by_candidate)
+        write_outputs("failed")
         emit(
             "summary",
             command="overnight",
