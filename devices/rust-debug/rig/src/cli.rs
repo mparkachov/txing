@@ -10,7 +10,7 @@ use crate::error::Result;
 #[cfg(not(feature = "ble-real"))]
 use crate::error::RigError;
 use crate::event::EventEmitter;
-use crate::greengrass::run_greengrass_component;
+use crate::greengrass::{run_greengrass_component, run_mock_component};
 use crate::overnight::{Candidate, OvernightConfig, run_overnight};
 use crate::sim_ble::SimBleCentral;
 
@@ -29,6 +29,7 @@ enum Command {
     Overnight(OvernightArgs),
     SimOvernight(OvernightArgs),
     Component(ComponentArgs),
+    MockComponent(ComponentArgs),
 }
 
 #[derive(Debug, Args)]
@@ -131,6 +132,9 @@ pub async fn run() -> Result<()> {
         }
         Command::Component(args) => {
             run_greengrass_component(&args.adapter_id)?;
+        }
+        Command::MockComponent(args) => {
+            run_mock_component(&args.adapter_id)?;
         }
     }
     Ok(())

@@ -6,6 +6,26 @@ use std::time::Duration;
 use crate::error::{Result, RigError};
 #[cfg(all(feature = "greengrass-sdk", target_os = "linux"))]
 use crate::pubsub::{ConnectivityHeartbeat, build_heartbeat_topic, now_ms};
+#[cfg(not(all(feature = "greengrass-sdk", target_os = "linux")))]
+use crate::pubsub::{ConnectivityHeartbeat, build_heartbeat_topic, now_ms};
+
+pub fn run_mock_component(adapter_id: &str) -> Result<()> {
+    let heartbeat = ConnectivityHeartbeat {
+        schema_version: crate::pubsub::SCHEMA_VERSION.to_string(),
+        adapter_id: adapter_id.to_string(),
+        status: "running".to_string(),
+        active_thing_name: None,
+        observed_at_ms: now_ms(),
+        seq: 1,
+    }
+    .to_json()?;
+    println!(
+        "mock-greengrass publish topic={} payload={}",
+        build_heartbeat_topic(adapter_id),
+        String::from_utf8_lossy(&heartbeat)
+    );
+    Ok(())
+}
 
 #[cfg(all(feature = "greengrass-sdk", target_os = "linux"))]
 pub fn run_greengrass_component(adapter_id: &str) -> Result<()> {

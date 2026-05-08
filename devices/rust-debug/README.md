@@ -67,6 +67,19 @@ real component path on Linux with:
 just rust-debug::rig::component
 ```
 
+That command compiles the AWS SDK crate and requires a native C/clang toolchain.
+On Ubuntu-class hosts, install:
+
+```sh
+sudo apt install build-essential clang libclang-dev libc6-dev
+```
+
+For an SDK-free component smoke test:
+
+```sh
+just rust-debug::rig::mock-component
+```
+
 Physical BLE commands enable `ble-real`. On Linux, those commands require the
 usual BlueZ/DBus development files, for example `libdbus-1-dev` and
 `pkg-config` on Ubuntu.
