@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -28,6 +29,7 @@ pub struct BtleplugBleCentral {
     command_char: Option<Characteristic>,
     state_char: Option<Characteristic>,
     notifications: Option<Arc<Mutex<NotificationStream>>>,
+    last_rssi_by_address: HashMap<String, i16>,
 }
 
 impl BtleplugBleCentral {
@@ -80,27 +82,42 @@ impl BtleplugBleCentral {
                     .local_name
                     .clone()
                     .or_else(|| peripheral_name_blocking(&peripheral));
+                let address = properties.address.to_string();
+                if let Some(rssi) = properties.rssi {
+                    self.last_rssi_by_address.insert(address.clone(), rssi);
+                }
                 let service_matches = properties.services.iter().any(|uuid| *uuid == service_uuid);
                 let name_matches = name.as_deref() == Some(config.name.as_str());
                 if name_matches {
-                    events.emit(
-                        "adv",
-                        &[
-                            ("name", name.clone().unwrap_or_else(|| config.name.clone())),
-                            ("address", properties.address.to_string()),
-                            (
-                                "rssi",
-                                properties
-                                    .rssi
-                                    .map(|value| value.to_string())
-                                    .unwrap_or_else(|| "unknown".to_string()),
-                            ),
-                            (
-                                "service",
-                                if service_matches { "1" } else { "0" }.to_string(),
-                            ),
-                        ],
-                    );
+                    let mut fields = vec![
+                        ("name", name.clone().unwrap_or_else(|| config.name.clone())),
+                        ("address", address.clone()),
+                    ];
+                    match properties
+                        .rssi
+                        .or_else(|| self.last_rssi_by_address.get(&address).copied())
+                    {
+                        Some(rssi) => {
+                            fields.push(("rssi", rssi.to_string()));
+                            fields.push((
+                                "rssiSource",
+                                if properties.rssi.is_some() {
+                                    "advertisement"
+                                } else {
+                                    "cached"
+                                }
+                                .to_string(),
+                            ));
+                        }
+                        None => {
+                            fields.push(("rssiSource", "unavailable".to_string()));
+                        }
+                    }
+                    fields.push((
+                        "service",
+                        if service_matches { "1" } else { "0" }.to_string(),
+                    ));
+                    events.emit("adv", &fields);
                 }
                 if name_matches && (!config.require_service || service_matches) {
                     found = Some(peripheral);

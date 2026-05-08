@@ -44,6 +44,15 @@ just rust-debug::rig::test
 just rust-debug::rig::test 60 weather-q8zbgb --conn-profile stable-100-0-20
 ```
 
+`just rust-debug::rig::test` runs an ignored Rust test through `cargo test`.
+Detailed cycle logs are written under `/tmp/rust-debug-rig-test-results/` and
+the test output prints the exact `cycle.log` path. For direct CLI debugging
+without the Rust test harness, use:
+
+```sh
+just rust-debug::rig::run-test
+```
+
 Physical BLE overnight matrix:
 
 ```sh

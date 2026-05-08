@@ -1,4 +1,9 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::fs::File;
+use std::io::Write;
+use std::path::Path;
+use std::sync::{Arc, Mutex};
+
+use chrono::{Local, SecondsFormat};
 
 pub type EventField<'a> = (&'a str, String);
 
@@ -32,8 +37,18 @@ impl EventEmitter {
         self.sinks.push(Box::new(sink));
     }
 
+    pub fn add_file_sink(&mut self, path: impl AsRef<Path>) -> std::io::Result<()> {
+        let file = Arc::new(Mutex::new(File::create(path)?));
+        self.add_sink(move |line| {
+            if let Ok(mut file) = file.lock() {
+                let _ = writeln!(file, "{line}");
+            }
+        });
+        Ok(())
+    }
+
     pub fn emit(&mut self, event: &str, fields: &[EventField<'_>]) {
-        let mut line = format!("{} {}", unix_ms(), event);
+        let mut line = format!("{} {}", local_timestamp(), event);
         for (key, value) in fields {
             line.push(' ');
             line.push_str(key);
@@ -66,11 +81,12 @@ pub fn parse_event_line(line: &str) -> (String, Vec<(String, String)>) {
     (event, fields)
 }
 
-fn unix_ms() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis()
+pub fn local_timestamp() -> String {
+    Local::now().to_rfc3339_opts(SecondsFormat::Millis, false)
+}
+
+pub fn local_timestamp_for_path() -> String {
+    Local::now().format("%Y%m%d-%H%M%S%.3f").to_string()
 }
 
 fn format_value(value: &str) -> String {

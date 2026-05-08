@@ -15,7 +15,10 @@ rig_dir := source_directory()
 @sim-overnight name="weather-q8zbgb" *args:
     cargo run --manifest-path "{{rig_dir}}/Cargo.toml" -- sim-overnight --name "{{name}}" {{args}}
 
-@test repetitions="1" name="weather-q8zbgb" *args:
+@test repetitions="5" name="weather-q8zbgb" *args:
+    RUST_DEBUG_RIG_REPETITIONS="{{repetitions}}" RUST_DEBUG_RIG_NAME="{{name}}" RUST_DEBUG_RIG_TEST_ARGS="{{args}}" cargo test --manifest-path "{{rig_dir}}/Cargo.toml" --features ble-real physical_ble_focused_cycle -- --ignored --nocapture
+
+@run-test repetitions="5" name="weather-q8zbgb" *args:
     cargo run --manifest-path "{{rig_dir}}/Cargo.toml" --features ble-real -- test --repetitions "{{repetitions}}" --name "{{name}}" {{args}}
 
 @overnight name="weather-q8zbgb" *args:

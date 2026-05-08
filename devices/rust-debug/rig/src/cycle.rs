@@ -1,8 +1,9 @@
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use crate::ble::{BleCentral, BleConnectConfig, TimedState};
 use crate::error::{Result, RigError};
-use crate::event::EventEmitter;
+use crate::event::{EventEmitter, local_timestamp_for_path};
 use crate::protocol::{
     ConnectionParams, REDCON_ACTIVE, REDCON_IDLE, WeatherState, connection_fields,
     resolve_connection_profiles,
@@ -42,6 +43,13 @@ pub struct CycleSummary {
     pub battery_values: Vec<u16>,
     pub wake_latencies_ms: Vec<u128>,
     pub connect_ms: Vec<u128>,
+}
+
+#[derive(Debug, Clone)]
+pub struct LoggedCycleRun {
+    pub summary: CycleSummary,
+    pub output_dir: PathBuf,
+    pub log_path: PathBuf,
 }
 
 impl CycleConfig {
@@ -113,6 +121,68 @@ impl CycleConfig {
         let index = ((cycle - 1) / block) as usize % self.resolved_conn_profiles.len();
         self.resolved_conn_profiles[index].as_ref()
     }
+}
+
+pub fn default_cycle_output_dir() -> PathBuf {
+    std::env::temp_dir()
+        .join("rust-debug-rig-test-results")
+        .join(format!(
+            "{}-{}",
+            local_timestamp_for_path(),
+            std::process::id()
+        ))
+}
+
+pub async fn run_logged_cycle_test(
+    central: &mut dyn BleCentral,
+    config: &mut CycleConfig,
+    time_mode: TimeMode,
+    output_dir: Option<PathBuf>,
+    stdout: bool,
+) -> Result<LoggedCycleRun> {
+    let output_dir = output_dir.unwrap_or_else(default_cycle_output_dir);
+    std::fs::create_dir_all(&output_dir).map_err(|err| {
+        RigError::new(
+            "log",
+            format!(
+                "failed to create output directory {}: {err}",
+                output_dir.display()
+            ),
+        )
+    })?;
+    let log_path = output_dir.join("cycle.log");
+    let mut events = if stdout {
+        EventEmitter::stdout()
+    } else {
+        EventEmitter::quiet()
+    };
+    events.add_file_sink(&log_path).map_err(|err| {
+        RigError::new(
+            "log",
+            format!("failed to create log file {}: {err}", log_path.display()),
+        )
+    })?;
+    events.emit(
+        "log-file",
+        &[
+            ("path", log_path.display().to_string()),
+            ("outputDir", output_dir.display().to_string()),
+        ],
+    );
+    let summary = run_cycle_test(central, config, time_mode, &mut events).await?;
+    events.emit(
+        "summary",
+        &[
+            ("command", "logged-test".to_string()),
+            ("log", log_path.display().to_string()),
+            ("outputDir", output_dir.display().to_string()),
+        ],
+    );
+    Ok(LoggedCycleRun {
+        summary,
+        output_dir,
+        log_path,
+    })
 }
 
 pub async fn run_cycle_test(

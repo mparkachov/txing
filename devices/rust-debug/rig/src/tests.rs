@@ -1,7 +1,11 @@
 use std::time::Duration;
 
 use crate::ble::BleCentral;
+#[cfg(feature = "ble-real")]
+use crate::btleplug_ble::BtleplugBleCentral;
 use crate::component::BleConnectivityComponent;
+#[cfg(feature = "ble-real")]
+use crate::cycle::run_logged_cycle_test;
 use crate::cycle::{CycleConfig, TimeMode, run_cycle_test};
 use crate::event::EventEmitter;
 use crate::overnight::{Candidate, OvernightConfig, run_overnight};
@@ -191,4 +195,135 @@ async fn ignored_wall_clock_simulated_cycle_soak() {
         .unwrap();
     assert_eq!(summary.passed_cycles, 1);
     tokio::time::sleep(Duration::from_millis(1)).await;
+}
+
+#[cfg(feature = "ble-real")]
+#[tokio::test]
+#[ignore = "requires a physical BLE weather-q8zbgb device and host Bluetooth access"]
+async fn physical_ble_focused_cycle() {
+    let mut config = focused_physical_config_from_env();
+    apply_physical_extra_args(&mut config);
+    let output_dir = physical_output_dir();
+    let mut central = BtleplugBleCentral::new();
+    let run = run_logged_cycle_test(&mut central, &mut config, TimeMode::Real, output_dir, false)
+        .await
+        .unwrap();
+    println!("log={}", run.log_path.display());
+    println!("outputDir={}", run.output_dir.display());
+    println!("passedCycles={}", run.summary.passed_cycles);
+    assert_eq!(run.summary.passed_cycles, config.repetitions);
+}
+
+#[cfg(feature = "ble-real")]
+fn focused_physical_config_from_env() -> CycleConfig {
+    let name = std::env::var("RUST_DEBUG_RIG_NAME").unwrap_or_else(|_| "weather-q8zbgb".into());
+    let mut config = CycleConfig::default_for_name(name).unwrap();
+    config.repetitions = env_parse("RUST_DEBUG_RIG_REPETITIONS", 5);
+    config.conn_profile = vec![env_string("RUST_DEBUG_RIG_CONN_PROFILE", "fast-50-0-20")];
+    config.scan_timeout = env_parse("RUST_DEBUG_RIG_SCAN_TIMEOUT", 120.0);
+    config.connect_timeout = env_parse("RUST_DEBUG_RIG_CONNECT_TIMEOUT", 60.0);
+    config.connect_attempts = env_parse("RUST_DEBUG_RIG_CONNECT_ATTEMPTS", 5);
+    config.retry_delay = env_parse("RUST_DEBUG_RIG_RETRY_DELAY", 5.0);
+    config.disconnect_deadline = env_parse("RUST_DEBUG_RIG_DISCONNECT_DEADLINE", 10.0);
+    config.require_service = false;
+    config
+}
+
+#[cfg(feature = "ble-real")]
+fn env_string(name: &str, default: &str) -> String {
+    std::env::var(name).unwrap_or_else(|_| default.to_string())
+}
+
+#[cfg(feature = "ble-real")]
+fn env_parse<T>(name: &str, default: T) -> T
+where
+    T: std::str::FromStr + Copy,
+{
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(default)
+}
+
+#[cfg(feature = "ble-real")]
+fn apply_physical_extra_args(config: &mut CycleConfig) {
+    let Ok(args) = std::env::var("RUST_DEBUG_RIG_TEST_ARGS") else {
+        return;
+    };
+    let mut tokens = args.split_whitespace();
+    while let Some(token) = tokens.next() {
+        let (flag, inline_value) = token
+            .split_once('=')
+            .map_or((token, None), |(flag, value)| (flag, Some(value)));
+        let mut next_value = || inline_value.or_else(|| tokens.next());
+        match flag {
+            "--conn-profile" => {
+                if let Some(value) = next_value() {
+                    config.conn_profile = vec![value.to_string()];
+                }
+            }
+            "--repetitions" => set_u32(&mut config.repetitions, next_value()),
+            "--name" => {
+                if let Some(value) = next_value() {
+                    config.name = value.to_string();
+                }
+            }
+            "--scan-timeout" => set_f64(&mut config.scan_timeout, next_value()),
+            "--connect-timeout" => set_f64(&mut config.connect_timeout, next_value()),
+            "--connect-attempts" => set_u32(&mut config.connect_attempts, next_value()),
+            "--retry-delay" => set_f64(&mut config.retry_delay, next_value()),
+            "--disconnect-deadline" => set_f64(&mut config.disconnect_deadline, next_value()),
+            "--wake-seconds" => set_f64(&mut config.wake_seconds, next_value()),
+            "--cycle-seconds" => set_f64(&mut config.cycle_seconds, next_value()),
+            "--wake-deadline" => set_f64(&mut config.wake_deadline, next_value()),
+            "--sleep-deadline" => set_f64(&mut config.sleep_deadline, next_value()),
+            "--min-battery" => set_usize(&mut config.min_battery, next_value()),
+            "--conn-profile-cycles" => set_u32(&mut config.conn_profile_cycles, next_value()),
+            "--output-dir" => {
+                let _ = next_value();
+            }
+            "--no-require-service" => config.require_service = false,
+            "--require-service" => config.require_service = true,
+            _ => {}
+        }
+    }
+}
+
+#[cfg(feature = "ble-real")]
+fn physical_output_dir() -> Option<std::path::PathBuf> {
+    if let Some(path) = std::env::var_os("RUST_DEBUG_RIG_OUTPUT_DIR") {
+        return Some(std::path::PathBuf::from(path));
+    }
+    let args = std::env::var("RUST_DEBUG_RIG_TEST_ARGS").ok()?;
+    let mut tokens = args.split_whitespace();
+    while let Some(token) = tokens.next() {
+        if let Some(value) = token.strip_prefix("--output-dir=") {
+            return Some(std::path::PathBuf::from(value));
+        }
+        if token == "--output-dir" {
+            return tokens.next().map(std::path::PathBuf::from);
+        }
+    }
+    None
+}
+
+#[cfg(feature = "ble-real")]
+fn set_f64(target: &mut f64, value: Option<&str>) {
+    if let Some(parsed) = value.and_then(|value| value.parse().ok()) {
+        *target = parsed;
+    }
+}
+
+#[cfg(feature = "ble-real")]
+fn set_u32(target: &mut u32, value: Option<&str>) {
+    if let Some(parsed) = value.and_then(|value| value.parse().ok()) {
+        *target = parsed;
+    }
+}
+
+#[cfg(feature = "ble-real")]
+fn set_usize(target: &mut usize, value: Option<&str>) {
+    if let Some(parsed) = value.and_then(|value| value.parse().ok()) {
+        *target = parsed;
+    }
 }

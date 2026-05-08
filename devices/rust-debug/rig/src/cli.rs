@@ -5,11 +5,10 @@ use clap::{Args, Parser, Subcommand};
 use crate::ble::BleCentral;
 #[cfg(feature = "ble-real")]
 use crate::btleplug_ble::BtleplugBleCentral;
-use crate::cycle::{CycleConfig, TimeMode, run_cycle_test};
+use crate::cycle::{CycleConfig, TimeMode, run_logged_cycle_test};
 use crate::error::Result;
 #[cfg(not(feature = "ble-real"))]
 use crate::error::RigError;
-use crate::event::EventEmitter;
 use crate::greengrass::{run_greengrass_component, run_greengrass_doctor, run_mock_component};
 use crate::overnight::{Candidate, OvernightConfig, run_overnight};
 use crate::sim_ble::SimBleCentral;
@@ -69,6 +68,8 @@ pub struct CycleArgs {
     conn_params: Vec<String>,
     #[arg(long, default_value_t = 1)]
     conn_profile_cycles: u32,
+    #[arg(long)]
+    output_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -187,9 +188,10 @@ async fn run_cycle_command(
     time_mode: TimeMode,
     central: &mut dyn BleCentral,
 ) -> Result<()> {
+    let output_dir = args.output_dir.clone();
     let mut config = cycle_config(args)?;
-    let mut events = EventEmitter::stdout();
-    let _ = run_cycle_test(central, &mut config, time_mode, &mut events).await?;
+    let run = run_logged_cycle_test(central, &mut config, time_mode, output_dir, true).await?;
+    println!("log={}", run.log_path.display());
     Ok(())
 }
 
