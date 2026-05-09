@@ -114,7 +114,7 @@ impl AwsRegistryClient {
                     continue;
                 }
             };
-            if registration.rig_id.as_deref() != Some(rig_id) {
+            if !is_managed_device_registration(&registration, rig_id) {
                 continue;
             }
             let type_record = match type_cache.get(&registration.thing_type) {
@@ -251,6 +251,10 @@ fn normalize_attribute(value: Option<&String>) -> Option<String> {
         .map(ToString::to_string)
 }
 
+fn is_managed_device_registration(registration: &ThingRegistration, rig_id: &str) -> bool {
+    registration.thing_name != rig_id && registration.rig_id.as_deref() == Some(rig_id)
+}
+
 struct MqttSession {
     client: AsyncClientHandle,
     seq: u64,
@@ -263,13 +267,16 @@ impl MqttSession {
         spec: crate::manager::MqttSessionSpec,
         event_sender: Option<mpsc::UnboundedSender<RuntimeEvent>>,
     ) -> Result<Self> {
+        let client_id = spec.client_id.clone();
+        let will_topic = spec.will.topic.clone();
+        eprintln!("connecting Sparkplug MQTT clientId={client_id} willTopic={will_topic}");
         let sigv4_options = WebsocketSigv4OptionsBuilder::new(region).await.build();
         let will = PublishPacket::builder(spec.will.topic.clone(), QualityOfService::AtLeastOnce)
             .with_payload(spec.will.payload)
             .build();
         let mut connect_options = gneiss_mqtt::client::config::ConnectOptions::builder();
         connect_options
-            .with_client_id(&spec.client_id)
+            .with_client_id(&client_id)
             .with_keep_alive_interval_seconds(Some(MQTT_KEEP_ALIVE_SECONDS))
             .with_will(will);
         let client = AwsClientBuilder::new_websockets_with_sigv4(endpoint, sigv4_options, None)?
@@ -291,6 +298,7 @@ impl MqttSession {
             }) as Arc<gneiss_mqtt::client::ClientEventListenerCallback>
         });
         client.start(listener)?;
+        eprintln!("started Sparkplug MQTT clientId={client_id}");
         Ok(Self { client, seq: 0 })
     }
 
@@ -960,6 +968,25 @@ mod tests {
             parse_dcmd_topic("spBv1.0/town-1/DCMD/rig-1/time-1/extra", "town-1", "rig-1"),
             None
         );
+    }
+
+    #[test]
+    fn managed_device_registration_excludes_rig_thing_itself() {
+        let rig = ThingRegistration {
+            thing_name: "cloud-1".to_string(),
+            thing_type: "cloud".to_string(),
+            rig_id: Some("cloud-1".to_string()),
+            town_id: Some("town-1".to_string()),
+        };
+        let device = ThingRegistration {
+            thing_name: "time-1".to_string(),
+            thing_type: "time".to_string(),
+            rig_id: Some("cloud-1".to_string()),
+            town_id: Some("town-1".to_string()),
+        };
+
+        assert!(!is_managed_device_registration(&rig, "cloud-1"));
+        assert!(is_managed_device_registration(&device, "cloud-1"));
     }
 
     #[test]
