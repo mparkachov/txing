@@ -39,6 +39,50 @@ single-process CLI:
   - should implement the same connectivity contract using Matter ICD reachability instead of BLE rendezvous
   - must not publish Sparkplug node lifecycle
 
+## BLE REDCON Architecture
+
+REDCON is the common lifecycle contract for txing BLE devices. The shared rig
+BLE discovery path should stay device-agnostic: it publishes advertisements
+with address, local name, RSSI, service UUIDs, manufacturer data, and service
+data. New device types should not add a separate BLE manager or scanner only
+because they expose additional characteristics.
+
+Current assumption: REDCON GATT v1 uses one common UUID set for the base
+lifecycle contract across BLE device types.
+
+```text
+redcon service  f6b4b000-7b32-4d2d-9f4b-4ff0a2b8f100
+redcon command  f6b4b001-7b32-4d2d-9f4b-4ff0a2b8f100
+redcon state    f6b4b002-7b32-4d2d-9f4b-4ff0a2b8f100
+```
+
+- the REDCON state characteristic is the common observable lifecycle and battery
+  surface
+- the REDCON command characteristic is present for device types that accept
+  lifecycle commands; read-only devices may omit it and still report REDCON
+  state
+- device-specific functionality should be layered on top of REDCON as extra
+  characteristics or extra services
+- weather telemetry can use an additional measurement characteristic, currently
+  assumed to be `f6b4b003-7b32-4d2d-9f4b-4ff0a2b8f100`, while keeping the same
+  REDCON service, command, and state UUIDs
+- a new service UUID set is reserved for a breaking change to the base REDCON
+  contract or for a deliberate discovery-level distinction of a fundamentally
+  different BLE contract; it is not needed for normal telemetry additions or
+  configuration differences
+
+Rig implementation should keep one shared BLE discovery/scanner component, one
+reusable REDCON client/parser for the common service/command/state behavior, and
+per-device connectivity adapters for extra characteristics and metric mapping.
+For example, `power` is REDCON-only while `weather` is REDCON plus weather
+measurements. Adapter behavior should come from the device type, manifest, or
+catalog, not from starting one BLE manager per UUID set.
+
+If a future REDCON version needs different UUIDs during a migration, the shared
+BLE scanner should still remain common. The rig can add a REDCON profile
+registry or client selection layer above discovery instead of duplicating BLE
+management.
+
 ## Current Runtime Model
 
 - managed devices come from AWS IoT Fleet Indexing with `attributes.rigId=<TXING_RIG_ID>`
