@@ -16,3 +16,6 @@
 [submodule "devices/common/mcu/modules/lib/picolibc"]
 	path = devices/common/mcu/modules/lib/picolibc
 	url = https://github.com/zephyrproject-rtos/picolibc.git
+[submodule "devices/common/mcu/ncs/nrf"]
+	path = devices/common/mcu/ncs/nrf
+	url = https://github.com/nrfconnect/sdk-nrf.git

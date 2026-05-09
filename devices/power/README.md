@@ -13,31 +13,32 @@ factory/NVE area, not compiled into the firmware image.
 Install host tools manually:
 
 ```sh
-brew install arm-none-eabi-gcc arm-none-eabi-binutils open-ocd
+brew install cmake ninja dtc open-ocd
 ```
 
-Initialize repo-local firmware submodules:
+Initialize the repo-local NCS manifest submodule:
 
 ```sh
 just power::mcu::submodules
 ```
 
-Create the Zephyr Python environment and validate the Homebrew toolchain:
+Create the NCS west workspace, Python environment, and local Zephyr SDK:
 
 ```sh
 just power::mcu::install
 ```
 
-Override the compiler prefix only when needed:
+Override the Python used to create the NCS environment only when needed:
 
 ```sh
-export POWER_MCU_CROSS_COMPILE=/opt/homebrew/bin/arm-none-eabi-
+export POWER_MCU_NCS_PYTHON=/opt/homebrew/bin/python3.13
 ```
 
 ## Build
 
-The firmware uses the standard Zephyr application configuration flow. Build-time
-values live in `mcu/zephyr/prj.conf`, and REDCON Kconfig symbols are defined in
+The firmware uses stock nRF Connect SDK `west build` with the built-in Seeed
+board identifier `xiao_nrf54l15/nrf54l15/cpuapp`. Build-time values live in
+`mcu/zephyr/prj.conf`, and REDCON Kconfig symbols are defined in
 `mcu/zephyr/Kconfig`. Build and flash commands do not take a profile argument.
 
 ```sh
@@ -50,7 +51,7 @@ just power::mcu::flash-check
 The build output is:
 
 ```text
-devices/power/mcu/build/zephyr-xiao_nrf54l15_cpuapp-brew/zephyr/zephyr.hex
+devices/power/mcu/build/ncs-xiao_nrf54l15_cpuapp/zephyr/zephyr/zephyr.hex
 ```
 
 ## Factory/NVE Data
@@ -75,7 +76,7 @@ just power::mcu::nve-check weather-q8zbgb
 Program the NVE record manually when hardware is connected:
 
 ```sh
-just power::mcu::nve-program weather-q8zbgb
+just power::mcu::nve-flash weather-q8zbgb
 ```
 
 ## Flash
@@ -87,6 +88,9 @@ just power::mcu::flash
 ```
 
 Agents must not run `flash` or physical BLE tests automatically.
+
+The flash path intentionally uses OpenOCD with the NCS Zephyr Seeed board
+configuration. No `nrfutil` runner is used by this subproject.
 
 ## Firmware Behavior
 
