@@ -170,6 +170,40 @@ class TimeAwsConnectivityBridgeTests(unittest.TestCase):
         )
         self.assertEqual(state.metrics["currentTimeIso"].value, "2024-04-29T07:20:00Z")
 
+    def test_heartbeat_refreshes_latest_capability_state(self) -> None:
+        async def exercise() -> list[CapabilityState]:
+            bus = InMemoryLocalPubSub()
+            states: list[CapabilityState] = []
+
+            async def state_handler(_topic: str, payload: bytes) -> None:
+                states.append(CapabilityState.from_payload(payload))
+
+            await bus.subscribe(build_capability_state_topic("clock", "time-aws"), state_handler)
+            bridge = TimeAwsConnectivityBridge(
+                TimeAwsConnectivityConfig(endpoint="endpoint", aws_region="eu-central-1"),
+                bus=bus,
+                connection_factory=FakeConnection,
+            )
+            time_state = TimeDeviceState(
+                thing_name="clock",
+                current_time_iso="2024-04-29T07:20:00Z",
+                mode=TIME_MODE_ACTIVE,
+                active_until_ms=1714380300000,
+                last_command_id="cmd-1",
+                observed_at_ms=1714380000000,
+                mcp_available=True,
+            )
+            await bridge.publish_connectivity_state(time_state)
+            await bridge._publish_heartbeat(7)
+            return states
+
+        states = asyncio.run(exercise())
+
+        self.assertEqual(len(states), 2)
+        self.assertEqual(states[0].observed_at_ms, 1714380000000)
+        self.assertGreater(states[1].observed_at_ms, states[0].observed_at_ms)
+        self.assertEqual(states[1].capabilities, states[0].capabilities)
+
     def test_command_result_is_forwarded_to_local_pubsub(self) -> None:
         async def exercise() -> CapabilityCommandResult:
             bus = InMemoryLocalPubSub()

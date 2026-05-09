@@ -86,6 +86,7 @@ class TimeAwsConnectivityBridge:
         self._connection: Any | None = None
         self._managed_things: set[str] = set()
         self._pending_command_redcon: dict[str, int] = {}
+        self._latest_time_states: dict[str, TimeDeviceState] = {}
         self._seq = 0
         self._loop: asyncio.AbstractEventLoop | None = None
         self._local_subscriptions: list[object] = []
@@ -248,7 +249,13 @@ class TimeAwsConnectivityBridge:
                 ).to_json(),
             )
 
-    async def publish_connectivity_state(self, state: TimeDeviceState) -> None:
+    async def publish_connectivity_state(
+        self,
+        state: TimeDeviceState,
+        *,
+        observed_at_ms: int | None = None,
+    ) -> None:
+        self._latest_time_states[state.thing_name] = state
         self._seq += 1
         metrics: dict[str, SparkplugMetricValue] = {
             "currentTimeIso": SparkplugMetricValue("String", state.current_time_iso),
@@ -268,7 +275,7 @@ class TimeAwsConnectivityBridge:
                 MCP_CAPABILITY: state.mcp_available,
             },
             metrics=metrics,
-            observed_at_ms=state.observed_at_ms,
+            observed_at_ms=observed_at_ms if observed_at_ms is not None else state.observed_at_ms,
             seq=self._seq,
         )
         await self._bus.publish(
@@ -276,20 +283,26 @@ class TimeAwsConnectivityBridge:
             capability_state.to_json(),
         )
 
+    async def _publish_heartbeat(self, seq: int) -> None:
+        observed_at_ms = utc_timestamp_ms()
+        await self._bus.publish(
+            build_capability_heartbeat_topic(self._config.adapter_id),
+            CapabilityHeartbeat(
+                adapter_id=self._config.adapter_id,
+                status=HEARTBEAT_RUNNING,
+                active_thing_name=None,
+                observed_at_ms=observed_at_ms,
+                seq=seq,
+            ).to_json(),
+        )
+        for state in self._latest_time_states.values():
+            await self.publish_connectivity_state(state, observed_at_ms=observed_at_ms)
+
     async def _heartbeat_loop(self) -> None:
         seq = 0
         while True:
             seq += 1
-            await self._bus.publish(
-                build_capability_heartbeat_topic(self._config.adapter_id),
-                CapabilityHeartbeat(
-                    adapter_id=self._config.adapter_id,
-                    status=HEARTBEAT_RUNNING,
-                    active_thing_name=None,
-                    observed_at_ms=utc_timestamp_ms(),
-                    seq=seq,
-                ).to_json(),
-            )
+            await self._publish_heartbeat(seq)
             await asyncio.sleep(self._config.heartbeat_interval)
 
 
