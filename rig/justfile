@@ -345,6 +345,8 @@ build-native:
       -DGGL_SYSTEMD_SYSTEM_DIR=/lib/systemd/system
     cmake --build "{{greengrass_lite_build_dir}}" --config MinSizeRel --parallel
     test -x "{{greengrass_lite_build_dir}}/bin/ggl-cli"
+    cargo build --release --features greengrass-sdk --manifest-path "{{rig_dir}}/sparkplug-manager/Cargo.toml"
+    test -x "{{rig_dir}}/sparkplug-manager/target/release/txing-sparkplug-manager"
 
 run:
     #!/usr/bin/env bash
@@ -1207,13 +1209,14 @@ deploy rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' com
               unset AWS_PROFILE AWS_DEFAULT_PROFILE AWS_SHARED_CREDENTIALS_FILE
               export RIG_NAME="$rig_name"
               export TXING_RIG_ID="$TXING_RIG_ID"
+              export TXING_TOWN_ID="$sparkplug_group_id"
               export RIG_ID="$TXING_RIG_ID"
               export SPARKPLUG_GROUP_ID="$sparkplug_group_id"
               export SPARKPLUG_EDGE_NODE_ID="$sparkplug_edge_node_id"
               export AWS_IOT_ENDPOINT="$iot_data_endpoint"
               export TXING_RIG_TYPE="$selected_rig_type"
               export RIG_TYPE="$selected_rig_type"
-              exec "{artifacts:path}/txing-sparkplug-manager" --inventory-interval-seconds 30 --command-deadline-ms 60000
+              exec "{artifacts:path}/txing-sparkplug-manager" --rig-id "$TXING_RIG_ID" --town-id "$TXING_TOWN_ID" --iot-endpoint "$AWS_IOT_ENDPOINT" --aws-region "$AWS_REGION" --inventory-interval-seconds 30 --command-deadline-ms 60000
         Artifacts:
           - Uri: "s3://txing-local-greengrass/txing-local-artifact.txt"
             Unarchive: "NONE"

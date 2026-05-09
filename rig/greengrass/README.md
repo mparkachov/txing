@@ -71,7 +71,8 @@ just rig::deploy <rig-id>
 ```
 
 Run the package install before `just rig::build-native`; the native build invokes
-`cmake` directly for Greengrass Lite and no longer builds a local Matter
+`cmake` directly for Greengrass Lite and also builds the Rust Sparkplug manager
+with the Linux-only Greengrass SDK feature. It no longer builds a local Matter
 controller.
 
 Run `just aws::cert <rig-id>` before `just rig::install-service <rig-id>`. The install recipe
