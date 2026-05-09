@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
-use txing_sparkplug_manager::manager::{device_session_spec, node_session_spec};
+use txing_sparkplug_manager::manager::{device_session_spec, node_client_id, node_session_spec};
 use txing_sparkplug_manager::runtime::{RuntimeConfig, run_runtime};
 
 #[derive(Debug, Parser)]
@@ -26,7 +26,13 @@ struct Args {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    let node = node_session_spec(&args.town_id, &args.rig_id, &args.rig_id, 0, now_ms())?;
+    let node = node_session_spec(
+        &args.town_id,
+        &args.rig_id,
+        &node_client_id(&args.rig_id),
+        0,
+        now_ms(),
+    )?;
     if args.dry_run {
         let example_device =
             device_session_spec(&args.town_id, &args.rig_id, "example-device", now_ms())?;

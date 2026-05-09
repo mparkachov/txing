@@ -41,6 +41,10 @@ pub struct MqttSessionSpec {
     pub will: MqttWill,
 }
 
+pub fn node_client_id(edge_node_id: &str) -> String {
+    format!("{edge_node_id}-sparkplug-manager")
+}
+
 #[derive(Debug, Clone)]
 pub struct DeviceRuntimeState {
     inventory: InventoryDevice,
@@ -565,10 +569,11 @@ mod tests {
 
     #[test]
     fn mqtt_session_specs_use_expected_lwt_topics() {
-        let node = node_session_spec("town-1", "rig-1", "rig-1", 12, 1000).unwrap();
+        let node =
+            node_session_spec("town-1", "rig-1", &node_client_id("rig-1"), 12, 1000).unwrap();
         let device = device_session_spec("town-1", "rig-1", "power-1", 1000).unwrap();
 
-        assert_eq!(node.client_id, "rig-1");
+        assert_eq!(node.client_id, "rig-1-sparkplug-manager");
         assert_eq!(node.will.topic, "spBv1.0/town-1/NDEATH/rig-1");
         assert_eq!(device.client_id, "power-1");
         assert_eq!(device.will.topic, "spBv1.0/town-1/DDEATH/rig-1/power-1");

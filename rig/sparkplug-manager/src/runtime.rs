@@ -20,7 +20,8 @@ use tokio::time::{MissedTickBehavior, interval};
 use crate::catalog::{TypeCatalogDevice, reconstruct_type_record};
 use crate::manager::{
     DevicePublication, DeviceRuntimeState, command_from_dcmd, command_result_metrics,
-    device_session_spec, graceful_device_death, graceful_node_death, node_session_spec,
+    device_session_spec, graceful_device_death, graceful_node_death, node_client_id,
+    node_session_spec,
 };
 use crate::protocol::{
     CAPABILITY_COMMAND_RESULT_TOPIC_PREFIX, CAPABILITY_HEARTBEAT_TOPIC_PREFIX,
@@ -386,7 +387,7 @@ impl SparkplugRuntime {
         let spec = node_session_spec(
             &self.config.town_id,
             &self.config.rig_id,
-            &self.config.rig_id,
+            &node_client_id(&self.config.rig_id),
             NODE_BDSEQ,
             now_ms(),
         )?;

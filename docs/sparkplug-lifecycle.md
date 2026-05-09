@@ -22,6 +22,8 @@ the unit device Sparkplug process component.
 - `DBIRTH`, `DDATA`, and `DDEATH` are only for txing/unit things managed by the rig.
 - Witness projects node `NBIRTH` and `NDEATH` messages onto the registered rig thing's `sparkplug` named shadow.
 - Greengrass core/device/component status and AWS IoT MQTT lifecycle events are observability signals only; they do not replace Sparkplug `NBIRTH` and `NDEATH`.
+- The Sparkplug node MQTT session uses `<rig>-sparkplug-manager` as its AWS IoT MQTT client id. The Sparkplug edge node id in topics remains `<rig>`, but the transport client id must not collide with the Greengrass core MQTT client id.
+- Managed device Sparkplug MQTT sessions use the managed thing name as their MQTT client id so AWS IoT thing connectivity tracks device session state.
 
 ## Authority and Ownership
 
