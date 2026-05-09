@@ -237,6 +237,7 @@ class TimeAwsConnectivityBridgeTests(unittest.TestCase):
 
         self.assertEqual(state.capabilities, {"sparkplug": True, "time": False, "mcp": False})
         self.assertEqual(state.metrics["mode"].value, "sleep")
+        self.assertEqual(state.metrics["activeUntilMs"].value, 0)
 
     def test_expired_retained_time_state_maps_to_sleep_immediately(self) -> None:
         async def exercise() -> CapabilityState:
@@ -272,6 +273,7 @@ class TimeAwsConnectivityBridgeTests(unittest.TestCase):
 
         self.assertEqual(state.capabilities, {"sparkplug": True, "time": False, "mcp": False})
         self.assertEqual(state.metrics["mode"].value, "sleep")
+        self.assertEqual(state.metrics["activeUntilMs"].value, 0)
 
     def test_command_result_is_forwarded_to_local_pubsub(self) -> None:
         async def exercise() -> CapabilityCommandResult:

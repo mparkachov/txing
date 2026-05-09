@@ -267,9 +267,11 @@ class TimeAwsConnectivityBridge:
             "currentTimeIso": SparkplugMetricValue("String", state.current_time_iso),
             "mode": SparkplugMetricValue("String", state.mode),
             "mcpAvailable": SparkplugMetricValue("Boolean", state.mcp_available),
+            "activeUntilMs": SparkplugMetricValue(
+                "Int64",
+                state.active_until_ms if state.active_until_ms is not None else 0,
+            ),
         }
-        if state.active_until_ms is not None:
-            metrics["activeUntilMs"] = SparkplugMetricValue("Int64", state.active_until_ms)
         if state.last_command_id is not None:
             metrics["lastCommandId"] = SparkplugMetricValue("String", state.last_command_id)
         capability_state = CapabilityState(
