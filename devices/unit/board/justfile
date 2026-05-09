@@ -32,7 +32,7 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
 @sync:
     cd "{{board_dir}}" && uv sync --python "{{python_executable}}" --no-managed-python --no-python-downloads
 
-@build:
+build:
     #!/usr/bin/env bash
     set -euo pipefail
     eval "$(just --justfile "{{root_justfile}}" _project-version-env)"
@@ -42,13 +42,13 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
     test -x "{{built_board_motor_raw}}"
 
 [positional-arguments]
-@aws *args:
+aws *args:
     #!/usr/bin/env bash
     set -euo pipefail
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env device)"
     command aws "$@"
 
-@check thing_name='' region=region aws_profile=aws_profile:
+check thing_name='' region=region aws_profile=aws_profile:
     #!/usr/bin/env bash
     set -euo pipefail
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "{{aws_profile}}")"
@@ -186,7 +186,7 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
     cmake --build "{{native_kvs_master_test_build_dir}}" --config Debug --target txing-board-kvs-master-tests
     ctest --test-dir "{{native_kvs_master_test_build_dir}}" --output-on-failure
 
-@run:
+run:
     #!/usr/bin/env bash
     set -euo pipefail
     test -x "{{built_board}}" || { \
@@ -196,7 +196,7 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "{{aws_profile}}")"
     cd "{{board_dir}}" && "{{built_board}}"
 
-@once:
+once:
     #!/usr/bin/env bash
     set -euo pipefail
     test -x "{{built_board}}" || { \
@@ -206,19 +206,19 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "{{aws_profile}}")"
     cd "{{board_dir}}" && "{{built_board}}" --once
 
-@dev:
+dev:
     #!/usr/bin/env bash
     set -euo pipefail
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "{{aws_profile}}")"
     cd "{{board_dir}}" && uv run board
 
-@once-dev:
+once-dev:
     #!/usr/bin/env bash
     set -euo pipefail
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "{{aws_profile}}")"
     cd "{{board_dir}}" && uv run board --once
 
-@motor-raw left='' right='' duration='' region=region aws_profile=aws_profile:
+motor-raw left='' right='' duration='' region=region aws_profile=aws_profile:
     #!/usr/bin/env bash
     set -euo pipefail
     test -x "{{built_board_motor_raw}}" || { \
@@ -249,12 +249,12 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
     fi
     "${command[@]}"
 
-@motor-stop region=region aws_profile=aws_profile:
+motor-stop region=region aws_profile=aws_profile:
     #!/usr/bin/env bash
     set -euo pipefail
     just motor-raw 0 0 0.25 "{{region}}" "{{aws_profile}}"
 
-@install-service video_sender_command='' thing_name='' schema_file='' video_region='' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file:
+install-service video_sender_command='' thing_name='' schema_file='' video_region='' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file:
     #!/usr/bin/env bash
     set -euo pipefail
     test -x "{{built_board}}" || { \
@@ -352,7 +352,7 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
     sudo systemctl daemon-reload
     sudo systemctl enable --now board
 
-@start:
+start:
     #!/usr/bin/env bash
     set -euo pipefail
     if ! systemctl cat "{{systemd_service}}" >/dev/null 2>&1; then \
@@ -363,7 +363,7 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
     sudo systemctl start "{{systemd_service}}"
     sudo systemctl --no-pager --full status "{{systemd_service}}"
 
-@stop:
+stop:
     #!/usr/bin/env bash
     set -euo pipefail
     if ! systemctl cat "{{systemd_service}}" >/dev/null 2>&1; then \
@@ -375,7 +375,7 @@ default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_S
 
 @restart: stop start
 
-@log lines='200' follow='true':
+log lines='200' follow='true':
     #!/usr/bin/env bash
     set -euo pipefail
     case "{{lines}}" in

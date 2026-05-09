@@ -33,7 +33,7 @@ aws_shared_credentials_file := ""
 @sync:
     cd "{{rig_dir}}" && uv sync --python "{{python_executable}}" --no-managed-python --no-python-downloads
 
-@build:
+build:
     #!/usr/bin/env bash
     set -euo pipefail
     eval "$(just --justfile "{{root_justfile}}" _project-version-env)"
@@ -44,13 +44,13 @@ aws_shared_credentials_file := ""
     test -x "{{built_rig_sparkplug_log}}"
 
 [positional-arguments]
-@aws *args:
+aws *args:
     #!/usr/bin/env bash
     set -euo pipefail
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig)"
     command aws "$@"
 
-@check rig_id='' cloudwatch_log_group='' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file:
+check rig_id='' cloudwatch_log_group='' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file:
     #!/usr/bin/env bash
     set -euo pipefail
     if [ -n "{{rig_id}}" ]; then
@@ -327,7 +327,7 @@ aws_shared_credentials_file := ""
     just clean-native
     rm -rf "{{greengrass_lite_dir}}"
 
-@build-native:
+build-native:
     #!/usr/bin/env bash
     set -euo pipefail
     if [ "$(uname -s)" != "Linux" ]; then \
@@ -346,7 +346,7 @@ aws_shared_credentials_file := ""
     cmake --build "{{greengrass_lite_build_dir}}" --config MinSizeRel --parallel
     test -x "{{greengrass_lite_build_dir}}/bin/ggl-cli"
 
-@run:
+run:
     #!/usr/bin/env bash
     set -euo pipefail
     test -x "{{built_rig}}" || { \
@@ -356,7 +356,7 @@ aws_shared_credentials_file := ""
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}")"
     cd "{{rig_dir}}" && "{{built_rig}}"
 
-@debug:
+debug:
     #!/usr/bin/env bash
     set -euo pipefail
     test -x "{{built_rig}}" || { \
@@ -366,19 +366,19 @@ aws_shared_credentials_file := ""
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}")"
     cd "{{rig_dir}}" && "{{built_rig}}" --debug
 
-@dev:
+dev:
     #!/usr/bin/env bash
     set -euo pipefail
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}")"
     cd "{{rig_dir}}" && uv run rig
 
-@debug-dev:
+debug-dev:
     #!/usr/bin/env bash
     set -euo pipefail
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}")"
     cd "{{rig_dir}}" && uv run rig --debug
 
-@wake sparkplug_group_id='' sparkplug_edge_node_id='' region=region aws_profile=aws_profile:
+wake sparkplug_group_id='' sparkplug_edge_node_id='' region=region aws_profile=aws_profile:
     #!/usr/bin/env bash
     set -euo pipefail
     test -x "{{built_rig_sparkplug_cmd}}" || { \
@@ -396,7 +396,7 @@ aws_shared_credentials_file := ""
     fi
     cd "{{rig_dir}}" && "{{built_rig_sparkplug_cmd}}" --redcon 3 --thing-name "{{thing_name}}" --sparkplug-group-id "$sparkplug_group_id" --sparkplug-edge-node-id "$sparkplug_edge_node_id"
 
-@sleep sparkplug_group_id='' sparkplug_edge_node_id='' region=region aws_profile=aws_profile:
+sleep sparkplug_group_id='' sparkplug_edge_node_id='' region=region aws_profile=aws_profile:
     #!/usr/bin/env bash
     set -euo pipefail
     test -x "{{built_rig_sparkplug_cmd}}" || { \
@@ -414,7 +414,7 @@ aws_shared_credentials_file := ""
     fi
     cd "{{rig_dir}}" && "{{built_rig_sparkplug_cmd}}" --redcon 4 --thing-name "{{thing_name}}" --sparkplug-group-id "$sparkplug_group_id" --sparkplug-edge-node-id "$sparkplug_edge_node_id"
 
-@dcmd sparkplug_group_id='' sparkplug_edge_node_id='' region=region aws_profile=aws_profile:
+dcmd sparkplug_group_id='' sparkplug_edge_node_id='' region=region aws_profile=aws_profile:
     #!/usr/bin/env bash
     set -euo pipefail
     test -x "{{built_rig_sparkplug_log}}" || { \
@@ -432,7 +432,7 @@ aws_shared_credentials_file := ""
     fi
     cd "{{rig_dir}}" && "{{built_rig_sparkplug_log}}" --thing-name "{{thing_name}}" --sparkplug-group-id "$sparkplug_group_id" --sparkplug-edge-node-id "$sparkplug_edge_node_id" --message-type dcmd
 
-@ddata sparkplug_group_id='' sparkplug_edge_node_id='' region=region aws_profile=aws_profile:
+ddata sparkplug_group_id='' sparkplug_edge_node_id='' region=region aws_profile=aws_profile:
     #!/usr/bin/env bash
     set -euo pipefail
     test -x "{{built_rig_sparkplug_log}}" || { \
@@ -450,7 +450,7 @@ aws_shared_credentials_file := ""
     fi
     cd "{{rig_dir}}" && "{{built_rig_sparkplug_log}}" --thing-name "{{thing_name}}" --sparkplug-group-id "$sparkplug_group_id" --sparkplug-edge-node-id "$sparkplug_edge_node_id" --message-type ddata
 
-@print shadow_name='sparkplug':
+print shadow_name='sparkplug':
     #!/usr/bin/env bash
     set -euo pipefail
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}")"
@@ -468,7 +468,7 @@ aws_shared_credentials_file := ""
       --shadow-name "{{shadow_name}}" \
       /dev/stdout | jq '.'
 
-@install-service rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file cloudwatch_log_group='':
+install-service rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file cloudwatch_log_group='':
     #!/usr/bin/env bash
     set -euo pipefail
     for built_entrypoint in "{{built_rig}}" "{{built_rig_device_process}}"; do \
@@ -592,7 +592,7 @@ aws_shared_credentials_file := ""
     printf 'txing rig is supervised by the standard Greengrass Lite systemd target %s\n' "{{greengrass_lite_target}}"
     printf 'Deploy rig type %s components with RigName=%s SparkplugGroupId=%s SparkplugEdgeNodeId=%s\n' "$selected_rig_type" "$rig_name" "$sparkplug_group_id" "$sparkplug_edge_node_id"
 
-@start rig_id='':
+start rig_id='':
     #!/usr/bin/env bash
     set -euo pipefail
     if [ -n "{{rig_id}}" ]; then
@@ -668,7 +668,7 @@ aws_shared_credentials_file := ""
     done
     sudo systemctl --no-pager --full status "${status_units[@]}"
 
-@stop rig_id='':
+stop rig_id='':
     #!/usr/bin/env bash
     set -euo pipefail
     if [ -n "{{rig_id}}" ]; then
@@ -718,7 +718,7 @@ aws_shared_credentials_file := ""
 
 @restart: stop start
 
-@log rig_id='' lines='200' follow='true':
+log rig_id='' lines='200' follow='true':
     #!/usr/bin/env bash
     set -euo pipefail
     if [ -n "{{rig_id}}" ]; then
@@ -785,7 +785,7 @@ aws_shared_credentials_file := ""
     printf '  %s\n' "${log_units[@]}"
     sudo journalctl "${journal_flags[@]}" "${journal_unit_args[@]}"
 
-@remove-legacy-components:
+remove-legacy-components:
     #!/usr/bin/env bash
     set -euo pipefail
     if ! systemctl cat "{{greengrass_lite_target}}" >/dev/null 2>&1; then \
@@ -819,7 +819,7 @@ aws_shared_credentials_file := ""
     done
     sudo "$ggl_cli" deploy "${remove_args[@]}"
 
-@deploy rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' component_version='' adapter_id='ble-main' name_fragment='txing' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file: build
+deploy rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' component_version='' adapter_id='ble-main' name_fragment='txing' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file: build
     #!/usr/bin/env bash
     set -euo pipefail
     for built_entrypoint in "{{built_rig}}" "{{built_rig_device_process}}"; do \

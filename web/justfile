@@ -15,7 +15,7 @@ web_dist_dir := web_dir + "/dist"
     ln -snf ../../../web/node_modules "{{project_root}}/devices/unit/web/node_modules"
     ln -snf ../../../web/node_modules "{{project_root}}/devices/time/web/node_modules"
 
-@dev:
+dev:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{web_dir}}"
@@ -23,7 +23,7 @@ web_dist_dir := web_dir + "/dist"
     export VITE_TXING_VERSION="$TXING_VERSION"
     bun run dev
 
-@build:
+build:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{web_dir}}"
@@ -31,7 +31,7 @@ web_dist_dir := web_dir + "/dist"
     export VITE_TXING_VERSION="$TXING_VERSION"
     bun run build
 
-@publish stack_name=stack_name region=region profile=profile web_dist_dir=web_dist_dir:
+publish stack_name=stack_name region=region profile=profile web_dist_dir=web_dist_dir:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{web_dir}}"
@@ -98,7 +98,7 @@ web_dist_dir := web_dir + "/dist"
     cd "{{web_dir}}"
     bun run lint
 
-@write-env thing_name='' sparkplug_group_id='' sparkplug_edge_node_id='' town_thing_name='' stack_name=stack_name region=region profile=profile:
+write-env thing_name='' sparkplug_group_id='' sparkplug_edge_node_id='' town_thing_name='' stack_name=stack_name region=region profile=profile:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{web_dir}}"

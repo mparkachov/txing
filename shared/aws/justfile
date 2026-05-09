@@ -16,7 +16,7 @@ profile := ""
 localhost_app_url := "http://localhost:5173"
 localhost_alt_app_url := "http://127.0.0.1:5173"
 
-@deploy CognitoDomainPrefix='' AdminEmail='' stack_name=stack_name template_file=template_file region=region profile=profile LocalhostAppUrl=localhost_app_url LocalhostAltAppUrl=localhost_alt_app_url:
+deploy CognitoDomainPrefix='' AdminEmail='' stack_name=stack_name template_file=template_file region=region profile=profile LocalhostAppUrl=localhost_app_url LocalhostAltAppUrl=localhost_alt_app_url:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
@@ -34,12 +34,12 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
       "LocalhostAltAppUrl={{LocalhostAltAppUrl}}"
     describe_stack_outputs "$AWS_STACK_NAME"
 
-@type-sync CognitoDomainPrefix='' AdminEmail='' stack_name=stack_name template_file=template_file region=region profile=profile:
+type-sync CognitoDomainPrefix='' AdminEmail='' stack_name=stack_name template_file=template_file region=region profile=profile:
     #!/usr/bin/env bash
     set -euo pipefail
     just --justfile "{{aws_dir}}/justfile" deploy "{{CognitoDomainPrefix}}" "{{AdminEmail}}" "{{stack_name}}" "{{template_file}}" "{{region}}" "{{profile}}"
 
-@delete stack_name=stack_name region=region profile=profile wait='true' delete_packaging_buckets='true' include_legacy_time_lambda='true':
+delete stack_name=stack_name region=region profile=profile wait='true' delete_packaging_buckets='true' include_legacy_time_lambda='true':
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
@@ -59,7 +59,7 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
       fi
     fi
 
-@type-list path='/txing' region=region profile=profile:
+type-list path='/txing' region=region profile=profile:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
@@ -69,7 +69,7 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
       --region "$AWS_REGION" \
       list "{{path}}"
 
-@type-describe path region=region profile=profile:
+type-describe path region=region profile=profile:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
@@ -79,7 +79,7 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
       --region "$AWS_REGION" \
       describe "{{path}}"
 
-@town-deploy town_name stack_name=stack_name region=region profile=profile:
+town-deploy town_name stack_name=stack_name region=region profile=profile:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
@@ -94,7 +94,7 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
     jq -r '"town id: \(.thingName)"' <<<"$registration"
     jq '.' <<<"$registration"
 
-@rig-deploy town_id rig_type rig_name stack_name=stack_name region=region profile=profile:
+rig-deploy town_id rig_type rig_name stack_name=stack_name region=region profile=profile:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
@@ -112,7 +112,7 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
     jq -r '"rig id: \(.thingName)"' <<<"$registration"
     jq '.' <<<"$registration"
 
-@device-deploy rig_id device_type device_name stack_name=stack_name region=region profile=profile:
+device-deploy rig_id device_type device_name stack_name=stack_name region=region profile=profile:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
@@ -130,7 +130,7 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
     jq -r '"device id: \(.thingName)"' <<<"$registration"
     jq '.' <<<"$registration"
 
-@enlist payload_file stack_name=stack_name region=region profile=profile:
+enlist payload_file stack_name=stack_name region=region profile=profile:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
@@ -139,7 +139,7 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
     txing_aws_init
     invoke_enlist_payload_file "{{payload_file}}" | jq '.'
 
-@discharge thing_id stack_name=stack_name region=region profile=profile:
+discharge thing_id stack_name=stack_name region=region profile=profile:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
@@ -153,7 +153,7 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
       '{action:"dischargeThing", thingId:$thingId}' >"$payload_file"
     invoke_enlist_payload_file "$payload_file" | jq '.'
 
-@configure-indexing region=region profile=profile:
+configure-indexing region=region profile=profile:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
@@ -162,7 +162,7 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
     txing_aws_init
     configure_indexing_and_wait
 
-@validate template_file=template_file region=region profile=profile stack_name=stack_name:
+validate template_file=template_file region=region profile=profile stack_name=stack_name:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
@@ -180,7 +180,7 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
       "${aws_flags[@]}"
     aws cloudformation validate-template --template-body "file://$packaged_template" "${aws_flags[@]}"
 
-@packaging-buckets region=region profile=profile stack_name=stack_name:
+packaging-buckets region=region profile=profile stack_name=stack_name:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
@@ -195,7 +195,7 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
       fi
     done
 
-@delete-packaging-buckets include_legacy_time_lambda='true' region=region profile=profile stack_name=stack_name:
+delete-packaging-buckets include_legacy_time_lambda='true' region=region profile=profile stack_name=stack_name:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
@@ -207,7 +207,7 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
       delete_s3_bucket_if_exists "$(legacy_time_lambda_artifact_bucket_name)"
     fi
 
-@describe stack_name=stack_name region=region profile=profile:
+describe stack_name=stack_name region=region profile=profile:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
@@ -216,7 +216,7 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
     txing_aws_init
     describe_stack_outputs "$AWS_STACK_NAME"
 
-@describe-all stack_name=stack_name region=region profile=profile:
+describe-all stack_name=stack_name region=region profile=profile:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
@@ -228,7 +228,7 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
       describe_stack_outputs "$stack"
     done
 
-@create-admin-user AdminPassword AdminEmail='' stack_name=stack_name region=region profile=profile:
+create-admin-user AdminPassword AdminEmail='' stack_name=stack_name region=region profile=profile:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
@@ -258,7 +258,7 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
       "${aws_flags[@]}" >/dev/null
     echo "Admin user password set."
 
-@check rig_id='' thing_id='' log_group_name='' region=region profile=profile:
+check rig_id='' thing_id='' log_group_name='' region=region profile=profile:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
@@ -303,7 +303,7 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
     fi
     echo "AWS check passed."
 
-@things-for-rig rig_id='' region=region profile=profile:
+things-for-rig rig_id='' region=region profile=profile:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
@@ -344,7 +344,7 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
     done
     jq '.' <<<"$result"
 
-@shadow thing_name='' shadow_name='' region=region profile=profile:
+shadow thing_name='' shadow_name='' region=region profile=profile:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
@@ -401,7 +401,7 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
     done < <(tr ',' '\n' <<<"$capabilities_set")
     jq '.' <<<"$result"
 
-@shadow-reset thing_name='' shadow_name='sparkplug' region=region profile=profile payload_file='':
+shadow-reset thing_name='' shadow_name='sparkplug' region=region profile=profile payload_file='':
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
@@ -471,7 +471,7 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
       "${aws_flags[@]}" \
       /dev/stdout | jq '.'
 
-@cert rig_id='':
+cert rig_id='':
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
@@ -522,7 +522,7 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
       --arg rootCaFile "$root_ca_path" \
       '{thingName: $thingName, policyName: $policyName, certificateArn: $certificateArn, certificatePem: $certificatePem, publicKey: $publicKey, privateKey: $privateKey, certificateArnFile: $certificateArnFile, rootCaFile: $rootCaFile}'
 
-@init-shadow thing_name='' shadow_name='sparkplug' region=region profile=profile payload_file='' shadow_response_file='':
+init-shadow thing_name='' shadow_name='sparkplug' region=region profile=profile payload_file='' shadow_response_file='':
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
@@ -586,7 +586,7 @@ localhost_alt_app_url := "http://127.0.0.1:5173"
       "${aws_flags[@]}" \
       "$response_target"
 
-@assign-device device_id rig_id region=region profile=profile:
+assign-device device_id rig_id region=region profile=profile:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"

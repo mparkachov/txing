@@ -11,7 +11,7 @@ template_file := "template.yaml"
 region := ""
 profile := ""
 
-@deploy stack_name=stack_name base_stack_name=base_stack_name template_file=template_file region=region profile=profile:
+deploy stack_name=stack_name base_stack_name=base_stack_name template_file=template_file region=region profile=profile:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{witness_dir}}"

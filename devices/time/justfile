@@ -8,7 +8,7 @@ root_justfile := project_root + "/justfile"
 @processes:
     cd "{{project_root}}" && uv run --project rig rig-device-process --device-type time list
 
-@run-process process:
+run-process process:
     #!/usr/bin/env bash
     set -euo pipefail
     export TXING_DEVICE_TYPE="${TXING_DEVICE_TYPE:-time}"

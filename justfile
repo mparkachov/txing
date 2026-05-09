@@ -353,21 +353,21 @@ _project-aws-env scope='aws' region='' profile='' stack_name='' cognito_domain_p
     fi
 
 [positional-arguments]
-@aws-rig *args:
+aws-rig *args:
     #!/usr/bin/env bash
     set -euo pipefail
     eval "$(just --justfile "{{ root_dir }}/justfile" _project-aws-env rig)"
     command aws "$@"
 
 [positional-arguments]
-@aws-town *args:
+aws-town *args:
     #!/usr/bin/env bash
     set -euo pipefail
     eval "$(just --justfile "{{ root_dir }}/justfile" _project-aws-env town)"
     command aws "$@"
 
 [positional-arguments]
-@aws-device *args:
+aws-device *args:
     #!/usr/bin/env bash
     set -euo pipefail
     eval "$(just --justfile "{{ root_dir }}/justfile" _project-aws-env device)"

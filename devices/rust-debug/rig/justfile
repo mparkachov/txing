@@ -15,7 +15,7 @@ rig_dir := source_directory()
 @sim-overnight name="weather-q8zbgb" *args:
     cargo run --manifest-path "{{rig_dir}}/Cargo.toml" -- sim-overnight --name "{{name}}" {{args}}
 
-@test repetitions="5" name="weather-q8zbgb" *args:
+test repetitions="5" name="weather-q8zbgb" *args:
     #!/usr/bin/env bash
     set -euo pipefail
     repetitions="{{repetitions}}"
