@@ -247,14 +247,14 @@ The board is the device-side Raspberry Pi. It publishes the `board` and `video` 
 
 This guide assumes:
 
-- Raspberry Pi OS Lite 64-bit
+- Raspberry Pi Zero 2 W with Raspberry Pi OS Lite 64-bit
 - Network is managed by `NetworkManager`
 - the board remains headless
 - AWS resources and the target device thing already exist
 
 If your image is still using a different network manager, switch it before enabling the read-only layout below.
 
-Keep the board root filesystem writable until the runtime, native sender, and service unit are installed.
+Keep the board root filesystem writable until the runtime, native sender, service unit, and `mise`-managed tools are installed.
 
 ### 1. Flash And Boot
 
@@ -268,53 +268,27 @@ Keep the board root filesystem writable until the runtime, native sender, and se
 sudo apt update
 sudo apt full-upgrade -y
 sudo apt install -y \
-  git curl jq cmake pkg-config build-essential pipx unzip \
+  git curl jq cmake pkg-config build-essential unzip \
   libssl-dev libcurl4-openssl-dev liblog4cplus-dev libsrtp2-dev \
   libusrsctp-dev libwebsockets-dev zlib1g-dev libcamera-dev \
   ca-certificates python3-venv python3-lgpio network-manager
 ```
 
-Install the latest `just` release from the official site, not from the Ubuntu
-package repository:
+Use `mise` for developer CLIs that are missing, unavailable, or too old in the
+OS package repository. `apt` should stay limited to OS libraries, headers, and
+services needed by the board runtime.
 
 ```bash
 mkdir -p "$HOME/.local/bin"
-curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh \
-  | bash -s -- --to "$HOME/.local/bin"
-if ! grep -qxF 'export PATH="$HOME/.local/bin:$PATH"' "$HOME/.profile"; then
-  echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.profile"
+curl https://mise.run | sh
+if ! grep -qxF 'eval "$($HOME/.local/bin/mise activate bash)"' "$HOME/.bashrc"; then
+  echo 'eval "$($HOME/.local/bin/mise activate bash)"' >> "$HOME/.bashrc"
 fi
-export PATH="$HOME/.local/bin:$PATH"
+eval "$("$HOME/.local/bin/mise" activate bash)"
+mise use --global just@latest uv@latest aws-cli@latest
 just --version
-```
-
-Install AWS CLI v2 from AWS, not from the OS package repository:
-
-```bash
-case "$(uname -m)" in
-  x86_64|amd64) aws_cli_arch="x86_64" ;;
-  aarch64|arm64) aws_cli_arch="aarch64" ;;
-  *) echo "Unsupported AWS CLI architecture: $(uname -m)" >&2; exit 1 ;;
-esac
-curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-${aws_cli_arch}.zip" -o /tmp/awscliv2.zip
-rm -rf /tmp/aws
-if ! command -v unzip >/dev/null 2>&1; then
-  sudo apt update
-  sudo apt install -y unzip
-fi
-unzip -q /tmp/awscliv2.zip -d /tmp
-sudo /tmp/aws/install --update
-rm -rf /tmp/aws /tmp/awscliv2.zip
-aws --version
-```
-
-Install `uv` with `pipx`:
-
-```bash
-pipx ensurepath
-export PATH="$HOME/.local/bin:$PATH"
-pipx install uv
 uv --version
+aws --version
 ```
 
 ### 3. Clone The Repo And Copy Config
@@ -451,9 +425,10 @@ alias root-rw='sudo bash -c "mount -o remount,rw /; mount -o remount,rw /boot/fi
 
 Operational notes:
 
-- Do all package installs, repo updates, rebuilds, and `systemd` unit changes while the root is writable.
+- Do all package installs, `mise` tool installs or updates, repo updates, rebuilds, and `systemd` unit changes while the root is writable.
 - Switch back to read-only only after the runtime, native sender, and config files are in place.
-- If you need to change board code, env files, `/boot/firmware/config.txt`, or the systemd unit later, use `root-rw`, make the change, restart the affected service, then `root-ro`.
+- The `mise` install, global config, and downloaded tools live under the user's home directory, primarily `~/.local/bin`, `~/.local/share/mise`, `~/.config/mise`, and `~/.cache/mise`. They must already be present before switching the root filesystem back to read-only.
+- If you need to change board code, env files, `/boot/firmware/config.txt`, the systemd unit, or `mise`-managed tooling later, use `root-rw`, make the change, restart the affected service, then `root-ro`.
 
 ### 8. Final Verification
 
