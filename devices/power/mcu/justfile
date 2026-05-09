@@ -15,6 +15,9 @@ build_version := "zephyr-v40201-homebrew"
 build_dir := mcu_dir + "/build/zephyr-xiao_nrf54l15_cpuapp-brew"
 firmware_elf := build_dir + "/zephyr/zephyr.elf"
 firmware_hex := build_dir + "/zephyr/zephyr.hex"
+nve_script := mcu_dir + "/scripts/redcon_nve.py"
+nve_hex := build_dir + "/redcon-factory-nve.hex"
+nve_address := "0x000f0000"
 venv_dir := mcu_dir + "/.venv"
 python := venv_dir + "/bin/python"
 pip_cache_dir := mcu_dir + "/.pip-cache"
@@ -46,6 +49,11 @@ _ensure-toolchain:
     done
     test -x "{{ cross_compile }}ld.bfd" || test -x "{{ cross_compile }}ld" || { echo "missing toolchain binary: {{ cross_compile }}ld.bfd" >&2; exit 1; }
     "{{ cross_compile }}gcc" --version | sed -n '1p' | grep -q arm-none-eabi-gcc || { echo "unexpected compiler: {{ cross_compile }}gcc" >&2; exit 1; }
+
+[private]
+_ensure-openocd:
+    test -f "{{ openocd_cfg }}" || { echo "missing Seeed OpenOCD config: {{ openocd_cfg }}" >&2; exit 1; }
+    command -v openocd >/dev/null || { echo "missing OpenOCD. Install manually with: brew install open-ocd" >&2; exit 1; }
 
 [private]
 _ensure-ready: _ensure-python-environment _ensure-submodules-present _ensure-toolchain
@@ -97,10 +105,8 @@ _build: _configure
 
 @build: _build
 
-@flash:
+@flash: _ensure-openocd
     test -f "{{ firmware_hex }}" || { echo "missing firmware hex. Run: just power::mcu::check" >&2; exit 1; }
-    test -f "{{ openocd_cfg }}" || { echo "missing Seeed OpenOCD config: {{ openocd_cfg }}" >&2; exit 1; }
-    command -v openocd >/dev/null || { echo "missing OpenOCD. Install manually with: brew install open-ocd" >&2; exit 1; }
     openocd \
       -s "{{ openocd_support_dir }}" \
       -f "{{ openocd_cfg }}" \
@@ -112,10 +118,8 @@ _build: _configure
       -c "reset run" \
       -c shutdown
 
-@flash-check: _ensure-ready
+@flash-check: _ensure-ready _ensure-openocd
     test -f "{{ firmware_hex }}" || { echo "missing firmware hex. Run: just power::mcu::check" >&2; exit 1; }
-    test -f "{{ openocd_cfg }}" || { echo "missing Seeed OpenOCD config: {{ openocd_cfg }}" >&2; exit 1; }
-    command -v openocd >/dev/null || { echo "missing OpenOCD. Install manually with: brew install open-ocd" >&2; exit 1; }
     printf '%q ' \
       openocd \
       -s "{{ openocd_support_dir }}" \
@@ -128,6 +132,39 @@ _build: _configure
       -c "reset run" \
       -c shutdown
     printf '\n'
+
+@nve-hex device_name="weather-q8zbgb":
+    test -f "{{ nve_script }}" || { echo "missing REDCON NVE script: {{ nve_script }}" >&2; exit 1; }
+    mkdir -p "{{ build_dir }}"
+    python3 "{{ nve_script }}" write-hex "{{ device_name }}" --address "{{ nve_address }}" --output "{{ nve_hex }}"
+
+@nve-check device_name="weather-q8zbgb": _ensure-openocd
+    just --justfile "{{ mcu_dir }}/justfile" nve-hex "{{ device_name }}"
+    printf '%q ' \
+      openocd \
+      -s "{{ openocd_support_dir }}" \
+      -f "{{ openocd_cfg }}" \
+      -c init \
+      -c "targets nrf54l.cpu" \
+      -c "reset init" \
+      -c "nrf54l-load {{ nve_hex }}" \
+      -c "verify_image {{ nve_hex }}" \
+      -c "reset run" \
+      -c shutdown
+    printf '\n'
+
+@nve-program device_name="weather-q8zbgb": _ensure-openocd
+    just --justfile "{{ mcu_dir }}/justfile" nve-hex "{{ device_name }}"
+    openocd \
+      -s "{{ openocd_support_dir }}" \
+      -f "{{ openocd_cfg }}" \
+      -c init \
+      -c "targets nrf54l.cpu" \
+      -c "reset init" \
+      -c "nrf54l-load {{ nve_hex }}" \
+      -c "verify_image {{ nve_hex }}" \
+      -c "reset run" \
+      -c shutdown
 
 @paths:
     print_path() { local label="$1"; local path="$2"; local exists=0; [ -e "$path" ] && exists=1; printf '%s: %s exists=%s\n' "$label" "$path" "$exists"; }; \
@@ -151,6 +188,9 @@ _build: _configure
     print_path "buildDir" "{{ build_dir }}"; \
     print_path "firmwareElf" "{{ firmware_elf }}"; \
     print_path "firmwareHex" "{{ firmware_hex }}"; \
+    print_path "nveScript" "{{ nve_script }}"; \
+    print_path "nveHex" "{{ nve_hex }}"; \
+    echo "nveAddress: {{ nve_address }}"; \
     echo "toolchainVariant: cross-compile"; \
     echo "crossCompile: {{ cross_compile }}"; \
     print_path "gcc" "{{ cross_compile }}gcc"; \
