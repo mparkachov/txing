@@ -3,22 +3,16 @@
 #include <stdint.h>
 
 #include <zephyr/bluetooth/bluetooth.h>
-#if POWER_ADV_CONNECTABLE
 #include <zephyr/bluetooth/conn.h>
-#endif
-#if POWER_GATT
 #include <zephyr/bluetooth/att.h>
 #include <zephyr/bluetooth/gatt.h>
-#endif
 #include <zephyr/bluetooth/hci.h>
 #include <zephyr/bluetooth/hci_vs.h>
 #include <zephyr/bluetooth/uuid.h>
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
-#if POWER_GATT
 #include <zephyr/drivers/adc.h>
 #include <nrfx_saadc.h>
-#endif
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/regulator.h>
 #include <zephyr/kernel.h>
@@ -26,71 +20,28 @@
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/util.h>
 
-#ifndef POWER_ADV_INTERVAL
-#define POWER_ADV_INTERVAL 0x4000
-#endif
-
-#ifndef POWER_ADV_TX_POWER_DBM
-#define POWER_ADV_TX_POWER_DBM -46
-#endif
-
-#ifndef POWER_ADV_CONNECTABLE
-#define POWER_ADV_CONNECTABLE 0
-#endif
-
-#ifndef POWER_ADV_SCANNABLE
-#define POWER_ADV_SCANNABLE 0
-#endif
-
-#ifndef POWER_ADV_INCLUDE_UUID
-#define POWER_ADV_INCLUDE_UUID 0
-#endif
-
-#ifndef POWER_GATT
-#define POWER_GATT 0
-#endif
-
-#ifndef POWER_REDCON_CONN_INTERVAL_MS
-#define POWER_REDCON_CONN_INTERVAL_MS 100U
-#endif
-
-#ifndef POWER_REDCON_CONN_LATENCY
-#define POWER_REDCON_CONN_LATENCY 0U
-#endif
-
-#ifndef POWER_REDCON_CONN_SUPERVISION_MS
-#define POWER_REDCON_CONN_SUPERVISION_MS 20000U
-#endif
-
-#ifndef POWER_REDCON_STATE_NOTIFY_INTERVAL_SECONDS
-#define POWER_REDCON_STATE_NOTIFY_INTERVAL_SECONDS 10U
-#endif
-
-#ifndef POWER_REDCON_IDLE_DISCONNECT_DELAY_MS
-#define POWER_REDCON_IDLE_DISCONNECT_DELAY_MS 500U
-#endif
-
-#ifndef POWER_REDCON_BATTERY_ADC_SETTLE_MS
-#define POWER_REDCON_BATTERY_ADC_SETTLE_MS 100U
-#endif
-
-#if POWER_ADV_INCLUDE_UUID && !POWER_ADV_SCANNABLE
+#if IS_ENABLED(CONFIG_POWER_ADV_INCLUDE_UUID) && \
+	!IS_ENABLED(CONFIG_POWER_ADV_SCANNABLE)
 #error "REDCON service UUID requires scannable advertising so it can fit in scan response"
 #endif
 
-#if POWER_GATT && !POWER_ADV_CONNECTABLE
+#if !IS_ENABLED(CONFIG_POWER_ADV_CONNECTABLE)
 #error "REDCON GATT requires connectable advertising"
 #endif
 
-#if POWER_GATT && !POWER_ADV_INCLUDE_UUID
+#if !IS_ENABLED(CONFIG_POWER_ADV_INCLUDE_UUID)
 #error "REDCON GATT requires redcon service UUID advertising"
 #endif
 
-#if POWER_GATT &&                                                                  \
-	(!DT_NODE_EXISTS(DT_PATH(zephyr_user)) ||                                      \
-	 !DT_NODE_HAS_PROP(DT_PATH(zephyr_user), io_channels))
+#if (!DT_NODE_EXISTS(DT_PATH(zephyr_user)) ||                                      \
+     !DT_NODE_HAS_PROP(DT_PATH(zephyr_user), io_channels))
 #error "REDCON GATT battery reporting requires zephyr,user io-channels"
 #endif
+
+BUILD_ASSERT(CONFIG_POWER_REDCON_CONN_SUPERVISION_MS >
+		     CONFIG_POWER_REDCON_CONN_INTERVAL_MS *
+			     (CONFIG_POWER_REDCON_CONN_LATENCY + 1) * 2,
+	     "invalid REDCON supervision timeout");
 
 #define REDCON_SERVICE_UUID_VAL                                                             \
 	BT_UUID_128_ENCODE(0xf6b4b000, 0x7b32, 0x4d2d, 0x9f4b, 0x4ff0a2b8f100)
@@ -110,9 +61,9 @@
 #define REDCON_CONN_SUPERVISION_MIN_UNITS 10U
 #define REDCON_CONN_SUPERVISION_MAX_UNITS 3200U
 
-#if POWER_ADV_CONNECTABLE
+#if IS_ENABLED(CONFIG_POWER_ADV_CONNECTABLE)
 #define POWER_ADV_OPTIONS BT_LE_ADV_OPT_CONN
-#elif POWER_ADV_SCANNABLE
+#elif IS_ENABLED(CONFIG_POWER_ADV_SCANNABLE)
 #define POWER_ADV_OPTIONS BT_LE_ADV_OPT_SCANNABLE
 #else
 #define POWER_ADV_OPTIONS 0
@@ -130,31 +81,28 @@ static const struct gpio_dt_spec power = GPIO_DT_SPEC_GET(DT_ALIAS(power), gpios
 DEFINE_REGULATOR_DEVICE(pdm_imu_pwr)
 DEFINE_REGULATOR_DEVICE(vbat_pwr)
 
-#if POWER_GATT
 static const struct adc_dt_spec battery_adc =
 	ADC_DT_SPEC_GET_BY_IDX(DT_PATH(zephyr_user), 0);
-#endif
 
 static const struct bt_data ad[] = {
 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
 	BT_DATA(BT_DATA_NAME_COMPLETE, CONFIG_BT_DEVICE_NAME, sizeof(CONFIG_BT_DEVICE_NAME) - 1),
 };
 
-#if POWER_ADV_INCLUDE_UUID
+#if IS_ENABLED(CONFIG_POWER_ADV_INCLUDE_UUID)
 static const struct bt_data sd[] = {
 	BT_DATA_BYTES(BT_DATA_UUID128_ALL, REDCON_SERVICE_UUID_VAL),
 };
 #endif
 
 static const struct bt_le_adv_param adv_params =
-	BT_LE_ADV_PARAM_INIT(POWER_ADV_OPTIONS, POWER_ADV_INTERVAL,
-			     POWER_ADV_INTERVAL, NULL);
+	BT_LE_ADV_PARAM_INIT(POWER_ADV_OPTIONS, CONFIG_POWER_ADV_INTERVAL,
+			     CONFIG_POWER_ADV_INTERVAL, NULL);
 
 static int start_advertising(void);
 static void disable_xiao_load_regulators(void);
 static void enter_ble_idle_hardware_state(void);
 
-#if POWER_GATT
 struct gatt_payload {
 	uint8_t *data;
 	size_t len;
@@ -224,7 +172,7 @@ static uint16_t sample_battery_mv(void)
 #if DT_NODE_HAS_STATUS(DT_NODELABEL(vbat_pwr), okay)
 	if (device_is_ready(vbat_pwr_reg)) {
 		(void)regulator_enable(vbat_pwr_reg);
-		k_sleep(K_MSEC(POWER_REDCON_BATTERY_ADC_SETTLE_MS));
+		k_sleep(K_MSEC(CONFIG_POWER_REDCON_BATTERY_ADC_SETTLE_MS));
 	}
 #endif
 
@@ -346,16 +294,16 @@ static void request_connection_params(struct bt_conn *conn)
 	if (conn == NULL) {
 		return;
 	}
-	if (!validate_connection_params(POWER_REDCON_CONN_INTERVAL_MS,
-					POWER_REDCON_CONN_LATENCY,
-					POWER_REDCON_CONN_SUPERVISION_MS)) {
+	if (!validate_connection_params(CONFIG_POWER_REDCON_CONN_INTERVAL_MS,
+					CONFIG_POWER_REDCON_CONN_LATENCY,
+					CONFIG_POWER_REDCON_CONN_SUPERVISION_MS)) {
 		return;
 	}
 
-	params.interval_min = conn_interval_units_from_ms(POWER_REDCON_CONN_INTERVAL_MS);
+	params.interval_min = conn_interval_units_from_ms(CONFIG_POWER_REDCON_CONN_INTERVAL_MS);
 	params.interval_max = params.interval_min;
-	params.latency = POWER_REDCON_CONN_LATENCY;
-	params.timeout = conn_supervision_units_from_ms(POWER_REDCON_CONN_SUPERVISION_MS);
+	params.latency = CONFIG_POWER_REDCON_CONN_LATENCY;
+	params.timeout = conn_supervision_units_from_ms(CONFIG_POWER_REDCON_CONN_SUPERVISION_MS);
 	(void)bt_conn_le_param_update(conn, &params);
 }
 
@@ -381,7 +329,7 @@ static void state_notify_work_handler(struct k_work *work)
 	refresh_redcon_payloads();
 	notify_redcon_state();
 	(void)k_work_schedule(k_work_delayable_from_work(work),
-			      K_SECONDS(POWER_REDCON_STATE_NOTIFY_INTERVAL_SECONDS));
+			      K_SECONDS(CONFIG_POWER_REDCON_STATE_NOTIFY_INTERVAL_SECONDS));
 }
 
 K_WORK_DELAYABLE_DEFINE(state_notify_work, state_notify_work_handler);
@@ -423,7 +371,7 @@ static void schedule_idle_disconnect(struct bt_conn *conn)
 
 	idle_disconnect_conn = bt_conn_ref(conn);
 	(void)k_work_schedule(&idle_disconnect_work,
-			      K_MSEC(POWER_REDCON_IDLE_DISCONNECT_DELAY_MS));
+			      K_MSEC(CONFIG_POWER_REDCON_IDLE_DISCONNECT_DELAY_MS));
 }
 
 static ssize_t write_command(struct bt_conn *conn, const struct bt_gatt_attr *attr,
@@ -449,7 +397,7 @@ static ssize_t write_command(struct bt_conn *conn, const struct bt_gatt_attr *at
 		refresh_redcon_payloads();
 		notify_redcon_state();
 		(void)k_work_reschedule(&state_notify_work,
-					 K_SECONDS(POWER_REDCON_STATE_NOTIFY_INTERVAL_SECONDS));
+					 K_SECONDS(CONFIG_POWER_REDCON_STATE_NOTIFY_INTERVAL_SECONDS));
 	} else {
 		enter_ble_idle_hardware_state();
 		refresh_redcon_payloads();
@@ -475,7 +423,6 @@ static void notify_redcon_state(void)
 	(void)bt_gatt_notify(NULL, &redcon_svc.attrs[4], redcon_state_payload,
 			     sizeof(redcon_state_payload));
 }
-#endif
 
 static void configure_output_inactive(const struct gpio_dt_spec *pin)
 {
@@ -484,7 +431,6 @@ static void configure_output_inactive(const struct gpio_dt_spec *pin)
 	}
 }
 
-#if POWER_GATT
 static void set_output_active(const struct gpio_dt_spec *pin, bool active)
 {
 	if (device_is_ready(pin->port)) {
@@ -497,7 +443,6 @@ static void set_redcon_power(bool active)
 	set_output_active(&led, active);
 	set_output_active(&power, active);
 }
-#endif
 
 static void disable_regulator(const struct device *reg)
 {
@@ -518,11 +463,9 @@ static void disable_xiao_load_regulators(void)
 
 static void enter_ble_idle_hardware_state(void)
 {
-#if POWER_GATT
 	set_redcon_power(false);
 	(void)k_work_cancel_delayable(&state_notify_work);
 	suspend_battery_adc();
-#endif
 	disable_xiao_load_regulators();
 }
 
@@ -560,14 +503,14 @@ static int set_adv_tx_power(int8_t dbm)
 
 static int start_advertising(void)
 {
-#if POWER_ADV_INCLUDE_UUID
+#if IS_ENABLED(CONFIG_POWER_ADV_INCLUDE_UUID)
 	return bt_le_adv_start(&adv_params, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
 #else
 	return bt_le_adv_start(&adv_params, ad, ARRAY_SIZE(ad), NULL, 0);
 #endif
 }
 
-#if POWER_ADV_CONNECTABLE
+#if IS_ENABLED(CONFIG_POWER_ADV_CONNECTABLE)
 static void advertise_work_handler(struct k_work *work)
 {
 	ARG_UNUSED(work);
@@ -589,12 +532,10 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 {
 	ARG_UNUSED(conn);
 	ARG_UNUSED(reason);
-#if POWER_GATT
 	current_redcon = REDCON_IDLE;
 	cancel_idle_disconnect();
 	enter_ble_idle_hardware_state();
 	encode_redcon_state(REDCON_IDLE, 0U);
-#endif
 	k_work_submit(&advertise_work);
 }
 
@@ -617,7 +558,7 @@ int main(void)
 		return err;
 	}
 
-	err = set_adv_tx_power(POWER_ADV_TX_POWER_DBM);
+	err = set_adv_tx_power(CONFIG_POWER_ADV_TX_POWER_DBM);
 	if (err < 0) {
 		return err;
 	}

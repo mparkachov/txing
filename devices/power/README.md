@@ -36,8 +36,10 @@ export POWER_MCU_CROSS_COMPILE=/opt/homebrew/bin/arm-none-eabi-
 
 ## Build
 
-The firmware has one config in `mcu/conf/mcu.yaml`; build and flash commands do
-not take a profile argument.
+The firmware uses the standard Zephyr application configuration flow. Build-time
+values live in `mcu/zephyr/prj.conf`, and power-specific Kconfig symbols are
+defined in `mcu/zephyr/Kconfig`. Build and flash commands do not take a profile
+argument.
 
 ```sh
 just power::mcu::paths

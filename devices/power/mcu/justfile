@@ -1,32 +1,169 @@
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
-set quiet := true
+set quiet
 
 mcu_dir := source_directory()
-firmware_script := mcu_dir + "/scripts/firmware.py"
+project_root := canonicalize(mcu_dir + "/../../..")
+common_mcu_dir := canonicalize(project_root + "/devices/common/mcu")
+zephyr_base := canonicalize(common_mcu_dir + "/zephyr")
+seeed_platform := canonicalize(common_mcu_dir + "/seeed-platform")
+board_root := canonicalize(seeed_platform + "/zephyr")
+board_dir := canonicalize(board_root + "/boards/arm/xiao_nrf54l15")
+openocd_support_dir := board_dir + "/support"
+openocd_cfg := openocd_support_dir + "/openocd.cfg"
+board := "xiao_nrf54l15/nrf54l15/cpuapp"
+build_version := "zephyr-v40201-homebrew"
+build_dir := mcu_dir + "/build/zephyr-xiao_nrf54l15_cpuapp-brew"
+firmware_elf := build_dir + "/zephyr/zephyr.elf"
+firmware_hex := build_dir + "/zephyr/zephyr.hex"
+venv_dir := mcu_dir + "/.venv"
+python := venv_dir + "/bin/python"
+pip_cache_dir := mcu_dir + "/.pip-cache"
+zephyr_cache_dir := mcu_dir + "/.zephyr-cache"
+ccache_dir := mcu_dir + "/.ccache"
+cross_compile := env_var_or_default("POWER_MCU_CROSS_COMPILE", env_var_or_default("POWER_CROSS_COMPILE", env_var_or_default("CROSS_COMPILE", "/opt/homebrew/bin/arm-none-eabi-")))
+zephyr_modules := common_mcu_dir + "/modules/hal/cmsis;" + common_mcu_dir + "/modules/hal/cmsis_6;" + common_mcu_dir + "/modules/hal/nordic;" + common_mcu_dir + "/modules/lib/picolibc"
 
-@install:
-    python3 "{{firmware_script}}" install
+env := 'PATH="' + venv_dir + '/bin:$(dirname "' + cross_compile + 'gcc"):$PATH" PIP_CACHE_DIR="' + pip_cache_dir + '" POWER_BOARD_ROOT="' + board_root + '" CCACHE_DIR="' + ccache_dir + '" CCACHE_DISABLE=1 ZEPHYR_CACHE_DIR="' + zephyr_cache_dir + '" ZEPHYR_BASE="' + zephyr_base + '" ZEPHYR_TOOLCHAIN_VARIANT=cross-compile CROSS_COMPILE="' + cross_compile + '"'
+
+[private]
+_ensure-submodules-present:
+    for path in "{{ zephyr_base }}" "{{ seeed_platform }}" "{{ common_mcu_dir }}/modules/hal/nordic" "{{ common_mcu_dir }}/modules/hal/cmsis" "{{ common_mcu_dir }}/modules/hal/cmsis_6" "{{ common_mcu_dir }}/modules/lib/picolibc"; do \
+      if [ ! -d "$path" ] || [ -z "$(find "$path" -mindepth 1 -maxdepth 1 -print -quit)" ]; then \
+        echo "missing power Zephyr submodules. Run: just power::mcu::submodules" >&2; \
+        echo "Missing path: $path" >&2; \
+        exit 1; \
+      fi; \
+    done
+
+[private]
+_ensure-python-environment:
+    test -x "{{ python }}" || { echo "missing power Zephyr Python environment. Run: just power::mcu::install" >&2; exit 1; }
+
+[private]
+_ensure-toolchain:
+    for tool in gcc objcopy size; do \
+      test -x "{{ cross_compile }}$tool" || { echo "missing toolchain binary: {{ cross_compile }}$tool" >&2; exit 1; }; \
+    done
+    test -x "{{ cross_compile }}ld.bfd" || test -x "{{ cross_compile }}ld" || { echo "missing toolchain binary: {{ cross_compile }}ld.bfd" >&2; exit 1; }
+    "{{ cross_compile }}gcc" --version | sed -n '1p' | grep -q arm-none-eabi-gcc || { echo "unexpected compiler: {{ cross_compile }}gcc" >&2; exit 1; }
+
+[private]
+_ensure-ready: _ensure-python-environment _ensure-submodules-present _ensure-toolchain
+
+[private]
+_configure: _ensure-ready
+    mkdir -p "{{ build_dir }}"
+    {{ env }} cmake \
+      -S "{{ mcu_dir }}/zephyr" \
+      -B "{{ build_dir }}" \
+      -G Ninja \
+      -DBOARD="{{ board }}" \
+      -DBOARD_ROOT="{{ board_root }}" \
+      -DZEPHYR_MODULES="{{ zephyr_modules }}" \
+      -DPython3_EXECUTABLE="{{ python }}" \
+      -DPYTHON_EXECUTABLE="{{ python }}" \
+      -DGEN_KOBJECT_LIST="{{ zephyr_base }}/scripts/build/gen_kobject_list.py" \
+      -DBUILD_VERSION="{{ build_version }}" \
+      -DUSER_CACHE_DIR="{{ zephyr_cache_dir }}" \
+      -DCONF_FILE="{{ mcu_dir }}/zephyr/prj.conf" \
+      -DZEPHYR_TOOLCHAIN_VARIANT=cross-compile \
+      -DCROSS_COMPILE="{{ cross_compile }}" \
+      -DUSE_CCACHE=0 \
+      -DCCACHE_PROGRAM=CCACHE_PROGRAM-NOTFOUND \
+      -DCMAKE_C_COMPILER_LAUNCHER= \
+      -DCMAKE_CXX_COMPILER_LAUNCHER=
+
+[private]
+_build: _configure
+    {{ env }} cmake --build "{{ build_dir }}"
+
+@install: _ensure-submodules-present
+    mkdir -p "{{ pip_cache_dir }}" "{{ zephyr_cache_dir }}" "{{ ccache_dir }}"
+    test -x "{{ python }}" || { echo "creating power Zephyr venv: {{ venv_dir }}"; python3 -m venv "{{ venv_dir }}"; }
+    {{ env }} "{{ python }}" -m pip install --upgrade pip -r "{{ zephyr_base }}/scripts/requirements-base.txt"
+    {{ env }} "{{ python }}" -m west --version
+    just --justfile "{{ mcu_dir }}/justfile" _ensure-toolchain
 
 @submodules:
-    python3 "{{firmware_script}}" submodules
+    git -C "{{ project_root }}" submodule update --init --recursive -- \
+      devices/common/mcu/zephyr \
+      devices/common/mcu/seeed-platform \
+      devices/common/mcu/modules/hal/nordic \
+      devices/common/mcu/modules/hal/cmsis \
+      devices/common/mcu/modules/hal/cmsis_6 \
+      devices/common/mcu/modules/lib/picolibc
 
-@check:
-    python3 "{{firmware_script}}" check
+@check: _build
 
-@build:
-    python3 "{{firmware_script}}" build
+@build: _build
 
 @flash:
-    python3 "{{firmware_script}}" flash
+    test -f "{{ firmware_hex }}" || { echo "missing firmware hex. Run: just power::mcu::check" >&2; exit 1; }
+    test -f "{{ openocd_cfg }}" || { echo "missing Seeed OpenOCD config: {{ openocd_cfg }}" >&2; exit 1; }
+    command -v openocd >/dev/null || { echo "missing OpenOCD. Install manually with: brew install open-ocd" >&2; exit 1; }
+    openocd \
+      -s "{{ openocd_support_dir }}" \
+      -f "{{ openocd_cfg }}" \
+      -c init \
+      -c "targets nrf54l.cpu" \
+      -c "reset init" \
+      -c "nrf54l-load {{ firmware_hex }}" \
+      -c "verify_image {{ firmware_hex }}" \
+      -c "reset run" \
+      -c shutdown
 
-@flash-check:
-    python3 "{{firmware_script}}" flash-check
+@flash-check: _ensure-ready
+    test -f "{{ firmware_hex }}" || { echo "missing firmware hex. Run: just power::mcu::check" >&2; exit 1; }
+    test -f "{{ openocd_cfg }}" || { echo "missing Seeed OpenOCD config: {{ openocd_cfg }}" >&2; exit 1; }
+    command -v openocd >/dev/null || { echo "missing OpenOCD. Install manually with: brew install open-ocd" >&2; exit 1; }
+    printf '%q ' \
+      openocd \
+      -s "{{ openocd_support_dir }}" \
+      -f "{{ openocd_cfg }}" \
+      -c init \
+      -c "targets nrf54l.cpu" \
+      -c "reset init" \
+      -c "nrf54l-load {{ firmware_hex }}" \
+      -c "verify_image {{ firmware_hex }}" \
+      -c "reset run" \
+      -c shutdown
+    printf '\n'
 
 @paths:
-    python3 "{{firmware_script}}" paths
+    print_path() { local label="$1"; local path="$2"; local exists=0; [ -e "$path" ] && exists=1; printf '%s: %s exists=%s\n' "$label" "$path" "$exists"; }; \
+    echo "projectRoot: $(cd "{{ project_root }}" && pwd)"; \
+    echo "deviceDir: $(cd "{{ mcu_dir }}/.." && pwd)"; \
+    echo "mcuDir: {{ mcu_dir }}"; \
+    echo "board: {{ board }}"; \
+    echo "buildVersion: {{ build_version }}"; \
+    echo "config: {{ mcu_dir }}/zephyr/prj.conf"; \
+    echo "kconfig: {{ mcu_dir }}/zephyr/Kconfig"; \
+    print_path "venv" "{{ venv_dir }}"; \
+    print_path "python" "{{ python }}"; \
+    print_path "pipCache" "{{ pip_cache_dir }}"; \
+    print_path "zephyrCache" "{{ zephyr_cache_dir }}"; \
+    print_path "ccache" "{{ ccache_dir }}"; \
+    print_path "zephyrBase" "{{ zephyr_base }}"; \
+    print_path "seeedPlatform" "{{ seeed_platform }}"; \
+    print_path "boardRoot" "{{ board_root }}"; \
+    print_path "boardDir" "{{ board_dir }}"; \
+    print_path "openocdCfg" "{{ openocd_cfg }}"; \
+    print_path "buildDir" "{{ build_dir }}"; \
+    print_path "firmwareElf" "{{ firmware_elf }}"; \
+    print_path "firmwareHex" "{{ firmware_hex }}"; \
+    echo "toolchainVariant: cross-compile"; \
+    echo "crossCompile: {{ cross_compile }}"; \
+    print_path "gcc" "{{ cross_compile }}gcc"; \
+    print_path "ldBfd" "{{ cross_compile }}ld.bfd"; \
+    print_path "ld" "{{ cross_compile }}ld"; \
+    print_path "objcopy" "{{ cross_compile }}objcopy"; \
+    print_path "size" "{{ cross_compile }}size"; \
+    echo "openocdCommand: openocd"; \
+    echo "openocdInPath: $(command -v openocd || true)"; \
+    for module in "{{ common_mcu_dir }}/modules/hal/cmsis" "{{ common_mcu_dir }}/modules/hal/cmsis_6" "{{ common_mcu_dir }}/modules/hal/nordic" "{{ common_mcu_dir }}/modules/lib/picolibc"; do print_path "module" "$module"; done
 
 @clean:
-    python3 "{{firmware_script}}" clean
+    if [ -d "{{ build_dir }}" ]; then echo "removing {{ build_dir }}"; rm -rf "{{ build_dir }}"; fi
 
 @default:
     @just --list
