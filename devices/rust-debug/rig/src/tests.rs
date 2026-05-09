@@ -6,6 +6,8 @@ use crate::btleplug_ble::BtleplugBleCentral;
 use crate::component::BleConnectivityComponent;
 use crate::cycle::{CycleConfig, TimeMode, run_cycle_test};
 use crate::event::EventEmitter;
+#[cfg(feature = "ble-real")]
+use crate::event::{local_timestamp, parse_event_line};
 use crate::overnight::{Candidate, OvernightConfig, run_overnight};
 use crate::protocol::{
     REDCON_ACTIVE, REDCON_IDLE, decode_state, encode_command, encode_state,
@@ -203,8 +205,19 @@ async fn run_physical_ble_cycle(test_name: &str, conn_profile: &str, index: usiz
     let output_dir = physical_output_dir();
     std::fs::create_dir_all(&output_dir).unwrap();
     let log_path = output_dir.join("cycle.log");
+    let started_at = local_timestamp();
+    let started = std::time::Instant::now();
+    let capture = std::sync::Arc::new(std::sync::Mutex::new(PhysicalTestCapture::default()));
     let mut events = EventEmitter::quiet();
     events.add_file_sink_append(&log_path).unwrap();
+    events.add_sink({
+        let capture = std::sync::Arc::clone(&capture);
+        move |line| {
+            if let Ok(mut capture) = capture.lock() {
+                capture.record_line(line);
+            }
+        }
+    });
     events.emit(
         "test-start",
         &[
@@ -216,19 +229,55 @@ async fn run_physical_ble_cycle(test_name: &str, conn_profile: &str, index: usiz
         ],
     );
     let mut central = BtleplugBleCentral::new();
-    let summary = run_cycle_test(&mut central, &mut config, TimeMode::Real, &mut events)
-        .await
-        .unwrap();
-    events.emit(
-        "test-end",
-        &[
-            ("test", test_name.to_string()),
-            ("suite", conn_profile.to_string()),
-            ("index", index.to_string()),
-            ("passedCycles", summary.passed_cycles.to_string()),
-        ],
+    let result = run_cycle_test(&mut central, &mut config, TimeMode::Real, &mut events).await;
+    let ended_at = local_timestamp();
+    let duration_ms = started.elapsed().as_millis();
+
+    match &result {
+        Ok(summary) => {
+            events.emit(
+                "test-end",
+                &[
+                    ("test", test_name.to_string()),
+                    ("suite", conn_profile.to_string()),
+                    ("index", index.to_string()),
+                    ("passedCycles", summary.passed_cycles.to_string()),
+                ],
+            );
+        }
+        Err(err) => {
+            events.emit(
+                "test-fail",
+                &[
+                    ("test", test_name.to_string()),
+                    ("suite", conn_profile.to_string()),
+                    ("index", index.to_string()),
+                    ("stage", err.stage.clone()),
+                    ("message", err.message.clone()),
+                ],
+            );
+        }
+    }
+
+    let record = physical_test_record(
+        test_name,
+        conn_profile,
+        index,
+        &config,
+        &log_path,
+        &output_dir,
+        started_at,
+        ended_at,
+        duration_ms,
+        capture.lock().unwrap().clone(),
+        &result,
     );
-    assert_eq!(summary.passed_cycles, 1);
+    write_physical_result(&output_dir, &record).unwrap();
+
+    if let Err(err) = result {
+        panic!("{err}");
+    }
+    assert_eq!(record["summary"]["passedCycles"].as_u64().unwrap_or(0), 1);
 }
 
 #[cfg(feature = "ble-real")]
@@ -352,4 +401,451 @@ fn set_usize(target: &mut usize, value: Option<&str>) {
     if let Some(parsed) = value.and_then(|value| value.parse().ok()) {
         *target = parsed;
     }
+}
+
+#[cfg(feature = "ble-real")]
+#[derive(Debug, Clone, Default)]
+struct PhysicalTestCapture {
+    adv_count: u64,
+    adv_service_matches: u64,
+    adv_rssi_values: Vec<i64>,
+    connect_retries: Vec<serde_json::Value>,
+    connect_ms: Vec<u128>,
+    wake_latencies_ms: Vec<u128>,
+    sleep_latencies_ms: Vec<u128>,
+    sleep_disconnect_ms: Vec<u128>,
+    active_battery_mv: Vec<u64>,
+    state_count: u64,
+    last_event: Option<serde_json::Value>,
+}
+
+#[cfg(feature = "ble-real")]
+impl PhysicalTestCapture {
+    fn record_line(&mut self, line: &str) {
+        let (event, fields) = parse_event_line(line);
+        if event.is_empty() {
+            return;
+        }
+        let fields = fields
+            .into_iter()
+            .collect::<std::collections::BTreeMap<_, _>>();
+        self.last_event = Some(serde_json::json!({
+            "event": event,
+            "fields": fields,
+        }));
+        match self
+            .last_event
+            .as_ref()
+            .and_then(|value| value["event"].as_str())
+            .unwrap_or_default()
+        {
+            "adv" => {
+                self.adv_count += 1;
+                if field_u64(&fields, "service") == Some(1) {
+                    self.adv_service_matches += 1;
+                }
+                if let Some(rssi) = field_i64(&fields, "rssi") {
+                    self.adv_rssi_values.push(rssi);
+                }
+            }
+            "connect-retry" => {
+                self.connect_retries.push(serde_json::json!({
+                    "attempt": field_u64(&fields, "attempt"),
+                    "attempts": field_u64(&fields, "attempts"),
+                    "message": fields.get("message").cloned().unwrap_or_default(),
+                }));
+            }
+            "connected" => {
+                if let Some(value) = field_u128(&fields, "connectMs") {
+                    self.connect_ms.push(value);
+                }
+            }
+            "state" => {
+                self.state_count += 1;
+            }
+            "wake-ok" => {
+                if let Some(value) = field_u128(&fields, "latencyMs") {
+                    self.wake_latencies_ms.push(value);
+                }
+            }
+            "battery" => {
+                if let Some(value) = field_u64(&fields, "batteryMv") {
+                    self.active_battery_mv.push(value);
+                }
+            }
+            "sleep-ok" => {
+                if let Some(value) = field_u128(&fields, "latencyMs") {
+                    self.sleep_latencies_ms.push(value);
+                }
+            }
+            "sleep-disconnect" => {
+                if let Some(value) = field_u128(&fields, "latencyMs") {
+                    self.sleep_disconnect_ms.push(value);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+#[cfg(feature = "ble-real")]
+#[allow(clippy::too_many_arguments)]
+fn physical_test_record(
+    test_name: &str,
+    conn_profile: &str,
+    index: usize,
+    config: &CycleConfig,
+    log_path: &std::path::Path,
+    output_dir: &std::path::Path,
+    started_at: String,
+    ended_at: String,
+    duration_ms: u128,
+    capture: PhysicalTestCapture,
+    result: &crate::error::Result<crate::cycle::CycleSummary>,
+) -> serde_json::Value {
+    let failure = result.as_ref().err().map(|err| {
+        serde_json::json!({
+            "stage": err.stage,
+            "message": err.message,
+        })
+    });
+    let summary = match result {
+        Ok(summary) => serde_json::json!({
+            "passedCycles": summary.passed_cycles,
+            "batteryCount": summary.battery_values.len(),
+            "batteryMinMv": summary.battery_values.iter().min().copied(),
+            "batteryMaxMv": summary.battery_values.iter().max().copied(),
+            "wakeLatenciesMs": summary.wake_latencies_ms,
+            "connectMs": summary.connect_ms,
+        }),
+        Err(_) => serde_json::json!({
+            "passedCycles": 0,
+            "batteryCount": capture.active_battery_mv.len(),
+            "batteryMinMv": capture.active_battery_mv.iter().min().copied(),
+            "batteryMaxMv": capture.active_battery_mv.iter().max().copied(),
+            "wakeLatenciesMs": capture.wake_latencies_ms,
+            "connectMs": capture.connect_ms,
+        }),
+    };
+    serde_json::json!({
+        "schemaVersion": "txing.rust-debug.physical-ble-testcase.v1",
+        "framework": "rust-test",
+        "test": {
+            "name": test_name,
+            "suite": conn_profile,
+            "index": index,
+            "status": if failure.is_some() { "failed" } else { "passed" },
+            "startedAt": started_at,
+            "endedAt": ended_at,
+            "durationMs": duration_ms,
+        },
+        "config": {
+            "name": config.name,
+            "connProfile": conn_profile,
+            "wakeSeconds": config.wake_seconds,
+            "cycleSeconds": config.cycle_seconds,
+            "minBattery": config.min_battery,
+            "wakeDeadline": config.wake_deadline,
+            "sleepDeadline": config.sleep_deadline,
+            "scanTimeout": config.scan_timeout,
+            "connectTimeout": config.connect_timeout,
+            "connectAttempts": config.connect_attempts,
+            "retryDelay": config.retry_delay,
+            "disconnectDeadline": config.disconnect_deadline,
+            "requireService": config.require_service,
+        },
+        "summary": summary,
+        "observed": {
+            "advertisements": {
+                "count": capture.adv_count,
+                "serviceMatches": capture.adv_service_matches,
+                "rssiValues": capture.adv_rssi_values,
+            },
+            "connectRetries": capture.connect_retries,
+            "connectMs": capture.connect_ms,
+            "wakeLatenciesMs": capture.wake_latencies_ms,
+            "sleepLatenciesMs": capture.sleep_latencies_ms,
+            "sleepDisconnectMs": capture.sleep_disconnect_ms,
+            "activeBatteryMv": capture.active_battery_mv,
+            "stateCount": capture.state_count,
+            "lastEvent": capture.last_event,
+        },
+        "failure": failure,
+        "artifacts": {
+            "outputDir": output_dir.display().to_string(),
+            "cycleLog": log_path.display().to_string(),
+            "jsonl": output_dir.join("results.jsonl").display().to_string(),
+            "json": output_dir.join("results.json").display().to_string(),
+            "junit": output_dir.join("junit.xml").display().to_string(),
+        },
+    })
+}
+
+#[cfg(feature = "ble-real")]
+fn write_physical_result(
+    output_dir: &std::path::Path,
+    record: &serde_json::Value,
+) -> std::io::Result<()> {
+    use std::io::Write;
+
+    let jsonl_path = output_dir.join("results.jsonl");
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&jsonl_path)?;
+    serde_json::to_writer(&mut file, record)?;
+    writeln!(file)?;
+    rebuild_physical_result_artifacts(output_dir)
+}
+
+#[cfg(feature = "ble-real")]
+fn rebuild_physical_result_artifacts(output_dir: &std::path::Path) -> std::io::Result<()> {
+    let records = read_physical_result_records(&output_dir.join("results.jsonl"))?;
+    let aggregate = physical_result_aggregate(output_dir, &records);
+    std::fs::write(
+        output_dir.join("results.json"),
+        serde_json::to_vec_pretty(&aggregate)?,
+    )?;
+    std::fs::write(output_dir.join("junit.xml"), physical_junit_xml(&records))?;
+    Ok(())
+}
+
+#[cfg(feature = "ble-real")]
+fn read_physical_result_records(path: &std::path::Path) -> std::io::Result<Vec<serde_json::Value>> {
+    use std::io::BufRead;
+
+    let file = std::fs::File::open(path)?;
+    let mut records = Vec::new();
+    for line in std::io::BufReader::new(file).lines() {
+        let line = line?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let value = serde_json::from_str(&line).map_err(std::io::Error::other)?;
+        records.push(value);
+    }
+    Ok(records)
+}
+
+#[cfg(feature = "ble-real")]
+fn physical_result_aggregate(
+    output_dir: &std::path::Path,
+    records: &[serde_json::Value],
+) -> serde_json::Value {
+    let mut suites = std::collections::BTreeMap::<String, serde_json::Value>::new();
+    for record in records {
+        let suite = record["test"]["suite"]
+            .as_str()
+            .unwrap_or("unknown")
+            .to_string();
+        let entry = suites.entry(suite.clone()).or_insert_with(|| {
+            serde_json::json!({
+                "name": suite,
+                "tests": 0,
+                "failures": 0,
+                "retries": 0,
+                "durationMs": 0_u64,
+            })
+        });
+        entry["tests"] = serde_json::json!(entry["tests"].as_u64().unwrap_or(0) + 1);
+        if record["test"]["status"].as_str() != Some("passed") {
+            entry["failures"] = serde_json::json!(entry["failures"].as_u64().unwrap_or(0) + 1);
+        }
+        entry["retries"] = serde_json::json!(
+            entry["retries"].as_u64().unwrap_or(0)
+                + record["observed"]["connectRetries"]
+                    .as_array()
+                    .map_or(0, |items| items.len() as u64)
+        );
+        entry["durationMs"] = serde_json::json!(
+            entry["durationMs"].as_u64().unwrap_or(0)
+                + record["test"]["durationMs"].as_u64().unwrap_or(0)
+        );
+    }
+    let failures = records
+        .iter()
+        .filter(|record| record["test"]["status"].as_str() != Some("passed"))
+        .count();
+    let retries: usize = records
+        .iter()
+        .map(|record| {
+            record["observed"]["connectRetries"]
+                .as_array()
+                .map_or(0, Vec::len)
+        })
+        .sum();
+    serde_json::json!({
+        "schemaVersion": "txing.rust-debug.physical-ble-results.v1",
+        "format": "txing-json+junit",
+        "generatedAt": local_timestamp(),
+        "outputDir": output_dir.display().to_string(),
+        "artifacts": {
+            "cycleLog": output_dir.join("cycle.log").display().to_string(),
+            "jsonl": output_dir.join("results.jsonl").display().to_string(),
+            "json": output_dir.join("results.json").display().to_string(),
+            "junit": output_dir.join("junit.xml").display().to_string(),
+        },
+        "summary": {
+            "tests": records.len(),
+            "passed": records.len().saturating_sub(failures),
+            "failed": failures,
+            "connectRetries": retries,
+        },
+        "suites": suites.into_values().collect::<Vec<_>>(),
+        "testCases": records,
+    })
+}
+
+#[cfg(feature = "ble-real")]
+fn physical_junit_xml(records: &[serde_json::Value]) -> String {
+    let mut by_suite = std::collections::BTreeMap::<String, Vec<&serde_json::Value>>::new();
+    for record in records {
+        by_suite
+            .entry(
+                record["test"]["suite"]
+                    .as_str()
+                    .unwrap_or("unknown")
+                    .to_string(),
+            )
+            .or_default()
+            .push(record);
+    }
+    let tests = records.len();
+    let failures = records
+        .iter()
+        .filter(|record| record["test"]["status"].as_str() != Some("passed"))
+        .count();
+    let total_time = records
+        .iter()
+        .map(|record| record["test"]["durationMs"].as_f64().unwrap_or(0.0) / 1000.0)
+        .sum::<f64>();
+    let mut xml = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuites name=\"rust-debug physical BLE\" tests=\"{tests}\" failures=\"{failures}\" errors=\"0\" time=\"{total_time:.3}\">\n"
+    );
+    for (suite, suite_records) in by_suite {
+        let suite_tests = suite_records.len();
+        let suite_failures = suite_records
+            .iter()
+            .filter(|record| record["test"]["status"].as_str() != Some("passed"))
+            .count();
+        let suite_time = suite_records
+            .iter()
+            .map(|record| record["test"]["durationMs"].as_f64().unwrap_or(0.0) / 1000.0)
+            .sum::<f64>();
+        xml.push_str(&format!(
+            "  <testsuite name=\"{}\" tests=\"{}\" failures=\"{}\" errors=\"0\" time=\"{:.3}\">\n",
+            xml_escape(&format!("physical_ble.{suite}")),
+            suite_tests,
+            suite_failures,
+            suite_time
+        ));
+        for record in suite_records {
+            let name = record["test"]["name"].as_str().unwrap_or("unknown");
+            let case_time = record["test"]["durationMs"].as_f64().unwrap_or(0.0) / 1000.0;
+            xml.push_str(&format!(
+                "    <testcase classname=\"{}\" name=\"{}\" time=\"{:.3}\">",
+                xml_escape(&format!("rust_debug_rig.physical_ble.{suite}")),
+                xml_escape(name),
+                case_time
+            ));
+            if record["test"]["status"].as_str() != Some("passed") {
+                let stage = record["failure"]["stage"].as_str().unwrap_or("failure");
+                let message = record["failure"]["message"]
+                    .as_str()
+                    .unwrap_or("test failed");
+                xml.push_str(&format!(
+                    "\n      <failure type=\"{}\" message=\"{}\">{}</failure>\n    ",
+                    xml_escape(stage),
+                    xml_escape(message),
+                    xml_escape(&serde_json::to_string_pretty(record).unwrap_or_default())
+                ));
+            }
+            let retries = record["observed"]["connectRetries"]
+                .as_array()
+                .map_or(0, Vec::len);
+            let connect_max = record["observed"]["connectMs"]
+                .as_array()
+                .and_then(|items| items.iter().filter_map(serde_json::Value::as_u64).max())
+                .unwrap_or(0);
+            xml.push_str(&format!(
+                "<system-out>{}</system-out></testcase>\n",
+                xml_escape(&format!(
+                    "connectRetries={retries} connectMaxMs={connect_max}"
+                ))
+            ));
+        }
+        xml.push_str("  </testsuite>\n");
+    }
+    xml.push_str("</testsuites>\n");
+    xml
+}
+
+#[cfg(feature = "ble-real")]
+fn xml_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
+#[cfg(feature = "ble-real")]
+fn field_u64(fields: &std::collections::BTreeMap<String, String>, key: &str) -> Option<u64> {
+    fields.get(key)?.parse().ok()
+}
+
+#[cfg(feature = "ble-real")]
+fn field_i64(fields: &std::collections::BTreeMap<String, String>, key: &str) -> Option<i64> {
+    fields.get(key)?.parse().ok()
+}
+
+#[cfg(feature = "ble-real")]
+fn field_u128(fields: &std::collections::BTreeMap<String, String>, key: &str) -> Option<u128> {
+    fields.get(key)?.parse().ok()
+}
+
+#[cfg(feature = "ble-real")]
+#[test]
+fn physical_result_artifacts_are_junit_and_json() {
+    let temp = tempfile::tempdir().unwrap();
+    let first = serde_json::json!({
+        "test": {
+            "name": "physical_ble_stable_100_0_20_001",
+            "suite": "stable-100-0-20",
+            "status": "passed",
+            "durationMs": 50000,
+        },
+        "observed": {
+            "connectRetries": [],
+            "connectMs": [1234],
+        },
+        "failure": null,
+    });
+    let second = serde_json::json!({
+        "test": {
+            "name": "physical_ble_stable_100_0_20_002",
+            "suite": "stable-100-0-20",
+            "status": "failed",
+            "durationMs": 32000,
+        },
+        "observed": {
+            "connectRetries": [{"attempt": 1, "attempts": 4, "message": "connect failed"}],
+            "connectMs": [2500],
+        },
+        "failure": {
+            "stage": "battery",
+            "message": "got 2 active battery updates, need 3",
+        },
+    });
+    write_physical_result(temp.path(), &first).unwrap();
+    write_physical_result(temp.path(), &second).unwrap();
+
+    let aggregate = std::fs::read_to_string(temp.path().join("results.json")).unwrap();
+    let junit = std::fs::read_to_string(temp.path().join("junit.xml")).unwrap();
+    assert!(aggregate.contains("\"tests\": 2"));
+    assert!(aggregate.contains("\"failed\": 1"));
+    assert!(junit.contains("<testsuites"));
+    assert!(junit.contains("failures=\"1\""));
+    assert!(junit.contains("<failure"));
 }

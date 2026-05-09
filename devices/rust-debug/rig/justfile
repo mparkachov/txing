@@ -69,7 +69,11 @@ test repetitions="5" name="weather-q8zbgb" *args:
     echo "connProfiles=$profiles_csv"
     echo "outputDir=$run_dir"
     echo "log=$run_dir/cycle.log"
+    echo "json=$run_dir/results.json"
+    echo "jsonl=$run_dir/results.jsonl"
+    echo "junit=$run_dir/junit.xml"
     : > "$run_dir/cycle.log"
+    rm -f "$run_dir/results.json" "$run_dir/results.jsonl" "$run_dir/junit.xml"
     RUST_DEBUG_RIG_RUN_OUTPUT_DIR="$run_dir" \
       RUST_DEBUG_RIG_TEST_REPETITIONS="$repetitions" \
       RUST_DEBUG_RIG_TEST_PROFILES="$profiles_csv" \

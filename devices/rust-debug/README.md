@@ -51,9 +51,11 @@ focused physical test default is a 50 second cycle (`wakeSeconds=30`,
 `cycleSeconds=50`) to stay below Rust's 60 second long-test warning in normal
 passing cases. The recipe runs only the library test target and uses terse
 captured test output. Detailed cycle logs are appended to one run-level
-`cycle.log` under `/tmp/rust-debug-rig-test-results/`, and the recipe prints
-that exact path before the tests start. For direct CLI debugging without the
-Rust test harness, use:
+`cycle.log` under `/tmp/rust-debug-rig-test-results/`. Each physical run also
+writes `results.jsonl` with one structured JSON record per Rust test,
+`results.json` with the aggregate run summary, and `junit.xml` for CI/test
+report integrations. The recipe prints all artifact paths before the tests
+start. For direct CLI debugging without the Rust test harness, use:
 
 ```sh
 just rust-debug::rig::run-test
@@ -114,3 +116,10 @@ just rust-debug::rig::mock-component
 Physical BLE commands enable `ble-real`. On Linux, those commands require the
 usual BlueZ/DBus development files, for example `libdbus-1-dev` and
 `pkg-config` on Ubuntu.
+
+## Physical BLE Findings
+
+Current focused physical BLE stability findings are recorded in
+[`docs/ble-stability-findings.md`](docs/ble-stability-findings.md). The current
+candidate from the copied logs is `gatt-1280-tx0` on the MCU with the Rust rig
+using `stable-100-0-20` and `--require-service`.
