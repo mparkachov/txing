@@ -1,6 +1,6 @@
 RecipeFormatVersion: '2020-01-25'
 ComponentName: dev.txing.device.weather.ConnectivityBle
-ComponentVersion: '0.7.0'
+ComponentVersion: '0.8.0'
 ComponentType: aws.greengrass.generic
 ComponentDescription: txing weather BLE connected-idle adapter for BME280 weather devices.
 ComponentPublisher: txing
@@ -42,5 +42,5 @@ Manifests:
           export PYTHONPATH="{artifacts:decompressedPath}/rig-greengrass/python"
           exec python3 -m weather_rig.connectivity_ble --adapter-id "{configuration:/AdapterId}" --connect-timeout "{configuration:/ConnectTimeout}" --presence-timeout "{configuration:/PresenceTimeout}"
     Artifacts:
-      - Uri: s3://REPLACE_WITH_TXING_GREENGRASS_ARTIFACT_BUCKET/rig-greengrass/0.7.0/rig-greengrass.zip
+      - Uri: s3://REPLACE_WITH_TXING_GREENGRASS_ARTIFACT_BUCKET/rig-greengrass/0.8.0/rig-greengrass.zip
         Unarchive: ZIP

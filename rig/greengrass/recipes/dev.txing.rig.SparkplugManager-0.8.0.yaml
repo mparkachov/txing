@@ -1,6 +1,6 @@
 RecipeFormatVersion: '2020-01-25'
 ComponentName: dev.txing.rig.SparkplugManager
-ComponentVersion: '0.7.0'
+ComponentVersion: '0.8.0'
 ComponentType: aws.greengrass.generic
 ComponentDescription: txing rig-wide Sparkplug lifecycle manager.
 ComponentPublisher: txing
@@ -46,6 +46,6 @@ Manifests:
           export SPARKPLUG_EDGE_NODE_ID="{configuration:/RigId}"
           exec "{artifacts:path}/txing-sparkplug-manager" --inventory-interval-seconds "{configuration:/InventoryIntervalSeconds}" --command-deadline-ms "{configuration:/CommandDeadlineMs}"
     Artifacts:
-      - Uri: s3://REPLACE_WITH_TXING_GREENGRASS_ARTIFACT_BUCKET/sparkplug-manager/0.7.0/txing-sparkplug-manager
+      - Uri: s3://REPLACE_WITH_TXING_GREENGRASS_ARTIFACT_BUCKET/sparkplug-manager/0.8.0/txing-sparkplug-manager
         Permission:
           Execute: OWNER

@@ -12,7 +12,7 @@ describe('navigation user menu', () => {
           sub: 'abc123',
         }}
         defaultOpen={true}
-        txingVersion="0.7.0+g123456789abc"
+        txingVersion="0.8.0+g123456789abc"
         isSessionLogVisible={false}
         onSignOff={() => {}}
         onToggleSessionLog={() => {}}
@@ -21,7 +21,7 @@ describe('navigation user menu', () => {
 
     expect(markup).toContain('role="menu"')
     expect(markup).toContain('About')
-    expect(markup).toContain('0.7.0+g123456789abc')
+    expect(markup).toContain('0.8.0+g123456789abc')
     expect(markup).toContain('Show Session Log')
     expect(markup).toContain('Sign Off')
     expect(markup).not.toContain('Load Shadow')

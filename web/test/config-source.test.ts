@@ -38,7 +38,7 @@ describe('web config wiring', () => {
     expect(configSource).toContain("const thingName = requireEnv('VITE_DEVICE_THING_NAME') ?? ''")
     expect(configSource).toContain("const townThingName = requireEnv('VITE_TOWN_THING_NAME') ?? ''")
     expect(configSource).toContain("const sparkplugGroupId = requireEnv('VITE_SPARKPLUG_GROUP_ID') ?? ''")
-    expect(configSource).toContain("const txingVersion = requireEnv('VITE_TXING_VERSION') ?? '0.7.0'")
+    expect(configSource).toContain("const txingVersion = requireEnv('VITE_TXING_VERSION') ?? '0.8.0'")
     expect(configSource).toContain('txingVersion,')
     expect(configSource).toContain("errors.push('Missing VITE_TOWN_THING_NAME')")
     expect(configSource).toContain("errors.push('Missing VITE_SPARKPLUG_GROUP_ID')")

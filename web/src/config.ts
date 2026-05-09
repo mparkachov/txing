@@ -34,7 +34,7 @@ const buildConfig = () => {
   const townThingName = requireEnv('VITE_TOWN_THING_NAME') ?? ''
   const sparkplugGroupId = requireEnv('VITE_SPARKPLUG_GROUP_ID') ?? ''
   const sparkplugEdgeNodeId = requireEnv('VITE_SPARKPLUG_EDGE_NODE_ID') ?? ''
-  const txingVersion = requireEnv('VITE_TXING_VERSION') ?? '0.7.0'
+  const txingVersion = requireEnv('VITE_TXING_VERSION') ?? '0.8.0'
 
   const errors: string[] = []
 

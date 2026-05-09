@@ -817,7 +817,7 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertNotIn('git_status="$(git -C "{{project_root}}" status --porcelain --untracked-files=all', justfile)
         self.assertIn('resolved_component_version="$TXING_VERSION"', justfile)
         self.assertIn("Greengrass Lite local component versions must not contain '-'", justfile)
-        self.assertIn("0.7.0+g<sha>", justfile)
+        self.assertIn("0.8.0+g<sha>", justfile)
         self.assertIn("rig::deploy arguments are positional", justfile)
         self.assertIn("Component version is generated automatically", justfile)
         self.assertIn('deploy_root="{{rig_dir}}/build/greengrass-local"', justfile)
@@ -902,7 +902,7 @@ class AwsShadowClientTests(unittest.TestCase):
                 / "rig"
                 / "greengrass"
                 / "recipes"
-                / "dev.txing.device.unit.SparkplugManager-0.7.0.yaml"
+                / "dev.txing.rig.SparkplugManager-0.8.0.yaml"
             ).exists()
         )
         self.assertTrue(
@@ -911,7 +911,7 @@ class AwsShadowClientTests(unittest.TestCase):
                 / "rig"
                 / "greengrass"
                 / "recipes"
-                / "dev.txing.device.unit.ConnectivityBle-0.7.0.yaml"
+                / "dev.txing.device.unit.ConnectivityBle-0.8.0.yaml"
             ).exists()
         )
         for recipe_path in (repo_root / "rig" / "greengrass" / "recipes").glob("dev.txing.device.unit.*.yaml"):
@@ -923,33 +923,32 @@ class AwsShadowClientTests(unittest.TestCase):
             / "rig"
             / "greengrass"
             / "recipes"
-            / "dev.txing.device.unit.SparkplugManager-0.7.0.yaml"
+            / "dev.txing.rig.SparkplugManager-0.8.0.yaml"
         ).read_text(encoding="utf-8")
         ble_recipe = (
             repo_root
             / "rig"
             / "greengrass"
             / "recipes"
-            / "dev.txing.device.unit.ConnectivityBle-0.7.0.yaml"
+            / "dev.txing.device.unit.ConnectivityBle-0.8.0.yaml"
         ).read_text(encoding="utf-8")
         weather_ble_recipe = (
             repo_root
             / "rig"
             / "greengrass"
             / "recipes"
-            / "dev.txing.device.weather.ConnectivityBle-0.7.0.yaml"
+            / "dev.txing.device.weather.ConnectivityBle-0.8.0.yaml"
         ).read_text(encoding="utf-8")
         power_ble_recipe = (
             repo_root
             / "rig"
             / "greengrass"
             / "recipes"
-            / "dev.txing.device.power.ConnectivityBle-0.7.0.yaml"
+            / "dev.txing.device.power.ConnectivityBle-0.8.0.yaml"
         ).read_text(encoding="utf-8")
         self.assertIn("runtime: aws_nucleus_lite", sparkplug_recipe)
         self.assertIn("runtime: aws_nucleus_lite", ble_recipe)
-        self.assertIn('export PYTHONPATH="{artifacts:decompressedPath}/rig-greengrass/python"', sparkplug_recipe)
-        self.assertIn("exec python3 -m unit_rig.sparkplug_manager", sparkplug_recipe)
+        self.assertIn("txing-sparkplug-manager", sparkplug_recipe)
         self.assertIn('export PYTHONPATH="{artifacts:decompressedPath}/rig-greengrass/python"', ble_recipe)
         self.assertIn("exec python3 -m unit_rig.connectivity_ble", ble_recipe)
         self.assertIn("ConnectTimeout: 8.0", weather_ble_recipe)

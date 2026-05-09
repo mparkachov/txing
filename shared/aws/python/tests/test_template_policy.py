@@ -306,7 +306,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         aws_justfile = (AWS_DIR / "justfile").read_text(encoding="utf-8")
         root_justfile = (REPO_ROOT / "justfile").read_text(encoding="utf-8")
 
-        self.assertEqual((REPO_ROOT / "VERSION").read_text(encoding="utf-8").strip(), "0.7.0")
+        self.assertEqual((REPO_ROOT / "VERSION").read_text(encoding="utf-8").strip(), "0.8.0")
         self.assertIn("_project-version-env:", root_justfile)
         self.assertIn("export_line TXING_VERSION_BASE", root_justfile)
         self.assertIn("export_line TXING_VERSION", root_justfile)

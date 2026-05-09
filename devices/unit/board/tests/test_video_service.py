@@ -62,13 +62,13 @@ class BoardVideoServiceTests(unittest.TestCase):
         self.assertIs(client.publishes[0].retain, True)
         payload = _decode_payload(client.publishes[0])
         self.assertEqual(payload["serviceId"], "video")
-        self.assertEqual(payload["serverVersion"], "0.7.0")
+        self.assertEqual(payload["serverVersion"], "0.8.0")
         self.assertEqual(payload["channelName"], "unit-local-board-video")
         self.assertEqual(payload["statusTopic"], "txings/unit-local/video/status")
 
     def test_descriptor_uses_global_txing_version_from_environment(self) -> None:
         client = _FakeMqttClient()
-        with patch.dict("os.environ", {"TXING_VERSION": "0.7.0+g123456789abc"}):
+        with patch.dict("os.environ", {"TXING_VERSION": "0.8.0+g123456789abc"}):
             service = BoardVideoService(
                 device_id="unit-local",
                 channel_name="unit-local-board-video",
@@ -78,7 +78,7 @@ class BoardVideoServiceTests(unittest.TestCase):
         service.on_connected(client=client, publish_timeout_seconds=2.0)
 
         payload = _decode_payload(client.publishes[0])
-        self.assertEqual(payload["serverVersion"], "0.7.0+g123456789abc")
+        self.assertEqual(payload["serverVersion"], "0.8.0+g123456789abc")
 
     def test_publishes_retained_status_from_local_video_state(self) -> None:
         client = _FakeMqttClient()
