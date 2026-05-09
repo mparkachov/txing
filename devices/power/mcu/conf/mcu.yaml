@@ -1,0 +1,7 @@
+deviceName: weather-q8zbgb
+advInterval: "0x0800"
+advTxPowerDbm: 4
+advConnectable: true
+advScannable: true
+advIncludeUuid: true
+gatt: true
