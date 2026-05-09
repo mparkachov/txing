@@ -4,7 +4,7 @@ use async_trait::async_trait;
 
 use crate::error::Result;
 use crate::event::EventEmitter;
-use crate::protocol::{ConnectionParams, WeatherState};
+use crate::protocol::RedconState;
 
 #[derive(Debug, Clone)]
 pub struct BleConnectConfig {
@@ -19,7 +19,7 @@ pub struct BleConnectConfig {
 #[derive(Debug, Clone)]
 pub struct TimedState {
     pub received_at: Instant,
-    pub state: WeatherState,
+    pub state: RedconState,
 }
 
 #[async_trait]
@@ -31,12 +31,7 @@ pub trait BleCentral: Send {
 
     async fn read_state(&mut self) -> Result<TimedState>;
 
-    async fn write_redcon(
-        &mut self,
-        redcon: u8,
-        conn_params: Option<&ConnectionParams>,
-        events: &mut EventEmitter,
-    ) -> Result<Instant>;
+    async fn write_redcon(&mut self, redcon: u8, events: &mut EventEmitter) -> Result<Instant>;
 
     async fn next_state(&mut self, timeout: Duration) -> Result<TimedState>;
 

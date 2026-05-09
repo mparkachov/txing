@@ -16,8 +16,7 @@ use crate::ble::{BleCentral, BleConnectConfig, TimedState};
 use crate::error::{Result, RigError};
 use crate::event::EventEmitter;
 use crate::protocol::{
-    ConnectionParams, connection_fields, decode_state, encode_command, weather_command_uuid,
-    weather_service_uuid, weather_state_uuid,
+    decode_state, encode_command, redcon_command_uuid, redcon_service_uuid, redcon_state_uuid,
 };
 
 type NotificationStream = Pin<Box<dyn Stream<Item = ValueNotification> + Send>>;
@@ -67,7 +66,7 @@ impl BtleplugBleCentral {
             .await
             .map_err(|err| RigError::new("discover", format!("failed to start BLE scan: {err}")))?;
 
-        let service_uuid = weather_service_uuid();
+        let service_uuid = redcon_service_uuid();
         let deadline = Instant::now() + config.scan_timeout;
         let mut found = None;
         while Instant::now() < deadline {
@@ -132,7 +131,7 @@ impl BtleplugBleCentral {
         let _ = adapter.stop_scan().await;
         found.ok_or_else(|| {
             let suffix = if config.require_service {
-                " with weather service UUID"
+                " with REDCON service UUID"
             } else {
                 ""
             };
@@ -214,12 +213,7 @@ impl BleCentral for BtleplugBleCentral {
         })
     }
 
-    async fn write_redcon(
-        &mut self,
-        redcon: u8,
-        conn_params: Option<&ConnectionParams>,
-        events: &mut EventEmitter,
-    ) -> Result<Instant> {
+    async fn write_redcon(&mut self, redcon: u8, events: &mut EventEmitter) -> Result<Instant> {
         let peripheral = self
             .peripheral
             .as_ref()
@@ -228,17 +222,16 @@ impl BleCentral for BtleplugBleCentral {
             .command_char
             .as_ref()
             .ok_or_else(|| RigError::new("services", "command characteristic missing"))?;
-        let payload = encode_command(redcon, conn_params);
+        let payload = encode_command(redcon);
         let started = Instant::now();
         peripheral
             .write(command_char, &payload, WriteType::WithResponse)
             .await
             .map_err(|err| RigError::new("command", format!("failed to write command: {err}")))?;
-        let mut fields = vec![
+        let fields = vec![
             ("redcon", redcon.to_string()),
             ("payload", hex_lower(&payload)),
         ];
-        fields.extend(connection_fields(conn_params));
         events.emit("command", &fields);
         Ok(started)
     }
@@ -249,7 +242,7 @@ impl BleCentral for BtleplugBleCentral {
             .as_ref()
             .ok_or_else(|| RigError::new("notify", "state notification stream is not active"))?
             .clone();
-        let state_uuid = weather_state_uuid();
+        let state_uuid = redcon_state_uuid();
         let fut = async {
             let mut stream = notifications.lock().await;
             loop {
@@ -346,8 +339,8 @@ impl BtleplugBleCentral {
             .await
             .map_err(|err| RigError::new("services", format!("service discovery failed: {err}")))?;
         let characteristics = peripheral.characteristics();
-        let command_uuid = weather_command_uuid();
-        let state_uuid = weather_state_uuid();
+        let command_uuid = redcon_command_uuid();
+        let state_uuid = redcon_state_uuid();
         let command_char = characteristics
             .iter()
             .find(|characteristic| characteristic.uuid == command_uuid)

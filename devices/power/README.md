@@ -4,9 +4,9 @@
 wake/sleep firmware. It intentionally has no rig runtime, AWS manifest, shadow
 contract, board code, or web adapter yet.
 
-The MCU code is derived from `devices/ble-debug/mcu` and keeps the current
-weather-compatible BLE GATT protocol so the Rust rig stability test can run
-unchanged against `weather-q8zbgb`.
+The MCU code is derived from `devices/ble-debug/mcu` and exposes the REDCON BLE
+GATT profile used by the Rust rig against the configured BLE name
+`weather-q8zbgb`.
 
 ## Setup
 
@@ -66,12 +66,13 @@ Agents must not run `flash` or physical BLE tests automatically.
 
 - Boots into REDCON `4` sleep state with the XIAO user LED and D1 `power` GPIO off.
 - Disables `pdm_imu_pwr` and `vbat_pwr` in BLE idle while leaving the radio path alone.
-- Advertises as `weather-q8zbgb` with the weather service UUID and GATT service.
-- REDCON `3` command turns LED and D1 on, requests supplied connection params, and notifies state.
+- Advertises as `weather-q8zbgb` with the REDCON service UUID and GATT service.
+- REDCON `3` command turns LED and D1 on, requests configured connection params, and notifies state.
 - REDCON `4` command or disconnect returns LED and D1 off, disables idle loads, disconnects, and resumes advertising.
+- REDCON command payload is `<version, redcon>`; state payload is `<version, redcon, battery_mv_le>`.
 
 The expected manual acceptance run after flashing is:
 
 ```sh
-just rust-debug::rig::test 5 weather-q8zbgb --conn-profile stable-100-0-20
+just rust-debug::rig::test 5 weather-q8zbgb
 ```

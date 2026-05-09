@@ -6,10 +6,7 @@ use async_trait::async_trait;
 use crate::ble::{BleCentral, BleConnectConfig, TimedState};
 use crate::error::{Result, RigError};
 use crate::event::EventEmitter;
-use crate::protocol::{
-    ConnectionParams, REDCON_ACTIVE, REDCON_IDLE, WeatherState, connection_fields, encode_command,
-    encode_state,
-};
+use crate::protocol::{REDCON_ACTIVE, REDCON_IDLE, RedconState, encode_command, encode_state};
 
 #[derive(Debug, Clone, Default)]
 pub struct SimBleBehavior {
@@ -28,12 +25,12 @@ pub struct SimBleCentral {
     remaining_connect_failures: u32,
     queued: VecDeque<SimEvent>,
     sleep_disconnect_pending: bool,
-    last_state: WeatherState,
+    last_state: RedconState,
 }
 
 #[derive(Debug)]
 enum SimEvent {
-    State(WeatherState),
+    State(RedconState),
     InvalidState,
     Disconnect,
 }
@@ -52,9 +49,8 @@ impl SimBleCentral {
             connected: false,
             queued: VecDeque::new(),
             sleep_disconnect_pending: false,
-            last_state: WeatherState {
+            last_state: RedconState {
                 redcon: REDCON_IDLE,
-                active: false,
                 battery_mv: None,
             },
         }
@@ -136,21 +132,15 @@ impl BleCentral for SimBleCentral {
         })
     }
 
-    async fn write_redcon(
-        &mut self,
-        redcon: u8,
-        conn_params: Option<&ConnectionParams>,
-        events: &mut EventEmitter,
-    ) -> Result<Instant> {
+    async fn write_redcon(&mut self, redcon: u8, events: &mut EventEmitter) -> Result<Instant> {
         if !self.connected {
             return Err(RigError::new("connect", "not connected"));
         }
-        let payload = encode_command(redcon, conn_params);
-        let mut fields = vec![
+        let payload = encode_command(redcon);
+        let fields = vec![
             ("redcon", redcon.to_string()),
             ("payload", hex_lower(&payload)),
         ];
-        fields.extend(connection_fields(conn_params));
         events.emit("command", &fields);
 
         if redcon == REDCON_ACTIVE {

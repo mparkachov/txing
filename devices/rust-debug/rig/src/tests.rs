@@ -9,10 +9,7 @@ use crate::event::EventEmitter;
 #[cfg(feature = "ble-real")]
 use crate::event::{local_timestamp, parse_event_line};
 use crate::overnight::{Candidate, OvernightConfig, run_overnight};
-use crate::protocol::{
-    REDCON_ACTIVE, REDCON_IDLE, decode_state, encode_command, encode_state,
-    validate_connection_params,
-};
+use crate::protocol::{REDCON_ACTIVE, REDCON_IDLE, decode_state, encode_command, encode_state};
 use crate::pubsub::{
     COMMAND_ACCEPTED, COMMAND_SUCCEEDED, ConnectivityCommand, ConnectivityCommandResult,
     ConnectivityState, InMemoryPubSub, build_command_result_topic, build_command_topic,
@@ -22,21 +19,16 @@ use crate::sim_ble::{SimBleBehavior, SimBleCentral};
 
 #[test]
 fn protocol_round_trips_command_and_state() {
-    let params = validate_connection_params("stable", 100, 0, 20000).unwrap();
-    assert_eq!(encode_command(REDCON_ACTIVE, None), vec![1, REDCON_ACTIVE]);
-    assert_eq!(
-        encode_command(REDCON_ACTIVE, Some(&params)),
-        vec![1, REDCON_ACTIVE, 100, 0, 0, 0, 32, 78]
-    );
+    assert_eq!(encode_command(REDCON_ACTIVE), vec![1, REDCON_ACTIVE]);
 
     let state = decode_state(&encode_state(REDCON_ACTIVE, 3795)).unwrap();
     assert_eq!(state.redcon, REDCON_ACTIVE);
-    assert!(state.active);
+    assert!(state.active());
     assert_eq!(state.battery_mv, Some(3795));
 
     let idle = decode_state(&encode_state(REDCON_IDLE, 0)).unwrap();
     assert_eq!(idle.redcon, REDCON_IDLE);
-    assert!(!idle.active);
+    assert!(!idle.active());
     assert_eq!(idle.battery_mv, None);
 }
 
@@ -44,7 +36,7 @@ fn protocol_round_trips_command_and_state() {
 fn protocol_rejects_invalid_state() {
     let err = decode_state(&[1, 3]).unwrap_err();
     assert_eq!(err.stage, "state");
-    let err = decode_state(&[2, 3, 1, 0, 0]).unwrap_err();
+    let err = decode_state(&[2, 3, 0, 0]).unwrap_err();
     assert_eq!(err.stage, "state");
 }
 
@@ -163,7 +155,6 @@ async fn virtual_overnight_writes_report_and_summary() {
         matrix_hours: 2.0 / 60.0,
         confirm_hours: 1.0 / 60.0,
         trial_cycles: 1,
-        connection_profiles: Some("stable-100-0-20".to_string()),
         central_profiles: Some("bluez-balanced-service".to_string()),
         ..OvernightConfig::default()
     };
@@ -176,7 +167,7 @@ async fn virtual_overnight_writes_report_and_summary() {
     let summary = std::fs::read_to_string(output.join("summary.json")).unwrap();
     let report = std::fs::read_to_string(output.join("report.md")).unwrap();
     assert!(summary.contains("\"phase\": \"complete\""));
-    assert!(summary.contains("stable-100-0-20+bluez-balanced-service"));
+    assert!(summary.contains("bluez-balanced-service"));
     assert!(report.contains("Selected Candidate"));
 }
 
@@ -198,8 +189,8 @@ async fn ignored_wall_clock_simulated_cycle_soak() {
 }
 
 #[cfg(feature = "ble-real")]
-async fn run_physical_ble_cycle(test_name: &str, conn_profile: &str, index: usize) {
-    let mut config = focused_physical_config_from_env(conn_profile);
+async fn run_physical_ble_cycle(test_name: &str, index: usize) {
+    let mut config = focused_physical_config_from_env();
     apply_physical_extra_args(&mut config);
     config.repetitions = 1;
     let output_dir = physical_output_dir();
@@ -222,7 +213,6 @@ async fn run_physical_ble_cycle(test_name: &str, conn_profile: &str, index: usiz
         "test-start",
         &[
             ("test", test_name.to_string()),
-            ("suite", conn_profile.to_string()),
             ("index", index.to_string()),
             ("log", log_path.display().to_string()),
             ("outputDir", output_dir.display().to_string()),
@@ -239,7 +229,6 @@ async fn run_physical_ble_cycle(test_name: &str, conn_profile: &str, index: usiz
                 "test-end",
                 &[
                     ("test", test_name.to_string()),
-                    ("suite", conn_profile.to_string()),
                     ("index", index.to_string()),
                     ("passedCycles", summary.passed_cycles.to_string()),
                 ],
@@ -250,7 +239,6 @@ async fn run_physical_ble_cycle(test_name: &str, conn_profile: &str, index: usiz
                 "test-fail",
                 &[
                     ("test", test_name.to_string()),
-                    ("suite", conn_profile.to_string()),
                     ("index", index.to_string()),
                     ("stage", err.stage.clone()),
                     ("message", err.message.clone()),
@@ -261,7 +249,6 @@ async fn run_physical_ble_cycle(test_name: &str, conn_profile: &str, index: usiz
 
     let record = physical_test_record(
         test_name,
-        conn_profile,
         index,
         &config,
         &log_path,
@@ -284,7 +271,7 @@ async fn run_physical_ble_cycle(test_name: &str, conn_profile: &str, index: usiz
 include!(concat!(env!("OUT_DIR"), "/physical_ble_tests.rs"));
 
 #[cfg(feature = "ble-real")]
-fn focused_physical_config_from_env(conn_profile: &str) -> CycleConfig {
+fn focused_physical_config_from_env() -> CycleConfig {
     let name = std::env::var("RUST_DEBUG_RIG_NAME").unwrap_or_else(|_| "weather-q8zbgb".into());
     let mut config = CycleConfig::default_for_name(name).unwrap();
     config.repetitions = 1;
@@ -295,7 +282,6 @@ fn focused_physical_config_from_env(conn_profile: &str) -> CycleConfig {
     config.connect_attempts = env_parse("RUST_DEBUG_RIG_CONNECT_ATTEMPTS", 5);
     config.retry_delay = env_parse("RUST_DEBUG_RIG_RETRY_DELAY", 5.0);
     config.disconnect_deadline = env_parse("RUST_DEBUG_RIG_DISCONNECT_DEADLINE", 10.0);
-    config.conn_profile = vec![conn_profile.to_string()];
     config.require_service = false;
     config
 }
@@ -323,9 +309,6 @@ fn apply_physical_extra_args(config: &mut CycleConfig) {
             .map_or((token, None), |(flag, value)| (flag, Some(value)));
         let mut next_value = || inline_value.or_else(|| tokens.next());
         match flag {
-            "--conn-profile" => {
-                let _ = next_value();
-            }
             "--repetitions" => {
                 let _ = next_value();
             }
@@ -344,12 +327,6 @@ fn apply_physical_extra_args(config: &mut CycleConfig) {
             "--wake-deadline" => set_f64(&mut config.wake_deadline, next_value()),
             "--sleep-deadline" => set_f64(&mut config.sleep_deadline, next_value()),
             "--min-battery" => set_usize(&mut config.min_battery, next_value()),
-            "--conn-profile-cycles" => set_u32(&mut config.conn_profile_cycles, next_value()),
-            "--conn-params" => {
-                if let Some(value) = next_value() {
-                    config.conn_params.push(value.to_string());
-                }
-            }
             "--output-dir" => {
                 let _ = next_value();
             }
@@ -492,7 +469,6 @@ impl PhysicalTestCapture {
 #[allow(clippy::too_many_arguments)]
 fn physical_test_record(
     test_name: &str,
-    conn_profile: &str,
     index: usize,
     config: &CycleConfig,
     log_path: &std::path::Path,
@@ -532,7 +508,7 @@ fn physical_test_record(
         "framework": "rust-test",
         "test": {
             "name": test_name,
-            "suite": conn_profile,
+            "suite": "redcon",
             "index": index,
             "status": if failure.is_some() { "failed" } else { "passed" },
             "startedAt": started_at,
@@ -541,7 +517,6 @@ fn physical_test_record(
         },
         "config": {
             "name": config.name,
-            "connProfile": conn_profile,
             "wakeSeconds": config.wake_seconds,
             "cycleSeconds": config.cycle_seconds,
             "minBattery": config.min_battery,
@@ -811,8 +786,8 @@ fn physical_result_artifacts_are_junit_and_json() {
     let temp = tempfile::tempdir().unwrap();
     let first = serde_json::json!({
         "test": {
-            "name": "physical_ble_stable_100_0_20_001",
-            "suite": "stable-100-0-20",
+            "name": "physical_ble_redcon_001",
+            "suite": "redcon",
             "status": "passed",
             "durationMs": 50000,
         },
@@ -824,8 +799,8 @@ fn physical_result_artifacts_are_junit_and_json() {
     });
     let second = serde_json::json!({
         "test": {
-            "name": "physical_ble_stable_100_0_20_002",
-            "suite": "stable-100-0-20",
+            "name": "physical_ble_redcon_002",
+            "suite": "redcon",
             "status": "failed",
             "durationMs": 32000,
         },

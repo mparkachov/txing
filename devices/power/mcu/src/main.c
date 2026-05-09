@@ -50,46 +50,65 @@
 #define POWER_GATT 0
 #endif
 
+#ifndef POWER_REDCON_CONN_INTERVAL_MS
+#define POWER_REDCON_CONN_INTERVAL_MS 100U
+#endif
+
+#ifndef POWER_REDCON_CONN_LATENCY
+#define POWER_REDCON_CONN_LATENCY 0U
+#endif
+
+#ifndef POWER_REDCON_CONN_SUPERVISION_MS
+#define POWER_REDCON_CONN_SUPERVISION_MS 20000U
+#endif
+
+#ifndef POWER_REDCON_STATE_NOTIFY_INTERVAL_SECONDS
+#define POWER_REDCON_STATE_NOTIFY_INTERVAL_SECONDS 10U
+#endif
+
+#ifndef POWER_REDCON_IDLE_DISCONNECT_DELAY_MS
+#define POWER_REDCON_IDLE_DISCONNECT_DELAY_MS 500U
+#endif
+
+#ifndef POWER_REDCON_BATTERY_ADC_SETTLE_MS
+#define POWER_REDCON_BATTERY_ADC_SETTLE_MS 100U
+#endif
+
 #if POWER_ADV_INCLUDE_UUID && !POWER_ADV_SCANNABLE
-#error "Weather service UUID requires scannable advertising so it can fit in scan response"
+#error "REDCON service UUID requires scannable advertising so it can fit in scan response"
 #endif
 
 #if POWER_GATT && !POWER_ADV_CONNECTABLE
-#error "Weather GATT requires connectable advertising"
+#error "REDCON GATT requires connectable advertising"
 #endif
 
 #if POWER_GATT && !POWER_ADV_INCLUDE_UUID
-#error "Weather GATT requires weather service UUID advertising"
+#error "REDCON GATT requires redcon service UUID advertising"
 #endif
 
 #if POWER_GATT &&                                                                  \
 	(!DT_NODE_EXISTS(DT_PATH(zephyr_user)) ||                                      \
 	 !DT_NODE_HAS_PROP(DT_PATH(zephyr_user), io_channels))
-#error "Weather GATT battery reporting requires zephyr,user io-channels"
+#error "REDCON GATT battery reporting requires zephyr,user io-channels"
 #endif
 
-#define WEATHER_SERVICE_UUID_VAL                                                             \
+#define REDCON_SERVICE_UUID_VAL                                                             \
 	BT_UUID_128_ENCODE(0xf6b4b000, 0x7b32, 0x4d2d, 0x9f4b, 0x4ff0a2b8f100)
-#define WEATHER_COMMAND_UUID_VAL                                                             \
+#define REDCON_COMMAND_UUID_VAL                                                             \
 	BT_UUID_128_ENCODE(0xf6b4b001, 0x7b32, 0x4d2d, 0x9f4b, 0x4ff0a2b8f100)
-#define WEATHER_STATE_UUID_VAL                                                               \
+#define REDCON_STATE_UUID_VAL                                                               \
 	BT_UUID_128_ENCODE(0xf6b4b002, 0x7b32, 0x4d2d, 0x9f4b, 0x4ff0a2b8f100)
 
-#define WEATHER_PROTOCOL_VERSION 1U
-#define WEATHER_REDCON_ACTIVE 3U
-#define WEATHER_REDCON_IDLE 4U
-#define WEATHER_STATE_FLAG_ACTIVE 0x01U
-#define WEATHER_STATE_PAYLOAD_SIZE 5U
-#define WEATHER_COMMAND_BASE_SIZE 2U
-#define WEATHER_COMMAND_CONN_PARAM_SIZE 8U
-#define WEATHER_BATTERY_ADC_SETTLE_MS 100U
-#define WEATHER_STATE_NOTIFY_INTERVAL_SECONDS 10U
-#define WEATHER_IDLE_DISCONNECT_DELAY_MS 500U
-#define WEATHER_CONN_INTERVAL_MIN_UNITS 6U
-#define WEATHER_CONN_INTERVAL_MAX_UNITS 3200U
-#define WEATHER_CONN_LATENCY_MAX 499U
-#define WEATHER_CONN_SUPERVISION_MIN_UNITS 10U
-#define WEATHER_CONN_SUPERVISION_MAX_UNITS 3200U
+#define REDCON_PROTOCOL_VERSION 1U
+#define REDCON_ACTIVE 3U
+#define REDCON_IDLE 4U
+#define REDCON_STATE_PAYLOAD_SIZE 4U
+#define REDCON_COMMAND_PAYLOAD_SIZE 2U
+#define REDCON_CONN_INTERVAL_MIN_UNITS 6U
+#define REDCON_CONN_INTERVAL_MAX_UNITS 3200U
+#define REDCON_CONN_LATENCY_MAX 499U
+#define REDCON_CONN_SUPERVISION_MIN_UNITS 10U
+#define REDCON_CONN_SUPERVISION_MAX_UNITS 3200U
 
 #if POWER_ADV_CONNECTABLE
 #define POWER_ADV_OPTIONS BT_LE_ADV_OPT_CONN
@@ -123,7 +142,7 @@ static const struct bt_data ad[] = {
 
 #if POWER_ADV_INCLUDE_UUID
 static const struct bt_data sd[] = {
-	BT_DATA_BYTES(BT_DATA_UUID128_ALL, WEATHER_SERVICE_UUID_VAL),
+	BT_DATA_BYTES(BT_DATA_UUID128_ALL, REDCON_SERVICE_UUID_VAL),
 };
 #endif
 
@@ -141,40 +160,34 @@ struct gatt_payload {
 	size_t len;
 };
 
-struct weather_command {
+struct redcon_command {
 	uint8_t redcon;
-	bool has_conn_params;
-	uint16_t conn_interval_ms;
-	uint16_t conn_latency;
-	uint16_t conn_supervision_ms;
 };
 
-static uint8_t current_redcon = WEATHER_REDCON_IDLE;
-static uint8_t weather_state_payload[WEATHER_STATE_PAYLOAD_SIZE] = {
-	WEATHER_PROTOCOL_VERSION,
-	WEATHER_REDCON_IDLE,
-	0,
+static uint8_t current_redcon = REDCON_IDLE;
+static uint8_t redcon_state_payload[REDCON_STATE_PAYLOAD_SIZE] = {
+	REDCON_PROTOCOL_VERSION,
+	REDCON_IDLE,
 	0,
 	0,
 };
-static struct gatt_payload weather_state_value = {
-	.data = weather_state_payload,
-	.len = sizeof(weather_state_payload),
+static struct gatt_payload redcon_state_value = {
+	.data = redcon_state_payload,
+	.len = sizeof(redcon_state_payload),
 };
 
-static const struct bt_uuid_128 weather_service_uuid =
-	BT_UUID_INIT_128(WEATHER_SERVICE_UUID_VAL);
-static const struct bt_uuid_128 weather_command_uuid =
-	BT_UUID_INIT_128(WEATHER_COMMAND_UUID_VAL);
-static const struct bt_uuid_128 weather_state_uuid =
-	BT_UUID_INIT_128(WEATHER_STATE_UUID_VAL);
+static const struct bt_uuid_128 redcon_service_uuid =
+	BT_UUID_INIT_128(REDCON_SERVICE_UUID_VAL);
+static const struct bt_uuid_128 redcon_command_uuid =
+	BT_UUID_INIT_128(REDCON_COMMAND_UUID_VAL);
+static const struct bt_uuid_128 redcon_state_uuid =
+	BT_UUID_INIT_128(REDCON_STATE_UUID_VAL);
 
-static void set_weather_power(bool active);
+static void set_redcon_power(bool active);
 static void suspend_battery_adc(void);
 static void cancel_idle_disconnect(void);
 static void schedule_idle_disconnect(struct bt_conn *conn);
-static void request_connection_params(struct bt_conn *conn,
-				      const struct weather_command *command);
+static void request_connection_params(struct bt_conn *conn);
 
 static void resume_battery_adc(void)
 {
@@ -211,7 +224,7 @@ static uint16_t sample_battery_mv(void)
 #if DT_NODE_HAS_STATUS(DT_NODELABEL(vbat_pwr), okay)
 	if (device_is_ready(vbat_pwr_reg)) {
 		(void)regulator_enable(vbat_pwr_reg);
-		k_sleep(K_MSEC(WEATHER_BATTERY_ADC_SETTLE_MS));
+		k_sleep(K_MSEC(POWER_REDCON_BATTERY_ADC_SETTLE_MS));
 	}
 #endif
 
@@ -254,25 +267,18 @@ out:
 	return result;
 }
 
-static void encode_weather_state(uint8_t redcon, uint16_t battery_mv)
+static void encode_redcon_state(uint8_t redcon, uint16_t battery_mv)
 {
-	uint8_t flags = 0U;
-
-	if (redcon < WEATHER_REDCON_IDLE) {
-		flags |= WEATHER_STATE_FLAG_ACTIVE;
-	}
-
-	weather_state_payload[0] = WEATHER_PROTOCOL_VERSION;
-	weather_state_payload[1] = redcon;
-	weather_state_payload[2] = flags;
-	sys_put_le16(battery_mv, &weather_state_payload[3]);
+	redcon_state_payload[0] = REDCON_PROTOCOL_VERSION;
+	redcon_state_payload[1] = redcon;
+	sys_put_le16(battery_mv, &redcon_state_payload[2]);
 }
 
-static void refresh_weather_payloads(void)
+static void refresh_redcon_payloads(void)
 {
 	const uint16_t battery_mv = sample_battery_mv();
 
-	encode_weather_state(current_redcon, battery_mv);
+	encode_redcon_state(current_redcon, battery_mv);
 }
 
 static uint16_t conn_interval_units_from_ms(uint16_t interval_ms)
@@ -294,15 +300,15 @@ static bool validate_connection_params(uint16_t interval_ms, uint16_t latency,
 	const uint32_t minimum_supervision_ms =
 		(uint32_t)interval_ms * (uint32_t)(latency + 1U) * 2U;
 
-	if (interval_units < WEATHER_CONN_INTERVAL_MIN_UNITS ||
-	    interval_units > WEATHER_CONN_INTERVAL_MAX_UNITS) {
+	if (interval_units < REDCON_CONN_INTERVAL_MIN_UNITS ||
+	    interval_units > REDCON_CONN_INTERVAL_MAX_UNITS) {
 		return false;
 	}
-	if (latency > WEATHER_CONN_LATENCY_MAX) {
+	if (latency > REDCON_CONN_LATENCY_MAX) {
 		return false;
 	}
-	if (supervision_units < WEATHER_CONN_SUPERVISION_MIN_UNITS ||
-	    supervision_units > WEATHER_CONN_SUPERVISION_MAX_UNITS) {
+	if (supervision_units < REDCON_CONN_SUPERVISION_MIN_UNITS ||
+	    supervision_units > REDCON_CONN_SUPERVISION_MAX_UNITS) {
 		return false;
 	}
 	if ((uint32_t)supervision_ms <= minimum_supervision_ms) {
@@ -311,60 +317,45 @@ static bool validate_connection_params(uint16_t interval_ms, uint16_t latency,
 	return true;
 }
 
-static bool decode_weather_command(const uint8_t *data, size_t len,
-				   struct weather_command *command)
+static bool decode_redcon_command(const uint8_t *data, size_t len,
+				   struct redcon_command *command)
 {
 	uint8_t redcon;
 
 	if (data == NULL || command == NULL ||
-	    (len != WEATHER_COMMAND_BASE_SIZE && len != WEATHER_COMMAND_CONN_PARAM_SIZE)) {
+	    len != REDCON_COMMAND_PAYLOAD_SIZE) {
 		return false;
 	}
-	if (data[0] != WEATHER_PROTOCOL_VERSION) {
+	if (data[0] != REDCON_PROTOCOL_VERSION) {
 		return false;
 	}
 
 	redcon = data[1];
-	if (redcon == 1U || redcon == 2U) {
-		redcon = WEATHER_REDCON_ACTIVE;
-	}
-	if (redcon != WEATHER_REDCON_ACTIVE && redcon != WEATHER_REDCON_IDLE) {
+	if (redcon != REDCON_ACTIVE && redcon != REDCON_IDLE) {
 		return false;
 	}
 
 	command->redcon = redcon;
-	command->has_conn_params = false;
-	command->conn_interval_ms = 0U;
-	command->conn_latency = 0U;
-	command->conn_supervision_ms = 0U;
-
-	if (len == WEATHER_COMMAND_CONN_PARAM_SIZE) {
-		command->conn_interval_ms = sys_get_le16(&data[2]);
-		command->conn_latency = sys_get_le16(&data[4]);
-		command->conn_supervision_ms = sys_get_le16(&data[6]);
-		if (!validate_connection_params(command->conn_interval_ms,
-						command->conn_latency,
-						command->conn_supervision_ms)) {
-			return false;
-		}
-		command->has_conn_params = true;
-	}
 	return true;
 }
 
-static void request_connection_params(struct bt_conn *conn,
-				      const struct weather_command *command)
+static void request_connection_params(struct bt_conn *conn)
 {
 	struct bt_le_conn_param params;
 
-	if (conn == NULL || command == NULL || !command->has_conn_params) {
+	if (conn == NULL) {
+		return;
+	}
+	if (!validate_connection_params(POWER_REDCON_CONN_INTERVAL_MS,
+					POWER_REDCON_CONN_LATENCY,
+					POWER_REDCON_CONN_SUPERVISION_MS)) {
 		return;
 	}
 
-	params.interval_min = conn_interval_units_from_ms(command->conn_interval_ms);
+	params.interval_min = conn_interval_units_from_ms(POWER_REDCON_CONN_INTERVAL_MS);
 	params.interval_max = params.interval_min;
-	params.latency = command->conn_latency;
-	params.timeout = conn_supervision_units_from_ms(command->conn_supervision_ms);
+	params.latency = POWER_REDCON_CONN_LATENCY;
+	params.timeout = conn_supervision_units_from_ms(POWER_REDCON_CONN_SUPERVISION_MS);
 	(void)bt_conn_le_param_update(conn, &params);
 }
 
@@ -373,24 +364,24 @@ static ssize_t read_state(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 {
 	const struct gatt_payload *payload = attr->user_data;
 
-	refresh_weather_payloads();
+	refresh_redcon_payloads();
 	return bt_gatt_attr_read(conn, attr, buf, len, offset, payload->data, payload->len);
 }
 
-static void notify_weather_state(void);
+static void notify_redcon_state(void);
 
 static void state_notify_work_handler(struct k_work *work)
 {
 	ARG_UNUSED(work);
 
-	if (current_redcon != WEATHER_REDCON_ACTIVE) {
+	if (current_redcon != REDCON_ACTIVE) {
 		return;
 	}
 
-	refresh_weather_payloads();
-	notify_weather_state();
+	refresh_redcon_payloads();
+	notify_redcon_state();
 	(void)k_work_schedule(k_work_delayable_from_work(work),
-			      K_SECONDS(WEATHER_STATE_NOTIFY_INTERVAL_SECONDS));
+			      K_SECONDS(POWER_REDCON_STATE_NOTIFY_INTERVAL_SECONDS));
 }
 
 K_WORK_DELAYABLE_DEFINE(state_notify_work, state_notify_work_handler);
@@ -432,13 +423,13 @@ static void schedule_idle_disconnect(struct bt_conn *conn)
 
 	idle_disconnect_conn = bt_conn_ref(conn);
 	(void)k_work_schedule(&idle_disconnect_work,
-			      K_MSEC(WEATHER_IDLE_DISCONNECT_DELAY_MS));
+			      K_MSEC(POWER_REDCON_IDLE_DISCONNECT_DELAY_MS));
 }
 
 static ssize_t write_command(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 			     const void *buf, uint16_t len, uint16_t offset, uint8_t flags)
 {
-	struct weather_command command;
+	struct redcon_command command;
 
 	ARG_UNUSED(attr);
 	ARG_UNUSED(flags);
@@ -446,23 +437,23 @@ static ssize_t write_command(struct bt_conn *conn, const struct bt_gatt_attr *at
 	if (offset != 0U) {
 		return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
 	}
-	if (!decode_weather_command(buf, len, &command)) {
+	if (!decode_redcon_command(buf, len, &command)) {
 		return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
 	}
 
 	current_redcon = command.redcon;
-	if (current_redcon == WEATHER_REDCON_ACTIVE) {
+	if (current_redcon == REDCON_ACTIVE) {
 		cancel_idle_disconnect();
-		set_weather_power(true);
-		request_connection_params(conn, &command);
-		refresh_weather_payloads();
-		notify_weather_state();
+		set_redcon_power(true);
+		request_connection_params(conn);
+		refresh_redcon_payloads();
+		notify_redcon_state();
 		(void)k_work_reschedule(&state_notify_work,
-					 K_SECONDS(WEATHER_STATE_NOTIFY_INTERVAL_SECONDS));
+					 K_SECONDS(POWER_REDCON_STATE_NOTIFY_INTERVAL_SECONDS));
 	} else {
 		enter_ble_idle_hardware_state();
-		refresh_weather_payloads();
-		notify_weather_state();
+		refresh_redcon_payloads();
+		notify_redcon_state();
 		enter_ble_idle_hardware_state();
 		schedule_idle_disconnect(conn);
 	}
@@ -470,19 +461,19 @@ static ssize_t write_command(struct bt_conn *conn, const struct bt_gatt_attr *at
 	return len;
 }
 
-BT_GATT_SERVICE_DEFINE(weather_svc,
-	BT_GATT_PRIMARY_SERVICE(&weather_service_uuid),
-	BT_GATT_CHARACTERISTIC(&weather_command_uuid.uuid, BT_GATT_CHRC_WRITE,
+BT_GATT_SERVICE_DEFINE(redcon_svc,
+	BT_GATT_PRIMARY_SERVICE(&redcon_service_uuid),
+	BT_GATT_CHARACTERISTIC(&redcon_command_uuid.uuid, BT_GATT_CHRC_WRITE,
 			       BT_GATT_PERM_WRITE, NULL, write_command, NULL),
-	BT_GATT_CHARACTERISTIC(&weather_state_uuid.uuid, BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY,
-			       BT_GATT_PERM_READ, read_state, NULL, &weather_state_value),
+	BT_GATT_CHARACTERISTIC(&redcon_state_uuid.uuid, BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY,
+			       BT_GATT_PERM_READ, read_state, NULL, &redcon_state_value),
 	BT_GATT_CCC(NULL, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
 );
 
-static void notify_weather_state(void)
+static void notify_redcon_state(void)
 {
-	(void)bt_gatt_notify(NULL, &weather_svc.attrs[4], weather_state_payload,
-			     sizeof(weather_state_payload));
+	(void)bt_gatt_notify(NULL, &redcon_svc.attrs[4], redcon_state_payload,
+			     sizeof(redcon_state_payload));
 }
 #endif
 
@@ -501,7 +492,7 @@ static void set_output_active(const struct gpio_dt_spec *pin, bool active)
 	}
 }
 
-static void set_weather_power(bool active)
+static void set_redcon_power(bool active)
 {
 	set_output_active(&led, active);
 	set_output_active(&power, active);
@@ -528,7 +519,7 @@ static void disable_xiao_load_regulators(void)
 static void enter_ble_idle_hardware_state(void)
 {
 #if POWER_GATT
-	set_weather_power(false);
+	set_redcon_power(false);
 	(void)k_work_cancel_delayable(&state_notify_work);
 	suspend_battery_adc();
 #endif
@@ -599,10 +590,10 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 	ARG_UNUSED(conn);
 	ARG_UNUSED(reason);
 #if POWER_GATT
-	current_redcon = WEATHER_REDCON_IDLE;
+	current_redcon = REDCON_IDLE;
 	cancel_idle_disconnect();
 	enter_ble_idle_hardware_state();
-	encode_weather_state(WEATHER_REDCON_IDLE, 0U);
+	encode_redcon_state(REDCON_IDLE, 0U);
 #endif
 	k_work_submit(&advertise_work);
 }

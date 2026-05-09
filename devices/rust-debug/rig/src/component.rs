@@ -76,7 +76,7 @@ impl<B: BleCentral> BleConnectivityComponent<B> {
         };
         let command_at = self
             .central
-            .write_redcon(target_redcon, None, &mut events)
+            .write_redcon(target_redcon, &mut events)
             .await?;
         let state = loop {
             let state = self.central.next_state(Duration::from_secs(10)).await?;

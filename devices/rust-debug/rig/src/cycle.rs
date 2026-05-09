@@ -4,10 +4,7 @@ use std::time::{Duration, Instant};
 use crate::ble::{BleCentral, BleConnectConfig, TimedState};
 use crate::error::{Result, RigError};
 use crate::event::{EventEmitter, local_timestamp_for_path};
-use crate::protocol::{
-    ConnectionParams, REDCON_ACTIVE, REDCON_IDLE, WeatherState, connection_fields,
-    resolve_connection_profiles,
-};
+use crate::protocol::{REDCON_ACTIVE, REDCON_IDLE, RedconState};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimeMode {
@@ -31,10 +28,6 @@ pub struct CycleConfig {
     pub disconnect_deadline: f64,
     pub keep_connected_during_sleep: bool,
     pub require_service: bool,
-    pub conn_profile: Vec<String>,
-    pub conn_params: Vec<String>,
-    pub conn_profile_cycles: u32,
-    pub resolved_conn_profiles: Vec<Option<ConnectionParams>>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -54,8 +47,6 @@ pub struct LoggedCycleRun {
 
 impl CycleConfig {
     pub fn default_for_name(name: impl Into<String>) -> Result<Self> {
-        let conn_profile = Vec::new();
-        let conn_params = Vec::new();
         Ok(Self {
             repetitions: 1,
             name: name.into(),
@@ -71,10 +62,6 @@ impl CycleConfig {
             disconnect_deadline: 5.0,
             keep_connected_during_sleep: false,
             require_service: true,
-            conn_profile,
-            conn_params,
-            conn_profile_cycles: 1,
-            resolved_conn_profiles: resolve_connection_profiles(&[], &[])?,
         })
     }
 
@@ -95,13 +82,6 @@ impl CycleConfig {
         if self.min_battery == 0 {
             return Err(RigError::args("min-battery must be greater than zero"));
         }
-        if self.conn_profile_cycles == 0 {
-            return Err(RigError::args(
-                "conn-profile-cycles must be greater than zero",
-            ));
-        }
-        self.resolved_conn_profiles =
-            resolve_connection_profiles(&self.conn_profile, &self.conn_params)?;
         Ok(())
     }
 
@@ -114,12 +94,6 @@ impl CycleConfig {
             connect_attempts: self.connect_attempts,
             retry_delay: Duration::from_secs_f64(self.retry_delay),
         }
-    }
-
-    pub fn conn_params_for_cycle(&self, cycle: u32) -> Option<&ConnectionParams> {
-        let block = self.conn_profile_cycles.max(1);
-        let index = ((cycle - 1) / block) as usize % self.resolved_conn_profiles.len();
-        self.resolved_conn_profiles[index].as_ref()
     }
 }
 
@@ -201,21 +175,6 @@ pub async fn run_cycle_test(
             ("wakeSeconds", config.wake_seconds.to_string()),
             ("cycleSeconds", config.cycle_seconds.to_string()),
             ("minBattery", config.min_battery.to_string()),
-            (
-                "connProfiles",
-                config
-                    .resolved_conn_profiles
-                    .iter()
-                    .map(|profile| {
-                        profile
-                            .as_ref()
-                            .map(|params| params.name.clone())
-                            .unwrap_or_else(|| "central-default".to_string())
-                    })
-                    .collect::<Vec<_>>()
-                    .join(","),
-            ),
-            ("connProfileCycles", config.conn_profile_cycles.to_string()),
         ],
     );
 
@@ -223,8 +182,7 @@ pub async fn run_cycle_test(
     let test_started = Instant::now();
     for cycle in 1..=config.repetitions {
         let cycle_started = Instant::now();
-        let conn_params = config.conn_params_for_cycle(cycle);
-        let mut start_fields = vec![
+        let start_fields = vec![
             ("cycle", cycle.to_string()),
             ("cycles", config.repetitions.to_string()),
             (
@@ -232,7 +190,6 @@ pub async fn run_cycle_test(
                 test_started.elapsed().as_millis().to_string(),
             ),
         ];
-        start_fields.extend(connection_fields(conn_params));
         events.emit("cycle-start", &start_fields);
 
         if !central.is_connected().await {
@@ -241,9 +198,7 @@ pub async fn run_cycle_test(
             emit_state(events, &state.state);
         }
 
-        let wake_command_at = central
-            .write_redcon(REDCON_ACTIVE, conn_params, events)
-            .await?;
+        let wake_command_at = central.write_redcon(REDCON_ACTIVE, events).await?;
         let wake_state = wait_for_redcon(
             central,
             REDCON_ACTIVE,
@@ -259,7 +214,7 @@ pub async fn run_cycle_test(
             .saturating_duration_since(wake_command_at)
             .as_millis();
         summary.wake_latencies_ms.push(wake_latency_ms);
-        let mut wake_fields = vec![
+        let wake_fields = vec![
             ("cycle", cycle.to_string()),
             ("latencyMs", wake_latency_ms.to_string()),
             (
@@ -283,7 +238,6 @@ pub async fn run_cycle_test(
                 wake_state.state.battery_mv.unwrap_or(0).to_string(),
             ),
         ];
-        wake_fields.extend(connection_fields(conn_params));
         events.emit("wake-ok", &wake_fields);
 
         let battery_states = collect_active_battery_states(
@@ -314,7 +268,7 @@ pub async fn run_cycle_test(
             .battery_values
             .extend(battery_values.iter().copied());
 
-        let sleep_command_at = central.write_redcon(REDCON_IDLE, None, events).await?;
+        let sleep_command_at = central.write_redcon(REDCON_IDLE, events).await?;
         let sleep_state = wait_for_redcon(
             central,
             REDCON_IDLE,
@@ -595,7 +549,7 @@ async fn monitor_sleep_window(
         let timeout = (until - Instant::now()).min(Duration::from_secs(1));
         match central.next_state(timeout).await {
             Ok(state) => {
-                if state.state.redcon == REDCON_ACTIVE || state.state.active {
+                if state.state.active() {
                     return Err(RigError::new(
                         "sleep",
                         format!("cycle {cycle}: active state observed during sleep window"),
@@ -638,17 +592,17 @@ async fn sleep_disconnected_window(
     }
 }
 
-fn emit_state(events: &mut EventEmitter, state: &WeatherState) {
+fn emit_state(events: &mut EventEmitter, state: &RedconState) {
     events.emit(
         "state",
         &[
             ("redcon", state.redcon.to_string()),
-            ("active", if state.active { "1" } else { "0" }.to_string()),
+            ("active", if state.active() { "1" } else { "0" }.to_string()),
             ("batteryMv", state.battery_mv.unwrap_or(0).to_string()),
         ],
     );
 }
 
-fn is_active_battery_state(state: &WeatherState) -> bool {
-    state.redcon == REDCON_ACTIVE && state.active && state.battery_mv.is_some()
+fn is_active_battery_state(state: &RedconState) -> bool {
+    state.active() && state.battery_mv.is_some()
 }

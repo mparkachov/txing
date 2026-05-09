@@ -12,10 +12,7 @@ use crate::ble::BleCentral;
 use crate::cycle::{CycleConfig, TimeMode, run_cycle_test};
 use crate::error::{Result, RigError};
 use crate::event::{EventEmitter, parse_event_line};
-use crate::protocol::{
-    CentralProfile, built_in_connection_profiles, default_central_profile_names,
-    default_central_profiles, default_connection_profile_names,
-};
+use crate::protocol::{CentralProfile, default_central_profile_names, default_central_profiles};
 
 #[derive(Debug, Clone)]
 pub struct OvernightConfig {
@@ -31,7 +28,6 @@ pub struct OvernightConfig {
     pub wake_deadline: f64,
     pub sleep_deadline: f64,
     pub failure_recovery_delay: f64,
-    pub connection_profiles: Option<String>,
     pub central_profiles: Option<String>,
     pub dry_run: bool,
 }
@@ -39,7 +35,6 @@ pub struct OvernightConfig {
 #[derive(Debug, Clone)]
 pub struct Candidate {
     pub name: String,
-    pub conn_profile: String,
     pub central_profile: CentralProfile,
     pub order: usize,
 }
@@ -59,7 +54,6 @@ pub struct TrialCapture {
 #[derive(Debug, Clone)]
 pub struct TrialResult {
     pub candidate: String,
-    pub conn_profile: String,
     pub central_profile: String,
     pub requested_cycles: u32,
     pub passed_cycles: u32,
@@ -110,7 +104,6 @@ impl Default for OvernightConfig {
             wake_deadline: 10.0,
             sleep_deadline: 10.0,
             failure_recovery_delay: 10.0,
-            connection_profiles: None,
             central_profiles: None,
             dry_run: false,
         }
@@ -204,7 +197,6 @@ impl CandidateStats {
     pub fn to_json(&self) -> serde_json::Value {
         json!({
             "candidate": self.candidate.name,
-            "connProfile": self.candidate.conn_profile,
             "centralProfile": self.candidate.central_profile.name,
             "trials": self.trials,
             "successfulTrials": self.successful_trials,
@@ -280,7 +272,6 @@ pub async fn run_overnight(
             "matrix-candidate",
             &[
                 ("candidate", candidate.name.clone()),
-                ("connProfile", candidate.conn_profile.clone()),
                 ("centralProfile", candidate.central_profile.name.clone()),
                 (
                     "scanTimeout",
@@ -525,7 +516,6 @@ async fn confirm_best(
         "confirm-selected",
         &[
             ("candidate", candidate.name.clone()),
-            ("connProfile", candidate.conn_profile.clone()),
             ("centralProfile", candidate.central_profile.name.clone()),
         ],
     );
@@ -575,7 +565,6 @@ async fn run_trial(
         &[
             ("phase", phase.to_string()),
             ("candidate", candidate.name.clone()),
-            ("connProfile", candidate.conn_profile.clone()),
             ("centralProfile", candidate.central_profile.name.clone()),
             ("cycles", cycles.to_string()),
             (
@@ -648,7 +637,6 @@ async fn run_trial(
     }
     let result = TrialResult {
         candidate: candidate.name.clone(),
-        conn_profile: candidate.conn_profile.clone(),
         central_profile: candidate.central_profile.name.clone(),
         requested_cycles: cycles,
         passed_cycles: capture.passed_cycles,
@@ -670,7 +658,6 @@ async fn run_trial(
         &[
             ("phase", phase.to_string()),
             ("candidate", result.candidate.clone()),
-            ("connProfile", result.conn_profile.clone()),
             ("centralProfile", result.central_profile.clone()),
             (
                 "success",
@@ -759,29 +746,10 @@ fn cycle_args_for_candidate(
     config.disconnect_deadline = candidate.central_profile.disconnect_deadline;
     config.keep_connected_during_sleep = false;
     config.require_service = candidate.central_profile.require_service;
-    config.conn_profile = vec![candidate.conn_profile.clone()];
     config
 }
 
 pub fn build_candidates(args: &OvernightConfig) -> Result<Vec<Candidate>> {
-    let connection_profiles = parse_csv(
-        args.connection_profiles.as_deref(),
-        default_connection_profile_names(),
-    );
-    let built_ins = built_in_connection_profiles();
-    let unknown: Vec<String> = connection_profiles
-        .iter()
-        .filter(|name| !built_ins.contains_key(name.as_str()))
-        .cloned()
-        .collect();
-    if !unknown.is_empty() {
-        return Err(RigError::args(format!(
-            "unknown connection profile(s): {}. Options: {}",
-            unknown.join(", "),
-            built_ins.keys().copied().collect::<Vec<_>>().join(", ")
-        )));
-    }
-
     let central_profiles = default_central_profiles();
     let central_by_name: BTreeMap<String, CentralProfile> = central_profiles
         .into_iter()
@@ -809,21 +777,16 @@ pub fn build_candidates(args: &OvernightConfig) -> Result<Vec<Candidate>> {
     }
 
     let mut candidates = Vec::new();
-    let mut order = 0usize;
-    for conn_profile in connection_profiles {
-        for central_name in &requested_central {
-            let central_profile = central_by_name
-                .get(central_name)
-                .expect("central profile validated")
-                .clone();
-            candidates.push(Candidate {
-                name: format!("{}+{}", conn_profile, central_profile.name),
-                conn_profile: conn_profile.clone(),
-                central_profile,
-                order,
-            });
-            order += 1;
-        }
+    for (order, central_name) in requested_central.iter().enumerate() {
+        let central_profile = central_by_name
+            .get(central_name)
+            .expect("central profile validated")
+            .clone();
+        candidates.push(Candidate {
+            name: central_profile.name.clone(),
+            central_profile,
+            order,
+        });
     }
     Ok(candidates)
 }
@@ -916,7 +879,6 @@ fn write_outputs(
         },
         "candidates": candidates.iter().map(|candidate| json!({
             "name": candidate.name,
-            "connProfile": candidate.conn_profile,
             "centralProfile": {
                 "name": candidate.central_profile.name,
                 "scanTimeout": candidate.central_profile.scan_timeout,
@@ -963,7 +925,6 @@ fn write_report(
             "## Selected Candidate".to_string(),
             String::new(),
             format!("- Candidate: `{}`", best.candidate.name),
-            format!("- Connection profile: `{}`", best.candidate.conn_profile),
             format!(
                 "- Central profile: `{}`",
                 best.candidate.central_profile.name
@@ -1042,15 +1003,13 @@ fn write_report(
             String::new(),
             "## Untested Candidates".to_string(),
             String::new(),
-            "| Candidate | Connection profile | Central profile |".to_string(),
-            "| --- | --- | --- |".to_string(),
+            "| Candidate | Central profile |".to_string(),
+            "| --- | --- |".to_string(),
         ]);
         for stats in untested {
             lines.push(format!(
-                "| `{}` | `{}` | `{}` |",
-                stats.candidate.name,
-                stats.candidate.conn_profile,
-                stats.candidate.central_profile.name
+                "| `{}` | `{}` |",
+                stats.candidate.name, stats.candidate.central_profile.name
             ));
         }
     }

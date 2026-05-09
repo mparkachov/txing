@@ -5,3 +5,9 @@ advConnectable: true
 advScannable: true
 advIncludeUuid: true
 gatt: true
+redconConnIntervalMs: 100
+redconConnLatency: 0
+redconConnSupervisionMs: 20000
+redconStateNotifyIntervalSeconds: 10
+redconIdleDisconnectDelayMs: 500
+redconBatteryAdcSettleMs: 100

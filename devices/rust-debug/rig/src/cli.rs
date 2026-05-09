@@ -62,12 +62,6 @@ pub struct CycleArgs {
     keep_connected_during_sleep: bool,
     #[arg(long)]
     no_require_service: bool,
-    #[arg(long = "conn-profile")]
-    conn_profile: Vec<String>,
-    #[arg(long = "conn-params")]
-    conn_params: Vec<String>,
-    #[arg(long, default_value_t = 1)]
-    conn_profile_cycles: u32,
     #[arg(long)]
     output_dir: Option<PathBuf>,
 }
@@ -98,8 +92,6 @@ pub struct OvernightArgs {
     sleep_deadline: f64,
     #[arg(long, default_value_t = 10.0)]
     failure_recovery_delay: f64,
-    #[arg(long)]
-    connection_profiles: Option<String>,
     #[arg(long)]
     central_profiles: Option<String>,
     #[arg(long)]
@@ -210,9 +202,6 @@ fn cycle_config(args: CycleArgs) -> Result<CycleConfig> {
     config.disconnect_deadline = args.disconnect_deadline;
     config.keep_connected_during_sleep = args.keep_connected_during_sleep;
     config.require_service = !args.no_require_service;
-    config.conn_profile = args.conn_profile;
-    config.conn_params = args.conn_params;
-    config.conn_profile_cycles = args.conn_profile_cycles;
     Ok(config)
 }
 
@@ -230,7 +219,6 @@ fn overnight_config(args: OvernightArgs) -> OvernightConfig {
         wake_deadline: args.wake_deadline,
         sleep_deadline: args.sleep_deadline,
         failure_recovery_delay: args.failure_recovery_delay,
-        connection_profiles: args.connection_profiles,
         central_profiles: args.central_profiles,
         dry_run: args.dry_run,
     }

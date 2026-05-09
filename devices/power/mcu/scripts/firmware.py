@@ -43,6 +43,12 @@ REQUIRED_CONFIG_FIELDS = (
     "advScannable",
     "advIncludeUuid",
     "gatt",
+    "redconConnIntervalMs",
+    "redconConnLatency",
+    "redconConnSupervisionMs",
+    "redconStateNotifyIntervalSeconds",
+    "redconIdleDisconnectDelayMs",
+    "redconBatteryAdcSettleMs",
 )
 _CONFIG_CACHE: dict[str, object] | None = None
 
@@ -163,6 +169,14 @@ def load_mcu_config() -> dict[str, object]:
         "advScannable": require_bool(raw_config, "advScannable"),
         "advIncludeUuid": require_bool(raw_config, "advIncludeUuid"),
         "gatt": require_bool(raw_config, "gatt"),
+        "redconConnIntervalMs": require_int(raw_config, "redconConnIntervalMs"),
+        "redconConnLatency": require_int(raw_config, "redconConnLatency"),
+        "redconConnSupervisionMs": require_int(raw_config, "redconConnSupervisionMs"),
+        "redconStateNotifyIntervalSeconds": require_int(
+            raw_config, "redconStateNotifyIntervalSeconds"
+        ),
+        "redconIdleDisconnectDelayMs": require_int(raw_config, "redconIdleDisconnectDelayMs"),
+        "redconBatteryAdcSettleMs": require_int(raw_config, "redconBatteryAdcSettleMs"),
     }
 
     try:
@@ -176,9 +190,36 @@ def load_mcu_config() -> dict[str, object]:
         raise SystemExit(f"{CONFIG_PATH}: gatt requires advConnectable")
     if config["gatt"] and not config["advIncludeUuid"]:
         raise SystemExit(f"{CONFIG_PATH}: gatt requires advIncludeUuid")
+    validate_redcon_timing_config(config)
 
     _CONFIG_CACHE = config
     return config
+
+
+def validate_range(config: dict[str, object], key: str, low: int, high: int) -> None:
+    value = config[key]
+    if not isinstance(value, int) or value < low or value > high:
+        raise SystemExit(f"{CONFIG_PATH}: {key} must be {low}..{high}")
+
+
+def validate_redcon_timing_config(config: dict[str, object]) -> None:
+    validate_range(config, "redconConnIntervalMs", 8, 4000)
+    validate_range(config, "redconConnLatency", 0, 499)
+    validate_range(config, "redconConnSupervisionMs", 100, 32000)
+    validate_range(config, "redconStateNotifyIntervalSeconds", 1, 3600)
+    validate_range(config, "redconIdleDisconnectDelayMs", 0, 60000)
+    validate_range(config, "redconBatteryAdcSettleMs", 0, 60000)
+
+    minimum_supervision_ms = (
+        int(config["redconConnIntervalMs"])
+        * (int(config["redconConnLatency"]) + 1)
+        * 2
+    )
+    if int(config["redconConnSupervisionMs"]) <= minimum_supervision_ms:
+        raise SystemExit(
+            f"{CONFIG_PATH}: redconConnSupervisionMs must be greater than "
+            "redconConnIntervalMs * (redconConnLatency + 1) * 2"
+        )
 
 
 def cmake_bool(value: object) -> str:
@@ -439,6 +480,12 @@ def configure() -> None:
             f"-DPOWER_ADV_SCANNABLE={cmake_bool(config['advScannable'])}",
             f"-DPOWER_ADV_INCLUDE_UUID={cmake_bool(config['advIncludeUuid'])}",
             f"-DPOWER_GATT={cmake_bool(config['gatt'])}",
+            f"-DPOWER_REDCON_CONN_INTERVAL_MS={config['redconConnIntervalMs']}",
+            f"-DPOWER_REDCON_CONN_LATENCY={config['redconConnLatency']}",
+            f"-DPOWER_REDCON_CONN_SUPERVISION_MS={config['redconConnSupervisionMs']}",
+            f"-DPOWER_REDCON_STATE_NOTIFY_INTERVAL_SECONDS={config['redconStateNotifyIntervalSeconds']}",
+            f"-DPOWER_REDCON_IDLE_DISCONNECT_DELAY_MS={config['redconIdleDisconnectDelayMs']}",
+            f"-DPOWER_REDCON_BATTERY_ADC_SETTLE_MS={config['redconBatteryAdcSettleMs']}",
             "-DZEPHYR_TOOLCHAIN_VARIANT=cross-compile",
             f"-DCROSS_COMPILE={cross_compile_prefix()}",
             "-DUSE_CCACHE=0",
@@ -517,6 +564,12 @@ def paths() -> None:
     print(f"advScannable: {cmake_bool(config['advScannable'])}")
     print(f"advIncludeUuid: {cmake_bool(config['advIncludeUuid'])}")
     print(f"gatt: {cmake_bool(config['gatt'])}")
+    print(f"redconConnIntervalMs: {config['redconConnIntervalMs']}")
+    print(f"redconConnLatency: {config['redconConnLatency']}")
+    print(f"redconConnSupervisionMs: {config['redconConnSupervisionMs']}")
+    print(f"redconStateNotifyIntervalSeconds: {config['redconStateNotifyIntervalSeconds']}")
+    print(f"redconIdleDisconnectDelayMs: {config['redconIdleDisconnectDelayMs']}")
+    print(f"redconBatteryAdcSettleMs: {config['redconBatteryAdcSettleMs']}")
     print_path("venv", VENV_DIR)
     print_path("python", python_executable())
     print_path("pipCache", PIP_CACHE_DIR)

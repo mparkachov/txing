@@ -2,14 +2,16 @@
 
 Date: 2026-05-09
 
-This note records the current physical BLE findings for the Rust rig against the
-`ble-debug` MCU GATT firmware. The goal is to identify a stable low-current
-configuration, not to improve the Rust test tool.
+This historical note records the physical BLE findings that selected the timing
+now used by the power MCU REDCON config. The goal was to identify a stable
+low-current configuration, not to define the current REDCON command-line
+surface.
 
 ## Test Contract
 
 All focused tests used the Rust physical test harness with one wake/sleep cycle
-per Rust test case. The relevant stable rig command shape was:
+per Rust test case. At the time, connection timing was selected from the rig with
+this command shape:
 
 ```sh
 just rust-debug::rig::test N weather-q8zbgb \
@@ -23,18 +25,18 @@ just rust-debug::rig::test N weather-q8zbgb \
 ```
 
 `--require-service` means scan discovery accepts an advertisement only when the
-local name matches `weather-q8zbgb` and the weather service UUID is visible in
+local name matches `weather-q8zbgb` and the REDCON service UUID is visible in
 the advertised service UUID list. It does not change GATT commands, connection
 parameters, wake/sleep behavior, or post-connect service discovery.
 
-## Current Preferred Candidate
+## Historical Preferred Candidate
 
-Current candidate:
+Selected historical candidate:
 
 ```text
-MCU profile:      gatt-1280-tx4
-Rig conn profile: stable-100-0-20
-Service filter:   --require-service
+MCU profile:             gatt-1280-tx4
+Historical rig profile:  stable-100-0-20
+Service filter:          --require-service
 ```
 
 Reason:
@@ -134,7 +136,7 @@ service discovery, notify enablement, and wake. They were active-window failures
 That pattern is not explained by `--require-service`, because service filtering
 is only part of pre-connect discovery.
 
-In the current firmware, `BLE_DEBUG_ADV_TX_POWER_DBM` is applied with
+In that firmware, `BLE_DEBUG_ADV_TX_POWER_DBM` was applied with
 `BT_HCI_VS_LL_HANDLE_TYPE_ADV`, so it clearly controls advertising TX power.
 This should not be interpreted as proof that `tx4` directly improves the
 connected-state link.
@@ -158,7 +160,8 @@ when `tx0` RSSI is considered too low and `tx8` current is visibly higher.
 
 ## Working Conclusions
 
-- Use `stable-100-0-20` as the rig connection profile for the current firmware.
+- Use the `stable-100-0-20` timing values in firmware config for the current
+  REDCON firmware.
 - Do not use `stable-125-0-20` for this setup.
 - Prefer `gatt-1280-tx4` for the current physical setup because the latest
   45-test run is clean, `tx0` RSSI is too low, and `tx4` current is close to
@@ -174,8 +177,7 @@ when `tx0` RSSI is considered too low and `tx8` current is visibly higher.
 
 ## Next Test If More Confidence Is Needed
 
-The next focused confidence test, if needed, should be only the current
-preferred candidate:
+The historical next focused confidence test was only the preferred candidate:
 
 ```sh
 just rust-debug::rig::test 45 weather-q8zbgb \
@@ -196,8 +198,8 @@ Acceptance suggestion:
 - A small number of recovered `le-connection-abort-by-local` retries is
   acceptable if every test still completes the full wake/sleep cycle.
 
-If a future `tx4` run fails again in the same post-wake battery-update pattern,
-the next variable to test is connection-parameter behavior, not TX power:
+The historical next variable for the same post-wake battery-update pattern was
+connection-parameter behavior, not TX power:
 
 ```sh
 just rust-debug::rig::test 10 weather-q8zbgb \

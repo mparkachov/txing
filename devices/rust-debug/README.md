@@ -11,7 +11,7 @@ The Rust rig has two BLE backends:
 - simulator: deterministic fake BLE peripheral for fast tests and overnight
   matrix simulation.
 
-The BLE protocol matches the current `ble-debug` GATT surface:
+The BLE protocol is the REDCON GATT profile:
 
 ```text
 service      f6b4b000-7b32-4d2d-9f4b-4ff0a2b8f100
@@ -19,7 +19,7 @@ command      f6b4b001-7b32-4d2d-9f4b-4ff0a2b8f100
 state        f6b4b002-7b32-4d2d-9f4b-4ff0a2b8f100
 ```
 
-Command payloads are `<BB>` or `<BBHHH>` and state payloads are `<BBBH>`.
+Command payloads are `<BB>` and state payloads are `<BBH>`.
 REDCON `3` means wakeup state and REDCON `4` means sleep state.
 
 ## Commands
@@ -41,13 +41,12 @@ Physical BLE cycle test:
 
 ```sh
 just rust-debug::rig::test
-just rust-debug::rig::test 60 weather-q8zbgb --conn-profile stable-100-0-20
+just rust-debug::rig::test 60 weather-q8zbgb
 ```
 
-`just rust-debug::rig::test N` uses the requested `--conn-profile` values as
-test suites and generates `N` ignored Rust test cases per suite during the Cargo
-build. Each generated test runs one physical BLE wake/sleep cycle, serially. The
-focused physical test default is a 50 second cycle (`wakeSeconds=30`,
+`just rust-debug::rig::test N` generates `N` ignored Rust test cases during the
+Cargo build. Each generated test runs one physical BLE wake/sleep cycle,
+serially. The focused physical test default is a 50 second cycle (`wakeSeconds=30`,
 `cycleSeconds=50`) to stay below Rust's 60 second long-test warning in normal
 passing cases. The recipe runs only the library test target and uses terse
 captured test output. Detailed cycle logs are appended to one run-level
@@ -121,5 +120,5 @@ usual BlueZ/DBus development files, for example `libdbus-1-dev` and
 
 Current focused physical BLE stability findings are recorded in
 [`docs/ble-stability-findings.md`](docs/ble-stability-findings.md). The current
-candidate from the copied logs is `gatt-1280-tx4` on the MCU with the Rust rig
-using `stable-100-0-20` and `--require-service`.
+historical candidate from the copied logs is `gatt-1280-tx4`; the stable timing
+from that run now lives in the power MCU YAML config.
