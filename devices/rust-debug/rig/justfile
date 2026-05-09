@@ -24,44 +24,68 @@ test repetitions="5" name="weather-q8zbgb" *args:
       exit 2
     fi
     cli_args=({{args}})
+    forward_args=()
+    write_logs=0
     output_dir=""
     for ((i = 0; i < ${#cli_args[@]}; i++)); do
       token="${cli_args[$i]}"
       case "$token" in
+        --logs)
+          write_logs=1
+          ;;
         --output-dir=*)
+          write_logs=1
           output_dir="${token#--output-dir=}"
+          forward_args+=("$token")
           ;;
         --output-dir)
+          write_logs=1
           i=$((i + 1))
           if [ "$i" -ge "${#cli_args[@]}" ]; then
             echo "--output-dir requires a value" >&2
             exit 2
           fi
           output_dir="${cli_args[$i]}"
+          forward_args+=("$token" "$output_dir")
+          ;;
+        *)
+          forward_args+=("$token")
           ;;
       esac
     done
-    root="/tmp/rust-debug-rig-test-results"
-    mkdir -p "$root"
-    if [ -n "$output_dir" ]; then
-      run_dir="$output_dir"
-      mkdir -p "$run_dir"
-    else
-      run_dir="$(mktemp -d "$root/$(date +%Y%m%d-%H%M%S)-XXXXXX")"
-    fi
     echo "rust-debug physical BLE REDCON suite: $repetitions test(s)"
-    echo "outputDir=$run_dir"
-    echo "log=$run_dir/cycle.log"
-    echo "json=$run_dir/results.json"
-    echo "jsonl=$run_dir/results.jsonl"
-    echo "junit=$run_dir/junit.xml"
-    : > "$run_dir/cycle.log"
-    rm -f "$run_dir/results.json" "$run_dir/results.jsonl" "$run_dir/junit.xml"
-    RUST_DEBUG_RIG_RUN_OUTPUT_DIR="$run_dir" \
-      RUST_DEBUG_RIG_TEST_REPETITIONS="$repetitions" \
-      RUST_DEBUG_RIG_NAME="{{name}}" \
-      RUST_DEBUG_RIG_TEST_ARGS="{{args}}" \
-      cargo test --manifest-path "{{rig_dir}}/Cargo.toml" --lib --features ble-real physical_ble_ -- --ignored --format terse --test-threads=1
+    forward_args_text=""
+    if [ "${#forward_args[@]}" -gt 0 ]; then
+      forward_args_text="${forward_args[*]}"
+    fi
+    env_args=(
+      "RUST_DEBUG_RIG_WRITE_LOGS=$write_logs"
+      "RUST_DEBUG_RIG_TEST_REPETITIONS=$repetitions"
+      "RUST_DEBUG_RIG_NAME={{name}}"
+      "RUST_DEBUG_RIG_TEST_ARGS=$forward_args_text"
+    )
+    if [ "$write_logs" -eq 1 ]; then
+      root="/tmp/rust-debug-rig-test-results"
+      mkdir -p "$root"
+      if [ -n "$output_dir" ]; then
+        run_dir="$output_dir"
+        mkdir -p "$run_dir"
+      else
+        run_dir="$(mktemp -d "$root/$(date +%Y%m%d-%H%M%S)-XXXXXX")"
+      fi
+      echo "outputDir=$run_dir"
+      echo "log=$run_dir/cycle.log"
+      echo "json=$run_dir/results.json"
+      echo "jsonl=$run_dir/results.jsonl"
+      echo "junit=$run_dir/junit.xml"
+      : > "$run_dir/cycle.log"
+      rm -f "$run_dir/results.json" "$run_dir/results.jsonl" "$run_dir/junit.xml"
+      env_args+=("RUST_DEBUG_RIG_RUN_OUTPUT_DIR=$run_dir")
+    else
+      echo "logs=disabled (use --logs or --output-dir DIR for cycle.log/results artifacts)"
+    fi
+    env "${env_args[@]}" \
+      cargo test --quiet --manifest-path "{{rig_dir}}/Cargo.toml" --lib --features ble-real physical_ble_ -- --ignored --format terse --test-threads=1 --nocapture
 
 @run-test repetitions="5" name="weather-q8zbgb" *args:
     cargo run --manifest-path "{{rig_dir}}/Cargo.toml" --features ble-real -- test --repetitions "{{repetitions}}" --name "{{name}}" {{args}}

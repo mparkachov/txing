@@ -48,13 +48,24 @@ just rust-debug::rig::test 60 weather-q8zbgb
 Cargo build. Each generated test runs one physical BLE wake/sleep cycle,
 serially. The focused physical test default is a 50 second cycle (`wakeSeconds=30`,
 `cycleSeconds=50`) to stay below Rust's 60 second long-test warning in normal
-passing cases. The recipe runs only the library test target and uses terse
-captured test output. Detailed cycle logs are appended to one run-level
-`cycle.log` under `/tmp/rust-debug-rig-test-results/`. Each physical run also
-writes `results.jsonl` with one structured JSON record per Rust test,
-`results.json` with the aggregate run summary, and `junit.xml` for CI/test
-report integrations. The recipe prints all artifact paths before the tests
-start. For direct CLI debugging without the Rust test harness, use:
+passing cases. By default the recipe runs only the library test target, writes no
+log/artifact files, and leaves clean passing cycles to Rust's normal dot output.
+Recovered connect retries are printed as warnings even when the Rust test itself
+passes.
+
+Enable detailed artifacts only when analysis is needed:
+
+```sh
+just rust-debug::rig::test 5 weather-q8zbgb --logs
+just rust-debug::rig::test 5 weather-q8zbgb --output-dir /tmp/rust-debug-run
+```
+
+With `--logs` or `--output-dir`, detailed cycle logs are appended to one
+run-level `cycle.log` under `/tmp/rust-debug-rig-test-results/` or the requested
+directory. The run also writes `results.jsonl` with one structured JSON record
+per Rust test, `results.json` with the aggregate run summary, and `junit.xml` for
+CI/test report integrations. For direct CLI debugging without the Rust test
+harness, use:
 
 ```sh
 just rust-debug::rig::run-test

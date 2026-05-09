@@ -193,14 +193,17 @@ async fn run_physical_ble_cycle(test_name: &str, index: usize) {
     let mut config = focused_physical_config_from_env();
     apply_physical_extra_args(&mut config);
     config.repetitions = 1;
-    let output_dir = physical_output_dir();
-    std::fs::create_dir_all(&output_dir).unwrap();
-    let log_path = output_dir.join("cycle.log");
+    let artifacts = physical_test_artifacts();
+    if let Some(artifacts) = &artifacts {
+        std::fs::create_dir_all(&artifacts.output_dir).unwrap();
+    }
     let started_at = local_timestamp();
     let started = std::time::Instant::now();
     let capture = std::sync::Arc::new(std::sync::Mutex::new(PhysicalTestCapture::default()));
     let mut events = EventEmitter::quiet();
-    events.add_file_sink_append(&log_path).unwrap();
+    if let Some(artifacts) = &artifacts {
+        events.add_file_sink_append(&artifacts.log_path).unwrap();
+    }
     events.add_sink({
         let capture = std::sync::Arc::clone(&capture);
         move |line| {
@@ -209,15 +212,15 @@ async fn run_physical_ble_cycle(test_name: &str, index: usize) {
             }
         }
     });
-    events.emit(
-        "test-start",
-        &[
-            ("test", test_name.to_string()),
-            ("index", index.to_string()),
-            ("log", log_path.display().to_string()),
-            ("outputDir", output_dir.display().to_string()),
-        ],
-    );
+    let mut start_fields = vec![
+        ("test", test_name.to_string()),
+        ("index", index.to_string()),
+    ];
+    if let Some(artifacts) = &artifacts {
+        start_fields.push(("log", artifacts.log_path.display().to_string()));
+        start_fields.push(("outputDir", artifacts.output_dir.display().to_string()));
+    }
+    events.emit("test-start", &start_fields);
     let mut central = BtleplugBleCentral::new();
     let result = run_cycle_test(&mut central, &mut config, TimeMode::Real, &mut events).await;
     let ended_at = local_timestamp();
@@ -247,19 +250,22 @@ async fn run_physical_ble_cycle(test_name: &str, index: usize) {
         }
     }
 
+    let capture_snapshot = capture.lock().unwrap().clone();
     let record = physical_test_record(
         test_name,
         index,
         &config,
-        &log_path,
-        &output_dir,
+        artifacts.as_ref(),
         started_at,
         ended_at,
         duration_ms,
-        capture.lock().unwrap().clone(),
+        capture_snapshot.clone(),
         &result,
     );
-    write_physical_result(&output_dir, &record).unwrap();
+    if let Some(artifacts) = &artifacts {
+        write_physical_result(&artifacts.output_dir, &record).unwrap();
+    }
+    print_physical_test_outcome(test_name, index, duration_ms, &capture_snapshot, &result);
 
     if let Err(err) = result {
         panic!("{err}");
@@ -269,6 +275,13 @@ async fn run_physical_ble_cycle(test_name: &str, index: usize) {
 
 #[cfg(feature = "ble-real")]
 include!(concat!(env!("OUT_DIR"), "/physical_ble_tests.rs"));
+
+#[cfg(feature = "ble-real")]
+#[derive(Debug, Clone)]
+struct PhysicalTestArtifacts {
+    output_dir: std::path::PathBuf,
+    log_path: std::path::PathBuf,
+}
 
 #[cfg(feature = "ble-real")]
 fn focused_physical_config_from_env() -> CycleConfig {
@@ -330,11 +343,63 @@ fn apply_physical_extra_args(config: &mut CycleConfig) {
             "--output-dir" => {
                 let _ = next_value();
             }
+            "--logs" => {}
             "--no-require-service" => config.require_service = false,
             "--require-service" => config.require_service = true,
             _ => {}
         }
     }
+}
+
+#[cfg(feature = "ble-real")]
+fn physical_test_artifacts() -> Option<PhysicalTestArtifacts> {
+    if !physical_logs_enabled() {
+        return None;
+    }
+    let output_dir = physical_output_dir();
+    Some(PhysicalTestArtifacts {
+        log_path: output_dir.join("cycle.log"),
+        output_dir,
+    })
+}
+
+#[cfg(feature = "ble-real")]
+fn physical_logs_enabled() -> bool {
+    physical_logs_enabled_from(
+        std::env::var("RUST_DEBUG_RIG_WRITE_LOGS").ok().as_deref(),
+        std::env::var_os("RUST_DEBUG_RIG_OUTPUT_DIR").is_some(),
+        std::env::var_os("RUST_DEBUG_RIG_RUN_OUTPUT_DIR").is_some(),
+        &std::env::var("RUST_DEBUG_RIG_TEST_ARGS").unwrap_or_default(),
+    )
+}
+
+#[cfg(feature = "ble-real")]
+fn physical_logs_enabled_from(
+    write_logs: Option<&str>,
+    output_dir_env: bool,
+    run_output_dir_env: bool,
+    args: &str,
+) -> bool {
+    if matches!(
+        write_logs.map(|value| value.to_ascii_lowercase()),
+        Some(value) if matches!(value.as_str(), "1" | "true" | "yes" | "on")
+    ) {
+        return true;
+    }
+    if output_dir_env || run_output_dir_env {
+        return true;
+    }
+
+    let mut tokens = args.split_whitespace();
+    while let Some(token) = tokens.next() {
+        if token == "--logs" || token.starts_with("--output-dir=") {
+            return true;
+        }
+        if token == "--output-dir" && tokens.next().is_some() {
+            return true;
+        }
+    }
+    false
 }
 
 #[cfg(feature = "ble-real")]
@@ -471,8 +536,7 @@ fn physical_test_record(
     test_name: &str,
     index: usize,
     config: &CycleConfig,
-    log_path: &std::path::Path,
-    output_dir: &std::path::Path,
+    artifacts: Option<&PhysicalTestArtifacts>,
     started_at: String,
     ended_at: String,
     duration_ms: u128,
@@ -503,6 +567,17 @@ fn physical_test_record(
             "connectMs": capture.connect_ms,
         }),
     };
+    let artifacts = artifacts
+        .map(|artifacts| {
+            serde_json::json!({
+                "outputDir": artifacts.output_dir.display().to_string(),
+                "cycleLog": artifacts.log_path.display().to_string(),
+                "jsonl": artifacts.output_dir.join("results.jsonl").display().to_string(),
+                "json": artifacts.output_dir.join("results.json").display().to_string(),
+                "junit": artifacts.output_dir.join("junit.xml").display().to_string(),
+            })
+        })
+        .unwrap_or(serde_json::Value::Null);
     serde_json::json!({
         "schemaVersion": "txing.rust-debug.physical-ble-testcase.v1",
         "framework": "rust-test",
@@ -546,14 +621,40 @@ fn physical_test_record(
             "lastEvent": capture.last_event,
         },
         "failure": failure,
-        "artifacts": {
-            "outputDir": output_dir.display().to_string(),
-            "cycleLog": log_path.display().to_string(),
-            "jsonl": output_dir.join("results.jsonl").display().to_string(),
-            "json": output_dir.join("results.json").display().to_string(),
-            "junit": output_dir.join("junit.xml").display().to_string(),
-        },
+        "artifacts": artifacts,
     })
+}
+
+#[cfg(feature = "ble-real")]
+fn print_physical_test_outcome(
+    test_name: &str,
+    index: usize,
+    duration_ms: u128,
+    capture: &PhysicalTestCapture,
+    result: &crate::error::Result<crate::cycle::CycleSummary>,
+) {
+    let retries = capture.connect_retries.len();
+    let connect_max_ms = capture.connect_ms.iter().max().copied().unwrap_or(0);
+    let battery_count = match result {
+        Ok(summary) => summary.battery_values.len(),
+        Err(_) => capture.active_battery_mv.len(),
+    };
+    if retries > 0 {
+        let last_message = capture
+            .connect_retries
+            .last()
+            .and_then(|retry| retry["message"].as_str())
+            .unwrap_or("connect retry");
+        eprintln!(
+            "warning: {test_name} index={index} recovered reconnect/connect retry count={retries} connectMaxMs={connect_max_ms} batterySamples={battery_count} durationMs={duration_ms} last={last_message:?}"
+        );
+    }
+    if let Err(err) = result {
+        eprintln!(
+            "failure: {test_name} index={index} durationMs={duration_ms} connectRetries={retries} connectMaxMs={connect_max_ms} batterySamples={battery_count} stage={} message={:?}",
+            err.stage, err.message
+        );
+    }
 }
 
 #[cfg(feature = "ble-real")]
@@ -778,6 +879,30 @@ fn field_i64(fields: &std::collections::BTreeMap<String, String>, key: &str) -> 
 #[cfg(feature = "ble-real")]
 fn field_u128(fields: &std::collections::BTreeMap<String, String>, key: &str) -> Option<u128> {
     fields.get(key)?.parse().ok()
+}
+
+#[cfg(feature = "ble-real")]
+#[test]
+fn physical_logs_are_opt_in() {
+    assert!(!physical_logs_enabled_from(None, false, false, ""));
+    assert!(!physical_logs_enabled_from(Some("0"), false, false, ""));
+    assert!(physical_logs_enabled_from(Some("1"), false, false, ""));
+    assert!(physical_logs_enabled_from(Some("true"), false, false, ""));
+    assert!(physical_logs_enabled_from(None, true, false, ""));
+    assert!(physical_logs_enabled_from(None, false, true, ""));
+    assert!(physical_logs_enabled_from(None, false, false, "--logs"));
+    assert!(physical_logs_enabled_from(
+        None,
+        false,
+        false,
+        "--output-dir /tmp/rig-results"
+    ));
+    assert!(physical_logs_enabled_from(
+        None,
+        false,
+        false,
+        "--output-dir=/tmp/rig-results"
+    ));
 }
 
 #[cfg(feature = "ble-real")]

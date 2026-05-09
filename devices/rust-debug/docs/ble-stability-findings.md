@@ -58,7 +58,8 @@ Reason:
 
 Copied logs are under `tmp/rust-debug-rig-test-results/`.
 
-New physical Rust test runs write structured artifacts next to `cycle.log`:
+Physical Rust test runs write structured artifacts next to `cycle.log` when
+`just rust-debug::rig::test` is run with `--logs` or `--output-dir`:
 
 - `results.jsonl`: one JSON record per generated Rust test case.
 - `results.json`: aggregate summary with copied testcase records.
