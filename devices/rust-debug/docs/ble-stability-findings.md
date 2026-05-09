@@ -27,28 +27,30 @@ local name matches `weather-q8zbgb` and the weather service UUID is visible in
 the advertised service UUID list. It does not change GATT commands, connection
 parameters, wake/sleep behavior, or post-connect service discovery.
 
-## Current Best Candidate
+## Current Preferred Candidate
 
 Current candidate:
 
 ```text
-MCU profile:      gatt-1280-tx0
+MCU profile:      gatt-1280-tx4
 Rig conn profile: stable-100-0-20
 Service filter:   --require-service
 ```
 
 Reason:
 
-- `gatt-1280-tx0` passed all focused `stable-100-0-20` service-filter tests
-  seen so far: 23/23.
-- It had only two recovered `le-connection-abort-by-local` retries across those
-  23 tests.
+- The latest `gatt-1280-tx4` service-filter run passed 45/45 tests with
+  `stable-100-0-20`.
+- It had six recovered `le-connection-abort-by-local` retries across those 45
+  tests.
 - It had no service discovery timeout, wake timeout, sleep timeout, missing
-  battery update, or unexpected disconnect failure.
-- Worst observed connect time was about 8.1 seconds, which is acceptable for the
-  current use case.
-- Current draw is lower than `tx8`, and `tx0` did not look less stable than
-  `tx4` in the collected data.
+  battery update, or unexpected disconnect failure in the 45-test run.
+- Worst observed connect time in that run was about 5.4 seconds, which is
+  acceptable for the current use case.
+- `gatt-1280-tx0` had a clean 23/23 stability result, but its observed RSSI was
+  judged too low for the current physical setup.
+- Current draw difference between `tx0` and `tx4` is small enough that the extra
+  radio margin of `tx4` is preferred. `tx8` remains visibly higher current.
 
 ## Observed Runs
 
@@ -60,8 +62,9 @@ New physical Rust test runs write structured artifacts next to `cycle.log`:
 - `results.json`: aggregate summary with copied testcase records.
 - `junit.xml`: JUnit-compatible report for CI/test reporters.
 
-The logs summarized below were copied before those structured artifacts existed,
-so their results were read from `cycle.log`.
+Older logs summarized below were copied before those structured artifacts
+existed, so their results were read from `cycle.log`. The latest 45-test `tx4`
+run has `results.json`, `results.jsonl`, and `junit.xml`.
 
 | Log directory | MCU profile | Rig profile(s) | Result | Notes |
 | --- | --- | --- | --- | --- |
@@ -71,6 +74,7 @@ so their results were read from `cycle.log`.
 | `20260509-090322-YXjaTR` | `gatt-1280-tx0` | `stable-100-0-20` | 8/8 passed | One recovered connect retry. Connect average 3.6 s, max 6.6 s. |
 | `20260509-091045-ZSUp6u` | `gatt-1280-tx0` | `stable-100-0-20` | 15/15 passed | One recovered connect retry. Connect average 4.5 s, max 8.1 s. |
 | `20260509-093036-pLYWEN` | `gatt-1280-tx4` | `stable-100-0-20` | 13/15 passed | One recovered retry. Two failures occurred after successful connection and wake. |
+| `20260509-100432-3j3Aa9` | `gatt-1280-tx4` | `stable-100-0-20` | 45/45 passed | Structured run. Six recovered connect retries. Connect average 3.3 s, max 5.4 s. Wake max 293 ms. No active-window failures. |
 
 ## Details
 
@@ -99,12 +103,16 @@ connect avg: ~4.2 s
 connect max: ~8.1 s
 ```
 
-This is the strongest current evidence for a low-current stable configuration.
+This remains the strongest current evidence for the lowest-current stable
+configuration. However, RSSI observed from the logs was judged too low for the
+current physical setup, so `tx0` is no longer the preferred practical choice.
 
 ### gatt-1280-tx4
 
-`gatt-1280-tx4` passed the first 8-test screen, but failed 2 of 15 in the later
-confirm run:
+`gatt-1280-tx4` passed the first 8-test screen, failed 2 of 15 in the next
+confirm run, then passed the latest 45-test run.
+
+First confirm failure:
 
 ```text
 tests:      15
@@ -128,29 +136,49 @@ is only part of pre-connect discovery.
 
 In the current firmware, `BLE_DEBUG_ADV_TX_POWER_DBM` is applied with
 `BT_HCI_VS_LL_HANDLE_TYPE_ADV`, so it clearly controls advertising TX power.
-The collected data should not be interpreted as proof that `tx4` improves the
-connected-state link. In this data, `tx4` had active-window failures while
-`tx0` did not.
+This should not be interpreted as proof that `tx4` directly improves the
+connected-state link.
+
+Latest 45-test confirm:
+
+```text
+tests:       45
+passed:      45
+failed:       0
+retries:      6
+connect avg: ~3.3 s
+connect max: ~5.4 s
+wake max:    293 ms
+sleep max:   273 ms
+RSSI sample: -81 dBm
+```
+
+The latest run is strong enough to make `tx4` the current practical candidate
+when `tx0` RSSI is considered too low and `tx8` current is visibly higher.
 
 ## Working Conclusions
 
 - Use `stable-100-0-20` as the rig connection profile for the current firmware.
 - Do not use `stable-125-0-20` for this setup.
-- Prefer `gatt-1280-tx0` over `gatt-1280-tx4` based on current stability and
-  current draw evidence.
-- Treat `gatt-1280-tx4` as inconclusive or rejected until it can pass a clean
-  confirm run; it currently has active-window failures.
+- Prefer `gatt-1280-tx4` for the current physical setup because the latest
+  45-test run is clean, `tx0` RSSI is too low, and `tx4` current is close to
+  `tx0`.
+- Keep `gatt-1280-tx0` as the lowest-current fallback only if RSSI margin is
+  acceptable in the target enclosure/location.
+- Treat the earlier `gatt-1280-tx4` 13/15 run as a warning that one more long
+  confirm run is useful before declaring it final, but do not reject `tx4`
+  based on the current evidence.
 - Avoid `gatt-320-tx8` unless faster first-connect behavior is more important
   than current draw. It is stable with `stable-100-0-20`, but `tx8` current is
   visibly higher.
 
 ## Next Test If More Confidence Is Needed
 
-No further tests have been run after the logs above. The next focused confidence
-test should be only the current best candidate:
+The next focused confidence test, if needed, should be only the current
+preferred candidate:
 
 ```sh
-just rust-debug::rig::test 30 weather-q8zbgb \
+just rust-debug::rig::test 45 weather-q8zbgb \
   --conn-profile stable-100-0-20 \
   --scan-timeout 90 \
   --connect-timeout 45 \
@@ -162,13 +190,13 @@ just rust-debug::rig::test 30 weather-q8zbgb \
 
 Acceptance suggestion:
 
-- 30/30 tests pass.
+- 45/45 tests pass.
 - No service discovery timeouts.
 - No active-window failures after `wake-ok`.
 - A small number of recovered `le-connection-abort-by-local` retries is
   acceptable if every test still completes the full wake/sleep cycle.
 
-If the 30-test `tx0` run fails in the same post-wake battery-update pattern,
+If a future `tx4` run fails again in the same post-wake battery-update pattern,
 the next variable to test is connection-parameter behavior, not TX power:
 
 ```sh

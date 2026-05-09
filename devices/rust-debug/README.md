@@ -121,5 +121,5 @@ usual BlueZ/DBus development files, for example `libdbus-1-dev` and
 
 Current focused physical BLE stability findings are recorded in
 [`docs/ble-stability-findings.md`](docs/ble-stability-findings.md). The current
-candidate from the copied logs is `gatt-1280-tx0` on the MCU with the Rust rig
+candidate from the copied logs is `gatt-1280-tx4` on the MCU with the Rust rig
 using `stable-100-0-20` and `--require-service`.
