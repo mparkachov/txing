@@ -460,6 +460,57 @@ class SparkplugWitnessTests(unittest.TestCase):
         self.assertEqual((thing_name, shadow_name), ("weather-1", "sparkplug"))
         self.assertEqual(payload["state"]["reported"]["payload"]["metrics"]["redcon"], 3)
 
+    def test_project_command_result_data_clears_legacy_commands_map(self) -> None:
+        encoded_payload = _encode_payload(
+            timestamp=1710000040000,
+            seq=9,
+            metrics=[
+                _encode_metric(name="redconCommandStatus", string_value="succeeded"),
+                _encode_metric(name="redconCommandSeq", int_value=2),
+                _encode_metric(name="redconCommandObservedAt", long_value=1710000040123),
+                _encode_metric(name="redconCommandId", string_value="dcmd-time-2"),
+                _encode_metric(name="redconCommandTarget", int_value=4),
+            ],
+        )
+        message = decode_sparkplug_payload(
+            encoded_payload,
+            "spBv1.0/town/DDATA/rig/time-1",
+        )
+        fake_iot_data = FakeIotDataClient(
+            {
+                "state": {
+                    "reported": {
+                        "payload": {
+                            "metrics": {
+                                "commands": {
+                                    "dcmd-time-1": {
+                                        "status": "succeeded",
+                                        "targetRedcon": 1,
+                                    }
+                                },
+                                "redconCommandMessage": "old failure",
+                            }
+                        }
+                    }
+                }
+            }
+        )
+
+        assert message is not None
+        with patch("witness.sparkplug_witness._resolve_thing_name", return_value="time-1"), patch(
+            "witness.sparkplug_witness._iot_data_client",
+            return_value=fake_iot_data,
+        ):
+            project_sparkplug_message(message, 1710000040999)
+
+        self.assertEqual(len(fake_iot_data.update_calls), 1)
+        _, _, payload = fake_iot_data.update_calls[0]
+        metrics = payload["state"]["reported"]["payload"]["metrics"]
+        self.assertEqual(metrics["redconCommandStatus"], "succeeded")
+        self.assertEqual(metrics["redconCommandId"], "dcmd-time-2")
+        self.assertIsNone(metrics["commands"])
+        self.assertIsNone(metrics["redconCommandMessage"])
+
     def test_project_device_death_replaces_metrics_with_death_payload(self) -> None:
         encoded_payload = _encode_payload(
             timestamp=None,

@@ -20,6 +20,14 @@ REPLACE_METRICS_MESSAGE_TYPES = {"DBIRTH", "NBIRTH"}
 MERGE_METRICS_MESSAGE_TYPES = {"DDATA", "NDATA"}
 CLEAR_METRICS_MESSAGE_TYPES = {"DDEATH", "NDEATH"}
 RIG_KIND_ATTRIBUTE = "rigType"
+COMMAND_RESULT_METRIC_KEYS = {
+    "redconCommandId",
+    "redconCommandObservedAt",
+    "redconCommandSeq",
+    "redconCommandStatus",
+    "redconCommandTarget",
+    "redconCommandMessage",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -376,6 +384,22 @@ def _metric_patch_is_noop(current: dict[str, Any], patch: dict[str, Any]) -> boo
     return True
 
 
+def _patch_contains_command_result(metrics: dict[str, Any]) -> bool:
+    return any(key in metrics for key in COMMAND_RESULT_METRIC_KEYS)
+
+
+def _prepare_metric_patch_for_merge(metrics: dict[str, Any]) -> dict[str, Any]:
+    if not _patch_contains_command_result(metrics):
+        return metrics
+    prepared = dict(metrics)
+    prepared["commands"] = None
+    if "redconCommandMessage" not in prepared:
+        prepared["redconCommandMessage"] = None
+    if "redconCommandTarget" not in prepared:
+        prepared["redconCommandTarget"] = None
+    return prepared
+
+
 def _replace_metrics(thing_name: str, reported_payload: dict[str, Any]) -> None:
     _update_named_shadow(
         thing_name,
@@ -394,6 +418,15 @@ def _replace_metrics(thing_name: str, reported_payload: dict[str, Any]) -> None:
 
 def _merge_metrics(thing_name: str, reported_payload: dict[str, Any]) -> None:
     patch_metrics = reported_payload.get("payload", {}).get("metrics")
+    if isinstance(patch_metrics, dict):
+        patch_metrics = _prepare_metric_patch_for_merge(patch_metrics)
+        reported_payload = {
+            **reported_payload,
+            "payload": {
+                **reported_payload.get("payload", {}),
+                "metrics": patch_metrics,
+            },
+        }
     current_metrics = _reported_metrics_from_shadow(_read_named_shadow(thing_name))
     if (
         isinstance(patch_metrics, dict)

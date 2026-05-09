@@ -4,8 +4,7 @@ use anyhow::{Result, bail};
 use serde_json::Value;
 
 use crate::protocol::{
-    COMMAND_ACCEPTED, COMMAND_FAILED, COMMAND_SUCCEEDED, CapabilityCommand,
-    CapabilityCommandResult, CapabilityState, InventoryDevice, MetricValue,
+    CapabilityCommand, CapabilityCommandResult, CapabilityState, InventoryDevice, MetricValue,
 };
 use crate::sparkplug::{self, Metric};
 
@@ -191,25 +190,19 @@ pub fn command_from_dcmd(
 
 pub fn command_result_metrics(result: &CapabilityCommandResult) -> Result<Vec<Metric>> {
     result.validate()?;
-    let prefix = format!("commands/{}/", result.command_id);
-    let mut metrics = vec![Metric::string(
-        format!("{prefix}status"),
-        result.status.clone(),
-    )];
+    let mut metrics = vec![
+        Metric::string("redconCommandStatus", result.status.clone()),
+        Metric::int32("redconCommandSeq", i32::try_from(result.seq)?),
+        Metric::uint64("redconCommandObservedAt", result.observed_at_ms),
+        Metric::string("redconCommandId", result.command_id.clone()),
+    ];
     if let Some(redcon) = result.target.redcon {
-        metrics.push(Metric::int32(
-            format!("{prefix}targetRedcon"),
-            i32::from(redcon),
-        ));
-    }
-    match result.status.as_str() {
-        COMMAND_ACCEPTED => metrics.push(Metric::boolean(format!("{prefix}accepted"), true)),
-        COMMAND_SUCCEEDED => metrics.push(Metric::boolean(format!("{prefix}succeeded"), true)),
-        COMMAND_FAILED => metrics.push(Metric::boolean(format!("{prefix}failed"), true)),
-        _ => {}
+        metrics.push(Metric::int32("redconCommandTarget", i32::from(redcon)));
     }
     if let Some(message) = &result.message {
-        metrics.push(Metric::string(format!("{prefix}message"), message.clone()));
+        if !message.is_empty() {
+            metrics.push(Metric::string("redconCommandMessage", message.clone()));
+        }
     }
     Ok(metrics)
 }
@@ -324,7 +317,7 @@ fn string_value(value: &Value) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{CapabilityCommandResultTarget, SCHEMA_VERSION};
+    use crate::protocol::{COMMAND_SUCCEEDED, CapabilityCommandResultTarget, SCHEMA_VERSION};
 
     fn power_inventory() -> InventoryDevice {
         InventoryDevice {
@@ -560,9 +553,11 @@ mod tests {
         assert_eq!(
             metrics,
             vec![
-                Metric::string("commands/cmd-1/status", "succeeded"),
-                Metric::int32("commands/cmd-1/targetRedcon", 3),
-                Metric::boolean("commands/cmd-1/succeeded", true),
+                Metric::string("redconCommandStatus", "succeeded"),
+                Metric::int32("redconCommandSeq", 1),
+                Metric::uint64("redconCommandObservedAt", 1000),
+                Metric::string("redconCommandId", "cmd-1"),
+                Metric::int32("redconCommandTarget", 3),
             ]
         );
     }
