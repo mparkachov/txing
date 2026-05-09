@@ -1,25 +1,26 @@
 RecipeFormatVersion: '2020-01-25'
-ComponentName: dev.txing.device.unit.ConnectivityBle
-ComponentVersion: '0.6.0'
+ComponentName: dev.txing.device.power.SparkplugManager
+ComponentVersion: '0.7.0'
 ComponentType: aws.greengrass.generic
-ComponentDescription: txing rig BLE connectivity adapter for MCU rendezvous and GATT power control.
+ComponentDescription: txing power Sparkplug lifecycle manager for BLE connected-idle power devices.
 ComponentPublisher: txing
+ComponentDependencies:
+  aws.greengrass.TokenExchangeService:
+    VersionRequirement: '>=0.0.0'
+    DependencyType: HARD
 ComponentConfiguration:
   DefaultConfiguration:
-    AdapterId: ble-main
     RigId: REPLACE_WITH_RIG_THING_ID
     TownId: REPLACE_WITH_TOWN_THING_ID
-    NameFragment: txing
     accessControl:
       aws.greengrass.ipc.pubsub:
-        dev.txing.device.unit.ConnectivityBle:pubsub:1:
-          policyDescription: Allows the BLE connectivity adapter to exchange local connectivity messages with the Sparkplug manager.
+        dev.txing.device.power.SparkplugManager:pubsub:1:
+          policyDescription: Allows the power Sparkplug manager to exchange local connectivity messages with power adapters.
           operations:
             - aws.greengrass#PublishToTopic
             - aws.greengrass#SubscribeToTopic
           resources:
             - dev/txing/rig/v1/connectivity/*
-            - dev/txing/rig/v1/ble/*
 Manifests:
   - Platform:
       os: linux
@@ -27,7 +28,6 @@ Manifests:
       runtime: aws_nucleus_lite
     Lifecycle:
       run:
-        RequiresPrivilege: true
         Script: |-
           export RIG_NAME="{configuration:/RigId}"
           export RIG_ID="{configuration:/RigId}"
@@ -35,11 +35,11 @@ Manifests:
           export TXING_TOWN_ID="{configuration:/TownId}"
           export SPARKPLUG_GROUP_ID="{configuration:/TownId}"
           export SPARKPLUG_EDGE_NODE_ID="{configuration:/RigId}"
-          export TXING_DEVICE_TYPE="unit"
-          export TXING_DEVICE_DIR="{artifacts:decompressedPath}/rig-greengrass/devices/unit"
-          export TXING_DEVICE_MANIFEST="{artifacts:decompressedPath}/rig-greengrass/devices/unit/manifest.toml"
+          export TXING_DEVICE_TYPE="power"
+          export TXING_DEVICE_DIR="{artifacts:decompressedPath}/rig-greengrass/devices/power"
+          export TXING_DEVICE_MANIFEST="{artifacts:decompressedPath}/rig-greengrass/devices/power/manifest.toml"
           export PYTHONPATH="{artifacts:decompressedPath}/rig-greengrass/python"
-          exec python3 -m unit_rig.connectivity_ble --adapter-id "{configuration:/AdapterId}" --name "{configuration:/NameFragment}"
+          exec python3 -m power_rig.sparkplug_manager
     Artifacts:
-      - Uri: s3://REPLACE_WITH_TXING_GREENGRASS_ARTIFACT_BUCKET/rig-greengrass/0.6.0/rig-greengrass.zip
+      - Uri: s3://REPLACE_WITH_TXING_GREENGRASS_ARTIFACT_BUCKET/rig-greengrass/0.7.0/rig-greengrass.zip
         Unarchive: ZIP

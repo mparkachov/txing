@@ -26,13 +26,13 @@ board read-only rootfs is configured, lives in [installation.md](./installation.
 ## Version And Artifact Channels
 
 `VERSION` is the stable release version for the repository. It must stay a base
-semantic version such as `0.6.0`.
+semantic version such as `0.7.0`.
 
 Runtime builds derive identity from `VERSION` plus Git metadata:
 
 ```text
-stable release: 0.6.0
-feature build:  0.6.0+g<short-sha>
+stable release: 0.7.0
+feature build:  0.7.0+g<short-sha>
 ```
 
 Keep the `+g<short-sha>` form for feature and local builds. It is valid SemVer
@@ -40,15 +40,15 @@ build metadata and avoids `-`, which is important because the current
 Greengrass Lite local recipe path rejects component versions with hyphens.
 
 Use release channels to decide which artifact a host should install; do not
-depend on SemVer ordering to decide that `0.6.0+g<short-sha>` is newer than
-`0.6.0`. SemVer build metadata does not change precedence, so update tooling
+depend on SemVer ordering to decide that `0.7.0+g<short-sha>` is newer than
+`0.7.0`. SemVer build metadata does not change precedence, so update tooling
 must resolve channels explicitly.
 
 Development direction for installable host tools and board-side native
 artifacts:
 
-- `stable` points at the artifact built from the stable `VERSION`, for example `0.6.0`.
-- `feature` points at the currently selected artifact from `feature/...` branches, for example `0.6.0+g123456789abc`.
+- `stable` points at the artifact built from the stable `VERSION`, for example `0.7.0`.
+- `feature` points at the currently selected artifact from `feature/...` branches, for example `0.7.0+g123456789abc`.
 - GitHub release assets should be immutable for each exact artifact version.
 - A mutable channel manifest or equivalent `mise` plugin logic should map `stable` and `feature` to exact artifact versions.
 - Read-only board boot flows may install `feature` channel artifacts into tmpfs-backed `mise` directories while using the persistent `stable` install as the fallback.

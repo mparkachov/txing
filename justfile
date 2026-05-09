@@ -18,7 +18,7 @@ _project-version-env:
 
     version_base="$(tr -d '[:space:]' < "$project_root/VERSION")"
     if ! [[ "$version_base" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-      echo "VERSION must contain a base semantic version like 0.6.0." >&2
+      echo "VERSION must contain a base semantic version like 0.7.0." >&2
       exit 1
     fi
 

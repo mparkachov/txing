@@ -1,6 +1,6 @@
 [project]
 name = "power-rig"
-version = "0.6.0"
+version = "0.7.0"
 description = "Power device-type runtime adapter for txing Raspberry Pi rigs"
 requires-python = ">=3.12"
 dependencies = [

@@ -1,6 +1,6 @@
 [project]
 name = "ble-debug-rig"
-version = "0.6.0"
+version = "0.7.0"
 description = "BLE wake/sleep cycle tester for the txing BLE debug device"
 requires-python = ">=3.12,<3.14"
 dependencies = [

@@ -11,7 +11,10 @@ export const shouldRenderRouteCatalogPanel = ({
 }: {
   thingKind: string | null | undefined
   reportedRedcon: number | null
-}): boolean => (thingKind === 'townType' || thingKind === 'rigType') && reportedRedcon === 1
+}): boolean =>
+  (thingKind === 'townType' || thingKind === 'rigType') &&
+  reportedRedcon !== null &&
+  reportedRedcon < 4
 
 export const getRouteDetailPanelOpenState = (
   route: AppRoute,

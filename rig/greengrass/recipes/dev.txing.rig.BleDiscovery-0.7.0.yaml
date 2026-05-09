@@ -1,6 +1,6 @@
 RecipeFormatVersion: '2020-01-25'
 ComponentName: dev.txing.rig.BleDiscovery
-ComponentVersion: '0.6.0'
+ComponentVersion: '0.7.0'
 ComponentType: aws.greengrass.generic
 ComponentDescription: txing shared BLE advertisement discovery adapter.
 ComponentPublisher: txing
@@ -31,5 +31,5 @@ Manifests:
           export PYTHONPATH="{artifacts:decompressedPath}/rig-greengrass/python"
           exec python3 -m rig.ble_discovery --adapter-id "{configuration:/AdapterId}" --scan-mode "{configuration:/ScanMode}" --publish-interval "{configuration:/PublishInterval}"
     Artifacts:
-      - Uri: s3://REPLACE_WITH_TXING_GREENGRASS_ARTIFACT_BUCKET/rig-greengrass/0.6.0/rig-greengrass.zip
+      - Uri: s3://REPLACE_WITH_TXING_GREENGRASS_ARTIFACT_BUCKET/rig-greengrass/0.7.0/rig-greengrass.zip
         Unarchive: ZIP

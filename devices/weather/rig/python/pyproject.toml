@@ -1,6 +1,6 @@
 [project]
 name = "weather-rig"
-version = "0.6.0"
+version = "0.7.0"
 description = "Weather device-type runtime adapter for txing Raspberry Pi rigs"
 requires-python = ">=3.12"
 dependencies = [

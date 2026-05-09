@@ -9,7 +9,7 @@ describe('web config wiring', () => {
     const justfile = readFileSync(resolve(repoRoot, 'web/justfile'), 'utf-8')
 
     expect(justfile).toContain(
-      "@write-env thing_name='' sparkplug_group_id='' sparkplug_edge_node_id='' town_thing_name=''",
+      "write-env thing_name='' sparkplug_group_id='' sparkplug_edge_node_id='' town_thing_name=''",
     )
     expect(justfile).toContain(
       'eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "")"',
@@ -38,7 +38,7 @@ describe('web config wiring', () => {
     expect(configSource).toContain("const thingName = requireEnv('VITE_DEVICE_THING_NAME') ?? ''")
     expect(configSource).toContain("const townThingName = requireEnv('VITE_TOWN_THING_NAME') ?? ''")
     expect(configSource).toContain("const sparkplugGroupId = requireEnv('VITE_SPARKPLUG_GROUP_ID') ?? ''")
-    expect(configSource).toContain("const txingVersion = requireEnv('VITE_TXING_VERSION') ?? '0.6.0'")
+    expect(configSource).toContain("const txingVersion = requireEnv('VITE_TXING_VERSION') ?? '0.7.0'")
     expect(configSource).toContain('txingVersion,')
     expect(configSource).toContain("errors.push('Missing VITE_TOWN_THING_NAME')")
     expect(configSource).toContain("errors.push('Missing VITE_SPARKPLUG_GROUP_ID')")

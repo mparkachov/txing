@@ -995,7 +995,7 @@ deploy rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' com
     fi
     case "$resolved_component_version" in
       *-*)
-        echo "Greengrass Lite local component versions must not contain '-' because its recipe filename scanner splits on the last hyphen. Use a version like 0.6.0+g<sha> or 0.6.1." >&2
+        echo "Greengrass Lite local component versions must not contain '-' because its recipe filename scanner splits on the last hyphen. Use a version like 0.7.0+g<sha> or 0.6.1." >&2
         exit 1
         ;;
     esac
