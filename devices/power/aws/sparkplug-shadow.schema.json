@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://txing.local/schemas/txing-power-sparkplug-shadow.schema.json",
+  "title": "Power Sparkplug Named Shadow Contract",
+  "description": "Named shadow 'sparkplug' AWS-side materialized Sparkplug view for a power txing.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["state"],
+  "properties": {
+    "state": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["reported"],
+      "properties": {
+        "reported": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "topic": {
+              "type": "object",
+              "additionalProperties": true
+            },
+            "payload": {
+              "type": "object",
+              "additionalProperties": true,
+              "properties": {
+                "metrics": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

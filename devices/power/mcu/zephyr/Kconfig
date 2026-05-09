@@ -57,11 +57,12 @@ config REDCON_BLE_STATE_NOTIFY_INTERVAL_SECONDS
 	  Periodic REDCON state notification interval while in REDCON 3 wakeup
 	  state.
 
-config REDCON_BLE_IDLE_DISCONNECT_DELAY_MS
-	int "REDCON idle disconnect delay in ms"
-	range 0 60000
+config REDCON_BLE_IDLE_STATE_NOTIFY_INTERVAL_SECONDS
+	int "REDCON idle state notification interval in seconds"
+	range 1 3600
 	help
-	  Delay before disconnecting after receiving REDCON 4 sleep command.
+	  Periodic REDCON state notification interval while connected in REDCON 4
+	  sleep state.
 
 endmenu
 endmenu

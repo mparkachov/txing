@@ -198,6 +198,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
             "TownTypeCatalog",
             "RaspiTypeCatalog",
             "RaspiUnitTypeCatalog",
+            "RaspiPowerTypeCatalog",
             "CloudTypeCatalog",
             "CloudTimeTypeCatalog",
             "EnlistLayer",
@@ -209,6 +210,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
             "templates/types/town.yaml",
             "templates/types/raspi.yaml",
             "templates/types/raspi-unit.yaml",
+            "templates/types/raspi-power.yaml",
             "templates/types/cloud.yaml",
             "templates/types/cloud-time.yaml",
             "templates/enlist.yaml",
@@ -226,11 +228,13 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("ThingTypeName: raspi", template)
         self.assertIn("ThingTypeName: cloud", template)
         self.assertIn("ThingTypeName: unit", template)
+        self.assertIn("ThingTypeName: power", template)
         self.assertIn("ThingTypeName: time", template)
         self.assertIn("TimeRuntimeFunction:", template)
         self.assertIn("TimeRuntimeMcpTopicRule:", template)
         self.assertIn("CatalogBasePath: /txing/town/cloud/time", template)
         self.assertIn("CatalogBasePath: /txing/town/raspi/unit", template)
+        self.assertIn("CatalogBasePath: /txing/town/raspi/power", template)
         self.assertIn("kind: deviceType", template)
         self.assertIn("EnlistFunctionName:", root_template)
         self.assertIn("EnlistFunctionArn:", root_template)
@@ -339,13 +343,13 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         ]
         text = "\n".join(path.read_text(encoding="utf-8") for path in checked_paths)
 
-        self.assertIn("@deploy", text)
-        self.assertIn("@town-deploy", text)
-        self.assertIn("@rig-deploy", text)
-        self.assertIn("@device-deploy", text)
-        self.assertIn("@enlist", text)
-        self.assertIn("@discharge", text)
-        self.assertIn("@delete", text)
+        self.assertIn("deploy CognitoDomainPrefix", text)
+        self.assertIn("town-deploy town_name", text)
+        self.assertIn("rig-deploy town_id", text)
+        self.assertIn("device-deploy rig_id", text)
+        self.assertIn("enlist payload_file", text)
+        self.assertIn("discharge thing_id", text)
+        self.assertIn("delete stack_name", text)
         self.assertIn("aws lambda invoke", text)
         self.assertIn("aws cloudformation delete-stack", text)
         self.assertIn("stack-delete-complete", text)
@@ -355,7 +359,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("resolve_rig_thing_name()", text)
         self.assertIn("resolve_device_thing_name()", text)
         self.assertIn("assume_stack_role()", text)
-        self.assertIn("@delete-packaging-buckets", text)
+        self.assertIn("delete-packaging-buckets include_legacy_time_lambda", text)
         self.assertIn("delete_s3_bucket_if_exists", text)
         self.assertIn("legacy_time_lambda_artifact_bucket_name", text)
         self.assertNotIn("@deploy-lambda", text)
@@ -378,7 +382,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         justfile = (AWS_DIR / "justfile").read_text(encoding="utf-8")
         gitignore = (REPO_ROOT / ".gitignore").read_text(encoding="utf-8")
 
-        self.assertIn("@cert rig_id='':", justfile)
+        self.assertIn("cert rig_id='':", justfile)
         self.assertIn('effective_thing_name="$TXING_RIG_ID"', justfile)
         self.assertIn('cert_dir="{{project_root}}/config/certs/rig"', justfile)
         self.assertIn('root_ca_path="$cert_dir/AmazonRootCA1.pem"', justfile)
@@ -391,12 +395,12 @@ class AwsTemplatePolicyTests(unittest.TestCase):
 
     def test_aws_justfile_enables_thing_connectivity_indexing(self) -> None:
         justfile = (AWS_DIR / "justfile").read_text(encoding="utf-8")
-        deploy_recipe = justfile.split("@deploy ", 1)[1].split("\n@", 1)[0]
-        configure_recipe = justfile.split("@configure-indexing ", 1)[1].split("\n@", 1)[0]
+        deploy_recipe = justfile.split("deploy ", 1)[1].split("\n\n", 1)[0]
+        configure_recipe = justfile.split("configure-indexing ", 1)[1].split("\n\n", 1)[0]
         aws_lib = (AWS_DIR / "scripts" / "aws_lib.sh").read_text(encoding="utf-8")
 
         self.assertNotIn("configure_indexing_and_wait", deploy_recipe)
-        self.assertIn("@configure-indexing", justfile)
+        self.assertIn("configure-indexing region=region profile=profile", justfile)
         self.assertIn("configure_indexing_and_wait", configure_recipe)
         self.assertIn('"thingConnectivityIndexingMode":"STATUS"', aws_lib)
         self.assertIn('[ "$thing_connectivity_indexing_mode" = "STATUS" ]', aws_lib)

@@ -143,8 +143,8 @@ static const struct bt_uuid_128 redcon_state_uuid =
 
 static void set_redcon_power(bool active);
 static void suspend_battery_adc(void);
-static void cancel_idle_disconnect(void);
-static void schedule_idle_disconnect(struct bt_conn *conn);
+static void cancel_idle_state_notifications(void);
+static void schedule_idle_state_notification(void);
 static void request_connection_params(struct bt_conn *conn);
 
 static bool is_valid_device_name_byte(uint8_t value)
@@ -395,44 +395,81 @@ static void state_notify_work_handler(struct k_work *work)
 
 K_WORK_DELAYABLE_DEFINE(state_notify_work, state_notify_work_handler);
 
-static struct bt_conn *idle_disconnect_conn;
+static struct bt_conn *connected_conn;
+K_MUTEX_DEFINE(connected_conn_lock);
 
-static void idle_disconnect_work_handler(struct k_work *work)
+static struct bt_conn *ref_connected_conn(void)
 {
-	struct bt_conn *conn = idle_disconnect_conn;
+	struct bt_conn *conn;
+
+	k_mutex_lock(&connected_conn_lock, K_FOREVER);
+	conn = connected_conn == NULL ? NULL : bt_conn_ref(connected_conn);
+	k_mutex_unlock(&connected_conn_lock);
+
+	return conn;
+}
+
+static void set_connected_conn(struct bt_conn *conn)
+{
+	struct bt_conn *next = conn == NULL ? NULL : bt_conn_ref(conn);
+	struct bt_conn *previous;
+
+	k_mutex_lock(&connected_conn_lock, K_FOREVER);
+	previous = connected_conn;
+	connected_conn = next;
+	k_mutex_unlock(&connected_conn_lock);
+
+	if (previous != NULL) {
+		bt_conn_unref(previous);
+	}
+}
+
+static void idle_state_notify_work_handler(struct k_work *work)
+{
+	struct bt_conn *conn;
 
 	ARG_UNUSED(work);
 
-	idle_disconnect_conn = NULL;
-	if (conn == NULL) {
+	if (current_redcon != REDCON_IDLE) {
 		return;
 	}
 
-	(void)bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+	conn = ref_connected_conn();
+	if (conn == NULL) {
+		return;
+	}
 	bt_conn_unref(conn);
+
+	refresh_redcon_payloads();
+	notify_redcon_state();
+	enter_ble_idle_hardware_state();
+	schedule_idle_state_notification();
 }
 
-K_WORK_DELAYABLE_DEFINE(idle_disconnect_work, idle_disconnect_work_handler);
+K_WORK_DELAYABLE_DEFINE(idle_state_notify_work, idle_state_notify_work_handler);
 
-static void cancel_idle_disconnect(void)
+static void cancel_idle_state_notifications(void)
 {
-	(void)k_work_cancel_delayable(&idle_disconnect_work);
-	if (idle_disconnect_conn != NULL) {
-		bt_conn_unref(idle_disconnect_conn);
-		idle_disconnect_conn = NULL;
-	}
+	(void)k_work_cancel_delayable(&idle_state_notify_work);
 }
 
-static void schedule_idle_disconnect(struct bt_conn *conn)
+static void schedule_idle_state_notification(void)
 {
-	cancel_idle_disconnect();
-	if (conn == NULL) {
+	struct bt_conn *conn;
+
+	if (current_redcon != REDCON_IDLE) {
 		return;
 	}
 
-	idle_disconnect_conn = bt_conn_ref(conn);
-	(void)k_work_schedule(&idle_disconnect_work,
-			      K_MSEC(CONFIG_REDCON_BLE_IDLE_DISCONNECT_DELAY_MS));
+	conn = ref_connected_conn();
+	if (conn == NULL) {
+		return;
+	}
+	bt_conn_unref(conn);
+
+	(void)k_work_schedule(
+		&idle_state_notify_work,
+		K_SECONDS(CONFIG_REDCON_BLE_IDLE_STATE_NOTIFY_INTERVAL_SECONDS));
 }
 
 static ssize_t write_command(struct bt_conn *conn, const struct bt_gatt_attr *attr,
@@ -452,7 +489,7 @@ static ssize_t write_command(struct bt_conn *conn, const struct bt_gatt_attr *at
 
 	current_redcon = command.redcon;
 	if (current_redcon == REDCON_ACTIVE) {
-		cancel_idle_disconnect();
+		cancel_idle_state_notifications();
 		set_redcon_power(true);
 		request_connection_params(conn);
 		refresh_redcon_payloads();
@@ -464,7 +501,7 @@ static ssize_t write_command(struct bt_conn *conn, const struct bt_gatt_attr *at
 		refresh_redcon_payloads();
 		notify_redcon_state();
 		enter_ble_idle_hardware_state();
-		schedule_idle_disconnect(conn);
+		schedule_idle_state_notification();
 	}
 
 	return len;
@@ -577,10 +614,14 @@ K_WORK_DEFINE(advertise_work, advertise_work_handler);
 
 static void connected(struct bt_conn *conn, uint8_t err)
 {
-	ARG_UNUSED(conn);
-
 	if (err != 0U) {
 		k_work_submit(&advertise_work);
+		return;
+	}
+
+	set_connected_conn(conn);
+	if (current_redcon == REDCON_IDLE) {
+		schedule_idle_state_notification();
 	}
 }
 
@@ -589,7 +630,8 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 	ARG_UNUSED(conn);
 	ARG_UNUSED(reason);
 	current_redcon = REDCON_IDLE;
-	cancel_idle_disconnect();
+	cancel_idle_state_notifications();
+	set_connected_conn(NULL);
 	enter_ble_idle_hardware_state();
 	encode_redcon_state(REDCON_IDLE, 0U);
 	k_work_submit(&advertise_work);

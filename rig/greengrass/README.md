@@ -18,6 +18,13 @@ Weather device process components:
 - `dev.txing.device.weather.ConnectivityBle`: BLE connected-idle adapter for
   nRF54L15 weather devices.
 
+Power device process components:
+
+- `dev.txing.device.power.SparkplugManager`: Sparkplug B lifecycle for power
+  things assigned to the raspi rig.
+- `dev.txing.device.power.ConnectivityBle`: BLE connected-idle adapter for
+  nRF54L15 REDCON battery reports.
+
 Weather devices use the Raspberry Pi 5 built-in BLE controller. The weather rig
 path does not require Matter, Thread, `chip-tool`, a Thread border router, or a
 separate radio dongle.
@@ -35,7 +42,7 @@ Lifecycle boundary:
   authoritative txing rig lifecycle.
 
 `just rig::deploy` is the local Greengrass Lite development path. For raspi rigs
-it deploys both current `unit` and `weather` component families. It builds wheels
+it deploys current `unit`, `weather`, and `power` component families. It builds wheels
 for generic `rig`, device runtime packages, and `aws`, uses `uv pip install
 --target` to assemble a self-contained artifact Python tree for the target
 platform, generates concrete local recipes under `rig/build/greengrass-local`,
@@ -109,6 +116,10 @@ weather Sparkplug manager publishes BLE inventory using the registered AWS Thing
 ID as the expected BLE local name, and the weather BLE component treats fresh
 matching advertisements as device presence. Weather GATT telemetry/control is a
 separate firmware/runtime layer.
+
+Power things use the same registry and BLE local-name matching flow. The power
+BLE component consumes only the REDCON command/state characteristics; connected
+REDCON 4 battery notifications are projected as Sparkplug `DDATA`.
 
 Use `just rig::restart` to restart the Greengrass Lite systemd units without
 deploying new code. Do not expect restart to pick up a new local build; restart

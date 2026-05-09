@@ -76,12 +76,12 @@ _firmware-hex:
       -c shutdown
     printf '\n'
 
-@nve-hex device_name="weather-q8zbgb":
+@nve-hex device_name="power-test":
     test -f "{{ nve_script }}" || { echo "missing REDCON NVE script: {{ nve_script }}" >&2; exit 1; }
     mkdir -p "{{ build_dir }}"
     python3 "{{ nve_script }}" write-hex "{{ device_name }}" --address "{{ nve_address }}" --output "{{ nve_hex }}"
 
-@nve-check device_name="weather-q8zbgb": _ensure-openocd
+@nve-check device_name="power-test": _ensure-openocd
     just --justfile "{{ mcu_dir }}/justfile" nve-hex "{{ device_name }}"
     printf '%q ' \
       openocd \
@@ -96,7 +96,7 @@ _firmware-hex:
       -c shutdown
     printf '\n'
 
-@nve-flash device_name="weather-q8zbgb": _ensure-openocd
+@nve-flash device_name="power-test": _ensure-openocd
     just --justfile "{{ mcu_dir }}/justfile" nve-hex "{{ device_name }}"
     openocd \
       -s "{{ openocd_support_dir }}" \

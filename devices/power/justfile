@@ -1,7 +1,81 @@
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 set quiet := true
 
+power_dir := source_directory()
+test_manifest := power_dir + "/test/Cargo.toml"
+
 mod mcu 'mcu/justfile'
+
+test repetitions="1" name="power-test" *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    repetitions="{{repetitions}}"
+    if ! [[ "$repetitions" =~ ^[0-9]+$ ]] || [ "$repetitions" -lt 1 ]; then
+      echo "repetitions must be a positive integer" >&2
+      exit 2
+    fi
+    cli_args=({{args}})
+    forward_args=()
+    write_logs=0
+    output_dir=""
+    for ((i = 0; i < ${#cli_args[@]}; i++)); do
+      token="${cli_args[$i]}"
+      case "$token" in
+        --logs)
+          write_logs=1
+          ;;
+        --output-dir=*)
+          write_logs=1
+          output_dir="${token#--output-dir=}"
+          forward_args+=("$token")
+          ;;
+        --output-dir)
+          write_logs=1
+          i=$((i + 1))
+          if [ "$i" -ge "${#cli_args[@]}" ]; then
+            echo "--output-dir requires a value" >&2
+            exit 2
+          fi
+          output_dir="${cli_args[$i]}"
+          forward_args+=("$token" "$output_dir")
+          ;;
+        *)
+          forward_args+=("$token")
+          ;;
+      esac
+    done
+    echo "power physical BLE connected-idle suite: $repetitions test(s)"
+    forward_args_text=""
+    if [ "${#forward_args[@]}" -gt 0 ]; then
+      forward_args_text="${forward_args[*]}"
+    fi
+    env_args=(
+      "POWER_DEVICE_TEST_WRITE_LOGS=$write_logs"
+      "POWER_DEVICE_TEST_REPETITIONS=$repetitions"
+      "POWER_DEVICE_TEST_NAME={{name}}"
+      "POWER_DEVICE_TEST_ARGS=$forward_args_text"
+    )
+    if [ "$write_logs" -eq 1 ]; then
+      root="/tmp/power-device-test-results"
+      mkdir -p "$root"
+      if [ -n "$output_dir" ]; then
+        run_dir="$output_dir"
+        mkdir -p "$run_dir"
+      else
+        run_dir="$(mktemp -d "$root/$(date +%Y%m%d-%H%M%S)-XXXXXX")"
+      fi
+      echo "outputDir=$run_dir"
+      echo "log=$run_dir/cycle.log"
+      : > "$run_dir/cycle.log"
+      env_args+=("POWER_DEVICE_TEST_RUN_OUTPUT_DIR=$run_dir")
+    else
+      echo "logs=disabled (use --logs or --output-dir DIR for cycle.log artifacts)"
+    fi
+    env "${env_args[@]}" \
+      cargo test --quiet --manifest-path "{{test_manifest}}" power_ble_ -- --ignored --format terse --test-threads=1 --nocapture
+
+@test-check:
+    cargo test --manifest-path "{{test_manifest}}"
 
 @default:
     @just --list

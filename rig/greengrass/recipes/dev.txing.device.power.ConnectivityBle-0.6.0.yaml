@@ -1,0 +1,46 @@
+RecipeFormatVersion: '2020-01-25'
+ComponentName: dev.txing.device.power.ConnectivityBle
+ComponentVersion: '0.6.0'
+ComponentType: aws.greengrass.generic
+ComponentDescription: txing power BLE connected-idle adapter for REDCON battery reports.
+ComponentPublisher: txing
+ComponentConfiguration:
+  DefaultConfiguration:
+    AdapterId: power-ble-main
+    ConnectTimeout: 8.0
+    PresenceTimeout: 20.0
+    RigId: REPLACE_WITH_RIG_THING_ID
+    TownId: REPLACE_WITH_TOWN_THING_ID
+    accessControl:
+      aws.greengrass.ipc.pubsub:
+        dev.txing.device.power.ConnectivityBle:pubsub:1:
+          policyDescription: Allows the power BLE adapter to exchange local connectivity messages with the Sparkplug manager.
+          operations:
+            - aws.greengrass#PublishToTopic
+            - aws.greengrass#SubscribeToTopic
+          resources:
+            - dev/txing/rig/v1/connectivity/*
+            - dev/txing/rig/v1/ble/*
+Manifests:
+  - Platform:
+      os: linux
+      architecture: aarch64
+      runtime: aws_nucleus_lite
+    Lifecycle:
+      run:
+        RequiresPrivilege: true
+        Script: |-
+          export RIG_NAME="{configuration:/RigId}"
+          export RIG_ID="{configuration:/RigId}"
+          export TXING_RIG_ID="{configuration:/RigId}"
+          export TXING_TOWN_ID="{configuration:/TownId}"
+          export SPARKPLUG_GROUP_ID="{configuration:/TownId}"
+          export SPARKPLUG_EDGE_NODE_ID="{configuration:/RigId}"
+          export TXING_DEVICE_TYPE="power"
+          export TXING_DEVICE_DIR="{artifacts:decompressedPath}/rig-greengrass/devices/power"
+          export TXING_DEVICE_MANIFEST="{artifacts:decompressedPath}/rig-greengrass/devices/power/manifest.toml"
+          export PYTHONPATH="{artifacts:decompressedPath}/rig-greengrass/python"
+          exec python3 -m power_rig.connectivity_ble --adapter-id "{configuration:/AdapterId}" --connect-timeout "{configuration:/ConnectTimeout}" --presence-timeout "{configuration:/PresenceTimeout}"
+    Artifacts:
+      - Uri: s3://REPLACE_WITH_TXING_GREENGRASS_ARTIFACT_BUCKET/rig-greengrass/0.6.0/rig-greengrass.zip
+        Unarchive: ZIP

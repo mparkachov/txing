@@ -74,6 +74,7 @@ class TypeCatalogTests(unittest.TestCase):
                 "/txing/town/raspi",
                 "/txing/town/raspi/unit",
                 "/txing/town/raspi/weather",
+                "/txing/town/raspi/power",
                 "/txing/town/cloud",
                 "/txing/town/cloud/time",
             },
@@ -82,6 +83,7 @@ class TypeCatalogTests(unittest.TestCase):
         self.assertEqual(records["/txing/town/cloud"]["defaultName"], "aws")
         self.assertEqual(records["/txing/town/raspi/unit"]["defaultName"], "bot")
         self.assertEqual(records["/txing/town/raspi/weather"]["defaultName"], "outside")
+        self.assertEqual(records["/txing/town/raspi/power"]["defaultName"], "power")
         self.assertEqual(records["/txing/town/cloud/time"]["defaultName"], "clock")
         self.assertEqual(records["/txing/town/raspi"]["thingType"], "raspi")
         self.assertEqual(records["/txing/town/cloud"]["thingType"], "cloud")
@@ -89,9 +91,11 @@ class TypeCatalogTests(unittest.TestCase):
         self.assertEqual(records["/txing/town/cloud/time"]["requiredAttributes"], ["name", "shortId", "townId", "rigId"])
         self.assertEqual(records["/txing/town/raspi/unit"]["rigType"], "raspi")
         self.assertEqual(records["/txing/town/raspi/weather"]["rigType"], "raspi")
+        self.assertEqual(records["/txing/town/raspi/power"]["rigType"], "raspi")
         self.assertEqual(records["/txing/town/cloud/time"]["rigType"], "cloud")
         self.assertEqual(records["/txing/town/raspi/unit"]["redconCommandLevels"], ["4", "3", "2", "1"])
         self.assertEqual(records["/txing/town/raspi/weather"]["redconCommandLevels"], ["4", "3"])
+        self.assertEqual(records["/txing/town/raspi/power"]["redconCommandLevels"], ["4", "3"])
         self.assertEqual(records["/txing/town/cloud/time"]["redconCommandLevels"], ["4", "1"])
 
     def test_records_are_json_serializable(self) -> None:
@@ -131,7 +135,15 @@ class TypeCatalogTests(unittest.TestCase):
             "sparkplug",
         )
         self.assertEqual(
+            ssm.parameters["/txing/town/raspi/power/capabilities"],
+            "sparkplug",
+        )
+        self.assertEqual(
             ssm.parameters["/txing/town/raspi/weather/redconCommandLevels"],
+            "4,3",
+        )
+        self.assertEqual(
+            ssm.parameters["/txing/town/raspi/power/redconCommandLevels"],
             "4,3",
         )
         self.assertEqual(
@@ -189,7 +201,12 @@ class TypeCatalogTests(unittest.TestCase):
         )
         self.assertEqual(
             [path for path, _record in catalog.list_records("/txing/town/raspi")],
-            ["/txing/town/raspi", "/txing/town/raspi/unit", "/txing/town/raspi/weather"],
+            [
+                "/txing/town/raspi",
+                "/txing/town/raspi/power",
+                "/txing/town/raspi/unit",
+                "/txing/town/raspi/weather",
+            ],
         )
 
     def test_required_list_leaf_must_not_be_empty(self) -> None:

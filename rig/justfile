@@ -19,7 +19,8 @@ greengrass_core_sockets := "ggl.gg_config.socket ggl.gg_deployment.socket ggl.gg
 shared_raspi_rig_component_units := "ggl.dev.txing.rig.BleDiscovery.service"
 unit_rig_component_units := "ggl.dev.txing.device.unit.SparkplugManager.service ggl.dev.txing.device.unit.ConnectivityBle.service"
 weather_rig_component_units := "ggl.dev.txing.device.weather.SparkplugManager.service ggl.dev.txing.device.weather.ConnectivityBle.service"
-raspi_rig_component_units := shared_raspi_rig_component_units + " " + unit_rig_component_units + " " + weather_rig_component_units
+power_rig_component_units := "ggl.dev.txing.device.power.SparkplugManager.service ggl.dev.txing.device.power.ConnectivityBle.service"
+raspi_rig_component_units := shared_raspi_rig_component_units + " " + unit_rig_component_units + " " + weather_rig_component_units + " " + power_rig_component_units
 aws_rig_component_units := "ggl.dev.txing.device.time.SparkplugManager.service ggl.dev.txing.device.time.AwsConnectivity.service"
 legacy_unit_rig_component_units := "ggl.dev.txing.rig.SparkplugManager.service ggl.dev.txing.rig.ConnectivityBle.service ggl.dev.txing.device.weather.MatterWatch.service"
 legacy_unit_rig_components := "dev.txing.rig.SparkplugManager dev.txing.rig.ConnectivityBle"
@@ -1051,7 +1052,11 @@ deploy rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' com
       weather_python_project="{{project_root}}/devices/weather/rig/python"
       weather_sparkplug_component="dev.txing.device.weather.SparkplugManager"
       weather_connectivity_component="dev.txing.device.weather.ConnectivityBle"
+      power_python_project="{{project_root}}/devices/power/rig/python"
+      power_sparkplug_component="dev.txing.device.power.SparkplugManager"
+      power_connectivity_component="dev.txing.device.power.ConnectivityBle"
       uv build --wheel --out-dir "$wheelhouse_dir" "$weather_python_project" >/dev/null
+      uv build --wheel --out-dir "$wheelhouse_dir" "$power_python_project" >/dev/null
     fi
     uv build --wheel --out-dir "$wheelhouse_dir" "{{rig_dir}}" >/dev/null
     uv export \
@@ -1068,6 +1073,7 @@ deploy rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' com
     )
     if [ "$selected_rig_type" = "raspi" ]; then
       install_wheels+=("$wheelhouse_dir"/weather_rig-*.whl)
+      install_wheels+=("$wheelhouse_dir"/power_rig-*.whl)
     fi
     uv pip install \
       --python "{{python_executable}}" \
@@ -1093,14 +1099,26 @@ deploy rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' com
         printf 'txing local Greengrass artifact for %s %s\n' "$component_name" "$resolved_component_version" >"$component_artifact_dir/txing-local-artifact.txt"; \
     done
     if [ "$selected_rig_type" = "raspi" ]; then
-      for component_name in "$weather_sparkplug_component" "$weather_connectivity_component"; do
+      for device_type_name in weather power; do
+        case "$device_type_name" in
+          weather)
+            extra_sparkplug_component="$weather_sparkplug_component"
+            extra_connectivity_component="$weather_connectivity_component"
+            ;;
+          power)
+            extra_sparkplug_component="$power_sparkplug_component"
+            extra_connectivity_component="$power_connectivity_component"
+            ;;
+        esac
+        for component_name in "$extra_sparkplug_component" "$extra_connectivity_component"; do
         component_artifact_dir="$artifacts_dir/$component_name/$resolved_component_version"
         mkdir -p "$component_artifact_dir/python"
         cp -a "$python_tree_dir/." "$component_artifact_dir/python/"
-        mkdir -p "$component_artifact_dir/devices/weather"
-        cp "{{project_root}}/devices/weather/manifest.toml" "$component_artifact_dir/devices/weather/"
-        cp -a "{{project_root}}/devices/weather/aws" "$component_artifact_dir/devices/weather/aws"
+        mkdir -p "$component_artifact_dir/devices/$device_type_name"
+        cp "{{project_root}}/devices/$device_type_name/manifest.toml" "$component_artifact_dir/devices/$device_type_name/"
+        cp -a "{{project_root}}/devices/$device_type_name/aws" "$component_artifact_dir/devices/$device_type_name/aws"
         printf 'txing local Greengrass artifact for %s %s\n' "$component_name" "$resolved_component_version" >"$component_artifact_dir/txing-local-artifact.txt"
+      done
       done
     fi
     if [ "$selected_rig_type" = "raspi" ]; then
@@ -1364,6 +1382,107 @@ deploy rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' com
           - Uri: "s3://txing-local-greengrass/txing-local-artifact.txt"
             Unarchive: "NONE"
     EOF
+      cat >"$recipe_dir/$power_sparkplug_component-$resolved_component_version.yaml" <<EOF
+    RecipeFormatVersion: '2020-01-25'
+    ComponentName: $power_sparkplug_component
+    ComponentVersion: '$resolved_component_version'
+    ComponentType: aws.greengrass.generic
+    ComponentDescription: txing power Sparkplug lifecycle manager for BLE connected-idle power devices.
+    ComponentPublisher: txing
+    ComponentDependencies:
+      aws.greengrass.TokenExchangeService:
+        VersionRequirement: '>=0.0.0'
+        DependencyType: HARD
+    ComponentConfiguration:
+      DefaultConfiguration:
+        accessControl:
+          aws.greengrass.ipc.pubsub:
+            $power_sparkplug_component:pubsub:1:
+              policyDescription: Allows the power Sparkplug manager to exchange local connectivity messages with power adapters.
+              operations:
+                - aws.greengrass#PublishToTopic
+                - aws.greengrass#SubscribeToTopic
+              resources:
+                - dev/txing/rig/v1/connectivity/*
+    Manifests:
+      - Platform:
+          os: linux
+          runtime: aws_nucleus_lite
+        Lifecycle:
+          run:
+            Script: |-
+              export AWS_REGION="$AWS_REGION"
+              export AWS_DEFAULT_REGION="$AWS_REGION"
+              export TXING_VERSION_BASE="$TXING_VERSION_BASE"
+              export TXING_VERSION="$resolved_component_version"
+              unset AWS_PROFILE AWS_DEFAULT_PROFILE AWS_SHARED_CREDENTIALS_FILE
+              export RIG_NAME="$rig_name"
+              export TXING_RIG_ID="$TXING_RIG_ID"
+              export RIG_ID="$TXING_RIG_ID"
+              export SPARKPLUG_GROUP_ID="$sparkplug_group_id"
+              export SPARKPLUG_EDGE_NODE_ID="$sparkplug_edge_node_id"
+              export AWS_IOT_ENDPOINT="$iot_data_endpoint"
+              export TXING_RIG_TYPE="$selected_rig_type"
+              export RIG_TYPE="$selected_rig_type"
+              export TXING_DEVICE_TYPE="power"
+              export TXING_DEVICE_DIR="{artifacts:path}/devices/power"
+              export TXING_DEVICE_MANIFEST="{artifacts:path}/devices/power/manifest.toml"
+              export PYTHONPATH="{artifacts:path}/python"
+              exec python3 -m power_rig.sparkplug_manager
+        Artifacts:
+          - Uri: "s3://txing-local-greengrass/txing-local-artifact.txt"
+            Unarchive: "NONE"
+    EOF
+      cat >"$recipe_dir/$power_connectivity_component-$resolved_component_version.yaml" <<EOF
+    RecipeFormatVersion: '2020-01-25'
+    ComponentName: $power_connectivity_component
+    ComponentVersion: '$resolved_component_version'
+    ComponentType: aws.greengrass.generic
+    ComponentDescription: txing power BLE connected-idle adapter for REDCON battery reports.
+    ComponentPublisher: txing
+    ComponentDependencies:
+      aws.greengrass.TokenExchangeService:
+        VersionRequirement: '>=0.0.0'
+        DependencyType: HARD
+    ComponentConfiguration:
+      DefaultConfiguration:
+        AdapterId: power-ble-main
+        ConnectTimeout: 8.0
+        PresenceTimeout: 20.0
+        accessControl:
+          aws.greengrass.ipc.pubsub:
+            $power_connectivity_component:pubsub:1:
+              policyDescription: Allows the power BLE adapter to exchange local connectivity messages with the power Sparkplug manager.
+              operations:
+                - aws.greengrass#PublishToTopic
+                - aws.greengrass#SubscribeToTopic
+              resources:
+                - dev/txing/rig/v1/connectivity/*
+                - dev/txing/rig/v1/ble/*
+    Manifests:
+      - Platform:
+          os: linux
+          runtime: aws_nucleus_lite
+        Lifecycle:
+          run:
+            RequiresPrivilege: true
+            Script: |-
+              export TXING_VERSION_BASE="$TXING_VERSION_BASE"
+              export TXING_VERSION="$resolved_component_version"
+              export RIG_NAME="$rig_name"
+              export TXING_RIG_ID="$TXING_RIG_ID"
+              export RIG_ID="$TXING_RIG_ID"
+              export TXING_RIG_TYPE="$selected_rig_type"
+              export RIG_TYPE="$selected_rig_type"
+              export TXING_DEVICE_TYPE="power"
+              export TXING_DEVICE_DIR="{artifacts:path}/devices/power"
+              export TXING_DEVICE_MANIFEST="{artifacts:path}/devices/power/manifest.toml"
+              export PYTHONPATH="{artifacts:path}/python"
+              exec python3 -m power_rig.connectivity_ble --adapter-id "{configuration:/AdapterId}" --connect-timeout "{configuration:/ConnectTimeout}" --presence-timeout "{configuration:/PresenceTimeout}"
+        Artifacts:
+          - Uri: "s3://txing-local-greengrass/txing-local-artifact.txt"
+            Unarchive: "NONE"
+    EOF
     fi
     deploy_args=(
       --recipe-dir "$recipe_dir" \
@@ -1376,6 +1495,8 @@ deploy rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' com
         --add-component "$ble_discovery_component=$resolved_component_version"
         --add-component "$weather_sparkplug_component=$resolved_component_version"
         --add-component "$weather_connectivity_component=$resolved_component_version"
+        --add-component "$power_sparkplug_component=$resolved_component_version"
+        --add-component "$power_connectivity_component=$resolved_component_version"
       )
     fi
     for legacy_component in "${legacy_components[@]}"; do
@@ -1386,7 +1507,7 @@ deploy rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' com
     done
     deployed_units=("ggl.$sparkplug_component.service" "ggl.$connectivity_component.service")
     if [ "$selected_rig_type" = "raspi" ]; then
-      deployed_units+=("ggl.$ble_discovery_component.service" "ggl.$weather_sparkplug_component.service" "ggl.$weather_connectivity_component.service")
+      deployed_units+=("ggl.$ble_discovery_component.service" "ggl.$weather_sparkplug_component.service" "ggl.$weather_connectivity_component.service" "ggl.$power_sparkplug_component.service" "ggl.$power_connectivity_component.service")
     fi
     quiesce_units=()
     legacy_units=({{legacy_unit_rig_component_units}})
