@@ -4,6 +4,7 @@ import asyncio
 import json
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 from rig.capability_protocol import (
     CapabilityCommand,
@@ -153,7 +154,7 @@ class TimeAwsConnectivityBridgeTests(unittest.TestCase):
                 thing_name="clock",
                 current_time_iso="2024-04-29T07:20:00Z",
                 mode=TIME_MODE_ACTIVE,
-                active_until_ms=1714380300000,
+                active_until_ms=4102444800000,
                 last_command_id="cmd-1",
                 observed_at_ms=1714380000000,
                 mcp_available=True,
@@ -188,7 +189,7 @@ class TimeAwsConnectivityBridgeTests(unittest.TestCase):
                 thing_name="clock",
                 current_time_iso="2024-04-29T07:20:00Z",
                 mode=TIME_MODE_ACTIVE,
-                active_until_ms=1714380300000,
+                active_until_ms=4102444800000,
                 last_command_id="cmd-1",
                 observed_at_ms=1714380000000,
                 mcp_available=True,
@@ -203,6 +204,74 @@ class TimeAwsConnectivityBridgeTests(unittest.TestCase):
         self.assertEqual(states[0].observed_at_ms, 1714380000000)
         self.assertGreater(states[1].observed_at_ms, states[0].observed_at_ms)
         self.assertEqual(states[1].capabilities, states[0].capabilities)
+
+    def test_heartbeat_projects_expired_active_state_to_sleep(self) -> None:
+        async def exercise() -> CapabilityState:
+            bus = InMemoryLocalPubSub()
+            states: list[CapabilityState] = []
+
+            async def state_handler(_topic: str, payload: bytes) -> None:
+                states.append(CapabilityState.from_payload(payload))
+
+            await bus.subscribe(build_capability_state_topic("clock", "time-aws"), state_handler)
+            bridge = TimeAwsConnectivityBridge(
+                TimeAwsConnectivityConfig(endpoint="endpoint", aws_region="eu-central-1"),
+                bus=bus,
+                connection_factory=FakeConnection,
+            )
+            time_state = TimeDeviceState(
+                thing_name="clock",
+                current_time_iso="2024-04-29T07:20:00Z",
+                mode=TIME_MODE_ACTIVE,
+                active_until_ms=1714380300000,
+                last_command_id="cmd-1",
+                observed_at_ms=1714380000000,
+                mcp_available=True,
+            )
+            await bridge.publish_connectivity_state(time_state)
+            with patch("time_rig.aws_connectivity.utc_timestamp_ms", return_value=1714380300001):
+                await bridge._publish_heartbeat(7)
+            return states[-1]
+
+        state = asyncio.run(exercise())
+
+        self.assertEqual(state.capabilities, {"sparkplug": True, "time": False, "mcp": False})
+        self.assertEqual(state.metrics["mode"].value, "sleep")
+
+    def test_expired_retained_time_state_maps_to_sleep_immediately(self) -> None:
+        async def exercise() -> CapabilityState:
+            bus = InMemoryLocalPubSub()
+            states: list[CapabilityState] = []
+
+            async def state_handler(_topic: str, payload: bytes) -> None:
+                states.append(CapabilityState.from_payload(payload))
+
+            await bus.subscribe(build_capability_state_topic("clock", "time-aws"), state_handler)
+            bridge = TimeAwsConnectivityBridge(
+                TimeAwsConnectivityConfig(endpoint="endpoint", aws_region="eu-central-1"),
+                bus=bus,
+                connection_factory=FakeConnection,
+            )
+            time_state = TimeDeviceState(
+                thing_name="clock",
+                current_time_iso="2024-04-29T07:20:00Z",
+                mode=TIME_MODE_ACTIVE,
+                active_until_ms=1714380300000,
+                last_command_id="cmd-1",
+                observed_at_ms=1714380000000,
+                mcp_available=True,
+            )
+            with patch("time_rig.aws_connectivity.utc_timestamp_ms", return_value=1714380300001):
+                await bridge.handle_mqtt_message(
+                    build_time_state_topic("clock"),
+                    time_state.to_json().encode(),
+                )
+            return states[0]
+
+        state = asyncio.run(exercise())
+
+        self.assertEqual(state.capabilities, {"sparkplug": True, "time": False, "mcp": False})
+        self.assertEqual(state.metrics["mode"].value, "sleep")
 
     def test_command_result_is_forwarded_to_local_pubsub(self) -> None:
         async def exercise() -> CapabilityCommandResult:

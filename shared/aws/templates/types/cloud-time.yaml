@@ -163,6 +163,25 @@ Resources:
       Principal: iot.amazonaws.com
       SourceArn: !GetAtt TimeRuntimeMcpTopicRule.Arn
 
+  TimeRuntimeCommandTopicRule:
+    Type: AWS::IoT::TopicRule
+    Properties:
+      TopicRulePayload:
+        AwsIotSqlVersion: "2016-03-23"
+        RuleDisabled: false
+        Sql: SELECT topic() AS mqttTopic, * FROM 'txings/+/time/command'
+        Actions:
+          - Lambda:
+              FunctionArn: !GetAtt TimeRuntimeFunction.Arn
+
+  TimeRuntimeCommandRulePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref TimeRuntimeFunction
+      Principal: iot.amazonaws.com
+      SourceArn: !GetAtt TimeRuntimeCommandTopicRule.Arn
+
 Outputs:
   TimeRuntimeFunctionName:
     Value: !Ref TimeRuntimeFunction
@@ -170,5 +189,7 @@ Outputs:
     Value: !Ref TimeRuntimeScheduleRule
   TimeRuntimeMcpTopicRuleArn:
     Value: !GetAtt TimeRuntimeMcpTopicRule.Arn
+  TimeRuntimeCommandTopicRuleArn:
+    Value: !GetAtt TimeRuntimeCommandTopicRule.Arn
   TimeRuntimeVersion:
     Value: !Ref TimeRuntimeVersion

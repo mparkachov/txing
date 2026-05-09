@@ -5,7 +5,8 @@ import asyncio
 import logging
 import os
 import signal
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from typing import Any, Callable
 
 try:
@@ -40,6 +41,7 @@ from rig.sparkplug import utc_timestamp_ms
 
 from .time_topics import (
     TIME_MODE_ACTIVE,
+    TIME_MODE_SLEEP,
     TimeDeviceState,
     build_time_command_topic,
     parse_time_service_topic,
@@ -255,6 +257,10 @@ class TimeAwsConnectivityBridge:
         *,
         observed_at_ms: int | None = None,
     ) -> None:
+        state = _effective_time_state(
+            state,
+            observed_at_ms if observed_at_ms is not None else utc_timestamp_ms(),
+        )
         self._latest_time_states[state.thing_name] = state
         self._seq += 1
         metrics: dict[str, SparkplugMetricValue] = {
@@ -321,6 +327,25 @@ def _parse_args() -> argparse.Namespace:
         default=float(os.getenv("TIME_AWS_HEARTBEAT_INTERVAL", DEFAULT_HEARTBEAT_INTERVAL)),
     )
     return parser.parse_args()
+
+
+def _effective_time_state(state: TimeDeviceState, now_ms: int) -> TimeDeviceState:
+    if (
+        state.mode == TIME_MODE_ACTIVE
+        and state.active_until_ms is not None
+        and state.active_until_ms <= now_ms
+    ):
+        return replace(
+            state,
+            current_time_iso=datetime.fromtimestamp(now_ms / 1000, tz=UTC)
+            .isoformat()
+            .replace("+00:00", "Z"),
+            mode=TIME_MODE_SLEEP,
+            active_until_ms=None,
+            observed_at_ms=now_ms,
+            mcp_available=False,
+        )
+    return state
 
 
 def _close_resource(resource: object) -> None:
