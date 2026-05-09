@@ -15,23 +15,28 @@ except ImportError:
 
 from aws.auth import build_aws_runtime, ensure_aws_profile, resolve_aws_region
 from aws.mqtt import AwsIotWebsocketConnection, AwsMqttConnectionConfig
-from rig.connectivity_protocol import (
-    COMMAND_TOPIC_PREFIX,
-    CONTROL_EVENTUAL,
-    CONTROL_IMMEDIATE,
+from rig.capability_protocol import (
+    CAPABILITY_COMMAND_TOPIC_PREFIX,
+    COMMAND_ACCEPTED,
+    HEARTBEAT_RUNNING,
     INVENTORY_TOPIC,
-    PRESENCE_ONLINE,
-    ConnectivityCommand,
+    CapabilityCommand,
+    CapabilityCommandResult,
+    CapabilityHeartbeat,
+    CapabilityInventory,
+    CapabilityState,
+    SparkplugMetricValue,
+    build_capability_command_result_topic,
+    build_capability_heartbeat_topic,
+    build_capability_state_topic,
+    parse_capability_command_topic,
+)
+from rig.connectivity_protocol import (
     ConnectivityCommandResult,
-    ConnectivityInventory,
-    ConnectivityState,
-    SLEEP_MODEL_MATTER_ICD,
-    TRANSPORT_MATTER,
-    build_command_result_topic,
-    build_state_topic,
-    parse_command_topic,
+    ConnectivityCommand as LegacyConnectivityCommand,
 )
 from rig.local_pubsub import GreengrassLocalPubSub, LocalPubSub
+from rig.sparkplug import utc_timestamp_ms
 
 from .time_topics import (
     TIME_MODE_ACTIVE,
@@ -46,6 +51,10 @@ DEFAULT_OPERATION_TIMEOUT = 10.0
 DEFAULT_RECONNECT_DELAY = 5.0
 DEFAULT_CLIENT_ID = "time-aws-connectivity"
 DEFAULT_ADAPTER_ID = "time-aws"
+DEFAULT_HEARTBEAT_INTERVAL = 10.0
+TIME_CAPABILITY = "time"
+MCP_CAPABILITY = "mcp"
+SPARKPLUG_CAPABILITY = "sparkplug"
 TIME_STATE_SUBSCRIPTION = "txings/+/time/state"
 TIME_COMMAND_RESULT_SUBSCRIPTION = "txings/+/time/command-result"
 
@@ -58,6 +67,7 @@ class TimeAwsConnectivityConfig:
     adapter_id: str = DEFAULT_ADAPTER_ID
     connect_timeout: float = DEFAULT_CONNECT_TIMEOUT
     operation_timeout: float = DEFAULT_OPERATION_TIMEOUT
+    heartbeat_interval: float = DEFAULT_HEARTBEAT_INTERVAL
 
 
 class TimeAwsConnectivityBridge:
@@ -75,9 +85,11 @@ class TimeAwsConnectivityBridge:
         self._aws_runtime = aws_runtime
         self._connection: Any | None = None
         self._managed_things: set[str] = set()
+        self._pending_command_redcon: dict[str, int] = {}
         self._seq = 0
         self._loop: asyncio.AbstractEventLoop | None = None
         self._local_subscriptions: list[object] = []
+        self._heartbeat_task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
         await self.connect()
@@ -86,8 +98,13 @@ class TimeAwsConnectivityBridge:
                 await self._bus.subscribe(INVENTORY_TOPIC, self._handle_inventory)
             )
             self._local_subscriptions.append(
-                await self._bus.subscribe(f"{COMMAND_TOPIC_PREFIX}/+", self._handle_local_command)
+                await self._bus.subscribe(
+                    f"{CAPABILITY_COMMAND_TOPIC_PREFIX}/+",
+                    self._handle_local_command,
+                )
             )
+        if self._heartbeat_task is None:
+            self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
 
     async def connect(self) -> None:
         if self._connection is not None:
@@ -119,6 +136,10 @@ class TimeAwsConnectivityBridge:
         LOGGER.info("Connected time AWS connectivity bridge endpoint=%s", self._config.endpoint)
 
     async def close(self) -> None:
+        if self._heartbeat_task is not None:
+            self._heartbeat_task.cancel()
+            await asyncio.gather(self._heartbeat_task, return_exceptions=True)
+            self._heartbeat_task = None
         for subscription in self._local_subscriptions:
             _close_resource(subscription)
         self._local_subscriptions.clear()
@@ -130,20 +151,19 @@ class TimeAwsConnectivityBridge:
             self._connection = None
 
     async def _handle_inventory(self, _topic: str, payload: bytes) -> None:
-        inventory = ConnectivityInventory.from_payload(payload)
+        inventory = CapabilityInventory.from_payload(payload)
         self._managed_things = {
             device.thing_name
             for device in inventory.devices
-            if device.transport == TRANSPORT_MATTER
-            and device.sleep_model == SLEEP_MODEL_MATTER_ICD
+            if TIME_CAPABILITY in device.capabilities
         }
         LOGGER.info("Time AWS connectivity inventory devices=%s", len(self._managed_things))
 
     async def _handle_local_command(self, topic: str, payload: bytes) -> None:
-        thing_name = parse_command_topic(topic)
+        thing_name = parse_capability_command_topic(topic)
         if thing_name is None:
             return
-        command = ConnectivityCommand.from_payload(payload)
+        command = CapabilityCommand.from_payload(payload)
         if command.thing_name != thing_name:
             raise ValueError(
                 f"command topic thing={thing_name} differs from payload thing={command.thing_name}"
@@ -153,17 +173,41 @@ class TimeAwsConnectivityBridge:
             return
         if self._connection is None:
             raise RuntimeError("time AWS connectivity bridge is not connected")
+        self._pending_command_redcon[command.command_id] = command.redcon
+        await self._bus.publish(
+            build_capability_command_result_topic(thing_name, self._config.adapter_id),
+            CapabilityCommandResult(
+                adapter_id=self._config.adapter_id,
+                command_id=command.command_id,
+                thing_name=thing_name,
+                status=COMMAND_ACCEPTED,
+                redcon=command.redcon,
+                message=None,
+                observed_at_ms=command.issued_at_ms,
+                seq=command.seq,
+            ).to_json(),
+        )
+        legacy_command = LegacyConnectivityCommand(
+            command_id=command.command_id,
+            thing_name=command.thing_name,
+            power=command.redcon < 4,
+            reason=command.reason,
+            issued_at_ms=command.issued_at_ms,
+            deadline_ms=command.deadline_ms,
+            seq=command.seq,
+        )
         await self._connection.publish(
             build_time_command_topic(thing_name),
-            command.to_json(),
+            legacy_command.to_json(),
             retain=True,
             timeout_seconds=self._config.operation_timeout,
         )
         LOGGER.info(
-            "Published retained time command thing=%s command_id=%s power=%s",
+            "Published retained time command thing=%s command_id=%s redcon=%s legacyPower=%s",
             thing_name,
             command.command_id,
-            command.power,
+            command.redcon,
+            legacy_command.power,
         )
 
     def _on_mqtt_message(self, topic: str, payload: bytes) -> None:
@@ -186,34 +230,67 @@ class TimeAwsConnectivityBridge:
             return
         if kind == "command-result":
             result = ConnectivityCommandResult.from_payload(payload)
-            await self._bus.publish(build_command_result_topic(result.thing_name), result.to_json())
+            redcon = self._pending_command_redcon.pop(result.command_id, None)
+            await self._bus.publish(
+                build_capability_command_result_topic(
+                    result.thing_name,
+                    self._config.adapter_id,
+                ),
+                CapabilityCommandResult(
+                    adapter_id=self._config.adapter_id,
+                    command_id=result.command_id,
+                    thing_name=result.thing_name,
+                    status=result.status,
+                    redcon=redcon,
+                    message=result.message,
+                    observed_at_ms=result.observed_at_ms,
+                    seq=result.seq,
+                ).to_json(),
+            )
 
     async def publish_connectivity_state(self, state: TimeDeviceState) -> None:
         self._seq += 1
-        control_availability = (
-            CONTROL_IMMEDIATE
-            if state.mode == TIME_MODE_ACTIVE and state.mcp_available
-            else CONTROL_EVENTUAL
-        )
-        connectivity_state = ConnectivityState(
+        metrics: dict[str, SparkplugMetricValue] = {
+            "currentTimeIso": SparkplugMetricValue("String", state.current_time_iso),
+            "mode": SparkplugMetricValue("String", state.mode),
+            "mcpAvailable": SparkplugMetricValue("Boolean", state.mcp_available),
+        }
+        if state.active_until_ms is not None:
+            metrics["activeUntilMs"] = SparkplugMetricValue("Int64", state.active_until_ms)
+        if state.last_command_id is not None:
+            metrics["lastCommandId"] = SparkplugMetricValue("String", state.last_command_id)
+        capability_state = CapabilityState(
             adapter_id=self._config.adapter_id,
             thing_name=state.thing_name,
-            transport=TRANSPORT_MATTER,
-            native_identity={
-                "currentTimeIso": state.current_time_iso,
-                "activeUntilMs": state.active_until_ms,
-                "lastCommandId": state.last_command_id,
-                "mcpAvailable": state.mcp_available,
+            capabilities={
+                SPARKPLUG_CAPABILITY: True,
+                TIME_CAPABILITY: state.mode == TIME_MODE_ACTIVE,
+                MCP_CAPABILITY: state.mcp_available,
             },
-            presence=PRESENCE_ONLINE,
-            control_availability=control_availability,
-            power=state.mode == TIME_MODE_ACTIVE,
-            sleep_model=SLEEP_MODEL_MATTER_ICD,
-            battery_mv=None,
+            metrics=metrics,
             observed_at_ms=state.observed_at_ms,
             seq=self._seq,
         )
-        await self._bus.publish(build_state_topic(state.thing_name), connectivity_state.to_json())
+        await self._bus.publish(
+            build_capability_state_topic(state.thing_name, self._config.adapter_id),
+            capability_state.to_json(),
+        )
+
+    async def _heartbeat_loop(self) -> None:
+        seq = 0
+        while True:
+            seq += 1
+            await self._bus.publish(
+                build_capability_heartbeat_topic(self._config.adapter_id),
+                CapabilityHeartbeat(
+                    adapter_id=self._config.adapter_id,
+                    status=HEARTBEAT_RUNNING,
+                    active_thing_name=None,
+                    observed_at_ms=utc_timestamp_ms(),
+                    seq=seq,
+                ).to_json(),
+            )
+            await asyncio.sleep(self._config.heartbeat_interval)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -225,6 +302,11 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--adapter-id", default=os.getenv("ADAPTER_ID", DEFAULT_ADAPTER_ID))
     parser.add_argument("--iot-endpoint", default=os.getenv("AWS_IOT_ENDPOINT", ""))
     parser.add_argument("--reconnect-delay", type=float, default=DEFAULT_RECONNECT_DELAY)
+    parser.add_argument(
+        "--heartbeat-interval",
+        type=float,
+        default=float(os.getenv("TIME_AWS_HEARTBEAT_INTERVAL", DEFAULT_HEARTBEAT_INTERVAL)),
+    )
     return parser.parse_args()
 
 
@@ -273,6 +355,7 @@ def main() -> None:
                         aws_region=aws_region,
                         client_id=args.client_id,
                         adapter_id=args.adapter_id,
+                        heartbeat_interval=args.heartbeat_interval,
                     )
                     bus = GreengrassLocalPubSub()
                     bridge = TimeAwsConnectivityBridge(

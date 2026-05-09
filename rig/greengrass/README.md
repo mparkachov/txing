@@ -4,26 +4,28 @@ This directory contains recipe templates for the Raspberry Pi 5 rig runtime on
 AWS IoT Greengrass Nucleus Lite. Greengrass is a rig implementation detail, so
 the templates live under `rig/`.
 
-Unit device process components:
+Rig-wide components:
 
-- `dev.txing.device.unit.SparkplugManager`: AWS registry, shadows, Sparkplug, and
-  per-device AWS IoT MQTT sessions.
-- `dev.txing.device.unit.ConnectivityBle`: BLE adapter for MCU rendezvous and GATT
-  wake/sleep control.
+- `dev.txing.rig.SparkplugManager`: Rust Sparkplug lifecycle manager for the rig
+  edge node and all managed device sessions.
+- `dev.txing.rig.BleDiscovery`: shared BLE advertisement scanner for raspi rigs.
 
 Weather device process components:
 
-- `dev.txing.device.weather.SparkplugManager`: Sparkplug B lifecycle for weather
-  things assigned to the raspi rig.
 - `dev.txing.device.weather.ConnectivityBle`: BLE connected-idle adapter for
-  nRF54L15 weather devices.
+  nRF54L15 weather devices. It publishes v2 capability state and consumes v2
+  REDCON commands.
 
 Power device process components:
 
-- `dev.txing.device.power.SparkplugManager`: Sparkplug B lifecycle for power
-  things assigned to the raspi rig.
 - `dev.txing.device.power.ConnectivityBle`: BLE connected-idle adapter for
-  nRF54L15 REDCON battery reports.
+  nRF54L15 REDCON battery reports. It publishes v2 capability state and consumes
+  v2 REDCON commands.
+
+Cloud rig device process components:
+
+- `dev.txing.device.time.AwsConnectivity`: bridge between v2 local REDCON
+  commands/state and the retained time AWS IoT MQTT service topics.
 
 Weather devices use the Raspberry Pi 5 built-in BLE controller. The weather rig
 path does not require Matter, Thread, `chip-tool`, a Thread border router, or a
@@ -32,25 +34,30 @@ separate radio dongle.
 Lifecycle boundary:
 
 - `rig = Sparkplug edge node = Greengrass Lite core`.
-- `dev.txing.device.unit.SparkplugManager` is the only txing component that publishes
+- `dev.txing.rig.SparkplugManager` is the only txing component that publishes
   rig edge-node `NBIRTH` and `NDEATH`.
 - Connectivity adapters never publish Sparkplug node lifecycle.
-- Managed txing/unit things use device `DBIRTH` and `DDEATH`; the rig itself
+- Managed txing things use device `DBIRTH` and `DDEATH`; the rig itself
   must not be represented as a Sparkplug device.
 - Greengrass core/component status and AWS IoT MQTT lifecycle events are useful
   operational signals, but Sparkplug `NBIRTH` and `NDEATH` remain the
   authoritative txing rig lifecycle.
 
-`just rig::deploy` is the local Greengrass Lite development path. For raspi rigs
-it deploys current `unit`, `weather`, and `power` component families. It builds wheels
-for generic `rig`, device runtime packages, and `aws`, uses `uv pip install
---target` to assemble a self-contained artifact Python tree for the target
-platform, generates concrete local recipes under `rig/build/greengrass-local`,
-and runs `ggl-cli deploy`. The generated recipe/artifact tree is kept until the
-next deploy because Greengrass Lite copies artifacts asynchronously after the CLI
-returns.
+`just rig::deploy` is the local Greengrass Lite development path. Raspi rigs
+deploy the Rust rig-wide Sparkplug manager, shared BLE discovery, and weather and
+power BLE adapters. Cloud rigs deploy the Rust rig-wide Sparkplug manager and the
+time AWS connectivity adapter. Unit v1 components are intentionally excluded from
+the migrated deployment set. The recipe builds wheels for generic `rig`, active
+device runtime packages, and `aws`, builds the Rust manager binary, assembles
+self-contained artifacts, generates concrete local recipes under
+`rig/build/greengrass-local`, and runs `ggl-cli deploy`. The generated
+recipe/artifact tree is kept until the next deploy because Greengrass Lite copies
+artifacts asynchronously after the CLI returns.
 The checked-in recipe files are publishing templates; local deployment does not
 use their placeholder S3 URIs.
+The Rust Greengrass SDK build is Linux-only in this repo, so run
+`just rig::deploy` on the Greengrass rig host rather than packaging the component
+from macOS.
 
 Native Greengrass Lite is built and installed through:
 
@@ -112,7 +119,7 @@ name are positional recipe arguments. Normal deploys should leave the internal
 component version empty.
 
 Weather things are discovered from the normal AWS registry assignment. The
-weather Sparkplug manager publishes BLE inventory using the registered AWS Thing
+rig-wide Sparkplug manager publishes v2 inventory using the registered AWS Thing
 ID as the expected BLE local name, and the weather BLE component treats fresh
 matching advertisements as device presence. Weather GATT telemetry/control is a
 separate firmware/runtime layer.

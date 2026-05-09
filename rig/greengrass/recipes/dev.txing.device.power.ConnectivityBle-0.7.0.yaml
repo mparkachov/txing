@@ -19,7 +19,7 @@ ComponentConfiguration:
             - aws.greengrass#PublishToTopic
             - aws.greengrass#SubscribeToTopic
           resources:
-            - dev/txing/rig/v1/connectivity/*
+            - dev/txing/rig/v2/*
             - dev/txing/rig/v1/ble/*
 Manifests:
   - Platform:

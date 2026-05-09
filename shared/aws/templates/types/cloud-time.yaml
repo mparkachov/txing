@@ -39,6 +39,8 @@ Resources:
         defaultName: clock
         capabilities: sparkplug,mcp,time
         redconCommandLevels: 4,1
+        redconRules/4: sparkplug
+        redconRules/1: sparkplug,time,mcp
         requiredAttributes: name,shortId,townId,rigId
         searchableAttributes: name,townId,rigId
         shadows/sparkplug/schema: aws/sparkplug-shadow.schema.json

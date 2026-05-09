@@ -24,7 +24,7 @@ class DeviceCatalogTests(unittest.TestCase):
     def test_lists_only_loadable_device_types(self) -> None:
         self.assertEqual(
             list_loadable_device_types(repo_root=REPO_ROOT),
-            ["time", "unit", "weather"],
+            ["power", "time", "unit", "weather"],
         )
 
     def test_loads_unit_manifest(self) -> None:
@@ -73,13 +73,10 @@ class DeviceCatalogTests(unittest.TestCase):
             [contract.name for contract in manifest.shadows.values()],
             ["sparkplug", "mcp", "time"],
         )
-        self.assertEqual(
-            [process.name for process in manifest.rig_processes],
-            ["time-sparkplug-manager", "time-aws-connectivity"],
-        )
+        self.assertEqual([process.name for process in manifest.rig_processes], ["time-aws-connectivity"])
         self.assertEqual(
             manifest.rig_processes[0].argv,
-            ("uv", "run", "--project", "rig/python", "time-rig-sparkplug-manager"),
+            ("uv", "run", "--project", "rig/python", "time-rig-aws-connectivity"),
         )
         self.assertEqual(manifest.render_board_video_channel_name(device_id="clock"), None)
         self.assertEqual(manifest.web_adapter, "web/time-adapter.tsx")
@@ -94,11 +91,11 @@ class DeviceCatalogTests(unittest.TestCase):
         self.assertEqual(manifest.type, "weather")
         self.assertEqual(manifest.device_name, "outside")
         self.assertEqual(manifest.display_name, "Weather")
-        self.assertEqual(manifest.capabilities, ("sparkplug",))
+        self.assertEqual(manifest.capabilities, ("sparkplug", "ble", "weather"))
         self.assertEqual(manifest.compatible_rig_types, ("raspi",))
         self.assertEqual(
             [process.name for process in manifest.rig_processes],
-            ["weather-connectivity-ble", "weather-sparkplug-manager"],
+            ["weather-connectivity-ble"],
         )
         self.assertEqual(manifest.render_board_video_channel_name(device_id="outside"), None)
         self.assertEqual(manifest.web_adapter, "web/weather-adapter.tsx")
@@ -118,7 +115,8 @@ class DeviceCatalogTests(unittest.TestCase):
             ("sparkplug", "mcu", "board", "mcp", "video"),
         )
         self.assertEqual(capabilities["time"], ("sparkplug", "mcp", "time"))
-        self.assertEqual(capabilities["weather"], ("sparkplug",))
+        self.assertEqual(capabilities["weather"], ("sparkplug", "ble", "weather"))
+        self.assertEqual(capabilities["power"], ("sparkplug", "ble", "power"))
         self.assertEqual(
             capabilities_for_thing_type("unit", repo_root=REPO_ROOT),
             ("sparkplug", "mcu", "board", "mcp", "video"),
@@ -129,7 +127,7 @@ class DeviceCatalogTests(unittest.TestCase):
         )
         self.assertEqual(
             capabilities_for_thing_type("weather", repo_root=REPO_ROOT),
-            ("sparkplug",),
+            ("sparkplug", "ble", "weather"),
         )
 
     def test_manifest_capabilities_are_device_defined(self) -> None:

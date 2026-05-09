@@ -12,11 +12,10 @@ from rig.connectivity_protocol import (
     BLE_SCAN_RESUME,
     BleAdvertisement,
     BleScanControl,
-    ConnectivityDeviceConfig,
-    ConnectivityInventory,
-    SLEEP_MODEL_BLE_CONNECTED_IDLE,
-    SLEEP_MODEL_BLE_RENDEZVOUS,
-    TRANSPORT_BLE_GATT,
+)
+from rig.capability_protocol import (
+    CapabilityInventory,
+    CapabilityInventoryDevice,
 )
 from rig.local_pubsub import InMemoryLocalPubSub
 
@@ -219,14 +218,18 @@ class BleDiscoveryServiceTests(unittest.TestCase):
             service._loop = asyncio.get_running_loop()
             await service._handle_inventory(
                 "",
-                ConnectivityInventory(
-                    adapter_id="weather-sparkplug-manager",
+                CapabilityInventory(
+                    manager_id="sparkplug-manager",
                     devices=(
-                        ConnectivityDeviceConfig(
+                        CapabilityInventoryDevice(
                             thing_name="weather-1",
-                            transport=TRANSPORT_BLE_GATT,
-                            native_identity={"bleLocalName": "weather-1"},
-                            sleep_model=SLEEP_MODEL_BLE_CONNECTED_IDLE,
+                            thing_type="weather",
+                            capabilities=("sparkplug", "ble", "weather"),
+                            redcon_command_levels=(4, 3),
+                            redcon_rules={
+                                4: ("sparkplug", "ble"),
+                                3: ("sparkplug", "ble", "weather"),
+                            },
                         ),
                     ),
                     seq=1,
@@ -235,14 +238,18 @@ class BleDiscoveryServiceTests(unittest.TestCase):
             )
             await service._handle_inventory(
                 "",
-                ConnectivityInventory(
-                    adapter_id="unit-sparkplug-manager",
+                CapabilityInventory(
+                    manager_id="sparkplug-manager-2",
                     devices=(
-                        ConnectivityDeviceConfig(
-                            thing_name="unit-1",
-                            transport=TRANSPORT_BLE_GATT,
-                            native_identity={"bleDeviceId": "aa:bb:cc:dd:ee:ff"},
-                            sleep_model=SLEEP_MODEL_BLE_RENDEZVOUS,
+                        CapabilityInventoryDevice(
+                            thing_name="power-1",
+                            thing_type="power",
+                            capabilities=("sparkplug", "ble", "power"),
+                            redcon_command_levels=(4, 3),
+                            redcon_rules={
+                                4: ("sparkplug", "ble"),
+                                3: ("sparkplug", "ble", "power"),
+                            },
                         ),
                     ),
                     seq=1,
@@ -256,8 +263,8 @@ class BleDiscoveryServiceTests(unittest.TestCase):
         publish_count, addresses, names = asyncio.run(exercise())
 
         self.assertEqual(publish_count, 1)
-        self.assertEqual(addresses, {"AA:BB:CC:DD:EE:FF"})
-        self.assertEqual(names, {"weather-1", "unit-1"})
+        self.assertEqual(addresses, set())
+        self.assertEqual(names, {"weather-1", "power-1"})
 
 
 if __name__ == "__main__":

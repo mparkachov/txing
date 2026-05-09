@@ -13,15 +13,16 @@ except ImportError:  # pragma: no cover - startup validation covers real deploym
     BleakScanner = None
 
 from rig.connectivity_protocol import (
-    INVENTORY_TOPIC,
     BLE_SCAN_CONTROL_TOPIC,
     BLE_SCAN_PAUSE,
     BLE_SCAN_RESUME,
-    TRANSPORT_BLE_GATT,
     BleAdvertisement,
     BleScanControl,
-    ConnectivityInventory,
     build_ble_advertisement_topic,
+)
+from rig.capability_protocol import (
+    INVENTORY_TOPIC,
+    CapabilityInventory,
 )
 from rig.local_pubsub import GreengrassLocalPubSub, LocalPubSub
 from rig.sparkplug import utc_timestamp_ms
@@ -110,7 +111,7 @@ class BleDiscoveryService:
 
     async def _handle_inventory(self, _topic: str, payload: bytes) -> None:
         try:
-            inventory = ConnectivityInventory.from_payload(payload)
+            inventory = CapabilityInventory.from_payload(payload)
         except Exception as err:
             LOGGER.warning("Invalid BLE discovery inventory ignored: %s", err)
             return
@@ -118,18 +119,12 @@ class BleDiscoveryService:
         target_addresses: set[str] = set()
         target_names: set[str] = set()
         for device in inventory.devices:
-            if device.transport != TRANSPORT_BLE_GATT:
+            if "ble" not in device.capabilities:
                 continue
             target_names.add(device.thing_name)
-            ble_device_id = device.native_identity.get("bleDeviceId")
-            if isinstance(ble_device_id, str) and ble_device_id.strip():
-                target_addresses.add(_normalize_address(ble_device_id))
-            ble_local_name = device.native_identity.get("bleLocalName")
-            if isinstance(ble_local_name, str) and ble_local_name.strip():
-                target_names.add(ble_local_name.strip())
 
         previous_targets = (self._target_addresses, self._target_names)
-        self._targets_by_adapter_id[inventory.adapter_id] = (
+        self._targets_by_adapter_id[inventory.manager_id] = (
             target_addresses,
             target_names,
         )

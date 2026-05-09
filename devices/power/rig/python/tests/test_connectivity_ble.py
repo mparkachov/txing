@@ -3,11 +3,9 @@ from __future__ import annotations
 import asyncio
 import unittest
 
-from rig.connectivity_protocol import (
-    CONTROL_EVENTUAL,
-    PRESENCE_ONLINE,
-    ConnectivityState,
-    build_state_topic,
+from rig.capability_protocol import (
+    CapabilityState,
+    build_capability_state_topic,
 )
 from rig.local_pubsub import InMemoryLocalPubSub
 from power_rig.connectivity_ble import (
@@ -35,11 +33,11 @@ class PowerConnectivityBleTests(unittest.TestCase):
         self.assertEqual(state.battery_mv, 3512)
 
     def test_connected_redcon_four_state_report_publishes_battery_connectivity(self) -> None:
-        async def exercise() -> ConnectivityState:
+        async def exercise() -> CapabilityState:
             bus = InMemoryLocalPubSub()
             published: list[bytes] = []
             await bus.subscribe(
-                build_state_topic("power-1"),
+                build_capability_state_topic("power-1", "power-ble-main"),
                 lambda _topic, payload: published.append(payload),
             )
             session = PowerBleDeviceSession(
@@ -50,28 +48,29 @@ class PowerConnectivityBleTests(unittest.TestCase):
             session._ble_connected = True
             session._ble_address = "AA:BB:CC:DD:EE:FF"
             await session._handle_state_bytes(STATE_STRUCT.pack(PROTOCOL_VERSION, 4, 3512))
-            return ConnectivityState.from_payload(published[0])
+            return CapabilityState.from_payload(published[0])
 
         state = asyncio.run(exercise())
 
-        self.assertEqual(state.presence, PRESENCE_ONLINE)
-        self.assertEqual(state.control_availability, CONTROL_EVENTUAL)
-        self.assertFalse(state.power)
-        self.assertEqual(state.battery_mv, 3512)
-        self.assertIsNone(state.weather)
-        self.assertTrue(state.native_identity["bleConnected"])
-        self.assertEqual(state.native_identity["bleLocalName"], "power-1")
+        self.assertEqual(
+            state.capabilities,
+            {"sparkplug": True, "ble": True, "power": False},
+        )
+        self.assertEqual(state.metrics["batteryMv"].datatype, "Int32")
+        self.assertEqual(state.metrics["batteryMv"].value, 3512)
+        self.assertEqual(state.metrics["bleConnected"].datatype, "Boolean")
+        self.assertTrue(state.metrics["bleConnected"].value)
 
     def test_fresh_power_presence_enters_connected_idle_without_command(self) -> None:
         class Device:
             address = "AA:BB:CC:DD:EE:FF"
             seq = 7
 
-        async def exercise() -> tuple[bool, ConnectivityState]:
+        async def exercise() -> tuple[bool, CapabilityState]:
             bus = InMemoryLocalPubSub()
             published: list[bytes] = []
             await bus.subscribe(
-                build_state_topic("power-1"),
+                build_capability_state_topic("power-1", "power-ble-main"),
                 lambda _topic, payload: published.append(payload),
             )
             session = PowerBleDeviceSession(
@@ -80,14 +79,16 @@ class PowerConnectivityBleTests(unittest.TestCase):
                 bus=bus,
             )
             should_connect = await session._run_advertising_presence(Device())
-            return should_connect, ConnectivityState.from_payload(published[0])
+            return should_connect, CapabilityState.from_payload(published[0])
 
         should_connect, state = asyncio.run(exercise())
 
         self.assertTrue(should_connect)
-        self.assertEqual(state.presence, PRESENCE_ONLINE)
-        self.assertFalse(state.native_identity["bleConnected"])
-        self.assertEqual(state.native_identity["bleAddress"], "AA:BB:CC:DD:EE:FF")
+        self.assertEqual(
+            state.capabilities,
+            {"sparkplug": True, "ble": True, "power": False},
+        )
+        self.assertFalse(state.metrics["bleConnected"].value)
 
 
 if __name__ == "__main__":

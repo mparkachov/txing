@@ -133,6 +133,56 @@ def _optional_redcon_command_levels(
     return tuple(levels)
 
 
+def _optional_redcon_rules(
+    payload: dict[str, Any],
+    key: str,
+    *,
+    manifest_file: Path,
+    capabilities: tuple[str, ...],
+) -> dict[int, tuple[str, ...]]:
+    value = payload.get(key)
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise DeviceManifestError(f"{manifest_file} field {key!r} must be a table when set")
+    capability_set = set(capabilities)
+    rules: dict[int, tuple[str, ...]] = {}
+    for raw_level, raw_capabilities in value.items():
+        try:
+            level = int(raw_level)
+        except (TypeError, ValueError) as err:
+            raise DeviceManifestError(
+                f"{manifest_file} field {key!r} keys must be REDCON levels"
+            ) from err
+        if level < 1 or level > 4:
+            raise DeviceManifestError(
+                f"{manifest_file} field {key!r} keys must be REDCON levels 1 through 4"
+            )
+        if not isinstance(raw_capabilities, list) or not raw_capabilities:
+            raise DeviceManifestError(
+                f"{manifest_file} field {key!r}.{raw_level} must be a non-empty string array"
+            )
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for item in raw_capabilities:
+            if not isinstance(item, str) or not item.strip() or item.strip() != item:
+                raise DeviceManifestError(
+                    f"{manifest_file} field {key!r}.{raw_level} must contain trimmed non-empty strings"
+                )
+            if item not in capability_set:
+                raise DeviceManifestError(
+                    f"{manifest_file} field {key!r}.{raw_level} references unknown capability {item!r}"
+                )
+            if item in seen:
+                raise DeviceManifestError(
+                    f"{manifest_file} field {key!r}.{raw_level} contains duplicate capability {item!r}"
+                )
+            seen.add(item)
+            normalized.append(item)
+        rules[level] = tuple(normalized)
+    return dict(sorted(rules.items()))
+
+
 def _validate_capabilities(
     capabilities: tuple[str, ...],
     *,
@@ -212,6 +262,7 @@ class DeviceManifest:
     capabilities: tuple[str, ...]
     compatible_rig_types: tuple[str, ...]
     redcon_command_levels: tuple[int, ...]
+    redcon_rules: dict[int, tuple[str, ...]]
     shadows: dict[str, DeviceShadowContract]
     rig_processes: tuple[RigProcessContract, ...]
     web: DeviceWebContract
@@ -369,6 +420,12 @@ def _load_manifest(
         "redcon_command_levels",
         manifest_file=manifest_file,
     )
+    redcon_rules = _optional_redcon_rules(
+        raw,
+        "redcon_rules",
+        manifest_file=manifest_file,
+        capabilities=capabilities,
+    )
     shadows = _load_shadow_contracts(
         raw,
         manifest_file=manifest_file,
@@ -403,6 +460,7 @@ def _load_manifest(
         capabilities=capabilities,
         compatible_rig_types=compatible_rig_types,
         redcon_command_levels=redcon_command_levels,
+        redcon_rules=redcon_rules,
         shadows=shadows,
         rig_processes=rig_processes,
         web=web,

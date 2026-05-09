@@ -165,6 +165,10 @@ def _device_record(manifest: DeviceManifest, *, rig_type: str) -> dict[str, Any]
             "redconCommandLevels": [
                 str(level) for level in manifest.redcon_command_levels
             ],
+            "redconRules": {
+                str(level): list(capabilities)
+                for level, capabilities in sorted(manifest.redcon_rules.items())
+            },
             "searchableAttributes": ["name", "townId", "rigId"],
             "requiredAttributes": [
                 "name",
@@ -299,6 +303,8 @@ def _assign_record_leaf(
     leaf_name = leaf_path[-1]
     if len(leaf_path) == 1 and leaf_name in LIST_LEAF_FIELDS:
         decoded: Any = _parse_list_leaf(parameter_name, value)
+    elif len(leaf_path) == 2 and leaf_path[0] == "redconRules":
+        decoded = _parse_list_leaf(parameter_name, value)
     else:
         decoded = value
     cursor[leaf_name] = decoded

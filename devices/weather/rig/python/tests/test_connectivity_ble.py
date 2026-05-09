@@ -6,22 +6,24 @@ import unittest
 from dataclasses import dataclass
 
 from rig.connectivity_protocol import (
+    BleAdvertisement,
+    SLEEP_MODEL_BLE_CONNECTED_IDLE,
+    SLEEP_MODEL_BLE_RENDEZVOUS,
+    TRANSPORT_BLE_GATT,
+)
+from rig.capability_protocol import (
     COMMAND_ACCEPTED,
     COMMAND_FAILED,
     COMMAND_SUCCEEDED,
     INVENTORY_TOPIC,
-    BleAdvertisement,
-    ConnectivityCommand,
-    ConnectivityCommandResult,
-    ConnectivityDeviceConfig,
-    ConnectivityInventory,
-    ConnectivityState,
-    SLEEP_MODEL_BLE_CONNECTED_IDLE,
-    SLEEP_MODEL_BLE_RENDEZVOUS,
-    TRANSPORT_BLE_GATT,
-    build_command_result_topic,
-    build_command_topic,
-    build_state_topic,
+    CapabilityCommand as ConnectivityCommand,
+    CapabilityCommandResult as ConnectivityCommandResult,
+    CapabilityInventory as ConnectivityInventory,
+    CapabilityInventoryDevice as ConnectivityDeviceConfig,
+    CapabilityState as ConnectivityState,
+    build_capability_command_result_topic,
+    build_capability_command_topic,
+    build_capability_state_topic,
 )
 from rig.local_pubsub import InMemoryLocalPubSub
 from rig.sparkplug import utc_timestamp_ms
@@ -47,6 +49,41 @@ from weather_rig.connectivity_ble import (
 class FakeDevice:
     name: str
     address: str = "AA:BB:CC:DD:EE:FF"
+
+
+def build_state_topic(thing_name: str) -> str:
+    return build_capability_state_topic(thing_name, "weather-ble-main")
+
+
+def build_command_result_topic(thing_name: str) -> str:
+    return build_capability_command_result_topic(thing_name, "weather-ble-main")
+
+
+def build_command_topic(thing_name: str) -> str:
+    return build_capability_command_topic(thing_name)
+
+
+def weather_inventory_device(thing_name: str = "weather-1") -> ConnectivityDeviceConfig:
+    return ConnectivityDeviceConfig(
+        thing_name=thing_name,
+        thing_type="weather",
+        capabilities=("sparkplug", "ble", "weather"),
+        redcon_command_levels=(4, 3),
+        redcon_rules={
+            4: ("sparkplug", "ble"),
+            3: ("sparkplug", "ble", "weather"),
+        },
+    )
+
+
+def unit_inventory_device(thing_name: str = "unit-1") -> ConnectivityDeviceConfig:
+    return ConnectivityDeviceConfig(
+        thing_name=thing_name,
+        thing_type="unit",
+        capabilities=("sparkplug", "mcu"),
+        redcon_command_levels=(4, 3, 2, 1),
+        redcon_rules={4: ("sparkplug",)},
+    )
 
 
 class FakeClient:
@@ -399,7 +436,7 @@ class WeatherBleDeviceSessionTests(unittest.TestCase):
                 ConnectivityCommand(
                     command_id="cmd-1",
                     thing_name="weather-1",
-                    power=True,
+                    redcon=3,
                     reason="redcon=3",
                     issued_at_ms=1714380000000,
                 )
@@ -508,7 +545,7 @@ class WeatherBleDeviceSessionTests(unittest.TestCase):
                 ConnectivityCommand(
                     command_id="cmd-1",
                     thing_name="weather-1",
-                    power=True,
+                    redcon=3,
                     reason="redcon=3",
                     issued_at_ms=1714380000000,
                 )
@@ -561,7 +598,7 @@ class WeatherBleDeviceSessionTests(unittest.TestCase):
                 ConnectivityCommand(
                     command_id="cmd-1",
                     thing_name="weather-1",
-                    power=True,
+                    redcon=3,
                     reason="redcon=3",
                     issued_at_ms=1714380000000,
                 )
@@ -614,7 +651,7 @@ class WeatherBleDeviceSessionTests(unittest.TestCase):
                 ConnectivityCommand(
                     command_id="cmd-1",
                     thing_name="weather-1",
-                    power=True,
+                    redcon=3,
                     reason="redcon=3",
                     issued_at_ms=1714380000000,
                 )
@@ -677,7 +714,7 @@ class WeatherBleDeviceSessionTests(unittest.TestCase):
                 ConnectivityCommand(
                     command_id="cmd-1",
                     thing_name="weather-1",
-                    power=True,
+                    redcon=3,
                     reason="redcon=3",
                     issued_at_ms=1714380000000,
                 )
@@ -732,7 +769,7 @@ class WeatherBleDeviceSessionTests(unittest.TestCase):
                 ConnectivityCommand(
                     command_id="cmd-1",
                     thing_name="weather-1",
-                    power=True,
+                    redcon=3,
                     reason="redcon=3",
                     issued_at_ms=1714380000000,
                 )
@@ -779,7 +816,7 @@ class WeatherBleDeviceSessionTests(unittest.TestCase):
                 ConnectivityCommand(
                     command_id="cmd-1",
                     thing_name="weather-1",
-                    power=True,
+                    redcon=3,
                     reason="redcon=3",
                     issued_at_ms=1714380000000,
                 )
@@ -832,7 +869,7 @@ class WeatherBleDeviceSessionTests(unittest.TestCase):
                 ConnectivityCommand(
                     command_id="cmd-1",
                     thing_name="weather-1",
-                    power=True,
+                    redcon=3,
                     reason="redcon=3",
                     issued_at_ms=1714380000000,
                 )
@@ -976,7 +1013,7 @@ class WeatherBleDeviceSessionTests(unittest.TestCase):
                 ConnectivityCommand(
                     command_id="cmd-1",
                     thing_name="weather-1",
-                    power=True,
+                    redcon=3,
                     reason="redcon=3",
                     issued_at_ms=1714380000000,
                 )
@@ -1012,7 +1049,7 @@ class WeatherBleDeviceSessionTests(unittest.TestCase):
                 ConnectivityCommand(
                     command_id="cmd-expired",
                     thing_name="weather-1",
-                    power=True,
+                    redcon=3,
                     reason="redcon=3",
                     issued_at_ms=1714380000000,
                     deadline_ms=utc_timestamp_ms() - 1,
@@ -1046,7 +1083,7 @@ class WeatherBleDeviceSessionTests(unittest.TestCase):
                 ConnectivityCommand(
                     command_id="cmd-1",
                     thing_name="weather-1",
-                    power=True,
+                    redcon=3,
                     reason="redcon=3",
                     issued_at_ms=1714380000000,
                 )
@@ -1131,16 +1168,11 @@ class WeatherConnectivityBleServiceTests(unittest.TestCase):
             await service._handle_inventory(
                 INVENTORY_TOPIC,
                 ConnectivityInventory(
-                    adapter_id="weather-sparkplug-manager",
+                    manager_id="rig-sparkplug-manager",
                     seq=1,
                     issued_at_ms=1714380000000,
                     devices=(
-                        ConnectivityDeviceConfig(
-                            thing_name="weather-1",
-                            transport=TRANSPORT_BLE_GATT,
-                            sleep_model=SLEEP_MODEL_BLE_CONNECTED_IDLE,
-                            native_identity={"bleLocalName": "weather-1"},
-                        ),
+                        weather_inventory_device("weather-1"),
                     ),
                 ).to_json().encode(),
             )
@@ -1186,16 +1218,11 @@ class WeatherConnectivityBleServiceTests(unittest.TestCase):
                 lambda _t, p: results.append(ConnectivityCommandResult.from_payload(p)),
             )
             inventory = ConnectivityInventory(
-                adapter_id="weather-sparkplug-manager",
+                manager_id="rig-sparkplug-manager",
                 seq=1,
                 issued_at_ms=1714380000000,
                 devices=(
-                    ConnectivityDeviceConfig(
-                        thing_name="weather-1",
-                        transport=TRANSPORT_BLE_GATT,
-                        sleep_model=SLEEP_MODEL_BLE_CONNECTED_IDLE,
-                        native_identity={"bleLocalName": "weather-1"},
-                    ),
+                    weather_inventory_device("weather-1"),
                 ),
             )
             await service._handle_inventory(INVENTORY_TOPIC, inventory.to_json().encode())
@@ -1204,7 +1231,7 @@ class WeatherConnectivityBleServiceTests(unittest.TestCase):
                 ConnectivityCommand(
                     command_id="cmd-1",
                     thing_name="weather-1",
-                    power=True,
+                    redcon=3,
                     reason="redcon=3",
                     issued_at_ms=1714380000000,
                     seq=9,
@@ -1248,16 +1275,11 @@ class WeatherConnectivityBleServiceTests(unittest.TestCase):
             await service._handle_inventory(
                 INVENTORY_TOPIC,
                 ConnectivityInventory(
-                    adapter_id="unit-sparkplug-manager",
+                    manager_id="rig-sparkplug-manager",
                     seq=1,
                     issued_at_ms=1714380000000,
                     devices=(
-                        ConnectivityDeviceConfig(
-                            thing_name="unit-1",
-                            transport=TRANSPORT_BLE_GATT,
-                            sleep_model=SLEEP_MODEL_BLE_RENDEZVOUS,
-                            native_identity={"bleDeviceId": "AA:BB"},
-                        ),
+                        unit_inventory_device("unit-1"),
                     ),
                 ).to_json().encode(),
             )
@@ -1266,7 +1288,7 @@ class WeatherConnectivityBleServiceTests(unittest.TestCase):
                 ConnectivityCommand(
                     command_id="cmd-unit",
                     thing_name="unit-1",
-                    power=True,
+                    redcon=3,
                     reason="redcon=3",
                     issued_at_ms=1714380000000,
                 ).to_json().encode(),

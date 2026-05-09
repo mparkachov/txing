@@ -97,6 +97,13 @@ class TypeCatalogTests(unittest.TestCase):
         self.assertEqual(records["/txing/town/raspi/weather"]["redconCommandLevels"], ["4", "3"])
         self.assertEqual(records["/txing/town/raspi/power"]["redconCommandLevels"], ["4", "3"])
         self.assertEqual(records["/txing/town/cloud/time"]["redconCommandLevels"], ["4", "1"])
+        self.assertEqual(
+            records["/txing/town/raspi/power"]["redconRules"],
+            {
+                "3": ["sparkplug", "ble", "power"],
+                "4": ["sparkplug", "ble"],
+            },
+        )
 
     def test_records_are_json_serializable(self) -> None:
         records = build_type_records(repo_root=REPO_ROOT)
@@ -132,11 +139,11 @@ class TypeCatalogTests(unittest.TestCase):
         )
         self.assertEqual(
             ssm.parameters["/txing/town/raspi/weather/capabilities"],
-            "sparkplug",
+            "sparkplug,ble,weather",
         )
         self.assertEqual(
             ssm.parameters["/txing/town/raspi/power/capabilities"],
-            "sparkplug",
+            "sparkplug,ble,power",
         )
         self.assertEqual(
             ssm.parameters["/txing/town/raspi/weather/redconCommandLevels"],
@@ -145,6 +152,14 @@ class TypeCatalogTests(unittest.TestCase):
         self.assertEqual(
             ssm.parameters["/txing/town/raspi/power/redconCommandLevels"],
             "4,3",
+        )
+        self.assertEqual(
+            ssm.parameters["/txing/town/raspi/power/redconRules/3"],
+            "sparkplug,ble,power",
+        )
+        self.assertEqual(
+            ssm.parameters["/txing/town/cloud/time/redconRules/1"],
+            "sparkplug,time,mcp",
         )
         self.assertEqual(
             ssm.parameters["/txing/town/cloud/time/shadows/time/schema"],
@@ -180,6 +195,10 @@ class TypeCatalogTests(unittest.TestCase):
         self.assertEqual(cloud_record["hostServices"], [])
         self.assertEqual(time_record["capabilities"], ["sparkplug", "mcp", "time"])
         self.assertEqual(time_record["redconCommandLevels"], ["4", "1"])
+        self.assertEqual(
+            time_record["redconRules"],
+            {"1": ["sparkplug", "time", "mcp"], "4": ["sparkplug"]},
+        )
         self.assertEqual(
             time_record["shadows"]["time"]["schema"],
             "aws/time-shadow.schema.json",

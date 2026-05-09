@@ -5,15 +5,17 @@ import json
 from pathlib import Path
 import unittest
 
-from rig.connectivity_protocol import (
-    CONTROL_IMMEDIATE,
-    ConnectivityCommand,
-    ConnectivityCommandResult,
-    ConnectivityState,
-    build_command_result_topic,
-    build_command_topic,
-    build_state_topic,
+from rig.capability_protocol import (
+    CapabilityCommand,
+    CapabilityCommandResult,
+    CapabilityHeartbeat,
+    CapabilityState,
+    build_capability_command_result_topic,
+    build_capability_command_topic,
+    build_capability_heartbeat_topic,
+    build_capability_state_topic,
 )
+from rig.connectivity_protocol import ConnectivityCommandResult as LegacyConnectivityCommandResult
 from rig.local_pubsub import InMemoryLocalPubSub
 from time_rig.aws_connectivity import TimeAwsConnectivityBridge, TimeAwsConnectivityConfig
 from time_rig.time_topics import (
@@ -73,18 +75,21 @@ class TimeAwsConnectivityBridgeTests(unittest.TestCase):
                 bus=bus,
                 connection_factory=FakeConnection,
             )
-            await bridge.start()
-            command = ConnectivityCommand(
-                command_id="cmd-1",
-                thing_name="clock",
-                power=True,
-                reason="redcon=1",
-                issued_at_ms=1714380000000,
-                deadline_ms=1714380060000,
-            )
-            await bus.publish(build_command_topic("clock"), command.to_json())
-            assert bridge._connection is not None
-            return bridge._connection.published[0]  # type: ignore[union-attr]
+            try:
+                await bridge.start()
+                command = CapabilityCommand(
+                    command_id="cmd-1",
+                    thing_name="clock",
+                    redcon=1,
+                    reason="redcon=1",
+                    issued_at_ms=1714380000000,
+                    deadline_ms=1714380060000,
+                )
+                await bus.publish(build_capability_command_topic("clock"), command.to_json())
+                assert bridge._connection is not None
+                return bridge._connection.published[0]  # type: ignore[union-attr]
+            finally:
+                await bridge.close()
 
         published = asyncio.run(exercise())
 
@@ -94,15 +99,51 @@ class TimeAwsConnectivityBridgeTests(unittest.TestCase):
         self.assertEqual(payload["commandId"], "cmd-1")
         self.assertTrue(payload["target"]["power"])
 
-    def test_retained_time_state_maps_to_local_matter_connectivity_state(self) -> None:
-        async def exercise() -> ConnectivityState:
+    def test_start_publishes_v2_heartbeat(self) -> None:
+        async def exercise() -> CapabilityHeartbeat:
             bus = InMemoryLocalPubSub()
-            states: list[ConnectivityState] = []
+            heartbeats: list[CapabilityHeartbeat] = []
+            heartbeat_seen = asyncio.Event()
+
+            async def heartbeat_handler(_topic: str, payload: bytes) -> None:
+                heartbeats.append(CapabilityHeartbeat.from_payload(payload))
+                heartbeat_seen.set()
+
+            await bus.subscribe(
+                build_capability_heartbeat_topic("time-aws"),
+                heartbeat_handler,
+            )
+            bridge = TimeAwsConnectivityBridge(
+                TimeAwsConnectivityConfig(
+                    endpoint="endpoint",
+                    aws_region="eu-central-1",
+                    heartbeat_interval=60.0,
+                ),
+                bus=bus,
+                connection_factory=FakeConnection,
+            )
+            try:
+                await bridge.start()
+                await asyncio.wait_for(heartbeat_seen.wait(), timeout=1.0)
+                return heartbeats[0]
+            finally:
+                await bridge.close()
+
+        heartbeat = asyncio.run(exercise())
+
+        self.assertEqual(heartbeat.adapter_id, "time-aws")
+        self.assertEqual(heartbeat.status, "running")
+        self.assertEqual(heartbeat.seq, 1)
+
+    def test_retained_time_state_maps_to_local_matter_connectivity_state(self) -> None:
+        async def exercise() -> CapabilityState:
+            bus = InMemoryLocalPubSub()
+            states: list[CapabilityState] = []
 
             async def state_handler(_topic: str, payload: bytes) -> None:
-                states.append(ConnectivityState.from_payload(payload))
+                states.append(CapabilityState.from_payload(payload))
 
-            await bus.subscribe(build_state_topic("clock"), state_handler)
+            await bus.subscribe(build_capability_state_topic("clock", "time-aws"), state_handler)
             bridge = TimeAwsConnectivityBridge(
                 TimeAwsConnectivityConfig(endpoint="endpoint", aws_region="eu-central-1"),
                 bus=bus,
@@ -123,27 +164,27 @@ class TimeAwsConnectivityBridgeTests(unittest.TestCase):
         state = asyncio.run(exercise())
 
         self.assertEqual(state.thing_name, "clock")
-        self.assertEqual(state.transport, "matter")
-        self.assertEqual(state.sleep_model, "matter-icd")
-        self.assertEqual(state.control_availability, CONTROL_IMMEDIATE)
-        self.assertTrue(state.power)
-        self.assertEqual(state.native_identity["currentTimeIso"], "2024-04-29T07:20:00Z")
+        self.assertEqual(
+            state.capabilities,
+            {"sparkplug": True, "time": True, "mcp": True},
+        )
+        self.assertEqual(state.metrics["currentTimeIso"].value, "2024-04-29T07:20:00Z")
 
     def test_command_result_is_forwarded_to_local_pubsub(self) -> None:
-        async def exercise() -> ConnectivityCommandResult:
+        async def exercise() -> CapabilityCommandResult:
             bus = InMemoryLocalPubSub()
-            results: list[ConnectivityCommandResult] = []
+            results: list[CapabilityCommandResult] = []
 
             async def result_handler(_topic: str, payload: bytes) -> None:
-                results.append(ConnectivityCommandResult.from_payload(payload))
+                results.append(CapabilityCommandResult.from_payload(payload))
 
-            await bus.subscribe(build_command_result_topic("clock"), result_handler)
+            await bus.subscribe(build_capability_command_result_topic("clock", "time-aws"), result_handler)
             bridge = TimeAwsConnectivityBridge(
                 TimeAwsConnectivityConfig(endpoint="endpoint", aws_region="eu-central-1"),
                 bus=bus,
                 connection_factory=FakeConnection,
             )
-            result = ConnectivityCommandResult(
+            result = LegacyConnectivityCommandResult(
                 adapter_id="time-lambda",
                 command_id="cmd-1",
                 thing_name="clock",

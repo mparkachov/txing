@@ -1,13 +1,25 @@
 type = "weather"
 device_name = "outside"
 display_name = "Weather"
-capabilities = ["sparkplug"]
+capabilities = ["sparkplug", "ble", "weather"]
 compatible_rig_types = ["raspi"]
 redcon_command_levels = [4, 3]
+
+[redcon_rules]
+4 = ["sparkplug", "ble"]
+3 = ["sparkplug", "ble", "weather"]
 
 [shadows.sparkplug]
 schema = "aws/sparkplug-shadow.schema.json"
 default = "aws/default-sparkplug-shadow.json"
+
+[shadows.ble]
+schema = "aws/ble-shadow.schema.json"
+default = "aws/default-ble-shadow.json"
+
+[shadows.weather]
+schema = "aws/weather-shadow.schema.json"
+default = "aws/default-weather-shadow.json"
 
 [[rig.processes]]
 name = "weather-connectivity-ble"
@@ -29,22 +41,6 @@ environment = [
   "WEATHER_BLE_CONNECT_TIMEOUT",
   "WEATHER_BLE_COMMAND_TIMEOUT",
   "WEATHER_BLE_STATE_REPORT_INTERVAL",
-]
-
-[[rig.processes]]
-name = "weather-sparkplug-manager"
-command = "uv"
-args = ["run", "--project", "rig/python", "weather-rig-sparkplug-manager"]
-cwd = "."
-environment = [
-  "TXING_DEVICE_TYPE",
-  "TXING_DEVICE_DIR",
-  "TXING_DEVICE_MANIFEST",
-  "RIG_NAME",
-  "THING_NAME",
-  "SPARKPLUG_GROUP_ID",
-  "SPARKPLUG_EDGE_NODE_ID",
-  "AWS_REGION",
 ]
 
 [web]

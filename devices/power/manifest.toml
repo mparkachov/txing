@@ -1,13 +1,25 @@
 type = "power"
 device_name = "power"
 display_name = "Power"
-capabilities = ["sparkplug"]
+capabilities = ["sparkplug", "ble", "power"]
 compatible_rig_types = ["raspi"]
 redcon_command_levels = [4, 3]
+
+[redcon_rules]
+4 = ["sparkplug", "ble"]
+3 = ["sparkplug", "ble", "power"]
 
 [shadows.sparkplug]
 schema = "aws/sparkplug-shadow.schema.json"
 default = "aws/default-sparkplug-shadow.json"
+
+[shadows.ble]
+schema = "aws/ble-shadow.schema.json"
+default = "aws/default-ble-shadow.json"
+
+[shadows.power]
+schema = "aws/power-shadow.schema.json"
+default = "aws/default-power-shadow.json"
 
 [[rig.processes]]
 name = "power-connectivity-ble"
@@ -28,22 +40,6 @@ environment = [
   "POWER_BLE_RECONNECT_DELAY",
   "POWER_BLE_CONNECT_TIMEOUT",
   "POWER_BLE_COMMAND_TIMEOUT",
-]
-
-[[rig.processes]]
-name = "power-sparkplug-manager"
-command = "uv"
-args = ["run", "--project", "rig/python", "power-rig-sparkplug-manager"]
-cwd = "."
-environment = [
-  "TXING_DEVICE_TYPE",
-  "TXING_DEVICE_DIR",
-  "TXING_DEVICE_MANIFEST",
-  "RIG_NAME",
-  "THING_NAME",
-  "SPARKPLUG_GROUP_ID",
-  "SPARKPLUG_EDGE_NODE_ID",
-  "AWS_REGION",
 ]
 
 [web]

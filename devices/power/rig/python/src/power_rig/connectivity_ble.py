@@ -22,29 +22,30 @@ from rig.connectivity_protocol import (
     BLE_SCAN_CONTROL_TOPIC,
     BLE_SCAN_PAUSE,
     BLE_SCAN_RESUME,
-    COMMAND_ACCEPTED,
-    COMMAND_FAILED,
-    COMMAND_SUCCEEDED,
-    COMMAND_TOPIC_PREFIX,
     CONTROL_EVENTUAL,
     CONTROL_UNAVAILABLE,
-    INVENTORY_TOPIC,
     PRESENCE_OFFLINE,
     PRESENCE_ONLINE,
     BleAdvertisement,
     BleScanControl,
-    ConnectivityCommand,
-    ConnectivityCommandResult,
-    ConnectivityHeartbeat,
-    ConnectivityInventory,
-    ConnectivityState,
-    SLEEP_MODEL_BLE_CONNECTED_IDLE,
-    TRANSPORT_BLE_GATT,
-    build_command_result_topic,
-    build_heartbeat_topic,
-    build_state_topic,
     parse_ble_advertisement_topic,
-    parse_command_topic,
+)
+from rig.capability_protocol import (
+    CAPABILITY_COMMAND_TOPIC_PREFIX,
+    COMMAND_ACCEPTED,
+    COMMAND_FAILED,
+    COMMAND_SUCCEEDED,
+    INVENTORY_TOPIC,
+    CapabilityCommand,
+    CapabilityCommandResult,
+    CapabilityHeartbeat,
+    CapabilityInventory,
+    CapabilityState,
+    SparkplugMetricValue,
+    build_capability_command_result_topic,
+    build_capability_heartbeat_topic,
+    build_capability_state_topic,
+    parse_capability_command_topic,
 )
 from rig.local_pubsub import GreengrassLocalPubSub, LocalPubSub
 from rig.sparkplug import utc_timestamp_ms
@@ -52,7 +53,6 @@ from rig.sparkplug import utc_timestamp_ms
 LOGGER = logging.getLogger("power_rig.connectivity_ble")
 
 DEFAULT_ADAPTER_ID = "power-ble-main"
-POWER_INVENTORY_ADAPTER_ID = "power-sparkplug-manager"
 DEFAULT_SCAN_TIMEOUT = 8.0
 DEFAULT_PRESENCE_TIMEOUT = 20.0
 DEFAULT_RECONNECT_DELAY = 2.0
@@ -62,6 +62,9 @@ DEFAULT_HEARTBEAT_INTERVAL = 10.0
 DEFAULT_STATE_REPORT_INTERVAL = 0.0
 DEFAULT_SCAN_PAUSE_SETTLE = 0.25
 DEFAULT_SCAN_PAUSE_MARGIN = 2.0
+POWER_CAPABILITY = "power"
+BLE_CAPABILITY = "ble"
+SPARKPLUG_CAPABILITY = "sparkplug"
 
 POWER_SERVICE_UUID = "f6b4b000-7b32-4d2d-9f4b-4ff0a2b8f100"
 POWER_COMMAND_UUID = "f6b4b001-7b32-4d2d-9f4b-4ff0a2b8f100"
@@ -102,8 +105,12 @@ class _DiscoveredPowerDevice:
     details: dict[str, Any]
 
 
-def normalize_target_redcon(power: bool) -> int:
-    return REDCON_ACTIVE if power else REDCON_IDLE
+def normalize_target_redcon(target_redcon: int) -> int:
+    if target_redcon in (1, 2):
+        return REDCON_ACTIVE
+    if target_redcon in (REDCON_ACTIVE, REDCON_IDLE):
+        return target_redcon
+    raise ValueError(f"unsupported power target REDCON: {target_redcon}")
 
 
 def encode_redcon_command(target_redcon: int) -> bytes:
@@ -128,12 +135,12 @@ def parse_state_report(data: bytes | bytearray | memoryview) -> PowerBleState:
     return PowerBleState(redcon=redcon, battery_mv=battery_mv or None)
 
 
-def _command_deadline_expired(command: ConnectivityCommand) -> bool:
+def _command_deadline_expired(command: CapabilityCommand) -> bool:
     return command.deadline_ms is not None and utc_timestamp_ms() >= command.deadline_ms
 
 
 def _command_deadline_expired_message(
-    command: ConnectivityCommand,
+    command: CapabilityCommand,
     *,
     last_connect_error: str | None = None,
 ) -> str:
@@ -163,7 +170,7 @@ class PowerBleDeviceSession:
         self._config = config
         self._bus = bus
         self._client_factory = client_factory or _default_client
-        self._command_queue: asyncio.Queue[ConnectivityCommand] = asyncio.Queue()
+        self._command_queue: asyncio.Queue[CapabilityCommand] = asyncio.Queue()
         self._stop_event = asyncio.Event()
         self._advertisement_event = asyncio.Event()
         self._seq = 0
@@ -178,7 +185,7 @@ class PowerBleDeviceSession:
         self._stop_event.set()
         self._advertisement_event.set()
 
-    async def enqueue_command(self, command: ConnectivityCommand) -> None:
+    async def enqueue_command(self, command: CapabilityCommand) -> None:
         if _command_deadline_expired(command):
             await self._publish_command_result(
                 command,
@@ -439,8 +446,8 @@ class PowerBleDeviceSession:
                 exc_info=True,
             )
 
-    async def _execute_command(self, client: Any, command: ConnectivityCommand) -> None:
-        target_redcon = normalize_target_redcon(command.power)
+    async def _execute_command(self, client: Any, command: CapabilityCommand) -> None:
+        target_redcon = normalize_target_redcon(command.redcon)
         LOGGER.info(
             "Writing power BLE command thing=%s commandId=%s targetRedcon=%s timeout=%.1fs",
             self.thing_name,
@@ -509,7 +516,7 @@ class PowerBleDeviceSession:
             await self._publish_command_result(command, status=COMMAND_FAILED, message=message)
 
     async def _fail_expired_queued_commands(self) -> None:
-        pending: list[ConnectivityCommand] = []
+        pending: list[CapabilityCommand] = []
         failed_any = False
         while True:
             try:
@@ -579,41 +586,48 @@ class PowerBleDeviceSession:
         ble_connected: bool,
     ) -> None:
         self._seq += 1
-        native_identity: dict[str, Any] = {
-            "bleLocalName": self.thing_name,
-            "bleConnected": ble_connected,
-        }
+        online = presence == PRESENCE_ONLINE and control_availability != CONTROL_UNAVAILABLE
+        metrics: dict[str, SparkplugMetricValue] = {}
+        metrics["bleLocalName"] = SparkplugMetricValue("String", self.thing_name)
         if self._ble_address:
-            native_identity["bleAddress"] = self._ble_address
-        state = ConnectivityState(
+            metrics["bleAddress"] = SparkplugMetricValue("String", self._ble_address)
+        if battery_mv is not None:
+            metrics["batteryMv"] = SparkplugMetricValue("Int32", battery_mv)
+        metrics["bleConnected"] = SparkplugMetricValue("Boolean", bool(ble_connected))
+        state = CapabilityState(
             adapter_id=self._config.adapter_id,
             thing_name=self.thing_name,
-            transport=TRANSPORT_BLE_GATT,
-            native_identity=native_identity,
-            presence=presence,
-            control_availability=control_availability,
-            power=power,
-            sleep_model=SLEEP_MODEL_BLE_CONNECTED_IDLE,
-            battery_mv=battery_mv,
+            capabilities={
+                SPARKPLUG_CAPABILITY: online,
+                BLE_CAPABILITY: online,
+                POWER_CAPABILITY: online and power,
+            },
+            metrics=metrics,
             observed_at_ms=utc_timestamp_ms(),
             seq=self._seq,
-            weather=None,
         )
-        await self._bus.publish(build_state_topic(self.thing_name), state.to_json())
+        await self._bus.publish(
+            build_capability_state_topic(self.thing_name, self._config.adapter_id),
+            state.to_json(),
+        )
 
     async def _publish_command_result(
         self,
-        command: ConnectivityCommand,
+        command: CapabilityCommand,
         *,
         status: str,
         message: str | None,
     ) -> None:
         await self._bus.publish(
-            build_command_result_topic(command.thing_name),
-            ConnectivityCommandResult(
+            build_capability_command_result_topic(
+                command.thing_name,
+                self._config.adapter_id,
+            ),
+            CapabilityCommandResult(
                 adapter_id=self._config.adapter_id,
                 command_id=command.command_id,
                 thing_name=command.thing_name,
+                redcon=command.redcon,
                 status=status,
                 message=message,
                 observed_at_ms=utc_timestamp_ms(),
@@ -648,7 +662,7 @@ class PowerConnectivityBleService:
         heartbeat_task: asyncio.Task[None] | None = None
         try:
             subscriptions.append(await self._bus.subscribe(INVENTORY_TOPIC, self._handle_inventory))
-            subscriptions.append(await self._bus.subscribe(f"{COMMAND_TOPIC_PREFIX}/+", self._handle_command))
+            subscriptions.append(await self._bus.subscribe(f"{CAPABILITY_COMMAND_TOPIC_PREFIX}/+", self._handle_command))
             subscriptions.append(
                 await self._bus.subscribe(
                     f"{BLE_ADVERTISEMENT_TOPIC_PREFIX}/+",
@@ -666,14 +680,12 @@ class PowerConnectivityBleService:
                 _close_resource(subscription)
 
     async def _handle_inventory(self, _topic: str, payload: bytes) -> None:
-        inventory = ConnectivityInventory.from_payload(payload)
-        if inventory.adapter_id != POWER_INVENTORY_ADAPTER_ID:
-            return
+        inventory = CapabilityInventory.from_payload(payload)
         wanted = tuple(
             device.thing_name
             for device in inventory.devices
-            if device.transport == TRANSPORT_BLE_GATT
-            and device.sleep_model == SLEEP_MODEL_BLE_CONNECTED_IDLE
+            if POWER_CAPABILITY in device.capabilities
+            and BLE_CAPABILITY in device.capabilities
         )
         self._known_thing_names = set(wanted)
         await self._reconcile_sessions(wanted)
@@ -708,11 +720,11 @@ class PowerConnectivityBleService:
             session.observe_advertisement(advertisement)
 
     async def _handle_command(self, topic: str, payload: bytes) -> None:
-        thing_name = parse_command_topic(topic)
+        thing_name = parse_capability_command_topic(topic)
         if thing_name is None:
             return
         try:
-            command = ConnectivityCommand.from_payload(payload)
+            command = CapabilityCommand.from_payload(payload)
             if command.thing_name != thing_name:
                 raise ValueError(
                     f"command topic thing={thing_name} differs from payload thing={command.thing_name}"
@@ -734,24 +746,28 @@ class PowerConnectivityBleService:
         except Exception as err:
             LOGGER.warning("Invalid power BLE command topic=%s error=%s", topic, err)
             try:
-                command = ConnectivityCommand.from_payload(payload)
+                command = CapabilityCommand.from_payload(payload)
             except Exception:
                 return
             await self._publish_command_result(command, status=COMMAND_FAILED, message=str(err))
 
     async def _publish_command_result(
         self,
-        command: ConnectivityCommand,
+        command: CapabilityCommand,
         *,
         status: str,
         message: str | None,
     ) -> None:
         await self._bus.publish(
-            build_command_result_topic(command.thing_name),
-            ConnectivityCommandResult(
+            build_capability_command_result_topic(
+                command.thing_name,
+                self._config.adapter_id,
+            ),
+            CapabilityCommandResult(
                 adapter_id=self._config.adapter_id,
                 command_id=command.command_id,
                 thing_name=command.thing_name,
+                redcon=command.redcon,
                 status=status,
                 message=message,
                 observed_at_ms=utc_timestamp_ms(),
@@ -764,8 +780,8 @@ class PowerConnectivityBleService:
         while True:
             seq += 1
             await self._bus.publish(
-                build_heartbeat_topic(self._config.adapter_id),
-                ConnectivityHeartbeat(
+                build_capability_heartbeat_topic(self._config.adapter_id),
+                CapabilityHeartbeat(
                     adapter_id=self._config.adapter_id,
                     status="running",
                     active_thing_name=None,

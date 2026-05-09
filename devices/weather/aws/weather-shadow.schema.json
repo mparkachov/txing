@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://txing.local/schemas/txing-weather-weather-shadow.schema.json",
+  "title": "Weather Capability Named Shadow Contract",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "state": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "reported": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    }
+  }
+}
