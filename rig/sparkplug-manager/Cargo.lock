@@ -2467,6 +2467,7 @@ dependencies = [
  "clap",
  "gneiss-mqtt",
  "gneiss-mqtt-aws",
+ "libc",
  "serde",
  "serde_json",
  "tokio",

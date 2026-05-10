@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
+use txing_sparkplug_manager::log_filter::install_greengrass_debug_log_filter;
 use txing_sparkplug_manager::manager::{device_session_spec, node_client_id, node_session_spec};
 use txing_sparkplug_manager::runtime::{RuntimeConfig, run_runtime};
 
@@ -53,6 +54,7 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
+    install_greengrass_debug_log_filter();
     run_runtime(RuntimeConfig {
         rig_id: args.rig_id,
         town_id: args.town_id,

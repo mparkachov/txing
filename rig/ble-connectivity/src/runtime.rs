@@ -364,18 +364,21 @@ impl DeviceSession {
         }
         self.last_advertisement = Some(advertisement.clone());
         self.offline_published = false;
+
+        if self.connected.is_some() {
+            return Ok(());
+        }
+
         let seq = self.next_seq();
         self.publish_sample(advertisement_sample(&self.spec, &advertisement, seq))?;
-        if self.connected.is_none() {
-            match self.connect(false).await {
-                Ok(()) => {}
-                Err(err) => {
-                    eprintln!(
-                        "warning: BLE connect from advertisement failed thing={} address={} error={err:#}",
-                        self.spec.thing_name, advertisement.address
-                    );
-                    tokio::time::sleep(Duration::from_millis(self.config.reconnect_delay_ms)).await;
-                }
+        match self.connect(false).await {
+            Ok(()) => {}
+            Err(err) => {
+                eprintln!(
+                    "warning: BLE connect from advertisement failed thing={} address={} error={err:#}",
+                    self.spec.thing_name, advertisement.address
+                );
+                tokio::time::sleep(Duration::from_millis(self.config.reconnect_delay_ms)).await;
             }
         }
         Ok(())
@@ -814,7 +817,9 @@ impl Drop for ConnectedDevice {
 }
 
 #[cfg(not(all(feature = "ble-real", target_os = "linux")))]
-struct ConnectedDevice;
+struct ConnectedDevice {
+    connected: bool,
+}
 
 #[cfg(not(all(feature = "ble-real", target_os = "linux")))]
 impl ConnectedDevice {
@@ -828,7 +833,7 @@ impl ConnectedDevice {
     }
 
     async fn is_connected(&self) -> bool {
-        false
+        self.connected
     }
 
     fn address(&self) -> String {
@@ -1101,7 +1106,8 @@ fn validate_greengrass_ipc_environment() -> Result<()> {
 mod tests {
     use super::*;
     use crate::protocol::{
-        CapabilityCommandTarget, InventoryDevice, SCHEMA_VERSION, build_capability_state_topic,
+        CapabilityCommandTarget, CapabilityState, InventoryDevice, SCHEMA_VERSION,
+        build_capability_state_topic,
     };
 
     fn inventory_device(thing_name: &str, capabilities: &[&str]) -> InventoryDevice {
@@ -1111,6 +1117,24 @@ mod tests {
             capabilities: capabilities.iter().map(|value| value.to_string()).collect(),
             redcon_command_levels: vec![4, 3],
             redcon_rules: BTreeMap::new(),
+        }
+    }
+
+    fn power_spec() -> DeviceSpec {
+        DeviceSpec {
+            thing_name: "power-1".to_string(),
+            kind: DeviceKind::Power,
+        }
+    }
+
+    fn advertisement() -> Advertisement {
+        Advertisement {
+            address: "E4:7C:BC:45:9B:A2".to_string(),
+            local_name: Some("power-1".to_string()),
+            services: Vec::new(),
+            rssi: Some(-55),
+            observed_at_ms: now_ms(),
+            seq: 1,
         }
     }
 
@@ -1135,6 +1159,43 @@ mod tests {
             })
         );
         assert_eq!(device_spec_from_inventory(&time), None);
+    }
+
+    #[tokio::test]
+    async fn connected_session_does_not_downgrade_state_from_advertisement() {
+        let (sender, mut receiver) = mpsc::unbounded_channel();
+        let mut session = DeviceSession::new(power_spec(), RuntimeConfig::default(), sender, None);
+        session.connected = Some(ConnectedDevice { connected: true });
+
+        session.handle_advertisement(advertisement()).await.unwrap();
+
+        assert!(receiver.try_recv().is_err());
+        assert!(session.connected.is_some());
+        assert!(session.last_advertisement.is_some());
+    }
+
+    #[tokio::test]
+    async fn disconnected_session_reports_advertisement_availability() {
+        let (sender, mut receiver) = mpsc::unbounded_channel();
+        let mut config = RuntimeConfig::default();
+        config.reconnect_delay_ms = 0;
+        let mut session = DeviceSession::new(power_spec(), config, sender, None);
+
+        session.handle_advertisement(advertisement()).await.unwrap();
+
+        let outbound = receiver.recv().await.unwrap();
+        let state: CapabilityState = serde_json::from_slice(&outbound.payload).unwrap();
+        assert_eq!(state.thing_name, "power-1");
+        assert_eq!(state.capabilities.get("sparkplug"), Some(&true));
+        assert_eq!(state.capabilities.get("ble"), Some(&true));
+        assert_eq!(state.capabilities.get("power"), Some(&false));
+        assert_eq!(
+            state
+                .metrics
+                .get("bleConnected")
+                .map(|metric| &metric.value),
+            Some(&serde_json::json!(false))
+        );
     }
 
     #[tokio::test]

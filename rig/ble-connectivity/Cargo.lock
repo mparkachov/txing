@@ -1009,6 +1009,7 @@ dependencies = [
  "btleplug",
  "clap",
  "futures",
+ "libc",
  "serde",
  "serde_json",
  "tokio",
