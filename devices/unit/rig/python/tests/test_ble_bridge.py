@@ -743,7 +743,6 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertIn("start_unit_if_present() {", justfile)
         self.assertIn("wait_active_if_present() {", justfile)
         self.assertIn("unit_rig_component_units :=", justfile)
-        self.assertIn("power_rig_component_units :=", justfile)
         self.assertIn("aws_rig_component_units :=", justfile)
         self.assertIn("legacy_unit_rig_component_units :=", justfile)
         self.assertIn("legacy_unit_rig_components :=", justfile)
@@ -754,6 +753,7 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertIn("ggl.dev.txing.device.power.SparkplugManager.service", justfile)
         self.assertIn("ggl.dev.txing.device.power.ConnectivityBle.service", justfile)
         self.assertIn("ggl.dev.txing.rig.SparkplugManager.service", justfile)
+        self.assertIn("ggl.dev.txing.rig.BleConnectivity.service", justfile)
         self.assertIn("ggl.dev.txing.rig.ConnectivityBle.service", justfile)
         self.assertIn("ggl.dev.txing.device.time.SparkplugManager.service", justfile)
         self.assertIn("ggl.dev.txing.device.time.AwsConnectivity.service", justfile)
@@ -843,27 +843,27 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertIn('export TXING_VERSION="$resolved_component_version"', justfile)
         self.assertIn('export AWS_IOT_ENDPOINT="$iot_data_endpoint"', justfile)
         self.assertIn('export PYTHONPATH="{artifacts:path}/python"', justfile)
-        self.assertIn('sparkplug_module="unit_rig.sparkplug_manager"', justfile)
-        self.assertIn('connectivity_module="unit_rig.connectivity_ble"', justfile)
-        self.assertIn('exec python3 -m $sparkplug_module', justfile)
+        self.assertIn('connectivity_module="time_rig.aws_connectivity"', justfile)
         self.assertIn('connectivity_command="exec python3 -m $connectivity_module"', justfile)
-        self.assertIn("dev/txing/rig/v1/connectivity/*", justfile)
-        self.assertIn('power_python_project="{{project_root}}/devices/power/rig/python"', justfile)
-        self.assertIn('install_wheels+=("$wheelhouse_dir"/power_rig-*.whl)', justfile)
-        self.assertIn('exec python3 -m power_rig.sparkplug_manager', justfile)
-        self.assertIn('exec python3 -m power_rig.connectivity_ble', justfile)
+        self.assertIn("dev/txing/rig/v2/*", justfile)
+        self.assertIn(
+            'cargo build --release --features greengrass-sdk --manifest-path "{{rig_dir}}/ble-connectivity/Cargo.toml"',
+            justfile,
+        )
+        self.assertIn('ble_connectivity_binary="{{rig_dir}}/ble-connectivity/target/release/txing-ble-connectivity"', justfile)
+        self.assertIn('connectivity_component="dev.txing.rig.BleConnectivity"', justfile)
+        self.assertIn('exec "{artifacts:path}/txing-ble-connectivity"', justfile)
         self.assertNotIn("dev/txing/rig/v1/connectivity/#", justfile)
         self.assertNotIn("python\" -m pip download", justfile)
-        self.assertIn('sparkplug_component="dev.txing.device.unit.SparkplugManager"', justfile)
-        self.assertIn('connectivity_component="dev.txing.device.unit.ConnectivityBle"', justfile)
+        self.assertIn('sparkplug_component="dev.txing.rig.SparkplugManager"', justfile)
         self.assertIn(
-            'legacy_components=(dev.txing.rig.SparkplugManager dev.txing.rig.ConnectivityBle dev.txing.device.weather.MatterWatch)',
+            'legacy_components=(dev.txing.rig.ConnectivityBle dev.txing.rig.BleDiscovery dev.txing.device.unit.SparkplugManager dev.txing.device.unit.ConnectivityBle dev.txing.device.weather.SparkplugManager dev.txing.device.weather.ConnectivityBle dev.txing.device.power.SparkplugManager dev.txing.device.power.ConnectivityBle dev.txing.device.weather.MatterWatch)',
             justfile,
         )
         self.assertIn('--add-component "$sparkplug_component=$resolved_component_version"', justfile)
         self.assertIn('--add-component "$connectivity_component=$resolved_component_version"', justfile)
-        self.assertIn("ConnectTimeout: 8.0", justfile)
-        self.assertIn('--connect-timeout "{configuration:/ConnectTimeout}"', justfile)
+        self.assertIn("ConnectTimeoutMs: 8000", justfile)
+        self.assertIn('--connect-timeout-ms "{configuration:/ConnectTimeoutMs}"', justfile)
         self.assertIn('--remove-component "$legacy_component"', justfile)
         self.assertIn('deployed_units=("ggl.$sparkplug_component.service" "ggl.$connectivity_component.service")', justfile)
         self.assertIn('core_sockets=({{greengrass_core_sockets}})', justfile)
@@ -932,29 +932,24 @@ class AwsShadowClientTests(unittest.TestCase):
             / "recipes"
             / "dev.txing.device.unit.ConnectivityBle-0.8.0.yaml"
         ).read_text(encoding="utf-8")
-        weather_ble_recipe = (
+        ble_connectivity_recipe = (
             repo_root
             / "rig"
             / "greengrass"
             / "recipes"
-            / "dev.txing.device.weather.ConnectivityBle-0.8.0.yaml"
-        ).read_text(encoding="utf-8")
-        power_ble_recipe = (
-            repo_root
-            / "rig"
-            / "greengrass"
-            / "recipes"
-            / "dev.txing.device.power.ConnectivityBle-0.8.0.yaml"
+            / "dev.txing.rig.BleConnectivity-0.8.0.yaml"
         ).read_text(encoding="utf-8")
         self.assertIn("runtime: aws_nucleus_lite", sparkplug_recipe)
         self.assertIn("runtime: aws_nucleus_lite", ble_recipe)
+        self.assertIn("runtime: aws_nucleus_lite", ble_connectivity_recipe)
         self.assertIn("txing-sparkplug-manager", sparkplug_recipe)
+        self.assertIn("txing-ble-connectivity", ble_connectivity_recipe)
         self.assertIn('export PYTHONPATH="{artifacts:decompressedPath}/rig-greengrass/python"', ble_recipe)
         self.assertIn("exec python3 -m unit_rig.connectivity_ble", ble_recipe)
-        self.assertIn("ConnectTimeout: 8.0", weather_ble_recipe)
-        self.assertIn('--connect-timeout "{configuration:/ConnectTimeout}"', weather_ble_recipe)
-        self.assertIn("ConnectTimeout: 8.0", power_ble_recipe)
-        self.assertIn("exec python3 -m power_rig.connectivity_ble", power_ble_recipe)
+        self.assertIn("ConnectTimeoutMs: 8000", ble_connectivity_recipe)
+        self.assertIn('--connect-timeout-ms "{configuration:/ConnectTimeoutMs}"', ble_connectivity_recipe)
+        self.assertIn("dev/txing/rig/v2/*", ble_connectivity_recipe)
+        self.assertNotIn("dev/txing/rig/v1/ble/*", ble_connectivity_recipe)
         self.assertNotIn("pip install", sparkplug_recipe)
         self.assertNotIn("pip install", ble_recipe)
 

@@ -220,8 +220,8 @@ Inspect Greengrass service health with:
 ```bash
 sudo systemctl status --with-dependencies greengrass-lite.target
 sudo journalctl -a -f
-sudo journalctl -a -f -u ggl.dev.txing.device.unit.SparkplugManager.service -u ggl.dev.txing.device.unit.ConnectivityBle.service
-sudo journalctl -a -f -u ggl.dev.txing.device.time.SparkplugManager.service -u ggl.dev.txing.device.time.AwsConnectivity.service
+sudo journalctl -a -f -u ggl.dev.txing.rig.SparkplugManager.service -u ggl.dev.txing.rig.BleConnectivity.service
+sudo journalctl -a -f -u ggl.dev.txing.rig.SparkplugManager.service -u ggl.dev.txing.device.time.AwsConnectivity.service
 ```
 
 Restart the installed Greengrass Lite systemd units without deploying a new

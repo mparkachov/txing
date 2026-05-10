@@ -364,7 +364,7 @@ mod tests {
         state
             .observe_state(CapabilityState {
                 schema_version: SCHEMA_VERSION.to_string(),
-                adapter_id: "power-ble-main".to_string(),
+                adapter_id: "dev.txing.rig.BleConnectivity".to_string(),
                 thing_name: "power-1".to_string(),
                 capabilities: BTreeMap::from([
                     ("sparkplug".to_string(), true),
@@ -387,7 +387,7 @@ mod tests {
         state
             .observe_state(CapabilityState {
                 schema_version: SCHEMA_VERSION.to_string(),
-                adapter_id: "power-ble-main".to_string(),
+                adapter_id: "dev.txing.rig.BleConnectivity".to_string(),
                 thing_name: "power-1".to_string(),
                 capabilities: BTreeMap::from([
                     ("sparkplug".to_string(), true),
@@ -414,7 +414,7 @@ mod tests {
         state
             .observe_state(CapabilityState {
                 schema_version: SCHEMA_VERSION.to_string(),
-                adapter_id: "power-ble-main".to_string(),
+                adapter_id: "dev.txing.rig.BleConnectivity".to_string(),
                 thing_name: "power-1".to_string(),
                 capabilities: BTreeMap::from([
                     ("sparkplug".to_string(), true),
@@ -434,7 +434,7 @@ mod tests {
         state
             .observe_state(CapabilityState {
                 schema_version: SCHEMA_VERSION.to_string(),
-                adapter_id: "power-ble-main".to_string(),
+                adapter_id: "dev.txing.rig.BleConnectivity".to_string(),
                 thing_name: "power-1".to_string(),
                 capabilities: BTreeMap::from([
                     ("sparkplug".to_string(), false),
@@ -458,7 +458,7 @@ mod tests {
         state
             .observe_state(CapabilityState {
                 schema_version: SCHEMA_VERSION.to_string(),
-                adapter_id: "power-ble-main".to_string(),
+                adapter_id: "dev.txing.rig.BleConnectivity".to_string(),
                 thing_name: "power-1".to_string(),
                 capabilities: BTreeMap::from([
                     ("sparkplug".to_string(), true),
@@ -489,7 +489,7 @@ mod tests {
         state
             .observe_state(CapabilityState {
                 schema_version: SCHEMA_VERSION.to_string(),
-                adapter_id: "power-ble-main".to_string(),
+                adapter_id: "dev.txing.rig.BleConnectivity".to_string(),
                 thing_name: "power-1".to_string(),
                 capabilities: BTreeMap::from([
                     ("sparkplug".to_string(), true),
@@ -538,7 +538,7 @@ mod tests {
     fn command_result_projects_to_sparkplug_metrics() {
         let result = CapabilityCommandResult {
             schema_version: SCHEMA_VERSION.to_string(),
-            adapter_id: "power-ble-main".to_string(),
+            adapter_id: "dev.txing.rig.BleConnectivity".to_string(),
             command_id: "cmd-1".to_string(),
             thing_name: "power-1".to_string(),
             status: COMMAND_SUCCEEDED.to_string(),

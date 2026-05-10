@@ -993,7 +993,7 @@ mod tests {
     fn rejects_local_topic_payload_mismatch() {
         let state = CapabilityState {
             schema_version: crate::protocol::SCHEMA_VERSION.to_string(),
-            adapter_id: "power-ble-main".to_string(),
+            adapter_id: "dev.txing.rig.BleConnectivity".to_string(),
             thing_name: "power-1".to_string(),
             capabilities: BTreeMap::from([("sparkplug".to_string(), true)]),
             metrics: BTreeMap::new(),
@@ -1001,9 +1001,15 @@ mod tests {
             seq: 1,
         };
 
-        assert!(validate_state_topic_payload("power-1", "power-ble-main", &state).is_ok());
-        assert!(validate_state_topic_payload("weather-1", "power-ble-main", &state).is_err());
-        assert!(validate_state_topic_payload("power-1", "weather-ble-main", &state).is_err());
+        assert!(
+            validate_state_topic_payload("power-1", "dev.txing.rig.BleConnectivity", &state)
+                .is_ok()
+        );
+        assert!(
+            validate_state_topic_payload("weather-1", "dev.txing.rig.BleConnectivity", &state)
+                .is_err()
+        );
+        assert!(validate_state_topic_payload("power-1", "other-adapter", &state).is_err());
 
         let heartbeat = CapabilityHeartbeat {
             schema_version: crate::protocol::SCHEMA_VERSION.to_string(),
@@ -1014,6 +1020,8 @@ mod tests {
             seq: 1,
         };
         assert!(validate_heartbeat_topic_payload("time-aws", &heartbeat).is_ok());
-        assert!(validate_heartbeat_topic_payload("weather-ble-main", &heartbeat).is_err());
+        assert!(
+            validate_heartbeat_topic_payload("dev.txing.rig.BleConnectivity", &heartbeat).is_err()
+        );
     }
 }

@@ -21,27 +21,5 @@ default = "aws/default-ble-shadow.json"
 schema = "aws/weather-shadow.schema.json"
 default = "aws/default-weather-shadow.json"
 
-[[rig.processes]]
-name = "weather-connectivity-ble"
-command = "uv"
-args = ["run", "--project", "rig/python", "weather-rig-connectivity-ble"]
-cwd = "."
-environment = [
-  "TXING_DEVICE_TYPE",
-  "TXING_DEVICE_DIR",
-  "TXING_DEVICE_MANIFEST",
-  "RIG_NAME",
-  "THING_NAME",
-  "SPARKPLUG_GROUP_ID",
-  "SPARKPLUG_EDGE_NODE_ID",
-  "AWS_REGION",
-  "WEATHER_BLE_ADAPTER_ID",
-  "WEATHER_BLE_SCAN_TIMEOUT",
-  "WEATHER_BLE_RECONNECT_DELAY",
-  "WEATHER_BLE_CONNECT_TIMEOUT",
-  "WEATHER_BLE_COMMAND_TIMEOUT",
-  "WEATHER_BLE_STATE_REPORT_INTERVAL",
-]
-
 [web]
 adapter = "web/weather-adapter.tsx"

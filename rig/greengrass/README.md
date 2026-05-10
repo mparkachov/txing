@@ -8,19 +8,10 @@ Rig-wide components:
 
 - `dev.txing.rig.SparkplugManager`: Rust Sparkplug lifecycle manager for the rig
   edge node and all managed device sessions.
-- `dev.txing.rig.BleDiscovery`: shared BLE advertisement scanner for raspi rigs.
-
-Weather device process components:
-
-- `dev.txing.device.weather.ConnectivityBle`: BLE connected-idle adapter for
-  nRF54L15 weather devices. It publishes v2 capability state and consumes v2
-  REDCON commands.
-
-Power device process components:
-
-- `dev.txing.device.power.ConnectivityBle`: BLE connected-idle adapter for
-  nRF54L15 REDCON battery reports. It publishes v2 capability state and consumes
-  v2 REDCON commands.
+- `dev.txing.rig.BleConnectivity`: Rust transport-level BLE connectivity
+  adapter for current raspi power and weather devices. It owns BLE scanning,
+  connection scheduling, GATT command/state exchange, and publishes v2
+  capability state/results.
 
 Cloud rig device process components:
 
@@ -44,11 +35,12 @@ Lifecycle boundary:
   authoritative txing rig lifecycle.
 
 `just rig::deploy` is the local Greengrass Lite development path. Raspi rigs
-deploy the Rust rig-wide Sparkplug manager, shared BLE discovery, and weather and
-power BLE adapters. Cloud rigs deploy the Rust rig-wide Sparkplug manager and the
-time AWS connectivity adapter. Unit v1 components are intentionally excluded from
-the migrated deployment set. The recipe builds wheels for generic `rig`, active
-device runtime packages, and `aws`, builds the Rust manager binary, assembles
+deploy the Rust rig-wide Sparkplug manager and the Rust BLE connectivity adapter.
+Cloud rigs deploy the Rust rig-wide Sparkplug manager and the time AWS
+connectivity adapter. Unit v1 components are intentionally excluded from the
+migrated deployment set. The recipe builds the Rust manager binary and, for raspi
+rigs, the Rust BLE connectivity binary; for cloud rigs it also builds the Python
+wheel artifact needed by the time AWS connectivity adapter. It assembles
 self-contained artifacts, generates concrete local recipes under
 `rig/build/greengrass-local`, and runs `ggl-cli deploy`. The generated
 recipe/artifact tree is kept until the next deploy because Greengrass Lite copies
@@ -72,8 +64,8 @@ just rig::deploy <rig-id>
 
 Run the package install before `just rig::build-native`; the native build invokes
 `cmake` directly for Greengrass Lite and also builds the Rust Sparkplug manager
-with the Linux-only Greengrass SDK feature. It no longer builds a local Matter
-controller.
+and BLE connectivity binaries with the Linux-only Greengrass SDK feature. It no
+longer builds a local Matter controller.
 
 Run `just aws::cert <rig-id>` before `just rig::install-service <rig-id>`. The install recipe
 copies `config/certs/rig/rig.cert.pem` and `rig.private.key` into
@@ -119,15 +111,13 @@ Do not run `just rig::deploy component_version=0.5.1`; values after the recipe
 name are positional recipe arguments. Normal deploys should leave the internal
 component version empty.
 
-Weather things are discovered from the normal AWS registry assignment. The
-rig-wide Sparkplug manager publishes v2 inventory using the registered AWS Thing
-ID as the expected BLE local name, and the weather BLE component treats fresh
-matching advertisements as device presence. Weather GATT telemetry/control is a
-separate firmware/runtime layer.
-
-Power things use the same registry and BLE local-name matching flow. The power
-BLE component consumes only the REDCON command/state characteristics; connected
-REDCON 4 battery notifications are projected as Sparkplug `DDATA`.
+Weather and power things are discovered from the normal AWS registry assignment.
+The rig-wide Sparkplug manager publishes v2 inventory using the registered AWS
+Thing ID as the expected BLE local name. `dev.txing.rig.BleConnectivity` treats
+fresh matching advertisements as REDCON 4 availability, connects to matching
+devices when possible, and reports active domain availability from GATT
+state/measurement reads. Incoming REDCON 1 or 2 commands are normalized to the
+physical BLE active level REDCON 3 for current weather and power firmware.
 
 Use `just rig::restart` to restart the Greengrass Lite systemd units without
 deploying new code. Do not expect restart to pick up a new local build; restart

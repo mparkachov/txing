@@ -1,21 +1,19 @@
 # Rig
 
 The rig is the always-on coordinator and Sparkplug edge node. The current
-`raspi` rig type bridges Sparkplug lifecycle intent from AWS IoT to BLE
-rendezvous sessions with the `unit` MCU and mirrors board MCP availability for
-readers. The `cloud` rig type runs the virtual `time` device components on
-Greengrass Lite without host hardware.
+`raspi` rig type runs a rig-wide Sparkplug manager plus transport-level BLE
+connectivity for power and weather devices. The `cloud` rig type runs the
+virtual `time` device connectivity adapter on Greengrass Lite without host
+hardware.
 
 ## Current Responsibilities
 
 - connect to AWS IoT Core over SigV4-authenticated MQTT over WebSockets
 - publish Sparkplug node lifecycle for the rig edge node with `NBIRTH` and `NDEATH`
-- publish Sparkplug device lifecycle for managed txing/unit things with `DBIRTH`, `DDATA`, and `DDEATH`
+- publish Sparkplug device lifecycle for managed txing things with `DBIRTH`, `DDATA`, and `DDEATH`
 - accept Sparkplug `DCMD.redcon`
-- bridge wakeup-state and sleep-state changes to the MCU over BLE
-- write the `mcu` named shadow
-- mirror retained MCP descriptor and status topics into the `mcp` named shadow
-- derive device REDCON from MCU state, MCP availability, and retained video readiness
+- bridge REDCON commands to transport adapters over local Greengrass IPC
+- derive device REDCON from adapter capability availability
 
 Witness, not rig, writes the AWS-side `sparkplug` named shadow projection.
 Hard invariant: `rig = Sparkplug edge node = Greengrass Lite core`. The rig
@@ -23,29 +21,31 @@ itself must never be represented by Sparkplug device `DBIRTH` or `DDEATH`.
 
 ## Greengrass Lite Split
 
-The rig now has a Greengrass-oriented component split in addition to the legacy
-single-process CLI:
+The rig has a Greengrass-oriented component split:
 
-- `dev.txing.device.unit.SparkplugManager`
-  - owns AWS registry discovery, shadows, retained MCP/video reads, REDCON derivation, and Sparkplug lifecycle
-  - defines Greengrass service running plus direct AWS IoT MQTT connectivity as the rig edge-node `NBIRTH` condition
+- `dev.txing.rig.SparkplugManager`
+  - owns AWS registry discovery, type-catalog reads, REDCON derivation, and Sparkplug lifecycle
+  - defines its direct AWS IoT MQTT connection as the rig edge-node `NBIRTH` condition
   - publishes explicit rig edge-node `NDEATH` on graceful shutdown and configures `NDEATH` as MQTT Last Will
   - uses direct per-device AWS IoT MQTT sessions so `DBIRTH` and `DDEATH` are coupled to each device session lifecycle
-- `dev.txing.device.unit.ConnectivityBle`
-  - owns BLE scanning, rendezvous presence, one-at-a-time GATT sessions, and MCU wake/sleep state reports
-  - communicates with the manager only through local Greengrass pub/sub topics under `dev/txing/rig/v1/connectivity/#`
+- `dev.txing.rig.BleConnectivity`
+  - owns BLE scanning, multi-device connected-idle GATT sessions, REDCON writes, and power/weather state reads
+  - communicates with the manager only through local Greengrass pub/sub topics under `dev/txing/rig/v2/#`
   - never publishes Sparkplug node lifecycle
-- future `dev.txing.rig.ConnectivityMatter`
-  - should implement the same connectivity contract using Matter ICD reachability instead of BLE rendezvous
+- `dev.txing.device.time.AwsConnectivity`
+  - bridges the same v2 capability contract to retained AWS IoT topics for cloud time devices
+- future connectivity adapters such as `dev.txing.rig.LoRaConnectivity`
+  - should implement the same v2 capability contract using their own transport
   - must not publish Sparkplug node lifecycle
 
 ## BLE REDCON Architecture
 
 REDCON is the common lifecycle contract for txing BLE devices. The shared rig
-BLE discovery path should stay device-agnostic: it publishes advertisements
-with address, local name, RSSI, service UUIDs, manufacturer data, and service
-data. New device types should not add a separate BLE manager or scanner only
-because they expose additional characteristics.
+BLE scanner stays device-agnostic and internal to
+`dev.txing.rig.BleConnectivity`: it observes address, local name, RSSI, and
+service UUIDs, then routes matching devices to protocol handlers. New device
+types should not add a separate BLE manager or scanner only because they expose
+additional characteristics.
 
 Current assumption: REDCON GATT v1 uses one common UUID set for the base
 lifecycle contract across BLE device types.
@@ -71,12 +71,11 @@ redcon state    f6b4b002-7b32-4d2d-9f4b-4ff0a2b8f100
   different BLE contract; it is not needed for normal telemetry additions or
   configuration differences
 
-Rig implementation should keep one shared BLE discovery/scanner component, one
-reusable REDCON client/parser for the common service/command/state behavior, and
-per-device connectivity adapters for extra characteristics and metric mapping.
-For example, `power` is REDCON-only while `weather` is REDCON plus weather
-measurements. Adapter behavior should come from the device type, manifest, or
-catalog, not from starting one BLE manager per UUID set.
+Rig implementation keeps one transport-level BLE connectivity component with one
+scanner, reusable REDCON client/parser behavior, and per-device-type metric
+mapping inside that component. For example, `power` is REDCON-only while
+`weather` is REDCON plus weather measurements. Sparkplug lifecycle stays in
+`dev.txing.rig.SparkplugManager`.
 
 If a future REDCON version needs different UUIDs during a migration, the shared
 BLE scanner should still remain common. The rig can add a REDCON profile
@@ -87,17 +86,15 @@ management.
 
 - managed devices come from AWS IoT Fleet Indexing with `attributes.rigId=<TXING_RIG_ID>`
 - startup reads each device `DescribeThing` result, its ThingType, and the SSM type catalog
-- named-shadow subscriptions are selected from type catalog capabilities
 - Sparkplug lifecycle state is published only on MQTT; the AWS read model is witness-owned
 - Greengrass core/device/component status is service observability only; it is not the txing lifecycle source of truth
-- `mcu.state.reported.power=true` means the wakeup state
-- `mcu.state.reported.power=false` means the sleep state with periodic `5 s` BLE rendezvous wakeups
+- v2 capability state from connectivity adapters selects the highest REDCON level whose type-catalog rule is satisfied
+- current raspi BLE devices advertise with the AWS Thing ID as local name
 
 The current contract sources are:
 
 - [Sparkplug lifecycle](../sparkplug-lifecycle.md)
-- [Unit thing shadow model](../../devices/unit/docs/thing-shadow.md)
-- [Unit device-rig shadow contract](../../devices/unit/docs/device-rig-shadow-spec.md)
+- `rig/ble-connectivity` Rust BLE connectivity component
 
 ## Build And Run
 
@@ -125,9 +122,11 @@ Useful options:
 
 - `just rig::wake`
 - `just rig::sleep`
-- `cd rig && ./.venv/bin/rig --no-ble`
+- `txing-ble-connectivity --dry-run`
 
-`--no-ble` keeps the cloud-side flow active without issuing BLE writes.
+The BLE connectivity component also accepts `--no-ble` for local diagnostics,
+which publishes offline capability state instead of touching the host BLE
+adapter.
 
 ## Service Install
 

@@ -25,28 +25,29 @@ from rig.capability_protocol import (
 
 class CapabilityProtocolTests(unittest.TestCase):
     def test_topics_use_v2_capability_namespace(self) -> None:
+        adapter_id = "dev.txing.rig.BleConnectivity"
         self.assertEqual(
-            build_capability_state_topic("power-1", "power-ble-main"),
-            "dev/txing/rig/v2/capability/state/power-1/power-ble-main",
+            build_capability_state_topic("power-1", adapter_id),
+            f"dev/txing/rig/v2/capability/state/power-1/{adapter_id}",
         )
         self.assertEqual(
             build_capability_command_topic("power-1"),
             "dev/txing/rig/v2/capability/command/power-1",
         )
         self.assertEqual(
-            build_capability_command_result_topic("power-1", "power-ble-main"),
-            "dev/txing/rig/v2/capability/command-result/power-1/power-ble-main",
+            build_capability_command_result_topic("power-1", adapter_id),
+            f"dev/txing/rig/v2/capability/command-result/power-1/{adapter_id}",
         )
         self.assertEqual(
-            parse_capability_state_topic(f"{CAPABILITY_STATE_TOPIC_PREFIX}/power-1/power-ble-main"),
-            ("power-1", "power-ble-main"),
+            parse_capability_state_topic(f"{CAPABILITY_STATE_TOPIC_PREFIX}/power-1/{adapter_id}"),
+            ("power-1", adapter_id),
         )
         self.assertEqual(parse_capability_command_topic(f"{CAPABILITY_COMMAND_TOPIC_PREFIX}/power-1"), "power-1")
         self.assertEqual(
             parse_capability_command_result_topic(
-                f"{CAPABILITY_COMMAND_RESULT_TOPIC_PREFIX}/power-1/power-ble-main"
+                f"{CAPABILITY_COMMAND_RESULT_TOPIC_PREFIX}/power-1/{adapter_id}"
             ),
-            ("power-1", "power-ble-main"),
+            ("power-1", adapter_id),
         )
 
     def test_inventory_round_trips_capability_rules(self) -> None:
@@ -77,7 +78,7 @@ class CapabilityProtocolTests(unittest.TestCase):
 
     def test_state_command_and_result_validate_redcon(self) -> None:
         state = CapabilityState(
-            adapter_id="power-ble-main",
+            adapter_id="dev.txing.rig.BleConnectivity",
             thing_name="power-1",
             capabilities={"sparkplug": True, "ble": True, "power": False},
             metrics={"batteryMv": SparkplugMetricValue("Int32", 3970)},
@@ -97,7 +98,7 @@ class CapabilityProtocolTests(unittest.TestCase):
         self.assertEqual(json.loads(command.to_json())["target"], {"redcon": 3})
 
         result = CapabilityCommandResult(
-            adapter_id="power-ble-main",
+            adapter_id="dev.txing.rig.BleConnectivity",
             command_id="cmd-1",
             thing_name="power-1",
             status="succeeded",

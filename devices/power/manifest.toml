@@ -21,26 +21,5 @@ default = "aws/default-ble-shadow.json"
 schema = "aws/power-shadow.schema.json"
 default = "aws/default-power-shadow.json"
 
-[[rig.processes]]
-name = "power-connectivity-ble"
-command = "uv"
-args = ["run", "--project", "rig/python", "power-rig-connectivity-ble"]
-cwd = "."
-environment = [
-  "TXING_DEVICE_TYPE",
-  "TXING_DEVICE_DIR",
-  "TXING_DEVICE_MANIFEST",
-  "RIG_NAME",
-  "THING_NAME",
-  "SPARKPLUG_GROUP_ID",
-  "SPARKPLUG_EDGE_NODE_ID",
-  "AWS_REGION",
-  "POWER_BLE_ADAPTER_ID",
-  "POWER_BLE_SCAN_TIMEOUT",
-  "POWER_BLE_RECONNECT_DELAY",
-  "POWER_BLE_CONNECT_TIMEOUT",
-  "POWER_BLE_COMMAND_TIMEOUT",
-]
-
 [web]
 adapter = "web/power-adapter.tsx"
