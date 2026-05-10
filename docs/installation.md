@@ -34,7 +34,7 @@ sudo apt full-upgrade -y
 sudo apt install -y \
   git curl jq ca-certificates python3-venv pipx unzip \
   build-essential pkg-config cmake libssl-dev libcurl4-openssl-dev \
-  uuid-dev libzip-dev libsqlite3-dev libyaml-dev libsystemd-dev \
+  libdbus-1-dev uuid-dev libzip-dev libsqlite3-dev libyaml-dev libsystemd-dev \
   libevent-dev liburiparser-dev cgroup-tools
 ```
 
@@ -44,6 +44,7 @@ Verify the required native tools are on `PATH`:
 cmake --version
 cc --version
 pkg-config --version
+pkg-config --exists dbus-1
 ```
 
 Install the latest `just` release from the official site, not from the Ubuntu
