@@ -3,6 +3,7 @@
 ## Status
 
 - Scope: current lifecycle control through Sparkplug with one writable metric: `redcon`
+  and reflected availability metrics under `capability.*`
 - Group model: `town` is the Sparkplug group id
 - Edge model: `rig` is the Sparkplug edge node and Greengrass Lite core
 - Device model: each physical `txing` is one Sparkplug device and one AWS IoT thing
@@ -86,6 +87,11 @@ Example projected txing shadow:
         "seq": 7,
         "metrics": {
           "redcon": 2,
+          "capability": {
+            "sparkplug": true,
+            "ble": true,
+            "power": false
+          },
           "batteryMv": 3972
         }
       },
@@ -101,7 +107,26 @@ Metric path rules:
 
 - split both `.` and `/` into nested object path segments
 - `redcon` -> `payload.metrics.redcon`
+- `capability.ble` -> `payload.metrics.capability.ble`
 - `batteryMv` -> `payload.metrics.batteryMv`
+
+Capability availability rules:
+
+- each managed device thing has a comma-separated `capabilities` thing attribute
+  derived from its device type definition
+- SparkplugManager reflects every capability from that attribute as a boolean
+  Sparkplug metric named `capability.<name>`
+- `true` means the corresponding named shadow or data domain is active and
+  current enough for logic to use
+- `false` means the corresponding named shadow or data domain is stale and must
+  not be used in logic, even if older data metrics are still present from a
+  previous `DDATA` merge
+- on startup and inventory refresh, SparkplugManager initializes declared
+  non-`sparkplug` capabilities to `false`; fresh connectivity adapter state can
+  raise them to `true`
+- `sparkplug` is special: live `DBIRTH` and `DDATA` may report
+  `capability.sparkplug=true`, while `DDEATH` remains the unavailable signal and
+  still carries no device metrics
 
 Projection behavior:
 
@@ -118,6 +143,15 @@ Current rig death payload policy:
 
 - `NDEATH` carries `bdSeq` and `redcon=4`
 - `DDEATH` carries no device metrics; `payload.metrics` is an empty object in the witness projection
+
+Current device metric policy:
+
+- device `DBIRTH` and `DDATA` carry `redcon` and the complete
+  `capability.*` boolean availability surface for the device type
+- legacy data metrics such as `batteryMv`, weather readings, and time readings
+  may still be present during the migration
+- the target cleanup state is that Sparkplug device metrics carry only `redcon`
+  and `capability.*`; typed data should live in the corresponding named shadows
 
 Town remains a compatibility exception outside witness ownership:
 

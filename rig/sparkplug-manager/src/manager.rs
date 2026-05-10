@@ -49,6 +49,7 @@ pub struct DeviceRuntimeState {
     inventory: InventoryDevice,
     adapter_states: BTreeMap<String, CapabilityState>,
     last_published_redcon: Option<u8>,
+    last_published_capabilities: BTreeMap<String, bool>,
     last_published_metrics: BTreeMap<String, MetricValue>,
     born: bool,
 }
@@ -59,6 +60,7 @@ impl DeviceRuntimeState {
             inventory,
             adapter_states: BTreeMap::new(),
             last_published_redcon: None,
+            last_published_capabilities: BTreeMap::new(),
             last_published_metrics: BTreeMap::new(),
             born: false,
         }
@@ -69,6 +71,12 @@ impl DeviceRuntimeState {
     }
 
     pub fn replace_inventory(&mut self, inventory: InventoryDevice) {
+        if self.inventory.capabilities != inventory.capabilities {
+            self.born = false;
+            self.last_published_redcon = None;
+            self.last_published_capabilities.clear();
+            self.last_published_metrics.clear();
+        }
         self.inventory = inventory;
     }
 
@@ -96,10 +104,9 @@ impl DeviceRuntimeState {
                 continue;
             }
             for (capability, available) in &state.capabilities {
-                capabilities
-                    .entry(capability.clone())
-                    .and_modify(|current| *current = *current || *available)
-                    .or_insert(*available);
+                if let Some(current) = capabilities.get_mut(capability) {
+                    *current = *current || *available;
+                }
             }
             for (name, metric) in &state.metrics {
                 metrics.insert(name.clone(), metric.clone());
@@ -123,27 +130,34 @@ impl DeviceRuntimeState {
             if self.born {
                 self.born = false;
                 self.last_published_redcon = None;
+                self.last_published_capabilities.clear();
                 self.last_published_metrics.clear();
                 return Ok(DevicePublication::Death);
             }
             return Ok(DevicePublication::None);
         }
         let redcon = snapshot.redcon.unwrap_or(4);
+        let capabilities_changed = self.last_published_capabilities != snapshot.capabilities;
         let metrics_changed = self.last_published_metrics != snapshot.metrics;
-        let metrics = if !self.born || self.last_published_redcon != Some(redcon) || metrics_changed
+        let metrics = if !self.born
+            || self.last_published_redcon != Some(redcon)
+            || capabilities_changed
+            || metrics_changed
         {
-            sparkplug_metrics_from_capability_metrics(&snapshot.metrics)?
+            sparkplug_metrics_from_snapshot(&snapshot.capabilities, &snapshot.metrics)?
         } else {
             Vec::new()
         };
         if !self.born {
             self.born = true;
             self.last_published_redcon = Some(redcon);
+            self.last_published_capabilities = snapshot.capabilities;
             self.last_published_metrics = snapshot.metrics;
             return Ok(DevicePublication::Birth { redcon, metrics });
         }
-        if self.last_published_redcon != Some(redcon) || metrics_changed {
+        if self.last_published_redcon != Some(redcon) || capabilities_changed || metrics_changed {
             self.last_published_redcon = Some(redcon);
+            self.last_published_capabilities = snapshot.capabilities;
             self.last_published_metrics = snapshot.metrics;
             return Ok(DevicePublication::Data { redcon, metrics });
         }
@@ -281,6 +295,18 @@ fn sparkplug_metrics_from_capability_metrics(
     Ok(result)
 }
 
+fn sparkplug_metrics_from_snapshot(
+    capabilities: &BTreeMap<String, bool>,
+    metrics: &BTreeMap<String, MetricValue>,
+) -> Result<Vec<Metric>> {
+    let mut result = capabilities
+        .iter()
+        .map(|(name, available)| Metric::boolean(format!("capability.{name}"), *available))
+        .collect::<Vec<_>>();
+    result.extend(sparkplug_metrics_from_capability_metrics(metrics)?);
+    Ok(result)
+}
+
 fn bool_value(value: &Value) -> Result<bool> {
     value
         .as_bool()
@@ -381,6 +407,142 @@ mod tests {
 
         assert_eq!(state.snapshot(1000).redcon, Some(3));
         assert_eq!(state.snapshot(1000 + STATE_TTL_MS + 1).redcon, None);
+    }
+
+    #[test]
+    fn snapshot_initializes_inventory_capabilities_to_false() {
+        let state = DeviceRuntimeState::new(power_inventory());
+        let snapshot = state.snapshot(1000);
+
+        assert_eq!(
+            snapshot.capabilities,
+            BTreeMap::from([
+                ("ble".to_string(), false),
+                ("power".to_string(), false),
+                ("sparkplug".to_string(), false),
+            ])
+        );
+        assert_eq!(snapshot.redcon, None);
+        assert!(!snapshot.sparkplug_available);
+    }
+
+    #[test]
+    fn birth_metrics_include_all_capability_availability_values() {
+        let mut state = DeviceRuntimeState::new(power_inventory());
+        state
+            .observe_state(CapabilityState {
+                schema_version: SCHEMA_VERSION.to_string(),
+                adapter_id: "dev.txing.rig.BleConnectivity".to_string(),
+                thing_name: "power-1".to_string(),
+                capabilities: BTreeMap::from([
+                    ("sparkplug".to_string(), true),
+                    ("ble".to_string(), true),
+                    ("power".to_string(), false),
+                ]),
+                metrics: BTreeMap::from([("batteryMv".to_string(), MetricValue::int32(3970))]),
+                observed_at_ms: 1000,
+                seq: 1,
+            })
+            .unwrap();
+
+        let publication = state.decide_publication(1000).unwrap();
+
+        assert_eq!(
+            publication,
+            DevicePublication::Birth {
+                redcon: 4,
+                metrics: vec![
+                    Metric::boolean("capability.ble", true),
+                    Metric::boolean("capability.power", false),
+                    Metric::boolean("capability.sparkplug", true),
+                    Metric::int32("batteryMv", 3970),
+                ],
+            }
+        );
+    }
+
+    #[test]
+    fn capability_only_change_publishes_data_with_false_values() {
+        let mut inventory = power_inventory();
+        inventory.capabilities.push("diagnostics".to_string());
+        let mut state = DeviceRuntimeState::new(inventory);
+        state
+            .observe_state(CapabilityState {
+                schema_version: SCHEMA_VERSION.to_string(),
+                adapter_id: "dev.txing.rig.BleConnectivity".to_string(),
+                thing_name: "power-1".to_string(),
+                capabilities: BTreeMap::from([
+                    ("sparkplug".to_string(), true),
+                    ("ble".to_string(), true),
+                    ("power".to_string(), false),
+                    ("diagnostics".to_string(), true),
+                ]),
+                metrics: BTreeMap::from([("batteryMv".to_string(), MetricValue::int32(3970))]),
+                observed_at_ms: 1000,
+                seq: 1,
+            })
+            .unwrap();
+        assert!(matches!(
+            state.decide_publication(1000).unwrap(),
+            DevicePublication::Birth { redcon: 4, .. }
+        ));
+
+        state
+            .observe_state(CapabilityState {
+                schema_version: SCHEMA_VERSION.to_string(),
+                adapter_id: "dev.txing.rig.BleConnectivity".to_string(),
+                thing_name: "power-1".to_string(),
+                capabilities: BTreeMap::from([
+                    ("sparkplug".to_string(), true),
+                    ("ble".to_string(), true),
+                    ("power".to_string(), false),
+                    ("diagnostics".to_string(), false),
+                ]),
+                metrics: BTreeMap::from([("batteryMv".to_string(), MetricValue::int32(3970))]),
+                observed_at_ms: 2000,
+                seq: 2,
+            })
+            .unwrap();
+
+        assert_eq!(
+            state.decide_publication(2000).unwrap(),
+            DevicePublication::Data {
+                redcon: 4,
+                metrics: vec![
+                    Metric::boolean("capability.ble", true),
+                    Metric::boolean("capability.diagnostics", false),
+                    Metric::boolean("capability.power", false),
+                    Metric::boolean("capability.sparkplug", true),
+                    Metric::int32("batteryMv", 3970),
+                ],
+            }
+        );
+    }
+
+    #[test]
+    fn adapter_capabilities_not_declared_by_inventory_are_ignored() {
+        let mut state = DeviceRuntimeState::new(power_inventory());
+        state
+            .observe_state(CapabilityState {
+                schema_version: SCHEMA_VERSION.to_string(),
+                adapter_id: "dev.txing.rig.BleConnectivity".to_string(),
+                thing_name: "power-1".to_string(),
+                capabilities: BTreeMap::from([
+                    ("sparkplug".to_string(), true),
+                    ("ble".to_string(), true),
+                    ("power".to_string(), false),
+                    ("debugOnly".to_string(), true),
+                ]),
+                metrics: BTreeMap::new(),
+                observed_at_ms: 1000,
+                seq: 1,
+            })
+            .unwrap();
+
+        let snapshot = state.snapshot(1000);
+
+        assert_eq!(snapshot.capabilities.get("debugOnly"), None);
+        assert_eq!(snapshot.capabilities.get("ble"), Some(&true));
     }
 
     #[test]

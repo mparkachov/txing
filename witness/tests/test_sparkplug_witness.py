@@ -460,6 +460,47 @@ class SparkplugWitnessTests(unittest.TestCase):
         self.assertEqual((thing_name, shadow_name), ("weather-1", "sparkplug"))
         self.assertEqual(payload["state"]["reported"]["payload"]["metrics"]["redcon"], 3)
 
+    def test_project_device_data_merges_capability_false_metric(self) -> None:
+        encoded_payload = _encode_payload(
+            timestamp=1710000030000,
+            seq=8,
+            metrics=[_encode_metric(name="capability.ble", bool_value=False, canonical_fields=True)],
+        )
+        message = decode_sparkplug_payload(
+            encoded_payload,
+            "spBv1.0/town/DDATA/rig/power-1",
+        )
+        fake_iot_data = FakeIotDataClient(
+            {
+                "state": {
+                    "reported": {
+                        "payload": {
+                            "metrics": {
+                                "redcon": 3,
+                                "capability": {
+                                    "ble": True,
+                                    "power": True,
+                                },
+                            }
+                        }
+                    }
+                }
+            }
+        )
+
+        assert message is not None
+        with patch("witness.sparkplug_witness._resolve_thing_name", return_value="power-1"), patch(
+            "witness.sparkplug_witness._iot_data_client",
+            return_value=fake_iot_data,
+        ):
+            projected_thing_name = project_sparkplug_message(message, 1710000030999)
+
+        self.assertEqual(projected_thing_name, "power-1")
+        self.assertEqual(len(fake_iot_data.update_calls), 1)
+        _, _, payload = fake_iot_data.update_calls[0]
+        metrics = payload["state"]["reported"]["payload"]["metrics"]
+        self.assertEqual(metrics["capability"], {"ble": False})
+
     def test_project_command_result_data_clears_legacy_commands_map(self) -> None:
         encoded_payload = _encode_payload(
             timestamp=1710000040000,

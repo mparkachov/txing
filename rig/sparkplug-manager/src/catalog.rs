@@ -14,10 +14,18 @@ pub struct TypeCatalogDevice {
 
 impl TypeCatalogDevice {
     pub fn to_inventory_device(&self, thing_name: impl Into<String>) -> InventoryDevice {
+        self.to_inventory_device_with_capabilities(thing_name, self.capabilities.clone())
+    }
+
+    pub fn to_inventory_device_with_capabilities(
+        &self,
+        thing_name: impl Into<String>,
+        capabilities: Vec<String>,
+    ) -> InventoryDevice {
         InventoryDevice {
             thing_name: thing_name.into(),
             thing_type: self.thing_type.clone(),
-            capabilities: self.capabilities.clone(),
+            capabilities,
             redcon_command_levels: self.redcon_command_levels.clone(),
             redcon_rules: self.redcon_rules.clone(),
         }
@@ -95,7 +103,7 @@ pub fn validate_type_record(record: &TypeCatalogDevice) -> Result<()> {
     Ok(())
 }
 
-fn parse_string_list(value: &str) -> Result<Vec<String>> {
+pub fn parse_string_list(value: &str) -> Result<Vec<String>> {
     if value.trim().is_empty() {
         return Ok(Vec::new());
     }

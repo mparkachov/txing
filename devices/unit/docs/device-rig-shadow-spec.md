@@ -45,6 +45,13 @@ Every rig and device thing exposes a witness-owned `sparkplug` named shadow with
         "seq": 7,
         "metrics": {
           "redcon": 3,
+          "capability": {
+            "sparkplug": true,
+            "mcu": true,
+            "board": false,
+            "mcp": false,
+            "video": false
+          },
           "batteryMv": 3795
         }
       },
@@ -69,7 +76,21 @@ Metric path rules:
 
 - Witness splits both `.` and `/` into nested metric paths.
 - `redcon` -> `payload.metrics.redcon`
+- `capability.mcp` -> `payload.metrics.capability.mcp`
 - `batteryMv` -> `payload.metrics.batteryMv`
+
+Capability availability:
+
+- The thing type capability list defines the full public availability surface
+  for a device.
+- SparkplugManager reflects every capability from the thing's comma-separated
+  `capabilities` attribute as a boolean metric named `capability.<name>`.
+- `true` means the corresponding named shadow or data domain is active and
+  current enough for logic to use.
+- `false` means that domain is stale and must not be used, even if older data
+  metrics are still present from prior Sparkplug merges.
+- On startup and inventory refresh, non-`sparkplug` capabilities initialize to
+  `false` until fresh adapter state reports them available.
 
 Projection rules:
 
@@ -122,7 +143,8 @@ Namespace and identity:
 Current metrics:
 
 - Node metrics: `bdSeq`, `redcon`
-- Device metrics: `redcon`, `batteryMv`
+- Device metrics: `redcon`, `capability.*`, and temporary legacy data metrics
+  such as `batteryMv`
 - Writable device command metric: `redcon`
 
 Current topics:
@@ -159,6 +181,8 @@ The born-state REDCON ladder is:
   - retained video status is ready and fresh
 
 Rig publishes these metrics into Sparkplug. Witness then materializes them into the `sparkplug` named shadow.
+The target cleanup state is that device Sparkplug metrics contain only `redcon`
+and `capability.*`; typed data moves to its corresponding named shadow.
 
 ## Acceptance Criteria
 

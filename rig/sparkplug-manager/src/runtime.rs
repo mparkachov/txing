@@ -17,7 +17,7 @@ use gneiss_mqtt_aws::{AwsClientBuilder, WebsocketSigv4OptionsBuilder};
 use tokio::sync::mpsc;
 use tokio::time::{MissedTickBehavior, interval};
 
-use crate::catalog::{TypeCatalogDevice, reconstruct_type_record};
+use crate::catalog::{TypeCatalogDevice, parse_string_list, reconstruct_type_record};
 use crate::manager::{
     DevicePublication, DeviceRuntimeState, command_from_dcmd, command_result_metrics,
     device_session_spec, graceful_device_death, graceful_node_death, node_client_id,
@@ -56,6 +56,7 @@ struct ThingRegistration {
     thing_type: String,
     rig_id: Option<String>,
     town_id: Option<String>,
+    capabilities: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -144,7 +145,21 @@ impl AwsRegistryClient {
                 );
                 continue;
             }
-            devices.push(type_record.to_inventory_device(registration.thing_name));
+            let capabilities = match validate_registration_capabilities(&registration, &type_record)
+            {
+                Ok(capabilities) => capabilities,
+                Err(err) => {
+                    eprintln!(
+                        "warning: skipping thing={} type={} because capabilities attribute is invalid: {err:#}",
+                        registration.thing_name, registration.thing_type
+                    );
+                    continue;
+                }
+            };
+            devices.push(
+                type_record
+                    .to_inventory_device_with_capabilities(registration.thing_name, capabilities),
+            );
         }
         devices.sort_by(|left, right| left.thing_name.cmp(&right.thing_name));
         Ok(RegistryInventory { rig_type, devices })
@@ -197,11 +212,17 @@ impl AwsRegistryClient {
             .ok_or_else(|| anyhow::anyhow!("thing {thing_name} is missing thingTypeName"))?
             .to_string();
         let attributes = response.attributes();
+        let capabilities = attributes
+            .and_then(|items| normalize_attribute(items.get("capabilities")))
+            .map(|value| parse_string_list(&value))
+            .transpose()
+            .with_context(|| format!("parse capabilities attribute on thing {thing_name}"))?;
         Ok(ThingRegistration {
             thing_name: thing_name.to_string(),
             thing_type,
             rig_id: attributes.and_then(|items| normalize_attribute(items.get("rigId"))),
             town_id: attributes.and_then(|items| normalize_attribute(items.get("townId"))),
+            capabilities,
         })
     }
 
@@ -253,6 +274,24 @@ fn normalize_attribute(value: Option<&String>) -> Option<String> {
 
 fn is_managed_device_registration(registration: &ThingRegistration, rig_id: &str) -> bool {
     registration.thing_name != rig_id && registration.rig_id.as_deref() == Some(rig_id)
+}
+
+fn validate_registration_capabilities(
+    registration: &ThingRegistration,
+    type_record: &TypeCatalogDevice,
+) -> Result<Vec<String>> {
+    let capabilities = registration
+        .capabilities
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("missing capabilities attribute"))?;
+    if capabilities != &type_record.capabilities {
+        bail!(
+            "thing capabilities [{}] do not match type catalog capabilities [{}]",
+            capabilities.join(","),
+            type_record.capabilities.join(",")
+        );
+    }
+    Ok(capabilities.clone())
 }
 
 struct MqttSession {
@@ -977,16 +1016,78 @@ mod tests {
             thing_type: "cloud".to_string(),
             rig_id: Some("cloud-1".to_string()),
             town_id: Some("town-1".to_string()),
+            capabilities: Some(vec!["sparkplug".to_string()]),
         };
         let device = ThingRegistration {
             thing_name: "time-1".to_string(),
             thing_type: "time".to_string(),
             rig_id: Some("cloud-1".to_string()),
             town_id: Some("town-1".to_string()),
+            capabilities: Some(vec![
+                "sparkplug".to_string(),
+                "mcp".to_string(),
+                "time".to_string(),
+            ]),
         };
 
         assert!(!is_managed_device_registration(&rig, "cloud-1"));
         assert!(is_managed_device_registration(&device, "cloud-1"));
+    }
+
+    #[test]
+    fn validates_thing_capabilities_against_type_catalog() {
+        let type_record = TypeCatalogDevice {
+            thing_type: "power".to_string(),
+            capabilities: vec![
+                "sparkplug".to_string(),
+                "ble".to_string(),
+                "power".to_string(),
+            ],
+            redcon_command_levels: vec![4, 3],
+            redcon_rules: BTreeMap::from([
+                (4, vec!["sparkplug".to_string(), "ble".to_string()]),
+                (
+                    3,
+                    vec![
+                        "sparkplug".to_string(),
+                        "ble".to_string(),
+                        "power".to_string(),
+                    ],
+                ),
+            ]),
+        };
+        let registration = ThingRegistration {
+            thing_name: "power-1".to_string(),
+            thing_type: "power".to_string(),
+            rig_id: Some("raspi-1".to_string()),
+            town_id: Some("town-1".to_string()),
+            capabilities: Some(vec![
+                "sparkplug".to_string(),
+                "ble".to_string(),
+                "power".to_string(),
+            ]),
+        };
+
+        assert_eq!(
+            validate_registration_capabilities(&registration, &type_record).unwrap(),
+            vec![
+                "sparkplug".to_string(),
+                "ble".to_string(),
+                "power".to_string(),
+            ]
+        );
+
+        let missing = ThingRegistration {
+            capabilities: None,
+            ..registration.clone()
+        };
+        assert!(validate_registration_capabilities(&missing, &type_record).is_err());
+
+        let mismatched = ThingRegistration {
+            capabilities: Some(vec!["sparkplug".to_string(), "ble".to_string()]),
+            ..registration
+        };
+        assert!(validate_registration_capabilities(&mismatched, &type_record).is_err());
     }
 
     #[test]
