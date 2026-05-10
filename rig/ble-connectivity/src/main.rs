@@ -1,7 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
 use txing_ble_connectivity::ble_protocol::ADAPTER_ID;
-use txing_ble_connectivity::log_filter::install_greengrass_debug_log_filter;
 use txing_ble_connectivity::runtime::{RuntimeConfig, run_component_runtime};
 
 #[derive(Debug, Parser)]
@@ -63,6 +62,5 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    install_greengrass_debug_log_filter();
     run_component_runtime(config).await
 }

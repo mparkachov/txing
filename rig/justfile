@@ -343,9 +343,9 @@ build-native:
       -DGGL_SYSTEMD_SYSTEM_DIR=/lib/systemd/system
     cmake --build "{{greengrass_lite_build_dir}}" --config MinSizeRel --parallel
     test -x "{{greengrass_lite_build_dir}}/bin/ggl-cli"
-    cargo build --release --features greengrass-sdk --manifest-path "{{rig_dir}}/sparkplug-manager/Cargo.toml"
+    TXING_REAL_CC="${CC:-cc}" CC="{{rig_dir}}/tools/cc-greengrass-info-log" cargo build --release --features greengrass-sdk --manifest-path "{{rig_dir}}/sparkplug-manager/Cargo.toml"
     test -x "{{rig_dir}}/sparkplug-manager/target/release/txing-sparkplug-manager"
-    cargo build --release --features greengrass-sdk --manifest-path "{{rig_dir}}/ble-connectivity/Cargo.toml"
+    TXING_REAL_CC="${CC:-cc}" CC="{{rig_dir}}/tools/cc-greengrass-info-log" cargo build --release --features greengrass-sdk --manifest-path "{{rig_dir}}/ble-connectivity/Cargo.toml"
     test -x "{{rig_dir}}/ble-connectivity/target/release/txing-ble-connectivity"
 
 run:
@@ -1041,14 +1041,14 @@ deploy rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' com
     requirements_file="$staging_root/requirements.txt"
     rm -rf "$deploy_root"
     mkdir -p "$recipe_dir" "$artifacts_dir" "$wheelhouse_dir" "$python_tree_dir"
-    cargo build --release --features greengrass-sdk --manifest-path "{{rig_dir}}/sparkplug-manager/Cargo.toml" >/dev/null
+    TXING_REAL_CC="${CC:-cc}" CC="{{rig_dir}}/tools/cc-greengrass-info-log" cargo build --release --features greengrass-sdk --manifest-path "{{rig_dir}}/sparkplug-manager/Cargo.toml" >/dev/null
     sparkplug_manager_binary="{{rig_dir}}/sparkplug-manager/target/release/txing-sparkplug-manager"
     if [ ! -x "$sparkplug_manager_binary" ]; then
       echo "Missing built Rust Sparkplug manager binary at $sparkplug_manager_binary" >&2
       exit 1
     fi
     if [ "$selected_rig_type" = "raspi" ]; then
-      cargo build --release --features greengrass-sdk --manifest-path "{{rig_dir}}/ble-connectivity/Cargo.toml" >/dev/null
+      TXING_REAL_CC="${CC:-cc}" CC="{{rig_dir}}/tools/cc-greengrass-info-log" cargo build --release --features greengrass-sdk --manifest-path "{{rig_dir}}/ble-connectivity/Cargo.toml" >/dev/null
       ble_connectivity_binary="{{rig_dir}}/ble-connectivity/target/release/txing-ble-connectivity"
       if [ ! -x "$ble_connectivity_binary" ]; then
         echo "Missing built Rust BLE connectivity binary at $ble_connectivity_binary" >&2
