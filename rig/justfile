@@ -743,6 +743,44 @@ stop rig_id='':
 
 @restart: stop start
 
+status rig_id='':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ -n "{{rig_id}}" ]; then
+      export TXING_RIG_ID="{{rig_id}}"
+    fi
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig)"
+    selected_rig_type="$RIG_TYPE"
+    if ! systemctl cat "{{greengrass_lite_target}}" >/dev/null 2>&1; then \
+        echo "Greengrass Lite target {{greengrass_lite_target}} is not installed. Run 'just rig::install-service' first." >&2; \
+        exit 1; \
+    fi
+    unit_exists() {
+      systemctl cat "$1" >/dev/null 2>&1
+    }
+    case "$selected_rig_type" in
+      raspi)
+        component_units=({{raspi_rig_component_units}})
+        ;;
+      cloud)
+        component_units=({{aws_rig_component_units}})
+        ;;
+      *)
+        echo "Unsupported RIG_TYPE=$selected_rig_type. Supported rig types: raspi, cloud." >&2
+        exit 1
+        ;;
+    esac
+    status_units=("{{greengrass_lite_target}}")
+    legacy_units=({{legacy_unit_rig_component_units}})
+    for unit in "${component_units[@]}" "${legacy_units[@]}"; do
+      if unit_exists "$unit"; then
+        status_units+=("$unit")
+      fi
+    done
+    printf 'showing rig status for RIG_TYPE=%s units:\n' "$selected_rig_type"
+    printf '  %s\n' "${status_units[@]}"
+    sudo systemctl --no-pager --full status "${status_units[@]}" || true
+
 log rig_id='' lines='200' follow='true':
     #!/usr/bin/env bash
     set -euo pipefail
