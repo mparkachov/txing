@@ -2,19 +2,23 @@ use std::collections::BTreeMap;
 
 use anyhow::{Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Number, Value};
 
 pub const SCHEMA_VERSION: &str = "2.0";
+pub const LOCAL_TOPIC_ROOT: &str = "dev/txing/rig/v2";
 pub const INVENTORY_TOPIC: &str = "dev/txing/rig/v2/inventory";
 pub const CAPABILITY_STATE_TOPIC_PREFIX: &str = "dev/txing/rig/v2/capability/state";
 pub const CAPABILITY_COMMAND_TOPIC_PREFIX: &str = "dev/txing/rig/v2/capability/command";
+pub const CAPABILITY_COMMAND_TOPIC_FILTER: &str = "dev/txing/rig/v2/capability/command/+";
 pub const CAPABILITY_COMMAND_RESULT_TOPIC_PREFIX: &str =
     "dev/txing/rig/v2/capability/command-result";
 pub const CAPABILITY_HEARTBEAT_TOPIC_PREFIX: &str = "dev/txing/rig/v2/capability/heartbeat";
 
+pub const COMMAND_PENDING: &str = "pending";
 pub const COMMAND_ACCEPTED: &str = "accepted";
 pub const COMMAND_SUCCEEDED: &str = "succeeded";
 pub const COMMAND_FAILED: &str = "failed";
+pub const COMMAND_REJECTED: &str = "rejected";
 pub const HEARTBEAT_RUNNING: &str = "running";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -83,7 +87,7 @@ pub struct CapabilityCommand {
     pub seq: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CapabilityCommandTarget {
     pub redcon: u8,
 }
@@ -107,7 +111,7 @@ pub struct CapabilityCommandResult {
     pub seq: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CapabilityCommandResultTarget {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub redcon: Option<u8>,
@@ -129,10 +133,30 @@ pub struct CapabilityHeartbeat {
 }
 
 impl Inventory {
+    pub fn new(
+        manager_id: impl Into<String>,
+        devices: Vec<InventoryDevice>,
+        seq: u64,
+        now_ms: u64,
+    ) -> Self {
+        Self {
+            schema_version: SCHEMA_VERSION.to_string(),
+            manager_id: manager_id.into(),
+            devices,
+            seq,
+            issued_at_ms: now_ms,
+        }
+    }
+
     pub fn from_slice(payload: &[u8]) -> Result<Self> {
         let value: Self = serde_json::from_slice(payload)?;
         value.validate()?;
         Ok(value)
+    }
+
+    pub fn to_vec(&self) -> Result<Vec<u8>> {
+        self.validate()?;
+        Ok(serde_json::to_vec(self)?)
     }
 
     pub fn validate(&self) -> Result<()> {
@@ -152,8 +176,8 @@ impl InventoryDevice {
         if self.capabilities.is_empty() {
             bail!("capabilities must not be empty");
         }
-        for capability in &self.capabilities {
-            validate_nonempty(capability, "capability")?;
+        if self.redcon_command_levels.is_empty() {
+            bail!("redconCommandLevels must not be empty");
         }
         for level in &self.redcon_command_levels {
             validate_redcon(*level, "redconCommandLevels")?;
@@ -170,14 +194,37 @@ impl InventoryDevice {
         Ok(())
     }
 
-    pub fn has_capability(&self, name: &str) -> bool {
+    pub fn has_capability(&self, capability: &str) -> bool {
         self.capabilities
             .iter()
-            .any(|capability| capability == name)
+            .any(|candidate| candidate == capability)
     }
 }
 
 impl CapabilityState {
+    pub fn new(
+        adapter_id: impl Into<String>,
+        thing_name: impl Into<String>,
+        observed_at_ms: u64,
+        seq: u64,
+    ) -> Self {
+        Self {
+            schema_version: SCHEMA_VERSION.to_string(),
+            adapter_id: adapter_id.into(),
+            thing_name: thing_name.into(),
+            capabilities: BTreeMap::new(),
+            metrics: BTreeMap::new(),
+            observed_at_ms,
+            seq,
+        }
+    }
+
+    pub fn from_slice(payload: &[u8]) -> Result<Self> {
+        let value: Self = serde_json::from_slice(payload)?;
+        value.validate()?;
+        Ok(value)
+    }
+
     pub fn to_vec(&self) -> Result<Vec<u8>> {
         self.validate()?;
         Ok(serde_json::to_vec(self)?)
@@ -209,17 +256,31 @@ impl MetricValue {
         }
     }
 
-    pub fn int32(value: impl Into<i64>) -> Self {
+    pub fn int32(value: i32) -> Self {
         Self {
             datatype: "Int32".to_string(),
-            value: Value::Number(value.into().into()),
+            value: Value::Number(Number::from(value)),
+        }
+    }
+
+    pub fn int64(value: i64) -> Self {
+        Self {
+            datatype: "Int64".to_string(),
+            value: Value::Number(Number::from(value)),
+        }
+    }
+
+    pub fn uint64(value: u64) -> Self {
+        Self {
+            datatype: "UInt64".to_string(),
+            value: Value::Number(Number::from(value)),
         }
     }
 
     pub fn double(value: f64) -> Self {
         Self {
             datatype: "Double".to_string(),
-            value: serde_json::Number::from_f64(value)
+            value: Number::from_f64(value)
                 .map(Value::Number)
                 .unwrap_or(Value::Null),
         }
@@ -248,10 +309,42 @@ impl MetricValue {
 }
 
 impl CapabilityCommand {
+    pub fn new(
+        command_id: impl Into<String>,
+        thing_name: impl Into<String>,
+        redcon: u8,
+        reason: impl Into<String>,
+        issued_at_ms: u64,
+        seq: u64,
+        deadline_ms: Option<u64>,
+    ) -> Result<Self> {
+        validate_redcon(redcon, "target.redcon")?;
+        if let Some(deadline_ms) = deadline_ms {
+            if deadline_ms <= issued_at_ms {
+                bail!("deadlineMs must be after issuedAtMs");
+            }
+        }
+        Ok(Self {
+            schema_version: SCHEMA_VERSION.to_string(),
+            command_id: command_id.into(),
+            thing_name: thing_name.into(),
+            target: CapabilityCommandTarget { redcon },
+            reason: reason.into(),
+            issued_at_ms,
+            deadline_ms,
+            seq,
+        })
+    }
+
     pub fn from_slice(payload: &[u8]) -> Result<Self> {
         let value: Self = serde_json::from_slice(payload)?;
         value.validate()?;
         Ok(value)
+    }
+
+    pub fn to_vec(&self) -> Result<Vec<u8>> {
+        self.validate()?;
+        Ok(serde_json::to_vec(self)?)
     }
 
     pub fn validate(&self) -> Result<()> {
@@ -266,26 +359,30 @@ impl CapabilityCommand {
 
 impl CapabilityCommandResult {
     pub fn new(
-        adapter_id: &str,
-        command: &CapabilityCommand,
-        status: &str,
-        target_redcon: Option<u8>,
-        message: Option<String>,
+        adapter_id: impl Into<String>,
+        command_id: impl Into<String>,
+        thing_name: impl Into<String>,
+        status: impl Into<String>,
         observed_at_ms: u64,
+        seq: u64,
     ) -> Self {
         Self {
             schema_version: SCHEMA_VERSION.to_string(),
-            adapter_id: adapter_id.to_string(),
-            command_id: command.command_id.clone(),
-            thing_name: command.thing_name.clone(),
-            status: status.to_string(),
-            target: CapabilityCommandResultTarget {
-                redcon: target_redcon,
-            },
-            message,
+            adapter_id: adapter_id.into(),
+            command_id: command_id.into(),
+            thing_name: thing_name.into(),
+            status: status.into(),
+            target: CapabilityCommandResultTarget { redcon: None },
+            message: None,
             observed_at_ms,
-            seq: command.seq,
+            seq,
         }
+    }
+
+    pub fn from_slice(payload: &[u8]) -> Result<Self> {
+        let value: Self = serde_json::from_slice(payload)?;
+        value.validate()?;
+        Ok(value)
     }
 
     pub fn to_vec(&self) -> Result<Vec<u8>> {
@@ -299,7 +396,8 @@ impl CapabilityCommandResult {
         validate_nonempty(&self.command_id, "commandId")?;
         validate_segment(&self.thing_name, "thingName")?;
         match self.status.as_str() {
-            COMMAND_ACCEPTED | COMMAND_SUCCEEDED | COMMAND_FAILED => {}
+            COMMAND_PENDING | COMMAND_ACCEPTED | COMMAND_SUCCEEDED | COMMAND_FAILED
+            | COMMAND_REJECTED => {}
             _ => bail!("unsupported command result status {}", self.status),
         }
         if let Some(redcon) = self.target.redcon {
@@ -311,19 +409,26 @@ impl CapabilityCommandResult {
 
 impl CapabilityHeartbeat {
     pub fn new(
-        adapter_id: &str,
+        adapter_id: impl Into<String>,
+        status: impl Into<String>,
         active_thing_name: Option<String>,
         observed_at_ms: u64,
         seq: u64,
     ) -> Self {
         Self {
             schema_version: SCHEMA_VERSION.to_string(),
-            adapter_id: adapter_id.to_string(),
-            status: HEARTBEAT_RUNNING.to_string(),
+            adapter_id: adapter_id.into(),
+            status: status.into(),
             active_thing_name,
             observed_at_ms,
             seq,
         }
+    }
+
+    pub fn from_slice(payload: &[u8]) -> Result<Self> {
+        let value: Self = serde_json::from_slice(payload)?;
+        value.validate()?;
+        Ok(value)
     }
 
     pub fn to_vec(&self) -> Result<Vec<u8>> {
@@ -351,6 +456,14 @@ pub fn build_capability_state_topic(thing_name: &str, adapter_id: &str) -> Resul
     ))
 }
 
+pub fn build_capability_command_topic(thing_name: &str) -> Result<String> {
+    Ok(format!(
+        "{}/{}",
+        CAPABILITY_COMMAND_TOPIC_PREFIX,
+        validate_segment(thing_name, "thingName")?
+    ))
+}
+
 pub fn build_capability_command_result_topic(thing_name: &str, adapter_id: &str) -> Result<String> {
     Ok(format!(
         "{}/{}/{}",
@@ -368,10 +481,54 @@ pub fn build_capability_heartbeat_topic(adapter_id: &str) -> Result<String> {
     ))
 }
 
+pub fn parse_capability_state_topic(topic: &str) -> Option<(&str, &str)> {
+    parse_two_segment_suffix(topic, CAPABILITY_STATE_TOPIC_PREFIX)
+}
+
 pub fn parse_capability_command_topic(topic: &str) -> Option<&str> {
     let prefix = format!("{CAPABILITY_COMMAND_TOPIC_PREFIX}/");
     let suffix = topic.strip_prefix(&prefix)?;
     (!suffix.is_empty() && !suffix.contains('/')).then_some(suffix)
+}
+
+pub fn parse_capability_command_result_topic(topic: &str) -> Option<(&str, &str)> {
+    parse_two_segment_suffix(topic, CAPABILITY_COMMAND_RESULT_TOPIC_PREFIX)
+}
+
+pub fn parse_capability_heartbeat_topic(topic: &str) -> Option<&str> {
+    let prefix = format!("{CAPABILITY_HEARTBEAT_TOPIC_PREFIX}/");
+    let suffix = topic.strip_prefix(&prefix)?;
+    (!suffix.is_empty() && !suffix.contains('/')).then_some(suffix)
+}
+
+fn parse_two_segment_suffix<'a>(topic: &'a str, prefix: &str) -> Option<(&'a str, &'a str)> {
+    let prefix = format!("{prefix}/");
+    let suffix = topic.strip_prefix(&prefix)?;
+    let mut parts = suffix.split('/');
+    let first = parts.next()?;
+    let second = parts.next()?;
+    if first.is_empty() || second.is_empty() || parts.next().is_some() {
+        return None;
+    }
+    Some((first, second))
+}
+
+pub fn command_deadline_expired(command: &CapabilityCommand, now_ms: u64) -> bool {
+    command
+        .deadline_ms
+        .is_some_and(|deadline| now_ms > deadline)
+}
+
+pub fn normalize_ble_target_redcon(redcon: u8) -> Result<u8> {
+    match redcon {
+        1 | 2 | 3 => Ok(3),
+        4 => Ok(4),
+        _ => bail!("unsupported BLE target REDCON {redcon}"),
+    }
+}
+
+pub fn topic_payload_thing_mismatch(topic_thing: &str, payload_thing: &str) -> anyhow::Error {
+    anyhow!("topic thingName {topic_thing} does not match payload thingName {payload_thing}")
 }
 
 pub fn validate_schema(schema_version: &str) -> Result<()> {
@@ -403,41 +560,9 @@ pub fn validate_redcon(level: u8, field_name: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn normalize_ble_target_redcon(level: u8) -> Result<u8> {
-    validate_redcon(level, "target.redcon")?;
-    Ok(match level {
-        1 | 2 => 3,
-        3 | 4 => level,
-        _ => unreachable!("validated above"),
-    })
-}
-
-pub fn command_deadline_expired(command: &CapabilityCommand, now_ms: u64) -> bool {
-    command
-        .deadline_ms
-        .is_some_and(|deadline| now_ms >= deadline)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn topics_use_ble_connectivity_adapter_id() {
-        assert_eq!(
-            build_capability_state_topic("power-1", "dev.txing.rig.BleConnectivity").unwrap(),
-            "dev/txing/rig/v2/capability/state/power-1/dev.txing.rig.BleConnectivity"
-        );
-        assert_eq!(
-            build_capability_command_result_topic("power-1", "dev.txing.rig.BleConnectivity")
-                .unwrap(),
-            "dev/txing/rig/v2/capability/command-result/power-1/dev.txing.rig.BleConnectivity"
-        );
-        assert_eq!(
-            parse_capability_command_topic("dev/txing/rig/v2/capability/command/weather-1"),
-            Some("weather-1")
-        );
-    }
 
     #[test]
     fn command_requires_redcon_target() {
@@ -446,8 +571,63 @@ mod tests {
         let command = CapabilityCommand::from_slice(payload).unwrap();
 
         assert_eq!(command.target.redcon, 3);
-        assert_eq!(normalize_ble_target_redcon(1).unwrap(), 3);
-        assert_eq!(normalize_ble_target_redcon(2).unwrap(), 3);
-        assert_eq!(normalize_ble_target_redcon(4).unwrap(), 4);
+        assert_eq!(
+            command.to_vec().unwrap(),
+            serde_json::to_vec(&command).unwrap()
+        );
+    }
+
+    #[test]
+    fn topic_parsing_uses_v2_root() {
+        assert_eq!(
+            build_capability_state_topic("weather-1", "dev.txing.rig.BleConnectivity").unwrap(),
+            "dev/txing/rig/v2/capability/state/weather-1/dev.txing.rig.BleConnectivity"
+        );
+        assert_eq!(
+            parse_capability_command_topic("dev/txing/rig/v2/capability/command/weather-1"),
+            Some("weather-1")
+        );
+        assert_eq!(
+            parse_capability_state_topic(
+                "dev/txing/rig/v2/capability/state/weather-1/dev.txing.rig.BleConnectivity"
+            ),
+            Some(("weather-1", "dev.txing.rig.BleConnectivity"))
+        );
+        assert_eq!(
+            parse_capability_heartbeat_topic(
+                "dev/txing/rig/v2/capability/heartbeat/dev.txing.rig.BleConnectivity"
+            ),
+            Some("dev.txing.rig.BleConnectivity")
+        );
+    }
+
+    #[test]
+    fn heartbeat_round_trips() {
+        let heartbeat = CapabilityHeartbeat {
+            schema_version: SCHEMA_VERSION.to_string(),
+            adapter_id: "dev.txing.rig.AwsConnectivity".to_string(),
+            status: HEARTBEAT_RUNNING.to_string(),
+            active_thing_name: Some("clock".to_string()),
+            observed_at_ms: 1714380000000,
+            seq: 1,
+        };
+
+        let decoded = CapabilityHeartbeat::from_slice(&heartbeat.to_vec().unwrap()).unwrap();
+
+        assert_eq!(decoded, heartbeat);
+    }
+
+    #[test]
+    fn inventory_device_capability_lookup_uses_capability_list() {
+        let device = InventoryDevice {
+            thing_name: "power-1".to_string(),
+            thing_type: "power".to_string(),
+            capabilities: vec!["sparkplug".to_string(), "ble".to_string()],
+            redcon_command_levels: vec![4, 3],
+            redcon_rules: BTreeMap::from([(4, vec!["sparkplug".to_string()])]),
+        };
+
+        assert!(device.has_capability("ble"));
+        assert!(!device.has_capability("time"));
     }
 }

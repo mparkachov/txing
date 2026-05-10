@@ -27,7 +27,7 @@ use crate::ble_protocol::{
     capability_state_from_sample, encode_redcon_command, now_ms, offline_sample, parse_power_state,
     parse_weather_measurement, parse_weather_state, power_state_sample, weather_state_sample,
 };
-use crate::protocol::{
+use txing_capability_protocol::{
     CAPABILITY_COMMAND_TOPIC_PREFIX, COMMAND_ACCEPTED, COMMAND_FAILED, COMMAND_SUCCEEDED,
     CapabilityCommand, CapabilityCommandResult, CapabilityHeartbeat, INVENTORY_TOPIC, Inventory,
     build_capability_command_result_topic, build_capability_heartbeat_topic,
@@ -236,7 +236,9 @@ impl RuntimeState {
     }
 }
 
-fn device_spec_from_inventory(device: &crate::protocol::InventoryDevice) -> Option<DeviceSpec> {
+fn device_spec_from_inventory(
+    device: &txing_capability_protocol::InventoryDevice,
+) -> Option<DeviceSpec> {
     if !device.has_capability(BLE_CAPABILITY) {
         return None;
     }
@@ -666,14 +668,19 @@ fn publish_command_result(
     message: Option<String>,
     target_redcon: Option<u8>,
 ) -> Result<()> {
-    let result = CapabilityCommandResult::new(
-        adapter_id,
-        command,
-        status,
-        target_redcon,
+    let result = CapabilityCommandResult {
+        schema_version: txing_capability_protocol::SCHEMA_VERSION.to_string(),
+        adapter_id: adapter_id.to_string(),
+        command_id: command.command_id.clone(),
+        thing_name: command.thing_name.clone(),
+        status: status.to_string(),
+        target: txing_capability_protocol::CapabilityCommandResultTarget {
+            redcon: target_redcon,
+        },
         message,
-        now_ms(),
-    );
+        observed_at_ms: now_ms(),
+        seq: command.seq,
+    };
     let topic = build_capability_command_result_topic(&command.thing_name, adapter_id)?;
     let payload = result.to_vec()?;
     outbound_sender
@@ -1042,7 +1049,13 @@ async fn run_greengrass_runtime(config: RuntimeConfig) -> Result<()> {
             }
             _ = heartbeat_timer.tick() => {
                 heartbeat_seq += 1;
-                let heartbeat = CapabilityHeartbeat::new(&config.adapter_id, None, now_ms(), heartbeat_seq);
+                let heartbeat = CapabilityHeartbeat::new(
+                    &config.adapter_id,
+                    txing_capability_protocol::HEARTBEAT_RUNNING,
+                    None,
+                    now_ms(),
+                    heartbeat_seq,
+                );
                 match heartbeat.to_vec().and_then(|payload| {
                     Ok((build_capability_heartbeat_topic(&config.adapter_id)?, payload))
                 }) {
@@ -1105,7 +1118,7 @@ fn validate_greengrass_ipc_environment() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{
+    use txing_capability_protocol::{
         CapabilityCommandTarget, CapabilityState, InventoryDevice, SCHEMA_VERSION,
         build_capability_state_topic,
     };

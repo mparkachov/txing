@@ -10,11 +10,11 @@ from time_device.runtime import (
     TIME_MODE_SLEEP,
     TIME_DEVICE_SEARCH_QUERY,
     TimeDeviceRuntime,
+    build_capability_command_result_topic,
+    build_capability_command_topic,
+    build_capability_state_topic,
     build_runtime_from_env,
     build_mcp_session_s2c_topic,
-    build_time_command_result_topic,
-    build_time_command_topic,
-    build_time_state_topic,
     handle_scheduled_wake_for_time_devices,
 )
 
@@ -78,17 +78,17 @@ def decode_payload(value: object) -> dict[str, object]:
 def command_payload(
     *,
     command_id: str = "cmd-1",
-    power: bool = True,
+    redcon: int = 1,
     deadline_ms: int = 1714380060000,
 ) -> bytes:
     return json.dumps(
         {
-            "schemaVersion": "1.0",
+            "schemaVersion": "2.0",
             "commandId": command_id,
             "thingName": "clock",
             "seq": 1,
             "target": {
-                "power": power,
+                "redcon": redcon,
             },
             "reason": "redcon=1",
             "issuedAtMs": 1714380000000,
@@ -136,17 +136,25 @@ class TimeDeviceRuntimeTests(unittest.TestCase):
         self.assertEqual(result["mode"], TIME_MODE_SLEEP)
         self.assertEqual(iot.time_reported["mode"], TIME_MODE_SLEEP)
         state_publish = next(
-            item for item in iot.published if item["topic"] == build_time_state_topic("clock")
+            item for item in iot.published if item["topic"] == build_capability_state_topic("clock")
         )
         state_payload = decode_payload(state_publish["payload"])
-        self.assertEqual(state_payload["currentTimeIso"], "2024-04-29T08:40:00Z")
-        self.assertEqual(state_payload["mode"], TIME_MODE_SLEEP)
-        self.assertFalse(state_payload["mcpAvailable"])
+        self.assertEqual(state_payload["schemaVersion"], "2.0")
+        self.assertEqual(state_payload["adapterId"], "dev.txing.rig.AwsConnectivity")
+        self.assertTrue(state_payload["capabilities"]["sparkplug"])
+        self.assertFalse(state_payload["capabilities"]["time"])
+        self.assertFalse(state_payload["capabilities"]["mcp"])
+        self.assertEqual(
+            state_payload["metrics"]["currentTimeIso"]["value"],
+            "2024-04-29T08:40:00Z",
+        )
+        self.assertEqual(state_payload["metrics"]["mode"]["value"], TIME_MODE_SLEEP)
+        self.assertFalse(state_payload["metrics"]["mcpAvailable"]["value"])
         self.assertTrue(state_publish["retain"])
 
     def test_new_redcon_one_command_enters_active_mode_and_publishes_mcp_status(self) -> None:
         runtime, iot = self.make_runtime()
-        iot.retained[build_time_command_topic("clock")] = command_payload(command_id="cmd-active")
+        iot.retained[build_capability_command_topic("clock")] = command_payload(command_id="cmd-active")
 
         with patch("time_device.runtime.utc_now_ms", return_value=1714380000000):
             result = runtime.handle_scheduled_wake({})
@@ -154,12 +162,22 @@ class TimeDeviceRuntimeTests(unittest.TestCase):
         self.assertEqual(result["mode"], TIME_MODE_ACTIVE)
         self.assertEqual(result["activeUntilMs"], 1714380300000)
         self.assertEqual(iot.time_reported["lastCommandId"], "cmd-active")
+        state_publish = next(
+            item for item in iot.published if item["topic"] == build_capability_state_topic("clock")
+        )
+        state_payload = decode_payload(state_publish["payload"])
+        self.assertEqual(state_payload["expiresAtMs"], 1714380300000)
+        self.assertEqual(state_payload["expiredCapabilities"]["time"], False)
+        self.assertEqual(state_payload["expiredMetrics"]["mode"]["value"], TIME_MODE_SLEEP)
         command_result_publish = next(
             item
             for item in iot.published
-            if item["topic"] == build_time_command_result_topic("clock")
+            if item["topic"] == build_capability_command_result_topic("clock")
         )
-        self.assertEqual(decode_payload(command_result_publish["payload"])["status"], "succeeded")
+        command_result = decode_payload(command_result_publish["payload"])
+        self.assertEqual(command_result["adapterId"], "dev.txing.rig.AwsConnectivity")
+        self.assertEqual(command_result["status"], "succeeded")
+        self.assertEqual(command_result["target"], {"redcon": 1})
         status_publish = next(
             item for item in iot.published if item["topic"] == "txings/clock/mcp/status"
         )
@@ -208,7 +226,7 @@ class TimeDeviceRuntimeTests(unittest.TestCase):
 
     def test_expired_retained_command_is_ignored(self) -> None:
         runtime, iot = self.make_runtime()
-        iot.retained[build_time_command_topic("clock")] = command_payload(
+        iot.retained[build_capability_command_topic("clock")] = command_payload(
             command_id="expired",
             deadline_ms=1714379999000,
         )
@@ -219,7 +237,7 @@ class TimeDeviceRuntimeTests(unittest.TestCase):
         self.assertEqual(result["mode"], TIME_MODE_SLEEP)
         self.assertIsNone(result["lastCommandId"])
         self.assertFalse(
-            any(item["topic"] == build_time_command_result_topic("clock") for item in iot.published)
+            any(item["topic"] == build_capability_command_result_topic("clock") for item in iot.published)
         )
         self.assertIsNone(iot.time_reported.get("lastCommandId"))
 
@@ -238,9 +256,9 @@ class TimeDeviceRuntimeTests(unittest.TestCase):
         self.assertEqual(result["mode"], TIME_MODE_SLEEP)
         self.assertIsNone(result["activeUntilMs"])
         state_publish = next(
-            item for item in iot.published if item["topic"] == build_time_state_topic("clock")
+            item for item in iot.published if item["topic"] == build_capability_state_topic("clock")
         )
-        self.assertFalse(decode_payload(state_publish["payload"])["mcpAvailable"])
+        self.assertFalse(decode_payload(state_publish["payload"])["capabilities"]["mcp"])
 
     def test_scheduled_wake_processes_paginated_time_things(self) -> None:
         iot = FakeIotClient(
@@ -271,10 +289,10 @@ class TimeDeviceRuntimeTests(unittest.TestCase):
         self.assertEqual(iot.requests[0]["queryString"], TIME_DEVICE_SEARCH_QUERY)
         self.assertEqual(iot.requests[1]["nextToken"], "page-2")
         self.assertTrue(
-            any(item["topic"] == build_time_state_topic("clock-a") for item in iot_data.published)
+            any(item["topic"] == build_capability_state_topic("clock-a") for item in iot_data.published)
         )
         self.assertTrue(
-            any(item["topic"] == build_time_state_topic("clock-b") for item in iot_data.published)
+            any(item["topic"] == build_capability_state_topic("clock-b") for item in iot_data.published)
         )
 
     def test_scheduled_wake_reports_one_device_failure_and_continues(self) -> None:

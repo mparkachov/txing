@@ -28,16 +28,16 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("Sid: DeviceVideoTopics", template)
         self.assertIn("iot:RetainPublish", template)
 
-    def test_rig_time_service_topics_are_authorized(self) -> None:
+    def test_rig_capability_service_topics_are_authorized(self) -> None:
         template = _template_text()
 
-        self.assertIn("Sid: RigTimeServiceTopics", template)
-        self.assertIn("Sid: RigTimeServiceTopicFilters", template)
-        self.assertIn("topic/txings/*/time/command", template)
-        self.assertIn("topic/txings/*/time/state", template)
-        self.assertIn("topic/txings/*/time/command-result", template)
-        self.assertIn("topicfilter/txings/*/time/state", template)
-        self.assertIn("topicfilter/txings/*/time/command-result", template)
+        self.assertIn("Sid: RigCapabilityServiceTopics", template)
+        self.assertIn("Sid: RigCapabilityServiceTopicFilters", template)
+        self.assertIn("topic/txings/*/capability/v2/command", template)
+        self.assertIn("topic/txings/*/capability/v2/state", template)
+        self.assertIn("topic/txings/*/capability/v2/command-result", template)
+        self.assertIn("topicfilter/txings/*/capability/v2/state", template)
+        self.assertIn("topicfilter/txings/*/capability/v2/command-result", template)
 
     def test_legacy_raw_cmd_vel_topic_permissions_are_removed(self) -> None:
         template = _template_text()
@@ -324,10 +324,11 @@ class AwsTemplatePolicyTests(unittest.TestCase):
             REPO_ROOT / "rig" / "pyproject.toml": f'version = "{version}"',
             REPO_ROOT / "shared" / "aws" / "python" / "pyproject.toml": f'version = "{version}"',
             REPO_ROOT / "devices" / "time" / "lambda" / "python" / "pyproject.toml": f'version = "{version}"',
-            REPO_ROOT / "devices" / "time" / "rig" / "python" / "pyproject.toml": f'version = "{version}"',
             REPO_ROOT / "devices" / "unit" / "rig" / "python" / "pyproject.toml": f'version = "{version}"',
             REPO_ROOT / "devices" / "unit" / "board" / "pyproject.toml": f'version = "{version}"',
             REPO_ROOT / "devices" / "unit" / "mcu" / "Cargo.toml": f'version = "{version}"',
+            REPO_ROOT / "rig" / "capability-protocol" / "Cargo.toml": f'version = "{version}"',
+            REPO_ROOT / "rig" / "aws-connectivity" / "Cargo.toml": f'version = "{version}"',
             REPO_ROOT / "web" / "package.json": f'"version": "{version}"',
         }
         for path, expected in manifest_expectations.items():

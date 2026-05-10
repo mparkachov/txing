@@ -1013,7 +1013,17 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "txing-capability-protocol",
  "uuid",
+]
+
+[[package]]
+name = "txing-capability-protocol"
+version = "0.8.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

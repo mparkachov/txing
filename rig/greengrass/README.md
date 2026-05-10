@@ -12,11 +12,9 @@ Rig-wide components:
   adapter for current raspi power and weather devices. It owns BLE scanning,
   connection scheduling, GATT command/state exchange, and publishes v2
   capability state/results.
-
-Cloud rig device process components:
-
-- `dev.txing.device.time.AwsConnectivity`: bridge between v2 local REDCON
-  commands/state and the retained time AWS IoT MQTT service topics.
+- `dev.txing.rig.AwsConnectivity`: Rust transport-level AWS retained MQTT
+  connectivity adapter for cloud devices. It owns retained v2 capability
+  command/state/result forwarding and publishes local v2 capability messages.
 
 Weather devices use the Raspberry Pi 5 built-in BLE controller. The weather rig
 path does not require Matter, Thread, `chip-tool`, a Thread border router, or a
@@ -36,11 +34,10 @@ Lifecycle boundary:
 
 `just rig::deploy` is the local Greengrass Lite development path. Raspi rigs
 deploy the Rust rig-wide Sparkplug manager and the Rust BLE connectivity adapter.
-Cloud rigs deploy the Rust rig-wide Sparkplug manager and the time AWS
+Cloud rigs deploy the Rust rig-wide Sparkplug manager and the Rust AWS
 connectivity adapter. Unit v1 components are intentionally excluded from the
-migrated deployment set. The recipe builds the Rust manager binary and, for raspi
-rigs, the Rust BLE connectivity binary; for cloud rigs it also builds the Python
-wheel artifact needed by the time AWS connectivity adapter. It assembles
+migrated deployment set. The recipe builds the Rust manager binary and the
+selected Rust connectivity binary. It assembles
 self-contained artifacts, generates concrete local recipes under
 `rig/build/greengrass-local`, and runs `ggl-cli deploy`. The generated
 recipe/artifact tree is kept until the next deploy because Greengrass Lite copies
@@ -63,9 +60,9 @@ just rig::deploy <rig-id>
 ```
 
 Run the package install before `just rig::build-native`; the native build invokes
-`cmake` directly for Greengrass Lite and also builds the Rust Sparkplug manager
-and BLE connectivity binaries with the Linux-only Greengrass SDK feature. It no
-longer builds a local Matter controller.
+`cmake` directly for Greengrass Lite and also builds the Rust Sparkplug manager,
+BLE connectivity, and AWS connectivity binaries with the Linux-only Greengrass
+SDK feature. It no longer builds a local Matter controller.
 
 Run `just aws::cert <rig-id>` before `just rig::install-service <rig-id>`. The install recipe
 copies `config/certs/rig/rig.cert.pem` and `rig.private.key` into

@@ -4,7 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{Result, bail};
 use uuid::{Uuid, uuid};
 
-use crate::protocol::{CapabilityState, MetricValue, SCHEMA_VERSION};
+use txing_capability_protocol::{CapabilityState, MetricValue, SCHEMA_VERSION};
 
 pub const ADAPTER_ID: &str = "dev.txing.rig.BleConnectivity";
 
@@ -286,7 +286,7 @@ pub fn capability_state_from_sample(adapter_id: &str, sample: CapabilitySample) 
     if let Some(value) = sample.battery_mv {
         metrics.insert(
             "batteryMv".to_string(),
-            MetricValue::int32(i64::from(value)),
+            MetricValue::int32(i32::from(value)),
         );
     }
     metrics.insert(

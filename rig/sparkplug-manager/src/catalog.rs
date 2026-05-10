@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use anyhow::{Result, bail};
 
-use crate::protocol::InventoryDevice;
+use txing_capability_protocol::InventoryDevice;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypeCatalogDevice {

@@ -18,8 +18,11 @@ except ImportError:  # pragma: no cover - deployment dependency
         pass
 
 
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "2.0"
 TIME_TOPIC_NAMESPACE = "txings"
+CAPABILITY_TOPIC_SEGMENT = "capability"
+CAPABILITY_TOPIC_VERSION = "v2"
+AWS_CONNECTIVITY_ADAPTER_ID = "dev.txing.rig.AwsConnectivity"
 TIME_SERVICE_NAME = "time"
 MCP_SERVICE_NAME = "mcp"
 MCP_PROTOCOL_VERSION = "2025-11-25"
@@ -53,20 +56,23 @@ def _segment(value: str, *, field_name: str) -> str:
     return text
 
 
-def build_time_topic_root(thing_name: str) -> str:
-    return f"{TIME_TOPIC_NAMESPACE}/{_segment(thing_name, field_name='thing_name')}/{TIME_SERVICE_NAME}"
+def build_capability_topic_root(thing_name: str) -> str:
+    return (
+        f"{TIME_TOPIC_NAMESPACE}/{_segment(thing_name, field_name='thing_name')}/"
+        f"{CAPABILITY_TOPIC_SEGMENT}/{CAPABILITY_TOPIC_VERSION}"
+    )
 
 
-def build_time_command_topic(thing_name: str) -> str:
-    return f"{build_time_topic_root(thing_name)}/command"
+def build_capability_command_topic(thing_name: str) -> str:
+    return f"{build_capability_topic_root(thing_name)}/command"
 
 
-def build_time_state_topic(thing_name: str) -> str:
-    return f"{build_time_topic_root(thing_name)}/state"
+def build_capability_state_topic(thing_name: str) -> str:
+    return f"{build_capability_topic_root(thing_name)}/state"
 
 
-def build_time_command_result_topic(thing_name: str) -> str:
-    return f"{build_time_topic_root(thing_name)}/command-result"
+def build_capability_command_result_topic(thing_name: str) -> str:
+    return f"{build_capability_topic_root(thing_name)}/command-result"
 
 
 def build_mcp_topic_root(thing_name: str) -> str:
@@ -138,23 +144,27 @@ def _read_payload_body(value: Any) -> bytes:
 class ConnectivityCommand:
     command_id: str
     thing_name: str
-    power: bool
+    redcon: int
     reason: str
     issued_at_ms: int
     deadline_ms: int | None
     seq: int = 0
 
+    @property
+    def activates_time(self) -> bool:
+        return self.redcon in {1, 2, 3}
+
     @classmethod
     def from_payload(cls, payload: bytes | str | Mapping[str, Any]) -> ConnectivityCommand:
         decoded = _json_loads(payload)
         if decoded.get("schemaVersion") != SCHEMA_VERSION:
-            raise ValueError("schemaVersion must be '1.0'")
+            raise ValueError("schemaVersion must be '2.0'")
         target = decoded.get("target")
         if not isinstance(target, Mapping):
             raise ValueError("target must be an object")
-        power = target.get("power")
-        if not isinstance(power, bool):
-            raise ValueError("target.power must be a boolean")
+        redcon = target.get("redcon")
+        if isinstance(redcon, bool) or not isinstance(redcon, int) or redcon not in {1, 2, 3, 4}:
+            raise ValueError("target.redcon must be a REDCON level 1 through 4")
         command_id = decoded.get("commandId")
         thing_name = decoded.get("thingName")
         reason = decoded.get("reason")
@@ -178,7 +188,7 @@ class ConnectivityCommand:
         return cls(
             command_id=command_id.strip(),
             thing_name=thing_name.strip(),
-            power=power,
+            redcon=redcon,
             reason=reason.strip(),
             issued_at_ms=issued_at_ms,
             deadline_ms=deadline_ms,
@@ -244,7 +254,7 @@ class TimeDeviceRuntime:
             else:
                 state.last_command_id = command.command_id
                 state.seq += 1
-                if command.power:
+                if command.activates_time:
                     state.mode = TIME_MODE_ACTIVE
                     state.active_until_ms = now_ms + self.active_ttl_ms
                 else:
@@ -340,7 +350,7 @@ class TimeDeviceRuntime:
     def load_retained_command(self) -> ConnectivityCommand | None:
         try:
             response = self.iot_data_client.get_retained_message(
-                topic=build_time_command_topic(self.thing_name)
+                topic=build_capability_command_topic(self.thing_name)
             )
         except ClientError as err:
             error_code = err.response.get("Error", {}).get("Code", "")
@@ -360,16 +370,23 @@ class TimeDeviceRuntime:
         now_ms: int,
     ) -> None:
         payload = {
+            "schemaVersion": SCHEMA_VERSION,
+            "adapterId": AWS_CONNECTIVITY_ADAPTER_ID,
             "thingName": self.thing_name,
-            "currentTimeIso": current_time_iso,
-            "mode": state.mode,
-            "activeUntilMs": state.active_until_ms,
-            "lastCommandId": state.last_command_id,
+            "capabilities": self.build_capabilities(state.mode == TIME_MODE_ACTIVE),
+            "metrics": self.build_time_metrics(
+                state=state,
+                current_time_iso=current_time_iso,
+            ),
             "observedAtMs": now_ms,
-            "mcpAvailable": state.mode == TIME_MODE_ACTIVE,
+            "seq": state.seq,
         }
+        if state.mode == TIME_MODE_ACTIVE and state.active_until_ms is not None:
+            payload["expiresAtMs"] = state.active_until_ms
+            payload["expiredCapabilities"] = self.build_capabilities(False)
+            payload["expiredMetrics"] = self.build_expired_metrics()
         self.publish_json(
-            build_time_state_topic(self.thing_name),
+            build_capability_state_topic(self.thing_name),
             payload,
             retain=True,
         )
@@ -388,7 +405,7 @@ class TimeDeviceRuntime:
 
     def publish_command_result(self, payload: Mapping[str, Any]) -> None:
         self.publish_json(
-            build_time_command_result_topic(self.thing_name),
+            build_capability_command_result_topic(self.thing_name),
             payload,
             retain=True,
         )
@@ -491,6 +508,48 @@ class TimeDeviceRuntime:
             "updatedAtMs": int(now_ms),
         }
 
+    def build_capabilities(self, active: bool) -> dict[str, bool]:
+        return {
+            "sparkplug": True,
+            TIME_SERVICE_NAME: bool(active),
+            MCP_SERVICE_NAME: bool(active),
+        }
+
+    def build_time_metrics(
+        self,
+        *,
+        state: StoredTimeState,
+        current_time_iso: str,
+    ) -> dict[str, dict[str, Any]]:
+        metrics: dict[str, dict[str, Any]] = {
+            "currentTimeIso": self.metric_string(current_time_iso),
+            "mode": self.metric_string(state.mode),
+            "mcpAvailable": self.metric_boolean(state.mode == TIME_MODE_ACTIVE),
+            "activeUntilMs": self.metric_int64(state.active_until_ms or 0),
+        }
+        if state.last_command_id:
+            metrics["lastCommandId"] = self.metric_string(state.last_command_id)
+        return metrics
+
+    def build_expired_metrics(self) -> dict[str, dict[str, Any]]:
+        return {
+            "mode": self.metric_string(TIME_MODE_SLEEP),
+            "mcpAvailable": self.metric_boolean(False),
+            "activeUntilMs": self.metric_int64(0),
+        }
+
+    @staticmethod
+    def metric_string(value: str) -> dict[str, Any]:
+        return {"datatype": "String", "value": value}
+
+    @staticmethod
+    def metric_boolean(value: bool) -> dict[str, Any]:
+        return {"datatype": "Boolean", "value": bool(value)}
+
+    @staticmethod
+    def metric_int64(value: int) -> dict[str, Any]:
+        return {"datatype": "Int64", "value": int(value)}
+
     def build_command_result(
         self,
         *,
@@ -502,10 +561,13 @@ class TimeDeviceRuntime:
     ) -> dict[str, Any]:
         return {
             "schemaVersion": SCHEMA_VERSION,
-            "adapterId": "time-lambda",
+            "adapterId": AWS_CONNECTIVITY_ADAPTER_ID,
             "commandId": command.command_id,
             "thingName": self.thing_name,
             "status": status,
+            "target": {
+                "redcon": command.redcon,
+            },
             "message": message,
             "observedAtMs": now_ms,
             "seq": int(seq),

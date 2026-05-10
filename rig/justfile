@@ -18,9 +18,9 @@ greengrass_core_units := "ggl.core.ggconfigd.service ggl.core.ggipcd.service ggl
 greengrass_core_sockets := "ggl.gg_config.socket ggl.gg_deployment.socket ggl.gg_fleet_status.socket ggl.aws_iot_mqtt.socket ggl.aws_iot_tes.socket ggl.gg_pubsub.socket ggl.ipc_component.socket ggl.gg-ipc.socket.socket ggl.gg_health.socket"
 shared_raspi_rig_component_units := "ggl.dev.txing.rig.SparkplugManager.service ggl.dev.txing.rig.BleConnectivity.service"
 raspi_rig_component_units := shared_raspi_rig_component_units
-aws_rig_component_units := "ggl.dev.txing.rig.SparkplugManager.service ggl.dev.txing.device.time.AwsConnectivity.service"
-legacy_unit_rig_component_units := "ggl.dev.txing.rig.ConnectivityBle.service ggl.dev.txing.rig.BleDiscovery.service ggl.dev.txing.device.unit.SparkplugManager.service ggl.dev.txing.device.unit.ConnectivityBle.service ggl.dev.txing.device.weather.SparkplugManager.service ggl.dev.txing.device.weather.ConnectivityBle.service ggl.dev.txing.device.power.SparkplugManager.service ggl.dev.txing.device.power.ConnectivityBle.service ggl.dev.txing.device.time.SparkplugManager.service ggl.dev.txing.device.weather.MatterWatch.service"
-legacy_unit_rig_components := "dev.txing.rig.ConnectivityBle dev.txing.rig.BleDiscovery dev.txing.device.unit.SparkplugManager dev.txing.device.unit.ConnectivityBle dev.txing.device.weather.SparkplugManager dev.txing.device.weather.ConnectivityBle dev.txing.device.power.SparkplugManager dev.txing.device.power.ConnectivityBle dev.txing.device.time.SparkplugManager"
+aws_rig_component_units := "ggl.dev.txing.rig.SparkplugManager.service ggl.dev.txing.rig.AwsConnectivity.service"
+legacy_unit_rig_component_units := "ggl.dev.txing.rig.ConnectivityBle.service ggl.dev.txing.rig.BleDiscovery.service ggl.dev.txing.device.unit.SparkplugManager.service ggl.dev.txing.device.unit.ConnectivityBle.service ggl.dev.txing.device.weather.SparkplugManager.service ggl.dev.txing.device.weather.ConnectivityBle.service ggl.dev.txing.device.power.SparkplugManager.service ggl.dev.txing.device.power.ConnectivityBle.service ggl.dev.txing.device.time.SparkplugManager.service ggl.dev.txing.device.time.AwsConnectivity.service ggl.dev.txing.device.weather.MatterWatch.service"
+legacy_unit_rig_components := "dev.txing.rig.ConnectivityBle dev.txing.rig.BleDiscovery dev.txing.device.unit.SparkplugManager dev.txing.device.unit.ConnectivityBle dev.txing.device.weather.SparkplugManager dev.txing.device.weather.ConnectivityBle dev.txing.device.power.SparkplugManager dev.txing.device.power.ConnectivityBle dev.txing.device.time.SparkplugManager dev.txing.device.time.AwsConnectivity"
 default_greengrass_lite_repository := env_var_or_default("TXING_RIG_GREENGRASS_LITE_REPOSITORY", "https://github.com/aws-greengrass/aws-greengrass-lite.git")
 default_greengrass_lite_ref := env_var_or_default("TXING_RIG_GREENGRASS_LITE_REF", "main")
 thing_name := "unit-local"
@@ -347,6 +347,8 @@ build-native:
     test -x "{{rig_dir}}/sparkplug-manager/target/release/txing-sparkplug-manager"
     TXING_REAL_CC="${CC:-cc}" CC="{{rig_dir}}/tools/cc-greengrass-info-log" cargo build --release --features greengrass-sdk --manifest-path "{{rig_dir}}/ble-connectivity/Cargo.toml"
     test -x "{{rig_dir}}/ble-connectivity/target/release/txing-ble-connectivity"
+    TXING_REAL_CC="${CC:-cc}" CC="{{rig_dir}}/tools/cc-greengrass-info-log" cargo build --release --features greengrass-sdk --manifest-path "{{rig_dir}}/aws-connectivity/Cargo.toml"
+    test -x "{{rig_dir}}/aws-connectivity/target/release/txing-aws-connectivity"
 
 run:
     #!/usr/bin/env bash
@@ -1007,16 +1009,9 @@ deploy rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' com
         legacy_components=(dev.txing.rig.ConnectivityBle dev.txing.rig.BleDiscovery dev.txing.device.unit.SparkplugManager dev.txing.device.unit.ConnectivityBle dev.txing.device.weather.SparkplugManager dev.txing.device.weather.ConnectivityBle dev.txing.device.power.SparkplugManager dev.txing.device.power.ConnectivityBle dev.txing.device.weather.MatterWatch)
         ;;
       cloud)
-        device_type="time"
-        device_python_project="{{project_root}}/devices/time/rig/python"
-        device_wheel_prefix="time_rig"
         sparkplug_component="dev.txing.rig.SparkplugManager"
-        connectivity_component="dev.txing.device.time.AwsConnectivity"
-        legacy_components=(dev.txing.device.time.SparkplugManager)
-        connectivity_module="time_rig.aws_connectivity"
-        connectivity_description="txing virtual time AWS IoT MQTT connectivity bridge."
-        connectivity_requires_privilege="false"
-        connectivity_extra_args=()
+        connectivity_component="dev.txing.rig.AwsConnectivity"
+        legacy_components=(dev.txing.device.time.SparkplugManager dev.txing.device.time.AwsConnectivity)
         ;;
       *)
         echo "Unsupported rig type '$selected_rig_type'. Supported rig types: raspi, cloud." >&2
@@ -1036,11 +1031,8 @@ deploy rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' com
     trap cleanup_staging_root EXIT
     recipe_dir="$deploy_root/recipes"
     artifacts_dir="$deploy_root/artifacts"
-    wheelhouse_dir="$staging_root/wheelhouse"
-    python_tree_dir="$staging_root/python"
-    requirements_file="$staging_root/requirements.txt"
     rm -rf "$deploy_root"
-    mkdir -p "$recipe_dir" "$artifacts_dir" "$wheelhouse_dir" "$python_tree_dir"
+    mkdir -p "$recipe_dir" "$artifacts_dir"
     TXING_REAL_CC="${CC:-cc}" CC="{{rig_dir}}/tools/cc-greengrass-info-log" cargo build --release --features greengrass-sdk --manifest-path "{{rig_dir}}/sparkplug-manager/Cargo.toml" >/dev/null
     sparkplug_manager_binary="{{rig_dir}}/sparkplug-manager/target/release/txing-sparkplug-manager"
     if [ ! -x "$sparkplug_manager_binary" ]; then
@@ -1056,29 +1048,12 @@ deploy rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' com
       fi
     fi
     if [ "$selected_rig_type" = "cloud" ]; then
-      uv build --wheel --out-dir "$wheelhouse_dir" "{{project_root}}/shared/aws/python" >/dev/null
-      uv build --wheel --out-dir "$wheelhouse_dir" "$device_python_project" >/dev/null
-      uv build --wheel --out-dir "$wheelhouse_dir" "{{rig_dir}}" >/dev/null
-      uv export \
-        --project "$device_python_project" \
-        --format requirements.txt \
-        --no-dev \
-        --no-editable \
-        --no-hashes \
-        | awk 'NF && $0 !~ /^[[:space:]]*#/ && $0 !~ /^\./ && $0 !~ /^\.\.\//' >"$requirements_file"
-      install_wheels=(
-        "$wheelhouse_dir"/aws-*.whl
-        "$wheelhouse_dir"/"$device_wheel_prefix"-*.whl
-        "$wheelhouse_dir"/rig-*.whl
-      )
-      uv pip install \
-        --python "{{python_executable}}" \
-        --target "$python_tree_dir" \
-        --compile-bytecode \
-        --reinstall \
-        --find-links "$wheelhouse_dir" \
-        --requirements "$requirements_file" \
-        "${install_wheels[@]}" >/dev/null
+      TXING_REAL_CC="${CC:-cc}" CC="{{rig_dir}}/tools/cc-greengrass-info-log" cargo build --release --features greengrass-sdk --manifest-path "{{rig_dir}}/aws-connectivity/Cargo.toml" >/dev/null
+      aws_connectivity_binary="{{rig_dir}}/aws-connectivity/target/release/txing-aws-connectivity"
+      if [ ! -x "$aws_connectivity_binary" ]; then
+        echo "Missing built Rust AWS connectivity binary at $aws_connectivity_binary" >&2
+        exit 1
+      fi
     fi
     component_artifact_dir="$artifacts_dir/$sparkplug_component/$resolved_component_version"
     mkdir -p "$component_artifact_dir"
@@ -1093,11 +1068,9 @@ deploy rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' com
       printf 'txing local Greengrass artifact for %s %s\n' "$connectivity_component" "$resolved_component_version" >"$component_artifact_dir/txing-local-artifact.txt"
     else
       component_artifact_dir="$artifacts_dir/$connectivity_component/$resolved_component_version"
-      mkdir -p "$component_artifact_dir/python"
-      cp -a "$python_tree_dir/." "$component_artifact_dir/python/"
-      mkdir -p "$component_artifact_dir/devices/$device_type"
-      cp "{{project_root}}/devices/$device_type/manifest.toml" "$component_artifact_dir/devices/$device_type/"
-      cp -a "{{project_root}}/devices/$device_type/aws" "$component_artifact_dir/devices/$device_type/aws"
+      mkdir -p "$component_artifact_dir"
+      cp "$aws_connectivity_binary" "$component_artifact_dir/txing-aws-connectivity"
+      chmod 755 "$component_artifact_dir/txing-aws-connectivity"
       printf 'txing local Greengrass artifact for %s %s\n' "$connectivity_component" "$resolved_component_version" >"$component_artifact_dir/txing-local-artifact.txt"
     fi
     if [ "$selected_rig_type" = "raspi" ]; then
@@ -1200,22 +1173,12 @@ deploy rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' com
             Unarchive: "NONE"
     EOF
     if [ "$selected_rig_type" = "cloud" ]; then
-    if [ "$connectivity_requires_privilege" = "true" ]; then
-      connectivity_privilege_line="        RequiresPrivilege: true"
-    else
-      connectivity_privilege_line=""
-    fi
-    connectivity_command="exec python3 -m $connectivity_module"
-    for arg in "${connectivity_extra_args[@]}"; do
-      printf -v quoted_arg '%q' "$arg"
-      connectivity_command="$connectivity_command $quoted_arg"
-    done
     cat >"$recipe_dir/$connectivity_component-$resolved_component_version.yaml" <<EOF
     RecipeFormatVersion: '2020-01-25'
     ComponentName: $connectivity_component
     ComponentVersion: '$resolved_component_version'
     ComponentType: aws.greengrass.generic
-    ComponentDescription: $connectivity_description
+    ComponentDescription: txing rig-wide AWS retained MQTT connectivity adapter.
     ComponentPublisher: txing
     ComponentDependencies:
       aws.greengrass.TokenExchangeService:
@@ -1238,7 +1201,6 @@ deploy rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' com
           runtime: aws_nucleus_lite
         Lifecycle:
           run:
-    $connectivity_privilege_line
             Script: |-
               export AWS_REGION="$AWS_REGION"
               export AWS_DEFAULT_REGION="$AWS_REGION"
@@ -1253,11 +1215,7 @@ deploy rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' com
               export AWS_IOT_ENDPOINT="$iot_data_endpoint"
               export TXING_RIG_TYPE="$selected_rig_type"
               export RIG_TYPE="$selected_rig_type"
-              export TXING_DEVICE_TYPE="$device_type"
-              export TXING_DEVICE_DIR="{artifacts:path}/devices/$device_type"
-              export TXING_DEVICE_MANIFEST="{artifacts:path}/devices/$device_type/manifest.toml"
-              export PYTHONPATH="{artifacts:path}/python"
-              $connectivity_command
+              exec "{artifacts:path}/txing-aws-connectivity" --adapter-id "$connectivity_component" --iot-endpoint "$iot_data_endpoint" --aws-region "$AWS_REGION" --client-id "$TXING_RIG_ID-aws-connectivity" --heartbeat-interval-ms 10000 --state-report-interval-ms 10000 --keep-alive-seconds 60
         Artifacts:
           - Uri: "s3://txing-local-greengrass/txing-local-artifact.txt"
             Unarchive: "NONE"

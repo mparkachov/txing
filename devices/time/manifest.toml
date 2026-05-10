@@ -21,21 +21,5 @@ default = "aws/default-mcp-shadow.json"
 schema = "aws/time-shadow.schema.json"
 default = "aws/default-time-shadow.json"
 
-[[rig.processes]]
-name = "time-aws-connectivity"
-command = "uv"
-args = ["run", "--project", "rig/python", "time-rig-aws-connectivity"]
-cwd = "."
-environment = [
-  "TXING_DEVICE_TYPE",
-  "TXING_DEVICE_DIR",
-  "TXING_DEVICE_MANIFEST",
-  "RIG_NAME",
-  "THING_NAME",
-  "SPARKPLUG_GROUP_ID",
-  "SPARKPLUG_EDGE_NODE_ID",
-  "AWS_REGION",
-]
-
 [web]
 adapter = "web/time-adapter.tsx"

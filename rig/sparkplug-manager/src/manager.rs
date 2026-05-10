@@ -3,10 +3,10 @@ use std::collections::BTreeMap;
 use anyhow::{Result, bail};
 use serde_json::Value;
 
-use crate::protocol::{
+use crate::sparkplug::{self, Metric};
+use txing_capability_protocol::{
     CapabilityCommand, CapabilityCommandResult, CapabilityState, InventoryDevice, MetricValue,
 };
-use crate::sparkplug::{self, Metric};
 
 const STATE_TTL_MS: u64 = 45_000;
 
@@ -317,7 +317,9 @@ fn string_value(value: &Value) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{COMMAND_SUCCEEDED, CapabilityCommandResultTarget, SCHEMA_VERSION};
+    use txing_capability_protocol::{
+        COMMAND_SUCCEEDED, CapabilityCommandResultTarget, SCHEMA_VERSION,
+    };
 
     fn power_inventory() -> InventoryDevice {
         InventoryDevice {

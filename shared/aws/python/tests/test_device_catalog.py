@@ -73,11 +73,7 @@ class DeviceCatalogTests(unittest.TestCase):
             [contract.name for contract in manifest.shadows.values()],
             ["sparkplug", "mcp", "time"],
         )
-        self.assertEqual([process.name for process in manifest.rig_processes], ["time-aws-connectivity"])
-        self.assertEqual(
-            manifest.rig_processes[0].argv,
-            ("uv", "run", "--project", "rig/python", "time-rig-aws-connectivity"),
-        )
+        self.assertEqual(manifest.rig_processes, ())
         self.assertEqual(manifest.render_board_video_channel_name(device_id="clock"), None)
         self.assertEqual(manifest.web_adapter, "web/time-adapter.tsx")
         for shadow_name in ("sparkplug", "mcp", "time"):
@@ -93,10 +89,7 @@ class DeviceCatalogTests(unittest.TestCase):
         self.assertEqual(manifest.display_name, "Weather")
         self.assertEqual(manifest.capabilities, ("sparkplug", "ble", "weather"))
         self.assertEqual(manifest.compatible_rig_types, ("raspi",))
-        self.assertEqual(
-            [process.name for process in manifest.rig_processes],
-            ["weather-connectivity-ble"],
-        )
+        self.assertEqual(manifest.rig_processes, ())
         self.assertEqual(manifest.render_board_video_channel_name(device_id="outside"), None)
         self.assertEqual(manifest.web_adapter, "web/weather-adapter.tsx")
 

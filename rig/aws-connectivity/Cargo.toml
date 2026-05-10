@@ -1,15 +1,12 @@
 [package]
-name = "txing-sparkplug-manager"
+name = "txing-aws-connectivity"
 version = "0.8.0"
 edition = "2024"
-description = "Rig-wide txing Sparkplug manager for Greengrass rigs"
+description = "Rig-wide txing AWS retained MQTT connectivity adapter for Greengrass cloud rigs"
 
 [dependencies]
 anyhow = "1"
-async-trait = "0.1"
 aws-config = { version = "1", features = ["behavior-version-latest"] }
-aws-sdk-iot = "1"
-aws-sdk-ssm = "1"
 clap = { version = "4.5", features = ["derive", "env"] }
 gneiss-mqtt = { version = "0.5", features = ["tokio-rustls", "tokio-websockets"] }
 gneiss-mqtt-aws = { version = "0.5", features = ["tokio-rustls", "tokio-websockets"] }

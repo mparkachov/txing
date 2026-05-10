@@ -32,8 +32,9 @@ The rig has a Greengrass-oriented component split:
   - owns BLE scanning, multi-device connected-idle GATT sessions, REDCON writes, and power/weather state reads
   - communicates with the manager only through local Greengrass pub/sub topics under `dev/txing/rig/v2/#`
   - never publishes Sparkplug node lifecycle
-- `dev.txing.device.time.AwsConnectivity`
-  - bridges the same v2 capability contract to retained AWS IoT topics for cloud time devices
+- `dev.txing.rig.AwsConnectivity`
+  - bridges the same v2 capability contract to retained AWS IoT topics for cloud devices
+  - contains no time-specific REDCON or metric mapping; time mapping lives in the time runtime package
 - future connectivity adapters such as `dev.txing.rig.LoRaConnectivity`
   - should implement the same v2 capability contract using their own transport
   - must not publish Sparkplug node lifecycle

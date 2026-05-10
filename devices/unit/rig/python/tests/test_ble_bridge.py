@@ -754,6 +754,7 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertIn("ggl.dev.txing.device.power.ConnectivityBle.service", justfile)
         self.assertIn("ggl.dev.txing.rig.SparkplugManager.service", justfile)
         self.assertIn("ggl.dev.txing.rig.BleConnectivity.service", justfile)
+        self.assertIn("ggl.dev.txing.rig.AwsConnectivity.service", justfile)
         self.assertIn("ggl.dev.txing.rig.ConnectivityBle.service", justfile)
         self.assertIn("ggl.dev.txing.device.time.SparkplugManager.service", justfile)
         self.assertIn("ggl.dev.txing.device.time.AwsConnectivity.service", justfile)
@@ -824,13 +825,13 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertIn('staging_root="$(mktemp -d "${TMPDIR:-/tmp}/txing-greengrass-stage.XXXXXX")"', justfile)
         self.assertIn('trap cleanup_staging_root EXIT', justfile)
         self.assertIn('rm -rf "$deploy_root"', justfile)
-        self.assertIn('uv build --wheel --out-dir "$wheelhouse_dir"', justfile)
-        self.assertIn('uv export \\', justfile)
-        self.assertIn('uv pip install \\', justfile)
-        self.assertIn('--target "$python_tree_dir"', justfile)
-        self.assertIn('--find-links "$wheelhouse_dir"', justfile)
-        self.assertIn('--requirements "$requirements_file"', justfile)
-        self.assertIn('cp -a "$python_tree_dir/." "$component_artifact_dir/python/"', justfile)
+        self.assertNotIn('uv build --wheel --out-dir "$wheelhouse_dir"', justfile)
+        self.assertNotIn('uv export \\', justfile)
+        self.assertNotIn('uv pip install \\', justfile)
+        self.assertNotIn('--target "$python_tree_dir"', justfile)
+        self.assertNotIn('--find-links "$wheelhouse_dir"', justfile)
+        self.assertNotIn('--requirements "$requirements_file"', justfile)
+        self.assertNotIn('cp -a "$python_tree_dir/." "$component_artifact_dir/python/"', justfile)
         self.assertIn('txing-local-artifact.txt', justfile)
         self.assertIn('Artifacts:', justfile)
         self.assertIn('Uri: "s3://txing-local-greengrass/txing-local-artifact.txt"', justfile)
@@ -842,12 +843,19 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertIn('export TXING_VERSION_BASE="$TXING_VERSION_BASE"', justfile)
         self.assertIn('export TXING_VERSION="$resolved_component_version"', justfile)
         self.assertIn('export AWS_IOT_ENDPOINT="$iot_data_endpoint"', justfile)
-        self.assertIn('export PYTHONPATH="{artifacts:path}/python"', justfile)
-        self.assertIn('connectivity_module="time_rig.aws_connectivity"', justfile)
-        self.assertIn('connectivity_command="exec python3 -m $connectivity_module"', justfile)
+        self.assertNotIn('export PYTHONPATH="{artifacts:path}/python"', justfile)
+        self.assertNotIn('connectivity_module="time_rig.aws_connectivity"', justfile)
+        self.assertNotIn('connectivity_command="exec python3 -m $connectivity_module"', justfile)
+        self.assertIn('connectivity_component="dev.txing.rig.AwsConnectivity"', justfile)
+        self.assertIn('exec "{artifacts:path}/txing-aws-connectivity"', justfile)
+        self.assertIn('aws_connectivity_binary="{{rig_dir}}/aws-connectivity/target/release/txing-aws-connectivity"', justfile)
         self.assertIn("dev/txing/rig/v2/*", justfile)
         self.assertIn(
             'cargo build --release --features greengrass-sdk --manifest-path "{{rig_dir}}/ble-connectivity/Cargo.toml"',
+            justfile,
+        )
+        self.assertIn(
+            'cargo build --release --features greengrass-sdk --manifest-path "{{rig_dir}}/aws-connectivity/Cargo.toml"',
             justfile,
         )
         self.assertIn('ble_connectivity_binary="{{rig_dir}}/ble-connectivity/target/release/txing-ble-connectivity"', justfile)
@@ -939,16 +947,26 @@ class AwsShadowClientTests(unittest.TestCase):
             / "recipes"
             / "dev.txing.rig.BleConnectivity-0.8.0.yaml"
         ).read_text(encoding="utf-8")
+        aws_connectivity_recipe = (
+            repo_root
+            / "rig"
+            / "greengrass"
+            / "recipes"
+            / "dev.txing.rig.AwsConnectivity-0.8.0.yaml"
+        ).read_text(encoding="utf-8")
         self.assertIn("runtime: aws_nucleus_lite", sparkplug_recipe)
         self.assertIn("runtime: aws_nucleus_lite", ble_recipe)
         self.assertIn("runtime: aws_nucleus_lite", ble_connectivity_recipe)
+        self.assertIn("runtime: aws_nucleus_lite", aws_connectivity_recipe)
         self.assertIn("txing-sparkplug-manager", sparkplug_recipe)
         self.assertIn("txing-ble-connectivity", ble_connectivity_recipe)
+        self.assertIn("txing-aws-connectivity", aws_connectivity_recipe)
         self.assertIn('export PYTHONPATH="{artifacts:decompressedPath}/rig-greengrass/python"', ble_recipe)
         self.assertIn("exec python3 -m unit_rig.connectivity_ble", ble_recipe)
         self.assertIn("ConnectTimeoutMs: 8000", ble_connectivity_recipe)
         self.assertIn('--connect-timeout-ms "{configuration:/ConnectTimeoutMs}"', ble_connectivity_recipe)
         self.assertIn("dev/txing/rig/v2/*", ble_connectivity_recipe)
+        self.assertIn("dev/txing/rig/v2/*", aws_connectivity_recipe)
         self.assertNotIn("dev/txing/rig/v1/ble/*", ble_connectivity_recipe)
         self.assertNotIn("pip install", sparkplug_recipe)
         self.assertNotIn("pip install", ble_recipe)

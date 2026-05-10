@@ -51,28 +51,10 @@ class DeviceProcessContractTests(unittest.TestCase):
             str(REPO_ROOT / "devices" / "unit" / "manifest.toml"),
         )
 
-    def test_builds_time_invocation_from_manifest_process_contract(self) -> None:
+    def test_time_manifest_has_no_device_specific_rig_process(self) -> None:
         manifest = load_device_manifest("time", repo_root=REPO_ROOT)
 
-        invocation = build_device_process_invocation(
-            manifest,
-            "time-aws-connectivity",
-            base_environment={
-                "RIG_NAME": "aws",
-                "THING_NAME": "clock",
-                "SPARKPLUG_GROUP_ID": "town",
-                "SPARKPLUG_EDGE_NODE_ID": "aws",
-                "AWS_REGION": "eu-central-1",
-            },
-        )
-
-        self.assertEqual(invocation.device_type, "time")
-        self.assertEqual(invocation.process_name, "time-aws-connectivity")
-        self.assertEqual(
-            invocation.argv,
-            ("uv", "run", "--project", "rig/python", "time-rig-aws-connectivity"),
-        )
-        self.assertEqual(invocation.cwd, REPO_ROOT / "devices" / "time")
+        self.assertEqual(manifest.rig_processes, ())
 
     def test_reports_missing_required_process_environment(self) -> None:
         manifest = load_device_manifest("unit", repo_root=REPO_ROOT)

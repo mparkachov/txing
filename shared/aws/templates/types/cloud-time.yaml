@@ -91,7 +91,7 @@ Resources:
                   - iot:RetainPublish
                   - iot:GetRetainedMessage
                 Resource:
-                  - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/*/time/*
+                  - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/*/capability/v2/*
                   - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/*/mcp/*
               - Sid: TimeRuntimeShadows
                 Effect: Allow
@@ -169,7 +169,7 @@ Resources:
       TopicRulePayload:
         AwsIotSqlVersion: "2016-03-23"
         RuleDisabled: false
-        Sql: SELECT topic() AS mqttTopic, * FROM 'txings/+/time/command'
+        Sql: SELECT topic() AS mqttTopic, * FROM 'txings/+/capability/v2/command'
         Actions:
           - Lambda:
               FunctionArn: !GetAtt TimeRuntimeFunction.Arn

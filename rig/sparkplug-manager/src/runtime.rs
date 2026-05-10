@@ -23,14 +23,14 @@ use crate::manager::{
     device_session_spec, graceful_device_death, graceful_node_death, node_client_id,
     node_session_spec,
 };
-use crate::protocol::{
+use crate::sparkplug;
+use txing_capability_protocol::{
     CAPABILITY_COMMAND_RESULT_TOPIC_PREFIX, CAPABILITY_HEARTBEAT_TOPIC_PREFIX,
     CAPABILITY_STATE_TOPIC_PREFIX, CapabilityCommandResult, CapabilityHeartbeat, CapabilityState,
     INVENTORY_TOPIC, Inventory, build_capability_command_topic,
     parse_capability_command_result_topic, parse_capability_heartbeat_topic,
     parse_capability_state_topic,
 };
-use crate::sparkplug;
 
 const MANAGER_ID: &str = "dev.txing.rig.SparkplugManager";
 const THING_INDEX_NAME: &str = "AWS_Things";
@@ -61,7 +61,7 @@ struct ThingRegistration {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RegistryInventory {
     rig_type: String,
-    devices: Vec<crate::protocol::InventoryDevice>,
+    devices: Vec<txing_capability_protocol::InventoryDevice>,
 }
 
 #[derive(Debug, Clone)]
@@ -992,7 +992,7 @@ mod tests {
     #[test]
     fn rejects_local_topic_payload_mismatch() {
         let state = CapabilityState {
-            schema_version: crate::protocol::SCHEMA_VERSION.to_string(),
+            schema_version: txing_capability_protocol::SCHEMA_VERSION.to_string(),
             adapter_id: "dev.txing.rig.BleConnectivity".to_string(),
             thing_name: "power-1".to_string(),
             capabilities: BTreeMap::from([("sparkplug".to_string(), true)]),
@@ -1012,7 +1012,7 @@ mod tests {
         assert!(validate_state_topic_payload("power-1", "other-adapter", &state).is_err());
 
         let heartbeat = CapabilityHeartbeat {
-            schema_version: crate::protocol::SCHEMA_VERSION.to_string(),
+            schema_version: txing_capability_protocol::SCHEMA_VERSION.to_string(),
             adapter_id: "time-aws".to_string(),
             status: "running".to_string(),
             active_thing_name: None,
