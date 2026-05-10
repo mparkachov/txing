@@ -14,7 +14,7 @@ pub fn install_greengrass_debug_log_filter() {
     if keep_debug_logs_enabled() {
         return;
     }
-    if let Err(err) = install_stderr_line_filter() {
+    if let Err(err) = install_output_line_filters() {
         eprintln!("warning: failed to install Greengrass SDK debug log filter: {err}");
     }
 }
@@ -26,7 +26,14 @@ fn keep_debug_logs_enabled() -> bool {
 }
 
 #[cfg(unix)]
-fn install_stderr_line_filter() -> io::Result<()> {
+fn install_output_line_filters() -> io::Result<()> {
+    install_fd_line_filter(libc::STDOUT_FILENO)?;
+    install_fd_line_filter(libc::STDERR_FILENO)?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn install_fd_line_filter(target_fd: libc::c_int) -> io::Result<()> {
     let mut pipe_fds = [0; 2];
     if unsafe { libc::pipe(pipe_fds.as_mut_ptr()) } != 0 {
         return Err(io::Error::last_os_error());
@@ -34,16 +41,16 @@ fn install_stderr_line_filter() -> io::Result<()> {
 
     let read_fd = pipe_fds[0];
     let write_fd = pipe_fds[1];
-    let stderr_fd = unsafe { libc::dup(libc::STDERR_FILENO) };
-    if stderr_fd < 0 {
+    let original_fd = unsafe { libc::dup(target_fd) };
+    if original_fd < 0 {
         close_fd(read_fd);
         close_fd(write_fd);
         return Err(io::Error::last_os_error());
     }
-    if unsafe { libc::dup2(write_fd, libc::STDERR_FILENO) } < 0 {
+    if unsafe { libc::dup2(write_fd, target_fd) } < 0 {
         close_fd(read_fd);
         close_fd(write_fd);
-        close_fd(stderr_fd);
+        close_fd(original_fd);
         return Err(io::Error::last_os_error());
     }
     close_fd(write_fd);
@@ -51,7 +58,7 @@ fn install_stderr_line_filter() -> io::Result<()> {
     thread::spawn(move || {
         let file = unsafe { File::from_raw_fd(read_fd) };
         let mut reader = BufReader::new(file);
-        let mut stderr = unsafe { File::from_raw_fd(stderr_fd) };
+        let mut output = unsafe { File::from_raw_fd(original_fd) };
         let mut line = Vec::new();
 
         loop {
@@ -60,8 +67,8 @@ fn install_stderr_line_filter() -> io::Result<()> {
                 Ok(0) => break,
                 Ok(_) => {
                     if should_emit_log_line(&line) {
-                        let _ = stderr.write_all(&line);
-                        let _ = stderr.flush();
+                        let _ = output.write_all(&line);
+                        let _ = output.flush();
                     }
                 }
                 Err(_) => break,
@@ -73,7 +80,7 @@ fn install_stderr_line_filter() -> io::Result<()> {
 }
 
 #[cfg(not(unix))]
-fn install_stderr_line_filter() -> io::Result<()> {
+fn install_output_line_filters() -> io::Result<()> {
     Ok(())
 }
 
