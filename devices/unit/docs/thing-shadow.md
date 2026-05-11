@@ -28,7 +28,9 @@ Schema/default files live under `devices/unit/aws/`:
 - `mcp-shadow.schema.json`, `default-mcp-shadow.json`
 - `video-shadow.schema.json`, `default-video-shadow.json`
 
-There is no `device` named shadow. Battery lives in `sparkplug.state.reported.payload.metrics.batteryMv`.
+There is no `device` named shadow. Sparkplug carries lifecycle only: `redcon`
+plus `capability.*`. Typed data belongs in the named shadow owned by the
+capability that produces it.
 
 ## Sparkplug Projection
 
@@ -50,7 +52,13 @@ Witness writes Sparkplug state into the `sparkplug` named shadow with this shape
         "seq": 7,
         "metrics": {
           "redcon": 3,
-          "batteryMv": 3972
+          "capability": {
+            "sparkplug": true,
+            "mcu": true,
+            "board": false,
+            "mcp": false,
+            "video": false
+          }
         }
       },
       "projection": {
@@ -76,7 +84,7 @@ Projection rules:
 Metric names preserve Sparkplug structure by splitting both `.` and `/` into nested path segments:
 
 - `redcon` -> `payload.metrics.redcon`
-- `batteryMv` -> `payload.metrics.batteryMv`
+- `capability.mcu` -> `payload.metrics.capability.mcu`
 
 Town remains a compatibility exception outside witness ownership:
 
@@ -113,7 +121,6 @@ Town remains a compatibility exception outside witness ownership:
   - `2`: Orange/Amber / `Ember Watch` / MCU wakeup state with BLE reachability and MCP availability, but retained video status not ready
   - `1`: Red / `Hot Rig` / MCU wakeup state with BLE reachability, MCP availability, and retained video status ready
 - `sparkplug.state.reported.topic.messageType = DDEATH` means the rig currently considers the device unavailable and `payload.metrics.redcon` is not defined for that device state.
-- `sparkplug.state.reported.payload.metrics.batteryMv` is the latest Sparkplug battery metric.
 - `mcu.state.reported.power=true` means the external wakeup state.
 - `mcu.state.reported.power=false` means the external sleep state with periodic `5 s` BLE rendezvous wakeups.
 - `mcu.state.reported.online` is rig-observed BLE reachability.

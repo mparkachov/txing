@@ -11,7 +11,30 @@
       "properties": {
         "reported": {
           "type": "object",
-          "additionalProperties": true
+          "additionalProperties": true,
+          "properties": {
+            "batteryMv": {
+              "type": ["integer", "null"],
+              "minimum": 0
+            },
+            "measuredTemperature": {
+              "type": ["number", "null"]
+            },
+            "measuredPressure": {
+              "type": ["number", "null"]
+            },
+            "measuredHumidity": {
+              "type": ["number", "null"]
+            },
+            "observedAtMs": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "seq": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
         }
       }
     }

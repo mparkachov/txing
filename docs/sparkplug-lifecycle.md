@@ -91,8 +91,7 @@ Example projected txing shadow:
             "sparkplug": true,
             "ble": true,
             "power": false
-          },
-          "batteryMv": 3972
+          }
         }
       },
       "projection": {
@@ -108,7 +107,6 @@ Metric path rules:
 - split both `.` and `/` into nested object path segments
 - `redcon` -> `payload.metrics.redcon`
 - `capability.ble` -> `payload.metrics.capability.ble`
-- `batteryMv` -> `payload.metrics.batteryMv`
 
 Capability availability rules:
 
@@ -127,6 +125,20 @@ Capability availability rules:
 - `sparkplug` is special: live `DBIRTH` and `DDATA` may report
   `capability.sparkplug=true`, while `DDEATH` remains the unavailable signal and
   still carries no device metrics
+
+Capability-owned shadow rule:
+
+- each capability that produces typed data owns its corresponding named shadow
+- Sparkplug reflects only availability with `capability.<name>` and lifecycle
+  with `redcon`
+- a capability component that needs to update its shadow must do so itself
+  through Greengrass IPC to AWS IoT Core, using named shadow MQTT topics such as
+  `$aws/things/<thingName>/shadow/name/<capability>/update`
+- if a capability component needs to read its shadow, it must use the same
+  Greengrass IoT Core IPC path with shadow `/get`, `/get/accepted`, and
+  `/get/rejected` topics
+- for BLE devices, `dev.txing.rig.BleConnectivity` owns the `ble` named shadow
+  and device-domain shadows such as `power` and `weather`
 
 Projection behavior:
 
@@ -148,13 +160,13 @@ Current device metric policy:
 
 - device `DBIRTH` and `DDATA` carry `redcon` and the complete
   `capability.*` boolean availability surface for the device type
-- legacy data metrics such as `batteryMv`, weather readings, and time readings
-  may still be present during the migration
 - availability and lifecycle helper metrics such as `bleConnected`,
   `mcpAvailable`, and `mode` are deprecated and must not be published as
   Sparkplug metrics; use `capability.*` and `redcon` instead
-- the target cleanup state is that Sparkplug device metrics carry only `redcon`
-  and `capability.*`; typed data should live in the corresponding named shadows
+- typed data such as `batteryMv`, weather readings, and time readings must live
+  in the corresponding capability-owned named shadows
+- command-result metrics such as `redconCommandStatus` still use Sparkplug for
+  the current command feedback path
 
 Town remains a compatibility exception outside witness ownership:
 

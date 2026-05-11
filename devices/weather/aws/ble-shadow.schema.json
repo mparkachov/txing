@@ -11,7 +11,23 @@
       "properties": {
         "reported": {
           "type": "object",
-          "additionalProperties": true
+          "additionalProperties": true,
+          "properties": {
+            "bleAddress": {
+              "type": ["string", "null"]
+            },
+            "bleLocalName": {
+              "type": ["string", "null"]
+            },
+            "observedAtMs": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "seq": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
         }
       }
     }

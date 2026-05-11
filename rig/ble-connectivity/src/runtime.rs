@@ -22,10 +22,11 @@ use uuid::Uuid;
 
 use crate::ble_protocol::{
     ADAPTER_ID, Advertisement, BLE_CAPABILITY, CapabilitySample, DeviceKind, DeviceSpec,
-    POWER_CAPABILITY, PowerState, TXING_BLE_COMMAND_UUID, TXING_BLE_STATE_UUID, WEATHER_CAPABILITY,
-    WEATHER_MEASUREMENT_UUID, WeatherMeasurement, WeatherState, advertisement_sample,
-    capability_state_from_sample, encode_redcon_command, now_ms, offline_sample, parse_power_state,
-    parse_weather_measurement, parse_weather_state, power_state_sample, weather_state_sample,
+    POWER_CAPABILITY, PowerState, ShadowUpdate, TXING_BLE_COMMAND_UUID, TXING_BLE_STATE_UUID,
+    WEATHER_CAPABILITY, WEATHER_MEASUREMENT_UUID, WeatherMeasurement, WeatherState,
+    advertisement_sample, capability_state_from_sample, encode_redcon_command, now_ms,
+    offline_sample, parse_power_state, parse_weather_measurement, parse_weather_state,
+    power_state_sample, shadow_updates_from_sample, weather_state_sample,
 };
 use txing_capability_protocol::{
     CAPABILITY_COMMAND_TOPIC_PREFIX, COMMAND_ACCEPTED, COMMAND_FAILED, COMMAND_SUCCEEDED,
@@ -91,6 +92,7 @@ struct RuntimeState {
     config: RuntimeConfig,
     advertisements: broadcast::Sender<Advertisement>,
     outbound_sender: mpsc::UnboundedSender<OutboundMessage>,
+    shadow_sender: mpsc::UnboundedSender<ShadowUpdate>,
     connection_semaphore: Option<Arc<Semaphore>>,
     sessions: BTreeMap<String, ManagedSession>,
     device_specs: BTreeMap<String, DeviceSpec>,
@@ -101,6 +103,7 @@ impl RuntimeState {
         config: RuntimeConfig,
         advertisements: broadcast::Sender<Advertisement>,
         outbound_sender: mpsc::UnboundedSender<OutboundMessage>,
+        shadow_sender: mpsc::UnboundedSender<ShadowUpdate>,
     ) -> Self {
         let connection_semaphore =
             (config.max_connections > 0).then(|| Arc::new(Semaphore::new(config.max_connections)));
@@ -108,6 +111,7 @@ impl RuntimeState {
             config,
             advertisements,
             outbound_sender,
+            shadow_sender,
             connection_semaphore,
             sessions: BTreeMap::new(),
             device_specs: BTreeMap::new(),
@@ -171,6 +175,7 @@ impl RuntimeState {
                 self.advertisements.subscribe(),
                 command_receiver,
                 self.outbound_sender.clone(),
+                self.shadow_sender.clone(),
                 self.connection_semaphore.clone(),
             ));
             self.sessions.insert(
@@ -261,9 +266,16 @@ async fn run_device_session(
     mut advertisements: broadcast::Receiver<Advertisement>,
     mut commands: mpsc::UnboundedReceiver<CapabilityCommand>,
     outbound_sender: mpsc::UnboundedSender<OutboundMessage>,
+    shadow_sender: mpsc::UnboundedSender<ShadowUpdate>,
     connection_semaphore: Option<Arc<Semaphore>>,
 ) {
-    let mut session = DeviceSession::new(spec, config, outbound_sender, connection_semaphore);
+    let mut session = DeviceSession::new(
+        spec,
+        config,
+        outbound_sender,
+        shadow_sender,
+        connection_semaphore,
+    );
     if let Err(err) = session.run(&mut advertisements, &mut commands).await {
         eprintln!(
             "warning: BLE device session ended thing={} error={err:#}",
@@ -276,6 +288,7 @@ struct DeviceSession {
     spec: DeviceSpec,
     config: RuntimeConfig,
     outbound_sender: mpsc::UnboundedSender<OutboundMessage>,
+    shadow_sender: mpsc::UnboundedSender<ShadowUpdate>,
     connection_semaphore: Option<Arc<Semaphore>>,
     seq: u64,
     last_advertisement: Option<Advertisement>,
@@ -291,12 +304,14 @@ impl DeviceSession {
         spec: DeviceSpec,
         config: RuntimeConfig,
         outbound_sender: mpsc::UnboundedSender<OutboundMessage>,
+        shadow_sender: mpsc::UnboundedSender<ShadowUpdate>,
         connection_semaphore: Option<Arc<Semaphore>>,
     ) -> Self {
         Self {
             spec,
             config,
             outbound_sender,
+            shadow_sender,
             connection_semaphore,
             seq: 0,
             last_advertisement: None,
@@ -590,6 +605,8 @@ impl DeviceSession {
                                     );
                                 }
                             }
+                        } else {
+                            self.last_weather_measurement = None;
                         }
                         let seq = self.next_seq();
                         let sample = weather_state_sample(
@@ -641,12 +658,21 @@ impl DeviceSession {
     }
 
     fn publish_sample(&self, sample: CapabilitySample) -> Result<()> {
-        let state = capability_state_from_sample(&self.config.adapter_id, sample);
+        let state = capability_state_from_sample(&self.config.adapter_id, &sample);
         let topic = build_capability_state_topic(&state.thing_name, &self.config.adapter_id)?;
         let payload = state.to_vec()?;
         self.outbound_sender
             .send(OutboundMessage { topic, payload })
-            .map_err(|_| anyhow!("outbound local pub/sub channel is closed"))
+            .map_err(|_| anyhow!("outbound local pub/sub channel is closed"))?;
+        for update in shadow_updates_from_sample(&sample)? {
+            if self.shadow_sender.send(update).is_err() {
+                eprintln!(
+                    "warning: BLE shadow update channel is closed thing={}",
+                    sample.thing_name
+                );
+            }
+        }
+        Ok(())
     }
 
     fn advertisement_is_fresh(&self, advertisement: &Advertisement) -> bool {
@@ -1021,7 +1047,13 @@ async fn run_greengrass_runtime(config: RuntimeConfig) -> Result<()> {
 
     let (advertisements, _) = broadcast::channel(SCANNER_BUFFER);
     let (outbound_sender, mut outbound_receiver) = mpsc::unbounded_channel();
-    let mut runtime = RuntimeState::new(config.clone(), advertisements.clone(), outbound_sender);
+    let (shadow_sender, mut shadow_receiver) = mpsc::unbounded_channel();
+    let mut runtime = RuntimeState::new(
+        config.clone(),
+        advertisements.clone(),
+        outbound_sender,
+        shadow_sender,
+    );
 
     let scanner_task = if config.no_ble {
         None
@@ -1044,6 +1076,11 @@ async fn run_greengrass_runtime(config: RuntimeConfig) -> Result<()> {
             Some(outbound) = outbound_receiver.recv() => {
                 if let Err(err) = publish_local(&outbound.topic, &outbound.payload).await {
                     eprintln!("warning: BLE connectivity local publish failed topic={}: {err:#}", outbound.topic);
+                }
+            }
+            Some(update) = shadow_receiver.recv() => {
+                if let Err(err) = publish_iot_core(&update.topic, &update.payload).await {
+                    eprintln!("warning: BLE shadow publish failed topic={}: {err:#}", update.topic);
                 }
             }
             _ = heartbeat_timer.tick() => {
@@ -1086,6 +1123,15 @@ async fn publish_local(topic: &str, payload: &[u8]) -> Result<()> {
         .ok_or_else(|| anyhow!("Greengrass SDK is not initialized"))?;
     sdk.publish_to_topic_binary(topic, payload)
         .map_err(|err| anyhow!("failed to publish local topic {topic}: {err:?}"))
+}
+
+#[cfg(all(feature = "greengrass-sdk", target_os = "linux"))]
+async fn publish_iot_core(topic: &str, payload: &[u8]) -> Result<()> {
+    let sdk = *GREENGRASS_SDK
+        .get()
+        .ok_or_else(|| anyhow!("Greengrass SDK is not initialized"))?;
+    sdk.publish_to_iot_core(topic, payload, gg_sdk::Qos::AtLeastOnce)
+        .map_err(|err| anyhow!("failed to publish AWS IoT Core topic {topic}: {err:?}"))
 }
 
 #[cfg(all(feature = "greengrass-sdk", target_os = "linux"))]
@@ -1176,12 +1222,20 @@ mod tests {
     #[tokio::test]
     async fn connected_session_does_not_downgrade_state_from_advertisement() {
         let (sender, mut receiver) = mpsc::unbounded_channel();
-        let mut session = DeviceSession::new(power_spec(), RuntimeConfig::default(), sender, None);
+        let (shadow_sender, mut shadow_receiver) = mpsc::unbounded_channel();
+        let mut session = DeviceSession::new(
+            power_spec(),
+            RuntimeConfig::default(),
+            sender,
+            shadow_sender,
+            None,
+        );
         session.connected = Some(ConnectedDevice { connected: true });
 
         session.handle_advertisement(advertisement()).await.unwrap();
 
         assert!(receiver.try_recv().is_err());
+        assert!(shadow_receiver.try_recv().is_err());
         assert!(session.connected.is_some());
         assert!(session.last_advertisement.is_some());
     }
@@ -1189,9 +1243,10 @@ mod tests {
     #[tokio::test]
     async fn disconnected_session_reports_advertisement_availability() {
         let (sender, mut receiver) = mpsc::unbounded_channel();
+        let (shadow_sender, mut shadow_receiver) = mpsc::unbounded_channel();
         let mut config = RuntimeConfig::default();
         config.reconnect_delay_ms = 0;
-        let mut session = DeviceSession::new(power_spec(), config, sender, None);
+        let mut session = DeviceSession::new(power_spec(), config, sender, shadow_sender, None);
 
         session.handle_advertisement(advertisement()).await.unwrap();
 
@@ -1201,7 +1256,32 @@ mod tests {
         assert_eq!(state.capabilities.get("sparkplug"), Some(&true));
         assert_eq!(state.capabilities.get("ble"), Some(&true));
         assert_eq!(state.capabilities.get("power"), Some(&false));
-        assert!(!state.metrics.contains_key("bleConnected"));
+        assert!(state.metrics.is_empty());
+
+        let shadow = shadow_receiver.recv().await.unwrap();
+        assert_eq!(shadow.topic, "$aws/things/power-1/shadow/name/ble/update");
+        let payload: serde_json::Value = serde_json::from_slice(&shadow.payload).unwrap();
+        assert_eq!(
+            payload["state"]["reported"]["bleAddress"],
+            serde_json::Value::from("E4:7C:BC:45:9B:A2")
+        );
+    }
+
+    #[tokio::test]
+    async fn shadow_publish_channel_failure_does_not_block_local_state() {
+        let (sender, mut receiver) = mpsc::unbounded_channel();
+        let (shadow_sender, shadow_receiver) = mpsc::unbounded_channel();
+        drop(shadow_receiver);
+        let mut config = RuntimeConfig::default();
+        config.reconnect_delay_ms = 0;
+        let mut session = DeviceSession::new(power_spec(), config, sender, shadow_sender, None);
+
+        session.handle_advertisement(advertisement()).await.unwrap();
+
+        let outbound = receiver.recv().await.unwrap();
+        let state: CapabilityState = serde_json::from_slice(&outbound.payload).unwrap();
+        assert_eq!(state.thing_name, "power-1");
+        assert_eq!(state.capabilities.get("ble"), Some(&true));
     }
 
     #[tokio::test]

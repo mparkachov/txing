@@ -31,6 +31,8 @@ The rig has a Greengrass-oriented component split:
 - `dev.txing.rig.BleConnectivity`
   - owns BLE scanning, multi-device connected-idle GATT sessions, REDCON writes, and power/weather state reads
   - communicates with the manager only through local Greengrass pub/sub topics under `dev/txing/rig/v2/#`
+  - publishes BLE-owned named shadow updates through Greengrass IPC `PublishToIoTCore`
+  - owns top-level reported fields in the `ble` shadow plus domain shadows such as `power` and `weather`
   - never publishes Sparkplug node lifecycle
 - `dev.txing.rig.AwsConnectivity`
   - bridges the same v2 capability contract to retained AWS IoT topics for cloud devices
@@ -73,10 +75,12 @@ redcon state    f6b4b002-7b32-4d2d-9f4b-4ff0a2b8f100
   configuration differences
 
 Rig implementation keeps one transport-level BLE connectivity component with one
-scanner, reusable REDCON client/parser behavior, and per-device-type metric
-mapping inside that component. For example, `power` is REDCON-only while
-`weather` is REDCON plus weather measurements. Sparkplug lifecycle stays in
-`dev.txing.rig.SparkplugManager`.
+scanner, reusable REDCON client/parser behavior, and per-device-type named
+shadow mapping inside that component. For example, `power` is REDCON plus a
+`power` shadow battery reading while `weather` is REDCON plus a `weather` shadow
+with weather measurements. Sparkplug lifecycle stays in
+`dev.txing.rig.SparkplugManager` and carries only `redcon`, `capability.*`, and
+current command-result feedback.
 
 If a future REDCON version needs different UUIDs during a migration, the shared
 BLE scanner should still remain common. The rig can add a REDCON profile

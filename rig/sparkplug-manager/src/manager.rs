@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 
 use anyhow::{Result, bail};
-use serde_json::Value;
 
 use crate::sparkplug::{self, Metric};
 use txing_capability_protocol::{
@@ -9,8 +8,6 @@ use txing_capability_protocol::{
 };
 
 const STATE_TTL_MS: u64 = 45_000;
-const DEPRECATED_AVAILABILITY_METRICS: &[&str] = &["bleConnected", "mcpAvailable", "mode"];
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct DeviceSnapshot {
     pub thing_name: String,
@@ -96,7 +93,7 @@ impl DeviceRuntimeState {
 
     pub fn snapshot(&self, now_ms: u64) -> DeviceSnapshot {
         let mut capabilities: BTreeMap<String, bool> = BTreeMap::new();
-        let mut metrics: BTreeMap<String, MetricValue> = BTreeMap::new();
+        let metrics: BTreeMap<String, MetricValue> = BTreeMap::new();
         for capability in &self.inventory.capabilities {
             capabilities.insert(capability.clone(), false);
         }
@@ -108,12 +105,6 @@ impl DeviceRuntimeState {
                 if let Some(current) = capabilities.get_mut(capability) {
                     *current = *current || *available;
                 }
-            }
-            for (name, metric) in &state.metrics {
-                if is_deprecated_availability_metric(name) {
-                    continue;
-                }
-                metrics.insert(name.clone(), metric.clone());
             }
         }
         let redcon = select_best_redcon(&self.inventory.redcon_rules, &capabilities);
@@ -167,10 +158,6 @@ impl DeviceRuntimeState {
         }
         Ok(DevicePublication::None)
     }
-}
-
-fn is_deprecated_availability_metric(name: &str) -> bool {
-    DEPRECATED_AVAILABILITY_METRICS.contains(&name)
 }
 
 pub fn select_best_redcon(
@@ -285,72 +272,21 @@ pub fn graceful_node_death(
     ))
 }
 
-fn sparkplug_metrics_from_capability_metrics(
-    metrics: &BTreeMap<String, MetricValue>,
-) -> Result<Vec<Metric>> {
-    let mut result = Vec::new();
-    for (name, metric) in metrics {
-        let value = match metric.datatype.as_str() {
-            "Boolean" => Metric::boolean(name.clone(), bool_value(&metric.value)?),
-            "Int32" => Metric::int32(name.clone(), i32_value(&metric.value)?),
-            "Int64" | "UInt64" => Metric::uint64(name.clone(), u64_value(&metric.value)?),
-            "Double" | "Float" => Metric::double(name.clone(), f64_value(&metric.value)?),
-            "String" => Metric::string(name.clone(), string_value(&metric.value)?),
-            datatype => bail!("unsupported capability metric datatype {datatype}"),
-        };
-        result.push(value);
-    }
-    Ok(result)
-}
-
 fn sparkplug_metrics_from_snapshot(
     capabilities: &BTreeMap<String, bool>,
-    metrics: &BTreeMap<String, MetricValue>,
+    _metrics: &BTreeMap<String, MetricValue>,
 ) -> Result<Vec<Metric>> {
-    let mut result = capabilities
+    let result = capabilities
         .iter()
         .map(|(name, available)| Metric::boolean(format!("capability.{name}"), *available))
         .collect::<Vec<_>>();
-    result.extend(sparkplug_metrics_from_capability_metrics(metrics)?);
     Ok(result)
-}
-
-fn bool_value(value: &Value) -> Result<bool> {
-    value
-        .as_bool()
-        .ok_or_else(|| anyhow::anyhow!("metric value must be a boolean"))
-}
-
-fn i32_value(value: &Value) -> Result<i32> {
-    let value = value
-        .as_i64()
-        .ok_or_else(|| anyhow::anyhow!("metric value must be an integer"))?;
-    Ok(i32::try_from(value)?)
-}
-
-fn u64_value(value: &Value) -> Result<u64> {
-    value
-        .as_u64()
-        .or_else(|| value.as_i64().and_then(|value| u64::try_from(value).ok()))
-        .ok_or_else(|| anyhow::anyhow!("metric value must be a non-negative integer"))
-}
-
-fn f64_value(value: &Value) -> Result<f64> {
-    value
-        .as_f64()
-        .ok_or_else(|| anyhow::anyhow!("metric value must be a number"))
-}
-
-fn string_value(value: &Value) -> Result<String> {
-    value
-        .as_str()
-        .map(ToString::to_string)
-        .ok_or_else(|| anyhow::anyhow!("metric value must be a string"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::Value;
     use txing_capability_protocol::{
         COMMAND_SUCCEEDED, CapabilityCommandResultTarget, SCHEMA_VERSION,
     };
@@ -463,14 +399,13 @@ mod tests {
                     Metric::boolean("capability.ble", true),
                     Metric::boolean("capability.power", false),
                     Metric::boolean("capability.sparkplug", true),
-                    Metric::int32("batteryMv", 3970),
                 ],
             }
         );
     }
 
     #[test]
-    fn deprecated_availability_metrics_are_filtered_before_publication_comparison() {
+    fn adapter_metrics_are_ignored_before_publication_comparison() {
         let mut state = DeviceRuntimeState::new(power_inventory());
         state
             .observe_state(CapabilityState {
@@ -501,7 +436,6 @@ mod tests {
                     Metric::boolean("capability.ble", true),
                     Metric::boolean("capability.power", false),
                     Metric::boolean("capability.sparkplug", true),
-                    Metric::int32("batteryMv", 3970),
                 ],
             }
         );
@@ -585,7 +519,6 @@ mod tests {
                     Metric::boolean("capability.diagnostics", false),
                     Metric::boolean("capability.power", false),
                     Metric::boolean("capability.sparkplug", true),
-                    Metric::int32("batteryMv", 3970),
                 ],
             }
         );
@@ -689,7 +622,7 @@ mod tests {
     }
 
     #[test]
-    fn unchanged_metrics_do_not_publish_repeated_data() {
+    fn adapter_metric_changes_do_not_publish_repeated_data() {
         let mut state = DeviceRuntimeState::new(power_inventory());
         state
             .observe_state(CapabilityState {
@@ -744,10 +677,10 @@ mod tests {
             })
             .unwrap();
 
-        assert!(matches!(
+        assert_eq!(
             state.decide_publication(3000).unwrap(),
-            DevicePublication::Data { redcon: 4, .. }
-        ));
+            DevicePublication::None
+        );
     }
 
     #[test]

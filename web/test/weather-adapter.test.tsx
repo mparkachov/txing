@@ -3,21 +3,18 @@ import weatherDeviceAdapter from '../../devices/weather/web/weather-adapter'
 import { extractWeatherReportedState } from '../../devices/weather/web/weather-model'
 
 describe('weather adapter', () => {
-  test('extracts weather metrics from sparkplug shadow', () => {
+  test('extracts weather metrics from weather shadow', () => {
     const shadow = {
       namedShadows: {
-        sparkplug: {
+        weather: {
           state: {
             reported: {
-              payload: {
-                metrics: {
-                  redcon: 4,
-                  batteryMv: 3512,
-                  measuredTemperature: 21.625,
-                  measuredPressure: 100.8,
-                  measuredHumidity: 44.5,
-                },
-              },
+              batteryMv: 3512,
+              measuredTemperature: 21.625,
+              measuredPressure: 100.8,
+              measuredHumidity: 44.5,
+              observedAtMs: 1000,
+              seq: 3,
             },
           },
         },

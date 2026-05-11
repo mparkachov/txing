@@ -155,6 +155,7 @@ just power::test 1 <power-thing-id> --idle-report-timeout 90
 - Disconnect returns the MCU to REDCON `4`, cancels the connected-idle battery loop, and resumes advertising.
 - REDCON command payload is `<version, redcon>`; state payload is `<version, redcon, battery_mv_le>`.
 
-Manual acceptance after flashing should confirm BLE local name, Sparkplug DBIRTH,
-minute-spaced REDCON `4` DDATA with `batteryMv`, REDCON `3` wakeup, and idle
-current with ADC suspended between samples.
+Manual acceptance after flashing should confirm BLE local name, Sparkplug DBIRTH
+with `redcon` and `capability.*`, minute-spaced REDCON `4` reports with
+`batteryMv` in the `power` named shadow, REDCON `3` wakeup, and idle current
+with ADC suspended between samples.

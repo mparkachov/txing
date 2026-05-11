@@ -51,8 +51,7 @@ Every rig and device thing exposes a witness-owned `sparkplug` named shadow with
             "board": false,
             "mcp": false,
             "video": false
-          },
-          "batteryMv": 3795
+          }
         }
       },
       "projection": {
@@ -77,7 +76,6 @@ Metric path rules:
 - Witness splits both `.` and `/` into nested metric paths.
 - `redcon` -> `payload.metrics.redcon`
 - `capability.mcp` -> `payload.metrics.capability.mcp`
-- `batteryMv` -> `payload.metrics.batteryMv`
 
 Capability availability:
 
@@ -88,7 +86,7 @@ Capability availability:
 - `true` means the corresponding named shadow or data domain is active and
   current enough for logic to use.
 - `false` means that domain is stale and must not be used, even if older data
-  metrics are still present from prior Sparkplug merges.
+  remains in the corresponding named shadow.
 - On startup and inventory refresh, non-`sparkplug` capabilities initialize to
   `false` until fresh adapter state reports them available.
 
@@ -143,11 +141,12 @@ Namespace and identity:
 Current metrics:
 
 - Node metrics: `bdSeq`, `redcon`
-- Device metrics: `redcon`, `capability.*`, and temporary legacy data metrics
-  such as `batteryMv`
+- Device metrics: `redcon` and `capability.*`
 - Deprecated availability/lifecycle helpers such as `bleConnected`,
   `mcpAvailable`, and `mode` must not be published as Sparkplug metrics; use
   `capability.*` and `redcon` instead
+- Typed data such as battery, MCU, board, MCP, and video state belongs in the
+  corresponding capability-owned named shadow.
 - Writable device command metric: `redcon`
 
 Current topics:
@@ -183,9 +182,9 @@ The born-state REDCON ladder is:
   - MCP is available
   - retained video status is ready and fresh
 
-Rig publishes these metrics into Sparkplug. Witness then materializes them into the `sparkplug` named shadow.
-The target cleanup state is that device Sparkplug metrics contain only `redcon`
-and `capability.*`; typed data moves to its corresponding named shadow.
+Rig publishes these lifecycle metrics into Sparkplug. Witness then materializes
+them into the `sparkplug` named shadow. Device Sparkplug metrics contain only
+`redcon` and `capability.*`; typed data moves to its corresponding named shadow.
 
 ## Acceptance Criteria
 
@@ -200,6 +199,5 @@ and `capability.*`; typed data moves to its corresponding named shadow.
   - `mcu.state.reported.power=false`
   - published Sparkplug `redcon=4`
   - the in-memory pending REDCON target cleared on convergence
-- `payload.metrics.batteryMv` tracks the latest battery reading published through Sparkplug.
 - `DBIRTH` is emitted when `mcu.state.reported.online` becomes `true`.
 - `DDEATH` is emitted when `mcu.state.reported.online` becomes `false`.

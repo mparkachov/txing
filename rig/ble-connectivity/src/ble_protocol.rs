@@ -2,9 +2,10 @@ use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Result, bail};
+use serde_json::{Value, json};
 use uuid::{Uuid, uuid};
 
-use txing_capability_protocol::{CapabilityState, MetricValue, SCHEMA_VERSION};
+use txing_capability_protocol::{CapabilityState, SCHEMA_VERSION, validate_segment};
 
 pub const ADAPTER_ID: &str = "dev.txing.rig.BleConnectivity";
 
@@ -12,6 +13,9 @@ pub const SPARKPLUG_CAPABILITY: &str = "sparkplug";
 pub const BLE_CAPABILITY: &str = "ble";
 pub const POWER_CAPABILITY: &str = "power";
 pub const WEATHER_CAPABILITY: &str = "weather";
+pub const BLE_SHADOW_NAME: &str = "ble";
+pub const POWER_SHADOW_NAME: &str = "power";
+pub const WEATHER_SHADOW_NAME: &str = "weather";
 
 pub const PROTOCOL_VERSION: u8 = 1;
 pub const REDCON_ACTIVE: u8 = 3;
@@ -98,6 +102,12 @@ pub struct CapabilitySample {
     pub weather: Option<WeatherMeasurement>,
     pub observed_at_ms: u64,
     pub seq: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShadowUpdate {
+    pub topic: String,
+    pub payload: Vec<u8>,
 }
 
 pub fn encode_redcon_command(target_redcon: u8) -> Result<Vec<u8>> {
@@ -202,7 +212,7 @@ pub fn offline_sample(spec: &DeviceSpec, seq: u64, now_ms: u64) -> CapabilitySam
         sparkplug_available: false,
         ble_available: false,
         domain_available: false,
-        ble_local_name: Some(spec.thing_name.clone()),
+        ble_local_name: None,
         ble_address: None,
         battery_mv: None,
         weather: None,
@@ -260,7 +270,10 @@ pub fn weather_state_sample(
     }
 }
 
-pub fn capability_state_from_sample(adapter_id: &str, sample: CapabilitySample) -> CapabilityState {
+pub fn capability_state_from_sample(
+    adapter_id: &str,
+    sample: &CapabilitySample,
+) -> CapabilityState {
     let mut capabilities = BTreeMap::new();
     capabilities.insert(SPARKPLUG_CAPABILITY.to_string(), sample.sparkplug_available);
     capabilities.insert(BLE_CAPABILITY.to_string(), sample.ble_available);
@@ -269,43 +282,111 @@ pub fn capability_state_from_sample(adapter_id: &str, sample: CapabilitySample) 
         sample.domain_available,
     );
 
-    let mut metrics = BTreeMap::new();
-    if let Some(value) = sample.ble_local_name {
-        metrics.insert("bleLocalName".to_string(), MetricValue::string(value));
-    }
-    if let Some(value) = sample.ble_address {
-        metrics.insert("bleAddress".to_string(), MetricValue::string(value));
-    }
-    if let Some(value) = sample.battery_mv {
-        metrics.insert(
-            "batteryMv".to_string(),
-            MetricValue::int32(i32::from(value)),
-        );
-    }
-    if let Some(weather) = sample.weather {
-        metrics.insert(
-            "measuredTemperature".to_string(),
-            MetricValue::double(weather.measured_temperature),
-        );
-        metrics.insert(
-            "measuredPressure".to_string(),
-            MetricValue::double(weather.measured_pressure),
-        );
-        metrics.insert(
-            "measuredHumidity".to_string(),
-            MetricValue::double(weather.measured_humidity),
-        );
-    }
-
     CapabilityState {
         schema_version: SCHEMA_VERSION.to_string(),
         adapter_id: adapter_id.to_string(),
-        thing_name: sample.thing_name,
+        thing_name: sample.thing_name.clone(),
         capabilities,
-        metrics,
+        metrics: BTreeMap::new(),
         observed_at_ms: sample.observed_at_ms,
         seq: sample.seq,
     }
+}
+
+pub fn shadow_updates_from_sample(sample: &CapabilitySample) -> Result<Vec<ShadowUpdate>> {
+    let mut updates = vec![build_shadow_update(
+        &sample.thing_name,
+        BLE_SHADOW_NAME,
+        BTreeMap::from([
+            (
+                "bleAddress".to_string(),
+                optional_string(sample.ble_address.as_deref()),
+            ),
+            (
+                "bleLocalName".to_string(),
+                optional_string(sample.ble_local_name.as_deref()),
+            ),
+            (
+                "observedAtMs".to_string(),
+                Value::from(sample.observed_at_ms),
+            ),
+            ("seq".to_string(), Value::from(sample.seq)),
+        ]),
+    )?];
+
+    match sample.kind {
+        DeviceKind::Power => updates.push(build_shadow_update(
+            &sample.thing_name,
+            POWER_SHADOW_NAME,
+            BTreeMap::from([
+                ("batteryMv".to_string(), optional_u16_i32(sample.battery_mv)),
+                (
+                    "observedAtMs".to_string(),
+                    Value::from(sample.observed_at_ms),
+                ),
+                ("seq".to_string(), Value::from(sample.seq)),
+            ]),
+        )?),
+        DeviceKind::Weather => {
+            let weather = sample.weather.as_ref();
+            updates.push(build_shadow_update(
+                &sample.thing_name,
+                WEATHER_SHADOW_NAME,
+                BTreeMap::from([
+                    ("batteryMv".to_string(), optional_u16_i32(sample.battery_mv)),
+                    (
+                        "measuredTemperature".to_string(),
+                        optional_f64(weather.map(|value| value.measured_temperature)),
+                    ),
+                    (
+                        "measuredPressure".to_string(),
+                        optional_f64(weather.map(|value| value.measured_pressure)),
+                    ),
+                    (
+                        "measuredHumidity".to_string(),
+                        optional_f64(weather.map(|value| value.measured_humidity)),
+                    ),
+                    (
+                        "observedAtMs".to_string(),
+                        Value::from(sample.observed_at_ms),
+                    ),
+                    ("seq".to_string(), Value::from(sample.seq)),
+                ]),
+            )?);
+        }
+    }
+
+    Ok(updates)
+}
+
+pub fn build_shadow_update(
+    thing_name: &str,
+    shadow_name: &str,
+    reported: BTreeMap<String, Value>,
+) -> Result<ShadowUpdate> {
+    validate_segment(thing_name, "thingName")?;
+    validate_segment(shadow_name, "shadowName")?;
+    let topic = format!("$aws/things/{thing_name}/shadow/name/{shadow_name}/update");
+    let payload = serde_json::to_vec(&json!({
+        "state": {
+            "reported": reported,
+        },
+    }))?;
+    Ok(ShadowUpdate { topic, payload })
+}
+
+fn optional_string(value: Option<&str>) -> Value {
+    value.map(Value::from).unwrap_or(Value::Null)
+}
+
+fn optional_u16_i32(value: Option<u16>) -> Value {
+    value
+        .map(|value| Value::from(i32::from(value)))
+        .unwrap_or(Value::Null)
+}
+
+fn optional_f64(value: Option<f64>) -> Value {
+    value.map(Value::from).unwrap_or(Value::Null)
 }
 
 pub fn now_ms() -> u64 {
@@ -372,17 +453,128 @@ mod tests {
             observed_at_ms: 42,
             seq: 7,
         };
-        let state = capability_state_from_sample(
-            ADAPTER_ID,
-            advertisement_sample(&spec, &advertisement, 1),
-        );
+        let sample = advertisement_sample(&spec, &advertisement, 1);
+        let state = capability_state_from_sample(ADAPTER_ID, &sample);
 
         assert_eq!(state.capabilities[SPARKPLUG_CAPABILITY], true);
         assert_eq!(state.capabilities[BLE_CAPABILITY], true);
         assert_eq!(state.capabilities[POWER_CAPABILITY], false);
-        assert!(!state.metrics.contains_key("bleConnected"));
+        assert!(state.metrics.is_empty());
 
-        let offline = capability_state_from_sample(ADAPTER_ID, offline_sample(&spec, 2, 100));
+        let offline_sample = offline_sample(&spec, 2, 100);
+        let offline = capability_state_from_sample(ADAPTER_ID, &offline_sample);
         assert_eq!(offline.capabilities[SPARKPLUG_CAPABILITY], false);
+    }
+
+    #[test]
+    fn advertisement_sample_publishes_ble_shadow() {
+        let spec = DeviceSpec {
+            thing_name: "power-1".to_string(),
+            kind: DeviceKind::Power,
+        };
+        let advertisement = Advertisement {
+            address: "AA:BB:CC:DD:EE:FF".to_string(),
+            local_name: Some("power-1".to_string()),
+            services: vec![TXING_BLE_SERVICE_UUID],
+            rssi: Some(-50),
+            observed_at_ms: 42,
+            seq: 7,
+        };
+        let updates =
+            shadow_updates_from_sample(&advertisement_sample(&spec, &advertisement, 1)).unwrap();
+
+        assert_eq!(updates.len(), 2);
+        assert_eq!(
+            updates[0].topic,
+            "$aws/things/power-1/shadow/name/ble/update"
+        );
+        let payload: Value = serde_json::from_slice(&updates[0].payload).unwrap();
+        assert_eq!(
+            payload["state"]["reported"]["bleAddress"],
+            Value::from("AA:BB:CC:DD:EE:FF")
+        );
+        assert_eq!(
+            payload["state"]["reported"]["bleLocalName"],
+            Value::from("power-1")
+        );
+        assert_eq!(
+            updates[1].topic,
+            "$aws/things/power-1/shadow/name/power/update"
+        );
+        let payload: Value = serde_json::from_slice(&updates[1].payload).unwrap();
+        assert!(payload["state"]["reported"]["batteryMv"].is_null());
+    }
+
+    #[test]
+    fn power_state_sample_publishes_power_shadow() {
+        let spec = DeviceSpec {
+            thing_name: "power-1".to_string(),
+            kind: DeviceKind::Power,
+        };
+        let sample = power_state_sample(
+            &spec,
+            &PowerState {
+                redcon: REDCON_ACTIVE,
+                battery_mv: Some(3970),
+            },
+            Some("AA:BB:CC:DD:EE:FF".to_string()),
+            3,
+            1000,
+        );
+        let updates = shadow_updates_from_sample(&sample).unwrap();
+
+        assert_eq!(updates.len(), 2);
+        assert_eq!(
+            updates[1].topic,
+            "$aws/things/power-1/shadow/name/power/update"
+        );
+        let payload: Value = serde_json::from_slice(&updates[1].payload).unwrap();
+        assert_eq!(payload["state"]["reported"]["batteryMv"], Value::from(3970));
+    }
+
+    #[test]
+    fn weather_state_sample_publishes_weather_shadow() {
+        let spec = DeviceSpec {
+            thing_name: "weather-1".to_string(),
+            kind: DeviceKind::Weather,
+        };
+        let sample = weather_state_sample(
+            &spec,
+            &WeatherState {
+                redcon: REDCON_ACTIVE,
+                battery_mv: Some(3700),
+                bme280_valid: true,
+            },
+            Some(WeatherMeasurement {
+                measured_temperature: 21.625,
+                measured_pressure: 100.8,
+                measured_humidity: 44.5,
+                battery_mv: Some(3710),
+            }),
+            Some("AA:BB:CC:DD:EE:FF".to_string()),
+            4,
+            2000,
+        );
+        let updates = shadow_updates_from_sample(&sample).unwrap();
+
+        assert_eq!(updates.len(), 2);
+        assert_eq!(
+            updates[1].topic,
+            "$aws/things/weather-1/shadow/name/weather/update"
+        );
+        let payload: Value = serde_json::from_slice(&updates[1].payload).unwrap();
+        assert_eq!(payload["state"]["reported"]["batteryMv"], Value::from(3710));
+        assert_eq!(
+            payload["state"]["reported"]["measuredTemperature"],
+            Value::from(21.625)
+        );
+        assert_eq!(
+            payload["state"]["reported"]["measuredPressure"],
+            Value::from(100.8)
+        );
+        assert_eq!(
+            payload["state"]["reported"]["measuredHumidity"],
+            Value::from(44.5)
+        );
     }
 }

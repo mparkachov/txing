@@ -24,6 +24,15 @@ ComponentConfiguration:
             - aws.greengrass#SubscribeToTopic
           resources:
             - dev/txing/rig/v2/*
+      aws.greengrass.ipc.mqttproxy:
+        dev.txing.rig.BleConnectivity:mqttproxy:1:
+          policyDescription: Allows BLE connectivity to publish BLE-owned named shadow updates through the rig IoT Core connection.
+          operations:
+            - aws.greengrass#PublishToIoTCore
+          resources:
+            - $aws/things/+/shadow/name/ble/update
+            - $aws/things/+/shadow/name/power/update
+            - $aws/things/+/shadow/name/weather/update
 Manifests:
   - Platform:
       os: linux

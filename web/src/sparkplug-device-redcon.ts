@@ -72,27 +72,3 @@ export const extractSparkplugDeviceRedconUpdate = (
     source: topic === topics.dbirth ? 'dbirth' : 'ddata',
   }
 }
-
-export const extractSparkplugDeviceBatteryMv = (
-  topic: string,
-  payload: Uint8Array,
-  topics: Pick<SparkplugTopics, 'dbirth' | 'ddata'>,
-): number | null => {
-  const metrics = decodeSparkplugDeviceMetrics(topic, payload, topics)
-  if (!metrics) {
-    return null
-  }
-
-  const batteryMetric = metrics.find((metric) => metric.name === 'batteryMv')
-  if (!batteryMetric) {
-    return null
-  }
-
-  const rawValue =
-    typeof batteryMetric.intValue === 'number'
-      ? batteryMetric.intValue
-      : typeof batteryMetric.longValue === 'number'
-        ? batteryMetric.longValue
-        : null
-  return Number.isInteger(rawValue) ? rawValue : null
-}

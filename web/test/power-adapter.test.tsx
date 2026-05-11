@@ -3,18 +3,15 @@ import powerDeviceAdapter from '../../devices/power/web/power-adapter'
 import { extractPowerReportedState } from '../../devices/power/web/power-model'
 
 describe('power adapter', () => {
-  test('extracts battery metrics from sparkplug shadow', () => {
+  test('extracts battery metrics from power shadow', () => {
     const shadow = {
       namedShadows: {
-        sparkplug: {
+        power: {
           state: {
             reported: {
-              payload: {
-                metrics: {
-                  redcon: 4,
-                  batteryMv: 3512,
-                },
-              },
+              batteryMv: 3512,
+              observedAtMs: 1000,
+              seq: 3,
             },
           },
         },
