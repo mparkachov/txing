@@ -1,5 +1,4 @@
 export type WeatherReportedState = {
-  batteryMv: number | null
   measuredTemperature: number | null
   measuredPressure: number | null
   measuredHumidity: number | null
@@ -22,7 +21,7 @@ const extractReportedState = (shadow: unknown): Record<string, unknown> | null =
 
 const extractNamedShadowReportedState = (
   shadow: unknown,
-  shadowName: 'weather',
+  shadowName: 'power' | 'weather',
 ): Record<string, unknown> | null => {
   if (!isRecord(shadow) || !isRecord(shadow.namedShadows)) {
     return null
@@ -45,10 +44,18 @@ const readNumberField = (
 export const extractWeatherReportedState = (shadow: unknown): WeatherReportedState => {
   const reported = extractNamedShadowReportedState(shadow, 'weather') ?? extractReportedState(shadow)
   return {
-    batteryMv: readNumberField(reported, 'batteryMv'),
     measuredTemperature: readNumberField(reported, 'measuredTemperature'),
     measuredPressure: readNumberField(reported, 'measuredPressure'),
     measuredHumidity: readNumberField(reported, 'measuredHumidity'),
+  }
+}
+
+export const extractWeatherPowerReportedState = (shadow: unknown): {
+  batteryMv: number | null
+} => {
+  const reported = extractNamedShadowReportedState(shadow, 'power')
+  return {
+    batteryMv: readNumberField(reported, 'batteryMv'),
   }
 }
 

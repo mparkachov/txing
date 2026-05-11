@@ -7,7 +7,7 @@ mod error;
 mod event;
 mod protocol;
 
-use ble::{BleCentral, BleConnectConfig, TimedState};
+use ble::{BleCentral, BleConnectConfig, TimedPowerMeasurement, TimedState};
 use btleplug_ble::BtleplugBleCentral;
 use clap::Parser;
 use error::{Result, RigError};
@@ -351,17 +351,12 @@ async fn run_power_test(
                         .as_millis()
                         .to_string(),
                 ),
-                (
-                    "batteryMv",
-                    wake_state.state.battery_mv.unwrap_or(0).to_string(),
-                ),
             ],
         );
 
         let active_battery = collect_active_battery(
             central,
             cycle,
-            wake_state,
             wake_command_at + Duration::from_secs_f64(config.wake_seconds),
             events,
         )
@@ -402,10 +397,6 @@ async fn run_power_test(
                         .as_millis()
                         .to_string(),
                 ),
-                (
-                    "batteryMv",
-                    sleep_state.state.battery_mv.unwrap_or(0).to_string(),
-                ),
             ],
         );
 
@@ -417,7 +408,7 @@ async fn run_power_test(
             events,
         )
         .await?;
-        let idle_battery = idle_state.state.battery_mv.unwrap_or(0);
+        let idle_battery = idle_state.measurement.battery_mv.unwrap_or(0);
         summary.idle_battery_values.push(idle_battery);
         events.emit(
             "idle-battery-ok",
@@ -508,41 +499,26 @@ async fn wait_for_redcon(
 async fn collect_active_battery(
     central: &mut dyn BleCentral,
     cycle: u32,
-    first_state: TimedState,
     active_until: Instant,
     events: &mut EventEmitter,
 ) -> Result<Vec<u16>> {
     let mut values = Vec::new();
-    if first_state.state.active() {
-        if let Some(battery_mv) = first_state.state.battery_mv {
-            values.push(battery_mv);
-        }
-    }
     while Instant::now() < active_until {
         let timeout = active_until
             .saturating_duration_since(Instant::now())
             .min(Duration::from_secs(1));
-        match central.next_state(timeout).await {
-            Ok(state) => {
-                emit_state(events, &state.state);
-                if state.state.redcon == REDCON_IDLE {
-                    return Err(RigError::new(
-                        "wake",
-                        format!("cycle {cycle}: device returned to REDCON 4 during wake window"),
-                    ));
-                }
-                if state.state.active() {
-                    if let Some(battery_mv) = state.state.battery_mv {
-                        values.push(battery_mv);
-                        events.emit(
-                            "active-battery",
-                            &[
-                                ("cycle", cycle.to_string()),
-                                ("count", values.len().to_string()),
-                                ("batteryMv", battery_mv.to_string()),
-                            ],
-                        );
-                    }
+        match central.next_power_measurement(timeout).await {
+            Ok(measurement) => {
+                if let Some(battery_mv) = measurement.measurement.battery_mv {
+                    values.push(battery_mv);
+                    events.emit(
+                        "active-battery",
+                        &[
+                            ("cycle", cycle.to_string()),
+                            ("count", values.len().to_string()),
+                            ("batteryMv", battery_mv.to_string()),
+                        ],
+                    );
                 }
             }
             Err(err) if err.stage == "timeout" => continue,
@@ -563,8 +539,8 @@ async fn wait_for_connected_idle_battery(
     cycle: u32,
     not_before: Instant,
     timeout: Duration,
-    events: &mut EventEmitter,
-) -> Result<TimedState> {
+    _events: &mut EventEmitter,
+) -> Result<TimedPowerMeasurement> {
     let until = Instant::now() + timeout;
     loop {
         if Instant::now() >= until {
@@ -576,20 +552,12 @@ async fn wait_for_connected_idle_battery(
         let wait = until
             .saturating_duration_since(Instant::now())
             .min(Duration::from_secs(1));
-        match central.next_state(wait).await {
-            Ok(state) => {
-                emit_state(events, &state.state);
-                if state.state.active() {
-                    return Err(RigError::new(
-                        "sleep",
-                        format!("cycle {cycle}: active state observed during connected idle"),
-                    ));
-                }
-                if state.state.redcon == REDCON_IDLE
-                    && state.received_at >= not_before
-                    && state.state.battery_mv.is_some()
+        match central.next_power_measurement(wait).await {
+            Ok(measurement) => {
+                if measurement.received_at >= not_before
+                    && measurement.measurement.battery_mv.is_some()
                 {
-                    return Ok(state);
+                    return Ok(measurement);
                 }
             }
             Err(err) if err.stage == "timeout" => continue,
@@ -610,7 +578,6 @@ fn emit_state(events: &mut EventEmitter, state: &RedconState) {
         &[
             ("redcon", state.redcon.to_string()),
             ("active", bool_field(state.active())),
-            ("batteryMv", state.battery_mv.unwrap_or(0).to_string()),
         ],
     );
 }

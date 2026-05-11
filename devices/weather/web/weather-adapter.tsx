@@ -1,5 +1,8 @@
 import type { DeviceWebAdapter } from '../../../web/src/device-adapter'
-import { extractWeatherReportedState } from './weather-model'
+import {
+  extractWeatherPowerReportedState,
+  extractWeatherReportedState,
+} from './weather-model'
 import WeatherPanel from './WeatherPanel'
 
 const weatherDeviceAdapter: DeviceWebAdapter = {
@@ -8,9 +11,9 @@ const weatherDeviceAdapter: DeviceWebAdapter = {
   buildVideoChannelName: (deviceId) => `${deviceId}-weather`,
   canUseBoardVideo: () => false,
   extractTelemetry: (shadow) => {
-    const reportedState = extractWeatherReportedState(shadow)
+    const reportedPowerState = extractWeatherPowerReportedState(shadow)
     return {
-      reportedBatteryMv: reportedState.batteryMv,
+      reportedBatteryMv: reportedPowerState.batteryMv,
       reportedBoardPower: null,
       reportedBoardOnline: null,
       reportedMcuOnline: null,

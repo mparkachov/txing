@@ -87,7 +87,7 @@ class DeviceCatalogTests(unittest.TestCase):
         self.assertEqual(manifest.type, "weather")
         self.assertEqual(manifest.device_name, "outside")
         self.assertEqual(manifest.display_name, "Weather")
-        self.assertEqual(manifest.capabilities, ("sparkplug", "ble", "weather"))
+        self.assertEqual(manifest.capabilities, ("sparkplug", "ble", "power", "weather"))
         self.assertEqual(manifest.compatible_rig_types, ("raspi",))
         self.assertEqual(manifest.rig_processes, ())
         self.assertEqual(manifest.render_board_video_channel_name(device_id="outside"), None)
@@ -108,7 +108,7 @@ class DeviceCatalogTests(unittest.TestCase):
             ("sparkplug", "mcu", "board", "mcp", "video"),
         )
         self.assertEqual(capabilities["time"], ("sparkplug", "mcp", "time"))
-        self.assertEqual(capabilities["weather"], ("sparkplug", "ble", "weather"))
+        self.assertEqual(capabilities["weather"], ("sparkplug", "ble", "power", "weather"))
         self.assertEqual(capabilities["power"], ("sparkplug", "ble", "power"))
         self.assertEqual(
             capabilities_for_thing_type("unit", repo_root=REPO_ROOT),
@@ -120,7 +120,7 @@ class DeviceCatalogTests(unittest.TestCase):
         )
         self.assertEqual(
             capabilities_for_thing_type("weather", repo_root=REPO_ROOT),
-            ("sparkplug", "ble", "weather"),
+            ("sparkplug", "ble", "power", "weather"),
         )
 
     def test_manifest_capabilities_are_device_defined(self) -> None:

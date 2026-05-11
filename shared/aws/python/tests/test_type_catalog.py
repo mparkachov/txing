@@ -139,7 +139,7 @@ class TypeCatalogTests(unittest.TestCase):
         )
         self.assertEqual(
             ssm.parameters["/txing/town/raspi/weather/capabilities"],
-            "sparkplug,ble,weather",
+            "sparkplug,ble,power,weather",
         )
         self.assertEqual(
             ssm.parameters["/txing/town/raspi/power/capabilities"],

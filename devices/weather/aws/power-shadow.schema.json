@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://txing.local/schemas/txing-weather-weather-shadow.schema.json",
-  "title": "Weather Capability Named Shadow Contract",
+  "$id": "https://txing.local/schemas/txing-weather-power-shadow.schema.json",
+  "title": "Power Capability Named Shadow Contract",
   "type": "object",
   "additionalProperties": true,
   "properties": {
@@ -13,14 +13,9 @@
           "type": "object",
           "additionalProperties": true,
           "properties": {
-            "measuredTemperature": {
-              "type": ["number", "null"]
-            },
-            "measuredPressure": {
-              "type": ["number", "null"]
-            },
-            "measuredHumidity": {
-              "type": ["number", "null"]
+            "batteryMv": {
+              "type": ["integer", "null"],
+              "minimum": 0
             },
             "observedAtMs": {
               "type": "integer",

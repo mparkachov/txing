@@ -16,16 +16,19 @@ use btleplug::api::{
 };
 #[cfg(all(feature = "ble-real", target_os = "linux"))]
 use btleplug::platform::{Adapter, Manager, Peripheral};
+#[cfg(all(feature = "ble-real", target_os = "linux"))]
+use futures::StreamExt;
 use tokio::sync::{Semaphore, broadcast, mpsc};
 use tokio::time::{MissedTickBehavior, interval, timeout};
 use uuid::Uuid;
 
 use crate::ble_protocol::{
     ADAPTER_ID, Advertisement, BLE_CAPABILITY, CapabilitySample, DeviceKind, DeviceSpec,
-    POWER_CAPABILITY, PowerState, ShadowUpdate, TXING_BLE_COMMAND_UUID, TXING_BLE_STATE_UUID,
-    WEATHER_CAPABILITY, WEATHER_MEASUREMENT_UUID, WeatherMeasurement, WeatherState,
-    advertisement_sample, capability_state_from_sample, encode_redcon_command, now_ms,
-    offline_sample, parse_power_state, parse_weather_measurement, parse_weather_state,
+    POWER_CAPABILITY, POWER_MEASUREMENT_UUID, PowerMeasurement, PowerState, REDCON_ACTIVE,
+    REDCON_IDLE, ShadowUpdate, TXING_BLE_COMMAND_UUID, TXING_BLE_STATE_UUID, WEATHER_CAPABILITY,
+    WEATHER_MEASUREMENT_UUID, WeatherMeasurement, WeatherState, advertisement_sample,
+    capability_state_from_sample, encode_redcon_command, now_ms, offline_sample,
+    parse_power_measurement, parse_power_state, parse_weather_measurement, parse_weather_state,
     power_state_sample, shadow_updates_from_sample, weather_state_sample,
 };
 use txing_capability_protocol::{
@@ -39,6 +42,9 @@ use txing_capability_protocol::{
 const SCANNER_BUFFER: usize = 256;
 const SCAN_POLL_INTERVAL_MS: u64 = 500;
 const STALE_CHECK_INTERVAL_MS: u64 = 500;
+const NOTIFICATION_DRAIN_INTERVAL_MS: u64 = 100;
+const REDCON_ACTIVE_MEASUREMENT_STALE_MS: u64 = 20_000;
+const REDCON_IDLE_MEASUREMENT_STALE_MS: u64 = 120_000;
 
 #[derive(Debug, Clone)]
 pub struct RuntimeConfig {
@@ -49,7 +55,6 @@ pub struct RuntimeConfig {
     pub connect_timeout_ms: u64,
     pub command_timeout_ms: u64,
     pub heartbeat_interval_ms: u64,
-    pub state_report_interval_ms: u64,
     pub max_connections: usize,
     pub no_ble: bool,
 }
@@ -64,7 +69,6 @@ impl Default for RuntimeConfig {
             connect_timeout_ms: 8_000,
             command_timeout_ms: 8_000,
             heartbeat_interval_ms: 10_000,
-            state_report_interval_ms: 30_000,
             max_connections: 0,
             no_ble: false,
         }
@@ -247,10 +251,10 @@ fn device_spec_from_inventory(
     if !device.has_capability(BLE_CAPABILITY) {
         return None;
     }
-    let kind = if device.has_capability(POWER_CAPABILITY) {
-        DeviceKind::Power
-    } else if device.has_capability(WEATHER_CAPABILITY) {
+    let kind = if device.has_capability(WEATHER_CAPABILITY) {
         DeviceKind::Weather
+    } else if device.has_capability(POWER_CAPABILITY) {
+        DeviceKind::Power
     } else {
         return None;
     };
@@ -292,11 +296,17 @@ struct DeviceSession {
     connection_semaphore: Option<Arc<Semaphore>>,
     seq: u64,
     last_advertisement: Option<Advertisement>,
-    last_power_state: Option<PowerState>,
-    last_weather_state: Option<WeatherState>,
-    last_weather_measurement: Option<WeatherMeasurement>,
+    last_redcon: Option<u8>,
+    last_power_measurement: Option<TimedMeasurement<PowerMeasurement>>,
+    last_weather_measurement: Option<TimedMeasurement<WeatherMeasurement>>,
     connected: Option<ConnectedDevice>,
     offline_published: bool,
+}
+
+#[derive(Debug, Clone)]
+struct TimedMeasurement<T> {
+    value: T,
+    observed_at_ms: u64,
 }
 
 impl DeviceSession {
@@ -315,8 +325,8 @@ impl DeviceSession {
             connection_semaphore,
             seq: 0,
             last_advertisement: None,
-            last_power_state: None,
-            last_weather_state: None,
+            last_redcon: None,
+            last_power_measurement: None,
             last_weather_measurement: None,
             connected: None,
             offline_published: false,
@@ -345,10 +355,9 @@ impl DeviceSession {
 
         let mut stale_timer = interval(Duration::from_millis(STALE_CHECK_INTERVAL_MS));
         stale_timer.set_missed_tick_behavior(MissedTickBehavior::Skip);
-        let mut report_timer = interval(Duration::from_millis(
-            self.config.state_report_interval_ms.max(1),
-        ));
-        report_timer.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        let mut notification_timer =
+            interval(Duration::from_millis(NOTIFICATION_DRAIN_INTERVAL_MS));
+        notification_timer.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
         loop {
             tokio::select! {
@@ -367,8 +376,8 @@ impl DeviceSession {
                 _ = stale_timer.tick() => {
                     self.check_stale().await?;
                 }
-                _ = report_timer.tick(), if self.connected.is_some() => {
-                    self.publish_connected_state().await?;
+                _ = notification_timer.tick(), if self.connected.is_some() => {
+                    self.drain_notifications().await?;
                 }
             }
         }
@@ -474,31 +483,8 @@ impl DeviceSession {
             return Ok(());
         }
 
-        match self.spec.kind {
-            DeviceKind::Power => {
-                let battery_mv = self
-                    .last_power_state
-                    .as_ref()
-                    .and_then(|state| state.battery_mv);
-                self.last_power_state = Some(PowerState {
-                    redcon: target_redcon,
-                    battery_mv,
-                });
-            }
-            DeviceKind::Weather => {
-                let (battery_mv, bme280_valid) = self
-                    .last_weather_state
-                    .as_ref()
-                    .map(|state| (state.battery_mv, state.bme280_valid))
-                    .unwrap_or((None, false));
-                self.last_weather_state = Some(WeatherState {
-                    redcon: target_redcon,
-                    battery_mv,
-                    bme280_valid,
-                });
-            }
-        }
-        self.publish_connected_state().await?;
+        self.last_redcon = Some(target_redcon);
+        self.seed_connected_state().await?;
         publish_command_result(
             &self.config.adapter_id,
             &self.outbound_sender,
@@ -545,11 +531,11 @@ impl DeviceSession {
         )
         .await?;
         self.connected = Some(connected);
-        self.publish_connected_state().await?;
+        self.seed_connected_state().await?;
         Ok(())
     }
 
-    async fn publish_connected_state(&mut self) -> Result<()> {
+    async fn seed_connected_state(&mut self) -> Result<()> {
         let Some(connected) = self.connected.as_mut() else {
             return Ok(());
         };
@@ -559,7 +545,6 @@ impl DeviceSession {
             return Ok(());
         }
 
-        let address = connected.address();
         let now = now_ms();
         match self.spec.kind {
             DeviceKind::Power => {
@@ -568,11 +553,7 @@ impl DeviceSession {
                     .await
                 {
                     Ok(state) => {
-                        self.last_power_state = Some(state.clone());
-                        let seq = self.next_seq();
-                        let sample =
-                            power_state_sample(&self.spec, &state, Some(address), seq, now);
-                        self.publish_sample(sample)?;
+                        self.last_redcon = Some(state.redcon);
                     }
                     Err(err) => {
                         eprintln!(
@@ -580,6 +561,25 @@ impl DeviceSession {
                             self.spec.thing_name
                         );
                         self.connected = None;
+                        return Ok(());
+                    }
+                }
+                match connected
+                    .read_power_measurement(self.config.command_timeout_ms)
+                    .await
+                {
+                    Ok(measurement) => {
+                        self.last_power_measurement = Some(TimedMeasurement {
+                            value: measurement,
+                            observed_at_ms: now,
+                        });
+                    }
+                    Err(err) => {
+                        eprintln!(
+                            "warning: BLE power measurement read failed thing={} error={err:#}",
+                            self.spec.thing_name
+                        );
+                        self.last_power_measurement = None;
                     }
                 }
             }
@@ -589,35 +589,7 @@ impl DeviceSession {
                     .await
                 {
                     Ok(state) => {
-                        self.last_weather_state = Some(state.clone());
-                        if state.bme280_valid {
-                            match connected
-                                .read_weather_measurement(self.config.command_timeout_ms)
-                                .await
-                            {
-                                Ok(measurement) => {
-                                    self.last_weather_measurement = Some(measurement);
-                                }
-                                Err(err) => {
-                                    eprintln!(
-                                        "warning: BLE weather measurement read failed thing={} error={err:#}",
-                                        self.spec.thing_name
-                                    );
-                                }
-                            }
-                        } else {
-                            self.last_weather_measurement = None;
-                        }
-                        let seq = self.next_seq();
-                        let sample = weather_state_sample(
-                            &self.spec,
-                            &state,
-                            self.last_weather_measurement.clone(),
-                            Some(address),
-                            seq,
-                            now,
-                        );
-                        self.publish_sample(sample)?;
+                        self.last_redcon = Some(state.redcon);
                     }
                     Err(err) => {
                         eprintln!(
@@ -625,15 +597,138 @@ impl DeviceSession {
                             self.spec.thing_name
                         );
                         self.connected = None;
+                        return Ok(());
                     }
                 }
+                match connected
+                    .read_power_measurement(self.config.command_timeout_ms)
+                    .await
+                {
+                    Ok(measurement) => {
+                        self.last_power_measurement = Some(TimedMeasurement {
+                            value: measurement,
+                            observed_at_ms: now,
+                        });
+                    }
+                    Err(err) => {
+                        eprintln!(
+                            "warning: BLE weather power measurement read failed thing={} error={err:#}",
+                            self.spec.thing_name
+                        );
+                        self.last_power_measurement = None;
+                    }
+                }
+                match connected
+                    .read_weather_measurement(self.config.command_timeout_ms)
+                    .await
+                {
+                    Ok(measurement) => {
+                        self.last_weather_measurement = Some(TimedMeasurement {
+                            value: measurement,
+                            observed_at_ms: now,
+                        });
+                    }
+                    Err(err) => {
+                        eprintln!(
+                            "warning: BLE weather measurement read failed thing={} error={err:#}",
+                            self.spec.thing_name
+                        );
+                        self.last_weather_measurement = None;
+                    }
+                }
+            }
+        }
+        self.publish_aggregate_sample(now)?;
+        Ok(())
+    }
+
+    async fn drain_notifications(&mut self) -> Result<()> {
+        let Some(connected) = self.connected.as_mut() else {
+            return Ok(());
+        };
+        if !connected.is_connected().await {
+            self.connected = None;
+            self.check_stale().await?;
+            return Ok(());
+        }
+        let notifications = connected.drain_notifications();
+        for notification in notifications {
+            self.handle_notification(notification)?;
+        }
+        Ok(())
+    }
+
+    fn handle_notification(&mut self, notification: BleNotification) -> Result<()> {
+        let now = now_ms();
+        if notification.uuid == TXING_BLE_STATE_UUID {
+            match self.spec.kind {
+                DeviceKind::Power => match parse_power_state(&notification.payload) {
+                    Ok(state) => self.last_redcon = Some(state.redcon),
+                    Err(err) => eprintln!(
+                        "warning: BLE power state notification ignored thing={} error={err:#}",
+                        self.spec.thing_name
+                    ),
+                },
+                DeviceKind::Weather => match parse_weather_state(&notification.payload) {
+                    Ok(state) => self.last_redcon = Some(state.redcon),
+                    Err(err) => eprintln!(
+                        "warning: BLE weather state notification ignored thing={} error={err:#}",
+                        self.spec.thing_name
+                    ),
+                },
+            }
+            self.publish_aggregate_sample(now)?;
+            return Ok(());
+        }
+        if notification.uuid == POWER_MEASUREMENT_UUID {
+            match parse_power_measurement(&notification.payload) {
+                Ok(measurement) => {
+                    self.last_power_measurement = Some(TimedMeasurement {
+                        value: measurement,
+                        observed_at_ms: now,
+                    });
+                    self.publish_aggregate_sample(now)?;
+                }
+                Err(err) => eprintln!(
+                    "warning: BLE power measurement notification ignored thing={} error={err:#}",
+                    self.spec.thing_name
+                ),
+            }
+            return Ok(());
+        }
+        if notification.uuid == WEATHER_MEASUREMENT_UUID && self.spec.kind.supports_weather() {
+            match parse_weather_measurement(&notification.payload) {
+                Ok(measurement) => {
+                    self.last_weather_measurement = Some(TimedMeasurement {
+                        value: measurement,
+                        observed_at_ms: now,
+                    });
+                    self.publish_aggregate_sample(now)?;
+                }
+                Err(err) => eprintln!(
+                    "warning: BLE weather measurement notification ignored thing={} error={err:#}",
+                    self.spec.thing_name
+                ),
             }
         }
         Ok(())
     }
 
     async fn check_stale(&mut self) -> Result<()> {
+        let now = now_ms();
         if self.connected.is_some() {
+            let mut changed = false;
+            if self.power_measurement_stale(now) {
+                self.last_power_measurement = None;
+                changed = true;
+            }
+            if self.weather_measurement_stale(now) {
+                self.last_weather_measurement = None;
+                changed = true;
+            }
+            if changed {
+                self.publish_aggregate_sample(now)?;
+            }
             return Ok(());
         }
         let fresh = self
@@ -650,11 +745,86 @@ impl DeviceSession {
     }
 
     async fn publish_offline(&mut self) -> Result<()> {
+        self.last_redcon = None;
+        self.last_power_measurement = None;
+        self.last_weather_measurement = None;
         let seq = self.next_seq();
         let sample = offline_sample(&self.spec, seq, now_ms());
         self.publish_sample(sample)?;
         self.offline_published = true;
         Ok(())
+    }
+
+    fn publish_aggregate_sample(&mut self, now: u64) -> Result<()> {
+        let address = self
+            .connected
+            .as_ref()
+            .map(ConnectedDevice::address)
+            .or_else(|| {
+                self.last_advertisement
+                    .as_ref()
+                    .map(|advertisement| advertisement.address.clone())
+            });
+        let redcon = self.last_redcon.unwrap_or(REDCON_IDLE);
+        let power_measurement = self
+            .last_power_measurement
+            .as_ref()
+            .filter(|measurement| {
+                now.saturating_sub(measurement.observed_at_ms) <= self.measurement_stale_ms()
+            })
+            .map(|measurement| measurement.value.clone());
+        let weather_measurement = self
+            .last_weather_measurement
+            .as_ref()
+            .filter(|measurement| {
+                now.saturating_sub(measurement.observed_at_ms) <= self.measurement_stale_ms()
+            })
+            .map(|measurement| measurement.value.clone());
+        let seq = self.next_seq();
+        let sample = match self.spec.kind {
+            DeviceKind::Power => power_state_sample(
+                &self.spec,
+                redcon,
+                power_measurement.as_ref(),
+                address,
+                seq,
+                now,
+            ),
+            DeviceKind::Weather => weather_state_sample(
+                &self.spec,
+                redcon,
+                power_measurement.as_ref(),
+                weather_measurement,
+                address,
+                seq,
+                now,
+            ),
+        };
+        self.publish_sample(sample)
+    }
+
+    fn power_measurement_stale(&self, now: u64) -> bool {
+        self.last_power_measurement
+            .as_ref()
+            .is_some_and(|measurement| {
+                now.saturating_sub(measurement.observed_at_ms) > self.measurement_stale_ms()
+            })
+    }
+
+    fn weather_measurement_stale(&self, now: u64) -> bool {
+        self.last_weather_measurement
+            .as_ref()
+            .is_some_and(|measurement| {
+                now.saturating_sub(measurement.observed_at_ms) > self.measurement_stale_ms()
+            })
+    }
+
+    fn measurement_stale_ms(&self) -> u64 {
+        if self.last_redcon.unwrap_or(REDCON_IDLE) < REDCON_IDLE {
+            REDCON_ACTIVE_MEASUREMENT_STALE_MS
+        } else {
+            REDCON_IDLE_MEASUREMENT_STALE_MS
+        }
     }
 
     fn publish_sample(&self, sample: CapabilitySample) -> Result<()> {
@@ -713,12 +883,21 @@ fn publish_command_result(
         .map_err(|_| anyhow!("outbound local pub/sub channel is closed"))
 }
 
+#[derive(Debug, Clone)]
+struct BleNotification {
+    uuid: Uuid,
+    payload: Vec<u8>,
+}
+
 #[cfg(all(feature = "ble-real", target_os = "linux"))]
 struct ConnectedDevice {
     peripheral: Peripheral,
     command_char: Characteristic,
     state_char: Characteristic,
-    measurement_char: Option<Characteristic>,
+    power_measurement_char: Characteristic,
+    weather_measurement_char: Option<Characteristic>,
+    notification_receiver: mpsc::UnboundedReceiver<BleNotification>,
+    notification_task: tokio::task::JoinHandle<()>,
     address: String,
     _permit: Option<tokio::sync::OwnedSemaphorePermit>,
 }
@@ -755,9 +934,49 @@ impl ConnectedDevice {
             .ok_or_else(|| anyhow!("BLE command characteristic is missing"))?;
         let state_char = find_characteristic(&characteristics, TXING_BLE_STATE_UUID)
             .ok_or_else(|| anyhow!("BLE state characteristic is missing"))?;
-        let measurement_char = (spec.kind == DeviceKind::Weather)
-            .then(|| find_characteristic(&characteristics, WEATHER_MEASUREMENT_UUID))
-            .flatten();
+        let power_measurement_char = find_characteristic(&characteristics, POWER_MEASUREMENT_UUID)
+            .ok_or_else(|| anyhow!("BLE power measurement characteristic is missing"))?;
+        let weather_measurement_char = if spec.kind.supports_weather() {
+            Some(
+                find_characteristic(&characteristics, WEATHER_MEASUREMENT_UUID)
+                    .ok_or_else(|| anyhow!("BLE weather measurement characteristic is missing"))?,
+            )
+        } else {
+            None
+        };
+
+        let mut notifications = peripheral
+            .notifications()
+            .await
+            .context("open BLE notification stream")?;
+        peripheral
+            .subscribe(&state_char)
+            .await
+            .context("subscribe BLE state notifications")?;
+        peripheral
+            .subscribe(&power_measurement_char)
+            .await
+            .context("subscribe BLE power measurement notifications")?;
+        if let Some(characteristic) = &weather_measurement_char {
+            peripheral
+                .subscribe(characteristic)
+                .await
+                .context("subscribe BLE weather measurement notifications")?;
+        }
+        let (notification_sender, notification_receiver) = mpsc::unbounded_channel();
+        let notification_task = tokio::spawn(async move {
+            while let Some(notification) = notifications.next().await {
+                if notification_sender
+                    .send(BleNotification {
+                        uuid: notification.uuid,
+                        payload: notification.value,
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
 
         eprintln!(
             "connected BLE thing={} address={} serviceAdvertised={}",
@@ -769,7 +988,10 @@ impl ConnectedDevice {
             peripheral,
             command_char,
             state_char,
-            measurement_char,
+            power_measurement_char,
+            weather_measurement_char,
+            notification_receiver,
+            notification_task,
             address: advertisement.address.clone(),
             _permit: permit,
         })
@@ -806,6 +1028,17 @@ impl ConnectedDevice {
         parse_power_state(&payload)
     }
 
+    async fn read_power_measurement(&self, command_timeout_ms: u64) -> Result<PowerMeasurement> {
+        let payload = timeout(
+            Duration::from_millis(command_timeout_ms),
+            self.peripheral.read(&self.power_measurement_char),
+        )
+        .await
+        .context("BLE power measurement read timed out")?
+        .context("read BLE power measurement")?;
+        parse_power_measurement(&payload)
+    }
+
     async fn read_weather_state(&self, command_timeout_ms: u64) -> Result<WeatherState> {
         let payload = timeout(
             Duration::from_millis(command_timeout_ms),
@@ -822,7 +1055,7 @@ impl ConnectedDevice {
         command_timeout_ms: u64,
     ) -> Result<WeatherMeasurement> {
         let measurement_char = self
-            .measurement_char
+            .weather_measurement_char
             .as_ref()
             .ok_or_else(|| anyhow!("BLE weather measurement characteristic is missing"))?;
         let payload = timeout(
@@ -834,14 +1067,31 @@ impl ConnectedDevice {
         .context("read BLE weather measurement")?;
         parse_weather_measurement(&payload)
     }
+
+    fn drain_notifications(&mut self) -> Vec<BleNotification> {
+        let mut notifications = Vec::new();
+        while let Ok(notification) = self.notification_receiver.try_recv() {
+            notifications.push(notification);
+        }
+        notifications
+    }
 }
 
 #[cfg(all(feature = "ble-real", target_os = "linux"))]
 impl Drop for ConnectedDevice {
     fn drop(&mut self) {
+        self.notification_task.abort();
         let peripheral = self.peripheral.clone();
+        let state_char = self.state_char.clone();
+        let power_measurement_char = self.power_measurement_char.clone();
+        let weather_measurement_char = self.weather_measurement_char.clone();
         tokio::spawn(async move {
             if peripheral.is_connected().await.unwrap_or(false) {
+                let _ = peripheral.unsubscribe(&state_char).await;
+                let _ = peripheral.unsubscribe(&power_measurement_char).await;
+                if let Some(characteristic) = weather_measurement_char {
+                    let _ = peripheral.unsubscribe(&characteristic).await;
+                }
                 let _ = peripheral.disconnect().await;
             }
         });
@@ -880,6 +1130,10 @@ impl ConnectedDevice {
         bail!("build with the ble-real feature to use the live BLE adapter")
     }
 
+    async fn read_power_measurement(&self, _command_timeout_ms: u64) -> Result<PowerMeasurement> {
+        bail!("build with the ble-real feature to use the live BLE adapter")
+    }
+
     async fn read_weather_state(&self, _command_timeout_ms: u64) -> Result<WeatherState> {
         bail!("build with the ble-real feature to use the live BLE adapter")
     }
@@ -889,6 +1143,10 @@ impl ConnectedDevice {
         _command_timeout_ms: u64,
     ) -> Result<WeatherMeasurement> {
         bail!("build with the ble-real feature to use the live BLE adapter")
+    }
+
+    fn drain_notifications(&mut self) -> Vec<BleNotification> {
+        Vec::new()
     }
 }
 
@@ -1199,7 +1457,7 @@ mod tests {
     #[test]
     fn inventory_filter_selects_power_and_weather_only() {
         let power = inventory_device("power-1", &["sparkplug", "ble", "power"]);
-        let weather = inventory_device("weather-1", &["sparkplug", "ble", "weather"]);
+        let weather = inventory_device("weather-1", &["sparkplug", "ble", "power", "weather"]);
         let time = inventory_device("time-1", &["sparkplug", "time", "mcp"]);
 
         assert_eq!(
@@ -1282,6 +1540,42 @@ mod tests {
         let state: CapabilityState = serde_json::from_slice(&outbound.payload).unwrap();
         assert_eq!(state.thing_name, "power-1");
         assert_eq!(state.capabilities.get("ble"), Some(&true));
+    }
+
+    #[tokio::test]
+    async fn stale_power_measurement_clears_power_capability_and_shadow() {
+        let (sender, mut receiver) = mpsc::unbounded_channel();
+        let (shadow_sender, mut shadow_receiver) = mpsc::unbounded_channel();
+        let mut session = DeviceSession::new(
+            power_spec(),
+            RuntimeConfig::default(),
+            sender,
+            shadow_sender,
+            None,
+        );
+        session.connected = Some(ConnectedDevice { connected: true });
+        session.last_redcon = Some(REDCON_ACTIVE);
+        session.last_power_measurement = Some(TimedMeasurement {
+            value: PowerMeasurement {
+                battery_mv: Some(3970),
+            },
+            observed_at_ms: now_ms().saturating_sub(REDCON_ACTIVE_MEASUREMENT_STALE_MS + 1),
+        });
+
+        session.check_stale().await.unwrap();
+
+        let outbound = receiver.recv().await.unwrap();
+        let state: CapabilityState = serde_json::from_slice(&outbound.payload).unwrap();
+        assert_eq!(state.capabilities.get("power"), Some(&false));
+
+        let _ble_shadow = shadow_receiver.recv().await.unwrap();
+        let power_shadow = shadow_receiver.recv().await.unwrap();
+        assert_eq!(
+            power_shadow.topic,
+            "$aws/things/power-1/shadow/name/power/update"
+        );
+        let payload: serde_json::Value = serde_json::from_slice(&power_shadow.payload).unwrap();
+        assert!(payload["state"]["reported"]["batteryMv"].is_null());
     }
 
     #[tokio::test]

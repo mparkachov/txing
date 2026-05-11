@@ -3,6 +3,7 @@ import type {
   DeviceWebAdapter,
 } from '../../../web/src/device-adapter'
 import {
+  extractWeatherPowerReportedState,
   extractWeatherReportedState,
   formatWeatherMetric,
 } from './weather-model'
@@ -12,6 +13,7 @@ type WeatherPanelElement = ReturnType<DeviceWebAdapter['renderDetail']>
 
 function WeatherPanel({ shadow }: WeatherPanelProps) {
   const reportedState = extractWeatherReportedState(shadow)
+  const reportedPowerState = extractWeatherPowerReportedState(shadow)
 
   return createWeatherElement(
     'section',
@@ -33,7 +35,7 @@ function WeatherPanel({ shadow }: WeatherPanelProps) {
       ),
       createMetric(
         'Battery',
-        reportedState.batteryMv === null ? '--' : `${reportedState.batteryMv} mV`,
+        reportedPowerState.batteryMv === null ? '--' : `${reportedPowerState.batteryMv} mV`,
       ),
     ),
   )

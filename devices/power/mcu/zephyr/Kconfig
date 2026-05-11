@@ -50,19 +50,19 @@ config REDCON_BLE_CONN_SUPERVISION_MS
 	  Connection supervision timeout requested when entering REDCON 3 wakeup
 	  state.
 
-config REDCON_BLE_STATE_NOTIFY_INTERVAL_SECONDS
-	int "REDCON state notification interval in seconds"
+config REDCON_BLE_MEASUREMENT_NOTIFY_INTERVAL_SECONDS
+	int "REDCON measurement notification interval in seconds"
 	range 1 3600
 	help
-	  Periodic REDCON state notification interval while in REDCON 3 wakeup
-	  state.
+	  Periodic power measurement notification interval while in REDCON 3
+	  wakeup state.
 
-config REDCON_BLE_IDLE_STATE_NOTIFY_INTERVAL_SECONDS
-	int "REDCON idle state notification interval in seconds"
+config REDCON_BLE_IDLE_MEASUREMENT_NOTIFY_INTERVAL_SECONDS
+	int "REDCON idle measurement notification interval in seconds"
 	range 1 3600
 	help
-	  Periodic REDCON state notification interval while connected in REDCON 4
-	  sleep state.
+	  Periodic power measurement notification interval while connected in
+	  REDCON 4 sleep state.
 
 endmenu
 endmenu

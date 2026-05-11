@@ -1,7 +1,7 @@
 type = "weather"
 device_name = "outside"
 display_name = "Weather"
-capabilities = ["sparkplug", "ble", "weather"]
+capabilities = ["sparkplug", "ble", "power", "weather"]
 compatible_rig_types = ["raspi"]
 redcon_command_levels = [4, 3]
 
@@ -16,6 +16,10 @@ default = "aws/default-sparkplug-shadow.json"
 [shadows.ble]
 schema = "aws/ble-shadow.schema.json"
 default = "aws/default-ble-shadow.json"
+
+[shadows.power]
+schema = "aws/power-shadow.schema.json"
+default = "aws/default-power-shadow.json"
 
 [shadows.weather]
 schema = "aws/weather-shadow.schema.json"

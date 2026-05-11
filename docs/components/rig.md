@@ -50,25 +50,27 @@ service UUIDs, then routes matching devices to protocol handlers. New device
 types should not add a separate BLE manager or scanner only because they expose
 additional characteristics.
 
-Current assumption: REDCON GATT v1 uses one common UUID set for the base
-lifecycle contract across BLE device types.
+Current assumption: REDCON GATT v2 uses one common UUID set for the base
+lifecycle contract across BLE device types, with one measurement characteristic
+per data capability.
 
 ```text
-redcon service  f6b4b000-7b32-4d2d-9f4b-4ff0a2b8f100
-redcon command  f6b4b001-7b32-4d2d-9f4b-4ff0a2b8f100
-redcon state    f6b4b002-7b32-4d2d-9f4b-4ff0a2b8f100
+redcon service      f6b4b000-7b32-4d2d-9f4b-4ff0a2b8f100
+redcon command      f6b4b001-7b32-4d2d-9f4b-4ff0a2b8f100  <version:u8=2, redcon:u8>
+redcon state        f6b4b002-7b32-4d2d-9f4b-4ff0a2b8f100  <version:u8=2, redcon:u8>
+power measurement   f6b4b003-7b32-4d2d-9f4b-4ff0a2b8f100  <version:u8=2, battery_mv:u16>
+weather measurement f6b4b004-7b32-4d2d-9f4b-4ff0a2b8f100  <version:u8=2, temperature_centi:i32, pressure_pa:u32, humidity_centi:u16>
 ```
 
-- the REDCON state characteristic is the common observable lifecycle and battery
+- the REDCON state characteristic is only the common observable lifecycle
   surface
 - the REDCON command characteristic is present for device types that accept
   lifecycle commands; read-only devices may omit it and still report REDCON
   state
-- device-specific functionality should be layered on top of REDCON as extra
-  characteristics or extra services
-- weather telemetry can use an additional measurement characteristic, currently
-  assumed to be `f6b4b003-7b32-4d2d-9f4b-4ff0a2b8f100`, while keeping the same
-  REDCON service, command, and state UUIDs
+- data-producing capabilities are layered on top as separate measurement
+  characteristics; multibyte fields are little-endian
+- firmware owns measurement cadence: REDCON `3` every 10 seconds and REDCON `4`
+  every 60 seconds
 - a new service UUID set is reserved for a breaking change to the base REDCON
   contract or for a deliberate discovery-level distinction of a fundamentally
   different BLE contract; it is not needed for normal telemetry additions or

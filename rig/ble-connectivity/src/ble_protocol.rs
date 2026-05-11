@@ -17,15 +17,15 @@ pub const BLE_SHADOW_NAME: &str = "ble";
 pub const POWER_SHADOW_NAME: &str = "power";
 pub const WEATHER_SHADOW_NAME: &str = "weather";
 
-pub const PROTOCOL_VERSION: u8 = 1;
+pub const PROTOCOL_VERSION: u8 = 2;
 pub const REDCON_ACTIVE: u8 = 3;
 pub const REDCON_IDLE: u8 = 4;
-pub const STATE_FLAG_BME280_VALID: u8 = 0x02;
 
 pub const TXING_BLE_SERVICE_UUID: Uuid = uuid!("f6b4b000-7b32-4d2d-9f4b-4ff0a2b8f100");
 pub const TXING_BLE_COMMAND_UUID: Uuid = uuid!("f6b4b001-7b32-4d2d-9f4b-4ff0a2b8f100");
 pub const TXING_BLE_STATE_UUID: Uuid = uuid!("f6b4b002-7b32-4d2d-9f4b-4ff0a2b8f100");
-pub const WEATHER_MEASUREMENT_UUID: Uuid = uuid!("f6b4b003-7b32-4d2d-9f4b-4ff0a2b8f100");
+pub const POWER_MEASUREMENT_UUID: Uuid = uuid!("f6b4b003-7b32-4d2d-9f4b-4ff0a2b8f100");
+pub const WEATHER_MEASUREMENT_UUID: Uuid = uuid!("f6b4b004-7b32-4d2d-9f4b-4ff0a2b8f100");
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeviceKind {
@@ -34,7 +34,15 @@ pub enum DeviceKind {
 }
 
 impl DeviceKind {
-    pub fn domain_capability(self) -> &'static str {
+    pub fn supports_power(self) -> bool {
+        true
+    }
+
+    pub fn supports_weather(self) -> bool {
+        self == Self::Weather
+    }
+
+    pub fn primary_capability(self) -> &'static str {
         match self {
             Self::Power => POWER_CAPABILITY,
             Self::Weather => WEATHER_CAPABILITY,
@@ -71,14 +79,16 @@ impl Advertisement {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PowerState {
     pub redcon: u8,
-    pub battery_mv: Option<u16>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WeatherState {
     pub redcon: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PowerMeasurement {
     pub battery_mv: Option<u16>,
-    pub bme280_valid: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -86,7 +96,6 @@ pub struct WeatherMeasurement {
     pub measured_temperature: f64,
     pub measured_pressure: f64,
     pub measured_humidity: f64,
-    pub battery_mv: Option<u16>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -95,7 +104,8 @@ pub struct CapabilitySample {
     pub kind: DeviceKind,
     pub sparkplug_available: bool,
     pub ble_available: bool,
-    pub domain_available: bool,
+    pub power_available: bool,
+    pub weather_available: bool,
     pub ble_local_name: Option<String>,
     pub ble_address: Option<String>,
     pub battery_mv: Option<u16>,
@@ -120,42 +130,58 @@ pub fn encode_redcon_command(target_redcon: u8) -> Result<Vec<u8>> {
 }
 
 pub fn parse_power_state(payload: &[u8]) -> Result<PowerState> {
-    if payload.len() < 4 {
-        bail!("power BLE state report is too short");
+    if payload.len() != 2 {
+        bail!(
+            "power BLE state report length must be 2, got {}",
+            payload.len()
+        );
     }
     let version = payload[0];
     if version != PROTOCOL_VERSION {
         bail!("unsupported power BLE state version {version}");
     }
     let redcon = normalize_state_redcon(payload[1], "power")?;
-    let battery_mv = u16::from_le_bytes([payload[2], payload[3]]);
-    Ok(PowerState {
-        redcon,
-        battery_mv: nonzero_battery(battery_mv),
-    })
+    Ok(PowerState { redcon })
 }
 
 pub fn parse_weather_state(payload: &[u8]) -> Result<WeatherState> {
-    if payload.len() < 5 {
-        bail!("weather BLE state report is too short");
+    if payload.len() != 2 {
+        bail!(
+            "weather BLE state report length must be 2, got {}",
+            payload.len()
+        );
     }
     let version = payload[0];
     if version != PROTOCOL_VERSION {
         bail!("unsupported weather BLE state version {version}");
     }
     let redcon = normalize_state_redcon(payload[1], "weather")?;
-    let flags = payload[2];
-    let battery_mv = u16::from_le_bytes([payload[3], payload[4]]);
-    Ok(WeatherState {
-        redcon,
+    Ok(WeatherState { redcon })
+}
+
+pub fn parse_power_measurement(payload: &[u8]) -> Result<PowerMeasurement> {
+    if payload.len() != 3 {
+        bail!(
+            "power BLE measurement report length must be 3, got {}",
+            payload.len()
+        );
+    }
+    let version = payload[0];
+    if version != PROTOCOL_VERSION {
+        bail!("unsupported power BLE measurement version {version}");
+    }
+    let battery_mv = u16::from_le_bytes([payload[1], payload[2]]);
+    Ok(PowerMeasurement {
         battery_mv: nonzero_battery(battery_mv),
-        bme280_valid: flags & STATE_FLAG_BME280_VALID != 0,
     })
 }
 
 pub fn parse_weather_measurement(payload: &[u8]) -> Result<WeatherMeasurement> {
-    if payload.len() < 13 {
-        bail!("weather BLE measurement report is too short");
+    if payload.len() != 11 {
+        bail!(
+            "weather BLE measurement report length must be 11, got {}",
+            payload.len()
+        );
     }
     let version = payload[0];
     if version != PROTOCOL_VERSION {
@@ -164,12 +190,10 @@ pub fn parse_weather_measurement(payload: &[u8]) -> Result<WeatherMeasurement> {
     let temperature_centi = i32::from_le_bytes([payload[1], payload[2], payload[3], payload[4]]);
     let pressure_pa = u32::from_le_bytes([payload[5], payload[6], payload[7], payload[8]]);
     let humidity_centi = u16::from_le_bytes([payload[9], payload[10]]);
-    let battery_mv = u16::from_le_bytes([payload[11], payload[12]]);
     Ok(WeatherMeasurement {
         measured_temperature: f64::from(temperature_centi) / 100.0,
         measured_pressure: f64::from(pressure_pa) / 1000.0,
         measured_humidity: f64::from(humidity_centi) / 100.0,
-        battery_mv: nonzero_battery(battery_mv),
     })
 }
 
@@ -195,7 +219,8 @@ pub fn advertisement_sample(
         kind: spec.kind,
         sparkplug_available: true,
         ble_available: true,
-        domain_available: false,
+        power_available: false,
+        weather_available: false,
         ble_local_name: advertisement.local_name.clone(),
         ble_address: Some(advertisement.address.clone()),
         battery_mv: None,
@@ -211,7 +236,8 @@ pub fn offline_sample(spec: &DeviceSpec, seq: u64, now_ms: u64) -> CapabilitySam
         kind: spec.kind,
         sparkplug_available: false,
         ble_available: false,
-        domain_available: false,
+        power_available: false,
+        weather_available: false,
         ble_local_name: None,
         ble_address: None,
         battery_mv: None,
@@ -223,7 +249,8 @@ pub fn offline_sample(spec: &DeviceSpec, seq: u64, now_ms: u64) -> CapabilitySam
 
 pub fn power_state_sample(
     spec: &DeviceSpec,
-    state: &PowerState,
+    redcon: u8,
+    measurement: Option<&PowerMeasurement>,
     ble_address: Option<String>,
     seq: u64,
     now_ms: u64,
@@ -233,10 +260,12 @@ pub fn power_state_sample(
         kind: DeviceKind::Power,
         sparkplug_available: true,
         ble_available: true,
-        domain_available: state.redcon < REDCON_IDLE,
+        power_available: redcon < REDCON_IDLE
+            && measurement.and_then(|item| item.battery_mv).is_some(),
+        weather_available: false,
         ble_local_name: Some(spec.thing_name.clone()),
         ble_address,
-        battery_mv: state.battery_mv,
+        battery_mv: measurement.and_then(|item| item.battery_mv),
         weather: None,
         observed_at_ms: now_ms,
         seq,
@@ -245,26 +274,25 @@ pub fn power_state_sample(
 
 pub fn weather_state_sample(
     spec: &DeviceSpec,
-    state: &WeatherState,
-    measurement: Option<WeatherMeasurement>,
+    redcon: u8,
+    power_measurement: Option<&PowerMeasurement>,
+    weather_measurement: Option<WeatherMeasurement>,
     ble_address: Option<String>,
     seq: u64,
     now_ms: u64,
 ) -> CapabilitySample {
-    let battery_mv = measurement
-        .as_ref()
-        .and_then(|item| item.battery_mv)
-        .or(state.battery_mv);
     CapabilitySample {
         thing_name: spec.thing_name.clone(),
         kind: DeviceKind::Weather,
         sparkplug_available: true,
         ble_available: true,
-        domain_available: state.redcon < REDCON_IDLE,
+        power_available: redcon < REDCON_IDLE
+            && power_measurement.and_then(|item| item.battery_mv).is_some(),
+        weather_available: redcon < REDCON_IDLE && weather_measurement.is_some(),
         ble_local_name: Some(spec.thing_name.clone()),
         ble_address,
-        battery_mv,
-        weather: measurement,
+        battery_mv: power_measurement.and_then(|item| item.battery_mv),
+        weather: weather_measurement,
         observed_at_ms: now_ms,
         seq,
     }
@@ -277,10 +305,12 @@ pub fn capability_state_from_sample(
     let mut capabilities = BTreeMap::new();
     capabilities.insert(SPARKPLUG_CAPABILITY.to_string(), sample.sparkplug_available);
     capabilities.insert(BLE_CAPABILITY.to_string(), sample.ble_available);
-    capabilities.insert(
-        sample.kind.domain_capability().to_string(),
-        sample.domain_available,
-    );
+    if sample.kind.supports_power() {
+        capabilities.insert(POWER_CAPABILITY.to_string(), sample.power_available);
+    }
+    if sample.kind.supports_weather() {
+        capabilities.insert(WEATHER_CAPABILITY.to_string(), sample.weather_available);
+    }
 
     CapabilityState {
         schema_version: SCHEMA_VERSION.to_string(),
@@ -314,8 +344,8 @@ pub fn shadow_updates_from_sample(sample: &CapabilitySample) -> Result<Vec<Shado
         ]),
     )?];
 
-    match sample.kind {
-        DeviceKind::Power => updates.push(build_shadow_update(
+    if sample.kind.supports_power() {
+        updates.push(build_shadow_update(
             &sample.thing_name,
             POWER_SHADOW_NAME,
             BTreeMap::from([
@@ -326,34 +356,34 @@ pub fn shadow_updates_from_sample(sample: &CapabilitySample) -> Result<Vec<Shado
                 ),
                 ("seq".to_string(), Value::from(sample.seq)),
             ]),
-        )?),
-        DeviceKind::Weather => {
-            let weather = sample.weather.as_ref();
-            updates.push(build_shadow_update(
-                &sample.thing_name,
-                WEATHER_SHADOW_NAME,
-                BTreeMap::from([
-                    ("batteryMv".to_string(), optional_u16_i32(sample.battery_mv)),
-                    (
-                        "measuredTemperature".to_string(),
-                        optional_f64(weather.map(|value| value.measured_temperature)),
-                    ),
-                    (
-                        "measuredPressure".to_string(),
-                        optional_f64(weather.map(|value| value.measured_pressure)),
-                    ),
-                    (
-                        "measuredHumidity".to_string(),
-                        optional_f64(weather.map(|value| value.measured_humidity)),
-                    ),
-                    (
-                        "observedAtMs".to_string(),
-                        Value::from(sample.observed_at_ms),
-                    ),
-                    ("seq".to_string(), Value::from(sample.seq)),
-                ]),
-            )?);
-        }
+        )?);
+    }
+
+    if sample.kind.supports_weather() {
+        let weather = sample.weather.as_ref();
+        updates.push(build_shadow_update(
+            &sample.thing_name,
+            WEATHER_SHADOW_NAME,
+            BTreeMap::from([
+                (
+                    "measuredTemperature".to_string(),
+                    optional_f64(weather.map(|value| value.measured_temperature)),
+                ),
+                (
+                    "measuredPressure".to_string(),
+                    optional_f64(weather.map(|value| value.measured_pressure)),
+                ),
+                (
+                    "measuredHumidity".to_string(),
+                    optional_f64(weather.map(|value| value.measured_humidity)),
+                ),
+                (
+                    "observedAtMs".to_string(),
+                    Value::from(sample.observed_at_ms),
+                ),
+                ("seq".to_string(), Value::from(sample.seq)),
+            ]),
+        )?);
     }
 
     Ok(updates)
@@ -402,14 +432,16 @@ mod tests {
 
     #[test]
     fn power_payload_round_trips_current_protocol() {
-        assert_eq!(encode_redcon_command(1).unwrap(), vec![1, 3]);
-        assert_eq!(encode_redcon_command(4).unwrap(), vec![1, 4]);
+        assert_eq!(encode_redcon_command(1).unwrap(), vec![2, 3]);
+        assert_eq!(encode_redcon_command(4).unwrap(), vec![2, 4]);
 
-        let state = parse_power_state(&[1, 4, 0x82, 0x0f]).unwrap();
+        let state = parse_power_state(&[2, 4]).unwrap();
+        assert_eq!(state, PowerState { redcon: 4 });
+
+        let measurement = parse_power_measurement(&[2, 0x82, 0x0f]).unwrap();
         assert_eq!(
-            state,
-            PowerState {
-                redcon: 4,
+            measurement,
+            PowerMeasurement {
                 battery_mv: Some(3970)
             }
         );
@@ -417,26 +449,29 @@ mod tests {
 
     #[test]
     fn weather_payload_parses_state_and_measurement() {
-        let state = parse_weather_state(&[1, 3, STATE_FLAG_BME280_VALID, 0x74, 0x0e]).unwrap();
-        assert_eq!(
-            state,
-            WeatherState {
-                redcon: 3,
-                battery_mv: Some(3700),
-                bme280_valid: true,
-            }
-        );
+        let state = parse_weather_state(&[2, 3]).unwrap();
+        assert_eq!(state, WeatherState { redcon: 3 });
+
+        let mut payload = vec![2];
+        payload.extend_from_slice(&2155_i32.to_le_bytes());
+        payload.extend_from_slice(&101_325_u32.to_le_bytes());
+        payload.extend_from_slice(&4550_u16.to_le_bytes());
+        let measurement = parse_weather_measurement(&payload).unwrap();
+        assert_eq!(measurement.measured_temperature, 21.55);
+        assert_eq!(measurement.measured_pressure, 101.325);
+        assert_eq!(measurement.measured_humidity, 45.5);
+    }
+
+    #[test]
+    fn old_version_one_payloads_are_rejected() {
+        assert!(parse_power_state(&[1, 3]).is_err());
+        assert!(parse_power_measurement(&[1, 0x82, 0x0f]).is_err());
 
         let mut payload = vec![1];
         payload.extend_from_slice(&2155_i32.to_le_bytes());
         payload.extend_from_slice(&101_325_u32.to_le_bytes());
         payload.extend_from_slice(&4550_u16.to_le_bytes());
-        payload.extend_from_slice(&3700_u16.to_le_bytes());
-        let measurement = parse_weather_measurement(&payload).unwrap();
-        assert_eq!(measurement.measured_temperature, 21.55);
-        assert_eq!(measurement.measured_pressure, 101.325);
-        assert_eq!(measurement.measured_humidity, 45.5);
-        assert_eq!(measurement.battery_mv, Some(3700));
+        assert!(parse_weather_measurement(&payload).is_err());
     }
 
     #[test]
@@ -513,10 +548,10 @@ mod tests {
         };
         let sample = power_state_sample(
             &spec,
-            &PowerState {
-                redcon: REDCON_ACTIVE,
+            REDCON_ACTIVE,
+            Some(&PowerMeasurement {
                 battery_mv: Some(3970),
-            },
+            }),
             Some("AA:BB:CC:DD:EE:FF".to_string()),
             3,
             1000,
@@ -540,16 +575,14 @@ mod tests {
         };
         let sample = weather_state_sample(
             &spec,
-            &WeatherState {
-                redcon: REDCON_ACTIVE,
-                battery_mv: Some(3700),
-                bme280_valid: true,
-            },
+            REDCON_ACTIVE,
+            Some(&PowerMeasurement {
+                battery_mv: Some(3710),
+            }),
             Some(WeatherMeasurement {
                 measured_temperature: 21.625,
                 measured_pressure: 100.8,
                 measured_humidity: 44.5,
-                battery_mv: Some(3710),
             }),
             Some("AA:BB:CC:DD:EE:FF".to_string()),
             4,
@@ -557,13 +590,20 @@ mod tests {
         );
         let updates = shadow_updates_from_sample(&sample).unwrap();
 
-        assert_eq!(updates.len(), 2);
+        assert_eq!(updates.len(), 3);
         assert_eq!(
             updates[1].topic,
-            "$aws/things/weather-1/shadow/name/weather/update"
+            "$aws/things/weather-1/shadow/name/power/update"
         );
         let payload: Value = serde_json::from_slice(&updates[1].payload).unwrap();
         assert_eq!(payload["state"]["reported"]["batteryMv"], Value::from(3710));
+
+        assert_eq!(
+            updates[2].topic,
+            "$aws/things/weather-1/shadow/name/weather/update"
+        );
+        let payload: Value = serde_json::from_slice(&updates[2].payload).unwrap();
+        assert!(payload["state"]["reported"].get("batteryMv").is_none());
         assert_eq!(
             payload["state"]["reported"]["measuredTemperature"],
             Value::from(21.625)

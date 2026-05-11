@@ -21,8 +21,6 @@ struct Args {
     command_timeout_ms: u64,
     #[arg(long, default_value_t = 10_000)]
     heartbeat_interval_ms: u64,
-    #[arg(long, default_value_t = 30_000)]
-    state_report_interval_ms: u64,
     #[arg(long, default_value_t = 0)]
     max_connections: usize,
     #[arg(long)]
@@ -42,7 +40,6 @@ async fn main() -> Result<()> {
         connect_timeout_ms: args.connect_timeout_ms,
         command_timeout_ms: args.command_timeout_ms,
         heartbeat_interval_ms: args.heartbeat_interval_ms,
-        state_report_interval_ms: args.state_report_interval_ms,
         max_connections: args.max_connections,
         no_ble: args.no_ble,
     };
@@ -56,7 +53,6 @@ async fn main() -> Result<()> {
         println!("connectTimeoutMs={}", config.connect_timeout_ms);
         println!("commandTimeoutMs={}", config.command_timeout_ms);
         println!("heartbeatIntervalMs={}", config.heartbeat_interval_ms);
-        println!("stateReportIntervalMs={}", config.state_report_interval_ms);
         println!("maxConnections={}", config.max_connections);
         println!("noBle={}", config.no_ble);
         return Ok(());

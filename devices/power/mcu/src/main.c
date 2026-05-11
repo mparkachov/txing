@@ -39,12 +39,15 @@ BUILD_ASSERT(CONFIG_REDCON_BLE_CONN_SUPERVISION_MS >
 	BT_UUID_128_ENCODE(0xf6b4b001, 0x7b32, 0x4d2d, 0x9f4b, 0x4ff0a2b8f100)
 #define REDCON_STATE_UUID_VAL                                                               \
 	BT_UUID_128_ENCODE(0xf6b4b002, 0x7b32, 0x4d2d, 0x9f4b, 0x4ff0a2b8f100)
+#define REDCON_POWER_MEASUREMENT_UUID_VAL                                                   \
+	BT_UUID_128_ENCODE(0xf6b4b003, 0x7b32, 0x4d2d, 0x9f4b, 0x4ff0a2b8f100)
 
-#define REDCON_PROTOCOL_VERSION 1U
+#define REDCON_PROTOCOL_VERSION 2U
 #define REDCON_ACTIVE 3U
 #define REDCON_IDLE 4U
-#define REDCON_STATE_PAYLOAD_SIZE 4U
+#define REDCON_STATE_PAYLOAD_SIZE 2U
 #define REDCON_COMMAND_PAYLOAD_SIZE 2U
+#define REDCON_POWER_MEASUREMENT_PAYLOAD_SIZE 3U
 #define REDCON_CONN_INTERVAL_MIN_UNITS 6U
 #define REDCON_CONN_INTERVAL_MAX_UNITS 3200U
 #define REDCON_CONN_LATENCY_MAX 499U
@@ -126,12 +129,19 @@ static uint8_t current_redcon = REDCON_IDLE;
 static uint8_t redcon_state_payload[REDCON_STATE_PAYLOAD_SIZE] = {
 	REDCON_PROTOCOL_VERSION,
 	REDCON_IDLE,
+};
+static uint8_t power_measurement_payload[REDCON_POWER_MEASUREMENT_PAYLOAD_SIZE] = {
+	REDCON_PROTOCOL_VERSION,
 	0,
 	0,
 };
 static struct gatt_payload redcon_state_value = {
 	.data = redcon_state_payload,
 	.len = sizeof(redcon_state_payload),
+};
+static struct gatt_payload power_measurement_value = {
+	.data = power_measurement_payload,
+	.len = sizeof(power_measurement_payload),
 };
 
 static const struct bt_uuid_128 redcon_service_uuid =
@@ -140,11 +150,13 @@ static const struct bt_uuid_128 redcon_command_uuid =
 	BT_UUID_INIT_128(REDCON_COMMAND_UUID_VAL);
 static const struct bt_uuid_128 redcon_state_uuid =
 	BT_UUID_INIT_128(REDCON_STATE_UUID_VAL);
+static const struct bt_uuid_128 redcon_power_measurement_uuid =
+	BT_UUID_INIT_128(REDCON_POWER_MEASUREMENT_UUID_VAL);
 
 static void set_redcon_power(bool active);
 static void suspend_battery_adc(void);
-static void cancel_idle_state_notifications(void);
-static void schedule_idle_state_notification(void);
+static void cancel_idle_measurement_notifications(void);
+static void schedule_idle_measurement_notification(void);
 static void request_connection_params(struct bt_conn *conn);
 
 static bool is_valid_device_name_byte(uint8_t value)
@@ -276,18 +288,23 @@ out:
 	return result;
 }
 
-static void encode_redcon_state(uint8_t redcon, uint16_t battery_mv)
+static void encode_redcon_state(uint8_t redcon)
 {
 	redcon_state_payload[0] = REDCON_PROTOCOL_VERSION;
 	redcon_state_payload[1] = redcon;
-	sys_put_le16(battery_mv, &redcon_state_payload[2]);
 }
 
-static void refresh_redcon_payloads(void)
+static void encode_power_measurement(uint16_t battery_mv)
+{
+	power_measurement_payload[0] = REDCON_PROTOCOL_VERSION;
+	sys_put_le16(battery_mv, &power_measurement_payload[1]);
+}
+
+static void refresh_power_measurement_payload(void)
 {
 	const uint16_t battery_mv = sample_battery_mv();
 
-	encode_redcon_state(current_redcon, battery_mv);
+	encode_power_measurement(battery_mv);
 }
 
 static uint16_t conn_interval_units_from_ms(uint16_t interval_ms)
@@ -373,13 +390,23 @@ static ssize_t read_state(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 {
 	const struct gatt_payload *payload = attr->user_data;
 
-	refresh_redcon_payloads();
+	encode_redcon_state(current_redcon);
+	return bt_gatt_attr_read(conn, attr, buf, len, offset, payload->data, payload->len);
+}
+
+static ssize_t read_power_measurement(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+				      void *buf, uint16_t len, uint16_t offset)
+{
+	const struct gatt_payload *payload = attr->user_data;
+
+	refresh_power_measurement_payload();
 	return bt_gatt_attr_read(conn, attr, buf, len, offset, payload->data, payload->len);
 }
 
 static void notify_redcon_state(void);
+static void notify_power_measurement(void);
 
-static void state_notify_work_handler(struct k_work *work)
+static void measurement_notify_work_handler(struct k_work *work)
 {
 	ARG_UNUSED(work);
 
@@ -387,13 +414,13 @@ static void state_notify_work_handler(struct k_work *work)
 		return;
 	}
 
-	refresh_redcon_payloads();
-	notify_redcon_state();
+	refresh_power_measurement_payload();
+	notify_power_measurement();
 	(void)k_work_schedule(k_work_delayable_from_work(work),
-			      K_SECONDS(CONFIG_REDCON_BLE_STATE_NOTIFY_INTERVAL_SECONDS));
+			      K_SECONDS(CONFIG_REDCON_BLE_MEASUREMENT_NOTIFY_INTERVAL_SECONDS));
 }
 
-K_WORK_DELAYABLE_DEFINE(state_notify_work, state_notify_work_handler);
+K_WORK_DELAYABLE_DEFINE(measurement_notify_work, measurement_notify_work_handler);
 
 static struct bt_conn *connected_conn;
 K_MUTEX_DEFINE(connected_conn_lock);
@@ -424,7 +451,7 @@ static void set_connected_conn(struct bt_conn *conn)
 	}
 }
 
-static void idle_state_notify_work_handler(struct k_work *work)
+static void idle_measurement_notify_work_handler(struct k_work *work)
 {
 	struct bt_conn *conn;
 
@@ -440,20 +467,20 @@ static void idle_state_notify_work_handler(struct k_work *work)
 	}
 	bt_conn_unref(conn);
 
-	refresh_redcon_payloads();
-	notify_redcon_state();
+	refresh_power_measurement_payload();
+	notify_power_measurement();
 	enter_ble_idle_hardware_state();
-	schedule_idle_state_notification();
+	schedule_idle_measurement_notification();
 }
 
-K_WORK_DELAYABLE_DEFINE(idle_state_notify_work, idle_state_notify_work_handler);
+K_WORK_DELAYABLE_DEFINE(idle_measurement_notify_work, idle_measurement_notify_work_handler);
 
-static void cancel_idle_state_notifications(void)
+static void cancel_idle_measurement_notifications(void)
 {
-	(void)k_work_cancel_delayable(&idle_state_notify_work);
+	(void)k_work_cancel_delayable(&idle_measurement_notify_work);
 }
 
-static void schedule_idle_state_notification(void)
+static void schedule_idle_measurement_notification(void)
 {
 	struct bt_conn *conn;
 
@@ -468,8 +495,8 @@ static void schedule_idle_state_notification(void)
 	bt_conn_unref(conn);
 
 	(void)k_work_schedule(
-		&idle_state_notify_work,
-		K_SECONDS(CONFIG_REDCON_BLE_IDLE_STATE_NOTIFY_INTERVAL_SECONDS));
+		&idle_measurement_notify_work,
+		K_SECONDS(CONFIG_REDCON_BLE_IDLE_MEASUREMENT_NOTIFY_INTERVAL_SECONDS));
 }
 
 static ssize_t write_command(struct bt_conn *conn, const struct bt_gatt_attr *attr,
@@ -488,20 +515,24 @@ static ssize_t write_command(struct bt_conn *conn, const struct bt_gatt_attr *at
 	}
 
 	current_redcon = command.redcon;
+	encode_redcon_state(current_redcon);
 	if (current_redcon == REDCON_ACTIVE) {
-		cancel_idle_state_notifications();
+		cancel_idle_measurement_notifications();
 		set_redcon_power(true);
 		request_connection_params(conn);
-		refresh_redcon_payloads();
 		notify_redcon_state();
-		(void)k_work_reschedule(&state_notify_work,
-					 K_SECONDS(CONFIG_REDCON_BLE_STATE_NOTIFY_INTERVAL_SECONDS));
+		refresh_power_measurement_payload();
+		notify_power_measurement();
+		(void)k_work_reschedule(&measurement_notify_work,
+					 K_SECONDS(CONFIG_REDCON_BLE_MEASUREMENT_NOTIFY_INTERVAL_SECONDS));
 	} else {
 		enter_ble_idle_hardware_state();
-		refresh_redcon_payloads();
+		encode_redcon_state(current_redcon);
 		notify_redcon_state();
+		refresh_power_measurement_payload();
+		notify_power_measurement();
 		enter_ble_idle_hardware_state();
-		schedule_idle_state_notification();
+		schedule_idle_measurement_notification();
 	}
 
 	return len;
@@ -514,12 +545,22 @@ BT_GATT_SERVICE_DEFINE(redcon_svc,
 	BT_GATT_CHARACTERISTIC(&redcon_state_uuid.uuid, BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY,
 			       BT_GATT_PERM_READ, read_state, NULL, &redcon_state_value),
 	BT_GATT_CCC(NULL, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
+	BT_GATT_CHARACTERISTIC(&redcon_power_measurement_uuid.uuid,
+			       BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_READ,
+			       read_power_measurement, NULL, &power_measurement_value),
+	BT_GATT_CCC(NULL, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
 );
 
 static void notify_redcon_state(void)
 {
 	(void)bt_gatt_notify(NULL, &redcon_svc.attrs[4], redcon_state_payload,
 			     sizeof(redcon_state_payload));
+}
+
+static void notify_power_measurement(void)
+{
+	(void)bt_gatt_notify(NULL, &redcon_svc.attrs[7], power_measurement_payload,
+			     sizeof(power_measurement_payload));
 }
 
 static void configure_output_inactive(const struct gpio_dt_spec *pin)
@@ -562,7 +603,7 @@ static void disable_xiao_load_regulators(void)
 static void enter_ble_idle_hardware_state(void)
 {
 	set_redcon_power(false);
-	(void)k_work_cancel_delayable(&state_notify_work);
+	(void)k_work_cancel_delayable(&measurement_notify_work);
 	suspend_battery_adc();
 	disable_xiao_load_regulators();
 }
@@ -621,7 +662,7 @@ static void connected(struct bt_conn *conn, uint8_t err)
 
 	set_connected_conn(conn);
 	if (current_redcon == REDCON_IDLE) {
-		schedule_idle_state_notification();
+		schedule_idle_measurement_notification();
 	}
 }
 
@@ -630,10 +671,10 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 	ARG_UNUSED(conn);
 	ARG_UNUSED(reason);
 	current_redcon = REDCON_IDLE;
-	cancel_idle_state_notifications();
+	cancel_idle_measurement_notifications();
 	set_connected_conn(NULL);
 	enter_ble_idle_hardware_state();
-	encode_redcon_state(REDCON_IDLE, 0U);
+	encode_redcon_state(REDCON_IDLE);
 	k_work_submit(&advertise_work);
 }
 

@@ -12,9 +12,12 @@
 #include <zephyr/bluetooth/gatt.h>
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
+#include <zephyr/drivers/adc.h>
 #include <zephyr/drivers/gpio.h>
+#include <zephyr/drivers/regulator.h>
 #include <zephyr/drivers/sensor.h>
 #include <zephyr/kernel.h>
+#include <nrfx_saadc.h>
 
 #include <array>
 #include <cstring>
@@ -32,15 +35,19 @@ constexpr std::uint16_t kIdleConnInterval = 800; // 1000 ms in 1.25 ms units.
 constexpr std::uint16_t kIdleConnLatency = 4;
 constexpr std::uint16_t kIdleSupervisionTimeout = 1200; // 12 seconds.
 constexpr int kIdleConnParamFallbackDelaySeconds = 30;
+constexpr int kActiveMeasurementIntervalSeconds = 10;
+constexpr int kIdleMeasurementIntervalSeconds = 60;
 
 #define TXING_WEATHER_SERVICE_UUID_VAL BT_UUID_128_ENCODE(0xf6b4b000, 0x7b32, 0x4d2d, 0x9f4b, 0x4ff0a2b8f100)
 #define TXING_WEATHER_COMMAND_UUID_VAL BT_UUID_128_ENCODE(0xf6b4b001, 0x7b32, 0x4d2d, 0x9f4b, 0x4ff0a2b8f100)
 #define TXING_WEATHER_STATE_UUID_VAL BT_UUID_128_ENCODE(0xf6b4b002, 0x7b32, 0x4d2d, 0x9f4b, 0x4ff0a2b8f100)
-#define TXING_WEATHER_MEASUREMENT_UUID_VAL BT_UUID_128_ENCODE(0xf6b4b003, 0x7b32, 0x4d2d, 0x9f4b, 0x4ff0a2b8f100)
+#define TXING_POWER_MEASUREMENT_UUID_VAL BT_UUID_128_ENCODE(0xf6b4b003, 0x7b32, 0x4d2d, 0x9f4b, 0x4ff0a2b8f100)
+#define TXING_WEATHER_MEASUREMENT_UUID_VAL BT_UUID_128_ENCODE(0xf6b4b004, 0x7b32, 0x4d2d, 0x9f4b, 0x4ff0a2b8f100)
 
 const bt_uuid_128 kWeatherServiceUuid = BT_UUID_INIT_128(TXING_WEATHER_SERVICE_UUID_VAL);
 const bt_uuid_128 kWeatherCommandUuid = BT_UUID_INIT_128(TXING_WEATHER_COMMAND_UUID_VAL);
 const bt_uuid_128 kWeatherStateUuid = BT_UUID_INIT_128(TXING_WEATHER_STATE_UUID_VAL);
+const bt_uuid_128 kPowerMeasurementUuid = BT_UUID_INIT_128(TXING_POWER_MEASUREMENT_UUID_VAL);
 const bt_uuid_128 kWeatherMeasurementUuid = BT_UUID_INIT_128(TXING_WEATHER_MEASUREMENT_UUID_VAL);
 
 #if DT_NODE_HAS_STATUS(DT_ALIAS(led0), okay)
@@ -56,12 +63,24 @@ const device *const kBme280 = DEVICE_DT_GET_ONE(bosch_bme280);
 const device *const kBme280 = nullptr;
 #endif
 
+#if DT_NODE_EXISTS(DT_PATH(zephyr_user)) && DT_NODE_HAS_PROP(DT_PATH(zephyr_user), io_channels)
+constexpr bool kHasBatteryAdc = true;
+const adc_dt_spec kBatteryAdc = ADC_DT_SPEC_GET_BY_IDX(DT_PATH(zephyr_user), 0);
+#else
+constexpr bool kHasBatteryAdc = false;
+#endif
+
+#if DT_NODE_HAS_STATUS(DT_NODELABEL(vbat_pwr), okay)
+const device *const kVbatRegulator = DEVICE_DT_GET(DT_NODELABEL(vbat_pwr));
+#else
+const device *const kVbatRegulator = nullptr;
+#endif
+
 struct RuntimeState
 {
 	std::uint8_t redcon = txing::weather::kRedconIdle;
-	bool bme280_valid = false;
 	std::uint16_t battery_mv = 0;
-	txing::weather::MeasurementReport measurement{};
+	txing::weather::WeatherMeasurementReport weather_measurement{};
 };
 
 RuntimeState gRuntime{};
@@ -69,8 +88,12 @@ bt_conn *gConnection = nullptr;
 extern const bt_gatt_attr attr_weather_service[];
 bool gIdleConnParamsRequested = false;
 bool gStateNotifyEnabled = false;
-bool gMeasurementNotifyEnabled = false;
+bool gPowerMeasurementNotifyEnabled = false;
+bool gWeatherMeasurementNotifyEnabled = false;
 k_work_delayable gIdleConnParamWork{};
+k_work_delayable gMeasurementWork{};
+
+void schedule_measurement_now();
 
 std::int32_t sensor_value_to_centi(const sensor_value &value)
 {
@@ -129,7 +152,7 @@ void request_connected_idle_params()
 
 void request_idle_params_if_gatt_ready()
 {
-	if (gStateNotifyEnabled && gMeasurementNotifyEnabled) {
+	if (gStateNotifyEnabled && gPowerMeasurementNotifyEnabled && gWeatherMeasurementNotifyEnabled) {
 		request_connected_idle_params();
 	}
 }
@@ -140,13 +163,88 @@ void idle_conn_param_work_handler(k_work *work)
 	request_connected_idle_params();
 }
 
+void resume_battery_adc()
+{
+	if (!nrfx_saadc_init_check()) {
+		(void)nrfx_saadc_init(0);
+	}
+}
+
+void suspend_battery_adc()
+{
+	if (nrfx_saadc_init_check()) {
+		nrfx_saadc_uninit();
+	}
+}
+
+std::uint16_t sample_battery_mv()
+{
+	if constexpr (!kHasBatteryAdc) {
+		return 0;
+	} else {
+#if DT_NODE_EXISTS(DT_PATH(zephyr_user)) && DT_NODE_HAS_PROP(DT_PATH(zephyr_user), io_channels)
+		std::uint16_t buf = 0;
+		std::uint16_t result = 0;
+		std::int32_t val_mv = 0;
+		adc_sequence sequence = {
+			.buffer = &buf,
+			.buffer_size = sizeof(buf),
+		};
+
+		if (!adc_is_ready_dt(&kBatteryAdc)) {
+			suspend_battery_adc();
+			return 0;
+		}
+
+		resume_battery_adc();
+
+		if (kVbatRegulator != nullptr && device_is_ready(kVbatRegulator)) {
+			(void)regulator_enable(kVbatRegulator);
+			k_sleep(K_MSEC(100));
+		}
+
+		int err = adc_channel_setup_dt(&kBatteryAdc);
+		if (err < 0) {
+			goto out;
+		}
+
+		(void)adc_sequence_init_dt(&kBatteryAdc, &sequence);
+		err = adc_read_dt(&kBatteryAdc, &sequence);
+		if (err < 0) {
+			goto out;
+		}
+
+		if (kBatteryAdc.channel_cfg.differential) {
+			val_mv = static_cast<std::int32_t>(static_cast<std::int16_t>(buf));
+		} else {
+			val_mv = static_cast<std::int32_t>(buf);
+		}
+
+		err = adc_raw_to_millivolts_dt(&kBatteryAdc, &val_mv);
+		if (err < 0 || val_mv < 0) {
+			goto out;
+		}
+
+		val_mv *= 2;
+		if (val_mv > UINT16_MAX) {
+			val_mv = UINT16_MAX;
+		}
+		result = static_cast<std::uint16_t>(val_mv);
+
+out:
+		if (kVbatRegulator != nullptr && device_is_ready(kVbatRegulator)) {
+			(void)regulator_disable(kVbatRegulator);
+		}
+		suspend_battery_adc();
+		return result;
+#endif
+	}
+}
+
 txing::weather::StateReport current_state_report()
 {
 	return txing::weather::StateReport{
 		.redcon = gRuntime.redcon,
-		.active = gRuntime.redcon < txing::weather::kRedconIdle,
-		.bme280_valid = gRuntime.bme280_valid,
-		.battery_mv = gRuntime.battery_mv,
 	};
 }
 
@@ -155,7 +253,7 @@ void notify_state()
 	if (gConnection == nullptr) {
 		return;
 	}
-	std::array<std::uint8_t, 5> payload{};
+	std::array<std::uint8_t, 2> payload{};
 	const std::size_t size = txing::weather::EncodeStateReport(
 		current_state_report(),
 		payload.data(),
@@ -166,14 +264,17 @@ void notify_state()
 	}
 }
 
-void notify_measurement()
+void notify_power_measurement()
 {
-	if (gConnection == nullptr || !gRuntime.bme280_valid) {
+	if (gConnection == nullptr) {
 		return;
 	}
-	std::array<std::uint8_t, 13> payload{};
-	const std::size_t size = txing::weather::EncodeMeasurementReport(
-		gRuntime.measurement,
+	txing::weather::PowerMeasurementReport measurement{
+		.battery_mv = gRuntime.battery_mv,
+	};
+	std::array<std::uint8_t, 3> payload{};
+	const std::size_t size = txing::weather::EncodePowerMeasurementReport(
+		measurement,
 		payload.data(),
 		payload.size()
 	);
@@ -182,14 +283,27 @@ void notify_measurement()
 	}
 }
 
+void notify_weather_measurement()
+{
+	if (gConnection == nullptr) {
+		return;
+	}
+	std::array<std::uint8_t, 11> payload{};
+	const std::size_t size = txing::weather::EncodeWeatherMeasurementReport(
+		gRuntime.weather_measurement,
+		payload.data(),
+		payload.size()
+	);
+	if (size > 0) {
+		bt_gatt_notify(gConnection, &attr_weather_service[10], payload.data(), size);
+	}
+}
+
 void set_redcon(std::uint8_t redcon)
 {
 	gRuntime.redcon = redcon == txing::weather::kRedconIdle
 		? txing::weather::kRedconIdle
 		: txing::weather::kRedconActive;
-	if (gRuntime.redcon == txing::weather::kRedconIdle) {
-		gRuntime.bme280_valid = false;
-	}
 	set_led(gRuntime.redcon < txing::weather::kRedconIdle);
 	notify_state();
 }
@@ -210,20 +324,18 @@ bool sample_bme280()
 	    sensor_channel_get(kBme280, SENSOR_CHAN_HUMIDITY, &humidity) != 0) {
 		return false;
 	}
-	gRuntime.measurement.temperature_centi_c = sensor_value_to_centi(temperature);
-	gRuntime.measurement.pressure_pa = pressure_value_to_pa(pressure);
-	gRuntime.measurement.humidity_centi_percent = static_cast<std::uint16_t>(
+	gRuntime.weather_measurement.temperature_centi_c = sensor_value_to_centi(temperature);
+	gRuntime.weather_measurement.pressure_pa = pressure_value_to_pa(pressure);
+	gRuntime.weather_measurement.humidity_centi_percent = static_cast<std::uint16_t>(
 		sensor_value_to_centi(humidity)
 	);
-	gRuntime.measurement.battery_mv = gRuntime.battery_mv;
-	gRuntime.bme280_valid = true;
 	return true;
 }
 
 ssize_t read_state(bt_conn *conn, const bt_gatt_attr *attr, void *buf, std::uint16_t len, std::uint16_t offset)
 {
 	(void)attr;
-	std::array<std::uint8_t, 5> payload{};
+	std::array<std::uint8_t, 2> payload{};
 	const std::size_t size = txing::weather::EncodeStateReport(
 		current_state_report(),
 		payload.data(),
@@ -232,12 +344,29 @@ ssize_t read_state(bt_conn *conn, const bt_gatt_attr *attr, void *buf, std::uint
 	return bt_gatt_attr_read(conn, attr, buf, len, offset, payload.data(), size);
 }
 
-ssize_t read_measurement(bt_conn *conn, const bt_gatt_attr *attr, void *buf, std::uint16_t len, std::uint16_t offset)
+ssize_t read_power_measurement(bt_conn *conn, const bt_gatt_attr *attr, void *buf, std::uint16_t len, std::uint16_t offset)
 {
 	(void)attr;
-	std::array<std::uint8_t, 13> payload{};
-	const std::size_t size = txing::weather::EncodeMeasurementReport(
-		gRuntime.measurement,
+	gRuntime.battery_mv = sample_battery_mv();
+	txing::weather::PowerMeasurementReport measurement{
+		.battery_mv = gRuntime.battery_mv,
+	};
+	std::array<std::uint8_t, 3> payload{};
+	const std::size_t size = txing::weather::EncodePowerMeasurementReport(
+		measurement,
+		payload.data(),
+		payload.size()
+	);
+	return bt_gatt_attr_read(conn, attr, buf, len, offset, payload.data(), size);
+}
+
+ssize_t read_weather_measurement(bt_conn *conn, const bt_gatt_attr *attr, void *buf, std::uint16_t len, std::uint16_t offset)
+{
+	(void)attr;
+	(void)sample_bme280();
+	std::array<std::uint8_t, 11> payload{};
+	const std::size_t size = txing::weather::EncodeWeatherMeasurementReport(
+		gRuntime.weather_measurement,
 		payload.data(),
 		payload.size()
 	);
@@ -264,6 +393,7 @@ ssize_t write_command(
 		return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
 	}
 	set_redcon(command.target_redcon);
+	schedule_measurement_now();
 	return len;
 }
 
@@ -274,10 +404,17 @@ void state_ccc_changed(const bt_gatt_attr *attr, std::uint16_t value)
 	request_idle_params_if_gatt_ready();
 }
 
-void measurement_ccc_changed(const bt_gatt_attr *attr, std::uint16_t value)
+void power_measurement_ccc_changed(const bt_gatt_attr *attr, std::uint16_t value)
 {
 	(void)attr;
-	gMeasurementNotifyEnabled = (value & BT_GATT_CCC_NOTIFY) != 0;
+	gPowerMeasurementNotifyEnabled = (value & BT_GATT_CCC_NOTIFY) != 0;
+	request_idle_params_if_gatt_ready();
+}
+
+void weather_measurement_ccc_changed(const bt_gatt_attr *attr, std::uint16_t value)
+{
+	(void)attr;
+	gWeatherMeasurementNotifyEnabled = (value & BT_GATT_CCC_NOTIFY) != 0;
 	request_idle_params_if_gatt_ready();
 }
 
@@ -301,15 +438,46 @@ BT_GATT_SERVICE_DEFINE(weather_service,
 	),
 	BT_GATT_CCC(state_ccc_changed, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
 	BT_GATT_CHARACTERISTIC(
-		&kWeatherMeasurementUuid.uuid,
+		&kPowerMeasurementUuid.uuid,
 		BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY,
 		BT_GATT_PERM_READ,
-		read_measurement,
+		read_power_measurement,
 		nullptr,
 		nullptr
 	),
-	BT_GATT_CCC(measurement_ccc_changed, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE)
+	BT_GATT_CCC(power_measurement_ccc_changed, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
+	BT_GATT_CHARACTERISTIC(
+		&kWeatherMeasurementUuid.uuid,
+		BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY,
+		BT_GATT_PERM_READ,
+		read_weather_measurement,
+		nullptr,
+		nullptr
+	),
+	BT_GATT_CCC(weather_measurement_ccc_changed, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE)
 );
+
+void measurement_work_handler(k_work *work)
+{
+	(void)work;
+	if (gConnection == nullptr) {
+		return;
+	}
+	gRuntime.battery_mv = sample_battery_mv();
+	notify_power_measurement();
+	if (sample_bme280()) {
+		notify_weather_measurement();
+	}
+	const int interval = gRuntime.redcon < txing::weather::kRedconIdle
+		? kActiveMeasurementIntervalSeconds
+		: kIdleMeasurementIntervalSeconds;
+	k_work_reschedule(&gMeasurementWork, K_SECONDS(interval));
+}
+
+void schedule_measurement_now()
+{
+	k_work_reschedule(&gMeasurementWork, K_NO_WAIT);
+}
 
 void connected(bt_conn *conn, std::uint8_t err)
 {
@@ -322,9 +490,11 @@ void connected(bt_conn *conn, std::uint8_t err)
 	gConnection = bt_conn_ref(conn);
 	gIdleConnParamsRequested = false;
 	gStateNotifyEnabled = false;
-	gMeasurementNotifyEnabled = false;
+	gPowerMeasurementNotifyEnabled = false;
+	gWeatherMeasurementNotifyEnabled = false;
 	request_connected_setup_params();
 	k_work_reschedule(&gIdleConnParamWork, K_SECONDS(kIdleConnParamFallbackDelaySeconds));
+	schedule_measurement_now();
 }
 
 void disconnected(bt_conn *conn, std::uint8_t reason)
@@ -334,7 +504,9 @@ void disconnected(bt_conn *conn, std::uint8_t reason)
 	k_work_cancel_delayable(&gIdleConnParamWork);
 	gIdleConnParamsRequested = false;
 	gStateNotifyEnabled = false;
-	gMeasurementNotifyEnabled = false;
+	gPowerMeasurementNotifyEnabled = false;
+	gWeatherMeasurementNotifyEnabled = false;
+	k_work_cancel_delayable(&gMeasurementWork);
 	if (gConnection != nullptr) {
 		bt_conn_unref(gConnection);
 		gConnection = nullptr;
@@ -386,6 +558,7 @@ int main()
 		return err;
 	}
 	k_work_init_delayable(&gIdleConnParamWork, idle_conn_param_work_handler);
+	k_work_init_delayable(&gMeasurementWork, measurement_work_handler);
 	if (!factory_valid) {
 		start_invalid_advertising();
 		for (;;) {
@@ -396,9 +569,6 @@ int main()
 		return 2;
 	}
 	for (;;) {
-		if (gRuntime.redcon < txing::weather::kRedconIdle && sample_bme280()) {
-			notify_measurement();
-		}
-		k_sleep(K_SECONDS(1));
+		k_sleep(K_FOREVER);
 	}
 }

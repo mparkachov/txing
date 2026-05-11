@@ -9,6 +9,10 @@
 	aliases {
 		led1 = &led0;
 	};
+
+	zephyr,user {
+		io-channels = <&adc 7>;
+	};
 };
 
 &xiao_i2c {
@@ -32,4 +36,12 @@
 
 &wdt31 {
 	status = "okay";
+};
+
+&pdm_imu_pwr {
+	/delete-property/ regulator-boot-on;
+};
+
+&vbat_pwr {
+	/delete-property/ regulator-boot-on;
 };

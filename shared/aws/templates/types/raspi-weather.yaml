@@ -27,7 +27,7 @@ Resources:
         rigType: raspi
         displayName: Weather
         defaultName: outside
-        capabilities: sparkplug,ble,weather
+        capabilities: sparkplug,ble,power,weather
         redconCommandLevels: 4,3
         redconRules/4: sparkplug,ble
         redconRules/3: sparkplug,ble,weather
@@ -39,6 +39,9 @@ Resources:
         shadows/ble/schema: aws/ble-shadow.schema.json
         shadows/ble/default: aws/default-ble-shadow.json
         shadows/ble/defaultPayload: '{"state":{"reported":{}}}'
+        shadows/power/schema: aws/power-shadow.schema.json
+        shadows/power/default: aws/default-power-shadow.json
+        shadows/power/defaultPayload: '{"state":{"reported":{}}}'
         shadows/weather/schema: aws/weather-shadow.schema.json
         shadows/weather/default: aws/default-weather-shadow.json
         shadows/weather/defaultPayload: '{"state":{"reported":{}}}'

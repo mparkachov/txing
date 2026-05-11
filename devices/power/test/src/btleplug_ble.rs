@@ -12,11 +12,12 @@ use btleplug::platform::{Adapter, Manager, Peripheral};
 use futures::{Stream, StreamExt};
 use tokio::sync::Mutex;
 
-use crate::ble::{BleCentral, BleConnectConfig, TimedState};
+use crate::ble::{BleCentral, BleConnectConfig, TimedPowerMeasurement, TimedState};
 use crate::error::{Result, RigError};
 use crate::event::EventEmitter;
 use crate::protocol::{
-    decode_state, encode_command, redcon_command_uuid, redcon_service_uuid, redcon_state_uuid,
+    decode_power_measurement, decode_state, encode_command, power_measurement_uuid,
+    redcon_command_uuid, redcon_service_uuid, redcon_state_uuid,
 };
 
 type NotificationStream = Pin<Box<dyn Stream<Item = ValueNotification> + Send>>;
@@ -27,6 +28,7 @@ pub struct BtleplugBleCentral {
     peripheral: Option<Peripheral>,
     command_char: Option<Characteristic>,
     state_char: Option<Characteristic>,
+    power_measurement_char: Option<Characteristic>,
     notifications: Option<Arc<Mutex<NotificationStream>>>,
     last_rssi_by_address: HashMap<String, i16>,
 }
@@ -147,6 +149,7 @@ impl BtleplugBleCentral {
         }
         self.command_char = None;
         self.state_char = None;
+        self.power_measurement_char = None;
         self.notifications = None;
     }
 
@@ -190,6 +193,7 @@ impl BtleplugBleCentral {
         let characteristics = peripheral.characteristics();
         let command_uuid = redcon_command_uuid();
         let state_uuid = redcon_state_uuid();
+        let power_measurement_uuid = power_measurement_uuid();
         let command_char = characteristics
             .iter()
             .find(|characteristic| characteristic.uuid == command_uuid)
@@ -198,11 +202,19 @@ impl BtleplugBleCentral {
             .iter()
             .find(|characteristic| characteristic.uuid == state_uuid)
             .cloned();
+        let power_measurement_char = characteristics
+            .iter()
+            .find(|characteristic| characteristic.uuid == power_measurement_uuid)
+            .cloned();
         events.emit(
             "services",
             &[
                 ("command", (command_char.is_some() as u8).to_string()),
                 ("state", (state_char.is_some() as u8).to_string()),
+                (
+                    "powerMeasurement",
+                    (power_measurement_char.is_some() as u8).to_string(),
+                ),
                 (
                     "servicesMs",
                     services_started.elapsed().as_millis().to_string(),
@@ -214,6 +226,12 @@ impl BtleplugBleCentral {
         })?;
         let state_char = state_char
             .ok_or_else(|| RigError::new("services", "required state characteristic is missing"))?;
+        let power_measurement_char = power_measurement_char.ok_or_else(|| {
+            RigError::new(
+                "services",
+                "required power measurement characteristic is missing",
+            )
+        })?;
         let notifications = peripheral
             .notifications()
             .await
@@ -229,11 +247,29 @@ impl BtleplugBleCentral {
                 ("enabled", "1".to_string()),
             ],
         );
+        peripheral
+            .subscribe(&power_measurement_char)
+            .await
+            .map_err(|err| {
+                RigError::new(
+                    "notify",
+                    format!("failed to subscribe power measurement: {err}"),
+                )
+            })?;
+        events.emit(
+            "notify",
+            &[
+                ("characteristic", "powerMeasurement".to_string()),
+                ("enabled", "1".to_string()),
+            ],
+        );
         self.peripheral = Some(peripheral);
         self.command_char = Some(command_char);
         self.state_char = Some(state_char);
+        self.power_measurement_char = Some(power_measurement_char);
         self.notifications = Some(Arc::new(Mutex::new(Box::pin(notifications))));
         let _ = self.read_state().await?;
+        let _ = self.read_power_measurement().await?;
         Ok(())
     }
 }
@@ -297,6 +333,27 @@ impl BleCentral for BtleplugBleCentral {
         })
     }
 
+    async fn read_power_measurement(&mut self) -> Result<TimedPowerMeasurement> {
+        let peripheral = self
+            .peripheral
+            .as_ref()
+            .ok_or_else(|| RigError::new("connect", "not connected"))?;
+        let characteristic = self
+            .power_measurement_char
+            .as_ref()
+            .ok_or_else(|| RigError::new("services", "power measurement characteristic missing"))?;
+        let payload = peripheral.read(characteristic).await.map_err(|err| {
+            RigError::new(
+                "power-measurement",
+                format!("failed to read power measurement: {err}"),
+            )
+        })?;
+        Ok(TimedPowerMeasurement {
+            received_at: Instant::now(),
+            measurement: decode_power_measurement(&payload)?,
+        })
+    }
+
     async fn write_redcon(&mut self, redcon: u8, events: &mut EventEmitter) -> Result<Instant> {
         let peripheral = self
             .peripheral
@@ -349,9 +406,41 @@ impl BleCentral for BtleplugBleCentral {
             .map_err(|_| RigError::new("timeout", "state deadline expired"))?
     }
 
+    async fn next_power_measurement(&mut self, timeout: Duration) -> Result<TimedPowerMeasurement> {
+        let notifications = self
+            .notifications
+            .as_ref()
+            .ok_or_else(|| RigError::new("notify", "notification stream is not active"))?
+            .clone();
+        let measurement_uuid = power_measurement_uuid();
+        let fut = async {
+            let mut stream = notifications.lock().await;
+            loop {
+                match stream.next().await {
+                    Some(notification) if notification.uuid == measurement_uuid => {
+                        return Ok(TimedPowerMeasurement {
+                            received_at: Instant::now(),
+                            measurement: decode_power_measurement(&notification.value)?,
+                        });
+                    }
+                    Some(_) => continue,
+                    None => return Err(RigError::new("disconnect", "notification stream closed")),
+                }
+            }
+        };
+        tokio::time::timeout(timeout, fut)
+            .await
+            .map_err(|_| RigError::new("timeout", "power measurement deadline expired"))?
+    }
+
     async fn close(&mut self) -> Result<()> {
         if let (Some(peripheral), Some(state_char)) = (&self.peripheral, &self.state_char) {
             let _ = peripheral.unsubscribe(state_char).await;
+        }
+        if let (Some(peripheral), Some(characteristic)) =
+            (&self.peripheral, &self.power_measurement_char)
+        {
+            let _ = peripheral.unsubscribe(characteristic).await;
         }
         if let Some(peripheral) = self.peripheral.take() {
             if peripheral.is_connected().await.unwrap_or(false) {
@@ -363,6 +452,7 @@ impl BleCentral for BtleplugBleCentral {
         }
         self.command_char = None;
         self.state_char = None;
+        self.power_measurement_char = None;
         self.notifications = None;
         Ok(())
     }

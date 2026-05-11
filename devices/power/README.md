@@ -151,9 +151,10 @@ just power::test 1 <power-thing-id> --idle-report-timeout 90
 - Disables `pdm_imu_pwr` and `vbat_pwr` in BLE idle while leaving the radio path alone.
 - Advertises with the NVE-stored BLE device name and the REDCON service UUID.
 - REDCON `3` command turns LED and D1 on, requests configured connection params, and notifies state.
-- REDCON `4` command keeps the BLE connection open, returns LED and D1 off, samples battery, notifies state, and then samples/notifies again every 60 seconds while connected.
+- REDCON `4` command keeps the BLE connection open, returns LED and D1 off, samples battery, notifies the power measurement, and then samples/notifies again every 60 seconds while connected.
 - Disconnect returns the MCU to REDCON `4`, cancels the connected-idle battery loop, and resumes advertising.
-- REDCON command payload is `<version, redcon>`; state payload is `<version, redcon, battery_mv_le>`.
+- REDCON command payload is `<version, redcon>`; state payload is `<version, redcon>`.
+- Power measurement payload is `<version, battery_mv>` on `f6b4b003-7b32-4d2d-9f4b-4ff0a2b8f100`.
 
 Manual acceptance after flashing should confirm BLE local name, Sparkplug DBIRTH
 with `redcon` and `capability.*`, minute-spaced REDCON `4` reports with
