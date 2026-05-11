@@ -148,8 +148,8 @@ class TimeDeviceRuntimeTests(unittest.TestCase):
             state_payload["metrics"]["currentTimeIso"]["value"],
             "2024-04-29T08:40:00Z",
         )
-        self.assertEqual(state_payload["metrics"]["mode"]["value"], TIME_MODE_SLEEP)
-        self.assertFalse(state_payload["metrics"]["mcpAvailable"]["value"])
+        self.assertNotIn("mode", state_payload["metrics"])
+        self.assertNotIn("mcpAvailable", state_payload["metrics"])
         self.assertTrue(state_publish["retain"])
 
     def test_new_redcon_one_command_enters_active_mode_and_publishes_mcp_status(self) -> None:
@@ -168,7 +168,9 @@ class TimeDeviceRuntimeTests(unittest.TestCase):
         state_payload = decode_payload(state_publish["payload"])
         self.assertEqual(state_payload["expiresAtMs"], 1714380300000)
         self.assertEqual(state_payload["expiredCapabilities"]["time"], False)
-        self.assertEqual(state_payload["expiredMetrics"]["mode"]["value"], TIME_MODE_SLEEP)
+        self.assertEqual(state_payload["expiredMetrics"]["activeUntilMs"]["value"], 0)
+        self.assertNotIn("mode", state_payload["expiredMetrics"])
+        self.assertNotIn("mcpAvailable", state_payload["expiredMetrics"])
         command_result_publish = next(
             item
             for item in iot.published

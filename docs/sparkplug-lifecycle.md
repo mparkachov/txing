@@ -150,6 +150,9 @@ Current device metric policy:
   `capability.*` boolean availability surface for the device type
 - legacy data metrics such as `batteryMv`, weather readings, and time readings
   may still be present during the migration
+- availability and lifecycle helper metrics such as `bleConnected`,
+  `mcpAvailable`, and `mode` are deprecated and must not be published as
+  Sparkplug metrics; use `capability.*` and `redcon` instead
 - the target cleanup state is that Sparkplug device metrics carry only `redcon`
   and `capability.*`; typed data should live in the corresponding named shadows
 

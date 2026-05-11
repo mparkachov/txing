@@ -145,6 +145,9 @@ Current metrics:
 - Node metrics: `bdSeq`, `redcon`
 - Device metrics: `redcon`, `capability.*`, and temporary legacy data metrics
   such as `batteryMv`
+- Deprecated availability/lifecycle helpers such as `bleConnected`,
+  `mcpAvailable`, and `mode` must not be published as Sparkplug metrics; use
+  `capability.*` and `redcon` instead
 - Writable device command metric: `redcon`
 
 Current topics:

@@ -9,6 +9,7 @@ use txing_capability_protocol::{
 };
 
 const STATE_TTL_MS: u64 = 45_000;
+const DEPRECATED_AVAILABILITY_METRICS: &[&str] = &["bleConnected", "mcpAvailable", "mode"];
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DeviceSnapshot {
@@ -109,6 +110,9 @@ impl DeviceRuntimeState {
                 }
             }
             for (name, metric) in &state.metrics {
+                if is_deprecated_availability_metric(name) {
+                    continue;
+                }
                 metrics.insert(name.clone(), metric.clone());
             }
         }
@@ -163,6 +167,10 @@ impl DeviceRuntimeState {
         }
         Ok(DevicePublication::None)
     }
+}
+
+fn is_deprecated_availability_metric(name: &str) -> bool {
+    DEPRECATED_AVAILABILITY_METRICS.contains(&name)
 }
 
 pub fn select_best_redcon(
@@ -458,6 +466,70 @@ mod tests {
                     Metric::int32("batteryMv", 3970),
                 ],
             }
+        );
+    }
+
+    #[test]
+    fn deprecated_availability_metrics_are_filtered_before_publication_comparison() {
+        let mut state = DeviceRuntimeState::new(power_inventory());
+        state
+            .observe_state(CapabilityState {
+                schema_version: SCHEMA_VERSION.to_string(),
+                adapter_id: "dev.txing.rig.BleConnectivity".to_string(),
+                thing_name: "power-1".to_string(),
+                capabilities: BTreeMap::from([
+                    ("sparkplug".to_string(), true),
+                    ("ble".to_string(), true),
+                    ("power".to_string(), false),
+                ]),
+                metrics: BTreeMap::from([
+                    ("batteryMv".to_string(), MetricValue::int32(3970)),
+                    ("bleConnected".to_string(), MetricValue::boolean(false)),
+                    ("mcpAvailable".to_string(), MetricValue::boolean(false)),
+                    ("mode".to_string(), MetricValue::string("sleep")),
+                ]),
+                observed_at_ms: 1000,
+                seq: 1,
+            })
+            .unwrap();
+
+        assert_eq!(
+            state.decide_publication(1000).unwrap(),
+            DevicePublication::Birth {
+                redcon: 4,
+                metrics: vec![
+                    Metric::boolean("capability.ble", true),
+                    Metric::boolean("capability.power", false),
+                    Metric::boolean("capability.sparkplug", true),
+                    Metric::int32("batteryMv", 3970),
+                ],
+            }
+        );
+
+        state
+            .observe_state(CapabilityState {
+                schema_version: SCHEMA_VERSION.to_string(),
+                adapter_id: "dev.txing.rig.BleConnectivity".to_string(),
+                thing_name: "power-1".to_string(),
+                capabilities: BTreeMap::from([
+                    ("sparkplug".to_string(), true),
+                    ("ble".to_string(), true),
+                    ("power".to_string(), false),
+                ]),
+                metrics: BTreeMap::from([
+                    ("batteryMv".to_string(), MetricValue::int32(3970)),
+                    ("bleConnected".to_string(), MetricValue::boolean(true)),
+                    ("mcpAvailable".to_string(), MetricValue::boolean(true)),
+                    ("mode".to_string(), MetricValue::string("active")),
+                ]),
+                observed_at_ms: 2000,
+                seq: 2,
+            })
+            .unwrap();
+
+        assert_eq!(
+            state.decide_publication(2000).unwrap(),
+            DevicePublication::None
         );
     }
 

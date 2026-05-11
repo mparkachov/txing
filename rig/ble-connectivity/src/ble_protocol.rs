@@ -92,7 +92,6 @@ pub struct CapabilitySample {
     pub sparkplug_available: bool,
     pub ble_available: bool,
     pub domain_available: bool,
-    pub ble_connected: bool,
     pub ble_local_name: Option<String>,
     pub ble_address: Option<String>,
     pub battery_mv: Option<u16>,
@@ -187,7 +186,6 @@ pub fn advertisement_sample(
         sparkplug_available: true,
         ble_available: true,
         domain_available: false,
-        ble_connected: false,
         ble_local_name: advertisement.local_name.clone(),
         ble_address: Some(advertisement.address.clone()),
         battery_mv: None,
@@ -204,7 +202,6 @@ pub fn offline_sample(spec: &DeviceSpec, seq: u64, now_ms: u64) -> CapabilitySam
         sparkplug_available: false,
         ble_available: false,
         domain_available: false,
-        ble_connected: false,
         ble_local_name: Some(spec.thing_name.clone()),
         ble_address: None,
         battery_mv: None,
@@ -218,7 +215,6 @@ pub fn power_state_sample(
     spec: &DeviceSpec,
     state: &PowerState,
     ble_address: Option<String>,
-    ble_connected: bool,
     seq: u64,
     now_ms: u64,
 ) -> CapabilitySample {
@@ -228,7 +224,6 @@ pub fn power_state_sample(
         sparkplug_available: true,
         ble_available: true,
         domain_available: state.redcon < REDCON_IDLE,
-        ble_connected,
         ble_local_name: Some(spec.thing_name.clone()),
         ble_address,
         battery_mv: state.battery_mv,
@@ -243,7 +238,6 @@ pub fn weather_state_sample(
     state: &WeatherState,
     measurement: Option<WeatherMeasurement>,
     ble_address: Option<String>,
-    ble_connected: bool,
     seq: u64,
     now_ms: u64,
 ) -> CapabilitySample {
@@ -257,7 +251,6 @@ pub fn weather_state_sample(
         sparkplug_available: true,
         ble_available: true,
         domain_available: state.redcon < REDCON_IDLE,
-        ble_connected,
         ble_local_name: Some(spec.thing_name.clone()),
         ble_address,
         battery_mv,
@@ -289,10 +282,6 @@ pub fn capability_state_from_sample(adapter_id: &str, sample: CapabilitySample) 
             MetricValue::int32(i32::from(value)),
         );
     }
-    metrics.insert(
-        "bleConnected".to_string(),
-        MetricValue::boolean(sample.ble_connected),
-    );
     if let Some(weather) = sample.weather {
         metrics.insert(
             "measuredTemperature".to_string(),
@@ -391,10 +380,7 @@ mod tests {
         assert_eq!(state.capabilities[SPARKPLUG_CAPABILITY], true);
         assert_eq!(state.capabilities[BLE_CAPABILITY], true);
         assert_eq!(state.capabilities[POWER_CAPABILITY], false);
-        assert_eq!(
-            state.metrics["bleConnected"].value,
-            serde_json::json!(false)
-        );
+        assert!(!state.metrics.contains_key("bleConnected"));
 
         let offline = capability_state_from_sample(ADAPTER_ID, offline_sample(&spec, 2, 100));
         assert_eq!(offline.capabilities[SPARKPLUG_CAPABILITY], false);

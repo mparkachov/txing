@@ -556,7 +556,7 @@ impl DeviceSession {
                         self.last_power_state = Some(state.clone());
                         let seq = self.next_seq();
                         let sample =
-                            power_state_sample(&self.spec, &state, Some(address), true, seq, now);
+                            power_state_sample(&self.spec, &state, Some(address), seq, now);
                         self.publish_sample(sample)?;
                     }
                     Err(err) => {
@@ -597,7 +597,6 @@ impl DeviceSession {
                             &state,
                             self.last_weather_measurement.clone(),
                             Some(address),
-                            true,
                             seq,
                             now,
                         );
@@ -1202,13 +1201,7 @@ mod tests {
         assert_eq!(state.capabilities.get("sparkplug"), Some(&true));
         assert_eq!(state.capabilities.get("ble"), Some(&true));
         assert_eq!(state.capabilities.get("power"), Some(&false));
-        assert_eq!(
-            state
-                .metrics
-                .get("bleConnected")
-                .map(|metric| &metric.value),
-            Some(&serde_json::json!(false))
-        );
+        assert!(!state.metrics.contains_key("bleConnected"));
     }
 
     #[tokio::test]

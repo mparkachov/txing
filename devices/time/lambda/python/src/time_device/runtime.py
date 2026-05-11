@@ -523,8 +523,6 @@ class TimeDeviceRuntime:
     ) -> dict[str, dict[str, Any]]:
         metrics: dict[str, dict[str, Any]] = {
             "currentTimeIso": self.metric_string(current_time_iso),
-            "mode": self.metric_string(state.mode),
-            "mcpAvailable": self.metric_boolean(state.mode == TIME_MODE_ACTIVE),
             "activeUntilMs": self.metric_int64(state.active_until_ms or 0),
         }
         if state.last_command_id:
@@ -533,8 +531,6 @@ class TimeDeviceRuntime:
 
     def build_expired_metrics(self) -> dict[str, dict[str, Any]]:
         return {
-            "mode": self.metric_string(TIME_MODE_SLEEP),
-            "mcpAvailable": self.metric_boolean(False),
             "activeUntilMs": self.metric_int64(0),
         }
 
