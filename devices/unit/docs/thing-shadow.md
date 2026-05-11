@@ -75,6 +75,9 @@ Projection rules:
 - `payload.timestamp` is the Sparkplug payload timestamp when present.
 - `payload.seq` is the Sparkplug payload sequence when present.
 - `projection.observedAt` is the AWS IoT Rule timestamp.
+- Capability-owned named shadows do not carry generic `observedAtMs` or `seq`
+  fields. Readers use AWS IoT Shadow metadata timestamps and root shadow
+  `version` for shadow freshness and ordering.
 - `NBIRTH` and `DBIRTH` replace `payload.metrics`.
 - `NDATA` and `DDATA` deep-merge changed metric paths into `payload.metrics`.
 - `NDEATH` and `DDEATH` replace `payload.metrics` with the actual Sparkplug death payload and still update `topic` plus `projection.observedAt`.

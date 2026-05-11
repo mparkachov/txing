@@ -3,7 +3,6 @@ type TimeReportedState = {
   mode: 'sleep' | 'active' | null
   activeUntilMs: number | null
   lastCommandId: string | null
-  observedAtMs: number | null
 }
 
 export type TimeNowResult = {
@@ -42,7 +41,6 @@ export const extractTimeReportedState = (shadow: unknown): TimeReportedState => 
       mode: null,
       activeUntilMs: null,
       lastCommandId: null,
-      observedAtMs: null,
     }
   }
   const mode = reported.mode === 'sleep' || reported.mode === 'active' ? reported.mode : null
@@ -51,7 +49,6 @@ export const extractTimeReportedState = (shadow: unknown): TimeReportedState => 
     mode,
     activeUntilMs: asOptionalNumber(reported.activeUntilMs),
     lastCommandId: asOptionalString(reported.lastCommandId),
-    observedAtMs: asOptionalNumber(reported.observedAtMs),
   }
 }
 

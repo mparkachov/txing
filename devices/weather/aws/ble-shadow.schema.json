@@ -18,14 +18,6 @@
             },
             "bleLocalName": {
               "type": ["string", "null"]
-            },
-            "observedAtMs": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "seq": {
-              "type": "integer",
-              "minimum": 0
             }
           }
         }

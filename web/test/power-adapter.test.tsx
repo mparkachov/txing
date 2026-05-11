@@ -10,8 +10,6 @@ describe('power adapter', () => {
           state: {
             reported: {
               batteryMv: 3512,
-              observedAtMs: 1000,
-              seq: 3,
             },
           },
         },

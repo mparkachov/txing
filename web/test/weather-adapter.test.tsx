@@ -13,8 +13,6 @@ describe('weather adapter', () => {
           state: {
             reported: {
               batteryMv: 3512,
-              observedAtMs: 990,
-              seq: 2,
             },
           },
         },
@@ -24,8 +22,6 @@ describe('weather adapter', () => {
               measuredTemperature: 21.625,
               measuredPressure: 100.8,
               measuredHumidity: 44.5,
-              observedAtMs: 1000,
-              seq: 3,
             },
           },
         },

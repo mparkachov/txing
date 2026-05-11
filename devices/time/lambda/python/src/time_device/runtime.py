@@ -202,7 +202,6 @@ class StoredTimeState:
     mode: str = TIME_MODE_SLEEP
     active_until_ms: int | None = None
     last_command_id: str | None = None
-    seq: int = 0
 
     @classmethod
     def from_reported_shadow(
@@ -214,13 +213,11 @@ class StoredTimeState:
         mode = reported.get("mode")
         active_until_ms = reported.get("activeUntilMs")
         last_command_id = reported.get("lastCommandId")
-        seq = reported.get("seq")
         return cls(
             thing_name=thing_name,
             mode=mode if mode == TIME_MODE_ACTIVE else TIME_MODE_SLEEP,
             active_until_ms=int(active_until_ms) if active_until_ms is not None else None,
             last_command_id=last_command_id if isinstance(last_command_id, str) else None,
-            seq=int(seq) if seq is not None else 0,
         )
 
 
@@ -253,7 +250,6 @@ class TimeDeviceRuntime:
                 command = None
             else:
                 state.last_command_id = command.command_id
-                state.seq += 1
                 if command.activates_time:
                     state.mode = TIME_MODE_ACTIVE
                     state.active_until_ms = now_ms + self.active_ttl_ms
@@ -264,20 +260,18 @@ class TimeDeviceRuntime:
                     command=command,
                     status=COMMAND_STATUS_SUCCEEDED,
                     message=None,
-                    now_ms=now_ms,
-                    seq=state.seq,
+                    seq=command.seq,
                 )
 
         if state.mode == TIME_MODE_ACTIVE and state.active_until_ms is not None:
             if state.active_until_ms <= now_ms:
                 state.mode = TIME_MODE_SLEEP
                 state.active_until_ms = None
-                state.seq += 1
 
         mcp_available = state.mode == TIME_MODE_ACTIVE
-        self.publish_time_state(state, current_time_iso=current_time_iso, now_ms=now_ms)
+        self.publish_time_state(state, current_time_iso=current_time_iso)
         self.publish_mcp_discovery(mcp_available=mcp_available, now_ms=now_ms)
-        self.update_time_shadow(state, current_time_iso=current_time_iso, now_ms=now_ms)
+        self.update_time_shadow(state, current_time_iso=current_time_iso)
         self.update_mcp_shadow(mcp_available=mcp_available, now_ms=now_ms)
         if command_result is not None:
             self.publish_command_result(command_result)
@@ -311,11 +305,10 @@ class TimeDeviceRuntime:
             if state.active_until_ms <= now_ms:
                 state.mode = TIME_MODE_SLEEP
                 state.active_until_ms = None
-                state.seq += 1
                 current_time_iso = utc_iso(now_ms)
-                self.publish_time_state(state, current_time_iso=current_time_iso, now_ms=now_ms)
+                self.publish_time_state(state, current_time_iso=current_time_iso)
                 self.publish_mcp_discovery(mcp_available=False, now_ms=now_ms)
-                self.update_time_shadow(state, current_time_iso=current_time_iso, now_ms=now_ms)
+                self.update_time_shadow(state, current_time_iso=current_time_iso)
                 self.update_mcp_shadow(mcp_available=False, now_ms=now_ms)
                 active = False
 
@@ -367,7 +360,6 @@ class TimeDeviceRuntime:
         state: StoredTimeState,
         *,
         current_time_iso: str,
-        now_ms: int,
     ) -> None:
         payload = {
             "schemaVersion": SCHEMA_VERSION,
@@ -378,8 +370,6 @@ class TimeDeviceRuntime:
                 state=state,
                 current_time_iso=current_time_iso,
             ),
-            "observedAtMs": now_ms,
-            "seq": state.seq,
         }
         if state.mode == TIME_MODE_ACTIVE and state.active_until_ms is not None:
             payload["expiresAtMs"] = state.active_until_ms
@@ -430,7 +420,6 @@ class TimeDeviceRuntime:
         state: StoredTimeState,
         *,
         current_time_iso: str,
-        now_ms: int,
     ) -> None:
         self.update_named_shadow(
             "time",
@@ -441,8 +430,8 @@ class TimeDeviceRuntime:
                         "mode": state.mode,
                         "activeUntilMs": state.active_until_ms,
                         "lastCommandId": state.last_command_id,
-                        "observedAtMs": now_ms,
-                        "seq": state.seq,
+                        "observedAtMs": None,
+                        "seq": None,
                     }
                 }
             },
@@ -552,7 +541,6 @@ class TimeDeviceRuntime:
         command: ConnectivityCommand,
         status: str,
         message: str | None,
-        now_ms: int,
         seq: int,
     ) -> dict[str, Any]:
         return {
@@ -565,7 +553,6 @@ class TimeDeviceRuntime:
                 "redcon": command.redcon,
             },
             "message": message,
-            "observedAtMs": now_ms,
             "seq": int(seq),
         }
 

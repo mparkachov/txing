@@ -126,6 +126,10 @@ Named shadow ownership outside Sparkplug:
 - `board.state.reported.*` is board-owned operational state.
 - `mcp.state.reported.*` mirrors the retained board MCP topics for readers.
 - `video.state.reported.*` mirrors the retained board video topics for readers.
+- Capability-owned named shadows contain only domain fields. Generic
+  bookkeeping such as `observedAtMs` and `seq` must not be published there;
+  readers use AWS IoT Shadow metadata timestamps and the root shadow `version`
+  for freshness and ordering.
 
 Rig uses `mcu`, retained MCP topics, and retained video status to derive the Sparkplug device `redcon` metric that it publishes. Readers query the witness-owned Sparkplug projection instead of subscribing to live Sparkplug traffic directly.
 

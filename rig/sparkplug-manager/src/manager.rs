@@ -202,7 +202,6 @@ pub fn command_result_metrics(result: &CapabilityCommandResult) -> Result<Vec<Me
     let mut metrics = vec![
         Metric::string("redconCommandStatus", result.status.clone()),
         Metric::int32("redconCommandSeq", i32::try_from(result.seq)?),
-        Metric::uint64("redconCommandObservedAt", result.observed_at_ms),
         Metric::string("redconCommandId", result.command_id.clone()),
     ];
     if let Some(redcon) = result.target.redcon {
@@ -724,7 +723,6 @@ mod tests {
             vec![
                 Metric::string("redconCommandStatus", "succeeded"),
                 Metric::int32("redconCommandSeq", 1),
-                Metric::uint64("redconCommandObservedAt", 1000),
                 Metric::string("redconCommandId", "cmd-1"),
                 Metric::int32("redconCommandTarget", 3),
             ]

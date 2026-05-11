@@ -12,7 +12,6 @@ const shadow = {
           mode: 'sleep',
           activeUntilMs: null,
           lastCommandId: null,
-          observedAtMs: 1777630272000,
         },
       },
     },

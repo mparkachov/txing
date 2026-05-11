@@ -25,7 +25,7 @@ use txing_capability_protocol::{
 
 use crate::retained::{
     ADAPTER_ID, RETAINED_COMMAND_RESULT_FILTER, RETAINED_STATE_FILTER, RetainedCapabilityState,
-    RetainedTopicKind, build_retained_command_topic, parse_retained_topic,
+    RetainedCommandResult, RetainedTopicKind, build_retained_command_topic, parse_retained_topic,
 };
 
 #[derive(Debug, Clone)]
@@ -186,18 +186,17 @@ impl RuntimeState {
                 self.publish_projected_state(&state, now_ms())?;
             }
             RetainedTopicKind::CommandResult => {
-                let mut result =
-                    CapabilityCommandResult::from_slice(&payload).with_context(|| {
-                        format!("decode retained capability command result from {topic}")
-                    })?;
+                let result = RetainedCommandResult::from_slice(&payload).with_context(|| {
+                    format!("decode retained capability command result from {topic}")
+                })?;
                 if result.thing_name != topic_thing_name {
                     return Err(topic_payload_thing_mismatch(
                         topic_thing_name,
                         &result.thing_name,
                     ));
                 }
-                result.adapter_id = self.config.adapter_id.clone();
-                self.publish_command_result_payload(result)?;
+                let local_result = result.to_local_result(&self.config.adapter_id, now_ms())?;
+                self.publish_command_result_payload(local_result)?;
             }
             RetainedTopicKind::Command => {}
         }
@@ -640,22 +639,23 @@ mod tests {
     #[test]
     fn retained_command_result_forwards_to_local_ipc() {
         let (mut runtime, mut receiver) = runtime();
-        let result = CapabilityCommandResult {
-            schema_version: SCHEMA_VERSION.to_string(),
-            adapter_id: "time-lambda".to_string(),
-            command_id: "cmd-1".to_string(),
-            thing_name: "time-1".to_string(),
-            status: txing_capability_protocol::COMMAND_SUCCEEDED.to_string(),
-            target: CapabilityCommandResultTarget { redcon: Some(4) },
-            message: None,
-            observed_at_ms: 10,
-            seq: 7,
-        };
+        let result = serde_json::json!({
+            "schemaVersion": SCHEMA_VERSION,
+            "adapterId": "time-lambda",
+            "commandId": "cmd-1",
+            "thingName": "time-1",
+            "status": txing_capability_protocol::COMMAND_SUCCEEDED,
+            "target": {
+                "redcon": 4
+            },
+            "message": null,
+            "seq": 7
+        });
 
         runtime
             .handle_retained_message(
                 "txings/time-1/capability/v2/command-result".to_string(),
-                result.to_vec().unwrap(),
+                serde_json::to_vec(&result).unwrap(),
             )
             .unwrap();
 
@@ -664,6 +664,10 @@ mod tests {
             outbound.topic,
             "dev/txing/rig/v2/capability/command-result/time-1/dev.txing.rig.AwsConnectivity"
         );
+        let result = CapabilityCommandResult::from_slice(&outbound.payload).unwrap();
+        assert_eq!(result.adapter_id, ADAPTER_ID);
+        assert_eq!(result.seq, 7);
+        assert!(result.observed_at_ms > 0);
     }
 
     #[test]

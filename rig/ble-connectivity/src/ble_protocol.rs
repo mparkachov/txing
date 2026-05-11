@@ -336,11 +336,8 @@ pub fn shadow_updates_from_sample(sample: &CapabilitySample) -> Result<Vec<Shado
                 "bleLocalName".to_string(),
                 optional_string(sample.ble_local_name.as_deref()),
             ),
-            (
-                "observedAtMs".to_string(),
-                Value::from(sample.observed_at_ms),
-            ),
-            ("seq".to_string(), Value::from(sample.seq)),
+            ("observedAtMs".to_string(), Value::Null),
+            ("seq".to_string(), Value::Null),
         ]),
     )?];
 
@@ -350,11 +347,8 @@ pub fn shadow_updates_from_sample(sample: &CapabilitySample) -> Result<Vec<Shado
             POWER_SHADOW_NAME,
             BTreeMap::from([
                 ("batteryMv".to_string(), optional_u16_i32(sample.battery_mv)),
-                (
-                    "observedAtMs".to_string(),
-                    Value::from(sample.observed_at_ms),
-                ),
-                ("seq".to_string(), Value::from(sample.seq)),
+                ("observedAtMs".to_string(), Value::Null),
+                ("seq".to_string(), Value::Null),
             ]),
         )?);
     }
@@ -377,11 +371,8 @@ pub fn shadow_updates_from_sample(sample: &CapabilitySample) -> Result<Vec<Shado
                     "measuredHumidity".to_string(),
                     optional_f64(weather.map(|value| value.measured_humidity)),
                 ),
-                (
-                    "observedAtMs".to_string(),
-                    Value::from(sample.observed_at_ms),
-                ),
-                ("seq".to_string(), Value::from(sample.seq)),
+                ("observedAtMs".to_string(), Value::Null),
+                ("seq".to_string(), Value::Null),
             ]),
         )?);
     }
@@ -532,12 +523,16 @@ mod tests {
             payload["state"]["reported"]["bleLocalName"],
             Value::from("power-1")
         );
+        assert!(payload["state"]["reported"]["observedAtMs"].is_null());
+        assert!(payload["state"]["reported"]["seq"].is_null());
         assert_eq!(
             updates[1].topic,
             "$aws/things/power-1/shadow/name/power/update"
         );
         let payload: Value = serde_json::from_slice(&updates[1].payload).unwrap();
         assert!(payload["state"]["reported"]["batteryMv"].is_null());
+        assert!(payload["state"]["reported"]["observedAtMs"].is_null());
+        assert!(payload["state"]["reported"]["seq"].is_null());
     }
 
     #[test]
@@ -565,6 +560,8 @@ mod tests {
         );
         let payload: Value = serde_json::from_slice(&updates[1].payload).unwrap();
         assert_eq!(payload["state"]["reported"]["batteryMv"], Value::from(3970));
+        assert!(payload["state"]["reported"]["observedAtMs"].is_null());
+        assert!(payload["state"]["reported"]["seq"].is_null());
     }
 
     #[test]
@@ -597,6 +594,8 @@ mod tests {
         );
         let payload: Value = serde_json::from_slice(&updates[1].payload).unwrap();
         assert_eq!(payload["state"]["reported"]["batteryMv"], Value::from(3710));
+        assert!(payload["state"]["reported"]["observedAtMs"].is_null());
+        assert!(payload["state"]["reported"]["seq"].is_null());
 
         assert_eq!(
             updates[2].topic,
@@ -616,5 +615,7 @@ mod tests {
             payload["state"]["reported"]["measuredHumidity"],
             Value::from(44.5)
         );
+        assert!(payload["state"]["reported"]["observedAtMs"].is_null());
+        assert!(payload["state"]["reported"]["seq"].is_null());
     }
 }

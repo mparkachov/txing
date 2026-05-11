@@ -139,6 +139,10 @@ Capability-owned shadow rule:
   `/get/rejected` topics
 - for BLE devices, `dev.txing.rig.BleConnectivity` owns the `ble` named shadow
   and device-domain shadows such as `power` and `weather`
+- capability-owned named shadows must contain only required domain fields; they
+  must not publish generic bookkeeping fields such as `observedAtMs` or `seq`
+- readers that need freshness or ordering for a named shadow should use AWS IoT
+  Shadow metadata timestamps and the root shadow `version`
 
 Projection behavior:
 
@@ -166,7 +170,8 @@ Current device metric policy:
 - typed data such as `batteryMv`, weather readings, and time readings must live
   in the corresponding capability-owned named shadows
 - command-result metrics such as `redconCommandStatus` still use Sparkplug for
-  the current command feedback path
+  the current command feedback path; `redconCommandSeq` is the command
+  correlation field
 
 Town remains a compatibility exception outside witness ownership:
 

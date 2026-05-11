@@ -16,14 +16,6 @@
             "batteryMv": {
               "type": ["integer", "null"],
               "minimum": 0
-            },
-            "observedAtMs": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "seq": {
-              "type": "integer",
-              "minimum": 0
             }
           }
         }

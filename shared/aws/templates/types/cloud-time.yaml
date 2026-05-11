@@ -51,7 +51,7 @@ Resources:
         shadows/mcp/defaultPayload: '{"state":{"reported":{"descriptor":null,"status":{"serviceId":"mcp","available":false,"updatedAtMs":0}}}}'
         shadows/time/schema: aws/time-shadow.schema.json
         shadows/time/default: aws/default-time-shadow.json
-        shadows/time/defaultPayload: '{"state":{"reported":{"currentTimeIso":null,"mode":"sleep","activeUntilMs":null,"lastCommandId":null,"observedAtMs":0,"seq":0}}}'
+        shadows/time/defaultPayload: '{"state":{"reported":{"currentTimeIso":null,"mode":"sleep","activeUntilMs":null,"lastCommandId":null}}}'
         web/adapter: web/time-adapter.tsx
 
   TimeRuntimeLogGroup:

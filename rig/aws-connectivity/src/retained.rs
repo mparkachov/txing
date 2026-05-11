@@ -2,7 +2,10 @@ use std::collections::BTreeMap;
 
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
-use txing_capability_protocol::{CapabilityState, MetricValue, SCHEMA_VERSION, validate_segment};
+use txing_capability_protocol::{
+    CapabilityCommandResult, CapabilityCommandResultTarget, CapabilityState, MetricValue,
+    SCHEMA_VERSION, validate_segment,
+};
 
 pub const ADAPTER_ID: &str = "dev.txing.rig.AwsConnectivity";
 pub const RETAINED_TOPIC_ROOT: &str = "txings";
@@ -30,7 +33,7 @@ pub struct RetainedCapabilityState {
     pub capabilities: BTreeMap<String, bool>,
     #[serde(default)]
     pub metrics: BTreeMap<String, MetricValue>,
-    #[serde(rename = "observedAtMs")]
+    #[serde(rename = "observedAtMs", default)]
     pub observed_at_ms: u64,
     #[serde(default)]
     pub seq: u64,
@@ -52,6 +55,26 @@ pub struct RetainedCapabilityState {
         skip_serializing_if = "Option::is_none"
     )]
     pub expired_metrics: Option<BTreeMap<String, MetricValue>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RetainedCommandResult {
+    #[serde(rename = "schemaVersion")]
+    pub schema_version: String,
+    #[serde(rename = "adapterId")]
+    pub adapter_id: String,
+    #[serde(rename = "commandId")]
+    pub command_id: String,
+    #[serde(rename = "thingName")]
+    pub thing_name: String,
+    pub status: String,
+    pub target: CapabilityCommandResultTarget,
+    pub message: Option<String>,
+    #[serde(rename = "observedAtMs", default)]
+    pub observed_at_ms: u64,
+    #[serde(default)]
+    pub seq: u64,
 }
 
 impl RetainedCapabilityState {
@@ -118,6 +141,39 @@ impl RetainedCapabilityState {
             observed_at_ms: now_ms,
             seq,
         })
+    }
+}
+
+impl RetainedCommandResult {
+    pub fn from_slice(payload: &[u8]) -> Result<Self> {
+        let value: Self = serde_json::from_slice(payload)?;
+        value.validate()?;
+        Ok(value)
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        self.to_local_result(&self.adapter_id, self.observed_at_ms)?
+            .validate()
+    }
+
+    pub fn to_local_result(
+        &self,
+        adapter_id: &str,
+        now_ms: u64,
+    ) -> Result<CapabilityCommandResult> {
+        let result = CapabilityCommandResult {
+            schema_version: SCHEMA_VERSION.to_string(),
+            adapter_id: adapter_id.to_string(),
+            command_id: self.command_id.clone(),
+            thing_name: self.thing_name.clone(),
+            status: self.status.clone(),
+            target: self.target,
+            message: self.message.clone(),
+            observed_at_ms: now_ms,
+            seq: self.seq,
+        };
+        result.validate()?;
+        Ok(result)
     }
 }
 
@@ -217,6 +273,30 @@ mod tests {
         );
         assert_eq!(projected.observed_at_ms, 21);
         assert_eq!(projected.seq, 2);
+    }
+
+    #[test]
+    fn retained_state_allows_omitted_bookkeeping_fields() {
+        let state = RetainedCapabilityState::from_slice(
+            br#"{
+                "schemaVersion": "2.0",
+                "adapterId": "time-lambda",
+                "thingName": "time-1",
+                "capabilities": {
+                    "sparkplug": true
+                },
+                "metrics": {}
+            }"#,
+        )
+        .expect("retained state");
+
+        assert_eq!(state.observed_at_ms, 0);
+        assert_eq!(state.seq, 0);
+        let projected = state
+            .to_local_state(ADAPTER_ID, 1714380000000, 8)
+            .expect("local state");
+        assert_eq!(projected.observed_at_ms, 1714380000000);
+        assert_eq!(projected.seq, 8);
     }
 
     #[test]

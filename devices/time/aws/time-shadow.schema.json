@@ -20,13 +20,6 @@
             },
             "lastCommandId": {
               "type": ["string", "null"]
-            },
-            "observedAtMs": {
-              "type": "integer"
-            },
-            "seq": {
-              "type": "integer",
-              "minimum": 0
             }
           }
         }

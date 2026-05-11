@@ -148,9 +148,18 @@ class TimeDeviceRuntimeTests(unittest.TestCase):
             state_payload["metrics"]["currentTimeIso"]["value"],
             "2024-04-29T08:40:00Z",
         )
+        self.assertNotIn("observedAtMs", state_payload)
+        self.assertNotIn("seq", state_payload)
         self.assertNotIn("mode", state_payload["metrics"])
         self.assertNotIn("mcpAvailable", state_payload["metrics"])
         self.assertTrue(state_publish["retain"])
+        time_shadow_update = next(
+            item for item in iot.shadow_updates if item["shadowName"] == "time"
+        )
+        time_shadow_payload = decode_payload(time_shadow_update["payload"])
+        reported = time_shadow_payload["state"]["reported"]
+        self.assertIsNone(reported["observedAtMs"])
+        self.assertIsNone(reported["seq"])
 
     def test_new_redcon_one_command_enters_active_mode_and_publishes_mcp_status(self) -> None:
         runtime, iot = self.make_runtime()
@@ -166,6 +175,8 @@ class TimeDeviceRuntimeTests(unittest.TestCase):
             item for item in iot.published if item["topic"] == build_capability_state_topic("clock")
         )
         state_payload = decode_payload(state_publish["payload"])
+        self.assertNotIn("observedAtMs", state_payload)
+        self.assertNotIn("seq", state_payload)
         self.assertEqual(state_payload["expiresAtMs"], 1714380300000)
         self.assertEqual(state_payload["expiredCapabilities"]["time"], False)
         self.assertEqual(state_payload["expiredMetrics"]["activeUntilMs"]["value"], 0)
@@ -179,6 +190,7 @@ class TimeDeviceRuntimeTests(unittest.TestCase):
         command_result = decode_payload(command_result_publish["payload"])
         self.assertEqual(command_result["adapterId"], "dev.txing.rig.AwsConnectivity")
         self.assertEqual(command_result["status"], "succeeded")
+        self.assertEqual(command_result["seq"], 1)
         self.assertEqual(command_result["target"], {"redcon": 1})
         status_publish = next(
             item for item in iot.published if item["topic"] == "txings/clock/mcp/status"
@@ -190,7 +202,6 @@ class TimeDeviceRuntimeTests(unittest.TestCase):
         iot.time_reported = {
             "mode": TIME_MODE_ACTIVE,
             "activeUntilMs": 1714380300000,
-            "seq": 1,
         }
         event = {
             "mqttTopic": "txings/clock/mcp/session/session-1/c2s",
@@ -249,7 +260,6 @@ class TimeDeviceRuntimeTests(unittest.TestCase):
             "mode": TIME_MODE_ACTIVE,
             "activeUntilMs": 1714379999999,
             "lastCommandId": "cmd-active",
-            "seq": 3,
         }
 
         with patch("time_device.runtime.utc_now_ms", return_value=1714380000000):

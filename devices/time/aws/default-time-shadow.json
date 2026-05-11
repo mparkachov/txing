@@ -4,9 +4,7 @@
       "currentTimeIso": null,
       "mode": "sleep",
       "activeUntilMs": null,
-      "lastCommandId": null,
-      "observedAtMs": 0,
-      "seq": 0
+      "lastCommandId": null
     }
   }
 }
