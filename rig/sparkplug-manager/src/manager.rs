@@ -7,7 +7,11 @@ use txing_capability_protocol::{
     CapabilityCommand, CapabilityCommandResult, CapabilityState, InventoryDevice, MetricValue,
 };
 
-const STATE_TTL_MS: u64 = 45_000;
+// BLE REDCON 4 publishes measurements every 60s and treats a single missed
+// sample as acceptable before marking the domain stale. Keep the manager-side
+// adapter state TTL above that producer freshness window so idle BLE devices
+// do not flap through DDEATH between valid samples.
+const STATE_TTL_MS: u64 = 150_000;
 #[derive(Debug, Clone, PartialEq)]
 pub struct DeviceSnapshot {
     pub thing_name: String,
@@ -350,6 +354,29 @@ mod tests {
 
         assert_eq!(state.snapshot(1000).redcon, Some(3));
         assert_eq!(state.snapshot(1000 + STATE_TTL_MS + 1).redcon, None);
+    }
+
+    #[test]
+    fn state_ttl_covers_idle_ble_measurement_window() {
+        let mut state = DeviceRuntimeState::new(power_inventory());
+        state
+            .observe_state(CapabilityState {
+                schema_version: SCHEMA_VERSION.to_string(),
+                adapter_id: "dev.txing.rig.BleConnectivity".to_string(),
+                thing_name: "power-1".to_string(),
+                capabilities: BTreeMap::from([
+                    ("sparkplug".to_string(), true),
+                    ("ble".to_string(), true),
+                    ("power".to_string(), false),
+                ]),
+                metrics: BTreeMap::new(),
+                observed_at_ms: 1000,
+                seq: 1,
+            })
+            .unwrap();
+
+        assert_eq!(state.snapshot(1000 + 60_000).redcon, Some(4));
+        assert_eq!(state.snapshot(1000 + 120_000).redcon, Some(4));
     }
 
     #[test]
