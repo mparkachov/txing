@@ -60,6 +60,16 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("- iot:UpdateThingShadow", template)
         self.assertIn("Sid: WitnessDescribeThings", template)
         self.assertIn("Action: iot:DescribeThing", template)
+        self.assertIn("Runtime: provided.al2023", template)
+        self.assertIn("Handler: rust.handler", template)
+        self.assertIn("Architectures:", template)
+        self.assertIn("- arm64", template)
+        self.assertIn("FunctionName: txing-witness-lambda", template)
+        self.assertIn("Code: ../../../witness/target/lambda/txing-witness-lambda/bootstrap.zip", template)
+        self.assertIn("encode(*, 'base64')", template)
+        self.assertIn("iot:DescribeEndpoint", template)
+        self.assertIn("WitnessFunctionName:", template)
+        self.assertIn("WitnessFunctionArn:", template)
 
     def test_template_uses_dynamic_txing_log_group_prefix_for_rig_logs(self) -> None:
         template = _template_text()
@@ -232,6 +242,8 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("ThingTypeName: time", template)
         self.assertIn("TimeRuntimeFunction:", template)
         self.assertIn("TimeRuntimeMcpTopicRule:", template)
+        self.assertIn("FunctionName: txing-time-lambda", template)
+        self.assertIn("Code: ../../../../devices/time/lambda/target/lambda/txing-time-lambda/bootstrap.zip", template)
         self.assertIn("CatalogBasePath: /txing/town/cloud/time", template)
         self.assertIn("CatalogBasePath: /txing/town/raspi/unit", template)
         self.assertIn("CatalogBasePath: /txing/town/raspi/power", template)
@@ -240,6 +252,47 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("EnlistFunctionArn:", root_template)
         self.assertIn("RigTypeCatalogRead", template)
         self.assertIn("ssm:GetParametersByPath", template)
+
+    def test_cloud_time_template_defines_rust_lambda_schedule_state_and_mcp_rules(self) -> None:
+        template = (AWS_DIR / "templates" / "types" / "cloud-time.yaml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("TimeRuntimeFunction:", template)
+        self.assertIn("AWS::Lambda::Function", template)
+        self.assertIn("AWS::Events::Rule", template)
+        self.assertIn("AWS::IoT::TopicRule", template)
+        self.assertIn("rate(1 minute)", template)
+        self.assertIn("txings/+/mcp/session/+/c2s", template)
+        self.assertIn("txings/+/capability/v2/command", template)
+        self.assertIn("TimeRuntimeCommandTopicRule:", template)
+        self.assertIn("TimeRuntimeCommandRulePermission:", template)
+        self.assertIn("iot:GetRetainedMessage", template)
+        self.assertIn("iot:GetThingShadow", template)
+        self.assertIn("iot:SearchIndex", template)
+        self.assertIn("TimeRuntimeVersion:", template)
+        self.assertIn("SERVER_VERSION: !Ref TimeRuntimeVersion", template)
+        self.assertIn("topic/txings/*/capability/v2/*", template)
+        self.assertIn("topic/txings/*/mcp/*", template)
+        self.assertIn("Runtime: provided.al2023", template)
+        self.assertIn("Handler: rust.handler", template)
+        self.assertIn("Architectures:", template)
+        self.assertIn("- arm64", template)
+        self.assertIn(
+            "FunctionName: txing-time-lambda",
+            template,
+        )
+        self.assertIn(
+            "Code: ../../../../devices/time/lambda/target/lambda/txing-time-lambda/bootstrap.zip",
+            template,
+        )
+        self.assertNotIn("ThingName:", template)
+        self.assertNotIn("THING_NAME", template)
+        self.assertNotIn("${ThingName}", template)
+        self.assertNotIn("txing-time-${ThingName}", template)
+        self.assertNotIn("AWS::Serverless::Function", template)
+        self.assertNotIn("AWS::DynamoDB::Table", template)
+        self.assertNotIn("dynamodb:", template)
 
     def test_enlist_stack_defines_lambda_and_minimal_permissions(self) -> None:
         root_template = (AWS_DIR / "template.yaml").read_text(encoding="utf-8")
@@ -315,6 +368,9 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("Value: !Ref TxingVersion", root_template)
         self.assertIn("TimeRuntimeVersion:", cloud_time_template)
         self.assertIn("SERVER_VERSION: !Ref TimeRuntimeVersion", cloud_time_template)
+        self.assertIn("Runtime: provided.al2023", cloud_time_template)
+        self.assertIn("Handler: rust.handler", cloud_time_template)
+        self.assertIn("- arm64", cloud_time_template)
         self.assertNotIn('SERVER_VERSION: "0.5.0"', cloud_time_template)
         self.assertIn('"TxingVersion=$TXING_VERSION"', aws_justfile)
 
@@ -322,7 +378,8 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         version = (REPO_ROOT / "VERSION").read_text(encoding="utf-8").strip()
         manifest_expectations = {
             REPO_ROOT / "shared" / "aws" / "python" / "pyproject.toml": f'version = "{version}"',
-            REPO_ROOT / "devices" / "time" / "lambda" / "python" / "pyproject.toml": f'version = "{version}"',
+            REPO_ROOT / "devices" / "time" / "lambda" / "Cargo.toml": f'version = "{version}"',
+            REPO_ROOT / "witness" / "Cargo.toml": f'version = "{version}"',
             REPO_ROOT / "devices" / "unit" / "rig" / "python" / "pyproject.toml": f'version = "{version}"',
             REPO_ROOT / "devices" / "unit" / "board" / "pyproject.toml": f'version = "{version}"',
             REPO_ROOT / "devices" / "unit" / "mcu" / "Cargo.toml": f'version = "{version}"',

@@ -1,0 +1,16 @@
+set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+set quiet := true
+
+lambda_dir := source_directory()
+
+@test:
+    cargo test --manifest-path "{{lambda_dir}}/Cargo.toml"
+
+build:
+    cd "{{lambda_dir}}" && cargo lambda build --release
+
+deploy: build
+    cd "{{lambda_dir}}" && cargo lambda deploy
+
+@default:
+    @just --list

@@ -745,13 +745,16 @@ Resources:
   TxingSparkplugWitnessFunction:
     Type: AWS::Lambda::Function
     Properties:
+      FunctionName: txing-witness-lambda
       Description: Projects Sparkplug MQTT state into sparkplug named shadows.
       Role: !GetAtt TxingWitnessRole.Arn
-      Runtime: python3.12
-      Handler: witness.sparkplug_witness.lambda_handler
+      Runtime: provided.al2023
+      Handler: rust.handler
+      Architectures:
+        - arm64
       MemorySize: 256
       Timeout: 30
-      Code: ../../../witness/src
+      Code: ../../../witness/target/lambda/txing-witness-lambda/bootstrap.zip
 
   TxingSparkplugWitnessInvokePermission:
     Type: AWS::Lambda::Permission
@@ -1037,3 +1040,7 @@ Outputs:
     Value: !Ref TxingGreengrassArtifactsBucket
   CustomResourceServiceToken:
     Value: !GetAtt TxingStackCleanupFunction.Arn
+  WitnessFunctionName:
+    Value: !Ref TxingSparkplugWitnessFunction
+  WitnessFunctionArn:
+    Value: !GetAtt TxingSparkplugWitnessFunction.Arn

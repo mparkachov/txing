@@ -1,8 +1,8 @@
 # time device
 
-`time` is a software-only txing device type. Its device runtime is an AWS Lambda
-invoked by EventBridge and AWS IoT MQTT topics. It is compatible with rigs whose
-AWS IoT ThingType is `cloud`.
+`time` is a software-only txing device type. Its Rust device runtime is an AWS
+Lambda invoked by EventBridge and AWS IoT MQTT topics. It is compatible with
+rigs whose AWS IoT ThingType is `cloud`.
 
 The Lambda stores its small active/sleep bookkeeping state in the `time` named
 shadow for the device thing.
@@ -33,11 +33,19 @@ just aws::device-deploy <rig-id> time clock
 Enrollment checks the `/txing/town/cloud/time/kind` compatibility leaf before
 creating the device thing.
 
-The time Lambda runtime is generic and owned by the shared `cloud-time` type
-stack. Deploy or update it with the shared AWS stack:
+The time Lambda infrastructure is generic and owned by the shared `cloud-time`
+type stack. Deploy or update infrastructure with the shared AWS stack:
 
 ```sh
 just aws::deploy
+```
+
+Update only the Rust Lambda code after the stack exists:
+
+```sh
+cd devices/time/lambda
+cargo lambda build --release
+cargo lambda deploy
 ```
 
 Existing per-device time Lambda stacks are legacy cleanup only.

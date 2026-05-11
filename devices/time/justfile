@@ -4,7 +4,9 @@ set quiet := true
 time_dir := source_directory()
 
 @test:
-    uv run --project "{{time_dir}}/lambda/python" python -m unittest discover -s "{{time_dir}}/lambda/python/tests"
+    just --justfile "{{time_dir}}/lambda/justfile" test
 
 @default:
     @just --list
+
+mod lambda 'lambda/justfile'

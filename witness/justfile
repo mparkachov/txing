@@ -2,92 +2,15 @@ set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 set quiet := true
 
 witness_dir := source_directory()
-project_root := witness_dir + "/.."
-root_justfile := project_root + "/justfile"
-
-stack_name := ""
-base_stack_name := ""
-template_file := "template.yaml"
-region := ""
-profile := ""
-
-deploy stack_name=stack_name base_stack_name=base_stack_name template_file=template_file region=region profile=profile:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    cd "{{witness_dir}}"
-
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}" "{{base_stack_name}}")"
-    base_stack_name="$AWS_STACK_NAME"
-    region="$AWS_REGION"
-    profile="$AWS_SELECTED_PROFILE"
-    witness_stack_name="{{stack_name}}"
-    if [ -z "$witness_stack_name" ]; then
-      witness_stack_name="${base_stack_name}-witness"
-    fi
-    witness_rule_name="$(printf '%s' "$witness_stack_name" | tr -cs '[:alnum:]_' '_' | sed 's/^_*//; s/_*$//')"
-    witness_rule_name="${witness_rule_name:0:128}"
-    if [ -z "$witness_rule_name" ]; then
-      echo "failed to derive witness IoT rule name" >&2
-      exit 1
-    fi
-
-    if [ -z "$region" ]; then
-      echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
-      exit 1
-    fi
-
-    aws_flags=(--region "$region")
-    if [ -n "$profile" ]; then
-      aws_flags+=(--profile "$profile")
-    fi
-    ensure_artifact_bucket() {
-      local account_id bucket_name
-      account_id="$(aws sts get-caller-identity "${aws_flags[@]}" --query Account --output text)"
-      bucket_name="$(printf 'txing-cfn-%s-%s-%s' "$account_id" "$region" "$witness_stack_name" \
-        | tr '[:upper:]' '[:lower:]' \
-        | tr -cs 'a-z0-9.-' '-' \
-        | sed 's/^-*//; s/-*$//')"
-      bucket_name="${bucket_name:0:63}"
-      bucket_name="${bucket_name%.}"
-      if [ -z "$bucket_name" ]; then
-        echo "failed to derive CloudFormation artifact bucket name" >&2
-        exit 1
-      fi
-      if ! aws s3api head-bucket --bucket "$bucket_name" "${aws_flags[@]}" >/dev/null 2>&1; then
-        if [ "$region" = "us-east-1" ]; then
-          aws s3api create-bucket --bucket "$bucket_name" "${aws_flags[@]}" >/dev/null
-        else
-          aws s3api create-bucket \
-            --bucket "$bucket_name" \
-            --create-bucket-configuration "LocationConstraint=$region" \
-            "${aws_flags[@]}" >/dev/null
-        fi
-      fi
-      printf '%s\n' "$bucket_name"
-    }
-
-    artifact_bucket="$(ensure_artifact_bucket)"
-    packaged_template="$(mktemp "${TMPDIR:-/tmp}/txing-witness-cfn.XXXXXX.yaml")"
-    trap 'rm -f "$packaged_template"' EXIT
-    aws cloudformation package \
-      --template-file "{{template_file}}" \
-      --s3-bucket "$artifact_bucket" \
-      --output-template-file "$packaged_template" \
-      "${aws_flags[@]}"
-
-    aws cloudformation deploy \
-      --stack-name "$witness_stack_name" \
-      --template-file "$packaged_template" \
-      --capabilities CAPABILITY_NAMED_IAM \
-      --parameter-overrides "WitnessRuleName=$witness_rule_name" \
-      --no-fail-on-empty-changeset \
-      "${aws_flags[@]}"
-
-    aws cloudformation describe-stacks \
-      --stack-name "$witness_stack_name" \
-      "${aws_flags[@]}" \
-      --query "Stacks[0].Outputs" \
-      --output table
 
 @test:
-    uv run --project "{{witness_dir}}" python -m unittest discover -s "{{witness_dir}}/tests" -p 'test_*.py'
+    cargo test --manifest-path "{{witness_dir}}/Cargo.toml"
+
+build:
+    cd "{{witness_dir}}" && cargo lambda build --release
+
+deploy: build
+    cd "{{witness_dir}}" && cargo lambda deploy
+
+@default:
+    @just --list

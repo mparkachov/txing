@@ -113,11 +113,13 @@ Resources:
     DependsOn:
       - TimeRuntimeLogGroup
     Properties:
-      FunctionName: !Sub ${AWS::StackName}-time-runtime
+      FunctionName: txing-time-lambda
       Description: Generic txing time device runtime for scheduled state projection and MCP requests.
-      Runtime: python3.12
-      Handler: time_device.lambda_handler.lambda_handler
-      Code: ../../../../devices/time/lambda/python/src
+      Runtime: provided.al2023
+      Handler: rust.handler
+      Architectures:
+        - arm64
+      Code: ../../../../devices/time/lambda/target/lambda/txing-time-lambda/bootstrap.zip
       Role: !GetAtt TimeRuntimeFunctionRole.Arn
       Timeout: 300
       MemorySize: 128

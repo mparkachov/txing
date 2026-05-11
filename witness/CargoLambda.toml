@@ -1,0 +1,9 @@
+[build]
+arm64 = true
+output_format = "zip"
+
+[deploy]
+name = "txing-witness-lambda"
+memory = 256
+runtime = "provided.al2023"
+timeout = 30

@@ -194,6 +194,10 @@ Outputs:
     Value: !GetAtt EnlistLayer.Outputs.EnlistFunctionName
   EnlistFunctionArn:
     Value: !GetAtt EnlistLayer.Outputs.EnlistFunctionArn
+  WitnessFunctionName:
+    Value: !GetAtt BaseEnvironment.Outputs.WitnessFunctionName
+  WitnessFunctionArn:
+    Value: !GetAtt BaseEnvironment.Outputs.WitnessFunctionArn
   TimeRuntimeFunctionName:
     Value: !GetAtt CloudTimeTypeCatalog.Outputs.TimeRuntimeFunctionName
   TimeRuntimeScheduleRuleName:

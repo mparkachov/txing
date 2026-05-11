@@ -1,6 +1,6 @@
 # Witness
 
-Witness is the Sparkplug projection Lambda deployed by the base AWS stack.
+Witness is the Rust Sparkplug projection Lambda deployed by the base AWS stack.
 
 ## Responsibilities
 
@@ -16,8 +16,17 @@ Witness is the only authority that writes the `sparkplug` named shadow for rig a
 just aws::deploy
 ```
 
-The `witness/` directory owns source and tests. The primary deployment flow does
-not use a separate witness stack.
+The `witness/` directory is a plain Cargo Lambda project and owns the active
+Lambda source and tests. The primary deployment flow does not use a separate
+witness stack or a witness-local CloudFormation template.
+
+Update only the Lambda code after the base stack exists:
+
+```bash
+cd witness
+cargo lambda build --release
+cargo lambda deploy
+```
 
 The deeper projection semantics are documented in:
 

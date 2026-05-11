@@ -8,7 +8,7 @@ Contract between:
 
 - Txing firmware (`mcu/`, BLE peripheral on nRF52840)
 - Txing rig runtime (`rig/`, BLE central on Raspberry Pi 5 and Sparkplug lifecycle publisher)
-- AWS IoT witness projection (`witness/src/witness/sparkplug_witness.py`)
+- AWS IoT witness projection (`witness/`)
 - AWS IoT named Thing Shadows
 - AWS IoT MQTT Sparkplug namespace `spBv1.0`
 
