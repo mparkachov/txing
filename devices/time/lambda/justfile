@@ -7,7 +7,14 @@ lambda_dir := source_directory()
     cargo test --manifest-path "{{lambda_dir}}/Cargo.toml"
 
 build:
-    cd "{{lambda_dir}}" && cargo lambda build --release
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! cargo lambda --help >/dev/null 2>&1; then
+      echo "cargo-lambda is required. Install it with: cargo install cargo-lambda" >&2
+      exit 1
+    fi
+    cd "{{lambda_dir}}"
+    cargo lambda build --release
 
 deploy: build
     cd "{{lambda_dir}}" && cargo lambda deploy
