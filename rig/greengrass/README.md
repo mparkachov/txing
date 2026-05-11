@@ -80,6 +80,11 @@ Greengrass Lite `misc/run_nucleus` script; it does not create or rename txing
 systemd units, does not enable rig-type-specific host dependencies, and does not
 remove the old custom `rig.service`. The standard systemd entrypoint is
 `greengrass-lite.target`.
+The install and deploy recipes also install systemd drop-ins that set
+`LogLevelMax=warning` for `ggl.core.ggipcd.service` and
+`ggl.core.iotcored.service`, keeping high-volume IPC/MQTT state logs quiet while
+leaving other Greengrass Lite and txing component units at their normal log
+level.
 
 After code changes or `git pull`, run:
 
