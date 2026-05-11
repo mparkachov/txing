@@ -698,8 +698,8 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertIn('iotRoleAlias: "$iot_role_alias"', justfile)
         self.assertIn('sudo install -m 644 "$greengrass_config_temp" /etc/greengrass/config.yaml', justfile)
         self.assertIn("standard Greengrass Lite systemd target", justfile)
-        self.assertIn('dev.txing.device.unit.SparkplugManager', justfile)
-        self.assertIn('dev.txing.device.unit.ConnectivityBle', justfile)
+        self.assertIn('dev.txing.rig.SparkplugManager', justfile)
+        self.assertIn('dev.txing.rig.BleConnectivity', justfile)
         self.assertNotIn('Environment="THING_NAME={{thing_name}}"', justfile)
         self.assertIn('rig_name="$RIG_NAME"', justfile)
         self.assertNotIn('Environment="RIG_THING_NAME={{rig_thing_name}}"', justfile)
@@ -742,22 +742,22 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertIn("unit_exists() {", justfile)
         self.assertIn("start_unit_if_present() {", justfile)
         self.assertIn("wait_active_if_present() {", justfile)
-        self.assertIn("unit_rig_component_units :=", justfile)
+        self.assertIn("raspi_rig_component_units :=", justfile)
         self.assertIn("aws_rig_component_units :=", justfile)
-        self.assertIn("legacy_unit_rig_component_units :=", justfile)
-        self.assertIn("legacy_unit_rig_components :=", justfile)
+        self.assertNotIn("legacy_unit_rig_component_units :=", justfile)
+        self.assertNotIn("legacy_unit_rig_components :=", justfile)
         self.assertIn("component_units=({{raspi_rig_component_units}})", justfile)
         self.assertIn("component_units=({{aws_rig_component_units}})", justfile)
-        self.assertIn("ggl.dev.txing.device.unit.SparkplugManager.service", justfile)
-        self.assertIn("ggl.dev.txing.device.unit.ConnectivityBle.service", justfile)
-        self.assertIn("ggl.dev.txing.device.power.SparkplugManager.service", justfile)
-        self.assertIn("ggl.dev.txing.device.power.ConnectivityBle.service", justfile)
+        self.assertNotIn("ggl.dev.txing.device.unit.SparkplugManager.service", justfile)
+        self.assertNotIn("ggl.dev.txing.device.unit.ConnectivityBle.service", justfile)
+        self.assertNotIn("ggl.dev.txing.device.power.SparkplugManager.service", justfile)
+        self.assertNotIn("ggl.dev.txing.device.power.ConnectivityBle.service", justfile)
         self.assertIn("ggl.dev.txing.rig.SparkplugManager.service", justfile)
         self.assertIn("ggl.dev.txing.rig.BleConnectivity.service", justfile)
         self.assertIn("ggl.dev.txing.rig.AwsConnectivity.service", justfile)
-        self.assertIn("ggl.dev.txing.rig.ConnectivityBle.service", justfile)
-        self.assertIn("ggl.dev.txing.device.time.SparkplugManager.service", justfile)
-        self.assertIn("ggl.dev.txing.device.time.AwsConnectivity.service", justfile)
+        self.assertNotIn("ggl.dev.txing.rig.ConnectivityBle.service", justfile)
+        self.assertNotIn("ggl.dev.txing.device.time.SparkplugManager.service", justfile)
+        self.assertNotIn("ggl.dev.txing.device.time.AwsConnectivity.service", justfile)
         self.assertIn("ggl.core.ggipcd.service", justfile)
         self.assertIn("ggl.core.iotcored.service", justfile)
         self.assertIn("ggl.core.tesd.service", justfile)
@@ -773,9 +773,9 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertIn('printf \'showing rig logs for RIG_TYPE=%s units:\\n\' "$selected_rig_type"', justfile)
         self.assertIn('sudo journalctl "${journal_flags[@]}" "${journal_unit_args[@]}"', justfile)
         self.assertIn("inspect rig logs with: just rig::log", justfile)
-        self.assertIn("remove-legacy-components:", justfile)
+        self.assertNotIn("remove-legacy-components:", justfile)
         self.assertIn("sudo systemctl stop \"${stop_units[@]}\" || true", justfile)
-        self.assertIn("sudo \"$ggl_cli\" deploy \"${remove_args[@]}\"", justfile)
+        self.assertNotIn("sudo \"$ggl_cli\" deploy \"${remove_args[@]}\"", justfile)
         self.assertNotIn("stop_units_by_pattern() {", justfile)
         self.assertNotIn('sudo systemctl restart "$unit"', justfile)
         self.assertNotIn('sudo systemctl restart "${greengrass_units[@]}"', justfile)
@@ -864,15 +864,12 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertNotIn("dev/txing/rig/v1/connectivity/#", justfile)
         self.assertNotIn("python\" -m pip download", justfile)
         self.assertIn('sparkplug_component="dev.txing.rig.SparkplugManager"', justfile)
-        self.assertIn(
-            'legacy_components=(dev.txing.rig.ConnectivityBle dev.txing.rig.BleDiscovery dev.txing.device.unit.SparkplugManager dev.txing.device.unit.ConnectivityBle dev.txing.device.weather.SparkplugManager dev.txing.device.weather.ConnectivityBle dev.txing.device.power.SparkplugManager dev.txing.device.power.ConnectivityBle dev.txing.device.weather.MatterWatch)',
-            justfile,
-        )
+        self.assertNotIn("legacy_components=", justfile)
         self.assertIn('--add-component "$sparkplug_component=$resolved_component_version"', justfile)
         self.assertIn('--add-component "$connectivity_component=$resolved_component_version"', justfile)
         self.assertIn("ConnectTimeoutMs: 8000", justfile)
         self.assertIn('--connect-timeout-ms "{configuration:/ConnectTimeoutMs}"', justfile)
-        self.assertIn('--remove-component "$legacy_component"', justfile)
+        self.assertNotIn("--remove-component", justfile)
         self.assertIn('deployed_units=("ggl.$sparkplug_component.service" "ggl.$connectivity_component.service")', justfile)
         self.assertIn('core_sockets=({{greengrass_core_sockets}})', justfile)
         self.assertIn('for core_socket in "${core_sockets[@]}"; do', justfile)
@@ -913,7 +910,7 @@ class AwsShadowClientTests(unittest.TestCase):
                 / "dev.txing.rig.SparkplugManager-0.8.0.yaml"
             ).exists()
         )
-        self.assertTrue(
+        self.assertFalse(
             (
                 repo_root
                 / "rig"
@@ -922,23 +919,16 @@ class AwsShadowClientTests(unittest.TestCase):
                 / "dev.txing.device.unit.ConnectivityBle-0.8.0.yaml"
             ).exists()
         )
-        for recipe_path in (repo_root / "rig" / "greengrass" / "recipes").glob("dev.txing.device.unit.*.yaml"):
-            recipe = recipe_path.read_text()
-            self.assertIn("dev/txing/rig/v1/connectivity/*", recipe)
-            self.assertNotIn("dev/txing/rig/v1/connectivity/#", recipe)
+        self.assertEqual(
+            [],
+            list((repo_root / "rig" / "greengrass" / "recipes").glob("dev.txing.device.*.yaml")),
+        )
         sparkplug_recipe = (
             repo_root
             / "rig"
             / "greengrass"
             / "recipes"
             / "dev.txing.rig.SparkplugManager-0.8.0.yaml"
-        ).read_text(encoding="utf-8")
-        ble_recipe = (
-            repo_root
-            / "rig"
-            / "greengrass"
-            / "recipes"
-            / "dev.txing.device.unit.ConnectivityBle-0.8.0.yaml"
         ).read_text(encoding="utf-8")
         ble_connectivity_recipe = (
             repo_root
@@ -955,14 +945,11 @@ class AwsShadowClientTests(unittest.TestCase):
             / "dev.txing.rig.AwsConnectivity-0.8.0.yaml"
         ).read_text(encoding="utf-8")
         self.assertIn("runtime: aws_nucleus_lite", sparkplug_recipe)
-        self.assertIn("runtime: aws_nucleus_lite", ble_recipe)
         self.assertIn("runtime: aws_nucleus_lite", ble_connectivity_recipe)
         self.assertIn("runtime: aws_nucleus_lite", aws_connectivity_recipe)
         self.assertIn("txing-sparkplug-manager", sparkplug_recipe)
         self.assertIn("txing-ble-connectivity", ble_connectivity_recipe)
         self.assertIn("txing-aws-connectivity", aws_connectivity_recipe)
-        self.assertIn('export PYTHONPATH="{artifacts:decompressedPath}/rig-greengrass/python"', ble_recipe)
-        self.assertIn("exec python3 -m unit_rig.connectivity_ble", ble_recipe)
         self.assertIn("ConnectTimeoutMs: 8000", ble_connectivity_recipe)
         self.assertIn('--connect-timeout-ms "{configuration:/ConnectTimeoutMs}"', ble_connectivity_recipe)
         self.assertIn("dev/txing/rig/v2/*", ble_connectivity_recipe)
@@ -974,7 +961,7 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertIn("dev/txing/rig/v2/*", aws_connectivity_recipe)
         self.assertNotIn("dev/txing/rig/v1/ble/*", ble_connectivity_recipe)
         self.assertNotIn("pip install", sparkplug_recipe)
-        self.assertNotIn("pip install", ble_recipe)
+        self.assertNotIn("pip install", ble_connectivity_recipe)
 
     def test_root_justfile_sources_consolidated_aws_env_for_rig_scope(self) -> None:
         justfile = (Path(__file__).resolve().parents[5] / "justfile").read_text(
