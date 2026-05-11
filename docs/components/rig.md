@@ -105,7 +105,7 @@ The current contract sources are:
 
 ## Build And Run
 
-`rig::build-native` requires the Greengrass Lite native toolchain on the rig
+`rig::build` requires the Greengrass Lite native toolchain on the rig
 host. On Raspberry Pi OS Lite/Trixie, install at least `cmake`,
 `build-essential`, `pkg-config`, `libssl-dev`, `libcurl4-openssl-dev`,
 `libdbus-1-dev`, `uuid-dev`, `libzip-dev`, `libsqlite3-dev`,
@@ -114,10 +114,9 @@ host. On Raspberry Pi OS Lite/Trixie, install at least `cmake`,
 
 ```bash
 just rig::check <rig-id>
-just rig::build-native
 just rig::build
-just rig::run
-just rig::debug
+just rig::deploy <rig-id>
+just rig::log <rig-id>
 ```
 
 `just rig::check` validates AWS control-plane access plus certificate-backed
@@ -128,8 +127,8 @@ enabled, and active.
 
 Useful options:
 
-- `just rig::wake`
-- `just rig::sleep`
+- `just rig::status <rig-id>`
+- `just rig::log <rig-id>`
 - `txing-ble-connectivity --dry-run`
 
 The BLE connectivity component also accepts `--no-ble` for local diagnostics,
@@ -139,14 +138,13 @@ adapter.
 ## Service Install
 
 ```bash
-just rig::build-native
 just rig::build
 just rig::install-service <rig-id>
 just rig::deploy <rig-id>
 sudo systemctl status --with-dependencies greengrass-lite.target
 ```
 
-`rig::build-native` builds Greengrass Lite with `GG_LOG_LEVEL=INFO` so the
+`rig::build` builds Greengrass Lite with `GG_LOG_LEVEL=INFO` so the
 standard Greengrass daemons do not flood journald with debug traces.
 
 The install target no longer creates or removes a custom `rig.service`, and it
@@ -173,9 +171,10 @@ sudo systemctl enable --now bluetooth.service
 Run `just rig::check <rig-id>` after configuring the host. It fails if a required
 service for the configured rig type is missing, disabled, or inactive.
 
-Use `just rig::deploy <rig-id>` after changing or pulling rig code; it depends
-on `just rig::build`, generates a local component version from the current short
-Git SHA, and then stages a new local component artifact under
+Use `just rig::deploy <rig-id>` after changing or pulling rig code; it builds
+and stages the selected Rust Greengrass components, generates a local component
+version from the current short Git SHA, and then stages a new local component
+artifact under
 `rig/build/greengrass-local`. That staging directory is intentionally kept until
 the next deploy because Greengrass Lite copies artifacts asynchronously. Use
 `just rig::restart` only when you want to restart the existing Greengrass Lite

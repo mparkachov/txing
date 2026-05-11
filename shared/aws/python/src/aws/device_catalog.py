@@ -49,22 +49,6 @@ def _require_text(
     return value.strip()
 
 
-def _optional_text(
-    payload: dict[str, Any],
-    key: str,
-    *,
-    manifest_file: Path,
-) -> str | None:
-    value = payload.get(key)
-    if value is None:
-        return None
-    if not isinstance(value, str) or not value.strip():
-        raise DeviceManifestError(
-            f"{manifest_file} field {key!r} must be a non-empty string when set"
-        )
-    return value.strip()
-
-
 def _require_table(
     payload: dict[str, Any],
     key: str,
@@ -211,21 +195,6 @@ def _resolve_device_file(
     return candidate
 
 
-def _resolve_device_dir(
-    manifest_file: Path,
-    raw_path: str,
-) -> Path:
-    candidate = Path(raw_path)
-    if not candidate.is_absolute():
-        candidate = manifest_file.parent / candidate
-    candidate = candidate.resolve()
-    if not candidate.is_dir():
-        raise DeviceManifestError(
-            f"{manifest_file} references missing directory {raw_path!r}"
-        )
-    return candidate
-
-
 @dataclass(slots=True, frozen=True)
 class DeviceShadowContract:
     name: str
@@ -234,19 +203,6 @@ class DeviceShadowContract:
 
     def load_default_bytes(self) -> bytes:
         return self.default.read_bytes()
-
-
-@dataclass(slots=True, frozen=True)
-class RigProcessContract:
-    name: str
-    command: str
-    args: tuple[str, ...]
-    cwd: Path | None
-    environment: tuple[str, ...]
-
-    @property
-    def argv(self) -> tuple[str, ...]:
-        return (self.command, *self.args)
 
 
 @dataclass(slots=True, frozen=True)
@@ -264,7 +220,6 @@ class DeviceManifest:
     redcon_command_levels: tuple[int, ...]
     redcon_rules: dict[int, tuple[str, ...]]
     shadows: dict[str, DeviceShadowContract]
-    rig_processes: tuple[RigProcessContract, ...]
     web: DeviceWebContract
     manifest_file: Path
     repo_root: Path
@@ -332,54 +287,6 @@ def _load_shadow_contracts(
     return shadows
 
 
-def _load_rig_processes(
-    raw: dict[str, Any],
-    *,
-    manifest_file: Path,
-) -> tuple[RigProcessContract, ...]:
-    raw_rig = raw.get("rig")
-    if raw_rig is None:
-        return ()
-    if not isinstance(raw_rig, dict):
-        raise DeviceManifestError(f"{manifest_file} field 'rig' must be a table")
-    raw_processes = raw_rig.get("processes")
-    if raw_processes is None:
-        return ()
-    if not isinstance(raw_processes, list):
-        raise DeviceManifestError(
-            f"{manifest_file} field 'rig.processes' must be an array of tables"
-        )
-
-    processes: list[RigProcessContract] = []
-    seen: set[str] = set()
-    for raw_process in raw_processes:
-        if not isinstance(raw_process, dict):
-            raise DeviceManifestError(
-                f"{manifest_file} field 'rig.processes' must contain tables"
-            )
-        name = _require_text(raw_process, "name", manifest_file=manifest_file)
-        if name in seen:
-            raise DeviceManifestError(
-                f"{manifest_file} field 'rig.processes' contains duplicate process {name!r}"
-            )
-        seen.add(name)
-        raw_cwd = _optional_text(raw_process, "cwd", manifest_file=manifest_file)
-        processes.append(
-            RigProcessContract(
-                name=name,
-                command=_require_text(raw_process, "command", manifest_file=manifest_file),
-                args=_require_text_list(raw_process, "args", manifest_file=manifest_file),
-                cwd=_resolve_device_dir(manifest_file, raw_cwd) if raw_cwd else None,
-                environment=_require_text_list(
-                    raw_process,
-                    "environment",
-                    manifest_file=manifest_file,
-                ),
-            )
-        )
-    return tuple(processes)
-
-
 def _load_web_contract(
     raw: dict[str, Any],
     *,
@@ -431,7 +338,6 @@ def _load_manifest(
         manifest_file=manifest_file,
         capabilities=capabilities,
     )
-    rig_processes = _load_rig_processes(raw, manifest_file=manifest_file)
     web = _load_web_contract(raw, manifest_file=manifest_file)
 
     resources = raw.get("resources")
@@ -462,7 +368,6 @@ def _load_manifest(
         redcon_command_levels=redcon_command_levels,
         redcon_rules=redcon_rules,
         shadows=shadows,
-        rig_processes=rig_processes,
         web=web,
         manifest_file=manifest_file,
         repo_root=repo_root,

@@ -5,7 +5,7 @@ For the system overview, see [../README.md](../README.md). For the documentation
 ## Repository Layout
 
 - `devices/unit/`: self-contained current `unit` device type, including MCU, board runtime, rig process implementation, AWS shadow contracts, docs, and web detail adapter
-- `rig/`: Python runtime for the always-on rig coordinator
+- `rig/`: Rust Greengrass components and rig host tooling for the always-on coordinator
 - `web/`: React + Vite admin/operator SPA
 - `witness/`: Sparkplug-to-shadow projection Lambda source and tests
 - `shared/aws/`: shared AWS CLI helpers, CloudFormation, and registry utilities
@@ -80,8 +80,9 @@ Common commands:
 ```bash
 just --list
 just unit::mcu::build
-just rig::run
-just rig::wake
+just rig::check <rig-id>
+just rig::deploy <rig-id>
+just rig::status <rig-id>
 just unit::board::run
 just web::dev
 just web::write-env
@@ -144,7 +145,8 @@ Rig:
 ```bash
 just rig::check <rig-id>
 just rig::build
-just rig::debug
+just rig::deploy <rig-id>
+just rig::log <rig-id>
 ```
 
 Board:

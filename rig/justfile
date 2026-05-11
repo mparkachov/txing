@@ -2,18 +2,11 @@ set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 set quiet := true
 
 rig_dir := source_directory()
-python_executable := "python3"
-built_rig := rig_dir + "/.venv/bin/rig"
-built_rig_device_process := rig_dir + "/.venv/bin/rig-device-process"
-built_rig_sparkplug_cmd := rig_dir + "/.venv/bin/rig-sparkplug-cmd"
-built_rig_sparkplug_log := rig_dir + "/.venv/bin/rig-sparkplug-log"
 project_root := rig_dir + "/.."
 root_justfile := project_root + "/justfile"
 greengrass_lite_dir := rig_dir + "/greengrass-lite"
 greengrass_lite_build_dir := greengrass_lite_dir + "/build"
 greengrass_lite_target := "greengrass-lite.target"
-native_python_dir := rig_dir + "/build/python"
-native_uv_cache_dir := rig_dir + "/build/uv-cache"
 greengrass_core_units := "ggl.core.ggconfigd.service ggl.core.ggipcd.service ggl.core.iotcored.service ggl.core.tesd.service ggl.aws.greengrass.TokenExchangeService.service ggl.core.ggdeploymentd.service ggl.core.gg-fleet-statusd.service ggl.core.ggpubsubd.service ggl.core.gghealthd.service"
 greengrass_core_sockets := "ggl.gg_config.socket ggl.gg_deployment.socket ggl.gg_fleet_status.socket ggl.aws_iot_mqtt.socket ggl.aws_iot_tes.socket ggl.gg_pubsub.socket ggl.ipc_component.socket ggl.gg-ipc.socket.socket ggl.gg_health.socket"
 shared_raspi_rig_component_units := "ggl.dev.txing.rig.SparkplugManager.service ggl.dev.txing.rig.BleConnectivity.service"
@@ -25,19 +18,6 @@ thing_name := "unit-local"
 region := ""
 aws_profile := ""
 aws_shared_credentials_file := ""
-
-@sync:
-    cd "{{rig_dir}}" && uv sync --python "{{python_executable}}" --no-managed-python --no-python-downloads
-
-build:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    eval "$(just --justfile "{{root_justfile}}" _project-version-env)"
-    cd "{{rig_dir}}" && uv sync --frozen --no-editable --compile-bytecode --python "{{python_executable}}" --no-managed-python --no-python-downloads --refresh-package rig --reinstall-package rig --refresh-package aws --reinstall-package aws
-    test -x "{{built_rig}}"
-    test -x "{{built_rig_device_process}}"
-    test -x "{{built_rig_sparkplug_cmd}}"
-    test -x "{{built_rig_sparkplug_log}}"
 
 [positional-arguments]
 aws *args:
@@ -317,13 +297,13 @@ check rig_id='' cloudwatch_log_group='' region=region aws_profile=aws_profile aw
     fi
 
 @clean-native:
-    rm -rf "{{greengrass_lite_build_dir}}" "{{native_python_dir}}" "{{native_uv_cache_dir}}"
+    rm -rf "{{greengrass_lite_build_dir}}"
 
 @distclean-native:
     just clean-native
     rm -rf "{{greengrass_lite_dir}}"
 
-build-native:
+build:
     #!/usr/bin/env bash
     set -euo pipefail
     if [ "$(uname -s)" != "Linux" ]; then \
@@ -369,110 +349,6 @@ build-native:
     TXING_REAL_CC="${CC:-cc}" CC="{{rig_dir}}/tools/cc-greengrass-info-log" cargo build --release --features greengrass-sdk --manifest-path "{{rig_dir}}/aws-connectivity/Cargo.toml"
     test -x "{{rig_dir}}/aws-connectivity/target/release/txing-aws-connectivity"
 
-run:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    test -x "{{built_rig}}" || { \
-        echo "Missing built rig executable at {{built_rig}}. Run 'just rig::build' first." >&2; \
-        exit 1; \
-    }
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}")"
-    cd "{{rig_dir}}" && "{{built_rig}}"
-
-debug:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    test -x "{{built_rig}}" || { \
-        echo "Missing built rig executable at {{built_rig}}. Run 'just rig::build' first." >&2; \
-        exit 1; \
-    }
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}")"
-    cd "{{rig_dir}}" && "{{built_rig}}" --debug
-
-dev:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}")"
-    cd "{{rig_dir}}" && uv run rig
-
-debug-dev:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}")"
-    cd "{{rig_dir}}" && uv run rig --debug
-
-wake sparkplug_group_id='' sparkplug_edge_node_id='' region=region aws_profile=aws_profile:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    test -x "{{built_rig_sparkplug_cmd}}" || { \
-        echo "Missing built rig Sparkplug command executable at {{built_rig_sparkplug_cmd}}. Run 'just rig::build' first." >&2; \
-        exit 1; \
-    }
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}")"
-    sparkplug_group_id="$SPARKPLUG_GROUP_ID"
-    sparkplug_edge_node_id="$SPARKPLUG_EDGE_NODE_ID"
-    if [ -n "{{sparkplug_group_id}}" ]; then
-      sparkplug_group_id="{{sparkplug_group_id}}"
-    fi
-    if [ -n "{{sparkplug_edge_node_id}}" ]; then
-      sparkplug_edge_node_id="{{sparkplug_edge_node_id}}"
-    fi
-    cd "{{rig_dir}}" && "{{built_rig_sparkplug_cmd}}" --redcon 3 --thing-name "{{thing_name}}" --sparkplug-group-id "$sparkplug_group_id" --sparkplug-edge-node-id "$sparkplug_edge_node_id"
-
-sleep sparkplug_group_id='' sparkplug_edge_node_id='' region=region aws_profile=aws_profile:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    test -x "{{built_rig_sparkplug_cmd}}" || { \
-        echo "Missing built rig Sparkplug command executable at {{built_rig_sparkplug_cmd}}. Run 'just rig::build' first." >&2; \
-        exit 1; \
-    }
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}")"
-    sparkplug_group_id="$SPARKPLUG_GROUP_ID"
-    sparkplug_edge_node_id="$SPARKPLUG_EDGE_NODE_ID"
-    if [ -n "{{sparkplug_group_id}}" ]; then
-      sparkplug_group_id="{{sparkplug_group_id}}"
-    fi
-    if [ -n "{{sparkplug_edge_node_id}}" ]; then
-      sparkplug_edge_node_id="{{sparkplug_edge_node_id}}"
-    fi
-    cd "{{rig_dir}}" && "{{built_rig_sparkplug_cmd}}" --redcon 4 --thing-name "{{thing_name}}" --sparkplug-group-id "$sparkplug_group_id" --sparkplug-edge-node-id "$sparkplug_edge_node_id"
-
-dcmd sparkplug_group_id='' sparkplug_edge_node_id='' region=region aws_profile=aws_profile:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    test -x "{{built_rig_sparkplug_log}}" || { \
-        echo "Missing built rig Sparkplug log executable at {{built_rig_sparkplug_log}}. Run 'just rig::build' first." >&2; \
-        exit 1; \
-    }
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}")"
-    sparkplug_group_id="$SPARKPLUG_GROUP_ID"
-    sparkplug_edge_node_id="$SPARKPLUG_EDGE_NODE_ID"
-    if [ -n "{{sparkplug_group_id}}" ]; then
-      sparkplug_group_id="{{sparkplug_group_id}}"
-    fi
-    if [ -n "{{sparkplug_edge_node_id}}" ]; then
-      sparkplug_edge_node_id="{{sparkplug_edge_node_id}}"
-    fi
-    cd "{{rig_dir}}" && "{{built_rig_sparkplug_log}}" --thing-name "{{thing_name}}" --sparkplug-group-id "$sparkplug_group_id" --sparkplug-edge-node-id "$sparkplug_edge_node_id" --message-type dcmd
-
-ddata sparkplug_group_id='' sparkplug_edge_node_id='' region=region aws_profile=aws_profile:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    test -x "{{built_rig_sparkplug_log}}" || { \
-        echo "Missing built rig Sparkplug log executable at {{built_rig_sparkplug_log}}. Run 'just rig::build' first." >&2; \
-        exit 1; \
-    }
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}")"
-    sparkplug_group_id="$SPARKPLUG_GROUP_ID"
-    sparkplug_edge_node_id="$SPARKPLUG_EDGE_NODE_ID"
-    if [ -n "{{sparkplug_group_id}}" ]; then
-      sparkplug_group_id="{{sparkplug_group_id}}"
-    fi
-    if [ -n "{{sparkplug_edge_node_id}}" ]; then
-      sparkplug_edge_node_id="{{sparkplug_edge_node_id}}"
-    fi
-    cd "{{rig_dir}}" && "{{built_rig_sparkplug_log}}" --thing-name "{{thing_name}}" --sparkplug-group-id "$sparkplug_group_id" --sparkplug-edge-node-id "$sparkplug_edge_node_id" --message-type ddata
-
 print shadow_name='sparkplug':
     #!/usr/bin/env bash
     set -euo pipefail
@@ -494,12 +370,6 @@ print shadow_name='sparkplug':
 install-service rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file cloudwatch_log_group='':
     #!/usr/bin/env bash
     set -euo pipefail
-    for built_entrypoint in "{{built_rig}}" "{{built_rig_device_process}}"; do \
-        if [ ! -x "$built_entrypoint" ]; then \
-            echo "Missing built rig entrypoint at $built_entrypoint. Run 'just rig::build' before 'just rig::install-service'." >&2; \
-            exit 1; \
-        fi; \
-    done
     if [ -n "{{rig_id}}" ]; then
       export TXING_RIG_ID="{{rig_id}}"
     fi
@@ -525,7 +395,7 @@ install-service rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_
     fi; \
     if [ ! -d "{{greengrass_lite_build_dir}}" ]; then \
         echo "Greengrass Lite native build is missing at {{greengrass_lite_build_dir}}." >&2; \
-        echo "Run 'just rig::build-native' before 'just rig::install-service'." >&2; \
+        echo "Run 'just rig::build' before 'just rig::install-service'." >&2; \
         exit 1; \
     fi
     if ! getent group ggcore >/dev/null; then \
@@ -843,15 +713,9 @@ log rig_id='' lines='200' follow='true':
     printf '  %s\n' "${log_units[@]}"
     sudo journalctl "${journal_flags[@]}" "${journal_unit_args[@]}"
 
-deploy rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' component_version='' adapter_id='ble-main' name_fragment='txing' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file: build
+deploy rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' component_version='' adapter_id='ble-main' name_fragment='txing' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file:
     #!/usr/bin/env bash
     set -euo pipefail
-    for built_entrypoint in "{{built_rig}}" "{{built_rig_device_process}}"; do \
-        if [ ! -x "$built_entrypoint" ]; then \
-            echo "Missing built rig entrypoint at $built_entrypoint. Run 'just rig::build' before 'just rig::deploy'." >&2; \
-            exit 1; \
-        fi; \
-    done
     for positional_arg in "{{rig_id}}" "{{rig_name}}" "{{sparkplug_group_id}}" "{{sparkplug_edge_node_id}}" "{{component_version}}" "{{adapter_id}}" "{{name_fragment}}"; do
       case "$positional_arg" in
         *=*)
@@ -965,7 +829,7 @@ deploy rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' com
     for core_runtime_unit in "${core_runtime_units[@]}"; do
       if ! systemctl cat "$core_runtime_unit" >/dev/null 2>&1; then
         if is_deployment_required_core_unit "$core_runtime_unit"; then
-          echo "Greengrass Lite deployment runtime $core_runtime_unit is not installed. Run 'just rig::build-native' and 'just rig::install-service' to install the current Greengrass Lite service set." >&2
+          echo "Greengrass Lite deployment runtime $core_runtime_unit is not installed. Run 'just rig::build' and 'just rig::install-service' to install the current Greengrass Lite service set." >&2
           exit 1
         fi
         echo "warning: optional Greengrass Lite socket $core_runtime_unit is not installed; continuing." >&2

@@ -321,13 +321,14 @@ class AwsTemplatePolicyTests(unittest.TestCase):
     def test_static_manifests_use_base_version_only(self) -> None:
         version = (REPO_ROOT / "VERSION").read_text(encoding="utf-8").strip()
         manifest_expectations = {
-            REPO_ROOT / "rig" / "pyproject.toml": f'version = "{version}"',
             REPO_ROOT / "shared" / "aws" / "python" / "pyproject.toml": f'version = "{version}"',
             REPO_ROOT / "devices" / "time" / "lambda" / "python" / "pyproject.toml": f'version = "{version}"',
             REPO_ROOT / "devices" / "unit" / "rig" / "python" / "pyproject.toml": f'version = "{version}"',
             REPO_ROOT / "devices" / "unit" / "board" / "pyproject.toml": f'version = "{version}"',
             REPO_ROOT / "devices" / "unit" / "mcu" / "Cargo.toml": f'version = "{version}"',
             REPO_ROOT / "rig" / "capability-protocol" / "Cargo.toml": f'version = "{version}"',
+            REPO_ROOT / "rig" / "sparkplug-manager" / "Cargo.toml": f'version = "{version}"',
+            REPO_ROOT / "rig" / "ble-connectivity" / "Cargo.toml": f'version = "{version}"',
             REPO_ROOT / "rig" / "aws-connectivity" / "Cargo.toml": f'version = "{version}"',
             REPO_ROOT / "web" / "package.json": f'"version": "{version}"',
         }

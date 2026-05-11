@@ -25,38 +25,6 @@ default = "aws/default-mcp-shadow.json"
 schema = "aws/video-shadow.schema.json"
 default = "aws/default-video-shadow.json"
 
-[[rig.processes]]
-name = "unit-connectivity-ble"
-command = "uv"
-args = ["run", "--project", "rig/python", "unit-rig-connectivity-ble"]
-cwd = "."
-environment = [
-  "TXING_DEVICE_TYPE",
-  "TXING_DEVICE_DIR",
-  "TXING_DEVICE_MANIFEST",
-  "RIG_NAME",
-  "THING_NAME",
-  "SPARKPLUG_GROUP_ID",
-  "SPARKPLUG_EDGE_NODE_ID",
-  "AWS_REGION",
-]
-
-[[rig.processes]]
-name = "unit-sparkplug-manager"
-command = "uv"
-args = ["run", "--project", "rig/python", "unit-rig-sparkplug-manager"]
-cwd = "."
-environment = [
-  "TXING_DEVICE_TYPE",
-  "TXING_DEVICE_DIR",
-  "TXING_DEVICE_MANIFEST",
-  "RIG_NAME",
-  "THING_NAME",
-  "SPARKPLUG_GROUP_ID",
-  "SPARKPLUG_EDGE_NODE_ID",
-  "AWS_REGION",
-]
-
 [web]
 adapter = "web/unit-adapter.tsx"
 

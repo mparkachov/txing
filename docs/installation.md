@@ -24,7 +24,7 @@ named-shadow updates.
 
 ### 1. Install OS Packages
 
-`just rig::build-native` compiles Greengrass Lite locally. Install the native
+`just rig::build` compiles Greengrass Lite locally. Install the native
 build toolchain before running it; otherwise the first failure will be similar
 to `cmake: command not found`.
 
@@ -169,20 +169,16 @@ credential-provider endpoints, and reading the
 
 ### 5. Build And Install The Greengrass Service
 
-The rig Python runtime requires Python `3.12+`; Raspberry Pi OS Trixie satisfies
-that requirement.
-
 ```bash
 cd "$TXING_HOME"
-just rig::build-native
 just rig::build
 just rig::install-service <rig-id>
 just rig::deploy <rig-id>
 ```
 
-`just rig::build-native` compiles Greengrass Lite with `GG_LOG_LEVEL=INFO`.
+`just rig::build` compiles Greengrass Lite with `GG_LOG_LEVEL=INFO`.
 If the host already has debug-built Greengrass Lite binaries installed, rerun
-`just rig::build-native` and `just rig::install-service` to replace them.
+`just rig::build` and `just rig::install-service` to replace them.
 
 `just rig::install-service` installs and starts the standard Greengrass Lite
 systemd units from the native build. It does not manage the old custom
@@ -193,17 +189,16 @@ if it still exists on an older host. The recipe creates the default `ggcore` and
 `ggcore:ggcore`, and starts `greengrass-lite.target` through the upstream
 `misc/run_nucleus` script.
 
-`just rig::deploy <rig-id>` packages the current rig Python source and the
-component set for the rig thing's `rigType`, stages Greengrass Lite recipes and
-artifacts under `rig/build/greengrass-local`, and deploys them with `ggl-cli
-deploy`. For `RIG_TYPE=raspi` it deploys the unit Sparkplug and BLE components.
-For `RIG_TYPE=cloud` it deploys the virtual time Sparkplug and AWS IoT MQTT
-connectivity components. The staging directory is kept after `ggl-cli` returns
-because Greengrass Lite copies artifacts asynchronously. It depends on
-`just rig::build`, so after changing rig code or pulling new code, run
-`just rig::deploy`. The recipe generates the local Greengrass component version
-from the current short Git SHA. A Greengrass service restart alone restarts the
-previously deployed component artifact.
+`just rig::deploy <rig-id>` builds the selected Rust Greengrass component
+binaries, stages recipes and artifacts under `rig/build/greengrass-local`, and
+deploys them with `ggl-cli deploy`. For `RIG_TYPE=raspi` it deploys
+`dev.txing.rig.SparkplugManager` plus `dev.txing.rig.BleConnectivity`. For
+`RIG_TYPE=cloud` it deploys `dev.txing.rig.SparkplugManager` plus
+`dev.txing.rig.AwsConnectivity`. The staging directory is kept after `ggl-cli`
+returns because Greengrass Lite copies artifacts asynchronously. The recipe
+generates the local Greengrass component version from the current short Git SHA.
+A Greengrass service restart alone restarts the previously deployed component
+artifact.
 
 When you need to force a specific Greengrass component version for a local
 redeploy, pass the internal fifth positional argument:
@@ -232,14 +227,13 @@ component artifact with:
 just rig::restart
 ```
 
-Useful foreground commands:
+Useful rig service commands:
 
 ```bash
 cd "$TXING_HOME"
-just rig::run
-just rig::debug
-just rig::wake
-just rig::sleep
+just rig::status <rig-id>
+just rig::log <rig-id>
+just rig::print sparkplug
 ```
 
 ## Board Host

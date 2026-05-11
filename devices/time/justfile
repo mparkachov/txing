@@ -2,21 +2,8 @@ set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 set quiet := true
 
 time_dir := source_directory()
-project_root := time_dir + "/../.."
-root_justfile := project_root + "/justfile"
-
-@processes:
-    cd "{{project_root}}" && uv run --project rig rig-device-process --device-type time list
-
-run-process process:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    export TXING_DEVICE_TYPE="${TXING_DEVICE_TYPE:-time}"
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig)"
-    cd "{{project_root}}" && uv run --project rig rig-device-process --device-type time run --process "{{process}}"
 
 @test:
-    uv run --project "{{time_dir}}/rig/python" python -m unittest discover -s "{{time_dir}}/rig/python/tests"
     uv run --project "{{time_dir}}/lambda/python" python -m unittest discover -s "{{time_dir}}/lambda/python/tests"
 
 @default:

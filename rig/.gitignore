@@ -1,20 +1,5 @@
-# Python cache and build artifacts
-__pycache__/
-*.py[cod]
-*.so
-*.egg-info/
+# Build artifacts
 build/
-dist/
-
-# Test and tooling caches
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.coverage
-.coverage.*
-htmlcov/
-
-# Rust build artifacts
 target/
 
 # Local environments and secrets

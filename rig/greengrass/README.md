@@ -53,13 +53,12 @@ Native Greengrass Lite is built and installed through:
 ```bash
 sudo apt install -y cmake build-essential pkg-config python3-venv python3-dev python3-pip git curl ninja-build unzip default-jre libssl-dev libcurl4-openssl-dev libdbus-1-dev libglib2.0-dev libavahi-client-dev libgirepository1.0-dev libcairo2-dev libreadline-dev uuid-dev libzip-dev libsqlite3-dev libyaml-dev libsystemd-dev libevent-dev liburiparser-dev cgroup-tools bluez pi-bluetooth avahi-utils
 cmake --version
-just rig::build-native
 just rig::build
 just rig::install-service <rig-id>
 just rig::deploy <rig-id>
 ```
 
-Run the package install before `just rig::build-native`; the native build invokes
+Run the package install before `just rig::build`; the native build invokes
 `cmake` directly for Greengrass Lite and also builds the Rust Sparkplug manager,
 BLE connectivity, and AWS connectivity binaries with the Linux-only Greengrass
 SDK feature. It no longer builds a local Matter controller.
@@ -88,8 +87,9 @@ After code changes or `git pull`, run:
 just rig::deploy <rig-id>
 ```
 
-`deploy` depends on `rig::build`, so a separate build step is not
-required for the normal edit/pull/deploy loop. The recipe generates a local
+`deploy` builds and stages the selected Rust Greengrass components, so a
+separate build step is not required for the normal edit/pull/deploy loop. The
+recipe generates a local
 Greengrass component version from the current short Git SHA, for example
 `0.8.0+g4e1261afdf2b`, adding a dirty-tree hash when local changes are present,
 so checked-out code is deployed without manually changing version numbers.

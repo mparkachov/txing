@@ -8,22 +8,6 @@ compatible_rig_types = ["example-rig"]
 schema = "aws/sparkplug-shadow.schema.json"
 default = "aws/default-sparkplug-shadow.json"
 
-[[rig.processes]]
-name = "example-runtime"
-command = "bin/example-runtime"
-args = ["--serve"]
-cwd = "."
-environment = [
-  "TXING_DEVICE_TYPE",
-  "TXING_DEVICE_DIR",
-  "TXING_DEVICE_MANIFEST",
-  "RIG_NAME",
-  "THING_NAME",
-  "SPARKPLUG_GROUP_ID",
-  "SPARKPLUG_EDGE_NODE_ID",
-  "AWS_REGION",
-]
-
 [web]
 adapter = "web/example-adapter.tsx"
 
