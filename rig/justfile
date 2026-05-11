@@ -20,7 +20,7 @@ shared_raspi_rig_component_units := "ggl.dev.txing.rig.SparkplugManager.service 
 raspi_rig_component_units := shared_raspi_rig_component_units
 aws_rig_component_units := "ggl.dev.txing.rig.SparkplugManager.service ggl.dev.txing.rig.AwsConnectivity.service"
 legacy_unit_rig_component_units := "ggl.dev.txing.rig.ConnectivityBle.service ggl.dev.txing.rig.BleDiscovery.service ggl.dev.txing.device.unit.SparkplugManager.service ggl.dev.txing.device.unit.ConnectivityBle.service ggl.dev.txing.device.weather.SparkplugManager.service ggl.dev.txing.device.weather.ConnectivityBle.service ggl.dev.txing.device.power.SparkplugManager.service ggl.dev.txing.device.power.ConnectivityBle.service ggl.dev.txing.device.time.SparkplugManager.service ggl.dev.txing.device.time.AwsConnectivity.service ggl.dev.txing.device.weather.MatterWatch.service"
-legacy_unit_rig_components := "dev.txing.rig.ConnectivityBle dev.txing.rig.BleDiscovery dev.txing.device.unit.SparkplugManager dev.txing.device.unit.ConnectivityBle dev.txing.device.weather.SparkplugManager dev.txing.device.weather.ConnectivityBle dev.txing.device.power.SparkplugManager dev.txing.device.power.ConnectivityBle dev.txing.device.time.SparkplugManager dev.txing.device.time.AwsConnectivity"
+legacy_unit_rig_components := "dev.txing.rig.ConnectivityBle dev.txing.rig.BleDiscovery dev.txing.device.unit.SparkplugManager dev.txing.device.unit.ConnectivityBle dev.txing.device.weather.SparkplugManager dev.txing.device.weather.ConnectivityBle dev.txing.device.power.SparkplugManager dev.txing.device.power.ConnectivityBle dev.txing.device.time.SparkplugManager dev.txing.device.time.AwsConnectivity dev.txing.device.weather.MatterWatch"
 default_greengrass_lite_repository := env_var_or_default("TXING_RIG_GREENGRASS_LITE_REPOSITORY", "https://github.com/aws-greengrass/aws-greengrass-lite.git")
 default_greengrass_lite_ref := env_var_or_default("TXING_RIG_GREENGRASS_LITE_REF", "main")
 thing_name := "unit-local"
@@ -881,6 +881,15 @@ remove-legacy-components:
       remove_args+=(--remove-component "$legacy_component")
     done
     sudo "$ggl_cli" deploy "${remove_args[@]}"
+    for unit in "${legacy_units[@]}"; do
+      sudo rm -f \
+        "/etc/systemd/system/{{greengrass_lite_target}}.wants/$unit" \
+        "/etc/systemd/system/multi-user.target.wants/$unit"
+      sudo find /etc/systemd/system /lib/systemd/system /usr/lib/systemd/system \
+        -xtype l -name "$unit" -delete 2>/dev/null || true
+    done
+    sudo systemctl daemon-reload
+    sudo systemctl reset-failed "${legacy_units[@]}" || true
 
 deploy rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' component_version='' adapter_id='ble-main' name_fragment='txing' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file: build
     #!/usr/bin/env bash
