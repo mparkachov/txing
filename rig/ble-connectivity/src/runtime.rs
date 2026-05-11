@@ -24,8 +24,8 @@ use uuid::Uuid;
 
 use crate::ble_protocol::{
     ADAPTER_ID, Advertisement, BLE_CAPABILITY, CapabilitySample, DeviceKind, DeviceSpec,
-    POWER_CAPABILITY, POWER_MEASUREMENT_UUID, PowerMeasurement, PowerState, REDCON_ACTIVE,
-    REDCON_IDLE, ShadowUpdate, TXING_BLE_COMMAND_UUID, TXING_BLE_STATE_UUID, WEATHER_CAPABILITY,
+    POWER_CAPABILITY, POWER_MEASUREMENT_UUID, PowerMeasurement, PowerState, REDCON_IDLE,
+    ShadowUpdate, TXING_BLE_COMMAND_UUID, TXING_BLE_STATE_UUID, WEATHER_CAPABILITY,
     WEATHER_MEASUREMENT_UUID, WeatherMeasurement, WeatherState, advertisement_sample,
     capability_state_from_sample, encode_redcon_command, now_ms, offline_sample,
     parse_power_measurement, parse_power_state, parse_weather_measurement, parse_weather_state,
@@ -1421,6 +1421,7 @@ fn validate_greengrass_ipc_environment() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ble_protocol::REDCON_ACTIVE;
     use txing_capability_protocol::{
         CapabilityCommandTarget, CapabilityState, InventoryDevice, SCHEMA_VERSION,
         build_capability_state_topic,
