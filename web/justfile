@@ -29,7 +29,7 @@ build:
     cd "{{web_dir}}"
     eval "$(just --justfile "{{root_justfile}}" _project-version-env)"
     export VITE_TXING_VERSION="$TXING_VERSION"
-    bun run build
+    bun --bun run build
 
 publish stack_name=stack_name region=region profile=profile web_dist_dir=web_dist_dir:
     #!/usr/bin/env bash

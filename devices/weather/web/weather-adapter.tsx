@@ -1,8 +1,5 @@
 import type { DeviceWebAdapter } from '../../../web/src/device-adapter'
-import {
-  extractWeatherPowerReportedState,
-  extractWeatherReportedState,
-} from './weather-model'
+import { extractWeatherPowerReportedState } from './weather-model'
 import WeatherPanel from './WeatherPanel'
 
 const weatherDeviceAdapter: DeviceWebAdapter = {
