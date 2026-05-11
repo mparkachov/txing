@@ -13,7 +13,6 @@ ComponentConfiguration:
     ConnectTimeoutMs: 8000
     CommandTimeoutMs: 8000
     HeartbeatIntervalMs: 10000
-    StateReportIntervalMs: 30000
     MaxConnections: 0
     accessControl:
       aws.greengrass.ipc.pubsub:
@@ -50,7 +49,6 @@ Manifests:
             --connect-timeout-ms "{configuration:/ConnectTimeoutMs}" \
             --command-timeout-ms "{configuration:/CommandTimeoutMs}" \
             --heartbeat-interval-ms "{configuration:/HeartbeatIntervalMs}" \
-            --state-report-interval-ms "{configuration:/StateReportIntervalMs}" \
             --max-connections "{configuration:/MaxConnections}"
     Artifacts:
       - Uri: s3://REPLACE_WITH_TXING_GREENGRASS_ARTIFACT_BUCKET/ble-connectivity/0.8.0/txing-ble-connectivity
