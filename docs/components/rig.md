@@ -109,7 +109,7 @@ The current contract sources are:
 host. On Raspberry Pi OS Lite/Trixie, install at least `cmake`,
 `build-essential`, `pkg-config`, `libssl-dev`, `libcurl4-openssl-dev`,
 `libdbus-1-dev`, `uuid-dev`, `libzip-dev`, `libsqlite3-dev`,
-`libyaml-dev`, `libsystemd-dev`, `libevent-dev`, `liburiparser-dev`, and
+`sqlite3`, `libyaml-dev`, `libsystemd-dev`, `libevent-dev`, `liburiparser-dev`, and
 `cgroup-tools`.
 
 ```bash

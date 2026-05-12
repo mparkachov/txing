@@ -815,6 +815,84 @@ deploy rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' com
         sudo systemctl reset-failed "$unit" || true
       fi
     }
+    prune_component_config_arn() {
+      local component="$1"
+      local config_db="/var/lib/greengrass/config.db"
+      if [ ! -f "$config_db" ]; then
+        return 0
+      fi
+      if ! command -v sqlite3 >/dev/null 2>&1; then
+        echo "warning: sqlite3 is not installed; cannot prune stale Greengrass Lite local configArn entries before deploy." >&2
+        echo "warning: install sqlite3 if deployments fail with: Json encode failed for key services/<component>/configArn" >&2
+        return 0
+      fi
+      local component_sql="${component//\'/\'\'}"
+      local safe_component="${component//[^A-Za-z0-9_.-]/_}"
+      local backup_path="$config_db.txing-configArn-backup.$safe_component.$(date -u +%Y%m%dT%H%M%SZ).$$"
+      sudo cp -a "$config_db" "$backup_path"
+      sudo sqlite3 "$config_db" <<SQL
+    BEGIN IMMEDIATE;
+    CREATE TEMP TABLE txing_delete_keys(keyid INTEGER PRIMARY KEY);
+    INSERT OR IGNORE INTO txing_delete_keys(keyid)
+    WITH
+      root AS (
+        SELECT keyid
+        FROM keyTable
+        WHERE keyvalue = 'services'
+          AND keyid NOT IN (SELECT keyid FROM relationTable)
+      ),
+      component AS (
+        SELECT kt.keyid
+        FROM keyTable kt
+        JOIN relationTable rt ON rt.keyid = kt.keyid
+        JOIN root ON rt.parentid = root.keyid
+        WHERE kt.keyvalue = '$component_sql'
+      ),
+      target AS (
+        SELECT kt.keyid
+        FROM keyTable kt
+        JOIN relationTable rt ON rt.keyid = kt.keyid
+        JOIN component ON rt.parentid = component.keyid
+        WHERE kt.keyvalue = 'configArn'
+      ),
+      descendants(keyid) AS (
+        SELECT keyid FROM target
+        UNION ALL
+        SELECT rt.keyid
+        FROM relationTable rt
+        JOIN descendants d ON rt.parentid = d.keyid
+      )
+    SELECT keyid FROM descendants;
+    DELETE FROM valueTable
+    WHERE keyid IN (SELECT keyid FROM txing_delete_keys);
+    DELETE FROM relationTable
+    WHERE keyid IN (SELECT keyid FROM txing_delete_keys)
+       OR parentid IN (SELECT keyid FROM txing_delete_keys);
+    DELETE FROM keyTable
+    WHERE keyid IN (SELECT keyid FROM txing_delete_keys);
+    DROP TABLE txing_delete_keys;
+    COMMIT;
+    SQL
+      echo "pruned stale Greengrass Lite local configArn entries for $component (backup: $backup_path)"
+    }
+    prune_local_deployment_config_arns() {
+      local components=("$@")
+      if [ "${#components[@]}" -eq 0 ]; then
+        return 0
+      fi
+      if [ ! -f /var/lib/greengrass/config.db ]; then
+        return 0
+      fi
+      echo "Pruning stale Greengrass Lite local deployment configArn entries before deploy."
+      sudo systemctl stop ggl.gg_config.socket ggl.core.ggconfigd.service || true
+      for component in "${components[@]}"; do
+        prune_component_config_arn "$component"
+      done
+      sudo systemctl start ggl.gg_config.socket || true
+      if ! wait_active_unit ggl.gg_config.socket; then
+        echo "warning: Greengrass Lite config socket did not become active after configArn prune." >&2
+      fi
+    }
     install_core_log_overrides() {
       local log_unit
       for log_unit in {{greengrass_warning_log_units}}; do
@@ -1147,6 +1225,7 @@ deploy rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' com
       --add-component "$connectivity_component=$resolved_component_version"
     )
     deployed_units=("ggl.$sparkplug_component.service" "ggl.$connectivity_component.service")
+    prune_local_deployment_config_arns "$sparkplug_component" "$connectivity_component"
     quiesce_units=()
     for unit in "${deployed_units[@]}"; do
       if systemctl cat "$unit" >/dev/null 2>&1; then

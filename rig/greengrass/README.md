@@ -51,7 +51,7 @@ from macOS.
 Native Greengrass Lite is built and installed through:
 
 ```bash
-sudo apt install -y cmake build-essential pkg-config python3-venv python3-dev python3-pip git curl ninja-build unzip default-jre libssl-dev libcurl4-openssl-dev libdbus-1-dev libglib2.0-dev libavahi-client-dev libgirepository1.0-dev libcairo2-dev libreadline-dev uuid-dev libzip-dev libsqlite3-dev libyaml-dev libsystemd-dev libevent-dev liburiparser-dev cgroup-tools bluez pi-bluetooth avahi-utils
+sudo apt install -y cmake build-essential pkg-config python3-venv python3-dev python3-pip git curl ninja-build unzip default-jre sqlite3 libssl-dev libcurl4-openssl-dev libdbus-1-dev libglib2.0-dev libavahi-client-dev libgirepository1.0-dev libcairo2-dev libreadline-dev uuid-dev libzip-dev libsqlite3-dev libyaml-dev libsystemd-dev libevent-dev liburiparser-dev cgroup-tools bluez pi-bluetooth avahi-utils
 cmake --version
 just rig::build
 just rig::install-service <rig-id>
@@ -100,6 +100,10 @@ Greengrass component version from the current short Git SHA, for example
 so checked-out code is deployed without manually changing version numbers.
 Generated versions intentionally avoid `-` because Greengrass Lite's local
 recipe filename scanner splits recipe names on the last hyphen.
+The deploy recipe also prunes stale local deployment `configArn` entries for the
+txing rig components from `/var/lib/greengrass/config.db`; Greengrass Lite keeps
+one entry per local deployment and can fail with a `Json encode failed` error
+after enough development redeploys.
 
 Manual component version pinning is intentionally outside the normal workflow.
 If needed while debugging Greengrass artifact caching, pass the internal fifth

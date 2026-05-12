@@ -32,7 +32,7 @@ to `cmake: command not found`.
 sudo apt update
 sudo apt full-upgrade -y
 sudo apt install -y \
-  git curl jq ca-certificates python3-venv pipx unzip \
+  git curl jq ca-certificates python3-venv pipx unzip sqlite3 \
   build-essential pkg-config cmake libssl-dev libcurl4-openssl-dev \
   libdbus-1-dev uuid-dev libzip-dev libsqlite3-dev libyaml-dev libsystemd-dev \
   libevent-dev liburiparser-dev cgroup-tools
@@ -199,6 +199,12 @@ returns because Greengrass Lite copies artifacts asynchronously. The recipe
 generates the local Greengrass component version from the current short Git SHA.
 A Greengrass service restart alone restarts the previously deployed component
 artifact.
+
+Before each local deployment, the recipe prunes stale Greengrass Lite
+`configArn` entries for the txing rig components from `/var/lib/greengrass/config.db`.
+Greengrass Lite appends one entry per local deployment, and repeated development
+deploys can otherwise overflow its config encoder and leave systemd linked to an
+older component version.
 
 When you need to force a specific Greengrass component version for a local
 redeploy, pass the internal fifth positional argument:
