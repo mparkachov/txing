@@ -149,6 +149,32 @@ export const extractReportedRedcon = (shadow: unknown): number | null => {
   return null
 }
 
+export const extractSparkplugCapabilityAvailability = (
+  shadow: unknown,
+  capabilityName: string,
+): boolean | null => {
+  if (extractIsSparkplugDeviceUnavailable(shadow)) {
+    return false
+  }
+  const metrics = extractSparkplugMetrics(shadow)
+  if (!metrics) {
+    return null
+  }
+  if (isRecord(metrics.capability)) {
+    const availability = metrics.capability[capabilityName]
+    if (typeof availability === 'boolean') {
+      return availability
+    }
+  }
+  if (capabilityName !== 'sparkplug') {
+    return null
+  }
+  if (extractSparkplugMessageType(shadow) === 'NDEATH') {
+    return false
+  }
+  return coerceRedcon(metrics.redcon) === null ? null : true
+}
+
 export const extractSparkplugRedconCommandStatus = (
   shadow: unknown,
 ): SparkplugRedconCommandStatus | null => {

@@ -56,7 +56,6 @@ import type { Twist } from './cmd-vel'
 import { appConfig } from './config'
 import DebugPanel from './DebugPanel'
 import {
-  formatCatalogDetailLine,
   getRouteDetailPanelOpenState,
   shouldRenderRouteCatalogPanel,
 } from './level-detail-panel'
@@ -74,9 +73,12 @@ import {
 } from './sparkplug-command'
 import SparkplugPanel from './SparkplugPanel'
 import {
+  describeRedcon,
+  extractSparkplugCapabilityAvailability,
   extractIsSparkplugDeviceUnavailable,
   extractReportedRedcon,
   extractSparkplugRedconCommandStatus,
+  getTxingRedconToneClass,
   hasReachedTargetRedcon,
   shouldClearPendingTargetRedcon,
 } from './sparkplug-model'
@@ -91,14 +93,26 @@ type ShadowSnapshotView = {
 }
 type RigCatalogState = {
   status: 'idle' | 'loading' | 'ready' | 'error'
-  rigs: RigCatalogEntry[]
+  rigs: RigCatalogItem[]
   error: string
 }
 type DeviceCatalogState = {
   status: 'idle' | 'loading' | 'ready' | 'error' | 'not_found'
-  devices: DeviceCatalogEntry[]
+  devices: DeviceCatalogItem[]
   error: string
 }
+type CatalogSparkplugStatus = 'loading' | 'ready' | 'error'
+type CatalogSparkplugFields = {
+  sparkplugShadow: unknown | null
+  sparkplugShadowStatus: CatalogSparkplugStatus
+  sparkplugShadowError: string
+}
+type SparkplugCatalogItem = {
+  thingName: string
+  capabilities: readonly ShadowName[]
+} & CatalogSparkplugFields
+type RigCatalogItem = RigCatalogEntry & CatalogSparkplugFields
+type DeviceCatalogItem = DeviceCatalogEntry & CatalogSparkplugFields
 type DeviceRoute = {
   town: string
   rig: string
@@ -128,6 +142,7 @@ const formatJson = (value: unknown): string => JSON.stringify(value, null, 2)
 const defaultMcpLeaseTtlMs = 5_000
 const robotStatePollIntervalMs = 5_000
 const routeSparkplugPollIntervalMs = 2_000
+const catalogSparkplugPollIntervalMs = 5_000
 const routeSparkplugRedconCommandTimeoutMs = 60_000
 const txingLogoUrl = 'https://txing.dev/txing-logo.png'
 const appHomePath = '/'
@@ -200,6 +215,16 @@ const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
 
 const getCatalogDeviceLabel = (device: DeviceCatalogEntry | null | undefined): string =>
   device?.name?.trim() ? device.name.trim() : 'Unnamed device'
+
+const createPendingCatalogItems = <CatalogEntry extends { thingName: string }>(
+  entries: readonly CatalogEntry[],
+): Array<CatalogEntry & CatalogSparkplugFields> =>
+  entries.map((entry) => ({
+    ...entry,
+    sparkplugShadow: null,
+    sparkplugShadowStatus: 'loading',
+    sparkplugShadowError: '',
+  }))
 
 function App({ initialAuthError = '' }: AppProps) {
   const [route, setRoute] = useState<AppRoute>(getInitialRoute)
@@ -887,11 +912,73 @@ function App({ initialAuthError = '' }: AppProps) {
     }
 
     let cancelled = false
+    let rigSparkplugRefreshInFlight = false
+    let rigSparkplugRefreshInterval: number | null = null
     setRigCatalog({
       status: 'loading',
       rigs: [],
       error: '',
     })
+
+    const readRigSparkplugStatus = async (rig: RigCatalogEntry): Promise<RigCatalogItem> => {
+      try {
+        const sparkplugShadow = await getThingNamedShadow(
+          resolveSessionIdToken,
+          rig.thingName,
+          'sparkplug',
+        )
+        return {
+          ...rig,
+          sparkplugShadow,
+          sparkplugShadowStatus: 'ready',
+          sparkplugShadowError: '',
+        }
+      } catch (caughtError) {
+        return {
+          ...rig,
+          sparkplugShadow: null,
+          sparkplugShadowStatus: 'error',
+          sparkplugShadowError: formatThingShadowReadError(
+            caughtError,
+            rig.thingName,
+            'sparkplug',
+          ),
+        }
+      }
+    }
+
+    const refreshRigSparkplugStatus = async (
+      rigsToRefresh: readonly RigCatalogEntry[],
+    ): Promise<void> => {
+      if (rigSparkplugRefreshInFlight) {
+        return
+      }
+      rigSparkplugRefreshInFlight = true
+      try {
+        const refreshedRigs = await Promise.all(
+          rigsToRefresh.map((rig) => readRigSparkplugStatus(rig)),
+        )
+        if (cancelled) {
+          return
+        }
+        const refreshedRigByThingName = new Map(
+          refreshedRigs.map((rig) => [rig.thingName, rig]),
+        )
+        setRigCatalog((currentCatalog) => {
+          if (currentCatalog.status !== 'ready') {
+            return currentCatalog
+          }
+          return {
+            ...currentCatalog,
+            rigs: currentCatalog.rigs.map(
+              (rig) => refreshedRigByThingName.get(rig.thingName) ?? rig,
+            ),
+          }
+        })
+      } finally {
+        rigSparkplugRefreshInFlight = false
+      }
+    }
 
     const loadRigCatalog = async (): Promise<void> => {
       try {
@@ -902,9 +989,15 @@ function App({ initialAuthError = '' }: AppProps) {
 
         setRigCatalog({
           status: 'ready',
-          rigs,
+          rigs: createPendingCatalogItems(rigs),
           error: '',
         })
+        if (rigs.length > 0) {
+          void refreshRigSparkplugStatus(rigs)
+          rigSparkplugRefreshInterval = window.setInterval(() => {
+            void refreshRigSparkplugStatus(rigs)
+          }, catalogSparkplugPollIntervalMs)
+        }
       } catch (caughtError) {
         if (cancelled) {
           return
@@ -922,6 +1015,9 @@ function App({ initialAuthError = '' }: AppProps) {
 
     return () => {
       cancelled = true
+      if (rigSparkplugRefreshInterval !== null) {
+        window.clearInterval(rigSparkplugRefreshInterval)
+      }
     }
   }, [
     adminEmailMismatch,
@@ -955,11 +1051,75 @@ function App({ initialAuthError = '' }: AppProps) {
     }
 
     let cancelled = false
+    let deviceSparkplugRefreshInFlight = false
+    let deviceSparkplugRefreshInterval: number | null = null
     setDeviceCatalog({
       status: 'loading',
       devices: [],
       error: '',
     })
+
+    const readDeviceSparkplugStatus = async (
+      device: DeviceCatalogEntry,
+    ): Promise<DeviceCatalogItem> => {
+      try {
+        const sparkplugShadow = await getThingNamedShadow(
+          resolveSessionIdToken,
+          device.thingName,
+          'sparkplug',
+        )
+        return {
+          ...device,
+          sparkplugShadow,
+          sparkplugShadowStatus: 'ready',
+          sparkplugShadowError: '',
+        }
+      } catch (caughtError) {
+        return {
+          ...device,
+          sparkplugShadow: null,
+          sparkplugShadowStatus: 'error',
+          sparkplugShadowError: formatThingShadowReadError(
+            caughtError,
+            device.thingName,
+            'sparkplug',
+          ),
+        }
+      }
+    }
+
+    const refreshDeviceSparkplugStatus = async (
+      devicesToRefresh: readonly DeviceCatalogEntry[],
+    ): Promise<void> => {
+      if (deviceSparkplugRefreshInFlight) {
+        return
+      }
+      deviceSparkplugRefreshInFlight = true
+      try {
+        const refreshedDevices = await Promise.all(
+          devicesToRefresh.map((device) => readDeviceSparkplugStatus(device)),
+        )
+        if (cancelled) {
+          return
+        }
+        const refreshedDeviceByThingName = new Map(
+          refreshedDevices.map((device) => [device.thingName, device]),
+        )
+        setDeviceCatalog((currentCatalog) => {
+          if (currentCatalog.status !== 'ready') {
+            return currentCatalog
+          }
+          return {
+            ...currentCatalog,
+            devices: currentCatalog.devices.map(
+              (device) => refreshedDeviceByThingName.get(device.thingName) ?? device,
+            ),
+          }
+        })
+      } finally {
+        deviceSparkplugRefreshInFlight = false
+      }
+    }
 
     const loadDeviceCatalog = async (): Promise<void> => {
       try {
@@ -970,9 +1130,15 @@ function App({ initialAuthError = '' }: AppProps) {
 
         setDeviceCatalog({
           status: 'ready',
-          devices,
+          devices: createPendingCatalogItems(devices),
           error: '',
         })
+        if (devices.length > 0) {
+          void refreshDeviceSparkplugStatus(devices)
+          deviceSparkplugRefreshInterval = window.setInterval(() => {
+            void refreshDeviceSparkplugStatus(devices)
+          }, catalogSparkplugPollIntervalMs)
+        }
       } catch (caughtError) {
         if (cancelled) {
           return
@@ -1000,6 +1166,9 @@ function App({ initialAuthError = '' }: AppProps) {
 
     return () => {
       cancelled = true
+      if (deviceSparkplugRefreshInterval !== null) {
+        window.clearInterval(deviceSparkplugRefreshInterval)
+      }
     }
   }, [
     adminEmailMismatch,
@@ -1538,17 +1707,70 @@ function App({ initialAuthError = '' }: AppProps) {
     </a>
   )
 
-  const renderCatalogCardLink = (path: string, label: string): ReactElement => (
-    <a
-      href={path}
-      className="catalog-card-link"
-      onClick={(event) => {
-        handleRouteLinkClick(event, path)
-      }}
-    >
-      <span className="catalog-card-link-line">{label}</span>
-    </a>
-  )
+  const renderSparkplugCatalogCardLink = (
+    path: string,
+    label: string,
+    item: SparkplugCatalogItem,
+  ): ReactElement => {
+    const redcon =
+      item.sparkplugShadowStatus === 'ready'
+        ? extractReportedRedcon(item.sparkplugShadow)
+        : null
+    const redconDescription =
+      item.sparkplugShadowStatus === 'loading'
+        ? 'Loading REDCON'
+        : item.sparkplugShadowStatus === 'error'
+          ? item.sparkplugShadowError
+          : describeRedcon(redcon)
+
+    return (
+      <a
+        href={path}
+        className="catalog-card-link catalog-status-link"
+        onClick={(event) => {
+          handleRouteLinkClick(event, path)
+        }}
+      >
+        <span className="catalog-status-summary">
+          <span
+            className={`catalog-status-redcon-ring ${getTxingRedconToneClass(redcon)}`}
+            aria-label={redconDescription}
+            title={redconDescription}
+          >
+            {redcon ?? '?'}
+          </span>
+          <span className="catalog-card-link-line">{label}</span>
+        </span>
+        <span
+          className="catalog-status-capabilities"
+          aria-label={`Capability status for ${label}`}
+        >
+          {item.capabilities.map((capability) => {
+            const availability =
+              item.sparkplugShadowStatus === 'ready'
+                ? extractSparkplugCapabilityAvailability(item.sparkplugShadow, capability)
+                : null
+            const isActive = availability === true
+            const statusLabel = isActive ? 'active' : 'inactive'
+            return (
+              <span
+                key={`${item.thingName}:${capability}`}
+                className={`catalog-status-capability ${
+                  isActive
+                    ? 'catalog-status-capability-active'
+                    : 'catalog-status-capability-inactive'
+                }`}
+                title={`${capability}: ${statusLabel}`}
+              >
+                <span className="catalog-status-capability-dot" aria-hidden="true" />
+                <span className="catalog-status-capability-label">{capability}</span>
+              </span>
+            )
+          })}
+        </span>
+      </a>
+    )
+  }
 
   const renderNavigationPath = (): ReactElement | null => {
     if (route.kind === 'root' || route.kind === 'not_found') {
@@ -1796,14 +2018,15 @@ function App({ initialAuthError = '' }: AppProps) {
         ) : null}
         {rigCatalog.rigs.length > 0 ? (
           <ul
-            className="catalog-list catalog-grid"
+            className="catalog-list catalog-grid catalog-status-list"
             aria-label={`Rigs in ${navigationTownLabel ?? route.town}`}
           >
             {rigCatalog.rigs.map((rig) => (
               <li key={rig.thingName} className="catalog-list-item">
-                {renderCatalogCardLink(
+                {renderSparkplugCatalogCardLink(
                   buildRigPath(route.town, rig.thingName),
-                  formatCatalogDetailLine(rig.shortId, rig.rigName),
+                  rig.rigName,
+                  rig,
                 )}
               </li>
             ))}
@@ -1824,14 +2047,15 @@ function App({ initialAuthError = '' }: AppProps) {
         ) : null}
         {deviceCatalog.devices.length > 0 ? (
           <ul
-            className="catalog-list catalog-grid"
+            className="catalog-list catalog-grid catalog-status-list"
             aria-label={`Devices in ${navigationRigLabel ?? route.rig}`}
           >
             {deviceCatalog.devices.map((device) => (
               <li key={device.thingName} className="catalog-list-item">
-                {renderCatalogCardLink(
+                {renderSparkplugCatalogCardLink(
                   buildDevicePath(route.town, route.rig, device.thingName),
-                  formatCatalogDetailLine(device.shortId, getCatalogDeviceLabel(device)),
+                  getCatalogDeviceLabel(device),
+                  device,
                 )}
               </li>
             ))}

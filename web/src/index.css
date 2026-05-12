@@ -492,7 +492,7 @@ body {
   place-items: center;
   padding: 1rem 1.05rem;
   border: 1px solid var(--panel-border);
-  border-radius: 18px;
+  border-radius: 8px;
   background: var(--panel-surface);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.05),
@@ -517,6 +517,133 @@ body {
   font-size: 1.05rem;
   font-weight: 700;
   line-height: 1.35;
+}
+
+.catalog-status-list {
+  grid-template-columns: 1fr;
+  gap: 0.65rem;
+}
+
+.catalog-status-link {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  justify-items: stretch;
+  gap: 0.75rem 1rem;
+  min-height: 3.45rem;
+  padding: 0.72rem 0.85rem;
+  text-align: left;
+}
+
+.catalog-status-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.72rem;
+  min-width: 0;
+}
+
+.catalog-status-summary .catalog-card-link-line {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.catalog-status-redcon-ring {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.9rem;
+  height: 1.9rem;
+  flex: 0 0 auto;
+  border: 1px solid rgba(143, 155, 171, 0.34);
+  border-radius: 999px;
+  background: rgba(227, 233, 241, 0.12);
+  color: #8b9bad;
+  font-family: "SF Mono", "Consolas", "Liberation Mono", monospace;
+  font-size: 0.78rem;
+  font-weight: 800;
+  line-height: 1;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.42),
+    0 3px 10px rgba(14, 24, 35, 0.08);
+}
+
+.catalog-status-redcon-ring.status-txing-redcon-1,
+.catalog-status-redcon-ring.status-txing-redcon-2,
+.catalog-status-redcon-ring.status-txing-redcon-3,
+.catalog-status-redcon-ring.status-txing-redcon-4 {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.34),
+    0 0 0 1px rgba(255, 255, 255, 0.76),
+    0 5px 12px rgba(20, 41, 67, 0.16);
+}
+
+.catalog-status-redcon-ring.status-txing-redcon-1 {
+  background: var(--redcon-1);
+  color: #fbfdff;
+}
+
+.catalog-status-redcon-ring.status-txing-redcon-2 {
+  background: var(--redcon-2);
+  color: #fbfdff;
+}
+
+.catalog-status-redcon-ring.status-txing-redcon-3 {
+  background: var(--redcon-3);
+  color: #132033;
+}
+
+.catalog-status-redcon-ring.status-txing-redcon-4 {
+  background: var(--redcon-4);
+  color: #102127;
+}
+
+.catalog-status-capabilities {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.35rem 0.62rem;
+  min-width: 0;
+}
+
+.catalog-status-capability {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  min-width: 0;
+  color: rgba(204, 223, 226, 0.68);
+  font-size: 0.76rem;
+  font-weight: 700;
+  line-height: 1.15;
+}
+
+.catalog-status-capability-dot {
+  width: 0.46rem;
+  height: 0.46rem;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: #758292;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.32);
+}
+
+.catalog-status-capability-active {
+  color: rgba(216, 245, 231, 0.92);
+}
+
+.catalog-status-capability-active .catalog-status-capability-dot {
+  background: var(--redcon-4);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.42),
+    0 0 0.45rem rgba(27, 156, 98, 0.28);
+}
+
+.catalog-status-capability-inactive {
+  color: rgba(169, 180, 193, 0.72);
+}
+
+.catalog-status-capability-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .notification-tray {
@@ -1984,6 +2111,15 @@ button:disabled {
 
   .catalog-grid {
     grid-template-columns: 1fr;
+  }
+
+  .catalog-status-link {
+    grid-template-columns: 1fr;
+  }
+
+  .catalog-status-capabilities {
+    justify-content: flex-start;
+    padding-left: 2.62rem;
   }
 
   .notification-tray {

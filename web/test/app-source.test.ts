@@ -20,4 +20,17 @@ describe('app route catalog source wiring', () => {
     expect(appSource).toContain("if (route.kind !== 'town' && route.kind !== 'rig')")
     expect(appSource).toContain('void refreshRouteSparkplugShadow(currentRouteThingName)')
   })
+
+  test('town and rig catalog rows render sparkplug status without short ids', () => {
+    const appSource = readFileSync(resolve(repoRoot, 'web/src/App.tsx'), 'utf-8')
+
+    expect(appSource).toContain('const renderSparkplugCatalogCardLink = (')
+    expect(appSource).toContain('const readRigSparkplugStatus = async')
+    expect(appSource).toContain('const readDeviceSparkplugStatus = async')
+    expect(appSource).toContain('rigs: createPendingCatalogItems(rigs)')
+    expect(appSource).toContain('devices: createPendingCatalogItems(devices)')
+    expect(appSource).toContain('rig.rigName')
+    expect(appSource).toContain('getCatalogDeviceLabel(device)')
+    expect(appSource).not.toContain('formatCatalogDetailLine(')
+  })
 })
