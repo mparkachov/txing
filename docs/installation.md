@@ -141,8 +141,8 @@ starts the default `greengrass-lite.target`.
 Before installing the service, the rig host must have:
 
 - the AWS stacks and type catalog deployed with `just aws::deploy`
-- a town thing created with `just aws::town-deploy town`
-- a rig thing created with `just aws::rig-deploy <town-id> raspi server` or `just aws::rig-deploy <town-id> cloud aws`
+- a town thing created with `just aws::deploy-town town`
+- a rig thing created with `just aws::deploy-rig <town-id> raspi server` or `just aws::deploy-rig <town-id> cloud aws`
 - rig certificate material generated with `just aws::cert` under
   `config/certs/rig/`
 

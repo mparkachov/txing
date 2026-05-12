@@ -310,7 +310,7 @@ def flash() -> None:
 	run(flash_openocd_command())
 
 
-def flash_check() -> None:
+def check_flash() -> None:
 	ensure_ready()
 	command = [str(part) for part in flash_openocd_command()]
 	print(" ".join(shlex.quote(part) for part in command))
@@ -368,7 +368,7 @@ def main() -> None:
 			"check",
 			"build",
 			"flash",
-			"flash-check",
+			"check-flash",
 			"paths",
 			"clean",
 		],
@@ -383,8 +383,8 @@ def main() -> None:
 		build()
 	elif args.command == "flash":
 		flash()
-	elif args.command == "flash-check":
-		flash_check()
+	elif args.command == "check-flash":
+		check_flash()
 	elif args.command == "paths":
 		paths()
 	elif args.command == "clean":

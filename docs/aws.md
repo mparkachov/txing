@@ -35,9 +35,9 @@ Run the setup in this order:
 
 ```bash
 just aws::deploy
-just aws::town-deploy town
-just aws::rig-deploy <town-id> raspi server
-just aws::device-deploy <rig-id> unit bot
+just aws::deploy-town town
+just aws::deploy-rig <town-id> raspi server
+just aws::deploy-device <rig-id> unit bot
 ```
 
 `just aws::deploy` deploys the base root stack. That root stack owns web/Cognito
@@ -47,16 +47,16 @@ type catalog. The type catalog is CloudFormation-managed under `/txing` as leaf
 parameters such as `/txing/town/cloud/time/kind` and
 `/txing/town/cloud/time/capabilities`.
 
-`just aws::town-deploy <town-name>` idempotently creates or updates only the
+`just aws::deploy-town <town-name>` idempotently creates or updates only the
 town thing with ThingType `town` and its `sparkplug` shadow. It prints the
 generated town thing ID.
 
-`just aws::rig-deploy <town-id> <rig-type> <rig-name>` idempotently creates or
+`just aws::deploy-rig <town-id> <rig-type> <rig-name>` idempotently creates or
 updates only the rig thing with ThingType `raspi` or `cloud` plus the rig
 `sparkplug` shadow. Shared Greengrass token exchange and runtime IAM are base
 stack outputs.
 
-`just aws::device-deploy <rig-id> <device-type> <device-name>` idempotently
+`just aws::deploy-device <rig-id> <device-type> <device-name>` idempotently
 creates or updates only the device thing, named shadows, and optional
 per-instance resources. Device enrollment validates compatibility by requiring
 the SSM leaf `/txing/town/<rig-type>/<device-type>/kind`. Concrete instance data
@@ -75,7 +75,7 @@ Generate and publish the SPA:
 ```bash
 just web::write-env
 just web::build
-just web::publish
+just web::deploy
 ```
 
 `web::write-env` is allowed to write `web/.env.local` because it is a web build

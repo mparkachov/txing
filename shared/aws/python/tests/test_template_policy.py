@@ -420,9 +420,9 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         text = "\n".join(path.read_text(encoding="utf-8") for path in checked_paths)
 
         self.assertIn("deploy CognitoDomainPrefix", text)
-        self.assertIn("town-deploy town_name", text)
-        self.assertIn("rig-deploy town_id", text)
-        self.assertIn("device-deploy rig_id", text)
+        self.assertIn("deploy-town town_name", text)
+        self.assertIn("deploy-rig town_id", text)
+        self.assertIn("deploy-device rig_id", text)
         self.assertIn("enlist payload_file", text)
         self.assertIn("discharge thing_id", text)
         self.assertIn("delete stack_name", text)

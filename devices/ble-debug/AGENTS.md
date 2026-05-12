@@ -10,7 +10,7 @@
 - Do not add legacy external build stacks, BME280 weather sampling, factory/NVE data, S115, SoftDevice, nRF-BM, PlatformIO, or production device contracts unless the user explicitly asks for them.
 
 ## Hardware Rules
-- Agents may run build/setup commands such as `just ble-debug::mcu::submodules`, `just ble-debug::mcu::install`, `just ble-debug::mcu::check`, `just ble-debug::mcu::build`, `just ble-debug::mcu::flash-check`, `just ble-debug::mcu::paths`, and `just ble-debug::mcu::clean`.
+- Agents may run build/setup commands such as `just ble-debug::mcu::submodules`, `just ble-debug::mcu::install`, `just ble-debug::mcu::check`, `just ble-debug::mcu::build`, `just ble-debug::mcu::check-flash`, `just ble-debug::mcu::paths`, and `just ble-debug::mcu::clean`.
 - Agents may run `just ble-debug::rig::install` because it only prepares the local Python environment.
 - Agents must not run `just ble-debug::mcu::flash`, `just ble-debug::rig::test`, `just ble-debug::rig::overnight`, OpenOCD, pyOCD, RTT, serial monitors, BLE scanner commands, or other hardware-attached commands.
 - Flashing and hardware verification are manual user actions.

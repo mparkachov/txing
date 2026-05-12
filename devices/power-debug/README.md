@@ -84,7 +84,7 @@ Agents must not run `flash` or any other hardware-attached command.
 To check the exact flash command without touching hardware:
 
 ```sh
-just power-debug::mcu::flash-check
+just power-debug::mcu::check-flash
 ```
 
 The flash command intentionally starts with plain `openocd`, so `brew upgrade`

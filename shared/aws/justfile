@@ -37,11 +37,6 @@ deploy CognitoDomainPrefix='' AdminEmail='' stack_name=stack_name template_file=
       "LocalhostAltAppUrl={{LocalhostAltAppUrl}}"
     describe_stack_outputs "$AWS_STACK_NAME"
 
-type-sync CognitoDomainPrefix='' AdminEmail='' stack_name=stack_name template_file=template_file region=region profile=profile:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    just --justfile "{{aws_dir}}/justfile" deploy "{{CognitoDomainPrefix}}" "{{AdminEmail}}" "{{stack_name}}" "{{template_file}}" "{{region}}" "{{profile}}"
-
 delete stack_name=stack_name region=region profile=profile wait='true' delete_packaging_buckets='true' include_legacy_time_lambda='true':
     #!/usr/bin/env bash
     set -euo pipefail
@@ -82,7 +77,7 @@ type-describe path region=region profile=profile:
       --region "$AWS_REGION" \
       describe "{{path}}"
 
-town-deploy town_name stack_name=stack_name region=region profile=profile:
+deploy-town town_name stack_name=stack_name region=region profile=profile:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
@@ -97,7 +92,7 @@ town-deploy town_name stack_name=stack_name region=region profile=profile:
     jq -r '"town id: \(.thingName)"' <<<"$registration"
     jq '.' <<<"$registration"
 
-rig-deploy town_id rig_type rig_name stack_name=stack_name region=region profile=profile:
+deploy-rig town_id rig_type rig_name stack_name=stack_name region=region profile=profile:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
@@ -115,7 +110,7 @@ rig-deploy town_id rig_type rig_name stack_name=stack_name region=region profile
     jq -r '"rig id: \(.thingName)"' <<<"$registration"
     jq '.' <<<"$registration"
 
-device-deploy rig_id device_type device_name stack_name=stack_name region=region profile=profile:
+deploy-device rig_id device_type device_name stack_name=stack_name region=region profile=profile:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
@@ -165,7 +160,7 @@ configure-indexing region=region profile=profile:
     txing_aws_init
     configure_indexing_and_wait
 
-validate template_file=template_file region=region profile=profile stack_name=stack_name:
+check-template template_file=template_file region=region profile=profile stack_name=stack_name:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"

@@ -74,7 +74,7 @@ test repetitions="1" name="power-test" *args:
     env "${env_args[@]}" \
       cargo test --quiet --manifest-path "{{test_manifest}}" power_ble_ -- --ignored --format terse --test-threads=1 --nocapture
 
-@test-check:
+@check:
     cargo test --manifest-path "{{test_manifest}}"
 
 @default:

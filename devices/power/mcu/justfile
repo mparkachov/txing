@@ -61,7 +61,7 @@ _firmware-hex:
       -c "reset run" \
       -c shutdown
 
-@flash-check: _ensure-openocd
+@check-flash: _ensure-openocd
     firmware="$(just --justfile "{{ mcu_dir }}/justfile" _firmware-hex)"; \
     printf '%q ' \
       openocd \
@@ -76,13 +76,13 @@ _firmware-hex:
       -c shutdown
     printf '\n'
 
-@nve-hex device_name="power-test":
+@build-nve-hex device_name="power-test":
     test -f "{{ nve_script }}" || { echo "missing REDCON NVE script: {{ nve_script }}" >&2; exit 1; }
     mkdir -p "{{ build_dir }}"
     python3 "{{ nve_script }}" write-hex "{{ device_name }}" --address "{{ nve_address }}" --output "{{ nve_hex }}"
 
-@nve-check device_name="power-test": _ensure-openocd
-    just --justfile "{{ mcu_dir }}/justfile" nve-hex "{{ device_name }}"
+@check-nve device_name="power-test": _ensure-openocd
+    just --justfile "{{ mcu_dir }}/justfile" build-nve-hex "{{ device_name }}"
     printf '%q ' \
       openocd \
       -s "{{ openocd_support_dir }}" \
@@ -96,8 +96,8 @@ _firmware-hex:
       -c shutdown
     printf '\n'
 
-@nve-flash device_name="power-test": _ensure-openocd
-    just --justfile "{{ mcu_dir }}/justfile" nve-hex "{{ device_name }}"
+@flash-nve device_name="power-test": _ensure-openocd
+    just --justfile "{{ mcu_dir }}/justfile" build-nve-hex "{{ device_name }}"
     openocd \
       -s "{{ openocd_support_dir }}" \
       -f "{{ openocd_cfg }}" \

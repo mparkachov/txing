@@ -58,9 +58,9 @@ cp web/.env.example web/.env.local
 
 ```bash
 just web::build
-just web::publish
+just web::deploy
 ```
 
-`web::publish` uploads `web/dist`, marks HTML as non-cacheable, and invalidates CloudFront.
+`web::deploy` uploads `web/dist`, marks HTML as non-cacheable, and invalidates CloudFront.
 
 AWS bootstrap, admin-user creation, and teardown live in [aws.md](../aws.md).

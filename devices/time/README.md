@@ -13,8 +13,8 @@ catalog at `/txing`, then AWS IoT thing IDs identify concrete instances:
 
 ```sh
 just aws::deploy
-just aws::town-deploy town
-just aws::rig-deploy <town-id> cloud aws
+just aws::deploy-town town
+just aws::deploy-rig <town-id> cloud aws
 ```
 
 Then use the normal rig path:
@@ -27,7 +27,7 @@ just rig::deploy <rig-id>
 Device enrollment is still device-specific:
 
 ```sh
-just aws::device-deploy <rig-id> time clock
+just aws::deploy-device <rig-id> time clock
 ```
 
 Enrollment checks the `/txing/town/cloud/time/kind` compatibility leaf before

@@ -31,7 +31,7 @@ build:
     export VITE_TXING_VERSION="$TXING_VERSION"
     bun --bun run build
 
-publish stack_name=stack_name region=region profile=profile web_dist_dir=web_dist_dir:
+deploy stack_name=stack_name region=region profile=profile web_dist_dir=web_dist_dir:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{web_dir}}"

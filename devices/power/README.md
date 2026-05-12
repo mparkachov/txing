@@ -19,14 +19,14 @@ just aws::deploy
 Register a power device on a raspi rig:
 
 ```sh
-just aws::device-deploy <rig-id> power power
+just aws::deploy-device <rig-id> power power
 ```
 
 Use the returned power Thing ID when preparing the MCU factory/NVE data:
 
 ```sh
-just power::mcu::nve-check <power-thing-id>
-just power::mcu::nve-flash <power-thing-id>
+just power::mcu::check-nve <power-thing-id>
+just power::mcu::flash-nve <power-thing-id>
 ```
 
 Deploy rig components after registration:
@@ -35,7 +35,7 @@ Deploy rig components after registration:
 just rig::deploy <rig-id>
 ```
 
-Agents may render `nve-check` commands, but firmware/NVE flashing remains a
+Agents may render `check-nve` commands, but firmware/NVE flashing remains a
 manual hardware step.
 
 ## MCU Setup
@@ -75,7 +75,7 @@ board identifier `xiao_nrf54l15/nrf54l15/cpuapp`. Build-time values live in
 just power::mcu::paths
 just power::mcu::check
 just power::mcu::build
-just power::mcu::flash-check
+just power::mcu::check-flash
 ```
 
 The build output is:
@@ -99,14 +99,14 @@ device name:
 Generate and inspect the NVE programming command:
 
 ```sh
-just power::mcu::nve-hex power-test
-just power::mcu::nve-check power-test
+just power::mcu::build-nve-hex power-test
+just power::mcu::check-nve power-test
 ```
 
 Program the NVE record manually when hardware is connected:
 
 ```sh
-just power::mcu::nve-flash power-test
+just power::mcu::flash-nve power-test
 ```
 
 ## Flash

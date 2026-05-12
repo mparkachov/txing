@@ -111,8 +111,8 @@ Agents must not run `flash` or any other hardware-attached command.
 To check the exact flash command without touching hardware:
 
 ```sh
-just ble-debug::mcu::flash-check
-just ble-debug::mcu::flash-check service-1280
+just ble-debug::mcu::check-flash
+just ble-debug::mcu::check-flash service-1280
 ```
 
 The flash command intentionally starts with plain `openocd`, so `brew upgrade`
@@ -371,34 +371,34 @@ Recommended detectability ladder:
 
 ```sh
 just ble-debug::mcu::build tx-minus20
-just ble-debug::mcu::flash-check tx-minus20
+just ble-debug::mcu::check-flash tx-minus20
 
 just ble-debug::mcu::build tx-0
-just ble-debug::mcu::flash-check tx-0
+just ble-debug::mcu::check-flash tx-0
 
 just ble-debug::mcu::build named-1280
-just ble-debug::mcu::flash-check named-1280
+just ble-debug::mcu::check-flash named-1280
 
 just ble-debug::mcu::build service-1280
-just ble-debug::mcu::flash-check service-1280
+just ble-debug::mcu::check-flash service-1280
 
 just ble-debug::mcu::build service-1280-tx4
-just ble-debug::mcu::flash-check service-1280-tx4
+just ble-debug::mcu::check-flash service-1280-tx4
 
 just ble-debug::mcu::build service-1280-tx8
-just ble-debug::mcu::flash-check service-1280-tx8
+just ble-debug::mcu::check-flash service-1280-tx8
 
 just ble-debug::mcu::build gatt-1280-tx0
-just ble-debug::mcu::flash-check gatt-1280-tx0
+just ble-debug::mcu::check-flash gatt-1280-tx0
 
 just ble-debug::mcu::build gatt-1280-tx4
-just ble-debug::mcu::flash-check gatt-1280-tx4
+just ble-debug::mcu::check-flash gatt-1280-tx4
 
 just ble-debug::mcu::build gatt-1280-tx8
-just ble-debug::mcu::flash-check gatt-1280-tx8
+just ble-debug::mcu::check-flash gatt-1280-tx8
 
 just ble-debug::mcu::build gatt-320-tx8
-just ble-debug::mcu::flash-check gatt-320-tx8
+just ble-debug::mcu::check-flash gatt-320-tx8
 ```
 
 ## Generated State

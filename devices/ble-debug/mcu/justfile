@@ -19,8 +19,8 @@ firmware_script := mcu_dir + "/scripts/firmware.py"
 @flash profile="":
     python3 "{{firmware_script}}" flash "{{profile}}"
 
-@flash-check profile="":
-    python3 "{{firmware_script}}" flash-check "{{profile}}"
+@check-flash profile="":
+    python3 "{{firmware_script}}" check-flash "{{profile}}"
 
 @paths profile="":
     python3 "{{firmware_script}}" paths "{{profile}}"

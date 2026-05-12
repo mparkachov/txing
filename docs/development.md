@@ -87,9 +87,9 @@ just unit::board::run
 just web::dev
 just web::write-env
 just aws::deploy
-just aws::town-deploy town
-just aws::rig-deploy <town-id> raspi server
-just aws::device-deploy <rig-id> unit bot
+just aws::deploy-town town
+just aws::deploy-rig <town-id> raspi server
+just aws::deploy-device <rig-id> unit bot
 just aws::shadow <thing>
 just aws::shadow-reset <thing>
 ```
