@@ -43,6 +43,7 @@ const SCANNER_BUFFER: usize = 256;
 const SCAN_POLL_INTERVAL_MS: u64 = 500;
 const STALE_CHECK_INTERVAL_MS: u64 = 500;
 const NOTIFICATION_DRAIN_INTERVAL_MS: u64 = 100;
+const CONNECTED_STATE_REFRESH_INTERVAL_MS: u64 = 30_000;
 const SHADOW_PUBLISH_INTERVAL_MS: u64 = 500;
 const SHADOW_PUBLISH_RETRY_LOG_INTERVAL_MS: u64 = 10_000;
 const REDCON_ACTIVE_MEASUREMENT_STALE_MS: u64 = 20_000;
@@ -394,6 +395,9 @@ impl DeviceSession {
         let mut notification_timer =
             interval(Duration::from_millis(NOTIFICATION_DRAIN_INTERVAL_MS));
         notification_timer.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        let mut connected_state_timer =
+            interval(Duration::from_millis(CONNECTED_STATE_REFRESH_INTERVAL_MS));
+        connected_state_timer.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
         loop {
             tokio::select! {
@@ -414,6 +418,9 @@ impl DeviceSession {
                 }
                 _ = notification_timer.tick(), if self.connected.is_some() => {
                     self.drain_notifications().await?;
+                }
+                _ = connected_state_timer.tick(), if self.connected.is_some() => {
+                    self.publish_aggregate_state_heartbeat(now_ms())?;
                 }
             }
         }
@@ -814,6 +821,16 @@ impl DeviceSession {
     }
 
     fn publish_aggregate_sample(&mut self, now: u64) -> Result<()> {
+        let sample = self.aggregate_sample(now);
+        self.publish_sample(sample)
+    }
+
+    fn publish_aggregate_state_heartbeat(&mut self, now: u64) -> Result<()> {
+        let sample = self.aggregate_sample(now);
+        self.publish_sample_without_shadow_updates(sample)
+    }
+
+    fn aggregate_sample(&mut self, now: u64) -> CapabilitySample {
         let address = self
             .connected
             .as_ref()
@@ -839,7 +856,7 @@ impl DeviceSession {
             })
             .map(|measurement| measurement.value.clone());
         let seq = self.next_seq();
-        let sample = match self.spec.kind {
+        match self.spec.kind {
             DeviceKind::Power => power_state_sample(
                 &self.spec,
                 redcon,
@@ -857,8 +874,7 @@ impl DeviceSession {
                 seq,
                 now,
             ),
-        };
-        self.publish_sample(sample)
+        }
     }
 
     fn power_measurement_stale(&self, now: u64) -> bool {
@@ -886,12 +902,27 @@ impl DeviceSession {
     }
 
     fn publish_sample(&self, sample: CapabilitySample) -> Result<()> {
+        self.publish_sample_with_shadow_updates(sample, true)
+    }
+
+    fn publish_sample_without_shadow_updates(&self, sample: CapabilitySample) -> Result<()> {
+        self.publish_sample_with_shadow_updates(sample, false)
+    }
+
+    fn publish_sample_with_shadow_updates(
+        &self,
+        sample: CapabilitySample,
+        include_shadow_updates: bool,
+    ) -> Result<()> {
         let state = capability_state_from_sample(&self.config.adapter_id, &sample);
         let topic = build_capability_state_topic(&state.thing_name, &self.config.adapter_id)?;
         let payload = state.to_vec()?;
         self.outbound_sender
             .send(OutboundMessage { topic, payload })
             .map_err(|_| anyhow!("outbound local pub/sub channel is closed"))?;
+        if !include_shadow_updates {
+            return Ok(());
+        }
         for update in shadow_updates_from_sample(&sample)? {
             if self.shadow_sender.send(update).is_err() {
                 eprintln!(
@@ -1541,6 +1572,13 @@ mod tests {
         }
     }
 
+    fn weather_spec() -> DeviceSpec {
+        DeviceSpec {
+            thing_name: "weather-1".to_string(),
+            kind: DeviceKind::Weather,
+        }
+    }
+
     fn advertisement() -> Advertisement {
         Advertisement {
             address: "E4:7C:BC:45:9B:A2".to_string(),
@@ -1739,6 +1777,47 @@ mod tests {
         );
         let payload: serde_json::Value = serde_json::from_slice(&power_shadow.payload).unwrap();
         assert!(payload["state"]["reported"]["batteryMv"].is_null());
+    }
+
+    #[tokio::test]
+    async fn connected_state_heartbeat_refreshes_local_state_without_shadow_updates() {
+        let (sender, mut receiver) = mpsc::unbounded_channel();
+        let (shadow_sender, mut shadow_receiver) = mpsc::unbounded_channel();
+        let mut session = DeviceSession::new(
+            weather_spec(),
+            RuntimeConfig::default(),
+            sender,
+            shadow_sender,
+            None,
+        );
+        let now = now_ms();
+        session.connected = Some(ConnectedDevice { connected: true });
+        session.last_redcon = Some(REDCON_IDLE);
+        session.last_power_measurement = Some(TimedMeasurement {
+            value: PowerMeasurement {
+                battery_mv: Some(3970),
+            },
+            observed_at_ms: now,
+        });
+        session.last_weather_measurement = Some(TimedMeasurement {
+            value: WeatherMeasurement {
+                measured_temperature: 21.5,
+                measured_pressure: 100.1,
+                measured_humidity: 44.0,
+            },
+            observed_at_ms: now,
+        });
+
+        session.publish_aggregate_state_heartbeat(now).unwrap();
+
+        let outbound = receiver.recv().await.unwrap();
+        let state: CapabilityState = serde_json::from_slice(&outbound.payload).unwrap();
+        assert_eq!(state.thing_name, "weather-1");
+        assert_eq!(state.capabilities.get("sparkplug"), Some(&true));
+        assert_eq!(state.capabilities.get("ble"), Some(&true));
+        assert_eq!(state.capabilities.get("power"), Some(&true));
+        assert_eq!(state.capabilities.get("weather"), Some(&true));
+        assert!(shadow_receiver.try_recv().is_err());
     }
 
     #[tokio::test]
