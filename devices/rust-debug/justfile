@@ -1,7 +1,0 @@
-set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
-set quiet := true
-
-mod rig 'rig/justfile'
-
-@default:
-    @just --list

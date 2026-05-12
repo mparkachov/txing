@@ -1,7 +1,0 @@
-.pytest_cache/
-__pycache__/
-build/
-.pip-cache/
-.zephyr-cache/
-.ccache/
-.venv/

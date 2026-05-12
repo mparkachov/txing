@@ -1,7 +1,0 @@
-set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
-set quiet := true
-
-mod mcu 'mcu/justfile'
-
-@default:
-    @just --list
