@@ -1162,7 +1162,12 @@ deploy rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' com
         fi
       done
     fi
-    sudo "$ggl_cli" deploy "${deploy_args[@]}"
+    if sudo timeout 180 "$ggl_cli" deploy "${deploy_args[@]}"; then
+      deploy_command_status=0
+    else
+      deploy_command_status=$?
+      echo "warning: ggl-cli deploy failed or timed out with status $deploy_command_status; checking deployed systemd component units anyway." >&2
+    fi
     sudo systemctl daemon-reload || true
     restart_core_log_override_units
     sudo systemctl start "{{greengrass_lite_target}}" || true
@@ -1197,6 +1202,9 @@ deploy rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' com
       echo "inspect Greengrass deployment processing with: sudo journalctl -a --no-pager -u ggl.core.ggdeploymentd.service -u ggl.gg_deployment.socket -n 200" >&2
       echo "Greengrass deploy completed, but $activation_failures deployed unit(s) did not stay active." >&2
       exit 1
+    fi
+    if [ "$deploy_command_status" -ne 0 ]; then
+      echo "warning: Greengrass deploy command reported failure, but component units are active at the expected version." >&2
     fi
     printf 'deployed Greengrass components version %s for RigName=%s RigType=%s SparkplugGroupId=%s SparkplugEdgeNodeId=%s\n' "$resolved_component_version" "$rig_name" "$selected_rig_type" "$sparkplug_group_id" "$sparkplug_edge_node_id"
     printf 'inspect rig logs with: just rig::log\n'
