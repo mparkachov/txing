@@ -6,42 +6,42 @@ This directory builds the `weather` txing firmware for:
 xiao_nrf54l15/nrf54l15/cpuapp
 ```
 
-The board is a Seeed Studio XIAO nRF54L15 with a Grove BME280 on the XIAO I2C
-connector. The weather firmware no longer uses Matter, Thread, `chip-tool`, or
-online provisioning. The rig talks to the device over BLE connected-idle.
+The board is a Seeed Studio XIAO nRF54L15 with a BME280 on I2C. BME280 power is
+switched by XIAO D1, and firmware only powers the sensor during a measurement.
 
-The AWS IoT Thing ID is written as factory data during flashing and is used as
-the BLE advertised local name:
+The firmware uses the same REDCON BLE service contract as `devices/power`:
 
-```sh
-just weather::mcu::flash weather-q8zbgb
-```
+- command/state UUIDs use payload version `2`
+- state is always `<2, 4>`
+- REDCON `4` command is accepted as an idempotent connected-idle command
+- REDCON `3` and all other command levels are rejected by the GATT write
+- power measurement `f6b4b003-7b32-4d2d-9f4b-4ff0a2b8f100` carries `<version, battery_mv>`
+- weather measurement `f6b4b004-7b32-4d2d-9f4b-4ff0a2b8f100` carries `<version, temperature_centi_c, pressure_pa, humidity_centi_percent>`
+- connected REDCON `4` reports battery and BME280 measurements every 60 seconds
 
-Factory data is written into the merged HEX image at
-`WEATHER_FACTORY_DATA_ADDRESS` (default `0x000f0000`) with:
+Factory/NVE data is power-compatible REDCON factory data at `0x000f0000`:
 
-- magic `TXW1`
+- magic `TXR1`
 - version `1`
-- ASCII Thing ID length and bytes
+- printable non-space ASCII BLE device name length and bytes
 - CRC32 over the preceding fields
 
-`just weather::mcu::check` builds the firmware. `just weather::mcu::verify` can
-optionally receive the same Thing ID to include factory data in the expected
-image:
+Build firmware:
 
 ```sh
 just weather::mcu::check
-just weather::mcu::verify weather-q8zbgb
 ```
 
-The BLE contract is defined in `app/src/weather_ble_protocol.*`:
+Generate the NVE HEX for manual programming:
 
-- REDCON command/state use payload version `2` and carry only `<version, redcon>`
-- power measurement `f6b4b003-7b32-4d2d-9f4b-4ff0a2b8f100` carries `<version, battery_mv>`
-- weather measurement `f6b4b004-7b32-4d2d-9f4b-4ff0a2b8f100` carries `<version, temperature_centi, pressure_pa, humidity_centi>`
-- REDCON `4`: connected idle, battery and weather measurement every 60 seconds
-- REDCON `3`: LED on, battery and weather measurement every 10 seconds
-- requested REDCON `1` or `2`: accepted as active and reported as actual `3`
+```sh
+just weather::mcu::build-nve-hex weather-q8zbgb
+just weather::mcu::check-nve weather-q8zbgb
+```
 
-Agents must not run the flash target. Use it only manually with the intended
-board connected.
+Firmware and NVE flashing remain manual hardware steps:
+
+```sh
+just weather::mcu::flash
+just weather::mcu::flash-nve weather-q8zbgb
+```

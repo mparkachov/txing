@@ -1,0 +1,36 @@
+/ {
+	aliases {
+		bme280 = &bme280_sensor;
+		power = &bme280_power_pin;
+	};
+
+	zephyr,user {
+		io-channels = <&adc 7>;
+	};
+
+	power_outputs {
+		compatible = "gpio-leds";
+
+		bme280_power_pin: bme280-power-pin {
+			gpios = <&gpio1 5 GPIO_ACTIVE_HIGH>; /* XIAO D1 */
+		};
+	};
+};
+
+&xiao_i2c {
+	status = "okay";
+
+	bme280_sensor: bme280@76 {
+		compatible = "bosch,bme280";
+		reg = <0x76>;
+		status = "okay";
+	};
+};
+
+&pdm_imu_pwr {
+	/delete-property/ regulator-boot-on;
+};
+
+&vbat_pwr {
+	/delete-property/ regulator-boot-on;
+};

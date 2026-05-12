@@ -426,6 +426,21 @@ impl DeviceSession {
             return Ok(());
         }
 
+        if self.spec.kind == DeviceKind::Weather && command.target.redcon != REDCON_IDLE {
+            publish_command_result(
+                &self.config.adapter_id,
+                &self.outbound_sender,
+                &command,
+                COMMAND_FAILED,
+                Some(format!(
+                    "weather BLE only supports REDCON 4, got {}",
+                    command.target.redcon
+                )),
+                Some(command.target.redcon),
+            )?;
+            return Ok(());
+        }
+
         let target_redcon = match normalize_ble_target_redcon(command.target.redcon) {
             Ok(value) => value,
             Err(err) => {
@@ -1476,6 +1491,41 @@ mod tests {
             })
         );
         assert_eq!(device_spec_from_inventory(&time), None);
+    }
+
+    #[tokio::test]
+    async fn weather_command_rejects_redcon_three_before_ble_write() {
+        let (sender, mut receiver) = mpsc::unbounded_channel();
+        let (shadow_sender, _shadow_receiver) = mpsc::unbounded_channel();
+        let mut session = DeviceSession::new(
+            DeviceSpec {
+                thing_name: "weather-1".to_string(),
+                kind: DeviceKind::Weather,
+            },
+            RuntimeConfig::default(),
+            sender,
+            shadow_sender,
+            None,
+        );
+        let command = CapabilityCommand {
+            schema_version: SCHEMA_VERSION.to_string(),
+            command_id: "cmd-weather-3".to_string(),
+            thing_name: "weather-1".to_string(),
+            target: CapabilityCommandTarget { redcon: 3 },
+            reason: "test".to_string(),
+            issued_at_ms: 1,
+            deadline_ms: None,
+            seq: 11,
+        };
+
+        session.handle_command(command).await.unwrap();
+
+        let outbound = receiver.recv().await.unwrap();
+        let result: txing_capability_protocol::CapabilityCommandResult =
+            serde_json::from_slice(&outbound.payload).unwrap();
+        assert_eq!(result.status, COMMAND_FAILED);
+        assert_eq!(result.target.redcon, Some(3));
+        assert!(result.message.unwrap().contains("only supports REDCON 4"));
     }
 
     #[tokio::test]

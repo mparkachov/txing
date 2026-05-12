@@ -1,0 +1,50 @@
+# SPDX-License-Identifier: Apache-2.0
+
+mainmenu "txing weather MCU"
+
+menu "REDCON"
+
+config REDCON_BATTERY_ADC_SETTLE_MS
+	int "REDCON battery ADC settle delay in ms"
+	range 0 60000
+	help
+	  Delay after enabling battery measurement power before sampling ADC.
+
+config REDCON_FACTORY_DATA_ADDRESS
+	hex "REDCON factory/NVE data address"
+	help
+	  Flash address containing the REDCON factory/NVE record. The record
+	  stores the BLE device name used for advertising and the Generic Access
+	  device name.
+
+config WEATHER_BME280_POWER_SETTLE_MS
+	int "BME280 D1 power settle delay in ms"
+	range 2 60000
+	help
+	  Delay after enabling D1 sensor power before the BME280 is accessed.
+
+menu "REDCON BLE"
+
+config REDCON_BLE_ADV_INTERVAL
+	hex "BLE advertising interval in 0.625 ms units"
+	range 0x0020 0x4000
+	help
+	  BLE advertising interval for REDCON 4 advertising.
+
+config REDCON_BLE_ADV_TX_POWER_DBM
+	int "BLE advertising TX power in dBm"
+	range -46 8
+	help
+	  Requested advertising transmit power.
+
+config REDCON_BLE_IDLE_MEASUREMENT_NOTIFY_INTERVAL_SECONDS
+	int "REDCON idle measurement notification interval in seconds"
+	range 1 3600
+	help
+	  Periodic battery and BME280 measurement notification interval while
+	  connected in REDCON 4.
+
+endmenu
+endmenu
+
+source "Kconfig.zephyr"

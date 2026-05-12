@@ -155,7 +155,10 @@ pub fn parse_weather_state(payload: &[u8]) -> Result<WeatherState> {
     if version != PROTOCOL_VERSION {
         bail!("unsupported weather BLE state version {version}");
     }
-    let redcon = normalize_state_redcon(payload[1], "weather")?;
+    let redcon = payload[1];
+    if redcon != REDCON_IDLE {
+        bail!("weather BLE state must be REDCON 4, got {redcon}");
+    }
     Ok(WeatherState { redcon })
 }
 
@@ -274,7 +277,7 @@ pub fn power_state_sample(
 
 pub fn weather_state_sample(
     spec: &DeviceSpec,
-    redcon: u8,
+    _redcon: u8,
     power_measurement: Option<&PowerMeasurement>,
     weather_measurement: Option<WeatherMeasurement>,
     ble_address: Option<String>,
@@ -286,9 +289,8 @@ pub fn weather_state_sample(
         kind: DeviceKind::Weather,
         sparkplug_available: true,
         ble_available: true,
-        power_available: redcon < REDCON_IDLE
-            && power_measurement.and_then(|item| item.battery_mv).is_some(),
-        weather_available: redcon < REDCON_IDLE && weather_measurement.is_some(),
+        power_available: power_measurement.and_then(|item| item.battery_mv).is_some(),
+        weather_available: weather_measurement.is_some(),
         ble_local_name: Some(spec.thing_name.clone()),
         ble_address,
         battery_mv: power_measurement.and_then(|item| item.battery_mv),
@@ -440,8 +442,9 @@ mod tests {
 
     #[test]
     fn weather_payload_parses_state_and_measurement() {
-        let state = parse_weather_state(&[2, 3]).unwrap();
-        assert_eq!(state, WeatherState { redcon: 3 });
+        let state = parse_weather_state(&[2, 4]).unwrap();
+        assert_eq!(state, WeatherState { redcon: 4 });
+        assert!(parse_weather_state(&[2, 3]).is_err());
 
         let mut payload = vec![2];
         payload.extend_from_slice(&2155_i32.to_le_bytes());
@@ -572,7 +575,7 @@ mod tests {
         };
         let sample = weather_state_sample(
             &spec,
-            REDCON_ACTIVE,
+            REDCON_IDLE,
             Some(&PowerMeasurement {
                 battery_mv: Some(3710),
             }),

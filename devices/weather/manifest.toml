@@ -3,11 +3,10 @@ device_name = "outside"
 display_name = "Weather"
 capabilities = ["sparkplug", "ble", "power", "weather"]
 compatible_rig_types = ["raspi"]
-redcon_command_levels = [4, 3]
+redcon_command_levels = [4]
 
 [redcon_rules]
-4 = ["sparkplug", "ble"]
-3 = ["sparkplug", "ble", "weather"]
+4 = ["sparkplug", "ble", "power", "weather"]
 
 [shadows.sparkplug]
 schema = "aws/sparkplug-shadow.schema.json"

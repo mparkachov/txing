@@ -3,23 +3,20 @@
 `weather` is a BLE-advertised txing type for an outside weather node:
 
 - MCU: Seeed Studio XIAO nRF54L15
-- Sensor: Grove BME280 on I2C
+- Sensor: BME280 on I2C, powered by XIAO D1 only during samples
 - Device name default: `outside`
 - Rig type: `raspi`
-- Capability: `sparkplug`
+- Capabilities: `sparkplug`, `ble`, `power`, `weather`
 
-The device is registered in AWS through the existing AWS device flow. During
-manual flashing, `weather::mcu::flash <aws-thing-id>` stores that Thing ID in
-MCU factory data. Firmware advertises the Thing ID as its BLE local name, and
-the Raspberry Pi 5 rig uses that local name as the presence identity.
+The device is registered through the existing AWS device flow. During manual NVE
+programming, the AWS Thing ID is stored as REDCON factory data. Firmware
+advertises that Thing ID as its BLE local name, and the Raspberry Pi 5 rig uses
+that local name as the presence identity.
 
-Sparkplug behavior:
-
-- Fresh Thing-name advertisements publish DBIRTH/DDATA with `redcon=4`.
-- Missing advertisements publish DDEATH after the presence timeout.
-- Weather measurements and REDCON commands are modeled through the weather BLE
-  GATT contract, but this device type is currently parked while BLE behavior is
-  rebuilt separately.
+Weather is REDCON 4 only. It has no REDCON 3 mode. While connected in REDCON 4,
+the MCU reports battery voltage and BME280 measurements every 60 seconds. A
+REDCON 3 command is rejected by the rig before BLE write and by firmware if sent
+directly.
 
 The weather implementation does not use Matter, Thread, `chip-tool`, online
-provisioning, MCP, or video.
+provisioning, MCP, video, or a weather-specific Python rig stack.

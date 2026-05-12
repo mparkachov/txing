@@ -94,7 +94,7 @@ class TypeCatalogTests(unittest.TestCase):
         self.assertEqual(records["/txing/town/raspi/power"]["rigType"], "raspi")
         self.assertEqual(records["/txing/town/cloud/time"]["rigType"], "cloud")
         self.assertEqual(records["/txing/town/raspi/unit"]["redconCommandLevels"], ["4", "3", "2", "1"])
-        self.assertEqual(records["/txing/town/raspi/weather"]["redconCommandLevels"], ["4", "3"])
+        self.assertEqual(records["/txing/town/raspi/weather"]["redconCommandLevels"], ["4"])
         self.assertEqual(records["/txing/town/raspi/power"]["redconCommandLevels"], ["4", "3"])
         self.assertEqual(records["/txing/town/cloud/time"]["redconCommandLevels"], ["4", "1"])
         self.assertEqual(
@@ -147,7 +147,7 @@ class TypeCatalogTests(unittest.TestCase):
         )
         self.assertEqual(
             ssm.parameters["/txing/town/raspi/weather/redconCommandLevels"],
-            "4,3",
+            "4",
         )
         self.assertEqual(
             ssm.parameters["/txing/town/raspi/power/redconCommandLevels"],

@@ -28,9 +28,8 @@ Resources:
         displayName: Weather
         defaultName: outside
         capabilities: sparkplug,ble,power,weather
-        redconCommandLevels: 4,3
-        redconRules/4: sparkplug,ble
-        redconRules/3: sparkplug,ble,weather
+        redconCommandLevels: 4
+        redconRules/4: sparkplug,ble,power,weather
         requiredAttributes: name,shortId,townId,rigId
         searchableAttributes: name,townId,rigId
         shadows/sparkplug/schema: aws/sparkplug-shadow.schema.json

@@ -1,9 +1,0 @@
-#
-# Copyright (c) 2026 txing contributors
-#
-# SPDX-License-Identifier: Apache-2.0
-#
-
-mainmenu "txing weather BLE connected-idle application"
-
-source "Kconfig.zephyr"
