@@ -3,7 +3,7 @@
     allow(dead_code, unused_imports)
 )]
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
 #[cfg(all(feature = "greengrass-sdk", target_os = "linux"))]
 use std::sync::OnceLock;
@@ -43,6 +43,8 @@ const SCANNER_BUFFER: usize = 256;
 const SCAN_POLL_INTERVAL_MS: u64 = 500;
 const STALE_CHECK_INTERVAL_MS: u64 = 500;
 const NOTIFICATION_DRAIN_INTERVAL_MS: u64 = 100;
+const SHADOW_PUBLISH_INTERVAL_MS: u64 = 500;
+const SHADOW_PUBLISH_RETRY_LOG_INTERVAL_MS: u64 = 10_000;
 const REDCON_ACTIVE_MEASUREMENT_STALE_MS: u64 = 20_000;
 const REDCON_IDLE_MEASUREMENT_STALE_MS: u64 = 120_000;
 
@@ -79,6 +81,38 @@ impl Default for RuntimeConfig {
 pub struct OutboundMessage {
     pub topic: String,
     pub payload: Vec<u8>,
+}
+
+#[derive(Debug, Default)]
+struct PendingShadowUpdates {
+    updates: BTreeMap<String, ShadowUpdate>,
+    order: VecDeque<String>,
+}
+
+impl PendingShadowUpdates {
+    fn push(&mut self, update: ShadowUpdate) {
+        if !self.updates.contains_key(&update.topic) {
+            self.order.push_back(update.topic.clone());
+        }
+        self.updates.insert(update.topic.clone(), update);
+    }
+
+    fn pop(&mut self) -> Option<ShadowUpdate> {
+        while let Some(topic) = self.order.pop_front() {
+            if let Some(update) = self.updates.remove(&topic) {
+                return Some(update);
+            }
+        }
+        None
+    }
+
+    fn is_empty(&self) -> bool {
+        self.updates.is_empty()
+    }
+
+    fn len(&self) -> usize {
+        self.updates.len()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1336,6 +1370,10 @@ async fn run_greengrass_runtime(config: RuntimeConfig) -> Result<()> {
     let mut heartbeat_seq = 0u64;
     let mut heartbeat_timer = interval(Duration::from_millis(config.heartbeat_interval_ms.max(1)));
     heartbeat_timer.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    let mut pending_shadow_updates = PendingShadowUpdates::default();
+    let mut shadow_publish_timer = interval(Duration::from_millis(SHADOW_PUBLISH_INTERVAL_MS));
+    shadow_publish_timer.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    let mut last_shadow_publish_error_log_ms = 0u64;
 
     let result = loop {
         tokio::select! {
@@ -1352,8 +1390,25 @@ async fn run_greengrass_runtime(config: RuntimeConfig) -> Result<()> {
                 }
             }
             Some(update) = shadow_receiver.recv() => {
-                if let Err(err) = publish_iot_core(&update.topic, &update.payload).await {
-                    eprintln!("warning: BLE shadow publish failed topic={}: {err:#}", update.topic);
+                pending_shadow_updates.push(update);
+            }
+            _ = shadow_publish_timer.tick(), if !pending_shadow_updates.is_empty() => {
+                if let Some(update) = pending_shadow_updates.pop() {
+                    if let Err(err) = publish_iot_core(&update.topic, &update.payload).await {
+                        let failed_topic = update.topic.clone();
+                        let pending_count = pending_shadow_updates.len() + 1;
+                        pending_shadow_updates.push(update);
+                        let now = now_ms();
+                        if now.saturating_sub(last_shadow_publish_error_log_ms)
+                            >= SHADOW_PUBLISH_RETRY_LOG_INTERVAL_MS
+                        {
+                            eprintln!(
+                                "warning: BLE shadow publish failed topic={}: {err:#}; will retry latest pending updates count={pending_count}",
+                                failed_topic
+                            );
+                            last_shadow_publish_error_log_ms = now;
+                        }
+                    }
                 }
             }
             _ = heartbeat_timer.tick() => {
@@ -1491,6 +1546,36 @@ mod tests {
             })
         );
         assert_eq!(device_spec_from_inventory(&time), None);
+    }
+
+    #[test]
+    fn pending_shadow_updates_coalesce_by_topic_and_retry_after_other_topics() {
+        let mut pending = PendingShadowUpdates::default();
+
+        pending.push(ShadowUpdate {
+            topic: "topic/a".to_string(),
+            payload: b"old-a".to_vec(),
+        });
+        pending.push(ShadowUpdate {
+            topic: "topic/b".to_string(),
+            payload: b"b".to_vec(),
+        });
+        pending.push(ShadowUpdate {
+            topic: "topic/a".to_string(),
+            payload: b"new-a".to_vec(),
+        });
+
+        assert_eq!(pending.len(), 2);
+        let failed = pending.pop().unwrap();
+        assert_eq!(failed.topic, "topic/a");
+        assert_eq!(failed.payload, b"new-a");
+        pending.push(failed);
+
+        let next = pending.pop().unwrap();
+        assert_eq!(next.topic, "topic/b");
+        let retried = pending.pop().unwrap();
+        assert_eq!(retried.topic, "topic/a");
+        assert!(pending.is_empty());
     }
 
     #[tokio::test]

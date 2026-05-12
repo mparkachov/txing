@@ -716,6 +716,7 @@ static void set_connected_conn(struct bt_conn *conn)
 static void idle_measurement_notify_work_handler(struct k_work *work)
 {
 	struct bt_conn *conn;
+	int weather_err;
 
 	ARG_UNUSED(work);
 
@@ -725,9 +726,13 @@ static void idle_measurement_notify_work_handler(struct k_work *work)
 	}
 	bt_conn_unref(conn);
 
+	set_output_active(&led, true);
 	refresh_power_measurement_payload();
+	weather_err = sample_bme280_payload();
+	set_output_active(&led, false);
+
 	notify_power_measurement();
-	if (sample_bme280_payload() == 0) {
+	if (weather_err == 0) {
 		notify_weather_measurement();
 	}
 	schedule_idle_measurement_notification();
