@@ -737,13 +737,22 @@ Resources:
               - Sid: WitnessCloudWatchLogsWrite
                 Effect: Allow
                 Action:
-                  - logs:CreateLogGroup
                   - logs:CreateLogStream
                   - logs:PutLogEvents
-                Resource: "*"
+                Resource:
+                  - !GetAtt TxingWitnessLogGroup.Arn
+                  - !Sub ${TxingWitnessLogGroup.Arn}:*
+
+  TxingWitnessLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/txing-witness-lambda
+      RetentionInDays: 14
 
   TxingSparkplugWitnessFunction:
     Type: AWS::Lambda::Function
+    DependsOn:
+      - TxingWitnessLogGroup
     Properties:
       FunctionName: txing-witness-lambda
       Description: Projects Sparkplug MQTT state into sparkplug named shadows.
@@ -752,7 +761,7 @@ Resources:
       Handler: rust.handler
       Architectures:
         - arm64
-      MemorySize: 256
+      MemorySize: 128
       Timeout: 30
       Code: ../../../witness/target/lambda/txing-witness-lambda/bootstrap.zip
 

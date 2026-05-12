@@ -1,0 +1,23 @@
+set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+set quiet := true
+
+enlist_dir := source_directory()
+
+@test:
+    cargo test --manifest-path "{{enlist_dir}}/Cargo.toml"
+
+build:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! cargo lambda --help >/dev/null 2>&1; then
+      echo "cargo-lambda is required. Install it with: cargo install cargo-lambda" >&2
+      exit 1
+    fi
+    cd "{{enlist_dir}}"
+    cargo lambda build --release
+
+deploy: build
+    cd "{{enlist_dir}}" && cargo lambda deploy
+
+@default:
+    @just --list

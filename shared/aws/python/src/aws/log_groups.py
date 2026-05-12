@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 LOG_GROUP_PREFIX = "txing"
-DEFAULT_LOG_RETENTION_DAYS = 30
+DEFAULT_LOG_RETENTION_DAYS = 14
 
 
 def build_rig_log_group_name(*, town_thing_name: str, rig_thing_name: str) -> str:

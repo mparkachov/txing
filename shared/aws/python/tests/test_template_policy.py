@@ -54,6 +54,9 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("TxingSparkplugWitnessFunction", template)
         self.assertIn("TxingSparkplugWitnessTopicRule", template)
         self.assertIn("TxingSparkplugWitnessInvokePermission", template)
+        self.assertIn("TxingWitnessLogGroup", template)
+        self.assertIn("LogGroupName: /aws/lambda/txing-witness-lambda", template)
+        self.assertIn("RetentionInDays: 14", template)
         self.assertIn("sparkplug-witness", template)
         self.assertIn("Sid: WitnessShadowUpdate", template)
         self.assertIn("- iot:GetThingShadow", template)
@@ -65,6 +68,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("Architectures:", template)
         self.assertIn("- arm64", template)
         self.assertIn("FunctionName: txing-witness-lambda", template)
+        self.assertIn("MemorySize: 128", template)
         self.assertIn("Code: ../../../witness/target/lambda/txing-witness-lambda/bootstrap.zip", template)
         self.assertIn("encode(*, 'base64')", template)
         self.assertIn("iot:DescribeEndpoint", template)
@@ -278,6 +282,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("Handler: rust.handler", template)
         self.assertIn("Architectures:", template)
         self.assertIn("- arm64", template)
+        self.assertIn("RetentionInDays: 14", template)
         self.assertIn(
             "FunctionName: txing-time-lambda",
             template,
@@ -301,8 +306,20 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("EnlistLayer:", root_template)
         self.assertIn("TemplateURL: templates/enlist.yaml", root_template)
         self.assertIn("TxingEnlistFunction:", enlist_template)
-        self.assertIn("Handler: aws.enlist.lambda_handler", enlist_template)
-        self.assertIn("TxingDischargeThingsOnDelete:", enlist_template)
+        self.assertIn("FunctionName: txing-enlist-lambda", enlist_template)
+        self.assertIn("LogGroupName: /aws/lambda/txing-enlist-lambda", enlist_template)
+        self.assertIn("RetentionInDays: 14", enlist_template)
+        self.assertIn("Runtime: provided.al2023", enlist_template)
+        self.assertIn("Handler: rust.handler", enlist_template)
+        self.assertIn("Architectures:", enlist_template)
+        self.assertIn("- arm64", enlist_template)
+        self.assertIn(
+            "Code: ../enlist/target/lambda/txing-enlist-lambda/bootstrap.zip",
+            enlist_template,
+        )
+        self.assertIn("MemorySize: 128", enlist_template)
+        self.assertIn("TxingDischargeThingsOnStackDelete:", enlist_template)
+        self.assertNotIn("TxingDischargeThingsOnDelete:", enlist_template)
         self.assertIn("Type: Custom::TxingDischargeThings", enlist_template)
         self.assertIn("CleanupType: TxingDischargeThings", enlist_template)
         self.assertIn("EnlistFunctionName:", enlist_template)
@@ -319,11 +336,10 @@ class AwsTemplatePolicyTests(unittest.TestCase):
             "iot:GetThingShadow",
             "iot:UpdateThingShadow",
             "ssm:GetParametersByPath",
-            "kinesisvideo:CreateSignalingChannel",
-            "kinesisvideo:DeleteSignalingChannel",
-            "kinesisvideo:DescribeSignalingChannel",
         ):
             self.assertIn(action, enlist_template)
+        self.assertNotIn("kinesisvideo:", enlist_template)
+        self.assertNotIn("EnlistBoardVideoChannels", enlist_template)
 
     def test_rig_runtime_can_connect_with_managed_device_client_ids(self) -> None:
         template = _template_text()
@@ -378,6 +394,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         version = (REPO_ROOT / "VERSION").read_text(encoding="utf-8").strip()
         manifest_expectations = {
             REPO_ROOT / "shared" / "aws" / "python" / "pyproject.toml": f'version = "{version}"',
+            REPO_ROOT / "shared" / "aws" / "enlist" / "Cargo.toml": f'version = "{version}"',
             REPO_ROOT / "devices" / "time" / "lambda" / "Cargo.toml": f'version = "{version}"',
             REPO_ROOT / "witness" / "Cargo.toml": f'version = "{version}"',
             REPO_ROOT / "devices" / "unit" / "rig" / "python" / "pyproject.toml": f'version = "{version}"',

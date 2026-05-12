@@ -266,7 +266,7 @@ class AwsCheckTests(unittest.TestCase):
         self.assertEqual(runtime.logs.created_groups, ["txing/town-3xvtqf/raspi-rig001"])
         self.assertEqual(
             runtime.logs.retention_policies,
-            [("txing/town-3xvtqf/raspi-rig001", 30)],
+            [("txing/town-3xvtqf/raspi-rig001", 14)],
         )
         self.assertEqual(len(runtime.logs.created_streams), 1)
         self.assertEqual(

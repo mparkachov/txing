@@ -5,7 +5,7 @@ Resources:
   TxingEnlistLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: !Sub /aws/lambda/${AWS::StackName}-enlist
+      LogGroupName: /aws/lambda/txing-enlist-lambda
       RetentionInDays: 14
 
   TxingEnlistRole:
@@ -67,29 +67,23 @@ Resources:
                 Effect: Allow
                 Action: iot:DescribeEndpoint
                 Resource: "*"
-              - Sid: EnlistBoardVideoChannels
-                Effect: Allow
-                Action:
-                  - kinesisvideo:CreateSignalingChannel
-                  - kinesisvideo:DeleteSignalingChannel
-                  - kinesisvideo:DescribeSignalingChannel
-                Resource: "*"
-
   TxingEnlistFunction:
     Type: AWS::Lambda::Function
     DependsOn:
       - TxingEnlistLogGroup
     Properties:
-      FunctionName: !Sub ${AWS::StackName}-enlist
+      FunctionName: txing-enlist-lambda
       Description: Enlists txing towns, rigs, devices, and assignments.
-      Runtime: python3.12
-      Handler: aws.enlist.lambda_handler
-      Code: ../python/src
+      Runtime: provided.al2023
+      Handler: rust.handler
+      Architectures:
+        - arm64
+      Code: ../enlist/target/lambda/txing-enlist-lambda/bootstrap.zip
       Role: !GetAtt TxingEnlistRole.Arn
       Timeout: 60
-      MemorySize: 256
+      MemorySize: 128
 
-  TxingDischargeThingsOnDelete:
+  TxingDischargeThingsOnStackDelete:
     Type: Custom::TxingDischargeThings
     DependsOn:
       - TxingEnlistFunction
