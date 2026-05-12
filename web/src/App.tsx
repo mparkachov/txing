@@ -242,7 +242,6 @@ function App({ initialAuthError = '' }: AppProps) {
   const nextNotificationLogIdRef = useRef(0)
   const lastBoardVideoErrorRef = useRef<string | null>(null)
   const hasObservedBoardVideoLastErrorRef = useRef(false)
-  const previousReportedRedconRef = useRef<number | null>(null)
   const hasReceivedShadowSnapshotRef = useRef(false)
 
   const hasConfigErrors = appConfig.errors.length > 0
@@ -378,6 +377,13 @@ function App({ initialAuthError = '' }: AppProps) {
   const commandableRedconLevels = useMemo(
     () => routeHeaderMetadata?.redconCommandLevels ?? [],
     [routeHeaderMetadata?.redconCommandLevels],
+  )
+  const detailRedcon = useMemo(
+    () =>
+      commandableRedconLevels.length === 0
+        ? null
+        : Math.min(...commandableRedconLevels),
+    [commandableRedconLevels],
   )
   const commandableRedconLevelSet = useMemo(
     () => new Set<RedconCommandLevel>(commandableRedconLevels),
@@ -1118,7 +1124,6 @@ function App({ initialAuthError = '' }: AppProps) {
       shadowSessionRef.current?.close()
       shadowSessionRef.current = null
       hasReceivedShadowSnapshotRef.current = false
-      previousReportedRedconRef.current = null
       setShadowBootstrapError('')
       setShadowConnectionState('idle')
       setIsLoadingShadow(false)
@@ -1138,7 +1143,6 @@ function App({ initialAuthError = '' }: AppProps) {
     let shadowSession: ShadowSession | null = null
     redconCommandSequenceRef.current += 1
     hasReceivedShadowSnapshotRef.current = false
-    previousReportedRedconRef.current = null
     setShadowJson('{}')
     setShadowBootstrapError('')
     setPendingTargetRedcon(null)
@@ -1287,12 +1291,11 @@ function App({ initialAuthError = '' }: AppProps) {
 
   useEffect(() => {
     if (route.kind !== 'device' && route.kind !== 'device_video') {
-      previousReportedRedconRef.current = reportedRedcon
       return
     }
     const nextAutoOpenDeviceDetailPanelState = currentDeviceAdapter?.getAutoOpenState({
+      detailRedcon,
       hasActiveSession: activeShadowTarget !== null,
-      previousRedcon: previousReportedRedconRef.current,
       nextRedcon: reportedRedcon,
       routeKind: route.kind,
     }) ?? null
@@ -1300,11 +1303,10 @@ function App({ initialAuthError = '' }: AppProps) {
       setIsBotPanelOpen(nextAutoOpenDeviceDetailPanelState.isDetailPanelOpen)
       setIsBoardVideoExpanded(nextAutoOpenDeviceDetailPanelState.isBoardVideoExpanded)
     }
-    previousReportedRedconRef.current = reportedRedcon
-  }, [activeShadowTarget, currentDeviceAdapter, reportedRedcon, route])
+  }, [activeShadowTarget, currentDeviceAdapter, detailRedcon, reportedRedcon, route])
 
   useEffect(() => {
-    if (!currentDeviceAdapter?.shouldCloseDetail(reportedRedcon)) {
+    if (!currentDeviceAdapter?.shouldCloseDetail({ detailRedcon, reportedRedcon })) {
       return
     }
     if (isBotPanelOpen) {
@@ -1313,7 +1315,7 @@ function App({ initialAuthError = '' }: AppProps) {
     if (isBoardVideoExpanded) {
       setIsBoardVideoExpanded(false)
     }
-  }, [currentDeviceAdapter, isBoardVideoExpanded, isBotPanelOpen, reportedRedcon])
+  }, [currentDeviceAdapter, detailRedcon, isBoardVideoExpanded, isBotPanelOpen, reportedRedcon])
 
   useEffect(() => {
     if (!isShadowConnected && isBoardVideoExpanded) {

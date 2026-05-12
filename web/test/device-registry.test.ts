@@ -29,9 +29,9 @@ describe('device web adapter registry', () => {
 
     expect(
       unitAdapter?.getAutoOpenState({
+        detailRedcon: 1,
         routeKind: 'device',
         hasActiveSession: true,
-        previousRedcon: 2,
         nextRedcon: 1,
       }),
     ).toEqual({
@@ -41,9 +41,9 @@ describe('device web adapter registry', () => {
 
     expect(
       unitAdapter?.getAutoOpenState({
+        detailRedcon: 1,
         routeKind: 'device_video',
         hasActiveSession: true,
-        previousRedcon: 2,
         nextRedcon: 1,
       }),
     ).toBeNull()

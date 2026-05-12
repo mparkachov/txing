@@ -22,12 +22,12 @@ describe('power adapter', () => {
     expect(powerDeviceAdapter.extractTelemetry(shadow).reportedBatteryMv).toBe(3512)
   })
 
-  test('auto-opens detail panel while power REDCON is below idle', () => {
+  test('auto-opens detail panel at the lowest commandable power REDCON', () => {
     expect(
       powerDeviceAdapter.getAutoOpenState({
+        detailRedcon: 3,
         routeKind: 'device',
         hasActiveSession: true,
-        previousRedcon: null,
         nextRedcon: 3,
       }),
     ).toEqual({
@@ -36,33 +36,42 @@ describe('power adapter', () => {
     })
     expect(
       powerDeviceAdapter.getAutoOpenState({
+        detailRedcon: 3,
         routeKind: 'device',
         hasActiveSession: true,
-        previousRedcon: 3,
         nextRedcon: 2,
       }),
     ).toBeNull()
     expect(
       powerDeviceAdapter.getAutoOpenState({
+        detailRedcon: 3,
         routeKind: 'device',
         hasActiveSession: true,
-        previousRedcon: 4,
         nextRedcon: 4,
       }),
     ).toBeNull()
     expect(
       powerDeviceAdapter.getAutoOpenState({
+        detailRedcon: 3,
         routeKind: 'device_video',
         hasActiveSession: true,
-        previousRedcon: null,
         nextRedcon: 3,
       }),
     ).toBeNull()
   })
 
-  test('closes detail panel when power REDCON is idle or unknown', () => {
-    expect(powerDeviceAdapter.shouldCloseDetail(3)).toBe(false)
-    expect(powerDeviceAdapter.shouldCloseDetail(4)).toBe(true)
-    expect(powerDeviceAdapter.shouldCloseDetail(null)).toBe(true)
+  test('closes detail panel away from the lowest commandable power REDCON', () => {
+    expect(
+      powerDeviceAdapter.shouldCloseDetail({ detailRedcon: 3, reportedRedcon: 3 }),
+    ).toBe(false)
+    expect(
+      powerDeviceAdapter.shouldCloseDetail({ detailRedcon: 3, reportedRedcon: 4 }),
+    ).toBe(true)
+    expect(
+      powerDeviceAdapter.shouldCloseDetail({ detailRedcon: 3, reportedRedcon: null }),
+    ).toBe(true)
+    expect(
+      powerDeviceAdapter.shouldCloseDetail({ detailRedcon: null, reportedRedcon: 3 }),
+    ).toBe(true)
   })
 })

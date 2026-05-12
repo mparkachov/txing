@@ -10,15 +10,20 @@ export type DeviceTelemetry = {
 }
 
 export type DeviceAutoOpenInput = {
+  detailRedcon: number | null
   hasActiveSession: boolean
   nextRedcon: number | null
-  previousRedcon: number | null
   routeKind: 'device' | 'device_video'
 }
 
 export type DeviceAutoOpenState = {
   isDetailPanelOpen: boolean
   isBoardVideoExpanded: boolean
+}
+
+export type DeviceDetailCloseInput = {
+  detailRedcon: number | null
+  reportedRedcon: number | null
 }
 
 export type DeviceDetailRenderProps = {
@@ -54,7 +59,7 @@ export type DeviceWebAdapter = {
   canUseBoardVideo: (reportedRedcon: number | null) => boolean
   extractTelemetry: (shadow: unknown) => DeviceTelemetry
   getAutoOpenState: (input: DeviceAutoOpenInput) => DeviceAutoOpenState | null
-  shouldCloseDetail: (reportedRedcon: number | null) => boolean
+  shouldCloseDetail: (input: DeviceDetailCloseInput) => boolean
   renderDetail: (props: DeviceDetailRenderProps) => ReactElement
   renderVideo: (props: DeviceVideoRenderProps) => ReactElement
 }

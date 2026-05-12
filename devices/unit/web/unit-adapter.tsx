@@ -23,25 +23,26 @@ const unitDeviceAdapter: DeviceWebAdapter = {
     reportedMcuPower: extractReportedMcuPower(shadow),
   }),
   getAutoOpenState: ({
+    detailRedcon,
     hasActiveSession,
     nextRedcon,
-    previousRedcon,
     routeKind,
   }) => {
     if (
       routeKind !== 'device' ||
       !hasActiveSession ||
-      previousRedcon === 1 ||
-      nextRedcon !== 1
+      detailRedcon === null ||
+      nextRedcon !== detailRedcon
     ) {
       return null
     }
     return {
       isDetailPanelOpen: true,
-      isBoardVideoExpanded: true,
+      isBoardVideoExpanded: nextRedcon === 1,
     }
   },
-  shouldCloseDetail: (reportedRedcon) => reportedRedcon !== 1,
+  shouldCloseDetail: ({ detailRedcon, reportedRedcon }) =>
+    detailRedcon === null || reportedRedcon !== detailRedcon,
   renderDetail: (props) => <TxingPanel {...props} />,
   renderVideo: ({
     debugEnabled,

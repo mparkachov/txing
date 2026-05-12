@@ -2,6 +2,11 @@ import type { DeviceWebAdapter } from '../../../web/src/device-adapter'
 import { extractWeatherPowerReportedState } from './weather-model'
 import WeatherPanel from './WeatherPanel'
 
+const isWeatherDetailRedcon = (
+  redcon: number | null,
+  detailRedcon: number | null,
+): boolean => detailRedcon !== null && redcon === detailRedcon
+
 const weatherDeviceAdapter: DeviceWebAdapter = {
   type: 'weather',
   displayName: 'Weather',
@@ -17,8 +22,26 @@ const weatherDeviceAdapter: DeviceWebAdapter = {
       reportedMcuPower: null,
     }
   },
-  getAutoOpenState: () => null,
-  shouldCloseDetail: () => false,
+  getAutoOpenState: ({
+    detailRedcon,
+    hasActiveSession,
+    nextRedcon,
+    routeKind,
+  }) => {
+    if (
+      routeKind !== 'device' ||
+      !hasActiveSession ||
+      !isWeatherDetailRedcon(nextRedcon, detailRedcon)
+    ) {
+      return null
+    }
+    return {
+      isDetailPanelOpen: true,
+      isBoardVideoExpanded: false,
+    }
+  },
+  shouldCloseDetail: ({ detailRedcon, reportedRedcon }) =>
+    !isWeatherDetailRedcon(reportedRedcon, detailRedcon),
   renderDetail: (props) =>
     createWeatherElement(
       WeatherPanel as (panelProps: Record<string, unknown>) => WeatherElement,

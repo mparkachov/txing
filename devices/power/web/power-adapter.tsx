@@ -2,8 +2,10 @@ import type { DeviceWebAdapter } from '../../../web/src/device-adapter'
 import { extractPowerReportedState } from './power-model'
 import PowerPanel from './PowerPanel'
 
-const isPowerDetailRedcon = (redcon: number | null): boolean =>
-  redcon !== null && redcon < 4
+const isPowerDetailRedcon = (
+  redcon: number | null,
+  detailRedcon: number | null,
+): boolean => detailRedcon !== null && redcon === detailRedcon
 
 const powerDeviceAdapter: DeviceWebAdapter = {
   type: 'power',
@@ -21,16 +23,15 @@ const powerDeviceAdapter: DeviceWebAdapter = {
     }
   },
   getAutoOpenState: ({
+    detailRedcon,
     hasActiveSession,
     nextRedcon,
-    previousRedcon,
     routeKind,
   }) => {
     if (
       routeKind !== 'device' ||
       !hasActiveSession ||
-      !isPowerDetailRedcon(nextRedcon) ||
-      isPowerDetailRedcon(previousRedcon)
+      !isPowerDetailRedcon(nextRedcon, detailRedcon)
     ) {
       return null
     }
@@ -39,7 +40,8 @@ const powerDeviceAdapter: DeviceWebAdapter = {
       isBoardVideoExpanded: false,
     }
   },
-  shouldCloseDetail: (reportedRedcon) => !isPowerDetailRedcon(reportedRedcon),
+  shouldCloseDetail: ({ detailRedcon, reportedRedcon }) =>
+    !isPowerDetailRedcon(reportedRedcon, detailRedcon),
   renderDetail: (props) =>
     createPowerElement(
       PowerPanel as (panelProps: Record<string, unknown>) => PowerElement,
