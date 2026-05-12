@@ -19,7 +19,7 @@ use btleplug::platform::{Adapter, Manager, Peripheral};
 #[cfg(all(feature = "ble-real", target_os = "linux"))]
 use futures::StreamExt;
 use tokio::sync::{Semaphore, broadcast, mpsc};
-use tokio::time::{MissedTickBehavior, interval, timeout};
+use tokio::time::{MissedTickBehavior, interval, sleep, timeout};
 use uuid::Uuid;
 
 use crate::ble_protocol::{
@@ -44,6 +44,8 @@ const SCAN_POLL_INTERVAL_MS: u64 = 500;
 const STALE_CHECK_INTERVAL_MS: u64 = 500;
 const NOTIFICATION_DRAIN_INTERVAL_MS: u64 = 100;
 const CONNECTED_STATE_REFRESH_INTERVAL_MS: u64 = 30_000;
+const BLE_CONNECT_RESET_DELAY_MS: u64 = 250;
+const BLUEZ_IN_PROGRESS_RECONNECT_DELAY_MS: u64 = 10_000;
 const SHADOW_PUBLISH_INTERVAL_MS: u64 = 500;
 const SHADOW_PUBLISH_RETRY_LOG_INTERVAL_MS: u64 = 10_000;
 const REDCON_ACTIVE_MEASUREMENT_STALE_MS: u64 = 20_000;
@@ -449,15 +451,26 @@ impl DeviceSession {
                 self.next_connect_after_ms = 0;
             }
             Err(err) => {
-                self.next_connect_after_ms =
-                    now_ms().saturating_add(self.config.reconnect_delay_ms);
+                let retry_delay_ms = self.connect_retry_delay_ms(&err);
+                self.next_connect_after_ms = now_ms().saturating_add(retry_delay_ms);
                 eprintln!(
-                    "warning: BLE connect from advertisement failed thing={} address={} retryAfterMs={} error={err:#}",
+                    "warning: BLE connect from advertisement failed thing={} address={} retryDelayMs={retry_delay_ms} retryAfterMs={} error={err:#}",
                     self.spec.thing_name, advertisement.address, self.next_connect_after_ms
                 );
             }
         }
         Ok(())
+    }
+
+    fn connect_retry_delay_ms(&self, err: &anyhow::Error) -> u64 {
+        let message = format!("{err:#}");
+        if message.contains("In Progress") {
+            self.config
+                .reconnect_delay_ms
+                .max(BLUEZ_IN_PROGRESS_RECONNECT_DELAY_MS)
+        } else {
+            self.config.reconnect_delay_ms
+        }
     }
 
     async fn handle_command(&mut self, command: CapabilityCommand) -> Result<()> {
@@ -1003,6 +1016,7 @@ impl ConnectedDevice {
         let peripheral = find_peripheral(&adapter, &advertisement.address, &spec.thing_name)
             .await?
             .ok_or_else(|| anyhow!("BLE peripheral {} is not visible", advertisement.address))?;
+        clear_peripheral_connect_state(&peripheral).await;
         match timeout(
             Duration::from_millis(connect_timeout_ms),
             peripheral.connect(),
@@ -1182,6 +1196,12 @@ impl ConnectedDevice {
         }
         notifications
     }
+}
+
+#[cfg(all(feature = "ble-real", target_os = "linux"))]
+async fn clear_peripheral_connect_state(peripheral: &Peripheral) {
+    let _ = peripheral.disconnect().await;
+    sleep(Duration::from_millis(BLE_CONNECT_RESET_DELAY_MS)).await;
 }
 
 #[cfg(all(feature = "ble-real", target_os = "linux"))]
@@ -1818,6 +1838,24 @@ mod tests {
         assert_eq!(state.capabilities.get("power"), Some(&true));
         assert_eq!(state.capabilities.get("weather"), Some(&true));
         assert!(shadow_receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn bluez_in_progress_uses_extended_retry_delay() {
+        let (sender, _receiver) = mpsc::unbounded_channel();
+        let (shadow_sender, _shadow_receiver) = mpsc::unbounded_channel();
+        let mut config = RuntimeConfig::default();
+        config.reconnect_delay_ms = 2_000;
+        let session = DeviceSession::new(power_spec(), config, sender, shadow_sender, None);
+
+        assert_eq!(
+            session.connect_retry_delay_ms(&anyhow!("connect BLE peripheral: In Progress")),
+            BLUEZ_IN_PROGRESS_RECONNECT_DELAY_MS
+        );
+        assert_eq!(
+            session.connect_retry_delay_ms(&anyhow!("BLE connect timed out")),
+            2_000
+        );
     }
 
     #[tokio::test]
