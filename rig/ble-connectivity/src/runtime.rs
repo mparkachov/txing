@@ -334,6 +334,7 @@ struct DeviceSession {
     last_power_measurement: Option<TimedMeasurement<PowerMeasurement>>,
     last_weather_measurement: Option<TimedMeasurement<WeatherMeasurement>>,
     connected: Option<ConnectedDevice>,
+    next_connect_after_ms: u64,
     offline_published: bool,
 }
 
@@ -363,6 +364,7 @@ impl DeviceSession {
             last_power_measurement: None,
             last_weather_measurement: None,
             connected: None,
+            next_connect_after_ms: 0,
             offline_published: false,
         }
     }
@@ -428,17 +430,24 @@ impl DeviceSession {
         if self.connected.is_some() {
             return Ok(());
         }
+        let now = now_ms();
+        if now < self.next_connect_after_ms {
+            return Ok(());
+        }
 
         let seq = self.next_seq();
         self.publish_sample(advertisement_sample(&self.spec, &advertisement, seq))?;
         match self.connect(false).await {
-            Ok(()) => {}
+            Ok(()) => {
+                self.next_connect_after_ms = 0;
+            }
             Err(err) => {
+                self.next_connect_after_ms =
+                    now_ms().saturating_add(self.config.reconnect_delay_ms);
                 eprintln!(
-                    "warning: BLE connect from advertisement failed thing={} address={} error={err:#}",
-                    self.spec.thing_name, advertisement.address
+                    "warning: BLE connect from advertisement failed thing={} address={} retryAfterMs={} error={err:#}",
+                    self.spec.thing_name, advertisement.address, self.next_connect_after_ms
                 );
-                tokio::time::sleep(Duration::from_millis(self.config.reconnect_delay_ms)).await;
             }
         }
         Ok(())
@@ -963,20 +972,38 @@ impl ConnectedDevice {
         let peripheral = find_peripheral(&adapter, &advertisement.address, &spec.thing_name)
             .await?
             .ok_or_else(|| anyhow!("BLE peripheral {} is not visible", advertisement.address))?;
-        timeout(
+        match timeout(
             Duration::from_millis(connect_timeout_ms),
             peripheral.connect(),
         )
         .await
-        .context("BLE connect timed out")?
-        .context("connect BLE peripheral")?;
-        timeout(
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => {
+                let _ = peripheral.disconnect().await;
+                return Err(err).context("connect BLE peripheral");
+            }
+            Err(err) => {
+                let _ = peripheral.disconnect().await;
+                return Err(err).context("BLE connect timed out");
+            }
+        }
+        match timeout(
             Duration::from_millis(connect_timeout_ms),
             peripheral.discover_services(),
         )
         .await
-        .context("BLE service discovery timed out")?
-        .context("discover BLE services")?;
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => {
+                let _ = peripheral.disconnect().await;
+                return Err(err).context("discover BLE services");
+            }
+            Err(err) => {
+                let _ = peripheral.disconnect().await;
+                return Err(err).context("BLE service discovery timed out");
+            }
+        }
 
         let characteristics = peripheral.characteristics();
         let command_char = find_characteristic(&characteristics, TXING_BLE_COMMAND_UUID)

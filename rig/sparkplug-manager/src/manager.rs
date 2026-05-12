@@ -111,7 +111,11 @@ impl DeviceRuntimeState {
                 }
             }
         }
-        let redcon = select_best_redcon(&self.inventory.redcon_rules, &capabilities);
+        let redcon = select_best_redcon(
+            &self.inventory.redcon_rules,
+            &self.inventory.redcon_command_levels,
+            &capabilities,
+        );
         let sparkplug_available = capabilities.get("sparkplug").copied().unwrap_or(false);
         DeviceSnapshot {
             thing_name: self.inventory.thing_name.clone(),
@@ -166,10 +170,12 @@ impl DeviceRuntimeState {
 
 pub fn select_best_redcon(
     rules: &BTreeMap<u8, Vec<String>>,
+    command_levels: &[u8],
     capabilities: &BTreeMap<String, bool>,
 ) -> Option<u8> {
     rules
         .iter()
+        .filter(|(level, _)| command_levels.contains(level))
         .filter(|(_, required)| {
             required
                 .iter()
@@ -318,19 +324,122 @@ mod tests {
         }
     }
 
+    fn weather_inventory_with_stale_redcon3_rule() -> InventoryDevice {
+        InventoryDevice {
+            thing_name: "weather-1".to_string(),
+            thing_type: "weather".to_string(),
+            capabilities: vec![
+                "sparkplug".to_string(),
+                "ble".to_string(),
+                "power".to_string(),
+                "weather".to_string(),
+            ],
+            redcon_command_levels: vec![4],
+            redcon_rules: BTreeMap::from([
+                (
+                    3,
+                    vec![
+                        "sparkplug".to_string(),
+                        "ble".to_string(),
+                        "power".to_string(),
+                        "weather".to_string(),
+                    ],
+                ),
+                (
+                    4,
+                    vec![
+                        "sparkplug".to_string(),
+                        "ble".to_string(),
+                        "power".to_string(),
+                        "weather".to_string(),
+                    ],
+                ),
+            ]),
+        }
+    }
+
     #[test]
     fn redcon_rule_selection_uses_best_ready_level() {
-        let rules = power_inventory().redcon_rules;
+        let inventory = power_inventory();
         let mut capabilities = BTreeMap::from([
             ("sparkplug".to_string(), true),
             ("ble".to_string(), true),
             ("power".to_string(), false),
         ]);
 
-        assert_eq!(select_best_redcon(&rules, &capabilities), Some(4));
+        assert_eq!(
+            select_best_redcon(
+                &inventory.redcon_rules,
+                &inventory.redcon_command_levels,
+                &capabilities
+            ),
+            Some(4)
+        );
 
         capabilities.insert("power".to_string(), true);
-        assert_eq!(select_best_redcon(&rules, &capabilities), Some(3));
+        assert_eq!(
+            select_best_redcon(
+                &inventory.redcon_rules,
+                &inventory.redcon_command_levels,
+                &capabilities
+            ),
+            Some(3)
+        );
+    }
+
+    #[test]
+    fn redcon_selection_ignores_rules_outside_command_levels() {
+        let inventory = weather_inventory_with_stale_redcon3_rule();
+        let capabilities = BTreeMap::from([
+            ("sparkplug".to_string(), true),
+            ("ble".to_string(), true),
+            ("power".to_string(), true),
+            ("weather".to_string(), true),
+        ]);
+
+        assert_eq!(
+            select_best_redcon(
+                &inventory.redcon_rules,
+                &inventory.redcon_command_levels,
+                &capabilities
+            ),
+            Some(4)
+        );
+    }
+
+    #[test]
+    fn weather_snapshot_stays_redcon4_with_stale_redcon3_rule() {
+        let mut state = DeviceRuntimeState::new(weather_inventory_with_stale_redcon3_rule());
+        state
+            .observe_state(CapabilityState {
+                schema_version: SCHEMA_VERSION.to_string(),
+                adapter_id: "dev.txing.rig.BleConnectivity".to_string(),
+                thing_name: "weather-1".to_string(),
+                capabilities: BTreeMap::from([
+                    ("sparkplug".to_string(), true),
+                    ("ble".to_string(), true),
+                    ("power".to_string(), true),
+                    ("weather".to_string(), true),
+                ]),
+                metrics: BTreeMap::new(),
+                observed_at_ms: 1000,
+                seq: 1,
+            })
+            .unwrap();
+
+        assert_eq!(state.snapshot(1000).redcon, Some(4));
+        assert_eq!(
+            state.decide_publication(1000).unwrap(),
+            DevicePublication::Birth {
+                redcon: 4,
+                metrics: vec![
+                    Metric::boolean("capability.ble", true),
+                    Metric::boolean("capability.power", true),
+                    Metric::boolean("capability.sparkplug", true),
+                    Metric::boolean("capability.weather", true),
+                ],
+            }
+        );
     }
 
     #[test]
