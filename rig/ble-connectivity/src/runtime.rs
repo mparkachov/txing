@@ -1458,7 +1458,7 @@ async fn publish_iot_core(topic: &str, payload: &[u8]) -> Result<()> {
     let sdk = *GREENGRASS_SDK
         .get()
         .ok_or_else(|| anyhow!("Greengrass SDK is not initialized"))?;
-    sdk.publish_to_iot_core(topic, payload, gg_sdk::Qos::AtLeastOnce)
+    sdk.publish_to_iot_core(topic, payload, gg_sdk::Qos::AtMostOnce)
         .map_err(|err| anyhow!("failed to publish AWS IoT Core topic {topic}: {err:?}"))
 }
 
