@@ -1076,6 +1076,9 @@ deploy target='all' component_version='' region=region aws_profile=aws_profile a
         Artifacts:
           - Uri: "$sparkplug_uri"
             Unarchive: "NONE"
+            Permission:
+              Read: ALL
+              Execute: ALL
     EOF
     cat >"$recipe_dir/dev.txing.rig.BleConnectivity.yaml" <<EOF
     RecipeFormatVersion: '2020-01-25'
@@ -1132,6 +1135,9 @@ deploy target='all' component_version='' region=region aws_profile=aws_profile a
         Artifacts:
           - Uri: "$ble_uri"
             Unarchive: "NONE"
+            Permission:
+              Read: ALL
+              Execute: ALL
     EOF
     cat >"$recipe_dir/dev.txing.rig.AwsConnectivity.yaml" <<EOF
     RecipeFormatVersion: '2020-01-25'
@@ -1183,6 +1189,9 @@ deploy target='all' component_version='' region=region aws_profile=aws_profile a
         Artifacts:
           - Uri: "$aws_uri"
             Unarchive: "NONE"
+            Permission:
+              Read: ALL
+              Execute: ALL
     EOF
 
     create_component_version() {

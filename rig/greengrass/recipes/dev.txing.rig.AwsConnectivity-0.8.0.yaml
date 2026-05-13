@@ -49,4 +49,5 @@ Manifests:
     Artifacts:
       - Uri: s3://REPLACE_WITH_TXING_GREENGRASS_ARTIFACT_BUCKET/aws-connectivity/0.8.0/txing-aws-connectivity
         Permission:
-          Execute: OWNER
+          Read: ALL
+          Execute: ALL
