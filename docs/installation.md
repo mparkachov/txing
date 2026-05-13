@@ -200,15 +200,18 @@ Publish or update those rig-type deployments from a Linux builder with AWS
 permissions:
 
 ```bash
+just rig::deploy
 just rig::deploy raspi
 just rig::deploy cloud
 just rig::deploy all
 ```
 
-`just rig::deploy <rig-type|all> [version]` uploads immutable artifacts to the
-Greengrass artifacts bucket, creates Greengrass component versions, and creates
-continuous deployments for `txing-rig-type-raspi` and/or
-`txing-rig-type-cloud`. The old host-local `ggl-cli deploy` path is kept only as
+`just rig::deploy` resolves the local rig type on a rig host; explicit
+`raspi`, `cloud`, and `all` targets are available for admin builders. It uploads
+immutable artifacts under `artifacts/<component>/<version>/`, creates
+Greengrass component versions from the plain root `VERSION`, and creates
+continuous deployments for `txing-rig-type-raspi` and/or `txing-rig-type-cloud`.
+The old host-local `ggl-cli deploy` path is kept only as
 `just rig::deploy-local <rig-id>` for debugging Greengrass Lite itself.
 
 Inspect Greengrass service health with:

@@ -170,13 +170,12 @@ sudo systemctl enable --now bluetooth.service
 Run `just rig::check <rig-id>` after configuring the host. It fails if a required
 service for the configured rig type is missing, disabled, or inactive.
 
-Use `just rig::deploy <rig-type|all> [version]` from a Linux builder after
-changing or pulling rig code. It builds the Rust Greengrass component binaries,
-uploads immutable artifacts to the Greengrass artifacts bucket, creates
-component versions, and creates AWS Greengrass deployments for the rig-type
-thing groups. New rigs enlisted into `txing-rig-type-raspi` or
-`txing-rig-type-cloud` receive the matching deployment automatically after the
-host starts Greengrass Lite.
+Use `just rig::deploy` on a rig host after `git pull`. It resolves the local
+rig type, builds the Rust Greengrass component binaries, uploads immutable
+artifacts under `artifacts/<component>/<version>/`, creates component versions
+from the plain root `VERSION`, and creates the AWS Greengrass deployment for the
+matching rig-type thing group. Admin builders can still use
+`just rig::deploy raspi`, `cloud`, or `all`.
 
 The production install path does not run `ggl-cli deploy`, does not stage
 artifacts under `rig/build/greengrass-local`, and does not depend on

@@ -948,13 +948,13 @@ log rig_id='' lines='200' follow='true':
     printf '  %s\n' "${log_units[@]}"
     sudo journalctl "${journal_flags[@]}" "${journal_unit_args[@]}"
 
-deploy target='all' component_version='' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file:
+deploy target='auto' component_version='' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file:
     #!/usr/bin/env bash
     set -euo pipefail
     case "{{target}}" in
-      raspi|cloud|all) ;;
+      auto|raspi|cloud|all) ;;
       *)
-        echo "target must be raspi, cloud, or all." >&2
+        echo "target must be auto, raspi, cloud, or all." >&2
         exit 1
         ;;
     esac
@@ -963,7 +963,11 @@ deploy target='all' component_version='' region=region aws_profile=aws_profile a
       echo "This deploy path publishes to AWS Greengrass and does not use host-local ggl-cli deploy state." >&2
       exit 1
     fi
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{region}}" "{{aws_profile}}" "" "" "" "{{aws_shared_credentials_file}}")"
+    env_scope="aws"
+    if [ "{{target}}" = "auto" ]; then
+      env_scope="rig"
+    fi
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env "$env_scope" "{{region}}" "{{aws_profile}}" "" "" "" "{{aws_shared_credentials_file}}")"
     region="$AWS_REGION"
     profile="$AWS_SELECTED_PROFILE"
     aws_flags=(--region "$region")
@@ -974,17 +978,41 @@ deploy target='all' component_version='' region=region aws_profile=aws_profile a
     if [ -z "$resolved_component_version" ]; then
       resolved_component_version="$TXING_VERSION"
     fi
-    case "$resolved_component_version" in
-      *-*)
-        echo "Greengrass component versions must not contain '-'. Use a version like 0.8.0+g<sha> or 0.8.0." >&2
+    if ! [[ "$resolved_component_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      echo "Greengrass component version must be a plain semantic version like 0.8.0." >&2
+      exit 1
+    fi
+    allow_dirty="${TXING_ALLOW_DIRTY_DEPLOY:-${TXING_RIG_ALLOW_DIRTY_DEPLOY:-}}"
+    case "$allow_dirty" in
+      true|1|yes|on) allow_dirty="true" ;;
+      *) allow_dirty="false" ;;
+    esac
+    if [ "${TXING_GIT_DIRTY:-false}" = "true" ] && [ "$allow_dirty" != "true" ]; then
+      echo "Refusing production Greengrass deploy from a dirty worktree." >&2
+      echo "Commit or stash local changes first, or set TXING_ALLOW_DIRTY_DEPLOY=1 for an explicit debug deploy." >&2
+      if [ -n "${TXING_GIT_DIRTY_HASH:-}" ]; then
+        echo "Dirty tree hash: $TXING_GIT_DIRTY_HASH" >&2
+      fi
+      exit 1
+    fi
+    deploy_target="{{target}}"
+    if [ "$deploy_target" = "auto" ]; then
+      deploy_target="$RIG_TYPE"
+      case "$deploy_target" in
+        raspi|cloud) ;;
+        *)
+          echo "Could not resolve rig deploy target from RIG_TYPE=$deploy_target. Use 'just rig::deploy raspi', 'cloud', or 'all'." >&2
+          exit 1
+          ;;
+      esac
+    fi
+    case "$deploy_target" in
+      raspi|cloud|all) ;;
+      *)
+        echo "target must resolve to raspi, cloud, or all." >&2
         exit 1
         ;;
     esac
-    if ! [[ "$resolved_component_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(\+[A-Za-z0-9.]+)?$ ]]; then
-      echo "Greengrass component version must be semantic version build metadata like 0.8.0+g<sha> or 0.8.0." >&2
-      exit 1
-    fi
-    artifact_version_path="${resolved_component_version//+/.build.}"
     artifacts_bucket="$(
       aws cloudformation describe-stacks \
         --stack-name "$AWS_STACK_NAME" \
@@ -1023,8 +1051,12 @@ deploy target='all' component_version='' region=region aws_profile=aws_profile a
       local component="$1"
       local source="$2"
       local filename="$3"
-      local key="greengrass/$artifact_version_path/$component/$filename"
-      aws s3 cp "$source" "s3://$artifacts_bucket/$key" "${aws_flags[@]}" >/dev/null
+      local key="artifacts/$component/$resolved_component_version/$filename"
+      if aws s3api head-object --bucket "$artifacts_bucket" --key "$key" "${aws_flags[@]}" >/dev/null 2>&1; then
+        printf 'artifact already exists: s3://%s/%s\n' "$artifacts_bucket" "$key" >&2
+      else
+        aws s3 cp "$source" "s3://$artifacts_bucket/$key" "${aws_flags[@]}" >/dev/null
+      fi
       printf 's3://%s/%s\n' "$artifacts_bucket" "$key"
     }
     sparkplug_uri="$(upload_artifact dev.txing.rig.SparkplugManager "$sparkplug_manager_binary" txing-sparkplug-manager)"
@@ -1250,8 +1282,8 @@ deploy target='all' component_version='' region=region aws_profile=aws_profile a
         "${aws_flags[@]}" >/dev/null
       printf 'created Greengrass deployment target=%s version=%s group=%s\n' "$rig_type" "$resolved_component_version" "$target_arn"
     }
-    case "{{target}}" in
-      raspi|cloud) deploy_rig_type "{{target}}" ;;
+    case "$deploy_target" in
+      raspi|cloud) deploy_rig_type "$deploy_target" ;;
       all)
         deploy_rig_type raspi
         deploy_rig_type cloud
@@ -1525,7 +1557,7 @@ deploy-local rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id=
     fi
     case "$resolved_component_version" in
       *-*)
-        echo "Greengrass Lite local component versions must not contain '-' because its recipe filename scanner splits on the last hyphen. Use a version like 0.8.0+g<sha> or 0.6.1." >&2
+        echo "Greengrass Lite local component versions must not contain '-' because its recipe filename scanner splits on the last hyphen. Use a version like 0.8.0." >&2
         exit 1
         ;;
     esac

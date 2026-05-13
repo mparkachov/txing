@@ -32,7 +32,7 @@ Lifecycle boundary:
   operational signals, but Sparkplug `NBIRTH` and `NDEATH` remain the
   authoritative txing rig lifecycle.
 
-`just rig::deploy <rig-type|all> [version]` is the production Greengrass cloud
+`just rig::deploy [rig-type|all] [version]` is the production Greengrass cloud
 deployment path. It builds Linux Greengrass component binaries, uploads
 immutable artifacts to the Greengrass artifacts bucket, creates Greengrass
 component versions, and creates continuous deployments for the rig-type thing
@@ -91,6 +91,13 @@ level.
 After code changes or `git pull`, run:
 
 ```bash
+just rig::deploy
+just rig::restart
+```
+
+From an admin builder, use an explicit target when needed:
+
+```bash
 just rig::deploy raspi
 just rig::deploy cloud
 just rig::deploy all
@@ -98,8 +105,9 @@ just rig::deploy all
 
 `deploy` builds and publishes all three Rust Greengrass components, so a
 separate component build step is not required. Without an explicit version, it
-uses `TXING_VERSION`, for example `0.8.0+g4e1261afdf2b`, adding a dirty-tree hash
-when local changes are present. Generated versions intentionally avoid `-`.
+uses the plain semantic version in the repository root `VERSION` file. CI bumps
+the patch version on `main`; Git metadata is exported for diagnostics but is not
+used as the Greengrass component version.
 
 Manual component version pinning is optional:
 
@@ -107,8 +115,10 @@ Manual component version pinning is optional:
 just rig::deploy raspi 0.8.0
 ```
 
-The first argument is the target rig type (`raspi`, `cloud`, or `all`); the
-second argument is the optional component version.
+The first argument is the target rig type (`auto`, `raspi`, `cloud`, or `all`);
+the second argument is the optional plain semantic component version. Production
+deploys reject dirty worktrees unless `TXING_ALLOW_DIRTY_DEPLOY=1` is set for an
+explicit debug deploy.
 
 Weather and power things are discovered from the normal AWS registry assignment.
 The rig-wide Sparkplug manager publishes v2 inventory using the registered AWS

@@ -22,12 +22,15 @@ _project-version-env:
       exit 1
     fi
 
-    git_short_sha="$(git -C "$project_root" rev-parse --short=12 HEAD 2>/dev/null || true)"
-    if [ -n "$git_short_sha" ]; then
+    txing_version="$version_base"
+    txing_git_sha="$(git -C "$project_root" rev-parse --short=12 HEAD 2>/dev/null || true)"
+    txing_git_dirty="false"
+    txing_git_dirty_hash=""
+    if [ -n "$txing_git_sha" ]; then
       git_status="$(git -C "$project_root" status --porcelain --untracked-files=all 2>/dev/null || true)"
-      dirty_suffix=""
       if [ -n "$git_status" ]; then
-        dirty_hash="$(
+        txing_git_dirty="true"
+        txing_git_dirty_hash="$(
           {
             printf '%s\n' "$git_status"
             git -C "$project_root" diff --binary --ignore-submodules -- 2>/dev/null || true
@@ -38,25 +41,14 @@ _project-version-env:
             done < <(git -C "$project_root" ls-files --others --exclude-standard -z 2>/dev/null || true)
           } | git -C "$project_root" hash-object --stdin | cut -c1-12
         )"
-        dirty_suffix=".d$dirty_hash"
       fi
-      txing_version="$version_base+g$git_short_sha$dirty_suffix"
-      txing_git_sha="$git_short_sha"
-    else
-      txing_version="$version_base+nogit.$(date -u +%s)"
-      txing_git_sha=""
     fi
-
-    case "$txing_version" in
-      *-*)
-        echo "TXING_VERSION must not contain '-' because Greengrass Lite recipe filename scanning splits on the last hyphen." >&2
-        exit 1
-        ;;
-    esac
 
     export_line TXING_VERSION_BASE "$version_base"
     export_line TXING_VERSION "$txing_version"
     export_line TXING_GIT_SHA "$txing_git_sha"
+    export_line TXING_GIT_DIRTY "$txing_git_dirty"
+    export_line TXING_GIT_DIRTY_HASH "$txing_git_dirty_hash"
 
 [private]
 _project-aws-env scope='aws' region='' profile='' stack_name='' cognito_domain_prefix='' admin_email='' aws_shared_credentials_file='' env_file='':
@@ -246,6 +238,8 @@ _project-aws-env scope='aws' region='' profile='' stack_name='' cognito_domain_p
     export_line TXING_VERSION_BASE "$TXING_VERSION_BASE"
     export_line TXING_VERSION "$TXING_VERSION"
     export_line TXING_GIT_SHA "$TXING_GIT_SHA"
+    export_line TXING_GIT_DIRTY "$TXING_GIT_DIRTY"
+    export_line TXING_GIT_DIRTY_HASH "$TXING_GIT_DIRTY_HASH"
     export_line AWS_ENV_FILE "$env_file"
     printf 'unset RIG_ENV_FILE\n'
     printf 'unset BOARD_ENV_FILE\n'

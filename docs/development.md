@@ -28,27 +28,22 @@ board read-only rootfs is configured, lives in [installation.md](./installation.
 `VERSION` is the stable release version for the repository. It must stay a base
 semantic version such as `0.8.0`.
 
-Runtime builds derive identity from `VERSION` plus Git metadata:
+Production Greengrass component versions use `VERSION` exactly. Git SHA and
+dirty state are exported separately for diagnostics, but they are not part of
+the Greengrass `ComponentVersion`. Patch releases are created by CI on `main`;
+after pulling a release commit on a rig, the normal workflow is:
 
-```text
-stable release: 0.8.0
-feature build:  0.8.0+g<short-sha>
+```bash
+git pull
+just rig::deploy
+just rig::restart
 ```
-
-Keep the `+g<short-sha>` form for feature and local builds. It is valid SemVer
-build metadata and avoids `-`, which is important because the current
-Greengrass Lite local recipe path rejects component versions with hyphens.
-
-Use release channels to decide which artifact a host should install; do not
-depend on SemVer ordering to decide that `0.8.0+g<short-sha>` is newer than
-`0.8.0`. SemVer build metadata does not change precedence, so update tooling
-must resolve channels explicitly.
 
 Development direction for installable host tools and board-side native
 artifacts:
 
 - `stable` points at the artifact built from the stable `VERSION`, for example `0.8.0`.
-- `feature` points at the currently selected artifact from `feature/...` branches, for example `0.8.0+g123456789abc`.
+- `feature` points at explicitly named debug artifacts and must not be confused with production Greengrass component versions.
 - GitHub release assets should be immutable for each exact artifact version.
 - A mutable channel manifest or equivalent `mise` plugin logic should map `stable` and `feature` to exact artifact versions.
 - Read-only board boot flows may install `feature` channel artifacts into tmpfs-backed `mise` directories while using the persistent `stable` install as the fallback.
@@ -81,7 +76,7 @@ Common commands:
 just --list
 just unit::mcu::build
 just rig::check <rig-id>
-just rig::deploy <rig-type|all>
+just rig::deploy
 just rig::status <rig-id>
 just unit::board::run
 just web::dev
@@ -145,7 +140,7 @@ Rig:
 ```bash
 just rig::check <rig-id>
 just rig::build
-just rig::deploy <rig-type|all>
+just rig::deploy
 just rig::log <rig-id>
 ```
 
