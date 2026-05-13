@@ -1305,6 +1305,133 @@ deploy target='auto' component_version='' region=region aws_profile=aws_profile 
         "${aws_flags[@]}" >/dev/null
       printf 'created Greengrass deployment target=%s version=%s group=%s\n' "$rig_type" "$resolved_component_version" "$target_arn"
     }
+    unit_loaded_version_matches() {
+      local unit="$1"
+      local version="$2"
+      systemctl cat "$unit" 2>/dev/null | grep -F -- "-v $version" >/dev/null 2>&1
+    }
+    resolve_local_greengrass_thing_name() {
+      if [ -n "${TXING_RIG_ID:-}" ]; then
+        printf '%s\n' "$TXING_RIG_ID"
+        return 0
+      fi
+      if [ -r /etc/greengrass/config.yaml ]; then
+        awk -F: '
+          /^[[:space:]]*thingName:/ {
+            value = $2
+            sub(/^[[:space:]]*/, "", value)
+            sub(/[[:space:]]*$/, "", value)
+            gsub(/^"|"$/, "", value)
+            print value
+            exit
+          }
+        ' /etc/greengrass/config.yaml
+      fi
+    }
+    resolve_local_rig_type() {
+      if [ -n "${RIG_TYPE:-}" ]; then
+        printf '%s\n' "$RIG_TYPE"
+        return 0
+      fi
+      local local_thing_name
+      local_thing_name="$(resolve_local_greengrass_thing_name)"
+      if [ -z "$local_thing_name" ]; then
+        return 0
+      fi
+      aws iot describe-thing \
+        --thing-name "$local_thing_name" \
+        "${aws_flags[@]}" \
+        --query thingTypeName \
+        --output text 2>/dev/null || true
+    }
+    wait_for_local_units_version() {
+      local version="$1"
+      shift
+      local units=("$@")
+      local wait_seconds="${TXING_RIG_DEPLOY_WAIT_SECONDS:-300}"
+      case "$wait_seconds" in
+        ''|*[!0-9]*)
+          echo "TXING_RIG_DEPLOY_WAIT_SECONDS must be a positive integer." >&2
+          exit 1
+          ;;
+      esac
+      if [ "$wait_seconds" -le 0 ]; then
+        echo "TXING_RIG_DEPLOY_WAIT_SECONDS must be a positive integer." >&2
+        exit 1
+      fi
+      local deadline=$((SECONDS + wait_seconds))
+      local pending=()
+      while [ "$SECONDS" -le "$deadline" ]; do
+        pending=()
+        sudo systemctl daemon-reload || true
+        for unit in "${units[@]}"; do
+          if ! unit_loaded_version_matches "$unit" "$version"; then
+            pending+=("$unit")
+          fi
+        done
+        if [ "${#pending[@]}" -eq 0 ]; then
+          printf 'local Greengrass systemd units now point at version %s: %s\n' "$version" "${units[*]}"
+          return 0
+        fi
+        sleep 2
+      done
+      echo "Greengrass deployment did not update local systemd units to version $version within ${wait_seconds}s." >&2
+      printf 'pending unit(s): %s\n' "${pending[*]}" >&2
+      for unit in "${units[@]}"; do
+        echo "---- systemctl cat $unit ----" >&2
+        systemctl cat "$unit" >&2 || true
+        echo "---- systemctl status $unit ----" >&2
+        systemctl --no-pager --full status "$unit" >&2 || true
+      done
+      echo "---- Greengrass deployment logs ----" >&2
+      sudo journalctl -a --no-pager \
+        -u ggl.core.ggdeploymentd.service \
+        -u ggl.gg_deployment.socket \
+        -u ggl.core.iotcored.service \
+        -u ggl.aws_iot_mqtt.socket \
+        -n 300 >&2 || true
+      return 1
+    }
+    verify_local_deployment_if_targeted() {
+      if ! systemctl cat "{{greengrass_lite_target}}" >/dev/null 2>&1; then
+        echo "No local Greengrass Lite target is installed; skipping local deployment verification."
+        return 0
+      fi
+      local local_rig_type
+      local_rig_type="$(resolve_local_rig_type)"
+      case "$local_rig_type" in
+        raspi|cloud) ;;
+        *)
+          echo "Local Greengrass Lite is installed, but local rig type could not be resolved; cannot verify cloud deployment." >&2
+          echo "Set TXING_RIG_ID or run 'just rig::deploy' with target auto on the rig host." >&2
+          exit 1
+          ;;
+      esac
+      case "$deploy_target" in
+        all|"$local_rig_type") ;;
+        *)
+          printf 'local rig type is %s; deployment target %s does not include this host, skipping local deployment verification.\n' "$local_rig_type" "$deploy_target"
+          return 0
+          ;;
+      esac
+      local expected_units=()
+      case "$local_rig_type" in
+        raspi)
+          expected_units=(ggl.dev.txing.rig.SparkplugManager.service ggl.dev.txing.rig.BleConnectivity.service)
+          ;;
+        cloud)
+          expected_units=(ggl.dev.txing.rig.SparkplugManager.service ggl.dev.txing.rig.AwsConnectivity.service)
+          ;;
+      esac
+      printf 'waiting for local Greengrass deployment target=%s version=%s units: %s\n' "$local_rig_type" "$resolved_component_version" "${expected_units[*]}"
+      sudo systemctl start "{{greengrass_lite_target}}" || true
+      for core_unit in ggl.gg_deployment.socket ggl.core.ggdeploymentd.service ggl.aws_iot_mqtt.socket ggl.core.iotcored.service; do
+        if systemctl cat "$core_unit" >/dev/null 2>&1; then
+          sudo systemctl start "$core_unit" || true
+        fi
+      done
+      wait_for_local_units_version "$resolved_component_version" "${expected_units[@]}"
+    }
     case "$deploy_target" in
       raspi|cloud) deploy_rig_type "$deploy_target" ;;
       all)
@@ -1312,6 +1439,7 @@ deploy target='auto' component_version='' region=region aws_profile=aws_profile 
         deploy_rig_type cloud
         ;;
     esac
+    verify_local_deployment_if_targeted
 
 deploy-local rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' component_version='' adapter_id='ble-main' name_fragment='txing' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file:
     #!/usr/bin/env bash
