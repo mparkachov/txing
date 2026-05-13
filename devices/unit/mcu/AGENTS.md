@@ -1,13 +1,15 @@
 # mcu subproject guide
 
 ## Scope
-- This directory contains the Rust firmware for the MCU.
+- This directory contains the NCS/Zephyr firmware for the unit MCU.
+- The target board is `xiao_nrf54l15/nrf54l15/cpuapp`.
 
 ## Notes
-- Run firmware build/test commands from `mcu/`.
+- Run firmware build/test commands from `mcu/` through the `just unit::mcu::*` recipes.
 - Follow repository-level rule: do not create commits unless explicitly requested by the user.
-- Use `../aws/*-shadow.schema.json` as the canonical shadow JSON structure.
-- Treat `rig` as owner of the `mcu.*` shadow subtree contract.
+- Do not flash firmware or NVE records automatically; prepare artifacts and commands only.
+- Use `../aws/ble-shadow.schema.json` and `../aws/power-shadow.schema.json` as the BLE/power shadow contract references.
+- Treat `rig` as owner of the `ble` and `power` named shadow contracts.
 
 ## Shared workflow
 - Follow the repository-level Beads workflow in `../AGENTS.md`.

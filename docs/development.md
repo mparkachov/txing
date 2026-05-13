@@ -109,8 +109,10 @@ Current capabilities:
 - `town`: `sparkplug`
 - `raspi`: `sparkplug`
 - `cloud`: `sparkplug`
-- `unit`: `sparkplug`, `mcu`, `board`, `mcp`, `video`
+- `unit`: `sparkplug`, `ble`, `power`, `board`, `mcp`, `video`
 - `time`: `sparkplug`, `mcp`, `time`
+- `weather`: `sparkplug`, `ble`, `power`, `weather`
+- `power`: `sparkplug`, `ble`, `power`
 
 There is no `device` named shadow in the current implementation.
 
@@ -135,6 +137,7 @@ MCU:
 ```bash
 just unit::mcu::check
 just unit::mcu::build
+just unit::mcu::build-nve-hex unit-test
 ```
 
 Rig:

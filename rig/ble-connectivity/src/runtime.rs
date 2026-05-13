@@ -1730,6 +1730,32 @@ mod tests {
     }
 
     #[test]
+    fn unit_inventory_with_ble_power_uses_power_profile() {
+        let unit = InventoryDevice {
+            thing_name: "unit-1".to_string(),
+            thing_type: "unit".to_string(),
+            capabilities: vec![
+                "sparkplug".to_string(),
+                "ble".to_string(),
+                "power".to_string(),
+                "board".to_string(),
+                "mcp".to_string(),
+                "video".to_string(),
+            ],
+            redcon_command_levels: vec![4, 3],
+            redcon_rules: BTreeMap::new(),
+        };
+
+        assert_eq!(
+            device_spec_from_inventory(&unit),
+            Some(DeviceSpec {
+                thing_name: "unit-1".to_string(),
+                kind: DeviceKind::Power,
+            })
+        );
+    }
+
+    #[test]
     fn pending_shadow_updates_coalesce_by_topic_and_retry_after_other_topics() {
         let mut pending = PendingShadowUpdates::default();
 

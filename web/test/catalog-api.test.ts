@@ -160,7 +160,7 @@ describe('catalog api helpers', () => {
             townId: 'town-berlin',
             rigId: 'raspi-a1',
             kind: 'deviceType',
-            capabilities: 'sparkplug,mcu,board,mcp,video',
+            capabilities: 'sparkplug,ble,power,board,mcp,video',
           },
         },
         {
@@ -172,7 +172,7 @@ describe('catalog api helpers', () => {
             townId: 'town-berlin',
             rigId: 'raspi-a1',
             kind: 'deviceType',
-            capabilities: 'sparkplug,mcu,board,mcp,video',
+            capabilities: 'sparkplug,ble,power,board,mcp,video',
           },
         },
         {
@@ -184,7 +184,7 @@ describe('catalog api helpers', () => {
             townId: 'town-berlin',
             rigId: 'raspi-a1',
             kind: 'deviceType',
-            capabilities: 'sparkplug,mcu,board,mcp,video',
+            capabilities: 'sparkplug,ble,power,board,mcp,video',
           },
         },
         {
@@ -258,19 +258,19 @@ describe('catalog api helpers', () => {
         thingName: 'unit-a1',
         name: 'bot',
         shortId: 'a1',
-        capabilities: ['sparkplug', 'mcu', 'board', 'mcp', 'video'],
+        capabilities: ['sparkplug', 'ble', 'power', 'board', 'mcp', 'video'],
       },
       {
         thingName: 'unit-b3',
         name: 'crawler',
         shortId: 'b3',
-        capabilities: ['sparkplug', 'mcu', 'board', 'mcp', 'video'],
+        capabilities: ['sparkplug', 'ble', 'power', 'board', 'mcp', 'video'],
       },
       {
         thingName: 'unit-z9',
         name: 'zeta',
         shortId: 'z9',
-        capabilities: ['sparkplug', 'mcu', 'board', 'mcp', 'video'],
+        capabilities: ['sparkplug', 'ble', 'power', 'board', 'mcp', 'video'],
       },
     ])
     expect(client.commands[0].input?.queryString).toBe(
@@ -290,7 +290,7 @@ describe('catalog api helpers', () => {
             townId: 'town-berlin',
             rigId: 'raspi-a1',
             kind: 'deviceType',
-            capabilities: 'sparkplug,mcu,board,mcp,video',
+            capabilities: 'sparkplug,ble,power,board,mcp,video',
           },
         },
         {
@@ -321,7 +321,7 @@ describe('catalog api helpers', () => {
       thingName: 'unit-kiv3mj',
       name: 'bot',
       shortId: 'kiv3mj',
-      capabilities: ['sparkplug', 'mcu', 'board', 'mcp', 'video'],
+      capabilities: ['sparkplug', 'ble', 'power', 'board', 'mcp', 'video'],
     })
   })
 

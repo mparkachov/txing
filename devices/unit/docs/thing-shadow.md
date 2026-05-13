@@ -4,7 +4,7 @@ This document defines the current AWS IoT Thing Shadow contract for the `unit` d
 
 ## Status
 
-- The txing device does not use the classic unnamed shadow.
+- The unit does not use the classic unnamed shadow.
 - Sparkplug MQTT is the source protocol for lifecycle state.
 - The `sparkplug` named shadow is an AWS-side materialized Sparkplug view only; it is not intent storage.
 - Sparkplug `DCMD.redcon` is the only authoritative external lifecycle command path.
@@ -12,10 +12,11 @@ This document defines the current AWS IoT Thing Shadow contract for the `unit` d
 
 ## Named Shadows
 
-Each txing thing uses these named shadows:
+Each unit thing uses these named shadows:
 
-- `sparkplug`: witness-owned projection of Sparkplug topic identity, Sparkplug payload facts, and projection metadata.
-- `mcu`: rig-owned MCU state under `state.reported.power`, `state.reported.online`, and `state.reported.bleDeviceId`.
+- `sparkplug`: witness-owned projection of Sparkplug topic identity, lifecycle metrics, capability availability, and projection metadata.
+- `ble`: rig-owned BLE identity/readiness state.
+- `power`: rig-owned power capability state, including `state.reported.batteryMv`.
 - `board`: board-owned board state under `state.reported.power` and `state.reported.wifi`.
 - `mcp`: rig-owned mirror of MCP descriptor/status retained topics.
 - `video`: board-owned mirror of video descriptor/status retained topics.
@@ -23,14 +24,13 @@ Each txing thing uses these named shadows:
 Schema/default files live under `devices/unit/aws/`:
 
 - `sparkplug-shadow.schema.json`, `default-sparkplug-shadow.json`
-- `mcu-shadow.schema.json`, `default-mcu-shadow.json`
+- `ble-shadow.schema.json`, `default-ble-shadow.json`
+- `power-shadow.schema.json`, `default-power-shadow.json`
 - `board-shadow.schema.json`, `default-board-shadow.json`
 - `mcp-shadow.schema.json`, `default-mcp-shadow.json`
 - `video-shadow.schema.json`, `default-video-shadow.json`
 
-There is no `device` named shadow. Sparkplug carries lifecycle only: `redcon`
-plus `capability.*`. Typed data belongs in the named shadow owned by the
-capability that produces it.
+There is no active public `mcu` named shadow contract for the upgraded unit. BLE reachability comes from `capability.ble`, wakeup/sleep state comes from Sparkplug `redcon`, and battery telemetry comes from `namedShadows.power.state.reported.batteryMv`.
 
 ## Sparkplug Projection
 
@@ -54,7 +54,8 @@ Witness writes Sparkplug state into the `sparkplug` named shadow with this shape
           "redcon": 3,
           "capability": {
             "sparkplug": true,
-            "mcu": true,
+            "ble": true,
+            "power": true,
             "board": false,
             "mcp": false,
             "video": false
@@ -75,59 +76,40 @@ Projection rules:
 - `payload.timestamp` is the Sparkplug payload timestamp when present.
 - `payload.seq` is the Sparkplug payload sequence when present.
 - `projection.observedAt` is the AWS IoT Rule timestamp.
-- Capability-owned named shadows do not carry generic `observedAtMs` or `seq`
-  fields. Readers use AWS IoT Shadow metadata timestamps and root shadow
-  `version` for shadow freshness and ordering.
+- Capability-owned named shadows do not carry generic `observedAtMs` or `seq` fields. Readers use AWS IoT Shadow metadata timestamps and root shadow `version` for freshness and ordering.
 - `NBIRTH` and `DBIRTH` replace `payload.metrics`.
 - `NDATA` and `DDATA` deep-merge changed metric paths into `payload.metrics`.
 - `NDEATH` and `DDEATH` replace `payload.metrics` with the actual Sparkplug death payload and still update `topic` plus `projection.observedAt`.
-- Node death keeps node metrics such as `redcon=4`, but device death does not. For device lifecycle semantics, readers must treat `topic.messageType = DDEATH` as unavailable and ignore any legacy device metrics that may still appear during rollout.
+- Device `DDEATH` means unavailable and device `redcon` is not defined.
 - Witness does not write the static town shadow.
 
 Metric names preserve Sparkplug structure by splitting both `.` and `/` into nested path segments:
 
 - `redcon` -> `payload.metrics.redcon`
-- `capability.mcu` -> `payload.metrics.capability.mcu`
-
-Town remains a compatibility exception outside witness ownership:
-
-```json
-{
-  "state": {
-    "reported": {
-      "payload": {
-        "metrics": {
-          "redcon": 1
-        }
-      }
-    }
-  }
-}
-```
+- `capability.ble` -> `payload.metrics.capability.ble`
+- `capability.power` -> `payload.metrics.capability.power`
 
 ## Ownership
 
 - `rig` publishes Sparkplug `NBIRTH`/`NDATA`/`NDEATH`/`DBIRTH`/`DDATA`/`DDEATH`.
 - Witness reads Sparkplug MQTT and updates the `sparkplug` named shadow directly.
-- `rig` writes the `mcu` and `mcp` named shadows.
+- `rig` writes the `ble`, `power`, and `mcp` named shadows.
 - `board` writes the `board` and `video` named shadows.
-- Web reads Sparkplug lifecycle state from `namedShadows.sparkplug.state.reported` and publishes lifecycle commands through Sparkplug MQTT `DCMD.redcon`.
+- Web reads lifecycle state from `namedShadows.sparkplug.state.reported` and publishes lifecycle commands through Sparkplug MQTT `DCMD.redcon`.
 
 ## Field Semantics
 
 - Lifecycle semantics are defined canonically in the root [README](../../../README.md).
 - `sparkplug.state.reported.topic.messageType` is the last observed Sparkplug message type for that thing.
-- `sparkplug.state.reported.payload.metrics.redcon` is the projected Sparkplug readiness metric:
-  - valid only for born device states (`DBIRTH` / `DDATA`)
-  - `4`: Green / `Cold Camp` / MCU sleep state with BLE presence still online
-  - `3`: Yellow / `Torch-Up` / MCU wakeup state with BLE reachability, but MCP unavailable
-  - `2`: Orange/Amber / `Ember Watch` / MCU wakeup state with BLE reachability and MCP availability, but retained video status not ready
-  - `1`: Red / `Hot Rig` / MCU wakeup state with BLE reachability, MCP availability, and retained video status ready
-- `sparkplug.state.reported.topic.messageType = DDEATH` means the rig currently considers the device unavailable and `payload.metrics.redcon` is not defined for that device state.
-- `mcu.state.reported.power=true` means the external wakeup state.
-- `mcu.state.reported.power=false` means the external sleep state with periodic `5 s` BLE rendezvous wakeups.
-- `mcu.state.reported.online` is rig-observed BLE reachability.
-- `mcu.state.reported.bleDeviceId` is the last observed BLE identity and fast-reconnect source of truth.
+- `sparkplug.state.reported.payload.metrics.redcon` is valid only for born device states (`DBIRTH` / `DDATA`).
+- `redcon=4` means sleep state / `Cold Camp`: BLE is reachable and the rest of the unit stack is off.
+- `redcon=3` means wakeup state / `Torch-Up`: BLE is reachable and D1 is enabled so the rest of the unit stack can boot.
+- `redcon=2` means local board and MCP capability are available.
+- `redcon=1` means local board, MCP, and video capability are available.
+- `sparkplug.state.reported.topic.messageType = DDEATH` means the rig currently considers the device unavailable and `payload.metrics.redcon` is not defined.
+- `sparkplug.state.reported.payload.metrics.capability.ble` is BLE reachability.
+- `sparkplug.state.reported.payload.metrics.capability.power` is wakeup-state power capability availability.
+- `power.state.reported.batteryMv` is the latest battery measurement in millivolts.
 - `board.state.reported.power` is best-effort board power state; stale `true` must not be treated as authoritative after a hard power cut.
 - `board.state.reported.wifi.online`, `ipv4`, and `ipv6` are refreshed by the board control loop.
 - `mcp.state.reported.descriptor` and `mcp.state.reported.status` mirror retained board MCP MQTT topics.
@@ -135,12 +117,7 @@ Town remains a compatibility exception outside witness ownership:
 
 ## Capability Discovery
 
-`devices/unit/manifest.toml` defines the named shadows supported by the `unit`
-device type and points at each shadow schema/default payload. The shared AWS
-deploy publishes those type capabilities into SSM leaf parameters under
-`/txing/town/raspi/unit`. Runtime and tooling use the thing's AWS IoT ThingType
-plus that SSM type catalog to decide which
-`$aws/things/<thing>/shadow/name/<shadow>/...` topics to read or reset.
+`devices/unit/manifest.toml` defines the named shadows supported by the `unit` device type and points at each shadow schema/default payload. The shared AWS deploy publishes those type capabilities into SSM leaf parameters under `/txing/town/raspi/unit`. Runtime and tooling use the thing's AWS IoT ThingType plus that SSM type catalog to decide which `$aws/things/<thing>/shadow/name/<shadow>/...` topics to read or reset.
 
 ## AWS IoT Note
 

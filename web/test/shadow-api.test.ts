@@ -57,7 +57,14 @@ describe('shadow protocol helpers', () => {
   })
 
   test('collapses multi-shadow subscriptions into wildcard named-shadow filters', () => {
-    const topics = buildNamedShadowTopics('unit-a1', ['sparkplug', 'mcu', 'board', 'mcp', 'video'])
+    const topics = buildNamedShadowTopics('unit-a1', [
+      'sparkplug',
+      'ble',
+      'power',
+      'board',
+      'mcp',
+      'video',
+    ])
     const packet = buildShadowSubscriptionPacket(topics)
 
     expect(packet.subscriptions.map((subscription) => subscription.topicFilter)).toEqual([

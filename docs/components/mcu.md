@@ -1,51 +1,51 @@
 # MCU
 
-Firmware for the nRF52840-based watch layer.
+Firmware for the unit watch layer on the XIAO nRF54L15.
 
 ## Current Behavior
 
-- reset default: sleep state
-- external wakeup state contract: `power=true`
-- external sleep state contract: `power=false`
-- sleep state uses RTC-driven low-power idle with periodic `5 s` rendezvous wakeups and a short advertising window
-- wakeup state stays BLE-connectable
-- battery and sleep state are exposed through the current BLE state report
+- target board: `xiao_nrf54l15/nrf54l15/cpuapp`
+- firmware stack: NCS/Zephyr through `devices/common/mcu/ncs`
+- D1 / `gpio1 5` is the active-high enable for the rest of the unit stack
+- reset default: `REDCON 4`, D1 off, LED off, load regulators disabled, ADC suspended
+- `REDCON 3`: D1 on, state reported, battery sampled/notified, periodic active battery reports
+- `REDCON 4`: D1 off, BLE remains connected when possible, idle battery reports every `60 s`, advertising resumes after disconnect
+- factory/NVE record at `0x000f0000` stores the AWS Thing ID as the BLE local name with the `TXR1` layout
 
-The MCU-specific integration contract is
-[devices/unit/docs/device-rig-shadow-spec.md](../../devices/unit/docs/device-rig-shadow-spec.md).
+The integration contract is [devices/unit/docs/device-rig-shadow-spec.md](../../devices/unit/docs/device-rig-shadow-spec.md).
 
 ## Build Artifacts
 
 Run from the repo root:
 
 ```bash
+just unit::mcu::paths
 just unit::mcu::check
 just unit::mcu::build
-just unit::mcu::bin
-just unit::mcu::uf2
+just unit::mcu::build-nve-hex unit-test
 ```
 
 Or from `devices/unit/mcu/`:
 
 ```bash
+just paths
 just check
 just build
-just bin
-just uf2
+just build-nve-hex unit-test
 ```
 
 ## Flashing
 
-Current manual flash paths:
+Firmware and NVE flashing remain manual user actions. To print the exact commands without programming hardware:
 
 ```bash
-just unit::mcu::flash-probe
-just unit::mcu::flash-uf2
-just unit::mcu::log
+just unit::mcu::check-flash
+just unit::mcu::check-nve unit-test
 ```
 
-Notes:
+Manual flash recipes are available as:
 
-- the application is linked at `0x27000`
-- avoid full-chip erase flows unless you intentionally want to wipe the bootloader or other non-application flash
-- firmware flashing remains a manual user action
+```bash
+just unit::mcu::flash
+just unit::mcu::flash-nve <thing-name>
+```

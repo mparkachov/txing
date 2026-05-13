@@ -35,7 +35,7 @@ class DeviceCatalogTests(unittest.TestCase):
         self.assertEqual(manifest.display_name, "Bot")
         self.assertEqual(
             manifest.capabilities,
-            ("sparkplug", "mcu", "board", "mcp", "video"),
+            ("sparkplug", "ble", "power", "board", "mcp", "video"),
         )
         self.assertEqual(manifest.compatible_rig_types, ("raspi",))
         self.assertEqual(
@@ -98,14 +98,14 @@ class DeviceCatalogTests(unittest.TestCase):
         self.assertEqual(capabilities["cloud"], ("sparkplug",))
         self.assertEqual(
             capabilities["unit"],
-            ("sparkplug", "mcu", "board", "mcp", "video"),
+            ("sparkplug", "ble", "power", "board", "mcp", "video"),
         )
         self.assertEqual(capabilities["time"], ("sparkplug", "mcp", "time"))
         self.assertEqual(capabilities["weather"], ("sparkplug", "ble", "power", "weather"))
         self.assertEqual(capabilities["power"], ("sparkplug", "ble", "power"))
         self.assertEqual(
             capabilities_for_thing_type("unit", repo_root=REPO_ROOT),
-            ("sparkplug", "mcu", "board", "mcp", "video"),
+            ("sparkplug", "ble", "power", "board", "mcp", "video"),
         )
         self.assertEqual(
             capabilities_for_thing_type("time", repo_root=REPO_ROOT),

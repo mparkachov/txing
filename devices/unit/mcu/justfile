@@ -1,46 +1,124 @@
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
-set quiet := true
+set quiet
 
 mcu_dir := source_directory()
-firmware_manifest := mcu_dir + "/Cargo.toml"
-target_triple := "thumbv7em-none-eabihf"
-artifacts_dir := mcu_dir + "/target/" + target_triple + "/release"
-elf_path := artifacts_dir + "/txing"
-bin_path := artifacts_dir + "/txing.bin"
-uf2_path := artifacts_dir + "/txing.uf2"
-uf2_base := "0x27000"
-uf2_family := "0xADA52840"
-uf2_mount_dir := "/Volumes/XIAO-SENSE"
-probe_rs_chip := "nRF52840_xxAA"
-probe_rs_protocol := "swd"
-probe_rs_run_detach_seconds := "2"
+project_root := canonicalize(mcu_dir + "/../../..")
+common_mcu_dir := canonicalize(project_root + "/devices/common/mcu")
+ncs_dir := common_mcu_dir + "/ncs"
+ncs_repo := ncs_dir + "/nrf"
+zephyr_base := ncs_dir + "/zephyr"
+board := "xiao_nrf54l15/nrf54l15/cpuapp"
+build_version := "ncs-v3.3.0"
+build_dir := mcu_dir + "/build/ncs-xiao_nrf54l15_cpuapp"
+firmware_hex := build_dir + "/zephyr/zephyr/zephyr.hex"
+firmware_hex_fallback := build_dir + "/zephyr/zephyr.hex"
+nve_script := mcu_dir + "/scripts/redcon_nve.py"
+ncs_script := mcu_dir + "/scripts/ncs_unit_mcu.py"
+nve_hex := build_dir + "/redcon-factory-nve.hex"
+nve_address := "0x000f0000"
+ncs_python := env_var_or_default("UNIT_MCU_NCS_PYTHON", "python3")
+openocd_support_dir := zephyr_base + "/boards/seeed/xiao_nrf54l15/support"
+openocd_cfg := openocd_support_dir + "/openocd.cfg"
 
-@build:
-    cd "{{mcu_dir}}" && cargo build --release --manifest-path "{{firmware_manifest}}"
+[private]
+_ensure-ncs-submodule:
+    test -f "{{ ncs_repo }}/west.yml" || { echo "missing NCS sdk-nrf submodule. Run: just unit::mcu::submodules" >&2; exit 1; }
 
-@bin:
-    cd "{{mcu_dir}}" && cargo build --release --manifest-path "{{firmware_manifest}}"
-    cd "{{mcu_dir}}" && cargo objcopy --release --manifest-path "{{firmware_manifest}}" -- -O binary "{{bin_path}}"
+[private]
+_ensure-openocd:
+    test -f "{{ openocd_cfg }}" || { echo "missing NCS Seeed OpenOCD config: {{ openocd_cfg }}. Run: just unit::mcu::install" >&2; exit 1; }
+    command -v openocd >/dev/null || { echo "missing OpenOCD. Install manually with: brew install open-ocd" >&2; exit 1; }
 
-@uf2:
-    cd "{{mcu_dir}}" && cargo build --release --manifest-path "{{firmware_manifest}}"
-    cd "{{mcu_dir}}" && cargo objcopy --release --manifest-path "{{firmware_manifest}}" -- -O binary "{{bin_path}}"
-    uf2conv "{{bin_path}}" --base "{{uf2_base}}" --family "{{uf2_family}}" --output "{{uf2_path}}"
+[private]
+_firmware-hex:
+    firmware="{{ firmware_hex }}"; \
+    if [ ! -f "$firmware" ]; then firmware="{{ firmware_hex_fallback }}"; fi; \
+    test -f "$firmware" || { echo "missing firmware hex. Run: just unit::mcu::check" >&2; exit 1; }; \
+    printf '%s\n' "$firmware"
 
-@flash-probe:
-    cd "{{mcu_dir}}" && cargo build --release --manifest-path "{{firmware_manifest}}"
-    (probe-rs run --chip "{{probe_rs_chip}}" --protocol "{{probe_rs_protocol}}" --no-catch-reset --no-catch-hardfault --rtt-scan-memory --no-location --target-output-file /dev/null "{{elf_path}}" & pid=$!; sleep "{{probe_rs_run_detach_seconds}}"; kill -INT "$pid" 2>/dev/null || true; wait "$pid" || test "$?" -eq 130)
+@submodules:
+    git -C "{{ project_root }}" submodule update --init --recursive -- devices/common/mcu/ncs/nrf
 
-@flash-uf2:
-    cd "{{mcu_dir}}" && cargo build --release --manifest-path "{{firmware_manifest}}"
-    cd "{{mcu_dir}}" && cargo objcopy --release --manifest-path "{{firmware_manifest}}" -- -O binary "{{bin_path}}"
-    uf2conv "{{bin_path}}" --base "{{uf2_base}}" --family "{{uf2_family}}" --output "{{uf2_path}}"
-    test -d "{{uf2_mount_dir}}" || { echo "mount point not found: {{uf2_mount_dir}}" >&2; exit 1; }
-    cp "{{uf2_path}}" "{{uf2_mount_dir}}/txing.uf2"
+@install: submodules
+    "{{ ncs_python }}" "{{ ncs_script }}" install
 
-@log:
-    cd "{{mcu_dir}}" && cargo build --release --manifest-path "{{firmware_manifest}}"
-    probe-rs attach --chip "{{probe_rs_chip}}" --protocol "{{probe_rs_protocol}}" --rtt-scan-memory --no-location "{{elf_path}}"
+@check: _ensure-ncs-submodule
+    "{{ ncs_python }}" "{{ ncs_script }}" check
 
-@check:
-    cd "{{mcu_dir}}" && cargo check --manifest-path "{{firmware_manifest}}" --target "{{target_triple}}"
+@build: _ensure-ncs-submodule
+    "{{ ncs_python }}" "{{ ncs_script }}" build
+
+@flash: _ensure-openocd
+    firmware="$(just --justfile "{{ mcu_dir }}/justfile" _firmware-hex)"; \
+    openocd \
+      -s "{{ openocd_support_dir }}" \
+      -f "{{ openocd_cfg }}" \
+      -c init \
+      -c "targets nrf54l.cpu" \
+      -c "reset init" \
+      -c "nrf54l-load $firmware" \
+      -c "verify_image $firmware" \
+      -c "reset run" \
+      -c shutdown
+
+@check-flash: _ensure-openocd
+    firmware="$(just --justfile "{{ mcu_dir }}/justfile" _firmware-hex)"; \
+    printf '%q ' \
+      openocd \
+      -s "{{ openocd_support_dir }}" \
+      -f "{{ openocd_cfg }}" \
+      -c init \
+      -c "targets nrf54l.cpu" \
+      -c "reset init" \
+      -c "nrf54l-load $firmware" \
+      -c "verify_image $firmware" \
+      -c "reset run" \
+      -c shutdown
+    printf '\n'
+
+@build-nve-hex device_name="unit-test":
+    test -f "{{ nve_script }}" || { echo "missing REDCON NVE script: {{ nve_script }}" >&2; exit 1; }
+    mkdir -p "{{ build_dir }}"
+    python3 "{{ nve_script }}" write-hex "{{ device_name }}" --address "{{ nve_address }}" --output "{{ nve_hex }}"
+
+@check-nve device_name="unit-test": _ensure-openocd
+    just --justfile "{{ mcu_dir }}/justfile" build-nve-hex "{{ device_name }}"
+    printf '%q ' \
+      openocd \
+      -s "{{ openocd_support_dir }}" \
+      -f "{{ openocd_cfg }}" \
+      -c init \
+      -c "targets nrf54l.cpu" \
+      -c "reset init" \
+      -c "nrf54l-load {{ nve_hex }}" \
+      -c "verify_image {{ nve_hex }}" \
+      -c "reset run" \
+      -c shutdown
+    printf '\n'
+
+@flash-nve device_name="unit-test": _ensure-openocd
+    just --justfile "{{ mcu_dir }}/justfile" build-nve-hex "{{ device_name }}"
+    openocd \
+      -s "{{ openocd_support_dir }}" \
+      -f "{{ openocd_cfg }}" \
+      -c init \
+      -c "targets nrf54l.cpu" \
+      -c "reset init" \
+      -c "nrf54l-load {{ nve_hex }}" \
+      -c "verify_image {{ nve_hex }}" \
+      -c "reset run" \
+      -c shutdown
+
+@paths:
+    "{{ ncs_python }}" "{{ ncs_script }}" paths
+    echo "board: {{ board }}"
+    echo "buildVersion: {{ build_version }}"
+    echo "nveScript: {{ nve_script }} exists=$([ -f "{{ nve_script }}" ] && echo 1 || echo 0)"
+    echo "nveHex: {{ nve_hex }} exists=$([ -f "{{ nve_hex }}" ] && echo 1 || echo 0)"
+    echo "nveAddress: {{ nve_address }}"
+
+@clean:
+    "{{ ncs_python }}" "{{ ncs_script }}" clean
+
+@default:
+    @just --list

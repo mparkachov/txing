@@ -223,13 +223,13 @@ describe('app model helpers', () => {
     ).toBe(false)
   })
 
-  test('extracts nested reported battery from reported.device', () => {
+  test('extracts reported battery from power named shadow', () => {
     expect(
       extractReportedBatteryMv({
-        state: {
-          reported: {
-            payload: {
-              metrics: {
+        namedShadows: {
+          power: {
+            state: {
+              reported: {
                 batteryMv: 3972,
               },
             },
@@ -242,8 +242,10 @@ describe('app model helpers', () => {
       extractReportedBatteryMv({
         state: {
           reported: {
-            device: {
-              batteryMv: 3901,
+            payload: {
+              metrics: {
+                batteryMv: 3901,
+              },
             },
           },
         },
@@ -251,7 +253,7 @@ describe('app model helpers', () => {
     ).toBeNull()
   })
 
-  test('treats device death battery as unavailable even if a legacy metric is present', () => {
+  test('treats device death battery as unavailable even if power shadow has a value', () => {
     expect(
       extractReportedBatteryMv({
         namedShadows: {
@@ -266,10 +268,15 @@ describe('app model helpers', () => {
                   messageType: 'DDEATH',
                 },
                 payload: {
-                  metrics: {
-                    batteryMv: 3901,
-                  },
+                  metrics: {},
                 },
+              },
+            },
+          },
+          power: {
+            state: {
+              reported: {
+                batteryMv: 3901,
               },
             },
           },
@@ -310,13 +317,27 @@ describe('app model helpers', () => {
     })
   })
 
-  test('extracts reported mcu online from nested reported.device state', () => {
+  test('extracts reported BLE online from sparkplug capability state', () => {
     const shadow = {
-      state: {
-        reported: {
-          device: {
-            mcu: {
-              online: true,
+      namedShadows: {
+        sparkplug: {
+          state: {
+            reported: {
+              topic: {
+                namespace: 'spBv1.0',
+                groupId: 'town',
+                messageType: 'DDATA',
+                edgeNodeId: 'rig',
+                deviceId: 'unit-a1',
+              },
+              payload: {
+                metrics: {
+                  redcon: 4,
+                  capability: {
+                    ble: true,
+                  },
+                },
+              },
             },
           },
         },

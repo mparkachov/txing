@@ -49,7 +49,7 @@ class _FakeIotClient:
                 "attributes": {
                     "name": "bot",
                     "shortId": "local",
-                    "capabilities": "sparkplug,mcu,board,mcp,video",
+                    "capabilities": "sparkplug,ble,power,board,mcp,video",
                     "deviceType": "unit",
                     "rigId": "raspi-rig001",
                     "townId": "town-3xvtqf",
@@ -310,7 +310,8 @@ class AwsCheckTests(unittest.TestCase):
             runtime.iot_data.thing_names,
             [
                 ("unit-local", "sparkplug"),
-                ("unit-local", "mcu"),
+                ("unit-local", "ble"),
+                ("unit-local", "power"),
                 ("unit-local", "board"),
                 ("unit-local", "mcp"),
                 ("unit-local", "video"),

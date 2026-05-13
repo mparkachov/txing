@@ -26,6 +26,9 @@ requires-dist = [
     { name = "boto3", specifier = ">=1.34,<2" },
 ]
 
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=9.0.3,<10" }]
+
 [[package]]
 name = "awscrt"
 version = "0.31.3"

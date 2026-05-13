@@ -2528,16 +2528,20 @@ mod tests {
                 ("rigType", "raspi"),
                 ("displayName", "Unit"),
                 ("defaultName", "bot"),
-                ("capabilities", "sparkplug,mcu,board,mcp,video"),
+                ("capabilities", "sparkplug,ble,power,board,mcp,video"),
                 ("redconCommandLevels", "4,3,2,1"),
-                ("redconRules/4", "sparkplug"),
-                ("redconRules/3", "sparkplug,mcu"),
-                ("redconRules/2", "sparkplug,mcu,board"),
-                ("redconRules/1", "sparkplug,mcu,board,mcp,video"),
+                ("redconRules/4", "sparkplug,ble"),
+                ("redconRules/3", "sparkplug,ble,power"),
+                ("redconRules/2", "sparkplug,ble,power,board,mcp"),
+                ("redconRules/1", "sparkplug,ble,power,board,mcp,video"),
                 ("requiredAttributes", "name,shortId,townId,rigId"),
                 ("searchableAttributes", "name,townId,rigId"),
                 ("web/adapter", "web/unit-adapter.tsx"),
-                ("shadows/mcu/defaultPayload", r#"{"state":{"reported":{}}}"#),
+                ("shadows/ble/defaultPayload", r#"{"state":{"reported":{}}}"#),
+                (
+                    "shadows/power/defaultPayload",
+                    r#"{"state":{"reported":{}}}"#,
+                ),
                 (
                     "shadows/board/defaultPayload",
                     r#"{"state":{"reported":{}}}"#,
@@ -2796,7 +2800,7 @@ mod tests {
         assert_eq!(result["attributes"]["redconCommandLevels"], "4,3,2,1");
         assert_eq!(
             result["initializedShadows"],
-            json!(["sparkplug", "mcu", "board", "mcp", "video"])
+            json!(["sparkplug", "ble", "power", "board", "mcp", "video"])
         );
         assert_eq!(result["auxiliaryResources"], json!({}));
     }
@@ -2933,7 +2937,7 @@ mod tests {
         assert_eq!(result["thingName"], thing_name);
         assert_eq!(
             result["deletedShadows"],
-            json!(["sparkplug", "mcu", "board", "mcp", "video"])
+            json!(["sparkplug", "ble", "power", "board", "mcp", "video"])
         );
         assert_eq!(
             result["detachedPrincipals"],

@@ -74,7 +74,7 @@ const extractReportedState = (shadow: unknown): Record<string, unknown> | null =
 
 const extractNamedShadowReportedState = (
   shadow: unknown,
-  shadowName: 'sparkplug' | 'mcu' | 'board' | 'video',
+  shadowName: 'sparkplug' | 'ble' | 'power' | 'board' | 'video',
 ): Record<string, unknown> | null => {
   if (!isRecord(shadow) || !isRecord(shadow.namedShadows)) {
     return null
@@ -94,19 +94,6 @@ export const extractReportedDevice = (shadow: unknown): Record<string, unknown> 
   }
   const device = reported.device
   return isRecord(device) ? device : null
-}
-
-export const extractReportedMcu = (shadow: unknown): Record<string, unknown> | null => {
-  const namedMcu = extractNamedShadowReportedState(shadow, 'mcu')
-  if (namedMcu) {
-    return namedMcu
-  }
-  const device = extractReportedDevice(shadow)
-  if (!device) {
-    return null
-  }
-  const mcu = device.mcu
-  return isRecord(mcu) ? mcu : null
 }
 
 export const extractReportedBoard = (shadow: unknown): Record<string, unknown> | null => {
@@ -150,6 +137,32 @@ const extractSparkplugMetrics = (shadow: unknown): Record<string, unknown> | nul
   }
   const metrics = payload.metrics
   return isRecord(metrics) ? metrics : null
+}
+
+const extractSparkplugCapabilityAvailability = (
+  shadow: unknown,
+  capabilityName: string,
+): boolean | null => {
+  if (extractIsSparkplugDeviceUnavailable(shadow)) {
+    return false
+  }
+  const metrics = extractSparkplugMetrics(shadow)
+  if (!metrics) {
+    return null
+  }
+  if (isRecord(metrics.capability)) {
+    const availability = metrics.capability[capabilityName]
+    if (typeof availability === 'boolean') {
+      return availability
+    }
+  }
+  if (capabilityName !== 'sparkplug') {
+    return null
+  }
+  if (extractSparkplugMessageType(shadow) === 'NDEATH') {
+    return false
+  }
+  return coerceRedcon(metrics.redcon) === null ? null : true
 }
 
 const coerceRedcon = (value: unknown): number | null => {
@@ -285,30 +298,34 @@ export const extractReportedBoardPower = (shadow: unknown): boolean | null => {
 }
 
 export const extractReportedMcuPower = (shadow: unknown): boolean | null => {
-  const mcu = extractReportedMcu(shadow)
-  if (!mcu) {
-    return null
+  const reportedRedcon = extractReportedRedcon(shadow)
+  if (reportedRedcon !== null) {
+    return reportedRedcon < 4
   }
-  return typeof mcu.power === 'boolean' ? mcu.power : null
+  const reportedPower = extractSparkplugCapabilityAvailability(shadow, 'power')
+  if (reportedPower !== null) {
+    return reportedPower
+  }
+  return null
 }
 
 export const extractReportedMcuOnline = (shadow: unknown): boolean | null => {
-  const mcu = extractReportedMcu(shadow)
-  if (!mcu) {
-    return null
+  const reportedBle = extractSparkplugCapabilityAvailability(shadow, 'ble')
+  if (reportedBle !== null) {
+    return reportedBle
   }
-  return typeof mcu.online === 'boolean' ? mcu.online : null
+  return null
 }
 
 export const extractReportedBatteryMv = (shadow: unknown): number | null => {
   if (extractIsSparkplugDeviceUnavailable(shadow)) {
     return null
   }
-  const metrics = extractSparkplugMetrics(shadow)
-  if (!metrics) {
+  const power = extractNamedShadowReportedState(shadow, 'power')
+  if (!power) {
     return null
   }
-  return typeof metrics.batteryMv === 'number' ? metrics.batteryMv : null
+  return typeof power.batteryMv === 'number' ? power.batteryMv : null
 }
 
 export const extractReportedBoardWifiOnline = (shadow: unknown): boolean | null => {

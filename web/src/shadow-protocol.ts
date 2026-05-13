@@ -10,7 +10,14 @@ export type ShadowTopics = {
   updateAccepted: string
   updateRejected: string
 }
-export const namedShadowNames: readonly ShadowName[] = ['sparkplug', 'mcu', 'board', 'mcp', 'video']
+export const namedShadowNames: readonly ShadowName[] = [
+  'sparkplug',
+  'ble',
+  'power',
+  'board',
+  'mcp',
+  'video',
+]
 const shadowNamePattern = /^[A-Za-z0-9:_-]+$/
 export const isShadowName = (value: string): value is ShadowName =>
   shadowNamePattern.test(value)

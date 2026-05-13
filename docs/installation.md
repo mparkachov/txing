@@ -19,8 +19,8 @@ cp config/aws.credentials.example config/aws.credentials
 ## Rig Host
 
 The rig is the always-on coordinator that owns Sparkplug publication. The
-current `unit` rig type also owns BLE wake/sleep control and `mcu` / `mcp`
-named-shadow updates.
+current `unit` rig type also owns BLE wake/sleep control and `ble`, `power`,
+and `mcp` named-shadow updates.
 
 ### 1. Install OS Packages
 

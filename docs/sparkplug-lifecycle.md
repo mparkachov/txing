@@ -33,7 +33,7 @@ the unit device Sparkplug process component.
 - `rig` is the only authority that publishes Sparkplug node lifecycle for the rig edge node and device lifecycle for managed txing entities.
 - Witness is the only authority that writes the AWS-side `sparkplug` named shadow projection for rig and unit things.
 - `board` remains the source of truth for board power, wifi, and video operational state.
-- `rig` remains the source of truth for `mcu` and `mcp` named shadows.
+- `rig` remains the source of truth for the `ble`, `power`, and `mcp` named shadows for BLE-managed devices.
 
 ## Topic Model
 
@@ -199,22 +199,34 @@ The root [README](../README.md) is the canonical lifecycle contract. In brief:
 The born-state REDCON ladder is:
 
 - `REDCON 4`
-  - MCU is in the sleep state
-  - BLE presence is still online through the rendezvous advertisements
+  - device is in the sleep state
+  - BLE presence is still online through rendezvous advertisements
 - `REDCON 3`
   - BLE is reachable
-  - MCU is in the wakeup state
+  - unit stack power is enabled
   - MCP is not yet available
 - `REDCON 2`
   - BLE is reachable
-  - MCU is in the wakeup state
+  - unit stack power is enabled
   - MCP is available
   - retained video status is not yet ready
 - `REDCON 1`
   - BLE is reachable
-  - MCU is in the wakeup state
+  - unit stack power is enabled
   - MCP is available
   - retained video status is ready and fresh
+
+For the upgraded `unit` rollout, all REDCON levels are declared in the type catalog
+so later board/MCP/video v2 capability publication does not require AWS catalog
+changes:
+
+- `4 = ["sparkplug", "ble"]`
+- `3 = ["sparkplug", "ble", "power"]`
+- `2 = ["sparkplug", "ble", "power", "board", "mcp"]`
+- `1 = ["sparkplug", "ble", "power", "board", "mcp", "video"]`
+
+Until board/MCP/video publish v2 capability state, current unit devices naturally
+converge only to REDCON `4` or `3`.
 
 Commandable REDCON levels are a txing type capability, exposed as the comma-separated
 `redconCommandLevels` thing attribute from each device manifest's `redcon_command_levels`.
@@ -231,7 +243,7 @@ Rig receives target REDCON only through Sparkplug.
   - clear the in-memory pending REDCON target on convergence
 - target `redcon=3`
   - wake txing
-  - once MCU is awake, publish Sparkplug device `redcon=3`
+  - once unit stack power is enabled, publish Sparkplug device `redcon=3`
   - if MCP/video conditions later satisfy higher derived levels, actual REDCON may rise naturally to `2` or `1`
   - clear the in-memory pending REDCON target once actual REDCON reaches the commanded REDCON
 

@@ -105,7 +105,7 @@ def _make_config(**overrides: object) -> ControlConfig:
         "iot_endpoint": "example-ats.iot.eu-central-1.amazonaws.com",
         "sparkplug_group_id": "town",
         "sparkplug_edge_node_id": "rig",
-        "capabilities_set": ("sparkplug", "device", "mcu", "board", "video"),
+        "capabilities_set": ("sparkplug", "ble", "power", "board", "mcp", "video"),
         "schema_file": Path(UNIT_AWS_DIR / "board-shadow.schema.json"),
         "video_schema_file": Path(UNIT_AWS_DIR / "video-shadow.schema.json"),
         "shadow_file": Path("/tmp/unit_board_shadow.json"),
@@ -154,7 +154,7 @@ def _make_runtime() -> MagicMock:
             "deviceType": "unit",
             "name": "bot",
             "shortId": "local00",
-            "capabilities": "sparkplug,mcu,board,mcp,video",
+            "capabilities": "sparkplug,ble,power,board,mcp,video",
         },
     }
     return runtime
@@ -711,7 +711,7 @@ class ShadowControlContractTests(unittest.TestCase):
     def test_shared_aws_check_uses_device_scope_defaults_for_thing_and_video_channel(self) -> None:
         justfile = Path(REPO_ROOT / "shared" / "aws" / "justfile").read_text(encoding="utf-8")
 
-        self.assertIn("@check rig_id='' thing_id=''", justfile)
+        self.assertIn("check rig_id='' thing_id=''", justfile)
         self.assertIn(
             'eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{profile}}")"',
             justfile,

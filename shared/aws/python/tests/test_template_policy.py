@@ -431,7 +431,6 @@ class AwsTemplatePolicyTests(unittest.TestCase):
             REPO_ROOT / "witness" / "Cargo.toml",
             REPO_ROOT / "devices" / "unit" / "rig" / "python" / "pyproject.toml",
             REPO_ROOT / "devices" / "unit" / "board" / "pyproject.toml",
-            REPO_ROOT / "devices" / "unit" / "mcu" / "Cargo.toml",
             REPO_ROOT / "rig" / "capability-protocol" / "Cargo.toml",
             REPO_ROOT / "rig" / "sparkplug-manager" / "Cargo.toml",
             REPO_ROOT / "rig" / "ble-connectivity" / "Cargo.toml",

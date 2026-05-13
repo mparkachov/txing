@@ -98,6 +98,15 @@ class TypeCatalogTests(unittest.TestCase):
         self.assertEqual(records["/txing/town/raspi/power"]["redconCommandLevels"], ["4", "3"])
         self.assertEqual(records["/txing/town/cloud/time"]["redconCommandLevels"], ["4", "1"])
         self.assertEqual(
+            records["/txing/town/raspi/unit"]["redconRules"],
+            {
+                "1": ["sparkplug", "ble", "power", "board", "mcp", "video"],
+                "2": ["sparkplug", "ble", "power", "board", "mcp"],
+                "3": ["sparkplug", "ble", "power"],
+                "4": ["sparkplug", "ble"],
+            },
+        )
+        self.assertEqual(
             records["/txing/town/raspi/power"]["redconRules"],
             {
                 "3": ["sparkplug", "ble", "power"],
@@ -136,6 +145,30 @@ class TypeCatalogTests(unittest.TestCase):
         self.assertEqual(
             ssm.parameters["/txing/town/cloud/time/capabilities"],
             "sparkplug,mcp,time",
+        )
+        self.assertEqual(
+            ssm.parameters["/txing/town/raspi/unit/capabilities"],
+            "sparkplug,ble,power,board,mcp,video",
+        )
+        self.assertEqual(
+            ssm.parameters["/txing/town/raspi/unit/redconCommandLevels"],
+            "4,3,2,1",
+        )
+        self.assertEqual(
+            ssm.parameters["/txing/town/raspi/unit/redconRules/1"],
+            "sparkplug,ble,power,board,mcp,video",
+        )
+        self.assertEqual(
+            ssm.parameters["/txing/town/raspi/unit/redconRules/2"],
+            "sparkplug,ble,power,board,mcp",
+        )
+        self.assertEqual(
+            ssm.parameters["/txing/town/raspi/unit/redconRules/3"],
+            "sparkplug,ble,power",
+        )
+        self.assertEqual(
+            ssm.parameters["/txing/town/raspi/unit/redconRules/4"],
+            "sparkplug,ble",
         )
         self.assertEqual(
             ssm.parameters["/txing/town/raspi/weather/capabilities"],
