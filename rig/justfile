@@ -763,6 +763,7 @@ start rig_id='' components='auto':
         reset_units+=("$unit")
       fi
     done
+    sudo systemctl daemon-reload || true
     sudo systemctl reset-failed "${reset_units[@]}" || true
     sudo systemctl start "{{greengrass_lite_target}}"
     for unit in "${core_sockets[@]}"; do
@@ -837,6 +838,7 @@ restart rig_id='' components='auto':
     #!/usr/bin/env bash
     set -euo pipefail
     just --justfile "{{rig_dir}}/justfile" stop "{{rig_id}}"
+    sudo systemctl daemon-reload || true
     just --justfile "{{rig_dir}}/justfile" start "{{rig_id}}" "{{components}}"
 
 status rig_id='':
@@ -869,6 +871,7 @@ status rig_id='':
         exit 1
         ;;
     esac
+    sudo systemctl daemon-reload || true
     status_units=("{{greengrass_lite_target}}")
     for unit in "${component_units[@]}"; do
       if unit_exists "$unit"; then
