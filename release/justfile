@@ -1,0 +1,16 @@
+set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+set quiet := true
+
+release_dir := source_directory()
+
+bump target:
+    uv run --project "{{ release_dir }}" txing-release bump "{{ target }}"
+
+check:
+    uv run --project "{{ release_dir }}" txing-release check
+
+build:
+    uv build --project "{{ release_dir }}"
+
+@default:
+    @just --list

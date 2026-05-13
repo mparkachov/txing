@@ -786,7 +786,7 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertNotIn('sudo systemctl restart "$unit"', justfile)
         self.assertNotIn('sudo systemctl restart "${greengrass_units[@]}"', justfile)
         self.assertNotIn("greengrass_units < <(", justfile)
-        self.assertIn("deploy target='all'", justfile)
+        self.assertIn("deploy target='auto'", justfile)
         self.assertIn("aws greengrassv2 create-deployment", justfile)
         self.assertIn("deploy-local rig_id=''", justfile)
         self.assertIn("aws_shared_credentials_file=aws_shared_credentials_file:", justfile)
@@ -832,7 +832,7 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertNotIn('git_status="$(git -C "{{project_root}}" status --porcelain --untracked-files=all', justfile)
         self.assertIn('resolved_component_version="$TXING_VERSION"', justfile)
         self.assertIn("Greengrass Lite local component versions must not contain '-'", justfile)
-        self.assertIn("0.8.0+g<sha>", justfile)
+        self.assertIn("x.y.z", justfile)
         self.assertIn("rig::deploy arguments are positional", justfile)
         self.assertIn("Component version is generated automatically", justfile)
         self.assertIn('deploy_root="{{rig_dir}}/build/greengrass-local"', justfile)
@@ -862,7 +862,7 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertNotIn('connectivity_command="exec python3 -m $connectivity_module"', justfile)
         self.assertIn('connectivity_component="dev.txing.rig.AwsConnectivity"', justfile)
         self.assertIn('exec "{artifacts:path}/txing-aws-connectivity"', justfile)
-        self.assertIn('aws_connectivity_binary="{{rig_dir}}/aws-connectivity/target/release/txing-aws-connectivity"', justfile)
+        self.assertIn('aws_connectivity_binary="{{rig_dir}}/target/release/txing-aws-connectivity"', justfile)
         self.assertIn("dev/txing/rig/v2/*", justfile)
         self.assertIn(
             'cargo build --release --features greengrass-sdk --manifest-path "{{rig_dir}}/ble-connectivity/Cargo.toml"',
@@ -872,7 +872,7 @@ class AwsShadowClientTests(unittest.TestCase):
             'cargo build --release --features greengrass-sdk --manifest-path "{{rig_dir}}/aws-connectivity/Cargo.toml"',
             justfile,
         )
-        self.assertIn('ble_connectivity_binary="{{rig_dir}}/ble-connectivity/target/release/txing-ble-connectivity"', justfile)
+        self.assertIn('ble_connectivity_binary="{{rig_dir}}/target/release/txing-ble-connectivity"', justfile)
         self.assertIn('connectivity_component="dev.txing.rig.BleConnectivity"', justfile)
         self.assertIn('exec "{artifacts:path}/txing-ble-connectivity"', justfile)
         self.assertNotIn("dev/txing/rig/v1/connectivity/#", justfile)
@@ -915,49 +915,13 @@ class AwsShadowClientTests(unittest.TestCase):
 
         self.assertFalse((repo_root / "greengrass" / "README.md").exists())
         self.assertTrue((repo_root / "rig" / "greengrass" / "README.md").exists())
-        self.assertTrue(
-            (
-                repo_root
-                / "rig"
-                / "greengrass"
-                / "recipes"
-                / "dev.txing.rig.SparkplugManager-0.8.0.yaml"
-            ).exists()
-        )
-        self.assertFalse(
-            (
-                repo_root
-                / "rig"
-                / "greengrass"
-                / "recipes"
-                / "dev.txing.device.unit.ConnectivityBle-0.8.0.yaml"
-            ).exists()
-        )
-        self.assertEqual(
-            [],
-            list((repo_root / "rig" / "greengrass" / "recipes").glob("dev.txing.device.*.yaml")),
-        )
-        sparkplug_recipe = (
-            repo_root
-            / "rig"
-            / "greengrass"
-            / "recipes"
-            / "dev.txing.rig.SparkplugManager-0.8.0.yaml"
-        ).read_text(encoding="utf-8")
-        ble_connectivity_recipe = (
-            repo_root
-            / "rig"
-            / "greengrass"
-            / "recipes"
-            / "dev.txing.rig.BleConnectivity-0.8.0.yaml"
-        ).read_text(encoding="utf-8")
-        aws_connectivity_recipe = (
-            repo_root
-            / "rig"
-            / "greengrass"
-            / "recipes"
-            / "dev.txing.rig.AwsConnectivity-0.8.0.yaml"
-        ).read_text(encoding="utf-8")
+        recipes_dir = repo_root / "rig" / "greengrass" / "recipes"
+        if recipes_dir.exists():
+            self.assertEqual([], list(recipes_dir.glob("*.yaml")))
+        generated_recipe_source = (repo_root / "rig" / "justfile").read_text(encoding="utf-8")
+        sparkplug_recipe = generated_recipe_source
+        ble_connectivity_recipe = generated_recipe_source
+        aws_connectivity_recipe = generated_recipe_source
         self.assertIn("runtime: aws_nucleus_lite", sparkplug_recipe)
         self.assertIn("runtime: aws_nucleus_lite", ble_connectivity_recipe)
         self.assertIn("runtime: aws_nucleus_lite", aws_connectivity_recipe)
@@ -987,7 +951,7 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertIn('version_base="$(tr -d \'[:space:]\' < "$project_root/VERSION")"', justfile)
         self.assertIn("TXING_VERSION_BASE", justfile)
         self.assertIn("TXING_VERSION", justfile)
-        self.assertIn('txing_version="$version_base+nogit.$(date -u +%s)"', justfile)
+        self.assertIn('txing_version="$version_base"', justfile)
         self.assertIn("aws|town|rig|device", justfile)
         self.assertIn('env_file="$(resolve_path "$(choose_value "{{ env_file }}" "config/aws.env")")"', justfile)
         self.assertIn('source "$env_file"', justfile)

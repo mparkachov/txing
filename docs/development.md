@@ -27,7 +27,7 @@ board read-only rootfs is configured, lives in [installation.md](./installation.
 ## Version And Artifact Channels
 
 `VERSION` is the stable release version for the repository. It must stay a base
-semantic version such as `0.8.0`.
+semantic version such as `x.y.z`.
 
 Production Greengrass component versions use `VERSION` exactly. Git SHA and
 dirty state are exported separately for diagnostics, but they are not part of
@@ -44,7 +44,7 @@ just rig::restart
 Development direction for installable host tools and board-side native
 artifacts:
 
-- `stable` points at the artifact built from the stable `VERSION`, for example `0.8.0`.
+- `stable` points at the artifact built from the stable `VERSION`, for example `x.y.z`.
 - `feature` points at explicitly named debug artifacts and must not be confused with production Greengrass component versions.
 - GitHub release assets should be immutable for each exact artifact version.
 - A mutable channel manifest or equivalent `mise` plugin logic should map `stable` and `feature` to exact artifact versions.

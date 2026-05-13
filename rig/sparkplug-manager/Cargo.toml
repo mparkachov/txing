@@ -1,7 +1,7 @@
 [package]
 name = "txing-sparkplug-manager"
-version = "0.8.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
 description = "Rig-wide txing Sparkplug manager for Greengrass rigs"
 
 [dependencies]

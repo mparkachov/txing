@@ -1,0 +1,13 @@
+[project]
+name = "txing-release"
+version = "0.9.1"
+description = "Release management tooling for txing"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+txing-release = "txing_release.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.10.6,<0.12.0"]
+build-backend = "uv_build"

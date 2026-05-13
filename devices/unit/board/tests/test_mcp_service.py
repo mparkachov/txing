@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 from unittest.mock import patch
 
-from board.mcp_service import BoardMcpServer
+from board.mcp_service import DEFAULT_MCP_SERVER_VERSION, BoardMcpServer
 from board.cmd_vel import DriveState
 from aws.mcp_topics import build_mcp_session_s2c_topic
 
@@ -108,7 +108,7 @@ class BoardMcpServerTests(unittest.TestCase):
         self.assertEqual(client.publishes[1].topic, "txings/unit-local/mcp/status")
         self.assertIs(client.publishes[1].retain, True)
         descriptor = _decode_payload(client.publishes[0])
-        self.assertEqual(descriptor["serverVersion"], "0.8.0")
+        self.assertEqual(descriptor["serverVersion"], DEFAULT_MCP_SERVER_VERSION)
         self.assertEqual(
             descriptor["transports"],
             [
@@ -150,7 +150,7 @@ class BoardMcpServerTests(unittest.TestCase):
     def test_descriptor_uses_global_txing_version_from_environment(self) -> None:
         cmd_vel = _FakeCmdVelController()
         client = _FakeMqttClient()
-        with patch.dict("os.environ", {"TXING_VERSION": "0.8.0+g123456789abc"}):
+        with patch.dict("os.environ", {"TXING_VERSION": "9.9.9+g123456789abc"}):
             server = BoardMcpServer(
                 device_id="unit-local",
                 cmd_vel_controller=cmd_vel,
@@ -159,7 +159,7 @@ class BoardMcpServerTests(unittest.TestCase):
         server.on_connected(client=client, publish_timeout_seconds=2.0)
 
         descriptor = _decode_payload(client.publishes[0])
-        self.assertEqual(descriptor["serverVersion"], "0.8.0+g123456789abc")
+        self.assertEqual(descriptor["serverVersion"], "9.9.9+g123456789abc")
 
     def test_initialize_and_tools_list_flow(self) -> None:
         cmd_vel = _FakeCmdVelController()

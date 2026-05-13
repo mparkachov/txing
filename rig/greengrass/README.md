@@ -112,7 +112,7 @@ used as the Greengrass component version.
 Manual component version pinning is optional:
 
 ```bash
-just rig::deploy raspi 0.8.0
+just rig::deploy raspi x.y.z
 ```
 
 The first argument is the target rig type (`auto`, `raspi`, `cloud`, or `all`);

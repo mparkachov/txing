@@ -18,7 +18,7 @@ _project-version-env:
 
     version_base="$(tr -d '[:space:]' < "$project_root/VERSION")"
     if ! [[ "$version_base" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-      echo "VERSION must contain a base semantic version like 0.8.0." >&2
+      echo "VERSION must contain a base semantic version like x.y.z." >&2
       exit 1
     fi
 
@@ -380,6 +380,7 @@ mod power 'devices/power/justfile'
 mod web 'web/justfile'
 mod zephyr 'zephyr/justfile'
 mod common 'devices/common/justfile'
+mod release 'release/justfile'
 
 @default:
     @just --list

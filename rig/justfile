@@ -22,6 +22,25 @@ region := ""
 aws_profile := ""
 aws_shared_credentials_file := ""
 
+[private]
+_check-rig-cargo-version expected_version:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    metadata="$(cargo metadata --manifest-path "{{rig_dir}}/Cargo.toml" --format-version 1 --no-deps)"
+    mismatches="$(
+      jq -r --arg expected "{{expected_version}}" '
+        .packages[]
+        | select(.version != $expected)
+        | "\(.name) \(.version)"
+      ' <<<"$metadata"
+    )"
+    if [ -n "$mismatches" ]; then
+      echo "Rig Cargo package versions do not match Greengrass component version {{expected_version}}:" >&2
+      sed 's/^/  /' <<<"$mismatches" >&2
+      echo "Run: just release::bump {{expected_version}}" >&2
+      exit 1
+    fi
+
 [positional-arguments]
 aws *args:
     #!/usr/bin/env bash
@@ -346,11 +365,11 @@ build:
     cmake --build "{{greengrass_lite_build_dir}}" --config MinSizeRel --parallel
     test -x "{{greengrass_lite_build_dir}}/bin/ggl-cli"
     TXING_REAL_CC="${CC:-cc}" CC="{{rig_dir}}/tools/cc-greengrass-info-log" cargo build --release --features greengrass-sdk --manifest-path "{{rig_dir}}/sparkplug-manager/Cargo.toml"
-    test -x "{{rig_dir}}/sparkplug-manager/target/release/txing-sparkplug-manager"
+    test -x "{{rig_dir}}/target/release/txing-sparkplug-manager"
     TXING_REAL_CC="${CC:-cc}" CC="{{rig_dir}}/tools/cc-greengrass-info-log" cargo build --release --features greengrass-sdk --manifest-path "{{rig_dir}}/ble-connectivity/Cargo.toml"
-    test -x "{{rig_dir}}/ble-connectivity/target/release/txing-ble-connectivity"
+    test -x "{{rig_dir}}/target/release/txing-ble-connectivity"
     TXING_REAL_CC="${CC:-cc}" CC="{{rig_dir}}/tools/cc-greengrass-info-log" cargo build --release --features greengrass-sdk --manifest-path "{{rig_dir}}/aws-connectivity/Cargo.toml"
-    test -x "{{rig_dir}}/aws-connectivity/target/release/txing-aws-connectivity"
+    test -x "{{rig_dir}}/target/release/txing-aws-connectivity"
 
 print shadow_name='sparkplug':
     #!/usr/bin/env bash
@@ -561,10 +580,10 @@ _local-start rig_id='' components='auto':
         ;;
     esac
 
-    broker_bin="{{rig_dir}}/local-pubsub/target/debug/txing-rig-local-pubsub"
-    sparkplug_bin="{{rig_dir}}/sparkplug-manager/target/debug/txing-sparkplug-manager"
-    ble_bin="{{rig_dir}}/ble-connectivity/target/debug/txing-ble-connectivity"
-    aws_bin="{{rig_dir}}/aws-connectivity/target/debug/txing-aws-connectivity"
+    broker_bin="{{rig_dir}}/target/debug/txing-rig-local-pubsub"
+    sparkplug_bin="{{rig_dir}}/target/debug/txing-sparkplug-manager"
+    ble_bin="{{rig_dir}}/target/debug/txing-ble-connectivity"
+    aws_bin="{{rig_dir}}/target/debug/txing-aws-connectivity"
 
     is_running() {
       local pid_file="$1"
@@ -982,9 +1001,10 @@ deploy target='auto' component_version='' region=region aws_profile=aws_profile 
       resolved_component_version="$TXING_VERSION"
     fi
     if ! [[ "$resolved_component_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-      echo "Greengrass component version must be a plain semantic version like 0.8.0." >&2
+      echo "Greengrass component version must be a plain semantic version like x.y.z." >&2
       exit 1
     fi
+    just --justfile "{{rig_dir}}/justfile" _check-rig-cargo-version "$resolved_component_version"
     allow_dirty="${TXING_ALLOW_DIRTY_DEPLOY:-${TXING_RIG_ALLOW_DIRTY_DEPLOY:-}}"
     case "$allow_dirty" in
       true|1|yes|on) allow_dirty="true" ;;
@@ -1040,9 +1060,9 @@ deploy target='auto' component_version='' region=region aws_profile=aws_profile 
     TXING_REAL_CC="${CC:-cc}" CC="{{rig_dir}}/tools/cc-greengrass-info-log" cargo build --release --features greengrass-sdk --manifest-path "{{rig_dir}}/sparkplug-manager/Cargo.toml" >/dev/null
     TXING_REAL_CC="${CC:-cc}" CC="{{rig_dir}}/tools/cc-greengrass-info-log" cargo build --release --features greengrass-sdk --manifest-path "{{rig_dir}}/ble-connectivity/Cargo.toml" >/dev/null
     TXING_REAL_CC="${CC:-cc}" CC="{{rig_dir}}/tools/cc-greengrass-info-log" cargo build --release --features greengrass-sdk --manifest-path "{{rig_dir}}/aws-connectivity/Cargo.toml" >/dev/null
-    sparkplug_manager_binary="{{rig_dir}}/sparkplug-manager/target/release/txing-sparkplug-manager"
-    ble_connectivity_binary="{{rig_dir}}/ble-connectivity/target/release/txing-ble-connectivity"
-    aws_connectivity_binary="{{rig_dir}}/aws-connectivity/target/release/txing-aws-connectivity"
+    sparkplug_manager_binary="{{rig_dir}}/target/release/txing-sparkplug-manager"
+    ble_connectivity_binary="{{rig_dir}}/target/release/txing-ble-connectivity"
+    aws_connectivity_binary="{{rig_dir}}/target/release/txing-aws-connectivity"
     for binary in "$sparkplug_manager_binary" "$ble_connectivity_binary" "$aws_connectivity_binary"; do
       if [ ! -x "$binary" ]; then
         echo "Missing built component binary $binary" >&2
@@ -1560,10 +1580,11 @@ deploy-local rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id=
     fi
     case "$resolved_component_version" in
       *-*)
-        echo "Greengrass Lite local component versions must not contain '-' because its recipe filename scanner splits on the last hyphen. Use a version like 0.8.0." >&2
+        echo "Greengrass Lite local component versions must not contain '-' because its recipe filename scanner splits on the last hyphen. Use a version like x.y.z." >&2
         exit 1
         ;;
     esac
+    just --justfile "{{rig_dir}}/justfile" _check-rig-cargo-version "$resolved_component_version"
     case "$selected_rig_type" in
       raspi)
         sparkplug_component="dev.txing.rig.SparkplugManager"
@@ -1594,14 +1615,14 @@ deploy-local rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id=
     rm -rf "$deploy_root"
     mkdir -p "$recipe_dir" "$artifacts_dir"
     TXING_REAL_CC="${CC:-cc}" CC="{{rig_dir}}/tools/cc-greengrass-info-log" cargo build --release --features greengrass-sdk --manifest-path "{{rig_dir}}/sparkplug-manager/Cargo.toml" >/dev/null
-    sparkplug_manager_binary="{{rig_dir}}/sparkplug-manager/target/release/txing-sparkplug-manager"
+    sparkplug_manager_binary="{{rig_dir}}/target/release/txing-sparkplug-manager"
     if [ ! -x "$sparkplug_manager_binary" ]; then
       echo "Missing built Rust Sparkplug manager binary at $sparkplug_manager_binary" >&2
       exit 1
     fi
     if [ "$selected_rig_type" = "raspi" ]; then
       TXING_REAL_CC="${CC:-cc}" CC="{{rig_dir}}/tools/cc-greengrass-info-log" cargo build --release --features greengrass-sdk --manifest-path "{{rig_dir}}/ble-connectivity/Cargo.toml" >/dev/null
-      ble_connectivity_binary="{{rig_dir}}/ble-connectivity/target/release/txing-ble-connectivity"
+      ble_connectivity_binary="{{rig_dir}}/target/release/txing-ble-connectivity"
       if [ ! -x "$ble_connectivity_binary" ]; then
         echo "Missing built Rust BLE connectivity binary at $ble_connectivity_binary" >&2
         exit 1
@@ -1609,7 +1630,7 @@ deploy-local rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id=
     fi
     if [ "$selected_rig_type" = "cloud" ]; then
       TXING_REAL_CC="${CC:-cc}" CC="{{rig_dir}}/tools/cc-greengrass-info-log" cargo build --release --features greengrass-sdk --manifest-path "{{rig_dir}}/aws-connectivity/Cargo.toml" >/dev/null
-      aws_connectivity_binary="{{rig_dir}}/aws-connectivity/target/release/txing-aws-connectivity"
+      aws_connectivity_binary="{{rig_dir}}/target/release/txing-aws-connectivity"
       if [ ! -x "$aws_connectivity_binary" ]; then
         echo "Missing built Rust AWS connectivity binary at $aws_connectivity_binary" >&2
         exit 1

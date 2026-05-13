@@ -1,7 +1,7 @@
 [package]
 name = "txing-rig-local-pubsub"
-version = "0.8.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
 description = "Local Unix-socket pub/sub broker for txing rig development"
 
 [dependencies]

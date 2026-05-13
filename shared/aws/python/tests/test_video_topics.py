@@ -54,7 +54,7 @@ class VideoTopicsContractTests(unittest.TestCase):
             device_id="unit-local",
             channel_name="unit-local-board-video",
             region="eu-central-1",
-            server_version="0.8.0",
+            server_version="test-version",
         )
 
         self.assertEqual(payload["serviceId"], VIDEO_SERVICE_NAME)
