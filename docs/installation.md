@@ -336,6 +336,10 @@ just unit::board::submodules
 just unit::board::build-native
 ```
 
+The native sender build uses distro development packages for OpenSSL, libcurl,
+libwebsockets, libsrtp2, usrsctp, zlib, and log4cplus. It does not compile the
+AWS SDK's bundled third-party dependency sources.
+
 Point `BOARD_VIDEO_SENDER_COMMAND` at the built binary, typically:
 
 ```bash

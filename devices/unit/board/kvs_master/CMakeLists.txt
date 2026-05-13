@@ -15,11 +15,6 @@ option(
   "Build txing-board-kvs-master against the AWS KVS WebRTC C SDK"
   ${_txing_kvs_real_sdk_default}
 )
-option(
-  TXING_KVS_USE_SYSTEM_DEPENDENCIES
-  "Build the AWS KVS WebRTC SDK against distro-provided dependencies instead of the vendored third-party build"
-  OFF
-)
 
 set(
   _txing_kvs_default_sdk_source_dir
@@ -95,11 +90,12 @@ else()
   target_compile_definitions(txing_board_kvs_master_lib PRIVATE TXING_KVS_HAS_LIBCAMERA=0)
 endif()
 
-function(txing_find_local_or_system_library output_var)
+function(txing_find_sdk_library output_var)
   set(options REQUIRED)
   set(oneValueArgs FRIENDLY_NAME)
   set(multiValueArgs NAMES)
   cmake_parse_arguments(TXING_FIND "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+  unset(${output_var} CACHE)
 
   find_library(
     ${output_var}
@@ -110,14 +106,27 @@ function(txing_find_local_or_system_library output_var)
     NO_DEFAULT_PATH
   )
 
-  if(NOT ${output_var})
-    find_library(${output_var} NAMES ${TXING_FIND_NAMES})
+  if(NOT ${output_var} AND TXING_FIND_REQUIRED)
+    message(FATAL_ERROR
+      "Required AWS SDK library '${TXING_FIND_FRIENDLY_NAME}' was not found. "
+      "Build the local AWS SDK install first with `just unit::board::build-aws-sdk`."
+    )
   endif()
+endfunction()
+
+function(txing_find_system_library output_var)
+  set(options REQUIRED)
+  set(oneValueArgs FRIENDLY_NAME)
+  set(multiValueArgs NAMES)
+  cmake_parse_arguments(TXING_FIND "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+  unset(${output_var} CACHE)
+
+  find_library(${output_var} NAMES ${TXING_FIND_NAMES})
 
   if(NOT ${output_var} AND TXING_FIND_REQUIRED)
     message(FATAL_ERROR
-      "Required library '${TXING_FIND_FRIENDLY_NAME}' was not found. "
-      "Build the local AWS SDK install first with `just unit::board::build-aws-sdk`."
+      "Required system library '${TXING_FIND_FRIENDLY_NAME}' was not found. "
+      "Install the distro development package before building txing-board-kvs-master."
     )
   endif()
 endfunction()
@@ -130,66 +139,58 @@ if(TXING_KVS_REAL_SDK)
     )
   endif()
 
-  if(TXING_KVS_USE_SYSTEM_DEPENDENCIES AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    message(WARNING
-      "TXING_KVS_USE_SYSTEM_DEPENDENCIES=ON assumes the separately built local AWS SDK install "
-      "was configured with BUILD_DEPENDENCIES=OFF. Debian Trixie ships newer OpenSSL and libsrtp2 "
-      "packages than AWS's documented system dependency window, so this mode remains an explicit override."
-    )
-  endif()
-
   find_package(Threads REQUIRED)
-  find_package(ZLIB QUIET)
+  find_package(ZLIB REQUIRED)
   set(OPENSSL_USE_STATIC_LIBS FALSE)
   find_package(OpenSSL REQUIRED)
 
-  txing_find_local_or_system_library(
+  txing_find_sdk_library(
     TXING_KVS_WEBRTC_CLIENT_LIBRARY
     REQUIRED
     FRIENDLY_NAME "kvsWebrtcClient"
     NAMES kvsWebrtcClient libkvsWebrtcClient.a
   )
-  txing_find_local_or_system_library(
+  txing_find_sdk_library(
     TXING_KVS_WEBRTC_SIGNALING_CLIENT_LIBRARY
     REQUIRED
     FRIENDLY_NAME "kvsWebrtcSignalingClient"
     NAMES kvsWebrtcSignalingClient libkvsWebrtcSignalingClient.a
   )
-  txing_find_local_or_system_library(
+  txing_find_sdk_library(
     TXING_KVS_COMMON_LWS_LIBRARY
     REQUIRED
     FRIENDLY_NAME "kvsCommonLws"
     NAMES kvsCommonLws libkvsCommonLws.a
   )
-  txing_find_local_or_system_library(
+  txing_find_sdk_library(
     TXING_KVS_PIC_UTILS_LIBRARY
     REQUIRED
     FRIENDLY_NAME "kvspicUtils"
     NAMES kvspicUtils libkvspicUtils.a
   )
-  txing_find_local_or_system_library(
+  txing_find_sdk_library(
     TXING_KVS_PIC_STATE_LIBRARY
     REQUIRED
     FRIENDLY_NAME "kvspicState"
     NAMES kvspicState libkvspicState.a
   )
-  txing_find_local_or_system_library(
+  txing_find_system_library(
     TXING_KVS_WEBSOCKETS_LIBRARY
     REQUIRED
     FRIENDLY_NAME "websockets"
-    NAMES websockets libwebsockets.a
+    NAMES websockets
   )
-  txing_find_local_or_system_library(
+  txing_find_system_library(
     TXING_KVS_SRTP_LIBRARY
     REQUIRED
     FRIENDLY_NAME "srtp2"
-    NAMES srtp2 libsrtp2.a
+    NAMES srtp2
   )
-  txing_find_local_or_system_library(
+  txing_find_system_library(
     TXING_KVS_USRSCTP_LIBRARY
     REQUIRED
     FRIENDLY_NAME "usrsctp"
-    NAMES usrsctp libusrsctp.a
+    NAMES usrsctp
   )
   find_library(TXING_KVS_CAP_LIBRARY NAMES cap)
 
@@ -222,13 +223,11 @@ if(TXING_KVS_REAL_SDK)
       "${TXING_KVS_USRSCTP_LIBRARY}"
       OpenSSL::SSL
       OpenSSL::Crypto
+      ZLIB::ZLIB
       Threads::Threads
       m
       "${CMAKE_DL_LIBS}"
   )
-  if(ZLIB_FOUND)
-    target_link_libraries(txing_board_kvs_master_lib PRIVATE ZLIB::ZLIB)
-  endif()
   if(TXING_KVS_CAP_LIBRARY)
     target_link_libraries(txing_board_kvs_master_lib PRIVATE "${TXING_KVS_CAP_LIBRARY}")
   endif()

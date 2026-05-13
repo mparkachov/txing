@@ -94,7 +94,9 @@ just unit::board::once
 
 `build-native` builds the native sender against the shared AWS KVS WebRTC SDK
 submodule under `devices/common/board/`. Initialize it with
-`just unit::board::submodules` before the first native build.
+`just unit::board::submodules` before the first native build. Third-party KVS
+dependencies come from distro packages, not from the SDK's bundled source
+builds.
 
 Manual motor bring-up:
 
