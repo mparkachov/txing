@@ -781,7 +781,7 @@ start rig_id='' components='auto':
         status_units+=("$unit")
       fi
     done
-    sudo systemctl --no-pager --full status "${status_units[@]}"
+    sudo systemctl --no-pager --full status "${status_units[@]}" || true
 
 stop rig_id='':
     #!/usr/bin/env bash
@@ -980,6 +980,11 @@ deploy target='all' component_version='' region=region aws_profile=aws_profile a
         exit 1
         ;;
     esac
+    if ! [[ "$resolved_component_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(\+[A-Za-z0-9.]+)?$ ]]; then
+      echo "Greengrass component version must be semantic version build metadata like 0.8.0+g<sha> or 0.8.0." >&2
+      exit 1
+    fi
+    artifact_version_path="${resolved_component_version//+/.build.}"
     artifacts_bucket="$(
       aws cloudformation describe-stacks \
         --stack-name "$AWS_STACK_NAME" \
@@ -1018,7 +1023,7 @@ deploy target='all' component_version='' region=region aws_profile=aws_profile a
       local component="$1"
       local source="$2"
       local filename="$3"
-      local key="greengrass/$resolved_component_version/$component/$filename"
+      local key="greengrass/$artifact_version_path/$component/$filename"
       aws s3 cp "$source" "s3://$artifacts_bucket/$key" "${aws_flags[@]}" >/dev/null
       printf 's3://%s/%s\n' "$artifacts_bucket" "$key"
     }
