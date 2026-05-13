@@ -3,6 +3,7 @@
 #include "kvs_master/aws_env.hpp"
 #include "kvs_master/kvs_session.hpp"
 #include "kvs_master/markers.hpp"
+#include "kvs_master/version.hpp"
 #include "kvs_master/video_capturer.hpp"
 
 #include <algorithm>
@@ -145,7 +146,10 @@ void Run(const RuntimeConfig& config, const RuntimeHooks& hooks) {
             have_previous_timestamp = true;
 
             if (!ready_emitted && frame.is_keyframe) {
-                EmitMarker("TXING_KVS_READY", {});
+                EmitMarker(
+                    "TXING_KVS_READY",
+                    {{"version", std::string(kTxingBoardKvsMasterVersion)}}
+                );
                 ready_emitted = true;
             }
         }

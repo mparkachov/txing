@@ -30,6 +30,7 @@ struct RuntimeConfig {
 
 struct ParsedCli {
     bool show_help = false;
+    bool show_version = false;
     RuntimeConfig config;
 };
 

@@ -25,6 +25,7 @@ describe('app route catalog source wiring', () => {
     const appSource = readFileSync(resolve(repoRoot, 'web/src/App.tsx'), 'utf-8')
 
     expect(appSource).toContain('const renderSparkplugCatalogCardLink = (')
+    expect(appSource).toContain('<CapabilityStack')
     expect(appSource).toContain('const readRigSparkplugStatus = async')
     expect(appSource).toContain('const readDeviceSparkplugStatus = async')
     expect(appSource).toContain('rigs: createPendingCatalogItems(rigs)')
@@ -32,6 +33,14 @@ describe('app route catalog source wiring', () => {
     expect(appSource).toContain('rig.rigName')
     expect(appSource).toContain('getCatalogDeviceLabel(device)')
     expect(appSource).not.toContain('formatCatalogDetailLine(')
+  })
+
+  test('route navigation reuses capability stack for the current thing', () => {
+    const appSource = readFileSync(resolve(repoRoot, 'web/src/App.tsx'), 'utf-8')
+
+    expect(appSource).toContain('const navigationCapabilities =')
+    expect(appSource).toContain('className="navigation-capabilities"')
+    expect(appSource).toContain('{navigationCapabilities}')
   })
 
   test('public landing can request office-origin sign-in', () => {

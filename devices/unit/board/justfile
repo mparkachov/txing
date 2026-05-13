@@ -6,21 +6,20 @@ python_executable := "python3"
 built_board := board_dir + "/.venv/bin/board"
 built_board_video_sender := board_dir + "/.venv/bin/board-video-sender"
 built_board_motor_raw := board_dir + "/.venv/bin/board-motor-raw"
-project_root := board_dir + "/../../.."
+project_root := canonicalize(board_dir + "/../../..")
 root_justfile := project_root + "/justfile"
+common_board_dir := project_root + "/devices/common/board"
 native_kvs_master_dir := board_dir + "/kvs_master"
 native_kvs_master_build_dir := native_kvs_master_dir + "/build"
 native_kvs_master_test_build_dir := native_kvs_master_dir + "/build-tests"
 built_native_kvs_master := native_kvs_master_build_dir + "/txing-board-kvs-master"
-aws_kvs_sdk_dir := board_dir + "/aws-kvs-webrtc-sdk"
-aws_kvs_sdk_build_dir := aws_kvs_sdk_dir + "/build"
-aws_kvs_sdk_install_dir := aws_kvs_sdk_dir + "/install"
+aws_kvs_sdk_dir := common_board_dir + "/aws-kvs-webrtc-sdk"
+aws_kvs_sdk_build_dir := common_board_dir + "/aws-kvs-webrtc-sdk-build"
+aws_kvs_sdk_install_dir := common_board_dir + "/aws-kvs-webrtc-sdk-install"
 aws_kvs_sdk_install_header := aws_kvs_sdk_install_dir + "/include/com/amazonaws/kinesis/video/webrtcclient/Include.h"
 aws_kvs_sdk_install_library := aws_kvs_sdk_install_dir + "/lib/libkvsWebrtcClient.a"
 aws_kvs_sdk_flags_file := aws_kvs_sdk_build_dir + "/CMakeFiles/kvsWebrtcSignalingClient.dir/flags.make"
 aws_kvs_sdk_state_file := aws_kvs_sdk_install_dir + "/.txing-sdk-build-state"
-default_aws_kvs_sdk_repository := env_var_or_default("TXING_BOARD_AWS_KVS_WEBRTC_SDK_REPOSITORY", "https://github.com/awslabs/amazon-kinesis-video-streams-webrtc-sdk-c.git")
-default_aws_kvs_sdk_ref := env_var_or_default("TXING_BOARD_AWS_KVS_WEBRTC_SDK_REF", "main")
 default_system_ca_cert_path := env_var_or_default("TXING_BOARD_KVS_SYSTEM_CA_CERT_PATH", "/etc/ssl/certs/Starfield_Services_Root_Certificate_Authority_-_G2.pem")
 systemd_service := "board.service"
 systemd_unit := "/etc/systemd/system/" + systemd_service
@@ -28,6 +27,10 @@ region := ""
 aws_profile := ""
 aws_shared_credentials_file := ""
 default_kvs_use_system_dependencies := env_var_or_default("TXING_BOARD_KVS_USE_SYSTEM_DEPENDENCIES", "ON")
+
+[private]
+_ensure-aws-sdk-submodule:
+    test -f "{{aws_kvs_sdk_dir}}/CMakeLists.txt" || { echo "missing AWS KVS WebRTC SDK submodule. Run: just unit::board::submodules" >&2; exit 1; }
 
 @sync:
     cd "{{board_dir}}" && uv sync --python "{{python_executable}}" --no-managed-python --no-python-downloads
@@ -62,22 +65,11 @@ check thing_name='' region=region aws_profile=aws_profile:
       --scope device \
       --thing-name "$thing_name"
 
-@clone-aws-sdk:
-    if [ ! -d "{{aws_kvs_sdk_dir}}/.git" ]; then \
-        git clone --branch "{{default_aws_kvs_sdk_ref}}" --depth 1 "{{default_aws_kvs_sdk_repository}}" "{{aws_kvs_sdk_dir}}"; \
-    else \
-        git -C "{{aws_kvs_sdk_dir}}" remote set-url origin "{{default_aws_kvs_sdk_repository}}"; \
-        git -C "{{aws_kvs_sdk_dir}}" fetch --force --tags origin; \
-        if git -C "{{aws_kvs_sdk_dir}}" show-ref --verify --quiet "refs/remotes/origin/{{default_aws_kvs_sdk_ref}}"; then \
-            git -C "{{aws_kvs_sdk_dir}}" checkout -B "{{default_aws_kvs_sdk_ref}}" "origin/{{default_aws_kvs_sdk_ref}}"; \
-            git -C "{{aws_kvs_sdk_dir}}" reset --hard "origin/{{default_aws_kvs_sdk_ref}}"; \
-        else \
-            git -C "{{aws_kvs_sdk_dir}}" checkout "{{default_aws_kvs_sdk_ref}}"; \
-        fi; \
-    fi
+@submodules:
+    git -C "{{project_root}}" submodule update --init --recursive -- devices/common/board/aws-kvs-webrtc-sdk
 
-@build-aws-sdk:
-    just clone-aws-sdk
+@build-aws-sdk: _ensure-aws-sdk-submodule
+    rm -rf "{{aws_kvs_sdk_build_dir}}" "{{aws_kvs_sdk_install_dir}}"
     build_dependencies=ON; \
     cmake_args=( \
         -S "{{aws_kvs_sdk_dir}}" \
@@ -120,8 +112,7 @@ check thing_name='' region=region aws_profile=aws_profile:
     sdk_head="$(git -C "{{aws_kvs_sdk_dir}}" rev-parse HEAD)"; \
     printf 'sdk_head=%s\nbuild_dependencies=%s\n' "$sdk_head" "$build_dependencies" > "{{aws_kvs_sdk_state_file}}"
 
-@ensure-aws-sdk:
-    just clone-aws-sdk
+@ensure-aws-sdk: _ensure-aws-sdk-submodule
     expected_build_dependencies=ON; \
     if [ "{{default_kvs_use_system_dependencies}}" = "ON" ]; then \
         expected_build_dependencies=OFF; \
@@ -149,7 +140,6 @@ check thing_name='' region=region aws_profile=aws_profile:
 
 @distclean:
     just clean
-    rm -rf "{{aws_kvs_sdk_dir}}"
 
 @build-native:
     if [ "$(uname -s)" = "Linux" ]; then \

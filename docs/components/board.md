@@ -85,11 +85,16 @@ This is why the read-only-rootfs setup keeps `/tmp` and `/var/tmp` on tmpfs. The
 
 ```bash
 just unit::board::check
+just unit::board::submodules
 just unit::board::build-native
 just unit::board::build
 just unit::board::run
 just unit::board::once
 ```
+
+`build-native` builds the native sender against the shared AWS KVS WebRTC SDK
+submodule under `devices/common/board/`. Initialize it with
+`just unit::board::submodules` before the first native build.
 
 Manual motor bring-up:
 

@@ -317,10 +317,16 @@ body {
 .navigation-panel-actions {
   display: inline-flex;
   align-items: center;
-  flex: 0 0 auto;
+  flex: 1 1 auto;
   justify-content: flex-end;
   gap: 0.8rem;
   margin-left: auto;
+  min-width: 0;
+}
+
+.navigation-capabilities {
+  flex: 1 1 auto;
+  max-width: min(34rem, 44vw);
 }
 
 .sparkplug-strip {
@@ -2085,6 +2091,7 @@ button:disabled {
   .navigation-panel-actions {
     justify-content: flex-end;
     flex-wrap: wrap;
+    width: 100%;
   }
 
   .navigation-panel-brand {
@@ -2120,6 +2127,11 @@ button:disabled {
   .catalog-status-capabilities {
     justify-content: flex-start;
     padding-left: 2.62rem;
+  }
+
+  .navigation-capabilities {
+    max-width: none;
+    padding-left: 0;
   }
 
   .notification-tray {

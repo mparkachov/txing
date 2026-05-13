@@ -1,5 +1,7 @@
 #include "kvs_master/config.hpp"
 
+#include "kvs_master/version.hpp"
+
 #include <cstdlib>
 #include <sstream>
 #include <stdexcept>
@@ -66,13 +68,21 @@ std::uint32_t ParseUnsigned(
     }
 }
 
-std::unordered_map<std::string, std::string> ParseOptions(const std::vector<std::string>& arguments, bool& show_help) {
+std::unordered_map<std::string, std::string> ParseOptions(
+    const std::vector<std::string>& arguments,
+    bool& show_help,
+    bool& show_version
+) {
     std::unordered_map<std::string, std::string> options;
 
     for (std::size_t index = 1; index < arguments.size(); ++index) {
         const std::string& argument = arguments[index];
         if (argument == "--help" || argument == "-h") {
             show_help = true;
+            continue;
+        }
+        if (argument == "--version") {
+            show_version = true;
             continue;
         }
         if (argument.rfind("--", 0) != 0) {
@@ -110,8 +120,8 @@ ParsedCli ParseCli(const std::vector<std::string>& arguments, const EnvLookup& l
     }
 
     ParsedCli parsed;
-    const auto options = ParseOptions(arguments, parsed.show_help);
-    if (parsed.show_help) {
+    const auto options = ParseOptions(arguments, parsed.show_help, parsed.show_version);
+    if (parsed.show_help || parsed.show_version) {
         return parsed;
     }
 
@@ -177,6 +187,7 @@ std::string UsageText() {
         << "  --framerate <fps>                      default: 30\n"
         << "  --bitrate <bps>                        default: 8000000\n"
         << "  --intra <frames>                       default: 30\n"
+        << "  --version\n"
         << "  --help\n";
     return usage.str();
 }

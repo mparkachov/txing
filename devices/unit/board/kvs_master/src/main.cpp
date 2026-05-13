@@ -1,6 +1,7 @@
 #include "kvs_master/config.hpp"
 #include "kvs_master/markers.hpp"
 #include "kvs_master/runtime.hpp"
+#include "kvs_master/version.hpp"
 
 #include <exception>
 #include <iostream>
@@ -14,6 +15,12 @@ int main(int argc, char** argv) {
         );
         if (parsed.show_help) {
             std::cout << txing::board::kvs_master::UsageText();
+            return 0;
+        }
+        if (parsed.show_version) {
+            std::cout << "txing-board-kvs-master "
+                      << txing::board::kvs_master::kTxingBoardKvsMasterVersion
+                      << '\n';
             return 0;
         }
 

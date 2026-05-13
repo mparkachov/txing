@@ -80,6 +80,12 @@ TEXT_VERSIONS = (
         'DEFAULT_VIDEO_SERVER_VERSION = "{version}"',
     ),
     TextVersion(
+        Path("devices/unit/board/kvs_master/include/kvs_master/version.hpp"),
+        "board native KVS master version",
+        re.compile(r'inline constexpr std::string_view kTxingBoardKvsMasterVersion = "[^"]+";'),
+        'inline constexpr std::string_view kTxingBoardKvsMasterVersion = "{version}";',
+    ),
+    TextVersion(
         Path("web/src/config.ts"),
         "web runtime fallback version",
         re.compile(r": '[0-9]+\.[0-9]+\.[0-9]+'"),

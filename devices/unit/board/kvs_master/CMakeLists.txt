@@ -23,11 +23,11 @@ option(
 
 set(
   _txing_kvs_default_sdk_source_dir
-  "${CMAKE_CURRENT_SOURCE_DIR}/../aws-kvs-webrtc-sdk"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../../../common/board/aws-kvs-webrtc-sdk"
 )
 set(
   _txing_kvs_default_sdk_install_dir
-  "${_txing_kvs_default_sdk_source_dir}/install"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../../../common/board/aws-kvs-webrtc-sdk-install"
 )
 
 set(
@@ -117,7 +117,7 @@ function(txing_find_local_or_system_library output_var)
   if(NOT ${output_var} AND TXING_FIND_REQUIRED)
     message(FATAL_ERROR
       "Required library '${TXING_FIND_FRIENDLY_NAME}' was not found. "
-      "Build the local AWS SDK install first with `just build-aws-sdk`."
+      "Build the local AWS SDK install first with `just unit::board::build-aws-sdk`."
     )
   endif()
 endfunction()
@@ -126,7 +126,7 @@ if(TXING_KVS_REAL_SDK)
   if(NOT EXISTS "${TXING_KVS_WEBRTC_SDK_INSTALL_DIR}/include/com/amazonaws/kinesis/video/webrtcclient/Include.h")
     message(FATAL_ERROR
       "AWS KVS WebRTC SDK install not found at '${TXING_KVS_WEBRTC_SDK_INSTALL_DIR}'. "
-      "Run `just build-aws-sdk` from the board directory first."
+      "Run `just unit::board::submodules` and `just unit::board::build-aws-sdk` first."
     )
   endif()
 

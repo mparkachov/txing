@@ -1,3 +1,6 @@
 [submodule "devices/common/mcu/ncs/nrf"]
 	path = devices/common/mcu/ncs/nrf
 	url = https://github.com/nrfconnect/sdk-nrf.git
+[submodule "devices/common/board/aws-kvs-webrtc-sdk"]
+	path = devices/common/board/aws-kvs-webrtc-sdk
+	url = https://github.com/awslabs/amazon-kinesis-video-streams-webrtc-sdk-c.git

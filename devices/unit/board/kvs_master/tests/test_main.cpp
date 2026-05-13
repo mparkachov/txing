@@ -2,6 +2,7 @@
 #include "kvs_master/config.hpp"
 #include "kvs_master/markers.hpp"
 #include "kvs_master/runtime.hpp"
+#include "kvs_master/version.hpp"
 #include "kvs_master/video_capturer.hpp"
 
 #include <filesystem>
@@ -31,6 +32,7 @@ using txing::board::kvs_master::RuntimeHooks;
 using txing::board::kvs_master::UsageText;
 using txing::board::kvs_master::VideoCapturer;
 using txing::board::kvs_master::VideoCapturerStatus;
+using txing::board::kvs_master::kTxingBoardKvsMasterVersion;
 
 int g_failures = 0;
 
@@ -293,6 +295,18 @@ void TestUsageText() {
         usage.find("BOARD_MCP_WEBRTC_SOCKET_PATH") != std::string::npos,
         "usage text should document the optional MCP WebRTC socket path environment variable"
     );
+    Expect(usage.find("--version") != std::string::npos, "usage text should document version output");
+}
+
+void TestVersionParsing() {
+    const auto parsed = ParseCli({"txing-board-kvs-master", "--version"}, EnvFrom({}));
+
+    Expect(parsed.show_version, "CLI should parse --version without requiring runtime configuration");
+    Expect(!parsed.show_help, "version output should not imply help output");
+    Expect(
+        std::string(kTxingBoardKvsMasterVersion).find('.') != std::string::npos,
+        "native sender version should be populated"
+    );
 }
 
 void TestCredentialResolution() {
@@ -375,6 +389,10 @@ void TestRuntimeReadyAndTimestamps() {
         output.find("TXING_KVS_READY") != std::string::npos,
         "runtime should emit readiness only after receiving a keyframe"
     );
+    Expect(
+        output.find("version=" + std::string(kTxingBoardKvsMasterVersion)) != std::string::npos,
+        "runtime readiness marker should include the native sender version"
+    );
 }
 
 void TestRuntimeAdvancesWhenEncoderTimestampsStayZero() {
@@ -447,6 +465,7 @@ void TestMarkerFormatting() {
 int main() {
     TestCliParsing();
     TestUsageText();
+    TestVersionParsing();
     TestCredentialResolution();
     TestRuntimeReadyAndTimestamps();
     TestRuntimeAdvancesWhenEncoderTimestampsStayZero();

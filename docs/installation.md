@@ -332,6 +332,7 @@ Build the repo-owned KVS sender:
 
 ```bash
 cd "$TXING_HOME"
+just unit::board::submodules
 just unit::board::build-native
 ```
 

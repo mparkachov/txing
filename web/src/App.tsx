@@ -62,6 +62,7 @@ import {
 import { shouldSuppressRobotStateTeardownError } from './mcp-errors'
 import type { McpTransportKind } from './mcp-descriptor'
 import { getMcpSteadyMotionHeartbeatIntervalMs } from './mcp-lease'
+import CapabilityStack, { type CapabilityStackStatus } from './CapabilityStack'
 import NavigationUserMenu from './NavigationUserMenu'
 import NotificationLogPanel from './NotificationLogPanel'
 import NotificationTray from './NotificationTray'
@@ -74,7 +75,6 @@ import {
 import SparkplugPanel from './SparkplugPanel'
 import {
   describeRedcon,
-  extractSparkplugCapabilityAvailability,
   extractIsSparkplugDeviceUnavailable,
   extractReportedRedcon,
   extractSparkplugRedconCommandStatus,
@@ -101,7 +101,7 @@ type DeviceCatalogState = {
   devices: DeviceCatalogItem[]
   error: string
 }
-type CatalogSparkplugStatus = 'loading' | 'ready' | 'error'
+type CatalogSparkplugStatus = CapabilityStackStatus
 type CatalogSparkplugFields = {
   sparkplugShadow: unknown | null
   sparkplugShadowStatus: CatalogSparkplugStatus
@@ -1769,33 +1769,13 @@ function App({ initialAuthError = '' }: AppProps) {
           </span>
           <span className="catalog-card-link-line">{label}</span>
         </span>
-        <span
-          className="catalog-status-capabilities"
-          aria-label={`Capability status for ${label}`}
-        >
-          {item.capabilities.map((capability) => {
-            const availability =
-              item.sparkplugShadowStatus === 'ready'
-                ? extractSparkplugCapabilityAvailability(item.sparkplugShadow, capability)
-                : null
-            const isActive = availability === true
-            const statusLabel = isActive ? 'active' : 'inactive'
-            return (
-              <span
-                key={`${item.thingName}:${capability}`}
-                className={`catalog-status-capability ${
-                  isActive
-                    ? 'catalog-status-capability-active'
-                    : 'catalog-status-capability-inactive'
-                }`}
-                title={`${capability}: ${statusLabel}`}
-              >
-                <span className="catalog-status-capability-dot" aria-hidden="true" />
-                <span className="catalog-status-capability-label">{capability}</span>
-              </span>
-            )
-          })}
-        </span>
+        <CapabilityStack
+          thingName={item.thingName}
+          label={label}
+          capabilities={item.capabilities}
+          sparkplugShadow={item.sparkplugShadow}
+          sparkplugShadowStatus={item.sparkplugShadowStatus}
+        />
       </a>
     )
   }
@@ -1938,6 +1918,38 @@ function App({ initialAuthError = '' }: AppProps) {
         : route.kind === 'device' || route.kind === 'device_video'
           ? selectedDeviceLabel ?? 'device'
           : 'route'
+  const navigationCapabilityLabel =
+    route.kind === 'town'
+      ? navigationTownLabel ?? route.town
+      : route.kind === 'rig'
+        ? navigationRigLabel ?? route.rig
+        : route.kind === 'device' || route.kind === 'device_video'
+          ? selectedDeviceLabel ?? route.device
+          : ''
+  const navigationCapabilityShadow =
+    currentRouteThingName !== null &&
+    activeShadowTarget?.thingName === currentRouteThingName
+      ? displayShadowDocument
+      : routeSparkplugShadow
+  const navigationCapabilityStatus: CapabilityStackStatus =
+    routeHeaderState.status !== 'ready'
+      ? 'loading'
+      : navigationCapabilityShadow !== null
+        ? 'ready'
+        : routeHeaderShadowWarning
+          ? 'error'
+          : 'loading'
+  const navigationCapabilities =
+    currentRouteThingName !== null && routeHeaderMetadata !== null ? (
+      <CapabilityStack
+        thingName={currentRouteThingName}
+        label={navigationCapabilityLabel}
+        capabilities={routeHeaderMetadata.capabilities}
+        sparkplugShadow={navigationCapabilityShadow}
+        sparkplugShadowStatus={navigationCapabilityStatus}
+        className="navigation-capabilities"
+      />
+    ) : null
 
   const navigationPanel =
     route.kind !== 'root' && isNavigationReady ? (
@@ -1967,6 +1979,7 @@ function App({ initialAuthError = '' }: AppProps) {
           </div>
         </div>
         <div className="navigation-panel-actions">
+          {navigationCapabilities}
           {currentRouteThingName !== null ? (
             <SparkplugPanel
               sparkplugRedcon={reportedRedcon}
