@@ -1,5 +1,5 @@
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
-set quiet := true
+set quiet
 
 board_dir := source_directory()
 board_justfile := board_dir + "/justfile"
@@ -19,6 +19,7 @@ aws_kvs_sdk_build_dir := common_board_dir + "/aws-kvs-webrtc-sdk-build"
 aws_kvs_sdk_install_dir := common_board_dir + "/aws-kvs-webrtc-sdk-install"
 aws_kvs_sdk_system_deps_dir := common_board_dir + "/aws-kvs-webrtc-sdk-system-deps"
 aws_kvs_sdk_install_header := aws_kvs_sdk_install_dir + "/include/com/amazonaws/kinesis/video/webrtcclient/Include.h"
+aws_kvs_sdk_install_common_header := aws_kvs_sdk_install_dir + "/include/com/amazonaws/kinesis/video/common/Include.h"
 aws_kvs_sdk_install_library := aws_kvs_sdk_install_dir + "/lib/libkvsWebrtcClient.a"
 aws_kvs_sdk_flags_file := aws_kvs_sdk_build_dir + "/CMakeFiles/kvsWebrtcSignalingClient.dir/flags.make"
 aws_kvs_sdk_state_file := aws_kvs_sdk_install_dir + "/.txing-sdk-build-state"
@@ -157,6 +158,11 @@ check thing_name='' region=region aws_profile=aws_profile:
     cmake "${cmake_args[@]}"
     cmake --build "{{aws_kvs_sdk_build_dir}}" --config Release
     cmake --install "{{aws_kvs_sdk_build_dir}}" --config Release
+    if [ ! -f "{{aws_kvs_sdk_system_deps_dir}}/include/com/amazonaws/kinesis/video/common/Include.h" ]; then
+        echo "Expected AWS SDK support headers were not built under {{aws_kvs_sdk_system_deps_dir}}/include" >&2
+        exit 1
+    fi
+    cp -a "{{aws_kvs_sdk_system_deps_dir}}/include/com" "{{aws_kvs_sdk_install_dir}}/include/"
     for aws_library in kvsCommonLws kvspicUtils kvspicState; do
         source_library="{{aws_kvs_sdk_system_deps_dir}}/lib/lib${aws_library}.a"
         if [ ! -f "$source_library" ]; then
@@ -172,7 +178,7 @@ check thing_name='' region=region aws_profile=aws_profile:
     #!/usr/bin/env bash
     set -euo pipefail
     sdk_head="$(git -C "{{aws_kvs_sdk_dir}}" rev-parse HEAD)"
-    if [ ! -f "{{aws_kvs_sdk_install_header}}" ] || [ ! -f "{{aws_kvs_sdk_install_library}}" ] || [ ! -f "{{aws_kvs_sdk_install_dir}}/lib/libkvsCommonLws.a" ] || [ ! -f "{{aws_kvs_sdk_install_dir}}/lib/libkvspicUtils.a" ] || [ ! -f "{{aws_kvs_sdk_install_dir}}/lib/libkvspicState.a" ] || [ ! -f "{{aws_kvs_sdk_state_file}}" ]; then
+    if [ ! -f "{{aws_kvs_sdk_install_header}}" ] || [ ! -f "{{aws_kvs_sdk_install_common_header}}" ] || [ ! -f "{{aws_kvs_sdk_install_library}}" ] || [ ! -f "{{aws_kvs_sdk_install_dir}}/lib/libkvsCommonLws.a" ] || [ ! -f "{{aws_kvs_sdk_install_dir}}/lib/libkvspicUtils.a" ] || [ ! -f "{{aws_kvs_sdk_install_dir}}/lib/libkvspicState.a" ] || [ ! -f "{{aws_kvs_sdk_state_file}}" ]; then
         just --justfile "{{board_justfile}}" build-aws-sdk
     elif ! grep -Fqx "sdk_head=$sdk_head" "{{aws_kvs_sdk_state_file}}"; then
         just --justfile "{{board_justfile}}" build-aws-sdk
@@ -198,12 +204,10 @@ check thing_name='' region=region aws_profile=aws_profile:
     just --justfile "{{board_justfile}}" clean
 
 @build-native:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if [ "$(uname -s)" = "Linux" ]; then
-        just --justfile "{{board_justfile}}" _check-kvs-system-dependencies
-        just --justfile "{{board_justfile}}" ensure-aws-sdk
-    fi
+    if [ "$(uname -s)" = "Linux" ]; then \
+        just --justfile "{{board_justfile}}" _check-kvs-system-dependencies; \
+        just --justfile "{{board_justfile}}" ensure-aws-sdk; \
+    fi; \
     native_cmake_args=( \
         -S "{{native_kvs_master_dir}}" \
         -B "{{native_kvs_master_build_dir}}" \
@@ -212,17 +216,17 @@ check thing_name='' region=region aws_profile=aws_profile:
         -DTXING_KVS_SYSTEM_CA_CERT_PATH="{{default_system_ca_cert_path}}" \
         -DTXING_KVS_WEBRTC_SDK_DIR="{{aws_kvs_sdk_dir}}" \
         -DTXING_KVS_WEBRTC_SDK_INSTALL_DIR="{{aws_kvs_sdk_install_dir}}" \
-    )
-    if [ "$(uname -s)" = "Linux" ]; then
-        openssl_libdir="$(pkg-config --variable=libdir openssl)"
-        openssl_includedir="$(pkg-config --variable=includedir openssl)"
-        native_cmake_args+=( -DOPENSSL_USE_STATIC_LIBS=FALSE )
-        native_cmake_args+=( -DOPENSSL_INCLUDE_DIR="$openssl_includedir" )
-        native_cmake_args+=( -DOPENSSL_SSL_LIBRARY="$openssl_libdir/libssl.so" )
-        native_cmake_args+=( -DOPENSSL_CRYPTO_LIBRARY="$openssl_libdir/libcrypto.so" )
-    fi
-    cmake "${native_cmake_args[@]}"
-    cmake --build "{{native_kvs_master_build_dir}}" --config Release
+    ); \
+    if [ "$(uname -s)" = "Linux" ]; then \
+        openssl_libdir="$(pkg-config --variable=libdir openssl)"; \
+        openssl_includedir="$(pkg-config --variable=includedir openssl)"; \
+        native_cmake_args+=( -DOPENSSL_USE_STATIC_LIBS=FALSE ); \
+        native_cmake_args+=( -DOPENSSL_INCLUDE_DIR="$openssl_includedir" ); \
+        native_cmake_args+=( -DOPENSSL_SSL_LIBRARY="$openssl_libdir/libssl.so" ); \
+        native_cmake_args+=( -DOPENSSL_CRYPTO_LIBRARY="$openssl_libdir/libcrypto.so" ); \
+    fi; \
+    cmake "${native_cmake_args[@]}"; \
+    cmake --build "{{native_kvs_master_build_dir}}" --config Release; \
     test -x "{{built_native_kvs_master}}"
 
 @test-native:
