@@ -5,45 +5,43 @@ import { resolve } from 'node:path'
 const repoRoot = resolve(import.meta.dir, '../..')
 
 describe('web config wiring', () => {
-  test('write-env sources device and rig identity from project config', () => {
+  test('write-env sources town identity without a preselected device or rig', () => {
     const justfile = readFileSync(resolve(repoRoot, 'web/justfile'), 'utf-8')
 
     expect(justfile).toContain(
-      "write-env thing_name='' sparkplug_group_id='' sparkplug_edge_node_id='' town_thing_name=''",
-    )
-    expect(justfile).toContain(
-      'eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "")"',
-    )
-    expect(justfile).toContain('device_thing_name="$THING_NAME"')
-    expect(justfile).toContain(
-      'eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "")"',
+      "write-env sparkplug_group_id='' town_thing_name=''",
     )
     expect(justfile).toContain('current_sparkplug_group_id="$SPARKPLUG_GROUP_ID"')
-    expect(justfile).toContain('current_sparkplug_edge_node_id="$SPARKPLUG_EDGE_NODE_ID"')
     expect(justfile).toContain('current_town_thing_name="$SPARKPLUG_GROUP_ID"')
+    expect(justfile).not.toContain('_project-aws-env device')
+    expect(justfile).not.toContain('_project-aws-env rig')
     expect(justfile).not.toContain('town_search_query=')
     expect(justfile).toContain('"VITE_TOWN_THING_NAME=$current_town_thing_name"')
-    expect(justfile).toContain('"VITE_DEVICE_THING_NAME=$device_thing_name"')
     expect(justfile).toContain('"VITE_SPARKPLUG_GROUP_ID=$current_sparkplug_group_id"')
-    expect(justfile).toContain('"VITE_SPARKPLUG_EDGE_NODE_ID=$current_sparkplug_edge_node_id"')
-    expect(justfile).toContain('"VITE_TXING_VERSION=$txing_version"')
-    expect(justfile).not.toContain('"VITE_DEVICE_THING_NAME=unit-local"')
+    expect(justfile).not.toContain('VITE_SPARKPLUG_EDGE_NODE_ID')
+    expect(justfile).not.toContain('VITE_DEVICE_THING_NAME')
+    expect(justfile).not.toContain('VITE_TXING_VERSION')
   })
 
-  test('runtime config requires the configured town thing but not a preselected device', () => {
+  test('runtime config requires the configured town thing and uses build-time version', () => {
     const configSource = readFileSync(resolve(repoRoot, 'web/src/config.ts'), 'utf-8')
     const authSource = readFileSync(resolve(repoRoot, 'web/src/auth.ts'), 'utf-8')
     const shadowRuntimeSource = readFileSync(resolve(repoRoot, 'web/src/shadow-api-runtime.ts'), 'utf-8')
+    const viteConfigSource = readFileSync(resolve(repoRoot, 'web/vite.config.ts'), 'utf-8')
 
-    expect(configSource).toContain("const thingName = requireEnv('VITE_DEVICE_THING_NAME') ?? ''")
     expect(configSource).toContain("const townThingName = requireEnv('VITE_TOWN_THING_NAME') ?? ''")
     expect(configSource).toContain("const sparkplugGroupId = requireEnv('VITE_SPARKPLUG_GROUP_ID') ?? ''")
-    expect(configSource).toContain("const txingVersion = requireEnv('VITE_TXING_VERSION') ?? '0.8.0'")
+    expect(configSource).toContain("typeof __TXING_VERSION__ === 'string'")
+    expect(configSource).toContain("? __TXING_VERSION__.trim()")
+    expect(configSource).not.toContain('VITE_SPARKPLUG_EDGE_NODE_ID')
     expect(configSource).toContain('txingVersion,')
     expect(configSource).toContain("errors.push('Missing VITE_TOWN_THING_NAME')")
     expect(configSource).toContain("errors.push('Missing VITE_SPARKPLUG_GROUP_ID')")
-    expect(configSource).not.toContain("errors.push('Missing VITE_DEVICE_THING_NAME')")
-    expect(configSource).not.toContain("const thingName = requireEnv('VITE_DEVICE_THING_NAME') ?? 'unit-local'")
+    expect(configSource).not.toContain('VITE_DEVICE_THING_NAME')
+    expect(configSource).not.toContain('VITE_TXING_VERSION')
+    expect(viteConfigSource).toContain('__TXING_VERSION__')
+    expect(viteConfigSource).toContain("../VERSION")
+    expect(viteConfigSource).not.toContain("git rev-parse --short=12 HEAD")
     expect(authSource).toContain('redirect_uri: getRuntimeAppUrl()')
     expect(authSource).toContain('logout_uri: getRuntimeAppUrl()')
     expect(shadowRuntimeSource).toContain('version: appConfig.txingVersion')
@@ -56,6 +54,8 @@ describe('web config wiring', () => {
 
     expect(justfile).toContain('Production web deployment is managed by Cloudflare Pages.')
     expect(justfile).toContain('Project: txing-office')
+    expect(justfile).toContain('Build command: bun install --frozen-lockfile && bun --bun run build')
+    expect(justfile).toContain('Deploy command: leave empty')
     expect(justfile).toContain('Domain: office.txing.dev')
     expect(justfile).not.toContain('aws s3 sync')
     expect(justfile).not.toContain('aws cloudfront create-invalidation')

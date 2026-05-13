@@ -86,10 +86,27 @@ Cloudflare Pages:
 - Repository: `mparkachov/txing`
 - Production branch: `main`
 - Root directory: `web`
-- Build command: `bun --bun run build`
+- Build command: `bun install --frozen-lockfile && bun --bun run build`
+- Deploy command: leave empty; do not use `npx wrangler deploy`
 - Build output directory: `dist`
 - Domain: `office.txing.dev`
-- Environment variables: `BUN_VERSION=1.3.11` plus the generated `VITE_*` values
+- Environment variables:
+  - `BUN_VERSION=1.3.11`
+  - `VITE_AWS_REGION`
+  - `VITE_TOWN_THING_NAME`
+  - `VITE_SPARKPLUG_GROUP_ID`
+  - `VITE_COGNITO_DOMAIN`
+  - `VITE_COGNITO_CLIENT_ID`
+  - `VITE_COGNITO_USER_POOL_ID`
+  - `VITE_COGNITO_IDENTITY_POOL_ID`
+  - `VITE_IOT_POLICY_NAME`
+  - `VITE_COGNITO_SCOPE`
+  - `VITE_ADMIN_EMAIL`
+
+Do not set `VITE_TXING_VERSION`, `VITE_DEVICE_THING_NAME`, or
+`VITE_SPARKPLUG_EDGE_NODE_ID` in Cloudflare. The version is injected by the Vite
+build from the root `VERSION` file, and the admin SPA discovers rigs and devices
+from the configured town.
 
 The base stack parameter `WebAppUrl` defaults to `https://office.txing.dev`.
 Cognito callback and logout URLs are:
@@ -104,7 +121,8 @@ Public `thing.dev` is a separate Cloudflare Pages project:
 - Repository: `mparkachov/txing`
 - Production branch: `main`
 - Root directory: `site`
-- Build command: `bun --bun run build`
+- Build command: `bun install --frozen-lockfile && bun --bun run build`
+- Deploy command: leave empty; do not use `npx wrangler deploy`
 - Build output directory: `dist`
 - Domain: `thing.dev`
 - Environment variables:

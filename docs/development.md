@@ -31,8 +31,9 @@ semantic version such as `0.8.0`.
 
 Production Greengrass component versions use `VERSION` exactly. Git SHA and
 dirty state are exported separately for diagnostics, but they are not part of
-the Greengrass `ComponentVersion`. Patch releases are created by CI on `main`;
-after pulling a release commit on a rig, the normal workflow is:
+the Greengrass `ComponentVersion`. Bump `VERSION` locally and commit that change
+when intentionally creating a new release. After pulling a release commit on a
+rig, the normal workflow is:
 
 ```bash
 git pull

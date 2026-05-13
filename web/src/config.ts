@@ -30,11 +30,12 @@ const buildConfig = () => {
   const cognitoUserPoolId = requireEnv('VITE_COGNITO_USER_POOL_ID') ?? ''
   const cognitoIdentityPoolId = requireEnv('VITE_COGNITO_IDENTITY_POOL_ID') ?? ''
   const iotPolicyName = requireEnv('VITE_IOT_POLICY_NAME') ?? ''
-  const thingName = requireEnv('VITE_DEVICE_THING_NAME') ?? ''
   const townThingName = requireEnv('VITE_TOWN_THING_NAME') ?? ''
   const sparkplugGroupId = requireEnv('VITE_SPARKPLUG_GROUP_ID') ?? ''
-  const sparkplugEdgeNodeId = requireEnv('VITE_SPARKPLUG_EDGE_NODE_ID') ?? ''
-  const txingVersion = requireEnv('VITE_TXING_VERSION') ?? '0.8.0'
+  const txingVersion =
+    typeof __TXING_VERSION__ === 'string' && __TXING_VERSION__.trim()
+      ? __TXING_VERSION__.trim()
+      : '0.8.0'
 
   const errors: string[] = []
 
@@ -70,10 +71,8 @@ const buildConfig = () => {
     errors,
     awsRegion,
     cognitoIdentityPoolId,
-    thingName,
     townThingName,
     sparkplugGroupId,
-    sparkplugEdgeNodeId,
     txingVersion,
     adminEmail,
     cognitoDomain,

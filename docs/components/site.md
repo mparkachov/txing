@@ -33,7 +33,8 @@ cp site/.env.example site/.env.local
 - Repository: `mparkachov/txing`
 - Production branch: `main`
 - Root directory: `site`
-- Build command: `bun --bun run build`
+- Build command: `bun install --frozen-lockfile && bun --bun run build`
+- Deploy command: leave empty; Cloudflare Pages publishes `dist`
 - Build output directory: `dist`
 - Domain: `thing.dev`
 - Environment variables:

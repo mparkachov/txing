@@ -9,9 +9,10 @@ interface ImportMetaEnv {
   readonly VITE_COGNITO_SCOPE?: string
   readonly VITE_ADMIN_EMAIL?: string
   readonly VITE_IOT_POLICY_NAME?: string
-  readonly VITE_TXING_VERSION?: string
 }
 
 interface ImportMeta {
   readonly env: ImportMetaEnv
 }
+
+declare const __TXING_VERSION__: string
