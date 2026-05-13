@@ -49,4 +49,16 @@ describe('web config wiring', () => {
     expect(shadowRuntimeSource).toContain('version: appConfig.txingVersion')
     expect(shadowRuntimeSource).not.toContain("version: '0.5.0'")
   })
+
+  test('production hosting is configured for Cloudflare Pages', () => {
+    const justfile = readFileSync(resolve(repoRoot, 'web/justfile'), 'utf-8')
+    const redirects = readFileSync(resolve(repoRoot, 'web/public/_redirects'), 'utf-8')
+
+    expect(justfile).toContain('Production web deployment is managed by Cloudflare Pages.')
+    expect(justfile).toContain('Project: txing-office')
+    expect(justfile).toContain('Domain: office.txing.dev')
+    expect(justfile).not.toContain('aws s3 sync')
+    expect(justfile).not.toContain('aws cloudfront create-invalidation')
+    expect(redirects.trim()).toBe('/* /index.html 200')
+  })
 })

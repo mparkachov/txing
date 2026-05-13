@@ -16,6 +16,11 @@ Parameters:
   LocalhostAltAppUrl:
     Type: String
     Default: http://127.0.0.1:5173
+  WebAppUrl:
+    Type: String
+    Default: https://office.txing.dev
+    Description: Cloudflare Pages production web app URL without a trailing slash.
+    AllowedPattern: "^https://.+[^/]$"
   TxingVersion:
     Type: String
     Description: Effective txing repo version deployed with this stack.
@@ -31,6 +36,7 @@ Resources:
         AdminEmail: !Ref AdminEmail
         LocalhostAppUrl: !Ref LocalhostAppUrl
         LocalhostAltAppUrl: !Ref LocalhostAltAppUrl
+        WebAppUrl: !Ref WebAppUrl
 
   TownTypeCatalog:
     Type: AWS::CloudFormation::Stack
@@ -150,12 +156,6 @@ Outputs:
     Value: !GetAtt BaseEnvironment.Outputs.WebCognitoIdentityPoolId
   WebCognitoDomain:
     Value: !GetAtt BaseEnvironment.Outputs.WebCognitoDomain
-  WebAppBucketName:
-    Value: !GetAtt BaseEnvironment.Outputs.WebAppBucketName
-  WebAppDistributionId:
-    Value: !GetAtt BaseEnvironment.Outputs.WebAppDistributionId
-  WebAppDistributionDomainName:
-    Value: !GetAtt BaseEnvironment.Outputs.WebAppDistributionDomainName
   WebAppUrl:
     Value: !GetAtt BaseEnvironment.Outputs.WebAppUrl
   WebExpectedAdminEmail:

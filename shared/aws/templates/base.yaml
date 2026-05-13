@@ -12,6 +12,11 @@ Parameters:
     Type: String
   LocalhostAltAppUrl:
     Type: String
+  WebAppUrl:
+    Type: String
+    Default: https://office.txing.dev
+    Description: Cloudflare Pages production web app URL without a trailing slash.
+    AllowedPattern: "^https://.+[^/]$"
 
 Resources:
   TxingGreengrassArtifactsBucket:
@@ -159,7 +164,6 @@ Resources:
                   - s3:ListBucketVersions
                 Resource:
                   - !GetAtt TxingGreengrassArtifactsBucket.Arn
-                  - !GetAtt TxingWebBucket.Arn
               - Sid: DeleteDisposableBucketObjects
                 Effect: Allow
                 Action:
@@ -167,7 +171,6 @@ Resources:
                   - s3:DeleteObjectVersion
                 Resource:
                   - !Sub "${TxingGreengrassArtifactsBucket.Arn}/*"
-                  - !Sub "${TxingWebBucket.Arn}/*"
               - Sid: DetachOutOfBandIotPolicyTargets
                 Effect: Allow
                 Action:
@@ -688,15 +691,6 @@ Resources:
       CleanupType: S3Bucket
       BucketName: !Ref TxingGreengrassArtifactsBucket
 
-  TxingWebBucketCleanup:
-    Type: Custom::TxingS3BucketCleanup
-    DependsOn:
-      - TxingWebBucket
-    Properties:
-      ServiceToken: !GetAtt TxingStackCleanupFunction.Arn
-      CleanupType: S3Bucket
-      BucketName: !Ref TxingWebBucket
-
   TxingIotPolicyAttachmentCleanup:
     Type: Custom::TxingIotPolicyAttachmentCleanup
     DependsOn:
@@ -819,92 +813,6 @@ Resources:
         app: web-admin
         admin-email: !Ref AdminEmail
 
-  TxingWebBucket:
-    Type: AWS::S3::Bucket
-    Properties:
-      BucketEncryption:
-        ServerSideEncryptionConfiguration:
-          - ServerSideEncryptionByDefault:
-              SSEAlgorithm: AES256
-      OwnershipControls:
-        Rules:
-          - ObjectOwnership: BucketOwnerEnforced
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        IgnorePublicAcls: true
-        BlockPublicPolicy: true
-        RestrictPublicBuckets: true
-
-  TxingWebOriginAccessControl:
-    Type: AWS::CloudFront::OriginAccessControl
-    Properties:
-      OriginAccessControlConfig:
-        Name: !Sub ${AWS::StackName}-txing-web
-        Description: Signs CloudFront requests to the txing web bucket.
-        OriginAccessControlOriginType: s3
-        SigningBehavior: always
-        SigningProtocol: sigv4
-
-  TxingWebDistribution:
-    Type: AWS::CloudFront::Distribution
-    Properties:
-      DistributionConfig:
-        Enabled: true
-        Comment: txing shadow admin SPA
-        DefaultRootObject: index.html
-        HttpVersion: http2
-        IPV6Enabled: true
-        Origins:
-          - Id: txing-web-origin
-            DomainName: !GetAtt TxingWebBucket.RegionalDomainName
-            OriginAccessControlId: !GetAtt TxingWebOriginAccessControl.Id
-            S3OriginConfig: {}
-        DefaultCacheBehavior:
-          TargetOriginId: txing-web-origin
-          ViewerProtocolPolicy: redirect-to-https
-          AllowedMethods:
-            - GET
-            - HEAD
-            - OPTIONS
-          CachedMethods:
-            - GET
-            - HEAD
-            - OPTIONS
-          Compress: true
-          ForwardedValues:
-            QueryString: false
-            Cookies:
-              Forward: none
-        CustomErrorResponses:
-          - ErrorCode: 403
-            ResponseCode: 200
-            ResponsePagePath: /index.html
-            ErrorCachingMinTTL: 0
-          - ErrorCode: 404
-            ResponseCode: 200
-            ResponsePagePath: /index.html
-            ErrorCachingMinTTL: 0
-        PriceClass: PriceClass_100
-        ViewerCertificate:
-          CloudFrontDefaultCertificate: true
-
-  TxingWebBucketPolicy:
-    Type: AWS::S3::BucketPolicy
-    Properties:
-      Bucket: !Ref TxingWebBucket
-      PolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Sid: AllowCloudFrontRead
-            Effect: Allow
-            Principal:
-              Service: cloudfront.amazonaws.com
-            Action: s3:GetObject
-            Resource: !Sub "${TxingWebBucket.Arn}/*"
-            Condition:
-              StringEquals:
-                AWS:SourceArn: !Sub arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${TxingWebDistribution}
-
   TxingAdminUserPoolClient:
     Type: AWS::Cognito::UserPoolClient
     Properties:
@@ -922,11 +830,11 @@ Resources:
       SupportedIdentityProviders:
         - COGNITO
       CallbackURLs:
-        - !Sub https://${TxingWebDistribution.DomainName}/
+        - !Sub "${WebAppUrl}/"
         - !Sub "${LocalhostAppUrl}/"
         - !Sub "${LocalhostAltAppUrl}/"
       LogoutURLs:
-        - !Sub https://${TxingWebDistribution.DomainName}/
+        - !Sub "${WebAppUrl}/"
         - !Sub "${LocalhostAppUrl}/"
         - !Sub "${LocalhostAltAppUrl}/"
       AccessTokenValidity: 60
@@ -1044,14 +952,8 @@ Outputs:
     Value: !Ref TxingAdminIdentityPool
   WebCognitoDomain:
     Value: !Sub https://${CognitoDomainPrefix}.auth.${AWS::Region}.amazoncognito.com
-  WebAppBucketName:
-    Value: !Ref TxingWebBucket
-  WebAppDistributionId:
-    Value: !Ref TxingWebDistribution
-  WebAppDistributionDomainName:
-    Value: !GetAtt TxingWebDistribution.DomainName
   WebAppUrl:
-    Value: !Sub https://${TxingWebDistribution.DomainName}/
+    Value: !Sub "${WebAppUrl}/"
   WebExpectedAdminEmail:
     Value: !Ref AdminEmail
   GreengrassArtifactsBucketName:

@@ -36,63 +36,17 @@ deploy stack_name=stack_name region=region profile=profile web_dist_dir=web_dist
     set -euo pipefail
     cd "{{web_dir}}"
 
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}" "{{stack_name}}")"
-    stack_name="$AWS_STACK_NAME"
-    region="$AWS_REGION"
-    profile="$AWS_SELECTED_PROFILE"
-
-    if [ -z "$region" ]; then
-      echo "region is empty and no default AWS region is configured. Set region=<aws-region>" >&2
-      exit 1
-    fi
-
     if [ ! -d "{{web_dist_dir}}" ]; then
       echo "Web build output {{web_dist_dir}} not found. Run just build first." >&2
       exit 1
     fi
 
-    aws_flags=(--region "$region")
-    if [ -n "$profile" ]; then
-      aws_flags+=(--profile "$profile")
-    fi
-
-    web_bucket_name="$(aws cloudformation describe-stacks \
-      --stack-name "$stack_name" \
-      "${aws_flags[@]}" \
-      --query "Stacks[0].Outputs[?OutputKey=='WebAppBucketName'].OutputValue | [0]" \
-      --output text)"
-
-    web_distribution_id="$(aws cloudformation describe-stacks \
-      --stack-name "$stack_name" \
-      "${aws_flags[@]}" \
-      --query "Stacks[0].Outputs[?OutputKey=='WebAppDistributionId'].OutputValue | [0]" \
-      --output text)"
-
-    if [ "$web_bucket_name" = "None" ] || [ "$web_distribution_id" = "None" ]; then
-      echo "Required web hosting outputs are missing in stack $stack_name. Deploy shared/aws/template.yaml first." >&2
-      exit 1
-    fi
-
-    aws s3 sync "{{web_dist_dir}}/" "s3://$web_bucket_name/" \
-      --delete \
-      --exclude "*.html" \
-      --cache-control "public,max-age=31536000,immutable" \
-      "${aws_flags[@]}"
-
-    while IFS= read -r -d '' html_file; do
-      key="${html_file#"{{web_dist_dir}}"/}"
-      key="${key#/}"
-      aws s3 cp "$html_file" "s3://$web_bucket_name/$key" \
-        --cache-control "no-cache, no-store, must-revalidate" \
-        "${aws_flags[@]}"
-    done < <(find "{{web_dist_dir}}" -type f -name '*.html' -print0)
-
-    aws cloudfront create-invalidation \
-      --distribution-id "$web_distribution_id" \
-      --paths "/*" \
-      "${aws_flags[@]}" >/dev/null
-
-    echo "Published {{web_dist_dir}} to s3://$web_bucket_name and invalidated CloudFront distribution $web_distribution_id."
+    echo "Production web deployment is managed by Cloudflare Pages."
+    echo "Project: txing-office"
+    echo "Root directory: web"
+    echo "Build command: bun --bun run build"
+    echo "Build output directory: dist"
+    echo "Domain: office.txing.dev"
 
 @lint:
     cd "{{web_dir}}"

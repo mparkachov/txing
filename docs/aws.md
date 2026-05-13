@@ -40,11 +40,12 @@ just aws::deploy-rig <town-id> raspi server
 just aws::deploy-device <rig-id> unit bot
 ```
 
-`just aws::deploy` deploys the base root stack. That root stack owns web/Cognito
-infrastructure, common IoT policies, artifact buckets, the Sparkplug witness,
-Fleet Indexing, shared rig/device runtime IAM, AWS IoT ThingTypes, and the SSM
-type catalog. The type catalog is CloudFormation-managed under `/txing` as leaf
-parameters such as `/txing/town/cloud/time/kind` and
+`just aws::deploy` deploys the base root stack. That root stack owns Cognito
+for web authentication, common IoT policies, artifact buckets, the Sparkplug
+witness, Fleet Indexing, shared rig/device runtime IAM, AWS IoT ThingTypes, and
+the SSM type catalog. Web hosting is externalized to Cloudflare Pages. The type
+catalog is CloudFormation-managed under `/txing` as leaf parameters such as
+`/txing/town/cloud/time/kind` and
 `/txing/town/cloud/time/capabilities`.
 
 `just aws::deploy-town <town-name>` idempotently creates or updates only the
@@ -70,16 +71,45 @@ Create or update the Cognito admin user after `aws::deploy`:
 just aws::create-admin-user '<strong-password>'
 ```
 
-Generate and publish the SPA:
+Generate and build the SPA:
 
 ```bash
 just web::write-env
 just web::build
-just web::deploy
 ```
 
 `web::write-env` is allowed to write `web/.env.local` because it is a web build
-input derived from live stack outputs.
+input derived from live stack outputs. Production hosting is handled manually in
+Cloudflare Pages:
+
+- Project: `txing-office`
+- Repository: `mparkachov/txing`
+- Production branch: `main`
+- Root directory: `web`
+- Build command: `bun --bun run build`
+- Build output directory: `dist`
+- Domain: `office.txing.dev`
+- Environment variables: `BUN_VERSION=1.3.11` plus the generated `VITE_*` values
+
+The base stack parameter `WebAppUrl` defaults to `https://office.txing.dev`.
+Cognito callback and logout URLs are:
+
+- `https://office.txing.dev/`
+- `http://localhost:5173/`
+- `http://127.0.0.1:5173/`
+
+Public `thing.dev` is a separate Cloudflare Pages project:
+
+- Project: `thing-dev`
+- Repository: `mparkachov/txing`
+- Production branch: `main`
+- Root directory: `site`
+- Build command: `bun --bun run build`
+- Build output directory: `dist`
+- Domain: `thing.dev`
+- Environment variables:
+  - `BUN_VERSION=1.3.11`
+  - `VITE_OFFICE_SIGNIN_URL=https://office.txing.dev/?signin=1`
 
 ## Runtime Checks
 
@@ -161,9 +191,15 @@ just aws-town cloudformation delete-stack --stack-name "$AWS_STACK_NAME"
 The base stack has delete-time cleanup custom resources for disposable S3 bucket
 contents and IoT policy attachments created outside CloudFormation, such as rig
 certificates and browser Cognito identities. You should not need to manually
-empty `WebAppBucketName` or `GreengrassArtifactsBucketName`, and the base IoT
-policies should be detached from their principals before CloudFormation deletes
-the policy resources.
+empty `GreengrassArtifactsBucketName`, and the base IoT policies should be
+detached from their principals before CloudFormation deletes the policy
+resources.
+
+Legacy AWS-hosted web stacks previously owned `WebAppBucketName` and
+`WebAppDistributionId`. Current CloudFormation removes those resources because
+production web hosting is on Cloudflare Pages. During the first update from an
+older stack, if CloudFormation cannot delete the old web bucket because it is
+not empty, manually empty only that old web bucket and retry the stack update.
 
 CloudFormation packaging buckets are intentionally created outside the stack so
 `aws cloudformation package` can upload templates before a stack exists. Delete

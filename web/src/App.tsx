@@ -146,6 +146,7 @@ const catalogSparkplugPollIntervalMs = 5_000
 const routeSparkplugRedconCommandTimeoutMs = 60_000
 const txingLogoUrl = 'https://txing.dev/txing-logo.png'
 const appHomePath = '/'
+const signInRequestParam = 'signin'
 let shadowApiModulePromise: Promise<typeof import('./shadow-api')> | null = null
 
 const emptyRigCatalogState = (): RigCatalogState => ({
@@ -192,6 +193,25 @@ const getInitialRoute = (): AppRoute => {
   }
 
   return parseAppRoute(window.location.pathname)
+}
+
+const consumeSignInRequest = (): boolean => {
+  if (typeof window === 'undefined') {
+    return false
+  }
+
+  const currentUrl = new URL(window.location.href)
+  if (currentUrl.searchParams.get(signInRequestParam) !== '1') {
+    return false
+  }
+
+  currentUrl.searchParams.delete(signInRequestParam)
+  window.history.replaceState(
+    {},
+    document.title,
+    `${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}`,
+  )
+  return true
 }
 
 const isPlainLeftClick = (event: ReactMouseEvent<HTMLAnchorElement>): boolean =>
@@ -688,6 +708,8 @@ function App({ initialAuthError = '' }: AppProps) {
     }
 
     const hydrateSession = async () => {
+      const shouldBeginRequestedSignIn = consumeSignInRequest()
+
       if (!initialAuthError) {
         setBlockingError('')
       }
@@ -695,6 +717,12 @@ function App({ initialAuthError = '' }: AppProps) {
       try {
         const restoredTokens = await refreshTokensIfNeeded()
         if (!restoredTokens) {
+          if (shouldBeginRequestedSignIn) {
+            setStatus('authenticating')
+            await beginSignIn()
+            return
+          }
+
           setStatus('signed_out')
           return
         }

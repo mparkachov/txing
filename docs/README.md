@@ -14,6 +14,7 @@ This repository now documents the current implementation directly rather than ke
 - [Board](./components/board.md)
 - [MCU](./components/mcu.md)
 - [Web](./components/web.md)
+- [Public Site](./components/site.md)
 - [Witness](./components/witness.md)
 
 ## Contracts

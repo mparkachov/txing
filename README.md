@@ -99,6 +99,7 @@ This repository contains one sample implementation of the `txing` concept:
 - `rig/`: the current Raspberry Pi coordinator that acts as the `rig` lifecycle runtime and bridges cloud intent to the watch link
 - `witness/`: the Sparkplug-to-shadow projection component
 - `web/`: the operator/admin surface
+- `site/`: the public `thing.dev` landing page
 - `docs/`: repo-level setup, workflow, and component documentation
 - `devices/unit/docs/`: unit-specific contracts for Thing Shadow, Sparkplug, BLE, and board video
 

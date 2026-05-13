@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-labelledby="title">
+  <title id="title">TXING mark</title>
+  <rect width="96" height="96" rx="20" fill="#111416"/>
+  <path d="M23 27h50v10H53v32H43V37H23V27Z" fill="#F4F1EA"/>
+  <path d="M24 70 43 49 24 26h13l13 16 13-16h13L57 49l19 21H63L50 56 37 70H24Z" fill="#3FB7A3" fill-opacity=".92"/>
+  <path d="M43 49 50 42l7 7-7 7-7-7Z" fill="#E2B64B"/>
+</svg>

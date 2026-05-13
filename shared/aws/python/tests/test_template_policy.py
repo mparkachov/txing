@@ -154,7 +154,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("TxingStackCleanupFunction:", template)
         self.assertIn("Type: Custom::TxingS3BucketCleanup", template)
         self.assertIn("TxingGreengrassArtifactsBucketCleanup:", template)
-        self.assertIn("TxingWebBucketCleanup:", template)
+        self.assertNotIn("TxingWebBucketCleanup:", template)
         self.assertIn('paginator = s3.get_paginator("list_object_versions")', template)
         self.assertIn('object_paginator = s3.get_paginator("list_objects_v2")', template)
         self.assertIn("s3:DeleteObjectVersion", template)
@@ -396,6 +396,8 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("export_line TXING_VERSION_BASE", root_justfile)
         self.assertIn("export_line TXING_VERSION", root_justfile)
         self.assertIn("TxingVersion:", root_template)
+        self.assertIn("WebAppUrl:", root_template)
+        self.assertIn("WebAppUrl: !Ref WebAppUrl", root_template)
         self.assertIn("TimeRuntimeVersion: !Ref TxingVersion", root_template)
         self.assertIn("Value: !Ref TxingVersion", root_template)
         self.assertIn("TimeRuntimeVersion:", cloud_time_template)
@@ -405,6 +407,21 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("- arm64", cloud_time_template)
         self.assertNotIn('SERVER_VERSION: "0.5.0"', cloud_time_template)
         self.assertIn('"TxingVersion=$TXING_VERSION"', aws_justfile)
+        self.assertIn('"WebAppUrl=$web_app_url"', aws_justfile)
+
+    def test_web_hosting_is_external_to_aws_stack(self) -> None:
+        template = _template_text()
+        root_template = (AWS_DIR / "template.yaml").read_text(encoding="utf-8")
+
+        self.assertNotIn("AWS::CloudFront::Distribution", template)
+        self.assertNotIn("AWS::CloudFront::OriginAccessControl", template)
+        self.assertNotIn("TxingWebBucket:", template)
+        self.assertNotIn("WebAppBucketName:", template)
+        self.assertNotIn("WebAppDistributionId:", template)
+        self.assertNotIn("WebAppBucketName:", root_template)
+        self.assertNotIn("WebAppDistributionId:", root_template)
+        self.assertIn('Default: https://office.txing.dev', root_template)
+        self.assertIn('- !Sub "${WebAppUrl}/"', template)
 
     def test_static_manifests_use_plain_semver_only(self) -> None:
         manifest_paths = [

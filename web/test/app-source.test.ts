@@ -33,4 +33,17 @@ describe('app route catalog source wiring', () => {
     expect(appSource).toContain('getCatalogDeviceLabel(device)')
     expect(appSource).not.toContain('formatCatalogDetailLine(')
   })
+
+  test('public landing can request office-origin sign-in', () => {
+    const appSource = readFileSync(resolve(repoRoot, 'web/src/App.tsx'), 'utf-8')
+
+    expect(appSource).toContain("const signInRequestParam = 'signin'")
+    expect(appSource).toContain('const consumeSignInRequest = (): boolean =>')
+    expect(appSource).toContain("currentUrl.searchParams.get(signInRequestParam) !== '1'")
+    expect(appSource).toContain('currentUrl.searchParams.delete(signInRequestParam)')
+    expect(appSource).toContain('const shouldBeginRequestedSignIn = consumeSignInRequest()')
+    expect(appSource).toContain('if (shouldBeginRequestedSignIn)')
+    expect(appSource).toContain("setStatus('authenticating')")
+    expect(appSource).toContain('await beginSignIn()')
+  })
 })

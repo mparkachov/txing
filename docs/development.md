@@ -7,6 +7,7 @@ For the system overview, see [../README.md](../README.md). For the documentation
 - `devices/unit/`: self-contained current `unit` device type, including MCU, board runtime, rig process implementation, AWS shadow contracts, docs, and web detail adapter
 - `rig/`: Rust Greengrass components and rig host tooling for the always-on coordinator
 - `web/`: React + Vite admin/operator SPA
+- `site/`: public static Vite landing page for `thing.dev`
 - `witness/`: Sparkplug-to-shadow projection Lambda source and tests
 - `shared/aws/`: shared AWS CLI helpers, CloudFormation, and registry utilities
 - `devices/template/`: scaffold for a new device type using the language-neutral manifest/process/web contracts
@@ -159,6 +160,14 @@ Web:
 just web::install
 just web::write-env
 just web::dev
+```
+
+Public site:
+
+```bash
+cd site
+bun install
+bun run dev
 ```
 
 Witness:
