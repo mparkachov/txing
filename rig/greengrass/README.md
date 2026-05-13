@@ -32,30 +32,32 @@ Lifecycle boundary:
   operational signals, but Sparkplug `NBIRTH` and `NDEATH` remain the
   authoritative txing rig lifecycle.
 
-`just rig::deploy` is the local Greengrass Lite development path. Raspi rigs
-deploy the Rust rig-wide Sparkplug manager and the Rust BLE connectivity adapter.
-Cloud rigs deploy the Rust rig-wide Sparkplug manager and the Rust AWS
-connectivity adapter. Unit v1 components are intentionally excluded from the
-migrated deployment set. The recipe builds the Rust manager binary and the
-selected Rust connectivity binary. It assembles
-self-contained artifacts, generates concrete local recipes under
-`rig/build/greengrass-local`, and runs `ggl-cli deploy`. The generated
-recipe/artifact tree is kept until the next deploy because Greengrass Lite copies
-artifacts asynchronously after the CLI returns.
-The checked-in recipe files are publishing templates; local deployment does not
-use their placeholder S3 URIs.
-The Rust Greengrass SDK build is Linux-only in this repo, so run
-`just rig::deploy` on the Greengrass rig host rather than packaging the component
-from macOS.
+`just rig::deploy <rig-type|all> [version]` is the production Greengrass cloud
+deployment path. It builds Linux Greengrass component binaries, uploads
+immutable artifacts to the Greengrass artifacts bucket, creates Greengrass
+component versions, and creates continuous deployments for the rig-type thing
+groups. Raspi deployments include the Sparkplug manager and BLE connectivity;
+cloud deployments include the Sparkplug manager and AWS retained MQTT
+connectivity. Unit v1 components are intentionally excluded from the migrated
+deployment set.
+
+The checked-in recipe files are publishing templates. Production deploys do not
+use host-local `ggl-cli deploy`, `rig/build/greengrass-local`, or
+`/var/lib/greengrass/config.db` state. The old local Greengrass Lite deploy path
+is retained only as `just rig::deploy-local <rig-id>` for debugging Greengrass
+Lite itself.
+
+The Rust Greengrass SDK build is Linux-only in this repo, so run cloud deploys
+from a Linux builder or rig host. macOS development uses `just rig::start` with
+the local Unix-socket broker instead.
 
 Native Greengrass Lite is built and installed through:
 
 ```bash
-sudo apt install -y cmake build-essential pkg-config python3-venv python3-dev python3-pip git curl ninja-build unzip default-jre sqlite3 libssl-dev libcurl4-openssl-dev libdbus-1-dev libglib2.0-dev libavahi-client-dev libgirepository1.0-dev libcairo2-dev libreadline-dev uuid-dev libzip-dev libsqlite3-dev libyaml-dev libsystemd-dev libevent-dev liburiparser-dev cgroup-tools bluez pi-bluetooth avahi-utils
+sudo apt install -y cmake build-essential pkg-config python3-venv python3-dev python3-pip git curl ninja-build unzip default-jre libssl-dev libcurl4-openssl-dev libdbus-1-dev libglib2.0-dev libavahi-client-dev libgirepository1.0-dev libcairo2-dev libreadline-dev uuid-dev libzip-dev libyaml-dev libsystemd-dev libevent-dev liburiparser-dev cgroup-tools bluez pi-bluetooth avahi-utils
 cmake --version
 just rig::build
 just rig::install-service <rig-id>
-just rig::deploy <rig-id>
 ```
 
 Run the package install before `just rig::build`; the native build invokes
@@ -80,7 +82,7 @@ Greengrass Lite `misc/run_nucleus` script; it does not create or rename txing
 systemd units, does not enable rig-type-specific host dependencies, and does not
 remove the old custom `rig.service`. The standard systemd entrypoint is
 `greengrass-lite.target`.
-The install and deploy recipes also install systemd drop-ins that set
+The install recipe also installs systemd drop-ins that set
 `LogLevelMax=warning` for `ggl.core.ggipcd.service` and
 `ggl.core.iotcored.service`, keeping high-volume IPC/MQTT state logs quiet while
 leaving other Greengrass Lite and txing component units at their normal log
@@ -89,33 +91,24 @@ level.
 After code changes or `git pull`, run:
 
 ```bash
-just rig::deploy <rig-id>
+just rig::deploy raspi
+just rig::deploy cloud
+just rig::deploy all
 ```
 
-`deploy` builds and stages the selected Rust Greengrass components, so a
-separate build step is not required for the normal edit/pull/deploy loop. The
-recipe generates a local
-Greengrass component version from the current short Git SHA, for example
-`0.8.0+g4e1261afdf2b`, adding a dirty-tree hash when local changes are present,
-so checked-out code is deployed without manually changing version numbers.
-Generated versions intentionally avoid `-` because Greengrass Lite's local
-recipe filename scanner splits recipe names on the last hyphen.
-The deploy recipe also prunes stale local deployment `configArn` entries for the
-txing rig components from `/var/lib/greengrass/config.db`; Greengrass Lite keeps
-one entry per local deployment and can fail with a `Json encode failed` error
-after enough development redeploys.
+`deploy` builds and publishes all three Rust Greengrass components, so a
+separate component build step is not required. Without an explicit version, it
+uses `TXING_VERSION`, for example `0.8.0+g4e1261afdf2b`, adding a dirty-tree hash
+when local changes are present. Generated versions intentionally avoid `-`.
 
-Manual component version pinning is intentionally outside the normal workflow.
-If needed while debugging Greengrass artifact caching, pass the internal fifth
-positional argument:
+Manual component version pinning is optional:
 
 ```bash
-just rig::deploy <rig-id> '' '' '' 0.5.1
+just rig::deploy raspi 0.8.0
 ```
 
-Do not run `just rig::deploy component_version=0.5.1`; values after the recipe
-name are positional recipe arguments. Normal deploys should leave the internal
-component version empty.
+The first argument is the target rig type (`raspi`, `cloud`, or `all`); the
+second argument is the optional component version.
 
 Weather and power things are discovered from the normal AWS registry assignment.
 The rig-wide Sparkplug manager publishes v2 inventory using the registered AWS

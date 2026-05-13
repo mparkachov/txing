@@ -13,7 +13,6 @@ ComponentConfiguration:
     AdapterId: dev.txing.rig.AwsConnectivity
     AwsRegion: ''
     IotEndpoint: ''
-    ClientId: REPLACE_WITH_RIG_THING_ID-aws-connectivity
     HeartbeatIntervalMs: 10000
     StateReportIntervalMs: 10000
     KeepAliveSeconds: 60
@@ -43,10 +42,10 @@ Manifests:
             --adapter-id "{configuration:/AdapterId}" \
             --iot-endpoint "{configuration:/IotEndpoint}" \
             --aws-region "{configuration:/AwsRegion}" \
-            --client-id "{configuration:/ClientId}" \
             --heartbeat-interval-ms "{configuration:/HeartbeatIntervalMs}" \
             --state-report-interval-ms "{configuration:/StateReportIntervalMs}" \
-            --keep-alive-seconds "{configuration:/KeepAliveSeconds}"
+            --keep-alive-seconds "{configuration:/KeepAliveSeconds}" \
+            --include-capability time
     Artifacts:
       - Uri: s3://REPLACE_WITH_TXING_GREENGRASS_ARTIFACT_BUCKET/aws-connectivity/0.8.0/txing-aws-connectivity
         Permission:

@@ -21,7 +21,7 @@ Then use the normal rig path:
 
 ```sh
 just rig::install-service <rig-id>
-just rig::deploy <rig-id>
+just rig::deploy cloud
 ```
 
 Device enrollment is still device-specific:

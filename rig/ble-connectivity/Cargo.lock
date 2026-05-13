@@ -89,6 +89,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "base64"
+version = "0.22.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
+
+[[package]]
 name = "bindgen"
 version = "0.72.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -955,6 +961,7 @@ version = "1.52.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8fc7f01b389ac15039e4dc9531aa973a135d7a4135281b12d7c1bc79fd57fffe"
 dependencies = [
+ "bytes",
  "libc",
  "mio",
  "pin-project-lite",
@@ -1014,6 +1021,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "txing-capability-protocol",
+ "txing-rig-local-pubsub",
  "uuid",
 ]
 
@@ -1024,6 +1032,18 @@ dependencies = [
  "anyhow",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "txing-rig-local-pubsub"
+version = "0.8.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "clap",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

@@ -7,9 +7,9 @@ use txing_sparkplug_manager::runtime::{RuntimeConfig, run_runtime};
 #[command(name = "txing-sparkplug-manager")]
 #[command(about = "Rig-wide txing Sparkplug manager")]
 struct Args {
-    #[arg(long, env = "TXING_RIG_ID")]
+    #[arg(long, env = "TXING_RIG_ID", default_value = "")]
     rig_id: String,
-    #[arg(long, env = "TXING_TOWN_ID")]
+    #[arg(long, env = "TXING_TOWN_ID", default_value = "")]
     town_id: String,
     #[arg(long, env = "AWS_IOT_ENDPOINT", default_value = "")]
     iot_endpoint: String,
@@ -19,6 +19,8 @@ struct Args {
     inventory_interval_seconds: u64,
     #[arg(long, default_value_t = 60_000)]
     command_deadline_ms: u64,
+    #[arg(long, env = "TXING_RIG_LOCAL_PUBSUB_SOCKET", default_value = "")]
+    local_ipc_socket: String,
     #[arg(long)]
     dry_run: bool,
 }
@@ -26,14 +28,14 @@ struct Args {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    let node = node_session_spec(
-        &args.town_id,
-        &args.rig_id,
-        &node_client_id(&args.rig_id),
-        0,
-        now_ms(),
-    )?;
     if args.dry_run {
+        let node = node_session_spec(
+            &args.town_id,
+            &args.rig_id,
+            &node_client_id(&args.rig_id),
+            0,
+            now_ms(),
+        )?;
         let example_device =
             device_session_spec(&args.town_id, &args.rig_id, "example-device", now_ms())?;
         println!("manager=dev.txing.rig.SparkplugManager");
@@ -60,6 +62,7 @@ async fn main() -> Result<()> {
         aws_region: args.aws_region,
         inventory_interval_seconds: args.inventory_interval_seconds,
         command_deadline_ms: args.command_deadline_ms,
+        local_ipc_socket: args.local_ipc_socket,
     })
     .await
 }

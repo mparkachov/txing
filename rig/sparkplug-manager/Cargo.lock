@@ -2464,6 +2464,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "txing-rig-local-pubsub"
+version = "0.8.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "clap",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "txing-sparkplug-manager"
 version = "0.8.0"
 dependencies = [
@@ -2481,6 +2493,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "txing-capability-protocol",
+ "txing-rig-local-pubsub",
 ]
 
 [[package]]

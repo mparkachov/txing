@@ -13,6 +13,8 @@ greengrass_warning_log_units := "ggl.core.ggipcd.service ggl.core.iotcored.servi
 shared_raspi_rig_component_units := "ggl.dev.txing.rig.SparkplugManager.service ggl.dev.txing.rig.BleConnectivity.service"
 raspi_rig_component_units := shared_raspi_rig_component_units
 aws_rig_component_units := "ggl.dev.txing.rig.SparkplugManager.service ggl.dev.txing.rig.AwsConnectivity.service"
+local_run_dir := rig_dir + "/run/local"
+local_pubsub_socket := local_run_dir + "/pubsub.sock"
 default_greengrass_lite_repository := env_var_or_default("TXING_RIG_GREENGRASS_LITE_REPOSITORY", "https://github.com/aws-greengrass/aws-greengrass-lite.git")
 default_greengrass_lite_ref := env_var_or_default("TXING_RIG_GREENGRASS_LITE_REF", "main")
 thing_name := "unit-local"
@@ -495,9 +497,219 @@ install-service rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_
     printf 'txing rig is supervised by the standard Greengrass Lite systemd target %s\n' "{{greengrass_lite_target}}"
     printf 'Deploy rig type %s components with RigName=%s SparkplugGroupId=%s SparkplugEdgeNodeId=%s\n' "$selected_rig_type" "$rig_name" "$sparkplug_group_id" "$sparkplug_edge_node_id"
 
-start rig_id='':
+[private]
+_local-component-list components selected_rig_type:
     #!/usr/bin/env bash
     set -euo pipefail
+    requested="{{components}}"
+    case "$requested" in
+      ''|auto)
+        case "{{selected_rig_type}}" in
+          raspi) requested="sparkplug,ble" ;;
+          cloud) requested="sparkplug,aws" ;;
+          *)
+            echo "Unsupported RIG_TYPE={{selected_rig_type}}. Supported rig types: raspi, cloud." >&2
+            exit 1
+            ;;
+        esac
+        ;;
+      all)
+        requested="sparkplug,ble,aws"
+        ;;
+    esac
+    printf '%s\n' "$requested" | tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | awk 'NF'
+
+[private]
+_local-start rig_id='' components='auto':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ "$(uname -s)" != "Darwin" ]; then
+      echo "rig local runtime is supported by this recipe only on macOS." >&2
+      exit 1
+    fi
+    if [ -n "{{rig_id}}" ]; then
+      export TXING_RIG_ID="{{rig_id}}"
+    fi
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig)"
+    region="$AWS_REGION"
+    profile="$AWS_SELECTED_PROFILE"
+    aws_flags=(--region "$region")
+    if [ -n "$profile" ]; then
+      aws_flags+=(--profile "$profile")
+    fi
+    iot_data_endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}" --query endpointAddress --output text)"
+    run_dir="{{local_run_dir}}"
+    socket="{{local_pubsub_socket}}"
+    mkdir -p "$run_dir"
+
+    cargo build --manifest-path "{{rig_dir}}/local-pubsub/Cargo.toml" >/dev/null
+    cargo build --manifest-path "{{rig_dir}}/sparkplug-manager/Cargo.toml" >/dev/null
+    cargo build --manifest-path "{{rig_dir}}/aws-connectivity/Cargo.toml" >/dev/null
+    ble_mode="${TXING_RIG_MAC_BLE_MODE:-simulated}"
+    case "$ble_mode" in
+      real)
+        cargo build --features ble-real --manifest-path "{{rig_dir}}/ble-connectivity/Cargo.toml" >/dev/null
+        ble_args=()
+        ;;
+      simulated|disabled)
+        cargo build --manifest-path "{{rig_dir}}/ble-connectivity/Cargo.toml" >/dev/null
+        ble_args=(--no-ble)
+        ;;
+      *)
+        echo "Unsupported TXING_RIG_MAC_BLE_MODE=$ble_mode. Supported modes: simulated, disabled, real." >&2
+        exit 1
+        ;;
+    esac
+
+    broker_bin="{{rig_dir}}/local-pubsub/target/debug/txing-rig-local-pubsub"
+    sparkplug_bin="{{rig_dir}}/sparkplug-manager/target/debug/txing-sparkplug-manager"
+    ble_bin="{{rig_dir}}/ble-connectivity/target/debug/txing-ble-connectivity"
+    aws_bin="{{rig_dir}}/aws-connectivity/target/debug/txing-aws-connectivity"
+
+    is_running() {
+      local pid_file="$1"
+      [ -f "$pid_file" ] && kill -0 "$(cat "$pid_file")" >/dev/null 2>&1
+    }
+    start_process() {
+      local name="$1"
+      shift
+      local pid_file="$run_dir/$name.pid"
+      local log_file="$run_dir/$name.log"
+      if is_running "$pid_file"; then
+        printf '%s already running pid=%s log=%s\n' "$name" "$(cat "$pid_file")" "$log_file"
+        return 0
+      fi
+      rm -f "$pid_file"
+      nohup "$@" >>"$log_file" 2>&1 &
+      printf '%s\n' "$!" >"$pid_file"
+      printf 'started %s pid=%s log=%s\n' "$name" "$!" "$log_file"
+    }
+
+    start_process broker "$broker_bin" --socket "$socket"
+    for _attempt in $(seq 1 50); do
+      [ -S "$socket" ] && break
+      sleep 0.1
+    done
+    if [ ! -S "$socket" ]; then
+      echo "local pub/sub broker did not create $socket" >&2
+      exit 1
+    fi
+
+    mapfile -t selected_components < <(just --justfile "{{rig_dir}}/justfile" _local-component-list "{{components}}" "$RIG_TYPE")
+    contains_component() {
+      local wanted="$1"
+      local component
+      for component in "${selected_components[@]}"; do
+        [ "$component" = "$wanted" ] && return 0
+      done
+      return 1
+    }
+    for component in ble aws sparkplug; do
+      contains_component "$component" || continue
+      case "$component" in
+        sparkplug)
+          start_process sparkplug "$sparkplug_bin" \
+            --rig-id "$TXING_RIG_ID" \
+            --town-id "$TXING_TOWN_ID" \
+            --iot-endpoint "$iot_data_endpoint" \
+            --aws-region "$region" \
+            --local-ipc-socket "$socket"
+          ;;
+        ble)
+          start_process ble "$ble_bin" \
+            --local-ipc-socket "$socket" \
+            "${ble_args[@]}"
+          ;;
+        aws)
+          start_process aws "$aws_bin" \
+            --iot-endpoint "$iot_data_endpoint" \
+            --aws-region "$region" \
+            --client-id "$TXING_RIG_ID-aws-connectivity" \
+            --local-ipc-socket "$socket" \
+            --include-capability time
+          ;;
+        *)
+          echo "Unsupported local rig component '$component'. Supported: sparkplug, ble, aws, all, auto." >&2
+          exit 1
+          ;;
+      esac
+    done
+    just --justfile "{{rig_dir}}/justfile" _local-status
+
+[private]
+_local-stop:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    run_dir="{{local_run_dir}}"
+    stop_process() {
+      local name="$1"
+      local pid_file="$run_dir/$name.pid"
+      if [ ! -f "$pid_file" ]; then
+        return 0
+      fi
+      local pid
+      pid="$(cat "$pid_file")"
+      if kill -0 "$pid" >/dev/null 2>&1; then
+        kill "$pid" || true
+        for _attempt in $(seq 1 50); do
+          if ! kill -0 "$pid" >/dev/null 2>&1; then
+            break
+          fi
+          sleep 0.1
+        done
+        if kill -0 "$pid" >/dev/null 2>&1; then
+          kill -9 "$pid" || true
+        fi
+        printf 'stopped %s pid=%s\n' "$name" "$pid"
+      fi
+      rm -f "$pid_file"
+    }
+    for name in aws ble sparkplug broker; do
+      stop_process "$name"
+    done
+    rm -f "{{local_pubsub_socket}}"
+
+[private]
+_local-status:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    run_dir="{{local_run_dir}}"
+    printf 'local rig runtime: %s\n' "$run_dir"
+    for name in broker sparkplug ble aws; do
+      pid_file="$run_dir/$name.pid"
+      log_file="$run_dir/$name.log"
+      if [ -f "$pid_file" ] && kill -0 "$(cat "$pid_file")" >/dev/null 2>&1; then
+        printf '  %-9s running pid=%s log=%s\n' "$name" "$(cat "$pid_file")" "$log_file"
+      else
+        printf '  %-9s stopped log=%s\n' "$name" "$log_file"
+      fi
+    done
+
+[private]
+_local-log lines='200' follow='true':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    shopt -s nullglob
+    logs=({{local_run_dir}}/*.log)
+    if [ "${#logs[@]}" -eq 0 ]; then
+      echo "No local rig logs under {{local_run_dir}}." >&2
+      exit 1
+    fi
+    case "{{follow}}" in
+      true|1|yes|on) tail -n "{{lines}}" -F "${logs[@]}" ;;
+      false|0|no|off) tail -n "{{lines}}" "${logs[@]}" ;;
+      *)
+        echo "follow must be true or false." >&2
+        exit 1
+        ;;
+    esac
+
+start rig_id='' components='auto':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ "$(uname -s)" = "Darwin" ]; then
+      exec just --justfile "{{rig_dir}}/justfile" _local-start "{{rig_id}}" "{{components}}"
+    fi
     if [ -n "{{rig_id}}" ]; then
       export TXING_RIG_ID="{{rig_id}}"
     fi
@@ -574,6 +786,9 @@ start rig_id='':
 stop rig_id='':
     #!/usr/bin/env bash
     set -euo pipefail
+    if [ "$(uname -s)" = "Darwin" ]; then
+      exec just --justfile "{{rig_dir}}/justfile" _local-stop
+    fi
     if [ -n "{{rig_id}}" ]; then
       export TXING_RIG_ID="{{rig_id}}"
     fi
@@ -618,11 +833,18 @@ stop rig_id='':
     done
     sudo systemctl --no-pager --full status "${status_units[@]}" || true
 
-@restart: stop start
+restart rig_id='' components='auto':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just --justfile "{{rig_dir}}/justfile" stop "{{rig_id}}"
+    just --justfile "{{rig_dir}}/justfile" start "{{rig_id}}" "{{components}}"
 
 status rig_id='':
     #!/usr/bin/env bash
     set -euo pipefail
+    if [ "$(uname -s)" = "Darwin" ]; then
+      exec just --justfile "{{rig_dir}}/justfile" _local-status
+    fi
     if [ -n "{{rig_id}}" ]; then
       export TXING_RIG_ID="{{rig_id}}"
     fi
@@ -660,6 +882,9 @@ status rig_id='':
 log rig_id='' lines='200' follow='true':
     #!/usr/bin/env bash
     set -euo pipefail
+    if [ "$(uname -s)" = "Darwin" ]; then
+      exec just --justfile "{{rig_dir}}/justfile" _local-log "{{lines}}" "{{follow}}"
+    fi
     if [ -n "{{rig_id}}" ]; then
       export TXING_RIG_ID="{{rig_id}}"
     fi
@@ -723,7 +948,303 @@ log rig_id='' lines='200' follow='true':
     printf '  %s\n' "${log_units[@]}"
     sudo journalctl "${journal_flags[@]}" "${journal_unit_args[@]}"
 
-deploy rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' component_version='' adapter_id='ble-main' name_fragment='txing' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file:
+deploy target='all' component_version='' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case "{{target}}" in
+      raspi|cloud|all) ;;
+      *)
+        echo "target must be raspi, cloud, or all." >&2
+        exit 1
+        ;;
+    esac
+    if [ "$(uname -s)" != "Linux" ]; then
+      echo "rig::deploy builds Linux Greengrass component binaries; run it on a Linux builder or rig host." >&2
+      echo "This deploy path publishes to AWS Greengrass and does not use host-local ggl-cli deploy state." >&2
+      exit 1
+    fi
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{region}}" "{{aws_profile}}" "" "" "" "{{aws_shared_credentials_file}}")"
+    region="$AWS_REGION"
+    profile="$AWS_SELECTED_PROFILE"
+    aws_flags=(--region "$region")
+    if [ -n "$profile" ]; then
+      aws_flags+=(--profile "$profile")
+    fi
+    resolved_component_version="{{component_version}}"
+    if [ -z "$resolved_component_version" ]; then
+      resolved_component_version="$TXING_VERSION"
+    fi
+    case "$resolved_component_version" in
+      *-*)
+        echo "Greengrass component versions must not contain '-'. Use a version like 0.8.0+g<sha> or 0.8.0." >&2
+        exit 1
+        ;;
+    esac
+    artifacts_bucket="$(
+      aws cloudformation describe-stacks \
+        --stack-name "$AWS_STACK_NAME" \
+        "${aws_flags[@]}" \
+        --query "Stacks[0].Outputs[?OutputKey=='GreengrassArtifactsBucketName'].OutputValue | [0]" \
+        --output text
+    )"
+    if [ -z "$artifacts_bucket" ] || [ "$artifacts_bucket" = "None" ]; then
+      echo "Could not resolve GreengrassArtifactsBucketName from stack $AWS_STACK_NAME." >&2
+      exit 1
+    fi
+    iot_data_endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}" --query endpointAddress --output text)"
+    build_root="$(mktemp -d "${TMPDIR:-/tmp}/txing-greengrass-cloud.XXXXXX")"
+    cleanup_build_root() {
+      rm -rf "$build_root"
+    }
+    trap cleanup_build_root EXIT
+    recipe_dir="$build_root/recipes"
+    artifact_dir="$build_root/artifacts"
+    mkdir -p "$recipe_dir" "$artifact_dir"
+
+    TXING_REAL_CC="${CC:-cc}" CC="{{rig_dir}}/tools/cc-greengrass-info-log" cargo build --release --features greengrass-sdk --manifest-path "{{rig_dir}}/sparkplug-manager/Cargo.toml" >/dev/null
+    TXING_REAL_CC="${CC:-cc}" CC="{{rig_dir}}/tools/cc-greengrass-info-log" cargo build --release --features greengrass-sdk --manifest-path "{{rig_dir}}/ble-connectivity/Cargo.toml" >/dev/null
+    TXING_REAL_CC="${CC:-cc}" CC="{{rig_dir}}/tools/cc-greengrass-info-log" cargo build --release --features greengrass-sdk --manifest-path "{{rig_dir}}/aws-connectivity/Cargo.toml" >/dev/null
+    sparkplug_manager_binary="{{rig_dir}}/sparkplug-manager/target/release/txing-sparkplug-manager"
+    ble_connectivity_binary="{{rig_dir}}/ble-connectivity/target/release/txing-ble-connectivity"
+    aws_connectivity_binary="{{rig_dir}}/aws-connectivity/target/release/txing-aws-connectivity"
+    for binary in "$sparkplug_manager_binary" "$ble_connectivity_binary" "$aws_connectivity_binary"; do
+      if [ ! -x "$binary" ]; then
+        echo "Missing built component binary $binary" >&2
+        exit 1
+      fi
+    done
+
+    upload_artifact() {
+      local component="$1"
+      local source="$2"
+      local filename="$3"
+      local key="greengrass/$resolved_component_version/$component/$filename"
+      aws s3 cp "$source" "s3://$artifacts_bucket/$key" "${aws_flags[@]}" >/dev/null
+      printf 's3://%s/%s\n' "$artifacts_bucket" "$key"
+    }
+    sparkplug_uri="$(upload_artifact dev.txing.rig.SparkplugManager "$sparkplug_manager_binary" txing-sparkplug-manager)"
+    ble_uri="$(upload_artifact dev.txing.rig.BleConnectivity "$ble_connectivity_binary" txing-ble-connectivity)"
+    aws_uri="$(upload_artifact dev.txing.rig.AwsConnectivity "$aws_connectivity_binary" txing-aws-connectivity)"
+
+    cat >"$recipe_dir/dev.txing.rig.SparkplugManager.yaml" <<EOF
+    RecipeFormatVersion: '2020-01-25'
+    ComponentName: dev.txing.rig.SparkplugManager
+    ComponentVersion: '$resolved_component_version'
+    ComponentType: aws.greengrass.generic
+    ComponentDescription: txing rig Sparkplug lifecycle manager.
+    ComponentPublisher: txing
+    ComponentDependencies:
+      aws.greengrass.TokenExchangeService:
+        VersionRequirement: '>=0.0.0'
+        DependencyType: HARD
+    ComponentConfiguration:
+      DefaultConfiguration:
+        InventoryIntervalSeconds: 30
+        CommandDeadlineMs: 60000
+        accessControl:
+          aws.greengrass.ipc.pubsub:
+            dev.txing.rig.SparkplugManager:pubsub:1:
+              policyDescription: Allows Sparkplug manager to exchange v2 capability messages with rig adapters.
+              operations:
+                - aws.greengrass#PublishToTopic
+                - aws.greengrass#SubscribeToTopic
+              resources:
+                - dev/txing/rig/v2/*
+    Manifests:
+      - Platform:
+          os: linux
+          runtime: aws_nucleus_lite
+        Lifecycle:
+          run:
+            Script: |-
+              export AWS_REGION="$AWS_REGION"
+              export AWS_DEFAULT_REGION="$AWS_REGION"
+              export AWS_IOT_ENDPOINT="$iot_data_endpoint"
+              export TXING_VERSION_BASE="$TXING_VERSION_BASE"
+              export TXING_VERSION="$resolved_component_version"
+              unset AWS_PROFILE AWS_DEFAULT_PROFILE AWS_SHARED_CREDENTIALS_FILE
+              exec "{artifacts:path}/txing-sparkplug-manager" \
+                --iot-endpoint "$iot_data_endpoint" \
+                --aws-region "$AWS_REGION" \
+                --inventory-interval-seconds "{configuration:/InventoryIntervalSeconds}" \
+                --command-deadline-ms "{configuration:/CommandDeadlineMs}"
+        Artifacts:
+          - Uri: "$sparkplug_uri"
+            Unarchive: "NONE"
+    EOF
+    cat >"$recipe_dir/dev.txing.rig.BleConnectivity.yaml" <<EOF
+    RecipeFormatVersion: '2020-01-25'
+    ComponentName: dev.txing.rig.BleConnectivity
+    ComponentVersion: '$resolved_component_version'
+    ComponentType: aws.greengrass.generic
+    ComponentDescription: txing rig-wide BLE connectivity adapter for power and weather devices.
+    ComponentPublisher: txing
+    ComponentConfiguration:
+      DefaultConfiguration:
+        AdapterId: dev.txing.rig.BleConnectivity
+        ScanIntervalMs: 500
+        PresenceTimeoutMs: 20000
+        ReconnectDelayMs: 2000
+        ConnectTimeoutMs: 8000
+        CommandTimeoutMs: 8000
+        HeartbeatIntervalMs: 10000
+        MaxConnections: 0
+        accessControl:
+          aws.greengrass.ipc.pubsub:
+            dev.txing.rig.BleConnectivity:pubsub:1:
+              policyDescription: Allows BLE connectivity to exchange v2 capability messages with the Sparkplug manager.
+              operations:
+                - aws.greengrass#PublishToTopic
+                - aws.greengrass#SubscribeToTopic
+              resources:
+                - dev/txing/rig/v2/*
+          aws.greengrass.ipc.mqttproxy:
+            dev.txing.rig.BleConnectivity:mqttproxy:1:
+              policyDescription: Allows BLE connectivity to publish BLE-owned named shadow updates.
+              operations:
+                - aws.greengrass#PublishToIoTCore
+              resources:
+                - \$aws/things/+/shadow/name/ble/update
+                - \$aws/things/+/shadow/name/power/update
+                - \$aws/things/+/shadow/name/weather/update
+    Manifests:
+      - Platform:
+          os: linux
+          runtime: aws_nucleus_lite
+        Lifecycle:
+          run:
+            RequiresPrivilege: true
+            Script: |-
+              exec "{artifacts:path}/txing-ble-connectivity" \
+                --adapter-id "{configuration:/AdapterId}" \
+                --scan-interval-ms "{configuration:/ScanIntervalMs}" \
+                --presence-timeout-ms "{configuration:/PresenceTimeoutMs}" \
+                --reconnect-delay-ms "{configuration:/ReconnectDelayMs}" \
+                --connect-timeout-ms "{configuration:/ConnectTimeoutMs}" \
+                --command-timeout-ms "{configuration:/CommandTimeoutMs}" \
+                --heartbeat-interval-ms "{configuration:/HeartbeatIntervalMs}" \
+                --max-connections "{configuration:/MaxConnections}"
+        Artifacts:
+          - Uri: "$ble_uri"
+            Unarchive: "NONE"
+    EOF
+    cat >"$recipe_dir/dev.txing.rig.AwsConnectivity.yaml" <<EOF
+    RecipeFormatVersion: '2020-01-25'
+    ComponentName: dev.txing.rig.AwsConnectivity
+    ComponentVersion: '$resolved_component_version'
+    ComponentType: aws.greengrass.generic
+    ComponentDescription: txing rig-wide AWS retained MQTT connectivity adapter for cloud devices.
+    ComponentPublisher: txing
+    ComponentDependencies:
+      aws.greengrass.TokenExchangeService:
+        VersionRequirement: '>=0.0.0'
+        DependencyType: HARD
+    ComponentConfiguration:
+      DefaultConfiguration:
+        AdapterId: dev.txing.rig.AwsConnectivity
+        HeartbeatIntervalMs: 10000
+        StateReportIntervalMs: 10000
+        KeepAliveSeconds: 60
+        accessControl:
+          aws.greengrass.ipc.pubsub:
+            dev.txing.rig.AwsConnectivity:pubsub:1:
+              policyDescription: Allows AWS connectivity to exchange v2 capability messages with the Sparkplug manager.
+              operations:
+                - aws.greengrass#PublishToTopic
+                - aws.greengrass#SubscribeToTopic
+              resources:
+                - dev/txing/rig/v2/*
+    Manifests:
+      - Platform:
+          os: linux
+          runtime: aws_nucleus_lite
+        Lifecycle:
+          run:
+            Script: |-
+              export AWS_REGION="$AWS_REGION"
+              export AWS_DEFAULT_REGION="$AWS_REGION"
+              export AWS_IOT_ENDPOINT="$iot_data_endpoint"
+              export TXING_VERSION_BASE="$TXING_VERSION_BASE"
+              export TXING_VERSION="$resolved_component_version"
+              unset AWS_PROFILE AWS_DEFAULT_PROFILE AWS_SHARED_CREDENTIALS_FILE
+              exec "{artifacts:path}/txing-aws-connectivity" \
+                --adapter-id "{configuration:/AdapterId}" \
+                --iot-endpoint "$iot_data_endpoint" \
+                --aws-region "$AWS_REGION" \
+                --heartbeat-interval-ms "{configuration:/HeartbeatIntervalMs}" \
+                --state-report-interval-ms "{configuration:/StateReportIntervalMs}" \
+                --keep-alive-seconds "{configuration:/KeepAliveSeconds}" \
+                --include-capability time
+        Artifacts:
+          - Uri: "$aws_uri"
+            Unarchive: "NONE"
+    EOF
+
+    create_component_version() {
+      local recipe="$1"
+      local err_file="$build_root/create-component.err"
+      if aws greengrassv2 create-component-version --inline-recipe "fileb://$recipe" "${aws_flags[@]}" >/dev/null 2>"$err_file"; then
+        printf 'published component recipe %s\n' "$(basename "$recipe")"
+      elif grep -Eiq 'already exists|conflict|ConflictException' "$err_file"; then
+        printf 'component recipe already exists: %s\n' "$(basename "$recipe")"
+      else
+        cat "$err_file" >&2
+        exit 1
+      fi
+    }
+    create_component_version "$recipe_dir/dev.txing.rig.SparkplugManager.yaml"
+    create_component_version "$recipe_dir/dev.txing.rig.BleConnectivity.yaml"
+    create_component_version "$recipe_dir/dev.txing.rig.AwsConnectivity.yaml"
+
+    ensure_thing_group() {
+      local rig_type="$1"
+      local group="txing-rig-type-$rig_type"
+      local err_file="$build_root/create-thing-group.err"
+      if aws iot create-thing-group --thing-group-name "$group" "${aws_flags[@]}" >/dev/null 2>"$err_file"; then
+        printf 'created thing group %s\n' "$group"
+      elif grep -Eiq 'already exists|ResourceAlreadyExistsException' "$err_file"; then
+        printf 'thing group already exists: %s\n' "$group"
+      else
+        cat "$err_file" >&2
+        exit 1
+      fi
+      aws iot describe-thing-group --thing-group-name "$group" "${aws_flags[@]}" --query thingGroupArn --output text
+    }
+    deploy_rig_type() {
+      local rig_type="$1"
+      local target_arn
+      target_arn="$(ensure_thing_group "$rig_type" | tail -n 1)"
+      local components_json="$build_root/$rig_type-components.json"
+      case "$rig_type" in
+        raspi)
+          jq -n --arg version "$resolved_component_version" '{
+            "dev.txing.rig.SparkplugManager": { "componentVersion": $version },
+            "dev.txing.rig.BleConnectivity": { "componentVersion": $version }
+          }' >"$components_json"
+          ;;
+        cloud)
+          jq -n --arg version "$resolved_component_version" '{
+            "dev.txing.rig.SparkplugManager": { "componentVersion": $version },
+            "dev.txing.rig.AwsConnectivity": { "componentVersion": $version }
+          }' >"$components_json"
+          ;;
+      esac
+      aws greengrassv2 create-deployment \
+        --target-arn "$target_arn" \
+        --deployment-name "txing-$rig_type-$resolved_component_version" \
+        --components "file://$components_json" \
+        "${aws_flags[@]}" >/dev/null
+      printf 'created Greengrass deployment target=%s version=%s group=%s\n' "$rig_type" "$resolved_component_version" "$target_arn"
+    }
+    case "{{target}}" in
+      raspi|cloud) deploy_rig_type "{{target}}" ;;
+      all)
+        deploy_rig_type raspi
+        deploy_rig_type cloud
+        ;;
+    esac
+
+deploy-local rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' component_version='' adapter_id='ble-main' name_fragment='txing' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file:
     #!/usr/bin/env bash
     set -euo pipefail
     for positional_arg in "{{rig_id}}" "{{rig_name}}" "{{sparkplug_group_id}}" "{{sparkplug_edge_node_id}}" "{{component_version}}" "{{adapter_id}}" "{{name_fragment}}"; do

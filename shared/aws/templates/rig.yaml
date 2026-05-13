@@ -124,6 +124,29 @@ Resources:
             Effect: Allow
             Action: s3:GetObject
             Resource: !Sub arn:${AWS::Partition}:s3:::${GreengrassArtifactsBucketName}/*
+          - Sid: RigGreengrassComponentDeploy
+            Effect: Allow
+            Action:
+              - greengrass:CreateComponentVersion
+              - greengrass:CreateDeployment
+              - greengrass:DescribeComponent
+              - greengrass:GetComponent
+              - greengrass:GetDeployment
+              - greengrass:ListComponentVersions
+              - greengrass:ListDeployments
+            Resource: "*"
+          - Sid: RigGreengrassArtifactObjectWrite
+            Effect: Allow
+            Action:
+              - s3:AbortMultipartUpload
+              - s3:PutObject
+            Resource: !Sub arn:${AWS::Partition}:s3:::${GreengrassArtifactsBucketName}/*
+          - Sid: RigTypeThingGroupDeploy
+            Effect: Allow
+            Action:
+              - iot:CreateThingGroup
+              - iot:DescribeThingGroup
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thinggroup/txing-rig-type-*
 
   TxingRigRuntimeRole:
     Type: AWS::IAM::Role

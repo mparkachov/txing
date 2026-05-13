@@ -46,6 +46,15 @@ Resources:
                   - iot:DetachThingPrincipal
                   - iot:ListThingPrincipals
                 Resource: "*"
+              - Sid: EnlistRigTypeThingGroups
+                Effect: Allow
+                Action:
+                  - iot:CreateThingGroup
+                  - iot:DescribeThingGroup
+                  - iot:AddThingToThingGroup
+                  - iot:RemoveThingFromThingGroup
+                  - iot:ListThingGroupsForThing
+                Resource: "*"
               - Sid: EnlistFleetRegistryRead
                 Effect: Allow
                 Action:

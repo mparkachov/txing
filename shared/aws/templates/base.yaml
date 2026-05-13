@@ -90,7 +90,14 @@ Resources:
             Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/*
           - Sid: GreengrassControlPlane
             Effect: Allow
-            Action: greengrass:*
+            Action:
+              - greengrass:CreateComponentVersion
+              - greengrass:CreateDeployment
+              - greengrass:DescribeComponent
+              - greengrass:GetComponent
+              - greengrass:GetDeployment
+              - greengrass:ListComponentVersions
+              - greengrass:ListDeployments
             Resource: "*"
           - Sid: GreengrassTokenExchangeAssumeRole
             Effect: Allow

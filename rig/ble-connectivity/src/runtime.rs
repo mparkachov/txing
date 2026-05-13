@@ -10,16 +10,17 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
-#[cfg(all(feature = "ble-real", target_os = "linux"))]
+#[cfg(all(feature = "ble-real", any(target_os = "linux", target_os = "macos")))]
 use btleplug::api::{
     Central, Characteristic, Manager as _, Peripheral as _, ScanFilter, WriteType,
 };
-#[cfg(all(feature = "ble-real", target_os = "linux"))]
+#[cfg(all(feature = "ble-real", any(target_os = "linux", target_os = "macos")))]
 use btleplug::platform::{Adapter, Manager, Peripheral};
-#[cfg(all(feature = "ble-real", target_os = "linux"))]
+#[cfg(all(feature = "ble-real", any(target_os = "linux", target_os = "macos")))]
 use futures::StreamExt;
 use tokio::sync::{Semaphore, broadcast, mpsc};
 use tokio::time::{MissedTickBehavior, interval, sleep, timeout};
+use txing_rig_local_pubsub::LocalPubSubClient;
 use uuid::Uuid;
 
 use crate::ble_protocol::{
@@ -62,6 +63,7 @@ pub struct RuntimeConfig {
     pub heartbeat_interval_ms: u64,
     pub max_connections: usize,
     pub no_ble: bool,
+    pub local_ipc_socket: String,
 }
 
 impl Default for RuntimeConfig {
@@ -76,6 +78,7 @@ impl Default for RuntimeConfig {
             heartbeat_interval_ms: 10_000,
             max_connections: 0,
             no_ble: false,
+            local_ipc_socket: String::new(),
         }
     }
 }
@@ -991,7 +994,7 @@ struct BleNotification {
     payload: Vec<u8>,
 }
 
-#[cfg(all(feature = "ble-real", target_os = "linux"))]
+#[cfg(all(feature = "ble-real", any(target_os = "linux", target_os = "macos")))]
 struct ConnectedDevice {
     peripheral: Peripheral,
     command_char: Characteristic,
@@ -1004,7 +1007,7 @@ struct ConnectedDevice {
     _permit: Option<tokio::sync::OwnedSemaphorePermit>,
 }
 
-#[cfg(all(feature = "ble-real", target_os = "linux"))]
+#[cfg(all(feature = "ble-real", any(target_os = "linux", target_os = "macos")))]
 impl ConnectedDevice {
     async fn connect(
         spec: &DeviceSpec,
@@ -1198,13 +1201,13 @@ impl ConnectedDevice {
     }
 }
 
-#[cfg(all(feature = "ble-real", target_os = "linux"))]
+#[cfg(all(feature = "ble-real", any(target_os = "linux", target_os = "macos")))]
 async fn clear_peripheral_connect_state(peripheral: &Peripheral) {
     let _ = peripheral.disconnect().await;
     sleep(Duration::from_millis(BLE_CONNECT_RESET_DELAY_MS)).await;
 }
 
-#[cfg(all(feature = "ble-real", target_os = "linux"))]
+#[cfg(all(feature = "ble-real", any(target_os = "linux", target_os = "macos")))]
 impl Drop for ConnectedDevice {
     fn drop(&mut self) {
         self.notification_task.abort();
@@ -1225,12 +1228,12 @@ impl Drop for ConnectedDevice {
     }
 }
 
-#[cfg(not(all(feature = "ble-real", target_os = "linux")))]
+#[cfg(not(all(feature = "ble-real", any(target_os = "linux", target_os = "macos"))))]
 struct ConnectedDevice {
     connected: bool,
 }
 
-#[cfg(not(all(feature = "ble-real", target_os = "linux")))]
+#[cfg(not(all(feature = "ble-real", any(target_os = "linux", target_os = "macos"))))]
 impl ConnectedDevice {
     async fn connect(
         _spec: &DeviceSpec,
@@ -1277,7 +1280,7 @@ impl ConnectedDevice {
     }
 }
 
-#[cfg(all(feature = "ble-real", target_os = "linux"))]
+#[cfg(all(feature = "ble-real", any(target_os = "linux", target_os = "macos")))]
 fn find_characteristic(
     characteristics: &BTreeSet<Characteristic>,
     uuid: Uuid,
@@ -1288,7 +1291,7 @@ fn find_characteristic(
         .cloned()
 }
 
-#[cfg(all(feature = "ble-real", target_os = "linux"))]
+#[cfg(all(feature = "ble-real", any(target_os = "linux", target_os = "macos")))]
 async fn default_adapter() -> Result<Adapter> {
     let manager = Manager::new().await.context("create BLE manager")?;
     let adapters = manager.adapters().await.context("list BLE adapters")?;
@@ -1298,7 +1301,7 @@ async fn default_adapter() -> Result<Adapter> {
         .ok_or_else(|| anyhow!("no BLE adapter found"))
 }
 
-#[cfg(all(feature = "ble-real", target_os = "linux"))]
+#[cfg(all(feature = "ble-real", any(target_os = "linux", target_os = "macos")))]
 async fn find_peripheral(
     adapter: &Adapter,
     address: &str,
@@ -1325,7 +1328,7 @@ async fn find_peripheral(
     Ok(None)
 }
 
-#[cfg(all(feature = "ble-real", target_os = "linux"))]
+#[cfg(all(feature = "ble-real", any(target_os = "linux", target_os = "macos")))]
 async fn run_scanner(
     config: RuntimeConfig,
     advertisements: broadcast::Sender<Advertisement>,
@@ -1374,7 +1377,7 @@ async fn run_scanner(
     }
 }
 
-#[cfg(not(all(feature = "ble-real", target_os = "linux")))]
+#[cfg(not(all(feature = "ble-real", any(target_os = "linux", target_os = "macos"))))]
 async fn run_scanner(
     _config: RuntimeConfig,
     _advertisements: broadcast::Sender<Advertisement>,
@@ -1383,6 +1386,9 @@ async fn run_scanner(
 }
 
 pub async fn run_component_runtime(config: RuntimeConfig) -> Result<()> {
+    if !config.local_ipc_socket.trim().is_empty() {
+        return run_local_runtime(config).await;
+    }
     #[cfg(all(feature = "greengrass-sdk", target_os = "linux"))]
     {
         run_greengrass_runtime(config).await
@@ -1390,7 +1396,9 @@ pub async fn run_component_runtime(config: RuntimeConfig) -> Result<()> {
     #[cfg(not(all(feature = "greengrass-sdk", target_os = "linux")))]
     {
         let _ = config;
-        bail!("build with --features greengrass-sdk on Linux to run the live Greengrass runtime")
+        bail!(
+            "build with --features greengrass-sdk on Linux to run the live Greengrass runtime, or pass --local-ipc-socket for local development"
+        )
     }
 }
 
@@ -1519,6 +1527,94 @@ async fn run_greengrass_runtime(config: RuntimeConfig) -> Result<()> {
     }
     drop(command_subscription);
     drop(inventory_subscription);
+    result
+}
+
+async fn run_local_runtime(config: RuntimeConfig) -> Result<()> {
+    let socket = config.local_ipc_socket.clone();
+    let mut local_client = LocalPubSubClient::connect(&socket).await?;
+    local_client.subscribe(INVENTORY_TOPIC).await?;
+    local_client
+        .subscribe(format!("{CAPABILITY_COMMAND_TOPIC_PREFIX}/+"))
+        .await?;
+    let local_publisher = local_client.publisher();
+
+    let (advertisements, _) = broadcast::channel(SCANNER_BUFFER);
+    let (outbound_sender, mut outbound_receiver) = mpsc::unbounded_channel();
+    let (shadow_sender, mut shadow_receiver) = mpsc::unbounded_channel();
+    let mut runtime = RuntimeState::new(
+        config.clone(),
+        advertisements.clone(),
+        outbound_sender,
+        shadow_sender,
+    );
+
+    let scanner_task = if config.no_ble {
+        None
+    } else {
+        Some(tokio::spawn(run_scanner(config.clone(), advertisements)))
+    };
+    let mut heartbeat_seq = 0u64;
+    let mut heartbeat_timer = interval(Duration::from_millis(config.heartbeat_interval_ms.max(1)));
+    heartbeat_timer.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    let mut shadow_skip_logged = false;
+
+    let result = loop {
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => break Ok(()),
+            received = local_client.recv() => {
+                match received {
+                    Some(Ok(message)) => {
+                        if let Err(err) = runtime.handle_local_message(message.topic, message.payload).await {
+                            eprintln!("warning: BLE connectivity local IPC event failed: {err:#}");
+                        }
+                    }
+                    Some(Err(message)) => eprintln!("warning: BLE connectivity local IPC broker error: {message}"),
+                    None => break Err(anyhow!("local pub/sub socket closed")),
+                }
+            }
+            Some(outbound) = outbound_receiver.recv() => {
+                if let Err(err) = local_publisher.publish(&outbound.topic, &outbound.payload).await {
+                    eprintln!("warning: BLE connectivity local IPC publish failed topic={}: {err:#}", outbound.topic);
+                }
+            }
+            Some(update) = shadow_receiver.recv() => {
+                if !shadow_skip_logged {
+                    eprintln!(
+                        "warning: BLE local runtime is not publishing AWS IoT shadow updates directly; first skipped topic={}",
+                        update.topic
+                    );
+                    shadow_skip_logged = true;
+                }
+            }
+            _ = heartbeat_timer.tick() => {
+                heartbeat_seq += 1;
+                let heartbeat = CapabilityHeartbeat::new(
+                    &config.adapter_id,
+                    txing_capability_protocol::HEARTBEAT_RUNNING,
+                    None,
+                    now_ms(),
+                    heartbeat_seq,
+                );
+                match heartbeat.to_vec().and_then(|payload| {
+                    Ok((build_capability_heartbeat_topic(&config.adapter_id)?, payload))
+                }) {
+                    Ok((topic, payload)) => {
+                        if let Err(err) = local_publisher.publish(&topic, &payload).await {
+                            eprintln!("warning: BLE heartbeat publish failed: {err:#}");
+                        }
+                    }
+                    Err(err) => eprintln!("warning: BLE heartbeat build failed: {err:#}"),
+                }
+            }
+        }
+    };
+
+    runtime.shutdown().await;
+    if let Some(scanner_task) = scanner_task {
+        scanner_task.abort();
+        let _ = scanner_task.await;
+    }
     result
 }
 

@@ -81,7 +81,7 @@ Common commands:
 just --list
 just unit::mcu::build
 just rig::check <rig-id>
-just rig::deploy <rig-id>
+just rig::deploy <rig-type|all>
 just rig::status <rig-id>
 just unit::board::run
 just web::dev
@@ -145,7 +145,7 @@ Rig:
 ```bash
 just rig::check <rig-id>
 just rig::build
-just rig::deploy <rig-id>
+just rig::deploy <rig-type|all>
 just rig::log <rig-id>
 ```
 

@@ -108,14 +108,14 @@ The current contract sources are:
 `rig::build` requires the Greengrass Lite native toolchain on the rig
 host. On Raspberry Pi OS Lite/Trixie, install at least `cmake`,
 `build-essential`, `pkg-config`, `libssl-dev`, `libcurl4-openssl-dev`,
-`libdbus-1-dev`, `uuid-dev`, `libzip-dev`, `libsqlite3-dev`,
-`sqlite3`, `libyaml-dev`, `libsystemd-dev`, `libevent-dev`, `liburiparser-dev`, and
+`libdbus-1-dev`, `uuid-dev`, `libzip-dev`,
+`libyaml-dev`, `libsystemd-dev`, `libevent-dev`, `liburiparser-dev`, and
 `cgroup-tools`.
 
 ```bash
 just rig::check <rig-id>
 just rig::build
-just rig::deploy <rig-id>
+just rig::install-service <rig-id>
 just rig::log <rig-id>
 ```
 
@@ -140,7 +140,6 @@ adapter.
 ```bash
 just rig::build
 just rig::install-service <rig-id>
-just rig::deploy <rig-id>
 sudo systemctl status --with-dependencies greengrass-lite.target
 ```
 
@@ -171,24 +170,25 @@ sudo systemctl enable --now bluetooth.service
 Run `just rig::check <rig-id>` after configuring the host. It fails if a required
 service for the configured rig type is missing, disabled, or inactive.
 
-Use `just rig::deploy <rig-id>` after changing or pulling rig code; it builds
-and stages the selected Rust Greengrass components, generates a local component
-version from the current short Git SHA, and then stages a new local component
-artifact under
-`rig/build/greengrass-local`. That staging directory is intentionally kept until
-the next deploy because Greengrass Lite copies artifacts asynchronously. Use
-`just rig::restart` only when you want to restart the existing Greengrass Lite
-systemd units without changing the deployed component version.
+Use `just rig::deploy <rig-type|all> [version]` from a Linux builder after
+changing or pulling rig code. It builds the Rust Greengrass component binaries,
+uploads immutable artifacts to the Greengrass artifacts bucket, creates
+component versions, and creates AWS Greengrass deployments for the rig-type
+thing groups. New rigs enlisted into `txing-rig-type-raspi` or
+`txing-rig-type-cloud` receive the matching deployment automatically after the
+host starts Greengrass Lite.
 
-For local redeploys that must force a specific Greengrass component version,
-pass the internal fifth positional argument:
+The production install path does not run `ggl-cli deploy`, does not stage
+artifacts under `rig/build/greengrass-local`, and does not depend on
+`/var/lib/greengrass/config.db`. Use `just rig::restart` only when you want to
+restart the existing Greengrass Lite systemd units without changing the deployed
+component version.
+
+The old local Greengrass Lite deploy path is available only as a debug escape
+hatch:
 
 ```bash
-just rig::deploy <rig-id> '' '' '' 0.5.1
+just rig::deploy-local <rig-id>
 ```
-
-Do not pass `component_version=...` after the recipe name; `just` treats that as
-the first positional recipe argument. Avoid `-` in local component versions
-because Greengrass Lite splits local recipe filenames on the last hyphen.
 
 Host setup details live in [installation.md](../installation.md). AWS bootstrap and registry steps live in [aws.md](../aws.md).

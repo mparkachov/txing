@@ -32,9 +32,9 @@ to `cmake: command not found`.
 sudo apt update
 sudo apt full-upgrade -y
 sudo apt install -y \
-  git curl jq ca-certificates python3-venv pipx unzip sqlite3 \
+  git curl jq ca-certificates python3-venv pipx unzip \
   build-essential pkg-config cmake libssl-dev libcurl4-openssl-dev \
-  libdbus-1-dev uuid-dev libzip-dev libsqlite3-dev libyaml-dev libsystemd-dev \
+  libdbus-1-dev uuid-dev libzip-dev libyaml-dev libsystemd-dev \
   libevent-dev liburiparser-dev cgroup-tools
 ```
 
@@ -173,7 +173,7 @@ credential-provider endpoints, and reading the
 cd "$TXING_HOME"
 just rig::build
 just rig::install-service <rig-id>
-just rig::deploy <rig-id>
+sudo systemctl status --with-dependencies greengrass-lite.target
 ```
 
 `just rig::build` compiles Greengrass Lite with `GG_LOG_LEVEL=INFO`.
@@ -189,33 +189,27 @@ if it still exists on an older host. The recipe creates the default `ggcore` and
 `ggcore:ggcore`, and starts `greengrass-lite.target` through the upstream
 `misc/run_nucleus` script.
 
-`just rig::deploy <rig-id>` builds the selected Rust Greengrass component
-binaries, stages recipes and artifacts under `rig/build/greengrass-local`, and
-deploys them with `ggl-cli deploy`. For `RIG_TYPE=raspi` it deploys
-`dev.txing.rig.SparkplugManager` plus `dev.txing.rig.BleConnectivity`. For
-`RIG_TYPE=cloud` it deploys `dev.txing.rig.SparkplugManager` plus
-`dev.txing.rig.AwsConnectivity`. The staging directory is kept after `ggl-cli`
-returns because Greengrass Lite copies artifacts asynchronously. The recipe
-generates the local Greengrass component version from the current short Git SHA.
-A Greengrass service restart alone restarts the previously deployed component
-artifact.
+`just rig::install-service <rig-id>` only installs Greengrass Lite, certificate
+material, and bootstrap configuration. Txing components are delivered by the AWS
+Greengrass deployment that targets the rig-type thing group. A clean host with
+certificates, `/etc/greengrass/config.yaml`, network, and AWS access should join
+that deployment after Greengrass Lite starts; no host-local `ggl-cli deploy` or
+`/var/lib/greengrass/config.db` state is part of the production workflow.
 
-Before each local deployment, the recipe prunes stale Greengrass Lite
-`configArn` entries for the txing rig components from `/var/lib/greengrass/config.db`.
-Greengrass Lite appends one entry per local deployment, and repeated development
-deploys can otherwise overflow its config encoder and leave systemd linked to an
-older component version.
-
-When you need to force a specific Greengrass component version for a local
-redeploy, pass the internal fifth positional argument:
+Publish or update those rig-type deployments from a Linux builder with AWS
+permissions:
 
 ```bash
-just rig::deploy <rig-id> '' '' '' 0.5.1
+just rig::deploy raspi
+just rig::deploy cloud
+just rig::deploy all
 ```
 
-Do not run `just rig::deploy component_version=0.5.1`; `just` treats arguments
-after a recipe as positional values. Avoid `-` in local component versions
-because Greengrass Lite splits local recipe filenames on the last hyphen.
+`just rig::deploy <rig-type|all> [version]` uploads immutable artifacts to the
+Greengrass artifacts bucket, creates Greengrass component versions, and creates
+continuous deployments for `txing-rig-type-raspi` and/or
+`txing-rig-type-cloud`. The old host-local `ggl-cli deploy` path is kept only as
+`just rig::deploy-local <rig-id>` for debugging Greengrass Lite itself.
 
 Inspect Greengrass service health with:
 

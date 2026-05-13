@@ -24,6 +24,7 @@ const CFN_DISCHARGE_PHYSICAL_ID: &str = "txing-discharge-things-on-delete";
 const ACTIVE_CFN_DISCHARGE_LOGICAL_ID: &str = "TxingDischargeThingsOnStackDelete";
 const TYPE_CATALOG_ROOT: &str = "/txing";
 const SPARKPLUG_NAMESPACE: &str = "spBv1.0";
+const RIG_TYPE_THING_GROUP_PREFIX: &str = "txing-rig-type-";
 
 const LIST_LEAF_FIELDS: &[&str] = &[
     "capabilities",
@@ -97,6 +98,13 @@ fn error_is_not_found(error: &(impl Debug + Display)) -> bool {
         || text.contains("NotFound")
 }
 
+fn error_is_already_exists(error: &(impl Debug + Display)) -> bool {
+    let text = format!("{error:?}");
+    text.contains("ResourceAlreadyExistsException")
+        || text.contains("ResourceAlreadyExists")
+        || text.contains("AlreadyExists")
+}
+
 fn normalize_slug_text(label: &str, value: &str) -> Result<String> {
     let text = value.trim().to_ascii_lowercase();
     if text.is_empty() {
@@ -136,6 +144,11 @@ fn normalize_slug_text(label: &str, value: &str) -> Result<String> {
         ));
     }
     Ok(normalized)
+}
+
+fn rig_type_group_name(rig_type: &str) -> Result<String> {
+    let normalized = normalize_slug_text("rig type", rig_type)?;
+    Ok(format!("{RIG_TYPE_THING_GROUP_PREFIX}{normalized}"))
 }
 
 fn require_text_from_value(mapping: &Value, key: &str, context: &str) -> Result<String> {
@@ -540,6 +553,12 @@ pub struct PrincipalPage {
     pub next_token: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThingGroupMembershipPage {
+    pub thing_group_names: Vec<String>,
+    pub next_token: Option<String>,
+}
+
 #[async_trait]
 pub trait EnlistAws: Send + Sync {
     async fn describe_thing(&self, thing_name: &str) -> Result<Option<ThingRecord>>;
@@ -576,6 +595,22 @@ pub trait EnlistAws: Send + Sync {
         next_token: Option<&str>,
     ) -> Result<PrincipalPage>;
     async fn detach_thing_principal(&self, thing_name: &str, principal: &str) -> Result<()>;
+    async fn create_thing_group(&self, thing_group_name: &str) -> Result<()>;
+    async fn list_thing_groups_for_thing(
+        &self,
+        thing_name: &str,
+        next_token: Option<&str>,
+    ) -> Result<ThingGroupMembershipPage>;
+    async fn add_thing_to_thing_group(
+        &self,
+        thing_name: &str,
+        thing_group_name: &str,
+    ) -> Result<()>;
+    async fn remove_thing_from_thing_group(
+        &self,
+        thing_name: &str,
+        thing_group_name: &str,
+    ) -> Result<()>;
 }
 
 #[derive(Clone)]
@@ -851,6 +886,89 @@ impl EnlistAws for AwsEnlistClient {
             Ok(_) => Ok(()),
             Err(err) if error_is_not_found(&err) => Ok(()),
             Err(err) => Err(anyhow!(err)).context("detach AWS IoT thing principal"),
+        }
+    }
+
+    async fn create_thing_group(&self, thing_group_name: &str) -> Result<()> {
+        match self
+            .iot
+            .create_thing_group()
+            .thing_group_name(thing_group_name)
+            .send()
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(err) if error_is_already_exists(&err) => Ok(()),
+            Err(err) => Err(anyhow!(err)).context("create AWS IoT thing group"),
+        }
+    }
+
+    async fn list_thing_groups_for_thing(
+        &self,
+        thing_name: &str,
+        next_token: Option<&str>,
+    ) -> Result<ThingGroupMembershipPage> {
+        let mut request = self
+            .iot
+            .list_thing_groups_for_thing()
+            .thing_name(thing_name);
+        if let Some(token) = next_token {
+            request = request.next_token(token);
+        }
+        match request.send().await {
+            Ok(response) => Ok(ThingGroupMembershipPage {
+                thing_group_names: response
+                    .thing_groups()
+                    .iter()
+                    .filter_map(|group| group.group_name().map(str::trim))
+                    .filter(|name| !name.is_empty())
+                    .map(ToOwned::to_owned)
+                    .collect(),
+                next_token: response
+                    .next_token()
+                    .map(str::trim)
+                    .filter(|token| !token.is_empty())
+                    .map(ToOwned::to_owned),
+            }),
+            Err(err) if error_is_not_found(&err) => Ok(ThingGroupMembershipPage {
+                thing_group_names: Vec::new(),
+                next_token: None,
+            }),
+            Err(err) => Err(anyhow!(err)).context("list AWS IoT thing groups for thing"),
+        }
+    }
+
+    async fn add_thing_to_thing_group(
+        &self,
+        thing_name: &str,
+        thing_group_name: &str,
+    ) -> Result<()> {
+        self.iot
+            .add_thing_to_thing_group()
+            .thing_name(thing_name)
+            .thing_group_name(thing_group_name)
+            .send()
+            .await
+            .context("add AWS IoT thing to thing group")?;
+        Ok(())
+    }
+
+    async fn remove_thing_from_thing_group(
+        &self,
+        thing_name: &str,
+        thing_group_name: &str,
+    ) -> Result<()> {
+        match self
+            .iot
+            .remove_thing_from_thing_group()
+            .thing_name(thing_name)
+            .thing_group_name(thing_group_name)
+            .send()
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(err) if error_is_not_found(&err) => Ok(()),
+            Err(err) => Err(anyhow!(err)).context("remove AWS IoT thing from thing group"),
         }
     }
 }
@@ -1194,6 +1312,44 @@ impl<'a, A: EnlistAws + ?Sized, R: ShortIdSource> EnlistService<'a, A, R> {
             .await
     }
 
+    async fn list_thing_group_names(&self, thing_name: &str) -> Result<Vec<String>> {
+        let mut names = BTreeSet::new();
+        let mut next_token = None;
+        loop {
+            let page = self
+                .aws
+                .list_thing_groups_for_thing(thing_name, next_token.as_deref())
+                .await
+                .with_context(|| format!("list AWS IoT thing groups for {thing_name}"))?;
+            names.extend(page.thing_group_names);
+            next_token = page.next_token;
+            if next_token.is_none() {
+                break;
+            }
+        }
+        Ok(names.into_iter().collect())
+    }
+
+    async fn ensure_rig_type_group_membership(
+        &self,
+        thing_name: &str,
+        rig_type: &str,
+    ) -> Result<String> {
+        let target_group = rig_type_group_name(rig_type)?;
+        self.aws.create_thing_group(&target_group).await?;
+        for group in self.list_thing_group_names(thing_name).await? {
+            if group.starts_with(RIG_TYPE_THING_GROUP_PREFIX) && group != target_group {
+                self.aws
+                    .remove_thing_from_thing_group(thing_name, &group)
+                    .await?;
+            }
+        }
+        self.aws
+            .add_thing_to_thing_group(thing_name, &target_group)
+            .await?;
+        Ok(target_group)
+    }
+
     async fn ensure_shadow(
         &self,
         thing_name: &str,
@@ -1398,7 +1554,16 @@ impl<'a, A: EnlistAws + ?Sized, R: ShortIdSource> EnlistService<'a, A, R> {
         let initialized = self
             .initialize_rig_shadows(&thing.thing_name, &normalized_town_id, &thing.thing_name)
             .await?;
-        Ok(self.thing_result(&thing, created, attributes, initialized, json!({})))
+        let thing_group_name = self
+            .ensure_rig_type_group_membership(&thing.thing_name, &normalized_rig_type)
+            .await?;
+        Ok(self.thing_result(
+            &thing,
+            created,
+            attributes,
+            initialized,
+            json!({ "thingGroupName": thing_group_name }),
+        ))
     }
 
     async fn enlist_device(
@@ -1875,6 +2040,7 @@ mod tests {
         shadow_updates: Vec<(String, String, Vec<u8>)>,
         parameters: BTreeMap<String, String>,
         principals: BTreeMap<String, Vec<String>>,
+        thing_groups: BTreeMap<String, BTreeSet<String>>,
         parameter_page_size: Option<usize>,
         search_page_size: Option<usize>,
     }
@@ -1957,6 +2123,16 @@ mod tests {
 
         fn thing_names(&self) -> BTreeSet<String> {
             self.state.lock().unwrap().things.keys().cloned().collect()
+        }
+
+        fn thing_group_members(&self, thing_group_name: &str) -> BTreeSet<String> {
+            self.state
+                .lock()
+                .unwrap()
+                .thing_groups
+                .get(thing_group_name)
+                .cloned()
+                .unwrap_or_default()
         }
 
         fn set_parameter_page_size(&self, size: usize) {
@@ -2149,6 +2325,71 @@ mod tests {
             let mut state = self.state.lock().unwrap();
             if let Some(principals) = state.principals.get_mut(thing_name) {
                 principals.retain(|candidate| candidate != principal);
+            }
+            Ok(())
+        }
+
+        async fn create_thing_group(&self, thing_group_name: &str) -> Result<()> {
+            self.state
+                .lock()
+                .unwrap()
+                .thing_groups
+                .entry(thing_group_name.to_string())
+                .or_default();
+            Ok(())
+        }
+
+        async fn list_thing_groups_for_thing(
+            &self,
+            thing_name: &str,
+            _next_token: Option<&str>,
+        ) -> Result<ThingGroupMembershipPage> {
+            let mut thing_group_names = self
+                .state
+                .lock()
+                .unwrap()
+                .thing_groups
+                .iter()
+                .filter(|(_, members)| members.contains(thing_name))
+                .map(|(name, _)| name.clone())
+                .collect::<Vec<_>>();
+            thing_group_names.sort();
+            Ok(ThingGroupMembershipPage {
+                thing_group_names,
+                next_token: None,
+            })
+        }
+
+        async fn add_thing_to_thing_group(
+            &self,
+            thing_name: &str,
+            thing_group_name: &str,
+        ) -> Result<()> {
+            let mut state = self.state.lock().unwrap();
+            if !state.things.contains_key(thing_name) {
+                bail!("thing not found");
+            }
+            state
+                .thing_groups
+                .entry(thing_group_name.to_string())
+                .or_default()
+                .insert(thing_name.to_string());
+            Ok(())
+        }
+
+        async fn remove_thing_from_thing_group(
+            &self,
+            thing_name: &str,
+            thing_group_name: &str,
+        ) -> Result<()> {
+            if let Some(members) = self
+                .state
+                .lock()
+                .unwrap()
+                .thing_groups
+                .get_mut(thing_group_name)
+            {
+                members.remove(thing_name);
             }
             Ok(())
         }
@@ -2418,10 +2659,62 @@ mod tests {
         assert_eq!(cloud["attributes"]["townId"], town["thingName"]);
         assert!(cloud["attributes"].get("hostServices").is_none());
         assert_eq!(cloud["initializedShadows"], json!(["sparkplug"]));
+        assert_eq!(
+            cloud["auxiliaryResources"],
+            json!({ "thingGroupName": "txing-rig-type-cloud" })
+        );
+        assert_eq!(
+            aws.thing_group_members("txing-rig-type-cloud"),
+            BTreeSet::from([result_str(&cloud, "thingName")])
+        );
 
         assert_eq!(raspi["thingTypeName"], "raspi");
         assert_eq!(raspi["attributes"]["displayName"], "Raspberry-Pi-Rig");
         assert_eq!(raspi["attributes"]["hostServices"], "bluetooth.service");
+        assert_eq!(
+            raspi["auxiliaryResources"],
+            json!({ "thingGroupName": "txing-rig-type-raspi" })
+        );
+        assert_eq!(
+            aws.thing_group_members("txing-rig-type-raspi"),
+            BTreeSet::from([result_str(&raspi, "thingName")])
+        );
+    }
+
+    #[tokio::test]
+    async fn repeated_enlist_repairs_rig_type_group_membership() {
+        let aws = FakeAws::seeded();
+        let mut service = EnlistService::new(&aws, SequenceShortIds::new());
+        let town = enlist_town(&mut service).await;
+        let cloud = enlist_rig(
+            &mut service,
+            &result_str(&town, "thingName"),
+            "cloud",
+            "aws",
+        )
+        .await;
+        let thing_name = result_str(&cloud, "thingName");
+        aws.create_thing_group("txing-rig-type-raspi")
+            .await
+            .unwrap();
+        aws.add_thing_to_thing_group(&thing_name, "txing-rig-type-raspi")
+            .await
+            .unwrap();
+
+        let repaired = enlist_rig(
+            &mut service,
+            &result_str(&town, "thingName"),
+            "cloud",
+            "aws",
+        )
+        .await;
+
+        assert_eq!(repaired["created"], false);
+        assert_eq!(
+            aws.thing_group_members("txing-rig-type-cloud"),
+            BTreeSet::from([thing_name.clone()])
+        );
+        assert!(aws.thing_group_members("txing-rig-type-raspi").is_empty());
     }
 
     #[tokio::test]

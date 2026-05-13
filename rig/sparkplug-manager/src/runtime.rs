@@ -16,6 +16,7 @@ use gneiss_mqtt::mqtt::{PublishPacket, QualityOfService, SubscribePacket};
 use gneiss_mqtt_aws::{AwsClientBuilder, WebsocketSigv4OptionsBuilder};
 use tokio::sync::mpsc;
 use tokio::time::{MissedTickBehavior, interval};
+use txing_rig_local_pubsub::LocalPubSubClient;
 
 use crate::catalog::{TypeCatalogDevice, parse_string_list, reconstruct_type_record};
 use crate::manager::{
@@ -48,6 +49,13 @@ pub struct RuntimeConfig {
     pub iot_endpoint: String,
     pub inventory_interval_seconds: u64,
     pub command_deadline_ms: u64,
+    pub local_ipc_socket: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutboundMessage {
+    pub topic: String,
+    pub payload: Vec<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -395,6 +403,7 @@ struct SparkplugRuntime {
     node_born: bool,
     command_seq: u64,
     event_sender: mpsc::UnboundedSender<RuntimeEvent>,
+    outbound_sender: mpsc::UnboundedSender<OutboundMessage>,
 }
 
 impl SparkplugRuntime {
@@ -402,6 +411,7 @@ impl SparkplugRuntime {
         config: RuntimeConfig,
         registry: AwsRegistryClient,
         event_sender: mpsc::UnboundedSender<RuntimeEvent>,
+        outbound_sender: mpsc::UnboundedSender<OutboundMessage>,
     ) -> Self {
         Self {
             config,
@@ -413,6 +423,7 @@ impl SparkplugRuntime {
             node_born: false,
             command_seq: 0,
             event_sender,
+            outbound_sender,
         }
     }
 
@@ -529,7 +540,7 @@ impl SparkplugRuntime {
             .map(|device| device.state.inventory().clone())
             .collect::<Vec<_>>();
         let inventory = Inventory::new(MANAGER_ID, devices, self.inventory_seq, now_ms());
-        publish_local(INVENTORY_TOPIC, &inventory.to_vec()?).await
+        self.publish_local(INVENTORY_TOPIC.to_string(), inventory.to_vec()?)
     }
 
     async fn handle_local_message(&mut self, topic: String, payload: Vec<u8>) -> Result<()> {
@@ -616,7 +627,13 @@ impl SparkplugRuntime {
             return Ok(());
         };
         let command_topic = build_capability_command_topic(thing_name)?;
-        publish_local(&command_topic, &command.to_vec()?).await
+        self.publish_local(command_topic, command.to_vec()?)
+    }
+
+    fn publish_local(&self, topic: String, payload: Vec<u8>) -> Result<()> {
+        self.outbound_sender
+            .send(OutboundMessage { topic, payload })
+            .map_err(|_| anyhow::anyhow!("outbound local pub/sub channel is closed"))
     }
 
     async fn publish_device_changes(&mut self) -> Result<()> {
@@ -756,13 +773,31 @@ impl SparkplugRuntime {
     }
 }
 
-#[cfg(all(feature = "greengrass-sdk", target_os = "linux"))]
 pub async fn run_runtime(mut config: RuntimeConfig) -> Result<()> {
-    validate_greengrass_ipc_environment()?;
     if config.command_deadline_ms == 0 {
         config.command_deadline_ms = DEFAULT_COMMAND_DEADLINE_MS;
     }
 
+    if !config.local_ipc_socket.trim().is_empty() {
+        return run_local_runtime(config).await;
+    }
+
+    #[cfg(all(feature = "greengrass-sdk", target_os = "linux"))]
+    {
+        return run_greengrass_runtime(config).await;
+    }
+    #[cfg(not(all(feature = "greengrass-sdk", target_os = "linux")))]
+    {
+        let _ = config;
+        bail!(
+            "build with --features greengrass-sdk on Linux to run the live Greengrass runtime, or pass --local-ipc-socket for local development"
+        )
+    }
+}
+
+async fn prepare_runtime_config(
+    mut config: RuntimeConfig,
+) -> Result<(RuntimeConfig, AwsRegistryClient)> {
     let aws_config = aws_config::load_defaults(BehaviorVersion::latest()).await;
     let registry = AwsRegistryClient::new(
         aws_sdk_iot::Client::new(&aws_config),
@@ -777,9 +812,34 @@ pub async fn run_runtime(mut config: RuntimeConfig) -> Result<()> {
             .map(ToString::to_string)
             .ok_or_else(|| anyhow::anyhow!("AWS region is required"))?;
     }
+    if config.rig_id.trim().is_empty() {
+        config.rig_id = resolve_greengrass_thing_name()?;
+    }
+    if config.town_id.trim().is_empty() {
+        let rig = registry.describe_thing(&config.rig_id).await?;
+        config.town_id = rig.town_id.ok_or_else(|| {
+            anyhow::anyhow!(
+                "rig thing {} is missing townId attribute; pass --town-id or fix the thing registration",
+                config.rig_id
+            )
+        })?;
+    }
+    Ok((config, registry))
+}
+
+#[cfg(all(feature = "greengrass-sdk", target_os = "linux"))]
+async fn run_greengrass_runtime(config: RuntimeConfig) -> Result<()> {
+    validate_greengrass_ipc_environment()?;
+    let (config, registry) = prepare_runtime_config(config).await?;
 
     let (event_sender, mut event_receiver) = mpsc::unbounded_channel();
-    let mut runtime = SparkplugRuntime::new(config.clone(), registry, event_sender.clone());
+    let (outbound_sender, mut outbound_receiver) = mpsc::unbounded_channel();
+    let mut runtime = SparkplugRuntime::new(
+        config.clone(),
+        registry,
+        event_sender.clone(),
+        outbound_sender,
+    );
 
     let sdk = gg_sdk::Sdk::init();
     GREENGRASS_SDK
@@ -865,6 +925,11 @@ pub async fn run_runtime(mut config: RuntimeConfig) -> Result<()> {
                     eprintln!("warning: runtime event failed: {err:#}");
                 }
             }
+            Some(outbound) = outbound_receiver.recv() => {
+                if let Err(err) = publish_greengrass_local(&outbound.topic, &outbound.payload).await {
+                    eprintln!("warning: Sparkplug manager local publish failed topic={}: {err:#}", outbound.topic);
+                }
+            }
         }
     };
 
@@ -875,13 +940,86 @@ pub async fn run_runtime(mut config: RuntimeConfig) -> Result<()> {
     result.and(shutdown_result)
 }
 
-#[cfg(not(all(feature = "greengrass-sdk", target_os = "linux")))]
-pub async fn run_runtime(_config: RuntimeConfig) -> Result<()> {
-    bail!("build with --features greengrass-sdk on Linux to run the live Greengrass runtime")
+async fn run_local_runtime(config: RuntimeConfig) -> Result<()> {
+    let socket = config.local_ipc_socket.clone();
+    let (config, registry) = prepare_runtime_config(config).await?;
+    let (event_sender, mut event_receiver) = mpsc::unbounded_channel();
+    let (outbound_sender, mut outbound_receiver) = mpsc::unbounded_channel();
+    let mut runtime =
+        SparkplugRuntime::new(config.clone(), registry, event_sender, outbound_sender);
+
+    let mut local_client = LocalPubSubClient::connect(&socket).await?;
+    local_client
+        .subscribe(format!("{CAPABILITY_STATE_TOPIC_PREFIX}/#"))
+        .await?;
+    local_client
+        .subscribe(format!("{CAPABILITY_COMMAND_RESULT_TOPIC_PREFIX}/#"))
+        .await?;
+    local_client
+        .subscribe(format!("{CAPABILITY_HEARTBEAT_TOPIC_PREFIX}/#"))
+        .await?;
+    let local_publisher = local_client.publisher();
+
+    runtime.refresh_inventory().await?;
+    runtime.connect_node().await?;
+    runtime.publish_node_birth().await?;
+    runtime.publish_inventory().await?;
+
+    let mut inventory_timer = interval(Duration::from_secs(
+        config.inventory_interval_seconds.max(1),
+    ));
+    inventory_timer.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    let mut publish_timer = interval(Duration::from_secs(DEVICE_PUBLISH_TICK_SECONDS));
+    publish_timer.set_missed_tick_behavior(MissedTickBehavior::Skip);
+
+    let result = loop {
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => break Ok(()),
+            received = local_client.recv() => {
+                match received {
+                    Some(Ok(message)) => {
+                        if let Err(err) = runtime.handle_local_message(message.topic, message.payload).await {
+                            eprintln!("warning: Sparkplug local IPC event failed: {err:#}");
+                        }
+                    }
+                    Some(Err(message)) => eprintln!("warning: Sparkplug local IPC broker error: {message}"),
+                    None => break Err(anyhow::anyhow!("local pub/sub socket closed")),
+                }
+            }
+            Some(event) = event_receiver.recv() => {
+                let RuntimeEvent::MqttPublish { topic, payload } = event else {
+                    continue;
+                };
+                if let Err(err) = runtime.handle_mqtt_publish(topic, payload).await {
+                    eprintln!("warning: Sparkplug MQTT event failed: {err:#}");
+                }
+            }
+            Some(outbound) = outbound_receiver.recv() => {
+                if let Err(err) = local_publisher.publish(&outbound.topic, &outbound.payload).await {
+                    eprintln!("warning: Sparkplug local IPC publish failed topic={}: {err:#}", outbound.topic);
+                }
+            }
+            _ = inventory_timer.tick() => {
+                if let Err(err) = runtime.refresh_inventory().await {
+                    eprintln!("warning: inventory refresh failed: {err:#}");
+                } else if let Err(err) = runtime.publish_inventory().await {
+                    eprintln!("warning: inventory publish failed: {err:#}");
+                }
+            }
+            _ = publish_timer.tick() => {
+                if let Err(err) = runtime.publish_device_changes().await {
+                    eprintln!("warning: device publish tick failed: {err:#}");
+                }
+            }
+        }
+    };
+
+    let shutdown_result = runtime.shutdown().await;
+    result.and(shutdown_result)
 }
 
 #[cfg(all(feature = "greengrass-sdk", target_os = "linux"))]
-async fn publish_local(topic: &str, payload: &[u8]) -> Result<()> {
+async fn publish_greengrass_local(topic: &str, payload: &[u8]) -> Result<()> {
     let sdk = *GREENGRASS_SDK
         .get()
         .ok_or_else(|| anyhow::anyhow!("Greengrass SDK is not initialized"))?;
@@ -892,9 +1030,50 @@ async fn publish_local(topic: &str, payload: &[u8]) -> Result<()> {
 #[cfg(all(feature = "greengrass-sdk", target_os = "linux"))]
 static GREENGRASS_SDK: OnceLock<gg_sdk::Sdk> = OnceLock::new();
 
-#[cfg(not(all(feature = "greengrass-sdk", target_os = "linux")))]
-async fn publish_local(topic: &str, _payload: &[u8]) -> Result<()> {
-    bail!("cannot publish local Greengrass topic {topic}: greengrass-sdk feature is disabled")
+fn resolve_greengrass_thing_name() -> Result<String> {
+    for name in [
+        "TXING_RIG_ID",
+        "AWS_IOT_THING_NAME",
+        "THING_NAME",
+        "AWS_GREENGRASS_THING_NAME",
+        "GGC_THING_NAME",
+    ] {
+        if let Some(value) = nonempty_env(name) {
+            return Ok(value);
+        }
+    }
+    if let Some(value) = greengrass_config_thing_name("/etc/greengrass/config.yaml") {
+        return Ok(value);
+    }
+    bail!(
+        "rig id is required; pass --rig-id, set TXING_RIG_ID, or run under Greengrass with /etc/greengrass/config.yaml"
+    )
+}
+
+fn nonempty_env(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn greengrass_config_thing_name(path: &str) -> Option<String> {
+    let contents = std::fs::read_to_string(path).ok()?;
+    contents.lines().find_map(|line| {
+        let trimmed = line.trim();
+        let value = trimmed.strip_prefix("thingName:")?;
+        normalize_yaml_scalar(value)
+    })
+}
+
+fn normalize_yaml_scalar(value: &str) -> Option<String> {
+    let value = value
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .trim()
+        .to_string();
+    (!value.is_empty()).then_some(value)
 }
 
 fn parse_dcmd_topic<'a>(topic: &'a str, town_id: &str, rig_id: &str) -> Option<&'a str> {

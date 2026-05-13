@@ -10,8 +10,6 @@ ComponentDependencies:
     DependencyType: HARD
 ComponentConfiguration:
   DefaultConfiguration:
-    RigId: REPLACE_WITH_RIG_THING_ID
-    TownId: REPLACE_WITH_TOWN_THING_ID
     AwsRegion: ''
     IotEndpoint: ''
     InventoryIntervalSeconds: 30
@@ -33,17 +31,11 @@ Manifests:
     Lifecycle:
       run:
         Script: |-
-          export TXING_RIG_ID="{configuration:/RigId}"
-          export TXING_TOWN_ID="{configuration:/TownId}"
           if [ -n "{configuration:/AwsRegion}" ]; then
             export AWS_REGION="{configuration:/AwsRegion}"
             export AWS_DEFAULT_REGION="{configuration:/AwsRegion}"
           fi
           export AWS_IOT_ENDPOINT="{configuration:/IotEndpoint}"
-          export RIG_NAME="{configuration:/RigId}"
-          export RIG_ID="{configuration:/RigId}"
-          export SPARKPLUG_GROUP_ID="{configuration:/TownId}"
-          export SPARKPLUG_EDGE_NODE_ID="{configuration:/RigId}"
           exec "{artifacts:path}/txing-sparkplug-manager" --inventory-interval-seconds "{configuration:/InventoryIntervalSeconds}" --command-deadline-ms "{configuration:/CommandDeadlineMs}"
     Artifacts:
       - Uri: s3://REPLACE_WITH_TXING_GREENGRASS_ARTIFACT_BUCKET/sparkplug-manager/0.8.0/txing-sparkplug-manager

@@ -10,6 +10,7 @@ use std::sync::OnceLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow, bail};
+use aws_config::BehaviorVersion;
 use gneiss_mqtt::client::{AsyncClient, AsyncClientHandle, ClientEvent, PublishResponse};
 use gneiss_mqtt::mqtt::{PublishPacket, QualityOfService, SubscribePacket};
 use gneiss_mqtt_aws::{AwsClientBuilder, WebsocketSigv4OptionsBuilder};
@@ -22,6 +23,7 @@ use txing_capability_protocol::{
     build_capability_state_topic, command_deadline_expired, parse_capability_command_topic,
     topic_payload_thing_mismatch,
 };
+use txing_rig_local_pubsub::LocalPubSubClient;
 
 use crate::retained::{
     ADAPTER_ID, RETAINED_COMMAND_RESULT_FILTER, RETAINED_STATE_FILTER, RetainedCapabilityState,
@@ -37,6 +39,8 @@ pub struct RuntimeConfig {
     pub heartbeat_interval_ms: u64,
     pub state_report_interval_ms: u64,
     pub keep_alive_seconds: u16,
+    pub local_ipc_socket: String,
+    pub include_capabilities: Vec<String>,
 }
 
 impl Default for RuntimeConfig {
@@ -49,6 +53,8 @@ impl Default for RuntimeConfig {
             heartbeat_interval_ms: 10_000,
             state_report_interval_ms: 10_000,
             keep_alive_seconds: 60,
+            local_ipc_socket: String::new(),
+            include_capabilities: Vec::new(),
         }
     }
 }
@@ -129,6 +135,14 @@ impl RuntimeState {
         self.managed_things = inventory
             .devices
             .into_iter()
+            .filter(|device| {
+                self.config.include_capabilities.is_empty()
+                    || self
+                        .config
+                        .include_capabilities
+                        .iter()
+                        .any(|capability| device.has_capability(capability))
+            })
             .map(|device| device.thing_name)
             .collect();
         self.latest_states
@@ -371,6 +385,9 @@ impl MqttSession {
 }
 
 pub async fn run_component_runtime(config: RuntimeConfig) -> Result<()> {
+    if !config.local_ipc_socket.trim().is_empty() {
+        return run_local_runtime(config).await;
+    }
     #[cfg(all(feature = "greengrass-sdk", target_os = "linux"))]
     {
         run_greengrass_runtime(config).await
@@ -378,13 +395,16 @@ pub async fn run_component_runtime(config: RuntimeConfig) -> Result<()> {
     #[cfg(not(all(feature = "greengrass-sdk", target_os = "linux")))]
     {
         let _ = config;
-        bail!("build with --features greengrass-sdk on Linux to run the live Greengrass runtime")
+        bail!(
+            "build with --features greengrass-sdk on Linux to run the live Greengrass runtime, or pass --local-ipc-socket for local development"
+        )
     }
 }
 
 #[cfg(all(feature = "greengrass-sdk", target_os = "linux"))]
 async fn run_greengrass_runtime(config: RuntimeConfig) -> Result<()> {
     validate_greengrass_ipc_environment()?;
+    let config = prepare_runtime_config(config).await?;
     let sdk = gg_sdk::Sdk::init();
     GREENGRASS_SDK
         .set(sdk)
@@ -495,6 +515,132 @@ async fn run_greengrass_runtime(config: RuntimeConfig) -> Result<()> {
     result
 }
 
+async fn run_local_runtime(config: RuntimeConfig) -> Result<()> {
+    let socket = config.local_ipc_socket.clone();
+    let config = prepare_runtime_config(config).await?;
+    let (event_sender, mut event_receiver) = mpsc::unbounded_channel();
+    let (outbound_sender, mut outbound_receiver) = mpsc::unbounded_channel();
+    let mut runtime = RuntimeState::new(config.clone(), outbound_sender);
+
+    let mut local_client = LocalPubSubClient::connect(&socket).await?;
+    local_client
+        .subscribe(txing_capability_protocol::INVENTORY_TOPIC)
+        .await?;
+    local_client
+        .subscribe(CAPABILITY_COMMAND_TOPIC_FILTER)
+        .await?;
+    let local_publisher = local_client.publisher();
+
+    let mqtt = MqttSession::new(
+        &config.iot_endpoint,
+        &config.aws_region,
+        &config.client_id,
+        config.keep_alive_seconds,
+        event_sender,
+    )
+    .await?;
+    mqtt.subscribe(RETAINED_STATE_FILTER.to_string()).await?;
+    mqtt.subscribe(RETAINED_COMMAND_RESULT_FILTER.to_string())
+        .await?;
+
+    let mut heartbeat_timer = interval(Duration::from_millis(config.heartbeat_interval_ms.max(1)));
+    heartbeat_timer.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    let mut state_report_timer = interval(Duration::from_millis(
+        config.state_report_interval_ms.max(1),
+    ));
+    state_report_timer.set_missed_tick_behavior(MissedTickBehavior::Skip);
+
+    let result = loop {
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => break Ok(()),
+            received = local_client.recv() => {
+                match received {
+                    Some(Ok(message)) => {
+                        match runtime.handle_local_message(message.topic, message.payload) {
+                            Ok(actions) => {
+                                for action in actions {
+                                    let RuntimeAction::PublishRetainedCommand { publish, command } = action;
+                                    match mqtt.publish_retained(publish).await {
+                                        Ok(()) => {
+                                            if let Err(err) = runtime.publish_command_accepted(&command) {
+                                                eprintln!("warning: AWS connectivity accepted result failed: {err:#}");
+                                            }
+                                        }
+                                        Err(err) => {
+                                            if let Err(result_err) = runtime.publish_command_failed(&command, format!("retained AWS command publish failed: {err:#}")) {
+                                                eprintln!("warning: AWS connectivity failed result failed: {result_err:#}");
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            Err(err) => eprintln!("warning: AWS connectivity local event failed: {err:#}"),
+                        }
+                    }
+                    Some(Err(message)) => eprintln!("warning: AWS connectivity local IPC broker error: {message}"),
+                    None => break Err(anyhow!("local pub/sub socket closed")),
+                }
+            }
+            Some(event) = event_receiver.recv() => {
+                let RuntimeEvent::MqttPublish { topic, payload } = event else {
+                    continue;
+                };
+                if let Err(err) = runtime.handle_retained_message(topic, payload) {
+                    eprintln!("warning: AWS connectivity retained event failed: {err:#}");
+                }
+            }
+            Some(outbound) = outbound_receiver.recv() => {
+                if let Err(err) = local_publisher.publish(&outbound.topic, &outbound.payload).await {
+                    eprintln!("warning: AWS connectivity local IPC publish failed topic={}: {err:#}", outbound.topic);
+                }
+            }
+            _ = heartbeat_timer.tick() => {
+                if let Err(err) = runtime.publish_heartbeat(now_ms()) {
+                    eprintln!("warning: AWS connectivity heartbeat publish failed: {err:#}");
+                }
+            }
+            _ = state_report_timer.tick() => {
+                if let Err(err) = runtime.refresh_latest_states(now_ms()) {
+                    eprintln!("warning: AWS connectivity state refresh failed: {err:#}");
+                }
+            }
+        }
+    };
+
+    mqtt.stop()?;
+    result
+}
+
+async fn prepare_runtime_config(mut config: RuntimeConfig) -> Result<RuntimeConfig> {
+    let aws_config = aws_config::load_defaults(BehaviorVersion::latest()).await;
+    let iot = aws_sdk_iot::Client::new(&aws_config);
+    if config.iot_endpoint.trim().is_empty() {
+        let response = iot
+            .describe_endpoint()
+            .endpoint_type("iot:Data-ATS")
+            .send()
+            .await
+            .context("describe AWS IoT Data-ATS endpoint")?;
+        config.iot_endpoint = response
+            .endpoint_address()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| anyhow!("AWS IoT DescribeEndpoint returned no endpointAddress"))?
+            .to_string();
+    }
+    if config.aws_region.trim().is_empty() {
+        config.aws_region = aws_config
+            .region()
+            .map(ToString::to_string)
+            .ok_or_else(|| anyhow!("AWS region is required"))?;
+    }
+    if config.client_id.trim().is_empty() {
+        let rig_id = resolve_greengrass_thing_name()?;
+        config.client_id = format!("{rig_id}-aws-connectivity");
+    }
+    Ok(config)
+}
+
 #[cfg(all(feature = "greengrass-sdk", target_os = "linux"))]
 async fn publish_local(topic: &str, payload: &[u8]) -> Result<()> {
     let sdk = *GREENGRASS_SDK
@@ -528,6 +674,52 @@ fn validate_greengrass_ipc_environment() -> Result<()> {
         );
     }
     Ok(())
+}
+
+fn resolve_greengrass_thing_name() -> Result<String> {
+    for name in [
+        "TXING_RIG_ID",
+        "AWS_IOT_THING_NAME",
+        "THING_NAME",
+        "AWS_GREENGRASS_THING_NAME",
+        "GGC_THING_NAME",
+    ] {
+        if let Some(value) = nonempty_env(name) {
+            return Ok(value);
+        }
+    }
+    if let Some(value) = greengrass_config_thing_name("/etc/greengrass/config.yaml") {
+        return Ok(value);
+    }
+    bail!(
+        "AWS connectivity client id is required; pass --client-id, set TXING_AWS_CONNECTIVITY_CLIENT_ID, set TXING_RIG_ID, or run under Greengrass with /etc/greengrass/config.yaml"
+    )
+}
+
+fn nonempty_env(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn greengrass_config_thing_name(path: &str) -> Option<String> {
+    let contents = std::fs::read_to_string(path).ok()?;
+    contents.lines().find_map(|line| {
+        let trimmed = line.trim();
+        let value = trimmed.strip_prefix("thingName:")?;
+        normalize_yaml_scalar(value)
+    })
+}
+
+fn normalize_yaml_scalar(value: &str) -> Option<String> {
+    let value = value
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .trim()
+        .to_string();
+    (!value.is_empty()).then_some(value)
 }
 
 fn now_ms() -> u64 {

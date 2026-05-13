@@ -25,6 +25,8 @@ struct Args {
     max_connections: usize,
     #[arg(long)]
     no_ble: bool,
+    #[arg(long, env = "TXING_RIG_LOCAL_PUBSUB_SOCKET", default_value = "")]
+    local_ipc_socket: String,
     #[arg(long)]
     dry_run: bool,
 }
@@ -42,6 +44,7 @@ async fn main() -> Result<()> {
         heartbeat_interval_ms: args.heartbeat_interval_ms,
         max_connections: args.max_connections,
         no_ble: args.no_ble,
+        local_ipc_socket: args.local_ipc_socket,
     };
 
     if args.dry_run {
@@ -55,6 +58,7 @@ async fn main() -> Result<()> {
         println!("heartbeatIntervalMs={}", config.heartbeat_interval_ms);
         println!("maxConnections={}", config.max_connections);
         println!("noBle={}", config.no_ble);
+        println!("localIpcSocket={}", config.local_ipc_socket);
         return Ok(());
     }
 

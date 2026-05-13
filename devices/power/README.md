@@ -32,7 +32,7 @@ just power::mcu::flash-nve <power-thing-id>
 Deploy rig components after registration:
 
 ```sh
-just rig::deploy <rig-id>
+just rig::deploy raspi
 ```
 
 Agents may render `check-nve` commands, but firmware/NVE flashing remains a
