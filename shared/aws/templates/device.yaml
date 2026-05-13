@@ -55,6 +55,13 @@ Resources:
             Resource:
               - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/*/video/descriptor
               - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/*/video/status
+          - Sid: DeviceCapabilityServiceTopics
+            Effect: Allow
+            Action:
+              - iot:Publish
+              - iot:RetainPublish
+            Resource:
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/*/capability/v2/state
           - Sid: DeviceThingShadowApi
             Effect: Allow
             Action: iot:GetThingShadow

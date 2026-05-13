@@ -13,6 +13,7 @@
 - Do not run any command against AWS that could create, update, or delete cloud resources. Agents may run read-only AWS inspection commands only when needed.
 - Prefer manual cleanup plus CloudFormation-forward changes over backward-compatible migration code. When existing AWS resources must be removed, renamed, imported, or otherwise reconciled, explain the required manual steps and let the user perform them.
 - Prefer moving development to new functionality without preserving backward compatibility, except for protocols and protocol versions. Before making a change that drops or ignores backward compatibility, ask the user every time whether that is acceptable.
+- After every code, firmware, infrastructure, or configuration change, explain the relevant deployment or rollout steps in the final response, including any manual steps the user must perform.
 - Do not perform `git commit` automatically.
 - Create commits only when explicitly requested by the user.
 - Flashing/programming firmware onto hardware must only be performed manually by the user. Agents may prepare artifacts and commands, but must not run flashing steps automatically.

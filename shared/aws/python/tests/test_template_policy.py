@@ -39,6 +39,12 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("topicfilter/txings/*/capability/v2/state", template)
         self.assertIn("topicfilter/txings/*/capability/v2/command-result", template)
 
+    def test_device_capability_service_topics_are_authorized(self) -> None:
+        template = _template_text()
+
+        self.assertIn("Sid: DeviceCapabilityServiceTopics", template)
+        self.assertIn("topic/txings/*/capability/v2/state", template)
+
     def test_legacy_raw_cmd_vel_topic_permissions_are_removed(self) -> None:
         template = _template_text()
 

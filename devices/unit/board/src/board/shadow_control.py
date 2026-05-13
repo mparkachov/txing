@@ -25,6 +25,7 @@ from aws.mcp_topics import MCP_DEFAULT_LEASE_TTL_MS
 from aws.mqtt import AwsIotWebsocketSyncConnection, AwsMqttConnectionConfig
 from aws.device_catalog import load_device_manifest
 
+from .capability_service import BoardCapabilityService
 from .cmd_vel import CmdVelController, MAX_SPEED
 from .mcp_service import BoardMcpServer
 from .mcp_ipc import BoardMcpIpcServer
@@ -113,6 +114,7 @@ DEFAULT_THING_NAME = "unit-local"
 DEFAULT_SCHEMA_FILE = DEFAULT_AWS_DIR / "board-shadow.schema.json"
 DEFAULT_VIDEO_SCHEMA_FILE = DEFAULT_AWS_DIR / "video-shadow.schema.json"
 BOARD_SHADOW_NAME = "board"
+MCP_SHADOW_NAME = "mcp"
 VIDEO_SHADOW_NAME = "video"
 DEFAULT_AWS_CONNECT_TIMEOUT = 20.0
 DEFAULT_MQTT_PUBLISH_TIMEOUT = 10.0
@@ -295,6 +297,7 @@ class AwsShadowClient:
         cmd_vel_controller: CmdVelController | None = None,
         mcp_server: BoardMcpServer | None = None,
         video_service: BoardVideoService | None = None,
+        capability_service: BoardCapabilityService | None = None,
     ) -> None:
         self._config = config
         self._aws_runtime = aws_runtime
@@ -311,6 +314,7 @@ class AwsShadowClient:
         self._cmd_vel_controller = cmd_vel_controller
         self._mcp_server = mcp_server
         self._video_service = video_service
+        self._capability_service = capability_service
         will_topic: str | None = None
         will_payload: bytes | None = None
         will_retain = False
@@ -444,6 +448,11 @@ class AwsShadowClient:
                 client=client,
                 publish_timeout_seconds=self._config.publish_timeout,
             )
+        if self._capability_service is not None:
+            self._capability_service.on_connected(
+                client=client,
+                publish_timeout_seconds=self._config.publish_timeout,
+            )
 
         self._request_shadow_get()
 
@@ -531,6 +540,8 @@ class AwsShadowClient:
             self._video_service.close()
         if self._mcp_server is not None:
             self._mcp_server.close()
+        if self._capability_service is not None:
+            self._capability_service.close()
         with self._lock:
             client = self._client
             self._client = None
@@ -596,6 +607,8 @@ class AwsShadowClient:
             self._video_service.on_disconnected(reason=detail)
         if self._mcp_server is not None:
             self._mcp_server.on_disconnected(reason=detail)
+        if self._capability_service is not None:
+            self._capability_service.on_disconnected(reason=detail)
         if not self._disconnect_requested and not intentional_disconnect:
             LOGGER.warning("AWS IoT MQTT disconnected unexpectedly (%s)", detail)
 
@@ -1429,6 +1442,52 @@ def _publish_video_shadow_report(
     )
 
 
+def _video_capability_available(
+    *,
+    video_service: BoardVideoService,
+    video_state: dict[str, Any],
+) -> bool:
+    status = video_service.build_status_payload(video_state)
+    return (
+        bool(status.get("available"))
+        and bool(status.get("ready"))
+        and status.get("status") == "ready"
+    )
+
+
+def _publish_capability_state(
+    *,
+    capability_service: BoardCapabilityService,
+    config: ControlConfig,
+    video_service: BoardVideoService,
+    video_state: dict[str, Any],
+    board_available: bool,
+) -> None:
+    mcp_available = board_available and MCP_SHADOW_NAME in config.capabilities_set
+    video_available = (
+        board_available
+        and VIDEO_SHADOW_NAME in config.capabilities_set
+        and _video_capability_available(
+            video_service=video_service,
+            video_state=video_state,
+        )
+    )
+    try:
+        capability_service.publish_state(
+            board_available=board_available,
+            mcp_available=mcp_available,
+            video_available=video_available,
+        )
+    except Exception as err:
+        raise RuntimeError(f"failed to publish retained capability state: {err}") from err
+    LOGGER.info(
+        "Published retained capability state board=%s mcp=%s video=%s",
+        board_available,
+        mcp_available,
+        video_available,
+    )
+
+
 def _build_cmd_vel_motor_driver(config: ControlConfig) -> PercentMotorDriverAdapter:
     if config.drive_cmd_raw_min_speed < 0:
         raise ValueError("drive_cmd_raw_min_speed must be non-negative")
@@ -1628,12 +1687,17 @@ def main() -> None:
         channel_name=config.video_channel_name,
         region=config.video_region,
     )
+    capability_service = BoardCapabilityService(
+        device_id=config.thing_name,
+        declared_capabilities=config.capabilities_set,
+    )
     shadow_client = AwsShadowClient(
         config,
         aws_runtime=aws_runtime,
         cmd_vel_controller=cmd_vel_controller,
         mcp_server=mcp_server,
         video_service=video_service,
+        capability_service=capability_service,
     )
     halt_requested = False
     startup_published = False
@@ -1679,6 +1743,13 @@ def main() -> None:
                     validator=board_validator,
                     config=config,
                     report=report,
+                )
+                _publish_capability_state(
+                    capability_service=capability_service,
+                    config=config,
+                    video_service=video_service,
+                    video_state=current_video_state,
+                    board_available=True,
                 )
                 LOGGER.info(
                     (
@@ -1759,6 +1830,14 @@ def main() -> None:
                         video_service=video_service,
                         video_state=current_video_state,
                     )
+                    if video_changed:
+                        _publish_capability_state(
+                            capability_service=capability_service,
+                            config=config,
+                            video_service=video_service,
+                            video_state=current_video_state,
+                            board_available=True,
+                        )
                     last_published_video_state = current_video_state
                     last_video_status_publish_monotonic = time.monotonic()
                 if not heartbeat_due:
@@ -1773,6 +1852,13 @@ def main() -> None:
                     validator=board_validator,
                     config=config,
                     report=report,
+                )
+                _publish_capability_state(
+                    capability_service=capability_service,
+                    config=config,
+                    video_service=video_service,
+                    video_state=current_video_state,
+                    board_available=True,
                 )
                 LOGGER.info(
                     (
@@ -1804,6 +1890,17 @@ def main() -> None:
                     config=config,
                     report=report,
                 )
+                try:
+                    capability_service.publish_state(
+                        board_available=False,
+                        mcp_available=False,
+                        video_available=False,
+                    )
+                except Exception as err:
+                    LOGGER.warning(
+                        "Failed to publish best-effort shutdown capability state: %s",
+                        err,
+                    )
                 LOGGER.info(
                     "Published best-effort clean shutdown board update"
                 )

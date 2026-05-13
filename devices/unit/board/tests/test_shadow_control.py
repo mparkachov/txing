@@ -30,7 +30,9 @@ from board.shadow_control import (
     _decode_sparkplug_redcon_command,
     _discover_repo_root,
     _load_validator,
+    _publish_capability_state,
     _validate_shadow_update,
+    _video_capability_available,
     _wait_for_system_clock_sync,
 )
 from board.video_state import DEFAULT_VIDEO_CHANNEL_NAME, build_reported_video_state
@@ -200,18 +202,22 @@ class ShadowControlContractTests(unittest.TestCase):
         mcp_server.status_topic = "txings/unit-local/mcp/status"
         mcp_server.build_unavailable_status_payload.return_value = b'{"available":false}'
         mcp_server.on_connected.side_effect = lambda **_kwargs: events.append("mcp-connected")
+        capability_service = MagicMock()
+        capability_service.on_connected.side_effect = lambda **_kwargs: events.append("capability-connected")
 
         with patch.object(shadow_control, "AwsIotWebsocketSyncConnection", _FakeConnection):
             shadow_client = AwsShadowClient(
                 _make_config(),
                 aws_runtime=_make_runtime(),
                 mcp_server=mcp_server,
+                capability_service=capability_service,
             )
             shadow_client.ensure_connected(timeout_seconds=1.0)
 
-        self.assertEqual(events[0:2], ["connect", "mcp-connected"])
-        self.assertEqual(events[2], "publish:$aws/things/unit-local/shadow/name/board/get")
+        self.assertEqual(events[0:3], ["connect", "mcp-connected", "capability-connected"])
+        self.assertEqual(events[3], "publish:$aws/things/unit-local/shadow/name/board/get")
         mcp_server.on_connected.assert_called_once()
+        capability_service.on_connected.assert_called_once()
 
     def test_aws_shadow_connect_waits_for_failed_client_close_before_retry(self) -> None:
         events: list[str] = []
@@ -379,6 +385,68 @@ class ShadowControlContractTests(unittest.TestCase):
 
         self.assertNotIn("updatedAt", reported)
 
+    def test_video_capability_requires_ready_status(self) -> None:
+        video_service = MagicMock()
+        video_service.build_status_payload.side_effect = [
+            {
+                "available": True,
+                "ready": True,
+                "status": "ready",
+            },
+            {
+                "available": True,
+                "ready": False,
+                "status": "starting",
+            },
+            {
+                "available": True,
+                "ready": True,
+                "status": "error",
+            },
+        ]
+
+        self.assertTrue(
+            _video_capability_available(
+                video_service=video_service,
+                video_state={},
+            )
+        )
+        self.assertFalse(
+            _video_capability_available(
+                video_service=video_service,
+                video_state={},
+            )
+        )
+        self.assertFalse(
+            _video_capability_available(
+                video_service=video_service,
+                video_state={},
+            )
+        )
+
+    def test_publish_capability_state_uses_board_owned_capabilities(self) -> None:
+        capability_service = MagicMock()
+        video_service = MagicMock()
+        video_service.build_status_payload.return_value = {
+            "available": True,
+            "ready": True,
+            "status": "ready",
+        }
+
+        _publish_capability_state(
+            capability_service=capability_service,
+            config=_make_config(),
+            video_service=video_service,
+            video_state=_make_video_state(ready=True),
+            board_available=True,
+        )
+
+        capability_service.publish_state.assert_called_once_with(
+            board_available=True,
+            mcp_available=True,
+            video_available=True,
+        )
+
     def test_cmd_vel_controller_watchdog_aligns_with_mcp_lease_window(self) -> None:
         motor_driver = MagicMock()
         controller = _build_cmd_vel_controller(
@@ -429,6 +497,12 @@ class ShadowControlContractTests(unittest.TestCase):
             last_error="sender warming up",
         )
         video_service = MagicMock()
+        video_service.build_status_payload.return_value = {
+            "available": True,
+            "ready": False,
+            "status": "starting",
+        }
+        capability_service = MagicMock()
 
         with (
             patch.object(shadow_control, "_parse_args", return_value=args),
@@ -448,6 +522,7 @@ class ShadowControlContractTests(unittest.TestCase):
                 return_value=DefaultRouteAddresses(ipv4="192.168.1.20", ipv6="2001:db8::20"),
             ),
             patch.object(shadow_control, "BoardVideoService", return_value=video_service),
+            patch.object(shadow_control, "BoardCapabilityService", return_value=capability_service),
             patch.object(shadow_control, "AwsShadowClient", return_value=shadow_client),
             patch.object(shadow_control, "VideoSenderSupervisor", return_value=video_supervisor) as video_supervisor_cls,
         ):
@@ -467,6 +542,11 @@ class ShadowControlContractTests(unittest.TestCase):
         self.assertNotIn("video", payload["state"]["reported"])
         self.assertNotIn("drive", payload["state"]["reported"])
         video_service.publish_status.assert_called_once()
+        capability_service.publish_state.assert_called_once_with(
+            board_available=True,
+            mcp_available=True,
+            video_available=False,
+        )
 
     def test_main_republishes_video_status_and_video_shadow_after_runtime_error(self) -> None:
         args = _make_args()
@@ -689,6 +769,21 @@ class ShadowControlContractTests(unittest.TestCase):
         self.assertIn('preserve_env=(', justfile)
         self.assertIn('sudo "--preserve-env=$preserve_env_csv"', justfile)
         self.assertNotIn('LG_WD', justfile)
+
+    def test_justfile_exposes_board_service_controls(self) -> None:
+        justfile = Path(UNIT_BOARD_DIR / "justfile").read_text(encoding="utf-8")
+
+        self.assertIn("\nstart:\n", justfile)
+        self.assertIn("\nstop:\n", justfile)
+        self.assertIn("\nrestart:\n", justfile)
+        self.assertIn("\nstatus:\n", justfile)
+        self.assertIn("\nlog lines='200' follow='true':\n", justfile)
+        self.assertIn('sudo systemctl start "{{systemd_service}}"', justfile)
+        self.assertIn('sudo systemctl restart "{{systemd_service}}"', justfile)
+        self.assertIn("showing board status for units:", justfile)
+        self.assertIn("showing board logs for units:", justfile)
+        self.assertIn('sudo journalctl "${journal_flags[@]}" -u "{{systemd_service}}"', justfile)
+        self.assertNotIn("@restart: stop start", justfile)
 
     def test_root_justfile_sources_consolidated_aws_env_for_device_scope(self) -> None:
         justfile = Path(REPO_ROOT / "justfile").read_text(encoding="utf-8")

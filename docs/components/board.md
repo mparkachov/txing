@@ -8,6 +8,7 @@ The board is the device-side Raspberry Pi. It is power-switched by the MCU, publ
 - publish the `video` named shadow
 - publish retained video descriptor and status topics under `txings/<device_id>/video/*`
 - publish retained MCP descriptor and status topics under `txings/<device_id>/mcp/*`
+- publish retained v2 capability state for `board`, `mcp`, and `video` for direct SparkplugManager consumption
 - supervise the native KVS WebRTC sender as a child process
 - subscribe to Sparkplug `DCMD.redcon` and halt locally on `redcon=4`
 - enforce MCP lease ownership for motion control
@@ -47,6 +48,7 @@ Current video is headless AWS KVS WebRTC:
 - signaling channel: `<device_id>-board-video`
 - browser route: `/<town>/<rig>/<device>/video`
 - retained topics: `txings/<device_id>/video/descriptor` and `txings/<device_id>/video/status`
+- capability state: `txings/<device_id>/capability/v2/state`
 
 The board video contract is documented in
 [devices/unit/docs/board-video.md](../../devices/unit/docs/board-video.md).

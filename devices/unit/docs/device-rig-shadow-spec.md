@@ -152,7 +152,9 @@ The unit REDCON rules are declared ahead of the board/MCP/video v2 capability ro
 - `2 = ["sparkplug", "ble", "power", "board", "mcp"]`
 - `1 = ["sparkplug", "ble", "power", "board", "mcp", "video"]`
 
-Until board/MCP/video publish v2 capability state, current unit devices naturally converge only to REDCON `4` or `3`. Board shadows may still exist and be read, but they do not drive REDCON until the v2 capability states are published.
+Board/MCP/video availability comes from board-owned retained v2 capability state
+consumed directly by SparkplugManager. Board shadows may still exist and be read,
+but REDCON selection uses the v2 capability state, not shadow freshness.
 
 ## Acceptance Criteria
 

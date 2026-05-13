@@ -40,6 +40,8 @@ const MQTT_KEEP_ALIVE_SECONDS: u16 = 60;
 const NODE_BDSEQ: u64 = 1;
 const DEVICE_PUBLISH_TICK_SECONDS: u64 = 2;
 const DEFAULT_COMMAND_DEADLINE_MS: u64 = 60_000;
+const BOARD_RETAINED_CAPABILITY_STATE_FILTER: &str = "txings/+/capability/v2/state";
+const BOARD_RETAINED_CAPABILITIES: [&str; 3] = ["board", "mcp", "video"];
 
 #[derive(Debug, Clone)]
 pub struct RuntimeConfig {
@@ -459,6 +461,9 @@ impl SparkplugRuntime {
         let dcmd_filter =
             sparkplug::build_device_topic(&self.config.town_id, "DCMD", &self.config.rig_id, "+");
         node_session.subscribe(dcmd_filter).await?;
+        node_session
+            .subscribe(BOARD_RETAINED_CAPABILITY_STATE_FILTER.to_string())
+            .await?;
         self.node_session = Some(node_session);
         Ok(())
     }
@@ -603,6 +608,21 @@ impl SparkplugRuntime {
     }
 
     async fn handle_mqtt_publish(&mut self, topic: String, payload: Vec<u8>) -> Result<()> {
+        if let Some(topic_thing_name) = parse_retained_capability_state_topic(&topic) {
+            let state = CapabilityState::from_slice(&payload).with_context(|| {
+                format!("decode board-owned retained capability state from topic {topic}")
+            })?;
+            validate_retained_state_topic_payload(topic_thing_name, &state)?;
+            if !state_has_board_owned_capability(&state) {
+                return Ok(());
+            }
+            if let Some(device) = self.devices.get_mut(&state.thing_name) {
+                device.state.observe_state(state)?;
+            }
+            self.publish_device_changes().await?;
+            return Ok(());
+        }
+
         let Some(thing_name) = parse_dcmd_topic(&topic, &self.config.town_id, &self.config.rig_id)
         else {
             return Ok(());
@@ -1087,6 +1107,43 @@ fn parse_dcmd_topic<'a>(topic: &'a str, town_id: &str, rig_id: &str) -> Option<&
     (!thing_name.is_empty() && !thing_name.contains('/')).then_some(thing_name)
 }
 
+fn parse_retained_capability_state_topic(topic: &str) -> Option<&str> {
+    let mut parts = topic.split('/');
+    if parts.next()? != "txings" {
+        return None;
+    }
+    let thing_name = parts.next()?;
+    if thing_name.is_empty()
+        || parts.next()? != "capability"
+        || parts.next()? != "v2"
+        || parts.next()? != "state"
+        || parts.next().is_some()
+    {
+        return None;
+    }
+    Some(thing_name)
+}
+
+fn state_has_board_owned_capability(state: &CapabilityState) -> bool {
+    state
+        .capabilities
+        .keys()
+        .any(|capability| BOARD_RETAINED_CAPABILITIES.contains(&capability.as_str()))
+}
+
+fn validate_retained_state_topic_payload(
+    topic_thing_name: &str,
+    state: &CapabilityState,
+) -> Result<()> {
+    if state.thing_name != topic_thing_name {
+        bail!(
+            "retained capability state topic thingName {topic_thing_name} differs from payload thingName {}",
+            state.thing_name
+        );
+    }
+    Ok(())
+}
+
 fn validate_state_topic_payload(
     topic_thing_name: &str,
     topic_adapter_id: &str,
@@ -1186,6 +1243,49 @@ mod tests {
             parse_dcmd_topic("spBv1.0/town-1/DCMD/rig-1/time-1/extra", "town-1", "rig-1"),
             None
         );
+    }
+
+    #[test]
+    fn parses_retained_board_capability_state_topics() {
+        assert_eq!(
+            parse_retained_capability_state_topic("txings/unit-1/capability/v2/state"),
+            Some("unit-1")
+        );
+        assert_eq!(
+            parse_retained_capability_state_topic("txings/unit-1/capability/v2/command"),
+            None
+        );
+        assert_eq!(
+            parse_retained_capability_state_topic("txings/unit-1/capability/v2/state/extra"),
+            None
+        );
+    }
+
+    #[test]
+    fn retained_state_filter_only_accepts_board_owned_capabilities() {
+        let board_state = CapabilityState {
+            schema_version: txing_capability_protocol::SCHEMA_VERSION.to_string(),
+            adapter_id: "dev.txing.board.Capability".to_string(),
+            thing_name: "unit-1".to_string(),
+            capabilities: BTreeMap::from([("video".to_string(), true)]),
+            metrics: BTreeMap::new(),
+            observed_at_ms: 1000,
+            seq: 1,
+        };
+        let time_state = CapabilityState {
+            schema_version: txing_capability_protocol::SCHEMA_VERSION.to_string(),
+            adapter_id: "dev.txing.rig.AwsConnectivity".to_string(),
+            thing_name: "time-1".to_string(),
+            capabilities: BTreeMap::from([("time".to_string(), true)]),
+            metrics: BTreeMap::new(),
+            observed_at_ms: 1000,
+            seq: 1,
+        };
+
+        assert!(state_has_board_owned_capability(&board_state));
+        assert!(!state_has_board_owned_capability(&time_state));
+        assert!(validate_retained_state_topic_payload("unit-1", &board_state).is_ok());
+        assert!(validate_retained_state_topic_payload("other", &board_state).is_err());
     }
 
     #[test]

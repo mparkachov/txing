@@ -401,58 +401,70 @@ install-service video_sender_command='' thing_name='' schema_file='' video_regio
     sudo systemctl enable --now board
 
 start:
-    #!/usr/bin/env bash
-    set -euo pipefail
     if ! systemctl cat "{{systemd_service}}" >/dev/null 2>&1; then \
         echo "Board service {{systemd_service}} is not installed. Run 'just board::install-service' first." >&2; \
         exit 1; \
-    fi
-    sudo systemctl reset-failed "{{systemd_service}}" || true
-    sudo systemctl start "{{systemd_service}}"
-    sudo systemctl --no-pager --full status "{{systemd_service}}"
-
-stop:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if ! systemctl cat "{{systemd_service}}" >/dev/null 2>&1; then \
-        echo "Board service {{systemd_service}} is not installed. Run 'just board::install-service' first." >&2; \
-        exit 1; \
-    fi
-    sudo systemctl stop "{{systemd_service}}"
+    fi; \
+    sudo systemctl reset-failed "{{systemd_service}}" || true; \
+    sudo systemctl start "{{systemd_service}}"; \
     sudo systemctl --no-pager --full status "{{systemd_service}}" || true
 
-@restart: stop start
-
-log lines='200' follow='true':
-    #!/usr/bin/env bash
-    set -euo pipefail
-    case "{{lines}}" in
-      ''|*[!0-9]*)
-        echo "lines must be a positive integer." >&2
-        exit 1
-        ;;
-    esac
-    if [ "{{lines}}" -le 0 ]; then
-      echo "lines must be a positive integer." >&2
-      exit 1
-    fi
+stop:
     if ! systemctl cat "{{systemd_service}}" >/dev/null 2>&1; then \
         echo "Board service {{systemd_service}} is not installed. Run 'just board::install-service' first." >&2; \
         exit 1; \
-    fi
-    journal_flags=(-a -n "{{lines}}")
-    case "{{follow}}" in
-      true|1|yes|on)
-        journal_flags+=(-f)
-        ;;
-      false|0|no|off)
-        journal_flags+=(--no-pager)
-        ;;
-      *)
-        echo "follow must be true or false." >&2
-        exit 1
-        ;;
-    esac
-    printf 'showing board logs for units:\n'
-    printf '  %s\n' "{{systemd_service}}"
+    fi; \
+    sudo systemctl stop "{{systemd_service}}"; \
+    sudo systemctl --no-pager --full status "{{systemd_service}}" || true
+
+restart:
+    if ! systemctl cat "{{systemd_service}}" >/dev/null 2>&1; then \
+        echo "Board service {{systemd_service}} is not installed. Run 'just board::install-service' first." >&2; \
+        exit 1; \
+    fi; \
+    sudo systemctl daemon-reload || true; \
+    sudo systemctl reset-failed "{{systemd_service}}" || true; \
+    sudo systemctl restart "{{systemd_service}}"; \
+    sudo systemctl --no-pager --full status "{{systemd_service}}" || true
+
+status:
+    if ! systemctl cat "{{systemd_service}}" >/dev/null 2>&1; then \
+        echo "Board service {{systemd_service}} is not installed. Run 'just board::install-service' first." >&2; \
+        exit 1; \
+    fi; \
+    sudo systemctl daemon-reload || true; \
+    printf 'showing board status for units:\n'; \
+    printf '  %s\n' "{{systemd_service}}"; \
+    sudo systemctl --no-pager --full status "{{systemd_service}}" || true
+
+log lines='200' follow='true':
+    case "{{lines}}" in \
+      ''|*[!0-9]*) \
+        echo "lines must be a positive integer." >&2; \
+        exit 1; \
+        ;; \
+    esac; \
+    if [ "{{lines}}" -le 0 ]; then \
+      echo "lines must be a positive integer." >&2; \
+      exit 1; \
+    fi; \
+    if ! systemctl cat "{{systemd_service}}" >/dev/null 2>&1; then \
+        echo "Board service {{systemd_service}} is not installed. Run 'just board::install-service' first." >&2; \
+        exit 1; \
+    fi; \
+    journal_flags=(-a -n "{{lines}}"); \
+    case "{{follow}}" in \
+      true|1|yes|on) \
+        journal_flags+=(-f); \
+        ;; \
+      false|0|no|off) \
+        journal_flags+=(--no-pager); \
+        ;; \
+      *) \
+        echo "follow must be true or false." >&2; \
+        exit 1; \
+        ;; \
+    esac; \
+    printf 'showing board logs for units:\n'; \
+    printf '  %s\n' "{{systemd_service}}"; \
     sudo journalctl "${journal_flags[@]}" -u "{{systemd_service}}"

@@ -225,8 +225,10 @@ changes:
 - `2 = ["sparkplug", "ble", "power", "board", "mcp"]`
 - `1 = ["sparkplug", "ble", "power", "board", "mcp", "video"]`
 
-Until board/MCP/video publish v2 capability state, current unit devices naturally
-converge only to REDCON `4` or `3`.
+The board runtime publishes retained v2 capability state for `board`, `mcp`, and
+`video`. SparkplugManager consumes those board-owned retained state messages
+directly. Together with BLE `sparkplug`/`ble`/`power` state, upgraded unit
+devices can converge through the full REDCON ladder.
 
 Commandable REDCON levels are a txing type capability, exposed as the comma-separated
 `redconCommandLevels` thing attribute from each device manifest's `redcon_command_levels`.
