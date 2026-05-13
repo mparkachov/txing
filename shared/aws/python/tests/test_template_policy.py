@@ -139,6 +139,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("Sid: RigGreengrassComponentDeploy", template)
         self.assertIn("greengrass:CreateComponentVersion", template)
         self.assertIn("greengrass:CreateDeployment", template)
+        self.assertIn("greengrass:ListThingGroupsForCoreDevice", template)
         self.assertIn("Sid: RigGreengrassArtifactObjectWrite", template)
         self.assertIn("s3:PutObject", template)
         self.assertIn("Sid: RigTypeThingGroupDeploy", template)

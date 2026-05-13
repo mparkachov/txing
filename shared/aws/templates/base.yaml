@@ -96,6 +96,7 @@ Resources:
               - greengrass:DescribeComponent
               - greengrass:GetComponent
               - greengrass:GetDeployment
+              - greengrass:ListThingGroupsForCoreDevice
               - greengrass:ListComponentVersions
               - greengrass:ListDeployments
             Resource: "*"
