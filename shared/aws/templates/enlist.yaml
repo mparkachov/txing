@@ -76,6 +76,12 @@ Resources:
                 Effect: Allow
                 Action: iot:DescribeEndpoint
                 Resource: "*"
+              - Sid: EnlistBoardVideoChannels
+                Effect: Allow
+                Action:
+                  - kinesisvideo:CreateSignalingChannel
+                  - kinesisvideo:DescribeSignalingChannel
+                Resource: "*"
   TxingEnlistFunction:
     Type: AWS::Lambda::Function
     DependsOn:

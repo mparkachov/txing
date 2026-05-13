@@ -10,6 +10,7 @@ async-trait = "0.1"
 aws-config = { version = "1", features = ["behavior-version-latest"] }
 aws-sdk-iot = "1"
 aws-sdk-iotdataplane = "1"
+aws-sdk-kinesisvideo = "1"
 aws-sdk-ssm = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 lambda_runtime = "1"

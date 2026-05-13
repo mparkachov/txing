@@ -348,11 +348,12 @@ class AwsTemplatePolicyTests(unittest.TestCase):
             "iot:SearchIndex",
             "iot:GetThingShadow",
             "iot:UpdateThingShadow",
+            "kinesisvideo:CreateSignalingChannel",
+            "kinesisvideo:DescribeSignalingChannel",
             "ssm:GetParametersByPath",
         ):
             self.assertIn(action, enlist_template)
-        self.assertNotIn("kinesisvideo:", enlist_template)
-        self.assertNotIn("EnlistBoardVideoChannels", enlist_template)
+        self.assertIn("EnlistBoardVideoChannels", enlist_template)
 
     def test_rig_runtime_can_connect_with_managed_device_client_ids(self) -> None:
         template = _template_text()

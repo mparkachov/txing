@@ -209,6 +209,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "aws-sdk-kinesisvideo"
+version = "1.100.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "423ac3b091283a64e28c0d89bb8d285502c635c8d85a87f74c618ebe84a6a0af"
+dependencies = [
+ "aws-credential-types",
+ "aws-runtime",
+ "aws-smithy-async",
+ "aws-smithy-http",
+ "aws-smithy-json",
+ "aws-smithy-observability",
+ "aws-smithy-runtime",
+ "aws-smithy-runtime-api",
+ "aws-smithy-types",
+ "aws-types",
+ "bytes",
+ "fastrand",
+ "http 0.2.12",
+ "http 1.4.0",
+ "regex-lite",
+ "tracing",
+]
+
+[[package]]
 name = "aws-sdk-ssm"
 version = "1.109.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2394,6 +2418,7 @@ dependencies = [
  "aws-config",
  "aws-sdk-iot",
  "aws-sdk-iotdataplane",
+ "aws-sdk-kinesisvideo",
  "aws-sdk-ssm",
  "chrono",
  "lambda_runtime",

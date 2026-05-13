@@ -6,6 +6,7 @@ use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use aws_sdk_iot::types::AttributePayload;
 use aws_sdk_iotdataplane::primitives::Blob;
+use aws_sdk_kinesisvideo::types::{ChannelType, SingleMasterConfiguration};
 use chrono::{SecondsFormat, Utc};
 use rand::Rng;
 use serde_json::{Map, Value, json};
@@ -298,6 +299,36 @@ fn parse_capabilities_set(value: &str, thing_name: &str) -> Result<Vec<String>> 
 fn capabilities(record: &Map<String, Value>, context: &str) -> Result<Vec<String>> {
     let values = list_value(record, "capabilities", context)?;
     parse_capabilities_set(&encode_capabilities_set(&values)?, context)
+}
+
+fn board_video_channel_name(
+    record: &Map<String, Value>,
+    thing_name: &str,
+) -> Result<Option<String>> {
+    let Some(template) = record
+        .get("resources")
+        .and_then(Value::as_object)
+        .and_then(|resources| resources.get("boardVideo"))
+        .and_then(Value::as_object)
+        .and_then(|board_video| board_video.get("channelName"))
+    else {
+        return Ok(None);
+    };
+    let template = template.as_str().ok_or_else(|| {
+        enlist_error(format!(
+            "type catalog record {:?} has non-string resources.boardVideo.channelName",
+            record_context(record)
+        ))
+    })?;
+    let channel_name = template.replace("{device_id}", thing_name);
+    let channel_name = channel_name.trim();
+    if channel_name.is_empty() {
+        return enlist_bail(format!(
+            "type catalog record {:?} has empty resources.boardVideo.channelName",
+            record_context(record)
+        ));
+    }
+    Ok(Some(channel_name.to_string()))
 }
 
 fn record_context(record: &Map<String, Value>) -> String {
@@ -611,12 +642,14 @@ pub trait EnlistAws: Send + Sync {
         thing_name: &str,
         thing_group_name: &str,
     ) -> Result<()>;
+    async fn ensure_signaling_channel(&self, channel_name: &str) -> Result<bool>;
 }
 
 #[derive(Clone)]
 pub struct AwsEnlistClient {
     iot: aws_sdk_iot::Client,
     iot_data: aws_sdk_iotdataplane::Client,
+    kinesisvideo: aws_sdk_kinesisvideo::Client,
     ssm: aws_sdk_ssm::Client,
 }
 
@@ -639,6 +672,7 @@ impl AwsEnlistClient {
         Ok(Self {
             iot,
             iot_data: aws_sdk_iotdataplane::Client::from_conf(data_config),
+            kinesisvideo: aws_sdk_kinesisvideo::Client::new(&config),
             ssm: aws_sdk_ssm::Client::new(&config),
         })
     }
@@ -969,6 +1003,42 @@ impl EnlistAws for AwsEnlistClient {
             Ok(_) => Ok(()),
             Err(err) if error_is_not_found(&err) => Ok(()),
             Err(err) => Err(anyhow!(err)).context("remove AWS IoT thing from thing group"),
+        }
+    }
+
+    async fn ensure_signaling_channel(&self, channel_name: &str) -> Result<bool> {
+        match self
+            .kinesisvideo
+            .describe_signaling_channel()
+            .channel_name(channel_name)
+            .send()
+            .await
+        {
+            Ok(_) => return Ok(false),
+            Err(err) if error_is_not_found(&err) => {}
+            Err(err) => {
+                return Err(anyhow!(err))
+                    .with_context(|| format!("describe KVS signaling channel {channel_name:?}"));
+            }
+        }
+
+        match self
+            .kinesisvideo
+            .create_signaling_channel()
+            .channel_name(channel_name)
+            .channel_type(ChannelType::SingleMaster)
+            .single_master_configuration(
+                SingleMasterConfiguration::builder()
+                    .message_ttl_seconds(60)
+                    .build(),
+            )
+            .send()
+            .await
+        {
+            Ok(_) => Ok(true),
+            Err(err) if error_is_already_exists(&err) => Ok(false),
+            Err(err) => Err(anyhow!(err))
+                .with_context(|| format!("create KVS signaling channel {channel_name:?}")),
         }
     }
 }
@@ -1444,6 +1514,25 @@ impl<'a, A: EnlistAws + ?Sized, R: ShortIdSource> EnlistService<'a, A, R> {
         Ok(initialized)
     }
 
+    async fn ensure_auxiliary_resources(
+        &self,
+        thing_name: &str,
+        record: &Map<String, Value>,
+    ) -> Result<Value> {
+        let mut resources = Map::new();
+        if let Some(channel_name) = board_video_channel_name(record, thing_name)? {
+            let created = self.aws.ensure_signaling_channel(&channel_name).await?;
+            resources.insert(
+                "boardVideo".to_string(),
+                json!({
+                    "channelName": channel_name,
+                    "created": created,
+                }),
+            );
+        }
+        Ok(Value::Object(resources))
+    }
+
     fn thing_result(
         &self,
         thing: &ThingRecord,
@@ -1641,7 +1730,16 @@ impl<'a, A: EnlistAws + ?Sized, R: ShortIdSource> EnlistService<'a, A, R> {
         let initialized = self
             .initialize_device_shadows(&thing.thing_name, &record, &town_id, &normalized_rig_id)
             .await?;
-        Ok(self.thing_result(&thing, created, attributes, initialized, json!({})))
+        let auxiliary_resources = self
+            .ensure_auxiliary_resources(&thing.thing_name, &record)
+            .await?;
+        Ok(self.thing_result(
+            &thing,
+            created,
+            attributes,
+            initialized,
+            auxiliary_resources,
+        ))
     }
 
     async fn assign_device(&self, device_id: &str, rig_id: &str) -> Result<EnlistResult> {
@@ -1678,7 +1776,10 @@ impl<'a, A: EnlistAws + ?Sized, R: ShortIdSource> EnlistService<'a, A, R> {
         self.update_thing_attributes(&device, attributes.clone())
             .await?;
         let updated = self.describe_thing(&normalized_device_id).await?;
-        Ok(self.thing_result(&updated, false, attributes, Vec::new(), json!({})))
+        let auxiliary_resources = self
+            .ensure_auxiliary_resources(&updated.thing_name, &record)
+            .await?;
+        Ok(self.thing_result(&updated, false, attributes, Vec::new(), auxiliary_resources))
     }
 
     async fn detach_thing_principals(&self, thing_name: &str) -> Result<Vec<String>> {
@@ -2041,6 +2142,7 @@ mod tests {
         parameters: BTreeMap<String, String>,
         principals: BTreeMap<String, Vec<String>>,
         thing_groups: BTreeMap<String, BTreeSet<String>>,
+        signaling_channels: BTreeSet<String>,
         parameter_page_size: Option<usize>,
         search_page_size: Option<usize>,
     }
@@ -2133,6 +2235,10 @@ mod tests {
                 .get(thing_group_name)
                 .cloned()
                 .unwrap_or_default()
+        }
+
+        fn signaling_channels(&self) -> BTreeSet<String> {
+            self.state.lock().unwrap().signaling_channels.clone()
         }
 
         fn set_parameter_page_size(&self, size: usize) {
@@ -2393,6 +2499,15 @@ mod tests {
             }
             Ok(())
         }
+
+        async fn ensure_signaling_channel(&self, channel_name: &str) -> Result<bool> {
+            Ok(self
+                .state
+                .lock()
+                .unwrap()
+                .signaling_channels
+                .insert(channel_name.to_string()))
+        }
     }
 
     #[derive(Debug, Clone, Default)]
@@ -2550,6 +2665,10 @@ mod tests {
                 (
                     "shadows/video/defaultPayload",
                     r#"{"state":{"reported":{}}}"#,
+                ),
+                (
+                    "resources/boardVideo/channelName",
+                    "{device_id}-board-video",
                 ),
             ],
         );
@@ -2776,7 +2895,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn enlist_unit_creates_all_shadows_without_auxiliary_resources() {
+    async fn enlist_unit_creates_all_shadows_and_board_video_channel() {
         let aws = FakeAws::seeded();
         let mut service = EnlistService::new(&aws, SequenceShortIds::new());
         let town = enlist_town(&mut service).await;
@@ -2802,7 +2921,19 @@ mod tests {
             result["initializedShadows"],
             json!(["sparkplug", "ble", "power", "board", "mcp", "video"])
         );
-        assert_eq!(result["auxiliaryResources"], json!({}));
+        assert_eq!(
+            result["auxiliaryResources"],
+            json!({
+                "boardVideo": {
+                    "channelName": "unit-000003-board-video",
+                    "created": true,
+                }
+            })
+        );
+        assert_eq!(
+            aws.signaling_channels(),
+            BTreeSet::from(["unit-000003-board-video".to_string()])
+        );
     }
 
     #[tokio::test]
@@ -2926,7 +3057,15 @@ mod tests {
                 "arn:aws:iot:eu-central-1:123:cert/two",
             ],
         );
-        assert_eq!(device["auxiliaryResources"], json!({}));
+        assert_eq!(
+            device["auxiliaryResources"],
+            json!({
+                "boardVideo": {
+                    "channelName": "unit-000003-board-video",
+                    "created": true,
+                }
+            })
+        );
 
         let result = service
             .handle(&json!({"action": "dischargeThing", "thingId": thing_name}))
