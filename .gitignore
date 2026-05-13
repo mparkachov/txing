@@ -25,6 +25,7 @@ __pycache__/
 /rig/build/
 /rig/greengrass-lite/
 /rig/connectedhomeip/
+/devices/*/web/node_modules
 
 # tmp for logs
 /tmp
