@@ -15,7 +15,8 @@ back for review before continuing when a step needs confirmation.
 - Build on the Lima `txing` Linux `aarch64` VM.
 - Do not build on the Raspberry Pi board.
 - Do not copy a source checkout to the board.
-- Do not publish a GitHub prerelease in this manual proof step.
+- Publish GitHub prereleases only through the explicit macOS publish step; the
+  Lima build step never talks to GitHub.
 - Do not configure a permanent `mise` tool install or systemd unit on the board.
 - Do not run `just unit::daemon::cert` as part of the build-only steps. That
   recipe creates or updates AWS resources and should be run only when
@@ -48,6 +49,15 @@ The phase-1 baseline now includes these implemented pieces:
 - `release::bump` and `release::check` now include
   `devices/unit/daemon/Cargo.toml` and the daemon package entry in
   `devices/unit/daemon/Cargo.lock`.
+- `just unit::daemon::prerelease-build` runs in the Linux `aarch64` Lima builder,
+  requires a clean worktree, runs daemon tests, builds the release binary, and
+  stages `txing-unit-daemon-linux-aarch64` plus JSON metadata under
+  `devices/unit/daemon/target/prerelease`.
+- `just unit::daemon::prerelease-publish` runs on macOS, requires `gh`, verifies
+  the staged metadata against the current clean `HEAD`, pushes
+  `feature/unit-daemon-prerelease`, creates
+  `v<NEXT_PATCH>-feature.<unix_timestamp>`, publishes the GitHub prerelease, and
+  keeps only the latest 10 matching unit-daemon feature prereleases.
 
 For normal local development on macOS after config has been provisioned:
 
@@ -64,6 +74,47 @@ just unit::daemon::cert unit-bl95f2
 The `cert` recipe refuses to overwrite an existing `.env` or certificate files.
 Move old material out of the config directory before intentionally issuing a
 replacement certificate.
+
+## Phase 1 GitHub Prerelease Flow
+
+The prerelease flow is intentionally split across two hosts. Build in Lima:
+
+```bash
+limactl shell txing
+```
+
+```bash
+cd /Users/Maxim/Developer/txing
+```
+
+```bash
+just unit::daemon::prerelease-build
+```
+
+Return to macOS:
+
+```bash
+exit
+```
+
+Publish from macOS:
+
+```bash
+just unit::daemon::prerelease-publish
+```
+
+Requirements:
+
+- The git worktree must be clean for both steps, including untracked files.
+- Dirty or untracked work must be committed before building or publishing.
+- The publish step uses macOS `gh` authentication; the Lima builder does not need
+  GitHub authentication.
+- The default moving branch is `feature/unit-daemon-prerelease`.
+- The tag and release name are `v<NEXT_PATCH>-feature.<unix_timestamp>`.
+- The uploaded release asset is the raw executable
+  `txing-unit-daemon-linux-aarch64`.
+- The publish step prunes older matching unit-daemon feature prereleases beyond
+  the latest 10, including their tags.
 
 ## 1. Confirm Host Access
 

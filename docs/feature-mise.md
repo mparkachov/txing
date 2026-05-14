@@ -61,10 +61,11 @@ Stable releases are normal GitHub releases:
 Feature releases are GitHub prereleases:
 
 - Tag/release name: repo-wide prerelease version, for example
-  `v0.9.9-dev.20260514T153000Z.gabc1234.dirtyabcd`.
+  `v0.9.9-feature.1770000000`.
 - Version source: the next patch version after the current base `VERSION`, plus
-  a timestamp and git state suffix.
-- Built locally by a developer in a Linux `aarch64` environment.
+  a Unix timestamp prerelease suffix.
+- Built locally by a developer in a Linux `aarch64` environment, then published
+  from macOS where GitHub CLI authentication is available.
 - Functional tests are mandatory before publish.
 - GitHub prerelease flag: `true`.
 - Asset: one Linux `aarch64` dynamically linked executable.
@@ -82,15 +83,15 @@ metadata on the current stable version.
 If stable is `0.9.8`, a feature build should look like:
 
 ```text
-0.9.9-dev.20260514T153000Z.gabc1234.dirtyabcd
+0.9.9-feature.1770000000
 ```
 
 This gives the desired ordering:
 
-- `0.9.9-dev...` is newer than stable `0.9.8`, so a feature-opt-in board can run
-  it.
-- Stable `0.9.9` is newer than `0.9.9-dev...`, so once `main` advances and CI
-  publishes stable, stable naturally wins.
+- `0.9.9-feature...` is newer than stable `0.9.8`, so a feature-opt-in board can
+  run it.
+- Stable `0.9.9` is newer than `0.9.9-feature...`, so once `main` advances and
+  CI publishes stable, stable naturally wins.
 - If `main` advances farther, for example to `0.10.0`, old feature prereleases
   are also naturally behind stable.
 
@@ -219,26 +220,44 @@ cross-linking is not the first-choice workflow. The recommended first workflow i
 a persistent Linux `aarch64` Lima VM with the repository checkout and build
 tooling installed inside the VM.
 
-From macOS, the intended developer command shape is:
+From macOS, log in to the Lima builder and run the Linux build step manually:
 
 ```bash
 limactl shell txing
 cd /path/to/txing
-just unit::daemon::prerelease
+just unit::daemon::prerelease-build
+exit
 ```
 
-The `unit::daemon::prerelease` implementation should run inside Linux and:
+Then publish from macOS, where `gh` is authenticated:
 
-- verify the feature version derived from root `VERSION`, timestamp, git SHA,
-  and dirty hash;
+```bash
+just unit::daemon::prerelease-publish
+```
+
+The `unit::daemon::prerelease-build` implementation runs inside Linux and:
+
+- requires Linux `aarch64`;
+- requires a clean git worktree, including untracked files;
+- derives the feature version from the next patch after root `VERSION` plus a
+  Unix timestamp: `v<NEXT_PATCH>-feature.<timestamp>`;
 - run mandatory functional tests;
 - build the release binary for Linux `aarch64`;
-- create a GitHub prerelease;
-- upload the single executable asset;
-- prune feature prereleases to the latest 10 globally.
+- stage the single executable asset as `txing-unit-daemon-linux-aarch64`;
+- write JSON metadata for the macOS publish step.
 
-Dirty working trees are allowed. Dirty builds must include dirty state in the
-prerelease version so two local states do not publish as the same version.
+The `unit::daemon::prerelease-publish` implementation runs on macOS and:
+
+- requires a clean git worktree;
+- verifies the current `HEAD` matches the build metadata;
+- pushes `HEAD` to a moving branch under `feature/`;
+- pushes the timestamped prerelease tag;
+- creates the GitHub prerelease and uploads the staged asset;
+- prunes older unit-daemon feature prereleases so only the latest 10 remain.
+
+Dirty or untracked work must be committed before publishing. The feature branch
+is intentionally moving; the default branch name is
+`feature/unit-daemon-prerelease`.
 
 ## Stable CI Publishing
 
@@ -272,6 +291,13 @@ The current phase-1 implementation has these working pieces:
 - `just unit::daemon::run` runs
   `cargo run --manifest-path devices/unit/daemon/Cargo.toml` from the repository
   root.
+- `just unit::daemon::prerelease-build` stages a clean-tree Linux `aarch64`
+  feature binary and JSON metadata under `devices/unit/daemon/target/prerelease`.
+- `just unit::daemon::prerelease-publish` runs on macOS, pushes the
+  `feature/unit-daemon-prerelease` branch and `v<NEXT_PATCH>-feature.<timestamp>`
+  tag, creates the GitHub prerelease, uploads
+  `txing-unit-daemon-linux-aarch64`, and keeps only the latest 10 matching
+  unit-daemon feature prereleases.
 - The daemon lookup order is `--env-file`, `TXING_DAEMON_ENV_FILE`,
   `TXING_DAEMON_CONFIG_DIR/.env`, `XDG_CONFIG_HOME/txing/unit-daemon/.env`, then
   `$HOME/.config/txing/unit-daemon/.env`.
@@ -364,9 +390,12 @@ Goal: prove the entire loop works before polishing repeatability.
 - Add a local foreground run recipe for source checkout development.
   Implemented as `just unit::daemon::run`.
 - Add a local Linux `aarch64` prerelease recipe for the daemon.
-- Run the mandatory daemon tests in that prerelease recipe.
-- Build a dynamically linked Linux `aarch64` binary.
-- Publish a GitHub prerelease with a single executable asset.
+- Run the mandatory daemon tests in that prerelease recipe. Implemented in
+  `just unit::daemon::prerelease-build`.
+- Build a dynamically linked Linux `aarch64` binary. Implemented in
+  `just unit::daemon::prerelease-build`.
+- Publish a GitHub prerelease with a single executable asset. Implemented in
+  `just unit::daemon::prerelease-publish`.
 - Manually configure one board with mise stable config and one feature service
   config.
 - Verify stable install through mise.
@@ -404,7 +433,6 @@ repeatable without requiring feature-channel knowledge.
 
 Goal: improve safety and developer ergonomics after the core path works.
 
-- Automate pruning to the latest 10 feature prereleases globally.
 - Add clearer journald messages around feature install success, timeout, and
   fallback.
 - Add a documented manual opt-in/opt-out procedure for feature mode.
@@ -422,6 +450,4 @@ Goal: improve safety and developer ergonomics after the core path works.
 
 - Exact stable and feature mise config file contents.
 - Exact systemd unit and drop-in layout.
-- Exact functional test set required before local prerelease publish.
 - Exact Lima image and provisioning requirements.
-- Exact GitHub release asset name pattern for future multi-architecture support.

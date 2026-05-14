@@ -81,6 +81,8 @@ just rig::check <rig-id>
 just rig::deploy
 just rig::status <rig-id>
 just unit::daemon::run
+just unit::daemon::prerelease-build
+just unit::daemon::prerelease-publish
 just unit::board::run
 just web::dev
 just web::write-env
@@ -154,6 +156,8 @@ Board:
 
 ```bash
 just unit::daemon::run
+just unit::daemon::prerelease-build
+just unit::daemon::prerelease-publish
 just unit::board::check
 just unit::board::build-native
 just unit::board::build
