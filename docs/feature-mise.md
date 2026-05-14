@@ -198,7 +198,7 @@ lives on the board as the `txing` user at:
 txing-unit-daemon = "github:mparkachov/txing"
 
 [tools.txing-unit-daemon]
-version = "0.9.8-feature.<unix_timestamp>"
+version = "latest"
 asset_pattern = "txing-unit-daemon-linux-aarch64.tar.gz"
 prerelease = true
 
@@ -207,8 +207,9 @@ slsa = false
 github_attestations = false
 ```
 
-For later feature tests, replace only `version` with the newest
-`<NEXT_PATCH>-feature.<unix_timestamp>` prerelease. The asset name and exposed
+With `prerelease = true`, `mise install` resolves `latest` to the newest GitHub
+release including prereleases. `MISE_OFFLINE=1 mise exec -- txing-unit-daemon`
+then runs the installed version without network work. The asset name and exposed
 command stay stable. The archive contains `txing-unit-daemon` at its root, so
 mise discovers that executable after extraction without `bin` or `rename_exe`.
 The `tool_alias` makes mise report the tool as `txing-unit-daemon` instead of
@@ -378,6 +379,14 @@ The current phase-1 implementation has these working pieces:
 - The daemon publishes the retained `board` capability state, and the web UI has
   been confirmed to show the board capability as enabled while the daemon is
   running.
+- The feature board config can use `version = "latest"` with `prerelease = true`
+  so `mise install` resolves the newest unit daemon GitHub prerelease at service
+  start, while `MISE_OFFLINE=1 mise exec -- txing-unit-daemon` runs the installed
+  version without network work.
+- A systemd feature-channel smoke test on `unit-bl95f2` has been confirmed to
+  download `txing-unit-daemon-linux-aarch64.tar.gz`, extract the daemon under
+  `/var/tmp/txing/unit-daemon/mise`, start it offline, and log
+  `version=0.9.8-feature.1778793458` on startup.
 - `release::bump` and `release::check` include the daemon Cargo manifest and
   lockfile.
 
@@ -469,13 +478,14 @@ Goal: prove the entire loop works before polishing repeatability.
   `just unit::daemon::prerelease-build`.
 - Publish a GitHub prerelease with a single `.tar.gz` archive asset. Implemented
   in `just unit::daemon::prerelease-publish`.
-- Manually configure one board with mise stable config and one feature service
-  config.
-- Verify stable install through mise.
-- Verify feature boot install into `/var/tmp`.
-- Verify fallback to stable when feature install fails.
-- Verify stable wins after publishing a stable version newer than the feature
-  prerelease base.
+- Manually configure one board with a feature service config. Verified on
+  `unit-bl95f2`.
+- Verify feature boot install into `/var/tmp`. Verified with
+  `txing-unit-daemon@0.9.8-feature.1778793458`.
+- Verify feature service start through systemd. Verified with startup version
+  logging and retained online state publish.
+- Defer stable install, stable fallback, and stable-wins behavior to phase 2,
+  after stable CI publishing and stable service config exist.
 
 This phase can tolerate manual board setup and rough commands. The success
 criterion is that a developer can build locally in Lima, publish a feature

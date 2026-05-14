@@ -76,6 +76,52 @@ The `cert` recipe refuses to overwrite an existing `.env` or certificate files.
 Move old material out of the config directory before intentionally issuing a
 replacement certificate.
 
+## Phase 1 Current Manual Status
+
+The end-to-end feature workflow has been manually checked through systemd on the
+`unit-bl95f2` board.
+
+Confirmed results:
+
+- `just unit::daemon::prerelease-build` in the Linux `aarch64` Lima builder
+  produced `v0.9.8-feature.1778793458`.
+- `just unit::daemon::prerelease-publish` on macOS pushed
+  `feature/unit-daemon-prerelease`, pushed tag
+  `v0.9.8-feature.1778793458`, and published
+  `txing-unit-daemon-linux-aarch64.tar.gz`.
+- The board feature mise config can use `version = "latest"` with
+  `prerelease = true`; `mise install` resolves the newest matching GitHub
+  prerelease.
+- The read-only-root tmpfs layout uses `/var/tmp` with a 96M cap and executable
+  mount options for feature-channel mise install/cache/tmp state.
+- The systemd feature service downloaded, checksummed, extracted, and installed
+  `txing-unit-daemon@0.9.8-feature.1778793458` from GitHub Releases.
+- The installed executable is under
+  `/var/tmp/txing/unit-daemon/mise/installs/txing-unit-daemon/0.9.8-feature.1778793458/`.
+- The first daemon log line includes
+  `version=0.9.8-feature.1778793458`.
+- The daemon read the sparkplug shadow, connected to MQTT, published online
+  `board` capability state, and published offline state on `systemctl stop`.
+
+The last confirmed systemd startup journal shape:
+
+```text
+mise txing-unit-daemon@0.9.8-feature.1778793458 [1/3] install
+mise txing-unit-daemon@0.9.8-feature.1778793458 [1/3] download txing-unit-daemon-linux-aarch64.tar.gz
+mise txing-unit-daemon@0.9.8-feature.1778793458 [2/3] checksum txing-unit-daemon-linux-aarch64.tar.gz
+mise txing-unit-daemon@0.9.8-feature.1778793458 [3/3] extract txing-unit-daemon-linux-aarch64.tar.gz
+mise txing-unit-daemon@0.9.8-feature.1778793458 ✓ installed
+info: starting unit daemon version=0.9.8-feature.1778793458 thing_id=unit-bl95f2 ... capabilities=["board"]
+info: read sparkplug shadow thing_id=unit-bl95f2 sparkplug_redcon=4
+info: mqtt connected client_id=unit-bl95f2-daemon-9972
+info: online state published thing_id=unit-bl95f2
+```
+
+Remaining phase-1 work is cleanup and deciding which parts of the test unit
+become the phase-2 stable service contract. Stable install, stable fallback, and
+stable-wins behavior are intentionally deferred until stable GitHub release
+publishing exists.
+
 ## Phase 1 GitHub Prerelease Flow
 
 The prerelease flow is intentionally split across two hosts. Build in Lima:
@@ -144,15 +190,12 @@ Requirements:
 
 ## Phase 1 Board Feature Install Smoke Test
 
-After publishing a feature prerelease, configure the board to install that exact
-version with mise from GitHub Releases. This step still does not copy a source
-checkout to the board.
-
-After publishing the new archive prerelease, set the feature version to the
-version printed by `just unit::daemon::prerelease-build`:
+After publishing a feature prerelease, configure the board to install the latest
+feature prerelease with mise from GitHub Releases. This step still does not copy
+a source checkout to the board.
 
 ```bash
-feature_version="0.9.8-feature.<unix_timestamp>"
+feature_version="latest"
 ```
 
 Log in to the board:
@@ -191,7 +234,9 @@ The GitHub verification settings are disabled only for this manual phase-1
 feature channel. The asset was built locally in Lima and uploaded by `gh`, so it
 does not have SLSA provenance or GitHub artifact attestations for mise to verify.
 The `tool_alias` makes `mise list` report the tool as `txing-unit-daemon` while
-still installing from the GitHub release backend.
+still installing from the GitHub release backend. With `prerelease = true`,
+`version = "latest"` resolves to the newest GitHub release including prereleases
+when `mise install` runs.
 
 Use the existing `/var/tmp` tmpfs for feature-channel mise install/cache/tmp
 state. `/tmp` is intentionally small and already carries board runtime state, so
