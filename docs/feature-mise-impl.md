@@ -51,8 +51,9 @@ The phase-1 baseline now includes these implemented pieces:
   `devices/unit/daemon/Cargo.lock`.
 - `just unit::daemon::prerelease-build` runs in the Linux `aarch64` Lima builder,
   requires a clean worktree, runs daemon tests, builds the release binary, and
-  stages `txing-unit-daemon-linux-aarch64` plus JSON metadata under
-  `devices/unit/daemon/target/prerelease`.
+  stages `txing-unit-daemon-linux-aarch64.tar.gz` plus JSON metadata under
+  `devices/unit/daemon/target/prerelease`. The archive contains a stripped
+  root-level executable named `txing-unit-daemon`.
 - `just unit::daemon::prerelease-publish` runs on macOS, requires `gh`, verifies
   the staged metadata against the current clean `HEAD`, pushes
   `feature/unit-daemon-prerelease`, creates
@@ -136,10 +137,244 @@ Requirements:
   GitHub authentication.
 - The default moving branch is `feature/unit-daemon-prerelease`.
 - The tag and release name are `v<NEXT_PATCH>-feature.<unix_timestamp>`.
-- The uploaded release asset is the raw executable
-  `txing-unit-daemon-linux-aarch64`.
+- The uploaded release asset is `txing-unit-daemon-linux-aarch64.tar.gz`.
+  It contains a stripped root-level executable named `txing-unit-daemon`.
 - The publish step prunes older matching unit-daemon feature prereleases beyond
   the latest 10, including their tags.
+
+## Phase 1 Board Feature Install Smoke Test
+
+After publishing a feature prerelease, configure the board to install that exact
+version with mise from GitHub Releases. This step still does not copy a source
+checkout to the board.
+
+After publishing the new archive prerelease, set the feature version to the
+version printed by `just unit::daemon::prerelease-build`:
+
+```bash
+feature_version="0.9.8-feature.<unix_timestamp>"
+```
+
+Log in to the board:
+
+```bash
+ssh txing
+```
+
+Create the phase-1 feature mise config on the board as the `txing` user:
+
+```text
+/home/txing/.config/mise/txing-unit-daemon-feature/config.toml
+```
+
+```bash
+install -d -m 700 "$HOME/.config/mise/txing-unit-daemon-feature"
+```
+
+```bash
+cat > "$HOME/.config/mise/txing-unit-daemon-feature/config.toml" <<EOF
+[tool_alias]
+txing-unit-daemon = "github:mparkachov/txing"
+
+[tools.txing-unit-daemon]
+version = "$feature_version"
+asset_pattern = "txing-unit-daemon-linux-aarch64.tar.gz"
+prerelease = true
+
+[settings.github]
+slsa = false
+github_attestations = false
+EOF
+```
+
+The GitHub verification settings are disabled only for this manual phase-1
+feature channel. The asset was built locally in Lima and uploaded by `gh`, so it
+does not have SLSA provenance or GitHub artifact attestations for mise to verify.
+The `tool_alias` makes `mise list` report the tool as `txing-unit-daemon` while
+still installing from the GitHub release backend.
+
+Use the existing `/var/tmp` tmpfs for feature-channel mise install/cache/tmp
+state. `/tmp` is intentionally small and already carries board runtime state, so
+do not consume it for downloaded daemon artifacts. `/var/tmp` must be large
+enough and executable; the read-only provisioning should mount it with
+`size=96M` and explicit `exec`. The size is a tmpfs cap, not preallocated
+memory, but the Raspberry Pi Zero 2 W has only 512 MB RAM, so keep the cap
+tight and remove download/tmp cache after install.
+
+```bash
+findmnt -no TARGET,FSTYPE,SIZE,AVAIL,OPTIONS /var/tmp
+```
+
+```bash
+df -h /var/tmp
+```
+
+If `/var/tmp` is still the old 16M mount or shows `noexec`, remount it for this
+manual test:
+
+```bash
+sudo mount -o remount,rw,exec,nosuid,nodev,mode=1777,size=96M /var/tmp
+```
+
+```bash
+findmnt -no TARGET,FSTYPE,SIZE,AVAIL,OPTIONS /var/tmp
+```
+
+Create the mise directories as the `txing` user:
+
+```bash
+install -d -m 700 /var/tmp/txing/unit-daemon/mise /var/tmp/txing/unit-daemon/mise-cache /var/tmp/txing/unit-daemon/mise-tmp
+```
+
+Export the same environment shape the future feature service will use:
+
+```bash
+export MISE_CONFIG_DIR="$HOME/.config/mise/txing-unit-daemon-feature"
+```
+
+```bash
+export MISE_DATA_DIR=/var/tmp/txing/unit-daemon/mise
+```
+
+```bash
+export MISE_CACHE_DIR=/var/tmp/txing/unit-daemon/mise-cache
+```
+
+```bash
+export MISE_TMP_DIR=/var/tmp/txing/unit-daemon/mise-tmp
+```
+
+```bash
+export MISE_PRERELEASES=1
+```
+
+```bash
+export TXING_DAEMON_CONFIG_DIR="$HOME/.config/txing/unit-daemon"
+```
+
+Install the feature binary into the `/var/tmp` tmpfs:
+
+```bash
+mise install
+```
+
+Inspect and then remove mise download/tmp cache. `mise exec --offline` only
+needs the installed tool in `MISE_DATA_DIR`.
+
+```bash
+du -sh /var/tmp/txing/unit-daemon/*
+```
+
+```bash
+rm -rf /var/tmp/txing/unit-daemon/mise-cache/* /var/tmp/txing/unit-daemon/mise-tmp/*
+```
+
+Confirm that mise resolves the command from the `/var/tmp` install:
+
+```bash
+mise which txing-unit-daemon
+```
+
+Expected path shape:
+
+```text
+/var/tmp/txing/unit-daemon/mise/installs/txing-unit-daemon/<feature-version>/...
+```
+
+Verify the binary without starting the daemon:
+
+```bash
+MISE_OFFLINE=1 mise exec -- txing-unit-daemon --help >/dev/null
+```
+
+If the board does not already have daemon runtime config, copy the generated
+macOS config directory to the board before starting the daemon. Run these
+commands on macOS:
+
+```bash
+test -r "$HOME/.config/txing/unit-daemon/.env"
+```
+
+```bash
+test -r "$HOME/.config/txing/unit-daemon/private.pem.key"
+```
+
+```bash
+COPYFILE_DISABLE=1 tar -C "$HOME/.config/txing" -czf /tmp/txing-unit-daemon-config.tgz unit-daemon
+```
+
+```bash
+tar -tzf /tmp/txing-unit-daemon-config.tgz
+```
+
+```bash
+scp /tmp/txing-unit-daemon-config.tgz txing:/tmp/txing-unit-daemon-config.tgz
+```
+
+Then on the board as the `txing` user:
+
+```bash
+install -d -m 700 "$HOME/.config/txing"
+```
+
+```bash
+tar -xzf /tmp/txing-unit-daemon-config.tgz -C "$HOME/.config/txing"
+```
+
+```bash
+chmod 700 "$HOME/.config/txing/unit-daemon"
+```
+
+```bash
+chmod 600 "$HOME/.config/txing/unit-daemon/.env"
+```
+
+```bash
+chmod 600 "$HOME/.config/txing/unit-daemon/certificate.arn"
+```
+
+```bash
+chmod 600 "$HOME/.config/txing/unit-daemon/certificate.pem.crt"
+```
+
+```bash
+chmod 600 "$HOME/.config/txing/unit-daemon/private.pem.key"
+```
+
+```bash
+chmod 600 "$HOME/.config/txing/unit-daemon/public.pem.key"
+```
+
+```bash
+chmod 644 "$HOME/.config/txing/unit-daemon/AmazonRootCA1.pem"
+```
+
+```bash
+rm -f /tmp/txing-unit-daemon-config.tgz
+```
+
+```bash
+test -r "$HOME/.config/txing/unit-daemon/.env"
+```
+
+```bash
+test -r "$HOME/.config/txing/unit-daemon/private.pem.key"
+```
+
+Run the feature binary in the foreground for the same 90-second smoke window:
+
+```bash
+timeout --signal INT 90s env MISE_OFFLINE=1 mise exec -- txing-unit-daemon
+```
+
+If `timeout` exits with status `124`, that is the expected timeout status for a
+successful foreground smoke test. Any other nonzero status needs investigation.
+
+Return to macOS after collecting output:
+
+```bash
+exit
+```
 
 ## 1. Confirm Host Access
 
@@ -413,7 +648,7 @@ cd "$HOME/.config/txing"
 ```
 
 ```bash
-tar -czf /tmp/txing-unit-daemon-config.tgz unit-daemon
+COPYFILE_DISABLE=1 tar -czf /tmp/txing-unit-daemon-config.tgz unit-daemon
 ```
 
 ```bash

@@ -10,7 +10,7 @@ region := ""
 profile := ""
 config_dir := ""
 prerelease_branch := "feature/unit-daemon-prerelease"
-prerelease_asset := "txing-unit-daemon-linux-aarch64"
+prerelease_asset := "txing-unit-daemon-linux-aarch64.tar.gz"
 prerelease_dir := daemon_dir + "/target/prerelease"
 prerelease_metadata := prerelease_dir + "/metadata.json"
 
@@ -192,6 +192,9 @@ prerelease-build branch=prerelease_branch:
     branch="{{branch}}"
     asset_name="{{prerelease_asset}}"
     asset_path="$prerelease_dir/$asset_name"
+    package_dir="$prerelease_dir/package"
+    binary_name="txing-unit-daemon"
+    binary_path="$package_dir/$binary_name"
 
     if [[ "$branch" == *=* ]]; then
       echo "Do not pass just recipe arguments as name=value. Use positional arguments." >&2
@@ -209,7 +212,7 @@ prerelease-build branch=prerelease_branch:
       echo "unit daemon prerelease-build requires Linux aarch64, got: $(uname -m)" >&2
       exit 1
     fi
-    for command in cargo file git python3; do
+    for command in cargo file git python3 strip tar; do
       if ! command -v "$command" >/dev/null 2>&1; then
         echo "unit daemon prerelease-build requires '$command'. Install missing Lima build dependencies first." >&2
         exit 1
@@ -241,8 +244,14 @@ prerelease-build branch=prerelease_branch:
     cargo build --release --manifest-path devices/unit/daemon/Cargo.toml --bin daemon
 
     install -d "$prerelease_dir"
-    install -m 755 "$daemon_dir/target/release/daemon" "$asset_path"
-    file "$asset_path"
+    rm -rf "$package_dir"
+    install -d "$package_dir"
+    install -m 755 "$daemon_dir/target/release/daemon" "$binary_path"
+    strip "$binary_path"
+    file "$binary_path"
+    rm -f "$asset_path"
+    tar -C "$package_dir" -czf "$asset_path" "$binary_name"
+    tar -tzf "$asset_path"
 
     python3 - "$metadata_path" <<PY
     import json
@@ -256,6 +265,9 @@ prerelease-build branch=prerelease_branch:
         "timestamp": int("$timestamp"),
         "assetName": "$asset_name",
         "assetPath": "$asset_path",
+        "assetFormat": "tar.gz",
+        "binaryName": "$binary_name",
+        "binaryPath": "$binary_path",
         "projectRoot": "$project_root",
         "buildHost": "$build_host",
         "buildKernel": "$build_kernel",
@@ -270,6 +282,7 @@ prerelease-build branch=prerelease_branch:
     printf '  branch: %s\n' "$branch"
     printf '  commit: %s\n' "$commit"
     printf '  asset: %s\n' "$asset_path"
+    printf '  binary: %s\n' "$binary_path"
     printf '  metadata: %s\n' "$metadata_path"
 
 prerelease-publish:
@@ -290,6 +303,10 @@ prerelease-publish:
     }
     command -v python3 >/dev/null || {
       echo "python3 is required to read prerelease metadata." >&2
+      exit 1
+    }
+    command -v tar >/dev/null || {
+      echo "tar is required to verify the prerelease archive." >&2
       exit 1
     }
     if [ ! -r "$metadata_path" ]; then
@@ -322,6 +339,8 @@ prerelease-publish:
     timestamp="$(read_metadata timestamp)"
     asset_name="$(read_metadata assetName)"
     asset_path="$(read_metadata assetPath)"
+    asset_format="$(read_metadata assetFormat)"
+    binary_name="$(read_metadata binaryName)"
     build_host="$(read_metadata buildHost)"
     build_kernel="$(read_metadata buildKernel)"
 
@@ -337,8 +356,21 @@ prerelease-publish:
       echo "Unexpected prerelease asset name: $asset_name" >&2
       exit 1
     fi
-    if [ ! -x "$asset_path" ]; then
-      echo "Missing executable prerelease asset: $asset_path" >&2
+    if [ "$asset_format" != "tar.gz" ]; then
+      echo "Unexpected prerelease asset format: $asset_format" >&2
+      exit 1
+    fi
+    if [ "$binary_name" != "txing-unit-daemon" ]; then
+      echo "Unexpected prerelease binary name: $binary_name" >&2
+      exit 1
+    fi
+    if [ ! -s "$asset_path" ]; then
+      echo "Missing prerelease archive asset: $asset_path" >&2
+      exit 1
+    fi
+    archive_listing="$(tar -tzf "$asset_path")"
+    if ! grep -Fxq "$binary_name" <<<"$archive_listing"; then
+      echo "Prerelease archive does not contain $binary_name at its root." >&2
       exit 1
     fi
     current_commit="$(git -C "$project_root" rev-parse HEAD)"
