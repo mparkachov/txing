@@ -322,12 +322,22 @@ function App({ initialAuthError = '' }: AppProps) {
     }
     return null
   }, [hasUnsupportedTown, route])
-  const routeHeaderMetadata =
-    routeHeaderState.status === 'ready' ? routeHeaderState.metadata : null
-  const routeSparkplugShadow =
-    routeHeaderState.status === 'ready' ? routeHeaderState.sparkplugShadow : null
-  const routeHeaderShadowWarning =
-    routeHeaderState.status === 'ready' ? routeHeaderState.shadowWarning : ''
+  const isRouteHeaderReadyForCurrentThing =
+    routeHeaderState.status === 'ready' &&
+    routeHeaderState.metadata?.thingName === currentRouteThingName
+  const isRouteHeaderPendingForCurrentThing =
+    currentRouteThingName !== null &&
+    routeHeaderState.status !== 'error' &&
+    !isRouteHeaderReadyForCurrentThing
+  const routeHeaderMetadata = isRouteHeaderReadyForCurrentThing
+    ? routeHeaderState.metadata
+    : null
+  const routeSparkplugShadow = isRouteHeaderReadyForCurrentThing
+    ? routeHeaderState.sparkplugShadow
+    : null
+  const routeHeaderShadowWarning = isRouteHeaderReadyForCurrentThing
+    ? routeHeaderState.shadowWarning
+    : ''
   const currentThingTypeName = routeHeaderMetadata?.thingTypeName ?? null
   const currentThingKind = routeHeaderMetadata?.kind ?? null
   const currentTownCatalogName =
@@ -369,11 +379,6 @@ function App({ initialAuthError = '' }: AppProps) {
       : route.kind === 'device' || route.kind === 'device_video'
         ? routeHeaderMetadata?.rigName ?? route.rig
         : null
-  const isNavigationReady =
-    route.kind !== 'root' &&
-    route.kind !== 'not_found' &&
-    !hasUnsupportedTown &&
-    routeHeaderState.status === 'ready'
   const hasShadowBootstrapFailure = shadowBootstrapError !== '' && lastShadowUpdateAtMs === null
 
   const adminEmailMismatch = useMemo(() => {
@@ -1909,15 +1914,17 @@ function App({ initialAuthError = '' }: AppProps) {
       route.kind === 'rig' ||
       route.kind === 'device' ||
       route.kind === 'device_video') &&
-    routeHeaderState.status === 'loading'
-  const routeLoadingLabel =
-    route.kind === 'town'
-      ? navigationTownLabel ?? 'town'
-      : route.kind === 'rig'
-        ? navigationRigLabel ?? 'rig'
-        : route.kind === 'device' || route.kind === 'device_video'
-          ? selectedDeviceLabel ?? 'device'
-          : 'route'
+    isRouteHeaderPendingForCurrentThing
+  const isNavigationBusy =
+    isRouteSessionPending ||
+    (route.kind === 'town' && rigCatalog.status === 'loading') ||
+    (route.kind === 'rig' && deviceCatalog.status === 'loading') ||
+    ((route.kind === 'device' || route.kind === 'device_video') &&
+      (shadowTargetState.status === 'loading' || isLoadingShadow))
+  const shouldRenderNavigationPanel =
+    route.kind !== 'root' &&
+    route.kind !== 'not_found' &&
+    !hasUnsupportedTown
   const navigationCapabilityLabel =
     route.kind === 'town'
       ? navigationTownLabel ?? route.town
@@ -1952,8 +1959,23 @@ function App({ initialAuthError = '' }: AppProps) {
     ) : null
 
   const navigationPanel =
-    route.kind !== 'root' && isNavigationReady ? (
-      <section className="card navigation-panel" aria-label="Navigation panel">
+    shouldRenderNavigationPanel ? (
+      <section
+        className={`card navigation-panel ${isNavigationBusy ? 'navigation-panel-busy' : ''}`}
+        aria-label="Navigation panel"
+        aria-busy={isNavigationBusy}
+      >
+        {isNavigationBusy ? (
+          <span
+            className="navigation-activity"
+            aria-label="Loading AWS data"
+            title="Loading AWS data"
+          >
+            <span className="navigation-activity-dot" aria-hidden="true" />
+            <span className="navigation-activity-dot" aria-hidden="true" />
+            <span className="navigation-activity-dot" aria-hidden="true" />
+          </span>
+        ) : null}
         <div className="navigation-panel-main">
           <div className="navigation-panel-header">
             <a
@@ -1980,7 +2002,7 @@ function App({ initialAuthError = '' }: AppProps) {
         </div>
         <div className="navigation-panel-actions">
           {navigationCapabilities}
-          {currentRouteThingName !== null ? (
+          {currentRouteThingName !== null && routeHeaderMetadata !== null ? (
             <SparkplugPanel
               sparkplugRedcon={reportedRedcon}
               targetRedcon={pendingTargetRedcon}
@@ -2043,16 +2065,10 @@ function App({ initialAuthError = '' }: AppProps) {
       </section>
     )
   } else if (isRouteSessionPending) {
-    content = (
-      <section className="card catalog-card">
-        <h1>Loading route</h1>
-        <p>Resolving {routeLoadingLabel} metadata and current Sparkplug state...</p>
-      </section>
-    )
+    content = <></>
   } else if (currentThingKind === 'townType' && route.kind === 'town') {
     content = isTownPanelOpen && shouldRenderCatalogPanel ? (
       <section className="catalog-grid-shell">
-        {rigCatalog.status === 'loading' ? <p>Loading rigs...</p> : null}
         {rigCatalog.status === 'error' ? <p className="error">{rigCatalog.error}</p> : null}
         {rigCatalog.status === 'ready' && rigCatalog.rigs.length === 0 ? (
           <p>No rigs are currently registered for this town.</p>
@@ -2080,7 +2096,6 @@ function App({ initialAuthError = '' }: AppProps) {
   } else if (currentThingKind === 'rigType' && route.kind === 'rig') {
     content = isRigPanelOpen && shouldRenderCatalogPanel ? (
       <section className="catalog-grid-shell">
-        {deviceCatalog.status === 'loading' ? <p>Loading devices...</p> : null}
         {deviceCatalog.status === 'not_found' ? <p className="error">{deviceCatalog.error}</p> : null}
         {deviceCatalog.status === 'error' ? <p className="error">{deviceCatalog.error}</p> : null}
         {deviceCatalog.status === 'ready' && deviceCatalog.devices.length === 0 ? (

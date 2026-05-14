@@ -43,6 +43,18 @@ describe('app route catalog source wiring', () => {
     expect(appSource).toContain('{navigationCapabilities}')
   })
 
+  test('route transitions use navigation activity instead of transient loading copy', () => {
+    const appSource = readFileSync(resolve(repoRoot, 'web/src/App.tsx'), 'utf-8')
+
+    expect(appSource).toContain('const isNavigationBusy =')
+    expect(appSource).toContain("className={`card navigation-panel ${isNavigationBusy ? 'navigation-panel-busy' : ''}`}")
+    expect(appSource).toContain('aria-busy={isNavigationBusy}')
+    expect(appSource).toContain('className="navigation-activity"')
+    expect(appSource).not.toContain('<h1>Loading route</h1>')
+    expect(appSource).not.toContain('<p>Loading rigs...</p>')
+    expect(appSource).not.toContain('<p>Loading devices...</p>')
+  })
+
   test('public landing can request office-origin sign-in', () => {
     const appSource = readFileSync(resolve(repoRoot, 'web/src/App.tsx'), 'utf-8')
 
