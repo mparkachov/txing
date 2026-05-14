@@ -18,6 +18,7 @@
 - Do not perform `git commit` automatically.
 - Create commits only when explicitly requested by the user.
 - Flashing/programming firmware onto hardware must only be performed manually by the user. Agents may prepare artifacts and commands, but must not run flashing steps automatically.
+- Rig runtime stability is a hard requirement: `rig` services are not user-serviced applications. All rig network, BLE, AWS, IPC, and supervisor-facing loops must tolerate transient failures with bounded retries, backoff, and log throttling where repeated failures are expected, and must avoid resource churn or leaks.
 
 ## Shared contracts
 - Thing Shadow schema source of truth for the current `unit` device type: `devices/unit/aws/*-shadow.schema.json`.

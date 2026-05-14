@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
+use std::error::Error as StdError;
 use std::fmt;
 use std::fs;
 use std::io::ErrorKind;
@@ -8,19 +9,38 @@ use std::path::Path;
 use std::process;
 use std::sync::Arc;
 use std::sync::Once;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow, bail};
 use async_trait::async_trait;
 use aws_config::BehaviorVersion;
 use aws_credential_types::Credentials;
+use aws_credential_types::provider::{
+    self, ProvideCredentials, SharedCredentialsProvider, error::CredentialsError, future,
+};
+use aws_sdk_cloudwatchlogs::error::ProvideErrorMetadata;
+use aws_sdk_cloudwatchlogs::types::InputLogEvent;
+use aws_smithy_types::{DateTime, date_time::Format};
 use clap::Parser;
 use gneiss_mqtt::client::config::{ConnectOptions, TlsOptions};
-use gneiss_mqtt::client::{AsyncClient, AsyncClientHandle, PublishResponse, TokioClientBuilder};
+use gneiss_mqtt::client::{
+    AsyncClient, AsyncClientHandle, ClientEvent, ClientEventListenerCallback, PublishResponse,
+    TokioClientBuilder,
+};
 use gneiss_mqtt::mqtt::{PublishPacket, QualityOfService};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::time::{Instant, MissedTickBehavior, interval_at};
+use tokio::sync::{mpsc, oneshot};
+use tokio::task::JoinHandle;
+use tokio::time::{Instant, MissedTickBehavior, interval_at, timeout};
+use tracing::field::{Field, Visit};
+use tracing::{Event, Level, Metadata, Subscriber};
+use tracing::{debug, info, warn};
+use tracing_subscriber::EnvFilter;
+use tracing_subscriber::Layer;
+use tracing_subscriber::layer::Context as LayerContext;
+use tracing_subscriber::prelude::*;
 
 pub const SCHEMA_VERSION: &str = "2.0";
 pub const ADAPTER_ID: &str = "dev.txing.unit.Daemon";
@@ -30,14 +50,777 @@ pub const SPARKPLUG_SHADOW_NAME: &str = "sparkplug";
 pub const DEFAULT_ENV_FILE: &str = "/etc/txing/daemon/daemon.env";
 pub const DEFAULT_CAPABILITY_TTL_SECONDS: u64 = 150;
 pub const DEFAULT_HEARTBEAT_SECONDS: u64 = 60;
+pub const DEFAULT_CLOUDWATCH_LOG_RETENTION_DAYS: i32 = 14;
 pub const MQTT_PORT: u16 = 8883;
 const MQTT_KEEP_ALIVE_SECONDS: u16 = 60;
+const MQTT_CONNECT_WAIT_SECONDS: u64 = 15;
+const MQTT_PUBLISH_OPERATION_TIMEOUT_SECONDS: u64 = 20;
+const CLOUDWATCH_LOG_QUEUE_CAPACITY: usize = 4096;
+const CLOUDWATCH_LOG_BATCH_MAX_EVENTS: usize = 100;
+const CLOUDWATCH_LOG_BATCH_MAX_BYTES: usize = 256 * 1024;
+const CLOUDWATCH_LOG_FLUSH_INTERVAL_SECONDS: u64 = 2;
+const CLOUDWATCH_LOG_SHUTDOWN_TIMEOUT_SECONDS: u64 = 5;
 static RUSTLS_CRYPTO_PROVIDER: Once = Once::new();
 
 pub fn install_default_crypto_provider() {
     RUSTLS_CRYPTO_PROVIDER.call_once(|| {
         let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     });
+}
+
+pub fn init_logging(
+    config: &RuntimeConfig,
+    cloudwatch: Option<PreparedCloudWatchLogging>,
+) -> Result<Option<CloudWatchLogHandle>> {
+    let filter = match env::var("TXING_LOG") {
+        Ok(value) => daemon_log_filter(&value),
+        Err(_) => EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| EnvFilter::new("error,txing_unit_daemon=info")),
+    };
+    let stderr_layer = StderrTextLayer.with_filter(filter);
+
+    let registry = tracing_subscriber::registry().with(stderr_layer);
+    if let Some(cloudwatch) = cloudwatch {
+        let (layer, handle) = cloudwatch.start(CloudWatchLogBaseFields::from(config));
+        registry
+            .with(layer)
+            .try_init()
+            .map_err(|err| anyhow!("initialize logging: {err}"))?;
+        Ok(Some(handle))
+    } else {
+        registry
+            .try_init()
+            .map_err(|err| anyhow!("initialize logging: {err}"))?;
+        Ok(None)
+    }
+}
+
+pub async fn shutdown_logging(handle: Option<CloudWatchLogHandle>) -> Result<()> {
+    if let Some(handle) = handle {
+        handle.shutdown().await
+    } else {
+        Ok(())
+    }
+}
+
+pub async fn prepare_cloudwatch_logging(
+    config: &RuntimeConfig,
+) -> Result<Option<PreparedCloudWatchLogging>> {
+    let Some(cloudwatch_config) = config.cloudwatch_logging.clone() else {
+        return Ok(None);
+    };
+    let sdk_config = aws_sdk_config_from_iot_credentials(config)
+        .await
+        .context("prepare CloudWatch Logs credentials from IoT certificate")?;
+    let logs_config = aws_sdk_cloudwatchlogs::config::Builder::from(&sdk_config).build();
+    let client = Arc::new(RealCloudWatchLogsClient {
+        client: aws_sdk_cloudwatchlogs::Client::from_conf(logs_config),
+    });
+    let writer = CloudWatchLogWriter::new(cloudwatch_config.clone(), client);
+    writer
+        .ensure_ready()
+        .await
+        .context("initialize CloudWatch Logs")?;
+    Ok(Some(PreparedCloudWatchLogging {
+        config: cloudwatch_config,
+        client: writer.client,
+    }))
+}
+
+fn daemon_log_filter(value: &str) -> EnvFilter {
+    let value = value.trim();
+    if matches!(value, "trace" | "debug" | "info" | "warn" | "error" | "off") {
+        EnvFilter::new(format!("error,txing_unit_daemon={value}"))
+    } else {
+        EnvFilter::new(value)
+    }
+}
+
+struct StderrTextLayer;
+
+impl<S> Layer<S> for StderrTextLayer
+where
+    S: Subscriber,
+{
+    fn on_event(&self, event: &Event<'_>, _ctx: LayerContext<'_, S>) {
+        let metadata = event.metadata();
+        let mut visitor = TextFieldVisitor::default();
+        event.record(&mut visitor);
+        eprintln!(
+            "{}",
+            format_stderr_log_line(
+                metadata.level(),
+                visitor
+                    .message
+                    .as_deref()
+                    .unwrap_or_else(|| metadata.name()),
+                &visitor.fields,
+            )
+        );
+    }
+}
+
+#[derive(Default)]
+struct TextFieldVisitor {
+    fields: Vec<(String, String)>,
+    message: Option<String>,
+}
+
+impl Visit for TextFieldVisitor {
+    fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
+        self.record_value(field, format!("{value:?}"));
+    }
+
+    fn record_str(&mut self, field: &Field, value: &str) {
+        self.record_value(field, value.to_string());
+    }
+
+    fn record_bool(&mut self, field: &Field, value: bool) {
+        self.record_value(field, value.to_string());
+    }
+
+    fn record_i64(&mut self, field: &Field, value: i64) {
+        self.record_value(field, value.to_string());
+    }
+
+    fn record_u64(&mut self, field: &Field, value: u64) {
+        self.record_value(field, value.to_string());
+    }
+}
+
+impl TextFieldVisitor {
+    fn record_value(&mut self, field: &Field, value: String) {
+        if field.name() == "message" {
+            self.message = Some(value);
+        } else {
+            self.fields.push((field.name().to_string(), value));
+        }
+    }
+}
+
+fn format_stderr_log_line(level: &Level, message: &str, fields: &[(String, String)]) -> String {
+    let mut line = format!("{}: {message}", stderr_level_name(level));
+    for (key, value) in fields {
+        line.push(' ');
+        line.push_str(key);
+        line.push('=');
+        line.push_str(value);
+    }
+    line
+}
+
+fn stderr_level_name(level: &Level) -> &'static str {
+    match *level {
+        Level::ERROR => "error",
+        Level::WARN => "warning",
+        Level::INFO => "info",
+        Level::DEBUG => "debug",
+        Level::TRACE => "trace",
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloudWatchLogLevel {
+    Error,
+    Warn,
+    Info,
+    Debug,
+    Trace,
+}
+
+impl CloudWatchLogLevel {
+    fn parse(value: &str) -> Result<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "error" => Ok(Self::Error),
+            "warn" | "warning" => Ok(Self::Warn),
+            "info" => Ok(Self::Info),
+            "debug" => Ok(Self::Debug),
+            "trace" => Ok(Self::Trace),
+            _ => bail!("cloudwatch-log-level must be one of error, warn, info, debug, trace"),
+        }
+    }
+
+    fn allows(self, level: &Level) -> bool {
+        level_severity(level) <= self.severity()
+    }
+
+    fn severity(self) -> u8 {
+        match self {
+            Self::Error => 1,
+            Self::Warn => 2,
+            Self::Info => 3,
+            Self::Debug => 4,
+            Self::Trace => 5,
+        }
+    }
+}
+
+fn level_severity(level: &Level) -> u8 {
+    match *level {
+        Level::ERROR => 1,
+        Level::WARN => 2,
+        Level::INFO => 3,
+        Level::DEBUG => 4,
+        Level::TRACE => 5,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CloudWatchLogConfig {
+    pub log_group: String,
+    pub log_stream: String,
+    pub level: CloudWatchLogLevel,
+    pub retention_days: i32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CloudWatchLogBaseFields {
+    pub thing_id: String,
+    pub client_id: String,
+    pub iot_role_alias: String,
+    pub aws_region: String,
+}
+
+impl From<&RuntimeConfig> for CloudWatchLogBaseFields {
+    fn from(config: &RuntimeConfig) -> Self {
+        Self {
+            thing_id: config.thing_id.clone(),
+            client_id: config.client_id.clone(),
+            iot_role_alias: config.iot_role_alias.clone(),
+            aws_region: config.aws_region.clone(),
+        }
+    }
+}
+
+pub struct PreparedCloudWatchLogging {
+    config: CloudWatchLogConfig,
+    client: Arc<dyn CloudWatchLogsClient>,
+}
+
+impl PreparedCloudWatchLogging {
+    fn start(
+        self,
+        base_fields: CloudWatchLogBaseFields,
+    ) -> (CloudWatchTracingLayer, CloudWatchLogHandle) {
+        let (sender, receiver) = mpsc::channel(CLOUDWATCH_LOG_QUEUE_CAPACITY);
+        let (shutdown_sender, shutdown_receiver) = oneshot::channel();
+        let writer = CloudWatchLogWriter::new(self.config.clone(), self.client);
+        let join = tokio::spawn(async move {
+            writer.run(receiver, shutdown_receiver).await;
+        });
+        (
+            CloudWatchTracingLayer {
+                sender,
+                level: self.config.level,
+                base_fields,
+                dropped_events: Arc::new(AtomicU64::new(0)),
+            },
+            CloudWatchLogHandle {
+                shutdown_sender: Some(shutdown_sender),
+                join,
+            },
+        )
+    }
+}
+
+pub struct CloudWatchLogHandle {
+    shutdown_sender: Option<oneshot::Sender<()>>,
+    join: JoinHandle<()>,
+}
+
+impl CloudWatchLogHandle {
+    pub async fn shutdown(mut self) -> Result<()> {
+        if let Some(sender) = self.shutdown_sender.take() {
+            let _ = sender.send(());
+        }
+        timeout(
+            Duration::from_secs(CLOUDWATCH_LOG_SHUTDOWN_TIMEOUT_SECONDS),
+            self.join,
+        )
+        .await
+        .context("timed out flushing CloudWatch Logs during shutdown")?
+        .context("CloudWatch Logs worker failed")?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CloudWatchLogRecord {
+    pub timestamp_ms: i64,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CloudWatchPutLogEventsResult {
+    pub next_sequence_token: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CloudWatchLogClientErrorKind {
+    AlreadyExists,
+    NotFound,
+    InvalidSequenceToken { expected: Option<String> },
+    DataAlreadyAccepted,
+    Other,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CloudWatchLogClientError {
+    pub kind: CloudWatchLogClientErrorKind,
+    pub message: String,
+}
+
+impl CloudWatchLogClientError {
+    fn new(kind: CloudWatchLogClientErrorKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+        }
+    }
+}
+
+impl fmt::Display for CloudWatchLogClientError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl StdError for CloudWatchLogClientError {}
+
+#[async_trait]
+pub trait CloudWatchLogsClient: Send + Sync + 'static {
+    async fn create_log_group(
+        &self,
+        log_group: &str,
+    ) -> std::result::Result<(), CloudWatchLogClientError>;
+    async fn put_retention_policy(
+        &self,
+        log_group: &str,
+        retention_days: i32,
+    ) -> std::result::Result<(), CloudWatchLogClientError>;
+    async fn create_log_stream(
+        &self,
+        log_group: &str,
+        log_stream: &str,
+    ) -> std::result::Result<(), CloudWatchLogClientError>;
+    async fn put_log_events(
+        &self,
+        log_group: &str,
+        log_stream: &str,
+        events: Vec<CloudWatchLogRecord>,
+        sequence_token: Option<String>,
+    ) -> std::result::Result<CloudWatchPutLogEventsResult, CloudWatchLogClientError>;
+}
+
+struct RealCloudWatchLogsClient {
+    client: aws_sdk_cloudwatchlogs::Client,
+}
+
+#[async_trait]
+impl CloudWatchLogsClient for RealCloudWatchLogsClient {
+    async fn create_log_group(
+        &self,
+        log_group: &str,
+    ) -> std::result::Result<(), CloudWatchLogClientError> {
+        self.client
+            .create_log_group()
+            .log_group_name(log_group)
+            .send()
+            .await
+            .map(|_| ())
+            .map_err(map_cloudwatch_sdk_error)
+    }
+
+    async fn put_retention_policy(
+        &self,
+        log_group: &str,
+        retention_days: i32,
+    ) -> std::result::Result<(), CloudWatchLogClientError> {
+        self.client
+            .put_retention_policy()
+            .log_group_name(log_group)
+            .retention_in_days(retention_days)
+            .send()
+            .await
+            .map(|_| ())
+            .map_err(map_cloudwatch_sdk_error)
+    }
+
+    async fn create_log_stream(
+        &self,
+        log_group: &str,
+        log_stream: &str,
+    ) -> std::result::Result<(), CloudWatchLogClientError> {
+        self.client
+            .create_log_stream()
+            .log_group_name(log_group)
+            .log_stream_name(log_stream)
+            .send()
+            .await
+            .map(|_| ())
+            .map_err(map_cloudwatch_sdk_error)
+    }
+
+    async fn put_log_events(
+        &self,
+        log_group: &str,
+        log_stream: &str,
+        events: Vec<CloudWatchLogRecord>,
+        sequence_token: Option<String>,
+    ) -> std::result::Result<CloudWatchPutLogEventsResult, CloudWatchLogClientError> {
+        let mut request = self
+            .client
+            .put_log_events()
+            .log_group_name(log_group)
+            .log_stream_name(log_stream);
+        for event in events {
+            let event = InputLogEvent::builder()
+                .timestamp(event.timestamp_ms)
+                .message(event.message)
+                .build()
+                .map_err(|err| {
+                    CloudWatchLogClientError::new(
+                        CloudWatchLogClientErrorKind::Other,
+                        format!("build CloudWatch log event: {err}"),
+                    )
+                })?;
+            request = request.log_events(event);
+        }
+        if let Some(sequence_token) = sequence_token {
+            request = request.sequence_token(sequence_token);
+        }
+        request
+            .send()
+            .await
+            .map(|output| CloudWatchPutLogEventsResult {
+                next_sequence_token: output.next_sequence_token().map(str::to_string),
+            })
+            .map_err(map_cloudwatch_sdk_error)
+    }
+}
+
+fn map_cloudwatch_sdk_error(
+    error: impl ProvideErrorMetadata + fmt::Display,
+) -> CloudWatchLogClientError {
+    let kind = match error.code() {
+        Some("ResourceAlreadyExistsException") => CloudWatchLogClientErrorKind::AlreadyExists,
+        Some("ResourceNotFoundException") => CloudWatchLogClientErrorKind::NotFound,
+        Some("InvalidSequenceTokenException") => {
+            CloudWatchLogClientErrorKind::InvalidSequenceToken { expected: None }
+        }
+        Some("DataAlreadyAcceptedException") => CloudWatchLogClientErrorKind::DataAlreadyAccepted,
+        _ => CloudWatchLogClientErrorKind::Other,
+    };
+    CloudWatchLogClientError::new(kind, error.to_string())
+}
+
+#[derive(Clone)]
+struct CloudWatchLogWriter {
+    config: CloudWatchLogConfig,
+    client: Arc<dyn CloudWatchLogsClient>,
+}
+
+impl CloudWatchLogWriter {
+    fn new(config: CloudWatchLogConfig, client: Arc<dyn CloudWatchLogsClient>) -> Self {
+        Self { config, client }
+    }
+
+    async fn ensure_ready(&self) -> Result<()> {
+        match self.client.create_log_group(&self.config.log_group).await {
+            Ok(()) => {}
+            Err(err) if err.kind == CloudWatchLogClientErrorKind::AlreadyExists => {}
+            Err(err) => return Err(err).context("create CloudWatch log group"),
+        }
+        self.client
+            .put_retention_policy(&self.config.log_group, self.config.retention_days)
+            .await
+            .context("set CloudWatch log group retention")?;
+        match self
+            .client
+            .create_log_stream(&self.config.log_group, &self.config.log_stream)
+            .await
+        {
+            Ok(()) => {}
+            Err(err) if err.kind == CloudWatchLogClientErrorKind::AlreadyExists => {}
+            Err(err) => return Err(err).context("create CloudWatch log stream"),
+        }
+        Ok(())
+    }
+
+    async fn run(
+        self,
+        mut receiver: mpsc::Receiver<CloudWatchLogRecord>,
+        mut shutdown: oneshot::Receiver<()>,
+    ) {
+        let mut batch = Vec::new();
+        let mut sequence_token = None;
+        let mut flush_interval =
+            tokio::time::interval(Duration::from_secs(CLOUDWATCH_LOG_FLUSH_INTERVAL_SECONDS));
+        flush_interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        loop {
+            tokio::select! {
+                Some(record) = receiver.recv() => {
+                    push_cloudwatch_log_batch_record(&mut batch, record);
+                    if cloudwatch_log_batch_should_flush(&batch) {
+                        self.flush_batch(&mut batch, &mut sequence_token).await;
+                    }
+                }
+                _ = flush_interval.tick() => {
+                    self.flush_batch(&mut batch, &mut sequence_token).await;
+                }
+                _ = &mut shutdown => {
+                    while let Ok(record) = receiver.try_recv() {
+                        push_cloudwatch_log_batch_record(&mut batch, record);
+                        if cloudwatch_log_batch_should_flush(&batch) {
+                            self.flush_batch(&mut batch, &mut sequence_token).await;
+                        }
+                    }
+                    self.flush_batch(&mut batch, &mut sequence_token).await;
+                    break;
+                }
+                else => {
+                    self.flush_batch(&mut batch, &mut sequence_token).await;
+                    break;
+                }
+            }
+        }
+    }
+
+    async fn flush_batch(
+        &self,
+        batch: &mut Vec<CloudWatchLogRecord>,
+        sequence_token: &mut Option<String>,
+    ) {
+        if batch.is_empty() {
+            return;
+        }
+        batch.sort_by_key(|event| event.timestamp_ms);
+        let events = std::mem::take(batch);
+        match self
+            .put_log_events_with_retry(events.clone(), sequence_token.clone())
+            .await
+        {
+            Ok(result) => {
+                *sequence_token = result.next_sequence_token;
+            }
+            Err(err) => {
+                eprintln!("WARN failed to publish CloudWatch Logs batch: {err:#}");
+            }
+        }
+    }
+
+    async fn put_log_events_with_retry(
+        &self,
+        events: Vec<CloudWatchLogRecord>,
+        sequence_token: Option<String>,
+    ) -> Result<CloudWatchPutLogEventsResult> {
+        match self
+            .client
+            .put_log_events(
+                &self.config.log_group,
+                &self.config.log_stream,
+                events.clone(),
+                sequence_token.clone(),
+            )
+            .await
+        {
+            Ok(result) => Ok(result),
+            Err(err) if err.kind == CloudWatchLogClientErrorKind::NotFound => {
+                self.ensure_ready().await?;
+                self.client
+                    .put_log_events(
+                        &self.config.log_group,
+                        &self.config.log_stream,
+                        events,
+                        sequence_token,
+                    )
+                    .await
+                    .context("retry CloudWatch Logs batch after stream setup")
+            }
+            Err(err) => match err.kind {
+                CloudWatchLogClientErrorKind::InvalidSequenceToken { expected } => self
+                    .client
+                    .put_log_events(
+                        &self.config.log_group,
+                        &self.config.log_stream,
+                        events,
+                        expected,
+                    )
+                    .await
+                    .context("retry CloudWatch Logs batch with expected sequence token"),
+                CloudWatchLogClientErrorKind::DataAlreadyAccepted => {
+                    Ok(CloudWatchPutLogEventsResult {
+                        next_sequence_token: None,
+                    })
+                }
+                _ => Err(err).context("put CloudWatch Logs batch"),
+            },
+        }
+    }
+}
+
+fn push_cloudwatch_log_batch_record(
+    batch: &mut Vec<CloudWatchLogRecord>,
+    record: CloudWatchLogRecord,
+) {
+    if record.message.len() + 26 > CLOUDWATCH_LOG_BATCH_MAX_BYTES {
+        return;
+    }
+    batch.push(record);
+}
+
+fn cloudwatch_log_batch_should_flush(batch: &[CloudWatchLogRecord]) -> bool {
+    if batch.len() >= CLOUDWATCH_LOG_BATCH_MAX_EVENTS {
+        return true;
+    }
+    cloudwatch_log_batch_size(batch) >= CLOUDWATCH_LOG_BATCH_MAX_BYTES
+}
+
+fn cloudwatch_log_batch_size(batch: &[CloudWatchLogRecord]) -> usize {
+    batch.iter().map(|event| event.message.len() + 26).sum()
+}
+
+pub struct CloudWatchTracingLayer {
+    sender: mpsc::Sender<CloudWatchLogRecord>,
+    level: CloudWatchLogLevel,
+    base_fields: CloudWatchLogBaseFields,
+    dropped_events: Arc<AtomicU64>,
+}
+
+impl<S> Layer<S> for CloudWatchTracingLayer
+where
+    S: Subscriber,
+{
+    fn on_event(&self, event: &Event<'_>, _ctx: LayerContext<'_, S>) {
+        let metadata = event.metadata();
+        if !metadata.target().starts_with("txing_unit_daemon") {
+            return;
+        }
+        if !self.level.allows(metadata.level()) {
+            return;
+        }
+        let record = cloudwatch_record_from_tracing_event(&self.base_fields, metadata, event);
+        if self.sender.try_send(record).is_err() {
+            self.dropped_events.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+}
+
+fn cloudwatch_record_from_tracing_event(
+    base_fields: &CloudWatchLogBaseFields,
+    metadata: &Metadata<'_>,
+    event: &Event<'_>,
+) -> CloudWatchLogRecord {
+    let timestamp_ms = now_ms();
+    let mut visitor = JsonFieldVisitor::default();
+    event.record(&mut visitor);
+    let message = visitor
+        .message
+        .unwrap_or_else(|| metadata.name().to_string());
+    let json = build_cloudwatch_log_message(
+        base_fields,
+        metadata.level().as_str(),
+        metadata.target(),
+        &message,
+        visitor.fields,
+        timestamp_ms,
+    )
+    .unwrap_or_else(|err| {
+        format!(
+            r#"{{"timestamp":{},"level":"ERROR","message":"failed to serialize daemon log event","error":"{}"}}"#,
+            timestamp_ms,
+            json_escape(&err.to_string())
+        )
+    });
+    CloudWatchLogRecord {
+        timestamp_ms: timestamp_ms.try_into().unwrap_or(i64::MAX),
+        message: json,
+    }
+}
+
+#[derive(Default)]
+struct JsonFieldVisitor {
+    fields: BTreeMap<String, Value>,
+    message: Option<String>,
+}
+
+impl Visit for JsonFieldVisitor {
+    fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
+        let value = format!("{value:?}");
+        if field.name() == "message" {
+            self.message = Some(value);
+        } else {
+            self.fields
+                .insert(field.name().to_string(), debug_field_to_json_value(&value));
+        }
+    }
+
+    fn record_str(&mut self, field: &Field, value: &str) {
+        if field.name() == "message" {
+            self.message = Some(value.to_string());
+        } else {
+            self.fields
+                .insert(field.name().to_string(), Value::String(value.to_string()));
+        }
+    }
+
+    fn record_bool(&mut self, field: &Field, value: bool) {
+        self.fields
+            .insert(field.name().to_string(), Value::Bool(value));
+    }
+
+    fn record_i64(&mut self, field: &Field, value: i64) {
+        self.fields
+            .insert(field.name().to_string(), Value::Number(value.into()));
+    }
+
+    fn record_u64(&mut self, field: &Field, value: u64) {
+        self.fields
+            .insert(field.name().to_string(), Value::Number(value.into()));
+    }
+}
+
+fn debug_field_to_json_value(value: &str) -> Value {
+    serde_json::from_str(value).unwrap_or_else(|_| Value::String(value.to_string()))
+}
+
+pub fn build_cloudwatch_log_message(
+    base_fields: &CloudWatchLogBaseFields,
+    level: &str,
+    target: &str,
+    message: &str,
+    event_fields: BTreeMap<String, Value>,
+    timestamp_ms: u64,
+) -> Result<String> {
+    let mut fields = BTreeMap::new();
+    fields.insert("timestamp".to_string(), Value::Number(timestamp_ms.into()));
+    fields.insert("level".to_string(), Value::String(level.to_string()));
+    fields.insert("target".to_string(), Value::String(target.to_string()));
+    fields.insert("message".to_string(), Value::String(message.to_string()));
+    fields.insert(
+        "thing_id".to_string(),
+        Value::String(base_fields.thing_id.clone()),
+    );
+    fields.insert(
+        "client_id".to_string(),
+        Value::String(base_fields.client_id.clone()),
+    );
+    fields.insert(
+        "iot_role_alias".to_string(),
+        Value::String(base_fields.iot_role_alias.clone()),
+    );
+    fields.insert(
+        "aws_region".to_string(),
+        Value::String(base_fields.aws_region.clone()),
+    );
+    for (key, value) in event_fields {
+        fields.insert(key, value);
+    }
+    serde_json::to_string(&fields).context("serialize CloudWatch log event")
+}
+
+fn json_escape(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 #[derive(Debug, Parser)]
@@ -82,6 +865,18 @@ pub struct Cli {
 
     #[arg(long)]
     pub heartbeat_seconds: Option<u64>,
+
+    #[arg(long = "cloudwatch-log-group")]
+    pub cloudwatch_log_group: Option<String>,
+
+    #[arg(long = "cloudwatch-log-stream")]
+    pub cloudwatch_log_stream: Option<String>,
+
+    #[arg(long = "cloudwatch-log-level")]
+    pub cloudwatch_log_level: Option<String>,
+
+    #[arg(long = "cloudwatch-log-retention-days")]
+    pub cloudwatch_log_retention_days: Option<i32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -98,6 +893,7 @@ pub struct RuntimeConfig {
     pub capabilities: Vec<String>,
     pub capability_ttl: Duration,
     pub heartbeat: Duration,
+    pub cloudwatch_logging: Option<CloudWatchLogConfig>,
 }
 
 impl RuntimeConfig {
@@ -154,7 +950,7 @@ impl RuntimeConfig {
             file_env,
         )?)?;
         let client_id = match optional_config_value(
-            cli.client_id,
+            cli.client_id.clone(),
             process_env,
             file_env,
             "TXING_DAEMON_CLIENT_ID",
@@ -163,6 +959,15 @@ impl RuntimeConfig {
             None => default_client_id(&thing_id, process::id()),
         };
         validate_client_id(&thing_id, &client_id)?;
+        let cloudwatch_logging = resolve_cloudwatch_log_config(
+            cli.cloudwatch_log_group,
+            cli.cloudwatch_log_stream,
+            cli.cloudwatch_log_level,
+            cli.cloudwatch_log_retention_days,
+            process_env,
+            file_env,
+            &client_id,
+        )?;
 
         let aws_region = required_config_value(
             cli.aws_region,
@@ -230,6 +1035,7 @@ impl RuntimeConfig {
             capabilities,
             capability_ttl: Duration::from_secs(capability_ttl_seconds),
             heartbeat: Duration::from_secs(heartbeat_seconds),
+            cloudwatch_logging,
         })
     }
 }
@@ -258,9 +1064,11 @@ struct MqttPublisher {
 
 impl MqttPublisher {
     async fn connect(config: &RuntimeConfig) -> Result<Self> {
-        eprintln!(
-            "connecting unit daemon MQTT endpoint={} port={} clientId={}",
-            config.iot_endpoint, MQTT_PORT, config.client_id
+        info!(
+            endpoint = %config.iot_endpoint,
+            port = MQTT_PORT,
+            client_id = %config.client_id,
+            "connecting mqtt"
         );
         let mut connect_options = ConnectOptions::builder();
         connect_options
@@ -276,8 +1084,55 @@ impl MqttPublisher {
             .with_connect_options(connect_options.build())
             .with_tls_options(tls_options.build_rustls()?);
         let client = builder.build()?;
-        client.start(None)?;
-        eprintln!("started unit daemon MQTT clientId={}", config.client_id);
+        let (connected_sender, connected_receiver) = oneshot::channel::<Result<(), String>>();
+        let connected_sender = Arc::new(std::sync::Mutex::new(Some(connected_sender)));
+        let event_client_id = config.client_id.clone();
+        let listener = {
+            let connected_sender = Arc::clone(&connected_sender);
+            Arc::new(move |event: Arc<ClientEvent>| match event.as_ref() {
+                ClientEvent::ConnectionSuccess(event) => {
+                    info!(client_id = %event_client_id, "mqtt connected");
+                    debug!(client_id = %event_client_id, event = %event, "mqtt connection detail");
+                    if let Ok(mut sender) = connected_sender.lock()
+                        && let Some(sender) = sender.take()
+                    {
+                        let _ = sender.send(Ok(()));
+                    }
+                }
+                ClientEvent::ConnectionFailure(event) => {
+                    warn!(client_id = %event_client_id, event = %event, "mqtt connection failed");
+                    if let Ok(mut sender) = connected_sender.lock()
+                        && let Some(sender) = sender.take()
+                    {
+                        let _ = sender.send(Err(event.to_string()));
+                    }
+                }
+                ClientEvent::Disconnection(event) => {
+                    warn!(client_id = %event_client_id, event = %event, "mqtt disconnected");
+                    if let Ok(mut sender) = connected_sender.lock()
+                        && let Some(sender) = sender.take()
+                    {
+                        let _ = sender.send(Err(event.to_string()));
+                    }
+                }
+                _ => {}
+            }) as Arc<ClientEventListenerCallback>
+        };
+        client.start(Some(listener))?;
+        match timeout(
+            Duration::from_secs(MQTT_CONNECT_WAIT_SECONDS),
+            connected_receiver,
+        )
+        .await
+        {
+            Ok(Ok(Ok(()))) => {}
+            Ok(Ok(Err(message))) => bail!("MQTT connection failed: {message}"),
+            Ok(Err(_)) => bail!("MQTT connection listener dropped before connection result"),
+            Err(_) => {
+                bail!("MQTT connection did not complete within {MQTT_CONNECT_WAIT_SECONDS} seconds")
+            }
+        }
+        info!(client_id = %config.client_id, "mqtt client started");
         Ok(Self { client })
     }
 
@@ -291,20 +1146,34 @@ impl MqttPublisher {
 #[async_trait]
 impl Publisher for MqttPublisher {
     async fn publish(&self, message: PublishedMessage) -> Result<()> {
+        let topic = message.topic.clone();
+        let retain = message.retain;
+        let payload_len = message.payload.len();
+        debug!(topic = %topic, retain, bytes = payload_len, "publishing mqtt message");
         let packet = PublishPacket::builder(message.topic.clone(), QualityOfService::AtLeastOnce)
             .with_payload(message.payload)
             .with_retain(message.retain)
             .build();
-        let response = self.client.publish(packet, None).await?;
+        let response = timeout(
+            Duration::from_secs(MQTT_PUBLISH_OPERATION_TIMEOUT_SECONDS),
+            self.client.publish(packet, None),
+        )
+        .await
+        .with_context(|| {
+            format!(
+                "MQTT publish timed out for {topic} after {MQTT_PUBLISH_OPERATION_TIMEOUT_SECONDS} seconds"
+            )
+        })??;
         if let PublishResponse::Qos1(puback) = response
             && !puback.reason_code().is_success()
         {
             bail!(
                 "MQTT publish failed for {}: {}",
-                message.topic,
+                topic,
                 puback.reason_code()
             );
         }
+        debug!(topic = %topic, retain, bytes = payload_len, "published mqtt message");
         Ok(())
     }
 }
@@ -471,10 +1340,17 @@ impl RuntimeState {
         addresses: DefaultRouteAddresses,
         observed_at_ms: u64,
     ) -> Result<()> {
+        info!(
+            thing_id = %self.config.thing_id,
+            capabilities = ?self.config.capabilities,
+            "publishing online state"
+        );
         self.publish_board_shadow(publisher, build_online_board_report(addresses))
             .await?;
         self.publish_capabilities(publisher, true, observed_at_ms)
-            .await
+            .await?;
+        info!(thing_id = %self.config.thing_id, "online state published");
+        Ok(())
     }
 
     pub async fn refresh_capabilities<P: Publisher + ?Sized>(
@@ -482,6 +1358,7 @@ impl RuntimeState {
         publisher: &P,
         observed_at_ms: u64,
     ) -> Result<()> {
+        debug!(thing_id = %self.config.thing_id, "refreshing capability state");
         self.publish_capabilities(publisher, true, observed_at_ms)
             .await
     }
@@ -491,10 +1368,13 @@ impl RuntimeState {
         publisher: &P,
         observed_at_ms: u64,
     ) -> Result<()> {
+        info!(thing_id = %self.config.thing_id, "publishing offline state");
         self.publish_board_shadow(publisher, build_offline_board_report())
             .await?;
         self.publish_capabilities(publisher, false, observed_at_ms)
-            .await
+            .await?;
+        info!(thing_id = %self.config.thing_id, "offline state published");
+        Ok(())
     }
 
     pub fn capability_seq(&self) -> u64 {
@@ -534,11 +1414,32 @@ impl RuntimeState {
 }
 
 pub async fn run_runtime(config: RuntimeConfig) -> Result<()> {
+    info!(
+        thing_id = %config.thing_id,
+        aws_region = %config.aws_region,
+        iot_endpoint = %config.iot_endpoint,
+        iot_credential_endpoint = %config.iot_credential_endpoint,
+        iot_role_alias = %config.iot_role_alias,
+        client_id = %config.client_id,
+        capabilities = ?config.capabilities,
+        "starting unit daemon"
+    );
     let redcon = read_current_sparkplug_redcon(&config).await?;
-    println!("{redcon}");
+    let sparkplug_redcon = match redcon {
+        SparkplugRedcon::Level(level) => level.to_string(),
+        SparkplugRedcon::Unavailable => "unavailable".to_string(),
+    };
+    info!(
+        thing_id = %config.thing_id,
+        sparkplug_redcon = %sparkplug_redcon,
+        "read sparkplug shadow"
+    );
     let publisher = MqttPublisher::connect(&config).await?;
     let run_result = run_connected_runtime(config, &publisher).await;
     let stop_result = publisher.stop();
+    if stop_result.is_ok() {
+        info!("mqtt client stopped");
+    }
     run_result.and(stop_result)
 }
 
@@ -555,18 +1456,19 @@ async fn run_connected_runtime(config: RuntimeConfig, publisher: &MqttPublisher)
         tokio::select! {
             shutdown = wait_for_shutdown_signal() => {
                 shutdown?;
+                info!("shutdown signal received");
                 break;
             }
             _ = heartbeat.tick() => {
                 if let Err(err) = state.refresh_capabilities(publisher, now_ms()).await {
-                    eprintln!("warning: failed to refresh unit daemon capability state: {err:#}");
+                    warn!(error = %format_args!("{err:#}"), "failed to refresh capability state");
                 }
             }
         }
     }
 
     if let Err(err) = state.publish_offline(publisher, now_ms()).await {
-        eprintln!("warning: failed to publish unit daemon offline state: {err:#}");
+        warn!(error = %format_args!("{err:#}"), "failed to publish offline state");
     }
     Ok(())
 }
@@ -637,6 +1539,46 @@ impl IotTemporaryCredentials {
     }
 }
 
+#[derive(Debug, Clone)]
+struct IotCertificateCredentialsProvider {
+    config: RuntimeConfig,
+}
+
+impl IotCertificateCredentialsProvider {
+    async fn load_credentials(&self) -> provider::Result {
+        fetch_iot_temporary_credentials(&self.config)
+            .await
+            .and_then(iot_temporary_credentials_to_sdk)
+            .map_err(|err| CredentialsError::provider_error(format!("{err:#}")))
+    }
+}
+
+impl ProvideCredentials for IotCertificateCredentialsProvider {
+    fn provide_credentials<'a>(&'a self) -> future::ProvideCredentials<'a>
+    where
+        Self: 'a,
+    {
+        future::ProvideCredentials::new(self.load_credentials())
+    }
+}
+
+fn iot_temporary_credentials_to_sdk(credentials: IotTemporaryCredentials) -> Result<Credentials> {
+    let expiry = parse_iot_temporary_credentials_expiration(&credentials.expiration)?;
+    Ok(Credentials::builder()
+        .access_key_id(credentials.access_key_id)
+        .secret_access_key(credentials.secret_access_key)
+        .session_token(credentials.session_token)
+        .expiry(expiry)
+        .provider_name("aws-iot-credential-provider")
+        .build())
+}
+
+fn parse_iot_temporary_credentials_expiration(value: &str) -> Result<SystemTime> {
+    let date_time = DateTime::from_str(value, Format::DateTime)
+        .with_context(|| format!("parse IoT temporary credential expiration {value:?}"))?;
+    SystemTime::try_from(date_time).context("convert IoT temporary credential expiration")
+}
+
 async fn fetch_iot_temporary_credentials(
     config: &RuntimeConfig,
 ) -> Result<IotTemporaryCredentials> {
@@ -675,27 +1617,28 @@ async fn fetch_iot_temporary_credentials(
     parse_iot_credentials_response(&bytes)
 }
 
+async fn aws_sdk_config_from_iot_credentials(
+    config: &RuntimeConfig,
+) -> Result<aws_config::SdkConfig> {
+    let credentials_provider = SharedCredentialsProvider::new(IotCertificateCredentialsProvider {
+        config: config.clone(),
+    });
+    Ok(aws_config::defaults(BehaviorVersion::latest())
+        .region(aws_sdk_iotdataplane::config::Region::new(
+            config.aws_region.clone(),
+        ))
+        .credentials_provider(credentials_provider)
+        .load()
+        .await)
+}
+
 pub fn build_iot_data_endpoint_url(endpoint: &str) -> Result<String> {
     validate_endpoint_host(endpoint, "iot-endpoint")?;
     Ok(format!("https://{endpoint}"))
 }
 
 pub async fn read_current_sparkplug_redcon(config: &RuntimeConfig) -> Result<SparkplugRedcon> {
-    let temporary_credentials = fetch_iot_temporary_credentials(config).await?;
-    let sdk_credentials = Credentials::new(
-        temporary_credentials.access_key_id,
-        temporary_credentials.secret_access_key,
-        Some(temporary_credentials.session_token),
-        None,
-        "aws-iot-credential-provider",
-    );
-    let sdk_config = aws_config::defaults(BehaviorVersion::latest())
-        .region(aws_sdk_iotdataplane::config::Region::new(
-            config.aws_region.clone(),
-        ))
-        .credentials_provider(sdk_credentials)
-        .load()
-        .await;
+    let sdk_config = aws_sdk_config_from_iot_credentials(config).await?;
     let data_config = aws_sdk_iotdataplane::config::Builder::from(&sdk_config)
         .endpoint_url(build_iot_data_endpoint_url(&config.iot_endpoint)?)
         .build();
@@ -931,6 +1874,84 @@ fn optional_u64_config(
         .map(Some)
 }
 
+fn resolve_cloudwatch_log_config(
+    cli_log_group: Option<String>,
+    cli_log_stream: Option<String>,
+    cli_log_level: Option<String>,
+    cli_retention_days: Option<i32>,
+    process_env: &BTreeMap<String, String>,
+    file_env: &BTreeMap<String, String>,
+    client_id: &str,
+) -> Result<Option<CloudWatchLogConfig>> {
+    let log_group = optional_config_value(
+        cli_log_group,
+        process_env,
+        file_env,
+        "TXING_CLOUDWATCH_LOG_GROUP",
+    );
+    let log_stream = optional_config_value(
+        cli_log_stream,
+        process_env,
+        file_env,
+        "TXING_CLOUDWATCH_LOG_STREAM",
+    );
+    let log_level = optional_config_value(
+        cli_log_level,
+        process_env,
+        file_env,
+        "TXING_CLOUDWATCH_LOG_LEVEL",
+    );
+    let retention_days = match cli_retention_days {
+        Some(value) => Some(value),
+        None => optional_i32_config(process_env, file_env, "TXING_CLOUDWATCH_LOG_RETENTION_DAYS")?,
+    };
+
+    let requested = log_group.is_some()
+        || log_stream.is_some()
+        || log_level.is_some()
+        || retention_days.is_some();
+    let Some(log_group) = log_group else {
+        if requested {
+            bail!("cloudwatch-log-group is required when CloudWatch logging options are set");
+        }
+        return Ok(None);
+    };
+    validate_cloudwatch_log_group(&log_group)?;
+
+    let log_stream = log_stream.unwrap_or_else(|| default_cloudwatch_log_stream(client_id));
+    validate_cloudwatch_log_stream(&log_stream)?;
+
+    let level = match log_level {
+        Some(value) => CloudWatchLogLevel::parse(&value)?,
+        None => CloudWatchLogLevel::Info,
+    };
+    let retention_days = retention_days.unwrap_or(DEFAULT_CLOUDWATCH_LOG_RETENTION_DAYS);
+    if retention_days <= 0 {
+        bail!("cloudwatch-log-retention-days must be greater than 0");
+    }
+
+    Ok(Some(CloudWatchLogConfig {
+        log_group,
+        log_stream,
+        level,
+        retention_days,
+    }))
+}
+
+fn optional_i32_config(
+    process_env: &BTreeMap<String, String>,
+    file_env: &BTreeMap<String, String>,
+    env_name: &str,
+) -> Result<Option<i32>> {
+    let Some(value) = optional_config_value(None, process_env, file_env, env_name) else {
+        return Ok(None);
+    };
+    value
+        .parse::<i32>()
+        .with_context(|| format!("{env_name} must be an integer"))
+        .map(Some)
+}
+
 fn resolve_capabilities(
     cli_capabilities: &[String],
     process_env: &BTreeMap<String, String>,
@@ -1009,6 +2030,34 @@ fn validate_endpoint_host(value: &str, label: &str) -> Result<()> {
     Ok(())
 }
 
+fn validate_cloudwatch_log_group(value: &str) -> Result<()> {
+    let value = normalize_required(value.to_string(), "cloudwatch-log-group")?;
+    if value.len() > 512 {
+        bail!("cloudwatch-log-group must be 512 characters or fewer");
+    }
+    if value.starts_with("aws/") || value.starts_with("/aws/") {
+        bail!("cloudwatch-log-group must not use the reserved aws/ prefix");
+    }
+    if !value
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-' | '/' | '#'))
+    {
+        bail!("cloudwatch-log-group contains an unsupported character");
+    }
+    Ok(())
+}
+
+fn validate_cloudwatch_log_stream(value: &str) -> Result<()> {
+    let value = normalize_required(value.to_string(), "cloudwatch-log-stream")?;
+    if value.len() > 512 {
+        bail!("cloudwatch-log-stream must be 512 characters or fewer");
+    }
+    if value.contains(':') || value.contains('*') || value.chars().any(char::is_control) {
+        bail!("cloudwatch-log-stream contains an unsupported character");
+    }
+    Ok(())
+}
+
 fn validate_role_alias(value: &str) -> Result<()> {
     let value = normalize_required(value.to_string(), "iot-role-alias")?;
     if value.len() > 128 {
@@ -1042,6 +2091,23 @@ fn default_client_id_prefix(thing_name: &str) -> String {
 
 fn default_client_id(thing_name: &str, pid: u32) -> String {
     format!("{}{pid}", default_client_id_prefix(thing_name))
+}
+
+fn default_cloudwatch_log_stream(client_id: &str) -> String {
+    format!(
+        "daemon/{}",
+        client_id
+            .chars()
+            .map(|ch| {
+                if ch == ':' || ch == '*' || ch.is_control() {
+                    '-'
+                } else {
+                    ch
+                }
+            })
+            .collect::<String>()
+            .trim_matches('/')
+    )
 }
 
 fn sanitize_client_id_fragment(thing_name: &str) -> String {
@@ -1105,6 +2171,124 @@ mod tests {
         }
     }
 
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct FakeCloudWatchPut {
+        log_group: String,
+        log_stream: String,
+        events: Vec<CloudWatchLogRecord>,
+        sequence_token: Option<String>,
+    }
+
+    #[derive(Default)]
+    struct FakeCloudWatchLogsClient {
+        calls: Mutex<Vec<String>>,
+        puts: Mutex<Vec<FakeCloudWatchPut>>,
+        create_log_group_result: Mutex<Option<std::result::Result<(), CloudWatchLogClientError>>>,
+        create_log_stream_result: Mutex<Option<std::result::Result<(), CloudWatchLogClientError>>>,
+        put_results:
+            Mutex<Vec<std::result::Result<CloudWatchPutLogEventsResult, CloudWatchLogClientError>>>,
+    }
+
+    impl FakeCloudWatchLogsClient {
+        fn calls(&self) -> Vec<String> {
+            self.calls.lock().unwrap().clone()
+        }
+
+        fn puts(&self) -> Vec<FakeCloudWatchPut> {
+            self.puts.lock().unwrap().clone()
+        }
+
+        fn set_create_log_group_result(
+            &self,
+            result: std::result::Result<(), CloudWatchLogClientError>,
+        ) {
+            *self.create_log_group_result.lock().unwrap() = Some(result);
+        }
+
+        fn set_create_log_stream_result(
+            &self,
+            result: std::result::Result<(), CloudWatchLogClientError>,
+        ) {
+            *self.create_log_stream_result.lock().unwrap() = Some(result);
+        }
+
+        fn push_put_result(
+            &self,
+            result: std::result::Result<CloudWatchPutLogEventsResult, CloudWatchLogClientError>,
+        ) {
+            self.put_results.lock().unwrap().push(result);
+        }
+    }
+
+    #[async_trait]
+    impl CloudWatchLogsClient for FakeCloudWatchLogsClient {
+        async fn create_log_group(
+            &self,
+            log_group: &str,
+        ) -> std::result::Result<(), CloudWatchLogClientError> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("create-log-group:{log_group}"));
+            self.create_log_group_result
+                .lock()
+                .unwrap()
+                .take()
+                .unwrap_or(Ok(()))
+        }
+
+        async fn put_retention_policy(
+            &self,
+            log_group: &str,
+            retention_days: i32,
+        ) -> std::result::Result<(), CloudWatchLogClientError> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("put-retention:{log_group}:{retention_days}"));
+            Ok(())
+        }
+
+        async fn create_log_stream(
+            &self,
+            log_group: &str,
+            log_stream: &str,
+        ) -> std::result::Result<(), CloudWatchLogClientError> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("create-log-stream:{log_group}:{log_stream}"));
+            self.create_log_stream_result
+                .lock()
+                .unwrap()
+                .take()
+                .unwrap_or(Ok(()))
+        }
+
+        async fn put_log_events(
+            &self,
+            log_group: &str,
+            log_stream: &str,
+            events: Vec<CloudWatchLogRecord>,
+            sequence_token: Option<String>,
+        ) -> std::result::Result<CloudWatchPutLogEventsResult, CloudWatchLogClientError> {
+            self.puts.lock().unwrap().push(FakeCloudWatchPut {
+                log_group: log_group.to_string(),
+                log_stream: log_stream.to_string(),
+                events,
+                sequence_token,
+            });
+            let mut results = self.put_results.lock().unwrap();
+            if results.is_empty() {
+                Ok(CloudWatchPutLogEventsResult {
+                    next_sequence_token: Some("next-token".to_string()),
+                })
+            } else {
+                results.remove(0)
+            }
+        }
+    }
+
     fn config() -> RuntimeConfig {
         RuntimeConfig {
             thing_id: "unit-local".to_string(),
@@ -1120,6 +2304,7 @@ mod tests {
             capabilities: vec![BOARD_CAPABILITY.to_string()],
             capability_ttl: Duration::from_secs(150),
             heartbeat: Duration::from_secs(60),
+            cloudwatch_logging: None,
         }
     }
 
@@ -1160,6 +2345,50 @@ mod tests {
             &BTreeMap::new(),
             &file_env(),
         )
+    }
+
+    fn cloudwatch_log_config() -> CloudWatchLogConfig {
+        CloudWatchLogConfig {
+            log_group: "txing/town-local/rig-local/unit-local".to_string(),
+            log_stream: "daemon/unit-local-daemon-test".to_string(),
+            level: CloudWatchLogLevel::Info,
+            retention_days: DEFAULT_CLOUDWATCH_LOG_RETENTION_DAYS,
+        }
+    }
+
+    fn cloudwatch_log_record(message: &str, timestamp_ms: i64) -> CloudWatchLogRecord {
+        CloudWatchLogRecord {
+            timestamp_ms,
+            message: message.to_string(),
+        }
+    }
+
+    #[test]
+    fn formats_stderr_line_like_systemd_service_message() {
+        assert_eq!(
+            format_stderr_log_line(
+                &Level::WARN,
+                "BLE connect from advertisement failed",
+                &[
+                    ("thing".to_string(), "unit-bl95f2".to_string()),
+                    ("retryDelayMs".to_string(), "2000".to_string()),
+                    (
+                        "error".to_string(),
+                        "create BLE manager: limit reached".to_string()
+                    ),
+                ],
+            ),
+            "warning: BLE connect from advertisement failed thing=unit-bl95f2 retryDelayMs=2000 error=create BLE manager: limit reached"
+        );
+
+        assert_eq!(
+            format_stderr_log_line(
+                &Level::INFO,
+                "starting unit daemon",
+                &[("capabilities".to_string(), r#"["board"]"#.to_string())],
+            ),
+            r#"info: starting unit daemon capabilities=["board"]"#
+        );
     }
 
     #[test]
@@ -1354,6 +2583,79 @@ mod tests {
         assert_eq!(config.capability_ttl, Duration::from_secs(120));
         assert_eq!(config.heartbeat, Duration::from_secs(30));
         assert_eq!(config.capabilities, vec![BOARD_CAPABILITY.to_string()]);
+        assert_eq!(config.cloudwatch_logging, None);
+    }
+
+    #[test]
+    fn cloudwatch_config_uses_precedence_and_defaults() {
+        let mut file_env = file_env();
+        file_env.insert(
+            "TXING_CLOUDWATCH_LOG_GROUP".to_string(),
+            "txing/town-file/rig-file/unit-local".to_string(),
+        );
+        file_env.insert(
+            "TXING_CLOUDWATCH_LOG_STREAM".to_string(),
+            "daemon/file".to_string(),
+        );
+        file_env.insert(
+            "TXING_CLOUDWATCH_LOG_LEVEL".to_string(),
+            "debug".to_string(),
+        );
+        file_env.insert(
+            "TXING_CLOUDWATCH_LOG_RETENTION_DAYS".to_string(),
+            "7".to_string(),
+        );
+        let process_env = BTreeMap::from([(
+            "TXING_CLOUDWATCH_LOG_STREAM".to_string(),
+            "daemon/process".to_string(),
+        )]);
+        let cli = Cli::try_parse_from([
+            "daemon",
+            "--client-id",
+            "unit-local-daemon-test",
+            "--cloudwatch-log-group",
+            "txing/town-cli/rig-cli/unit-local",
+            "--cloudwatch-log-retention-days",
+            "30",
+        ])
+        .unwrap();
+        let config = RuntimeConfig::from_sources(cli, &process_env, &file_env).unwrap();
+
+        assert_eq!(
+            config.cloudwatch_logging,
+            Some(CloudWatchLogConfig {
+                log_group: "txing/town-cli/rig-cli/unit-local".to_string(),
+                log_stream: "daemon/process".to_string(),
+                level: CloudWatchLogLevel::Debug,
+                retention_days: 30,
+            })
+        );
+    }
+
+    #[test]
+    fn cloudwatch_config_defaults_stream_level_and_retention() {
+        let config = runtime_config_from_args(&[
+            "daemon",
+            "--client-id",
+            "unit-local-daemon-test",
+            "--cloudwatch-log-group",
+            "txing/town-local/rig-local/unit-local",
+        ])
+        .unwrap();
+
+        assert_eq!(config.cloudwatch_logging, Some(cloudwatch_log_config()));
+    }
+
+    #[test]
+    fn cloudwatch_config_requires_group_when_other_cloudwatch_options_are_set() {
+        assert!(
+            runtime_config_from_args(&["daemon", "--cloudwatch-log-stream", "daemon/test"])
+                .is_err()
+        );
+        assert!(
+            runtime_config_from_args(&["daemon", "--cloudwatch-log-group", "txing/invalid:*"])
+                .is_err()
+        );
     }
 
     #[test]
@@ -1365,6 +2667,7 @@ mod tests {
         assert_eq!(config.capability_ttl, Duration::from_secs(150));
         assert_eq!(config.heartbeat, Duration::from_secs(60));
         assert!(config.client_id.starts_with("unit-local-daemon-"));
+        assert_eq!(config.cloudwatch_logging, None);
     }
 
     #[test]
@@ -1437,6 +2740,8 @@ mod tests {
         assert_eq!(credentials.access_key_id, "akid");
         assert_eq!(credentials.secret_access_key, "secret");
         assert_eq!(credentials.session_token, "token");
+        let sdk_credentials = iot_temporary_credentials_to_sdk(credentials).unwrap();
+        assert!(sdk_credentials.expiry().is_some());
         assert!(parse_iot_credentials_response(br#"{"credentials":{"accessKeyId":""}}"#).is_err());
     }
 
@@ -1449,6 +2754,150 @@ mod tests {
         assert!(
             build_iot_data_endpoint_url("https://example.iot.eu-central-1.amazonaws.com").is_err()
         );
+    }
+
+    #[test]
+    fn builds_structured_cloudwatch_log_message() {
+        let base_fields = CloudWatchLogBaseFields {
+            thing_id: "unit-local".to_string(),
+            client_id: "unit-local-daemon-test".to_string(),
+            iot_role_alias: "txing-daemon-unit-local".to_string(),
+            aws_region: "eu-central-1".to_string(),
+        };
+        let message = build_cloudwatch_log_message(
+            &base_fields,
+            "INFO",
+            "txing_unit_daemon",
+            "read sparkplug shadow",
+            BTreeMap::from([(
+                "sparkplug_redcon".to_string(),
+                Value::String("4".to_string()),
+            )]),
+            1234,
+        )
+        .unwrap();
+        let parsed: Value = serde_json::from_str(&message).unwrap();
+
+        assert_eq!(parsed["timestamp"], 1234);
+        assert_eq!(parsed["level"], "INFO");
+        assert_eq!(parsed["target"], "txing_unit_daemon");
+        assert_eq!(parsed["message"], "read sparkplug shadow");
+        assert_eq!(parsed["thing_id"], "unit-local");
+        assert_eq!(parsed["client_id"], "unit-local-daemon-test");
+        assert_eq!(parsed["iot_role_alias"], "txing-daemon-unit-local");
+        assert_eq!(parsed["aws_region"], "eu-central-1");
+        assert_eq!(parsed["sparkplug_redcon"], "4");
+    }
+
+    #[test]
+    fn cloudwatch_debug_fields_preserve_json_shapes_when_possible() {
+        assert_eq!(
+            debug_field_to_json_value(r#"["board"]"#),
+            Value::Array(vec![Value::String("board".to_string())])
+        );
+        assert_eq!(debug_field_to_json_value("4"), Value::Number(4.into()));
+        assert_eq!(
+            debug_field_to_json_value("ConnectionSuccessEvent { ok: true }"),
+            Value::String("ConnectionSuccessEvent { ok: true }".to_string())
+        );
+    }
+
+    #[test]
+    fn cloudwatch_batch_flushes_by_event_count_and_size() {
+        let records = (0..CLOUDWATCH_LOG_BATCH_MAX_EVENTS)
+            .map(|index| cloudwatch_log_record(&format!("event-{index}"), index as i64))
+            .collect::<Vec<_>>();
+        assert!(cloudwatch_log_batch_should_flush(&records));
+
+        let mut oversized = Vec::new();
+        push_cloudwatch_log_batch_record(
+            &mut oversized,
+            cloudwatch_log_record(&"x".repeat(CLOUDWATCH_LOG_BATCH_MAX_BYTES), 1),
+        );
+        assert!(oversized.is_empty());
+    }
+
+    #[tokio::test]
+    async fn cloudwatch_writer_sets_up_group_retention_and_stream() {
+        let fake = Arc::new(FakeCloudWatchLogsClient::default());
+        fake.set_create_log_group_result(Err(CloudWatchLogClientError::new(
+            CloudWatchLogClientErrorKind::AlreadyExists,
+            "group exists",
+        )));
+        fake.set_create_log_stream_result(Err(CloudWatchLogClientError::new(
+            CloudWatchLogClientErrorKind::AlreadyExists,
+            "stream exists",
+        )));
+        let writer = CloudWatchLogWriter::new(cloudwatch_log_config(), fake.clone());
+
+        writer.ensure_ready().await.unwrap();
+
+        assert_eq!(
+            fake.calls(),
+            vec![
+                "create-log-group:txing/town-local/rig-local/unit-local",
+                "put-retention:txing/town-local/rig-local/unit-local:14",
+                "create-log-stream:txing/town-local/rig-local/unit-local:daemon/unit-local-daemon-test",
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn cloudwatch_writer_retries_missing_stream_after_setup() {
+        let fake = Arc::new(FakeCloudWatchLogsClient::default());
+        fake.push_put_result(Err(CloudWatchLogClientError::new(
+            CloudWatchLogClientErrorKind::NotFound,
+            "stream missing",
+        )));
+        fake.push_put_result(Ok(CloudWatchPutLogEventsResult {
+            next_sequence_token: Some("next".to_string()),
+        }));
+        let writer = CloudWatchLogWriter::new(cloudwatch_log_config(), fake.clone());
+
+        let result = writer
+            .put_log_events_with_retry(vec![cloudwatch_log_record("first", 1)], None)
+            .await
+            .unwrap();
+
+        assert_eq!(result.next_sequence_token.as_deref(), Some("next"));
+        assert_eq!(fake.puts().len(), 2);
+        assert_eq!(
+            fake.calls(),
+            vec![
+                "create-log-group:txing/town-local/rig-local/unit-local",
+                "put-retention:txing/town-local/rig-local/unit-local:14",
+                "create-log-stream:txing/town-local/rig-local/unit-local:daemon/unit-local-daemon-test",
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn cloudwatch_writer_retries_invalid_sequence_token() {
+        let fake = Arc::new(FakeCloudWatchLogsClient::default());
+        fake.push_put_result(Err(CloudWatchLogClientError::new(
+            CloudWatchLogClientErrorKind::InvalidSequenceToken {
+                expected: Some("expected".to_string()),
+            },
+            "invalid token",
+        )));
+        fake.push_put_result(Ok(CloudWatchPutLogEventsResult {
+            next_sequence_token: Some("next".to_string()),
+        }));
+        let writer = CloudWatchLogWriter::new(cloudwatch_log_config(), fake.clone());
+
+        let result = writer
+            .put_log_events_with_retry(
+                vec![cloudwatch_log_record("first", 1)],
+                Some("stale".to_string()),
+            )
+            .await
+            .unwrap();
+        let puts = fake.puts();
+
+        assert_eq!(result.next_sequence_token.as_deref(), Some("next"));
+        assert_eq!(puts.len(), 2);
+        assert_eq!(puts[0].sequence_token.as_deref(), Some("stale"));
+        assert_eq!(puts[1].sequence_token.as_deref(), Some("expected"));
     }
 
     #[test]

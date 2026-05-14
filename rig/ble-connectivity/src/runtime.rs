@@ -18,6 +18,8 @@ use btleplug::api::{
 use btleplug::platform::{Adapter, Manager, Peripheral};
 #[cfg(all(feature = "ble-real", any(target_os = "linux", target_os = "macos")))]
 use futures::StreamExt;
+#[cfg(all(feature = "ble-real", any(target_os = "linux", target_os = "macos")))]
+use tokio::sync::OnceCell;
 use tokio::sync::{Semaphore, broadcast, mpsc};
 use tokio::time::{MissedTickBehavior, interval, sleep, timeout};
 use txing_rig_local_pubsub::LocalPubSubClient;
@@ -46,7 +48,11 @@ const STALE_CHECK_INTERVAL_MS: u64 = 500;
 const NOTIFICATION_DRAIN_INTERVAL_MS: u64 = 100;
 const CONNECTED_STATE_REFRESH_INTERVAL_MS: u64 = 30_000;
 const BLE_CONNECT_RESET_DELAY_MS: u64 = 250;
+const BLE_RETRY_MIN_DELAY_MS: u64 = 1_000;
+const BLE_RETRY_MAX_DELAY_MS: u64 = 120_000;
+const BLE_RETRY_JITTER_MAX_MS: u64 = 1_000;
 const BLUEZ_IN_PROGRESS_RECONNECT_DELAY_MS: u64 = 10_000;
+const BLUEZ_RESOURCE_EXHAUSTED_RECONNECT_DELAY_MS: u64 = 60_000;
 const SHADOW_PUBLISH_INTERVAL_MS: u64 = 500;
 const SHADOW_PUBLISH_RETRY_LOG_INTERVAL_MS: u64 = 10_000;
 const REDCON_ACTIVE_MEASUREMENT_STALE_MS: u64 = 20_000;
@@ -341,7 +347,14 @@ struct DeviceSession {
     last_weather_measurement: Option<TimedMeasurement<WeatherMeasurement>>,
     connected: Option<ConnectedDevice>,
     next_connect_after_ms: u64,
+    connect_failures: u32,
     offline_published: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConnectOutcome {
+    Connected,
+    DeferredNoCapacity,
 }
 
 #[derive(Debug, Clone)]
@@ -371,6 +384,7 @@ impl DeviceSession {
             last_weather_measurement: None,
             connected: None,
             next_connect_after_ms: 0,
+            connect_failures: 0,
             offline_published: false,
         }
     }
@@ -450,15 +464,20 @@ impl DeviceSession {
         let seq = self.next_seq();
         self.publish_sample(advertisement_sample(&self.spec, &advertisement, seq))?;
         match self.connect(false).await {
-            Ok(()) => {
-                self.next_connect_after_ms = 0;
+            Ok(ConnectOutcome::Connected) => self.reset_connect_backoff(),
+            Ok(ConnectOutcome::DeferredNoCapacity) => {
+                self.next_connect_after_ms = now_ms()
+                    .saturating_add(self.config.reconnect_delay_ms.max(BLE_RETRY_MIN_DELAY_MS));
             }
             Err(err) => {
-                let retry_delay_ms = self.connect_retry_delay_ms(&err);
+                let retry_delay_ms = self.record_connect_failure(&err);
                 self.next_connect_after_ms = now_ms().saturating_add(retry_delay_ms);
                 eprintln!(
-                    "warning: BLE connect from advertisement failed thing={} address={} retryDelayMs={retry_delay_ms} retryAfterMs={} error={err:#}",
-                    self.spec.thing_name, advertisement.address, self.next_connect_after_ms
+                    "warning: BLE connect from advertisement failed thing={} address={} failureCount={} retryDelayMs={retry_delay_ms} retryAfterMs={} error={err:#}",
+                    self.spec.thing_name,
+                    advertisement.address,
+                    self.connect_failures,
+                    self.next_connect_after_ms
                 );
             }
         }
@@ -466,14 +485,45 @@ impl DeviceSession {
     }
 
     fn connect_retry_delay_ms(&self, err: &anyhow::Error) -> u64 {
+        let delay = self.connect_retry_base_delay_ms(err);
+        let delay = bounded_retry_delay_ms(
+            delay,
+            self.connect_failures.saturating_add(1),
+            BLE_RETRY_MAX_DELAY_MS,
+        );
+        delay
+            .saturating_add(self.connect_retry_jitter_ms())
+            .min(BLE_RETRY_MAX_DELAY_MS)
+    }
+
+    fn connect_retry_base_delay_ms(&self, err: &anyhow::Error) -> u64 {
         let message = format!("{err:#}");
-        if message.contains("In Progress") {
+        if ble_error_indicates_host_resource_exhaustion(&message) {
+            self.config
+                .reconnect_delay_ms
+                .max(BLUEZ_RESOURCE_EXHAUSTED_RECONNECT_DELAY_MS)
+        } else if ble_error_indicates_in_progress(&message) {
             self.config
                 .reconnect_delay_ms
                 .max(BLUEZ_IN_PROGRESS_RECONNECT_DELAY_MS)
         } else {
-            self.config.reconnect_delay_ms
+            self.config.reconnect_delay_ms.max(BLE_RETRY_MIN_DELAY_MS)
         }
+    }
+
+    fn connect_retry_jitter_ms(&self) -> u64 {
+        stable_jitter_ms(&self.spec.thing_name, BLE_RETRY_JITTER_MAX_MS)
+    }
+
+    fn record_connect_failure(&mut self, err: &anyhow::Error) -> u64 {
+        let retry_delay_ms = self.connect_retry_delay_ms(err);
+        self.connect_failures = self.connect_failures.saturating_add(1);
+        retry_delay_ms
+    }
+
+    fn reset_connect_backoff(&mut self) {
+        self.connect_failures = 0;
+        self.next_connect_after_ms = 0;
     }
 
     async fn handle_command(&mut self, command: CapabilityCommand) -> Result<()> {
@@ -523,6 +573,8 @@ impl DeviceSession {
         };
 
         if let Err(err) = self.connect(true).await {
+            let retry_delay_ms = self.record_connect_failure(&err);
+            self.next_connect_after_ms = now_ms().saturating_add(retry_delay_ms);
             publish_command_result(
                 &self.config.adapter_id,
                 &self.outbound_sender,
@@ -552,6 +604,8 @@ impl DeviceSession {
             .write_redcon(target_redcon, self.config.command_timeout_ms)
             .await
         {
+            let retry_delay_ms = self.record_connect_failure(&err);
+            self.next_connect_after_ms = now_ms().saturating_add(retry_delay_ms);
             self.connected = None;
             publish_command_result(
                 &self.config.adapter_id,
@@ -566,6 +620,7 @@ impl DeviceSession {
 
         self.last_redcon = Some(target_redcon);
         self.seed_connected_state().await?;
+        self.reset_connect_backoff();
         publish_command_result(
             &self.config.adapter_id,
             &self.outbound_sender,
@@ -577,10 +632,10 @@ impl DeviceSession {
         Ok(())
     }
 
-    async fn connect(&mut self, wait_for_cap: bool) -> Result<()> {
+    async fn connect(&mut self, wait_for_cap: bool) -> Result<ConnectOutcome> {
         if let Some(connected) = &self.connected {
             if connected.is_connected().await {
-                return Ok(());
+                return Ok(ConnectOutcome::Connected);
             }
         }
         self.connected = None;
@@ -600,7 +655,7 @@ impl DeviceSession {
             Some(semaphore) if wait_for_cap => Some(semaphore.acquire_owned().await?),
             Some(semaphore) => match semaphore.try_acquire_owned() {
                 Ok(permit) => Some(permit),
-                Err(_) => return Ok(()),
+                Err(_) => return Ok(ConnectOutcome::DeferredNoCapacity),
             },
             None => None,
         };
@@ -613,7 +668,11 @@ impl DeviceSession {
         .await?;
         self.connected = Some(connected);
         self.seed_connected_state().await?;
-        Ok(())
+        if self.connected.is_some() {
+            Ok(ConnectOutcome::Connected)
+        } else {
+            bail!("BLE connected but initial state read did not complete")
+        }
     }
 
     async fn seed_connected_state(&mut self) -> Result<()> {
@@ -832,6 +891,7 @@ impl DeviceSession {
         let seq = self.next_seq();
         let sample = offline_sample(&self.spec, seq, now_ms());
         self.publish_sample(sample)?;
+        self.reset_connect_backoff();
         self.offline_published = true;
         Ok(())
     }
@@ -986,6 +1046,33 @@ fn publish_command_result(
     outbound_sender
         .send(OutboundMessage { topic, payload })
         .map_err(|_| anyhow!("outbound local pub/sub channel is closed"))
+}
+
+fn bounded_retry_delay_ms(base_delay_ms: u64, failure_count: u32, max_delay_ms: u64) -> u64 {
+    let base_delay_ms = base_delay_ms.max(BLE_RETRY_MIN_DELAY_MS);
+    let exponent = failure_count.saturating_sub(1).min(6);
+    base_delay_ms
+        .saturating_mul(1u64 << exponent)
+        .min(max_delay_ms)
+}
+
+fn stable_jitter_ms(key: &str, max_jitter_ms: u64) -> u64 {
+    if max_jitter_ms == 0 {
+        return 0;
+    }
+    key.bytes().fold(0u64, |accumulator, byte| {
+        accumulator.wrapping_mul(33).wrapping_add(u64::from(byte))
+    }) % (max_jitter_ms + 1)
+}
+
+fn ble_error_indicates_in_progress(message: &str) -> bool {
+    message.contains("In Progress") || message.contains("InProgress")
+}
+
+fn ble_error_indicates_host_resource_exhaustion(message: &str) -> bool {
+    message.contains("maximum number of active connections")
+        || message.contains("LimitsExceeded")
+        || message.contains("Too many open files")
 }
 
 #[derive(Debug, Clone)]
@@ -1292,13 +1379,22 @@ fn find_characteristic(
 }
 
 #[cfg(all(feature = "ble-real", any(target_os = "linux", target_os = "macos")))]
-async fn default_adapter() -> Result<Adapter> {
-    let manager = Manager::new().await.context("create BLE manager")?;
-    let adapters = manager.adapters().await.context("list BLE adapters")?;
-    adapters
-        .into_iter()
-        .next()
-        .ok_or_else(|| anyhow!("no BLE adapter found"))
+static DEFAULT_ADAPTER: OnceCell<Arc<Adapter>> = OnceCell::const_new();
+
+#[cfg(all(feature = "ble-real", any(target_os = "linux", target_os = "macos")))]
+async fn default_adapter() -> Result<Arc<Adapter>> {
+    let adapter = DEFAULT_ADAPTER
+        .get_or_try_init(|| async {
+            let manager = Manager::new().await.context("create BLE manager")?;
+            let adapters = manager.adapters().await.context("list BLE adapters")?;
+            let adapter = adapters
+                .into_iter()
+                .next()
+                .ok_or_else(|| anyhow!("no BLE adapter found"))?;
+            Ok::<Arc<Adapter>, anyhow::Error>(Arc::new(adapter))
+        })
+        .await?;
+    Ok(Arc::clone(adapter))
 }
 
 #[cfg(all(feature = "ble-real", any(target_os = "linux", target_os = "macos")))]
@@ -1331,6 +1427,27 @@ async fn find_peripheral(
 #[cfg(all(feature = "ble-real", any(target_os = "linux", target_os = "macos")))]
 async fn run_scanner(
     config: RuntimeConfig,
+    advertisements: broadcast::Sender<Advertisement>,
+) -> Result<()> {
+    let mut failure_count = 0u32;
+    loop {
+        match run_scanner_once(&config, advertisements.clone()).await {
+            Ok(()) => return Ok(()),
+            Err(err) => {
+                failure_count = failure_count.saturating_add(1);
+                let retry_delay_ms = scanner_retry_delay_ms(&config, failure_count, &err);
+                eprintln!(
+                    "warning: BLE scanner failed failureCount={failure_count} retryDelayMs={retry_delay_ms} error={err:#}"
+                );
+                sleep(Duration::from_millis(retry_delay_ms)).await;
+            }
+        }
+    }
+}
+
+#[cfg(all(feature = "ble-real", any(target_os = "linux", target_os = "macos")))]
+async fn run_scanner_once(
+    config: &RuntimeConfig,
     advertisements: broadcast::Sender<Advertisement>,
 ) -> Result<()> {
     let adapter = default_adapter().await?;
@@ -1375,6 +1492,22 @@ async fn run_scanner(
             let _ = advertisements.send(advertisement);
         }
     }
+}
+
+fn scanner_retry_delay_ms(config: &RuntimeConfig, failure_count: u32, err: &anyhow::Error) -> u64 {
+    let message = format!("{err:#}");
+    let base_delay_ms = if ble_error_indicates_host_resource_exhaustion(&message) {
+        config
+            .reconnect_delay_ms
+            .max(BLUEZ_RESOURCE_EXHAUSTED_RECONNECT_DELAY_MS)
+    } else if ble_error_indicates_in_progress(&message) {
+        config
+            .reconnect_delay_ms
+            .max(BLUEZ_IN_PROGRESS_RECONNECT_DELAY_MS)
+    } else {
+        config.reconnect_delay_ms.max(BLE_RETRY_MIN_DELAY_MS)
+    };
+    bounded_retry_delay_ms(base_delay_ms, failure_count, BLE_RETRY_MAX_DELAY_MS)
 }
 
 #[cfg(not(all(feature = "ble-real", any(target_os = "linux", target_os = "macos"))))]
@@ -1969,14 +2102,67 @@ mod tests {
         let mut config = RuntimeConfig::default();
         config.reconnect_delay_ms = 2_000;
         let session = DeviceSession::new(power_spec(), config, sender, shadow_sender, None);
+        let jitter = session.connect_retry_jitter_ms();
 
         assert_eq!(
             session.connect_retry_delay_ms(&anyhow!("connect BLE peripheral: In Progress")),
-            BLUEZ_IN_PROGRESS_RECONNECT_DELAY_MS
+            BLUEZ_IN_PROGRESS_RECONNECT_DELAY_MS + jitter
         );
         assert_eq!(
             session.connect_retry_delay_ms(&anyhow!("BLE connect timed out")),
-            2_000
+            2_000 + jitter
+        );
+    }
+
+    #[test]
+    fn ble_resource_exhaustion_uses_slow_retry_delay() {
+        let (sender, _receiver) = mpsc::unbounded_channel();
+        let (shadow_sender, _shadow_receiver) = mpsc::unbounded_channel();
+        let mut config = RuntimeConfig::default();
+        config.reconnect_delay_ms = 2_000;
+        let session = DeviceSession::new(power_spec(), config, sender, shadow_sender, None);
+        let jitter = session.connect_retry_jitter_ms();
+
+        assert_eq!(
+            session.connect_retry_delay_ms(&anyhow!(
+                "create BLE manager: The maximum number of active connections for UID 0 has been reached"
+            )),
+            BLUEZ_RESOURCE_EXHAUSTED_RECONNECT_DELAY_MS + jitter
+        );
+    }
+
+    #[test]
+    fn connect_failures_back_off_exponentially() {
+        let (sender, _receiver) = mpsc::unbounded_channel();
+        let (shadow_sender, _shadow_receiver) = mpsc::unbounded_channel();
+        let mut config = RuntimeConfig::default();
+        config.reconnect_delay_ms = 2_000;
+        let mut session = DeviceSession::new(power_spec(), config, sender, shadow_sender, None);
+        let jitter = session.connect_retry_jitter_ms();
+        let err = anyhow!("BLE connect timed out");
+
+        assert_eq!(session.record_connect_failure(&err), 2_000 + jitter);
+        assert_eq!(session.record_connect_failure(&err), 4_000 + jitter);
+        assert_eq!(session.connect_failures, 2);
+
+        session.reset_connect_backoff();
+        assert_eq!(session.connect_failures, 0);
+    }
+
+    #[test]
+    fn scanner_retry_uses_backoff_for_host_resource_exhaustion() {
+        let mut config = RuntimeConfig::default();
+        config.reconnect_delay_ms = 2_000;
+
+        assert_eq!(
+            scanner_retry_delay_ms(
+                &config,
+                1,
+                &anyhow!(
+                    "create BLE manager: The maximum number of active connections for UID 0 has been reached"
+                ),
+            ),
+            BLUEZ_RESOURCE_EXHAUSTED_RECONNECT_DELAY_MS
         );
     }
 
