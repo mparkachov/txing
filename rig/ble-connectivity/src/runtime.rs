@@ -4,9 +4,9 @@
 )]
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::sync::Arc;
 #[cfg(all(feature = "greengrass-sdk", target_os = "linux"))]
 use std::sync::OnceLock;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -47,12 +47,14 @@ const SCAN_POLL_INTERVAL_MS: u64 = 500;
 const STALE_CHECK_INTERVAL_MS: u64 = 500;
 const NOTIFICATION_DRAIN_INTERVAL_MS: u64 = 100;
 const CONNECTED_STATE_REFRESH_INTERVAL_MS: u64 = 30_000;
+const BLE_ADVERTISEMENT_BROADCAST_MIN_INTERVAL_MS: u64 = 1_000;
 const BLE_CONNECT_RESET_DELAY_MS: u64 = 250;
 const BLE_RETRY_MIN_DELAY_MS: u64 = 1_000;
 const BLE_RETRY_MAX_DELAY_MS: u64 = 120_000;
 const BLE_RETRY_JITTER_MAX_MS: u64 = 1_000;
 const BLUEZ_IN_PROGRESS_RECONNECT_DELAY_MS: u64 = 10_000;
 const BLUEZ_RESOURCE_EXHAUSTED_RECONNECT_DELAY_MS: u64 = 60_000;
+const BLE_SCANNER_PROPERTY_ERROR_LOG_INTERVAL_MS: u64 = 30_000;
 const SHADOW_PUBLISH_INTERVAL_MS: u64 = 500;
 const SHADOW_PUBLISH_RETRY_LOG_INTERVAL_MS: u64 = 10_000;
 const REDCON_ACTIVE_MEASUREMENT_STALE_MS: u64 = 20_000;
@@ -138,9 +140,12 @@ struct ManagedSession {
     task: tokio::task::JoinHandle<()>,
 }
 
+type SharedScannerTargets = Arc<RwLock<BTreeSet<String>>>;
+
 struct RuntimeState {
     config: RuntimeConfig,
     advertisements: broadcast::Sender<Advertisement>,
+    scanner_targets: SharedScannerTargets,
     outbound_sender: mpsc::UnboundedSender<OutboundMessage>,
     shadow_sender: mpsc::UnboundedSender<ShadowUpdate>,
     connection_semaphore: Option<Arc<Semaphore>>,
@@ -152,6 +157,7 @@ impl RuntimeState {
     fn new(
         config: RuntimeConfig,
         advertisements: broadcast::Sender<Advertisement>,
+        scanner_targets: SharedScannerTargets,
         outbound_sender: mpsc::UnboundedSender<OutboundMessage>,
         shadow_sender: mpsc::UnboundedSender<ShadowUpdate>,
     ) -> Self {
@@ -160,6 +166,7 @@ impl RuntimeState {
         Self {
             config,
             advertisements,
+            scanner_targets,
             outbound_sender,
             shadow_sender,
             connection_semaphore,
@@ -198,6 +205,7 @@ impl RuntimeState {
             .map(|spec| (spec.thing_name.clone(), spec))
             .collect::<BTreeMap<_, _>>();
         let wanted_names = wanted.keys().cloned().collect::<BTreeSet<_>>();
+        replace_scanner_targets(&self.scanner_targets, wanted_names.clone());
 
         let removed = self
             .sessions
@@ -1066,13 +1074,46 @@ fn stable_jitter_ms(key: &str, max_jitter_ms: u64) -> u64 {
 }
 
 fn ble_error_indicates_in_progress(message: &str) -> bool {
-    message.contains("In Progress") || message.contains("InProgress")
+    message.contains("In Progress")
+        || message.contains("InProgress")
+        || message.contains("already in progress")
 }
 
 fn ble_error_indicates_host_resource_exhaustion(message: &str) -> bool {
     message.contains("maximum number of active connections")
         || message.contains("LimitsExceeded")
         || message.contains("Too many open files")
+}
+
+fn replace_scanner_targets(scanner_targets: &SharedScannerTargets, wanted_names: BTreeSet<String>) {
+    match scanner_targets.write() {
+        Ok(mut targets) => *targets = wanted_names,
+        Err(_) => eprintln!("warning: BLE scanner target set lock is poisoned"),
+    }
+}
+
+fn scanner_targets_snapshot(scanner_targets: &SharedScannerTargets) -> BTreeSet<String> {
+    match scanner_targets.read() {
+        Ok(targets) => targets.clone(),
+        Err(_) => {
+            eprintln!("warning: BLE scanner target set lock is poisoned");
+            BTreeSet::new()
+        }
+    }
+}
+
+fn should_publish_scanner_advertisement(
+    local_name: &str,
+    target_names: &BTreeSet<String>,
+    last_published_by_name: &BTreeMap<String, u64>,
+    now: u64,
+) -> bool {
+    target_names.contains(local_name)
+        && last_published_by_name
+            .get(local_name)
+            .is_none_or(|last_published| {
+                now.saturating_sub(*last_published) >= BLE_ADVERTISEMENT_BROADCAST_MIN_INTERVAL_MS
+            })
 }
 
 #[derive(Debug, Clone)]
@@ -1408,12 +1449,10 @@ async fn find_peripheral(
         .await
         .context("list BLE peripherals")?
     {
-        let Some(properties) = peripheral
-            .properties()
-            .await
-            .context("read BLE properties")?
-        else {
-            continue;
+        let properties = match peripheral.properties().await {
+            Ok(Some(properties)) => properties,
+            Ok(None) => continue,
+            Err(_) => continue,
         };
         if properties.address.to_string() == address
             || properties.local_name.as_deref() == Some(thing_name)
@@ -1428,10 +1467,11 @@ async fn find_peripheral(
 async fn run_scanner(
     config: RuntimeConfig,
     advertisements: broadcast::Sender<Advertisement>,
+    scanner_targets: SharedScannerTargets,
 ) -> Result<()> {
     let mut failure_count = 0u32;
     loop {
-        match run_scanner_once(&config, advertisements.clone()).await {
+        match run_scanner_once(&config, advertisements.clone(), scanner_targets.clone()).await {
             Ok(()) => return Ok(()),
             Err(err) => {
                 failure_count = failure_count.saturating_add(1);
@@ -1449,47 +1489,85 @@ async fn run_scanner(
 async fn run_scanner_once(
     config: &RuntimeConfig,
     advertisements: broadcast::Sender<Advertisement>,
+    scanner_targets: SharedScannerTargets,
 ) -> Result<()> {
     let adapter = default_adapter().await?;
-    adapter
-        .start_scan(ScanFilter::default())
-        .await
-        .context("start BLE scan")?;
+    start_scan_if_needed(&adapter).await?;
     let mut seq = 0u64;
+    let mut last_published_by_name = BTreeMap::new();
+    let mut last_property_error_log_ms = 0u64;
     let mut timer = interval(Duration::from_millis(config.scan_interval_ms.max(100)));
     timer.set_missed_tick_behavior(MissedTickBehavior::Skip);
     loop {
         timer.tick().await;
+        let target_names = scanner_targets_snapshot(&scanner_targets);
+        if target_names.is_empty() {
+            continue;
+        }
         for peripheral in adapter
             .peripherals()
             .await
             .context("list BLE peripherals")?
         {
-            let Some(properties) = peripheral
-                .properties()
-                .await
-                .context("read BLE properties")?
+            let properties = match peripheral.properties().await {
+                Ok(Some(properties)) => properties,
+                Ok(None) => continue,
+                Err(err) => {
+                    let now = now_ms();
+                    if now.saturating_sub(last_property_error_log_ms)
+                        >= BLE_SCANNER_PROPERTY_ERROR_LOG_INTERVAL_MS
+                    {
+                        eprintln!(
+                            "warning: BLE scanner skipped unreadable peripheral properties error={err}"
+                        );
+                        last_property_error_log_ms = now;
+                    }
+                    continue;
+                }
+            };
+            let address = properties.address.to_string();
+            let Some(local_name) = properties
+                .local_name
+                .clone()
+                .filter(|value| !value.trim().is_empty())
             else {
                 continue;
             };
-            let address = properties.address.to_string();
-            let local_name = properties
-                .local_name
-                .clone()
-                .filter(|value| !value.trim().is_empty());
-            if local_name.is_none() {
+            let now = now_ms();
+            if !should_publish_scanner_advertisement(
+                &local_name,
+                &target_names,
+                &last_published_by_name,
+                now,
+            ) {
                 continue;
             }
+            last_published_by_name.insert(local_name.clone(), now);
             seq += 1;
             let advertisement = Advertisement {
                 address,
-                local_name,
+                local_name: Some(local_name),
                 services: properties.services,
                 rssi: properties.rssi,
-                observed_at_ms: now_ms(),
+                observed_at_ms: now,
                 seq,
             };
             let _ = advertisements.send(advertisement);
+        }
+    }
+}
+
+#[cfg(all(feature = "ble-real", any(target_os = "linux", target_os = "macos")))]
+async fn start_scan_if_needed(adapter: &Adapter) -> Result<()> {
+    match adapter.start_scan(ScanFilter::default()).await {
+        Ok(()) => Ok(()),
+        Err(err) => {
+            let message = err.to_string();
+            if ble_error_indicates_in_progress(&message) {
+                Ok(())
+            } else {
+                Err(err).context("start BLE scan")
+            }
         }
     }
 }
@@ -1514,6 +1592,7 @@ fn scanner_retry_delay_ms(config: &RuntimeConfig, failure_count: u32, err: &anyh
 async fn run_scanner(
     _config: RuntimeConfig,
     _advertisements: broadcast::Sender<Advertisement>,
+    _scanner_targets: SharedScannerTargets,
 ) -> Result<()> {
     bail!("build with the ble-real feature to use the live BLE adapter")
 }
@@ -1572,11 +1651,13 @@ async fn run_greengrass_runtime(config: RuntimeConfig) -> Result<()> {
         .map_err(|err| anyhow!("failed to subscribe v2 capability command topics: {err:?}"))?;
 
     let (advertisements, _) = broadcast::channel(SCANNER_BUFFER);
+    let scanner_targets = Arc::new(RwLock::new(BTreeSet::new()));
     let (outbound_sender, mut outbound_receiver) = mpsc::unbounded_channel();
     let (shadow_sender, mut shadow_receiver) = mpsc::unbounded_channel();
     let mut runtime = RuntimeState::new(
         config.clone(),
         advertisements.clone(),
+        scanner_targets.clone(),
         outbound_sender,
         shadow_sender,
     );
@@ -1584,7 +1665,11 @@ async fn run_greengrass_runtime(config: RuntimeConfig) -> Result<()> {
     let scanner_task = if config.no_ble {
         None
     } else {
-        Some(tokio::spawn(run_scanner(config.clone(), advertisements)))
+        Some(tokio::spawn(run_scanner(
+            config.clone(),
+            advertisements,
+            scanner_targets,
+        )))
     };
     let mut heartbeat_seq = 0u64;
     let mut heartbeat_timer = interval(Duration::from_millis(config.heartbeat_interval_ms.max(1)));
@@ -1673,11 +1758,13 @@ async fn run_local_runtime(config: RuntimeConfig) -> Result<()> {
     let local_publisher = local_client.publisher();
 
     let (advertisements, _) = broadcast::channel(SCANNER_BUFFER);
+    let scanner_targets = Arc::new(RwLock::new(BTreeSet::new()));
     let (outbound_sender, mut outbound_receiver) = mpsc::unbounded_channel();
     let (shadow_sender, mut shadow_receiver) = mpsc::unbounded_channel();
     let mut runtime = RuntimeState::new(
         config.clone(),
         advertisements.clone(),
+        scanner_targets.clone(),
         outbound_sender,
         shadow_sender,
     );
@@ -1685,7 +1772,11 @@ async fn run_local_runtime(config: RuntimeConfig) -> Result<()> {
     let scanner_task = if config.no_ble {
         None
     } else {
-        Some(tokio::spawn(run_scanner(config.clone(), advertisements)))
+        Some(tokio::spawn(run_scanner(
+            config.clone(),
+            advertisements,
+            scanner_targets,
+        )))
     };
     let mut heartbeat_seq = 0u64;
     let mut heartbeat_timer = interval(Duration::from_millis(config.heartbeat_interval_ms.max(1)));
@@ -2167,6 +2258,46 @@ mod tests {
             ),
             BLUEZ_RESOURCE_EXHAUSTED_RECONNECT_DELAY_MS
         );
+    }
+
+    #[test]
+    fn scanner_treats_scan_already_active_as_in_progress() {
+        assert!(ble_error_indicates_in_progress(
+            "start BLE scan: Operation already in progress"
+        ));
+    }
+
+    #[test]
+    fn scanner_advertisement_filter_only_publishes_target_names_on_interval() {
+        let target_names = BTreeSet::from(["unit-1".to_string()]);
+        let mut last_published_by_name = BTreeMap::new();
+
+        assert!(should_publish_scanner_advertisement(
+            "unit-1",
+            &target_names,
+            &last_published_by_name,
+            1_000,
+        ));
+
+        last_published_by_name.insert("unit-1".to_string(), 1_000);
+        assert!(!should_publish_scanner_advertisement(
+            "unit-1",
+            &target_names,
+            &last_published_by_name,
+            1_500,
+        ));
+        assert!(should_publish_scanner_advertisement(
+            "unit-1",
+            &target_names,
+            &last_published_by_name,
+            2_000,
+        ));
+        assert!(!should_publish_scanner_advertisement(
+            "other",
+            &target_names,
+            &last_published_by_name,
+            2_000,
+        ));
     }
 
     #[tokio::test]

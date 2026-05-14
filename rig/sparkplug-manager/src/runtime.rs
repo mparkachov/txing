@@ -609,10 +609,15 @@ impl SparkplugRuntime {
 
     async fn handle_mqtt_publish(&mut self, topic: String, payload: Vec<u8>) -> Result<()> {
         if let Some(topic_thing_name) = parse_retained_capability_state_topic(&topic) {
-            let state = CapabilityState::from_slice(&payload).with_context(|| {
-                format!("decode board-owned retained capability state from topic {topic}")
-            })?;
-            validate_retained_state_topic_payload(topic_thing_name, &state)?;
+            let Some(state) = decode_retained_capability_state_payload(&topic, &payload) else {
+                return Ok(());
+            };
+            if let Err(err) = validate_retained_state_topic_payload(topic_thing_name, &state) {
+                eprintln!(
+                    "warning: ignoring invalid board-owned retained capability state topic={topic}: {err:#}"
+                );
+                return Ok(());
+            }
             if !state_has_board_owned_capability(&state) {
                 return Ok(());
             }
@@ -1124,6 +1129,21 @@ fn parse_retained_capability_state_topic(topic: &str) -> Option<&str> {
     Some(thing_name)
 }
 
+fn decode_retained_capability_state_payload(
+    topic: &str,
+    payload: &[u8],
+) -> Option<CapabilityState> {
+    match CapabilityState::from_slice(payload) {
+        Ok(state) => Some(state),
+        Err(err) => {
+            eprintln!(
+                "warning: ignoring invalid board-owned retained capability state topic={topic}: {err:#}"
+            );
+            None
+        }
+    }
+}
+
 fn state_has_board_owned_capability(state: &CapabilityState) -> bool {
     state
         .capabilities
@@ -1286,6 +1306,24 @@ mod tests {
         assert!(!state_has_board_owned_capability(&time_state));
         assert!(validate_retained_state_topic_payload("unit-1", &board_state).is_ok());
         assert!(validate_retained_state_topic_payload("other", &board_state).is_err());
+    }
+
+    #[test]
+    fn invalid_retained_capability_state_payload_is_ignored() {
+        let payload = br#"{
+            "schemaVersion": "2.0",
+            "adapterId": "dev.txing.rig.AwsConnectivity",
+            "thingName": "time-b98n8s",
+            "capabilities": {"time": true}
+        }"#;
+
+        assert!(
+            decode_retained_capability_state_payload(
+                "txings/time-b98n8s/capability/v2/state",
+                payload,
+            )
+            .is_none()
+        );
     }
 
     #[test]
