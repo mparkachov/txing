@@ -43,6 +43,7 @@ use tracing_subscriber::layer::Context as LayerContext;
 use tracing_subscriber::prelude::*;
 
 pub const SCHEMA_VERSION: &str = "2.0";
+pub const DAEMON_VERSION: &str = env!("TXING_DAEMON_BUILD_VERSION");
 pub const ADAPTER_ID: &str = "dev.txing.unit.Daemon";
 pub const BOARD_CAPABILITY: &str = "board";
 pub const BOARD_SHADOW_NAME: &str = "board";
@@ -1439,6 +1440,7 @@ impl RuntimeState {
 
 pub async fn run_runtime(config: RuntimeConfig) -> Result<()> {
     info!(
+        version = DAEMON_VERSION,
         thing_id = %config.thing_id,
         aws_region = %config.aws_region,
         iot_endpoint = %config.iot_endpoint,
@@ -2497,9 +2499,15 @@ mod tests {
             format_stderr_log_line(
                 &Level::INFO,
                 "starting unit daemon",
-                &[("capabilities".to_string(), r#"["board"]"#.to_string())],
+                &[
+                    (
+                        "version".to_string(),
+                        "0.9.8-feature.1770000000".to_string()
+                    ),
+                    ("capabilities".to_string(), r#"["board"]"#.to_string()),
+                ],
             ),
-            r#"info: starting unit daemon capabilities=["board"]"#
+            r#"info: starting unit daemon version=0.9.8-feature.1770000000 capabilities=["board"]"#
         );
     }
 

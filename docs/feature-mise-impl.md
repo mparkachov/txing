@@ -367,8 +367,160 @@ Run the feature binary in the foreground for the same 90-second smoke window:
 timeout --signal INT 90s env MISE_OFFLINE=1 mise exec -- txing-unit-daemon
 ```
 
+The first daemon log line should include the exact feature version, for example:
+
+```text
+info: starting unit daemon version=0.9.8-feature.<unix_timestamp> ...
+```
+
 If `timeout` exits with status `124`, that is the expected timeout status for a
 successful foreground smoke test. Any other nonzero status needs investigation.
+
+## Phase 1 Systemd Feature Service Smoke Test
+
+After the foreground smoke test passes, test the same flow through systemd. This
+strict phase-1 unit performs a fresh `mise install` during service start, removes
+mise download/tmp cache, then starts the daemon offline. If install fails, service
+start should fail visibly.
+
+Stay logged in to the board as the `txing` user and resolve the installed mise
+path:
+
+```bash
+mise_bin="$(command -v mise)"
+```
+
+```bash
+test -x "$mise_bin"
+```
+
+```bash
+printf '%s\n' "$mise_bin"
+```
+
+Confirm `/var/tmp` is still the 96M executable tmpfs:
+
+```bash
+findmnt -no TARGET,FSTYPE,SIZE,AVAIL,OPTIONS /var/tmp
+```
+
+Creating the unit writes to `/etc/systemd/system`. If the root filesystem is
+currently read-only, enter the existing writable maintenance mode first:
+
+```bash
+root-rw
+```
+
+Create the test systemd unit:
+
+```bash
+sudo tee /etc/systemd/system/txing-unit-daemon-feature.service >/dev/null <<EOF
+[Unit]
+Description=Txing Unit Daemon Feature Channel
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=txing
+Group=txing
+WorkingDirectory=/home/txing
+KillSignal=SIGINT
+TimeoutStartSec=180
+TimeoutStopSec=30
+Restart=on-failure
+RestartSec=5
+
+Environment=MISE_CONFIG_DIR=/home/txing/.config/mise/txing-unit-daemon-feature
+Environment=MISE_DATA_DIR=/var/tmp/txing/unit-daemon/mise
+Environment=MISE_CACHE_DIR=/var/tmp/txing/unit-daemon/mise-cache
+Environment=MISE_TMP_DIR=/var/tmp/txing/unit-daemon/mise-tmp
+Environment=MISE_PRERELEASES=1
+Environment=TXING_DAEMON_CONFIG_DIR=/home/txing/.config/txing/unit-daemon
+Environment=HOME=/home/txing
+
+ExecStartPre=/usr/bin/install -d -m 700 /var/tmp/txing/unit-daemon/mise /var/tmp/txing/unit-daemon/mise-cache /var/tmp/txing/unit-daemon/mise-tmp
+ExecStartPre=$mise_bin install
+ExecStartPre=-/usr/bin/find /var/tmp/txing/unit-daemon/mise-cache /var/tmp/txing/unit-daemon/mise-tmp -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+ExecStart=/usr/bin/env MISE_OFFLINE=1 $mise_bin exec -- txing-unit-daemon
+
+[Install]
+WantedBy=multi-user.target
+EOF
+```
+
+Load the unit:
+
+```bash
+sudo systemctl daemon-reload
+```
+
+Force a fresh feature-channel install by clearing only the tmpfs-backed daemon
+mise state:
+
+```bash
+sudo systemctl stop txing-unit-daemon-feature.service 2>/dev/null || true
+```
+
+```bash
+sudo rm -rf /var/tmp/txing/unit-daemon
+```
+
+Start the service:
+
+```bash
+sudo systemctl start txing-unit-daemon-feature.service
+```
+
+Inspect the installed executable and journal:
+
+```bash
+mise which txing-unit-daemon
+```
+
+```bash
+ls -alh "$(mise which txing-unit-daemon)"
+```
+
+```bash
+du -sh /var/tmp/txing/unit-daemon/*
+```
+
+```bash
+sudo systemctl status --no-pager -l txing-unit-daemon-feature.service
+```
+
+```bash
+sudo journalctl -u txing-unit-daemon-feature.service -n 120 --no-pager
+```
+
+The first daemon startup line in the journal should include
+`version=<feature-version>`.
+
+Stop the service and confirm the daemon publishes offline state:
+
+```bash
+sudo systemctl stop txing-unit-daemon-feature.service
+```
+
+```bash
+sudo journalctl -u txing-unit-daemon-feature.service -n 80 --no-pager
+```
+
+Keep the unit installed only if this board should continue running the feature
+channel service. Otherwise remove the test unit:
+
+```bash
+sudo systemctl disable --now txing-unit-daemon-feature.service
+```
+
+```bash
+sudo rm -f /etc/systemd/system/txing-unit-daemon-feature.service
+```
+
+```bash
+sudo systemctl daemon-reload
+```
 
 Return to macOS after collecting output:
 

@@ -228,9 +228,10 @@ Environment=MISE_CACHE_DIR=/var/tmp/txing/unit-daemon/mise-cache
 Environment=MISE_TMP_DIR=/var/tmp/txing/unit-daemon/mise-tmp
 Environment=MISE_PRERELEASES=1
 Environment=TXING_DAEMON_CONFIG_DIR=/home/txing/.config/txing/unit-daemon
+Environment=HOME=/home/txing
 
 ExecStartPre=/usr/bin/install -d -m 700 /var/tmp/txing/unit-daemon/mise /var/tmp/txing/unit-daemon/mise-cache /var/tmp/txing/unit-daemon/mise-tmp
-ExecStartPre=-/usr/bin/timeout 10s /home/txing/.local/bin/mise install
+ExecStartPre=/home/txing/.local/bin/mise install
 ExecStartPre=-/usr/bin/find /var/tmp/txing/unit-daemon/mise-cache /var/tmp/txing/unit-daemon/mise-tmp -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 ExecStart=/usr/bin/env MISE_OFFLINE=1 /home/txing/.local/bin/mise exec -- txing-unit-daemon
 ```
@@ -243,11 +244,9 @@ Expected behavior:
 - If feature install succeeds and the feature prerelease is newer than stable,
   `MISE_OFFLINE=1 mise exec -- txing-unit-daemon` runs the feature binary from
   `/var/tmp/txing/unit-daemon/mise/installs` on the executable tmpfs.
-- If feature install fails or times out, the `-` prefix lets systemd continue,
-  and `MISE_OFFLINE=1 mise exec -- txing-unit-daemon` runs the latest persistent
-  stable binary.
-- If stable has advanced beyond the feature prerelease, stable wins through
-  normal version ordering.
+- In the strict phase-1 unit, feature install failure makes service start fail
+  visibly. Stable fallback should be designed after the stable channel unit is in
+  place.
 - `ExecStart` is offline, so the actual daemon start does not perform network
   resolution or install work.
 
@@ -307,6 +306,7 @@ The `unit::daemon::prerelease-build` implementation runs inside Linux and:
   Unix timestamp: `v<NEXT_PATCH>-feature.<timestamp>`;
 - run mandatory functional tests;
 - build the release binary for Linux `aarch64`;
+- embed the feature version into the daemon startup log;
 - strip it;
 - stage it as `txing-unit-daemon-linux-aarch64.tar.gz`, containing a root-level
   `txing-unit-daemon` executable;
@@ -360,6 +360,8 @@ The current phase-1 implementation has these working pieces:
 - `just unit::daemon::prerelease-build` stages a clean-tree Linux `aarch64`
   stripped feature binary archive and JSON metadata under
   `devices/unit/daemon/target/prerelease`.
+- The daemon startup log includes `version=<version>`, using the exact feature
+  prerelease version when built by `unit::daemon::prerelease-build`.
 - `just unit::daemon::prerelease-publish` runs on macOS, pushes the
   `feature/unit-daemon-prerelease` branch and `v<NEXT_PATCH>-feature.<timestamp>`
   tag, creates the GitHub prerelease, uploads

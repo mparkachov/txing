@@ -240,8 +240,8 @@ prerelease-build branch=prerelease_branch:
     build_kernel="$(uname -a)"
 
     cd "$project_root"
-    cargo test --manifest-path devices/unit/daemon/Cargo.toml
-    cargo build --release --manifest-path devices/unit/daemon/Cargo.toml --bin daemon
+    TXING_DAEMON_BUILD_VERSION="$version" cargo test --manifest-path devices/unit/daemon/Cargo.toml
+    TXING_DAEMON_BUILD_VERSION="$version" cargo build --release --manifest-path devices/unit/daemon/Cargo.toml --bin daemon
 
     install -d "$prerelease_dir"
     rm -rf "$package_dir"
