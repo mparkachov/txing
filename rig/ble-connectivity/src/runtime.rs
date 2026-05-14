@@ -1953,6 +1953,7 @@ mod tests {
         assert!(result.message.unwrap().contains("only supports REDCON 4"));
     }
 
+    #[cfg(not(all(feature = "ble-real", any(target_os = "linux", target_os = "macos"))))]
     #[tokio::test]
     async fn connected_session_does_not_downgrade_state_from_advertisement() {
         let (sender, mut receiver) = mpsc::unbounded_channel();
@@ -2018,6 +2019,7 @@ mod tests {
         assert_eq!(state.capabilities.get("ble"), Some(&true));
     }
 
+    #[cfg(not(all(feature = "ble-real", any(target_os = "linux", target_os = "macos"))))]
     #[tokio::test]
     async fn stale_power_measurement_clears_power_capability_and_shadow() {
         let (sender, mut receiver) = mpsc::unbounded_channel();
@@ -2054,6 +2056,7 @@ mod tests {
         assert!(payload["state"]["reported"]["batteryMv"].is_null());
     }
 
+    #[cfg(not(all(feature = "ble-real", any(target_os = "linux", target_os = "macos"))))]
     #[tokio::test]
     async fn connected_state_heartbeat_refreshes_local_state_without_shadow_updates() {
         let (sender, mut receiver) = mpsc::unbounded_channel();
