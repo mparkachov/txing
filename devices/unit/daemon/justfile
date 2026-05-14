@@ -209,6 +209,12 @@ prerelease-build branch=prerelease_branch:
       echo "unit daemon prerelease-build requires Linux aarch64, got: $(uname -m)" >&2
       exit 1
     fi
+    for command in cargo file git python3; do
+      if ! command -v "$command" >/dev/null 2>&1; then
+        echo "unit daemon prerelease-build requires '$command'. Install missing Lima build dependencies first." >&2
+        exit 1
+      fi
+    done
     if [ -n "$(git -C "$project_root" status --porcelain --untracked-files=all)" ]; then
       echo "Working tree must be clean before prerelease build." >&2
       git -C "$project_root" status --short --untracked-files=all >&2

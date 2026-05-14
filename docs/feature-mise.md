@@ -260,6 +260,7 @@ just unit::daemon::prerelease-publish
 The `unit::daemon::prerelease-build` implementation runs inside Linux and:
 
 - requires Linux `aarch64`;
+- requires Lima build tools including `cargo`, `file`, `git`, and `python3`;
 - requires a clean git worktree, including untracked files;
 - derives the feature version from the next patch after root `VERSION` plus a
   Unix timestamp: `v<NEXT_PATCH>-feature.<timestamp>`;

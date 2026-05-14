@@ -240,7 +240,7 @@ sudo apt-get update
 ```
 
 ```bash
-sudo apt-get install -y build-essential pkg-config cmake perl
+sudo apt-get install -y build-essential pkg-config cmake perl git
 ```
 
 ```bash
