@@ -130,6 +130,62 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("topic/spBv1.0/*", template)
         self.assertIn("topicfilter/spBv1.0/*", template)
 
+    def test_template_defines_unit_daemon_certificate_resources(self) -> None:
+        template = _template_text()
+
+        self.assertIn("TxingDaemonIotPolicy:", template)
+        self.assertIn("Sid: DaemonConnect", template)
+        self.assertIn("client/${!iot:Connection.Thing.ThingName}-daemon-*", template)
+        self.assertIn("iot:Connection.Thing.IsAttached", template)
+        self.assertIn("Sid: DaemonBoardShadowUpdate", template)
+        self.assertIn(
+            "topic/$aws/things/${!iot:Connection.Thing.ThingName}/shadow/name/board/update",
+            template,
+        )
+        self.assertIn("Sid: DaemonCapabilityState", template)
+        self.assertIn(
+            "topic/txings/${!iot:Connection.Thing.ThingName}/capability/v2/state",
+            template,
+        )
+        self.assertIn("Sid: DaemonCredentialProvider", template)
+        self.assertIn(
+            "rolealias/txing-daemon-${!iot:Connection.Thing.ThingName}",
+            template,
+        )
+        self.assertIn("DeviceDaemonIotPolicyName:", template)
+        self.assertNotIn("Sid: DaemonSparkplugShadowRead", template)
+        self.assertNotIn("TxingDaemonCredentialRole:", template)
+        self.assertNotIn("DeviceDaemonCredentialRoleAlias:", template)
+
+    def test_unit_daemon_cert_recipe_uses_daemon_specific_outputs(self) -> None:
+        unit_justfile = (REPO_ROOT / "devices" / "unit" / "justfile").read_text(
+            encoding="utf-8"
+        )
+        daemon_justfile = (
+            REPO_ROOT / "devices" / "unit" / "daemon" / "justfile"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("mod daemon 'daemon/justfile'", unit_justfile)
+        self.assertIn("DeviceDaemonIotPolicyName", daemon_justfile)
+        self.assertIn('requested_thing_name="{{thing_id}}"', daemon_justfile)
+        self.assertIn("Do not pass just recipe arguments as name=value", daemon_justfile)
+        self.assertIn('effective_thing_name="${requested_thing_name:-$THING_NAME}"', daemon_justfile)
+        self.assertIn('[[ ! "$effective_thing_name" =~ ^[a-zA-Z0-9:_-]+$ ]]', daemon_justfile)
+        self.assertIn("daemon_role_name=\"txing-daemon-$effective_thing_name\"", daemon_justfile)
+        self.assertIn("iot_role_alias=\"txing-daemon-$effective_thing_name\"", daemon_justfile)
+        self.assertIn("credentials.iot.amazonaws.com", daemon_justfile)
+        self.assertIn("DaemonSparkplugShadowRead", daemon_justfile)
+        self.assertIn("arn:${partition}:iot:${AWS_REGION}:${account_id}:thing/${effective_thing_name}/sparkplug", daemon_justfile)
+        self.assertIn("create-role-alias", daemon_justfile)
+        self.assertIn("put-role-policy", daemon_justfile)
+        self.assertIn("create-keys-and-certificate", daemon_justfile)
+        self.assertIn("attach-policy --policy-name \"$daemon_policy_name\"", daemon_justfile)
+        self.assertIn("attach-thing-principal", daemon_justfile)
+        self.assertIn("/etc/txing/daemon", daemon_justfile)
+        self.assertIn("printf 'TXING_IOT_CERT_FILE=%s\\n' \"$cert_path\"", daemon_justfile)
+        self.assertNotIn("stack_output \"$AWS_STACK_NAME\" PolicyName", daemon_justfile)
+        self.assertNotIn("DeviceDaemonCredentialRoleAlias", daemon_justfile)
+
     def test_template_defines_greengrass_token_exchange_resources(self) -> None:
         template = _template_text()
 

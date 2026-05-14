@@ -125,6 +125,37 @@ Resources:
               - kinesisvideo:ConnectAsMaster
             Resource: "*"
 
+  TxingDaemonIotPolicy:
+    Type: AWS::IoT::Policy
+    Properties:
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DaemonConnect
+            Effect: Allow
+            Action: iot:Connect
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/${!iot:Connection.Thing.ThingName}-daemon-*
+            Condition:
+              Bool:
+                iot:Connection.Thing.IsAttached: "true"
+          - Sid: DaemonBoardShadowUpdate
+            Effect: Allow
+            Action: iot:Publish
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/${!iot:Connection.Thing.ThingName}/shadow/name/board/update
+          - Sid: DaemonCapabilityState
+            Effect: Allow
+            Action:
+              - iot:Publish
+              - iot:RetainPublish
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/${!iot:Connection.Thing.ThingName}/capability/v2/state
+          - Sid: DaemonCredentialProvider
+            Effect: Allow
+            Action: iot:AssumeRoleWithCertificate
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:rolealias/txing-daemon-${!iot:Connection.Thing.ThingName}
+            Condition:
+              Bool:
+                iot:Connection.Thing.IsAttached: "true"
+
 Outputs:
   DeviceRuntimeRoleArn:
     Value: !GetAtt TxingRuntimeRole.Arn
@@ -136,3 +167,5 @@ Outputs:
     Value: !Ref TxingBootstrapManagedPolicy
   BoardVideoSenderManagedPolicyArn:
     Value: !Ref TxingBoardVideoSenderManagedPolicy
+  DeviceDaemonIotPolicyName:
+    Value: !Ref TxingDaemonIotPolicy

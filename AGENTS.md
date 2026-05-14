@@ -9,6 +9,7 @@
 ## Working rules
 - Treat this repository as a monorepo with the subprojects above.
 - Keep changes scoped to the relevant subproject.
+- `just` recipe arguments in this repository are positional. Do not invoke recipes with `name=value` syntax such as `just unit::daemon::cert thing_id=unit-bl95f2`; pass values positionally, for example `just unit::daemon::cert unit-bl95f2`.
 - Do not read from, copy from, execute from, or depend on files outside this repository (`/Users/Maxim/Developer/txing`) unless the user explicitly provides the content in the conversation or explicitly asks to vendor it into the repository first.
 - Do not run any command against AWS that could create, update, or delete cloud resources. Agents may run read-only AWS inspection commands only when needed.
 - Prefer manual cleanup plus CloudFormation-forward changes over backward-compatible migration code. When existing AWS resources must be removed, renamed, imported, or otherwise reconciled, explain the required manual steps and let the user perform them.

@@ -1,0 +1,144 @@
+set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+set quiet := true
+
+daemon_dir := source_directory()
+project_root := canonicalize(daemon_dir + "/../../..")
+root_justfile := project_root + "/justfile"
+aws_lib := project_root + "/shared/aws/scripts/aws_lib.sh"
+
+region := ""
+profile := ""
+etc_dir := "/etc/txing/daemon"
+
+cert thing_id='' region=region profile=profile etc_dir=etc_dir:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    requested_thing_name="{{thing_id}}"
+    if [[ "$requested_thing_name" == *=* ]]; then
+      echo "Do not pass just recipe arguments as name=value. Use: just unit::daemon::cert <thing-id>" >&2
+      exit 2
+    fi
+    if [ -n "$requested_thing_name" ]; then
+      export TXING_THING_ID="$requested_thing_name"
+    fi
+    source "{{aws_lib}}"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "{{profile}}")"
+    txing_aws_init
+    effective_thing_name="${requested_thing_name:-$THING_NAME}"
+    if [[ "$effective_thing_name" == *=* ]]; then
+      echo "Invalid Thing ID '$effective_thing_name'. Use positional just arguments, for example: just unit::daemon::cert unit-bl95f2" >&2
+      exit 2
+    fi
+    if [[ ! "$effective_thing_name" =~ ^[a-zA-Z0-9:_-]+$ ]]; then
+      echo "Invalid Thing ID '$effective_thing_name'. Allowed characters: letters, digits, colon, underscore, hyphen." >&2
+      exit 2
+    fi
+    daemon_policy_name="$(stack_output "$AWS_STACK_NAME" DeviceDaemonIotPolicyName)"
+    if [ -z "$daemon_policy_name" ] || [ "$daemon_policy_name" = "None" ]; then
+      echo "Could not resolve DeviceDaemonIotPolicyName from stack $AWS_STACK_NAME." >&2
+      exit 1
+    fi
+    account_id="$(aws sts get-caller-identity "${aws_flags[@]}" --query Account --output text)"
+    caller_arn="$(aws sts get-caller-identity "${aws_flags[@]}" --query Arn --output text)"
+    partition="$(cut -d: -f2 <<<"$caller_arn")"
+    daemon_role_name="txing-daemon-$effective_thing_name"
+    iot_role_alias="txing-daemon-$effective_thing_name"
+    if [ "${#daemon_role_name}" -gt 64 ]; then
+      echo "IAM role name $daemon_role_name is longer than 64 characters." >&2
+      exit 1
+    fi
+    if [ "${#iot_role_alias}" -gt 128 ]; then
+      echo "IoT role alias $iot_role_alias is longer than 128 characters." >&2
+      exit 1
+    fi
+    iot_data_endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}" --query endpointAddress --output text)"
+    iot_credential_endpoint="$(aws iot describe-endpoint --endpoint-type iot:CredentialProvider "${aws_flags[@]}" --query endpointAddress --output text)"
+    cert_dir="{{etc_dir}}/certs"
+    env_file="{{etc_dir}}/daemon.env"
+    cert_path="$cert_dir/certificate.pem.crt"
+    public_key_path="$cert_dir/public.pem.key"
+    private_key_path="$cert_dir/private.pem.key"
+    cert_arn_path="$cert_dir/certificate.arn"
+    root_ca_path="$cert_dir/AmazonRootCA1.pem"
+    install -d -m 700 "{{etc_dir}}" "$cert_dir"
+    if [ -e "$env_file" ] || [ -e "$cert_path" ] || [ -e "$public_key_path" ] || [ -e "$private_key_path" ] || [ -e "$cert_arn_path" ]; then
+      echo "Daemon certificate or env material already exists under {{etc_dir}}." >&2
+      echo "Move or delete those files before issuing a replacement certificate." >&2
+      exit 1
+    fi
+    temp_files=()
+    cleanup_temp_files() {
+      if [ "${#temp_files[@]}" -gt 0 ]; then
+        rm -f "${temp_files[@]}"
+      fi
+    }
+    trap cleanup_temp_files EXIT
+    trust_policy_file="$(mktemp "${TMPDIR:-/tmp}/txing-daemon-trust.XXXXXX")"
+    credential_policy_file="$(mktemp "${TMPDIR:-/tmp}/txing-daemon-credential-policy.XXXXXX")"
+    temp_files+=("$trust_policy_file" "$credential_policy_file")
+    jq -n '{Version: "2012-10-17", Statement: [{Effect: "Allow", Principal: {Service: "credentials.iot.amazonaws.com"}, Action: "sts:AssumeRole"}]}' >"$trust_policy_file"
+    jq -n \
+      --arg iotShadowArn "arn:${partition}:iot:${AWS_REGION}:${account_id}:thing/${effective_thing_name}/sparkplug" \
+      '{Version: "2012-10-17", Statement: [{Sid: "DaemonSparkplugShadowRead", Effect: "Allow", Action: "iot:GetThingShadow", Resource: $iotShadowArn}]}' \
+      >"$credential_policy_file"
+    if aws iam get-role --role-name "$daemon_role_name" "${aws_flags[@]}" >/dev/null 2>&1; then
+      aws iam update-assume-role-policy --role-name "$daemon_role_name" --policy-document "file://$trust_policy_file" "${aws_flags[@]}"
+    else
+      aws iam create-role --role-name "$daemon_role_name" --assume-role-policy-document "file://$trust_policy_file" "${aws_flags[@]}" >/dev/null
+    fi
+    aws iam put-role-policy \
+      --role-name "$daemon_role_name" \
+      --policy-name txing-daemon-own-thing \
+      --policy-document "file://$credential_policy_file" \
+      "${aws_flags[@]}"
+    daemon_role_arn="$(aws iam get-role --role-name "$daemon_role_name" "${aws_flags[@]}" --query 'Role.Arn' --output text)"
+    if aws iot describe-role-alias --role-alias "$iot_role_alias" "${aws_flags[@]}" >/dev/null 2>&1; then
+      aws iot update-role-alias --role-alias "$iot_role_alias" --role-arn "$daemon_role_arn" --credential-duration-seconds 3600 "${aws_flags[@]}" >/dev/null
+    else
+      aws iot create-role-alias --role-alias "$iot_role_alias" --role-arn "$daemon_role_arn" --credential-duration-seconds 3600 "${aws_flags[@]}" >/dev/null
+    fi
+    curl -fsSL https://www.amazontrust.com/repository/AmazonRootCA1.pem -o "$root_ca_path"
+    cert_arn="$(
+      aws iot create-keys-and-certificate \
+        --set-as-active \
+        --certificate-pem-outfile "$cert_path" \
+        --public-key-outfile "$public_key_path" \
+        --private-key-outfile "$private_key_path" \
+        "${aws_flags[@]}" \
+        --query certificateArn \
+        --output text
+    )"
+    aws iot attach-policy --policy-name "$daemon_policy_name" --target "$cert_arn" "${aws_flags[@]}"
+    aws iot attach-thing-principal --thing-name "$effective_thing_name" --principal "$cert_arn" "${aws_flags[@]}"
+    printf '%s\n' "$cert_arn" >"$cert_arn_path"
+    {
+      printf 'TXING_THING_ID=%s\n' "$effective_thing_name"
+      printf 'AWS_REGION=%s\n' "$AWS_REGION"
+      printf 'TXING_IOT_ENDPOINT=%s\n' "$iot_data_endpoint"
+      printf 'TXING_IOT_CREDENTIAL_ENDPOINT=%s\n' "$iot_credential_endpoint"
+      printf 'TXING_IOT_ROLE_ALIAS=%s\n' "$iot_role_alias"
+      printf 'TXING_IOT_CERT_FILE=%s\n' "$cert_path"
+      printf 'TXING_IOT_PRIVATE_KEY_FILE=%s\n' "$private_key_path"
+      printf 'TXING_IOT_ROOT_CA_FILE=%s\n' "$root_ca_path"
+    } >"$env_file"
+    chmod 600 "$env_file" "$cert_path" "$public_key_path" "$private_key_path" "$cert_arn_path"
+    chmod 644 "$root_ca_path"
+    jq -n \
+      --arg thingName "$effective_thing_name" \
+      --arg policyName "$daemon_policy_name" \
+      --arg certificateArn "$cert_arn" \
+      --arg certificatePem "$cert_path" \
+      --arg publicKey "$public_key_path" \
+      --arg privateKey "$private_key_path" \
+      --arg certificateArnFile "$cert_arn_path" \
+      --arg rootCaFile "$root_ca_path" \
+      --arg envFile "$env_file" \
+      --arg iotDataEndpoint "$iot_data_endpoint" \
+      --arg iotCredentialEndpoint "$iot_credential_endpoint" \
+      --arg iotRoleAlias "$iot_role_alias" \
+      --arg daemonRoleName "$daemon_role_name" \
+      --arg daemonRoleArn "$daemon_role_arn" \
+      '{thingName: $thingName, policyName: $policyName, certificateArn: $certificateArn, certificatePem: $certificatePem, publicKey: $publicKey, privateKey: $privateKey, certificateArnFile: $certificateArnFile, rootCaFile: $rootCaFile, envFile: $envFile, iotDataEndpoint: $iotDataEndpoint, iotCredentialEndpoint: $iotCredentialEndpoint, iotRoleAlias: $iotRoleAlias, daemonRoleName: $daemonRoleName, daemonRoleArn: $daemonRoleArn}'
+
+test:
+    cargo test --manifest-path "{{daemon_dir}}/Cargo.toml"

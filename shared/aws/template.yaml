@@ -190,6 +190,8 @@ Outputs:
     Value: !GetAtt DeviceRuntimeLayer.Outputs.DeviceBootstrapManagedPolicyArn
   BoardVideoSenderManagedPolicyArn:
     Value: !GetAtt DeviceRuntimeLayer.Outputs.BoardVideoSenderManagedPolicyArn
+  DeviceDaemonIotPolicyName:
+    Value: !GetAtt DeviceRuntimeLayer.Outputs.DeviceDaemonIotPolicyName
   EnlistFunctionName:
     Value: !GetAtt EnlistLayer.Outputs.EnlistFunctionName
   EnlistFunctionArn:

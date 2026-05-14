@@ -1,39 +1,75 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::env;
+use std::fmt;
+use std::fs;
+use std::io::ErrorKind;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
+use std::path::Path;
 use std::process;
 use std::sync::Arc;
+use std::sync::Once;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow, bail};
 use async_trait::async_trait;
 use aws_config::BehaviorVersion;
+use aws_credential_types::Credentials;
 use clap::Parser;
-use gneiss_mqtt::client::{AsyncClient, AsyncClientHandle, PublishResponse};
+use gneiss_mqtt::client::config::{ConnectOptions, TlsOptions};
+use gneiss_mqtt::client::{AsyncClient, AsyncClientHandle, PublishResponse, TokioClientBuilder};
 use gneiss_mqtt::mqtt::{PublishPacket, QualityOfService};
-use gneiss_mqtt_aws::{AwsClientBuilder, WebsocketSigv4OptionsBuilder};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tokio::time::{Instant, MissedTickBehavior, interval_at};
 
 pub const SCHEMA_VERSION: &str = "2.0";
 pub const ADAPTER_ID: &str = "dev.txing.unit.Daemon";
 pub const BOARD_CAPABILITY: &str = "board";
 pub const BOARD_SHADOW_NAME: &str = "board";
+pub const SPARKPLUG_SHADOW_NAME: &str = "sparkplug";
+pub const DEFAULT_ENV_FILE: &str = "/etc/txing/daemon/daemon.env";
 pub const DEFAULT_CAPABILITY_TTL_SECONDS: u64 = 150;
 pub const DEFAULT_HEARTBEAT_SECONDS: u64 = 60;
+pub const MQTT_PORT: u16 = 8883;
 const MQTT_KEEP_ALIVE_SECONDS: u16 = 60;
+static RUSTLS_CRYPTO_PROVIDER: Once = Once::new();
+
+pub fn install_default_crypto_provider() {
+    RUSTLS_CRYPTO_PROVIDER.call_once(|| {
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    });
+}
 
 #[derive(Debug, Parser)]
 #[command(name = "daemon")]
 #[command(about = "Unit board daemon")]
 pub struct Cli {
-    #[arg(long = "thing-id", env = "TXING_THING_ID")]
-    pub thing_id: String,
+    #[arg(long = "env-file")]
+    pub env_file: Option<String>,
 
-    #[arg(long = "aws-region", env = "AWS_REGION")]
+    #[arg(long = "thing-id")]
+    pub thing_id: Option<String>,
+
+    #[arg(long = "aws-region")]
     pub aws_region: Option<String>,
 
-    #[arg(long = "iot-endpoint", env = "AWS_IOT_ENDPOINT")]
+    #[arg(long = "iot-endpoint")]
     pub iot_endpoint: Option<String>,
+
+    #[arg(long = "iot-credential-endpoint")]
+    pub iot_credential_endpoint: Option<String>,
+
+    #[arg(long = "iot-role-alias")]
+    pub iot_role_alias: Option<String>,
+
+    #[arg(long = "iot-cert-file")]
+    pub iot_cert_file: Option<String>,
+
+    #[arg(long = "iot-private-key-file")]
+    pub iot_private_key_file: Option<String>,
+
+    #[arg(long = "iot-root-ca-file")]
+    pub iot_root_ca_file: Option<String>,
 
     #[arg(long)]
     pub client_id: Option<String>,
@@ -41,55 +77,159 @@ pub struct Cli {
     #[arg(long = "capability", value_name = "NAME")]
     pub capabilities: Vec<String>,
 
-    #[arg(long, default_value_t = DEFAULT_CAPABILITY_TTL_SECONDS)]
-    pub capability_ttl_seconds: u64,
+    #[arg(long)]
+    pub capability_ttl_seconds: Option<u64>,
 
-    #[arg(long, default_value_t = DEFAULT_HEARTBEAT_SECONDS)]
-    pub heartbeat_seconds: u64,
+    #[arg(long)]
+    pub heartbeat_seconds: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeConfig {
     pub thing_id: String,
-    pub aws_region: Option<String>,
-    pub iot_endpoint: Option<String>,
+    pub aws_region: String,
+    pub iot_endpoint: String,
+    pub iot_credential_endpoint: String,
+    pub iot_role_alias: String,
+    pub iot_cert_file: String,
+    pub iot_private_key_file: String,
+    pub iot_root_ca_file: String,
     pub client_id: String,
     pub capabilities: Vec<String>,
     pub capability_ttl: Duration,
     pub heartbeat: Duration,
 }
 
-impl TryFrom<Cli> for RuntimeConfig {
-    type Error = anyhow::Error;
+impl RuntimeConfig {
+    pub fn from_cli(cli: Cli) -> Result<Self> {
+        let process_env = env::vars().collect::<BTreeMap<_, _>>();
+        let file_env = load_env_file_for_cli(&cli, &process_env)?;
+        Self::from_sources(cli, &process_env, &file_env)
+    }
 
-    fn try_from(cli: Cli) -> Result<Self> {
-        let thing_id = normalize_required(cli.thing_id, "thing-id")?;
+    pub fn from_sources(
+        cli: Cli,
+        process_env: &BTreeMap<String, String>,
+        file_env: &BTreeMap<String, String>,
+    ) -> Result<Self> {
+        let thing_id = required_config_value(
+            cli.thing_id,
+            process_env,
+            file_env,
+            "TXING_THING_ID",
+            "thing-id",
+        )?;
         validate_topic_segment(&thing_id, "thing-id")?;
 
-        if cli.capability_ttl_seconds == 0 {
+        let capability_ttl_seconds = cli
+            .capability_ttl_seconds
+            .or(optional_u64_config(
+                process_env,
+                file_env,
+                "TXING_CAPABILITY_TTL_SECONDS",
+            )?)
+            .unwrap_or(DEFAULT_CAPABILITY_TTL_SECONDS);
+        let heartbeat_seconds = cli
+            .heartbeat_seconds
+            .or(optional_u64_config(
+                process_env,
+                file_env,
+                "TXING_HEARTBEAT_SECONDS",
+            )?)
+            .unwrap_or(DEFAULT_HEARTBEAT_SECONDS);
+
+        if capability_ttl_seconds == 0 {
             bail!("capability-ttl-seconds must be greater than 0");
         }
-        if cli.heartbeat_seconds == 0 {
+        if heartbeat_seconds == 0 {
             bail!("heartbeat-seconds must be greater than 0");
         }
-        if cli.heartbeat_seconds >= cli.capability_ttl_seconds {
+        if heartbeat_seconds >= capability_ttl_seconds {
             bail!("heartbeat-seconds must be less than capability-ttl-seconds");
         }
 
-        let capabilities = normalize_capabilities(cli.capabilities)?;
-        let client_id = match normalize_optional(cli.client_id) {
+        let capabilities = normalize_capabilities(resolve_capabilities(
+            &cli.capabilities,
+            process_env,
+            file_env,
+        )?)?;
+        let client_id = match optional_config_value(
+            cli.client_id,
+            process_env,
+            file_env,
+            "TXING_DAEMON_CLIENT_ID",
+        ) {
             Some(value) => value,
             None => default_client_id(&thing_id, process::id()),
         };
+        validate_client_id(&thing_id, &client_id)?;
+
+        let aws_region = required_config_value(
+            cli.aws_region,
+            process_env,
+            file_env,
+            "AWS_REGION",
+            "aws-region",
+        )?;
+        let iot_endpoint = required_config_value(
+            cli.iot_endpoint,
+            process_env,
+            file_env,
+            "TXING_IOT_ENDPOINT",
+            "iot-endpoint",
+        )?;
+        validate_endpoint_host(&iot_endpoint, "iot-endpoint")?;
+        let iot_credential_endpoint = required_config_value(
+            cli.iot_credential_endpoint,
+            process_env,
+            file_env,
+            "TXING_IOT_CREDENTIAL_ENDPOINT",
+            "iot-credential-endpoint",
+        )?;
+        validate_endpoint_host(&iot_credential_endpoint, "iot-credential-endpoint")?;
+        let iot_role_alias = required_config_value(
+            cli.iot_role_alias,
+            process_env,
+            file_env,
+            "TXING_IOT_ROLE_ALIAS",
+            "iot-role-alias",
+        )?;
+        validate_role_alias(&iot_role_alias)?;
+        let iot_cert_file = required_config_value(
+            cli.iot_cert_file,
+            process_env,
+            file_env,
+            "TXING_IOT_CERT_FILE",
+            "iot-cert-file",
+        )?;
+        let iot_private_key_file = required_config_value(
+            cli.iot_private_key_file,
+            process_env,
+            file_env,
+            "TXING_IOT_PRIVATE_KEY_FILE",
+            "iot-private-key-file",
+        )?;
+        let iot_root_ca_file = required_config_value(
+            cli.iot_root_ca_file,
+            process_env,
+            file_env,
+            "TXING_IOT_ROOT_CA_FILE",
+            "iot-root-ca-file",
+        )?;
 
         Ok(Self {
             thing_id,
-            aws_region: normalize_optional(cli.aws_region),
-            iot_endpoint: normalize_optional(cli.iot_endpoint),
+            aws_region,
+            iot_endpoint,
+            iot_credential_endpoint,
+            iot_role_alias,
+            iot_cert_file,
+            iot_private_key_file,
+            iot_root_ca_file,
             client_id,
             capabilities,
-            capability_ttl: Duration::from_secs(cli.capability_ttl_seconds),
-            heartbeat: Duration::from_secs(cli.heartbeat_seconds),
+            capability_ttl: Duration::from_secs(capability_ttl_seconds),
+            heartbeat: Duration::from_secs(heartbeat_seconds),
         })
     }
 }
@@ -117,18 +257,27 @@ struct MqttPublisher {
 }
 
 impl MqttPublisher {
-    async fn connect(endpoint: &str, region: &str, client_id: &str) -> Result<Self> {
-        eprintln!("connecting unit daemon MQTT clientId={client_id}");
-        let sigv4_options = WebsocketSigv4OptionsBuilder::new(region).await.build();
-        let mut connect_options = gneiss_mqtt::client::config::ConnectOptions::builder();
+    async fn connect(config: &RuntimeConfig) -> Result<Self> {
+        eprintln!(
+            "connecting unit daemon MQTT endpoint={} port={} clientId={}",
+            config.iot_endpoint, MQTT_PORT, config.client_id
+        );
+        let mut connect_options = ConnectOptions::builder();
         connect_options
-            .with_client_id(client_id)
+            .with_client_id(&config.client_id)
             .with_keep_alive_interval_seconds(Some(MQTT_KEEP_ALIVE_SECONDS));
-        let client = AwsClientBuilder::new_websockets_with_sigv4(endpoint, sigv4_options, None)?
+        let mut tls_options = TlsOptions::builder_with_mtls_from_path(
+            &config.iot_cert_file,
+            &config.iot_private_key_file,
+        )?;
+        tls_options.with_root_ca_from_path(&config.iot_root_ca_file)?;
+        let mut builder = TokioClientBuilder::new(&config.iot_endpoint, MQTT_PORT);
+        builder
             .with_connect_options(connect_options.build())
-            .build_tokio()?;
+            .with_tls_options(tls_options.build_rustls()?);
+        let client = builder.build()?;
         client.start(None)?;
-        eprintln!("started unit daemon MQTT clientId={client_id}");
+        eprintln!("started unit daemon MQTT clientId={}", config.client_id);
         Ok(Self { client })
     }
 
@@ -384,20 +533,10 @@ impl RuntimeState {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct LiveRuntimeConfig {
-    endpoint: String,
-    region: String,
-}
-
 pub async fn run_runtime(config: RuntimeConfig) -> Result<()> {
-    let live_config = resolve_live_runtime_config(&config).await?;
-    let publisher = MqttPublisher::connect(
-        &live_config.endpoint,
-        &live_config.region,
-        &config.client_id,
-    )
-    .await?;
+    let redcon = read_current_sparkplug_redcon(&config).await?;
+    println!("{redcon}");
+    let publisher = MqttPublisher::connect(&config).await?;
     let run_result = run_connected_runtime(config, &publisher).await;
     let stop_result = publisher.stop();
     run_result.and(stop_result)
@@ -432,36 +571,175 @@ async fn run_connected_runtime(config: RuntimeConfig, publisher: &MqttPublisher)
     Ok(())
 }
 
-async fn resolve_live_runtime_config(config: &RuntimeConfig) -> Result<LiveRuntimeConfig> {
-    let mut loader = aws_config::defaults(BehaviorVersion::latest());
-    if let Some(region) = &config.aws_region {
-        loader = loader.region(aws_sdk_iot::config::Region::new(region.clone()));
-    }
-    let sdk_config = loader.load().await;
-    let region = config
-        .aws_region
-        .clone()
-        .or_else(|| sdk_config.region().map(ToString::to_string))
-        .ok_or_else(|| anyhow!("AWS region is required; pass --aws-region or set AWS_REGION"))?;
-    let endpoint = match &config.iot_endpoint {
-        Some(endpoint) => endpoint.clone(),
-        None => {
-            let iot = aws_sdk_iot::Client::new(&sdk_config);
-            let response = iot
-                .describe_endpoint()
-                .endpoint_type("iot:Data-ATS")
-                .send()
-                .await
-                .context("describe AWS IoT Data-ATS endpoint")?;
-            response
-                .endpoint_address()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToString::to_string)
-                .ok_or_else(|| anyhow!("AWS IoT DescribeEndpoint returned no endpointAddress"))?
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SparkplugRedcon {
+    Level(u8),
+    Unavailable,
+}
+
+impl fmt::Display for SparkplugRedcon {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Level(level) => write!(formatter, "sparkplug.redcon={level}"),
+            Self::Unavailable => formatter.write_str("sparkplug.redcon=unavailable"),
         }
-    };
-    Ok(LiveRuntimeConfig { endpoint, region })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IotCredentialsRequest {
+    pub url: String,
+    pub thing_name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct IotCredentialsEnvelope {
+    credentials: IotTemporaryCredentials,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct IotTemporaryCredentials {
+    #[serde(rename = "accessKeyId")]
+    pub access_key_id: String,
+    #[serde(rename = "secretAccessKey")]
+    pub secret_access_key: String,
+    #[serde(rename = "sessionToken")]
+    pub session_token: String,
+    pub expiration: String,
+}
+
+pub fn build_iot_credentials_request(config: &RuntimeConfig) -> Result<IotCredentialsRequest> {
+    validate_endpoint_host(&config.iot_credential_endpoint, "iot-credential-endpoint")?;
+    validate_role_alias(&config.iot_role_alias)?;
+    Ok(IotCredentialsRequest {
+        url: format!(
+            "https://{}/role-aliases/{}/credentials",
+            config.iot_credential_endpoint, config.iot_role_alias
+        ),
+        thing_name: config.thing_id.clone(),
+    })
+}
+
+pub fn parse_iot_credentials_response(payload: &[u8]) -> Result<IotTemporaryCredentials> {
+    let envelope: IotCredentialsEnvelope =
+        serde_json::from_slice(payload).context("parse AWS IoT credential provider response")?;
+    envelope.credentials.validate()?;
+    Ok(envelope.credentials)
+}
+
+impl IotTemporaryCredentials {
+    fn validate(&self) -> Result<()> {
+        normalize_required(self.access_key_id.clone(), "accessKeyId")?;
+        normalize_required(self.secret_access_key.clone(), "secretAccessKey")?;
+        normalize_required(self.session_token.clone(), "sessionToken")?;
+        normalize_required(self.expiration.clone(), "expiration")?;
+        Ok(())
+    }
+}
+
+async fn fetch_iot_temporary_credentials(
+    config: &RuntimeConfig,
+) -> Result<IotTemporaryCredentials> {
+    let request = build_iot_credentials_request(config)?;
+    let mut identity_pem = fs::read(&config.iot_cert_file)
+        .with_context(|| format!("read IoT certificate {}", config.iot_cert_file))?;
+    identity_pem.push(b'\n');
+    identity_pem.extend(
+        fs::read(&config.iot_private_key_file)
+            .with_context(|| format!("read IoT private key {}", config.iot_private_key_file))?,
+    );
+    let identity =
+        reqwest::Identity::from_pem(&identity_pem).context("load IoT client identity")?;
+    let root_ca = reqwest::Certificate::from_pem(
+        &fs::read(&config.iot_root_ca_file)
+            .with_context(|| format!("read IoT root CA {}", config.iot_root_ca_file))?,
+    )
+    .context("load IoT root CA")?;
+    let client = reqwest::Client::builder()
+        .use_rustls_tls()
+        .identity(identity)
+        .add_root_certificate(root_ca)
+        .build()
+        .context("build IoT credential provider HTTP client")?;
+    let bytes = client
+        .get(&request.url)
+        .header("x-amzn-iot-thingname", &request.thing_name)
+        .send()
+        .await
+        .context("request AWS IoT temporary credentials")?
+        .error_for_status()
+        .context("AWS IoT temporary credential request failed")?
+        .bytes()
+        .await
+        .context("read AWS IoT temporary credential response")?;
+    parse_iot_credentials_response(&bytes)
+}
+
+pub fn build_iot_data_endpoint_url(endpoint: &str) -> Result<String> {
+    validate_endpoint_host(endpoint, "iot-endpoint")?;
+    Ok(format!("https://{endpoint}"))
+}
+
+pub async fn read_current_sparkplug_redcon(config: &RuntimeConfig) -> Result<SparkplugRedcon> {
+    let temporary_credentials = fetch_iot_temporary_credentials(config).await?;
+    let sdk_credentials = Credentials::new(
+        temporary_credentials.access_key_id,
+        temporary_credentials.secret_access_key,
+        Some(temporary_credentials.session_token),
+        None,
+        "aws-iot-credential-provider",
+    );
+    let sdk_config = aws_config::defaults(BehaviorVersion::latest())
+        .region(aws_sdk_iotdataplane::config::Region::new(
+            config.aws_region.clone(),
+        ))
+        .credentials_provider(sdk_credentials)
+        .load()
+        .await;
+    let data_config = aws_sdk_iotdataplane::config::Builder::from(&sdk_config)
+        .endpoint_url(build_iot_data_endpoint_url(&config.iot_endpoint)?)
+        .build();
+    let iot_data = aws_sdk_iotdataplane::Client::from_conf(data_config);
+    let response = iot_data
+        .get_thing_shadow()
+        .thing_name(&config.thing_id)
+        .shadow_name(SPARKPLUG_SHADOW_NAME)
+        .send()
+        .await
+        .with_context(|| {
+            format!(
+                "get sparkplug thing shadow thing={} shadow={} endpoint={} region={} roleAlias={}",
+                config.thing_id,
+                SPARKPLUG_SHADOW_NAME,
+                config.iot_endpoint,
+                config.aws_region,
+                config.iot_role_alias
+            )
+        })?;
+    let payload = response
+        .payload()
+        .map(|payload| payload.as_ref())
+        .ok_or_else(|| anyhow!("sparkplug shadow response did not include payload"))?;
+    parse_sparkplug_redcon(payload)
+}
+
+pub fn parse_sparkplug_redcon(payload: &[u8]) -> Result<SparkplugRedcon> {
+    let shadow: Value = serde_json::from_slice(payload).context("parse sparkplug shadow")?;
+    if shadow
+        .pointer("/state/reported/topic/messageType")
+        .and_then(Value::as_str)
+        == Some("DDEATH")
+    {
+        return Ok(SparkplugRedcon::Unavailable);
+    }
+    match shadow
+        .pointer("/state/reported/payload/metrics/redcon")
+        .and_then(Value::as_u64)
+    {
+        Some(level @ 1..=4) => Ok(SparkplugRedcon::Level(level as u8)),
+        Some(level) => bail!("sparkplug redcon value {level} is outside 1..=4"),
+        None => Ok(SparkplugRedcon::Unavailable),
+    }
 }
 
 #[cfg(unix)]
@@ -552,6 +830,128 @@ fn probe_default_route_ip(remote: SocketAddr) -> Option<IpAddr> {
     Some(socket.local_addr().ok()?.ip())
 }
 
+pub fn load_env_file_for_cli(
+    cli: &Cli,
+    process_env: &BTreeMap<String, String>,
+) -> Result<BTreeMap<String, String>> {
+    let cli_env_file = normalize_optional(cli.env_file.clone());
+    let process_env_file = normalize_optional(process_env.get("TXING_DAEMON_ENV_FILE").cloned());
+    let explicit = cli_env_file.is_some() || process_env_file.is_some();
+    let env_file = cli_env_file
+        .or(process_env_file)
+        .unwrap_or_else(|| DEFAULT_ENV_FILE.to_string());
+    match fs::read_to_string(Path::new(&env_file)) {
+        Ok(contents) => parse_env_file_contents(&contents),
+        Err(err) if err.kind() == ErrorKind::NotFound && !explicit => Ok(BTreeMap::new()),
+        Err(err) => Err(err).with_context(|| format!("read daemon env file {env_file}")),
+    }
+}
+
+pub fn parse_env_file_contents(contents: &str) -> Result<BTreeMap<String, String>> {
+    let mut values = BTreeMap::new();
+    for (index, raw_line) in contents.lines().enumerate() {
+        let line_number = index + 1;
+        let mut line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some(without_export) = line.strip_prefix("export ") {
+            line = without_export.trim_start();
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            bail!("invalid daemon env line {line_number}: expected KEY=VALUE");
+        };
+        let key = key.trim();
+        validate_env_key(key).with_context(|| format!("invalid daemon env line {line_number}"))?;
+        let value = parse_env_value(value.trim(), line_number)?;
+        values.insert(key.to_string(), value);
+    }
+    Ok(values)
+}
+
+fn parse_env_value(value: &str, line_number: usize) -> Result<String> {
+    if value.len() >= 2 {
+        let first = value.as_bytes()[0];
+        let last = value.as_bytes()[value.len() - 1];
+        if (first == b'\'' && last == b'\'') || (first == b'"' && last == b'"') {
+            return Ok(value[1..value.len() - 1].to_string());
+        }
+    }
+    if value.starts_with('\'') || value.starts_with('"') {
+        bail!("invalid daemon env line {line_number}: unterminated quoted value");
+    }
+    Ok(value.to_string())
+}
+
+fn validate_env_key(key: &str) -> Result<()> {
+    let mut chars = key.chars();
+    match chars.next() {
+        Some(ch) if ch.is_ascii_alphabetic() || ch == '_' => {}
+        _ => bail!("env key must start with an ASCII letter or underscore"),
+    }
+    if !chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
+        bail!("env key must contain only ASCII letters, digits, and underscore");
+    }
+    Ok(())
+}
+
+fn required_config_value(
+    cli_value: Option<String>,
+    process_env: &BTreeMap<String, String>,
+    file_env: &BTreeMap<String, String>,
+    env_name: &str,
+    label: &str,
+) -> Result<String> {
+    optional_config_value(cli_value, process_env, file_env, env_name)
+        .ok_or_else(|| anyhow!("{label} is required; pass --{label} or set {env_name}"))
+}
+
+fn optional_config_value(
+    cli_value: Option<String>,
+    process_env: &BTreeMap<String, String>,
+    file_env: &BTreeMap<String, String>,
+    env_name: &str,
+) -> Option<String> {
+    normalize_optional(cli_value)
+        .or_else(|| normalize_optional(process_env.get(env_name).cloned()))
+        .or_else(|| normalize_optional(file_env.get(env_name).cloned()))
+}
+
+fn optional_u64_config(
+    process_env: &BTreeMap<String, String>,
+    file_env: &BTreeMap<String, String>,
+    env_name: &str,
+) -> Result<Option<u64>> {
+    let Some(value) = optional_config_value(None, process_env, file_env, env_name) else {
+        return Ok(None);
+    };
+    value
+        .parse::<u64>()
+        .with_context(|| format!("{env_name} must be an unsigned integer"))
+        .map(Some)
+}
+
+fn resolve_capabilities(
+    cli_capabilities: &[String],
+    process_env: &BTreeMap<String, String>,
+    file_env: &BTreeMap<String, String>,
+) -> Result<Vec<String>> {
+    if !cli_capabilities.is_empty() {
+        return Ok(cli_capabilities.to_vec());
+    }
+    let Some(value) =
+        optional_config_value(None, process_env, file_env, "TXING_DAEMON_CAPABILITIES")
+    else {
+        return Ok(Vec::new());
+    };
+    Ok(value
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .collect())
+}
+
 fn normalize_required(value: String, label: &str) -> Result<String> {
     let normalized = value.trim().to_string();
     if normalized.is_empty() {
@@ -598,7 +998,53 @@ fn validate_topic_segment<'a>(value: &'a str, label: &str) -> Result<&'a str> {
     Ok(value)
 }
 
+fn validate_endpoint_host(value: &str, label: &str) -> Result<()> {
+    validate_topic_segment(value, label)?;
+    if value.contains("://") || value.contains('/') || value.contains(':') {
+        bail!("{label} must be an endpoint hostname without scheme, path, or port");
+    }
+    if value.chars().any(char::is_whitespace) {
+        bail!("{label} must not contain whitespace");
+    }
+    Ok(())
+}
+
+fn validate_role_alias(value: &str) -> Result<()> {
+    let value = normalize_required(value.to_string(), "iot-role-alias")?;
+    if value.len() > 128 {
+        bail!("iot-role-alias must be 128 characters or fewer");
+    }
+    if !value
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '=' | ',' | '@' | '-'))
+    {
+        bail!("iot-role-alias contains an unsupported character");
+    }
+    Ok(())
+}
+
+fn validate_client_id(thing_name: &str, client_id: &str) -> Result<()> {
+    let client_id = normalize_required(client_id.to_string(), "client-id")?;
+    validate_topic_segment(&client_id, "client-id")?;
+    if client_id.len() > 128 {
+        bail!("client-id must be 128 characters or fewer");
+    }
+    let expected_prefix = default_client_id_prefix(thing_name);
+    if !client_id.starts_with(&expected_prefix) {
+        bail!("client-id must start with {expected_prefix:?}");
+    }
+    Ok(())
+}
+
+fn default_client_id_prefix(thing_name: &str) -> String {
+    format!("{}-daemon-", sanitize_client_id_fragment(thing_name))
+}
+
 fn default_client_id(thing_name: &str, pid: u32) -> String {
+    format!("{}{pid}", default_client_id_prefix(thing_name))
+}
+
+fn sanitize_client_id_fragment(thing_name: &str) -> String {
     let mut sanitized = thing_name
         .chars()
         .map(|ch| {
@@ -618,7 +1064,7 @@ fn default_client_id(thing_name: &str, pid: u32) -> String {
     if sanitized.len() > 128 - SUFFIX_RESERVE {
         sanitized.truncate(128 - SUFFIX_RESERVE);
     }
-    format!("{sanitized}-daemon-{pid}")
+    sanitized
 }
 
 fn duration_millis(duration: Duration) -> u64 {
@@ -662,13 +1108,58 @@ mod tests {
     fn config() -> RuntimeConfig {
         RuntimeConfig {
             thing_id: "unit-local".to_string(),
-            aws_region: Some("eu-central-1".to_string()),
-            iot_endpoint: Some("example.iot.eu-central-1.amazonaws.com".to_string()),
+            aws_region: "eu-central-1".to_string(),
+            iot_endpoint: "example.iot.eu-central-1.amazonaws.com".to_string(),
+            iot_credential_endpoint: "example.credentials.iot.eu-central-1.amazonaws.com"
+                .to_string(),
+            iot_role_alias: "unit-daemon-role-alias".to_string(),
+            iot_cert_file: "/etc/txing/daemon/certs/certificate.pem.crt".to_string(),
+            iot_private_key_file: "/etc/txing/daemon/certs/private.pem.key".to_string(),
+            iot_root_ca_file: "/etc/txing/daemon/certs/AmazonRootCA1.pem".to_string(),
             client_id: "unit-local-daemon-test".to_string(),
             capabilities: vec![BOARD_CAPABILITY.to_string()],
             capability_ttl: Duration::from_secs(150),
             heartbeat: Duration::from_secs(60),
         }
+    }
+
+    fn file_env() -> BTreeMap<String, String> {
+        BTreeMap::from([
+            ("TXING_THING_ID".to_string(), "unit-local".to_string()),
+            ("AWS_REGION".to_string(), "eu-central-1".to_string()),
+            (
+                "TXING_IOT_ENDPOINT".to_string(),
+                "example.iot.eu-central-1.amazonaws.com".to_string(),
+            ),
+            (
+                "TXING_IOT_CREDENTIAL_ENDPOINT".to_string(),
+                "example.credentials.iot.eu-central-1.amazonaws.com".to_string(),
+            ),
+            (
+                "TXING_IOT_ROLE_ALIAS".to_string(),
+                "unit-daemon-role-alias".to_string(),
+            ),
+            (
+                "TXING_IOT_CERT_FILE".to_string(),
+                "/etc/txing/daemon/certs/certificate.pem.crt".to_string(),
+            ),
+            (
+                "TXING_IOT_PRIVATE_KEY_FILE".to_string(),
+                "/etc/txing/daemon/certs/private.pem.key".to_string(),
+            ),
+            (
+                "TXING_IOT_ROOT_CA_FILE".to_string(),
+                "/etc/txing/daemon/certs/AmazonRootCA1.pem".to_string(),
+            ),
+        ])
+    }
+
+    fn runtime_config_from_args(args: &[&str]) -> Result<RuntimeConfig> {
+        RuntimeConfig::from_sources(
+            Cli::try_parse_from(args.iter().copied()).unwrap(),
+            &BTreeMap::new(),
+            &file_env(),
+        )
     }
 
     #[test]
@@ -779,9 +1270,95 @@ mod tests {
     }
 
     #[test]
+    fn parses_env_file_without_shell_execution() {
+        let parsed = parse_env_file_contents(
+            r#"
+            # comment
+            export TXING_THING_ID=unit-local
+            AWS_REGION="eu-central-1"
+            TXING_IOT_ROLE_ALIAS='alias-name'
+            EMPTY=
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            parsed.get("TXING_THING_ID").map(String::as_str),
+            Some("unit-local")
+        );
+        assert_eq!(
+            parsed.get("AWS_REGION").map(String::as_str),
+            Some("eu-central-1")
+        );
+        assert_eq!(
+            parsed.get("TXING_IOT_ROLE_ALIAS").map(String::as_str),
+            Some("alias-name")
+        );
+        assert_eq!(parsed.get("EMPTY").map(String::as_str), Some(""));
+        assert!(parse_env_file_contents("$(echo bad)").is_err());
+    }
+
+    #[test]
+    fn config_precedence_is_cli_then_process_env_then_env_file_then_defaults() {
+        let file_env = BTreeMap::from([
+            ("TXING_THING_ID".to_string(), "from-file".to_string()),
+            ("AWS_REGION".to_string(), "from-file".to_string()),
+            (
+                "TXING_IOT_ENDPOINT".to_string(),
+                "file.iot.eu-central-1.amazonaws.com".to_string(),
+            ),
+            (
+                "TXING_IOT_CREDENTIAL_ENDPOINT".to_string(),
+                "file.credentials.iot.eu-central-1.amazonaws.com".to_string(),
+            ),
+            ("TXING_IOT_ROLE_ALIAS".to_string(), "file-alias".to_string()),
+            (
+                "TXING_IOT_CERT_FILE".to_string(),
+                "/file/cert.pem".to_string(),
+            ),
+            (
+                "TXING_IOT_PRIVATE_KEY_FILE".to_string(),
+                "/file/private.key".to_string(),
+            ),
+            (
+                "TXING_IOT_ROOT_CA_FILE".to_string(),
+                "/file/ca.pem".to_string(),
+            ),
+            ("TXING_HEARTBEAT_SECONDS".to_string(), "30".to_string()),
+        ]);
+        let process_env = BTreeMap::from([
+            ("TXING_THING_ID".to_string(), "from-process".to_string()),
+            (
+                "TXING_IOT_ENDPOINT".to_string(),
+                "process.iot.eu-central-1.amazonaws.com".to_string(),
+            ),
+        ]);
+        let cli = Cli::try_parse_from([
+            "daemon",
+            "--thing-id",
+            "from-cli",
+            "--client-id",
+            "from-cli-daemon-test",
+            "--capability-ttl-seconds",
+            "120",
+        ])
+        .unwrap();
+        let config = RuntimeConfig::from_sources(cli, &process_env, &file_env).unwrap();
+
+        assert_eq!(config.thing_id, "from-cli");
+        assert_eq!(
+            config.iot_endpoint,
+            "process.iot.eu-central-1.amazonaws.com"
+        );
+        assert_eq!(config.aws_region, "from-file");
+        assert_eq!(config.capability_ttl, Duration::from_secs(120));
+        assert_eq!(config.heartbeat, Duration::from_secs(30));
+        assert_eq!(config.capabilities, vec![BOARD_CAPABILITY.to_string()]);
+    }
+
+    #[test]
     fn cli_defaults_to_board_capability() {
-        let cli = Cli::try_parse_from(["daemon", "--thing-id", "unit-local"]).unwrap();
-        let config = RuntimeConfig::try_from(cli).unwrap();
+        let config = runtime_config_from_args(&["daemon"]).unwrap();
 
         assert_eq!(config.thing_id, "unit-local");
         assert_eq!(config.capabilities, vec![BOARD_CAPABILITY.to_string()]);
@@ -791,42 +1368,120 @@ mod tests {
     }
 
     #[test]
-    fn cli_requires_thing_name() {
-        assert!(Cli::try_parse_from(["daemon"]).is_err());
+    fn config_requires_production_connection_values() {
+        let cli = Cli::try_parse_from(["daemon"]).unwrap();
+        assert!(RuntimeConfig::from_sources(cli, &BTreeMap::new(), &BTreeMap::new()).is_err());
     }
 
     #[test]
     fn config_rejects_heartbeat_at_or_after_ttl() {
-        let cli = Cli::try_parse_from([
-            "daemon",
-            "--thing-id",
-            "unit-local",
-            "--capability-ttl-seconds",
-            "60",
-            "--heartbeat-seconds",
-            "60",
-        ])
-        .unwrap();
-
-        assert!(RuntimeConfig::try_from(cli).is_err());
+        assert!(
+            runtime_config_from_args(&[
+                "daemon",
+                "--capability-ttl-seconds",
+                "60",
+                "--heartbeat-seconds",
+                "60",
+            ])
+            .is_err()
+        );
     }
 
     #[test]
     fn config_rejects_unsupported_capability() {
-        let cli = Cli::try_parse_from([
-            "daemon",
-            "--thing-id",
-            "unit-local",
-            "--capability",
-            "video",
-        ])
-        .unwrap();
+        assert!(runtime_config_from_args(&["daemon", "--capability", "video"]).is_err());
+    }
 
-        assert!(RuntimeConfig::try_from(cli).is_err());
+    #[test]
+    fn config_rejects_client_id_outside_thing_daemon_prefix() {
+        assert!(runtime_config_from_args(&["daemon", "--client-id", "other-client"]).is_err());
+    }
+
+    #[test]
+    fn config_rejects_endpoint_with_scheme_or_port() {
+        assert!(
+            runtime_config_from_args(&[
+                "daemon",
+                "--iot-endpoint",
+                "https://example.iot.eu-central-1.amazonaws.com:443",
+            ])
+            .is_err()
+        );
     }
 
     #[test]
     fn default_client_id_sanitizes_thing_name() {
         assert_eq!(default_client_id("Unit Local!", 42), "Unit-Local-daemon-42");
+    }
+
+    #[test]
+    fn mqtt_mtls_uses_direct_tls_port() {
+        assert_eq!(MQTT_PORT, 8883);
+    }
+
+    #[test]
+    fn builds_iot_credential_provider_request_and_parses_response() {
+        let mut config = config();
+        config.iot_role_alias = "unit_daemon,role-alias@Test=1".to_string();
+        let request = build_iot_credentials_request(&config).unwrap();
+        assert_eq!(
+            request.url,
+            "https://example.credentials.iot.eu-central-1.amazonaws.com/role-aliases/unit_daemon,role-alias@Test=1/credentials"
+        );
+        assert_eq!(request.thing_name, "unit-local");
+
+        let credentials = parse_iot_credentials_response(
+            br#"{"credentials":{"accessKeyId":"akid","secretAccessKey":"secret","sessionToken":"token","expiration":"2026-05-14T12:00:00Z"}}"#,
+        )
+        .unwrap();
+        assert_eq!(credentials.access_key_id, "akid");
+        assert_eq!(credentials.secret_access_key, "secret");
+        assert_eq!(credentials.session_token, "token");
+        assert!(parse_iot_credentials_response(br#"{"credentials":{"accessKeyId":""}}"#).is_err());
+    }
+
+    #[test]
+    fn builds_iot_data_endpoint_url() {
+        assert_eq!(
+            build_iot_data_endpoint_url("example.iot.eu-central-1.amazonaws.com").unwrap(),
+            "https://example.iot.eu-central-1.amazonaws.com"
+        );
+        assert!(
+            build_iot_data_endpoint_url("https://example.iot.eu-central-1.amazonaws.com").is_err()
+        );
+    }
+
+    #[test]
+    fn parses_sparkplug_redcon_shadow_states() {
+        assert_eq!(
+            parse_sparkplug_redcon(
+                br#"{"state":{"reported":{"topic":{"messageType":"DDATA"},"payload":{"metrics":{"redcon":2}}}}}"#,
+            )
+            .unwrap(),
+            SparkplugRedcon::Level(2)
+        );
+        assert_eq!(
+            parse_sparkplug_redcon(
+                br#"{"state":{"reported":{"topic":{"messageType":"DDEATH"},"payload":{"metrics":{"redcon":2}}}}}"#,
+            )
+            .unwrap(),
+            SparkplugRedcon::Unavailable
+        );
+        assert_eq!(
+            parse_sparkplug_redcon(br#"{"state":{"reported":{"payload":{"metrics":{}}}}}"#)
+                .unwrap(),
+            SparkplugRedcon::Unavailable
+        );
+        assert!(
+            parse_sparkplug_redcon(
+                br#"{"state":{"reported":{"payload":{"metrics":{"redcon":8}}}}}"#
+            )
+            .is_err()
+        );
+        assert_eq!(SparkplugRedcon::Level(3).to_string(), "sparkplug.redcon=3");
+        assert_eq!(
+            SparkplugRedcon::Unavailable.to_string(),
+            "sparkplug.redcon=unavailable"
+        );
     }
 }
