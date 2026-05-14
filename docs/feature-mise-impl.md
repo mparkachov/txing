@@ -83,12 +83,37 @@ The prerelease flow is intentionally split across two hosts. Build in Lima:
 limactl shell txing
 ```
 
+If `just` is not on `PATH` but `mise exec -- just --version` works, activate mise
+for future Lima login shells:
+
+```bash
+cat >> ~/.bashrc <<'EOF'
+export PATH="$HOME/.local/bin:$PATH"
+if command -v mise >/dev/null 2>&1; then
+  eval "$(mise activate bash)"
+fi
+EOF
+```
+
+```bash
+exec bash
+```
+
+For the current shell before reloading `.bashrc`, use
+`mise exec -- just unit::daemon::prerelease-build` instead of bare `just`.
+
 ```bash
 cd /Users/Maxim/Developer/txing
 ```
 
 ```bash
 just unit::daemon::prerelease-build
+```
+
+Current-shell fallback:
+
+```bash
+mise exec -- just unit::daemon::prerelease-build
 ```
 
 Return to macOS:
@@ -224,6 +249,28 @@ mise use --global rust@1.95.0
 
 ```bash
 mise exec -- rustc -vV
+```
+
+Enable mise activation for future Lima login shells so `just` and `cargo` can be
+run directly:
+
+```bash
+cat >> ~/.bashrc <<'EOF'
+export PATH="$HOME/.local/bin:$PATH"
+if command -v mise >/dev/null 2>&1; then
+  eval "$(mise activate bash)"
+fi
+EOF
+```
+
+```bash
+exec bash
+```
+
+Verify direct `just` lookup after reloading the shell:
+
+```bash
+just --version
 ```
 
 If a previous apt run was interrupted, repair the VM manually before retrying:

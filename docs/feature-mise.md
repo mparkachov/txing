@@ -220,6 +220,22 @@ cross-linking is not the first-choice workflow. The recommended first workflow i
 a persistent Linux `aarch64` Lima VM with the repository checkout and build
 tooling installed inside the VM.
 
+The Lima login shell should activate mise so `just`, `cargo`, and other tools
+are on `PATH` without wrapping each command:
+
+```bash
+cat >> ~/.bashrc <<'EOF'
+export PATH="$HOME/.local/bin:$PATH"
+if command -v mise >/dev/null 2>&1; then
+  eval "$(mise activate bash)"
+fi
+EOF
+exec bash
+```
+
+If the current shell has not been reloaded yet, run the build command through
+`mise exec --` instead of bare `just`.
+
 From macOS, log in to the Lima builder and run the Linux build step manually:
 
 ```bash
@@ -227,6 +243,12 @@ limactl shell txing
 cd /path/to/txing
 just unit::daemon::prerelease-build
 exit
+```
+
+Current-shell fallback before `.bashrc` activation is active:
+
+```bash
+mise exec -- just unit::daemon::prerelease-build
 ```
 
 Then publish from macOS, where `gh` is authenticated:
