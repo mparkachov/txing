@@ -7,6 +7,7 @@ This repository now documents the current implementation directly rather than ke
 - [Development](./development.md)
 - [Installation](./installation.md)
 - [AWS bring-up and rebuild](./aws.md)
+- [Feature mise release architecture](./feature-mise.md)
 
 ## Component Guides
 
