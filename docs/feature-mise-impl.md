@@ -1,0 +1,524 @@
+# Feature Mise Phase 1 Manual Implementation
+
+This runbook documents the first phase-1 proof path from
+[feature-mise.md](./feature-mise.md): compile the `unit` daemon in a Linux
+`aarch64` builder, copy only the executable to the `txing` board, and run it in
+the foreground from a temporary path.
+
+These steps are intentionally manual. Do not turn them into an automatic deploy
+or permanent board installation yet. Run each command at the prompt shown for
+that host and stop after each command to inspect the output. Paste the output
+back for review before continuing when a step needs confirmation.
+
+## Scope
+
+- Build on the Lima `txing` Linux `aarch64` VM.
+- Do not build on the Raspberry Pi board.
+- Do not copy a source checkout to the board.
+- Do not publish a GitHub prerelease in this manual proof step.
+- Do not configure a permanent `mise` tool install or systemd unit on the board.
+- Do not run `just unit::daemon::cert` as part of the build-only steps. That
+  recipe creates or updates AWS resources and should be run only when
+  deliberately provisioning daemon config and certificates.
+- Keep CloudWatch logging in the generated `.env`; the foreground run may create
+  or update CloudWatch Logs resources through the daemon's normal runtime path.
+
+The foreground run still uses the daemon's normal AWS IoT runtime path. It may
+read AWS IoT credentials and shadows and publish MQTT runtime state. Run it only
+when those data-plane side effects are acceptable.
+
+## Implemented Functionality
+
+The phase-1 baseline now includes these implemented pieces:
+
+- `just unit::daemon::cert <thing-id>` generates local daemon config under
+  `${TXING_DAEMON_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/txing/unit-daemon}`.
+- The generated config file is `.env`, uses sourceable `export KEY=value` lines,
+  includes CloudWatch log settings, and lives beside the certificate files.
+- The daemon can start without `--env-file` by loading the default `.env` from
+  the per-user config directory.
+- When `TXING_IOT_CERT_FILE`, `TXING_IOT_PRIVATE_KEY_FILE`, and
+  `TXING_IOT_ROOT_CA_FILE` are absent, the daemon derives those paths from the
+  loaded `.env` directory.
+- `just unit::daemon::run` starts the daemon from the macOS checkout with:
+  `cargo run --manifest-path devices/unit/daemon/Cargo.toml`.
+- A macOS run through `just unit::daemon::run` has been confirmed to start and
+  publish the `board` runtime capability state; the web UI then shows the board
+  capability as enabled.
+- `release::bump` and `release::check` now include
+  `devices/unit/daemon/Cargo.toml` and the daemon package entry in
+  `devices/unit/daemon/Cargo.lock`.
+
+For normal local development on macOS after config has been provisioned:
+
+```bash
+just unit::daemon::run
+```
+
+Provision or replace cert material only when AWS resource changes are intended:
+
+```bash
+just unit::daemon::cert unit-bl95f2
+```
+
+The `cert` recipe refuses to overwrite an existing `.env` or certificate files.
+Move old material out of the config directory before intentionally issuing a
+replacement certificate.
+
+## 1. Confirm Host Access
+
+From the macOS repository checkout, run each command separately:
+
+```bash
+uname -a
+```
+
+```bash
+pwd
+```
+
+```bash
+just --version
+```
+
+Log in to the Raspberry Pi board:
+
+```bash
+ssh txing
+```
+
+On the board, run each command separately:
+
+```bash
+uname -a
+```
+
+```bash
+pwd
+```
+
+```bash
+mise --version
+```
+
+```bash
+mise exec -- just --version
+```
+
+Return to macOS:
+
+```bash
+exit
+```
+
+Log in to the Lima builder:
+
+```bash
+limactl shell txing
+```
+
+In the Lima builder, run each command separately:
+
+```bash
+uname -a
+```
+
+```bash
+pwd
+```
+
+```bash
+mise --version
+```
+
+```bash
+mise exec -- just --version
+```
+
+Return to macOS:
+
+```bash
+exit
+```
+
+Expected shape:
+
+- macOS developer host is `arm64`.
+- `ssh txing` reaches the Raspberry Pi board as the `txing` user.
+- `limactl shell txing` reaches a Linux `aarch64` VM with the repository mounted
+  at `/Users/Maxim/Developer/txing`.
+- `just` is available through `mise` on both Linux hosts.
+
+## 2. Provision The Lima Builder
+
+The Lima VM needs native Linux build tools and Rust. Log in to the Lima builder:
+
+```bash
+limactl shell txing
+```
+
+In the Lima builder, run each command separately:
+
+```bash
+sudo apt-get update
+```
+
+```bash
+sudo apt-get install -y build-essential pkg-config cmake perl
+```
+
+```bash
+mise use --global rust@1.95.0
+```
+
+```bash
+mise exec -- rustc -vV
+```
+
+If a previous apt run was interrupted, repair the VM manually before retrying:
+
+```bash
+sudo dpkg --configure -a
+```
+
+```bash
+sudo apt-get install -f
+```
+
+The final `rustc -vV` output should report Rust `1.95.0` for an `aarch64`
+Linux host. Return to macOS when this step is complete:
+
+```bash
+exit
+```
+
+## 3. Run Daemon Tests In Lima
+
+Log in to the Lima builder:
+
+```bash
+limactl shell txing
+```
+
+In the Lima builder, run:
+
+```bash
+cd /Users/Maxim/Developer/txing
+```
+
+Run the daemon tests before creating the manual artifact:
+
+```bash
+mise exec -- cargo test --manifest-path devices/unit/daemon/Cargo.toml
+```
+
+Expected result: all `txing-unit-daemon` tests pass.
+
+## 4. Build The Release Binary In Lima
+
+Stay in the Lima builder or log in again with `limactl shell txing`. In the Lima
+builder, run:
+
+```bash
+cd /Users/Maxim/Developer/txing
+```
+
+Build only the daemon binary target:
+
+```bash
+mise exec -- cargo build --release --manifest-path devices/unit/daemon/Cargo.toml --bin daemon
+```
+
+Inspect the resulting executable:
+
+```bash
+file devices/unit/daemon/target/release/daemon
+```
+
+```bash
+ldd devices/unit/daemon/target/release/daemon
+```
+
+Expected result:
+
+- `file` reports a Linux `aarch64` ELF executable.
+- `ldd` resolves the dynamic libraries instead of reporting missing
+  dependencies.
+- `not stripped` in the `file` output is acceptable for this manual phase-1
+  proof.
+- A minimal dynamic dependency set of `libgcc_s`, `libm`, `libc`, and
+  `/lib/ld-linux-aarch64.so.1` is acceptable.
+
+The current Cargo binary target is named `daemon`; the future installed command
+name in `feature-mise.md` is `txing-unit-daemon`. For this phase-1 manual test,
+copy and install the built `daemon` executable under the future command name on
+the board. Return to macOS when the build has been inspected:
+
+```bash
+exit
+```
+
+## 5. Copy Only The Binary To The Board
+
+From macOS, copy the built executable to a temporary board path:
+
+```bash
+scp /Users/Maxim/Developer/txing/devices/unit/daemon/target/release/daemon txing:/tmp/txing-unit-daemon.manual
+```
+
+Do not copy the repository checkout or Cargo build directory to the board.
+
+## 6. Run A Foreground Smoke Test On The Board
+
+The daemon now expects its config and certificate material in a colocated
+per-user config directory:
+
+```text
+$HOME/.config/txing/unit-daemon/
+```
+
+The directory contains:
+
+```text
+.env
+AmazonRootCA1.pem
+certificate.arn
+certificate.pem.crt
+private.pem.key
+public.pem.key
+```
+
+The `.env` file is directly sourceable and should contain host-independent
+runtime values only:
+
+```bash
+export TXING_THING_ID=unit-bl95f2
+export AWS_REGION=eu-central-1
+export TXING_IOT_ENDPOINT=...
+export TXING_IOT_CREDENTIAL_ENDPOINT=...
+export TXING_IOT_ROLE_ALIAS=txing-daemon-unit-bl95f2
+export TXING_CLOUDWATCH_LOG_GROUP=txing/<town>/<rig>/unit-bl95f2
+export TXING_CLOUDWATCH_LOG_LEVEL=info
+export TXING_CLOUDWATCH_LOG_RETENTION_DAYS=14
+```
+
+The daemon derives the colocated cert paths from the loaded `.env` path, so the
+same directory can be copied between macOS and the board without editing `.env`.
+The CloudWatch log stream is intentionally omitted; the daemon defaults it to a
+per-client stream derived from the generated client ID.
+
+If the config was generated on macOS with `just unit::daemon::cert`, copy it to
+the board from macOS:
+
+```bash
+cd "$HOME/.config/txing"
+```
+
+```bash
+tar -czf /tmp/txing-unit-daemon-config.tgz unit-daemon
+```
+
+```bash
+tar -tzf /tmp/txing-unit-daemon-config.tgz
+```
+
+Expected archive entries:
+
+```text
+unit-daemon/
+unit-daemon/.env
+unit-daemon/AmazonRootCA1.pem
+unit-daemon/certificate.arn
+unit-daemon/certificate.pem.crt
+unit-daemon/private.pem.key
+unit-daemon/public.pem.key
+```
+
+Copy the archive to the board:
+
+```bash
+scp /tmp/txing-unit-daemon-config.tgz txing:/tmp/txing-unit-daemon-config.tgz
+```
+
+Log in to the board:
+
+```bash
+ssh txing
+```
+
+On the board, inspect and unpack the archive:
+
+```bash
+tar -tzf /tmp/txing-unit-daemon-config.tgz
+```
+
+```bash
+install -d -m 700 "$HOME/.config/txing"
+```
+
+```bash
+tar -xzf /tmp/txing-unit-daemon-config.tgz -C "$HOME/.config/txing"
+```
+
+Apply the expected permissions:
+
+```bash
+chmod 700 "$HOME/.config/txing/unit-daemon"
+```
+
+```bash
+chmod 600 "$HOME/.config/txing/unit-daemon/.env"
+```
+
+```bash
+chmod 600 "$HOME/.config/txing/unit-daemon/certificate.arn"
+```
+
+```bash
+chmod 600 "$HOME/.config/txing/unit-daemon/certificate.pem.crt"
+```
+
+```bash
+chmod 600 "$HOME/.config/txing/unit-daemon/private.pem.key"
+```
+
+```bash
+chmod 600 "$HOME/.config/txing/unit-daemon/public.pem.key"
+```
+
+```bash
+chmod 644 "$HOME/.config/txing/unit-daemon/AmazonRootCA1.pem"
+```
+
+Verify the config and cert files:
+
+```bash
+find "$HOME/.config/txing/unit-daemon" -maxdepth 1 -type f -exec ls -l {} \;
+```
+
+Expected permissions:
+
+- `$HOME/.config/txing/unit-daemon/.env`: mode `600`.
+- `$HOME/.config/txing/unit-daemon/private.pem.key`: mode `600`.
+- `$HOME/.config/txing/unit-daemon/AmazonRootCA1.pem`: mode `644`.
+- Other cert metadata and public/certificate files: mode `600`.
+
+Confirm the daemon can find its config:
+
+```bash
+test -r "$HOME/.config/txing/unit-daemon/.env"
+```
+
+```bash
+test -r "$HOME/.config/txing/unit-daemon/private.pem.key"
+```
+
+```bash
+. "$HOME/.config/txing/unit-daemon/.env"
+```
+
+Remove the temporary config archive from the board:
+
+```bash
+rm -f /tmp/txing-unit-daemon-config.tgz
+```
+
+On the board, run each smoke-test setup command separately. These commands
+create a temporary runtime directory and verify `--help`.
+
+```bash
+manual_dir="${XDG_RUNTIME_DIR:-/tmp}/txing-daemon-manual"
+```
+
+```bash
+rm -rf "$manual_dir"
+```
+
+```bash
+install -d -m 700 "$manual_dir"
+```
+
+```bash
+install -m 700 /tmp/txing-unit-daemon.manual "$manual_dir/txing-unit-daemon"
+```
+
+```bash
+"$manual_dir/txing-unit-daemon" --help >/dev/null
+```
+
+Run the foreground smoke test for 90 seconds:
+
+```bash
+timeout --signal INT 90s "$manual_dir/txing-unit-daemon"
+```
+
+If `timeout` exits with status `124`, that is the expected timeout status for a
+successful foreground smoke test. Any other nonzero status needs investigation
+before continuing.
+
+Return to macOS only after collecting the daemon output:
+
+```bash
+exit
+```
+
+Back on macOS, remove the temporary config archive:
+
+```bash
+rm -f /tmp/txing-unit-daemon-config.tgz
+```
+
+Expected result:
+
+- `--help` exits successfully.
+- The daemon starts, reads the sparkplug shadow, connects to MQTT, publishes its
+  runtime state, and exits when `timeout` sends `SIGINT`.
+- Exit status `124` from `timeout` is acceptable.
+- Any other nonzero exit status needs investigation before continuing.
+
+## 7. Manual Cleanup Checks
+
+Clean up the temporary board files after the smoke test. Log in to the board if
+needed with `ssh txing`, then run:
+
+```bash
+rm -f /tmp/txing-unit-daemon.manual
+```
+
+```bash
+rm -rf "${XDG_RUNTIME_DIR:-/tmp}/txing-daemon-manual"
+```
+
+Return to macOS:
+
+```bash
+exit
+```
+
+The build artifact remains in the local checkout under:
+
+```text
+devices/unit/daemon/target/release/daemon
+```
+
+Remove it only if a clean rebuild is desired.
+
+## 8. Record The Result
+
+After the manual run, record:
+
+- Whether `just unit::daemon::run` starts the daemon on macOS with the generated
+  per-user config.
+- Whether the web UI shows the `board` capability as enabled while the daemon is
+  running.
+- Lima `rustc -vV` output.
+- Test result from `cargo test`.
+- `file` and `ldd` output for the release binary.
+- Whether the board `--help` check passed.
+- Whether the 90-second foreground run exited with status `124` or another
+  status.
+- Any daemon log lines showing startup, shadow read, MQTT publish, shutdown, or
+  errors.
+
+This record is the evidence for whether phase 1 can move from a manual binary
+copy to the next release/mise implementation step.

@@ -13,7 +13,9 @@ The board is the device-side Raspberry Pi. It is power-switched by the MCU, publ
 - subscribe to Sparkplug `DCMD.redcon` and halt locally on `redcon=4`
 - enforce MCP lease ownership for motion control
 
-`txing-board` remains the only publisher of `board.*` Thing Shadow updates.
+The board runtime owns `board.*` Thing Shadow updates. In the legacy Python
+runtime that publisher is `txing-board`; in the phase-1 Rust path it is the unit
+daemon.
 
 ## Current Interfaces
 
@@ -84,6 +86,26 @@ The board runtime writes transient local state only:
 This is why the read-only-rootfs setup keeps `/tmp` and `/var/tmp` on tmpfs. The native sender also keeps the KVS signaling cache in memory only.
 
 ## Build And Run
+
+Rust unit daemon phase-1 local run:
+
+```bash
+just unit::daemon::run
+```
+
+The daemon uses the per-user config directory
+`${TXING_DAEMON_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/txing/unit-daemon}`.
+Its `.env` file is sourceable and the IoT certificate files live beside it. In
+the current phase-1 implementation, the daemon publishes the `board` named
+shadow and retained `board` capability state for web/Sparkplug visibility.
+
+Provision daemon config and certs only when AWS resource changes are intended:
+
+```bash
+just unit::daemon::cert <thing-id>
+```
+
+Existing Python board runtime commands:
 
 ```bash
 just unit::board::check

@@ -106,9 +106,35 @@ Persistent stable state lives under the user's home directory:
 
 ```text
 /home/txing/.config/mise/
+/home/txing/.config/txing/unit-daemon/
 /home/txing/.local/share/mise/
 /home/txing/.cache/mise/
 ```
+
+The unit daemon runtime config uses the same per-user layout on macOS and
+Linux:
+
+```text
+${TXING_DAEMON_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/txing/unit-daemon}
+```
+
+The implemented config filename is `.env`. It is directly sourceable and lives
+beside the daemon certificate material:
+
+```text
+.env
+AmazonRootCA1.pem
+certificate.arn
+certificate.pem.crt
+private.pem.key
+public.pem.key
+```
+
+The generated `.env` contains host-independent runtime values, including the IoT
+endpoints, role alias, and CloudWatch log settings. It intentionally does not
+contain certificate paths; the daemon derives the default certificate paths from
+the directory of the loaded `.env` file. Explicit CLI flags or environment
+variables can still override those paths.
 
 These paths are on the read-only root during normal boot. They are updated only
 during a manual writable maintenance window.
@@ -163,6 +189,7 @@ Environment=MISE_CACHE_DIR=/run/txing/mise-cache
 Environment=MISE_TMP_DIR=/run/txing/mise-tmp
 Environment=MISE_SHARED_INSTALL_DIRS=/home/txing/.local/share/mise/installs
 Environment=MISE_PRERELEASES=1
+Environment=TXING_DAEMON_CONFIG_DIR=/home/txing/.config/txing/unit-daemon
 
 ExecStartPre=-/usr/bin/timeout 10s /home/txing/.local/bin/mise install
 ExecStart=/home/txing/.local/bin/mise exec --offline -- txing-unit-daemon
@@ -195,7 +222,9 @@ tooling installed inside the VM.
 From macOS, the intended developer command shape is:
 
 ```bash
-limactl shell txing -- bash -lc 'cd /path/to/txing && just unit::daemon::prerelease'
+limactl shell txing
+cd /path/to/txing
+just unit::daemon::prerelease
 ```
 
 The `unit::daemon::prerelease` implementation should run inside Linux and:
@@ -225,9 +254,37 @@ Stable publishing is CI-owned:
 - Existing stable releases and assets are immutable. CI should fail or skip
   rather than replace a release asset for an already-published version.
 
-Before this can be trusted, the daemon's Cargo package version needs to be
-managed by the repo release tooling so `devices/unit/daemon/Cargo.toml` and
-`devices/unit/daemon/Cargo.lock` match root `VERSION`.
+The daemon Cargo package version is managed by the repo release tooling:
+`release::bump` updates `devices/unit/daemon/Cargo.toml` and the daemon package
+entry in `devices/unit/daemon/Cargo.lock`, and `release::check` validates both
+against the repo root `VERSION`.
+
+## Implemented Phase 1 Baseline
+
+The current phase-1 implementation has these working pieces:
+
+- `just unit::daemon::cert <thing-id>` provisions daemon certificate material
+  and writes `.env` plus the certificate files into the per-user
+  `txing/unit-daemon` config directory. The recipe refuses to overwrite existing
+  `.env` or certificate material.
+- The generated `.env` uses `export KEY=value` lines and includes CloudWatch log
+  group, level, and retention settings.
+- `just unit::daemon::run` runs
+  `cargo run --manifest-path devices/unit/daemon/Cargo.toml` from the repository
+  root.
+- The daemon lookup order is `--env-file`, `TXING_DAEMON_ENV_FILE`,
+  `TXING_DAEMON_CONFIG_DIR/.env`, `XDG_CONFIG_HOME/txing/unit-daemon/.env`, then
+  `$HOME/.config/txing/unit-daemon/.env`.
+- When certificate path variables are absent, the daemon loads
+  `certificate.pem.crt`, `private.pem.key`, and `AmazonRootCA1.pem` from the
+  same directory as the loaded `.env`.
+- A macOS foreground run through `just unit::daemon::run` has been confirmed to
+  start successfully with the generated local config.
+- The daemon publishes the retained `board` capability state, and the web UI has
+  been confirmed to show the board capability as enabled while the daemon is
+  running.
+- `release::bump` and `release::check` include the daemon Cargo manifest and
+  lockfile.
 
 ## Architecture Decisions
 
@@ -299,8 +356,13 @@ developer command fast and predictable.
 Goal: prove the entire loop works before polishing repeatability.
 
 - Add daemon version surfaces to release tooling so root `VERSION`, Cargo
-  manifest, and lockfile agree.
+  manifest, and lockfile agree. Implemented for `release::bump` and
+  `release::check`.
 - Decide the installed command name and release asset naming convention.
+- Add per-user daemon config loading from `.env` with colocated certificate
+  defaults. Implemented for local macOS and Linux board runs.
+- Add a local foreground run recipe for source checkout development.
+  Implemented as `just unit::daemon::run`.
 - Add a local Linux `aarch64` prerelease recipe for the daemon.
 - Run the mandatory daemon tests in that prerelease recipe.
 - Build a dynamically linked Linux `aarch64` binary.

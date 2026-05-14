@@ -30,6 +30,11 @@ The video route is derived from the selected route and web origin. It is not sto
 
 The app expects `capabilities` to include `sparkplug` and uses it to decide which named shadows should exist for a selected thing.
 
+For `unit` devices, the phase-1 Rust unit daemon publishes retained
+`txings/<device_id>/capability/v2/state` messages for the `board` capability.
+Sparkplug projection reflects that into `capability.board`, and the web
+capability stack shows `board` as enabled while the daemon is running.
+
 ## Local Development
 
 Install and write the local env:

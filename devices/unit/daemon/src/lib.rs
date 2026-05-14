@@ -5,7 +5,7 @@ use std::fmt;
 use std::fs;
 use std::io::ErrorKind;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::Arc;
 use std::sync::Once;
@@ -47,7 +47,11 @@ pub const ADAPTER_ID: &str = "dev.txing.unit.Daemon";
 pub const BOARD_CAPABILITY: &str = "board";
 pub const BOARD_SHADOW_NAME: &str = "board";
 pub const SPARKPLUG_SHADOW_NAME: &str = "sparkplug";
-pub const DEFAULT_ENV_FILE: &str = "/etc/txing/daemon/daemon.env";
+pub const DEFAULT_CONFIG_SUBDIR: &str = "txing/unit-daemon";
+pub const DEFAULT_ENV_FILE_NAME: &str = ".env";
+pub const DEFAULT_IOT_CERT_FILE_NAME: &str = "certificate.pem.crt";
+pub const DEFAULT_IOT_PRIVATE_KEY_FILE_NAME: &str = "private.pem.key";
+pub const DEFAULT_IOT_ROOT_CA_FILE_NAME: &str = "AmazonRootCA1.pem";
 pub const DEFAULT_CAPABILITY_TTL_SECONDS: u64 = 150;
 pub const DEFAULT_HEARTBEAT_SECONDS: u64 = 60;
 pub const DEFAULT_CLOUDWATCH_LOG_RETENTION_DAYS: i32 = 14;
@@ -900,13 +904,27 @@ impl RuntimeConfig {
     pub fn from_cli(cli: Cli) -> Result<Self> {
         let process_env = env::vars().collect::<BTreeMap<_, _>>();
         let file_env = load_env_file_for_cli(&cli, &process_env)?;
-        Self::from_sources(cli, &process_env, &file_env)
+        Self::from_sources_with_env_file_dir(
+            cli,
+            &process_env,
+            &file_env.values,
+            file_env.parent_dir(),
+        )
     }
 
     pub fn from_sources(
         cli: Cli,
         process_env: &BTreeMap<String, String>,
         file_env: &BTreeMap<String, String>,
+    ) -> Result<Self> {
+        Self::from_sources_with_env_file_dir(cli, process_env, file_env, None)
+    }
+
+    pub fn from_sources_with_env_file_dir(
+        cli: Cli,
+        process_env: &BTreeMap<String, String>,
+        file_env: &BTreeMap<String, String>,
+        env_file_dir: Option<&Path>,
     ) -> Result<Self> {
         let thing_id = required_config_value(
             cli.thing_id,
@@ -1000,26 +1018,32 @@ impl RuntimeConfig {
             "iot-role-alias",
         )?;
         validate_role_alias(&iot_role_alias)?;
-        let iot_cert_file = required_config_value(
+        let iot_cert_file = config_value_or_colocated_file(
             cli.iot_cert_file,
             process_env,
             file_env,
             "TXING_IOT_CERT_FILE",
             "iot-cert-file",
+            env_file_dir,
+            DEFAULT_IOT_CERT_FILE_NAME,
         )?;
-        let iot_private_key_file = required_config_value(
+        let iot_private_key_file = config_value_or_colocated_file(
             cli.iot_private_key_file,
             process_env,
             file_env,
             "TXING_IOT_PRIVATE_KEY_FILE",
             "iot-private-key-file",
+            env_file_dir,
+            DEFAULT_IOT_PRIVATE_KEY_FILE_NAME,
         )?;
-        let iot_root_ca_file = required_config_value(
+        let iot_root_ca_file = config_value_or_colocated_file(
             cli.iot_root_ca_file,
             process_env,
             file_env,
             "TXING_IOT_ROOT_CA_FILE",
             "iot-root-ca-file",
+            env_file_dir,
+            DEFAULT_IOT_ROOT_CA_FILE_NAME,
         )?;
 
         Ok(Self {
@@ -1773,21 +1797,80 @@ fn probe_default_route_ip(remote: SocketAddr) -> Option<IpAddr> {
     Some(socket.local_addr().ok()?.ip())
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoadedEnvFile {
+    pub values: BTreeMap<String, String>,
+    pub path: Option<PathBuf>,
+}
+
+impl LoadedEnvFile {
+    pub fn parent_dir(&self) -> Option<&Path> {
+        self.path.as_deref().and_then(Path::parent)
+    }
+}
+
 pub fn load_env_file_for_cli(
     cli: &Cli,
     process_env: &BTreeMap<String, String>,
-) -> Result<BTreeMap<String, String>> {
+) -> Result<LoadedEnvFile> {
     let cli_env_file = normalize_optional(cli.env_file.clone());
-    let process_env_file = normalize_optional(process_env.get("TXING_DAEMON_ENV_FILE").cloned());
-    let explicit = cli_env_file.is_some() || process_env_file.is_some();
-    let env_file = cli_env_file
-        .or(process_env_file)
-        .unwrap_or_else(|| DEFAULT_ENV_FILE.to_string());
-    match fs::read_to_string(Path::new(&env_file)) {
-        Ok(contents) => parse_env_file_contents(&contents),
-        Err(err) if err.kind() == ErrorKind::NotFound && !explicit => Ok(BTreeMap::new()),
-        Err(err) => Err(err).with_context(|| format!("read daemon env file {env_file}")),
+    if let Some(env_file) = cli_env_file {
+        return read_env_file(PathBuf::from(env_file), true);
     }
+    if let Some(env_file) = normalize_optional(process_env.get("TXING_DAEMON_ENV_FILE").cloned()) {
+        return read_env_file(PathBuf::from(env_file), true);
+    }
+    if let Some(config_dir) =
+        normalize_optional(process_env.get("TXING_DAEMON_CONFIG_DIR").cloned())
+    {
+        return read_env_file(Path::new(&config_dir).join(DEFAULT_ENV_FILE_NAME), true);
+    }
+
+    for env_file in default_env_file_candidates(process_env) {
+        match read_env_file(env_file, false) {
+            Ok(loaded) if loaded.path.is_some() => return Ok(loaded),
+            Ok(_) => {}
+            Err(err) => return Err(err),
+        }
+    }
+    Ok(LoadedEnvFile {
+        values: BTreeMap::new(),
+        path: None,
+    })
+}
+
+fn read_env_file(path: PathBuf, explicit: bool) -> Result<LoadedEnvFile> {
+    match fs::read_to_string(&path) {
+        Ok(contents) => Ok(LoadedEnvFile {
+            values: parse_env_file_contents(&contents)?,
+            path: Some(path),
+        }),
+        Err(err) if err.kind() == ErrorKind::NotFound && !explicit => Ok(LoadedEnvFile {
+            values: BTreeMap::new(),
+            path: None,
+        }),
+        Err(err) => Err(err).with_context(|| format!("read daemon env file {}", path.display())),
+    }
+}
+
+fn default_env_file_candidates(process_env: &BTreeMap<String, String>) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(xdg_config_home) = normalize_optional(process_env.get("XDG_CONFIG_HOME").cloned()) {
+        candidates.push(
+            Path::new(&xdg_config_home)
+                .join(DEFAULT_CONFIG_SUBDIR)
+                .join(DEFAULT_ENV_FILE_NAME),
+        );
+    }
+    if let Some(home) = normalize_optional(process_env.get("HOME").cloned()) {
+        candidates.push(
+            Path::new(&home)
+                .join(".config")
+                .join(DEFAULT_CONFIG_SUBDIR)
+                .join(DEFAULT_ENV_FILE_NAME),
+        );
+    }
+    candidates
 }
 
 pub fn parse_env_file_contents(contents: &str) -> Result<BTreeMap<String, String>> {
@@ -1847,6 +1930,26 @@ fn required_config_value(
 ) -> Result<String> {
     optional_config_value(cli_value, process_env, file_env, env_name)
         .ok_or_else(|| anyhow!("{label} is required; pass --{label} or set {env_name}"))
+}
+
+fn config_value_or_colocated_file(
+    cli_value: Option<String>,
+    process_env: &BTreeMap<String, String>,
+    file_env: &BTreeMap<String, String>,
+    env_name: &str,
+    label: &str,
+    env_file_dir: Option<&Path>,
+    file_name: &str,
+) -> Result<String> {
+    if let Some(value) = optional_config_value(cli_value, process_env, file_env, env_name) {
+        return Ok(value);
+    }
+    if let Some(env_file_dir) = env_file_dir {
+        return Ok(env_file_dir.join(file_name).display().to_string());
+    }
+    bail!(
+        "{label} is required; pass --{label}, set {env_name}, or load an env file from the daemon config directory"
+    )
 }
 
 fn optional_config_value(
@@ -2152,6 +2255,14 @@ mod tests {
 
     use super::*;
 
+    fn test_temp_dir(label: &str) -> PathBuf {
+        env::temp_dir().join(format!(
+            "txing-unit-daemon-{label}-{}-{}",
+            process::id(),
+            now_ms()
+        ))
+    }
+
     #[derive(Default)]
     struct FakePublisher {
         messages: Mutex<Vec<PublishedMessage>>,
@@ -2297,9 +2408,10 @@ mod tests {
             iot_credential_endpoint: "example.credentials.iot.eu-central-1.amazonaws.com"
                 .to_string(),
             iot_role_alias: "unit-daemon-role-alias".to_string(),
-            iot_cert_file: "/etc/txing/daemon/certs/certificate.pem.crt".to_string(),
-            iot_private_key_file: "/etc/txing/daemon/certs/private.pem.key".to_string(),
-            iot_root_ca_file: "/etc/txing/daemon/certs/AmazonRootCA1.pem".to_string(),
+            iot_cert_file: "/home/txing/.config/txing/unit-daemon/certificate.pem.crt".to_string(),
+            iot_private_key_file: "/home/txing/.config/txing/unit-daemon/private.pem.key"
+                .to_string(),
+            iot_root_ca_file: "/home/txing/.config/txing/unit-daemon/AmazonRootCA1.pem".to_string(),
             client_id: "unit-local-daemon-test".to_string(),
             capabilities: vec![BOARD_CAPABILITY.to_string()],
             capability_ttl: Duration::from_secs(150),
@@ -2326,15 +2438,15 @@ mod tests {
             ),
             (
                 "TXING_IOT_CERT_FILE".to_string(),
-                "/etc/txing/daemon/certs/certificate.pem.crt".to_string(),
+                "/home/txing/.config/txing/unit-daemon/certificate.pem.crt".to_string(),
             ),
             (
                 "TXING_IOT_PRIVATE_KEY_FILE".to_string(),
-                "/etc/txing/daemon/certs/private.pem.key".to_string(),
+                "/home/txing/.config/txing/unit-daemon/private.pem.key".to_string(),
             ),
             (
                 "TXING_IOT_ROOT_CA_FILE".to_string(),
-                "/etc/txing/daemon/certs/AmazonRootCA1.pem".to_string(),
+                "/home/txing/.config/txing/unit-daemon/AmazonRootCA1.pem".to_string(),
             ),
         ])
     }
@@ -2525,6 +2637,105 @@ mod tests {
         );
         assert_eq!(parsed.get("EMPTY").map(String::as_str), Some(""));
         assert!(parse_env_file_contents("$(echo bad)").is_err());
+    }
+
+    #[test]
+    fn loads_env_file_from_config_dir() {
+        let config_dir = test_temp_dir("config-dir");
+        let env_file = config_dir.join(DEFAULT_ENV_FILE_NAME);
+        fs::create_dir_all(&config_dir).unwrap();
+        fs::write(
+            &env_file,
+            "export TXING_THING_ID=unit-local\nexport AWS_REGION=eu-central-1\n",
+        )
+        .unwrap();
+
+        let process_env = BTreeMap::from([(
+            "TXING_DAEMON_CONFIG_DIR".to_string(),
+            config_dir.display().to_string(),
+        )]);
+        let cli = Cli::try_parse_from(["daemon"]).unwrap();
+        let loaded = load_env_file_for_cli(&cli, &process_env).unwrap();
+
+        assert_eq!(loaded.path, Some(env_file));
+        assert_eq!(
+            loaded.values.get("TXING_THING_ID").map(String::as_str),
+            Some("unit-local")
+        );
+        fs::remove_dir_all(config_dir).unwrap();
+    }
+
+    #[test]
+    fn loads_env_file_from_xdg_then_home() {
+        let root = test_temp_dir("xdg-home");
+        let xdg_env_file = root
+            .join("xdg")
+            .join(DEFAULT_CONFIG_SUBDIR)
+            .join(DEFAULT_ENV_FILE_NAME);
+        let home_env_file = root
+            .join("home")
+            .join(".config")
+            .join(DEFAULT_CONFIG_SUBDIR)
+            .join(DEFAULT_ENV_FILE_NAME);
+        fs::create_dir_all(xdg_env_file.parent().unwrap()).unwrap();
+        fs::create_dir_all(home_env_file.parent().unwrap()).unwrap();
+        fs::write(&xdg_env_file, "TXING_THING_ID=from-xdg\n").unwrap();
+        fs::write(&home_env_file, "TXING_THING_ID=from-home\n").unwrap();
+
+        let cli = Cli::try_parse_from(["daemon"]).unwrap();
+        let process_env = BTreeMap::from([
+            (
+                "XDG_CONFIG_HOME".to_string(),
+                root.join("xdg").display().to_string(),
+            ),
+            ("HOME".to_string(), root.join("home").display().to_string()),
+        ]);
+        let loaded = load_env_file_for_cli(&cli, &process_env).unwrap();
+        assert_eq!(loaded.path, Some(xdg_env_file));
+        assert_eq!(
+            loaded.values.get("TXING_THING_ID").map(String::as_str),
+            Some("from-xdg")
+        );
+
+        let process_env =
+            BTreeMap::from([("HOME".to_string(), root.join("home").display().to_string())]);
+        let loaded = load_env_file_for_cli(&cli, &process_env).unwrap();
+        assert_eq!(loaded.path, Some(home_env_file));
+        assert_eq!(
+            loaded.values.get("TXING_THING_ID").map(String::as_str),
+            Some("from-home")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn colocated_cert_paths_default_to_env_file_directory() {
+        let mut file_env = file_env();
+        file_env.remove("TXING_IOT_CERT_FILE");
+        file_env.remove("TXING_IOT_PRIVATE_KEY_FILE");
+        file_env.remove("TXING_IOT_ROOT_CA_FILE");
+        let env_file_dir = Path::new("/home/txing/.config/txing/unit-daemon");
+        let cli = Cli::try_parse_from(["daemon", "--client-id", "unit-local-daemon-test"]).unwrap();
+        let config = RuntimeConfig::from_sources_with_env_file_dir(
+            cli,
+            &BTreeMap::new(),
+            &file_env,
+            Some(env_file_dir),
+        )
+        .unwrap();
+
+        assert_eq!(
+            config.iot_cert_file,
+            "/home/txing/.config/txing/unit-daemon/certificate.pem.crt"
+        );
+        assert_eq!(
+            config.iot_private_key_file,
+            "/home/txing/.config/txing/unit-daemon/private.pem.key"
+        );
+        assert_eq!(
+            config.iot_root_ca_file,
+            "/home/txing/.config/txing/unit-daemon/AmazonRootCA1.pem"
+        );
     }
 
     #[test]

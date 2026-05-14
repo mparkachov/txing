@@ -8,14 +8,19 @@ aws_lib := project_root + "/shared/aws/scripts/aws_lib.sh"
 
 region := ""
 profile := ""
-etc_dir := "/etc/txing/daemon"
+config_dir := ""
 
-cert thing_id='' region=region profile=profile etc_dir=etc_dir:
+cert thing_id='' region=region profile=profile config_dir=config_dir:
     #!/usr/bin/env bash
     set -euo pipefail
     requested_thing_name="{{thing_id}}"
     if [[ "$requested_thing_name" == *=* ]]; then
       echo "Do not pass just recipe arguments as name=value. Use: just unit::daemon::cert <thing-id>" >&2
+      exit 2
+    fi
+    requested_config_dir="{{config_dir}}"
+    if [[ "$requested_config_dir" == *=* ]]; then
+      echo "Do not pass just recipe arguments as name=value. Use positional arguments." >&2
       exit 2
     fi
     if [ -n "$requested_thing_name" ]; then
@@ -54,16 +59,28 @@ cert thing_id='' region=region profile=profile etc_dir=etc_dir:
     cloudwatch_log_group="txing/${TXING_TOWN_ID}/${TXING_RIG_ID}/${effective_thing_name}"
     iot_data_endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}" --query endpointAddress --output text)"
     iot_credential_endpoint="$(aws iot describe-endpoint --endpoint-type iot:CredentialProvider "${aws_flags[@]}" --query endpointAddress --output text)"
-    cert_dir="{{etc_dir}}/certs"
-    env_file="{{etc_dir}}/daemon.env"
-    cert_path="$cert_dir/certificate.pem.crt"
-    public_key_path="$cert_dir/public.pem.key"
-    private_key_path="$cert_dir/private.pem.key"
-    cert_arn_path="$cert_dir/certificate.arn"
-    root_ca_path="$cert_dir/AmazonRootCA1.pem"
-    install -d -m 700 "{{etc_dir}}" "$cert_dir"
+    default_config_dir() {
+      if [ -n "${TXING_DAEMON_CONFIG_DIR:-}" ]; then
+        printf '%s\n' "$TXING_DAEMON_CONFIG_DIR"
+      elif [ -n "${XDG_CONFIG_HOME:-}" ]; then
+        printf '%s\n' "$XDG_CONFIG_HOME/txing/unit-daemon"
+      elif [ -n "${HOME:-}" ]; then
+        printf '%s\n' "$HOME/.config/txing/unit-daemon"
+      else
+        echo "HOME is not set; pass an explicit config directory as a positional argument." >&2
+        exit 1
+      fi
+    }
+    daemon_config_dir="${requested_config_dir:-$(default_config_dir)}"
+    env_file="$daemon_config_dir/.env"
+    cert_path="$daemon_config_dir/certificate.pem.crt"
+    public_key_path="$daemon_config_dir/public.pem.key"
+    private_key_path="$daemon_config_dir/private.pem.key"
+    cert_arn_path="$daemon_config_dir/certificate.arn"
+    root_ca_path="$daemon_config_dir/AmazonRootCA1.pem"
+    install -d -m 700 "$daemon_config_dir"
     if [ -e "$env_file" ] || [ -e "$cert_path" ] || [ -e "$public_key_path" ] || [ -e "$private_key_path" ] || [ -e "$cert_arn_path" ]; then
-      echo "Daemon certificate or env material already exists under {{etc_dir}}." >&2
+      echo "Daemon certificate or env material already exists under $daemon_config_dir." >&2
       echo "Move or delete those files before issuing a replacement certificate." >&2
       exit 1
     fi
@@ -122,15 +139,14 @@ cert thing_id='' region=region profile=profile etc_dir=etc_dir:
       "${aws_flags[@]}"
     printf '%s\n' "$cert_arn" >"$cert_arn_path"
     {
-      printf 'TXING_THING_ID=%s\n' "$effective_thing_name"
-      printf 'AWS_REGION=%s\n' "$AWS_REGION"
-      printf 'TXING_IOT_ENDPOINT=%s\n' "$iot_data_endpoint"
-      printf 'TXING_IOT_CREDENTIAL_ENDPOINT=%s\n' "$iot_credential_endpoint"
-      printf 'TXING_IOT_ROLE_ALIAS=%s\n' "$iot_role_alias"
-      printf 'TXING_IOT_CERT_FILE=%s\n' "$cert_path"
-      printf 'TXING_IOT_PRIVATE_KEY_FILE=%s\n' "$private_key_path"
-      printf 'TXING_IOT_ROOT_CA_FILE=%s\n' "$root_ca_path"
-      printf 'TXING_CLOUDWATCH_LOG_GROUP=%s\n' "$cloudwatch_log_group"
+      printf 'export TXING_THING_ID=%s\n' "$effective_thing_name"
+      printf 'export AWS_REGION=%s\n' "$AWS_REGION"
+      printf 'export TXING_IOT_ENDPOINT=%s\n' "$iot_data_endpoint"
+      printf 'export TXING_IOT_CREDENTIAL_ENDPOINT=%s\n' "$iot_credential_endpoint"
+      printf 'export TXING_IOT_ROLE_ALIAS=%s\n' "$iot_role_alias"
+      printf 'export TXING_CLOUDWATCH_LOG_GROUP=%s\n' "$cloudwatch_log_group"
+      printf 'export TXING_CLOUDWATCH_LOG_LEVEL=info\n'
+      printf 'export TXING_CLOUDWATCH_LOG_RETENTION_DAYS=14\n'
     } >"$env_file"
     chmod 600 "$env_file" "$cert_path" "$public_key_path" "$private_key_path" "$cert_arn_path"
     chmod 644 "$root_ca_path"
@@ -154,3 +170,9 @@ cert thing_id='' region=region profile=profile etc_dir=etc_dir:
 
 test:
     cargo test --manifest-path "{{daemon_dir}}/Cargo.toml"
+
+run:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{project_root}}"
+    cargo run --manifest-path devices/unit/daemon/Cargo.toml
