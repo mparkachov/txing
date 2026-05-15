@@ -27,7 +27,8 @@ The operational phase-1 runbook is
 
 - Phase 1 end-to-end feature workflow: implemented and manually verified on a
   Raspberry Pi Zero 2 W with read-only root.
-- Phase 2 stable CI publishing and stable fallback behavior: pending.
+- Phase 2 stable CI publishing: initial GitHub Actions workflow implemented.
+- Phase 2 stable fallback behavior: pending.
 - Phase 3 channel polish and operational improvements: pending.
 
 ## Non-Goals
@@ -361,15 +362,27 @@ is intentionally moving; the default branch name is
 
 Stable publishing is CI-owned:
 
-- Trigger: merge to `main` where root `VERSION` changed.
+- Workflow: `.github/workflows/unit-daemon-stable-release.yml`.
+- Final trigger: push to `main` where root `VERSION`, daemon inputs, shared
+  code, or the workflow changed.
+- Temporary phase-2 trigger: push a matching stable tag from
+  `feature/build-daemon-for-txing` while the workflow is being developed before
+  it exists on `main`.
 - Version: root `VERSION` exactly.
 - Release: repo-wide `v<VERSION>`.
 - GitHub prerelease flag: `false`.
 - Build target: Linux `aarch64` dynamic binary for the current supported board
   baseline.
 - Asset command: `txing-unit-daemon`.
-- Existing stable releases and assets are immutable. CI should fail or skip
-  rather than replace a release asset for an already-published version.
+- Asset archive: `txing-unit-daemon-linux-aarch64.tar.gz`, containing a
+  root-level `txing-unit-daemon` executable.
+- Existing stable releases and assets are immutable. CI fails rather than
+  replacing a tag, release, or asset for an already-published version.
+
+The workflow builds natively on GitHub's Linux `aarch64` runner, runs daemon
+tests, packages the archive, and publishes a normal GitHub Release. It caches the
+Rust toolchain, Cargo downloads, and the daemon `target` directory with cache
+keys scoped to Rust `1.95.0` and `devices/unit/daemon/Cargo.lock`.
 
 The daemon Cargo package version is managed by the repo release tooling:
 `release::bump` updates `devices/unit/daemon/Cargo.toml` and the daemon package
@@ -533,7 +546,9 @@ board. This criterion is met for phase 1.
 Goal: make stable board setup and maintenance boring and repeatable.
 
 - Add CI publishing for stable releases on `main` when `VERSION` changes.
-- Make stable release assets immutable.
+  Implemented as `.github/workflows/unit-daemon-stable-release.yml`; temporary
+  phase-2 tag publishing from `feature/build-daemon-for-txing` is also allowed.
+- Make stable release assets immutable. Implemented in the workflow.
 - Document the initial board setup from fresh Raspberry Pi OS image through
   dedicated `txing` user, mise install, stable tool config, certificates, and
   systemd unit creation.

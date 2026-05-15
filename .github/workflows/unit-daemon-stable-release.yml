@@ -1,0 +1,217 @@
+name: Unit Daemon Stable Release
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*.*.*'
+    paths:
+      - VERSION
+      - devices/unit/daemon/**
+      - shared/**
+      - .github/workflows/unit-daemon-stable-release.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: unit-daemon-stable-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  RUST_VERSION: 1.95.0
+  STABLE_FEATURE_BRANCH: feature/build-daemon-for-txing
+  ASSET_NAME: txing-unit-daemon-linux-aarch64.tar.gz
+  BINARY_NAME: txing-unit-daemon
+
+jobs:
+  stable-release:
+    name: Build and publish stable daemon
+    runs-on: ubuntu-24.04-arm
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve release metadata
+        id: metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="$(tr -d '[:space:]' < VERSION)"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "VERSION must contain a stable semantic version like x.y.z, got: $version" >&2
+            exit 1
+          fi
+
+          tag="v$version"
+          release_target="$(git rev-parse HEAD)"
+          case "${GITHUB_REF_TYPE}" in
+            branch)
+              if [ "${GITHUB_REF_NAME}" != "main" ]; then
+                echo "Stable releases from branches are only allowed from main, got: ${GITHUB_REF_NAME}" >&2
+                exit 1
+              fi
+              tag_mode="create"
+              ;;
+            tag)
+              if [ "${GITHUB_REF_NAME}" != "$tag" ]; then
+                echo "Tag ${GITHUB_REF_NAME} must match root VERSION tag $tag." >&2
+                exit 1
+              fi
+              git fetch origin "$STABLE_FEATURE_BRANCH:refs/remotes/origin/$STABLE_FEATURE_BRANCH" --force
+              if ! git merge-base --is-ancestor "$release_target" "origin/$STABLE_FEATURE_BRANCH"; then
+                echo "Temporary stable tag releases must point to a commit reachable from origin/$STABLE_FEATURE_BRANCH." >&2
+                exit 1
+              fi
+              tag_mode="verify"
+              ;;
+            *)
+              echo "Unsupported ref type for stable release: ${GITHUB_REF_TYPE}" >&2
+              exit 1
+              ;;
+          esac
+
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+          echo "tag=$tag" >>"$GITHUB_OUTPUT"
+          echo "release_target=$release_target" >>"$GITHUB_OUTPUT"
+          echo "tag_mode=$tag_mode" >>"$GITHUB_OUTPUT"
+
+      - name: Reject existing immutable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.metadata.outputs.tag }}
+          TAG_MODE: ${{ steps.metadata.outputs.tag_mode }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Stable release $TAG already exists; stable releases are immutable." >&2
+            exit 1
+          fi
+
+          if [ "$TAG_MODE" = "create" ] && git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "Stable tag $TAG already exists; stable releases are immutable." >&2
+            exit 1
+          fi
+
+      - name: Install system build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config cmake perl file
+
+      - name: Restore Rust toolchain cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.rustup/toolchains/1.95.0-aarch64-unknown-linux-gnu
+            ~/.rustup/update-hashes/1.95.0-aarch64-unknown-linux-gnu
+          key: rustup-${{ runner.os }}-${{ runner.arch }}-1.95.0
+
+      - name: Install Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_VERSION" --profile minimal
+          rustup default "$RUST_VERSION"
+          rustc -vV
+          cargo -V
+
+      - name: Restore Cargo cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            devices/unit/daemon/target
+          key: cargo-unit-daemon-${{ runner.os }}-${{ runner.arch }}-rust-1.95.0-${{ hashFiles('devices/unit/daemon/Cargo.lock') }}
+          restore-keys: |
+            cargo-unit-daemon-${{ runner.os }}-${{ runner.arch }}-rust-1.95.0-
+
+      - name: Test daemon
+        env:
+          TXING_DAEMON_BUILD_VERSION: ${{ steps.metadata.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --manifest-path devices/unit/daemon/Cargo.toml
+
+      - name: Build daemon
+        env:
+          TXING_DAEMON_BUILD_VERSION: ${{ steps.metadata.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --release --manifest-path devices/unit/daemon/Cargo.toml --bin daemon
+
+      - name: Package release asset
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          package_dir="$RUNNER_TEMP/unit-daemon-package"
+          asset_path="$RUNNER_TEMP/$ASSET_NAME"
+
+          rm -rf "$package_dir"
+          install -d "$package_dir"
+          install -m 755 devices/unit/daemon/target/release/daemon "$package_dir/$BINARY_NAME"
+          strip "$package_dir/$BINARY_NAME"
+          file "$package_dir/$BINARY_NAME"
+          tar -C "$package_dir" -czf "$asset_path" "$BINARY_NAME"
+
+          archive_listing="$(tar -tzf "$asset_path")"
+          if [ "$archive_listing" != "$BINARY_NAME" ]; then
+            echo "Expected archive to contain only root-level $BINARY_NAME, got:" >&2
+            printf '%s\n' "$archive_listing" >&2
+            exit 1
+          fi
+
+          echo "asset_path=$asset_path" >>"$GITHUB_OUTPUT"
+
+      - name: Publish stable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.metadata.outputs.tag }}
+          VERSION: ${{ steps.metadata.outputs.version }}
+          RELEASE_TARGET: ${{ steps.metadata.outputs.release_target }}
+          TAG_MODE: ${{ steps.metadata.outputs.tag_mode }}
+          ASSET_PATH: ${{ steps.package.outputs.asset_path }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          notes_file="$(mktemp)"
+          cat >"$notes_file" <<NOTES
+          Unit daemon stable release.
+
+          - Version: $VERSION
+          - Tag: $TAG
+          - Commit: $RELEASE_TARGET
+          - Asset: $ASSET_NAME
+          NOTES
+
+          args=(
+            "$TAG"
+            "$ASSET_PATH"
+            --title "$TAG"
+            --notes-file "$notes_file"
+            --latest=true
+          )
+
+          if [ "$TAG_MODE" = "verify" ]; then
+            args+=(--verify-tag)
+          else
+            args+=(--target "$RELEASE_TARGET")
+          fi
+
+          gh release create "${args[@]}"

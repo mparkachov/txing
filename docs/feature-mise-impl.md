@@ -127,6 +127,44 @@ The publish step pushes the current commit to the moving branch
 GitHub prerelease, uploads the archive asset, and keeps only the latest 10
 matching unit-daemon feature prereleases.
 
+### Stable Release Workflow
+
+Stable daemon releases are built by:
+
+```text
+.github/workflows/unit-daemon-stable-release.yml
+```
+
+The workflow builds natively on `ubuntu-24.04-arm`, installs Rust `1.95.0`,
+runs daemon tests, builds the release binary, strips it, and packages the same
+mise-compatible archive used by feature prereleases:
+
+```text
+txing-unit-daemon-linux-aarch64.tar.gz
+```
+
+The archive contains one root-level executable:
+
+```text
+txing-unit-daemon
+```
+
+The stable tag and release name are exactly:
+
+```text
+v<VERSION>
+```
+
+The workflow publishes a normal GitHub Release with `prerelease=false` and fails
+if the stable tag or release already exists. It caches the Rust toolchain, Cargo
+downloads, Cargo git checkouts, and `devices/unit/daemon/target` using cache
+keys scoped to Rust `1.95.0` and `devices/unit/daemon/Cargo.lock`.
+
+Final behavior is stable publishing from `main`. During phase-2 development, the
+workflow also supports a temporary tag-push path from
+`feature/build-daemon-for-txing`: the pushed tag must match root `VERSION`, and
+the tagged commit must be reachable from that feature branch.
+
 ### Board Mise Config
 
 The board uses one mise config path for both channels:
@@ -378,7 +416,26 @@ tag, creates the GitHub prerelease, uploads
 `txing-unit-daemon-linux-aarch64.tar.gz`, and prunes older matching feature
 prereleases beyond the latest 10.
 
-### 6. Install Or Update The Board Service
+### 6. Publish A Stable Release During Phase 2
+
+Temporary phase-2 stable publishing from this feature branch uses a matching
+stable tag. From macOS, after committing the workflow and versioned daemon
+changes:
+
+```bash
+version="$(tr -d '[:space:]' < VERSION)"
+git tag "v$version"
+git push origin "v$version"
+```
+
+The workflow rejects the tag unless it is exactly `v<VERSION>` and points to a
+commit reachable from `origin/feature/build-daemon-for-txing`.
+
+After the workflow exists on `main`, normal stable publishing is a push to
+`main` with relevant changes. In both paths, an existing `v<VERSION>` release or
+tag is treated as immutable and causes the workflow to fail.
+
+### 7. Install Or Update The Board Service
 
 Confirm `/var/tmp` is writable and executable:
 
@@ -414,7 +471,7 @@ The installer validates Linux/systemd, the `txing` user, daemon runtime config,
 `/var/tmp`, root writability, and `mise`; then it writes the mise config and
 systemd unit, reloads systemd, enables the service, and restarts it.
 
-### 7. Verify Before Reboot
+### 8. Verify Before Reboot
 
 Check the installed service:
 
@@ -430,7 +487,7 @@ Confirm the journal shows:
 - MQTT connection;
 - retained `board` capability publish.
 
-### 8. Verify Read-Only Reboot
+### 9. Verify Read-Only Reboot
 
 Return the board to read-only mode and reboot:
 
