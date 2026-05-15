@@ -262,8 +262,8 @@ archive contains `txing-unit-daemon` at its root, so mise discovers that
 executable after extraction without `bin` or `rename_exe`. The `tool_alias`
 makes mise report the tool as `txing-unit-daemon` instead of the backend key
 `github:mparkachov/txing`. SLSA and GitHub artifact attestations are disabled
-only for feature mode because the asset is built locally in Lima and uploaded by
-`gh`; stable CI publishing should revisit attestations.
+only for feature mode because the asset is built locally through Docker in Lima
+and uploaded by `gh`; stable CI publishing should revisit attestations.
 
 The installer writes the service with
 `Wants=network-online.target systemd-time-wait-sync.service` and
@@ -314,38 +314,27 @@ even when the board root is read-only.
 
 Most developers use Apple Silicon Macs. Direct macOS-to-Linux dynamic glibc
 cross-linking is not the first-choice workflow. The recommended first workflow is
-a persistent Linux `aarch64` Lima VM with the repository checkout and build
-tooling installed inside the VM.
+a Docker builder running on a Linux `aarch64` Docker daemon in Lima. Lima mounts
+the macOS checkout at the same absolute path, and Docker bind-mounts that path
+read-only into the builder container.
 
-The Lima login shell should activate mise so `just`, `cargo`, and other tools
-are on `PATH` without wrapping each command:
+Build or refresh the reusable builder image after Dockerfile or toolchain
+changes:
 
 ```bash
-cat >> ~/.bashrc <<'EOF'
-export PATH="$HOME/.local/bin:$PATH"
-if command -v mise >/dev/null 2>&1; then
-  eval "$(mise activate bash)"
-fi
-EOF
-exec bash
+just unit::daemon::prerelease-builder-image
 ```
 
-If the current shell has not been reloaded yet, run the build command through
-`mise exec --` instead of bare `just`.
-
-From macOS, log in to the Lima builder and run the Linux build step manually:
+For interactive debugging, open the same cached Docker environment:
 
 ```bash
-limactl shell txing
-cd /path/to/txing
+just unit::daemon::prerelease-builder-shell
+```
+
+From macOS, run the Linux build through Docker:
+
+```bash
 just unit::daemon::prerelease-build
-exit
-```
-
-Current-shell fallback before `.bashrc` activation is active:
-
-```bash
-mise exec -- just unit::daemon::prerelease-build
 ```
 
 Then publish from macOS, where `gh` is authenticated:
@@ -354,15 +343,19 @@ Then publish from macOS, where `gh` is authenticated:
 just unit::daemon::prerelease-publish
 ```
 
-The `unit::daemon::prerelease-build` implementation runs inside Linux and:
+The `unit::daemon::prerelease-build` implementation runs from the development
+host and:
 
-- requires Linux `aarch64`;
-- requires Lima build tools including `cargo`, `file`, `git`, and `python3`;
+- requires Docker connected to a native Linux `arm64` daemon;
+- requires the prerelease builder image from
+  `unit::daemon::prerelease-builder-image`;
 - requires a clean git worktree, including untracked files;
 - derives the feature version from the next patch after root `VERSION` plus a
   Unix timestamp: `v<NEXT_PATCH>-feature.<timestamp>`;
-- run mandatory functional tests;
-- build the release binary for Linux `aarch64`;
+- mounts the repository read-only at the same absolute path inside Docker;
+- uses Docker volumes for Cargo registry, git, and target caches;
+- runs mandatory functional tests;
+- builds the release binary for Linux `aarch64`;
 - embed the feature version into the daemon startup log;
 - strip it;
 - stage it as `txing-unit-daemon-linux-aarch64.tar.gz`, containing a root-level
@@ -562,10 +555,10 @@ Status: complete for the feature channel.
 - Stable mode is supported by the installer, but stable release publishing,
   stable fallback, and stable-wins behavior remain phase 2.
 
-The success criterion is that a developer can build locally in Lima, publish a
-feature prerelease, run the raw installer in feature mode, reboot an opted-in
-board, and see the daemon run that binary without a source checkout on the
-board. This criterion is met for phase 1.
+The success criterion is that a developer can build locally through Docker in
+Lima, publish a feature prerelease, run the raw installer in feature mode,
+reboot an opted-in board, and see the daemon run that binary without a source
+checkout on the board. This criterion is met for phase 1.
 
 ### Phase 2: Repeatable Stable Installation
 

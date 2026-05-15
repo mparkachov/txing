@@ -13,6 +13,11 @@ prerelease_branch := "feature/unit-daemon-prerelease"
 prerelease_asset := "txing-unit-daemon-linux-aarch64.tar.gz"
 prerelease_dir := daemon_dir + "/target/prerelease"
 prerelease_metadata := prerelease_dir + "/metadata.json"
+prerelease_builder_image := "txing-unit-daemon-builder:ubuntu24-rust-stable"
+prerelease_builder_dockerfile := daemon_dir + "/Dockerfile.prerelease-builder"
+prerelease_cargo_registry_volume := "txing-cargo-registry"
+prerelease_cargo_git_volume := "txing-cargo-git"
+prerelease_target_volume := "txing-unit-daemon-target"
 
 cert thing_id='' region=region profile=profile config_dir=config_dir:
     #!/usr/bin/env bash
@@ -181,6 +186,70 @@ run:
     cd "{{project_root}}"
     cargo run --manifest-path devices/unit/daemon/Cargo.toml
 
+prerelease-builder-image rust_toolchain="stable":
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    rust_toolchain="{{rust_toolchain}}"
+    image="{{prerelease_builder_image}}"
+    dockerfile="{{prerelease_builder_dockerfile}}"
+
+    if [[ "$rust_toolchain" == *=* ]]; then
+      echo "Do not pass just recipe arguments as name=value. Use positional arguments." >&2
+      exit 2
+    fi
+    command -v docker >/dev/null || {
+      echo "docker is required to build the unit daemon prerelease builder image." >&2
+      exit 1
+    }
+    if [ ! -r "$dockerfile" ]; then
+      echo "Missing prerelease builder Dockerfile: $dockerfile" >&2
+      exit 1
+    fi
+
+    empty_context="$(mktemp -d "${TMPDIR:-/tmp}/txing-unit-daemon-builder-context.XXXXXX")"
+    cleanup() {
+      rm -rf "$empty_context"
+    }
+    trap cleanup EXIT
+
+    docker build \
+      --build-arg "RUST_TOOLCHAIN=$rust_toolchain" \
+      -f "$dockerfile" \
+      -t "$image" \
+      "$empty_context"
+
+prerelease-builder-shell:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    project_root="{{project_root}}"
+    image="{{prerelease_builder_image}}"
+
+    command -v docker >/dev/null || {
+      echo "docker is required to run the unit daemon prerelease builder shell." >&2
+      exit 1
+    }
+    if ! docker image inspect "$image" >/dev/null 2>&1; then
+      echo "Missing prerelease builder image: $image" >&2
+      echo "Run: just unit::daemon::prerelease-builder-image" >&2
+      exit 1
+    fi
+
+    docker volume create "{{prerelease_cargo_registry_volume}}" >/dev/null
+    docker volume create "{{prerelease_cargo_git_volume}}" >/dev/null
+    docker volume create "{{prerelease_target_volume}}" >/dev/null
+
+    exec docker run --rm -it \
+      --mount "type=bind,source=$project_root,target=$project_root,readonly" \
+      --mount "type=volume,source={{prerelease_cargo_registry_volume}},target=/opt/cargo/registry" \
+      --mount "type=volume,source={{prerelease_cargo_git_volume}},target=/opt/cargo/git" \
+      --mount "type=volume,source={{prerelease_target_volume}},target=/target" \
+      -e CARGO_TARGET_DIR=/target \
+      -w "$project_root" \
+      "$image" \
+      bash
+
 prerelease-build branch=prerelease_branch:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -195,6 +264,8 @@ prerelease-build branch=prerelease_branch:
     package_dir="$prerelease_dir/package"
     binary_name="txing-unit-daemon"
     binary_path="$package_dir/$binary_name"
+    builder_image="{{prerelease_builder_image}}"
+    docker_out_dir="$prerelease_dir/docker-out"
 
     if [[ "$branch" == *=* ]]; then
       echo "Do not pass just recipe arguments as name=value. Use positional arguments." >&2
@@ -204,20 +275,22 @@ prerelease-build branch=prerelease_branch:
       echo "Feature prerelease branch must be under feature/, got: $branch" >&2
       exit 2
     fi
-    if [ "$(uname -s)" != "Linux" ]; then
-      echo "unit daemon prerelease-build must run inside the Linux aarch64 builder." >&2
-      exit 1
-    fi
-    if [ "$(uname -m)" != "aarch64" ]; then
-      echo "unit daemon prerelease-build requires Linux aarch64, got: $(uname -m)" >&2
-      exit 1
-    fi
-    for command in cargo file git python3 strip tar; do
+    for command in docker git python3 tar; do
       if ! command -v "$command" >/dev/null 2>&1; then
-        echo "unit daemon prerelease-build requires '$command'. Install missing Lima build dependencies first." >&2
+        echo "unit daemon prerelease-build requires '$command'." >&2
         exit 1
       fi
     done
+    if ! docker image inspect "$builder_image" >/dev/null 2>&1; then
+      echo "Missing prerelease builder image: $builder_image" >&2
+      echo "Run: just unit::daemon::prerelease-builder-image" >&2
+      exit 1
+    fi
+    server_platform="$(docker version | awk '/^  OS\/Arch:/ {print $2; exit}')"
+    if [ "$server_platform" != "linux/arm64" ]; then
+      echo "unit daemon prerelease-build requires a native linux/arm64 Docker daemon, got: $server_platform" >&2
+      exit 1
+    fi
     if [ -n "$(git -C "$project_root" status --porcelain --untracked-files=all)" ]; then
       echo "Working tree must be clean before prerelease build." >&2
       git -C "$project_root" status --short --untracked-files=all >&2
@@ -236,21 +309,56 @@ prerelease-build branch=prerelease_branch:
     version="$major.$minor.$((patch + 1))-feature.$timestamp"
     tag="v$version"
     commit="$(git -C "$project_root" rev-parse HEAD)"
-    build_host="$(hostname)"
-    build_kernel="$(uname -a)"
 
-    cd "$project_root"
-    TXING_DAEMON_BUILD_VERSION="$version" cargo test --manifest-path devices/unit/daemon/Cargo.toml
-    TXING_DAEMON_BUILD_VERSION="$version" cargo build --release --manifest-path devices/unit/daemon/Cargo.toml --bin daemon
+    docker volume create "{{prerelease_cargo_registry_volume}}" >/dev/null
+    docker volume create "{{prerelease_cargo_git_volume}}" >/dev/null
+    docker volume create "{{prerelease_target_volume}}" >/dev/null
 
     install -d "$prerelease_dir"
-    rm -rf "$package_dir"
-    install -d "$package_dir"
-    install -m 755 "$daemon_dir/target/release/daemon" "$binary_path"
+    rm -rf "$docker_out_dir"
+    install -d "$docker_out_dir"
+
+    docker run --rm -i \
+      --mount "type=bind,source=$project_root,target=$project_root,readonly" \
+      --mount "type=bind,source=$docker_out_dir,target=/out" \
+      --mount "type=volume,source={{prerelease_cargo_registry_volume}},target=/opt/cargo/registry" \
+      --mount "type=volume,source={{prerelease_cargo_git_volume}},target=/opt/cargo/git" \
+      --mount "type=volume,source={{prerelease_target_volume}},target=/target" \
+      -e CARGO_TARGET_DIR=/target \
+      -e TXING_DAEMON_BUILD_VERSION="$version" \
+      -e TXING_PRERELEASE_ASSET_NAME="$asset_name" \
+      -e TXING_PRERELEASE_BINARY_NAME="$binary_name" \
+      -w "$project_root" \
+      "$builder_image" \
+      bash -se <<'DOCKER_BUILD'
+    set -euo pipefail
+
+    build_host="$(hostname)"
+    build_kernel="$(uname -a)"
+    printf '%s\n' "$build_host" > /out/build-host
+    printf '%s\n' "$build_kernel" > /out/build-kernel
+
+    cargo test --manifest-path devices/unit/daemon/Cargo.toml
+    cargo build --release --manifest-path devices/unit/daemon/Cargo.toml --bin daemon
+
+    package_dir="$(mktemp -d /tmp/txing-unit-daemon-package.XXXXXX)"
+    binary_path="$package_dir/$TXING_PRERELEASE_BINARY_NAME"
+    install -m 755 "$CARGO_TARGET_DIR/release/daemon" "$binary_path"
     strip "$binary_path"
     file "$binary_path"
+    install -m 755 "$binary_path" "/out/$TXING_PRERELEASE_BINARY_NAME"
+    tar -C "$package_dir" -czf "/out/$TXING_PRERELEASE_ASSET_NAME" "$TXING_PRERELEASE_BINARY_NAME"
+    tar -tzf "/out/$TXING_PRERELEASE_ASSET_NAME"
+    DOCKER_BUILD
+
+    build_host="$(cat "$docker_out_dir/build-host")"
+    build_kernel="$(cat "$docker_out_dir/build-kernel")"
+
+    rm -rf "$package_dir"
+    install -d "$package_dir"
+    install -m 755 "$docker_out_dir/$binary_name" "$binary_path"
     rm -f "$asset_path"
-    tar -C "$package_dir" -czf "$asset_path" "$binary_name"
+    install -m 644 "$docker_out_dir/$asset_name" "$asset_path"
     tar -tzf "$asset_path"
 
     python3 - "$metadata_path" <<PY
@@ -276,6 +384,8 @@ prerelease-build branch=prerelease_branch:
         json.dump(metadata, handle, indent=2)
         handle.write("\n")
     PY
+
+    rm -rf "$docker_out_dir"
 
     printf 'prepared unit daemon prerelease artifact\n'
     printf '  tag: %s\n' "$tag"
@@ -311,7 +421,7 @@ prerelease-publish:
     }
     if [ ! -r "$metadata_path" ]; then
       echo "Missing prerelease metadata: $metadata_path" >&2
-      echo "Run just unit::daemon::prerelease-build inside the Linux aarch64 builder first." >&2
+      echo "Run just unit::daemon::prerelease-build first." >&2
       exit 1
     fi
     if [ -n "$(git -C "$project_root" status --porcelain --untracked-files=all)" ]; then

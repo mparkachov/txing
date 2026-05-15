@@ -15,8 +15,12 @@ checkout to the board, and does not use `/etc/txing` for daemon runtime config.
 - macOS development host:
   - owns the source checkout;
   - provisions daemon config and certificate material when explicitly requested;
+  - drives Docker prerelease builds through the Lima Docker socket;
   - publishes GitHub prereleases through authenticated `gh`.
-- Lima Linux `aarch64` builder:
+- Docker prerelease builder on Lima Linux `aarch64`:
+  - receives the source checkout as a read-only bind mount at the same absolute
+    path used on macOS and Lima;
+  - uses Docker volumes for Cargo registry, git, and target caches;
   - builds and packages the daemon;
   - runs daemon Rust tests before packaging;
   - does not publish to GitHub.
@@ -290,55 +294,37 @@ not valid yet".
 
 These steps document the manual workflow used to prove phase 1 end to end.
 
-### 1. Prepare The Lima Builder
+### 1. Prepare The Docker Builder
 
-Log in to the Lima builder:
-
-```bash
-limactl shell txing
-```
-
-Install `mise` if it is missing:
+Confirm macOS can reach the Lima Docker daemon and that it is native Linux
+`arm64`:
 
 ```bash
-curl https://mise.run | sh
+docker run --rm alpine:latest uname -a
 ```
 
-Add `mise` to the current shell:
+The Lima instance must mount the checkout path, for example:
+
+```yaml
+mounts:
+  - location: "/Users/Maxim/Developer/txing"
+    writable: true
+```
+
+Build the reusable prerelease builder image:
 
 ```bash
-export PATH="$HOME/.local/bin:$PATH"
+just unit::daemon::prerelease-builder-image
 ```
 
-Install Linux build dependencies once:
+For manual debugging, open the cached builder environment:
 
 ```bash
-sudo apt-get update
-sudo apt-get install -y build-essential pkg-config cmake perl git file python3
+just unit::daemon::prerelease-builder-shell
 ```
 
-Install Rust and confirm tooling:
-
-```bash
-mise use --global rust@1.95.0
-mise exec -- rustc -vV
-mise exec -- just --version
-```
-
-Activate `mise` for future Lima login shells:
-
-```bash
-cat >> ~/.bashrc <<'EOF'
-export PATH="$HOME/.local/bin:$PATH"
-if command -v mise >/dev/null 2>&1; then
-  eval "$(mise activate bash)"
-fi
-EOF
-exec bash
-```
-
-Before the shell has been reloaded, use `mise exec -- just ...` instead of bare
-`just`.
+The shell mounts the repo read-only at `/Users/Maxim/Developer/txing`, mounts
+Cargo cache volumes, and writes build artifacts to the target volume.
 
 ### 2. Provision Local Daemon Config On macOS
 
@@ -380,31 +366,25 @@ chmod 644 "$HOME/.config/txing/unit-daemon/AmazonRootCA1.pem"
 rm -f /tmp/txing-unit-daemon-config.tgz
 ```
 
-### 4. Build The Feature Prerelease In Lima
+### 4. Build The Feature Prerelease With Docker
 
-Log in to Lima and run the build manually:
+From the macOS checkout:
 
 ```bash
-limactl shell txing
-cd /Users/Maxim/Developer/txing
 just unit::daemon::prerelease-build
-exit
-```
-
-Current-shell fallback before `mise` activation:
-
-```bash
-mise exec -- just unit::daemon::prerelease-build
 ```
 
 The build recipe requires:
 
-- Linux `aarch64`;
-- `cargo`, `file`, `git`, `python3`, `strip`, and `tar`;
+- Docker connected to a native Linux `arm64` daemon;
+- the `txing-unit-daemon-builder:ubuntu24-rust-stable` image built by
+  `just unit::daemon::prerelease-builder-image`;
 - a clean git worktree, including untracked files.
 
 It runs daemon tests, builds the release binary, strips it, packages it, and
-writes JSON metadata beside the staged archive.
+writes JSON metadata beside the staged archive. The repository bind mount is
+read-only inside Docker; generated outputs are copied back into
+`devices/unit/daemon/target/prerelease` by the host recipe.
 
 ### 5. Publish The Feature Prerelease From macOS
 
@@ -419,7 +399,7 @@ The publish recipe requires:
 - macOS;
 - authenticated `gh`;
 - a clean git worktree;
-- current `HEAD` matching the Lima build metadata.
+- current `HEAD` matching the Docker build metadata.
 
 It pushes `HEAD` to `feature/unit-daemon-prerelease`, pushes the timestamped
 tag, creates the GitHub prerelease, uploads
