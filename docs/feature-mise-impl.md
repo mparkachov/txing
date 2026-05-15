@@ -155,15 +155,14 @@ The stable tag and release name are exactly:
 v<VERSION>
 ```
 
-The workflow publishes a normal GitHub Release with `prerelease=false` and fails
-if the stable tag or release already exists. It caches the Rust toolchain, Cargo
-downloads, Cargo git checkouts, and `devices/unit/daemon/target` using cache
-keys scoped to Rust `1.95.0` and `devices/unit/daemon/Cargo.lock`.
+The workflow is manual-only through `workflow_dispatch`. It publishes a normal
+GitHub Release with `prerelease=false` and fails if the stable tag or release
+already exists. It caches the Rust toolchain, Cargo downloads, Cargo git
+checkouts, and `devices/unit/daemon/target` using cache keys scoped to Rust
+`1.95.0` and `devices/unit/daemon/Cargo.lock`.
 
-Final behavior is stable publishing from `main`. During phase-2 development, the
-workflow also supports a temporary tag-push path from
-`feature/build-daemon-for-txing`: the pushed tag must match root `VERSION`, and
-the tagged commit must be reachable from that feature branch.
+Final behavior is manual stable publishing from `main`. During phase-2
+development, manual runs from `feature/build-daemon-for-txing` are also allowed.
 
 ### Board Mise Config
 
@@ -423,22 +422,12 @@ prereleases beyond the latest 10.
 
 ### 6. Publish A Stable Release During Phase 2
 
-Temporary phase-2 stable publishing from this feature branch uses a matching
-stable tag. From macOS, after committing the workflow and versioned daemon
-changes:
+Stable publishing is manual-only while phase 2 is being developed. Push the
+branch containing the workflow, then run the `Unit Daemon Stable Release`
+workflow manually from either `main` or `feature/build-daemon-for-txing`.
 
-```bash
-version="$(tr -d '[:space:]' < VERSION)"
-git tag "v$version"
-git push origin "v$version"
-```
-
-The workflow rejects the tag unless it is exactly `v<VERSION>` and points to a
-commit reachable from `origin/feature/build-daemon-for-txing`.
-
-After the workflow exists on `main`, normal stable publishing is a push to
-`main` with relevant changes. In both paths, an existing `v<VERSION>` release or
-tag is treated as immutable and causes the workflow to fail.
+The workflow reads root `VERSION`, creates release `v<VERSION>`, and rejects the
+run if that stable tag or release already exists.
 
 ### 7. Install Or Update The Board Service
 

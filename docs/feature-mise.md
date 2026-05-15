@@ -367,11 +367,9 @@ is intentionally moving; the default branch name is
 Stable publishing is CI-owned:
 
 - Workflow: `.github/workflows/unit-daemon-stable-release.yml`.
-- Final trigger: push to `main` where root `VERSION`, daemon inputs, shared
-  code, or the workflow changed.
-- Temporary phase-2 trigger: push a matching stable tag from
-  `feature/build-daemon-for-txing` while the workflow is being developed before
-  it exists on `main`.
+- Current trigger: manual `workflow_dispatch` only.
+- Allowed manual refs: `main` and temporary phase-2 branch
+  `feature/build-daemon-for-txing`.
 - Version: root `VERSION` exactly.
 - Release: repo-wide `v<VERSION>`.
 - GitHub prerelease flag: `false`.
@@ -380,7 +378,7 @@ Stable publishing is CI-owned:
 - Asset command: `txing-unit-daemon`.
 - Asset archive: `txing-unit-daemon-linux-aarch64.tar.gz`, containing a
   root-level `txing-unit-daemon` executable.
-- Existing stable releases and assets are immutable. CI fails rather than
+- Existing stable tags, releases, and assets are immutable. CI fails rather than
   replacing a tag, release, or asset for an already-published version.
 
 The workflow builds natively on GitHub's Linux `aarch64` runner, runs daemon
@@ -550,9 +548,9 @@ board. This criterion is met for phase 1.
 
 Goal: make stable board setup and maintenance boring and repeatable.
 
-- Add CI publishing for stable releases on `main` when `VERSION` changes.
-  Implemented as `.github/workflows/unit-daemon-stable-release.yml`; temporary
-  phase-2 tag publishing from `feature/build-daemon-for-txing` is also allowed.
+- Add CI publishing for stable releases. Implemented as manual
+  `.github/workflows/unit-daemon-stable-release.yml`; temporary phase-2 manual
+  runs from `feature/build-daemon-for-txing` are also allowed.
 - Make stable release assets immutable. Implemented in the workflow.
 - Document the initial board setup from fresh Raspberry Pi OS image through
   dedicated `txing` user, mise install, stable tool config, certificates, and

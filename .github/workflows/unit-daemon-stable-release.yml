@@ -2,16 +2,6 @@ name: Unit Daemon Stable Release
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-    tags:
-      - 'v*.*.*'
-    paths:
-      - VERSION
-      - devices/unit/daemon/**
-      - shared/**
-      - .github/workflows/unit-daemon-stable-release.yml
 
 permissions:
   contents: write
@@ -51,28 +41,14 @@ jobs:
 
           tag="v$version"
           release_target="$(git rev-parse HEAD)"
-          case "${GITHUB_REF_TYPE}" in
-            branch)
-              if [ "${GITHUB_REF_NAME}" != "main" ]; then
-                echo "Stable releases from branches are only allowed from main, got: ${GITHUB_REF_NAME}" >&2
-                exit 1
-              fi
-              tag_mode="create"
-              ;;
-            tag)
-              if [ "${GITHUB_REF_NAME}" != "$tag" ]; then
-                echo "Tag ${GITHUB_REF_NAME} must match root VERSION tag $tag." >&2
-                exit 1
-              fi
-              git fetch origin "$STABLE_FEATURE_BRANCH:refs/remotes/origin/$STABLE_FEATURE_BRANCH" --force
-              if ! git merge-base --is-ancestor "$release_target" "origin/$STABLE_FEATURE_BRANCH"; then
-                echo "Temporary stable tag releases must point to a commit reachable from origin/$STABLE_FEATURE_BRANCH." >&2
-                exit 1
-              fi
-              tag_mode="verify"
-              ;;
+          if [ "${GITHUB_REF_TYPE}" != "branch" ]; then
+            echo "Stable release workflow must be run manually from a branch, got ref type: ${GITHUB_REF_TYPE}" >&2
+            exit 1
+          fi
+          case "${GITHUB_REF_NAME}" in
+            main|"$STABLE_FEATURE_BRANCH") ;;
             *)
-              echo "Unsupported ref type for stable release: ${GITHUB_REF_TYPE}" >&2
+              echo "Stable release workflow is only allowed from main or $STABLE_FEATURE_BRANCH, got: ${GITHUB_REF_NAME}" >&2
               exit 1
               ;;
           esac
@@ -80,13 +56,11 @@ jobs:
           echo "version=$version" >>"$GITHUB_OUTPUT"
           echo "tag=$tag" >>"$GITHUB_OUTPUT"
           echo "release_target=$release_target" >>"$GITHUB_OUTPUT"
-          echo "tag_mode=$tag_mode" >>"$GITHUB_OUTPUT"
 
       - name: Reject existing immutable release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.metadata.outputs.tag }}
-          TAG_MODE: ${{ steps.metadata.outputs.tag_mode }}
         shell: bash
         run: |
           set -euo pipefail
@@ -96,7 +70,7 @@ jobs:
             exit 1
           fi
 
-          if [ "$TAG_MODE" = "create" ] && git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
             echo "Stable tag $TAG already exists; stable releases are immutable." >&2
             exit 1
           fi
@@ -184,7 +158,6 @@ jobs:
           TAG: ${{ steps.metadata.outputs.tag }}
           VERSION: ${{ steps.metadata.outputs.version }}
           RELEASE_TARGET: ${{ steps.metadata.outputs.release_target }}
-          TAG_MODE: ${{ steps.metadata.outputs.tag_mode }}
           ASSET_PATH: ${{ steps.package.outputs.asset_path }}
         shell: bash
         run: |
@@ -208,10 +181,6 @@ jobs:
             --latest=true
           )
 
-          if [ "$TAG_MODE" = "verify" ]; then
-            args+=(--verify-tag)
-          else
-            args+=(--target "$RELEASE_TARGET")
-          fi
+          args+=(--target "$RELEASE_TARGET")
 
           gh release create "${args[@]}"
