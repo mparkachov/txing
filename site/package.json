@@ -1,7 +1,7 @@
 {
   "name": "site",
   "private": true,
-  "version": "0.9.110",
+  "version": "0.9.111",
   "type": "module",
   "packageManager": "bun@1.3.11",
   "scripts": {
