@@ -56,6 +56,7 @@ const BLUEZ_IN_PROGRESS_RECONNECT_DELAY_MS: u64 = 10_000;
 const BLUEZ_RESOURCE_EXHAUSTED_RECONNECT_DELAY_MS: u64 = 60_000;
 const BLE_SCANNER_PROPERTY_ERROR_LOG_INTERVAL_MS: u64 = 30_000;
 const BLE_SCANNER_DEBUG_SUMMARY_INTERVAL_MS: u64 = 5_000;
+const BLE_SCANNER_NO_TARGET_LOG_INTERVAL_MS: u64 = 30_000;
 const BLE_SCANNER_DEBUG_SAMPLE_LIMIT: usize = 8;
 const BLE_SCANNER_UNMANAGED_TXING_LOG_INTERVAL_MS: u64 = 30_000;
 const SHADOW_PUBLISH_INTERVAL_MS: u64 = 500;
@@ -1249,7 +1250,7 @@ impl ScannerDebugSummary {
         }
     }
 
-    fn log(&self, target_names: &BTreeSet<String>) {
+    fn log_debug(&self, target_names: &BTreeSet<String>) {
         eprintln!(
             "debug: BLE scanner visibility total={} named={} txingService={} target={} freshTarget={} missingName={} staleTarget={} targets={target_names:?} samples=[{}]",
             self.total,
@@ -1259,6 +1260,17 @@ impl ScannerDebugSummary {
             self.fresh_target,
             self.missing_name,
             self.stale_target,
+            self.samples.join("; ")
+        );
+    }
+
+    fn log_no_target_warning(&self, target_names: &BTreeSet<String>) {
+        eprintln!(
+            "warning: BLE scanner has no target advertisements total={} named={} txingService={} missingName={} targets={target_names:?} samples=[{}]",
+            self.total,
+            self.named,
+            self.txing_service,
+            self.missing_name,
             self.samples.join("; ")
         );
     }
@@ -1590,7 +1602,7 @@ async fn default_adapter() -> Result<Arc<Adapter>> {
 async fn find_peripheral(
     adapter: &Adapter,
     address: &str,
-    _thing_name: &str,
+    thing_name: &str,
 ) -> Result<Option<Peripheral>> {
     for peripheral in adapter
         .peripherals()
@@ -1602,7 +1614,9 @@ async fn find_peripheral(
             Ok(None) => continue,
             Err(_) => continue,
         };
-        if properties.address.to_string() == address {
+        if properties.address.to_string() == address
+            || properties.local_name.as_deref() == Some(thing_name)
+        {
             return Ok(Some(peripheral));
         }
     }
@@ -1659,6 +1673,7 @@ struct ScannerRunState {
     last_published_by_name: BTreeMap<String, u64>,
     last_unmanaged_txing_log_by_name: BTreeMap<String, u64>,
     last_logged_targets: BTreeSet<String>,
+    last_no_target_log_ms: u64,
     last_property_error_log_ms: u64,
     debug_summary: ScannerDebugSummary,
 }
@@ -1682,6 +1697,32 @@ impl ScannerRunState {
             );
             self.last_property_error_log_ms = now;
         }
+    }
+
+    fn log_visibility_summary_if_needed(
+        &mut self,
+        config: &RuntimeConfig,
+        target_names: &BTreeSet<String>,
+    ) {
+        if target_names.is_empty() {
+            self.debug_summary = ScannerDebugSummary::default();
+            return;
+        }
+        if config.debug {
+            self.debug_summary.log_debug(target_names);
+            self.debug_summary = ScannerDebugSummary::default();
+            return;
+        }
+        if self.debug_summary.fresh_target > 0 {
+            self.debug_summary = ScannerDebugSummary::default();
+            return;
+        }
+        let now = now_ms();
+        if now.saturating_sub(self.last_no_target_log_ms) >= BLE_SCANNER_NO_TARGET_LOG_INTERVAL_MS {
+            self.debug_summary.log_no_target_warning(target_names);
+            self.last_no_target_log_ms = now;
+        }
+        self.debug_summary = ScannerDebugSummary::default();
     }
 
     async fn process_peripheral(
@@ -1710,16 +1751,14 @@ impl ScannerRunState {
             .is_some_and(|value| target_names.contains(value));
         let service_advertised = properties.services.contains(&TXING_BLE_SERVICE_UUID);
         let fresh_signal = scanner_advertisement_has_fresh_signal(properties.rssi);
-        if config.debug {
-            self.debug_summary.record(
-                &address,
-                local_name.as_deref(),
-                properties.rssi,
-                service_advertised,
-                target_matches,
-                fresh_signal,
-            );
-        }
+        self.debug_summary.record(
+            &address,
+            local_name.as_deref(),
+            properties.rssi,
+            service_advertised,
+            target_matches,
+            fresh_signal,
+        );
         if config.debug && target_matches {
             eprintln!(
                 "debug: BLE scanner candidate source={source} thing={} address={} rssi={:?} serviceAdvertised={} freshSignal={fresh_signal}",
@@ -1823,10 +1862,10 @@ async fn run_scanner_once(
     let mut poll_timer = interval(Duration::from_millis(config.scan_interval_ms.max(1)));
     poll_timer.set_missed_tick_behavior(MissedTickBehavior::Skip);
     poll_timer.tick().await;
-    let mut debug_summary_timer =
+    let mut visibility_summary_timer =
         interval(Duration::from_millis(BLE_SCANNER_DEBUG_SUMMARY_INTERVAL_MS));
-    debug_summary_timer.set_missed_tick_behavior(MissedTickBehavior::Skip);
-    debug_summary_timer.tick().await;
+    visibility_summary_timer.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    visibility_summary_timer.tick().await;
     loop {
         tokio::select! {
             event = events.next() => {
@@ -1860,10 +1899,9 @@ async fn run_scanner_once(
                     state.process_peripheral(config, &advertisements, &target_names, &peripheral, "poll").await?;
                 }
             }
-            _ = debug_summary_timer.tick(), if config.debug => {
+            _ = visibility_summary_timer.tick() => {
                 let target_names = scanner_targets_snapshot(&scanner_targets);
-                state.debug_summary.log(&target_names);
-                state.debug_summary = ScannerDebugSummary::default();
+                state.log_visibility_summary_if_needed(config, &target_names);
             }
         }
     }

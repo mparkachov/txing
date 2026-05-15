@@ -1,6 +1,6 @@
 [package]
 name = "power-device-test"
-version = "0.9.10"
+version = "0.9.101"
 edition = "2024"
 description = "Power device physical BLE contract tests"
 
