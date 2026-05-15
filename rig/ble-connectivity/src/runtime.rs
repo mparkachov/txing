@@ -2856,7 +2856,7 @@ mod tests {
 
     #[cfg(not(all(feature = "ble-real", any(target_os = "linux", target_os = "macos"))))]
     #[tokio::test]
-    async fn stale_power_measurement_clears_power_capability_and_shadow() {
+    async fn stale_power_measurement_clears_power_shadow_but_keeps_active_power_capability() {
         let (sender, mut receiver) = mpsc::unbounded_channel();
         let (shadow_sender, mut shadow_receiver) = mpsc::unbounded_channel();
         let mut session = DeviceSession::new(
@@ -2879,7 +2879,7 @@ mod tests {
 
         let outbound = receiver.recv().await.unwrap();
         let state: CapabilityState = serde_json::from_slice(&outbound.payload).unwrap();
-        assert_eq!(state.capabilities.get("power"), Some(&false));
+        assert_eq!(state.capabilities.get("power"), Some(&true));
 
         let _ble_shadow = shadow_receiver.recv().await.unwrap();
         let power_shadow = shadow_receiver.recv().await.unwrap();

@@ -68,8 +68,9 @@ export POWER_MCU_NCS_PYTHON=/opt/homebrew/bin/python3.13
 
 The firmware uses stock nRF Connect SDK `west build` with the built-in Seeed
 board identifier `xiao_nrf54l15/nrf54l15/cpuapp`. Build-time values live in
-`mcu/zephyr/prj.conf`, and REDCON Kconfig symbols are defined in
-`mcu/zephyr/Kconfig`. Build and flash commands do not take a profile argument.
+`mcu/zephyr/prj.conf`; app-specific Kconfig includes the shared REDCON symbols
+from `devices/common/mcu/xiao_nrf54l15/Kconfig`. Build and flash commands do
+not take a profile argument.
 
 ```sh
 just power::mcu::paths
@@ -152,7 +153,7 @@ just power::test 1 <power-thing-id> --idle-report-timeout 90
 - Advertises with the NVE-stored BLE device name and the REDCON service UUID.
 - REDCON `3` command turns LED and D1 on, requests configured connection params, and notifies state.
 - REDCON `4` command keeps the BLE connection open, returns LED and D1 off, samples battery, notifies the power measurement, and then samples/notifies again every 60 seconds while connected.
-- Disconnect returns the MCU to REDCON `4`, cancels the connected-idle battery loop, and resumes advertising.
+- Disconnect preserves REDCON `3` when the device is in wakeup state, keeps LED and D1 on, and resumes advertising. Disconnect in REDCON `4` stays in REDCON `4`, cancels the connected-idle battery loop, and resumes advertising.
 - REDCON command payload is `<version, redcon>`; state payload is `<version, redcon>`.
 - Power measurement payload is `<version, battery_mv>` on `f6b4b003-7b32-4d2d-9f4b-4ff0a2b8f100`.
 

@@ -9,7 +9,7 @@ xiao_nrf54l15/nrf54l15/cpuapp
 The board is a Seeed Studio XIAO nRF54L15 with a BME280 on I2C. BME280 power is
 switched by XIAO D1, and firmware only powers the sensor during a measurement.
 
-The firmware uses the same REDCON BLE service contract as `devices/power`:
+The firmware uses the shared REDCON BLE service implementation:
 
 - command/state UUIDs use payload version `2`
 - state is always `<2, 4>`
@@ -19,7 +19,7 @@ The firmware uses the same REDCON BLE service contract as `devices/power`:
 - weather measurement `f6b4b004-7b32-4d2d-9f4b-4ff0a2b8f100` carries `<version, temperature_centi_c, pressure_pa, humidity_centi_percent>`
 - connected REDCON `4` reports battery and BME280 measurements every 60 seconds
 
-Factory/NVE data is power-compatible REDCON factory data at `0x000f0000`:
+Factory/NVE data is shared REDCON factory data at `0x000f0000`:
 
 - magic `TXR1`
 - version `1`

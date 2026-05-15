@@ -263,8 +263,7 @@ pub fn power_state_sample(
         kind: DeviceKind::Power,
         sparkplug_available: true,
         ble_available: true,
-        power_available: redcon < REDCON_IDLE
-            && measurement.and_then(|item| item.battery_mv).is_some(),
+        power_available: redcon < REDCON_IDLE,
         weather_available: false,
         ble_local_name: Some(spec.thing_name.clone()),
         ble_address,
@@ -565,6 +564,19 @@ mod tests {
         assert_eq!(payload["state"]["reported"]["batteryMv"], Value::from(3970));
         assert!(payload["state"]["reported"]["observedAtMs"].is_null());
         assert!(payload["state"]["reported"]["seq"].is_null());
+    }
+
+    #[test]
+    fn active_power_state_keeps_power_capability_without_fresh_battery() {
+        let spec = DeviceSpec {
+            thing_name: "power-1".to_string(),
+            kind: DeviceKind::Power,
+        };
+        let sample = power_state_sample(&spec, REDCON_ACTIVE, None, None, 3, 1000);
+        let state = capability_state_from_sample(ADAPTER_ID, &sample);
+
+        assert_eq!(state.capabilities[POWER_CAPABILITY], true);
+        assert_eq!(sample.battery_mv, None);
     }
 
     #[test]
