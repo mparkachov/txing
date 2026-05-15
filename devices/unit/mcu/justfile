@@ -12,7 +12,7 @@ build_version := "ncs-v3.3.0"
 build_dir := mcu_dir + "/build/ncs-xiao_nrf54l15_cpuapp"
 firmware_hex := build_dir + "/zephyr/zephyr/zephyr.hex"
 firmware_hex_fallback := build_dir + "/zephyr/zephyr.hex"
-nve_script := mcu_dir + "/scripts/redcon_nve.py"
+nve_script := common_mcu_dir + "/xiao_nrf54l15/scripts/redcon_nve.py"
 ncs_script := mcu_dir + "/scripts/ncs_unit_mcu.py"
 nve_hex := build_dir + "/redcon-factory-nve.hex"
 nve_address := "0x000f0000"
@@ -76,13 +76,13 @@ _firmware-hex:
       -c shutdown
     printf '\n'
 
-@build-nve-hex device_name="unit-test":
+@build-nve-hex thing_name="unit-test":
     test -f "{{ nve_script }}" || { echo "missing REDCON NVE script: {{ nve_script }}" >&2; exit 1; }
     mkdir -p "{{ build_dir }}"
-    python3 "{{ nve_script }}" write-hex "{{ device_name }}" --address "{{ nve_address }}" --output "{{ nve_hex }}"
+    python3 "{{ nve_script }}" write-hex "{{ thing_name }}" --address "{{ nve_address }}" --output "{{ nve_hex }}"
 
-@check-nve device_name="unit-test": _ensure-openocd
-    just --justfile "{{ mcu_dir }}/justfile" build-nve-hex "{{ device_name }}"
+@check-nve thing_name="unit-test": _ensure-openocd
+    just --justfile "{{ mcu_dir }}/justfile" build-nve-hex "{{ thing_name }}"
     printf '%q ' \
       openocd \
       -s "{{ openocd_support_dir }}" \
@@ -96,8 +96,8 @@ _firmware-hex:
       -c shutdown
     printf '\n'
 
-@flash-nve device_name="unit-test": _ensure-openocd
-    just --justfile "{{ mcu_dir }}/justfile" build-nve-hex "{{ device_name }}"
+@flash-nve thing_name="unit-test": _ensure-openocd
+    just --justfile "{{ mcu_dir }}/justfile" build-nve-hex "{{ thing_name }}"
     openocd \
       -s "{{ openocd_support_dir }}" \
       -f "{{ openocd_cfg }}" \

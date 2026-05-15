@@ -432,9 +432,10 @@ Operational notes:
 
 - Do all package installs, `mise` tool installs or updates, repo updates, rebuilds, and `systemd` unit changes while the root is writable.
 - Switch back to read-only only after the runtime, native sender, and config files are in place.
-- The `mise` binary, unit daemon mise config, and stable unit daemon install
-  live under the `txing` user's home directory. Stable installs must happen
-  while the root filesystem is writable. Feature-channel daemon artifacts are
+- The `mise` binary, normal user mise config, and stable unit daemon install
+  live under the `txing` user's home directory. Stable installs and upgrades
+  must happen while the root filesystem is writable and should use plain
+  `mise upgrade` as the `txing` user. Feature-channel daemon artifacts are
   installed at service start into `/var/tmp/txing/unit-daemon/`, which is
   tmpfs-backed and executable.
 - AWS-backed services that install or connect over HTTPS during boot must wait

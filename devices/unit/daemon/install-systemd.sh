@@ -84,6 +84,7 @@ mise_bin="$(resolve_mise)" || fail "mise is required; install it for the '$daemo
 
 mise_config_dir="$daemon_home/.config/mise/txing-unit-daemon"
 mise_config_file="$mise_config_dir/config.toml"
+stable_config_file="$daemon_home/.config/mise/conf.d/txing-unit-daemon.toml"
 service_name="txing-unit-daemon.service"
 service_file="$systemd_dir/$service_name"
 legacy_service_name="txing-unit-daemon-feature.service"
@@ -107,7 +108,12 @@ if systemctl list-unit-files NetworkManager-wait-online.service --no-legend --no
   systemctl enable NetworkManager-wait-online.service >/dev/null
 fi
 
-install -d -m 700 -o "$daemon_user" -g "$daemon_group" "$daemon_home/.config/mise" "$mise_config_dir"
+install -d -m 700 -o "$daemon_user" -g "$daemon_group" "$daemon_home/.config/mise"
+if [ "$channel" = "stable" ]; then
+  install -d -m 700 -o "$daemon_user" -g "$daemon_group" "$daemon_home/.config/mise/conf.d"
+else
+  install -d -m 700 -o "$daemon_user" -g "$daemon_group" "$mise_config_dir"
+fi
 config_tmp="$(mktemp)"
 service_tmp="$(mktemp)"
 trap 'if [ -n "${var_tmp_probe:-}" ]; then rm -rf "$var_tmp_probe"; fi; rm -f "$config_tmp" "$service_tmp"' EXIT
@@ -131,15 +137,14 @@ github_attestations = false
 EOF
 fi
 
-install -m 600 -o "$daemon_user" -g "$daemon_group" "$config_tmp" "$mise_config_file"
-
 if [ "$channel" = "stable" ]; then
+  install -m 600 -o "$daemon_user" -g "$daemon_group" "$config_tmp" "$stable_config_file"
   command -v runuser >/dev/null 2>&1 || fail "runuser is required for stable install as '$daemon_user'"
   runuser -u "$daemon_user" -- env \
-    "MISE_CONFIG_DIR=$mise_config_dir" \
     "HOME=$daemon_home" \
     "$mise_bin" install
 else
+  install -m 600 -o "$daemon_user" -g "$daemon_group" "$config_tmp" "$mise_config_file"
   install -d -m 700 -o "$daemon_user" -g "$daemon_group" \
     "$tmp_root/mise" \
     "$tmp_root/mise-cache" \
@@ -164,12 +169,12 @@ TimeoutStopSec=30
 Restart=on-failure
 RestartSec=5
 
-Environment=MISE_CONFIG_DIR=$mise_config_dir
 Environment=TXING_DAEMON_CONFIG_DIR=$daemon_config_dir
 Environment=HOME=$daemon_home
 EOF
   if [ "$channel" = "feature" ]; then
     cat <<EOF
+Environment=MISE_CONFIG_DIR=$mise_config_dir
 Environment=MISE_DATA_DIR=$tmp_root/mise
 Environment=MISE_CACHE_DIR=$tmp_root/mise-cache
 Environment=MISE_TMP_DIR=$tmp_root/mise-tmp
@@ -202,7 +207,11 @@ systemctl enable "$service_name"
 systemctl restart "$service_name"
 
 printf 'installed %s for %s channel\n' "$service_name" "$channel"
-printf '  mise config: %s\n' "$mise_config_file"
+if [ "$channel" = "stable" ]; then
+  printf '  mise config: %s\n' "$stable_config_file"
+else
+  printf '  mise config: %s\n' "$mise_config_file"
+fi
 printf '  systemd unit: %s\n' "$service_file"
 printf '  mise binary: %s\n' "$mise_bin"
 if [ "$channel" = "stable" ]; then

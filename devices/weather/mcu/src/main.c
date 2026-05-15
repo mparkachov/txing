@@ -1,63 +1,19 @@
 #include <errno.h>
 #include <stddef.h>
-#include <stdbool.h>
 #include <stdint.h>
-#include <string.h>
 
-#include <zephyr/bluetooth/att.h>
-#include <zephyr/bluetooth/bluetooth.h>
-#include <zephyr/bluetooth/conn.h>
-#include <zephyr/bluetooth/gatt.h>
-#include <zephyr/bluetooth/hci.h>
-#include <zephyr/bluetooth/hci_vs.h>
-#include <zephyr/bluetooth/uuid.h>
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
-#include <zephyr/drivers/adc.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/i2c.h>
-#include <zephyr/drivers/regulator.h>
-#include <nrfx_saadc.h>
 #include <zephyr/kernel.h>
-#include <zephyr/net_buf.h>
 #include <zephyr/sys/byteorder.h>
-#include <zephyr/sys/crc.h>
-#include <zephyr/sys/util.h>
 
-#if (!DT_NODE_EXISTS(DT_PATH(zephyr_user)) ||                                      \
-     !DT_NODE_HAS_PROP(DT_PATH(zephyr_user), io_channels))
-#error "weather REDCON battery reporting requires zephyr,user io-channels"
-#endif
+#include <txing_redcon.h>
 
 #if !DT_NODE_HAS_STATUS(DT_ALIAS(bme280), okay)
 #error "weather REDCON BME280 reporting requires a bme280 devicetree alias"
 #endif
-
-#define REDCON_SERVICE_UUID_VAL                                                             \
-	BT_UUID_128_ENCODE(0xf6b4b000, 0x7b32, 0x4d2d, 0x9f4b, 0x4ff0a2b8f100)
-#define REDCON_COMMAND_UUID_VAL                                                             \
-	BT_UUID_128_ENCODE(0xf6b4b001, 0x7b32, 0x4d2d, 0x9f4b, 0x4ff0a2b8f100)
-#define REDCON_STATE_UUID_VAL                                                               \
-	BT_UUID_128_ENCODE(0xf6b4b002, 0x7b32, 0x4d2d, 0x9f4b, 0x4ff0a2b8f100)
-#define REDCON_POWER_MEASUREMENT_UUID_VAL                                                   \
-	BT_UUID_128_ENCODE(0xf6b4b003, 0x7b32, 0x4d2d, 0x9f4b, 0x4ff0a2b8f100)
-#define REDCON_WEATHER_MEASUREMENT_UUID_VAL                                                 \
-	BT_UUID_128_ENCODE(0xf6b4b004, 0x7b32, 0x4d2d, 0x9f4b, 0x4ff0a2b8f100)
-
-#define REDCON_PROTOCOL_VERSION 2U
-#define REDCON_IDLE 4U
-#define REDCON_STATE_PAYLOAD_SIZE 2U
-#define REDCON_COMMAND_PAYLOAD_SIZE 2U
-#define REDCON_POWER_MEASUREMENT_PAYLOAD_SIZE 3U
-#define REDCON_WEATHER_MEASUREMENT_PAYLOAD_SIZE 11U
-#define REDCON_BLE_ADV_MAX_NAME_LEN 26U
-
-#define REDCON_FACTORY_DATA_MAGIC "TXR1"
-#define REDCON_FACTORY_DATA_VERSION 1U
-#define REDCON_FACTORY_DEVICE_NAME_SIZE 26U
-#define REDCON_DEFAULT_DEVICE_NAME "txing-unconfigured"
-
-#define REDCON_BLE_ADV_OPTIONS BT_LE_ADV_OPT_CONN
 
 #define BME280_REG_PRESS_MSB 0xf7U
 #define BME280_REG_COMP_START 0x88U
@@ -80,35 +36,6 @@
 #define BME280_CONFIG_VAL 0U
 #define BME280_EXPECTED_SAMPLE_TIME_MS 8U
 #define BME280_MEASUREMENT_TIMEOUT_MS 150U
-
-BUILD_ASSERT(CONFIG_BT_DEVICE_NAME_MAX <= REDCON_BLE_ADV_MAX_NAME_LEN,
-	     "REDCON BLE device name must fit legacy advertising data");
-BUILD_ASSERT(sizeof(REDCON_DEFAULT_DEVICE_NAME) - 1 <= CONFIG_BT_DEVICE_NAME_MAX,
-	     "default REDCON BLE device name exceeds configured limit");
-BUILD_ASSERT(REDCON_FACTORY_DEVICE_NAME_SIZE == REDCON_BLE_ADV_MAX_NAME_LEN,
-	     "REDCON factory name capacity must match BLE advertising name capacity");
-
-struct redcon_factory_data {
-	uint8_t magic[4];
-	uint8_t version;
-	uint8_t device_name_len;
-	uint8_t device_name[REDCON_FACTORY_DEVICE_NAME_SIZE];
-	uint32_t crc32_le;
-};
-
-BUILD_ASSERT(sizeof(struct redcon_factory_data) == 36U,
-	     "REDCON factory data must match the NVE writer layout");
-BUILD_ASSERT(offsetof(struct redcon_factory_data, crc32_le) == 32U,
-	     "REDCON factory data CRC offset must match the NVE writer layout");
-
-struct redcon_command {
-	uint8_t redcon;
-};
-
-struct gatt_payload {
-	uint8_t *data;
-	size_t len;
-};
 
 struct bme280_calibration {
 	uint16_t dig_t1;
@@ -135,241 +62,6 @@ struct bme280_calibration {
 static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
 static const struct gpio_dt_spec bme280_power = GPIO_DT_SPEC_GET(DT_ALIAS(power), gpios);
 static const struct i2c_dt_spec bme280_i2c = I2C_DT_SPEC_GET(DT_ALIAS(bme280));
-static const struct adc_dt_spec battery_adc =
-	ADC_DT_SPEC_GET_BY_IDX(DT_PATH(zephyr_user), 0);
-
-#define DEFINE_REGULATOR_DEVICE(name)                                                \
-	COND_CODE_1(DT_NODE_HAS_STATUS(DT_NODELABEL(name), okay),                    \
-		    (static const struct device *const name##_reg =                  \
-			     DEVICE_DT_GET(DT_NODELABEL(name));),                    \
-		    ())
-
-DEFINE_REGULATOR_DEVICE(pdm_imu_pwr)
-DEFINE_REGULATOR_DEVICE(vbat_pwr)
-
-static char device_name[CONFIG_BT_DEVICE_NAME_MAX + 1] = REDCON_DEFAULT_DEVICE_NAME;
-
-static struct bt_data ad[] = {
-	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
-	BT_DATA(BT_DATA_NAME_COMPLETE, device_name, sizeof(REDCON_DEFAULT_DEVICE_NAME) - 1),
-};
-
-static const struct bt_data sd[] = {
-	BT_DATA_BYTES(BT_DATA_UUID128_ALL, REDCON_SERVICE_UUID_VAL),
-};
-
-static const struct bt_le_adv_param adv_params =
-	BT_LE_ADV_PARAM_INIT(REDCON_BLE_ADV_OPTIONS, CONFIG_REDCON_BLE_ADV_INTERVAL,
-			     CONFIG_REDCON_BLE_ADV_INTERVAL, NULL);
-
-static uint8_t redcon_state_payload[REDCON_STATE_PAYLOAD_SIZE] = {
-	REDCON_PROTOCOL_VERSION,
-	REDCON_IDLE,
-};
-static uint8_t power_measurement_payload[REDCON_POWER_MEASUREMENT_PAYLOAD_SIZE] = {
-	REDCON_PROTOCOL_VERSION,
-	0,
-	0,
-};
-static uint8_t weather_measurement_payload[REDCON_WEATHER_MEASUREMENT_PAYLOAD_SIZE] = {
-	REDCON_PROTOCOL_VERSION,
-	0,
-	0,
-	0,
-	0,
-	0,
-	0,
-	0,
-	0,
-	0,
-	0,
-};
-static struct gatt_payload redcon_state_value = {
-	.data = redcon_state_payload,
-	.len = sizeof(redcon_state_payload),
-};
-static struct gatt_payload power_measurement_value = {
-	.data = power_measurement_payload,
-	.len = sizeof(power_measurement_payload),
-};
-static struct gatt_payload weather_measurement_value = {
-	.data = weather_measurement_payload,
-	.len = sizeof(weather_measurement_payload),
-};
-
-static const struct bt_uuid_128 redcon_service_uuid =
-	BT_UUID_INIT_128(REDCON_SERVICE_UUID_VAL);
-static const struct bt_uuid_128 redcon_command_uuid =
-	BT_UUID_INIT_128(REDCON_COMMAND_UUID_VAL);
-static const struct bt_uuid_128 redcon_state_uuid =
-	BT_UUID_INIT_128(REDCON_STATE_UUID_VAL);
-static const struct bt_uuid_128 redcon_power_measurement_uuid =
-	BT_UUID_INIT_128(REDCON_POWER_MEASUREMENT_UUID_VAL);
-static const struct bt_uuid_128 redcon_weather_measurement_uuid =
-	BT_UUID_INIT_128(REDCON_WEATHER_MEASUREMENT_UUID_VAL);
-
-static struct bt_conn *connected_conn;
-K_MUTEX_DEFINE(connected_conn_lock);
-
-static bool is_valid_device_name_byte(uint8_t value)
-{
-	return value >= 0x21U && value <= 0x7eU;
-}
-
-static bool set_device_name_from_bytes(const uint8_t *name, uint8_t len)
-{
-	if (len == 0U || len > CONFIG_BT_DEVICE_NAME_MAX ||
-	    len > REDCON_BLE_ADV_MAX_NAME_LEN) {
-		return false;
-	}
-
-	for (uint8_t i = 0U; i < len; i++) {
-		if (!is_valid_device_name_byte(name[i])) {
-			return false;
-		}
-	}
-
-	memcpy(device_name, name, len);
-	device_name[len] = '\0';
-	ad[1].data_len = len;
-	return true;
-}
-
-static bool load_device_name_from_nve(void)
-{
-	struct redcon_factory_data factory;
-	const size_t without_crc = offsetof(struct redcon_factory_data, crc32_le);
-	const struct redcon_factory_data *stored =
-		(const struct redcon_factory_data *)CONFIG_REDCON_FACTORY_DATA_ADDRESS;
-	uint32_t crc;
-
-	memcpy(&factory, stored, sizeof(factory));
-
-	if (memcmp(factory.magic, REDCON_FACTORY_DATA_MAGIC, 4U) != 0 ||
-	    factory.version != REDCON_FACTORY_DATA_VERSION) {
-		return false;
-	}
-	if (factory.device_name_len == 0U ||
-	    factory.device_name_len > REDCON_FACTORY_DEVICE_NAME_SIZE) {
-		return false;
-	}
-
-	crc = crc32_ieee((const uint8_t *)&factory, without_crc);
-	if (crc != sys_le32_to_cpu(factory.crc32_le)) {
-		return false;
-	}
-
-	return set_device_name_from_bytes(factory.device_name, factory.device_name_len);
-}
-
-static void configure_output_inactive(const struct gpio_dt_spec *pin)
-{
-	if (device_is_ready(pin->port)) {
-		(void)gpio_pin_configure_dt(pin, GPIO_OUTPUT_INACTIVE);
-	}
-}
-
-static void set_output_active(const struct gpio_dt_spec *pin, bool active)
-{
-	if (device_is_ready(pin->port)) {
-		(void)gpio_pin_set_dt(pin, active ? 1 : 0);
-	}
-}
-
-static void disable_regulator(const struct device *reg)
-{
-	if (device_is_ready(reg)) {
-		(void)regulator_disable(reg);
-	}
-}
-
-static void disable_xiao_load_regulators(void)
-{
-#if DT_NODE_HAS_STATUS(DT_NODELABEL(pdm_imu_pwr), okay)
-	disable_regulator(pdm_imu_pwr_reg);
-#endif
-#if DT_NODE_HAS_STATUS(DT_NODELABEL(vbat_pwr), okay)
-	disable_regulator(vbat_pwr_reg);
-#endif
-}
-
-static void resume_battery_adc(void)
-{
-	if (!nrfx_saadc_init_check()) {
-		(void)nrfx_saadc_init(0);
-	}
-}
-
-static void suspend_battery_adc(void)
-{
-	if (nrfx_saadc_init_check()) {
-		nrfx_saadc_uninit();
-	}
-}
-
-static uint16_t sample_battery_mv(void)
-{
-	uint16_t buf;
-	uint16_t result = 0U;
-	int32_t val_mv;
-	struct adc_sequence sequence = {
-		.buffer = &buf,
-		.buffer_size = sizeof(buf),
-	};
-	int err;
-
-	if (!adc_is_ready_dt(&battery_adc)) {
-		suspend_battery_adc();
-		return 0U;
-	}
-
-	resume_battery_adc();
-
-#if DT_NODE_HAS_STATUS(DT_NODELABEL(vbat_pwr), okay)
-	if (device_is_ready(vbat_pwr_reg)) {
-		(void)regulator_enable(vbat_pwr_reg);
-		k_sleep(K_MSEC(CONFIG_REDCON_BATTERY_ADC_SETTLE_MS));
-	}
-#endif
-
-	err = adc_channel_setup_dt(&battery_adc);
-	if (err < 0) {
-		goto out;
-	}
-
-	(void)adc_sequence_init_dt(&battery_adc, &sequence);
-	err = adc_read_dt(&battery_adc, &sequence);
-	if (err < 0) {
-		goto out;
-	}
-
-	if (battery_adc.channel_cfg.differential) {
-		val_mv = (int32_t)((int16_t)buf);
-	} else {
-		val_mv = (int32_t)buf;
-	}
-
-	err = adc_raw_to_millivolts_dt(&battery_adc, &val_mv);
-	if (err < 0 || val_mv < 0) {
-		goto out;
-	}
-
-	val_mv *= 2;
-	if (val_mv > UINT16_MAX) {
-		val_mv = UINT16_MAX;
-	}
-
-	result = (uint16_t)val_mv;
-
-out:
-#if DT_NODE_HAS_STATUS(DT_NODELABEL(vbat_pwr), okay)
-	if (device_is_ready(vbat_pwr_reg)) {
-		(void)regulator_disable(vbat_pwr_reg);
-	}
-#endif
-	suspend_battery_adc();
-	return result;
-}
 
 static int bme280_read(uint8_t reg, uint8_t *buf, uint32_t len)
 {
@@ -521,7 +213,7 @@ static uint32_t bme280_compensate_humidity(struct bme280_calibration *cal,
 	return (uint32_t)(h >> 12);
 }
 
-static int sample_bme280_payload(void)
+static int sample_bme280_payload(uint8_t *payload, size_t len)
 {
 	struct bme280_calibration cal;
 	uint8_t id;
@@ -536,11 +228,14 @@ static int sample_bme280_payload(void)
 	uint32_t humidity_centi_percent;
 	int err;
 
+	if (payload == NULL || len != TXING_REDCON_WEATHER_MEASUREMENT_PAYLOAD_SIZE) {
+		return -EINVAL;
+	}
 	if (!i2c_is_ready_dt(&bme280_i2c)) {
 		return -ENODEV;
 	}
 
-	set_output_active(&bme280_power, true);
+	txing_redcon_set_output_active(&bme280_power, true);
 	k_sleep(K_MSEC(CONFIG_WEATHER_BME280_POWER_SETTLE_MS));
 
 	err = bme280_read(BME280_REG_ID, &id, sizeof(id));
@@ -606,338 +301,35 @@ static int sample_bme280_payload(void)
 		humidity_centi_percent = 10000U;
 	}
 
-	weather_measurement_payload[0] = REDCON_PROTOCOL_VERSION;
-	sys_put_le32((uint32_t)temperature_centi_c, &weather_measurement_payload[1]);
-	sys_put_le32(pressure_pa, &weather_measurement_payload[5]);
-	sys_put_le16((uint16_t)humidity_centi_percent, &weather_measurement_payload[9]);
+	payload[0] = TXING_REDCON_PROTOCOL_VERSION;
+	sys_put_le32((uint32_t)temperature_centi_c, &payload[1]);
+	sys_put_le32(pressure_pa, &payload[5]);
+	sys_put_le16((uint16_t)humidity_centi_percent, &payload[9]);
 
 out:
-	set_output_active(&bme280_power, false);
+	txing_redcon_set_output_active(&bme280_power, false);
 	return err;
 }
 
-static void encode_redcon_state(void)
+static void before_idle_measurement(void)
 {
-	redcon_state_payload[0] = REDCON_PROTOCOL_VERSION;
-	redcon_state_payload[1] = REDCON_IDLE;
+	txing_redcon_set_output_active(&led, true);
 }
 
-static void encode_power_measurement(uint16_t battery_mv)
+static void after_idle_measurement(void)
 {
-	power_measurement_payload[0] = REDCON_PROTOCOL_VERSION;
-	sys_put_le16(battery_mv, &power_measurement_payload[1]);
+	txing_redcon_set_output_active(&led, false);
 }
 
-static void refresh_power_measurement_payload(void)
-{
-	const uint16_t battery_mv = sample_battery_mv();
-
-	encode_power_measurement(battery_mv);
-}
-
-static bool decode_redcon_command(const uint8_t *data, size_t len,
-				  struct redcon_command *command)
-{
-	if (data == NULL || command == NULL ||
-	    len != REDCON_COMMAND_PAYLOAD_SIZE) {
-		return false;
-	}
-	if (data[0] != REDCON_PROTOCOL_VERSION) {
-		return false;
-	}
-	if (data[1] != REDCON_IDLE) {
-		return false;
-	}
-
-	command->redcon = REDCON_IDLE;
-	return true;
-}
-
-static ssize_t read_state(struct bt_conn *conn, const struct bt_gatt_attr *attr,
-			  void *buf, uint16_t len, uint16_t offset)
-{
-	const struct gatt_payload *payload = attr->user_data;
-
-	encode_redcon_state();
-	return bt_gatt_attr_read(conn, attr, buf, len, offset, payload->data, payload->len);
-}
-
-static ssize_t read_power_measurement(struct bt_conn *conn, const struct bt_gatt_attr *attr,
-				      void *buf, uint16_t len, uint16_t offset)
-{
-	const struct gatt_payload *payload = attr->user_data;
-
-	refresh_power_measurement_payload();
-	return bt_gatt_attr_read(conn, attr, buf, len, offset, payload->data, payload->len);
-}
-
-static ssize_t read_weather_measurement(struct bt_conn *conn, const struct bt_gatt_attr *attr,
-					void *buf, uint16_t len, uint16_t offset)
-{
-	const struct gatt_payload *payload = attr->user_data;
-
-	if (sample_bme280_payload() < 0) {
-		return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
-	}
-	return bt_gatt_attr_read(conn, attr, buf, len, offset, payload->data, payload->len);
-}
-
-static void notify_redcon_state(void);
-static void notify_power_measurement(void);
-static void notify_weather_measurement(void);
-static void schedule_idle_measurement_notification(void);
-
-static struct bt_conn *ref_connected_conn(void)
-{
-	struct bt_conn *conn;
-
-	k_mutex_lock(&connected_conn_lock, K_FOREVER);
-	conn = connected_conn == NULL ? NULL : bt_conn_ref(connected_conn);
-	k_mutex_unlock(&connected_conn_lock);
-
-	return conn;
-}
-
-static void set_connected_conn(struct bt_conn *conn)
-{
-	struct bt_conn *next = conn == NULL ? NULL : bt_conn_ref(conn);
-	struct bt_conn *previous;
-
-	k_mutex_lock(&connected_conn_lock, K_FOREVER);
-	previous = connected_conn;
-	connected_conn = next;
-	k_mutex_unlock(&connected_conn_lock);
-
-	if (previous != NULL) {
-		bt_conn_unref(previous);
-	}
-}
-
-static void idle_measurement_notify_work_handler(struct k_work *work)
-{
-	struct bt_conn *conn;
-	int weather_err;
-
-	ARG_UNUSED(work);
-
-	conn = ref_connected_conn();
-	if (conn == NULL) {
-		return;
-	}
-	bt_conn_unref(conn);
-
-	set_output_active(&led, true);
-	refresh_power_measurement_payload();
-	weather_err = sample_bme280_payload();
-	set_output_active(&led, false);
-
-	notify_power_measurement();
-	if (weather_err == 0) {
-		notify_weather_measurement();
-	}
-	schedule_idle_measurement_notification();
-}
-
-K_WORK_DELAYABLE_DEFINE(idle_measurement_notify_work, idle_measurement_notify_work_handler);
-
-static void cancel_idle_measurement_notifications(void)
-{
-	(void)k_work_cancel_delayable(&idle_measurement_notify_work);
-}
-
-static void schedule_idle_measurement_notification(void)
-{
-	struct bt_conn *conn;
-
-	conn = ref_connected_conn();
-	if (conn == NULL) {
-		return;
-	}
-	bt_conn_unref(conn);
-
-	(void)k_work_schedule(
-		&idle_measurement_notify_work,
-		K_SECONDS(CONFIG_REDCON_BLE_IDLE_MEASUREMENT_NOTIFY_INTERVAL_SECONDS));
-}
-
-static ssize_t write_command(struct bt_conn *conn, const struct bt_gatt_attr *attr,
-			     const void *buf, uint16_t len, uint16_t offset, uint8_t flags)
-{
-	struct redcon_command command;
-
-	ARG_UNUSED(conn);
-	ARG_UNUSED(attr);
-	ARG_UNUSED(flags);
-
-	if (offset != 0U) {
-		return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
-	}
-	if (!decode_redcon_command(buf, len, &command)) {
-		return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
-	}
-
-	encode_redcon_state();
-	notify_redcon_state();
-	refresh_power_measurement_payload();
-	notify_power_measurement();
-	if (sample_bme280_payload() == 0) {
-		notify_weather_measurement();
-	}
-	cancel_idle_measurement_notifications();
-	schedule_idle_measurement_notification();
-
-	return len;
-}
-
-BT_GATT_SERVICE_DEFINE(weather_svc,
-	BT_GATT_PRIMARY_SERVICE(&redcon_service_uuid),
-	BT_GATT_CHARACTERISTIC(&redcon_command_uuid.uuid, BT_GATT_CHRC_WRITE,
-			       BT_GATT_PERM_WRITE, NULL, write_command, NULL),
-	BT_GATT_CHARACTERISTIC(&redcon_state_uuid.uuid, BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY,
-			       BT_GATT_PERM_READ, read_state, NULL, &redcon_state_value),
-	BT_GATT_CCC(NULL, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
-	BT_GATT_CHARACTERISTIC(&redcon_power_measurement_uuid.uuid,
-			       BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_READ,
-			       read_power_measurement, NULL, &power_measurement_value),
-	BT_GATT_CCC(NULL, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
-	BT_GATT_CHARACTERISTIC(&redcon_weather_measurement_uuid.uuid,
-			       BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_READ,
-			       read_weather_measurement, NULL, &weather_measurement_value),
-	BT_GATT_CCC(NULL, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
-);
-
-static void notify_redcon_state(void)
-{
-	(void)bt_gatt_notify(NULL, &weather_svc.attrs[4], redcon_state_payload,
-			     sizeof(redcon_state_payload));
-}
-
-static void notify_power_measurement(void)
-{
-	(void)bt_gatt_notify(NULL, &weather_svc.attrs[7], power_measurement_payload,
-			     sizeof(power_measurement_payload));
-}
-
-static void notify_weather_measurement(void)
-{
-	(void)bt_gatt_notify(NULL, &weather_svc.attrs[10], weather_measurement_payload,
-			     sizeof(weather_measurement_payload));
-}
-
-static void enter_ble_idle_hardware_state(void)
-{
-	set_output_active(&led, false);
-	set_output_active(&bme280_power, false);
-	suspend_battery_adc();
-	disable_xiao_load_regulators();
-}
-
-static int set_adv_tx_power(int8_t dbm)
-{
-	struct bt_hci_cp_vs_write_tx_power_level *cp;
-	struct bt_hci_rp_vs_write_tx_power_level *rp;
-	struct net_buf *buf;
-	struct net_buf *rsp = NULL;
-	int err;
-
-	buf = bt_hci_cmd_alloc(K_FOREVER);
-	if (buf == NULL) {
-		return -ENOMEM;
-	}
-
-	cp = net_buf_add(buf, sizeof(*cp));
-	cp->handle_type = BT_HCI_VS_LL_HANDLE_TYPE_ADV;
-	cp->handle = sys_cpu_to_le16(0);
-	cp->tx_power_level = dbm;
-
-	err = bt_hci_cmd_send_sync(BT_HCI_OP_VS_WRITE_TX_POWER_LEVEL, buf, &rsp);
-	if (err < 0) {
-		return err;
-	}
-
-	rp = (void *)rsp->data;
-	if (rp->status != 0U || rp->selected_tx_power != dbm) {
-		err = -EIO;
-	}
-
-	net_buf_unref(rsp);
-	return err;
-}
-
-static int start_advertising(void)
-{
-	return bt_le_adv_start(&adv_params, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
-}
-
-static void advertise_work_handler(struct k_work *work)
-{
-	ARG_UNUSED(work);
-	(void)start_advertising();
-}
-
-K_WORK_DEFINE(advertise_work, advertise_work_handler);
-
-static void connected(struct bt_conn *conn, uint8_t err)
-{
-	if (err != 0U) {
-		k_work_submit(&advertise_work);
-		return;
-	}
-
-	set_connected_conn(conn);
-	schedule_idle_measurement_notification();
-}
-
-static void disconnected(struct bt_conn *conn, uint8_t reason)
-{
-	ARG_UNUSED(conn);
-	ARG_UNUSED(reason);
-	cancel_idle_measurement_notifications();
-	set_connected_conn(NULL);
-	enter_ble_idle_hardware_state();
-	encode_redcon_state();
-	k_work_submit(&advertise_work);
-}
-
-BT_CONN_CB_DEFINE(conn_callbacks) = {
-	.connected = connected,
-	.disconnected = disconnected,
+static const struct txing_redcon_ops redcon_ops = {
+	.led = &led,
+	.power = &bme280_power,
+	.sample_weather_measurement = sample_bme280_payload,
+	.before_idle_measurement = before_idle_measurement,
+	.after_idle_measurement = after_idle_measurement,
 };
 
 int main(void)
 {
-	int err;
-
-	(void)load_device_name_from_nve();
-
-	configure_output_inactive(&led);
-	configure_output_inactive(&bme280_power);
-	enter_ble_idle_hardware_state();
-	encode_redcon_state();
-
-	err = bt_enable(NULL);
-	if (err < 0) {
-		return err;
-	}
-
-	err = bt_set_name(device_name);
-	if (err < 0) {
-		return err;
-	}
-
-	err = set_adv_tx_power(CONFIG_REDCON_BLE_ADV_TX_POWER_DBM);
-	if (err < 0) {
-		return err;
-	}
-
-	err = start_advertising();
-	if (err < 0) {
-		return err;
-	}
-
-	while (true) {
-		k_sleep(K_FOREVER);
-	}
-
-	return 0;
+	return txing_redcon_run(&redcon_ops);
 }

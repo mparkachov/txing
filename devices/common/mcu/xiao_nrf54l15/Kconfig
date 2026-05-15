@@ -1,0 +1,93 @@
+# SPDX-License-Identifier: Apache-2.0
+
+menu "REDCON"
+
+config REDCON_BATTERY_ADC_SETTLE_MS
+	int "REDCON battery ADC settle delay in ms"
+	default 100
+	range 0 60000
+	help
+	  Delay after enabling battery measurement power before sampling ADC.
+
+config REDCON_FACTORY_DATA_ADDRESS
+	hex "REDCON factory/NVE data address"
+	default 0x000f0000
+	help
+	  Flash address containing the REDCON factory/NVE record. The record
+	  stores the BLE device name used for advertising and the Generic Access
+	  device name.
+
+config REDCON_COMMAND_LEVELS_MASK
+	hex "REDCON command levels bitmask"
+	default 0x18
+	help
+	  Bitmask of accepted REDCON command levels. Bit N enables REDCON N.
+	  For example, 0x18 enables REDCON 3 and 4.
+
+config REDCON_PRESERVE_LEVEL_ON_DISCONNECT
+	bool "Preserve wakeup REDCON level on BLE disconnect"
+	help
+	  Keep the current REDCON level and wakeup-state hardware active across
+	  BLE disconnect when the current REDCON level is below 4.
+
+config REDCON_WEATHER_MEASUREMENT
+	bool "Expose REDCON weather measurement characteristic"
+	help
+	  Add the weather measurement characteristic to the REDCON BLE service.
+
+menu "REDCON BLE"
+
+config REDCON_BLE_ADV_INTERVAL
+	hex "BLE advertising interval in 0.625 ms units"
+	default 0x0800
+	range 0x0020 0x4000
+	help
+	  BLE advertising interval for REDCON advertising.
+
+config REDCON_BLE_ADV_TX_POWER_DBM
+	int "BLE advertising TX power in dBm"
+	default 4
+	range -46 8
+	help
+	  Requested advertising transmit power.
+
+config REDCON_BLE_CONN_INTERVAL_MS
+	int "REDCON connection interval request in ms"
+	default 100
+	range 8 4000
+	help
+	  Connection interval requested when entering a wakeup-state REDCON.
+
+config REDCON_BLE_CONN_LATENCY
+	int "REDCON connection latency request"
+	default 0
+	range 0 499
+	help
+	  Connection latency requested when entering a wakeup-state REDCON.
+
+config REDCON_BLE_CONN_SUPERVISION_MS
+	int "REDCON supervision timeout request in ms"
+	default 20000
+	range 100 32000
+	help
+	  Connection supervision timeout requested when entering a wakeup-state
+	  REDCON.
+
+config REDCON_BLE_MEASUREMENT_NOTIFY_INTERVAL_SECONDS
+	int "REDCON measurement notification interval in seconds"
+	default 10
+	range 1 3600
+	help
+	  Periodic power measurement notification interval while in wakeup-state
+	  REDCON.
+
+config REDCON_BLE_IDLE_MEASUREMENT_NOTIFY_INTERVAL_SECONDS
+	int "REDCON idle measurement notification interval in seconds"
+	default 60
+	range 1 3600
+	help
+	  Periodic measurement notification interval while connected in REDCON 4
+	  sleep state.
+
+endmenu
+endmenu

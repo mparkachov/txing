@@ -14,8 +14,8 @@ The operational phase-1 runbook is
 - Keep the normal board root filesystem read-only after initial setup.
 - Let a developer manually opt a board into a temporary feature channel.
 - Let stable maintenance feel like normal package maintenance:
-  `root-rw`, `apt` upgrade, `mise install` or `mise upgrade`, then manual
-  service restart when desired.
+  `root-rw`, `apt` upgrade, `mise upgrade`, then manual service restart when
+  desired.
 - Avoid building on the board.
 - Keep local feature publish fast for Apple Silicon developers.
 - Use dynamic Linux binaries and the target OS userspace where practical, rather
@@ -40,8 +40,7 @@ The operational phase-1 runbook is
 - No source repository, `just` tasks, or project checkout on the board.
 - No automatic branch-specific feature channel yet.
 - No integrity enforcement beyond GitHub Releases over HTTPS yet.
-- No automatic daemon restart after `mise install` or `mise upgrade` during
-  stable maintenance.
+- No automatic daemon restart after `mise upgrade` during stable maintenance.
 
 ## External Mechanisms
 
@@ -49,7 +48,7 @@ The design uses standard mise features:
 
 - GitHub release assets through the mise GitHub backend:
   <https://mise.jdx.dev/dev-tools/backends/github.html>
-- `mise install` and `mise upgrade` for normal installed-tool updates:
+- `mise upgrade` for normal installed-tool updates:
   <https://mise.jdx.dev/cli/upgrade.html>
 - `mise exec` for launching the configured tool:
   <https://mise.jdx.dev/cli/exec.html>
@@ -186,14 +185,32 @@ root-rw
 sudo apt update
 sudo apt dist-upgrade -y
 sudo -u txing env \
-  MISE_CONFIG_DIR=/home/txing/.config/mise/txing-unit-daemon \
   HOME=/home/txing \
-  /home/txing/.local/bin/mise install
+  /home/txing/.local/bin/mise upgrade
 sudo systemctl restart txing-unit-daemon.service
 ```
 
-The stable mise config excludes prereleases. That keeps manual stable
-install/update operations equivalent to "install latest stable".
+The stable channel is written into the `txing` user's normal mise config tree
+as a `conf.d` fragment:
+
+```text
+/home/txing/.config/mise/conf.d/txing-unit-daemon.toml
+```
+
+Mise loads `conf.d/*.toml` through the normal config search path, so the daemon
+fragment does not replace `/home/txing/.config/mise/config.toml` or any other
+user-level tools such as `just`. The stable config excludes prereleases. That
+keeps plain `mise upgrade` as "upgrade to latest stable" for the daemon. If a
+GitHub release was just published and mise still resolves the previous version,
+clear the `txing` user's mise cache first:
+
+```bash
+sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise cache clear
+sudo -u txing env \
+  HOME=/home/txing \
+  /home/txing/.local/bin/mise upgrade
+sudo systemctl restart txing-unit-daemon.service
+```
 
 ## Unit Daemon Service Install
 
@@ -214,16 +231,21 @@ current feature branch copy of the script:
 curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/feature/unit-daemon-prerelease/devices/unit/daemon/install-systemd.sh | sudo bash -s -- feature
 ```
 
-Stable installs use `main` once stable daemon release assets exist:
+Stable installs use the canonical `main` raw URL:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/devices/unit/daemon/install-systemd.sh | sudo bash -s -- stable
 ```
 
-Both channels use the same systemd unit and mise config path:
+The `main` segment is intentionally explicit and pins the installer source to
+the repository's stable branch.
+
+Both channels use the same systemd unit. Stable uses the normal user mise
+configuration tree, while feature uses an isolated daemon config:
 
 ```text
 /etc/systemd/system/txing-unit-daemon.service
+/home/txing/.config/mise/conf.d/txing-unit-daemon.toml
 /home/txing/.config/mise/txing-unit-daemon/config.toml
 ```
 
@@ -276,7 +298,6 @@ Stable service environment:
 User=txing
 Group=txing
 
-Environment=MISE_CONFIG_DIR=/home/txing/.config/mise/txing-unit-daemon
 Environment=TXING_DAEMON_CONFIG_DIR=/home/txing/.config/txing/unit-daemon
 Environment=HOME=/home/txing
 
@@ -298,9 +319,10 @@ ExecStartPre=-/usr/bin/find /var/tmp/txing/unit-daemon/mise-cache /var/tmp/txing
 
 Expected behavior:
 
-- Stable installer runs `mise install` once, as the `txing` user, while root is
-  writable. Stable service startup is offline-only and uses the persistent home
-  install.
+- Stable installer writes the normal user mise `conf.d` fragment and runs
+  `mise install` once, as the `txing` user, while root is writable. Later stable
+  maintenance uses plain `mise upgrade`. Stable service startup is offline-only
+  and uses the persistent home install.
 - Feature service startup runs `mise install` after network-online and clock
   synchronization, before daemon start, and writes install/cache/tmp state under
   `/var/tmp/txing/unit-daemon` on the executable tmpfs.
@@ -438,9 +460,10 @@ The current phase-1 implementation has these working pieces:
 - The daemon publishes the retained `board` capability state when it starts
   successfully.
 - The generic daemon installer writes
-  `/home/txing/.config/mise/txing-unit-daemon/config.toml`; feature mode uses
-  `version = "latest"` with `prerelease = true`, and stable mode uses
-  `version = "latest"` with `prerelease = false`.
+  `/home/txing/.config/mise/conf.d/txing-unit-daemon.toml` for stable mode and
+  `/home/txing/.config/mise/txing-unit-daemon/config.toml` for feature mode;
+  feature mode uses `version = "latest"` with `prerelease = true`, and stable
+  mode uses `version = "latest"` with `prerelease = false`.
 - The generic daemon installer writes `txing-unit-daemon.service`; stable mode
   installs into the persistent user-home mise tree during the writable
   maintenance window, while feature mode installs at service start under
@@ -571,7 +594,7 @@ Goal: make stable board setup and maintenance boring and repeatable.
   dedicated `txing` user, mise install, stable tool config, certificates, and
   systemd unit creation.
 - Document the stable maintenance command sequence:
-  `root-rw`, `apt update`, `apt dist-upgrade`, `mise install`, manual restart,
+  `root-rw`, `apt update`, `apt dist-upgrade`, `mise upgrade`, manual restart,
   `root-ro`. Implemented for the unit daemon stable installer.
 - Document expected filesystem writes during stable maintenance and normal boot.
 - Verify the generic systemd unit in stable mode once stable release assets

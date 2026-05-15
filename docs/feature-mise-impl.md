@@ -167,7 +167,16 @@ keys scoped to Rust `1.95.0` and `devices/unit/daemon/Cargo.lock`.
 
 ### Board Mise Config
 
-The board uses one mise config path for both channels:
+Stable mode uses the `txing` user's normal mise config tree so plain
+`mise upgrade` can update the daemon without setting a daemon-specific config
+environment variable:
+
+```text
+/home/txing/.config/mise/conf.d/txing-unit-daemon.toml
+```
+
+Feature mode uses an isolated mise config because it needs prerelease settings
+and `/var/tmp` service state:
 
 ```text
 /home/txing/.config/mise/txing-unit-daemon/config.toml
@@ -217,6 +226,7 @@ The raw repository installer writes:
 
 ```text
 /etc/systemd/system/txing-unit-daemon.service
+/home/txing/.config/mise/conf.d/txing-unit-daemon.toml
 /home/txing/.config/mise/txing-unit-daemon/config.toml
 ```
 
@@ -440,11 +450,14 @@ Install or switch to the feature channel:
 curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/feature/unit-daemon-prerelease/devices/unit/daemon/install-systemd.sh | sudo bash -s -- feature
 ```
 
-The same installer supports stable mode once stable release assets exist:
+The same installer supports stable mode from the canonical `main` raw URL:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/devices/unit/daemon/install-systemd.sh | sudo bash -s -- stable
 ```
+
+Use the `main` URL for stable boards. Use a feature-branch raw URL only when
+intentionally testing feature-channel installer changes.
 
 The installer validates Linux/systemd, the `txing` user, daemon runtime config,
 root writability, and `mise`; for feature mode it also validates `/var/tmp`.
@@ -458,6 +471,18 @@ and stores the selected stable release under
 then starts offline without `ExecStartPre=mise install`, so it can run after the
 root filesystem is switched back to read-only.
 
+For later stable upgrades, use the normal `txing` user mise config tree. Plain
+`mise upgrade` is the supported stable daemon refresh command and will load the
+daemon fragment from `conf.d`:
+
+```bash
+sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise cache clear
+sudo -u txing env \
+  HOME=/home/txing \
+  /home/txing/.local/bin/mise upgrade
+sudo systemctl restart txing-unit-daemon.service
+```
+
 Feature mode keeps the boot-lifetime behavior: the service runs `mise install`
 through `ExecStartPre`, stores the selected feature release under
 `/var/tmp/txing/unit-daemon/mise`, and installs again after reboot because
@@ -469,11 +494,9 @@ To verify the currently installed release before switching back to read-only:
 sudo journalctl -u txing-unit-daemon.service -n 120 --no-pager
 sudo systemctl status --no-pager -l txing-unit-daemon.service
 sudo -u txing env \
-  MISE_CONFIG_DIR=/home/txing/.config/mise/txing-unit-daemon \
   HOME=/home/txing \
   /home/txing/.local/bin/mise list
 sudo -u txing env \
-  MISE_CONFIG_DIR=/home/txing/.config/mise/txing-unit-daemon \
   HOME=/home/txing \
   /home/txing/.local/bin/mise which txing-unit-daemon
 ```
