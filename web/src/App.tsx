@@ -639,16 +639,10 @@ function App({ initialAuthError = '' }: AppProps) {
 
         const nextShadow = await refreshRouteSparkplugShadow(thingName)
         if (extractIsSparkplugDeviceUnavailable(nextShadow)) {
-          if (redconCommandSequenceRef.current === commandSequence) {
+          if (targetRedcon === 4 && redconCommandSequenceRef.current === commandSequence) {
             setPendingTargetRedcon(null)
-            if (targetRedcon !== 4) {
-              enqueueRuntimeError(
-                `Sparkplug DCMD.redcon -> ${targetRedcon} failed: device became unavailable`,
-                'sparkplug-redcon-convergence',
-              )
-            }
+            return
           }
-          return
         }
         if (
           hasReachedTargetRedcon({
@@ -783,19 +777,9 @@ function App({ initialAuthError = '' }: AppProps) {
         isSparkplugDeviceUnavailable,
       })
     ) {
-      if (
-        isSparkplugDeviceUnavailable &&
-        pendingTargetRedcon !== null &&
-        pendingTargetRedcon !== 4
-      ) {
-        enqueueRuntimeError(
-          `Sparkplug DCMD.redcon -> ${pendingTargetRedcon} failed: device became unavailable`,
-          'sparkplug-redcon-convergence',
-        )
-      }
       setPendingTargetRedcon(null)
     }
-  }, [enqueueRuntimeError, isSparkplugDeviceUnavailable, pendingTargetRedcon, reportedRedcon])
+  }, [isSparkplugDeviceUnavailable, pendingTargetRedcon, reportedRedcon])
 
   useEffect(() => {
     if (status !== 'signed_in') {
@@ -1965,17 +1949,6 @@ function App({ initialAuthError = '' }: AppProps) {
         aria-label="Navigation panel"
         aria-busy={isNavigationBusy}
       >
-        {isNavigationBusy ? (
-          <span
-            className="navigation-activity"
-            aria-label="Loading AWS data"
-            title="Loading AWS data"
-          >
-            <span className="navigation-activity-dot" aria-hidden="true" />
-            <span className="navigation-activity-dot" aria-hidden="true" />
-            <span className="navigation-activity-dot" aria-hidden="true" />
-          </span>
-        ) : null}
         <div className="navigation-panel-main">
           <div className="navigation-panel-header">
             <a

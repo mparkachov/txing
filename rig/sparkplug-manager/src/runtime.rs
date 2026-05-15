@@ -14,6 +14,7 @@ use aws_config::BehaviorVersion;
 use gneiss_mqtt::client::{AsyncClient, AsyncClientHandle, ClientEvent, PublishResponse};
 use gneiss_mqtt::mqtt::{PublishPacket, QualityOfService, SubscribePacket};
 use gneiss_mqtt_aws::{AwsClientBuilder, WebsocketSigv4OptionsBuilder};
+use serde::Deserialize;
 use tokio::sync::mpsc;
 use tokio::time::{MissedTickBehavior, interval};
 use txing_rig_local_pubsub::LocalPubSubClient;
@@ -28,7 +29,7 @@ use crate::sparkplug;
 use txing_capability_protocol::{
     CAPABILITY_COMMAND_RESULT_TOPIC_PREFIX, CAPABILITY_HEARTBEAT_TOPIC_PREFIX,
     CAPABILITY_STATE_TOPIC_PREFIX, CapabilityCommandResult, CapabilityHeartbeat, CapabilityState,
-    INVENTORY_TOPIC, Inventory, build_capability_command_topic,
+    INVENTORY_TOPIC, Inventory, MetricValue, build_capability_command_topic,
     parse_capability_command_result_topic, parse_capability_heartbeat_topic,
     parse_capability_state_topic,
 };
@@ -73,6 +74,39 @@ struct ThingRegistration {
 struct RegistryInventory {
     rig_type: String,
     devices: Vec<txing_capability_protocol::InventoryDevice>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+struct RetainedCapabilityStatePayload {
+    #[serde(rename = "schemaVersion")]
+    schema_version: String,
+    #[serde(rename = "adapterId")]
+    adapter_id: String,
+    #[serde(rename = "thingName")]
+    thing_name: String,
+    capabilities: BTreeMap<String, bool>,
+    #[serde(default)]
+    metrics: BTreeMap<String, MetricValue>,
+    #[serde(rename = "observedAtMs", default)]
+    observed_at_ms: u64,
+    #[serde(default)]
+    seq: u64,
+}
+
+impl RetainedCapabilityStatePayload {
+    fn into_capability_state(self) -> Result<CapabilityState> {
+        let state = CapabilityState {
+            schema_version: self.schema_version,
+            adapter_id: self.adapter_id,
+            thing_name: self.thing_name,
+            capabilities: self.capabilities,
+            metrics: self.metrics,
+            observed_at_ms: self.observed_at_ms,
+            seq: self.seq,
+        };
+        state.validate()?;
+        Ok(state)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1133,7 +1167,11 @@ fn decode_retained_capability_state_payload(
     topic: &str,
     payload: &[u8],
 ) -> Option<CapabilityState> {
-    match CapabilityState::from_slice(payload) {
+    match serde_json::from_slice::<RetainedCapabilityStatePayload>(payload).and_then(|state| {
+        state
+            .into_capability_state()
+            .map_err(serde::de::Error::custom)
+    }) {
         Ok(state) => Some(state),
         Err(err) => {
             eprintln!(
@@ -1309,7 +1347,7 @@ mod tests {
     }
 
     #[test]
-    fn invalid_retained_capability_state_payload_is_ignored() {
+    fn retained_non_board_capability_state_payload_allows_omitted_bookkeeping_fields() {
         let payload = br#"{
             "schemaVersion": "2.0",
             "adapterId": "dev.txing.rig.AwsConnectivity",
@@ -1317,12 +1355,47 @@ mod tests {
             "capabilities": {"time": true}
         }"#;
 
+        let state = decode_retained_capability_state_payload(
+            "txings/time-b98n8s/capability/v2/state",
+            payload,
+        )
+        .expect("retained state");
+
+        assert_eq!(state.observed_at_ms, 0);
+        assert_eq!(state.seq, 0);
+        assert!(!state_has_board_owned_capability(&state));
+    }
+
+    #[test]
+    fn retained_board_capability_state_payload_allows_omitted_bookkeeping_fields() {
+        let payload = br#"{
+            "schemaVersion": "2.0",
+            "adapterId": "dev.txing.board.Capability",
+            "thingName": "unit-1",
+            "capabilities": {"video": true}
+        }"#;
+
+        let state =
+            decode_retained_capability_state_payload("txings/unit-1/capability/v2/state", payload)
+                .expect("retained state");
+
+        assert_eq!(state.observed_at_ms, 0);
+        assert_eq!(state.seq, 0);
+        assert!(state_has_board_owned_capability(&state));
+        assert!(validate_retained_state_topic_payload("unit-1", &state).is_ok());
+    }
+
+    #[test]
+    fn invalid_retained_capability_state_payload_is_ignored() {
+        let payload = br#"{
+            "schemaVersion": "2.0",
+            "adapterId": "dev.txing.board.Capability",
+            "capabilities": {"video": true}
+        }"#;
+
         assert!(
-            decode_retained_capability_state_payload(
-                "txings/time-b98n8s/capability/v2/state",
-                payload,
-            )
-            .is_none()
+            decode_retained_capability_state_payload("txings/unit-1/capability/v2/state", payload)
+                .is_none()
         );
     }
 

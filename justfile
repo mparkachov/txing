@@ -84,10 +84,23 @@ _project-aws-env scope='aws' region='' profile='' stack_name='' cognito_domain_p
       printf 'export %s=%q\n' "$name" "$value"
     }
 
+    caller_txing_town_id="${TXING_TOWN_ID:-}"
+    caller_txing_rig_id="${TXING_RIG_ID:-}"
+    caller_txing_thing_id="${TXING_THING_ID:-}"
+
     env_file="$(resolve_path "$(choose_value "{{ env_file }}" "config/aws.env")")"
     if [ -f "$env_file" ]; then
       # shellcheck disable=SC1090
       source "$env_file"
+    fi
+    if [ -n "$caller_txing_town_id" ]; then
+      TXING_TOWN_ID="$caller_txing_town_id"
+    fi
+    if [ -n "$caller_txing_rig_id" ]; then
+      TXING_RIG_ID="$caller_txing_rig_id"
+    fi
+    if [ -n "$caller_txing_thing_id" ]; then
+      TXING_THING_ID="$caller_txing_thing_id"
     fi
     unset AWS_CONFIG_FILE RIG_ENV_FILE BOARD_ENV_FILE
 

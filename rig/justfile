@@ -564,15 +564,15 @@ _local-start rig_id='' components='auto':
     cargo build --manifest-path "{{rig_dir}}/local-pubsub/Cargo.toml" >/dev/null
     cargo build --manifest-path "{{rig_dir}}/sparkplug-manager/Cargo.toml" >/dev/null
     cargo build --manifest-path "{{rig_dir}}/aws-connectivity/Cargo.toml" >/dev/null
-    ble_mode="${TXING_RIG_MAC_BLE_MODE:-simulated}"
+    ble_mode="${TXING_RIG_MAC_BLE_MODE:-real}"
+    ble_no_ble_arg=""
     case "$ble_mode" in
       real)
         cargo build --features ble-real --manifest-path "{{rig_dir}}/ble-connectivity/Cargo.toml" >/dev/null
-        ble_args=()
         ;;
       simulated|disabled)
         cargo build --manifest-path "{{rig_dir}}/ble-connectivity/Cargo.toml" >/dev/null
-        ble_args=(--no-ble)
+        ble_no_ble_arg="--no-ble"
         ;;
       *)
         echo "Unsupported TXING_RIG_MAC_BLE_MODE=$ble_mode. Supported modes: simulated, disabled, real." >&2
@@ -614,7 +614,10 @@ _local-start rig_id='' components='auto':
       exit 1
     fi
 
-    mapfile -t selected_components < <(just --justfile "{{rig_dir}}/justfile" _local-component-list "{{components}}" "$RIG_TYPE")
+    selected_components=()
+    while IFS= read -r component; do
+      selected_components+=("$component")
+    done < <(just --justfile "{{rig_dir}}/justfile" _local-component-list "{{components}}" "$RIG_TYPE")
     contains_component() {
       local wanted="$1"
       local component
@@ -623,7 +626,7 @@ _local-start rig_id='' components='auto':
       done
       return 1
     }
-    for component in ble aws sparkplug; do
+    for component in sparkplug ble aws; do
       contains_component "$component" || continue
       case "$component" in
         sparkplug)
@@ -632,12 +635,18 @@ _local-start rig_id='' components='auto':
             --town-id "$TXING_TOWN_ID" \
             --iot-endpoint "$iot_data_endpoint" \
             --aws-region "$region" \
+            --inventory-interval-seconds 2 \
             --local-ipc-socket "$socket"
           ;;
         ble)
-          start_process ble "$ble_bin" \
-            --local-ipc-socket "$socket" \
-            "${ble_args[@]}"
+          if [ -n "$ble_no_ble_arg" ]; then
+            start_process ble "$ble_bin" \
+              --local-ipc-socket "$socket" \
+              "$ble_no_ble_arg"
+          else
+            start_process ble "$ble_bin" \
+              --local-ipc-socket "$socket"
+          fi
           ;;
         aws)
           start_process aws "$aws_bin" \
@@ -905,7 +914,20 @@ log rig_id='' lines='200' follow='true':
     #!/usr/bin/env bash
     set -euo pipefail
     if [ "$(uname -s)" = "Darwin" ]; then
-      exec just --justfile "{{rig_dir}}/justfile" _local-log "{{lines}}" "{{follow}}"
+      local_lines="{{lines}}"
+      local_follow="{{follow}}"
+      case "{{rig_id}}" in
+        ''|*[!0-9]*) ;;
+        *)
+          case "{{lines}}" in
+            true|1|yes|on|false|0|no|off)
+              local_lines="{{rig_id}}"
+              local_follow="{{lines}}"
+              ;;
+          esac
+          ;;
+      esac
+      exec just --justfile "{{rig_dir}}/justfile" _local-log "$local_lines" "$local_follow"
     fi
     if [ -n "{{rig_id}}" ]; then
       export TXING_RIG_ID="{{rig_id}}"
