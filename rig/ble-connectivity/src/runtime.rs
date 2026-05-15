@@ -12,7 +12,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow, bail};
 #[cfg(all(feature = "ble-real", any(target_os = "linux", target_os = "macos")))]
 use btleplug::api::{
-    Central, CentralEvent, Characteristic, Manager as _, Peripheral as _, ScanFilter, WriteType,
+    Central, Characteristic, Manager as _, Peripheral as _, ScanFilter, WriteType,
 };
 #[cfg(all(feature = "ble-real", any(target_os = "linux", target_os = "macos")))]
 use btleplug::platform::{Adapter, Manager, Peripheral};
@@ -57,6 +57,7 @@ const BLUEZ_RESOURCE_EXHAUSTED_RECONNECT_DELAY_MS: u64 = 60_000;
 const BLE_SCANNER_PROPERTY_ERROR_LOG_INTERVAL_MS: u64 = 30_000;
 const BLE_SCANNER_DEBUG_SUMMARY_INTERVAL_MS: u64 = 5_000;
 const BLE_SCANNER_NO_TARGET_LOG_INTERVAL_MS: u64 = 30_000;
+const BLE_SCANNER_EMPTY_CACHE_RESTART_INTERVAL_MS: u64 = 30_000;
 const BLE_SCANNER_DEBUG_SAMPLE_LIMIT: usize = 8;
 const BLE_SCANNER_UNMANAGED_TXING_LOG_INTERVAL_MS: u64 = 30_000;
 const SHADOW_PUBLISH_INTERVAL_MS: u64 = 500;
@@ -1624,27 +1625,6 @@ async fn find_peripheral(
 }
 
 #[cfg(all(feature = "ble-real", any(target_os = "linux", target_os = "macos")))]
-async fn event_peripheral(adapter: &Adapter, event: CentralEvent) -> Result<Option<Peripheral>> {
-    let id = match event {
-        CentralEvent::DeviceDiscovered(id)
-        | CentralEvent::DeviceUpdated(id)
-        | CentralEvent::DeviceServicesModified(id)
-        | CentralEvent::ManufacturerDataAdvertisement { id, .. }
-        | CentralEvent::ServiceDataAdvertisement { id, .. }
-        | CentralEvent::ServicesAdvertisement { id, .. }
-        | CentralEvent::RssiUpdate { id, .. } => id,
-        CentralEvent::DeviceConnected(_)
-        | CentralEvent::DeviceDisconnected(_)
-        | CentralEvent::StateUpdate(_) => return Ok(None),
-    };
-    adapter
-        .peripheral(&id)
-        .await
-        .map(Some)
-        .context("resolve BLE event peripheral")
-}
-
-#[cfg(all(feature = "ble-real", any(target_os = "linux", target_os = "macos")))]
 async fn run_scanner(
     config: RuntimeConfig,
     advertisements: broadcast::Sender<Advertisement>,
@@ -1674,6 +1654,7 @@ struct ScannerRunState {
     last_unmanaged_txing_log_by_name: BTreeMap<String, u64>,
     last_logged_targets: BTreeSet<String>,
     last_no_target_log_ms: u64,
+    last_empty_cache_restart_ms: u64,
     last_property_error_log_ms: u64,
     debug_summary: ScannerDebugSummary,
 }
@@ -1703,26 +1684,36 @@ impl ScannerRunState {
         &mut self,
         config: &RuntimeConfig,
         target_names: &BTreeSet<String>,
-    ) {
+    ) -> bool {
         if target_names.is_empty() {
             self.debug_summary = ScannerDebugSummary::default();
-            return;
+            return false;
         }
+        let now = now_ms();
+        let should_restart_empty_cache = self.debug_summary.total == 0
+            && now.saturating_sub(self.last_empty_cache_restart_ms)
+                >= BLE_SCANNER_EMPTY_CACHE_RESTART_INTERVAL_MS;
         if config.debug {
             self.debug_summary.log_debug(target_names);
             self.debug_summary = ScannerDebugSummary::default();
-            return;
+            if should_restart_empty_cache {
+                self.last_empty_cache_restart_ms = now;
+            }
+            return should_restart_empty_cache;
         }
         if self.debug_summary.fresh_target > 0 {
             self.debug_summary = ScannerDebugSummary::default();
-            return;
+            return false;
         }
-        let now = now_ms();
         if now.saturating_sub(self.last_no_target_log_ms) >= BLE_SCANNER_NO_TARGET_LOG_INTERVAL_MS {
             self.debug_summary.log_no_target_warning(target_names);
             self.last_no_target_log_ms = now;
         }
         self.debug_summary = ScannerDebugSummary::default();
+        if should_restart_empty_cache {
+            self.last_empty_cache_restart_ms = now;
+        }
+        should_restart_empty_cache
     }
 
     async fn process_peripheral(
@@ -1841,20 +1832,16 @@ async fn run_scanner_once(
     scanner_targets: SharedScannerTargets,
 ) -> Result<()> {
     let adapter = default_adapter().await?;
-    let mut events = adapter
-        .events()
-        .await
-        .context("subscribe BLE scan events")?;
     start_scan_if_needed(&adapter).await?;
     if config.debug {
         eprintln!(
-            "debug: BLE scanner active mode=events+poll pollIntervalMs={} debugSummaryIntervalMs={}",
+            "debug: BLE scanner active mode=poll pollIntervalMs={} debugSummaryIntervalMs={}",
             config.scan_interval_ms.max(1),
             BLE_SCANNER_DEBUG_SUMMARY_INTERVAL_MS
         );
     } else {
         eprintln!(
-            "started BLE scanner mode=events+poll pollIntervalMs={}",
+            "started BLE scanner mode=poll pollIntervalMs={}",
             config.scan_interval_ms.max(1)
         );
     }
@@ -1868,20 +1855,6 @@ async fn run_scanner_once(
     visibility_summary_timer.tick().await;
     loop {
         tokio::select! {
-            event = events.next() => {
-                let Some(event) = event else {
-                    bail!("BLE scanner event stream ended");
-                };
-                let target_names = scanner_targets_snapshot(&scanner_targets);
-                state.log_targets_if_changed(config, &target_names);
-                if target_names.is_empty() {
-                    continue;
-                }
-                let Some(peripheral) = event_peripheral(&adapter, event).await? else {
-                    continue;
-                };
-                state.process_peripheral(config, &advertisements, &target_names, &peripheral, "event").await?;
-            }
             _ = poll_timer.tick() => {
                 let target_names = scanner_targets_snapshot(&scanner_targets);
                 state.log_targets_if_changed(config, &target_names);
@@ -1901,7 +1874,12 @@ async fn run_scanner_once(
             }
             _ = visibility_summary_timer.tick() => {
                 let target_names = scanner_targets_snapshot(&scanner_targets);
-                state.log_visibility_summary_if_needed(config, &target_names);
+                if state.log_visibility_summary_if_needed(config, &target_names) {
+                    eprintln!(
+                        "warning: BLE scanner peripheral cache is empty while targets are configured; restarting BLE scan"
+                    );
+                    restart_scan(&adapter).await?;
+                }
             }
         }
     }
@@ -1920,6 +1898,14 @@ async fn start_scan_if_needed(adapter: &Adapter) -> Result<()> {
             }
         }
     }
+}
+
+#[cfg(all(feature = "ble-real", any(target_os = "linux", target_os = "macos")))]
+async fn restart_scan(adapter: &Adapter) -> Result<()> {
+    if let Err(err) = adapter.stop_scan().await {
+        eprintln!("warning: BLE scanner stop before restart failed: {err}");
+    }
+    start_scan_if_needed(adapter).await
 }
 
 fn scanner_retry_delay_ms(config: &RuntimeConfig, failure_count: u32, err: &anyhow::Error) -> u64 {
