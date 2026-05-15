@@ -29,9 +29,8 @@ The operational implementation runbook is
 
 - Phase 1 end-to-end feature workflow: implemented and manually verified on a
   Raspberry Pi Zero 2 W with read-only root.
-- Phase 2 stable CI publishing, stable install, and stable `mise upgrade`:
-  implemented and manually verified.
-- Phase 2 stable read-only reboot verification: pending final check.
+- Phase 2 repeatable stable installation: implemented and manually verified,
+  including read-only-root reboot on stable `0.9.114`.
 - Phase 3 channel polish and operational improvements: pending.
 
 ## Non-Goals
@@ -594,8 +593,7 @@ checkout on the board. This criterion is met for phase 1.
 
 Goal: make stable board setup and maintenance boring and repeatable.
 
-Status: core implementation complete; final stable read-only reboot verification
-is still pending.
+Status: complete for the stable channel.
 
 - Add CI publishing for stable releases. Implemented as manual
   `.github/workflows/unit-daemon-stable-release.yml` runs from `main` only.
@@ -613,7 +611,10 @@ is still pending.
 - Verify stable upgrade while root is writable and service restart after
   upgrade. Verified after moving stable config into the normal mise `conf.d`
   tree so plain `mise upgrade` sees `txing-unit-daemon`.
-- Verify stable-only boot on read-only root. Pending final user verification.
+- Verify stable-only boot on read-only root. Verified with stable `0.9.114`:
+  systemd started `txing-unit-daemon.service`, the daemon logged
+  `version=0.9.114`, connected to MQTT, and published retained `board` online
+  state without running board-side source checkout commands.
 
 This phase should leave production-like stable boards understandable and
 repeatable without requiring feature-channel knowledge.

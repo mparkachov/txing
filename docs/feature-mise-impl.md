@@ -17,11 +17,12 @@ Implemented and manually exercised:
 - stable GitHub Actions release publish from `main`;
 - stable board install from the `main` raw installer;
 - stable daemon update with plain `mise upgrade` through the normal
-  `/home/txing/.config/mise/conf.d` config tree.
+  `/home/txing/.config/mise/conf.d` config tree;
+- stable read-only-root reboot on `0.9.114`, with systemd starting the daemon,
+  MQTT connecting, and retained `board` online state publishing.
 
 Still left:
 
-- final stable-only read-only-root reboot verification;
 - feature-channel fallback behavior if GitHub install fails before `/var/tmp`
   contains a runnable feature binary;
 - manual feature opt-in/opt-out procedure;
