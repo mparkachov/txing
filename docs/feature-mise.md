@@ -253,7 +253,10 @@ makes mise report the tool as `txing-unit-daemon` instead of the backend key
 only for feature mode because the asset is built locally in Lima and uploaded by
 `gh`; stable CI publishing should revisit attestations.
 
-The installer writes this service shape with absolute paths:
+The installer writes the service with
+`Wants=network-online.target systemd-time-wait-sync.service` and
+`After=network-online.target systemd-time-wait-sync.service time-sync.target`,
+then this service shape with absolute paths:
 
 ```ini
 User=txing
@@ -276,8 +279,9 @@ Feature mode additionally sets `MISE_PRERELEASES=1` in the rendered unit.
 
 Expected behavior:
 
-- `mise install` runs before daemon start and writes install/cache/tmp state
-  under `/var/tmp/txing/unit-daemon` on the executable tmpfs.
+- `mise install` runs after network-online and clock synchronization, before
+  daemon start, and writes install/cache/tmp state under
+  `/var/tmp/txing/unit-daemon` on the executable tmpfs.
 - In phase 1, install failure makes service start fail visibly. Stable fallback
   should be designed after stable release publishing is in place.
 - `ExecStart` is offline, so the actual daemon start does not perform network
@@ -427,7 +431,8 @@ The current phase-1 implementation has these working pieces:
   `version = "latest"` with `prerelease = true`, and stable mode uses
   `version = "latest"` with `prerelease = false`.
 - The generic daemon installer writes `txing-unit-daemon.service`; service start
-  downloads `txing-unit-daemon-linux-aarch64.tar.gz`, extracts the daemon under
+  waits for network-online and clock synchronization, downloads
+  `txing-unit-daemon-linux-aarch64.tar.gz`, extracts the daemon under
   `/var/tmp/txing/unit-daemon/mise`, starts it offline, and logs
   `version=<version>` on startup.
 - `release::bump` and `release::check` include the daemon Cargo manifest and

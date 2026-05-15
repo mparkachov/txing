@@ -234,8 +234,8 @@ The service uses this shape:
 ```ini
 [Unit]
 Description=Txing Unit Daemon
-Wants=network-online.target
-After=network-online.target
+Wants=network-online.target systemd-time-wait-sync.service
+After=network-online.target systemd-time-wait-sync.service time-sync.target
 
 [Service]
 Type=simple
@@ -275,6 +275,11 @@ The daemon startup log includes the selected version:
 ```text
 info: starting unit daemon version=<version> ...
 ```
+
+The clock-sync dependency is required because `mise install` performs HTTPS
+requests before daemon startup. If the board has network but the clock still has
+an old boot-time value, TLS certificate validation can fail with "certificate
+not valid yet".
 
 ## Manual Steps Used To Complete Phase 1
 
@@ -468,7 +473,8 @@ curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/devices/unit/
 ```
 
 The installer validates Linux/systemd, the `txing` user, daemon runtime config,
-`/var/tmp`, root writability, and `mise`; then it writes the mise config and
+`/var/tmp`, root writability, and `mise`; then it enables
+`NetworkManager-wait-online.service` when present, writes the mise config and
 systemd unit, reloads systemd, enables the service, and restarts it.
 
 ### 8. Verify Before Reboot

@@ -102,6 +102,11 @@ legacy_service_file="$systemd_dir/$legacy_service_name"
 tmp_root="/var/tmp/txing/unit-daemon"
 asset_pattern="txing-unit-daemon-linux-aarch64.tar.gz"
 
+if systemctl list-unit-files NetworkManager-wait-online.service --no-legend --no-pager 2>/dev/null \
+  | grep -q '^NetworkManager-wait-online\.service[[:space:]]'; then
+  systemctl enable NetworkManager-wait-online.service >/dev/null
+fi
+
 install -d -m 700 -o "$daemon_user" -g "$daemon_group" "$daemon_home/.config/mise" "$mise_config_dir"
 config_tmp="$(mktemp)"
 service_tmp="$(mktemp)"
@@ -137,8 +142,8 @@ install -d -m 700 -o "$daemon_user" -g "$daemon_group" \
   cat <<EOF
 [Unit]
 Description=Txing Unit Daemon
-Wants=network-online.target
-After=network-online.target
+Wants=network-online.target systemd-time-wait-sync.service
+After=network-online.target systemd-time-wait-sync.service time-sync.target
 
 [Service]
 Type=simple
