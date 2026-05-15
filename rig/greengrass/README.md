@@ -109,16 +109,9 @@ uses the plain semantic version in the repository root `VERSION` file. CI bumps
 the patch version on `main`; Git metadata is exported for diagnostics but is not
 used as the Greengrass component version.
 
-Manual component version pinning is optional:
-
-```bash
-just rig::deploy raspi x.y.z
-```
-
-The first argument is the target rig type (`auto`, `raspi`, `cloud`, or `all`);
-the second argument is the optional plain semantic component version. Production
-deploys reject dirty worktrees unless `TXING_ALLOW_DIRTY_DEPLOY=1` is set for an
-explicit debug deploy.
+The first argument is the target rig type (`auto`, `raspi`, `cloud`, or `all`).
+When a new Greengrass component version is required, bump the whole project
+release version first. Production deploys reject dirty worktrees.
 
 Weather and power things are discovered from the normal AWS registry assignment.
 The rig-wide Sparkplug manager publishes v2 inventory using the registered AWS

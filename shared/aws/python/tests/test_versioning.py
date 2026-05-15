@@ -55,15 +55,17 @@ class VersionEnvironmentTests(unittest.TestCase):
             self.assertIn("export TXING_GIT_DIRTY=true", dirty)
             self.assertNotIn("+g", dirty)
 
-    def test_rig_deploy_defaults_to_plain_semver_and_immutable_artifacts(self) -> None:
+    def test_rig_deploy_defaults_to_project_release_and_immutable_artifacts(self) -> None:
         rig_justfile = (REPO_ROOT / "rig" / "justfile").read_text(encoding="utf-8")
 
         self.assertIn("deploy target='auto'", rig_justfile)
         self.assertIn('env_scope="rig"', rig_justfile)
         self.assertIn('deploy_target="$RIG_TYPE"', rig_justfile)
-        self.assertIn("TXING_ALLOW_DIRTY_DEPLOY", rig_justfile)
+        self.assertIn('resolved_component_version="$TXING_VERSION"', rig_justfile)
         self.assertIn("Refusing production Greengrass deploy from a dirty worktree.", rig_justfile)
-        self.assertIn("^[0-9]+\\.[0-9]+\\.[0-9]+$", rig_justfile)
+        self.assertNotIn("TXING_ALLOW_DIRTY_DEPLOY", rig_justfile)
+        self.assertNotIn("TXING_RIG_ALLOW_DIRTY_DEPLOY", rig_justfile)
+        self.assertNotIn("_check-rig-cargo-version", rig_justfile)
         self.assertIn('local key="artifacts/$component/$resolved_component_version/$filename"', rig_justfile)
         self.assertIn("aws s3api head-object", rig_justfile)
         self.assertNotIn("artifact_version_path", rig_justfile)

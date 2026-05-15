@@ -1653,6 +1653,149 @@ async fn run_scanner(
 }
 
 #[cfg(all(feature = "ble-real", any(target_os = "linux", target_os = "macos")))]
+#[derive(Debug, Default)]
+struct ScannerRunState {
+    seq: u64,
+    last_published_by_name: BTreeMap<String, u64>,
+    last_unmanaged_txing_log_by_name: BTreeMap<String, u64>,
+    last_logged_targets: BTreeSet<String>,
+    last_property_error_log_ms: u64,
+    debug_summary: ScannerDebugSummary,
+}
+
+#[cfg(all(feature = "ble-real", any(target_os = "linux", target_os = "macos")))]
+impl ScannerRunState {
+    fn log_targets_if_changed(&mut self, config: &RuntimeConfig, target_names: &BTreeSet<String>) {
+        if config.debug && target_names != &self.last_logged_targets {
+            eprintln!("debug: BLE scanner targets={target_names:?}");
+            self.last_logged_targets = target_names.clone();
+        }
+    }
+
+    fn log_property_error(&mut self, message: impl std::fmt::Display) {
+        let now = now_ms();
+        if now.saturating_sub(self.last_property_error_log_ms)
+            >= BLE_SCANNER_PROPERTY_ERROR_LOG_INTERVAL_MS
+        {
+            eprintln!(
+                "warning: BLE scanner skipped unreadable peripheral properties error={message}"
+            );
+            self.last_property_error_log_ms = now;
+        }
+    }
+
+    async fn process_peripheral(
+        &mut self,
+        config: &RuntimeConfig,
+        advertisements: &broadcast::Sender<Advertisement>,
+        target_names: &BTreeSet<String>,
+        peripheral: &Peripheral,
+        source: &str,
+    ) -> Result<()> {
+        let properties = match peripheral.properties().await {
+            Ok(Some(properties)) => properties,
+            Ok(None) => return Ok(()),
+            Err(err) => {
+                self.log_property_error(err);
+                return Ok(());
+            }
+        };
+        let address = properties.address.to_string();
+        let local_name = properties
+            .local_name
+            .clone()
+            .filter(|value| !value.trim().is_empty());
+        let target_matches = local_name
+            .as_deref()
+            .is_some_and(|value| target_names.contains(value));
+        let service_advertised = properties.services.contains(&TXING_BLE_SERVICE_UUID);
+        let fresh_signal = scanner_advertisement_has_fresh_signal(properties.rssi);
+        if config.debug {
+            self.debug_summary.record(
+                &address,
+                local_name.as_deref(),
+                properties.rssi,
+                service_advertised,
+                target_matches,
+                fresh_signal,
+            );
+        }
+        if config.debug && target_matches {
+            eprintln!(
+                "debug: BLE scanner candidate source={source} thing={} address={} rssi={:?} serviceAdvertised={} freshSignal={fresh_signal}",
+                local_name.as_deref().unwrap_or("<unnamed>"),
+                address,
+                properties.rssi,
+                service_advertised
+            );
+        }
+        if !fresh_signal {
+            if config.debug && target_matches {
+                eprintln!(
+                    "debug: BLE scanner skipped likely cached candidate source={source} thing={} address={} reason=missing-rssi",
+                    local_name.as_deref().unwrap_or("<unnamed>"),
+                    address
+                );
+            }
+            return Ok(());
+        }
+        let Some(local_name) = local_name else {
+            return Ok(());
+        };
+        let now = now_ms();
+        if service_advertised
+            && should_log_unmanaged_txing_advertisement(
+                &local_name,
+                target_names,
+                &mut self.last_unmanaged_txing_log_by_name,
+                now,
+            )
+        {
+            eprintln!(
+                "warning: BLE scanner saw unmanaged Txing advertisement thing={} address={} rssi={:?} targets={target_names:?}",
+                local_name, address, properties.rssi
+            );
+        }
+        if !should_publish_scanner_advertisement(
+            &local_name,
+            target_names,
+            &self.last_published_by_name,
+            now,
+        ) {
+            if config.debug && target_matches {
+                eprintln!(
+                    "debug: BLE scanner skipped candidate source={source} thing={} address={} reason=throttled-or-not-target",
+                    local_name, address
+                );
+            }
+            return Ok(());
+        }
+        self.last_published_by_name.insert(local_name.clone(), now);
+        self.seq += 1;
+        let advertisement = Advertisement {
+            address,
+            local_name: Some(local_name.clone()),
+            services: properties.services,
+            rssi: properties.rssi,
+            observed_at_ms: now,
+            seq: self.seq,
+        };
+        if config.debug {
+            eprintln!(
+                "debug: BLE scanner published advertisement source={source} thing={} address={} rssi={:?} serviceAdvertised={} seq={}",
+                local_name,
+                advertisement.address,
+                advertisement.rssi,
+                advertisement.has_txing_service(),
+                self.seq
+            );
+        }
+        let _ = advertisements.send(advertisement);
+        Ok(())
+    }
+}
+
+#[cfg(all(feature = "ble-real", any(target_os = "linux", target_os = "macos")))]
 async fn run_scanner_once(
     config: &RuntimeConfig,
     advertisements: broadcast::Sender<Advertisement>,
@@ -1666,18 +1809,20 @@ async fn run_scanner_once(
     start_scan_if_needed(&adapter).await?;
     if config.debug {
         eprintln!(
-            "debug: BLE scanner active mode=events debugSummaryIntervalMs={}",
+            "debug: BLE scanner active mode=events+poll pollIntervalMs={} debugSummaryIntervalMs={}",
+            config.scan_interval_ms.max(1),
             BLE_SCANNER_DEBUG_SUMMARY_INTERVAL_MS
         );
     } else {
-        eprintln!("started BLE scanner mode=events");
+        eprintln!(
+            "started BLE scanner mode=events+poll pollIntervalMs={}",
+            config.scan_interval_ms.max(1)
+        );
     }
-    let mut seq = 0u64;
-    let mut last_published_by_name = BTreeMap::new();
-    let mut last_unmanaged_txing_log_by_name = BTreeMap::new();
-    let mut last_logged_targets = BTreeSet::new();
-    let mut last_property_error_log_ms = 0u64;
-    let mut debug_summary = ScannerDebugSummary::default();
+    let mut state = ScannerRunState::default();
+    let mut poll_timer = interval(Duration::from_millis(config.scan_interval_ms.max(1)));
+    poll_timer.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    poll_timer.tick().await;
     let mut debug_summary_timer =
         interval(Duration::from_millis(BLE_SCANNER_DEBUG_SUMMARY_INTERVAL_MS));
     debug_summary_timer.set_missed_tick_behavior(MissedTickBehavior::Skip);
@@ -1689,127 +1834,36 @@ async fn run_scanner_once(
                     bail!("BLE scanner event stream ended");
                 };
                 let target_names = scanner_targets_snapshot(&scanner_targets);
-                if config.debug && target_names != last_logged_targets {
-                    eprintln!("debug: BLE scanner targets={target_names:?}");
-                    last_logged_targets = target_names.clone();
-                }
+                state.log_targets_if_changed(config, &target_names);
                 if target_names.is_empty() {
                     continue;
                 }
                 let Some(peripheral) = event_peripheral(&adapter, event).await? else {
                     continue;
                 };
-            let properties = match peripheral.properties().await {
-                Ok(Some(properties)) => properties,
-                Ok(None) => continue,
-                Err(err) => {
-                    let now = now_ms();
-                    if now.saturating_sub(last_property_error_log_ms)
-                        >= BLE_SCANNER_PROPERTY_ERROR_LOG_INTERVAL_MS
-                    {
-                        eprintln!(
-                            "warning: BLE scanner skipped unreadable peripheral properties error={err}"
-                        );
-                        last_property_error_log_ms = now;
-                    }
+                state.process_peripheral(config, &advertisements, &target_names, &peripheral, "event").await?;
+            }
+            _ = poll_timer.tick() => {
+                let target_names = scanner_targets_snapshot(&scanner_targets);
+                state.log_targets_if_changed(config, &target_names);
+                if target_names.is_empty() {
                     continue;
                 }
-            };
-            let address = properties.address.to_string();
-            let local_name = properties
-                .local_name
-                .clone()
-                .filter(|value| !value.trim().is_empty());
-            let target_matches = local_name
-                .as_deref()
-                .is_some_and(|value| target_names.contains(value));
-            let service_advertised = properties.services.contains(&TXING_BLE_SERVICE_UUID);
-            let fresh_signal = scanner_advertisement_has_fresh_signal(properties.rssi);
-                if config.debug {
-                    debug_summary.record(
-                    &address,
-                    local_name.as_deref(),
-                    properties.rssi,
-                    service_advertised,
-                    target_matches,
-                    fresh_signal,
-                );
-            }
-            if config.debug && target_matches {
-                eprintln!(
-                    "debug: BLE scanner candidate thing={} address={} rssi={:?} serviceAdvertised={} freshSignal={fresh_signal}",
-                    local_name.as_deref().unwrap_or("<unnamed>"),
-                    address,
-                    properties.rssi,
-                    service_advertised
-                );
-            }
-            if !fresh_signal {
-                if config.debug && target_matches {
-                    eprintln!(
-                        "debug: BLE scanner skipped likely cached candidate thing={} address={} reason=missing-rssi",
-                        local_name.as_deref().unwrap_or("<unnamed>"),
-                        address
-                    );
+                let peripherals = match adapter.peripherals().await {
+                    Ok(peripherals) => peripherals,
+                    Err(err) => {
+                        state.log_property_error(format!("list BLE peripherals: {err}"));
+                        continue;
+                    }
+                };
+                for peripheral in peripherals {
+                    state.process_peripheral(config, &advertisements, &target_names, &peripheral, "poll").await?;
                 }
-                continue;
-            }
-            let Some(local_name) = local_name else {
-                continue;
-            };
-            let now = now_ms();
-            if service_advertised
-                && should_log_unmanaged_txing_advertisement(
-                    &local_name,
-                    &target_names,
-                    &mut last_unmanaged_txing_log_by_name,
-                    now,
-                )
-            {
-                eprintln!(
-                    "warning: BLE scanner saw unmanaged Txing advertisement thing={} address={} rssi={:?} targets={target_names:?}",
-                    local_name, address, properties.rssi
-                );
-            }
-            if !should_publish_scanner_advertisement(
-                &local_name,
-                &target_names,
-                &last_published_by_name,
-                now,
-            ) {
-                if config.debug && target_matches {
-                    eprintln!(
-                        "debug: BLE scanner skipped candidate thing={} address={} reason=throttled-or-not-target",
-                        local_name, address
-                    );
-                }
-                continue;
-            }
-            last_published_by_name.insert(local_name.clone(), now);
-            seq += 1;
-            let advertisement = Advertisement {
-                address,
-                local_name: Some(local_name.clone()),
-                services: properties.services,
-                rssi: properties.rssi,
-                observed_at_ms: now,
-                seq,
-            };
-            if config.debug {
-                eprintln!(
-                    "debug: BLE scanner published advertisement thing={} address={} rssi={:?} serviceAdvertised={} seq={seq}",
-                    local_name,
-                    advertisement.address,
-                    advertisement.rssi,
-                    advertisement.has_txing_service()
-                );
-            }
-            let _ = advertisements.send(advertisement);
             }
             _ = debug_summary_timer.tick(), if config.debug => {
                 let target_names = scanner_targets_snapshot(&scanner_targets);
-                debug_summary.log(&target_names);
-                debug_summary = ScannerDebugSummary::default();
+                state.debug_summary.log(&target_names);
+                state.debug_summary = ScannerDebugSummary::default();
             }
         }
     }

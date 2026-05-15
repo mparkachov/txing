@@ -21,9 +21,9 @@ use txing_rig_local_pubsub::LocalPubSubClient;
 
 use crate::catalog::{TypeCatalogDevice, parse_string_list, reconstruct_type_record};
 use crate::manager::{
-    DevicePublication, DeviceRuntimeState, command_from_dcmd, command_result_metrics,
-    device_session_spec, graceful_device_death, graceful_node_death, node_client_id,
-    node_session_spec,
+    DevicePublication, DeviceRuntimeState, NODE_REDCON_BORN, command_from_dcmd,
+    command_result_metrics, device_session_spec, graceful_device_death, graceful_node_death,
+    node_client_id, node_session_spec,
 };
 use crate::sparkplug;
 use txing_capability_protocol::{
@@ -113,8 +113,31 @@ impl RetainedCapabilityStatePayload {
 
 #[derive(Debug, Clone)]
 enum RuntimeEvent {
-    LocalMessage { topic: String, payload: Vec<u8> },
-    MqttPublish { topic: String, payload: Vec<u8> },
+    LocalMessage {
+        topic: String,
+        payload: Vec<u8>,
+    },
+    MqttPublish {
+        topic: String,
+        payload: Vec<u8>,
+    },
+    MqttConnectionSuccess {
+        owner: MqttSessionOwner,
+    },
+    MqttConnectionFailure {
+        owner: MqttSessionOwner,
+        message: String,
+    },
+    MqttDisconnection {
+        owner: MqttSessionOwner,
+        message: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum MqttSessionOwner {
+    Node { generation: u64 },
+    Device { thing_name: String, generation: u64 },
 }
 
 struct AwsRegistryClient {
@@ -350,7 +373,7 @@ impl MqttSession {
         endpoint: &str,
         region: &str,
         spec: crate::manager::MqttSessionSpec,
-        event_sender: Option<mpsc::UnboundedSender<RuntimeEvent>>,
+        event_sender: Option<(mpsc::UnboundedSender<RuntimeEvent>, MqttSessionOwner)>,
     ) -> Result<Self> {
         let client_id = spec.client_id.clone();
         let will_topic = spec.will.topic.clone();
@@ -367,19 +390,40 @@ impl MqttSession {
         let client = AwsClientBuilder::new_websockets_with_sigv4(endpoint, sigv4_options, None)?
             .with_connect_options(connect_options.build())
             .build_tokio()?;
-        let listener = event_sender.map(|sender| {
-            Arc::new(move |event: Arc<ClientEvent>| {
-                if let ClientEvent::PublishReceived(received) = event.as_ref() {
-                    let payload = received
-                        .publish
-                        .payload()
-                        .map(|payload| payload.to_vec())
-                        .unwrap_or_default();
-                    let _ = sender.send(RuntimeEvent::MqttPublish {
-                        topic: received.publish.topic().to_string(),
-                        payload,
+        let listener = event_sender.map(|(sender, owner)| {
+            Arc::new(move |event: Arc<ClientEvent>| match event.as_ref() {
+                ClientEvent::PublishReceived(received) => {
+                    if matches!(&owner, MqttSessionOwner::Node { .. }) {
+                        let payload = received
+                            .publish
+                            .payload()
+                            .map(|payload| payload.to_vec())
+                            .unwrap_or_default();
+                        let _ = sender.send(RuntimeEvent::MqttPublish {
+                            topic: received.publish.topic().to_string(),
+                            payload,
+                        });
+                    }
+                }
+                ClientEvent::ConnectionSuccess(_) => {
+                    let _ = sender.send(RuntimeEvent::MqttConnectionSuccess {
+                        owner: owner.clone(),
                     });
                 }
+                ClientEvent::ConnectionFailure(failure) => {
+                    let _ = sender.send(RuntimeEvent::MqttConnectionFailure {
+                        owner: owner.clone(),
+                        message: failure.to_string(),
+                    });
+                }
+                ClientEvent::Disconnection(disconnection) => {
+                    let _ = sender.send(RuntimeEvent::MqttDisconnection {
+                        owner: owner.clone(),
+                        message: disconnection.to_string(),
+                    });
+                }
+                ClientEvent::ConnectionAttempt(_) | ClientEvent::Stopped(_) => {}
+                _ => {}
             }) as Arc<gneiss_mqtt::client::ClientEventListenerCallback>
         });
         client.start(listener)?;
@@ -429,6 +473,8 @@ impl MqttSession {
 struct ManagedDevice {
     state: DeviceRuntimeState,
     session: Option<MqttSession>,
+    session_generation: u64,
+    connection_seen: bool,
 }
 
 struct SparkplugRuntime {
@@ -436,6 +482,8 @@ struct SparkplugRuntime {
     registry: AwsRegistryClient,
     devices: BTreeMap<String, ManagedDevice>,
     node_session: Option<MqttSession>,
+    node_session_generation: u64,
+    node_connection_seen: bool,
     inventory_seq: u64,
     node_seq: u64,
     node_born: bool,
@@ -456,6 +504,8 @@ impl SparkplugRuntime {
             registry,
             devices: BTreeMap::new(),
             node_session: None,
+            node_session_generation: 0,
+            node_connection_seen: false,
             inventory_seq: 0,
             node_seq: 0,
             node_born: false,
@@ -480,6 +530,11 @@ impl SparkplugRuntime {
         if self.node_session.is_some() {
             return Ok(());
         }
+        self.node_session_generation = self.node_session_generation.saturating_add(1);
+        self.node_connection_seen = false;
+        let owner = MqttSessionOwner::Node {
+            generation: self.node_session_generation,
+        };
         let spec = node_session_spec(
             &self.config.town_id,
             &self.config.rig_id,
@@ -491,18 +546,10 @@ impl SparkplugRuntime {
             &self.config.iot_endpoint,
             &self.config.aws_region,
             spec,
-            Some(self.event_sender.clone()),
+            Some((self.event_sender.clone(), owner)),
         )
         .await?;
-        let dcmd_filter =
-            sparkplug::build_device_topic(&self.config.town_id, "DCMD", &self.config.rig_id, "+");
-        let subscribe_result = async {
-            node_session.subscribe(dcmd_filter).await?;
-            node_session
-                .subscribe(BOARD_RETAINED_CAPABILITY_STATE_FILTER.to_string())
-                .await
-        }
-        .await;
+        let subscribe_result = self.subscribe_node_topics(&node_session).await;
         if let Err(err) = subscribe_result {
             if let Err(stop_err) = node_session.stop() {
                 eprintln!(
@@ -515,11 +562,21 @@ impl SparkplugRuntime {
         Ok(())
     }
 
+    async fn subscribe_node_topics(&self, node_session: &MqttSession) -> Result<()> {
+        let dcmd_filter =
+            sparkplug::build_device_topic(&self.config.town_id, "DCMD", &self.config.rig_id, "+");
+        node_session.subscribe(dcmd_filter).await?;
+        node_session
+            .subscribe(BOARD_RETAINED_CAPABILITY_STATE_FILTER.to_string())
+            .await
+    }
+
     async fn publish_node_birth(&mut self) -> Result<()> {
         let topic =
             sparkplug::build_node_topic(&self.config.town_id, "NBIRTH", &self.config.rig_id);
         let seq = self.next_node_seq();
-        let payload = sparkplug::build_node_birth_payload(1, NODE_BDSEQ, seq, now_ms())?;
+        let payload =
+            sparkplug::build_node_birth_payload(NODE_REDCON_BORN, NODE_BDSEQ, seq, now_ms())?;
         self.node_session()?
             .publish(topic, payload)
             .await
@@ -580,6 +637,8 @@ impl SparkplugRuntime {
                 .or_insert_with(|| ManagedDevice {
                     state: DeviceRuntimeState::new(inventory_device),
                     session: None,
+                    session_generation: 0,
+                    connection_seen: false,
                 });
         }
         if previous_names != next_names {
@@ -709,6 +768,97 @@ impl SparkplugRuntime {
         self.publish_local(command_topic, command.to_vec()?)
     }
 
+    async fn handle_mqtt_connection_success(&mut self, owner: MqttSessionOwner) -> Result<()> {
+        if !self.is_current_mqtt_owner(&owner) {
+            return Ok(());
+        }
+        match owner {
+            MqttSessionOwner::Node { .. } => {
+                if !self.node_connection_seen {
+                    self.node_connection_seen = true;
+                    eprintln!("Sparkplug node MQTT connected rigId={}", self.config.rig_id);
+                    return Ok(());
+                }
+                eprintln!(
+                    "warning: Sparkplug node MQTT reconnected rigId={}; republishing NBIRTH and inventory",
+                    self.config.rig_id
+                );
+                self.restore_node_birth().await?;
+            }
+            MqttSessionOwner::Device { thing_name, .. } => {
+                let Some(device) = self.devices.get_mut(&thing_name) else {
+                    return Ok(());
+                };
+                if !device.connection_seen {
+                    device.connection_seen = true;
+                    eprintln!("Sparkplug device MQTT connected thing={thing_name}");
+                    return Ok(());
+                }
+                eprintln!(
+                    "warning: Sparkplug device MQTT reconnected thing={thing_name}; republishing DBIRTH if available"
+                );
+                device.state.reset_publication();
+                self.publish_device_changes().await?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn restore_node_birth(&mut self) -> Result<()> {
+        self.node_born = false;
+        if let Some(node_session) = self.node_session.as_ref() {
+            self.subscribe_node_topics(node_session).await?;
+        }
+        self.publish_node_birth().await?;
+        self.publish_inventory().await?;
+        self.reset_device_publications();
+        self.publish_device_changes().await
+    }
+
+    fn reset_device_publications(&mut self) {
+        for device in self.devices.values_mut() {
+            device.state.reset_publication();
+        }
+    }
+
+    fn handle_mqtt_connection_problem(
+        &mut self,
+        owner: MqttSessionOwner,
+        event_name: &str,
+        message: String,
+    ) {
+        if !self.is_current_mqtt_owner(&owner) {
+            return;
+        }
+        match owner {
+            MqttSessionOwner::Node { .. } => {
+                eprintln!(
+                    "warning: Sparkplug node MQTT {event_name} rigId={} event={message}",
+                    self.config.rig_id
+                );
+            }
+            MqttSessionOwner::Device { thing_name, .. } => {
+                eprintln!(
+                    "warning: Sparkplug device MQTT {event_name} thing={thing_name} event={message}"
+                );
+            }
+        }
+    }
+
+    fn is_current_mqtt_owner(&self, owner: &MqttSessionOwner) -> bool {
+        match owner {
+            MqttSessionOwner::Node { generation } => {
+                self.node_session.is_some() && *generation == self.node_session_generation
+            }
+            MqttSessionOwner::Device {
+                thing_name,
+                generation,
+            } => self.devices.get(thing_name).is_some_and(|device| {
+                device.session.is_some() && *generation == device.session_generation
+            }),
+        }
+    }
+
     fn publish_local(&self, topic: String, payload: Vec<u8>) -> Result<()> {
         self.outbound_sender
             .send(OutboundMessage { topic, payload })
@@ -779,6 +929,12 @@ impl SparkplugRuntime {
         if device.session.is_some() {
             return Ok(());
         }
+        device.session_generation = device.session_generation.saturating_add(1);
+        device.connection_seen = false;
+        let owner = MqttSessionOwner::Device {
+            thing_name: thing_name.to_string(),
+            generation: device.session_generation,
+        };
         let spec = device_session_spec(
             &self.config.town_id,
             &self.config.rig_id,
@@ -789,7 +945,7 @@ impl SparkplugRuntime {
             &self.config.iot_endpoint,
             &self.config.aws_region,
             spec,
-            None,
+            Some((self.event_sender.clone(), owner)),
         )
         .await?;
         device.session = Some(session);
@@ -803,6 +959,7 @@ impl SparkplugRuntime {
         let Some(mut session) = device.session.take() else {
             return Ok(());
         };
+        device.connection_seen = false;
         let seq = session.next_seq();
         let (topic, payload) = graceful_device_death(
             &self.config.town_id,
@@ -1067,6 +1224,15 @@ async fn run_greengrass_runtime(config: RuntimeConfig) -> Result<()> {
                 let result = match event {
                     RuntimeEvent::LocalMessage { topic, payload } => runtime.handle_local_message(topic, payload).await,
                     RuntimeEvent::MqttPublish { topic, payload } => runtime.handle_mqtt_publish(topic, payload).await,
+                    RuntimeEvent::MqttConnectionSuccess { owner } => runtime.handle_mqtt_connection_success(owner).await,
+                    RuntimeEvent::MqttConnectionFailure { owner, message } => {
+                        runtime.handle_mqtt_connection_problem(owner, "connection failure", message);
+                        Ok(())
+                    }
+                    RuntimeEvent::MqttDisconnection { owner, message } => {
+                        runtime.handle_mqtt_connection_problem(owner, "disconnection", message);
+                        Ok(())
+                    }
                 };
                 if let Err(err) = result {
                     eprintln!("warning: runtime event failed: {err:#}");
@@ -1139,10 +1305,20 @@ async fn run_local_runtime(config: RuntimeConfig) -> Result<()> {
                 }
             }
             Some(event) = event_receiver.recv() => {
-                let RuntimeEvent::MqttPublish { topic, payload } = event else {
-                    continue;
+                let result = match event {
+                    RuntimeEvent::MqttPublish { topic, payload } => runtime.handle_mqtt_publish(topic, payload).await,
+                    RuntimeEvent::MqttConnectionSuccess { owner } => runtime.handle_mqtt_connection_success(owner).await,
+                    RuntimeEvent::MqttConnectionFailure { owner, message } => {
+                        runtime.handle_mqtt_connection_problem(owner, "connection failure", message);
+                        Ok(())
+                    }
+                    RuntimeEvent::MqttDisconnection { owner, message } => {
+                        runtime.handle_mqtt_connection_problem(owner, "disconnection", message);
+                        Ok(())
+                    }
+                    RuntimeEvent::LocalMessage { .. } => Ok(()),
                 };
-                if let Err(err) = runtime.handle_mqtt_publish(topic, payload).await {
+                if let Err(err) = result {
                     eprintln!("warning: Sparkplug MQTT event failed: {err:#}");
                 }
             }

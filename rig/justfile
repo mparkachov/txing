@@ -22,25 +22,6 @@ region := ""
 aws_profile := ""
 aws_shared_credentials_file := ""
 
-[private]
-_check-rig-cargo-version expected_version:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    metadata="$(cargo metadata --manifest-path "{{rig_dir}}/Cargo.toml" --format-version 1 --no-deps)"
-    mismatches="$(
-      jq -r --arg expected "{{expected_version}}" '
-        .packages[]
-        | select(.version != $expected)
-        | "\(.name) \(.version)"
-      ' <<<"$metadata"
-    )"
-    if [ -n "$mismatches" ]; then
-      echo "Rig Cargo package versions do not match Greengrass component version {{expected_version}}:" >&2
-      sed 's/^/  /' <<<"$mismatches" >&2
-      echo "Run: just release::bump {{expected_version}}" >&2
-      exit 1
-    fi
-
 [positional-arguments]
 aws *args:
     #!/usr/bin/env bash
@@ -1022,19 +1003,9 @@ deploy target='auto' component_version='' region=region aws_profile=aws_profile 
     if [ -z "$resolved_component_version" ]; then
       resolved_component_version="$TXING_VERSION"
     fi
-    if ! [[ "$resolved_component_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-      echo "Greengrass component version must be a plain semantic version like x.y.z." >&2
-      exit 1
-    fi
-    just --justfile "{{rig_dir}}/justfile" _check-rig-cargo-version "$resolved_component_version"
-    allow_dirty="${TXING_ALLOW_DIRTY_DEPLOY:-${TXING_RIG_ALLOW_DIRTY_DEPLOY:-}}"
-    case "$allow_dirty" in
-      true|1|yes|on) allow_dirty="true" ;;
-      *) allow_dirty="false" ;;
-    esac
-    if [ "${TXING_GIT_DIRTY:-false}" = "true" ] && [ "$allow_dirty" != "true" ]; then
+    if [ "${TXING_GIT_DIRTY:-false}" = "true" ]; then
       echo "Refusing production Greengrass deploy from a dirty worktree." >&2
-      echo "Commit or stash local changes first, or set TXING_ALLOW_DIRTY_DEPLOY=1 for an explicit debug deploy." >&2
+      echo "Commit or stash local changes first." >&2
       if [ -n "${TXING_GIT_DIRTY_HASH:-}" ]; then
         echo "Dirty tree hash: $TXING_GIT_DIRTY_HASH" >&2
       fi
@@ -1734,7 +1705,6 @@ deploy-local rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id=
         exit 1
         ;;
     esac
-    just --justfile "{{rig_dir}}/justfile" _check-rig-cargo-version "$resolved_component_version"
     case "$selected_rig_type" in
       raspi)
         sparkplug_component="dev.txing.rig.SparkplugManager"

@@ -12,6 +12,9 @@ use txing_capability_protocol::{
 // adapter state TTL above that producer freshness window so idle BLE devices
 // do not flap through DDEATH between valid samples.
 const STATE_TTL_MS: u64 = 150_000;
+pub const NODE_REDCON_BORN: u8 = 1;
+pub const NODE_REDCON_DEAD: u8 = 4;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct DeviceSnapshot {
     pub thing_name: String,
@@ -74,12 +77,16 @@ impl DeviceRuntimeState {
 
     pub fn replace_inventory(&mut self, inventory: InventoryDevice) {
         if self.inventory.capabilities != inventory.capabilities {
-            self.born = false;
-            self.last_published_redcon = None;
-            self.last_published_capabilities.clear();
-            self.last_published_metrics.clear();
+            self.reset_publication();
         }
         self.inventory = inventory;
+    }
+
+    pub fn reset_publication(&mut self) {
+        self.born = false;
+        self.last_published_redcon = None;
+        self.last_published_capabilities.clear();
+        self.last_published_metrics.clear();
     }
 
     pub fn observe_state(&mut self, state: CapabilityState) -> Result<()> {
@@ -236,7 +243,7 @@ pub fn node_session_spec(
         client_id: client_id.to_string(),
         will: MqttWill {
             topic: sparkplug::build_node_topic(group_id, "NDEATH", edge_node_id),
-            payload: sparkplug::build_node_death_payload(4, bdseq, timestamp)?,
+            payload: sparkplug::build_node_death_payload(NODE_REDCON_DEAD, bdseq, timestamp)?,
         },
     })
 }
@@ -870,9 +877,22 @@ mod tests {
         let node =
             node_session_spec("town-1", "rig-1", &node_client_id("rig-1"), 12, 1000).unwrap();
         let device = device_session_spec("town-1", "rig-1", "power-1", 1000).unwrap();
+        let node_will = sparkplug::decode_payload(&node.will.payload).unwrap();
+        let node_birth = sparkplug::decode_payload(
+            &sparkplug::build_node_birth_payload(NODE_REDCON_BORN, 12, 0, 1000).unwrap(),
+        )
+        .unwrap();
 
         assert_eq!(node.client_id, "rig-1-sparkplug-manager");
         assert_eq!(node.will.topic, "spBv1.0/town-1/NDEATH/rig-1");
+        assert_eq!(
+            node_birth.metrics,
+            vec![Metric::uint64("bdSeq", 12), Metric::int32("redcon", 1)]
+        );
+        assert_eq!(
+            node_will.metrics,
+            vec![Metric::uint64("bdSeq", 12), Metric::int32("redcon", 4)]
+        );
         assert_eq!(device.client_id, "power-1");
         assert_eq!(device.will.topic, "spBv1.0/town-1/DDEATH/rig-1/power-1");
     }
