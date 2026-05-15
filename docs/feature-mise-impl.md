@@ -130,6 +130,16 @@ The prerelease flow is intentionally split across two hosts. Build in Lima:
 limactl shell txing
 ```
 
+If `mise` itself is missing, install it first:
+
+```bash
+curl https://mise.run | sh
+```
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
 If `just` is not on `PATH` but `mise exec -- just --version` works, activate mise
 for future Lima login shells:
 
@@ -672,7 +682,17 @@ sudo apt-get update
 ```
 
 ```bash
-sudo apt-get install -y build-essential pkg-config cmake perl git
+sudo apt-get install -y build-essential pkg-config cmake perl git curl
+```
+
+If `mise` itself is missing, install it first:
+
+```bash
+curl https://mise.run | sh
+```
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
 ```
 
 ```bash
