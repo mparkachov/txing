@@ -4,7 +4,7 @@ requires-python = ">=3.12"
 
 [[package]]
 name = "aws"
-version = "0.9.104"
+version = "0.9.105"
 source = { editable = "." }
 dependencies = [
     { name = "awsiotsdk" },

@@ -60,6 +60,7 @@ const BLE_SCANNER_NO_TARGET_LOG_INTERVAL_MS: u64 = 30_000;
 const BLE_SCANNER_EMPTY_CACHE_RESTART_INTERVAL_MS: u64 = 30_000;
 const BLE_SCANNER_IN_PROGRESS_RECOVERY_ATTEMPTS: u32 = 3;
 const BLE_SCANNER_IN_PROGRESS_RECOVERY_DELAY_MS: u64 = 500;
+const BLE_SCANNER_ADAPTER_RESET_DELAY_MS: u64 = 1_000;
 const BLE_SCANNER_DEBUG_SAMPLE_LIMIT: usize = 8;
 const BLE_SCANNER_UNMANAGED_TXING_LOG_INTERVAL_MS: u64 = 30_000;
 const SHADOW_PUBLISH_INTERVAL_MS: u64 = 500;
@@ -1932,7 +1933,57 @@ async fn recover_in_progress_scan(adapter: &Adapter, mut last_message: String) -
             }
         }
     }
+    if let Err(err) = reset_bluez_adapters_after_stale_discovery().await {
+        eprintln!("warning: BLE scanner BlueZ adapter reset failed: {err:#}");
+    } else {
+        match adapter.start_scan(ScanFilter::default()).await {
+            Ok(()) => {
+                eprintln!("BLE scanner recovered after BlueZ adapter reset");
+                return Ok(());
+            }
+            Err(err) => {
+                last_message = err.to_string();
+                if !ble_error_indicates_in_progress(&last_message) {
+                    return Err(err).context("start BLE scan after BlueZ adapter reset");
+                }
+            }
+        }
+    }
     bail!("start BLE scan after resetting discovery: {last_message}")
+}
+
+#[cfg(all(feature = "ble-real", target_os = "linux"))]
+async fn reset_bluez_adapters_after_stale_discovery() -> Result<()> {
+    eprintln!("warning: BLE scanner power-cycling Bluetooth adapter through bluetoothctl");
+    run_bluetoothctl_power("off").await?;
+    sleep(Duration::from_millis(BLE_SCANNER_ADAPTER_RESET_DELAY_MS)).await;
+    run_bluetoothctl_power("on").await
+}
+
+#[cfg(all(feature = "ble-real", not(target_os = "linux")))]
+async fn reset_bluez_adapters_after_stale_discovery() -> Result<()> {
+    bail!("BlueZ adapter reset is only available on Linux")
+}
+
+#[cfg(all(feature = "ble-real", target_os = "linux"))]
+async fn run_bluetoothctl_power(state: &'static str) -> Result<()> {
+    tokio::task::spawn_blocking(move || {
+        let output = std::process::Command::new("bluetoothctl")
+            .args(["power", state])
+            .output()
+            .with_context(|| format!("run bluetoothctl power {state}"))?;
+        if output.status.success() {
+            return Ok(());
+        }
+        bail!(
+            "bluetoothctl power {state} failed status={} stdout={} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout).trim(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        )
+    })
+    .await
+    .context("join bluetoothctl power command")?
 }
 
 #[cfg(all(feature = "ble-real", any(target_os = "linux", target_os = "macos")))]
