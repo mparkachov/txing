@@ -62,11 +62,11 @@ The design uses standard mise features:
 
 There is one tool from the board's point of view: `txing-unit-daemon`.
 
-Stable releases are normal GitHub releases:
+Stable releases are manually published normal GitHub releases:
 
 - Tag/release name: repo-wide `v<VERSION>`, for example `v0.9.8`.
 - Version source: repo root `VERSION`.
-- Built by CI from `main` when `VERSION` changes.
+- Built by the manual `Unit Daemon Stable Release` workflow from `main`.
 - GitHub prerelease flag: `false`.
 - Asset: one `.tar.gz` archive containing a stripped Linux `aarch64`
   dynamically linked executable named `txing-unit-daemon`.
@@ -387,9 +387,8 @@ is intentionally moving; the default branch name is
 Stable publishing is CI-owned:
 
 - Workflow: `.github/workflows/unit-daemon-stable-release.yml`.
-- Current trigger: manual `workflow_dispatch` only.
-- Allowed manual refs: `main` and temporary phase-2 branch
-  `feature/build-daemon-for-txing`.
+- Trigger: manual `workflow_dispatch` only.
+- Allowed ref: `main` only.
 - Version: root `VERSION` exactly.
 - Release: repo-wide `v<VERSION>`.
 - GitHub prerelease flag: `false`.
@@ -402,7 +401,8 @@ Stable publishing is CI-owned:
   replacing a tag, release, or asset for an already-published version.
 
 The workflow builds natively on GitHub's Linux `aarch64` runner, runs daemon
-tests, packages the archive, and publishes a normal GitHub Release. It caches the
+tests, packages the archive, verifies that neither the `v<VERSION>` tag nor
+release already exists, and publishes a normal GitHub Release. It caches the
 Rust toolchain, Cargo downloads, and the daemon `target` directory with cache
 keys scoped to Rust `1.95.0` and `devices/unit/daemon/Cargo.lock`.
 
@@ -572,8 +572,7 @@ board. This criterion is met for phase 1.
 Goal: make stable board setup and maintenance boring and repeatable.
 
 - Add CI publishing for stable releases. Implemented as manual
-  `.github/workflows/unit-daemon-stable-release.yml`; temporary phase-2 manual
-  runs from `feature/build-daemon-for-txing` are also allowed.
+  `.github/workflows/unit-daemon-stable-release.yml` runs from `main` only.
 - Make stable release assets immutable. Implemented in the workflow.
 - Document the initial board setup from fresh Raspberry Pi OS image through
   dedicated `txing` user, mise install, stable tool config, certificates, and

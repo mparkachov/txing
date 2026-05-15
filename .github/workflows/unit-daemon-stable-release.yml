@@ -12,7 +12,6 @@ concurrency:
 
 env:
   RUST_VERSION: 1.95.0
-  STABLE_FEATURE_BRANCH: feature/build-daemon-for-txing
   ASSET_NAME: txing-unit-daemon-linux-aarch64.tar.gz
   BINARY_NAME: txing-unit-daemon
 
@@ -45,13 +44,10 @@ jobs:
             echo "Stable release workflow must be run manually from a branch, got ref type: ${GITHUB_REF_TYPE}" >&2
             exit 1
           fi
-          case "${GITHUB_REF_NAME}" in
-            main|"$STABLE_FEATURE_BRANCH") ;;
-            *)
-              echo "Stable release workflow is only allowed from main or $STABLE_FEATURE_BRANCH, got: ${GITHUB_REF_NAME}" >&2
-              exit 1
-              ;;
-          esac
+          if [ "${GITHUB_REF_NAME}" != "main" ]; then
+            echo "Stable release workflow is only allowed from main, got: ${GITHUB_REF_NAME}" >&2
+            exit 1
+          fi
 
           echo "version=$version" >>"$GITHUB_OUTPUT"
           echo "tag=$tag" >>"$GITHUB_OUTPUT"
