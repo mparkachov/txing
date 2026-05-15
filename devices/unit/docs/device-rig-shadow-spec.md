@@ -157,7 +157,10 @@ The unit REDCON rules are declared ahead of the board/MCP/video v2 capability ro
 
 Board/MCP/video availability comes from board-owned retained v2 capability state
 consumed directly by SparkplugManager. Board shadows may still exist and be read,
-but REDCON selection uses the v2 capability state, not shadow freshness.
+but REDCON selection uses the v2 capability state, not shadow freshness. The
+board-owned capabilities are still gated by BLE `power=true`; REDCON `4` /
+power-off evidence clears board/MCP/video immediately even if retained board
+state is stale.
 
 ## Acceptance Criteria
 

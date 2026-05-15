@@ -236,8 +236,11 @@ changes:
 
 The board runtime publishes retained v2 capability state for `board`, `mcp`, and
 `video`. SparkplugManager consumes those board-owned retained state messages
-directly. Together with BLE `sparkplug`/`ble`/`power` state, upgraded unit
-devices can converge through the full REDCON ladder.
+directly, but gates them behind BLE `power=true`. When BLE reports REDCON `4`
+or otherwise reports `power=false`, SparkplugManager clears `board`, `mcp`, and
+`video` immediately instead of waiting for the retained board state to expire.
+Together with BLE `sparkplug`/`ble`/`power` state, upgraded unit devices can
+converge through the full REDCON ladder.
 
 Commandable REDCON levels are a txing type capability, exposed as the comma-separated
 `redconCommandLevels` thing attribute from each device manifest's `redcon_command_levels`.

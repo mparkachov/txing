@@ -98,7 +98,8 @@ management.
 - Sparkplug lifecycle state is published only on MQTT; the AWS read model is witness-owned
 - Greengrass core/device/component status is service observability only; it is not the txing lifecycle source of truth
 - v2 capability state from connectivity adapters selects the highest REDCON level whose type-catalog rule is satisfied
-- raspi rigs run BLE connectivity for `sparkplug`/`ble`/`power`; board-owned retained state is consumed directly by SparkplugManager for `board`/`mcp`/`video`
+- raspi rigs run BLE connectivity for `sparkplug`/`ble`/`power`; board-owned retained state is consumed by SparkplugManager for `board`/`mcp`/`video`
+- board-owned retained state is gated by BLE power availability, so REDCON `4` / power-off evidence clears `board`, `mcp`, and `video` without waiting for retained state TTL expiry
 - current BLE devices advertise with the AWS Thing ID from MCU NVE as the primary identity name
 
 The current contract sources are:
