@@ -54,6 +54,8 @@ const BLE_RETRY_MAX_DELAY_MS: u64 = 120_000;
 const BLE_RETRY_JITTER_MAX_MS: u64 = 1_000;
 const BLUEZ_IN_PROGRESS_RECONNECT_DELAY_MS: u64 = 10_000;
 const BLUEZ_RESOURCE_EXHAUSTED_RECONNECT_DELAY_MS: u64 = 60_000;
+const BLE_CONNECT_SESSION_MAX_TIMEOUT_MS: u64 = 20_000;
+const BLE_DISCONNECT_TIMEOUT_MS: u64 = 2_000;
 const BLE_SCANNER_PROPERTY_ERROR_LOG_INTERVAL_MS: u64 = 30_000;
 const BLE_SCANNER_DEBUG_SUMMARY_INTERVAL_MS: u64 = 5_000;
 const BLE_SCANNER_NO_TARGET_LOG_INTERVAL_MS: u64 = 30_000;
@@ -1160,38 +1162,57 @@ fn scanner_targets_snapshot(scanner_targets: &SharedScannerTargets) -> BTreeSet<
 }
 
 fn should_publish_scanner_advertisement(
-    local_name: &str,
+    identity_name: &str,
     target_names: &BTreeSet<String>,
     last_published_by_name: &BTreeMap<String, u64>,
     now: u64,
 ) -> bool {
-    target_names.contains(local_name)
+    target_names.contains(identity_name)
         && last_published_by_name
-            .get(local_name)
+            .get(identity_name)
             .is_none_or(|last_published| {
                 now.saturating_sub(*last_published) >= BLE_ADVERTISEMENT_BROADCAST_MIN_INTERVAL_MS
             })
 }
 
 fn should_log_unmanaged_txing_advertisement(
-    local_name: &str,
+    identity_name: &str,
     target_names: &BTreeSet<String>,
     last_logged_by_name: &mut BTreeMap<String, u64>,
     now: u64,
 ) -> bool {
-    if target_names.contains(local_name) {
+    if target_names.contains(identity_name) {
         return false;
     }
     if last_logged_by_name
-        .get(local_name)
+        .get(identity_name)
         .is_some_and(|last_logged| {
             now.saturating_sub(*last_logged) < BLE_SCANNER_UNMANAGED_TXING_LOG_INTERVAL_MS
         })
     {
         return false;
     }
-    last_logged_by_name.insert(local_name.to_string(), now);
+    last_logged_by_name.insert(identity_name.to_string(), now);
     true
+}
+
+fn scanner_reported_identity_name(
+    advertised_name: Option<String>,
+    gap_local_name: Option<String>,
+) -> Option<String> {
+    advertised_name.or(gap_local_name)
+}
+
+fn ble_address_is_matchable(address: &str) -> bool {
+    let address = address.trim();
+    !address.is_empty() && address != "00:00:00:00:00:00"
+}
+
+fn connect_session_timeout_ms(connect_timeout_ms: u64) -> u64 {
+    connect_timeout_ms
+        .max(BLE_RETRY_MIN_DELAY_MS)
+        .saturating_mul(2)
+        .min(BLE_CONNECT_SESSION_MAX_TIMEOUT_MS)
 }
 
 fn scanner_advertisement_has_fresh_signal(rssi: Option<i16>) -> bool {
@@ -1223,14 +1244,14 @@ impl ScannerDebugSummary {
     fn record(
         &mut self,
         address: &str,
-        local_name: Option<&str>,
+        identity_name: Option<&str>,
         rssi: Option<i16>,
         service_advertised: bool,
         target_matches: bool,
         fresh_signal: bool,
     ) {
         self.total += 1;
-        if local_name.is_some() {
+        if identity_name.is_some() {
             self.named += 1;
         } else {
             self.missing_name += 1;
@@ -1248,11 +1269,11 @@ impl ScannerDebugSummary {
         }
 
         if self.samples.len() < BLE_SCANNER_DEBUG_SAMPLE_LIMIT
-            && (target_matches || service_advertised || local_name.is_some())
+            && (target_matches || service_advertised || identity_name.is_some())
         {
             self.samples.push(format!(
                 "{}@{} rssi={rssi:?} txingService={service_advertised} fresh={fresh_signal}",
-                local_name.unwrap_or("<unnamed>"),
+                identity_name.unwrap_or("<unnamed>"),
                 address
             ));
         }
@@ -1311,110 +1332,181 @@ impl ConnectedDevice {
         connect_timeout_ms: u64,
         permit: Option<tokio::sync::OwnedSemaphorePermit>,
     ) -> Result<Self> {
-        let adapter = default_adapter().await?;
-        let peripheral = find_peripheral(&adapter, &advertisement.address, &spec.thing_name)
-            .await?
-            .ok_or_else(|| anyhow!("BLE peripheral {} is not visible", advertisement.address))?;
-        clear_peripheral_connect_state(&peripheral).await;
-        match timeout(
+        let adapter = timeout(Duration::from_millis(connect_timeout_ms), default_adapter())
+            .await
+            .context("BLE adapter lookup timed out")??;
+        let peripheral = timeout(
             Duration::from_millis(connect_timeout_ms),
-            peripheral.connect(),
+            find_peripheral(&adapter, &advertisement.address, &spec.thing_name),
         )
         .await
-        {
-            Ok(Ok(())) => {}
-            Ok(Err(err)) => {
-                let _ = peripheral.disconnect().await;
-                return Err(err).context("connect BLE peripheral");
-            }
-            Err(err) => {
-                let _ = peripheral.disconnect().await;
-                return Err(err).context("BLE connect timed out");
-            }
-        }
-        match timeout(
-            Duration::from_millis(connect_timeout_ms),
-            peripheral.discover_services(),
-        )
-        .await
-        {
-            Ok(Ok(())) => {}
-            Ok(Err(err)) => {
-                let _ = peripheral.disconnect().await;
-                return Err(err).context("discover BLE services");
-            }
-            Err(err) => {
-                let _ = peripheral.disconnect().await;
-                return Err(err).context("BLE service discovery timed out");
-            }
-        }
-
-        let characteristics = peripheral.characteristics();
-        let command_char = find_characteristic(&characteristics, TXING_BLE_COMMAND_UUID)
-            .ok_or_else(|| anyhow!("BLE command characteristic is missing"))?;
-        let state_char = find_characteristic(&characteristics, TXING_BLE_STATE_UUID)
-            .ok_or_else(|| anyhow!("BLE state characteristic is missing"))?;
-        let power_measurement_char = find_characteristic(&characteristics, POWER_MEASUREMENT_UUID)
-            .ok_or_else(|| anyhow!("BLE power measurement characteristic is missing"))?;
-        let weather_measurement_char = if spec.kind.supports_weather() {
-            Some(
-                find_characteristic(&characteristics, WEATHER_MEASUREMENT_UUID)
-                    .ok_or_else(|| anyhow!("BLE weather measurement characteristic is missing"))?,
-            )
-        } else {
-            None
-        };
-
-        let mut notifications = peripheral
-            .notifications()
-            .await
-            .context("open BLE notification stream")?;
-        peripheral
-            .subscribe(&state_char)
-            .await
-            .context("subscribe BLE state notifications")?;
-        peripheral
-            .subscribe(&power_measurement_char)
-            .await
-            .context("subscribe BLE power measurement notifications")?;
-        if let Some(characteristic) = &weather_measurement_char {
-            peripheral
-                .subscribe(characteristic)
+        .context("BLE peripheral lookup timed out")??
+        .ok_or_else(|| anyhow!("BLE peripheral {} is not visible", advertisement.address))?;
+        let setup_result = timeout(
+            Duration::from_millis(connect_session_timeout_ms(connect_timeout_ms)),
+            async {
+                clear_peripheral_connect_state(&peripheral).await;
+                match timeout(
+                    Duration::from_millis(connect_timeout_ms),
+                    peripheral.connect(),
+                )
                 .await
-                .context("subscribe BLE weather measurement notifications")?;
-        }
-        let (notification_sender, notification_receiver) = mpsc::unbounded_channel();
-        let notification_task = tokio::spawn(async move {
-            while let Some(notification) = notifications.next().await {
-                if notification_sender
-                    .send(BleNotification {
-                        uuid: notification.uuid,
-                        payload: notification.value,
-                    })
-                    .is_err()
                 {
-                    break;
+                    Ok(Ok(())) => {}
+                    Ok(Err(err)) => {
+                        disconnect_peripheral_with_timeout(&peripheral, "connect failure cleanup")
+                            .await;
+                        return Err(err).context("connect BLE peripheral");
+                    }
+                    Err(err) => {
+                        disconnect_peripheral_with_timeout(&peripheral, "connect timeout cleanup")
+                            .await;
+                        return Err(err).context("BLE connect timed out");
+                    }
                 }
-            }
-        });
+                match timeout(
+                    Duration::from_millis(connect_timeout_ms),
+                    peripheral.discover_services(),
+                )
+                .await
+                {
+                    Ok(Ok(())) => {}
+                    Ok(Err(err)) => {
+                        disconnect_peripheral_with_timeout(
+                            &peripheral,
+                            "service discovery failure cleanup",
+                        )
+                        .await;
+                        return Err(err).context("discover BLE services");
+                    }
+                    Err(err) => {
+                        disconnect_peripheral_with_timeout(
+                            &peripheral,
+                            "service discovery timeout cleanup",
+                        )
+                        .await;
+                        return Err(err).context("BLE service discovery timed out");
+                    }
+                }
 
-        eprintln!(
-            "connected BLE thing={} address={} serviceAdvertised={}",
-            spec.thing_name,
-            advertisement.address,
-            advertisement.has_txing_service()
-        );
-        Ok(Self {
-            peripheral,
-            command_char,
-            state_char,
-            power_measurement_char,
-            weather_measurement_char,
-            notification_receiver,
-            notification_task,
-            address: advertisement.address.clone(),
-            _permit: permit,
-        })
+                let notification_setup_result = async {
+                    let characteristics = peripheral.characteristics();
+                    let command_char =
+                        find_characteristic(&characteristics, TXING_BLE_COMMAND_UUID)
+                            .ok_or_else(|| anyhow!("BLE command characteristic is missing"))?;
+                    let state_char = find_characteristic(&characteristics, TXING_BLE_STATE_UUID)
+                        .ok_or_else(|| anyhow!("BLE state characteristic is missing"))?;
+                    let power_measurement_char =
+                        find_characteristic(&characteristics, POWER_MEASUREMENT_UUID).ok_or_else(
+                            || anyhow!("BLE power measurement characteristic is missing"),
+                        )?;
+                    let weather_measurement_char = if spec.kind.supports_weather() {
+                        Some(
+                            find_characteristic(&characteristics, WEATHER_MEASUREMENT_UUID)
+                                .ok_or_else(|| {
+                                    anyhow!("BLE weather measurement characteristic is missing")
+                                })?,
+                        )
+                    } else {
+                        None
+                    };
+
+                    let notifications = timeout(
+                        Duration::from_millis(connect_timeout_ms),
+                        peripheral.notifications(),
+                    )
+                    .await
+                    .context("open BLE notification stream timed out")?
+                    .context("open BLE notification stream")?;
+                    timeout(
+                        Duration::from_millis(connect_timeout_ms),
+                        peripheral.subscribe(&state_char),
+                    )
+                    .await
+                    .context("subscribe BLE state notifications timed out")?
+                    .context("subscribe BLE state notifications")?;
+                    timeout(
+                        Duration::from_millis(connect_timeout_ms),
+                        peripheral.subscribe(&power_measurement_char),
+                    )
+                    .await
+                    .context("subscribe BLE power measurement notifications timed out")?
+                    .context("subscribe BLE power measurement notifications")?;
+                    if let Some(characteristic) = &weather_measurement_char {
+                        timeout(
+                            Duration::from_millis(connect_timeout_ms),
+                            peripheral.subscribe(characteristic),
+                        )
+                        .await
+                        .context("subscribe BLE weather measurement notifications timed out")?
+                        .context("subscribe BLE weather measurement notifications")?;
+                    }
+                    Ok((
+                        command_char,
+                        state_char,
+                        power_measurement_char,
+                        weather_measurement_char,
+                        notifications,
+                    ))
+                }
+                .await;
+                let (
+                    command_char,
+                    state_char,
+                    power_measurement_char,
+                    weather_measurement_char,
+                    mut notifications,
+                ) = match notification_setup_result {
+                    Ok(value) => value,
+                    Err(err) => {
+                        disconnect_peripheral_with_timeout(&peripheral, "connection setup cleanup")
+                            .await;
+                        return Err(err);
+                    }
+                };
+                let (notification_sender, notification_receiver) = mpsc::unbounded_channel();
+                let notification_task = tokio::spawn(async move {
+                    while let Some(notification) = notifications.next().await {
+                        if notification_sender
+                            .send(BleNotification {
+                                uuid: notification.uuid,
+                                payload: notification.value,
+                            })
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                });
+
+                eprintln!(
+                    "connected BLE thing={} address={} serviceAdvertised={}",
+                    spec.thing_name,
+                    advertisement.address,
+                    advertisement.has_txing_service()
+                );
+                Ok(Self {
+                    peripheral: peripheral.clone(),
+                    command_char,
+                    state_char,
+                    power_measurement_char,
+                    weather_measurement_char,
+                    notification_receiver,
+                    notification_task,
+                    address: advertisement.address.clone(),
+                    _permit: permit,
+                })
+            },
+        )
+        .await;
+        match setup_result {
+            Ok(result) => result,
+            Err(err) => {
+                disconnect_peripheral_with_timeout(&peripheral, "connect session timeout cleanup")
+                    .await;
+                Err(err).context("BLE connect session timed out")
+            }
+        }
     }
 
     async fn is_connected(&self) -> bool {
@@ -1499,8 +1591,34 @@ impl ConnectedDevice {
 
 #[cfg(all(feature = "ble-real", any(target_os = "linux", target_os = "macos")))]
 async fn clear_peripheral_connect_state(peripheral: &Peripheral) {
-    let _ = peripheral.disconnect().await;
+    if timeout(
+        Duration::from_millis(BLE_DISCONNECT_TIMEOUT_MS),
+        peripheral.disconnect(),
+    )
+    .await
+    .is_err()
+    {
+        eprintln!("warning: BLE peripheral disconnect timed out reason=pre-connect reset");
+    }
     sleep(Duration::from_millis(BLE_CONNECT_RESET_DELAY_MS)).await;
+}
+
+#[cfg(all(feature = "ble-real", any(target_os = "linux", target_os = "macos")))]
+async fn disconnect_peripheral_with_timeout(peripheral: &Peripheral, reason: &str) {
+    match timeout(
+        Duration::from_millis(BLE_DISCONNECT_TIMEOUT_MS),
+        peripheral.disconnect(),
+    )
+    .await
+    {
+        Ok(Ok(())) => {}
+        Ok(Err(err)) => {
+            eprintln!("warning: BLE peripheral disconnect failed reason={reason} error={err}");
+        }
+        Err(_) => {
+            eprintln!("warning: BLE peripheral disconnect timed out reason={reason}");
+        }
+    }
 }
 
 #[cfg(all(feature = "ble-real", any(target_os = "linux", target_os = "macos")))]
@@ -1512,13 +1630,33 @@ impl Drop for ConnectedDevice {
         let power_measurement_char = self.power_measurement_char.clone();
         let weather_measurement_char = self.weather_measurement_char.clone();
         tokio::spawn(async move {
-            if peripheral.is_connected().await.unwrap_or(false) {
-                let _ = peripheral.unsubscribe(&state_char).await;
-                let _ = peripheral.unsubscribe(&power_measurement_char).await;
+            let connected = timeout(
+                Duration::from_millis(BLE_DISCONNECT_TIMEOUT_MS),
+                peripheral.is_connected(),
+            )
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .unwrap_or(false);
+            if connected {
+                let _ = timeout(
+                    Duration::from_millis(BLE_DISCONNECT_TIMEOUT_MS),
+                    peripheral.unsubscribe(&state_char),
+                )
+                .await;
+                let _ = timeout(
+                    Duration::from_millis(BLE_DISCONNECT_TIMEOUT_MS),
+                    peripheral.unsubscribe(&power_measurement_char),
+                )
+                .await;
                 if let Some(characteristic) = weather_measurement_char {
-                    let _ = peripheral.unsubscribe(&characteristic).await;
+                    let _ = timeout(
+                        Duration::from_millis(BLE_DISCONNECT_TIMEOUT_MS),
+                        peripheral.unsubscribe(&characteristic),
+                    )
+                    .await;
                 }
-                let _ = peripheral.disconnect().await;
+                disconnect_peripheral_with_timeout(&peripheral, "connected device drop").await;
             }
         });
     }
@@ -1612,6 +1750,7 @@ async fn find_peripheral(
     address: &str,
     thing_name: &str,
 ) -> Result<Option<Peripheral>> {
+    let address_is_matchable = ble_address_is_matchable(address);
     for peripheral in adapter
         .peripherals()
         .await
@@ -1622,8 +1761,11 @@ async fn find_peripheral(
             Ok(None) => continue,
             Err(_) => continue,
         };
-        if properties.address.to_string() == address
-            || properties.local_name.as_deref() == Some(thing_name)
+        let advertisement_name = properties.advertisement_name.as_deref();
+        let gap_local_name = properties.local_name.as_deref();
+        if advertisement_name == Some(thing_name)
+            || gap_local_name == Some(thing_name)
+            || (address_is_matchable && properties.address.to_string() == address)
         {
             return Ok(Some(peripheral));
         }
@@ -1740,18 +1882,24 @@ impl ScannerRunState {
             }
         };
         let address = properties.address.to_string();
-        let local_name = properties
+        let gap_local_name = properties
             .local_name
             .clone()
             .filter(|value| !value.trim().is_empty());
-        let target_matches = local_name
+        let advertised_name = properties
+            .advertisement_name
+            .clone()
+            .filter(|value| !value.trim().is_empty());
+        let identity_name =
+            scanner_reported_identity_name(advertised_name.clone(), gap_local_name.clone());
+        let target_matches = identity_name
             .as_deref()
             .is_some_and(|value| target_names.contains(value));
         let service_advertised = properties.services.contains(&TXING_BLE_SERVICE_UUID);
         let fresh_signal = scanner_advertisement_has_fresh_signal(properties.rssi);
         self.debug_summary.record(
             &address,
-            local_name.as_deref(),
+            identity_name.as_deref(),
             properties.rssi,
             service_advertised,
             target_matches,
@@ -1759,8 +1907,10 @@ impl ScannerRunState {
         );
         if config.debug && target_matches {
             eprintln!(
-                "debug: BLE scanner candidate source={source} thing={} address={} rssi={:?} serviceAdvertised={} freshSignal={fresh_signal}",
-                local_name.as_deref().unwrap_or("<unnamed>"),
+                "debug: BLE scanner candidate source={source} thing={} advertisedName={:?} gapLocalName={:?} address={} rssi={:?} serviceAdvertised={} freshSignal={fresh_signal}",
+                identity_name.as_deref().unwrap_or("<unnamed>"),
+                advertised_name.as_deref(),
+                gap_local_name.as_deref(),
                 address,
                 properties.rssi,
                 service_advertised
@@ -1770,19 +1920,19 @@ impl ScannerRunState {
             if config.debug && target_matches {
                 eprintln!(
                     "debug: BLE scanner skipped likely cached candidate source={source} thing={} address={} reason=missing-rssi",
-                    local_name.as_deref().unwrap_or("<unnamed>"),
+                    identity_name.as_deref().unwrap_or("<unnamed>"),
                     address
                 );
             }
             return Ok(());
         }
-        let Some(local_name) = local_name else {
+        let Some(identity_name) = identity_name else {
             return Ok(());
         };
         let now = now_ms();
         if service_advertised
             && should_log_unmanaged_txing_advertisement(
-                &local_name,
+                &identity_name,
                 target_names,
                 &mut self.last_unmanaged_txing_log_by_name,
                 now,
@@ -1790,11 +1940,11 @@ impl ScannerRunState {
         {
             eprintln!(
                 "warning: BLE scanner saw unmanaged Txing advertisement thing={} address={} rssi={:?} targets={target_names:?}",
-                local_name, address, properties.rssi
+                identity_name, address, properties.rssi
             );
         }
         if !should_publish_scanner_advertisement(
-            &local_name,
+            &identity_name,
             target_names,
             &self.last_published_by_name,
             now,
@@ -1802,16 +1952,17 @@ impl ScannerRunState {
             if config.debug && target_matches {
                 eprintln!(
                     "debug: BLE scanner skipped candidate source={source} thing={} address={} reason=throttled-or-not-target",
-                    local_name, address
+                    identity_name, address
                 );
             }
             return Ok(());
         }
-        self.last_published_by_name.insert(local_name.clone(), now);
+        self.last_published_by_name
+            .insert(identity_name.clone(), now);
         self.seq += 1;
         let advertisement = Advertisement {
             address,
-            local_name: Some(local_name.clone()),
+            identity_name: Some(identity_name.clone()),
             services: properties.services,
             rssi: properties.rssi,
             observed_at_ms: now,
@@ -1820,7 +1971,7 @@ impl ScannerRunState {
         if config.debug {
             eprintln!(
                 "debug: BLE scanner published advertisement source={source} thing={} address={} rssi={:?} serviceAdvertised={} seq={}",
-                local_name,
+                identity_name,
                 advertisement.address,
                 advertisement.rssi,
                 advertisement.has_txing_service(),
@@ -1920,9 +2071,7 @@ async fn recover_in_progress_scan(adapter: &Adapter, mut last_message: String) -
         .await;
         match adapter.start_scan(ScanFilter::default()).await {
             Ok(()) => {
-                eprintln!(
-                    "BLE scanner recovered from in-progress discovery attempt={attempt}"
-                );
+                eprintln!("BLE scanner recovered from in-progress discovery attempt={attempt}");
                 return Ok(());
             }
             Err(err) => {
@@ -2358,7 +2507,7 @@ mod tests {
     fn advertisement() -> Advertisement {
         Advertisement {
             address: "E4:7C:BC:45:9B:A2".to_string(),
-            local_name: Some("power-1".to_string()),
+            identity_name: Some("power-1".to_string()),
             services: Vec::new(),
             rssi: Some(-55),
             observed_at_ms: now_ms(),
@@ -2744,6 +2893,21 @@ mod tests {
     }
 
     #[test]
+    fn scanner_prefers_advertised_name_as_identity() {
+        assert_eq!(
+            scanner_reported_identity_name(
+                Some("unit-current".to_string()),
+                Some("power-stale".to_string())
+            ),
+            Some("unit-current".to_string())
+        );
+        assert_eq!(
+            scanner_reported_identity_name(None, Some("unit-current".to_string())),
+            Some("unit-current".to_string())
+        );
+    }
+
+    #[test]
     fn unmanaged_txing_advertisement_warning_is_throttled_by_name() {
         let target_names = BTreeSet::from(["unit-1".to_string()]);
         let mut last_logged_by_name = BTreeMap::new();
@@ -2772,6 +2936,21 @@ mod tests {
             &mut last_logged_by_name,
             31_000,
         ));
+    }
+
+    #[test]
+    fn macos_placeholder_ble_address_is_not_matchable_identity() {
+        assert!(!ble_address_is_matchable("00:00:00:00:00:00"));
+        assert!(ble_address_is_matchable("E4:7C:BC:45:9B:A2"));
+    }
+
+    #[test]
+    fn ble_connect_session_timeout_is_bounded_below_state_ttl_window() {
+        assert_eq!(connect_session_timeout_ms(8_000), 16_000);
+        assert_eq!(
+            connect_session_timeout_ms(60_000),
+            BLE_CONNECT_SESSION_MAX_TIMEOUT_MS
+        );
     }
 
     #[test]

@@ -33,8 +33,21 @@ struct Args {
     debug: bool,
 }
 
+#[cfg(not(target_os = "macos"))]
 #[tokio::main]
 async fn main() -> Result<()> {
+    async_main().await
+}
+
+#[cfg(target_os = "macos")]
+fn main() -> Result<()> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(async_main())
+}
+
+async fn async_main() -> Result<()> {
     let args = Args::parse();
     let config = RuntimeConfig {
         adapter_id: args.adapter_id,

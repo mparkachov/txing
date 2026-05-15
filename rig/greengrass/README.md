@@ -115,11 +115,13 @@ release version first. Production deploys reject dirty worktrees.
 
 Weather and power things are discovered from the normal AWS registry assignment.
 The rig-wide Sparkplug manager publishes v2 inventory using the registered AWS
-Thing ID as the expected BLE local name. `dev.txing.rig.BleConnectivity` treats
-fresh matching advertisements as REDCON 4 availability, connects to matching
-devices when possible, and reports active domain availability from GATT
-state/measurement reads. Incoming REDCON 1 or 2 commands are normalized to the
-physical BLE active level REDCON 3 for current weather and power firmware.
+Thing ID as the expected BLE advertised identity name.
+`dev.txing.rig.BleConnectivity` treats fresh matching advertisements as REDCON 4
+availability, maps devices by advertised name first with GAP/local name only as
+a fallback, connects to matching devices when possible, and reports active
+domain availability from GATT state/measurement reads. Incoming REDCON 1 or 2
+commands are normalized to the physical BLE active level REDCON 3 for current
+weather and power firmware.
 
 Use `just rig::restart` to restart the Greengrass Lite systemd units without
 deploying new code. Do not expect restart to pick up a new local build; restart

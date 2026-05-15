@@ -1,6 +1,6 @@
 [package]
 name = "txing-unit-daemon"
-version = "0.9.106"
+version = "0.9.110"
 edition = "2024"
 description = "Unit board daemon for txing"
 
