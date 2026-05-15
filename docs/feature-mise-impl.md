@@ -1,12 +1,33 @@
-# Feature Mise Phase 1 Implementation
+# Feature Mise Implementation Runbook
 
-This runbook documents the completed phase-1 implementation from
+This runbook documents the implemented release flow from
 [feature-mise.md](./feature-mise.md): local Linux `aarch64` feature builds,
-macOS GitHub prerelease publishing, and a raw-repository systemd installer for
-the board.
+macOS GitHub prerelease publishing, GitHub Actions stable publishing, and a
+raw-repository systemd installer for the board.
 
 The final path does not build on the Raspberry Pi board, does not copy a source
 checkout to the board, and does not use `/etc/txing` for daemon runtime config.
+
+## Current Status
+
+Implemented and manually exercised:
+
+- feature prerelease build and publish;
+- feature-channel board install and read-only-root reboot;
+- stable GitHub Actions release publish from `main`;
+- stable board install from the `main` raw installer;
+- stable daemon update with plain `mise upgrade` through the normal
+  `/home/txing/.config/mise/conf.d` config tree.
+
+Still left:
+
+- final stable-only read-only-root reboot verification;
+- feature-channel fallback behavior if GitHub install fails before `/var/tmp`
+  contains a runnable feature binary;
+- manual feature opt-in/opt-out procedure;
+- stable attestation/checksum policy beyond GitHub Releases over HTTPS;
+- optional phase-3 expansion: branch-specific feature channels, additional
+  architectures, alternate artifact hosting, or `.deb` packaging.
 
 ## Final Configuration
 
@@ -222,7 +243,7 @@ The installed service name is shared by both channels:
 txing-unit-daemon.service
 ```
 
-The raw repository installer writes:
+Depending on the selected channel, the raw repository installer writes:
 
 ```text
 /etc/systemd/system/txing-unit-daemon.service
@@ -265,7 +286,6 @@ TimeoutStopSec=30
 Restart=on-failure
 RestartSec=5
 
-Environment=MISE_CONFIG_DIR=/home/txing/.config/mise/txing-unit-daemon
 Environment=TXING_DAEMON_CONFIG_DIR=/home/txing/.config/txing/unit-daemon
 Environment=HOME=/home/txing
 
@@ -279,6 +299,7 @@ Feature mode additionally sets the `/var/tmp` mise directories, enables
 prereleases, and installs at service start:
 
 ```ini
+Environment=MISE_CONFIG_DIR=/home/txing/.config/mise/txing-unit-daemon
 Environment=MISE_DATA_DIR=/var/tmp/txing/unit-daemon/mise
 Environment=MISE_CACHE_DIR=/var/tmp/txing/unit-daemon/mise-cache
 Environment=MISE_TMP_DIR=/var/tmp/txing/unit-daemon/mise-tmp
@@ -300,9 +321,10 @@ requests before daemon startup. If the board has network but the clock still has
 an old boot-time value, TLS certificate validation can fail with "certificate
 not valid yet".
 
-## Manual Steps Used To Complete Phase 1
+## Manual Steps Used To Prove The Workflow
 
-These steps document the manual workflow used to prove phase 1 end to end.
+These steps document the manual workflow used to prove the feature and stable
+paths end to end.
 
 ### 1. Prepare The Docker Builder
 
@@ -476,11 +498,17 @@ For later stable upgrades, use the normal `txing` user mise config tree. Plain
 daemon fragment from `conf.d`:
 
 ```bash
-sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise cache clear
 sudo -u txing env \
   HOME=/home/txing \
   /home/txing/.local/bin/mise upgrade
 sudo systemctl restart txing-unit-daemon.service
+```
+
+If a release was just published and mise still resolves the previous version,
+clear the `txing` user's mise cache and retry the upgrade:
+
+```bash
+sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise cache clear
 ```
 
 Feature mode keeps the boot-lifetime behavior: the service runs `mise install`
@@ -512,7 +540,8 @@ sudo journalctl -u txing-unit-daemon.service -n 120 --no-pager
 
 Confirm the journal shows:
 
-- `mise install`;
+- feature mode: `mise install` in `ExecStartPre`;
+- stable mode: daemon startup without `ExecStartPre=mise install`;
 - the selected `version=<version>` in the daemon startup log;
 - MQTT connection;
 - retained `board` capability publish.
@@ -533,7 +562,11 @@ sudo systemctl status --no-pager -l txing-unit-daemon.service
 sudo journalctl -u txing-unit-daemon.service -n 120 --no-pager
 ```
 
-The expected phase-1 result is that the service installs the selected mise
-feature release into `/var/tmp`, starts offline through `mise exec`, logs the
-feature version, and publishes the `board` capability without a source checkout
-on the board.
+Expected results:
+
+- Stable mode starts offline through `mise exec` from the persistent user-home
+  mise install tree, logs the stable version, and publishes the `board`
+  capability without a source checkout on the board.
+- Feature mode installs the selected mise feature release into `/var/tmp`,
+  starts offline through `mise exec`, logs the feature version, and publishes
+  the `board` capability without a source checkout on the board.

@@ -1,11 +1,13 @@
 # Feature Mise Release Architecture
 
 This document captures the architecture decision for installing and testing
-`unit` daemon releases with `mise`. Phase 1 is implemented: feature builds are
-published as GitHub prereleases, and opted-in boards install and run them through
-`mise` plus systemd without a source checkout.
+`unit` daemon releases with `mise`. Phase 1 is implemented, and the core phase
+2 stable release path is implemented: feature builds are published as GitHub
+prereleases, stable builds are published by GitHub Actions, and boards install
+and run the selected release through `mise` plus systemd without a source
+checkout.
 
-The operational phase-1 runbook is
+The operational implementation runbook is
 [feature-mise-impl.md](./feature-mise-impl.md).
 
 ## Goals
@@ -27,8 +29,9 @@ The operational phase-1 runbook is
 
 - Phase 1 end-to-end feature workflow: implemented and manually verified on a
   Raspberry Pi Zero 2 W with read-only root.
-- Phase 2 stable CI publishing: initial GitHub Actions workflow implemented.
-- Phase 2 stable fallback behavior: pending.
+- Phase 2 stable CI publishing, stable install, and stable `mise upgrade`:
+  implemented and manually verified.
+- Phase 2 stable read-only reboot verification: pending final check.
 - Phase 3 channel polish and operational improvements: pending.
 
 ## Non-Goals
@@ -307,6 +310,7 @@ ExecStart=/usr/bin/env MISE_OFFLINE=1 /home/txing/.local/bin/mise exec -- txing-
 Feature mode additionally sets:
 
 ```ini
+Environment=MISE_CONFIG_DIR=/home/txing/.config/mise/txing-unit-daemon
 Environment=MISE_DATA_DIR=/var/tmp/txing/unit-daemon/mise
 Environment=MISE_CACHE_DIR=/var/tmp/txing/unit-daemon/mise-cache
 Environment=MISE_TMP_DIR=/var/tmp/txing/unit-daemon/mise-tmp
@@ -426,9 +430,9 @@ The daemon Cargo package version is managed by the repo release tooling:
 entry in `devices/unit/daemon/Cargo.lock`, and `release::check` validates both
 against the repo root `VERSION`.
 
-## Implemented Phase 1 Baseline
+## Implemented Baseline
 
-The current phase-1 implementation has these working pieces:
+The current implementation has these working pieces:
 
 - `just unit::daemon::cert <thing-id>` provisions daemon certificate material
   and writes `.env` plus the certificate files into the per-user
@@ -459,6 +463,9 @@ The current phase-1 implementation has these working pieces:
   local config path as the board service.
 - The daemon publishes the retained `board` capability state when it starts
   successfully.
+- `.github/workflows/unit-daemon-stable-release.yml` builds stable Linux
+  `aarch64` daemon releases from `main`, packages the same mise-compatible
+  archive, and refuses to replace existing stable tags or releases.
 - The generic daemon installer writes
   `/home/txing/.config/mise/conf.d/txing-unit-daemon.toml` for stable mode and
   `/home/txing/.config/mise/txing-unit-daemon/config.toml` for feature mode;
@@ -575,8 +582,8 @@ Status: complete for the feature channel.
 - Verify feature boot install into `/var/tmp`. Verified.
 - Verify daemon service start through systemd with startup version logging and
   retained online state publish. Verified.
-- Stable mode is supported by the installer, but stable release publishing,
-  stable fallback, and stable-wins behavior remain phase 2.
+- Stable mode is supported by the same installer and is completed by the phase 2
+  stable release workflow.
 
 The success criterion is that a developer can build locally through Docker in
 Lima, publish a feature prerelease, run the raw installer in feature mode,
@@ -587,21 +594,26 @@ checkout on the board. This criterion is met for phase 1.
 
 Goal: make stable board setup and maintenance boring and repeatable.
 
+Status: core implementation complete; final stable read-only reboot verification
+is still pending.
+
 - Add CI publishing for stable releases. Implemented as manual
   `.github/workflows/unit-daemon-stable-release.yml` runs from `main` only.
 - Make stable release assets immutable. Implemented in the workflow.
 - Document the initial board setup from fresh Raspberry Pi OS image through
   dedicated `txing` user, mise install, stable tool config, certificates, and
-  systemd unit creation.
+  systemd unit creation. Implemented in this document, the implementation
+  runbook, and [installation.md](./installation.md).
 - Document the stable maintenance command sequence:
   `root-rw`, `apt update`, `apt dist-upgrade`, `mise upgrade`, manual restart,
   `root-ro`. Implemented for the unit daemon stable installer.
 - Document expected filesystem writes during stable maintenance and normal boot.
 - Verify the generic systemd unit in stable mode once stable release assets
-  exist. In progress.
-- Verify stable-only boot on read-only root. Pending user verification.
+  exist. Verified with a stable GitHub Release and the `main` raw installer.
 - Verify stable upgrade while root is writable and service restart after
-  upgrade. Pending user verification.
+  upgrade. Verified after moving stable config into the normal mise `conf.d`
+  tree so plain `mise upgrade` sees `txing-unit-daemon`.
+- Verify stable-only boot on read-only root. Pending final user verification.
 
 This phase should leave production-like stable boards understandable and
 repeatable without requiring feature-channel knowledge.
@@ -612,6 +624,9 @@ Goal: improve safety and developer ergonomics after the core path works.
 
 - Add clearer journald messages around feature install success, timeout, and
   fallback.
+- Decide whether feature mode should fall back to the persistent stable install
+  if GitHub is unavailable and `/var/tmp` does not yet contain the selected
+  feature binary.
 - Add a documented manual opt-in/opt-out procedure for feature mode.
 - Add branch-specific or pinned feature channels if developers need isolation.
 - Add additional architectures through Rust target and release-asset matrices.
@@ -625,5 +640,8 @@ Goal: improve safety and developer ergonomics after the core path works.
 
 ## Remaining Questions
 
-- Stable release publishing workflow and attestation policy.
-- Stable service fallback behavior when install or network resolution fails.
+- Stable release attestation/checksum policy beyond GitHub Releases over HTTPS.
+- Feature-channel fallback behavior when install or network resolution fails
+  before `/var/tmp` contains a runnable feature binary.
+- Whether phase 3 needs branch-specific feature channels or the single moving
+  `feature/unit-daemon-prerelease` channel remains enough.
