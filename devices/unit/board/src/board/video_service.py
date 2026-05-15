@@ -18,7 +18,7 @@ from .video_state import normalize_video_state
 
 LOGGER = logging.getLogger("board.video_service")
 
-DEFAULT_VIDEO_SERVER_VERSION = "0.9.8"
+DEFAULT_VIDEO_SERVER_VERSION = "0.9.9"
 
 
 def _encode_json(payload: dict[str, Any]) -> bytes:

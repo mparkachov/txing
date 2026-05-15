@@ -496,10 +496,21 @@ impl SparkplugRuntime {
         .await?;
         let dcmd_filter =
             sparkplug::build_device_topic(&self.config.town_id, "DCMD", &self.config.rig_id, "+");
-        node_session.subscribe(dcmd_filter).await?;
-        node_session
-            .subscribe(BOARD_RETAINED_CAPABILITY_STATE_FILTER.to_string())
-            .await?;
+        let subscribe_result = async {
+            node_session.subscribe(dcmd_filter).await?;
+            node_session
+                .subscribe(BOARD_RETAINED_CAPABILITY_STATE_FILTER.to_string())
+                .await
+        }
+        .await;
+        if let Err(err) = subscribe_result {
+            if let Err(stop_err) = node_session.stop() {
+                eprintln!(
+                    "warning: failed to stop partially connected Sparkplug node MQTT session: {stop_err:#}"
+                );
+            }
+            return Err(err);
+        }
         self.node_session = Some(node_session);
         Ok(())
     }
@@ -963,7 +974,8 @@ async fn run_greengrass_runtime(config: RuntimeConfig) -> Result<()> {
     validate_greengrass_ipc_environment()?;
     let (config, registry) = prepare_runtime_config_with_retry(config, "runtime").await?;
     eprintln!(
-        "resolved Sparkplug runtime rigId={} townId={} inventoryIntervalSeconds={} commandDeadlineMs={}",
+        "resolved Sparkplug runtime version={} rigId={} townId={} inventoryIntervalSeconds={} commandDeadlineMs={}",
+        env!("CARGO_PKG_VERSION"),
         config.rig_id,
         config.town_id,
         config.inventory_interval_seconds,
@@ -1079,7 +1091,8 @@ async fn run_local_runtime(config: RuntimeConfig) -> Result<()> {
     let socket = config.local_ipc_socket.clone();
     let (config, registry) = prepare_runtime_config_with_retry(config, "local runtime").await?;
     eprintln!(
-        "resolved Sparkplug local runtime rigId={} townId={} inventoryIntervalSeconds={} commandDeadlineMs={}",
+        "resolved Sparkplug local runtime version={} rigId={} townId={} inventoryIntervalSeconds={} commandDeadlineMs={}",
+        env!("CARGO_PKG_VERSION"),
         config.rig_id,
         config.town_id,
         config.inventory_interval_seconds,
