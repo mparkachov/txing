@@ -22,7 +22,7 @@ pub const TIME_MODE_ACTIVE: &str = "active";
 pub const COMMAND_STATUS_SUCCEEDED: &str = "succeeded";
 pub const DEFAULT_ACTIVE_TTL_MS: i64 = 300_000;
 pub const DEFAULT_LEASE_TTL_MS: i64 = 5_000;
-pub const DEFAULT_SERVER_VERSION: &str = "0.9.102";
+pub const DEFAULT_SERVER_VERSION: &str = "0.9.103";
 pub const TIME_DEVICE_SEARCH_QUERY: &str = "thingTypeName:time AND attributes.kind:deviceType";
 pub const TIME_DEVICE_SEARCH_PAGE_SIZE: i32 = 100;
 

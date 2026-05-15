@@ -1129,6 +1129,10 @@ fn ble_error_indicates_in_progress(message: &str) -> bool {
         || message.contains("already in progress")
 }
 
+fn ble_error_indicates_no_discovery(message: &str) -> bool {
+    message.contains("No discovery started")
+}
+
 fn ble_error_indicates_host_resource_exhaustion(message: &str) -> bool {
     message.contains("maximum number of active connections")
         || message.contains("LimitsExceeded")
@@ -1887,23 +1891,19 @@ async fn run_scanner_once(
 
 #[cfg(all(feature = "ble-real", any(target_os = "linux", target_os = "macos")))]
 async fn start_scan_if_needed(adapter: &Adapter) -> Result<()> {
-    match adapter.start_scan(ScanFilter::default()).await {
-        Ok(()) => Ok(()),
-        Err(err) => {
-            let message = err.to_string();
-            if ble_error_indicates_in_progress(&message) {
-                Ok(())
-            } else {
-                Err(err).context("start BLE scan")
-            }
-        }
-    }
+    adapter
+        .start_scan(ScanFilter::default())
+        .await
+        .context("start BLE scan")
 }
 
 #[cfg(all(feature = "ble-real", any(target_os = "linux", target_os = "macos")))]
 async fn restart_scan(adapter: &Adapter) -> Result<()> {
     if let Err(err) = adapter.stop_scan().await {
-        eprintln!("warning: BLE scanner stop before restart failed: {err}");
+        let message = err.to_string();
+        if !ble_error_indicates_no_discovery(&message) {
+            eprintln!("warning: BLE scanner stop before restart failed: {message}");
+        }
     }
     start_scan_if_needed(adapter).await
 }
@@ -2609,6 +2609,11 @@ mod tests {
         assert!(ble_error_indicates_in_progress(
             "start BLE scan: Operation already in progress"
         ));
+    }
+
+    #[test]
+    fn scanner_treats_missing_discovery_as_inactive() {
+        assert!(ble_error_indicates_no_discovery("No discovery started"));
     }
 
     #[test]
