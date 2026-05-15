@@ -45,10 +45,12 @@ The rig has a Greengrass-oriented component split:
 
 REDCON is the common lifecycle contract for txing BLE devices. The shared rig
 BLE scanner stays device-agnostic and internal to
-`dev.txing.rig.BleConnectivity`: it observes address, local name, RSSI, and
-service UUIDs, then routes matching devices to protocol handlers. New device
-types should not add a separate BLE manager or scanner only because they expose
-additional characteristics.
+`dev.txing.rig.BleConnectivity`: it observes address, advertised identity name,
+GAP/local name, RSSI, and service UUIDs, then routes matching devices to
+protocol handlers. The advertised identity name is the primary Thing mapping
+signal; GAP/local name is only a fallback. New device types should not add a
+separate BLE manager or scanner only because they expose additional
+characteristics.
 
 Current assumption: REDCON GATT v2 uses one common UUID set for the base
 lifecycle contract across BLE device types, with one measurement characteristic
@@ -97,7 +99,7 @@ management.
 - Greengrass core/device/component status is service observability only; it is not the txing lifecycle source of truth
 - v2 capability state from connectivity adapters selects the highest REDCON level whose type-catalog rule is satisfied
 - raspi rigs run BLE connectivity for `sparkplug`/`ble`/`power`; board-owned retained state is consumed directly by SparkplugManager for `board`/`mcp`/`video`
-- current raspi BLE devices advertise with the AWS Thing ID as local name
+- current BLE devices advertise with the AWS Thing ID from MCU NVE as the primary identity name
 
 The current contract sources are:
 

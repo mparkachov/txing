@@ -19,6 +19,15 @@ the unit device Sparkplug process component.
 
 - `spBv1.0/<town>/NBIRTH/<rig>` means the Greengrass Lite rig edge node is born.
 - `spBv1.0/<town>/NDEATH/<rig>` means the Greengrass Lite rig edge node is dead.
+- A born rig edge node is healthy REDCON 1. If Greengrass Lite is running, the
+  rig Sparkplug and connectivity component services are active, and
+  `just rig::check` passes, the rig thing's Sparkplug projection must be
+  `NBIRTH` with `payload.metrics.redcon=1`. A retained `NDEATH`, missing
+  `NBIRTH`, or any non-1 born rig REDCON in that condition is a rig defect.
+- This is a Sparkplug lifecycle contract, not a `rig::check` responsibility.
+  `rig::check` remains a configuration and connectivity check; it is only one
+  of the preconditions under which the Sparkplug projection is expected to show
+  the born edge node state.
 - `spBv1.0/<town>/DBIRTH/<rig>/...` and `spBv1.0/<town>/DDEATH/<rig>/...` must never represent the rig itself.
 - `DBIRTH`, `DDATA`, and `DDEATH` are only for txing/unit things managed by the rig.
 - Witness projects node `NBIRTH` and `NDEATH` messages onto the registered rig thing's `sparkplug` named shadow.

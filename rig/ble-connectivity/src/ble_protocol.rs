@@ -59,7 +59,7 @@ pub struct DeviceSpec {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Advertisement {
     pub address: String,
-    pub local_name: Option<String>,
+    pub identity_name: Option<String>,
     pub services: Vec<Uuid>,
     pub rssi: Option<i16>,
     pub observed_at_ms: u64,
@@ -68,7 +68,7 @@ pub struct Advertisement {
 
 impl Advertisement {
     pub fn matches_thing(&self, thing_name: &str) -> bool {
-        self.local_name.as_deref() == Some(thing_name)
+        self.identity_name.as_deref() == Some(thing_name)
     }
 
     pub fn has_txing_service(&self) -> bool {
@@ -224,7 +224,7 @@ pub fn advertisement_sample(
         ble_available: true,
         power_available: false,
         weather_available: false,
-        ble_local_name: advertisement.local_name.clone(),
+        ble_local_name: advertisement.identity_name.clone(),
         ble_address: Some(advertisement.address.clone()),
         battery_mv: None,
         weather: None,
@@ -476,7 +476,7 @@ mod tests {
         };
         let advertisement = Advertisement {
             address: "AA:BB:CC:DD:EE:FF".to_string(),
-            local_name: Some("power-1".to_string()),
+            identity_name: Some("power-1".to_string()),
             services: vec![TXING_BLE_SERVICE_UUID],
             rssi: Some(-50),
             observed_at_ms: 42,
@@ -503,7 +503,7 @@ mod tests {
         };
         let advertisement = Advertisement {
             address: "AA:BB:CC:DD:EE:FF".to_string(),
-            local_name: Some("power-1".to_string()),
+            identity_name: Some("power-1".to_string()),
             services: vec![TXING_BLE_SERVICE_UUID],
             rssi: Some(-50),
             observed_at_ms: 42,

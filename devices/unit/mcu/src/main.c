@@ -670,11 +670,19 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 {
 	ARG_UNUSED(conn);
 	ARG_UNUSED(reason);
-	current_redcon = REDCON_IDLE;
-	cancel_idle_measurement_notifications();
 	set_connected_conn(NULL);
-	enter_ble_idle_hardware_state();
-	encode_redcon_state(REDCON_IDLE);
+	if (current_redcon == REDCON_IDLE) {
+		cancel_idle_measurement_notifications();
+		enter_ble_idle_hardware_state();
+		encode_redcon_state(REDCON_IDLE);
+	} else {
+		cancel_idle_measurement_notifications();
+		set_redcon_power(true);
+		encode_redcon_state(current_redcon);
+		(void)k_work_reschedule(
+			&measurement_notify_work,
+			K_SECONDS(CONFIG_REDCON_BLE_MEASUREMENT_NOTIFY_INTERVAL_SECONDS));
+	}
 	k_work_submit(&advertise_work);
 }
 

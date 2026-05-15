@@ -26,6 +26,7 @@ RIG_PACKAGES = (
 STANDALONE_CARGO_MANIFESTS = (
     Path("witness/Cargo.toml"),
     Path("shared/aws/enlist/Cargo.toml"),
+    Path("devices/unit/daemon/Cargo.toml"),
     Path("devices/time/lambda/Cargo.toml"),
     Path("devices/power/test/Cargo.toml"),
     Path("devices/weather/test/Cargo.toml"),

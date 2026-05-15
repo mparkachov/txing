@@ -400,6 +400,8 @@ The current board runtime is compatible with a read-only root as long as these w
   - board video sender state: `/tmp/txing_board_video_state.json`
   - MCP WebRTC socket: `/tmp/txing_board_mcp_webrtc.sock`
 - `/var/tmp`
+  - feature-channel mise install/cache/tmp state:
+    `/var/tmp/txing/unit-daemon/`
 - `/var/log`
 - `/var/lib/NetworkManager`
 
@@ -414,7 +416,7 @@ proc            /proc           proc    defaults          0       0
 PARTUUID=<boot-partuuid>  /boot/firmware  vfat    defaults,ro,noatime         0       2
 PARTUUID=<root-partuuid>  /               ext4    defaults,ro,noatime         0       1
 tmpfs                     /tmp                 tmpfs nosuid,nodev,mode=1777,size=32M 0 0
-tmpfs                     /var/tmp             tmpfs nosuid,nodev,mode=1777,size=16M 0 0
+tmpfs                     /var/tmp             tmpfs nosuid,nodev,exec,mode=1777,size=96M 0 0
 tmpfs                     /var/log             tmpfs nosuid,nodev,mode=0755,size=16M 0 0
 tmpfs                     /var/lib/NetworkManager tmpfs nosuid,nodev,mode=0755,size=16M 0 0
 ```
@@ -430,7 +432,14 @@ Operational notes:
 
 - Do all package installs, `mise` tool installs or updates, repo updates, rebuilds, and `systemd` unit changes while the root is writable.
 - Switch back to read-only only after the runtime, native sender, and config files are in place.
-- The `mise` install, global config, and downloaded tools live under the user's home directory, primarily `~/.local/bin`, `~/.local/share/mise`, `~/.config/mise`, and `~/.cache/mise`. They must already be present before switching the root filesystem back to read-only.
+- The `mise` binary, unit daemon mise config, and stable unit daemon install
+  live under the `txing` user's home directory. Stable installs must happen
+  while the root filesystem is writable. Feature-channel daemon artifacts are
+  installed at service start into `/var/tmp/txing/unit-daemon/`, which is
+  tmpfs-backed and executable.
+- AWS-backed services that install or connect over HTTPS during boot must wait
+  for both network-online and clock synchronization. Otherwise TLS validation
+  can fail before NTP corrects the board clock.
 - If you need to change board code, env files, `/boot/firmware/config.txt`, the systemd unit, or `mise`-managed tooling later, use `root-rw`, make the change, restart the affected service, then `root-ro`.
 
 ### 8. Final Verification

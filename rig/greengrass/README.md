@@ -109,24 +109,19 @@ uses the plain semantic version in the repository root `VERSION` file. CI bumps
 the patch version on `main`; Git metadata is exported for diagnostics but is not
 used as the Greengrass component version.
 
-Manual component version pinning is optional:
-
-```bash
-just rig::deploy raspi x.y.z
-```
-
-The first argument is the target rig type (`auto`, `raspi`, `cloud`, or `all`);
-the second argument is the optional plain semantic component version. Production
-deploys reject dirty worktrees unless `TXING_ALLOW_DIRTY_DEPLOY=1` is set for an
-explicit debug deploy.
+The first argument is the target rig type (`auto`, `raspi`, `cloud`, or `all`).
+When a new Greengrass component version is required, bump the whole project
+release version first. Production deploys reject dirty worktrees.
 
 Weather and power things are discovered from the normal AWS registry assignment.
 The rig-wide Sparkplug manager publishes v2 inventory using the registered AWS
-Thing ID as the expected BLE local name. `dev.txing.rig.BleConnectivity` treats
-fresh matching advertisements as REDCON 4 availability, connects to matching
-devices when possible, and reports active domain availability from GATT
-state/measurement reads. Incoming REDCON 1 or 2 commands are normalized to the
-physical BLE active level REDCON 3 for current weather and power firmware.
+Thing ID as the expected BLE advertised identity name.
+`dev.txing.rig.BleConnectivity` treats fresh matching advertisements as REDCON 4
+availability, maps devices by advertised name first with GAP/local name only as
+a fallback, connects to matching devices when possible, and reports active
+domain availability from GATT state/measurement reads. Incoming REDCON 1 or 2
+commands are normalized to the physical BLE active level REDCON 3 for current
+weather and power firmware.
 
 Use `just rig::restart` to restart the Greengrass Lite systemd units without
 deploying new code. Do not expect restart to pick up a new local build; restart

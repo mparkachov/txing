@@ -29,10 +29,25 @@ struct Args {
     local_ipc_socket: String,
     #[arg(long)]
     dry_run: bool,
+    #[arg(long)]
+    debug: bool,
 }
 
+#[cfg(not(target_os = "macos"))]
 #[tokio::main]
 async fn main() -> Result<()> {
+    async_main().await
+}
+
+#[cfg(target_os = "macos")]
+fn main() -> Result<()> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(async_main())
+}
+
+async fn async_main() -> Result<()> {
     let args = Args::parse();
     let config = RuntimeConfig {
         adapter_id: args.adapter_id,
@@ -45,6 +60,7 @@ async fn main() -> Result<()> {
         max_connections: args.max_connections,
         no_ble: args.no_ble,
         local_ipc_socket: args.local_ipc_socket,
+        debug: args.debug || env_flag("TXING_RIG_BLE_DEBUG"),
     };
 
     if args.dry_run {
@@ -59,8 +75,18 @@ async fn main() -> Result<()> {
         println!("maxConnections={}", config.max_connections);
         println!("noBle={}", config.no_ble);
         println!("localIpcSocket={}", config.local_ipc_socket);
+        println!("debug={}", config.debug);
         return Ok(());
     }
 
     run_component_runtime(config).await
+}
+
+fn env_flag(name: &str) -> bool {
+    std::env::var(name).ok().is_some_and(|value| {
+        matches!(
+            value.as_str(),
+            "1" | "true" | "TRUE" | "yes" | "YES" | "on" | "ON"
+        )
+    })
 }

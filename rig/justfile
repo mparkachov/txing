@@ -13,33 +13,12 @@ greengrass_warning_log_units := "ggl.core.ggipcd.service ggl.core.iotcored.servi
 shared_raspi_rig_component_units := "ggl.dev.txing.rig.SparkplugManager.service ggl.dev.txing.rig.BleConnectivity.service"
 raspi_rig_component_units := shared_raspi_rig_component_units
 aws_rig_component_units := "ggl.dev.txing.rig.SparkplugManager.service ggl.dev.txing.rig.AwsConnectivity.service"
-local_run_dir := rig_dir + "/run/local"
-local_pubsub_socket := local_run_dir + "/pubsub.sock"
 default_greengrass_lite_repository := env_var_or_default("TXING_RIG_GREENGRASS_LITE_REPOSITORY", "https://github.com/aws-greengrass/aws-greengrass-lite.git")
 default_greengrass_lite_ref := env_var_or_default("TXING_RIG_GREENGRASS_LITE_REF", "main")
 thing_name := "unit-local"
 region := ""
 aws_profile := ""
 aws_shared_credentials_file := ""
-
-[private]
-_check-rig-cargo-version expected_version:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    metadata="$(cargo metadata --manifest-path "{{rig_dir}}/Cargo.toml" --format-version 1 --no-deps)"
-    mismatches="$(
-      jq -r --arg expected "{{expected_version}}" '
-        .packages[]
-        | select(.version != $expected)
-        | "\(.name) \(.version)"
-      ' <<<"$metadata"
-    )"
-    if [ -n "$mismatches" ]; then
-      echo "Rig Cargo package versions do not match Greengrass component version {{expected_version}}:" >&2
-      sed 's/^/  /' <<<"$mismatches" >&2
-      echo "Run: just release::bump {{expected_version}}" >&2
-      exit 1
-    fi
 
 [positional-arguments]
 aws *args:
@@ -557,22 +536,58 @@ _local-start rig_id='' components='auto':
       aws_flags+=(--profile "$profile")
     fi
     iot_data_endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}" --query endpointAddress --output text)"
-    run_dir="{{local_run_dir}}"
-    socket="{{local_pubsub_socket}}"
+    runtime_pointer_file() {
+      printf '%s\n' "${TXING_RIG_LOCAL_RUN_FILE:-${TMPDIR:-/tmp}/txing-rig-local.current}"
+    }
+    is_running() {
+      local pid_file="$1"
+      [ -f "$pid_file" ] && kill -0 "$(cat "$pid_file")" >/dev/null 2>&1
+    }
+    any_process_running() {
+      local candidate_run_dir="$1"
+      local name
+      for name in broker sparkplug ble aws; do
+        is_running "$candidate_run_dir/$name.pid" && return 0
+      done
+      return 1
+    }
+    current_run_dir() {
+      local pointer_file
+      pointer_file="$(runtime_pointer_file)"
+      if [ -f "$pointer_file" ]; then
+        local candidate
+        candidate="$(cat "$pointer_file")"
+        if [ -n "$candidate" ]; then
+          printf '%s\n' "$candidate"
+          return 0
+        fi
+      fi
+      return 1
+    }
+    run_dir=""
+    if run_dir="$(current_run_dir)" && [ -d "$run_dir" ] && any_process_running "$run_dir"; then
+      :
+    else
+      run_dir="$(mktemp -d "${TMPDIR:-/tmp}/txing-rig-local.XXXXXX")"
+      pointer_file="$(runtime_pointer_file)"
+      mkdir -p "$(dirname "$pointer_file")"
+      printf '%s\n' "$run_dir" >"$pointer_file"
+    fi
+    socket="$run_dir/pubsub.sock"
     mkdir -p "$run_dir"
 
     cargo build --manifest-path "{{rig_dir}}/local-pubsub/Cargo.toml" >/dev/null
     cargo build --manifest-path "{{rig_dir}}/sparkplug-manager/Cargo.toml" >/dev/null
     cargo build --manifest-path "{{rig_dir}}/aws-connectivity/Cargo.toml" >/dev/null
-    ble_mode="${TXING_RIG_MAC_BLE_MODE:-simulated}"
+    ble_mode="${TXING_RIG_MAC_BLE_MODE:-real}"
+    ble_no_ble_arg=""
     case "$ble_mode" in
       real)
         cargo build --features ble-real --manifest-path "{{rig_dir}}/ble-connectivity/Cargo.toml" >/dev/null
-        ble_args=()
         ;;
       simulated|disabled)
         cargo build --manifest-path "{{rig_dir}}/ble-connectivity/Cargo.toml" >/dev/null
-        ble_args=(--no-ble)
+        ble_no_ble_arg="--no-ble"
         ;;
       *)
         echo "Unsupported TXING_RIG_MAC_BLE_MODE=$ble_mode. Supported modes: simulated, disabled, real." >&2
@@ -585,10 +600,6 @@ _local-start rig_id='' components='auto':
     ble_bin="{{rig_dir}}/target/debug/txing-ble-connectivity"
     aws_bin="{{rig_dir}}/target/debug/txing-aws-connectivity"
 
-    is_running() {
-      local pid_file="$1"
-      [ -f "$pid_file" ] && kill -0 "$(cat "$pid_file")" >/dev/null 2>&1
-    }
     start_process() {
       local name="$1"
       shift
@@ -604,6 +615,9 @@ _local-start rig_id='' components='auto':
       printf 'started %s pid=%s log=%s\n' "$name" "$!" "$log_file"
     }
 
+    if ! is_running "$run_dir/broker.pid"; then
+      rm -f "$socket"
+    fi
     start_process broker "$broker_bin" --socket "$socket"
     for _attempt in $(seq 1 50); do
       [ -S "$socket" ] && break
@@ -614,7 +628,10 @@ _local-start rig_id='' components='auto':
       exit 1
     fi
 
-    mapfile -t selected_components < <(just --justfile "{{rig_dir}}/justfile" _local-component-list "{{components}}" "$RIG_TYPE")
+    selected_components=()
+    while IFS= read -r component; do
+      selected_components+=("$component")
+    done < <(just --justfile "{{rig_dir}}/justfile" _local-component-list "{{components}}" "$RIG_TYPE")
     contains_component() {
       local wanted="$1"
       local component
@@ -623,7 +640,7 @@ _local-start rig_id='' components='auto':
       done
       return 1
     }
-    for component in ble aws sparkplug; do
+    for component in sparkplug ble aws; do
       contains_component "$component" || continue
       case "$component" in
         sparkplug)
@@ -632,12 +649,18 @@ _local-start rig_id='' components='auto':
             --town-id "$TXING_TOWN_ID" \
             --iot-endpoint "$iot_data_endpoint" \
             --aws-region "$region" \
+            --inventory-interval-seconds 2 \
             --local-ipc-socket "$socket"
           ;;
         ble)
-          start_process ble "$ble_bin" \
-            --local-ipc-socket "$socket" \
-            "${ble_args[@]}"
+          if [ -n "$ble_no_ble_arg" ]; then
+            start_process ble "$ble_bin" \
+              --local-ipc-socket "$socket" \
+              "$ble_no_ble_arg"
+          else
+            start_process ble "$ble_bin" \
+              --local-ipc-socket "$socket"
+          fi
           ;;
         aws)
           start_process aws "$aws_bin" \
@@ -659,9 +682,20 @@ _local-start rig_id='' components='auto':
 _local-stop:
     #!/usr/bin/env bash
     set -euo pipefail
-    run_dir="{{local_run_dir}}"
+    runtime_pointer_file() {
+      printf '%s\n' "${TXING_RIG_LOCAL_RUN_FILE:-${TMPDIR:-/tmp}/txing-rig-local.current}"
+    }
+    run_dir=""
+    pointer_file="$(runtime_pointer_file)"
+    if [ -f "$pointer_file" ]; then
+      run_dir="$(cat "$pointer_file")"
+    fi
+    if [ -z "$run_dir" ]; then
+      exit 0
+    fi
     stop_process() {
-      local name="$1"
+      local run_dir="$1"
+      local name="$2"
       local pid_file="$run_dir/$name.pid"
       if [ ! -f "$pid_file" ]; then
         return 0
@@ -684,15 +718,29 @@ _local-stop:
       rm -f "$pid_file"
     }
     for name in aws ble sparkplug broker; do
-      stop_process "$name"
+      stop_process "$run_dir" "$name"
     done
-    rm -f "{{local_pubsub_socket}}"
+    rm -f "$run_dir/pubsub.sock"
 
 [private]
 _local-status:
     #!/usr/bin/env bash
     set -euo pipefail
-    run_dir="{{local_run_dir}}"
+    runtime_pointer_file() {
+      printf '%s\n' "${TXING_RIG_LOCAL_RUN_FILE:-${TMPDIR:-/tmp}/txing-rig-local.current}"
+    }
+    run_dir=""
+    pointer_file="$(runtime_pointer_file)"
+    if [ -f "$pointer_file" ]; then
+      run_dir="$(cat "$pointer_file")"
+    fi
+    if [ -z "$run_dir" ]; then
+      echo "local rig runtime: none"
+      for name in broker sparkplug ble aws; do
+        printf '  %-9s stopped\n' "$name"
+      done
+      exit 0
+    fi
     printf 'local rig runtime: %s\n' "$run_dir"
     for name in broker sparkplug ble aws; do
       pid_file="$run_dir/$name.pid"
@@ -709,9 +757,21 @@ _local-log lines='200' follow='true':
     #!/usr/bin/env bash
     set -euo pipefail
     shopt -s nullglob
-    logs=({{local_run_dir}}/*.log)
+    runtime_pointer_file() {
+      printf '%s\n' "${TXING_RIG_LOCAL_RUN_FILE:-${TMPDIR:-/tmp}/txing-rig-local.current}"
+    }
+    run_dir=""
+    pointer_file="$(runtime_pointer_file)"
+    if [ -f "$pointer_file" ]; then
+      run_dir="$(cat "$pointer_file")"
+    fi
+    if [ -z "$run_dir" ]; then
+      echo "No local rig runtime has been started." >&2
+      exit 1
+    fi
+    logs=("$run_dir"/*.log)
     if [ "${#logs[@]}" -eq 0 ]; then
-      echo "No local rig logs under {{local_run_dir}}." >&2
+      echo "No local rig logs under $run_dir." >&2
       exit 1
     fi
     case "{{follow}}" in
@@ -905,7 +965,20 @@ log rig_id='' lines='200' follow='true':
     #!/usr/bin/env bash
     set -euo pipefail
     if [ "$(uname -s)" = "Darwin" ]; then
-      exec just --justfile "{{rig_dir}}/justfile" _local-log "{{lines}}" "{{follow}}"
+      local_lines="{{lines}}"
+      local_follow="{{follow}}"
+      case "{{rig_id}}" in
+        ''|*[!0-9]*) ;;
+        *)
+          case "{{lines}}" in
+            true|1|yes|on|false|0|no|off)
+              local_lines="{{rig_id}}"
+              local_follow="{{lines}}"
+              ;;
+          esac
+          ;;
+      esac
+      exec just --justfile "{{rig_dir}}/justfile" _local-log "$local_lines" "$local_follow"
     fi
     if [ -n "{{rig_id}}" ]; then
       export TXING_RIG_ID="{{rig_id}}"
@@ -1000,19 +1073,9 @@ deploy target='auto' component_version='' region=region aws_profile=aws_profile 
     if [ -z "$resolved_component_version" ]; then
       resolved_component_version="$TXING_VERSION"
     fi
-    if ! [[ "$resolved_component_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-      echo "Greengrass component version must be a plain semantic version like x.y.z." >&2
-      exit 1
-    fi
-    just --justfile "{{rig_dir}}/justfile" _check-rig-cargo-version "$resolved_component_version"
-    allow_dirty="${TXING_ALLOW_DIRTY_DEPLOY:-${TXING_RIG_ALLOW_DIRTY_DEPLOY:-}}"
-    case "$allow_dirty" in
-      true|1|yes|on) allow_dirty="true" ;;
-      *) allow_dirty="false" ;;
-    esac
-    if [ "${TXING_GIT_DIRTY:-false}" = "true" ] && [ "$allow_dirty" != "true" ]; then
+    if [ "${TXING_GIT_DIRTY:-false}" = "true" ]; then
       echo "Refusing production Greengrass deploy from a dirty worktree." >&2
-      echo "Commit or stash local changes first, or set TXING_ALLOW_DIRTY_DEPLOY=1 for an explicit debug deploy." >&2
+      echo "Commit or stash local changes first." >&2
       if [ -n "${TXING_GIT_DIRTY_HASH:-}" ]; then
         echo "Dirty tree hash: $TXING_GIT_DIRTY_HASH" >&2
       fi
@@ -1712,7 +1775,6 @@ deploy-local rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id=
         exit 1
         ;;
     esac
-    just --justfile "{{rig_dir}}/justfile" _check-rig-cargo-version "$resolved_component_version"
     case "$selected_rig_type" in
       raspi)
         sparkplug_component="dev.txing.rig.SparkplugManager"

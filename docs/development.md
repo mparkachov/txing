@@ -80,6 +80,9 @@ just unit::mcu::build
 just rig::check <rig-id>
 just rig::deploy
 just rig::status <rig-id>
+just unit::daemon::run
+just unit::daemon::prerelease-build
+just unit::daemon::prerelease-publish
 just unit::board::run
 just web::dev
 just web::write-env
@@ -152,11 +155,22 @@ just rig::log <rig-id>
 Board:
 
 ```bash
+just unit::daemon::run
+just unit::daemon::prerelease-build
+just unit::daemon::prerelease-publish
 just unit::board::check
 just unit::board::build-native
 just unit::board::build
 just unit::board::once
 ```
+
+The Rust unit daemon loads its default config from
+`${TXING_DAEMON_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/txing/unit-daemon}/.env`
+and expects certificate files in the same directory unless explicit certificate
+path overrides are supplied. Provision that directory with
+`just unit::daemon::cert <thing-id>` only when AWS resource changes are
+intended; the recipe writes sourceable `.env` content and refuses to overwrite
+existing daemon env or certificate material.
 
 Web:
 

@@ -102,7 +102,10 @@ There is no separate `device` named shadow.
 Named shadow ownership outside Sparkplug:
 
 - `ble.state.reported.bleAddress` is the last observed BLE address.
-- `ble.state.reported.bleLocalName` is the BLE local name from the factory/NVE Thing ID record.
+- `ble.state.reported.bleLocalName` is the BLE advertised identity name from
+  the factory/NVE Thing ID record. The field name is retained for the v2 shadow
+  contract; the rig maps devices by advertised name first, with GAP/local name
+  only as a fallback.
 - `power.state.reported.batteryMv` is the latest battery measurement in millivolts.
 - `board.state.reported.*` is board-owned operational state.
 - `mcp.state.reported.*` mirrors the retained board MCP topics for readers.

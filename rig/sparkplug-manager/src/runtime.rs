@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 #[cfg(all(feature = "greengrass-sdk", target_os = "linux"))]
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
@@ -14,21 +15,22 @@ use aws_config::BehaviorVersion;
 use gneiss_mqtt::client::{AsyncClient, AsyncClientHandle, ClientEvent, PublishResponse};
 use gneiss_mqtt::mqtt::{PublishPacket, QualityOfService, SubscribePacket};
 use gneiss_mqtt_aws::{AwsClientBuilder, WebsocketSigv4OptionsBuilder};
+use serde::Deserialize;
 use tokio::sync::mpsc;
-use tokio::time::{MissedTickBehavior, interval};
+use tokio::time::{MissedTickBehavior, interval, sleep};
 use txing_rig_local_pubsub::LocalPubSubClient;
 
 use crate::catalog::{TypeCatalogDevice, parse_string_list, reconstruct_type_record};
 use crate::manager::{
-    DevicePublication, DeviceRuntimeState, command_from_dcmd, command_result_metrics,
-    device_session_spec, graceful_device_death, graceful_node_death, node_client_id,
-    node_session_spec,
+    DevicePublication, DeviceRuntimeState, NODE_REDCON_BORN, command_from_dcmd,
+    command_result_metrics, device_session_spec, graceful_device_death, graceful_node_death,
+    node_client_id, node_session_spec,
 };
 use crate::sparkplug;
 use txing_capability_protocol::{
     CAPABILITY_COMMAND_RESULT_TOPIC_PREFIX, CAPABILITY_HEARTBEAT_TOPIC_PREFIX,
     CAPABILITY_STATE_TOPIC_PREFIX, CapabilityCommandResult, CapabilityHeartbeat, CapabilityState,
-    INVENTORY_TOPIC, Inventory, build_capability_command_topic,
+    INVENTORY_TOPIC, Inventory, MetricValue, build_capability_command_topic,
     parse_capability_command_result_topic, parse_capability_heartbeat_topic,
     parse_capability_state_topic,
 };
@@ -40,6 +42,8 @@ const MQTT_KEEP_ALIVE_SECONDS: u16 = 60;
 const NODE_BDSEQ: u64 = 1;
 const DEVICE_PUBLISH_TICK_SECONDS: u64 = 2;
 const DEFAULT_COMMAND_DEADLINE_MS: u64 = 60_000;
+const STARTUP_RETRY_INITIAL_DELAY_MS: u64 = 1_000;
+const STARTUP_RETRY_MAX_DELAY_MS: u64 = 60_000;
 const BOARD_RETAINED_CAPABILITY_STATE_FILTER: &str = "txings/+/capability/v2/state";
 const BOARD_RETAINED_CAPABILITIES: [&str; 3] = ["board", "mcp", "video"];
 
@@ -75,10 +79,66 @@ struct RegistryInventory {
     devices: Vec<txing_capability_protocol::InventoryDevice>,
 }
 
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+struct RetainedCapabilityStatePayload {
+    #[serde(rename = "schemaVersion")]
+    schema_version: String,
+    #[serde(rename = "adapterId")]
+    adapter_id: String,
+    #[serde(rename = "thingName")]
+    thing_name: String,
+    capabilities: BTreeMap<String, bool>,
+    #[serde(default)]
+    metrics: BTreeMap<String, MetricValue>,
+    #[serde(rename = "observedAtMs", default)]
+    observed_at_ms: u64,
+    #[serde(default)]
+    seq: u64,
+}
+
+impl RetainedCapabilityStatePayload {
+    fn into_capability_state(self) -> Result<CapabilityState> {
+        let state = CapabilityState {
+            schema_version: self.schema_version,
+            adapter_id: self.adapter_id,
+            thing_name: self.thing_name,
+            capabilities: self.capabilities,
+            metrics: self.metrics,
+            observed_at_ms: self.observed_at_ms,
+            seq: self.seq,
+        };
+        state.validate()?;
+        Ok(state)
+    }
+}
+
 #[derive(Debug, Clone)]
 enum RuntimeEvent {
-    LocalMessage { topic: String, payload: Vec<u8> },
-    MqttPublish { topic: String, payload: Vec<u8> },
+    LocalMessage {
+        topic: String,
+        payload: Vec<u8>,
+    },
+    MqttPublish {
+        topic: String,
+        payload: Vec<u8>,
+    },
+    MqttConnectionSuccess {
+        owner: MqttSessionOwner,
+    },
+    MqttConnectionFailure {
+        owner: MqttSessionOwner,
+        message: String,
+    },
+    MqttDisconnection {
+        owner: MqttSessionOwner,
+        message: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum MqttSessionOwner {
+    Node { generation: u64 },
+    Device { thing_name: String, generation: u64 },
 }
 
 struct AwsRegistryClient {
@@ -307,6 +367,7 @@ fn validate_registration_capabilities(
 struct MqttSession {
     client: AsyncClientHandle,
     seq: u64,
+    stopping: Arc<AtomicBool>,
 }
 
 impl MqttSession {
@@ -314,7 +375,7 @@ impl MqttSession {
         endpoint: &str,
         region: &str,
         spec: crate::manager::MqttSessionSpec,
-        event_sender: Option<mpsc::UnboundedSender<RuntimeEvent>>,
+        event_sender: Option<(mpsc::UnboundedSender<RuntimeEvent>, MqttSessionOwner)>,
     ) -> Result<Self> {
         let client_id = spec.client_id.clone();
         let will_topic = spec.will.topic.clone();
@@ -331,24 +392,53 @@ impl MqttSession {
         let client = AwsClientBuilder::new_websockets_with_sigv4(endpoint, sigv4_options, None)?
             .with_connect_options(connect_options.build())
             .build_tokio()?;
-        let listener = event_sender.map(|sender| {
-            Arc::new(move |event: Arc<ClientEvent>| {
-                if let ClientEvent::PublishReceived(received) = event.as_ref() {
-                    let payload = received
-                        .publish
-                        .payload()
-                        .map(|payload| payload.to_vec())
-                        .unwrap_or_default();
-                    let _ = sender.send(RuntimeEvent::MqttPublish {
-                        topic: received.publish.topic().to_string(),
-                        payload,
+        let stopping = Arc::new(AtomicBool::new(false));
+        let listener = event_sender.map(|(sender, owner)| {
+            let stopping = Arc::clone(&stopping);
+            Arc::new(move |event: Arc<ClientEvent>| match event.as_ref() {
+                ClientEvent::PublishReceived(received) => {
+                    if matches!(&owner, MqttSessionOwner::Node { .. }) {
+                        let payload = received
+                            .publish
+                            .payload()
+                            .map(|payload| payload.to_vec())
+                            .unwrap_or_default();
+                        let _ = sender.send(RuntimeEvent::MqttPublish {
+                            topic: received.publish.topic().to_string(),
+                            payload,
+                        });
+                    }
+                }
+                ClientEvent::ConnectionSuccess(_) => {
+                    let _ = sender.send(RuntimeEvent::MqttConnectionSuccess {
+                        owner: owner.clone(),
                     });
                 }
+                ClientEvent::ConnectionFailure(failure) => {
+                    let _ = sender.send(RuntimeEvent::MqttConnectionFailure {
+                        owner: owner.clone(),
+                        message: failure.to_string(),
+                    });
+                }
+                ClientEvent::Disconnection(disconnection) => {
+                    if !stopping.load(Ordering::Relaxed) {
+                        let _ = sender.send(RuntimeEvent::MqttDisconnection {
+                            owner: owner.clone(),
+                            message: disconnection.to_string(),
+                        });
+                    }
+                }
+                ClientEvent::ConnectionAttempt(_) | ClientEvent::Stopped(_) => {}
+                _ => {}
             }) as Arc<gneiss_mqtt::client::ClientEventListenerCallback>
         });
         client.start(listener)?;
         eprintln!("started Sparkplug MQTT clientId={client_id}");
-        Ok(Self { client, seq: 0 })
+        Ok(Self {
+            client,
+            seq: 0,
+            stopping,
+        })
     }
 
     fn next_seq(&mut self) -> u64 {
@@ -384,6 +474,7 @@ impl MqttSession {
     }
 
     fn stop(&self) -> Result<()> {
+        self.stopping.store(true, Ordering::Relaxed);
         self.client.stop(None)?;
         self.client.close()?;
         Ok(())
@@ -393,6 +484,8 @@ impl MqttSession {
 struct ManagedDevice {
     state: DeviceRuntimeState,
     session: Option<MqttSession>,
+    session_generation: u64,
+    connection_seen: bool,
 }
 
 struct SparkplugRuntime {
@@ -400,6 +493,8 @@ struct SparkplugRuntime {
     registry: AwsRegistryClient,
     devices: BTreeMap<String, ManagedDevice>,
     node_session: Option<MqttSession>,
+    node_session_generation: u64,
+    node_connection_seen: bool,
     inventory_seq: u64,
     node_seq: u64,
     node_born: bool,
@@ -420,6 +515,8 @@ impl SparkplugRuntime {
             registry,
             devices: BTreeMap::new(),
             node_session: None,
+            node_session_generation: 0,
+            node_connection_seen: false,
             inventory_seq: 0,
             node_seq: 0,
             node_born: false,
@@ -444,6 +541,11 @@ impl SparkplugRuntime {
         if self.node_session.is_some() {
             return Ok(());
         }
+        self.node_session_generation = self.node_session_generation.saturating_add(1);
+        self.node_connection_seen = false;
+        let owner = MqttSessionOwner::Node {
+            generation: self.node_session_generation,
+        };
         let spec = node_session_spec(
             &self.config.town_id,
             &self.config.rig_id,
@@ -455,24 +557,37 @@ impl SparkplugRuntime {
             &self.config.iot_endpoint,
             &self.config.aws_region,
             spec,
-            Some(self.event_sender.clone()),
+            Some((self.event_sender.clone(), owner)),
         )
         .await?;
+        let subscribe_result = self.subscribe_node_topics(&node_session).await;
+        if let Err(err) = subscribe_result {
+            if let Err(stop_err) = node_session.stop() {
+                eprintln!(
+                    "warning: failed to stop partially connected Sparkplug node MQTT session: {stop_err:#}"
+                );
+            }
+            return Err(err);
+        }
+        self.node_session = Some(node_session);
+        Ok(())
+    }
+
+    async fn subscribe_node_topics(&self, node_session: &MqttSession) -> Result<()> {
         let dcmd_filter =
             sparkplug::build_device_topic(&self.config.town_id, "DCMD", &self.config.rig_id, "+");
         node_session.subscribe(dcmd_filter).await?;
         node_session
             .subscribe(BOARD_RETAINED_CAPABILITY_STATE_FILTER.to_string())
-            .await?;
-        self.node_session = Some(node_session);
-        Ok(())
+            .await
     }
 
     async fn publish_node_birth(&mut self) -> Result<()> {
         let topic =
             sparkplug::build_node_topic(&self.config.town_id, "NBIRTH", &self.config.rig_id);
         let seq = self.next_node_seq();
-        let payload = sparkplug::build_node_birth_payload(1, NODE_BDSEQ, seq, now_ms())?;
+        let payload =
+            sparkplug::build_node_birth_payload(NODE_REDCON_BORN, NODE_BDSEQ, seq, now_ms())?;
         self.node_session()?
             .publish(topic, payload)
             .await
@@ -506,6 +621,7 @@ impl SparkplugRuntime {
     }
 
     async fn refresh_inventory(&mut self) -> Result<()> {
+        let previous_names = self.devices.keys().cloned().collect::<BTreeSet<_>>();
         let inventory = self.registry.load_inventory(&self.config.rig_id).await?;
         let next_names = inventory
             .devices
@@ -532,7 +648,15 @@ impl SparkplugRuntime {
                 .or_insert_with(|| ManagedDevice {
                     state: DeviceRuntimeState::new(inventory_device),
                     session: None,
+                    session_generation: 0,
+                    connection_seen: false,
                 });
+        }
+        if previous_names != next_names {
+            eprintln!(
+                "Sparkplug inventory updated rigId={} devices={next_names:?}",
+                self.config.rig_id
+            );
         }
         Ok(())
     }
@@ -655,6 +779,97 @@ impl SparkplugRuntime {
         self.publish_local(command_topic, command.to_vec()?)
     }
 
+    async fn handle_mqtt_connection_success(&mut self, owner: MqttSessionOwner) -> Result<()> {
+        if !self.is_current_mqtt_owner(&owner) {
+            return Ok(());
+        }
+        match owner {
+            MqttSessionOwner::Node { .. } => {
+                if !self.node_connection_seen {
+                    self.node_connection_seen = true;
+                    eprintln!("Sparkplug node MQTT connected rigId={}", self.config.rig_id);
+                    return Ok(());
+                }
+                eprintln!(
+                    "warning: Sparkplug node MQTT reconnected rigId={}; republishing NBIRTH and inventory",
+                    self.config.rig_id
+                );
+                self.restore_node_birth().await?;
+            }
+            MqttSessionOwner::Device { thing_name, .. } => {
+                let Some(device) = self.devices.get_mut(&thing_name) else {
+                    return Ok(());
+                };
+                if !device.connection_seen {
+                    device.connection_seen = true;
+                    eprintln!("Sparkplug device MQTT connected thing={thing_name}");
+                    return Ok(());
+                }
+                eprintln!(
+                    "warning: Sparkplug device MQTT reconnected thing={thing_name}; republishing DBIRTH if available"
+                );
+                device.state.reset_publication();
+                self.publish_device_changes().await?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn restore_node_birth(&mut self) -> Result<()> {
+        self.node_born = false;
+        if let Some(node_session) = self.node_session.as_ref() {
+            self.subscribe_node_topics(node_session).await?;
+        }
+        self.publish_node_birth().await?;
+        self.publish_inventory().await?;
+        self.reset_device_publications();
+        self.publish_device_changes().await
+    }
+
+    fn reset_device_publications(&mut self) {
+        for device in self.devices.values_mut() {
+            device.state.reset_publication();
+        }
+    }
+
+    fn handle_mqtt_connection_problem(
+        &mut self,
+        owner: MqttSessionOwner,
+        event_name: &str,
+        message: String,
+    ) {
+        if !self.is_current_mqtt_owner(&owner) {
+            return;
+        }
+        match owner {
+            MqttSessionOwner::Node { .. } => {
+                eprintln!(
+                    "warning: Sparkplug node MQTT {event_name} rigId={} event={message}",
+                    self.config.rig_id
+                );
+            }
+            MqttSessionOwner::Device { thing_name, .. } => {
+                eprintln!(
+                    "warning: Sparkplug device MQTT {event_name} thing={thing_name} event={message}"
+                );
+            }
+        }
+    }
+
+    fn is_current_mqtt_owner(&self, owner: &MqttSessionOwner) -> bool {
+        match owner {
+            MqttSessionOwner::Node { generation } => {
+                self.node_session.is_some() && *generation == self.node_session_generation
+            }
+            MqttSessionOwner::Device {
+                thing_name,
+                generation,
+            } => self.devices.get(thing_name).is_some_and(|device| {
+                device.session.is_some() && *generation == device.session_generation
+            }),
+        }
+    }
+
     fn publish_local(&self, topic: String, payload: Vec<u8>) -> Result<()> {
         self.outbound_sender
             .send(OutboundMessage { topic, payload })
@@ -725,6 +940,12 @@ impl SparkplugRuntime {
         if device.session.is_some() {
             return Ok(());
         }
+        device.session_generation = device.session_generation.saturating_add(1);
+        device.connection_seen = false;
+        let owner = MqttSessionOwner::Device {
+            thing_name: thing_name.to_string(),
+            generation: device.session_generation,
+        };
         let spec = device_session_spec(
             &self.config.town_id,
             &self.config.rig_id,
@@ -735,7 +956,7 @@ impl SparkplugRuntime {
             &self.config.iot_endpoint,
             &self.config.aws_region,
             spec,
-            None,
+            Some((self.event_sender.clone(), owner)),
         )
         .await?;
         device.session = Some(session);
@@ -749,6 +970,7 @@ impl SparkplugRuntime {
         let Some(mut session) = device.session.take() else {
             return Ok(());
         };
+        device.connection_seen = false;
         let seq = session.next_seq();
         let (topic, payload) = graceful_device_death(
             &self.config.town_id,
@@ -852,10 +1074,81 @@ async fn prepare_runtime_config(
     Ok((config, registry))
 }
 
+async fn prepare_runtime_config_with_retry(
+    config: RuntimeConfig,
+    runtime_label: &str,
+) -> Result<(RuntimeConfig, AwsRegistryClient)> {
+    let mut failure_count = 0u32;
+    loop {
+        match prepare_runtime_config(config.clone()).await {
+            Ok(result) => {
+                if failure_count > 0 {
+                    eprintln!(
+                        "Sparkplug {runtime_label} config recovered after failureCount={failure_count}"
+                    );
+                }
+                return Ok(result);
+            }
+            Err(err) => {
+                failure_count = failure_count.saturating_add(1);
+                let retry_delay_ms = startup_retry_delay_ms(failure_count);
+                eprintln!(
+                    "warning: Sparkplug {runtime_label} config failed failureCount={failure_count} retryDelayMs={retry_delay_ms} error={err:#}"
+                );
+                sleep(Duration::from_millis(retry_delay_ms)).await;
+            }
+        }
+    }
+}
+
+async fn initialize_sparkplug_with_retry(runtime: &mut SparkplugRuntime) -> Result<()> {
+    let mut failure_count = 0u32;
+    loop {
+        match initialize_sparkplug(runtime).await {
+            Ok(()) => {
+                if failure_count > 0 {
+                    eprintln!("Sparkplug startup recovered after failureCount={failure_count}");
+                }
+                return Ok(());
+            }
+            Err(err) => {
+                failure_count = failure_count.saturating_add(1);
+                let retry_delay_ms = startup_retry_delay_ms(failure_count);
+                eprintln!(
+                    "warning: Sparkplug startup failed failureCount={failure_count} retryDelayMs={retry_delay_ms} error={err:#}"
+                );
+                sleep(Duration::from_millis(retry_delay_ms)).await;
+            }
+        }
+    }
+}
+
+async fn initialize_sparkplug(runtime: &mut SparkplugRuntime) -> Result<()> {
+    runtime.refresh_inventory().await?;
+    runtime.connect_node().await?;
+    runtime.publish_node_birth().await?;
+    runtime.publish_inventory().await
+}
+
+fn startup_retry_delay_ms(failure_count: u32) -> u64 {
+    let shift = failure_count.saturating_sub(1).min(16);
+    STARTUP_RETRY_INITIAL_DELAY_MS
+        .saturating_mul(1_u64 << shift)
+        .min(STARTUP_RETRY_MAX_DELAY_MS)
+}
+
 #[cfg(all(feature = "greengrass-sdk", target_os = "linux"))]
 async fn run_greengrass_runtime(config: RuntimeConfig) -> Result<()> {
     validate_greengrass_ipc_environment()?;
-    let (config, registry) = prepare_runtime_config(config).await?;
+    let (config, registry) = prepare_runtime_config_with_retry(config, "runtime").await?;
+    eprintln!(
+        "resolved Sparkplug runtime version={} rigId={} townId={} inventoryIntervalSeconds={} commandDeadlineMs={}",
+        env!("CARGO_PKG_VERSION"),
+        config.rig_id,
+        config.town_id,
+        config.inventory_interval_seconds,
+        config.command_deadline_ms
+    );
 
     let (event_sender, mut event_receiver) = mpsc::unbounded_channel();
     let (outbound_sender, mut outbound_receiver) = mpsc::unbounded_channel();
@@ -912,10 +1205,7 @@ async fn run_greengrass_runtime(config: RuntimeConfig) -> Result<()> {
             anyhow::anyhow!("failed to subscribe capability heartbeat topics: {err:?}")
         })?;
 
-    runtime.refresh_inventory().await?;
-    runtime.connect_node().await?;
-    runtime.publish_node_birth().await?;
-    runtime.publish_inventory().await?;
+    initialize_sparkplug_with_retry(&mut runtime).await?;
 
     let mut inventory_timer = interval(Duration::from_secs(
         config.inventory_interval_seconds.max(1),
@@ -945,6 +1235,15 @@ async fn run_greengrass_runtime(config: RuntimeConfig) -> Result<()> {
                 let result = match event {
                     RuntimeEvent::LocalMessage { topic, payload } => runtime.handle_local_message(topic, payload).await,
                     RuntimeEvent::MqttPublish { topic, payload } => runtime.handle_mqtt_publish(topic, payload).await,
+                    RuntimeEvent::MqttConnectionSuccess { owner } => runtime.handle_mqtt_connection_success(owner).await,
+                    RuntimeEvent::MqttConnectionFailure { owner, message } => {
+                        runtime.handle_mqtt_connection_problem(owner, "connection failure", message);
+                        Ok(())
+                    }
+                    RuntimeEvent::MqttDisconnection { owner, message } => {
+                        runtime.handle_mqtt_connection_problem(owner, "disconnection", message);
+                        Ok(())
+                    }
                 };
                 if let Err(err) = result {
                     eprintln!("warning: runtime event failed: {err:#}");
@@ -967,7 +1266,15 @@ async fn run_greengrass_runtime(config: RuntimeConfig) -> Result<()> {
 
 async fn run_local_runtime(config: RuntimeConfig) -> Result<()> {
     let socket = config.local_ipc_socket.clone();
-    let (config, registry) = prepare_runtime_config(config).await?;
+    let (config, registry) = prepare_runtime_config_with_retry(config, "local runtime").await?;
+    eprintln!(
+        "resolved Sparkplug local runtime version={} rigId={} townId={} inventoryIntervalSeconds={} commandDeadlineMs={}",
+        env!("CARGO_PKG_VERSION"),
+        config.rig_id,
+        config.town_id,
+        config.inventory_interval_seconds,
+        config.command_deadline_ms
+    );
     let (event_sender, mut event_receiver) = mpsc::unbounded_channel();
     let (outbound_sender, mut outbound_receiver) = mpsc::unbounded_channel();
     let mut runtime =
@@ -985,10 +1292,7 @@ async fn run_local_runtime(config: RuntimeConfig) -> Result<()> {
         .await?;
     let local_publisher = local_client.publisher();
 
-    runtime.refresh_inventory().await?;
-    runtime.connect_node().await?;
-    runtime.publish_node_birth().await?;
-    runtime.publish_inventory().await?;
+    initialize_sparkplug_with_retry(&mut runtime).await?;
 
     let mut inventory_timer = interval(Duration::from_secs(
         config.inventory_interval_seconds.max(1),
@@ -1012,10 +1316,20 @@ async fn run_local_runtime(config: RuntimeConfig) -> Result<()> {
                 }
             }
             Some(event) = event_receiver.recv() => {
-                let RuntimeEvent::MqttPublish { topic, payload } = event else {
-                    continue;
+                let result = match event {
+                    RuntimeEvent::MqttPublish { topic, payload } => runtime.handle_mqtt_publish(topic, payload).await,
+                    RuntimeEvent::MqttConnectionSuccess { owner } => runtime.handle_mqtt_connection_success(owner).await,
+                    RuntimeEvent::MqttConnectionFailure { owner, message } => {
+                        runtime.handle_mqtt_connection_problem(owner, "connection failure", message);
+                        Ok(())
+                    }
+                    RuntimeEvent::MqttDisconnection { owner, message } => {
+                        runtime.handle_mqtt_connection_problem(owner, "disconnection", message);
+                        Ok(())
+                    }
+                    RuntimeEvent::LocalMessage { .. } => Ok(()),
                 };
-                if let Err(err) = runtime.handle_mqtt_publish(topic, payload).await {
+                if let Err(err) = result {
                     eprintln!("warning: Sparkplug MQTT event failed: {err:#}");
                 }
             }
@@ -1133,7 +1447,11 @@ fn decode_retained_capability_state_payload(
     topic: &str,
     payload: &[u8],
 ) -> Option<CapabilityState> {
-    match CapabilityState::from_slice(payload) {
+    match serde_json::from_slice::<RetainedCapabilityStatePayload>(payload).and_then(|state| {
+        state
+            .into_capability_state()
+            .map_err(serde::de::Error::custom)
+    }) {
         Ok(state) => Some(state),
         Err(err) => {
             eprintln!(
@@ -1309,7 +1627,7 @@ mod tests {
     }
 
     #[test]
-    fn invalid_retained_capability_state_payload_is_ignored() {
+    fn retained_non_board_capability_state_payload_allows_omitted_bookkeeping_fields() {
         let payload = br#"{
             "schemaVersion": "2.0",
             "adapterId": "dev.txing.rig.AwsConnectivity",
@@ -1317,12 +1635,47 @@ mod tests {
             "capabilities": {"time": true}
         }"#;
 
+        let state = decode_retained_capability_state_payload(
+            "txings/time-b98n8s/capability/v2/state",
+            payload,
+        )
+        .expect("retained state");
+
+        assert_eq!(state.observed_at_ms, 0);
+        assert_eq!(state.seq, 0);
+        assert!(!state_has_board_owned_capability(&state));
+    }
+
+    #[test]
+    fn retained_board_capability_state_payload_allows_omitted_bookkeeping_fields() {
+        let payload = br#"{
+            "schemaVersion": "2.0",
+            "adapterId": "dev.txing.board.Capability",
+            "thingName": "unit-1",
+            "capabilities": {"video": true}
+        }"#;
+
+        let state =
+            decode_retained_capability_state_payload("txings/unit-1/capability/v2/state", payload)
+                .expect("retained state");
+
+        assert_eq!(state.observed_at_ms, 0);
+        assert_eq!(state.seq, 0);
+        assert!(state_has_board_owned_capability(&state));
+        assert!(validate_retained_state_topic_payload("unit-1", &state).is_ok());
+    }
+
+    #[test]
+    fn invalid_retained_capability_state_payload_is_ignored() {
+        let payload = br#"{
+            "schemaVersion": "2.0",
+            "adapterId": "dev.txing.board.Capability",
+            "capabilities": {"video": true}
+        }"#;
+
         assert!(
-            decode_retained_capability_state_payload(
-                "txings/time-b98n8s/capability/v2/state",
-                payload,
-            )
-            .is_none()
+            decode_retained_capability_state_payload("txings/unit-1/capability/v2/state", payload)
+                .is_none()
         );
     }
 
@@ -1405,6 +1758,14 @@ mod tests {
             ..registration
         };
         assert!(validate_registration_capabilities(&mismatched, &type_record).is_err());
+    }
+
+    #[test]
+    fn startup_retry_delay_uses_bounded_exponential_backoff() {
+        assert_eq!(startup_retry_delay_ms(1), 1_000);
+        assert_eq!(startup_retry_delay_ms(2), 2_000);
+        assert_eq!(startup_retry_delay_ms(3), 4_000);
+        assert_eq!(startup_retry_delay_ms(100), STARTUP_RETRY_MAX_DELAY_MS);
     }
 
     #[test]

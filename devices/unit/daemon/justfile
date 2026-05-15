@@ -8,14 +8,23 @@ aws_lib := project_root + "/shared/aws/scripts/aws_lib.sh"
 
 region := ""
 profile := ""
-etc_dir := "/etc/txing/daemon"
+config_dir := ""
+prerelease_branch := "feature/unit-daemon-prerelease"
+prerelease_asset := "txing-unit-daemon-linux-aarch64.tar.gz"
+prerelease_dir := daemon_dir + "/target/prerelease"
+prerelease_metadata := prerelease_dir + "/metadata.json"
 
-cert thing_id='' region=region profile=profile etc_dir=etc_dir:
+cert thing_id='' region=region profile=profile config_dir=config_dir:
     #!/usr/bin/env bash
     set -euo pipefail
     requested_thing_name="{{thing_id}}"
     if [[ "$requested_thing_name" == *=* ]]; then
       echo "Do not pass just recipe arguments as name=value. Use: just unit::daemon::cert <thing-id>" >&2
+      exit 2
+    fi
+    requested_config_dir="{{config_dir}}"
+    if [[ "$requested_config_dir" == *=* ]]; then
+      echo "Do not pass just recipe arguments as name=value. Use positional arguments." >&2
       exit 2
     fi
     if [ -n "$requested_thing_name" ]; then
@@ -54,16 +63,28 @@ cert thing_id='' region=region profile=profile etc_dir=etc_dir:
     cloudwatch_log_group="txing/${TXING_TOWN_ID}/${TXING_RIG_ID}/${effective_thing_name}"
     iot_data_endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}" --query endpointAddress --output text)"
     iot_credential_endpoint="$(aws iot describe-endpoint --endpoint-type iot:CredentialProvider "${aws_flags[@]}" --query endpointAddress --output text)"
-    cert_dir="{{etc_dir}}/certs"
-    env_file="{{etc_dir}}/daemon.env"
-    cert_path="$cert_dir/certificate.pem.crt"
-    public_key_path="$cert_dir/public.pem.key"
-    private_key_path="$cert_dir/private.pem.key"
-    cert_arn_path="$cert_dir/certificate.arn"
-    root_ca_path="$cert_dir/AmazonRootCA1.pem"
-    install -d -m 700 "{{etc_dir}}" "$cert_dir"
+    default_config_dir() {
+      if [ -n "${TXING_DAEMON_CONFIG_DIR:-}" ]; then
+        printf '%s\n' "$TXING_DAEMON_CONFIG_DIR"
+      elif [ -n "${XDG_CONFIG_HOME:-}" ]; then
+        printf '%s\n' "$XDG_CONFIG_HOME/txing/unit-daemon"
+      elif [ -n "${HOME:-}" ]; then
+        printf '%s\n' "$HOME/.config/txing/unit-daemon"
+      else
+        echo "HOME is not set; pass an explicit config directory as a positional argument." >&2
+        exit 1
+      fi
+    }
+    daemon_config_dir="${requested_config_dir:-$(default_config_dir)}"
+    env_file="$daemon_config_dir/.env"
+    cert_path="$daemon_config_dir/certificate.pem.crt"
+    public_key_path="$daemon_config_dir/public.pem.key"
+    private_key_path="$daemon_config_dir/private.pem.key"
+    cert_arn_path="$daemon_config_dir/certificate.arn"
+    root_ca_path="$daemon_config_dir/AmazonRootCA1.pem"
+    install -d -m 700 "$daemon_config_dir"
     if [ -e "$env_file" ] || [ -e "$cert_path" ] || [ -e "$public_key_path" ] || [ -e "$private_key_path" ] || [ -e "$cert_arn_path" ]; then
-      echo "Daemon certificate or env material already exists under {{etc_dir}}." >&2
+      echo "Daemon certificate or env material already exists under $daemon_config_dir." >&2
       echo "Move or delete those files before issuing a replacement certificate." >&2
       exit 1
     fi
@@ -122,15 +143,14 @@ cert thing_id='' region=region profile=profile etc_dir=etc_dir:
       "${aws_flags[@]}"
     printf '%s\n' "$cert_arn" >"$cert_arn_path"
     {
-      printf 'TXING_THING_ID=%s\n' "$effective_thing_name"
-      printf 'AWS_REGION=%s\n' "$AWS_REGION"
-      printf 'TXING_IOT_ENDPOINT=%s\n' "$iot_data_endpoint"
-      printf 'TXING_IOT_CREDENTIAL_ENDPOINT=%s\n' "$iot_credential_endpoint"
-      printf 'TXING_IOT_ROLE_ALIAS=%s\n' "$iot_role_alias"
-      printf 'TXING_IOT_CERT_FILE=%s\n' "$cert_path"
-      printf 'TXING_IOT_PRIVATE_KEY_FILE=%s\n' "$private_key_path"
-      printf 'TXING_IOT_ROOT_CA_FILE=%s\n' "$root_ca_path"
-      printf 'TXING_CLOUDWATCH_LOG_GROUP=%s\n' "$cloudwatch_log_group"
+      printf 'export TXING_THING_ID=%s\n' "$effective_thing_name"
+      printf 'export AWS_REGION=%s\n' "$AWS_REGION"
+      printf 'export TXING_IOT_ENDPOINT=%s\n' "$iot_data_endpoint"
+      printf 'export TXING_IOT_CREDENTIAL_ENDPOINT=%s\n' "$iot_credential_endpoint"
+      printf 'export TXING_IOT_ROLE_ALIAS=%s\n' "$iot_role_alias"
+      printf 'export TXING_CLOUDWATCH_LOG_GROUP=%s\n' "$cloudwatch_log_group"
+      printf 'export TXING_CLOUDWATCH_LOG_LEVEL=info\n'
+      printf 'export TXING_CLOUDWATCH_LOG_RETENTION_DAYS=14\n'
     } >"$env_file"
     chmod 600 "$env_file" "$cert_path" "$public_key_path" "$private_key_path" "$cert_arn_path"
     chmod 644 "$root_ca_path"
@@ -154,3 +174,253 @@ cert thing_id='' region=region profile=profile etc_dir=etc_dir:
 
 test:
     cargo test --manifest-path "{{daemon_dir}}/Cargo.toml"
+
+run:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{project_root}}"
+    cargo run --manifest-path devices/unit/daemon/Cargo.toml
+
+prerelease-build branch=prerelease_branch:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    project_root="{{project_root}}"
+    daemon_dir="{{daemon_dir}}"
+    prerelease_dir="{{prerelease_dir}}"
+    metadata_path="{{prerelease_metadata}}"
+    branch="{{branch}}"
+    asset_name="{{prerelease_asset}}"
+    asset_path="$prerelease_dir/$asset_name"
+    package_dir="$prerelease_dir/package"
+    binary_name="txing-unit-daemon"
+    binary_path="$package_dir/$binary_name"
+
+    if [[ "$branch" == *=* ]]; then
+      echo "Do not pass just recipe arguments as name=value. Use positional arguments." >&2
+      exit 2
+    fi
+    if [[ "$branch" != feature/* ]]; then
+      echo "Feature prerelease branch must be under feature/, got: $branch" >&2
+      exit 2
+    fi
+    if [ "$(uname -s)" != "Linux" ]; then
+      echo "unit daemon prerelease-build must run inside the Linux aarch64 builder." >&2
+      exit 1
+    fi
+    if [ "$(uname -m)" != "aarch64" ]; then
+      echo "unit daemon prerelease-build requires Linux aarch64, got: $(uname -m)" >&2
+      exit 1
+    fi
+    for command in cargo file git python3 strip tar; do
+      if ! command -v "$command" >/dev/null 2>&1; then
+        echo "unit daemon prerelease-build requires '$command'. Install missing Lima build dependencies first." >&2
+        exit 1
+      fi
+    done
+    if [ -n "$(git -C "$project_root" status --porcelain --untracked-files=all)" ]; then
+      echo "Working tree must be clean before prerelease build." >&2
+      git -C "$project_root" status --short --untracked-files=all >&2
+      exit 1
+    fi
+
+    version_base="$(tr -d '[:space:]' < "$project_root/VERSION")"
+    if [[ ! "$version_base" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+      echo "VERSION must contain a base semantic version like x.y.z." >&2
+      exit 1
+    fi
+    major="${BASH_REMATCH[1]}"
+    minor="${BASH_REMATCH[2]}"
+    patch="${BASH_REMATCH[3]}"
+    timestamp="$(date -u +%s)"
+    version="$major.$minor.$((patch + 1))-feature.$timestamp"
+    tag="v$version"
+    commit="$(git -C "$project_root" rev-parse HEAD)"
+    build_host="$(hostname)"
+    build_kernel="$(uname -a)"
+
+    cd "$project_root"
+    TXING_DAEMON_BUILD_VERSION="$version" cargo test --manifest-path devices/unit/daemon/Cargo.toml
+    TXING_DAEMON_BUILD_VERSION="$version" cargo build --release --manifest-path devices/unit/daemon/Cargo.toml --bin daemon
+
+    install -d "$prerelease_dir"
+    rm -rf "$package_dir"
+    install -d "$package_dir"
+    install -m 755 "$daemon_dir/target/release/daemon" "$binary_path"
+    strip "$binary_path"
+    file "$binary_path"
+    rm -f "$asset_path"
+    tar -C "$package_dir" -czf "$asset_path" "$binary_name"
+    tar -tzf "$asset_path"
+
+    python3 - "$metadata_path" <<PY
+    import json
+    import sys
+
+    metadata = {
+        "version": "$version",
+        "tag": "$tag",
+        "branch": "$branch",
+        "commit": "$commit",
+        "timestamp": int("$timestamp"),
+        "assetName": "$asset_name",
+        "assetPath": "$asset_path",
+        "assetFormat": "tar.gz",
+        "binaryName": "$binary_name",
+        "binaryPath": "$binary_path",
+        "projectRoot": "$project_root",
+        "buildHost": "$build_host",
+        "buildKernel": "$build_kernel",
+    }
+    with open(sys.argv[1], "w", encoding="utf-8") as handle:
+        json.dump(metadata, handle, indent=2)
+        handle.write("\n")
+    PY
+
+    printf 'prepared unit daemon prerelease artifact\n'
+    printf '  tag: %s\n' "$tag"
+    printf '  branch: %s\n' "$branch"
+    printf '  commit: %s\n' "$commit"
+    printf '  asset: %s\n' "$asset_path"
+    printf '  binary: %s\n' "$binary_path"
+    printf '  metadata: %s\n' "$metadata_path"
+
+prerelease-publish:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    project_root="{{project_root}}"
+    metadata_path="{{prerelease_metadata}}"
+    expected_asset_name="{{prerelease_asset}}"
+
+    if [ "$(uname -s)" != "Darwin" ]; then
+      echo "unit daemon prerelease-publish must run on macOS where gh is authenticated." >&2
+      exit 1
+    fi
+    command -v gh >/dev/null || {
+      echo "gh is required to publish the unit daemon prerelease." >&2
+      exit 1
+    }
+    command -v python3 >/dev/null || {
+      echo "python3 is required to read prerelease metadata." >&2
+      exit 1
+    }
+    command -v tar >/dev/null || {
+      echo "tar is required to verify the prerelease archive." >&2
+      exit 1
+    }
+    if [ ! -r "$metadata_path" ]; then
+      echo "Missing prerelease metadata: $metadata_path" >&2
+      echo "Run just unit::daemon::prerelease-build inside the Linux aarch64 builder first." >&2
+      exit 1
+    fi
+    if [ -n "$(git -C "$project_root" status --porcelain --untracked-files=all)" ]; then
+      echo "Working tree must be clean before prerelease publish." >&2
+      git -C "$project_root" status --short --untracked-files=all >&2
+      exit 1
+    fi
+
+    read_metadata() {
+      local key="$1"
+      python3 - "$metadata_path" "$key" <<'PY'
+    import json
+    import sys
+
+    with open(sys.argv[1], encoding="utf-8") as handle:
+        value = json.load(handle)[sys.argv[2]]
+    print(value)
+    PY
+    }
+
+    tag="$(read_metadata tag)"
+    branch="$(read_metadata branch)"
+    commit="$(read_metadata commit)"
+    version="$(read_metadata version)"
+    timestamp="$(read_metadata timestamp)"
+    asset_name="$(read_metadata assetName)"
+    asset_path="$(read_metadata assetPath)"
+    asset_format="$(read_metadata assetFormat)"
+    binary_name="$(read_metadata binaryName)"
+    build_host="$(read_metadata buildHost)"
+    build_kernel="$(read_metadata buildKernel)"
+
+    if [[ "$branch" != feature/* ]]; then
+      echo "Feature prerelease branch must be under feature/, got: $branch" >&2
+      exit 2
+    fi
+    if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-feature\.[0-9]+$ ]]; then
+      echo "Unexpected unit daemon feature tag: $tag" >&2
+      exit 1
+    fi
+    if [ "$asset_name" != "$expected_asset_name" ]; then
+      echo "Unexpected prerelease asset name: $asset_name" >&2
+      exit 1
+    fi
+    if [ "$asset_format" != "tar.gz" ]; then
+      echo "Unexpected prerelease asset format: $asset_format" >&2
+      exit 1
+    fi
+    if [ "$binary_name" != "txing-unit-daemon" ]; then
+      echo "Unexpected prerelease binary name: $binary_name" >&2
+      exit 1
+    fi
+    if [ ! -s "$asset_path" ]; then
+      echo "Missing prerelease archive asset: $asset_path" >&2
+      exit 1
+    fi
+    archive_listing="$(tar -tzf "$asset_path")"
+    if ! grep -Fxq "$binary_name" <<<"$archive_listing"; then
+      echo "Prerelease archive does not contain $binary_name at its root." >&2
+      exit 1
+    fi
+    current_commit="$(git -C "$project_root" rev-parse HEAD)"
+    if [ "$current_commit" != "$commit" ]; then
+      echo "Current HEAD $current_commit does not match prerelease build commit $commit." >&2
+      exit 1
+    fi
+    cd "$project_root"
+
+    notes_file="$(mktemp "${TMPDIR:-/tmp}/txing-unit-daemon-prerelease-notes.XXXXXX")"
+    old_tags_file="$(mktemp "${TMPDIR:-/tmp}/txing-unit-daemon-prerelease-old-tags.XXXXXX")"
+    cleanup() {
+      rm -f "$notes_file" "$old_tags_file"
+    }
+    trap cleanup EXIT
+    cat >"$notes_file" <<NOTES
+    Unit daemon feature prerelease.
+
+    - Version: $version
+    - Tag: $tag
+    - Branch: $branch
+    - Commit: $commit
+    - Asset: $asset_name
+    - Build host: $build_host
+    - Build kernel: $build_kernel
+    - Timestamp: $timestamp
+    NOTES
+
+    git -C "$project_root" push --force-with-lease origin "HEAD:refs/heads/$branch"
+    git -C "$project_root" tag -a "$tag" -m "unit daemon feature prerelease $version" "$commit"
+    git -C "$project_root" push origin "refs/tags/$tag:refs/tags/$tag"
+    gh release create "$tag" "$asset_path" \
+      --prerelease \
+      --latest=false \
+      --verify-tag \
+      --title "$tag" \
+      --notes-file "$notes_file"
+
+    gh api --paginate repos/{owner}/{repo}/releases \
+      --jq '.[] | select(.prerelease == true) | select(.tag_name | test("^v[0-9]+\\.[0-9]+\\.[0-9]+-feature\\.[0-9]+$")) | select(any(.assets[]?; .name == "'"$expected_asset_name"'")) | [.tag_name, .published_at] | @tsv' \
+      | sort -r -k2,2 \
+      | awk 'NR > 10 {print $1}' \
+      >"$old_tags_file"
+    while IFS= read -r old_tag; do
+      [ -n "$old_tag" ] || continue
+      printf 'pruning old unit daemon feature prerelease %s\n' "$old_tag"
+      gh release delete "$old_tag" --cleanup-tag --yes
+    done <"$old_tags_file"
+
+    printf 'published unit daemon feature prerelease\n'
+    printf '  tag: %s\n' "$tag"
+    printf '  branch: %s\n' "$branch"
+    printf '  asset: %s\n' "$asset_path"

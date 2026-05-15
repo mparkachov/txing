@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import {
   extractSparkplugCapabilityAvailability,
   extractSparkplugRedconCommandStatus,
+  shouldClearPendingTargetRedcon,
 } from '../src/sparkplug-model'
 
 describe('sparkplug model helpers', () => {
@@ -138,5 +139,23 @@ describe('sparkplug model helpers', () => {
         'sparkplug',
       ),
     ).toBe(false)
+  })
+
+  test('keeps wake redcon commands pending through transient device death', () => {
+    expect(
+      shouldClearPendingTargetRedcon({
+        pendingTargetRedcon: 1,
+        reportedRedcon: null,
+        isSparkplugDeviceUnavailable: true,
+      }),
+    ).toBe(false)
+
+    expect(
+      shouldClearPendingTargetRedcon({
+        pendingTargetRedcon: 4,
+        reportedRedcon: null,
+        isSparkplugDeviceUnavailable: true,
+      }),
+    ).toBe(true)
   })
 })
