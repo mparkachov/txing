@@ -211,8 +211,8 @@ impl RuntimeState {
             .collect::<BTreeMap<_, _>>();
         let wanted_names = wanted.keys().cloned().collect::<BTreeSet<_>>();
         let previous_names = scanner_targets_snapshot(&self.scanner_targets);
-        if self.config.debug && previous_names != wanted_names {
-            eprintln!("debug: BLE inventory targets={wanted_names:?}");
+        if previous_names != wanted_names {
+            eprintln!("BLE inventory targets updated targets={wanted_names:?}");
         }
         replace_scanner_targets(&self.scanner_targets, wanted_names.clone());
 
@@ -1669,6 +1669,8 @@ async fn run_scanner_once(
             "debug: BLE scanner active mode=events debugSummaryIntervalMs={}",
             BLE_SCANNER_DEBUG_SUMMARY_INTERVAL_MS
         );
+    } else {
+        eprintln!("started BLE scanner mode=events");
     }
     let mut seq = 0u64;
     let mut last_published_by_name = BTreeMap::new();

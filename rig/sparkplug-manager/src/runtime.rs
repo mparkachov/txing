@@ -540,6 +540,7 @@ impl SparkplugRuntime {
     }
 
     async fn refresh_inventory(&mut self) -> Result<()> {
+        let previous_names = self.devices.keys().cloned().collect::<BTreeSet<_>>();
         let inventory = self.registry.load_inventory(&self.config.rig_id).await?;
         let next_names = inventory
             .devices
@@ -567,6 +568,12 @@ impl SparkplugRuntime {
                     state: DeviceRuntimeState::new(inventory_device),
                     session: None,
                 });
+        }
+        if previous_names != next_names {
+            eprintln!(
+                "Sparkplug inventory updated rigId={} devices={next_names:?}",
+                self.config.rig_id
+            );
         }
         Ok(())
     }
@@ -890,6 +897,13 @@ async fn prepare_runtime_config(
 async fn run_greengrass_runtime(config: RuntimeConfig) -> Result<()> {
     validate_greengrass_ipc_environment()?;
     let (config, registry) = prepare_runtime_config(config).await?;
+    eprintln!(
+        "resolved Sparkplug runtime rigId={} townId={} inventoryIntervalSeconds={} commandDeadlineMs={}",
+        config.rig_id,
+        config.town_id,
+        config.inventory_interval_seconds,
+        config.command_deadline_ms
+    );
 
     let (event_sender, mut event_receiver) = mpsc::unbounded_channel();
     let (outbound_sender, mut outbound_receiver) = mpsc::unbounded_channel();
@@ -1002,6 +1016,13 @@ async fn run_greengrass_runtime(config: RuntimeConfig) -> Result<()> {
 async fn run_local_runtime(config: RuntimeConfig) -> Result<()> {
     let socket = config.local_ipc_socket.clone();
     let (config, registry) = prepare_runtime_config(config).await?;
+    eprintln!(
+        "resolved Sparkplug local runtime rigId={} townId={} inventoryIntervalSeconds={} commandDeadlineMs={}",
+        config.rig_id,
+        config.town_id,
+        config.inventory_interval_seconds,
+        config.command_deadline_ms
+    );
     let (event_sender, mut event_receiver) = mpsc::unbounded_channel();
     let (outbound_sender, mut outbound_receiver) = mpsc::unbounded_channel();
     let mut runtime =
