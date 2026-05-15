@@ -103,7 +103,8 @@ feature artifacts pretending to be newer than later production releases.
 ## Board Installation Model
 
 The board has a dedicated `txing` user. Mise is installed for that user and runs
-as that user. The systemd service is created once during manual board setup.
+as that user. The raw repository installer creates or updates the systemd
+service during a writable maintenance window.
 
 Persistent daemon config lives under the user's home directory and is provisioned
 during a writable maintenance window:
@@ -150,8 +151,8 @@ existing executable tmpfs from the read-only-root provisioning:
 /var/tmp/txing/unit-daemon/mise-tmp
 ```
 
-Every feature-opt-in boot may attempt to install or refresh the pinned feature
-release before starting the daemon offline.
+Every daemon service boot may attempt to install or refresh the selected mise
+channel before starting the daemon offline.
 
 ## Stable Maintenance Flow
 
@@ -170,28 +171,39 @@ restart the service manually when appropriate.
 The stable mise config should exclude prereleases. That keeps `mise upgrade`
 equivalent to "install latest stable".
 
-## Feature Opt-In Boot Flow
+## Unit Daemon Service Install
 
-Feature channel selection is manual and local to the board. It is not controlled
-by AWS or the fleet runtime.
+Channel selection is manual and local to the board. It is not controlled by AWS
+or the fleet runtime.
 
-A feature-opt-in board uses a separate mise config for the daemon systemd
-service. The service uses `/var/tmp/txing/unit-daemon` for mise installs,
-download cache, and tmp. The read-only-root provisioning should mount `/var/tmp`
-as tmpfs with `exec` and enough space for one downloaded daemon asset, one
-installed daemon executable, and mise temporary files. On Raspberry Pi Zero 2 W,
-use a tight cap such as `96M`; tmpfs size is a cap, not preallocated memory.
-After a successful `mise install`, the service may remove mise download/tmp cache
-and keep only the installed executable tree. Do not install into
-`/home` or `/var/cache` during normal boot because the board treats the whole
-root filesystem as read-only outside maintenance.
-
-The phase-1 feature config pins one published prerelease version explicitly. It
-lives on the board as the `txing` user at:
+The implemented phase-1 board installer is a raw repository script, not a
+GitHub release asset:
 
 ```text
-/home/txing/.config/mise/txing-unit-daemon-feature/config.toml
+devices/unit/daemon/install-systemd.sh
 ```
+
+Run it during a writable-root maintenance window. Feature installs use the
+current feature branch copy of the script:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/feature/unit-daemon-prerelease/devices/unit/daemon/install-systemd.sh | sudo bash -s -- feature
+```
+
+Stable installs use `main` once stable daemon release assets exist:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/devices/unit/daemon/install-systemd.sh | sudo bash -s -- stable
+```
+
+Both channels use the same systemd unit and mise config path:
+
+```text
+/etc/systemd/system/txing-unit-daemon.service
+/home/txing/.config/mise/txing-unit-daemon/config.toml
+```
+
+Feature channel config:
 
 ```toml
 [tool_alias]
@@ -207,27 +219,38 @@ slsa = false
 github_attestations = false
 ```
 
-With `prerelease = true`, `mise install` resolves `latest` to the newest GitHub
-release including prereleases. `MISE_OFFLINE=1 mise exec -- txing-unit-daemon`
-then runs the installed version without network work. The asset name and exposed
-command stay stable. The archive contains `txing-unit-daemon` at its root, so
-mise discovers that executable after extraction without `bin` or `rename_exe`.
-The `tool_alias` makes mise report the tool as `txing-unit-daemon` instead of
-the backend key `github:mparkachov/txing`. SLSA and GitHub artifact attestations
-are disabled for this manual phase-1 channel because the asset is built locally
-in Lima and uploaded by `gh`; stable CI publishing should revisit attestations.
+Stable channel config:
 
-Conceptual systemd shape:
+```toml
+[tool_alias]
+txing-unit-daemon = "github:mparkachov/txing"
+
+[tools.txing-unit-daemon]
+version = "latest"
+asset_pattern = "txing-unit-daemon-linux-aarch64.tar.gz"
+prerelease = false
+```
+
+With `prerelease = true`, feature mode resolves `latest` to the newest GitHub
+release including prereleases. With `prerelease = false`, stable mode resolves
+only normal releases. The asset name and exposed command stay stable. The
+archive contains `txing-unit-daemon` at its root, so mise discovers that
+executable after extraction without `bin` or `rename_exe`. The `tool_alias`
+makes mise report the tool as `txing-unit-daemon` instead of the backend key
+`github:mparkachov/txing`. SLSA and GitHub artifact attestations are disabled
+only for feature mode because the asset is built locally in Lima and uploaded by
+`gh`; stable CI publishing should revisit attestations.
+
+The installer writes this service shape with absolute paths:
 
 ```ini
 User=txing
 Group=txing
 
-Environment=MISE_CONFIG_DIR=/home/txing/.config/mise/txing-unit-daemon-feature
+Environment=MISE_CONFIG_DIR=/home/txing/.config/mise/txing-unit-daemon
 Environment=MISE_DATA_DIR=/var/tmp/txing/unit-daemon/mise
 Environment=MISE_CACHE_DIR=/var/tmp/txing/unit-daemon/mise-cache
 Environment=MISE_TMP_DIR=/var/tmp/txing/unit-daemon/mise-tmp
-Environment=MISE_PRERELEASES=1
 Environment=TXING_DAEMON_CONFIG_DIR=/home/txing/.config/txing/unit-daemon
 Environment=HOME=/home/txing
 
@@ -237,22 +260,19 @@ ExecStartPre=-/usr/bin/find /var/tmp/txing/unit-daemon/mise-cache /var/tmp/txing
 ExecStart=/usr/bin/env MISE_OFFLINE=1 /home/txing/.local/bin/mise exec -- txing-unit-daemon
 ```
 
-The exact unit should use absolute paths and the current installed mise location.
-The snippet is a behavioral sketch, not a final unit file.
+Feature mode additionally sets `MISE_PRERELEASES=1` in the rendered unit.
 
 Expected behavior:
 
-- If feature install succeeds and the feature prerelease is newer than stable,
-  `MISE_OFFLINE=1 mise exec -- txing-unit-daemon` runs the feature binary from
-  `/var/tmp/txing/unit-daemon/mise/installs` on the executable tmpfs.
-- In the strict phase-1 unit, feature install failure makes service start fail
-  visibly. Stable fallback should be designed after the stable channel unit is in
-  place.
+- `mise install` runs before daemon start and writes install/cache/tmp state
+  under `/var/tmp/txing/unit-daemon` on the executable tmpfs.
+- In phase 1, install failure makes service start fail visibly. Stable fallback
+  should be designed after stable release publishing is in place.
 - `ExecStart` is offline, so the actual daemon start does not perform network
   resolution or install work.
 
-This avoids a custom wrapper script while keeping installed executables on an
-existing writable executable filesystem even when the board root is read-only.
+This keeps installed executables on an existing writable executable filesystem
+even when the board root is read-only.
 
 ## Local Feature Publishing
 
@@ -374,19 +394,18 @@ The current phase-1 implementation has these working pieces:
 - When certificate path variables are absent, the daemon loads
   `certificate.pem.crt`, `private.pem.key`, and `AmazonRootCA1.pem` from the
   same directory as the loaded `.env`.
-- A macOS foreground run through `just unit::daemon::run` has been confirmed to
-  start successfully with the generated local config.
-- The daemon publishes the retained `board` capability state, and the web UI has
-  been confirmed to show the board capability as enabled while the daemon is
-  running.
-- The feature board config can use `version = "latest"` with `prerelease = true`
-  so `mise install` resolves the newest unit daemon GitHub prerelease at service
-  start, while `MISE_OFFLINE=1 mise exec -- txing-unit-daemon` runs the installed
-  version without network work.
-- A systemd feature-channel smoke test on `unit-bl95f2` has been confirmed to
-  download `txing-unit-daemon-linux-aarch64.tar.gz`, extract the daemon under
-  `/var/tmp/txing/unit-daemon/mise`, start it offline, and log
-  `version=0.9.8-feature.1778793458` on startup.
+- A macOS foreground run through `just unit::daemon::run` uses the same generated
+  local config path as the board service.
+- The daemon publishes the retained `board` capability state when it starts
+  successfully.
+- The generic daemon installer writes
+  `/home/txing/.config/mise/txing-unit-daemon/config.toml`; feature mode uses
+  `version = "latest"` with `prerelease = true`, and stable mode uses
+  `version = "latest"` with `prerelease = false`.
+- The generic daemon installer writes `txing-unit-daemon.service`; service start
+  downloads `txing-unit-daemon-linux-aarch64.tar.gz`, extracts the daemon under
+  `/var/tmp/txing/unit-daemon/mise`, starts it offline, and logs
+  `version=<version>` on startup.
 - `release::bump` and `release::check` include the daemon Cargo manifest and
   lockfile.
 
@@ -420,28 +439,29 @@ before there is a concrete need.
 A Debian package is attractive for stable fleet deployment, but it adds package
 repository, signing, and system-file ownership questions. The current goal is a
 developer-friendly binary channel with read-only-root compatibility. Systemd unit
-creation remains a one-time manual setup step for now.
+creation is handled by the raw repository installer script.
 
-### Use `/var/tmp` For Feature Installs
+### Use `/var/tmp` For Service Installs
 
 The root filesystem is read-only during normal boot. `/tmp` and `/var/tmp` are
 already tmpfs-backed in the board provisioning. `/tmp` is intentionally small and
-is used for board runtime sockets and state, so feature mise state should not
+is used for board runtime sockets and state, so daemon mise state should not
 consume it. `/var/tmp` is the existing general-purpose writable tmpfs, so it is
-the right place for boot-lifetime feature install/cache/tmp state as long as the
+the right place for boot-lifetime install/cache/tmp state as long as the
 provisioned size is increased and `exec` remains allowed. Use a tight cap, for
 example `96M`, on Raspberry Pi Zero 2 W boards.
 
-### Keep Stable In The User Home
+### Keep Service Config In The User Home
 
 The onboarding model is intentionally simple: image the board, create/login as
-the user, install mise, configure credentials and mise, run upgrades, then switch
-the root back to read-only. Keeping mise under `/home/txing` matches normal mise
-usage and avoids system-wide tool management.
+the user, install mise, configure credentials and mise config, run upgrades, then
+switch the root back to read-only. Keeping service config under `/home/txing`
+matches normal mise usage and avoids system-wide tool configuration. The
+downloaded daemon executable itself lives under `/var/tmp` during phase 1.
 
 ### Run As The Dedicated `txing` User
 
-Mise installation, feature install, and daemon execution should all happen as the
+Mise installation, daemon install, and daemon execution should all happen as the
 same dedicated user. This avoids root-owned files in the user's mise directories
 and keeps the daemon out of the login user's personal account.
 
@@ -478,19 +498,19 @@ Goal: prove the entire loop works before polishing repeatability.
   `just unit::daemon::prerelease-build`.
 - Publish a GitHub prerelease with a single `.tar.gz` archive asset. Implemented
   in `just unit::daemon::prerelease-publish`.
-- Manually configure one board with a feature service config. Verified on
-  `unit-bl95f2`.
-- Verify feature boot install into `/var/tmp`. Verified with
-  `txing-unit-daemon@0.9.8-feature.1778793458`.
-- Verify feature service start through systemd. Verified with startup version
-  logging and retained online state publish.
-- Defer stable install, stable fallback, and stable-wins behavior to phase 2,
-  after stable CI publishing and stable service config exist.
+- Add a generic raw-repository systemd installer for the daemon service.
+  Implemented as `devices/unit/daemon/install-systemd.sh`.
+- Install a clean board with the generic service in feature mode.
+- Verify feature boot install into `/var/tmp`.
+- Verify daemon service start through systemd with startup version logging and
+  retained online state publish.
+- Stable mode is supported by the installer, but stable release publishing,
+  stable fallback, and stable-wins behavior remain phase 2.
 
-This phase can tolerate manual board setup and rough commands. The success
-criterion is that a developer can build locally in Lima, publish a feature
-prerelease, reboot an opted-in board, and see the daemon run that binary without
-a source checkout on the board.
+The success criterion is that a developer can build locally in Lima, publish a
+feature prerelease, run the raw installer in feature mode, reboot an opted-in
+board, and see the daemon run that binary without a source checkout on the
+board.
 
 ### Phase 2: Repeatable Stable Installation
 
@@ -505,8 +525,8 @@ Goal: make stable board setup and maintenance boring and repeatable.
   `root-rw`, `apt update`, `apt dist-upgrade`, `mise upgrade`, manual restart,
   `root-ro`.
 - Document expected filesystem writes during stable maintenance and normal boot.
-- Add a stable-only systemd unit that launches through `mise exec` with
-  `MISE_OFFLINE=1`.
+- Verify the generic systemd unit in stable mode once stable release assets
+  exist.
 - Verify stable-only boot on read-only root.
 - Verify stable upgrade while root is writable and service restart after upgrade.
 
@@ -532,6 +552,5 @@ Goal: improve safety and developer ergonomics after the core path works.
 
 ## Open Questions For Implementation
 
-- Exact stable and feature mise config file contents.
-- Exact systemd unit and drop-in layout.
+- Stable release publishing workflow and attestation policy.
 - Exact Lima image and provisioning requirements.
