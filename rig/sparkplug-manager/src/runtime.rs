@@ -16,7 +16,7 @@ use gneiss_mqtt::mqtt::{PublishPacket, QualityOfService, SubscribePacket};
 use gneiss_mqtt_aws::{AwsClientBuilder, WebsocketSigv4OptionsBuilder};
 use serde::Deserialize;
 use tokio::sync::mpsc;
-use tokio::time::{MissedTickBehavior, interval};
+use tokio::time::{MissedTickBehavior, interval, sleep};
 use txing_rig_local_pubsub::LocalPubSubClient;
 
 use crate::catalog::{TypeCatalogDevice, parse_string_list, reconstruct_type_record};
@@ -41,6 +41,8 @@ const MQTT_KEEP_ALIVE_SECONDS: u16 = 60;
 const NODE_BDSEQ: u64 = 1;
 const DEVICE_PUBLISH_TICK_SECONDS: u64 = 2;
 const DEFAULT_COMMAND_DEADLINE_MS: u64 = 60_000;
+const STARTUP_RETRY_INITIAL_DELAY_MS: u64 = 1_000;
+const STARTUP_RETRY_MAX_DELAY_MS: u64 = 60_000;
 const BOARD_RETAINED_CAPABILITY_STATE_FILTER: &str = "txings/+/capability/v2/state";
 const BOARD_RETAINED_CAPABILITIES: [&str; 3] = ["board", "mcp", "video"];
 
@@ -893,10 +895,73 @@ async fn prepare_runtime_config(
     Ok((config, registry))
 }
 
+async fn prepare_runtime_config_with_retry(
+    config: RuntimeConfig,
+    runtime_label: &str,
+) -> Result<(RuntimeConfig, AwsRegistryClient)> {
+    let mut failure_count = 0u32;
+    loop {
+        match prepare_runtime_config(config.clone()).await {
+            Ok(result) => {
+                if failure_count > 0 {
+                    eprintln!(
+                        "Sparkplug {runtime_label} config recovered after failureCount={failure_count}"
+                    );
+                }
+                return Ok(result);
+            }
+            Err(err) => {
+                failure_count = failure_count.saturating_add(1);
+                let retry_delay_ms = startup_retry_delay_ms(failure_count);
+                eprintln!(
+                    "warning: Sparkplug {runtime_label} config failed failureCount={failure_count} retryDelayMs={retry_delay_ms} error={err:#}"
+                );
+                sleep(Duration::from_millis(retry_delay_ms)).await;
+            }
+        }
+    }
+}
+
+async fn initialize_sparkplug_with_retry(runtime: &mut SparkplugRuntime) -> Result<()> {
+    let mut failure_count = 0u32;
+    loop {
+        match initialize_sparkplug(runtime).await {
+            Ok(()) => {
+                if failure_count > 0 {
+                    eprintln!("Sparkplug startup recovered after failureCount={failure_count}");
+                }
+                return Ok(());
+            }
+            Err(err) => {
+                failure_count = failure_count.saturating_add(1);
+                let retry_delay_ms = startup_retry_delay_ms(failure_count);
+                eprintln!(
+                    "warning: Sparkplug startup failed failureCount={failure_count} retryDelayMs={retry_delay_ms} error={err:#}"
+                );
+                sleep(Duration::from_millis(retry_delay_ms)).await;
+            }
+        }
+    }
+}
+
+async fn initialize_sparkplug(runtime: &mut SparkplugRuntime) -> Result<()> {
+    runtime.refresh_inventory().await?;
+    runtime.connect_node().await?;
+    runtime.publish_node_birth().await?;
+    runtime.publish_inventory().await
+}
+
+fn startup_retry_delay_ms(failure_count: u32) -> u64 {
+    let shift = failure_count.saturating_sub(1).min(16);
+    STARTUP_RETRY_INITIAL_DELAY_MS
+        .saturating_mul(1_u64 << shift)
+        .min(STARTUP_RETRY_MAX_DELAY_MS)
+}
+
 #[cfg(all(feature = "greengrass-sdk", target_os = "linux"))]
 async fn run_greengrass_runtime(config: RuntimeConfig) -> Result<()> {
     validate_greengrass_ipc_environment()?;
-    let (config, registry) = prepare_runtime_config(config).await?;
+    let (config, registry) = prepare_runtime_config_with_retry(config, "runtime").await?;
     eprintln!(
         "resolved Sparkplug runtime rigId={} townId={} inventoryIntervalSeconds={} commandDeadlineMs={}",
         config.rig_id,
@@ -960,10 +1025,7 @@ async fn run_greengrass_runtime(config: RuntimeConfig) -> Result<()> {
             anyhow::anyhow!("failed to subscribe capability heartbeat topics: {err:?}")
         })?;
 
-    runtime.refresh_inventory().await?;
-    runtime.connect_node().await?;
-    runtime.publish_node_birth().await?;
-    runtime.publish_inventory().await?;
+    initialize_sparkplug_with_retry(&mut runtime).await?;
 
     let mut inventory_timer = interval(Duration::from_secs(
         config.inventory_interval_seconds.max(1),
@@ -1015,7 +1077,7 @@ async fn run_greengrass_runtime(config: RuntimeConfig) -> Result<()> {
 
 async fn run_local_runtime(config: RuntimeConfig) -> Result<()> {
     let socket = config.local_ipc_socket.clone();
-    let (config, registry) = prepare_runtime_config(config).await?;
+    let (config, registry) = prepare_runtime_config_with_retry(config, "local runtime").await?;
     eprintln!(
         "resolved Sparkplug local runtime rigId={} townId={} inventoryIntervalSeconds={} commandDeadlineMs={}",
         config.rig_id,
@@ -1040,10 +1102,7 @@ async fn run_local_runtime(config: RuntimeConfig) -> Result<()> {
         .await?;
     let local_publisher = local_client.publisher();
 
-    runtime.refresh_inventory().await?;
-    runtime.connect_node().await?;
-    runtime.publish_node_birth().await?;
-    runtime.publish_inventory().await?;
+    initialize_sparkplug_with_retry(&mut runtime).await?;
 
     let mut inventory_timer = interval(Duration::from_secs(
         config.inventory_interval_seconds.max(1),
@@ -1499,6 +1558,14 @@ mod tests {
             ..registration
         };
         assert!(validate_registration_capabilities(&mismatched, &type_record).is_err());
+    }
+
+    #[test]
+    fn startup_retry_delay_uses_bounded_exponential_backoff() {
+        assert_eq!(startup_retry_delay_ms(1), 1_000);
+        assert_eq!(startup_retry_delay_ms(2), 2_000);
+        assert_eq!(startup_retry_delay_ms(3), 4_000);
+        assert_eq!(startup_retry_delay_ms(100), STARTUP_RETRY_MAX_DELAY_MS);
     }
 
     #[test]
