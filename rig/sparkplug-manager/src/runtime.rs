@@ -918,9 +918,7 @@ impl SparkplugRuntime {
             thing_name,
         );
         let payload = sparkplug::build_device_report_payload(redcon, seq, now_ms(), metrics)?;
-        session.publish(topic, payload).await?;
-        eprintln!("published Sparkplug {message_type} thing={thing_name} redcon={redcon}");
-        Ok(())
+        session.publish(topic, payload).await
     }
 
     async fn ensure_device_session(&mut self, thing_name: &str) -> Result<()> {
@@ -971,7 +969,6 @@ impl SparkplugRuntime {
             now_ms(),
         )?;
         session.publish(topic, payload).await?;
-        eprintln!("published Sparkplug DDEATH thing={thing_name}");
         session.stop()?;
         Ok(())
     }

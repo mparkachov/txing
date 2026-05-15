@@ -29,7 +29,7 @@ from .video_state import (
 
 LOGGER = logging.getLogger("board.mcp_service")
 
-DEFAULT_MCP_SERVER_VERSION = "0.9.105"
+DEFAULT_MCP_SERVER_VERSION = "0.9.106"
 MCP_WEBRTC_DATA_CHANNEL_LABEL = "txing.mcp.v1"
 _JSONRPC_VERSION = "2.0"
 _ResponseSender = Callable[[bytes], None]
