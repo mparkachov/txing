@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::Arc;
 use std::sync::Once;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -1085,6 +1085,7 @@ pub trait Publisher: Send + Sync {
 
 struct MqttPublisher {
     client: AsyncClientHandle,
+    stopping: Arc<AtomicBool>,
 }
 
 impl MqttPublisher {
@@ -1112,8 +1113,10 @@ impl MqttPublisher {
         let (connected_sender, connected_receiver) = oneshot::channel::<Result<(), String>>();
         let connected_sender = Arc::new(std::sync::Mutex::new(Some(connected_sender)));
         let event_client_id = config.client_id.clone();
+        let stopping = Arc::new(AtomicBool::new(false));
         let listener = {
             let connected_sender = Arc::clone(&connected_sender);
+            let stopping = Arc::clone(&stopping);
             Arc::new(move |event: Arc<ClientEvent>| match event.as_ref() {
                 ClientEvent::ConnectionSuccess(event) => {
                     info!(client_id = %event_client_id, "mqtt connected");
@@ -1133,7 +1136,11 @@ impl MqttPublisher {
                     }
                 }
                 ClientEvent::Disconnection(event) => {
-                    warn!(client_id = %event_client_id, event = %event, "mqtt disconnected");
+                    if stopping.load(Ordering::Relaxed) {
+                        debug!(client_id = %event_client_id, event = %event, "mqtt disconnected during shutdown");
+                    } else {
+                        warn!(client_id = %event_client_id, event = %event, "mqtt disconnected");
+                    }
                     if let Ok(mut sender) = connected_sender.lock()
                         && let Some(sender) = sender.take()
                     {
@@ -1158,10 +1165,11 @@ impl MqttPublisher {
             }
         }
         info!(client_id = %config.client_id, "mqtt client started");
-        Ok(Self { client })
+        Ok(Self { client, stopping })
     }
 
     fn stop(&self) -> Result<()> {
+        self.stopping.store(true, Ordering::Relaxed);
         self.client.stop(None)?;
         self.client.close()?;
         Ok(())

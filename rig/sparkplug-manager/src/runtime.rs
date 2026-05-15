@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 #[cfg(all(feature = "greengrass-sdk", target_os = "linux"))]
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
@@ -366,6 +367,7 @@ fn validate_registration_capabilities(
 struct MqttSession {
     client: AsyncClientHandle,
     seq: u64,
+    stopping: Arc<AtomicBool>,
 }
 
 impl MqttSession {
@@ -390,7 +392,9 @@ impl MqttSession {
         let client = AwsClientBuilder::new_websockets_with_sigv4(endpoint, sigv4_options, None)?
             .with_connect_options(connect_options.build())
             .build_tokio()?;
+        let stopping = Arc::new(AtomicBool::new(false));
         let listener = event_sender.map(|(sender, owner)| {
+            let stopping = Arc::clone(&stopping);
             Arc::new(move |event: Arc<ClientEvent>| match event.as_ref() {
                 ClientEvent::PublishReceived(received) => {
                     if matches!(&owner, MqttSessionOwner::Node { .. }) {
@@ -417,10 +421,12 @@ impl MqttSession {
                     });
                 }
                 ClientEvent::Disconnection(disconnection) => {
-                    let _ = sender.send(RuntimeEvent::MqttDisconnection {
-                        owner: owner.clone(),
-                        message: disconnection.to_string(),
-                    });
+                    if !stopping.load(Ordering::Relaxed) {
+                        let _ = sender.send(RuntimeEvent::MqttDisconnection {
+                            owner: owner.clone(),
+                            message: disconnection.to_string(),
+                        });
+                    }
                 }
                 ClientEvent::ConnectionAttempt(_) | ClientEvent::Stopped(_) => {}
                 _ => {}
@@ -428,7 +434,11 @@ impl MqttSession {
         });
         client.start(listener)?;
         eprintln!("started Sparkplug MQTT clientId={client_id}");
-        Ok(Self { client, seq: 0 })
+        Ok(Self {
+            client,
+            seq: 0,
+            stopping,
+        })
     }
 
     fn next_seq(&mut self) -> u64 {
@@ -464,6 +474,7 @@ impl MqttSession {
     }
 
     fn stop(&self) -> Result<()> {
+        self.stopping.store(true, Ordering::Relaxed);
         self.client.stop(None)?;
         self.client.close()?;
         Ok(())
