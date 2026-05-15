@@ -21,7 +21,7 @@ use futures::StreamExt;
 #[cfg(all(feature = "ble-real", any(target_os = "linux", target_os = "macos")))]
 use tokio::sync::OnceCell;
 use tokio::sync::{Semaphore, broadcast, mpsc};
-use tokio::time::{MissedTickBehavior, interval, sleep, timeout};
+use tokio::time::{Instant, MissedTickBehavior, interval, sleep, timeout};
 use txing_rig_local_pubsub::LocalPubSubClient;
 use uuid::Uuid;
 
@@ -56,6 +56,8 @@ const BLUEZ_IN_PROGRESS_RECONNECT_DELAY_MS: u64 = 10_000;
 const BLUEZ_RESOURCE_EXHAUSTED_RECONNECT_DELAY_MS: u64 = 60_000;
 const BLE_CONNECT_SESSION_MAX_TIMEOUT_MS: u64 = 20_000;
 const BLE_DISCONNECT_TIMEOUT_MS: u64 = 2_000;
+const BLE_PERIPHERAL_LOOKUP_POLL_MS: u64 = 200;
+const BLE_COMMAND_CONNECT_RETRY_DELAY_MS: u64 = 1_000;
 const BLE_SCANNER_PROPERTY_ERROR_LOG_INTERVAL_MS: u64 = 30_000;
 const BLE_SCANNER_DEBUG_SUMMARY_INTERVAL_MS: u64 = 5_000;
 const BLE_SCANNER_NO_TARGET_LOG_INTERVAL_MS: u64 = 30_000;
@@ -518,6 +520,15 @@ impl DeviceSession {
 
         let seq = self.next_seq();
         self.publish_sample(advertisement_sample(&self.spec, &advertisement, seq))?;
+        if !self.should_connect_from_advertisement() {
+            if self.config.debug {
+                eprintln!(
+                    "debug: BLE advertisement did not trigger background connect thing={} lastRedcon={:?}",
+                    self.spec.thing_name, self.last_redcon
+                );
+            }
+            return Ok(());
+        }
         match self.connect(false).await {
             Ok(ConnectOutcome::Connected) => self.reset_connect_backoff(),
             Ok(ConnectOutcome::DeferredNoCapacity) => {
@@ -537,6 +548,13 @@ impl DeviceSession {
             }
         }
         Ok(())
+    }
+
+    fn should_connect_from_advertisement(&self) -> bool {
+        match self.spec.kind {
+            DeviceKind::Power => self.last_redcon.is_none_or(|redcon| redcon < REDCON_IDLE),
+            DeviceKind::Weather => true,
+        }
     }
 
     fn connect_retry_delay_ms(&self, err: &anyhow::Error) -> u64 {
@@ -627,7 +645,7 @@ impl DeviceSession {
             }
         };
 
-        if let Err(err) = self.connect(true).await {
+        if let Err(err) = self.connect_for_command(&command).await {
             let retry_delay_ms = self.record_connect_failure(&err);
             self.next_connect_after_ms = now_ms().saturating_add(retry_delay_ms);
             publish_command_result(
@@ -637,6 +655,21 @@ impl DeviceSession {
                 COMMAND_FAILED,
                 Some(format!(
                     "BLE connection failed before command write: {err:#}"
+                )),
+                Some(command.target.redcon),
+            )?;
+            return Ok(());
+        }
+
+        if command_deadline_expired(&command, now_ms()) {
+            publish_command_result(
+                &self.config.adapter_id,
+                &self.outbound_sender,
+                &command,
+                COMMAND_FAILED,
+                Some(format!(
+                    "BLE command deadline expired deadlineMs={:?}",
+                    command.deadline_ms
                 )),
                 Some(command.target.redcon),
             )?;
@@ -685,6 +718,41 @@ impl DeviceSession {
             Some(command.target.redcon),
         )?;
         Ok(())
+    }
+
+    async fn connect_for_command(&mut self, command: &CapabilityCommand) -> Result<()> {
+        let retry_deadline_ms = command
+            .deadline_ms
+            .unwrap_or_else(|| now_ms().saturating_add(self.config.connect_timeout_ms));
+        let mut attempt = 0u32;
+        loop {
+            attempt = attempt.saturating_add(1);
+            match self.connect(true).await {
+                Ok(ConnectOutcome::Connected) => return Ok(()),
+                Ok(ConnectOutcome::DeferredNoCapacity) => {
+                    bail!("BLE connection capacity is unavailable before command write")
+                }
+                Err(err) => {
+                    let now = now_ms();
+                    let can_retry = ble_command_connect_error_is_retryable(&err)
+                        && now.saturating_add(BLE_COMMAND_CONNECT_RETRY_DELAY_MS)
+                            < retry_deadline_ms;
+                    if !can_retry {
+                        return Err(err);
+                    }
+                    if self.config.debug {
+                        eprintln!(
+                            "debug: BLE command connect retry thing={} commandId={} attempt={} retryDelayMs={} error={err:#}",
+                            self.spec.thing_name,
+                            command.command_id,
+                            attempt,
+                            BLE_COMMAND_CONNECT_RETRY_DELAY_MS
+                        );
+                    }
+                    sleep(Duration::from_millis(BLE_COMMAND_CONNECT_RETRY_DELAY_MS)).await;
+                }
+            }
+        }
     }
 
     async fn connect(&mut self, wait_for_cap: bool) -> Result<ConnectOutcome> {
@@ -1144,6 +1212,17 @@ fn ble_error_indicates_host_resource_exhaustion(message: &str) -> bool {
         || message.contains("Too many open files")
 }
 
+fn ble_command_connect_error_is_retryable(err: &anyhow::Error) -> bool {
+    let message = format!("{err:#}");
+    message.contains("BLE peripheral lookup timed out")
+        || message.contains("is not visible")
+        || message.contains("BLE connect timed out")
+        || message.contains("BLE connect session timed out")
+        || message.contains("connect BLE peripheral")
+        || message.contains("le-connection-abort-by-local")
+        || ble_error_indicates_in_progress(&message)
+}
+
 fn replace_scanner_targets(scanner_targets: &SharedScannerTargets, wanted_names: BTreeSet<String>) {
     match scanner_targets.write() {
         Ok(mut targets) => *targets = wanted_names,
@@ -1337,7 +1416,12 @@ impl ConnectedDevice {
             .context("BLE adapter lookup timed out")??;
         let peripheral = timeout(
             Duration::from_millis(connect_timeout_ms),
-            find_peripheral(&adapter, &advertisement.address, &spec.thing_name),
+            find_peripheral_until(
+                &adapter,
+                &advertisement.address,
+                &spec.thing_name,
+                connect_timeout_ms,
+            ),
         )
         .await
         .context("BLE peripheral lookup timed out")??
@@ -1771,6 +1855,31 @@ async fn find_peripheral(
         }
     }
     Ok(None)
+}
+
+#[cfg(all(feature = "ble-real", any(target_os = "linux", target_os = "macos")))]
+async fn find_peripheral_until(
+    adapter: &Adapter,
+    address: &str,
+    thing_name: &str,
+    timeout_ms: u64,
+) -> Result<Option<Peripheral>> {
+    let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+    loop {
+        if let Some(peripheral) = find_peripheral(adapter, address, thing_name).await? {
+            return Ok(Some(peripheral));
+        }
+        let now = Instant::now();
+        if now >= deadline {
+            return Ok(None);
+        }
+        sleep(
+            deadline
+                .saturating_duration_since(now)
+                .min(Duration::from_millis(BLE_PERIPHERAL_LOOKUP_POLL_MS)),
+        )
+        .await;
+    }
 }
 
 #[cfg(all(feature = "ble-real", any(target_os = "linux", target_os = "macos")))]
@@ -2627,6 +2736,54 @@ mod tests {
         assert_eq!(result.status, COMMAND_FAILED);
         assert_eq!(result.target.redcon, Some(3));
         assert!(result.message.unwrap().contains("only supports REDCON 4"));
+    }
+
+    #[test]
+    fn power_background_connects_only_until_idle_state_is_known() {
+        let (sender, _receiver) = mpsc::unbounded_channel();
+        let (shadow_sender, _shadow_receiver) = mpsc::unbounded_channel();
+        let mut session = DeviceSession::new(
+            power_spec(),
+            RuntimeConfig::default(),
+            sender,
+            shadow_sender,
+            None,
+        );
+
+        assert!(session.should_connect_from_advertisement());
+        session.last_redcon = Some(REDCON_IDLE);
+        assert!(!session.should_connect_from_advertisement());
+        session.last_redcon = Some(REDCON_ACTIVE);
+        assert!(session.should_connect_from_advertisement());
+    }
+
+    #[test]
+    fn weather_background_connects_for_measurements() {
+        let (sender, _receiver) = mpsc::unbounded_channel();
+        let (shadow_sender, _shadow_receiver) = mpsc::unbounded_channel();
+        let mut session = DeviceSession::new(
+            weather_spec(),
+            RuntimeConfig::default(),
+            sender,
+            shadow_sender,
+            None,
+        );
+        session.last_redcon = Some(REDCON_IDLE);
+
+        assert!(session.should_connect_from_advertisement());
+    }
+
+    #[test]
+    fn transient_ble_command_connect_errors_are_retryable() {
+        assert!(ble_command_connect_error_is_retryable(&anyhow!(
+            "BLE peripheral E4:7C:BC:45:9B:A2 is not visible"
+        )));
+        assert!(ble_command_connect_error_is_retryable(&anyhow!(
+            "connect BLE peripheral: le-connection-abort-by-local"
+        )));
+        assert!(!ble_command_connect_error_is_retryable(&anyhow!(
+            "BLE command characteristic is missing"
+        )));
     }
 
     #[cfg(not(all(feature = "ble-real", any(target_os = "linux", target_os = "macos"))))]

@@ -200,9 +200,9 @@ asset_pattern = "txing-unit-daemon-linux-aarch64.tar.gz"
 prerelease = false
 ```
 
-Stable mode is installed by the same script, but stable release publishing is a
-phase-2 task. Until stable daemon release assets exist, feature mode is the
-validated phase-1 path.
+Stable mode is installed by the same script. It installs the latest stable
+release into the `txing` user's persistent mise install tree during the writable
+maintenance window.
 
 ### Board Systemd Service
 
@@ -219,8 +219,15 @@ The raw repository installer writes:
 /home/txing/.config/mise/txing-unit-daemon/config.toml
 ```
 
-The service runs as the dedicated `txing` user. It stores boot-lifetime mise
-install, cache, and temp state under the executable `/var/tmp` tmpfs:
+The service runs as the dedicated `txing` user. Stable mode uses the normal
+persistent mise install tree:
+
+```text
+/home/txing/.local/share/mise/installs/txing-unit-daemon/
+```
+
+Feature mode stores boot-lifetime mise install, cache, and temp state under the
+executable `/var/tmp` tmpfs:
 
 ```text
 /var/tmp/txing/unit-daemon/mise
@@ -228,7 +235,7 @@ install, cache, and temp state under the executable `/var/tmp` tmpfs:
 /var/tmp/txing/unit-daemon/mise-tmp
 ```
 
-The service uses this shape:
+The stable service uses this shape:
 
 ```ini
 [Unit]
@@ -248,25 +255,27 @@ Restart=on-failure
 RestartSec=5
 
 Environment=MISE_CONFIG_DIR=/home/txing/.config/mise/txing-unit-daemon
-Environment=MISE_DATA_DIR=/var/tmp/txing/unit-daemon/mise
-Environment=MISE_CACHE_DIR=/var/tmp/txing/unit-daemon/mise-cache
-Environment=MISE_TMP_DIR=/var/tmp/txing/unit-daemon/mise-tmp
 Environment=TXING_DAEMON_CONFIG_DIR=/home/txing/.config/txing/unit-daemon
 Environment=HOME=/home/txing
 
-ExecStartPre=/usr/bin/install -d -m 700 /var/tmp/txing/unit-daemon/mise /var/tmp/txing/unit-daemon/mise-cache /var/tmp/txing/unit-daemon/mise-tmp
-ExecStartPre=/home/txing/.local/bin/mise install
-ExecStartPre=-/usr/bin/find /var/tmp/txing/unit-daemon/mise-cache /var/tmp/txing/unit-daemon/mise-tmp -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 ExecStart=/usr/bin/env MISE_OFFLINE=1 /home/txing/.local/bin/mise exec -- txing-unit-daemon
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-Feature mode additionally sets:
+Feature mode additionally sets the `/var/tmp` mise directories, enables
+prereleases, and installs at service start:
 
 ```ini
+Environment=MISE_DATA_DIR=/var/tmp/txing/unit-daemon/mise
+Environment=MISE_CACHE_DIR=/var/tmp/txing/unit-daemon/mise-cache
+Environment=MISE_TMP_DIR=/var/tmp/txing/unit-daemon/mise-tmp
 Environment=MISE_PRERELEASES=1
+
+ExecStartPre=/usr/bin/install -d -m 700 /var/tmp/txing/unit-daemon/mise /var/tmp/txing/unit-daemon/mise-cache /var/tmp/txing/unit-daemon/mise-tmp
+ExecStartPre=/home/txing/.local/bin/mise install
+ExecStartPre=-/usr/bin/find /var/tmp/txing/unit-daemon/mise-cache /var/tmp/txing/unit-daemon/mise-tmp -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 ```
 
 The daemon startup log includes the selected version:
@@ -431,7 +440,7 @@ run if that stable tag or release already exists.
 
 ### 7. Install Or Update The Board Service
 
-Confirm `/var/tmp` is writable and executable:
+For feature-channel installs, confirm `/var/tmp` is writable and executable:
 
 ```bash
 findmnt -no TARGET,FSTYPE,SIZE,AVAIL,OPTIONS /var/tmp
@@ -462,9 +471,36 @@ curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/devices/unit/
 ```
 
 The installer validates Linux/systemd, the `txing` user, daemon runtime config,
-`/var/tmp`, root writability, and `mise`; then it enables
-`NetworkManager-wait-online.service` when present, writes the mise config and
-systemd unit, reloads systemd, enables the service, and restarts it.
+root writability, and `mise`; for feature mode it also validates `/var/tmp`.
+Then it enables `NetworkManager-wait-online.service` when present, writes the
+mise config and systemd unit, reloads systemd, enables the service, and restarts
+it.
+
+Stable mode runs `mise install` once during the installer, as the `txing` user,
+and stores the selected stable release under
+`/home/txing/.local/share/mise/installs/txing-unit-daemon/`. The stable service
+then starts offline without `ExecStartPre=mise install`, so it can run after the
+root filesystem is switched back to read-only.
+
+Feature mode keeps the boot-lifetime behavior: the service runs `mise install`
+through `ExecStartPre`, stores the selected feature release under
+`/var/tmp/txing/unit-daemon/mise`, and installs again after reboot because
+`root-ro` clears `/var/tmp`.
+
+To verify the currently installed release before switching back to read-only:
+
+```bash
+sudo journalctl -u txing-unit-daemon.service -n 120 --no-pager
+sudo systemctl status --no-pager -l txing-unit-daemon.service
+sudo -u txing env \
+  MISE_CONFIG_DIR=/home/txing/.config/mise/txing-unit-daemon \
+  HOME=/home/txing \
+  /home/txing/.local/bin/mise list
+sudo -u txing env \
+  MISE_CONFIG_DIR=/home/txing/.config/mise/txing-unit-daemon \
+  HOME=/home/txing \
+  /home/txing/.local/bin/mise which txing-unit-daemon
+```
 
 ### 8. Verify Before Reboot
 

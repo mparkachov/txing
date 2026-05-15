@@ -60,17 +60,6 @@ if ! : >"$write_probe" 2>/dev/null; then
 fi
 rm -f "$write_probe"
 
-[ -d /var/tmp ] || fail "/var/tmp does not exist"
-[ -w /var/tmp ] || fail "/var/tmp is not writable"
-var_tmp_probe="$(mktemp -d /var/tmp/txing-unit-daemon-install.XXXXXX)"
-cleanup() {
-  rm -rf "$var_tmp_probe"
-}
-trap cleanup EXIT
-printf '#!/usr/bin/env sh\nexit 0\n' >"$var_tmp_probe/exec-test"
-chmod 700 "$var_tmp_probe/exec-test"
-"$var_tmp_probe/exec-test" >/dev/null 2>&1 || fail "/var/tmp must be mounted executable, without noexec"
-
 resolve_mise() {
   if [ -x "$daemon_home/.local/bin/mise" ]; then
     printf '%s\n' "$daemon_home/.local/bin/mise"
@@ -101,6 +90,17 @@ legacy_service_name="txing-unit-daemon-feature.service"
 legacy_service_file="$systemd_dir/$legacy_service_name"
 tmp_root="/var/tmp/txing/unit-daemon"
 asset_pattern="txing-unit-daemon-linux-aarch64.tar.gz"
+stable_install_root="$daemon_home/.local/share/mise/installs/txing-unit-daemon"
+var_tmp_probe=""
+
+if [ "$channel" = "feature" ]; then
+  [ -d /var/tmp ] || fail "/var/tmp does not exist"
+  [ -w /var/tmp ] || fail "/var/tmp is not writable"
+  var_tmp_probe="$(mktemp -d /var/tmp/txing-unit-daemon-install.XXXXXX)"
+  printf '#!/usr/bin/env sh\nexit 0\n' >"$var_tmp_probe/exec-test"
+  chmod 700 "$var_tmp_probe/exec-test"
+  "$var_tmp_probe/exec-test" >/dev/null 2>&1 || fail "/var/tmp must be mounted executable, without noexec"
+fi
 
 if systemctl list-unit-files NetworkManager-wait-online.service --no-legend --no-pager 2>/dev/null \
   | grep -q '^NetworkManager-wait-online\.service[[:space:]]'; then
@@ -110,7 +110,7 @@ fi
 install -d -m 700 -o "$daemon_user" -g "$daemon_group" "$daemon_home/.config/mise" "$mise_config_dir"
 config_tmp="$(mktemp)"
 service_tmp="$(mktemp)"
-trap 'rm -rf "$var_tmp_probe"; rm -f "$config_tmp" "$service_tmp"' EXIT
+trap 'if [ -n "${var_tmp_probe:-}" ]; then rm -rf "$var_tmp_probe"; fi; rm -f "$config_tmp" "$service_tmp"' EXIT
 
 cat >"$config_tmp" <<EOF
 [tool_alias]
@@ -133,10 +133,18 @@ fi
 
 install -m 600 -o "$daemon_user" -g "$daemon_group" "$config_tmp" "$mise_config_file"
 
-install -d -m 700 -o "$daemon_user" -g "$daemon_group" \
-  "$tmp_root/mise" \
-  "$tmp_root/mise-cache" \
-  "$tmp_root/mise-tmp"
+if [ "$channel" = "stable" ]; then
+  command -v runuser >/dev/null 2>&1 || fail "runuser is required for stable install as '$daemon_user'"
+  runuser -u "$daemon_user" -- env \
+    "MISE_CONFIG_DIR=$mise_config_dir" \
+    "HOME=$daemon_home" \
+    "$mise_bin" install
+else
+  install -d -m 700 -o "$daemon_user" -g "$daemon_group" \
+    "$tmp_root/mise" \
+    "$tmp_root/mise-cache" \
+    "$tmp_root/mise-tmp"
+fi
 
 {
   cat <<EOF
@@ -157,20 +165,24 @@ Restart=on-failure
 RestartSec=5
 
 Environment=MISE_CONFIG_DIR=$mise_config_dir
-Environment=MISE_DATA_DIR=$tmp_root/mise
-Environment=MISE_CACHE_DIR=$tmp_root/mise-cache
-Environment=MISE_TMP_DIR=$tmp_root/mise-tmp
 Environment=TXING_DAEMON_CONFIG_DIR=$daemon_config_dir
 Environment=HOME=$daemon_home
 EOF
   if [ "$channel" = "feature" ]; then
+    cat <<EOF
+Environment=MISE_DATA_DIR=$tmp_root/mise
+Environment=MISE_CACHE_DIR=$tmp_root/mise-cache
+Environment=MISE_TMP_DIR=$tmp_root/mise-tmp
+EOF
     printf 'Environment=MISE_PRERELEASES=1\n'
-  fi
-  cat <<EOF
+    cat <<EOF
 
 ExecStartPre=/usr/bin/install -d -m 700 $tmp_root/mise $tmp_root/mise-cache $tmp_root/mise-tmp
 ExecStartPre=$mise_bin install
 ExecStartPre=-/usr/bin/find $tmp_root/mise-cache $tmp_root/mise-tmp -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+EOF
+  fi
+  cat <<EOF
 ExecStart=/usr/bin/env MISE_OFFLINE=1 $mise_bin exec -- txing-unit-daemon
 
 [Install]
@@ -193,3 +205,8 @@ printf 'installed %s for %s channel\n' "$service_name" "$channel"
 printf '  mise config: %s\n' "$mise_config_file"
 printf '  systemd unit: %s\n' "$service_file"
 printf '  mise binary: %s\n' "$mise_bin"
+if [ "$channel" = "stable" ]; then
+  printf '  stable install root: %s\n' "$stable_install_root"
+else
+  printf '  feature install root: %s\n' "$tmp_root/mise"
+fi

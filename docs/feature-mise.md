@@ -14,8 +14,8 @@ The operational phase-1 runbook is
 - Keep the normal board root filesystem read-only after initial setup.
 - Let a developer manually opt a board into a temporary feature channel.
 - Let stable maintenance feel like normal package maintenance:
-  `root-rw`, `apt` upgrade, `mise upgrade`, then manual service restart when
-  desired.
+  `root-rw`, `apt` upgrade, `mise install` or `mise upgrade`, then manual
+  service restart when desired.
 - Avoid building on the board.
 - Keep local feature publish fast for Apple Silicon developers.
 - Use dynamic Linux binaries and the target OS userspace where practical, rather
@@ -40,7 +40,8 @@ The operational phase-1 runbook is
 - No source repository, `just` tasks, or project checkout on the board.
 - No automatic branch-specific feature channel yet.
 - No integrity enforcement beyond GitHub Releases over HTTPS yet.
-- No automatic daemon restart after `mise upgrade` during stable maintenance.
+- No automatic daemon restart after `mise install` or `mise upgrade` during
+  stable maintenance.
 
 ## External Mechanisms
 
@@ -48,7 +49,7 @@ The design uses standard mise features:
 
 - GitHub release assets through the mise GitHub backend:
   <https://mise.jdx.dev/dev-tools/backends/github.html>
-- `mise upgrade` for normal installed-tool updates:
+- `mise install` and `mise upgrade` for normal installed-tool updates:
   <https://mise.jdx.dev/cli/upgrade.html>
 - `mise exec` for launching the configured tool:
   <https://mise.jdx.dev/cli/exec.html>
@@ -154,6 +155,15 @@ variables can still override those paths.
 These paths are on the read-only root during normal boot. They are updated only
 during a manual writable maintenance window.
 
+Stable daemon install state lives under the `txing` user's normal persistent
+mise install tree on the root filesystem:
+
+```text
+/home/txing/.local/share/mise/installs/txing-unit-daemon/
+```
+
+It is updated only during a writable maintenance window.
+
 Feature install/cache/tmp state is ephemeral and lives under `/var/tmp` on the
 existing executable tmpfs from the read-only-root provisioning:
 
@@ -163,8 +173,9 @@ existing executable tmpfs from the read-only-root provisioning:
 /var/tmp/txing/unit-daemon/mise-tmp
 ```
 
-Every daemon service boot may attempt to install or refresh the selected mise
-channel before starting the daemon offline.
+Feature-mode service boot may attempt to install or refresh the selected mise
+channel before starting the daemon offline. Stable-mode service boot starts
+offline from the persistent install and does not run `mise install`.
 
 ## Stable Maintenance Flow
 
@@ -174,14 +185,15 @@ On a stable-only board, the developer performs maintenance manually:
 root-rw
 sudo apt update
 sudo apt dist-upgrade -y
-mise upgrade
+sudo -u txing env \
+  MISE_CONFIG_DIR=/home/txing/.config/mise/txing-unit-daemon \
+  HOME=/home/txing \
+  /home/txing/.local/bin/mise install
+sudo systemctl restart txing-unit-daemon.service
 ```
 
-The daemon is not restarted automatically by this flow. The developer can
-restart the service manually when appropriate.
-
-The stable mise config should exclude prereleases. That keeps `mise upgrade`
-equivalent to "install latest stable".
+The stable mise config excludes prereleases. That keeps manual stable
+install/update operations equivalent to "install latest stable".
 
 ## Unit Daemon Service Install
 
@@ -256,34 +268,42 @@ only for feature mode because the asset is built locally in Lima and uploaded by
 The installer writes the service with
 `Wants=network-online.target systemd-time-wait-sync.service` and
 `After=network-online.target systemd-time-wait-sync.service time-sync.target`,
-then this service shape with absolute paths:
+then a channel-specific service shape with absolute paths.
+
+Stable service environment:
 
 ```ini
 User=txing
 Group=txing
 
 Environment=MISE_CONFIG_DIR=/home/txing/.config/mise/txing-unit-daemon
+Environment=TXING_DAEMON_CONFIG_DIR=/home/txing/.config/txing/unit-daemon
+Environment=HOME=/home/txing
+
+ExecStart=/usr/bin/env MISE_OFFLINE=1 /home/txing/.local/bin/mise exec -- txing-unit-daemon
+```
+
+Feature mode additionally sets:
+
+```ini
 Environment=MISE_DATA_DIR=/var/tmp/txing/unit-daemon/mise
 Environment=MISE_CACHE_DIR=/var/tmp/txing/unit-daemon/mise-cache
 Environment=MISE_TMP_DIR=/var/tmp/txing/unit-daemon/mise-tmp
-Environment=TXING_DAEMON_CONFIG_DIR=/home/txing/.config/txing/unit-daemon
-Environment=HOME=/home/txing
+Environment=MISE_PRERELEASES=1
 
 ExecStartPre=/usr/bin/install -d -m 700 /var/tmp/txing/unit-daemon/mise /var/tmp/txing/unit-daemon/mise-cache /var/tmp/txing/unit-daemon/mise-tmp
 ExecStartPre=/home/txing/.local/bin/mise install
 ExecStartPre=-/usr/bin/find /var/tmp/txing/unit-daemon/mise-cache /var/tmp/txing/unit-daemon/mise-tmp -mindepth 1 -maxdepth 1 -exec rm -rf {} +
-ExecStart=/usr/bin/env MISE_OFFLINE=1 /home/txing/.local/bin/mise exec -- txing-unit-daemon
 ```
-
-Feature mode additionally sets `MISE_PRERELEASES=1` in the rendered unit.
 
 Expected behavior:
 
-- `mise install` runs after network-online and clock synchronization, before
-  daemon start, and writes install/cache/tmp state under
+- Stable installer runs `mise install` once, as the `txing` user, while root is
+  writable. Stable service startup is offline-only and uses the persistent home
+  install.
+- Feature service startup runs `mise install` after network-online and clock
+  synchronization, before daemon start, and writes install/cache/tmp state under
   `/var/tmp/txing/unit-daemon` on the executable tmpfs.
-- In phase 1, install failure makes service start fail visibly. Stable fallback
-  should be designed after stable release publishing is in place.
 - `ExecStart` is offline, so the actual daemon start does not perform network
   resolution or install work.
 
@@ -428,10 +448,10 @@ The current phase-1 implementation has these working pieces:
   `/home/txing/.config/mise/txing-unit-daemon/config.toml`; feature mode uses
   `version = "latest"` with `prerelease = true`, and stable mode uses
   `version = "latest"` with `prerelease = false`.
-- The generic daemon installer writes `txing-unit-daemon.service`; service start
-  waits for network-online and clock synchronization, downloads
-  `txing-unit-daemon-linux-aarch64.tar.gz`, extracts the daemon under
-  `/var/tmp/txing/unit-daemon/mise`, starts it offline, and logs
+- The generic daemon installer writes `txing-unit-daemon.service`; stable mode
+  installs into the persistent user-home mise tree during the writable
+  maintenance window, while feature mode installs at service start under
+  `/var/tmp/txing/unit-daemon/mise`. Both modes start the daemon offline and log
   `version=<version>` on startup.
 - `release::bump` and `release::check` include the daemon Cargo manifest and
   lockfile.
@@ -468,15 +488,16 @@ repository, signing, and system-file ownership questions. The current goal is a
 developer-friendly binary channel with read-only-root compatibility. Systemd unit
 creation is handled by the raw repository installer script.
 
-### Use `/var/tmp` For Service Installs
+### Use `/var/tmp` For Feature Service Installs
 
 The root filesystem is read-only during normal boot. `/tmp` and `/var/tmp` are
 already tmpfs-backed in the board provisioning. `/tmp` is intentionally small and
-is used for board runtime sockets and state, so daemon mise state should not
-consume it. `/var/tmp` is the existing general-purpose writable tmpfs, so it is
-the right place for boot-lifetime install/cache/tmp state as long as the
-provisioned size is increased and `exec` remains allowed. Use a tight cap, for
-example `96M`, on Raspberry Pi Zero 2 W boards.
+is used for board runtime sockets and state, so feature-channel daemon mise
+state should not consume it. `/var/tmp` is the existing general-purpose writable
+tmpfs, so it is the right place for feature-channel boot-lifetime
+install/cache/tmp state as long as the provisioned size is increased and `exec`
+remains allowed. Use a tight cap, for example `96M`, on Raspberry Pi Zero 2 W
+boards.
 
 ### Keep Service Config In The User Home
 
@@ -484,7 +505,9 @@ The onboarding model is intentionally simple: image the board, create/login as
 the user, install mise, configure credentials and mise config, run upgrades, then
 switch the root back to read-only. Keeping service config under `/home/txing`
 matches normal mise usage and avoids system-wide tool configuration. The
-downloaded daemon executable itself lives under `/var/tmp` during phase 1.
+stable daemon executable also lives under the user's home in the normal mise
+install tree. Feature-channel daemon executables live under `/var/tmp` during
+phase 1 and 2 testing.
 
 ### Run As The Dedicated `txing` User
 
@@ -556,13 +579,14 @@ Goal: make stable board setup and maintenance boring and repeatable.
   dedicated `txing` user, mise install, stable tool config, certificates, and
   systemd unit creation.
 - Document the stable maintenance command sequence:
-  `root-rw`, `apt update`, `apt dist-upgrade`, `mise upgrade`, manual restart,
-  `root-ro`.
+  `root-rw`, `apt update`, `apt dist-upgrade`, `mise install`, manual restart,
+  `root-ro`. Implemented for the unit daemon stable installer.
 - Document expected filesystem writes during stable maintenance and normal boot.
 - Verify the generic systemd unit in stable mode once stable release assets
-  exist.
-- Verify stable-only boot on read-only root.
-- Verify stable upgrade while root is writable and service restart after upgrade.
+  exist. In progress.
+- Verify stable-only boot on read-only root. Pending user verification.
+- Verify stable upgrade while root is writable and service restart after
+  upgrade. Pending user verification.
 
 This phase should leave production-like stable boards understandable and
 repeatable without requiring feature-channel knowledge.
