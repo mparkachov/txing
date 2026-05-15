@@ -1,8 +1,12 @@
 # Feature Mise Release Architecture
 
 This document captures the architecture decision for installing and testing
-`unit` daemon releases with `mise`. It is intended as the source material for a
-later implementation plan.
+`unit` daemon releases with `mise`. Phase 1 is implemented: feature builds are
+published as GitHub prereleases, and opted-in boards install and run them through
+`mise` plus systemd without a source checkout.
+
+The operational phase-1 runbook is
+[feature-mise-impl.md](./feature-mise-impl.md).
 
 ## Goals
 
@@ -19,6 +23,13 @@ later implementation plan.
 - Keep the first implementation narrow: `aarch64` Linux for current Raspberry Pi
   OS Trixie-class boards.
 
+## Phase Status
+
+- Phase 1 end-to-end feature workflow: implemented and manually verified on a
+  Raspberry Pi Zero 2 W with read-only root.
+- Phase 2 stable CI publishing and stable fallback behavior: pending.
+- Phase 3 channel polish and operational improvements: pending.
+
 ## Non-Goals
 
 - No AWS IoT, shadow, MQTT, or fleet-control mechanism for selecting the feature
@@ -26,7 +37,7 @@ later implementation plan.
 - No `.deb` package in the first implementation.
 - No custom mise plugin in the first implementation.
 - No source repository, `just` tasks, or project checkout on the board.
-- No branch-specific feature channel yet.
+- No automatic branch-specific feature channel yet.
 - No integrity enforcement beyond GitHub Releases over HTTPS yet.
 - No automatic daemon restart after `mise upgrade` during stable maintenance.
 
@@ -483,15 +494,20 @@ developer command fast and predictable.
 
 Goal: prove the entire loop works before polishing repeatability.
 
+Status: complete for the feature channel.
+
 - Add daemon version surfaces to release tooling so root `VERSION`, Cargo
   manifest, and lockfile agree. Implemented for `release::bump` and
   `release::check`.
 - Decide the installed command name and release asset naming convention.
+  Implemented as command `txing-unit-daemon` and asset
+  `txing-unit-daemon-linux-aarch64.tar.gz`.
 - Add per-user daemon config loading from `.env` with colocated certificate
   defaults. Implemented for local macOS and Linux board runs.
 - Add a local foreground run recipe for source checkout development.
   Implemented as `just unit::daemon::run`.
-- Add a local Linux `aarch64` prerelease recipe for the daemon.
+- Add a local Linux `aarch64` prerelease recipe for the daemon. Implemented as
+  `just unit::daemon::prerelease-build`.
 - Run the mandatory daemon tests in that prerelease recipe. Implemented in
   `just unit::daemon::prerelease-build`.
 - Build a dynamically linked Linux `aarch64` binary. Implemented in
@@ -500,17 +516,17 @@ Goal: prove the entire loop works before polishing repeatability.
   in `just unit::daemon::prerelease-publish`.
 - Add a generic raw-repository systemd installer for the daemon service.
   Implemented as `devices/unit/daemon/install-systemd.sh`.
-- Install a clean board with the generic service in feature mode.
-- Verify feature boot install into `/var/tmp`.
+- Install a clean board with the generic service in feature mode. Verified.
+- Verify feature boot install into `/var/tmp`. Verified.
 - Verify daemon service start through systemd with startup version logging and
-  retained online state publish.
+  retained online state publish. Verified.
 - Stable mode is supported by the installer, but stable release publishing,
   stable fallback, and stable-wins behavior remain phase 2.
 
 The success criterion is that a developer can build locally in Lima, publish a
 feature prerelease, run the raw installer in feature mode, reboot an opted-in
 board, and see the daemon run that binary without a source checkout on the
-board.
+board. This criterion is met for phase 1.
 
 ### Phase 2: Repeatable Stable Installation
 
@@ -550,7 +566,7 @@ Goal: improve safety and developer ergonomics after the core path works.
 - Revisit `.deb` packaging only if stable fleet deployment needs OS package
   semantics.
 
-## Open Questions For Implementation
+## Remaining Questions
 
 - Stable release publishing workflow and attestation policy.
-- Exact Lima image and provisioning requirements.
+- Stable service fallback behavior when install or network resolution fails.

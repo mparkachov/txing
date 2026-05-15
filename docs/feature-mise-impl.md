@@ -1,95 +1,283 @@
 # Feature Mise Phase 1 Implementation
 
-This runbook documents the current phase-1 path from
-[feature-mise.md](./feature-mise.md): build the `unit` daemon in a Linux
-`aarch64` builder, publish a feature prerelease from macOS, and install the
-board systemd service through a raw repository installer script.
+This runbook documents the completed phase-1 implementation from
+[feature-mise.md](./feature-mise.md): local Linux `aarch64` feature builds,
+macOS GitHub prerelease publishing, and a raw-repository systemd installer for
+the board.
 
-The board installer is intentionally explicit and local to one board. It does
-not copy a source checkout to the board, does not provision certificates, and
-does not run AWS provisioning commands.
+The final path does not build on the Raspberry Pi board, does not copy a source
+checkout to the board, and does not use `/etc/txing` for daemon runtime config.
 
-## Scope
+## Final Configuration
 
-- Build on the Lima `txing` Linux `aarch64` VM.
-- Do not build on the Raspberry Pi board.
-- Do not copy a source checkout to the board.
-- Publish GitHub prereleases only through the explicit macOS publish step; the
-  Lima build step never talks to GitHub.
-- Do not run `just unit::daemon::cert` as part of the build-only steps. That
-  recipe creates or updates AWS resources and should be run only when
-  deliberately provisioning daemon config and certificates.
-- Keep CloudWatch logging in the generated `.env`; the daemon service may create
-  or update CloudWatch Logs resources through the daemon's normal runtime path.
+### Host Roles
 
-## Implemented Functionality
+- macOS development host:
+  - owns the source checkout;
+  - provisions daemon config and certificate material when explicitly requested;
+  - publishes GitHub prereleases through authenticated `gh`.
+- Lima Linux `aarch64` builder:
+  - builds and packages the daemon;
+  - runs daemon Rust tests before packaging;
+  - does not publish to GitHub.
+- Raspberry Pi board:
+  - installs release assets through `mise`;
+  - runs the daemon through systemd;
+  - does not contain a source checkout.
 
-The phase-1 baseline now includes these pieces:
+### Daemon Runtime Config
 
-- `just unit::daemon::cert <thing-id>` generates local daemon config under
-  `${TXING_DAEMON_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/txing/unit-daemon}`.
-- The generated config file is `.env`, uses sourceable `export KEY=value` lines,
-  includes CloudWatch log settings, and lives beside the certificate files.
-- The daemon can start without `--env-file` by loading the default `.env` from
-  the per-user config directory.
-- When `TXING_IOT_CERT_FILE`, `TXING_IOT_PRIVATE_KEY_FILE`, and
-  `TXING_IOT_ROOT_CA_FILE` are absent, the daemon derives those paths from the
-  loaded `.env` directory.
-- `just unit::daemon::run` starts the daemon from the macOS checkout with:
-  `cargo run --manifest-path devices/unit/daemon/Cargo.toml`.
-- `release::bump` and `release::check` include `devices/unit/daemon/Cargo.toml`
-  and the daemon package entry in `devices/unit/daemon/Cargo.lock`.
-- `just unit::daemon::prerelease-build` runs in the Linux `aarch64` Lima builder,
-  requires a clean worktree, runs daemon tests, builds the release binary, and
-  stages `txing-unit-daemon-linux-aarch64.tar.gz` plus JSON metadata under
-  `devices/unit/daemon/target/prerelease`. The archive contains a stripped
-  root-level executable named `txing-unit-daemon`.
-- `just unit::daemon::prerelease-publish` runs on macOS, requires `gh`, verifies
-  the staged metadata against the current clean `HEAD`, pushes
-  `feature/unit-daemon-prerelease`, creates
-  `v<NEXT_PATCH>-feature.<unix_timestamp>`, publishes the GitHub prerelease, and
-  keeps only the latest 10 matching unit-daemon feature prereleases.
-- `devices/unit/daemon/install-systemd.sh` installs or updates the generic
-  `txing-unit-daemon.service` systemd unit and the generic
-  `/home/txing/.config/mise/txing-unit-daemon/config.toml` mise config for either
-  `feature` or `stable` channel mode.
+The daemon searches for config in this order:
 
-For normal local development on macOS after config has been provisioned:
+1. `--env-file`
+2. `TXING_DAEMON_ENV_FILE`
+3. `TXING_DAEMON_CONFIG_DIR/.env`
+4. `XDG_CONFIG_HOME/txing/unit-daemon/.env`
+5. `$HOME/.config/txing/unit-daemon/.env`
 
-```bash
-just unit::daemon::run
+The standard config directory is:
+
+```text
+${TXING_DAEMON_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/txing/unit-daemon}
 ```
 
-Provision or replace cert material only when AWS resource changes are intended:
+The macOS and board layouts are intentionally the same:
+
+```text
+~/.config/txing/unit-daemon/.env
+~/.config/txing/unit-daemon/AmazonRootCA1.pem
+~/.config/txing/unit-daemon/certificate.arn
+~/.config/txing/unit-daemon/certificate.pem.crt
+~/.config/txing/unit-daemon/private.pem.key
+~/.config/txing/unit-daemon/public.pem.key
+```
+
+The `.env` file is directly sourceable and contains host-independent runtime
+values:
+
+```bash
+export TXING_THING_ID=unit-bl95f2
+export AWS_REGION=eu-central-1
+export TXING_IOT_ENDPOINT=...
+export TXING_IOT_CREDENTIAL_ENDPOINT=...
+export TXING_IOT_ROLE_ALIAS=txing-daemon-unit-bl95f2
+export TXING_CLOUDWATCH_LOG_GROUP=txing/<town>/<rig>/unit-bl95f2
+export TXING_CLOUDWATCH_LOG_LEVEL=info
+export TXING_CLOUDWATCH_LOG_RETENTION_DAYS=14
+```
+
+Certificate paths are not written into `.env` by default. When explicit cert
+path variables are absent, the daemon loads `certificate.pem.crt`,
+`private.pem.key`, and `AmazonRootCA1.pem` from the same directory as the loaded
+`.env`.
+
+### Local Development Commands
+
+Provision daemon config and certificates only when AWS resource changes are
+intended:
 
 ```bash
 just unit::daemon::cert <thing-id>
 ```
 
-The `cert` recipe refuses to overwrite an existing `.env` or certificate files.
-Move old material out of the config directory before intentionally issuing a
-replacement certificate.
+The `cert` recipe creates or updates AWS IAM/IoT resources and refuses to
+overwrite existing `.env` or certificate material.
 
-## Phase 1 GitHub Prerelease Flow
+Run the daemon from the macOS checkout after config exists:
 
-The prerelease flow is split across two hosts. Build in Lima:
+```bash
+just unit::daemon::run
+```
+
+That recipe runs:
+
+```bash
+cargo run --manifest-path devices/unit/daemon/Cargo.toml
+```
+
+### Feature Prerelease Artifact
+
+The feature prerelease recipe builds a Linux `aarch64` archive:
+
+```text
+devices/unit/daemon/target/prerelease/txing-unit-daemon-linux-aarch64.tar.gz
+```
+
+The archive contains one root-level executable:
+
+```text
+txing-unit-daemon
+```
+
+Feature prerelease versions are generated from the next patch after root
+`VERSION` plus a Unix timestamp:
+
+```text
+v<NEXT_PATCH>-feature.<unix_timestamp>
+```
+
+Example:
+
+```text
+v0.9.8-feature.1778793458
+```
+
+The publish step pushes the current commit to the moving branch
+`feature/unit-daemon-prerelease`, creates the timestamped tag, publishes a
+GitHub prerelease, uploads the archive asset, and keeps only the latest 10
+matching unit-daemon feature prereleases.
+
+### Board Mise Config
+
+The board uses one mise config path for both channels:
+
+```text
+/home/txing/.config/mise/txing-unit-daemon/config.toml
+```
+
+Feature channel:
+
+```toml
+[tool_alias]
+txing-unit-daemon = "github:mparkachov/txing"
+
+[tools.txing-unit-daemon]
+version = "latest"
+asset_pattern = "txing-unit-daemon-linux-aarch64.tar.gz"
+prerelease = true
+
+[settings.github]
+slsa = false
+github_attestations = false
+```
+
+Stable channel:
+
+```toml
+[tool_alias]
+txing-unit-daemon = "github:mparkachov/txing"
+
+[tools.txing-unit-daemon]
+version = "latest"
+asset_pattern = "txing-unit-daemon-linux-aarch64.tar.gz"
+prerelease = false
+```
+
+Stable mode is installed by the same script, but stable release publishing is a
+phase-2 task. Until stable daemon release assets exist, feature mode is the
+validated phase-1 path.
+
+### Board Systemd Service
+
+The installed service name is shared by both channels:
+
+```text
+txing-unit-daemon.service
+```
+
+The raw repository installer writes:
+
+```text
+/etc/systemd/system/txing-unit-daemon.service
+/home/txing/.config/mise/txing-unit-daemon/config.toml
+```
+
+The service runs as the dedicated `txing` user. It stores boot-lifetime mise
+install, cache, and temp state under the executable `/var/tmp` tmpfs:
+
+```text
+/var/tmp/txing/unit-daemon/mise
+/var/tmp/txing/unit-daemon/mise-cache
+/var/tmp/txing/unit-daemon/mise-tmp
+```
+
+The service uses this shape:
+
+```ini
+[Unit]
+Description=Txing Unit Daemon
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=txing
+Group=txing
+WorkingDirectory=/home/txing
+KillSignal=SIGINT
+TimeoutStartSec=180
+TimeoutStopSec=30
+Restart=on-failure
+RestartSec=5
+
+Environment=MISE_CONFIG_DIR=/home/txing/.config/mise/txing-unit-daemon
+Environment=MISE_DATA_DIR=/var/tmp/txing/unit-daemon/mise
+Environment=MISE_CACHE_DIR=/var/tmp/txing/unit-daemon/mise-cache
+Environment=MISE_TMP_DIR=/var/tmp/txing/unit-daemon/mise-tmp
+Environment=TXING_DAEMON_CONFIG_DIR=/home/txing/.config/txing/unit-daemon
+Environment=HOME=/home/txing
+
+ExecStartPre=/usr/bin/install -d -m 700 /var/tmp/txing/unit-daemon/mise /var/tmp/txing/unit-daemon/mise-cache /var/tmp/txing/unit-daemon/mise-tmp
+ExecStartPre=/home/txing/.local/bin/mise install
+ExecStartPre=-/usr/bin/find /var/tmp/txing/unit-daemon/mise-cache /var/tmp/txing/unit-daemon/mise-tmp -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+ExecStart=/usr/bin/env MISE_OFFLINE=1 /home/txing/.local/bin/mise exec -- txing-unit-daemon
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Feature mode additionally sets:
+
+```ini
+Environment=MISE_PRERELEASES=1
+```
+
+The daemon startup log includes the selected version:
+
+```text
+info: starting unit daemon version=<version> ...
+```
+
+## Manual Steps Used To Complete Phase 1
+
+These steps document the manual workflow used to prove phase 1 end to end.
+
+### 1. Prepare The Lima Builder
+
+Log in to the Lima builder:
 
 ```bash
 limactl shell txing
 ```
 
-If `mise` itself is missing, install it first:
+Install `mise` if it is missing:
 
 ```bash
 curl https://mise.run | sh
 ```
 
+Add `mise` to the current shell:
+
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-If `just` is not on `PATH` but `mise exec -- just --version` works, activate mise
-for future Lima login shells:
+Install Linux build dependencies once:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y build-essential pkg-config cmake perl git file python3
+```
+
+Install Rust and confirm tooling:
+
+```bash
+mise use --global rust@1.95.0
+mise exec -- rustc -vV
+mise exec -- just --version
+```
+
+Activate `mise` for future Lima login shells:
 
 ```bash
 cat >> ~/.bashrc <<'EOF'
@@ -98,69 +286,29 @@ if command -v mise >/dev/null 2>&1; then
   eval "$(mise activate bash)"
 fi
 EOF
-```
-
-```bash
 exec bash
 ```
 
-For the current shell before reloading `.bashrc`, use
-`mise exec -- just unit::daemon::prerelease-build` instead of bare `just`.
+Before the shell has been reloaded, use `mise exec -- just ...` instead of bare
+`just`.
+
+### 2. Provision Local Daemon Config On macOS
+
+Run this only when certificate or AWS daemon resource provisioning is intended:
 
 ```bash
-cd /Users/Maxim/Developer/txing
+just unit::daemon::cert <thing-id>
 ```
+
+Confirm the generated config:
 
 ```bash
-just unit::daemon::prerelease-build
+ls -al "$HOME/.config/txing/unit-daemon"
 ```
 
-Current-shell fallback:
+### 3. Copy Config To The Board
 
-```bash
-mise exec -- just unit::daemon::prerelease-build
-```
-
-Return to macOS:
-
-```bash
-exit
-```
-
-Publish from macOS:
-
-```bash
-just unit::daemon::prerelease-publish
-```
-
-Requirements:
-
-- The git worktree must be clean for both steps, including untracked files.
-- Dirty or untracked work must be committed before building or publishing.
-- The publish step uses macOS `gh` authentication; the Lima builder does not need
-  GitHub authentication.
-- The default moving branch is `feature/unit-daemon-prerelease`.
-- The tag and release name are `v<NEXT_PATCH>-feature.<unix_timestamp>`.
-- The uploaded release asset is `txing-unit-daemon-linux-aarch64.tar.gz`.
-  It contains a stripped root-level executable named `txing-unit-daemon`.
-- The publish step prunes older matching unit-daemon feature prereleases beyond
-  the latest 10, including their tags.
-
-## Phase 1 Board Systemd Install
-
-After publishing a feature prerelease, install or update the board service with
-the raw repository installer. This step does not copy a source checkout to the
-board.
-
-The board must already have daemon runtime config and certificate material:
-
-```text
-/home/txing/.config/txing/unit-daemon/.env
-/home/txing/.config/txing/unit-daemon/private.pem.key
-```
-
-If the board does not have that directory yet, copy the generated macOS config
-directory first. Run these commands on macOS:
+From macOS:
 
 ```bash
 test -r "$HOME/.config/txing/unit-daemon/.env"
@@ -169,7 +317,7 @@ COPYFILE_DISABLE=1 tar -C "$HOME/.config/txing" -czf /tmp/txing-unit-daemon-conf
 scp /tmp/txing-unit-daemon-config.tgz txing:/tmp/txing-unit-daemon-config.tgz
 ```
 
-Then on the board as the `txing` user:
+On the board as `txing`:
 
 ```bash
 install -d -m 700 "$HOME/.config/txing"
@@ -184,69 +332,107 @@ chmod 644 "$HOME/.config/txing/unit-daemon/AmazonRootCA1.pem"
 rm -f /tmp/txing-unit-daemon-config.tgz
 ```
 
-Confirm `/var/tmp` is the executable tmpfs from the read-only-root provisioning:
+### 4. Build The Feature Prerelease In Lima
+
+Log in to Lima and run the build manually:
+
+```bash
+limactl shell txing
+cd /Users/Maxim/Developer/txing
+just unit::daemon::prerelease-build
+exit
+```
+
+Current-shell fallback before `mise` activation:
+
+```bash
+mise exec -- just unit::daemon::prerelease-build
+```
+
+The build recipe requires:
+
+- Linux `aarch64`;
+- `cargo`, `file`, `git`, `python3`, `strip`, and `tar`;
+- a clean git worktree, including untracked files.
+
+It runs daemon tests, builds the release binary, strips it, packages it, and
+writes JSON metadata beside the staged archive.
+
+### 5. Publish The Feature Prerelease From macOS
+
+From the macOS checkout:
+
+```bash
+just unit::daemon::prerelease-publish
+```
+
+The publish recipe requires:
+
+- macOS;
+- authenticated `gh`;
+- a clean git worktree;
+- current `HEAD` matching the Lima build metadata.
+
+It pushes `HEAD` to `feature/unit-daemon-prerelease`, pushes the timestamped
+tag, creates the GitHub prerelease, uploads
+`txing-unit-daemon-linux-aarch64.tar.gz`, and prunes older matching feature
+prereleases beyond the latest 10.
+
+### 6. Install Or Update The Board Service
+
+Confirm `/var/tmp` is writable and executable:
 
 ```bash
 findmnt -no TARGET,FSTYPE,SIZE,AVAIL,OPTIONS /var/tmp
 ```
 
-Expected shape:
+Expected shape on the Raspberry Pi Zero 2 W board:
 
 ```text
 /var/tmp tmpfs 96M ... rw,nosuid,nodev,relatime,size=98304k
 ```
 
-If root is currently read-only, enter the existing writable maintenance mode:
+Enter writable-root maintenance mode:
 
 ```bash
 root-rw
 ```
 
-Install or switch to the feature channel with the raw script from the moving
-feature branch:
+Install or switch to the feature channel:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/feature/unit-daemon-prerelease/devices/unit/daemon/install-systemd.sh | sudo bash -s -- feature
 ```
 
-The same script supports the stable channel once stable daemon release assets
-exist:
+The same installer supports stable mode once stable release assets exist:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/devices/unit/daemon/install-systemd.sh | sudo bash -s -- stable
 ```
 
-Both modes write the same service and config paths:
+The installer validates Linux/systemd, the `txing` user, daemon runtime config,
+`/var/tmp`, root writability, and `mise`; then it writes the mise config and
+systemd unit, reloads systemd, enables the service, and restarts it.
 
-```text
-/etc/systemd/system/txing-unit-daemon.service
-/home/txing/.config/mise/txing-unit-daemon/config.toml
-```
+### 7. Verify Before Reboot
 
-The installer runs:
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable txing-unit-daemon.service
-sudo systemctl restart txing-unit-daemon.service
-```
-
-Inspect the service:
+Check the installed service:
 
 ```bash
 sudo systemctl status --no-pager -l txing-unit-daemon.service
 sudo journalctl -u txing-unit-daemon.service -n 120 --no-pager
 ```
 
-The first daemon startup line in the journal should include the selected daemon
-version:
+Confirm the journal shows:
 
-```text
-info: starting unit daemon version=<version> ...
-```
+- `mise install`;
+- the selected `version=<version>` in the daemon startup log;
+- MQTT connection;
+- retained `board` capability publish.
 
-After feature install succeeds, return the board to read-only mode and reboot to
-verify boot-time install/start:
+### 8. Verify Read-Only Reboot
+
+Return the board to read-only mode and reboot:
 
 ```bash
 root-ro
@@ -259,3 +445,8 @@ After reboot:
 sudo systemctl status --no-pager -l txing-unit-daemon.service
 sudo journalctl -u txing-unit-daemon.service -n 120 --no-pager
 ```
+
+The expected phase-1 result is that the service installs the selected mise
+feature release into `/var/tmp`, starts offline through `mise exec`, logs the
+feature version, and publishes the `board` capability without a source checkout
+on the board.
