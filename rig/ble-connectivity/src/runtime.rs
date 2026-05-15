@@ -58,6 +58,8 @@ const BLE_SCANNER_PROPERTY_ERROR_LOG_INTERVAL_MS: u64 = 30_000;
 const BLE_SCANNER_DEBUG_SUMMARY_INTERVAL_MS: u64 = 5_000;
 const BLE_SCANNER_NO_TARGET_LOG_INTERVAL_MS: u64 = 30_000;
 const BLE_SCANNER_EMPTY_CACHE_RESTART_INTERVAL_MS: u64 = 30_000;
+const BLE_SCANNER_IN_PROGRESS_RECOVERY_ATTEMPTS: u32 = 3;
+const BLE_SCANNER_IN_PROGRESS_RECOVERY_DELAY_MS: u64 = 500;
 const BLE_SCANNER_DEBUG_SAMPLE_LIMIT: usize = 8;
 const BLE_SCANNER_UNMANAGED_TXING_LOG_INTERVAL_MS: u64 = 30_000;
 const SHADOW_PUBLISH_INTERVAL_MS: u64 = 500;
@@ -1891,21 +1893,62 @@ async fn run_scanner_once(
 
 #[cfg(all(feature = "ble-real", any(target_os = "linux", target_os = "macos")))]
 async fn start_scan_if_needed(adapter: &Adapter) -> Result<()> {
-    adapter
-        .start_scan(ScanFilter::default())
-        .await
-        .context("start BLE scan")
+    match adapter.start_scan(ScanFilter::default()).await {
+        Ok(()) => Ok(()),
+        Err(err) => {
+            let message = err.to_string();
+            if ble_error_indicates_in_progress(&message) {
+                recover_in_progress_scan(adapter, message).await
+            } else {
+                Err(err).context("start BLE scan")
+            }
+        }
+    }
+}
+
+#[cfg(all(feature = "ble-real", any(target_os = "linux", target_os = "macos")))]
+async fn recover_in_progress_scan(adapter: &Adapter, mut last_message: String) -> Result<()> {
+    eprintln!(
+        "warning: BLE scanner start found discovery already in progress; resetting discovery session error={last_message}"
+    );
+    for attempt in 1..=BLE_SCANNER_IN_PROGRESS_RECOVERY_ATTEMPTS {
+        stop_scan_for_restart(adapter).await;
+        sleep(Duration::from_millis(
+            BLE_SCANNER_IN_PROGRESS_RECOVERY_DELAY_MS.saturating_mul(u64::from(attempt)),
+        ))
+        .await;
+        match adapter.start_scan(ScanFilter::default()).await {
+            Ok(()) => {
+                eprintln!(
+                    "BLE scanner recovered from in-progress discovery attempt={attempt}"
+                );
+                return Ok(());
+            }
+            Err(err) => {
+                last_message = err.to_string();
+                if !ble_error_indicates_in_progress(&last_message) {
+                    return Err(err).context("start BLE scan after resetting discovery");
+                }
+            }
+        }
+    }
+    bail!("start BLE scan after resetting discovery: {last_message}")
 }
 
 #[cfg(all(feature = "ble-real", any(target_os = "linux", target_os = "macos")))]
 async fn restart_scan(adapter: &Adapter) -> Result<()> {
+    stop_scan_for_restart(adapter).await;
+    start_scan_if_needed(adapter).await
+}
+
+#[cfg(all(feature = "ble-real", any(target_os = "linux", target_os = "macos")))]
+async fn stop_scan_for_restart(adapter: &Adapter) {
     if let Err(err) = adapter.stop_scan().await {
         let message = err.to_string();
         if !ble_error_indicates_no_discovery(&message) {
             eprintln!("warning: BLE scanner stop before restart failed: {message}");
         }
     }
-    start_scan_if_needed(adapter).await
 }
 
 fn scanner_retry_delay_ms(config: &RuntimeConfig, failure_count: u32, err: &anyhow::Error) -> u64 {
