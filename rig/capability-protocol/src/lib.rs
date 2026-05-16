@@ -13,6 +13,7 @@ pub const CAPABILITY_COMMAND_TOPIC_FILTER: &str = "dev/txing/rig/v2/capability/c
 pub const CAPABILITY_COMMAND_RESULT_TOPIC_PREFIX: &str =
     "dev/txing/rig/v2/capability/command-result";
 pub const CAPABILITY_HEARTBEAT_TOPIC_PREFIX: &str = "dev/txing/rig/v2/capability/heartbeat";
+pub const BLE_REDCON_METRIC: &str = "bleRedcon";
 
 pub const COMMAND_PENDING: &str = "pending";
 pub const COMMAND_ACCEPTED: &str = "accepted";

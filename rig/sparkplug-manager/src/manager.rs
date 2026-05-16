@@ -4,7 +4,8 @@ use anyhow::{Result, bail};
 
 use crate::sparkplug::{self, Metric};
 use txing_capability_protocol::{
-    CapabilityCommand, CapabilityCommandResult, CapabilityState, InventoryDevice, MetricValue,
+    BLE_REDCON_METRIC, CapabilityCommand, CapabilityCommandResult, CapabilityState,
+    InventoryDevice, MetricValue,
 };
 
 // BLE REDCON 4 publishes measurements every 60s and treats a single missed
@@ -112,17 +113,19 @@ impl DeviceRuntimeState {
         for capability in &self.inventory.capabilities {
             capabilities.insert(capability.clone(), false);
         }
+        let mut ble_redcon4_observed = false;
         for state in self.adapter_states.values() {
             if state.observed_at_ms + STATE_TTL_MS < now_ms {
                 continue;
             }
+            ble_redcon4_observed = ble_redcon4_observed || state_reports_ble_redcon4(state);
             for (capability, available) in &state.capabilities {
                 if let Some(current) = capabilities.get_mut(capability) {
                     *current = *current || *available;
                 }
             }
         }
-        apply_capability_dependency_gates(&mut capabilities);
+        apply_capability_dependency_gates(&mut capabilities, ble_redcon4_observed);
         let redcon = select_best_redcon(
             &self.inventory.redcon_rules,
             &self.inventory.redcon_command_levels,
@@ -180,8 +183,18 @@ impl DeviceRuntimeState {
     }
 }
 
-fn apply_capability_dependency_gates(capabilities: &mut BTreeMap<String, bool>) {
-    if capability_is_declared(capabilities, POWER_CAPABILITY)
+fn apply_capability_dependency_gates(
+    capabilities: &mut BTreeMap<String, bool>,
+    ble_redcon4_observed: bool,
+) {
+    if ble_redcon4_observed {
+        force_capability_unavailable(capabilities, POWER_CAPABILITY);
+        force_capability_unavailable(capabilities, BOARD_CAPABILITY);
+        force_capability_unavailable(capabilities, MCP_CAPABILITY);
+        force_capability_unavailable(capabilities, VIDEO_CAPABILITY);
+    }
+    if !ble_redcon4_observed
+        && capability_is_declared(capabilities, POWER_CAPABILITY)
         && !capability_is_available(capabilities, POWER_CAPABILITY)
         && [BOARD_CAPABILITY, MCP_CAPABILITY, VIDEO_CAPABILITY]
             .iter()
@@ -208,6 +221,28 @@ fn apply_capability_dependency_gates(capabilities: &mut BTreeMap<String, bool>) 
         && !capability_is_available(capabilities, MCP_CAPABILITY)
     {
         force_capability_unavailable(capabilities, VIDEO_CAPABILITY);
+    }
+}
+
+fn state_reports_ble_redcon4(state: &CapabilityState) -> bool {
+    if !capability_is_declared(&state.capabilities, POWER_CAPABILITY)
+        || capability_is_available(&state.capabilities, POWER_CAPABILITY)
+    {
+        return false;
+    }
+    metric_int(&state.metrics, BLE_REDCON_METRIC) == Some(4)
+}
+
+fn metric_int(metrics: &BTreeMap<String, MetricValue>, name: &str) -> Option<i64> {
+    let metric = metrics.get(name)?;
+    match metric.datatype.as_str() {
+        "Int32" | "Int64" | "UInt32" | "UInt64" => metric.value.as_i64().or_else(|| {
+            metric
+                .value
+                .as_u64()
+                .and_then(|value| i64::try_from(value).ok())
+        }),
+        _ => None,
     }
 }
 
@@ -548,7 +583,7 @@ mod tests {
     }
 
     #[test]
-    fn board_owned_capabilities_imply_power_when_ble_power_is_stale() {
+    fn board_owned_capabilities_imply_power_when_ble_power_is_unconfirmed() {
         let mut state = DeviceRuntimeState::new(unit_inventory());
         state
             .observe_state(CapabilityState {
@@ -597,6 +632,144 @@ mod tests {
                     Metric::boolean("capability.board", true),
                     Metric::boolean("capability.mcp", true),
                     Metric::boolean("capability.power", true),
+                    Metric::boolean("capability.sparkplug", true),
+                    Metric::boolean("capability.video", false),
+                ],
+            }
+        );
+    }
+
+    #[test]
+    fn ble_redcon4_evidence_clears_board_owned_capabilities() {
+        let mut state = DeviceRuntimeState::new(unit_inventory());
+        state
+            .observe_state(CapabilityState {
+                schema_version: SCHEMA_VERSION.to_string(),
+                adapter_id: "dev.txing.rig.BleConnectivity".to_string(),
+                thing_name: "unit-1".to_string(),
+                capabilities: BTreeMap::from([
+                    ("sparkplug".to_string(), true),
+                    ("ble".to_string(), true),
+                    (POWER_CAPABILITY.to_string(), false),
+                ]),
+                metrics: BTreeMap::from([(BLE_REDCON_METRIC.to_string(), MetricValue::int32(4))]),
+                observed_at_ms: 2000,
+                seq: 1,
+            })
+            .unwrap();
+        state
+            .observe_state(CapabilityState {
+                schema_version: SCHEMA_VERSION.to_string(),
+                adapter_id: "dev.txing.board".to_string(),
+                thing_name: "unit-1".to_string(),
+                capabilities: BTreeMap::from([
+                    (BOARD_CAPABILITY.to_string(), true),
+                    (MCP_CAPABILITY.to_string(), true),
+                    (VIDEO_CAPABILITY.to_string(), true),
+                ]),
+                metrics: BTreeMap::new(),
+                observed_at_ms: 1900,
+                seq: 2,
+            })
+            .unwrap();
+
+        let snapshot = state.snapshot(2000);
+
+        assert_eq!(snapshot.redcon, Some(4));
+        assert_eq!(snapshot.capabilities.get(POWER_CAPABILITY), Some(&false));
+        assert_eq!(snapshot.capabilities.get(BOARD_CAPABILITY), Some(&false));
+        assert_eq!(snapshot.capabilities.get(MCP_CAPABILITY), Some(&false));
+        assert_eq!(snapshot.capabilities.get(VIDEO_CAPABILITY), Some(&false));
+        assert_eq!(
+            state.decide_publication(2000).unwrap(),
+            DevicePublication::Birth {
+                redcon: 4,
+                metrics: vec![
+                    Metric::boolean("capability.ble", true),
+                    Metric::boolean("capability.board", false),
+                    Metric::boolean("capability.mcp", false),
+                    Metric::boolean("capability.power", false),
+                    Metric::boolean("capability.sparkplug", true),
+                    Metric::boolean("capability.video", false),
+                ],
+            }
+        );
+    }
+
+    #[test]
+    fn ble_redcon4_transition_publishes_data_even_with_retained_board_state() {
+        let mut state = DeviceRuntimeState::new(unit_inventory());
+        state
+            .observe_state(CapabilityState {
+                schema_version: SCHEMA_VERSION.to_string(),
+                adapter_id: "dev.txing.rig.BleConnectivity".to_string(),
+                thing_name: "unit-1".to_string(),
+                capabilities: BTreeMap::from([
+                    ("sparkplug".to_string(), true),
+                    ("ble".to_string(), true),
+                    (POWER_CAPABILITY.to_string(), true),
+                ]),
+                metrics: BTreeMap::from([(BLE_REDCON_METRIC.to_string(), MetricValue::int32(3))]),
+                observed_at_ms: 1000,
+                seq: 1,
+            })
+            .unwrap();
+        state
+            .observe_state(CapabilityState {
+                schema_version: SCHEMA_VERSION.to_string(),
+                adapter_id: "dev.txing.board".to_string(),
+                thing_name: "unit-1".to_string(),
+                capabilities: BTreeMap::from([
+                    (BOARD_CAPABILITY.to_string(), true),
+                    (MCP_CAPABILITY.to_string(), true),
+                    (VIDEO_CAPABILITY.to_string(), false),
+                ]),
+                metrics: BTreeMap::new(),
+                observed_at_ms: 1000,
+                seq: 2,
+            })
+            .unwrap();
+
+        assert_eq!(
+            state.decide_publication(1000).unwrap(),
+            DevicePublication::Birth {
+                redcon: 2,
+                metrics: vec![
+                    Metric::boolean("capability.ble", true),
+                    Metric::boolean("capability.board", true),
+                    Metric::boolean("capability.mcp", true),
+                    Metric::boolean("capability.power", true),
+                    Metric::boolean("capability.sparkplug", true),
+                    Metric::boolean("capability.video", false),
+                ],
+            }
+        );
+
+        state
+            .observe_state(CapabilityState {
+                schema_version: SCHEMA_VERSION.to_string(),
+                adapter_id: "dev.txing.rig.BleConnectivity".to_string(),
+                thing_name: "unit-1".to_string(),
+                capabilities: BTreeMap::from([
+                    ("sparkplug".to_string(), true),
+                    ("ble".to_string(), true),
+                    (POWER_CAPABILITY.to_string(), false),
+                ]),
+                metrics: BTreeMap::from([(BLE_REDCON_METRIC.to_string(), MetricValue::int32(4))]),
+                observed_at_ms: 2000,
+                seq: 3,
+            })
+            .unwrap();
+
+        assert_eq!(
+            state.decide_publication(2000).unwrap(),
+            DevicePublication::Data {
+                redcon: 4,
+                metrics: vec![
+                    Metric::boolean("capability.ble", true),
+                    Metric::boolean("capability.board", false),
+                    Metric::boolean("capability.mcp", false),
+                    Metric::boolean("capability.power", false),
                     Metric::boolean("capability.sparkplug", true),
                     Metric::boolean("capability.video", false),
                 ],

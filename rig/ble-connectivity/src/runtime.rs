@@ -562,10 +562,7 @@ impl DeviceSession {
     }
 
     fn should_connect_from_advertisement(&self) -> bool {
-        match self.spec.kind {
-            DeviceKind::Power => self.last_redcon.is_none_or(|redcon| redcon < REDCON_IDLE),
-            DeviceKind::Weather => true,
-        }
+        true
     }
 
     fn connect_retry_delay_ms(&self, err: &anyhow::Error) -> u64 {
@@ -730,6 +727,11 @@ impl DeviceSession {
         }
 
         self.last_redcon = Some(target_redcon);
+        if target_redcon >= REDCON_IDLE {
+            self.last_power_measurement = None;
+            self.last_weather_measurement = None;
+        }
+        self.publish_aggregate_sample(now_ms())?;
         self.seed_connected_state().await?;
         self.reset_connect_backoff();
         eprintln!(
@@ -2877,7 +2879,7 @@ mod tests {
     }
 
     #[test]
-    fn power_background_connects_only_until_idle_state_is_known() {
+    fn power_background_connects_even_when_idle_state_is_known() {
         let (sender, _receiver) = mpsc::unbounded_channel();
         let (shadow_sender, _shadow_receiver) = mpsc::unbounded_channel();
         let mut session = DeviceSession::new(
@@ -2890,7 +2892,7 @@ mod tests {
 
         assert!(session.should_connect_from_advertisement());
         session.last_redcon = Some(REDCON_IDLE);
-        assert!(!session.should_connect_from_advertisement());
+        assert!(session.should_connect_from_advertisement());
         session.last_redcon = Some(REDCON_ACTIVE);
         assert!(session.should_connect_from_advertisement());
     }

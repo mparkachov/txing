@@ -209,19 +209,20 @@ The born-state REDCON ladder is:
 
 - `REDCON 4`
   - device is in the sleep state
-  - BLE presence is still online through rendezvous advertisements
+  - BLE is reachable; the rig keeps the BLE connection open when possible and the MCU advertises again after disconnect
+  - unit stack power/D1 is disabled
 - `REDCON 3`
   - BLE is reachable
-  - unit stack power is enabled
+  - unit stack power/D1 is enabled
   - MCP is not yet available
 - `REDCON 2`
   - BLE is reachable
-  - unit stack power is enabled
+  - unit stack power/D1 is enabled
   - MCP is available
   - retained video status is not yet ready
 - `REDCON 1`
   - BLE is reachable
-  - unit stack power is enabled
+  - unit stack power/D1 is enabled
   - MCP is available
   - retained video status is ready and fresh
 
@@ -236,9 +237,14 @@ changes:
 
 The board runtime publishes retained v2 capability state for `board`, `mcp`, and
 `video`. SparkplugManager consumes those board-owned retained state messages
-directly, but gates them behind BLE `power=true`. When BLE reports REDCON `4`
-or otherwise reports `power=false`, SparkplugManager clears `board`, `mcp`, and
-`video` immediately instead of waiting for the retained board state to expire.
+directly, but gates them behind BLE `power=true`. In this contract `power`
+means MCU-controlled wakeup power/D1 availability, not MCU power. When BLE
+reports REDCON `4` or otherwise reports `power=false`, SparkplugManager clears
+`board`, `mcp`, and `video` immediately instead of waiting for the retained
+board state to expire.
+BLE state-read and command-applied capability states carry internal
+`metrics.bleRedcon` evidence for this gate; advertisement-only BLE reachability
+does not.
 Together with BLE `sparkplug`/`ble`/`power` state, upgraded unit devices can
 converge through the full REDCON ladder.
 
@@ -254,10 +260,11 @@ Rig receives target REDCON only through Sparkplug.
 - target `redcon=4`
   - converge txing to the sleep state
   - publish Sparkplug device `redcon=4`
+  - keep BLE connected when possible for idle state and measurement updates
   - clear the in-memory pending REDCON target on convergence
 - target `redcon=3`
   - wake txing
-  - once unit stack power is enabled, publish Sparkplug device `redcon=3`
+  - once unit stack power/D1 is enabled, publish Sparkplug device `redcon=3`
   - if MCP/video conditions later satisfy higher derived levels, actual REDCON may rise naturally to `2` or `1`
   - clear the in-memory pending REDCON target once actual REDCON reaches the commanded REDCON
 

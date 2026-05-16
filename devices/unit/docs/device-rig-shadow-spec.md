@@ -158,14 +158,18 @@ The unit REDCON rules are declared ahead of the board/MCP/video v2 capability ro
 Board/MCP/video availability comes from board-owned retained v2 capability state
 consumed directly by SparkplugManager. Board shadows may still exist and be read,
 but REDCON selection uses the v2 capability state, not shadow freshness. The
-board-owned capabilities are still gated by BLE `power=true`; REDCON `4` /
-power-off evidence clears board/MCP/video immediately even if retained board
-state is stale.
+board-owned capabilities are still gated by BLE `power=true`; here `power`
+means MCU-controlled wakeup power/D1 availability, not MCU power. REDCON `4` /
+sleep-state evidence clears board/MCP/video immediately even if retained board
+state is stale. BLE state-read and command-applied capability states carry the
+internal `metrics.bleRedcon` value so SparkplugManager can distinguish explicit
+sleep-state evidence from advertisement-only BLE reachability; this internal
+metric is not published as a Sparkplug device metric.
 
 ## Acceptance Criteria
 
 - From projected `payload.metrics.redcon=4`, sending `DCMD.redcon=3` eventually results in:
-  - a BLE connection during a rendezvous window
+  - an existing or newly established BLE connection
   - a successful REDCON 3 command write
   - a State Report confirmation
   - D1 enabled by the MCU
@@ -175,6 +179,7 @@ state is stale.
 - From projected `payload.metrics.redcon=3`, sending `DCMD.redcon=4` eventually results in:
   - a successful REDCON 4 command write
   - D1 disabled by the MCU
+  - BLE remains connected when possible for idle state and measurement updates
   - published Sparkplug `redcon=4`
   - Sparkplug `capability.power=false`
   - the in-memory pending REDCON target cleared on convergence

@@ -5,7 +5,9 @@ use anyhow::{Result, bail};
 use serde_json::{Value, json};
 use uuid::{Uuid, uuid};
 
-use txing_capability_protocol::{CapabilityState, SCHEMA_VERSION, validate_segment};
+use txing_capability_protocol::{
+    BLE_REDCON_METRIC, CapabilityState, MetricValue, SCHEMA_VERSION, validate_segment,
+};
 
 pub const ADAPTER_ID: &str = "dev.txing.rig.BleConnectivity";
 
@@ -102,6 +104,7 @@ pub struct WeatherMeasurement {
 pub struct CapabilitySample {
     pub thing_name: String,
     pub kind: DeviceKind,
+    pub redcon: Option<u8>,
     pub sparkplug_available: bool,
     pub ble_available: bool,
     pub power_available: bool,
@@ -220,6 +223,7 @@ pub fn advertisement_sample(
     CapabilitySample {
         thing_name: spec.thing_name.clone(),
         kind: spec.kind,
+        redcon: None,
         sparkplug_available: true,
         ble_available: true,
         power_available: false,
@@ -237,6 +241,7 @@ pub fn offline_sample(spec: &DeviceSpec, seq: u64, now_ms: u64) -> CapabilitySam
     CapabilitySample {
         thing_name: spec.thing_name.clone(),
         kind: spec.kind,
+        redcon: None,
         sparkplug_available: false,
         ble_available: false,
         power_available: false,
@@ -261,6 +266,7 @@ pub fn power_state_sample(
     CapabilitySample {
         thing_name: spec.thing_name.clone(),
         kind: DeviceKind::Power,
+        redcon: Some(redcon),
         sparkplug_available: true,
         ble_available: true,
         power_available: redcon < REDCON_IDLE,
@@ -286,6 +292,7 @@ pub fn weather_state_sample(
     CapabilitySample {
         thing_name: spec.thing_name.clone(),
         kind: DeviceKind::Weather,
+        redcon: Some(_redcon),
         sparkplug_available: true,
         ble_available: true,
         power_available: power_measurement.and_then(|item| item.battery_mv).is_some(),
@@ -312,13 +319,20 @@ pub fn capability_state_from_sample(
     if sample.kind.supports_weather() {
         capabilities.insert(WEATHER_CAPABILITY.to_string(), sample.weather_available);
     }
+    let mut metrics = BTreeMap::new();
+    if let Some(redcon) = sample.redcon {
+        metrics.insert(
+            BLE_REDCON_METRIC.to_string(),
+            MetricValue::int32(i32::from(redcon)),
+        );
+    }
 
     CapabilityState {
         schema_version: SCHEMA_VERSION.to_string(),
         adapter_id: adapter_id.to_string(),
         thing_name: sample.thing_name.clone(),
         capabilities,
-        metrics: BTreeMap::new(),
+        metrics,
         observed_at_ms: sample.observed_at_ms,
         seq: sample.seq,
     }
@@ -577,6 +591,10 @@ mod tests {
 
         assert_eq!(state.capabilities[POWER_CAPABILITY], true);
         assert_eq!(sample.battery_mv, None);
+        assert_eq!(
+            state.metrics.get(BLE_REDCON_METRIC),
+            Some(&MetricValue::int32(i32::from(REDCON_ACTIVE)))
+        );
     }
 
     #[test]

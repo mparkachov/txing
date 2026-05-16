@@ -108,7 +108,7 @@ Metric names preserve Sparkplug structure by splitting both `.` and `/` into nes
 - `redcon=1` means local board, MCP, and video capability are available.
 - `sparkplug.state.reported.topic.messageType = DDEATH` means the rig currently considers the device unavailable and `payload.metrics.redcon` is not defined.
 - `sparkplug.state.reported.payload.metrics.capability.ble` is BLE reachability.
-- `sparkplug.state.reported.payload.metrics.capability.power` is wakeup-state power capability availability.
+- `sparkplug.state.reported.payload.metrics.capability.power` is MCU-controlled wakeup power/D1 availability, not MCU power.
 - `power.state.reported.batteryMv` is the latest battery measurement in millivolts.
 - `board.state.reported.power` is best-effort board power state; stale `true` must not be treated as authoritative after a hard power cut.
 - `board.state.reported.wifi.online`, `ipv4`, and `ipv6` are refreshed by the board control loop.
