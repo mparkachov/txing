@@ -47,8 +47,10 @@ artifacts:
 - `stable` points at the artifact built from the stable `VERSION`, for example `x.y.z`.
 - `feature` points at explicitly named debug artifacts and must not be confused with production Greengrass component versions.
 - GitHub release assets should be immutable for each exact artifact version.
-- A mutable channel manifest or equivalent `mise` plugin logic should map `stable` and `feature` to exact artifact versions.
-- Read-only board boot flows may install `feature` channel artifacts into tmpfs-backed `mise` directories while using the persistent `stable` install as the fallback.
+- The unit daemon uses mise's GitHub backend directly; see [artifacts.md](./artifacts.md).
+- Read-only board boot flows may install `feature` channel artifacts into
+  tmpfs-backed `mise` directories while using the persistent `stable` install as
+  the fallback.
 - Writable maintenance flows should update the persistent baseline with the `stable` channel.
 
 ## Project-Local AWS Config

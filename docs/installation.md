@@ -241,7 +241,9 @@ just rig::print sparkplug
 
 ## Board Host
 
-The board is the device-side Raspberry Pi. It publishes the `board` and `video` named shadows, runs the KVS sender, and exposes board MCP.
+The board is the device-side Raspberry Pi. It runs the stable `txing-unit-daemon`
+from GitHub Release artifacts, publishes the `board` and `video` named shadows,
+runs the KVS sender, and exposes board MCP.
 
 This guide assumes:
 
@@ -249,16 +251,32 @@ This guide assumes:
 - Network is managed by `NetworkManager`
 - the board remains headless
 - AWS resources and the target device thing already exist
+- daemon `.env` and certificate material have already been provisioned on the
+  development Mac; see [Artifacts](./artifacts.md)
 
-If your image is still using a different network manager, switch it before enabling the read-only layout below.
+If your image is still using a different network manager, switch it before
+enabling the read-only layout below.
 
-Keep the board root filesystem writable until the runtime, native sender, service unit, and `mise`-managed tools are installed.
+Keep the board root filesystem writable until mise, the stable daemon, runtime
+config, native sender, board service, and read-only-root configuration are in
+place.
 
-### 1. Flash And Boot
+### 1. Create The Card
 
-- Flash Raspberry Pi OS Lite 64-bit.
-- Enable SSH and configure Wi-Fi during imaging if needed.
-- Boot once with the default writable root filesystem.
+Use Raspberry Pi Imager:
+
+- OS: Raspberry Pi OS Lite 64-bit
+- hostname: `txing`
+- user: `txing`
+- SSH: enabled, preferably with the development machine's public key
+- Wi-Fi: configured if the board is not using Ethernet
+- locale/timezone: set for the installation location
+
+Boot once with the default writable root filesystem and connect:
+
+```bash
+ssh txing
+```
 
 ### 2. Install OS Packages
 
@@ -271,6 +289,11 @@ sudo apt install -y \
   libusrsctp-dev libwebsockets-dev zlib1g-dev libcamera-dev \
   ca-certificates python3-venv python3-lgpio network-manager
 ```
+
+If NetworkManager was newly installed or enabled, reconnect over the resulting
+network path before continuing.
+
+### 3. Install Mise
 
 Use `mise` for developer CLIs that are missing, unavailable, or too old in the
 OS package repository. `apt` should stay limited to OS libraries, headers, and
@@ -289,7 +312,62 @@ uv --version
 aws --version
 ```
 
-### 3. Clone The Repo And Copy Config
+### 4. Copy Unit Daemon Config
+
+From macOS:
+
+```bash
+test -r "$HOME/.config/txing/unit-daemon/.env"
+test -r "$HOME/.config/txing/unit-daemon/private.pem.key"
+COPYFILE_DISABLE=1 tar -C "$HOME/.config/txing" -czf /tmp/txing-unit-daemon-config.tgz unit-daemon
+scp /tmp/txing-unit-daemon-config.tgz txing:/tmp/txing-unit-daemon-config.tgz
+```
+
+On the board:
+
+```bash
+install -d -m 700 "$HOME/.config/txing"
+tar -xzf /tmp/txing-unit-daemon-config.tgz -C "$HOME/.config/txing"
+chmod 700 "$HOME/.config/txing/unit-daemon"
+chmod 600 "$HOME/.config/txing/unit-daemon/.env"
+chmod 600 "$HOME/.config/txing/unit-daemon/certificate.arn"
+chmod 600 "$HOME/.config/txing/unit-daemon/certificate.pem.crt"
+chmod 600 "$HOME/.config/txing/unit-daemon/private.pem.key"
+chmod 600 "$HOME/.config/txing/unit-daemon/public.pem.key"
+chmod 644 "$HOME/.config/txing/unit-daemon/AmazonRootCA1.pem"
+rm -f /tmp/txing-unit-daemon-config.tgz
+```
+
+### 5. Install Stable Unit Daemon
+
+Install the stable daemon and systemd unit while root is still writable:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/devices/unit/daemon/install-systemd.sh | sudo bash -s -- stable
+```
+
+Verify:
+
+```bash
+sudo systemctl status --no-pager -l txing-unit-daemon.service
+sudo journalctl -u txing-unit-daemon.service -n 120 --no-pager
+mise list
+mise which txing-unit-daemon
+```
+
+Expected:
+
+- `txing-unit-daemon` is listed from
+  `~/.config/mise/conf.d/txing-unit-daemon.toml`;
+- the executable lives under
+  `~/.local/share/mise/installs/txing-unit-daemon/<version>/`;
+- the daemon log includes `version=<stable-version>`, connects to MQTT, and
+  publishes retained `board` online state.
+
+### 6. Clone The Repo And Copy Board Runtime Config
+
+The stable unit daemon does not require a source checkout. The board runtime and
+native video sender still use the repository checkout.
 
 ```bash
 export TXING_HOME="$HOME/txing"
@@ -318,7 +396,7 @@ BOARD_DRIVE_CMD_RAW_MIN_SPEED=50
 BOARD_DRIVE_CMD_RAW_MAX_SPEED=250
 ```
 
-### 4. Enable PWM Overlay
+### 7. Enable PWM Overlay
 
 Append this to `/boot/firmware/config.txt` while `/boot/firmware` is writable:
 
@@ -326,7 +404,7 @@ Append this to `/boot/firmware/config.txt` while `/boot/firmware` is writable:
 dtoverlay=pwm-2chan,pin=12,func=4,pin2=13,func2=4
 ```
 
-### 5. Build The Native Sender And Python Runtime
+### 8. Build The Native Sender And Python Runtime
 
 Build the repo-owned KVS sender:
 
@@ -361,7 +439,7 @@ cd "$TXING_HOME"
 just unit::board::check
 ```
 
-### 6. Smoke Test And Install The Service
+### 9. Smoke Test And Install The Board Service
 
 Run one foreground publish as `root`:
 
@@ -391,9 +469,10 @@ The generated unit:
 - enables `NetworkManager-wait-online.service`
 - waits for clock synchronization before starting the AWS-backed video sender
 
-### 7. Configure The Read-Only Root Filesystem
+### 10. Configure The Read-Only Root Filesystem
 
-The current board runtime is compatible with a read-only root as long as these writable paths stay on tmpfs:
+The current board runtime is compatible with a read-only root as long as these
+writable paths stay on tmpfs:
 
 - `/tmp`
   - board shadow mirror: `/tmp/txing_board_shadow.json`
@@ -421,11 +500,13 @@ tmpfs                     /var/log             tmpfs nosuid,nodev,mode=0755,size
 tmpfs                     /var/lib/NetworkManager tmpfs nosuid,nodev,mode=0755,size=16M 0 0
 ```
 
-Useful aliases:
+Add useful aliases to the `txing` user's shell config:
 
 ```bash
+cat >> "$HOME/.bashrc" <<'EOF'
 alias root-ro='sudo bash -c "rm -rf /var/tmp/* /tmp/* ; sync ; mount -o remount,ro /boot/firmware ; mount -o remount,ro /"'
 alias root-rw='sudo bash -c "mount -o remount,rw /; mount -o remount,rw /boot/firmware; umount /var/tmp /tmp; sudo systemctl daemon-reload"'
+EOF
 ```
 
 Operational notes:
@@ -434,29 +515,64 @@ Operational notes:
 - Switch back to read-only only after the runtime, native sender, and config files are in place.
 - The `mise` binary, normal user mise config, and stable unit daemon install
   live under the `txing` user's home directory. Stable installs and upgrades
-  must happen while the root filesystem is writable and should use plain
-  `mise upgrade` as the `txing` user. Feature-channel daemon artifacts are
-  installed at service start into `/var/tmp/txing/unit-daemon/`, which is
-  tmpfs-backed and executable.
+  must happen while the root filesystem is writable and use plain
+  `mise upgrade`. Feature-channel daemon artifacts are installed at service
+  start into `/var/tmp/txing/unit-daemon/`, which is tmpfs-backed and
+  executable, with the persistent stable install as fallback.
 - AWS-backed services that install or connect over HTTPS during boot must wait
   for both network-online and clock synchronization. Otherwise TLS validation
   can fail before NTP corrects the board clock.
 - If you need to change board code, env files, `/boot/firmware/config.txt`, the systemd unit, or `mise`-managed tooling later, use `root-rw`, make the change, restart the affected service, then `root-ro`.
 
-### 8. Final Verification
+### 11. Stable Maintenance
 
-Reboot once after enabling the read-only layout:
+Use this during a writable-root maintenance window:
 
 ```bash
+root-rw
+sudo apt update
+sudo apt dist-upgrade -y
+mise upgrade
+sudo systemctl restart txing-unit-daemon.service
+root-ro
+```
+
+If a stable daemon release was just published and mise still resolves the
+previous version:
+
+```bash
+root-rw
+mise cache clear
+mise upgrade
+sudo systemctl restart txing-unit-daemon.service
+root-ro
+```
+
+### 12. Final Verification
+
+Switch to read-only mode and reboot:
+
+```bash
+root-ro
 sudo reboot
 ```
 
 After reconnecting:
 
 ```bash
+sudo systemctl status --no-pager -l txing-unit-daemon.service
+sudo journalctl -u txing-unit-daemon.service -b -u txing-unit-daemon.service --no-pager
+mise list
 sudo systemctl status board
 sudo journalctl -u board -f
 ```
+
+Expected stable daemon behavior after reboot:
+
+- root filesystem is read-only;
+- `txing-unit-daemon.service` starts without a source checkout;
+- daemon log includes `version=<stable-version>`;
+- MQTT connects and retained `board` online state is published.
 
 Useful board commands:
 

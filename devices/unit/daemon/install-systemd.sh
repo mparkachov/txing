@@ -95,6 +95,15 @@ stable_install_root="$daemon_home/.local/share/mise/installs/txing-unit-daemon"
 var_tmp_probe=""
 
 if [ "$channel" = "feature" ]; then
+  [ -r "$stable_config_file" ] || fail "missing stable daemon mise config: $stable_config_file; install stable channel first"
+  stable_binary_found=false
+  for stable_binary in "$stable_install_root"/*/txing-unit-daemon; do
+    if [ -x "$stable_binary" ]; then
+      stable_binary_found=true
+      break
+    fi
+  done
+  [ "$stable_binary_found" = true ] || fail "missing persistent stable daemon install under $stable_install_root; install stable channel first"
   [ -d /var/tmp ] || fail "/var/tmp does not exist"
   [ -w /var/tmp ] || fail "/var/tmp is not writable"
   var_tmp_probe="$(mktemp -d /var/tmp/txing-unit-daemon-install.XXXXXX)"
@@ -139,6 +148,9 @@ fi
 
 if [ "$channel" = "stable" ]; then
   install -m 600 -o "$daemon_user" -g "$daemon_group" "$config_tmp" "$stable_config_file"
+  rm -f "$mise_config_file"
+  rmdir "$mise_config_dir" 2>/dev/null || true
+  rm -rf "$tmp_root"
   command -v runuser >/dev/null 2>&1 || fail "runuser is required for stable install as '$daemon_user'"
   runuser -u "$daemon_user" -- env \
     "HOME=$daemon_home" \
@@ -178,12 +190,13 @@ Environment=MISE_CONFIG_DIR=$mise_config_dir
 Environment=MISE_DATA_DIR=$tmp_root/mise
 Environment=MISE_CACHE_DIR=$tmp_root/mise-cache
 Environment=MISE_TMP_DIR=$tmp_root/mise-tmp
+Environment=MISE_SHARED_INSTALL_DIRS=$daemon_home/.local/share/mise/installs
 EOF
     printf 'Environment=MISE_PRERELEASES=1\n'
     cat <<EOF
 
 ExecStartPre=/usr/bin/install -d -m 700 $tmp_root/mise $tmp_root/mise-cache $tmp_root/mise-tmp
-ExecStartPre=$mise_bin install
+ExecStartPre=-$mise_bin install
 ExecStartPre=-/usr/bin/find $tmp_root/mise-cache $tmp_root/mise-tmp -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 EOF
   fi
@@ -218,4 +231,5 @@ if [ "$channel" = "stable" ]; then
   printf '  stable install root: %s\n' "$stable_install_root"
 else
   printf '  feature install root: %s\n' "$tmp_root/mise"
+  printf '  stable fallback root: %s\n' "$stable_install_root"
 fi
