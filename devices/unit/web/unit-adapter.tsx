@@ -15,6 +15,7 @@ const unitDeviceAdapter: DeviceWebAdapter = {
   displayName: 'Unit',
   buildVideoChannelName: buildBoardVideoChannelName,
   canUseBoardVideo: (reportedRedcon) => reportedRedcon === 1,
+  canUseDriveControl: (reportedRedcon) => reportedRedcon === 1 || reportedRedcon === 2,
   extractTelemetry: (shadow) => ({
     reportedBatteryMv: extractReportedBatteryMv(shadow),
     reportedBoardPower: extractReportedBoardPower(shadow),
@@ -32,7 +33,7 @@ const unitDeviceAdapter: DeviceWebAdapter = {
       routeKind !== 'device' ||
       !hasActiveSession ||
       detailRedcon === null ||
-      nextRedcon !== detailRedcon
+      (nextRedcon !== 1 && nextRedcon !== 2)
     ) {
       return null
     }
@@ -42,7 +43,7 @@ const unitDeviceAdapter: DeviceWebAdapter = {
     }
   },
   shouldCloseDetail: ({ detailRedcon, reportedRedcon }) =>
-    detailRedcon === null || reportedRedcon !== detailRedcon,
+    detailRedcon === null || (reportedRedcon !== 1 && reportedRedcon !== 2),
   renderDetail: (props) => <TxingPanel {...props} />,
   renderVideo: ({
     debugEnabled,

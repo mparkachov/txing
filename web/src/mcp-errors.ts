@@ -8,14 +8,14 @@ const getMessage = (error: unknown): string => {
   return ''
 }
 
-export const isInvalidMcpLeaseTokenError = (error: unknown): boolean =>
-  getMessage(error).toLowerCase().includes('invalid lease token')
+export const isMcpNoActiveControlError = (error: unknown): boolean =>
+  getMessage(error).toLowerCase().includes('no active control')
 
-export const isMcpNoActiveControlLeaseError = (error: unknown): boolean =>
-  getMessage(error).toLowerCase().includes('no active control lease')
+export const isMcpStaleActiveControlEpochError = (error: unknown): boolean =>
+  getMessage(error).toLowerCase().includes('stale active control epoch')
 
-export const isRecoverableMcpLeaseError = (error: unknown): boolean =>
-  isInvalidMcpLeaseTokenError(error) || isMcpNoActiveControlLeaseError(error)
+export const isRecoverableMcpActiveControlError = (error: unknown): boolean =>
+  isMcpNoActiveControlError(error) || isMcpStaleActiveControlEpochError(error)
 
 export const isMcpSessionNotInitializedError = (error: unknown): boolean =>
   getMessage(error).toLowerCase().includes('mcp session is not initialized')
@@ -33,18 +33,16 @@ export const isExpectedMcpTeardownError = (error: unknown): boolean =>
 
 type RobotStateTeardownContext = {
   error: unknown
-  canUseBoardVideo: boolean
-  isBoardVideoExpanded: boolean
+  isDriveControlActive: boolean
   isShadowConnected: boolean
   pendingTargetRedcon: 1 | 2 | 3 | 4 | null
 }
 
 export const shouldSuppressRobotStateTeardownError = ({
   error,
-  canUseBoardVideo,
-  isBoardVideoExpanded,
+  isDriveControlActive,
   isShadowConnected,
   pendingTargetRedcon,
 }: RobotStateTeardownContext): boolean =>
   isExpectedMcpTeardownError(error) &&
-  (!canUseBoardVideo || !isBoardVideoExpanded || !isShadowConnected || pendingTargetRedcon === 4)
+  (!isDriveControlActive || !isShadowConnected || pendingTargetRedcon === 4)

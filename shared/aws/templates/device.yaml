@@ -45,7 +45,10 @@ Resources:
           - Sid: DeviceMcpTopicFilters
             Effect: Allow
             Action: iot:Subscribe
-            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/txings/*/mcp/session/*/c2s
+            Resource:
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/txings/*/mcp/descriptor
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/txings/*/mcp/status
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/txings/*/mcp/session/*/s2c
           - Sid: DeviceVideoTopics
             Effect: Allow
             Action:
@@ -142,6 +145,31 @@ Resources:
             Effect: Allow
             Action: iot:Publish
             Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/${!iot:Connection.Thing.ThingName}/shadow/name/board/update
+          - Sid: DaemonMcpShadowUpdate
+            Effect: Allow
+            Action: iot:Publish
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/${!iot:Connection.Thing.ThingName}/shadow/name/mcp/update
+          - Sid: DaemonMcpRetainedTopics
+            Effect: Allow
+            Action:
+              - iot:Publish
+              - iot:RetainPublish
+            Resource:
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/${!iot:Connection.Thing.ThingName}/mcp/descriptor
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/${!iot:Connection.Thing.ThingName}/mcp/status
+          - Sid: DaemonMcpSessionReceive
+            Effect: Allow
+            Action:
+              - iot:Subscribe
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/txings/${!iot:Connection.Thing.ThingName}/mcp/session/+/c2s
+          - Sid: DaemonMcpSessionTopics
+            Effect: Allow
+            Action:
+              - iot:Receive
+              - iot:Publish
+            Resource:
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/${!iot:Connection.Thing.ThingName}/mcp/session/*/c2s
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/${!iot:Connection.Thing.ThingName}/mcp/session/*/s2c
           - Sid: DaemonCapabilityState
             Effect: Allow
             Action:

@@ -10,6 +10,7 @@ describe('txing panel', () => {
         isDebugEnabled={false}
         mcpTransport="webrtc-datachannel"
         onToggleDebug={() => {}}
+        reportedRedcon={1}
         reportedBatteryMv={3960}
         reportedBoardLeftTrackSpeed={60}
         reportedBoardOnline={true}
@@ -44,5 +45,34 @@ describe('txing panel', () => {
     expect(markup).not.toContain('Connect')
     expect(markup).not.toContain('status-redcon-dot')
     expect(markup).not.toContain('status-switch-track')
+  })
+
+  test('renders a REDCON 2 MQTT drive panel without board video', () => {
+    const markup = renderToStaticMarkup(
+      <TxingPanel
+        isBoardVideoExpanded={true}
+        isDebugEnabled={false}
+        mcpTransport="mqtt-jsonrpc"
+        onToggleDebug={() => {}}
+        reportedRedcon={2}
+        reportedBatteryMv={3960}
+        reportedBoardLeftTrackSpeed={25}
+        reportedBoardOnline={true}
+        reportedBoardRightTrackSpeed={25}
+        reportedMcuOnline={true}
+        videoChannelName="unit-local-board-video"
+        resolveIdToken={async () => 'token'}
+        onBoardVideoRuntimeError={() => {}}
+      />,
+    )
+
+    expect(markup).toContain('status-video-offline-surface')
+    expect(markup).toContain('data-drive-mode="mqtt-jsonrpc"')
+    expect(markup).toContain('status-mcp-transport-mqtt')
+    expect(markup).toContain('aria-label="MCP over MQTT JSON-RPC"')
+    expect(markup).toContain('data-track-side="left"')
+    expect(markup).toContain('data-track-side="right"')
+    expect(markup).not.toContain('status-video-debug-button')
+    expect(markup).not.toContain('txing-video-panel')
   })
 })

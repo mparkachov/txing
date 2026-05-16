@@ -67,4 +67,14 @@ describe('app route catalog source wiring', () => {
     expect(appSource).toContain("setStatus('authenticating')")
     expect(appSource).toContain('await beginSignIn()')
   })
+
+  test('drive detail keeps polling robot feedback while motion is active', () => {
+    const appSource = readFileSync(resolve(repoRoot, 'web/src/App.tsx'), 'utf-8')
+
+    expect(appSource).toContain('const robotStatePollIntervalMs = 5_000')
+    expect(appSource).toContain('const intervalId = window.setInterval(() => {')
+    expect(appSource).toContain('void requestRobotState()')
+    expect(appSource).toContain('}, robotStatePollIntervalMs)')
+    expect(appSource).not.toContain('if (isRobotMotionActive || isRobotControlActive)')
+  })
 })

@@ -6,6 +6,7 @@ const timeDeviceAdapter: DeviceWebAdapter = {
   displayName: 'Time',
   buildVideoChannelName: (deviceId) => `${deviceId}-time`,
   canUseBoardVideo: () => false,
+  canUseDriveControl: () => false,
   extractTelemetry: () => ({
     reportedBatteryMv: null,
     reportedBoardPower: null,

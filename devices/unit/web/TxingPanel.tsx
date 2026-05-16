@@ -10,6 +10,7 @@ type TxingPanelProps = {
   reportedBoardLeftTrackSpeed: number | null
   reportedBoardOnline: boolean | null
   reportedBoardRightTrackSpeed: number | null
+  reportedRedcon: number | null
   reportedMcuOnline: boolean | null
   onToggleDebug: () => void
   videoChannelName: string
@@ -247,6 +248,7 @@ function TxingPanel({
   reportedBoardLeftTrackSpeed,
   reportedBoardOnline,
   reportedBoardRightTrackSpeed,
+  reportedRedcon,
   reportedMcuOnline,
   onToggleDebug,
   videoChannelName,
@@ -255,23 +257,26 @@ function TxingPanel({
 }: TxingPanelProps) {
   const boardWifiToneClass = getBoardWifiToneClass(reportedBoardOnline)
   const bleSignalToneClass = getBleSignalToneClass(reportedMcuOnline)
+  const shouldRenderBoardVideo = isBoardVideoExpanded && reportedRedcon === 1
   const videoOverlay = (
     <div className="status-video-overlay-bar">
       <div className="status-video-overlay-side status-video-overlay-side-start">
-        <button
-          type="button"
-          className={`status-video-debug-button ${
-            isDebugEnabled
-              ? 'status-video-debug-button-active'
-              : 'status-video-debug-button-idle'
-          }`}
-          aria-label={isDebugEnabled ? 'Disable Debug' : 'Enable Debug'}
-          aria-pressed={isDebugEnabled}
-          title={isDebugEnabled ? 'Disable Debug' : 'Enable Debug'}
-          onClick={onToggleDebug}
-        >
-          <DebugGlyph />
-        </button>
+        {shouldRenderBoardVideo ? (
+          <button
+            type="button"
+            className={`status-video-debug-button ${
+              isDebugEnabled
+                ? 'status-video-debug-button-active'
+                : 'status-video-debug-button-idle'
+            }`}
+            aria-label={isDebugEnabled ? 'Disable Debug' : 'Enable Debug'}
+            aria-pressed={isDebugEnabled}
+            title={isDebugEnabled ? 'Disable Debug' : 'Enable Debug'}
+            onClick={onToggleDebug}
+          >
+            <DebugGlyph />
+          </button>
+        ) : null}
         <McpTransportGlyph transport={mcpTransport} />
       </div>
       <div className="status-video-overlay-lockup">
@@ -326,8 +331,8 @@ function TxingPanel({
   return (
     <section className="status-hero status-hero-dashboard" aria-label="Bot status">
       <div className="shadow-diagram">
-        <div className={`status-node status-node-txing ${isBoardVideoExpanded ? 'status-node-txing-expanded' : ''}`}>
-          {isBoardVideoExpanded ? (
+        <div className={`status-node status-node-txing ${shouldRenderBoardVideo ? 'status-node-txing-expanded' : ''}`}>
+          {shouldRenderBoardVideo ? (
             <VideoPanel
               channelName={videoChannelName}
               debugEnabled={isDebugEnabled}
@@ -335,7 +340,15 @@ function TxingPanel({
               overlay={videoOverlay}
               resolveIdToken={resolveIdToken}
             />
-          ) : null}
+          ) : (
+            <div
+              className="status-video-offline-surface"
+              aria-label="Bot drive status"
+              data-drive-mode={mcpTransport ?? 'pending'}
+            >
+              {videoOverlay}
+            </div>
+          )}
         </div>
       </div>
     </section>

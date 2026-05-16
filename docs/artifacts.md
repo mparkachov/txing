@@ -91,10 +91,10 @@ MISE_SHARED_INSTALL_DIRS=/home/txing/.local/share/mise/installs
 ```
 
 That shared install directory is the fallback path to the persistent stable
-daemon. Feature service start tries to install the latest feature-capable
-resolution into `/var/tmp`; if that pre-start install fails or no newer feature
-release is available, offline `mise exec` can still resolve the installed stable
-daemon through the shared install directory.
+daemon. Feature service start tries to upgrade the feature-capable resolution in
+`/var/tmp` before ensuring it is installed; if those pre-start steps fail or no
+feature release is installed, offline `mise exec` can still resolve the
+installed stable daemon through the shared install directory.
 
 The installed service is the same for both channels:
 
@@ -314,7 +314,7 @@ before executing it:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/devices/unit/daemon/install-systemd.sh \
-  | grep -n 'MISE_SHARED_INSTALL_DIRS\|ExecStartPre=-.*mise install\|conf.d'
+  | grep -n 'MISE_SHARED_INSTALL_DIRS\|ExecStartPre=-.*mise upgrade\|ExecStartPre=-.*mise install\|conf.d'
 ```
 
 Use a commit-pinned raw URL if the board still sees an older script.

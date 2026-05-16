@@ -57,6 +57,7 @@ export type DeviceWebAdapter = {
   displayName: string
   buildVideoChannelName: (deviceId: string) => string
   canUseBoardVideo: (reportedRedcon: number | null) => boolean
+  canUseDriveControl: (reportedRedcon: number | null) => boolean
   extractTelemetry: (shadow: unknown) => DeviceTelemetry
   getAutoOpenState: (input: DeviceAutoOpenInput) => DeviceAutoOpenState | null
   shouldCloseDetail: (input: DeviceDetailCloseInput) => boolean

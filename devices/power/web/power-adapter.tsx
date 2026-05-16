@@ -12,6 +12,7 @@ const powerDeviceAdapter: DeviceWebAdapter = {
   displayName: 'Power',
   buildVideoChannelName: (deviceId) => `${deviceId}-power`,
   canUseBoardVideo: () => false,
+  canUseDriveControl: () => false,
   extractTelemetry: (shadow) => {
     const reportedState = extractPowerReportedState(shadow)
     return {
