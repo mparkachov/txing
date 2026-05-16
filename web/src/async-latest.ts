@@ -11,7 +11,7 @@ export class LatestAsyncValueRunner<T> {
   push(value: T): Promise<void> {
     this.pendingValue = value
     if (this.running) {
-      return this.running
+      return Promise.resolve()
     }
 
     const loop = this.drain().finally(() => {

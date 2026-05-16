@@ -183,6 +183,16 @@ impl DeviceRuntimeState {
 fn apply_capability_dependency_gates(capabilities: &mut BTreeMap<String, bool>) {
     if capability_is_declared(capabilities, POWER_CAPABILITY)
         && !capability_is_available(capabilities, POWER_CAPABILITY)
+        && [BOARD_CAPABILITY, MCP_CAPABILITY, VIDEO_CAPABILITY]
+            .iter()
+            .any(|capability| capability_is_available(capabilities, capability))
+    {
+        if let Some(power) = capabilities.get_mut(POWER_CAPABILITY) {
+            *power = true;
+        }
+    }
+    if capability_is_declared(capabilities, POWER_CAPABILITY)
+        && !capability_is_available(capabilities, POWER_CAPABILITY)
     {
         force_capability_unavailable(capabilities, BOARD_CAPABILITY);
         force_capability_unavailable(capabilities, MCP_CAPABILITY);
@@ -538,7 +548,7 @@ mod tests {
     }
 
     #[test]
-    fn board_owned_capabilities_are_gated_by_ble_power() {
+    fn board_owned_capabilities_imply_power_when_ble_power_is_stale() {
         let mut state = DeviceRuntimeState::new(unit_inventory());
         state
             .observe_state(CapabilityState {
@@ -563,7 +573,7 @@ mod tests {
                 capabilities: BTreeMap::from([
                     (BOARD_CAPABILITY.to_string(), true),
                     (MCP_CAPABILITY.to_string(), true),
-                    (VIDEO_CAPABILITY.to_string(), true),
+                    (VIDEO_CAPABILITY.to_string(), false),
                 ]),
                 metrics: BTreeMap::new(),
                 observed_at_ms: 1900,
@@ -573,20 +583,20 @@ mod tests {
 
         let snapshot = state.snapshot(2000);
 
-        assert_eq!(snapshot.redcon, Some(4));
-        assert_eq!(snapshot.capabilities.get(POWER_CAPABILITY), Some(&false));
-        assert_eq!(snapshot.capabilities.get(BOARD_CAPABILITY), Some(&false));
-        assert_eq!(snapshot.capabilities.get(MCP_CAPABILITY), Some(&false));
+        assert_eq!(snapshot.redcon, Some(2));
+        assert_eq!(snapshot.capabilities.get(POWER_CAPABILITY), Some(&true));
+        assert_eq!(snapshot.capabilities.get(BOARD_CAPABILITY), Some(&true));
+        assert_eq!(snapshot.capabilities.get(MCP_CAPABILITY), Some(&true));
         assert_eq!(snapshot.capabilities.get(VIDEO_CAPABILITY), Some(&false));
         assert_eq!(
             state.decide_publication(2000).unwrap(),
             DevicePublication::Birth {
-                redcon: 4,
+                redcon: 2,
                 metrics: vec![
                     Metric::boolean("capability.ble", true),
-                    Metric::boolean("capability.board", false),
-                    Metric::boolean("capability.mcp", false),
-                    Metric::boolean("capability.power", false),
+                    Metric::boolean("capability.board", true),
+                    Metric::boolean("capability.mcp", true),
+                    Metric::boolean("capability.power", true),
                     Metric::boolean("capability.sparkplug", true),
                     Metric::boolean("capability.video", false),
                 ],

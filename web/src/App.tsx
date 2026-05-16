@@ -59,9 +59,12 @@ import {
   getRouteDetailPanelOpenState,
   shouldRenderRouteCatalogPanel,
 } from './level-detail-panel'
-import { shouldSuppressRobotStateTeardownError } from './mcp-errors'
+import {
+  isRecoverableMcpActiveControlError,
+  shouldSuppressRobotStateTeardownError,
+} from './mcp-errors'
 import type { McpTransportKind } from './mcp-descriptor'
-import { getMcpSteadyMotionHeartbeatIntervalMs } from './mcp-lease'
+import { getMcpSteadyMotionHeartbeatIntervalMs } from './mcp-active-control'
 import CapabilityStack, { type CapabilityStackStatus } from './CapabilityStack'
 import NavigationUserMenu from './NavigationUserMenu'
 import NotificationLogPanel from './NotificationLogPanel'
@@ -139,7 +142,7 @@ type RouteHeaderState = {
 }
 
 const formatJson = (value: unknown): string => JSON.stringify(value, null, 2)
-const defaultMcpLeaseTtlMs = 5_000
+const defaultMcpActiveTtlMs = 5_000
 const robotStatePollIntervalMs = 5_000
 const routeSparkplugPollIntervalMs = 2_000
 const catalogSparkplugPollIntervalMs = 5_000
@@ -461,13 +464,12 @@ function App({ initialAuthError = '' }: AppProps) {
   const isRedconSleepCommandDisabled =
     !isSparkplugDeviceCommandAvailable || isUpdatingShadow
   const canLoadShadow = !isLoadingShadow && isShadowConnected
-  const canUseBoardVideo = currentDeviceAdapter?.canUseBoardVideo(reportedRedcon) ?? false
+  const canUseDriveControl = currentDeviceAdapter?.canUseDriveControl(reportedRedcon) ?? false
+  const isDriveControlActive =
+    route.kind === 'device' && isBotPanelOpen && canUseDriveControl && isShadowConnected
   const cmdVelRepeatIntervalMs = getMcpSteadyMotionHeartbeatIntervalMs(
-    robotState?.control.leaseTtlMs ?? defaultMcpLeaseTtlMs,
+    robotState?.control.activeTtlMs ?? defaultMcpActiveTtlMs,
   )
-  const isRobotMotionActive =
-    (robotState?.motion.leftSpeed ?? 0) !== 0 || (robotState?.motion.rightSpeed ?? 0) !== 0
-  const isRobotControlActive = robotState?.control.leaseHeldByCaller === true
   const reportedBoardLeftTrackSpeed = robotState?.motion.leftSpeed ?? null
   const reportedBoardRightTrackSpeed = robotState?.motion.rightSpeed ?? null
   const robotVideoLastError = robotState?.video.lastError ?? null
@@ -1437,6 +1439,9 @@ function App({ initialAuthError = '' }: AppProps) {
     try {
       await shadowSession.publishCmdVel(twist)
     } catch (caughtError) {
+      if (isRecoverableMcpActiveControlError(caughtError)) {
+        return
+      }
       enqueueRuntimeError(
         caughtError instanceof Error ? caughtError.message : 'Unable to publish board cmd_vel',
         'board-cmd-vel',
@@ -1521,8 +1526,7 @@ function App({ initialAuthError = '' }: AppProps) {
       if (
         shouldSuppressRobotStateTeardownError({
           error: caughtError,
-          canUseBoardVideo,
-          isBoardVideoExpanded,
+          isDriveControlActive,
           isShadowConnected,
           pendingTargetRedcon,
         })
@@ -1537,14 +1541,11 @@ function App({ initialAuthError = '' }: AppProps) {
   })
 
   useEffect(() => {
-    if (!isBoardVideoExpanded || !canUseBoardVideo || !isShadowConnected) {
+    if (!isDriveControlActive) {
       return
     }
 
     void requestRobotState()
-    if (isRobotMotionActive || isRobotControlActive) {
-      return
-    }
 
     const intervalId = window.setInterval(() => {
       void requestRobotState()
@@ -1554,16 +1555,12 @@ function App({ initialAuthError = '' }: AppProps) {
       window.clearInterval(intervalId)
     }
   }, [
-    canUseBoardVideo,
-    isBoardVideoExpanded,
-    isRobotControlActive,
-    isRobotMotionActive,
+    isDriveControlActive,
     pendingTargetRedcon,
-    isShadowConnected,
   ])
 
   useEffect(() => {
-    if (!isBoardVideoExpanded || !canUseBoardVideo || !isShadowConnected) {
+    if (!isDriveControlActive) {
       return
     }
 
@@ -1617,7 +1614,7 @@ function App({ initialAuthError = '' }: AppProps) {
       document.removeEventListener('visibilitychange', handleVisibilityChange)
       teleopController.deactivate()
     }
-  }, [canUseBoardVideo, cmdVelRepeatIntervalMs, isBoardVideoExpanded, isShadowConnected])
+  }, [cmdVelRepeatIntervalMs, isDriveControlActive])
 
   const loadShadow = async (): Promise<void> => {
     setIsLoadingShadow(true)

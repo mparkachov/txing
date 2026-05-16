@@ -9,9 +9,9 @@ import { ensureIotPolicyAttached, getIdentityId } from './iot-policy-attach'
 import { resolveIotDataEndpoint } from './iot-endpoint'
 import {
   isMcpSessionNotInitializedError,
-  isRecoverableMcpLeaseError,
+  isRecoverableMcpActiveControlError,
 } from './mcp-errors'
-import { getMcpLeaseRenewBeforeMs } from './mcp-lease'
+import { getMcpActiveControlRenewBeforeMs } from './mcp-active-control'
 import {
   parseMcpDescriptor,
   shouldAwaitInitialMcpDescriptor,
@@ -84,20 +84,21 @@ type PendingMcpRequest = {
 }
 type McpDiscoverySummary = {
   available: boolean | null
+  observedAtMs: number | null
   transport: string | null
   mcpProtocolVersion: string | null
   descriptorTopic: string | null
-  leaseRequired: boolean | null
-  leaseTtlMs: number | null
+  activeTtlMs: number | null
   serverVersion: string | null
 }
-type McpLeaseState = {
-  leaseToken: string
+type McpActiveControlState = {
+  epoch: number
   expiresAtMs: number
-  leaseTtlMs: number
+  activeTtlMs: number
 }
 type McpMotionCommandResult = {
-  leaseExpiresAtMs: number | null
+  activeExpiresAtMs: number | null
+  activeEpoch: number | null
   motion: RobotMotionState
 }
 export type ShadowSessionOptions = {
@@ -253,11 +254,11 @@ const getShadowRejectedMessage = (
 
 const normalizeMcpDiscoverySummary = (thingName: string): McpDiscoverySummary => ({
   available: null,
+  observedAtMs: null,
   transport: null,
   mcpProtocolVersion: null,
   descriptorTopic: buildMcpDescriptorTopic(thingName),
-  leaseRequired: null,
-  leaseTtlMs: null,
+  activeTtlMs: null,
   serverVersion: null,
 })
 
@@ -266,39 +267,39 @@ const createMcpSessionId = (): string =>
     ? crypto.randomUUID()
     : `session-${Date.now()}-${Math.random().toString(16).slice(2)}`
 
-const containsMcpLeaseToken = (value: unknown, depth = 0): boolean => {
+const containsMcpActiveEpoch = (value: unknown, depth = 0): boolean => {
   if (depth > 4 || !isRecord(value)) {
     return false
   }
-  if (typeof value.leaseToken === 'string' && value.leaseToken.trim()) {
+  if (typeof value.epoch === 'number' && Number.isFinite(value.epoch)) {
     return true
   }
-  return Object.values(value).some((child) => containsMcpLeaseToken(child, depth + 1))
+  return Object.values(value).some((child) => containsMcpActiveEpoch(child, depth + 1))
 }
 
-const parseMcpLeaseState = (value: unknown): McpLeaseState | null => {
+const parseMcpActiveControlState = (
+  value: unknown,
+  fallbackActiveTtlMs: number,
+): McpActiveControlState | null => {
   if (!isRecord(value)) {
     return null
   }
-  const leaseToken = value.leaseToken
-  const leaseTtlMs = value.leaseTtlMs
-  if (typeof leaseToken !== 'string' || !leaseToken) {
+  const activeControl = isRecord(value.activeControl) ? value.activeControl : value
+  const epoch = activeControl.epoch
+  if (typeof epoch !== 'number' || !Number.isInteger(epoch) || epoch <= 0) {
     return null
   }
-  if (
-    typeof leaseTtlMs !== 'number' ||
-    !Number.isFinite(leaseTtlMs) ||
-    leaseTtlMs <= 0
-  ) {
-    return null
-  }
+  const activeTtlMs =
+    typeof value.activeTtlMs === 'number' && Number.isFinite(value.activeTtlMs) && value.activeTtlMs > 0
+      ? Math.round(value.activeTtlMs)
+      : fallbackActiveTtlMs
   // Use local wall clock for renewal deadlines to avoid board/browser clock skew.
-  // Server still enforces the real lease validity; this only drives client renew timing.
-  const localExpiresAtMs = Date.now() + Math.round(leaseTtlMs)
+  // Server still enforces the real active-control validity; this only drives client renew timing.
+  const localExpiresAtMs = Date.now() + Math.round(activeTtlMs)
   return {
-    leaseToken,
+    epoch,
     expiresAtMs: localExpiresAtMs,
-    leaseTtlMs,
+    activeTtlMs,
   }
 }
 
@@ -313,12 +314,24 @@ const createDefaultRobotVideoState = (): RobotVideoState => ({
 const createDefaultRobotControlState = (
   overrides: Partial<RobotControlState> = {},
 ): RobotControlState => ({
-  leaseRequired: true,
-  leaseTtlMs: null,
-  leaseHeldByCaller: false,
-  leaseOwnerSessionId: null,
-  leaseExpiresAtMs: null,
+  activeRequired: true,
+  activeTtlMs: null,
+  activeHeldByCaller: false,
+  activeOwnerSessionId: null,
+  activeExpiresAtMs: null,
+  activeEpoch: null,
   ...overrides,
+})
+
+const createStoppedRobotMotionState = (
+  previousMotion: RobotMotionState | null = null,
+): RobotMotionState => ({
+  leftSpeed: 0,
+  rightSpeed: 0,
+  sequence:
+    typeof previousMotion?.sequence === 'number' && Number.isInteger(previousMotion.sequence)
+      ? previousMotion.sequence + 1
+      : 0,
 })
 
 const parseSignedPercent = (value: unknown): number | null =>
@@ -379,32 +392,34 @@ const parseRobotControlState = (value: unknown): RobotControlState | null => {
   if (!isRecord(value)) {
     return null
   }
-  if (
-    typeof value.leaseRequired !== 'boolean' ||
-    typeof value.leaseHeldByCaller !== 'boolean'
-  ) {
+  if (typeof value.activeRequired !== 'boolean' || typeof value.activeHeldByCaller !== 'boolean') {
     return null
   }
-  const leaseTtlMs =
-    typeof value.leaseTtlMs === 'number' && Number.isFinite(value.leaseTtlMs) && value.leaseTtlMs > 0
-      ? Math.round(value.leaseTtlMs)
+  const activeTtlMs =
+    typeof value.activeTtlMs === 'number' && Number.isFinite(value.activeTtlMs) && value.activeTtlMs > 0
+      ? Math.round(value.activeTtlMs)
       : null
-  const leaseExpiresAtMs =
-    typeof value.leaseExpiresAtMs === 'number' &&
-    Number.isFinite(value.leaseExpiresAtMs) &&
-    value.leaseExpiresAtMs >= 0
-      ? Math.round(value.leaseExpiresAtMs)
+  const activeExpiresAtMs =
+    typeof value.activeExpiresAtMs === 'number' &&
+    Number.isFinite(value.activeExpiresAtMs) &&
+    value.activeExpiresAtMs >= 0
+      ? Math.round(value.activeExpiresAtMs)
       : null
-  const leaseOwnerSessionId =
-    typeof value.leaseOwnerSessionId === 'string' && value.leaseOwnerSessionId.trim()
-      ? value.leaseOwnerSessionId
+  const activeOwnerSessionId =
+    typeof value.activeOwnerSessionId === 'string' && value.activeOwnerSessionId.trim()
+      ? value.activeOwnerSessionId
+      : null
+  const activeEpoch =
+    typeof value.activeEpoch === 'number' && Number.isInteger(value.activeEpoch) && value.activeEpoch > 0
+      ? value.activeEpoch
       : null
   return {
-    leaseRequired: value.leaseRequired,
-    leaseTtlMs,
-    leaseHeldByCaller: value.leaseHeldByCaller,
-    leaseOwnerSessionId,
-    leaseExpiresAtMs,
+    activeRequired: value.activeRequired,
+    activeTtlMs,
+    activeHeldByCaller: value.activeHeldByCaller,
+    activeOwnerSessionId,
+    activeExpiresAtMs,
+    activeEpoch,
   }
 }
 
@@ -433,14 +448,20 @@ const parseMcpMotionCommandResult = (value: unknown): McpMotionCommandResult | n
   if (!motion) {
     return null
   }
-  const leaseExpiresAtMs =
-    typeof value.leaseExpiresAtMs === 'number' &&
-    Number.isFinite(value.leaseExpiresAtMs) &&
-    value.leaseExpiresAtMs >= 0
-      ? Math.round(value.leaseExpiresAtMs)
+  const activeExpiresAtMs =
+    typeof value.activeExpiresAtMs === 'number' &&
+    Number.isFinite(value.activeExpiresAtMs) &&
+    value.activeExpiresAtMs >= 0
+      ? Math.round(value.activeExpiresAtMs)
+      : null
+  const activeControl = isRecord(value.activeControl) ? value.activeControl : null
+  const activeEpoch =
+    typeof activeControl?.epoch === 'number' && Number.isInteger(activeControl.epoch) && activeControl.epoch > 0
+      ? activeControl.epoch
       : null
   return {
-    leaseExpiresAtMs,
+    activeExpiresAtMs,
+    activeEpoch,
     motion,
   }
 }
@@ -513,7 +534,7 @@ class AwsIotShadowSession implements ShadowSession {
   private mcpRequestSeq = 0
   private mcpDiscovery: McpDiscoverySummary
   private mcpDescriptor: McpDescriptor | null = null
-  private mcpLease: McpLeaseState | null = null
+  private mcpActiveControl: McpActiveControlState | null = null
   private latestRobotState: RobotState | null = null
   private mcpSessionId: string | null = null
   private mcpSessionSubscribed = false
@@ -1045,6 +1066,35 @@ class AwsIotShadowSession implements ShadowSession {
     }
   }
 
+  private updateMcpAvailability(available: boolean, observedAtMs: unknown): void {
+    const nextObservedAtMs =
+      typeof observedAtMs === 'number' && Number.isFinite(observedAtMs)
+        ? Math.round(observedAtMs)
+        : null
+    if (nextObservedAtMs === null && this.mcpDiscovery.observedAtMs !== null) {
+      return
+    }
+    if (
+      nextObservedAtMs !== null &&
+      this.mcpDiscovery.observedAtMs !== null &&
+      nextObservedAtMs < this.mcpDiscovery.observedAtMs
+    ) {
+      return
+    }
+    this.mcpDiscovery.available = available
+    if (nextObservedAtMs !== null) {
+      this.mcpDiscovery.observedAtMs = nextObservedAtMs
+    }
+  }
+
+  private hasMcpDescriptorHint(): boolean {
+    return (
+      this.mcpDescriptor !== null ||
+      this.mcpDiscovery.mcpProtocolVersion !== null ||
+      this.mcpDiscovery.activeTtlMs !== null
+    )
+  }
+
   private handleNonShadowMessage(topic: string, payload: unknown): void {
     if (topic === this.mcpDescriptorTopic) {
       const parsed = parseShadowPayload(payload)
@@ -1062,7 +1112,7 @@ class AwsIotShadowSession implements ShadowSession {
     if (topic === this.mcpStatusTopic) {
       const parsed = parseShadowPayload(payload)
       if (isRecord(parsed) && typeof parsed.available === 'boolean') {
-        this.mcpDiscovery.available = parsed.available
+        this.updateMcpAvailability(parsed.available, parsed.observedAtMs ?? parsed.updatedAtMs)
       }
       return
     }
@@ -1084,8 +1134,14 @@ class AwsIotShadowSession implements ShadowSession {
     const descriptor = isRecord(reported.descriptor) ? reported.descriptor : null
     const status = isRecord(reported.status) ? reported.status : null
 
-    this.mcpDiscovery.available =
-      typeof status?.available === 'boolean' ? status.available : null
+    if (typeof status?.available === 'boolean') {
+      this.updateMcpAvailability(status.available, status.observedAtMs ?? status.updatedAtMs)
+    }
+    const parsedDescriptor = parseMcpDescriptor(descriptor)
+    if (parsedDescriptor) {
+      this.mcpDescriptor = parsedDescriptor
+      this.resolveMcpDescriptorWaiters()
+    }
     this.mcpDiscovery.transport =
       typeof descriptor?.transport === 'string' && descriptor.transport.trim()
         ? descriptor.transport
@@ -1093,16 +1149,17 @@ class AwsIotShadowSession implements ShadowSession {
     this.mcpDiscovery.mcpProtocolVersion =
       typeof descriptor?.mcpProtocolVersion === 'string' && descriptor.mcpProtocolVersion.trim()
         ? descriptor.mcpProtocolVersion
+        : typeof descriptor?.protocolVersion === 'string' && descriptor.protocolVersion.trim()
+          ? descriptor.protocolVersion
         : null
     this.mcpDiscovery.descriptorTopic =
       typeof descriptor?.descriptorTopic === 'string' && descriptor.descriptorTopic.trim()
         ? descriptor.descriptorTopic
         : this.mcpDescriptorTopic
-    this.mcpDiscovery.leaseRequired =
-      typeof descriptor?.leaseRequired === 'boolean' ? descriptor.leaseRequired : null
-    this.mcpDiscovery.leaseTtlMs =
-      typeof descriptor?.leaseTtlMs === 'number' && Number.isFinite(descriptor.leaseTtlMs)
-        ? Math.round(descriptor.leaseTtlMs)
+    const control = isRecord(descriptor?.control) ? descriptor.control : null
+    this.mcpDiscovery.activeTtlMs =
+      typeof control?.activeTtlMs === 'number' && Number.isFinite(control.activeTtlMs)
+        ? Math.round(control.activeTtlMs)
         : null
     this.mcpDiscovery.serverVersion =
       typeof descriptor?.serverVersion === 'string' && descriptor.serverVersion.trim()
@@ -1149,26 +1206,41 @@ class AwsIotShadowSession implements ShadowSession {
   }
 
   private buildLocalRobotControlState(
-    leaseExpiresAtMs: number | null,
-    leaseHeldByCaller: boolean,
+    activeExpiresAtMs: number | null,
+    activeHeldByCaller: boolean,
+    activeEpoch: number | null,
   ): RobotControlState {
-    const leaseTtlMs = this.mcpDescriptor?.leaseTtlMs ?? this.mcpDiscovery.leaseTtlMs ?? null
+    const activeTtlMs = this.mcpDescriptor?.activeTtlMs ?? this.mcpDiscovery.activeTtlMs ?? null
     return createDefaultRobotControlState({
-      leaseTtlMs,
-      leaseHeldByCaller,
-      leaseOwnerSessionId: leaseHeldByCaller ? this.mcpSessionId : null,
-      leaseExpiresAtMs,
+      activeTtlMs,
+      activeHeldByCaller,
+      activeOwnerSessionId: activeHeldByCaller ? this.mcpSessionId : null,
+      activeExpiresAtMs,
+      activeEpoch,
     })
   }
 
   private updateRobotStateFromMotionResult(
     motionResult: McpMotionCommandResult,
-    leaseHeldByCaller: boolean,
+    activeHeldByCaller: boolean,
   ): void {
     const currentVideo = this.latestRobotState?.video ?? createDefaultRobotVideoState()
     this.setLatestRobotState({
-      control: this.buildLocalRobotControlState(motionResult.leaseExpiresAtMs, leaseHeldByCaller),
+      control: this.buildLocalRobotControlState(
+        motionResult.activeExpiresAtMs,
+        activeHeldByCaller,
+        motionResult.activeEpoch,
+      ),
       motion: motionResult.motion,
+      video: currentVideo,
+    })
+  }
+
+  private updateRobotStateToLocalStop(): void {
+    const currentVideo = this.latestRobotState?.video ?? createDefaultRobotVideoState()
+    this.setLatestRobotState({
+      control: this.buildLocalRobotControlState(null, false, null),
+      motion: createStoppedRobotMotionState(this.latestRobotState?.motion ?? null),
       video: currentVideo,
     })
   }
@@ -1176,14 +1248,15 @@ class AwsIotShadowSession implements ShadowSession {
   private async publishCmdVelViaMcp(twist: Twist): Promise<void> {
     await this.ensureMcpSessionReady()
     if (isZeroTwist(twist)) {
-      if (!this.mcpLease) {
+      if (!this.mcpActiveControl) {
+        this.updateRobotStateToLocalStop()
         return
       }
-      const leaseToken = this.mcpLease.leaseToken
+      const epoch = this.mcpActiveControl.epoch
       try {
         const motionResult = parseMcpMotionCommandResult(
           await this.callMcpToolInternal('cmd_vel.stop', {
-            leaseToken,
+            epoch,
           }),
         )
         if (!motionResult) {
@@ -1193,37 +1266,38 @@ class AwsIotShadowSession implements ShadowSession {
       } catch (caughtError) {
         if (
           !isMcpSessionNotInitializedError(caughtError) &&
-          !isRecoverableMcpLeaseError(caughtError)
+          !isRecoverableMcpActiveControlError(caughtError)
         ) {
           throw caughtError
         }
         if (isMcpSessionNotInitializedError(caughtError)) {
           this.mcpInitialized = false
         }
-        this.mcpLease = null
+        this.mcpActiveControl = null
+        this.updateRobotStateToLocalStop()
         return
       }
       await this.releaseMcpControlBestEffort()
       if (this.latestRobotState) {
         this.setLatestRobotState({
           ...this.latestRobotState,
-          control: this.buildLocalRobotControlState(null, false),
+          control: this.buildLocalRobotControlState(null, false, null),
         })
       }
       return
     }
 
-    const lease = await this.ensureMcpLease()
-    const motionResult = await this.publishCmdVelWithLeaseRetry({
-      lease,
+    const active = await this.ensureMcpActiveControl()
+    const motionResult = await this.publishCmdVelWithActiveRetry({
+      active,
       twist,
     })
     this.updateRobotStateFromMotionResult(motionResult, true)
   }
 
   private async ensureMcpSessionReady(): Promise<void> {
-    if (this.mcpDiscovery.available === false) {
-      throw new Error('MCP service is currently unavailable')
+    if (this.mcpDiscovery.available === false && !this.hasMcpDescriptorHint()) {
+      await this.waitForMcpDescriptor(initialMcpDescriptorWaitTimeoutMs)
     }
     if (this.mcpInitialized) {
       return
@@ -1245,7 +1319,7 @@ class AwsIotShadowSession implements ShadowSession {
   private async initializeMcpSession(): Promise<void> {
     await this.ensureMcpTransportReady()
     const initializeResult = await this.publishMcpRequest('initialize', {
-      protocolVersion: this.mcpDiscovery.mcpProtocolVersion ?? '2025-11-25',
+      protocolVersion: this.mcpDiscovery.mcpProtocolVersion ?? '2026-05-16',
       capabilities: {},
       clientInfo: {
         name: 'txing-web',
@@ -1337,18 +1411,21 @@ class AwsIotShadowSession implements ShadowSession {
     this.setActiveMcpTransport('mqtt-jsonrpc')
   }
 
-  private async ensureMcpLease(): Promise<McpLeaseState> {
+  private async ensureMcpActiveControl(): Promise<McpActiveControlState> {
     const nowMs = Date.now()
-    const knownLeaseTtlMs = this.mcpDescriptor?.leaseTtlMs ?? this.mcpDiscovery.leaseTtlMs ?? 5_000
-    if (this.mcpLease) {
-      const activeLeaseTtlMs = this.mcpLease.leaseTtlMs || knownLeaseTtlMs
-      const renewBeforeMs = getMcpLeaseRenewBeforeMs(activeLeaseTtlMs)
-      if (nowMs < this.mcpLease.expiresAtMs - renewBeforeMs) {
-        return this.mcpLease
+    const knownActiveTtlMs = this.mcpDescriptor?.activeTtlMs ?? this.mcpDiscovery.activeTtlMs ?? 5_000
+    if (this.mcpActiveControl) {
+      const activeTtlMs = this.mcpActiveControl.activeTtlMs || knownActiveTtlMs
+      const renewBeforeMs = getMcpActiveControlRenewBeforeMs(activeTtlMs)
+      if (nowMs < this.mcpActiveControl.expiresAtMs - renewBeforeMs) {
+        return this.mcpActiveControl
       }
+      const renewed = await this.renewMcpActiveControl(this.mcpActiveControl.epoch)
+      this.mcpActiveControl = renewed
+      return renewed
     }
 
-    return this.acquireMcpLease()
+    return this.activateMcpControl()
   }
 
   private async warmUpMcpSession(): Promise<void> {
@@ -1392,47 +1469,61 @@ class AwsIotShadowSession implements ShadowSession {
   }
 
   private async releaseMcpControlBestEffort(): Promise<void> {
-    const lease = this.mcpLease
-    this.mcpLease = null
-    if (!lease) {
+    const active = this.mcpActiveControl
+    this.mcpActiveControl = null
+    if (!active) {
       return
     }
     try {
-      await this.callMcpToolInternal('control.release_lease', {
-        leaseToken: lease.leaseToken,
+      await this.callMcpToolInternal('control.release_active', {
+        epoch: active.epoch,
       })
     } catch {
       return
     }
   }
 
-  private async acquireMcpLease(): Promise<McpLeaseState> {
+  private async activateMcpControl(): Promise<McpActiveControlState> {
     let acquiredResult: unknown
     try {
-      acquiredResult = await this.callMcpToolInternal('control.acquire_lease', {})
+      acquiredResult = await this.callMcpToolInternal('control.activate', {
+        actor: 'txing-web',
+      })
     } catch (caughtError) {
       if (!isMcpSessionNotInitializedError(caughtError)) {
         throw caughtError
       }
       this.mcpInitialized = false
       await this.ensureMcpSessionReady()
-      acquiredResult = await this.callMcpToolInternal('control.acquire_lease', {})
+      acquiredResult = await this.callMcpToolInternal('control.activate', {
+        actor: 'txing-web',
+      })
     }
-    const acquired = parseMcpLeaseState(acquiredResult)
+    const knownActiveTtlMs = this.mcpDescriptor?.activeTtlMs ?? this.mcpDiscovery.activeTtlMs ?? 5_000
+    const acquired = parseMcpActiveControlState(acquiredResult, knownActiveTtlMs)
     if (!acquired) {
-      throw new Error('MCP control.acquire_lease returned an invalid payload')
+      throw new Error('MCP control.activate returned an invalid payload')
     }
-    this.mcpLease = acquired
+    this.mcpActiveControl = acquired
     return acquired
   }
 
-  private async callCmdVelPublish(
-    leaseToken: string,
-    twist: Twist,
-  ): Promise<McpMotionCommandResult> {
+  private async renewMcpActiveControl(epoch: number): Promise<McpActiveControlState> {
+    const knownActiveTtlMs = this.mcpDescriptor?.activeTtlMs ?? this.mcpDiscovery.activeTtlMs ?? 5_000
+    const renewed = parseMcpActiveControlState(
+      await this.callMcpToolInternal('control.renew_active', { epoch }),
+      knownActiveTtlMs,
+    )
+    if (!renewed) {
+      throw new Error('MCP control.renew_active returned an invalid payload')
+    }
+    return renewed
+  }
+
+  private async callCmdVelPublish(epoch: number, twist: Twist): Promise<McpMotionCommandResult> {
     const motionResult = parseMcpMotionCommandResult(
       await this.callMcpToolInternal('cmd_vel.publish', {
-        leaseToken,
+        epoch,
         twist,
       }),
     )
@@ -1442,18 +1533,18 @@ class AwsIotShadowSession implements ShadowSession {
     return motionResult
   }
 
-  private async publishCmdVelWithLeaseRetry({
-    lease,
+  private async publishCmdVelWithActiveRetry({
+    active,
     twist,
   }: {
-    lease: McpLeaseState
+    active: McpActiveControlState
     twist: Twist
   }): Promise<McpMotionCommandResult> {
     try {
-      return await this.callCmdVelPublish(lease.leaseToken, twist)
+      return await this.callCmdVelPublish(active.epoch, twist)
     } catch (caughtError) {
       if (
-        !isRecoverableMcpLeaseError(caughtError) &&
+        !isRecoverableMcpActiveControlError(caughtError) &&
         !isMcpSessionNotInitializedError(caughtError)
       ) {
         throw caughtError
@@ -1461,9 +1552,9 @@ class AwsIotShadowSession implements ShadowSession {
       if (isMcpSessionNotInitializedError(caughtError)) {
         this.mcpInitialized = false
       }
-      this.mcpLease = null
-      const refreshedLease = await this.acquireMcpLease()
-      return this.callCmdVelPublish(refreshedLease.leaseToken, twist)
+      this.mcpActiveControl = null
+      const refreshedActive = await this.activateMcpControl()
+      return this.callCmdVelPublish(refreshedActive.epoch, twist)
     }
   }
 
@@ -1475,17 +1566,17 @@ class AwsIotShadowSession implements ShadowSession {
   }
 
   private sendMcpStopAndReleaseBestEffort(): void {
-    const lease = this.mcpLease
-    if (!lease) {
+    const active = this.mcpActiveControl
+    if (!active) {
       return
     }
     this.publishMcpToolCallBestEffort('cmd_vel.stop', {
-      leaseToken: lease.leaseToken,
+      epoch: active.epoch,
     })
-    this.publishMcpToolCallBestEffort('control.release_lease', {
-      leaseToken: lease.leaseToken,
+    this.publishMcpToolCallBestEffort('control.release_active', {
+      epoch: active.epoch,
     })
-    this.mcpLease = null
+    this.mcpActiveControl = null
   }
 
   private publishMcpToolCallBestEffort(
@@ -1600,7 +1691,7 @@ class AwsIotShadowSession implements ShadowSession {
       try {
         return await this.mcpWebRtcHandle.request(message, mcpRequestTimeoutMs)
       } catch (caughtError) {
-        const canRetryOverMqtt = !this.mcpLease && !containsMcpLeaseToken(params)
+        const canRetryOverMqtt = !this.mcpActiveControl && !containsMcpActiveEpoch(params)
         this.handleMcpWebRtcFailure()
         if (!canRetryOverMqtt) {
           throw caughtError instanceof Error
@@ -1680,7 +1771,7 @@ class AwsIotShadowSession implements ShadowSession {
   private handleMcpWebRtcFailure(): void {
     this.mcpWebRtcUnavailable = true
     this.closeMcpWebRtcHandle()
-    this.mcpLease = null
+    this.mcpActiveControl = null
     this.mcpInitialized = false
     this.mcpSessionReadyPromise = null
     this.mcpSessionSubscribed = false
@@ -1693,7 +1784,7 @@ class AwsIotShadowSession implements ShadowSession {
   private resetMcpConnectionState(): void {
     this.closeMcpWebRtcHandle()
     this.mcpSessionReadyPromise = null
-    this.mcpLease = null
+    this.mcpActiveControl = null
     this.mcpInitialized = false
     this.mcpSessionSubscribed = false
     this.mcpSessionId = null

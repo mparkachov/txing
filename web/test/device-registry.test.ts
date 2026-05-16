@@ -10,11 +10,19 @@ describe('device web adapter registry', () => {
 
     expect(timeAdapter?.type).toBe('time')
     expect(timeAdapter?.canUseBoardVideo(1)).toBe(false)
+    expect(timeAdapter?.canUseDriveControl(1)).toBe(false)
     expect(unitAdapter?.type).toBe('unit')
     expect(unitAdapter?.buildVideoChannelName('unit-a1')).toBe('unit-a1-board-video')
+    expect(unitAdapter?.canUseBoardVideo(1)).toBe(true)
+    expect(unitAdapter?.canUseBoardVideo(2)).toBe(false)
+    expect(unitAdapter?.canUseDriveControl(1)).toBe(true)
+    expect(unitAdapter?.canUseDriveControl(2)).toBe(true)
+    expect(unitAdapter?.canUseDriveControl(3)).toBe(false)
     expect(weatherAdapter?.type).toBe('weather')
+    expect(weatherAdapter?.canUseDriveControl(1)).toBe(false)
     expect(powerAdapter?.type).toBe('power')
     expect(powerAdapter?.canUseBoardVideo(1)).toBe(false)
+    expect(powerAdapter?.canUseDriveControl(1)).toBe(false)
     expect(getDeviceWebAdapter('sensor')).toBeNull()
     expect(listDeviceWebAdapters().map((adapter) => adapter.type)).toEqual([
       'time',
@@ -37,6 +45,18 @@ describe('device web adapter registry', () => {
     ).toEqual({
       isDetailPanelOpen: true,
       isBoardVideoExpanded: true,
+    })
+
+    expect(
+      unitAdapter?.getAutoOpenState({
+        detailRedcon: 2,
+        routeKind: 'device',
+        hasActiveSession: true,
+        nextRedcon: 2,
+      }),
+    ).toEqual({
+      isDetailPanelOpen: true,
+      isBoardVideoExpanded: false,
     })
 
     expect(

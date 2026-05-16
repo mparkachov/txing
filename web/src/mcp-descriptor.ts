@@ -19,7 +19,7 @@ export type McpWebRtcTransportDescriptor = {
 export type McpTransportDescriptor = McpMqttTransportDescriptor | McpWebRtcTransportDescriptor
 
 export type McpDescriptor = {
-  leaseTtlMs: number
+  activeTtlMs: number
   transports: McpTransportDescriptor[]
 }
 
@@ -101,12 +101,20 @@ export const parseMcpDescriptor = (value: unknown): McpDescriptor | null => {
   if (!isRecord(value)) {
     return null
   }
-  const leaseTtlRaw = value.leaseTtlMs
-  if (typeof leaseTtlRaw !== 'number' || !Number.isFinite(leaseTtlRaw) || leaseTtlRaw <= 0) {
+  const control = isRecord(value.control) ? value.control : null
+  if (control?.mode !== 'active') {
+    return null
+  }
+  const activeTtlRaw = control.activeTtlMs
+  if (
+    typeof activeTtlRaw !== 'number' ||
+    !Number.isFinite(activeTtlRaw) ||
+    activeTtlRaw <= 0
+  ) {
     return null
   }
   return {
-    leaseTtlMs: Math.round(leaseTtlRaw),
+    activeTtlMs: Math.round(activeTtlRaw),
     transports: parseMcpTransports(value),
   }
 }

@@ -316,6 +316,65 @@ Notes:
 
 - No native RTC worker dependency is required in this phase.
 
+Current status as of 2026-05-16:
+
+- Implemented in the Rust unit daemon:
+  - MCP protocol version `2026-05-16`
+  - MQTT JSON-RPC MCP transport on
+    `txings/<thing>/mcp/session/<sessionId>/c2s` and `.../s2c`
+  - tools `control.get_state`, `control.activate`,
+    `control.renew_active`, `control.release_active`,
+    `cmd_vel.publish`, `cmd_vel.stop`, and `robot.get_state`
+  - one active-control slot with TTL, epoch checks, stale-epoch rejection,
+    no-active rejection, and no takeover in Phase 1
+  - motor ownership, Twist validation, tank mixing, PWM/GPIO output, and
+    watchdog neutralization on command silence, active expiry, MQTT loss, and
+    shutdown
+  - retained MCP descriptor/status publication and `mcp` named-shadow mirror
+  - retained v2 capability publication for `board=true`, `mcp=true`,
+    `video=false` while healthy and false/offline on shutdown
+- Implemented in AWS/IAM:
+  - daemon permissions for retained MCP topics, MCP session receive/publish,
+    `mcp` named-shadow updates, and retained capability state
+  - operator/browser policy coverage for MCP descriptor/status reads and
+    session `s2c` subscriptions
+  - cloud time runtime MCP IoT rule is scoped to `time-*` thing names so it
+    cannot answer unit MCP topics
+- Implemented in the web app:
+  - unit drive capability is enabled at REDCON `1` and `2`
+  - board video remains enabled only at REDCON `1`
+  - REDCON `2` renders the non-video drive panel with track gauges, battery,
+    board/BLE status, and MQTT transport indicator
+  - robot-state polling and keyboard teleop are tied to active unit detail plus
+    drive capability and shadow connection, not video expansion
+  - stale/default MCP unavailable shadow state no longer blocks MQTT MCP startup
+  - robot-state polling continues while motion is active so watchdog stops are
+    reflected back in the UI
+- Implemented in Sparkplug derivation:
+  - live daemon board/MCP capability state can derive REDCON `2` even if the BLE
+    power capability is temporarily stale false
+  - REDCON `1` remains non-convergent in Phase 1 because video capability stays
+    false
+
+Open Phase 1 rollout and validation items:
+
+- Deploy a new rig `sparkplug-manager` component/release containing the REDCON
+  derivation fix.
+- Deploy the AWS stack updates for the operator MCP policy and scoped cloud-time
+  MCP IoT rule.
+- Deploy the updated web bundle.
+- Deploy/restart the unit daemon release that contains the Phase 1 daemon
+  implementation.
+- Complete hardware validation on a clean unit install:
+  - command REDCON `4` to sleep, then command REDCON `1`; the expected Phase 1
+    outcome is convergence to REDCON `2` and a REDCON `1` convergence timeout
+    because video is unavailable
+  - drive over MQTT MCP without video
+  - confirm neutral behavior on key stop, blur, command silence, active expiry,
+    MQTT loss, and daemon shutdown
+  - confirm the UI reflects daemon watchdog stops through `robot.get_state`
+    polling
+
 ### Phase 2: Video Capability With Separate `kvs_master`
 
 Goal: reach the current Python board runtime behavior with the Rust daemon as
