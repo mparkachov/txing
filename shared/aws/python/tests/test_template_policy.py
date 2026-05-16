@@ -45,6 +45,19 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("Sid: DeviceCapabilityServiceTopics", template)
         self.assertIn("topic/txings/*/capability/v2/state", template)
 
+    def test_device_mqtt_mcp_topics_are_authorized_for_operator_sessions(self) -> None:
+        template = _template_text()
+
+        self.assertIn("Sid: DeviceMcpTopics", template)
+        self.assertIn("Sid: DeviceMcpTopicFilters", template)
+        self.assertIn("topic/txings/*/mcp/descriptor", template)
+        self.assertIn("topic/txings/*/mcp/status", template)
+        self.assertIn("topic/txings/*/mcp/session/*/c2s", template)
+        self.assertIn("topic/txings/*/mcp/session/*/s2c", template)
+        self.assertIn("topicfilter/txings/*/mcp/descriptor", template)
+        self.assertIn("topicfilter/txings/*/mcp/status", template)
+        self.assertIn("topicfilter/txings/*/mcp/session/*/s2c", template)
+
     def test_legacy_raw_cmd_vel_topic_permissions_are_removed(self) -> None:
         template = _template_text()
 
@@ -379,6 +392,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("AWS::IoT::TopicRule", template)
         self.assertIn("rate(1 minute)", template)
         self.assertIn("txings/+/mcp/session/+/c2s", template)
+        self.assertIn("WHERE startswith(topic(2), 'time-')", template)
         self.assertIn("txings/+/capability/v2/command", template)
         self.assertIn("TimeRuntimeCommandTopicRule:", template)
         self.assertIn("TimeRuntimeCommandRulePermission:", template)

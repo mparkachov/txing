@@ -152,7 +152,7 @@ Resources:
       TopicRulePayload:
         AwsIotSqlVersion: "2016-03-23"
         RuleDisabled: false
-        Sql: SELECT topic() AS mqttTopic, * FROM 'txings/+/mcp/session/+/c2s'
+        Sql: SELECT topic() AS mqttTopic, * FROM 'txings/+/mcp/session/+/c2s' WHERE startswith(topic(2), 'time-')
         Actions:
           - Lambda:
               FunctionArn: !GetAtt TimeRuntimeFunction.Arn

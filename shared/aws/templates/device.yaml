@@ -45,7 +45,10 @@ Resources:
           - Sid: DeviceMcpTopicFilters
             Effect: Allow
             Action: iot:Subscribe
-            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/txings/*/mcp/session/*/c2s
+            Resource:
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/txings/*/mcp/descriptor
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/txings/*/mcp/status
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/txings/*/mcp/session/*/s2c
           - Sid: DeviceVideoTopics
             Effect: Allow
             Action:

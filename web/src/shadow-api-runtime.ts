@@ -323,6 +323,17 @@ const createDefaultRobotControlState = (
   ...overrides,
 })
 
+const createStoppedRobotMotionState = (
+  previousMotion: RobotMotionState | null = null,
+): RobotMotionState => ({
+  leftSpeed: 0,
+  rightSpeed: 0,
+  sequence:
+    typeof previousMotion?.sequence === 'number' && Number.isInteger(previousMotion.sequence)
+      ? previousMotion.sequence + 1
+      : 0,
+})
+
 const parseSignedPercent = (value: unknown): number | null =>
   typeof value === 'number' && Number.isInteger(value) && value >= -100 && value <= 100
     ? value
@@ -1060,6 +1071,9 @@ class AwsIotShadowSession implements ShadowSession {
       typeof observedAtMs === 'number' && Number.isFinite(observedAtMs)
         ? Math.round(observedAtMs)
         : null
+    if (nextObservedAtMs === null && this.mcpDiscovery.observedAtMs !== null) {
+      return
+    }
     if (
       nextObservedAtMs !== null &&
       this.mcpDiscovery.observedAtMs !== null &&
@@ -1098,7 +1112,7 @@ class AwsIotShadowSession implements ShadowSession {
     if (topic === this.mcpStatusTopic) {
       const parsed = parseShadowPayload(payload)
       if (isRecord(parsed) && typeof parsed.available === 'boolean') {
-        this.updateMcpAvailability(parsed.available, parsed.observedAtMs)
+        this.updateMcpAvailability(parsed.available, parsed.observedAtMs ?? parsed.updatedAtMs)
       }
       return
     }
@@ -1121,7 +1135,7 @@ class AwsIotShadowSession implements ShadowSession {
     const status = isRecord(reported.status) ? reported.status : null
 
     if (typeof status?.available === 'boolean') {
-      this.updateMcpAvailability(status.available, status.observedAtMs)
+      this.updateMcpAvailability(status.available, status.observedAtMs ?? status.updatedAtMs)
     }
     const parsedDescriptor = parseMcpDescriptor(descriptor)
     if (parsedDescriptor) {
@@ -1222,10 +1236,20 @@ class AwsIotShadowSession implements ShadowSession {
     })
   }
 
+  private updateRobotStateToLocalStop(): void {
+    const currentVideo = this.latestRobotState?.video ?? createDefaultRobotVideoState()
+    this.setLatestRobotState({
+      control: this.buildLocalRobotControlState(null, false, null),
+      motion: createStoppedRobotMotionState(this.latestRobotState?.motion ?? null),
+      video: currentVideo,
+    })
+  }
+
   private async publishCmdVelViaMcp(twist: Twist): Promise<void> {
     await this.ensureMcpSessionReady()
     if (isZeroTwist(twist)) {
       if (!this.mcpActiveControl) {
+        this.updateRobotStateToLocalStop()
         return
       }
       const epoch = this.mcpActiveControl.epoch
@@ -1250,6 +1274,7 @@ class AwsIotShadowSession implements ShadowSession {
           this.mcpInitialized = false
         }
         this.mcpActiveControl = null
+        this.updateRobotStateToLocalStop()
         return
       }
       await this.releaseMcpControlBestEffort()
@@ -1273,9 +1298,6 @@ class AwsIotShadowSession implements ShadowSession {
   private async ensureMcpSessionReady(): Promise<void> {
     if (this.mcpDiscovery.available === false && !this.hasMcpDescriptorHint()) {
       await this.waitForMcpDescriptor(initialMcpDescriptorWaitTimeoutMs)
-    }
-    if (this.mcpDiscovery.available === false && !this.hasMcpDescriptorHint()) {
-      throw new Error('MCP service is currently unavailable')
     }
     if (this.mcpInitialized) {
       return

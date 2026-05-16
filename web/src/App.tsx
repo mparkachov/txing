@@ -470,9 +470,6 @@ function App({ initialAuthError = '' }: AppProps) {
   const cmdVelRepeatIntervalMs = getMcpSteadyMotionHeartbeatIntervalMs(
     robotState?.control.activeTtlMs ?? defaultMcpActiveTtlMs,
   )
-  const isRobotMotionActive =
-    (robotState?.motion.leftSpeed ?? 0) !== 0 || (robotState?.motion.rightSpeed ?? 0) !== 0
-  const isRobotControlActive = robotState?.control.activeHeldByCaller === true
   const reportedBoardLeftTrackSpeed = robotState?.motion.leftSpeed ?? null
   const reportedBoardRightTrackSpeed = robotState?.motion.rightSpeed ?? null
   const robotVideoLastError = robotState?.video.lastError ?? null
@@ -1549,9 +1546,6 @@ function App({ initialAuthError = '' }: AppProps) {
     }
 
     void requestRobotState()
-    if (isRobotMotionActive || isRobotControlActive) {
-      return
-    }
 
     const intervalId = window.setInterval(() => {
       void requestRobotState()
@@ -1562,8 +1556,6 @@ function App({ initialAuthError = '' }: AppProps) {
     }
   }, [
     isDriveControlActive,
-    isRobotControlActive,
-    isRobotMotionActive,
     pendingTargetRedcon,
   ])
 
