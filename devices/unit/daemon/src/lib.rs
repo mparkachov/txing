@@ -62,12 +62,12 @@ pub const DEFAULT_HEARTBEAT_SECONDS: u64 = 60;
 pub const DEFAULT_MCP_ACTIVE_TTL_MS: u64 = 5_000;
 pub const DEFAULT_MOTOR_WATCHDOG_TIMEOUT_MS: u64 = DEFAULT_MCP_ACTIVE_TTL_MS;
 pub const DEFAULT_MOTOR_PWM_SYSFS_ROOT: &str = "/sys/class/pwm";
-pub const DEFAULT_MOTOR_GPIO_SYSFS_ROOT: &str = "/sys/class/gpio";
 pub const DEFAULT_MOTOR_RAW_MAX_SPEED: i32 = 480;
 pub const DEFAULT_MOTOR_CMD_RAW_MIN_SPEED: i32 = 0;
 pub const DEFAULT_MOTOR_CMD_RAW_MAX_SPEED: i32 = DEFAULT_MOTOR_RAW_MAX_SPEED;
 pub const DEFAULT_MOTOR_PWM_HZ: u64 = 20_000;
 pub const DEFAULT_MOTOR_PWM_CHIP: u32 = 0;
+pub const DEFAULT_MOTOR_GPIO_CHIP: u32 = 0;
 pub const DEFAULT_MOTOR_LEFT_PWM_CHANNEL: u32 = 0;
 pub const DEFAULT_MOTOR_RIGHT_PWM_CHANNEL: u32 = 1;
 pub const DEFAULT_MOTOR_LEFT_DIR_GPIO: u32 = 5;
@@ -910,8 +910,8 @@ pub struct Cli {
     #[arg(long = "motor-pwm-sysfs-root")]
     pub motor_pwm_sysfs_root: Option<String>,
 
-    #[arg(long = "motor-gpio-sysfs-root")]
-    pub motor_gpio_sysfs_root: Option<String>,
+    #[arg(long = "motor-gpio-chip")]
+    pub motor_gpio_chip: Option<u32>,
 
     #[arg(long = "motor-raw-max-speed")]
     pub motor_raw_max_speed: Option<i32>,
@@ -957,12 +957,12 @@ pub struct Cli {
 pub struct MotorConfig {
     pub enabled: bool,
     pub pwm_sysfs_root: String,
-    pub gpio_sysfs_root: String,
     pub raw_max_speed: i32,
     pub cmd_raw_min_speed: i32,
     pub cmd_raw_max_speed: i32,
     pub pwm_hz: u64,
     pub pwm_chip: u32,
+    pub gpio_chip: u32,
     pub left_pwm_channel: u32,
     pub right_pwm_channel: u32,
     pub left_dir_gpio: u32,
@@ -1486,8 +1486,8 @@ pub struct SysfsMotorDriver {
     config: MotorConfig,
     left_pwm: SysfsPwmChannel,
     right_pwm: SysfsPwmChannel,
-    left_dir: SysfsGpioPin,
-    right_dir: SysfsGpioPin,
+    left_dir: GpioOutputPin,
+    right_dir: GpioOutputPin,
 }
 
 impl SysfsMotorDriver {
@@ -1504,8 +1504,8 @@ impl SysfsMotorDriver {
             config.right_pwm_channel,
             config.pwm_hz,
         )?;
-        let left_dir = SysfsGpioPin::open(&config.gpio_sysfs_root, config.left_dir_gpio)?;
-        let right_dir = SysfsGpioPin::open(&config.gpio_sysfs_root, config.right_dir_gpio)?;
+        let left_dir = GpioOutputPin::open(config.gpio_chip, config.left_dir_gpio)?;
+        let right_dir = GpioOutputPin::open(config.gpio_chip, config.right_dir_gpio)?;
         let mut driver = Self {
             config,
             left_pwm,
@@ -1584,7 +1584,7 @@ fn apply_motor_side(
     raw_max_speed: i32,
     inverted: bool,
     pwm: &mut SysfsPwmChannel,
-    direction: &mut SysfsGpioPin,
+    direction: &mut GpioOutputPin,
 ) -> Result<()> {
     let clamped = clamp_i32(raw_speed, -raw_max_speed, raw_max_speed);
     let effective = if inverted { -clamped } else { clamped };
@@ -1600,6 +1600,7 @@ struct SysfsPwmChannel {
     channel_path: PathBuf,
     period_ns: u64,
     owns_channel: bool,
+    closed: bool,
 }
 
 impl SysfsPwmChannel {
@@ -1621,6 +1622,7 @@ impl SysfsPwmChannel {
             channel_path,
             period_ns,
             owns_channel,
+            closed: false,
         };
         let _ = pwm.disable();
         pwm.set_period_ns(period_ns)?;
@@ -1649,6 +1651,10 @@ impl SysfsPwmChannel {
     }
 
     fn close(&mut self) -> Result<()> {
+        if self.closed {
+            return Ok(());
+        }
+        self.closed = true;
         let _ = self.set_duty_cycle_ns(0);
         let _ = self.disable();
         if self.owns_channel {
@@ -1661,6 +1667,12 @@ impl SysfsPwmChannel {
     }
 }
 
+impl Drop for SysfsPwmChannel {
+    fn drop(&mut self) {
+        let _ = self.close();
+    }
+}
+
 fn channel_number_from_path(path: &Path) -> Result<u32> {
     path.file_name()
         .and_then(|name| name.to_str())
@@ -1670,48 +1682,63 @@ fn channel_number_from_path(path: &Path) -> Result<u32> {
         .context("parse PWM channel number")
 }
 
+#[cfg(target_os = "linux")]
 #[derive(Debug)]
-struct SysfsGpioPin {
-    root: PathBuf,
+struct GpioOutputPin {
+    request: gpiocdev::Request,
+    chip: u32,
     pin: u32,
-    pin_path: PathBuf,
-    owns_pin: bool,
 }
 
-impl SysfsGpioPin {
-    fn open(root: &str, pin: u32) -> Result<Self> {
-        let root = PathBuf::from(root);
-        if !root.is_dir() {
-            bail!("GPIO sysfs root does not exist: {}", root.display());
-        }
-        let pin_path = root.join(format!("gpio{pin}"));
-        let mut owns_pin = false;
-        if !pin_path.is_dir() {
-            write_int(root.join("export"), pin)?;
-            owns_pin = true;
-            wait_for_dir(&pin_path, Duration::from_secs(1))?;
-        }
-        write_text(pin_path.join("direction"), "out\n")?;
-        write_int(pin_path.join("value"), 0_u8)?;
-        Ok(Self {
-            root,
-            pin,
-            pin_path,
-            owns_pin,
-        })
+#[cfg(target_os = "linux")]
+impl GpioOutputPin {
+    fn open(chip: u32, pin: u32) -> Result<Self> {
+        let chip_path = format!("/dev/gpiochip{chip}");
+        let request = gpiocdev::Request::builder()
+            .on_chip(chip_path.as_str())
+            .with_consumer("txing-unit-daemon")
+            .with_line(pin)
+            .as_output(gpiocdev::line::Value::Inactive)
+            .request()
+            .with_context(|| {
+                format!("request GPIO direction pin {pin} from {chip_path} as output")
+            })?;
+        Ok(Self { request, chip, pin })
     }
 
     fn set_value(&mut self, high: bool) -> Result<()> {
-        write_int(self.pin_path.join("value"), if high { 1_u8 } else { 0_u8 })
+        self.request
+            .set_lone_value(gpiocdev::line::Value::from(high))
+            .with_context(|| {
+                format!(
+                    "set GPIO direction pin {} on gpiochip{}",
+                    self.pin, self.chip
+                )
+            })
     }
 }
 
-impl Drop for SysfsGpioPin {
+#[cfg(target_os = "linux")]
+impl Drop for GpioOutputPin {
     fn drop(&mut self) {
         let _ = self.set_value(false);
-        if self.owns_pin {
-            let _ = write_int(self.root.join("unexport"), self.pin);
-        }
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+#[derive(Debug)]
+struct GpioOutputPin;
+
+#[cfg(not(target_os = "linux"))]
+impl GpioOutputPin {
+    fn open(chip: u32, pin: u32) -> Result<Self> {
+        bail!(
+            "GPIO direction pins require Linux GPIO character devices: /dev/gpiochip{chip} pin {pin}"
+        )
+    }
+
+    fn set_value(&mut self, _high: bool) -> Result<()> {
+        Ok(())
     }
 }
 
@@ -3289,6 +3316,14 @@ fn resolve_motor_config(
             "TXING_MOTOR_PWM_CHIP",
         )?)
         .unwrap_or(DEFAULT_MOTOR_PWM_CHIP);
+    let gpio_chip = cli
+        .motor_gpio_chip
+        .or(optional_u32_config(
+            process_env,
+            file_env,
+            "TXING_MOTOR_GPIO_CHIP",
+        )?)
+        .unwrap_or(DEFAULT_MOTOR_GPIO_CHIP);
     let left_pwm_channel = cli
         .motor_left_pwm_channel
         .or(optional_u32_config(
@@ -3344,23 +3379,15 @@ fn resolve_motor_config(
         "TXING_MOTOR_PWM_SYSFS_ROOT",
     )
     .unwrap_or_else(|| DEFAULT_MOTOR_PWM_SYSFS_ROOT.to_string());
-    let gpio_sysfs_root = optional_config_value(
-        cli.motor_gpio_sysfs_root.clone(),
-        process_env,
-        file_env,
-        "TXING_MOTOR_GPIO_SYSFS_ROOT",
-    )
-    .unwrap_or_else(|| DEFAULT_MOTOR_GPIO_SYSFS_ROOT.to_string());
-
     let config = MotorConfig {
         enabled,
         pwm_sysfs_root,
-        gpio_sysfs_root,
         raw_max_speed,
         cmd_raw_min_speed,
         cmd_raw_max_speed,
         pwm_hz,
         pwm_chip,
+        gpio_chip,
         left_pwm_channel,
         right_pwm_channel,
         left_dir_gpio,
@@ -3872,12 +3899,12 @@ mod tests {
         MotorConfig {
             enabled,
             pwm_sysfs_root: DEFAULT_MOTOR_PWM_SYSFS_ROOT.to_string(),
-            gpio_sysfs_root: DEFAULT_MOTOR_GPIO_SYSFS_ROOT.to_string(),
             raw_max_speed: DEFAULT_MOTOR_RAW_MAX_SPEED,
             cmd_raw_min_speed: DEFAULT_MOTOR_CMD_RAW_MIN_SPEED,
             cmd_raw_max_speed: DEFAULT_MOTOR_CMD_RAW_MAX_SPEED,
             pwm_hz: DEFAULT_MOTOR_PWM_HZ,
             pwm_chip: DEFAULT_MOTOR_PWM_CHIP,
+            gpio_chip: DEFAULT_MOTOR_GPIO_CHIP,
             left_pwm_channel: DEFAULT_MOTOR_LEFT_PWM_CHANNEL,
             right_pwm_channel: DEFAULT_MOTOR_RIGHT_PWM_CHANNEL,
             left_dir_gpio: DEFAULT_MOTOR_LEFT_DIR_GPIO,
