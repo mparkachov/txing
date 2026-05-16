@@ -48,6 +48,8 @@ artifacts:
 - `feature` points at explicitly named debug artifacts and must not be confused with production Greengrass component versions.
 - GitHub release assets should be immutable for each exact artifact version.
 - The unit daemon uses mise's GitHub backend directly; see [artifacts.md](./artifacts.md).
+- Unit daemon feature prereleases are published by the manual `Unit Daemon
+  Feature Prerelease` GitHub Actions workflow from pushed `feature/*` branches.
 - Read-only board boot flows may install `feature` channel artifacts into
   tmpfs-backed `mise` directories while using the persistent `stable` install as
   the fallback.
@@ -83,8 +85,6 @@ just rig::check <rig-id>
 just rig::deploy
 just rig::status <rig-id>
 just unit::daemon::run
-just unit::daemon::prerelease-build
-just unit::daemon::prerelease-publish
 just unit::board::run
 just web::dev
 just web::write-env
@@ -158,8 +158,6 @@ Board:
 
 ```bash
 just unit::daemon::run
-just unit::daemon::prerelease-build
-just unit::daemon::prerelease-publish
 just unit::board::check
 just unit::board::build-native
 just unit::board::build
