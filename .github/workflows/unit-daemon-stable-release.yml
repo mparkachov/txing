@@ -78,8 +78,8 @@ jobs:
 
           if (( target_major_num < current_major_num ||
                 (target_major_num == current_major_num && target_minor_num < current_minor_num) ||
-                (target_major_num == current_major_num && target_minor_num == current_minor_num && target_patch_num < current_patch_num) )); then
-            echo "Refusing stable release version downgrade from $current_version to $version." >&2
+                (target_major_num == current_major_num && target_minor_num == current_minor_num && target_patch_num <= current_patch_num) )); then
+            echo "Stable release version must be greater than current VERSION $current_version, got $version." >&2
             exit 1
           fi
 
@@ -107,14 +107,12 @@ jobs:
         run: |
           set -euo pipefail
 
-          git fetch --force --tags
-
-          if gh release view "$TAG" >/dev/null 2>&1; then
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "Stable release $TAG already exists; stable releases are immutable." >&2
             exit 1
           fi
 
-          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
             echo "Stable tag $TAG already exists; stable releases are immutable." >&2
             exit 1
           fi

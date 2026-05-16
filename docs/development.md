@@ -33,10 +33,10 @@ Production Greengrass component versions use `VERSION` exactly. Git SHA and
 dirty state are exported separately for diagnostics, but they are not part of
 the Greengrass `ComponentVersion`. Create stable releases with the manual
 `Unit Daemon Stable Release` GitHub Actions workflow from `main`; provide the
-new stable version in the workflow input, or leave it blank to use the next
-minor version. The workflow updates managed version files, commits the release
-bump to `main`, tags the commit, and publishes the GitHub Release. After pulling
-a release commit on a rig, the normal workflow is:
+new stable version greater than the current root `VERSION`, or leave the input
+blank to use the next minor version. The workflow updates managed version files,
+commits the release bump to `main`, tags the commit, and publishes the GitHub
+Release. After pulling a release commit on a rig, the normal workflow is:
 
 ```bash
 git pull

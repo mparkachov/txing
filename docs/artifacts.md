@@ -206,10 +206,11 @@ rm -f /tmp/txing-unit-daemon-config.tgz
 ### Publish A Stable Release
 
 Push the intended code to `main`, then run the `Unit Daemon Stable Release`
-workflow manually from `main`. Enter the new stable version, or leave the input
-blank to release the next minor version from the current root `VERSION`. The
-workflow bumps managed version files, commits that release bump to `main`, and
-publishes release `v<VERSION>`. It fails if that tag or release already exists.
+workflow manually from `main`. Enter a new stable version greater than the
+current root `VERSION`, or leave the input blank to release the next minor
+version. The workflow bumps managed version files, commits that release bump to
+`main`, and publishes release `v<VERSION>`. It fails if that tag or release
+already exists.
 
 ### Install Stable On A Board
 
