@@ -1308,6 +1308,23 @@ h1 {
   place-items: center;
 }
 
+.status-video-offline-surface {
+  position: relative;
+  min-height: 15rem;
+  aspect-ratio: 16 / 9;
+  border-radius: 18px;
+  overflow: hidden;
+  background:
+    linear-gradient(180deg, rgba(10, 18, 24, 0.96), rgba(7, 12, 16, 0.98)),
+    linear-gradient(135deg, rgba(238, 138, 29, 0.18), rgba(28, 56, 69, 0.2));
+}
+
+.status-video-offline-surface .status-video-overlay-bar {
+  position: absolute;
+  inset: 1rem;
+  width: auto;
+}
+
 .status-video-overlay {
   position: absolute;
   inset: 0;

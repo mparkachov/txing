@@ -142,6 +142,34 @@ class AwsTemplatePolicyTests(unittest.TestCase):
             "topic/$aws/things/${!iot:Connection.Thing.ThingName}/shadow/name/board/update",
             template,
         )
+        self.assertIn("Sid: DaemonMcpShadowUpdate", template)
+        self.assertIn(
+            "topic/$aws/things/${!iot:Connection.Thing.ThingName}/shadow/name/mcp/update",
+            template,
+        )
+        self.assertIn("Sid: DaemonMcpRetainedTopics", template)
+        self.assertIn(
+            "topic/txings/${!iot:Connection.Thing.ThingName}/mcp/descriptor",
+            template,
+        )
+        self.assertIn(
+            "topic/txings/${!iot:Connection.Thing.ThingName}/mcp/status",
+            template,
+        )
+        self.assertIn("Sid: DaemonMcpSessionReceive", template)
+        self.assertIn(
+            "topicfilter/txings/${!iot:Connection.Thing.ThingName}/mcp/session/+/c2s",
+            template,
+        )
+        self.assertIn("Sid: DaemonMcpSessionTopics", template)
+        self.assertIn(
+            "topic/txings/${!iot:Connection.Thing.ThingName}/mcp/session/*/c2s",
+            template,
+        )
+        self.assertIn(
+            "topic/txings/${!iot:Connection.Thing.ThingName}/mcp/session/*/s2c",
+            template,
+        )
         self.assertIn("Sid: DaemonCapabilityState", template)
         self.assertIn(
             "topic/txings/${!iot:Connection.Thing.ThingName}/capability/v2/state",
@@ -191,9 +219,10 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("attach-policy --policy-name \"$daemon_policy_name\"", daemon_justfile)
         self.assertIn("attach-thing-principal", daemon_justfile)
         self.assertIn("--thing-principal-type EXCLUSIVE_THING", daemon_justfile)
-        self.assertIn("/etc/txing/daemon", daemon_justfile)
-        self.assertIn("printf 'TXING_IOT_CERT_FILE=%s\\n' \"$cert_path\"", daemon_justfile)
-        self.assertIn("printf 'TXING_CLOUDWATCH_LOG_GROUP=%s\\n' \"$cloudwatch_log_group\"", daemon_justfile)
+        self.assertIn("TXING_DAEMON_CONFIG_DIR", daemon_justfile)
+        self.assertIn("$HOME/.config/txing/unit-daemon", daemon_justfile)
+        self.assertIn('cert_path="$daemon_config_dir/certificate.pem.crt"', daemon_justfile)
+        self.assertIn("printf 'export TXING_CLOUDWATCH_LOG_GROUP=%s\\n' \"$cloudwatch_log_group\"", daemon_justfile)
         self.assertNotIn("stack_output \"$AWS_STACK_NAME\" PolicyName", daemon_justfile)
         self.assertNotIn("DeviceDaemonCredentialRoleAlias", daemon_justfile)
 

@@ -5,6 +5,7 @@ const exampleAdapter: DeviceWebAdapter = {
   displayName: "Example Device",
   buildVideoChannelName: (deviceId) => `${deviceId}-board-video`,
   canUseBoardVideo: () => false,
+  canUseDriveControl: () => false,
   extractTelemetry: () => ({
     reportedBatteryMv: null,
     reportedBoardPower: null,

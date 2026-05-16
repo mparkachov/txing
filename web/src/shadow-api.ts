@@ -6,11 +6,12 @@ export type ShadowConnectionState = 'idle' | 'connecting' | 'connected' | 'error
 type ResolveIdToken = () => Promise<string>
 
 export type RobotControlState = {
-  leaseRequired: boolean
-  leaseTtlMs: number | null
-  leaseHeldByCaller: boolean
-  leaseOwnerSessionId: string | null
-  leaseExpiresAtMs: number | null
+  activeRequired: boolean
+  activeTtlMs: number | null
+  activeHeldByCaller: boolean
+  activeOwnerSessionId: string | null
+  activeExpiresAtMs: number | null
+  activeEpoch: number | null
 }
 
 export type RobotMotionState = {

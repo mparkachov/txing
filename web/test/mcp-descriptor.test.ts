@@ -7,14 +7,17 @@ import {
 } from '../src/mcp-descriptor'
 
 describe('MCP descriptor transport parsing', () => {
-  test('treats legacy descriptors without transports as MQTT-only', () => {
+  test('treats active MQTT descriptors without transports as MQTT-only', () => {
     expect(
       parseMcpDescriptor({
         transport: 'mqtt-jsonrpc',
-        leaseTtlMs: 5000,
+        control: {
+          mode: 'active',
+          activeTtlMs: 5000,
+        },
       }),
     ).toEqual({
-      leaseTtlMs: 5000,
+      activeTtlMs: 5000,
       transports: [
         {
           type: 'mqtt-jsonrpc',
@@ -24,9 +27,24 @@ describe('MCP descriptor transport parsing', () => {
     })
   })
 
+  test('rejects descriptors without active control metadata', () => {
+    expect(
+      parseMcpDescriptor({
+        transport: 'mqtt-jsonrpc',
+        control: {
+          mode: 'lease',
+          activeTtlMs: 5000,
+        },
+      }),
+    ).toBeNull()
+  })
+
   test('orders WebRTC data channel ahead of MQTT fallback', () => {
     const descriptor = parseMcpDescriptor({
-      leaseTtlMs: 5000,
+      control: {
+        mode: 'active',
+        activeTtlMs: 5000,
+      },
       transports: [
         {
           type: 'mqtt-jsonrpc',
@@ -59,7 +77,10 @@ describe('MCP descriptor transport parsing', () => {
 
   test('keeps MQTT fallback even when descriptor omits it', () => {
     const descriptor = parseMcpDescriptor({
-      leaseTtlMs: 5000,
+      control: {
+        mode: 'active',
+        activeTtlMs: 5000,
+      },
       transports: [
         {
           type: 'webrtc-datachannel',
@@ -94,7 +115,10 @@ describe('MCP descriptor transport parsing', () => {
     expect(
       shouldAwaitInitialMcpDescriptor(
         parseMcpDescriptor({
-          leaseTtlMs: 5000,
+          control: {
+            mode: 'active',
+            activeTtlMs: 5000,
+          },
           transports: [
             {
               type: 'webrtc-datachannel',

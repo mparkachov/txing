@@ -172,8 +172,7 @@ After=network-online.target systemd-time-wait-sync.service time-sync.target
 
 [Service]
 Type=simple
-User=$daemon_user
-Group=$daemon_group
+# Runs as root because Phase 1 owns PWM/GPIO motor control directly.
 WorkingDirectory=$daemon_home
 KillSignal=SIGINT
 TimeoutStartSec=180

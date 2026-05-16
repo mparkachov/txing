@@ -12,6 +12,7 @@ const weatherDeviceAdapter: DeviceWebAdapter = {
   displayName: 'Weather',
   buildVideoChannelName: (deviceId) => `${deviceId}-weather`,
   canUseBoardVideo: () => false,
+  canUseDriveControl: () => false,
   extractTelemetry: (shadow) => {
     const reportedPowerState = extractWeatherPowerReportedState(shadow)
     return {
