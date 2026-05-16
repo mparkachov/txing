@@ -39,7 +39,8 @@ Feature releases are GitHub prereleases:
 
 - tag and release name: `v<NEXT_PATCH>-feature.<unix_timestamp>`;
 - version source: next patch after root `VERSION`, plus a Unix timestamp;
-- publisher: local Linux `aarch64` Docker build followed by macOS `gh` publish;
+- publisher: manual `Unit Daemon Feature Prerelease` GitHub Actions workflow
+  from a pushed `feature/*` branch;
 - GitHub prerelease flag: `true`;
 - retention: latest 10 matching unit-daemon feature prereleases.
 
@@ -120,21 +121,18 @@ Rust `1.95.0`, runs daemon tests, builds and strips the Linux `aarch64` binary,
 packages the archive, and creates a normal GitHub Release for `v<VERSION>`.
 Stable tags and releases are immutable.
 
-Feature publishing is local:
+Feature publishing is CI-owned:
 
-```bash
-just unit::daemon::prerelease-builder-image
-just unit::daemon::prerelease-build
-just unit::daemon::prerelease-publish
+```text
+.github/workflows/unit-daemon-feature-prerelease.yml
 ```
 
-The build recipe requires Docker connected to a native Linux `arm64` daemon,
-requires a clean worktree, runs daemon tests, builds the release binary, strips
-it, packages it, and writes JSON metadata under
-`devices/unit/daemon/target/prerelease`. The publish recipe runs on macOS,
-requires authenticated `gh`, verifies the metadata commit, pushes the moving
-`feature/unit-daemon-prerelease` branch, creates the timestamped prerelease, and
-prunes older feature prereleases beyond the latest 10.
+The workflow runs manually from a pushed `feature/*` branch, builds on
+`ubuntu-24.04-arm`, installs Rust `1.95.0`, runs daemon tests, builds and strips
+the Linux `aarch64` binary, packages the archive, creates the timestamped
+prerelease, and prunes older feature prereleases beyond the latest 10. The
+workflow fails if it is dispatched from `main`, a tag, or any non-`feature/*`
+branch.
 
 ## Integrity Policy
 
@@ -143,18 +141,17 @@ The current implemented integrity policy is:
 - stable release tags and releases are immutable;
 - feature prereleases are timestamped and retained only for recent testing;
 - assets are retrieved from GitHub Releases over HTTPS through mise;
-- feature mode disables SLSA and GitHub artifact attestation checks because the
-  asset is built locally and uploaded through `gh`.
+- feature mode disables SLSA and GitHub artifact attestation checks because
+  checksum assets and attestations are not implemented for this channel.
 
 Checksum assets or GitHub artifact attestations are not implemented yet. Add
 them later only when stronger artifact integrity requirements are needed.
 
 ## Verified Behavior
 
-The current flow has been manually verified on a Raspberry Pi Zero 2 W with a
-read-only root filesystem:
+The board install behavior has been manually verified on a Raspberry Pi Zero 2
+W with a read-only root filesystem:
 
-- feature prerelease build and publish;
 - feature service install into `/var/tmp` and read-only-root reboot;
 - stable GitHub Actions release publish from `main`;
 - stable board install from the `main` raw installer;
@@ -270,16 +267,16 @@ published.
 
 ### Publish A Feature Prerelease
 
-From the macOS checkout:
+Push the feature branch, then run the `Unit Daemon Feature Prerelease` workflow
+manually from that `feature/*` branch. The workflow file must already exist on
+the default branch before GitHub exposes it for manual dispatch.
 
 ```bash
-just unit::daemon::prerelease-builder-image
-just unit::daemon::prerelease-build
-just unit::daemon::prerelease-publish
+git push origin HEAD
 ```
 
-Both build and publish require a clean worktree. Publish pushes the moving
-`feature/unit-daemon-prerelease` branch and a timestamped prerelease tag.
+The workflow publishes a timestamped prerelease tag for the selected branch
+head and prunes older unit-daemon feature prereleases beyond the latest 10.
 
 ### Opt A Board Into Feature
 
