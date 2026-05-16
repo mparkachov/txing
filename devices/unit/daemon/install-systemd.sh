@@ -195,6 +195,7 @@ EOF
     cat <<EOF
 
 ExecStartPre=/usr/bin/install -d -m 700 $tmp_root/mise $tmp_root/mise-cache $tmp_root/mise-tmp
+ExecStartPre=-$mise_bin upgrade txing-unit-daemon
 ExecStartPre=-$mise_bin install
 ExecStartPre=-/usr/bin/find $tmp_root/mise-cache $tmp_root/mise-tmp -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 EOF
