@@ -465,7 +465,7 @@ impl DeviceSession {
                     }
                 }
                 Some(command) = commands.recv() => {
-                    self.handle_command(command).await?;
+                    self.handle_command(command, advertisements).await?;
                 }
                 _ = stale_timer.tick() => {
                     self.check_stale().await?;
@@ -482,21 +482,13 @@ impl DeviceSession {
     }
 
     async fn handle_advertisement(&mut self, advertisement: Advertisement) -> Result<()> {
-        if !advertisement.matches_thing(&self.spec.thing_name) {
+        if !self.observe_matching_advertisement(advertisement) {
             return Ok(());
         }
-        if self.config.debug {
-            eprintln!(
-                "debug: BLE advertisement matched thing={} address={} rssi={:?} serviceAdvertised={} seq={}",
-                self.spec.thing_name,
-                advertisement.address,
-                advertisement.rssi,
-                advertisement.has_txing_service(),
-                advertisement.seq
-            );
-        }
-        self.last_advertisement = Some(advertisement.clone());
-        self.offline_published = false;
+        let advertisement = self
+            .last_advertisement
+            .clone()
+            .expect("matching advertisement was just recorded");
 
         if self.connected.is_some() {
             if self.config.debug {
@@ -550,6 +542,25 @@ impl DeviceSession {
         Ok(())
     }
 
+    fn observe_matching_advertisement(&mut self, advertisement: Advertisement) -> bool {
+        if !advertisement.matches_thing(&self.spec.thing_name) {
+            return false;
+        }
+        if self.config.debug {
+            eprintln!(
+                "debug: BLE advertisement matched thing={} address={} rssi={:?} serviceAdvertised={} seq={}",
+                self.spec.thing_name,
+                advertisement.address,
+                advertisement.rssi,
+                advertisement.has_txing_service(),
+                advertisement.seq
+            );
+        }
+        self.last_advertisement = Some(advertisement);
+        self.offline_published = false;
+        true
+    }
+
     fn should_connect_from_advertisement(&self) -> bool {
         match self.spec.kind {
             DeviceKind::Power => self.last_redcon.is_none_or(|redcon| redcon < REDCON_IDLE),
@@ -599,7 +610,11 @@ impl DeviceSession {
         self.next_connect_after_ms = 0;
     }
 
-    async fn handle_command(&mut self, command: CapabilityCommand) -> Result<()> {
+    async fn handle_command(
+        &mut self,
+        command: CapabilityCommand,
+        advertisements: &mut broadcast::Receiver<Advertisement>,
+    ) -> Result<()> {
         if command_deadline_expired(&command, now_ms()) {
             publish_command_result(
                 &self.config.adapter_id,
@@ -645,7 +660,11 @@ impl DeviceSession {
             }
         };
 
-        if let Err(err) = self.connect_for_command(&command).await {
+        if let Err(err) = self.connect_for_command(&command, advertisements).await {
+            eprintln!(
+                "warning: BLE REDCON command connection failed thing={} commandId={} targetRedcon={} error={err:#}",
+                self.spec.thing_name, command.command_id, command.target.redcon
+            );
             let retry_delay_ms = self.record_connect_failure(&err);
             self.next_connect_after_ms = now_ms().saturating_add(retry_delay_ms);
             publish_command_result(
@@ -692,6 +711,10 @@ impl DeviceSession {
             .write_redcon(target_redcon, self.config.command_timeout_ms)
             .await
         {
+            eprintln!(
+                "warning: BLE REDCON command write failed thing={} commandId={} targetRedcon={} bleRedcon={} error={err:#}",
+                self.spec.thing_name, command.command_id, command.target.redcon, target_redcon
+            );
             let retry_delay_ms = self.record_connect_failure(&err);
             self.next_connect_after_ms = now_ms().saturating_add(retry_delay_ms);
             self.connected = None;
@@ -709,6 +732,10 @@ impl DeviceSession {
         self.last_redcon = Some(target_redcon);
         self.seed_connected_state().await?;
         self.reset_connect_backoff();
+        eprintln!(
+            "BLE REDCON command succeeded thing={} commandId={} targetRedcon={} bleRedcon={}",
+            self.spec.thing_name, command.command_id, command.target.redcon, target_redcon
+        );
         publish_command_result(
             &self.config.adapter_id,
             &self.outbound_sender,
@@ -720,7 +747,11 @@ impl DeviceSession {
         Ok(())
     }
 
-    async fn connect_for_command(&mut self, command: &CapabilityCommand) -> Result<()> {
+    async fn connect_for_command(
+        &mut self,
+        command: &CapabilityCommand,
+        advertisements: &mut broadcast::Receiver<Advertisement>,
+    ) -> Result<()> {
         let retry_deadline_ms = command
             .deadline_ms
             .unwrap_or_else(|| now_ms().saturating_add(self.config.connect_timeout_ms));
@@ -749,10 +780,111 @@ impl DeviceSession {
                             BLE_COMMAND_CONNECT_RETRY_DELAY_MS
                         );
                     }
-                    sleep(Duration::from_millis(BLE_COMMAND_CONNECT_RETRY_DELAY_MS)).await;
+                    if self.has_fresh_advertisement() {
+                        self.wait_for_command_retry_delay(
+                            advertisements,
+                            BLE_COMMAND_CONNECT_RETRY_DELAY_MS,
+                        )
+                        .await?;
+                    } else {
+                        self.wait_for_fresh_command_advertisement(
+                            command,
+                            advertisements,
+                            retry_deadline_ms,
+                        )
+                        .await?;
+                    }
                 }
             }
         }
+    }
+
+    fn has_fresh_advertisement(&self) -> bool {
+        self.last_advertisement
+            .as_ref()
+            .is_some_and(|advertisement| self.advertisement_is_fresh(advertisement))
+    }
+
+    async fn wait_for_fresh_command_advertisement(
+        &mut self,
+        command: &CapabilityCommand,
+        advertisements: &mut broadcast::Receiver<Advertisement>,
+        deadline_ms: u64,
+    ) -> Result<()> {
+        loop {
+            if self.has_fresh_advertisement() {
+                return Ok(());
+            }
+            let now = now_ms();
+            if now >= deadline_ms {
+                bail!(
+                    "no fresh BLE advertisement for {} before command deadline commandId={} deadlineMs={deadline_ms}",
+                    self.spec.thing_name,
+                    command.command_id
+                );
+            }
+            let wait_ms = deadline_ms
+                .saturating_sub(now)
+                .min(BLE_COMMAND_CONNECT_RETRY_DELAY_MS)
+                .max(1);
+            let _ = self
+                .wait_for_command_advertisement(advertisements, wait_ms)
+                .await?;
+        }
+    }
+
+    async fn wait_for_command_retry_delay(
+        &mut self,
+        advertisements: &mut broadcast::Receiver<Advertisement>,
+        delay_ms: u64,
+    ) -> Result<()> {
+        let deadline = Instant::now() + Duration::from_millis(delay_ms.max(1));
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Ok(());
+            }
+            if self
+                .wait_for_command_advertisement(
+                    advertisements,
+                    u64::try_from(remaining.as_millis()).unwrap_or(u64::MAX),
+                )
+                .await?
+            {
+                return Ok(());
+            }
+        }
+    }
+
+    async fn wait_for_command_advertisement(
+        &mut self,
+        advertisements: &mut broadcast::Receiver<Advertisement>,
+        wait_ms: u64,
+    ) -> Result<bool> {
+        match timeout(Duration::from_millis(wait_ms.max(1)), advertisements.recv()).await {
+            Ok(Ok(advertisement)) => {
+                if self.observe_matching_advertisement(advertisement) {
+                    let advertisement = self
+                        .last_advertisement
+                        .clone()
+                        .expect("matching advertisement was just recorded");
+                    let seq = self.next_seq();
+                    self.publish_sample(advertisement_sample(&self.spec, &advertisement, seq))?;
+                    return Ok(true);
+                }
+            }
+            Ok(Err(broadcast::error::RecvError::Lagged(skipped))) => {
+                eprintln!(
+                    "warning: BLE command advertisement receiver lagged thing={} skipped={skipped}",
+                    self.spec.thing_name
+                );
+            }
+            Ok(Err(broadcast::error::RecvError::Closed)) => {
+                bail!("BLE advertisement receiver closed before command write");
+            }
+            Err(_) => {}
+        }
+        Ok(false)
     }
 
     async fn connect(&mut self, wait_for_cap: bool) -> Result<ConnectOutcome> {
@@ -1215,6 +1347,8 @@ fn ble_error_indicates_host_resource_exhaustion(message: &str) -> bool {
 fn ble_command_connect_error_is_retryable(err: &anyhow::Error) -> bool {
     let message = format!("{err:#}");
     message.contains("BLE peripheral lookup timed out")
+        || message.contains("no BLE advertisement has been observed")
+        || message.contains("last BLE advertisement")
         || message.contains("is not visible")
         || message.contains("BLE connect timed out")
         || message.contains("BLE connect session timed out")
@@ -2727,8 +2861,12 @@ mod tests {
             deadline_ms: None,
             seq: 11,
         };
+        let (_advertisement_sender, mut advertisements) = broadcast::channel(1);
 
-        session.handle_command(command).await.unwrap();
+        session
+            .handle_command(command, &mut advertisements)
+            .await
+            .unwrap();
 
         let outbound = receiver.recv().await.unwrap();
         let result: txing_capability_protocol::CapabilityCommandResult =
@@ -2781,9 +2919,93 @@ mod tests {
         assert!(ble_command_connect_error_is_retryable(&anyhow!(
             "connect BLE peripheral: le-connection-abort-by-local"
         )));
+        assert!(ble_command_connect_error_is_retryable(&anyhow!(
+            "last BLE advertisement for power-1 is stale"
+        )));
+        assert!(ble_command_connect_error_is_retryable(&anyhow!(
+            "no BLE advertisement has been observed for power-1"
+        )));
         assert!(!ble_command_connect_error_is_retryable(&anyhow!(
             "BLE command characteristic is missing"
         )));
+    }
+
+    #[tokio::test]
+    async fn command_wait_consumes_next_matching_advertisement() {
+        let (sender, mut receiver) = mpsc::unbounded_channel();
+        let (shadow_sender, mut shadow_receiver) = mpsc::unbounded_channel();
+        let mut session = DeviceSession::new(
+            power_spec(),
+            RuntimeConfig::default(),
+            sender,
+            shadow_sender,
+            None,
+        );
+        let (advertisement_sender, mut advertisements) = broadcast::channel(4);
+        advertisement_sender.send(advertisement()).unwrap();
+
+        session
+            .wait_for_fresh_command_advertisement(
+                &CapabilityCommand {
+                    schema_version: SCHEMA_VERSION.to_string(),
+                    command_id: "cmd-1".to_string(),
+                    thing_name: "power-1".to_string(),
+                    target: CapabilityCommandTarget { redcon: 3 },
+                    reason: "test".to_string(),
+                    issued_at_ms: now_ms(),
+                    deadline_ms: None,
+                    seq: 1,
+                },
+                &mut advertisements,
+                now_ms().saturating_add(1_000),
+            )
+            .await
+            .unwrap();
+
+        assert!(session.has_fresh_advertisement());
+        let outbound = receiver.recv().await.unwrap();
+        let state: CapabilityState = serde_json::from_slice(&outbound.payload).unwrap();
+        assert_eq!(state.thing_name, "power-1");
+        assert_eq!(state.capabilities.get("ble"), Some(&true));
+
+        let shadow = shadow_receiver.recv().await.unwrap();
+        assert_eq!(shadow.topic, "$aws/things/power-1/shadow/name/ble/update");
+    }
+
+    #[cfg(not(all(feature = "ble-real", any(target_os = "linux", target_os = "macos"))))]
+    #[tokio::test]
+    async fn command_connect_uses_existing_connection_with_stale_advertisement() {
+        let (sender, _receiver) = mpsc::unbounded_channel();
+        let (shadow_sender, _shadow_receiver) = mpsc::unbounded_channel();
+        let mut session = DeviceSession::new(
+            power_spec(),
+            RuntimeConfig::default(),
+            sender,
+            shadow_sender,
+            None,
+        );
+        let mut stale_advertisement = advertisement();
+        stale_advertisement.observed_at_ms = now_ms().saturating_sub(60_000);
+        session.last_advertisement = Some(stale_advertisement);
+        session.connected = Some(ConnectedDevice { connected: true });
+        let (_advertisement_sender, mut advertisements) = broadcast::channel(1);
+
+        session
+            .connect_for_command(
+                &CapabilityCommand {
+                    schema_version: SCHEMA_VERSION.to_string(),
+                    command_id: "cmd-1".to_string(),
+                    thing_name: "power-1".to_string(),
+                    target: CapabilityCommandTarget { redcon: 3 },
+                    reason: "test".to_string(),
+                    issued_at_ms: now_ms(),
+                    deadline_ms: None,
+                    seq: 1,
+                },
+                &mut advertisements,
+            )
+            .await
+            .unwrap();
     }
 
     #[cfg(not(all(feature = "ble-real", any(target_os = "linux", target_os = "macos"))))]

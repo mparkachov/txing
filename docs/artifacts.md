@@ -28,7 +28,8 @@ txing-unit-daemon
 Stable releases are normal GitHub Releases:
 
 - tag and release name: `v<VERSION>`, for example `v0.9.114`;
-- version source: repository root `VERSION`;
+- version source: manual workflow input, or the next minor version computed from
+  repository root `VERSION` when the input is blank;
 - publisher: manual `Unit Daemon Stable Release` GitHub Actions workflow from
   `main`;
 - GitHub prerelease flag: `false`;
@@ -204,9 +205,11 @@ rm -f /tmp/txing-unit-daemon-config.tgz
 
 ### Publish A Stable Release
 
-After merging a release bump to `main`, run the `Unit Daemon Stable Release`
-workflow manually from `main`. It publishes release `v<VERSION>` and fails if
-that tag or release already exists.
+Push the intended code to `main`, then run the `Unit Daemon Stable Release`
+workflow manually from `main`. Enter the new stable version, or leave the input
+blank to release the next minor version from the current root `VERSION`. The
+workflow bumps managed version files, commits that release bump to `main`, and
+publishes release `v<VERSION>`. It fails if that tag or release already exists.
 
 ### Install Stable On A Board
 

@@ -31,9 +31,12 @@ semantic version such as `x.y.z`.
 
 Production Greengrass component versions use `VERSION` exactly. Git SHA and
 dirty state are exported separately for diagnostics, but they are not part of
-the Greengrass `ComponentVersion`. Bump `VERSION` locally and commit that change
-when intentionally creating a new release. After pulling a release commit on a
-rig, the normal workflow is:
+the Greengrass `ComponentVersion`. Create stable releases with the manual
+`Unit Daemon Stable Release` GitHub Actions workflow from `main`; provide the
+new stable version in the workflow input, or leave it blank to use the next
+minor version. The workflow updates managed version files, commits the release
+bump to `main`, tags the commit, and publishes the GitHub Release. After pulling
+a release commit on a rig, the normal workflow is:
 
 ```bash
 git pull

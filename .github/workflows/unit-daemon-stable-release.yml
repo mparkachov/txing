@@ -2,6 +2,11 @@ name: Unit Daemon Stable Release
 
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Stable version to release. Leave blank to use the next minor version from VERSION."
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -28,18 +33,24 @@ jobs:
 
       - name: Resolve release metadata
         id: metadata
+        env:
+          VERSION_INPUT: ${{ inputs.version }}
         shell: bash
         run: |
           set -euo pipefail
 
-          version="$(tr -d '[:space:]' < VERSION)"
-          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "VERSION must contain a stable semantic version like x.y.z, got: $version" >&2
+          current_version="$(tr -d '[:space:]' < VERSION)"
+          if [[ ! "$current_version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "VERSION must contain a stable semantic version like x.y.z, got: $current_version" >&2
             exit 1
           fi
+          current_major="${BASH_REMATCH[1]}"
+          current_minor="${BASH_REMATCH[2]}"
+          current_patch="${BASH_REMATCH[3]}"
+          current_major_num=$((10#$current_major))
+          current_minor_num=$((10#$current_minor))
+          current_patch_num=$((10#$current_patch))
 
-          tag="v$version"
-          release_target="$(git rev-parse HEAD)"
           if [ "${GITHUB_REF_TYPE}" != "branch" ]; then
             echo "Stable release workflow must be run manually from a branch, got ref type: ${GITHUB_REF_TYPE}" >&2
             exit 1
@@ -49,9 +60,44 @@ jobs:
             exit 1
           fi
 
+          requested_version="$(printf '%s' "$VERSION_INPUT" | tr -d '[:space:]')"
+          if [ -z "$requested_version" ]; then
+            version="$current_major.$((current_minor_num + 1)).0"
+            version_source="next-minor-default"
+          else
+            version="$requested_version"
+            version_source="workflow-input"
+          fi
+          if [[ ! "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "Stable release version must be semantic version x.y.z, got: $version" >&2
+            exit 1
+          fi
+          target_major_num=$((10#${BASH_REMATCH[1]}))
+          target_minor_num=$((10#${BASH_REMATCH[2]}))
+          target_patch_num=$((10#${BASH_REMATCH[3]}))
+
+          if (( target_major_num < current_major_num ||
+                (target_major_num == current_major_num && target_minor_num < current_minor_num) ||
+                (target_major_num == current_major_num && target_minor_num == current_minor_num && target_patch_num < current_patch_num) )); then
+            echo "Refusing stable release version downgrade from $current_version to $version." >&2
+            exit 1
+          fi
+
+          tag="v$version"
+
+          {
+            echo "### Unit daemon stable release"
+            echo
+            echo "- Current VERSION: \`$current_version\`"
+            echo "- Requested version: \`$version\`"
+            echo "- Version source: \`$version_source\`"
+            echo "- Tag: \`$tag\`"
+          } >>"$GITHUB_STEP_SUMMARY"
+
+          echo "current_version=$current_version" >>"$GITHUB_OUTPUT"
           echo "version=$version" >>"$GITHUB_OUTPUT"
+          echo "version_source=$version_source" >>"$GITHUB_OUTPUT"
           echo "tag=$tag" >>"$GITHUB_OUTPUT"
-          echo "release_target=$release_target" >>"$GITHUB_OUTPUT"
 
       - name: Reject existing immutable release
         env:
@@ -60,6 +106,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          git fetch --force --tags
 
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Stable release $TAG already exists; stable releases are immutable." >&2
@@ -94,6 +142,25 @@ jobs:
           rustup default "$RUST_VERSION"
           rustc -vV
           cargo -V
+
+      - name: Install uv
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --user uv || python3 -m pip install --user --break-system-packages uv
+          echo "$HOME/.local/bin" >>"$GITHUB_PATH"
+          "$HOME/.local/bin/uv" --version
+
+      - name: Bump release version
+        env:
+          VERSION: ${{ steps.metadata.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 release/src/txing_release/cli.py bump "$VERSION"
+          python3 release/src/txing_release/cli.py check
+          git diff --stat
 
       - name: Restore Cargo cache
         uses: actions/cache@v4
@@ -148,12 +215,36 @@ jobs:
 
           echo "asset_path=$asset_path" >>"$GITHUB_OUTPUT"
 
+      - name: Commit release bump
+        id: release_refs
+        env:
+          TAG: ${{ steps.metadata.outputs.tag }}
+          VERSION: ${{ steps.metadata.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if ! git diff --quiet || [ -n "$(git status --porcelain --untracked-files=normal)" ]; then
+            git add -A
+            git commit -m "release: bump version to $VERSION"
+          else
+            echo "Managed version files are already at $VERSION; no release bump commit needed."
+          fi
+
+          release_target="$(git rev-parse HEAD)"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+
+          echo "release_target=$release_target" >>"$GITHUB_OUTPUT"
+
       - name: Publish stable release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.metadata.outputs.tag }}
           VERSION: ${{ steps.metadata.outputs.version }}
-          RELEASE_TARGET: ${{ steps.metadata.outputs.release_target }}
+          RELEASE_TARGET: ${{ steps.release_refs.outputs.release_target }}
           ASSET_PATH: ${{ steps.package.outputs.asset_path }}
         shell: bash
         run: |
@@ -172,11 +263,10 @@ jobs:
           args=(
             "$TAG"
             "$ASSET_PATH"
+            --target "$RELEASE_TARGET"
             --title "$TAG"
             --notes-file "$notes_file"
             --latest=true
           )
-
-          args+=(--target "$RELEASE_TARGET")
 
           gh release create "${args[@]}"
