@@ -2382,7 +2382,10 @@ impl RuntimeState {
         };
         self.publish_mcp_response(publisher, &session_id, payload)
             .await?;
-        self.publish_mcp_status(publisher, observed_at_ms).await
+        if mcp_request_updates_status(method, request.get("params")) {
+            self.publish_mcp_status(publisher, observed_at_ms).await?;
+        }
+        Ok(())
     }
 
     fn handle_mcp_tool_call(
@@ -2529,6 +2532,23 @@ impl RuntimeState {
             })
             .await
     }
+}
+
+fn mcp_request_updates_status(method: &str, params: Option<&Value>) -> bool {
+    if method != "tools/call" {
+        return false;
+    }
+    let Some(tool_name) = params
+        .and_then(Value::as_object)
+        .and_then(|params| params.get("name"))
+        .and_then(Value::as_str)
+    else {
+        return false;
+    };
+    matches!(
+        tool_name,
+        "control.activate" | "control.renew_active" | "control.release_active"
+    )
 }
 
 fn parse_epoch_argument(arguments: &Value) -> Result<u64> {
@@ -4201,6 +4221,31 @@ mod tests {
                 .contains("no active control")
         );
         assert!(recorder.calls().contains(&(0, 0)));
+    }
+
+    #[test]
+    fn mcp_status_updates_are_kept_off_cmd_vel_hot_path() {
+        let cmd_vel_publish = serde_json::json!({
+            "name": "cmd_vel.publish",
+            "arguments": {"epoch": 1, "twist": {}}
+        });
+        let robot_state = serde_json::json!({"name": "robot.get_state"});
+        let activate = serde_json::json!({"name": "control.activate"});
+        let renew = serde_json::json!({"name": "control.renew_active"});
+        let release = serde_json::json!({"name": "control.release_active"});
+
+        assert!(!mcp_request_updates_status("initialize", None));
+        assert!(!mcp_request_updates_status(
+            "tools/call",
+            Some(&cmd_vel_publish)
+        ));
+        assert!(!mcp_request_updates_status(
+            "tools/call",
+            Some(&robot_state)
+        ));
+        assert!(mcp_request_updates_status("tools/call", Some(&activate)));
+        assert!(mcp_request_updates_status("tools/call", Some(&renew)));
+        assert!(mcp_request_updates_status("tools/call", Some(&release)));
     }
 
     #[test]

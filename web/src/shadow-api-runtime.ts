@@ -84,6 +84,7 @@ type PendingMcpRequest = {
 }
 type McpDiscoverySummary = {
   available: boolean | null
+  observedAtMs: number | null
   transport: string | null
   mcpProtocolVersion: string | null
   descriptorTopic: string | null
@@ -253,6 +254,7 @@ const getShadowRejectedMessage = (
 
 const normalizeMcpDiscoverySummary = (thingName: string): McpDiscoverySummary => ({
   available: null,
+  observedAtMs: null,
   transport: null,
   mcpProtocolVersion: null,
   descriptorTopic: buildMcpDescriptorTopic(thingName),
@@ -1053,6 +1055,32 @@ class AwsIotShadowSession implements ShadowSession {
     }
   }
 
+  private updateMcpAvailability(available: boolean, observedAtMs: unknown): void {
+    const nextObservedAtMs =
+      typeof observedAtMs === 'number' && Number.isFinite(observedAtMs)
+        ? Math.round(observedAtMs)
+        : null
+    if (
+      nextObservedAtMs !== null &&
+      this.mcpDiscovery.observedAtMs !== null &&
+      nextObservedAtMs < this.mcpDiscovery.observedAtMs
+    ) {
+      return
+    }
+    this.mcpDiscovery.available = available
+    if (nextObservedAtMs !== null) {
+      this.mcpDiscovery.observedAtMs = nextObservedAtMs
+    }
+  }
+
+  private hasMcpDescriptorHint(): boolean {
+    return (
+      this.mcpDescriptor !== null ||
+      this.mcpDiscovery.mcpProtocolVersion !== null ||
+      this.mcpDiscovery.activeTtlMs !== null
+    )
+  }
+
   private handleNonShadowMessage(topic: string, payload: unknown): void {
     if (topic === this.mcpDescriptorTopic) {
       const parsed = parseShadowPayload(payload)
@@ -1070,7 +1098,7 @@ class AwsIotShadowSession implements ShadowSession {
     if (topic === this.mcpStatusTopic) {
       const parsed = parseShadowPayload(payload)
       if (isRecord(parsed) && typeof parsed.available === 'boolean') {
-        this.mcpDiscovery.available = parsed.available
+        this.updateMcpAvailability(parsed.available, parsed.observedAtMs)
       }
       return
     }
@@ -1092,8 +1120,14 @@ class AwsIotShadowSession implements ShadowSession {
     const descriptor = isRecord(reported.descriptor) ? reported.descriptor : null
     const status = isRecord(reported.status) ? reported.status : null
 
-    this.mcpDiscovery.available =
-      typeof status?.available === 'boolean' ? status.available : null
+    if (typeof status?.available === 'boolean') {
+      this.updateMcpAvailability(status.available, status.observedAtMs)
+    }
+    const parsedDescriptor = parseMcpDescriptor(descriptor)
+    if (parsedDescriptor) {
+      this.mcpDescriptor = parsedDescriptor
+      this.resolveMcpDescriptorWaiters()
+    }
     this.mcpDiscovery.transport =
       typeof descriptor?.transport === 'string' && descriptor.transport.trim()
         ? descriptor.transport
@@ -1237,7 +1271,10 @@ class AwsIotShadowSession implements ShadowSession {
   }
 
   private async ensureMcpSessionReady(): Promise<void> {
-    if (this.mcpDiscovery.available === false) {
+    if (this.mcpDiscovery.available === false && !this.hasMcpDescriptorHint()) {
+      await this.waitForMcpDescriptor(initialMcpDescriptorWaitTimeoutMs)
+    }
+    if (this.mcpDiscovery.available === false && !this.hasMcpDescriptorHint()) {
       throw new Error('MCP service is currently unavailable')
     }
     if (this.mcpInitialized) {

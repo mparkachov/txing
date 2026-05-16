@@ -59,7 +59,10 @@ import {
   getRouteDetailPanelOpenState,
   shouldRenderRouteCatalogPanel,
 } from './level-detail-panel'
-import { shouldSuppressRobotStateTeardownError } from './mcp-errors'
+import {
+  isRecoverableMcpActiveControlError,
+  shouldSuppressRobotStateTeardownError,
+} from './mcp-errors'
 import type { McpTransportKind } from './mcp-descriptor'
 import { getMcpSteadyMotionHeartbeatIntervalMs } from './mcp-active-control'
 import CapabilityStack, { type CapabilityStackStatus } from './CapabilityStack'
@@ -1439,6 +1442,9 @@ function App({ initialAuthError = '' }: AppProps) {
     try {
       await shadowSession.publishCmdVel(twist)
     } catch (caughtError) {
+      if (isRecoverableMcpActiveControlError(caughtError)) {
+        return
+      }
       enqueueRuntimeError(
         caughtError instanceof Error ? caughtError.message : 'Unable to publish board cmd_vel',
         'board-cmd-vel',
