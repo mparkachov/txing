@@ -959,7 +959,7 @@ dependencies = [
 
 [[package]]
 name = "weather-device-test"
-version = "0.9.119"
+version = "0.9.120"
 dependencies = [
  "async-trait",
  "btleplug",
