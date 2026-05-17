@@ -194,9 +194,8 @@ Generated files:
 
 `config/certs/` is explicitly ignored by git. The recipe refuses to overwrite
 existing material; move or delete the files first if you intentionally rotate the
-rig certificate. On a stable rig host, `txing-greengrass-lite` is read-only; use
-the copied certificate and private key during manual Greengrass Lite host
-configuration.
+rig certificate. On a stable rig host, use the copied certificate and private key
+during manual Greengrass Lite host configuration.
 
 ## Cleanup
 

@@ -154,20 +154,20 @@ just rig::check <rig-id>
 Copy the resulting `rig.cert.pem` and `rig.private.key` to the rig host under
 `/home/txing/.config/txing/rig/certs/`.
 
-`txing-greengrass-lite` is read-only. It validates the mise payload and prints
-the payload directories to use during manual host configuration. It does not
+The `txing-greengrass-lite` mise tool points at the official upstream
+`aws-greengrass/aws-greengrass-lite` release asset. Repository code does not
 copy files into system directories, create users, change ownership, write
 `/etc/greengrass/config.yaml`, resolve AWS endpoints, or start systemd units.
 
 ### 5. Install Greengrass Lite And Deploy Rig Components
 
 ```bash
-/home/txing/.local/bin/mise exec -- txing-greengrass-lite check
-/home/txing/.local/bin/mise exec -- txing-greengrass-lite payload-files
+/home/txing/.local/bin/mise where txing-greengrass-lite
 /home/txing/.local/bin/mise exec -- txing-rig-deploy auto
 ```
 
-`txing-greengrass-lite` only inspects the standard Greengrass Lite payload. It
+The Greengrass Lite payload contains the upstream arm64 Debian package and AWS
+installer helper. Install and configure it as a manual privileged host step. It
 does not manage the old custom `rig.service` and it does not enable
 rig-type-specific host dependencies such as Bluetooth. Remove old services
 manually before using the fresh stable path.
@@ -202,9 +202,8 @@ Normal stable update:
 /home/txing/.local/bin/mise exec -- txing-rig-deploy auto
 ```
 
-The Greengrass Lite mise tool uses `latest` with the `greengrass-lite-v` tag
-prefix. It only changes when this repository publishes a new
-`greengrass-lite-v<upstream-version>` release.
+The Greengrass Lite mise tool uses the official upstream AWS GitHub release and
+only changes when AWS publishes a newer upstream Greengrass Lite version.
 
 For old rigs, cleanup is manual and intentionally not automated:
 

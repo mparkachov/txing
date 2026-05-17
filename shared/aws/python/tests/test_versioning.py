@@ -74,7 +74,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("aws s3api head-object", rig_justfile)
         self.assertNotIn("artifact_version_path", rig_justfile)
 
-    def test_stable_release_publishes_rig_and_greengrass_lite_assets(self) -> None:
+    def test_stable_release_publishes_only_project_assets(self) -> None:
         workflow = (
             REPO_ROOT / ".github" / "workflows" / "unit-daemon-stable-release.yml"
         ).read_text(encoding="utf-8")
@@ -85,29 +85,18 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("txing-ble-connectivity-linux-aarch64.tar.gz", workflow)
         self.assertIn("txing-aws-connectivity-linux-aarch64.tar.gz", workflow)
         self.assertIn("txing-rig-deploy-linux-aarch64.tar.gz", workflow)
-        self.assertIn("txing-greengrass-lite-linux-aarch64.tar.gz", workflow)
-        self.assertIn(
-            "git submodule update --init --remote modules/aws-greengrass/aws-greengrass-lite",
-            workflow,
-        )
-        self.assertIn(
-            "tr -d '[:space:]' < modules/aws-greengrass/aws-greengrass-lite/version",
-            workflow,
-        )
         self.assertIn('version="$(tr -d \'[:space:]\' < VERSION)"', workflow)
         self.assertIn("git fetch --tags --force origin", workflow)
         self.assertIn("Pushed VERSION $version must be greater than latest stable tag", workflow)
         self.assertIn('release_target="$(git rev-parse HEAD)"', workflow)
         self.assertIn("python3 release/src/txing_release/cli.py check", workflow)
-        self.assertIn("greengrass-lite-v$greengrass_lite_version", workflow)
-        self.assertIn("gh release view \"$GGL_TAG\"", workflow)
-        self.assertIn("steps.greengrass_lite.outputs.build == 'true'", workflow)
-        self.assertIn("--latest=false", workflow)
-        self.assertIn("-DGGL_SYSTEMD_SYSTEM_DIR=/usr/lib/systemd/system", workflow)
-        self.assertIn('install -d "$payload_dir/bin" "$payload_dir/systemd" "$payload_dir/tmpfiles"', workflow)
-        self.assertIn('cp -a "$install_root/usr/local/bin/." "$payload_dir/bin/"', workflow)
-        self.assertIn('cp -a "$install_root/usr/lib/systemd/system/." "$payload_dir/systemd/"', workflow)
-        self.assertIn("Refusing to package unsafe top-level /lib payload", workflow)
+        self.assertNotIn("txing-greengrass-lite-linux-aarch64.tar.gz", workflow)
+        self.assertNotIn("Build Greengrass Lite", workflow)
+        self.assertNotIn("Package Greengrass Lite release asset", workflow)
+        self.assertNotIn("Publish Greengrass Lite release", workflow)
+        self.assertNotIn("greengrass_lite_version", workflow)
+        self.assertNotIn("greengrass-lite-v", workflow)
+        self.assertNotIn("modules/aws-greengrass/aws-greengrass-lite/version", workflow)
         self.assertNotIn("txing-greengrass-lite-payload/root", workflow)
         self.assertNotIn('run_nucleus "$payload_dir', workflow)
         self.assertNotIn("description: \"Stable version to release", workflow)
@@ -130,20 +119,24 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn('txing-ble-connectivity = "github:$owner/$repo"', installer)
         self.assertIn('txing-aws-connectivity = "github:$owner/$repo"', installer)
         self.assertIn('txing-rig-deploy = "github:$owner/$repo"', installer)
-        self.assertIn('txing-greengrass-lite = "github:$owner/$repo"', installer)
+        self.assertIn(
+            'txing-greengrass-lite = "github:aws-greengrass/aws-greengrass-lite"',
+            installer,
+        )
         self.assertIn(
             'asset_pattern = "txing-rig-deploy-linux-aarch64.tar.gz"', installer
         )
-        self.assertIn('version_prefix = "greengrass-lite-v"', installer)
         self.assertIn(
-            'asset_pattern = "txing-greengrass-lite-linux-aarch64.tar.gz"',
+            'asset_pattern = "aws-greengrass-lite-deb-arm64.zip"',
             installer,
         )
+        self.assertNotIn('version_prefix = "greengrass-lite-v"', installer)
+        self.assertNotIn("prerelease = true", installer)
         self.assertNotIn("sudo", installer)
         self.assertNotIn("run as root", installer)
         self.assertNotIn("chown", installer)
 
-    def test_greengrass_lite_release_uses_upstream_version_only(self) -> None:
+    def test_greengrass_lite_submodule_stays_top_level_module(self) -> None:
         self.assertFalse((REPO_ROOT / "rig" / "greengrass-lite-build.env").exists())
         self.assertFalse(
             (REPO_ROOT / "rig" / "scripts" / "greengrass-lite-version").exists()
@@ -166,21 +159,8 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("path = modules/nrfconnect/sdk-nrf", gitmodules)
         self.assertIn("branch = main", gitmodules)
 
-    def test_greengrass_lite_helper_is_user_space_only(self) -> None:
-        helper = (
-            REPO_ROOT / "rig" / "scripts" / "txing-greengrass-lite"
-        ).read_text(encoding="utf-8")
-
-        self.assertIn("payload-dir", helper)
-        self.assertIn("payload-files", helper)
-        self.assertIn("automatic host installation was removed", helper)
-        self.assertIn("unsafe Greengrass Lite payload contains a root filesystem tree", helper)
-        self.assertNotIn("install must run as root", helper)
-        self.assertNotIn("systemctl", helper)
-        self.assertNotIn("chown", helper)
-        self.assertNotIn("/etc/greengrass", helper)
-        self.assertNotIn("/var/lib/greengrass", helper)
-        self.assertNotIn("tar -cf", helper)
+    def test_greengrass_lite_helper_removed(self) -> None:
+        self.assertFalse((REPO_ROOT / "rig" / "scripts" / "txing-greengrass-lite").exists())
 
     def test_rig_deploy_dry_run_generates_expected_recipes(self) -> None:
         script = REPO_ROOT / "rig" / "scripts" / "txing-rig-deploy"

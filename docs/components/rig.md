@@ -152,17 +152,17 @@ adapter.
 ## Service Install
 
 ```bash
-/home/txing/.local/bin/mise exec -- txing-greengrass-lite check
-/home/txing/.local/bin/mise exec -- txing-greengrass-lite payload-files
+/home/txing/.local/bin/mise where txing-greengrass-lite
 /home/txing/.local/bin/mise exec -- txing-rig-deploy auto
 ```
 
-`txing-greengrass-lite` is a read-only helper for the mise-provided Greengrass
-Lite payload. It does not install host files, write `/etc/greengrass/config.yaml`,
-install certificate material, call systemd, create or remove a custom
-`rig.service`, migrate old installs, or enable rig-type-specific host services.
-Manual privileged host configuration must be completed separately. Rig behavior
-comes from Greengrass deployments selected by the configured `RIG_TYPE`.
+The Greengrass Lite mise tool installs the official upstream AWS arm64 Debian
+package payload. Repository code does not install host files, write
+`/etc/greengrass/config.yaml`, install certificate material, call systemd, create
+or remove a custom `rig.service`, migrate old installs, or enable
+rig-type-specific host services. Manual privileged host configuration must be
+completed separately. Rig behavior comes from Greengrass deployments selected by
+the configured `RIG_TYPE`.
 
 ## Rig Type Host Requirements
 

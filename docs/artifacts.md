@@ -68,19 +68,17 @@ Each archive contains one root-level executable with the same command name.
 Greengrass artifacts bucket, creates Greengrass component versions, and creates
 the rig-type deployments.
 
-Greengrass Lite is versioned separately from the project release. Its release
-tag is derived directly from the upstream Greengrass Lite `version` file in the
-submodule:
+Greengrass Lite is installed from the official upstream AWS release, not from a
+txing release asset:
 
 ```text
-greengrass-lite-v<upstream-version>
-txing-greengrass-lite-linux-aarch64.tar.gz
+github:aws-greengrass/aws-greengrass-lite
+aws-greengrass-lite-deb-arm64.zip
 ```
 
-The stable release workflow updates the
-`modules/aws-greengrass/aws-greengrass-lite` submodule from upstream `main`,
-reads that version file, and skips the Greengrass Lite build/publish steps when
-`greengrass-lite-v<upstream-version>` already exists.
+The stable release workflow does not build, package, or publish Greengrass Lite.
+The checked-in Greengrass Lite submodule remains for source-checkout development
+and local debugging only.
 
 Rig mise config is installed at:
 
@@ -92,13 +90,11 @@ It defines `txing-greengrass-lite` with:
 
 ```toml
 version = "latest"
-version_prefix = "greengrass-lite-v"
-asset_pattern = "txing-greengrass-lite-linux-aarch64.tar.gz"
+asset_pattern = "aws-greengrass-lite-deb-arm64.zip"
 ```
 
 Plain `mise upgrade` therefore updates txing rig binaries and only updates
-Greengrass Lite when this repository publishes a newer upstream Greengrass Lite
-version.
+Greengrass Lite when AWS publishes a newer official upstream release.
 
 ## Board Layout
 
@@ -170,9 +166,8 @@ Stable publishing is CI-owned:
 
 The workflow runs manually from `main`, builds on `ubuntu-24.04-arm`, installs
 Rust `1.95.0`, runs Rust tests, builds and strips the Linux `aarch64` binaries,
-packages the project stable assets, publishes or skips the upstream-versioned
-Greengrass Lite release, and creates a normal GitHub Release for `v<VERSION>`.
-Stable project tags and releases are immutable.
+packages the project stable assets, and creates a normal GitHub Release for
+`v<VERSION>`. Stable project tags and releases are immutable.
 
 Feature publishing is CI-owned:
 
@@ -261,9 +256,8 @@ Update all managed version files locally, push the intended code to `main`, then
 run the `Txing Stable Release` workflow manually from `main`. The workflow reads
 the pushed root `VERSION`, checks that all managed version files already match,
 fails unless that version is newer than the latest existing stable `v*` tag, and
-publishes release `v<VERSION>`. It does not bump versions, commit, or push back
-to `main`. It also publishes `greengrass-lite-v<upstream-version>` only if that
-Greengrass Lite release does not already exist.
+publishes release `v<VERSION>`. It does not bump versions, commit, push back to
+`main`, build Greengrass Lite, or publish Greengrass Lite.
 
 ### Install Stable On A Rig
 
@@ -291,15 +285,13 @@ Then install and deploy:
 
 ```bash
 /home/txing/.local/bin/mise install
-/home/txing/.local/bin/mise exec -- txing-greengrass-lite check
-/home/txing/.local/bin/mise exec -- txing-greengrass-lite payload-dir
+/home/txing/.local/bin/mise where txing-greengrass-lite
 /home/txing/.local/bin/mise exec -- txing-rig-deploy auto
 ```
 
 Greengrass Lite host configuration is a manual privileged step. Repository
-scripts only expose the mise payload path; they do not copy files into system
-locations, create users, write `/etc/greengrass/config.yaml`, or start systemd
-units.
+scripts do not copy files into system locations, create users, write
+`/etc/greengrass/config.yaml`, or start systemd units.
 
 Normal stable update:
 

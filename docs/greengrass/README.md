@@ -52,13 +52,12 @@ prebuilt Linux assets; source-checkout development and admin builder deploys
 must run from Linux. macOS development uses `just rig::start` with the local
 Unix-socket broker instead.
 
-Stable Greengrass Lite is delivered as a separate upstream-versioned mise
-artifact. The helper is read-only and exposes the payload paths for manual host
-configuration:
+Stable Greengrass Lite is delivered from the official upstream AWS GitHub
+release. Use mise to install the upstream arm64 Debian package payload, then
+perform host configuration manually:
 
 ```bash
-/home/txing/.local/bin/mise exec -- txing-greengrass-lite check
-/home/txing/.local/bin/mise exec -- txing-greengrass-lite payload-files
+/home/txing/.local/bin/mise where txing-greengrass-lite
 /home/txing/.local/bin/mise exec -- txing-rig-deploy auto
 ```
 
@@ -89,12 +88,12 @@ mTLS and AWS IoT Credentials Provider role-alias probes with the local rig
 certificate. It also validates rig identity consistency, the configured
 registry `rigType`, and host services required by that rig type.
 
-`txing-greengrass-lite` does not install host files, call systemd, create users,
-write `/etc/greengrass/config.yaml`, enable rig-type-specific host dependencies,
-migrate old installs, or remove the old custom `rig.service`. Existing
-Greengrass state must be removed as a manual privileged host-maintenance step
-before configuring a reused host. The standard systemd entrypoint is
-`greengrass-lite.target`.
+Repository code does not install Greengrass Lite host files, call systemd,
+create users, write `/etc/greengrass/config.yaml`, enable rig-type-specific host
+dependencies, migrate old installs, or remove the old custom `rig.service`.
+Existing Greengrass state must be removed as a manual privileged
+host-maintenance step before configuring a reused host. The standard systemd
+entrypoint is `greengrass-lite.target`.
 
 After stable release updates on a rig host, run:
 

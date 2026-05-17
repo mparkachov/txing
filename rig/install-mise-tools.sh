@@ -25,7 +25,7 @@ txing-sparkplug-manager = "github:$owner/$repo"
 txing-ble-connectivity = "github:$owner/$repo"
 txing-aws-connectivity = "github:$owner/$repo"
 txing-rig-deploy = "github:$owner/$repo"
-txing-greengrass-lite = "github:$owner/$repo"
+txing-greengrass-lite = "github:aws-greengrass/aws-greengrass-lite"
 
 [tools.txing-sparkplug-manager]
 version = "latest"
@@ -45,8 +45,7 @@ asset_pattern = "txing-rig-deploy-linux-aarch64.tar.gz"
 
 [tools.txing-greengrass-lite]
 version = "latest"
-version_prefix = "greengrass-lite-v"
-asset_pattern = "txing-greengrass-lite-linux-aarch64.tar.gz"
+asset_pattern = "aws-greengrass-lite-deb-arm64.zip"
 EOF
 
 install -m 600 "$tmp" "$config_file"
