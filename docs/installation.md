@@ -35,8 +35,16 @@ sudo apt update
 sudo apt full-upgrade -y
 sudo apt install -y \
   curl jq ca-certificates unzip \
-  libssl3 libcurl4 libdbus-1-3 libzip4 libyaml-0-2 libsystemd0 \
+  libssl3 libcurl4 libdbus-1-3 libyaml-0-2 libsystemd0 \
   libevent-2.1-7 liburiparser1 cgroup-tools
+```
+
+If Greengrass Lite reports a missing `libzip.so.*` at runtime, install the
+runtime package provided by the rig OS:
+
+```bash
+apt-cache search '^libzip[0-9]'
+sudo apt install -y <matching-libzip-package>
 ```
 
 Install AWS CLI v2 from AWS, not from the OS package repository:
@@ -69,32 +77,25 @@ sudo install -d -o txing -g txing -m 700 /home/txing/.config/txing/rig
 ```
 
 For `RIG_TYPE=raspi`, install and enable Bluetooth manually before deploying the
-unit connectivity component:
-
-```bash
-sudo apt install -y bluez
-sudo systemctl enable --now bluetooth.service
-```
+unit connectivity component.
 
 Install `mise` for the `txing` user. The stable rig artifacts live in that
 user's mise install tree:
 
 ```bash
-sudo -u txing env HOME=/home/txing bash -lc '
-  mkdir -p "$HOME/.local/bin"
-  curl https://mise.run | sh
-  if ! grep -qxF '\''eval "$($HOME/.local/bin/mise activate bash)"'\'' "$HOME/.bashrc"; then
-    echo '\''eval "$($HOME/.local/bin/mise activate bash)"'\'' >> "$HOME/.bashrc"
-  fi
-'
-sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise --version
+mkdir -p "$HOME/.local/bin"
+curl https://mise.run | sh
+if ! grep -qxF 'eval "$($HOME/.local/bin/mise activate bash)"' "$HOME/.bashrc"; then
+  echo 'eval "$($HOME/.local/bin/mise activate bash)"' >> "$HOME/.bashrc"
+fi
+$HOME/.local/bin/mise --version
 ```
 
 ### 2. Install Rig Mise Tool Config
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/rig/install-mise-tools.sh | sudo bash
-sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise install
+curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/rig/install-mise-tools.sh | bash
+$HOME/.local/bin/mise install
 ```
 
 ### 3. Configure AWS Access
@@ -121,14 +122,15 @@ Copy rig certificate material into:
 /home/txing/.config/txing/rig/certs/rig.private.key
 ```
 
-The stable no-checkout installer uses these files to bootstrap Greengrass Lite.
+The stable no-checkout tooling uses these files for deployment and for manual
+Greengrass Lite host configuration.
 
 ### 4. Prepare Greengrass Lite Configuration
 
 Production rig supervision is AWS IoT Greengrass Nucleus Lite, not a custom
 `rig.service` Python systemd unit. The stable rig path installs a
-mise-provided Greengrass Lite payload and starts the default
-`greengrass-lite.target`.
+mise-provided Greengrass Lite payload. Host service configuration and starting
+`greengrass-lite.target` are manual privileged steps.
 
 Before installing the service, the rig host must have:
 
@@ -152,44 +154,37 @@ just rig::check <rig-id>
 Copy the resulting `rig.cert.pem` and `rig.private.key` to the rig host under
 `/home/txing/.config/txing/rig/certs/`.
 
-`txing-greengrass-lite install <rig-id>` copies those files into
-`/var/lib/greengrass/credentials`, downloads Amazon Root CA 1 into that same
-directory, creates `ggcore`/`gg_component` if needed, and changes
-`/var/lib/greengrass` ownership to `ggcore:ggcore`. It also generates
-`/etc/greengrass/config.yaml` automatically by resolving the configured rig
-thing through AWS IoT registry indexing, resolving the AWS IoT data and
-credential-provider endpoints, and reading the
-`GreengrassTokenExchangeRoleAlias` output from the base AWS stack.
+`txing-greengrass-lite` is read-only. It validates the mise payload and prints
+the payload directories to use during manual host configuration. It does not
+copy files into system directories, create users, change ownership, write
+`/etc/greengrass/config.yaml`, resolve AWS endpoints, or start systemd units.
 
 ### 5. Install Greengrass Lite And Deploy Rig Components
 
 ```bash
-sudo env HOME=/home/txing /home/txing/.local/bin/mise exec -- txing-greengrass-lite install <rig-id>
-sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise exec -- txing-rig-deploy auto
-sudo systemctl status --with-dependencies greengrass-lite.target
+/home/txing/.local/bin/mise exec -- txing-greengrass-lite check
+/home/txing/.local/bin/mise exec -- txing-greengrass-lite payload-files
+/home/txing/.local/bin/mise exec -- txing-rig-deploy auto
 ```
 
-`txing-greengrass-lite` installs and starts the standard Greengrass Lite
-systemd units from the mise-provided payload. It does not manage the old custom
-`rig.service` and it does not enable rig-type-specific host dependencies such as
-Bluetooth. It rejects existing `/etc/greengrass`, `/var/lib/greengrass`,
-`/run/greengrass`, or txing Greengrass tmpfiles state; remove old services
+`txing-greengrass-lite` only inspects the standard Greengrass Lite payload. It
+does not manage the old custom `rig.service` and it does not enable
+rig-type-specific host dependencies such as Bluetooth. Remove old services
 manually before using the fresh stable path.
 
-`txing-greengrass-lite install <rig-id>` only installs Greengrass Lite, certificate
-material, and bootstrap configuration. Txing components are delivered by the AWS
-Greengrass deployment that targets the rig-type thing group. A clean host with
-certificates, `/etc/greengrass/config.yaml`, network, and AWS access should join
-that deployment after Greengrass Lite starts; no host-local `ggl-cli deploy` or
+Txing components are delivered by the AWS Greengrass deployment that targets the
+rig-type thing group. A clean host with certificates,
+`/etc/greengrass/config.yaml`, network, and AWS access should join that
+deployment after Greengrass Lite starts; no host-local `ggl-cli deploy` or
 `/var/lib/greengrass/config.db` state is part of the production workflow.
 
 Publish or update those rig-type deployments from the rig host:
 
 ```bash
-sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise exec -- txing-rig-deploy auto
-sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise exec -- txing-rig-deploy raspi
-sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise exec -- txing-rig-deploy cloud
-sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise exec -- txing-rig-deploy all
+/home/txing/.local/bin/mise exec -- txing-rig-deploy auto
+/home/txing/.local/bin/mise exec -- txing-rig-deploy raspi
+/home/txing/.local/bin/mise exec -- txing-rig-deploy cloud
+/home/txing/.local/bin/mise exec -- txing-rig-deploy all
 ```
 
 `txing-rig-deploy` resolves the local rig type on a rig host; explicit `raspi`,
@@ -203,8 +198,8 @@ The old host-local `ggl-cli deploy` path is kept only as
 Normal stable update:
 
 ```bash
-sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise upgrade
-sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise exec -- txing-rig-deploy auto
+/home/txing/.local/bin/mise upgrade
+/home/txing/.local/bin/mise exec -- txing-rig-deploy auto
 ```
 
 The Greengrass Lite mise tool uses `latest` with the `greengrass-lite-v` tag

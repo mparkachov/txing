@@ -2,11 +2,6 @@ name: Txing Stable Release
 
 on:
   workflow_dispatch:
-    inputs:
-      version:
-        description: "Stable version to release. Leave blank to use the next minor version from VERSION."
-        required: false
-        type: string
 
 permissions:
   contents: write
@@ -43,23 +38,18 @@ jobs:
 
       - name: Resolve release metadata
         id: metadata
-        env:
-          VERSION_INPUT: ${{ inputs.version }}
         shell: bash
         run: |
           set -euo pipefail
 
-          current_version="$(tr -d '[:space:]' < VERSION)"
-          if [[ ! "$current_version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
-            echo "VERSION must contain a stable semantic version like x.y.z, got: $current_version" >&2
+          version="$(tr -d '[:space:]' < VERSION)"
+          if [[ ! "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "VERSION must contain a stable semantic version like x.y.z, got: $version" >&2
             exit 1
           fi
-          current_major="${BASH_REMATCH[1]}"
-          current_minor="${BASH_REMATCH[2]}"
-          current_patch="${BASH_REMATCH[3]}"
-          current_major_num=$((10#$current_major))
-          current_minor_num=$((10#$current_minor))
-          current_patch_num=$((10#$current_patch))
+          version_major_num=$((10#${BASH_REMATCH[1]}))
+          version_minor_num=$((10#${BASH_REMATCH[2]}))
+          version_patch_num=$((10#${BASH_REMATCH[3]}))
 
           if [ "${GITHUB_REF_TYPE}" != "branch" ]; then
             echo "Stable release workflow must be run manually from a branch, got ref type: ${GITHUB_REF_TYPE}" >&2
@@ -70,30 +60,40 @@ jobs:
             exit 1
           fi
 
-          requested_version="$(printf '%s' "$VERSION_INPUT" | tr -d '[:space:]')"
-          if [ -z "$requested_version" ]; then
-            version="$current_major.$((current_minor_num + 1)).0"
-            version_source="next-minor-default"
-          else
-            version="$requested_version"
-            version_source="workflow-input"
-          fi
-          if [[ ! "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
-            echo "Stable release version must be semantic version x.y.z, got: $version" >&2
-            exit 1
-          fi
-          target_major_num=$((10#${BASH_REMATCH[1]}))
-          target_minor_num=$((10#${BASH_REMATCH[2]}))
-          target_patch_num=$((10#${BASH_REMATCH[3]}))
+          git fetch --tags --force origin
+          latest_stable_version=""
+          latest_major_num=0
+          latest_minor_num=0
+          latest_patch_num=0
+          while IFS= read -r tag; do
+            candidate="${tag#v}"
+            if [[ ! "$candidate" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+              continue
+            fi
+            candidate_major_num=$((10#${BASH_REMATCH[1]}))
+            candidate_minor_num=$((10#${BASH_REMATCH[2]}))
+            candidate_patch_num=$((10#${BASH_REMATCH[3]}))
+            if [ -z "$latest_stable_version" ] ||
+              (( candidate_major_num > latest_major_num ||
+                (candidate_major_num == latest_major_num && candidate_minor_num > latest_minor_num) ||
+                (candidate_major_num == latest_major_num && candidate_minor_num == latest_minor_num && candidate_patch_num > latest_patch_num) )); then
+              latest_stable_version="$candidate"
+              latest_major_num="$candidate_major_num"
+              latest_minor_num="$candidate_minor_num"
+              latest_patch_num="$candidate_patch_num"
+            fi
+          done < <(git tag --list 'v*')
 
-          if (( target_major_num < current_major_num ||
-                (target_major_num == current_major_num && target_minor_num < current_minor_num) ||
-                (target_major_num == current_major_num && target_minor_num == current_minor_num && target_patch_num <= current_patch_num) )); then
-            echo "Stable release version must be greater than current VERSION $current_version, got $version." >&2
+          if [ -n "$latest_stable_version" ] &&
+            (( version_major_num < latest_major_num ||
+              (version_major_num == latest_major_num && version_minor_num < latest_minor_num) ||
+              (version_major_num == latest_major_num && version_minor_num == latest_minor_num && version_patch_num <= latest_patch_num) )); then
+            echo "Pushed VERSION $version must be greater than latest stable tag v$latest_stable_version." >&2
             exit 1
           fi
 
           tag="v$version"
+          release_target="$(git rev-parse HEAD)"
           greengrass_lite_version="$(tr -d '[:space:]' < modules/aws-greengrass/aws-greengrass-lite/version)"
           if [[ ! "$greengrass_lite_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "Greengrass Lite version must be semantic version x.y.z, got: $greengrass_lite_version" >&2
@@ -104,17 +104,21 @@ jobs:
           {
             echo "### Txing stable release"
             echo
-            echo "- Current VERSION: \`$current_version\`"
-            echo "- Requested version: \`$version\`"
-            echo "- Version source: \`$version_source\`"
+            echo "- Pushed VERSION: \`$version\`"
+            if [ -n "$latest_stable_version" ]; then
+              echo "- Latest stable tag: \`v$latest_stable_version\`"
+            else
+              echo "- Latest stable tag: none"
+            fi
             echo "- Tag: \`$tag\`"
+            echo "- Commit: \`$release_target\`"
             echo "- Greengrass Lite tag: \`$greengrass_lite_tag\`"
           } >>"$GITHUB_STEP_SUMMARY"
 
-          echo "current_version=$current_version" >>"$GITHUB_OUTPUT"
           echo "version=$version" >>"$GITHUB_OUTPUT"
-          echo "version_source=$version_source" >>"$GITHUB_OUTPUT"
+          echo "latest_stable_version=$latest_stable_version" >>"$GITHUB_OUTPUT"
           echo "tag=$tag" >>"$GITHUB_OUTPUT"
+          echo "release_target=$release_target" >>"$GITHUB_OUTPUT"
           echo "greengrass_lite_version=$greengrass_lite_version" >>"$GITHUB_OUTPUT"
           echo "greengrass_lite_tag=$greengrass_lite_tag" >>"$GITHUB_OUTPUT"
 
@@ -187,16 +191,12 @@ jobs:
           echo "$HOME/.local/bin" >>"$GITHUB_PATH"
           "$HOME/.local/bin/uv" --version
 
-      - name: Bump release version
-        env:
-          VERSION: ${{ steps.metadata.outputs.version }}
+      - name: Check release version surfaces
         shell: bash
         run: |
           set -euo pipefail
 
-          python3 release/src/txing_release/cli.py bump "$VERSION"
           python3 release/src/txing_release/cli.py check
-          git diff --stat
 
       - name: Restore Cargo cache
         uses: actions/cache@v4
@@ -246,7 +246,7 @@ jobs:
             -DGG_LOG_LEVEL=INFO \
             -DGGL_SYSTEMD_SYSTEM_USER=ggcore \
             -DGGL_SYSTEMD_SYSTEM_GROUP=ggcore \
-            -DGGL_SYSTEMD_SYSTEM_DIR=/lib/systemd/system
+            -DGGL_SYSTEMD_SYSTEM_DIR=/usr/lib/systemd/system
           cmake --build "$RUNNER_TEMP/greengrass-lite-build" --config MinSizeRel --parallel
           test -x "$RUNNER_TEMP/greengrass-lite-build/bin/ggl-cli"
 
@@ -292,11 +292,25 @@ jobs:
           set -euo pipefail
           package_dir="$RUNNER_TEMP/package-txing-greengrass-lite"
           payload_dir="$package_dir/txing-greengrass-lite-payload"
+          install_root="$RUNNER_TEMP/greengrass-lite-install-root"
           rm -rf "$package_dir"
-          install -d "$payload_dir/root" "$package_dir"
-          DESTDIR="$payload_dir/root" cmake --install "$RUNNER_TEMP/greengrass-lite-build" --config MinSizeRel
+          rm -rf "$install_root"
+          install -d "$payload_dir/bin" "$payload_dir/systemd" "$payload_dir/tmpfiles" "$install_root" "$package_dir"
+          DESTDIR="$install_root" cmake --install "$RUNNER_TEMP/greengrass-lite-build" --config MinSizeRel
+          if [ -e "$install_root/lib" ]; then
+            echo "Refusing to package unsafe top-level /lib payload: $install_root/lib" >&2
+            exit 1
+          fi
+          test -d "$install_root/usr/local/bin"
+          test -d "$install_root/usr/lib/systemd/system"
+          cp -a "$install_root/usr/local/bin/." "$payload_dir/bin/"
+          cp -a "$install_root/usr/lib/systemd/system/." "$payload_dir/systemd/"
+          if [ -d "$install_root/usr/local/lib/tmpfiles.d" ]; then
+            cp -a "$install_root/usr/local/lib/tmpfiles.d/." "$payload_dir/tmpfiles/"
+          fi
+          test -x "$payload_dir/bin/ggl-cli"
+          test -r "$payload_dir/systemd/greengrass-lite.target"
           install -m 755 rig/scripts/txing-greengrass-lite "$package_dir/txing-greengrass-lite"
-          install -m 755 modules/aws-greengrass/aws-greengrass-lite/misc/run_nucleus "$payload_dir/run_nucleus"
           cat >"$payload_dir/metadata.env" <<EOF
           TXING_GREENGRASS_LITE_VERSION=$GGL_VERSION
           TXING_GREENGRASS_LITE_UPSTREAM_VERSION=$GGL_VERSION
@@ -306,36 +320,13 @@ jobs:
             txing-greengrass-lite \
             txing-greengrass-lite-payload
 
-      - name: Commit release bump
-        id: release_refs
-        env:
-          VERSION: ${{ steps.metadata.outputs.version }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          if ! git diff --quiet || [ -n "$(git status --porcelain --untracked-files=normal)" ]; then
-            git add -A
-            git commit -m "release: bump version to $VERSION"
-          else
-            echo "Managed version files are already at $VERSION; no release bump commit needed."
-          fi
-
-          release_target="$(git rev-parse HEAD)"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
-
-          echo "release_target=$release_target" >>"$GITHUB_OUTPUT"
-
       - name: Publish Greengrass Lite release
         if: steps.greengrass_lite.outputs.build == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           GGL_TAG: ${{ steps.metadata.outputs.greengrass_lite_tag }}
           GGL_VERSION: ${{ steps.metadata.outputs.greengrass_lite_version }}
-          RELEASE_TARGET: ${{ steps.release_refs.outputs.release_target }}
+          RELEASE_TARGET: ${{ steps.metadata.outputs.release_target }}
         shell: bash
         run: |
           set -euo pipefail
@@ -361,7 +352,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.metadata.outputs.tag }}
           VERSION: ${{ steps.metadata.outputs.version }}
-          RELEASE_TARGET: ${{ steps.release_refs.outputs.release_target }}
+          RELEASE_TARGET: ${{ steps.metadata.outputs.release_target }}
           GGL_TAG: ${{ steps.metadata.outputs.greengrass_lite_tag }}
         shell: bash
         run: |

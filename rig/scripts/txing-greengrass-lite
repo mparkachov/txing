@@ -3,11 +3,14 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-Usage: txing-greengrass-lite install <rig-id>
+Usage: txing-greengrass-lite check
+       txing-greengrass-lite payload-dir
+       txing-greengrass-lite payload-files
        txing-greengrass-lite version
 
-Installs the mise-provided txing Greengrass Lite payload on a fresh rig host.
-Run install as root during a writable-root maintenance window.
+Inspects the mise-provided Greengrass Lite payload. This helper is intentionally
+read-only: it does not install host files, call systemd, or require elevated
+privileges.
 EOF
 }
 
@@ -20,8 +23,9 @@ script_path="${BASH_SOURCE[0]}"
 script_dir="$(cd "$(dirname "$script_path")" && pwd -P)"
 payload_dir="${TXING_GREENGRASS_LITE_PAYLOAD_DIR:-$script_dir/txing-greengrass-lite-payload}"
 metadata_file="$payload_dir/metadata.env"
-payload_root="$payload_dir/root"
-run_nucleus="$payload_dir/run_nucleus"
+bin_dir="$payload_dir/bin"
+systemd_dir="$payload_dir/systemd"
+tmpfiles_dir="$payload_dir/tmpfiles"
 
 load_metadata() {
   [ -r "$metadata_file" ] || fail "missing payload metadata: $metadata_file"
@@ -29,177 +33,48 @@ load_metadata() {
   source "$metadata_file"
 }
 
-if [ "$#" -lt 1 ]; then
-  usage
-  exit 2
-fi
-
-command_name="$1"
-shift
-
-case "$command_name" in
-  version)
-    load_metadata
-    printf '%s\n' "${TXING_GREENGRASS_LITE_VERSION:?}"
-    exit 0
-    ;;
-  install) ;;
-  *)
-    usage
-    exit 2
-    ;;
-esac
+check_payload() {
+  load_metadata
+  [ ! -e "$payload_dir/root" ] || fail "unsafe Greengrass Lite payload contains a root filesystem tree"
+  [ ! -e "$payload_dir/lib" ] || fail "unsafe Greengrass Lite payload contains top-level lib content"
+  [ -d "$bin_dir" ] || fail "missing Greengrass Lite binary payload: $bin_dir"
+  [ -d "$systemd_dir" ] || fail "missing Greengrass Lite systemd payload: $systemd_dir"
+  [ -d "$tmpfiles_dir" ] || fail "missing Greengrass Lite tmpfiles payload: $tmpfiles_dir"
+  [ -x "$bin_dir/ggl-cli" ] || fail "missing Greengrass Lite CLI: $bin_dir/ggl-cli"
+  [ -r "$systemd_dir/greengrass-lite.target" ] || fail "missing greengrass-lite.target in $systemd_dir"
+}
 
 if [ "$#" -ne 1 ]; then
   usage
   exit 2
 fi
-rig_id="$1"
-case "$rig_id" in
-  ''|*=*)
-    fail "pass the rig id positionally, for example: txing-greengrass-lite install rig-abc123"
+
+case "$1" in
+  check)
+    check_payload
+    printf 'txing Greengrass Lite payload %s is available at %s\n' \
+      "${TXING_GREENGRASS_LITE_VERSION:?}" "$payload_dir"
+    ;;
+  payload-dir)
+    check_payload
+    printf '%s\n' "$payload_dir"
+    ;;
+  payload-files)
+    check_payload
+    printf 'TXING_GREENGRASS_LITE_PAYLOAD_DIR=%s\n' "$payload_dir"
+    printf 'TXING_GREENGRASS_LITE_BIN_DIR=%s\n' "$bin_dir"
+    printf 'TXING_GREENGRASS_LITE_SYSTEMD_DIR=%s\n' "$systemd_dir"
+    printf 'TXING_GREENGRASS_LITE_TMPFILES_DIR=%s\n' "$tmpfiles_dir"
+    ;;
+  version)
+    load_metadata
+    printf '%s\n' "${TXING_GREENGRASS_LITE_VERSION:?}"
+    ;;
+  install)
+    fail "automatic host installation was removed; use the payload paths with manual host configuration steps"
+    ;;
+  *)
+    usage
+    exit 2
     ;;
 esac
-
-[ "$(id -u)" -eq 0 ] || fail "install must run as root"
-[ -d "$payload_root" ] || fail "missing Greengrass Lite payload root: $payload_root"
-[ -x "$run_nucleus" ] || fail "missing Greengrass Lite run_nucleus helper: $run_nucleus"
-load_metadata
-
-existing_paths=()
-for path in /etc/greengrass /var/lib/greengrass /run/greengrass /etc/tmpfiles.d/txing-greengrass-lite.conf; do
-  if [ -e "$path" ]; then
-    existing_paths+=("$path")
-  fi
-done
-if [ "${#existing_paths[@]}" -ne 0 ]; then
-  fail "existing Greengrass Lite state detected (${existing_paths[*]}). Remove the old installation manually before running the fresh installer."
-fi
-
-daemon_user="${TXING_RIG_USER:-txing}"
-daemon_home="${TXING_RIG_HOME:-/home/$daemon_user}"
-daemon_group="$(id -gn "$daemon_user" 2>/dev/null)" || fail "user '$daemon_user' does not exist"
-[ -d "$daemon_home" ] || fail "expected rig home directory $daemon_home"
-
-config_dir="${TXING_RIG_CONFIG_DIR:-$daemon_home/.config/txing/rig}"
-env_file="$config_dir/aws.env"
-credentials_file="$config_dir/aws.credentials"
-cert_dir="$config_dir/certs"
-rig_cert_path="$cert_dir/rig.cert.pem"
-rig_private_key_path="$cert_dir/rig.private.key"
-root_ca_path="$cert_dir/AmazonRootCA1.pem"
-
-[ -r "$env_file" ] || fail "missing rig AWS config: $env_file"
-[ -r "$credentials_file" ] || fail "missing rig AWS credentials: $credentials_file"
-[ -r "$rig_cert_path" ] || fail "missing rig certificate: $rig_cert_path"
-[ -r "$rig_private_key_path" ] || fail "missing rig private key: $rig_private_key_path"
-
-# shellcheck disable=SC1090
-source "$env_file"
-
-AWS_REGION="${AWS_REGION:-}"
-AWS_STACK_NAME="${AWS_STACK_NAME:-}"
-AWS_SELECTED_PROFILE="${AWS_SELECTED_PROFILE:-${AWS_SOURCE_PROFILE:-${AWS_TOWN_PROFILE:-${AWS_PROFILE:-}}}}"
-AWS_SHARED_CREDENTIALS_FILE="${AWS_SHARED_CREDENTIALS_FILE:-$credentials_file}"
-case "$AWS_SHARED_CREDENTIALS_FILE" in
-  /*) ;;
-  *) AWS_SHARED_CREDENTIALS_FILE="$config_dir/$AWS_SHARED_CREDENTIALS_FILE" ;;
-esac
-export AWS_SHARED_CREDENTIALS_FILE AWS_REGION AWS_DEFAULT_REGION="$AWS_REGION"
-
-[ -n "$AWS_REGION" ] || fail "AWS_REGION is required in $env_file"
-[ -n "$AWS_STACK_NAME" ] || fail "AWS_STACK_NAME is required in $env_file"
-command -v aws >/dev/null 2>&1 || fail "aws CLI is required"
-command -v curl >/dev/null 2>&1 || fail "curl is required"
-command -v systemctl >/dev/null 2>&1 || fail "systemctl is required"
-[ -d /run/systemd/system ] || fail "systemd does not appear to be PID 1"
-
-aws_flags=(--region "$AWS_REGION")
-if [ -n "$AWS_SELECTED_PROFILE" ]; then
-  aws_flags+=(--profile "$AWS_SELECTED_PROFILE")
-  export AWS_PROFILE="$AWS_SELECTED_PROFILE" AWS_DEFAULT_PROFILE="$AWS_SELECTED_PROFILE"
-else
-  unset AWS_PROFILE AWS_DEFAULT_PROFILE
-fi
-
-if [ ! -f "$root_ca_path" ]; then
-  install -d -m 700 -o "$daemon_user" -g "$daemon_group" "$cert_dir"
-  curl -fsSL https://www.amazontrust.com/repository/AmazonRootCA1.pem -o "$root_ca_path"
-  chown "$daemon_user:$daemon_group" "$root_ca_path"
-  chmod 644 "$root_ca_path"
-fi
-
-iot_data_endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}" --query endpointAddress --output text)"
-iot_cred_endpoint="$(aws iot describe-endpoint --endpoint-type iot:CredentialProvider "${aws_flags[@]}" --query endpointAddress --output text)"
-iot_role_alias="$(
-  aws cloudformation describe-stacks \
-    --stack-name "$AWS_STACK_NAME" \
-    "${aws_flags[@]}" \
-    --query "Stacks[0].Outputs[?OutputKey=='GreengrassTokenExchangeRoleAlias'].OutputValue | [0]" \
-    --output text
-)"
-if [ -z "$iot_role_alias" ] || [ "$iot_role_alias" = "None" ]; then
-  fail "could not resolve GreengrassTokenExchangeRoleAlias from stack $AWS_STACK_NAME"
-fi
-
-if ! getent group ggcore >/dev/null; then
-  groupadd --system ggcore
-fi
-if ! id -u ggcore >/dev/null 2>&1; then
-  useradd --system --gid ggcore --home-dir /var/lib/greengrass --shell /usr/sbin/nologin ggcore
-fi
-if ! getent group gg_component >/dev/null; then
-  groupadd --system gg_component
-fi
-if ! id -u gg_component >/dev/null 2>&1; then
-  useradd --system --gid gg_component --home-dir /var/lib/greengrass/component --shell /usr/sbin/nologin gg_component
-fi
-
-mkdir -p /etc/greengrass /etc/tmpfiles.d /var/lib/greengrass
-install -d -o ggcore -g ggcore -m 775 /run/greengrass
-install -d -o ggcore -g ggcore -m 770 /etc/greengrass/config.d
-cat >/etc/tmpfiles.d/txing-greengrass-lite.conf <<'EOF'
-d /run/greengrass 0775 ggcore ggcore -
-d /etc/greengrass/config.d 0770 ggcore ggcore -
-EOF
-systemd-tmpfiles --create /etc/tmpfiles.d/txing-greengrass-lite.conf
-
-install -d -o ggcore -g ggcore -m 700 /var/lib/greengrass/credentials
-install -o ggcore -g ggcore -m 600 "$rig_cert_path" /var/lib/greengrass/credentials/rig.cert.pem
-install -o ggcore -g ggcore -m 600 "$rig_private_key_path" /var/lib/greengrass/credentials/rig.private.key
-install -o ggcore -g ggcore -m 644 "$root_ca_path" /var/lib/greengrass/credentials/AmazonRootCA1.pem
-
-cat >/etc/greengrass/config.yaml <<EOF
-system:
-  privateKeyPath: "/var/lib/greengrass/credentials/rig.private.key"
-  certificateFilePath: "/var/lib/greengrass/credentials/rig.cert.pem"
-  rootCaPath: "/var/lib/greengrass/credentials/AmazonRootCA1.pem"
-  rootPath: "/var/lib/greengrass"
-  thingName: "$rig_id"
-services:
-  aws.greengrass.NucleusLite:
-    componentType: "NUCLEUS"
-    configuration:
-      awsRegion: "$AWS_REGION"
-      iotCredEndpoint: "$iot_cred_endpoint"
-      iotDataEndpoint: "$iot_data_endpoint"
-      iotRoleAlias: "$iot_role_alias"
-      runWithDefault:
-        posixUser: "gg_component:gg_component"
-      greengrassDataPlanePort: "8443"
-      platformOverride: {}
-EOF
-chmod 644 /etc/greengrass/config.yaml
-
-(cd "$payload_root" && tar -cf - .) | (cd / && tar -xpf -)
-chown -R ggcore:ggcore /var/lib/greengrass
-
-for log_unit in ggl.core.ggipcd.service ggl.core.iotcored.service; do
-  install -d -m 755 "/etc/systemd/system/$log_unit.d"
-  printf '[Service]\nLogLevelMax=warning\n' >"/etc/systemd/system/$log_unit.d/10-log-level.conf"
-done
-
-systemctl daemon-reload
-"$run_nucleus"
-
-printf 'installed txing Greengrass Lite %s for rig %s\n' "$TXING_GREENGRASS_LITE_VERSION" "$rig_id"

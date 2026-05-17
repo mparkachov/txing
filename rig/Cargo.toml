@@ -9,5 +9,5 @@ members = [
 resolver = "3"
 
 [workspace.package]
-version = "0.9.118"
+version = "0.9.119"
 edition = "2024"

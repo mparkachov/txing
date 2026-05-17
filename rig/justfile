@@ -291,7 +291,7 @@ check rig_id='' cloudwatch_log_group='' region=region aws_profile=aws_profile aw
     just clean-native
 
 install-mise-tools:
-    sudo "{{rig_dir}}/install-mise-tools.sh"
+    "{{rig_dir}}/install-mise-tools.sh"
 
 build: check-greengrass-lite
     #!/usr/bin/env bash

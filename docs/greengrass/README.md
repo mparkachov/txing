@@ -52,12 +52,14 @@ prebuilt Linux assets; source-checkout development and admin builder deploys
 must run from Linux. macOS development uses `just rig::start` with the local
 Unix-socket broker instead.
 
-Stable Greengrass Lite is installed from the separate upstream-versioned mise
-artifact:
+Stable Greengrass Lite is delivered as a separate upstream-versioned mise
+artifact. The helper is read-only and exposes the payload paths for manual host
+configuration:
 
 ```bash
-sudo env HOME=/home/txing /home/txing/.local/bin/mise exec -- txing-greengrass-lite install <rig-id>
-sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise exec -- txing-rig-deploy auto
+/home/txing/.local/bin/mise exec -- txing-greengrass-lite check
+/home/txing/.local/bin/mise exec -- txing-greengrass-lite payload-files
+/home/txing/.local/bin/mise exec -- txing-rig-deploy auto
 ```
 
 Source-checkout Greengrass Lite builds are for development and local debugging:
@@ -87,23 +89,18 @@ mTLS and AWS IoT Credentials Provider role-alias probes with the local rig
 certificate. It also validates rig identity consistency, the configured
 registry `rigType`, and host services required by that rig type.
 
-`txing-greengrass-lite install <rig-id>` uses the packaged upstream CMake
-install payload and Greengrass Lite `misc/run_nucleus` script; it does not
-create or rename txing systemd units, does not enable rig-type-specific host
-dependencies, does not migrate old installs, and does not remove the old custom
-`rig.service`. Existing Greengrass state must be removed manually before running
-it. The standard systemd entrypoint is `greengrass-lite.target`.
-The install recipe also installs systemd drop-ins that set
-`LogLevelMax=warning` for `ggl.core.ggipcd.service` and
-`ggl.core.iotcored.service`, keeping high-volume IPC/MQTT state logs quiet while
-leaving other Greengrass Lite and txing component units at their normal log
-level.
+`txing-greengrass-lite` does not install host files, call systemd, create users,
+write `/etc/greengrass/config.yaml`, enable rig-type-specific host dependencies,
+migrate old installs, or remove the old custom `rig.service`. Existing
+Greengrass state must be removed as a manual privileged host-maintenance step
+before configuring a reused host. The standard systemd entrypoint is
+`greengrass-lite.target`.
 
 After stable release updates on a rig host, run:
 
 ```bash
-sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise upgrade
-sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise exec -- txing-rig-deploy auto
+/home/txing/.local/bin/mise upgrade
+/home/txing/.local/bin/mise exec -- txing-rig-deploy auto
 ```
 
 From an admin builder with installed release artifacts, use an explicit target

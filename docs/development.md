@@ -32,18 +32,18 @@ semantic version such as `x.y.z`.
 Production Greengrass component versions use `VERSION` exactly. Git SHA and
 dirty state are exported separately for diagnostics, but they are not part of
 the Greengrass `ComponentVersion`. Create stable releases with the manual
-`Txing Stable Release` GitHub Actions workflow from `main`; provide the new
-stable version greater than the current root `VERSION`, or leave the input
-blank to use the next minor version. The workflow updates managed version files,
-commits the release bump to `main`, tags the commit, publishes the GitHub
-Release, and also publishes the rig stable binaries.
+`Txing Stable Release` GitHub Actions workflow from `main` after bumping and
+pushing the managed version files yourself. The workflow reads the pushed root
+`VERSION`, fails unless it is newer than the latest existing stable `v*` tag,
+publishes the GitHub Release, and also publishes the rig stable binaries. It
+does not commit or push version changes back to `main`.
 
 Stable rigs do not pull the repository. They update installed artifacts and
 publish Greengrass deployments with:
 
 ```bash
-sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise upgrade
-sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise exec -- txing-rig-deploy auto
+/home/txing/.local/bin/mise upgrade
+/home/txing/.local/bin/mise exec -- txing-rig-deploy auto
 ```
 
 Development direction for installable host tools and board-side native

@@ -28,12 +28,11 @@ txing-unit-daemon
 Stable releases are normal GitHub Releases:
 
 - tag and release name: `v<VERSION>`, for example `v0.9.114`;
-- version source: manual workflow input, or the next minor version computed from
-  repository root `VERSION` when the input is blank;
+- version source: the pushed repository root `VERSION`;
 - publisher: manual `Txing Stable Release` GitHub Actions workflow from `main`;
 - GitHub prerelease flag: `false`;
-- release immutability: the workflow fails if the stable tag or release already
-  exists.
+- release immutability: the workflow fails if `VERSION` is not newer than the
+  latest existing stable `v*` tag, or if the stable tag/release already exists.
 
 Feature releases are GitHub prereleases:
 
@@ -258,13 +257,13 @@ rm -f /tmp/txing-unit-daemon-config.tgz
 
 ### Publish A Stable Release
 
-Push the intended code to `main`, then run the `Txing Stable Release`
-workflow manually from `main`. Enter a new stable version greater than the
-current root `VERSION`, or leave the input blank to release the next minor
-version. The workflow bumps managed version files, commits that release bump to
-`main`, and publishes release `v<VERSION>`. It also publishes
-`greengrass-lite-v<upstream-version>` only if that Greengrass Lite release does
-not already exist. It fails if the project tag or release already exists.
+Update all managed version files locally, push the intended code to `main`, then
+run the `Txing Stable Release` workflow manually from `main`. The workflow reads
+the pushed root `VERSION`, checks that all managed version files already match,
+fails unless that version is newer than the latest existing stable `v*` tag, and
+publishes release `v<VERSION>`. It does not bump versions, commit, or push back
+to `main`. It also publishes `greengrass-lite-v<upstream-version>` only if that
+Greengrass Lite release does not already exist.
 
 ### Install Stable On A Rig
 
@@ -274,8 +273,9 @@ town thing, rig thing, and rig certificate material prepared.
 Install mise and the rig tool config:
 
 ```bash
-sudo -u txing env HOME=/home/txing bash -lc 'mkdir -p "$HOME/.local/bin" && curl https://mise.run | sh'
-curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/rig/install-mise-tools.sh | sudo bash
+mkdir -p "$HOME/.local/bin"
+curl https://mise.run | sh
+curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/rig/install-mise-tools.sh | bash
 ```
 
 Create:
@@ -290,32 +290,31 @@ Create:
 Then install and deploy:
 
 ```bash
-sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise install
-sudo env HOME=/home/txing /home/txing/.local/bin/mise exec -- txing-greengrass-lite install <rig-id>
-sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise exec -- txing-rig-deploy auto
+/home/txing/.local/bin/mise install
+/home/txing/.local/bin/mise exec -- txing-greengrass-lite check
+/home/txing/.local/bin/mise exec -- txing-greengrass-lite payload-dir
+/home/txing/.local/bin/mise exec -- txing-rig-deploy auto
 ```
+
+Greengrass Lite host configuration is a manual privileged step. Repository
+scripts only expose the mise payload path; they do not copy files into system
+locations, create users, write `/etc/greengrass/config.yaml`, or start systemd
+units.
 
 Normal stable update:
 
 ```bash
-sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise upgrade
-sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise exec -- txing-rig-deploy auto
+/home/txing/.local/bin/mise upgrade
+/home/txing/.local/bin/mise exec -- txing-rig-deploy auto
 ```
 
 ### Remove An Old Rig Install Manually
 
-The stable installers are fresh-host only. They do not migrate or clean up old
-installations automatically. Before using the new path on an older rig, review
-and run the cleanup manually:
-
-```bash
-sudo systemctl stop ggl.dev.txing.rig.SparkplugManager.service ggl.dev.txing.rig.BleConnectivity.service ggl.dev.txing.rig.AwsConnectivity.service greengrass-lite.target || true
-sudo systemctl disable greengrass-lite.target || true
-sudo rm -rf /etc/greengrass /var/lib/greengrass /run/greengrass
-sudo rm -f /etc/tmpfiles.d/txing-greengrass-lite.conf
-sudo systemctl daemon-reload
-sudo systemctl reset-failed
-```
+The stable rig tooling is fresh-host only. It does not migrate or clean up old
+installations automatically. Before using the new path on an older rig, remove
+the old Greengrass Lite target, txing component services, `/etc/greengrass`,
+`/var/lib/greengrass`, `/run/greengrass`, and the old txing tmpfiles entry as a
+manual privileged host-maintenance step.
 
 ### Install Stable On A Board
 
@@ -343,15 +342,15 @@ Run during a writable-root maintenance window:
 root-rw
 sudo apt update
 sudo apt dist-upgrade -y
-sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise upgrade
+/home/txing/.local/bin/mise upgrade
 sudo systemctl restart txing-unit-daemon.service
 ```
 
 If a release was just published and mise still resolves the previous version:
 
 ```bash
-sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise cache clear
-sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise upgrade
+/home/txing/.local/bin/mise cache clear
+/home/txing/.local/bin/mise upgrade
 sudo systemctl restart txing-unit-daemon.service
 ```
 

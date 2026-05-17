@@ -6,18 +6,16 @@ fail() {
   exit 1
 }
 
-rig_user="${TXING_RIG_USER:-txing}"
-rig_home="${TXING_RIG_HOME:-/home/$rig_user}"
+rig_home="${TXING_RIG_HOME:-${HOME:-}}"
 owner="${TXING_GITHUB_OWNER:-mparkachov}"
 repo="${TXING_GITHUB_REPO:-txing}"
 
-[ "$(id -u)" -eq 0 ] || fail "run as root"
-rig_group="$(id -gn "$rig_user" 2>/dev/null)" || fail "user '$rig_user' does not exist"
+[ -n "$rig_home" ] || fail "HOME is required"
 [ -d "$rig_home" ] || fail "expected rig home directory $rig_home"
 
 config_dir="$rig_home/.config/mise/conf.d"
 config_file="$config_dir/txing-rig.toml"
-install -d -m 700 -o "$rig_user" -g "$rig_group" "$config_dir"
+install -d -m 700 "$config_dir"
 
 tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT
@@ -51,5 +49,5 @@ version_prefix = "greengrass-lite-v"
 asset_pattern = "txing-greengrass-lite-linux-aarch64.tar.gz"
 EOF
 
-install -m 600 -o "$rig_user" -g "$rig_group" "$tmp" "$config_file"
+install -m 600 "$tmp" "$config_file"
 printf 'installed rig mise config: %s\n' "$config_file"

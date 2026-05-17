@@ -115,8 +115,8 @@ checkout, Rust toolchain, CMake, or local compilation.
 Normal stable update on a rig host:
 
 ```bash
-sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise upgrade
-sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise exec -- txing-rig-deploy auto
+/home/txing/.local/bin/mise upgrade
+/home/txing/.local/bin/mise exec -- txing-rig-deploy auto
 ```
 
 For source-checkout development or admin builder work, `rig::build` requires the
@@ -152,29 +152,23 @@ adapter.
 ## Service Install
 
 ```bash
-sudo env HOME=/home/txing /home/txing/.local/bin/mise exec -- txing-greengrass-lite install <rig-id>
-sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise exec -- txing-rig-deploy auto
-sudo systemctl status --with-dependencies greengrass-lite.target
+/home/txing/.local/bin/mise exec -- txing-greengrass-lite check
+/home/txing/.local/bin/mise exec -- txing-greengrass-lite payload-files
+/home/txing/.local/bin/mise exec -- txing-rig-deploy auto
 ```
 
-`txing-greengrass-lite install <rig-id>` installs the mise-provided Greengrass
-Lite payload, writes `/etc/greengrass/config.yaml`, installs certificate
-material, and starts the standard `greengrass-lite.target` through Greengrass
-Lite's `misc/run_nucleus` script. It does not create or remove a custom
-`rig.service`, does not migrate old installs, and does not enable
-rig-type-specific host services. Existing Greengrass state must be removed
-manually before running it. Rig behavior comes from Greengrass deployments
-selected by the configured `RIG_TYPE`.
+`txing-greengrass-lite` is a read-only helper for the mise-provided Greengrass
+Lite payload. It does not install host files, write `/etc/greengrass/config.yaml`,
+install certificate material, call systemd, create or remove a custom
+`rig.service`, migrate old installs, or enable rig-type-specific host services.
+Manual privileged host configuration must be completed separately. Rig behavior
+comes from Greengrass deployments selected by the configured `RIG_TYPE`.
 
 ## Rig Type Host Requirements
 
 `RIG_TYPE=raspi` requires the host Bluetooth service because the connectivity
-component uses BLE rendezvous with the MCU. Install and enable it manually:
-
-```bash
-sudo apt install -y bluez
-sudo systemctl enable --now bluetooth.service
-```
+component uses BLE rendezvous with the MCU. Install the OS Bluetooth package and
+enable `bluetooth.service` as a manual privileged host configuration step.
 
 `RIG_TYPE=cloud` has no extra host service dependency beyond Greengrass Lite.
 

@@ -94,10 +94,30 @@ class VersionEnvironmentTests(unittest.TestCase):
             "tr -d '[:space:]' < modules/aws-greengrass/aws-greengrass-lite/version",
             workflow,
         )
+        self.assertIn('version="$(tr -d \'[:space:]\' < VERSION)"', workflow)
+        self.assertIn("git fetch --tags --force origin", workflow)
+        self.assertIn("Pushed VERSION $version must be greater than latest stable tag", workflow)
+        self.assertIn('release_target="$(git rev-parse HEAD)"', workflow)
+        self.assertIn("python3 release/src/txing_release/cli.py check", workflow)
         self.assertIn("greengrass-lite-v$greengrass_lite_version", workflow)
         self.assertIn("gh release view \"$GGL_TAG\"", workflow)
         self.assertIn("steps.greengrass_lite.outputs.build == 'true'", workflow)
         self.assertIn("--latest=false", workflow)
+        self.assertIn("-DGGL_SYSTEMD_SYSTEM_DIR=/usr/lib/systemd/system", workflow)
+        self.assertIn('install -d "$payload_dir/bin" "$payload_dir/systemd" "$payload_dir/tmpfiles"', workflow)
+        self.assertIn('cp -a "$install_root/usr/local/bin/." "$payload_dir/bin/"', workflow)
+        self.assertIn('cp -a "$install_root/usr/lib/systemd/system/." "$payload_dir/systemd/"', workflow)
+        self.assertIn("Refusing to package unsafe top-level /lib payload", workflow)
+        self.assertNotIn("txing-greengrass-lite-payload/root", workflow)
+        self.assertNotIn('run_nucleus "$payload_dir', workflow)
+        self.assertNotIn("description: \"Stable version to release", workflow)
+        self.assertNotIn("inputs:", workflow)
+        self.assertNotIn("VERSION_INPUT", workflow)
+        self.assertNotIn("next-minor-default", workflow)
+        self.assertNotIn("workflow-input", workflow)
+        self.assertNotIn("release/src/txing_release/cli.py bump", workflow)
+        self.assertNotIn("Commit release bump", workflow)
+        self.assertNotIn("git push origin", workflow)
         self.assertNotIn("greengrass-lite-version", workflow)
         self.assertNotIn("TXING_GREENGRASS_LITE_BUILD_INPUT_HASH", workflow)
 
@@ -119,6 +139,9 @@ class VersionEnvironmentTests(unittest.TestCase):
             'asset_pattern = "txing-greengrass-lite-linux-aarch64.tar.gz"',
             installer,
         )
+        self.assertNotIn("sudo", installer)
+        self.assertNotIn("run as root", installer)
+        self.assertNotIn("chown", installer)
 
     def test_greengrass_lite_release_uses_upstream_version_only(self) -> None:
         self.assertFalse((REPO_ROOT / "rig" / "greengrass-lite-build.env").exists())
@@ -143,16 +166,21 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("path = modules/nrfconnect/sdk-nrf", gitmodules)
         self.assertIn("branch = main", gitmodules)
 
-    def test_greengrass_lite_installer_is_fresh_install_only(self) -> None:
-        installer = (
+    def test_greengrass_lite_helper_is_user_space_only(self) -> None:
+        helper = (
             REPO_ROOT / "rig" / "scripts" / "txing-greengrass-lite"
         ).read_text(encoding="utf-8")
 
-        self.assertIn("existing Greengrass Lite state detected", installer)
-        self.assertIn("/etc/greengrass", installer)
-        self.assertIn("/var/lib/greengrass", installer)
-        self.assertNotIn("rm -rf /etc/greengrass", installer)
-        self.assertNotIn("systemctl stop greengrass-lite.target", installer)
+        self.assertIn("payload-dir", helper)
+        self.assertIn("payload-files", helper)
+        self.assertIn("automatic host installation was removed", helper)
+        self.assertIn("unsafe Greengrass Lite payload contains a root filesystem tree", helper)
+        self.assertNotIn("install must run as root", helper)
+        self.assertNotIn("systemctl", helper)
+        self.assertNotIn("chown", helper)
+        self.assertNotIn("/etc/greengrass", helper)
+        self.assertNotIn("/var/lib/greengrass", helper)
+        self.assertNotIn("tar -cf", helper)
 
     def test_rig_deploy_dry_run_generates_expected_recipes(self) -> None:
         script = REPO_ROOT / "rig" / "scripts" / "txing-rig-deploy"
