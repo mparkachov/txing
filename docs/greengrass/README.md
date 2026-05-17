@@ -53,17 +53,17 @@ must run from Linux. macOS development uses `just rig::start` with the local
 Unix-socket broker instead.
 
 Stable Greengrass Lite is delivered from the official upstream AWS GitHub
-release. Use mise to install the upstream arm64 Debian package payload, then
-perform host configuration manually:
+release. Install the upstream arm64 Debian package from a root shell, perform
+host configuration manually, then use mise as `ggcore` for txing rig tools:
 
 ```bash
-/home/txing/.local/bin/mise where txing-greengrass-lite
-/home/txing/.local/bin/mise exec -- txing-rig-deploy auto
+/home/ggcore/.local/bin/mise install
+/home/ggcore/.local/bin/mise exec -- txing-rig-deploy auto
 ```
 
-Use separate Unix identities for operation and runtime: `txing` owns mise and
-deployment configuration, `ggcore` runs Greengrass Lite core services, and
-`gg_component` runs normal Greengrass components. On raspi rigs, add
+Use Greengrass package identities for operation and runtime: `ggcore` owns mise,
+deployment configuration, and Greengrass Lite core services; `gg_component` runs
+normal Greengrass components. On raspi rigs, add
 `gg_component` to the OS `bluetooth` group so the BLE component runs
 unprivileged through BlueZ/D-Bus.
 
@@ -95,7 +95,7 @@ certificate. It also validates rig identity consistency, the configured
 registry `rigType`, and host services required by that rig type.
 
 Repository code does not install Greengrass Lite host files, call systemd,
-create users, write `/etc/greengrass/config.yaml`, enable rig-type-specific host
+create users, write Greengrass configuration, enable rig-type-specific host
 dependencies, migrate old installs, or remove the old custom `rig.service`.
 Existing Greengrass state must be removed as a manual privileged
 host-maintenance step before configuring a reused host. The standard systemd
@@ -104,8 +104,8 @@ entrypoint is `greengrass-lite.target`.
 After stable release updates on a rig host, run:
 
 ```bash
-/home/txing/.local/bin/mise upgrade
-/home/txing/.local/bin/mise exec -- txing-rig-deploy auto
+/home/ggcore/.local/bin/mise upgrade
+/home/ggcore/.local/bin/mise exec -- txing-rig-deploy auto
 ```
 
 From an admin builder with installed release artifacts, use an explicit target

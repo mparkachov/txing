@@ -72,29 +72,35 @@ Greengrass Lite is installed from the official upstream AWS release, not from a
 txing release asset:
 
 ```text
-github:aws-greengrass/aws-greengrass-lite
+https://github.com/aws-greengrass/aws-greengrass-lite/releases
 aws-greengrass-lite-deb-arm64.zip
 ```
 
 The stable release workflow does not build, package, or publish Greengrass Lite.
 The checked-in Greengrass Lite submodule remains for source-checkout development
-and local debugging only.
+and local debugging only. Stable rigs install the upstream Debian package from a
+root shell before installing txing tools with mise as `ggcore`.
 
 Rig mise config is installed at:
 
 ```text
-/home/txing/.config/mise/conf.d/txing-rig.toml
+/home/ggcore/.config/mise/conf.d/txing-rig.toml
 ```
 
-It defines `txing-greengrass-lite` with:
+It disables stale remote-version caching for rig release checks and defines the
+txing rig tools:
 
 ```toml
+[settings]
+fetch_remote_versions_cache = "0s"
+
+[tools.txing-rig-deploy]
 version = "latest"
-asset_pattern = "aws-greengrass-lite-deb-arm64.zip"
+asset_pattern = "txing-rig-deploy-linux-aarch64.tar.gz"
 ```
 
-Plain `mise upgrade` therefore updates txing rig binaries and only updates
-Greengrass Lite when AWS publishes a newer official upstream release.
+Plain `mise upgrade` therefore updates txing rig binaries. Greengrass Lite is
+not managed by mise.
 
 ## Board Layout
 
@@ -264,7 +270,8 @@ publishes release `v<VERSION>`. It does not bump versions, commit, push back to
 This is the fresh-host stable path. The rig must already have the AWS stack,
 town thing, rig thing, and rig certificate material prepared.
 
-Install mise and the rig tool config:
+After installing the upstream Greengrass Lite Debian package, switch to the
+package-created `ggcore` user and install mise plus the rig tool config:
 
 ```bash
 mkdir -p "$HOME/.local/bin"
@@ -275,23 +282,20 @@ curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/rig/install-m
 Create:
 
 ```text
-/home/txing/.config/txing/rig/aws.env
-/home/txing/.config/txing/rig/aws.credentials
-/home/txing/.config/txing/rig/certs/rig.cert.pem
-/home/txing/.config/txing/rig/certs/rig.private.key
+/home/ggcore/.config/txing/rig/aws.env
+/home/ggcore/.config/txing/rig/aws.credentials
 ```
 
 Then install and deploy:
 
 ```bash
-/home/txing/.local/bin/mise install
-/home/txing/.local/bin/mise where txing-greengrass-lite
-/home/txing/.local/bin/mise exec -- txing-rig-deploy auto
+/home/ggcore/.local/bin/mise install
+/home/ggcore/.local/bin/mise exec -- txing-rig-deploy auto
 ```
 
 Greengrass Lite host configuration is a manual privileged step. Repository
 scripts do not copy files into system locations, create users, write
-`/etc/greengrass/config.yaml`, or start systemd units.
+Greengrass configuration, or start systemd units.
 Use `ggcore` for Greengrass Lite core services and `gg_component` for normal
 Greengrass components. Raspi rigs should add `gg_component` to the OS
 `bluetooth` group so BLE access uses BlueZ/D-Bus without a privileged
@@ -300,8 +304,17 @@ component lifecycle.
 Normal stable update:
 
 ```bash
-/home/txing/.local/bin/mise upgrade
-/home/txing/.local/bin/mise exec -- txing-rig-deploy auto
+/home/ggcore/.local/bin/mise upgrade
+/home/ggcore/.local/bin/mise exec -- txing-rig-deploy auto
+```
+
+If a stable txing release was just published and mise still resolves the
+previous version, refresh the remote-version cache before upgrading:
+
+```bash
+/home/ggcore/.local/bin/mise cache clear
+MISE_FETCH_REMOTE_VERSIONS_CACHE=0 /home/ggcore/.local/bin/mise upgrade
+/home/ggcore/.local/bin/mise exec -- txing-rig-deploy auto
 ```
 
 ### Remove An Old Rig Install Manually

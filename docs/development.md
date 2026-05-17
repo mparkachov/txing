@@ -42,8 +42,8 @@ Stable rigs do not pull the repository. They update installed artifacts and
 publish Greengrass deployments with:
 
 ```bash
-/home/txing/.local/bin/mise upgrade
-/home/txing/.local/bin/mise exec -- txing-rig-deploy auto
+/home/ggcore/.local/bin/mise upgrade
+/home/ggcore/.local/bin/mise exec -- txing-rig-deploy auto
 ```
 
 Development direction for installable host tools and board-side native

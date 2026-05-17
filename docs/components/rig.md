@@ -115,8 +115,8 @@ checkout, Rust toolchain, CMake, or local compilation.
 Normal stable update on a rig host:
 
 ```bash
-/home/txing/.local/bin/mise upgrade
-/home/txing/.local/bin/mise exec -- txing-rig-deploy auto
+/home/ggcore/.local/bin/mise upgrade
+/home/ggcore/.local/bin/mise exec -- txing-rig-deploy auto
 ```
 
 For source-checkout development or admin builder work, `rig::build` requires the
@@ -152,12 +152,13 @@ adapter.
 ## Service Install
 
 ```bash
-/home/txing/.local/bin/mise where txing-greengrass-lite
-/home/txing/.local/bin/mise exec -- txing-rig-deploy auto
+/home/ggcore/.local/bin/mise install
+/home/ggcore/.local/bin/mise exec -- txing-rig-deploy auto
 ```
 
-The Greengrass Lite mise tool installs the official upstream AWS arm64 Debian
-package payload. Repository code does not install host files, write
+Greengrass Lite is installed directly from the official upstream AWS arm64
+Debian package before installing txing tools with mise as `ggcore`. Repository
+code does not install host files, write
 `/etc/greengrass/config.yaml`, install certificate material, call systemd, create
 or remove a custom `rig.service`, migrate old installs, or enable
 rig-type-specific host services. Manual privileged host configuration must be

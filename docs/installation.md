@@ -8,7 +8,7 @@ This guide covers host setup. AWS bring-up and teardown live in [aws.md](./aws.m
 - Stable rig and board hosts install release artifacts with `mise` and do not
   need a source checkout for the stable runtime path.
 - Project-local AWS config in a checkout stays under `config/`.
-- Stable rig host AWS config lives under `/home/txing/.config/txing/rig/`.
+- Stable rig host AWS config lives under `/home/ggcore/.config/txing/rig/`.
 - `aws.env` is the single non-secret AWS/runtime config file.
 - `aws.credentials` holds the source `town` credentials.
 
@@ -28,12 +28,13 @@ and `mcp` named-shadow updates.
 ### 1. Install OS Packages
 
 Stable rig installs do not compile Greengrass Lite or txing rig components on
-the host. Install OS runtime packages and operator tools only:
+the host. From a privileged root shell, install OS runtime packages and operator
+tools only:
 
 ```bash
-sudo apt update
-sudo apt full-upgrade -y
-sudo apt install -y \
+apt update
+apt full-upgrade -y
+apt install -y \
   curl jq ca-certificates unzip \
   libssl3 libcurl4 libdbus-1-3 libyaml-0-2 libsystemd0 \
   libevent-2.1-7 liburiparser1 cgroup-tools
@@ -44,7 +45,7 @@ runtime package provided by the rig OS:
 
 ```bash
 apt-cache search '^libzip[0-9]'
-sudo apt install -y <matching-libzip-package>
+apt install -y <matching-libzip-package>
 ```
 
 Install AWS CLI v2 from AWS, not from the OS package repository:
@@ -58,89 +59,29 @@ esac
 curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-${aws_cli_arch}.zip" -o /tmp/awscliv2.zip
 rm -rf /tmp/aws
 if ! command -v unzip >/dev/null 2>&1; then
-  sudo apt update
-  sudo apt install -y unzip
+  apt update
+  apt install -y unzip
 fi
 unzip -q /tmp/awscliv2.zip -d /tmp
-sudo /tmp/aws/install --update
+/tmp/aws/install --update
 rm -rf /tmp/aws /tmp/awscliv2.zip
 aws --version
 ```
 
-Create the runtime user if it does not already exist:
-
-```bash
-if ! id -u txing >/dev/null 2>&1; then
-  sudo useradd -m -s /bin/bash txing
-fi
-sudo install -d -o txing -g txing -m 700 /home/txing/.config/txing/rig
-```
-
-For `RIG_TYPE=raspi`, install and enable Bluetooth manually before deploying the
-unit connectivity component. Add the Greengrass component user
-`gg_component` to the OS `bluetooth` group so the BLE component can use BlueZ
-over D-Bus without a privileged Greengrass lifecycle.
-
-Install `mise` for the `txing` user. The stable rig artifacts live in that
-user's mise install tree:
-
-```bash
-mkdir -p "$HOME/.local/bin"
-curl https://mise.run | sh
-if ! grep -qxF 'eval "$($HOME/.local/bin/mise activate bash)"' "$HOME/.bashrc"; then
-  echo 'eval "$($HOME/.local/bin/mise activate bash)"' >> "$HOME/.bashrc"
-fi
-$HOME/.local/bin/mise --version
-```
-
-### 2. Install Rig Mise Tool Config
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/rig/install-mise-tools.sh | bash
-$HOME/.local/bin/mise install
-```
-
-### 3. Configure AWS Access
-
-Create and edit:
-
-- `/home/txing/.config/txing/rig/aws.env`
-  - `AWS_REGION`
-  - `AWS_STACK_NAME`
-  - optional `TXING_TOWN_ID`
-  - optional `TXING_RIG_ID`
-  - optional `CLOUDWATCH_LOG_GROUP`
-- `/home/txing/.config/txing/rig/aws.credentials`
-  - fill the `[town]` access keys
-
-Concrete towns, rigs, and devices are AWS IoT things. The SSM catalog under
-`/txing` stores only supported types and compatibility as leaf parameters, for
-example `/txing/town/cloud/time/kind`.
-
-Copy rig certificate material into:
-
-```text
-/home/txing/.config/txing/rig/certs/rig.cert.pem
-/home/txing/.config/txing/rig/certs/rig.private.key
-```
-
-The stable no-checkout tooling uses these files for deployment and for manual
-Greengrass Lite host configuration.
-
-### 4. Prepare Greengrass Lite Configuration
+### 2. Install Greengrass Lite Package
 
 Production rig supervision is AWS IoT Greengrass Nucleus Lite, not a custom
-`rig.service` Python systemd unit. The stable rig path installs a
-mise-provided Greengrass Lite payload. Host service configuration and starting
+`rig.service` Python systemd unit. The stable rig path installs the upstream
+Greengrass Lite Debian package first. Host service configuration and starting
 `greengrass-lite.target` are manual privileged steps.
 
-Before installing the service, the rig host must have:
+Before installing Greengrass Lite, the rig host must have:
 
 - the AWS stacks and type catalog deployed with `just aws::deploy`
 - a town thing created with `just aws::deploy-town town`
 - a rig thing created with `just aws::deploy-rig <town-id> raspi server` or `just aws::deploy-rig <town-id> cloud aws`
-- rig certificate material copied under
-  `/home/txing/.config/txing/rig/certs/`
+- rig certificate material ready to install into
+  `/var/lib/greengrass/credentials/`
 
 On a development machine with a checkout, create the rig certificate material.
 The recipe resolves the configured rig thing from AWS IoT registry indexing,
@@ -153,51 +94,52 @@ just aws::cert <rig-id>
 just rig::check <rig-id>
 ```
 
-Copy the resulting `rig.cert.pem` and `rig.private.key` to the rig host under
-`/home/txing/.config/txing/rig/certs/`.
+Transfer the resulting `rig.cert.pem` and `rig.private.key` to the rig host with
+your normal admin workflow. Install them directly into
+`/var/lib/greengrass/credentials/` during the Greengrass Lite host setup below.
 
-The `txing-greengrass-lite` mise tool points at the official upstream
-`aws-greengrass/aws-greengrass-lite` release asset. Repository code does not
-copy files into system directories, create users, change ownership, write
-Greengrass configuration, resolve AWS endpoints, or start systemd units.
+Repository code does not copy files into system directories, create users,
+change ownership, write Greengrass configuration, resolve AWS endpoints, or
+start systemd units.
 
-### 5. Install Greengrass Lite And Deploy Rig Components
-
-Install the upstream Greengrass Lite payload with mise as the `txing` user:
+From a privileged root shell on the rig, download and install the upstream
+Greengrass Lite Debian package. Do not run `install-greengrass-lite.sh`; txing
+writes its own Greengrass config fragment.
 
 ```bash
-/home/txing/.local/bin/mise install
-/home/txing/.local/bin/mise where txing-greengrass-lite
+GGL_VERSION="2.5.1"
+GGL_ZIP="/tmp/aws-greengrass-lite-deb-arm64.zip"
+GGL_UNPACK="/tmp/aws-greengrass-lite"
+
+curl -fL -o "$GGL_ZIP" "https://github.com/aws-greengrass/aws-greengrass-lite/releases/download/v$GGL_VERSION/aws-greengrass-lite-deb-arm64.zip"
+rm -rf "$GGL_UNPACK"
+install -d -m 755 "$GGL_UNPACK"
+unzip -q "$GGL_ZIP" -d "$GGL_UNPACK"
+apt install -y "$GGL_UNPACK/aws-greengrass-lite-$GGL_VERSION-Linux.deb"
+rm -rf "$GGL_UNPACK" "$GGL_ZIP"
+id ggcore >/dev/null
+id gg_component >/dev/null
 ```
 
-The Greengrass Lite payload contains the upstream arm64 Debian package and AWS
-installer helper. The txing stable path installs the Debian package directly and
-writes txing configuration manually; do not run the upstream helper unless you
-are intentionally using the upstream ConnectionKit flow.
+The package creates the `ggcore` and `gg_component` users and writes
+`/etc/greengrass/config.d/greengrass-lite.yaml` during installation.
 
-From a privileged root shell on the rig, install the `.deb` from the path printed
-by `mise where txing-greengrass-lite`, install certificate material, and write
-the Greengrass Lite configuration. Fill the placeholder endpoint values from the
-AWS stack and IoT endpoint reads for the target town/rig:
+From the same root shell, install certificate material and replace that config
+fragment with the txing Greengrass configuration. Fill the placeholder endpoint
+values from the AWS stack and IoT endpoint reads for the target town/rig:
 
 ```bash
-GGL_PAYLOAD="/home/txing/.local/share/mise/installs/txing-greengrass-lite/2.5.1"
+RIG_CERT_PEM="./rig.cert.pem"
+RIG_PRIVATE_KEY="./rig.private.key"
 RIG_ID="<rig-id>"
 AWS_REGION="<aws-region>"
 IOT_CRED_ENDPOINT="<credential-provider-endpoint>"
 IOT_DATA_ENDPOINT="<iot-data-ats-endpoint>"
 IOT_ROLE_ALIAS="<greengrass-token-exchange-role-alias>"
 
-getent group ggcore >/dev/null || groupadd --system ggcore
-id -u ggcore >/dev/null 2>&1 || useradd --system --gid ggcore --home-dir /var/lib/greengrass --shell /usr/sbin/nologin ggcore
-getent group gg_component >/dev/null || groupadd --system gg_component
-id -u gg_component >/dev/null 2>&1 || useradd --system --gid gg_component --home-dir /var/lib/greengrass/component --shell /usr/sbin/nologin gg_component
-
-apt install -y "$GGL_PAYLOAD"/aws-greengrass-lite-*-Linux.deb
-
 install -d -o ggcore -g ggcore -m 700 /var/lib/greengrass/credentials
-install -o ggcore -g ggcore -m 600 /home/txing/.config/txing/rig/certs/rig.cert.pem /var/lib/greengrass/credentials/rig.cert.pem
-install -o ggcore -g ggcore -m 600 /home/txing/.config/txing/rig/certs/rig.private.key /var/lib/greengrass/credentials/rig.private.key
+install -o ggcore -g ggcore -m 600 "$RIG_CERT_PEM" /var/lib/greengrass/credentials/rig.cert.pem
+install -o ggcore -g ggcore -m 600 "$RIG_PRIVATE_KEY" /var/lib/greengrass/credentials/rig.private.key
 curl -fsSL https://www.amazontrust.com/repository/AmazonRootCA1.pem -o /tmp/AmazonRootCA1.pem
 install -o ggcore -g ggcore -m 644 /tmp/AmazonRootCA1.pem /var/lib/greengrass/credentials/AmazonRootCA1.pem
 rm -f /tmp/AmazonRootCA1.pem
@@ -229,7 +171,8 @@ systemctl daemon-reload
 systemctl enable --now greengrass-lite.target
 ```
 
-For `RIG_TYPE=raspi`, also add the component runtime user to the OS Bluetooth
+For `RIG_TYPE=raspi`, install and enable Bluetooth manually before deploying the
+BLE connectivity component. Add the component runtime user to the OS Bluetooth
 group from the same root shell, then restart Bluetooth and Greengrass:
 
 ```bash
@@ -239,10 +182,42 @@ systemctl restart bluetooth.service
 systemctl restart greengrass-lite.target
 ```
 
-The package writes `/etc/greengrass/config.d/greengrass-lite.yaml` during
-installation. The txing configuration above deliberately replaces that fragment
-so generic components run as `gg_component:gg_component`, not as the Greengrass
-core user.
+The txing configuration deliberately sets generic components to run as
+`gg_component:gg_component`, not as the Greengrass core user.
+
+### 3. Install Rig Mise Tools As ggcore
+
+Switch to the package-created `ggcore` user. This user owns the mise install
+tree and the txing deployment configuration on stable rigs:
+
+```bash
+mkdir -p "$HOME/.local/bin"
+curl https://mise.run | sh
+if ! grep -qxF 'eval "$($HOME/.local/bin/mise activate bash)"' "$HOME/.bashrc"; then
+  echo 'eval "$($HOME/.local/bin/mise activate bash)"' >> "$HOME/.bashrc"
+fi
+$HOME/.local/bin/mise --version
+curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/rig/install-mise-tools.sh | bash
+```
+
+Create and edit:
+
+- `/home/ggcore/.config/txing/rig/aws.env`
+  - `AWS_REGION`
+  - `AWS_STACK_NAME`
+  - optional `TXING_TOWN_ID`
+  - optional `TXING_RIG_ID`
+  - optional `CLOUDWATCH_LOG_GROUP`
+- `/home/ggcore/.config/txing/rig/aws.credentials`
+  - fill the `[town]` access keys
+
+Concrete towns, rigs, and devices are AWS IoT things. The SSM catalog under
+`/txing` stores only supported types and compatibility as leaf parameters, for
+example `/txing/town/cloud/time/kind`.
+
+`txing-rig-deploy` uses `/home/ggcore/.config/txing/rig/aws.credentials` for
+publishing Greengrass component versions and deployments. It does not use the
+rig mTLS certificate files.
 
 Txing components are delivered by the AWS Greengrass deployment that targets the
 rig-type thing group. A clean host with certificates,
@@ -254,10 +229,11 @@ production workflow.
 Publish or update those rig-type deployments from the rig host:
 
 ```bash
-/home/txing/.local/bin/mise exec -- txing-rig-deploy auto
-/home/txing/.local/bin/mise exec -- txing-rig-deploy raspi
-/home/txing/.local/bin/mise exec -- txing-rig-deploy cloud
-/home/txing/.local/bin/mise exec -- txing-rig-deploy all
+/home/ggcore/.local/bin/mise install
+/home/ggcore/.local/bin/mise exec -- txing-rig-deploy auto
+/home/ggcore/.local/bin/mise exec -- txing-rig-deploy raspi
+/home/ggcore/.local/bin/mise exec -- txing-rig-deploy cloud
+/home/ggcore/.local/bin/mise exec -- txing-rig-deploy all
 ```
 
 `txing-rig-deploy` resolves the local rig type on a rig host; explicit `raspi`,
@@ -271,12 +247,22 @@ The old host-local `ggl-cli deploy` path is kept only as
 Normal stable update:
 
 ```bash
-/home/txing/.local/bin/mise upgrade
-/home/txing/.local/bin/mise exec -- txing-rig-deploy auto
+/home/ggcore/.local/bin/mise upgrade
+/home/ggcore/.local/bin/mise exec -- txing-rig-deploy auto
 ```
 
-The Greengrass Lite mise tool uses the official upstream AWS GitHub release and
-only changes when AWS publishes a newer upstream Greengrass Lite version.
+If a stable release was just published and mise still resolves the previous
+version, refresh the remote-version cache before upgrading:
+
+```bash
+/home/ggcore/.local/bin/mise cache clear
+MISE_FETCH_REMOTE_VERSIONS_CACHE=0 /home/ggcore/.local/bin/mise upgrade
+/home/ggcore/.local/bin/mise exec -- txing-rig-deploy auto
+```
+
+Greengrass Lite is installed as an upstream Debian package, not as a mise tool.
+Upgrade it manually only when AWS publishes a newer upstream Greengrass Lite
+version you want to adopt.
 
 For old rigs, cleanup is manual and intentionally not automated:
 

@@ -110,7 +110,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn("greengrass-lite-version", workflow)
         self.assertNotIn("TXING_GREENGRASS_LITE_BUILD_INPUT_HASH", workflow)
 
-    def test_rig_mise_config_uses_github_assets_and_greengrass_prefix(self) -> None:
+    def test_rig_mise_config_uses_github_assets_without_greengrass(self) -> None:
         installer = (REPO_ROOT / "rig" / "install-mise-tools.sh").read_text(
             encoding="utf-8"
         )
@@ -119,17 +119,13 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn('txing-ble-connectivity = "github:$owner/$repo"', installer)
         self.assertIn('txing-aws-connectivity = "github:$owner/$repo"', installer)
         self.assertIn('txing-rig-deploy = "github:$owner/$repo"', installer)
-        self.assertIn(
-            'txing-greengrass-lite = "github:aws-greengrass/aws-greengrass-lite"',
-            installer,
-        )
+        self.assertIn('[settings]', installer)
+        self.assertIn('fetch_remote_versions_cache = "0s"', installer)
         self.assertIn(
             'asset_pattern = "txing-rig-deploy-linux-aarch64.tar.gz"', installer
         )
-        self.assertIn(
-            'asset_pattern = "aws-greengrass-lite-deb-arm64.zip"',
-            installer,
-        )
+        self.assertNotIn("txing-greengrass-lite", installer)
+        self.assertNotIn("aws-greengrass-lite-deb-arm64.zip", installer)
         self.assertNotIn('version_prefix = "greengrass-lite-v"', installer)
         self.assertNotIn("prerelease = true", installer)
         self.assertNotIn("sudo", installer)
@@ -150,8 +146,15 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn("RequiresPrivilege: true", rig_justfile)
         self.assertIn("gg_component", installation_docs)
         self.assertIn("bluetooth", installation_docs)
-        self.assertIn("aws-greengrass-lite-*-Linux.deb", installation_docs)
+        self.assertIn("aws-greengrass-lite-deb-arm64.zip", installation_docs)
+        self.assertIn("aws-greengrass-lite-$GGL_VERSION-Linux.deb", installation_docs)
         self.assertIn("/etc/greengrass/config.d/greengrass-lite.yaml", installation_docs)
+        self.assertIn("/var/lib/greengrass/credentials/", installation_docs)
+        self.assertIn("/home/ggcore/.config/txing/rig/aws.credentials", installation_docs)
+        self.assertNotIn("/home/txing/.config/txing/rig/certs", installation_docs)
+        self.assertIn("The package creates the `ggcore` and `gg_component` users", installation_docs)
+        self.assertNotIn("groupadd --system ggcore", installation_docs)
+        self.assertNotIn("useradd --system --gid ggcore", installation_docs)
 
     def test_greengrass_lite_submodule_stays_top_level_module(self) -> None:
         self.assertFalse((REPO_ROOT / "rig" / "greengrass-lite-build.env").exists())
