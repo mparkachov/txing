@@ -77,7 +77,9 @@ sudo install -d -o txing -g txing -m 700 /home/txing/.config/txing/rig
 ```
 
 For `RIG_TYPE=raspi`, install and enable Bluetooth manually before deploying the
-unit connectivity component.
+unit connectivity component. Add the Greengrass component user
+`gg_component` to the OS `bluetooth` group so the BLE component can use BlueZ
+over D-Bus without a privileged Greengrass lifecycle.
 
 Install `mise` for the `txing` user. The stable rig artifacts live in that
 user's mise install tree:
@@ -157,26 +159,97 @@ Copy the resulting `rig.cert.pem` and `rig.private.key` to the rig host under
 The `txing-greengrass-lite` mise tool points at the official upstream
 `aws-greengrass/aws-greengrass-lite` release asset. Repository code does not
 copy files into system directories, create users, change ownership, write
-`/etc/greengrass/config.yaml`, resolve AWS endpoints, or start systemd units.
+Greengrass configuration, resolve AWS endpoints, or start systemd units.
 
 ### 5. Install Greengrass Lite And Deploy Rig Components
 
+Install the upstream Greengrass Lite payload with mise as the `txing` user:
+
 ```bash
+/home/txing/.local/bin/mise install
 /home/txing/.local/bin/mise where txing-greengrass-lite
-/home/txing/.local/bin/mise exec -- txing-rig-deploy auto
 ```
 
 The Greengrass Lite payload contains the upstream arm64 Debian package and AWS
-installer helper. Install and configure it as a manual privileged host step. It
-does not manage the old custom `rig.service` and it does not enable
-rig-type-specific host dependencies such as Bluetooth. Remove old services
-manually before using the fresh stable path.
+installer helper. The txing stable path installs the Debian package directly and
+writes txing configuration manually; do not run the upstream helper unless you
+are intentionally using the upstream ConnectionKit flow.
+
+From a privileged root shell on the rig, install the `.deb` from the path printed
+by `mise where txing-greengrass-lite`, install certificate material, and write
+the Greengrass Lite configuration. Fill the placeholder endpoint values from the
+AWS stack and IoT endpoint reads for the target town/rig:
+
+```bash
+GGL_PAYLOAD="/home/txing/.local/share/mise/installs/txing-greengrass-lite/2.5.1"
+RIG_ID="<rig-id>"
+AWS_REGION="<aws-region>"
+IOT_CRED_ENDPOINT="<credential-provider-endpoint>"
+IOT_DATA_ENDPOINT="<iot-data-ats-endpoint>"
+IOT_ROLE_ALIAS="<greengrass-token-exchange-role-alias>"
+
+getent group ggcore >/dev/null || groupadd --system ggcore
+id -u ggcore >/dev/null 2>&1 || useradd --system --gid ggcore --home-dir /var/lib/greengrass --shell /usr/sbin/nologin ggcore
+getent group gg_component >/dev/null || groupadd --system gg_component
+id -u gg_component >/dev/null 2>&1 || useradd --system --gid gg_component --home-dir /var/lib/greengrass/component --shell /usr/sbin/nologin gg_component
+
+apt install -y "$GGL_PAYLOAD"/aws-greengrass-lite-*-Linux.deb
+
+install -d -o ggcore -g ggcore -m 700 /var/lib/greengrass/credentials
+install -o ggcore -g ggcore -m 600 /home/txing/.config/txing/rig/certs/rig.cert.pem /var/lib/greengrass/credentials/rig.cert.pem
+install -o ggcore -g ggcore -m 600 /home/txing/.config/txing/rig/certs/rig.private.key /var/lib/greengrass/credentials/rig.private.key
+curl -fsSL https://www.amazontrust.com/repository/AmazonRootCA1.pem -o /tmp/AmazonRootCA1.pem
+install -o ggcore -g ggcore -m 644 /tmp/AmazonRootCA1.pem /var/lib/greengrass/credentials/AmazonRootCA1.pem
+rm -f /tmp/AmazonRootCA1.pem
+
+install -d -m 755 /etc/greengrass/config.d
+cat >/etc/greengrass/config.d/greengrass-lite.yaml <<EOF
+system:
+  privateKeyPath: "/var/lib/greengrass/credentials/rig.private.key"
+  certificateFilePath: "/var/lib/greengrass/credentials/rig.cert.pem"
+  rootCaPath: "/var/lib/greengrass/credentials/AmazonRootCA1.pem"
+  rootPath: "/var/lib/greengrass"
+  thingName: "$RIG_ID"
+services:
+  aws.greengrass.NucleusLite:
+    componentType: "NUCLEUS"
+    configuration:
+      awsRegion: "$AWS_REGION"
+      iotCredEndpoint: "$IOT_CRED_ENDPOINT"
+      iotDataEndpoint: "$IOT_DATA_ENDPOINT"
+      iotRoleAlias: "$IOT_ROLE_ALIAS"
+      runWithDefault:
+        posixUser: "gg_component:gg_component"
+      greengrassDataPlanePort: "8443"
+      platformOverride: {}
+EOF
+
+chown -R ggcore:ggcore /var/lib/greengrass
+systemctl daemon-reload
+systemctl enable --now greengrass-lite.target
+```
+
+For `RIG_TYPE=raspi`, also add the component runtime user to the OS Bluetooth
+group from the same root shell, then restart Bluetooth and Greengrass:
+
+```bash
+getent group bluetooth
+usermod -aG bluetooth gg_component
+systemctl restart bluetooth.service
+systemctl restart greengrass-lite.target
+```
+
+The package writes `/etc/greengrass/config.d/greengrass-lite.yaml` during
+installation. The txing configuration above deliberately replaces that fragment
+so generic components run as `gg_component:gg_component`, not as the Greengrass
+core user.
 
 Txing components are delivered by the AWS Greengrass deployment that targets the
 rig-type thing group. A clean host with certificates,
-`/etc/greengrass/config.yaml`, network, and AWS access should join that
-deployment after Greengrass Lite starts; no host-local `ggl-cli deploy` or
-`/var/lib/greengrass/config.db` state is part of the production workflow.
+`/etc/greengrass/config.d/greengrass-lite.yaml`, network, and AWS access should
+join that deployment after Greengrass Lite starts; no host-local
+`ggl-cli deploy` or `/var/lib/greengrass/config.db` state is part of the
+production workflow.
 
 Publish or update those rig-type deployments from the rig host:
 

@@ -136,6 +136,23 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn("run as root", installer)
         self.assertNotIn("chown", installer)
 
+    def test_rig_ble_component_runs_without_greengrass_privilege(self) -> None:
+        stable_deploy = (REPO_ROOT / "rig" / "scripts" / "txing-rig-deploy").read_text(
+            encoding="utf-8"
+        )
+        rig_justfile = (REPO_ROOT / "rig" / "justfile").read_text(encoding="utf-8")
+        installation_docs = (REPO_ROOT / "docs" / "installation.md").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("txing-ble-connectivity", stable_deploy)
+        self.assertNotIn("RequiresPrivilege: true", stable_deploy)
+        self.assertNotIn("RequiresPrivilege: true", rig_justfile)
+        self.assertIn("gg_component", installation_docs)
+        self.assertIn("bluetooth", installation_docs)
+        self.assertIn("aws-greengrass-lite-*-Linux.deb", installation_docs)
+        self.assertIn("/etc/greengrass/config.d/greengrass-lite.yaml", installation_docs)
+
     def test_greengrass_lite_submodule_stays_top_level_module(self) -> None:
         self.assertFalse((REPO_ROOT / "rig" / "greengrass-lite-build.env").exists())
         self.assertFalse(
@@ -221,6 +238,7 @@ class VersionEnvironmentTests(unittest.TestCase):
                 sparkplug_recipe,
             )
             self.assertIn("aws.greengrass#PublishToTopic", ble_recipe)
+            self.assertNotIn("RequiresPrivilege", ble_recipe)
             self.assertIn("txing-aws-connectivity", aws_recipe)
 
     def test_rig_deploy_rejects_version_skew(self) -> None:

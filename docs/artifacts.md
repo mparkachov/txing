@@ -292,6 +292,10 @@ Then install and deploy:
 Greengrass Lite host configuration is a manual privileged step. Repository
 scripts do not copy files into system locations, create users, write
 `/etc/greengrass/config.yaml`, or start systemd units.
+Use `ggcore` for Greengrass Lite core services and `gg_component` for normal
+Greengrass components. Raspi rigs should add `gg_component` to the OS
+`bluetooth` group so BLE access uses BlueZ/D-Bus without a privileged
+component lifecycle.
 
 Normal stable update:
 

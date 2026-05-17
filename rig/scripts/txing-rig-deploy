@@ -294,7 +294,6 @@ Manifests:
       runtime: aws_nucleus_lite
     Lifecycle:
       run:
-        RequiresPrivilege: true
         Script: |-
           exec "{artifacts:path}/txing-ble-connectivity" \
             --adapter-id "{configuration:/AdapterId}" \

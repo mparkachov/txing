@@ -1227,7 +1227,6 @@ deploy target='auto' component_version='' region=region aws_profile=aws_profile 
           runtime: aws_nucleus_lite
         Lifecycle:
           run:
-            RequiresPrivilege: true
             Script: |-
               exec "{artifacts:path}/txing-ble-connectivity" \
                 --adapter-id "{configuration:/AdapterId}" \
@@ -1874,7 +1873,6 @@ deploy-local rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id=
           runtime: aws_nucleus_lite
         Lifecycle:
           run:
-            RequiresPrivilege: true
             Script: |-
               exec "{artifacts:path}/txing-ble-connectivity" \
                 --adapter-id "{configuration:/AdapterId}" \

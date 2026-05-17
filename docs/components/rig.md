@@ -168,7 +168,9 @@ the configured `RIG_TYPE`.
 
 `RIG_TYPE=raspi` requires the host Bluetooth service because the connectivity
 component uses BLE rendezvous with the MCU. Install the OS Bluetooth package and
-enable `bluetooth.service` as a manual privileged host configuration step.
+enable `bluetooth.service` as a manual privileged host configuration step. Add
+the Greengrass component user `gg_component` to the OS `bluetooth` group before
+starting Greengrass, then restart Greengrass after changing group membership.
 
 `RIG_TYPE=cloud` has no extra host service dependency beyond Greengrass Lite.
 

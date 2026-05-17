@@ -61,6 +61,12 @@ perform host configuration manually:
 /home/txing/.local/bin/mise exec -- txing-rig-deploy auto
 ```
 
+Use separate Unix identities for operation and runtime: `txing` owns mise and
+deployment configuration, `ggcore` runs Greengrass Lite core services, and
+`gg_component` runs normal Greengrass components. On raspi rigs, add
+`gg_component` to the OS `bluetooth` group so the BLE component runs
+unprivileged through BlueZ/D-Bus.
+
 Source-checkout Greengrass Lite builds are for development and local debugging:
 
 ```bash
