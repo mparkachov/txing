@@ -18,7 +18,7 @@ option(
 
 set(
   _txing_kvs_default_sdk_source_dir
-  "${CMAKE_CURRENT_SOURCE_DIR}/../../../common/board/aws-kvs-webrtc-sdk"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../../../../modules/awslabs/amazon-kinesis-video-streams-webrtc-sdk-c"
 )
 set(
   _txing_kvs_default_sdk_install_dir

@@ -653,13 +653,15 @@ class AwsShadowClientTests(unittest.TestCase):
         self.assertIn('command aws "$@"', justfile)
         self.assertNotIn('describe-log-groups', justfile)
         self.assertNotIn("legacy_systemd_unit", justfile)
-        self.assertIn('greengrass_lite_dir := rig_dir + "/greengrass-lite"', justfile)
+        self.assertIn(
+            'greengrass_lite_dir := project_root + "/modules/aws-greengrass/aws-greengrass-lite"',
+            justfile,
+        )
         self.assertIn('greengrass_lite_target := "greengrass-lite.target"', justfile)
-        self.assertIn("default_greengrass_lite_repository", justfile)
-        self.assertIn("https://github.com/aws-greengrass/aws-greengrass-lite.git", justfile)
-        self.assertIn("default_greengrass_lite_ref", justfile)
-        self.assertIn("clone-greengrass-lite:", justfile)
-        self.assertIn('git clone --branch "{{default_greengrass_lite_ref}}"', justfile)
+        self.assertNotIn("default_greengrass_lite_repository", justfile)
+        self.assertNotIn("default_greengrass_lite_ref", justfile)
+        self.assertNotIn("clone-greengrass-lite:", justfile)
+        self.assertIn("modules/aws-greengrass/aws-greengrass-lite", justfile)
         self.assertIn("build:", justfile)
         self.assertNotIn("build" "-native:", justfile)
         self.assertIn("Greengrass Lite native build is supported only on Linux", justfile)

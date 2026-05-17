@@ -2,9 +2,10 @@
 
 This directory contains shared board-side native dependencies.
 
-Tracked content:
+Submodule content:
 
-- `aws-kvs-webrtc-sdk/`: AWS KVS WebRTC C SDK, pinned by git submodule.
+- `../../../modules/awslabs/amazon-kinesis-video-streams-webrtc-sdk-c/`: AWS KVS
+  WebRTC C SDK, pinned by git submodule.
 
 Generated content:
 

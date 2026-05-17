@@ -30,8 +30,7 @@ Stable releases are normal GitHub Releases:
 - tag and release name: `v<VERSION>`, for example `v0.9.114`;
 - version source: manual workflow input, or the next minor version computed from
   repository root `VERSION` when the input is blank;
-- publisher: manual `Unit Daemon Stable Release` GitHub Actions workflow from
-  `main`;
+- publisher: manual `Txing Stable Release` GitHub Actions workflow from `main`;
 - GitHub prerelease flag: `false`;
 - release immutability: the workflow fails if the stable tag or release already
   exists.
@@ -48,6 +47,59 @@ Feature releases are GitHub prereleases:
 Feature versions intentionally sort between the current stable and the next
 stable. For example, `0.9.115-feature.1770000000` is newer than `0.9.114`, but
 older than stable `0.9.115`.
+
+## Rig Stable Artifacts
+
+Stable rig hosts use `mise` to install txing rig binaries from GitHub Releases.
+The rig does not need a source checkout or local Rust/CMake compilation for the
+stable runtime path.
+
+Project stable releases publish these project-versioned assets on `v<VERSION>`:
+
+```text
+txing-unit-daemon-linux-aarch64.tar.gz
+txing-sparkplug-manager-linux-aarch64.tar.gz
+txing-ble-connectivity-linux-aarch64.tar.gz
+txing-aws-connectivity-linux-aarch64.tar.gz
+txing-rig-deploy-linux-aarch64.tar.gz
+```
+
+Each archive contains one root-level executable with the same command name.
+`txing-rig-deploy` uploads the installed component binaries to the existing
+Greengrass artifacts bucket, creates Greengrass component versions, and creates
+the rig-type deployments.
+
+Greengrass Lite is versioned separately from the project release. Its release
+tag is derived directly from the upstream Greengrass Lite `version` file in the
+submodule:
+
+```text
+greengrass-lite-v<upstream-version>
+txing-greengrass-lite-linux-aarch64.tar.gz
+```
+
+The stable release workflow updates the
+`modules/aws-greengrass/aws-greengrass-lite` submodule from upstream `main`,
+reads that version file, and skips the Greengrass Lite build/publish steps when
+`greengrass-lite-v<upstream-version>` already exists.
+
+Rig mise config is installed at:
+
+```text
+/home/txing/.config/mise/conf.d/txing-rig.toml
+```
+
+It defines `txing-greengrass-lite` with:
+
+```toml
+version = "latest"
+version_prefix = "greengrass-lite-v"
+asset_pattern = "txing-greengrass-lite-linux-aarch64.tar.gz"
+```
+
+Plain `mise upgrade` therefore updates txing rig binaries and only updates
+Greengrass Lite when this repository publishes a newer upstream Greengrass Lite
+version.
 
 ## Board Layout
 
@@ -118,9 +170,10 @@ Stable publishing is CI-owned:
 ```
 
 The workflow runs manually from `main`, builds on `ubuntu-24.04-arm`, installs
-Rust `1.95.0`, runs daemon tests, builds and strips the Linux `aarch64` binary,
-packages the archive, and creates a normal GitHub Release for `v<VERSION>`.
-Stable tags and releases are immutable.
+Rust `1.95.0`, runs Rust tests, builds and strips the Linux `aarch64` binaries,
+packages the project stable assets, publishes or skips the upstream-versioned
+Greengrass Lite release, and creates a normal GitHub Release for `v<VERSION>`.
+Stable project tags and releases are immutable.
 
 Feature publishing is CI-owned:
 
@@ -205,12 +258,64 @@ rm -f /tmp/txing-unit-daemon-config.tgz
 
 ### Publish A Stable Release
 
-Push the intended code to `main`, then run the `Unit Daemon Stable Release`
+Push the intended code to `main`, then run the `Txing Stable Release`
 workflow manually from `main`. Enter a new stable version greater than the
 current root `VERSION`, or leave the input blank to release the next minor
 version. The workflow bumps managed version files, commits that release bump to
-`main`, and publishes release `v<VERSION>`. It fails if that tag or release
-already exists.
+`main`, and publishes release `v<VERSION>`. It also publishes
+`greengrass-lite-v<upstream-version>` only if that Greengrass Lite release does
+not already exist. It fails if the project tag or release already exists.
+
+### Install Stable On A Rig
+
+This is the fresh-host stable path. The rig must already have the AWS stack,
+town thing, rig thing, and rig certificate material prepared.
+
+Install mise and the rig tool config:
+
+```bash
+sudo -u txing env HOME=/home/txing bash -lc 'mkdir -p "$HOME/.local/bin" && curl https://mise.run | sh'
+curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/rig/install-mise-tools.sh | sudo bash
+```
+
+Create:
+
+```text
+/home/txing/.config/txing/rig/aws.env
+/home/txing/.config/txing/rig/aws.credentials
+/home/txing/.config/txing/rig/certs/rig.cert.pem
+/home/txing/.config/txing/rig/certs/rig.private.key
+```
+
+Then install and deploy:
+
+```bash
+sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise install
+sudo env HOME=/home/txing /home/txing/.local/bin/mise exec -- txing-greengrass-lite install <rig-id>
+sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise exec -- txing-rig-deploy auto
+```
+
+Normal stable update:
+
+```bash
+sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise upgrade
+sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise exec -- txing-rig-deploy auto
+```
+
+### Remove An Old Rig Install Manually
+
+The stable installers are fresh-host only. They do not migrate or clean up old
+installations automatically. Before using the new path on an older rig, review
+and run the cleanup manually:
+
+```bash
+sudo systemctl stop ggl.dev.txing.rig.SparkplugManager.service ggl.dev.txing.rig.BleConnectivity.service ggl.dev.txing.rig.AwsConnectivity.service greengrass-lite.target || true
+sudo systemctl disable greengrass-lite.target || true
+sudo rm -rf /etc/greengrass /var/lib/greengrass /run/greengrass
+sudo rm -f /etc/tmpfiles.d/txing-greengrass-lite.conf
+sudo systemctl daemon-reload
+sudo systemctl reset-failed
+```
 
 ### Install Stable On A Board
 

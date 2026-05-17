@@ -6,7 +6,7 @@ weather_dir := canonicalize(mcu_dir + "/..")
 project_root := canonicalize(mcu_dir + "/../../..")
 common_mcu_dir := canonicalize(project_root + "/devices/common/mcu")
 ncs_dir := common_mcu_dir + "/ncs"
-ncs_repo := ncs_dir + "/nrf"
+ncs_repo := project_root + "/modules/nrfconnect/sdk-nrf"
 zephyr_base := ncs_dir + "/zephyr"
 ncs_venv := ncs_dir + "/.venv"
 west := ncs_venv + "/bin/west"
@@ -44,7 +44,7 @@ _firmware-hex:
     printf '%s\n' "$firmware"
 
 @submodules:
-    git -C "{{ project_root }}" submodule update --init --recursive -- devices/common/mcu/ncs/nrf
+    git -C "{{ project_root }}" submodule update --init --recursive -- modules/nrfconnect/sdk-nrf
 
 @check: _ensure-ncs
     cd "{{ ncs_dir }}" && \

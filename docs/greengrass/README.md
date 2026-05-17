@@ -1,8 +1,8 @@
 # Rig Greengrass Components
 
-This directory contains recipe templates for the Raspberry Pi 5 rig runtime on
-AWS IoT Greengrass Nucleus Lite. Greengrass is a rig implementation detail, so
-the templates live under `rig/`.
+This guide describes the Raspberry Pi 5 rig runtime on AWS IoT Greengrass
+Nucleus Lite. Greengrass is a rig implementation detail; the component binaries
+and deploy tooling live under `rig/`.
 
 Rig-wide components:
 
@@ -32,8 +32,8 @@ Lifecycle boundary:
   operational signals, but Sparkplug `NBIRTH` and `NDEATH` remain the
   authoritative txing rig lifecycle.
 
-`just rig::deploy [rig-type|all] [version]` is the production Greengrass cloud
-deployment path. It builds Linux Greengrass component binaries, uploads
+`txing-rig-deploy [auto|raspi|cloud|all]` is the stable Greengrass cloud
+deployment path on rigs. It runs from mise-installed release artifacts, uploads
 immutable artifacts to the Greengrass artifacts bucket, creates Greengrass
 component versions, and creates continuous deployments for the rig-type thing
 groups. Raspi deployments include the Sparkplug manager and BLE connectivity;
@@ -47,11 +47,20 @@ use host-local `ggl-cli deploy`, `rig/build/greengrass-local`, or
 is retained only as `just rig::deploy-local <rig-id>` for debugging Greengrass
 Lite itself.
 
-The Rust Greengrass SDK build is Linux-only in this repo, so run cloud deploys
-from a Linux builder or rig host. macOS development uses `just rig::start` with
-the local Unix-socket broker instead.
+The Rust Greengrass SDK build is Linux-only in this repo. Stable rigs use
+prebuilt Linux assets; source-checkout development and admin builder deploys
+must run from Linux. macOS development uses `just rig::start` with the local
+Unix-socket broker instead.
 
-Native Greengrass Lite is built and installed through:
+Stable Greengrass Lite is installed from the separate upstream-versioned mise
+artifact:
+
+```bash
+sudo env HOME=/home/txing /home/txing/.local/bin/mise exec -- txing-greengrass-lite install <rig-id>
+sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise exec -- txing-rig-deploy auto
+```
+
+Source-checkout Greengrass Lite builds are for development and local debugging:
 
 ```bash
 sudo apt install -y cmake build-essential pkg-config python3-venv python3-dev python3-pip git curl ninja-build unzip default-jre libssl-dev libcurl4-openssl-dev libdbus-1-dev libglib2.0-dev libavahi-client-dev libgirepository1.0-dev libcairo2-dev libreadline-dev uuid-dev libzip-dev libyaml-dev libsystemd-dev libevent-dev liburiparser-dev cgroup-tools bluez pi-bluetooth avahi-utils
@@ -61,9 +70,10 @@ just rig::install-service <rig-id>
 ```
 
 Run the package install before `just rig::build`; the native build invokes
-`cmake` directly for Greengrass Lite and also builds the Rust Sparkplug manager,
-BLE connectivity, and AWS connectivity binaries with the Linux-only Greengrass
-SDK feature. It no longer builds a local Matter controller.
+`cmake` directly for the checked-in Greengrass Lite submodule and also builds
+the Rust Sparkplug manager, BLE connectivity, and AWS connectivity binaries with
+the Linux-only Greengrass SDK feature. It no longer builds a local Matter
+controller.
 
 Run `just aws::cert <rig-id>` before `just rig::install-service <rig-id>`. The install recipe
 copies `config/certs/rig/rig.cert.pem` and `rig.private.key` into
@@ -77,41 +87,43 @@ mTLS and AWS IoT Credentials Provider role-alias probes with the local rig
 certificate. It also validates rig identity consistency, the configured
 registry `rigType`, and host services required by that rig type.
 
-`just rig::install-service` uses the upstream CMake install target and
-Greengrass Lite `misc/run_nucleus` script; it does not create or rename txing
-systemd units, does not enable rig-type-specific host dependencies, and does not
-remove the old custom `rig.service`. The standard systemd entrypoint is
-`greengrass-lite.target`.
+`txing-greengrass-lite install <rig-id>` uses the packaged upstream CMake
+install payload and Greengrass Lite `misc/run_nucleus` script; it does not
+create or rename txing systemd units, does not enable rig-type-specific host
+dependencies, does not migrate old installs, and does not remove the old custom
+`rig.service`. Existing Greengrass state must be removed manually before running
+it. The standard systemd entrypoint is `greengrass-lite.target`.
 The install recipe also installs systemd drop-ins that set
 `LogLevelMax=warning` for `ggl.core.ggipcd.service` and
 `ggl.core.iotcored.service`, keeping high-volume IPC/MQTT state logs quiet while
 leaving other Greengrass Lite and txing component units at their normal log
 level.
 
-After code changes or `git pull`, run:
+After stable release updates on a rig host, run:
 
 ```bash
-just rig::deploy
-just rig::restart
+sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise upgrade
+sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise exec -- txing-rig-deploy auto
 ```
 
-From an admin builder, use an explicit target when needed:
+From an admin builder with installed release artifacts, use an explicit target
+when needed:
 
 ```bash
-just rig::deploy raspi
-just rig::deploy cloud
-just rig::deploy all
+txing-rig-deploy raspi
+txing-rig-deploy cloud
+txing-rig-deploy all
 ```
 
-`deploy` builds and publishes all three Rust Greengrass components, so a
-separate component build step is not required. Without an explicit version, it
-uses the plain semantic version in the repository root `VERSION` file. CI bumps
-the patch version on `main`; Git metadata is exported for diagnostics but is not
-used as the Greengrass component version.
+`txing-rig-deploy` publishes all three installed Rust Greengrass component
+binaries and requires them to have the same stable project SemVer. Git metadata
+is exported for diagnostics by the components, but it is not used as the
+Greengrass component version.
 
 The first argument is the target rig type (`auto`, `raspi`, `cloud`, or `all`).
 When a new Greengrass component version is required, bump the whole project
-release version first. Production deploys reject dirty worktrees.
+release version first. The stable deploy tool does not inspect a checkout;
+source-checkout `just rig::deploy` still rejects dirty worktrees.
 
 Weather and power things are discovered from the normal AWS registry assignment.
 The rig-wide Sparkplug manager publishes v2 inventory using the registered AWS

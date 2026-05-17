@@ -3,9 +3,10 @@
 This directory is the repo-local nRF Connect SDK workspace used by MCU
 subprojects that need stock NCS tooling.
 
-Tracked content:
+Submodule content:
 
-- `nrf/`: Nordic `sdk-nrf` manifest repository, pinned by git submodule.
+- `../../../../modules/nrfconnect/sdk-nrf/`: Nordic `sdk-nrf` manifest
+  repository, pinned by git submodule.
 
 Generated content:
 

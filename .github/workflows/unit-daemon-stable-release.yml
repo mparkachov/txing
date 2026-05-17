@@ -1,4 +1,4 @@
-name: Unit Daemon Stable Release
+name: Txing Stable Release
 
 on:
   workflow_dispatch:
@@ -12,17 +12,21 @@ permissions:
   contents: write
 
 concurrency:
-  group: unit-daemon-stable-release-${{ github.ref }}
+  group: txing-stable-release-${{ github.ref }}
   cancel-in-progress: false
 
 env:
   RUST_VERSION: 1.95.0
-  ASSET_NAME: txing-unit-daemon-linux-aarch64.tar.gz
-  BINARY_NAME: txing-unit-daemon
+  UNIT_DAEMON_ASSET: txing-unit-daemon-linux-aarch64.tar.gz
+  SPARKPLUG_MANAGER_ASSET: txing-sparkplug-manager-linux-aarch64.tar.gz
+  BLE_CONNECTIVITY_ASSET: txing-ble-connectivity-linux-aarch64.tar.gz
+  AWS_CONNECTIVITY_ASSET: txing-aws-connectivity-linux-aarch64.tar.gz
+  RIG_DEPLOY_ASSET: txing-rig-deploy-linux-aarch64.tar.gz
+  GREENGRASS_LITE_ASSET: txing-greengrass-lite-linux-aarch64.tar.gz
 
 jobs:
   stable-release:
-    name: Build and publish stable daemon
+    name: Build and publish stable artifacts
     runs-on: ubuntu-24.04-arm
 
     steps:
@@ -30,6 +34,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Update Greengrass Lite submodule from upstream main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git submodule update --init --remote modules/aws-greengrass/aws-greengrass-lite
 
       - name: Resolve release metadata
         id: metadata
@@ -84,20 +94,45 @@ jobs:
           fi
 
           tag="v$version"
+          greengrass_lite_version="$(tr -d '[:space:]' < modules/aws-greengrass/aws-greengrass-lite/version)"
+          if [[ ! "$greengrass_lite_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Greengrass Lite version must be semantic version x.y.z, got: $greengrass_lite_version" >&2
+            exit 1
+          fi
+          greengrass_lite_tag="greengrass-lite-v$greengrass_lite_version"
 
           {
-            echo "### Unit daemon stable release"
+            echo "### Txing stable release"
             echo
             echo "- Current VERSION: \`$current_version\`"
             echo "- Requested version: \`$version\`"
             echo "- Version source: \`$version_source\`"
             echo "- Tag: \`$tag\`"
+            echo "- Greengrass Lite tag: \`$greengrass_lite_tag\`"
           } >>"$GITHUB_STEP_SUMMARY"
 
           echo "current_version=$current_version" >>"$GITHUB_OUTPUT"
           echo "version=$version" >>"$GITHUB_OUTPUT"
           echo "version_source=$version_source" >>"$GITHUB_OUTPUT"
           echo "tag=$tag" >>"$GITHUB_OUTPUT"
+          echo "greengrass_lite_version=$greengrass_lite_version" >>"$GITHUB_OUTPUT"
+          echo "greengrass_lite_tag=$greengrass_lite_tag" >>"$GITHUB_OUTPUT"
+
+      - name: Check Greengrass Lite release
+        id: greengrass_lite
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GGL_TAG: ${{ steps.metadata.outputs.greengrass_lite_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$GGL_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "build=false" >>"$GITHUB_OUTPUT"
+            echo "Greengrass Lite release $GGL_TAG already exists; skipping Greengrass Lite build." >>"$GITHUB_STEP_SUMMARY"
+          else
+            echo "build=true" >>"$GITHUB_OUTPUT"
+            echo "Greengrass Lite release $GGL_TAG does not exist; building it." >>"$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Reject existing immutable release
         env:
@@ -122,7 +157,10 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config cmake perl file
+          sudo apt-get install -y \
+            build-essential pkg-config cmake perl file curl git \
+            libssl-dev libcurl4-openssl-dev libdbus-1-dev uuid-dev \
+            libzip-dev libyaml-dev libsystemd-dev libevent-dev liburiparser-dev
 
       - name: Restore Rust toolchain cache
         uses: actions/cache@v4
@@ -168,55 +206,109 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             devices/unit/daemon/target
-          key: cargo-unit-daemon-${{ runner.os }}-${{ runner.arch }}-rust-1.95.0-${{ hashFiles('devices/unit/daemon/Cargo.lock') }}
+            rig/target
+          key: cargo-stable-${{ runner.os }}-${{ runner.arch }}-rust-1.95.0-${{ hashFiles('devices/unit/daemon/Cargo.lock', 'rig/Cargo.lock') }}
           restore-keys: |
-            cargo-unit-daemon-${{ runner.os }}-${{ runner.arch }}-rust-1.95.0-
+            cargo-stable-${{ runner.os }}-${{ runner.arch }}-rust-1.95.0-
 
-      - name: Test daemon
+      - name: Test Rust artifacts
         env:
           TXING_DAEMON_BUILD_VERSION: ${{ steps.metadata.outputs.version }}
         shell: bash
         run: |
           set -euo pipefail
           cargo test --manifest-path devices/unit/daemon/Cargo.toml
+          cargo test --manifest-path rig/Cargo.toml --workspace
 
-      - name: Build daemon
+      - name: Build Rust artifacts
         env:
           TXING_DAEMON_BUILD_VERSION: ${{ steps.metadata.outputs.version }}
         shell: bash
         run: |
           set -euo pipefail
           cargo build --release --manifest-path devices/unit/daemon/Cargo.toml --bin daemon
+          TXING_REAL_CC="${CC:-cc}" CC="$PWD/rig/tools/cc-greengrass-info-log" \
+            cargo build --release --features greengrass-sdk --manifest-path rig/sparkplug-manager/Cargo.toml
+          TXING_REAL_CC="${CC:-cc}" CC="$PWD/rig/tools/cc-greengrass-info-log" \
+            cargo build --release --features greengrass-sdk --manifest-path rig/ble-connectivity/Cargo.toml
+          TXING_REAL_CC="${CC:-cc}" CC="$PWD/rig/tools/cc-greengrass-info-log" \
+            cargo build --release --features greengrass-sdk --manifest-path rig/aws-connectivity/Cargo.toml
 
-      - name: Package release asset
-        id: package
+      - name: Build Greengrass Lite
+        if: steps.greengrass_lite.outputs.build == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake \
+            -S modules/aws-greengrass/aws-greengrass-lite \
+            -B "$RUNNER_TEMP/greengrass-lite-build" \
+            -DCMAKE_BUILD_TYPE=MinSizeRel \
+            -DGG_LOG_LEVEL=INFO \
+            -DGGL_SYSTEMD_SYSTEM_USER=ggcore \
+            -DGGL_SYSTEMD_SYSTEM_GROUP=ggcore \
+            -DGGL_SYSTEMD_SYSTEM_DIR=/lib/systemd/system
+          cmake --build "$RUNNER_TEMP/greengrass-lite-build" --config MinSizeRel --parallel
+          test -x "$RUNNER_TEMP/greengrass-lite-build/bin/ggl-cli"
+
+      - name: Package project release assets
         shell: bash
         run: |
           set -euo pipefail
 
-          package_dir="$RUNNER_TEMP/unit-daemon-package"
-          asset_path="$RUNNER_TEMP/$ASSET_NAME"
+          package_binary() {
+            local source="$1"
+            local binary_name="$2"
+            local asset_name="$3"
+            local package_dir="$RUNNER_TEMP/package-$binary_name"
+            local asset_path="$RUNNER_TEMP/$asset_name"
+            rm -rf "$package_dir"
+            install -d "$package_dir"
+            install -m 755 "$source" "$package_dir/$binary_name"
+            if file "$package_dir/$binary_name" | grep -q 'ELF'; then
+              strip "$package_dir/$binary_name"
+            fi
+            file "$package_dir/$binary_name"
+            tar -C "$package_dir" -czf "$asset_path" "$binary_name"
+            archive_listing="$(tar -tzf "$asset_path")"
+            if [ "$archive_listing" != "$binary_name" ]; then
+              echo "Expected $asset_name to contain only root-level $binary_name, got:" >&2
+              printf '%s\n' "$archive_listing" >&2
+              exit 1
+            fi
+          }
 
+          package_binary devices/unit/daemon/target/release/daemon txing-unit-daemon "$UNIT_DAEMON_ASSET"
+          package_binary rig/target/release/txing-sparkplug-manager txing-sparkplug-manager "$SPARKPLUG_MANAGER_ASSET"
+          package_binary rig/target/release/txing-ble-connectivity txing-ble-connectivity "$BLE_CONNECTIVITY_ASSET"
+          package_binary rig/target/release/txing-aws-connectivity txing-aws-connectivity "$AWS_CONNECTIVITY_ASSET"
+          package_binary rig/scripts/txing-rig-deploy txing-rig-deploy "$RIG_DEPLOY_ASSET"
+
+      - name: Package Greengrass Lite release asset
+        if: steps.greengrass_lite.outputs.build == 'true'
+        env:
+          GGL_VERSION: ${{ steps.metadata.outputs.greengrass_lite_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_dir="$RUNNER_TEMP/package-txing-greengrass-lite"
+          payload_dir="$package_dir/txing-greengrass-lite-payload"
           rm -rf "$package_dir"
-          install -d "$package_dir"
-          install -m 755 devices/unit/daemon/target/release/daemon "$package_dir/$BINARY_NAME"
-          strip "$package_dir/$BINARY_NAME"
-          file "$package_dir/$BINARY_NAME"
-          tar -C "$package_dir" -czf "$asset_path" "$BINARY_NAME"
-
-          archive_listing="$(tar -tzf "$asset_path")"
-          if [ "$archive_listing" != "$BINARY_NAME" ]; then
-            echo "Expected archive to contain only root-level $BINARY_NAME, got:" >&2
-            printf '%s\n' "$archive_listing" >&2
-            exit 1
-          fi
-
-          echo "asset_path=$asset_path" >>"$GITHUB_OUTPUT"
+          install -d "$payload_dir/root" "$package_dir"
+          DESTDIR="$payload_dir/root" cmake --install "$RUNNER_TEMP/greengrass-lite-build" --config MinSizeRel
+          install -m 755 rig/scripts/txing-greengrass-lite "$package_dir/txing-greengrass-lite"
+          install -m 755 modules/aws-greengrass/aws-greengrass-lite/misc/run_nucleus "$payload_dir/run_nucleus"
+          cat >"$payload_dir/metadata.env" <<EOF
+          TXING_GREENGRASS_LITE_VERSION=$GGL_VERSION
+          TXING_GREENGRASS_LITE_UPSTREAM_VERSION=$GGL_VERSION
+          TXING_GREENGRASS_LITE_UPSTREAM_COMMIT=$(git -C modules/aws-greengrass/aws-greengrass-lite rev-parse HEAD)
+          EOF
+          tar -C "$package_dir" -czf "$RUNNER_TEMP/$GREENGRASS_LITE_ASSET" \
+            txing-greengrass-lite \
+            txing-greengrass-lite-payload
 
       - name: Commit release bump
         id: release_refs
         env:
-          TAG: ${{ steps.metadata.outputs.tag }}
           VERSION: ${{ steps.metadata.outputs.version }}
         shell: bash
         run: |
@@ -237,34 +329,67 @@ jobs:
 
           echo "release_target=$release_target" >>"$GITHUB_OUTPUT"
 
-      - name: Publish stable release
+      - name: Publish Greengrass Lite release
+        if: steps.greengrass_lite.outputs.build == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.metadata.outputs.tag }}
-          VERSION: ${{ steps.metadata.outputs.version }}
+          GGL_TAG: ${{ steps.metadata.outputs.greengrass_lite_tag }}
+          GGL_VERSION: ${{ steps.metadata.outputs.greengrass_lite_version }}
           RELEASE_TARGET: ${{ steps.release_refs.outputs.release_target }}
-          ASSET_PATH: ${{ steps.package.outputs.asset_path }}
         shell: bash
         run: |
           set -euo pipefail
 
           notes_file="$(mktemp)"
           cat >"$notes_file" <<NOTES
-          Unit daemon stable release.
+          Txing Greengrass Lite payload.
+
+          - Version: $GGL_VERSION
+          - Tag: $GGL_TAG
+          - Commit: $RELEASE_TARGET
+          - Asset: $GREENGRASS_LITE_ASSET
+          NOTES
+
+          gh release create "$GGL_TAG" "$RUNNER_TEMP/$GREENGRASS_LITE_ASSET" \
+            --target "$RELEASE_TARGET" \
+            --title "$GGL_TAG" \
+            --notes-file "$notes_file" \
+            --latest=false
+
+      - name: Publish stable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.metadata.outputs.tag }}
+          VERSION: ${{ steps.metadata.outputs.version }}
+          RELEASE_TARGET: ${{ steps.release_refs.outputs.release_target }}
+          GGL_TAG: ${{ steps.metadata.outputs.greengrass_lite_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          notes_file="$(mktemp)"
+          cat >"$notes_file" <<NOTES
+          Txing stable release.
 
           - Version: $VERSION
           - Tag: $TAG
           - Commit: $RELEASE_TARGET
-          - Asset: $ASSET_NAME
+          - Assets:
+            - $UNIT_DAEMON_ASSET
+            - $SPARKPLUG_MANAGER_ASSET
+            - $BLE_CONNECTIVITY_ASSET
+            - $AWS_CONNECTIVITY_ASSET
+            - $RIG_DEPLOY_ASSET
+          - Greengrass Lite release: $GGL_TAG
           NOTES
 
-          args=(
-            "$TAG"
-            "$ASSET_PATH"
-            --target "$RELEASE_TARGET"
-            --title "$TAG"
-            --notes-file "$notes_file"
+          gh release create "$TAG" \
+            "$RUNNER_TEMP/$UNIT_DAEMON_ASSET" \
+            "$RUNNER_TEMP/$SPARKPLUG_MANAGER_ASSET" \
+            "$RUNNER_TEMP/$BLE_CONNECTIVITY_ASSET" \
+            "$RUNNER_TEMP/$AWS_CONNECTIVITY_ASSET" \
+            "$RUNNER_TEMP/$RIG_DEPLOY_ASSET" \
+            --target "$RELEASE_TARGET" \
+            --title "$TAG" \
+            --notes-file "$notes_file" \
             --latest=true
-          )
-
-          gh release create "${args[@]}"

@@ -32,16 +32,18 @@ semantic version such as `x.y.z`.
 Production Greengrass component versions use `VERSION` exactly. Git SHA and
 dirty state are exported separately for diagnostics, but they are not part of
 the Greengrass `ComponentVersion`. Create stable releases with the manual
-`Unit Daemon Stable Release` GitHub Actions workflow from `main`; provide the
-new stable version greater than the current root `VERSION`, or leave the input
+`Txing Stable Release` GitHub Actions workflow from `main`; provide the new
+stable version greater than the current root `VERSION`, or leave the input
 blank to use the next minor version. The workflow updates managed version files,
-commits the release bump to `main`, tags the commit, and publishes the GitHub
-Release. After pulling a release commit on a rig, the normal workflow is:
+commits the release bump to `main`, tags the commit, publishes the GitHub
+Release, and also publishes the rig stable binaries.
+
+Stable rigs do not pull the repository. They update installed artifacts and
+publish Greengrass deployments with:
 
 ```bash
-git pull
-just rig::deploy
-just rig::restart
+sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise upgrade
+sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise exec -- txing-rig-deploy auto
 ```
 
 Development direction for installable host tools and board-side native
@@ -50,7 +52,8 @@ artifacts:
 - `stable` points at the artifact built from the stable `VERSION`, for example `x.y.z`.
 - `feature` points at explicitly named debug artifacts and must not be confused with production Greengrass component versions.
 - GitHub release assets should be immutable for each exact artifact version.
-- The unit daemon uses mise's GitHub backend directly; see [artifacts.md](./artifacts.md).
+- The unit daemon and stable rig tools use mise's GitHub backend directly; see
+  [artifacts.md](./artifacts.md).
 - Unit daemon feature prereleases are published by the manual `Unit Daemon
   Feature Prerelease` GitHub Actions workflow from pushed `feature/*` branches.
 - Read-only board boot flows may install `feature` channel artifacts into
@@ -156,6 +159,9 @@ just rig::build
 just rig::deploy
 just rig::log <rig-id>
 ```
+
+That source-checkout rig loop is for development and admin builder use. Stable
+rig hosts use `mise upgrade` plus `txing-rig-deploy auto` instead.
 
 Board:
 

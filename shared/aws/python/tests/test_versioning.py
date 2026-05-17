@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import tempfile
 from pathlib import Path
@@ -59,6 +60,9 @@ class VersionEnvironmentTests(unittest.TestCase):
         rig_justfile = (REPO_ROOT / "rig" / "justfile").read_text(encoding="utf-8")
 
         self.assertIn("deploy target='auto'", rig_justfile)
+        self.assertIn("check-greengrass-lite", rig_justfile)
+        self.assertNotIn("git clone --branch", rig_justfile)
+        self.assertNotIn("TXING_RIG_GREENGRASS_LITE_REPOSITORY", rig_justfile)
         self.assertIn('env_scope="rig"', rig_justfile)
         self.assertIn('deploy_target="$RIG_TYPE"', rig_justfile)
         self.assertIn('resolved_component_version="$TXING_VERSION"', rig_justfile)
@@ -69,6 +73,187 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn('local key="artifacts/$component/$resolved_component_version/$filename"', rig_justfile)
         self.assertIn("aws s3api head-object", rig_justfile)
         self.assertNotIn("artifact_version_path", rig_justfile)
+
+    def test_stable_release_publishes_rig_and_greengrass_lite_assets(self) -> None:
+        workflow = (
+            REPO_ROOT / ".github" / "workflows" / "unit-daemon-stable-release.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("name: Txing Stable Release", workflow)
+        self.assertIn("txing-unit-daemon-linux-aarch64.tar.gz", workflow)
+        self.assertIn("txing-sparkplug-manager-linux-aarch64.tar.gz", workflow)
+        self.assertIn("txing-ble-connectivity-linux-aarch64.tar.gz", workflow)
+        self.assertIn("txing-aws-connectivity-linux-aarch64.tar.gz", workflow)
+        self.assertIn("txing-rig-deploy-linux-aarch64.tar.gz", workflow)
+        self.assertIn("txing-greengrass-lite-linux-aarch64.tar.gz", workflow)
+        self.assertIn(
+            "git submodule update --init --remote modules/aws-greengrass/aws-greengrass-lite",
+            workflow,
+        )
+        self.assertIn(
+            "tr -d '[:space:]' < modules/aws-greengrass/aws-greengrass-lite/version",
+            workflow,
+        )
+        self.assertIn("greengrass-lite-v$greengrass_lite_version", workflow)
+        self.assertIn("gh release view \"$GGL_TAG\"", workflow)
+        self.assertIn("steps.greengrass_lite.outputs.build == 'true'", workflow)
+        self.assertIn("--latest=false", workflow)
+        self.assertNotIn("greengrass-lite-version", workflow)
+        self.assertNotIn("TXING_GREENGRASS_LITE_BUILD_INPUT_HASH", workflow)
+
+    def test_rig_mise_config_uses_github_assets_and_greengrass_prefix(self) -> None:
+        installer = (REPO_ROOT / "rig" / "install-mise-tools.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('txing-sparkplug-manager = "github:$owner/$repo"', installer)
+        self.assertIn('txing-ble-connectivity = "github:$owner/$repo"', installer)
+        self.assertIn('txing-aws-connectivity = "github:$owner/$repo"', installer)
+        self.assertIn('txing-rig-deploy = "github:$owner/$repo"', installer)
+        self.assertIn('txing-greengrass-lite = "github:$owner/$repo"', installer)
+        self.assertIn(
+            'asset_pattern = "txing-rig-deploy-linux-aarch64.tar.gz"', installer
+        )
+        self.assertIn('version_prefix = "greengrass-lite-v"', installer)
+        self.assertIn(
+            'asset_pattern = "txing-greengrass-lite-linux-aarch64.tar.gz"',
+            installer,
+        )
+
+    def test_greengrass_lite_release_uses_upstream_version_only(self) -> None:
+        self.assertFalse((REPO_ROOT / "rig" / "greengrass-lite-build.env").exists())
+        self.assertFalse(
+            (REPO_ROOT / "rig" / "scripts" / "greengrass-lite-version").exists()
+        )
+
+        gitmodules = (REPO_ROOT / ".gitmodules").read_text(encoding="utf-8")
+        self.assertIn('[submodule "aws-greengrass/aws-greengrass-lite"]', gitmodules)
+        self.assertIn(
+            "path = modules/aws-greengrass/aws-greengrass-lite", gitmodules
+        )
+        self.assertIn(
+            '[submodule "awslabs/amazon-kinesis-video-streams-webrtc-sdk-c"]',
+            gitmodules,
+        )
+        self.assertIn(
+            "path = modules/awslabs/amazon-kinesis-video-streams-webrtc-sdk-c",
+            gitmodules,
+        )
+        self.assertIn('[submodule "nrfconnect/sdk-nrf"]', gitmodules)
+        self.assertIn("path = modules/nrfconnect/sdk-nrf", gitmodules)
+        self.assertIn("branch = main", gitmodules)
+
+    def test_greengrass_lite_installer_is_fresh_install_only(self) -> None:
+        installer = (
+            REPO_ROOT / "rig" / "scripts" / "txing-greengrass-lite"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("existing Greengrass Lite state detected", installer)
+        self.assertIn("/etc/greengrass", installer)
+        self.assertIn("/var/lib/greengrass", installer)
+        self.assertNotIn("rm -rf /etc/greengrass", installer)
+        self.assertNotIn("systemctl stop greengrass-lite.target", installer)
+
+    def test_rig_deploy_dry_run_generates_expected_recipes(self) -> None:
+        script = REPO_ROOT / "rig" / "scripts" / "txing-rig-deploy"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            installs = root / "installs"
+            version = "1.2.3"
+            binary_paths = {}
+            for tool in (
+                "txing-sparkplug-manager",
+                "txing-ble-connectivity",
+                "txing-aws-connectivity",
+            ):
+                binary_dir = installs / tool / version
+                if tool == "txing-aws-connectivity":
+                    binary_dir = binary_dir / "bin"
+                binary = binary_dir / tool
+                binary.parent.mkdir(parents=True)
+                binary.write_text("#!/usr/bin/env sh\nexit 0\n", encoding="utf-8")
+                binary.chmod(0o755)
+                binary_paths[tool] = binary
+
+            out_dir = root / "dry-run"
+            env = os.environ.copy()
+            env.update(
+                {
+                    "TXING_RIG_DEPLOY_DRY_RUN": "true",
+                    "TXING_RIG_DEPLOY_DRY_RUN_DIR": str(out_dir),
+                    "TXING_SPARKPLUG_MANAGER_BINARY": str(
+                        binary_paths["txing-sparkplug-manager"]
+                    ),
+                    "TXING_BLE_CONNECTIVITY_BINARY": str(
+                        binary_paths["txing-ble-connectivity"]
+                    ),
+                    "TXING_AWS_CONNECTIVITY_BINARY": str(
+                        binary_paths["txing-aws-connectivity"]
+                    ),
+                    "RIG_TYPE": "raspi",
+                    "AWS_REGION": "eu-central-1",
+                    "AWS_STACK_NAME": "town",
+                }
+            )
+            subprocess.run([str(script), "auto"], check=True, env=env, text=True)
+
+            sparkplug_recipe = (
+                out_dir / "recipes" / "dev.txing.rig.SparkplugManager.yaml"
+            ).read_text(encoding="utf-8")
+            ble_recipe = (
+                out_dir / "recipes" / "dev.txing.rig.BleConnectivity.yaml"
+            ).read_text(encoding="utf-8")
+            aws_recipe = (
+                out_dir / "recipes" / "dev.txing.rig.AwsConnectivity.yaml"
+            ).read_text(encoding="utf-8")
+
+            self.assertIn("ComponentVersion: '1.2.3'", sparkplug_recipe)
+            self.assertIn(
+                "artifacts/dev.txing.rig.SparkplugManager/1.2.3/txing-sparkplug-manager",
+                sparkplug_recipe,
+            )
+            self.assertIn("aws.greengrass#PublishToTopic", ble_recipe)
+            self.assertIn("txing-aws-connectivity", aws_recipe)
+
+    def test_rig_deploy_rejects_version_skew(self) -> None:
+        script = REPO_ROOT / "rig" / "scripts" / "txing-rig-deploy"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            versions = {
+                "txing-sparkplug-manager": "1.2.3",
+                "txing-ble-connectivity": "1.2.4",
+                "txing-aws-connectivity": "1.2.3",
+            }
+            env = os.environ.copy()
+            env.update(
+                {
+                    "TXING_RIG_DEPLOY_DRY_RUN": "true",
+                    "RIG_TYPE": "raspi",
+                    "AWS_REGION": "eu-central-1",
+                    "AWS_STACK_NAME": "town",
+                }
+            )
+            for tool, version in versions.items():
+                binary = root / "installs" / tool / version / tool
+                binary.parent.mkdir(parents=True)
+                binary.write_text("#!/usr/bin/env sh\nexit 0\n", encoding="utf-8")
+                binary.chmod(0o755)
+                env_name = {
+                    "txing-sparkplug-manager": "TXING_SPARKPLUG_MANAGER_BINARY",
+                    "txing-ble-connectivity": "TXING_BLE_CONNECTIVITY_BINARY",
+                    "txing-aws-connectivity": "TXING_AWS_CONNECTIVITY_BINARY",
+                }[tool]
+                env[env_name] = str(binary)
+
+            result = subprocess.run(
+                [str(script), "raspi"],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("version skew", result.stderr)
 
     def test_release_version_is_manual(self) -> None:
         self.assertFalse((REPO_ROOT / ".github" / "workflows" / "release-version.yml").exists())

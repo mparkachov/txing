@@ -1,6 +1,10 @@
-[submodule "devices/common/mcu/ncs/nrf"]
-	path = devices/common/mcu/ncs/nrf
+[submodule "nrfconnect/sdk-nrf"]
+	path = modules/nrfconnect/sdk-nrf
 	url = https://github.com/nrfconnect/sdk-nrf.git
-[submodule "devices/common/board/aws-kvs-webrtc-sdk"]
-	path = devices/common/board/aws-kvs-webrtc-sdk
+[submodule "awslabs/amazon-kinesis-video-streams-webrtc-sdk-c"]
+	path = modules/awslabs/amazon-kinesis-video-streams-webrtc-sdk-c
 	url = https://github.com/awslabs/amazon-kinesis-video-streams-webrtc-sdk-c.git
+[submodule "aws-greengrass/aws-greengrass-lite"]
+	path = modules/aws-greengrass/aws-greengrass-lite
+	url = https://github.com/aws-greengrass/aws-greengrass-lite.git
+	branch = main

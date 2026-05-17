@@ -14,7 +14,7 @@ native_kvs_master_dir := board_dir + "/kvs_master"
 native_kvs_master_build_dir := native_kvs_master_dir + "/build"
 native_kvs_master_test_build_dir := native_kvs_master_dir + "/build-tests"
 built_native_kvs_master := native_kvs_master_build_dir + "/txing-board-kvs-master"
-aws_kvs_sdk_dir := common_board_dir + "/aws-kvs-webrtc-sdk"
+aws_kvs_sdk_dir := project_root + "/modules/awslabs/amazon-kinesis-video-streams-webrtc-sdk-c"
 aws_kvs_sdk_build_dir := common_board_dir + "/aws-kvs-webrtc-sdk-build"
 aws_kvs_sdk_install_dir := common_board_dir + "/aws-kvs-webrtc-sdk-install"
 aws_kvs_sdk_system_deps_dir := common_board_dir + "/aws-kvs-webrtc-sdk-system-deps"
@@ -105,7 +105,7 @@ check thing_name='' region=region aws_profile=aws_profile:
       --thing-name "$thing_name"
 
 @submodules:
-    git -C "{{project_root}}" submodule update --init --recursive -- devices/common/board/aws-kvs-webrtc-sdk
+    git -C "{{project_root}}" submodule update --init --recursive -- modules/awslabs/amazon-kinesis-video-streams-webrtc-sdk-c
 
 @build-aws-sdk: _ensure-aws-sdk-submodule
     #!/usr/bin/env bash

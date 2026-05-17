@@ -24,7 +24,7 @@ BUILD_VERSION = f"ncs-{NCS_VERSION}"
 MCU_DIR = Path(__file__).resolve().parents[1]
 PROJECT_ROOT = MCU_DIR.parents[2]
 NCS_DIR = PROJECT_ROOT / "devices" / "common" / "mcu" / "ncs"
-NCS_REPO = NCS_DIR / "nrf"
+NCS_REPO = PROJECT_ROOT / "modules" / "nrfconnect" / "sdk-nrf"
 ZEPHYR_BASE = NCS_DIR / "zephyr"
 SDK_PARENT_DIR = NCS_DIR / "sdk"
 SDK_DIR = SDK_PARENT_DIR / f"zephyr-sdk-{SDK_VERSION}"
@@ -171,7 +171,7 @@ def west_command() -> list[str]:
 def ensure_workspace() -> None:
     env = local_env()
     if not (NCS_DIR / ".west").is_dir():
-        run(west_command() + ["init", "-l", "nrf"], cwd=NCS_DIR, env=env)
+        run(west_command() + ["init", "-l", str(NCS_REPO)], cwd=NCS_DIR, env=env)
     else:
         manifest_path = run(
             west_command() + ["config", "manifest.path"],

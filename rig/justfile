@@ -4,7 +4,7 @@ set quiet := true
 rig_dir := source_directory()
 project_root := rig_dir + "/.."
 root_justfile := project_root + "/justfile"
-greengrass_lite_dir := rig_dir + "/greengrass-lite"
+greengrass_lite_dir := project_root + "/modules/aws-greengrass/aws-greengrass-lite"
 greengrass_lite_build_dir := greengrass_lite_dir + "/build"
 greengrass_lite_target := "greengrass-lite.target"
 greengrass_core_units := "ggl.core.ggconfigd.service ggl.core.ggipcd.service ggl.core.iotcored.service ggl.core.tesd.service ggl.aws.greengrass.TokenExchangeService.service ggl.core.ggdeploymentd.service ggl.core.gg-fleet-statusd.service ggl.core.ggpubsubd.service ggl.core.gghealthd.service"
@@ -13,8 +13,6 @@ greengrass_warning_log_units := "ggl.core.ggipcd.service ggl.core.iotcored.servi
 shared_raspi_rig_component_units := "ggl.dev.txing.rig.SparkplugManager.service ggl.dev.txing.rig.BleConnectivity.service"
 raspi_rig_component_units := shared_raspi_rig_component_units
 aws_rig_component_units := "ggl.dev.txing.rig.SparkplugManager.service ggl.dev.txing.rig.AwsConnectivity.service"
-default_greengrass_lite_repository := env_var_or_default("TXING_RIG_GREENGRASS_LITE_REPOSITORY", "https://github.com/aws-greengrass/aws-greengrass-lite.git")
-default_greengrass_lite_ref := env_var_or_default("TXING_RIG_GREENGRASS_LITE_REF", "main")
 thing_name := "unit-local"
 region := ""
 aws_profile := ""
@@ -283,28 +281,19 @@ check rig_id='' cloudwatch_log_group='' region=region aws_profile=aws_profile aw
       echo "skip: no managed ${TXING_DEVICE_TYPE} device found for rig=${rig_name} town=${sparkplug_group_id}; skipped per-device SigV4 MQTT check"
     fi
 
-@clone-greengrass-lite:
-    if [ ! -d "{{greengrass_lite_dir}}/.git" ]; then \
-        git clone --branch "{{default_greengrass_lite_ref}}" --depth 1 "{{default_greengrass_lite_repository}}" "{{greengrass_lite_dir}}"; \
-    else \
-        git -C "{{greengrass_lite_dir}}" remote set-url origin "{{default_greengrass_lite_repository}}"; \
-        git -C "{{greengrass_lite_dir}}" fetch --force --tags origin; \
-        if git -C "{{greengrass_lite_dir}}" show-ref --verify --quiet "refs/remotes/origin/{{default_greengrass_lite_ref}}"; then \
-            git -C "{{greengrass_lite_dir}}" checkout -B "{{default_greengrass_lite_ref}}" "origin/{{default_greengrass_lite_ref}}"; \
-            git -C "{{greengrass_lite_dir}}" reset --hard "origin/{{default_greengrass_lite_ref}}"; \
-        else \
-            git -C "{{greengrass_lite_dir}}" checkout "{{default_greengrass_lite_ref}}"; \
-        fi; \
-    fi
+@check-greengrass-lite:
+    test -f "{{greengrass_lite_dir}}/version" || (echo "Missing Greengrass Lite submodule. Run: git submodule update --init --remote modules/aws-greengrass/aws-greengrass-lite" >&2; exit 1)
 
 @clean-native:
     rm -rf "{{greengrass_lite_build_dir}}"
 
 @distclean-native:
     just clean-native
-    rm -rf "{{greengrass_lite_dir}}"
 
-build:
+install-mise-tools:
+    sudo "{{rig_dir}}/install-mise-tools.sh"
+
+build: check-greengrass-lite
     #!/usr/bin/env bash
     set -euo pipefail
     if [ "$(uname -s)" != "Linux" ]; then \
@@ -332,7 +321,6 @@ build:
       echo "  sudo apt update && sudo apt install -y ${missing_native_packages[*]}" >&2
       exit 1
     fi
-    just clone-greengrass-lite
     cmake \
       -S "{{greengrass_lite_dir}}" \
       -B "{{greengrass_lite_build_dir}}" \

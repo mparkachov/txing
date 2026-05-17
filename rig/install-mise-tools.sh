@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+fail() {
+  echo "error: $*" >&2
+  exit 1
+}
+
+rig_user="${TXING_RIG_USER:-txing}"
+rig_home="${TXING_RIG_HOME:-/home/$rig_user}"
+owner="${TXING_GITHUB_OWNER:-mparkachov}"
+repo="${TXING_GITHUB_REPO:-txing}"
+
+[ "$(id -u)" -eq 0 ] || fail "run as root"
+rig_group="$(id -gn "$rig_user" 2>/dev/null)" || fail "user '$rig_user' does not exist"
+[ -d "$rig_home" ] || fail "expected rig home directory $rig_home"
+
+config_dir="$rig_home/.config/mise/conf.d"
+config_file="$config_dir/txing-rig.toml"
+install -d -m 700 -o "$rig_user" -g "$rig_group" "$config_dir"
+
+tmp="$(mktemp)"
+trap 'rm -f "$tmp"' EXIT
+cat >"$tmp" <<EOF
+[tool_alias]
+txing-sparkplug-manager = "github:$owner/$repo"
+txing-ble-connectivity = "github:$owner/$repo"
+txing-aws-connectivity = "github:$owner/$repo"
+txing-rig-deploy = "github:$owner/$repo"
+txing-greengrass-lite = "github:$owner/$repo"
+
+[tools.txing-sparkplug-manager]
+version = "latest"
+asset_pattern = "txing-sparkplug-manager-linux-aarch64.tar.gz"
+
+[tools.txing-ble-connectivity]
+version = "latest"
+asset_pattern = "txing-ble-connectivity-linux-aarch64.tar.gz"
+
+[tools.txing-aws-connectivity]
+version = "latest"
+asset_pattern = "txing-aws-connectivity-linux-aarch64.tar.gz"
+
+[tools.txing-rig-deploy]
+version = "latest"
+asset_pattern = "txing-rig-deploy-linux-aarch64.tar.gz"
+
+[tools.txing-greengrass-lite]
+version = "latest"
+version_prefix = "greengrass-lite-v"
+asset_pattern = "txing-greengrass-lite-linux-aarch64.tar.gz"
+EOF
+
+install -m 600 -o "$rig_user" -g "$rig_group" "$tmp" "$config_file"
+printf 'installed rig mise config: %s\n' "$config_file"

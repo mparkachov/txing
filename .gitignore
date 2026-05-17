@@ -23,7 +23,6 @@ __pycache__/
 
 # Native dependency checkouts/build artifacts
 /rig/build/
-/rig/greengrass-lite/
 /rig/connectedhomeip/
 /devices/*/web/node_modules
 

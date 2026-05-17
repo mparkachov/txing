@@ -17,6 +17,7 @@ This repository now documents the current implementation directly rather than ke
 ## Component Guides
 
 - [Rig](./components/rig.md)
+- [Greengrass](./greengrass/)
 - [Board](./components/board.md)
 - [MCU](./components/mcu.md)
 - [Web](./components/web.md)

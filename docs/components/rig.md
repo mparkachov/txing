@@ -109,10 +109,20 @@ The current contract sources are:
 
 ## Build And Run
 
-`rig::build` requires the Greengrass Lite native toolchain on the rig
-host. On Raspberry Pi OS Lite/Trixie, install at least `cmake`,
-`build-essential`, `pkg-config`, `libssl-dev`, `libcurl4-openssl-dev`,
-`libdbus-1-dev`, `uuid-dev`, `libzip-dev`,
+Stable rig hosts install release artifacts with `mise`. They do not need a repo
+checkout, Rust toolchain, CMake, or local compilation.
+
+Normal stable update on a rig host:
+
+```bash
+sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise upgrade
+sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise exec -- txing-rig-deploy auto
+```
+
+For source-checkout development or admin builder work, `rig::build` requires the
+Greengrass Lite native toolchain. On Raspberry Pi OS Lite/Trixie, install at
+least `cmake`, `build-essential`, `pkg-config`, `libssl-dev`,
+`libcurl4-openssl-dev`, `libdbus-1-dev`, `uuid-dev`, `libzip-dev`,
 `libyaml-dev`, `libsystemd-dev`, `libevent-dev`, `liburiparser-dev`, and
 `cgroup-tools`.
 
@@ -142,22 +152,19 @@ adapter.
 ## Service Install
 
 ```bash
-just rig::build
-just rig::install-service <rig-id>
+sudo env HOME=/home/txing /home/txing/.local/bin/mise exec -- txing-greengrass-lite install <rig-id>
+sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise exec -- txing-rig-deploy auto
 sudo systemctl status --with-dependencies greengrass-lite.target
 ```
 
-`rig::build` builds Greengrass Lite with `GG_LOG_LEVEL=INFO` so the
-standard Greengrass daemons do not flood journald with debug traces.
-
-The install target no longer creates or removes a custom `rig.service`, and it
-does not enable rig-type-specific host services. It resolves the configured rig
-thing and Greengrass token exchange settings from AWS, writes
-`/etc/greengrass/config.yaml`, installs the native Greengrass Lite build using
-the upstream CMake install target, and starts the standard
-`greengrass-lite.target` through Greengrass Lite's `misc/run_nucleus` script.
-Rig behavior comes from Greengrass deployments selected by the configured
-`RIG_TYPE`.
+`txing-greengrass-lite install <rig-id>` installs the mise-provided Greengrass
+Lite payload, writes `/etc/greengrass/config.yaml`, installs certificate
+material, and starts the standard `greengrass-lite.target` through Greengrass
+Lite's `misc/run_nucleus` script. It does not create or remove a custom
+`rig.service`, does not migrate old installs, and does not enable
+rig-type-specific host services. Existing Greengrass state must be removed
+manually before running it. Rig behavior comes from Greengrass deployments
+selected by the configured `RIG_TYPE`.
 
 ## Rig Type Host Requirements
 
@@ -174,12 +181,12 @@ sudo systemctl enable --now bluetooth.service
 Run `just rig::check <rig-id>` after configuring the host. It fails if a required
 service for the configured rig type is missing, disabled, or inactive.
 
-Use `just rig::deploy` on a rig host after `git pull`. It resolves the local
-rig type, builds the Rust Greengrass component binaries, uploads immutable
-artifacts under `artifacts/<component>/<version>/`, creates component versions
-from the plain root `VERSION`, and creates the AWS Greengrass deployment for the
-matching rig-type thing group. Admin builders can still use
-`just rig::deploy raspi`, `cloud`, or `all`.
+Use `txing-rig-deploy auto` on a stable rig host after `mise upgrade`. It
+resolves the local rig type, uses the installed stable component binaries,
+uploads immutable artifacts under `artifacts/<component>/<version>/`, creates
+component versions from the stable project SemVer, and creates the AWS
+Greengrass deployment for the matching rig-type thing group. Admin builders with
+a source checkout can still use `just rig::deploy raspi`, `cloud`, or `all`.
 
 The production install path does not run `ggl-cli deploy`, does not stage
 artifacts under `rig/build/greengrass-local`, and does not depend on
