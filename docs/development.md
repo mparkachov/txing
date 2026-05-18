@@ -19,7 +19,8 @@ Repo-wide tooling:
 - `uv`
 - `just`
 - `jq`
-- AWS CLI v2 installed from AWS, not from the OS package repository
+- AWS CLI v2
+- GitHub CLI (`gh`) for operator-side stable release deploys
 
 Host-specific setup, including how each host installs `uv` / `just` and how the
 board read-only rootfs is configured, lives in [installation.md](./installation.md).
@@ -38,12 +39,12 @@ pushing the managed version files yourself. The workflow reads the pushed root
 publishes the GitHub Release, and also publishes the rig stable binaries. It
 does not commit or push version changes back to `main`.
 
-Stable rigs do not pull the repository. They update installed artifacts and
-publish Greengrass deployments with:
+Stable rigs do not pull the repository and do not run AWS CLI. After a stable
+release workflow finishes, the operator Mac publishes the release artifacts to
+Greengrass with:
 
 ```bash
-/home/ggcore/.local/bin/mise upgrade
-/home/ggcore/.local/bin/mise exec -- txing-rig-deploy auto
+just rig::deploy-release latest all
 ```
 
 Development direction for installable host tools and board-side native
@@ -52,7 +53,8 @@ artifacts:
 - `stable` points at the artifact built from the stable `VERSION`, for example `x.y.z`.
 - `feature` points at explicitly named debug artifacts and must not be confused with production Greengrass component versions.
 - GitHub release assets should be immutable for each exact artifact version.
-- The unit daemon and stable rig tools use mise's GitHub backend directly; see
+- The unit daemon uses mise's GitHub backend directly; stable rig components are
+  published to Greengrass from GitHub release assets; see
   [artifacts.md](./artifacts.md).
 - Unit daemon feature prereleases are published by the manual `Unit Daemon
   Feature Prerelease` GitHub Actions workflow from pushed `feature/*` branches.
@@ -161,7 +163,8 @@ just rig::log <rig-id>
 ```
 
 That source-checkout rig loop is for development and admin builder use. Stable
-rig hosts use `mise upgrade` plus `txing-rig-deploy auto` instead.
+rig hosts receive Greengrass deployments published from the operator machine
+instead.
 
 Board:
 

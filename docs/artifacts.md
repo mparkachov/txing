@@ -49,9 +49,9 @@ older than stable `0.9.115`.
 
 ## Rig Stable Artifacts
 
-Stable rig hosts use `mise` to install txing rig binaries from GitHub Releases.
-The rig does not need a source checkout or local Rust/CMake compilation for the
-stable runtime path.
+Stable rig hosts receive txing binaries through Greengrass cloud deployments.
+The rig does not need a source checkout, mise, AWS CLI, AWS access keys, or
+local Rust/CMake compilation for the stable runtime path.
 
 Project stable releases publish these project-versioned assets on `v<VERSION>`:
 
@@ -64,9 +64,12 @@ txing-rig-deploy-linux-aarch64.tar.gz
 ```
 
 Each archive contains one root-level executable with the same command name.
-`txing-rig-deploy` uploads the installed component binaries to the existing
-Greengrass artifacts bucket, creates Greengrass component versions, and creates
-the rig-type deployments.
+`just rig::deploy-release` runs on the operator Mac, applies the repository AWS
+profile/credentials, downloads these assets with `gh`, and uses the release's
+`txing-rig-deploy` shell script to upload component binaries to the existing
+Greengrass artifacts bucket, create Greengrass component versions, and create
+the rig-type deployments. The Linux component binaries are not executed on the
+operator Mac.
 
 Greengrass Lite is installed from the official upstream AWS release, not from a
 txing release asset:
@@ -79,28 +82,11 @@ aws-greengrass-lite-deb-arm64.zip
 The stable release workflow does not build, package, or publish Greengrass Lite.
 The checked-in Greengrass Lite submodule remains for source-checkout development
 and local debugging only. Stable rigs install the upstream Debian package from a
-root shell before installing txing tools with mise as `ggcore`.
+root shell and then receive txing components through Greengrass cloud
+deployments.
 
-Rig mise config is installed at:
-
-```text
-/home/ggcore/.config/mise/conf.d/txing-rig.toml
-```
-
-It disables stale remote-version caching for rig release checks and defines the
-txing rig tools:
-
-```toml
-[settings]
-fetch_remote_versions_cache = "0s"
-
-[tools.txing-rig-deploy]
-version = "latest"
-asset_pattern = "txing-rig-deploy-linux-aarch64.tar.gz"
-```
-
-Plain `mise upgrade` therefore updates txing rig binaries. Greengrass Lite is
-not managed by mise.
+The canonical stable rig installation and deployment flow is documented in
+[Rig](./components/rig.md).
 
 ## Board Layout
 
@@ -270,27 +256,11 @@ publishes release `v<VERSION>`. It does not bump versions, commit, push back to
 This is the fresh-host stable path. The rig must already have the AWS stack,
 town thing, rig thing, and rig certificate material prepared.
 
-After installing the upstream Greengrass Lite Debian package, switch to the
-package-created `ggcore` user and install mise plus the rig tool config:
+After installing the upstream Greengrass Lite Debian package, publish the stable
+GitHub release artifacts from the operator Mac:
 
 ```bash
-mkdir -p "$HOME/.local/bin"
-curl https://mise.run | sh
-curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/rig/install-mise-tools.sh | bash
-```
-
-Create:
-
-```text
-/home/ggcore/.config/txing/rig/aws.env
-/home/ggcore/.config/txing/rig/aws.credentials
-```
-
-Then install and deploy:
-
-```bash
-/home/ggcore/.local/bin/mise install
-/home/ggcore/.local/bin/mise exec -- txing-rig-deploy auto
+just rig::deploy-release latest all
 ```
 
 Greengrass Lite host configuration is a manual privileged step. Repository
@@ -304,17 +274,7 @@ component lifecycle.
 Normal stable update:
 
 ```bash
-/home/ggcore/.local/bin/mise upgrade
-/home/ggcore/.local/bin/mise exec -- txing-rig-deploy auto
-```
-
-If a stable txing release was just published and mise still resolves the
-previous version, refresh the remote-version cache before upgrading:
-
-```bash
-/home/ggcore/.local/bin/mise cache clear
-MISE_FETCH_REMOTE_VERSIONS_CACHE=0 /home/ggcore/.local/bin/mise upgrade
-/home/ggcore/.local/bin/mise exec -- txing-rig-deploy auto
+just rig::deploy-release latest all
 ```
 
 ### Remove An Old Rig Install Manually

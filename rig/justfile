@@ -1491,6 +1491,32 @@ deploy target='auto' component_version='' region=region aws_profile=aws_profile 
     esac
     verify_local_deployment_if_targeted
 
+deploy-release release='latest' target='all' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case "{{release}}" in
+      latest|v[0-9]*|[0-9]*) ;;
+      *=*)
+        echo "release must be latest, vX.Y.Z, or X.Y.Z." >&2
+        exit 1
+        ;;
+      *)
+        echo "release must be latest, vX.Y.Z, or X.Y.Z." >&2
+        exit 1
+        ;;
+    esac
+    case "{{target}}" in
+      raspi|cloud|all) ;;
+      *)
+        echo "target must be raspi, cloud, or all." >&2
+        exit 1
+        ;;
+    esac
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{region}}" "{{aws_profile}}" "" "" "" "{{aws_shared_credentials_file}}")"
+    export TXING_RIG_CONFIG_DIR="$TXING_PROJECT_ROOT"
+    export TXING_RIG_ENV_FILE="$AWS_ENV_FILE"
+    exec "{{rig_dir}}/scripts/txing-rig-deploy-release" "{{release}}" "{{target}}"
+
 deploy-local rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' component_version='' adapter_id='ble-main' name_fragment='txing' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file:
     #!/usr/bin/env bash
     set -euo pipefail

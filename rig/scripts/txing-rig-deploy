@@ -5,8 +5,9 @@ usage() {
   cat >&2 <<'EOF'
 Usage: txing-rig-deploy [auto|raspi|cloud|all]
 
-Deploys mise-installed txing rig component binaries to AWS IoT Greengrass.
-This command is self-contained and does not require a txing source checkout.
+Deploys txing rig component binaries to AWS IoT Greengrass. Binaries can come
+from mise installs or explicit TXING_*_BINARY paths. This command is
+self-contained and does not require a txing source checkout.
 EOF
 }
 

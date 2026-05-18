@@ -1,6 +1,6 @@
 [package]
 name = "txing-time-lambda"
-version = "0.9.120"
+version = "0.9.121"
 edition = "2024"
 description = "txing time device AWS Lambda runtime"
 

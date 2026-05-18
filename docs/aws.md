@@ -7,8 +7,11 @@ state, generated AWS config files, or hidden certificate paths.
 Prefer the AWS CLI for control-plane work. The `just aws-town ...`,
 `just aws-rig ...`, and `just aws-device ...` recipes are thin wrappers around
 `aws` with `config/aws.env` and `config/aws.credentials` applied.
-Install AWS CLI v2 using the official AWS installer; do not use the OS
-repository `awscli` package.
+Install operator CLIs with mise if they are not already available:
+
+```bash
+mise use --global aws-cli@latest gh@latest jq@latest
+```
 
 ## Local Config
 
@@ -178,10 +181,18 @@ just aws::init-shadow <thing-name> sparkplug
 `aws::cert` is rig-focused. It resolves the rig thing by generated thing ID,
 creates a new active AWS IoT certificate,
 attaches the base stack IoT policy, attaches the certificate to the rig thing,
-and writes material under `config/certs/rig/`.
+resolves the Greengrass Lite endpoint config, and writes material under
+`config/certs/rig/`.
 
 ```bash
 just aws::cert <rig-id>
+```
+
+For existing certificate material, regenerate only the Greengrass Lite config
+fragment with:
+
+```bash
+just aws::greengrass-config <rig-id>
 ```
 
 Generated files:
@@ -191,11 +202,13 @@ Generated files:
 - `config/certs/rig/rig.private.key`
 - `config/certs/rig/rig.cert.arn`
 - `config/certs/rig/AmazonRootCA1.pem`
+- `config/certs/rig/greengrass-lite.yaml`
 
 `config/certs/` is explicitly ignored by git. The recipe refuses to overwrite
 existing material; move or delete the files first if you intentionally rotate the
-rig certificate. On a stable rig host, use the copied certificate and private key
-during manual Greengrass Lite host configuration.
+rig certificate. On a stable rig host, copy the certificate, private key, root
+CA, and generated `greengrass-lite.yaml` during manual Greengrass Lite host
+configuration.
 
 ## Cleanup
 

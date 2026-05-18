@@ -73,6 +73,10 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn('local key="artifacts/$component/$resolved_component_version/$filename"', rig_justfile)
         self.assertIn("aws s3api head-object", rig_justfile)
         self.assertNotIn("artifact_version_path", rig_justfile)
+        self.assertIn("deploy-release release='latest' target='all'", rig_justfile)
+        self.assertIn('_project-aws-env aws "{{region}}" "{{aws_profile}}"', rig_justfile)
+        self.assertIn('export TXING_RIG_ENV_FILE="$AWS_ENV_FILE"', rig_justfile)
+        self.assertIn('scripts/txing-rig-deploy-release" "{{release}}" "{{target}}"', rig_justfile)
 
     def test_stable_release_publishes_only_project_assets(self) -> None:
         workflow = (
@@ -137,24 +141,57 @@ class VersionEnvironmentTests(unittest.TestCase):
             encoding="utf-8"
         )
         rig_justfile = (REPO_ROOT / "rig" / "justfile").read_text(encoding="utf-8")
+        rig_docs = (REPO_ROOT / "docs" / "components" / "rig.md").read_text(
+            encoding="utf-8"
+        )
         installation_docs = (REPO_ROOT / "docs" / "installation.md").read_text(
             encoding="utf-8"
         )
 
         self.assertIn("txing-ble-connectivity", stable_deploy)
+        self.assertTrue((REPO_ROOT / "rig" / "scripts" / "txing-rig-deploy-release").exists())
         self.assertNotIn("RequiresPrivilege: true", stable_deploy)
         self.assertNotIn("RequiresPrivilege: true", rig_justfile)
-        self.assertIn("gg_component", installation_docs)
-        self.assertIn("bluetooth", installation_docs)
-        self.assertIn("aws-greengrass-lite-deb-arm64.zip", installation_docs)
-        self.assertIn("aws-greengrass-lite-$GGL_VERSION-Linux.deb", installation_docs)
-        self.assertIn("/etc/greengrass/config.d/greengrass-lite.yaml", installation_docs)
-        self.assertIn("/var/lib/greengrass/credentials/", installation_docs)
-        self.assertIn("/home/ggcore/.config/txing/rig/aws.credentials", installation_docs)
-        self.assertNotIn("/home/txing/.config/txing/rig/certs", installation_docs)
-        self.assertIn("The package creates the `ggcore` and `gg_component` users", installation_docs)
-        self.assertNotIn("groupadd --system ggcore", installation_docs)
-        self.assertNotIn("useradd --system --gid ggcore", installation_docs)
+        self.assertIn("Canonical rig installation", installation_docs)
+        self.assertIn("components/rig.md", installation_docs)
+        self.assertIn("gg_component", rig_docs)
+        self.assertIn("bluetooth", rig_docs)
+        self.assertIn("aws-greengrass-lite-deb-arm64.zip", rig_docs)
+        self.assertIn("aws-greengrass-lite-$GGL_VERSION-Linux.deb", rig_docs)
+        self.assertIn("Transfer these files from `config/certs/rig/`", rig_docs)
+        self.assertIn("already contains the rig thing name", rig_docs)
+        self.assertIn("just aws::greengrass-config <rig-id>", rig_docs)
+        self.assertIn('GGL_CONFIG="./greengrass-lite.yaml"', rig_docs)
+        self.assertIn("/etc/greengrass/config.d/greengrass-lite.yaml", rig_docs)
+        self.assertIn("/var/lib/greengrass/credentials/", rig_docs)
+        self.assertIn("just rig::deploy-release latest all", rig_docs)
+        self.assertIn("The rig does not run AWS CLI", rig_docs)
+        self.assertIn("A stable rig does not need", rig_docs)
+        self.assertIn("a repo checkout, mise, AWS CLI", rig_docs)
+        self.assertNotIn("mise use --global aws-cli@latest gh@latest jq@latest", rig_docs)
+        self.assertNotIn("/home/ggcore/.config/txing/rig/aws.credentials", rig_docs)
+        self.assertNotIn("/home/ggcore/.local/bin/mise exec -- txing-rig-deploy", rig_docs)
+        self.assertNotIn("raw.githubusercontent.com/mparkachov/txing/main/rig/scripts/txing-rig-deploy-release", rig_docs)
+        self.assertNotIn("/home/txing/.config/txing/rig/certs", rig_docs)
+        self.assertIn("The package creates `ggcore`", rig_docs)
+        self.assertNotIn("groupadd --system ggcore", rig_docs)
+        self.assertNotIn("useradd --system --gid ggcore", rig_docs)
+
+    def test_rig_release_deploy_runs_from_operator_assets(self) -> None:
+        release_deploy = (
+            REPO_ROOT / "rig" / "scripts" / "txing-rig-deploy-release"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("gh release download", release_deploy)
+        self.assertIn("txing-sparkplug-manager-linux-aarch64.tar.gz", release_deploy)
+        self.assertIn("txing-ble-connectivity-linux-aarch64.tar.gz", release_deploy)
+        self.assertIn("txing-aws-connectivity-linux-aarch64.tar.gz", release_deploy)
+        self.assertIn("txing-rig-deploy-linux-aarch64.tar.gz", release_deploy)
+        self.assertIn("TXING_RIG_COMPONENT_VERSION", release_deploy)
+        self.assertIn("head -n 1", release_deploy)
+        self.assertIn("are not executed locally", release_deploy)
+        self.assertNotIn("sudo", release_deploy)
+        self.assertNotIn("chown", release_deploy)
 
     def test_greengrass_lite_submodule_stays_top_level_module(self) -> None:
         self.assertFalse((REPO_ROOT / "rig" / "greengrass-lite-build.env").exists())

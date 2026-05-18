@@ -74,12 +74,5 @@ opportunities:
 
 ## Rig Deploy Credentials
 
-Stable rig deployment currently uses AWS credentials from
-`/home/txing/.config/txing/rig/aws.credentials` so `txing-rig-deploy` can upload
-component artifacts and create Greengrass deployments without a source checkout.
-
-Future work: derive deployment credentials from the local Greengrass
-certificate and token-exchange role alias instead of keeping config-dir AWS
-access keys on the rig. Keep that change separate from the stable artifact flow
-so credential behavior can be tested against S3, GreengrassV2, IoT thing-group,
-and CloudFormation output reads in one focused pass.
+Stable rig deployment is operator-side. The rig host keeps only the Greengrass
+certificate/private key and does not store AWS access keys for deployment.

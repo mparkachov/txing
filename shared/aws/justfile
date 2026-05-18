@@ -496,12 +496,16 @@ cert rig_id='':
     private_key_path="$cert_dir/rig.private.key"
     cert_arn_path="$cert_dir/rig.cert.arn"
     root_ca_path="$cert_dir/AmazonRootCA1.pem"
+    greengrass_config_path="$cert_dir/greengrass-lite.yaml"
     install -d -m 700 "$cert_dir"
-    if [ -e "$cert_path" ] || [ -e "$public_key_path" ] || [ -e "$private_key_path" ] || [ -e "$cert_arn_path" ]; then
+    if [ -e "$cert_path" ] || [ -e "$public_key_path" ] || [ -e "$private_key_path" ] || [ -e "$cert_arn_path" ] || [ -e "$greengrass_config_path" ]; then
       echo "Certificate material already exists under $cert_dir." >&2
       echo "Move or delete those files before issuing a replacement certificate." >&2
       exit 1
     fi
+    iot_data_endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}" --query endpointAddress --output text)"
+    iot_cred_endpoint="$(aws iot describe-endpoint --endpoint-type iot:CredentialProvider "${aws_flags[@]}" --query endpointAddress --output text)"
+    iot_role_alias="$(stack_output "$AWS_STACK_NAME" GreengrassTokenExchangeRoleAlias)"
     curl -fsSL https://www.amazontrust.com/repository/AmazonRootCA1.pem -o "$root_ca_path"
     cert_arn="$(
       aws iot create-keys-and-certificate \
@@ -516,7 +520,28 @@ cert rig_id='':
     aws iot attach-policy --policy-name "$effective_policy_name" --target "$cert_arn" "${aws_flags[@]}"
     aws iot attach-thing-principal --thing-name "$effective_thing_name" --principal "$cert_arn" "${aws_flags[@]}"
     printf '%s\n' "$cert_arn" >"$cert_arn_path"
+    {
+      printf 'system:\n'
+      printf '  privateKeyPath: "/var/lib/greengrass/credentials/rig.private.key"\n'
+      printf '  certificateFilePath: "/var/lib/greengrass/credentials/rig.cert.pem"\n'
+      printf '  rootCaPath: "/var/lib/greengrass/credentials/AmazonRootCA1.pem"\n'
+      printf '  rootPath: "/var/lib/greengrass"\n'
+      printf '  thingName: "%s"\n' "$effective_thing_name"
+      printf 'services:\n'
+      printf '  aws.greengrass.NucleusLite:\n'
+      printf '    componentType: "NUCLEUS"\n'
+      printf '    configuration:\n'
+      printf '      awsRegion: "%s"\n' "$AWS_REGION"
+      printf '      iotCredEndpoint: "%s"\n' "$iot_cred_endpoint"
+      printf '      iotDataEndpoint: "%s"\n' "$iot_data_endpoint"
+      printf '      iotRoleAlias: "%s"\n' "$iot_role_alias"
+      printf '      runWithDefault:\n'
+      printf '        posixUser: "gg_component:gg_component"\n'
+      printf '      greengrassDataPlanePort: "8443"\n'
+      printf '      platformOverride: {}\n'
+    } >"$greengrass_config_path"
     chmod 600 "$cert_path" "$public_key_path" "$private_key_path" "$cert_arn_path"
+    chmod 600 "$greengrass_config_path"
     chmod 644 "$root_ca_path"
     jq -n \
       --arg thingName "$effective_thing_name" \
@@ -527,7 +552,58 @@ cert rig_id='':
       --arg privateKey "$private_key_path" \
       --arg certificateArnFile "$cert_arn_path" \
       --arg rootCaFile "$root_ca_path" \
-      '{thingName: $thingName, policyName: $policyName, certificateArn: $certificateArn, certificatePem: $certificatePem, publicKey: $publicKey, privateKey: $privateKey, certificateArnFile: $certificateArnFile, rootCaFile: $rootCaFile}'
+      --arg greengrassConfig "$greengrass_config_path" \
+      '{thingName: $thingName, policyName: $policyName, certificateArn: $certificateArn, certificatePem: $certificatePem, publicKey: $publicKey, privateKey: $privateKey, certificateArnFile: $certificateArnFile, rootCaFile: $rootCaFile, greengrassConfig: $greengrassConfig}'
+
+greengrass-config rig_id='':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{aws_dir}}"
+    source "{{aws_lib}}"
+    if [ -n "{{rig_id}}" ]; then
+      export TXING_RIG_ID="{{rig_id}}"
+    fi
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig)"
+    txing_aws_init
+    effective_thing_name="$TXING_RIG_ID"
+    cert_dir="{{project_root}}/config/certs/rig"
+    cert_path="$cert_dir/rig.cert.pem"
+    private_key_path="$cert_dir/rig.private.key"
+    root_ca_path="$cert_dir/AmazonRootCA1.pem"
+    greengrass_config_path="$cert_dir/greengrass-lite.yaml"
+    if [ ! -f "$cert_path" ] || [ ! -f "$private_key_path" ] || [ ! -f "$root_ca_path" ]; then
+      echo "Rig certificate material is missing under $cert_dir." >&2
+      echo "Run 'just aws::cert <rig-id>' first, or restore rig.cert.pem, rig.private.key, and AmazonRootCA1.pem." >&2
+      exit 1
+    fi
+    iot_data_endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}" --query endpointAddress --output text)"
+    iot_cred_endpoint="$(aws iot describe-endpoint --endpoint-type iot:CredentialProvider "${aws_flags[@]}" --query endpointAddress --output text)"
+    iot_role_alias="$(stack_output "$AWS_STACK_NAME" GreengrassTokenExchangeRoleAlias)"
+    {
+      printf 'system:\n'
+      printf '  privateKeyPath: "/var/lib/greengrass/credentials/rig.private.key"\n'
+      printf '  certificateFilePath: "/var/lib/greengrass/credentials/rig.cert.pem"\n'
+      printf '  rootCaPath: "/var/lib/greengrass/credentials/AmazonRootCA1.pem"\n'
+      printf '  rootPath: "/var/lib/greengrass"\n'
+      printf '  thingName: "%s"\n' "$effective_thing_name"
+      printf 'services:\n'
+      printf '  aws.greengrass.NucleusLite:\n'
+      printf '    componentType: "NUCLEUS"\n'
+      printf '    configuration:\n'
+      printf '      awsRegion: "%s"\n' "$AWS_REGION"
+      printf '      iotCredEndpoint: "%s"\n' "$iot_cred_endpoint"
+      printf '      iotDataEndpoint: "%s"\n' "$iot_data_endpoint"
+      printf '      iotRoleAlias: "%s"\n' "$iot_role_alias"
+      printf '      runWithDefault:\n'
+      printf '        posixUser: "gg_component:gg_component"\n'
+      printf '      greengrassDataPlanePort: "8443"\n'
+      printf '      platformOverride: {}\n'
+    } >"$greengrass_config_path"
+    chmod 600 "$greengrass_config_path"
+    jq -n \
+      --arg thingName "$effective_thing_name" \
+      --arg greengrassConfig "$greengrass_config_path" \
+      '{thingName: $thingName, greengrassConfig: $greengrassConfig}'
 
 init-shadow thing_name='' shadow_name='sparkplug' region=region profile=profile payload_file='' shadow_response_file='':
     #!/usr/bin/env bash
