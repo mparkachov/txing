@@ -90,8 +90,10 @@ service_file="$systemd_dir/$service_name"
 legacy_service_name="txing-unit-daemon-feature.service"
 legacy_service_file="$systemd_dir/$legacy_service_name"
 tmp_root="/var/tmp/txing/unit-daemon"
-asset_pattern="txing-unit-daemon-linux-aarch64.tar.gz"
+daemon_asset_pattern="txing-unit-daemon-linux-aarch64.tar.gz"
+kvs_master_asset_pattern="txing-board-kvs-master-linux-aarch64.tar.gz"
 stable_install_root="$daemon_home/.local/share/mise/installs/txing-unit-daemon"
+kvs_master_stable_install_root="$daemon_home/.local/share/mise/installs/txing-board-kvs-master"
 var_tmp_probe=""
 
 if [ "$channel" = "feature" ]; then
@@ -104,6 +106,14 @@ if [ "$channel" = "feature" ]; then
     fi
   done
   [ "$stable_binary_found" = true ] || fail "missing persistent stable daemon install under $stable_install_root; install stable channel first"
+  stable_kvs_master_found=false
+  for stable_kvs_master in "$kvs_master_stable_install_root"/*/txing-board-kvs-master; do
+    if [ -x "$stable_kvs_master" ]; then
+      stable_kvs_master_found=true
+      break
+    fi
+  done
+  [ "$stable_kvs_master_found" = true ] || fail "missing persistent stable KVS master install under $kvs_master_stable_install_root; install stable channel first"
   [ -d /var/tmp ] || fail "/var/tmp does not exist"
   [ -w /var/tmp ] || fail "/var/tmp is not writable"
   var_tmp_probe="$(mktemp -d /var/tmp/txing-unit-daemon-install.XXXXXX)"
@@ -130,10 +140,16 @@ trap 'if [ -n "${var_tmp_probe:-}" ]; then rm -rf "$var_tmp_probe"; fi; rm -f "$
 cat >"$config_tmp" <<EOF
 [tool_alias]
 txing-unit-daemon = "github:mparkachov/txing"
+txing-board-kvs-master = "github:mparkachov/txing"
 
 [tools.txing-unit-daemon]
 version = "latest"
-asset_pattern = "$asset_pattern"
+asset_pattern = "$daemon_asset_pattern"
+prerelease = $([ "$channel" = "feature" ] && printf true || printf false)
+
+[tools.txing-board-kvs-master]
+version = "latest"
+asset_pattern = "$kvs_master_asset_pattern"
 prerelease = $([ "$channel" = "feature" ] && printf true || printf false)
 EOF
 
@@ -172,7 +188,7 @@ After=network-online.target systemd-time-wait-sync.service time-sync.target
 
 [Service]
 Type=simple
-# Runs as root because Phase 1 owns PWM/GPIO motor control directly.
+# Runs as root because the daemon owns PWM/GPIO motor control directly.
 WorkingDirectory=$daemon_home
 KillSignal=SIGINT
 TimeoutStartSec=180
@@ -196,6 +212,7 @@ EOF
 
 ExecStartPre=/usr/bin/install -d -m 700 $tmp_root/mise $tmp_root/mise-cache $tmp_root/mise-tmp
 ExecStartPre=-$mise_bin upgrade txing-unit-daemon
+ExecStartPre=-$mise_bin upgrade txing-board-kvs-master
 ExecStartPre=-$mise_bin install
 ExecStartPre=-/usr/bin/find $tmp_root/mise-cache $tmp_root/mise-tmp -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 EOF
@@ -229,7 +246,9 @@ printf '  systemd unit: %s\n' "$service_file"
 printf '  mise binary: %s\n' "$mise_bin"
 if [ "$channel" = "stable" ]; then
   printf '  stable install root: %s\n' "$stable_install_root"
+  printf '  KVS master stable install root: %s\n' "$kvs_master_stable_install_root"
 else
   printf '  feature install root: %s\n' "$tmp_root/mise"
   printf '  stable fallback root: %s\n' "$stable_install_root"
+  printf '  KVS master stable fallback root: %s\n' "$kvs_master_stable_install_root"
 fi

@@ -7,7 +7,10 @@
 - Current live-control target: `p95` operator glass-to-glass latency under `800 ms` on target links
 - Control model: directional commands, not precision teleoperation
 - Field-validation status: manual field validation was completed and accepted the plain-AWS-WebRTC path from a business perspective; no lab-grade metrics dataset is recorded in-repo
-- Current repo implementation: `txing-board` publishes retained video service topics, `rig` consumes them for REDCON readiness, and the browser uses AWS KVS signaling + WebRTC for the viewer path
+- Current stable implementation: `txing-unit-daemon` supervises the native
+  `txing-board-kvs-master`, publishes retained video service topics, `rig`
+  consumes them for REDCON readiness, and the browser uses AWS KVS signaling +
+  WebRTC for the viewer path
 
 Explicit non-goals for this slice:
 
@@ -21,33 +24,30 @@ Explicit non-goals for this slice:
 ## Current Design
 
 - The board stays fully headless.
-- `txing-board` remains the only publisher of board power and wifi state into the shared Thing Shadow.
-- `txing-board` publishes retained video descriptor/status topics under `txings/<device_id>/video/*`.
+- `txing-unit-daemon` publishes board power and wifi state for the stable Rust
+  runtime path.
+- `txing-unit-daemon` publishes retained video descriptor/status topics under `txings/<device_id>/video/*`.
 - The current implementation uses one live video path only: board camera -> plain AWS WebRTC signaling channel -> operator.
 - The operator watches the plain AWS WebRTC path, not a board-local viewer page.
 - The current implementation does not use WebRTC ingestion/storage, multiviewer, or `kvssink`.
 - The current implementation assumes one human operator at a time operationally, but does not enforce single-viewer admission control in the repo.
 - ML and other cloud-side consumers are explicitly outside the current media path.
 - A second direct operator path remains deferred. The recorded manual field validation did not justify reopening it.
-- In the current repo, the native sender implementation is shipped in-tree and is still launched as a supervised child process by `board.video_sender`.
+- The native sender implementation is shipped in-tree and packaged as the
+  `txing-board-kvs-master` release asset. The stable daemon launches it as a
+  supervised child process.
 
 ## High-Level Architecture
 
 ```text
-txing-board
+txing-unit-daemon
   -> owns board power and wifi shadow state
-  -> supervises board video sender state
+  -> supervises native KVS master state
   -> publishes retained board video descriptor/status topics
   -> tracks coarse board video readiness and failures
 
-board video sender state manager
-  -> validates the KVS signaling channel exists
-  -> launches the configured native sender child command
-  -> marks sender ready from child output or fallback startup timeout
-  -> tracks best-effort viewer connected/disconnected state from child output markers
-
 native sender command
-  -> is shipped in-tree by this repo
+  -> is shipped as txing-board-kvs-master
   -> owns the actual camera capture, encode, and KVS master session
 
 operator client
@@ -66,7 +66,7 @@ The current implementation publishes retained board video service topics:
   "serviceId": "video",
   "serverInfo": {
     "name": "video",
-    "version": "<board-version>"
+    "version": "<daemon-version>"
   },
   "topicRoot": "txings/<device_id>/video",
   "descriptorTopic": "txings/<device_id>/video/descriptor",
@@ -74,7 +74,7 @@ The current implementation publishes retained board video service topics:
   "transport": "aws-webrtc",
   "channelName": "<device_id>-board-video",
   "region": "<aws-region>",
-  "serverVersion": "<board-version>"
+  "serverVersion": "<daemon-version>"
 }
 ```
 
@@ -105,27 +105,27 @@ Notes:
 
 ## Runtime Layout
 
-### `txing-board`
+### `txing-unit-daemon`
 
 Responsibilities:
 
 - publish board power and wifi Thing Shadow updates
 - halt locally when Sparkplug `DCMD.redcon=4` arrives for the assigned device
 - refresh board IPv4 and IPv6 on each publish loop
-- supervise the local board video sender state manager
+- supervise the native KVS master child process
 - publish retained video descriptor/status topics
 - gate retained video `ready` on sender readiness rather than any board-local iframe endpoint
 - surface the last coarse media error through retained video `lastError`
 
-### Board Video Sender State Manager
+### Native KVS Master Supervision
 
 Responsibilities:
 
-- validate the configured signaling channel before steady-state sender supervision
-- run the native sender child command selected for the board runtime
-- persist local sender state for `txing-board`
-- translate sender output markers into coarse `ready` / `viewerConnected` state
-- keep the repo-managed path simple enough for field validation
+- inject IoT role-alias temporary credentials into the child process
+- restart the child before credential expiry and after failures with bounded backoff
+- translate child output markers into coarse `ready`, `viewerConnected`, and
+  `lastError` state
+- publish unavailable video state on daemon shutdown
 
 ### Native Sender Command
 

@@ -141,41 +141,19 @@ Resources:
             Condition:
               Bool:
                 iot:Connection.Thing.IsAttached: "true"
-          - Sid: DaemonBoardShadowUpdate
-            Effect: Allow
-            Action: iot:Publish
-            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/${!iot:Connection.Thing.ThingName}/shadow/name/board/update
-          - Sid: DaemonMcpShadowUpdate
-            Effect: Allow
-            Action: iot:Publish
-            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/${!iot:Connection.Thing.ThingName}/shadow/name/mcp/update
-          - Sid: DaemonMcpRetainedTopics
+          - Sid: DaemonOwnThingTopics
             Effect: Allow
             Action:
               - iot:Publish
               - iot:RetainPublish
-            Resource:
-              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/${!iot:Connection.Thing.ThingName}/mcp/descriptor
-              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/${!iot:Connection.Thing.ThingName}/mcp/status
-          - Sid: DaemonMcpSessionReceive
-            Effect: Allow
-            Action:
-              - iot:Subscribe
-            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/txings/${!iot:Connection.Thing.ThingName}/mcp/session/+/c2s
-          - Sid: DaemonMcpSessionTopics
-            Effect: Allow
-            Action:
               - iot:Receive
-              - iot:Publish
             Resource:
-              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/${!iot:Connection.Thing.ThingName}/mcp/session/*/c2s
-              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/${!iot:Connection.Thing.ThingName}/mcp/session/*/s2c
-          - Sid: DaemonCapabilityState
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/${!iot:Connection.Thing.ThingName}/shadow/name/*/update
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/${!iot:Connection.Thing.ThingName}/*
+          - Sid: DaemonOwnThingTopicFilters
             Effect: Allow
-            Action:
-              - iot:Publish
-              - iot:RetainPublish
-            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/${!iot:Connection.Thing.ThingName}/capability/v2/state
+            Action: iot:Subscribe
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/txings/${!iot:Connection.Thing.ThingName}/*
           - Sid: DaemonCredentialProvider
             Effect: Allow
             Action: iot:AssumeRoleWithCertificate

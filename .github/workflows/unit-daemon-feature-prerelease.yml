@@ -12,8 +12,10 @@ concurrency:
 
 env:
   RUST_VERSION: 1.95.0
-  ASSET_NAME: txing-unit-daemon-linux-aarch64.tar.gz
-  BINARY_NAME: txing-unit-daemon
+  UNIT_DAEMON_ASSET: txing-unit-daemon-linux-aarch64.tar.gz
+  UNIT_DAEMON_BINARY: txing-unit-daemon
+  KVS_MASTER_ASSET: txing-board-kvs-master-linux-aarch64.tar.gz
+  KVS_MASTER_BINARY: txing-board-kvs-master
   FEATURE_PRERELEASE_RETAIN: 10
 
 jobs:
@@ -87,7 +89,23 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config cmake perl file
+          sudo apt-get install -y \
+            build-essential pkg-config cmake perl file curl git \
+            libssl-dev libcurl4-openssl-dev liblog4cplus-dev libsrtp2-dev \
+            libusrsctp-dev libwebsockets-dev zlib1g-dev libcamera-dev
+
+      - name: Install mise tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl https://mise.run | sh
+          echo "$HOME/.local/bin" >>"$GITHUB_PATH"
+          echo "$HOME/.local/share/mise/shims" >>"$GITHUB_PATH"
+          mise_bin="$HOME/.local/bin/mise"
+          "$mise_bin" --version
+          "$mise_bin" use --global --yes uv@latest just@latest
+          "$mise_bin" exec -- uv --version
+          "$mise_bin" exec -- just --version
 
       - name: Restore Rust toolchain cache
         uses: actions/cache@v4
@@ -134,30 +152,44 @@ jobs:
           set -euo pipefail
           cargo build --release --manifest-path devices/unit/daemon/Cargo.toml --bin daemon
 
-      - name: Package prerelease asset
+      - name: Build native KVS master
+        shell: bash
+        run: |
+          set -euo pipefail
+          just unit::board::submodules
+          just unit::board::build-native
+
+      - name: Package prerelease assets
         id: package
         shell: bash
         run: |
           set -euo pipefail
 
-          package_dir="$RUNNER_TEMP/unit-daemon-package"
-          asset_path="$RUNNER_TEMP/$ASSET_NAME"
+          package_binary() {
+            local source="$1"
+            local binary_name="$2"
+            local asset_name="$3"
+            local package_dir="$RUNNER_TEMP/package-$binary_name"
+            local asset_path="$RUNNER_TEMP/$asset_name"
+            rm -rf "$package_dir"
+            install -d "$package_dir"
+            install -m 755 "$source" "$package_dir/$binary_name"
+            strip "$package_dir/$binary_name"
+            file "$package_dir/$binary_name"
+            tar -C "$package_dir" -czf "$asset_path" "$binary_name"
+            archive_listing="$(tar -tzf "$asset_path")"
+            if [ "$archive_listing" != "$binary_name" ]; then
+              echo "Expected $asset_name to contain only root-level $binary_name, got:" >&2
+              printf '%s\n' "$archive_listing" >&2
+              exit 1
+            fi
+          }
 
-          rm -rf "$package_dir"
-          install -d "$package_dir"
-          install -m 755 devices/unit/daemon/target/release/daemon "$package_dir/$BINARY_NAME"
-          strip "$package_dir/$BINARY_NAME"
-          file "$package_dir/$BINARY_NAME"
-          tar -C "$package_dir" -czf "$asset_path" "$BINARY_NAME"
+          package_binary devices/unit/daemon/target/release/daemon "$UNIT_DAEMON_BINARY" "$UNIT_DAEMON_ASSET"
+          package_binary devices/unit/board/kvs_master/build/txing-board-kvs-master "$KVS_MASTER_BINARY" "$KVS_MASTER_ASSET"
 
-          archive_listing="$(tar -tzf "$asset_path")"
-          if [ "$archive_listing" != "$BINARY_NAME" ]; then
-            echo "Expected archive to contain only root-level $BINARY_NAME, got:" >&2
-            printf '%s\n' "$archive_listing" >&2
-            exit 1
-          fi
-
-          echo "asset_path=$asset_path" >>"$GITHUB_OUTPUT"
+          echo "unit_daemon_asset_path=$RUNNER_TEMP/$UNIT_DAEMON_ASSET" >>"$GITHUB_OUTPUT"
+          echo "kvs_master_asset_path=$RUNNER_TEMP/$KVS_MASTER_ASSET" >>"$GITHUB_OUTPUT"
 
       - name: Publish feature prerelease
         env:
@@ -167,7 +199,8 @@ jobs:
           BRANCH: ${{ steps.metadata.outputs.branch }}
           TIMESTAMP: ${{ steps.metadata.outputs.timestamp }}
           RELEASE_TARGET: ${{ steps.metadata.outputs.release_target }}
-          ASSET_PATH: ${{ steps.package.outputs.asset_path }}
+          UNIT_DAEMON_ASSET_PATH: ${{ steps.package.outputs.unit_daemon_asset_path }}
+          KVS_MASTER_ASSET_PATH: ${{ steps.package.outputs.kvs_master_asset_path }}
         shell: bash
         run: |
           set -euo pipefail
@@ -189,7 +222,9 @@ jobs:
           - Tag: $TAG
           - Branch: $BRANCH
           - Commit: $RELEASE_TARGET
-          - Asset: $ASSET_NAME
+          - Assets:
+            - $UNIT_DAEMON_ASSET
+            - $KVS_MASTER_ASSET
           - Build host: $build_host
           - Build kernel: $build_kernel
           - Timestamp: $TIMESTAMP
@@ -200,7 +235,7 @@ jobs:
           git tag -a "$TAG" -m "unit daemon feature prerelease $VERSION" "$RELEASE_TARGET"
           git push origin "refs/tags/$TAG:refs/tags/$TAG"
 
-          gh release create "$TAG" "$ASSET_PATH" \
+          gh release create "$TAG" "$UNIT_DAEMON_ASSET_PATH" "$KVS_MASTER_ASSET_PATH" \
             --prerelease \
             --latest=false \
             --verify-tag \
@@ -208,7 +243,7 @@ jobs:
             --notes-file "$notes_file"
 
           gh api --paginate repos/{owner}/{repo}/releases \
-            --jq '.[] | select(.prerelease == true) | select(.tag_name | test("^v[0-9]+\\.[0-9]+\\.[0-9]+-feature\\.[0-9]+$")) | select(any(.assets[]?; .name == "'"$ASSET_NAME"'")) | [.tag_name, .published_at] | @tsv' \
+            --jq '.[] | select(.prerelease == true) | select(.tag_name | test("^v[0-9]+\\.[0-9]+\\.[0-9]+-feature\\.[0-9]+$")) | select(any(.assets[]?; .name == "'"$UNIT_DAEMON_ASSET"'")) | [.tag_name, .published_at] | @tsv' \
             | sort -r -k2,2 \
             | awk -v retain="$FEATURE_PRERELEASE_RETAIN" 'NR > retain {print $1}' \
             >"$old_tags_file"
@@ -222,4 +257,5 @@ jobs:
           printf 'published unit daemon feature prerelease\n'
           printf '  tag: %s\n' "$TAG"
           printf '  branch: %s\n' "$BRANCH"
-          printf '  asset: %s\n' "$ASSET_PATH"
+          printf '  asset: %s\n' "$UNIT_DAEMON_ASSET_PATH"
+          printf '  asset: %s\n' "$KVS_MASTER_ASSET_PATH"

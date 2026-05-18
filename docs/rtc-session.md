@@ -6,9 +6,9 @@ This document records the architecture direction for moving unit board control
 from the current Python board runtime into the Rust unit daemon while preserving
 the existing browser operator behavior.
 
-This is a forward design note, not an implemented contract. Breaking protocol
-changes are acceptable for this migration when they simplify the daemon and
-client model.
+This is a migration plan. Phase 2a is the current implementation target:
+restore KVS video under the Rust daemon while keeping MCP MQTT-only. Phase 2b
+and later sections remain forward design.
 
 ## Intention
 
@@ -21,10 +21,11 @@ The unit daemon should become the owner of board-side control behavior:
 - supervision of the native RTC/KVS worker
 - publication of retained MCP and video descriptor/status topics
 
-The native KVS/WebRTC implementation should remain a separate local worker. It
-owns AWS KVS WebRTC master behavior, camera capture, H.264 media, and WebRTC
-data-channel bridging. The worker is a media/RTC endpoint provider, not the
-owner of MCP business logic or motor authority.
+The native KVS/WebRTC implementation should remain a separate local worker. In
+Phase 2a it owns AWS KVS WebRTC master behavior, camera capture, and H.264
+media only. WebRTC data-channel bridging is deferred to Phase 2b. The worker is
+a media/RTC endpoint provider, not the owner of MCP business logic or motor
+authority.
 
 The architecture should make video an optional media capability of an RTC
 session. MCP over WebRTC is a control transport that can ride on the same RTC
@@ -72,9 +73,10 @@ proven the control model.
 For the current video-capable `unit`, a control-only WebRTC backup is not part
 of the next implementation.
 
-When video is ready, REDCON can reach `1` and MCP should prefer the WebRTC data
-channel on the media RTC session. When video is unavailable, the unit remains at
-REDCON `2` and MQTT MCP control is acceptable.
+In Phase 2a, MCP remains MQTT-only even when video is ready and REDCON reaches
+`1`. In the later WebRTC-MCP phase, MCP may prefer the WebRTC data channel on
+the media RTC session. When video is unavailable, the unit remains at REDCON `2`
+and MQTT MCP control is acceptable.
 
 Reason: this keeps the current product behavior clear. Video readiness remains
 the difference between REDCON `2` and REDCON `1`, while MCP availability remains
@@ -88,14 +90,15 @@ transport.
 Reason: connection success is more important than lowest latency. MQTT is also
 the acceptable REDCON `2` control path when video is not ready.
 
-### WebRTC Transport Is Preferred When Video Is Available
+### WebRTC Transport Becomes Preferred After Phase 2b
 
-For video-capable units, the preferred MCP transport is WebRTC data channel on
-the media RTC session whenever video is available.
+For video-capable units after Phase 2b, the preferred MCP transport is WebRTC
+data channel on the media RTC session whenever video is available.
 
 Reason: a video consumer can receive media and send control commands over the
 same AWS KVS WebRTC session. This is the cleanest low-latency path for the
-operator and for future near-realtime cloud consumers.
+operator and for future near-realtime cloud consumers. This is explicitly not
+part of Phase 2a.
 
 ### No Second KVS Channel In The Unit Migration
 
@@ -152,8 +155,8 @@ native rtc-worker
   AWS KVS WebRTC master
   libcamera capture when video is enabled
   H.264 encode and media track
-  WebRTC data channel acceptor
-  local IPC bridge to daemon MCP core
+  WebRTC data channel acceptor (Phase 2b)
+  local IPC bridge to daemon MCP core (Phase 2b)
 
 browser or cloud consumer
   AWS KVS viewer
@@ -167,6 +170,10 @@ advertised, which session is active controller, and whether a command is safe to
 apply. The RTC worker reports readiness and forwards WebRTC data-channel
 messages; it does not decide command authority.
 
+Phase 2a uses only the media portions of this shape. The RTC worker reports
+readiness/errors through stdout/stderr markers, and the daemon preserves the
+existing MQTT-only MCP descriptor.
+
 ## REDCON Behavior
 
 The REDCON ladder remains:
@@ -179,14 +186,16 @@ The REDCON ladder remains:
 MCP remains a REDCON `2` capability. Video remains the additional capability
 required for REDCON `1`.
 
-When the RTC media path is ready, the daemon can advertise MCP WebRTC data
-channel as the preferred transport. When the media path is not ready, the daemon
-should advertise MQTT-only MCP control and the device should remain at REDCON
-`2` if board and MCP are otherwise healthy.
+In Phase 2a, the daemon advertises MQTT-only MCP control regardless of video
+status. In Phase 2b, when the RTC media path is ready, the daemon can advertise
+MCP WebRTC data channel as the preferred transport. When the media path is not
+ready, the daemon should advertise MQTT-only MCP control and the device should
+remain at REDCON `2` if board and MCP are otherwise healthy.
 
 ## MCP Transport Descriptor Direction
 
-The next descriptor version should make transport choice explicit and ordered by
+Phase 2a must preserve the existing MQTT-only descriptor. The next descriptor
+version for Phase 2b should make transport choice explicit and ordered by
 priority.
 
 For video-ready units:
@@ -375,43 +384,60 @@ Open Phase 1 rollout and validation items:
   - confirm the UI reflects daemon watchdog stops through `robot.get_state`
     polling
 
-### Phase 2: Video Capability With Separate `kvs_master`
+### Phase 2a: Video Capability With MQTT-Only MCP
 
 Goal: reach the current Python board runtime behavior with the Rust daemon as
-the control owner and a separate native KVS worker as the RTC/media owner.
+the control owner and a separate native KVS worker as the RTC/media owner,
+while keeping MCP on MQTT only.
 
 Scope:
 
-- supervise the native `kvs_master` or renamed `rtc-worker` from the Rust daemon
+- install `txing-board-kvs-master` as a separate mise-managed release asset
+  beside `txing-unit-daemon`
+- supervise the native `txing-board-kvs-master` from the Rust daemon
 - keep camera capture, H.264 encode, and AWS KVS master behavior in the native
   worker
-- connect worker WebRTC data-channel messages to the Rust MCP core through local
-  IPC
 - publish retained video descriptor/status topics from the daemon
 - mirror video descriptor/status into the `video` named shadow according to the
   current reader contract
-- advertise MCP WebRTC data channel first only when media RTC is ready
-- advertise MQTT fallback always
+- keep the MCP descriptor transport-neutral in shape but MQTT-only in content
 - publish video retained v2 capability state so REDCON can reach `1` when the
   video worker is ready
 
-Expected operating state after phase 2:
+Expected operating state after phase 2a:
 
 - browser operator can open the existing unit video route
 - operator can see video through AWS KVS WebRTC
-- operator can control from the browser
-- browser prefers MCP over WebRTC data channel when video is available
-- browser falls back to MQTT MCP when WebRTC data channel is unavailable
+- operator can control from the browser over MQTT MCP
 - behavior is at least equivalent to the current Python control plus
-  `kvs_master` implementation
+  `kvs_master` implementation, except MCP over WebRTC remains intentionally
+  deferred
 
 Notes:
 
+- Phase 2a iteration should use the `Unit Daemon Feature Prerelease` GitHub
+  workflow from a pushed `feature/*` branch. The workflow publishes both
+  `txing-unit-daemon-linux-aarch64.tar.gz` and
+  `txing-board-kvs-master-linux-aarch64.tar.gz`; boards can then opt into the
+  feature channel for validation without publishing a stable project release.
 - The worker should be treated as a child process with bounded restart/backoff
   and clear status reporting.
-- The local worker IPC should become structured. Stderr/stdout markers may still
-  exist for logs, but daemon state should not depend on ad hoc marker parsing
-  long term.
+- Stderr/stdout markers remain the current worker status input for readiness,
+  viewer connection, and errors.
+- Promote to a stable release only after Phase 2a board validation passes.
+
+### Phase 2b: MCP Over Video WebRTC
+
+Goal: add WebRTC data-channel MCP only after the Rust daemon owns video worker
+supervision and video capability publication.
+
+Scope:
+
+- connect worker WebRTC data-channel messages to the Rust MCP core through local
+  IPC
+- advertise MCP WebRTC data channel first only when media RTC is ready
+- advertise MQTT fallback always
+- make browser transport switching deterministic and observable
 
 ### Phase 3: Channel Switching And Responsibility Control
 
