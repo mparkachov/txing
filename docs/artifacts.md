@@ -1,28 +1,31 @@
 # Artifacts
 
 This document describes the implemented artifact flow for installing the `unit`
-daemon on Raspberry Pi boards without keeping a source checkout on the board.
-The board uses `mise` to install GitHub Release assets and `systemd` to run the
-daemon.
+daemon and native KVS master on Raspberry Pi boards without keeping a source
+checkout on the board. The board uses `mise` to install GitHub Release assets
+and `systemd` to run the daemon.
 
 ## Unit Daemon Channels
 
-The board has one installed command:
+The board has two installed commands:
 
 ```text
 txing-unit-daemon
+txing-board-kvs-master
 ```
 
-Both stable and feature releases publish the same asset:
+Both stable and feature releases publish the same board assets:
 
 ```text
 txing-unit-daemon-linux-aarch64.tar.gz
+txing-board-kvs-master-linux-aarch64.tar.gz
 ```
 
-The archive contains one root-level executable:
+Each archive contains one root-level executable with the matching command name:
 
 ```text
 txing-unit-daemon
+txing-board-kvs-master
 ```
 
 Stable releases are normal GitHub Releases:
@@ -57,6 +60,7 @@ Project stable releases publish these project-versioned assets on `v<VERSION>`:
 
 ```text
 txing-unit-daemon-linux-aarch64.tar.gz
+txing-board-kvs-master-linux-aarch64.tar.gz
 txing-sparkplug-manager-linux-aarch64.tar.gz
 txing-ble-connectivity-linux-aarch64.tar.gz
 txing-aws-connectivity-linux-aarch64.tar.gz
@@ -111,6 +115,7 @@ tree:
 ```text
 /home/txing/.config/mise/conf.d/txing-unit-daemon.toml
 /home/txing/.local/share/mise/installs/txing-unit-daemon/
+/home/txing/.local/share/mise/installs/txing-board-kvs-master/
 ```
 
 Feature mode is an overlay on top of stable. It uses an isolated mise config and
@@ -130,10 +135,11 @@ MISE_SHARED_INSTALL_DIRS=/home/txing/.local/share/mise/installs
 ```
 
 That shared install directory is the fallback path to the persistent stable
-daemon. Feature service start tries to upgrade the feature-capable resolution in
-`/var/tmp` before ensuring it is installed; if those pre-start steps fail or no
-feature release is installed, offline `mise exec` can still resolve the
-installed stable daemon through the shared install directory.
+daemon and native KVS master. Feature service start tries to upgrade the
+feature-capable resolution in `/var/tmp` before ensuring it is installed; if
+those pre-start steps fail or no feature release is installed, offline
+`mise exec` can still resolve the installed stable tools through the shared
+install directory.
 
 The installed service is the same for both channels:
 
@@ -157,9 +163,10 @@ Stable publishing is CI-owned:
 ```
 
 The workflow runs manually from `main`, builds on `ubuntu-24.04-arm`, installs
-Rust `1.95.0`, runs Rust tests, builds and strips the Linux `aarch64` binaries,
-packages the project stable assets, and creates a normal GitHub Release for
-`v<VERSION>`. Stable project tags and releases are immutable.
+Rust `1.95.0`, runs Rust tests, builds the native KVS master, builds and strips
+the Linux `aarch64` binaries, packages the project stable assets, and creates a
+normal GitHub Release for `v<VERSION>`. Stable project tags and releases are
+immutable.
 
 Feature publishing is CI-owned:
 
@@ -168,11 +175,11 @@ Feature publishing is CI-owned:
 ```
 
 The workflow runs manually from a pushed `feature/*` branch, builds on
-`ubuntu-24.04-arm`, installs Rust `1.95.0`, runs daemon tests, builds and strips
-the Linux `aarch64` binary, packages the archive, creates the timestamped
-prerelease, and prunes older feature prereleases beyond the latest 10. The
-workflow fails if it is dispatched from `main`, a tag, or any non-`feature/*`
-branch.
+`ubuntu-24.04-arm`, installs Rust `1.95.0`, runs daemon tests, builds the
+native KVS master, builds and strips the Linux `aarch64` binaries, packages the
+archives, creates the timestamped prerelease, and prunes older feature
+prereleases beyond the latest 10. The workflow fails if it is dispatched from
+`main`, a tag, or any non-`feature/*` branch.
 
 ## Integrity Policy
 
@@ -198,6 +205,10 @@ W with a read-only root filesystem:
 - stable upgrade with plain `mise upgrade`;
 - stable read-only-root reboot on `0.9.114`, with systemd starting the daemon,
   MQTT connecting, and retained `board` online state publishing.
+
+The current phase-2a artifact flow installs both `txing-unit-daemon` and
+`txing-board-kvs-master` through the same board mise config. It still needs
+field validation on a clean board after the next stable release is published.
 
 ## Manual Actions
 
@@ -241,6 +252,19 @@ chmod 600 "$HOME/.config/txing/unit-daemon/public.pem.key"
 chmod 644 "$HOME/.config/txing/unit-daemon/AmazonRootCA1.pem"
 rm -f /tmp/txing-unit-daemon-config.tgz
 ```
+
+### Refresh Existing Daemon Role Policy
+
+New certificate provisioning writes the current daemon role policy. Existing
+devices that were provisioned before the native KVS master role permissions
+must be refreshed from the operator machine:
+
+```bash
+just unit::daemon::role-policy <thing-id>
+```
+
+The recipe updates only the per-device daemon IAM role inline policy. It does
+not issue a new certificate.
 
 ### Publish A Stable Release
 
@@ -301,6 +325,7 @@ sudo systemctl status --no-pager -l txing-unit-daemon.service
 sudo journalctl -u txing-unit-daemon.service -n 120 --no-pager
 sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise list
 sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise which txing-unit-daemon
+sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise which txing-board-kvs-master
 ```
 
 ### Upgrade Stable On A Board
@@ -339,21 +364,29 @@ sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise list
 ```
 
 Expected: no source checkout is needed, the service starts offline, the daemon
-logs the stable version, MQTT connects, and retained `board` online state is
-published.
+logs the stable version, MQTT connects, the native KVS master resolves through
+mise, and retained `board`, `mcp`, and `video` state is published.
 
 ### Publish A Feature Prerelease
 
-Push the feature branch, then run the `Unit Daemon Feature Prerelease` workflow
-manually from that `feature/*` branch. The workflow file must already exist on
-the default branch before GitHub exposes it for manual dispatch.
+Use this path for Phase 2a board iteration before publishing a stable project
+release. Push the feature branch, then run the `Unit Daemon Feature Prerelease`
+workflow manually from that `feature/*` branch. The workflow file must already
+exist on the default branch before GitHub exposes it for manual dispatch.
 
 ```bash
 git push origin HEAD
 ```
 
-The workflow publishes a timestamped prerelease tag for the selected branch
-head and prunes older unit-daemon feature prereleases beyond the latest 10.
+The workflow publishes a timestamped prerelease tag for the selected branch head
+with both board assets:
+
+```text
+txing-unit-daemon-linux-aarch64.tar.gz
+txing-board-kvs-master-linux-aarch64.tar.gz
+```
+
+It also prunes older unit-daemon feature prereleases beyond the latest 10.
 
 ### Opt A Board Into Feature
 
@@ -365,9 +398,34 @@ root-rw
 curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/devices/unit/daemon/install-systemd.sh | sudo bash -s -- feature
 ```
 
+While validating installer changes that are still only on a feature branch, use
+the installer from that same branch instead of `main`:
+
+```bash
+FEATURE_BRANCH=feature/phase-2a-kvs
+curl -fsSL "https://raw.githubusercontent.com/mparkachov/txing/${FEATURE_BRANCH}/devices/unit/daemon/install-systemd.sh" | sudo bash -s -- feature
+```
+
 Feature service start may install a newer feature prerelease into `/var/tmp`.
 If feature install is unavailable or no newer feature exists, the service uses
 the persistent stable install through `MISE_SHARED_INSTALL_DIRS`.
+
+Verify the feature service resolves both commands:
+
+```bash
+sudo -u txing env HOME=/home/txing MISE_CONFIG_DIR=/home/txing/.config/mise/txing-unit-daemon \
+  MISE_DATA_DIR=/var/tmp/txing/unit-daemon/mise \
+  MISE_CACHE_DIR=/var/tmp/txing/unit-daemon/mise-cache \
+  MISE_TMP_DIR=/var/tmp/txing/unit-daemon/mise-tmp \
+  MISE_SHARED_INSTALL_DIRS=/home/txing/.local/share/mise/installs \
+  /home/txing/.local/bin/mise which txing-unit-daemon
+sudo -u txing env HOME=/home/txing MISE_CONFIG_DIR=/home/txing/.config/mise/txing-unit-daemon \
+  MISE_DATA_DIR=/var/tmp/txing/unit-daemon/mise \
+  MISE_CACHE_DIR=/var/tmp/txing/unit-daemon/mise-cache \
+  MISE_TMP_DIR=/var/tmp/txing/unit-daemon/mise-tmp \
+  MISE_SHARED_INSTALL_DIRS=/home/txing/.local/share/mise/installs \
+  /home/txing/.local/bin/mise which txing-board-kvs-master
+```
 
 ### Opt A Board Out Of Feature
 

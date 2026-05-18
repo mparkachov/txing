@@ -149,6 +149,10 @@ Resources:
             Effect: Allow
             Action: iot:Publish
             Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/${!iot:Connection.Thing.ThingName}/shadow/name/mcp/update
+          - Sid: DaemonVideoShadowUpdate
+            Effect: Allow
+            Action: iot:Publish
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/${!iot:Connection.Thing.ThingName}/shadow/name/video/update
           - Sid: DaemonMcpRetainedTopics
             Effect: Allow
             Action:
@@ -157,6 +161,14 @@ Resources:
             Resource:
               - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/${!iot:Connection.Thing.ThingName}/mcp/descriptor
               - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/${!iot:Connection.Thing.ThingName}/mcp/status
+          - Sid: DaemonVideoRetainedTopics
+            Effect: Allow
+            Action:
+              - iot:Publish
+              - iot:RetainPublish
+            Resource:
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/${!iot:Connection.Thing.ThingName}/video/descriptor
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/${!iot:Connection.Thing.ThingName}/video/status
           - Sid: DaemonMcpSessionReceive
             Effect: Allow
             Action:

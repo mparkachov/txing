@@ -85,6 +85,8 @@ class VersionEnvironmentTests(unittest.TestCase):
 
         self.assertIn("name: Txing Stable Release", workflow)
         self.assertIn("txing-unit-daemon-linux-aarch64.tar.gz", workflow)
+        self.assertIn("txing-board-kvs-master-linux-aarch64.tar.gz", workflow)
+        self.assertIn("just unit::board::build-native", workflow)
         self.assertIn("txing-sparkplug-manager-linux-aarch64.tar.gz", workflow)
         self.assertIn("txing-ble-connectivity-linux-aarch64.tar.gz", workflow)
         self.assertIn("txing-aws-connectivity-linux-aarch64.tar.gz", workflow)
@@ -113,6 +115,52 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn("git push origin", workflow)
         self.assertNotIn("greengrass-lite-version", workflow)
         self.assertNotIn("TXING_GREENGRASS_LITE_BUILD_INPUT_HASH", workflow)
+
+    def test_unit_daemon_feature_prerelease_publishes_daemon_and_kvs_master(self) -> None:
+        workflow = (
+            REPO_ROOT / ".github" / "workflows" / "unit-daemon-feature-prerelease.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("name: Unit Daemon Feature Prerelease", workflow)
+        self.assertIn("UNIT_DAEMON_ASSET: txing-unit-daemon-linux-aarch64.tar.gz", workflow)
+        self.assertIn("KVS_MASTER_ASSET: txing-board-kvs-master-linux-aarch64.tar.gz", workflow)
+        self.assertIn("just unit::board::build-native", workflow)
+        self.assertIn('"$UNIT_DAEMON_ASSET_PATH" "$KVS_MASTER_ASSET_PATH"', workflow)
+        self.assertNotIn("ASSET_NAME: txing-unit-daemon", workflow)
+
+    def test_unit_daemon_installer_installs_daemon_and_kvs_master_with_mise(self) -> None:
+        installer = (
+            REPO_ROOT / "devices" / "unit" / "daemon" / "install-systemd.sh"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('txing-unit-daemon = "github:mparkachov/txing"', installer)
+        self.assertIn('txing-board-kvs-master = "github:mparkachov/txing"', installer)
+        self.assertIn('asset_pattern = "$daemon_asset_pattern"', installer)
+        self.assertIn('asset_pattern = "$kvs_master_asset_pattern"', installer)
+        self.assertIn("txing-board-kvs-master-linux-aarch64.tar.gz", installer)
+        self.assertIn("ExecStartPre=-$mise_bin upgrade txing-board-kvs-master", installer)
+        self.assertIn("MISE_SHARED_INSTALL_DIRS", installer)
+
+    def test_board_stable_docs_use_daemon_kvs_master_release_path(self) -> None:
+        installation_docs = (REPO_ROOT / "docs" / "installation.md").read_text(
+            encoding="utf-8"
+        )
+        artifacts_docs = (REPO_ROOT / "docs" / "artifacts.md").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("mise which txing-board-kvs-master", installation_docs)
+        self.assertIn("just unit::daemon::role-policy <thing-id>", installation_docs)
+        self.assertIn("MQTT-only `mcp`", installation_docs)
+        self.assertIn("just unit::daemon::role-policy <thing-id>", artifacts_docs)
+        self.assertIn("Use this path for Phase 2a board iteration", artifacts_docs)
+        self.assertIn("txing-board-kvs-master-linux-aarch64.tar.gz", artifacts_docs)
+        self.assertIn("MISE_SHARED_INSTALL_DIRS=/home/txing/.local/share/mise/installs", artifacts_docs)
+        self.assertNotIn("BOARD_VIDEO_SENDER_COMMAND", installation_docs)
+        self.assertNotIn("just unit::board::build-native", installation_docs)
+        self.assertNotIn("sudo systemctl status board", installation_docs)
+        self.assertNotIn("git clone <repo-url>", installation_docs)
+        self.assertNotIn("$TXING_HOME", installation_docs)
 
     def test_rig_mise_config_uses_github_assets_without_greengrass(self) -> None:
         installer = (REPO_ROOT / "rig" / "install-mise-tools.sh").read_text(

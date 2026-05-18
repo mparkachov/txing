@@ -222,7 +222,6 @@ class AwsCheckTests(unittest.TestCase):
                 "THING_NAME": "unit-local",
                 "SCHEMA_FILE": "/missing/schema.json",
                 "BOARD_VIDEO_REGION": "eu-central-1",
-                "BOARD_VIDEO_SENDER_COMMAND": "",
             },
         )
 
@@ -233,7 +232,29 @@ class AwsCheckTests(unittest.TestCase):
         )
         self.assertIn("AWS shared credentials file missing or not a file (/missing/aws.credentials)", failure_messages)
         self.assertIn("Shadow schema file missing or not a file (/missing/schema.json)", failure_messages)
-        self.assertIn("Board video sender command missing ($BOARD_VIDEO_SENDER_COMMAND)", failure_messages)
+        self.assertNotIn("Board video sender command missing ($BOARD_VIDEO_SENDER_COMMAND)", failure_messages)
+
+    def test_validate_device_environment_defaults_video_region_to_aws_region(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            temp_path = Path(tempdir)
+            shared_credentials_file = temp_path / "aws.credentials"
+            shared_credentials_file.write_text("[town]\n", encoding="utf-8")
+            schema_file = temp_path / "schema.json"
+            schema_file.write_text("{}", encoding="utf-8")
+
+            results, resolved = validate_service_environment(
+                "device",
+                {
+                    "AWS_REGION": "eu-central-1",
+                    "AWS_DEVICE_PROFILE": "device",
+                    "AWS_SHARED_CREDENTIALS_FILE": str(shared_credentials_file),
+                    "THING_NAME": "unit-local",
+                    "SCHEMA_FILE": str(schema_file),
+                },
+            )
+
+        self.assertTrue(all(result.ok for result in results), [result.message for result in results])
+        self.assertEqual(resolved["video_region"], "eu-central-1")
 
     def test_run_rig_service_check_uses_shared_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
@@ -297,8 +318,7 @@ class AwsCheckTests(unittest.TestCase):
                     "AWS_SHARED_CREDENTIALS_FILE": str(shared_credentials_file),
                     "THING_NAME": "unit-local",
                     "SCHEMA_FILE": str(schema_file),
-                    "BOARD_VIDEO_REGION": "us-east-1",
-                    "BOARD_VIDEO_SENDER_COMMAND": "/tmp/bot-board-kvs-master",
+                    "TXING_BOARD_VIDEO_REGION": "us-east-1",
                 },
                 aws_runtime=runtime,
             )

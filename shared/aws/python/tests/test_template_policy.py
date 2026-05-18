@@ -160,6 +160,11 @@ class AwsTemplatePolicyTests(unittest.TestCase):
             "topic/$aws/things/${!iot:Connection.Thing.ThingName}/shadow/name/mcp/update",
             template,
         )
+        self.assertIn("Sid: DaemonVideoShadowUpdate", template)
+        self.assertIn(
+            "topic/$aws/things/${!iot:Connection.Thing.ThingName}/shadow/name/video/update",
+            template,
+        )
         self.assertIn("Sid: DaemonMcpRetainedTopics", template)
         self.assertIn(
             "topic/txings/${!iot:Connection.Thing.ThingName}/mcp/descriptor",
@@ -167,6 +172,15 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         )
         self.assertIn(
             "topic/txings/${!iot:Connection.Thing.ThingName}/mcp/status",
+            template,
+        )
+        self.assertIn("Sid: DaemonVideoRetainedTopics", template)
+        self.assertIn(
+            "topic/txings/${!iot:Connection.Thing.ThingName}/video/descriptor",
+            template,
+        )
+        self.assertIn(
+            "topic/txings/${!iot:Connection.Thing.ThingName}/video/status",
             template,
         )
         self.assertIn("Sid: DaemonMcpSessionReceive", template)
@@ -222,6 +236,11 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("logs:CreateLogGroup", daemon_justfile)
         self.assertIn("logs:CreateLogStream", daemon_justfile)
         self.assertIn("logs:DescribeLogStreams", daemon_justfile)
+        self.assertIn("DaemonBoardVideoMaster", daemon_justfile)
+        self.assertIn("kinesisvideo:ConnectAsMaster", daemon_justfile)
+        self.assertIn('video_region="${TXING_BOARD_VIDEO_REGION:-${BOARD_VIDEO_REGION:-$AWS_REGION}}"', daemon_justfile)
+        self.assertIn("arn:${partition}:kinesisvideo:${video_region}:${account_id}:channel/${effective_thing_name}-board-video/*", daemon_justfile)
+        self.assertIn('role-policy thing_id=', daemon_justfile)
         self.assertIn("logs:PutRetentionPolicy", daemon_justfile)
         self.assertIn("logs:PutLogEvents", daemon_justfile)
         self.assertIn("arn:${partition}:logs:${AWS_REGION}:${account_id}:log-group:${cloudwatch_log_group}", daemon_justfile)
@@ -235,6 +254,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("TXING_DAEMON_CONFIG_DIR", daemon_justfile)
         self.assertIn("$HOME/.config/txing/unit-daemon", daemon_justfile)
         self.assertIn('cert_path="$daemon_config_dir/certificate.pem.crt"', daemon_justfile)
+        self.assertIn("printf 'export TXING_BOARD_VIDEO_REGION=%s\\n' \"$video_region\"", daemon_justfile)
         self.assertIn("printf 'export TXING_CLOUDWATCH_LOG_GROUP=%s\\n' \"$cloudwatch_log_group\"", daemon_justfile)
         self.assertNotIn("stack_output \"$AWS_STACK_NAME\" PolicyName", daemon_justfile)
         self.assertNotIn("DeviceDaemonCredentialRoleAlias", daemon_justfile)

@@ -13,6 +13,7 @@ concurrency:
 env:
   RUST_VERSION: 1.95.0
   UNIT_DAEMON_ASSET: txing-unit-daemon-linux-aarch64.tar.gz
+  KVS_MASTER_ASSET: txing-board-kvs-master-linux-aarch64.tar.gz
   SPARKPLUG_MANAGER_ASSET: txing-sparkplug-manager-linux-aarch64.tar.gz
   BLE_CONNECTIVITY_ASSET: txing-ble-connectivity-linux-aarch64.tar.gz
   AWS_CONNECTIVITY_ASSET: txing-aws-connectivity-linux-aarch64.tar.gz
@@ -130,9 +131,11 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential pkg-config cmake perl file curl git \
+            build-essential pkg-config cmake perl file curl git just \
             libssl-dev libcurl4-openssl-dev libdbus-1-dev uuid-dev \
-            libzip-dev libyaml-dev libsystemd-dev libevent-dev liburiparser-dev
+            libzip-dev libyaml-dev libsystemd-dev libevent-dev liburiparser-dev \
+            liblog4cplus-dev libsrtp2-dev libusrsctp-dev libwebsockets-dev \
+            zlib1g-dev libcamera-dev
 
       - name: Restore Rust toolchain cache
         uses: actions/cache@v4
@@ -202,6 +205,13 @@ jobs:
           TXING_REAL_CC="${CC:-cc}" CC="$PWD/rig/tools/cc-greengrass-info-log" \
             cargo build --release --features greengrass-sdk --manifest-path rig/aws-connectivity/Cargo.toml
 
+      - name: Build native KVS master
+        shell: bash
+        run: |
+          set -euo pipefail
+          just unit::board::submodules
+          just unit::board::build-native
+
       - name: Package project release assets
         shell: bash
         run: |
@@ -230,6 +240,7 @@ jobs:
           }
 
           package_binary devices/unit/daemon/target/release/daemon txing-unit-daemon "$UNIT_DAEMON_ASSET"
+          package_binary devices/unit/board/kvs_master/build/txing-board-kvs-master txing-board-kvs-master "$KVS_MASTER_ASSET"
           package_binary rig/target/release/txing-sparkplug-manager txing-sparkplug-manager "$SPARKPLUG_MANAGER_ASSET"
           package_binary rig/target/release/txing-ble-connectivity txing-ble-connectivity "$BLE_CONNECTIVITY_ASSET"
           package_binary rig/target/release/txing-aws-connectivity txing-aws-connectivity "$AWS_CONNECTIVITY_ASSET"
@@ -254,6 +265,7 @@ jobs:
           - Commit: $RELEASE_TARGET
           - Assets:
             - $UNIT_DAEMON_ASSET
+            - $KVS_MASTER_ASSET
             - $SPARKPLUG_MANAGER_ASSET
             - $BLE_CONNECTIVITY_ASSET
             - $AWS_CONNECTIVITY_ASSET
@@ -262,6 +274,7 @@ jobs:
 
           gh release create "$TAG" \
             "$RUNNER_TEMP/$UNIT_DAEMON_ASSET" \
+            "$RUNNER_TEMP/$KVS_MASTER_ASSET" \
             "$RUNNER_TEMP/$SPARKPLUG_MANAGER_ASSET" \
             "$RUNNER_TEMP/$BLE_CONNECTIVITY_ASSET" \
             "$RUNNER_TEMP/$AWS_CONNECTIVITY_ASSET" \

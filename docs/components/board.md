@@ -13,9 +13,9 @@ The board is the device-side Raspberry Pi. It is power-switched by the MCU, publ
 - subscribe to Sparkplug `DCMD.redcon` and halt locally on `redcon=4`
 - enforce MCP lease ownership for motion control
 
-The board runtime owns `board.*` Thing Shadow updates. In the legacy Python
-runtime that publisher is `txing-board`; in the phase-1 Rust path it is the unit
-daemon.
+The stable Rust unit daemon owns `board.*` Thing Shadow updates and the retained
+board/MCP/video capability state. The older Python `txing-board` runtime remains
+in the repository for legacy and development reference only.
 
 ## Current Interfaces
 
@@ -61,8 +61,8 @@ Current MCP transport:
 
 - retained descriptor topic: `txings/<device_id>/mcp/descriptor`
 - retained status topic: `txings/<device_id>/mcp/status`
-- mandatory fallback transport: MQTT JSON-RPC
-- optional higher-priority transport: WebRTC data channel on the board video KVS session with label `txing.mcp.v1`
+- current stable transport: MQTT JSON-RPC
+- deferred transport: WebRTC data channel on the board video KVS session with label `txing.mcp.v1`
 
 Current tool surface:
 
@@ -77,7 +77,10 @@ Current tool surface:
 
 ## Local Runtime State
 
-The board runtime writes transient local state only:
+The stable Rust daemon writes no persistent board runtime state outside its
+per-user config directory. Feature-channel mise installs use `/var/tmp`.
+
+The legacy Python board runtime writes transient local state only:
 
 - `/tmp/txing_board_shadow.json`
 - `/tmp/txing_board_video_state.json`
@@ -87,7 +90,7 @@ This is why the read-only-rootfs setup keeps `/tmp` and `/var/tmp` on tmpfs. The
 
 ## Build And Run
 
-Rust unit daemon phase-1 local run:
+Rust unit daemon local run:
 
 ```bash
 just unit::daemon::run
@@ -96,8 +99,9 @@ just unit::daemon::run
 The daemon uses the per-user config directory
 `${TXING_DAEMON_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/txing/unit-daemon}`.
 Its `.env` file is sourceable and the IoT certificate files live beside it. In
-the current phase-1 implementation, the daemon publishes the `board` named
-shadow and retained `board` capability state for web/Sparkplug visibility.
+the current implementation, the daemon publishes the `board`, `mcp`, and
+`video` runtime surfaces for web/Sparkplug visibility while keeping MCP
+MQTT-only.
 
 Provision daemon config and certs only when AWS resource changes are intended:
 
@@ -105,7 +109,7 @@ Provision daemon config and certs only when AWS resource changes are intended:
 just unit::daemon::cert <thing-id>
 ```
 
-Existing Python board runtime commands:
+Legacy Python board runtime commands:
 
 ```bash
 just unit::board::check
@@ -131,7 +135,14 @@ just unit::board::motor-stop
 
 ## Service Install
 
-The service must run as `root`.
+The current stable service is installed through the Rust daemon installer:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/devices/unit/daemon/install-systemd.sh | sudo bash -s -- stable
+```
+
+The legacy Python board service path is still available for development
+comparison and must run as `root`:
 
 ```bash
 just unit::board::install-service "$BOARD_VIDEO_SENDER_COMMAND"

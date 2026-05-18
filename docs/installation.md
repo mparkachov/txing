@@ -68,9 +68,9 @@ This guide assumes:
 If your image is still using a different network manager, switch it before
 enabling the read-only layout below.
 
-Keep the board root filesystem writable until mise, the stable daemon, runtime
-config, native sender, board service, and read-only-root configuration are in
-place.
+Keep the board root filesystem writable until mise, the stable daemon, the
+native KVS master release asset, runtime config, PWM overlay, and read-only-root
+configuration are in place.
 
 ### 1. Create The Card
 
@@ -95,10 +95,10 @@ ssh txing
 sudo apt update
 sudo apt full-upgrade -y
 sudo apt install -y \
-  git curl jq cmake pkg-config build-essential unzip \
+  curl jq \
   libssl-dev libcurl4-openssl-dev liblog4cplus-dev libsrtp2-dev \
   libusrsctp-dev libwebsockets-dev zlib1g-dev libcamera-dev \
-  ca-certificates python3-venv python3-lgpio network-manager
+  ca-certificates network-manager
 ```
 
 If NetworkManager was newly installed or enabled, reconnect over the resulting
@@ -106,9 +106,9 @@ network path before continuing.
 
 ### 3. Install Mise
 
-Use `mise` for developer CLIs that are missing, unavailable, or too old in the
-OS package repository. `apt` should stay limited to OS libraries, headers, and
-services needed by the board runtime.
+Use `mise` for txing release binaries and any operator CLIs that are missing,
+unavailable, or too old in the OS package repository. `apt` should stay limited
+to OS libraries, headers, and services needed by the board runtime.
 
 ```bash
 mkdir -p "$HOME/.local/bin"
@@ -117,10 +117,7 @@ if ! grep -qxF 'eval "$($HOME/.local/bin/mise activate bash)"' "$HOME/.bashrc"; 
   echo 'eval "$($HOME/.local/bin/mise activate bash)"' >> "$HOME/.bashrc"
 fi
 eval "$("$HOME/.local/bin/mise" activate bash)"
-mise use --global just@latest uv@latest aws-cli@latest
-just --version
-uv --version
-aws --version
+mise --version
 ```
 
 ### 4. Copy Unit Daemon Config
@@ -149,6 +146,14 @@ chmod 644 "$HOME/.config/txing/unit-daemon/AmazonRootCA1.pem"
 rm -f /tmp/txing-unit-daemon-config.tgz
 ```
 
+For existing devices provisioned before the daemon KVS permissions were added,
+refresh the per-device daemon role policy from the operator machine before
+restarting the board:
+
+```bash
+just unit::daemon::role-policy <thing-id>
+```
+
 ### 5. Install Stable Unit Daemon
 
 Install the stable daemon and systemd unit while root is still writable:
@@ -164,47 +169,40 @@ sudo systemctl status --no-pager -l txing-unit-daemon.service
 sudo journalctl -u txing-unit-daemon.service -n 120 --no-pager
 mise list
 mise which txing-unit-daemon
+mise which txing-board-kvs-master
 ```
 
 Expected:
 
 - `txing-unit-daemon` is listed from
   `~/.config/mise/conf.d/txing-unit-daemon.toml`;
+- `txing-board-kvs-master` is listed from the same mise config;
 - the executable lives under
   `~/.local/share/mise/installs/txing-unit-daemon/<version>/`;
-- the daemon log includes `version=<stable-version>`, connects to MQTT, and
-  publishes retained `board` online state.
+- `txing-board-kvs-master` lives under
+  `~/.local/share/mise/installs/txing-board-kvs-master/<version>/`;
+- the daemon log includes `version=<stable-version>`, connects to MQTT,
+  publishes retained `board` and MQTT-only `mcp` state, and starts the native
+  KVS master when the device declares the `video` capability.
 
-### 6. Clone The Repo And Copy Board Runtime Config
+### 6. Configure Runtime Options
 
-The stable unit daemon does not require a source checkout. The board runtime and
-native video sender still use the repository checkout.
+The copied daemon `.env` is enough for the default video path:
 
-```bash
-export TXING_HOME="$HOME/txing"
-git clone <repo-url> "$TXING_HOME"
-cd "$TXING_HOME"
-```
+- `TXING_KVS_MASTER_COMMAND` defaults to `txing-board-kvs-master`.
+- `TXING_BOARD_VIDEO_REGION` falls back to `BOARD_VIDEO_REGION`, then
+  `AWS_REGION`.
+- `TXING_BOARD_VIDEO_CHANNEL_NAME` falls back to
+  `BOARD_VIDEO_CHANNEL_NAME`, then `<thing-id>-board-video`.
 
-Populate:
+Only add overrides to `$HOME/.config/txing/unit-daemon/.env` when the board
+needs non-default values.
 
-- `config/aws.env`
-- `config/aws.credentials`
-
-Board-specific values to set in `config/aws.env`:
-
-- `TXING_THING_ID` for board commands that operate on one enrolled device
-- `BOARD_VIDEO_REGION`
-- `BOARD_VIDEO_SENDER_COMMAND`
-- `KVS_DUALSTACK_ENDPOINTS=ON`
-- `BOARD_DRIVE_CMD_RAW_MIN_SPEED`
-- `BOARD_DRIVE_CMD_RAW_MAX_SPEED`
-
-If you are using the current default chassis, the measured bring-up values are:
+For the current default chassis, the measured motor bring-up values are:
 
 ```bash
-BOARD_DRIVE_CMD_RAW_MIN_SPEED=50
-BOARD_DRIVE_CMD_RAW_MAX_SPEED=250
+TXING_MOTOR_CMD_RAW_MIN_SPEED=50
+TXING_MOTOR_CMD_RAW_MAX_SPEED=250
 ```
 
 ### 7. Enable PWM Overlay
@@ -215,80 +213,35 @@ Append this to `/boot/firmware/config.txt` while `/boot/firmware` is writable:
 dtoverlay=pwm-2chan,pin=12,func=4,pin2=13,func2=4
 ```
 
-### 8. Build The Native Sender And Python Runtime
+Restart after changing the overlay so the PWM devices exist before motor
+validation.
 
-Build the repo-owned KVS sender:
+### 8. Validate Stable Runtime
 
-```bash
-cd "$TXING_HOME"
-just unit::board::submodules
-just unit::board::build-native
-```
-
-The native sender build uses distro development packages for OpenSSL, libcurl,
-libwebsockets, libsrtp2, usrsctp, zlib, and log4cplus. It does not compile the
-AWS SDK's bundled third-party dependency sources.
-
-Point `BOARD_VIDEO_SENDER_COMMAND` at the built binary, typically:
+After the reboot or service restart:
 
 ```bash
-export BOARD_VIDEO_SENDER_COMMAND="$TXING_HOME/devices/unit/board/kvs_master/build/txing-board-kvs-master"
+sudo systemctl status --no-pager -l txing-unit-daemon.service
+sudo journalctl -u txing-unit-daemon.service -n 160 --no-pager
+sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise which txing-unit-daemon
+sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise which txing-board-kvs-master
 ```
 
-Build the Python runtime:
+Expected:
 
-```bash
-cd "$TXING_HOME"
-python3 --version
-just unit::board::build
-```
+- the daemon resolves both release-installed commands through mise;
+- the daemon publishes retained `board`, MQTT-only `mcp`, and `video`
+  descriptor/status state;
+- the `video` named shadow mirrors the retained video state;
+- REDCON can reach `1` after rig projection sees board, MCP, and video ready.
 
-Validate the board runtime AWS access:
-
-```bash
-cd "$TXING_HOME"
-just unit::board::check
-```
-
-### 9. Smoke Test And Install The Board Service
-
-Run one foreground publish as `root`:
-
-```bash
-cd "$TXING_HOME/devices/unit/board"
-sudo ./.venv/bin/board \
-  --once \
-  --video-region <aws-region> \
-  --video-sender-command "$BOARD_VIDEO_SENDER_COMMAND"
-```
-
-Replace `<aws-region>` with the same value you configured as `BOARD_VIDEO_REGION` in `config/aws.env`.
-
-Then install the service:
-
-```bash
-cd "$TXING_HOME"
-just unit::board::install-service "$BOARD_VIDEO_SENDER_COMMAND"
-sudo systemctl status board
-sudo journalctl -u board -f
-```
-
-The generated unit:
-
-- runs `board` as `root`
-- loads `config/aws.env`
-- enables `NetworkManager-wait-online.service`
-- waits for clock synchronization before starting the AWS-backed video sender
-
-### 10. Configure The Read-Only Root Filesystem
+### 9. Configure The Read-Only Root Filesystem
 
 The current board runtime is compatible with a read-only root as long as these
 writable paths stay on tmpfs:
 
 - `/tmp`
-  - board shadow mirror: `/tmp/txing_board_shadow.json`
-  - board video sender state: `/tmp/txing_board_video_state.json`
-  - MCP WebRTC socket: `/tmp/txing_board_mcp_webrtc.sock`
+  - transient runtime and OS scratch space
 - `/var/tmp`
   - feature-channel mise install/cache/tmp state:
     `/var/tmp/txing/unit-daemon/`
@@ -322,8 +275,10 @@ EOF
 
 Operational notes:
 
-- Do all package installs, `mise` tool installs or updates, repo updates, rebuilds, and `systemd` unit changes while the root is writable.
-- Switch back to read-only only after the runtime, native sender, and config files are in place.
+- Do all package installs, `mise` tool installs or updates, daemon config
+  changes, and `systemd` unit changes while the root is writable.
+- Switch back to read-only only after the runtime, native KVS master, and config
+  files are in place.
 - The `mise` binary, normal user mise config, and stable unit daemon install
   live under the `txing` user's home directory. Stable installs and upgrades
   must happen while the root filesystem is writable and use plain
@@ -333,9 +288,11 @@ Operational notes:
 - AWS-backed services that install or connect over HTTPS during boot must wait
   for both network-online and clock synchronization. Otherwise TLS validation
   can fail before NTP corrects the board clock.
-- If you need to change board code, env files, `/boot/firmware/config.txt`, the systemd unit, or `mise`-managed tooling later, use `root-rw`, make the change, restart the affected service, then `root-ro`.
+- If you need to change env files, `/boot/firmware/config.txt`, the systemd
+  unit, or `mise`-managed tooling later, use `root-rw`, make the change,
+  restart the affected service, then `root-ro`.
 
-### 11. Stable Maintenance
+### 10. Stable Maintenance
 
 Use this during a writable-root maintenance window:
 
@@ -344,6 +301,7 @@ root-rw
 sudo apt update
 sudo apt dist-upgrade -y
 mise upgrade
+mise which txing-board-kvs-master
 sudo systemctl restart txing-unit-daemon.service
 root-ro
 ```
@@ -359,7 +317,7 @@ sudo systemctl restart txing-unit-daemon.service
 root-ro
 ```
 
-### 12. Final Verification
+### 11. Final Verification
 
 Switch to read-only mode and reboot:
 
@@ -373,9 +331,9 @@ After reconnecting:
 ```bash
 sudo systemctl status --no-pager -l txing-unit-daemon.service
 sudo journalctl -u txing-unit-daemon.service -b -u txing-unit-daemon.service --no-pager
-mise list
-sudo systemctl status board
-sudo journalctl -u board -f
+sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise list
+sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise which txing-unit-daemon
+sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise which txing-board-kvs-master
 ```
 
 Expected stable daemon behavior after reboot:
@@ -383,14 +341,7 @@ Expected stable daemon behavior after reboot:
 - root filesystem is read-only;
 - `txing-unit-daemon.service` starts without a source checkout;
 - daemon log includes `version=<stable-version>`;
-- MQTT connects and retained `board` online state is published.
-
-Useful board commands:
-
-```bash
-cd "$TXING_HOME"
-just unit::board::run
-just unit::board::once
-just unit::board::motor-raw 240 240
-just unit::board::motor-stop
-```
+- MQTT connects and retained `board`, MQTT-only `mcp`, and `video` state is
+  published;
+- the KVS master child reaches `TXING_KVS_READY` when camera and signaling are
+  available.

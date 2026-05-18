@@ -3,10 +3,10 @@ use std::env;
 use std::error::Error as StdError;
 use std::fmt;
 use std::fs;
-use std::io::ErrorKind;
+use std::io::{BufRead, BufReader, ErrorKind, Read};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
 use std::path::{Path, PathBuf};
-use std::process;
+use std::process::{self, Stdio};
 use std::sync::Arc;
 use std::sync::Once;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -50,6 +50,7 @@ pub const MCP_CAPABILITY: &str = "mcp";
 pub const VIDEO_CAPABILITY: &str = "video";
 pub const BOARD_SHADOW_NAME: &str = "board";
 pub const MCP_SHADOW_NAME: &str = "mcp";
+pub const VIDEO_SHADOW_NAME: &str = "video";
 pub const SPARKPLUG_SHADOW_NAME: &str = "sparkplug";
 pub const MCP_PROTOCOL_VERSION: &str = "2026-05-16";
 pub const DEFAULT_CONFIG_SUBDIR: &str = "txing/unit-daemon";
@@ -77,6 +78,13 @@ pub const DEFAULT_MOTOR_RIGHT_INVERTED: bool = false;
 pub const DEFAULT_TRACK_WIDTH_M: f64 = 0.28;
 pub const DEFAULT_MAX_WHEEL_LINEAR_SPEED_MPS: f64 = 0.50;
 pub const DEFAULT_CLOUDWATCH_LOG_RETENTION_DAYS: i32 = 14;
+pub const DEFAULT_KVS_MASTER_COMMAND: &str = "txing-board-kvs-master";
+pub const DEFAULT_VIDEO_CODEC: &str = "h264";
+pub const DEFAULT_VIDEO_TRANSPORT: &str = "aws-webrtc";
+pub const VIDEO_STATUS_STARTING: &str = "starting";
+pub const VIDEO_STATUS_READY: &str = "ready";
+pub const VIDEO_STATUS_ERROR: &str = "error";
+pub const VIDEO_STATUS_UNAVAILABLE: &str = "unavailable";
 pub const MQTT_PORT: u16 = 8883;
 const MQTT_KEEP_ALIVE_SECONDS: u16 = 60;
 const MQTT_CONNECT_WAIT_SECONDS: u64 = 15;
@@ -86,6 +94,11 @@ const CLOUDWATCH_LOG_BATCH_MAX_EVENTS: usize = 100;
 const CLOUDWATCH_LOG_BATCH_MAX_BYTES: usize = 256 * 1024;
 const CLOUDWATCH_LOG_FLUSH_INTERVAL_SECONDS: u64 = 2;
 const CLOUDWATCH_LOG_SHUTDOWN_TIMEOUT_SECONDS: u64 = 5;
+const VIDEO_STATUS_HEARTBEAT_SECONDS: u64 = 5;
+const VIDEO_RESTART_BACKOFF_INITIAL_SECONDS: u64 = 1;
+const VIDEO_RESTART_BACKOFF_MAX_SECONDS: u64 = 30;
+const VIDEO_CREDENTIAL_RESTART_MARGIN_SECONDS: u64 = 300;
+const VIDEO_CREDENTIAL_RESTART_MIN_SECONDS: u64 = 30;
 static RUSTLS_CRYPTO_PROVIDER: Once = Once::new();
 
 pub fn install_default_crypto_provider() {
@@ -904,6 +917,15 @@ pub struct Cli {
     #[arg(long = "cloudwatch-log-retention-days")]
     pub cloudwatch_log_retention_days: Option<i32>,
 
+    #[arg(long = "kvs-master-command")]
+    pub kvs_master_command: Option<String>,
+
+    #[arg(long = "video-region")]
+    pub video_region: Option<String>,
+
+    #[arg(long = "video-channel-name")]
+    pub video_channel_name: Option<String>,
+
     #[arg(long = "motor-enabled")]
     pub motor_enabled: Option<String>,
 
@@ -988,6 +1010,9 @@ pub struct RuntimeConfig {
     pub capabilities: Vec<String>,
     pub capability_ttl: Duration,
     pub heartbeat: Duration,
+    pub kvs_master_command: String,
+    pub video_region: String,
+    pub video_channel_name: String,
     pub motor: MotorConfig,
     pub cloudwatch_logging: Option<CloudWatchLogConfig>,
 }
@@ -1070,6 +1095,36 @@ impl RuntimeConfig {
             None => default_client_id(&thing_id, process::id()),
         };
         validate_client_id(&thing_id, &client_id)?;
+        let kvs_master_command = optional_config_value(
+            cli.kvs_master_command,
+            process_env,
+            file_env,
+            "TXING_KVS_MASTER_COMMAND",
+        )
+        .unwrap_or_else(|| DEFAULT_KVS_MASTER_COMMAND.to_string());
+        let aws_region = required_config_value(
+            cli.aws_region,
+            process_env,
+            file_env,
+            "AWS_REGION",
+            "aws-region",
+        )?;
+        let video_region = optional_config_value_with_fallbacks(
+            cli.video_region,
+            process_env,
+            file_env,
+            &["TXING_BOARD_VIDEO_REGION", "BOARD_VIDEO_REGION"],
+        )
+        .unwrap_or_else(|| aws_region.clone());
+        let video_channel_name = optional_config_value_with_fallbacks(
+            cli.video_channel_name,
+            process_env,
+            file_env,
+            &["TXING_BOARD_VIDEO_CHANNEL_NAME", "BOARD_VIDEO_CHANNEL_NAME"],
+        )
+        .unwrap_or_else(|| default_video_channel_name(&thing_id));
+        validate_topic_segment(&video_channel_name, "video-channel-name")?;
+        validate_topic_segment(&video_region, "video-region")?;
         let cloudwatch_logging = resolve_cloudwatch_log_config(
             cli.cloudwatch_log_group,
             cli.cloudwatch_log_stream,
@@ -1080,13 +1135,6 @@ impl RuntimeConfig {
             &client_id,
         )?;
 
-        let aws_region = required_config_value(
-            cli.aws_region,
-            process_env,
-            file_env,
-            "AWS_REGION",
-            "aws-region",
-        )?;
         let iot_endpoint = required_config_value(
             cli.iot_endpoint,
             process_env,
@@ -1152,6 +1200,9 @@ impl RuntimeConfig {
             capabilities,
             capability_ttl: Duration::from_secs(capability_ttl_seconds),
             heartbeat: Duration::from_secs(heartbeat_seconds),
+            kvs_master_command,
+            video_region,
+            video_channel_name,
             motor,
             cloudwatch_logging,
         })
@@ -1930,6 +1981,76 @@ pub struct RobotStateReport {
     pub video: RobotVideoReport,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VideoRuntimeState {
+    pub available: bool,
+    pub ready: bool,
+    pub status: String,
+    pub viewer_connected: bool,
+    pub last_error: Option<String>,
+    pub updated_at_ms: u64,
+}
+
+impl VideoRuntimeState {
+    pub fn starting(observed_at_ms: u64) -> Self {
+        Self {
+            available: true,
+            ready: false,
+            status: VIDEO_STATUS_STARTING.to_string(),
+            viewer_connected: false,
+            last_error: None,
+            updated_at_ms: observed_at_ms,
+        }
+    }
+
+    pub fn unavailable(observed_at_ms: u64) -> Self {
+        Self {
+            available: false,
+            ready: false,
+            status: VIDEO_STATUS_UNAVAILABLE.to_string(),
+            viewer_connected: false,
+            last_error: None,
+            updated_at_ms: observed_at_ms,
+        }
+    }
+
+    pub fn robot_report(&self) -> RobotVideoReport {
+        RobotVideoReport {
+            available: self.available,
+            ready: self.ready,
+            status: self.status.clone(),
+            viewer_connected: self.viewer_connected,
+            last_error: self.last_error.clone(),
+        }
+    }
+
+    fn apply_event(&mut self, event: VideoWorkerEvent, observed_at_ms: u64) {
+        match event {
+            VideoWorkerEvent::Starting => {
+                *self = Self::starting(observed_at_ms);
+            }
+            VideoWorkerEvent::Ready { .. } => {
+                self.available = true;
+                self.ready = true;
+                self.status = VIDEO_STATUS_READY.to_string();
+                self.last_error = None;
+                self.updated_at_ms = observed_at_ms;
+            }
+            VideoWorkerEvent::ViewerConnected { connected } => {
+                self.viewer_connected = connected;
+                self.updated_at_ms = observed_at_ms;
+            }
+            VideoWorkerEvent::Error { detail } => {
+                self.available = true;
+                self.ready = false;
+                self.status = VIDEO_STATUS_ERROR.to_string();
+                self.last_error = Some(detail);
+                self.updated_at_ms = observed_at_ms;
+            }
+        }
+    }
+}
+
 pub struct McpServer {
     active: Option<ActiveControlState>,
     next_epoch: u64,
@@ -2071,7 +2192,12 @@ impl McpServer {
         Ok(())
     }
 
-    pub fn robot_state(&self, caller_session_id: &str, motion: DriveState) -> RobotStateReport {
+    pub fn robot_state(
+        &self,
+        caller_session_id: &str,
+        motion: DriveState,
+        video: RobotVideoReport,
+    ) -> RobotStateReport {
         let active = self.active.clone();
         RobotStateReport {
             control: RobotControlReport {
@@ -2086,13 +2212,7 @@ impl McpServer {
                 active_control: active,
             },
             motion,
-            video: RobotVideoReport {
-                available: false,
-                ready: false,
-                status: "unavailable".to_string(),
-                viewer_connected: false,
-                last_error: None,
-            },
+            video,
         }
     }
 }
@@ -2102,6 +2222,7 @@ pub struct RuntimeState {
     capability_manager: CapabilityManager,
     mcp: McpServer,
     cmd_vel: CmdVelController,
+    video: VideoRuntimeState,
 }
 
 impl RuntimeState {
@@ -2113,6 +2234,7 @@ impl RuntimeState {
             capability_manager,
             mcp: McpServer::new(Duration::from_millis(DEFAULT_MCP_ACTIVE_TTL_MS)),
             cmd_vel,
+            video: VideoRuntimeState::starting(0),
         })
     }
 
@@ -2131,6 +2253,11 @@ impl RuntimeState {
             .await?;
         self.publish_mcp_discovery(publisher, observed_at_ms)
             .await?;
+        if self.video_enabled() {
+            self.video = VideoRuntimeState::starting(observed_at_ms);
+            self.publish_video_discovery(publisher).await?;
+            self.publish_video_status_and_shadow(publisher).await?;
+        }
         self.publish_capabilities(publisher, self.online_capabilities(), observed_at_ms)
             .await?;
         info!(thing_id = %self.config.thing_id, "online state published");
@@ -2148,6 +2275,18 @@ impl RuntimeState {
             .await
     }
 
+    pub async fn refresh_video_status<P: Publisher + ?Sized>(
+        &mut self,
+        publisher: &P,
+        observed_at_ms: u64,
+    ) -> Result<()> {
+        if self.video_enabled() {
+            self.video.updated_at_ms = observed_at_ms;
+            self.publish_video_status_and_shadow(publisher).await?;
+        }
+        Ok(())
+    }
+
     pub async fn publish_offline<P: Publisher + ?Sized>(
         &mut self,
         publisher: &P,
@@ -2159,6 +2298,10 @@ impl RuntimeState {
             .await?;
         self.publish_mcp_unavailable(publisher, observed_at_ms)
             .await?;
+        if self.video_enabled() {
+            self.video = VideoRuntimeState::unavailable(observed_at_ms);
+            self.publish_video_status_and_shadow(publisher).await?;
+        }
         self.publish_capabilities(publisher, self.offline_capabilities(), observed_at_ms)
             .await?;
         info!(thing_id = %self.config.thing_id, "offline state published");
@@ -2190,7 +2333,7 @@ impl RuntimeState {
         BTreeMap::from([
             (BOARD_CAPABILITY.to_string(), true),
             (MCP_CAPABILITY.to_string(), true),
-            (VIDEO_CAPABILITY.to_string(), false),
+            (VIDEO_CAPABILITY.to_string(), self.video.ready),
         ])
     }
 
@@ -2232,6 +2375,28 @@ impl RuntimeState {
                 Ok(())
             }
         }
+    }
+
+    pub async fn handle_video_event<P: Publisher + ?Sized>(
+        &mut self,
+        publisher: &P,
+        event: VideoWorkerEvent,
+        observed_at_ms: u64,
+    ) -> Result<()> {
+        if !self.video_enabled() {
+            return Ok(());
+        }
+        self.video.apply_event(event, observed_at_ms);
+        self.publish_video_status_and_shadow(publisher).await?;
+        self.publish_capabilities(publisher, self.online_capabilities(), observed_at_ms)
+            .await
+    }
+
+    fn video_enabled(&self) -> bool {
+        self.config
+            .capabilities
+            .iter()
+            .any(|capability| capability == VIDEO_CAPABILITY)
     }
 
     async fn publish_mcp_discovery<P: Publisher + ?Sized>(
@@ -2324,6 +2489,89 @@ impl RuntimeState {
                 retain: false,
             })
             .await
+    }
+
+    async fn publish_video_discovery<P: Publisher + ?Sized>(&self, publisher: &P) -> Result<()> {
+        let descriptor = self.video_descriptor();
+        publisher
+            .publish(PublishedMessage {
+                topic: build_video_descriptor_topic(&self.config.thing_id)?,
+                payload: serde_json::to_vec(&descriptor)?,
+                retain: true,
+            })
+            .await
+    }
+
+    async fn publish_video_status_and_shadow<P: Publisher + ?Sized>(
+        &self,
+        publisher: &P,
+    ) -> Result<()> {
+        let descriptor = self.video_descriptor();
+        let status = self.video_status();
+        publisher
+            .publish(PublishedMessage {
+                topic: build_video_status_topic(&self.config.thing_id)?,
+                payload: serde_json::to_vec(&status)?,
+                retain: true,
+            })
+            .await?;
+        self.publish_video_shadow(publisher, descriptor, status)
+            .await
+    }
+
+    async fn publish_video_shadow<P: Publisher + ?Sized>(
+        &self,
+        publisher: &P,
+        descriptor: Value,
+        status: Value,
+    ) -> Result<()> {
+        let payload = serde_json::json!({
+            "state": {
+                "reported": {
+                    "descriptor": descriptor,
+                    "status": status,
+                }
+            }
+        });
+        publisher
+            .publish(PublishedMessage {
+                topic: build_video_shadow_update_topic(&self.config.thing_id)?,
+                payload: serde_json::to_vec(&payload)?,
+                retain: false,
+            })
+            .await
+    }
+
+    fn video_descriptor(&self) -> Value {
+        serde_json::json!({
+            "serviceId": VIDEO_CAPABILITY,
+            "serverInfo": {
+                "name": VIDEO_CAPABILITY,
+                "version": DAEMON_VERSION,
+            },
+            "topicRoot": build_video_topic_root(&self.config.thing_id).unwrap_or_default(),
+            "descriptorTopic": build_video_descriptor_topic(&self.config.thing_id).unwrap_or_default(),
+            "statusTopic": build_video_status_topic(&self.config.thing_id).unwrap_or_default(),
+            "transport": DEFAULT_VIDEO_TRANSPORT,
+            "channelName": self.config.video_channel_name,
+            "region": self.config.video_region,
+            "codec": {
+                "video": DEFAULT_VIDEO_CODEC,
+            },
+            "serverVersion": DAEMON_VERSION,
+        })
+    }
+
+    fn video_status(&self) -> Value {
+        serde_json::json!({
+            "serviceId": VIDEO_CAPABILITY,
+            "available": self.video.available,
+            "ready": self.video.ready,
+            "status": self.video.status,
+            "viewerConnected": self.video.viewer_connected,
+            "lastError": self.video.last_error,
+            "updatedAtMs": self.video.updated_at_ms,
+        })
     }
 
     async fn handle_mcp_publish<P: Publisher + ?Sized>(
@@ -2428,7 +2676,11 @@ impl RuntimeState {
             "control.get_state" => {
                 let state = self
                     .mcp
-                    .robot_state(session_id, self.cmd_vel.drive_state())
+                    .robot_state(
+                        session_id,
+                        self.cmd_vel.drive_state(),
+                        self.video.robot_report(),
+                    )
                     .control;
                 serde_json::to_value(state).context("serialize control state")
             }
@@ -2477,7 +2729,9 @@ impl RuntimeState {
                 let twist: Twist =
                     serde_json::from_value(twist_value.clone()).context("parse cmd_vel twist")?;
                 let motion = self.cmd_vel.publish_twist(twist, observed_at_ms)?;
-                let state = self.mcp.robot_state(session_id, motion.clone());
+                let state =
+                    self.mcp
+                        .robot_state(session_id, motion.clone(), self.video.robot_report());
                 Ok(serde_json::json!({
                     "motion": motion,
                     "activeControl": state.control.active_control,
@@ -2489,7 +2743,9 @@ impl RuntimeState {
                 self.mcp
                     .ensure_active(session_id, epoch, observed_at_ms, &mut self.cmd_vel)?;
                 let motion = self.cmd_vel.stop(true)?;
-                let state = self.mcp.robot_state(session_id, motion.clone());
+                let state =
+                    self.mcp
+                        .robot_state(session_id, motion.clone(), self.video.robot_report());
                 Ok(serde_json::json!({
                     "motion": motion,
                     "activeControl": state.control.active_control,
@@ -2497,7 +2753,11 @@ impl RuntimeState {
                 }))
             }
             "robot.get_state" => {
-                let state = self.mcp.robot_state(session_id, self.cmd_vel.drive_state());
+                let state = self.mcp.robot_state(
+                    session_id,
+                    self.cmd_vel.drive_state(),
+                    self.video.robot_report(),
+                );
                 serde_json::to_value(state).context("serialize robot state")
             }
             _ => bail!("unknown MCP tool {name}"),
@@ -2596,6 +2856,366 @@ fn json_rpc_error(code: i64, message: &str) -> Value {
     })
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VideoWorkerEvent {
+    Starting,
+    Ready { worker_version: Option<String> },
+    ViewerConnected { connected: bool },
+    Error { detail: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VideoWorkerMarker {
+    Ready { worker_version: Option<String> },
+    ViewerConnected,
+    ViewerDisconnected,
+    Error { detail: String },
+}
+
+pub fn parse_video_worker_marker(line: &str) -> Option<VideoWorkerMarker> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let (marker, rest) = trimmed
+        .split_once(char::is_whitespace)
+        .map_or((trimmed, ""), |(marker, rest)| (marker, rest.trim()));
+    match marker {
+        "TXING_KVS_READY" => Some(VideoWorkerMarker::Ready {
+            worker_version: parse_marker_field(rest, "version"),
+        }),
+        "TXING_VIEWER_CONNECTED" => Some(VideoWorkerMarker::ViewerConnected),
+        "TXING_VIEWER_DISCONNECTED" => Some(VideoWorkerMarker::ViewerDisconnected),
+        "TXING_KVS_ERROR" => Some(VideoWorkerMarker::Error {
+            detail: parse_marker_field(rest, "detail")
+                .unwrap_or_else(|| "native KVS worker reported an error".to_string()),
+        }),
+        _ => None,
+    }
+}
+
+fn parse_marker_field(fields: &str, key: &str) -> Option<String> {
+    let prefix = format!("{key}=");
+    if let Some(value) = fields.strip_prefix(&prefix) {
+        return Some(value.to_string());
+    }
+    fields
+        .split_whitespace()
+        .find_map(|field| field.strip_prefix(&prefix))
+        .map(str::to_string)
+}
+
+struct VideoSupervisorHandle {
+    stop: Arc<AtomicBool>,
+    task: JoinHandle<()>,
+}
+
+impl VideoSupervisorHandle {
+    async fn shutdown(self) {
+        self.stop.store(true, Ordering::SeqCst);
+        let mut task = self.task;
+        tokio::select! {
+            join_result = &mut task => {
+                if let Err(err) = join_result {
+                    warn!(error = %err, "video supervisor task failed during shutdown");
+                }
+            }
+            _ = tokio::time::sleep(Duration::from_secs(5)) => {
+                task.abort();
+                warn!("video supervisor did not stop within timeout; aborting task");
+            }
+        }
+    }
+}
+
+fn start_video_supervisor(
+    config: RuntimeConfig,
+    event_tx: mpsc::UnboundedSender<VideoWorkerEvent>,
+) -> VideoSupervisorHandle {
+    let stop = Arc::new(AtomicBool::new(false));
+    let task_stop = stop.clone();
+    let task = tokio::spawn(async move {
+        run_video_supervisor(config, event_tx, task_stop).await;
+    });
+    VideoSupervisorHandle { stop, task }
+}
+
+async fn run_video_supervisor(
+    config: RuntimeConfig,
+    event_tx: mpsc::UnboundedSender<VideoWorkerEvent>,
+    stop: Arc<AtomicBool>,
+) {
+    let mut backoff = VideoRestartBackoff::default();
+    while !stop.load(Ordering::SeqCst) {
+        let _ = event_tx.send(VideoWorkerEvent::Starting);
+        let credentials = match fetch_iot_temporary_credentials(&config).await {
+            Ok(credentials) => credentials,
+            Err(err) => {
+                let detail = format!("resolve KVS worker credentials: {err:#}");
+                warn!(error = %detail, "video worker credential resolution failed");
+                let _ = event_tx.send(VideoWorkerEvent::Error { detail });
+                sleep_until_stop(stop.clone(), backoff.next_delay()).await;
+                continue;
+            }
+        };
+        let expires_at = match parse_iot_temporary_credentials_expiration(&credentials.expiration) {
+            Ok(expires_at) => expires_at,
+            Err(err) => {
+                let detail = format!("parse KVS worker credential expiration: {err:#}");
+                warn!(error = %detail, "video worker credential expiration invalid");
+                let _ = event_tx.send(VideoWorkerEvent::Error { detail });
+                sleep_until_stop(stop.clone(), backoff.next_delay()).await;
+                continue;
+            }
+        };
+        let worker = VideoWorkerRunConfig {
+            command: config.kvs_master_command.clone(),
+            region: config.video_region.clone(),
+            channel_name: config.video_channel_name.clone(),
+            credentials,
+            expires_at,
+            stop: stop.clone(),
+            event_tx: event_tx.clone(),
+        };
+        let result =
+            match tokio::task::spawn_blocking(move || run_video_worker_blocking(worker)).await {
+                Ok(result) => result,
+                Err(err) => {
+                    let detail = format!("join KVS worker supervisor: {err}");
+                    let _ = event_tx.send(VideoWorkerEvent::Error {
+                        detail: detail.clone(),
+                    });
+                    VideoWorkerRunResult::Failed(detail)
+                }
+            };
+        if stop.load(Ordering::SeqCst) {
+            break;
+        }
+        match result {
+            VideoWorkerRunResult::CredentialRefresh => {
+                backoff.reset();
+            }
+            VideoWorkerRunResult::Stopped => break,
+            VideoWorkerRunResult::Failed(detail) => {
+                warn!(error = %detail, "video worker stopped unexpectedly");
+                let _ = event_tx.send(VideoWorkerEvent::Error { detail });
+                sleep_until_stop(stop.clone(), backoff.next_delay()).await;
+            }
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct VideoRestartBackoff {
+    next_seconds: u64,
+}
+
+impl VideoRestartBackoff {
+    fn next_delay(&mut self) -> Duration {
+        let delay = if self.next_seconds == 0 {
+            VIDEO_RESTART_BACKOFF_INITIAL_SECONDS
+        } else {
+            self.next_seconds
+        };
+        self.next_seconds = delay
+            .saturating_mul(2)
+            .min(VIDEO_RESTART_BACKOFF_MAX_SECONDS);
+        Duration::from_secs(delay)
+    }
+
+    fn reset(&mut self) {
+        self.next_seconds = 0;
+    }
+}
+
+async fn sleep_until_stop(stop: Arc<AtomicBool>, duration: Duration) {
+    let deadline = Instant::now() + duration;
+    while !stop.load(Ordering::SeqCst) {
+        let now = Instant::now();
+        if now >= deadline {
+            break;
+        }
+        let remaining = deadline.saturating_duration_since(now);
+        tokio::time::sleep(remaining.min(Duration::from_millis(200))).await;
+    }
+}
+
+struct VideoWorkerRunConfig {
+    command: String,
+    region: String,
+    channel_name: String,
+    credentials: IotTemporaryCredentials,
+    expires_at: SystemTime,
+    stop: Arc<AtomicBool>,
+    event_tx: mpsc::UnboundedSender<VideoWorkerEvent>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum VideoWorkerRunResult {
+    CredentialRefresh,
+    Failed(String),
+    Stopped,
+}
+
+fn run_video_worker_blocking(config: VideoWorkerRunConfig) -> VideoWorkerRunResult {
+    let restart_at = video_credential_restart_at(config.expires_at, SystemTime::now());
+    let mut command = std::process::Command::new(&config.command);
+    command
+        .env("BOARD_VIDEO_REGION", &config.region)
+        .env("BOARD_VIDEO_CHANNEL_NAME", &config.channel_name)
+        .env("AWS_ACCESS_KEY_ID", &config.credentials.access_key_id)
+        .env(
+            "AWS_SECRET_ACCESS_KEY",
+            &config.credentials.secret_access_key,
+        )
+        .env_remove("AWS_PROFILE")
+        .env_remove("AWS_DEFAULT_PROFILE")
+        .env_remove("AWS_DEVICE_PROFILE")
+        .env_remove("AWS_TXING_PROFILE")
+        .env_remove("AWS_SHARED_CREDENTIALS_FILE")
+        .env_remove("AWS_CONFIG_FILE")
+        .env_remove("BOARD_MCP_WEBRTC_SOCKET_PATH")
+        .env_remove("TXING_BOARD_MCP_WEBRTC_SOCKET_PATH")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if config.credentials.session_token.trim().is_empty() {
+        command.env_remove("AWS_SESSION_TOKEN");
+    } else {
+        command.env("AWS_SESSION_TOKEN", &config.credentials.session_token);
+    }
+
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(err) => {
+            return VideoWorkerRunResult::Failed(format!(
+                "spawn KVS worker command {:?}: {err}",
+                config.command
+            ));
+        }
+    };
+    info!(
+        command = %config.command,
+        channel_name = %config.channel_name,
+        region = %config.region,
+        pid = child.id(),
+        "native KVS worker started"
+    );
+
+    let mut readers = Vec::new();
+    if let Some(stdout) = child.stdout.take() {
+        readers.push(spawn_video_marker_reader(
+            "stdout",
+            stdout,
+            config.event_tx.clone(),
+        ));
+    }
+    if let Some(stderr) = child.stderr.take() {
+        readers.push(spawn_video_marker_reader(
+            "stderr",
+            stderr,
+            config.event_tx.clone(),
+        ));
+    }
+
+    loop {
+        if config.stop.load(Ordering::SeqCst) {
+            terminate_video_child(&mut child);
+            join_video_marker_readers(readers);
+            return VideoWorkerRunResult::Stopped;
+        }
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                join_video_marker_readers(readers);
+                return VideoWorkerRunResult::Failed(format!(
+                    "KVS worker exited with status {status}"
+                ));
+            }
+            Ok(None) => {}
+            Err(err) => {
+                terminate_video_child(&mut child);
+                join_video_marker_readers(readers);
+                return VideoWorkerRunResult::Failed(format!("poll KVS worker status: {err}"));
+            }
+        }
+        if SystemTime::now() >= restart_at {
+            info!("restarting native KVS worker before IoT credentials expire");
+            terminate_video_child(&mut child);
+            join_video_marker_readers(readers);
+            return VideoWorkerRunResult::CredentialRefresh;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+}
+
+fn video_credential_restart_at(expires_at: SystemTime, now: SystemTime) -> SystemTime {
+    let margin = Duration::from_secs(VIDEO_CREDENTIAL_RESTART_MARGIN_SECONDS);
+    let min_delay = Duration::from_secs(VIDEO_CREDENTIAL_RESTART_MIN_SECONDS);
+    if expires_at
+        .duration_since(now)
+        .is_ok_and(|remaining| remaining > margin + min_delay)
+    {
+        expires_at - margin
+    } else {
+        now + min_delay
+    }
+}
+
+fn spawn_video_marker_reader<R>(
+    stream_name: &'static str,
+    reader: R,
+    event_tx: mpsc::UnboundedSender<VideoWorkerEvent>,
+) -> std::thread::JoinHandle<()>
+where
+    R: Read + Send + 'static,
+{
+    std::thread::Builder::new()
+        .name(format!("kvs-worker-{stream_name}"))
+        .spawn(move || {
+            let reader = BufReader::new(reader);
+            for line in reader.lines() {
+                let Ok(line) = line else {
+                    break;
+                };
+                if line.trim().is_empty() {
+                    continue;
+                }
+                if let Some(marker) = parse_video_worker_marker(&line) {
+                    let event = match marker {
+                        VideoWorkerMarker::Ready { worker_version } => {
+                            VideoWorkerEvent::Ready { worker_version }
+                        }
+                        VideoWorkerMarker::ViewerConnected => {
+                            VideoWorkerEvent::ViewerConnected { connected: true }
+                        }
+                        VideoWorkerMarker::ViewerDisconnected => {
+                            VideoWorkerEvent::ViewerConnected { connected: false }
+                        }
+                        VideoWorkerMarker::Error { detail } => VideoWorkerEvent::Error { detail },
+                    };
+                    let _ = event_tx.send(event);
+                } else {
+                    debug!(stream = stream_name, line = %line, "native KVS worker output");
+                }
+            }
+        })
+        .expect("spawn KVS worker marker reader")
+}
+
+fn join_video_marker_readers(readers: Vec<std::thread::JoinHandle<()>>) {
+    for reader in readers {
+        let _ = reader.join();
+    }
+}
+
+fn terminate_video_child(child: &mut std::process::Child) {
+    if child.try_wait().ok().flatten().is_some() {
+        return;
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
 pub async fn run_runtime(config: RuntimeConfig) -> Result<()> {
     info!(
         version = DAEMON_VERSION,
@@ -2633,6 +3253,16 @@ async fn run_connected_runtime(
     mut incoming_events: mpsc::UnboundedReceiver<RuntimeMqttEvent>,
 ) -> Result<()> {
     let mut state = RuntimeState::new(config.clone())?;
+    let (video_event_tx, mut video_events) = mpsc::unbounded_channel();
+    let video_supervisor = if config
+        .capabilities
+        .iter()
+        .any(|capability| capability == VIDEO_CAPABILITY)
+    {
+        Some(start_video_supervisor(config.clone(), video_event_tx))
+    } else {
+        None
+    };
     publisher
         .subscribe(build_mcp_session_c2s_subscription(&config.thing_id)?)
         .await?;
@@ -2647,12 +3277,22 @@ async fn run_connected_runtime(
         Duration::from_millis(100),
     );
     watchdog.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    let mut video_status = interval_at(
+        Instant::now() + Duration::from_secs(VIDEO_STATUS_HEARTBEAT_SECONDS),
+        Duration::from_secs(VIDEO_STATUS_HEARTBEAT_SECONDS),
+    );
+    video_status.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
     loop {
         tokio::select! {
             Some(event) = incoming_events.recv() => {
                 if let Err(err) = state.handle_mqtt_event(publisher, event, now_ms()).await {
                     warn!(error = %format_args!("{err:#}"), "failed to handle MQTT runtime event");
+                }
+            }
+            Some(event) = video_events.recv() => {
+                if let Err(err) = state.handle_video_event(publisher, event, now_ms()).await {
+                    warn!(error = %format_args!("{err:#}"), "failed to handle video worker event");
                 }
             }
             shutdown = wait_for_shutdown_signal() => {
@@ -2670,9 +3310,17 @@ async fn run_connected_runtime(
                     warn!(error = %format_args!("{err:#}"), "failed to tick watchdogs");
                 }
             }
+            _ = video_status.tick() => {
+                if let Err(err) = state.refresh_video_status(publisher, now_ms()).await {
+                    warn!(error = %format_args!("{err:#}"), "failed to refresh video status");
+                }
+            }
         }
     }
 
+    if let Some(video_supervisor) = video_supervisor {
+        video_supervisor.shutdown().await;
+    }
     if let Err(err) = state.publish_offline(publisher, now_ms()).await {
         warn!(error = %format_args!("{err:#}"), "failed to publish offline state");
     }
@@ -2931,6 +3579,24 @@ pub fn build_mcp_status_topic(thing_name: &str) -> Result<String> {
     Ok(format!("{}/status", build_mcp_topic_root(thing_name)?))
 }
 
+pub fn build_video_topic_root(thing_name: &str) -> Result<String> {
+    Ok(format!(
+        "txings/{}/video",
+        validate_topic_segment(thing_name, "thing-id")?
+    ))
+}
+
+pub fn build_video_descriptor_topic(thing_name: &str) -> Result<String> {
+    Ok(format!(
+        "{}/descriptor",
+        build_video_topic_root(thing_name)?
+    ))
+}
+
+pub fn build_video_status_topic(thing_name: &str) -> Result<String> {
+    Ok(format!("{}/status", build_video_topic_root(thing_name)?))
+}
+
 pub fn build_mcp_session_c2s_subscription(thing_name: &str) -> Result<String> {
     Ok(format!(
         "{}/session/+/c2s",
@@ -2964,6 +3630,13 @@ pub fn build_board_shadow_update_topic(thing_name: &str) -> Result<String> {
 pub fn build_mcp_shadow_update_topic(thing_name: &str) -> Result<String> {
     Ok(format!(
         "$aws/things/{}/shadow/name/{MCP_SHADOW_NAME}/update",
+        validate_topic_segment(thing_name, "thing-id")?
+    ))
+}
+
+pub fn build_video_shadow_update_topic(thing_name: &str) -> Result<String> {
+    Ok(format!(
+        "$aws/things/{}/shadow/name/{VIDEO_SHADOW_NAME}/update",
         validate_topic_segment(thing_name, "thing-id")?
     ))
 }
@@ -3188,6 +3861,24 @@ fn optional_config_value(
     normalize_optional(cli_value)
         .or_else(|| normalize_optional(process_env.get(env_name).cloned()))
         .or_else(|| normalize_optional(file_env.get(env_name).cloned()))
+}
+
+fn optional_config_value_with_fallbacks(
+    cli_value: Option<String>,
+    process_env: &BTreeMap<String, String>,
+    file_env: &BTreeMap<String, String>,
+    env_names: &[&str],
+) -> Option<String> {
+    normalize_optional(cli_value).or_else(|| {
+        env_names.iter().find_map(|env_name| {
+            normalize_optional(process_env.get(*env_name).cloned())
+                .or_else(|| normalize_optional(file_env.get(*env_name).cloned()))
+        })
+    })
+}
+
+fn default_video_channel_name(thing_id: &str) -> String {
+    format!("{thing_id}-board-video")
 }
 
 fn optional_u64_config(
@@ -3910,6 +4601,9 @@ mod tests {
             ],
             capability_ttl: Duration::from_secs(150),
             heartbeat: Duration::from_secs(60),
+            kvs_master_command: DEFAULT_KVS_MASTER_COMMAND.to_string(),
+            video_region: "eu-central-1".to_string(),
+            video_channel_name: "unit-local-board-video".to_string(),
             motor: motor_config(false),
             cloudwatch_logging: None,
         }
@@ -4110,7 +4804,7 @@ mod tests {
         runtime.publish_offline(&publisher, 30).await.unwrap();
 
         let messages = publisher.messages();
-        assert_eq!(messages.len(), 12);
+        assert_eq!(messages.len(), 17);
         assert_eq!(
             messages[0].topic,
             "$aws/things/unit-local/shadow/name/board/update"
@@ -4124,23 +4818,36 @@ mod tests {
             messages[3].topic,
             "$aws/things/unit-local/shadow/name/mcp/update"
         );
-        assert_eq!(messages[4].topic, "txings/unit-local/capability/v2/state");
-        assert_eq!(messages[5].topic, "txings/unit-local/mcp/status");
+        assert_eq!(messages[4].topic, "txings/unit-local/video/descriptor");
+        assert!(messages[4].retain);
+        assert_eq!(messages[5].topic, "txings/unit-local/video/status");
+        assert!(messages[5].retain);
         assert_eq!(
             messages[6].topic,
-            "$aws/things/unit-local/shadow/name/mcp/update"
+            "$aws/things/unit-local/shadow/name/video/update"
         );
         assert_eq!(messages[7].topic, "txings/unit-local/capability/v2/state");
+        assert_eq!(messages[8].topic, "txings/unit-local/mcp/status");
         assert_eq!(
-            messages[8].topic,
-            "$aws/things/unit-local/shadow/name/board/update"
-        );
-        assert_eq!(messages[9].topic, "txings/unit-local/mcp/status");
-        assert_eq!(
-            messages[10].topic,
+            messages[9].topic,
             "$aws/things/unit-local/shadow/name/mcp/update"
         );
-        assert_eq!(messages[11].topic, "txings/unit-local/capability/v2/state");
+        assert_eq!(messages[10].topic, "txings/unit-local/capability/v2/state");
+        assert_eq!(
+            messages[11].topic,
+            "$aws/things/unit-local/shadow/name/board/update"
+        );
+        assert_eq!(messages[12].topic, "txings/unit-local/mcp/status");
+        assert_eq!(
+            messages[13].topic,
+            "$aws/things/unit-local/shadow/name/mcp/update"
+        );
+        assert_eq!(messages[14].topic, "txings/unit-local/video/status");
+        assert_eq!(
+            messages[15].topic,
+            "$aws/things/unit-local/shadow/name/video/update"
+        );
+        assert_eq!(messages[16].topic, "txings/unit-local/capability/v2/state");
 
         let descriptor: Value = serde_json::from_slice(&messages[1].payload).unwrap();
         assert_eq!(descriptor["protocolVersion"], MCP_PROTOCOL_VERSION);
@@ -4149,10 +4856,20 @@ mod tests {
         let status: Value = serde_json::from_slice(&messages[2].payload).unwrap();
         assert_eq!(status["available"], true);
         assert_eq!(status["protocolVersion"], MCP_PROTOCOL_VERSION);
+        assert_eq!(descriptor["transports"][0]["type"], "mqtt-jsonrpc");
+        assert_eq!(descriptor["transports"].as_array().unwrap().len(), 1);
 
-        let first: CapabilityStatePayload = serde_json::from_slice(&messages[4].payload).unwrap();
-        let second: CapabilityStatePayload = serde_json::from_slice(&messages[7].payload).unwrap();
-        let third: CapabilityStatePayload = serde_json::from_slice(&messages[11].payload).unwrap();
+        let video_descriptor: Value = serde_json::from_slice(&messages[4].payload).unwrap();
+        assert_eq!(video_descriptor["transport"], DEFAULT_VIDEO_TRANSPORT);
+        assert_eq!(video_descriptor["channelName"], "unit-local-board-video");
+        let video_status: Value = serde_json::from_slice(&messages[5].payload).unwrap();
+        assert_eq!(video_status["available"], true);
+        assert_eq!(video_status["ready"], false);
+        assert_eq!(video_status["status"], VIDEO_STATUS_STARTING);
+
+        let first: CapabilityStatePayload = serde_json::from_slice(&messages[7].payload).unwrap();
+        let second: CapabilityStatePayload = serde_json::from_slice(&messages[10].payload).unwrap();
+        let third: CapabilityStatePayload = serde_json::from_slice(&messages[16].payload).unwrap();
         assert_eq!(first.seq, 1);
         assert_eq!(second.seq, 2);
         assert_eq!(third.seq, 3);
@@ -4160,6 +4877,135 @@ mod tests {
         assert_eq!(third.capabilities.get(MCP_CAPABILITY), Some(&false));
         assert_eq!(third.capabilities.get(VIDEO_CAPABILITY), Some(&false));
         assert_eq!(runtime.capability_seq(), 3);
+    }
+
+    #[tokio::test]
+    async fn video_worker_events_publish_status_shadow_and_capability() {
+        let publisher = FakePublisher::default();
+        let mut runtime = RuntimeState::new(config()).unwrap();
+
+        runtime
+            .handle_video_event(
+                &publisher,
+                VideoWorkerEvent::Ready {
+                    worker_version: Some("1.2.3".to_string()),
+                },
+                42,
+            )
+            .await
+            .unwrap();
+
+        let messages = publisher.messages();
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0].topic, "txings/unit-local/video/status");
+        assert_eq!(
+            messages[1].topic,
+            "$aws/things/unit-local/shadow/name/video/update"
+        );
+        assert_eq!(messages[2].topic, "txings/unit-local/capability/v2/state");
+
+        let status: Value = serde_json::from_slice(&messages[0].payload).unwrap();
+        assert_eq!(status["available"], true);
+        assert_eq!(status["ready"], true);
+        assert_eq!(status["status"], VIDEO_STATUS_READY);
+        assert_eq!(status["updatedAtMs"], 42);
+
+        let capability: CapabilityStatePayload =
+            serde_json::from_slice(&messages[2].payload).unwrap();
+        assert_eq!(capability.capabilities.get(VIDEO_CAPABILITY), Some(&true));
+    }
+
+    #[tokio::test]
+    async fn video_status_refresh_updates_freshness_timestamp() {
+        let publisher = FakePublisher::default();
+        let mut runtime = RuntimeState::new(config()).unwrap();
+
+        runtime
+            .handle_video_event(
+                &publisher,
+                VideoWorkerEvent::Ready {
+                    worker_version: None,
+                },
+                42,
+            )
+            .await
+            .unwrap();
+        runtime
+            .refresh_video_status(&publisher, 5_042)
+            .await
+            .unwrap();
+
+        let messages = publisher.messages();
+        assert_eq!(messages.len(), 5);
+        assert_eq!(messages[3].topic, "txings/unit-local/video/status");
+        let status: Value = serde_json::from_slice(&messages[3].payload).unwrap();
+        assert_eq!(status["ready"], true);
+        assert_eq!(status["updatedAtMs"], 5_042);
+    }
+
+    #[test]
+    fn parses_native_kvs_worker_markers() {
+        assert_eq!(
+            parse_video_worker_marker("TXING_KVS_READY version=0.9.121"),
+            Some(VideoWorkerMarker::Ready {
+                worker_version: Some("0.9.121".to_string())
+            })
+        );
+        assert_eq!(
+            parse_video_worker_marker("TXING_VIEWER_CONNECTED clientId=a viewers=1"),
+            Some(VideoWorkerMarker::ViewerConnected)
+        );
+        assert_eq!(
+            parse_video_worker_marker("TXING_VIEWER_DISCONNECTED clientId=a viewers=0"),
+            Some(VideoWorkerMarker::ViewerDisconnected)
+        );
+        assert_eq!(
+            parse_video_worker_marker("TXING_KVS_ERROR detail=bad line here"),
+            Some(VideoWorkerMarker::Error {
+                detail: "bad line here".to_string()
+            })
+        );
+        assert_eq!(parse_video_worker_marker("INFO normal log"), None);
+    }
+
+    #[test]
+    fn computes_video_credential_restart_before_expiry_with_floor() {
+        let now = UNIX_EPOCH + Duration::from_secs(1_000);
+        let long_expiry = now + Duration::from_secs(3_600);
+        assert_eq!(
+            video_credential_restart_at(long_expiry, now),
+            long_expiry - Duration::from_secs(VIDEO_CREDENTIAL_RESTART_MARGIN_SECONDS)
+        );
+        let short_expiry = now + Duration::from_secs(60);
+        assert_eq!(
+            video_credential_restart_at(short_expiry, now),
+            now + Duration::from_secs(VIDEO_CREDENTIAL_RESTART_MIN_SECONDS)
+        );
+    }
+
+    #[test]
+    fn video_restart_backoff_is_bounded_and_resettable() {
+        let mut backoff = VideoRestartBackoff::default();
+
+        assert_eq!(
+            backoff.next_delay(),
+            Duration::from_secs(VIDEO_RESTART_BACKOFF_INITIAL_SECONDS)
+        );
+        assert_eq!(backoff.next_delay(), Duration::from_secs(2));
+        assert_eq!(backoff.next_delay(), Duration::from_secs(4));
+        for _ in 0..10 {
+            backoff.next_delay();
+        }
+        assert_eq!(
+            backoff.next_delay(),
+            Duration::from_secs(VIDEO_RESTART_BACKOFF_MAX_SECONDS)
+        );
+
+        backoff.reset();
+        assert_eq!(
+            backoff.next_delay(),
+            Duration::from_secs(VIDEO_RESTART_BACKOFF_INITIAL_SECONDS)
+        );
     }
 
     #[test]
@@ -4514,6 +5360,9 @@ mod tests {
         assert_eq!(config.aws_region, "from-file");
         assert_eq!(config.capability_ttl, Duration::from_secs(120));
         assert_eq!(config.heartbeat, Duration::from_secs(30));
+        assert_eq!(config.kvs_master_command, DEFAULT_KVS_MASTER_COMMAND);
+        assert_eq!(config.video_region, "from-file");
+        assert_eq!(config.video_channel_name, "from-cli-board-video");
         assert_eq!(
             config.capabilities,
             vec![
@@ -4598,7 +5447,7 @@ mod tests {
     }
 
     #[test]
-    fn cli_defaults_to_phase_1_capabilities() {
+    fn cli_defaults_to_declared_unit_capabilities() {
         let config = runtime_config_from_args(&["daemon"]).unwrap();
 
         assert_eq!(config.thing_id, "unit-local");
@@ -4612,6 +5461,9 @@ mod tests {
         );
         assert_eq!(config.capability_ttl, Duration::from_secs(150));
         assert_eq!(config.heartbeat, Duration::from_secs(60));
+        assert_eq!(config.kvs_master_command, DEFAULT_KVS_MASTER_COMMAND);
+        assert_eq!(config.video_region, "eu-central-1");
+        assert_eq!(config.video_channel_name, "unit-local-board-video");
         assert!(config.client_id.starts_with("unit-local-daemon-"));
         assert_eq!(config.cloudwatch_logging, None);
     }

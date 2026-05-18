@@ -171,14 +171,18 @@ def validate_service_environment(
         if schema_file is not None:
             resolved["schema_file"] = schema_file
 
-        for key, label, env_name in (
-            ("video_region", "Board video region", "BOARD_VIDEO_REGION"),
-            ("video_sender_command", "Board video sender command", "BOARD_VIDEO_SENDER_COMMAND"),
-        ):
-            result, value = _check_text_env(environment, label, env_name)
-            results.append(result)
-            if value is not None:
-                resolved[key] = value
+        video_region_env_name, video_region = _first_non_empty(
+            environment,
+            "TXING_BOARD_VIDEO_REGION",
+            "BOARD_VIDEO_REGION",
+        )
+        if video_region is None:
+            video_region = resolved.get("aws_region")
+            results.append(_ok("Board video region (AWS_REGION default)"))
+        else:
+            results.append(_ok(f"Board video region ({video_region_env_name})"))
+        if isinstance(video_region, str):
+            resolved["video_region"] = video_region
     return results, resolved
 
 
