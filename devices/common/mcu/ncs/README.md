@@ -11,6 +11,7 @@ Submodule content:
 Generated content:
 
 - `.west/`
+- `nrf` local clone of `../../../../modules/nrfconnect/sdk-nrf`
 - `.venv/`
 - `.home/`
 - `.pip-cache/`
@@ -21,5 +22,6 @@ Generated content:
 - west-managed projects such as `zephyr/`, `modules/`, `nrfxlib/`, and
   `bootloader/`
 
-Use the relevant device justfile target, such as `just power::mcu::install`, to
-initialize generated workspace state.
+Use the relevant device justfile target, such as `just unit::mcu::install`,
+`just power::mcu::install`, or `just weather::mcu::install`, to initialize
+generated workspace state.

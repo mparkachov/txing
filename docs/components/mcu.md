@@ -4,10 +4,33 @@ Firmware for the XIAO nRF54L15 MCU used by `unit`, `power`, and `weather`.
 Shared REDCON BLE, factory/NVE, battery, advertising, connection, and idle
 hardware handling lives in `devices/common/mcu/xiao_nrf54l15`.
 
+## Shared Stack Invariant
+
+The active MCU firmware targets are `devices/unit/mcu`, `devices/power/mcu`,
+and `devices/weather/mcu`. `devices/template/mcu` is only a scaffold and does
+not build firmware.
+
+All active MCU targets use the same shared stack:
+
+- each target's `zephyr/CMakeLists.txt` sets `TXING_XIAO_NRF54L15_DIR` to
+  `devices/common/mcu/xiao_nrf54l15`
+- each target compiles `${TXING_XIAO_NRF54L15_DIR}/src/redcon.c`
+- each target includes `${TXING_XIAO_NRF54L15_DIR}/include`
+- each target's `justfile` runs `devices/common/mcu/scripts/ncs_mcu.py` for
+  `install`, `check`, and `build`
+- each target's NVE HEX recipe uses
+  `devices/common/mcu/xiao_nrf54l15/scripts/redcon_nve.py`
+
+Device-specific behavior belongs in the local `src/main.c` hooks passed through
+`struct txing_redcon_ops`, local `zephyr/prj.conf`, and local devicetree
+overlays. Do not copy `redcon.c`, fork the REDCON UUID/payload handling, or add
+a per-device NCS install/build path for a new XIAO nRF54L15 MCU target.
+
 ## Current Behavior
 
 - target board: `xiao_nrf54l15/nrf54l15/cpuapp`
 - firmware stack: NCS/Zephyr through `devices/common/mcu/ncs`
+- shared NCS build driver: `devices/common/mcu/scripts/ncs_mcu.py`
 - shared REDCON app entrypoint: `txing_redcon_run(&ops)`
 - D1 / `gpio1 5` is the active-high enable for app hardware
 - reset default: `REDCON 4`, D1 off, LED off, load regulators disabled, ADC suspended
@@ -26,6 +49,9 @@ The integration contract is [devices/unit/docs/device-rig-shadow-spec.md](../../
 Run from the repo root:
 
 ```bash
+just unit::mcu::install
+just power::mcu::install
+just weather::mcu::install
 just unit::mcu::paths
 just unit::mcu::check
 just unit::mcu::build

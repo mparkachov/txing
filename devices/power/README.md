@@ -58,9 +58,13 @@ Create the NCS west workspace, Python environment, and local Zephyr SDK:
 just power::mcu::install
 ```
 
-Override the Python used to create the NCS environment only when needed:
+All XIAO nRF54L15 MCU targets use the shared NCS helper at
+`devices/common/mcu/scripts/ncs_mcu.py`. Override the Python used to create the
+NCS environment only when needed:
 
 ```sh
+export TXING_MCU_NCS_PYTHON=/opt/homebrew/bin/python3.13
+# Or for power only:
 export POWER_MCU_NCS_PYTHON=/opt/homebrew/bin/python3.13
 ```
 
@@ -69,8 +73,11 @@ export POWER_MCU_NCS_PYTHON=/opt/homebrew/bin/python3.13
 The firmware uses stock nRF Connect SDK `west build` with the built-in Seeed
 board identifier `xiao_nrf54l15/nrf54l15/cpuapp`. Build-time values live in
 `mcu/zephyr/prj.conf`; app-specific Kconfig includes the shared REDCON symbols
-from `devices/common/mcu/xiao_nrf54l15/Kconfig`. Build and flash commands do
-not take a profile argument.
+from `devices/common/mcu/xiao_nrf54l15/Kconfig`. The power CMake target links
+the same `devices/common/mcu/xiao_nrf54l15/src/redcon.c` implementation used by
+`unit` and `weather`; power-specific behavior is limited to the local
+`mcu/src/main.c` ops, `mcu/zephyr/prj.conf`, and devicetree overlay. Build and
+flash commands do not take a profile argument.
 
 ```sh
 just power::mcu::paths

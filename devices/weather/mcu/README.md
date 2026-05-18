@@ -11,6 +11,8 @@ switched by XIAO D1, and firmware only powers the sensor during a measurement.
 
 The firmware uses the shared REDCON BLE service implementation:
 
+- build/install/check go through `devices/common/mcu/scripts/ncs_mcu.py`
+- the Zephyr target links `devices/common/mcu/xiao_nrf54l15/src/redcon.c`
 - command/state UUIDs use payload version `2`
 - state is always `<2, 4>`
 - REDCON `4` command is accepted as an idempotent connected-idle command
@@ -29,6 +31,7 @@ Factory/NVE data is shared REDCON factory data at `0x000f0000`:
 Build firmware:
 
 ```sh
+just weather::mcu::install
 just weather::mcu::check
 ```
 

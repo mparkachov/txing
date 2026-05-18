@@ -13,10 +13,11 @@ build_dir := mcu_dir + "/build/ncs-xiao_nrf54l15_cpuapp"
 firmware_hex := build_dir + "/zephyr/zephyr/zephyr.hex"
 firmware_hex_fallback := build_dir + "/zephyr/zephyr.hex"
 nve_script := common_mcu_dir + "/xiao_nrf54l15/scripts/redcon_nve.py"
-ncs_script := mcu_dir + "/scripts/ncs_unit_mcu.py"
+ncs_script := common_mcu_dir + "/scripts/ncs_mcu.py"
 nve_hex := build_dir + "/redcon-factory-nve.hex"
 nve_address := "0x000f0000"
-ncs_python := env_var_or_default("UNIT_MCU_NCS_PYTHON", "python3")
+default_ncs_python := env_var_or_default("TXING_MCU_NCS_PYTHON", "python3")
+ncs_python := env_var_or_default("UNIT_MCU_NCS_PYTHON", default_ncs_python)
 openocd_support_dir := zephyr_base + "/boards/seeed/xiao_nrf54l15/support"
 openocd_cfg := openocd_support_dir + "/openocd.cfg"
 
@@ -40,13 +41,13 @@ _firmware-hex:
     git -C "{{ project_root }}" submodule update --init --recursive -- modules/nrfconnect/sdk-nrf
 
 @install: submodules
-    "{{ ncs_python }}" "{{ ncs_script }}" install
+    "{{ ncs_python }}" "{{ ncs_script }}" --mcu-dir "{{ mcu_dir }}" --device-label unit install
 
 @check: _ensure-ncs-submodule
-    "{{ ncs_python }}" "{{ ncs_script }}" check
+    "{{ ncs_python }}" "{{ ncs_script }}" --mcu-dir "{{ mcu_dir }}" --device-label unit check
 
 @build: _ensure-ncs-submodule
-    "{{ ncs_python }}" "{{ ncs_script }}" build
+    "{{ ncs_python }}" "{{ ncs_script }}" --mcu-dir "{{ mcu_dir }}" --device-label unit build
 
 @flash: _ensure-openocd
     firmware="$(just --justfile "{{ mcu_dir }}/justfile" _firmware-hex)"; \
@@ -110,7 +111,7 @@ _firmware-hex:
       -c shutdown
 
 @paths:
-    "{{ ncs_python }}" "{{ ncs_script }}" paths
+    "{{ ncs_python }}" "{{ ncs_script }}" --mcu-dir "{{ mcu_dir }}" --device-label unit paths
     echo "board: {{ board }}"
     echo "buildVersion: {{ build_version }}"
     echo "nveScript: {{ nve_script }} exists=$([ -f "{{ nve_script }}" ] && echo 1 || echo 0)"
@@ -118,7 +119,7 @@ _firmware-hex:
     echo "nveAddress: {{ nve_address }}"
 
 @clean:
-    "{{ ncs_python }}" "{{ ncs_script }}" clean
+    "{{ ncs_python }}" "{{ ncs_script }}" --mcu-dir "{{ mcu_dir }}" --device-label unit clean
 
 @default:
     @just --list
