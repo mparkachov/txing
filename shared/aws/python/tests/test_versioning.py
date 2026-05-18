@@ -143,31 +143,37 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn("JUST_VERSION", workflow)
         self.assertNotIn("cargo install just", workflow)
 
-    def test_unit_daemon_systemd_generator_prepares_daemon_and_kvs_master_with_mise(self) -> None:
+    def test_unit_daemon_root_owned_installer_uses_mise_for_daemon_and_kvs_master(self) -> None:
         installer = (
             REPO_ROOT / "devices" / "unit" / "daemon" / "install-systemd.sh"
         ).read_text(encoding="utf-8")
 
-        self.assertIn("Generates the txing unit daemon mise config", installer)
+        self.assertIn("root-owned txing unit daemon systemd service", installer)
+        self.assertIn("run this installer from a root shell", installer)
         self.assertIn('txing-unit-daemon = "github:mparkachov/txing"', installer)
         self.assertIn('txing-board-kvs-master = "github:mparkachov/txing"', installer)
         self.assertIn('asset_pattern = "$daemon_asset_pattern"', installer)
         self.assertIn('asset_pattern = "$kvs_master_asset_pattern"', installer)
         self.assertIn("txing-board-kvs-master-linux-aarch64.tar.gz", installer)
         self.assertIn('fetch_remote_versions_cache = "0s"', installer)
-        self.assertIn('generated_systemd_dir="$daemon_config_dir/systemd"', installer)
-        self.assertIn('install -m 644 "$service_tmp" "$generated_service_file"', installer)
+        self.assertIn('root_home="${TXING_DAEMON_ROOT_HOME:-${HOME:-/root}}"', installer)
+        self.assertIn('daemon_config_dir="${TXING_DAEMON_CONFIG_DIR:-$root_home/.config/txing/unit-daemon}"', installer)
+        self.assertIn("Environment=HOME=$root_home", installer)
+        self.assertIn("Environment=TXING_KVS_MASTER_COMMAND=txing-board-kvs-master", installer)
+        self.assertIn("ExecStartPre=-$mise_bin upgrade txing-board-kvs-master", installer)
+        self.assertIn("MISE_SHARED_INSTALL_DIRS=$root_home/.local/share/mise/installs", installer)
+        self.assertIn("ExecStart=/usr/bin/env MISE_OFFLINE=1 $mise_bin exec -- txing-unit-daemon", installer)
+        self.assertIn('install -m 644 "$service_tmp" "$service_file"', installer)
+        self.assertIn('systemctl restart "$service_name"', installer)
         self.assertIn("warning: daemon runtime config is not readable yet", installer)
         self.assertIn("warning: daemon private key is not readable yet", installer)
         self.assertNotIn("missing daemon runtime config", installer)
         self.assertNotIn("missing daemon private key", installer)
-        self.assertIn("ExecStartPre=-$mise_bin upgrade txing-board-kvs-master", installer)
-        self.assertIn("MISE_SHARED_INSTALL_DIRS", installer)
         self.assertNotIn("sudo", installer)
         self.assertNotIn("runuser", installer)
-        self.assertNotIn("systemctl enable", installer)
-        self.assertNotIn("systemctl restart", installer)
-        self.assertNotIn('install -m 644 "$service_tmp" "$service_file"', installer)
+        self.assertNotIn("chown", installer)
+        self.assertNotIn("/home/txing/.local/share/mise", installer)
+        self.assertNotIn("generated_systemd_dir", installer)
 
     def test_board_stable_docs_use_daemon_kvs_master_release_path(self) -> None:
         installation_docs = (REPO_ROOT / "docs" / "installation.md").read_text(
@@ -179,19 +185,23 @@ class VersionEnvironmentTests(unittest.TestCase):
 
         self.assertIn("mise which txing-board-kvs-master", installation_docs)
         self.assertIn("bash /tmp/txing-install-systemd.sh stable", installation_docs)
-        self.assertIn(
-            "install -m 644 /home/txing/.config/txing/unit-daemon/systemd/txing-unit-daemon.service",
-            installation_docs,
-        )
+        self.assertIn("sudo su -", installation_docs)
+        self.assertIn("/root/.local/bin/mise which txing-board-kvs-master", installation_docs)
         self.assertIn("just unit::daemon::role-policy <thing-id>", installation_docs)
         self.assertIn("MQTT-only `mcp`", installation_docs)
         self.assertIn("just unit::daemon::role-policy <thing-id>", artifacts_docs)
         self.assertIn("Use this path for Phase 2a board iteration", artifacts_docs)
         self.assertIn("txing-board-kvs-master-linux-aarch64.tar.gz", artifacts_docs)
-        self.assertIn("MISE_SHARED_INSTALL_DIRS=/home/txing/.local/share/mise/installs", artifacts_docs)
+        self.assertIn("TXING_KVS_MASTER_COMMAND", artifacts_docs)
+        self.assertIn("MISE_SHARED_INSTALL_DIRS=/root/.local/share/mise/installs", artifacts_docs)
+        self.assertIn("ExecStartPre=-", artifacts_docs)
         self.assertIn("bash /tmp/txing-install-systemd.sh feature", artifacts_docs)
         self.assertNotIn("install-systemd.sh | sudo bash", installation_docs)
         self.assertNotIn("install-systemd.sh | sudo bash", artifacts_docs)
+        self.assertNotIn("MISE_SHARED_INSTALL_DIRS=/home/txing/.local/share/mise/installs", artifacts_docs)
+        self.assertNotIn("sudo -u txing env HOME=/home/txing", installation_docs)
+        self.assertNotIn("sudo -u txing env HOME=/home/txing", artifacts_docs)
+        self.assertNotIn("mise-txing-unit-daemon-feature", artifacts_docs)
         self.assertNotIn("BOARD_VIDEO_SENDER_COMMAND", installation_docs)
         self.assertNotIn("just unit::board::build-native", installation_docs)
         self.assertNotIn("sudo systemctl status board", installation_docs)

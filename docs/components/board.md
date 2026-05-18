@@ -96,12 +96,13 @@ Rust unit daemon local run:
 just unit::daemon::run
 ```
 
-The daemon uses the per-user config directory
+For local development, the daemon uses the per-user config directory
 `${TXING_DAEMON_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/txing/unit-daemon}`.
-Its `.env` file is sourceable and the IoT certificate files live beside it. In
-the current implementation, the daemon publishes the `board`, `mcp`, and
-`video` runtime surfaces for web/Sparkplug visibility while keeping MCP
-MQTT-only.
+On deployed boards the stable runtime is root-owned and uses
+`/root/.config/txing/unit-daemon`. Its `.env` file is sourceable and the IoT
+certificate files live beside it. In the current implementation, the daemon
+publishes the `board`, `mcp`, and `video` runtime surfaces for web/Sparkplug
+visibility while keeping MCP MQTT-only.
 
 Provision daemon config and certs only when AWS resource changes are intended:
 
@@ -135,15 +136,11 @@ just unit::board::motor-stop
 
 ## Service Install
 
-The current stable service uses the Rust daemon systemd generator, followed by
-manual unit installation:
+The current stable service uses the root-owned Rust daemon installer:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/devices/unit/daemon/install-systemd.sh -o /tmp/txing-install-systemd.sh
-sudo -u txing env HOME=/home/txing bash /tmp/txing-install-systemd.sh stable
-sudo install -m 644 /home/txing/.config/txing/unit-daemon/systemd/txing-unit-daemon.service /etc/systemd/system/txing-unit-daemon.service
-sudo systemctl daemon-reload
-sudo systemctl enable --now txing-unit-daemon.service
+bash /tmp/txing-install-systemd.sh stable
 ```
 
 The legacy Python board service path is still available for development

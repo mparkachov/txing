@@ -94,52 +94,43 @@ The canonical stable rig installation and deployment flow is documented in
 
 ## Board Layout
 
-Daemon runtime config is per-user and is not stored under `/etc`:
+Daemon runtime config is root-owned and is not stored under `/etc`:
 
 ```text
-/home/txing/.config/txing/unit-daemon/.env
-/home/txing/.config/txing/unit-daemon/AmazonRootCA1.pem
-/home/txing/.config/txing/unit-daemon/certificate.arn
-/home/txing/.config/txing/unit-daemon/certificate.pem.crt
-/home/txing/.config/txing/unit-daemon/private.pem.key
-/home/txing/.config/txing/unit-daemon/public.pem.key
+/root/.config/txing/unit-daemon/.env
+/root/.config/txing/unit-daemon/AmazonRootCA1.pem
+/root/.config/txing/unit-daemon/certificate.arn
+/root/.config/txing/unit-daemon/certificate.pem.crt
+/root/.config/txing/unit-daemon/private.pem.key
+/root/.config/txing/unit-daemon/public.pem.key
 ```
 
 The `.env` file is directly sourceable and contains host-independent runtime
 values. Certificate paths are omitted by default; the daemon derives colocated
 certificate paths from the loaded `.env` directory.
 
-Stable mode uses the normal `txing` mise config tree and persistent install
-tree:
+Stable mode uses root's normal mise config tree and persistent install tree:
 
 ```text
-/home/txing/.config/mise/conf.d/txing-unit-daemon.toml
-/home/txing/.local/share/mise/installs/txing-unit-daemon/
-/home/txing/.local/share/mise/installs/txing-board-kvs-master/
+/root/.config/mise/conf.d/txing-unit-daemon.toml
+/root/.local/share/mise/installs/txing-unit-daemon/
+/root/.local/share/mise/installs/txing-board-kvs-master/
 ```
 
-Feature mode is an overlay on top of stable. It uses an isolated mise config and
-ephemeral install/cache/tmp state under executable `/var/tmp`:
+Feature mode is an overlay on top of stable. It uses an isolated root mise
+config and tmpfs-backed install/cache/tmp state:
 
 ```text
-/home/txing/.config/mise/txing-unit-daemon/config.toml
+/root/.config/mise/txing-unit-daemon/config.toml
 /var/tmp/txing/unit-daemon/mise
 /var/tmp/txing/unit-daemon/mise-cache
 /var/tmp/txing/unit-daemon/mise-tmp
 ```
 
-The feature systemd environment also sets:
-
-```text
-MISE_SHARED_INSTALL_DIRS=/home/txing/.local/share/mise/installs
-```
-
-That shared install directory is the fallback path to the persistent stable
-daemon and native KVS master. Feature service start tries to upgrade the
-feature-capable resolution in `/var/tmp` before ensuring it is installed; if
-those pre-start steps fail or no feature release is installed, offline
-`mise exec` can still resolve the installed stable tools through the shared
-install directory.
+The board runtime is root-owned. The `txing` login user is only the SSH entry
+point and can enter a root shell for maintenance. The root-owned service runs
+`mise`; feature service start attempts to upgrade/install the latest matching
+feature prerelease into `/var/tmp`, with root's stable install as fallback.
 
 The installed service is the same for both channels:
 
@@ -148,10 +139,13 @@ The installed service is the same for both channels:
 ```
 
 The service waits for network-online and clock synchronization before start,
-runs as the `txing` user, sends `SIGINT` on stop, and starts the daemon through:
+runs as root for direct PWM/GPIO access, sends `SIGINT` on stop, and starts the
+daemon through root-owned mise:
 
 ```ini
-ExecStart=/usr/bin/env MISE_OFFLINE=1 /home/txing/.local/bin/mise exec -- txing-unit-daemon
+Environment=HOME=/root
+Environment=TXING_KVS_MASTER_COMMAND=txing-board-kvs-master
+ExecStart=/usr/bin/env MISE_OFFLINE=1 /root/.local/bin/mise exec -- txing-unit-daemon
 ```
 
 ## Publishing
@@ -199,10 +193,10 @@ them later only when stronger artifact integrity requirements are needed.
 The board install behavior has been manually verified on a Raspberry Pi Zero 2
 W with a read-only root filesystem:
 
-- feature service generation with `/var/tmp` runtime state and read-only-root reboot;
+- feature service install into `/var/tmp` and read-only-root reboot;
 - stable GitHub Actions release publish from `main`;
-- stable board generation from the `main` raw script plus manual systemd install;
-- stable upgrade with plain `mise upgrade`;
+- stable board install from the `main` raw installer;
+- stable upgrade with the root-owned installer;
 - stable read-only-root reboot on `0.9.114`, with systemd starting the daemon,
   MQTT connecting, and retained `board` online state publishing.
 
@@ -238,7 +232,7 @@ COPYFILE_DISABLE=1 tar -C "$HOME/.config/txing" -czf /tmp/txing-unit-daemon-conf
 scp /tmp/txing-unit-daemon-config.tgz txing:/tmp/txing-unit-daemon-config.tgz
 ```
 
-On the board as `txing`:
+On the board from the root shell:
 
 ```bash
 install -d -m 700 "$HOME/.config/txing"
@@ -316,29 +310,22 @@ Run during a writable-root maintenance window:
 ```bash
 root-rw
 curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/devices/unit/daemon/install-systemd.sh -o /tmp/txing-install-systemd.sh
-sudo -u txing env HOME=/home/txing bash /tmp/txing-install-systemd.sh stable
-sudo install -m 644 /home/txing/.config/txing/unit-daemon/systemd/txing-unit-daemon.service /etc/systemd/system/txing-unit-daemon.service
-sudo systemctl disable --now txing-unit-daemon-feature.service 2>/dev/null || true
-sudo rm -f /etc/systemd/system/txing-unit-daemon-feature.service
-if systemctl list-unit-files NetworkManager-wait-online.service --no-legend --no-pager 2>/dev/null | grep -q '^NetworkManager-wait-online\.service[[:space:]]'; then
-  sudo systemctl enable NetworkManager-wait-online.service
-fi
-sudo systemctl daemon-reload
-sudo systemctl enable --now txing-unit-daemon.service
+bash /tmp/txing-install-systemd.sh stable
 ```
 
-The generator only prepares mise config and the unit file. It can run before the
-daemon runtime `.env` and certificate files exist, but those files must be in
-place before the manual service start or restart.
+The installer writes root-owned mise config, installs both release tools,
+writes `/etc/systemd/system/txing-unit-daemon.service`, enables it, and restarts
+it. It can run before the daemon runtime `.env` and certificate files exist, but
+the service will not run successfully until those files are in place.
 
 Verify:
 
 ```bash
-sudo systemctl status --no-pager -l txing-unit-daemon.service
-sudo journalctl -u txing-unit-daemon.service -n 120 --no-pager
-sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise list
-sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise which txing-unit-daemon
-sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise which txing-board-kvs-master
+systemctl status --no-pager -l txing-unit-daemon.service
+journalctl -u txing-unit-daemon.service -n 120 --no-pager
+/root/.local/bin/mise list
+/root/.local/bin/mise which txing-unit-daemon
+/root/.local/bin/mise which txing-board-kvs-master
 ```
 
 ### Upgrade Stable On A Board
@@ -347,18 +334,18 @@ Run during a writable-root maintenance window:
 
 ```bash
 root-rw
-sudo apt update
-sudo apt dist-upgrade -y
-sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise upgrade
-sudo systemctl restart txing-unit-daemon.service
+apt update
+apt dist-upgrade -y
+curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/devices/unit/daemon/install-systemd.sh -o /tmp/txing-install-systemd.sh
+bash /tmp/txing-install-systemd.sh stable
 ```
 
 If a release was just published and mise still resolves the previous version:
 
 ```bash
-sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise cache clear
-sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise upgrade
-sudo systemctl restart txing-unit-daemon.service
+curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/devices/unit/daemon/install-systemd.sh -o /tmp/txing-install-systemd.sh
+/root/.local/bin/mise cache clear
+bash /tmp/txing-install-systemd.sh stable
 ```
 
 ### Verify Stable Read-Only Reboot
@@ -371,14 +358,14 @@ sudo reboot
 After reconnecting:
 
 ```bash
-sudo systemctl status --no-pager -l txing-unit-daemon.service
-sudo journalctl -u txing-unit-daemon.service -b -u txing-unit-daemon.service --no-pager
-sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise list
+systemctl status --no-pager -l txing-unit-daemon.service
+journalctl -u txing-unit-daemon.service -b -u txing-unit-daemon.service --no-pager
+/root/.local/bin/mise list
 ```
 
 Expected: no source checkout is needed, the service starts offline, the daemon
 logs the stable version, MQTT connects, the native KVS master resolves through
-mise, and retained `board`, `mcp`, and `video` state is published.
+root-owned mise, and retained `board`, `mcp`, and `video` state is published.
 
 ### Publish A Feature Prerelease
 
@@ -409,60 +396,51 @@ maintenance window:
 ```bash
 root-rw
 curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/devices/unit/daemon/install-systemd.sh -o /tmp/txing-install-systemd.sh
-sudo -u txing env HOME=/home/txing bash /tmp/txing-install-systemd.sh feature
-sudo install -m 644 /home/txing/.config/txing/unit-daemon/systemd/txing-unit-daemon.service /etc/systemd/system/txing-unit-daemon.service
-sudo systemctl daemon-reload
-sudo systemctl restart txing-unit-daemon.service
+bash /tmp/txing-install-systemd.sh feature
 ```
 
-While validating generator changes that are still only on a feature branch, use
-the generator from that same branch instead of `main`:
+While validating installer changes that are still only on a feature branch, use
+the installer from that same branch instead of `main`:
 
 ```bash
 FEATURE_BRANCH=feature/phase-2a-kvs
 curl -fsSL "https://raw.githubusercontent.com/mparkachov/txing/${FEATURE_BRANCH}/devices/unit/daemon/install-systemd.sh" -o /tmp/txing-install-systemd.sh
-sudo -u txing env HOME=/home/txing bash /tmp/txing-install-systemd.sh feature
-sudo install -m 644 /home/txing/.config/txing/unit-daemon/systemd/txing-unit-daemon.service /etc/systemd/system/txing-unit-daemon.service
-sudo systemctl daemon-reload
-sudo systemctl restart txing-unit-daemon.service
+bash /tmp/txing-install-systemd.sh feature
 ```
 
-Feature service start may install a newer feature prerelease into `/var/tmp`.
-If feature install is unavailable or no newer feature exists, the service uses
-the persistent stable install through `MISE_SHARED_INSTALL_DIRS`.
+The feature service start may install a newer feature prerelease into
+`/var/tmp`. If feature install is unavailable or no newer feature exists, the
+service uses the persistent stable install through `MISE_SHARED_INSTALL_DIRS`.
 
 Verify the feature service resolves both commands:
 
 ```bash
-sudo -u txing env HOME=/home/txing MISE_CONFIG_DIR=/home/txing/.config/mise/txing-unit-daemon \
+env HOME=/root MISE_CONFIG_DIR=/root/.config/mise/txing-unit-daemon \
   MISE_DATA_DIR=/var/tmp/txing/unit-daemon/mise \
   MISE_CACHE_DIR=/var/tmp/txing/unit-daemon/mise-cache \
   MISE_TMP_DIR=/var/tmp/txing/unit-daemon/mise-tmp \
-  MISE_SHARED_INSTALL_DIRS=/home/txing/.local/share/mise/installs \
-  /home/txing/.local/bin/mise which txing-unit-daemon
-sudo -u txing env HOME=/home/txing MISE_CONFIG_DIR=/home/txing/.config/mise/txing-unit-daemon \
+  MISE_SHARED_INSTALL_DIRS=/root/.local/share/mise/installs \
+  /root/.local/bin/mise which txing-unit-daemon
+env HOME=/root MISE_CONFIG_DIR=/root/.config/mise/txing-unit-daemon \
   MISE_DATA_DIR=/var/tmp/txing/unit-daemon/mise \
   MISE_CACHE_DIR=/var/tmp/txing/unit-daemon/mise-cache \
   MISE_TMP_DIR=/var/tmp/txing/unit-daemon/mise-tmp \
-  MISE_SHARED_INSTALL_DIRS=/home/txing/.local/share/mise/installs \
-  /home/txing/.local/bin/mise which txing-board-kvs-master
+  MISE_SHARED_INSTALL_DIRS=/root/.local/share/mise/installs \
+  /root/.local/bin/mise which txing-board-kvs-master
 ```
 
 ### Opt A Board Out Of Feature
 
-Run the stable generator again and reinstall the generated unit:
+Run the stable installer again:
 
 ```bash
 root-rw
 curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/devices/unit/daemon/install-systemd.sh -o /tmp/txing-install-systemd.sh
-sudo -u txing env HOME=/home/txing bash /tmp/txing-install-systemd.sh stable
-sudo install -m 644 /home/txing/.config/txing/unit-daemon/systemd/txing-unit-daemon.service /etc/systemd/system/txing-unit-daemon.service
-sudo systemctl daemon-reload
-sudo systemctl restart txing-unit-daemon.service
+bash /tmp/txing-install-systemd.sh stable
 ```
 
-The stable generator removes the feature overlay config. The manual systemd
-restart switches the same `txing-unit-daemon.service` back to stable mode.
+The stable installer removes the feature overlay config/state and restarts the
+same `txing-unit-daemon.service` in stable mode.
 
 ### Check Raw GitHub Script Cache
 

@@ -111,6 +111,7 @@ unavailable, or too old in the OS package repository. `apt` should stay limited
 to OS libraries, headers, and services needed by the board runtime.
 
 ```bash
+sudo su -
 mkdir -p "$HOME/.local/bin"
 curl https://mise.run | sh
 if ! grep -qxF 'eval "$($HOME/.local/bin/mise activate bash)"' "$HOME/.bashrc"; then
@@ -131,7 +132,7 @@ COPYFILE_DISABLE=1 tar -C "$HOME/.config/txing" -czf /tmp/txing-unit-daemon-conf
 scp /tmp/txing-unit-daemon-config.tgz txing:/tmp/txing-unit-daemon-config.tgz
 ```
 
-On the board:
+On the board from the root shell:
 
 ```bash
 install -d -m 700 "$HOME/.config/txing"
@@ -156,34 +157,25 @@ just unit::daemon::role-policy <thing-id>
 
 ### 5. Install Stable Unit Daemon
 
-Generate the stable mise config and systemd unit while root is still writable,
-then install the generated unit manually:
+Install the stable daemon, KVS master, and systemd unit from the root shell
+while root is still writable:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/devices/unit/daemon/install-systemd.sh -o /tmp/txing-install-systemd.sh
-sudo -u txing env HOME=/home/txing bash /tmp/txing-install-systemd.sh stable
-sudo install -m 644 /home/txing/.config/txing/unit-daemon/systemd/txing-unit-daemon.service /etc/systemd/system/txing-unit-daemon.service
-sudo systemctl disable --now txing-unit-daemon-feature.service 2>/dev/null || true
-sudo rm -f /etc/systemd/system/txing-unit-daemon-feature.service
-if systemctl list-unit-files NetworkManager-wait-online.service --no-legend --no-pager 2>/dev/null | grep -q '^NetworkManager-wait-online\.service[[:space:]]'; then
-  sudo systemctl enable NetworkManager-wait-online.service
-fi
-sudo systemctl daemon-reload
-sudo systemctl enable --now txing-unit-daemon.service
+bash /tmp/txing-install-systemd.sh stable
 ```
 
-The generator may run before the daemon `.env` and certificate files are copied.
-Those files must exist before the manual `systemctl enable --now` or restart
-step, otherwise the service will fail at runtime.
+The installer may run before the daemon `.env` and certificate files are copied.
+Those files must exist before the service can run successfully.
 
 Verify:
 
 ```bash
-sudo systemctl status --no-pager -l txing-unit-daemon.service
-sudo journalctl -u txing-unit-daemon.service -n 120 --no-pager
-sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise list
-sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise which txing-unit-daemon
-sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise which txing-board-kvs-master
+systemctl status --no-pager -l txing-unit-daemon.service
+journalctl -u txing-unit-daemon.service -n 120 --no-pager
+/root/.local/bin/mise list
+/root/.local/bin/mise which txing-unit-daemon
+/root/.local/bin/mise which txing-board-kvs-master
 ```
 
 Expected:
@@ -235,10 +227,10 @@ validation.
 After the reboot or service restart:
 
 ```bash
-sudo systemctl status --no-pager -l txing-unit-daemon.service
-sudo journalctl -u txing-unit-daemon.service -n 160 --no-pager
-sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise which txing-unit-daemon
-sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise which txing-board-kvs-master
+systemctl status --no-pager -l txing-unit-daemon.service
+journalctl -u txing-unit-daemon.service -n 160 --no-pager
+/root/.local/bin/mise which txing-unit-daemon
+/root/.local/bin/mise which txing-board-kvs-master
 ```
 
 Expected:
@@ -257,8 +249,7 @@ writable paths stay on tmpfs:
 - `/tmp`
   - transient runtime and OS scratch space
 - `/var/tmp`
-  - feature-channel mise install/cache/tmp state:
-    `/var/tmp/txing/unit-daemon/`
+  - transient runtime scratch space
 - `/var/log`
 - `/var/lib/NetworkManager`
 
@@ -278,12 +269,12 @@ tmpfs                     /var/log             tmpfs nosuid,nodev,mode=0755,size
 tmpfs                     /var/lib/NetworkManager tmpfs nosuid,nodev,mode=0755,size=16M 0 0
 ```
 
-Add useful aliases to the `txing` user's shell config:
+Add useful aliases to the root shell config:
 
 ```bash
 cat >> "$HOME/.bashrc" <<'EOF'
-alias root-ro='sudo bash -c "rm -rf /var/tmp/* /tmp/* ; sync ; mount -o remount,ro /boot/firmware ; mount -o remount,ro /"'
-alias root-rw='sudo bash -c "mount -o remount,rw /; mount -o remount,rw /boot/firmware; umount /var/tmp /tmp; sudo systemctl daemon-reload"'
+alias root-ro='bash -c "rm -rf /var/tmp/* /tmp/* ; sync ; mount -o remount,ro /boot/firmware ; mount -o remount,ro /"'
+alias root-rw='bash -c "mount -o remount,rw /; mount -o remount,rw /boot/firmware; umount /var/tmp /tmp; systemctl daemon-reload"'
 EOF
 ```
 
@@ -293,12 +284,10 @@ Operational notes:
   changes, and `systemd` unit changes while the root is writable.
 - Switch back to read-only only after the runtime, native KVS master, and config
   files are in place.
-- The `mise` binary, normal user mise config, and stable unit daemon install
-  live under the `txing` user's home directory. Stable installs and upgrades
-  must happen while the root filesystem is writable and use plain
-  `mise upgrade`. Feature-channel daemon artifacts are upgraded and installed at
-  service start into `/var/tmp/txing/unit-daemon/`, which is tmpfs-backed and
-  executable, with the persistent stable install as fallback.
+- The `mise` binary, mise config, daemon config, stable daemon install, and
+  feature daemon overlay are root-owned. The service runs as root with
+  `HOME=/root`, so feature-channel `mise` pre-start updates never write into
+  `/home/txing`.
 - AWS-backed services that install or connect over HTTPS during boot must wait
   for both network-online and clock synchronization. Otherwise TLS validation
   can fail before NTP corrects the board clock.
@@ -312,11 +301,10 @@ Use this during a writable-root maintenance window:
 
 ```bash
 root-rw
-sudo apt update
-sudo apt dist-upgrade -y
-sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise upgrade
-sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise which txing-board-kvs-master
-sudo systemctl restart txing-unit-daemon.service
+apt update
+apt dist-upgrade -y
+curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/devices/unit/daemon/install-systemd.sh -o /tmp/txing-install-systemd.sh
+bash /tmp/txing-install-systemd.sh stable
 root-ro
 ```
 
@@ -325,9 +313,9 @@ previous version:
 
 ```bash
 root-rw
-sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise cache clear
-sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise upgrade
-sudo systemctl restart txing-unit-daemon.service
+curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/devices/unit/daemon/install-systemd.sh -o /tmp/txing-install-systemd.sh
+/root/.local/bin/mise cache clear
+bash /tmp/txing-install-systemd.sh stable
 root-ro
 ```
 
@@ -343,11 +331,11 @@ sudo reboot
 After reconnecting:
 
 ```bash
-sudo systemctl status --no-pager -l txing-unit-daemon.service
-sudo journalctl -u txing-unit-daemon.service -b -u txing-unit-daemon.service --no-pager
-sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise list
-sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise which txing-unit-daemon
-sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise which txing-board-kvs-master
+systemctl status --no-pager -l txing-unit-daemon.service
+journalctl -u txing-unit-daemon.service -b -u txing-unit-daemon.service --no-pager
+/root/.local/bin/mise list
+/root/.local/bin/mise which txing-unit-daemon
+/root/.local/bin/mise which txing-board-kvs-master
 ```
 
 Expected stable daemon behavior after reboot:
