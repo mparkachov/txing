@@ -199,9 +199,9 @@ them later only when stronger artifact integrity requirements are needed.
 The board install behavior has been manually verified on a Raspberry Pi Zero 2
 W with a read-only root filesystem:
 
-- feature service install into `/var/tmp` and read-only-root reboot;
+- feature service generation with `/var/tmp` runtime state and read-only-root reboot;
 - stable GitHub Actions release publish from `main`;
-- stable board install from the `main` raw installer;
+- stable board generation from the `main` raw script plus manual systemd install;
 - stable upgrade with plain `mise upgrade`;
 - stable read-only-root reboot on `0.9.114`, with systemd starting the daemon,
   MQTT connecting, and retained `board` online state publishing.
@@ -315,7 +315,16 @@ Run during a writable-root maintenance window:
 
 ```bash
 root-rw
-curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/devices/unit/daemon/install-systemd.sh | sudo bash -s -- stable
+curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/devices/unit/daemon/install-systemd.sh -o /tmp/txing-install-systemd.sh
+sudo -u txing env HOME=/home/txing bash /tmp/txing-install-systemd.sh stable
+sudo install -m 644 /home/txing/.config/txing/unit-daemon/systemd/txing-unit-daemon.service /etc/systemd/system/txing-unit-daemon.service
+sudo systemctl disable --now txing-unit-daemon-feature.service 2>/dev/null || true
+sudo rm -f /etc/systemd/system/txing-unit-daemon-feature.service
+if systemctl list-unit-files NetworkManager-wait-online.service --no-legend --no-pager 2>/dev/null | grep -q '^NetworkManager-wait-online\.service[[:space:]]'; then
+  sudo systemctl enable NetworkManager-wait-online.service
+fi
+sudo systemctl daemon-reload
+sudo systemctl enable --now txing-unit-daemon.service
 ```
 
 Verify:
@@ -336,15 +345,15 @@ Run during a writable-root maintenance window:
 root-rw
 sudo apt update
 sudo apt dist-upgrade -y
-/home/txing/.local/bin/mise upgrade
+sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise upgrade
 sudo systemctl restart txing-unit-daemon.service
 ```
 
 If a release was just published and mise still resolves the previous version:
 
 ```bash
-/home/txing/.local/bin/mise cache clear
-/home/txing/.local/bin/mise upgrade
+sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise cache clear
+sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise upgrade
 sudo systemctl restart txing-unit-daemon.service
 ```
 
@@ -395,15 +404,23 @@ maintenance window:
 
 ```bash
 root-rw
-curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/devices/unit/daemon/install-systemd.sh | sudo bash -s -- feature
+curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/devices/unit/daemon/install-systemd.sh -o /tmp/txing-install-systemd.sh
+sudo -u txing env HOME=/home/txing bash /tmp/txing-install-systemd.sh feature
+sudo install -m 644 /home/txing/.config/txing/unit-daemon/systemd/txing-unit-daemon.service /etc/systemd/system/txing-unit-daemon.service
+sudo systemctl daemon-reload
+sudo systemctl restart txing-unit-daemon.service
 ```
 
-While validating installer changes that are still only on a feature branch, use
-the installer from that same branch instead of `main`:
+While validating generator changes that are still only on a feature branch, use
+the generator from that same branch instead of `main`:
 
 ```bash
 FEATURE_BRANCH=feature/phase-2a-kvs
-curl -fsSL "https://raw.githubusercontent.com/mparkachov/txing/${FEATURE_BRANCH}/devices/unit/daemon/install-systemd.sh" | sudo bash -s -- feature
+curl -fsSL "https://raw.githubusercontent.com/mparkachov/txing/${FEATURE_BRANCH}/devices/unit/daemon/install-systemd.sh" -o /tmp/txing-install-systemd.sh
+sudo -u txing env HOME=/home/txing bash /tmp/txing-install-systemd.sh feature
+sudo install -m 644 /home/txing/.config/txing/unit-daemon/systemd/txing-unit-daemon.service /etc/systemd/system/txing-unit-daemon.service
+sudo systemctl daemon-reload
+sudo systemctl restart txing-unit-daemon.service
 ```
 
 Feature service start may install a newer feature prerelease into `/var/tmp`.
@@ -429,15 +446,19 @@ sudo -u txing env HOME=/home/txing MISE_CONFIG_DIR=/home/txing/.config/mise/txin
 
 ### Opt A Board Out Of Feature
 
-Run the stable installer again:
+Run the stable generator again and reinstall the generated unit:
 
 ```bash
 root-rw
-curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/devices/unit/daemon/install-systemd.sh | sudo bash -s -- stable
+curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/devices/unit/daemon/install-systemd.sh -o /tmp/txing-install-systemd.sh
+sudo -u txing env HOME=/home/txing bash /tmp/txing-install-systemd.sh stable
+sudo install -m 644 /home/txing/.config/txing/unit-daemon/systemd/txing-unit-daemon.service /etc/systemd/system/txing-unit-daemon.service
+sudo systemctl daemon-reload
+sudo systemctl restart txing-unit-daemon.service
 ```
 
-The stable installer removes the feature overlay config/state and restarts the
-same `txing-unit-daemon.service` in stable mode.
+The stable generator removes the feature overlay config. The manual systemd
+restart switches the same `txing-unit-daemon.service` back to stable mode.
 
 ### Check Raw GitHub Script Cache
 

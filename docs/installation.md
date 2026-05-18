@@ -156,10 +156,20 @@ just unit::daemon::role-policy <thing-id>
 
 ### 5. Install Stable Unit Daemon
 
-Install the stable daemon and systemd unit while root is still writable:
+Generate the stable mise config and systemd unit while root is still writable,
+then install the generated unit manually:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/devices/unit/daemon/install-systemd.sh | sudo bash -s -- stable
+curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/devices/unit/daemon/install-systemd.sh -o /tmp/txing-install-systemd.sh
+sudo -u txing env HOME=/home/txing bash /tmp/txing-install-systemd.sh stable
+sudo install -m 644 /home/txing/.config/txing/unit-daemon/systemd/txing-unit-daemon.service /etc/systemd/system/txing-unit-daemon.service
+sudo systemctl disable --now txing-unit-daemon-feature.service 2>/dev/null || true
+sudo rm -f /etc/systemd/system/txing-unit-daemon-feature.service
+if systemctl list-unit-files NetworkManager-wait-online.service --no-legend --no-pager 2>/dev/null | grep -q '^NetworkManager-wait-online\.service[[:space:]]'; then
+  sudo systemctl enable NetworkManager-wait-online.service
+fi
+sudo systemctl daemon-reload
+sudo systemctl enable --now txing-unit-daemon.service
 ```
 
 Verify:
@@ -167,9 +177,9 @@ Verify:
 ```bash
 sudo systemctl status --no-pager -l txing-unit-daemon.service
 sudo journalctl -u txing-unit-daemon.service -n 120 --no-pager
-mise list
-mise which txing-unit-daemon
-mise which txing-board-kvs-master
+sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise list
+sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise which txing-unit-daemon
+sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise which txing-board-kvs-master
 ```
 
 Expected:
@@ -300,8 +310,8 @@ Use this during a writable-root maintenance window:
 root-rw
 sudo apt update
 sudo apt dist-upgrade -y
-mise upgrade
-mise which txing-board-kvs-master
+sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise upgrade
+sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise which txing-board-kvs-master
 sudo systemctl restart txing-unit-daemon.service
 root-ro
 ```
@@ -311,8 +321,8 @@ previous version:
 
 ```bash
 root-rw
-mise cache clear
-mise upgrade
+sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise cache clear
+sudo -u txing env HOME=/home/txing /home/txing/.local/bin/mise upgrade
 sudo systemctl restart txing-unit-daemon.service
 root-ro
 ```

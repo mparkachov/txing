@@ -135,10 +135,15 @@ just unit::board::motor-stop
 
 ## Service Install
 
-The current stable service is installed through the Rust daemon installer:
+The current stable service uses the Rust daemon systemd generator, followed by
+manual unit installation:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/devices/unit/daemon/install-systemd.sh | sudo bash -s -- stable
+curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/devices/unit/daemon/install-systemd.sh -o /tmp/txing-install-systemd.sh
+sudo -u txing env HOME=/home/txing bash /tmp/txing-install-systemd.sh stable
+sudo install -m 644 /home/txing/.config/txing/unit-daemon/systemd/txing-unit-daemon.service /etc/systemd/system/txing-unit-daemon.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now txing-unit-daemon.service
 ```
 
 The legacy Python board service path is still available for development

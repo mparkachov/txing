@@ -3,10 +3,13 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-Usage: sudo bash install-systemd.sh stable|feature
+Usage: bash install-systemd.sh stable|feature
 
-Installs or updates the txing unit daemon systemd service for the selected mise
-channel. Run this during a writable-root maintenance window.
+Generates the txing unit daemon mise config and systemd unit file for the
+selected mise channel. Run this as the txing user during a writable-root
+maintenance window.
+
+Installing or updating the systemd service is a manual privileged host step.
 EOF
 }
 
@@ -29,52 +32,37 @@ case "$channel" in
     ;;
 esac
 
-if [ "$(id -u)" -ne 0 ]; then
-  fail "this installer must run as root"
+if [ "$(id -u)" -eq 0 ]; then
+  fail "run this generator as the daemon user, not as root"
 fi
 if [ "$(uname -s)" != "Linux" ]; then
-  fail "this installer must run on Linux"
+  fail "this generator must run on Linux"
 fi
-command -v systemctl >/dev/null 2>&1 || fail "systemctl is required"
-[ -d /run/systemd/system ] || fail "systemd does not appear to be PID 1"
 
-daemon_user="txing"
-daemon_home="/home/$daemon_user"
-daemon_group="$(id -gn "$daemon_user" 2>/dev/null)" || fail "user '$daemon_user' does not exist"
+daemon_user="${TXING_DAEMON_USER:-txing}"
+current_user="$(id -un 2>/dev/null || true)"
+[ "$current_user" = "$daemon_user" ] || fail "run this generator as '$daemon_user' user; current user is '${current_user:-unknown}'"
+daemon_home="${HOME:-}"
+[ -n "$daemon_home" ] && [ "$daemon_home" != "/" ] || fail "HOME must point at the daemon user's home directory"
 [ -d "$daemon_home" ] || fail "expected daemon home directory $daemon_home"
 
-daemon_config_dir="$daemon_home/.config/txing/unit-daemon"
+daemon_config_dir="${TXING_DAEMON_CONFIG_DIR:-$daemon_home/.config/txing/unit-daemon}"
 [ -r "$daemon_config_dir/.env" ] || fail "missing daemon runtime config: $daemon_config_dir/.env"
 [ -r "$daemon_config_dir/private.pem.key" ] || fail "missing daemon private key: $daemon_config_dir/private.pem.key"
 
 root_options="$(findmnt -no OPTIONS / 2>/dev/null || true)"
 case ",$root_options," in
-  *,ro,*) fail "root filesystem is read-only; run root-rw before installing the service" ;;
+  *,ro,*) fail "root filesystem is read-only; enter a writable-root maintenance window before generating config" ;;
 esac
-
-systemd_dir="/etc/systemd/system"
-[ -d "$systemd_dir" ] || fail "missing systemd unit directory: $systemd_dir"
-write_probe="$systemd_dir/.txing-unit-daemon-write-test.$$"
-if ! : >"$write_probe" 2>/dev/null; then
-  fail "$systemd_dir is not writable; run root-rw before installing the service"
-fi
-rm -f "$write_probe"
 
 resolve_mise() {
   if [ -x "$daemon_home/.local/bin/mise" ]; then
     printf '%s\n' "$daemon_home/.local/bin/mise"
     return 0
   fi
-  if command -v runuser >/dev/null 2>&1; then
-    user_mise="$(runuser -u "$daemon_user" -- sh -lc 'command -v mise' 2>/dev/null || true)"
-    if [ -n "$user_mise" ] && [ -x "$user_mise" ]; then
-      printf '%s\n' "$user_mise"
-      return 0
-    fi
-  fi
-  root_mise="$(command -v mise 2>/dev/null || true)"
-  if [ -n "$root_mise" ] && [ -x "$root_mise" ]; then
-    printf '%s\n' "$root_mise"
+  user_mise="$(command -v mise 2>/dev/null || true)"
+  if [ -n "$user_mise" ] && [ -x "$user_mise" ]; then
+    printf '%s\n' "$user_mise"
     return 0
   fi
   return 1
@@ -86,9 +74,9 @@ mise_config_dir="$daemon_home/.config/mise/txing-unit-daemon"
 mise_config_file="$mise_config_dir/config.toml"
 stable_config_file="$daemon_home/.config/mise/conf.d/txing-unit-daemon.toml"
 service_name="txing-unit-daemon.service"
-service_file="$systemd_dir/$service_name"
-legacy_service_name="txing-unit-daemon-feature.service"
-legacy_service_file="$systemd_dir/$legacy_service_name"
+generated_systemd_dir="$daemon_config_dir/systemd"
+generated_service_file="$generated_systemd_dir/$service_name"
+manual_service_file="/etc/systemd/system/$service_name"
 tmp_root="/var/tmp/txing/unit-daemon"
 daemon_asset_pattern="txing-unit-daemon-linux-aarch64.tar.gz"
 kvs_master_asset_pattern="txing-board-kvs-master-linux-aarch64.tar.gz"
@@ -122,22 +110,21 @@ if [ "$channel" = "feature" ]; then
   "$var_tmp_probe/exec-test" >/dev/null 2>&1 || fail "/var/tmp must be mounted executable, without noexec"
 fi
 
-if systemctl list-unit-files NetworkManager-wait-online.service --no-legend --no-pager 2>/dev/null \
-  | grep -q '^NetworkManager-wait-online\.service[[:space:]]'; then
-  systemctl enable NetworkManager-wait-online.service >/dev/null
-fi
-
-install -d -m 700 -o "$daemon_user" -g "$daemon_group" "$daemon_home/.config/mise"
+install -d -m 700 "$daemon_home/.config/mise"
 if [ "$channel" = "stable" ]; then
-  install -d -m 700 -o "$daemon_user" -g "$daemon_group" "$daemon_home/.config/mise/conf.d"
+  install -d -m 700 "$daemon_home/.config/mise/conf.d"
 else
-  install -d -m 700 -o "$daemon_user" -g "$daemon_group" "$mise_config_dir"
+  install -d -m 700 "$mise_config_dir"
 fi
+install -d -m 700 "$generated_systemd_dir"
 config_tmp="$(mktemp)"
 service_tmp="$(mktemp)"
 trap 'if [ -n "${var_tmp_probe:-}" ]; then rm -rf "$var_tmp_probe"; fi; rm -f "$config_tmp" "$service_tmp"' EXIT
 
 cat >"$config_tmp" <<EOF
+[settings]
+fetch_remote_versions_cache = "0s"
+
 [tool_alias]
 txing-unit-daemon = "github:mparkachov/txing"
 txing-board-kvs-master = "github:mparkachov/txing"
@@ -163,24 +150,22 @@ EOF
 fi
 
 if [ "$channel" = "stable" ]; then
-  install -m 600 -o "$daemon_user" -g "$daemon_group" "$config_tmp" "$stable_config_file"
+  install -m 600 "$config_tmp" "$stable_config_file"
   rm -f "$mise_config_file"
   rmdir "$mise_config_dir" 2>/dev/null || true
-  rm -rf "$tmp_root"
-  command -v runuser >/dev/null 2>&1 || fail "runuser is required for stable install as '$daemon_user'"
-  runuser -u "$daemon_user" -- env \
+  "$mise_bin" cache clear >/dev/null 2>&1 || true
+  env \
     "HOME=$daemon_home" \
     "$mise_bin" install
 else
-  install -m 600 -o "$daemon_user" -g "$daemon_group" "$config_tmp" "$mise_config_file"
-  install -d -m 700 -o "$daemon_user" -g "$daemon_group" \
-    "$tmp_root/mise" \
-    "$tmp_root/mise-cache" \
-    "$tmp_root/mise-tmp"
+  install -m 600 "$config_tmp" "$mise_config_file"
 fi
 
 {
   cat <<EOF
+# Generated by txing unit daemon systemd generator.
+# Install manually as $manual_service_file during host maintenance.
+
 [Unit]
 Description=Txing Unit Daemon
 Wants=network-online.target systemd-time-wait-sync.service
@@ -225,24 +210,16 @@ WantedBy=multi-user.target
 EOF
 } >"$service_tmp"
 
-install -m 644 "$service_tmp" "$service_file"
+install -m 644 "$service_tmp" "$generated_service_file"
 
-if systemctl cat "$legacy_service_name" >/dev/null 2>&1 || [ -e "$legacy_service_file" ]; then
-  systemctl disable --now "$legacy_service_name" >/dev/null 2>&1 || true
-  rm -f "$legacy_service_file"
-fi
-
-systemctl daemon-reload
-systemctl enable "$service_name"
-systemctl restart "$service_name"
-
-printf 'installed %s for %s channel\n' "$service_name" "$channel"
+printf 'generated %s for %s channel\n' "$service_name" "$channel"
 if [ "$channel" = "stable" ]; then
   printf '  mise config: %s\n' "$stable_config_file"
 else
   printf '  mise config: %s\n' "$mise_config_file"
 fi
-printf '  systemd unit: %s\n' "$service_file"
+printf '  generated systemd unit: %s\n' "$generated_service_file"
+printf '  manual systemd target: %s\n' "$manual_service_file"
 printf '  mise binary: %s\n' "$mise_bin"
 if [ "$channel" = "stable" ]; then
   printf '  stable install root: %s\n' "$stable_install_root"
