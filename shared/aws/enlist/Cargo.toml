@@ -1,6 +1,6 @@
 [package]
 name = "txing-enlist-lambda"
-version = "0.9.121"
+version = "0.9.122"
 edition = "2024"
 description = "txing town, rig, and device enlist AWS Lambda"
 
