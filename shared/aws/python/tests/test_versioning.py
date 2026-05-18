@@ -84,6 +84,10 @@ class VersionEnvironmentTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         self.assertIn("name: Txing Stable Release", workflow)
+        self.assertIn("Install mise tools", workflow)
+        self.assertIn("curl https://mise.run | sh", workflow)
+        self.assertIn("mise/shims", workflow)
+        self.assertIn("use --global --yes uv@latest just@latest", workflow)
         self.assertIn("txing-unit-daemon-linux-aarch64.tar.gz", workflow)
         self.assertIn("txing-board-kvs-master-linux-aarch64.tar.gz", workflow)
         self.assertIn("just unit::board::build-native", workflow)
@@ -115,6 +119,10 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn("git push origin", workflow)
         self.assertNotIn("greengrass-lite-version", workflow)
         self.assertNotIn("TXING_GREENGRASS_LITE_BUILD_INPUT_HASH", workflow)
+        self.assertNotIn("curl git just", workflow)
+        self.assertNotIn("JUST_VERSION", workflow)
+        self.assertNotIn("cargo install just", workflow)
+        self.assertNotIn("pip install --user uv", workflow)
 
     def test_unit_daemon_feature_prerelease_publishes_daemon_and_kvs_master(self) -> None:
         workflow = (
@@ -124,9 +132,16 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("name: Unit Daemon Feature Prerelease", workflow)
         self.assertIn("UNIT_DAEMON_ASSET: txing-unit-daemon-linux-aarch64.tar.gz", workflow)
         self.assertIn("KVS_MASTER_ASSET: txing-board-kvs-master-linux-aarch64.tar.gz", workflow)
+        self.assertIn("Install mise tools", workflow)
+        self.assertIn("curl https://mise.run | sh", workflow)
+        self.assertIn("mise/shims", workflow)
+        self.assertIn("use --global --yes uv@latest just@latest", workflow)
         self.assertIn("just unit::board::build-native", workflow)
         self.assertIn('"$UNIT_DAEMON_ASSET_PATH" "$KVS_MASTER_ASSET_PATH"', workflow)
         self.assertNotIn("ASSET_NAME: txing-unit-daemon", workflow)
+        self.assertNotIn("curl git just", workflow)
+        self.assertNotIn("JUST_VERSION", workflow)
+        self.assertNotIn("cargo install just", workflow)
 
     def test_unit_daemon_installer_installs_daemon_and_kvs_master_with_mise(self) -> None:
         installer = (
