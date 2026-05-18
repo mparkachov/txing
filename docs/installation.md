@@ -172,6 +172,10 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now txing-unit-daemon.service
 ```
 
+The generator may run before the daemon `.env` and certificate files are copied.
+Those files must exist before the manual `systemctl enable --now` or restart
+step, otherwise the service will fail at runtime.
+
 Verify:
 
 ```bash

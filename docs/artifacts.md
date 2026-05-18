@@ -327,6 +327,10 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now txing-unit-daemon.service
 ```
 
+The generator only prepares mise config and the unit file. It can run before the
+daemon runtime `.env` and certificate files exist, but those files must be in
+place before the manual service start or restart.
+
 Verify:
 
 ```bash

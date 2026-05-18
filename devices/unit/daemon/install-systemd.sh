@@ -47,8 +47,12 @@ daemon_home="${HOME:-}"
 [ -d "$daemon_home" ] || fail "expected daemon home directory $daemon_home"
 
 daemon_config_dir="${TXING_DAEMON_CONFIG_DIR:-$daemon_home/.config/txing/unit-daemon}"
-[ -r "$daemon_config_dir/.env" ] || fail "missing daemon runtime config: $daemon_config_dir/.env"
-[ -r "$daemon_config_dir/private.pem.key" ] || fail "missing daemon private key: $daemon_config_dir/private.pem.key"
+if [ ! -r "$daemon_config_dir/.env" ]; then
+  printf 'warning: daemon runtime config is not readable yet: %s\n' "$daemon_config_dir/.env" >&2
+fi
+if [ ! -r "$daemon_config_dir/private.pem.key" ]; then
+  printf 'warning: daemon private key is not readable yet: %s\n' "$daemon_config_dir/private.pem.key" >&2
+fi
 
 root_options="$(findmnt -no OPTIONS / 2>/dev/null || true)"
 case ",$root_options," in
