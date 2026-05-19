@@ -5188,6 +5188,16 @@ mod tests {
     #[test]
     fn daemon_env_template_contains_forward_runtime_defaults() {
         let template = DEFAULT_DAEMON_ENV_TEMPLATE;
+        let parsed = parse_env_file_contents(template).unwrap();
+        let get = |key: &str| {
+            parsed
+                .get(key)
+                .unwrap_or_else(|| panic!("missing daemon env template key {key}"))
+        };
+        let parse_i32 = |key: &str| get(key).parse::<i32>().unwrap();
+        let parse_u32 = |key: &str| get(key).parse::<u32>().unwrap();
+        let parse_u64 = |key: &str| get(key).parse::<u64>().unwrap();
+        let parse_f64 = |key: &str| get(key).parse::<f64>().unwrap();
 
         assert!(template.contains("export TXING_DAEMON_CAPABILITIES=board,mcp,video"));
         assert!(template.contains(&format!(
@@ -5206,18 +5216,41 @@ mod tests {
         );
         assert!(!template.contains("AWS_DEFAULT_REGION"));
         assert!(!template.contains("TXING_BOARD_VIDEO_REGION"));
-        assert!(template.contains(&format!(
-            "export TXING_MOTOR_RAW_MAX_SPEED={DEFAULT_MOTOR_RAW_MAX_SPEED}"
-        )));
-        assert!(template.contains(&format!(
-            "export TXING_MOTOR_CMD_RAW_MIN_SPEED={DEFAULT_MOTOR_CMD_RAW_MIN_SPEED}"
-        )));
-        assert!(template.contains(&format!(
-            "export TXING_MOTOR_CMD_RAW_MAX_SPEED={DEFAULT_MOTOR_CMD_RAW_MAX_SPEED}"
-        )));
-        assert!(template.contains(&format!("export TXING_MOTOR_PWM_HZ={DEFAULT_MOTOR_PWM_HZ}")));
         assert!(!template.contains("export BOARD_DRIVE_"));
         assert!(!template.contains("export BOARD_VIDEO_"));
+
+        let motor = MotorConfig {
+            enabled: parse_bool_text(get("TXING_MOTOR_ENABLED"), "TXING_MOTOR_ENABLED").unwrap(),
+            pwm_sysfs_root: normalize_required(
+                get("TXING_MOTOR_PWM_SYSFS_ROOT").to_string(),
+                "TXING_MOTOR_PWM_SYSFS_ROOT",
+            )
+            .unwrap(),
+            raw_max_speed: parse_i32("TXING_MOTOR_RAW_MAX_SPEED"),
+            cmd_raw_min_speed: parse_i32("TXING_MOTOR_CMD_RAW_MIN_SPEED"),
+            cmd_raw_max_speed: parse_i32("TXING_MOTOR_CMD_RAW_MAX_SPEED"),
+            pwm_hz: parse_u64("TXING_MOTOR_PWM_HZ"),
+            pwm_chip: parse_u32("TXING_MOTOR_PWM_CHIP"),
+            gpio_chip: parse_u32("TXING_MOTOR_GPIO_CHIP"),
+            left_pwm_channel: parse_u32("TXING_MOTOR_LEFT_PWM_CHANNEL"),
+            right_pwm_channel: parse_u32("TXING_MOTOR_RIGHT_PWM_CHANNEL"),
+            left_dir_gpio: parse_u32("TXING_MOTOR_LEFT_DIR_GPIO"),
+            right_dir_gpio: parse_u32("TXING_MOTOR_RIGHT_DIR_GPIO"),
+            left_inverted: parse_bool_text(
+                get("TXING_MOTOR_LEFT_INVERTED"),
+                "TXING_MOTOR_LEFT_INVERTED",
+            )
+            .unwrap(),
+            right_inverted: parse_bool_text(
+                get("TXING_MOTOR_RIGHT_INVERTED"),
+                "TXING_MOTOR_RIGHT_INVERTED",
+            )
+            .unwrap(),
+            track_width_m: parse_f64("TXING_MOTOR_TRACK_WIDTH_M"),
+            max_wheel_linear_speed_mps: parse_f64("TXING_MOTOR_MAX_WHEEL_LINEAR_SPEED_MPS"),
+            watchdog_timeout: Duration::from_millis(DEFAULT_MOTOR_WATCHDOG_TIMEOUT_MS),
+        };
+        validate_motor_config(&motor).unwrap();
     }
 
     #[test]

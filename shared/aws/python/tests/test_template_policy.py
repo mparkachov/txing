@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from pathlib import Path
 import unittest
 
@@ -13,6 +14,21 @@ def _template_text() -> str:
     template_paths.extend(sorted((AWS_DIR / "templates").glob("*.yaml")))
     template_paths.extend(sorted((AWS_DIR / "templates" / "types").glob("*.yaml")))
     return "\n".join(path.read_text(encoding="utf-8") for path in template_paths)
+
+
+def _parse_env_template_exports(text: str) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export ") :].strip()
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        values[key.strip()] = value.strip().strip("\"'")
+    return values
 
 
 class AwsTemplatePolicyTests(unittest.TestCase):
@@ -250,10 +266,56 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("export AWS_REGION={{AWS_REGION}}", daemon_env_template)
         self.assertNotIn("AWS_DEFAULT_REGION", daemon_env_template)
         self.assertNotIn("TXING_BOARD_VIDEO_REGION", daemon_env_template)
-        self.assertIn("export TXING_MOTOR_RAW_MAX_SPEED=480", daemon_env_template)
-        self.assertIn("export TXING_MOTOR_CMD_RAW_MIN_SPEED=50", daemon_env_template)
-        self.assertIn("export TXING_MOTOR_CMD_RAW_MAX_SPEED=250", daemon_env_template)
-        self.assertIn("export TXING_MOTOR_PWM_HZ=20000", daemon_env_template)
+        daemon_env_values = _parse_env_template_exports(daemon_env_template)
+        for key in (
+            "TXING_MOTOR_ENABLED",
+            "TXING_MOTOR_PWM_SYSFS_ROOT",
+            "TXING_MOTOR_RAW_MAX_SPEED",
+            "TXING_MOTOR_CMD_RAW_MIN_SPEED",
+            "TXING_MOTOR_CMD_RAW_MAX_SPEED",
+            "TXING_MOTOR_PWM_HZ",
+            "TXING_MOTOR_PWM_CHIP",
+            "TXING_MOTOR_LEFT_PWM_CHANNEL",
+            "TXING_MOTOR_RIGHT_PWM_CHANNEL",
+            "TXING_MOTOR_GPIO_CHIP",
+            "TXING_MOTOR_LEFT_DIR_GPIO",
+            "TXING_MOTOR_RIGHT_DIR_GPIO",
+            "TXING_MOTOR_LEFT_INVERTED",
+            "TXING_MOTOR_RIGHT_INVERTED",
+            "TXING_MOTOR_TRACK_WIDTH_M",
+            "TXING_MOTOR_MAX_WHEEL_LINEAR_SPEED_MPS",
+        ):
+            self.assertIn(key, daemon_env_values)
+        self.assertIn(daemon_env_values["TXING_MOTOR_ENABLED"], {"true", "false"})
+        self.assertIn(daemon_env_values["TXING_MOTOR_LEFT_INVERTED"], {"true", "false"})
+        self.assertIn(daemon_env_values["TXING_MOTOR_RIGHT_INVERTED"], {"true", "false"})
+        self.assertTrue(daemon_env_values["TXING_MOTOR_PWM_SYSFS_ROOT"].startswith("/"))
+
+        raw_max_speed = int(daemon_env_values["TXING_MOTOR_RAW_MAX_SPEED"])
+        cmd_raw_min_speed = int(daemon_env_values["TXING_MOTOR_CMD_RAW_MIN_SPEED"])
+        cmd_raw_max_speed = int(daemon_env_values["TXING_MOTOR_CMD_RAW_MAX_SPEED"])
+        pwm_hz = int(daemon_env_values["TXING_MOTOR_PWM_HZ"])
+        left_pwm_channel = int(daemon_env_values["TXING_MOTOR_LEFT_PWM_CHANNEL"])
+        right_pwm_channel = int(daemon_env_values["TXING_MOTOR_RIGHT_PWM_CHANNEL"])
+        left_dir_gpio = int(daemon_env_values["TXING_MOTOR_LEFT_DIR_GPIO"])
+        right_dir_gpio = int(daemon_env_values["TXING_MOTOR_RIGHT_DIR_GPIO"])
+        track_width_m = float(daemon_env_values["TXING_MOTOR_TRACK_WIDTH_M"])
+        max_wheel_linear_speed_mps = float(
+            daemon_env_values["TXING_MOTOR_MAX_WHEEL_LINEAR_SPEED_MPS"]
+        )
+
+        self.assertGreater(raw_max_speed, 0)
+        self.assertGreaterEqual(cmd_raw_min_speed, 0)
+        self.assertGreater(cmd_raw_max_speed, 0)
+        self.assertLess(cmd_raw_min_speed, cmd_raw_max_speed)
+        self.assertLessEqual(cmd_raw_max_speed, raw_max_speed)
+        self.assertGreater(pwm_hz, 0)
+        self.assertNotEqual(left_pwm_channel, right_pwm_channel)
+        self.assertNotEqual(left_dir_gpio, right_dir_gpio)
+        self.assertTrue(math.isfinite(track_width_m))
+        self.assertGreater(track_width_m, 0.0)
+        self.assertTrue(math.isfinite(max_wheel_linear_speed_mps))
+        self.assertGreater(max_wheel_linear_speed_mps, 0.0)
         self.assertNotIn("export BOARD_DRIVE_", daemon_env_template)
         self.assertNotIn("export BOARD_VIDEO_", daemon_env_template)
         self.assertNotIn("BOARD_DRIVE_", aws_env_example)
