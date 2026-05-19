@@ -195,8 +195,8 @@ Expected:
 - `txing-board-kvs-master` lives under
   `~/.local/share/mise/installs/txing-board-kvs-master/<version>/`;
 - the daemon log includes `version=<stable-version>`, connects to MQTT,
-  publishes retained `board` and MQTT-only `mcp` state, and starts the native
-  KVS master when the device declares the `video` capability.
+  publishes retained `board` state and a dynamic `mcp` descriptor, and starts
+  the native KVS master when the device declares the `video` capability.
 
 ### 6. Configure Runtime Options
 
@@ -236,7 +236,7 @@ journalctl -u txing-unit-daemon.service -n 160 --no-pager
 Expected:
 
 - the daemon resolves both release-installed commands through mise;
-- the daemon publishes retained `board`, MQTT-only `mcp`, and `video`
+- the daemon publishes retained `board`, dynamic `mcp`, and `video`
   descriptor/status state;
 - the `video` named shadow mirrors the retained video state;
 - REDCON can reach `1` after rig projection sees board, MCP, and video ready.
@@ -343,7 +343,7 @@ Expected stable daemon behavior after reboot:
 - root filesystem is read-only;
 - `txing-unit-daemon.service` starts without a source checkout;
 - daemon log includes `version=<stable-version>`;
-- MQTT connects and retained `board`, MQTT-only `mcp`, and `video` state is
+- MQTT connects and retained `board`, dynamic `mcp`, and `video` state is
   published;
 - the KVS master child reaches `TXING_KVS_READY` when camera and signaling are
   available.

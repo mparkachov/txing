@@ -10,7 +10,9 @@
 - Current stable implementation: `txing-unit-daemon` supervises the native
   `txing-board-kvs-master`, publishes retained video service topics, `rig`
   consumes them for REDCON readiness, and the browser uses AWS KVS signaling +
-  WebRTC for the viewer path
+  WebRTC for the viewer path. When video is ready, MCP control uses the
+  `txing.mcp.v1` data channel on the same media peer connection; MQTT MCP is
+  the REDCON `2` fallback when video is unavailable/not ready.
 
 Explicit non-goals for this slice:
 
@@ -54,6 +56,7 @@ operator client
   -> connects as viewer through the KVS WebRTC signaling channel
   -> receives the live path negotiated by AWS signaling / ICE
   -> sends directional commands through board MCP using strict ROS `geometry_msgs/Twist`
+     over the media WebRTC data channel at REDCON 1, or MQTT MCP at REDCON 2
 ```
 
 ## Retained MQTT Contract

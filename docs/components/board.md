@@ -61,14 +61,17 @@ Current MCP transport:
 
 - retained descriptor topic: `txings/<device_id>/mcp/descriptor`
 - retained status topic: `txings/<device_id>/mcp/status`
-- current stable transport: MQTT JSON-RPC
-- deferred transport: WebRTC data channel on the board video KVS session with label `txing.mcp.v1`
+- REDCON `1` transport: WebRTC data channel on the board video KVS session
+  with label `txing.mcp.v1`
+- REDCON `2` fallback transport: MQTT JSON-RPC
+- MQTT MCP requests are rejected while the daemon advertises WebRTC-only MCP
 
 Current tool surface:
 
-- `control.acquire_lease`
-- `control.renew_lease`
-- `control.release_lease`
+- `control.get_state`
+- `control.activate`
+- `control.renew_active`
+- `control.release_active`
 - `cmd_vel.publish`
 - `cmd_vel.stop`
 - `robot.get_state`
@@ -104,7 +107,8 @@ On deployed boards the stable runtime is root-owned and uses
 `/root/.config/txing/unit-daemon`. Its `daemon.env` file is sourceable and the IoT
 certificate files live beside it. In the current implementation, the daemon
 publishes the `board`, `mcp`, and `video` runtime surfaces for web/Sparkplug
-visibility while keeping MCP MQTT-only.
+visibility. MCP is WebRTC data-channel only at REDCON `1` and MQTT-only at
+REDCON `2`.
 
 Provision daemon config and certs only when AWS resource changes are intended:
 

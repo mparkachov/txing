@@ -25,8 +25,10 @@ The video route is derived from the selected route and web origin. It is not sto
 - route breadcrumbs and first-load metadata: AWS IoT HTTPS APIs
 - live shadow updates: named Thing Shadow over MQTT/WSS
 - lifecycle commands: Sparkplug `DCMD.redcon` over MQTT/WSS
-- board control: MCP over MQTT/WSS; WebRTC data-channel preference is deferred
-  until a future descriptor advertises it
+- board control at REDCON `1`: MCP over the `txing.mcp.v1` WebRTC data channel
+  on the board video KVS session
+- board control at REDCON `2`: MCP over MQTT/WSS when the daemon advertises
+  MQTT-only MCP because video is unavailable/not ready
 - board video: AWS KVS WebRTC
 
 The app expects `capabilities` to include `sparkplug` and uses it to decide which named shadows should exist for a selected thing.

@@ -7,6 +7,8 @@ import {
   reduceViewerUiState,
 } from '../src/video-session'
 import {
+  buildKinesisVideoClientConfig,
+  buildKinesisVideoSignalingClientConfig,
   clearKvsSignalingMetadataCacheForTests,
   resolveCachedKvsSignalingMetadata,
   type KvsSignalingMetadata,
@@ -48,6 +50,26 @@ describe('video session helpers', () => {
       username: 'user',
       credential: 'pass',
     })
+  })
+
+  test('uses dualstack for KVS control plane without combining it with custom signaling endpoints', () => {
+    const credentials = async () => ({
+      accessKeyId: 'access',
+      secretAccessKey: 'secret',
+    })
+    const controlPlaneConfig = buildKinesisVideoClientConfig({
+      region: 'eu-central-1',
+      credentials,
+    }) as Record<string, unknown>
+    const signalingConfig = buildKinesisVideoSignalingClientConfig({
+      region: 'eu-central-1',
+      endpoint: 'https://data.kinesisvideo.eu-central-1.amazonaws.com',
+      credentials,
+    }) as Record<string, unknown>
+
+    expect(controlPlaneConfig.useDualstackEndpoint).toBe(true)
+    expect(signalingConfig.endpoint).toBe('https://data.kinesisvideo.eu-central-1.amazonaws.com')
+    expect('useDualstackEndpoint' in signalingConfig).toBe(false)
   })
 
   test('reduces viewer ui state through connection and error transitions', () => {

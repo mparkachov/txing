@@ -77,6 +77,10 @@ type KvsSignalingMetadataFailureEntry = {
   error: Error
   retryAtMs: number
 }
+type KinesisVideoClientConfig = NonNullable<ConstructorParameters<typeof KinesisVideoClient>[0]>
+type KinesisVideoSignalingClientConfig = NonNullable<
+  ConstructorParameters<typeof KinesisVideoSignalingClient>[0]
+>
 
 const kvsSignalingMetadataCacheTtlMs = 5 * 60_000
 const kvsSignalingMetadataFailureCooldownMs = 60_000
@@ -162,6 +166,32 @@ const getKvsSignalingMetadataCacheKey = (region: string, channelName: string): s
 
 const toError = (error: unknown, fallback: string): Error =>
   error instanceof Error ? error : new Error(fallback)
+
+export const buildKinesisVideoClientConfig = ({
+  credentials,
+  region,
+}: {
+  credentials: ReturnType<typeof createCredentialProvider>
+  region: string
+}): KinesisVideoClientConfig => ({
+  region,
+  credentials,
+  useDualstackEndpoint: true,
+})
+
+export const buildKinesisVideoSignalingClientConfig = ({
+  credentials,
+  endpoint,
+  region,
+}: {
+  credentials: ReturnType<typeof createCredentialProvider>
+  endpoint: string
+  region: string
+}): KinesisVideoSignalingClientConfig => ({
+  region,
+  endpoint,
+  credentials,
+})
 
 export const clearKvsSignalingMetadataCacheForTests = (): void => {
   kvsSignalingMetadataCache.clear()
@@ -321,22 +351,20 @@ const createSharedBoardRtcSession = async (
   const idToken = await options.resolveIdToken()
   const credentialProvider = createCredentialProvider(idToken)
   const credentials = await credentialProvider()
-  const kinesisVideoClient = new KinesisVideoClient({
+  const kinesisVideoClient = new KinesisVideoClient(buildKinesisVideoClientConfig({
     region: options.region,
     credentials: credentialProvider,
-    useDualstackEndpoint: true,
-  })
+  }))
   const { channelArn, endpoints } = await resolveKvsSignalingMetadata({
     channelName: options.channelName,
     region: options.region,
     kinesisVideoClient,
   })
-  const signalingApiClient = new KinesisVideoSignalingClient({
+  const signalingApiClient = new KinesisVideoSignalingClient(buildKinesisVideoSignalingClientConfig({
     region: options.region,
     endpoint: endpoints.HTTPS,
     credentials: credentialProvider,
-    useDualstackEndpoint: true,
-  })
+  }))
   const clientId = crypto.randomUUID()
   const iceConfigResponse = await signalingApiClient.send(
     new GetIceServerConfigCommand({
