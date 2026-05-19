@@ -98,6 +98,10 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("URIs: https://archive.raspberrypi.com/debian/", workflow)
         self.assertIn("Trusted: yes", workflow)
         self.assertIn("apt-cache policy libcamera-dev libcamera0.7", workflow)
+        self.assertIn(
+            'git config --global --add safe.directory "$PWD/modules/awslabs/amazon-kinesis-video-streams-webrtc-sdk-c"',
+            workflow,
+        )
         self.assertIn('grep -F "libcamera.so.0.7"', workflow)
         self.assertIn('grep -F "libcamera-base.so.0.7"', workflow)
         self.assertIn('kvs_master_build_binary="devices/unit/board/kvs_master/build/$KVS_MASTER_BINARY"', workflow)
@@ -161,6 +165,10 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("URIs: https://archive.raspberrypi.com/debian/", workflow)
         self.assertIn("Trusted: yes", workflow)
         self.assertIn("apt-cache policy libcamera-dev libcamera0.7", workflow)
+        self.assertIn(
+            'git config --global --add safe.directory "$PWD/modules/awslabs/amazon-kinesis-video-streams-webrtc-sdk-c"',
+            workflow,
+        )
         self.assertIn('grep -F "libcamera.so.0.7"', workflow)
         self.assertIn('grep -F "libcamera-base.so.0.7"', workflow)
         self.assertIn('kvs_master_build_binary="devices/unit/board/kvs_master/build/$KVS_MASTER_BINARY"', workflow)

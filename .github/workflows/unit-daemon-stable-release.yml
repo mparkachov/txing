@@ -249,6 +249,7 @@ jobs:
           export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"
           mise use --global --yes just@latest
           git config --global --add safe.directory "$PWD"
+          git config --global --add safe.directory "$PWD/modules/awslabs/amazon-kinesis-video-streams-webrtc-sdk-c"
           just unit::board::submodules
           just unit::board::build-native
           ldd devices/unit/board/kvs_master/build/txing-board-kvs-master
