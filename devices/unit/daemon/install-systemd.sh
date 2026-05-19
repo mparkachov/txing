@@ -100,10 +100,15 @@ daemon_asset_pattern="txing-unit-daemon-linux-aarch64.tar.gz"
 kvs_master_asset_pattern="txing-board-kvs-master-linux-aarch64.tar.gz"
 stable_install_root="$root_home/.local/share/mise/installs/txing-unit-daemon"
 kvs_master_stable_install_root="$root_home/.local/share/mise/installs/txing-board-kvs-master"
+feature_trusted_config_paths="$mise_config_root:$mise_config_dir"
+daemon_binary=""
+kvs_master_binary=""
 var_tmp_probe=""
 
 run_root_mise() {
-  env "HOME=$root_home" "$mise_bin" "$@"
+  env "HOME=$root_home" \
+    "MISE_TRUSTED_CONFIG_PATHS=$mise_config_root" \
+    "$mise_bin" "$@"
 }
 
 run_feature_mise() {
@@ -113,6 +118,7 @@ run_feature_mise() {
     "MISE_CACHE_DIR=$tmp_root/mise-cache" \
     "MISE_TMP_DIR=$tmp_root/mise-tmp" \
     "MISE_SHARED_INSTALL_DIRS=$root_home/.local/share/mise/installs" \
+    "MISE_TRUSTED_CONFIG_PATHS=$feature_trusted_config_paths" \
     "MISE_PRERELEASES=1" \
     "$mise_bin" "$@"
 }
@@ -192,14 +198,18 @@ if [ "$channel" = "stable" ]; then
   rm -rf "$tmp_root"
   run_root_mise cache clear >/dev/null 2>&1 || true
   run_root_mise install
+  daemon_binary="$(run_root_mise which txing-unit-daemon)"
+  kvs_master_binary="$(run_root_mise which txing-board-kvs-master)"
 else
   install -m 600 "$config_tmp" "$mise_config_file"
   install -d -m 700 "$tmp_root/mise" "$tmp_root/mise-cache" "$tmp_root/mise-tmp"
   run_feature_mise cache clear >/dev/null 2>&1 || true
   run_feature_mise install
-  run_feature_mise which txing-unit-daemon >/dev/null
-  run_feature_mise which txing-board-kvs-master >/dev/null
+  daemon_binary="$(run_feature_mise which txing-unit-daemon)"
+  kvs_master_binary="$(run_feature_mise which txing-board-kvs-master)"
 fi
+[ -x "$daemon_binary" ] || fail "resolved daemon binary is not executable: $daemon_binary"
+[ -x "$kvs_master_binary" ] || fail "resolved KVS master binary is not executable: $kvs_master_binary"
 
 {
   cat <<EOF
@@ -221,27 +231,13 @@ RestartSec=5
 
 Environment=TXING_DAEMON_CONFIG_DIR=$daemon_config_dir
 Environment=HOME=$root_home
-Environment=TXING_KVS_MASTER_COMMAND=txing-board-kvs-master
+Environment=TXING_KVS_MASTER_COMMAND=$kvs_master_binary
 EOF
-  if [ "$channel" = "feature" ]; then
-    cat <<EOF
-Environment=MISE_CONFIG_DIR=$mise_config_dir
-Environment=MISE_DATA_DIR=$tmp_root/mise
-Environment=MISE_CACHE_DIR=$tmp_root/mise-cache
-Environment=MISE_TMP_DIR=$tmp_root/mise-tmp
-Environment=MISE_SHARED_INSTALL_DIRS=$root_home/.local/share/mise/installs
-EOF
-    printf 'Environment=MISE_PRERELEASES=1\n'
-    cat <<EOF
-
-ExecStartPre=/usr/bin/install -d -m 700 $tmp_root/mise $tmp_root/mise-cache $tmp_root/mise-tmp
-ExecStartPre=/usr/bin/env MISE_OFFLINE=1 $mise_bin which txing-unit-daemon
-ExecStartPre=/usr/bin/env MISE_OFFLINE=1 $mise_bin which txing-board-kvs-master
-ExecStartPre=-/usr/bin/find $tmp_root/mise-cache $tmp_root/mise-tmp -mindepth 1 -maxdepth 1 -exec rm -rf {} +
-EOF
-  fi
   cat <<EOF
-ExecStart=/usr/bin/env MISE_OFFLINE=1 $mise_bin exec -- txing-unit-daemon
+ExecStartPre=/usr/bin/test -x $daemon_binary
+ExecStartPre=/usr/bin/test -x $kvs_master_binary
+ExecStartPre=$daemon_binary --version
+ExecStart=$daemon_binary
 
 [Install]
 WantedBy=multi-user.target
@@ -272,6 +268,10 @@ else
 fi
 printf '  systemd unit: %s\n' "$service_file"
 printf '  mise binary: %s\n' "$mise_bin"
+printf '  daemon binary: %s\n' "$daemon_binary"
+printf '  KVS master binary: %s\n' "$kvs_master_binary"
+printf '  daemon version: '
+"$daemon_binary" --version
 if [ "$channel" = "stable" ]; then
   printf '  stable install root: %s\n' "$stable_install_root"
   printf '  KVS master stable install root: %s\n' "$kvs_master_stable_install_root"

@@ -864,7 +864,8 @@ fn json_escape(value: &str) -> String {
 }
 
 #[derive(Debug, Parser)]
-#[command(name = "daemon")]
+#[command(name = "txing-unit-daemon")]
+#[command(version = DAEMON_VERSION)]
 #[command(about = "Unit board daemon")]
 pub struct Cli {
     #[arg(long = "env-file")]
@@ -4663,6 +4664,15 @@ mod tests {
             timestamp_ms,
             message: message.to_string(),
         }
+    }
+
+    #[test]
+    fn cli_reports_daemon_build_version() {
+        use clap::CommandFactory;
+
+        let command = Cli::command();
+        assert_eq!(command.get_name(), "txing-unit-daemon");
+        assert_eq!(command.get_version(), Some(DAEMON_VERSION));
     }
 
     #[test]

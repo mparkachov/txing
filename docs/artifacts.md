@@ -143,12 +143,15 @@ The installed service is the same for both channels:
 
 The service waits for network-online and clock synchronization before start,
 runs as root for direct PWM/GPIO access, sends `SIGINT` on stop, and starts the
-daemon through root-owned mise:
+exact daemon binary resolved by the installer. The KVS master is also resolved
+to an exact installed path so stable and feature channels are visible in the
+unit file and journal:
 
 ```ini
 Environment=HOME=/root
-Environment=TXING_KVS_MASTER_COMMAND=txing-board-kvs-master
-ExecStart=/usr/bin/env MISE_OFFLINE=1 /root/.local/bin/mise exec -- txing-unit-daemon
+Environment=TXING_KVS_MASTER_COMMAND=/root/.local/share/mise/installs/txing-board-kvs-master/<version>/txing-board-kvs-master
+ExecStartPre=/root/.local/share/mise/installs/txing-unit-daemon/<version>/txing-unit-daemon --version
+ExecStart=/root/.local/share/mise/installs/txing-unit-daemon/<version>/txing-unit-daemon
 ```
 
 ## Publishing
@@ -411,12 +414,13 @@ bash /tmp/txing-install-systemd.sh feature
 ```
 
 The feature installer installs the current feature prerelease into `/var/tmp`.
-After that, the systemd service starts offline and only verifies that both mise
-commands resolve before launching the daemon. This prevents a daemon crash loop
-from repeatedly calling the GitHub Releases API. To pick up a newer feature
+After that, the systemd service starts offline from the exact installed binary
+paths and prints the daemon `--version` during start. This prevents a daemon
+crash loop from repeatedly calling the GitHub Releases API and makes it clear
+whether the unit is running stable or feature. To pick up a newer feature
 prerelease, rerun the feature installer.
 
-Verify the feature service resolves both commands:
+Verify the feature installer resolves both commands:
 
 ```bash
 env HOME=/root MISE_CONFIG_DIR=/root/.config/mise/txing-unit-daemon \
@@ -455,7 +459,7 @@ before executing it:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/devices/unit/daemon/install-systemd.sh \
-  | grep -n 'MISE_SHARED_INSTALL_DIRS\|MISE_OFFLINE=1.*mise which\|conf.d'
+  | grep -n 'daemon_binary=\|ExecStartPre=.*--version\|conf.d'
 ```
 
 Use a commit-pinned raw URL if the board still sees an older script.
