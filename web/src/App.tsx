@@ -147,10 +147,14 @@ const robotStatePollIntervalMs = 5_000
 const routeSparkplugPollIntervalMs = 2_000
 const catalogSparkplugPollIntervalMs = 5_000
 const routeSparkplugRedconCommandTimeoutMs = 60_000
+const sparkplugRedconCommandSeqModulo = 2_147_000_000
 const txingLogoUrl = 'https://txing.dev/txing-logo.png'
 const appHomePath = '/'
 const signInRequestParam = 'signin'
 let shadowApiModulePromise: Promise<typeof import('./shadow-api')> | null = null
+
+const createSparkplugRedconCommandSeq = (salt: number): number =>
+  (Date.now() + salt) % sparkplugRedconCommandSeqModulo
 
 const emptyRigCatalogState = (): RigCatalogState => ({
   status: 'idle',
@@ -260,6 +264,7 @@ function App({ initialAuthError = '' }: AppProps) {
   const [isLoadingShadow, setIsLoadingShadow] = useState(false)
   const [isUpdatingShadow, setIsUpdatingShadow] = useState(false)
   const [isDebugEnabled, setIsDebugEnabled] = useState(false)
+  const [isTakingMcpControl, setIsTakingMcpControl] = useState(false)
   const [isTownPanelOpen, setIsTownPanelOpen] = useState(false)
   const [isRigPanelOpen, setIsRigPanelOpen] = useState(false)
   const [isBotPanelOpen, setIsBotPanelOpen] = useState(false)
@@ -455,10 +460,7 @@ function App({ initialAuthError = '' }: AppProps) {
   const isRedconCommandPending =
     pendingTargetRedcon !== null &&
     !isSparkplugDeviceUnavailable &&
-    (reportedRedcon === null ||
-      (pendingTargetRedcon === 4
-        ? reportedRedcon !== 4
-        : reportedRedcon > pendingTargetRedcon))
+    (pendingTargetRedcon === 4 ? reportedRedcon !== 4 : true)
   const isRedconCommandDisabled =
     !isSparkplugDeviceCommandAvailable || isUpdatingShadow || isRedconCommandPending
   const isRedconSleepCommandDisabled =
@@ -467,6 +469,11 @@ function App({ initialAuthError = '' }: AppProps) {
   const canUseDriveControl = currentDeviceAdapter?.canUseDriveControl(reportedRedcon) ?? false
   const isDriveControlActive =
     route.kind === 'device' && isBotPanelOpen && canUseDriveControl && isShadowConnected
+  const activeControlOwnerSessionId = robotState?.control.activeOwnerSessionId ?? null
+  const isDriveControlOwnedByOther =
+    activeControlOwnerSessionId !== null &&
+    robotState?.control.activeHeldByCaller === false
+  const isDriveInputEnabled = isDriveControlActive && !isDriveControlOwnedByOther
   const cmdVelRepeatIntervalMs = getMcpSteadyMotionHeartbeatIntervalMs(
     robotState?.control.activeTtlMs ?? defaultMcpActiveTtlMs,
   )
@@ -646,21 +653,10 @@ function App({ initialAuthError = '' }: AppProps) {
             return
           }
         }
-        if (
-          hasReachedTargetRedcon({
-            targetRedcon,
-            reportedRedcon: extractReportedRedcon(nextShadow),
-          })
-        ) {
-          if (redconCommandSequenceRef.current === commandSequence) {
-            setPendingTargetRedcon(null)
-          }
-          return
-        }
         const commandStatus = extractSparkplugRedconCommandStatus(nextShadow)
         if (
           commandStatus?.status === 'failed' &&
-          commandStatus.seq === commandSequence - 1 &&
+          commandStatus.seq === commandSequence &&
           commandStatus.targetRedcon === targetRedcon
         ) {
           if (redconCommandSequenceRef.current === commandSequence) {
@@ -671,6 +667,21 @@ function App({ initialAuthError = '' }: AppProps) {
               }`,
               'sparkplug-redcon-convergence',
             )
+          }
+          return
+        }
+        if (
+          hasReachedTargetRedcon({
+            targetRedcon,
+            reportedRedcon: extractReportedRedcon(nextShadow),
+          }) &&
+          (targetRedcon === 4 ||
+            (commandStatus?.status === 'succeeded' &&
+              commandStatus.seq === commandSequence &&
+              commandStatus.targetRedcon === targetRedcon))
+        ) {
+          if (redconCommandSequenceRef.current === commandSequence) {
+            setPendingTargetRedcon(null)
           }
           return
         }
@@ -1322,6 +1333,7 @@ function App({ initialAuthError = '' }: AppProps) {
       setRobotState(null)
       setIsBotPanelOpen(false)
       setIsBoardVideoExpanded(false)
+      setIsTakingMcpControl(false)
       lastBoardVideoErrorRef.current = null
       hasObservedBoardVideoLastErrorRef.current = false
       return
@@ -1336,6 +1348,7 @@ function App({ initialAuthError = '' }: AppProps) {
     setPendingTargetRedcon(null)
     setRobotState(null)
     setMcpTransport(null)
+    setIsTakingMcpControl(false)
     setLastShadowUpdateAtMs(null)
     setIsLoadingShadow(true)
     setIsUpdatingShadow(false)
@@ -1460,6 +1473,24 @@ function App({ initialAuthError = '' }: AppProps) {
     [isShadowConnected],
   )
 
+  const takeMcpControl = useEffectEvent(async (): Promise<void> => {
+    const shadowSession = shadowSessionRef.current
+    if (!shadowSession || !shadowSession.isConnected()) {
+      return
+    }
+    setIsTakingMcpControl(true)
+    try {
+      await shadowSession.takeMcpControl()
+    } catch (caughtError) {
+      enqueueRuntimeError(
+        caughtError instanceof Error ? caughtError.message : 'Unable to take active control',
+        'board-take-control',
+      )
+    } finally {
+      setIsTakingMcpControl(false)
+    }
+  })
+
   useEffect(() => {
     const nextBoardVideoLastError = normalizeRuntimeMessage(robotVideoLastError)
     const nextNotificationMessage = getNextBoardVideoLastErrorNotification(
@@ -1560,7 +1591,7 @@ function App({ initialAuthError = '' }: AppProps) {
   ])
 
   useEffect(() => {
-    if (!isDriveControlActive) {
+    if (!isDriveInputEnabled) {
       return
     }
 
@@ -1614,7 +1645,7 @@ function App({ initialAuthError = '' }: AppProps) {
       document.removeEventListener('visibilitychange', handleVisibilityChange)
       teleopController.deactivate()
     }
-  }, [cmdVelRepeatIntervalMs, isDriveControlActive])
+  }, [cmdVelRepeatIntervalMs, isDriveInputEnabled])
 
   const loadShadow = async (): Promise<void> => {
     setIsLoadingShadow(true)
@@ -1639,19 +1670,21 @@ function App({ initialAuthError = '' }: AppProps) {
       return false
     }
 
-    const commandSequence = redconCommandSequenceRef.current + 1
+    const commandSequence = createSparkplugRedconCommandSeq(
+      redconCommandSequenceRef.current + 1,
+    )
     redconCommandSequenceRef.current = commandSequence
     setIsUpdatingShadow(true)
+    setPendingTargetRedcon(redcon)
 
     try {
       await publishDirectSparkplugRedconCommand(
         resolveSessionIdToken,
         commandTarget,
         redcon,
-        commandSequence - 1,
+        commandSequence,
       )
       if (redconCommandSequenceRef.current === commandSequence) {
-        setPendingTargetRedcon(redcon)
         appendSessionLogEntry({
           tone: 'neutral',
           message: `Sparkplug DCMD.redcon -> ${redcon}`,
@@ -1663,6 +1696,7 @@ function App({ initialAuthError = '' }: AppProps) {
       return true
     } catch (caughtError) {
       if (redconCommandSequenceRef.current === commandSequence) {
+        setPendingTargetRedcon(null)
         enqueueRuntimeError(
           caughtError instanceof Error ? caughtError.message : 'Unable to publish Sparkplug command',
           'sparkplug-redcon',
@@ -2138,11 +2172,16 @@ function App({ initialAuthError = '' }: AppProps) {
         callMcpTool: callDeviceMcpTool,
         isBoardVideoExpanded,
         isDebugEnabled,
+        isTakeControlPending: isTakingMcpControl,
         isShadowConnected,
         mcpTransport,
+        onTakeControl: () => {
+          void takeMcpControl()
+        },
         onToggleDebug: () => {
           setIsDebugEnabled((currentValue) => !currentValue)
         },
+        robotControl: robotState?.control ?? null,
         reportedBatteryMv: primaryReportedBatteryMv,
         reportedBoardLeftTrackSpeed,
         reportedBoardOnline,

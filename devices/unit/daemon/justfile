@@ -5,6 +5,7 @@ daemon_dir := source_directory()
 project_root := canonicalize(daemon_dir + "/../../..")
 root_justfile := project_root + "/justfile"
 aws_lib := project_root + "/shared/aws/scripts/aws_lib.sh"
+daemon_env_template := daemon_dir + "/daemon.env.template"
 
 region := ""
 profile := ""
@@ -24,7 +25,7 @@ cert thing_id='' region=region profile=profile config_dir=config_dir:
     set -euo pipefail
     requested_thing_name="{{thing_id}}"
     if [[ "$requested_thing_name" == *=* ]]; then
-      echo "Do not pass just recipe arguments as name=value. Use: just unit::daemon::cert <thing-id>" >&2
+      echo "Do not pass just recipe arguments as name=value. Use: just unit::cert <thing-id>" >&2
       exit 2
     fi
     requested_config_dir="{{config_dir}}"
@@ -40,7 +41,7 @@ cert thing_id='' region=region profile=profile config_dir=config_dir:
     txing_aws_init
     effective_thing_name="${requested_thing_name:-$THING_NAME}"
     if [[ "$effective_thing_name" == *=* ]]; then
-      echo "Invalid Thing ID '$effective_thing_name'. Use positional just arguments, for example: just unit::daemon::cert unit-bl95f2" >&2
+      echo "Invalid Thing ID '$effective_thing_name'. Use positional just arguments, for example: just unit::cert unit-bl95f2" >&2
       exit 2
     fi
     if [[ ! "$effective_thing_name" =~ ^[a-zA-Z0-9:_-]+$ ]]; then
@@ -66,31 +67,42 @@ cert thing_id='' region=region profile=profile config_dir=config_dir:
       exit 1
     fi
     cloudwatch_log_group="txing/${TXING_TOWN_ID}/${TXING_RIG_ID}/${effective_thing_name}"
-    video_region="${TXING_BOARD_VIDEO_REGION:-${BOARD_VIDEO_REGION:-$AWS_REGION}}"
+    video_channel_name="${TXING_BOARD_VIDEO_CHANNEL_NAME:-${effective_thing_name}-board-video}"
     iot_data_endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}" --query endpointAddress --output text)"
     iot_credential_endpoint="$(aws iot describe-endpoint --endpoint-type iot:CredentialProvider "${aws_flags[@]}" --query endpointAddress --output text)"
+    default_output_root() {
+      printf '%s\n' "{{project_root}}/config/certs/unit/$effective_thing_name"
+    }
     default_config_dir() {
       if [ -n "${TXING_DAEMON_CONFIG_DIR:-}" ]; then
         printf '%s\n' "$TXING_DAEMON_CONFIG_DIR"
-      elif [ -n "${XDG_CONFIG_HOME:-}" ]; then
-        printf '%s\n' "$XDG_CONFIG_HOME/txing/unit-daemon"
-      elif [ -n "${HOME:-}" ]; then
-        printf '%s\n' "$HOME/.config/txing/unit-daemon"
       else
-        echo "HOME is not set; pass an explicit config directory as a positional argument." >&2
-        exit 1
+        printf '%s\n' "$(default_output_root)/unit-daemon"
       fi
     }
     daemon_config_dir="${requested_config_dir:-$(default_config_dir)}"
-    env_file="$daemon_config_dir/.env"
+    if [ -n "$requested_config_dir" ]; then
+      output_root="$(dirname "$daemon_config_dir")"
+      tarball_path="$output_root/${effective_thing_name}-daemon-config.tgz"
+    elif [ -n "${TXING_DAEMON_CONFIG_DIR:-}" ]; then
+      output_root="$(dirname "$daemon_config_dir")"
+      tarball_path="$output_root/${effective_thing_name}-daemon-config.tgz"
+    else
+      output_root="$(default_output_root)"
+      tarball_path="{{project_root}}/config/certs/unit/${effective_thing_name}-daemon-config.tgz"
+    fi
+    env_file="$daemon_config_dir/daemon.env"
     cert_path="$daemon_config_dir/certificate.pem.crt"
     public_key_path="$daemon_config_dir/public.pem.key"
     private_key_path="$daemon_config_dir/private.pem.key"
     cert_arn_path="$daemon_config_dir/certificate.arn"
     root_ca_path="$daemon_config_dir/AmazonRootCA1.pem"
+    daemon_env_template="{{daemon_env_template}}"
+    [ -r "$daemon_env_template" ] || { echo "Missing daemon env template: $daemon_env_template" >&2; exit 1; }
     install -d -m 700 "$daemon_config_dir"
-    if [ -e "$env_file" ] || [ -e "$cert_path" ] || [ -e "$public_key_path" ] || [ -e "$private_key_path" ] || [ -e "$cert_arn_path" ]; then
+    if [ -e "$env_file" ] || [ -e "$cert_path" ] || [ -e "$public_key_path" ] || [ -e "$private_key_path" ] || [ -e "$cert_arn_path" ] || [ -e "$tarball_path" ]; then
       echo "Daemon certificate or env material already exists under $daemon_config_dir." >&2
+      echo "Daemon config tarball path: $tarball_path" >&2
       echo "Move or delete those files before issuing a replacement certificate." >&2
       exit 1
     fi
@@ -109,7 +121,7 @@ cert thing_id='' region=region profile=profile config_dir=config_dir:
       --arg iotShadowArn "arn:${partition}:iot:${AWS_REGION}:${account_id}:thing/${effective_thing_name}/sparkplug" \
       --arg cloudwatchLogGroupArn "arn:${partition}:logs:${AWS_REGION}:${account_id}:log-group:${cloudwatch_log_group}" \
       --arg cloudwatchLogStreamArn "arn:${partition}:logs:${AWS_REGION}:${account_id}:log-group:${cloudwatch_log_group}:log-stream:*" \
-      --arg kvsChannelArn "arn:${partition}:kinesisvideo:${video_region}:${account_id}:channel/${effective_thing_name}-board-video/*" \
+      --arg kvsChannelArn "arn:${partition}:kinesisvideo:${AWS_REGION}:${account_id}:channel/${effective_thing_name}-board-video/*" \
       '{Version: "2012-10-17", Statement: [
         {Sid: "DaemonSparkplugShadowRead", Effect: "Allow", Action: "iot:GetThingShadow", Resource: $iotShadowArn},
         {Sid: "DaemonCloudWatchLogsWrite", Effect: "Allow", Action: ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:DescribeLogStreams", "logs:PutRetentionPolicy", "logs:PutLogEvents"], Resource: [$cloudwatchLogGroupArn, $cloudwatchLogStreamArn]},
@@ -150,19 +162,24 @@ cert thing_id='' region=region profile=profile config_dir=config_dir:
       --thing-principal-type EXCLUSIVE_THING \
       "${aws_flags[@]}"
     printf '%s\n' "$cert_arn" >"$cert_arn_path"
-    {
-      printf 'export TXING_THING_ID=%s\n' "$effective_thing_name"
-      printf 'export AWS_REGION=%s\n' "$AWS_REGION"
-      printf 'export TXING_BOARD_VIDEO_REGION=%s\n' "$video_region"
-      printf 'export TXING_IOT_ENDPOINT=%s\n' "$iot_data_endpoint"
-      printf 'export TXING_IOT_CREDENTIAL_ENDPOINT=%s\n' "$iot_credential_endpoint"
-      printf 'export TXING_IOT_ROLE_ALIAS=%s\n' "$iot_role_alias"
-      printf 'export TXING_CLOUDWATCH_LOG_GROUP=%s\n' "$cloudwatch_log_group"
-      printf 'export TXING_CLOUDWATCH_LOG_LEVEL=info\n'
-      printf 'export TXING_CLOUDWATCH_LOG_RETENTION_DAYS=14\n'
-    } >"$env_file"
+    render_daemon_env_template() {
+      local line
+      while IFS= read -r line || [ -n "$line" ]; do
+        line="${line//\{\{TXING_THING_ID\}\}/$effective_thing_name}"
+        line="${line//\{\{AWS_REGION\}\}/$AWS_REGION}"
+        line="${line//\{\{TXING_IOT_ENDPOINT\}\}/$iot_data_endpoint}"
+        line="${line//\{\{TXING_IOT_CREDENTIAL_ENDPOINT\}\}/$iot_credential_endpoint}"
+        line="${line//\{\{TXING_IOT_ROLE_ALIAS\}\}/$iot_role_alias}"
+        line="${line//\{\{TXING_BOARD_VIDEO_CHANNEL_NAME\}\}/$video_channel_name}"
+        line="${line//\{\{TXING_CLOUDWATCH_LOG_GROUP\}\}/$cloudwatch_log_group}"
+        printf '%s\n' "$line"
+      done <"$daemon_env_template"
+    }
+    render_daemon_env_template >"$env_file"
     chmod 600 "$env_file" "$cert_path" "$public_key_path" "$private_key_path" "$cert_arn_path"
     chmod 644 "$root_ca_path"
+    COPYFILE_DISABLE=1 tar -C "$output_root" -czf "$tarball_path" "$(basename "$daemon_config_dir")"
+    chmod 600 "$tarball_path"
     jq -n \
       --arg thingName "$effective_thing_name" \
       --arg policyName "$daemon_policy_name" \
@@ -176,11 +193,13 @@ cert thing_id='' region=region profile=profile config_dir=config_dir:
       --arg iotDataEndpoint "$iot_data_endpoint" \
       --arg iotCredentialEndpoint "$iot_credential_endpoint" \
       --arg iotRoleAlias "$iot_role_alias" \
-      --arg videoRegion "$video_region" \
+      --arg videoRegion "$AWS_REGION" \
+      --arg videoChannelName "$video_channel_name" \
       --arg cloudWatchLogGroup "$cloudwatch_log_group" \
       --arg daemonRoleName "$daemon_role_name" \
       --arg daemonRoleArn "$daemon_role_arn" \
-      '{thingName: $thingName, policyName: $policyName, certificateArn: $certificateArn, certificatePem: $certificatePem, publicKey: $publicKey, privateKey: $privateKey, certificateArnFile: $certificateArnFile, rootCaFile: $rootCaFile, envFile: $envFile, iotDataEndpoint: $iotDataEndpoint, iotCredentialEndpoint: $iotCredentialEndpoint, iotRoleAlias: $iotRoleAlias, videoRegion: $videoRegion, cloudWatchLogGroup: $cloudWatchLogGroup, daemonRoleName: $daemonRoleName, daemonRoleArn: $daemonRoleArn}'
+      --arg configTarball "$tarball_path" \
+      '{thingName: $thingName, policyName: $policyName, certificateArn: $certificateArn, certificatePem: $certificatePem, publicKey: $publicKey, privateKey: $privateKey, certificateArnFile: $certificateArnFile, rootCaFile: $rootCaFile, envFile: $envFile, configTarball: $configTarball, iotDataEndpoint: $iotDataEndpoint, iotCredentialEndpoint: $iotCredentialEndpoint, iotRoleAlias: $iotRoleAlias, videoRegion: $videoRegion, videoChannelName: $videoChannelName, cloudWatchLogGroup: $cloudWatchLogGroup, daemonRoleName: $daemonRoleName, daemonRoleArn: $daemonRoleArn}'
 
 role-policy thing_id='' region=region profile=profile:
     #!/usr/bin/env bash
@@ -210,11 +229,10 @@ role-policy thing_id='' region=region profile=profile:
     partition="$(cut -d: -f2 <<<"$caller_arn")"
     daemon_role_name="txing-daemon-$effective_thing_name"
     if ! aws iam get-role --role-name "$daemon_role_name" "${aws_flags[@]}" >/dev/null 2>&1; then
-      echo "Daemon IAM role $daemon_role_name does not exist. Run just unit::daemon::cert <thing-id> first." >&2
+      echo "Daemon IAM role $daemon_role_name does not exist. Run just unit::cert <thing-id> first." >&2
       exit 1
     fi
     cloudwatch_log_group="txing/${TXING_TOWN_ID}/${TXING_RIG_ID}/${effective_thing_name}"
-    video_region="${TXING_BOARD_VIDEO_REGION:-${BOARD_VIDEO_REGION:-$AWS_REGION}}"
     credential_policy_file="$(mktemp "${TMPDIR:-/tmp}/txing-daemon-credential-policy.XXXXXX")"
     cleanup() {
       rm -f "$credential_policy_file"
@@ -224,7 +242,7 @@ role-policy thing_id='' region=region profile=profile:
       --arg iotShadowArn "arn:${partition}:iot:${AWS_REGION}:${account_id}:thing/${effective_thing_name}/sparkplug" \
       --arg cloudwatchLogGroupArn "arn:${partition}:logs:${AWS_REGION}:${account_id}:log-group:${cloudwatch_log_group}" \
       --arg cloudwatchLogStreamArn "arn:${partition}:logs:${AWS_REGION}:${account_id}:log-group:${cloudwatch_log_group}:log-stream:*" \
-      --arg kvsChannelArn "arn:${partition}:kinesisvideo:${video_region}:${account_id}:channel/${effective_thing_name}-board-video/*" \
+      --arg kvsChannelArn "arn:${partition}:kinesisvideo:${AWS_REGION}:${account_id}:channel/${effective_thing_name}-board-video/*" \
       '{Version: "2012-10-17", Statement: [
         {Sid: "DaemonSparkplugShadowRead", Effect: "Allow", Action: "iot:GetThingShadow", Resource: $iotShadowArn},
         {Sid: "DaemonCloudWatchLogsWrite", Effect: "Allow", Action: ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:DescribeLogStreams", "logs:PutRetentionPolicy", "logs:PutLogEvents"], Resource: [$cloudwatchLogGroupArn, $cloudwatchLogStreamArn]},
@@ -239,7 +257,7 @@ role-policy thing_id='' region=region profile=profile:
     printf 'refreshed daemon IAM role policy\n'
     printf '  thing: %s\n' "$effective_thing_name"
     printf '  role: %s\n' "$daemon_role_name"
-    printf '  video region: %s\n' "$video_region"
+    printf '  video region: %s\n' "$AWS_REGION"
 
 test:
     cargo test --manifest-path "{{daemon_dir}}/Cargo.toml"

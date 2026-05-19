@@ -26,7 +26,7 @@ out of scope. They are not actionable repository dependencies.
 Several lockfiles contain multiple versions of the same transitive packages.
 Most duplication comes from upstream AWS SDK, Smithy, TLS, MQTT, and
 cross-platform target dependency stacks. A broad cleanup would be high churn and
-would not materially improve the current unit daemon phase-1 work.
+would not materially improve the current unit daemon runtime work.
 
 The visible `release::bump` update notes are also not all direct upgrade
 opportunities:
@@ -76,3 +76,30 @@ opportunities:
 
 Stable rig deployment is operator-side. The rig host keeps only the Greengrass
 certificate/private key and does not store AWS access keys for deployment.
+
+## Cloud And Control-Only RTC Consumers
+
+The current unit implementation uses one AWS KVS media session for browser
+video and MCP control at REDCON `1`, and MQTT MCP at REDCON `2` when video is
+unavailable or not ready. That path is complete for the current browser
+operator workflow.
+
+Future work may add non-browser session consumers:
+
+- a cloud worker that connects as another MCP session and uses the existing
+  `control.activate` takeover semantics
+- a no-video or control-only WebRTC worker for device types where MCP should
+  use WebRTC without a media track
+- a distinct KVS signaling channel for a control-only WebRTC path, if a future
+  device needs it
+- admission, scheduling, or policy around cloud workers competing with human
+  operators for the single active-control slot
+
+Current non-actions:
+
+- do not add a second KVS channel to the current `unit` path
+- do not add a cloud session consumer until there is a concrete product use
+  case
+- do not change the active-control protocol for this future work; reuse
+  `control.activate`, `takeover`, session identity, transport, and epoch
+  enforcement unless a real protocol gap is found

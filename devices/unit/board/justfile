@@ -15,6 +15,7 @@ native_kvs_master_build_dir := native_kvs_master_dir + "/build"
 native_kvs_master_test_build_dir := native_kvs_master_dir + "/build-tests"
 built_native_kvs_master := native_kvs_master_build_dir + "/txing-board-kvs-master"
 aws_kvs_sdk_dir := project_root + "/modules/awslabs/amazon-kinesis-video-streams-webrtc-sdk-c"
+aws_kvs_sdk_commit := "bb106510cf74edd2c24881c1ae94ceaa0083d15c"
 aws_kvs_sdk_build_dir := common_board_dir + "/aws-kvs-webrtc-sdk-build"
 aws_kvs_sdk_install_dir := common_board_dir + "/aws-kvs-webrtc-sdk-install"
 aws_kvs_sdk_system_deps_dir := common_board_dir + "/aws-kvs-webrtc-sdk-system-deps"
@@ -33,6 +34,7 @@ aws_shared_credentials_file := ""
 [private]
 _ensure-aws-sdk-submodule:
     test -f "{{aws_kvs_sdk_dir}}/CMakeLists.txt" || { echo "missing AWS KVS WebRTC SDK submodule. Run: just unit::board::submodules" >&2; exit 1; }
+    test "$(git -C "{{aws_kvs_sdk_dir}}" rev-parse HEAD)" = "{{aws_kvs_sdk_commit}}" || { echo "AWS KVS WebRTC SDK submodule is not at {{aws_kvs_sdk_commit}}. Run: just unit::board::submodules" >&2; exit 1; }
 
 @_check-kvs-system-dependencies:
     #!/usr/bin/env bash
@@ -106,6 +108,8 @@ check thing_name='' region=region aws_profile=aws_profile:
 
 @submodules:
     git -C "{{project_root}}" submodule update --init --recursive -- modules/awslabs/amazon-kinesis-video-streams-webrtc-sdk-c
+    git -C "{{aws_kvs_sdk_dir}}" fetch --depth=1 origin "{{aws_kvs_sdk_commit}}"
+    git -C "{{aws_kvs_sdk_dir}}" checkout --detach "{{aws_kvs_sdk_commit}}"
 
 @build-aws-sdk: _ensure-aws-sdk-submodule
     #!/usr/bin/env bash

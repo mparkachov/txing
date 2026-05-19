@@ -97,7 +97,7 @@ export const buildRtcIceServers = (
 ): RTCIceServer[] => {
   const rtcIceServers: RTCIceServer[] = [
     {
-      urls: `stun:stun.kinesisvideo.${region}.amazonaws.com:443`,
+      urls: `stun:stun.kinesisvideo.${region}.api.aws:443`,
     },
   ]
 

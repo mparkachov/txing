@@ -25,8 +25,12 @@ The video route is derived from the selected route and web origin. It is not sto
 - route breadcrumbs and first-load metadata: AWS IoT HTTPS APIs
 - live shadow updates: named Thing Shadow over MQTT/WSS
 - lifecycle commands: Sparkplug `DCMD.redcon` over MQTT/WSS
-- board control: MCP over MQTT/WSS; WebRTC data-channel preference is deferred
-  until a future descriptor advertises it
+- board control at REDCON `1`: MCP over the `txing.mcp.v1` WebRTC data channel
+  on the board video KVS session
+- board control at REDCON `2`: MCP over MQTT/WSS when the daemon advertises
+  MQTT-only MCP because video is unavailable/not ready
+- board active control: keyboard/drive input does not take over from another
+  active session; the unit panel exposes an explicit take-control action
 - board video: AWS KVS WebRTC
 
 The app expects `capabilities` to include `sparkplug` and uses it to decide which named shadows should exist for a selected thing.
@@ -35,6 +39,11 @@ For `unit` devices, the Rust unit daemon publishes retained
 `txings/<device_id>/capability/v2/state` messages for `board`, `mcp`, and
 `video`. Sparkplug projection reflects those into the capability stack; `video`
 becomes enabled only when the native KVS worker is ready.
+
+The web app must not derive board/MCP/video availability locally from pending
+commands or client-side transport state. Capability indicators reflect the
+Sparkplug named shadow projection. A small delay is acceptable; inconsistent
+client-side capability prediction is not.
 
 ## Local Development
 

@@ -145,6 +145,14 @@ describe('sparkplug model helpers', () => {
     expect(
       shouldClearPendingTargetRedcon({
         pendingTargetRedcon: 1,
+        reportedRedcon: 1,
+        isSparkplugDeviceUnavailable: false,
+      }),
+    ).toBe(false)
+
+    expect(
+      shouldClearPendingTargetRedcon({
+        pendingTargetRedcon: 1,
         reportedRedcon: null,
         isSparkplugDeviceUnavailable: true,
       }),

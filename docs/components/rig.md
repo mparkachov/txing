@@ -99,7 +99,10 @@ management.
 - Greengrass core/device/component status is service observability only; it is not the txing lifecycle source of truth
 - v2 capability state from connectivity adapters selects the highest REDCON level whose type-catalog rule is satisfied
 - raspi rigs run BLE connectivity for `sparkplug`/`ble`/`power`; board-owned retained state is consumed by SparkplugManager for `board`/`mcp`/`video`
-- board-owned retained state is gated by BLE power availability, so REDCON `4` / power-off evidence clears `board`, `mcp`, and `video` without waiting for retained state TTL expiry
+- board-owned retained state is gated by BLE power availability, so REDCON `4`
+  / power-off evidence clears `board`, `mcp`, and `video` without waiting for
+  retained state TTL expiry; after the next wake, fresh board-owned state must
+  arrive before those capabilities become available again
 - current BLE devices advertise with the AWS Thing ID from MCU NVE as the primary identity name
 
 The current contract sources are:
@@ -369,4 +372,4 @@ which publishes offline capability state instead of touching the host BLE
 adapter.
 
 AWS bootstrap and registry steps live in [aws.md](../aws.md). Board host setup
-lives in [installation.md](../installation.md).
+lives in [board.md](./board.md).

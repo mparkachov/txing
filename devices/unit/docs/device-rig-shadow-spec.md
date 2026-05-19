@@ -161,10 +161,12 @@ but REDCON selection uses the v2 capability state, not shadow freshness. The
 board-owned capabilities are still gated by BLE `power=true`; here `power`
 means MCU-controlled wakeup power/D1 availability, not MCU power. REDCON `4` /
 sleep-state evidence clears board/MCP/video immediately even if retained board
-state is stale. BLE state-read and command-applied capability states carry the
-internal `metrics.bleRedcon` value so SparkplugManager can distinguish explicit
-sleep-state evidence from advertisement-only BLE reachability; this internal
-metric is not published as a Sparkplug device metric.
+state is stale. After a later wake, board/MCP/video stay false until a fresh
+board-owned retained capability state arrives. BLE state-read and
+command-applied capability states carry the internal `metrics.bleRedcon` value
+so SparkplugManager can distinguish explicit sleep-state evidence from
+advertisement-only BLE reachability; this internal metric is not published as a
+Sparkplug device metric.
 
 ## Acceptance Criteria
 

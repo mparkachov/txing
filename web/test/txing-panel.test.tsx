@@ -8,8 +8,12 @@ describe('txing panel', () => {
       <TxingPanel
         isBoardVideoExpanded={true}
         isDebugEnabled={false}
+        isShadowConnected={true}
+        isTakeControlPending={false}
         mcpTransport="webrtc-datachannel"
+        onTakeControl={() => {}}
         onToggleDebug={() => {}}
+        robotControl={null}
         reportedRedcon={1}
         reportedBatteryMv={3960}
         reportedBoardLeftTrackSpeed={60}
@@ -52,8 +56,12 @@ describe('txing panel', () => {
       <TxingPanel
         isBoardVideoExpanded={true}
         isDebugEnabled={false}
+        isShadowConnected={true}
+        isTakeControlPending={false}
         mcpTransport="mqtt-jsonrpc"
+        onTakeControl={() => {}}
         onToggleDebug={() => {}}
+        robotControl={null}
         reportedRedcon={2}
         reportedBatteryMv={3960}
         reportedBoardLeftTrackSpeed={25}
@@ -74,5 +82,48 @@ describe('txing panel', () => {
     expect(markup).toContain('data-track-side="right"')
     expect(markup).not.toContain('status-video-debug-button')
     expect(markup).not.toContain('txing-video-panel')
+  })
+
+  test('renders an explicit active-control takeover button when another session owns control', () => {
+    const markup = renderToStaticMarkup(
+      <TxingPanel
+        isBoardVideoExpanded={true}
+        isDebugEnabled={false}
+        isShadowConnected={true}
+        isTakeControlPending={false}
+        mcpTransport="webrtc-datachannel"
+        onTakeControl={() => {}}
+        onToggleDebug={() => {}}
+        robotControl={{
+          activeRequired: true,
+          activeTtlMs: 5000,
+          activeHeldByCaller: false,
+          activeOwnerSessionId: 'session-a',
+          activeExpiresAtMs: 10000,
+          activeEpoch: 7,
+          activeControl: {
+            sessionId: 'session-a',
+            actor: 'operator-a',
+            transport: 'webrtc-datachannel',
+            sinceMs: 5000,
+            expiresAtMs: 10000,
+            epoch: 7,
+          },
+        }}
+        reportedRedcon={1}
+        reportedBatteryMv={3960}
+        reportedBoardLeftTrackSpeed={0}
+        reportedBoardOnline={true}
+        reportedBoardRightTrackSpeed={0}
+        reportedMcuOnline={true}
+        videoChannelName="unit-local-board-video"
+        resolveIdToken={async () => 'token'}
+        onBoardVideoRuntimeError={() => {}}
+      />,
+    )
+
+    expect(markup).toContain('status-video-take-control-button')
+    expect(markup).toContain('aria-label="Take active control"')
+    expect(markup).toContain('title="Take active control from operator-a"')
   })
 })

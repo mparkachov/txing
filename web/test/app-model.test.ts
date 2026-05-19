@@ -423,14 +423,14 @@ describe('app model helpers', () => {
     ).toBe(false)
   })
 
-  test('clears pending redcon state on convergence or device death', () => {
+  test('clears pending sleep state on convergence or device death', () => {
     expect(
       shouldClearPendingTargetRedcon({
-        pendingTargetRedcon: 3,
-        reportedRedcon: 3,
+        pendingTargetRedcon: 1,
+        reportedRedcon: 1,
         isSparkplugDeviceUnavailable: false,
       }),
-    ).toBe(true)
+    ).toBe(false)
 
     expect(
       shouldClearPendingTargetRedcon({

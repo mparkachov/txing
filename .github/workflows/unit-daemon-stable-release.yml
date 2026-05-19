@@ -14,10 +14,12 @@ env:
   RUST_VERSION: 1.95.0
   UNIT_DAEMON_ASSET: txing-unit-daemon-linux-aarch64.tar.gz
   KVS_MASTER_ASSET: txing-board-kvs-master-linux-aarch64.tar.gz
+  KVS_MASTER_BINARY: txing-board-kvs-master
   SPARKPLUG_MANAGER_ASSET: txing-sparkplug-manager-linux-aarch64.tar.gz
   BLE_CONNECTIVITY_ASSET: txing-ble-connectivity-linux-aarch64.tar.gz
   AWS_CONNECTIVITY_ASSET: txing-aws-connectivity-linux-aarch64.tar.gz
   RIG_DEPLOY_ASSET: txing-rig-deploy-linux-aarch64.tar.gz
+  KVS_MASTER_BUILD_IMAGE: debian:trixie
 
 jobs:
   stable-release:
@@ -125,6 +127,17 @@ jobs:
             exit 1
           fi
 
+      - name: Configure apt networking
+        shell: bash
+        run: |
+          set -euo pipefail
+          for source in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+            [ -e "$source" ] || continue
+            sudo sed -i 's|http://ports.ubuntu.com/ubuntu-ports|https://ports.ubuntu.com/ubuntu-ports|g' "$source"
+          done
+          printf 'Acquire::ForceIPv4 "true";\nAcquire::Retries "5";\n' \
+            | sudo tee /etc/apt/apt.conf.d/99txing-ci-network >/dev/null
+
       - name: Install system build dependencies
         shell: bash
         run: |
@@ -135,7 +148,7 @@ jobs:
             libssl-dev libcurl4-openssl-dev libdbus-1-dev uuid-dev \
             libzip-dev libyaml-dev libsystemd-dev libevent-dev liburiparser-dev \
             liblog4cplus-dev libsrtp2-dev libusrsctp-dev libwebsockets-dev \
-            zlib1g-dev libcamera-dev
+            zlib1g-dev
 
       - name: Install mise tools
         shell: bash
@@ -210,12 +223,58 @@ jobs:
           TXING_REAL_CC="${CC:-cc}" CC="$PWD/rig/tools/cc-greengrass-info-log" \
             cargo build --release --features greengrass-sdk --manifest-path rig/aws-connectivity/Cargo.toml
 
-      - name: Build native KVS master
+      - name: Build native KVS master in Trixie container
         shell: bash
         run: |
           set -euo pipefail
+          docker run --rm -i \
+            -v "$PWD:$PWD" \
+            -w "$PWD" \
+            -e DEBIAN_FRONTEND=noninteractive \
+            -e KVS_MASTER_BINARY="$KVS_MASTER_BINARY" \
+            "$KVS_MASTER_BUILD_IMAGE" \
+          bash -se <<'TRIXIE_BUILD'
+          set -euo pipefail
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates curl
+          cat >/etc/apt/sources.list.d/raspi.sources <<'APT_SOURCE'
+          Types: deb
+          URIs: https://archive.raspberrypi.com/debian/
+          Suites: trixie
+          Components: main
+          Architectures: arm64
+          Trusted: yes
+          APT_SOURCE
+          cat >/etc/apt/preferences.d/raspi-libcamera <<'APT_PREFERENCES'
+          Package: libcamera* python3-libcamera gstreamer1.0-libcamera
+          Pin: origin archive.raspberrypi.com
+          Pin-Priority: 1001
+          APT_PREFERENCES
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential pkg-config cmake perl file curl git ca-certificates \
+            libssl-dev libcurl4-openssl-dev liblog4cplus-dev libsrtp2-dev \
+            libusrsctp-dev libwebsockets-dev zlib1g-dev libcamera-dev
+          apt-cache policy libcamera-dev libcamera0.7
+          curl https://mise.run | sh
+          export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"
+          mise use --global --yes just@latest
+          git config --global --add safe.directory "$PWD"
+          git config --global --add safe.directory "$PWD/modules/awslabs/amazon-kinesis-video-streams-webrtc-sdk-c"
           just unit::board::submodules
           just unit::board::build-native
+          ldd devices/unit/board/kvs_master/build/txing-board-kvs-master
+          if ldd devices/unit/board/kvs_master/build/txing-board-kvs-master | grep -Fq "not found"; then
+            echo "txing-board-kvs-master has unresolved shared libraries" >&2
+            exit 1
+          fi
+          ldd devices/unit/board/kvs_master/build/txing-board-kvs-master | grep -F "libcamera.so.0.7"
+          ldd devices/unit/board/kvs_master/build/txing-board-kvs-master | grep -F "libcamera-base.so.0.7"
+          TRIXIE_BUILD
+          kvs_master_build_binary="devices/unit/board/kvs_master/build/$KVS_MASTER_BINARY"
+          test -x "$kvs_master_build_binary"
+          file "$kvs_master_build_binary"
+          install -m 755 "$kvs_master_build_binary" "$RUNNER_TEMP/$KVS_MASTER_BINARY"
 
       - name: Package project release assets
         shell: bash
@@ -245,7 +304,7 @@ jobs:
           }
 
           package_binary devices/unit/daemon/target/release/daemon txing-unit-daemon "$UNIT_DAEMON_ASSET"
-          package_binary devices/unit/board/kvs_master/build/txing-board-kvs-master txing-board-kvs-master "$KVS_MASTER_ASSET"
+          package_binary "$RUNNER_TEMP/$KVS_MASTER_BINARY" "$KVS_MASTER_BINARY" "$KVS_MASTER_ASSET"
           package_binary rig/target/release/txing-sparkplug-manager txing-sparkplug-manager "$SPARKPLUG_MANAGER_ASSET"
           package_binary rig/target/release/txing-ble-connectivity txing-ble-connectivity "$BLE_CONNECTIVITY_ASSET"
           package_binary rig/target/release/txing-aws-connectivity txing-aws-connectivity "$AWS_CONNECTIVITY_ASSET"

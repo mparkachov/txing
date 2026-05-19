@@ -5,6 +5,7 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <netdb.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -57,6 +58,7 @@ constexpr CHAR kVideoTrackId[] = "txingBoardVideoTrack";
 constexpr CHAR kMcpDataChannelLabel[] = "txing.mcp.v1";
 constexpr char kSystemCaCertPath[] = TXING_KVS_SYSTEM_CA_CERT_PATH;
 constexpr std::size_t kCandidateAddressTokenIndex = 4;
+constexpr int kMcpIpcResponseTimeoutMs = 7000;
 
 std::optional<std::string> ExtractJsonStringField(std::string_view json, std::string_view key) {
     const std::string quoted_key = std::string("\"") + std::string(key) + "\"";
@@ -120,6 +122,57 @@ bool HasJsonField(std::string_view json, std::string_view key) {
     return cursor < json.size();
 }
 
+std::optional<std::string> ExtractJsonRawField(std::string_view json, std::string_view key) {
+    const std::string quoted_key = std::string("\"") + std::string(key) + "\"";
+    const std::size_t key_position = json.find(quoted_key);
+    if (key_position == std::string_view::npos) {
+        return std::nullopt;
+    }
+
+    std::size_t cursor = json.find(':', key_position + quoted_key.size());
+    if (cursor == std::string_view::npos) {
+        return std::nullopt;
+    }
+
+    ++cursor;
+    while (cursor < json.size() && std::isspace(static_cast<unsigned char>(json[cursor])) != 0) {
+        ++cursor;
+    }
+    if (cursor >= json.size()) {
+        return std::nullopt;
+    }
+
+    if (json[cursor] == '"') {
+        const std::size_t start = cursor;
+        bool escaping = false;
+        for (++cursor; cursor < json.size(); ++cursor) {
+            const char ch = json[cursor];
+            if (escaping) {
+                escaping = false;
+                continue;
+            }
+            if (ch == '\\') {
+                escaping = true;
+                continue;
+            }
+            if (ch == '"') {
+                return std::string(json.substr(start, cursor - start + 1));
+            }
+        }
+        return std::nullopt;
+    }
+
+    const std::size_t start = cursor;
+    while (cursor < json.size() && json[cursor] != ',' && json[cursor] != '}' &&
+           std::isspace(static_cast<unsigned char>(json[cursor])) == 0) {
+        ++cursor;
+    }
+    if (cursor == start) {
+        return std::nullopt;
+    }
+    return std::string(json.substr(start, cursor - start));
+}
+
 std::string EscapeJsonString(std::string_view value) {
     std::string escaped;
     escaped.reserve(value.size() + 8);
@@ -148,6 +201,17 @@ std::string EscapeJsonString(std::string_view value) {
     return escaped;
 }
 
+std::string BuildJsonRpcErrorResponse(std::string_view request, int code, std::string_view message) {
+    const std::string id = ExtractJsonRawField(request, "id").value_or("null");
+    return std::string("{\"jsonrpc\":\"2.0\",\"id\":") +
+        id +
+        ",\"error\":{\"code\":" +
+        std::to_string(code) +
+        ",\"message\":\"" +
+        EscapeJsonString(message) +
+        "\"}}";
+}
+
 bool WriteAll(int fd, std::string_view payload) {
     std::size_t offset = 0;
     while (offset < payload.size()) {
@@ -166,10 +230,23 @@ bool WriteAll(int fd, std::string_view payload) {
     return true;
 }
 
-std::optional<std::string> ReadLine(int fd) {
+std::optional<std::string> ReadLine(int fd, int timeout_ms) {
     std::string line;
     char ch = '\0';
     while (true) {
+        if (timeout_ms > 0) {
+            pollfd descriptor{};
+            descriptor.fd = fd;
+            descriptor.events = POLLIN;
+            int poll_status = 0;
+            do {
+                poll_status = ::poll(&descriptor, 1, timeout_ms);
+            } while (poll_status < 0 && errno == EINTR);
+            if (poll_status <= 0 ||
+                (descriptor.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
+                return std::nullopt;
+            }
+        }
         const ssize_t received = ::read(fd, &ch, 1);
         if (received < 0) {
             if (errno == EINTR) {
@@ -842,6 +919,16 @@ class RealKvsSession final : public KvsSession {
         if (session == nullptr) {
             return;
         }
+        if (session->mcp_data_channel != nullptr) {
+            EmitMarker(
+                "TXING_MCP_DATACHANNEL_CLOSED",
+                {
+                    {"sessionId", session->peer_id},
+                    {"reason", reason == nullptr ? "MCP WebRTC data channel closed" : reason},
+                }
+            );
+            session->mcp_data_channel = nullptr;
+        }
         std::lock_guard<std::mutex> lock(session->mcp_ipc_lock);
         if (session->mcp_ipc_fd < 0) {
             return;
@@ -857,6 +944,16 @@ class RealKvsSession final : public KvsSession {
         session->mcp_ipc_fd = -1;
     }
 
+    void ReportMcpDataChannelError(StreamingSession* session, std::string_view detail) {
+        EmitMarker(
+            "TXING_MCP_DATACHANNEL_ERROR",
+            {
+                {"sessionId", session == nullptr ? "" : session->peer_id},
+                {"detail", std::string(detail)},
+            }
+        );
+    }
+
     std::optional<std::string> DispatchMcpDataChannelMessage(
         StreamingSession* session,
         std::string_view payload
@@ -866,6 +963,10 @@ class RealKvsSession final : public KvsSession {
         }
         std::lock_guard<std::mutex> lock(session->mcp_ipc_lock);
         if (!EnsureMcpIpcConnected(session)) {
+            ReportMcpDataChannelError(session, "MCP IPC unavailable");
+            if (HasJsonField(payload, "id")) {
+                return BuildJsonRpcErrorResponse(payload, -32000, "MCP WebRTC IPC is unavailable");
+            }
             return std::nullopt;
         }
         const std::string request_frame =
@@ -877,18 +978,28 @@ class RealKvsSession final : public KvsSession {
         if (!WriteAll(session->mcp_ipc_fd, request_frame)) {
             ::close(session->mcp_ipc_fd);
             session->mcp_ipc_fd = -1;
+            ReportMcpDataChannelError(session, "write MCP IPC request failed");
+            if (HasJsonField(payload, "id")) {
+                return BuildJsonRpcErrorResponse(payload, -32000, "MCP WebRTC IPC write failed");
+            }
             return std::nullopt;
         }
         if (!HasJsonField(payload, "id")) {
             return std::nullopt;
         }
-        const auto response_line = ReadLine(session->mcp_ipc_fd);
+        const auto response_line = ReadLine(session->mcp_ipc_fd, kMcpIpcResponseTimeoutMs);
         if (!response_line.has_value()) {
             ::close(session->mcp_ipc_fd);
             session->mcp_ipc_fd = -1;
-            return std::nullopt;
+            ReportMcpDataChannelError(session, "read MCP IPC response failed");
+            return BuildJsonRpcErrorResponse(payload, -32000, "MCP WebRTC IPC read failed");
         }
-        return ExtractJsonStringField(*response_line, "payload");
+        const auto response_payload = ExtractJsonStringField(*response_line, "payload");
+        if (!response_payload.has_value()) {
+            ReportMcpDataChannelError(session, "MCP IPC response missing payload");
+            return BuildJsonRpcErrorResponse(payload, -32000, "MCP WebRTC IPC returned an invalid response");
+        }
+        return response_payload;
     }
 
     STATUS CreateStreamingSession(const std::string& peer_id, std::shared_ptr<StreamingSession>* session_out) {
@@ -1542,8 +1653,13 @@ class RealKvsSession final : public KvsSession {
             return;
         }
         session->mcp_data_channel = data_channel;
+        EmitMarker("TXING_MCP_DATACHANNEL_OPEN", {{"sessionId", session->peer_id}});
         const STATUS status = dataChannelOnMessage(data_channel, custom_data, OnDataChannelMessage);
         if (STATUS_FAILED(status)) {
+            EmitMarker(
+                "TXING_MCP_DATACHANNEL_ERROR",
+                {{"sessionId", session->peer_id}, {"detail", "failed to register MCP data channel message handler"}}
+            );
             std::fprintf(
                 stderr,
                 "WARN kvs_session_real: failed to register MCP data channel message handler status=%s peer=%s\n",

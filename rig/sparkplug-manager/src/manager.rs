@@ -103,6 +103,15 @@ impl DeviceRuntimeState {
                 self.inventory.thing_name
             );
         }
+        if state_reports_ble_redcon4(&state) {
+            self.adapter_states
+                .retain(|_, existing| !state_declares_board_owned_capability(existing));
+        } else if state_declares_board_owned_capability(&state)
+            && self.adapter_states.values().any(state_reports_ble_redcon4)
+        {
+            self.adapter_states.remove(&state.adapter_id);
+            return Ok(());
+        }
         self.adapter_states.insert(state.adapter_id.clone(), state);
         Ok(())
     }
@@ -231,6 +240,12 @@ fn state_reports_ble_redcon4(state: &CapabilityState) -> bool {
         return false;
     }
     metric_int(&state.metrics, BLE_REDCON_METRIC) == Some(4)
+}
+
+fn state_declares_board_owned_capability(state: &CapabilityState) -> bool {
+    [BOARD_CAPABILITY, MCP_CAPABILITY, VIDEO_CAPABILITY]
+        .iter()
+        .any(|capability| capability_is_declared(&state.capabilities, capability))
 }
 
 fn metric_int(metrics: &BTreeMap<String, MetricValue>, name: &str) -> Option<i64> {
@@ -775,6 +790,143 @@ mod tests {
                 ],
             }
         );
+    }
+
+    #[test]
+    fn ble_redcon4_forgets_retained_board_capabilities_until_fresh_update() {
+        let mut state = DeviceRuntimeState::new(unit_inventory());
+        state
+            .observe_state(CapabilityState {
+                schema_version: SCHEMA_VERSION.to_string(),
+                adapter_id: "dev.txing.rig.BleConnectivity".to_string(),
+                thing_name: "unit-1".to_string(),
+                capabilities: BTreeMap::from([
+                    ("sparkplug".to_string(), true),
+                    ("ble".to_string(), true),
+                    (POWER_CAPABILITY.to_string(), true),
+                ]),
+                metrics: BTreeMap::from([(BLE_REDCON_METRIC.to_string(), MetricValue::int32(3))]),
+                observed_at_ms: 1000,
+                seq: 1,
+            })
+            .unwrap();
+        state
+            .observe_state(CapabilityState {
+                schema_version: SCHEMA_VERSION.to_string(),
+                adapter_id: "dev.txing.board".to_string(),
+                thing_name: "unit-1".to_string(),
+                capabilities: BTreeMap::from([
+                    (BOARD_CAPABILITY.to_string(), true),
+                    (MCP_CAPABILITY.to_string(), true),
+                    (VIDEO_CAPABILITY.to_string(), true),
+                ]),
+                metrics: BTreeMap::new(),
+                observed_at_ms: 1000,
+                seq: 2,
+            })
+            .unwrap();
+
+        assert_eq!(state.snapshot(1000).redcon, Some(1));
+        assert!(matches!(
+            state.decide_publication(1000).unwrap(),
+            DevicePublication::Birth { redcon: 1, .. }
+        ));
+
+        state
+            .observe_state(CapabilityState {
+                schema_version: SCHEMA_VERSION.to_string(),
+                adapter_id: "dev.txing.rig.BleConnectivity".to_string(),
+                thing_name: "unit-1".to_string(),
+                capabilities: BTreeMap::from([
+                    ("sparkplug".to_string(), true),
+                    ("ble".to_string(), true),
+                    (POWER_CAPABILITY.to_string(), false),
+                ]),
+                metrics: BTreeMap::from([(BLE_REDCON_METRIC.to_string(), MetricValue::int32(4))]),
+                observed_at_ms: 2000,
+                seq: 3,
+            })
+            .unwrap();
+
+        assert!(matches!(
+            state.decide_publication(2000).unwrap(),
+            DevicePublication::Data { redcon: 4, .. }
+        ));
+
+        state
+            .observe_state(CapabilityState {
+                schema_version: SCHEMA_VERSION.to_string(),
+                adapter_id: "dev.txing.board".to_string(),
+                thing_name: "unit-1".to_string(),
+                capabilities: BTreeMap::from([
+                    (BOARD_CAPABILITY.to_string(), true),
+                    (MCP_CAPABILITY.to_string(), true),
+                    (VIDEO_CAPABILITY.to_string(), true),
+                ]),
+                metrics: BTreeMap::new(),
+                observed_at_ms: 2500,
+                seq: 4,
+            })
+            .unwrap();
+        assert_eq!(state.snapshot(2500).redcon, Some(4));
+
+        state
+            .observe_state(CapabilityState {
+                schema_version: SCHEMA_VERSION.to_string(),
+                adapter_id: "dev.txing.rig.BleConnectivity".to_string(),
+                thing_name: "unit-1".to_string(),
+                capabilities: BTreeMap::from([
+                    ("sparkplug".to_string(), true),
+                    ("ble".to_string(), true),
+                    (POWER_CAPABILITY.to_string(), true),
+                ]),
+                metrics: BTreeMap::from([(BLE_REDCON_METRIC.to_string(), MetricValue::int32(3))]),
+                observed_at_ms: 3000,
+                seq: 5,
+            })
+            .unwrap();
+
+        let waking_snapshot = state.snapshot(3000);
+        assert_eq!(waking_snapshot.redcon, Some(3));
+        assert_eq!(
+            waking_snapshot.capabilities.get(BOARD_CAPABILITY),
+            Some(&false)
+        );
+        assert_eq!(
+            waking_snapshot.capabilities.get(MCP_CAPABILITY),
+            Some(&false)
+        );
+        assert_eq!(
+            waking_snapshot.capabilities.get(VIDEO_CAPABILITY),
+            Some(&false)
+        );
+        match state.decide_publication(3000).unwrap() {
+            DevicePublication::Data { redcon, metrics } => {
+                assert_eq!(redcon, 3);
+                assert!(metrics.contains(&Metric::boolean("capability.board", false)));
+                assert!(metrics.contains(&Metric::boolean("capability.mcp", false)));
+                assert!(metrics.contains(&Metric::boolean("capability.video", false)));
+            }
+            other => panic!("expected REDCON 3 data publication, got {other:?}"),
+        }
+
+        state
+            .observe_state(CapabilityState {
+                schema_version: SCHEMA_VERSION.to_string(),
+                adapter_id: "dev.txing.board".to_string(),
+                thing_name: "unit-1".to_string(),
+                capabilities: BTreeMap::from([
+                    (BOARD_CAPABILITY.to_string(), true),
+                    (MCP_CAPABILITY.to_string(), true),
+                    (VIDEO_CAPABILITY.to_string(), true),
+                ]),
+                metrics: BTreeMap::new(),
+                observed_at_ms: 4000,
+                seq: 6,
+            })
+            .unwrap();
+
+        assert_eq!(state.snapshot(4000).redcon, Some(1));
     }
 
     #[test]

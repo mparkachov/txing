@@ -3,16 +3,32 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-Usage: sudo bash install-systemd.sh stable|feature
+Usage: bash install-systemd.sh stable|feature
 
-Installs or updates the txing unit daemon systemd service for the selected mise
-channel. Run this during a writable-root maintenance window.
+Installs or updates the root-owned txing unit daemon systemd service for the
+selected mise channel. Run from a root shell during a writable-root maintenance
+window.
 EOF
 }
 
 fail() {
   echo "error: $*" >&2
   exit 1
+}
+
+ensure_writable_dir() {
+  local label="$1"
+  local dir="$2"
+  local probe
+
+  if [ ! -d "$dir" ]; then
+    install -d -m 700 "$dir" || fail "cannot create $label directory: $dir"
+  fi
+  probe="$dir/.txing-write-test.$$"
+  if ! : >"$probe" 2>/dev/null; then
+    fail "$label directory is not writable: $dir"
+  fi
+  rm -f "$probe"
 }
 
 if [ "$#" -ne 1 ]; then
@@ -30,7 +46,7 @@ case "$channel" in
 esac
 
 if [ "$(id -u)" -ne 0 ]; then
-  fail "this installer must run as root"
+  fail "run this installer from a root shell"
 fi
 if [ "$(uname -s)" != "Linux" ]; then
   fail "this installer must run on Linux"
@@ -38,39 +54,27 @@ fi
 command -v systemctl >/dev/null 2>&1 || fail "systemctl is required"
 [ -d /run/systemd/system ] || fail "systemd does not appear to be PID 1"
 
-daemon_user="txing"
-daemon_home="/home/$daemon_user"
-daemon_group="$(id -gn "$daemon_user" 2>/dev/null)" || fail "user '$daemon_user' does not exist"
-[ -d "$daemon_home" ] || fail "expected daemon home directory $daemon_home"
+root_home="${TXING_DAEMON_ROOT_HOME:-${HOME:-/root}}"
+[ -n "$root_home" ] && [ "$root_home" != "/" ] || fail "root HOME must be set"
+[ -d "$root_home" ] || fail "expected root home directory $root_home"
 
-daemon_config_dir="$daemon_home/.config/txing/unit-daemon"
-[ -r "$daemon_config_dir/.env" ] || fail "missing daemon runtime config: $daemon_config_dir/.env"
-[ -r "$daemon_config_dir/private.pem.key" ] || fail "missing daemon private key: $daemon_config_dir/private.pem.key"
+daemon_config_dir="${TXING_DAEMON_CONFIG_DIR:-$root_home/.config/txing/unit-daemon}"
+if [ ! -r "$daemon_config_dir/daemon.env" ]; then
+  printf 'warning: daemon runtime config is not readable yet: %s\n' "$daemon_config_dir/daemon.env" >&2
+fi
+if [ ! -r "$daemon_config_dir/private.pem.key" ]; then
+  printf 'warning: daemon private key is not readable yet: %s\n' "$daemon_config_dir/private.pem.key" >&2
+fi
 
 root_options="$(findmnt -no OPTIONS / 2>/dev/null || true)"
 case ",$root_options," in
   *,ro,*) fail "root filesystem is read-only; run root-rw before installing the service" ;;
 esac
 
-systemd_dir="/etc/systemd/system"
-[ -d "$systemd_dir" ] || fail "missing systemd unit directory: $systemd_dir"
-write_probe="$systemd_dir/.txing-unit-daemon-write-test.$$"
-if ! : >"$write_probe" 2>/dev/null; then
-  fail "$systemd_dir is not writable; run root-rw before installing the service"
-fi
-rm -f "$write_probe"
-
 resolve_mise() {
-  if [ -x "$daemon_home/.local/bin/mise" ]; then
-    printf '%s\n' "$daemon_home/.local/bin/mise"
+  if [ -x "$root_home/.local/bin/mise" ]; then
+    printf '%s\n' "$root_home/.local/bin/mise"
     return 0
-  fi
-  if command -v runuser >/dev/null 2>&1; then
-    user_mise="$(runuser -u "$daemon_user" -- sh -lc 'command -v mise' 2>/dev/null || true)"
-    if [ -n "$user_mise" ] && [ -x "$user_mise" ]; then
-      printf '%s\n' "$user_mise"
-      return 0
-    fi
   fi
   root_mise="$(command -v mise 2>/dev/null || true)"
   if [ -n "$root_mise" ] && [ -x "$root_mise" ]; then
@@ -80,21 +84,63 @@ resolve_mise() {
   return 1
 }
 
-mise_bin="$(resolve_mise)" || fail "mise is required; install it for the '$daemon_user' user first"
+mise_bin="$(resolve_mise)" || fail "mise is required in the root shell; run: curl https://mise.run | sh"
 
-mise_config_dir="$daemon_home/.config/mise/txing-unit-daemon"
+mise_config_root="$root_home/.config/mise"
+mise_config_dir="$mise_config_root/txing-unit-daemon"
 mise_config_file="$mise_config_dir/config.toml"
-stable_config_file="$daemon_home/.config/mise/conf.d/txing-unit-daemon.toml"
+stable_config_file="$mise_config_root/conf.d/txing-unit-daemon.toml"
+mise_data_dir="$root_home/.local/share/mise"
 service_name="txing-unit-daemon.service"
+systemd_dir="/etc/systemd/system"
 service_file="$systemd_dir/$service_name"
 legacy_service_name="txing-unit-daemon-feature.service"
 legacy_service_file="$systemd_dir/$legacy_service_name"
 tmp_root="/var/tmp/txing/unit-daemon"
 daemon_asset_pattern="txing-unit-daemon-linux-aarch64.tar.gz"
 kvs_master_asset_pattern="txing-board-kvs-master-linux-aarch64.tar.gz"
-stable_install_root="$daemon_home/.local/share/mise/installs/txing-unit-daemon"
-kvs_master_stable_install_root="$daemon_home/.local/share/mise/installs/txing-board-kvs-master"
+stable_install_root="$root_home/.local/share/mise/installs/txing-unit-daemon"
+kvs_master_stable_install_root="$root_home/.local/share/mise/installs/txing-board-kvs-master"
+feature_trusted_config_paths="$mise_config_root:$mise_config_dir"
+daemon_binary=""
+kvs_master_binary=""
 var_tmp_probe=""
+
+run_root_mise() {
+  env "HOME=$root_home" \
+    "MISE_TRUSTED_CONFIG_PATHS=$mise_config_root" \
+    "$mise_bin" "$@"
+}
+
+run_feature_mise() {
+  env "HOME=$root_home" \
+    "MISE_CONFIG_DIR=$mise_config_dir" \
+    "MISE_DATA_DIR=$mise_data_dir" \
+    "MISE_CACHE_DIR=$tmp_root/mise-cache" \
+    "MISE_TMP_DIR=$tmp_root/mise-tmp" \
+    "MISE_TRUSTED_CONFIG_PATHS=$feature_trusted_config_paths" \
+    "MISE_PRERELEASES=1" \
+    "$mise_bin" "$@"
+}
+
+check_shared_libraries() {
+  local label="$1"
+  local binary="$2"
+  local ldd_output
+
+  command -v ldd >/dev/null 2>&1 || return 0
+  if ! ldd_output="$(ldd "$binary" 2>&1)"; then
+    fail "inspect $label shared libraries with ldd: $ldd_output"
+  fi
+  if printf '%s\n' "$ldd_output" | grep -Fq "not found"; then
+    printf 'error: unresolved shared libraries for %s: %s\n' "$label" "$binary" >&2
+    printf '%s\n' "$ldd_output" | grep -F "not found" >&2
+    printf 'Install the missing runtime OS packages on the board before restarting %s.\n' "$service_name" >&2
+    printf 'For Raspberry Pi OS Trixie, the release KVS master should link against libcamera.so.0.7 from libcamera0.7.\n' >&2
+    printf 'If the missing library is libcamera.so.0.2 or libcamera.so.0.4, the KVS master asset was built against a non-Raspberry Pi OS image; publish a new KVS master built with Raspberry Pi OS Trixie packages.\n' >&2
+    exit 1
+  fi
+}
 
 if [ "$channel" = "feature" ]; then
   [ -r "$stable_config_file" ] || fail "missing stable daemon mise config: $stable_config_file; install stable channel first"
@@ -122,22 +168,25 @@ if [ "$channel" = "feature" ]; then
   "$var_tmp_probe/exec-test" >/dev/null 2>&1 || fail "/var/tmp must be mounted executable, without noexec"
 fi
 
-if systemctl list-unit-files NetworkManager-wait-online.service --no-legend --no-pager 2>/dev/null \
-  | grep -q '^NetworkManager-wait-online\.service[[:space:]]'; then
-  systemctl enable NetworkManager-wait-online.service >/dev/null
-fi
-
-install -d -m 700 -o "$daemon_user" -g "$daemon_group" "$daemon_home/.config/mise"
+ensure_writable_dir "mise config" "$mise_config_root"
+ensure_writable_dir "mise data" "$mise_data_dir"
 if [ "$channel" = "stable" ]; then
-  install -d -m 700 -o "$daemon_user" -g "$daemon_group" "$daemon_home/.config/mise/conf.d"
+  ensure_writable_dir "stable mise config" "$mise_config_root/conf.d"
 else
-  install -d -m 700 -o "$daemon_user" -g "$daemon_group" "$mise_config_dir"
+  ensure_writable_dir "feature mise config" "$mise_config_dir"
 fi
+ensure_writable_dir "daemon config" "$daemon_config_dir"
+[ -d "$systemd_dir" ] || fail "missing systemd unit directory: $systemd_dir"
+ensure_writable_dir "systemd unit" "$systemd_dir"
+
 config_tmp="$(mktemp)"
 service_tmp="$(mktemp)"
 trap 'if [ -n "${var_tmp_probe:-}" ]; then rm -rf "$var_tmp_probe"; fi; rm -f "$config_tmp" "$service_tmp"' EXIT
 
 cat >"$config_tmp" <<EOF
+[settings]
+fetch_remote_versions_cache = "10m"
+
 [tool_alias]
 txing-unit-daemon = "github:mparkachov/txing"
 txing-board-kvs-master = "github:mparkachov/txing"
@@ -163,21 +212,26 @@ EOF
 fi
 
 if [ "$channel" = "stable" ]; then
-  install -m 600 -o "$daemon_user" -g "$daemon_group" "$config_tmp" "$stable_config_file"
+  install -m 600 "$config_tmp" "$stable_config_file"
   rm -f "$mise_config_file"
   rmdir "$mise_config_dir" 2>/dev/null || true
   rm -rf "$tmp_root"
-  command -v runuser >/dev/null 2>&1 || fail "runuser is required for stable install as '$daemon_user'"
-  runuser -u "$daemon_user" -- env \
-    "HOME=$daemon_home" \
-    "$mise_bin" install
+  run_root_mise cache clear >/dev/null 2>&1 || true
+  run_root_mise install --force txing-unit-daemon@latest txing-board-kvs-master@latest
+  daemon_binary="$(run_root_mise which txing-unit-daemon)"
+  kvs_master_binary="$(run_root_mise which txing-board-kvs-master)"
 else
-  install -m 600 -o "$daemon_user" -g "$daemon_group" "$config_tmp" "$mise_config_file"
-  install -d -m 700 -o "$daemon_user" -g "$daemon_group" \
-    "$tmp_root/mise" \
-    "$tmp_root/mise-cache" \
-    "$tmp_root/mise-tmp"
+  install -m 600 "$config_tmp" "$mise_config_file"
+  install -d -m 700 "$tmp_root/mise-cache" "$tmp_root/mise-tmp"
+  run_feature_mise cache clear >/dev/null 2>&1 || true
+  run_feature_mise install --force txing-unit-daemon@latest txing-board-kvs-master@latest
+  daemon_binary="$(run_feature_mise which txing-unit-daemon)"
+  kvs_master_binary="$(run_feature_mise which txing-board-kvs-master)"
 fi
+[ -x "$daemon_binary" ] || fail "resolved daemon binary is not executable: $daemon_binary"
+[ -x "$kvs_master_binary" ] || fail "resolved KVS master binary is not executable: $kvs_master_binary"
+check_shared_libraries "txing-unit-daemon" "$daemon_binary"
+check_shared_libraries "txing-board-kvs-master" "$kvs_master_binary"
 
 {
   cat <<EOF
@@ -185,11 +239,12 @@ fi
 Description=Txing Unit Daemon
 Wants=network-online.target systemd-time-wait-sync.service
 After=network-online.target systemd-time-wait-sync.service time-sync.target
+StartLimitIntervalSec=10min
+StartLimitBurst=5
 
 [Service]
 Type=simple
-# Runs as root because the daemon owns PWM/GPIO motor control directly.
-WorkingDirectory=$daemon_home
+WorkingDirectory=$root_home
 KillSignal=SIGINT
 TimeoutStartSec=180
 TimeoutStopSec=30
@@ -197,28 +252,17 @@ Restart=on-failure
 RestartSec=5
 
 Environment=TXING_DAEMON_CONFIG_DIR=$daemon_config_dir
-Environment=HOME=$daemon_home
+Environment=HOME=$root_home
+Environment=TXING_KVS_MASTER_COMMAND=$kvs_master_binary
 EOF
-  if [ "$channel" = "feature" ]; then
-    cat <<EOF
-Environment=MISE_CONFIG_DIR=$mise_config_dir
-Environment=MISE_DATA_DIR=$tmp_root/mise
-Environment=MISE_CACHE_DIR=$tmp_root/mise-cache
-Environment=MISE_TMP_DIR=$tmp_root/mise-tmp
-Environment=MISE_SHARED_INSTALL_DIRS=$daemon_home/.local/share/mise/installs
-EOF
-    printf 'Environment=MISE_PRERELEASES=1\n'
-    cat <<EOF
-
-ExecStartPre=/usr/bin/install -d -m 700 $tmp_root/mise $tmp_root/mise-cache $tmp_root/mise-tmp
-ExecStartPre=-$mise_bin upgrade txing-unit-daemon
-ExecStartPre=-$mise_bin upgrade txing-board-kvs-master
-ExecStartPre=-$mise_bin install
-ExecStartPre=-/usr/bin/find $tmp_root/mise-cache $tmp_root/mise-tmp -mindepth 1 -maxdepth 1 -exec rm -rf {} +
-EOF
-  fi
   cat <<EOF
-ExecStart=/usr/bin/env MISE_OFFLINE=1 $mise_bin exec -- txing-unit-daemon
+ExecStartPre=/usr/bin/test -x $daemon_binary
+ExecStartPre=/usr/bin/test -x $kvs_master_binary
+ExecStartPre=/usr/bin/echo txing-unit-daemon binary: $daemon_binary
+ExecStartPre=-$daemon_binary --version
+ExecStartPre=/usr/bin/echo txing-board-kvs-master binary: $kvs_master_binary
+ExecStartPre=-$kvs_master_binary --version
+ExecStart=$daemon_binary
 
 [Install]
 WantedBy=multi-user.target
@@ -232,8 +276,14 @@ if systemctl cat "$legacy_service_name" >/dev/null 2>&1 || [ -e "$legacy_service
   rm -f "$legacy_service_file"
 fi
 
+if systemctl list-unit-files NetworkManager-wait-online.service --no-legend --no-pager 2>/dev/null \
+  | grep -q '^NetworkManager-wait-online\.service[[:space:]]'; then
+  systemctl enable NetworkManager-wait-online.service >/dev/null
+fi
+
 systemctl daemon-reload
 systemctl enable "$service_name"
+systemctl reset-failed "$service_name" >/dev/null 2>&1 || true
 systemctl restart "$service_name"
 
 printf 'installed %s for %s channel\n' "$service_name" "$channel"
@@ -244,11 +294,21 @@ else
 fi
 printf '  systemd unit: %s\n' "$service_file"
 printf '  mise binary: %s\n' "$mise_bin"
+printf '  daemon binary: %s\n' "$daemon_binary"
+printf '  KVS master binary: %s\n' "$kvs_master_binary"
+printf '  daemon version: '
+if ! "$daemon_binary" --version; then
+  printf 'unavailable; resolved binary does not support --version\n'
+fi
+printf '  KVS master version: '
+if ! "$kvs_master_binary" --version; then
+  printf 'unavailable; resolved binary does not support --version\n'
+fi
 if [ "$channel" = "stable" ]; then
   printf '  stable install root: %s\n' "$stable_install_root"
   printf '  KVS master stable install root: %s\n' "$kvs_master_stable_install_root"
 else
-  printf '  feature install root: %s\n' "$tmp_root/mise"
+  printf '  feature install root: %s\n' "$mise_data_dir/installs"
   printf '  stable fallback root: %s\n' "$stable_install_root"
   printf '  KVS master stable fallback root: %s\n' "$kvs_master_stable_install_root"
 fi

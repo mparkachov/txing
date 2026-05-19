@@ -1,17 +1,22 @@
 import { getTrackIndicatorPresentation } from './app-model'
 import VideoPanel from '../../../web/src/VideoPanel'
 import type { McpTransportKind } from '../../../web/src/mcp-descriptor'
+import type { RobotControlState } from '../../../web/src/shadow-api'
 
 type TxingPanelProps = {
   isBoardVideoExpanded: boolean
   isDebugEnabled: boolean
+  isShadowConnected: boolean
+  isTakeControlPending: boolean
   mcpTransport: McpTransportKind | null
+  onTakeControl: () => void
   reportedBatteryMv: number | null
   reportedBoardLeftTrackSpeed: number | null
   reportedBoardOnline: boolean | null
   reportedBoardRightTrackSpeed: number | null
   reportedRedcon: number | null
   reportedMcuOnline: boolean | null
+  robotControl: RobotControlState | null
   onToggleDebug: () => void
   videoChannelName: string
   resolveIdToken: () => Promise<string>
@@ -181,6 +186,34 @@ function DebugGlyph() {
   )
 }
 
+function TakeControlGlyph() {
+  return (
+    <svg
+      className="status-video-take-control-glyph"
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path
+        d="M12 4.8v5.8M12 13.4v5.8M4.8 12h5.8M13.4 12h5.8"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="2"
+      />
+      <circle
+        cx="12"
+        cy="12"
+        r="6.6"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+      />
+      <circle cx="12" cy="12" r="1.8" fill="currentColor" />
+    </svg>
+  )
+}
+
 function McpTransportGlyph({ transport }: { transport: McpTransportKind | null }) {
   const label =
     transport === 'webrtc-datachannel'
@@ -243,13 +276,17 @@ function McpTransportGlyph({ transport }: { transport: McpTransportKind | null }
 function TxingPanel({
   isBoardVideoExpanded,
   isDebugEnabled,
+  isShadowConnected,
+  isTakeControlPending,
   mcpTransport,
+  onTakeControl,
   reportedBatteryMv,
   reportedBoardLeftTrackSpeed,
   reportedBoardOnline,
   reportedBoardRightTrackSpeed,
   reportedRedcon,
   reportedMcuOnline,
+  robotControl,
   onToggleDebug,
   videoChannelName,
   resolveIdToken,
@@ -258,6 +295,14 @@ function TxingPanel({
   const boardWifiToneClass = getBoardWifiToneClass(reportedBoardOnline)
   const bleSignalToneClass = getBleSignalToneClass(reportedMcuOnline)
   const shouldRenderBoardVideo = isBoardVideoExpanded && reportedRedcon === 1
+  const activeOwnerSessionId = robotControl?.activeOwnerSessionId ?? null
+  const isControlOwnedByOther =
+    activeOwnerSessionId !== null &&
+    robotControl?.activeHeldByCaller === false
+  const activeControlActor = robotControl?.activeControl?.actor
+  const takeControlTitle = activeControlActor
+    ? `Take active control from ${activeControlActor}`
+    : 'Take active control'
   const videoOverlay = (
     <div className="status-video-overlay-bar">
       <div className="status-video-overlay-side status-video-overlay-side-start">
@@ -275,6 +320,18 @@ function TxingPanel({
             onClick={onToggleDebug}
           >
             <DebugGlyph />
+          </button>
+        ) : null}
+        {isControlOwnedByOther ? (
+          <button
+            type="button"
+            className="status-video-take-control-button"
+            aria-label="Take active control"
+            disabled={!isShadowConnected || isTakeControlPending}
+            title={takeControlTitle}
+            onClick={onTakeControl}
+          >
+            <TakeControlGlyph />
           </button>
         ) : null}
         <McpTransportGlyph transport={mcpTransport} />

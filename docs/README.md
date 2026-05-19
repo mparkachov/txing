@@ -1,6 +1,7 @@
 # Documentation
 
-This repository now documents the current implementation directly rather than keeping older phase-design notes as the main reference.
+This repository documents the current implementation directly. Historical
+design notes have been folded into the owning component guides.
 
 ## Start Here
 
@@ -9,10 +10,6 @@ This repository now documents the current implementation directly rather than ke
 - [Artifacts](./artifacts.md)
 - [AWS bring-up and rebuild](./aws.md)
 - [Future work](./future-work.md)
-
-## Architecture Directions
-
-- [RTC session architecture](./rtc-session.md)
 
 ## Component Guides
 

@@ -241,7 +241,8 @@ directly, but gates them behind BLE `power=true`. In this contract `power`
 means MCU-controlled wakeup power/D1 availability, not MCU power. When BLE
 reports REDCON `4` or otherwise reports `power=false`, SparkplugManager clears
 `board`, `mcp`, and `video` immediately instead of waiting for the retained
-board state to expire.
+board state to expire. After a later wake, those board-owned capabilities stay
+false until a fresh board daemon capability state is observed.
 BLE state-read and command-applied capability states carry internal
 `metrics.bleRedcon` evidence for this gate; advertisement-only BLE reachability
 does not.

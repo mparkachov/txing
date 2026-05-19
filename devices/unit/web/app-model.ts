@@ -264,6 +264,9 @@ export const shouldClearPendingTargetRedcon = ({
   if (pendingTargetRedcon === null) {
     return false
   }
+  if (pendingTargetRedcon < 4) {
+    return false
+  }
   if (isSparkplugDeviceUnavailable) {
     return true
   }

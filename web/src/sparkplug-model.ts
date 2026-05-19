@@ -239,8 +239,11 @@ export const shouldClearPendingTargetRedcon = ({
   if (pendingTargetRedcon === null) {
     return false
   }
+  if (pendingTargetRedcon < 4) {
+    return false
+  }
   if (isSparkplugDeviceUnavailable) {
-    return pendingTargetRedcon === 4
+    return true
   }
   return hasReachedTargetRedcon({
     targetRedcon: pendingTargetRedcon,
