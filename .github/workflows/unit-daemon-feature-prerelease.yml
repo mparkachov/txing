@@ -158,8 +158,10 @@ jobs:
           set -euo pipefail
           docker run --rm \
             -v "$PWD:$PWD" \
+            -v "$RUNNER_TEMP:/out" \
             -w "$PWD" \
             -e DEBIAN_FRONTEND=noninteractive \
+            -e KVS_MASTER_BINARY="$KVS_MASTER_BINARY" \
             "$KVS_MASTER_BUILD_IMAGE" \
             bash -se <<'TRIXIE_BUILD'
           set -euo pipefail
@@ -200,6 +202,7 @@ jobs:
           fi
           ldd devices/unit/board/kvs_master/build/txing-board-kvs-master | grep -F "libcamera.so.0.7"
           ldd devices/unit/board/kvs_master/build/txing-board-kvs-master | grep -F "libcamera-base.so.0.7"
+          install -m 755 devices/unit/board/kvs_master/build/txing-board-kvs-master "/out/$KVS_MASTER_BINARY"
           TRIXIE_BUILD
 
       - name: Package prerelease assets
@@ -229,7 +232,7 @@ jobs:
           }
 
           package_binary devices/unit/daemon/target/release/daemon "$UNIT_DAEMON_BINARY" "$UNIT_DAEMON_ASSET"
-          package_binary devices/unit/board/kvs_master/build/txing-board-kvs-master "$KVS_MASTER_BINARY" "$KVS_MASTER_ASSET"
+          package_binary "$RUNNER_TEMP/$KVS_MASTER_BINARY" "$KVS_MASTER_BINARY" "$KVS_MASTER_ASSET"
 
           echo "unit_daemon_asset_path=$RUNNER_TEMP/$UNIT_DAEMON_ASSET" >>"$GITHUB_OUTPUT"
           echo "kvs_master_asset_path=$RUNNER_TEMP/$KVS_MASTER_ASSET" >>"$GITHUB_OUTPUT"

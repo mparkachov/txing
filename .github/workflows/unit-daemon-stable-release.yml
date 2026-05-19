@@ -217,8 +217,10 @@ jobs:
           set -euo pipefail
           docker run --rm \
             -v "$PWD:$PWD" \
+            -v "$RUNNER_TEMP:/out" \
             -w "$PWD" \
             -e DEBIAN_FRONTEND=noninteractive \
+            -e KVS_MASTER_BINARY=txing-board-kvs-master \
             "$KVS_MASTER_BUILD_IMAGE" \
             bash -se <<'TRIXIE_BUILD'
           set -euo pipefail
@@ -259,6 +261,7 @@ jobs:
           fi
           ldd devices/unit/board/kvs_master/build/txing-board-kvs-master | grep -F "libcamera.so.0.7"
           ldd devices/unit/board/kvs_master/build/txing-board-kvs-master | grep -F "libcamera-base.so.0.7"
+          install -m 755 devices/unit/board/kvs_master/build/txing-board-kvs-master "/out/$KVS_MASTER_BINARY"
           TRIXIE_BUILD
 
       - name: Package project release assets
@@ -289,7 +292,7 @@ jobs:
           }
 
           package_binary devices/unit/daemon/target/release/daemon txing-unit-daemon "$UNIT_DAEMON_ASSET"
-          package_binary devices/unit/board/kvs_master/build/txing-board-kvs-master txing-board-kvs-master "$KVS_MASTER_ASSET"
+          package_binary "$RUNNER_TEMP/txing-board-kvs-master" txing-board-kvs-master "$KVS_MASTER_ASSET"
           package_binary rig/target/release/txing-sparkplug-manager txing-sparkplug-manager "$SPARKPLUG_MANAGER_ASSET"
           package_binary rig/target/release/txing-ble-connectivity txing-ble-connectivity "$BLE_CONNECTIVITY_ASSET"
           package_binary rig/target/release/txing-aws-connectivity txing-aws-connectivity "$AWS_CONNECTIVITY_ASSET"
