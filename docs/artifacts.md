@@ -206,6 +206,9 @@ The board install behavior has been manually verified on a Raspberry Pi Zero 2
 W with a read-only root filesystem:
 
 - feature installer install into `/root/.local/share/mise/installs` and read-only-root reboot;
+- Phase 2a feature release with Rust daemon KVS supervision, REDCON `4` to `1`
+  convergence, browser AWS KVS video, and browser MQTT MCP motor control;
+- service restart from read-only root without calling the GitHub Releases API;
 - stable GitHub Actions release publish from `main`;
 - stable board install from the `main` raw installer;
 - stable upgrade with the root-owned installer;

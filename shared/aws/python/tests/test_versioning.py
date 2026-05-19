@@ -250,6 +250,9 @@ class VersionEnvironmentTests(unittest.TestCase):
         artifacts_docs = (REPO_ROOT / "docs" / "artifacts.md").read_text(
             encoding="utf-8"
         )
+        rtc_session_docs = (REPO_ROOT / "docs" / "rtc-session.md").read_text(
+            encoding="utf-8"
+        )
 
         self.assertIn("mise which txing-board-kvs-master", installation_docs)
         self.assertIn("bash /tmp/txing-install-systemd.sh stable", installation_docs)
@@ -273,6 +276,12 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("mount /tmp ; mount /var/tmp", installation_docs)
         self.assertIn("MISE_DATA_DIR=/root/.local/share/mise", artifacts_docs)
         self.assertIn("service starts offline", artifacts_docs)
+        self.assertIn("service restart from read-only root without calling the GitHub Releases API", artifacts_docs)
+        self.assertIn("Phase 2a is implemented and board-validated", rtc_session_docs)
+        self.assertIn("browser motor control works over MQTT MCP", rtc_session_docs)
+        self.assertIn("Publishing a new", rtc_session_docs)
+        self.assertIn("GitHub Release does not upgrade a board on daemon restart", rtc_session_docs)
+        self.assertIn("service restarts do not auto-upgrade or call GitHub", rtc_session_docs)
         self.assertIn("bash /tmp/txing-install-systemd.sh feature", artifacts_docs)
         self.assertNotIn("install-systemd.sh | sudo bash", installation_docs)
         self.assertNotIn("install-systemd.sh | sudo bash", artifacts_docs)

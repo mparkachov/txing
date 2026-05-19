@@ -6,9 +6,26 @@ This document records the architecture direction for moving unit board control
 from the current Python board runtime into the Rust unit daemon while preserving
 the existing browser operator behavior.
 
-This is a migration plan. Phase 2a is the current implementation target:
-restore KVS video under the Rust daemon while keeping MCP MQTT-only. Phase 2b
-and later sections remain forward design.
+This is a migration plan. Phase 2a is implemented and board-validated for the
+current unit path: KVS video is restored under Rust daemon supervision, REDCON
+can reach `1`, and browser motor control works over MQTT MCP. Phase 2b and
+later sections remain forward design.
+
+Current status as of 2026-05-19:
+
+- Rust `txing-unit-daemon` owns board, MCP, motor control, and KVS worker
+  supervision.
+- Native `txing-board-kvs-master` owns AWS KVS WebRTC master behavior, camera
+  capture, and H.264 media.
+- MCP transport is MQTT-only in the published descriptor; no WebRTC MCP data
+  channel or local MCP IPC is implemented.
+- Browser operator video works through AWS KVS WebRTC, while browser motor
+  control works through MQTT MCP.
+- Feature and stable service starts are offline by design. Publishing a new
+  GitHub Release does not upgrade a board on daemon restart; rerun the
+  installer during a writable-root maintenance window to install a newer
+  stable or feature release. This avoids daemon crash loops repeatedly calling
+  the GitHub Releases API and hitting rate limits.
 
 ## Intention
 
@@ -425,6 +442,37 @@ Notes:
 - Stderr/stdout markers remain the current worker status input for readiness,
   viewer connection, and errors.
 - Promote to a stable release only after Phase 2a board validation passes.
+
+Current status as of 2026-05-19:
+
+- Implemented in the Rust unit daemon:
+  - native KVS worker supervision gated by declared `video` capability
+  - IoT role-alias temporary credential injection into the worker environment
+  - bounded worker restart/backoff and credential-expiry restart
+  - parsing for `TXING_KVS_READY`, `TXING_VIEWER_CONNECTED`,
+    `TXING_VIEWER_DISCONNECTED`, and `TXING_KVS_ERROR`
+  - retained video descriptor/status publication
+  - `video` named-shadow mirror and v2 video capability publication
+  - `robot.get_state` includes live video status while MCP stays MQTT-only
+- Implemented in release/install:
+  - feature and stable releases package both `txing-unit-daemon` and
+    `txing-board-kvs-master`
+  - KVS master CI build uses a Debian Trixie arm64 container with Raspberry Pi
+    OS Trixie `libcamera0.7` packages
+  - root-owned installer installs both tools with mise and writes exact binary
+    paths into `txing-unit-daemon.service`
+  - service restarts do not auto-upgrade or call GitHub; rerun the installer to
+    pick up a newer release
+- Validated on board:
+  - REDCON `4` to `1` convergence
+  - browser AWS KVS video
+  - browser MQTT MCP motor control
+  - KVS worker stdout/stderr is visible in the daemon journal
+- Deferred:
+  - WebRTC data-channel MCP
+  - local daemon-to-worker MCP IPC
+  - browser MCP transport switching
+  - second KVS/control-only WebRTC channel
 
 ### Phase 2b: MCP Over Video WebRTC
 
