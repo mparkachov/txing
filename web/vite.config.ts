@@ -20,9 +20,9 @@ const reactDomClientPath = fileURLToPath(
 
 const readTxingVersion = (): string => {
   try {
-    return readFileSync(versionPath, 'utf-8').trim() || '0.9.124'
+    return readFileSync(versionPath, 'utf-8').trim() || '0.9.125'
   } catch {
-    return '0.9.124'
+    return '0.9.125'
   }
 }
 
