@@ -2,34 +2,28 @@ set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 set quiet
 
 mcu_dir := source_directory()
-weather_dir := canonicalize(mcu_dir + "/..")
 project_root := canonicalize(mcu_dir + "/../../..")
 common_mcu_dir := canonicalize(project_root + "/devices/common/mcu")
 ncs_dir := common_mcu_dir + "/ncs"
 ncs_repo := project_root + "/modules/nrfconnect/sdk-nrf"
 zephyr_base := ncs_dir + "/zephyr"
-ncs_venv := ncs_dir + "/.venv"
-west := ncs_venv + "/bin/west"
-sdk_dir := ncs_dir + "/sdk/zephyr-sdk-0.17.4"
 board := "xiao_nrf54l15/nrf54l15/cpuapp"
 build_version := "ncs-v3.3.0"
-app_dir := mcu_dir + "/zephyr"
-prj_conf := app_dir + "/prj.conf"
 build_dir := mcu_dir + "/build/ncs-xiao_nrf54l15_cpuapp"
 firmware_hex := build_dir + "/zephyr/zephyr/zephyr.hex"
 firmware_hex_fallback := build_dir + "/zephyr/zephyr.hex"
 nve_script := common_mcu_dir + "/xiao_nrf54l15/scripts/redcon_nve.py"
+ncs_script := common_mcu_dir + "/scripts/ncs_mcu.py"
 nve_hex := build_dir + "/redcon-factory-nve.hex"
 nve_address := "0x000f0000"
+default_ncs_python := env_var_or_default("TXING_MCU_NCS_PYTHON", "python3")
+ncs_python := env_var_or_default("WEATHER_MCU_NCS_PYTHON", default_ncs_python)
 openocd_support_dir := zephyr_base + "/boards/seeed/xiao_nrf54l15/support"
 openocd_cfg := openocd_support_dir + "/openocd.cfg"
 
 [private]
-_ensure-ncs:
+_ensure-ncs-submodule:
     test -f "{{ ncs_repo }}/west.yml" || { echo "missing NCS sdk-nrf submodule. Run: just weather::mcu::submodules" >&2; exit 1; }
-    test -x "{{ west }}" || { echo "missing shared NCS west environment at {{ west }}. Initialize devices/common/mcu/ncs first." >&2; exit 1; }
-    test -d "{{ zephyr_base }}" || { echo "missing shared NCS Zephyr checkout at {{ zephyr_base }}" >&2; exit 1; }
-    test -x "{{ sdk_dir }}/arm-zephyr-eabi/bin/arm-zephyr-eabi-gcc" || { echo "missing shared Zephyr SDK under {{ sdk_dir }}" >&2; exit 1; }
 
 [private]
 _ensure-openocd:
@@ -46,22 +40,14 @@ _firmware-hex:
 @submodules:
     git -C "{{ project_root }}" submodule update --init --recursive -- modules/nrfconnect/sdk-nrf
 
-@check: _ensure-ncs
-    cd "{{ ncs_dir }}" && \
-      HOME="{{ ncs_dir }}/.home" \
-      PIP_CACHE_DIR="{{ ncs_dir }}/.pip-cache" \
-      ZEPHYR_BASE="{{ zephyr_base }}" \
-      ZEPHYR_SDK_INSTALL_DIR="{{ sdk_dir }}" \
-      ZEPHYR_TOOLCHAIN_VARIANT=zephyr \
-      ZEPHYR_CACHE_DIR="{{ ncs_dir }}/.zephyr-cache" \
-      CCACHE_DIR="{{ ncs_dir }}/.ccache" \
-      PATH="{{ ncs_venv }}/bin:$PATH" \
-      "{{ west }}" build -p auto -b "{{ board }}" "{{ app_dir }}" -d "{{ build_dir }}" -- \
-        -DCONF_FILE="{{ prj_conf }}" \
-        -DSB_CONFIG_PARTITION_MANAGER=n \
-        -DBUILD_VERSION="{{ build_version }}"
+@install: submodules
+    "{{ ncs_python }}" "{{ ncs_script }}" --mcu-dir "{{ mcu_dir }}" --device-label weather install
 
-@build: check
+@check: _ensure-ncs-submodule
+    "{{ ncs_python }}" "{{ ncs_script }}" --mcu-dir "{{ mcu_dir }}" --device-label weather check
+
+@build: _ensure-ncs-submodule
+    "{{ ncs_python }}" "{{ ncs_script }}" --mcu-dir "{{ mcu_dir }}" --device-label weather build
 
 @flash: _ensure-openocd
     firmware="$(just --justfile "{{ mcu_dir }}/justfile" _firmware-hex)"; \
@@ -125,22 +111,15 @@ _firmware-hex:
       -c shutdown
 
 @paths:
-    echo "projectRoot: {{ project_root }}"
-    echo "mcuDir: {{ mcu_dir }}"
-    echo "ncsDir: {{ ncs_dir }} exists=$([ -d "{{ ncs_dir }}" ] && echo 1 || echo 0)"
-    echo "zephyrBase: {{ zephyr_base }} exists=$([ -d "{{ zephyr_base }}" ] && echo 1 || echo 0)"
-    echo "west: {{ west }} exists=$([ -x "{{ west }}" ] && echo 1 || echo 0)"
-    echo "sdkDir: {{ sdk_dir }} exists=$([ -d "{{ sdk_dir }}" ] && echo 1 || echo 0)"
+    "{{ ncs_python }}" "{{ ncs_script }}" --mcu-dir "{{ mcu_dir }}" --device-label weather paths
     echo "board: {{ board }}"
-    echo "appDir: {{ app_dir }}"
-    echo "buildDir: {{ build_dir }}"
-    echo "firmwareHex: {{ firmware_hex }} exists=$([ -f "{{ firmware_hex }}" ] && echo 1 || echo 0)"
+    echo "buildVersion: {{ build_version }}"
     echo "nveScript: {{ nve_script }} exists=$([ -f "{{ nve_script }}" ] && echo 1 || echo 0)"
     echo "nveHex: {{ nve_hex }} exists=$([ -f "{{ nve_hex }}" ] && echo 1 || echo 0)"
     echo "nveAddress: {{ nve_address }}"
 
 @clean:
-    rm -rf "{{ build_dir }}"
+    "{{ ncs_python }}" "{{ ncs_script }}" --mcu-dir "{{ mcu_dir }}" --device-label weather clean
 
 @default:
     @just --list
