@@ -6,8 +6,10 @@
 - Goal: one live operator path with minimal IT operations
 - Current live-control target: `p95` operator glass-to-glass latency under `800 ms` on target links
 - Control model: directional commands, not precision teleoperation
+- Active-control model: one MCP session owns actuator authority; explicit
+  `control.activate` with `takeover: true` switches ownership
 - Field-validation status: manual field validation was completed and accepted the plain-AWS-WebRTC path from a business perspective; no lab-grade metrics dataset is recorded in-repo
-- Current stable implementation: `txing-unit-daemon` supervises the native
+- Current implementation: `txing-unit-daemon` supervises the native
   `txing-board-kvs-master`, publishes retained video service topics, `rig`
   consumes them for REDCON readiness, and the browser uses AWS KVS signaling +
   WebRTC for the viewer path. When video is ready, MCP control uses the
@@ -31,6 +33,8 @@ Explicit non-goals for this slice:
 - `txing-unit-daemon` publishes retained video descriptor/status topics under `txings/<device_id>/video/*`.
 - The current implementation uses one live video path only: board camera -> plain AWS WebRTC signaling channel -> operator.
 - The operator watches the plain AWS WebRTC path, not a board-local viewer page.
+- KVS dual-stack endpoints and IPv6-preferred TURN behavior are enabled by
+  default for the current worker/browser path.
 - The current implementation does not use WebRTC ingestion/storage, multiviewer, or `kvssink`.
 - The current implementation assumes one human operator at a time operationally, but does not enforce single-viewer admission control in the repo.
 - ML and other cloud-side consumers are explicitly outside the current media path.
@@ -217,6 +221,8 @@ Not part of the current implementation:
 - A later implementation may add a separate cloud-consumption path for ML and other cloud-side consumers.
 - Additional future clients may reuse the same session metadata and signaling model without changing the current browser-operator path.
 - These future paths are outside the current operator media path and do not change the current AWS-WebRTC browser-operator design.
+- Cloud/control-only session consumers are tracked in
+  [docs/future-work.md](../../../docs/future-work.md).
 
 ## References
 

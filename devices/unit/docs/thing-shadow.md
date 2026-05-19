@@ -114,6 +114,11 @@ Metric names preserve Sparkplug structure by splitting both `.` and `/` into nes
 - `board.state.reported.wifi.online`, `ipv4`, and `ipv6` are refreshed by the board control loop.
 - `mcp.state.reported.descriptor` and `mcp.state.reported.status` mirror retained board MCP MQTT topics.
 - `video.state.reported.descriptor` and `video.state.reported.status` mirror retained board video MQTT topics.
+- UI capability indicators should use
+  `sparkplug.state.reported.payload.metrics.capability.*` as the reflected
+  source of truth. Board/MCP/video REDCON readiness comes from board-owned
+  retained v2 capability state consumed by SparkplugManager, not from
+  client-side inference.
 
 ## Capability Discovery
 

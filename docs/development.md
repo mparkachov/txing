@@ -22,8 +22,9 @@ Repo-wide tooling:
 - AWS CLI v2
 - GitHub CLI (`gh`) for operator-side stable release deploys
 
-Host-specific setup, including how each host installs `uv` / `just` and how the
-board read-only rootfs is configured, lives in [installation.md](./installation.md).
+Host-specific setup starts in [installation.md](./installation.md). Detailed
+board runtime setup, including read-only rootfs, lives in
+[components/board.md](./components/board.md).
 
 ## Version And Artifact Channels
 
@@ -58,10 +59,9 @@ artifacts:
   [artifacts.md](./artifacts.md).
 - Unit daemon feature prereleases are published by the manual `Unit Daemon
   Feature Prerelease` GitHub Actions workflow from pushed `feature/*` branches.
-- Read-only board boot flows may install `feature` channel artifacts into
-  tmpfs-backed `mise` directories while using the persistent `stable` install as
-  the fallback.
-- Writable maintenance flows should update the persistent baseline with the `stable` channel.
+- Board stable and feature channel changes are writable-root maintenance
+  actions. The installed systemd service starts offline from exact root-owned
+  binary paths and does not call GitHub during normal service restart.
 
 ## Project-Local AWS Config
 
@@ -184,6 +184,9 @@ path overrides are supplied. Provision that directory with
 intended; the recipe renders sourceable `daemon.env` content from
 `devices/unit/daemon/daemon.env.template` and refuses to overwrite existing
 daemon env or certificate material.
+
+The deployed board runtime, MCP/video transport contract, and board install
+flow are documented in [components/board.md](./components/board.md).
 
 Web:
 

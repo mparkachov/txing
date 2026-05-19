@@ -1,27 +1,50 @@
 # Board
 
-The board is the device-side Raspberry Pi. It is power-switched by the MCU, publishes board runtime state, supervises the native KVS sender, and exposes the board MCP surface.
+The board is the device-side Raspberry Pi. It is power-switched by the MCU,
+runs the root-owned Rust `txing-unit-daemon`, supervises the native
+`txing-board-kvs-master` process, publishes board-owned runtime state, and
+exposes board MCP for motion control.
+
+The older Python `txing-board` runtime remains in the repository for legacy and
+development reference only. It is not the stable runtime path.
 
 ## Responsibilities
 
 - publish the `board` named shadow
-- publish the `video` named shadow
-- publish retained video descriptor and status topics under `txings/<device_id>/video/*`
-- publish retained MCP descriptor and status topics under `txings/<device_id>/mcp/*`
-- publish retained v2 capability state for `board`, `mcp`, and `video` for direct SparkplugManager consumption
-- supervise the native KVS WebRTC sender as a child process
+- publish the `video` named shadow mirror
+- publish retained video descriptor/status topics under
+  `txings/<device_id>/video/*`
+- publish retained MCP descriptor/status topics under
+  `txings/<device_id>/mcp/*`
+- publish retained v2 capability state for `board`, `mcp`, and `video`
+- supervise the native KVS WebRTC worker as a child process
+- inject IoT role-alias temporary credentials into the native worker
 - subscribe to Sparkplug `DCMD.redcon` and halt locally on `redcon=4`
-- enforce MCP lease ownership for motion control
+- enforce MCP active-control ownership for actuator tools
+- stop motors on command silence, active-control expiry, session close,
+  transport switch, REDCON `4`, and daemon shutdown
 
-The stable Rust unit daemon owns `board.*` Thing Shadow updates and the retained
-board/MCP/video capability state. The older Python `txing-board` runtime remains
-in the repository for legacy and development reference only.
+## REDCON Contract
 
-## Current Interfaces
+For the current `unit` device type:
+
+- `REDCON 4`: BLE is reachable and the unit is in the sleep state.
+- `REDCON 3`: BLE is reachable and MCU-controlled wakeup power/D1 is enabled.
+- `REDCON 2`: board and MCP are available; video is unavailable or not ready.
+- `REDCON 1`: board, MCP, and video are available.
+
+The board publishes retained v2 capability state for `board`, `mcp`, and
+`video`. `rig/sparkplug-manager` consumes that retained state directly for
+REDCON projection. When BLE confirms REDCON `4` / `power=false`, Sparkplug
+projection clears board-owned capabilities and does not reuse stale retained
+board state on the next wake; fresh board daemon state must arrive before
+`board`, `mcp`, or `video` become available again.
+
+## Runtime Interfaces
 
 ### Board Shadow
 
-The board-owned named shadow is:
+The board-owned named shadow is a reported-only read model:
 
 ```json
 {
@@ -40,33 +63,45 @@ The board-owned named shadow is:
 
 Notes:
 
-- `reported.power=false` is best-effort clean shutdown state only
-- stale `power=true` or `wifi.online=true` must not be treated as authoritative after a hard power cut
+- `reported.power=false` is best-effort clean shutdown state only.
+- stale `power=true` or `wifi.online=true` must not be treated as
+  authoritative after a hard power cut.
 
 ### Video
 
-Current video is headless AWS KVS WebRTC:
+Current video is headless AWS Kinesis Video Streams WebRTC:
 
 - signaling channel: `<device_id>-board-video`
 - browser route: `/<town>/<rig>/<device>/video`
-- retained topics: `txings/<device_id>/video/descriptor` and `txings/<device_id>/video/status`
-- capability state: `txings/<device_id>/capability/v2/state`
+- retained topics:
+  - `txings/<device_id>/video/descriptor`
+  - `txings/<device_id>/video/status`
+- named shadow mirror: `video`
+- worker binary: `txing-board-kvs-master`
+
+The native worker owns camera capture, H.264 encode, AWS KVS master behavior,
+WebRTC peer connections, and data-channel forwarding. The Rust daemon owns
+worker supervision, readiness interpretation, retained state publication, MCP
+business logic, and motor authority.
+
+By default the daemon asks the native worker to use KVS dual-stack endpoints
+and IPv6-preferred TURN behavior. `TXING_KVS_DISABLE_IPV4_TURN=true` is a
+validation override, not the normal runtime setting.
+
+The daemon parses native worker markers:
+
+- `TXING_KVS_READY`
+- `TXING_VIEWER_CONNECTED`
+- `TXING_VIEWER_DISCONNECTED`
+- `TXING_KVS_ERROR`
+- MCP data-channel lifecycle markers
 
 The board video contract is documented in
 [devices/unit/docs/board-video.md](../../devices/unit/docs/board-video.md).
 
 ### MCP
 
-Current MCP transport:
-
-- retained descriptor topic: `txings/<device_id>/mcp/descriptor`
-- retained status topic: `txings/<device_id>/mcp/status`
-- REDCON `1` transport: WebRTC data channel on the board video KVS session
-  with label `txing.mcp.v1`
-- REDCON `2` fallback transport: MQTT JSON-RPC
-- MQTT MCP requests are rejected while the daemon advertises WebRTC-only MCP
-- `control.activate` uses `takeover: true` for explicit active-control
-  switching; non-active sessions can observe but cannot actuate
+MCP protocol version is `2026-05-19`.
 
 Current tool surface:
 
@@ -78,49 +113,442 @@ Current tool surface:
 - `cmd_vel.stop`
 - `robot.get_state`
 
-`robot.get_state` is the current read surface for active-control ownership,
-motion, and video runtime state. Those live runtime fields are no longer
-carried in Thing Shadow.
+Dynamic transport rules:
 
-## Local Runtime State
+- REDCON `1`: MCP is WebRTC data-channel only on the board video KVS media
+  session, with label `txing.mcp.v1`.
+- REDCON `2`: MCP is MQTT JSON-RPC only.
+- MQTT MCP requests are rejected while the daemon advertises WebRTC-only MCP.
+- If WebRTC MCP fails while WebRTC-only MCP is advertised, browser control stays
+  unavailable until the daemon publishes an MQTT-only descriptor.
+- Legacy descriptors without `transports` parse as MQTT-only.
 
-The stable Rust daemon writes no persistent board runtime state outside its
-per-user config directory. Stable and feature-channel mise tool installs are
-root-owned and persistent under `/root/.local/share/mise`; `/var/tmp` is only
-install/runtime scratch.
+Video-ready descriptor shape:
 
-The legacy Python board runtime writes transient local state only:
+```json
+{
+  "serviceId": "mcp",
+  "mcpProtocolVersion": "2026-05-19",
+  "transports": [
+    {
+      "type": "webrtc-datachannel",
+      "priority": 10,
+      "sessionKind": "media",
+      "signaling": "aws-kvs",
+      "channelName": "<device_id>-board-video",
+      "region": "<aws-region>",
+      "label": "txing.mcp.v1"
+    }
+  ]
+}
+```
 
-- `/tmp/txing_board_shadow.json`
-- `/tmp/txing_board_video_state.json`
-- `/tmp/txing_board_mcp_webrtc.sock`
+Video-unavailable descriptor shape:
 
-This is why the read-only-rootfs setup keeps `/tmp` and `/var/tmp` on tmpfs. The native sender also keeps the KVS signaling cache in memory only.
+```json
+{
+  "serviceId": "mcp",
+  "mcpProtocolVersion": "2026-05-19",
+  "transports": [
+    {
+      "type": "mqtt-jsonrpc",
+      "priority": 100,
+      "topicRoot": "txings/<device_id>/mcp"
+    }
+  ]
+}
+```
 
-## Build And Run
+### Active Control
 
-Rust unit daemon local run:
+The daemon maintains one active control slot. Many MCP sessions may observe,
+but only the active session may execute actuator tools.
+
+`control.activate` arguments:
+
+```json
+{
+  "actor": "txing-web",
+  "takeover": true
+}
+```
+
+Rules:
+
+- no active owner: `control.activate` succeeds
+- same session already active: returns current active state
+- another session active and `takeover` is not `true`: returns active-control
+  busy
+- another session active and `takeover: true`: stops motors, increments
+  `epoch`, replaces the active owner, and publishes status
+- displaced sessions remain connected as observers
+- `renew_active`, `release_active`, `cmd_vel.publish`, and `cmd_vel.stop` all
+  enforce session and epoch
+
+`robot.get_state` and retained MCP status include active-control owner metadata:
+
+```json
+{
+  "activeControl": {
+    "sessionId": "session-id",
+    "actor": "txing-web",
+    "transport": "webrtc-datachannel",
+    "sinceMs": 1770000000000,
+    "expiresAtMs": 1770000005000,
+    "epoch": 42
+  }
+}
+```
+
+## Runtime Configuration
+
+Deployed boards use root-owned config:
+
+```text
+/root/.config/txing/unit-daemon/daemon.env
+/root/.config/txing/unit-daemon/AmazonRootCA1.pem
+/root/.config/txing/unit-daemon/certificate.arn
+/root/.config/txing/unit-daemon/certificate.pem.crt
+/root/.config/txing/unit-daemon/private.pem.key
+/root/.config/txing/unit-daemon/public.pem.key
+```
+
+`daemon.env` is sourceable and rendered from
+`devices/unit/daemon/daemon.env.template`. Certificate paths are omitted by
+default; the daemon derives colocated paths from the loaded `daemon.env`
+directory.
+
+Default runtime inputs include:
+
+- `AWS_REGION`
+- `TXING_CAPABILITIES`
+- `TXING_KVS_MASTER_COMMAND`
+- `TXING_BOARD_VIDEO_CHANNEL_NAME`
+- `TXING_MCP_WEBRTC_SOCKET_PATH`
+- `TXING_KVS_PREFER_IPV6`
+- `TXING_KVS_DISABLE_IPV4_TURN`
+- `TXING_MOTOR_*`
+- CloudWatch log configuration
+
+The default video channel is `<thing_id>-board-video`. The default MCP WebRTC
+IPC socket path is `/var/tmp/txing/unit-daemon/mcp-webrtc.sock`.
+
+## Release Artifacts
+
+Boards install two GitHub Release assets through root-owned `mise`:
+
+```text
+txing-unit-daemon-linux-aarch64.tar.gz
+txing-board-kvs-master-linux-aarch64.tar.gz
+```
+
+Each archive contains one root-level executable:
+
+```text
+txing-unit-daemon
+txing-board-kvs-master
+```
+
+Stable mode uses root's persistent mise config and install tree:
+
+```text
+/root/.config/mise/conf.d/txing-unit-daemon.toml
+/root/.local/share/mise/installs/txing-unit-daemon/
+/root/.local/share/mise/installs/txing-board-kvs-master/
+```
+
+Feature mode requires stable to be installed first. It uses an isolated root
+mise config with prereleases enabled, installs into the same persistent root
+mise data tree, and uses `/var/tmp` only for cache/tmp scratch:
+
+```text
+/root/.config/mise/txing-unit-daemon/config.toml
+/root/.local/share/mise/installs/txing-unit-daemon/
+/root/.local/share/mise/installs/txing-board-kvs-master/
+/var/tmp/txing/unit-daemon/mise-cache
+/var/tmp/txing/unit-daemon/mise-tmp
+```
+
+Service starts are offline by design. Restarting
+`txing-unit-daemon.service` does not install or upgrade tools. Rerun the
+installer during a writable-root maintenance window to pick up a newer stable
+release or feature prerelease.
+
+## Fresh Board Install
+
+Assumptions:
+
+- Raspberry Pi Zero 2 W
+- Raspberry Pi OS Lite 64-bit, Trixie
+- `NetworkManager` manages networking
+- AWS resources and the target unit thing already exist
+- daemon config/certificate archive has been generated on the operator machine
+
+### 1. Create The Card
+
+Use Raspberry Pi Imager:
+
+- OS: Raspberry Pi OS Lite 64-bit
+- hostname: `txing`
+- user: `txing`
+- SSH enabled
+- Wi-Fi configured if the board is not using Ethernet
+- locale/timezone set for the installation location
+
+Boot once with the default writable root filesystem, connect as `txing`, then
+enter a root shell for the remaining host setup:
+
+```bash
+sudo su -
+```
+
+### 2. Install OS Packages
+
+```bash
+apt update
+apt full-upgrade -y
+apt install -y \
+  curl jq \
+  libssl-dev libcurl4-openssl-dev liblog4cplus-dev libsrtp2-dev \
+  libusrsctp-dev libwebsockets-dev zlib1g-dev libcamera-dev \
+  ca-certificates network-manager
+```
+
+If NetworkManager was newly installed or enabled, reconnect over the resulting
+network path before continuing.
+
+The release KVS master is built for Raspberry Pi OS Trixie and should link
+against `libcamera.so.0.7` and `libcamera-base.so.0.7`. The installer runs
+`ldd` on the resolved binaries and stops if any shared library is missing. If it
+reports `libcamera.so.0.2` or `libcamera.so.0.4`, the release asset was built
+against the wrong board image and must be replaced.
+
+### 3. Install Mise
+
+Install `mise` in the root shell:
+
+```bash
+mkdir -p "$HOME/.local/bin"
+curl https://mise.run | sh
+if ! grep -qxF 'eval "$($HOME/.local/bin/mise activate bash)"' "$HOME/.bashrc"; then
+  echo 'eval "$($HOME/.local/bin/mise activate bash)"' >> "$HOME/.bashrc"
+fi
+eval "$("$HOME/.local/bin/mise" activate bash)"
+mise --version
+```
+
+### 4. Generate And Copy Daemon Config
+
+On the operator machine:
+
+```bash
+just unit::cert <thing-id>
+scp config/certs/unit/<thing-id>-daemon-config.tgz txing:/tmp/<thing-id>-daemon-config.tgz
+```
+
+On the board from the root shell:
+
+```bash
+install -d -m 700 "$HOME/.config/txing"
+tar --no-same-owner -xzf /tmp/<thing-id>-daemon-config.tgz -C "$HOME/.config/txing"
+chmod 700 "$HOME/.config/txing/unit-daemon"
+chmod 600 "$HOME/.config/txing/unit-daemon/daemon.env"
+chmod 600 "$HOME/.config/txing/unit-daemon/certificate.arn"
+chmod 600 "$HOME/.config/txing/unit-daemon/certificate.pem.crt"
+chmod 600 "$HOME/.config/txing/unit-daemon/private.pem.key"
+chmod 600 "$HOME/.config/txing/unit-daemon/public.pem.key"
+chmod 644 "$HOME/.config/txing/unit-daemon/AmazonRootCA1.pem"
+rm -f /tmp/<thing-id>-daemon-config.tgz
+```
+
+For existing devices provisioned before daemon KVS permissions were added,
+refresh the per-device daemon role policy from the operator machine:
+
+```bash
+just unit::daemon::role-policy <thing-id>
+```
+
+### 5. Install Stable Runtime
+
+Run from the board root shell while root is writable:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/devices/unit/daemon/install-systemd.sh -o /tmp/txing-install-systemd.sh
+bash /tmp/txing-install-systemd.sh stable
+```
+
+The installer writes root-owned mise config, installs both release tools, writes
+`/etc/systemd/system/txing-unit-daemon.service`, enables the service, and
+restarts it. It can run before `daemon.env` and certificate files exist, but the
+service will not run successfully until those files are in place.
+
+Verify:
+
+```bash
+systemctl status --no-pager -l txing-unit-daemon.service
+journalctl -u txing-unit-daemon.service -n 160 --no-pager
+/root/.local/bin/mise list
+/root/.local/bin/mise which txing-unit-daemon
+/root/.local/bin/mise which txing-board-kvs-master
+```
+
+Expected:
+
+- the daemon log includes `version=<release-version>`
+- MQTT connects
+- retained `board`, dynamic `mcp`, and `video` state is published
+- the KVS master child reaches `TXING_KVS_READY` when camera and signaling are
+  available
+- REDCON can reach `1` after Sparkplug projection sees fresh `board`, `mcp`,
+  and `video` capability state
+
+### 6. Enable PWM Overlay
+
+Append this to `/boot/firmware/config.txt` while `/boot/firmware` is writable:
+
+```ini
+dtoverlay=pwm-2chan,pin=12,func=4,pin2=13,func2=4
+```
+
+Restart after changing the overlay so PWM devices exist before motor
+validation.
+
+### 7. Configure Read-Only Root
+
+The runtime is compatible with read-only root as long as these paths stay
+writable on tmpfs:
+
+- `/tmp`
+- `/var/tmp`
+- `/var/log`
+- `/var/lib/NetworkManager`
+
+The native KVS worker keeps the signaling cache in memory and does not depend
+on the SDK default `.SignalingCache_v1` file.
+
+Replace `PARTUUID` placeholders with values from
+`lsblk -o NAME,PARTUUID,MOUNTPOINT`, then use this `fstab` layout:
+
+```fstab
+proc            /proc           proc    defaults          0       0
+PARTUUID=<boot-partuuid>  /boot/firmware  vfat    defaults,ro,noatime         0       2
+PARTUUID=<root-partuuid>  /               ext4    defaults,ro,noatime         0       1
+tmpfs                     /tmp                 tmpfs nosuid,nodev,mode=1777,size=32M 0 0
+tmpfs                     /var/tmp             tmpfs nosuid,nodev,exec,mode=1777,size=96M 0 0
+tmpfs                     /var/log             tmpfs nosuid,nodev,mode=0755,size=16M 0 0
+tmpfs                     /var/lib/NetworkManager tmpfs nosuid,nodev,mode=0755,size=16M 0 0
+```
+
+Useful root shell aliases:
+
+```bash
+cat >> "$HOME/.bashrc" <<'EOF'
+alias root-ro='bash -c "rm -rf /var/tmp/* /tmp/* ; sync ; mount -o remount,ro /boot/firmware ; mount -o remount,ro / ; mount /tmp ; mount /var/tmp"'
+alias root-rw='bash -c "mount -o remount,rw /; mount -o remount,rw /boot/firmware; umount /var/tmp /tmp; systemctl daemon-reload"'
+EOF
+```
+
+Operational rules:
+
+- do package installs, `mise` installs/updates, daemon config changes, and
+  systemd unit changes while root is writable
+- switch back to read-only only after runtime, native KVS master, and config
+  files are in place
+- the service runs as root with `HOME=/root`
+- AWS-backed services must wait for network-online and clock synchronization so
+  TLS validation does not race NTP
+
+### 8. Final Reboot Check
+
+```bash
+root-ro
+reboot
+```
+
+After reconnecting:
+
+```bash
+systemctl status --no-pager -l txing-unit-daemon.service
+journalctl -u txing-unit-daemon.service -b -u txing-unit-daemon.service --no-pager
+/root/.local/bin/mise list
+/root/.local/bin/mise which txing-unit-daemon
+/root/.local/bin/mise which txing-board-kvs-master
+```
+
+Expected:
+
+- root filesystem is read-only
+- `txing-unit-daemon.service` starts without a source checkout
+- service start logs the exact daemon and KVS master paths
+- daemon log includes `version=<release-version>`
+- MQTT connects and retained board/MCP/video state is published
+
+## Maintenance
+
+Stable update during a writable-root maintenance window:
+
+```bash
+root-rw
+apt update
+apt dist-upgrade -y
+curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/devices/unit/daemon/install-systemd.sh -o /tmp/txing-install-systemd.sh
+bash /tmp/txing-install-systemd.sh stable
+root-ro
+```
+
+If a stable release was just published and `mise` still resolves the previous
+version:
+
+```bash
+root-rw
+curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/devices/unit/daemon/install-systemd.sh -o /tmp/txing-install-systemd.sh
+/root/.local/bin/mise cache clear
+bash /tmp/txing-install-systemd.sh stable
+root-ro
+```
+
+Feature validation requires stable to be installed first:
+
+```bash
+root-rw
+curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/devices/unit/daemon/install-systemd.sh -o /tmp/txing-install-systemd.sh
+bash /tmp/txing-install-systemd.sh feature
+root-ro
+```
+
+While validating installer changes that exist only on a feature branch, fetch
+the installer from that branch:
+
+```bash
+FEATURE_BRANCH=feature/<branch-name>
+curl -fsSL "https://raw.githubusercontent.com/mparkachov/txing/${FEATURE_BRANCH}/devices/unit/daemon/install-systemd.sh" -o /tmp/txing-install-systemd.sh
+bash /tmp/txing-install-systemd.sh feature
+```
+
+Opt out of feature by rerunning the stable installer.
+
+Raw GitHub URLs can be cached briefly after a push. Check the fetched installer
+before executing it when validating a just-pushed change:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/devices/unit/daemon/install-systemd.sh \
+  | grep -n 'daemon_binary=\|ExecStartPre=-.*--version\|conf.d'
+```
+
+## Local Development
+
+Rust unit daemon:
 
 ```bash
 just unit::daemon::run
 ```
 
-For local development, the daemon uses the per-user config directory
+The local daemon uses
 `${TXING_DAEMON_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/txing/unit-daemon}`.
-On deployed boards the stable runtime is root-owned and uses
-`/root/.config/txing/unit-daemon`. Its `daemon.env` file is sourceable and the IoT
-certificate files live beside it. In the current implementation, the daemon
-publishes the `board`, `mcp`, and `video` runtime surfaces for web/Sparkplug
-visibility. MCP is WebRTC data-channel only at REDCON `1` and MQTT-only at
-REDCON `2`.
+Provision that directory with `just unit::cert <thing-id>` only when AWS
+resource changes are intended.
 
-Provision daemon config and certs only when AWS resource changes are intended:
-
-```bash
-just unit::cert <thing-id>
-```
-
-Legacy Python board runtime commands:
+Native worker and legacy Python board commands:
 
 ```bash
 just unit::board::check
@@ -144,28 +572,11 @@ just unit::board::motor-raw 240 240
 just unit::board::motor-stop
 ```
 
-## Service Install
+## References
 
-The current stable service uses the root-owned Rust daemon installer:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/devices/unit/daemon/install-systemd.sh -o /tmp/txing-install-systemd.sh
-bash /tmp/txing-install-systemd.sh stable
-```
-
-The legacy Python board service path is still available for development
-comparison and must run as `root`:
-
-```bash
-just unit::board::install-service "$BOARD_VIDEO_SENDER_COMMAND"
-sudo journalctl -u board -f
-```
-
-The generated unit:
-
-- loads `config/aws.env`
-- enables `NetworkManager-wait-online.service`
-- waits for time synchronization before starting the AWS-backed sender
-- starts `board` with `--heartbeat-seconds 60`
-
-Board host setup, including the read-only root filesystem layout, lives in [installation.md](../installation.md).
+- [Artifacts](../artifacts.md)
+- [Installation overview](../installation.md)
+- [Unit board video contract](../../devices/unit/docs/board-video.md)
+- [Unit thing shadow model](../../devices/unit/docs/thing-shadow.md)
+- [Unit device-rig shadow contract](../../devices/unit/docs/device-rig-shadow-spec.md)
+- [Sparkplug lifecycle](../sparkplug-lifecycle.md)

@@ -40,6 +40,11 @@ For `unit` devices, the Rust unit daemon publishes retained
 `video`. Sparkplug projection reflects those into the capability stack; `video`
 becomes enabled only when the native KVS worker is ready.
 
+The web app must not derive board/MCP/video availability locally from pending
+commands or client-side transport state. Capability indicators reflect the
+Sparkplug named shadow projection. A small delay is acceptable; inconsistent
+client-side capability prediction is not.
+
 ## Local Development
 
 Install and write the local env:
