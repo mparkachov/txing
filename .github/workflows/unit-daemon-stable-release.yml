@@ -14,11 +14,13 @@ env:
   RUST_VERSION: 1.95.0
   UNIT_DAEMON_ASSET: txing-unit-daemon-linux-aarch64.tar.gz
   KVS_MASTER_ASSET: txing-board-kvs-master-linux-aarch64.tar.gz
+  KVS_MASTER_BINARY: txing-board-kvs-master
   SPARKPLUG_MANAGER_ASSET: txing-sparkplug-manager-linux-aarch64.tar.gz
   BLE_CONNECTIVITY_ASSET: txing-ble-connectivity-linux-aarch64.tar.gz
   AWS_CONNECTIVITY_ASSET: txing-aws-connectivity-linux-aarch64.tar.gz
   RIG_DEPLOY_ASSET: txing-rig-deploy-linux-aarch64.tar.gz
   KVS_MASTER_BUILD_IMAGE: debian:trixie
+  KVS_MASTER_OUTPUT_DIR: .txing-workflow-out
 
 jobs:
   stable-release:
@@ -215,12 +217,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          rm -rf "$KVS_MASTER_OUTPUT_DIR"
+          install -d "$KVS_MASTER_OUTPUT_DIR"
           docker run --rm \
             -v "$PWD:$PWD" \
-            -v "$RUNNER_TEMP:/out" \
             -w "$PWD" \
             -e DEBIAN_FRONTEND=noninteractive \
-            -e KVS_MASTER_BINARY=txing-board-kvs-master \
+            -e KVS_MASTER_BINARY="$KVS_MASTER_BINARY" \
+            -e KVS_MASTER_OUTPUT_DIR="$KVS_MASTER_OUTPUT_DIR" \
             "$KVS_MASTER_BUILD_IMAGE" \
             bash -se <<'TRIXIE_BUILD'
           set -euo pipefail
@@ -261,7 +265,7 @@ jobs:
           fi
           ldd devices/unit/board/kvs_master/build/txing-board-kvs-master | grep -F "libcamera.so.0.7"
           ldd devices/unit/board/kvs_master/build/txing-board-kvs-master | grep -F "libcamera-base.so.0.7"
-          install -m 755 devices/unit/board/kvs_master/build/txing-board-kvs-master "/out/$KVS_MASTER_BINARY"
+          install -m 755 devices/unit/board/kvs_master/build/txing-board-kvs-master "$KVS_MASTER_OUTPUT_DIR/$KVS_MASTER_BINARY"
           TRIXIE_BUILD
 
       - name: Package project release assets
@@ -292,7 +296,7 @@ jobs:
           }
 
           package_binary devices/unit/daemon/target/release/daemon txing-unit-daemon "$UNIT_DAEMON_ASSET"
-          package_binary "$RUNNER_TEMP/txing-board-kvs-master" txing-board-kvs-master "$KVS_MASTER_ASSET"
+          package_binary "$KVS_MASTER_OUTPUT_DIR/$KVS_MASTER_BINARY" "$KVS_MASTER_BINARY" "$KVS_MASTER_ASSET"
           package_binary rig/target/release/txing-sparkplug-manager txing-sparkplug-manager "$SPARKPLUG_MANAGER_ASSET"
           package_binary rig/target/release/txing-ble-connectivity txing-ble-connectivity "$BLE_CONNECTIVITY_ASSET"
           package_binary rig/target/release/txing-aws-connectivity txing-aws-connectivity "$AWS_CONNECTIVITY_ASSET"
