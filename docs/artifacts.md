@@ -212,13 +212,15 @@ Run this on macOS only when certificate or AWS daemon resource provisioning is
 intended:
 
 ```bash
-just unit::daemon::cert <thing-id>
+just unit::cert <thing-id>
 ```
 
-The recipe writes `.env` and certificate material into:
+The recipe writes `.env` and certificate material into the gitignored unit cert
+area and creates a ready-to-copy root-runtime config archive:
 
 ```text
-$HOME/.config/txing/unit-daemon
+config/certs/unit/<thing-id>/unit-daemon/
+config/certs/unit/<thing-id>-daemon-config.tgz
 ```
 
 ### Copy Daemon Config To The Board
@@ -226,17 +228,14 @@ $HOME/.config/txing/unit-daemon
 From macOS:
 
 ```bash
-test -r "$HOME/.config/txing/unit-daemon/.env"
-test -r "$HOME/.config/txing/unit-daemon/private.pem.key"
-COPYFILE_DISABLE=1 tar -C "$HOME/.config/txing" -czf /tmp/txing-unit-daemon-config.tgz unit-daemon
-scp /tmp/txing-unit-daemon-config.tgz txing:/tmp/txing-unit-daemon-config.tgz
+scp config/certs/unit/<thing-id>-daemon-config.tgz txing:/tmp/<thing-id>-daemon-config.tgz
 ```
 
 On the board from the root shell:
 
 ```bash
 install -d -m 700 "$HOME/.config/txing"
-tar -xzf /tmp/txing-unit-daemon-config.tgz -C "$HOME/.config/txing"
+tar --no-same-owner -xzf /tmp/<thing-id>-daemon-config.tgz -C "$HOME/.config/txing"
 chmod 700 "$HOME/.config/txing/unit-daemon"
 chmod 600 "$HOME/.config/txing/unit-daemon/.env"
 chmod 600 "$HOME/.config/txing/unit-daemon/certificate.arn"
@@ -244,7 +243,7 @@ chmod 600 "$HOME/.config/txing/unit-daemon/certificate.pem.crt"
 chmod 600 "$HOME/.config/txing/unit-daemon/private.pem.key"
 chmod 600 "$HOME/.config/txing/unit-daemon/public.pem.key"
 chmod 644 "$HOME/.config/txing/unit-daemon/AmazonRootCA1.pem"
-rm -f /tmp/txing-unit-daemon-config.tgz
+rm -f /tmp/<thing-id>-daemon-config.tgz
 ```
 
 ### Refresh Existing Daemon Role Policy

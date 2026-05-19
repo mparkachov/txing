@@ -107,7 +107,7 @@ visibility while keeping MCP MQTT-only.
 Provision daemon config and certs only when AWS resource changes are intended:
 
 ```bash
-just unit::daemon::cert <thing-id>
+just unit::cert <thing-id>
 ```
 
 Legacy Python board runtime commands:
