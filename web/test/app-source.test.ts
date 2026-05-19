@@ -43,6 +43,21 @@ describe('app route catalog source wiring', () => {
     expect(appSource).toContain('{navigationCapabilities}')
   })
 
+  test('wake commands keep reflection sourced from shadow state', () => {
+    const appSource = readFileSync(resolve(repoRoot, 'web/src/App.tsx'), 'utf-8')
+
+    expect(appSource).toContain("commandStatus?.status === 'succeeded'")
+    expect(appSource).toContain('const commandSequence = createSparkplugRedconCommandSeq(')
+    expect(appSource).toContain('commandStatus.seq === commandSequence')
+    expect(appSource).toContain('setPendingTargetRedcon(redcon)')
+    expect(appSource).toContain('sparkplugRedcon={reportedRedcon}')
+    expect(appSource).toContain('reportedRedcon,')
+    expect(appSource).not.toContain('effectiveReportedRedcon')
+    expect(appSource).not.toContain('isWakeRedconPending')
+    expect(appSource).not.toContain('commandStatus.seq === commandSequence - 1')
+    expect(appSource).not.toContain('commandSequence - 1')
+  })
+
   test('route transitions use busy navigation styling instead of transient loading copy', () => {
     const appSource = readFileSync(resolve(repoRoot, 'web/src/App.tsx'), 'utf-8')
 

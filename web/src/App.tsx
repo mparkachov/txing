@@ -147,10 +147,14 @@ const robotStatePollIntervalMs = 5_000
 const routeSparkplugPollIntervalMs = 2_000
 const catalogSparkplugPollIntervalMs = 5_000
 const routeSparkplugRedconCommandTimeoutMs = 60_000
+const sparkplugRedconCommandSeqModulo = 2_147_000_000
 const txingLogoUrl = 'https://txing.dev/txing-logo.png'
 const appHomePath = '/'
 const signInRequestParam = 'signin'
 let shadowApiModulePromise: Promise<typeof import('./shadow-api')> | null = null
+
+const createSparkplugRedconCommandSeq = (salt: number): number =>
+  (Date.now() + salt) % sparkplugRedconCommandSeqModulo
 
 const emptyRigCatalogState = (): RigCatalogState => ({
   status: 'idle',
@@ -456,10 +460,7 @@ function App({ initialAuthError = '' }: AppProps) {
   const isRedconCommandPending =
     pendingTargetRedcon !== null &&
     !isSparkplugDeviceUnavailable &&
-    (reportedRedcon === null ||
-      (pendingTargetRedcon === 4
-        ? reportedRedcon !== 4
-        : reportedRedcon > pendingTargetRedcon))
+    (pendingTargetRedcon === 4 ? reportedRedcon !== 4 : true)
   const isRedconCommandDisabled =
     !isSparkplugDeviceCommandAvailable || isUpdatingShadow || isRedconCommandPending
   const isRedconSleepCommandDisabled =
@@ -652,21 +653,10 @@ function App({ initialAuthError = '' }: AppProps) {
             return
           }
         }
-        if (
-          hasReachedTargetRedcon({
-            targetRedcon,
-            reportedRedcon: extractReportedRedcon(nextShadow),
-          })
-        ) {
-          if (redconCommandSequenceRef.current === commandSequence) {
-            setPendingTargetRedcon(null)
-          }
-          return
-        }
         const commandStatus = extractSparkplugRedconCommandStatus(nextShadow)
         if (
           commandStatus?.status === 'failed' &&
-          commandStatus.seq === commandSequence - 1 &&
+          commandStatus.seq === commandSequence &&
           commandStatus.targetRedcon === targetRedcon
         ) {
           if (redconCommandSequenceRef.current === commandSequence) {
@@ -677,6 +667,21 @@ function App({ initialAuthError = '' }: AppProps) {
               }`,
               'sparkplug-redcon-convergence',
             )
+          }
+          return
+        }
+        if (
+          hasReachedTargetRedcon({
+            targetRedcon,
+            reportedRedcon: extractReportedRedcon(nextShadow),
+          }) &&
+          (targetRedcon === 4 ||
+            (commandStatus?.status === 'succeeded' &&
+              commandStatus.seq === commandSequence &&
+              commandStatus.targetRedcon === targetRedcon))
+        ) {
+          if (redconCommandSequenceRef.current === commandSequence) {
+            setPendingTargetRedcon(null)
           }
           return
         }
@@ -1665,19 +1670,21 @@ function App({ initialAuthError = '' }: AppProps) {
       return false
     }
 
-    const commandSequence = redconCommandSequenceRef.current + 1
+    const commandSequence = createSparkplugRedconCommandSeq(
+      redconCommandSequenceRef.current + 1,
+    )
     redconCommandSequenceRef.current = commandSequence
     setIsUpdatingShadow(true)
+    setPendingTargetRedcon(redcon)
 
     try {
       await publishDirectSparkplugRedconCommand(
         resolveSessionIdToken,
         commandTarget,
         redcon,
-        commandSequence - 1,
+        commandSequence,
       )
       if (redconCommandSequenceRef.current === commandSequence) {
-        setPendingTargetRedcon(redcon)
         appendSessionLogEntry({
           tone: 'neutral',
           message: `Sparkplug DCMD.redcon -> ${redcon}`,
@@ -1689,6 +1696,7 @@ function App({ initialAuthError = '' }: AppProps) {
       return true
     } catch (caughtError) {
       if (redconCommandSequenceRef.current === commandSequence) {
+        setPendingTargetRedcon(null)
         enqueueRuntimeError(
           caughtError instanceof Error ? caughtError.message : 'Unable to publish Sparkplug command',
           'sparkplug-redcon',
