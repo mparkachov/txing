@@ -13,6 +13,7 @@ import {
 } from './mcp-errors'
 import { getMcpActiveControlRenewBeforeMs } from './mcp-active-control'
 import {
+  hasMcpMqttTransport,
   parseMcpDescriptor,
   shouldAwaitInitialMcpDescriptor,
   selectPreferredMcpWebRtcTransport,
@@ -266,16 +267,6 @@ const createMcpSessionId = (): string =>
   typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
     ? crypto.randomUUID()
     : `session-${Date.now()}-${Math.random().toString(16).slice(2)}`
-
-const containsMcpActiveEpoch = (value: unknown, depth = 0): boolean => {
-  if (depth > 4 || !isRecord(value)) {
-    return false
-  }
-  if (typeof value.epoch === 'number' && Number.isFinite(value.epoch)) {
-    return true
-  }
-  return Object.values(value).some((child) => containsMcpActiveEpoch(child, depth + 1))
-}
 
 const parseMcpActiveControlState = (
   value: unknown,
@@ -1100,7 +1091,7 @@ class AwsIotShadowSession implements ShadowSession {
       const parsed = parseShadowPayload(payload)
       const descriptor = parseMcpDescriptor(parsed)
       if (descriptor) {
-        this.mcpDescriptor = descriptor
+        this.applyMcpDescriptor(descriptor)
         this.resolveMcpDescriptorWaiters()
       }
       if (isRecord(parsed) && typeof parsed.descriptorTopic === 'string' && parsed.descriptorTopic.trim()) {
@@ -1139,7 +1130,7 @@ class AwsIotShadowSession implements ShadowSession {
     }
     const parsedDescriptor = parseMcpDescriptor(descriptor)
     if (parsedDescriptor) {
-      this.mcpDescriptor = parsedDescriptor
+      this.applyMcpDescriptor(parsedDescriptor)
       this.resolveMcpDescriptorWaiters()
     }
     this.mcpDiscovery.transport =
@@ -1203,6 +1194,21 @@ class AwsIotShadowSession implements ShadowSession {
     }
     this.activeMcpTransport = nextTransport
     this.options.onMcpTransportChange(nextTransport)
+  }
+
+  private applyMcpDescriptor(descriptor: McpDescriptor): void {
+    const activeTransport = this.activeMcpTransport
+    this.mcpDescriptor = descriptor
+    if (
+      activeTransport &&
+      !descriptor.transports.some((transport) => transport.type === activeTransport)
+    ) {
+      this.resetMcpConnectionState()
+      this.mcpDescriptor = descriptor
+    }
+    if (!selectPreferredMcpWebRtcTransport(descriptor)) {
+      this.mcpWebRtcUnavailable = false
+    }
   }
 
   private buildLocalRobotControlState(
@@ -1380,6 +1386,9 @@ class AwsIotShadowSession implements ShadowSession {
       } catch {
         this.mcpWebRtcUnavailable = true
         this.closeMcpWebRtcHandle()
+        if (!hasMcpMqttTransport(this.mcpDescriptor)) {
+          throw new Error('MCP WebRTC data channel is unavailable and MQTT MCP is not advertised')
+        }
       }
     }
 
@@ -1390,6 +1399,9 @@ class AwsIotShadowSession implements ShadowSession {
     const client = this.client
     if (!client || !this.isConnected()) {
       throw new Error('Shadow connection is not ready')
+    }
+    if (this.mcpDescriptor && !hasMcpMqttTransport(this.mcpDescriptor)) {
+      throw new Error('MCP MQTT transport is not advertised')
     }
     if (!this.mcpSessionId) {
       this.mcpSessionId = createMcpSessionId()
@@ -1691,18 +1703,10 @@ class AwsIotShadowSession implements ShadowSession {
       try {
         return await this.mcpWebRtcHandle.request(message, mcpRequestTimeoutMs)
       } catch (caughtError) {
-        const canRetryOverMqtt = !this.mcpActiveControl && !containsMcpActiveEpoch(params)
         this.handleMcpWebRtcFailure()
-        if (!canRetryOverMqtt) {
-          throw caughtError instanceof Error
-            ? caughtError
-            : new Error(getErrorMessage(caughtError, `MCP WebRTC request ${method} failed`))
-        }
-        await this.ensureMqttMcpSessionSubscription()
-        if (method !== 'initialize') {
-          await this.ensureMcpSessionReady()
-        }
-        return this.publishMcpRequest(method, params)
+        throw caughtError instanceof Error
+          ? caughtError
+          : new Error(getErrorMessage(caughtError, `MCP WebRTC request ${method} failed`))
       }
     }
 

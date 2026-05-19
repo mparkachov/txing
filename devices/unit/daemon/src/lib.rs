@@ -31,9 +31,13 @@ use gneiss_mqtt::client::{
 use gneiss_mqtt::mqtt::{PublishPacket, QualityOfService, SubscribePacket};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tokio::io::{
+    AsyncBufReadExt, AsyncWriteExt, BufReader as TokioBufReader, split as split_async_io,
+};
+use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
-use tokio::time::{Instant, MissedTickBehavior, interval_at, timeout};
+use tokio::time::{Instant, MissedTickBehavior, interval_at, sleep, timeout};
 use tracing::field::{Field, Visit};
 use tracing::{Event, Level, Metadata, Subscriber};
 use tracing::{debug, info, warn};
@@ -80,6 +84,7 @@ pub const DEFAULT_TRACK_WIDTH_M: f64 = 0.28;
 pub const DEFAULT_MAX_WHEEL_LINEAR_SPEED_MPS: f64 = 0.50;
 pub const DEFAULT_CLOUDWATCH_LOG_RETENTION_DAYS: i32 = 14;
 pub const DEFAULT_KVS_MASTER_COMMAND: &str = "txing-board-kvs-master";
+pub const DEFAULT_MCP_WEBRTC_SOCKET_PATH: &str = "/var/tmp/txing/unit-daemon/mcp-webrtc.sock";
 pub const DEFAULT_VIDEO_CODEC: &str = "h264";
 pub const DEFAULT_VIDEO_TRANSPORT: &str = "aws-webrtc";
 pub const VIDEO_STATUS_STARTING: &str = "starting";
@@ -922,6 +927,15 @@ pub struct Cli {
     #[arg(long = "kvs-master-command")]
     pub kvs_master_command: Option<String>,
 
+    #[arg(long = "mcp-webrtc-socket-path")]
+    pub mcp_webrtc_socket_path: Option<String>,
+
+    #[arg(long = "kvs-prefer-ipv6")]
+    pub kvs_prefer_ipv6: Option<String>,
+
+    #[arg(long = "kvs-disable-ipv4-turn")]
+    pub kvs_disable_ipv4_turn: Option<String>,
+
     #[arg(long = "video-channel-name")]
     pub video_channel_name: Option<String>,
 
@@ -1010,6 +1024,9 @@ pub struct RuntimeConfig {
     pub capability_ttl: Duration,
     pub heartbeat: Duration,
     pub kvs_master_command: String,
+    pub mcp_webrtc_socket_path: String,
+    pub kvs_prefer_ipv6: bool,
+    pub kvs_disable_ipv4_turn: bool,
     pub video_region: String,
     pub video_channel_name: String,
     pub motor: MotorConfig,
@@ -1101,6 +1118,32 @@ impl RuntimeConfig {
             "TXING_KVS_MASTER_COMMAND",
         )
         .unwrap_or_else(|| DEFAULT_KVS_MASTER_COMMAND.to_string());
+        let mcp_webrtc_socket_path = optional_config_value(
+            cli.mcp_webrtc_socket_path,
+            process_env,
+            file_env,
+            "TXING_MCP_WEBRTC_SOCKET_PATH",
+        )
+        .unwrap_or_else(|| DEFAULT_MCP_WEBRTC_SOCKET_PATH.to_string());
+        if mcp_webrtc_socket_path.trim().is_empty() {
+            bail!("mcp-webrtc-socket-path must not be empty");
+        }
+        let kvs_prefer_ipv6 = optional_bool_config(
+            cli.kvs_prefer_ipv6,
+            process_env,
+            file_env,
+            "TXING_KVS_PREFER_IPV6",
+            "kvs-prefer-ipv6",
+        )?
+        .unwrap_or(true);
+        let kvs_disable_ipv4_turn = optional_bool_config(
+            cli.kvs_disable_ipv4_turn,
+            process_env,
+            file_env,
+            "TXING_KVS_DISABLE_IPV4_TURN",
+            "kvs-disable-ipv4-turn",
+        )?
+        .unwrap_or(false);
         let aws_region = required_config_value(
             cli.aws_region,
             process_env,
@@ -1193,6 +1236,9 @@ impl RuntimeConfig {
             capability_ttl: Duration::from_secs(capability_ttl_seconds),
             heartbeat: Duration::from_secs(heartbeat_seconds),
             kvs_master_command,
+            mcp_webrtc_socket_path,
+            kvs_prefer_ipv6,
+            kvs_disable_ipv4_turn,
             video_region: aws_region,
             video_channel_name,
             motor,
@@ -1218,6 +1264,29 @@ pub struct PublishedMessage {
 pub enum RuntimeMqttEvent {
     Publish { topic: String, payload: Vec<u8> },
     Disconnected,
+}
+
+#[derive(Debug)]
+pub enum RuntimeMcpIpcEvent {
+    Request {
+        session_id: String,
+        payload: String,
+        response_tx: oneshot::Sender<Option<String>>,
+    },
+    Close {
+        session_id: String,
+        reason: String,
+    },
+}
+
+#[derive(Debug, Deserialize)]
+struct McpIpcFrame {
+    #[serde(rename = "type")]
+    frame_type: String,
+    #[serde(rename = "sessionId")]
+    session_id: Option<String>,
+    payload: Option<String>,
+    reason: Option<String>,
 }
 
 #[async_trait]
@@ -1344,6 +1413,183 @@ impl MqttPublisher {
         self.client.stop(None)?;
         self.client.close()?;
         Ok(())
+    }
+}
+
+struct McpIpcServerHandle {
+    stop: Arc<AtomicBool>,
+    path: String,
+    task: JoinHandle<()>,
+}
+
+impl McpIpcServerHandle {
+    async fn shutdown(self) {
+        self.stop.store(true, Ordering::SeqCst);
+        let mut task = self.task;
+        tokio::select! {
+            join_result = &mut task => {
+                if let Err(err) = join_result {
+                    warn!(error = %err, "MCP IPC server task failed during shutdown");
+                }
+            }
+            _ = tokio::time::sleep(Duration::from_secs(2)) => {
+                task.abort();
+                warn!("MCP IPC server did not stop within timeout; aborting task");
+            }
+        }
+        if let Err(err) = fs::remove_file(&self.path)
+            && err.kind() != ErrorKind::NotFound
+        {
+            warn!(path = %self.path, error = %err, "failed to remove MCP IPC socket");
+        }
+    }
+}
+
+fn start_mcp_ipc_server(
+    socket_path: String,
+    event_tx: mpsc::UnboundedSender<RuntimeMcpIpcEvent>,
+) -> McpIpcServerHandle {
+    let stop = Arc::new(AtomicBool::new(false));
+    let task_stop = stop.clone();
+    let task_path = socket_path.clone();
+    let task = tokio::spawn(async move {
+        if let Err(err) = run_mcp_ipc_server(task_path, event_tx, task_stop).await {
+            warn!(error = %format_args!("{err:#}"), "MCP IPC server stopped");
+        }
+    });
+    McpIpcServerHandle {
+        stop,
+        path: socket_path,
+        task,
+    }
+}
+
+async fn run_mcp_ipc_server(
+    socket_path: String,
+    event_tx: mpsc::UnboundedSender<RuntimeMcpIpcEvent>,
+    stop: Arc<AtomicBool>,
+) -> Result<()> {
+    let path = Path::new(&socket_path);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("create MCP IPC socket directory {}", parent.display()))?;
+    }
+    if let Err(err) = fs::remove_file(path)
+        && err.kind() != ErrorKind::NotFound
+    {
+        return Err(err).with_context(|| format!("remove stale MCP IPC socket {socket_path}"));
+    }
+    let listener =
+        UnixListener::bind(path).with_context(|| format!("bind MCP IPC socket {socket_path}"))?;
+    info!(path = %socket_path, "MCP WebRTC IPC server started");
+    while !stop.load(Ordering::SeqCst) {
+        tokio::select! {
+            accepted = listener.accept() => {
+                match accepted {
+                    Ok((stream, _)) => {
+                        let connection_tx = event_tx.clone();
+                        tokio::spawn(async move {
+                            handle_mcp_ipc_connection(stream, connection_tx).await;
+                        });
+                    }
+                    Err(err) => {
+                        if stop.load(Ordering::SeqCst) {
+                            break;
+                        }
+                        warn!(error = %err, "MCP IPC accept failed");
+                    }
+                }
+            }
+            _ = sleep(Duration::from_millis(200)) => {}
+        }
+    }
+    Ok(())
+}
+
+async fn handle_mcp_ipc_connection(
+    stream: UnixStream,
+    event_tx: mpsc::UnboundedSender<RuntimeMcpIpcEvent>,
+) {
+    let (reader, mut writer) = split_async_io(stream);
+    let mut reader = TokioBufReader::new(reader);
+    let mut line = String::new();
+    loop {
+        line.clear();
+        let read = match reader.read_line(&mut line).await {
+            Ok(read) => read,
+            Err(err) => {
+                warn!(error = %err, "MCP IPC read failed");
+                break;
+            }
+        };
+        if read == 0 {
+            break;
+        }
+        let frame: McpIpcFrame = match serde_json::from_str(line.trim_end()) {
+            Ok(frame) => frame,
+            Err(err) => {
+                warn!(error = %err, "ignored invalid MCP IPC frame");
+                continue;
+            }
+        };
+        let Some(session_id) = frame
+            .session_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+        else {
+            warn!("ignored MCP IPC frame without sessionId");
+            continue;
+        };
+        match frame.frame_type.as_str() {
+            "request" => {
+                let Some(payload) = frame.payload else {
+                    warn!(session_id = %session_id, "ignored MCP IPC request without payload");
+                    continue;
+                };
+                let (response_tx, response_rx) = oneshot::channel();
+                if event_tx
+                    .send(RuntimeMcpIpcEvent::Request {
+                        session_id: session_id.clone(),
+                        payload,
+                        response_tx,
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+                let response = response_rx.await.ok().flatten();
+                if let Some(payload) = response {
+                    let frame = serde_json::json!({
+                        "type": "response",
+                        "sessionId": session_id,
+                        "payload": payload,
+                    });
+                    let mut encoded = match serde_json::to_vec(&frame) {
+                        Ok(encoded) => encoded,
+                        Err(err) => {
+                            warn!(error = %err, "failed to encode MCP IPC response");
+                            break;
+                        }
+                    };
+                    encoded.push(b'\n');
+                    if let Err(err) = writer.write_all(&encoded).await {
+                        warn!(error = %err, "MCP IPC response write failed");
+                        break;
+                    }
+                }
+            }
+            "close" => {
+                let reason = frame
+                    .reason
+                    .unwrap_or_else(|| "MCP WebRTC data channel closed".to_string());
+                let _ = event_tx.send(RuntimeMcpIpcEvent::Close { session_id, reason });
+            }
+            other => {
+                warn!(frame_type = %other, "ignored unsupported MCP IPC frame");
+            }
+        }
     }
 }
 
@@ -2039,6 +2285,11 @@ impl VideoRuntimeState {
                 self.last_error = Some(detail);
                 self.updated_at_ms = observed_at_ms;
             }
+            VideoWorkerEvent::McpDataChannelOpen { .. }
+            | VideoWorkerEvent::McpDataChannelClosed { .. }
+            | VideoWorkerEvent::McpDataChannelError { .. } => {
+                self.updated_at_ms = observed_at_ms;
+            }
         }
     }
 }
@@ -2115,6 +2366,7 @@ impl McpServer {
         &mut self,
         session_id: &str,
         actor: Option<String>,
+        transport: &str,
         now_ms: u64,
         cmd_vel: &mut CmdVelController,
     ) -> Result<ActiveControlState> {
@@ -2130,13 +2382,33 @@ impl McpServer {
         let active = ActiveControlState {
             session_id: session_id.to_string(),
             actor,
-            transport: "mqtt-jsonrpc".to_string(),
+            transport: transport.to_string(),
             since_ms: now_ms,
             expires_at_ms: now_ms.saturating_add(duration_millis(self.active_ttl)),
             epoch: self.next_epoch,
         };
         self.active = Some(active.clone());
         Ok(active)
+    }
+
+    fn clear_active(&mut self, cmd_vel: &mut CmdVelController) -> Result<bool> {
+        if self.active.is_none() {
+            return Ok(false);
+        }
+        self.active = None;
+        cmd_vel.stop(true)?;
+        Ok(true)
+    }
+
+    fn close_session(&mut self, session_id: &str, cmd_vel: &mut CmdVelController) -> Result<bool> {
+        if self
+            .active
+            .as_ref()
+            .is_some_and(|active| active.session_id == session_id)
+        {
+            return self.clear_active(cmd_vel);
+        }
+        Ok(false)
     }
 
     fn renew_active(
@@ -2207,6 +2479,26 @@ impl McpServer {
             video,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum McpTransportMode {
+    Mqtt,
+    WebRtcDataChannel,
+}
+
+impl McpTransportMode {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Mqtt => "mqtt-jsonrpc",
+            Self::WebRtcDataChannel => "webrtc-datachannel",
+        }
+    }
+}
+
+struct McpJsonRpcHandleResult {
+    response: Option<Value>,
+    updates_status: bool,
 }
 
 pub struct RuntimeState {
@@ -2378,10 +2670,80 @@ impl RuntimeState {
         if !self.video_enabled() {
             return Ok(());
         }
-        self.video.apply_event(event, observed_at_ms);
+        let previous_transport = self.mcp_transport_mode();
+        self.video.apply_event(event.clone(), observed_at_ms);
+        let mcp_status_changed = match event {
+            VideoWorkerEvent::McpDataChannelClosed { session_id, reason } => {
+                info!(session_id = %session_id, reason = %reason, "MCP WebRTC data channel closed");
+                self.mcp.close_session(&session_id, &mut self.cmd_vel)?
+            }
+            VideoWorkerEvent::McpDataChannelError { session_id, detail } => {
+                warn!(session_id = ?session_id, error = %detail, "MCP WebRTC data channel error");
+                if let Some(session_id) = session_id {
+                    self.mcp.close_session(&session_id, &mut self.cmd_vel)?
+                } else {
+                    false
+                }
+            }
+            VideoWorkerEvent::McpDataChannelOpen { session_id } => {
+                info!(session_id = %session_id, "MCP WebRTC data channel open");
+                false
+            }
+            _ => false,
+        };
+        let next_transport = self.mcp_transport_mode();
+        if previous_transport != next_transport {
+            let _ = self.mcp.clear_active(&mut self.cmd_vel)?;
+            self.publish_mcp_discovery(publisher, observed_at_ms)
+                .await?;
+        }
+        if mcp_status_changed {
+            self.publish_mcp_status(publisher, observed_at_ms).await?;
+        }
         self.publish_video_status_and_shadow(publisher).await?;
         self.publish_capabilities(publisher, self.online_capabilities(), observed_at_ms)
             .await
+    }
+
+    pub async fn handle_mcp_ipc_event<P: Publisher + ?Sized>(
+        &mut self,
+        publisher: &P,
+        event: RuntimeMcpIpcEvent,
+        observed_at_ms: u64,
+    ) -> Result<()> {
+        match event {
+            RuntimeMcpIpcEvent::Request {
+                session_id,
+                payload,
+                response_tx,
+            } => {
+                let response = match serde_json::from_str::<Value>(&payload) {
+                    Ok(request) => {
+                        let result =
+                            self.handle_mcp_json_rpc_request(&session_id, request, observed_at_ms)?;
+                        if result.updates_status {
+                            self.publish_mcp_status(publisher, observed_at_ms).await?;
+                        }
+                        result
+                            .response
+                            .map(|payload| serde_json::to_string(&payload))
+                            .transpose()?
+                    }
+                    Err(err) => Some(serde_json::to_string(&json_rpc_error_response(
+                        None,
+                        json_rpc_error(-32700, &format!("parse error: {err}")),
+                    ))?),
+                };
+                let _ = response_tx.send(response);
+            }
+            RuntimeMcpIpcEvent::Close { session_id, reason } => {
+                info!(session_id = %session_id, reason = %reason, "MCP WebRTC IPC session closed");
+                if self.mcp.close_session(&session_id, &mut self.cmd_vel)? {
+                    self.publish_mcp_status(publisher, observed_at_ms).await?;
+                }
+            }
+        }
+        Ok(())
     }
 
     fn video_enabled(&self) -> bool {
@@ -2391,12 +2753,64 @@ impl RuntimeState {
             .any(|capability| capability == VIDEO_CAPABILITY)
     }
 
+    fn mcp_transport_mode(&self) -> McpTransportMode {
+        if self.video_enabled() && self.video.ready {
+            McpTransportMode::WebRtcDataChannel
+        } else {
+            McpTransportMode::Mqtt
+        }
+    }
+
+    fn mcp_descriptor(&self) -> Value {
+        let transport_mode = self.mcp_transport_mode();
+        let topic_root = build_mcp_topic_root(&self.config.thing_id).unwrap_or_default();
+        let session_topic_pattern = serde_json::json!({
+            "clientToServer": format!("txings/{}/mcp/session/{{sessionId}}/c2s", self.config.thing_id),
+            "serverToClient": format!("txings/{}/mcp/session/{{sessionId}}/s2c", self.config.thing_id),
+        });
+        let transports = match transport_mode {
+            McpTransportMode::Mqtt => serde_json::json!([{
+                "type": "mqtt-jsonrpc",
+                "priority": 100,
+                "topicRoot": topic_root,
+                "sessionTopicPattern": session_topic_pattern,
+            }]),
+            McpTransportMode::WebRtcDataChannel => serde_json::json!([{
+                "type": "webrtc-datachannel",
+                "priority": 10,
+                "sessionKind": "media",
+                "signaling": "aws-kvs",
+                "channelName": self.config.video_channel_name,
+                "region": self.config.video_region,
+                "label": "txing.mcp.v1",
+            }]),
+        };
+        serde_json::json!({
+            "serviceId": "mcp",
+            "mcpProtocolVersion": MCP_PROTOCOL_VERSION,
+            "protocolVersion": MCP_PROTOCOL_VERSION,
+            "serverInfo": {
+                "name": "txing-unit-daemon",
+                "version": DAEMON_VERSION,
+            },
+            "serverVersion": DAEMON_VERSION,
+            "control": {
+                "mode": "active",
+                "activeTtlMs": DEFAULT_MCP_ACTIVE_TTL_MS,
+            },
+            "transport": transport_mode.name(),
+            "descriptorTopic": build_mcp_descriptor_topic(&self.config.thing_id).unwrap_or_default(),
+            "statusTopic": build_mcp_status_topic(&self.config.thing_id).unwrap_or_default(),
+            "transports": transports,
+        })
+    }
+
     async fn publish_mcp_discovery<P: Publisher + ?Sized>(
         &self,
         publisher: &P,
         observed_at_ms: u64,
     ) -> Result<()> {
-        let descriptor = McpServer::descriptor(&self.config.thing_id);
+        let descriptor = self.mcp_descriptor();
         let status = self.mcp.status(observed_at_ms);
         publisher
             .publish(PublishedMessage {
@@ -2428,12 +2842,8 @@ impl RuntimeState {
                 retain: true,
             })
             .await?;
-        self.publish_mcp_shadow(
-            publisher,
-            McpServer::descriptor(&self.config.thing_id),
-            status,
-        )
-        .await
+        self.publish_mcp_shadow(publisher, self.mcp_descriptor(), status)
+            .await
     }
 
     async fn publish_mcp_unavailable<P: Publisher + ?Sized>(
@@ -2441,7 +2851,7 @@ impl RuntimeState {
         publisher: &P,
         observed_at_ms: u64,
     ) -> Result<()> {
-        let descriptor = McpServer::descriptor(&self.config.thing_id);
+        let descriptor = self.mcp_descriptor();
         let status = serde_json::json!({
             "serviceId": MCP_CAPABILITY,
             "available": false,
@@ -2578,21 +2988,50 @@ impl RuntimeState {
         };
         let request: Value =
             serde_json::from_slice(payload).context("parse MCP JSON-RPC request")?;
-        let Some(method) = request.get("method").and_then(Value::as_str) else {
+        if self.mcp_transport_mode() == McpTransportMode::WebRtcDataChannel {
+            let response = json_rpc_error_response(
+                request.get("id").cloned(),
+                json_rpc_error(
+                    -32000,
+                    "MCP is available only over WebRTC data channel while video is ready",
+                ),
+            );
             return self
-                .publish_mcp_response(
-                    publisher,
-                    &session_id,
-                    json_rpc_error_response(
-                        request.get("id").cloned(),
-                        json_rpc_error(-32600, "invalid request"),
-                    ),
-                )
+                .publish_mcp_response(publisher, &session_id, response)
                 .await;
+        }
+        let result = self.handle_mcp_json_rpc_request(&session_id, request, observed_at_ms)?;
+        if let Some(payload) = result.response {
+            self.publish_mcp_response(publisher, &session_id, payload)
+                .await?;
+        }
+        if result.updates_status {
+            self.publish_mcp_status(publisher, observed_at_ms).await?;
+        }
+        Ok(())
+    }
+
+    fn handle_mcp_json_rpc_request(
+        &mut self,
+        session_id: &str,
+        request: Value,
+        observed_at_ms: u64,
+    ) -> Result<McpJsonRpcHandleResult> {
+        let Some(method) = request.get("method").and_then(Value::as_str) else {
+            return Ok(McpJsonRpcHandleResult {
+                response: Some(json_rpc_error_response(
+                    request.get("id").cloned(),
+                    json_rpc_error(-32600, "invalid request"),
+                )),
+                updates_status: false,
+            });
         };
         let id = request.get("id").cloned();
         if id.is_none() {
-            return Ok(());
+            return Ok(McpJsonRpcHandleResult {
+                response: None,
+                updates_status: false,
+            });
         }
         let response = match method {
             "initialize" => Ok(serde_json::json!({
@@ -2620,12 +3059,10 @@ impl RuntimeState {
             Ok(result) => json_rpc_success(id, result),
             Err(error) => json_rpc_error_response(id, error),
         };
-        self.publish_mcp_response(publisher, &session_id, payload)
-            .await?;
-        if mcp_request_updates_status(method, request.get("params")) {
-            self.publish_mcp_status(publisher, observed_at_ms).await?;
-        }
-        Ok(())
+        Ok(McpJsonRpcHandleResult {
+            response: Some(payload),
+            updates_status: mcp_request_updates_status(method, request.get("params")),
+        })
     }
 
     fn handle_mcp_tool_call(
@@ -2683,9 +3120,13 @@ impl RuntimeState {
                     .map(str::trim)
                     .filter(|value| !value.is_empty())
                     .map(ToOwned::to_owned);
-                let active =
-                    self.mcp
-                        .activate(session_id, actor, observed_at_ms, &mut self.cmd_vel)?;
+                let active = self.mcp.activate(
+                    session_id,
+                    actor,
+                    self.mcp_transport_mode().name(),
+                    observed_at_ms,
+                    &mut self.cmd_vel,
+                )?;
                 Ok(serde_json::json!({
                     "activeControl": active,
                     "activeTtlMs": DEFAULT_MCP_ACTIVE_TTL_MS,
@@ -2851,17 +3292,49 @@ fn json_rpc_error(code: i64, message: &str) -> Value {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VideoWorkerEvent {
     Starting,
-    Ready { worker_version: Option<String> },
-    ViewerConnected { connected: bool },
-    Error { detail: String },
+    Ready {
+        worker_version: Option<String>,
+    },
+    ViewerConnected {
+        connected: bool,
+    },
+    McpDataChannelOpen {
+        session_id: String,
+    },
+    McpDataChannelClosed {
+        session_id: String,
+        reason: String,
+    },
+    McpDataChannelError {
+        session_id: Option<String>,
+        detail: String,
+    },
+    Error {
+        detail: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VideoWorkerMarker {
-    Ready { worker_version: Option<String> },
+    Ready {
+        worker_version: Option<String>,
+    },
     ViewerConnected,
     ViewerDisconnected,
-    Error { detail: String },
+    McpDataChannelOpen {
+        session_id: String,
+    },
+    McpDataChannelClosed {
+        session_id: String,
+        reason: String,
+    },
+    McpDataChannelError {
+        session_id: Option<String>,
+        detail: String,
+    },
+    Error {
+        detail: String,
+    },
 }
 
 pub fn parse_video_worker_marker(line: &str) -> Option<VideoWorkerMarker> {
@@ -2878,6 +3351,19 @@ pub fn parse_video_worker_marker(line: &str) -> Option<VideoWorkerMarker> {
         }),
         "TXING_VIEWER_CONNECTED" => Some(VideoWorkerMarker::ViewerConnected),
         "TXING_VIEWER_DISCONNECTED" => Some(VideoWorkerMarker::ViewerDisconnected),
+        "TXING_MCP_DATACHANNEL_OPEN" => Some(VideoWorkerMarker::McpDataChannelOpen {
+            session_id: parse_marker_field(rest, "sessionId").unwrap_or_default(),
+        }),
+        "TXING_MCP_DATACHANNEL_CLOSED" => Some(VideoWorkerMarker::McpDataChannelClosed {
+            session_id: parse_marker_field(rest, "sessionId").unwrap_or_default(),
+            reason: parse_marker_field(rest, "reason")
+                .unwrap_or_else(|| "MCP WebRTC data channel closed".to_string()),
+        }),
+        "TXING_MCP_DATACHANNEL_ERROR" => Some(VideoWorkerMarker::McpDataChannelError {
+            session_id: parse_marker_field(rest, "sessionId"),
+            detail: parse_marker_field(rest, "detail")
+                .unwrap_or_else(|| "MCP WebRTC data channel error".to_string()),
+        }),
         "TXING_KVS_ERROR" => Some(VideoWorkerMarker::Error {
             detail: parse_marker_field(rest, "detail")
                 .unwrap_or_else(|| "native KVS worker reported an error".to_string()),
@@ -2889,7 +3375,10 @@ pub fn parse_video_worker_marker(line: &str) -> Option<VideoWorkerMarker> {
 fn parse_marker_field(fields: &str, key: &str) -> Option<String> {
     let prefix = format!("{key}=");
     if let Some(value) = fields.strip_prefix(&prefix) {
-        return Some(value.to_string());
+        if matches!(key, "detail" | "reason") {
+            return Some(value.to_string());
+        }
+        return value.split_whitespace().next().map(str::to_string);
     }
     fields
         .split_whitespace()
@@ -2962,6 +3451,9 @@ async fn run_video_supervisor(
         };
         let worker = VideoWorkerRunConfig {
             command: config.kvs_master_command.clone(),
+            mcp_webrtc_socket_path: config.mcp_webrtc_socket_path.clone(),
+            kvs_prefer_ipv6: config.kvs_prefer_ipv6,
+            kvs_disable_ipv4_turn: config.kvs_disable_ipv4_turn,
             region: config.video_region.clone(),
             channel_name: config.video_channel_name.clone(),
             credentials,
@@ -3034,6 +3526,9 @@ async fn sleep_until_stop(stop: Arc<AtomicBool>, duration: Duration) {
 
 struct VideoWorkerRunConfig {
     command: String,
+    mcp_webrtc_socket_path: String,
+    kvs_prefer_ipv6: bool,
+    kvs_disable_ipv4_turn: bool,
     region: String,
     channel_name: String,
     credentials: IotTemporaryCredentials,
@@ -3052,30 +3547,7 @@ enum VideoWorkerRunResult {
 fn run_video_worker_blocking(config: VideoWorkerRunConfig) -> VideoWorkerRunResult {
     let restart_at = video_credential_restart_at(config.expires_at, SystemTime::now());
     let mut command = std::process::Command::new(&config.command);
-    command
-        .env("BOARD_VIDEO_REGION", &config.region)
-        .env("BOARD_VIDEO_CHANNEL_NAME", &config.channel_name)
-        .env("AWS_ACCESS_KEY_ID", &config.credentials.access_key_id)
-        .env(
-            "AWS_SECRET_ACCESS_KEY",
-            &config.credentials.secret_access_key,
-        )
-        .env_remove("AWS_PROFILE")
-        .env_remove("AWS_DEFAULT_PROFILE")
-        .env_remove("AWS_DEVICE_PROFILE")
-        .env_remove("AWS_TXING_PROFILE")
-        .env_remove("AWS_SHARED_CREDENTIALS_FILE")
-        .env_remove("AWS_CONFIG_FILE")
-        .env_remove("BOARD_MCP_WEBRTC_SOCKET_PATH")
-        .env_remove("TXING_BOARD_MCP_WEBRTC_SOCKET_PATH")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    if config.credentials.session_token.trim().is_empty() {
-        command.env_remove("AWS_SESSION_TOKEN");
-    } else {
-        command.env("AWS_SESSION_TOKEN", &config.credentials.session_token);
-    }
+    configure_video_worker_command(&mut command, &config);
 
     let mut child = match command.spawn() {
         Ok(child) => child,
@@ -3140,6 +3612,53 @@ fn run_video_worker_blocking(config: VideoWorkerRunConfig) -> VideoWorkerRunResu
     }
 }
 
+fn configure_video_worker_command(
+    command: &mut std::process::Command,
+    config: &VideoWorkerRunConfig,
+) {
+    command
+        .env("BOARD_VIDEO_REGION", &config.region)
+        .env("BOARD_VIDEO_CHANNEL_NAME", &config.channel_name)
+        .env(
+            "BOARD_MCP_WEBRTC_SOCKET_PATH",
+            &config.mcp_webrtc_socket_path,
+        )
+        .env("AWS_ACCESS_KEY_ID", &config.credentials.access_key_id)
+        .env(
+            "AWS_SECRET_ACCESS_KEY",
+            &config.credentials.secret_access_key,
+        )
+        .env_remove("AWS_PROFILE")
+        .env_remove("AWS_DEFAULT_PROFILE")
+        .env_remove("AWS_DEVICE_PROFILE")
+        .env_remove("AWS_TXING_PROFILE")
+        .env_remove("AWS_SHARED_CREDENTIALS_FILE")
+        .env_remove("AWS_CONFIG_FILE")
+        .env_remove("TXING_BOARD_MCP_WEBRTC_SOCKET_PATH")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if config.kvs_prefer_ipv6 {
+        command
+            .env("KVS_DUALSTACK_ENDPOINTS", "ON")
+            .env("AWS_USE_DUALSTACK_ENDPOINT", "true");
+    } else {
+        command
+            .env_remove("KVS_DUALSTACK_ENDPOINTS")
+            .env_remove("AWS_USE_DUALSTACK_ENDPOINT");
+    }
+    if config.kvs_disable_ipv4_turn {
+        command.env("KVS_DISABLE_IPV4_TURN", "ON");
+    } else {
+        command.env_remove("KVS_DISABLE_IPV4_TURN");
+    }
+    if config.credentials.session_token.trim().is_empty() {
+        command.env_remove("AWS_SESSION_TOKEN");
+    } else {
+        command.env("AWS_SESSION_TOKEN", &config.credentials.session_token);
+    }
+}
+
 fn video_credential_restart_at(expires_at: SystemTime, now: SystemTime) -> SystemTime {
     let margin = Duration::from_secs(VIDEO_CREDENTIAL_RESTART_MARGIN_SECONDS);
     let min_delay = Duration::from_secs(VIDEO_CREDENTIAL_RESTART_MIN_SECONDS);
@@ -3182,6 +3701,15 @@ where
                         }
                         VideoWorkerMarker::ViewerDisconnected => {
                             VideoWorkerEvent::ViewerConnected { connected: false }
+                        }
+                        VideoWorkerMarker::McpDataChannelOpen { session_id } => {
+                            VideoWorkerEvent::McpDataChannelOpen { session_id }
+                        }
+                        VideoWorkerMarker::McpDataChannelClosed { session_id, reason } => {
+                            VideoWorkerEvent::McpDataChannelClosed { session_id, reason }
+                        }
+                        VideoWorkerMarker::McpDataChannelError { session_id, detail } => {
+                            VideoWorkerEvent::McpDataChannelError { session_id, detail }
                         }
                         VideoWorkerMarker::Error { detail } => VideoWorkerEvent::Error { detail },
                     };
@@ -3262,11 +3790,20 @@ async fn run_connected_runtime(
 ) -> Result<()> {
     let mut state = RuntimeState::new(config.clone())?;
     let (video_event_tx, mut video_events) = mpsc::unbounded_channel();
-    let video_supervisor = if config
+    let video_enabled = config
         .capabilities
         .iter()
-        .any(|capability| capability == VIDEO_CAPABILITY)
-    {
+        .any(|capability| capability == VIDEO_CAPABILITY);
+    let (mcp_ipc_event_tx, mut mcp_ipc_events) = mpsc::unbounded_channel();
+    let mcp_ipc_server = if video_enabled {
+        Some(start_mcp_ipc_server(
+            config.mcp_webrtc_socket_path.clone(),
+            mcp_ipc_event_tx,
+        ))
+    } else {
+        None
+    };
+    let video_supervisor = if video_enabled {
         Some(start_video_supervisor(config.clone(), video_event_tx))
     } else {
         None
@@ -3303,6 +3840,11 @@ async fn run_connected_runtime(
                     warn!(error = %format_args!("{err:#}"), "failed to handle video worker event");
                 }
             }
+            Some(event) = mcp_ipc_events.recv() => {
+                if let Err(err) = state.handle_mcp_ipc_event(publisher, event, now_ms()).await {
+                    warn!(error = %format_args!("{err:#}"), "failed to handle MCP WebRTC IPC event");
+                }
+            }
             shutdown = wait_for_shutdown_signal() => {
                 shutdown?;
                 info!("shutdown signal received");
@@ -3328,6 +3870,9 @@ async fn run_connected_runtime(
 
     if let Some(video_supervisor) = video_supervisor {
         video_supervisor.shutdown().await;
+    }
+    if let Some(mcp_ipc_server) = mcp_ipc_server {
+        mcp_ipc_server.shutdown().await;
     }
     if let Err(err) = state.publish_offline(publisher, now_ms()).await {
         warn!(error = %format_args!("{err:#}"), "failed to publish offline state");
@@ -4428,6 +4973,10 @@ mod tests {
         fn messages(&self) -> Vec<PublishedMessage> {
             self.messages.lock().unwrap().clone()
         }
+
+        fn clear(&self) {
+            self.messages.lock().unwrap().clear();
+        }
     }
 
     #[async_trait]
@@ -4598,6 +5147,9 @@ mod tests {
             capability_ttl: Duration::from_secs(150),
             heartbeat: Duration::from_secs(60),
             kvs_master_command: DEFAULT_KVS_MASTER_COMMAND.to_string(),
+            mcp_webrtc_socket_path: DEFAULT_MCP_WEBRTC_SOCKET_PATH.to_string(),
+            kvs_prefer_ipv6: true,
+            kvs_disable_ipv4_turn: false,
             video_region: "eu-central-1".to_string(),
             video_channel_name: "unit-local-board-video".to_string(),
             motor: motor_config(false),
@@ -4901,23 +5453,151 @@ mod tests {
             .unwrap();
 
         let messages = publisher.messages();
-        assert_eq!(messages.len(), 3);
-        assert_eq!(messages[0].topic, "txings/unit-local/video/status");
+        assert_eq!(messages.len(), 6);
+        assert_eq!(messages[0].topic, "txings/unit-local/mcp/descriptor");
+        assert_eq!(messages[1].topic, "txings/unit-local/mcp/status");
         assert_eq!(
-            messages[1].topic,
+            messages[2].topic,
+            "$aws/things/unit-local/shadow/name/mcp/update"
+        );
+        assert_eq!(messages[3].topic, "txings/unit-local/video/status");
+        assert_eq!(
+            messages[4].topic,
             "$aws/things/unit-local/shadow/name/video/update"
         );
-        assert_eq!(messages[2].topic, "txings/unit-local/capability/v2/state");
+        assert_eq!(messages[5].topic, "txings/unit-local/capability/v2/state");
 
-        let status: Value = serde_json::from_slice(&messages[0].payload).unwrap();
+        let mcp_descriptor: Value = serde_json::from_slice(&messages[0].payload).unwrap();
+        assert_eq!(
+            mcp_descriptor["transports"][0]["type"],
+            "webrtc-datachannel"
+        );
+        assert_eq!(mcp_descriptor["transports"].as_array().unwrap().len(), 1);
+
+        let status: Value = serde_json::from_slice(&messages[3].payload).unwrap();
         assert_eq!(status["available"], true);
         assert_eq!(status["ready"], true);
         assert_eq!(status["status"], VIDEO_STATUS_READY);
         assert_eq!(status["updatedAtMs"], 42);
 
         let capability: CapabilityStatePayload =
-            serde_json::from_slice(&messages[2].payload).unwrap();
+            serde_json::from_slice(&messages[5].payload).unwrap();
         assert_eq!(capability.capabilities.get(VIDEO_CAPABILITY), Some(&true));
+    }
+
+    #[tokio::test]
+    async fn mqtt_mcp_requests_are_rejected_while_webrtc_only_is_advertised() {
+        let publisher = FakePublisher::default();
+        let mut runtime = RuntimeState::new(config()).unwrap();
+        runtime
+            .handle_video_event(
+                &publisher,
+                VideoWorkerEvent::Ready {
+                    worker_version: None,
+                },
+                42,
+            )
+            .await
+            .unwrap();
+        publisher.clear();
+
+        runtime
+            .handle_mqtt_event(
+                &publisher,
+                RuntimeMqttEvent::Publish {
+                    topic: "txings/unit-local/mcp/session/session-a/c2s".to_string(),
+                    payload: serde_json::to_vec(&serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "initialize",
+                    }))
+                    .unwrap(),
+                },
+                43,
+            )
+            .await
+            .unwrap();
+
+        let messages = publisher.messages();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(
+            messages[0].topic,
+            "txings/unit-local/mcp/session/session-a/s2c"
+        );
+        let response: Value = serde_json::from_slice(&messages[0].payload).unwrap();
+        assert_eq!(response["id"], 1);
+        assert_eq!(response["error"]["code"], -32000);
+        assert!(
+            response["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("WebRTC data channel")
+        );
+    }
+
+    #[tokio::test]
+    async fn mcp_ipc_requests_use_core_and_close_clears_active_control() {
+        let publisher = FakePublisher::default();
+        let mut runtime = RuntimeState::new(config()).unwrap();
+        runtime
+            .handle_video_event(
+                &publisher,
+                VideoWorkerEvent::Ready {
+                    worker_version: None,
+                },
+                42,
+            )
+            .await
+            .unwrap();
+        publisher.clear();
+
+        let (response_tx, response_rx) = oneshot::channel();
+        runtime
+            .handle_mcp_ipc_event(
+                &publisher,
+                RuntimeMcpIpcEvent::Request {
+                    session_id: "rtc-session".to_string(),
+                    payload: serde_json::to_string(&serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "tools/call",
+                        "params": {
+                            "name": "control.activate",
+                            "arguments": {"actor": "operator"},
+                        },
+                    }))
+                    .unwrap(),
+                    response_tx,
+                },
+                43,
+            )
+            .await
+            .unwrap();
+        let response: Value = serde_json::from_str(&response_rx.await.unwrap().unwrap()).unwrap();
+        assert_eq!(
+            response["result"]["structuredContent"]["activeControl"]["transport"],
+            "webrtc-datachannel"
+        );
+        assert_eq!(publisher.messages().len(), 2);
+
+        runtime
+            .handle_mcp_ipc_event(
+                &publisher,
+                RuntimeMcpIpcEvent::Close {
+                    session_id: "rtc-session".to_string(),
+                    reason: "data channel closed".to_string(),
+                },
+                44,
+            )
+            .await
+            .unwrap();
+
+        let messages = publisher.messages();
+        let status: Value = serde_json::from_slice(&messages.last().unwrap().payload).unwrap();
+        assert_eq!(
+            status["state"]["reported"]["status"]["activeControl"],
+            Value::Null
+        );
     }
 
     #[tokio::test]
@@ -4941,9 +5621,9 @@ mod tests {
             .unwrap();
 
         let messages = publisher.messages();
-        assert_eq!(messages.len(), 5);
-        assert_eq!(messages[3].topic, "txings/unit-local/video/status");
-        let status: Value = serde_json::from_slice(&messages[3].payload).unwrap();
+        assert_eq!(messages.len(), 8);
+        assert_eq!(messages[6].topic, "txings/unit-local/video/status");
+        let status: Value = serde_json::from_slice(&messages[6].payload).unwrap();
         assert_eq!(status["ready"], true);
         assert_eq!(status["updatedAtMs"], 5_042);
     }
@@ -4970,6 +5650,28 @@ mod tests {
                 detail: "bad line here".to_string()
             })
         );
+        assert_eq!(
+            parse_video_worker_marker("TXING_MCP_DATACHANNEL_OPEN sessionId=peer-a"),
+            Some(VideoWorkerMarker::McpDataChannelOpen {
+                session_id: "peer-a".to_string()
+            })
+        );
+        assert_eq!(
+            parse_video_worker_marker(
+                "TXING_MCP_DATACHANNEL_CLOSED sessionId=peer-a reason=closed"
+            ),
+            Some(VideoWorkerMarker::McpDataChannelClosed {
+                session_id: "peer-a".to_string(),
+                reason: "closed".to_string()
+            })
+        );
+        assert_eq!(
+            parse_video_worker_marker("TXING_MCP_DATACHANNEL_ERROR sessionId=peer-a detail=bad"),
+            Some(VideoWorkerMarker::McpDataChannelError {
+                session_id: Some("peer-a".to_string()),
+                detail: "bad".to_string()
+            })
+        );
         assert_eq!(parse_video_worker_marker("INFO normal log"), None);
     }
 
@@ -4991,6 +5693,56 @@ mod tests {
         assert_eq!(
             video_credential_restart_at(short_expiry, now),
             now + Duration::from_secs(VIDEO_CREDENTIAL_RESTART_MIN_SECONDS)
+        );
+    }
+
+    #[test]
+    fn video_worker_command_includes_mcp_socket_and_ipv6_environment() {
+        let (event_tx, _event_rx) = mpsc::unbounded_channel();
+        let run_config = VideoWorkerRunConfig {
+            command: "txing-board-kvs-master".to_string(),
+            mcp_webrtc_socket_path: "/tmp/mcp.sock".to_string(),
+            kvs_prefer_ipv6: true,
+            kvs_disable_ipv4_turn: true,
+            region: "eu-central-1".to_string(),
+            channel_name: "unit-local-board-video".to_string(),
+            credentials: IotTemporaryCredentials {
+                access_key_id: "akid".to_string(),
+                secret_access_key: "secret".to_string(),
+                session_token: "token".to_string(),
+                expiration: "2026-05-14T12:00:00Z".to_string(),
+            },
+            expires_at: UNIX_EPOCH + Duration::from_secs(3_600),
+            stop: Arc::new(AtomicBool::new(false)),
+            event_tx,
+        };
+        let mut command = std::process::Command::new(&run_config.command);
+        configure_video_worker_command(&mut command, &run_config);
+        let envs = command
+            .get_envs()
+            .map(|(key, value)| {
+                (
+                    key.to_string_lossy().to_string(),
+                    value.map(|value| value.to_string_lossy().to_string()),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+
+        assert_eq!(
+            envs.get("BOARD_MCP_WEBRTC_SOCKET_PATH"),
+            Some(&Some("/tmp/mcp.sock".to_string()))
+        );
+        assert_eq!(
+            envs.get("KVS_DUALSTACK_ENDPOINTS"),
+            Some(&Some("ON".to_string()))
+        );
+        assert_eq!(
+            envs.get("AWS_USE_DUALSTACK_ENDPOINT"),
+            Some(&Some("true".to_string()))
+        );
+        assert_eq!(
+            envs.get("KVS_DISABLE_IPV4_TURN"),
+            Some(&Some("ON".to_string()))
         );
     }
 
@@ -5029,6 +5781,7 @@ mod tests {
             .activate(
                 "session-a",
                 Some("operator".to_string()),
+                "mqtt-jsonrpc",
                 1_000,
                 &mut cmd_vel,
             )
@@ -5038,7 +5791,7 @@ mod tests {
         assert_eq!(active.epoch, 1);
         assert_eq!(active.expires_at_ms, 6_000);
         assert!(
-            mcp.activate("session-b", None, 1_500, &mut cmd_vel)
+            mcp.activate("session-b", None, "mqtt-jsonrpc", 1_500, &mut cmd_vel)
                 .unwrap_err()
                 .to_string()
                 .contains("active control busy")
@@ -5069,7 +5822,7 @@ mod tests {
         );
 
         let expired = mcp
-            .activate("session-a", None, 3_000, &mut cmd_vel)
+            .activate("session-a", None, "mqtt-jsonrpc", 3_000, &mut cmd_vel)
             .unwrap();
         assert!(
             mcp.renew_active("session-a", expired.epoch, 8_000, &mut cmd_vel)
@@ -5241,6 +5994,11 @@ mod tests {
         assert!(template.contains(&format!(
             "export TXING_KVS_MASTER_COMMAND={DEFAULT_KVS_MASTER_COMMAND}"
         )));
+        assert!(template.contains(&format!(
+            "export TXING_MCP_WEBRTC_SOCKET_PATH={DEFAULT_MCP_WEBRTC_SOCKET_PATH}"
+        )));
+        assert_eq!(get("TXING_KVS_PREFER_IPV6"), "true");
+        assert_eq!(get("TXING_KVS_DISABLE_IPV4_TURN"), "false");
         assert!(
             template.contains(
                 "export TXING_BOARD_VIDEO_CHANNEL_NAME={{TXING_BOARD_VIDEO_CHANNEL_NAME}}"

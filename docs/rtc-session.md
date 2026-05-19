@@ -8,8 +8,8 @@ the existing browser operator behavior.
 
 This is a migration plan. Phase 2a is implemented and board-validated for the
 current unit path: KVS video is restored under Rust daemon supervision, REDCON
-can reach `1`, and browser motor control works over MQTT MCP. Phase 2b and
-later sections remain forward design.
+can reach `1`, and browser motor control works over MQTT MCP. Phase 2b code is
+now implemented in the feature path and still needs prerelease board validation.
 
 Current status as of 2026-05-19:
 
@@ -17,10 +17,14 @@ Current status as of 2026-05-19:
   supervision.
 - Native `txing-board-kvs-master` owns AWS KVS WebRTC master behavior, camera
   capture, and H.264 media.
-- MCP transport is MQTT-only in the published descriptor; no WebRTC MCP data
-  channel or local MCP IPC is implemented.
-- Browser operator video works through AWS KVS WebRTC, while browser motor
-  control works through MQTT MCP.
+- MCP transport is dynamic: video-ready units advertise WebRTC data channel
+  only; video-not-ready units advertise MQTT JSON-RPC only.
+- The native KVS worker accepts the browser-created `txing.mcp.v1` data channel
+  on the media peer connection and bridges MCP frames to the Rust daemon over
+  local Unix IPC.
+- Browser operator video and WebRTC MCP share one AWS KVS viewer session when
+  video is ready; MQTT MCP remains the REDCON `2` fallback when video is not
+  ready.
 - Feature and stable service starts are offline by design. Publishing a new
   GitHub Release does not upgrade a board on daemon restart; rerun the
   installer during a writable-root maintenance window to install a newer
@@ -99,13 +103,14 @@ Reason: this keeps the current product behavior clear. Video readiness remains
 the difference between REDCON `2` and REDCON `1`, while MCP availability remains
 separate from video availability.
 
-### MQTT Remains Mandatory Fallback
+### MQTT Remains REDCON 2 Fallback
 
-Every MCP-capable device must continue to expose MQTT JSON-RPC as a fallback
-transport.
+Every MCP-capable device must continue to expose MQTT JSON-RPC when video is
+not ready or not available.
 
-Reason: connection success is more important than lowest latency. MQTT is also
-the acceptable REDCON `2` control path when video is not ready.
+Reason: connection success is more important than lowest latency at REDCON `2`.
+At REDCON `1`, the operator already has a media RTC session, so MCP is carried
+only on that session's WebRTC data channel.
 
 ### WebRTC Transport Becomes Preferred After Phase 2b
 
@@ -203,40 +208,34 @@ The REDCON ladder remains:
 MCP remains a REDCON `2` capability. Video remains the additional capability
 required for REDCON `1`.
 
-In Phase 2a, the daemon advertises MQTT-only MCP control regardless of video
-status. In Phase 2b, when the RTC media path is ready, the daemon can advertise
-MCP WebRTC data channel as the preferred transport. When the media path is not
-ready, the daemon should advertise MQTT-only MCP control and the device should
-remain at REDCON `2` if board and MCP are otherwise healthy.
+In Phase 2a, the daemon advertised MQTT-only MCP control regardless of video
+status. In Phase 2b, when the RTC media path is ready, the daemon advertises
+only WebRTC data-channel MCP on the media RTC session. MQTT MCP session requests
+are rejected while that WebRTC-only descriptor is advertised. When the media
+path is not ready, the daemon advertises MQTT-only MCP control and the device
+remains at REDCON `2` if board and MCP are otherwise healthy.
 
 ## MCP Transport Descriptor Direction
 
-Phase 2a must preserve the existing MQTT-only descriptor. The next descriptor
-version for Phase 2b should make transport choice explicit and ordered by
-priority.
+Phase 2a preserved the existing MQTT-only descriptor. Phase 2b makes transport
+choice explicit and ordered by priority. Legacy descriptors without
+`transports` still parse as MQTT-only.
 
 For video-ready units:
 
 ```json
 {
   "serviceId": "mcp",
-  "mcpProtocolVersion": "next",
+  "mcpProtocolVersion": "2026-05-16",
   "transports": [
     {
       "type": "webrtc-datachannel",
       "priority": 10,
       "sessionKind": "media",
-      "signaling": {
-        "provider": "aws-kvs",
-        "channelName": "<device_id>-board-video",
-        "region": "<aws-region>"
-      },
-      "label": "txing.mcp.v2"
-    },
-    {
-      "type": "mqtt-jsonrpc",
-      "priority": 100,
-      "topicRoot": "txings/<device_id>/mcp"
+      "signaling": "aws-kvs",
+      "channelName": "<device_id>-board-video",
+      "region": "<aws-region>",
+      "label": "txing.mcp.v1"
     }
   ]
 }
@@ -247,7 +246,7 @@ For REDCON `2` units without ready video:
 ```json
 {
   "serviceId": "mcp",
-  "mcpProtocolVersion": "next",
+  "mcpProtocolVersion": "2026-05-16",
   "transports": [
     {
       "type": "mqtt-jsonrpc",
@@ -476,16 +475,56 @@ Current status as of 2026-05-19:
 
 ### Phase 2b: MCP Over Video WebRTC
 
-Goal: add WebRTC data-channel MCP only after the Rust daemon owns video worker
-supervision and video capability publication.
+Goal: carry MCP JSON-RPC on the same AWS KVS media peer connection as video
+when video is ready.
 
 Scope:
 
-- connect worker WebRTC data-channel messages to the Rust MCP core through local
-  IPC
-- advertise MCP WebRTC data channel first only when media RTC is ready
-- advertise MQTT fallback always
-- make browser transport switching deterministic and observable
+- keep using the existing `{thing}-board-video` signaling channel; do not add a
+  second KVS channel
+- connect worker WebRTC data-channel messages to the Rust MCP core through a
+  local Unix IPC socket
+- advertise WebRTC data-channel MCP only when media RTC is ready
+- reject MQTT MCP session requests while WebRTC-only MCP is advertised
+- advertise MQTT-only MCP when video is not ready or video capability is absent
+- make browser video and MCP use one shared AWS KVS viewer peer connection
+- enable KVS dual-stack endpoints and prefer IPv6 TURN behavior through the
+  upstream KVS C SDK support
+
+Expected operating state after phase 2b:
+
+- REDCON `1`: board, MCP, and video are available; browser video and MCP control
+  use one WebRTC media session and MQTT MCP is rejected
+- REDCON `2`: board and MCP are available without ready video; MCP uses MQTT
+  JSON-RPC
+- if WebRTC MCP fails while video is still advertised, browser control remains
+  unavailable until the daemon publishes an MQTT-only MCP descriptor
+
+Current implementation status:
+
+- Rust daemon:
+  - starts a local `TXING_MCP_WEBRTC_SOCKET_PATH` IPC server before the KVS
+    worker when video capability is declared
+  - passes the socket path to `txing-board-kvs-master`
+  - uses the same MCP core for MQTT and IPC JSON-RPC
+  - publishes MQTT-only versus WebRTC-only descriptors as video readiness
+    changes
+  - clears active control and neutralizes motors when the WebRTC MCP session
+    closes
+  - injects `KVS_DUALSTACK_ENDPOINTS=ON` and
+    `AWS_USE_DUALSTACK_ENDPOINT=true` by default, and
+    `KVS_DISABLE_IPV4_TURN=ON` only when explicitly configured
+- Native KVS worker:
+  - accepts the `txing.mcp.v1` data channel on the media peer connection
+  - emits MCP data-channel open/close/error markers
+  - returns JSON-RPC errors when daemon IPC is unavailable instead of silently
+    timing out
+- Browser:
+  - treats explicit WebRTC-only descriptors as WebRTC-only, with no synthetic
+    MQTT fallback
+  - shares one board RTC session for video and MCP
+  - uses dual-stack AWS KVS client configuration and the dual-stack STUN URL
+    `stun:stun.kinesisvideo.<region>.api.aws:443`
 
 ### Phase 3: Channel Switching And Responsibility Control
 

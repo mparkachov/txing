@@ -81,20 +81,20 @@ const orderMcpTransports = (
   [...transports].sort((left, right) => left.priority - right.priority)
 
 const parseMcpTransports = (value: Record<string, unknown>): McpTransportDescriptor[] => {
-  const parsedTransports = Array.isArray(value.transports)
-    ? value.transports
-        .map((transport) => parseMcpTransportDescriptor(transport))
-        .filter((transport): transport is McpTransportDescriptor => transport !== null)
-    : []
-
-  if (!parsedTransports.some((transport) => transport.type === 'mqtt-jsonrpc')) {
-    parsedTransports.push({
-      type: 'mqtt-jsonrpc',
-      priority: 100,
-    })
+  if (!Array.isArray(value.transports)) {
+    return [
+      {
+        type: 'mqtt-jsonrpc',
+        priority: 100,
+      },
+    ]
   }
 
-  return orderMcpTransports(parsedTransports)
+  return orderMcpTransports(
+    value.transports
+      .map((transport) => parseMcpTransportDescriptor(transport))
+      .filter((transport): transport is McpTransportDescriptor => transport !== null),
+  )
 }
 
 export const parseMcpDescriptor = (value: unknown): McpDescriptor | null => {
@@ -126,6 +126,9 @@ export const selectPreferredMcpWebRtcTransport = (
     (transport): transport is McpWebRtcTransportDescriptor =>
       transport.type === 'webrtc-datachannel',
   ) ?? null
+
+export const hasMcpMqttTransport = (descriptor: McpDescriptor | null): boolean =>
+  descriptor?.transports.some((transport) => transport.type === 'mqtt-jsonrpc') ?? false
 
 export const shouldAwaitInitialMcpDescriptor = (
   descriptor: McpDescriptor | null,

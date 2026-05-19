@@ -42,7 +42,7 @@ describe('video session helpers', () => {
       },
     ] satisfies IceServer[])
 
-    expect(iceServers[0]?.urls).toBe('stun:stun.kinesisvideo.eu-central-1.amazonaws.com:443')
+    expect(iceServers[0]?.urls).toBe('stun:stun.kinesisvideo.eu-central-1.api.aws:443')
     expect(iceServers[1]).toEqual({
       urls: ['turn:example.com:443'],
       username: 'user',

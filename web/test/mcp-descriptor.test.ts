@@ -75,7 +75,7 @@ describe('MCP descriptor transport parsing', () => {
     })
   })
 
-  test('keeps MQTT fallback even when descriptor omits it', () => {
+  test('keeps explicit WebRTC-only descriptors WebRTC-only', () => {
     const descriptor = parseMcpDescriptor({
       control: {
         mode: 'active',
@@ -100,10 +100,6 @@ describe('MCP descriptor transport parsing', () => {
         channelName: 'unit-local-board-video',
         region: 'eu-central-1',
         label: mcpWebRtcDataChannelLabel,
-      },
-      {
-        type: 'mqtt-jsonrpc',
-        priority: 100,
       },
     ])
   })
