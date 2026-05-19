@@ -85,6 +85,17 @@ jobs:
             exit 1
           fi
 
+      - name: Configure apt networking
+        shell: bash
+        run: |
+          set -euo pipefail
+          for source in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+            [ -e "$source" ] || continue
+            sudo sed -i 's|http://ports.ubuntu.com/ubuntu-ports|https://ports.ubuntu.com/ubuntu-ports|g' "$source"
+          done
+          printf 'Acquire::ForceIPv4 "true";\nAcquire::Retries "5";\n' \
+            | sudo tee /etc/apt/apt.conf.d/99txing-ci-network >/dev/null
+
       - name: Install system build dependencies
         shell: bash
         run: |
