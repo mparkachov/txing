@@ -34,6 +34,7 @@ import {
   type SparkplugTopics,
 } from './sparkplug-protocol'
 import type {
+  RobotActiveControlState,
   RobotControlState,
   RobotMotionState,
   RobotState,
@@ -93,13 +94,17 @@ type McpDiscoverySummary = {
   serverVersion: string | null
 }
 type McpActiveControlState = {
+  sessionId: string
+  actor: string | null
+  transport: string | null
+  sinceMs: number | null
+  serverExpiresAtMs: number | null
   epoch: number
   expiresAtMs: number
   activeTtlMs: number
 }
 type McpMotionCommandResult = {
-  activeExpiresAtMs: number | null
-  activeEpoch: number | null
+  activeControl: RobotActiveControlState | null
   motion: RobotMotionState
 }
 export type ShadowSessionOptions = {
@@ -120,6 +125,7 @@ export type ShadowSession = {
   requestSnapshot: () => Promise<unknown>
   publishRedconCommand: (redcon: number) => Promise<void>
   publishCmdVel: (twist: Twist) => Promise<void>
+  takeMcpControl: () => Promise<RobotState>
   callMcpTool: (name: string, args?: Record<string, unknown>) => Promise<unknown>
   requestRobotState: () => Promise<RobotState>
   waitForSnapshot: (
@@ -268,7 +274,37 @@ const createMcpSessionId = (): string =>
     ? crypto.randomUUID()
     : `session-${Date.now()}-${Math.random().toString(16).slice(2)}`
 
-const parseMcpActiveControlState = (
+const parseNonNegativeTimestamp = (value: unknown): number | null =>
+  typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? Math.round(value)
+    : null
+
+const parseRobotActiveControlState = (value: unknown): RobotActiveControlState | null => {
+  if (!isRecord(value)) {
+    return null
+  }
+  const sessionId =
+    typeof value.sessionId === 'string' && value.sessionId.trim()
+      ? value.sessionId.trim()
+      : null
+  const epoch =
+    typeof value.epoch === 'number' && Number.isInteger(value.epoch) && value.epoch > 0
+      ? value.epoch
+      : null
+  if (!sessionId || epoch === null) {
+    return null
+  }
+  return {
+    sessionId,
+    actor: typeof value.actor === 'string' && value.actor.trim() ? value.actor.trim() : null,
+    transport: typeof value.transport === 'string' && value.transport.trim() ? value.transport.trim() : null,
+    sinceMs: parseNonNegativeTimestamp(value.sinceMs),
+    expiresAtMs: parseNonNegativeTimestamp(value.expiresAtMs),
+    epoch,
+  }
+}
+
+export const parseMcpActiveControlState = (
   value: unknown,
   fallbackActiveTtlMs: number,
 ): McpActiveControlState | null => {
@@ -276,8 +312,8 @@ const parseMcpActiveControlState = (
     return null
   }
   const activeControl = isRecord(value.activeControl) ? value.activeControl : value
-  const epoch = activeControl.epoch
-  if (typeof epoch !== 'number' || !Number.isInteger(epoch) || epoch <= 0) {
+  const parsedActiveControl = parseRobotActiveControlState(activeControl)
+  if (!parsedActiveControl) {
     return null
   }
   const activeTtlMs =
@@ -288,7 +324,12 @@ const parseMcpActiveControlState = (
   // Server still enforces the real active-control validity; this only drives client renew timing.
   const localExpiresAtMs = Date.now() + Math.round(activeTtlMs)
   return {
-    epoch,
+    sessionId: parsedActiveControl.sessionId,
+    actor: parsedActiveControl.actor,
+    transport: parsedActiveControl.transport,
+    sinceMs: parsedActiveControl.sinceMs,
+    serverExpiresAtMs: parsedActiveControl.expiresAtMs,
+    epoch: parsedActiveControl.epoch,
     expiresAtMs: localExpiresAtMs,
     activeTtlMs,
   }
@@ -311,6 +352,7 @@ const createDefaultRobotControlState = (
   activeOwnerSessionId: null,
   activeExpiresAtMs: null,
   activeEpoch: null,
+  activeControl: null,
   ...overrides,
 })
 
@@ -386,24 +428,20 @@ const parseRobotControlState = (value: unknown): RobotControlState | null => {
   if (typeof value.activeRequired !== 'boolean' || typeof value.activeHeldByCaller !== 'boolean') {
     return null
   }
+  const activeControl = parseRobotActiveControlState(value.activeControl)
   const activeTtlMs =
     typeof value.activeTtlMs === 'number' && Number.isFinite(value.activeTtlMs) && value.activeTtlMs > 0
       ? Math.round(value.activeTtlMs)
       : null
-  const activeExpiresAtMs =
-    typeof value.activeExpiresAtMs === 'number' &&
-    Number.isFinite(value.activeExpiresAtMs) &&
-    value.activeExpiresAtMs >= 0
-      ? Math.round(value.activeExpiresAtMs)
-      : null
+  const activeExpiresAtMs = parseNonNegativeTimestamp(value.activeExpiresAtMs) ?? activeControl?.expiresAtMs ?? null
   const activeOwnerSessionId =
     typeof value.activeOwnerSessionId === 'string' && value.activeOwnerSessionId.trim()
       ? value.activeOwnerSessionId
-      : null
+      : activeControl?.sessionId ?? null
   const activeEpoch =
     typeof value.activeEpoch === 'number' && Number.isInteger(value.activeEpoch) && value.activeEpoch > 0
       ? value.activeEpoch
-      : null
+      : activeControl?.epoch ?? null
   return {
     activeRequired: value.activeRequired,
     activeTtlMs,
@@ -411,10 +449,11 @@ const parseRobotControlState = (value: unknown): RobotControlState | null => {
     activeOwnerSessionId,
     activeExpiresAtMs,
     activeEpoch,
+    activeControl,
   }
 }
 
-const parseRobotState = (value: unknown): RobotState | null => {
+export const parseRobotState = (value: unknown): RobotState | null => {
   if (!isRecord(value)) {
     return null
   }
@@ -439,20 +478,9 @@ const parseMcpMotionCommandResult = (value: unknown): McpMotionCommandResult | n
   if (!motion) {
     return null
   }
-  const activeExpiresAtMs =
-    typeof value.activeExpiresAtMs === 'number' &&
-    Number.isFinite(value.activeExpiresAtMs) &&
-    value.activeExpiresAtMs >= 0
-      ? Math.round(value.activeExpiresAtMs)
-      : null
-  const activeControl = isRecord(value.activeControl) ? value.activeControl : null
-  const activeEpoch =
-    typeof activeControl?.epoch === 'number' && Number.isInteger(activeControl.epoch) && activeControl.epoch > 0
-      ? activeControl.epoch
-      : null
+  const activeControl = parseRobotActiveControlState(value.activeControl)
   return {
-    activeExpiresAtMs,
-    activeEpoch,
+    activeControl,
     motion,
   }
 }
@@ -709,6 +737,18 @@ class AwsIotShadowSession implements ShadowSession {
 
   async publishCmdVel(twist: Twist): Promise<void> {
     return this.cmdVelPublisher.push(twist)
+  }
+
+  async takeMcpControl(): Promise<RobotState> {
+    await this.ensureMcpSessionReady()
+    const active = await this.activateMcpControl(true)
+    const robotState: RobotState = {
+      control: this.buildLocalRobotControlState(this.robotActiveControlFromMcpActive(active), true),
+      motion: this.latestRobotState?.motion ?? createStoppedRobotMotionState(null),
+      video: this.latestRobotState?.video ?? createDefaultRobotVideoState(),
+    }
+    this.setLatestRobotState(robotState)
+    return robotState
   }
 
   async callMcpTool(
@@ -1212,18 +1252,31 @@ class AwsIotShadowSession implements ShadowSession {
   }
 
   private buildLocalRobotControlState(
-    activeExpiresAtMs: number | null,
+    activeControl: RobotActiveControlState | null,
     activeHeldByCaller: boolean,
-    activeEpoch: number | null,
   ): RobotControlState {
     const activeTtlMs = this.mcpDescriptor?.activeTtlMs ?? this.mcpDiscovery.activeTtlMs ?? null
     return createDefaultRobotControlState({
       activeTtlMs,
       activeHeldByCaller,
-      activeOwnerSessionId: activeHeldByCaller ? this.mcpSessionId : null,
-      activeExpiresAtMs,
-      activeEpoch,
+      activeOwnerSessionId: activeControl?.sessionId ?? null,
+      activeExpiresAtMs: activeControl?.expiresAtMs ?? null,
+      activeEpoch: activeControl?.epoch ?? null,
+      activeControl,
     })
+  }
+
+  private robotActiveControlFromMcpActive(
+    active: McpActiveControlState,
+  ): RobotActiveControlState {
+    return {
+      sessionId: active.sessionId,
+      actor: active.actor,
+      transport: active.transport,
+      sinceMs: active.sinceMs,
+      expiresAtMs: active.serverExpiresAtMs ?? active.expiresAtMs,
+      epoch: active.epoch,
+    }
   }
 
   private updateRobotStateFromMotionResult(
@@ -1231,12 +1284,11 @@ class AwsIotShadowSession implements ShadowSession {
     activeHeldByCaller: boolean,
   ): void {
     const currentVideo = this.latestRobotState?.video ?? createDefaultRobotVideoState()
+    const activeControl =
+      motionResult.activeControl ??
+      (this.mcpActiveControl ? this.robotActiveControlFromMcpActive(this.mcpActiveControl) : null)
     this.setLatestRobotState({
-      control: this.buildLocalRobotControlState(
-        motionResult.activeExpiresAtMs,
-        activeHeldByCaller,
-        motionResult.activeEpoch,
-      ),
+      control: this.buildLocalRobotControlState(activeControl, activeHeldByCaller),
       motion: motionResult.motion,
       video: currentVideo,
     })
@@ -1245,7 +1297,7 @@ class AwsIotShadowSession implements ShadowSession {
   private updateRobotStateToLocalStop(): void {
     const currentVideo = this.latestRobotState?.video ?? createDefaultRobotVideoState()
     this.setLatestRobotState({
-      control: this.buildLocalRobotControlState(null, false, null),
+      control: this.buildLocalRobotControlState(null, false),
       motion: createStoppedRobotMotionState(this.latestRobotState?.motion ?? null),
       video: currentVideo,
     })
@@ -1287,7 +1339,7 @@ class AwsIotShadowSession implements ShadowSession {
       if (this.latestRobotState) {
         this.setLatestRobotState({
           ...this.latestRobotState,
-          control: this.buildLocalRobotControlState(null, false, null),
+          control: this.buildLocalRobotControlState(null, false),
         })
       }
       return
@@ -1325,7 +1377,7 @@ class AwsIotShadowSession implements ShadowSession {
   private async initializeMcpSession(): Promise<void> {
     await this.ensureMcpTransportReady()
     const initializeResult = await this.publishMcpRequest('initialize', {
-      protocolVersion: this.mcpDiscovery.mcpProtocolVersion ?? '2026-05-16',
+      protocolVersion: this.mcpDiscovery.mcpProtocolVersion ?? '2026-05-19',
       capabilities: {},
       clientInfo: {
         name: 'txing-web',
@@ -1495,21 +1547,20 @@ class AwsIotShadowSession implements ShadowSession {
     }
   }
 
-  private async activateMcpControl(): Promise<McpActiveControlState> {
+  private async activateMcpControl(takeover = false): Promise<McpActiveControlState> {
+    const activateArguments = takeover
+      ? { actor: 'txing-web', takeover: true }
+      : { actor: 'txing-web' }
     let acquiredResult: unknown
     try {
-      acquiredResult = await this.callMcpToolInternal('control.activate', {
-        actor: 'txing-web',
-      })
+      acquiredResult = await this.callMcpToolInternal('control.activate', activateArguments)
     } catch (caughtError) {
       if (!isMcpSessionNotInitializedError(caughtError)) {
         throw caughtError
       }
       this.mcpInitialized = false
       await this.ensureMcpSessionReady()
-      acquiredResult = await this.callMcpToolInternal('control.activate', {
-        actor: 'txing-web',
-      })
+      acquiredResult = await this.callMcpToolInternal('control.activate', activateArguments)
     }
     const knownActiveTtlMs = this.mcpDescriptor?.activeTtlMs ?? this.mcpDiscovery.activeTtlMs ?? 5_000
     const acquired = parseMcpActiveControlState(acquiredResult, knownActiveTtlMs)

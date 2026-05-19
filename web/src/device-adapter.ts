@@ -1,5 +1,6 @@
 import type { ReactElement } from 'react'
 import type { McpTransportKind } from './mcp-descriptor'
+import type { RobotControlState } from './shadow-api'
 
 export type DeviceTelemetry = {
   reportedBatteryMv: number | null
@@ -31,9 +32,12 @@ export type DeviceDetailRenderProps = {
   isBoardVideoExpanded: boolean
   isDebugEnabled: boolean
   isShadowConnected: boolean
+  isTakeControlPending: boolean
   mcpTransport: McpTransportKind | null
   onBoardVideoRuntimeError: (message: string) => void
+  onTakeControl: () => void
   onToggleDebug: () => void
+  robotControl: RobotControlState | null
   reportedBatteryMv: number | null
   reportedBoardLeftTrackSpeed: number | null
   reportedBoardOnline: boolean | null

@@ -260,6 +260,7 @@ function App({ initialAuthError = '' }: AppProps) {
   const [isLoadingShadow, setIsLoadingShadow] = useState(false)
   const [isUpdatingShadow, setIsUpdatingShadow] = useState(false)
   const [isDebugEnabled, setIsDebugEnabled] = useState(false)
+  const [isTakingMcpControl, setIsTakingMcpControl] = useState(false)
   const [isTownPanelOpen, setIsTownPanelOpen] = useState(false)
   const [isRigPanelOpen, setIsRigPanelOpen] = useState(false)
   const [isBotPanelOpen, setIsBotPanelOpen] = useState(false)
@@ -467,6 +468,11 @@ function App({ initialAuthError = '' }: AppProps) {
   const canUseDriveControl = currentDeviceAdapter?.canUseDriveControl(reportedRedcon) ?? false
   const isDriveControlActive =
     route.kind === 'device' && isBotPanelOpen && canUseDriveControl && isShadowConnected
+  const activeControlOwnerSessionId = robotState?.control.activeOwnerSessionId ?? null
+  const isDriveControlOwnedByOther =
+    activeControlOwnerSessionId !== null &&
+    robotState?.control.activeHeldByCaller === false
+  const isDriveInputEnabled = isDriveControlActive && !isDriveControlOwnedByOther
   const cmdVelRepeatIntervalMs = getMcpSteadyMotionHeartbeatIntervalMs(
     robotState?.control.activeTtlMs ?? defaultMcpActiveTtlMs,
   )
@@ -1322,6 +1328,7 @@ function App({ initialAuthError = '' }: AppProps) {
       setRobotState(null)
       setIsBotPanelOpen(false)
       setIsBoardVideoExpanded(false)
+      setIsTakingMcpControl(false)
       lastBoardVideoErrorRef.current = null
       hasObservedBoardVideoLastErrorRef.current = false
       return
@@ -1336,6 +1343,7 @@ function App({ initialAuthError = '' }: AppProps) {
     setPendingTargetRedcon(null)
     setRobotState(null)
     setMcpTransport(null)
+    setIsTakingMcpControl(false)
     setLastShadowUpdateAtMs(null)
     setIsLoadingShadow(true)
     setIsUpdatingShadow(false)
@@ -1460,6 +1468,24 @@ function App({ initialAuthError = '' }: AppProps) {
     [isShadowConnected],
   )
 
+  const takeMcpControl = useEffectEvent(async (): Promise<void> => {
+    const shadowSession = shadowSessionRef.current
+    if (!shadowSession || !shadowSession.isConnected()) {
+      return
+    }
+    setIsTakingMcpControl(true)
+    try {
+      await shadowSession.takeMcpControl()
+    } catch (caughtError) {
+      enqueueRuntimeError(
+        caughtError instanceof Error ? caughtError.message : 'Unable to take active control',
+        'board-take-control',
+      )
+    } finally {
+      setIsTakingMcpControl(false)
+    }
+  })
+
   useEffect(() => {
     const nextBoardVideoLastError = normalizeRuntimeMessage(robotVideoLastError)
     const nextNotificationMessage = getNextBoardVideoLastErrorNotification(
@@ -1560,7 +1586,7 @@ function App({ initialAuthError = '' }: AppProps) {
   ])
 
   useEffect(() => {
-    if (!isDriveControlActive) {
+    if (!isDriveInputEnabled) {
       return
     }
 
@@ -1614,7 +1640,7 @@ function App({ initialAuthError = '' }: AppProps) {
       document.removeEventListener('visibilitychange', handleVisibilityChange)
       teleopController.deactivate()
     }
-  }, [cmdVelRepeatIntervalMs, isDriveControlActive])
+  }, [cmdVelRepeatIntervalMs, isDriveInputEnabled])
 
   const loadShadow = async (): Promise<void> => {
     setIsLoadingShadow(true)
@@ -2138,11 +2164,16 @@ function App({ initialAuthError = '' }: AppProps) {
         callMcpTool: callDeviceMcpTool,
         isBoardVideoExpanded,
         isDebugEnabled,
+        isTakeControlPending: isTakingMcpControl,
         isShadowConnected,
         mcpTransport,
+        onTakeControl: () => {
+          void takeMcpControl()
+        },
         onToggleDebug: () => {
           setIsDebugEnabled((currentValue) => !currentValue)
         },
+        robotControl: robotState?.control ?? null,
         reportedBatteryMv: primaryReportedBatteryMv,
         reportedBoardLeftTrackSpeed,
         reportedBoardOnline,

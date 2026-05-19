@@ -5,6 +5,15 @@ import type { ShadowName } from './shadow-protocol'
 export type ShadowConnectionState = 'idle' | 'connecting' | 'connected' | 'error'
 type ResolveIdToken = () => Promise<string>
 
+export type RobotActiveControlState = {
+  sessionId: string
+  actor: string | null
+  transport: string | null
+  sinceMs: number | null
+  expiresAtMs: number | null
+  epoch: number
+}
+
 export type RobotControlState = {
   activeRequired: boolean
   activeTtlMs: number | null
@@ -12,6 +21,7 @@ export type RobotControlState = {
   activeOwnerSessionId: string | null
   activeExpiresAtMs: number | null
   activeEpoch: number | null
+  activeControl: RobotActiveControlState | null
 }
 
 export type RobotMotionState = {
@@ -53,6 +63,7 @@ export type ShadowSession = {
   requestSnapshot: () => Promise<unknown>
   publishRedconCommand: (redcon: number) => Promise<void>
   publishCmdVel: (twist: Twist) => Promise<void>
+  takeMcpControl: () => Promise<RobotState>
   callMcpTool: (name: string, args?: Record<string, unknown>) => Promise<unknown>
   requestRobotState: () => Promise<RobotState>
   waitForSnapshot: (
@@ -103,6 +114,11 @@ class LazyShadowSession implements ShadowSession {
   async publishCmdVel(twist: Twist): Promise<void> {
     const session = await this.getSession()
     await session.publishCmdVel(twist)
+  }
+
+  async takeMcpControl(): Promise<RobotState> {
+    const session = await this.getSession()
+    return session.takeMcpControl()
   }
 
   async callMcpTool(name: string, args: Record<string, unknown> = {}): Promise<unknown> {

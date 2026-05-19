@@ -29,6 +29,8 @@ The video route is derived from the selected route and web origin. It is not sto
   on the board video KVS session
 - board control at REDCON `2`: MCP over MQTT/WSS when the daemon advertises
   MQTT-only MCP because video is unavailable/not ready
+- board active control: keyboard/drive input does not take over from another
+  active session; the unit panel exposes an explicit take-control action
 - board video: AWS KVS WebRTC
 
 The app expects `capabilities` to include `sparkplug` and uses it to decide which named shadows should exist for a selected thing.

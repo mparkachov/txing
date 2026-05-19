@@ -65,6 +65,8 @@ Current MCP transport:
   with label `txing.mcp.v1`
 - REDCON `2` fallback transport: MQTT JSON-RPC
 - MQTT MCP requests are rejected while the daemon advertises WebRTC-only MCP
+- `control.activate` uses `takeover: true` for explicit active-control
+  switching; non-active sessions can observe but cannot actuate
 
 Current tool surface:
 
@@ -76,7 +78,9 @@ Current tool surface:
 - `cmd_vel.stop`
 - `robot.get_state`
 
-`robot.get_state` is the current read surface for lease, motion, and video runtime state. Those live runtime fields are no longer carried in Thing Shadow.
+`robot.get_state` is the current read surface for active-control ownership,
+motion, and video runtime state. Those live runtime fields are no longer
+carried in Thing Shadow.
 
 ## Local Runtime State
 

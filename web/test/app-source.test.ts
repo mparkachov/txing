@@ -77,4 +77,15 @@ describe('app route catalog source wiring', () => {
     expect(appSource).toContain('}, robotStatePollIntervalMs)')
     expect(appSource).not.toContain('if (isRobotMotionActive || isRobotControlActive)')
   })
+
+  test('drive input requires explicit active-control takeover when another session owns control', () => {
+    const appSource = readFileSync(resolve(repoRoot, 'web/src/App.tsx'), 'utf-8')
+    const shadowRuntimeSource = readFileSync(resolve(repoRoot, 'web/src/shadow-api-runtime.ts'), 'utf-8')
+
+    expect(appSource).toContain('const isDriveControlOwnedByOther =')
+    expect(appSource).toContain('const isDriveInputEnabled = isDriveControlActive && !isDriveControlOwnedByOther')
+    expect(appSource).toContain('await shadowSession.takeMcpControl()')
+    expect(shadowRuntimeSource).toContain("this.activateMcpControl(true)")
+    expect(shadowRuntimeSource).toContain("takeover: true")
+  })
 })

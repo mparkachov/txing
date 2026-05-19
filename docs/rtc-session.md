@@ -144,13 +144,13 @@ The MCP server should model actuator authority as a single active control slot.
 
 Many sessions may observe capabilities. Exactly one session may be active
 controller. Only the active controller may execute control tools. Manual
-operator takeover is an explicit switch of active control from one session to
-another, not concurrent control and not a special "override command" mixed into
-every control call.
+operator takeover is an explicit `control.activate` call with
+`takeover: true`, which switches active control from one session to another.
+Takeover is not concurrent control and is not mixed into every actuator call.
 
 Reason: this cleanly separates session identity, transport, and actuator
-authority. A cloud worker can normally control, a human operator can observe,
-and the human can explicitly take active control when needed.
+authority. Any later automation or cloud worker can reuse the same active
+control protocol, but no cloud session consumer is part of Phase 3.
 
 ### Commands Stay Request/Response
 
@@ -228,7 +228,7 @@ For video-ready units:
 ```json
 {
   "serviceId": "mcp",
-  "mcpProtocolVersion": "2026-05-16",
+  "mcpProtocolVersion": "2026-05-19",
   "transports": [
     {
       "type": "webrtc-datachannel",
@@ -248,7 +248,7 @@ For REDCON `2` units without ready video:
 ```json
 {
   "serviceId": "mcp",
-  "mcpProtocolVersion": "2026-05-16",
+  "mcpProtocolVersion": "2026-05-19",
   "transports": [
     {
       "type": "mqtt-jsonrpc",
@@ -296,14 +296,12 @@ Candidate MCP methods:
 - `control.activate`
 - `control.renew_active`
 - `control.release_active`
-- `control.deactivate_session`
 - `cmd_vel.publish`
 - `cmd_vel.stop`
 - `robot.get_state`
 
-The exact method names can change with the breaking MCP protocol version, but
-the authority model should stay centered on active control rather than
-transport-specific lease override modes.
+`control.activate` accepts optional `actor` and `takeover` arguments. If another
+session is active, `takeover: true` is required to switch ownership.
 
 ## Implementation Phases
 
@@ -537,56 +535,44 @@ Current status as of 2026-05-19:
   - uses dual-stack AWS KVS client configuration and the dual-stack STUN URL
     `stun:stun.kinesisvideo.<region>.api.aws:443`
 
-### Phase 3: Channel Switching And Responsibility Control
+### Phase 3: Active-Control Finalization
 
-Goal: finish the MCP v2 authority model and make multi-consumer behavior
-deterministic.
+Goal: finalize the MCP active-control contract and deterministic browser
+behavior.
 
-Scope:
+Current status as of 2026-05-19:
 
-- finalize the breaking MCP descriptor/protocol version
-- implement active control state and epoch enforcement
-- implement explicit active-control switching between sessions
-- stop motors on every active-control switch
-- reject actuator commands from non-active sessions
-- publish active-control state through MCP status and `robot.get_state`
-- make WebRTC/MQTT transport switching deterministic and observable
-- define browser UI behavior for manual takeover from a cloud worker
-- harden disconnect, expiry, reconnect, and fallback behavior
+- MCP protocol version is `2026-05-19`.
+- `control.activate` is the only activation/takeover API.
+- `control.activate` without `takeover` succeeds only when there is no active
+  owner or the caller already owns active control.
+- `control.activate` with `takeover: true` switches ownership, stops motors,
+  increments `epoch`, and publishes active-control status.
+- Displaced sessions remain connected as observers, but actuator commands from
+  old sessions or stale epochs are rejected.
+- Active-control state is published in MCP status and `robot.get_state`.
+- The browser observes by default when another session owns active control and
+  exposes an explicit take-control action instead of taking over from keyboard
+  input.
+- WebRTC/MQTT transport switching keeps the Phase 2 rule: WebRTC-only while
+  video is ready, MQTT-only when video is unavailable/not ready.
 
 Expected operating state:
 
 - multiple sessions can observe the same device
 - one session at a time controls motors
-- a manual operator can explicitly take active control from a cloud worker
+- a browser operator can explicitly take active control from another active
+  session
 - the displaced session remains connected for observation but cannot actuate
 - stale commands from the old active session or old epoch are rejected
 - fallback from WebRTC to MQTT does not create a second controlling authority
 
-## Future Cloud Session Consumer
+## Out Of Scope: Cloud Session Consumer
 
-A cloud session consumer fits this architecture as another KVS viewer and MCP
-session.
-
-For video-capable units in REDCON `1`, the cloud worker connects to the media
-RTC session, receives video, and sends MCP commands over the WebRTC data channel.
-The human operator can connect at the same time as an observer. If the human
-operator takes active control, the daemon switches the active control slot from
-the cloud worker session to the operator session, stops motors, increments the
-control epoch, and rejects further actuator commands from the cloud worker until
-control is switched back.
-
-For REDCON `2` or video-unavailable states, the cloud worker may still use MQTT
-MCP if that is acceptable for the task. The architecture does not require a
-control-only WebRTC channel for the current unit, but leaves room for future
-device types to advertise one as a separate transport.
-
-The near-realtime cloud consumer should initially use the same AWS KVS/WebRTC
-model as the browser/operator path. A native C/C++ worker is the lowest-risk
-consumer implementation because it matches the current AWS KVS WebRTC native
-surface. A Rust application can still own policy and supervision around that
-native worker. Pure Rust WebRTC/KVS integration should be treated as a separate
-future investigation rather than a dependency of the unit daemon migration.
+Phase 3 finalizes a generic MCP active-control contract, but it does not
+implement a cloud session consumer. A future cloud worker can connect as another
+MCP session and use the same `control.activate` takeover semantics without
+requiring another active-control protocol break.
 
 ## References
 

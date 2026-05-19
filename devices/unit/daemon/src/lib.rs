@@ -56,7 +56,7 @@ pub const BOARD_SHADOW_NAME: &str = "board";
 pub const MCP_SHADOW_NAME: &str = "mcp";
 pub const VIDEO_SHADOW_NAME: &str = "video";
 pub const SPARKPLUG_SHADOW_NAME: &str = "sparkplug";
-pub const MCP_PROTOCOL_VERSION: &str = "2026-05-16";
+pub const MCP_PROTOCOL_VERSION: &str = "2026-05-19";
 pub const DEFAULT_CONFIG_SUBDIR: &str = "txing/unit-daemon";
 pub const DEFAULT_ENV_FILE_NAME: &str = "daemon.env";
 pub const DEFAULT_DAEMON_ENV_TEMPLATE: &str = include_str!("../daemon.env.template");
@@ -2367,15 +2367,19 @@ impl McpServer {
         session_id: &str,
         actor: Option<String>,
         transport: &str,
+        takeover: bool,
         now_ms: u64,
         cmd_vel: &mut CmdVelController,
     ) -> Result<ActiveControlState> {
         self.clear_expired(now_ms, cmd_vel)?;
         if let Some(active) = &self.active {
             if active.session_id != session_id {
-                bail!("active control busy");
+                if !takeover {
+                    bail!("active control busy");
+                }
+            } else {
+                return Ok(active.clone());
             }
-            return Ok(active.clone());
         }
         cmd_vel.stop(true)?;
         self.next_epoch = self.next_epoch.saturating_add(1);
@@ -3120,10 +3124,15 @@ impl RuntimeState {
                     .map(str::trim)
                     .filter(|value| !value.is_empty())
                     .map(ToOwned::to_owned);
+                let takeover = arguments
+                    .get("takeover")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
                 let active = self.mcp.activate(
                     session_id,
                     actor,
                     self.mcp_transport_mode().name(),
+                    takeover,
                     observed_at_ms,
                     &mut self.cmd_vel,
                 )?;
@@ -4979,6 +4988,29 @@ mod tests {
         }
     }
 
+    async fn call_mcp_ipc(
+        runtime: &mut RuntimeState,
+        publisher: &FakePublisher,
+        session_id: &str,
+        request: Value,
+        observed_at_ms: u64,
+    ) -> Value {
+        let (response_tx, response_rx) = oneshot::channel();
+        runtime
+            .handle_mcp_ipc_event(
+                publisher,
+                RuntimeMcpIpcEvent::Request {
+                    session_id: session_id.to_string(),
+                    payload: serde_json::to_string(&request).unwrap(),
+                    response_tx,
+                },
+                observed_at_ms,
+            )
+            .await
+            .unwrap();
+        serde_json::from_str(&response_rx.await.unwrap().unwrap()).unwrap()
+    }
+
     #[async_trait]
     impl Publisher for FakePublisher {
         async fn publish(&self, message: PublishedMessage) -> Result<()> {
@@ -5551,34 +5583,90 @@ mod tests {
             .unwrap();
         publisher.clear();
 
-        let (response_tx, response_rx) = oneshot::channel();
-        runtime
-            .handle_mcp_ipc_event(
-                &publisher,
-                RuntimeMcpIpcEvent::Request {
-                    session_id: "rtc-session".to_string(),
-                    payload: serde_json::to_string(&serde_json::json!({
-                        "jsonrpc": "2.0",
-                        "id": 1,
-                        "method": "tools/call",
-                        "params": {
-                            "name": "control.activate",
-                            "arguments": {"actor": "operator"},
-                        },
-                    }))
-                    .unwrap(),
-                    response_tx,
+        let response = call_mcp_ipc(
+            &mut runtime,
+            &publisher,
+            "rtc-session",
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {
+                    "name": "control.activate",
+                    "arguments": {"actor": "operator"},
                 },
-                43,
-            )
-            .await
-            .unwrap();
-        let response: Value = serde_json::from_str(&response_rx.await.unwrap().unwrap()).unwrap();
+            }),
+            43,
+        )
+        .await;
         assert_eq!(
             response["result"]["structuredContent"]["activeControl"]["transport"],
             "webrtc-datachannel"
         );
         assert_eq!(publisher.messages().len(), 2);
+
+        let busy_response = call_mcp_ipc(
+            &mut runtime,
+            &publisher,
+            "rtc-session-b",
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "control.activate",
+                    "arguments": {"actor": "operator-b"},
+                },
+            }),
+            44,
+        )
+        .await;
+        assert_eq!(busy_response["error"]["code"], -32012);
+        assert!(
+            busy_response["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("active control busy")
+        );
+
+        let takeover_response = call_mcp_ipc(
+            &mut runtime,
+            &publisher,
+            "rtc-session-b",
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "tools/call",
+                "params": {
+                    "name": "control.activate",
+                    "arguments": {"actor": "operator-b", "takeover": true},
+                },
+            }),
+            45,
+        )
+        .await;
+        let takeover_active = &takeover_response["result"]["structuredContent"]["activeControl"];
+        assert_eq!(takeover_active["sessionId"], "rtc-session-b");
+        assert_eq!(takeover_active["actor"], "operator-b");
+        assert_eq!(takeover_active["epoch"], 2);
+
+        let displaced_response = call_mcp_ipc(
+            &mut runtime,
+            &publisher,
+            "rtc-session",
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "tools/call",
+                "params": {
+                    "name": "cmd_vel.stop",
+                    "arguments": {"epoch": 1},
+                },
+            }),
+            46,
+        )
+        .await;
+        assert_eq!(displaced_response["error"]["code"], -32011);
 
         runtime
             .handle_mcp_ipc_event(
@@ -5587,7 +5675,25 @@ mod tests {
                     session_id: "rtc-session".to_string(),
                     reason: "data channel closed".to_string(),
                 },
-                44,
+                47,
+            )
+            .await
+            .unwrap();
+        let status_after_old_close: Value =
+            serde_json::from_slice(&publisher.messages().last().unwrap().payload).unwrap();
+        assert_eq!(
+            status_after_old_close["state"]["reported"]["status"]["activeControl"]["sessionId"],
+            "rtc-session-b"
+        );
+
+        runtime
+            .handle_mcp_ipc_event(
+                &publisher,
+                RuntimeMcpIpcEvent::Close {
+                    session_id: "rtc-session-b".to_string(),
+                    reason: "data channel closed".to_string(),
+                },
+                48,
             )
             .await
             .unwrap();
@@ -5782,6 +5888,7 @@ mod tests {
                 "session-a",
                 Some("operator".to_string()),
                 "mqtt-jsonrpc",
+                false,
                 1_000,
                 &mut cmd_vel,
             )
@@ -5791,11 +5898,55 @@ mod tests {
         assert_eq!(active.epoch, 1);
         assert_eq!(active.expires_at_ms, 6_000);
         assert!(
-            mcp.activate("session-b", None, "mqtt-jsonrpc", 1_500, &mut cmd_vel)
+            mcp.activate(
+                "session-b",
+                None,
+                "mqtt-jsonrpc",
+                false,
+                1_500,
+                &mut cmd_vel
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("active control busy")
+        );
+        let takeover = mcp
+            .activate(
+                "session-b",
+                Some("operator-b".to_string()),
+                "webrtc-datachannel",
+                true,
+                1_600,
+                &mut cmd_vel,
+            )
+            .unwrap();
+        assert_eq!(takeover.session_id, "session-b");
+        assert_eq!(takeover.actor.as_deref(), Some("operator-b"));
+        assert_eq!(takeover.transport, "webrtc-datachannel");
+        assert_eq!(takeover.epoch, active.epoch + 1);
+        assert_eq!(takeover.expires_at_ms, 6_600);
+        assert!(
+            mcp.renew_active("session-a", active.epoch, 1_700, &mut cmd_vel)
                 .unwrap_err()
                 .to_string()
-                .contains("active control busy")
+                .contains("no active control")
         );
+        let released_takeover = mcp
+            .release_active("session-b", takeover.epoch, 1_800, &mut cmd_vel)
+            .unwrap();
+        assert_eq!(released_takeover.left_speed, 0);
+        assert_eq!(released_takeover.right_speed, 0);
+
+        let active = mcp
+            .activate(
+                "session-a",
+                Some("operator".to_string()),
+                "mqtt-jsonrpc",
+                false,
+                1_900,
+                &mut cmd_vel,
+            )
+            .unwrap();
         assert!(
             mcp.renew_active("session-a", active.epoch + 1, 2_000, &mut cmd_vel)
                 .unwrap_err()
@@ -5822,7 +5973,14 @@ mod tests {
         );
 
         let expired = mcp
-            .activate("session-a", None, "mqtt-jsonrpc", 3_000, &mut cmd_vel)
+            .activate(
+                "session-a",
+                None,
+                "mqtt-jsonrpc",
+                false,
+                3_000,
+                &mut cmd_vel,
+            )
             .unwrap();
         assert!(
             mcp.renew_active("session-a", expired.epoch, 8_000, &mut cmd_vel)
