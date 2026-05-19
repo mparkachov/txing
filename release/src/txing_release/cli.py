@@ -99,12 +99,6 @@ TEXT_VERSIONS = (
         "'{version}'",
         0,
     ),
-    TextVersion(
-        Path("shared/aws/templates/types/cloud-time.yaml"),
-        "cloud time runtime default version",
-        re.compile(r"(?m)^(\s*Default:\s*)[0-9]+\.[0-9]+\.[0-9]+$"),
-        r"\g<1>{version}",
-    ),
 )
 
 SCAN_IGNORED_DIRS = {

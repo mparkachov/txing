@@ -478,8 +478,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("iot:GetRetainedMessage", template)
         self.assertIn("iot:GetThingShadow", template)
         self.assertIn("iot:SearchIndex", template)
-        self.assertIn("TimeRuntimeVersion:", template)
-        self.assertIn("SERVER_VERSION: !Ref TimeRuntimeVersion", template)
+        self.assertIn("ACTIVE_TTL_MS: !Ref TimeRuntimeActiveTtlMs", template)
         self.assertIn("topic/txings/*/capability/v2/*", template)
         self.assertIn("topic/txings/*/mcp/*", template)
         self.assertIn("Runtime: provided.al2023", template)
@@ -576,26 +575,25 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("Type: AWS::CloudFormation::Stack", root_template)
         self.assertIn("TemplateURL: templates/base.yaml", root_template)
 
-    def test_global_version_is_parameterized_through_root_and_time_runtime(self) -> None:
+    def test_time_runtime_uses_compiled_project_version_metadata(self) -> None:
         root_template = (AWS_DIR / "template.yaml").read_text(encoding="utf-8")
         cloud_time_template = (AWS_DIR / "templates" / "types" / "cloud-time.yaml").read_text(
             encoding="utf-8"
         )
+        time_lambda_source = (REPO_ROOT / "devices" / "time" / "lambda" / "src" / "lib.rs").read_text(
+            encoding="utf-8"
+        )
         aws_justfile = (AWS_DIR / "justfile").read_text(encoding="utf-8")
         root_justfile = (REPO_ROOT / "justfile").read_text(encoding="utf-8")
+        project_version = (REPO_ROOT / "VERSION").read_text(encoding="utf-8").strip()
 
-        self.assertRegex(
-            (REPO_ROOT / "VERSION").read_text(encoding="utf-8").strip(),
-            r"^[0-9]+\.[0-9]+\.[0-9]+$",
-        )
+        self.assertRegex(project_version, r"^[0-9]+\.[0-9]+\.[0-9]+$")
         self.assertIn("_project-version-env:", root_justfile)
         self.assertIn("export_line TXING_VERSION_BASE", root_justfile)
         self.assertIn("export_line TXING_VERSION", root_justfile)
-        self.assertIn("TxingVersion:", root_template)
-        self.assertIn(
-            f"Default: {(REPO_ROOT / 'VERSION').read_text(encoding='utf-8').strip()}",
-            root_template,
-        )
+        self.assertIn(f'DEFAULT_SERVER_VERSION: &str = "{project_version}"', time_lambda_source)
+        self.assertIn('std::env::var("TXING_VERSION")', time_lambda_source)
+        self.assertIn("DEFAULT_SERVER_VERSION.to_string()", time_lambda_source)
         parameter_block = root_template.split("\nResources:", 1)[0]
         self.assertIn("StackCognitoDomainPrefix:", parameter_block)
         self.assertIn("StackAdminEmail:", parameter_block)
@@ -610,19 +608,12 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("CognitoDomainPrefix: !Ref StackCognitoDomainPrefix", root_template)
         self.assertIn("AdminEmail: !Ref StackAdminEmail", root_template)
         self.assertIn("WebAppUrl: !Ref StackWebAppUrl", root_template)
-        self.assertIn("TimeRuntimeVersion: !Ref TxingVersion", root_template)
-        self.assertIn("Value: !Ref TxingVersion", root_template)
-        self.assertIn("TimeRuntimeVersion:", cloud_time_template)
-        self.assertIn("SERVER_VERSION: !Ref TimeRuntimeVersion", cloud_time_template)
+        self.assertIn("TemplateURL: templates/types/cloud-time.yaml", root_template)
+        self.assertIn("ACTIVE_TTL_MS: !Ref TimeRuntimeActiveTtlMs", cloud_time_template)
         self.assertIn("Runtime: provided.al2023", cloud_time_template)
         self.assertIn("Handler: rust.handler", cloud_time_template)
         self.assertIn("- arm64", cloud_time_template)
-        self.assertNotIn('SERVER_VERSION: "0.5.0"', cloud_time_template)
         self.assertNotIn("--parameter-overrides", aws_justfile)
-        self.assertNotIn('"TxingVersion=', aws_justfile)
-        self.assertNotIn('"CognitoDomainPrefix=', aws_justfile)
-        self.assertNotIn('"AdminEmail=', aws_justfile)
-        self.assertNotIn('"WebAppUrl=', aws_justfile)
 
     def test_web_hosting_is_external_to_aws_stack(self) -> None:
         template = _template_text()

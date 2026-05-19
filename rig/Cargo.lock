@@ -2803,7 +2803,7 @@ dependencies = [
 
 [[package]]
 name = "txing-aws-connectivity"
-version = "0.9.125"
+version = "0.9.126"
 dependencies = [
  "anyhow",
  "aws-config",
@@ -2822,7 +2822,7 @@ dependencies = [
 
 [[package]]
 name = "txing-ble-connectivity"
-version = "0.9.125"
+version = "0.9.126"
 dependencies = [
  "anyhow",
  "aws-greengrass-component-sdk",
@@ -2840,7 +2840,7 @@ dependencies = [
 
 [[package]]
 name = "txing-capability-protocol"
-version = "0.9.125"
+version = "0.9.126"
 dependencies = [
  "anyhow",
  "serde",
@@ -2849,7 +2849,7 @@ dependencies = [
 
 [[package]]
 name = "txing-rig-local-pubsub"
-version = "0.9.125"
+version = "0.9.126"
 dependencies = [
  "anyhow",
  "base64",
@@ -2862,7 +2862,7 @@ dependencies = [
 
 [[package]]
 name = "txing-sparkplug-manager"
-version = "0.9.125"
+version = "0.9.126"
 dependencies = [
  "anyhow",
  "async-trait",
