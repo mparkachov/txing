@@ -90,6 +90,7 @@ mise_config_root="$root_home/.config/mise"
 mise_config_dir="$mise_config_root/txing-unit-daemon"
 mise_config_file="$mise_config_dir/config.toml"
 stable_config_file="$mise_config_root/conf.d/txing-unit-daemon.toml"
+mise_data_dir="$root_home/.local/share/mise"
 service_name="txing-unit-daemon.service"
 systemd_dir="/etc/systemd/system"
 service_file="$systemd_dir/$service_name"
@@ -114,10 +115,9 @@ run_root_mise() {
 run_feature_mise() {
   env "HOME=$root_home" \
     "MISE_CONFIG_DIR=$mise_config_dir" \
-    "MISE_DATA_DIR=$tmp_root/mise" \
+    "MISE_DATA_DIR=$mise_data_dir" \
     "MISE_CACHE_DIR=$tmp_root/mise-cache" \
     "MISE_TMP_DIR=$tmp_root/mise-tmp" \
-    "MISE_SHARED_INSTALL_DIRS=$root_home/.local/share/mise/installs" \
     "MISE_TRUSTED_CONFIG_PATHS=$feature_trusted_config_paths" \
     "MISE_PRERELEASES=1" \
     "$mise_bin" "$@"
@@ -169,6 +169,7 @@ if [ "$channel" = "feature" ]; then
 fi
 
 ensure_writable_dir "mise config" "$mise_config_root"
+ensure_writable_dir "mise data" "$mise_data_dir"
 if [ "$channel" = "stable" ]; then
   ensure_writable_dir "stable mise config" "$mise_config_root/conf.d"
 else
@@ -221,7 +222,7 @@ if [ "$channel" = "stable" ]; then
   kvs_master_binary="$(run_root_mise which txing-board-kvs-master)"
 else
   install -m 600 "$config_tmp" "$mise_config_file"
-  install -d -m 700 "$tmp_root/mise" "$tmp_root/mise-cache" "$tmp_root/mise-tmp"
+  install -d -m 700 "$tmp_root/mise-cache" "$tmp_root/mise-tmp"
   run_feature_mise cache clear >/dev/null 2>&1 || true
   run_feature_mise install --force txing-unit-daemon@latest txing-board-kvs-master@latest
   daemon_binary="$(run_feature_mise which txing-unit-daemon)"
@@ -302,7 +303,7 @@ if [ "$channel" = "stable" ]; then
   printf '  stable install root: %s\n' "$stable_install_root"
   printf '  KVS master stable install root: %s\n' "$kvs_master_stable_install_root"
 else
-  printf '  feature install root: %s\n' "$tmp_root/mise"
+  printf '  feature install root: %s\n' "$mise_data_dir/installs"
   printf '  stable fallback root: %s\n' "$stable_install_root"
   printf '  KVS master stable fallback root: %s\n' "$kvs_master_stable_install_root"
 fi

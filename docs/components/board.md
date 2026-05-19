@@ -78,7 +78,9 @@ Current tool surface:
 ## Local Runtime State
 
 The stable Rust daemon writes no persistent board runtime state outside its
-per-user config directory. Feature-channel mise installs use `/var/tmp`.
+per-user config directory. Stable and feature-channel mise tool installs are
+root-owned and persistent under `/root/.local/share/mise`; `/var/tmp` is only
+install/runtime scratch.
 
 The legacy Python board runtime writes transient local state only:
 

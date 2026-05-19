@@ -120,20 +120,23 @@ Stable mode uses root's normal mise config tree and persistent install tree:
 ```
 
 Feature mode is an overlay on top of stable. It uses an isolated root mise
-config and tmpfs-backed install/cache/tmp state:
+config, but installs the selected feature binaries into the same persistent
+root-owned mise data directory as stable:
 
 ```text
 /root/.config/mise/txing-unit-daemon/config.toml
-/var/tmp/txing/unit-daemon/mise
+/root/.local/share/mise/installs/txing-unit-daemon/
+/root/.local/share/mise/installs/txing-board-kvs-master/
 /var/tmp/txing/unit-daemon/mise-cache
 /var/tmp/txing/unit-daemon/mise-tmp
 ```
 
 The board runtime is root-owned. The `txing` login user is only the SSH entry
 point and can enter a root shell for maintenance. The root-owned service runs
-`mise`; feature installation resolves the latest matching feature prerelease
-into `/var/tmp`, then the service starts offline from the already-installed
-tools.
+`mise` only during install/update; feature installation resolves the latest
+matching feature prerelease into persistent root-owned mise installs, then the
+service starts offline from the already-installed tools. `/var/tmp` is only
+temporary install scratch and may be cleared before remounting root read-only.
 
 The installed service is the same for both channels:
 
@@ -202,7 +205,7 @@ them later only when stronger artifact integrity requirements are needed.
 The board install behavior has been manually verified on a Raspberry Pi Zero 2
 W with a read-only root filesystem:
 
-- feature installer install into `/var/tmp` and read-only-root reboot;
+- feature installer install into `/root/.local/share/mise/installs` and read-only-root reboot;
 - stable GitHub Actions release publish from `main`;
 - stable board install from the `main` raw installer;
 - stable upgrade with the root-owned installer;
@@ -423,7 +426,7 @@ bash /tmp/txing-install-systemd.sh feature
 ```
 
 The feature installer force-installs the current remote feature prerelease into
-`/var/tmp`.
+`/root/.local/share/mise/installs`.
 After that, the systemd service starts offline from the exact installed binary
 paths, logs the daemon path, and attempts to print daemon `--version` during
 start without making old binaries fail. This prevents a daemon crash loop from
@@ -436,17 +439,15 @@ Verify the feature installer resolves both commands:
 
 ```bash
 env HOME=/root MISE_CONFIG_DIR=/root/.config/mise/txing-unit-daemon \
-  MISE_DATA_DIR=/var/tmp/txing/unit-daemon/mise \
+  MISE_DATA_DIR=/root/.local/share/mise \
   MISE_CACHE_DIR=/var/tmp/txing/unit-daemon/mise-cache \
   MISE_TMP_DIR=/var/tmp/txing/unit-daemon/mise-tmp \
-  MISE_SHARED_INSTALL_DIRS=/root/.local/share/mise/installs \
   MISE_OFFLINE=1 \
   /root/.local/bin/mise which txing-unit-daemon
 env HOME=/root MISE_CONFIG_DIR=/root/.config/mise/txing-unit-daemon \
-  MISE_DATA_DIR=/var/tmp/txing/unit-daemon/mise \
+  MISE_DATA_DIR=/root/.local/share/mise \
   MISE_CACHE_DIR=/var/tmp/txing/unit-daemon/mise-cache \
   MISE_TMP_DIR=/var/tmp/txing/unit-daemon/mise-tmp \
-  MISE_SHARED_INSTALL_DIRS=/root/.local/share/mise/installs \
   MISE_OFFLINE=1 \
   /root/.local/bin/mise which txing-board-kvs-master
 ```
