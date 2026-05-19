@@ -17,7 +17,6 @@ env:
   KVS_MASTER_ASSET: txing-board-kvs-master-linux-aarch64.tar.gz
   KVS_MASTER_BINARY: txing-board-kvs-master
   KVS_MASTER_BUILD_IMAGE: debian:trixie
-  KVS_MASTER_OUTPUT_DIR: .txing-workflow-out
   FEATURE_PRERELEASE_RETAIN: 10
 
 jobs:
@@ -157,14 +156,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf "$KVS_MASTER_OUTPUT_DIR"
-          install -d "$KVS_MASTER_OUTPUT_DIR"
-          docker run --rm \
+          docker run --rm -i \
             -v "$PWD:$PWD" \
             -w "$PWD" \
             -e DEBIAN_FRONTEND=noninteractive \
             -e KVS_MASTER_BINARY="$KVS_MASTER_BINARY" \
-            -e KVS_MASTER_OUTPUT_DIR="$KVS_MASTER_OUTPUT_DIR" \
             "$KVS_MASTER_BUILD_IMAGE" \
             bash -se <<'TRIXIE_BUILD'
           set -euo pipefail
@@ -205,8 +201,11 @@ jobs:
           fi
           ldd devices/unit/board/kvs_master/build/txing-board-kvs-master | grep -F "libcamera.so.0.7"
           ldd devices/unit/board/kvs_master/build/txing-board-kvs-master | grep -F "libcamera-base.so.0.7"
-          install -m 755 devices/unit/board/kvs_master/build/txing-board-kvs-master "$KVS_MASTER_OUTPUT_DIR/$KVS_MASTER_BINARY"
           TRIXIE_BUILD
+          kvs_master_build_binary="devices/unit/board/kvs_master/build/$KVS_MASTER_BINARY"
+          test -x "$kvs_master_build_binary"
+          file "$kvs_master_build_binary"
+          install -m 755 "$kvs_master_build_binary" "$RUNNER_TEMP/$KVS_MASTER_BINARY"
 
       - name: Package prerelease assets
         id: package
@@ -235,7 +234,7 @@ jobs:
           }
 
           package_binary devices/unit/daemon/target/release/daemon "$UNIT_DAEMON_BINARY" "$UNIT_DAEMON_ASSET"
-          package_binary "$KVS_MASTER_OUTPUT_DIR/$KVS_MASTER_BINARY" "$KVS_MASTER_BINARY" "$KVS_MASTER_ASSET"
+          package_binary "$RUNNER_TEMP/$KVS_MASTER_BINARY" "$KVS_MASTER_BINARY" "$KVS_MASTER_ASSET"
 
           echo "unit_daemon_asset_path=$RUNNER_TEMP/$UNIT_DAEMON_ASSET" >>"$GITHUB_OUTPUT"
           echo "kvs_master_asset_path=$RUNNER_TEMP/$KVS_MASTER_ASSET" >>"$GITHUB_OUTPUT"
