@@ -162,20 +162,17 @@ jobs:
             -e DEBIAN_FRONTEND=noninteractive \
             -e KVS_MASTER_BINARY="$KVS_MASTER_BINARY" \
             "$KVS_MASTER_BUILD_IMAGE" \
-            bash -se <<'TRIXIE_BUILD'
+          bash -se <<'TRIXIE_BUILD'
           set -euo pipefail
           apt-get update
-          apt-get install -y --no-install-recommends ca-certificates curl gnupg
-          install -d -m 755 /etc/apt/keyrings
-          curl -fsSL https://archive.raspberrypi.com/debian/raspberrypi.gpg.key \
-            | gpg --dearmor -o /etc/apt/keyrings/raspberrypi-archive-keyring.gpg
+          apt-get install -y --no-install-recommends ca-certificates curl
           cat >/etc/apt/sources.list.d/raspi.sources <<'APT_SOURCE'
           Types: deb
           URIs: https://archive.raspberrypi.com/debian/
           Suites: trixie
           Components: main
           Architectures: arm64
-          Signed-By: /etc/apt/keyrings/raspberrypi-archive-keyring.gpg
+          Trusted: yes
           APT_SOURCE
           cat >/etc/apt/preferences.d/raspi-libcamera <<'APT_PREFERENCES'
           Package: libcamera* python3-libcamera gstreamer1.0-libcamera
