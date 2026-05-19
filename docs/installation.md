@@ -104,6 +104,15 @@ sudo apt install -y \
 If NetworkManager was newly installed or enabled, reconnect over the resulting
 network path before continuing.
 
+The native KVS master is dynamically linked against the libcamera ABI from the
+release build image. Release workflows build this binary in a Trixie arm64
+container with the Raspberry Pi OS apt repository enabled, so it links against
+`libcamera.so.0.7` and `libcamera-base.so.0.7`. The installer runs `ldd` against
+the installed binaries and stops before restarting the service if a runtime
+library is missing. If it reports `libcamera.so.0.2` or `libcamera.so.0.4`, the
+asset was built against a non-Raspberry Pi OS image and must be replaced with a
+Raspberry Pi OS Trixie-built KVS master.
+
 ### 3. Install Mise
 
 Use `mise` for txing release binaries and any operator CLIs that are missing,

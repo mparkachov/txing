@@ -163,11 +163,12 @@ Stable publishing is CI-owned:
 .github/workflows/unit-daemon-stable-release.yml
 ```
 
-The workflow runs manually from `main`, builds on `ubuntu-24.04-arm`, installs
-Rust `1.95.0`, runs Rust tests, builds the native KVS master, builds and strips
-the Linux `aarch64` binaries, packages the project stable assets, and creates a
-normal GitHub Release for `v<VERSION>`. Stable project tags and releases are
-immutable.
+The workflow runs manually from `main`, builds Rust artifacts on
+`ubuntu-24.04-arm`, installs Rust `1.95.0`, runs Rust tests, builds the native
+KVS master in a Trixie arm64 container with the Raspberry Pi OS apt repository
+enabled, builds and strips the Linux `aarch64` binaries, packages the project
+stable assets, and creates a normal GitHub Release for `v<VERSION>`. Stable
+project tags and releases are immutable.
 
 Feature publishing is CI-owned:
 
@@ -175,12 +176,13 @@ Feature publishing is CI-owned:
 .github/workflows/unit-daemon-feature-prerelease.yml
 ```
 
-The workflow runs manually from a pushed `feature/*` branch, builds on
-`ubuntu-24.04-arm`, installs Rust `1.95.0`, runs daemon tests, builds the
-native KVS master, builds and strips the Linux `aarch64` binaries, packages the
-archives, creates the timestamped prerelease, and prunes older feature
-prereleases beyond the latest 10. The workflow fails if it is dispatched from
-`main`, a tag, or any non-`feature/*` branch.
+The workflow runs manually from a pushed `feature/*` branch, builds Rust on
+`ubuntu-24.04-arm`, installs Rust `1.95.0`, runs daemon tests, builds the native
+KVS master in a Trixie arm64 container with the Raspberry Pi OS apt repository
+enabled, builds and strips the Linux `aarch64` binaries, packages the archives,
+creates the timestamped prerelease, and prunes older feature prereleases beyond
+the latest 10. The workflow fails if it is dispatched from `main`, a tag, or any
+non-`feature/*` branch.
 
 ## Integrity Policy
 
@@ -210,6 +212,12 @@ W with a read-only root filesystem:
 The current phase-2a artifact flow installs both `txing-unit-daemon` and
 `txing-board-kvs-master` through the same board mise config. It still needs
 field validation on a clean board after the next stable release is published.
+The native KVS master is dynamically linked to the libcamera ABI from Raspberry
+Pi OS Trixie packages, so Raspberry Pi OS Trixie boards must have matching
+runtime libraries. The release workflows assert that the asset links against
+`libcamera.so.0.7` and `libcamera-base.so.0.7`. The installer runs `ldd` on the
+resolved daemon and KVS master before restarting systemd; unresolved libraries
+are reported as an installation error instead of becoming a daemon crash loop.
 
 ## Manual Actions
 
@@ -414,13 +422,15 @@ curl -fsSL "https://raw.githubusercontent.com/mparkachov/txing/${FEATURE_BRANCH}
 bash /tmp/txing-install-systemd.sh feature
 ```
 
-The feature installer installs the current feature prerelease into `/var/tmp`.
+The feature installer force-installs the current remote feature prerelease into
+`/var/tmp`.
 After that, the systemd service starts offline from the exact installed binary
 paths, logs the daemon path, and attempts to print daemon `--version` during
 start without making old binaries fail. This prevents a daemon crash loop from
 repeatedly calling the GitHub Releases API and makes it clear whether the unit
 is running stable or feature. To pick up a newer feature prerelease, rerun the
-feature installer.
+feature installer. `systemctl restart txing-unit-daemon.service` intentionally
+does not install or upgrade anything.
 
 Verify the feature installer resolves both commands:
 

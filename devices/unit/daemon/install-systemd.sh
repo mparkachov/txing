@@ -123,6 +123,25 @@ run_feature_mise() {
     "$mise_bin" "$@"
 }
 
+check_shared_libraries() {
+  local label="$1"
+  local binary="$2"
+  local ldd_output
+
+  command -v ldd >/dev/null 2>&1 || return 0
+  if ! ldd_output="$(ldd "$binary" 2>&1)"; then
+    fail "inspect $label shared libraries with ldd: $ldd_output"
+  fi
+  if printf '%s\n' "$ldd_output" | grep -Fq "not found"; then
+    printf 'error: unresolved shared libraries for %s: %s\n' "$label" "$binary" >&2
+    printf '%s\n' "$ldd_output" | grep -F "not found" >&2
+    printf 'Install the missing runtime OS packages on the board before restarting %s.\n' "$service_name" >&2
+    printf 'For Raspberry Pi OS Trixie, the release KVS master should link against libcamera.so.0.7 from libcamera0.7.\n' >&2
+    printf 'If the missing library is libcamera.so.0.2 or libcamera.so.0.4, the KVS master asset was built against a non-Raspberry Pi OS image; publish a new KVS master built with Raspberry Pi OS Trixie packages.\n' >&2
+    exit 1
+  fi
+}
+
 if [ "$channel" = "feature" ]; then
   [ -r "$stable_config_file" ] || fail "missing stable daemon mise config: $stable_config_file; install stable channel first"
   stable_binary_found=false
@@ -197,19 +216,21 @@ if [ "$channel" = "stable" ]; then
   rmdir "$mise_config_dir" 2>/dev/null || true
   rm -rf "$tmp_root"
   run_root_mise cache clear >/dev/null 2>&1 || true
-  run_root_mise install
+  run_root_mise install --force txing-unit-daemon@latest txing-board-kvs-master@latest
   daemon_binary="$(run_root_mise which txing-unit-daemon)"
   kvs_master_binary="$(run_root_mise which txing-board-kvs-master)"
 else
   install -m 600 "$config_tmp" "$mise_config_file"
   install -d -m 700 "$tmp_root/mise" "$tmp_root/mise-cache" "$tmp_root/mise-tmp"
   run_feature_mise cache clear >/dev/null 2>&1 || true
-  run_feature_mise install
+  run_feature_mise install --force txing-unit-daemon@latest txing-board-kvs-master@latest
   daemon_binary="$(run_feature_mise which txing-unit-daemon)"
   kvs_master_binary="$(run_feature_mise which txing-board-kvs-master)"
 fi
 [ -x "$daemon_binary" ] || fail "resolved daemon binary is not executable: $daemon_binary"
 [ -x "$kvs_master_binary" ] || fail "resolved KVS master binary is not executable: $kvs_master_binary"
+check_shared_libraries "txing-unit-daemon" "$daemon_binary"
+check_shared_libraries "txing-board-kvs-master" "$kvs_master_binary"
 
 {
   cat <<EOF
