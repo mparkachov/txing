@@ -261,6 +261,7 @@ ExecStartPre=/usr/bin/test -x $kvs_master_binary
 ExecStartPre=/usr/bin/echo txing-unit-daemon binary: $daemon_binary
 ExecStartPre=-$daemon_binary --version
 ExecStartPre=/usr/bin/echo txing-board-kvs-master binary: $kvs_master_binary
+ExecStartPre=-$kvs_master_binary --version
 ExecStart=$daemon_binary
 
 [Install]
@@ -297,6 +298,10 @@ printf '  daemon binary: %s\n' "$daemon_binary"
 printf '  KVS master binary: %s\n' "$kvs_master_binary"
 printf '  daemon version: '
 if ! "$daemon_binary" --version; then
+  printf 'unavailable; resolved binary does not support --version\n'
+fi
+printf '  KVS master version: '
+if ! "$kvs_master_binary" --version; then
   printf 'unavailable; resolved binary does not support --version\n'
 fi
 if [ "$channel" = "stable" ]; then

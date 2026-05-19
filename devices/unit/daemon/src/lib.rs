@@ -2693,6 +2693,13 @@ impl RuntimeState {
                 info!(session_id = %session_id, "MCP WebRTC data channel open");
                 false
             }
+            VideoWorkerEvent::Ready { worker_version } => {
+                info!(
+                    worker_version = worker_version.as_deref().unwrap_or("unknown"),
+                    "native KVS worker ready"
+                );
+                false
+            }
             _ => false,
         };
         let next_transport = self.mcp_transport_mode();
@@ -2721,17 +2728,24 @@ impl RuntimeState {
                 payload,
                 response_tx,
             } => {
+                let mut updates_status = false;
                 let response = match serde_json::from_str::<Value>(&payload) {
                     Ok(request) => {
-                        let result =
-                            self.handle_mcp_json_rpc_request(&session_id, request, observed_at_ms)?;
-                        if result.updates_status {
-                            self.publish_mcp_status(publisher, observed_at_ms).await?;
+                        let request_id = request.get("id").cloned();
+                        match self.handle_mcp_json_rpc_request(&session_id, request, observed_at_ms)
+                        {
+                            Ok(result) => {
+                                updates_status = result.updates_status;
+                                result
+                                    .response
+                                    .map(|payload| serde_json::to_string(&payload))
+                                    .transpose()?
+                            }
+                            Err(err) => Some(serde_json::to_string(&json_rpc_error_response(
+                                request_id,
+                                json_rpc_error(-32603, &format!("internal error: {err}")),
+                            ))?),
                         }
-                        result
-                            .response
-                            .map(|payload| serde_json::to_string(&payload))
-                            .transpose()?
                     }
                     Err(err) => Some(serde_json::to_string(&json_rpc_error_response(
                         None,
@@ -2739,6 +2753,15 @@ impl RuntimeState {
                     ))?),
                 };
                 let _ = response_tx.send(response);
+                if updates_status
+                    && let Err(err) = self.publish_mcp_status(publisher, observed_at_ms).await
+                {
+                    warn!(
+                        session_id = %session_id,
+                        error = %format_args!("{err:#}"),
+                        "failed to publish MCP status after IPC response"
+                    );
+                }
             }
             RuntimeMcpIpcEvent::Close { session_id, reason } => {
                 info!(session_id = %session_id, reason = %reason, "MCP WebRTC IPC session closed");
@@ -4988,9 +5011,9 @@ mod tests {
         }
     }
 
-    async fn call_mcp_ipc(
+    async fn call_mcp_ipc<P: Publisher + ?Sized>(
         runtime: &mut RuntimeState,
-        publisher: &FakePublisher,
+        publisher: &P,
         session_id: &str,
         request: Value,
         observed_at_ms: u64,
@@ -5016,6 +5039,15 @@ mod tests {
         async fn publish(&self, message: PublishedMessage) -> Result<()> {
             self.messages.lock().unwrap().push(message);
             Ok(())
+        }
+    }
+
+    struct FailingPublisher;
+
+    #[async_trait]
+    impl Publisher for FailingPublisher {
+        async fn publish(&self, _message: PublishedMessage) -> Result<()> {
+            Err(anyhow!("publish failed"))
         }
     }
 
@@ -5703,6 +5735,46 @@ mod tests {
         assert_eq!(
             status["state"]["reported"]["status"]["activeControl"],
             Value::Null
+        );
+    }
+
+    #[tokio::test]
+    async fn mcp_ipc_returns_response_even_when_status_publish_fails() {
+        let publisher = FakePublisher::default();
+        let failing_publisher = FailingPublisher;
+        let mut runtime = RuntimeState::new(config()).unwrap();
+        runtime
+            .handle_video_event(
+                &publisher,
+                VideoWorkerEvent::Ready {
+                    worker_version: Some("0.9.test".to_string()),
+                },
+                42,
+            )
+            .await
+            .unwrap();
+
+        let response = call_mcp_ipc(
+            &mut runtime,
+            &failing_publisher,
+            "rtc-session",
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {
+                    "name": "control.activate",
+                    "arguments": {"actor": "operator"},
+                },
+            }),
+            43,
+        )
+        .await;
+
+        assert_eq!(response["id"], 1);
+        assert_eq!(
+            response["result"]["structuredContent"]["activeControl"]["sessionId"],
+            "rtc-session"
         );
     }
 

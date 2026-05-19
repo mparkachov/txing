@@ -5,6 +5,7 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <netdb.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -57,6 +58,7 @@ constexpr CHAR kVideoTrackId[] = "txingBoardVideoTrack";
 constexpr CHAR kMcpDataChannelLabel[] = "txing.mcp.v1";
 constexpr char kSystemCaCertPath[] = TXING_KVS_SYSTEM_CA_CERT_PATH;
 constexpr std::size_t kCandidateAddressTokenIndex = 4;
+constexpr int kMcpIpcResponseTimeoutMs = 7000;
 
 std::optional<std::string> ExtractJsonStringField(std::string_view json, std::string_view key) {
     const std::string quoted_key = std::string("\"") + std::string(key) + "\"";
@@ -228,10 +230,23 @@ bool WriteAll(int fd, std::string_view payload) {
     return true;
 }
 
-std::optional<std::string> ReadLine(int fd) {
+std::optional<std::string> ReadLine(int fd, int timeout_ms) {
     std::string line;
     char ch = '\0';
     while (true) {
+        if (timeout_ms > 0) {
+            pollfd descriptor{};
+            descriptor.fd = fd;
+            descriptor.events = POLLIN;
+            int poll_status = 0;
+            do {
+                poll_status = ::poll(&descriptor, 1, timeout_ms);
+            } while (poll_status < 0 && errno == EINTR);
+            if (poll_status <= 0 ||
+                (descriptor.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
+                return std::nullopt;
+            }
+        }
         const ssize_t received = ::read(fd, &ch, 1);
         if (received < 0) {
             if (errno == EINTR) {
@@ -972,14 +987,19 @@ class RealKvsSession final : public KvsSession {
         if (!HasJsonField(payload, "id")) {
             return std::nullopt;
         }
-        const auto response_line = ReadLine(session->mcp_ipc_fd);
+        const auto response_line = ReadLine(session->mcp_ipc_fd, kMcpIpcResponseTimeoutMs);
         if (!response_line.has_value()) {
             ::close(session->mcp_ipc_fd);
             session->mcp_ipc_fd = -1;
             ReportMcpDataChannelError(session, "read MCP IPC response failed");
             return BuildJsonRpcErrorResponse(payload, -32000, "MCP WebRTC IPC read failed");
         }
-        return ExtractJsonStringField(*response_line, "payload");
+        const auto response_payload = ExtractJsonStringField(*response_line, "payload");
+        if (!response_payload.has_value()) {
+            ReportMcpDataChannelError(session, "MCP IPC response missing payload");
+            return BuildJsonRpcErrorResponse(payload, -32000, "MCP WebRTC IPC returned an invalid response");
+        }
+        return response_payload;
     }
 
     STATUS CreateStreamingSession(const std::string& peer_id, std::shared_ptr<StreamingSession>* session_out) {
