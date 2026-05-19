@@ -150,7 +150,8 @@ unit file and journal:
 ```ini
 Environment=HOME=/root
 Environment=TXING_KVS_MASTER_COMMAND=/root/.local/share/mise/installs/txing-board-kvs-master/<version>/txing-board-kvs-master
-ExecStartPre=/root/.local/share/mise/installs/txing-unit-daemon/<version>/txing-unit-daemon --version
+ExecStartPre=/usr/bin/echo txing-unit-daemon binary: /root/.local/share/mise/installs/txing-unit-daemon/<version>/txing-unit-daemon
+ExecStartPre=-/root/.local/share/mise/installs/txing-unit-daemon/<version>/txing-unit-daemon --version
 ExecStart=/root/.local/share/mise/installs/txing-unit-daemon/<version>/txing-unit-daemon
 ```
 
@@ -415,10 +416,11 @@ bash /tmp/txing-install-systemd.sh feature
 
 The feature installer installs the current feature prerelease into `/var/tmp`.
 After that, the systemd service starts offline from the exact installed binary
-paths and prints the daemon `--version` during start. This prevents a daemon
-crash loop from repeatedly calling the GitHub Releases API and makes it clear
-whether the unit is running stable or feature. To pick up a newer feature
-prerelease, rerun the feature installer.
+paths, logs the daemon path, and attempts to print daemon `--version` during
+start without making old binaries fail. This prevents a daemon crash loop from
+repeatedly calling the GitHub Releases API and makes it clear whether the unit
+is running stable or feature. To pick up a newer feature prerelease, rerun the
+feature installer.
 
 Verify the feature installer resolves both commands:
 
@@ -459,7 +461,7 @@ before executing it:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/devices/unit/daemon/install-systemd.sh \
-  | grep -n 'daemon_binary=\|ExecStartPre=.*--version\|conf.d'
+  | grep -n 'daemon_binary=\|ExecStartPre=-.*--version\|conf.d'
 ```
 
 Use a commit-pinned raw URL if the board still sees an older script.

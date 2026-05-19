@@ -3187,11 +3187,27 @@ where
                     };
                     let _ = event_tx.send(event);
                 } else {
-                    debug!(stream = stream_name, line = %line, "native KVS worker output");
+                    log_video_worker_output_line(stream_name, &line);
                 }
             }
         })
         .expect("spawn KVS worker marker reader")
+}
+
+fn log_video_worker_output_line(stream_name: &'static str, line: &str) {
+    if video_worker_output_level(stream_name) == Level::WARN {
+        warn!(stream = stream_name, line = %line, "native KVS worker output");
+    } else {
+        info!(stream = stream_name, line = %line, "native KVS worker output");
+    }
+}
+
+fn video_worker_output_level(stream_name: &str) -> Level {
+    if stream_name == "stderr" {
+        Level::WARN
+    } else {
+        Level::INFO
+    }
 }
 
 fn join_video_marker_readers(readers: Vec<std::thread::JoinHandle<()>>) {
@@ -4955,6 +4971,12 @@ mod tests {
             })
         );
         assert_eq!(parse_video_worker_marker("INFO normal log"), None);
+    }
+
+    #[test]
+    fn native_kvs_worker_output_is_visible_in_default_logs() {
+        assert_eq!(video_worker_output_level("stdout"), Level::INFO);
+        assert_eq!(video_worker_output_level("stderr"), Level::WARN);
     }
 
     #[test]

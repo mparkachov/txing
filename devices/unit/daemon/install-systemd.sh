@@ -236,7 +236,9 @@ EOF
   cat <<EOF
 ExecStartPre=/usr/bin/test -x $daemon_binary
 ExecStartPre=/usr/bin/test -x $kvs_master_binary
-ExecStartPre=$daemon_binary --version
+ExecStartPre=/usr/bin/echo txing-unit-daemon binary: $daemon_binary
+ExecStartPre=-$daemon_binary --version
+ExecStartPre=/usr/bin/echo txing-board-kvs-master binary: $kvs_master_binary
 ExecStart=$daemon_binary
 
 [Install]
@@ -258,6 +260,7 @@ fi
 
 systemctl daemon-reload
 systemctl enable "$service_name"
+systemctl reset-failed "$service_name" >/dev/null 2>&1 || true
 systemctl restart "$service_name"
 
 printf 'installed %s for %s channel\n' "$service_name" "$channel"
@@ -271,7 +274,9 @@ printf '  mise binary: %s\n' "$mise_bin"
 printf '  daemon binary: %s\n' "$daemon_binary"
 printf '  KVS master binary: %s\n' "$kvs_master_binary"
 printf '  daemon version: '
-"$daemon_binary" --version
+if ! "$daemon_binary" --version; then
+  printf 'unavailable; resolved binary does not support --version\n'
+fi
 if [ "$channel" = "stable" ]; then
   printf '  stable install root: %s\n' "$stable_install_root"
   printf '  KVS master stable install root: %s\n' "$kvs_master_stable_install_root"
