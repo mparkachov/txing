@@ -105,8 +105,10 @@ Daemon runtime config is root-owned and is not stored under `/etc`:
 /root/.config/txing/unit-daemon/public.pem.key
 ```
 
-The `daemon.env` file is directly sourceable and contains host-independent runtime
-values. Certificate paths are omitted by default; the daemon derives colocated
+The `daemon.env` file is directly sourceable and is rendered from
+`devices/unit/daemon/daemon.env.template`. It contains daemon-owned `TXING_*`
+runtime defaults for video, capabilities, CloudWatch, and motor control.
+Certificate paths are omitted by default; the daemon derives colocated
 certificate paths from the loaded `daemon.env` directory.
 
 Stable mode uses root's normal mise config tree and persistent install tree:

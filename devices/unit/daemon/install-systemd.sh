@@ -59,7 +59,7 @@ root_home="${TXING_DAEMON_ROOT_HOME:-${HOME:-/root}}"
 [ -d "$root_home" ] || fail "expected root home directory $root_home"
 
 daemon_config_dir="${TXING_DAEMON_CONFIG_DIR:-$root_home/.config/txing/unit-daemon}"
-if [ ! -r "$daemon_config_dir/daemon.env" ] && [ ! -r "$daemon_config_dir/.env" ]; then
+if [ ! -r "$daemon_config_dir/daemon.env" ]; then
   printf 'warning: daemon runtime config is not readable yet: %s\n' "$daemon_config_dir/daemon.env" >&2
 fi
 if [ ! -r "$daemon_config_dir/private.pem.key" ]; then

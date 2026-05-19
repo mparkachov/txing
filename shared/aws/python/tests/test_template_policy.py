@@ -189,6 +189,12 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         daemon_justfile = (
             REPO_ROOT / "devices" / "unit" / "daemon" / "justfile"
         ).read_text(encoding="utf-8")
+        daemon_env_template = (
+            REPO_ROOT / "devices" / "unit" / "daemon" / "daemon.env.template"
+        ).read_text(encoding="utf-8")
+        aws_env_example = (REPO_ROOT / "config" / "aws.env.example").read_text(
+            encoding="utf-8"
+        )
         root_gitignore = (REPO_ROOT / ".gitignore").read_text(encoding="utf-8")
 
         self.assertIn("mod daemon 'daemon/justfile'", unit_justfile)
@@ -212,8 +218,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("logs:DescribeLogStreams", daemon_justfile)
         self.assertIn("DaemonBoardVideoMaster", daemon_justfile)
         self.assertIn("kinesisvideo:ConnectAsMaster", daemon_justfile)
-        self.assertIn('video_region="${TXING_BOARD_VIDEO_REGION:-${BOARD_VIDEO_REGION:-$AWS_REGION}}"', daemon_justfile)
-        self.assertIn("arn:${partition}:kinesisvideo:${video_region}:${account_id}:channel/${effective_thing_name}-board-video/*", daemon_justfile)
+        self.assertIn("arn:${partition}:kinesisvideo:${AWS_REGION}:${account_id}:channel/${effective_thing_name}-board-video/*", daemon_justfile)
         self.assertIn('role-policy thing_id=', daemon_justfile)
         self.assertIn("logs:PutRetentionPolicy", daemon_justfile)
         self.assertIn("logs:PutLogEvents", daemon_justfile)
@@ -233,26 +238,27 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("configTarball", daemon_justfile)
         self.assertIn("/config/certs/", root_gitignore)
         self.assertIn('env_file="$daemon_config_dir/daemon.env"', daemon_justfile)
+        self.assertIn('daemon_env_template="{{daemon_env_template}}"', daemon_justfile)
+        self.assertIn("render_daemon_env_template >\"$env_file\"", daemon_justfile)
         self.assertIn('cert_path="$daemon_config_dir/certificate.pem.crt"', daemon_justfile)
         self.assertIn(
-            'video_channel_name="${TXING_BOARD_VIDEO_CHANNEL_NAME:-${BOARD_VIDEO_CHANNEL_NAME:-${effective_thing_name}-board-video}}"',
+            'video_channel_name="${TXING_BOARD_VIDEO_CHANNEL_NAME:-${effective_thing_name}-board-video}"',
             daemon_justfile,
         )
-        self.assertIn(
-            "printf 'export TXING_KVS_MASTER_COMMAND=%s\\n' \"txing-board-kvs-master\"",
-            daemon_justfile,
-        )
-        self.assertIn("printf 'export TXING_BOARD_VIDEO_REGION=%s\\n' \"$video_region\"", daemon_justfile)
-        self.assertIn("printf 'export BOARD_VIDEO_REGION=%s\\n' \"$video_region\"", daemon_justfile)
-        self.assertIn(
-            "printf 'export TXING_BOARD_VIDEO_CHANNEL_NAME=%s\\n' \"$video_channel_name\"",
-            daemon_justfile,
-        )
-        self.assertIn(
-            "printf 'export BOARD_VIDEO_CHANNEL_NAME=%s\\n' \"$video_channel_name\"",
-            daemon_justfile,
-        )
-        self.assertIn("printf 'export TXING_CLOUDWATCH_LOG_GROUP=%s\\n' \"$cloudwatch_log_group\"", daemon_justfile)
+        self.assertIn("export TXING_KVS_MASTER_COMMAND=txing-board-kvs-master", daemon_env_template)
+        self.assertIn("export TXING_BOARD_VIDEO_CHANNEL_NAME={{TXING_BOARD_VIDEO_CHANNEL_NAME}}", daemon_env_template)
+        self.assertIn("export AWS_REGION={{AWS_REGION}}", daemon_env_template)
+        self.assertNotIn("AWS_DEFAULT_REGION", daemon_env_template)
+        self.assertNotIn("TXING_BOARD_VIDEO_REGION", daemon_env_template)
+        self.assertIn("export TXING_MOTOR_RAW_MAX_SPEED=480", daemon_env_template)
+        self.assertIn("export TXING_MOTOR_CMD_RAW_MIN_SPEED=50", daemon_env_template)
+        self.assertIn("export TXING_MOTOR_CMD_RAW_MAX_SPEED=250", daemon_env_template)
+        self.assertIn("export TXING_MOTOR_PWM_HZ=20000", daemon_env_template)
+        self.assertNotIn("export BOARD_DRIVE_", daemon_env_template)
+        self.assertNotIn("export BOARD_VIDEO_", daemon_env_template)
+        self.assertNotIn("BOARD_DRIVE_", aws_env_example)
+        self.assertNotIn("BOARD_VIDEO_", aws_env_example)
+        self.assertNotIn("KVS_DUALSTACK_ENDPOINTS", aws_env_example)
         self.assertNotIn("stack_output \"$AWS_STACK_NAME\" PolicyName", daemon_justfile)
         self.assertNotIn("DeviceDaemonCredentialRoleAlias", daemon_justfile)
 

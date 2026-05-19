@@ -193,19 +193,14 @@ Expected:
 
 The copied daemon `daemon.env` is enough for the default video path:
 
+- `AWS_REGION` for AWS IoT and KVS video.
 - `TXING_KVS_MASTER_COMMAND=txing-board-kvs-master`.
-- `TXING_BOARD_VIDEO_REGION` and `BOARD_VIDEO_REGION`.
-- `TXING_BOARD_VIDEO_CHANNEL_NAME` and `BOARD_VIDEO_CHANNEL_NAME`.
+- `TXING_BOARD_VIDEO_CHANNEL_NAME`.
+- `TXING_MOTOR_*` values for the DRV8835 stock wiring and current chassis
+  command range.
 
 Only add overrides to `$HOME/.config/txing/unit-daemon/daemon.env` when the board
 needs non-default values.
-
-For the current default chassis, the measured motor bring-up values are:
-
-```bash
-TXING_MOTOR_CMD_RAW_MIN_SPEED=50
-TXING_MOTOR_CMD_RAW_MAX_SPEED=250
-```
 
 ### 7. Enable PWM Overlay
 

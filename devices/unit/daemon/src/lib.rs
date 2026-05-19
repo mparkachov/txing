@@ -55,7 +55,7 @@ pub const SPARKPLUG_SHADOW_NAME: &str = "sparkplug";
 pub const MCP_PROTOCOL_VERSION: &str = "2026-05-16";
 pub const DEFAULT_CONFIG_SUBDIR: &str = "txing/unit-daemon";
 pub const DEFAULT_ENV_FILE_NAME: &str = "daemon.env";
-pub const LEGACY_ENV_FILE_NAME: &str = ".env";
+pub const DEFAULT_DAEMON_ENV_TEMPLATE: &str = include_str!("../daemon.env.template");
 pub const DEFAULT_IOT_CERT_FILE_NAME: &str = "certificate.pem.crt";
 pub const DEFAULT_IOT_PRIVATE_KEY_FILE_NAME: &str = "private.pem.key";
 pub const DEFAULT_IOT_ROOT_CA_FILE_NAME: &str = "AmazonRootCA1.pem";
@@ -65,8 +65,8 @@ pub const DEFAULT_MCP_ACTIVE_TTL_MS: u64 = 5_000;
 pub const DEFAULT_MOTOR_WATCHDOG_TIMEOUT_MS: u64 = DEFAULT_MCP_ACTIVE_TTL_MS;
 pub const DEFAULT_MOTOR_PWM_SYSFS_ROOT: &str = "/sys/class/pwm";
 pub const DEFAULT_MOTOR_RAW_MAX_SPEED: i32 = 480;
-pub const DEFAULT_MOTOR_CMD_RAW_MIN_SPEED: i32 = 0;
-pub const DEFAULT_MOTOR_CMD_RAW_MAX_SPEED: i32 = DEFAULT_MOTOR_RAW_MAX_SPEED;
+pub const DEFAULT_MOTOR_CMD_RAW_MIN_SPEED: i32 = 50;
+pub const DEFAULT_MOTOR_CMD_RAW_MAX_SPEED: i32 = 250;
 pub const DEFAULT_MOTOR_PWM_HZ: u64 = 20_000;
 pub const DEFAULT_MOTOR_PWM_CHIP: u32 = 0;
 pub const DEFAULT_MOTOR_GPIO_CHIP: u32 = 0;
@@ -921,9 +921,6 @@ pub struct Cli {
     #[arg(long = "kvs-master-command")]
     pub kvs_master_command: Option<String>,
 
-    #[arg(long = "video-region")]
-    pub video_region: Option<String>,
-
     #[arg(long = "video-channel-name")]
     pub video_channel_name: Option<String>,
 
@@ -1110,22 +1107,15 @@ impl RuntimeConfig {
             "AWS_REGION",
             "aws-region",
         )?;
-        let video_region = optional_config_value_with_fallbacks(
-            cli.video_region,
-            process_env,
-            file_env,
-            &["TXING_BOARD_VIDEO_REGION", "BOARD_VIDEO_REGION"],
-        )
-        .unwrap_or_else(|| aws_region.clone());
-        let video_channel_name = optional_config_value_with_fallbacks(
+        let video_channel_name = optional_config_value(
             cli.video_channel_name,
             process_env,
             file_env,
-            &["TXING_BOARD_VIDEO_CHANNEL_NAME", "BOARD_VIDEO_CHANNEL_NAME"],
+            "TXING_BOARD_VIDEO_CHANNEL_NAME",
         )
         .unwrap_or_else(|| default_video_channel_name(&thing_id));
         validate_topic_segment(&video_channel_name, "video-channel-name")?;
-        validate_topic_segment(&video_region, "video-region")?;
+        validate_topic_segment(&aws_region, "aws-region")?;
         let cloudwatch_logging = resolve_cloudwatch_log_config(
             cli.cloudwatch_log_group,
             cli.cloudwatch_log_stream,
@@ -1190,7 +1180,7 @@ impl RuntimeConfig {
 
         Ok(Self {
             thing_id,
-            aws_region,
+            aws_region: aws_region.clone(),
             iot_endpoint,
             iot_credential_endpoint,
             iot_role_alias,
@@ -1202,7 +1192,7 @@ impl RuntimeConfig {
             capability_ttl: Duration::from_secs(capability_ttl_seconds),
             heartbeat: Duration::from_secs(heartbeat_seconds),
             kvs_master_command,
-            video_region,
+            video_region: aws_region,
             video_channel_name,
             motor,
             cloudwatch_logging,
@@ -3724,13 +3714,7 @@ pub fn load_env_file_for_cli(
     if let Some(config_dir) =
         normalize_optional(process_env.get("TXING_DAEMON_CONFIG_DIR").cloned())
     {
-        return read_env_file_candidates(
-            &[
-                Path::new(&config_dir).join(DEFAULT_ENV_FILE_NAME),
-                Path::new(&config_dir).join(LEGACY_ENV_FILE_NAME),
-            ],
-            true,
-        );
+        return read_env_file(Path::new(&config_dir).join(DEFAULT_ENV_FILE_NAME), true);
     }
 
     read_env_file_candidates(&default_env_file_candidates(process_env), false)
@@ -3774,12 +3758,10 @@ fn default_env_file_candidates(process_env: &BTreeMap<String, String>) -> Vec<Pa
     if let Some(xdg_config_home) = normalize_optional(process_env.get("XDG_CONFIG_HOME").cloned()) {
         let config_dir = Path::new(&xdg_config_home).join(DEFAULT_CONFIG_SUBDIR);
         candidates.push(config_dir.join(DEFAULT_ENV_FILE_NAME));
-        candidates.push(config_dir.join(LEGACY_ENV_FILE_NAME));
     }
     if let Some(home) = normalize_optional(process_env.get("HOME").cloned()) {
         let config_dir = Path::new(&home).join(".config").join(DEFAULT_CONFIG_SUBDIR);
         candidates.push(config_dir.join(DEFAULT_ENV_FILE_NAME));
-        candidates.push(config_dir.join(LEGACY_ENV_FILE_NAME));
     }
     candidates
 }
@@ -3872,20 +3854,6 @@ fn optional_config_value(
     normalize_optional(cli_value)
         .or_else(|| normalize_optional(process_env.get(env_name).cloned()))
         .or_else(|| normalize_optional(file_env.get(env_name).cloned()))
-}
-
-fn optional_config_value_with_fallbacks(
-    cli_value: Option<String>,
-    process_env: &BTreeMap<String, String>,
-    file_env: &BTreeMap<String, String>,
-    env_names: &[&str],
-) -> Option<String> {
-    normalize_optional(cli_value).or_else(|| {
-        env_names.iter().find_map(|env_name| {
-            normalize_optional(process_env.get(*env_name).cloned())
-                .or_else(|| normalize_optional(file_env.get(*env_name).cloned()))
-        })
-    })
 }
 
 fn default_video_channel_name(thing_id: &str) -> String {
@@ -5218,6 +5186,41 @@ mod tests {
     }
 
     #[test]
+    fn daemon_env_template_contains_forward_runtime_defaults() {
+        let template = DEFAULT_DAEMON_ENV_TEMPLATE;
+
+        assert!(template.contains("export TXING_DAEMON_CAPABILITIES=board,mcp,video"));
+        assert!(template.contains(&format!(
+            "export TXING_CAPABILITY_TTL_SECONDS={DEFAULT_CAPABILITY_TTL_SECONDS}"
+        )));
+        assert!(template.contains(&format!(
+            "export TXING_HEARTBEAT_SECONDS={DEFAULT_HEARTBEAT_SECONDS}"
+        )));
+        assert!(template.contains(&format!(
+            "export TXING_KVS_MASTER_COMMAND={DEFAULT_KVS_MASTER_COMMAND}"
+        )));
+        assert!(
+            template.contains(
+                "export TXING_BOARD_VIDEO_CHANNEL_NAME={{TXING_BOARD_VIDEO_CHANNEL_NAME}}"
+            )
+        );
+        assert!(!template.contains("AWS_DEFAULT_REGION"));
+        assert!(!template.contains("TXING_BOARD_VIDEO_REGION"));
+        assert!(template.contains(&format!(
+            "export TXING_MOTOR_RAW_MAX_SPEED={DEFAULT_MOTOR_RAW_MAX_SPEED}"
+        )));
+        assert!(template.contains(&format!(
+            "export TXING_MOTOR_CMD_RAW_MIN_SPEED={DEFAULT_MOTOR_CMD_RAW_MIN_SPEED}"
+        )));
+        assert!(template.contains(&format!(
+            "export TXING_MOTOR_CMD_RAW_MAX_SPEED={DEFAULT_MOTOR_CMD_RAW_MAX_SPEED}"
+        )));
+        assert!(template.contains(&format!("export TXING_MOTOR_PWM_HZ={DEFAULT_MOTOR_PWM_HZ}")));
+        assert!(!template.contains("export BOARD_DRIVE_"));
+        assert!(!template.contains("export BOARD_VIDEO_"));
+    }
+
+    #[test]
     fn loads_env_file_from_config_dir() {
         let config_dir = test_temp_dir("config-dir");
         let env_file = config_dir.join(DEFAULT_ENV_FILE_NAME);
@@ -5239,32 +5242,6 @@ mod tests {
         assert_eq!(
             loaded.values.get("TXING_THING_ID").map(String::as_str),
             Some("unit-local")
-        );
-        fs::remove_dir_all(config_dir).unwrap();
-    }
-
-    #[test]
-    fn loads_legacy_env_file_from_config_dir_when_daemon_env_is_missing() {
-        let config_dir = test_temp_dir("legacy-config-dir");
-        let env_file = config_dir.join(LEGACY_ENV_FILE_NAME);
-        fs::create_dir_all(&config_dir).unwrap();
-        fs::write(
-            &env_file,
-            "export TXING_THING_ID=unit-legacy\nexport AWS_REGION=eu-central-1\n",
-        )
-        .unwrap();
-
-        let process_env = BTreeMap::from([(
-            "TXING_DAEMON_CONFIG_DIR".to_string(),
-            config_dir.display().to_string(),
-        )]);
-        let cli = Cli::try_parse_from(["daemon"]).unwrap();
-        let loaded = load_env_file_for_cli(&cli, &process_env).unwrap();
-
-        assert_eq!(loaded.path, Some(env_file));
-        assert_eq!(
-            loaded.values.get("TXING_THING_ID").map(String::as_str),
-            Some("unit-legacy")
         );
         fs::remove_dir_all(config_dir).unwrap();
     }
