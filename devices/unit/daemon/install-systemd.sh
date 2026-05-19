@@ -59,8 +59,8 @@ root_home="${TXING_DAEMON_ROOT_HOME:-${HOME:-/root}}"
 [ -d "$root_home" ] || fail "expected root home directory $root_home"
 
 daemon_config_dir="${TXING_DAEMON_CONFIG_DIR:-$root_home/.config/txing/unit-daemon}"
-if [ ! -r "$daemon_config_dir/.env" ]; then
-  printf 'warning: daemon runtime config is not readable yet: %s\n' "$daemon_config_dir/.env" >&2
+if [ ! -r "$daemon_config_dir/daemon.env" ] && [ ! -r "$daemon_config_dir/.env" ]; then
+  printf 'warning: daemon runtime config is not readable yet: %s\n' "$daemon_config_dir/daemon.env" >&2
 fi
 if [ ! -r "$daemon_config_dir/private.pem.key" ]; then
   printf 'warning: daemon private key is not readable yet: %s\n' "$daemon_config_dir/private.pem.key" >&2
@@ -106,6 +106,17 @@ run_root_mise() {
   env "HOME=$root_home" "$mise_bin" "$@"
 }
 
+run_feature_mise() {
+  env "HOME=$root_home" \
+    "MISE_CONFIG_DIR=$mise_config_dir" \
+    "MISE_DATA_DIR=$tmp_root/mise" \
+    "MISE_CACHE_DIR=$tmp_root/mise-cache" \
+    "MISE_TMP_DIR=$tmp_root/mise-tmp" \
+    "MISE_SHARED_INSTALL_DIRS=$root_home/.local/share/mise/installs" \
+    "MISE_PRERELEASES=1" \
+    "$mise_bin" "$@"
+}
+
 if [ "$channel" = "feature" ]; then
   [ -r "$stable_config_file" ] || fail "missing stable daemon mise config: $stable_config_file; install stable channel first"
   stable_binary_found=false
@@ -148,7 +159,7 @@ trap 'if [ -n "${var_tmp_probe:-}" ]; then rm -rf "$var_tmp_probe"; fi; rm -f "$
 
 cat >"$config_tmp" <<EOF
 [settings]
-fetch_remote_versions_cache = "0s"
+fetch_remote_versions_cache = "10m"
 
 [tool_alias]
 txing-unit-daemon = "github:mparkachov/txing"
@@ -184,6 +195,10 @@ if [ "$channel" = "stable" ]; then
 else
   install -m 600 "$config_tmp" "$mise_config_file"
   install -d -m 700 "$tmp_root/mise" "$tmp_root/mise-cache" "$tmp_root/mise-tmp"
+  run_feature_mise cache clear >/dev/null 2>&1 || true
+  run_feature_mise install
+  run_feature_mise which txing-unit-daemon >/dev/null
+  run_feature_mise which txing-board-kvs-master >/dev/null
 fi
 
 {
@@ -192,6 +207,8 @@ fi
 Description=Txing Unit Daemon
 Wants=network-online.target systemd-time-wait-sync.service
 After=network-online.target systemd-time-wait-sync.service time-sync.target
+StartLimitIntervalSec=10min
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -218,9 +235,8 @@ EOF
     cat <<EOF
 
 ExecStartPre=/usr/bin/install -d -m 700 $tmp_root/mise $tmp_root/mise-cache $tmp_root/mise-tmp
-ExecStartPre=-$mise_bin upgrade txing-unit-daemon
-ExecStartPre=-$mise_bin upgrade txing-board-kvs-master
-ExecStartPre=-$mise_bin install
+ExecStartPre=/usr/bin/env MISE_OFFLINE=1 $mise_bin which txing-unit-daemon
+ExecStartPre=/usr/bin/env MISE_OFFLINE=1 $mise_bin which txing-board-kvs-master
 ExecStartPre=-/usr/bin/find $tmp_root/mise-cache $tmp_root/mise-tmp -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 EOF
   fi

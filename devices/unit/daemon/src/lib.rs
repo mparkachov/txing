@@ -54,7 +54,8 @@ pub const VIDEO_SHADOW_NAME: &str = "video";
 pub const SPARKPLUG_SHADOW_NAME: &str = "sparkplug";
 pub const MCP_PROTOCOL_VERSION: &str = "2026-05-16";
 pub const DEFAULT_CONFIG_SUBDIR: &str = "txing/unit-daemon";
-pub const DEFAULT_ENV_FILE_NAME: &str = ".env";
+pub const DEFAULT_ENV_FILE_NAME: &str = "daemon.env";
+pub const LEGACY_ENV_FILE_NAME: &str = ".env";
 pub const DEFAULT_IOT_CERT_FILE_NAME: &str = "certificate.pem.crt";
 pub const DEFAULT_IOT_PRIVATE_KEY_FILE_NAME: &str = "private.pem.key";
 pub const DEFAULT_IOT_ROOT_CA_FILE_NAME: &str = "AmazonRootCA1.pem";
@@ -3723,14 +3724,29 @@ pub fn load_env_file_for_cli(
     if let Some(config_dir) =
         normalize_optional(process_env.get("TXING_DAEMON_CONFIG_DIR").cloned())
     {
-        return read_env_file(Path::new(&config_dir).join(DEFAULT_ENV_FILE_NAME), true);
+        return read_env_file_candidates(
+            &[
+                Path::new(&config_dir).join(DEFAULT_ENV_FILE_NAME),
+                Path::new(&config_dir).join(LEGACY_ENV_FILE_NAME),
+            ],
+            true,
+        );
     }
 
-    for env_file in default_env_file_candidates(process_env) {
-        match read_env_file(env_file, false) {
+    read_env_file_candidates(&default_env_file_candidates(process_env), false)
+}
+
+fn read_env_file_candidates(candidates: &[PathBuf], explicit: bool) -> Result<LoadedEnvFile> {
+    for env_file in candidates {
+        match read_env_file(env_file.clone(), false) {
             Ok(loaded) if loaded.path.is_some() => return Ok(loaded),
             Ok(_) => {}
             Err(err) => return Err(err),
+        }
+    }
+    if explicit {
+        if let Some(env_file) = candidates.first() {
+            return read_env_file(env_file.clone(), true);
         }
     }
     Ok(LoadedEnvFile {
@@ -3756,19 +3772,14 @@ fn read_env_file(path: PathBuf, explicit: bool) -> Result<LoadedEnvFile> {
 fn default_env_file_candidates(process_env: &BTreeMap<String, String>) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
     if let Some(xdg_config_home) = normalize_optional(process_env.get("XDG_CONFIG_HOME").cloned()) {
-        candidates.push(
-            Path::new(&xdg_config_home)
-                .join(DEFAULT_CONFIG_SUBDIR)
-                .join(DEFAULT_ENV_FILE_NAME),
-        );
+        let config_dir = Path::new(&xdg_config_home).join(DEFAULT_CONFIG_SUBDIR);
+        candidates.push(config_dir.join(DEFAULT_ENV_FILE_NAME));
+        candidates.push(config_dir.join(LEGACY_ENV_FILE_NAME));
     }
     if let Some(home) = normalize_optional(process_env.get("HOME").cloned()) {
-        candidates.push(
-            Path::new(&home)
-                .join(".config")
-                .join(DEFAULT_CONFIG_SUBDIR)
-                .join(DEFAULT_ENV_FILE_NAME),
-        );
+        let config_dir = Path::new(&home).join(".config").join(DEFAULT_CONFIG_SUBDIR);
+        candidates.push(config_dir.join(DEFAULT_ENV_FILE_NAME));
+        candidates.push(config_dir.join(LEGACY_ENV_FILE_NAME));
     }
     candidates
 }
@@ -5228,6 +5239,32 @@ mod tests {
         assert_eq!(
             loaded.values.get("TXING_THING_ID").map(String::as_str),
             Some("unit-local")
+        );
+        fs::remove_dir_all(config_dir).unwrap();
+    }
+
+    #[test]
+    fn loads_legacy_env_file_from_config_dir_when_daemon_env_is_missing() {
+        let config_dir = test_temp_dir("legacy-config-dir");
+        let env_file = config_dir.join(LEGACY_ENV_FILE_NAME);
+        fs::create_dir_all(&config_dir).unwrap();
+        fs::write(
+            &env_file,
+            "export TXING_THING_ID=unit-legacy\nexport AWS_REGION=eu-central-1\n",
+        )
+        .unwrap();
+
+        let process_env = BTreeMap::from([(
+            "TXING_DAEMON_CONFIG_DIR".to_string(),
+            config_dir.display().to_string(),
+        )]);
+        let cli = Cli::try_parse_from(["daemon"]).unwrap();
+        let loaded = load_env_file_for_cli(&cli, &process_env).unwrap();
+
+        assert_eq!(loaded.path, Some(env_file));
+        assert_eq!(
+            loaded.values.get("TXING_THING_ID").map(String::as_str),
+            Some("unit-legacy")
         );
         fs::remove_dir_all(config_dir).unwrap();
     }

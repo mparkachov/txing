@@ -62,7 +62,7 @@ This guide assumes:
 - Network is managed by `NetworkManager`
 - the board remains headless
 - AWS resources and the target device thing already exist
-- daemon `.env` and certificate material have already been provisioned on the
+- daemon `daemon.env` and certificate material have already been provisioned on the
   development Mac; see [Artifacts](./artifacts.md)
 
 If your image is still using a different network manager, switch it before
@@ -136,7 +136,7 @@ On the board from the root shell:
 install -d -m 700 "$HOME/.config/txing"
 tar --no-same-owner -xzf /tmp/<thing-id>-daemon-config.tgz -C "$HOME/.config/txing"
 chmod 700 "$HOME/.config/txing/unit-daemon"
-chmod 600 "$HOME/.config/txing/unit-daemon/.env"
+chmod 600 "$HOME/.config/txing/unit-daemon/daemon.env"
 chmod 600 "$HOME/.config/txing/unit-daemon/certificate.arn"
 chmod 600 "$HOME/.config/txing/unit-daemon/certificate.pem.crt"
 chmod 600 "$HOME/.config/txing/unit-daemon/private.pem.key"
@@ -163,7 +163,7 @@ curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/devices/unit/
 bash /tmp/txing-install-systemd.sh stable
 ```
 
-The installer may run before the daemon `.env` and certificate files are copied.
+The installer may run before the daemon `daemon.env` and certificate files are copied.
 Those files must exist before the service can run successfully.
 
 Verify:
@@ -191,15 +191,13 @@ Expected:
 
 ### 6. Configure Runtime Options
 
-The copied daemon `.env` is enough for the default video path:
+The copied daemon `daemon.env` is enough for the default video path:
 
-- `TXING_KVS_MASTER_COMMAND` defaults to `txing-board-kvs-master`.
-- `TXING_BOARD_VIDEO_REGION` falls back to `BOARD_VIDEO_REGION`, then
-  `AWS_REGION`.
-- `TXING_BOARD_VIDEO_CHANNEL_NAME` falls back to
-  `BOARD_VIDEO_CHANNEL_NAME`, then `<thing-id>-board-video`.
+- `TXING_KVS_MASTER_COMMAND=txing-board-kvs-master`.
+- `TXING_BOARD_VIDEO_REGION` and `BOARD_VIDEO_REGION`.
+- `TXING_BOARD_VIDEO_CHANNEL_NAME` and `BOARD_VIDEO_CHANNEL_NAME`.
 
-Only add overrides to `$HOME/.config/txing/unit-daemon/.env` when the board
+Only add overrides to `$HOME/.config/txing/unit-daemon/daemon.env` when the board
 needs non-default values.
 
 For the current default chassis, the measured motor bring-up values are:

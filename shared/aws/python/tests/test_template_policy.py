@@ -232,8 +232,26 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn('COPYFILE_DISABLE=1 tar -C "$output_root" -czf "$tarball_path"', daemon_justfile)
         self.assertIn("configTarball", daemon_justfile)
         self.assertIn("/config/certs/", root_gitignore)
+        self.assertIn('env_file="$daemon_config_dir/daemon.env"', daemon_justfile)
         self.assertIn('cert_path="$daemon_config_dir/certificate.pem.crt"', daemon_justfile)
+        self.assertIn(
+            'video_channel_name="${TXING_BOARD_VIDEO_CHANNEL_NAME:-${BOARD_VIDEO_CHANNEL_NAME:-${effective_thing_name}-board-video}}"',
+            daemon_justfile,
+        )
+        self.assertIn(
+            "printf 'export TXING_KVS_MASTER_COMMAND=%s\\n' \"txing-board-kvs-master\"",
+            daemon_justfile,
+        )
         self.assertIn("printf 'export TXING_BOARD_VIDEO_REGION=%s\\n' \"$video_region\"", daemon_justfile)
+        self.assertIn("printf 'export BOARD_VIDEO_REGION=%s\\n' \"$video_region\"", daemon_justfile)
+        self.assertIn(
+            "printf 'export TXING_BOARD_VIDEO_CHANNEL_NAME=%s\\n' \"$video_channel_name\"",
+            daemon_justfile,
+        )
+        self.assertIn(
+            "printf 'export BOARD_VIDEO_CHANNEL_NAME=%s\\n' \"$video_channel_name\"",
+            daemon_justfile,
+        )
         self.assertIn("printf 'export TXING_CLOUDWATCH_LOG_GROUP=%s\\n' \"$cloudwatch_log_group\"", daemon_justfile)
         self.assertNotIn("stack_output \"$AWS_STACK_NAME\" PolicyName", daemon_justfile)
         self.assertNotIn("DeviceDaemonCredentialRoleAlias", daemon_justfile)

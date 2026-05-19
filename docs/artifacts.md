@@ -97,7 +97,7 @@ The canonical stable rig installation and deployment flow is documented in
 Daemon runtime config is root-owned and is not stored under `/etc`:
 
 ```text
-/root/.config/txing/unit-daemon/.env
+/root/.config/txing/unit-daemon/daemon.env
 /root/.config/txing/unit-daemon/AmazonRootCA1.pem
 /root/.config/txing/unit-daemon/certificate.arn
 /root/.config/txing/unit-daemon/certificate.pem.crt
@@ -105,9 +105,9 @@ Daemon runtime config is root-owned and is not stored under `/etc`:
 /root/.config/txing/unit-daemon/public.pem.key
 ```
 
-The `.env` file is directly sourceable and contains host-independent runtime
+The `daemon.env` file is directly sourceable and contains host-independent runtime
 values. Certificate paths are omitted by default; the daemon derives colocated
-certificate paths from the loaded `.env` directory.
+certificate paths from the loaded `daemon.env` directory.
 
 Stable mode uses root's normal mise config tree and persistent install tree:
 
@@ -129,8 +129,9 @@ config and tmpfs-backed install/cache/tmp state:
 
 The board runtime is root-owned. The `txing` login user is only the SSH entry
 point and can enter a root shell for maintenance. The root-owned service runs
-`mise`; feature service start attempts to upgrade/install the latest matching
-feature prerelease into `/var/tmp`, with root's stable install as fallback.
+`mise`; feature installation resolves the latest matching feature prerelease
+into `/var/tmp`, then the service starts offline from the already-installed
+tools.
 
 The installed service is the same for both channels:
 
@@ -193,7 +194,7 @@ them later only when stronger artifact integrity requirements are needed.
 The board install behavior has been manually verified on a Raspberry Pi Zero 2
 W with a read-only root filesystem:
 
-- feature service install into `/var/tmp` and read-only-root reboot;
+- feature installer install into `/var/tmp` and read-only-root reboot;
 - stable GitHub Actions release publish from `main`;
 - stable board install from the `main` raw installer;
 - stable upgrade with the root-owned installer;
@@ -215,7 +216,7 @@ intended:
 just unit::cert <thing-id>
 ```
 
-The recipe writes `.env` and certificate material into the gitignored unit cert
+The recipe writes `daemon.env` and certificate material into the gitignored unit cert
 area and creates a ready-to-copy root-runtime config archive:
 
 ```text
@@ -237,7 +238,7 @@ On the board from the root shell:
 install -d -m 700 "$HOME/.config/txing"
 tar --no-same-owner -xzf /tmp/<thing-id>-daemon-config.tgz -C "$HOME/.config/txing"
 chmod 700 "$HOME/.config/txing/unit-daemon"
-chmod 600 "$HOME/.config/txing/unit-daemon/.env"
+chmod 600 "$HOME/.config/txing/unit-daemon/daemon.env"
 chmod 600 "$HOME/.config/txing/unit-daemon/certificate.arn"
 chmod 600 "$HOME/.config/txing/unit-daemon/certificate.pem.crt"
 chmod 600 "$HOME/.config/txing/unit-daemon/private.pem.key"
@@ -314,7 +315,7 @@ bash /tmp/txing-install-systemd.sh stable
 
 The installer writes root-owned mise config, installs both release tools,
 writes `/etc/systemd/system/txing-unit-daemon.service`, enables it, and restarts
-it. It can run before the daemon runtime `.env` and certificate files exist, but
+it. It can run before the daemon runtime `daemon.env` and certificate files exist, but
 the service will not run successfully until those files are in place.
 
 Verify:
@@ -407,9 +408,11 @@ curl -fsSL "https://raw.githubusercontent.com/mparkachov/txing/${FEATURE_BRANCH}
 bash /tmp/txing-install-systemd.sh feature
 ```
 
-The feature service start may install a newer feature prerelease into
-`/var/tmp`. If feature install is unavailable or no newer feature exists, the
-service uses the persistent stable install through `MISE_SHARED_INSTALL_DIRS`.
+The feature installer installs the current feature prerelease into `/var/tmp`.
+After that, the systemd service starts offline and only verifies that both mise
+commands resolve before launching the daemon. This prevents a daemon crash loop
+from repeatedly calling the GitHub Releases API. To pick up a newer feature
+prerelease, rerun the feature installer.
 
 Verify the feature service resolves both commands:
 
@@ -419,12 +422,14 @@ env HOME=/root MISE_CONFIG_DIR=/root/.config/mise/txing-unit-daemon \
   MISE_CACHE_DIR=/var/tmp/txing/unit-daemon/mise-cache \
   MISE_TMP_DIR=/var/tmp/txing/unit-daemon/mise-tmp \
   MISE_SHARED_INSTALL_DIRS=/root/.local/share/mise/installs \
+  MISE_OFFLINE=1 \
   /root/.local/bin/mise which txing-unit-daemon
 env HOME=/root MISE_CONFIG_DIR=/root/.config/mise/txing-unit-daemon \
   MISE_DATA_DIR=/var/tmp/txing/unit-daemon/mise \
   MISE_CACHE_DIR=/var/tmp/txing/unit-daemon/mise-cache \
   MISE_TMP_DIR=/var/tmp/txing/unit-daemon/mise-tmp \
   MISE_SHARED_INSTALL_DIRS=/root/.local/share/mise/installs \
+  MISE_OFFLINE=1 \
   /root/.local/bin/mise which txing-board-kvs-master
 ```
 
@@ -448,7 +453,7 @@ before executing it:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/devices/unit/daemon/install-systemd.sh \
-  | grep -n 'MISE_SHARED_INSTALL_DIRS\|ExecStartPre=-.*mise upgrade\|ExecStartPre=-.*mise install\|conf.d'
+  | grep -n 'MISE_SHARED_INSTALL_DIRS\|MISE_OFFLINE=1.*mise which\|conf.d'
 ```
 
 Use a commit-pinned raw URL if the board still sees an older script.

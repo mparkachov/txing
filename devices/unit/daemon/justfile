@@ -67,6 +67,7 @@ cert thing_id='' region=region profile=profile config_dir=config_dir:
     fi
     cloudwatch_log_group="txing/${TXING_TOWN_ID}/${TXING_RIG_ID}/${effective_thing_name}"
     video_region="${TXING_BOARD_VIDEO_REGION:-${BOARD_VIDEO_REGION:-$AWS_REGION}}"
+    video_channel_name="${TXING_BOARD_VIDEO_CHANNEL_NAME:-${BOARD_VIDEO_CHANNEL_NAME:-${effective_thing_name}-board-video}}"
     iot_data_endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}" --query endpointAddress --output text)"
     iot_credential_endpoint="$(aws iot describe-endpoint --endpoint-type iot:CredentialProvider "${aws_flags[@]}" --query endpointAddress --output text)"
     default_output_root() {
@@ -90,14 +91,15 @@ cert thing_id='' region=region profile=profile config_dir=config_dir:
       output_root="$(default_output_root)"
       tarball_path="{{project_root}}/config/certs/unit/${effective_thing_name}-daemon-config.tgz"
     fi
-    env_file="$daemon_config_dir/.env"
+    env_file="$daemon_config_dir/daemon.env"
+    legacy_env_file="$daemon_config_dir/.env"
     cert_path="$daemon_config_dir/certificate.pem.crt"
     public_key_path="$daemon_config_dir/public.pem.key"
     private_key_path="$daemon_config_dir/private.pem.key"
     cert_arn_path="$daemon_config_dir/certificate.arn"
     root_ca_path="$daemon_config_dir/AmazonRootCA1.pem"
     install -d -m 700 "$daemon_config_dir"
-    if [ -e "$env_file" ] || [ -e "$cert_path" ] || [ -e "$public_key_path" ] || [ -e "$private_key_path" ] || [ -e "$cert_arn_path" ] || [ -e "$tarball_path" ]; then
+    if [ -e "$env_file" ] || [ -e "$legacy_env_file" ] || [ -e "$cert_path" ] || [ -e "$public_key_path" ] || [ -e "$private_key_path" ] || [ -e "$cert_arn_path" ] || [ -e "$tarball_path" ]; then
       echo "Daemon certificate or env material already exists under $daemon_config_dir." >&2
       echo "Daemon config tarball path: $tarball_path" >&2
       echo "Move or delete those files before issuing a replacement certificate." >&2
@@ -162,7 +164,12 @@ cert thing_id='' region=region profile=profile config_dir=config_dir:
     {
       printf 'export TXING_THING_ID=%s\n' "$effective_thing_name"
       printf 'export AWS_REGION=%s\n' "$AWS_REGION"
+      printf 'export AWS_DEFAULT_REGION=%s\n' "$AWS_REGION"
+      printf 'export TXING_KVS_MASTER_COMMAND=%s\n' "txing-board-kvs-master"
       printf 'export TXING_BOARD_VIDEO_REGION=%s\n' "$video_region"
+      printf 'export BOARD_VIDEO_REGION=%s\n' "$video_region"
+      printf 'export TXING_BOARD_VIDEO_CHANNEL_NAME=%s\n' "$video_channel_name"
+      printf 'export BOARD_VIDEO_CHANNEL_NAME=%s\n' "$video_channel_name"
       printf 'export TXING_IOT_ENDPOINT=%s\n' "$iot_data_endpoint"
       printf 'export TXING_IOT_CREDENTIAL_ENDPOINT=%s\n' "$iot_credential_endpoint"
       printf 'export TXING_IOT_ROLE_ALIAS=%s\n' "$iot_role_alias"
@@ -188,11 +195,12 @@ cert thing_id='' region=region profile=profile config_dir=config_dir:
       --arg iotCredentialEndpoint "$iot_credential_endpoint" \
       --arg iotRoleAlias "$iot_role_alias" \
       --arg videoRegion "$video_region" \
+      --arg videoChannelName "$video_channel_name" \
       --arg cloudWatchLogGroup "$cloudwatch_log_group" \
       --arg daemonRoleName "$daemon_role_name" \
       --arg daemonRoleArn "$daemon_role_arn" \
       --arg configTarball "$tarball_path" \
-      '{thingName: $thingName, policyName: $policyName, certificateArn: $certificateArn, certificatePem: $certificatePem, publicKey: $publicKey, privateKey: $privateKey, certificateArnFile: $certificateArnFile, rootCaFile: $rootCaFile, envFile: $envFile, configTarball: $configTarball, iotDataEndpoint: $iotDataEndpoint, iotCredentialEndpoint: $iotCredentialEndpoint, iotRoleAlias: $iotRoleAlias, videoRegion: $videoRegion, cloudWatchLogGroup: $cloudWatchLogGroup, daemonRoleName: $daemonRoleName, daemonRoleArn: $daemonRoleArn}'
+      '{thingName: $thingName, policyName: $policyName, certificateArn: $certificateArn, certificatePem: $certificatePem, publicKey: $publicKey, privateKey: $privateKey, certificateArnFile: $certificateArnFile, rootCaFile: $rootCaFile, envFile: $envFile, configTarball: $configTarball, iotDataEndpoint: $iotDataEndpoint, iotCredentialEndpoint: $iotCredentialEndpoint, iotRoleAlias: $iotRoleAlias, videoRegion: $videoRegion, videoChannelName: $videoChannelName, cloudWatchLogGroup: $cloudWatchLogGroup, daemonRoleName: $daemonRoleName, daemonRoleArn: $daemonRoleArn}'
 
 role-policy thing_id='' region=region profile=profile:
     #!/usr/bin/env bash

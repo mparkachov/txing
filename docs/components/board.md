@@ -99,7 +99,7 @@ just unit::daemon::run
 For local development, the daemon uses the per-user config directory
 `${TXING_DAEMON_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/txing/unit-daemon}`.
 On deployed boards the stable runtime is root-owned and uses
-`/root/.config/txing/unit-daemon`. Its `.env` file is sourceable and the IoT
+`/root/.config/txing/unit-daemon`. Its `daemon.env` file is sourceable and the IoT
 certificate files live beside it. In the current implementation, the daemon
 publishes the `board`, `mcp`, and `video` runtime surfaces for web/Sparkplug
 visibility while keeping MCP MQTT-only.
