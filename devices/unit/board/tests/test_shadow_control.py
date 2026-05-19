@@ -722,7 +722,6 @@ class ShadowControlContractTests(unittest.TestCase):
         self.assertIn('ExecStart={{built_board}} --heartbeat-seconds 60', justfile)
         self.assertIn('eval "$(just --justfile "{{root_justfile}}" _project-aws-env device', justfile)
         self.assertIn('project_root="$TXING_PROJECT_ROOT"', justfile)
-        self.assertNotIn('env_file="$AWS_ENV_FILE"', justfile)
         self.assertNotIn('EnvironmentFile=$env_file', justfile)
         self.assertNotIn('EnvironmentFile=-$board_env_file', justfile)
         self.assertIn('WorkingDirectory=$project_root', justfile)
@@ -742,15 +741,14 @@ class ShadowControlContractTests(unittest.TestCase):
         self.assertIn('[ -n "{{video_sender_command}}" ]', justfile)
         self.assertIn('video_sender_command="{{video_sender_command}}"', justfile)
         self.assertIn('BOARD_VIDEO_SENDER_COMMAND=$video_sender_command', justfile)
-        self.assertIn('[ -n "$region" ]', justfile)
-        self.assertIn('AWS_REGION=$region', justfile)
-        self.assertIn('AWS_DEFAULT_REGION=$region', justfile)
-        self.assertIn('[ -n "$aws_profile" ]', justfile)
-        self.assertNotIn('[ -n "{{aws_profile}}" ] && [ -n "$aws_profile" ]', justfile)
-        self.assertIn('AWS_PROFILE=$aws_profile', justfile)
-        self.assertIn('AWS_DEFAULT_PROFILE=$aws_profile', justfile)
-        self.assertIn('[ -n "$aws_shared_credentials_file" ]', justfile)
-        self.assertIn('AWS_SHARED_CREDENTIALS_FILE=$aws_shared_credentials_file', justfile)
+        self.assertNotIn('[ -n "$region" ]', justfile)
+        self.assertNotIn('AWS_REGION=$region', justfile)
+        self.assertNotIn('AWS_DEFAULT_REGION=$region', justfile)
+        self.assertNotIn("aws_profile", justfile)
+        self.assertNotIn("AWS_PROFILE", justfile)
+        self.assertNotIn("AWS_DEFAULT_PROFILE", justfile)
+        self.assertNotIn("aws_shared_credentials_file", justfile)
+        self.assertNotIn("AWS_SHARED_CREDENTIALS_FILE", justfile)
         self.assertIn('for env_name in \\', justfile)
         self.assertIn('KVS_DUALSTACK_ENDPOINTS \\', justfile)
         self.assertIn('BOARD_DRIVE_RAW_MAX_SPEED \\', justfile)
@@ -790,8 +788,8 @@ class ShadowControlContractTests(unittest.TestCase):
 
         self.assertIn("_project-aws-env scope='aws'", justfile)
         self.assertIn("aws|town|rig|device", justfile)
-        self.assertIn('env_file="$(resolve_path "$(choose_value "{{ env_file }}" "config/aws.env")")"', justfile)
-        self.assertIn('source "$env_file"', justfile)
+        self.assertIn('requested_stack_name="{{ stack_name }}"', justfile)
+        self.assertIn('export_line TXING_AWS_STACK "$txing_aws_stack"', justfile)
         self.assertIn('printf \'unset BOARD_ENV_FILE\\n\'', justfile)
         self.assertNotIn("config/board.env", justfile)
         self.assertNotIn('export_line BOARD_VIDEO_VIEWER_URL', justfile)
@@ -808,7 +806,15 @@ class ShadowControlContractTests(unittest.TestCase):
 
         self.assertIn("check rig_id='' thing_id=''", justfile)
         self.assertIn(
-            'eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{profile}}")"',
+            'eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws)"',
+            justfile,
+        )
+        self.assertIn(
+            'eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig)"',
+            justfile,
+        )
+        self.assertIn(
+            'eval "$(just --justfile "{{root_justfile}}" _project-aws-env device)"',
             justfile,
         )
         self.assertIn('--scope rig', justfile)

@@ -34,41 +34,25 @@ case "$dry_run" in
   *) fail "TXING_RIG_DEPLOY_DRY_RUN must be true or false" ;;
 esac
 
-config_dir="${TXING_RIG_CONFIG_DIR:-${HOME:-}/.config/txing/rig}"
-env_file="${TXING_RIG_ENV_FILE:-$config_dir/aws.env}"
-if [ -r "$env_file" ]; then
+if [ -n "${TXING_RIG_ENV_FILE:-}" ] && [ -r "$TXING_RIG_ENV_FILE" ]; then
   # shellcheck disable=SC1090
-  source "$env_file"
-elif [ "$dry_run" != true ]; then
-  fail "missing rig AWS config: $env_file"
+  source "$TXING_RIG_ENV_FILE"
 fi
 
-AWS_REGION="${AWS_REGION:-}"
-AWS_STACK_NAME="${AWS_STACK_NAME:-}"
-AWS_SELECTED_PROFILE="${AWS_SELECTED_PROFILE:-${AWS_SOURCE_PROFILE:-${AWS_TOWN_PROFILE:-${AWS_PROFILE:-}}}}"
-AWS_SHARED_CREDENTIALS_FILE="${AWS_SHARED_CREDENTIALS_FILE:-$config_dir/aws.credentials}"
-case "$AWS_SHARED_CREDENTIALS_FILE" in
-  /*) ;;
-  *) AWS_SHARED_CREDENTIALS_FILE="$config_dir/$AWS_SHARED_CREDENTIALS_FILE" ;;
-esac
-export AWS_SHARED_CREDENTIALS_FILE
+TXING_AWS_STACK="${TXING_AWS_STACK:-}"
 
 if [ "$dry_run" != true ]; then
-  [ -n "$AWS_REGION" ] || fail "AWS_REGION is required in $env_file"
-  [ -n "$AWS_STACK_NAME" ] || fail "AWS_STACK_NAME is required in $env_file"
+  [ -n "$TXING_AWS_STACK" ] || fail "TXING_AWS_STACK is required"
   command -v aws >/dev/null 2>&1 || fail "aws CLI is required"
   command -v jq >/dev/null 2>&1 || fail "jq is required"
 fi
-AWS_REGION="${AWS_REGION:-test-region-1}"
-AWS_STACK_NAME="${AWS_STACK_NAME:-test-stack}"
-export AWS_REGION AWS_DEFAULT_REGION="$AWS_REGION"
-
-aws_flags=(--region "$AWS_REGION")
-if [ -n "$AWS_SELECTED_PROFILE" ]; then
-  aws_flags+=(--profile "$AWS_SELECTED_PROFILE")
-  export AWS_PROFILE="$AWS_SELECTED_PROFILE" AWS_DEFAULT_PROFILE="$AWS_SELECTED_PROFILE"
+TXING_AWS_STACK="${TXING_AWS_STACK:-test-stack}"
+if [ "$dry_run" = true ]; then
+  aws_region="$(aws configure get region 2>/dev/null || true)"
+  aws_region="${aws_region:-test-region-1}"
 else
-  unset AWS_PROFILE AWS_DEFAULT_PROFILE
+  aws_region="$(aws configure get region 2>/dev/null || true)"
+  [ -n "$aws_region" ] || fail "AWS CLI region is not configured; run 'aws configure set region <aws-region>' or set it in your AWS CLI config"
 fi
 
 strict_semver_re='^[0-9]+\.[0-9]+\.[0-9]+$'
@@ -119,7 +103,7 @@ export TXING_VERSION="$resolved_component_version"
 
 describe_thing_json() {
   local thing_id="$1"
-  aws iot describe-thing --thing-name "$thing_id" "${aws_flags[@]}" --output json
+  aws iot describe-thing --thing-name "$thing_id" --output json
 }
 
 jq_string() {
@@ -154,15 +138,14 @@ if [ "$dry_run" = true ]; then
 else
   artifacts_bucket="$(
     aws cloudformation describe-stacks \
-      --stack-name "$AWS_STACK_NAME" \
-      "${aws_flags[@]}" \
+      --stack-name "$TXING_AWS_STACK" \
       --query "Stacks[0].Outputs[?OutputKey=='GreengrassArtifactsBucketName'].OutputValue | [0]" \
       --output text
   )"
   if [ -z "$artifacts_bucket" ] || [ "$artifacts_bucket" = "None" ]; then
-    fail "could not resolve GreengrassArtifactsBucketName from stack $AWS_STACK_NAME"
+    fail "could not resolve GreengrassArtifactsBucketName from stack $TXING_AWS_STACK"
   fi
-  iot_data_endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}" --query endpointAddress --output text)"
+  iot_data_endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS --query endpointAddress --output text)"
 fi
 
 build_root="${TXING_RIG_DEPLOY_DRY_RUN_DIR:-}"
@@ -192,10 +175,10 @@ upload_artifact() {
     printf 's3://%s/%s\n' "$artifacts_bucket" "$key"
     return 0
   fi
-  if aws s3api head-object --bucket "$artifacts_bucket" --key "$key" "${aws_flags[@]}" >/dev/null 2>&1; then
+  if aws s3api head-object --bucket "$artifacts_bucket" --key "$key" >/dev/null 2>&1; then
     printf 'artifact already exists: s3://%s/%s\n' "$artifacts_bucket" "$key" >&2
   else
-    aws s3 cp "$source" "s3://$artifacts_bucket/$key" "${aws_flags[@]}" >/dev/null
+    aws s3 cp "$source" "s3://$artifacts_bucket/$key" >/dev/null
   fi
   printf 's3://%s/%s\n' "$artifacts_bucket" "$key"
 }
@@ -235,15 +218,14 @@ Manifests:
     Lifecycle:
       run:
         Script: |-
-          export AWS_REGION="$AWS_REGION"
-          export AWS_DEFAULT_REGION="$AWS_REGION"
+          export AWS_REGION="$aws_region"
+          export AWS_DEFAULT_REGION="$aws_region"
           export AWS_IOT_ENDPOINT="$iot_data_endpoint"
           export TXING_VERSION_BASE="$TXING_VERSION_BASE"
           export TXING_VERSION="$resolved_component_version"
-          unset AWS_PROFILE AWS_DEFAULT_PROFILE AWS_SHARED_CREDENTIALS_FILE
           exec "{artifacts:path}/txing-sparkplug-manager" \
             --iot-endpoint "$iot_data_endpoint" \
-            --aws-region "$AWS_REGION" \
+            --aws-region "$aws_region" \
             --inventory-interval-seconds "{configuration:/InventoryIntervalSeconds}" \
             --command-deadline-ms "{configuration:/CommandDeadlineMs}"
     Artifacts:
@@ -346,16 +328,15 @@ Manifests:
     Lifecycle:
       run:
         Script: |-
-          export AWS_REGION="$AWS_REGION"
-          export AWS_DEFAULT_REGION="$AWS_REGION"
+          export AWS_REGION="$aws_region"
+          export AWS_DEFAULT_REGION="$aws_region"
           export AWS_IOT_ENDPOINT="$iot_data_endpoint"
           export TXING_VERSION_BASE="$TXING_VERSION_BASE"
           export TXING_VERSION="$resolved_component_version"
-          unset AWS_PROFILE AWS_DEFAULT_PROFILE AWS_SHARED_CREDENTIALS_FILE
           exec "{artifacts:path}/txing-aws-connectivity" \
             --adapter-id "{configuration:/AdapterId}" \
             --iot-endpoint "$iot_data_endpoint" \
-            --aws-region "$AWS_REGION" \
+            --aws-region "$aws_region" \
             --heartbeat-interval-ms "{configuration:/HeartbeatIntervalMs}" \
             --state-report-interval-ms "{configuration:/StateReportIntervalMs}" \
             --keep-alive-seconds "{configuration:/KeepAliveSeconds}" \
@@ -376,7 +357,7 @@ fi
 create_component_version() {
   local recipe="$1"
   local err_file="$build_root/create-component.err"
-  if aws greengrassv2 create-component-version --inline-recipe "fileb://$recipe" "${aws_flags[@]}" >/dev/null 2>"$err_file"; then
+  if aws greengrassv2 create-component-version --inline-recipe "fileb://$recipe" >/dev/null 2>"$err_file"; then
     printf 'published component recipe %s\n' "$(basename "$recipe")"
   elif grep -Eiq 'already exists|conflict|ConflictException' "$err_file"; then
     printf 'component recipe already exists: %s\n' "$(basename "$recipe")"
@@ -394,7 +375,7 @@ ensure_thing_group() {
   local rig_type="$1"
   local group="txing-rig-type-$rig_type"
   local err_file="$build_root/create-thing-group.err"
-  if aws iot create-thing-group --thing-group-name "$group" "${aws_flags[@]}" >/dev/null 2>"$err_file"; then
+  if aws iot create-thing-group --thing-group-name "$group" >/dev/null 2>"$err_file"; then
     printf 'created thing group %s\n' "$group"
   elif grep -Eiq 'already exists|ResourceAlreadyExistsException' "$err_file"; then
     printf 'thing group already exists: %s\n' "$group"
@@ -402,7 +383,7 @@ ensure_thing_group() {
     cat "$err_file" >&2
     exit 1
   fi
-  aws iot describe-thing-group --thing-group-name "$group" "${aws_flags[@]}" --query thingGroupArn --output text
+  aws iot describe-thing-group --thing-group-name "$group" --query thingGroupArn --output text
 }
 
 deploy_rig_type() {
@@ -427,8 +408,7 @@ deploy_rig_type() {
   aws greengrassv2 create-deployment \
     --target-arn "$target_arn" \
     --deployment-name "txing-$rig_type-$resolved_component_version" \
-    --components "file://$components_json" \
-    "${aws_flags[@]}" >/dev/null
+    --components "file://$components_json" >/dev/null
   printf 'created Greengrass deployment target=%s version=%s group=%s\n' "$rig_type" "$resolved_component_version" "$target_arn"
 }
 

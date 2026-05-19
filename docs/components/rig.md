@@ -258,12 +258,13 @@ gh auth status
 just rig::deploy-release latest all
 ```
 
-`rig::deploy-release` applies the repository AWS profile and credentials from
-`config/aws.env` / `config/aws.credentials`, downloads the stable GitHub release
-assets with `gh`, uploads the Linux component binaries to the Greengrass
-artifact bucket, creates Greengrass component versions from the stable project
-SemVer, and creates continuous deployments for the rig-type thing groups. The
-Linux component binaries are not executed on the operator Mac.
+`rig::deploy-release` relies on native AWS CLI configuration plus an explicit
+`TXING_AWS_STACK` in the operator environment; it fails before deployment if the
+stack name is unset. The command downloads the stable GitHub release assets with `gh`,
+uploads the Linux component binaries to the Greengrass artifact bucket, creates
+Greengrass component versions from the stable project SemVer, and creates
+continuous deployments for the rig-type thing groups. The Linux component
+binaries are not executed on the operator Mac.
 
 Use an explicit target when needed:
 

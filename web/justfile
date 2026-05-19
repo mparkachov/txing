@@ -5,8 +5,6 @@ web_dir := source_directory()
 project_root := web_dir + "/.."
 root_justfile := project_root + "/justfile"
 stack_name := ""
-region := ""
-profile := ""
 web_dist_dir := web_dir + "/dist"
 
 @install:
@@ -25,7 +23,7 @@ build:
     cd "{{web_dir}}"
     bun --bun run build
 
-deploy stack_name=stack_name region=region profile=profile web_dist_dir=web_dist_dir:
+deploy stack_name=stack_name web_dist_dir=web_dist_dir:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{web_dir}}"
@@ -47,54 +45,42 @@ deploy stack_name=stack_name region=region profile=profile web_dist_dir=web_dist
     cd "{{web_dir}}"
     bun run lint
 
-write-env sparkplug_group_id='' town_thing_name='' stack_name=stack_name region=region profile=profile:
+write-env sparkplug_group_id='' town_thing_name='' stack_name=stack_name:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{web_dir}}"
 
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{region}}" "{{profile}}" "{{stack_name}}")"
-    stack_name="$AWS_STACK_NAME"
-    region="$AWS_REGION"
-    profile="$AWS_SELECTED_PROFILE"
-
-    aws_flags=(--region "$region")
-    if [ -n "$profile" ]; then
-      aws_flags+=(--profile "$profile")
-    fi
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{stack_name}}")"
+    stack_name="$TXING_AWS_STACK"
+    region="$TXING_AWS_REGION"
 
     cognito_domain="$(aws cloudformation describe-stacks \
       --stack-name "$stack_name" \
-      "${aws_flags[@]}" \
       --query "Stacks[0].Outputs[?OutputKey=='WebCognitoDomain'].OutputValue | [0]" \
       --output text)"
 
     cognito_client_id="$(aws cloudformation describe-stacks \
       --stack-name "$stack_name" \
-      "${aws_flags[@]}" \
       --query "Stacks[0].Outputs[?OutputKey=='WebCognitoUserPoolClientId'].OutputValue | [0]" \
       --output text)"
 
     cognito_user_pool_id="$(aws cloudformation describe-stacks \
       --stack-name "$stack_name" \
-      "${aws_flags[@]}" \
       --query "Stacks[0].Outputs[?OutputKey=='WebCognitoUserPoolId'].OutputValue | [0]" \
       --output text)"
 
     cognito_identity_pool_id="$(aws cloudformation describe-stacks \
       --stack-name "$stack_name" \
-      "${aws_flags[@]}" \
       --query "Stacks[0].Outputs[?OutputKey=='WebCognitoIdentityPoolId'].OutputValue | [0]" \
       --output text)"
 
     web_iot_policy_name="$(aws cloudformation describe-stacks \
       --stack-name "$stack_name" \
-      "${aws_flags[@]}" \
       --query "Stacks[0].Outputs[?OutputKey=='WebIotPolicyName'].OutputValue | [0]" \
       --output text)"
 
     admin_email="$(aws cloudformation describe-stacks \
       --stack-name "$stack_name" \
-      "${aws_flags[@]}" \
       --query "Stacks[0].Outputs[?OutputKey=='WebExpectedAdminEmail'].OutputValue | [0]" \
       --output text)"
 

@@ -10,7 +10,7 @@ mod mcu 'mcu/justfile'
 @default:
     @just --list
 
-cert thing_id='' region='' profile='' config_dir='':
+cert thing_id='' config_dir='':
     #!/usr/bin/env bash
     set -euo pipefail
-    just --justfile "{{unit_dir}}/justfile" daemon::cert "{{thing_id}}" "{{region}}" "{{profile}}" "{{config_dir}}"
+    just --justfile "{{unit_dir}}/justfile" daemon::cert "{{thing_id}}" "{{config_dir}}"

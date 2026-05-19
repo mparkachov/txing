@@ -27,9 +27,6 @@ aws_kvs_sdk_state_file := aws_kvs_sdk_install_dir + "/.txing-sdk-build-state"
 default_system_ca_cert_path := env_var_or_default("TXING_BOARD_KVS_SYSTEM_CA_CERT_PATH", "/etc/ssl/certs/Starfield_Services_Root_Certificate_Authority_-_G2.pem")
 systemd_service := "board.service"
 systemd_unit := "/etc/systemd/system/" + systemd_service
-region := ""
-aws_profile := ""
-aws_shared_credentials_file := ""
 
 [private]
 _ensure-aws-sdk-submodule:
@@ -92,10 +89,10 @@ aws *args:
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env device)"
     command aws "$@"
 
-check thing_name='' region=region aws_profile=aws_profile:
+check thing_name='':
     #!/usr/bin/env bash
     set -euo pipefail
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "{{aws_profile}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env device)"
     thing_name="$THING_NAME"
     if [ -n "{{thing_name}}" ]; then
       thing_name="{{thing_name}}"
@@ -245,7 +242,7 @@ run:
         echo "Missing built board executable at {{built_board}}. Run 'just build' first." >&2; \
         exit 1; \
     }
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "{{aws_profile}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env device)"
     cd "{{board_dir}}" && "{{built_board}}"
 
 once:
@@ -255,22 +252,22 @@ once:
         echo "Missing built board executable at {{built_board}}. Run 'just build' first." >&2; \
         exit 1; \
     }
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "{{aws_profile}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env device)"
     cd "{{board_dir}}" && "{{built_board}}" --once
 
 dev:
     #!/usr/bin/env bash
     set -euo pipefail
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "{{aws_profile}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env device)"
     cd "{{board_dir}}" && uv run board
 
 once-dev:
     #!/usr/bin/env bash
     set -euo pipefail
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "{{aws_profile}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env device)"
     cd "{{board_dir}}" && uv run board --once
 
-motor-raw left='' right='' duration='' region=region aws_profile=aws_profile:
+motor-raw left='' right='' duration='':
     #!/usr/bin/env bash
     set -euo pipefail
     test -x "{{built_board_motor_raw}}" || { \
@@ -281,7 +278,7 @@ motor-raw left='' right='' duration='' region=region aws_profile=aws_profile:
         echo "Both left and right are required. Example: just unit::board::motor-raw 240 240" >&2; \
         exit 1; \
     fi
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "{{aws_profile}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env device)"
     preserve_env=(
         BOARD_DRIVE_RAW_MAX_SPEED
         BOARD_DRIVE_PWM_HZ
@@ -301,28 +298,25 @@ motor-raw left='' right='' duration='' region=region aws_profile=aws_profile:
     fi
     "${command[@]}"
 
-motor-stop region=region aws_profile=aws_profile:
+motor-stop:
     #!/usr/bin/env bash
     set -euo pipefail
-    just --justfile "{{board_justfile}}" motor-raw 0 0 0.25 "{{region}}" "{{aws_profile}}"
+    just --justfile "{{board_justfile}}" motor-raw 0 0 0.25
 
-install-service video_sender_command='' thing_name='' schema_file='' video_region='' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file:
+install-service video_sender_command='' thing_name='' schema_file='' video_region='':
     #!/usr/bin/env bash
     set -euo pipefail
     test -x "{{built_board}}" || { \
         echo "Missing built board executable at {{built_board}}. Run 'just build' first." >&2; \
         exit 1; \
     }
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "{{aws_profile}}" "" "" "" "{{aws_shared_credentials_file}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env device)"
     project_root="$TXING_PROJECT_ROOT"
     txing_version="$TXING_VERSION"
     thing_name="$THING_NAME"
     schema_file="$SCHEMA_FILE"
     video_region="$BOARD_VIDEO_REGION"
     video_sender_command="$BOARD_VIDEO_SENDER_COMMAND"
-    region="$AWS_REGION"
-    aws_profile="$AWS_SELECTED_PROFILE"
-    aws_shared_credentials_file="$AWS_SHARED_CREDENTIALS_FILE"
     sudo systemctl enable NetworkManager-wait-online.service
     service_env=(); \
     if [ -n "{{thing_name}}" ]; then \
@@ -351,17 +345,6 @@ install-service video_sender_command='' thing_name='' schema_file='' video_regio
     fi; \
     if [ -n "$video_sender_command" ]; then \
         service_env+=("Environment=\"BOARD_VIDEO_SENDER_COMMAND=$video_sender_command\""); \
-    fi; \
-    if [ -n "$region" ]; then \
-        service_env+=("Environment=\"AWS_REGION=$region\""); \
-        service_env+=("Environment=\"AWS_DEFAULT_REGION=$region\""); \
-    fi; \
-    if [ -n "$aws_profile" ]; then \
-        service_env+=("Environment=\"AWS_PROFILE=$aws_profile\""); \
-        service_env+=("Environment=\"AWS_DEFAULT_PROFILE=$aws_profile\""); \
-    fi; \
-    if [ -n "$aws_shared_credentials_file" ]; then \
-        service_env+=("Environment=\"AWS_SHARED_CREDENTIALS_FILE=$aws_shared_credentials_file\""); \
     fi; \
     for env_name in \
         KVS_DUALSTACK_ENDPOINTS \

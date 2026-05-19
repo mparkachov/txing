@@ -14,9 +14,7 @@
 __pycache__/
 *.py[cod]
 
-# Project-local AWS config: keep examples only
-/config/*
-!/config/*.example
+/shared/aws/deploy-init.json
 
 # Generated AWS IoT certificates and private keys
 /config/certs/

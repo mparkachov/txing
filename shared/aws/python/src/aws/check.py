@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from .auth import AwsRuntime, build_aws_runtime, ensure_aws_profile
+from .auth import AwsRuntime, build_aws_runtime, resolve_aws_region
 from .log_groups import DEFAULT_LOG_RETENTION_DAYS, build_rig_log_group_name
 from .thing_capabilities import ThingCapabilitiesError, parse_capabilities_set
 
@@ -17,12 +17,6 @@ _SCOPE_LABELS = {
     "device": "device",
     "txing": "device",
 }
-_SCOPE_PROFILE_ENV_NAMES = {
-    "rig": ("AWS_PROFILE", "AWS_RIG_PROFILE"),
-    "device": ("AWS_PROFILE", "AWS_DEVICE_PROFILE", "AWS_TXING_PROFILE"),
-    "txing": ("AWS_PROFILE", "AWS_TXING_PROFILE"),
-}
-
 
 @dataclass(slots=True, frozen=True)
 class CheckResult:
@@ -78,7 +72,6 @@ def _check_file_env(
 def _validate_common_environment(
     environment: Mapping[str, str],
     *,
-    profile_env_names: Sequence[str],
     require_thing_name: bool,
 ) -> tuple[list[CheckResult], dict[str, Any]]:
     results: list[CheckResult] = []
@@ -93,22 +86,11 @@ def _validate_common_environment(
     results.append(result)
     if region_name is not None:
         resolved["aws_region"] = region_name
-
-    result, _profile_name = _check_text_env(
-        environment,
-        "AWS runtime profile selector",
-        *profile_env_names,
-    )
-    results.append(result)
-
-    result, shared_credentials_file = _check_file_env(
-        environment,
-        "AWS shared credentials file",
-        "AWS_SHARED_CREDENTIALS_FILE",
-    )
-    results.append(result)
-    if shared_credentials_file is not None:
-        resolved["aws_shared_credentials_file"] = shared_credentials_file
+    else:
+        region_name = resolve_aws_region()
+        if region_name:
+            results[-1] = _ok("AWS region (AWS CLI/SDK config)")
+            resolved["aws_region"] = region_name
 
     if require_thing_name:
         result, thing_name = _check_text_env(environment, "Thing name", "THING_NAME")
@@ -132,7 +114,6 @@ def validate_service_environment(
 
     results, resolved = _validate_common_environment(
         environment,
-        profile_env_names=_SCOPE_PROFILE_ENV_NAMES[scope],
         require_thing_name=(scope != "rig"),
     )
 
@@ -215,12 +196,7 @@ def _run_aws_check(
 
 
 def _build_runtime(scope: str, *, region_name: str) -> AwsRuntime:
-    if scope == "rig":
-        ensure_aws_profile("AWS_RIG_PROFILE")
-    elif scope == "device":
-        ensure_aws_profile("AWS_DEVICE_PROFILE", "AWS_TXING_PROFILE")
-    else:
-        ensure_aws_profile("AWS_TXING_PROFILE")
+    del scope
     return build_aws_runtime(region_name=region_name)
 
 

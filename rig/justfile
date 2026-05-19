@@ -4,6 +4,7 @@ set quiet := true
 rig_dir := source_directory()
 project_root := rig_dir + "/.."
 root_justfile := project_root + "/justfile"
+aws_lib := project_root + "/shared/aws/scripts/aws_lib.sh"
 greengrass_lite_dir := project_root + "/modules/aws-greengrass/aws-greengrass-lite"
 greengrass_lite_build_dir := greengrass_lite_dir + "/build"
 greengrass_lite_target := "greengrass-lite.target"
@@ -14,9 +15,6 @@ shared_raspi_rig_component_units := "ggl.dev.txing.rig.SparkplugManager.service 
 raspi_rig_component_units := shared_raspi_rig_component_units
 aws_rig_component_units := "ggl.dev.txing.rig.SparkplugManager.service ggl.dev.txing.rig.AwsConnectivity.service"
 thing_name := "unit-local"
-region := ""
-aws_profile := ""
-aws_shared_credentials_file := ""
 
 [positional-arguments]
 aws *args:
@@ -25,19 +23,14 @@ aws *args:
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig)"
     command aws "$@"
 
-check rig_id='' cloudwatch_log_group='' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file:
+check rig_id='' cloudwatch_log_group='':
     #!/usr/bin/env bash
     set -euo pipefail
     if [ -n "{{rig_id}}" ]; then
       export TXING_RIG_ID="{{rig_id}}"
     fi
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}" "" "" "" "{{aws_shared_credentials_file}}")"
-    region="$AWS_REGION"
-    profile="$AWS_SELECTED_PROFILE"
-    aws_flags=(--region "$region")
-    if [ -n "$profile" ]; then
-      aws_flags+=(--profile "$profile")
-    fi
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig)"
+    region="$TXING_AWS_REGION"
     rig_name="$RIG_NAME"
     selected_rig_type="$RIG_TYPE"
     sparkplug_group_id="$SPARKPLUG_GROUP_ID"
@@ -134,7 +127,6 @@ check rig_id='' cloudwatch_log_group='' region=region aws_profile=aws_profile aw
     registered_rig_type="$(
       aws iot describe-thing \
         --thing-name "$rig_thing_name" \
-        "${aws_flags[@]}" \
         --query 'thingTypeName' \
         --output text
     )"
@@ -155,7 +147,6 @@ check rig_id='' cloudwatch_log_group='' region=region aws_profile=aws_profile aw
     principal_things="$(
       aws iot list-principal-things \
         --principal "$cert_arn" \
-        "${aws_flags[@]}" \
         --query 'things[]' \
         --output text
     )"
@@ -165,7 +156,7 @@ check rig_id='' cloudwatch_log_group='' region=region aws_profile=aws_profile aw
     fi
     echo "ok: certificate is attached to rig thing $rig_thing_name"
 
-    iot_data_endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}" --query endpointAddress --output text)"
+    iot_data_endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS --query endpointAddress --output text)"
     mqtt_client_id="rig-check-${rig_name}-$$"
     uv run --project "{{project_root}}/shared/aws/python" python - "$iot_data_endpoint" "$cert_path" "$private_key_path" "$root_ca_path" "$mqtt_client_id" <<'PY'
     import sys
@@ -191,16 +182,15 @@ check rig_id='' cloudwatch_log_group='' region=region aws_profile=aws_profile aw
     print(f"ok: AWS IoT MQTT mTLS connect ({client_id})")
     PY
 
-    iot_cred_endpoint="$(aws iot describe-endpoint --endpoint-type iot:CredentialProvider "${aws_flags[@]}" --query endpointAddress --output text)"
+    iot_cred_endpoint="$(aws iot describe-endpoint --endpoint-type iot:CredentialProvider --query endpointAddress --output text)"
     iot_role_alias="$(
       aws cloudformation describe-stacks \
-        --stack-name "$AWS_STACK_NAME" \
-        "${aws_flags[@]}" \
+        --stack-name "$TXING_AWS_STACK" \
         --query "Stacks[0].Outputs[?OutputKey=='GreengrassTokenExchangeRoleAlias'].OutputValue | [0]" \
         --output text
     )"
     if [ -z "$iot_role_alias" ] || [ "$iot_role_alias" = "None" ]; then
-      echo "fail: could not resolve GreengrassTokenExchangeRoleAlias from stack $AWS_STACK_NAME" >&2
+      echo "fail: could not resolve GreengrassTokenExchangeRoleAlias from stack $TXING_AWS_STACK" >&2
       exit 1
     fi
     tes_response="$(mktemp "${TMPDIR:-/tmp}/txing-tes-check.XXXXXX")"
@@ -219,7 +209,6 @@ check rig_id='' cloudwatch_log_group='' region=region aws_profile=aws_profile aw
         --index-name AWS_Things \
         --query-string "attributes.rigId:${TXING_RIG_ID}" \
         --max-results 1 \
-        "${aws_flags[@]}" \
         --query 'things[0].thingName' \
         --output text
     )"
@@ -229,7 +218,6 @@ check rig_id='' cloudwatch_log_group='' region=region aws_profile=aws_profile aw
           --index-name AWS_Things \
           --query-string "attributes.rigId:${TXING_RIG_ID}" \
           --max-results 1 \
-          "${aws_flags[@]}" \
           --query 'things[0].thingName' \
           --output text
       )"
@@ -341,34 +329,23 @@ build: check-greengrass-lite
 print shadow_name='sparkplug':
     #!/usr/bin/env bash
     set -euo pipefail
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}")"
-    region="$AWS_REGION"
-    aws_profile="$AWS_SELECTED_PROFILE"
-    aws_flags=(--region "$region")
-    if [ -n "$aws_profile" ]; then
-      aws_flags+=(--profile "$aws_profile")
-    fi
-    endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}" --query endpointAddress --output text)"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig)"
+    region="$TXING_AWS_REGION"
+    endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS --query endpointAddress --output text)"
     aws iot-data get-thing-shadow \
-      --region "$region" \
       --endpoint-url "https://$endpoint" \
       --thing-name "{{thing_name}}" \
       --shadow-name "{{shadow_name}}" \
       /dev/stdout | jq '.'
 
-install-service rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file cloudwatch_log_group='':
+install-service rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' cloudwatch_log_group='':
     #!/usr/bin/env bash
     set -euo pipefail
     if [ -n "{{rig_id}}" ]; then
       export TXING_RIG_ID="{{rig_id}}"
     fi
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}" "" "" "" "{{aws_shared_credentials_file}}")"
-    region="$AWS_REGION"
-    profile="$AWS_SELECTED_PROFILE"
-    aws_flags=(--region "$region")
-    if [ -n "$profile" ]; then \
-        aws_flags+=(--profile "$profile"); \
-    fi
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig)"
+    region="$TXING_AWS_REGION"
     rig_name="$RIG_NAME"
     selected_rig_type="$RIG_TYPE"
     sparkplug_group_id="$SPARKPLUG_GROUP_ID"
@@ -415,17 +392,16 @@ install-service rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_
         exit 1; \
     fi
     rig_thing_name="$TXING_RIG_ID"
-    iot_data_endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}" --query endpointAddress --output text)"
-    iot_cred_endpoint="$(aws iot describe-endpoint --endpoint-type iot:CredentialProvider "${aws_flags[@]}" --query endpointAddress --output text)"
+    iot_data_endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS --query endpointAddress --output text)"
+    iot_cred_endpoint="$(aws iot describe-endpoint --endpoint-type iot:CredentialProvider --query endpointAddress --output text)"
     iot_role_alias="$(
         aws cloudformation describe-stacks \
-          --stack-name "$AWS_STACK_NAME" \
-          "${aws_flags[@]}" \
+          --stack-name "$TXING_AWS_STACK" \
           --query "Stacks[0].Outputs[?OutputKey=='GreengrassTokenExchangeRoleAlias'].OutputValue | [0]" \
           --output text
     )"
     if [ -z "$iot_role_alias" ] || [ "$iot_role_alias" = "None" ]; then \
-        echo "Could not resolve GreengrassTokenExchangeRoleAlias from stack $AWS_STACK_NAME." >&2; \
+        echo "Could not resolve GreengrassTokenExchangeRoleAlias from stack $TXING_AWS_STACK." >&2; \
         exit 1; \
     fi
     temp_files=()
@@ -517,13 +493,8 @@ _local-start rig_id='' components='auto':
       export TXING_RIG_ID="{{rig_id}}"
     fi
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig)"
-    region="$AWS_REGION"
-    profile="$AWS_SELECTED_PROFILE"
-    aws_flags=(--region "$region")
-    if [ -n "$profile" ]; then
-      aws_flags+=(--profile "$profile")
-    fi
-    iot_data_endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}" --query endpointAddress --output text)"
+    region="$TXING_AWS_REGION"
+    iot_data_endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS --query endpointAddress --output text)"
     runtime_pointer_file() {
       printf '%s\n' "${TXING_RIG_LOCAL_RUN_FILE:-${TMPDIR:-/tmp}/txing-rig-local.current}"
     }
@@ -1031,7 +1002,7 @@ log rig_id='' lines='200' follow='true':
     printf '  %s\n' "${log_units[@]}"
     sudo journalctl "${journal_flags[@]}" "${journal_unit_args[@]}"
 
-deploy target='auto' component_version='' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file:
+deploy target='auto' component_version='':
     #!/usr/bin/env bash
     set -euo pipefail
     case "{{target}}" in
@@ -1050,13 +1021,8 @@ deploy target='auto' component_version='' region=region aws_profile=aws_profile 
     if [ "{{target}}" = "auto" ]; then
       env_scope="rig"
     fi
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env "$env_scope" "{{region}}" "{{aws_profile}}" "" "" "" "{{aws_shared_credentials_file}}")"
-    region="$AWS_REGION"
-    profile="$AWS_SELECTED_PROFILE"
-    aws_flags=(--region "$region")
-    if [ -n "$profile" ]; then
-      aws_flags+=(--profile "$profile")
-    fi
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env "$env_scope")"
+    region="$TXING_AWS_REGION"
     resolved_component_version="{{component_version}}"
     if [ -z "$resolved_component_version" ]; then
       resolved_component_version="$TXING_VERSION"
@@ -1089,16 +1055,15 @@ deploy target='auto' component_version='' region=region aws_profile=aws_profile 
     esac
     artifacts_bucket="$(
       aws cloudformation describe-stacks \
-        --stack-name "$AWS_STACK_NAME" \
-        "${aws_flags[@]}" \
+        --stack-name "$TXING_AWS_STACK" \
         --query "Stacks[0].Outputs[?OutputKey=='GreengrassArtifactsBucketName'].OutputValue | [0]" \
         --output text
     )"
     if [ -z "$artifacts_bucket" ] || [ "$artifacts_bucket" = "None" ]; then
-      echo "Could not resolve GreengrassArtifactsBucketName from stack $AWS_STACK_NAME." >&2
+      echo "Could not resolve GreengrassArtifactsBucketName from stack $TXING_AWS_STACK." >&2
       exit 1
     fi
-    iot_data_endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}" --query endpointAddress --output text)"
+    iot_data_endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS --query endpointAddress --output text)"
     build_root="$(mktemp -d "${TMPDIR:-/tmp}/txing-greengrass-cloud.XXXXXX")"
     cleanup_build_root() {
       rm -rf "$build_root"
@@ -1126,10 +1091,10 @@ deploy target='auto' component_version='' region=region aws_profile=aws_profile 
       local source="$2"
       local filename="$3"
       local key="artifacts/$component/$resolved_component_version/$filename"
-      if aws s3api head-object --bucket "$artifacts_bucket" --key "$key" "${aws_flags[@]}" >/dev/null 2>&1; then
+      if aws s3api head-object --bucket "$artifacts_bucket" --key "$key" >/dev/null 2>&1; then
         printf 'artifact already exists: s3://%s/%s\n' "$artifacts_bucket" "$key" >&2
       else
-        aws s3 cp "$source" "s3://$artifacts_bucket/$key" "${aws_flags[@]}" >/dev/null
+        aws s3 cp "$source" "s3://$artifacts_bucket/$key" >/dev/null
       fi
       printf 's3://%s/%s\n' "$artifacts_bucket" "$key"
     }
@@ -1168,15 +1133,14 @@ deploy target='auto' component_version='' region=region aws_profile=aws_profile 
         Lifecycle:
           run:
             Script: |-
-              export AWS_REGION="$AWS_REGION"
-              export AWS_DEFAULT_REGION="$AWS_REGION"
+              export AWS_REGION="$TXING_AWS_REGION"
+              export AWS_DEFAULT_REGION="$TXING_AWS_REGION"
               export AWS_IOT_ENDPOINT="$iot_data_endpoint"
               export TXING_VERSION_BASE="$TXING_VERSION_BASE"
               export TXING_VERSION="$resolved_component_version"
-              unset AWS_PROFILE AWS_DEFAULT_PROFILE AWS_SHARED_CREDENTIALS_FILE
               exec "{artifacts:path}/txing-sparkplug-manager" \
                 --iot-endpoint "$iot_data_endpoint" \
-                --aws-region "$AWS_REGION" \
+                --aws-region "$TXING_AWS_REGION" \
                 --inventory-interval-seconds "{configuration:/InventoryIntervalSeconds}" \
                 --command-deadline-ms "{configuration:/CommandDeadlineMs}"
         Artifacts:
@@ -1277,16 +1241,15 @@ deploy target='auto' component_version='' region=region aws_profile=aws_profile 
         Lifecycle:
           run:
             Script: |-
-              export AWS_REGION="$AWS_REGION"
-              export AWS_DEFAULT_REGION="$AWS_REGION"
+              export AWS_REGION="$TXING_AWS_REGION"
+              export AWS_DEFAULT_REGION="$TXING_AWS_REGION"
               export AWS_IOT_ENDPOINT="$iot_data_endpoint"
               export TXING_VERSION_BASE="$TXING_VERSION_BASE"
               export TXING_VERSION="$resolved_component_version"
-              unset AWS_PROFILE AWS_DEFAULT_PROFILE AWS_SHARED_CREDENTIALS_FILE
               exec "{artifacts:path}/txing-aws-connectivity" \
                 --adapter-id "{configuration:/AdapterId}" \
                 --iot-endpoint "$iot_data_endpoint" \
-                --aws-region "$AWS_REGION" \
+                --aws-region "$TXING_AWS_REGION" \
                 --heartbeat-interval-ms "{configuration:/HeartbeatIntervalMs}" \
                 --state-report-interval-ms "{configuration:/StateReportIntervalMs}" \
                 --keep-alive-seconds "{configuration:/KeepAliveSeconds}" \
@@ -1302,7 +1265,7 @@ deploy target='auto' component_version='' region=region aws_profile=aws_profile 
     create_component_version() {
       local recipe="$1"
       local err_file="$build_root/create-component.err"
-      if aws greengrassv2 create-component-version --inline-recipe "fileb://$recipe" "${aws_flags[@]}" >/dev/null 2>"$err_file"; then
+      if aws greengrassv2 create-component-version --inline-recipe "fileb://$recipe" >/dev/null 2>"$err_file"; then
         printf 'published component recipe %s\n' "$(basename "$recipe")"
       elif grep -Eiq 'already exists|conflict|ConflictException' "$err_file"; then
         printf 'component recipe already exists: %s\n' "$(basename "$recipe")"
@@ -1319,7 +1282,7 @@ deploy target='auto' component_version='' region=region aws_profile=aws_profile 
       local rig_type="$1"
       local group="txing-rig-type-$rig_type"
       local err_file="$build_root/create-thing-group.err"
-      if aws iot create-thing-group --thing-group-name "$group" "${aws_flags[@]}" >/dev/null 2>"$err_file"; then
+      if aws iot create-thing-group --thing-group-name "$group" >/dev/null 2>"$err_file"; then
         printf 'created thing group %s\n' "$group"
       elif grep -Eiq 'already exists|ResourceAlreadyExistsException' "$err_file"; then
         printf 'thing group already exists: %s\n' "$group"
@@ -1327,7 +1290,7 @@ deploy target='auto' component_version='' region=region aws_profile=aws_profile 
         cat "$err_file" >&2
         exit 1
       fi
-      aws iot describe-thing-group --thing-group-name "$group" "${aws_flags[@]}" --query thingGroupArn --output text
+      aws iot describe-thing-group --thing-group-name "$group" --query thingGroupArn --output text
     }
     deploy_rig_type() {
       local rig_type="$1"
@@ -1352,7 +1315,7 @@ deploy target='auto' component_version='' region=region aws_profile=aws_profile 
         --target-arn "$target_arn" \
         --deployment-name "txing-$rig_type-$resolved_component_version" \
         --components "file://$components_json" \
-        "${aws_flags[@]}" >/dev/null
+        >/dev/null
       printf 'created Greengrass deployment target=%s version=%s group=%s\n' "$rig_type" "$resolved_component_version" "$target_arn"
     }
     unit_loaded_version_matches() {
@@ -1390,7 +1353,6 @@ deploy target='auto' component_version='' region=region aws_profile=aws_profile 
       fi
       aws iot describe-thing \
         --thing-name "$local_thing_name" \
-        "${aws_flags[@]}" \
         --query thingTypeName \
         --output text 2>/dev/null || true
     }
@@ -1491,7 +1453,7 @@ deploy target='auto' component_version='' region=region aws_profile=aws_profile 
     esac
     verify_local_deployment_if_targeted
 
-deploy-release release='latest' target='all' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file:
+deploy-release release='latest' target='all':
     #!/usr/bin/env bash
     set -euo pipefail
     case "{{release}}" in
@@ -1512,12 +1474,10 @@ deploy-release release='latest' target='all' region=region aws_profile=aws_profi
         exit 1
         ;;
     esac
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{region}}" "{{aws_profile}}" "" "" "" "{{aws_shared_credentials_file}}")"
-    export TXING_RIG_CONFIG_DIR="$TXING_PROJECT_ROOT"
-    export TXING_RIG_ENV_FILE="$AWS_ENV_FILE"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws)"
     exec "{{rig_dir}}/scripts/txing-rig-deploy-release" "{{release}}" "{{target}}"
 
-deploy-local rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' component_version='' adapter_id='ble-main' name_fragment='txing' region=region aws_profile=aws_profile aws_shared_credentials_file=aws_shared_credentials_file:
+deploy-local rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' component_version='' adapter_id='ble-main' name_fragment='txing':
     #!/usr/bin/env bash
     set -euo pipefail
     for positional_arg in "{{rig_id}}" "{{rig_name}}" "{{sparkplug_group_id}}" "{{sparkplug_edge_node_id}}" "{{component_version}}" "{{adapter_id}}" "{{name_fragment}}"; do
@@ -1532,13 +1492,8 @@ deploy-local rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id=
     if [ -n "{{rig_id}}" ]; then
       export TXING_RIG_ID="{{rig_id}}"
     fi
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig "{{region}}" "{{aws_profile}}" "" "" "" "{{aws_shared_credentials_file}}")"
-    region="$AWS_REGION"
-    profile="$AWS_SELECTED_PROFILE"
-    aws_flags=(--region "$region")
-    if [ -n "$profile" ]; then \
-        aws_flags+=(--profile "$profile"); \
-    fi
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig)"
+    region="$TXING_AWS_REGION"
     if ! systemctl cat "{{greengrass_lite_target}}" >/dev/null 2>&1; then \
         echo "Greengrass Lite target {{greengrass_lite_target}} is not installed. Run 'just rig::install-service' first." >&2; \
         exit 1; \
@@ -1806,7 +1761,7 @@ deploy-local rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id=
       echo "Rust Greengrass SDK builds are Linux-only; run rig::deploy on the Greengrass rig host." >&2
       exit 1
     fi
-    iot_data_endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}" --query endpointAddress --output text)"
+    iot_data_endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS --query endpointAddress --output text)"
     deploy_root="{{rig_dir}}/build/greengrass-local"
     staging_root="$(mktemp -d "${TMPDIR:-/tmp}/txing-greengrass-stage.XXXXXX")"
     cleanup_staging_root() {
@@ -1943,11 +1898,10 @@ deploy-local rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id=
         Lifecycle:
           run:
             Script: |-
-              export AWS_REGION="$AWS_REGION"
-              export AWS_DEFAULT_REGION="$AWS_REGION"
+              export AWS_REGION="$TXING_AWS_REGION"
+              export AWS_DEFAULT_REGION="$TXING_AWS_REGION"
               export TXING_VERSION_BASE="$TXING_VERSION_BASE"
               export TXING_VERSION="$resolved_component_version"
-              unset AWS_PROFILE AWS_DEFAULT_PROFILE AWS_SHARED_CREDENTIALS_FILE
               export RIG_NAME="$rig_name"
               export TXING_RIG_ID="$TXING_RIG_ID"
               export TXING_TOWN_ID="$sparkplug_group_id"
@@ -1957,7 +1911,7 @@ deploy-local rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id=
               export AWS_IOT_ENDPOINT="$iot_data_endpoint"
               export TXING_RIG_TYPE="$selected_rig_type"
               export RIG_TYPE="$selected_rig_type"
-              exec "{artifacts:path}/txing-sparkplug-manager" --rig-id "$TXING_RIG_ID" --town-id "$sparkplug_group_id" --iot-endpoint "$iot_data_endpoint" --aws-region "$AWS_REGION" --inventory-interval-seconds 30 --command-deadline-ms 60000
+              exec "{artifacts:path}/txing-sparkplug-manager" --rig-id "$TXING_RIG_ID" --town-id "$sparkplug_group_id" --iot-endpoint "$iot_data_endpoint" --aws-region "$TXING_AWS_REGION" --inventory-interval-seconds 30 --command-deadline-ms 60000
         Artifacts:
           - Uri: "s3://txing-local-greengrass/txing-local-artifact.txt"
             Unarchive: "NONE"
@@ -1992,11 +1946,10 @@ deploy-local rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id=
         Lifecycle:
           run:
             Script: |-
-              export AWS_REGION="$AWS_REGION"
-              export AWS_DEFAULT_REGION="$AWS_REGION"
+              export AWS_REGION="$TXING_AWS_REGION"
+              export AWS_DEFAULT_REGION="$TXING_AWS_REGION"
               export TXING_VERSION_BASE="$TXING_VERSION_BASE"
               export TXING_VERSION="$resolved_component_version"
-              unset AWS_PROFILE AWS_DEFAULT_PROFILE AWS_SHARED_CREDENTIALS_FILE
               export RIG_NAME="$rig_name"
               export TXING_RIG_ID="$TXING_RIG_ID"
               export RIG_ID="$TXING_RIG_ID"
@@ -2005,7 +1958,7 @@ deploy-local rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id=
               export AWS_IOT_ENDPOINT="$iot_data_endpoint"
               export TXING_RIG_TYPE="$selected_rig_type"
               export RIG_TYPE="$selected_rig_type"
-              exec "{artifacts:path}/txing-aws-connectivity" --adapter-id "$connectivity_component" --iot-endpoint "$iot_data_endpoint" --aws-region "$AWS_REGION" --client-id "$TXING_RIG_ID-aws-connectivity" --heartbeat-interval-ms 10000 --state-report-interval-ms 10000 --keep-alive-seconds 60
+              exec "{artifacts:path}/txing-aws-connectivity" --adapter-id "$connectivity_component" --iot-endpoint "$iot_data_endpoint" --aws-region "$TXING_AWS_REGION" --client-id "$TXING_RIG_ID-aws-connectivity" --heartbeat-interval-ms 10000 --state-report-interval-ms 10000 --keep-alive-seconds 60
         Artifacts:
           - Uri: "s3://txing-local-greengrass/txing-local-artifact.txt"
             Unarchive: "NONE"

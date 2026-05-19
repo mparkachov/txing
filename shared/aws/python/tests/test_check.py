@@ -187,24 +187,17 @@ class _FakeRuntime:
 
 
 class AwsCheckTests(unittest.TestCase):
-    def test_validate_rig_environment_accepts_profile_selector_and_credentials_file(self) -> None:
-        with tempfile.TemporaryDirectory() as tempdir:
-            temp_path = Path(tempdir)
-            shared_credentials_file = temp_path / "aws.credentials"
-            shared_credentials_file.write_text("[town]\n", encoding="utf-8")
-
-            results, resolved = validate_service_environment(
-                "rig",
-                {
-                    "AWS_REGION": "eu-central-1",
-                    "AWS_RIG_PROFILE": "rig",
-                    "AWS_SHARED_CREDENTIALS_FILE": str(shared_credentials_file),
-                    "TXING_RIG_ID": "raspi-rig001",
-                    "RIG_NAME": "rig",
-                    "SPARKPLUG_GROUP_ID": "town",
-                    "SPARKPLUG_EDGE_NODE_ID": "rig",
-                },
-            )
+    def test_validate_rig_environment_accepts_native_aws_config(self) -> None:
+        results, resolved = validate_service_environment(
+            "rig",
+            {
+                "AWS_REGION": "eu-central-1",
+                "TXING_RIG_ID": "raspi-rig001",
+                "RIG_NAME": "rig",
+                "SPARKPLUG_GROUP_ID": "town",
+                "SPARKPLUG_EDGE_NODE_ID": "rig",
+            },
+        )
 
         self.assertTrue(all(result.ok for result in results))
         self.assertEqual(resolved["aws_region"], "eu-central-1")
@@ -218,7 +211,6 @@ class AwsCheckTests(unittest.TestCase):
             "device",
             {
                 "AWS_REGION": "eu-central-1",
-                "AWS_SHARED_CREDENTIALS_FILE": "/missing/aws.credentials",
                 "THING_NAME": "unit-local",
                 "SCHEMA_FILE": "/missing/schema.json",
                 "BOARD_VIDEO_REGION": "eu-central-1",
@@ -226,19 +218,12 @@ class AwsCheckTests(unittest.TestCase):
         )
 
         failure_messages = [result.message for result in results if not result.ok]
-        self.assertIn(
-            "AWS runtime profile selector missing ($AWS_PROFILE or $AWS_DEVICE_PROFILE or $AWS_TXING_PROFILE)",
-            failure_messages,
-        )
-        self.assertIn("AWS shared credentials file missing or not a file (/missing/aws.credentials)", failure_messages)
         self.assertIn("Shadow schema file missing or not a file (/missing/schema.json)", failure_messages)
         self.assertNotIn("Board video sender command missing ($BOARD_VIDEO_SENDER_COMMAND)", failure_messages)
 
     def test_validate_device_environment_defaults_video_region_to_aws_region(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             temp_path = Path(tempdir)
-            shared_credentials_file = temp_path / "aws.credentials"
-            shared_credentials_file.write_text("[town]\n", encoding="utf-8")
             schema_file = temp_path / "schema.json"
             schema_file.write_text("{}", encoding="utf-8")
 
@@ -246,8 +231,6 @@ class AwsCheckTests(unittest.TestCase):
                 "device",
                 {
                     "AWS_REGION": "eu-central-1",
-                    "AWS_DEVICE_PROFILE": "device",
-                    "AWS_SHARED_CREDENTIALS_FILE": str(shared_credentials_file),
                     "THING_NAME": "unit-local",
                     "SCHEMA_FILE": str(schema_file),
                 },
@@ -257,25 +240,19 @@ class AwsCheckTests(unittest.TestCase):
         self.assertEqual(resolved["video_region"], "eu-central-1")
 
     def test_run_rig_service_check_uses_shared_runtime(self) -> None:
-        with tempfile.TemporaryDirectory() as tempdir:
-            temp_path = Path(tempdir)
-            shared_credentials_file = temp_path / "aws.credentials"
-            shared_credentials_file.write_text("[town]\n", encoding="utf-8")
-            runtime = _FakeRuntime(endpoint="abc123-ats.iot.eu-central-1.amazonaws.com")
+        runtime = _FakeRuntime(endpoint="abc123-ats.iot.eu-central-1.amazonaws.com")
 
-            results = run_service_check(
-                "rig",
-                environment={
-                    "AWS_REGION": "eu-central-1",
-                    "AWS_RIG_PROFILE": "rig",
-                    "AWS_SHARED_CREDENTIALS_FILE": str(shared_credentials_file),
-                    "TXING_RIG_ID": "raspi-rig001",
-                    "RIG_NAME": "rig",
-                    "SPARKPLUG_GROUP_ID": "town",
-                    "SPARKPLUG_EDGE_NODE_ID": "rig",
-                },
-                aws_runtime=runtime,
-            )
+        results = run_service_check(
+            "rig",
+            environment={
+                "AWS_REGION": "eu-central-1",
+                "TXING_RIG_ID": "raspi-rig001",
+                "RIG_NAME": "rig",
+                "SPARKPLUG_GROUP_ID": "town",
+                "SPARKPLUG_EDGE_NODE_ID": "rig",
+            },
+            aws_runtime=runtime,
+        )
 
         self.assertTrue(all(result.ok for result in results))
         self.assertEqual(runtime.sts.calls, 1)
@@ -304,8 +281,6 @@ class AwsCheckTests(unittest.TestCase):
     def test_run_device_service_check_uses_discovered_endpoint_and_video_region(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             temp_path = Path(tempdir)
-            shared_credentials_file = temp_path / "aws.credentials"
-            shared_credentials_file.write_text("[town]\n", encoding="utf-8")
             schema_file = temp_path / "schema.json"
             schema_file.write_text("{}", encoding="utf-8")
             runtime = _FakeRuntime(endpoint="abc123-ats.iot.eu-central-1.amazonaws.com")
@@ -314,8 +289,6 @@ class AwsCheckTests(unittest.TestCase):
                 "device",
                 environment={
                     "AWS_REGION": "eu-central-1",
-                    "AWS_DEVICE_PROFILE": "device",
-                    "AWS_SHARED_CREDENTIALS_FILE": str(shared_credentials_file),
                     "THING_NAME": "unit-local",
                     "SCHEMA_FILE": str(schema_file),
                     "TXING_BOARD_VIDEO_REGION": "us-east-1",
@@ -352,23 +325,17 @@ class AwsCheckTests(unittest.TestCase):
         )
 
     def test_run_time_device_service_check_uses_catalog_attrs_without_board_requirements(self) -> None:
-        with tempfile.TemporaryDirectory() as tempdir:
-            temp_path = Path(tempdir)
-            shared_credentials_file = temp_path / "aws.credentials"
-            shared_credentials_file.write_text("[town]\n", encoding="utf-8")
-            runtime = _FakeRuntime(endpoint="abc123-ats.iot.eu-central-1.amazonaws.com")
+        runtime = _FakeRuntime(endpoint="abc123-ats.iot.eu-central-1.amazonaws.com")
 
-            results = run_service_check(
-                "device",
-                environment={
-                    "AWS_REGION": "eu-central-1",
-                    "AWS_DEVICE_PROFILE": "device",
-                    "AWS_SHARED_CREDENTIALS_FILE": str(shared_credentials_file),
-                    "THING_NAME": "time-clock",
-                    "TXING_DEVICE_TYPE": "time",
-                },
-                aws_runtime=runtime,
-            )
+        results = run_service_check(
+            "device",
+            environment={
+                "AWS_REGION": "eu-central-1",
+                "THING_NAME": "time-clock",
+                "TXING_DEVICE_TYPE": "time",
+            },
+            aws_runtime=runtime,
+        )
 
         self.assertTrue(all(result.ok for result in results), [result.message for result in results])
         self.assertEqual(runtime.iot.describe_thing_names, ["time-clock"])

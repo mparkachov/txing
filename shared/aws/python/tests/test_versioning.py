@@ -11,6 +11,69 @@ AWS_DIR = Path(__file__).resolve().parents[2]
 REPO_ROOT = AWS_DIR.parents[1]
 
 
+def _write_fake_aws(bin_dir: Path) -> None:
+    aws = bin_dir / "aws"
+    aws.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+case "$1 $2 ${3:-}" in
+  "configure get region")
+    printf 'eu-central-1\\n'
+    ;;
+  "sts get-caller-identity "*)
+    printf '123456789012\\n'
+    ;;
+  "cloudformation describe-stacks "*)
+    printf 'CREATE_COMPLETE\\n'
+    ;;
+  "iot describe-endpoint "*)
+    printf 'abc123-ats.iot.eu-central-1.amazonaws.com\\n'
+    ;;
+  "iot get-indexing-configuration "*)
+    joined=" $* "
+    if [[ "$joined" == *ThingConnectivityIndexingMode* || "$joined" == *thingConnectivityIndexingMode* ]]; then
+      printf 'STATUS\\n'
+    elif [[ "$joined" == *ThingIndexingMode* || "$joined" == *thingIndexingMode* ]]; then
+      printf 'REGISTRY\\n'
+    else
+      printf '{}\\n'
+    fi
+    ;;
+  "ssm put-parameter "*)
+    printf '{}\\n'
+    ;;
+  *)
+    printf '{}\\n'
+    ;;
+esac
+""",
+        encoding="utf-8",
+    )
+    aws.chmod(0o755)
+
+
+def _native_aws_env(bin_dir: Path, *, stack: str | None = "town") -> dict[str, str]:
+    env = os.environ.copy()
+    env["PATH"] = f"{bin_dir}{os.pathsep}{env.get('PATH', '')}"
+    for name in (
+        "AWS_REGION",
+        "AWS_DEFAULT_REGION",
+        "AWS_PROFILE",
+        "AWS_DEFAULT_PROFILE",
+        "AWS_SELECTED_PROFILE",
+        "AWS_SHARED_CREDENTIALS_FILE",
+        "TXING_RIG_ID",
+        "TXING_THING_ID",
+    ):
+        env.pop(name, None)
+    if stack is None:
+        env.pop("TXING_AWS_STACK", None)
+        env["AWS_STACK_NAME"] = "legacy-stack"
+    else:
+        env["TXING_AWS_STACK"] = stack
+    return env
+
+
 class VersionEnvironmentTests(unittest.TestCase):
     def test_project_version_env_uses_plain_version_and_reports_dirty_state(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -56,6 +119,140 @@ class VersionEnvironmentTests(unittest.TestCase):
             self.assertIn("export TXING_GIT_DIRTY=true", dirty)
             self.assertNotIn("+g", dirty)
 
+    def test_project_aws_env_uses_txing_stack_and_native_cli_region(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bin_dir = Path(temp_dir)
+            _write_fake_aws(bin_dir)
+            result = subprocess.run(
+                [
+                    "just",
+                    "--justfile",
+                    str(REPO_ROOT / "justfile"),
+                    "_project-aws-env",
+                    "aws",
+                ],
+                check=True,
+                env=_native_aws_env(bin_dir),
+                text=True,
+                stdout=subprocess.PIPE,
+            )
+
+        self.assertIn("export TXING_AWS_STACK=town", result.stdout)
+        self.assertIn("export TXING_AWS_REGION=eu-central-1", result.stdout)
+        self.assertNotIn("AWS_STACK_NAME", result.stdout)
+        self.assertNotIn("AWS_SELECTED_PROFILE", result.stdout)
+        self.assertNotIn("AWS_SHARED_CREDENTIALS_FILE", result.stdout)
+        self.assertNotIn("AWS_COGNITO_DOMAIN_PREFIX", result.stdout)
+        self.assertNotIn("AWS_ADMIN_EMAIL", result.stdout)
+        self.assertNotIn("AWS_WEB_APP_URL", result.stdout)
+
+    def test_project_aws_env_requires_txing_stack_without_legacy_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bin_dir = Path(temp_dir)
+            _write_fake_aws(bin_dir)
+            result = subprocess.run(
+                [
+                    "just",
+                    "--justfile",
+                    str(REPO_ROOT / "justfile"),
+                    "_project-aws-env",
+                    "aws",
+                ],
+                env=_native_aws_env(bin_dir, stack=None),
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Missing required TXING_AWS_STACK", result.stderr)
+
+    def test_aws_docs_describe_native_cli_stack_inputs(self) -> None:
+        aws_docs = (REPO_ROOT / "docs" / "aws.md").read_text(encoding="utf-8")
+        install_docs = (REPO_ROOT / "docs" / "installation.md").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertTrue((REPO_ROOT / "shared" / "aws" / "deploy-init.example.json").exists())
+        self.assertIn("fail unless `TXING_AWS_STACK` is", install_docs)
+        self.assertIn("Txing identifiers come from environment variables", aws_docs)
+        self.assertIn("native AWS CLI configuration", aws_docs)
+        self.assertIn("`TXING_AWS_STACK`", aws_docs)
+
+    def test_deploy_init_stores_web_admin_parameters_in_ssm(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bin_dir = Path(temp_dir) / "bin"
+            bin_dir.mkdir()
+            _write_fake_aws(bin_dir)
+            parameter_file = Path(temp_dir) / "deploy-init.json"
+            parameter_file.write_text(
+                '{"CognitoDomainPrefix":"town","AdminEmail":"admin@example.com","WebAppUrl":"https://office.txing.dev"}',
+                encoding="utf-8",
+            )
+            result = subprocess.run(
+                [
+                    "just",
+                    "--justfile",
+                    str(REPO_ROOT / "justfile"),
+                    "aws::deploy-init",
+                    str(parameter_file),
+                ],
+                check=True,
+                env=_native_aws_env(bin_dir, stack=None),
+                text=True,
+                stdout=subprocess.PIPE,
+            )
+
+        self.assertIn("/txing/stack/CognitoDomainPrefix", result.stdout)
+        self.assertIn("/txing/stack/AdminEmail", result.stdout)
+        self.assertIn("/txing/stack/WebAppUrl", result.stdout)
+
+    def test_aws_check_default_does_not_require_rig_or_device_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bin_dir = Path(temp_dir)
+            _write_fake_aws(bin_dir)
+            result = subprocess.run(
+                [
+                    "just",
+                    "--justfile",
+                    str(REPO_ROOT / "justfile"),
+                    "aws::check",
+                ],
+                check=True,
+                env=_native_aws_env(bin_dir),
+                text=True,
+                stdout=subprocess.PIPE,
+            )
+
+        self.assertIn("ok: CloudFormation stack town", result.stdout)
+        self.assertIn("ok: AWS IoT Data-ATS endpoint", result.stdout)
+        self.assertNotIn("Checking rig Python service environment", result.stdout)
+        self.assertNotIn("Checking device Python service environment", result.stdout)
+
+    def test_operator_aws_commands_use_native_cli_config(self) -> None:
+        operator_files = [
+            REPO_ROOT / "justfile",
+            REPO_ROOT / "shared" / "aws" / "justfile",
+            REPO_ROOT / "shared" / "aws" / "scripts" / "aws_lib.sh",
+            REPO_ROOT / "rig" / "justfile",
+            REPO_ROOT / "rig" / "scripts" / "txing-rig-deploy",
+            REPO_ROOT / "rig" / "scripts" / "txing-rig-deploy-release",
+            REPO_ROOT / "devices" / "unit" / "justfile",
+            REPO_ROOT / "devices" / "unit" / "daemon" / "justfile",
+            REPO_ROOT / "devices" / "unit" / "board" / "justfile",
+            REPO_ROOT / "web" / "justfile",
+        ]
+        for path in operator_files:
+            text = path.read_text(encoding="utf-8")
+            with self.subTest(path=path.relative_to(REPO_ROOT)):
+                self.assertNotIn("AWS_SELECTED_PROFILE", text)
+                self.assertNotIn("AWS_SHARED_CREDENTIALS_FILE", text)
+                self.assertNotIn("AWS_COGNITO_DOMAIN_PREFIX", text)
+                self.assertNotIn("AWS_ADMIN_EMAIL", text)
+                self.assertNotIn("AWS_WEB_APP_URL", text)
+                self.assertNotIn("--profile", text)
+                self.assertNotRegex(text, r"(?<!aws-)--region\b")
+
     def test_rig_deploy_defaults_to_project_release_and_immutable_artifacts(self) -> None:
         rig_justfile = (REPO_ROOT / "rig" / "justfile").read_text(encoding="utf-8")
 
@@ -74,8 +271,8 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("aws s3api head-object", rig_justfile)
         self.assertNotIn("artifact_version_path", rig_justfile)
         self.assertIn("deploy-release release='latest' target='all'", rig_justfile)
-        self.assertIn('_project-aws-env aws "{{region}}" "{{aws_profile}}"', rig_justfile)
-        self.assertIn('export TXING_RIG_ENV_FILE="$AWS_ENV_FILE"', rig_justfile)
+        self.assertIn('_project-aws-env aws)', rig_justfile)
+        self.assertNotIn("TXING_RIG_ENV_FILE", rig_justfile)
         self.assertIn('scripts/txing-rig-deploy-release" "{{release}}" "{{target}}"', rig_justfile)
 
     def test_stable_release_publishes_only_project_assets(self) -> None:
@@ -352,7 +549,6 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("A stable rig does not need", rig_docs)
         self.assertIn("a repo checkout, mise, AWS CLI", rig_docs)
         self.assertNotIn("mise use --global aws-cli@latest gh@latest jq@latest", rig_docs)
-        self.assertNotIn("/home/ggcore/.config/txing/rig/aws.credentials", rig_docs)
         self.assertNotIn("/home/ggcore/.local/bin/mise exec -- txing-rig-deploy", rig_docs)
         self.assertNotIn("raw.githubusercontent.com/mparkachov/txing/main/rig/scripts/txing-rig-deploy-release", rig_docs)
         self.assertNotIn("/home/txing/.config/txing/rig/certs", rig_docs)
@@ -369,10 +565,11 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("txing-sparkplug-manager-linux-aarch64.tar.gz", release_deploy)
         self.assertIn("txing-ble-connectivity-linux-aarch64.tar.gz", release_deploy)
         self.assertIn("txing-aws-connectivity-linux-aarch64.tar.gz", release_deploy)
-        self.assertIn("txing-rig-deploy-linux-aarch64.tar.gz", release_deploy)
+        self.assertNotIn("txing-rig-deploy-linux-aarch64.tar.gz", release_deploy)
         self.assertIn("TXING_RIG_COMPONENT_VERSION", release_deploy)
-        self.assertIn("head -n 1", release_deploy)
+        self.assertIn('TXING_RIG_DEPLOY_SCRIPT:-$script_dir/txing-rig-deploy', release_deploy)
         self.assertIn("are not executed locally", release_deploy)
+        self.assertNotIn("missing rig AWS config", release_deploy)
         self.assertNotIn("sudo", release_deploy)
         self.assertNotIn("chown", release_deploy)
 
@@ -439,10 +636,16 @@ class VersionEnvironmentTests(unittest.TestCase):
                         binary_paths["txing-aws-connectivity"]
                     ),
                     "RIG_TYPE": "raspi",
-                    "AWS_REGION": "eu-central-1",
-                    "AWS_STACK_NAME": "town",
                 }
             )
+            for removed_name in (
+                "AWS_REGION",
+                "AWS_DEFAULT_REGION",
+                "AWS_SELECTED_PROFILE",
+                "AWS_SHARED_CREDENTIALS_FILE",
+                "TXING_RIG_ENV_FILE",
+            ):
+                env.pop(removed_name, None)
             subprocess.run([str(script), "auto"], check=True, env=env, text=True)
 
             sparkplug_recipe = (
@@ -464,6 +667,31 @@ class VersionEnvironmentTests(unittest.TestCase):
             self.assertNotIn("RequiresPrivilege", ble_recipe)
             self.assertIn("txing-aws-connectivity", aws_recipe)
 
+    def test_rig_deploy_requires_txing_stack_for_real_runs(self) -> None:
+        script = REPO_ROOT / "rig" / "scripts" / "txing-rig-deploy"
+        env = os.environ.copy()
+        for removed_name in (
+            "TXING_AWS_STACK",
+            "AWS_STACK_NAME",
+            "TXING_RIG_ENV_FILE",
+            "AWS_SELECTED_PROFILE",
+            "AWS_SHARED_CREDENTIALS_FILE",
+        ):
+            env.pop(removed_name, None)
+        env["TXING_RIG_DEPLOY_DRY_RUN"] = "false"
+
+        result = subprocess.run(
+            [str(script), "raspi"],
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("TXING_AWS_STACK is required", result.stderr)
+        self.assertNotIn("missing rig AWS config", result.stderr)
+
     def test_rig_deploy_rejects_version_skew(self) -> None:
         script = REPO_ROOT / "rig" / "scripts" / "txing-rig-deploy"
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -478,10 +706,16 @@ class VersionEnvironmentTests(unittest.TestCase):
                 {
                     "TXING_RIG_DEPLOY_DRY_RUN": "true",
                     "RIG_TYPE": "raspi",
-                    "AWS_REGION": "eu-central-1",
-                    "AWS_STACK_NAME": "town",
                 }
             )
+            for removed_name in (
+                "AWS_REGION",
+                "AWS_DEFAULT_REGION",
+                "AWS_SELECTED_PROFILE",
+                "AWS_SHARED_CREDENTIALS_FILE",
+                "TXING_RIG_ENV_FILE",
+            ):
+                env.pop(removed_name, None)
             for tool, version in versions.items():
                 binary = root / "installs" / tool / version / tool
                 binary.parent.mkdir(parents=True)

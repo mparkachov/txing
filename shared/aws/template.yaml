@@ -2,27 +2,27 @@ AWSTemplateFormatVersion: "2010-09-09"
 Description: txing base environment root stack.
 
 Parameters:
-  CognitoDomainPrefix:
-    Type: String
-    Description: Unique Cognito hosted UI domain prefix in this AWS region.
-    AllowedPattern: "^[a-z0-9-]{1,63}$"
-  AdminEmail:
-    Type: String
-    Description: Single admin email expected by the SPA.
-    AllowedPattern: "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+  StackCognitoDomainPrefix:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /txing/stack/CognitoDomainPrefix
+    Description: SSM parameter containing the unique Cognito hosted UI domain prefix in this AWS region.
+  StackAdminEmail:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /txing/stack/AdminEmail
+    Description: SSM parameter containing the single admin email expected by the SPA.
   LocalhostAppUrl:
     Type: String
     Default: http://localhost:5173
   LocalhostAltAppUrl:
     Type: String
     Default: http://127.0.0.1:5173
-  WebAppUrl:
-    Type: String
-    Default: https://office.txing.dev
-    Description: Cloudflare Pages production web app URL without a trailing slash.
-    AllowedPattern: "^https://.+[^/]$"
+  StackWebAppUrl:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /txing/stack/WebAppUrl
+    Description: SSM parameter containing the Cloudflare Pages production web app URL without a trailing slash.
   TxingVersion:
     Type: String
+    Default: 0.9.124
     Description: Effective txing repo version deployed with this stack.
     AllowedPattern: "^[0-9]+\\.[0-9]+\\.[0-9]+(\\+[A-Za-z0-9.]+)?$"
 
@@ -32,11 +32,11 @@ Resources:
     Properties:
       TemplateURL: templates/base.yaml
       Parameters:
-        CognitoDomainPrefix: !Ref CognitoDomainPrefix
-        AdminEmail: !Ref AdminEmail
+        CognitoDomainPrefix: !Ref StackCognitoDomainPrefix
+        AdminEmail: !Ref StackAdminEmail
         LocalhostAppUrl: !Ref LocalhostAppUrl
         LocalhostAltAppUrl: !Ref LocalhostAltAppUrl
-        WebAppUrl: !Ref WebAppUrl
+        WebAppUrl: !Ref StackWebAppUrl
 
   TownTypeCatalog:
     Type: AWS::CloudFormation::Stack

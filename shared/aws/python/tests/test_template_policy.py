@@ -208,9 +208,6 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         daemon_env_template = (
             REPO_ROOT / "devices" / "unit" / "daemon" / "daemon.env.template"
         ).read_text(encoding="utf-8")
-        aws_env_example = (REPO_ROOT / "config" / "aws.env.example").read_text(
-            encoding="utf-8"
-        )
         root_gitignore = (REPO_ROOT / ".gitignore").read_text(encoding="utf-8")
 
         self.assertIn("mod daemon 'daemon/justfile'", unit_justfile)
@@ -226,7 +223,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("iot_role_alias=\"txing-daemon-$effective_thing_name\"", daemon_justfile)
         self.assertIn("credentials.iot.amazonaws.com", daemon_justfile)
         self.assertIn("DaemonSparkplugShadowRead", daemon_justfile)
-        self.assertIn("arn:${partition}:iot:${AWS_REGION}:${account_id}:thing/${effective_thing_name}/sparkplug", daemon_justfile)
+        self.assertIn("arn:${partition}:iot:${TXING_AWS_REGION}:${account_id}:thing/${effective_thing_name}/sparkplug", daemon_justfile)
         self.assertIn('cloudwatch_log_group="txing/${TXING_TOWN_ID}/${TXING_RIG_ID}/${effective_thing_name}"', daemon_justfile)
         self.assertIn("DaemonCloudWatchLogsWrite", daemon_justfile)
         self.assertIn("logs:CreateLogGroup", daemon_justfile)
@@ -234,12 +231,12 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("logs:DescribeLogStreams", daemon_justfile)
         self.assertIn("DaemonBoardVideoMaster", daemon_justfile)
         self.assertIn("kinesisvideo:ConnectAsMaster", daemon_justfile)
-        self.assertIn("arn:${partition}:kinesisvideo:${AWS_REGION}:${account_id}:channel/${effective_thing_name}-board-video/*", daemon_justfile)
+        self.assertIn("arn:${partition}:kinesisvideo:${TXING_AWS_REGION}:${account_id}:channel/${effective_thing_name}-board-video/*", daemon_justfile)
         self.assertIn('role-policy thing_id=', daemon_justfile)
         self.assertIn("logs:PutRetentionPolicy", daemon_justfile)
         self.assertIn("logs:PutLogEvents", daemon_justfile)
-        self.assertIn("arn:${partition}:logs:${AWS_REGION}:${account_id}:log-group:${cloudwatch_log_group}", daemon_justfile)
-        self.assertIn("arn:${partition}:logs:${AWS_REGION}:${account_id}:log-group:${cloudwatch_log_group}:log-stream:*", daemon_justfile)
+        self.assertIn("arn:${partition}:logs:${TXING_AWS_REGION}:${account_id}:log-group:${cloudwatch_log_group}", daemon_justfile)
+        self.assertIn("arn:${partition}:logs:${TXING_AWS_REGION}:${account_id}:log-group:${cloudwatch_log_group}:log-stream:*", daemon_justfile)
         self.assertIn("create-role-alias", daemon_justfile)
         self.assertIn("put-role-policy", daemon_justfile)
         self.assertIn("create-keys-and-certificate", daemon_justfile)
@@ -318,10 +315,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertGreater(max_wheel_linear_speed_mps, 0.0)
         self.assertNotIn("export BOARD_DRIVE_", daemon_env_template)
         self.assertNotIn("export BOARD_VIDEO_", daemon_env_template)
-        self.assertNotIn("BOARD_DRIVE_", aws_env_example)
-        self.assertNotIn("BOARD_VIDEO_", aws_env_example)
-        self.assertNotIn("KVS_DUALSTACK_ENDPOINTS", aws_env_example)
-        self.assertNotIn("stack_output \"$AWS_STACK_NAME\" PolicyName", daemon_justfile)
+        self.assertNotIn("AWS_STACK_NAME", daemon_justfile)
         self.assertNotIn("DeviceDaemonCredentialRoleAlias", daemon_justfile)
 
     def test_template_defines_greengrass_token_exchange_resources(self) -> None:
@@ -598,8 +592,24 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("export_line TXING_VERSION_BASE", root_justfile)
         self.assertIn("export_line TXING_VERSION", root_justfile)
         self.assertIn("TxingVersion:", root_template)
-        self.assertIn("WebAppUrl:", root_template)
-        self.assertIn("WebAppUrl: !Ref WebAppUrl", root_template)
+        self.assertIn(
+            f"Default: {(REPO_ROOT / 'VERSION').read_text(encoding='utf-8').strip()}",
+            root_template,
+        )
+        parameter_block = root_template.split("\nResources:", 1)[0]
+        self.assertIn("StackCognitoDomainPrefix:", parameter_block)
+        self.assertIn("StackAdminEmail:", parameter_block)
+        self.assertIn("StackWebAppUrl:", parameter_block)
+        self.assertNotIn("  CognitoDomainPrefix:\n", parameter_block)
+        self.assertNotIn("  AdminEmail:\n", parameter_block)
+        self.assertNotIn("  WebAppUrl:\n", parameter_block)
+        self.assertIn("Type: AWS::SSM::Parameter::Value<String>", root_template)
+        self.assertIn("Default: /txing/stack/CognitoDomainPrefix", root_template)
+        self.assertIn("Default: /txing/stack/AdminEmail", root_template)
+        self.assertIn("Default: /txing/stack/WebAppUrl", root_template)
+        self.assertIn("CognitoDomainPrefix: !Ref StackCognitoDomainPrefix", root_template)
+        self.assertIn("AdminEmail: !Ref StackAdminEmail", root_template)
+        self.assertIn("WebAppUrl: !Ref StackWebAppUrl", root_template)
         self.assertIn("TimeRuntimeVersion: !Ref TxingVersion", root_template)
         self.assertIn("Value: !Ref TxingVersion", root_template)
         self.assertIn("TimeRuntimeVersion:", cloud_time_template)
@@ -608,8 +618,11 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("Handler: rust.handler", cloud_time_template)
         self.assertIn("- arm64", cloud_time_template)
         self.assertNotIn('SERVER_VERSION: "0.5.0"', cloud_time_template)
-        self.assertIn('"TxingVersion=$TXING_VERSION"', aws_justfile)
-        self.assertIn('"WebAppUrl=$web_app_url"', aws_justfile)
+        self.assertNotIn("--parameter-overrides", aws_justfile)
+        self.assertNotIn('"TxingVersion=', aws_justfile)
+        self.assertNotIn('"CognitoDomainPrefix=', aws_justfile)
+        self.assertNotIn('"AdminEmail=', aws_justfile)
+        self.assertNotIn('"WebAppUrl=', aws_justfile)
 
     def test_web_hosting_is_external_to_aws_stack(self) -> None:
         template = _template_text()
@@ -622,7 +635,8 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertNotIn("WebAppDistributionId:", template)
         self.assertNotIn("WebAppBucketName:", root_template)
         self.assertNotIn("WebAppDistributionId:", root_template)
-        self.assertIn('Default: https://office.txing.dev', root_template)
+        self.assertNotIn('Default: https://office.txing.dev', root_template)
+        self.assertIn('Default: https://office.txing.dev', template)
         self.assertIn('- !Sub "${WebAppUrl}/"', template)
 
     def test_static_manifests_use_plain_semver_only(self) -> None:
@@ -653,7 +667,14 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         ]
         text = "\n".join(path.read_text(encoding="utf-8") for path in checked_paths)
 
-        self.assertIn("deploy CognitoDomainPrefix", text)
+        self.assertIn("deploy-init parameter_file", text)
+        self.assertIn("aws ssm put-parameter", text)
+        self.assertIn("deploy_init_parameter_name()", text)
+        self.assertIn("/txing/stack", text)
+        self.assertIn("deploy stack_name=stack_name", text)
+        self.assertNotIn("--parameter-overrides", text)
+        self.assertNotIn("deploy CognitoDomainPrefix", text)
+        self.assertNotIn("aws ssm get-parameter", text)
         self.assertIn("deploy-town town_name", text)
         self.assertIn("deploy-rig town_id", text)
         self.assertIn("deploy-device rig_id", text)
@@ -678,8 +699,6 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertNotIn(".state", text)
         self.assertNotIn("local_state_dir", text)
         self.assertNotIn("packaged_template_file", text)
-        self.assertNotIn("config/aws.config", text)
-        self.assertNotIn("aws_config_file", text)
         self.assertNotIn("config/rig.env", text)
         self.assertNotIn("config/board.env", text)
         self.assertNotIn("python -m aws.type_catalog \\\n      --region \"$AWS_REGION\" \\\n      sync", text)
@@ -715,11 +734,11 @@ class AwsTemplatePolicyTests(unittest.TestCase):
     def test_aws_justfile_enables_thing_connectivity_indexing(self) -> None:
         justfile = (AWS_DIR / "justfile").read_text(encoding="utf-8")
         deploy_recipe = justfile.split("deploy ", 1)[1].split("\n\n", 1)[0]
-        configure_recipe = justfile.split("configure-indexing ", 1)[1].split("\n\n", 1)[0]
+        configure_recipe = justfile.split("configure-indexing:", 1)[1].split("\n\n", 1)[0]
         aws_lib = (AWS_DIR / "scripts" / "aws_lib.sh").read_text(encoding="utf-8")
 
         self.assertNotIn("configure_indexing_and_wait", deploy_recipe)
-        self.assertIn("configure-indexing region=region profile=profile", justfile)
+        self.assertIn("configure-indexing:", justfile)
         self.assertIn("configure_indexing_and_wait", configure_recipe)
         self.assertIn('"thingConnectivityIndexingMode":"STATUS"', aws_lib)
         self.assertIn('[ "$thing_connectivity_indexing_mode" = "STATUS" ]', aws_lib)

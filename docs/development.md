@@ -63,22 +63,21 @@ artifacts:
   actions. The installed systemd service starts offline from exact root-owned
   binary paths and does not call GitHub during normal service restart.
 
-## Project-Local AWS Config
+## Operator AWS Config
 
-The default workflow keeps AWS config in the checkout:
-
-```bash
-cp config/aws.env.example config/aws.env
-cp config/aws.credentials.example config/aws.credentials
-```
-
-Profile wrappers:
+Native AWS CLI configuration is the source of truth for AWS account,
+credentials, selected profile, and region. `TXING_AWS_STACK` and optional
+selected thing IDs come from the operator shell. The wrapper recipes run plain
+AWS CLI commands:
 
 - `just aws-town ...`
 - `just aws-rig ...`
 - `just aws-device ...`
 
 AWS bring-up and destructive rebuild steps live in [aws.md](./aws.md).
+Web/admin base stack parameters are initialized separately with
+`just aws::deploy-init`; CloudFormation reads the resulting `/txing/stack/*`
+SSM Parameter Store values during `aws::deploy`.
 
 ## Task Runner
 

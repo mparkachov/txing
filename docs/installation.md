@@ -11,19 +11,14 @@ component that owns the host behavior.
 - Stable rig hosts receive txing components through Greengrass cloud
   deployments and do not need a source checkout, `mise`, AWS CLI, or AWS access
   keys.
-- Project-local AWS config in a checkout stays under `config/`.
-- Operator AWS config stays under `config/` in a checkout, or in an explicit
-  operator config directory passed to deployment commands.
-- `aws.env` is the single non-secret AWS/runtime config file for operator
-  commands and board/rig setup.
-- `aws.credentials` holds the source `town` credentials.
-
-Initialize local config files on the operator/development machine:
-
-```bash
-cp config/aws.env.example config/aws.env
-cp config/aws.credentials.example config/aws.credentials
-```
+- Operator AWS account, credentials, profile selection, and region come from
+  native AWS CLI configuration.
+- Stack-backed operator commands and deploys fail unless `TXING_AWS_STACK` is
+  set explicitly in the operator environment or passed as a positional stack
+  name where supported.
+- The one-off `just aws::deploy-init` step stores web/admin deploy parameters
+  from `shared/aws/deploy-init.json` as separate `/txing/stack/*` SSM Parameter
+  Store values before the first base stack deployment.
 
 ## Development Machine
 

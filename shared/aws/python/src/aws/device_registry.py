@@ -8,7 +8,7 @@ import random
 import re
 from typing import Any
 
-from .auth import AwsRuntime, build_aws_runtime, ensure_aws_profile, resolve_aws_region
+from .auth import AwsRuntime, build_aws_runtime, resolve_aws_region
 from .device_catalog import DeviceManifest, discover_repo_root, load_device_manifest
 from .sparkplug_shadow import (
     build_offline_device_shadow_payload,
@@ -824,7 +824,6 @@ class AwsDeviceRegistry:
 
 
 def _build_registry(*, region_name: str, repo_root: Path | None) -> AwsDeviceRegistry:
-    ensure_aws_profile("AWS_SELECTED_PROFILE", "AWS_TOWN_PROFILE")
     runtime = build_aws_runtime(region_name=region_name)
     return AwsDeviceRegistry(runtime, repo_root=repo_root)
 
@@ -904,7 +903,7 @@ def main(argv: list[str] | None = None) -> int:
     region_name = args.region.strip() or resolve_aws_region()
     if not region_name:
         raise RuntimeError(
-            "AWS region is required; set AWS_REGION/AWS_DEFAULT_REGION or pass --region"
+            "AWS region is required; configure an AWS CLI/SDK region or pass --region"
         )
 
     repo_root = Path(args.repo_root).resolve() if args.repo_root else None

@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 
 txing_aws_init() {
-  if [ -z "${AWS_REGION:-}" ]; then
-    echo "AWS_REGION is empty. Set it in config/aws.env or pass region=<aws-region>." >&2
+  if [ -z "${TXING_AWS_STACK:-}" ]; then
+    echo "TXING_AWS_STACK is required for stack-backed txing AWS commands." >&2
     return 1
   fi
-  aws_flags=(--region "$AWS_REGION")
-  if [ -n "${AWS_SELECTED_PROFILE:-}" ]; then
-    aws_flags+=(--profile "$AWS_SELECTED_PROFILE")
+  TXING_AWS_REGION="$(aws configure get region 2>/dev/null || true)"
+  if [ -z "$TXING_AWS_REGION" ]; then
+    echo "AWS CLI region is not configured. Set it with 'aws configure set region <aws-region>' or in your AWS CLI config." >&2
+    return 1
   fi
+  export TXING_AWS_REGION
 }
 
 stack_output() {
@@ -18,7 +20,6 @@ stack_output() {
   value="$(
     aws cloudformation describe-stacks \
       --stack-name "$stack_name" \
-      "${aws_flags[@]}" \
       --query "Stacks[0].Outputs[?OutputKey=='${output_key}'].OutputValue | [0]" \
       --output text
   )"
@@ -33,7 +34,6 @@ describe_stack_outputs() {
   local stack_name="$1"
   aws cloudformation describe-stacks \
     --stack-name "$stack_name" \
-    "${aws_flags[@]}" \
     --query "Stacks[0].Outputs" \
     --output table
 }
@@ -47,7 +47,6 @@ _resolve_unique_thing_name() {
       --index-name AWS_Things \
       --query-string "$query" \
       --max-results 2 \
-      "${aws_flags[@]}" \
       --query 'length(things)' \
       --output text
   )"
@@ -63,7 +62,6 @@ _resolve_unique_thing_name() {
     --index-name AWS_Things \
     --query-string "$query" \
     --max-results 1 \
-    "${aws_flags[@]}" \
     --query 'things[0].thingName' \
     --output text
 }
@@ -105,7 +103,6 @@ assume_stack_role() {
     aws sts assume-role \
       --role-arn "$role_arn" \
       --role-session-name "txing-${output_key}-$(date -u +%Y%m%dT%H%M%SZ)" \
-      "${aws_flags[@]}" \
       --query Credentials \
       --output json
   )"
@@ -115,14 +112,12 @@ assume_stack_role() {
   AWS_ACCESS_KEY_ID="$(jq -r '.AccessKeyId' <<<"$creds")"
   AWS_SECRET_ACCESS_KEY="$(jq -r '.SecretAccessKey' <<<"$creds")"
   AWS_SESSION_TOKEN="$(jq -r '.SessionToken' <<<"$creds")"
-  unset AWS_PROFILE AWS_DEFAULT_PROFILE
-  aws_flags=(--region "$AWS_REGION")
 }
 
 artifact_bucket_name() {
   local account_id
-  account_id="$(aws sts get-caller-identity "${aws_flags[@]}" --query Account --output text)"
-  printf 'txing-cfn-%s-%s-%s' "$account_id" "$AWS_REGION" "$AWS_STACK_NAME" \
+  account_id="$(aws sts get-caller-identity --query Account --output text)"
+  printf 'txing-cfn-%s-%s-%s' "$account_id" "$TXING_AWS_REGION" "$TXING_AWS_STACK" \
     | tr '[:upper:]' '[:lower:]' \
     | tr -cs 'a-z0-9.-' '-' \
     | sed 's/^-*//; s/-*$//' \
@@ -132,8 +127,13 @@ artifact_bucket_name() {
 
 legacy_time_lambda_artifact_bucket_name() {
   local account_id
-  account_id="$(aws sts get-caller-identity "${aws_flags[@]}" --query Account --output text)"
-  printf 'txing-time-lambda-%s-%s\n' "$account_id" "$AWS_REGION"
+  account_id="$(aws sts get-caller-identity --query Account --output text)"
+  printf 'txing-time-lambda-%s-%s\n' "$account_id" "$TXING_AWS_REGION"
+}
+
+deploy_init_parameter_name() {
+  local parameter_key="$1"
+  printf '/txing/stack/%s' "$parameter_key"
 }
 
 ensure_artifact_bucket() {
@@ -145,14 +145,13 @@ ensure_artifact_bucket() {
     echo "failed to derive CloudFormation artifact bucket name" >&2
     return 1
   fi
-  if ! aws s3api head-bucket --bucket "$bucket_name" "${aws_flags[@]}" >/dev/null 2>&1; then
-    if [ "$AWS_REGION" = "us-east-1" ]; then
-      aws s3api create-bucket --bucket "$bucket_name" "${aws_flags[@]}" >/dev/null
+  if ! aws s3api head-bucket --bucket "$bucket_name" >/dev/null 2>&1; then
+    if [ "$TXING_AWS_REGION" = "us-east-1" ]; then
+      aws s3api create-bucket --bucket "$bucket_name" >/dev/null
     else
       aws s3api create-bucket \
         --bucket "$bucket_name" \
-        --create-bucket-configuration "LocationConstraint=$AWS_REGION" \
-        "${aws_flags[@]}" >/dev/null
+        --create-bucket-configuration "LocationConstraint=$TXING_AWS_REGION" >/dev/null
     fi
   fi
   printf '%s\n' "$bucket_name"
@@ -163,12 +162,12 @@ empty_s3_bucket() {
   local page
   local delete_batch
   local delete_count
-  if ! aws s3api head-bucket --bucket "$bucket_name" "${aws_flags[@]}" >/dev/null 2>&1; then
+  if ! aws s3api head-bucket --bucket "$bucket_name" >/dev/null 2>&1; then
     echo "skip: bucket $bucket_name does not exist or is not accessible"
     return 0
   fi
   while true; do
-    page="$(aws s3api list-object-versions --bucket "$bucket_name" "${aws_flags[@]}" --output json)"
+    page="$(aws s3api list-object-versions --bucket "$bucket_name" --output json)"
     delete_batch="$(
       jq -c '{Objects: (((.Versions // []) + (.DeleteMarkers // [])) | map({Key, VersionId})), Quiet: true}' <<<"$page"
     )"
@@ -178,11 +177,10 @@ empty_s3_bucket() {
     fi
     aws s3api delete-objects \
       --bucket "$bucket_name" \
-      --delete "$delete_batch" \
-      "${aws_flags[@]}" >/dev/null
+      --delete "$delete_batch" >/dev/null
   done
   while true; do
-    page="$(aws s3api list-objects-v2 --bucket "$bucket_name" "${aws_flags[@]}" --output json)"
+    page="$(aws s3api list-objects-v2 --bucket "$bucket_name" --output json)"
     delete_batch="$(
       jq -c '{Objects: ((.Contents // []) | map({Key})), Quiet: true}' <<<"$page"
     )"
@@ -192,20 +190,19 @@ empty_s3_bucket() {
     fi
     aws s3api delete-objects \
       --bucket "$bucket_name" \
-      --delete "$delete_batch" \
-      "${aws_flags[@]}" >/dev/null
+      --delete "$delete_batch" >/dev/null
   done
   echo "emptied bucket $bucket_name"
 }
 
 delete_s3_bucket_if_exists() {
   local bucket_name="$1"
-  if ! aws s3api head-bucket --bucket "$bucket_name" "${aws_flags[@]}" >/dev/null 2>&1; then
+  if ! aws s3api head-bucket --bucket "$bucket_name" >/dev/null 2>&1; then
     echo "skip: bucket $bucket_name does not exist or is not accessible"
     return 0
   fi
   empty_s3_bucket "$bucket_name"
-  aws s3api delete-bucket --bucket "$bucket_name" "${aws_flags[@]}"
+  aws s3api delete-bucket --bucket "$bucket_name"
   echo "deleted bucket $bucket_name"
 }
 
@@ -222,15 +219,13 @@ deploy_template() {
   aws cloudformation package \
     --template-file "$template_file" \
     --s3-bucket "$artifact_bucket" \
-    --output-template-file "$packaged_template" \
-    "${aws_flags[@]}"
+    --output-template-file "$packaged_template"
   aws cloudformation deploy \
     --stack-name "$stack_name" \
     --template-file "$packaged_template" \
     --capabilities CAPABILITY_IAM \
     --no-fail-on-empty-changeset \
-    "$@" \
-    "${aws_flags[@]}"
+    "$@"
   rm -rf "$packaged_template_dir"
 }
 
@@ -239,15 +234,14 @@ invoke_enlist_payload_file() {
   local function_name
   local response_file
   local invoke_metadata_file
-  function_name="$(stack_output "$AWS_STACK_NAME" EnlistFunctionName)"
+  function_name="$(stack_output "$TXING_AWS_STACK" EnlistFunctionName)"
   response_file="$(mktemp "${TMPDIR:-/tmp}/txing-enlist-response.XXXXXX")"
   invoke_metadata_file="$(mktemp "${TMPDIR:-/tmp}/txing-enlist-metadata.XXXXXX")"
   aws lambda invoke \
     --function-name "$function_name" \
     --cli-binary-format raw-in-base64-out \
     --payload "fileb://$payload_file" \
-    "$response_file" \
-    "${aws_flags[@]}" >"$invoke_metadata_file"
+    "$response_file" >"$invoke_metadata_file"
   if jq -e '.FunctionError? // empty' "$invoke_metadata_file" >/dev/null; then
     cat "$response_file" >&2
     rm -f "$response_file" "$invoke_metadata_file"
@@ -270,25 +264,21 @@ configure_indexing_and_wait() {
   local indexing_custom_fields
   thing_indexing_configuration='{"thingIndexingMode":"REGISTRY","thingConnectivityIndexingMode":"STATUS","customFields":[{"name":"attributes.name","type":"String"},{"name":"attributes.kind","type":"String"},{"name":"attributes.townId","type":"String"},{"name":"attributes.rigId","type":"String"}]}'
   aws iot update-indexing-configuration \
-    "${aws_flags[@]}" \
     --thing-indexing-configuration "$thing_indexing_configuration"
   deadline=$(( $(date +%s) + 90 ))
   while :; do
     thing_indexing_mode="$(
       aws iot get-indexing-configuration \
-        "${aws_flags[@]}" \
         --query "thingIndexingConfiguration.thingIndexingMode" \
         --output text 2>/dev/null || true
     )"
     thing_connectivity_indexing_mode="$(
       aws iot get-indexing-configuration \
-        "${aws_flags[@]}" \
         --query "thingIndexingConfiguration.thingConnectivityIndexingMode" \
         --output text 2>/dev/null || true
     )"
     indexing_custom_fields="$(
       aws iot get-indexing-configuration \
-        "${aws_flags[@]}" \
         --query "thingIndexingConfiguration.customFields[].name" \
         --output text 2>/dev/null || true
     )"
@@ -307,7 +297,6 @@ configure_indexing_and_wait() {
     sleep 3
   done
   aws iot get-indexing-configuration \
-    "${aws_flags[@]}" \
     --query "thingIndexingConfiguration" \
     --output json
 }

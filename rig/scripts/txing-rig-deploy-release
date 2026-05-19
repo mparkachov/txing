@@ -6,8 +6,8 @@ usage() {
 Usage: txing-rig-deploy-release [latest|vX.Y.Z|X.Y.Z] [raspi|cloud|all]
 
 Downloads txing rig binaries from a GitHub stable release with gh, then
-publishes those binaries as AWS IoT Greengrass component artifacts using the
-release's txing-rig-deploy shell script. Run this from an operator machine with
+publishes those binaries as AWS IoT Greengrass component artifacts using this
+checkout's txing-rig-deploy shell script. Run this from an operator machine with
 AWS credentials. The downloaded Linux component binaries are uploaded to S3 and
 are not executed locally.
 EOF
@@ -20,6 +20,7 @@ fail() {
 
 release_ref="${1:-latest}"
 target="${2:-all}"
+script_dir="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 if [ "$#" -gt 2 ]; then
   usage
   exit 2
@@ -110,26 +111,16 @@ extract_binary_asset() {
 sparkplug_asset="txing-sparkplug-manager-linux-aarch64.tar.gz"
 ble_asset="txing-ble-connectivity-linux-aarch64.tar.gz"
 aws_asset="txing-aws-connectivity-linux-aarch64.tar.gz"
-deploy_asset="txing-rig-deploy-linux-aarch64.tar.gz"
 
 download_asset "$sparkplug_asset"
 download_asset "$ble_asset"
 download_asset "$aws_asset"
-download_asset "$deploy_asset"
 
 sparkplug_binary="$(extract_binary_asset "$sparkplug_asset" txing-sparkplug-manager)"
 ble_binary="$(extract_binary_asset "$ble_asset" txing-ble-connectivity)"
 aws_binary="$(extract_binary_asset "$aws_asset" txing-aws-connectivity)"
-deploy_binary="$(extract_binary_asset "$deploy_asset" txing-rig-deploy)"
-case "$(head -n 1 "$deploy_binary")" in
-  '#!'*) ;;
-  *) fail "$deploy_asset did not contain a shell script deploy helper" ;;
-esac
-
-if [ -z "${TXING_RIG_ENV_FILE:-}" ] && [ -r "$PWD/config/aws.env" ]; then
-  export TXING_RIG_CONFIG_DIR="$PWD"
-  export TXING_RIG_ENV_FILE="$PWD/config/aws.env"
-fi
+deploy_binary="${TXING_RIG_DEPLOY_SCRIPT:-$script_dir/txing-rig-deploy}"
+[ -x "$deploy_binary" ] || fail "txing-rig-deploy helper is missing or not executable: $deploy_binary"
 
 printf 'deploying txing stable release %s to Greengrass target=%s from %s\n' "$release_tag" "$target" "$repo_full"
 

@@ -172,8 +172,8 @@ class VideoSenderTests(unittest.TestCase):
             {
                 "AWS_PROFILE": "txing",
                 "AWS_DEFAULT_PROFILE": "txing",
-                "AWS_SHARED_CREDENTIALS_FILE": "config/aws.credentials",
-                "AWS_CONFIG_FILE": "config/aws.config",
+                "AWS_SHARED_CREDENTIALS_FILE": "/tmp/aws-credentials",
+                "AWS_CONFIG_FILE": "/tmp/aws-config",
                 "AWS_SESSION_TOKEN": "stale-token",
             },
             clear=True,
@@ -224,8 +224,8 @@ class VideoSenderTests(unittest.TestCase):
                 "BOARD_VIDEO_READY_PATTERN": "^READY$",
                 "BOARD_VIDEO_VIEWER_CONNECTED_PATTERN": "^CONNECTED$",
                 "BOARD_VIDEO_VIEWER_DISCONNECTED_PATTERN": "^DISCONNECTED$",
-                "AWS_SHARED_CREDENTIALS_FILE": "/tmp/credentials",
-                "AWS_CONFIG_FILE": "/tmp/config",
+                "AWS_SHARED_CREDENTIALS_FILE": "/tmp/aws-credentials",
+                "AWS_CONFIG_FILE": "/tmp/aws-config",
             },
             clear=True,
         ):
@@ -240,8 +240,8 @@ class VideoSenderTests(unittest.TestCase):
                 args = video_sender._parse_args()
 
         self.assertEqual(args.sender_command, "/tmp/txing-board-kvs-master")
-        self.assertEqual(str(args.aws_shared_credentials_file), "/tmp/credentials")
-        self.assertEqual(str(args.aws_config_file), "/tmp/config")
+        self.assertEqual(str(args.aws_shared_credentials_file), "/tmp/aws-credentials")
+        self.assertEqual(str(args.aws_config_file), "/tmp/aws-config")
         self.assertEqual(args.ready_pattern, "^READY$")
         self.assertEqual(args.viewer_connected_pattern, "^CONNECTED$")
         self.assertEqual(args.viewer_disconnected_pattern, "^DISCONNECTED$")
@@ -252,8 +252,8 @@ class VideoSenderTests(unittest.TestCase):
             os.environ,
             {
                 "AWS_TXING_PROFILE": "txing",
-                "AWS_SHARED_CREDENTIALS_FILE": "config/aws.credentials",
-                "AWS_CONFIG_FILE": "config/aws.config",
+                "AWS_SHARED_CREDENTIALS_FILE": "/tmp/aws-credentials",
+                "AWS_CONFIG_FILE": "/tmp/aws-config",
             },
             clear=True,
         ):
@@ -268,11 +268,11 @@ class VideoSenderTests(unittest.TestCase):
         self.assertEqual(environment["AWS_DEFAULT_PROFILE"], "txing")
         self.assertEqual(
             environment["AWS_SHARED_CREDENTIALS_FILE"],
-            str((Path("/repo") / "config/aws.credentials").resolve()),
+            str(Path("/tmp/aws-credentials").resolve()),
         )
         self.assertEqual(
             environment["AWS_CONFIG_FILE"],
-            str((Path("/repo") / "config/aws.config").resolve()),
+            str(Path("/tmp/aws-config").resolve()),
         )
 
     def test_build_supervisor_environment_prefers_explicit_credentials(self) -> None:
@@ -280,15 +280,15 @@ class VideoSenderTests(unittest.TestCase):
             os.environ,
             {
                 "AWS_TXING_PROFILE": "txing",
-                "AWS_SHARED_CREDENTIALS_FILE": "config/aws.credentials",
-                "AWS_CONFIG_FILE": "config/aws.config",
+                "AWS_SHARED_CREDENTIALS_FILE": "/tmp/aws-credentials",
+                "AWS_CONFIG_FILE": "/tmp/aws-config",
             },
             clear=True,
         ):
             environment = video_sender._build_supervisor_environment(
                 cwd=Path("/repo"),
-                aws_shared_credentials_file=Path("config/aws.credentials"),
-                aws_config_file=Path("config/aws.config"),
+                aws_shared_credentials_file=Path("/tmp/aws-credentials"),
+                aws_config_file=Path("/tmp/aws-config"),
                 aws_credentials=AwsCredentialSnapshot(
                     access_key_id="env-access",
                     secret_access_key="env-secret",
@@ -326,8 +326,8 @@ class VideoSenderTests(unittest.TestCase):
                     channel_name="txing-board-video",
                     region="eu-central-1",
                     sender_command="/tmp/txing-board-kvs-master",
-                    aws_shared_credentials_file=Path("config/aws.credentials"),
-                    aws_config_file=Path("config/aws.config"),
+                    aws_shared_credentials_file=Path("/tmp/aws-credentials"),
+                    aws_config_file=Path("/tmp/aws-config"),
                     working_directory=Path("/stable-repo"),
                     mcp_webrtc_socket_path=Path("runtime/mcp.sock"),
                 )
@@ -343,11 +343,11 @@ class VideoSenderTests(unittest.TestCase):
         self.assertEqual(environment["AWS_DEFAULT_PROFILE"], "txing")
         self.assertEqual(
             environment["AWS_SHARED_CREDENTIALS_FILE"],
-            str((Path("/stable-repo") / "config/aws.credentials").resolve()),
+            str(Path("/tmp/aws-credentials").resolve()),
         )
         self.assertEqual(
             environment["AWS_CONFIG_FILE"],
-            str((Path("/stable-repo") / "config/aws.config").resolve()),
+            str(Path("/tmp/aws-config").resolve()),
         )
 
     @patch("board.video_sender.subprocess.Popen")
@@ -359,8 +359,8 @@ class VideoSenderTests(unittest.TestCase):
             os.environ,
             {
                 "AWS_TXING_PROFILE": "txing",
-                "AWS_SHARED_CREDENTIALS_FILE": "config/aws.credentials",
-                "AWS_CONFIG_FILE": "config/aws.config",
+                "AWS_SHARED_CREDENTIALS_FILE": "/tmp/aws-credentials",
+                "AWS_CONFIG_FILE": "/tmp/aws-config",
             },
             clear=True,
         ):
@@ -373,8 +373,8 @@ class VideoSenderTests(unittest.TestCase):
                     channel_name="txing-board-video",
                     region="eu-central-1",
                     sender_command="/tmp/txing-board-kvs-master",
-                    aws_shared_credentials_file=Path("config/aws.credentials"),
-                    aws_config_file=Path("config/aws.config"),
+                    aws_shared_credentials_file=Path("/tmp/aws-credentials"),
+                    aws_config_file=Path("/tmp/aws-config"),
                     aws_credentials=AwsCredentialSnapshot(
                         access_key_id="env-access",
                         secret_access_key="env-secret",

@@ -6,42 +6,63 @@ state, generated AWS config files, or hidden certificate paths.
 
 Prefer the AWS CLI for control-plane work. The `just aws-town ...`,
 `just aws-rig ...`, and `just aws-device ...` recipes are thin wrappers around
-`aws` with `config/aws.env` and `config/aws.credentials` applied.
+plain `aws` calls. Txing identifiers come from environment variables or explicit
+positional recipe arguments.
 Install operator CLIs with mise if they are not already available:
 
 ```bash
 mise use --global aws-cli@latest gh@latest jq@latest
 ```
 
-## Local Config
+## Native AWS Config
 
-Initialize and edit only these files:
+AWS account, credentials, selected profile, and region come from native AWS CLI
+configuration. Verify the operator shell can resolve both before running stack
+recipes:
 
 ```bash
-cp config/aws.env.example config/aws.env
-cp config/aws.credentials.example config/aws.credentials
+aws configure get region
+aws sts get-caller-identity
 ```
 
-`config/aws.env` is the single non-secret AWS access/config file. It defines
-the AWS region/source profile, base stack name, optional selected generated
-thing IDs (`TXING_TOWN_ID`, `TXING_RIG_ID`, `TXING_THING_ID`), Cognito admin
-settings, and local board/rig runtime settings. It does not define an SSM
-catalog root; the type catalog root is always `/txing`.
-
-`config/aws.credentials` contains the source AWS access keys only. Do not create
-repo-local generated AWS profile files; recipes resolve stack outputs and AWS IoT
-registry values live.
+Set `TXING_AWS_STACK` explicitly before running stack-backed commands such as
+`just aws::deploy`, `just aws::check`, `just web::write-env`,
+`just rig::deploy-release`, and `just unit::cert`. Export it in the operator
+shell or pass a positional stack name to recipes that accept one. Those commands
+fail if `TXING_AWS_STACK` is unset and no positional stack name is provided.
+Optional selected generated thing IDs (`TXING_TOWN_ID`, `TXING_RIG_ID`,
+`TXING_THING_ID`) also come from the operator shell. Web/admin deploy parameters
+are initialized with `aws::deploy-init`; the type catalog root is always
+`/txing`. Recipes resolve stack outputs and AWS IoT registry values live.
 
 ## Bring-Up Order
 
 Run the setup in this order:
 
 ```bash
+export TXING_AWS_STACK=town
+cp shared/aws/deploy-init.example.json shared/aws/deploy-init.json
+$EDITOR shared/aws/deploy-init.json
+just aws::deploy-init
 just aws::deploy
 just aws::deploy-town town
 just aws::deploy-rig <town-id> raspi server
 just aws::deploy-device <rig-id> unit bot
 ```
+
+`just aws::deploy-init` is a one-off manual step before first installation. It
+reads `shared/aws/deploy-init.json` and stores the web/admin deploy parameters
+as separate SSM Parameter Store parameters:
+
+- `/txing/stack/CognitoDomainPrefix`
+- `/txing/stack/AdminEmail`
+- `/txing/stack/WebAppUrl`
+
+After that, `just aws::deploy` does not pass these values during deployment;
+the CloudFormation template reads the SSM parameters directly. `aws::deploy`
+can run without the JSON file or any repository config file present on disk, as
+long as `TXING_AWS_STACK` is provided in the environment or as a positional stack
+name.
 
 `just aws::deploy` deploys the base root stack. That root stack owns Cognito
 for web authentication, common IoT policies, artifact buckets, the Sparkplug
@@ -111,7 +132,7 @@ Do not set `VITE_TXING_VERSION`, `VITE_DEVICE_THING_NAME`, or
 build from the root `VERSION` file, and the admin SPA discovers rigs and devices
 from the configured town.
 
-The base stack parameter `WebAppUrl` defaults to `https://office.txing.dev`.
+The base stack reads `WebAppUrl` from `/txing/stack/WebAppUrl`.
 Cognito callback and logout URLs are:
 
 - `https://office.txing.dev/`
@@ -141,9 +162,9 @@ just rig::check <rig-id>
 just unit::board::check
 ```
 
-Production rig services run as Greengrass Lite components. Local command wrappers
-use `config/aws.env` and live AWS resolution; they do not depend on generated
-local AWS config files.
+Production rig services run as Greengrass Lite components. Local command
+wrappers use native AWS CLI configuration and live AWS resolution; they do not
+depend on generated local AWS config files.
 
 ## Important Naming Rule
 
@@ -215,7 +236,7 @@ configuration.
 For a full teardown, delete resources in reverse dependency order:
 
 ```bash
-just aws-town cloudformation delete-stack --stack-name "$AWS_STACK_NAME"
+just aws-town cloudformation delete-stack --stack-name "$TXING_AWS_STACK"
 ```
 
 The base stack has delete-time cleanup custom resources for disposable S3 bucket

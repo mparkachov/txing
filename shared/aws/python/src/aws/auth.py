@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import json
 import logging
 import os
+import subprocess
 import time
 from typing import Any, Callable, Mapping
 import urllib.request
@@ -65,7 +66,22 @@ def resolve_aws_region() -> str | None:
         if region:
             return region
     if boto3 is not None:
-        return boto3.session.Session().region_name
+        region = boto3.session.Session().region_name
+        if region:
+            return region
+    try:
+        result = subprocess.run(
+            ["aws", "configure", "get", "region"],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+    except OSError:
+        return None
+    region = result.stdout.strip()
+    if region:
+        return region
     return None
 
 

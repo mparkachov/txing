@@ -51,7 +51,7 @@ _project-version-env:
     export_line TXING_GIT_DIRTY_HASH "$txing_git_dirty_hash"
 
 [private]
-_project-aws-env scope='aws' region='' profile='' stack_name='' cognito_domain_prefix='' admin_email='' aws_shared_credentials_file='' env_file='':
+_project-aws-env scope='aws' stack_name='':
     #!/usr/bin/env bash
     set -euo pipefail
 
@@ -68,41 +68,13 @@ _project-aws-env scope='aws' region='' profile='' stack_name='' cognito_domain_p
       esac
     }
 
-    choose_value() {
-      local explicit="$1"
-      local fallback="$2"
-      if [ -n "$explicit" ]; then
-        printf '%s\n' "$explicit"
-      else
-        printf '%s\n' "$fallback"
-      fi
-    }
-
     export_line() {
       local name="$1"
       local value="$2"
       printf 'export %s=%q\n' "$name" "$value"
     }
 
-    caller_txing_town_id="${TXING_TOWN_ID:-}"
-    caller_txing_rig_id="${TXING_RIG_ID:-}"
-    caller_txing_thing_id="${TXING_THING_ID:-}"
-
-    env_file="$(resolve_path "$(choose_value "{{ env_file }}" "config/aws.env")")"
-    if [ -f "$env_file" ]; then
-      # shellcheck disable=SC1090
-      source "$env_file"
-    fi
-    if [ -n "$caller_txing_town_id" ]; then
-      TXING_TOWN_ID="$caller_txing_town_id"
-    fi
-    if [ -n "$caller_txing_rig_id" ]; then
-      TXING_RIG_ID="$caller_txing_rig_id"
-    fi
-    if [ -n "$caller_txing_thing_id" ]; then
-      TXING_THING_ID="$caller_txing_thing_id"
-    fi
-    unset AWS_CONFIG_FILE RIG_ENV_FILE BOARD_ENV_FILE
+    unset RIG_ENV_FILE BOARD_ENV_FILE
 
     normalize_slug() {
       printf '%s\n' "$1" \
@@ -116,6 +88,16 @@ _project-aws-env scope='aws' region='' profile='' stack_name='' cognito_domain_p
       local value="$2"
       if [ -z "$value" ]; then
         echo "Missing required $label." >&2
+        exit 1
+      fi
+      printf '%s\n' "$value"
+    }
+
+    resolve_aws_cli_region() {
+      local value
+      value="$(aws configure get region 2>/dev/null || true)"
+      if [ -z "$value" ]; then
+        echo "AWS CLI region is not configured. Set it with 'aws configure set region <aws-region>' or in your AWS CLI config." >&2
         exit 1
       fi
       printf '%s\n' "$value"
@@ -148,27 +130,14 @@ _project-aws-env scope='aws' region='' profile='' stack_name='' cognito_domain_p
 
     eval "$(just --justfile "$project_root/justfile" _project-version-env)"
 
-    aws_region="$(require_value AWS_REGION "$(choose_value "{{ region }}" "${AWS_REGION:-}")")"
-    aws_stack_name="$(choose_value "{{ stack_name }}" "${AWS_STACK_NAME:-txing-iot}")"
-    aws_cognito_domain_prefix="$(choose_value "{{ cognito_domain_prefix }}" "${AWS_COGNITO_DOMAIN_PREFIX:-txing-iot}")"
-    aws_admin_email="$(choose_value "{{ admin_email }}" "${AWS_ADMIN_EMAIL:-admin@example.com}")"
-    aws_web_app_url="${AWS_WEB_APP_URL:-https://office.txing.dev}"
-    aws_source_profile="${AWS_SOURCE_PROFILE:-${AWS_TOWN_PROFILE:-${AWS_PROFILE:-}}}"
-    aws_town_profile="$aws_source_profile"
-    aws_selected_profile="$(choose_value "{{ profile }}" "${AWS_SELECTED_PROFILE:-$aws_source_profile}")"
-    aws_shared_credentials_file="$(resolve_path "$(choose_value "{{ aws_shared_credentials_file }}" "${AWS_SHARED_CREDENTIALS_FILE:-config/aws.credentials}")")"
-
-    aws_lookup_flags=(--region "$aws_region")
-    if [ -n "$aws_selected_profile" ]; then
-      aws_lookup_flags+=(--profile "$aws_selected_profile")
-    fi
+    aws_region="$(resolve_aws_cli_region)"
+    requested_stack_name="{{ stack_name }}"
+    txing_aws_stack="$(require_value TXING_AWS_STACK "${requested_stack_name:-${TXING_AWS_STACK:-}}")"
 
     describe_thing_json() {
       local thing_id="$1"
-      AWS_SHARED_CREDENTIALS_FILE="$aws_shared_credentials_file" \
       aws iot describe-thing \
         --thing-name "$thing_id" \
-        "${aws_lookup_flags[@]}" \
         --output json
     }
 
@@ -254,21 +223,10 @@ _project-aws-env scope='aws' region='' profile='' stack_name='' cognito_domain_p
     export_line TXING_GIT_SHA "$TXING_GIT_SHA"
     export_line TXING_GIT_DIRTY "$TXING_GIT_DIRTY"
     export_line TXING_GIT_DIRTY_HASH "$TXING_GIT_DIRTY_HASH"
-    export_line AWS_ENV_FILE "$env_file"
+    export_line TXING_AWS_STACK "$txing_aws_stack"
+    export_line TXING_AWS_REGION "$aws_region"
     printf 'unset RIG_ENV_FILE\n'
     printf 'unset BOARD_ENV_FILE\n'
-    printf 'unset AWS_CONFIG_FILE\n'
-    export_line AWS_REGION "$aws_region"
-    export_line AWS_STACK_NAME "$aws_stack_name"
-    export_line AWS_COGNITO_DOMAIN_PREFIX "$aws_cognito_domain_prefix"
-    export_line AWS_ADMIN_EMAIL "$aws_admin_email"
-    export_line AWS_WEB_APP_URL "$aws_web_app_url"
-    export_line AWS_SOURCE_PROFILE "$aws_source_profile"
-    export_line AWS_TOWN_PROFILE "$aws_town_profile"
-    export_line AWS_RIG_PROFILE "$aws_source_profile"
-    export_line AWS_DEVICE_PROFILE "$aws_source_profile"
-    export_line AWS_SELECTED_PROFILE "$aws_selected_profile"
-    export_line AWS_SHARED_CREDENTIALS_FILE "$aws_shared_credentials_file"
     export_line TXING_TOWN_ID "$txing_town_id"
     export_line TXING_RIG_ID "$txing_rig_id"
     export_line TXING_THING_ID "$txing_thing_id"
@@ -351,14 +309,6 @@ _project-aws-env scope='aws' region='' profile='' stack_name='' cognito_domain_p
       export_line BOARD_DRIVE_RIGHT_INVERTED "$board_drive_right_inverted"
     else
       printf 'unset BOARD_DRIVE_RIGHT_INVERTED\n'
-    fi
-    export_line AWS_DEFAULT_REGION "$aws_region"
-    if [ -n "$aws_selected_profile" ]; then
-      export_line AWS_PROFILE "$aws_selected_profile"
-      export_line AWS_DEFAULT_PROFILE "$aws_selected_profile"
-    else
-      printf 'unset AWS_PROFILE\n'
-      printf 'unset AWS_DEFAULT_PROFILE\n'
     fi
 
 [positional-arguments]

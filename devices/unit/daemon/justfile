@@ -7,8 +7,6 @@ root_justfile := project_root + "/justfile"
 aws_lib := project_root + "/shared/aws/scripts/aws_lib.sh"
 daemon_env_template := daemon_dir + "/daemon.env.template"
 
-region := ""
-profile := ""
 config_dir := ""
 prerelease_branch := "feature/unit-daemon-prerelease"
 prerelease_asset := "txing-unit-daemon-linux-aarch64.tar.gz"
@@ -20,7 +18,7 @@ prerelease_cargo_registry_volume := "txing-cargo-registry"
 prerelease_cargo_git_volume := "txing-cargo-git"
 prerelease_target_volume := "txing-unit-daemon-target"
 
-cert thing_id='' region=region profile=profile config_dir=config_dir:
+cert thing_id='' config_dir=config_dir:
     #!/usr/bin/env bash
     set -euo pipefail
     requested_thing_name="{{thing_id}}"
@@ -37,7 +35,7 @@ cert thing_id='' region=region profile=profile config_dir=config_dir:
       export TXING_THING_ID="$requested_thing_name"
     fi
     source "{{aws_lib}}"
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "{{profile}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env device)"
     txing_aws_init
     effective_thing_name="${requested_thing_name:-$THING_NAME}"
     if [[ "$effective_thing_name" == *=* ]]; then
@@ -48,13 +46,13 @@ cert thing_id='' region=region profile=profile config_dir=config_dir:
       echo "Invalid Thing ID '$effective_thing_name'. Allowed characters: letters, digits, colon, underscore, hyphen." >&2
       exit 2
     fi
-    daemon_policy_name="$(stack_output "$AWS_STACK_NAME" DeviceDaemonIotPolicyName)"
+    daemon_policy_name="$(stack_output "$TXING_AWS_STACK" DeviceDaemonIotPolicyName)"
     if [ -z "$daemon_policy_name" ] || [ "$daemon_policy_name" = "None" ]; then
-      echo "Could not resolve DeviceDaemonIotPolicyName from stack $AWS_STACK_NAME." >&2
+      echo "Could not resolve DeviceDaemonIotPolicyName from stack $TXING_AWS_STACK." >&2
       exit 1
     fi
-    account_id="$(aws sts get-caller-identity "${aws_flags[@]}" --query Account --output text)"
-    caller_arn="$(aws sts get-caller-identity "${aws_flags[@]}" --query Arn --output text)"
+    account_id="$(aws sts get-caller-identity --query Account --output text)"
+    caller_arn="$(aws sts get-caller-identity --query Arn --output text)"
     partition="$(cut -d: -f2 <<<"$caller_arn")"
     daemon_role_name="txing-daemon-$effective_thing_name"
     iot_role_alias="txing-daemon-$effective_thing_name"
@@ -68,8 +66,8 @@ cert thing_id='' region=region profile=profile config_dir=config_dir:
     fi
     cloudwatch_log_group="txing/${TXING_TOWN_ID}/${TXING_RIG_ID}/${effective_thing_name}"
     video_channel_name="${TXING_BOARD_VIDEO_CHANNEL_NAME:-${effective_thing_name}-board-video}"
-    iot_data_endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS "${aws_flags[@]}" --query endpointAddress --output text)"
-    iot_credential_endpoint="$(aws iot describe-endpoint --endpoint-type iot:CredentialProvider "${aws_flags[@]}" --query endpointAddress --output text)"
+    iot_data_endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS --query endpointAddress --output text)"
+    iot_credential_endpoint="$(aws iot describe-endpoint --endpoint-type iot:CredentialProvider --query endpointAddress --output text)"
     default_output_root() {
       printf '%s\n' "{{project_root}}/config/certs/unit/$effective_thing_name"
     }
@@ -118,31 +116,30 @@ cert thing_id='' region=region profile=profile config_dir=config_dir:
     temp_files+=("$trust_policy_file" "$credential_policy_file")
     jq -n '{Version: "2012-10-17", Statement: [{Effect: "Allow", Principal: {Service: "credentials.iot.amazonaws.com"}, Action: "sts:AssumeRole"}]}' >"$trust_policy_file"
     jq -n \
-      --arg iotShadowArn "arn:${partition}:iot:${AWS_REGION}:${account_id}:thing/${effective_thing_name}/sparkplug" \
-      --arg cloudwatchLogGroupArn "arn:${partition}:logs:${AWS_REGION}:${account_id}:log-group:${cloudwatch_log_group}" \
-      --arg cloudwatchLogStreamArn "arn:${partition}:logs:${AWS_REGION}:${account_id}:log-group:${cloudwatch_log_group}:log-stream:*" \
-      --arg kvsChannelArn "arn:${partition}:kinesisvideo:${AWS_REGION}:${account_id}:channel/${effective_thing_name}-board-video/*" \
+      --arg iotShadowArn "arn:${partition}:iot:${TXING_AWS_REGION}:${account_id}:thing/${effective_thing_name}/sparkplug" \
+      --arg cloudwatchLogGroupArn "arn:${partition}:logs:${TXING_AWS_REGION}:${account_id}:log-group:${cloudwatch_log_group}" \
+      --arg cloudwatchLogStreamArn "arn:${partition}:logs:${TXING_AWS_REGION}:${account_id}:log-group:${cloudwatch_log_group}:log-stream:*" \
+      --arg kvsChannelArn "arn:${partition}:kinesisvideo:${TXING_AWS_REGION}:${account_id}:channel/${effective_thing_name}-board-video/*" \
       '{Version: "2012-10-17", Statement: [
         {Sid: "DaemonSparkplugShadowRead", Effect: "Allow", Action: "iot:GetThingShadow", Resource: $iotShadowArn},
         {Sid: "DaemonCloudWatchLogsWrite", Effect: "Allow", Action: ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:DescribeLogStreams", "logs:PutRetentionPolicy", "logs:PutLogEvents"], Resource: [$cloudwatchLogGroupArn, $cloudwatchLogStreamArn]},
         {Sid: "DaemonBoardVideoMaster", Effect: "Allow", Action: ["kinesisvideo:DescribeSignalingChannel", "kinesisvideo:GetSignalingChannelEndpoint", "kinesisvideo:GetIceServerConfig", "kinesisvideo:ConnectAsMaster"], Resource: $kvsChannelArn}
       ]}' \
       >"$credential_policy_file"
-    if aws iam get-role --role-name "$daemon_role_name" "${aws_flags[@]}" >/dev/null 2>&1; then
-      aws iam update-assume-role-policy --role-name "$daemon_role_name" --policy-document "file://$trust_policy_file" "${aws_flags[@]}"
+    if aws iam get-role --role-name "$daemon_role_name" >/dev/null 2>&1; then
+      aws iam update-assume-role-policy --role-name "$daemon_role_name" --policy-document "file://$trust_policy_file"
     else
-      aws iam create-role --role-name "$daemon_role_name" --assume-role-policy-document "file://$trust_policy_file" "${aws_flags[@]}" >/dev/null
+      aws iam create-role --role-name "$daemon_role_name" --assume-role-policy-document "file://$trust_policy_file" >/dev/null
     fi
     aws iam put-role-policy \
       --role-name "$daemon_role_name" \
       --policy-name txing-daemon-own-thing \
-      --policy-document "file://$credential_policy_file" \
-      "${aws_flags[@]}"
-    daemon_role_arn="$(aws iam get-role --role-name "$daemon_role_name" "${aws_flags[@]}" --query 'Role.Arn' --output text)"
-    if aws iot describe-role-alias --role-alias "$iot_role_alias" "${aws_flags[@]}" >/dev/null 2>&1; then
-      aws iot update-role-alias --role-alias "$iot_role_alias" --role-arn "$daemon_role_arn" --credential-duration-seconds 3600 "${aws_flags[@]}" >/dev/null
+      --policy-document "file://$credential_policy_file"
+    daemon_role_arn="$(aws iam get-role --role-name "$daemon_role_name" --query 'Role.Arn' --output text)"
+    if aws iot describe-role-alias --role-alias "$iot_role_alias" >/dev/null 2>&1; then
+      aws iot update-role-alias --role-alias "$iot_role_alias" --role-arn "$daemon_role_arn" --credential-duration-seconds 3600 >/dev/null
     else
-      aws iot create-role-alias --role-alias "$iot_role_alias" --role-arn "$daemon_role_arn" --credential-duration-seconds 3600 "${aws_flags[@]}" >/dev/null
+      aws iot create-role-alias --role-alias "$iot_role_alias" --role-arn "$daemon_role_arn" --credential-duration-seconds 3600 >/dev/null
     fi
     curl -fsSL https://www.amazontrust.com/repository/AmazonRootCA1.pem -o "$root_ca_path"
     cert_arn="$(
@@ -151,22 +148,20 @@ cert thing_id='' region=region profile=profile config_dir=config_dir:
         --certificate-pem-outfile "$cert_path" \
         --public-key-outfile "$public_key_path" \
         --private-key-outfile "$private_key_path" \
-        "${aws_flags[@]}" \
         --query certificateArn \
         --output text
     )"
-    aws iot attach-policy --policy-name "$daemon_policy_name" --target "$cert_arn" "${aws_flags[@]}"
+    aws iot attach-policy --policy-name "$daemon_policy_name" --target "$cert_arn"
     aws iot attach-thing-principal \
       --thing-name "$effective_thing_name" \
       --principal "$cert_arn" \
-      --thing-principal-type EXCLUSIVE_THING \
-      "${aws_flags[@]}"
+      --thing-principal-type EXCLUSIVE_THING
     printf '%s\n' "$cert_arn" >"$cert_arn_path"
     render_daemon_env_template() {
       local line
       while IFS= read -r line || [ -n "$line" ]; do
         line="${line//\{\{TXING_THING_ID\}\}/$effective_thing_name}"
-        line="${line//\{\{AWS_REGION\}\}/$AWS_REGION}"
+        line="${line//\{\{AWS_REGION\}\}/$TXING_AWS_REGION}"
         line="${line//\{\{TXING_IOT_ENDPOINT\}\}/$iot_data_endpoint}"
         line="${line//\{\{TXING_IOT_CREDENTIAL_ENDPOINT\}\}/$iot_credential_endpoint}"
         line="${line//\{\{TXING_IOT_ROLE_ALIAS\}\}/$iot_role_alias}"
@@ -193,7 +188,7 @@ cert thing_id='' region=region profile=profile config_dir=config_dir:
       --arg iotDataEndpoint "$iot_data_endpoint" \
       --arg iotCredentialEndpoint "$iot_credential_endpoint" \
       --arg iotRoleAlias "$iot_role_alias" \
-      --arg videoRegion "$AWS_REGION" \
+      --arg videoRegion "$TXING_AWS_REGION" \
       --arg videoChannelName "$video_channel_name" \
       --arg cloudWatchLogGroup "$cloudwatch_log_group" \
       --arg daemonRoleName "$daemon_role_name" \
@@ -201,7 +196,7 @@ cert thing_id='' region=region profile=profile config_dir=config_dir:
       --arg configTarball "$tarball_path" \
       '{thingName: $thingName, policyName: $policyName, certificateArn: $certificateArn, certificatePem: $certificatePem, publicKey: $publicKey, privateKey: $privateKey, certificateArnFile: $certificateArnFile, rootCaFile: $rootCaFile, envFile: $envFile, configTarball: $configTarball, iotDataEndpoint: $iotDataEndpoint, iotCredentialEndpoint: $iotCredentialEndpoint, iotRoleAlias: $iotRoleAlias, videoRegion: $videoRegion, videoChannelName: $videoChannelName, cloudWatchLogGroup: $cloudWatchLogGroup, daemonRoleName: $daemonRoleName, daemonRoleArn: $daemonRoleArn}'
 
-role-policy thing_id='' region=region profile=profile:
+role-policy thing_id='':
     #!/usr/bin/env bash
     set -euo pipefail
     requested_thing_name="{{thing_id}}"
@@ -213,7 +208,7 @@ role-policy thing_id='' region=region profile=profile:
       export TXING_THING_ID="$requested_thing_name"
     fi
     source "{{aws_lib}}"
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env device "{{region}}" "{{profile}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env device)"
     txing_aws_init
     effective_thing_name="${requested_thing_name:-$THING_NAME}"
     if [[ "$effective_thing_name" == *=* ]]; then
@@ -224,11 +219,11 @@ role-policy thing_id='' region=region profile=profile:
       echo "Invalid Thing ID '$effective_thing_name'. Allowed characters: letters, digits, colon, underscore, hyphen." >&2
       exit 2
     fi
-    account_id="$(aws sts get-caller-identity "${aws_flags[@]}" --query Account --output text)"
-    caller_arn="$(aws sts get-caller-identity "${aws_flags[@]}" --query Arn --output text)"
+    account_id="$(aws sts get-caller-identity --query Account --output text)"
+    caller_arn="$(aws sts get-caller-identity --query Arn --output text)"
     partition="$(cut -d: -f2 <<<"$caller_arn")"
     daemon_role_name="txing-daemon-$effective_thing_name"
-    if ! aws iam get-role --role-name "$daemon_role_name" "${aws_flags[@]}" >/dev/null 2>&1; then
+    if ! aws iam get-role --role-name "$daemon_role_name" >/dev/null 2>&1; then
       echo "Daemon IAM role $daemon_role_name does not exist. Run just unit::cert <thing-id> first." >&2
       exit 1
     fi
@@ -239,10 +234,10 @@ role-policy thing_id='' region=region profile=profile:
     }
     trap cleanup EXIT
     jq -n \
-      --arg iotShadowArn "arn:${partition}:iot:${AWS_REGION}:${account_id}:thing/${effective_thing_name}/sparkplug" \
-      --arg cloudwatchLogGroupArn "arn:${partition}:logs:${AWS_REGION}:${account_id}:log-group:${cloudwatch_log_group}" \
-      --arg cloudwatchLogStreamArn "arn:${partition}:logs:${AWS_REGION}:${account_id}:log-group:${cloudwatch_log_group}:log-stream:*" \
-      --arg kvsChannelArn "arn:${partition}:kinesisvideo:${AWS_REGION}:${account_id}:channel/${effective_thing_name}-board-video/*" \
+      --arg iotShadowArn "arn:${partition}:iot:${TXING_AWS_REGION}:${account_id}:thing/${effective_thing_name}/sparkplug" \
+      --arg cloudwatchLogGroupArn "arn:${partition}:logs:${TXING_AWS_REGION}:${account_id}:log-group:${cloudwatch_log_group}" \
+      --arg cloudwatchLogStreamArn "arn:${partition}:logs:${TXING_AWS_REGION}:${account_id}:log-group:${cloudwatch_log_group}:log-stream:*" \
+      --arg kvsChannelArn "arn:${partition}:kinesisvideo:${TXING_AWS_REGION}:${account_id}:channel/${effective_thing_name}-board-video/*" \
       '{Version: "2012-10-17", Statement: [
         {Sid: "DaemonSparkplugShadowRead", Effect: "Allow", Action: "iot:GetThingShadow", Resource: $iotShadowArn},
         {Sid: "DaemonCloudWatchLogsWrite", Effect: "Allow", Action: ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:DescribeLogStreams", "logs:PutRetentionPolicy", "logs:PutLogEvents"], Resource: [$cloudwatchLogGroupArn, $cloudwatchLogStreamArn]},
@@ -252,12 +247,11 @@ role-policy thing_id='' region=region profile=profile:
     aws iam put-role-policy \
       --role-name "$daemon_role_name" \
       --policy-name txing-daemon-own-thing \
-      --policy-document "file://$credential_policy_file" \
-      "${aws_flags[@]}"
+      --policy-document "file://$credential_policy_file"
     printf 'refreshed daemon IAM role policy\n'
     printf '  thing: %s\n' "$effective_thing_name"
     printf '  role: %s\n' "$daemon_role_name"
-    printf '  video region: %s\n' "$AWS_REGION"
+    printf '  video region: %s\n' "$TXING_AWS_REGION"
 
 test:
     cargo test --manifest-path "{{daemon_dir}}/Cargo.toml"
