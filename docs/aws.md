@@ -88,8 +88,9 @@ generated town thing ID.
 
 `just aws::deploy-rig <town-id> <rig-type> <rig-name>` idempotently creates or
 updates only the rig thing with ThingType `raspi` or `cloud` plus the rig
-`sparkplug` shadow. Shared Greengrass token exchange and runtime IAM are base
-stack outputs.
+`sparkplug` shadow. Shared Greengrass token exchange outputs support `raspi`
+rig hosts; AWS-hosted `cloud` rig runtime IAM is deployed with the cloud MCU
+type stack.
 
 `just aws::deploy-device <rig-id> <device-type> <device-name>` idempotently
 creates or updates only the device thing, named shadows, and optional
@@ -172,9 +173,10 @@ just rig::check <rig-id>
 just unit::board::check
 ```
 
-Production rig services run as Greengrass Lite components. Local command
-wrappers use native AWS CLI configuration and live AWS resolution; they do not
-depend on generated local AWS config files.
+Production `raspi` rig services run as Greengrass Lite components. Production
+`cloud` rig services run as AWS Lambda functions. Local command wrappers use
+native AWS CLI configuration and live AWS resolution; they do not depend on
+generated local AWS config files.
 
 ## Important Naming Rule
 
@@ -209,8 +211,8 @@ just aws::init-shadow <thing-name> sparkplug
 
 ## Certificates
 
-`aws::cert` is rig-focused. It resolves the rig thing by generated thing ID,
-creates a new active AWS IoT certificate,
+`aws::cert` is for `raspi` rig hosts. It resolves the rig thing by generated
+thing ID, creates a new active AWS IoT certificate,
 attaches the base stack IoT policy, attaches the certificate to the rig thing,
 resolves the Greengrass Lite endpoint config, and writes material under
 `config/certs/rig/`.
@@ -237,9 +239,9 @@ Generated files:
 
 `config/certs/` is explicitly ignored by git. The recipe refuses to overwrite
 existing material; move or delete the files first if you intentionally rotate the
-rig certificate. On a stable rig host, copy the certificate, private key, root
-CA, and generated `greengrass-lite.yaml` during manual Greengrass Lite host
-configuration.
+rig certificate. On a stable `raspi` rig host, copy the certificate, private
+key, root CA, and generated `greengrass-lite.yaml` during manual Greengrass Lite
+host configuration. `cloud` rigs do not use this host certificate path.
 
 ## Cleanup
 

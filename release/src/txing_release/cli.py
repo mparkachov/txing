@@ -108,7 +108,6 @@ SCAN_IGNORED_DIRS = {
 
 SCAN_IGNORED_PREFIXES = (
     Path("devices/common/mcu/ncs"),
-    Path("zephyr/workspace"),
 )
 
 SCAN_EXTENSIONS = {

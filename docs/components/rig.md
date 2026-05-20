@@ -13,16 +13,19 @@ devices every six seconds.
 - publish Sparkplug node lifecycle for the rig edge node with `NBIRTH` and `NDEATH`
 - publish Sparkplug device lifecycle for managed txing things with `DBIRTH`, `DDATA`, and `DDEATH`
 - accept Sparkplug `DCMD.redcon`
-- bridge REDCON commands to transport adapters over local Greengrass IPC
-- derive device REDCON from adapter capability availability
+- for `raspi`, bridge REDCON commands to transport adapters over local
+  Greengrass IPC
+- derive device REDCON from transport/runtime capability availability
 
 Witness, not rig, writes the AWS-side `sparkplug` named shadow projection.
-Hard invariant: `rig = Sparkplug edge node = Greengrass Lite core`. The rig
-itself must never be represented by Sparkplug device `DBIRTH` or `DDEATH`.
+Hard invariant: `rig = Sparkplug edge node`. For `raspi` rigs that edge node is
+the Greengrass Lite core running txing rig components. For `cloud` rigs that
+edge node is the AWS-hosted `txing-cloud-rig-lambda` runtime. The rig itself
+must never be represented by Sparkplug device `DBIRTH` or `DDEATH`.
 
-## Greengrass Lite Split
+## Raspi Greengrass Split
 
-The rig has a Greengrass-oriented component split:
+The `raspi` rig host has a Greengrass-oriented component split:
 
 - `dev.txing.rig.SparkplugManager`
   - owns AWS registry discovery, type-catalog reads, REDCON derivation, and Sparkplug lifecycle
@@ -35,12 +38,14 @@ The rig has a Greengrass-oriented component split:
   - publishes BLE-owned named shadow updates through Greengrass IPC `PublishToIoTCore`
   - owns top-level reported fields in the `ble` shadow plus domain shadows such as `power` and `weather`
   - never publishes Sparkplug node lifecycle
-- `dev.txing.rig.AwsConnectivity`
-  - bridges the same v2 capability contract to retained AWS IoT topics for cloud devices
-  - contains no cloud-device-specific REDCON or metric mapping; AWS-hosted cloud MCU mapping lives in `devices/cloud-mcu`
 - future connectivity adapters such as `dev.txing.rig.LoRaConnectivity`
   - should implement the same v2 capability contract using their own transport
   - must not publish Sparkplug node lifecycle
+
+The `cloud` rig runtime is not a Greengrass component split. Its active runtime
+lives in `devices/cloud-mcu`: EventBridge invokes `txing-cloud-rig-lambda`, SQS
+acts as the watch link, and `txing-cloud-mcu-lambda` reconciles `cloud-mcu`
+devices.
 
 ## BLE REDCON Architecture
 
@@ -97,8 +102,10 @@ management.
 - managed devices come from AWS IoT Fleet Indexing with `attributes.rigId=<TXING_RIG_ID>`
 - startup reads each device `DescribeThing` result, its ThingType, and the SSM type catalog
 - Sparkplug lifecycle state is published only on MQTT; the AWS read model is witness-owned
-- Greengrass core/device/component status is service observability only; it is not the txing lifecycle source of truth
-- v2 capability state from connectivity adapters selects the highest REDCON level whose type-catalog rule is satisfied
+- for `raspi`, Greengrass core/device/component status is service observability
+  only; it is not the txing lifecycle source of truth
+- v2 capability state from connectivity adapters, or cloud MCU SQS ticks,
+  selects the highest REDCON level whose type-catalog rule is satisfied
 - raspi rigs run BLE connectivity for `sparkplug`/`ble`/`power`; board-owned retained state is consumed by SparkplugManager for `board`/`mcp`/`video`
 - board-owned retained state is gated by BLE power availability, so REDCON `4`
   / power-off evidence clears `board`, `mcp`, and `video` without waiting for
@@ -111,22 +118,22 @@ The current contract sources are:
 - [Sparkplug lifecycle](../sparkplug-lifecycle.md)
 - `rig/ble-connectivity` Rust BLE connectivity component
 
-## Runtime
+## Raspi Runtime
 
-Production rigs run the official AWS Greengrass Lite Debian package plus txing
-Greengrass components delivered by cloud deployments. A production rig does not need
-a repo checkout, mise, AWS CLI, AWS access keys, Rust toolchain, CMake, or local
-compilation. The rig stores only Greengrass certificate material and the
-Greengrass Lite config fragment.
+Production `raspi` rig hosts run the official AWS Greengrass Lite Debian
+package plus txing Greengrass components delivered by cloud deployments. A
+production `raspi` rig does not need a repo checkout, mise, AWS CLI, AWS access
+keys, Rust toolchain, CMake, or local compilation. The rig stores only
+Greengrass certificate material and the Greengrass Lite config fragment.
 
-Production setup is intentionally split:
+Production `raspi` setup is intentionally split:
 
 1. The operator creates AWS resources, the rig thing, certificate material, and
    `config/certs/rig/greengrass-lite.yaml`.
 2. The rig host installs the upstream Greengrass Lite Debian package and copies
    the generated certificate/config files into the Greengrass locations.
 3. The operator publishes txing release artifacts to Greengrass with
-   `just rig::deploy-release latest all`.
+   `just rig::deploy-release latest raspi`.
 4. Greengrass Lite pulls and runs the deployed components.
 
 Repository code does not install host files, write system directories, create
@@ -134,14 +141,14 @@ users, change ownership, call systemd, migrate old installs, remove old
 services, or enable rig-type-specific host services. Those are manual privileged
 host-maintenance steps.
 
-## Initial Install
+## Raspi Initial Install
 
-Before configuring the rig host, the operator-side AWS setup must already have:
+Before configuring a `raspi` rig host, the operator-side AWS setup must already
+have:
 
 - the base AWS stack and type catalog from `just aws::deploy`
 - a town thing from `just aws::deploy-town town`
-- a rig thing from `just aws::deploy-rig <town-id> raspi server` or
-  `just aws::deploy-rig <town-id> cloud aws`
+- a rig thing from `just aws::deploy-rig <town-id> raspi server`
 - a completed GitHub release for the txing component version to deploy
 
 On the operator machine, generate the rig certificate and Greengrass Lite config
@@ -246,17 +253,19 @@ systemctl restart bluetooth.service
 systemctl restart greengrass-lite.target
 ```
 
-`RIG_TYPE=cloud` has no extra host service dependency beyond Greengrass Lite.
+`cloud` rigs do not have a host install path. Deploy the AWS stack and Lambda
+artifacts, register a `cloud` rig thing, and manage `cloud-mcu` devices through
+the AWS-hosted runtime documented in `devices/cloud-mcu/README.md`.
 
 ## Deploy And Update
 
-The rig does not run AWS CLI, GitHub CLI, mise, or deployment scripts. Publish
-txing component versions from the operator machine after the `Txing Release`
-workflow finishes:
+The `raspi` rig host does not run AWS CLI, GitHub CLI, mise, or deployment
+scripts. Publish txing component versions from the operator machine after the
+`Txing Release` workflow finishes:
 
 ```bash
 gh auth status
-just rig::deploy-release latest all
+just rig::deploy-release latest raspi
 ```
 
 `rig::deploy-release` relies on native AWS CLI configuration plus an explicit
@@ -264,22 +273,20 @@ just rig::deploy-release latest all
 stack name is unset. The command downloads the GitHub release assets with `gh`,
 uploads the Linux component binaries to the Greengrass artifact bucket, creates
 Greengrass component versions from the project SemVer, and creates continuous
-deployments for the rig-type thing groups. The Linux component binaries are not
-executed on the operator Mac.
+deployments for the `raspi` rig-type thing group. The Linux component binaries
+are not executed on the operator Mac.
 
 Use an explicit target when needed:
 
 ```bash
 just rig::deploy-release latest raspi
-just rig::deploy-release latest cloud
-just rig::deploy-release latest all
 ```
 
 Normal update:
 
 1. Bump and push the project version files.
 2. Run the `Txing Release` workflow on GitHub.
-3. Run `just rig::deploy-release latest all` from the operator machine.
+3. Run `just rig::deploy-release latest raspi` from the operator machine.
 
 Greengrass Lite itself is installed as an upstream Debian package, not as a
 txing release artifact or mise tool. Upgrade it manually only when AWS publishes
@@ -287,8 +294,9 @@ a newer upstream Greengrass Lite version you want to adopt.
 
 The production install path does not run host-local `ggl-cli deploy`, does not
 stage artifacts under `rig/build/greengrass-local`, and does not depend on
-`/var/lib/greengrass/config.db`. The old local Greengrass Lite deploy path is
-available only as a debug escape hatch:
+`/var/lib/greengrass/config.db`. The local txing component deployment path is
+available only as a debug escape hatch against an already installed Greengrass
+Lite runtime:
 
 ```bash
 just rig::deploy-local <rig-id>
@@ -347,20 +355,21 @@ systemctl reset-failed
 
 ## Source Development
 
-Source-checkout Greengrass Lite builds are for development and local debugging.
-They must run on Linux because the Rust Greengrass SDK build is Linux-only in
-this repo. macOS development uses `just rig::start` with the local Unix-socket
+Source-checkout rig builds are for txing component development and local
+debugging against an already installed upstream Greengrass Lite runtime. They
+must run on Linux because the Rust Greengrass SDK build is Linux-only in this
+repo. macOS development uses `just rig::start` with the local Unix-socket
 broker instead.
 
-On Raspberry Pi OS Lite/Trixie, install at least `cmake`, `build-essential`,
-`pkg-config`, `libssl-dev`, `libcurl4-openssl-dev`, `libdbus-1-dev`,
-`uuid-dev`, `libzip-dev`, `libyaml-dev`, `libsystemd-dev`, `libevent-dev`,
-`liburiparser-dev`, `cgroup-tools`, `bluez`, and `pi-bluetooth`.
+On Raspberry Pi OS Lite/Trixie, install the upstream Greengrass Lite Debian
+package first, then install the native prerequisites required by the txing
+component builds: `build-essential`, `pkg-config`, `libssl-dev`,
+`libdbus-1-dev`, `libzip-dev`, `libyaml-dev`, `libsystemd-dev`,
+`libevent-dev`, `liburiparser-dev`, `cgroup-tools`, `bluez`, and
+`pi-bluetooth`.
 
 ```bash
 just rig::build
-just rig::deploy raspi
-just rig::deploy cloud
 just rig::deploy-local <rig-id>
 ```
 

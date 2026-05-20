@@ -220,14 +220,16 @@ pub fn advertisement_sample(
     advertisement: &Advertisement,
     seq: u64,
 ) -> CapabilitySample {
+    let redcon = spec.kind.supports_weather().then_some(REDCON_IDLE);
+    let weather_domain_available = spec.kind.supports_weather();
     CapabilitySample {
         thing_name: spec.thing_name.clone(),
         kind: spec.kind,
-        redcon: None,
+        redcon,
         sparkplug_available: true,
         ble_available: true,
-        power_available: false,
-        weather_available: false,
+        power_available: weather_domain_available,
+        weather_available: weather_domain_available,
         ble_local_name: advertisement.identity_name.clone(),
         ble_address: Some(advertisement.address.clone()),
         battery_mv: None,
@@ -282,7 +284,7 @@ pub fn power_state_sample(
 
 pub fn weather_state_sample(
     spec: &DeviceSpec,
-    _redcon: u8,
+    redcon: u8,
     power_measurement: Option<&PowerMeasurement>,
     weather_measurement: Option<WeatherMeasurement>,
     ble_address: Option<String>,
@@ -292,11 +294,11 @@ pub fn weather_state_sample(
     CapabilitySample {
         thing_name: spec.thing_name.clone(),
         kind: DeviceKind::Weather,
-        redcon: Some(_redcon),
+        redcon: Some(redcon),
         sparkplug_available: true,
         ble_available: true,
-        power_available: power_measurement.and_then(|item| item.battery_mv).is_some(),
-        weather_available: weather_measurement.is_some(),
+        power_available: redcon == REDCON_IDLE,
+        weather_available: redcon == REDCON_IDLE,
         ble_local_name: Some(spec.thing_name.clone()),
         ble_address,
         battery_mv: power_measurement.and_then(|item| item.battery_mv),
@@ -544,6 +546,34 @@ mod tests {
     }
 
     #[test]
+    fn weather_advertisement_sample_keeps_redcon_four_capabilities_available() {
+        let spec = DeviceSpec {
+            thing_name: "weather-1".to_string(),
+            kind: DeviceKind::Weather,
+        };
+        let advertisement = Advertisement {
+            address: "AA:BB:CC:DD:EE:FF".to_string(),
+            identity_name: Some("weather-1".to_string()),
+            services: vec![TXING_BLE_SERVICE_UUID],
+            rssi: Some(-50),
+            observed_at_ms: 42,
+            seq: 7,
+        };
+        let sample = advertisement_sample(&spec, &advertisement, 1);
+        let state = capability_state_from_sample(ADAPTER_ID, &sample);
+
+        assert_eq!(sample.redcon, Some(REDCON_IDLE));
+        assert_eq!(state.capabilities[SPARKPLUG_CAPABILITY], true);
+        assert_eq!(state.capabilities[BLE_CAPABILITY], true);
+        assert_eq!(state.capabilities[POWER_CAPABILITY], true);
+        assert_eq!(state.capabilities[WEATHER_CAPABILITY], true);
+        assert_eq!(
+            state.metrics.get(BLE_REDCON_METRIC),
+            Some(&MetricValue::int32(i32::from(REDCON_IDLE)))
+        );
+    }
+
+    #[test]
     fn power_state_sample_publishes_power_shadow() {
         let spec = DeviceSpec {
             thing_name: "power-1".to_string(),
@@ -648,5 +678,34 @@ mod tests {
         );
         assert!(payload["state"]["reported"]["observedAtMs"].is_null());
         assert!(payload["state"]["reported"]["seq"].is_null());
+    }
+
+    #[test]
+    fn weather_state_keeps_capabilities_available_without_fresh_measurements() {
+        let spec = DeviceSpec {
+            thing_name: "weather-1".to_string(),
+            kind: DeviceKind::Weather,
+        };
+        let sample = weather_state_sample(
+            &spec,
+            REDCON_IDLE,
+            None,
+            None,
+            Some("AA:BB:CC:DD:EE:FF".to_string()),
+            5,
+            3000,
+        );
+        let state = capability_state_from_sample(ADAPTER_ID, &sample);
+
+        assert_eq!(state.capabilities[SPARKPLUG_CAPABILITY], true);
+        assert_eq!(state.capabilities[BLE_CAPABILITY], true);
+        assert_eq!(state.capabilities[POWER_CAPABILITY], true);
+        assert_eq!(state.capabilities[WEATHER_CAPABILITY], true);
+        let updates = shadow_updates_from_sample(&sample).unwrap();
+        assert_eq!(updates.len(), 1);
+        assert_eq!(
+            updates[0].topic,
+            "$aws/things/weather-1/shadow/name/ble/update"
+        );
     }
 }

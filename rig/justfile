@@ -5,8 +5,6 @@ rig_dir := source_directory()
 project_root := rig_dir + "/.."
 root_justfile := project_root + "/justfile"
 aws_lib := project_root + "/shared/aws/scripts/aws_lib.sh"
-greengrass_lite_dir := project_root + "/modules/aws-greengrass/aws-greengrass-lite"
-greengrass_lite_build_dir := greengrass_lite_dir + "/build"
 greengrass_lite_target := "greengrass-lite.target"
 greengrass_core_units := "ggl.core.ggconfigd.service ggl.core.ggipcd.service ggl.core.iotcored.service ggl.core.tesd.service ggl.aws.greengrass.TokenExchangeService.service ggl.core.ggdeploymentd.service ggl.core.gg-fleet-statusd.service ggl.core.ggpubsubd.service ggl.core.gghealthd.service"
 greengrass_core_sockets := "ggl.gg_config.socket ggl.gg_deployment.socket ggl.gg_fleet_status.socket ggl.aws_iot_mqtt.socket ggl.aws_iot_tes.socket ggl.gg_pubsub.socket ggl.ipc_component.socket ggl.gg-ipc.socket.socket ggl.gg_health.socket"
@@ -269,56 +267,16 @@ check rig_id='' cloudwatch_log_group='':
       echo "skip: no managed ${TXING_DEVICE_TYPE} device found for rig=${rig_name} town=${sparkplug_group_id}; skipped per-device SigV4 MQTT check"
     fi
 
-@check-greengrass-lite:
-    test -f "{{greengrass_lite_dir}}/version" || (echo "Missing Greengrass Lite submodule. Run: git submodule update --init --remote modules/aws-greengrass/aws-greengrass-lite" >&2; exit 1)
-
-@clean-native:
-    rm -rf "{{greengrass_lite_build_dir}}"
-
-@distclean-native:
-    just clean-native
-
 install-mise-tools:
     "{{rig_dir}}/install-mise-tools.sh"
 
-build: check-greengrass-lite
+build:
     #!/usr/bin/env bash
     set -euo pipefail
     if [ "$(uname -s)" != "Linux" ]; then \
-        echo "Greengrass Lite native build is supported only on Linux targets such as Raspberry Pi OS Lite." >&2; \
+        echo "Greengrass component binary builds are supported only on Linux targets such as Raspberry Pi OS Lite." >&2; \
         exit 1; \
     fi
-    missing_native_packages=()
-    if ! command -v pkg-config >/dev/null 2>&1; then
-      missing_native_packages+=("pkg-config")
-    else
-      require_pkg_config() {
-        local module="$1"
-        local package="$2"
-        if ! pkg-config --exists "$module"; then
-          missing_native_packages+=("$package")
-        fi
-      }
-      require_pkg_config openssl libssl-dev
-      require_pkg_config libcurl libcurl4-openssl-dev
-      require_pkg_config dbus-1 libdbus-1-dev
-    fi
-    if [ "${#missing_native_packages[@]}" -ne 0 ]; then
-      echo "Missing native build prerequisite(s): ${missing_native_packages[*]}" >&2
-      echo "Install on Raspberry Pi OS/Debian with:" >&2
-      echo "  sudo apt update && sudo apt install -y ${missing_native_packages[*]}" >&2
-      exit 1
-    fi
-    cmake \
-      -S "{{greengrass_lite_dir}}" \
-      -B "{{greengrass_lite_build_dir}}" \
-      -DCMAKE_BUILD_TYPE=MinSizeRel \
-      -DGG_LOG_LEVEL=INFO \
-      -DGGL_SYSTEMD_SYSTEM_USER=ggcore \
-      -DGGL_SYSTEMD_SYSTEM_GROUP=ggcore \
-      -DGGL_SYSTEMD_SYSTEM_DIR=/lib/systemd/system
-    cmake --build "{{greengrass_lite_build_dir}}" --config MinSizeRel --parallel
-    test -x "{{greengrass_lite_build_dir}}/bin/ggl-cli"
     TXING_REAL_CC="${CC:-cc}" CC="{{rig_dir}}/tools/cc-greengrass-info-log" cargo build --release --features greengrass-sdk --manifest-path "{{rig_dir}}/sparkplug-manager/Cargo.toml"
     test -x "{{rig_dir}}/target/release/txing-sparkplug-manager"
     TXING_REAL_CC="${CC:-cc}" CC="{{rig_dir}}/tools/cc-greengrass-info-log" cargo build --release --features greengrass-sdk --manifest-path "{{rig_dir}}/ble-connectivity/Cargo.toml"
@@ -337,127 +295,6 @@ print shadow_name='sparkplug':
       --thing-name "{{thing_name}}" \
       --shadow-name "{{shadow_name}}" \
       /dev/stdout | jq '.'
-
-install-service rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id='' cloudwatch_log_group='':
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if [ -n "{{rig_id}}" ]; then
-      export TXING_RIG_ID="{{rig_id}}"
-    fi
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig)"
-    region="$TXING_AWS_REGION"
-    rig_name="$RIG_NAME"
-    selected_rig_type="$RIG_TYPE"
-    sparkplug_group_id="$SPARKPLUG_GROUP_ID"
-    sparkplug_edge_node_id="$SPARKPLUG_EDGE_NODE_ID"
-    if [ -n "{{rig_name}}" ]; then \
-        rig_name="{{rig_name}}"; \
-    fi; \
-    if [ -n "{{sparkplug_group_id}}" ]; then \
-        sparkplug_group_id="{{sparkplug_group_id}}"; \
-    fi; \
-    if [ -n "{{sparkplug_edge_node_id}}" ]; then \
-        sparkplug_edge_node_id="{{sparkplug_edge_node_id}}"; \
-    fi; \
-    if [ ! -d "{{greengrass_lite_build_dir}}" ]; then \
-        echo "Greengrass Lite native build is missing at {{greengrass_lite_build_dir}}." >&2; \
-        echo "Run 'just rig::build' before 'just rig::install-service'." >&2; \
-        exit 1; \
-    fi
-    install_core_log_overrides() {
-      local log_unit
-      for log_unit in {{greengrass_warning_log_units}}; do
-        sudo install -d -m 755 "/etc/systemd/system/$log_unit.d"
-        printf '[Service]\nLogLevelMax=warning\n' | sudo tee "/etc/systemd/system/$log_unit.d/10-log-level.conf" >/dev/null
-      done
-      sudo systemctl daemon-reload || true
-    }
-    if ! getent group ggcore >/dev/null; then \
-        sudo groupadd --system ggcore; \
-    fi
-    if ! id -u ggcore >/dev/null 2>&1; then \
-        sudo useradd --system --gid ggcore --home-dir /var/lib/greengrass --shell /usr/sbin/nologin ggcore; \
-    fi
-    if ! getent group gg_component >/dev/null; then \
-        sudo groupadd --system gg_component; \
-    fi
-    if ! id -u gg_component >/dev/null 2>&1; then \
-        sudo useradd --system --gid gg_component --home-dir /var/lib/greengrass/component --shell /usr/sbin/nologin gg_component; \
-    fi
-    rig_cert_path="{{project_root}}/config/certs/rig/rig.cert.pem"
-    rig_private_key_path="{{project_root}}/config/certs/rig/rig.private.key"
-    if [ ! -f "$rig_cert_path" ] || [ ! -f "$rig_private_key_path" ]; then \
-        echo "Rig certificate material is missing under {{project_root}}/config/certs/rig." >&2; \
-        echo "Run 'just aws::cert' before 'just rig::install-service'." >&2; \
-        exit 1; \
-    fi
-    rig_thing_name="$TXING_RIG_ID"
-    iot_data_endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS --query endpointAddress --output text)"
-    iot_cred_endpoint="$(aws iot describe-endpoint --endpoint-type iot:CredentialProvider --query endpointAddress --output text)"
-    iot_role_alias="$(
-        aws cloudformation describe-stacks \
-          --stack-name "$TXING_AWS_STACK" \
-          --query "Stacks[0].Outputs[?OutputKey=='GreengrassTokenExchangeRoleAlias'].OutputValue | [0]" \
-          --output text
-    )"
-    if [ -z "$iot_role_alias" ] || [ "$iot_role_alias" = "None" ]; then \
-        echo "Could not resolve GreengrassTokenExchangeRoleAlias from stack $TXING_AWS_STACK." >&2; \
-        exit 1; \
-    fi
-    temp_files=()
-    cleanup_temp_files() {
-        if [ "${#temp_files[@]}" -gt 0 ]; then
-            rm -f "${temp_files[@]}"
-        fi
-    }
-    trap cleanup_temp_files EXIT
-    sudo mkdir -p /var/lib/greengrass /etc/greengrass /etc/tmpfiles.d
-    sudo install -d -o ggcore -g ggcore -m 775 /run/greengrass
-    sudo install -d -o ggcore -g ggcore -m 770 /etc/greengrass/config.d
-    greengrass_tmpfiles_temp="$(mktemp "${TMPDIR:-/tmp}/txing-greengrass-tmpfiles.XXXXXX")"
-    temp_files+=("$greengrass_tmpfiles_temp")
-    cat >"$greengrass_tmpfiles_temp" <<'EOF'
-    d /run/greengrass 0775 ggcore ggcore -
-    d /etc/greengrass/config.d 0770 ggcore ggcore -
-    EOF
-    sudo install -m 644 "$greengrass_tmpfiles_temp" /etc/tmpfiles.d/txing-greengrass-lite.conf
-    sudo systemd-tmpfiles --create /etc/tmpfiles.d/txing-greengrass-lite.conf
-    sudo install -d -o ggcore -g ggcore -m 700 /var/lib/greengrass/credentials
-    sudo install -o ggcore -g ggcore -m 600 "$rig_cert_path" /var/lib/greengrass/credentials/rig.cert.pem
-    sudo install -o ggcore -g ggcore -m 600 "$rig_private_key_path" /var/lib/greengrass/credentials/rig.private.key
-    root_ca_temp="$(mktemp "${TMPDIR:-/tmp}/txing-amazon-root-ca.XXXXXX")"
-    temp_files+=("$root_ca_temp")
-    curl -fsSL https://www.amazontrust.com/repository/AmazonRootCA1.pem -o "$root_ca_temp"
-    sudo install -o ggcore -g ggcore -m 644 "$root_ca_temp" /var/lib/greengrass/credentials/AmazonRootCA1.pem
-    greengrass_config_temp="$(mktemp "${TMPDIR:-/tmp}/txing-greengrass-config.XXXXXX")"
-    temp_files+=("$greengrass_config_temp")
-    cat >"$greengrass_config_temp" <<EOF
-    system:
-      privateKeyPath: "/var/lib/greengrass/credentials/rig.private.key"
-      certificateFilePath: "/var/lib/greengrass/credentials/rig.cert.pem"
-      rootCaPath: "/var/lib/greengrass/credentials/AmazonRootCA1.pem"
-      rootPath: "/var/lib/greengrass"
-      thingName: "$rig_thing_name"
-    services:
-      aws.greengrass.NucleusLite:
-        componentType: "NUCLEUS"
-        configuration:
-          awsRegion: "$region"
-          iotCredEndpoint: "$iot_cred_endpoint"
-          iotDataEndpoint: "$iot_data_endpoint"
-          iotRoleAlias: "$iot_role_alias"
-          runWithDefault:
-            posixUser: "gg_component:gg_component"
-          greengrassDataPlanePort: "8443"
-          platformOverride: {}
-    EOF
-    sudo install -m 644 "$greengrass_config_temp" /etc/greengrass/config.yaml
-    sudo chown -R ggcore:ggcore /var/lib/greengrass
-    sudo cmake --install "{{greengrass_lite_build_dir}}" --config MinSizeRel
-    install_core_log_overrides
-    sudo "{{greengrass_lite_dir}}/misc/run_nucleus"
-    printf 'txing rig is supervised by the standard Greengrass Lite systemd target %s\n' "{{greengrass_lite_target}}"
-    printf 'Deploy rig type %s components with RigName=%s SparkplugGroupId=%s SparkplugEdgeNodeId=%s\n' "$selected_rig_type" "$rig_name" "$sparkplug_group_id" "$sparkplug_edge_node_id"
 
 [private]
 _local-component-list components selected_rig_type:
@@ -754,7 +591,7 @@ start rig_id='' components='auto':
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig)"
     selected_rig_type="$RIG_TYPE"
     if ! systemctl cat "{{greengrass_lite_target}}" >/dev/null 2>&1; then \
-        echo "Greengrass Lite target {{greengrass_lite_target}} is not installed. Run 'just rig::install-service' first." >&2; \
+        echo "Greengrass Lite target {{greengrass_lite_target}} is not installed. Install the upstream Greengrass Lite distribution package and config first; see docs/components/rig.md." >&2; \
         exit 1; \
     fi
     unit_exists() {
@@ -834,7 +671,7 @@ stop rig_id='':
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig)"
     selected_rig_type="$RIG_TYPE"
     if ! systemctl cat "{{greengrass_lite_target}}" >/dev/null 2>&1; then \
-        echo "Greengrass Lite target {{greengrass_lite_target}} is not installed. Run 'just rig::install-service' first." >&2; \
+        echo "Greengrass Lite target {{greengrass_lite_target}} is not installed. Install the upstream Greengrass Lite distribution package and config first; see docs/components/rig.md." >&2; \
         exit 1; \
     fi
     unit_exists() {
@@ -891,7 +728,7 @@ status rig_id='':
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig)"
     selected_rig_type="$RIG_TYPE"
     if ! systemctl cat "{{greengrass_lite_target}}" >/dev/null 2>&1; then \
-        echo "Greengrass Lite target {{greengrass_lite_target}} is not installed. Run 'just rig::install-service' first." >&2; \
+        echo "Greengrass Lite target {{greengrass_lite_target}} is not installed. Install the upstream Greengrass Lite distribution package and config first; see docs/components/rig.md." >&2; \
         exit 1; \
     fi
     unit_exists() {
@@ -955,7 +792,7 @@ log rig_id='' lines='200' follow='true':
       exit 1
     fi
     if ! systemctl cat "{{greengrass_lite_target}}" >/dev/null 2>&1; then \
-        echo "Greengrass Lite target {{greengrass_lite_target}} is not installed. Run 'just rig::install-service' first." >&2; \
+        echo "Greengrass Lite target {{greengrass_lite_target}} is not installed. Install the upstream Greengrass Lite distribution package and config first; see docs/components/rig.md." >&2; \
         exit 1; \
     fi
     unit_exists() {
@@ -1495,7 +1332,7 @@ deploy-local rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id=
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig)"
     region="$TXING_AWS_REGION"
     if ! systemctl cat "{{greengrass_lite_target}}" >/dev/null 2>&1; then \
-        echo "Greengrass Lite target {{greengrass_lite_target}} is not installed. Run 'just rig::install-service' first." >&2; \
+        echo "Greengrass Lite target {{greengrass_lite_target}} is not installed. Install the upstream Greengrass Lite distribution package and config first; see docs/components/rig.md." >&2; \
         exit 1; \
     fi
     wait_active_unit() {
@@ -1686,7 +1523,7 @@ deploy-local rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id=
     for core_runtime_unit in "${core_runtime_units[@]}"; do
       if ! systemctl cat "$core_runtime_unit" >/dev/null 2>&1; then
         if is_deployment_required_core_unit "$core_runtime_unit"; then
-          echo "Greengrass Lite deployment runtime $core_runtime_unit is not installed. Run 'just rig::build' and 'just rig::install-service' to install the current Greengrass Lite service set." >&2
+          echo "Greengrass Lite deployment runtime $core_runtime_unit is not installed. Install the upstream Greengrass Lite distribution package and config first; see docs/components/rig.md." >&2
           exit 1
         fi
         echo "warning: optional Greengrass Lite socket $core_runtime_unit is not installed; continuing." >&2
@@ -1715,7 +1552,7 @@ deploy-local rig_id='' rig_name='' sparkplug_group_id='' sparkplug_edge_node_id=
         ggl_cli=/usr/local/bin/ggl-cli; \
     fi
     if [ -z "$ggl_cli" ]; then \
-        echo "Missing ggl-cli. Run 'just rig::install-service' to install Greengrass Lite." >&2; \
+        echo "Missing ggl-cli. Install the upstream Greengrass Lite distribution package first; see docs/components/rig.md." >&2; \
         exit 1; \
     fi
     rig_name="$RIG_NAME"

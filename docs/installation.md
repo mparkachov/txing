@@ -8,9 +8,11 @@ component that owns the host behavior.
 - Development machines may use a repository checkout.
 - Production board hosts install release artifacts with `mise` and do not need a
   source checkout for the release runtime path.
-- Production rig hosts receive txing components through Greengrass cloud
-  deployments and do not need a source checkout, `mise`, AWS CLI, or AWS access
-  keys.
+- Production `raspi` rig hosts receive txing components through Greengrass
+  cloud deployments and do not need a source checkout, `mise`, AWS CLI, or AWS
+  access keys.
+- Production `cloud` rigs are AWS-hosted Lambda/EventBridge/SQS runtimes and
+  do not have a host install path.
 - Operator AWS account, credentials, profile selection, and region come from
   native AWS CLI configuration.
 - Stack-backed operator commands and deploys fail unless `TXING_AWS_STACK` is
@@ -40,13 +42,14 @@ mise use --global uv@latest just@latest aws-cli@latest gh@latest jq@latest
 Day-to-day development commands live in [development.md](./development.md).
 AWS bring-up and teardown live in [aws.md](./aws.md).
 
-## Rig Host
+## Raspi Rig Host
 
-The rig is the always-on coordinator that owns Sparkplug publication. Production
-rig hosts run the official AWS Greengrass Lite Debian package plus txing
-Greengrass components delivered by cloud deployments.
+The `raspi` rig is the always-on host coordinator that owns Sparkplug
+publication for local BLE-managed devices. Production `raspi` rig hosts run the
+official AWS Greengrass Lite Debian package plus txing Greengrass components
+delivered by cloud deployments.
 
-Canonical rig installation, Greengrass Lite configuration, Bluetooth
+Canonical `raspi` rig installation, Greengrass Lite configuration, Bluetooth
 permission, deployment, health-check, update, and cleanup instructions live in
 [components/rig.md](./components/rig.md).
 
@@ -60,7 +63,20 @@ The short production flow is:
    `greengrass-lite.yaml` to the Greengrass locations on the rig.
 5. Restart `greengrass-lite.target`.
 6. Deploy txing components from the operator machine with
-   `just rig::deploy-release latest all`.
+   `just rig::deploy-release latest raspi`.
+
+## Cloud Rig Runtime
+
+The `cloud` rig type is AWS-hosted. Deploy its Lambda/EventBridge/SQS runtime
+through the AWS stack and Lambda release assets:
+
+```bash
+just aws::deploy-lambdas latest
+just aws::deploy
+```
+
+Cloud MCU registration and runtime behavior are documented in
+[Cloud MCU](../devices/cloud-mcu/README.md).
 
 ## Board Host
 

@@ -5,7 +5,9 @@
 - Scope: current lifecycle control through Sparkplug with one writable metric: `redcon`
   and reflected availability metrics under `capability.*`
 - Group model: `town` is the Sparkplug group id
-- Edge model: `rig` is the Sparkplug edge node and Greengrass Lite core
+- Edge model: `rig` is the Sparkplug edge node. A `raspi` edge node is the
+  Greengrass Lite core running txing rig components; a `cloud` edge node is the
+  AWS-hosted `txing-cloud-rig-lambda` runtime.
 - Device model: each physical `txing` is one Sparkplug device and one AWS IoT thing
 - Sparkplug MQTT is the source protocol
 - The `sparkplug` named shadow is the AWS-side materialized Sparkplug view, not device intent storage
@@ -13,36 +15,50 @@
 
 ## Hard Edge Node Requirement
 
-The rig is not a Sparkplug device. The rig is the Sparkplug edge node, and in
-production that edge node is the Greengrass Lite core running
-the unit device Sparkplug process component.
+The rig is not a Sparkplug device. The rig is the Sparkplug edge node. In
+production, `raspi` rigs publish that edge node from the Greengrass Lite
+Sparkplug process component, while `cloud` rigs publish it from
+`txing-cloud-rig-lambda`.
 
-- `spBv1.0/<town>/NBIRTH/<rig>` means the Greengrass Lite rig edge node is born.
-- `spBv1.0/<town>/NDEATH/<rig>` means the Greengrass Lite rig edge node is dead.
-- A born rig edge node is healthy REDCON 1. If Greengrass Lite is running, the
-  rig Sparkplug and connectivity component services are active, and
-  `just rig::check` passes, the rig thing's Sparkplug projection must be
-  `NBIRTH` with `payload.metrics.redcon=1`. A retained `NDEATH`, missing
-  `NBIRTH`, or any non-1 born rig REDCON in that condition is a rig defect.
+- `spBv1.0/<town>/NBIRTH/<rig>` means the rig edge node is born.
+- `spBv1.0/<town>/NDEATH/<rig>` means the rig edge node is dead.
+- A born rig edge node is healthy REDCON 1. For `raspi`, if Greengrass Lite is
+  running, the rig Sparkplug and connectivity component services are active,
+  and `just rig::check` passes, the rig thing's Sparkplug projection must be
+  `NBIRTH` with `payload.metrics.redcon=1`. For `cloud`, the EventBridge minute
+  schedule must refresh `NBIRTH` within the witness timeout. A retained
+  `NDEATH`, missing `NBIRTH`, or any non-1 born rig REDCON in those conditions
+  is a rig defect.
 - This is a Sparkplug lifecycle contract, not a `rig::check` responsibility.
   `rig::check` remains a configuration and connectivity check; it is only one
   of the preconditions under which the Sparkplug projection is expected to show
   the born edge node state.
 - `spBv1.0/<town>/DBIRTH/<rig>/...` and `spBv1.0/<town>/DDEATH/<rig>/...` must never represent the rig itself.
-- `DBIRTH`, `DDATA`, and `DDEATH` are only for txing/unit things managed by the rig.
+- `DBIRTH`, `DDATA`, and `DDEATH` are only for device things managed by the rig.
 - Witness projects node `NBIRTH` and `NDEATH` messages onto the registered rig thing's `sparkplug` named shadow.
-- Greengrass core/device/component status and AWS IoT MQTT lifecycle events are observability signals only; they do not replace Sparkplug `NBIRTH` and `NDEATH`.
-- The Sparkplug node MQTT session uses `<rig>-sparkplug-manager` as its AWS IoT MQTT client id. The Sparkplug edge node id in topics remains `<rig>`, but the transport client id must not collide with the Greengrass core MQTT client id.
+- Greengrass core/device/component status, Lambda invocation status, and AWS
+  IoT MQTT lifecycle events are observability signals only; they do not replace
+  Sparkplug `NBIRTH` and `NDEATH`.
+- For `raspi`, the Sparkplug node MQTT session uses
+  `<rig>-sparkplug-manager` as its AWS IoT MQTT client id. For `cloud`, the
+  Lambda runtime publishes the same Sparkplug topic model from the AWS-hosted
+  runtime. The Sparkplug edge node id in topics remains `<rig>`, but any
+  transport client id must not collide with another rig/runtime client id.
 - Managed device Sparkplug MQTT sessions use the managed thing name as their MQTT client id so AWS IoT thing connectivity tracks device session state.
 
 ## Authority and Ownership
 
 - Sparkplug is the only authoritative lifecycle intent transport.
 - AWS shadow is reflection and durable restart cache only.
-- `rig` is the only authority that publishes Sparkplug node lifecycle for the rig edge node and device lifecycle for managed txing entities.
-- Witness is the only authority that writes the AWS-side `sparkplug` named shadow projection for rig and unit things.
+- The rig runtime is the only authority that publishes Sparkplug node lifecycle
+  for the rig edge node and device lifecycle for managed txing entities.
+- Witness is the only authority that writes the AWS-side `sparkplug` named
+  shadow projection for rig and managed device things.
 - `board` remains the source of truth for board power, wifi, and video operational state.
-- `rig` remains the source of truth for the `ble`, `power`, and `mcp` named shadows for BLE-managed devices.
+- `rig` remains the source of truth for the `ble`, `power`, and `mcp` named
+  shadows for BLE-managed devices.
+- `cloud-mcu` runtime remains the source of truth for `sqs`, `power`, and
+  future `ecs` named shadows for cloud-managed MCU devices.
 
 ## Topic Model
 

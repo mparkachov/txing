@@ -47,8 +47,8 @@ Release publishing flow:
 4. Deploy Lambda code from the operator machine with
    `just aws::deploy-lambdas latest`.
 5. Apply AWS infrastructure changes with `just aws::deploy`.
-6. Deploy rig components from the operator machine with
-   `just rig::deploy-release latest all`.
+6. Deploy `raspi` rig components from the operator machine with
+   `just rig::deploy-release latest raspi`.
 7. If a board needs the new binaries, update it manually from a board root
    shell with writable root, root-owned `mise upgrade`, and a reboot.
 
@@ -128,16 +128,20 @@ and reboot.
 
 ## Rig Artifacts
 
-Production rig hosts receive txing binaries through Greengrass cloud deployments.
-The rig does not need a source checkout, `mise`, AWS CLI, AWS access keys, or
-local Rust/CMake compilation for the release runtime path.
+Production `raspi` rig hosts receive txing binaries through Greengrass cloud
+deployments. The rig host does not need a source checkout, `mise`, AWS CLI, AWS
+access keys, or local Rust/CMake compilation for the release runtime path.
 
-`just rig::deploy-release` runs on the operator Mac, applies the repository AWS
-profile/credentials, downloads GitHub release assets with `gh`, uploads
-Linux component binaries to the Greengrass artifacts bucket, creates Greengrass
-component versions from the project SemVer, and creates continuous deployments
-for the rig-type thing groups. The Linux component binaries are not executed on
-the operator Mac.
+Production `cloud` rig code is shipped as Lambda release artifacts:
+`txing-cloud-rig-lambda-linux-aarch64.zip` and
+`txing-cloud-mcu-lambda-linux-aarch64.zip`.
+
+`just rig::deploy-release latest raspi` runs on the operator Mac, applies the
+repository AWS profile/credentials, downloads GitHub release assets with `gh`,
+uploads Linux component binaries to the Greengrass artifacts bucket, creates
+Greengrass component versions from the project SemVer, and creates continuous
+deployments for the `raspi` rig-type thing group. The Linux component binaries
+are not executed on the operator Mac.
 
 Greengrass Lite is installed from the official upstream AWS release, not from a
 txing release asset:
@@ -148,8 +152,8 @@ aws-greengrass-lite-deb-arm64.zip
 ```
 
 The release workflow does not build, package, or publish Greengrass Lite. The
-checked-in Greengrass Lite submodule remains for source-checkout development
-and local debugging only.
+repository no longer keeps a Greengrass Lite source checkout; install and
+upgrade the upstream distribution package manually on rig hosts.
 
 ## Integrity Policy
 

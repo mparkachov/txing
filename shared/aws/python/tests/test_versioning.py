@@ -258,7 +258,10 @@ class VersionEnvironmentTests(unittest.TestCase):
         rig_justfile = (REPO_ROOT / "rig" / "justfile").read_text(encoding="utf-8")
 
         self.assertIn("deploy target='auto'", rig_justfile)
-        self.assertIn("check-greengrass-lite", rig_justfile)
+        self.assertNotIn("check-greengrass-lite", rig_justfile)
+        self.assertNotIn(
+            "modules/aws-greengrass/aws-greengrass-lite", rig_justfile
+        )
         self.assertNotIn("git clone --branch", rig_justfile)
         self.assertNotIn("TXING_RIG_GREENGRASS_LITE_REPOSITORY", rig_justfile)
         self.assertIn('env_scope="rig"', rig_justfile)
@@ -551,7 +554,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertTrue((REPO_ROOT / "rig" / "scripts" / "txing-rig-deploy-release").exists())
         self.assertNotIn("RequiresPrivilege: true", deploy_script)
         self.assertNotIn("RequiresPrivilege: true", rig_justfile)
-        self.assertIn("Canonical rig installation", installation_docs)
+        self.assertIn("Canonical `raspi` rig installation", installation_docs)
         self.assertIn("components/rig.md", installation_docs)
         self.assertIn("gg_component", rig_docs)
         self.assertIn("bluetooth", rig_docs)
@@ -563,9 +566,9 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn('GGL_CONFIG="./greengrass-lite.yaml"', rig_docs)
         self.assertIn("/etc/greengrass/config.d/greengrass-lite.yaml", rig_docs)
         self.assertIn("/var/lib/greengrass/credentials/", rig_docs)
-        self.assertIn("just rig::deploy-release latest all", rig_docs)
-        self.assertIn("The rig does not run AWS CLI", rig_docs)
-        self.assertIn("A production rig does not need", rig_docs)
+        self.assertIn("just rig::deploy-release latest raspi", rig_docs)
+        self.assertIn("The `raspi` rig host does not run AWS CLI", rig_docs)
+        self.assertIn("production `raspi` rig does not need", rig_docs)
         self.assertIn("a repo checkout, mise, AWS CLI", rig_docs)
         self.assertNotIn("mise use --global aws-cli@latest gh@latest jq@latest", rig_docs)
         self.assertNotIn("/home/ggcore/.local/bin/mise exec -- txing-rig-deploy", rig_docs)
@@ -621,15 +624,17 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn("sudo", release_deploy)
         self.assertNotIn("chown", release_deploy)
 
-    def test_greengrass_lite_submodule_stays_top_level_module(self) -> None:
+    def test_greengrass_lite_submodule_removed_for_distribution_install(self) -> None:
         self.assertFalse((REPO_ROOT / "rig" / "greengrass-lite-build.env").exists())
         self.assertFalse(
             (REPO_ROOT / "rig" / "scripts" / "greengrass-lite-version").exists()
         )
 
         gitmodules = (REPO_ROOT / ".gitmodules").read_text(encoding="utf-8")
-        self.assertIn('[submodule "aws-greengrass/aws-greengrass-lite"]', gitmodules)
-        self.assertIn(
+        self.assertNotIn(
+            '[submodule "aws-greengrass/aws-greengrass-lite"]', gitmodules
+        )
+        self.assertNotIn(
             "path = modules/aws-greengrass/aws-greengrass-lite", gitmodules
         )
         self.assertIn(
@@ -642,10 +647,11 @@ class VersionEnvironmentTests(unittest.TestCase):
         )
         self.assertIn('[submodule "nrfconnect/sdk-nrf"]', gitmodules)
         self.assertIn("path = modules/nrfconnect/sdk-nrf", gitmodules)
-        self.assertIn("branch = main", gitmodules)
 
     def test_greengrass_lite_helper_removed(self) -> None:
-        self.assertFalse((REPO_ROOT / "rig" / "scripts" / "txing-greengrass-lite").exists())
+        self.assertFalse(
+            (REPO_ROOT / "rig" / "scripts" / "txing-greengrass-lite").exists()
+        )
 
     def test_rig_deploy_dry_run_generates_expected_recipes(self) -> None:
         script = REPO_ROOT / "rig" / "scripts" / "txing-rig-deploy"

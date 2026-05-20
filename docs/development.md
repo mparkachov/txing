@@ -5,7 +5,8 @@ For the system overview, see [../README.md](../README.md). For the documentation
 ## Repository Layout
 
 - `devices/unit/`: self-contained current `unit` device type, including MCU, board runtime, rig process implementation, AWS shadow contracts, docs, and web detail adapter
-- `rig/`: Rust Greengrass components and rig host tooling for the always-on coordinator
+- `rig/`: Rust Greengrass components and host tooling for `raspi` rigs
+- `devices/cloud-mcu/`: AWS-hosted `cloud` rig and `cloud-mcu` Lambda runtime
 - `web/`: React + Vite admin/operator SPA
 - `site/`: public static Vite landing page for `thing.dev`
 - `witness/`: Sparkplug-to-shadow projection Lambda source and tests
@@ -48,11 +49,11 @@ just aws::deploy-lambdas latest
 just aws::deploy
 ```
 
-Production rigs do not pull the repository and do not run AWS CLI. The operator
-Mac publishes rig release artifacts to Greengrass with:
+Production `raspi` rigs do not pull the repository and do not run AWS CLI. The
+operator Mac publishes `raspi` rig release artifacts to Greengrass with:
 
 ```bash
-just rig::deploy-release latest all
+just rig::deploy-release latest raspi
 ```
 
 Development direction for installable host tools and board-side native
@@ -167,8 +168,9 @@ just rig::log <rig-id>
 ```
 
 That source-checkout rig loop is for development and admin builder use.
-Production rig hosts receive Greengrass deployments published from the operator
-machine instead.
+Production `raspi` rig hosts receive Greengrass deployments published from the
+operator machine instead. Production `cloud` rigs are updated through
+`just aws::deploy-lambdas latest` and `just aws::deploy`.
 
 Board:
 

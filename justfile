@@ -341,7 +341,6 @@ mod cloud-mcu 'devices/cloud-mcu/justfile'
 mod weather 'devices/weather/justfile'
 mod power 'devices/power/justfile'
 mod web 'web/justfile'
-mod zephyr 'zephyr/justfile'
 mod common 'devices/common/justfile'
 mod release 'release/justfile'
 
