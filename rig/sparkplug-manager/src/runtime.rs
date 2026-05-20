@@ -887,19 +887,25 @@ impl SparkplugRuntime {
                     .expect("device name came from devices map");
                 device.state.decide_publication(now)?
             };
-            match publication {
+            let publish_result = match publication {
                 DevicePublication::Birth { redcon, metrics } => {
                     self.publish_device_report(&thing_name, "DBIRTH", redcon, metrics)
-                        .await?;
+                        .await
                 }
                 DevicePublication::Data { redcon, metrics } => {
                     self.publish_device_report(&thing_name, "DDATA", redcon, metrics)
-                        .await?;
+                        .await
                 }
-                DevicePublication::Death => {
-                    self.publish_device_death(&thing_name).await?;
+                DevicePublication::Death => self.publish_device_death(&thing_name, true).await,
+                DevicePublication::None => Ok(()),
+            };
+            if let Err(err) = publish_result {
+                if let Some(device) = self.devices.get_mut(&thing_name) {
+                    device.state.reset_publication();
                 }
-                DevicePublication::None => {}
+                return Err(err).with_context(|| {
+                    format!("publish Sparkplug device change thing={thing_name}")
+                });
             }
         }
         Ok(())
@@ -963,7 +969,14 @@ impl SparkplugRuntime {
         Ok(())
     }
 
-    async fn publish_device_death(&mut self, thing_name: &str) -> Result<()> {
+    async fn publish_device_death(
+        &mut self,
+        thing_name: &str,
+        create_session_if_missing: bool,
+    ) -> Result<()> {
+        if create_session_if_missing {
+            self.ensure_device_session(thing_name).await?;
+        }
         let Some(device) = self.devices.get_mut(thing_name) else {
             return Ok(());
         };
@@ -1010,7 +1023,7 @@ impl SparkplugRuntime {
     async fn shutdown(&mut self) -> Result<()> {
         let names = self.devices.keys().cloned().collect::<Vec<_>>();
         for thing_name in names {
-            self.publish_device_death(&thing_name).await?;
+            self.publish_device_death(&thing_name, false).await?;
         }
         self.publish_node_death().await?;
         if let Some(session) = self.node_session.take() {
