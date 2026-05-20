@@ -84,7 +84,7 @@ pub const DEFAULT_TRACK_WIDTH_M: f64 = 0.28;
 pub const DEFAULT_MAX_WHEEL_LINEAR_SPEED_MPS: f64 = 0.50;
 pub const DEFAULT_CLOUDWATCH_LOG_RETENTION_DAYS: i32 = 14;
 pub const DEFAULT_KVS_MASTER_COMMAND: &str = "txing-board-kvs-master";
-pub const DEFAULT_MCP_WEBRTC_SOCKET_PATH: &str = "/var/tmp/txing/unit-daemon/mcp-webrtc.sock";
+pub const DEFAULT_MCP_WEBRTC_SOCKET_PATH: &str = "/run/txing-unit-daemon/mcp-webrtc.sock";
 pub const DEFAULT_VIDEO_CODEC: &str = "h264";
 pub const DEFAULT_VIDEO_TRANSPORT: &str = "aws-webrtc";
 pub const VIDEO_STATUS_STARTING: &str = "starting";
@@ -1448,27 +1448,24 @@ impl McpIpcServerHandle {
 fn start_mcp_ipc_server(
     socket_path: String,
     event_tx: mpsc::UnboundedSender<RuntimeMcpIpcEvent>,
-) -> McpIpcServerHandle {
+) -> Result<McpIpcServerHandle> {
+    let listener = bind_mcp_ipc_listener(&socket_path)?;
     let stop = Arc::new(AtomicBool::new(false));
     let task_stop = stop.clone();
     let task_path = socket_path.clone();
     let task = tokio::spawn(async move {
-        if let Err(err) = run_mcp_ipc_server(task_path, event_tx, task_stop).await {
+        if let Err(err) = run_mcp_ipc_server(listener, event_tx, task_stop).await {
             warn!(error = %format_args!("{err:#}"), "MCP IPC server stopped");
         }
     });
-    McpIpcServerHandle {
+    Ok(McpIpcServerHandle {
         stop,
-        path: socket_path,
+        path: task_path,
         task,
-    }
+    })
 }
 
-async fn run_mcp_ipc_server(
-    socket_path: String,
-    event_tx: mpsc::UnboundedSender<RuntimeMcpIpcEvent>,
-    stop: Arc<AtomicBool>,
-) -> Result<()> {
+fn bind_mcp_ipc_listener(socket_path: &str) -> Result<UnixListener> {
     let path = Path::new(&socket_path);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
@@ -1482,6 +1479,14 @@ async fn run_mcp_ipc_server(
     let listener =
         UnixListener::bind(path).with_context(|| format!("bind MCP IPC socket {socket_path}"))?;
     info!(path = %socket_path, "MCP WebRTC IPC server started");
+    Ok(listener)
+}
+
+async fn run_mcp_ipc_server(
+    listener: UnixListener,
+    event_tx: mpsc::UnboundedSender<RuntimeMcpIpcEvent>,
+    stop: Arc<AtomicBool>,
+) -> Result<()> {
     while !stop.load(Ordering::SeqCst) {
         tokio::select! {
             accepted = listener.accept() => {
@@ -3831,7 +3836,7 @@ async fn run_connected_runtime(
         Some(start_mcp_ipc_server(
             config.mcp_webrtc_socket_path.clone(),
             mcp_ipc_event_tx,
-        ))
+        )?)
     } else {
         None
     };
@@ -5330,10 +5335,7 @@ mod tests {
                 &Level::INFO,
                 "starting unit daemon",
                 &[
-                    (
-                        "version".to_string(),
-                        "0.9.8".to_string()
-                    ),
+                    ("version".to_string(), "0.9.8".to_string()),
                     ("capabilities".to_string(), r#"["board"]"#.to_string()),
                 ],
             ),
@@ -5857,6 +5859,19 @@ mod tests {
     fn native_kvs_worker_output_is_visible_in_default_logs() {
         assert_eq!(video_worker_output_level("stdout"), Level::INFO);
         assert_eq!(video_worker_output_level("stderr"), Level::WARN);
+    }
+
+    #[tokio::test]
+    async fn mcp_ipc_listener_binds_under_runtime_directory() {
+        let socket_dir = PathBuf::from(format!("/tmp/tx-mcp-{}-{}", process::id(), now_ms()));
+        let socket_path = socket_dir.join("nested").join("mcp.sock");
+
+        let listener = bind_mcp_ipc_listener(socket_path.to_str().unwrap()).unwrap();
+        assert!(socket_path.exists());
+
+        drop(listener);
+        fs::remove_file(&socket_path).unwrap();
+        fs::remove_dir_all(socket_dir).unwrap();
     }
 
     #[test]

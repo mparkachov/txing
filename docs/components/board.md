@@ -231,7 +231,10 @@ Default runtime inputs include:
 - CloudWatch log configuration
 
 The default video channel is `<thing_id>-board-video`. The default MCP WebRTC
-IPC socket path is `/var/tmp/txing/unit-daemon/mcp-webrtc.sock`.
+IPC socket path is `/run/txing-unit-daemon/mcp-webrtc.sock`.
+Existing boards with an older generated `daemon.env` must update
+`TXING_MCP_WEBRTC_SOCKET_PATH`; generated config files are not overwritten by
+binary upgrades.
 
 ## Release Artifacts
 
