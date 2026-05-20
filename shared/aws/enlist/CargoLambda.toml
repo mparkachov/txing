@@ -1,9 +1,0 @@
-[build]
-arm64 = true
-output_format = "zip"
-
-[deploy]
-name = "txing-enlist-lambda"
-memory = 128
-runtime = "provided.al2023"
-timeout = 60

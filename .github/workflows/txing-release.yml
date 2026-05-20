@@ -405,7 +405,9 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config cmake perl file curl git libssl-dev
+          sudo apt-get install -y \
+            build-essential pkg-config cmake perl file curl git \
+            binutils libssl-dev unzip zip
 
       - name: Restore Rust toolchain cache
         uses: actions/cache@v4
@@ -423,13 +425,6 @@ jobs:
           rustup default "$RUST_VERSION"
           rustc -vV
           cargo -V
-
-      - name: Install Cargo Lambda
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo install cargo-lambda --locked
-          cargo lambda --version
 
       - name: Restore Cargo cache
         uses: actions/cache@v4
@@ -456,15 +451,30 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo lambda build --release
+          cargo build --release
 
       - name: Package ${{ matrix.asset_name }}
         shell: bash
         run: |
           set -euo pipefail
-          source="${{ matrix.working_directory }}/target/lambda/${{ matrix.function_name }}/bootstrap.zip"
-          test -s "$source"
-          install -m 644 "$source" "$RUNNER_TEMP/${{ matrix.asset_name }}"
+          source="${{ matrix.working_directory }}/target/release/${{ matrix.function_name }}"
+          package_dir="$RUNNER_TEMP/package-${{ matrix.function_name }}"
+          asset_path="$RUNNER_TEMP/${{ matrix.asset_name }}"
+          test -x "$source"
+          rm -rf "$package_dir"
+          install -d "$package_dir"
+          install -m 755 "$source" "$package_dir/bootstrap"
+          if file "$package_dir/bootstrap" | grep -q 'ELF'; then
+            strip "$package_dir/bootstrap"
+          fi
+          file "$package_dir/bootstrap"
+          (cd "$package_dir" && zip -q "$asset_path" bootstrap)
+          archive_listing="$(unzip -Z1 "$asset_path")"
+          if [ "$archive_listing" != "bootstrap" ]; then
+            echo "Expected ${{ matrix.asset_name }} to contain only root-level bootstrap, got:" >&2
+            printf '%s\n' "$archive_listing" >&2
+            exit 1
+          fi
 
       - name: Upload ${{ matrix.asset_name }}
         uses: actions/upload-artifact@v4

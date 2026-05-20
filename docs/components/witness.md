@@ -18,7 +18,7 @@ Deploy or update the release-built Lambda code:
 just aws::deploy-lambdas latest
 ```
 
-The `witness/` directory is a plain Cargo Lambda project and owns the active
+The `witness/` directory is a plain Rust Lambda project and owns the active
 Lambda source and tests. The primary deployment flow does not use a separate
 witness stack or a witness-local CloudFormation template.
 

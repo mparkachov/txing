@@ -328,8 +328,15 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("txing-witness-lambda-linux-aarch64.zip", workflow)
         self.assertIn("txing-enlist-lambda-linux-aarch64.zip", workflow)
         self.assertIn("txing-time-lambda-linux-aarch64.zip", workflow)
-        self.assertIn("Install Cargo Lambda", workflow)
-        self.assertIn("cargo lambda build --release", workflow)
+        self.assertIn("target/release/${{ matrix.function_name }}", workflow)
+        self.assertIn('install -m 755 "$source" "$package_dir/bootstrap"', workflow)
+        self.assertIn('zip -q "$asset_path" bootstrap', workflow)
+        self.assertIn('archive_listing="$(unzip -Z1 "$asset_path")"', workflow)
+        self.assertIn('cargo build --release', workflow)
+        self.assertNotIn("Install Cargo Lambda", workflow)
+        self.assertNotIn("cargo lambda", workflow)
+        self.assertNotIn("cargo-lambda", workflow)
+        self.assertNotIn("zig", workflow.lower())
         self.assertIn("cargo test --manifest-path rig/Cargo.toml --workspace", workflow)
         self.assertIn('release_asset_paths+=("$asset_path")', workflow)
         self.assertIn('version="$(tr -d \'[:space:]\' < VERSION)"', workflow)
@@ -360,6 +367,9 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn("JUST_VERSION", workflow)
         self.assertNotIn("cargo install just", workflow)
         self.assertNotIn("pip install --user uv", workflow)
+        self.assertFalse((REPO_ROOT / "witness" / "CargoLambda.toml").exists())
+        self.assertFalse((REPO_ROOT / "shared" / "aws" / "enlist" / "CargoLambda.toml").exists())
+        self.assertFalse((REPO_ROOT / "devices" / "time" / "lambda" / "CargoLambda.toml").exists())
 
     def test_unit_daemon_manual_docker_build_replaces_release_channel(self) -> None:
         removed_workflow = "unit-daemon-feature-" + "prerelease.yml"

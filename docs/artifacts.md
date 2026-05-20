@@ -31,8 +31,8 @@ txing-time-lambda-linux-aarch64.zip
 ```
 
 Each `.tar.gz` archive contains one root-level executable with the same command
-name. Each Lambda `.zip` is a Cargo Lambda `bootstrap.zip` for the
-`provided.al2023` arm64 runtime.
+name. Each Lambda `.zip` contains one root-level executable named `bootstrap`
+for the `provided.al2023` arm64 runtime.
 
 Release publishing flow:
 
