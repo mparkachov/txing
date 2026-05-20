@@ -1,6 +1,6 @@
 [project]
 name = "txing-release"
-version = "0.10.0"
+version = "0.10.1"
 description = "Release management tooling for txing"
 requires-python = ">=3.12"
 dependencies = []

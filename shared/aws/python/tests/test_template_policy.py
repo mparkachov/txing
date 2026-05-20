@@ -640,6 +640,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertNotIn('Default: https://office.txing.dev', root_template)
         self.assertIn('Default: https://office.txing.dev', template)
         self.assertIn('- !Sub "${WebAppUrl}/"', template)
+        self.assertIn("- https://txing.dev/", template)
 
     def test_static_manifests_use_plain_semver_only(self) -> None:
         manifest_paths = [

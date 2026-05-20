@@ -115,5 +115,7 @@ The public `txing.dev` site is a separate Cloudflare Pages project under
 The office SPA consumes that query parameter, starts the existing PKCE Cognito
 flow from the office origin, and Cognito returns to `https://office.txing.dev/`.
 Do not add `txing.dev` as a Cognito callback URL for this entry flow.
+Production sign-off redirects through Cognito to `https://txing.dev/`; local
+development sign-off returns to the current local office origin.
 
 AWS bootstrap, admin-user creation, and teardown live in [aws.md](../aws.md).

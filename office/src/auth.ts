@@ -18,6 +18,8 @@ const TOKEN_KEY = 'txing.auth.tokens'
 const STATE_KEY = 'txing.auth.state'
 const VERIFIER_KEY = 'txing.auth.pkce_verifier'
 const EXPIRY_SKEW_MS = 30_000
+const productionOfficeOrigin = 'https://office.txing.dev'
+const productionPublicLogoutUrl = 'https://txing.dev/'
 
 type TokenEndpointResponse = {
   access_token: string
@@ -265,11 +267,22 @@ export const getAuthUser = (tokens: AuthTokens): AuthUser => {
   }
 }
 
+export const getLogoutUrl = (): string => {
+  const runtimeUrl = getRuntimeAppUrl()
+  const runtimeOrigin = new URL(runtimeUrl).origin
+
+  if (runtimeOrigin === productionOfficeOrigin) {
+    return productionPublicLogoutUrl
+  }
+
+  return runtimeUrl
+}
+
 export const signOut = (): void => {
   clearAuthState()
   const params = new URLSearchParams({
     client_id: appConfig.cognitoClientId,
-    logout_uri: getRuntimeAppUrl(),
+    logout_uri: getLogoutUrl(),
   })
   window.location.assign(`${appConfig.cognitoDomain}/logout?${params.toString()}`)
 }

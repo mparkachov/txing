@@ -840,6 +840,7 @@ Resources:
         - !Sub "${LocalhostAltAppUrl}/"
       LogoutURLs:
         - !Sub "${WebAppUrl}/"
+        - https://txing.dev/
         - !Sub "${LocalhostAppUrl}/"
         - !Sub "${LocalhostAltAppUrl}/"
       AccessTokenValidity: 60

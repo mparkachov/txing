@@ -144,11 +144,21 @@ build from the root `VERSION` file, and the admin SPA discovers rigs and devices
 from the configured town.
 
 The base stack reads `WebAppUrl` from `/txing/stack/WebAppUrl`.
-Cognito callback and logout URLs are:
+Cognito callback URLs are:
 
 - `https://office.txing.dev/`
 - `http://localhost:5173/`
 - `http://127.0.0.1:5173/`
+
+Cognito logout URLs are:
+
+- `https://office.txing.dev/`
+- `https://txing.dev/`
+- `http://localhost:5173/`
+- `http://127.0.0.1:5173/`
+
+Production office sign-off redirects through Cognito to `https://txing.dev/`.
+Local development sign-off still returns to the current local office origin.
 
 Public `txing.dev` is a separate Cloudflare Pages project:
 
