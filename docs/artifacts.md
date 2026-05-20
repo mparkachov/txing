@@ -32,7 +32,9 @@ txing-time-lambda-linux-aarch64.zip
 
 Each `.tar.gz` archive contains one root-level executable with the same command
 name. Each Lambda `.zip` contains one root-level executable named `bootstrap`
-for the `provided.al2023` arm64 runtime.
+for the `provided.al2023` arm64 runtime. Lambda release artifacts are built
+inside Amazon Linux 2023 so the executable does not depend on newer host glibc
+symbols than the Lambda runtime provides.
 
 Release publishing flow:
 

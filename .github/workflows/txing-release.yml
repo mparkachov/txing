@@ -439,19 +439,43 @@ jobs:
             cargo-release-${{ matrix.function_name }}-${{ runner.os }}-${{ runner.arch }}-rust-1.95.0-
             cargo-release-${{ runner.os }}-${{ runner.arch }}-rust-1.95.0-
 
-      - name: Test ${{ matrix.function_name }}
-        working-directory: ${{ matrix.working_directory }}
+      - name: Test and build ${{ matrix.function_name }} in Amazon Linux 2023
         shell: bash
         run: |
           set -euo pipefail
-          cargo test
-
-      - name: Build ${{ matrix.function_name }}
-        working-directory: ${{ matrix.working_directory }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo build --release
+          cargo_home="$RUNNER_TEMP/cargo-${{ matrix.function_name }}"
+          rustup_home="$RUNNER_TEMP/rustup-lambda-${{ matrix.function_name }}"
+          install -d "$cargo_home" "$rustup_home"
+          rm -rf "${{ matrix.working_directory }}/target"
+          docker run --rm \
+            --env CARGO_HOME=/cargo \
+            --env RUSTUP_HOME=/rustup \
+            --env RUST_VERSION="$RUST_VERSION" \
+            --env HOST_UID="$(id -u)" \
+            --env HOST_GID="$(id -g)" \
+            --volume "$PWD:/work" \
+            --volume "$cargo_home:/cargo" \
+            --volume "$rustup_home:/rustup" \
+            --workdir "/work/${{ matrix.working_directory }}" \
+            public.ecr.aws/amazonlinux/amazonlinux:2023 \
+            bash -euxo pipefail -c '
+              dnf install -y gcc gcc-c++ make pkgconf-pkg-config cmake perl openssl-devel curl git
+              if ! getent group "$HOST_GID" >/dev/null; then
+                groupadd -g "$HOST_GID" txing
+              fi
+              if ! id -u txing >/dev/null 2>&1; then
+                useradd -m -u "$HOST_UID" -g "$HOST_GID" txing
+              fi
+              chown -R "$HOST_UID:$HOST_GID" /cargo /rustup
+              runuser -u txing -- env CARGO_HOME=/cargo RUSTUP_HOME=/rustup RUST_VERSION="$RUST_VERSION" bash -euxo pipefail -c "
+                curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal --default-toolchain \"\$RUST_VERSION\"
+                . /cargo/env
+                rustc -vV
+                cargo -V
+                cargo test
+                cargo build --release
+              "
+            '
 
       - name: Package ${{ matrix.asset_name }}
         shell: bash
@@ -467,6 +491,20 @@ jobs:
           if file "$package_dir/bootstrap" | grep -q 'ELF'; then
             strip "$package_dir/bootstrap"
           fi
+          glibc_versions="$(
+            objdump -T "$package_dir/bootstrap" \
+              | sed -n 's/.*GLIBC_\([0-9][0-9.]*\).*/\1/p' \
+              | sort -Vu
+          )"
+          python3 - "$glibc_versions" <<'PY'
+          import sys
+
+          versions = [tuple(int(part) for part in line.split(".")) for line in sys.argv[1].splitlines()]
+          too_new = [version for version in versions if version > (2, 34)]
+          if too_new:
+              rendered = ", ".join(".".join(str(part) for part in version) for version in too_new)
+              raise SystemExit(f"Lambda bootstrap requires glibc newer than AL2023 supports: {rendered}")
+          PY
           file "$package_dir/bootstrap"
           (cd "$package_dir" && zip -q "$asset_path" bootstrap)
           archive_listing="$(unzip -Z1 "$asset_path")"
