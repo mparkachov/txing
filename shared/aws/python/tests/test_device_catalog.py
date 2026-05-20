@@ -24,7 +24,7 @@ class DeviceCatalogTests(unittest.TestCase):
     def test_lists_only_loadable_device_types(self) -> None:
         self.assertEqual(
             list_loadable_device_types(repo_root=REPO_ROOT),
-            ["power", "time", "unit", "weather"],
+            ["cloud-mcu", "power", "time", "unit", "weather"],
         )
 
     def test_loads_unit_manifest(self) -> None:
@@ -56,21 +56,21 @@ class DeviceCatalogTests(unittest.TestCase):
         )
         self.assertEqual(manifest.web_adapter, "web/unit-adapter.tsx")
 
-    def test_loads_time_manifest(self) -> None:
-        manifest = load_device_manifest("time", repo_root=REPO_ROOT)
+    def test_loads_cloud_mcu_manifest(self) -> None:
+        manifest = load_device_manifest("cloud-mcu", repo_root=REPO_ROOT)
 
-        self.assertEqual(manifest.type, "time")
-        self.assertEqual(manifest.device_name, "clock")
-        self.assertEqual(manifest.display_name, "Time")
-        self.assertEqual(manifest.capabilities, ("sparkplug", "mcp", "time"))
+        self.assertEqual(manifest.type, "cloud-mcu")
+        self.assertEqual(manifest.device_name, "cloud")
+        self.assertEqual(manifest.display_name, "Cloud MCU")
+        self.assertEqual(manifest.capabilities, ("sparkplug", "sqs", "power", "ecs"))
         self.assertEqual(manifest.compatible_rig_types, ("cloud",))
         self.assertEqual(
             [contract.name for contract in manifest.shadows.values()],
-            ["sparkplug", "mcp", "time"],
+            ["sparkplug", "sqs", "power", "ecs"],
         )
-        self.assertEqual(manifest.render_board_video_channel_name(device_id="clock"), None)
-        self.assertEqual(manifest.web_adapter, "web/time-adapter.tsx")
-        for shadow_name in ("sparkplug", "mcp", "time"):
+        self.assertEqual(manifest.render_board_video_channel_name(device_id="cloud"), None)
+        self.assertEqual(manifest.web_adapter, "web/cloud-mcu-adapter.tsx")
+        for shadow_name in ("sparkplug", "sqs", "power", "ecs"):
             contract = manifest.shadow_contract(shadow_name)
             self.assertIsInstance(json.loads(contract.schema.read_text(encoding="utf-8")), dict)
             self.assertIsInstance(json.loads(contract.default.read_text(encoding="utf-8")), dict)
@@ -100,7 +100,7 @@ class DeviceCatalogTests(unittest.TestCase):
             capabilities["unit"],
             ("sparkplug", "ble", "power", "board", "mcp", "video"),
         )
-        self.assertEqual(capabilities["time"], ("sparkplug", "mcp", "time"))
+        self.assertEqual(capabilities["cloud-mcu"], ("sparkplug", "sqs", "power", "ecs"))
         self.assertEqual(capabilities["weather"], ("sparkplug", "ble", "power", "weather"))
         self.assertEqual(capabilities["power"], ("sparkplug", "ble", "power"))
         self.assertEqual(
@@ -108,8 +108,8 @@ class DeviceCatalogTests(unittest.TestCase):
             ("sparkplug", "ble", "power", "board", "mcp", "video"),
         )
         self.assertEqual(
-            capabilities_for_thing_type("time", repo_root=REPO_ROOT),
-            ("sparkplug", "mcp", "time"),
+            capabilities_for_thing_type("cloud-mcu", repo_root=REPO_ROOT),
+            ("sparkplug", "sqs", "power", "ecs"),
         )
         self.assertEqual(
             capabilities_for_thing_type("weather", repo_root=REPO_ROOT),

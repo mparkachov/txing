@@ -2,9 +2,10 @@
 
 The rig is the always-on coordinator and Sparkplug edge node. The current
 `raspi` rig type runs a rig-wide Sparkplug manager plus transport-level BLE
-connectivity for power and weather devices. The `cloud` rig type runs the
-virtual `time` device connectivity adapter on Greengrass Lite without host
-hardware.
+connectivity for power and weather devices. The `cloud` rig type is AWS-hosted:
+EventBridge runs `txing-cloud-rig-lambda` once per minute, SQS delayed messages
+act as the watch link, and `txing-cloud-mcu-lambda` reconciles `cloud-mcu`
+devices every six seconds.
 
 ## Current Responsibilities
 
@@ -36,7 +37,7 @@ The rig has a Greengrass-oriented component split:
   - never publishes Sparkplug node lifecycle
 - `dev.txing.rig.AwsConnectivity`
   - bridges the same v2 capability contract to retained AWS IoT topics for cloud devices
-  - contains no time-specific REDCON or metric mapping; time mapping lives in the time runtime package
+  - contains no cloud-device-specific REDCON or metric mapping; AWS-hosted cloud MCU mapping lives in `devices/cloud-mcu`
 - future connectivity adapters such as `dev.txing.rig.LoRaConnectivity`
   - should implement the same v2 capability contract using their own transport
   - must not publish Sparkplug node lifecycle

@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://txing.local/schemas/txing-cloud-mcu-sqs-shadow.schema.json",
+  "title": "Cloud MCU SQS Watch Link Named Shadow Contract",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "state": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "reported": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "lastTickOffsetSeconds": {
+              "type": ["integer", "null"],
+              "minimum": 0,
+              "maximum": 54
+            },
+            "lastTickScheduledAtMs": {
+              "type": ["integer", "null"],
+              "minimum": 0
+            }
+          }
+        }
+      }
+    }
+  }
+}

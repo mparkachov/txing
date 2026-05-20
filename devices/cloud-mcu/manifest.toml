@@ -1,0 +1,29 @@
+type = "cloud-mcu"
+device_name = "cloud"
+display_name = "Cloud MCU"
+capabilities = ["sparkplug", "sqs", "power", "ecs"]
+compatible_rig_types = ["cloud"]
+redcon_command_levels = [4, 3]
+
+[redcon_rules]
+4 = ["sparkplug", "sqs"]
+3 = ["sparkplug", "sqs", "power"]
+
+[shadows.sparkplug]
+schema = "aws/sparkplug-shadow.schema.json"
+default = "aws/default-sparkplug-shadow.json"
+
+[shadows.sqs]
+schema = "aws/sqs-shadow.schema.json"
+default = "aws/default-sqs-shadow.json"
+
+[shadows.power]
+schema = "aws/power-shadow.schema.json"
+default = "aws/default-power-shadow.json"
+
+[shadows.ecs]
+schema = "aws/ecs-shadow.schema.json"
+default = "aws/default-ecs-shadow.json"
+
+[web]
+adapter = "web/cloud-mcu-adapter.tsx"

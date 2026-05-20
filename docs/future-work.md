@@ -11,7 +11,7 @@ larger dependency work.
 The dependency review covered the project-owned Rust lockfiles:
 
 - `devices/power/test/Cargo.lock`
-- `devices/time/lambda/Cargo.lock`
+- `devices/cloud-mcu/lambda/Cargo.lock`
 - `devices/unit/daemon/Cargo.lock`
 - `devices/weather/test/Cargo.lock`
 - `rig/Cargo.lock`
@@ -43,7 +43,7 @@ opportunities:
 
 | Area | Duplicate versions | Seen in | Main cause | Decision |
 | --- | --- | --- | --- | --- |
-| AWS HTTP/TLS stack | `http 0.2/1`, `http-body 0.4/1`, `hyper 0.14/1`, `h2 0.3/0.4`, `hyper-rustls 0.24/0.27`, `rustls 0.21/0.23`, `tokio-rustls 0.24/0.26` | Unit daemon, rig, enlist, witness, time lambda | AWS SDK and Smithy currently carry both older and newer HTTP/TLS stacks | Defer. Do not chase with local overrides. Revisit when upgrading AWS SDK/Smithy or replacing a larger AWS client surface. |
+| AWS HTTP/TLS stack | `http 0.2/1`, `http-body 0.4/1`, `hyper 0.14/1`, `h2 0.3/0.4`, `hyper-rustls 0.24/0.27`, `rustls 0.21/0.23`, `tokio-rustls 0.24/0.26` | Unit daemon, rig, enlist, witness, cloud MCU lambda | AWS SDK and Smithy currently carry both older and newer HTTP/TLS stacks | Defer. Do not chase with local overrides. Revisit when upgrading AWS SDK/Smithy or replacing a larger AWS client surface. |
 | RustCrypto stack | `block-buffer 0.10/0.12`, `crypto-common 0.1/0.2`, `digest 0.10/0.11`, `cpufeatures 0.2/0.3` | AWS-heavy Rust projects | `aws-config -> sha1 0.10` keeps old `digest/crypto-common`; newer AWS signing code uses newer traits | Defer. Local bump is blocked by upstream pins, including `generic-array = "=0.14.7"`. |
 | `reqwest` | Direct use is still `0.12`; `0.13` is available | Unit daemon, enlist | Direct dependency version, with changed feature names and TLS behavior | Separate migration task. Requires daemon IoT/TLS and enlist CloudFormation response testing. |
 | Randomness stack | `rand 0.8/0.9/0.10`, `rand_core 0.6/0.9/0.10`, `rand_chacha 0.3/0.9`, `getrandom 0.2/0.3/0.4` | Unit daemon, rig, enlist | Direct enlist use plus transitive `gneiss-mqtt`, `tungstenite`, AWS, UUID, and BLE dependencies | Optional small cleanup for direct enlist usage. Do not expect it to remove all duplicate `rand` versions. |

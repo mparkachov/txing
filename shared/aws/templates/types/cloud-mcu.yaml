@@ -1,0 +1,420 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: txing cloud MCU device type catalog and event-driven runtime for cloud rigs.
+
+Parameters:
+  TypeCatalogServiceToken:
+    Type: String
+  CloudMcuRuntimeScheduleExpression:
+    Type: String
+    Default: rate(1 minute)
+  CloudMcuEcsTaskImage:
+    Type: String
+    Default: public.ecr.aws/docker/library/alpine:3.20
+  LambdaArtifactsBucketName:
+    Type: String
+    Description: S3 bucket containing release-built Lambda bootstrap zip artifacts.
+
+Resources:
+  CloudMcuTypeCatalog:
+    Type: Custom::TxingTypeCatalog
+    Properties:
+      ServiceToken: !Ref TypeCatalogServiceToken
+      CleanupType: TypeCatalog
+      PhysicalResourceId: txing-type-catalog-cloud-mcu
+      ThingTypeName: cloud-mcu
+      ThingTypeDescription: txing cloud MCU device type
+      SearchableAttributes:
+        - name
+        - townId
+        - rigId
+      CatalogBasePath: /txing/town/cloud/cloud-mcu
+      CatalogParameters:
+        kind: deviceType
+        schemaVersion: "1.0"
+        thingType: cloud-mcu
+        deviceType: cloud-mcu
+        rigType: cloud
+        displayName: Cloud MCU
+        defaultName: cloud
+        capabilities: sparkplug,sqs,power,ecs
+        redconCommandLevels: 4,3
+        redconRules/4: sparkplug,sqs
+        redconRules/3: sparkplug,sqs,power
+        requiredAttributes: name,shortId,townId,rigId
+        searchableAttributes: name,townId,rigId
+        shadows/sparkplug/schema: aws/sparkplug-shadow.schema.json
+        shadows/sparkplug/default: aws/default-sparkplug-shadow.json
+        shadows/sparkplug/defaultPayload: '{"state":{"reported":{"payload":{"metrics":{"redcon":4}}}}}'
+        shadows/sqs/schema: aws/sqs-shadow.schema.json
+        shadows/sqs/default: aws/default-sqs-shadow.json
+        shadows/sqs/defaultPayload: '{"state":{"reported":{}}}'
+        shadows/power/schema: aws/power-shadow.schema.json
+        shadows/power/default: aws/default-power-shadow.json
+        shadows/power/defaultPayload: '{"state":{"reported":{"desiredRedcon":4,"powered":false,"ecsTaskArn":null,"ecsTaskStatus":null,"pendingCommand":null,"sparkplugBorn":false}}}'
+        shadows/ecs/schema: aws/ecs-shadow.schema.json
+        shadows/ecs/default: aws/default-ecs-shadow.json
+        shadows/ecs/defaultPayload: '{"state":{"reported":{}}}'
+        web/adapter: web/cloud-mcu-adapter.tsx
+
+  CloudMcuVpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.83.0.0/24
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+
+  CloudMcuInternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  CloudMcuVpcGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref CloudMcuVpc
+      InternetGatewayId: !Ref CloudMcuInternetGateway
+
+  CloudMcuSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref CloudMcuVpc
+      CidrBlock: 10.83.0.0/25
+      MapPublicIpOnLaunch: true
+
+  CloudMcuRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref CloudMcuVpc
+
+  CloudMcuDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: CloudMcuVpcGatewayAttachment
+    Properties:
+      RouteTableId: !Ref CloudMcuRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref CloudMcuInternetGateway
+
+  CloudMcuSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref CloudMcuSubnet
+      RouteTableId: !Ref CloudMcuRouteTable
+
+  CloudMcuTaskSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allows cloud MCU placeholder ECS tasks outbound access.
+      VpcId: !Ref CloudMcuVpc
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+
+  CloudMcuCluster:
+    Type: AWS::ECS::Cluster
+
+  CloudMcuTaskLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/ecs/txing-cloud-mcu
+      RetentionInDays: 14
+
+  CloudMcuTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: Execution role for placeholder cloud MCU Fargate tasks.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: cloud-mcu-task-execution
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: CloudMcuTaskLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !GetAtt CloudMcuTaskLogGroup.Arn
+                  - !Sub ${CloudMcuTaskLogGroup.Arn}:*
+
+  CloudMcuTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: Placeholder task role for future cloud MCU ECS runtime.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+
+  CloudMcuTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: txing-cloud-mcu
+      Cpu: "256"
+      Memory: "512"
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      RuntimePlatform:
+        CpuArchitecture: ARM64
+        OperatingSystemFamily: LINUX
+      ExecutionRoleArn: !GetAtt CloudMcuTaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt CloudMcuTaskRole.Arn
+      ContainerDefinitions:
+        - Name: cloud-mcu
+          Image: !Ref CloudMcuEcsTaskImage
+          Essential: true
+          Command:
+            - sh
+            - -c
+            - "while true; do sleep 3600; done"
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref CloudMcuTaskLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: cloud-mcu
+
+  CloudMcuTickDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 1209600
+
+  CloudMcuTickQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      VisibilityTimeout: 60
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt CloudMcuTickDeadLetterQueue.Arn
+        maxReceiveCount: 5
+
+  CloudRigRuntimeLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/txing-cloud-rig-lambda
+      RetentionInDays: 14
+
+  CloudMcuRuntimeLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/txing-cloud-mcu-lambda
+      RetentionInDays: 14
+
+  CloudRigRuntimeFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: Schedules cloud MCU SQS watch-link ticks for cloud rigs.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: cloud-rig-runtime
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: CloudRigRuntimeLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !GetAtt CloudRigRuntimeLogGroup.Arn
+                  - !Sub ${CloudRigRuntimeLogGroup.Arn}:*
+              - Sid: CloudRigRuntimeSparkplug
+                Effect: Allow
+                Action: iot:Publish
+                Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/spBv1.0/*
+              - Sid: CloudRigRuntimeFleetIndexing
+                Effect: Allow
+                Action: iot:SearchIndex
+                Resource: "*"
+              - Sid: CloudRigRuntimeDescribeEndpoint
+                Effect: Allow
+                Action: iot:DescribeEndpoint
+                Resource: "*"
+              - Sid: CloudRigRuntimeSqs
+                Effect: Allow
+                Action: sqs:SendMessage
+                Resource: !GetAtt CloudMcuTickQueue.Arn
+
+  CloudMcuRuntimeFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: Executes cloud MCU SQS tick and REDCON reconciliation.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: cloud-mcu-runtime
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: CloudMcuRuntimeLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !GetAtt CloudMcuRuntimeLogGroup.Arn
+                  - !Sub ${CloudMcuRuntimeLogGroup.Arn}:*
+              - Sid: CloudMcuRuntimeSparkplug
+                Effect: Allow
+                Action: iot:Publish
+                Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/spBv1.0/*
+              - Sid: CloudMcuRuntimeShadows
+                Effect: Allow
+                Action:
+                  - iot:GetThingShadow
+                  - iot:UpdateThingShadow
+                Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/*
+              - Sid: CloudMcuRuntimeDescribeThing
+                Effect: Allow
+                Action: iot:DescribeThing
+                Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/*
+              - Sid: CloudMcuRuntimeDescribeEndpoint
+                Effect: Allow
+                Action: iot:DescribeEndpoint
+                Resource: "*"
+              - Sid: CloudMcuRuntimeSqs
+                Effect: Allow
+                Action:
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                Resource: !GetAtt CloudMcuTickQueue.Arn
+              - Sid: CloudMcuRuntimeEcs
+                Effect: Allow
+                Action:
+                  - ecs:DescribeTasks
+                  - ecs:RunTask
+                  - ecs:StopTask
+                Resource: "*"
+              - Sid: CloudMcuRuntimePassTaskRoles
+                Effect: Allow
+                Action: iam:PassRole
+                Resource:
+                  - !GetAtt CloudMcuTaskExecutionRole.Arn
+                  - !GetAtt CloudMcuTaskRole.Arn
+
+  CloudRigRuntimeFunction:
+    Type: AWS::Lambda::Function
+    DependsOn:
+      - CloudRigRuntimeLogGroup
+    Properties:
+      FunctionName: txing-cloud-rig-lambda
+      Description: EventBridge scheduler for cloud MCU SQS watch-link ticks.
+      Runtime: provided.al2023
+      Handler: rust.handler
+      Architectures:
+        - arm64
+      Code:
+        S3Bucket: !Ref LambdaArtifactsBucketName
+        S3Key: lambda/txing-cloud-rig-lambda/current/bootstrap.zip
+      Role: !GetAtt CloudRigRuntimeFunctionRole.Arn
+      Timeout: 60
+      MemorySize: 128
+      Environment:
+        Variables:
+          CLOUD_MCU_TICK_QUEUE_URL: !Ref CloudMcuTickQueue
+
+  CloudMcuRuntimeFunction:
+    Type: AWS::Lambda::Function
+    DependsOn:
+      - CloudMcuRuntimeLogGroup
+    Properties:
+      FunctionName: txing-cloud-mcu-lambda
+      Description: SQS and Sparkplug DCMD runtime for cloud MCU devices.
+      Runtime: provided.al2023
+      Handler: rust.handler
+      Architectures:
+        - arm64
+      Code:
+        S3Bucket: !Ref LambdaArtifactsBucketName
+        S3Key: lambda/txing-cloud-mcu-lambda/current/bootstrap.zip
+      Role: !GetAtt CloudMcuRuntimeFunctionRole.Arn
+      Timeout: 30
+      MemorySize: 128
+      Environment:
+        Variables:
+          CLOUD_MCU_ECS_CLUSTER: !Ref CloudMcuCluster
+          CLOUD_MCU_ECS_TASK_DEFINITION: !Ref CloudMcuTaskDefinition
+          CLOUD_MCU_ECS_SUBNETS: !Ref CloudMcuSubnet
+          CLOUD_MCU_ECS_SECURITY_GROUPS: !Ref CloudMcuTaskSecurityGroup
+
+  CloudMcuTickEventSource:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      BatchSize: 1
+      EventSourceArn: !GetAtt CloudMcuTickQueue.Arn
+      FunctionName: !Ref CloudMcuRuntimeFunction
+
+  CloudRigRuntimeScheduleRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Schedule cloud MCU watch-link ticks once per minute.
+      ScheduleExpression: !Ref CloudMcuRuntimeScheduleExpression
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt CloudRigRuntimeFunction.Arn
+          Id: CloudRigRuntimeFunction
+
+  CloudRigRuntimeSchedulePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref CloudRigRuntimeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt CloudRigRuntimeScheduleRule.Arn
+
+  CloudMcuDcmdTopicRule:
+    Type: AWS::IoT::TopicRule
+    Properties:
+      TopicRulePayload:
+        AwsIotSqlVersion: "2016-03-23"
+        RuleDisabled: false
+        Sql: >-
+          SELECT topic() AS mqttTopic, encode(*, 'base64') AS payloadBase64, timestamp() AS observedAt
+          FROM 'spBv1.0/+/DCMD/+/+'
+          WHERE startswith(topic(5), 'cloud-mcu-')
+        Actions:
+          - Lambda:
+              FunctionArn: !GetAtt CloudMcuRuntimeFunction.Arn
+
+  CloudMcuDcmdRulePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref CloudMcuRuntimeFunction
+      Principal: iot.amazonaws.com
+      SourceArn: !GetAtt CloudMcuDcmdTopicRule.Arn
+
+Outputs:
+  CloudRigRuntimeFunctionName:
+    Value: !Ref CloudRigRuntimeFunction
+  CloudMcuRuntimeFunctionName:
+    Value: !Ref CloudMcuRuntimeFunction
+  CloudMcuTickQueueUrl:
+    Value: !Ref CloudMcuTickQueue
+  CloudRigRuntimeScheduleRuleName:
+    Value: !Ref CloudRigRuntimeScheduleRule
+  CloudMcuDcmdTopicRuleArn:
+    Value: !GetAtt CloudMcuDcmdTopicRule.Arn
+  CloudMcuClusterName:
+    Value: !Ref CloudMcuCluster
+  CloudMcuTaskDefinitionArn:
+    Value: !Ref CloudMcuTaskDefinition

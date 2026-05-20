@@ -29,7 +29,8 @@ txing-aws-connectivity-linux-aarch64.tar.gz
 txing-rig-deploy-linux-aarch64.tar.gz
 txing-witness-lambda-linux-aarch64.zip
 txing-enlist-lambda-linux-aarch64.zip
-txing-time-lambda-linux-aarch64.zip
+txing-cloud-rig-lambda-linux-aarch64.zip
+txing-cloud-mcu-lambda-linux-aarch64.zip
 ```
 
 Each `.tar.gz` archive contains one root-level executable with the same command

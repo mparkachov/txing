@@ -37,7 +37,7 @@ capabilities for each AWS IoT ThingType:
 - `raspi`: `sparkplug`
 - `cloud`: `sparkplug`
 - `unit`: `sparkplug`, `ble`, `power`, `board`, `mcp`, `video`
-- `time`: `sparkplug`, `mcp`, `time`
+- `cloud-mcu`: `sparkplug`, `sqs`, `power`, `ecs`
 - `weather`: `sparkplug`, `ble`, `power`, `weather`
 - `power`: `sparkplug`, `ble`, `power`
 

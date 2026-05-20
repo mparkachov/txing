@@ -3,14 +3,14 @@ import { getDeviceWebAdapter, listDeviceWebAdapters } from '../src/device-regist
 
 describe('device web adapter registry', () => {
   test('registers installed device detail adapters and returns null for unknown device types', () => {
-    const timeAdapter = getDeviceWebAdapter('time')
+    const cloudMcuAdapter = getDeviceWebAdapter('cloud-mcu')
     const unitAdapter = getDeviceWebAdapter('unit')
     const weatherAdapter = getDeviceWebAdapter('weather')
     const powerAdapter = getDeviceWebAdapter('power')
 
-    expect(timeAdapter?.type).toBe('time')
-    expect(timeAdapter?.canUseBoardVideo(1)).toBe(false)
-    expect(timeAdapter?.canUseDriveControl(1)).toBe(false)
+    expect(cloudMcuAdapter?.type).toBe('cloud-mcu')
+    expect(cloudMcuAdapter?.canUseBoardVideo(1)).toBe(false)
+    expect(cloudMcuAdapter?.canUseDriveControl(1)).toBe(false)
     expect(unitAdapter?.type).toBe('unit')
     expect(unitAdapter?.buildVideoChannelName('unit-a1')).toBe('unit-a1-board-video')
     expect(unitAdapter?.canUseBoardVideo(1)).toBe(true)
@@ -25,7 +25,7 @@ describe('device web adapter registry', () => {
     expect(powerAdapter?.canUseDriveControl(1)).toBe(false)
     expect(getDeviceWebAdapter('sensor')).toBeNull()
     expect(listDeviceWebAdapters().map((adapter) => adapter.type)).toEqual([
-      'time',
+      'cloud-mcu',
       'unit',
       'weather',
       'power',

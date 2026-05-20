@@ -27,7 +27,7 @@ STANDALONE_CARGO_MANIFESTS = (
     Path("witness/Cargo.toml"),
     Path("shared/aws/enlist/Cargo.toml"),
     Path("devices/unit/daemon/Cargo.toml"),
-    Path("devices/time/lambda/Cargo.toml"),
+    Path("devices/cloud-mcu/lambda/Cargo.toml"),
     Path("devices/power/test/Cargo.toml"),
     Path("devices/weather/test/Cargo.toml"),
 )
@@ -62,12 +62,6 @@ class TextVersion:
 
 
 TEXT_VERSIONS = (
-    TextVersion(
-        Path("devices/time/lambda/src/lib.rs"),
-        "time lambda default server version",
-        re.compile(r'pub const DEFAULT_SERVER_VERSION: &str = "[^"]+";'),
-        'pub const DEFAULT_SERVER_VERSION: &str = "{version}";',
-    ),
     TextVersion(
         Path("devices/unit/board/src/board/mcp_service.py"),
         "board MCP default server version",
@@ -115,6 +109,7 @@ SCAN_IGNORED_DIRS = {
 }
 
 SCAN_IGNORED_PREFIXES = (
+    Path("devices/time"),
     Path("devices/common/mcu/ncs"),
     Path("zephyr/workspace"),
 )

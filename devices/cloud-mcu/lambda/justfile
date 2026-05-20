@@ -1,0 +1,19 @@
+set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+set quiet := true
+
+lambda_dir := source_directory()
+
+@test:
+    cargo test --manifest-path "{{lambda_dir}}/Cargo.toml"
+
+build:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build --release --manifest-path "{{lambda_dir}}/Cargo.toml"
+
+deploy:
+    @echo "Direct local Lambda deploy is disabled. Build a GitHub release and run: just aws::deploy-lambdas latest" >&2
+    @exit 1
+
+@default:
+    @just --list

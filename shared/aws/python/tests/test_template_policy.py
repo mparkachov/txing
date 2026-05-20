@@ -420,7 +420,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
             "RaspiUnitTypeCatalog",
             "RaspiPowerTypeCatalog",
             "CloudTypeCatalog",
-            "CloudTimeTypeCatalog",
+            "CloudMcuTypeCatalog",
             "EnlistLayer",
             "RigRuntimeLayer",
             "DeviceRuntimeLayer",
@@ -432,7 +432,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
             "templates/types/raspi-unit.yaml",
             "templates/types/raspi-power.yaml",
             "templates/types/cloud.yaml",
-            "templates/types/cloud-time.yaml",
+            "templates/types/cloud-mcu.yaml",
             "templates/enlist.yaml",
             "templates/rig.yaml",
             "templates/device.yaml",
@@ -449,13 +449,15 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("ThingTypeName: cloud", template)
         self.assertIn("ThingTypeName: unit", template)
         self.assertIn("ThingTypeName: power", template)
-        self.assertIn("ThingTypeName: time", template)
-        self.assertIn("TimeRuntimeFunction:", template)
-        self.assertIn("TimeRuntimeMcpTopicRule:", template)
-        self.assertIn("FunctionName: txing-time-lambda", template)
-        self.assertIn("S3Key: lambda/txing-time-lambda/current/bootstrap.zip", template)
+        self.assertIn("ThingTypeName: cloud-mcu", template)
+        self.assertIn("CloudRigRuntimeFunction:", template)
+        self.assertIn("CloudMcuRuntimeFunction:", template)
+        self.assertIn("FunctionName: txing-cloud-rig-lambda", template)
+        self.assertIn("FunctionName: txing-cloud-mcu-lambda", template)
+        self.assertIn("S3Key: lambda/txing-cloud-rig-lambda/current/bootstrap.zip", template)
+        self.assertIn("S3Key: lambda/txing-cloud-mcu-lambda/current/bootstrap.zip", template)
         self.assertNotIn("devices/time/lambda/target/lambda/txing-time-lambda/bootstrap.zip", template)
-        self.assertIn("CatalogBasePath: /txing/town/cloud/time", template)
+        self.assertIn("CatalogBasePath: /txing/town/cloud/cloud-mcu", template)
         self.assertIn("CatalogBasePath: /txing/town/raspi/unit", template)
         self.assertIn("CatalogBasePath: /txing/town/raspi/power", template)
         self.assertIn("kind: deviceType", template)
@@ -464,43 +466,53 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("RigTypeCatalogRead", template)
         self.assertIn("ssm:GetParametersByPath", template)
 
-    def test_cloud_time_template_defines_rust_lambda_schedule_state_and_mcp_rules(self) -> None:
-        template = (AWS_DIR / "templates" / "types" / "cloud-time.yaml").read_text(
+    def test_cloud_mcu_template_defines_event_driven_runtime_resources(self) -> None:
+        template = (AWS_DIR / "templates" / "types" / "cloud-mcu.yaml").read_text(
             encoding="utf-8"
         )
 
-        self.assertIn("TimeRuntimeFunction:", template)
+        self.assertIn("CloudRigRuntimeFunction:", template)
+        self.assertIn("CloudMcuRuntimeFunction:", template)
         self.assertIn("AWS::Lambda::Function", template)
         self.assertIn("AWS::Events::Rule", template)
+        self.assertIn("AWS::SQS::Queue", template)
+        self.assertIn("AWS::Lambda::EventSourceMapping", template)
         self.assertIn("AWS::IoT::TopicRule", template)
+        self.assertIn("AWS::ECS::Cluster", template)
+        self.assertIn("AWS::ECS::TaskDefinition", template)
+        self.assertIn("AWS::EC2::VPC", template)
         self.assertIn("rate(1 minute)", template)
-        self.assertIn("txings/+/mcp/session/+/c2s", template)
-        self.assertIn("WHERE startswith(topic(2), 'time-')", template)
-        self.assertIn("txings/+/capability/v2/command", template)
-        self.assertIn("TimeRuntimeCommandTopicRule:", template)
-        self.assertIn("TimeRuntimeCommandRulePermission:", template)
-        self.assertIn("iot:GetRetainedMessage", template)
+        self.assertIn("FROM 'spBv1.0/+/DCMD/+/+'", template)
+        self.assertIn("WHERE startswith(topic(5), 'cloud-mcu-')", template)
+        self.assertIn("CloudMcuDcmdTopicRule:", template)
+        self.assertIn("CloudMcuDcmdRulePermission:", template)
         self.assertIn("iot:GetThingShadow", template)
+        self.assertIn("iot:UpdateThingShadow", template)
         self.assertIn("iot:SearchIndex", template)
-        self.assertIn("ACTIVE_TTL_MS: !Ref TimeRuntimeActiveTtlMs", template)
-        self.assertIn("topic/txings/*/capability/v2/*", template)
-        self.assertIn("topic/txings/*/mcp/*", template)
+        self.assertIn("sqs:SendMessage", template)
+        self.assertIn("sqs:ReceiveMessage", template)
+        self.assertIn("ecs:RunTask", template)
+        self.assertIn("ecs:StopTask", template)
+        self.assertIn("iam:PassRole", template)
         self.assertIn("Runtime: provided.al2023", template)
         self.assertIn("Handler: rust.handler", template)
         self.assertIn("Architectures:", template)
         self.assertIn("- arm64", template)
         self.assertIn("RetentionInDays: 14", template)
+        self.assertIn("CpuArchitecture: ARM64", template)
+        self.assertIn("public.ecr.aws/docker/library/alpine:3.20", template)
         self.assertIn(
-            "FunctionName: txing-time-lambda",
+            "FunctionName: txing-cloud-rig-lambda",
             template,
         )
+        self.assertIn("FunctionName: txing-cloud-mcu-lambda", template)
         self.assertIn("S3Bucket: !Ref LambdaArtifactsBucketName", template)
-        self.assertIn("S3Key: lambda/txing-time-lambda/current/bootstrap.zip", template)
+        self.assertIn("S3Key: lambda/txing-cloud-rig-lambda/current/bootstrap.zip", template)
+        self.assertIn("S3Key: lambda/txing-cloud-mcu-lambda/current/bootstrap.zip", template)
         self.assertNotIn("devices/time/lambda/target/lambda/txing-time-lambda/bootstrap.zip", template)
         self.assertNotIn("ThingName:", template)
         self.assertNotIn("THING_NAME", template)
         self.assertNotIn("${ThingName}", template)
-        self.assertNotIn("txing-time-${ThingName}", template)
         self.assertNotIn("AWS::Serverless::Function", template)
         self.assertNotIn("AWS::DynamoDB::Table", template)
         self.assertNotIn("dynamodb:", template)
@@ -578,12 +590,9 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("Type: AWS::CloudFormation::Stack", root_template)
         self.assertIn("TemplateURL: templates/base.yaml", root_template)
 
-    def test_time_runtime_uses_compiled_project_version_metadata(self) -> None:
+    def test_cloud_mcu_runtime_uses_release_lambda_assets(self) -> None:
         root_template = (AWS_DIR / "template.yaml").read_text(encoding="utf-8")
-        cloud_time_template = (AWS_DIR / "templates" / "types" / "cloud-time.yaml").read_text(
-            encoding="utf-8"
-        )
-        time_lambda_source = (REPO_ROOT / "devices" / "time" / "lambda" / "src" / "lib.rs").read_text(
+        cloud_mcu_template = (AWS_DIR / "templates" / "types" / "cloud-mcu.yaml").read_text(
             encoding="utf-8"
         )
         aws_justfile = (AWS_DIR / "justfile").read_text(encoding="utf-8")
@@ -594,9 +603,6 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("_project-version-env:", root_justfile)
         self.assertIn("export_line TXING_VERSION_BASE", root_justfile)
         self.assertIn("export_line TXING_VERSION", root_justfile)
-        self.assertIn(f'DEFAULT_SERVER_VERSION: &str = "{project_version}"', time_lambda_source)
-        self.assertIn('std::env::var("TXING_VERSION")', time_lambda_source)
-        self.assertIn("DEFAULT_SERVER_VERSION.to_string()", time_lambda_source)
         parameter_block = root_template.split("\nResources:", 1)[0]
         self.assertIn("StackCognitoDomainPrefix:", parameter_block)
         self.assertIn("StackAdminEmail:", parameter_block)
@@ -611,11 +617,12 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("CognitoDomainPrefix: !Ref StackCognitoDomainPrefix", root_template)
         self.assertIn("AdminEmail: !Ref StackAdminEmail", root_template)
         self.assertIn("WebAppUrl: !Ref StackWebAppUrl", root_template)
-        self.assertIn("TemplateURL: templates/types/cloud-time.yaml", root_template)
-        self.assertIn("ACTIVE_TTL_MS: !Ref TimeRuntimeActiveTtlMs", cloud_time_template)
-        self.assertIn("Runtime: provided.al2023", cloud_time_template)
-        self.assertIn("Handler: rust.handler", cloud_time_template)
-        self.assertIn("- arm64", cloud_time_template)
+        self.assertIn("TemplateURL: templates/types/cloud-mcu.yaml", root_template)
+        self.assertIn("Runtime: provided.al2023", cloud_mcu_template)
+        self.assertIn("Handler: rust.handler", cloud_mcu_template)
+        self.assertIn("- arm64", cloud_mcu_template)
+        self.assertIn("lambda/txing-cloud-rig-lambda/current/bootstrap.zip", cloud_mcu_template)
+        self.assertIn("lambda/txing-cloud-mcu-lambda/current/bootstrap.zip", cloud_mcu_template)
         self.assertNotIn("--parameter-overrides", aws_justfile)
 
     def test_web_hosting_is_external_to_aws_stack(self) -> None:
@@ -637,7 +644,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         manifest_paths = [
             REPO_ROOT / "shared" / "aws" / "python" / "pyproject.toml",
             REPO_ROOT / "shared" / "aws" / "enlist" / "Cargo.toml",
-            REPO_ROOT / "devices" / "time" / "lambda" / "Cargo.toml",
+            REPO_ROOT / "devices" / "cloud-mcu" / "lambda" / "Cargo.toml",
             REPO_ROOT / "witness" / "Cargo.toml",
             REPO_ROOT / "devices" / "unit" / "rig" / "python" / "pyproject.toml",
             REPO_ROOT / "devices" / "unit" / "board" / "pyproject.toml",
@@ -657,7 +664,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
             REPO_ROOT / "justfile",
             AWS_DIR / "justfile",
             AWS_DIR / "scripts" / "aws_lib.sh",
-            REPO_ROOT / "devices" / "time" / "justfile",
+            REPO_ROOT / "devices" / "cloud-mcu" / "justfile",
         ]
         text = "\n".join(path.read_text(encoding="utf-8") for path in checked_paths)
 

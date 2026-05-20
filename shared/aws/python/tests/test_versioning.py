@@ -327,7 +327,8 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("txing-rig-deploy-linux-aarch64.tar.gz", workflow)
         self.assertIn("txing-witness-lambda-linux-aarch64.zip", workflow)
         self.assertIn("txing-enlist-lambda-linux-aarch64.zip", workflow)
-        self.assertIn("txing-time-lambda-linux-aarch64.zip", workflow)
+        self.assertIn("txing-cloud-rig-lambda-linux-aarch64.zip", workflow)
+        self.assertIn("txing-cloud-mcu-lambda-linux-aarch64.zip", workflow)
         self.assertIn("Test and build ${{ matrix.function_name }} in Amazon Linux 2023", workflow)
         self.assertIn("public.ecr.aws/amazonlinux/amazonlinux:2023", workflow)
         self.assertIn("curl-minimal ca-certificates", workflow)
@@ -379,7 +380,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn("pip install --user uv", workflow)
         self.assertFalse((REPO_ROOT / "witness" / "CargoLambda.toml").exists())
         self.assertFalse((REPO_ROOT / "shared" / "aws" / "enlist" / "CargoLambda.toml").exists())
-        self.assertFalse((REPO_ROOT / "devices" / "time" / "lambda" / "CargoLambda.toml").exists())
+        self.assertFalse((REPO_ROOT / "devices" / "cloud-mcu" / "lambda" / "CargoLambda.toml").exists())
 
     def test_unit_daemon_manual_docker_build_replaces_release_channel(self) -> None:
         removed_workflow = "unit-daemon-feature-" + "prerelease.yml"
@@ -612,7 +613,8 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("gh release download", release_deploy)
         self.assertIn("txing-witness-lambda-linux-aarch64.zip", release_deploy)
         self.assertIn("txing-enlist-lambda-linux-aarch64.zip", release_deploy)
-        self.assertIn("txing-time-lambda-linux-aarch64.zip", release_deploy)
+        self.assertIn("txing-cloud-rig-lambda-linux-aarch64.zip", release_deploy)
+        self.assertIn("txing-cloud-mcu-lambda-linux-aarch64.zip", release_deploy)
         self.assertIn('version_key="lambda/$function_name/$version/bootstrap.zip"', release_deploy)
         self.assertIn('current_key="lambda/$function_name/current/bootstrap.zip"', release_deploy)
         self.assertIn("aws lambda update-function-code", release_deploy)

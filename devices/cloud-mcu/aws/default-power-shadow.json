@@ -1,0 +1,12 @@
+{
+  "state": {
+    "reported": {
+      "desiredRedcon": 4,
+      "powered": false,
+      "ecsTaskArn": null,
+      "ecsTaskStatus": null,
+      "pendingCommand": null,
+      "sparkplugBorn": false
+    }
+  }
+}

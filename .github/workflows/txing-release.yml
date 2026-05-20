@@ -21,7 +21,8 @@ env:
   RIG_DEPLOY_ASSET: txing-rig-deploy-linux-aarch64.tar.gz
   WITNESS_LAMBDA_ASSET: txing-witness-lambda-linux-aarch64.zip
   ENLIST_LAMBDA_ASSET: txing-enlist-lambda-linux-aarch64.zip
-  TIME_LAMBDA_ASSET: txing-time-lambda-linux-aarch64.zip
+  CLOUD_RIG_LAMBDA_ASSET: txing-cloud-rig-lambda-linux-aarch64.zip
+  CLOUD_MCU_LAMBDA_ASSET: txing-cloud-mcu-lambda-linux-aarch64.zip
   KVS_MASTER_BUILD_IMAGE: debian:trixie
   RELEASE_RETENTION_COUNT: "10"
 
@@ -379,10 +380,14 @@ jobs:
             working_directory: shared/aws/enlist
             lock_file: shared/aws/enlist/Cargo.lock
             asset_name: txing-enlist-lambda-linux-aarch64.zip
-          - function_name: txing-time-lambda
-            working_directory: devices/time/lambda
-            lock_file: devices/time/lambda/Cargo.lock
-            asset_name: txing-time-lambda-linux-aarch64.zip
+          - function_name: txing-cloud-rig-lambda
+            working_directory: devices/cloud-mcu/lambda
+            lock_file: devices/cloud-mcu/lambda/Cargo.lock
+            asset_name: txing-cloud-rig-lambda-linux-aarch64.zip
+          - function_name: txing-cloud-mcu-lambda
+            working_directory: devices/cloud-mcu/lambda
+            lock_file: devices/cloud-mcu/lambda/Cargo.lock
+            asset_name: txing-cloud-mcu-lambda-linux-aarch64.zip
 
     steps:
       - name: Check out repository
@@ -705,7 +710,8 @@ jobs:
             "$RIG_DEPLOY_ASSET"
             "$WITNESS_LAMBDA_ASSET"
             "$ENLIST_LAMBDA_ASSET"
-            "$TIME_LAMBDA_ASSET"
+            "$CLOUD_RIG_LAMBDA_ASSET"
+            "$CLOUD_MCU_LAMBDA_ASSET"
           )
 
           release_asset_paths=()

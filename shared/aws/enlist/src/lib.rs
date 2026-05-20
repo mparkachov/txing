@@ -2611,26 +2611,27 @@ mod tests {
         );
         put_record(
             aws,
-            "/txing/town/cloud/time",
+            "/txing/town/cloud/cloud-mcu",
             &[
                 ("kind", "deviceType"),
-                ("thingType", "time"),
-                ("deviceType", "time"),
+                ("thingType", "cloud-mcu"),
+                ("deviceType", "cloud-mcu"),
                 ("rigType", "cloud"),
-                ("displayName", "Time"),
-                ("defaultName", "clock"),
-                ("capabilities", "sparkplug,mcp,time"),
-                ("redconCommandLevels", "4,1"),
-                ("redconRules/4", "sparkplug"),
-                ("redconRules/1", "sparkplug,time,mcp"),
+                ("displayName", "Cloud MCU"),
+                ("defaultName", "cloud"),
+                ("capabilities", "sparkplug,sqs,power,ecs"),
+                ("redconCommandLevels", "4,3"),
+                ("redconRules/4", "sparkplug,sqs"),
+                ("redconRules/3", "sparkplug,sqs,power"),
                 ("requiredAttributes", "name,shortId,townId,rigId"),
                 ("searchableAttributes", "name,townId,rigId"),
-                ("web/adapter", "web/time-adapter.tsx"),
-                ("shadows/mcp/defaultPayload", r#"{"state":{"reported":{}}}"#),
+                ("web/adapter", "web/cloud-mcu-adapter.tsx"),
+                ("shadows/sqs/defaultPayload", r#"{"state":{"reported":{}}}"#),
                 (
-                    "shadows/time/defaultPayload",
-                    r#"{"state":{"reported":{"mode":"sleep"}}}"#,
+                    "shadows/power/defaultPayload",
+                    r#"{"state":{"reported":{"desiredRedcon":4,"powered":false,"ecsTaskArn":null,"ecsTaskStatus":null,"pendingCommand":null,"sparkplugBorn":false}}}"#,
                 ),
+                ("shadows/ecs/defaultPayload", r#"{"state":{"reported":{}}}"#),
             ],
         );
         put_record(
@@ -2841,7 +2842,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn enlist_time_device_validates_rig_compatibility_and_initializes_shadows() {
+    async fn enlist_cloud_mcu_device_validates_rig_compatibility_and_initializes_shadows() {
         let aws = FakeAws::seeded();
         let mut service = EnlistService::new(&aws, SequenceShortIds::new());
         let town = enlist_town(&mut service).await;
@@ -2857,8 +2858,8 @@ mod tests {
             .handle(&json!({
                 "action": "enlistDevice",
                 "rigId": result_str(&raspi, "thingName"),
-                "deviceType": "time",
-                "deviceName": "clock",
+                "deviceType": "cloud-mcu",
+                "deviceName": "cloud",
             }))
             .await
             .unwrap_err();
@@ -2874,24 +2875,31 @@ mod tests {
         let result = enlist_device(
             &mut service,
             &result_str(&cloud, "thingName"),
-            "time",
-            "clock",
+            "cloud-mcu",
+            "cloud",
         )
         .await;
 
-        assert_eq!(result["thingTypeName"], "time");
+        assert_eq!(result["thingTypeName"], "cloud-mcu");
         assert_eq!(result["attributes"]["kind"], "deviceType");
         assert_eq!(result["attributes"]["rigType"], "cloud");
-        assert_eq!(result["attributes"]["deviceType"], "time");
-        assert_eq!(result["attributes"]["webAdapter"], "web/time-adapter.tsx");
-        assert_eq!(result["attributes"]["capabilities"], "sparkplug,mcp,time");
-        assert_eq!(result["attributes"]["redconCommandLevels"], "4,1");
+        assert_eq!(result["attributes"]["deviceType"], "cloud-mcu");
+        assert_eq!(
+            result["attributes"]["webAdapter"],
+            "web/cloud-mcu-adapter.tsx"
+        );
+        assert_eq!(
+            result["attributes"]["capabilities"],
+            "sparkplug,sqs,power,ecs"
+        );
+        assert_eq!(result["attributes"]["redconCommandLevels"], "4,3");
         assert_eq!(
             result["initializedShadows"],
-            json!(["sparkplug", "mcp", "time"])
+            json!(["sparkplug", "sqs", "power", "ecs"])
         );
-        let time_shadow = aws.shadow_json(&result_str(&result, "thingName"), "time");
-        assert_eq!(time_shadow["state"]["reported"]["mode"], "sleep");
+        let power_shadow = aws.shadow_json(&result_str(&result, "thingName"), "power");
+        assert_eq!(power_shadow["state"]["reported"]["desiredRedcon"], 4);
+        assert_eq!(power_shadow["state"]["reported"]["powered"], false);
     }
 
     #[tokio::test]
@@ -2951,15 +2959,15 @@ mod tests {
         let first = enlist_device(
             &mut service,
             &result_str(&cloud, "thingName"),
-            "time",
-            "clock",
+            "cloud-mcu",
+            "cloud",
         )
         .await;
         let thing_name = result_str(&first, "thingName");
         aws.remove_attribute(&thing_name, "webAdapter");
         aws.put_shadow(
             &thing_name,
-            "mcp",
+            "sqs",
             br#"{"state":{"reported":{"custom":true}}}"#,
         );
         let update_count = aws.shadow_update_count();
@@ -2967,18 +2975,21 @@ mod tests {
         let second = enlist_device(
             &mut service,
             &result_str(&cloud, "thingName"),
-            "time",
-            "clock",
+            "cloud-mcu",
+            "cloud",
         )
         .await;
 
         assert_eq!(second["created"], false);
         assert_eq!(second["initializedShadows"], json!([]));
-        assert_eq!(second["attributes"]["webAdapter"], "web/time-adapter.tsx");
-        assert_eq!(second["attributes"]["redconCommandLevels"], "4,1");
+        assert_eq!(
+            second["attributes"]["webAdapter"],
+            "web/cloud-mcu-adapter.tsx"
+        );
+        assert_eq!(second["attributes"]["redconCommandLevels"], "4,3");
         assert_eq!(aws.shadow_update_count(), update_count);
         assert_eq!(
-            aws.shadow_bytes(&thing_name, "mcp"),
+            aws.shadow_bytes(&thing_name, "sqs"),
             br#"{"state":{"reported":{"custom":true}}}"#.to_vec()
         );
     }
@@ -3005,8 +3016,8 @@ mod tests {
         let device = enlist_device(
             &mut service,
             &result_str(&cloud_a, "thingName"),
-            "time",
-            "clock",
+            "cloud-mcu",
+            "cloud",
         )
         .await;
         let update_count = aws.shadow_update_count();
@@ -3105,8 +3116,8 @@ mod tests {
         let device = enlist_device(
             &mut service,
             &result_str(&cloud, "thingName"),
-            "time",
-            "clock",
+            "cloud-mcu",
+            "cloud",
         )
         .await;
 
@@ -3181,8 +3192,8 @@ mod tests {
         let _device = enlist_device(
             &mut service,
             &result_str(&cloud, "thingName"),
-            "time",
-            "clock",
+            "cloud-mcu",
+            "cloud",
         )
         .await;
 

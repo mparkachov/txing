@@ -95,13 +95,13 @@ Resources:
       Parameters:
         TypeCatalogServiceToken: !GetAtt BaseEnvironment.Outputs.CustomResourceServiceToken
 
-  CloudTimeTypeCatalog:
+  CloudMcuTypeCatalog:
     Type: AWS::CloudFormation::Stack
     DependsOn:
       - BaseEnvironment
       - CloudTypeCatalog
     Properties:
-      TemplateURL: templates/types/cloud-time.yaml
+      TemplateURL: templates/types/cloud-mcu.yaml
       Parameters:
         TypeCatalogServiceToken: !GetAtt BaseEnvironment.Outputs.CustomResourceServiceToken
         LambdaArtifactsBucketName: !Ref LambdaArtifactsBucketName
@@ -130,7 +130,7 @@ Resources:
       - RaspiWeatherTypeCatalog
       - RaspiPowerTypeCatalog
       - CloudTypeCatalog
-      - CloudTimeTypeCatalog
+      - CloudMcuTypeCatalog
     Properties:
       TemplateURL: templates/enlist.yaml
       Parameters:
@@ -199,9 +199,13 @@ Outputs:
     Value: !GetAtt BaseEnvironment.Outputs.WitnessFunctionName
   WitnessFunctionArn:
     Value: !GetAtt BaseEnvironment.Outputs.WitnessFunctionArn
-  TimeRuntimeFunctionName:
-    Value: !GetAtt CloudTimeTypeCatalog.Outputs.TimeRuntimeFunctionName
-  TimeRuntimeScheduleRuleName:
-    Value: !GetAtt CloudTimeTypeCatalog.Outputs.TimeRuntimeScheduleRuleName
-  TimeRuntimeMcpTopicRuleArn:
-    Value: !GetAtt CloudTimeTypeCatalog.Outputs.TimeRuntimeMcpTopicRuleArn
+  CloudRigRuntimeFunctionName:
+    Value: !GetAtt CloudMcuTypeCatalog.Outputs.CloudRigRuntimeFunctionName
+  CloudMcuRuntimeFunctionName:
+    Value: !GetAtt CloudMcuTypeCatalog.Outputs.CloudMcuRuntimeFunctionName
+  CloudMcuTickQueueUrl:
+    Value: !GetAtt CloudMcuTypeCatalog.Outputs.CloudMcuTickQueueUrl
+  CloudRigRuntimeScheduleRuleName:
+    Value: !GetAtt CloudMcuTypeCatalog.Outputs.CloudRigRuntimeScheduleRuleName
+  CloudMcuDcmdTopicRuleArn:
+    Value: !GetAtt CloudMcuTypeCatalog.Outputs.CloudMcuDcmdTopicRuleArn

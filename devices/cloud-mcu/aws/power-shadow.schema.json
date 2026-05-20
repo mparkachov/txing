@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://txing.local/schemas/txing-cloud-mcu-power-shadow.schema.json",
+  "title": "Cloud MCU Power Named Shadow Contract",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "state": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "reported": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "desiredRedcon": {
+              "type": "integer",
+              "enum": [3, 4]
+            },
+            "powered": {
+              "type": "boolean"
+            },
+            "ecsTaskArn": {
+              "type": ["string", "null"]
+            },
+            "ecsTaskStatus": {
+              "type": ["string", "null"]
+            },
+            "pendingCommand": {
+              "type": ["object", "null"],
+              "additionalProperties": true,
+              "properties": {
+                "seq": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "targetRedcon": {
+                  "type": "integer",
+                  "enum": [3, 4]
+                }
+              }
+            },
+            "sparkplugBorn": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    }
+  }
+}

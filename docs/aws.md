@@ -79,8 +79,8 @@ artifact buckets, the Sparkplug witness infrastructure, Fleet Indexing, shared
 rig/device runtime IAM, AWS IoT ThingTypes, and the SSM type catalog. Web
 hosting is externalized to Cloudflare Pages. The type catalog is
 CloudFormation-managed under `/txing` as leaf parameters such as
-`/txing/town/cloud/time/kind` and
-`/txing/town/cloud/time/capabilities`.
+`/txing/town/cloud/cloud-mcu/kind` and
+`/txing/town/cloud/cloud-mcu/capabilities`.
 
 `just aws::deploy-town <town-name>` idempotently creates or updates only the
 town thing with ThingType `town` and its `sparkplug` shadow. It prints the
@@ -275,6 +275,6 @@ legacy `txing-time-lambda-<account>-<region>` bucket if either exists. Current
 Lambda release deployment reuses the shared `txing-cfn-*` packaging bucket by
 default.
 
-Generated IoT things, per-device time Lambda stacks, and KVS signaling channels
-are still instance resources. Delete those separately if you want the account
-back to a fully empty state.
+Generated IoT things, legacy `time` things/shadows/Lambda resources, and KVS
+signaling channels are still instance resources. Delete those separately if you
+want the account back to a fully empty state.

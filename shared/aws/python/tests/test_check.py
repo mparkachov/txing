@@ -55,15 +55,15 @@ class _FakeIotClient:
                     "townId": "town-3xvtqf",
                 },
             }
-        if thingName == "time-clock":
+        if thingName == "cloud-mcu-cloud":
             return {
                 "thingName": thingName,
-                "thingTypeName": "time",
+                "thingTypeName": "cloud-mcu",
                 "attributes": {
-                    "name": "clock",
-                    "shortId": "clock",
-                    "capabilities": "sparkplug,mcp,time",
-                    "deviceType": "time",
+                    "name": "cloud",
+                    "shortId": "cloud",
+                    "capabilities": "sparkplug,sqs,power,ecs",
+                    "deviceType": "cloud-mcu",
                     "rigId": "cloud-rig001",
                     "townId": "town-3xvtqf",
                 },
@@ -324,27 +324,28 @@ class AwsCheckTests(unittest.TestCase):
             runtime.client_calls,
         )
 
-    def test_run_time_device_service_check_uses_catalog_attrs_without_board_requirements(self) -> None:
+    def test_run_cloud_mcu_device_service_check_uses_catalog_attrs_without_board_requirements(self) -> None:
         runtime = _FakeRuntime(endpoint="abc123-ats.iot.eu-central-1.amazonaws.com")
 
         results = run_service_check(
             "device",
             environment={
                 "AWS_REGION": "eu-central-1",
-                "THING_NAME": "time-clock",
-                "TXING_DEVICE_TYPE": "time",
+                "THING_NAME": "cloud-mcu-cloud",
+                "TXING_DEVICE_TYPE": "cloud-mcu",
             },
             aws_runtime=runtime,
         )
 
         self.assertTrue(all(result.ok for result in results), [result.message for result in results])
-        self.assertEqual(runtime.iot.describe_thing_names, ["time-clock"])
+        self.assertEqual(runtime.iot.describe_thing_names, ["cloud-mcu-cloud"])
         self.assertEqual(
             runtime.iot_data.thing_names,
             [
-                ("time-clock", "sparkplug"),
-                ("time-clock", "mcp"),
-                ("time-clock", "time"),
+                ("cloud-mcu-cloud", "sparkplug"),
+                ("cloud-mcu-cloud", "sqs"),
+                ("cloud-mcu-cloud", "power"),
+                ("cloud-mcu-cloud", "ecs"),
             ],
         )
         self.assertEqual(runtime.kinesisvideo.channel_names, [])

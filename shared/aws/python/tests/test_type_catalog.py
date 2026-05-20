@@ -60,7 +60,7 @@ class TypeCatalogTests(unittest.TestCase):
         self.assertEqual(TYPE_CATALOG_ROOT, "/txing")
         self.assertEqual(town_type_path(), "/txing/town")
         self.assertEqual(rig_type_path("raspi"), "/txing/town/raspi")
-        self.assertEqual(device_type_path("cloud", "time"), "/txing/town/cloud/time")
+        self.assertEqual(device_type_path("cloud", "cloud-mcu"), "/txing/town/cloud/cloud-mcu")
         self.assertEqual(normalize_catalog_path("ssm:/txing/town/cloud"), "/txing/town/cloud")
         self.assertEqual(normalize_catalog_path("town/raspi/unit"), "/txing/town/raspi/unit")
 
@@ -76,7 +76,7 @@ class TypeCatalogTests(unittest.TestCase):
                 "/txing/town/raspi/weather",
                 "/txing/town/raspi/power",
                 "/txing/town/cloud",
-                "/txing/town/cloud/time",
+                "/txing/town/cloud/cloud-mcu",
             },
         )
         self.assertEqual(records["/txing/town/raspi"]["defaultName"], "server")
@@ -84,19 +84,22 @@ class TypeCatalogTests(unittest.TestCase):
         self.assertEqual(records["/txing/town/raspi/unit"]["defaultName"], "bot")
         self.assertEqual(records["/txing/town/raspi/weather"]["defaultName"], "outside")
         self.assertEqual(records["/txing/town/raspi/power"]["defaultName"], "power")
-        self.assertEqual(records["/txing/town/cloud/time"]["defaultName"], "clock")
+        self.assertEqual(records["/txing/town/cloud/cloud-mcu"]["defaultName"], "cloud")
         self.assertEqual(records["/txing/town/raspi"]["thingType"], "raspi")
         self.assertEqual(records["/txing/town/cloud"]["thingType"], "cloud")
         self.assertEqual(records["/txing/town/raspi"]["requiredAttributes"], ["name", "shortId", "townId"])
-        self.assertEqual(records["/txing/town/cloud/time"]["requiredAttributes"], ["name", "shortId", "townId", "rigId"])
+        self.assertEqual(
+            records["/txing/town/cloud/cloud-mcu"]["requiredAttributes"],
+            ["name", "shortId", "townId", "rigId"],
+        )
         self.assertEqual(records["/txing/town/raspi/unit"]["rigType"], "raspi")
         self.assertEqual(records["/txing/town/raspi/weather"]["rigType"], "raspi")
         self.assertEqual(records["/txing/town/raspi/power"]["rigType"], "raspi")
-        self.assertEqual(records["/txing/town/cloud/time"]["rigType"], "cloud")
+        self.assertEqual(records["/txing/town/cloud/cloud-mcu"]["rigType"], "cloud")
         self.assertEqual(records["/txing/town/raspi/unit"]["redconCommandLevels"], ["4", "3", "2", "1"])
         self.assertEqual(records["/txing/town/raspi/weather"]["redconCommandLevels"], ["4"])
         self.assertEqual(records["/txing/town/raspi/power"]["redconCommandLevels"], ["4", "3"])
-        self.assertEqual(records["/txing/town/cloud/time"]["redconCommandLevels"], ["4", "1"])
+        self.assertEqual(records["/txing/town/cloud/cloud-mcu"]["redconCommandLevels"], ["4", "3"])
         self.assertEqual(
             records["/txing/town/raspi/unit"]["redconRules"],
             {
@@ -113,12 +116,19 @@ class TypeCatalogTests(unittest.TestCase):
                 "4": ["sparkplug", "ble"],
             },
         )
+        self.assertEqual(
+            records["/txing/town/cloud/cloud-mcu"]["redconRules"],
+            {
+                "3": ["sparkplug", "sqs", "power"],
+                "4": ["sparkplug", "sqs"],
+            },
+        )
 
     def test_records_are_json_serializable(self) -> None:
         records = build_type_records(repo_root=REPO_ROOT)
         payload = json.dumps(records, sort_keys=True)
 
-        self.assertIn("/txing/town/cloud/time", payload)
+        self.assertIn("/txing/town/cloud/cloud-mcu", payload)
         self.assertNotIn("capabilitiesSet", payload)
 
     def test_sync_writes_leaf_parameters_and_deletes_stale_catalog_values(self) -> None:
@@ -126,7 +136,7 @@ class TypeCatalogTests(unittest.TestCase):
         ssm.parameters.update(
             {
                 "/txing/town": '{"kind":"townType"}',
-                "/txing/town/cloud/time": '{"kind":"deviceType"}',
+                "/txing/town/cloud/cloud-mcu": '{"kind":"deviceType"}',
                 "/txing/town/stale/kind": "rigType",
             }
         )
@@ -135,16 +145,16 @@ class TypeCatalogTests(unittest.TestCase):
         catalog.sync()
 
         self.assertNotIn("/txing/town", ssm.parameters)
-        self.assertNotIn("/txing/town/cloud/time", ssm.parameters)
+        self.assertNotIn("/txing/town/cloud/cloud-mcu", ssm.parameters)
         self.assertNotIn("/txing/town/stale/kind", ssm.parameters)
         self.assertEqual(ssm.parameters["/txing/town/kind"], "townType")
         self.assertEqual(ssm.parameters["/txing/town/raspi/kind"], "rigType")
         self.assertEqual(ssm.parameters["/txing/town/raspi/unit/kind"], "deviceType")
         self.assertEqual(ssm.parameters["/txing/town/cloud/kind"], "rigType")
-        self.assertEqual(ssm.parameters["/txing/town/cloud/time/kind"], "deviceType")
+        self.assertEqual(ssm.parameters["/txing/town/cloud/cloud-mcu/kind"], "deviceType")
         self.assertEqual(
-            ssm.parameters["/txing/town/cloud/time/capabilities"],
-            "sparkplug,mcp,time",
+            ssm.parameters["/txing/town/cloud/cloud-mcu/capabilities"],
+            "sparkplug,sqs,power,ecs",
         )
         self.assertEqual(
             ssm.parameters["/txing/town/raspi/unit/capabilities"],
@@ -191,20 +201,24 @@ class TypeCatalogTests(unittest.TestCase):
             "sparkplug,ble,power",
         )
         self.assertEqual(
-            ssm.parameters["/txing/town/cloud/time/redconRules/1"],
-            "sparkplug,time,mcp",
+            ssm.parameters["/txing/town/cloud/cloud-mcu/redconRules/3"],
+            "sparkplug,sqs,power",
         )
         self.assertEqual(
-            ssm.parameters["/txing/town/cloud/time/shadows/time/schema"],
-            "aws/time-shadow.schema.json",
+            ssm.parameters["/txing/town/cloud/cloud-mcu/redconRules/4"],
+            "sparkplug,sqs",
         )
         self.assertEqual(
-            ssm.parameters["/txing/town/cloud/time/web/adapter"],
-            "web/time-adapter.tsx",
+            ssm.parameters["/txing/town/cloud/cloud-mcu/shadows/power/schema"],
+            "aws/power-shadow.schema.json",
         )
         self.assertIn(
-            '"mode"',
-            ssm.parameters["/txing/town/cloud/time/shadows/time/defaultPayload"],
+            '"desiredRedcon"',
+            ssm.parameters["/txing/town/cloud/cloud-mcu/shadows/power/defaultPayload"],
+        )
+        self.assertEqual(
+            ssm.parameters["/txing/town/cloud/cloud-mcu/web/adapter"],
+            "web/cloud-mcu-adapter.tsx",
         )
         self.assertFalse(
             any(
@@ -221,26 +235,26 @@ class TypeCatalogTests(unittest.TestCase):
 
         town_record = catalog.get_record("/txing/town")
         cloud_record = catalog.get_record("/txing/town/cloud")
-        time_record = catalog.get_record("/txing/town/cloud/time")
+        cloud_mcu_record = catalog.get_record("/txing/town/cloud/cloud-mcu")
 
         self.assertNotIn("cloud", town_record)
-        self.assertNotIn("time", cloud_record)
+        self.assertNotIn("cloud-mcu", cloud_record)
         self.assertEqual(cloud_record["hostServices"], [])
-        self.assertEqual(time_record["capabilities"], ["sparkplug", "mcp", "time"])
-        self.assertEqual(time_record["redconCommandLevels"], ["4", "1"])
+        self.assertEqual(cloud_mcu_record["capabilities"], ["sparkplug", "sqs", "power", "ecs"])
+        self.assertEqual(cloud_mcu_record["redconCommandLevels"], ["4", "3"])
         self.assertEqual(
-            time_record["redconRules"],
-            {"1": ["sparkplug", "time", "mcp"], "4": ["sparkplug"]},
+            cloud_mcu_record["redconRules"],
+            {"3": ["sparkplug", "sqs", "power"], "4": ["sparkplug", "sqs"]},
         )
         self.assertEqual(
-            time_record["shadows"]["time"]["schema"],
-            "aws/time-shadow.schema.json",
+            cloud_mcu_record["shadows"]["power"]["schema"],
+            "aws/power-shadow.schema.json",
         )
         self.assertEqual(
-            time_record["shadows"]["time"]["default"],
-            "aws/default-time-shadow.json",
+            cloud_mcu_record["shadows"]["power"]["default"],
+            "aws/default-power-shadow.json",
         )
-        self.assertIn('"mode"', time_record["shadows"]["time"]["defaultPayload"])
+        self.assertIn('"desiredRedcon"', cloud_mcu_record["shadows"]["power"]["defaultPayload"])
 
     def test_list_records_groups_leaf_parameters_by_kind_marker(self) -> None:
         ssm = _FakeSsmClient()
@@ -249,7 +263,7 @@ class TypeCatalogTests(unittest.TestCase):
 
         self.assertEqual(
             [path for path, _record in catalog.list_records("/txing/town/cloud")],
-            ["/txing/town/cloud", "/txing/town/cloud/time"],
+            ["/txing/town/cloud", "/txing/town/cloud/cloud-mcu"],
         )
         self.assertEqual(
             [path for path, _record in catalog.list_records("/txing/town/raspi")],
@@ -265,19 +279,19 @@ class TypeCatalogTests(unittest.TestCase):
         ssm = _FakeSsmClient()
         catalog = SsmTypeCatalog(ssm, repo_root=REPO_ROOT)
         catalog.sync()
-        ssm.parameters["/txing/town/cloud/time/capabilities"] = ""
+        ssm.parameters["/txing/town/cloud/cloud-mcu/capabilities"] = ""
 
         with self.assertRaisesRegex(TypeCatalogError, "capabilities"):
-            catalog.get_record("/txing/town/cloud/time")
+            catalog.get_record("/txing/town/cloud/cloud-mcu")
 
     def test_list_leaf_items_must_not_contain_commas(self) -> None:
         ssm = _FakeSsmClient()
         catalog = SsmTypeCatalog(ssm, repo_root=REPO_ROOT)
-        record = build_type_records(repo_root=REPO_ROOT)["/txing/town/cloud/time"]
+        record = build_type_records(repo_root=REPO_ROOT)["/txing/town/cloud/cloud-mcu"]
         record = {**record, "capabilities": ["sparkplug", "bad,value"]}
 
         with self.assertRaisesRegex(TypeCatalogError, "must not contain"):
-            catalog.put_record("/txing/town/cloud/time", record)
+            catalog.put_record("/txing/town/cloud/cloud-mcu", record)
 
 
 if __name__ == "__main__":

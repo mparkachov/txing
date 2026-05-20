@@ -157,7 +157,7 @@ class _FakeIotClient:
                 continue
             if "thingTypeName:unit" in query and thing_type != "unit":
                 continue
-            if "thingTypeName:time" in query and thing_type != "time":
+            if "thingTypeName:cloud-mcu" in query and thing_type != "cloud-mcu":
                 continue
             if "thingTypeName:raspi" in query and thing_type != "raspi":
                 continue
@@ -295,16 +295,16 @@ class DeviceRegistryTests(unittest.TestCase):
         registry = AwsDeviceRegistry(
             runtime,
             repo_root=REPO_ROOT,
-            random_source=_SequenceRandom("time01"),
+            random_source=_SequenceRandom("mcu001"),
         )
 
         with self.assertRaisesRegex(DeviceRegistryError, "not compatible"):
-            registry.register_device(rig_id="raspi-ras001", device_type="time")
+            registry.register_device(rig_id="raspi-ras001", device_type="cloud-mcu")
 
-        registration = registry.register_device(rig_id="cloud-cld001", device_type="time")
+        registration = registry.register_device(rig_id="cloud-cld001", device_type="cloud-mcu")
 
-        self.assertEqual(registration.thing_name, "time-time01")
-        self.assertEqual(runtime.iot.create_thing_requests[0]["thingTypeName"], "time")
+        self.assertEqual(registration.thing_name, "cloud-mcu-mcu001")
+        self.assertEqual(runtime.iot.create_thing_requests[0]["thingTypeName"], "cloud-mcu")
         attributes = runtime.iot.create_thing_requests[0]["attributePayload"]["attributes"]  # type: ignore[index]
         self.assertEqual(attributes["townId"], "town-ber001")
         self.assertEqual(attributes["rigId"], "cloud-cld001")
@@ -324,11 +324,11 @@ class DeviceRegistryTests(unittest.TestCase):
             },
             "version": 1,
         }
-        runtime.iot._things["time-zzzzzz"] = {
-            "thingName": "time-zzzzzz",
-            "thingTypeName": "time",
+        runtime.iot._things["cloud-mcu-zzzzzz"] = {
+            "thingName": "cloud-mcu-zzzzzz",
+            "thingTypeName": "cloud-mcu",
             "attributes": {
-                "name": "clock",
+                "name": "cloud",
                 "shortId": "zzzzzz",
                 "townId": "town-ber001",
                 "rigId": "cloud-cld001",
@@ -338,7 +338,7 @@ class DeviceRegistryTests(unittest.TestCase):
         registry = AwsDeviceRegistry(runtime, repo_root=REPO_ROOT)
 
         with self.assertRaisesRegex(DeviceRegistryError, "not compatible"):
-            registry.assign_device("time-zzzzzz", rig_id="raspi-ras002")
+            registry.assign_device("cloud-mcu-zzzzzz", rig_id="raspi-ras002")
 
         registration = registry.assign_device("unit-aaaaaa", rig_id="raspi-ras002")
 
@@ -356,12 +356,12 @@ class DeviceRegistryTests(unittest.TestCase):
 
     def test_missing_ssm_compatibility_path_fails_clearly(self) -> None:
         records = build_type_records(repo_root=REPO_ROOT)
-        records.pop("/txing/town/cloud/time")
+        records.pop("/txing/town/cloud/cloud-mcu")
         runtime = _FakeRuntime(ssm=_FakeSsmClient(records))
         registry = AwsDeviceRegistry(runtime, repo_root=REPO_ROOT)
 
-        with self.assertRaisesRegex(DeviceRegistryError, "/txing/town/cloud/time"):
-            registry.register_device(rig_id="cloud-cld001", device_type="time")
+        with self.assertRaisesRegex(DeviceRegistryError, "/txing/town/cloud/cloud-mcu"):
+            registry.register_device(rig_id="cloud-cld001", device_type="cloud-mcu")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,15 @@
+set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+set quiet := true
+
+cloud_mcu_dir := source_directory()
+
+@test:
+    just --justfile "{{cloud_mcu_dir}}/lambda/justfile" test
+
+@build:
+    just --justfile "{{cloud_mcu_dir}}/lambda/justfile" build
+
+mod lambda 'lambda/justfile'
+
+@default:
+    @just --list
