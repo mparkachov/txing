@@ -2122,7 +2122,7 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
 name = "txing-time-lambda"
-version = "0.9.129"
+version = "0.9.130"
 dependencies = [
  "anyhow",
  "async-trait",

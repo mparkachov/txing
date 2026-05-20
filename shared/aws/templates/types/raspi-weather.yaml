@@ -34,7 +34,7 @@ Resources:
         searchableAttributes: name,townId,rigId
         shadows/sparkplug/schema: aws/sparkplug-shadow.schema.json
         shadows/sparkplug/default: aws/default-sparkplug-shadow.json
-        shadows/sparkplug/defaultPayload: '{"state":{"reported":{"payload":{"metrics":{"redcon":4}}}}}'
+        shadows/sparkplug/defaultPayload: '{"state":{"reported":{"topic":{"namespace":"spBv1.0","groupId":"town","messageType":"DDEATH","edgeNodeId":"rig","deviceId":"weather-local"},"payload":{"metrics":{}}}}}'
         shadows/ble/schema: aws/ble-shadow.schema.json
         shadows/ble/default: aws/default-ble-shadow.json
         shadows/ble/defaultPayload: '{"state":{"reported":{}}}'

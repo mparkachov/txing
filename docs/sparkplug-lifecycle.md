@@ -131,6 +131,9 @@ Capability availability rules:
 - on startup and inventory refresh, SparkplugManager initializes declared
   non-`sparkplug` capabilities to `false`; fresh connectivity adapter state can
   raise them to `true`
+- if an inventoried device has no current `sparkplug` availability when
+  SparkplugManager starts, the manager publishes `DDEATH` once so stale projected
+  `DBIRTH` or `DDATA` shadows from a previous process are cleared
 - `sparkplug` is special: live `DBIRTH` and `DDATA` may report
   `capability.sparkplug=true`, while `DDEATH` remains the unavailable signal and
   still carries no device metrics
@@ -237,12 +240,13 @@ changes:
 
 The board runtime publishes retained v2 capability state for `board`, `mcp`, and
 `video`. SparkplugManager consumes those board-owned retained state messages
-directly, but gates them behind BLE `power=true`. In this contract `power`
-means MCU-controlled wakeup power/D1 availability, not MCU power. When BLE
-reports REDCON `4` or otherwise reports `power=false`, SparkplugManager clears
-`board`, `mcp`, and `video` immediately instead of waiting for the retained
-board state to expire. After a later wake, those board-owned capabilities stay
-false until a fresh board daemon capability state is observed.
+directly, but orders them against BLE REDCON evidence. In this contract `power`
+means MCU-controlled wakeup power/D1 availability, not MCU power. When newer BLE
+state reports REDCON `4` or otherwise reports `power=false`, SparkplugManager
+clears `board`, `mcp`, and `video` immediately instead of waiting for the
+retained board state to expire. A later board daemon capability state with a
+newer observation timestamp can raise board-owned capabilities again; older
+board retained state cannot override newer BLE REDCON 4 evidence.
 BLE state-read and command-applied capability states carry internal
 `metrics.bleRedcon` evidence for this gate; advertisement-only BLE reachability
 does not.

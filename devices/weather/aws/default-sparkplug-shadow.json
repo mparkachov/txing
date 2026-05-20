@@ -1,10 +1,15 @@
 {
   "state": {
     "reported": {
+      "topic": {
+        "namespace": "spBv1.0",
+        "groupId": "town",
+        "messageType": "DDEATH",
+        "edgeNodeId": "rig",
+        "deviceId": "weather-local"
+      },
       "payload": {
-        "metrics": {
-          "redcon": 4
-        }
+        "metrics": {}
       }
     }
   }

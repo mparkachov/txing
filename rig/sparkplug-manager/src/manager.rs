@@ -62,6 +62,7 @@ pub struct DeviceRuntimeState {
     last_published_capabilities: BTreeMap<String, bool>,
     last_published_metrics: BTreeMap<String, MetricValue>,
     born: bool,
+    unavailable_published: bool,
 }
 
 impl DeviceRuntimeState {
@@ -73,6 +74,7 @@ impl DeviceRuntimeState {
             last_published_capabilities: BTreeMap::new(),
             last_published_metrics: BTreeMap::new(),
             born: false,
+            unavailable_published: false,
         }
     }
 
@@ -92,6 +94,7 @@ impl DeviceRuntimeState {
         self.last_published_redcon = None;
         self.last_published_capabilities.clear();
         self.last_published_metrics.clear();
+        self.unavailable_published = false;
     }
 
     pub fn observe_state(&mut self, state: CapabilityState) -> Result<()> {
@@ -104,10 +107,16 @@ impl DeviceRuntimeState {
             );
         }
         if state_reports_ble_redcon4(&state) {
-            self.adapter_states
-                .retain(|_, existing| !state_declares_board_owned_capability(existing));
+            let observed_at_ms = state.observed_at_ms;
+            self.adapter_states.retain(|_, existing| {
+                !state_declares_board_owned_capability(existing)
+                    || existing.observed_at_ms > observed_at_ms
+            });
         } else if state_declares_board_owned_capability(&state)
-            && self.adapter_states.values().any(state_reports_ble_redcon4)
+            && self.adapter_states.values().any(|existing| {
+                state_reports_ble_redcon4(existing)
+                    && existing.observed_at_ms >= state.observed_at_ms
+            })
         {
             self.adapter_states.remove(&state.adapter_id);
             return Ok(());
@@ -122,12 +131,23 @@ impl DeviceRuntimeState {
         for capability in &self.inventory.capabilities {
             capabilities.insert(capability.clone(), false);
         }
+        let latest_board_state_ms = self
+            .adapter_states
+            .values()
+            .filter(|state| state.observed_at_ms + STATE_TTL_MS >= now_ms)
+            .filter(|state| state_declares_board_owned_capability(state))
+            .map(|state| state.observed_at_ms)
+            .max();
         let mut ble_redcon4_observed = false;
         for state in self.adapter_states.values() {
             if state.observed_at_ms + STATE_TTL_MS < now_ms {
                 continue;
             }
-            ble_redcon4_observed = ble_redcon4_observed || state_reports_ble_redcon4(state);
+            let newer_or_equal_to_board = latest_board_state_ms
+                .map(|board_state_ms| state.observed_at_ms >= board_state_ms)
+                .unwrap_or(true);
+            ble_redcon4_observed = ble_redcon4_observed
+                || (state_reports_ble_redcon4(state) && newer_or_equal_to_board);
             for (capability, available) in &state.capabilities {
                 if let Some(current) = capabilities.get_mut(capability) {
                     *current = *current || *available;
@@ -154,15 +174,21 @@ impl DeviceRuntimeState {
     pub fn decide_publication(&mut self, now_ms: u64) -> Result<DevicePublication> {
         let snapshot = self.snapshot(now_ms);
         if !snapshot.sparkplug_available {
+            self.last_published_redcon = None;
+            self.last_published_capabilities.clear();
+            self.last_published_metrics.clear();
             if self.born {
                 self.born = false;
-                self.last_published_redcon = None;
-                self.last_published_capabilities.clear();
-                self.last_published_metrics.clear();
+                self.unavailable_published = true;
+                return Ok(DevicePublication::Death);
+            }
+            if !self.unavailable_published {
+                self.unavailable_published = true;
                 return Ok(DevicePublication::Death);
             }
             return Ok(DevicePublication::None);
         }
+        self.unavailable_published = false;
         let redcon = snapshot.redcon.unwrap_or(4);
         let capabilities_changed = self.last_published_capabilities != snapshot.capabilities;
         let metrics_changed = self.last_published_metrics != snapshot.metrics;
@@ -793,7 +819,7 @@ mod tests {
     }
 
     #[test]
-    fn ble_redcon4_forgets_retained_board_capabilities_until_fresh_update() {
+    fn newer_board_capabilities_supersede_older_ble_redcon4_evidence() {
         let mut state = DeviceRuntimeState::new(unit_inventory());
         state
             .observe_state(CapabilityState {
@@ -868,7 +894,78 @@ mod tests {
                 seq: 4,
             })
             .unwrap();
-        assert_eq!(state.snapshot(2500).redcon, Some(4));
+        assert_eq!(state.snapshot(2500).redcon, Some(1));
+        match state.decide_publication(2500).unwrap() {
+            DevicePublication::Data { redcon, metrics } => {
+                assert_eq!(redcon, 1);
+                assert!(metrics.contains(&Metric::boolean("capability.board", true)));
+                assert!(metrics.contains(&Metric::boolean("capability.mcp", true)));
+                assert!(metrics.contains(&Metric::boolean("capability.video", true)));
+            }
+            other => panic!("expected REDCON 1 data publication, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ble_redcon4_forgets_older_board_capabilities_until_fresh_board_update() {
+        let mut state = DeviceRuntimeState::new(unit_inventory());
+        state
+            .observe_state(CapabilityState {
+                schema_version: SCHEMA_VERSION.to_string(),
+                adapter_id: "dev.txing.rig.BleConnectivity".to_string(),
+                thing_name: "unit-1".to_string(),
+                capabilities: BTreeMap::from([
+                    ("sparkplug".to_string(), true),
+                    ("ble".to_string(), true),
+                    (POWER_CAPABILITY.to_string(), true),
+                ]),
+                metrics: BTreeMap::from([(BLE_REDCON_METRIC.to_string(), MetricValue::int32(3))]),
+                observed_at_ms: 1000,
+                seq: 1,
+            })
+            .unwrap();
+        state
+            .observe_state(CapabilityState {
+                schema_version: SCHEMA_VERSION.to_string(),
+                adapter_id: "dev.txing.board".to_string(),
+                thing_name: "unit-1".to_string(),
+                capabilities: BTreeMap::from([
+                    (BOARD_CAPABILITY.to_string(), true),
+                    (MCP_CAPABILITY.to_string(), true),
+                    (VIDEO_CAPABILITY.to_string(), true),
+                ]),
+                metrics: BTreeMap::new(),
+                observed_at_ms: 1000,
+                seq: 2,
+            })
+            .unwrap();
+
+        assert_eq!(state.snapshot(1000).redcon, Some(1));
+        assert!(matches!(
+            state.decide_publication(1000).unwrap(),
+            DevicePublication::Birth { redcon: 1, .. }
+        ));
+
+        state
+            .observe_state(CapabilityState {
+                schema_version: SCHEMA_VERSION.to_string(),
+                adapter_id: "dev.txing.rig.BleConnectivity".to_string(),
+                thing_name: "unit-1".to_string(),
+                capabilities: BTreeMap::from([
+                    ("sparkplug".to_string(), true),
+                    ("ble".to_string(), true),
+                    (POWER_CAPABILITY.to_string(), false),
+                ]),
+                metrics: BTreeMap::from([(BLE_REDCON_METRIC.to_string(), MetricValue::int32(4))]),
+                observed_at_ms: 2000,
+                seq: 3,
+            })
+            .unwrap();
+
+        assert!(matches!(
+            state.decide_publication(2000).unwrap(),
+            DevicePublication::Data { redcon: 4, .. }
+        ));
 
         state
             .observe_state(CapabilityState {
@@ -882,7 +979,7 @@ mod tests {
                 ]),
                 metrics: BTreeMap::from([(BLE_REDCON_METRIC.to_string(), MetricValue::int32(3))]),
                 observed_at_ms: 3000,
-                seq: 5,
+                seq: 4,
             })
             .unwrap();
 
@@ -922,7 +1019,7 @@ mod tests {
                 ]),
                 metrics: BTreeMap::new(),
                 observed_at_ms: 4000,
-                seq: 6,
+                seq: 5,
             })
             .unwrap();
 
@@ -990,6 +1087,20 @@ mod tests {
         );
         assert_eq!(snapshot.redcon, None);
         assert!(!snapshot.sparkplug_available);
+    }
+
+    #[test]
+    fn initially_unavailable_device_publishes_death_once() {
+        let mut state = DeviceRuntimeState::new(power_inventory());
+
+        assert_eq!(
+            state.decide_publication(1000).unwrap(),
+            DevicePublication::Death
+        );
+        assert_eq!(
+            state.decide_publication(2000).unwrap(),
+            DevicePublication::None
+        );
     }
 
     #[test]
