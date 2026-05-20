@@ -330,6 +330,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("txing-time-lambda-linux-aarch64.zip", workflow)
         self.assertIn("Test and build ${{ matrix.function_name }} in Amazon Linux 2023", workflow)
         self.assertIn("public.ecr.aws/amazonlinux/amazonlinux:2023", workflow)
+        self.assertIn("curl-minimal ca-certificates", workflow)
         self.assertIn("Lambda bootstrap requires glibc newer than AL2023 supports", workflow)
         self.assertIn("target/release/${{ matrix.function_name }}", workflow)
         self.assertIn('install -m 755 "$source" "$package_dir/bootstrap"', workflow)

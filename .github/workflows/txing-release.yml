@@ -459,7 +459,7 @@ jobs:
             --workdir "/work/${{ matrix.working_directory }}" \
             public.ecr.aws/amazonlinux/amazonlinux:2023 \
             bash -euxo pipefail -c '
-              dnf install -y gcc gcc-c++ make pkgconf-pkg-config cmake perl openssl-devel curl git
+              dnf install -y gcc gcc-c++ make pkgconf-pkg-config cmake perl openssl-devel curl-minimal ca-certificates git
               if ! getent group "$HOST_GID" >/dev/null; then
                 groupadd -g "$HOST_GID" txing
               fi
