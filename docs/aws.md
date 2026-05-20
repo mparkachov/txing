@@ -27,7 +27,7 @@ aws sts get-caller-identity
 
 Set `TXING_AWS_STACK` explicitly before running stack-backed commands such as
 `just aws::deploy`, `just aws::deploy-lambdas`, `just aws::check`,
-`just web::write-env`, `just rig::deploy-release`, and `just unit::cert`.
+`just office::write-env`, `just rig::deploy-release`, and `just unit::cert`.
 Export it in the operator shell or pass a positional stack name to recipes that
 accept one. Those commands fail if `TXING_AWS_STACK` is unset and no positional
 stack name is provided.
@@ -53,7 +53,7 @@ just aws::deploy-device <rig-id> unit bot
 ```
 
 `just aws::deploy-init` is a one-off manual step before first installation. It
-reads `shared/aws/deploy-init.json` and stores the web/admin deploy parameters
+reads `shared/aws/deploy-init.json` and stores the office/admin deploy parameters
 as separate SSM Parameter Store parameters:
 
 - `/txing/stack/CognitoDomainPrefix`
@@ -109,18 +109,18 @@ just aws::create-admin-user '<strong-password>'
 Generate and build the SPA:
 
 ```bash
-just web::write-env
-just web::build
+just office::write-env
+just office::build
 ```
 
-`web::write-env` is allowed to write `web/.env.local` because it is a web build
+`office::write-env` is allowed to write `office/.env.local` because it is an office build
 input derived from live stack outputs. Production hosting is handled manually in
 Cloudflare Pages:
 
 - Project: `txing-office`
 - Repository: `mparkachov/txing`
 - Production branch: `main`
-- Root directory: `web`
+- Root directory: `office`
 - Build command: `bun install --frozen-lockfile && bun --bun run build`
 - Deploy command: leave empty; do not use `npx wrangler deploy`
 - Build output directory: `dist`
@@ -150,19 +150,19 @@ Cognito callback and logout URLs are:
 - `http://localhost:5173/`
 - `http://127.0.0.1:5173/`
 
-Public `thing.dev` is a separate Cloudflare Pages project:
+Public `txing.dev` is a separate Cloudflare Pages project:
 
-- Project: `thing-dev`
+- Project: `txing-dev`
 - Repository: `mparkachov/txing`
 - Production branch: `main`
-- Root directory: `site`
-- Build command: `bun install --frozen-lockfile && bun --bun run build`
+- Root directory: `www`
+- Build command: `exit 0`
 - Deploy command: leave empty; do not use `npx wrangler deploy`
-- Build output directory: `dist`
-- Domain: `thing.dev`
-- Environment variables:
-  - `BUN_VERSION=1.3.11`
-  - `VITE_OFFICE_SIGNIN_URL=https://office.txing.dev/?signin=1`
+- Build output directory: `.` when Root directory is `www`
+- Domain: `txing.dev`
+- Environment variables: none
+- Build watch paths include: `www/*`
+- Build watch paths exclude: empty
 
 ## Runtime Checks
 

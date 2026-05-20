@@ -9,6 +9,7 @@
 .DS_Store
 
 # Python bytecode caches
+.cache/
 .venv/
 .pytest_cache/
 __pycache__/
@@ -26,3 +27,8 @@ __pycache__/
 
 # tmp for logs
 /tmp
+
+# Retired local web app artifacts left behind after web/ was renamed to office/.
+/web/.env.local
+/web/dist/
+/web/node_modules/

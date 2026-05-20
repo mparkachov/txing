@@ -1,4 +1,4 @@
-import type { DeviceWebAdapter } from "../../../web/src/device-adapter";
+import type { DeviceWebAdapter } from "../../../office/src/device-adapter";
 
 const exampleAdapter: DeviceWebAdapter = {
   type: "example",

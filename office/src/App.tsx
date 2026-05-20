@@ -1473,7 +1473,7 @@ function App({ initialAuthError = '' }: AppProps) {
     [isShadowConnected],
   )
 
-  const takeMcpControl = useEffectEvent(async (): Promise<void> => {
+  const takeMcpControl = useCallback(async (): Promise<void> => {
     const shadowSession = shadowSessionRef.current
     if (!shadowSession || !shadowSession.isConnected()) {
       return
@@ -1489,7 +1489,7 @@ function App({ initialAuthError = '' }: AppProps) {
     } finally {
       setIsTakingMcpControl(false)
     }
-  })
+  }, [enqueueRuntimeError])
 
   useEffect(() => {
     const nextBoardVideoLastError = normalizeRuntimeMessage(robotVideoLastError)

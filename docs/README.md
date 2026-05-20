@@ -17,8 +17,8 @@ design notes have been folded into the owning component guides.
 - [Greengrass](./greengrass/)
 - [Board](./components/board.md)
 - [MCU](./components/mcu.md)
-- [Web](./components/web.md)
-- [Public Site](./components/site.md)
+- [Office](./components/office.md)
+- [Public WWW](./components/www.md)
 - [Witness](./components/witness.md)
 
 ## Contracts

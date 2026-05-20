@@ -45,9 +45,8 @@ PYTHON_LOCK_PACKAGES = (
 )
 
 NODE_PACKAGES = (
-    Path("web/package.json"),
-    Path("site/package.json"),
-)
+    Path("office/package.json"),
+    )
 
 
 @dataclass(frozen=True)
@@ -79,14 +78,14 @@ TEXT_VERSIONS = (
         'inline constexpr std::string_view kTxingBoardKvsMasterVersion = "{version}";',
     ),
     TextVersion(
-        Path("web/src/config.ts"),
-        "web runtime fallback version",
+        Path("office/src/config.ts"),
+        "office runtime fallback version",
         re.compile(r": '[0-9]+\.[0-9]+\.[0-9]+'"),
         ": '{version}'",
     ),
     TextVersion(
-        Path("web/vite.config.ts"),
-        "web vite fallback version",
+        Path("office/vite.config.ts"),
+        "office vite fallback version",
         re.compile(r"'[0-9]+\.[0-9]+\.[0-9]+'"),
         "'{version}'",
         0,

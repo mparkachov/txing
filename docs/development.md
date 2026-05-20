@@ -7,8 +7,8 @@ For the system overview, see [../README.md](../README.md). For the documentation
 - `devices/unit/`: self-contained current `unit` device type, including MCU, board runtime, rig process implementation, AWS shadow contracts, docs, and web detail adapter
 - `rig/`: Rust Greengrass components and host tooling for `raspi` rigs
 - `devices/cloud-mcu/`: AWS-hosted `cloud` rig and `cloud-mcu` Lambda runtime
-- `web/`: React + Vite admin/operator SPA
-- `site/`: public static Vite landing page for `thing.dev`
+- `office/`: React + Vite admin/operator SPA
+- `www/`: public static HTML/CSS/assets site for `txing.dev`
 - `witness/`: Sparkplug-to-shadow projection Lambda source and tests
 - `shared/aws/`: shared AWS CLI helpers, CloudFormation, and registry utilities
 - `devices/template/`: scaffold for a new device type using the language-neutral manifest/process/web contracts
@@ -98,8 +98,8 @@ just rig::deploy
 just rig::status <rig-id>
 just unit::daemon::run
 just unit::board::run
-just web::dev
-just web::write-env
+just office::dev
+just office::write-env
 just aws::deploy-lambdas latest
 just aws::deploy
 just aws::deploy-town town
@@ -114,7 +114,7 @@ Root modules:
 - `rig::...` -> generic rig host tooling in `rig/justfile`
 - `unit::...` -> current device type tooling in `devices/unit/justfile`
 - `aws::...` -> `shared/aws/justfile`
-- `web::...` -> `web/justfile`
+- `office::...` -> `office/justfile`
 - `witness::...` -> `witness/justfile`
 
 ## Current Named Shadows
@@ -194,20 +194,19 @@ daemon env or certificate material.
 The deployed board runtime, MCP/video transport contract, and board install
 flow are documented in [components/board.md](./components/board.md).
 
-Web:
+Office:
 
 ```bash
-just web::install
-just web::write-env
-just web::dev
+just office::install
+just office::write-env
+just office::dev
 ```
 
 Public site:
 
 ```bash
-cd site
-bun install
-bun run dev
+cd www
+python3 -m http.server 5174
 ```
 
 Witness:

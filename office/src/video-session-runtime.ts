@@ -662,8 +662,7 @@ const getSharedBoardRtcSession = (
     return existing
   }
 
-  let created: Promise<SharedBoardRtcSession>
-  created = createSharedBoardRtcSession(key, options).catch((error: unknown) => {
+  const created = createSharedBoardRtcSession(key, options).catch((error: unknown) => {
     if (sharedBoardRtcSessions.get(key) === created) {
       sharedBoardRtcSessions.delete(key)
     }

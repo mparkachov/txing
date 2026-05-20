@@ -647,13 +647,12 @@ class AwsTemplatePolicyTests(unittest.TestCase):
             REPO_ROOT / "shared" / "aws" / "enlist" / "Cargo.toml",
             REPO_ROOT / "devices" / "cloud-mcu" / "lambda" / "Cargo.toml",
             REPO_ROOT / "witness" / "Cargo.toml",
-            REPO_ROOT / "devices" / "unit" / "rig" / "python" / "pyproject.toml",
             REPO_ROOT / "devices" / "unit" / "board" / "pyproject.toml",
             REPO_ROOT / "rig" / "capability-protocol" / "Cargo.toml",
             REPO_ROOT / "rig" / "sparkplug-manager" / "Cargo.toml",
             REPO_ROOT / "rig" / "ble-connectivity" / "Cargo.toml",
             REPO_ROOT / "rig" / "aws-connectivity" / "Cargo.toml",
-            REPO_ROOT / "web" / "package.json",
+            REPO_ROOT / "office" / "package.json",
         ]
         for path in manifest_paths:
             text = path.read_text(encoding="utf-8")

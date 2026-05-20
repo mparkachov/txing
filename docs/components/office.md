@@ -1,6 +1,6 @@
-# Web
+# Office
 
-The web app is the operator and admin SPA for browsing towns, rigs, and devices, reading the current projected state, opening board video, and sending lifecycle and MCP actions.
+The office app is the operator and admin SPA for browsing towns, rigs, and devices, reading the current projected state, opening board video, and sending lifecycle and MCP actions.
 
 ## Current Scope
 
@@ -18,7 +18,7 @@ The web app is the operator and admin SPA for browsing towns, rigs, and devices,
 - `/<townThingName>/<rigThingName>/<deviceThingName>`
 - `/<townThingName>/<rigThingName>/<deviceThingName>/video`
 
-The video route is derived from the selected route and web origin. It is not stored in Thing Shadow or board config.
+The video route is derived from the selected route and office origin. It is not stored in Thing Shadow or board config.
 
 ## Current Transport Split
 
@@ -40,7 +40,7 @@ For `unit` devices, the Rust unit daemon publishes retained
 `video`. Sparkplug projection reflects those into the capability stack; `video`
 becomes enabled only when the native KVS worker is ready.
 
-The web app must not derive board/MCP/video availability locally from pending
+The office app must not derive board/MCP/video availability locally from pending
 commands or client-side transport state. Capability indicators reflect the
 Sparkplug named shadow projection. A small delay is acceptable; inconsistent
 client-side capability prediction is not.
@@ -50,25 +50,25 @@ client-side capability prediction is not.
 Install and write the local env:
 
 ```bash
-just web::install
-just web::write-env
-just web::dev
+just office::install
+just office::write-env
+just office::dev
 ```
 
 Manual fallback:
 
 ```bash
-cp web/.env.example web/.env.local
+cp office/.env.example office/.env.local
 ```
 
-`web::write-env` writes:
+`office::write-env` writes:
 
 - `VITE_AWS_REGION`
 - `VITE_TOWN_THING_NAME`
 - `VITE_SPARKPLUG_GROUP_ID`
 - the Cognito stack outputs
 
-The web bundle version is injected by Vite from the root `VERSION` file during
+The office bundle version is injected by Vite from the root `VERSION` file during
 the build. It is not a Cloudflare environment variable.
 
 Local Cognito sign-in remains allowed for:
@@ -79,14 +79,14 @@ Local Cognito sign-in remains allowed for:
 ## Cloudflare Pages
 
 ```bash
-just web::build
+just office::build
 ```
 
 Production deployment is a Cloudflare Pages Git deployment, not an AWS S3 or
 CloudFront upload. Use these Cloudflare Pages settings:
 
 - Project: `txing-office`
-- Root directory: `web`
+- Root directory: `office`
 - Build command: `bun install --frozen-lockfile && bun --bun run build`
 - Deploy command: leave empty; Cloudflare Pages publishes `dist`
 - Build output directory: `dist`
@@ -104,16 +104,16 @@ CloudFront upload. Use these Cloudflare Pages settings:
   - `VITE_COGNITO_SCOPE`
   - `VITE_ADMIN_EMAIL`
 
-`web/public/_redirects` keeps deep SPA routes on `index.html` when served by
-Cloudflare Pages. `just web::deploy` is now informational and prints the
+`office/public/_redirects` keeps deep SPA routes on `index.html` when served by
+Cloudflare Pages. `just office::deploy` is now informational and prints the
 Cloudflare Pages settings.
 
 ## Public Sign-In Entry
 
-The public `thing.dev` site is a separate Cloudflare Pages project under
-`site/`. Its sign-in link points to `https://office.txing.dev/?signin=1`.
+The public `txing.dev` site is a separate Cloudflare Pages project under
+`www/`. Its sign-in link points to `https://office.txing.dev/?signin=1`.
 The office SPA consumes that query parameter, starts the existing PKCE Cognito
 flow from the office origin, and Cognito returns to `https://office.txing.dev/`.
-Do not add `thing.dev` as a Cognito callback URL for this entry flow.
+Do not add `txing.dev` as a Cognito callback URL for this entry flow.
 
 AWS bootstrap, admin-user creation, and teardown live in [aws.md](../aws.md).

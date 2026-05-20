@@ -1,6 +1,6 @@
 [package]
 name = "txing-cloud-mcu-lambda"
-version = "0.9.138"
+version = "0.10.0"
 edition = "2024"
 description = "txing cloud rig and cloud MCU AWS Lambda runtime"
 

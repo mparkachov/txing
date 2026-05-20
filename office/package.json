@@ -1,7 +1,7 @@
 {
-  "name": "web",
+  "name": "office",
   "private": true,
-  "version": "0.9.138",
+  "version": "0.10.0",
   "type": "module",
   "packageManager": "bun@1.3.11",
   "scripts": {

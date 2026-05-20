@@ -1,6 +1,6 @@
-# Web
+# Office
 
-The authoritative web documentation now lives in [../docs/components/web.md](../docs/components/web.md).
+The authoritative office documentation now lives in [../docs/components/office.md](../docs/components/office.md).
 
 Related docs:
 

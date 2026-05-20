@@ -1,4 +1,4 @@
-import type { DeviceWebAdapter } from '../../../web/src/device-adapter'
+import type { DeviceWebAdapter } from '../../../office/src/device-adapter'
 import { extractPowerReportedState } from './power-model'
 import PowerPanel from './PowerPanel'
 

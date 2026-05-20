@@ -18,7 +18,7 @@ component that owns the host behavior.
 - Stack-backed operator commands and deploys fail unless `TXING_AWS_STACK` is
   set explicitly in the operator environment or passed as a positional stack
   name where supported.
-- The one-off `just aws::deploy-init` step stores web/admin deploy parameters
+- The one-off `just aws::deploy-init` step stores office/admin deploy parameters
   from `shared/aws/deploy-init.json` as separate `/txing/stack/*` SSM Parameter
   Store values before the first base stack deployment.
 
@@ -106,26 +106,25 @@ The short production flow is:
 
 ## Web
 
-The operator/admin SPA is documented in [components/web.md](./components/web.md).
+The operator/admin SPA is documented in [components/office.md](./components/office.md).
 
 Local development:
 
 ```bash
-just web::install
-just web::write-env
-just web::dev
+just office::install
+just office::write-env
+just office::dev
 ```
 
-Production deployment is Cloudflare Pages from the `web` directory.
+Production deployment is Cloudflare Pages from the `office` directory.
 
 ## Public Site
 
-The public site is documented in [components/site.md](./components/site.md).
+The public site is documented in [components/www.md](./components/www.md).
 
 Local development:
 
 ```bash
-cd site
-bun install
-bun run dev
+cd www
+python3 -m http.server 5174
 ```

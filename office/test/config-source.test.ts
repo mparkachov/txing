@@ -4,9 +4,9 @@ import { resolve } from 'node:path'
 
 const repoRoot = resolve(import.meta.dir, '../..')
 
-describe('web config wiring', () => {
+describe('office config wiring', () => {
   test('write-env sources town identity without a preselected device or rig', () => {
-    const justfile = readFileSync(resolve(repoRoot, 'web/justfile'), 'utf-8')
+    const justfile = readFileSync(resolve(repoRoot, 'office/justfile'), 'utf-8')
 
     expect(justfile).toContain(
       "write-env sparkplug_group_id='' town_thing_name=''",
@@ -24,10 +24,10 @@ describe('web config wiring', () => {
   })
 
   test('runtime config requires the configured town thing and uses build-time version', () => {
-    const configSource = readFileSync(resolve(repoRoot, 'web/src/config.ts'), 'utf-8')
-    const authSource = readFileSync(resolve(repoRoot, 'web/src/auth.ts'), 'utf-8')
-    const shadowRuntimeSource = readFileSync(resolve(repoRoot, 'web/src/shadow-api-runtime.ts'), 'utf-8')
-    const viteConfigSource = readFileSync(resolve(repoRoot, 'web/vite.config.ts'), 'utf-8')
+    const configSource = readFileSync(resolve(repoRoot, 'office/src/config.ts'), 'utf-8')
+    const authSource = readFileSync(resolve(repoRoot, 'office/src/auth.ts'), 'utf-8')
+    const shadowRuntimeSource = readFileSync(resolve(repoRoot, 'office/src/shadow-api-runtime.ts'), 'utf-8')
+    const viteConfigSource = readFileSync(resolve(repoRoot, 'office/vite.config.ts'), 'utf-8')
 
     expect(configSource).toContain("const townThingName = requireEnv('VITE_TOWN_THING_NAME') ?? ''")
     expect(configSource).toContain("const sparkplugGroupId = requireEnv('VITE_SPARKPLUG_GROUP_ID') ?? ''")
@@ -49,17 +49,18 @@ describe('web config wiring', () => {
   })
 
   test('production hosting is configured for Cloudflare Pages', () => {
-    const justfile = readFileSync(resolve(repoRoot, 'web/justfile'), 'utf-8')
-    const redirects = readFileSync(resolve(repoRoot, 'web/public/_redirects'), 'utf-8')
-    const tsconfig = readFileSync(resolve(repoRoot, 'web/tsconfig.app.json'), 'utf-8')
-    const viteConfigSource = readFileSync(resolve(repoRoot, 'web/vite.config.ts'), 'utf-8')
+    const justfile = readFileSync(resolve(repoRoot, 'office/justfile'), 'utf-8')
+    const redirects = readFileSync(resolve(repoRoot, 'office/public/_redirects'), 'utf-8')
+    const tsconfig = readFileSync(resolve(repoRoot, 'office/tsconfig.app.json'), 'utf-8')
+    const viteConfigSource = readFileSync(resolve(repoRoot, 'office/vite.config.ts'), 'utf-8')
 
-    expect(justfile).toContain('Production web deployment is managed by Cloudflare Pages.')
+    expect(justfile).toContain('Production office deployment is managed by Cloudflare Pages.')
     expect(justfile).toContain('Project: txing-office')
+    expect(justfile).toContain('Root directory: office')
     expect(justfile).toContain('Build command: bun install --frozen-lockfile && bun --bun run build')
     expect(justfile).toContain('Deploy command: leave empty')
     expect(justfile).toContain('Domain: office.txing.dev')
-    expect(justfile).not.toContain('ln -snf ../../../web/node_modules')
+    expect(justfile).not.toContain('ln -snf')
     expect(justfile).not.toContain('aws s3 sync')
     expect(justfile).not.toContain('aws cloudfront create-invalidation')
     expect(redirects.trim()).toBe('/* /index.html 200')

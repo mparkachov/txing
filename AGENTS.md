@@ -4,7 +4,8 @@
 - `devices/unit/mcu/`: Rust firmware subproject for the current `unit` device type MCU.
 - `rig/`: Python subproject for the Raspberry Pi 5 rig runtime (AWS IoT MQTT + BLE communication with MCU).
 - `devices/unit/board/`: Python subproject for the current `unit` device-side Raspberry Pi board control (AWS IoT MQTT shadow control/reporting).
-- `web/`: React/Vite SPA for admin management of Thing Shadow.
+- `office/`: React/Vite SPA for admin management of Thing Shadow.
+- `www/`: strictly static public web site for `txing.dev`.
 
 ## Working rules
 - Treat this repository as a monorepo with the subprojects above.

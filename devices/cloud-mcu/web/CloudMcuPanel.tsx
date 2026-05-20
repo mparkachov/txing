@@ -1,7 +1,7 @@
 import type {
   DeviceDetailRenderProps,
   DeviceWebAdapter,
-} from '../../../web/src/device-adapter'
+} from '../../../office/src/device-adapter'
 import { extractCloudMcuReportedState } from './cloud-mcu-model'
 
 type CloudMcuPanelProps = Pick<DeviceDetailRenderProps, 'shadow'>

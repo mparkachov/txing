@@ -1,5 +1,5 @@
-import type { DeviceWebAdapter } from '../../../web/src/device-adapter'
-import VideoPanel from '../../../web/src/VideoPanel'
+import type { DeviceWebAdapter } from '../../../office/src/device-adapter'
+import VideoPanel from '../../../office/src/VideoPanel'
 import {
   buildBoardVideoChannelName,
   extractReportedBatteryMv,

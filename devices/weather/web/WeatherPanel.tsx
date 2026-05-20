@@ -1,7 +1,7 @@
 import type {
   DeviceDetailRenderProps,
   DeviceWebAdapter,
-} from '../../../web/src/device-adapter'
+} from '../../../office/src/device-adapter'
 import {
   extractWeatherPowerReportedState,
   extractWeatherReportedState,

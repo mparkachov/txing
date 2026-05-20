@@ -1,0 +1,229 @@
+:root {
+  color-scheme: dark;
+  --canvas: transparent;
+  --panel-border: rgba(104, 231, 246, 0.26);
+  --panel-border-strong: rgba(104, 231, 246, 0.52);
+  --text: rgba(244, 251, 252, 0.96);
+  --muted: rgba(204, 223, 226, 0.8);
+  --accent: #6ceef6;
+  --shadow: 0 24px 60px rgba(0, 0, 0, 0.28);
+  --radius: 1.5rem;
+  --max-width: 56rem;
+  --mark-height: clamp(5.75rem, 10vw, 7.5rem);
+  --logo-slot: calc(var(--mark-height) * 0.88);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  background: transparent;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--canvas);
+  color: var(--text);
+  font-family: "Avenir Next", Avenir, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+img {
+  display: block;
+  max-width: 100%;
+}
+
+figure {
+  margin: 0;
+}
+
+a {
+  color: var(--text);
+  text-decoration-color: rgba(108, 238, 246, 0.65);
+  text-decoration-thickness: 0.08em;
+  text-underline-offset: 0.18em;
+}
+
+a:hover {
+  color: var(--accent);
+}
+
+a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 0.22rem;
+  border-radius: 0.2rem;
+}
+
+.page {
+  width: min(100% - 2rem, var(--max-width));
+  margin: 0 auto;
+  padding: clamp(1rem, 3vw, 2rem) 0;
+}
+
+.panel {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, rgba(14, 28, 36, 0.96), rgba(6, 13, 18, 0.88));
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(16px) saturate(120%);
+  -webkit-backdrop-filter: blur(16px) saturate(120%);
+}
+
+.panel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at top right, rgba(108, 238, 246, 0.14), transparent 34%),
+    linear-gradient(135deg, rgba(108, 238, 246, 0.06), transparent 28%);
+  pointer-events: none;
+}
+
+.hero {
+  display: grid;
+  gap: clamp(1rem, 2.4vw, 1.5rem);
+  padding: clamp(1.25rem, 3vw, 2rem);
+}
+
+.hero-lockup,
+.hero-visual,
+.hero-copy {
+  position: relative;
+  z-index: 1;
+}
+
+.hero-lockup {
+  display: grid;
+  grid-template-columns: var(--logo-slot) 1fr var(--logo-slot);
+  gap: clamp(0.9rem, 2.5vw, 1.75rem);
+  align-items: center;
+}
+
+.hero-visual {
+  display: block;
+  width: var(--logo-slot);
+  justify-self: start;
+}
+
+.hero-visual img {
+  width: 100%;
+  height: auto;
+  filter: drop-shadow(0 0 2.5rem rgba(91, 235, 255, 0.14));
+}
+
+.hero-copy {
+  display: grid;
+  gap: 0.85rem;
+  justify-items: center;
+  text-align: center;
+}
+
+h1 {
+  margin: 0;
+  align-self: center;
+  justify-self: center;
+  color: var(--text);
+  font-family: "Avenir Next", Avenir, "Segoe UI", sans-serif;
+  font-size: calc(var(--mark-height) * 0.78);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 1rem;
+  line-height: 1.7;
+  max-width: 60ch;
+}
+
+.lede {
+  color: var(--text);
+  width: min(76%, 36rem);
+  font-size: clamp(1.4rem, 3vw, 2rem);
+  line-height: 1.4;
+  max-width: none;
+}
+
+.support-copy {
+  color: var(--text);
+  font-size: clamp(1.05rem, 1.8vw, 1.2rem);
+  max-width: 36rem;
+}
+
+.hero-link {
+  display: flex;
+  gap: 1rem;
+  justify-content: flex-end;
+  font-size: 0.98rem;
+  width: 100%;
+  justify-self: end;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.panel:hover {
+  border-color: var(--panel-border-strong);
+}
+
+.reveal {
+  animation: rise-in 520ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 859px) {
+  :root {
+    --mark-height: clamp(4.25rem, 15vw, 5.5rem);
+  }
+
+  .page {
+    width: min(100% - 1rem, var(--max-width));
+    padding-top: 0.5rem;
+  }
+
+  .hero {
+    padding: 1.1rem;
+  }
+
+  .hero-lockup {
+    gap: 0.75rem;
+  }
+
+  h1 {
+    font-size: clamp(2.6rem, 8vw, 4rem);
+  }
+
+  .lede {
+    width: min(100%, 32rem);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}

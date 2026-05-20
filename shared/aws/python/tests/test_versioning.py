@@ -241,7 +241,7 @@ class VersionEnvironmentTests(unittest.TestCase):
             REPO_ROOT / "devices" / "unit" / "justfile",
             REPO_ROOT / "devices" / "unit" / "daemon" / "justfile",
             REPO_ROOT / "devices" / "unit" / "board" / "justfile",
-            REPO_ROOT / "web" / "justfile",
+            REPO_ROOT / "office" / "justfile",
         ]
         for path in operator_files:
             text = path.read_text(encoding="utf-8")

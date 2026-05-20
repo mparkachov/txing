@@ -6,7 +6,7 @@ const repoRoot = resolve(import.meta.dir, '../..')
 
 describe('app route catalog source wiring', () => {
   test('rig device catalog queries by rig thing id, not display name', () => {
-    const appSource = readFileSync(resolve(repoRoot, 'web/src/App.tsx'), 'utf-8')
+    const appSource = readFileSync(resolve(repoRoot, 'office/src/App.tsx'), 'utf-8')
 
     expect(appSource).toContain("const currentRigCatalogThingName = route.kind === 'rig' ? route.rig : null")
     expect(appSource).toContain('listRigDevices(resolveSessionIdToken, currentRigCatalogThingName)')
@@ -14,7 +14,7 @@ describe('app route catalog source wiring', () => {
   })
 
   test('town and rig route headers refresh sparkplug shadows without a device session', () => {
-    const appSource = readFileSync(resolve(repoRoot, 'web/src/App.tsx'), 'utf-8')
+    const appSource = readFileSync(resolve(repoRoot, 'office/src/App.tsx'), 'utf-8')
 
     expect(appSource).toContain('const routeSparkplugPollIntervalMs = 2_000')
     expect(appSource).toContain("if (route.kind !== 'town' && route.kind !== 'rig')")
@@ -22,7 +22,7 @@ describe('app route catalog source wiring', () => {
   })
 
   test('town and rig catalog rows render sparkplug status without short ids', () => {
-    const appSource = readFileSync(resolve(repoRoot, 'web/src/App.tsx'), 'utf-8')
+    const appSource = readFileSync(resolve(repoRoot, 'office/src/App.tsx'), 'utf-8')
 
     expect(appSource).toContain('const renderSparkplugCatalogCardLink = (')
     expect(appSource).toContain('<CapabilityStack')
@@ -36,7 +36,7 @@ describe('app route catalog source wiring', () => {
   })
 
   test('route navigation reuses capability stack for the current thing', () => {
-    const appSource = readFileSync(resolve(repoRoot, 'web/src/App.tsx'), 'utf-8')
+    const appSource = readFileSync(resolve(repoRoot, 'office/src/App.tsx'), 'utf-8')
 
     expect(appSource).toContain('const navigationCapabilities =')
     expect(appSource).toContain('className="navigation-capabilities"')
@@ -44,7 +44,7 @@ describe('app route catalog source wiring', () => {
   })
 
   test('wake commands keep reflection sourced from shadow state', () => {
-    const appSource = readFileSync(resolve(repoRoot, 'web/src/App.tsx'), 'utf-8')
+    const appSource = readFileSync(resolve(repoRoot, 'office/src/App.tsx'), 'utf-8')
 
     expect(appSource).toContain("commandStatus?.status === 'succeeded'")
     expect(appSource).toContain('const commandSequence = createSparkplugRedconCommandSeq(')
@@ -59,7 +59,7 @@ describe('app route catalog source wiring', () => {
   })
 
   test('route transitions use busy navigation styling instead of transient loading copy', () => {
-    const appSource = readFileSync(resolve(repoRoot, 'web/src/App.tsx'), 'utf-8')
+    const appSource = readFileSync(resolve(repoRoot, 'office/src/App.tsx'), 'utf-8')
 
     expect(appSource).toContain('const isNavigationBusy =')
     expect(appSource).toContain("className={`card navigation-panel ${isNavigationBusy ? 'navigation-panel-busy' : ''}`}")
@@ -71,7 +71,7 @@ describe('app route catalog source wiring', () => {
   })
 
   test('public landing can request office-origin sign-in', () => {
-    const appSource = readFileSync(resolve(repoRoot, 'web/src/App.tsx'), 'utf-8')
+    const appSource = readFileSync(resolve(repoRoot, 'office/src/App.tsx'), 'utf-8')
 
     expect(appSource).toContain("const signInRequestParam = 'signin'")
     expect(appSource).toContain('const consumeSignInRequest = (): boolean =>')
@@ -84,7 +84,7 @@ describe('app route catalog source wiring', () => {
   })
 
   test('drive detail keeps polling robot feedback while motion is active', () => {
-    const appSource = readFileSync(resolve(repoRoot, 'web/src/App.tsx'), 'utf-8')
+    const appSource = readFileSync(resolve(repoRoot, 'office/src/App.tsx'), 'utf-8')
 
     expect(appSource).toContain('const robotStatePollIntervalMs = 5_000')
     expect(appSource).toContain('const intervalId = window.setInterval(() => {')
@@ -94,8 +94,8 @@ describe('app route catalog source wiring', () => {
   })
 
   test('drive input requires explicit active-control takeover when another session owns control', () => {
-    const appSource = readFileSync(resolve(repoRoot, 'web/src/App.tsx'), 'utf-8')
-    const shadowRuntimeSource = readFileSync(resolve(repoRoot, 'web/src/shadow-api-runtime.ts'), 'utf-8')
+    const appSource = readFileSync(resolve(repoRoot, 'office/src/App.tsx'), 'utf-8')
+    const shadowRuntimeSource = readFileSync(resolve(repoRoot, 'office/src/shadow-api-runtime.ts'), 'utf-8')
 
     expect(appSource).toContain('const isDriveControlOwnedByOther =')
     expect(appSource).toContain('const isDriveInputEnabled = isDriveControlActive && !isDriveControlOwnedByOther')

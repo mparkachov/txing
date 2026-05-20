@@ -12,7 +12,7 @@ Expected structure:
 - `aws/`: per-shadow default payloads and schemas for the new device type
 - `docs/`: device-type contracts and operator/runtime notes
 - `rig/`: optional rig-side Greengrass component implementation in any language
-- `web/`: optional React/TypeScript adapter and UI modules compiled into the admin SPA
+- `web/`: optional React/TypeScript adapter and UI modules compiled into the office SPA
 - `mcu/`: optional firmware/watch-layer implementation
 - `board/`: optional device-side board/runtime implementation
 

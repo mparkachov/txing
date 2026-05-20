@@ -340,7 +340,7 @@ mod unit 'devices/unit/justfile'
 mod cloud-mcu 'devices/cloud-mcu/justfile'
 mod weather 'devices/weather/justfile'
 mod power 'devices/power/justfile'
-mod web 'web/justfile'
+mod office 'office/justfile'
 mod common 'devices/common/justfile'
 mod release 'release/justfile'
 

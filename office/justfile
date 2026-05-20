@@ -1,54 +1,54 @@
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 set quiet := true
 
-web_dir := source_directory()
-project_root := web_dir + "/.."
+office_dir := source_directory()
+project_root := office_dir + "/.."
 root_justfile := project_root + "/justfile"
 stack_name := ""
-web_dist_dir := web_dir + "/dist"
+office_dist_dir := office_dir + "/dist"
 
 @install:
-    cd "{{web_dir}}"
+    cd "{{office_dir}}"
     bun install
 
 dev:
     #!/usr/bin/env bash
     set -euo pipefail
-    cd "{{web_dir}}"
+    cd "{{office_dir}}"
     bun run dev
 
 build:
     #!/usr/bin/env bash
     set -euo pipefail
-    cd "{{web_dir}}"
+    cd "{{office_dir}}"
     bun --bun run build
 
-deploy stack_name=stack_name web_dist_dir=web_dist_dir:
+deploy stack_name=stack_name office_dist_dir=office_dist_dir:
     #!/usr/bin/env bash
     set -euo pipefail
-    cd "{{web_dir}}"
+    cd "{{office_dir}}"
 
-    if [ ! -d "{{web_dist_dir}}" ]; then
-      echo "Web build output {{web_dist_dir}} not found. Run just build first." >&2
+    if [ ! -d "{{office_dist_dir}}" ]; then
+      echo "Office build output {{office_dist_dir}} not found. Run just build first." >&2
       exit 1
     fi
 
-    echo "Production web deployment is managed by Cloudflare Pages."
+    echo "Production office deployment is managed by Cloudflare Pages."
     echo "Project: txing-office"
-    echo "Root directory: web"
+    echo "Root directory: office"
     echo "Build command: bun install --frozen-lockfile && bun --bun run build"
     echo "Deploy command: leave empty; Cloudflare Pages publishes the dist directory"
     echo "Build output directory: dist"
     echo "Domain: office.txing.dev"
 
 @lint:
-    cd "{{web_dir}}"
+    cd "{{office_dir}}"
     bun run lint
 
 write-env sparkplug_group_id='' town_thing_name='' stack_name=stack_name:
     #!/usr/bin/env bash
     set -euo pipefail
-    cd "{{web_dir}}"
+    cd "{{office_dir}}"
 
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{stack_name}}")"
     stack_name="$TXING_AWS_STACK"
@@ -85,7 +85,7 @@ write-env sparkplug_group_id='' town_thing_name='' stack_name=stack_name:
       --output text)"
 
     if [ "$cognito_domain" = "None" ] || [ "$cognito_client_id" = "None" ] || [ "$cognito_user_pool_id" = "None" ] || [ "$cognito_identity_pool_id" = "None" ] || [ "$web_iot_policy_name" = "None" ] || [ "$admin_email" = "None" ]; then
-      echo "Required web outputs are missing in stack $stack_name. Deploy shared/aws/template.yaml first." >&2
+      echo "Required office outputs are missing in stack $stack_name. Deploy shared/aws/template.yaml first." >&2
       exit 1
     fi
 
@@ -112,4 +112,4 @@ write-env sparkplug_group_id='' town_thing_name='' stack_name=stack_name:
       "VITE_ADMIN_EMAIL=$admin_email" \
       > .env.local
 
-    echo "Wrote {{web_dir}}/.env.local from stack $stack_name outputs."
+    echo "Wrote {{office_dir}}/.env.local from stack $stack_name outputs."

@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "web",
+      "name": "office",
       "dependencies": {
         "@aws-sdk/client-cognito-identity": "^3.1005.0",
         "@aws-sdk/client-iot": "^3.1005.0",

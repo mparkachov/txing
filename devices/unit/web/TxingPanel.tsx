@@ -1,7 +1,7 @@
 import { getTrackIndicatorPresentation } from './app-model'
-import VideoPanel from '../../../web/src/VideoPanel'
-import type { McpTransportKind } from '../../../web/src/mcp-descriptor'
-import type { RobotControlState } from '../../../web/src/shadow-api'
+import VideoPanel from '../../../office/src/VideoPanel'
+import type { McpTransportKind } from '../../../office/src/mcp-descriptor'
+import type { RobotControlState } from '../../../office/src/shadow-api'
 
 type TxingPanelProps = {
   isBoardVideoExpanded: boolean
