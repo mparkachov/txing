@@ -1,4 +1,4 @@
-name: Unit Daemon Feature Prerelease
+name: Txing Release
 
 on:
   workflow_dispatch:
@@ -7,21 +7,23 @@ permissions:
   contents: write
 
 concurrency:
-  group: unit-daemon-feature-prerelease-${{ github.ref }}
+  group: txing-release-${{ github.ref }}
   cancel-in-progress: false
 
 env:
   RUST_VERSION: 1.95.0
   UNIT_DAEMON_ASSET: txing-unit-daemon-linux-aarch64.tar.gz
-  UNIT_DAEMON_BINARY: txing-unit-daemon
   KVS_MASTER_ASSET: txing-board-kvs-master-linux-aarch64.tar.gz
   KVS_MASTER_BINARY: txing-board-kvs-master
+  SPARKPLUG_MANAGER_ASSET: txing-sparkplug-manager-linux-aarch64.tar.gz
+  BLE_CONNECTIVITY_ASSET: txing-ble-connectivity-linux-aarch64.tar.gz
+  AWS_CONNECTIVITY_ASSET: txing-aws-connectivity-linux-aarch64.tar.gz
+  RIG_DEPLOY_ASSET: txing-rig-deploy-linux-aarch64.tar.gz
   KVS_MASTER_BUILD_IMAGE: debian:trixie
-  FEATURE_PRERELEASE_RETAIN: 10
 
 jobs:
-  feature-prerelease:
-    name: Build and publish feature daemon prerelease
+  release:
+    name: Build and publish release artifacts
     runs-on: ubuntu-24.04-arm
 
     steps:
@@ -30,42 +32,84 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Resolve prerelease metadata
+      - name: Resolve release metadata
         id: metadata
         shell: bash
         run: |
           set -euo pipefail
 
-          version_base="$(tr -d '[:space:]' < VERSION)"
-          if [[ ! "$version_base" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
-            echo "VERSION must contain a base semantic version like x.y.z, got: $version_base" >&2
+          version="$(tr -d '[:space:]' < VERSION)"
+          if [[ ! "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "VERSION must contain a semantic version like x.y.z, got: $version" >&2
             exit 1
           fi
-          major="${BASH_REMATCH[1]}"
-          minor="${BASH_REMATCH[2]}"
-          patch="${BASH_REMATCH[3]}"
+          version_major_num=$((10#${BASH_REMATCH[1]}))
+          version_minor_num=$((10#${BASH_REMATCH[2]}))
+          version_patch_num=$((10#${BASH_REMATCH[3]}))
 
           if [ "${GITHUB_REF_TYPE}" != "branch" ]; then
-            echo "Feature prerelease workflow must be run manually from a branch, got ref type: ${GITHUB_REF_TYPE}" >&2
+            echo "Release workflow must be run manually from a branch, got ref type: ${GITHUB_REF_TYPE}" >&2
             exit 1
           fi
-          if [[ "${GITHUB_REF_NAME}" != feature/* ]]; then
-            echo "Feature prerelease workflow is only allowed from feature/* branches, got: ${GITHUB_REF_NAME}" >&2
+          if [ "${GITHUB_REF_NAME}" != "main" ]; then
+            echo "Release workflow is only allowed from main, got: ${GITHUB_REF_NAME}" >&2
             exit 1
           fi
 
-          timestamp="$(date -u +%s)"
-          version="$major.$minor.$((patch + 1))-feature.$timestamp"
+          git fetch --tags --force origin
+          latest_release_version=""
+          latest_major_num=0
+          latest_minor_num=0
+          latest_patch_num=0
+          while IFS= read -r tag; do
+            candidate="${tag#v}"
+            if [[ ! "$candidate" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+              continue
+            fi
+            candidate_major_num=$((10#${BASH_REMATCH[1]}))
+            candidate_minor_num=$((10#${BASH_REMATCH[2]}))
+            candidate_patch_num=$((10#${BASH_REMATCH[3]}))
+            if [ -z "$latest_release_version" ] ||
+              (( candidate_major_num > latest_major_num ||
+                (candidate_major_num == latest_major_num && candidate_minor_num > latest_minor_num) ||
+                (candidate_major_num == latest_major_num && candidate_minor_num == latest_minor_num && candidate_patch_num > latest_patch_num) )); then
+              latest_release_version="$candidate"
+              latest_major_num="$candidate_major_num"
+              latest_minor_num="$candidate_minor_num"
+              latest_patch_num="$candidate_patch_num"
+            fi
+          done < <(git tag --list 'v*')
+
+          if [ -n "$latest_release_version" ] &&
+            (( version_major_num < latest_major_num ||
+              (version_major_num == latest_major_num && version_minor_num < latest_minor_num) ||
+              (version_major_num == latest_major_num && version_minor_num == latest_minor_num && version_patch_num <= latest_patch_num) )); then
+            echo "Pushed VERSION $version must be greater than latest release tag v$latest_release_version." >&2
+            exit 1
+          fi
+
           tag="v$version"
           release_target="$(git rev-parse HEAD)"
 
+          {
+            echo "### Txing release"
+            echo
+            echo "- Pushed VERSION: \`$version\`"
+            if [ -n "$latest_release_version" ]; then
+              echo "- Latest release tag: \`v$latest_release_version\`"
+            else
+              echo "- Latest release tag: none"
+            fi
+            echo "- Tag: \`$tag\`"
+            echo "- Commit: \`$release_target\`"
+          } >>"$GITHUB_STEP_SUMMARY"
+
           echo "version=$version" >>"$GITHUB_OUTPUT"
+          echo "latest_release_version=$latest_release_version" >>"$GITHUB_OUTPUT"
           echo "tag=$tag" >>"$GITHUB_OUTPUT"
-          echo "branch=${GITHUB_REF_NAME}" >>"$GITHUB_OUTPUT"
-          echo "timestamp=$timestamp" >>"$GITHUB_OUTPUT"
           echo "release_target=$release_target" >>"$GITHUB_OUTPUT"
 
-      - name: Reject existing feature prerelease
+      - name: Reject existing immutable release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.metadata.outputs.tag }}
@@ -73,15 +117,13 @@ jobs:
         run: |
           set -euo pipefail
 
-          git fetch --force --tags
-
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Feature prerelease $TAG already exists." >&2
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; releases are immutable." >&2
             exit 1
           fi
 
-          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
-            echo "Feature prerelease tag $TAG already exists." >&2
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "Release tag $TAG already exists; releases are immutable." >&2
             exit 1
           fi
 
@@ -103,7 +145,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             build-essential pkg-config cmake perl file curl git \
-            ca-certificates
+            libssl-dev libcurl4-openssl-dev libdbus-1-dev uuid-dev \
+            libzip-dev libyaml-dev libsystemd-dev libevent-dev liburiparser-dev \
+            liblog4cplus-dev libsrtp2-dev libusrsctp-dev libwebsockets-dev \
+            zlib1g-dev
 
       - name: Install mise tools
         shell: bash
@@ -135,6 +180,13 @@ jobs:
           rustc -vV
           cargo -V
 
+      - name: Check release version surfaces
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 release/src/txing_release/cli.py check
+
       - name: Restore Cargo cache
         uses: actions/cache@v4
         with:
@@ -143,25 +195,33 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             devices/unit/daemon/target
-          key: cargo-unit-daemon-${{ runner.os }}-${{ runner.arch }}-rust-1.95.0-${{ hashFiles('devices/unit/daemon/Cargo.lock') }}
+            rig/target
+          key: cargo-release-${{ runner.os }}-${{ runner.arch }}-rust-1.95.0-${{ hashFiles('devices/unit/daemon/Cargo.lock', 'rig/Cargo.lock') }}
           restore-keys: |
-            cargo-unit-daemon-${{ runner.os }}-${{ runner.arch }}-rust-1.95.0-
+            cargo-release-${{ runner.os }}-${{ runner.arch }}-rust-1.95.0-
 
-      - name: Test daemon
+      - name: Test Rust artifacts
         env:
           TXING_DAEMON_BUILD_VERSION: ${{ steps.metadata.outputs.version }}
         shell: bash
         run: |
           set -euo pipefail
           cargo test --manifest-path devices/unit/daemon/Cargo.toml
+          cargo test --manifest-path rig/Cargo.toml --workspace
 
-      - name: Build daemon
+      - name: Build Rust artifacts
         env:
           TXING_DAEMON_BUILD_VERSION: ${{ steps.metadata.outputs.version }}
         shell: bash
         run: |
           set -euo pipefail
           cargo build --release --manifest-path devices/unit/daemon/Cargo.toml --bin daemon
+          TXING_REAL_CC="${CC:-cc}" CC="$PWD/rig/tools/cc-greengrass-info-log" \
+            cargo build --release --features greengrass-sdk --manifest-path rig/sparkplug-manager/Cargo.toml
+          TXING_REAL_CC="${CC:-cc}" CC="$PWD/rig/tools/cc-greengrass-info-log" \
+            cargo build --release --features greengrass-sdk --manifest-path rig/ble-connectivity/Cargo.toml
+          TXING_REAL_CC="${CC:-cc}" CC="$PWD/rig/tools/cc-greengrass-info-log" \
+            cargo build --release --features greengrass-sdk --manifest-path rig/aws-connectivity/Cargo.toml
 
       - name: Build native KVS master in Trixie container
         shell: bash
@@ -216,8 +276,7 @@ jobs:
           file "$kvs_master_build_binary"
           install -m 755 "$kvs_master_build_binary" "$RUNNER_TEMP/$KVS_MASTER_BINARY"
 
-      - name: Package prerelease assets
-        id: package
+      - name: Package project release assets
         shell: bash
         run: |
           set -euo pipefail
@@ -231,7 +290,9 @@ jobs:
             rm -rf "$package_dir"
             install -d "$package_dir"
             install -m 755 "$source" "$package_dir/$binary_name"
-            strip "$package_dir/$binary_name"
+            if file "$package_dir/$binary_name" | grep -q 'ELF'; then
+              strip "$package_dir/$binary_name"
+            fi
             file "$package_dir/$binary_name"
             tar -C "$package_dir" -czf "$asset_path" "$binary_name"
             archive_listing="$(tar -tzf "$asset_path")"
@@ -242,77 +303,47 @@ jobs:
             fi
           }
 
-          package_binary devices/unit/daemon/target/release/daemon "$UNIT_DAEMON_BINARY" "$UNIT_DAEMON_ASSET"
+          package_binary devices/unit/daemon/target/release/daemon txing-unit-daemon "$UNIT_DAEMON_ASSET"
           package_binary "$RUNNER_TEMP/$KVS_MASTER_BINARY" "$KVS_MASTER_BINARY" "$KVS_MASTER_ASSET"
+          package_binary rig/target/release/txing-sparkplug-manager txing-sparkplug-manager "$SPARKPLUG_MANAGER_ASSET"
+          package_binary rig/target/release/txing-ble-connectivity txing-ble-connectivity "$BLE_CONNECTIVITY_ASSET"
+          package_binary rig/target/release/txing-aws-connectivity txing-aws-connectivity "$AWS_CONNECTIVITY_ASSET"
+          package_binary rig/scripts/txing-rig-deploy txing-rig-deploy "$RIG_DEPLOY_ASSET"
 
-          echo "unit_daemon_asset_path=$RUNNER_TEMP/$UNIT_DAEMON_ASSET" >>"$GITHUB_OUTPUT"
-          echo "kvs_master_asset_path=$RUNNER_TEMP/$KVS_MASTER_ASSET" >>"$GITHUB_OUTPUT"
-
-      - name: Publish feature prerelease
+      - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.metadata.outputs.tag }}
           VERSION: ${{ steps.metadata.outputs.version }}
-          BRANCH: ${{ steps.metadata.outputs.branch }}
-          TIMESTAMP: ${{ steps.metadata.outputs.timestamp }}
           RELEASE_TARGET: ${{ steps.metadata.outputs.release_target }}
-          UNIT_DAEMON_ASSET_PATH: ${{ steps.package.outputs.unit_daemon_asset_path }}
-          KVS_MASTER_ASSET_PATH: ${{ steps.package.outputs.kvs_master_asset_path }}
         shell: bash
         run: |
           set -euo pipefail
 
           notes_file="$(mktemp)"
-          old_tags_file="$(mktemp)"
-          cleanup() {
-            rm -f "$notes_file" "$old_tags_file"
-          }
-          trap cleanup EXIT
-
-          build_host="$(hostname)"
-          build_kernel="$(uname -a)"
-
           cat >"$notes_file" <<NOTES
-          Unit daemon feature prerelease.
+          Txing release.
 
           - Version: $VERSION
           - Tag: $TAG
-          - Branch: $BRANCH
           - Commit: $RELEASE_TARGET
           - Assets:
             - $UNIT_DAEMON_ASSET
             - $KVS_MASTER_ASSET
-          - Build host: $build_host
-          - Build kernel: $build_kernel
-          - Timestamp: $TIMESTAMP
+            - $SPARKPLUG_MANAGER_ASSET
+            - $BLE_CONNECTIVITY_ASSET
+            - $AWS_CONNECTIVITY_ASSET
+            - $RIG_DEPLOY_ASSET
           NOTES
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "$TAG" -m "unit daemon feature prerelease $VERSION" "$RELEASE_TARGET"
-          git push origin "refs/tags/$TAG:refs/tags/$TAG"
-
-          gh release create "$TAG" "$UNIT_DAEMON_ASSET_PATH" "$KVS_MASTER_ASSET_PATH" \
-            --prerelease \
-            --latest=false \
-            --verify-tag \
+          gh release create "$TAG" \
+            "$RUNNER_TEMP/$UNIT_DAEMON_ASSET" \
+            "$RUNNER_TEMP/$KVS_MASTER_ASSET" \
+            "$RUNNER_TEMP/$SPARKPLUG_MANAGER_ASSET" \
+            "$RUNNER_TEMP/$BLE_CONNECTIVITY_ASSET" \
+            "$RUNNER_TEMP/$AWS_CONNECTIVITY_ASSET" \
+            "$RUNNER_TEMP/$RIG_DEPLOY_ASSET" \
+            --target "$RELEASE_TARGET" \
             --title "$TAG" \
-            --notes-file "$notes_file"
-
-          gh api --paginate repos/{owner}/{repo}/releases \
-            --jq '.[] | select(.prerelease == true) | select(.tag_name | test("^v[0-9]+\\.[0-9]+\\.[0-9]+-feature\\.[0-9]+$")) | select(any(.assets[]?; .name == "'"$UNIT_DAEMON_ASSET"'")) | [.tag_name, .published_at] | @tsv' \
-            | sort -r -k2,2 \
-            | awk -v retain="$FEATURE_PRERELEASE_RETAIN" 'NR > retain {print $1}' \
-            >"$old_tags_file"
-
-          while IFS= read -r old_tag; do
-            [ -n "$old_tag" ] || continue
-            printf 'pruning old unit daemon feature prerelease %s\n' "$old_tag"
-            gh release delete "$old_tag" --cleanup-tag --yes
-          done <"$old_tags_file"
-
-          printf 'published unit daemon feature prerelease\n'
-          printf '  tag: %s\n' "$TAG"
-          printf '  branch: %s\n' "$BRANCH"
-          printf '  asset: %s\n' "$UNIT_DAEMON_ASSET_PATH"
-          printf '  asset: %s\n' "$KVS_MASTER_ASSET_PATH"
+            --notes-file "$notes_file" \
+            --latest=true

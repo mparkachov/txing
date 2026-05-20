@@ -5332,12 +5332,12 @@ mod tests {
                 &[
                     (
                         "version".to_string(),
-                        "0.9.8-feature.1770000000".to_string()
+                        "0.9.8".to_string()
                     ),
                     ("capabilities".to_string(), r#"["board"]"#.to_string()),
                 ],
             ),
-            r#"info: starting unit daemon version=0.9.8-feature.1770000000 capabilities=["board"]"#
+            r#"info: starting unit daemon version=0.9.8 capabilities=["board"]"#
         );
     }
 

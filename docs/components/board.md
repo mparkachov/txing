@@ -6,7 +6,7 @@ runs the root-owned Rust `txing-unit-daemon`, supervises the native
 exposes board MCP for motion control.
 
 The older Python `txing-board` runtime remains in the repository for legacy and
-development reference only. It is not the stable runtime path.
+development reference only. It is not the release runtime path.
 
 ## Responsibilities
 
@@ -249,30 +249,20 @@ txing-unit-daemon
 txing-board-kvs-master
 ```
 
-Stable mode uses root's persistent mise config and install tree:
+Boards use root's persistent mise config, shims, and install tree:
 
 ```text
 /root/.config/mise/conf.d/txing-unit-daemon.toml
+/root/.local/share/mise/shims/txing-unit-daemon
+/root/.local/share/mise/shims/txing-board-kvs-master
 /root/.local/share/mise/installs/txing-unit-daemon/
 /root/.local/share/mise/installs/txing-board-kvs-master/
-```
-
-Feature mode requires stable to be installed first. It uses an isolated root
-mise config with prereleases enabled, installs into the same persistent root
-mise data tree, and uses `/var/tmp` only for cache/tmp scratch:
-
-```text
-/root/.config/mise/txing-unit-daemon/config.toml
-/root/.local/share/mise/installs/txing-unit-daemon/
-/root/.local/share/mise/installs/txing-board-kvs-master/
-/var/tmp/txing/unit-daemon/mise-cache
-/var/tmp/txing/unit-daemon/mise-tmp
 ```
 
 Service starts are offline by design. Restarting
-`txing-unit-daemon.service` does not install or upgrade tools. Rerun the
-installer during a writable-root maintenance window to pick up a newer stable
-release or feature prerelease.
+`txing-unit-daemon.service` does not install or upgrade tools. If a board needs
+new binaries, log into the board, enter a root shell, switch root to writable
+mode, run root-owned `mise upgrade`, and reboot.
 
 ## Fresh Board Install
 
@@ -318,10 +308,10 @@ If NetworkManager was newly installed or enabled, reconnect over the resulting
 network path before continuing.
 
 The release KVS master is built for Raspberry Pi OS Trixie and should link
-against `libcamera.so.0.7` and `libcamera-base.so.0.7`. The installer runs
-`ldd` on the resolved binaries and stops if any shared library is missing. If it
-reports `libcamera.so.0.2` or `libcamera.so.0.4`, the release asset was built
-against the wrong board image and must be replaced.
+against `libcamera.so.0.7` and `libcamera-base.so.0.7`. The manual install
+checks below run `ldd` on the resolved binaries before systemd is restarted. If
+`ldd` reports `libcamera.so.0.2` or `libcamera.so.0.4`, the release asset was
+built against the wrong board image and must be replaced.
 
 ### 3. Install Mise
 
@@ -368,19 +358,89 @@ refresh the per-device daemon role policy from the operator machine:
 just unit::daemon::role-policy <thing-id>
 ```
 
-### 5. Install Stable Runtime
+### 5. Install Runtime
 
 Run from the board root shell while root is writable:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/devices/unit/daemon/install-systemd.sh -o /tmp/txing-install-systemd.sh
-bash /tmp/txing-install-systemd.sh stable
+install -d -m 700 /root/.config/mise/conf.d /root/.local/share/mise
+cat >/root/.config/mise/conf.d/txing-unit-daemon.toml <<'EOF'
+[settings]
+fetch_remote_versions_cache = "10m"
+
+[tool_alias]
+txing-unit-daemon = "github:mparkachov/txing"
+txing-board-kvs-master = "github:mparkachov/txing"
+
+[tools.txing-unit-daemon]
+version = "latest"
+asset_pattern = "txing-unit-daemon-linux-aarch64.tar.gz"
+
+[tools.txing-board-kvs-master]
+version = "latest"
+asset_pattern = "txing-board-kvs-master-linux-aarch64.tar.gz"
+EOF
+
+MISE_TRUSTED_CONFIG_PATHS=/root/.config/mise \
+  /root/.local/bin/mise install txing-unit-daemon@latest txing-board-kvs-master@latest
 ```
 
-The installer writes root-owned mise config, installs both release tools, writes
-`/etc/systemd/system/txing-unit-daemon.service`, enables the service, and
-restarts it. It can run before `daemon.env` and certificate files exist, but the
-service will not run successfully until those files are in place.
+Check the resolved binaries before writing the service:
+
+```bash
+/root/.local/bin/mise list
+/root/.local/share/mise/shims/txing-unit-daemon --version
+/root/.local/share/mise/shims/txing-board-kvs-master --version
+ldd "$(/root/.local/bin/mise which txing-unit-daemon)"
+ldd "$(/root/.local/bin/mise which txing-board-kvs-master)"
+ldd "$(/root/.local/bin/mise which txing-board-kvs-master)" | grep -F "libcamera.so.0.7"
+ldd "$(/root/.local/bin/mise which txing-board-kvs-master)" | grep -F "libcamera-base.so.0.7"
+```
+
+Write the root-owned systemd unit:
+
+```bash
+cat >/etc/systemd/system/txing-unit-daemon.service <<'EOF'
+[Unit]
+Description=Txing Unit Daemon
+Wants=network-online.target systemd-time-wait-sync.service
+After=network-online.target systemd-time-wait-sync.service time-sync.target
+StartLimitIntervalSec=10min
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=/root
+KillSignal=SIGINT
+TimeoutStartSec=180
+TimeoutStopSec=30
+Restart=on-failure
+RestartSec=5
+
+Environment=TXING_DAEMON_CONFIG_DIR=/root/.config/txing/unit-daemon
+Environment=HOME=/root
+Environment=MISE_TRUSTED_CONFIG_PATHS=/root/.config/mise
+Environment=MISE_OFFLINE=1
+Environment=TXING_KVS_MASTER_COMMAND=/root/.local/share/mise/shims/txing-board-kvs-master
+
+ExecStartPre=/usr/bin/test -x /root/.local/share/mise/shims/txing-unit-daemon
+ExecStartPre=/usr/bin/test -x /root/.local/share/mise/shims/txing-board-kvs-master
+ExecStartPre=-/root/.local/share/mise/shims/txing-unit-daemon --version
+ExecStartPre=-/root/.local/share/mise/shims/txing-board-kvs-master --version
+ExecStart=/root/.local/share/mise/shims/txing-unit-daemon
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+if systemctl list-unit-files NetworkManager-wait-online.service --no-legend --no-pager 2>/dev/null \
+  | grep -q '^NetworkManager-wait-online\.service[[:space:]]'; then
+  systemctl enable NetworkManager-wait-online.service
+fi
+systemctl daemon-reload
+systemctl enable txing-unit-daemon.service
+systemctl restart txing-unit-daemon.service
+```
 
 Verify:
 
@@ -388,8 +448,8 @@ Verify:
 systemctl status --no-pager -l txing-unit-daemon.service
 journalctl -u txing-unit-daemon.service -n 160 --no-pager
 /root/.local/bin/mise list
-/root/.local/bin/mise which txing-unit-daemon
-/root/.local/bin/mise which txing-board-kvs-master
+/root/.local/share/mise/shims/txing-unit-daemon --version
+/root/.local/share/mise/shims/txing-board-kvs-master --version
 ```
 
 Expected:
@@ -479,60 +539,27 @@ Expected:
 
 - root filesystem is read-only
 - `txing-unit-daemon.service` starts without a source checkout
-- service start logs the exact daemon and KVS master paths
+- service start logs daemon and KVS master versions
 - daemon log includes `version=<release-version>`
 - MQTT connects and retained board/MCP/video state is published
 
 ## Maintenance
 
-Stable update during a writable-root maintenance window:
+Board update during a writable-root maintenance window:
 
 ```bash
+sudo su -
 root-rw
 apt update
 apt dist-upgrade -y
-curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/devices/unit/daemon/install-systemd.sh -o /tmp/txing-install-systemd.sh
-bash /tmp/txing-install-systemd.sh stable
-root-ro
-```
-
-If a stable release was just published and `mise` still resolves the previous
-version:
-
-```bash
-root-rw
-curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/devices/unit/daemon/install-systemd.sh -o /tmp/txing-install-systemd.sh
-/root/.local/bin/mise cache clear
-bash /tmp/txing-install-systemd.sh stable
-root-ro
-```
-
-Feature validation requires stable to be installed first:
-
-```bash
-root-rw
-curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/devices/unit/daemon/install-systemd.sh -o /tmp/txing-install-systemd.sh
-bash /tmp/txing-install-systemd.sh feature
-root-ro
-```
-
-While validating installer changes that exist only on a feature branch, fetch
-the installer from that branch:
-
-```bash
-FEATURE_BRANCH=feature/<branch-name>
-curl -fsSL "https://raw.githubusercontent.com/mparkachov/txing/${FEATURE_BRANCH}/devices/unit/daemon/install-systemd.sh" -o /tmp/txing-install-systemd.sh
-bash /tmp/txing-install-systemd.sh feature
-```
-
-Opt out of feature by rerunning the stable installer.
-
-Raw GitHub URLs can be cached briefly after a push. Check the fetched installer
-before executing it when validating a just-pushed change:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/mparkachov/txing/main/devices/unit/daemon/install-systemd.sh \
-  | grep -n 'daemon_binary=\|ExecStartPre=-.*--version\|conf.d'
+MISE_TRUSTED_CONFIG_PATHS=/root/.config/mise \
+  /root/.local/bin/mise upgrade txing-unit-daemon txing-board-kvs-master
+/root/.local/share/mise/shims/txing-unit-daemon --version
+/root/.local/share/mise/shims/txing-board-kvs-master --version
+ldd "$(/root/.local/bin/mise which txing-board-kvs-master)" | grep -F "libcamera.so.0.7"
+ldd "$(/root/.local/bin/mise which txing-board-kvs-master)" | grep -F "libcamera-base.so.0.7"
+sync
+reboot
 ```
 
 ## Local Development

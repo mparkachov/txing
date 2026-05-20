@@ -275,12 +275,12 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn("TXING_RIG_ENV_FILE", rig_justfile)
         self.assertIn('scripts/txing-rig-deploy-release" "{{release}}" "{{target}}"', rig_justfile)
 
-    def test_stable_release_publishes_only_project_assets(self) -> None:
+    def test_release_publishes_only_project_assets(self) -> None:
         workflow = (
-            REPO_ROOT / ".github" / "workflows" / "unit-daemon-stable-release.yml"
+            REPO_ROOT / ".github" / "workflows" / "txing-release.yml"
         ).read_text(encoding="utf-8")
 
-        self.assertIn("name: Txing Stable Release", workflow)
+        self.assertIn("name: Txing Release", workflow)
         self.assertIn("Install mise tools", workflow)
         self.assertIn("curl https://mise.run | sh", workflow)
         self.assertIn("mise/shims", workflow)
@@ -316,7 +316,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("txing-rig-deploy-linux-aarch64.tar.gz", workflow)
         self.assertIn('version="$(tr -d \'[:space:]\' < VERSION)"', workflow)
         self.assertIn("git fetch --tags --force origin", workflow)
-        self.assertIn("Pushed VERSION $version must be greater than latest stable tag", workflow)
+        self.assertIn("Pushed VERSION $version must be greater than latest release tag", workflow)
         self.assertIn('release_target="$(git rev-parse HEAD)"', workflow)
         self.assertIn("python3 release/src/txing_release/cli.py check", workflow)
         self.assertNotIn("txing-greengrass-lite-linux-aarch64.tar.gz", workflow)
@@ -328,7 +328,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn("modules/aws-greengrass/aws-greengrass-lite/version", workflow)
         self.assertNotIn("txing-greengrass-lite-payload/root", workflow)
         self.assertNotIn('run_nucleus "$payload_dir', workflow)
-        self.assertNotIn("description: \"Stable version to release", workflow)
+        self.assertNotIn("description: \"Version to release", workflow)
         self.assertNotIn("inputs:", workflow)
         self.assertNotIn("VERSION_INPUT", workflow)
         self.assertNotIn("next-minor-default", workflow)
@@ -343,147 +343,105 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn("cargo install just", workflow)
         self.assertNotIn("pip install --user uv", workflow)
 
-    def test_unit_daemon_feature_prerelease_publishes_daemon_and_kvs_master(self) -> None:
-        workflow = (
-            REPO_ROOT / ".github" / "workflows" / "unit-daemon-feature-prerelease.yml"
-        ).read_text(encoding="utf-8")
+    def test_unit_daemon_manual_docker_build_replaces_release_channel(self) -> None:
+        removed_workflow = "unit-daemon-feature-" + "prerelease.yml"
+        removed_dockerfile = "Dockerfile." + "prerelease-" + "builder"
+        removed_cli_flag = "--" + "prerelease"
+        removed_publish_recipe = "prerelease-" + "publish"
+        removed_version_suffix = "-feature" + "."
+        workflow_path = REPO_ROOT / ".github" / "workflows" / removed_workflow
+        daemon_dir = REPO_ROOT / "devices" / "unit" / "daemon"
+        justfile = (daemon_dir / "justfile").read_text(encoding="utf-8")
 
-        self.assertIn("name: Unit Daemon Feature Prerelease", workflow)
-        self.assertIn("UNIT_DAEMON_ASSET: txing-unit-daemon-linux-aarch64.tar.gz", workflow)
-        self.assertIn("KVS_MASTER_ASSET: txing-board-kvs-master-linux-aarch64.tar.gz", workflow)
-        self.assertIn("KVS_MASTER_BUILD_IMAGE: debian:trixie", workflow)
-        self.assertIn("Install mise tools", workflow)
-        self.assertIn("curl https://mise.run | sh", workflow)
-        self.assertIn("mise/shims", workflow)
-        self.assertIn("use --global --yes uv@latest just@latest", workflow)
-        self.assertIn("Build native KVS master in Trixie container", workflow)
-        self.assertIn("docker run --rm -i", workflow)
-        self.assertIn("just unit::board::build-native", workflow)
-        self.assertIn("URIs: https://archive.raspberrypi.com/debian/", workflow)
-        self.assertIn("Trusted: yes", workflow)
-        self.assertIn("apt-cache policy libcamera-dev libcamera0.7", workflow)
-        self.assertIn(
-            'git config --global --add safe.directory "$PWD/modules/awslabs/amazon-kinesis-video-streams-webrtc-sdk-c"',
-            workflow,
+        self.assertFalse(workflow_path.exists())
+        self.assertTrue((daemon_dir / "Dockerfile.docker-builder").exists())
+        self.assertFalse((daemon_dir / removed_dockerfile).exists())
+        self.assertIn("docker-builder-image", justfile)
+        self.assertIn("docker-builder-shell", justfile)
+        self.assertIn("docker-build:", justfile)
+        self.assertIn('docker_build_dir := daemon_dir + "/target/docker-build"', justfile)
+        self.assertIn('docker_kvs_master_build_image := "debian:trixie"', justfile)
+        self.assertIn('TXING_DAEMON_BUILD_VERSION="$version"', justfile)
+        self.assertIn("just unit::board::build-native", justfile)
+        self.assertIn("URIs: https://archive.raspberrypi.com/debian/", justfile)
+        self.assertIn("apt-cache policy libcamera-dev libcamera0.7", justfile)
+        self.assertIn('grep -F "libcamera.so.0.7"', justfile)
+        self.assertIn('grep -F "libcamera-base.so.0.7"', justfile)
+        self.assertIn('"outputs": {', justfile)
+        self.assertIn("txing-unit-daemon", justfile)
+        self.assertIn("txing-board-kvs-master", justfile)
+        self.assertNotIn("gh release create", justfile)
+        self.assertNotIn(removed_cli_flag, justfile)
+        self.assertNotIn(removed_publish_recipe, justfile)
+        self.assertNotIn(removed_version_suffix, justfile)
+
+    def test_unit_daemon_root_owned_installer_removed(self) -> None:
+        removed_installer = "install-" + "systemd.sh"
+        removed_mise_env = "MISE_" + "PRERELEASES"
+        daemon_dir = REPO_ROOT / "devices" / "unit" / "daemon"
+        board_docs = (REPO_ROOT / "docs" / "components" / "board.md").read_text(
+            encoding="utf-8"
         )
-        self.assertIn('grep -F "libcamera.so.0.7"', workflow)
-        self.assertIn('grep -F "libcamera-base.so.0.7"', workflow)
-        self.assertIn('kvs_master_build_binary="devices/unit/board/kvs_master/build/$KVS_MASTER_BINARY"', workflow)
-        self.assertIn('test -x "$kvs_master_build_binary"', workflow)
-        self.assertIn('install -m 755 "$kvs_master_build_binary" "$RUNNER_TEMP/$KVS_MASTER_BINARY"', workflow)
-        self.assertIn('package_binary "$RUNNER_TEMP/$KVS_MASTER_BINARY"', workflow)
-        self.assertNotIn("KVS_MASTER_OUTPUT_DIR", workflow)
-        self.assertNotIn('-v "$RUNNER_TEMP:/out"', workflow)
-        self.assertNotIn('"/out/$KVS_MASTER_BINARY"', workflow)
-        self.assertNotIn("raspberrypi.gpg.key", workflow)
-        self.assertNotIn("Signed-By:", workflow)
-        self.assertIn('"$UNIT_DAEMON_ASSET_PATH" "$KVS_MASTER_ASSET_PATH"', workflow)
-        self.assertNotIn("ASSET_NAME: txing-unit-daemon", workflow)
-        self.assertNotIn("curl git just", workflow)
-        self.assertNotIn("JUST_VERSION", workflow)
-        self.assertNotIn("cargo install just", workflow)
 
-    def test_unit_daemon_root_owned_installer_uses_mise_for_daemon_and_kvs_master(self) -> None:
-        installer = (
-            REPO_ROOT / "devices" / "unit" / "daemon" / "install-systemd.sh"
-        ).read_text(encoding="utf-8")
+        self.assertFalse((daemon_dir / removed_installer).exists())
+        self.assertIn('txing-unit-daemon = "github:mparkachov/txing"', board_docs)
+        self.assertIn('txing-board-kvs-master = "github:mparkachov/txing"', board_docs)
+        self.assertIn('asset_pattern = "txing-unit-daemon-linux-aarch64.tar.gz"', board_docs)
+        self.assertIn('asset_pattern = "txing-board-kvs-master-linux-aarch64.tar.gz"', board_docs)
+        self.assertIn("MISE_TRUSTED_CONFIG_PATHS=/root/.config/mise", board_docs)
+        self.assertIn("Environment=MISE_OFFLINE=1", board_docs)
+        self.assertIn(
+            "Environment=TXING_KVS_MASTER_COMMAND=/root/.local/share/mise/shims/txing-board-kvs-master",
+            board_docs,
+        )
+        self.assertIn("ExecStart=/root/.local/share/mise/shims/txing-unit-daemon", board_docs)
+        self.assertIn(
+            "/root/.local/bin/mise upgrade txing-unit-daemon txing-board-kvs-master",
+            board_docs,
+        )
+        self.assertIn("sudo su -", board_docs)
+        self.assertNotIn(removed_installer, board_docs)
+        self.assertNotIn(removed_mise_env, board_docs)
+        self.assertNotIn("MISE_SHARED_INSTALL_DIRS", board_docs)
 
-        self.assertIn("root-owned txing unit daemon systemd service", installer)
-        self.assertIn("run this installer from a root shell", installer)
-        self.assertIn('txing-unit-daemon = "github:mparkachov/txing"', installer)
-        self.assertIn('txing-board-kvs-master = "github:mparkachov/txing"', installer)
-        self.assertIn('asset_pattern = "$daemon_asset_pattern"', installer)
-        self.assertIn('asset_pattern = "$kvs_master_asset_pattern"', installer)
-        self.assertIn("txing-board-kvs-master-linux-aarch64.tar.gz", installer)
-        self.assertIn('fetch_remote_versions_cache = "10m"', installer)
-        self.assertIn('root_home="${TXING_DAEMON_ROOT_HOME:-${HOME:-/root}}"', installer)
-        self.assertIn('daemon_config_dir="${TXING_DAEMON_CONFIG_DIR:-$root_home/.config/txing/unit-daemon}"', installer)
-        self.assertIn('mise_data_dir="$root_home/.local/share/mise"', installer)
-        self.assertIn("Environment=HOME=$root_home", installer)
-        self.assertIn("Environment=TXING_KVS_MASTER_COMMAND=$kvs_master_binary", installer)
-        self.assertIn("run_root_mise install --force txing-unit-daemon@latest txing-board-kvs-master@latest", installer)
-        self.assertIn("run_feature_mise install --force txing-unit-daemon@latest txing-board-kvs-master@latest", installer)
-        self.assertIn('daemon_binary="$(run_root_mise which txing-unit-daemon)"', installer)
-        self.assertIn('daemon_binary="$(run_feature_mise which txing-unit-daemon)"', installer)
-        self.assertIn('kvs_master_binary="$(run_feature_mise which txing-board-kvs-master)"', installer)
-        self.assertIn('check_shared_libraries "txing-board-kvs-master" "$kvs_master_binary"', installer)
-        self.assertIn("unresolved shared libraries", installer)
-        self.assertIn("libcamera.so.0.7", installer)
-        self.assertIn("libcamera.so.0.2", installer)
-        self.assertIn("libcamera.so.0.4", installer)
-        self.assertIn("StartLimitBurst=5", installer)
-        self.assertIn("MISE_DATA_DIR=$mise_data_dir", installer)
-        self.assertNotIn("MISE_SHARED_INSTALL_DIRS", installer)
-        self.assertIn("MISE_TRUSTED_CONFIG_PATHS=$mise_config_root", installer)
-        self.assertIn('feature_trusted_config_paths="$mise_config_root:$mise_config_dir"', installer)
-        self.assertIn("MISE_TRUSTED_CONFIG_PATHS=$feature_trusted_config_paths", installer)
-        self.assertIn("ExecStartPre=/usr/bin/test -x $daemon_binary", installer)
-        self.assertIn("ExecStartPre=/usr/bin/test -x $kvs_master_binary", installer)
-        self.assertIn("ExecStartPre=/usr/bin/echo txing-unit-daemon binary: $daemon_binary", installer)
-        self.assertIn("ExecStartPre=-$daemon_binary --version", installer)
-        self.assertIn("ExecStartPre=/usr/bin/echo txing-board-kvs-master binary: $kvs_master_binary", installer)
-        self.assertIn("ExecStartPre=-$kvs_master_binary --version", installer)
-        self.assertIn("ExecStart=$daemon_binary", installer)
-        self.assertIn("daemon version:", installer)
-        self.assertIn("KVS master version:", installer)
-        self.assertIn("does not support --version", installer)
-        self.assertNotIn("ExecStart=/usr/bin/env MISE_OFFLINE=1", installer)
-        self.assertIn('install -m 644 "$service_tmp" "$service_file"', installer)
-        self.assertIn('systemctl reset-failed "$service_name"', installer)
-        self.assertIn('systemctl restart "$service_name"', installer)
-        self.assertIn("$daemon_config_dir/daemon.env", installer)
-        self.assertIn("warning: daemon runtime config is not readable yet", installer)
-        self.assertIn("warning: daemon private key is not readable yet", installer)
-        self.assertNotIn("missing daemon runtime config", installer)
-        self.assertNotIn("missing daemon private key", installer)
-        self.assertNotIn("sudo", installer)
-        self.assertNotIn("runuser", installer)
-        self.assertNotIn("chown", installer)
-        self.assertNotIn("/home/txing/.local/share/mise", installer)
-        self.assertNotIn("generated_systemd_dir", installer)
-
-    def test_board_stable_docs_use_daemon_kvs_master_release_path(self) -> None:
+    def test_board_docs_use_daemon_kvs_master_release_path(self) -> None:
+        removed_installer = "install-" + "systemd.sh"
+        removed_mise_env = "MISE_" + "PRERELEASES"
         installation_docs = (REPO_ROOT / "docs" / "installation.md").read_text(
             encoding="utf-8"
         )
         artifacts_docs = (REPO_ROOT / "docs" / "artifacts.md").read_text(
             encoding="utf-8"
         )
-        rtc_session_docs = (REPO_ROOT / "docs" / "rtc-session.md").read_text(
+        board_docs = (REPO_ROOT / "docs" / "components" / "board.md").read_text(
             encoding="utf-8"
         )
 
-        self.assertIn("mise which txing-board-kvs-master", installation_docs)
-        self.assertIn("bash /tmp/txing-install-systemd.sh stable", installation_docs)
-        self.assertIn("sudo su -", installation_docs)
-        self.assertIn("/root/.local/bin/mise which txing-board-kvs-master", installation_docs)
-        self.assertIn("just unit::daemon::role-policy <thing-id>", installation_docs)
-        self.assertIn("dynamic `mcp` descriptor", installation_docs)
-        self.assertIn("just unit::daemon::role-policy <thing-id>", artifacts_docs)
-        self.assertIn("Use this path for Phase 2a board iteration", artifacts_docs)
+        self.assertIn("root-owned mise release tools", installation_docs)
+        self.assertIn("sudo su -", board_docs)
+        self.assertIn("/root/.local/bin/mise which txing-board-kvs-master", board_docs)
+        self.assertIn("just unit::daemon::role-policy <thing-id>", board_docs)
+        self.assertIn("dynamic `mcp`", board_docs)
         self.assertIn("txing-board-kvs-master-linux-aarch64.tar.gz", artifacts_docs)
-        self.assertIn("TXING_KVS_MASTER_COMMAND", artifacts_docs)
+        self.assertIn("TXING_KVS_MASTER_COMMAND", board_docs)
         self.assertIn("daemon.env", installation_docs)
         self.assertIn("daemon.env", artifacts_docs)
-        self.assertIn("Raspberry Pi OS apt repository", artifacts_docs)
-        self.assertIn("libcamera.so.0.7", installation_docs)
+        self.assertIn("Raspberry Pi OS Trixie", board_docs)
+        self.assertIn("libcamera.so.0.7", board_docs)
         self.assertIn("libcamera.so.0.7", artifacts_docs)
-        self.assertIn("libcamera.so.0.2", installation_docs)
-        self.assertIn("libcamera.so.0.4", installation_docs)
-        self.assertIn("installer runs `ldd`", installation_docs)
-        self.assertIn("installer runs `ldd`", artifacts_docs)
-        self.assertIn("mount /tmp ; mount /var/tmp", installation_docs)
-        self.assertIn("MISE_DATA_DIR=/root/.local/share/mise", artifacts_docs)
-        self.assertIn("service starts offline", artifacts_docs)
-        self.assertIn("service restart from read-only root without calling the GitHub Releases API", artifacts_docs)
-        self.assertIn("Phase 2b is implemented and prerelease-validated", rtc_session_docs)
-        self.assertIn("MCP commands over the shared WebRTC data", rtc_session_docs)
-        self.assertIn("Publishing a new", rtc_session_docs)
-        self.assertIn("GitHub Release does not upgrade a board on daemon restart", rtc_session_docs)
-        self.assertIn("service restarts do not auto-upgrade or call GitHub", rtc_session_docs)
-        self.assertIn("bash /tmp/txing-install-systemd.sh feature", artifacts_docs)
-        self.assertNotIn("install-systemd.sh | sudo bash", installation_docs)
-        self.assertNotIn("install-systemd.sh | sudo bash", artifacts_docs)
+        self.assertIn("libcamera.so.0.2", board_docs)
+        self.assertIn("libcamera.so.0.4", board_docs)
+        self.assertIn('run `ldd` on resolved binaries', artifacts_docs)
+        self.assertIn("mount /tmp ; mount /var/tmp", board_docs)
+        self.assertIn("/root/.local/share/mise/shims/txing-unit-daemon", artifacts_docs)
+        self.assertIn("Service starts are offline", board_docs)
+        self.assertIn("GitHub Release does not upgrade a board", artifacts_docs)
+        self.assertIn("MISE_OFFLINE=1", artifacts_docs)
+        self.assertNotIn(removed_installer, installation_docs)
+        self.assertNotIn(removed_installer, artifacts_docs)
+        self.assertNotIn(removed_mise_env, artifacts_docs)
+        self.assertNotIn(f"{removed_installer} | sudo bash", installation_docs)
+        self.assertNotIn(f"{removed_installer} | sudo bash", artifacts_docs)
         self.assertNotIn("MISE_SHARED_INSTALL_DIRS", artifacts_docs)
         self.assertNotIn("sudo -u txing env HOME=/home/txing", installation_docs)
         self.assertNotIn("sudo -u txing env HOME=/home/txing", artifacts_docs)
@@ -517,7 +475,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn("chown", installer)
 
     def test_rig_ble_component_runs_without_greengrass_privilege(self) -> None:
-        stable_deploy = (REPO_ROOT / "rig" / "scripts" / "txing-rig-deploy").read_text(
+        deploy_script = (REPO_ROOT / "rig" / "scripts" / "txing-rig-deploy").read_text(
             encoding="utf-8"
         )
         rig_justfile = (REPO_ROOT / "rig" / "justfile").read_text(encoding="utf-8")
@@ -528,9 +486,9 @@ class VersionEnvironmentTests(unittest.TestCase):
             encoding="utf-8"
         )
 
-        self.assertIn("txing-ble-connectivity", stable_deploy)
+        self.assertIn("txing-ble-connectivity", deploy_script)
         self.assertTrue((REPO_ROOT / "rig" / "scripts" / "txing-rig-deploy-release").exists())
-        self.assertNotIn("RequiresPrivilege: true", stable_deploy)
+        self.assertNotIn("RequiresPrivilege: true", deploy_script)
         self.assertNotIn("RequiresPrivilege: true", rig_justfile)
         self.assertIn("Canonical rig installation", installation_docs)
         self.assertIn("components/rig.md", installation_docs)
@@ -546,7 +504,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("/var/lib/greengrass/credentials/", rig_docs)
         self.assertIn("just rig::deploy-release latest all", rig_docs)
         self.assertIn("The rig does not run AWS CLI", rig_docs)
-        self.assertIn("A stable rig does not need", rig_docs)
+        self.assertIn("A production rig does not need", rig_docs)
         self.assertIn("a repo checkout, mise, AWS CLI", rig_docs)
         self.assertNotIn("mise use --global aws-cli@latest gh@latest jq@latest", rig_docs)
         self.assertNotIn("/home/ggcore/.local/bin/mise exec -- txing-rig-deploy", rig_docs)

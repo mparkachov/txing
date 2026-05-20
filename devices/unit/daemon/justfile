@@ -8,15 +8,14 @@ aws_lib := project_root + "/shared/aws/scripts/aws_lib.sh"
 daemon_env_template := daemon_dir + "/daemon.env.template"
 
 config_dir := ""
-prerelease_branch := "feature/unit-daemon-prerelease"
-prerelease_asset := "txing-unit-daemon-linux-aarch64.tar.gz"
-prerelease_dir := daemon_dir + "/target/prerelease"
-prerelease_metadata := prerelease_dir + "/metadata.json"
-prerelease_builder_image := "txing-unit-daemon-builder:ubuntu24-rust-stable"
-prerelease_builder_dockerfile := daemon_dir + "/Dockerfile.prerelease-builder"
-prerelease_cargo_registry_volume := "txing-cargo-registry"
-prerelease_cargo_git_volume := "txing-cargo-git"
-prerelease_target_volume := "txing-unit-daemon-target"
+docker_build_dir := daemon_dir + "/target/docker-build"
+docker_build_metadata := docker_build_dir + "/metadata.json"
+docker_builder_image := "txing-board-binaries-builder:ubuntu24-rust-stable"
+docker_builder_dockerfile := daemon_dir + "/Dockerfile.docker-builder"
+docker_cargo_registry_volume := "txing-cargo-registry"
+docker_cargo_git_volume := "txing-cargo-git"
+docker_target_volume := "txing-unit-daemon-target"
+docker_kvs_master_build_image := "debian:trixie"
 
 cert thing_id='' config_dir=config_dir:
     #!/usr/bin/env bash
@@ -262,28 +261,28 @@ run:
     cd "{{project_root}}"
     cargo run --manifest-path devices/unit/daemon/Cargo.toml
 
-prerelease-builder-image rust_toolchain="stable":
+docker-builder-image rust_toolchain="stable":
     #!/usr/bin/env bash
     set -euo pipefail
 
     rust_toolchain="{{rust_toolchain}}"
-    image="{{prerelease_builder_image}}"
-    dockerfile="{{prerelease_builder_dockerfile}}"
+    image="{{docker_builder_image}}"
+    dockerfile="{{docker_builder_dockerfile}}"
 
     if [[ "$rust_toolchain" == *=* ]]; then
       echo "Do not pass just recipe arguments as name=value. Use positional arguments." >&2
       exit 2
     fi
     command -v docker >/dev/null || {
-      echo "docker is required to build the unit daemon prerelease builder image." >&2
+      echo "docker is required to build the board binaries builder image." >&2
       exit 1
     }
     if [ ! -r "$dockerfile" ]; then
-      echo "Missing prerelease builder Dockerfile: $dockerfile" >&2
+      echo "Missing Docker builder Dockerfile: $dockerfile" >&2
       exit 1
     fi
 
-    empty_context="$(mktemp -d "${TMPDIR:-/tmp}/txing-unit-daemon-builder-context.XXXXXX")"
+    empty_context="$(mktemp -d "${TMPDIR:-/tmp}/txing-board-binaries-builder-context.XXXXXX")"
     cleanup() {
       rm -rf "$empty_context"
     }
@@ -295,147 +294,176 @@ prerelease-builder-image rust_toolchain="stable":
       -t "$image" \
       "$empty_context"
 
-prerelease-builder-shell:
+docker-builder-shell:
     #!/usr/bin/env bash
     set -euo pipefail
 
     project_root="{{project_root}}"
-    image="{{prerelease_builder_image}}"
+    image="{{docker_builder_image}}"
 
     command -v docker >/dev/null || {
-      echo "docker is required to run the unit daemon prerelease builder shell." >&2
+      echo "docker is required to run the board binaries builder shell." >&2
       exit 1
     }
     if ! docker image inspect "$image" >/dev/null 2>&1; then
-      echo "Missing prerelease builder image: $image" >&2
-      echo "Run: just unit::daemon::prerelease-builder-image" >&2
+      echo "Missing Docker builder image: $image" >&2
+      echo "Run: just unit::daemon::docker-builder-image" >&2
       exit 1
     fi
 
-    docker volume create "{{prerelease_cargo_registry_volume}}" >/dev/null
-    docker volume create "{{prerelease_cargo_git_volume}}" >/dev/null
-    docker volume create "{{prerelease_target_volume}}" >/dev/null
+    docker volume create "{{docker_cargo_registry_volume}}" >/dev/null
+    docker volume create "{{docker_cargo_git_volume}}" >/dev/null
+    docker volume create "{{docker_target_volume}}" >/dev/null
 
     exec docker run --rm -it \
       --mount "type=bind,source=$project_root,target=$project_root,readonly" \
-      --mount "type=volume,source={{prerelease_cargo_registry_volume}},target=/opt/cargo/registry" \
-      --mount "type=volume,source={{prerelease_cargo_git_volume}},target=/opt/cargo/git" \
-      --mount "type=volume,source={{prerelease_target_volume}},target=/target" \
+      --mount "type=volume,source={{docker_cargo_registry_volume}},target=/opt/cargo/registry" \
+      --mount "type=volume,source={{docker_cargo_git_volume}},target=/opt/cargo/git" \
+      --mount "type=volume,source={{docker_target_volume}},target=/target" \
       -e CARGO_TARGET_DIR=/target \
       -w "$project_root" \
       "$image" \
       bash
 
-prerelease-build branch=prerelease_branch:
+docker-build:
     #!/usr/bin/env bash
     set -euo pipefail
 
     project_root="{{project_root}}"
     daemon_dir="{{daemon_dir}}"
-    prerelease_dir="{{prerelease_dir}}"
-    metadata_path="{{prerelease_metadata}}"
-    branch="{{branch}}"
-    asset_name="{{prerelease_asset}}"
-    asset_path="$prerelease_dir/$asset_name"
-    package_dir="$prerelease_dir/package"
-    binary_name="txing-unit-daemon"
-    binary_path="$package_dir/$binary_name"
-    builder_image="{{prerelease_builder_image}}"
-    docker_out_dir="$prerelease_dir/docker-out"
+    docker_build_dir="{{docker_build_dir}}"
+    metadata_path="{{docker_build_metadata}}"
+    builder_image="{{docker_builder_image}}"
+    kvs_master_build_image="{{docker_kvs_master_build_image}}"
+    docker_out_dir="$docker_build_dir/docker-out"
+    bin_dir="$docker_build_dir/bin"
+    daemon_binary_name="txing-unit-daemon"
+    kvs_master_binary_name="txing-board-kvs-master"
+    daemon_binary_path="$bin_dir/$daemon_binary_name"
+    kvs_master_binary_path="$bin_dir/$kvs_master_binary_name"
 
-    if [[ "$branch" == *=* ]]; then
-      echo "Do not pass just recipe arguments as name=value. Use positional arguments." >&2
-      exit 2
-    fi
-    if [[ "$branch" != feature/* ]]; then
-      echo "Feature prerelease branch must be under feature/, got: $branch" >&2
-      exit 2
-    fi
-    for command in docker git python3 tar; do
+    for command in docker git python3 file; do
       if ! command -v "$command" >/dev/null 2>&1; then
-        echo "unit daemon prerelease-build requires '$command'." >&2
+        echo "unit daemon docker-build requires '$command'." >&2
         exit 1
       fi
     done
     if ! docker image inspect "$builder_image" >/dev/null 2>&1; then
-      echo "Missing prerelease builder image: $builder_image" >&2
-      echo "Run: just unit::daemon::prerelease-builder-image" >&2
+      echo "Missing Docker builder image: $builder_image" >&2
+      echo "Run: just unit::daemon::docker-builder-image" >&2
       exit 1
     fi
     server_platform="$(docker version | awk '/^  OS\/Arch:/ {print $2; exit}')"
     if [ "$server_platform" != "linux/arm64" ]; then
-      echo "unit daemon prerelease-build requires a native linux/arm64 Docker daemon, got: $server_platform" >&2
-      exit 1
-    fi
-    if [ -n "$(git -C "$project_root" status --porcelain --untracked-files=all)" ]; then
-      echo "Working tree must be clean before prerelease build." >&2
-      git -C "$project_root" status --short --untracked-files=all >&2
+      echo "unit daemon docker-build requires a native linux/arm64 Docker daemon, got: $server_platform" >&2
       exit 1
     fi
 
-    version_base="$(tr -d '[:space:]' < "$project_root/VERSION")"
-    if [[ ! "$version_base" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+    version="$(tr -d '[:space:]' < "$project_root/VERSION")"
+    if [[ ! "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
       echo "VERSION must contain a base semantic version like x.y.z." >&2
       exit 1
     fi
-    major="${BASH_REMATCH[1]}"
-    minor="${BASH_REMATCH[2]}"
-    patch="${BASH_REMATCH[3]}"
-    timestamp="$(date -u +%s)"
-    version="$major.$minor.$((patch + 1))-feature.$timestamp"
-    tag="v$version"
     commit="$(git -C "$project_root" rev-parse HEAD)"
+    timestamp="$(date -u +%s)"
 
-    docker volume create "{{prerelease_cargo_registry_volume}}" >/dev/null
-    docker volume create "{{prerelease_cargo_git_volume}}" >/dev/null
-    docker volume create "{{prerelease_target_volume}}" >/dev/null
+    docker volume create "{{docker_cargo_registry_volume}}" >/dev/null
+    docker volume create "{{docker_cargo_git_volume}}" >/dev/null
+    docker volume create "{{docker_target_volume}}" >/dev/null
 
-    install -d "$prerelease_dir"
+    rm -rf "$docker_build_dir"
+    install -d "$docker_build_dir" "$bin_dir"
     rm -rf "$docker_out_dir"
     install -d "$docker_out_dir"
 
     docker run --rm -i \
       --mount "type=bind,source=$project_root,target=$project_root,readonly" \
       --mount "type=bind,source=$docker_out_dir,target=/out" \
-      --mount "type=volume,source={{prerelease_cargo_registry_volume}},target=/opt/cargo/registry" \
-      --mount "type=volume,source={{prerelease_cargo_git_volume}},target=/opt/cargo/git" \
-      --mount "type=volume,source={{prerelease_target_volume}},target=/target" \
+      --mount "type=volume,source={{docker_cargo_registry_volume}},target=/opt/cargo/registry" \
+      --mount "type=volume,source={{docker_cargo_git_volume}},target=/opt/cargo/git" \
+      --mount "type=volume,source={{docker_target_volume}},target=/target" \
       -e CARGO_TARGET_DIR=/target \
       -e TXING_DAEMON_BUILD_VERSION="$version" \
-      -e TXING_PRERELEASE_ASSET_NAME="$asset_name" \
-      -e TXING_PRERELEASE_BINARY_NAME="$binary_name" \
+      -e TXING_DAEMON_BINARY_NAME="$daemon_binary_name" \
       -w "$project_root" \
       "$builder_image" \
-      bash -se <<'DOCKER_BUILD'
+      bash -se <<'DAEMON_BUILD'
     set -euo pipefail
 
     build_host="$(hostname)"
     build_kernel="$(uname -a)"
-    printf '%s\n' "$build_host" > /out/build-host
-    printf '%s\n' "$build_kernel" > /out/build-kernel
+    printf '%s\n' "$build_host" > /out/daemon-build-host
+    printf '%s\n' "$build_kernel" > /out/daemon-build-kernel
 
     cargo test --manifest-path devices/unit/daemon/Cargo.toml
     cargo build --release --manifest-path devices/unit/daemon/Cargo.toml --bin daemon
 
-    package_dir="$(mktemp -d /tmp/txing-unit-daemon-package.XXXXXX)"
-    binary_path="$package_dir/$TXING_PRERELEASE_BINARY_NAME"
-    install -m 755 "$CARGO_TARGET_DIR/release/daemon" "$binary_path"
-    strip "$binary_path"
-    file "$binary_path"
-    install -m 755 "$binary_path" "/out/$TXING_PRERELEASE_BINARY_NAME"
-    tar -C "$package_dir" -czf "/out/$TXING_PRERELEASE_ASSET_NAME" "$TXING_PRERELEASE_BINARY_NAME"
-    tar -tzf "/out/$TXING_PRERELEASE_ASSET_NAME"
-    DOCKER_BUILD
+    install -m 755 "$CARGO_TARGET_DIR/release/daemon" "/out/$TXING_DAEMON_BINARY_NAME"
+    strip "/out/$TXING_DAEMON_BINARY_NAME"
+    file "/out/$TXING_DAEMON_BINARY_NAME"
+    DAEMON_BUILD
 
-    build_host="$(cat "$docker_out_dir/build-host")"
-    build_kernel="$(cat "$docker_out_dir/build-kernel")"
+    docker run --rm -i \
+      -v "$project_root:$project_root" \
+      -v "$docker_out_dir:/out" \
+      -w "$project_root" \
+      -e DEBIAN_FRONTEND=noninteractive \
+      -e KVS_MASTER_BINARY="$kvs_master_binary_name" \
+      "$kvs_master_build_image" \
+      bash -se <<'KVS_MASTER_BUILD'
+    set -euo pipefail
+    build_host="$(hostname)"
+    build_kernel="$(uname -a)"
+    printf '%s\n' "$build_host" > /out/kvs-master-build-host
+    printf '%s\n' "$build_kernel" > /out/kvs-master-build-kernel
+    apt-get update
+    apt-get install -y --no-install-recommends ca-certificates curl
+    cat >/etc/apt/sources.list.d/raspi.sources <<'APT_SOURCE'
+    Types: deb
+    URIs: https://archive.raspberrypi.com/debian/
+    Suites: trixie
+    Components: main
+    Architectures: arm64
+    Trusted: yes
+    APT_SOURCE
+    cat >/etc/apt/preferences.d/raspi-libcamera <<'APT_PREFERENCES'
+    Package: libcamera* python3-libcamera gstreamer1.0-libcamera
+    Pin: origin archive.raspberrypi.com
+    Pin-Priority: 1001
+    APT_PREFERENCES
+    apt-get update
+    apt-get install -y --no-install-recommends \
+      build-essential pkg-config cmake perl file curl git ca-certificates \
+      libssl-dev libcurl4-openssl-dev liblog4cplus-dev libsrtp2-dev \
+      libusrsctp-dev libwebsockets-dev zlib1g-dev libcamera-dev
+    apt-cache policy libcamera-dev libcamera0.7
+    curl https://mise.run | sh
+    export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"
+    mise use --global --yes just@latest
+    git config --global --add safe.directory "$PWD"
+    git config --global --add safe.directory "$PWD/modules/awslabs/amazon-kinesis-video-streams-webrtc-sdk-c"
+    just unit::board::submodules
+    just unit::board::build-native
+    kvs_master_build_binary="devices/unit/board/kvs_master/build/$KVS_MASTER_BINARY"
+    test -x "$kvs_master_build_binary"
+    ldd "$kvs_master_build_binary"
+    if ldd "$kvs_master_build_binary" | grep -Fq "not found"; then
+      echo "txing-board-kvs-master has unresolved shared libraries" >&2
+      exit 1
+    fi
+    ldd "$kvs_master_build_binary" | grep -F "libcamera.so.0.7"
+    ldd "$kvs_master_build_binary" | grep -F "libcamera-base.so.0.7"
+    install -m 755 "$kvs_master_build_binary" "/out/$KVS_MASTER_BINARY"
+    strip "/out/$KVS_MASTER_BINARY"
+    file "/out/$KVS_MASTER_BINARY"
+    KVS_MASTER_BUILD
 
-    rm -rf "$package_dir"
-    install -d "$package_dir"
-    install -m 755 "$docker_out_dir/$binary_name" "$binary_path"
-    rm -f "$asset_path"
-    install -m 644 "$docker_out_dir/$asset_name" "$asset_path"
-    tar -tzf "$asset_path"
+    install -m 755 "$docker_out_dir/$daemon_binary_name" "$daemon_binary_path"
+    install -m 755 "$docker_out_dir/$kvs_master_binary_name" "$kvs_master_binary_path"
+    daemon_build_host="$(cat "$docker_out_dir/daemon-build-host")"
+    daemon_build_kernel="$(cat "$docker_out_dir/daemon-build-kernel")"
+    kvs_master_build_host="$(cat "$docker_out_dir/kvs-master-build-host")"
+    kvs_master_build_kernel="$(cat "$docker_out_dir/kvs-master-build-kernel")"
 
     python3 - "$metadata_path" <<PY
     import json
@@ -443,18 +471,17 @@ prerelease-build branch=prerelease_branch:
 
     metadata = {
         "version": "$version",
-        "tag": "$tag",
-        "branch": "$branch",
         "commit": "$commit",
         "timestamp": int("$timestamp"),
-        "assetName": "$asset_name",
-        "assetPath": "$asset_path",
-        "assetFormat": "tar.gz",
-        "binaryName": "$binary_name",
-        "binaryPath": "$binary_path",
+        "outputs": {
+            "$daemon_binary_name": "$daemon_binary_path",
+            "$kvs_master_binary_name": "$kvs_master_binary_path",
+        },
         "projectRoot": "$project_root",
-        "buildHost": "$build_host",
-        "buildKernel": "$build_kernel",
+        "daemonBuildHost": "$daemon_build_host",
+        "daemonBuildKernel": "$daemon_build_kernel",
+        "kvsMasterBuildHost": "$kvs_master_build_host",
+        "kvsMasterBuildKernel": "$kvs_master_build_kernel",
     }
     with open(sys.argv[1], "w", encoding="utf-8") as handle:
         json.dump(metadata, handle, indent=2)
@@ -463,150 +490,9 @@ prerelease-build branch=prerelease_branch:
 
     rm -rf "$docker_out_dir"
 
-    printf 'prepared unit daemon prerelease artifact\n'
-    printf '  tag: %s\n' "$tag"
-    printf '  branch: %s\n' "$branch"
+    printf 'prepared local board binaries with docker\n'
+    printf '  version: %s\n' "$version"
     printf '  commit: %s\n' "$commit"
-    printf '  asset: %s\n' "$asset_path"
-    printf '  binary: %s\n' "$binary_path"
+    printf '  daemon binary: %s\n' "$daemon_binary_path"
+    printf '  KVS master binary: %s\n' "$kvs_master_binary_path"
     printf '  metadata: %s\n' "$metadata_path"
-
-prerelease-publish:
-    #!/usr/bin/env bash
-    set -euo pipefail
-
-    project_root="{{project_root}}"
-    metadata_path="{{prerelease_metadata}}"
-    expected_asset_name="{{prerelease_asset}}"
-
-    if [ "$(uname -s)" != "Darwin" ]; then
-      echo "unit daemon prerelease-publish must run on macOS where gh is authenticated." >&2
-      exit 1
-    fi
-    command -v gh >/dev/null || {
-      echo "gh is required to publish the unit daemon prerelease." >&2
-      exit 1
-    }
-    command -v python3 >/dev/null || {
-      echo "python3 is required to read prerelease metadata." >&2
-      exit 1
-    }
-    command -v tar >/dev/null || {
-      echo "tar is required to verify the prerelease archive." >&2
-      exit 1
-    }
-    if [ ! -r "$metadata_path" ]; then
-      echo "Missing prerelease metadata: $metadata_path" >&2
-      echo "Run just unit::daemon::prerelease-build first." >&2
-      exit 1
-    fi
-    if [ -n "$(git -C "$project_root" status --porcelain --untracked-files=all)" ]; then
-      echo "Working tree must be clean before prerelease publish." >&2
-      git -C "$project_root" status --short --untracked-files=all >&2
-      exit 1
-    fi
-
-    read_metadata() {
-      local key="$1"
-      python3 - "$metadata_path" "$key" <<'PY'
-    import json
-    import sys
-
-    with open(sys.argv[1], encoding="utf-8") as handle:
-        value = json.load(handle)[sys.argv[2]]
-    print(value)
-    PY
-    }
-
-    tag="$(read_metadata tag)"
-    branch="$(read_metadata branch)"
-    commit="$(read_metadata commit)"
-    version="$(read_metadata version)"
-    timestamp="$(read_metadata timestamp)"
-    asset_name="$(read_metadata assetName)"
-    asset_path="$(read_metadata assetPath)"
-    asset_format="$(read_metadata assetFormat)"
-    binary_name="$(read_metadata binaryName)"
-    build_host="$(read_metadata buildHost)"
-    build_kernel="$(read_metadata buildKernel)"
-
-    if [[ "$branch" != feature/* ]]; then
-      echo "Feature prerelease branch must be under feature/, got: $branch" >&2
-      exit 2
-    fi
-    if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-feature\.[0-9]+$ ]]; then
-      echo "Unexpected unit daemon feature tag: $tag" >&2
-      exit 1
-    fi
-    if [ "$asset_name" != "$expected_asset_name" ]; then
-      echo "Unexpected prerelease asset name: $asset_name" >&2
-      exit 1
-    fi
-    if [ "$asset_format" != "tar.gz" ]; then
-      echo "Unexpected prerelease asset format: $asset_format" >&2
-      exit 1
-    fi
-    if [ "$binary_name" != "txing-unit-daemon" ]; then
-      echo "Unexpected prerelease binary name: $binary_name" >&2
-      exit 1
-    fi
-    if [ ! -s "$asset_path" ]; then
-      echo "Missing prerelease archive asset: $asset_path" >&2
-      exit 1
-    fi
-    archive_listing="$(tar -tzf "$asset_path")"
-    if ! grep -Fxq "$binary_name" <<<"$archive_listing"; then
-      echo "Prerelease archive does not contain $binary_name at its root." >&2
-      exit 1
-    fi
-    current_commit="$(git -C "$project_root" rev-parse HEAD)"
-    if [ "$current_commit" != "$commit" ]; then
-      echo "Current HEAD $current_commit does not match prerelease build commit $commit." >&2
-      exit 1
-    fi
-    cd "$project_root"
-
-    notes_file="$(mktemp "${TMPDIR:-/tmp}/txing-unit-daemon-prerelease-notes.XXXXXX")"
-    old_tags_file="$(mktemp "${TMPDIR:-/tmp}/txing-unit-daemon-prerelease-old-tags.XXXXXX")"
-    cleanup() {
-      rm -f "$notes_file" "$old_tags_file"
-    }
-    trap cleanup EXIT
-    cat >"$notes_file" <<NOTES
-    Unit daemon feature prerelease.
-
-    - Version: $version
-    - Tag: $tag
-    - Branch: $branch
-    - Commit: $commit
-    - Asset: $asset_name
-    - Build host: $build_host
-    - Build kernel: $build_kernel
-    - Timestamp: $timestamp
-    NOTES
-
-    git -C "$project_root" push --force-with-lease origin "HEAD:refs/heads/$branch"
-    git -C "$project_root" tag -a "$tag" -m "unit daemon feature prerelease $version" "$commit"
-    git -C "$project_root" push origin "refs/tags/$tag:refs/tags/$tag"
-    gh release create "$tag" "$asset_path" \
-      --prerelease \
-      --latest=false \
-      --verify-tag \
-      --title "$tag" \
-      --notes-file "$notes_file"
-
-    gh api --paginate repos/{owner}/{repo}/releases \
-      --jq '.[] | select(.prerelease == true) | select(.tag_name | test("^v[0-9]+\\.[0-9]+\\.[0-9]+-feature\\.[0-9]+$")) | select(any(.assets[]?; .name == "'"$expected_asset_name"'")) | [.tag_name, .published_at] | @tsv' \
-      | sort -r -k2,2 \
-      | awk 'NR > 10 {print $1}' \
-      >"$old_tags_file"
-    while IFS= read -r old_tag; do
-      [ -n "$old_tag" ] || continue
-      printf 'pruning old unit daemon feature prerelease %s\n' "$old_tag"
-      gh release delete "$old_tag" --cleanup-tag --yes
-    done <"$old_tags_file"
-
-    printf 'published unit daemon feature prerelease\n'
-    printf '  tag: %s\n' "$tag"
-    printf '  branch: %s\n' "$branch"
-    printf '  asset: %s\n' "$asset_path"

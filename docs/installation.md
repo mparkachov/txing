@@ -6,9 +6,9 @@ component that owns the host behavior.
 ## Shared Assumptions
 
 - Development machines may use a repository checkout.
-- Stable board hosts install release artifacts with `mise` and do not need a
-  source checkout for the stable runtime path.
-- Stable rig hosts receive txing components through Greengrass cloud
+- Production board hosts install release artifacts with `mise` and do not need a
+  source checkout for the release runtime path.
+- Production rig hosts receive txing components through Greengrass cloud
   deployments and do not need a source checkout, `mise`, AWS CLI, or AWS access
   keys.
 - Operator AWS account, credentials, profile selection, and region come from
@@ -28,7 +28,7 @@ Repo-wide developer tooling:
 - `just`
 - `jq`
 - AWS CLI v2
-- GitHub CLI (`gh`) for operator-side stable release and Greengrass deploys
+- GitHub CLI (`gh`) for operator-side release and Greengrass deploys
 
 Install operator CLIs with the package manager you use for the development
 machine. `mise` is acceptable for missing or stale CLI versions:
@@ -42,7 +42,7 @@ AWS bring-up and teardown live in [aws.md](./aws.md).
 
 ## Rig Host
 
-The rig is the always-on coordinator that owns Sparkplug publication. Stable
+The rig is the always-on coordinator that owns Sparkplug publication. Production
 rig hosts run the official AWS Greengrass Lite Debian package plus txing
 Greengrass components delivered by cloud deployments.
 
@@ -64,13 +64,13 @@ The short production flow is:
 
 ## Board Host
 
-The board is the device-side Raspberry Pi. Stable boards run the root-owned
+The board is the device-side Raspberry Pi. Production boards run the root-owned
 Rust `txing-unit-daemon` and native `txing-board-kvs-master` installed from
 GitHub Release assets through `mise`.
 
 Canonical board installation, runtime config, root-owned service setup,
-read-only-root layout, stable/feature maintenance, and validation instructions
-live in [components/board.md](./components/board.md).
+read-only-root layout, manual maintenance, and validation instructions live in
+[components/board.md](./components/board.md).
 
 The short production flow is:
 
@@ -80,9 +80,10 @@ The short production flow is:
 4. Generate daemon config/cert material on the operator machine with
    `just unit::cert <thing-id>`.
 5. Copy and unpack `<thing-id>-daemon-config.tgz` under
-   `/root/.config/txing/unit-daemon`.
-6. Install the stable board runtime with
-   `devices/unit/daemon/install-systemd.sh stable`.
+   `/root/.config/txing/unit-daemon`, including `daemon.env` and certificate
+   files.
+6. Install the root-owned mise release tools and
+   `txing-unit-daemon.service` manually as documented in the board guide.
 7. Configure the PWM overlay and read-only-root tmpfs layout.
 8. Reboot and verify `txing-unit-daemon.service`, KVS readiness, and REDCON
    convergence.

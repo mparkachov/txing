@@ -74,7 +74,7 @@ opportunities:
 
 ## Rig Deploy Credentials
 
-Stable rig deployment is operator-side. The rig host keeps only the Greengrass
+Rig deployment is operator-side. The rig host keeps only the Greengrass
 certificate/private key and does not store AWS access keys for deployment.
 
 ## Cloud And Control-Only RTC Consumers

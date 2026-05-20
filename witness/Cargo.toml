@@ -1,6 +1,6 @@
 [package]
 name = "txing-witness-lambda"
-version = "0.9.126"
+version = "0.9.127"
 edition = "2024"
 description = "txing Sparkplug witness AWS Lambda projection"
 

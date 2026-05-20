@@ -20,7 +20,7 @@ Repo-wide tooling:
 - `just`
 - `jq`
 - AWS CLI v2
-- GitHub CLI (`gh`) for operator-side stable release deploys
+- GitHub CLI (`gh`) for operator-side release deploys
 
 Host-specific setup starts in [installation.md](./installation.md). Detailed
 board runtime setup, including read-only rootfs, lives in
@@ -28,19 +28,19 @@ board runtime setup, including read-only rootfs, lives in
 
 ## Version And Artifact Channels
 
-`VERSION` is the stable release version for the repository. It must stay a base
+`VERSION` is the release version for the repository. It must stay a base
 semantic version such as `x.y.z`.
 
 Production Greengrass component versions use `VERSION` exactly. Git SHA and
 dirty state are exported separately for diagnostics, but they are not part of
-the Greengrass `ComponentVersion`. Create stable releases with the manual
-`Txing Stable Release` GitHub Actions workflow from `main` after bumping and
+the Greengrass `ComponentVersion`. Create releases with the manual
+`Txing Release` GitHub Actions workflow from `main` after bumping and
 pushing the managed version files yourself. The workflow reads the pushed root
-`VERSION`, fails unless it is newer than the latest existing stable `v*` tag,
-publishes the GitHub Release, and also publishes the rig stable binaries. It
+`VERSION`, fails unless it is newer than the latest existing `v*` tag,
+publishes the GitHub Release, and also publishes the rig binaries. It
 does not commit or push version changes back to `main`.
 
-Stable rigs do not pull the repository and do not run AWS CLI. After a stable
+Production rigs do not pull the repository and do not run AWS CLI. After a
 release workflow finishes, the operator Mac publishes the release artifacts to
 Greengrass with:
 
@@ -51,17 +51,13 @@ just rig::deploy-release latest all
 Development direction for installable host tools and board-side native
 artifacts:
 
-- `stable` points at the artifact built from the stable `VERSION`, for example `x.y.z`.
-- `feature` points at explicitly named debug artifacts and must not be confused with production Greengrass component versions.
+- release artifacts point at the artifact built from `VERSION`, for example `x.y.z`.
 - GitHub release assets should be immutable for each exact artifact version.
-- The unit daemon uses mise's GitHub backend directly; stable rig components are
-  published to Greengrass from GitHub release assets; see
-  [artifacts.md](./artifacts.md).
-- Unit daemon feature prereleases are published by the manual `Unit Daemon
-  Feature Prerelease` GitHub Actions workflow from pushed `feature/*` branches.
-- Board stable and feature channel changes are writable-root maintenance
-  actions. The installed systemd service starts offline from exact root-owned
-  binary paths and does not call GitHub during normal service restart.
+- The unit daemon uses mise's GitHub backend directly; rig components are
+  published to Greengrass from GitHub release assets; see [artifacts.md](./artifacts.md).
+- Board binary updates are manual writable-root maintenance actions. The
+  installed systemd service starts offline from root-owned mise shims and does
+  not call GitHub during normal service restart.
 
 ## Operator AWS Config
 
@@ -161,9 +157,9 @@ just rig::deploy
 just rig::log <rig-id>
 ```
 
-That source-checkout rig loop is for development and admin builder use. Stable
-rig hosts receive Greengrass deployments published from the operator machine
-instead.
+That source-checkout rig loop is for development and admin builder use.
+Production rig hosts receive Greengrass deployments published from the operator
+machine instead.
 
 Board:
 

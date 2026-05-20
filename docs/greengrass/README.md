@@ -4,7 +4,7 @@ Rig Greengrass runtime, initial installation, deployment, health-check, and
 cleanup instructions live in [components/rig.md](../components/rig.md).
 
 The files under `rig/greengrass/` are publishing templates for txing
-Greengrass components. Production stable rigs do not run host-local
+Greengrass components. Production rigs do not run host-local
 `ggl-cli deploy`, do not use `rig/build/greengrass-local`, and do not depend on
 `/var/lib/greengrass/config.db` state. Txing component versions are published
 from the operator machine with:

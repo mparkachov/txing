@@ -5,7 +5,7 @@ usage() {
   cat >&2 <<'EOF'
 Usage: txing-rig-deploy-release [latest|vX.Y.Z|X.Y.Z] [raspi|cloud|all]
 
-Downloads txing rig binaries from a GitHub stable release with gh, then
+Downloads txing rig binaries from a GitHub release with gh, then
 publishes those binaries as AWS IoT Greengrass component artifacts using this
 checkout's txing-rig-deploy shell script. Run this from an operator machine with
 AWS credentials. The downloaded Linux component binaries are uploaded to S3 and
@@ -66,7 +66,7 @@ esac
 
 version="${release_tag#v}"
 strict_semver_re='^[0-9]+\.[0-9]+\.[0-9]+$'
-[[ "$version" =~ $strict_semver_re ]] || fail "release tag must be stable SemVer vX.Y.Z, got: $release_tag"
+[[ "$version" =~ $strict_semver_re ]] || fail "release tag must be SemVer vX.Y.Z, got: $release_tag"
 
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/txing-rig-release.XXXXXX")"
 keep_work_dir="${TXING_RIG_RELEASE_KEEP_WORK_DIR:-false}"
@@ -122,7 +122,7 @@ aws_binary="$(extract_binary_asset "$aws_asset" txing-aws-connectivity)"
 deploy_binary="${TXING_RIG_DEPLOY_SCRIPT:-$script_dir/txing-rig-deploy}"
 [ -x "$deploy_binary" ] || fail "txing-rig-deploy helper is missing or not executable: $deploy_binary"
 
-printf 'deploying txing stable release %s to Greengrass target=%s from %s\n' "$release_tag" "$target" "$repo_full"
+printf 'deploying txing release %s to Greengrass target=%s from %s\n' "$release_tag" "$target" "$repo_full"
 
 export TXING_RIG_COMPONENT_VERSION="$version"
 export TXING_SPARKPLUG_MANAGER_BINARY="$sparkplug_binary"

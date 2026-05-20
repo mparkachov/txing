@@ -110,10 +110,10 @@ The current contract sources are:
 - [Sparkplug lifecycle](../sparkplug-lifecycle.md)
 - `rig/ble-connectivity` Rust BLE connectivity component
 
-## Stable Runtime
+## Runtime
 
-Stable rigs run the official AWS Greengrass Lite Debian package plus txing
-Greengrass components delivered by cloud deployments. A stable rig does not need
+Production rigs run the official AWS Greengrass Lite Debian package plus txing
+Greengrass components delivered by cloud deployments. A production rig does not need
 a repo checkout, mise, AWS CLI, AWS access keys, Rust toolchain, CMake, or local
 compilation. The rig stores only Greengrass certificate material and the
 Greengrass Lite config fragment.
@@ -141,7 +141,7 @@ Before configuring the rig host, the operator-side AWS setup must already have:
 - a town thing from `just aws::deploy-town town`
 - a rig thing from `just aws::deploy-rig <town-id> raspi server` or
   `just aws::deploy-rig <town-id> cloud aws`
-- a completed stable GitHub release for the txing component version to deploy
+- a completed GitHub release for the txing component version to deploy
 
 On the operator machine, generate the rig certificate and Greengrass Lite config
 from a txing checkout:
@@ -250,8 +250,8 @@ systemctl restart greengrass-lite.target
 ## Deploy And Update
 
 The rig does not run AWS CLI, GitHub CLI, mise, or deployment scripts. Publish
-txing component versions from the operator machine after the `Txing Stable
-Release` workflow finishes:
+txing component versions from the operator machine after the `Txing Release`
+workflow finishes:
 
 ```bash
 gh auth status
@@ -260,11 +260,11 @@ just rig::deploy-release latest all
 
 `rig::deploy-release` relies on native AWS CLI configuration plus an explicit
 `TXING_AWS_STACK` in the operator environment; it fails before deployment if the
-stack name is unset. The command downloads the stable GitHub release assets with `gh`,
+stack name is unset. The command downloads the GitHub release assets with `gh`,
 uploads the Linux component binaries to the Greengrass artifact bucket, creates
-Greengrass component versions from the stable project SemVer, and creates
-continuous deployments for the rig-type thing groups. The Linux component
-binaries are not executed on the operator Mac.
+Greengrass component versions from the project SemVer, and creates continuous
+deployments for the rig-type thing groups. The Linux component binaries are not
+executed on the operator Mac.
 
 Use an explicit target when needed:
 
@@ -274,10 +274,10 @@ just rig::deploy-release latest cloud
 just rig::deploy-release latest all
 ```
 
-Normal stable update:
+Normal update:
 
 1. Bump and push the project version files.
-2. Run the `Txing Stable Release` workflow on GitHub.
+2. Run the `Txing Release` workflow on GitHub.
 3. Run `just rig::deploy-release latest all` from the operator machine.
 
 Greengrass Lite itself is installed as an upstream Debian package, not as a
