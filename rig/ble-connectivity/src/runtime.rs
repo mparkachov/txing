@@ -3080,7 +3080,7 @@ mod tests {
 
     #[cfg(not(all(feature = "ble-real", any(target_os = "linux", target_os = "macos"))))]
     #[tokio::test]
-    async fn stale_power_measurement_clears_power_shadow_but_keeps_active_power_capability() {
+    async fn stale_power_measurement_keeps_active_power_capability_without_clearing_shadow() {
         let (sender, mut receiver) = mpsc::unbounded_channel();
         let (shadow_sender, mut shadow_receiver) = mpsc::unbounded_channel();
         let mut session = DeviceSession::new(
@@ -3105,14 +3105,12 @@ mod tests {
         let state: CapabilityState = serde_json::from_slice(&outbound.payload).unwrap();
         assert_eq!(state.capabilities.get("power"), Some(&true));
 
-        let _ble_shadow = shadow_receiver.recv().await.unwrap();
-        let power_shadow = shadow_receiver.recv().await.unwrap();
+        let ble_shadow = shadow_receiver.recv().await.unwrap();
         assert_eq!(
-            power_shadow.topic,
-            "$aws/things/power-1/shadow/name/power/update"
+            ble_shadow.topic,
+            "$aws/things/power-1/shadow/name/ble/update"
         );
-        let payload: serde_json::Value = serde_json::from_slice(&power_shadow.payload).unwrap();
-        assert!(payload["state"]["reported"]["batteryMv"].is_null());
+        assert!(shadow_receiver.try_recv().is_err());
     }
 
     #[cfg(not(all(feature = "ble-real", any(target_os = "linux", target_os = "macos"))))]

@@ -356,7 +356,7 @@ pub fn shadow_updates_from_sample(sample: &CapabilitySample) -> Result<Vec<Shado
         ]),
     )?];
 
-    if sample.kind.supports_power() {
+    if sample.kind.supports_power() && sample.battery_mv.is_some() {
         updates.push(build_shadow_update(
             &sample.thing_name,
             POWER_SHADOW_NAME,
@@ -368,7 +368,7 @@ pub fn shadow_updates_from_sample(sample: &CapabilitySample) -> Result<Vec<Shado
         )?);
     }
 
-    if sample.kind.supports_weather() {
+    if sample.kind.supports_weather() && sample.weather.is_some() {
         let weather = sample.weather.as_ref();
         updates.push(build_shadow_update(
             &sample.thing_name,
@@ -509,7 +509,7 @@ mod tests {
     }
 
     #[test]
-    fn advertisement_sample_publishes_ble_shadow() {
+    fn advertisement_sample_publishes_only_ble_shadow_without_measurements() {
         let spec = DeviceSpec {
             thing_name: "power-1".to_string(),
             kind: DeviceKind::Power,
@@ -525,7 +525,7 @@ mod tests {
         let updates =
             shadow_updates_from_sample(&advertisement_sample(&spec, &advertisement, 1)).unwrap();
 
-        assert_eq!(updates.len(), 2);
+        assert_eq!(updates.len(), 1);
         assert_eq!(
             updates[0].topic,
             "$aws/things/power-1/shadow/name/ble/update"
@@ -539,14 +539,6 @@ mod tests {
             payload["state"]["reported"]["bleLocalName"],
             Value::from("power-1")
         );
-        assert!(payload["state"]["reported"]["observedAtMs"].is_null());
-        assert!(payload["state"]["reported"]["seq"].is_null());
-        assert_eq!(
-            updates[1].topic,
-            "$aws/things/power-1/shadow/name/power/update"
-        );
-        let payload: Value = serde_json::from_slice(&updates[1].payload).unwrap();
-        assert!(payload["state"]["reported"]["batteryMv"].is_null());
         assert!(payload["state"]["reported"]["observedAtMs"].is_null());
         assert!(payload["state"]["reported"]["seq"].is_null());
     }
@@ -594,6 +586,12 @@ mod tests {
         assert_eq!(
             state.metrics.get(BLE_REDCON_METRIC),
             Some(&MetricValue::int32(i32::from(REDCON_ACTIVE)))
+        );
+        let updates = shadow_updates_from_sample(&sample).unwrap();
+        assert_eq!(updates.len(), 1);
+        assert_eq!(
+            updates[0].topic,
+            "$aws/things/power-1/shadow/name/ble/update"
         );
     }
 
