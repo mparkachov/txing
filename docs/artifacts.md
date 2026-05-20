@@ -15,6 +15,8 @@ Releases:
 - publisher: manual `Txing Release` GitHub Actions workflow from `main`
 - release immutability: the workflow fails if `VERSION` is not newer than the
   latest existing `v*` tag, or if the tag/release already exists
+- release retention: after publishing, the workflow keeps the newest 10 project
+  releases matching `vX.Y.Z` and deletes older releases with their tags
 
 Project releases publish these Linux `aarch64` assets:
 
@@ -52,7 +54,8 @@ Release publishing flow:
 The workflow reads the pushed root `VERSION`, checks that all managed version
 files already match, fails unless the version is newer than the latest existing
 release, publishes the GitHub Release, and publishes the board, rig, and Lambda
-artifacts. It does not bump versions, commit, push back to `main`, build
+artifacts. After a successful publish, it prunes older project releases down to
+the newest 10. It does not bump versions, commit, push back to `main`, build
 Greengrass Lite, upload Lambda code to AWS, or deploy to hosts.
 
 ## Lambda Artifacts

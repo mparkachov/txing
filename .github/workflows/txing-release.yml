@@ -23,6 +23,7 @@ env:
   ENLIST_LAMBDA_ASSET: txing-enlist-lambda-linux-aarch64.zip
   TIME_LAMBDA_ASSET: txing-time-lambda-linux-aarch64.zip
   KVS_MASTER_BUILD_IMAGE: debian:trixie
+  RELEASE_RETENTION_COUNT: "10"
 
 jobs:
   metadata:
@@ -738,3 +739,58 @@ jobs:
             --title "$TAG" \
             --notes-file "$notes_file" \
             --latest=true
+
+      - name: Prune old project releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEEP_RELEASES: ${{ env.RELEASE_RETENTION_COUNT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          release_list="$RUNNER_TEMP/project-releases.json"
+          stale_tags="$RUNNER_TEMP/project-release-tags-to-delete.txt"
+
+          gh release list \
+            --repo "$GITHUB_REPOSITORY" \
+            --limit 1000 \
+            --json tagName,publishedAt,createdAt \
+            >"$release_list"
+
+          python3 - "$KEEP_RELEASES" "$release_list" >"$stale_tags" <<'PY'
+          import json
+          import re
+          import sys
+
+          keep_releases = int(sys.argv[1])
+          release_list_path = sys.argv[2]
+          project_release_pattern = re.compile(
+              r"^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$"
+          )
+
+          with open(release_list_path, encoding="utf-8") as release_file:
+              releases = json.load(release_file)
+
+          project_releases = []
+          for release in releases:
+              tag_name = release.get("tagName") or ""
+              if not project_release_pattern.fullmatch(tag_name):
+                  continue
+              published_at = release.get("publishedAt") or release.get("createdAt") or ""
+              project_releases.append((published_at, tag_name))
+
+          project_releases.sort(reverse=True)
+          for _, tag_name in project_releases[keep_releases:]:
+              print(tag_name)
+          PY
+
+          if [ ! -s "$stale_tags" ]; then
+            echo "No project releases older than the newest $KEEP_RELEASES to prune."
+            exit 0
+          fi
+
+          while IFS= read -r old_tag; do
+            [ -n "$old_tag" ] || continue
+            echo "Deleting old project release and tag $old_tag"
+            gh release delete "$old_tag" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
+          done <"$stale_tags"
