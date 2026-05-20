@@ -230,16 +230,16 @@ mod tests {
     #[test]
     fn builds_and_parses_retained_topics() {
         assert_eq!(
-            build_retained_command_topic("time-1").unwrap(),
-            "txings/time-1/capability/v2/command"
+            build_retained_command_topic("cloud-mcu-1").unwrap(),
+            "txings/cloud-mcu-1/capability/v2/command"
         );
         assert_eq!(
-            parse_retained_topic("txings/time-1/capability/v2/state"),
-            Some(("time-1", RetainedTopicKind::State))
+            parse_retained_topic("txings/cloud-mcu-1/capability/v2/state"),
+            Some(("cloud-mcu-1", RetainedTopicKind::State))
         );
         assert_eq!(
-            parse_retained_topic("txings/time-1/capability/v2/command-result"),
-            Some(("time-1", RetainedTopicKind::CommandResult))
+            parse_retained_topic("txings/cloud-mcu-1/capability/v2/command-result"),
+            Some(("cloud-mcu-1", RetainedTopicKind::CommandResult))
         );
     }
 
@@ -247,8 +247,8 @@ mod tests {
     fn expired_projection_replaces_capabilities_and_metrics() {
         let state = RetainedCapabilityState {
             schema_version: SCHEMA_VERSION.to_string(),
-            adapter_id: "time-lambda".to_string(),
-            thing_name: "time-1".to_string(),
+            adapter_id: "cloud-mcu-lambda".to_string(),
+            thing_name: "cloud-mcu-1".to_string(),
             capabilities: BTreeMap::from([("sparkplug".to_string(), true)]),
             metrics: BTreeMap::from([("mode".to_string(), MetricValue::string("active"))]),
             observed_at_ms: 10,
@@ -280,8 +280,8 @@ mod tests {
         let state = RetainedCapabilityState::from_slice(
             br#"{
                 "schemaVersion": "2.0",
-                "adapterId": "time-lambda",
-                "thingName": "time-1",
+                "adapterId": "cloud-mcu-lambda",
+                "thingName": "cloud-mcu-1",
                 "capabilities": {
                     "sparkplug": true
                 },
@@ -303,8 +303,8 @@ mod tests {
     fn expired_state_without_projection_stops_refreshing() {
         let state = RetainedCapabilityState {
             schema_version: SCHEMA_VERSION.to_string(),
-            adapter_id: "time-lambda".to_string(),
-            thing_name: "time-1".to_string(),
+            adapter_id: "cloud-mcu-lambda".to_string(),
+            thing_name: "cloud-mcu-1".to_string(),
             capabilities: BTreeMap::from([("sparkplug".to_string(), true)]),
             metrics: BTreeMap::new(),
             observed_at_ms: 10,

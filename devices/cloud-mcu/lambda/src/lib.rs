@@ -8,6 +8,7 @@ use aws_sdk_ecs::types::{
     AssignPublicIp, AwsVpcConfiguration, LaunchType, NetworkConfiguration, Tag,
 };
 use aws_sdk_iotdataplane::primitives::Blob;
+use aws_sdk_sqs::types::SendMessageBatchRequestEntry;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use serde::{Deserialize, Serialize};
@@ -30,6 +31,7 @@ pub const NODE_BDSEQ: u64 = 1;
 pub const TICK_OFFSETS_SECONDS: [i32; 10] = [0, 6, 12, 18, 24, 30, 36, 42, 48, 54];
 pub const COMMAND_STATUS_SUCCEEDED: &str = "succeeded";
 pub const COMMAND_STATUS_FAILED: &str = "failed";
+pub const ECS_STARTED_BY_PREFIX: &str = "txing-cloud-mcu";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CloudMcuDevice {
@@ -112,7 +114,7 @@ pub trait CloudAws: Send + Sync {
     async fn search_cloud_mcu_devices(&self, next_token: Option<&str>) -> Result<SearchPage>;
     async fn describe_thing(&self, thing_name: &str) -> Result<ThingDescription>;
     async fn publish(&self, topic: &str, payload: Vec<u8>) -> Result<()>;
-    async fn send_tick(&self, tick: &CloudMcuTick, delay_seconds: i32) -> Result<()>;
+    async fn send_tick_batch(&self, ticks: &[CloudMcuTick]) -> Result<()>;
     async fn get_thing_shadow(
         &self,
         thing_name: &str,
@@ -124,6 +126,7 @@ pub trait CloudAws: Send + Sync {
         shadow_name: &str,
         payload: Vec<u8>,
     ) -> Result<()>;
+    async fn list_device_tasks(&self, thing_name: &str) -> Result<Vec<EcsTaskState>>;
     async fn describe_task(&self, task_arn: &str) -> Result<Option<EcsTaskState>>;
     async fn run_task(&self, thing_name: &str, rig_id: &str) -> Result<EcsTaskState>;
     async fn stop_task(&self, task_arn: &str) -> Result<()>;
@@ -277,15 +280,46 @@ impl CloudAws for AwsCloudClient {
         Ok(())
     }
 
-    async fn send_tick(&self, tick: &CloudMcuTick, delay_seconds: i32) -> Result<()> {
-        self.sqs
-            .send_message()
+    async fn send_tick_batch(&self, ticks: &[CloudMcuTick]) -> Result<()> {
+        if ticks.is_empty() {
+            bail!("cloud MCU tick batch must not be empty");
+        }
+        let mut entries = Vec::with_capacity(ticks.len());
+        for tick in ticks {
+            tick.validate()?;
+            entries.push(
+                SendMessageBatchRequestEntry::builder()
+                    .id(format!("tick-{}", tick.tick_offset_seconds))
+                    .delay_seconds(tick.tick_offset_seconds)
+                    .message_body(serde_json::to_string(tick)?)
+                    .build()?,
+            );
+        }
+
+        let response = self
+            .sqs
+            .send_message_batch()
             .queue_url(self.required_tick_queue_url()?)
-            .delay_seconds(delay_seconds)
-            .message_body(serde_json::to_string(tick)?)
+            .set_entries(Some(entries))
             .send()
             .await
-            .context("send cloud MCU SQS tick")?;
+            .context("send cloud MCU SQS tick batch")?;
+        if !response.failed().is_empty() {
+            let failures = response
+                .failed()
+                .iter()
+                .map(|failure| {
+                    format!(
+                        "{}:{}:{}",
+                        failure.id(),
+                        failure.code(),
+                        failure.message().unwrap_or("")
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            bail!("cloud MCU SQS tick batch had failed entries: {failures}");
+        }
         Ok(())
     }
 
@@ -325,6 +359,49 @@ impl CloudAws for AwsCloudClient {
         Ok(())
     }
 
+    async fn list_device_tasks(&self, thing_name: &str) -> Result<Vec<EcsTaskState>> {
+        let cluster = self.required_ecs_cluster()?.to_string();
+        let started_by = ecs_started_by(thing_name)?;
+        let mut task_arns = Vec::new();
+        let mut next_token: Option<String> = None;
+        loop {
+            let mut request = self
+                .ecs
+                .list_tasks()
+                .cluster(&cluster)
+                .started_by(started_by.clone());
+            if let Some(token) = next_token.as_deref() {
+                request = request.next_token(token);
+            }
+            let response = request
+                .send()
+                .await
+                .context("list cloud MCU ECS tasks for device")?;
+            task_arns.extend(response.task_arns().iter().cloned());
+            next_token = response.next_token().map(ToOwned::to_owned);
+            if next_token.is_none() {
+                break;
+            }
+        }
+
+        let mut tasks = Vec::new();
+        for chunk in task_arns.chunks(100) {
+            if chunk.is_empty() {
+                continue;
+            }
+            let mut request = self.ecs.describe_tasks().cluster(&cluster);
+            for task_arn in chunk {
+                request = request.tasks(task_arn);
+            }
+            let response = request
+                .send()
+                .await
+                .context("describe cloud MCU ECS tasks for device")?;
+            tasks.extend(response.tasks().iter().filter_map(task_state_from_aws_task));
+        }
+        Ok(tasks)
+    }
+
     async fn describe_task(&self, task_arn: &str) -> Result<Option<EcsTaskState>> {
         let response = self
             .ecs
@@ -354,6 +431,8 @@ impl CloudAws for AwsCloudClient {
             .task_definition(self.required_ecs_task_definition()?)
             .launch_type(LaunchType::Fargate)
             .network_configuration(network)
+            .count(1)
+            .started_by(ecs_started_by(thing_name)?)
             .tags(
                 Tag::builder()
                     .key("txing:thingName")
@@ -389,6 +468,34 @@ fn task_state_from_aws_task(task: &aws_sdk_ecs::types::Task) -> Option<EcsTaskSt
         task_arn: task.task_arn()?.to_string(),
         last_status: task.last_status().map(ToOwned::to_owned),
     })
+}
+
+pub fn ecs_started_by(thing_name: &str) -> Result<String> {
+    let thing_name = segment(thing_name, "thingName")?;
+    let sanitized = thing_name
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .take(80)
+        .collect::<String>();
+    Ok(format!(
+        "{ECS_STARTED_BY_PREFIX}-{sanitized}-{:016x}",
+        fnv1a_64(thing_name.as_bytes())
+    ))
+}
+
+fn fnv1a_64(bytes: &[u8]) -> u64 {
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
 }
 
 fn error_is_not_found(error: &(impl Debug + Display)) -> bool {
@@ -856,13 +963,15 @@ impl<'a, A: CloudAws + ?Sized> CloudRigScheduler<'a, A> {
         }
 
         let mut sent_ticks = 0_usize;
+        let mut sent_batches = 0_usize;
         for device in &devices {
-            for offset in TICK_OFFSETS_SECONDS {
-                self.aws
-                    .send_tick(&CloudMcuTick::new(device, offset, now_ms), offset)
-                    .await?;
-                sent_ticks += 1;
-            }
+            let ticks = TICK_OFFSETS_SECONDS
+                .iter()
+                .map(|offset| CloudMcuTick::new(device, *offset, now_ms))
+                .collect::<Vec<_>>();
+            self.aws.send_tick_batch(&ticks).await?;
+            sent_batches += 1;
+            sent_ticks += ticks.len();
         }
 
         Ok(json!({
@@ -870,6 +979,7 @@ impl<'a, A: CloudAws + ?Sized> CloudRigScheduler<'a, A> {
             "deviceCount": devices.len(),
             "rigCount": rigs.len(),
             "tickCount": sent_ticks,
+            "batchCount": sent_batches,
             "publishedRigs": published_rigs,
         }))
     }
@@ -916,7 +1026,7 @@ impl<'a, A: CloudAws + ?Sized> CloudMcuRuntime<'a, A> {
                 REDCON_SLEEP
             }
         } else {
-            self.ensure_task_stopped(&mut power).await?;
+            self.ensure_task_stopped(&tick, &mut power).await?;
             REDCON_SLEEP
         };
 
@@ -1051,31 +1161,111 @@ impl<'a, A: CloudAws + ?Sized> CloudMcuRuntime<'a, A> {
     }
 
     async fn ensure_task_running(&self, tick: &CloudMcuTick, power: &mut PowerState) -> Result<()> {
-        if let Some(task_arn) = power.ecs_task_arn.as_deref() {
-            if let Some(task) = self.aws.describe_task(task_arn).await? {
-                if task.is_active() {
-                    power.powered = true;
-                    power.ecs_task_arn = Some(task.task_arn);
-                    power.ecs_task_status = task.last_status;
-                    return Ok(());
-                }
-            }
+        let active_tasks = self
+            .active_device_tasks(&tick.thing_name, power.ecs_task_arn.as_deref())
+            .await?;
+        if let Some(task) = self
+            .keep_single_active_task(power.ecs_task_arn.as_deref(), active_tasks)
+            .await?
+        {
+            power.powered = true;
+            power.ecs_task_arn = Some(task.task_arn);
+            power.ecs_task_status = task.last_status;
+            return Ok(());
         }
+
         let task = self.aws.run_task(&tick.thing_name, &tick.rig_id).await?;
-        power.powered = task.is_active();
-        power.ecs_task_arn = Some(task.task_arn);
-        power.ecs_task_status = task.last_status;
+        let launched_task_arn = task.task_arn.clone();
+        let mut active_tasks = self
+            .active_device_tasks(&tick.thing_name, Some(&task.task_arn))
+            .await?;
+        if task.is_active()
+            && !active_tasks
+                .iter()
+                .any(|active| active.task_arn == task.task_arn)
+        {
+            active_tasks.push(task);
+        }
+        let preferred_task_arn = power
+            .ecs_task_arn
+            .as_deref()
+            .filter(|task_arn| active_tasks.iter().any(|task| task.task_arn == *task_arn))
+            .unwrap_or(&launched_task_arn);
+        if let Some(task) = self
+            .keep_single_active_task(Some(preferred_task_arn), active_tasks)
+            .await?
+        {
+            power.powered = true;
+            power.ecs_task_arn = Some(task.task_arn);
+            power.ecs_task_status = task.last_status;
+        } else {
+            power.powered = false;
+            power.ecs_task_arn = None;
+            power.ecs_task_status = None;
+        }
         Ok(())
     }
 
-    async fn ensure_task_stopped(&self, power: &mut PowerState) -> Result<()> {
+    async fn ensure_task_stopped(&self, tick: &CloudMcuTick, power: &mut PowerState) -> Result<()> {
+        let mut task_arns = BTreeSet::new();
         if let Some(task_arn) = power.ecs_task_arn.as_deref() {
-            self.aws.stop_task(task_arn).await?;
+            task_arns.insert(task_arn.to_string());
+        }
+        for task in self.aws.list_device_tasks(&tick.thing_name).await? {
+            if task.is_active() {
+                task_arns.insert(task.task_arn);
+            }
+        }
+        for task_arn in task_arns {
+            self.aws.stop_task(&task_arn).await?;
         }
         power.powered = false;
         power.ecs_task_arn = None;
         power.ecs_task_status = None;
         Ok(())
+    }
+
+    async fn active_device_tasks(
+        &self,
+        thing_name: &str,
+        tracked_task_arn: Option<&str>,
+    ) -> Result<Vec<EcsTaskState>> {
+        let mut tasks = self.aws.list_device_tasks(thing_name).await?;
+        if let Some(task_arn) = tracked_task_arn {
+            let already_listed = tasks.iter().any(|task| task.task_arn == task_arn);
+            if !already_listed {
+                if let Some(task) = self.aws.describe_task(task_arn).await? {
+                    tasks.push(task);
+                }
+            }
+        }
+        tasks.retain(EcsTaskState::is_active);
+        tasks.sort_by(|left, right| left.task_arn.cmp(&right.task_arn));
+        tasks.dedup_by(|left, right| left.task_arn == right.task_arn);
+        Ok(tasks)
+    }
+
+    async fn keep_single_active_task(
+        &self,
+        tracked_task_arn: Option<&str>,
+        mut active_tasks: Vec<EcsTaskState>,
+    ) -> Result<Option<EcsTaskState>> {
+        if active_tasks.is_empty() {
+            return Ok(None);
+        }
+        active_tasks.sort_by(|left, right| left.task_arn.cmp(&right.task_arn));
+        let keep_index = tracked_task_arn
+            .and_then(|task_arn| {
+                active_tasks
+                    .iter()
+                    .position(|task| task.task_arn == task_arn)
+            })
+            .unwrap_or(0);
+        let keep = active_tasks.remove(keep_index);
+        for duplicate in active_tasks {
+            self.aws.stop_task(&duplicate.task_arn).await?;
+        }
+        Ok(Some(keep))
     }
 
     async fn update_sqs_shadow(&self, tick: &CloudMcuTick) -> Result<()> {
@@ -1200,14 +1390,24 @@ mod tests {
         delay_seconds: i32,
     }
 
+    impl From<&CloudMcuTick> for SentTick {
+        fn from(tick: &CloudMcuTick) -> Self {
+            Self {
+                tick: tick.clone(),
+                delay_seconds: tick.tick_offset_seconds,
+            }
+        }
+    }
+
     #[derive(Debug, Default)]
     struct FakeAws {
         pages: Mutex<Vec<SearchPage>>,
         descriptions: Mutex<HashMap<String, ThingDescription>>,
         published: Mutex<Vec<Published>>,
-        sent_ticks: Mutex<Vec<SentTick>>,
+        sent_tick_batches: Mutex<Vec<Vec<SentTick>>>,
         shadows: Mutex<HashMap<(String, String), Vec<u8>>>,
         tasks: Mutex<HashMap<String, EcsTaskState>>,
+        task_devices: Mutex<HashMap<String, String>>,
         run_task_count: Mutex<usize>,
         stopped_tasks: Mutex<Vec<String>>,
     }
@@ -1242,11 +1442,11 @@ mod tests {
             Ok(())
         }
 
-        async fn send_tick(&self, tick: &CloudMcuTick, delay_seconds: i32) -> Result<()> {
-            self.sent_ticks.lock().unwrap().push(SentTick {
-                tick: tick.clone(),
-                delay_seconds,
-            });
+        async fn send_tick_batch(&self, ticks: &[CloudMcuTick]) -> Result<()> {
+            self.sent_tick_batches
+                .lock()
+                .unwrap()
+                .push(ticks.iter().map(SentTick::from).collect());
             Ok(())
         }
 
@@ -1276,6 +1476,24 @@ mod tests {
             Ok(())
         }
 
+        async fn list_device_tasks(&self, thing_name: &str) -> Result<Vec<EcsTaskState>> {
+            let task_devices = self.task_devices.lock().unwrap().clone();
+            let tasks = self.tasks.lock().unwrap();
+            let mut matches = task_devices
+                .iter()
+                .filter_map(|(task_arn, device_thing_name)| {
+                    if device_thing_name == thing_name {
+                        tasks.get(task_arn).cloned()
+                    } else {
+                        None
+                    }
+                })
+                .filter(EcsTaskState::is_active)
+                .collect::<Vec<_>>();
+            matches.sort_by(|left, right| left.task_arn.cmp(&right.task_arn));
+            Ok(matches)
+        }
+
         async fn describe_task(&self, task_arn: &str) -> Result<Option<EcsTaskState>> {
             Ok(self.tasks.lock().unwrap().get(task_arn).cloned())
         }
@@ -1291,6 +1509,10 @@ mod tests {
                 .lock()
                 .unwrap()
                 .insert(task.task_arn.clone(), task.clone());
+            self.task_devices
+                .lock()
+                .unwrap()
+                .insert(task.task_arn.clone(), thing_name.to_string());
             Ok(task)
         }
 
@@ -1299,6 +1521,9 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push(task_arn.to_string());
+            if let Some(task) = self.tasks.lock().unwrap().get_mut(task_arn) {
+                task.last_status = Some("STOPPED".to_string());
+            }
             Ok(())
         }
     }
@@ -1316,6 +1541,27 @@ mod tests {
             },
         );
         aws
+    }
+
+    fn add_device_task(
+        aws: &FakeAws,
+        thing_name: &str,
+        task_arn: &str,
+        last_status: &str,
+    ) -> EcsTaskState {
+        let task = EcsTaskState {
+            task_arn: task_arn.to_string(),
+            last_status: Some(last_status.to_string()),
+        };
+        aws.tasks
+            .lock()
+            .unwrap()
+            .insert(task.task_arn.clone(), task.clone());
+        aws.task_devices
+            .lock()
+            .unwrap()
+            .insert(task.task_arn.clone(), thing_name.to_string());
+        task
     }
 
     fn tick() -> CloudMcuTick {
@@ -1339,14 +1585,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn scheduler_publishes_rig_birth_and_ten_ticks_per_device() {
+    async fn scheduler_publishes_rig_birth_and_one_tick_batch_per_device() {
         let aws = fake();
         aws.pages.lock().unwrap().push(SearchPage {
-            devices: vec![CloudMcuDevice {
-                thing_name: "cloud-1".to_string(),
-                town_id: "town-1".to_string(),
-                rig_id: "rig-1".to_string(),
-            }],
+            devices: vec![
+                CloudMcuDevice {
+                    thing_name: "cloud-1".to_string(),
+                    town_id: "town-1".to_string(),
+                    rig_id: "rig-1".to_string(),
+                },
+                CloudMcuDevice {
+                    thing_name: "cloud-2".to_string(),
+                    town_id: "town-1".to_string(),
+                    rig_id: "rig-1".to_string(),
+                },
+            ],
             next_token: None,
         });
 
@@ -1355,20 +1608,26 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(result["deviceCount"], 1);
-        assert_eq!(result["tickCount"], 10);
+        assert_eq!(result["deviceCount"], 2);
+        assert_eq!(result["tickCount"], 20);
+        assert_eq!(result["batchCount"], 2);
+        assert_eq!(aws.published.lock().unwrap().len(), 1);
         assert_eq!(
             aws.published.lock().unwrap()[0].topic,
             "spBv1.0/town-1/NBIRTH/rig-1"
         );
-        let sent = aws.sent_ticks.lock().unwrap();
-        assert_eq!(
-            sent.iter()
-                .map(|tick| tick.delay_seconds)
-                .collect::<Vec<_>>(),
-            TICK_OFFSETS_SECONDS
-        );
-        assert_eq!(sent[0].tick.thing_name, "cloud-1");
+        let batches = aws.sent_tick_batches.lock().unwrap();
+        assert_eq!(batches.len(), 2);
+        for (batch, thing_name) in batches.iter().zip(["cloud-1", "cloud-2"]) {
+            assert_eq!(
+                batch
+                    .iter()
+                    .map(|tick| tick.delay_seconds)
+                    .collect::<Vec<_>>(),
+                TICK_OFFSETS_SECONDS
+            );
+            assert!(batch.iter().all(|sent| sent.tick.thing_name == thing_name));
+        }
     }
 
     #[tokio::test]
@@ -1463,8 +1722,111 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn redcon_four_tick_stops_tracked_task() {
+    async fn redcon_three_tick_reuses_existing_device_task_without_shadow_arn() {
         let aws = fake();
+        add_device_task(
+            aws.as_ref(),
+            "cloud-1",
+            "arn:aws:ecs:task/cloud-1-existing",
+            "RUNNING",
+        );
+        aws.shadows.lock().unwrap().insert(
+            ("cloud-1".to_string(), "power".to_string()),
+            serde_json::to_vec(&json!({
+                "state": {
+                    "reported": {
+                        "desiredRedcon": 3,
+                        "sparkplugBorn": true
+                    }
+                }
+            }))
+            .unwrap(),
+        );
+
+        let result = CloudMcuRuntime::new(aws.as_ref())
+            .handle_tick_with_now(tick(), 1714380006000)
+            .await
+            .unwrap();
+
+        assert_eq!(result["redcon"], 3);
+        assert_eq!(*aws.run_task_count.lock().unwrap(), 0);
+        let power = aws
+            .shadows
+            .lock()
+            .unwrap()
+            .get(&("cloud-1".to_string(), "power".to_string()))
+            .cloned()
+            .unwrap();
+        let decoded: Value = serde_json::from_slice(&power).unwrap();
+        assert_eq!(
+            decoded["state"]["reported"]["ecsTaskArn"],
+            "arn:aws:ecs:task/cloud-1-existing"
+        );
+        assert!(aws.stopped_tasks.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn redcon_three_tick_keeps_one_device_task_and_stops_duplicates() {
+        let aws = fake();
+        add_device_task(
+            aws.as_ref(),
+            "cloud-1",
+            "arn:aws:ecs:task/cloud-1-a",
+            "RUNNING",
+        );
+        add_device_task(
+            aws.as_ref(),
+            "cloud-1",
+            "arn:aws:ecs:task/cloud-1-b",
+            "PENDING",
+        );
+        aws.shadows.lock().unwrap().insert(
+            ("cloud-1".to_string(), "power".to_string()),
+            serde_json::to_vec(&json!({
+                "state": {
+                    "reported": {
+                        "desiredRedcon": 3,
+                        "sparkplugBorn": true
+                    }
+                }
+            }))
+            .unwrap(),
+        );
+
+        let result = CloudMcuRuntime::new(aws.as_ref())
+            .handle_tick_with_now(tick(), 1714380006000)
+            .await
+            .unwrap();
+
+        assert_eq!(result["redcon"], 3);
+        assert_eq!(*aws.run_task_count.lock().unwrap(), 0);
+        assert_eq!(
+            aws.stopped_tasks.lock().unwrap().as_slice(),
+            ["arn:aws:ecs:task/cloud-1-b"]
+        );
+        let power = aws
+            .shadows
+            .lock()
+            .unwrap()
+            .get(&("cloud-1".to_string(), "power".to_string()))
+            .cloned()
+            .unwrap();
+        let decoded: Value = serde_json::from_slice(&power).unwrap();
+        assert_eq!(
+            decoded["state"]["reported"]["ecsTaskArn"],
+            "arn:aws:ecs:task/cloud-1-a"
+        );
+    }
+
+    #[tokio::test]
+    async fn redcon_four_tick_stops_all_device_tasks() {
+        let aws = fake();
+        add_device_task(
+            aws.as_ref(),
+            "cloud-1",
+            "arn:aws:ecs:task/cloud-1-extra",
+            "RUNNING",
+        );
         aws.shadows.lock().unwrap().insert(
             ("cloud-1".to_string(), "power".to_string()),
             serde_json::to_vec(&json!({
@@ -1493,7 +1855,7 @@ mod tests {
         assert_eq!(result["redcon"], 4);
         assert_eq!(
             aws.stopped_tasks.lock().unwrap().as_slice(),
-            ["arn:aws:ecs:task/cloud-1"]
+            ["arn:aws:ecs:task/cloud-1", "arn:aws:ecs:task/cloud-1-extra"]
         );
         let power = aws
             .shadows

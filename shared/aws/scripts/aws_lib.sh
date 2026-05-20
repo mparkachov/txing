@@ -125,12 +125,6 @@ artifact_bucket_name() {
     | sed 's/[.]*$//'
 }
 
-legacy_time_lambda_artifact_bucket_name() {
-  local account_id
-  account_id="$(aws sts get-caller-identity --query Account --output text)"
-  printf 'txing-time-lambda-%s-%s\n' "$account_id" "$TXING_AWS_REGION"
-}
-
 deploy_init_parameter_name() {
   local parameter_key="$1"
   printf '/txing/stack/%s' "$parameter_key"

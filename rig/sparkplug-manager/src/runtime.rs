@@ -1583,15 +1583,19 @@ mod tests {
     #[test]
     fn parses_device_command_topics_for_this_node_only() {
         assert_eq!(
-            parse_dcmd_topic("spBv1.0/town-1/DCMD/rig-1/time-1", "town-1", "rig-1"),
-            Some("time-1")
+            parse_dcmd_topic("spBv1.0/town-1/DCMD/rig-1/cloud-mcu-1", "town-1", "rig-1"),
+            Some("cloud-mcu-1")
         );
         assert_eq!(
-            parse_dcmd_topic("spBv1.0/town-2/DCMD/rig-1/time-1", "town-1", "rig-1"),
+            parse_dcmd_topic("spBv1.0/town-2/DCMD/rig-1/cloud-mcu-1", "town-1", "rig-1"),
             None
         );
         assert_eq!(
-            parse_dcmd_topic("spBv1.0/town-1/DCMD/rig-1/time-1/extra", "town-1", "rig-1"),
+            parse_dcmd_topic(
+                "spBv1.0/town-1/DCMD/rig-1/cloud-mcu-1/extra",
+                "town-1",
+                "rig-1"
+            ),
             None
         );
     }
@@ -1623,18 +1627,18 @@ mod tests {
             observed_at_ms: 1000,
             seq: 1,
         };
-        let time_state = CapabilityState {
+        let weather_state = CapabilityState {
             schema_version: txing_capability_protocol::SCHEMA_VERSION.to_string(),
             adapter_id: "dev.txing.rig.AwsConnectivity".to_string(),
-            thing_name: "time-1".to_string(),
-            capabilities: BTreeMap::from([("time".to_string(), true)]),
+            thing_name: "weather-1".to_string(),
+            capabilities: BTreeMap::from([("weather".to_string(), true)]),
             metrics: BTreeMap::new(),
             observed_at_ms: 1000,
             seq: 1,
         };
 
         assert!(state_has_board_owned_capability(&board_state));
-        assert!(!state_has_board_owned_capability(&time_state));
+        assert!(!state_has_board_owned_capability(&weather_state));
         assert!(validate_retained_state_topic_payload("unit-1", &board_state).is_ok());
         assert!(validate_retained_state_topic_payload("other", &board_state).is_err());
     }
@@ -1644,12 +1648,12 @@ mod tests {
         let payload = br#"{
             "schemaVersion": "2.0",
             "adapterId": "dev.txing.rig.AwsConnectivity",
-            "thingName": "time-b98n8s",
-            "capabilities": {"time": true}
+            "thingName": "weather-b98n8s",
+            "capabilities": {"weather": true}
         }"#;
 
         let state = decode_retained_capability_state_payload(
-            "txings/time-b98n8s/capability/v2/state",
+            "txings/weather-b98n8s/capability/v2/state",
             payload,
         )
         .expect("retained state");
@@ -1702,14 +1706,14 @@ mod tests {
             capabilities: Some(vec!["sparkplug".to_string()]),
         };
         let device = ThingRegistration {
-            thing_name: "time-1".to_string(),
-            thing_type: "time".to_string(),
+            thing_name: "cloud-mcu-1".to_string(),
+            thing_type: "cloud-mcu".to_string(),
             rig_id: Some("cloud-1".to_string()),
             town_id: Some("town-1".to_string()),
             capabilities: Some(vec![
                 "sparkplug".to_string(),
-                "mcp".to_string(),
-                "time".to_string(),
+                "sqs".to_string(),
+                "power".to_string(),
             ]),
         };
 
@@ -1805,13 +1809,13 @@ mod tests {
 
         let heartbeat = CapabilityHeartbeat {
             schema_version: txing_capability_protocol::SCHEMA_VERSION.to_string(),
-            adapter_id: "time-aws".to_string(),
+            adapter_id: "cloud-mcu-lambda".to_string(),
             status: "running".to_string(),
             active_thing_name: None,
             observed_at_ms: 1000,
             seq: 1,
         };
-        assert!(validate_heartbeat_topic_payload("time-aws", &heartbeat).is_ok());
+        assert!(validate_heartbeat_topic_payload("cloud-mcu-lambda", &heartbeat).is_ok());
         assert!(
             validate_heartbeat_topic_payload("dev.txing.rig.BleConnectivity", &heartbeat).is_err()
         );

@@ -742,7 +742,7 @@ mod tests {
         CapabilityCommand {
             schema_version: SCHEMA_VERSION.to_string(),
             command_id: "cmd-1".to_string(),
-            thing_name: "time-1".to_string(),
+            thing_name: "cloud-mcu-1".to_string(),
             target: CapabilityCommandTarget { redcon },
             reason: "test".to_string(),
             issued_at_ms: 1,
@@ -756,9 +756,9 @@ mod tests {
             schema_version: SCHEMA_VERSION.to_string(),
             manager_id: "dev.txing.rig.SparkplugManager".to_string(),
             devices: vec![InventoryDevice {
-                thing_name: "time-1".to_string(),
-                thing_type: "time".to_string(),
-                capabilities: vec!["sparkplug".to_string(), "time".to_string()],
+                thing_name: "cloud-mcu-1".to_string(),
+                thing_type: "cloud-mcu".to_string(),
+                capabilities: vec!["sparkplug".to_string(), "sqs".to_string()],
                 redcon_command_levels: vec![4, 3, 2, 1],
                 redcon_rules: BTreeMap::new(),
             }],
@@ -781,7 +781,7 @@ mod tests {
 
         assert_eq!(actions.len(), 1);
         let RuntimeAction::PublishRetainedCommand { publish, .. } = &actions[0];
-        assert_eq!(publish.topic, "txings/time-1/capability/v2/command");
+        assert_eq!(publish.topic, "txings/cloud-mcu-1/capability/v2/command");
         assert!(publish.retain);
     }
 
@@ -794,7 +794,7 @@ mod tests {
         let outbound = receiver.try_recv().unwrap();
         assert_eq!(
             outbound.topic,
-            "dev/txing/rig/v2/capability/command-result/time-1/dev.txing.rig.AwsConnectivity"
+            "dev/txing/rig/v2/capability/command-result/cloud-mcu-1/dev.txing.rig.AwsConnectivity"
         );
         let result = CapabilityCommandResult::from_slice(&outbound.payload).unwrap();
         assert_eq!(result.status, COMMAND_ACCEPTED);
@@ -806,8 +806,8 @@ mod tests {
         let (mut runtime, mut receiver) = runtime();
         let retained = RetainedCapabilityState {
             schema_version: SCHEMA_VERSION.to_string(),
-            adapter_id: "time-lambda".to_string(),
-            thing_name: "time-1".to_string(),
+            adapter_id: "cloud-mcu-lambda".to_string(),
+            thing_name: "cloud-mcu-1".to_string(),
             capabilities: BTreeMap::from([("sparkplug".to_string(), true)]),
             metrics: BTreeMap::from([("mode".to_string(), MetricValue::string("active"))]),
             observed_at_ms: 10,
@@ -819,13 +819,16 @@ mod tests {
         let payload = serde_json::to_vec(&retained).unwrap();
 
         runtime
-            .handle_retained_message("txings/time-1/capability/v2/state".to_string(), payload)
+            .handle_retained_message(
+                "txings/cloud-mcu-1/capability/v2/state".to_string(),
+                payload,
+            )
             .unwrap();
 
         let outbound = receiver.try_recv().unwrap();
         let state = CapabilityState::from_slice(&outbound.payload).unwrap();
         assert_eq!(state.adapter_id, ADAPTER_ID);
-        assert_eq!(state.thing_name, "time-1");
+        assert_eq!(state.thing_name, "cloud-mcu-1");
     }
 
     #[test]
@@ -833,9 +836,9 @@ mod tests {
         let (mut runtime, mut receiver) = runtime();
         let result = serde_json::json!({
             "schemaVersion": SCHEMA_VERSION,
-            "adapterId": "time-lambda",
+            "adapterId": "cloud-mcu-lambda",
             "commandId": "cmd-1",
-            "thingName": "time-1",
+            "thingName": "cloud-mcu-1",
             "status": txing_capability_protocol::COMMAND_SUCCEEDED,
             "target": {
                 "redcon": 4
@@ -846,7 +849,7 @@ mod tests {
 
         runtime
             .handle_retained_message(
-                "txings/time-1/capability/v2/command-result".to_string(),
+                "txings/cloud-mcu-1/capability/v2/command-result".to_string(),
                 serde_json::to_vec(&result).unwrap(),
             )
             .unwrap();
@@ -854,7 +857,7 @@ mod tests {
         let outbound = receiver.try_recv().unwrap();
         assert_eq!(
             outbound.topic,
-            "dev/txing/rig/v2/capability/command-result/time-1/dev.txing.rig.AwsConnectivity"
+            "dev/txing/rig/v2/capability/command-result/cloud-mcu-1/dev.txing.rig.AwsConnectivity"
         );
         let result = CapabilityCommandResult::from_slice(&outbound.payload).unwrap();
         assert_eq!(result.adapter_id, ADAPTER_ID);

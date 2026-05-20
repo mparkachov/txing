@@ -781,9 +781,9 @@ mod tests {
             },
         );
         aws.things.lock().unwrap().insert(
-            "time-1".to_string(),
+            "unit-1".to_string(),
             ThingDescription {
-                thing_type_name: Some("time".to_string()),
+                thing_type_name: Some("unit".to_string()),
                 attributes: HashMap::from([
                     ("kind".to_string(), "deviceType".to_string()),
                     ("townId".to_string(), "town-1".to_string()),
@@ -803,7 +803,7 @@ mod tests {
                 false,
             )],
         );
-        let message = decode_sparkplug_payload(&encoded_payload, "spBv1.0/town-1/NBIRTH/time-1")
+        let message = decode_sparkplug_payload(&encoded_payload, "spBv1.0/town-1/NBIRTH/unit-1")
             .expect("message");
 
         let err = resolve_thing_name(&message, &aws).await.unwrap_err();
@@ -1030,7 +1030,7 @@ mod tests {
                     "payload": {
                         "metrics": {
                             "commands": {
-                                "dcmd-time-1": {
+                                "dcmd-cloud-mcu-1": {
                                     "status": "succeeded",
                                     "targetRedcon": 1,
                                 }
@@ -1070,7 +1070,7 @@ mod tests {
                     None,
                     None,
                     None,
-                    Some("dcmd-time-2"),
+                    Some("dcmd-cloud-mcu-2"),
                     false,
                 ),
                 encode_metric(
@@ -1084,8 +1084,9 @@ mod tests {
                 ),
             ],
         );
-        let message = decode_sparkplug_payload(&encoded_payload, "spBv1.0/town/DDATA/rig/time-1")
-            .expect("message");
+        let message =
+            decode_sparkplug_payload(&encoded_payload, "spBv1.0/town/DDATA/rig/cloud-mcu-1")
+                .expect("message");
 
         project_sparkplug_message(&message, 1710000040999, &aws)
             .await
@@ -1095,7 +1096,7 @@ mod tests {
         assert_eq!(updates.len(), 1);
         let metrics = &updates[0].1["state"]["reported"]["payload"]["metrics"];
         assert_eq!(metrics["redconCommandStatus"], "succeeded");
-        assert_eq!(metrics["redconCommandId"], "dcmd-time-2");
+        assert_eq!(metrics["redconCommandId"], "dcmd-cloud-mcu-2");
         assert!(metrics["commands"].is_null());
         assert!(metrics["redconCommandMessage"].is_null());
     }

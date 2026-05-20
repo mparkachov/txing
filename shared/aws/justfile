@@ -83,7 +83,7 @@ deploy-lambdas release='latest':
     export TXING_LAMBDA_ARTIFACT_BUCKET="$artifact_bucket"
     exec "{{aws_dir}}/scripts/txing-lambda-deploy-release" "{{release}}"
 
-delete stack_name=stack_name wait='true' delete_packaging_buckets='true' include_legacy_time_lambda='true':
+delete stack_name=stack_name wait='true' delete_packaging_buckets='true':
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
@@ -98,9 +98,6 @@ delete stack_name=stack_name wait='true' delete_packaging_buckets='true' include
     fi
     if [ "{{delete_packaging_buckets}}" = "true" ]; then
       delete_s3_bucket_if_exists "$(artifact_bucket_name)"
-      if [ "{{include_legacy_time_lambda}}" = "true" ]; then
-        delete_s3_bucket_if_exists "$(legacy_time_lambda_artifact_bucket_name)"
-      fi
     fi
 
 type-list path='/txing':
@@ -228,15 +225,14 @@ packaging-buckets stack_name=stack_name:
     source "{{aws_lib}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{stack_name}}")"
     txing_aws_init
-    for bucket in "$(artifact_bucket_name)" "$(legacy_time_lambda_artifact_bucket_name)"; do
-      if aws s3api head-bucket --bucket "$bucket" >/dev/null 2>&1; then
-        echo "exists: $bucket"
-      else
-        echo "missing: $bucket"
-      fi
-    done
+    bucket="$(artifact_bucket_name)"
+    if aws s3api head-bucket --bucket "$bucket" >/dev/null 2>&1; then
+      echo "exists: $bucket"
+    else
+      echo "missing: $bucket"
+    fi
 
-delete-packaging-buckets include_legacy_time_lambda='true' stack_name=stack_name:
+delete-packaging-buckets stack_name=stack_name:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
@@ -244,9 +240,6 @@ delete-packaging-buckets include_legacy_time_lambda='true' stack_name=stack_name
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{stack_name}}")"
     txing_aws_init
     delete_s3_bucket_if_exists "$(artifact_bucket_name)"
-    if [ "{{include_legacy_time_lambda}}" = "true" ]; then
-      delete_s3_bucket_if_exists "$(legacy_time_lambda_artifact_bucket_name)"
-    fi
 
 describe stack_name=stack_name:
     #!/usr/bin/env bash

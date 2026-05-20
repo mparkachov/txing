@@ -629,6 +629,6 @@ mod tests {
         };
 
         assert!(device.has_capability("ble"));
-        assert!(!device.has_capability("time"));
+        assert!(!device.has_capability("unknown"));
     }
 }

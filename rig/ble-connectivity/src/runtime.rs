@@ -2764,7 +2764,7 @@ mod tests {
     fn inventory_filter_selects_power_and_weather_only() {
         let power = inventory_device("power-1", &["sparkplug", "ble", "power"]);
         let weather = inventory_device("weather-1", &["sparkplug", "ble", "power", "weather"]);
-        let time = inventory_device("time-1", &["sparkplug", "time", "mcp"]);
+        let cloud_mcu = inventory_device("cloud-mcu-1", &["sparkplug", "sqs", "power"]);
 
         assert_eq!(
             device_spec_from_inventory(&power),
@@ -2780,7 +2780,7 @@ mod tests {
                 kind: DeviceKind::Weather,
             })
         );
-        assert_eq!(device_spec_from_inventory(&time), None);
+        assert_eq!(device_spec_from_inventory(&cloud_mcu), None);
     }
 
     #[test]

@@ -179,7 +179,7 @@ Current device metric policy:
 - availability and lifecycle helper metrics such as `bleConnected`,
   `mcpAvailable`, and `mode` are deprecated and must not be published as
   Sparkplug metrics; use `capability.*` and `redcon` instead
-- typed data such as `batteryMv`, weather readings, and time readings must live
+- typed data such as `batteryMv` and weather readings must live
   in the corresponding capability-owned named shadows
 - command-result metrics such as `redconCommandStatus` still use Sparkplug for
   the current command feedback path; `redconCommandSeq` is the command

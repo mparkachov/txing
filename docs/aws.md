@@ -271,10 +271,8 @@ just aws::delete-packaging-buckets
 ```
 
 This removes the shared `txing-cfn-<account>-<region>-<stack>` bucket and the
-legacy `txing-time-lambda-<account>-<region>` bucket if either exists. Current
-Lambda release deployment reuses the shared `txing-cfn-*` packaging bucket by
-default.
+current Lambda release deployment reuses the shared `txing-cfn-*` packaging
+bucket by default.
 
-Generated IoT things, legacy `time` things/shadows/Lambda resources, and KVS
-signaling channels are still instance resources. Delete those separately if you
-want the account back to a fully empty state.
+Generated IoT things and KVS signaling channels are still instance resources.
+Delete those separately if you want the account back to a fully empty state.

@@ -606,7 +606,6 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("deploy-lambdas release='latest'", aws_justfile)
         self.assertIn("TXING_LAMBDA_ARTIFACT_BUCKET", aws_justfile)
         self.assertIn('scripts/txing-lambda-deploy-release" "{{release}}"', aws_justfile)
-        self.assertNotIn("time::lambda::build", aws_justfile)
         self.assertNotIn("witness::build", aws_justfile)
         self.assertNotIn('enlist/justfile" build', aws_justfile)
         self.assertIn("LambdaArtifactsBucketName=$artifact_bucket", aws_lib)

@@ -301,9 +301,17 @@ Resources:
                 Effect: Allow
                 Action:
                   - ecs:DescribeTasks
+                  - ecs:ListTasks
                   - ecs:RunTask
                   - ecs:StopTask
                 Resource: "*"
+              - Sid: CloudMcuRuntimeTagRunTasks
+                Effect: Allow
+                Action: ecs:TagResource
+                Resource: !Sub arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:task/${CloudMcuCluster}/*
+                Condition:
+                  StringEquals:
+                    ecs:CreateAction: RunTask
               - Sid: CloudMcuRuntimePassTaskRoles
                 Effect: Allow
                 Action: iam:PassRole

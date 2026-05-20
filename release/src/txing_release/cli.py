@@ -36,14 +36,12 @@ PYTHON_PROJECTS = (
     Path("release/pyproject.toml"),
     Path("shared/aws/python/pyproject.toml"),
     Path("devices/unit/board/pyproject.toml"),
-    Path("devices/unit/rig/python/pyproject.toml"),
 )
 
 PYTHON_LOCK_PACKAGES = (
     (Path("release/uv.lock"), ("txing-release",)),
     (Path("shared/aws/python/uv.lock"), ("aws",)),
     (Path("devices/unit/board/uv.lock"), ("aws", "board")),
-    (Path("devices/unit/rig/python/uv.lock"), ("aws", "unit-rig")),
 )
 
 NODE_PACKAGES = (
@@ -109,7 +107,6 @@ SCAN_IGNORED_DIRS = {
 }
 
 SCAN_IGNORED_PREFIXES = (
-    Path("devices/time"),
     Path("devices/common/mcu/ncs"),
     Path("zephyr/workspace"),
 )
