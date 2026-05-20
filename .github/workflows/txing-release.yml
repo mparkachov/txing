@@ -19,12 +19,20 @@ env:
   BLE_CONNECTIVITY_ASSET: txing-ble-connectivity-linux-aarch64.tar.gz
   AWS_CONNECTIVITY_ASSET: txing-aws-connectivity-linux-aarch64.tar.gz
   RIG_DEPLOY_ASSET: txing-rig-deploy-linux-aarch64.tar.gz
+  WITNESS_LAMBDA_ASSET: txing-witness-lambda-linux-aarch64.zip
+  ENLIST_LAMBDA_ASSET: txing-enlist-lambda-linux-aarch64.zip
+  TIME_LAMBDA_ASSET: txing-time-lambda-linux-aarch64.zip
   KVS_MASTER_BUILD_IMAGE: debian:trixie
 
 jobs:
-  release:
-    name: Build and publish release artifacts
+  metadata:
+    name: Resolve release metadata
     runs-on: ubuntu-24.04-arm
+    outputs:
+      version: ${{ steps.metadata.outputs.version }}
+      latest_release_version: ${{ steps.metadata.outputs.latest_release_version }}
+      tag: ${{ steps.metadata.outputs.tag }}
+      release_target: ${{ steps.metadata.outputs.release_target }}
 
     steps:
       - name: Check out repository
@@ -127,6 +135,56 @@ jobs:
             exit 1
           fi
 
+      - name: Check release version surfaces
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 release/src/txing_release/cli.py check
+
+  build-rust-binary:
+    name: Build ${{ matrix.binary_name }}
+    runs-on: ubuntu-24.04-arm
+    needs: metadata
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - binary_name: txing-unit-daemon
+            manifest_path: devices/unit/daemon/Cargo.toml
+            binary_path: devices/unit/daemon/target/release/daemon
+            asset_name: txing-unit-daemon-linux-aarch64.tar.gz
+            test_command: cargo test --manifest-path devices/unit/daemon/Cargo.toml
+            build_command: cargo build --release --manifest-path devices/unit/daemon/Cargo.toml --bin daemon
+            greengrass_cc: "false"
+          - binary_name: txing-sparkplug-manager
+            manifest_path: rig/sparkplug-manager/Cargo.toml
+            binary_path: rig/target/release/txing-sparkplug-manager
+            asset_name: txing-sparkplug-manager-linux-aarch64.tar.gz
+            test_command: ""
+            build_command: cargo build --release --features greengrass-sdk --manifest-path rig/sparkplug-manager/Cargo.toml
+            greengrass_cc: "true"
+          - binary_name: txing-ble-connectivity
+            manifest_path: rig/ble-connectivity/Cargo.toml
+            binary_path: rig/target/release/txing-ble-connectivity
+            asset_name: txing-ble-connectivity-linux-aarch64.tar.gz
+            test_command: ""
+            build_command: cargo build --release --features greengrass-sdk --manifest-path rig/ble-connectivity/Cargo.toml
+            greengrass_cc: "true"
+          - binary_name: txing-aws-connectivity
+            manifest_path: rig/aws-connectivity/Cargo.toml
+            binary_path: rig/target/release/txing-aws-connectivity
+            asset_name: txing-aws-connectivity-linux-aarch64.tar.gz
+            test_command: ""
+            build_command: cargo build --release --features greengrass-sdk --manifest-path rig/aws-connectivity/Cargo.toml
+            greengrass_cc: "true"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Configure apt networking
         shell: bash
         run: |
@@ -150,18 +208,123 @@ jobs:
             liblog4cplus-dev libsrtp2-dev libusrsctp-dev libwebsockets-dev \
             zlib1g-dev
 
-      - name: Install mise tools
+      - name: Restore Rust toolchain cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.rustup/toolchains/1.95.0-aarch64-unknown-linux-gnu
+            ~/.rustup/update-hashes/1.95.0-aarch64-unknown-linux-gnu
+          key: rustup-${{ runner.os }}-${{ runner.arch }}-1.95.0
+
+      - name: Install Rust toolchain
         shell: bash
         run: |
           set -euo pipefail
-          curl https://mise.run | sh
-          echo "$HOME/.local/bin" >>"$GITHUB_PATH"
-          echo "$HOME/.local/share/mise/shims" >>"$GITHUB_PATH"
-          mise_bin="$HOME/.local/bin/mise"
-          "$mise_bin" --version
-          "$mise_bin" use --global --yes uv@latest just@latest
-          "$mise_bin" exec -- uv --version
-          "$mise_bin" exec -- just --version
+          rustup toolchain install "$RUST_VERSION" --profile minimal
+          rustup default "$RUST_VERSION"
+          rustc -vV
+          cargo -V
+
+      - name: Restore Cargo cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            devices/unit/daemon/target
+            rig/target
+          key: cargo-release-${{ matrix.binary_name }}-${{ runner.os }}-${{ runner.arch }}-rust-1.95.0-${{ hashFiles(matrix.manifest_path, 'devices/unit/daemon/Cargo.lock', 'rig/Cargo.lock') }}
+          restore-keys: |
+            cargo-release-${{ matrix.binary_name }}-${{ runner.os }}-${{ runner.arch }}-rust-1.95.0-
+            cargo-release-${{ runner.os }}-${{ runner.arch }}-rust-1.95.0-
+
+      - name: Test ${{ matrix.binary_name }}
+        if: matrix.test_command != ''
+        env:
+          TXING_DAEMON_BUILD_VERSION: ${{ needs.metadata.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ${{ matrix.test_command }}
+
+      - name: Build ${{ matrix.binary_name }}
+        env:
+          TXING_DAEMON_BUILD_VERSION: ${{ needs.metadata.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.greengrass_cc }}" = "true" ]; then
+            TXING_REAL_CC="${CC:-cc}" CC="$PWD/rig/tools/cc-greengrass-info-log" \
+              ${{ matrix.build_command }}
+          else
+            ${{ matrix.build_command }}
+          fi
+
+      - name: Package ${{ matrix.asset_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          source="${{ matrix.binary_path }}"
+          binary_name="${{ matrix.binary_name }}"
+          asset_name="${{ matrix.asset_name }}"
+          package_dir="$RUNNER_TEMP/package-$binary_name"
+          asset_path="$RUNNER_TEMP/$asset_name"
+          rm -rf "$package_dir"
+          install -d "$package_dir"
+          install -m 755 "$source" "$package_dir/$binary_name"
+          if file "$package_dir/$binary_name" | grep -q 'ELF'; then
+            strip "$package_dir/$binary_name"
+          fi
+          file "$package_dir/$binary_name"
+          tar -C "$package_dir" -czf "$asset_path" "$binary_name"
+          archive_listing="$(tar -tzf "$asset_path")"
+          if [ "$archive_listing" != "$binary_name" ]; then
+            echo "Expected $asset_name to contain only root-level $binary_name, got:" >&2
+            printf '%s\n' "$archive_listing" >&2
+            exit 1
+          fi
+
+      - name: Upload ${{ matrix.asset_name }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: ${{ runner.temp }}/${{ matrix.asset_name }}
+          if-no-files-found: error
+
+  test-rig-workspace:
+    name: Test rig Rust workspace
+    runs-on: ubuntu-24.04-arm
+    needs: metadata
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure apt networking
+        shell: bash
+        run: |
+          set -euo pipefail
+          for source in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+            [ -e "$source" ] || continue
+            sudo sed -i 's|http://ports.ubuntu.com/ubuntu-ports|https://ports.ubuntu.com/ubuntu-ports|g' "$source"
+          done
+          printf 'Acquire::ForceIPv4 "true";\nAcquire::Retries "5";\n' \
+            | sudo tee /etc/apt/apt.conf.d/99txing-ci-network >/dev/null
+
+      - name: Install system build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential pkg-config cmake perl file curl git \
+            libssl-dev libcurl4-openssl-dev libdbus-1-dev uuid-dev \
+            libzip-dev libyaml-dev libsystemd-dev libevent-dev liburiparser-dev \
+            liblog4cplus-dev libsrtp2-dev libusrsctp-dev libwebsockets-dev \
+            zlib1g-dev
 
       - name: Restore Rust toolchain cache
         uses: actions/cache@v4
@@ -180,12 +343,93 @@ jobs:
           rustc -vV
           cargo -V
 
-      - name: Check release version surfaces
+      - name: Restore Cargo cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            rig/target
+          key: cargo-release-rig-tests-${{ runner.os }}-${{ runner.arch }}-rust-1.95.0-${{ hashFiles('rig/Cargo.lock') }}
+          restore-keys: |
+            cargo-release-rig-tests-${{ runner.os }}-${{ runner.arch }}-rust-1.95.0-
+            cargo-release-${{ runner.os }}-${{ runner.arch }}-rust-1.95.0-
+
+      - name: Test rig Rust workspace
         shell: bash
         run: |
           set -euo pipefail
+          cargo test --manifest-path rig/Cargo.toml --workspace
 
-          python3 release/src/txing_release/cli.py check
+  build-lambda:
+    name: Build ${{ matrix.function_name }}
+    runs-on: ubuntu-24.04-arm
+    needs: metadata
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - function_name: txing-witness-lambda
+            working_directory: witness
+            lock_file: witness/Cargo.lock
+            asset_name: txing-witness-lambda-linux-aarch64.zip
+          - function_name: txing-enlist-lambda
+            working_directory: shared/aws/enlist
+            lock_file: shared/aws/enlist/Cargo.lock
+            asset_name: txing-enlist-lambda-linux-aarch64.zip
+          - function_name: txing-time-lambda
+            working_directory: devices/time/lambda
+            lock_file: devices/time/lambda/Cargo.lock
+            asset_name: txing-time-lambda-linux-aarch64.zip
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure apt networking
+        shell: bash
+        run: |
+          set -euo pipefail
+          for source in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+            [ -e "$source" ] || continue
+            sudo sed -i 's|http://ports.ubuntu.com/ubuntu-ports|https://ports.ubuntu.com/ubuntu-ports|g' "$source"
+          done
+          printf 'Acquire::ForceIPv4 "true";\nAcquire::Retries "5";\n' \
+            | sudo tee /etc/apt/apt.conf.d/99txing-ci-network >/dev/null
+
+      - name: Install system build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config cmake perl file curl git libssl-dev
+
+      - name: Restore Rust toolchain cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.rustup/toolchains/1.95.0-aarch64-unknown-linux-gnu
+            ~/.rustup/update-hashes/1.95.0-aarch64-unknown-linux-gnu
+          key: rustup-${{ runner.os }}-${{ runner.arch }}-1.95.0
+
+      - name: Install Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_VERSION" --profile minimal
+          rustup default "$RUST_VERSION"
+          rustc -vV
+          cargo -V
+
+      - name: Install Cargo Lambda
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo install cargo-lambda --locked
+          cargo lambda --version
 
       - name: Restore Cargo cache
         uses: actions/cache@v4
@@ -194,34 +438,69 @@ jobs:
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             ~/.cargo/git/db
-            devices/unit/daemon/target
-            rig/target
-          key: cargo-release-${{ runner.os }}-${{ runner.arch }}-rust-1.95.0-${{ hashFiles('devices/unit/daemon/Cargo.lock', 'rig/Cargo.lock') }}
+            ${{ matrix.working_directory }}/target
+          key: cargo-release-${{ matrix.function_name }}-${{ runner.os }}-${{ runner.arch }}-rust-1.95.0-${{ hashFiles(matrix.lock_file) }}
           restore-keys: |
+            cargo-release-${{ matrix.function_name }}-${{ runner.os }}-${{ runner.arch }}-rust-1.95.0-
             cargo-release-${{ runner.os }}-${{ runner.arch }}-rust-1.95.0-
 
-      - name: Test Rust artifacts
-        env:
-          TXING_DAEMON_BUILD_VERSION: ${{ steps.metadata.outputs.version }}
+      - name: Test ${{ matrix.function_name }}
+        working-directory: ${{ matrix.working_directory }}
         shell: bash
         run: |
           set -euo pipefail
-          cargo test --manifest-path devices/unit/daemon/Cargo.toml
-          cargo test --manifest-path rig/Cargo.toml --workspace
+          cargo test
 
-      - name: Build Rust artifacts
-        env:
-          TXING_DAEMON_BUILD_VERSION: ${{ steps.metadata.outputs.version }}
+      - name: Build ${{ matrix.function_name }}
+        working-directory: ${{ matrix.working_directory }}
         shell: bash
         run: |
           set -euo pipefail
-          cargo build --release --manifest-path devices/unit/daemon/Cargo.toml --bin daemon
-          TXING_REAL_CC="${CC:-cc}" CC="$PWD/rig/tools/cc-greengrass-info-log" \
-            cargo build --release --features greengrass-sdk --manifest-path rig/sparkplug-manager/Cargo.toml
-          TXING_REAL_CC="${CC:-cc}" CC="$PWD/rig/tools/cc-greengrass-info-log" \
-            cargo build --release --features greengrass-sdk --manifest-path rig/ble-connectivity/Cargo.toml
-          TXING_REAL_CC="${CC:-cc}" CC="$PWD/rig/tools/cc-greengrass-info-log" \
-            cargo build --release --features greengrass-sdk --manifest-path rig/aws-connectivity/Cargo.toml
+          cargo lambda build --release
+
+      - name: Package ${{ matrix.asset_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          source="${{ matrix.working_directory }}/target/lambda/${{ matrix.function_name }}/bootstrap.zip"
+          test -s "$source"
+          install -m 644 "$source" "$RUNNER_TEMP/${{ matrix.asset_name }}"
+
+      - name: Upload ${{ matrix.asset_name }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: ${{ runner.temp }}/${{ matrix.asset_name }}
+          if-no-files-found: error
+
+  build-kvs-master:
+    name: Build txing-board-kvs-master
+    runs-on: ubuntu-24.04-arm
+    needs: metadata
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure apt networking
+        shell: bash
+        run: |
+          set -euo pipefail
+          for source in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+            [ -e "$source" ] || continue
+            sudo sed -i 's|http://ports.ubuntu.com/ubuntu-ports|https://ports.ubuntu.com/ubuntu-ports|g' "$source"
+          done
+          printf 'Acquire::ForceIPv4 "true";\nAcquire::Retries "5";\n' \
+            | sudo tee /etc/apt/apt.conf.d/99txing-ci-network >/dev/null
+
+      - name: Install packaging tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y binutils file
 
       - name: Build native KVS master in Trixie container
         shell: bash
@@ -276,73 +555,137 @@ jobs:
           file "$kvs_master_build_binary"
           install -m 755 "$kvs_master_build_binary" "$RUNNER_TEMP/$KVS_MASTER_BINARY"
 
-      - name: Package project release assets
+      - name: Package ${{ env.KVS_MASTER_ASSET }}
         shell: bash
         run: |
           set -euo pipefail
+          package_dir="$RUNNER_TEMP/package-$KVS_MASTER_BINARY"
+          asset_path="$RUNNER_TEMP/$KVS_MASTER_ASSET"
+          rm -rf "$package_dir"
+          install -d "$package_dir"
+          install -m 755 "$RUNNER_TEMP/$KVS_MASTER_BINARY" "$package_dir/$KVS_MASTER_BINARY"
+          if file "$package_dir/$KVS_MASTER_BINARY" | grep -q 'ELF'; then
+            strip "$package_dir/$KVS_MASTER_BINARY"
+          fi
+          file "$package_dir/$KVS_MASTER_BINARY"
+          tar -C "$package_dir" -czf "$asset_path" "$KVS_MASTER_BINARY"
+          archive_listing="$(tar -tzf "$asset_path")"
+          if [ "$archive_listing" != "$KVS_MASTER_BINARY" ]; then
+            echo "Expected $KVS_MASTER_ASSET to contain only root-level $KVS_MASTER_BINARY, got:" >&2
+            printf '%s\n' "$archive_listing" >&2
+            exit 1
+          fi
 
-          package_binary() {
-            local source="$1"
-            local binary_name="$2"
-            local asset_name="$3"
-            local package_dir="$RUNNER_TEMP/package-$binary_name"
-            local asset_path="$RUNNER_TEMP/$asset_name"
-            rm -rf "$package_dir"
-            install -d "$package_dir"
-            install -m 755 "$source" "$package_dir/$binary_name"
-            if file "$package_dir/$binary_name" | grep -q 'ELF'; then
-              strip "$package_dir/$binary_name"
-            fi
-            file "$package_dir/$binary_name"
-            tar -C "$package_dir" -czf "$asset_path" "$binary_name"
-            archive_listing="$(tar -tzf "$asset_path")"
-            if [ "$archive_listing" != "$binary_name" ]; then
-              echo "Expected $asset_name to contain only root-level $binary_name, got:" >&2
-              printf '%s\n' "$archive_listing" >&2
-              exit 1
-            fi
-          }
+      - name: Upload ${{ env.KVS_MASTER_ASSET }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.KVS_MASTER_ASSET }}
+          path: ${{ runner.temp }}/${{ env.KVS_MASTER_ASSET }}
+          if-no-files-found: error
 
-          package_binary devices/unit/daemon/target/release/daemon txing-unit-daemon "$UNIT_DAEMON_ASSET"
-          package_binary "$RUNNER_TEMP/$KVS_MASTER_BINARY" "$KVS_MASTER_BINARY" "$KVS_MASTER_ASSET"
-          package_binary rig/target/release/txing-sparkplug-manager txing-sparkplug-manager "$SPARKPLUG_MANAGER_ASSET"
-          package_binary rig/target/release/txing-ble-connectivity txing-ble-connectivity "$BLE_CONNECTIVITY_ASSET"
-          package_binary rig/target/release/txing-aws-connectivity txing-aws-connectivity "$AWS_CONNECTIVITY_ASSET"
-          package_binary rig/scripts/txing-rig-deploy txing-rig-deploy "$RIG_DEPLOY_ASSET"
+  package-rig-deploy:
+    name: Package txing-rig-deploy
+    runs-on: ubuntu-24.04-arm
+    needs: metadata
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Package ${{ env.RIG_DEPLOY_ASSET }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_dir="$RUNNER_TEMP/package-txing-rig-deploy"
+          asset_path="$RUNNER_TEMP/$RIG_DEPLOY_ASSET"
+          rm -rf "$package_dir"
+          install -d "$package_dir"
+          install -m 755 rig/scripts/txing-rig-deploy "$package_dir/txing-rig-deploy"
+          tar -C "$package_dir" -czf "$asset_path" txing-rig-deploy
+          archive_listing="$(tar -tzf "$asset_path")"
+          if [ "$archive_listing" != "txing-rig-deploy" ]; then
+            echo "Expected $RIG_DEPLOY_ASSET to contain only root-level txing-rig-deploy, got:" >&2
+            printf '%s\n' "$archive_listing" >&2
+            exit 1
+          fi
+
+      - name: Upload ${{ env.RIG_DEPLOY_ASSET }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.RIG_DEPLOY_ASSET }}
+          path: ${{ runner.temp }}/${{ env.RIG_DEPLOY_ASSET }}
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    runs-on: ubuntu-24.04-arm
+    needs:
+      - metadata
+      - build-rust-binary
+      - test-rig-workspace
+      - build-lambda
+      - build-kvs-master
+      - package-rig-deploy
+
+    steps:
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/release-assets
+          merge-multiple: true
 
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.metadata.outputs.tag }}
-          VERSION: ${{ steps.metadata.outputs.version }}
-          RELEASE_TARGET: ${{ steps.metadata.outputs.release_target }}
+          TAG: ${{ needs.metadata.outputs.tag }}
+          VERSION: ${{ needs.metadata.outputs.version }}
+          RELEASE_TARGET: ${{ needs.metadata.outputs.release_target }}
+          RELEASE_ASSETS_DIR: ${{ runner.temp }}/release-assets
         shell: bash
         run: |
           set -euo pipefail
 
-          notes_file="$(mktemp)"
-          cat >"$notes_file" <<NOTES
-          Txing release.
+          release_assets=(
+            "$UNIT_DAEMON_ASSET"
+            "$KVS_MASTER_ASSET"
+            "$SPARKPLUG_MANAGER_ASSET"
+            "$BLE_CONNECTIVITY_ASSET"
+            "$AWS_CONNECTIVITY_ASSET"
+            "$RIG_DEPLOY_ASSET"
+            "$WITNESS_LAMBDA_ASSET"
+            "$ENLIST_LAMBDA_ASSET"
+            "$TIME_LAMBDA_ASSET"
+          )
 
-          - Version: $VERSION
-          - Tag: $TAG
-          - Commit: $RELEASE_TARGET
-          - Assets:
-            - $UNIT_DAEMON_ASSET
-            - $KVS_MASTER_ASSET
-            - $SPARKPLUG_MANAGER_ASSET
-            - $BLE_CONNECTIVITY_ASSET
-            - $AWS_CONNECTIVITY_ASSET
-            - $RIG_DEPLOY_ASSET
-          NOTES
+          release_asset_paths=()
+          for asset in "${release_assets[@]}"; do
+            asset_path="$RELEASE_ASSETS_DIR/$asset"
+            if [ ! -s "$asset_path" ]; then
+              echo "Missing release asset from build jobs: $asset_path" >&2
+              find "$RELEASE_ASSETS_DIR" -maxdepth 2 -type f -print >&2 || true
+              exit 1
+            fi
+            release_asset_paths+=("$asset_path")
+          done
+
+          notes_file="$(mktemp)"
+          {
+            echo "Txing release."
+            echo
+            echo "- Version: $VERSION"
+            echo "- Tag: $TAG"
+            echo "- Commit: $RELEASE_TARGET"
+            echo "- Assets:"
+            for asset in "${release_assets[@]}"; do
+              echo "  - $asset"
+            done
+          } >"$notes_file"
 
           gh release create "$TAG" \
-            "$RUNNER_TEMP/$UNIT_DAEMON_ASSET" \
-            "$RUNNER_TEMP/$KVS_MASTER_ASSET" \
-            "$RUNNER_TEMP/$SPARKPLUG_MANAGER_ASSET" \
-            "$RUNNER_TEMP/$BLE_CONNECTIVITY_ASSET" \
-            "$RUNNER_TEMP/$AWS_CONNECTIVITY_ASSET" \
-            "$RUNNER_TEMP/$RIG_DEPLOY_ASSET" \
+            "${release_asset_paths[@]}" \
+            --repo "$GITHUB_REPOSITORY" \
             --target "$RELEASE_TARGET" \
             --title "$TAG" \
             --notes-file "$notes_file" \

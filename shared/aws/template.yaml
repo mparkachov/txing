@@ -20,6 +20,9 @@ Parameters:
     Type: AWS::SSM::Parameter::Value<String>
     Default: /txing/stack/WebAppUrl
     Description: SSM parameter containing the Cloudflare Pages production web app URL without a trailing slash.
+  LambdaArtifactsBucketName:
+    Type: String
+    Description: S3 bucket containing release-built Lambda bootstrap zip artifacts.
 
 Resources:
   BaseEnvironment:
@@ -32,6 +35,7 @@ Resources:
         LocalhostAppUrl: !Ref LocalhostAppUrl
         LocalhostAltAppUrl: !Ref LocalhostAltAppUrl
         WebAppUrl: !Ref StackWebAppUrl
+        LambdaArtifactsBucketName: !Ref LambdaArtifactsBucketName
 
   TownTypeCatalog:
     Type: AWS::CloudFormation::Stack
@@ -100,6 +104,7 @@ Resources:
       TemplateURL: templates/types/cloud-time.yaml
       Parameters:
         TypeCatalogServiceToken: !GetAtt BaseEnvironment.Outputs.CustomResourceServiceToken
+        LambdaArtifactsBucketName: !Ref LambdaArtifactsBucketName
 
   RigRuntimeLayer:
     Type: AWS::CloudFormation::Stack
@@ -128,6 +133,8 @@ Resources:
       - CloudTimeTypeCatalog
     Properties:
       TemplateURL: templates/enlist.yaml
+      Parameters:
+        LambdaArtifactsBucketName: !Ref LambdaArtifactsBucketName
 
 Outputs:
   RigLogGroupPattern:

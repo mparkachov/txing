@@ -55,14 +55,33 @@ deploy stack_name=stack_name template_file=template_file:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
-    just --justfile "{{root_justfile}}" time::lambda::build
-    just --justfile "{{root_justfile}}" witness::build
-    just --justfile "{{aws_dir}}/enlist/justfile" build
     source "{{aws_lib}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{stack_name}}")"
     txing_aws_init
     deploy_template "$TXING_AWS_STACK" "{{template_file}}"
     describe_stack_outputs "$TXING_AWS_STACK"
+
+deploy-lambdas release='latest':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case "{{release}}" in
+      latest|v[0-9]*|[0-9]*) ;;
+      *=*)
+        echo "release must be latest, vX.Y.Z, or X.Y.Z." >&2
+        exit 1
+        ;;
+      *)
+        echo "release must be latest, vX.Y.Z, or X.Y.Z." >&2
+        exit 1
+        ;;
+    esac
+    cd "{{aws_dir}}"
+    source "{{aws_lib}}"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws)"
+    txing_aws_init
+    artifact_bucket="$(ensure_artifact_bucket)"
+    export TXING_LAMBDA_ARTIFACT_BUCKET="$artifact_bucket"
+    exec "{{aws_dir}}/scripts/txing-lambda-deploy-release" "{{release}}"
 
 delete stack_name=stack_name wait='true' delete_packaging_buckets='true' include_legacy_time_lambda='true':
     #!/usr/bin/env bash
@@ -189,9 +208,6 @@ check-template template_file=template_file stack_name=stack_name:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{aws_dir}}"
-    just --justfile "{{root_justfile}}" time::lambda::build
-    just --justfile "{{root_justfile}}" witness::build
-    just --justfile "{{aws_dir}}/enlist/justfile" build
     source "{{aws_lib}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{stack_name}}")"
     txing_aws_init

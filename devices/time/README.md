@@ -12,6 +12,7 @@ The shared AWS deployment creates the nested ThingType stacks and the SSM type
 catalog at `/txing`, then AWS IoT thing IDs identify concrete instances:
 
 ```sh
+just aws::deploy-lambdas latest
 just aws::deploy
 just aws::deploy-town town
 just aws::deploy-rig <town-id> cloud aws
@@ -34,18 +35,17 @@ Enrollment checks the `/txing/town/cloud/time/kind` compatibility leaf before
 creating the device thing.
 
 The time Lambda infrastructure is generic and owned by the shared `cloud-time`
-type stack. Deploy or update infrastructure with the shared AWS stack:
+type stack. Deploy or update the release-built Lambda code from the operator
+machine:
+
+```sh
+just aws::deploy-lambdas latest
+```
+
+Deploy or update infrastructure with the shared AWS stack:
 
 ```sh
 just aws::deploy
-```
-
-Update only the Rust Lambda code after the stack exists:
-
-```sh
-cd devices/time/lambda
-cargo lambda build --release
-cargo lambda deploy
 ```
 
 Existing per-device time Lambda stacks are legacy cleanup only.

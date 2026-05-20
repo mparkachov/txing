@@ -16,8 +16,9 @@ build:
     cd "{{lambda_dir}}"
     cargo lambda build --release
 
-deploy: build
-    cd "{{lambda_dir}}" && cargo lambda deploy
+deploy:
+    @echo "Direct local Lambda deploy is disabled. Build a GitHub release and run: just aws::deploy-lambdas latest" >&2
+    @exit 1
 
 @default:
     @just --list

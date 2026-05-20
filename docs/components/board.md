@@ -249,12 +249,12 @@ txing-unit-daemon
 txing-board-kvs-master
 ```
 
-Boards use root's persistent mise config, shims, and install tree:
+Boards use root's persistent mise config and install tree:
 
 ```text
 /root/.config/mise/conf.d/txing-unit-daemon.toml
-/root/.local/share/mise/shims/txing-unit-daemon
-/root/.local/share/mise/shims/txing-board-kvs-master
+/root/.local/share/mise/installs/txing-unit-daemon/latest/txing-unit-daemon
+/root/.local/share/mise/installs/txing-board-kvs-master/latest/txing-board-kvs-master
 /root/.local/share/mise/installs/txing-unit-daemon/
 /root/.local/share/mise/installs/txing-board-kvs-master/
 ```
@@ -389,12 +389,12 @@ Check the resolved binaries before writing the service:
 
 ```bash
 /root/.local/bin/mise list
-/root/.local/share/mise/shims/txing-unit-daemon --version
-/root/.local/share/mise/shims/txing-board-kvs-master --version
-ldd "$(/root/.local/bin/mise which txing-unit-daemon)"
-ldd "$(/root/.local/bin/mise which txing-board-kvs-master)"
-ldd "$(/root/.local/bin/mise which txing-board-kvs-master)" | grep -F "libcamera.so.0.7"
-ldd "$(/root/.local/bin/mise which txing-board-kvs-master)" | grep -F "libcamera-base.so.0.7"
+/root/.local/share/mise/installs/txing-unit-daemon/latest/txing-unit-daemon --version
+/root/.local/share/mise/installs/txing-board-kvs-master/latest/txing-board-kvs-master --version
+ldd /root/.local/share/mise/installs/txing-unit-daemon/latest/txing-unit-daemon
+ldd /root/.local/share/mise/installs/txing-board-kvs-master/latest/txing-board-kvs-master
+ldd /root/.local/share/mise/installs/txing-board-kvs-master/latest/txing-board-kvs-master | grep -F "libcamera.so.0.7"
+ldd /root/.local/share/mise/installs/txing-board-kvs-master/latest/txing-board-kvs-master | grep -F "libcamera-base.so.0.7"
 ```
 
 Write the root-owned systemd unit:
@@ -419,15 +419,13 @@ RestartSec=5
 
 Environment=TXING_DAEMON_CONFIG_DIR=/root/.config/txing/unit-daemon
 Environment=HOME=/root
-Environment=MISE_TRUSTED_CONFIG_PATHS=/root/.config/mise
-Environment=MISE_OFFLINE=1
-Environment=TXING_KVS_MASTER_COMMAND=/root/.local/share/mise/shims/txing-board-kvs-master
+Environment=TXING_KVS_MASTER_COMMAND=/root/.local/share/mise/installs/txing-board-kvs-master/latest/txing-board-kvs-master
 
-ExecStartPre=/usr/bin/test -x /root/.local/share/mise/shims/txing-unit-daemon
-ExecStartPre=/usr/bin/test -x /root/.local/share/mise/shims/txing-board-kvs-master
-ExecStartPre=-/root/.local/share/mise/shims/txing-unit-daemon --version
-ExecStartPre=-/root/.local/share/mise/shims/txing-board-kvs-master --version
-ExecStart=/root/.local/share/mise/shims/txing-unit-daemon
+ExecStartPre=/usr/bin/test -x /root/.local/share/mise/installs/txing-unit-daemon/latest/txing-unit-daemon
+ExecStartPre=/usr/bin/test -x /root/.local/share/mise/installs/txing-board-kvs-master/latest/txing-board-kvs-master
+ExecStartPre=-/root/.local/share/mise/installs/txing-unit-daemon/latest/txing-unit-daemon --version
+ExecStartPre=-/root/.local/share/mise/installs/txing-board-kvs-master/latest/txing-board-kvs-master --version
+ExecStart=/root/.local/share/mise/installs/txing-unit-daemon/latest/txing-unit-daemon
 
 [Install]
 WantedBy=multi-user.target
@@ -448,8 +446,8 @@ Verify:
 systemctl status --no-pager -l txing-unit-daemon.service
 journalctl -u txing-unit-daemon.service -n 160 --no-pager
 /root/.local/bin/mise list
-/root/.local/share/mise/shims/txing-unit-daemon --version
-/root/.local/share/mise/shims/txing-board-kvs-master --version
+/root/.local/share/mise/installs/txing-unit-daemon/latest/txing-unit-daemon --version
+/root/.local/share/mise/installs/txing-board-kvs-master/latest/txing-board-kvs-master --version
 ```
 
 Expected:
@@ -531,8 +529,8 @@ After reconnecting:
 systemctl status --no-pager -l txing-unit-daemon.service
 journalctl -u txing-unit-daemon.service -b -u txing-unit-daemon.service --no-pager
 /root/.local/bin/mise list
-/root/.local/bin/mise which txing-unit-daemon
-/root/.local/bin/mise which txing-board-kvs-master
+/root/.local/share/mise/installs/txing-unit-daemon/latest/txing-unit-daemon --version
+/root/.local/share/mise/installs/txing-board-kvs-master/latest/txing-board-kvs-master --version
 ```
 
 Expected:
@@ -554,10 +552,10 @@ apt update
 apt dist-upgrade -y
 MISE_TRUSTED_CONFIG_PATHS=/root/.config/mise \
   /root/.local/bin/mise upgrade txing-unit-daemon txing-board-kvs-master
-/root/.local/share/mise/shims/txing-unit-daemon --version
-/root/.local/share/mise/shims/txing-board-kvs-master --version
-ldd "$(/root/.local/bin/mise which txing-board-kvs-master)" | grep -F "libcamera.so.0.7"
-ldd "$(/root/.local/bin/mise which txing-board-kvs-master)" | grep -F "libcamera-base.so.0.7"
+/root/.local/share/mise/installs/txing-unit-daemon/latest/txing-unit-daemon --version
+/root/.local/share/mise/installs/txing-board-kvs-master/latest/txing-board-kvs-master --version
+ldd /root/.local/share/mise/installs/txing-board-kvs-master/latest/txing-board-kvs-master | grep -F "libcamera.so.0.7"
+ldd /root/.local/share/mise/installs/txing-board-kvs-master/latest/txing-board-kvs-master | grep -F "libcamera-base.so.0.7"
 sync
 reboot
 ```

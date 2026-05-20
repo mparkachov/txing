@@ -213,6 +213,7 @@ deploy_template() {
   local artifact_bucket
   local packaged_template_dir
   local packaged_template
+  local parameter_overrides=()
   artifact_bucket="$(ensure_artifact_bucket)"
   packaged_template_dir="$(mktemp -d "${TMPDIR:-/tmp}/txing-cfn.XXXXXX")"
   packaged_template="$packaged_template_dir/template.yaml"
@@ -220,11 +221,15 @@ deploy_template() {
     --template-file "$template_file" \
     --s3-bucket "$artifact_bucket" \
     --output-template-file "$packaged_template"
+  if grep -q '^  LambdaArtifactsBucketName:' "$packaged_template"; then
+    parameter_overrides+=(--parameter-overrides "LambdaArtifactsBucketName=$artifact_bucket")
+  fi
   aws cloudformation deploy \
     --stack-name "$stack_name" \
     --template-file "$packaged_template" \
     --capabilities CAPABILITY_IAM \
     --no-fail-on-empty-changeset \
+    "${parameter_overrides[@]}" \
     "$@"
   rm -rf "$packaged_template_dir"
 }

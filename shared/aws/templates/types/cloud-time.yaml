@@ -10,6 +10,9 @@ Parameters:
   TimeRuntimeActiveTtlMs:
     Type: Number
     Default: 300000
+  LambdaArtifactsBucketName:
+    Type: String
+    Description: S3 bucket containing release-built Lambda bootstrap zip artifacts.
 
 Resources:
   TimeTypeCatalog:
@@ -115,7 +118,9 @@ Resources:
       Handler: rust.handler
       Architectures:
         - arm64
-      Code: ../../../../devices/time/lambda/target/lambda/txing-time-lambda/bootstrap.zip
+      Code:
+        S3Bucket: !Ref LambdaArtifactsBucketName
+        S3Key: lambda/txing-time-lambda/current/bootstrap.zip
       Role: !GetAtt TimeRuntimeFunctionRole.Arn
       Timeout: 300
       MemorySize: 128

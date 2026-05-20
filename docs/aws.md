@@ -26,10 +26,11 @@ aws sts get-caller-identity
 ```
 
 Set `TXING_AWS_STACK` explicitly before running stack-backed commands such as
-`just aws::deploy`, `just aws::check`, `just web::write-env`,
-`just rig::deploy-release`, and `just unit::cert`. Export it in the operator
-shell or pass a positional stack name to recipes that accept one. Those commands
-fail if `TXING_AWS_STACK` is unset and no positional stack name is provided.
+`just aws::deploy`, `just aws::deploy-lambdas`, `just aws::check`,
+`just web::write-env`, `just rig::deploy-release`, and `just unit::cert`.
+Export it in the operator shell or pass a positional stack name to recipes that
+accept one. Those commands fail if `TXING_AWS_STACK` is unset and no positional
+stack name is provided.
 Optional selected generated thing IDs (`TXING_TOWN_ID`, `TXING_RIG_ID`,
 `TXING_THING_ID`) also come from the operator shell. Web/admin deploy parameters
 are initialized with `aws::deploy-init`; the type catalog root is always
@@ -44,6 +45,7 @@ export TXING_AWS_STACK=town
 cp shared/aws/deploy-init.example.json shared/aws/deploy-init.json
 $EDITOR shared/aws/deploy-init.json
 just aws::deploy-init
+just aws::deploy-lambdas latest
 just aws::deploy
 just aws::deploy-town town
 just aws::deploy-rig <town-id> raspi server
@@ -64,11 +66,19 @@ can run without the JSON file or any repository config file present on disk, as
 long as `TXING_AWS_STACK` is provided in the environment or as a positional stack
 name.
 
-`just aws::deploy` deploys the base root stack. That root stack owns Cognito
-for web authentication, common IoT policies, artifact buckets, the Sparkplug
-witness, Fleet Indexing, shared rig/device runtime IAM, AWS IoT ThingTypes, and
-the SSM type catalog. Web hosting is externalized to Cloudflare Pages. The type
-catalog is CloudFormation-managed under `/txing` as leaf parameters such as
+`just aws::deploy-lambdas latest` downloads release-built Lambda zips from
+GitHub, uploads them to the shared `txing-cfn-*` artifact bucket, updates
+existing Lambda functions, and seeds stable S3 bootstrap keys for first stack
+creation. Run it after the `Txing Release` workflow and before a first
+`aws::deploy` in a new account/stack.
+
+`just aws::deploy` deploys the base root stack and applies AWS infrastructure
+changes only. It does not build Lambda crates or change Lambda code versions.
+That root stack owns Cognito for web authentication, common IoT policies,
+artifact buckets, the Sparkplug witness infrastructure, Fleet Indexing, shared
+rig/device runtime IAM, AWS IoT ThingTypes, and the SSM type catalog. Web
+hosting is externalized to Cloudflare Pages. The type catalog is
+CloudFormation-managed under `/txing` as leaf parameters such as
 `/txing/town/cloud/time/kind` and
 `/txing/town/cloud/time/capabilities`.
 
@@ -262,7 +272,7 @@ just aws::delete-packaging-buckets
 
 This removes the shared `txing-cfn-<account>-<region>-<stack>` bucket and the
 legacy `txing-time-lambda-<account>-<region>` bucket if either exists. Current
-time Lambda deployment reuses the shared `txing-cfn-*` packaging bucket by
+Lambda release deployment reuses the shared `txing-cfn-*` packaging bucket by
 default.
 
 Generated IoT things, per-device time Lambda stacks, and KVS signaling channels

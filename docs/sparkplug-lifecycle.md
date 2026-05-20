@@ -274,5 +274,6 @@ The current implementation keeps the derived-behavior model rather than making R
 ## Deploy Boundary
 
 - `shared/aws` owns the nested AWS stacks.
-- `just aws::deploy` deploys the base stack, including the Sparkplug witness Lambda, IoT rule, and role.
-- `witness/` owns the Lambda source and tests, not a separate primary deployment flow.
+- `just aws::deploy` deploys the base stack, including the Sparkplug witness Lambda infrastructure, IoT rule, and role.
+- `just aws::deploy-lambdas` deploys release-built witness Lambda code.
+- `witness/` owns the Lambda source and tests, not a separate primary stack.

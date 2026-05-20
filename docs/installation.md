@@ -28,7 +28,7 @@ Repo-wide developer tooling:
 - `just`
 - `jq`
 - AWS CLI v2
-- GitHub CLI (`gh`) for operator-side release and Greengrass deploys
+- GitHub CLI (`gh`) for operator-side release, Lambda, and Greengrass deploys
 
 Install operator CLIs with the package manager you use for the development
 machine. `mise` is acceptable for missing or stale CLI versions:

@@ -12,21 +12,25 @@ Witness is the only authority that writes the `sparkplug` named shadow for rig a
 
 ## Deploy
 
+Deploy or update the release-built Lambda code:
+
 ```bash
-just aws::deploy
+just aws::deploy-lambdas latest
 ```
 
 The `witness/` directory is a plain Cargo Lambda project and owns the active
 Lambda source and tests. The primary deployment flow does not use a separate
 witness stack or a witness-local CloudFormation template.
 
-Update only the Lambda code after the base stack exists:
+Apply infrastructure changes with the shared AWS stack:
 
 ```bash
-cd witness
-cargo lambda build --release
-cargo lambda deploy
+just aws::deploy
 ```
+
+`aws::deploy` does not build or upload witness code. The direct local Lambda
+deploy recipe is disabled; use the release workflow and `aws::deploy-lambdas`
+for production updates.
 
 The deeper projection semantics are documented in:
 

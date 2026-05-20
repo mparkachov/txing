@@ -25,25 +25,49 @@ txing-sparkplug-manager-linux-aarch64.tar.gz
 txing-ble-connectivity-linux-aarch64.tar.gz
 txing-aws-connectivity-linux-aarch64.tar.gz
 txing-rig-deploy-linux-aarch64.tar.gz
+txing-witness-lambda-linux-aarch64.zip
+txing-enlist-lambda-linux-aarch64.zip
+txing-time-lambda-linux-aarch64.zip
 ```
 
-Each archive contains one root-level executable with the same command name.
+Each `.tar.gz` archive contains one root-level executable with the same command
+name. Each Lambda `.zip` is a Cargo Lambda `bootstrap.zip` for the
+`provided.al2023` arm64 runtime.
 
 Release publishing flow:
 
 1. Update all managed version files locally.
 2. Push the intended code to `main`.
 3. Run the `Txing Release` workflow manually from `main`.
-4. Deploy rig components from the operator machine with
+4. Deploy Lambda code from the operator machine with
+   `just aws::deploy-lambdas latest`.
+5. Apply AWS infrastructure changes with `just aws::deploy`.
+6. Deploy rig components from the operator machine with
    `just rig::deploy-release latest all`.
-5. If a board needs the new binaries, update it manually from a board root
+7. If a board needs the new binaries, update it manually from a board root
    shell with writable root, root-owned `mise upgrade`, and a reboot.
 
 The workflow reads the pushed root `VERSION`, checks that all managed version
 files already match, fails unless the version is newer than the latest existing
-release, publishes the GitHub Release, and publishes the rig binaries. It does
-not bump versions, commit, push back to `main`, build Greengrass Lite, or
-deploy to hosts.
+release, publishes the GitHub Release, and publishes the board, rig, and Lambda
+artifacts. It does not bump versions, commit, push back to `main`, build
+Greengrass Lite, upload Lambda code to AWS, or deploy to hosts.
+
+## Lambda Artifacts
+
+Production Lambda code is deployed from GitHub release assets by the operator
+machine:
+
+```bash
+gh auth status
+just aws::deploy-lambdas latest
+```
+
+`aws::deploy-lambdas` downloads the release-built Lambda zips with `gh`, uploads
+them to the shared `txing-cfn-*` artifact bucket, updates existing Lambda
+functions, and seeds stable S3 bootstrap keys for first-time stack creation.
+`just aws::deploy` applies CloudFormation only; it does not build, upload, or
+change Lambda code versions.
 
 ## Board Assets
 
@@ -71,8 +95,8 @@ The root-owned runtime layout is:
 /root/.config/txing/unit-daemon/private.pem.key
 /root/.config/txing/unit-daemon/public.pem.key
 /root/.config/mise/conf.d/txing-unit-daemon.toml
-/root/.local/share/mise/shims/txing-unit-daemon
-/root/.local/share/mise/shims/txing-board-kvs-master
+/root/.local/share/mise/installs/txing-unit-daemon/latest/txing-unit-daemon
+/root/.local/share/mise/installs/txing-board-kvs-master/latest/txing-board-kvs-master
 /root/.local/share/mise/installs/txing-unit-daemon/
 /root/.local/share/mise/installs/txing-board-kvs-master/
 /etc/systemd/system/txing-unit-daemon.service
@@ -87,13 +111,14 @@ certificate paths from the loaded `daemon.env` directory.
 The native KVS master is dynamically linked to the libcamera ABI from Raspberry
 Pi OS Trixie packages. Release workflows assert that the asset links against
 `libcamera.so.0.7` and `libcamera-base.so.0.7`; board maintenance instructions
-run `ldd` on resolved binaries before rebooting.
+run `ldd` on the installed `latest` binary before rebooting.
 
-The board systemd unit starts from root-owned mise shims and sets
-`MISE_OFFLINE=1`, so service restarts do not call GitHub. Publishing a new
-GitHub Release does not upgrade a board; the operator must log in to the board,
-switch to root, run `root-rw`, run root-owned `mise upgrade`, verify versions,
-sync, and reboot.
+The board systemd unit starts the root-owned binaries under mise's `latest`
+install paths. Service restarts do not invoke mise, call GitHub, depend on
+generated shims, or use separate wrapper scripts. Publishing a new GitHub
+Release does not upgrade a board; the operator must log in to the board, switch
+to root, run `root-rw`, run root-owned `mise upgrade`, verify versions, sync,
+and reboot.
 
 ## Rig Artifacts
 

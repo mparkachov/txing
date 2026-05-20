@@ -17,6 +17,9 @@ Parameters:
     Default: https://office.txing.dev
     Description: Cloudflare Pages production web app URL without a trailing slash.
     AllowedPattern: "^https://.+[^/]$"
+  LambdaArtifactsBucketName:
+    Type: String
+    Description: S3 bucket containing release-built Lambda bootstrap zip artifacts.
 
 Resources:
   TxingGreengrassArtifactsBucket:
@@ -766,7 +769,9 @@ Resources:
         - arm64
       MemorySize: 128
       Timeout: 30
-      Code: ../../../witness/target/lambda/txing-witness-lambda/bootstrap.zip
+      Code:
+        S3Bucket: !Ref LambdaArtifactsBucketName
+        S3Key: lambda/txing-witness-lambda/current/bootstrap.zip
 
   TxingSparkplugWitnessInvokePermission:
     Type: AWS::Lambda::Permission

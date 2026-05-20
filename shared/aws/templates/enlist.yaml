@@ -1,6 +1,11 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: txing enlist Lambda for town, rig, and device enrollment.
 
+Parameters:
+  LambdaArtifactsBucketName:
+    Type: String
+    Description: S3 bucket containing release-built Lambda bootstrap zip artifacts.
+
 Resources:
   TxingEnlistLogGroup:
     Type: AWS::Logs::LogGroup
@@ -93,7 +98,9 @@ Resources:
       Handler: rust.handler
       Architectures:
         - arm64
-      Code: ../enlist/target/lambda/txing-enlist-lambda/bootstrap.zip
+      Code:
+        S3Bucket: !Ref LambdaArtifactsBucketName
+        S3Key: lambda/txing-enlist-lambda/current/bootstrap.zip
       Role: !GetAtt TxingEnlistRole.Arn
       Timeout: 60
       MemorySize: 128

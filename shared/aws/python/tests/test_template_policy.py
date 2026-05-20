@@ -104,7 +104,10 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("- arm64", template)
         self.assertIn("FunctionName: txing-witness-lambda", template)
         self.assertIn("MemorySize: 128", template)
-        self.assertIn("Code: ../../../witness/target/lambda/txing-witness-lambda/bootstrap.zip", template)
+        self.assertIn("LambdaArtifactsBucketName:", template)
+        self.assertIn("S3Bucket: !Ref LambdaArtifactsBucketName", template)
+        self.assertIn("S3Key: lambda/txing-witness-lambda/current/bootstrap.zip", template)
+        self.assertNotIn("witness/target/lambda/txing-witness-lambda/bootstrap.zip", template)
         self.assertIn("encode(*, 'base64')", template)
         self.assertIn("iot:DescribeEndpoint", template)
         self.assertIn("WitnessFunctionName:", template)
@@ -450,7 +453,8 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("TimeRuntimeFunction:", template)
         self.assertIn("TimeRuntimeMcpTopicRule:", template)
         self.assertIn("FunctionName: txing-time-lambda", template)
-        self.assertIn("Code: ../../../../devices/time/lambda/target/lambda/txing-time-lambda/bootstrap.zip", template)
+        self.assertIn("S3Key: lambda/txing-time-lambda/current/bootstrap.zip", template)
+        self.assertNotIn("devices/time/lambda/target/lambda/txing-time-lambda/bootstrap.zip", template)
         self.assertIn("CatalogBasePath: /txing/town/cloud/time", template)
         self.assertIn("CatalogBasePath: /txing/town/raspi/unit", template)
         self.assertIn("CatalogBasePath: /txing/town/raspi/power", template)
@@ -490,10 +494,9 @@ class AwsTemplatePolicyTests(unittest.TestCase):
             "FunctionName: txing-time-lambda",
             template,
         )
-        self.assertIn(
-            "Code: ../../../../devices/time/lambda/target/lambda/txing-time-lambda/bootstrap.zip",
-            template,
-        )
+        self.assertIn("S3Bucket: !Ref LambdaArtifactsBucketName", template)
+        self.assertIn("S3Key: lambda/txing-time-lambda/current/bootstrap.zip", template)
+        self.assertNotIn("devices/time/lambda/target/lambda/txing-time-lambda/bootstrap.zip", template)
         self.assertNotIn("ThingName:", template)
         self.assertNotIn("THING_NAME", template)
         self.assertNotIn("${ThingName}", template)
@@ -516,10 +519,10 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("Handler: rust.handler", enlist_template)
         self.assertIn("Architectures:", enlist_template)
         self.assertIn("- arm64", enlist_template)
-        self.assertIn(
-            "Code: ../enlist/target/lambda/txing-enlist-lambda/bootstrap.zip",
-            enlist_template,
-        )
+        self.assertIn("LambdaArtifactsBucketName:", enlist_template)
+        self.assertIn("S3Bucket: !Ref LambdaArtifactsBucketName", enlist_template)
+        self.assertIn("S3Key: lambda/txing-enlist-lambda/current/bootstrap.zip", enlist_template)
+        self.assertNotIn("enlist/target/lambda/txing-enlist-lambda/bootstrap.zip", enlist_template)
         self.assertIn("MemorySize: 128", enlist_template)
         self.assertIn("TxingDischargeThingsOnStackDelete:", enlist_template)
         self.assertNotIn("TxingDischargeThingsOnDelete:", enlist_template)
@@ -663,7 +666,10 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("deploy_init_parameter_name()", text)
         self.assertIn("/txing/stack", text)
         self.assertIn("deploy stack_name=stack_name", text)
-        self.assertNotIn("--parameter-overrides", text)
+        self.assertIn(
+            'parameter_overrides+=(--parameter-overrides "LambdaArtifactsBucketName=$artifact_bucket")',
+            text,
+        )
         self.assertNotIn("deploy CognitoDomainPrefix", text)
         self.assertNotIn("aws ssm get-parameter", text)
         self.assertIn("deploy-town town_name", text)

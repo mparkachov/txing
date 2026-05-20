@@ -234,6 +234,7 @@ class VersionEnvironmentTests(unittest.TestCase):
             REPO_ROOT / "justfile",
             REPO_ROOT / "shared" / "aws" / "justfile",
             REPO_ROOT / "shared" / "aws" / "scripts" / "aws_lib.sh",
+            REPO_ROOT / "shared" / "aws" / "scripts" / "txing-lambda-deploy-release",
             REPO_ROOT / "rig" / "justfile",
             REPO_ROOT / "rig" / "scripts" / "txing-rig-deploy",
             REPO_ROOT / "rig" / "scripts" / "txing-rig-deploy-release",
@@ -281,10 +282,18 @@ class VersionEnvironmentTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         self.assertIn("name: Txing Release", workflow)
-        self.assertIn("Install mise tools", workflow)
-        self.assertIn("curl https://mise.run | sh", workflow)
-        self.assertIn("mise/shims", workflow)
-        self.assertIn("use --global --yes uv@latest just@latest", workflow)
+        self.assertIn("metadata:", workflow)
+        self.assertIn("build-rust-binary:", workflow)
+        self.assertIn("test-rig-workspace:", workflow)
+        self.assertIn("build-lambda:", workflow)
+        self.assertIn("build-kvs-master:", workflow)
+        self.assertIn("package-rig-deploy:", workflow)
+        self.assertIn("publish:", workflow)
+        self.assertIn("strategy:", workflow)
+        self.assertIn("matrix:", workflow)
+        self.assertIn("actions/upload-artifact@v4", workflow)
+        self.assertIn("actions/download-artifact@v4", workflow)
+        self.assertIn("merge-multiple: true", workflow)
         self.assertIn("txing-unit-daemon-linux-aarch64.tar.gz", workflow)
         self.assertIn("txing-board-kvs-master-linux-aarch64.tar.gz", workflow)
         self.assertIn("KVS_MASTER_BUILD_IMAGE: debian:trixie", workflow)
@@ -299,12 +308,14 @@ class VersionEnvironmentTests(unittest.TestCase):
             'git config --global --add safe.directory "$PWD/modules/awslabs/amazon-kinesis-video-streams-webrtc-sdk-c"',
             workflow,
         )
+        self.assertIn("curl https://mise.run | sh", workflow)
+        self.assertIn("mise/shims", workflow)
+        self.assertIn("mise use --global --yes just@latest", workflow)
         self.assertIn('grep -F "libcamera.so.0.7"', workflow)
         self.assertIn('grep -F "libcamera-base.so.0.7"', workflow)
         self.assertIn('kvs_master_build_binary="devices/unit/board/kvs_master/build/$KVS_MASTER_BINARY"', workflow)
         self.assertIn('test -x "$kvs_master_build_binary"', workflow)
         self.assertIn('install -m 755 "$kvs_master_build_binary" "$RUNNER_TEMP/$KVS_MASTER_BINARY"', workflow)
-        self.assertIn('package_binary "$RUNNER_TEMP/$KVS_MASTER_BINARY"', workflow)
         self.assertNotIn("KVS_MASTER_OUTPUT_DIR", workflow)
         self.assertNotIn('-v "$RUNNER_TEMP:/out"', workflow)
         self.assertNotIn('"/out/$KVS_MASTER_BINARY"', workflow)
@@ -314,6 +325,13 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("txing-ble-connectivity-linux-aarch64.tar.gz", workflow)
         self.assertIn("txing-aws-connectivity-linux-aarch64.tar.gz", workflow)
         self.assertIn("txing-rig-deploy-linux-aarch64.tar.gz", workflow)
+        self.assertIn("txing-witness-lambda-linux-aarch64.zip", workflow)
+        self.assertIn("txing-enlist-lambda-linux-aarch64.zip", workflow)
+        self.assertIn("txing-time-lambda-linux-aarch64.zip", workflow)
+        self.assertIn("Install Cargo Lambda", workflow)
+        self.assertIn("cargo lambda build --release", workflow)
+        self.assertIn("cargo test --manifest-path rig/Cargo.toml --workspace", workflow)
+        self.assertIn('release_asset_paths+=("$asset_path")', workflow)
         self.assertIn('version="$(tr -d \'[:space:]\' < VERSION)"', workflow)
         self.assertIn("git fetch --tags --force origin", workflow)
         self.assertIn("Pushed VERSION $version must be greater than latest release tag", workflow)
@@ -389,12 +407,16 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn('asset_pattern = "txing-unit-daemon-linux-aarch64.tar.gz"', board_docs)
         self.assertIn('asset_pattern = "txing-board-kvs-master-linux-aarch64.tar.gz"', board_docs)
         self.assertIn("MISE_TRUSTED_CONFIG_PATHS=/root/.config/mise", board_docs)
-        self.assertIn("Environment=MISE_OFFLINE=1", board_docs)
         self.assertIn(
-            "Environment=TXING_KVS_MASTER_COMMAND=/root/.local/share/mise/shims/txing-board-kvs-master",
+            "Environment=TXING_KVS_MASTER_COMMAND=/root/.local/share/mise/installs/"
+            "txing-board-kvs-master/latest/txing-board-kvs-master",
             board_docs,
         )
-        self.assertIn("ExecStart=/root/.local/share/mise/shims/txing-unit-daemon", board_docs)
+        self.assertIn(
+            "ExecStart=/root/.local/share/mise/installs/"
+            "txing-unit-daemon/latest/txing-unit-daemon",
+            board_docs,
+        )
         self.assertIn(
             "/root/.local/bin/mise upgrade txing-unit-daemon txing-board-kvs-master",
             board_docs,
@@ -403,6 +425,10 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn(removed_installer, board_docs)
         self.assertNotIn(removed_mise_env, board_docs)
         self.assertNotIn("MISE_SHARED_INSTALL_DIRS", board_docs)
+        self.assertNotIn("txing-unit-daemon-service", board_docs)
+        self.assertNotIn("txing-board-kvs-master-service", board_docs)
+        self.assertNotIn("mise exec -- txing-unit-daemon", board_docs)
+        self.assertNotIn("mise exec -- txing-board-kvs-master", board_docs)
 
     def test_board_docs_use_daemon_kvs_master_release_path(self) -> None:
         removed_installer = "install-" + "systemd.sh"
@@ -419,7 +445,11 @@ class VersionEnvironmentTests(unittest.TestCase):
 
         self.assertIn("root-owned mise release tools", installation_docs)
         self.assertIn("sudo su -", board_docs)
-        self.assertIn("/root/.local/bin/mise which txing-board-kvs-master", board_docs)
+        self.assertIn(
+            "/root/.local/share/mise/installs/txing-board-kvs-master/latest/"
+            "txing-board-kvs-master",
+            board_docs,
+        )
         self.assertIn("just unit::daemon::role-policy <thing-id>", board_docs)
         self.assertIn("dynamic `mcp`", board_docs)
         self.assertIn("txing-board-kvs-master-linux-aarch64.tar.gz", artifacts_docs)
@@ -431,12 +461,20 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("libcamera.so.0.7", artifacts_docs)
         self.assertIn("libcamera.so.0.2", board_docs)
         self.assertIn("libcamera.so.0.4", board_docs)
-        self.assertIn('run `ldd` on resolved binaries', artifacts_docs)
+        self.assertIn("run `ldd` on the installed `latest` binary", artifacts_docs)
         self.assertIn("mount /tmp ; mount /var/tmp", board_docs)
-        self.assertIn("/root/.local/share/mise/shims/txing-unit-daemon", artifacts_docs)
+        self.assertIn(
+            "/root/.local/share/mise/installs/txing-unit-daemon/latest/"
+            "txing-unit-daemon",
+            artifacts_docs,
+        )
+        self.assertIn("do not invoke mise", artifacts_docs)
+        self.assertIn("depend on\ngenerated shims", artifacts_docs)
         self.assertIn("Service starts are offline", board_docs)
-        self.assertIn("GitHub Release does not upgrade a board", artifacts_docs)
-        self.assertIn("MISE_OFFLINE=1", artifacts_docs)
+        self.assertIn("Release does not upgrade a board", artifacts_docs)
+        self.assertNotIn("MISE_OFFLINE=1", artifacts_docs)
+        self.assertNotIn("txing-unit-daemon-service", artifacts_docs)
+        self.assertNotIn("txing-board-kvs-master-service", artifacts_docs)
         self.assertNotIn(removed_installer, installation_docs)
         self.assertNotIn(removed_installer, artifacts_docs)
         self.assertNotIn(removed_mise_env, artifacts_docs)
@@ -528,6 +566,35 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn('TXING_RIG_DEPLOY_SCRIPT:-$script_dir/txing-rig-deploy', release_deploy)
         self.assertIn("are not executed locally", release_deploy)
         self.assertNotIn("missing rig AWS config", release_deploy)
+        self.assertNotIn("sudo", release_deploy)
+        self.assertNotIn("chown", release_deploy)
+
+    def test_lambda_release_deploy_runs_from_operator_assets(self) -> None:
+        aws_justfile = (REPO_ROOT / "shared" / "aws" / "justfile").read_text(
+            encoding="utf-8"
+        )
+        aws_lib = (REPO_ROOT / "shared" / "aws" / "scripts" / "aws_lib.sh").read_text(
+            encoding="utf-8"
+        )
+        release_deploy = (
+            REPO_ROOT / "shared" / "aws" / "scripts" / "txing-lambda-deploy-release"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("deploy-lambdas release='latest'", aws_justfile)
+        self.assertIn("TXING_LAMBDA_ARTIFACT_BUCKET", aws_justfile)
+        self.assertIn('scripts/txing-lambda-deploy-release" "{{release}}"', aws_justfile)
+        self.assertNotIn("time::lambda::build", aws_justfile)
+        self.assertNotIn("witness::build", aws_justfile)
+        self.assertNotIn('enlist/justfile" build', aws_justfile)
+        self.assertIn("LambdaArtifactsBucketName=$artifact_bucket", aws_lib)
+        self.assertIn("gh release download", release_deploy)
+        self.assertIn("txing-witness-lambda-linux-aarch64.zip", release_deploy)
+        self.assertIn("txing-enlist-lambda-linux-aarch64.zip", release_deploy)
+        self.assertIn("txing-time-lambda-linux-aarch64.zip", release_deploy)
+        self.assertIn('version_key="lambda/$function_name/$version/bootstrap.zip"', release_deploy)
+        self.assertIn('current_key="lambda/$function_name/current/bootstrap.zip"', release_deploy)
+        self.assertIn("aws lambda update-function-code", release_deploy)
+        self.assertIn("does not exist yet; seeded S3 bootstrap", release_deploy)
         self.assertNotIn("sudo", release_deploy)
         self.assertNotIn("chown", release_deploy)
 

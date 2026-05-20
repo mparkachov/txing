@@ -20,7 +20,7 @@ Repo-wide tooling:
 - `just`
 - `jq`
 - AWS CLI v2
-- GitHub CLI (`gh`) for operator-side release deploys
+- GitHub CLI (`gh`) for operator-side release, Lambda, and Greengrass deploys
 
 Host-specific setup starts in [installation.md](./installation.md). Detailed
 board runtime setup, including read-only rootfs, lives in
@@ -37,12 +37,19 @@ the Greengrass `ComponentVersion`. Create releases with the manual
 `Txing Release` GitHub Actions workflow from `main` after bumping and
 pushing the managed version files yourself. The workflow reads the pushed root
 `VERSION`, fails unless it is newer than the latest existing `v*` tag,
-publishes the GitHub Release, and also publishes the rig binaries. It
-does not commit or push version changes back to `main`.
+publishes the GitHub Release, and also publishes the board, rig, and Lambda
+artifacts. It does not commit or push version changes back to `main`.
 
-Production rigs do not pull the repository and do not run AWS CLI. After a
-release workflow finishes, the operator Mac publishes the release artifacts to
-Greengrass with:
+After a release workflow finishes, the operator Mac publishes Lambda artifacts
+to AWS Lambda and applies AWS infrastructure changes with:
+
+```bash
+just aws::deploy-lambdas latest
+just aws::deploy
+```
+
+Production rigs do not pull the repository and do not run AWS CLI. The operator
+Mac publishes rig release artifacts to Greengrass with:
 
 ```bash
 just rig::deploy-release latest all
@@ -54,7 +61,8 @@ artifacts:
 - release artifacts point at the artifact built from `VERSION`, for example `x.y.z`.
 - GitHub release assets should be immutable for each exact artifact version.
 - The unit daemon uses mise's GitHub backend directly; rig components are
-  published to Greengrass from GitHub release assets; see [artifacts.md](./artifacts.md).
+  published to Greengrass from GitHub release assets; Lambda code is uploaded
+  to AWS Lambda from GitHub release assets; see [artifacts.md](./artifacts.md).
 - Board binary updates are manual writable-root maintenance actions. The
   installed systemd service starts offline from root-owned mise shims and does
   not call GitHub during normal service restart.
@@ -91,6 +99,7 @@ just unit::daemon::run
 just unit::board::run
 just web::dev
 just web::write-env
+just aws::deploy-lambdas latest
 just aws::deploy
 just aws::deploy-town town
 just aws::deploy-rig <town-id> raspi server
