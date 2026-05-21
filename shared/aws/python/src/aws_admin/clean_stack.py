@@ -166,40 +166,6 @@ def _empty_bucket(bucket):
     return {"deletedObjects": deleted, "missing": False}
 
 
-def _detach_policy_targets(policy_name):
-    targets = []
-    marker = None
-    while True:
-        request = {
-            "policyName": policy_name,
-            "pageSize": 250,
-        }
-        if marker:
-            request["marker"] = marker
-        try:
-            response = _iot().list_targets_for_policy(**request)
-        except Exception as error:
-            if _error_code(error) in {"ResourceNotFoundException", "NotFoundException"}:
-                return {"detachedTargets": 0, "missing": True}
-            raise
-        targets.extend(response.get("targets", []))
-        marker = response.get("nextMarker")
-        if not marker:
-            break
-
-    detached = 0
-    for target in sorted(set(targets)):
-        try:
-            _iot().detach_policy(policyName=policy_name, target=target)
-        except Exception as error:
-            code = _error_code(error)
-            message = str(error).lower()
-            if code not in {"ResourceNotFoundException", "NotFoundException"} and "not attached" not in message:
-                raise
-        detached += 1
-    return {"detachedTargets": detached, "missing": False}
-
-
 def _fleet_indexing_configuration():
     return {
         "thingIndexingMode": "REGISTRY",
@@ -434,7 +400,7 @@ def _handle_create_or_update(properties):
         return _configure_iot_fleet_indexing()
     if cleanup_type == "TypeCatalog":
         return _ensure_type_catalog(properties)
-    if cleanup_type in {"S3Bucket", "IotPolicyAttachments"}:
+    if cleanup_type == "S3Bucket":
         return {}
     raise ValueError(f"Unsupported CleanupType: {cleanup_type!r}")
 
@@ -443,11 +409,6 @@ def _handle_delete(properties):
     cleanup_type = properties.get("CleanupType")
     if cleanup_type == "S3Bucket":
         return _empty_bucket(properties["BucketName"])
-    if cleanup_type == "IotPolicyAttachments":
-        results = {}
-        for policy_name in properties.get("PolicyNames", []):
-            results[policy_name] = _detach_policy_targets(policy_name)
-        return {"policies": results}
     if cleanup_type == "IotFleetIndexing":
         return {"skipped": True}
     if cleanup_type == "TypeCatalog":

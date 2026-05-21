@@ -23,7 +23,6 @@ from aws.type_catalog import (
     rig_type_path,
     town_type_path,
 )
-from aws_admin.cfn import stack_is_deleting
 
 
 THING_INDEX_NAME = "AWS_Things"
@@ -973,15 +972,10 @@ def _handle_cfn_custom_resource(event: dict[str, Any], context: Any) -> dict[str
         if properties.get("CleanupType") != "TxingDischargeThings":
             raise EnlistError(f"Unsupported CleanupType: {properties.get('CleanupType')!r}")
         data: dict[str, Any]
-        if event.get("RequestType") == "Delete":
-            if stack_is_deleting(event["StackId"]):
-                region_name = resolve_aws_region()
-                runtime = build_aws_runtime(region_name=region_name)
-                data = EnlistService(runtime).discharge_all().to_payload()
-            else:
-                data = {"skipped": True, "reason": "stack is not deleting"}
-        else:
-            data = {"skipped": True}
+        data = {
+            "skipped": True,
+            "reason": "CloudFormation cleanup must not delete manually enlisted things",
+        }
         _send_cfn_response(
             event,
             context,

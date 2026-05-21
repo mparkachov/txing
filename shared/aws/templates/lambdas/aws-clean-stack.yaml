@@ -1,0 +1,122 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: txing aws-clean-stack Lambda and base cleanup custom resources.
+
+Parameters:
+  AwsAdminCodeS3Bucket:
+    Type: String
+    Description: S3 bucket containing the packaged AWS admin Lambda code.
+  AwsAdminCodeS3Key:
+    Type: String
+    Description: S3 key containing the packaged AWS admin Lambda code.
+  GreengrassArtifactsBucketName:
+    Type: String
+  GreengrassArtifactsBucketArn:
+    Type: String
+
+Resources:
+  AwsCleanStackLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/aws-clean-stack
+      RetentionInDays: 14
+
+  AwsCleanStackRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: Handles txing base-stack custom resources for cleanup and Fleet Indexing.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: stack-cleanup
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: CleanupLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+              - Sid: EmptyDisposableBuckets
+                Effect: Allow
+                Action:
+                  - s3:ListBucket
+                  - s3:ListBucketVersions
+                Resource:
+                  - !Ref GreengrassArtifactsBucketArn
+              - Sid: DeleteDisposableBucketObjects
+                Effect: Allow
+                Action:
+                  - s3:DeleteObject
+                  - s3:DeleteObjectVersion
+                Resource:
+                  - !Sub "${GreengrassArtifactsBucketArn}/*"
+              - Sid: ConfigureIotFleetIndexing
+                Effect: Allow
+                Action:
+                  - iot:UpdateIndexingConfiguration
+                  - iot:GetIndexingConfiguration
+                Resource: "*"
+              - Sid: ManageTxingThingTypes
+                Effect: Allow
+                Action:
+                  - iot:CreateThingType
+                  - iot:DescribeThingType
+                  - iot:UpdateThingType
+                  - iot:DeprecateThingType
+                Resource: "*"
+              - Sid: ManageTxingTypeCatalog
+                Effect: Allow
+                Action:
+                  - ssm:PutParameter
+                  - ssm:DeleteParameter
+                  - ssm:GetParametersByPath
+                Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/txing/*
+              - Sid: DescribeCloudFormationStack
+                Effect: Allow
+                Action: cloudformation:DescribeStacks
+                Resource: "*"
+
+  AwsCleanStackFunction:
+    Type: AWS::Lambda::Function
+    DependsOn:
+      - AwsCleanStackLogGroup
+    Properties:
+      FunctionName: aws-clean-stack
+      Description: CloudFormation custom resources for txing cleanup and Fleet Indexing.
+      Role: !GetAtt AwsCleanStackRole.Arn
+      Runtime: python3.12
+      Handler: aws_admin.clean_stack.lambda_handler
+      MemorySize: 128
+      Timeout: 300
+      Code:
+        S3Bucket: !Ref AwsAdminCodeS3Bucket
+        S3Key: !Ref AwsAdminCodeS3Key
+
+  AwsCleanStackIotFleetIndexing:
+    Type: Custom::TxingIotFleetIndexing
+    Properties:
+      ServiceToken: !GetAtt AwsCleanStackFunction.Arn
+      CleanupType: IotFleetIndexing
+      PhysicalResourceId: txing-iot-fleet-indexing
+
+  AwsCleanStackGreengrassArtifactsBucketCleanup:
+    Type: Custom::TxingS3BucketCleanup
+    Properties:
+      ServiceToken: !GetAtt AwsCleanStackFunction.Arn
+      CleanupType: S3Bucket
+      BucketName: !Ref GreengrassArtifactsBucketName
+
+Outputs:
+  CustomResourceServiceToken:
+    Value: !GetAtt AwsCleanStackFunction.Arn
+  CleanStackFunctionName:
+    Value: !Ref AwsCleanStackFunction
+  CleanStackFunctionArn:
+    Value: !GetAtt AwsCleanStackFunction.Arn

@@ -13,11 +13,9 @@ These functions call boto3-heavy AWS control-plane APIs for CloudFormation, S3,
 IoT registry, Greengrass, SSM, and operator publishing workflows. They are
 packaged with `just aws::deploy` as CloudFormation-managed stack code, not as
 GitHub release runtime artifacts.
-
-Existing stacks may temporarily retain legacy custom-resource service-token
-functions such as `txing-enlist-lambda` and the old generated cleanup function.
-Those are migration bridges only: operator commands and stack outputs point at
-the `aws-*` admin functions, and the legacy functions are not release artifacts.
+Each Lambda is owned by a dedicated nested stack under `shared/aws/templates/lambdas/`.
+The template is intentionally clean-stack only: it does not contain rollback,
+migration, or legacy service-token bridge modes.
 
 Runtime Lambdas are Go:
 

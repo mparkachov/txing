@@ -1,0 +1,109 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: txing-cloud-rig-lambda runtime.
+
+Parameters:
+  LambdaArtifactsBucketName:
+    Type: String
+    Description: S3 bucket containing release-built Lambda bootstrap zip artifacts.
+  CloudMcuTickQueueArn:
+    Type: String
+  CloudMcuTickQueueUrl:
+    Type: String
+  CloudMcuRuntimeScheduleExpression:
+    Type: String
+    Default: rate(1 minute)
+
+Resources:
+  CloudRigRuntimeLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/txing-cloud-rig-lambda
+      RetentionInDays: 14
+
+  CloudRigRuntimeFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: Schedules cloud MCU SQS watch-link ticks for cloud rigs.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: cloud-rig-runtime
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: CloudRigRuntimeLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !GetAtt CloudRigRuntimeLogGroup.Arn
+                  - !Sub ${CloudRigRuntimeLogGroup.Arn}:*
+              - Sid: CloudRigRuntimeSparkplug
+                Effect: Allow
+                Action: iot:Publish
+                Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/spBv1.0/*
+              - Sid: CloudRigRuntimeFleetIndexing
+                Effect: Allow
+                Action: iot:SearchIndex
+                Resource: "*"
+              - Sid: CloudRigRuntimeDescribeEndpoint
+                Effect: Allow
+                Action: iot:DescribeEndpoint
+                Resource: "*"
+              - Sid: CloudRigRuntimeSqs
+                Effect: Allow
+                Action: sqs:SendMessage
+                Resource: !Ref CloudMcuTickQueueArn
+
+  CloudRigRuntimeFunction:
+    Type: AWS::Lambda::Function
+    DependsOn:
+      - CloudRigRuntimeLogGroup
+    Properties:
+      FunctionName: txing-cloud-rig-lambda
+      Description: EventBridge scheduler for cloud MCU SQS watch-link ticks.
+      Runtime: provided.al2023
+      Handler: bootstrap
+      Architectures:
+        - arm64
+      Code:
+        S3Bucket: !Ref LambdaArtifactsBucketName
+        S3Key: lambda/txing-cloud-rig-lambda/current/bootstrap.zip
+      Role: !GetAtt CloudRigRuntimeFunctionRole.Arn
+      Timeout: 60
+      MemorySize: 128
+      Environment:
+        Variables:
+          CLOUD_MCU_TICK_QUEUE_URL: !Ref CloudMcuTickQueueUrl
+
+  CloudRigRuntimeScheduleRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Schedule cloud MCU watch-link ticks once per minute.
+      ScheduleExpression: !Ref CloudMcuRuntimeScheduleExpression
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt CloudRigRuntimeFunction.Arn
+          Id: CloudRigRuntimeFunction
+
+  CloudRigRuntimeSchedulePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref CloudRigRuntimeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt CloudRigRuntimeScheduleRule.Arn
+
+Outputs:
+  CloudRigRuntimeFunctionName:
+    Value: !Ref CloudRigRuntimeFunction
+  CloudRigRuntimeFunctionArn:
+    Value: !GetAtt CloudRigRuntimeFunction.Arn
+  CloudRigRuntimeScheduleRuleName:
+    Value: !Ref CloudRigRuntimeScheduleRule

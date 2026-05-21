@@ -23,34 +23,9 @@ class CleanStackTests(unittest.TestCase):
             ],
         )
 
-    def test_delete_policy_attachments_detaches_targets(self) -> None:
-        class FakeIot:
-            def __init__(self) -> None:
-                self.detached: list[tuple[str, str]] = []
-
-            def list_targets_for_policy(self, **kwargs: Any) -> dict[str, Any]:
-                if kwargs["policyName"] != "policy":
-                    raise AssertionError(kwargs)
-                return {"targets": ["cert/b", "cert/a", "cert/a"]}
-
-            def detach_policy(self, *, policyName: str, target: str) -> None:
-                self.detached.append((policyName, target))
-
-        fake = FakeIot()
-        original = clean_stack.iot
-        clean_stack.iot = fake
-        try:
-            result = clean_stack._handle_delete(
-                {"CleanupType": "IotPolicyAttachments", "PolicyNames": ["policy"]}
-            )
-        finally:
-            clean_stack.iot = original
-
-        self.assertEqual(
-            result,
-            {"policies": {"policy": {"detachedTargets": 2, "missing": False}}},
-        )
-        self.assertEqual(fake.detached, [("policy", "cert/a"), ("policy", "cert/b")])
+    def test_delete_policy_attachments_is_not_supported(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Unsupported CleanupType"):
+            clean_stack._handle_delete({"CleanupType": "IotPolicyAttachments"})
 
     def test_type_catalog_create_rejects_non_map_parameters(self) -> None:
         with self.assertRaisesRegex(TypeError, "CatalogParameters must be a map"):
@@ -68,10 +43,10 @@ class CleanStackTests(unittest.TestCase):
             "ResponseURL": "https://cloudformation-response.example",
             "StackId": "stack",
             "RequestId": "request",
-            "LogicalResourceId": "TxingIotPolicyAttachmentCleanup",
+            "LogicalResourceId": "TxingGreengrassArtifactsBucketCleanup",
             "ResourceProperties": {
-                "CleanupType": "IotPolicyAttachments",
-                "PolicyNames": ["policy"],
+                "CleanupType": "S3Bucket",
+                "BucketName": "bucket",
             },
         }
         sent: list[dict[str, Any]] = []

@@ -452,7 +452,7 @@ class EnlistServiceTests(unittest.TestCase):
             self.assertEqual(failed["errorType"], "Error")
             self.assertIn("ssm failed", failed["message"])
 
-    def test_cfn_create_update_skip_delete_discharges_and_failure_sends_failed(self) -> None:
+    def test_cfn_create_update_delete_never_discharges_things_and_failure_sends_failed(self) -> None:
         town = self._enlist_town()
         cloud = self._enlist_rig(town["thingName"], "cloud", "aws")
         self._enlist_device(cloud["thingName"], "cloud-mcu", "cloud")
@@ -470,9 +470,6 @@ class EnlistServiceTests(unittest.TestCase):
             sent.append((status, dict(data or {}), reason, physical_resource_id))
 
         with (
-            patch.object(enlist, "resolve_aws_region", return_value="eu-central-1"),
-            patch.object(enlist, "build_aws_runtime", return_value=self.runtime),
-            patch.object(enlist, "stack_is_deleting", return_value=True),
             patch.object(enlist, "_send_cfn_response", side_effect=send_response),
         ):
             create = enlist.lambda_handler(_cfn_event("Create", "TxingDischargeThings"), object())
@@ -482,7 +479,8 @@ class EnlistServiceTests(unittest.TestCase):
         self.assertEqual(create["ok"], True)
         self.assertEqual(create["skipped"], True)
         self.assertEqual(delete["ok"], True)
-        self.assertEqual(delete["deletedThingCount"], 3)
+        self.assertEqual(delete["skipped"], True)
+        self.assertEqual(len(self.runtime.iot.things), 3)
         self.assertEqual(failed["ok"], False)
         self.assertEqual(failed["errorType"], "EnlistError")
         self.assertEqual([row[0] for row in sent], ["SUCCESS", "SUCCESS", "FAILED"])

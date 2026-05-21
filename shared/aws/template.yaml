@@ -46,27 +46,42 @@ Resources:
         LocalhostAppUrl: !Ref LocalhostAppUrl
         LocalhostAltAppUrl: !Ref LocalhostAltAppUrl
         WebAppUrl: !Ref StackWebAppUrl
-        LambdaArtifactsBucketName: !Ref LambdaArtifactsBucketName
-        AwsAdminCodeS3Bucket: !Ref AwsAdminCodeS3Bucket
-        AwsAdminCodeS3Key: !Ref AwsAdminCodeS3Key
 
-  TownTypeCatalog:
+  CleanStackLayer:
     Type: AWS::CloudFormation::Stack
     DependsOn: BaseEnvironment
     Properties:
+      TemplateURL: templates/lambdas/aws-clean-stack.yaml
+      Parameters:
+        AwsAdminCodeS3Bucket: !Ref AwsAdminCodeS3Bucket
+        AwsAdminCodeS3Key: !Ref AwsAdminCodeS3Key
+        GreengrassArtifactsBucketName: !GetAtt BaseEnvironment.Outputs.GreengrassArtifactsBucketName
+        GreengrassArtifactsBucketArn: !GetAtt BaseEnvironment.Outputs.GreengrassArtifactsBucketArn
+
+  WitnessLayer:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: BaseEnvironment
+    Properties:
+      TemplateURL: templates/lambdas/txing-witness-lambda.yaml
+      Parameters:
+        LambdaArtifactsBucketName: !Ref LambdaArtifactsBucketName
+
+  TownTypeCatalog:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: CleanStackLayer
+    Properties:
       TemplateURL: templates/types/town.yaml
       Parameters:
-        TypeCatalogServiceToken: !GetAtt BaseEnvironment.Outputs.CustomResourceServiceToken
+        TypeCatalogServiceToken: !GetAtt CleanStackLayer.Outputs.CustomResourceServiceToken
 
   RaspiTypeCatalog:
     Type: AWS::CloudFormation::Stack
     DependsOn:
-      - BaseEnvironment
       - TownTypeCatalog
     Properties:
       TemplateURL: templates/types/raspi.yaml
       Parameters:
-        TypeCatalogServiceToken: !GetAtt BaseEnvironment.Outputs.CustomResourceServiceToken
+        TypeCatalogServiceToken: !GetAtt CleanStackLayer.Outputs.CustomResourceServiceToken
 
   RaspiUnitTypeCatalog:
     Type: AWS::CloudFormation::Stack
@@ -76,7 +91,7 @@ Resources:
     Properties:
       TemplateURL: templates/types/raspi-unit.yaml
       Parameters:
-        TypeCatalogServiceToken: !GetAtt BaseEnvironment.Outputs.CustomResourceServiceToken
+        TypeCatalogServiceToken: !GetAtt CleanStackLayer.Outputs.CustomResourceServiceToken
 
   RaspiWeatherTypeCatalog:
     Type: AWS::CloudFormation::Stack
@@ -86,7 +101,7 @@ Resources:
     Properties:
       TemplateURL: templates/types/raspi-weather.yaml
       Parameters:
-        TypeCatalogServiceToken: !GetAtt BaseEnvironment.Outputs.CustomResourceServiceToken
+        TypeCatalogServiceToken: !GetAtt CleanStackLayer.Outputs.CustomResourceServiceToken
 
   RaspiPowerTypeCatalog:
     Type: AWS::CloudFormation::Stack
@@ -96,17 +111,16 @@ Resources:
     Properties:
       TemplateURL: templates/types/raspi-power.yaml
       Parameters:
-        TypeCatalogServiceToken: !GetAtt BaseEnvironment.Outputs.CustomResourceServiceToken
+        TypeCatalogServiceToken: !GetAtt CleanStackLayer.Outputs.CustomResourceServiceToken
 
   CloudTypeCatalog:
     Type: AWS::CloudFormation::Stack
     DependsOn:
-      - BaseEnvironment
       - TownTypeCatalog
     Properties:
       TemplateURL: templates/types/cloud.yaml
       Parameters:
-        TypeCatalogServiceToken: !GetAtt BaseEnvironment.Outputs.CustomResourceServiceToken
+        TypeCatalogServiceToken: !GetAtt CleanStackLayer.Outputs.CustomResourceServiceToken
 
   CloudMcuTypeCatalog:
     Type: AWS::CloudFormation::Stack
@@ -116,8 +130,34 @@ Resources:
     Properties:
       TemplateURL: templates/types/cloud-mcu.yaml
       Parameters:
-        TypeCatalogServiceToken: !GetAtt BaseEnvironment.Outputs.CustomResourceServiceToken
+        TypeCatalogServiceToken: !GetAtt CleanStackLayer.Outputs.CustomResourceServiceToken
+
+  CloudRigRuntimeLambdaLayer:
+    Type: AWS::CloudFormation::Stack
+    DependsOn:
+      - CloudMcuTypeCatalog
+    Properties:
+      TemplateURL: templates/lambdas/txing-cloud-rig-lambda.yaml
+      Parameters:
         LambdaArtifactsBucketName: !Ref LambdaArtifactsBucketName
+        CloudMcuTickQueueArn: !GetAtt CloudMcuTypeCatalog.Outputs.CloudMcuTickQueueArn
+        CloudMcuTickQueueUrl: !GetAtt CloudMcuTypeCatalog.Outputs.CloudMcuTickQueueUrl
+
+  CloudMcuRuntimeLambdaLayer:
+    Type: AWS::CloudFormation::Stack
+    DependsOn:
+      - CloudMcuTypeCatalog
+    Properties:
+      TemplateURL: templates/lambdas/txing-cloud-mcu-lambda.yaml
+      Parameters:
+        LambdaArtifactsBucketName: !Ref LambdaArtifactsBucketName
+        CloudMcuTickQueueArn: !GetAtt CloudMcuTypeCatalog.Outputs.CloudMcuTickQueueArn
+        CloudMcuClusterName: !GetAtt CloudMcuTypeCatalog.Outputs.CloudMcuClusterName
+        CloudMcuTaskDefinitionArn: !GetAtt CloudMcuTypeCatalog.Outputs.CloudMcuTaskDefinitionArn
+        CloudMcuSubnetId: !GetAtt CloudMcuTypeCatalog.Outputs.CloudMcuSubnetId
+        CloudMcuTaskSecurityGroupId: !GetAtt CloudMcuTypeCatalog.Outputs.CloudMcuTaskSecurityGroupId
+        CloudMcuTaskExecutionRoleArn: !GetAtt CloudMcuTypeCatalog.Outputs.CloudMcuTaskExecutionRoleArn
+        CloudMcuTaskRoleArn: !GetAtt CloudMcuTypeCatalog.Outputs.CloudMcuTaskRoleArn
 
   RigRuntimeLayer:
     Type: AWS::CloudFormation::Stack
@@ -136,7 +176,6 @@ Resources:
   EnlistLayer:
     Type: AWS::CloudFormation::Stack
     DependsOn:
-      - BaseEnvironment
       - TownTypeCatalog
       - RaspiTypeCatalog
       - RaspiUnitTypeCatalog
@@ -145,136 +184,26 @@ Resources:
       - CloudTypeCatalog
       - CloudMcuTypeCatalog
     Properties:
-      TemplateURL: templates/enlist.yaml
+      TemplateURL: templates/lambdas/aws-enlist-txing.yaml
       Parameters:
         AwsAdminCodeS3Bucket: !Ref AwsAdminCodeS3Bucket
         AwsAdminCodeS3Key: !Ref AwsAdminCodeS3Key
 
-  AwsPublishReleaseLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: /aws/lambda/aws-publish-release
-      RetentionInDays: 14
-
-  AwsPublishReleaseRole:
-    Type: AWS::IAM::Role
-    Properties:
-      Description: Publishes txing release artifacts to Lambda and Greengrass.
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: lambda.amazonaws.com
-            Action: sts:AssumeRole
-      Policies:
-        - PolicyName: release-publisher
-          PolicyDocument:
-            Version: "2012-10-17"
-            Statement:
-              - Sid: ReleasePublisherLogs
-                Effect: Allow
-                Action:
-                  - logs:CreateLogStream
-                  - logs:PutLogEvents
-                Resource:
-                  - !GetAtt AwsPublishReleaseLogGroup.Arn
-                  - !Sub ${AwsPublishReleaseLogGroup.Arn}:*
-              - Sid: ListLambdaArtifacts
-                Effect: Allow
-                Action:
-                  - s3:ListBucket
-                  - s3:ListBucketMultipartUploads
-                Resource: !Sub arn:${AWS::Partition}:s3:::${LambdaArtifactsBucketName}
-                Condition:
-                  StringLike:
-                    s3:prefix:
-                      - lambda/*
-              - Sid: WriteLambdaArtifacts
-                Effect: Allow
-                Action:
-                  - s3:AbortMultipartUpload
-                  - s3:GetObject
-                  - s3:ListMultipartUploadParts
-                  - s3:PutObject
-                Resource: !Sub arn:${AWS::Partition}:s3:::${LambdaArtifactsBucketName}/lambda/*
-              - Sid: ListGreengrassArtifacts
-                Effect: Allow
-                Action:
-                  - s3:ListBucket
-                  - s3:ListBucketMultipartUploads
-                Resource: !Sub
-                  - arn:${AWS::Partition}:s3:::${BucketName}
-                  - BucketName: !GetAtt BaseEnvironment.Outputs.GreengrassArtifactsBucketName
-                Condition:
-                  StringLike:
-                    s3:prefix:
-                      - artifacts/*
-              - Sid: WriteGreengrassArtifacts
-                Effect: Allow
-                Action:
-                  - s3:AbortMultipartUpload
-                  - s3:GetObject
-                  - s3:ListMultipartUploadParts
-                  - s3:PutObject
-                Resource: !Sub
-                  - arn:${AWS::Partition}:s3:::${BucketName}/artifacts/*
-                  - BucketName: !GetAtt BaseEnvironment.Outputs.GreengrassArtifactsBucketName
-              - Sid: UpdateReleaseLambdas
-                Effect: Allow
-                Action:
-                  - lambda:GetFunction
-                  - lambda:GetFunctionConfiguration
-                  - lambda:UpdateFunctionCode
-                Resource:
-                  - !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:txing-witness-lambda
-                  - !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:txing-cloud-rig-lambda
-                  - !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:txing-cloud-mcu-lambda
-              - Sid: PublishGreengrassComponents
-                Effect: Allow
-                Action:
-                  - greengrass:CreateComponentVersion
-                  - greengrass:CreateDeployment
-                Resource: "*"
-              - Sid: ManageGreengrassThingGroups
-                Effect: Allow
-                Action:
-                  - iot:CreateThingGroup
-                  - iot:DescribeThingGroup
-                  - iot:DescribeEndpoint
-                Resource: "*"
-              - Sid: CreateGreengrassDeploymentJobs
-                Effect: Allow
-                Action:
-                  - iot:CancelJob
-                  - iot:CreateJob
-                  - iot:DescribeJob
-                  - iot:UpdateJob
-                Resource:
-                  - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thinggroup/txing-rig-type-*
-                  - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:job/*
-
-  AwsPublishReleaseFunction:
-    Type: AWS::Lambda::Function
+  PublishReleaseLayer:
+    Type: AWS::CloudFormation::Stack
     DependsOn:
-      - AwsPublishReleaseLogGroup
       - BaseEnvironment
+      - WitnessLayer
+      - CloudRigRuntimeLambdaLayer
+      - CloudMcuRuntimeLambdaLayer
     Properties:
-      FunctionName: aws-publish-release
-      Description: Publishes txing release artifacts to Lambda and Greengrass.
-      Runtime: python3.12
-      Handler: aws_admin.publish_release.handler.lambda_handler
-      Code:
-        S3Bucket: !Ref AwsAdminCodeS3Bucket
-        S3Key: !Ref AwsAdminCodeS3Key
-      Role: !GetAtt AwsPublishReleaseRole.Arn
-      Timeout: 300
-      MemorySize: 512
-      Environment:
-        Variables:
-          TXING_GITHUB_REPOSITORY: !Ref GithubRepository
-          TXING_LAMBDA_ARTIFACT_BUCKET: !Ref LambdaArtifactsBucketName
-          TXING_GREENGRASS_ARTIFACT_BUCKET: !GetAtt BaseEnvironment.Outputs.GreengrassArtifactsBucketName
+      TemplateURL: templates/lambdas/aws-publish-release.yaml
+      Parameters:
+        AwsAdminCodeS3Bucket: !Ref AwsAdminCodeS3Bucket
+        AwsAdminCodeS3Key: !Ref AwsAdminCodeS3Key
+        LambdaArtifactsBucketName: !Ref LambdaArtifactsBucketName
+        GreengrassArtifactsBucketName: !GetAtt BaseEnvironment.Outputs.GreengrassArtifactsBucketName
+        GithubRepository: !Ref GithubRepository
 
 Outputs:
   RigLogGroupPattern:
@@ -302,9 +231,9 @@ Outputs:
   GreengrassArtifactsBucketName:
     Value: !GetAtt BaseEnvironment.Outputs.GreengrassArtifactsBucketName
   ReleasePublisherFunctionName:
-    Value: !Ref AwsPublishReleaseFunction
+    Value: !GetAtt PublishReleaseLayer.Outputs.ReleasePublisherFunctionName
   ReleasePublisherFunctionArn:
-    Value: !GetAtt AwsPublishReleaseFunction.Arn
+    Value: !GetAtt PublishReleaseLayer.Outputs.ReleasePublisherFunctionArn
   RigRuntimeRoleArn:
     Value: !GetAtt RigRuntimeLayer.Outputs.RigRuntimeRoleArn
   RigRuntimeRoleName:
@@ -340,16 +269,16 @@ Outputs:
   EnlistFunctionArn:
     Value: !GetAtt EnlistLayer.Outputs.EnlistFunctionArn
   WitnessFunctionName:
-    Value: !GetAtt BaseEnvironment.Outputs.WitnessFunctionName
+    Value: !GetAtt WitnessLayer.Outputs.WitnessFunctionName
   WitnessFunctionArn:
-    Value: !GetAtt BaseEnvironment.Outputs.WitnessFunctionArn
+    Value: !GetAtt WitnessLayer.Outputs.WitnessFunctionArn
   CloudRigRuntimeFunctionName:
-    Value: !GetAtt CloudMcuTypeCatalog.Outputs.CloudRigRuntimeFunctionName
+    Value: !GetAtt CloudRigRuntimeLambdaLayer.Outputs.CloudRigRuntimeFunctionName
   CloudMcuRuntimeFunctionName:
-    Value: !GetAtt CloudMcuTypeCatalog.Outputs.CloudMcuRuntimeFunctionName
+    Value: !GetAtt CloudMcuRuntimeLambdaLayer.Outputs.CloudMcuRuntimeFunctionName
   CloudMcuTickQueueUrl:
     Value: !GetAtt CloudMcuTypeCatalog.Outputs.CloudMcuTickQueueUrl
   CloudRigRuntimeScheduleRuleName:
-    Value: !GetAtt CloudMcuTypeCatalog.Outputs.CloudRigRuntimeScheduleRuleName
+    Value: !GetAtt CloudRigRuntimeLambdaLayer.Outputs.CloudRigRuntimeScheduleRuleName
   CloudMcuDcmdTopicRuleArn:
-    Value: !GetAtt CloudMcuTypeCatalog.Outputs.CloudMcuDcmdTopicRuleArn
+    Value: !GetAtt CloudMcuRuntimeLambdaLayer.Outputs.CloudMcuDcmdTopicRuleArn

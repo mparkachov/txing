@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: txing enlist Lambda for town, rig, and device enrollment.
+Description: txing aws-enlist-txing Lambda.
 
 Parameters:
   AwsAdminCodeS3Bucket:
@@ -10,19 +10,13 @@ Parameters:
     Description: S3 key containing the packaged AWS admin Lambda code.
 
 Resources:
-  TxingEnlistLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: /aws/lambda/txing-enlist-lambda
-      RetentionInDays: 14
-
   AwsEnlistTxingLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: /aws/lambda/aws-enlist-txing
       RetentionInDays: 14
 
-  TxingEnlistRole:
+  AwsEnlistTxingRole:
     Type: AWS::IAM::Role
     Properties:
       Description: Executes txing town, rig, and device enlistment.
@@ -44,8 +38,6 @@ Resources:
                   - logs:CreateLogStream
                   - logs:PutLogEvents
                 Resource:
-                  - !GetAtt TxingEnlistLogGroup.Arn
-                  - !Sub ${TxingEnlistLogGroup.Arn}:*
                   - !GetAtt AwsEnlistTxingLogGroup.Arn
                   - !Sub ${AwsEnlistTxingLogGroup.Arn}:*
               - Sid: EnlistThingRegistryWrite
@@ -98,27 +90,6 @@ Resources:
                   - kinesisvideo:CreateSignalingChannel
                   - kinesisvideo:DescribeSignalingChannel
                 Resource: "*"
-              - Sid: EnlistDescribeCloudFormationStack
-                Effect: Allow
-                Action: cloudformation:DescribeStacks
-                Resource: "*"
-  TxingEnlistFunction:
-    Type: AWS::Lambda::Function
-    DependsOn:
-      - TxingEnlistLogGroup
-    Properties:
-      FunctionName: txing-enlist-lambda
-      Description: Legacy service-token bridge for pre-aws-enlist-txing custom resources.
-      Runtime: python3.12
-      Handler: aws_admin.enlist_txing.lambda_handler
-      Code:
-        S3Bucket: !Ref AwsAdminCodeS3Bucket
-        S3Key: !Ref AwsAdminCodeS3Key
-      Role: !GetAtt TxingEnlistRole.Arn
-      Timeout: 60
-      MemorySize: 128
-      Architectures:
-        - arm64
 
   AwsEnlistTxingFunction:
     Type: AWS::Lambda::Function
@@ -132,18 +103,9 @@ Resources:
       Code:
         S3Bucket: !Ref AwsAdminCodeS3Bucket
         S3Key: !Ref AwsAdminCodeS3Key
-      Role: !GetAtt TxingEnlistRole.Arn
+      Role: !GetAtt AwsEnlistTxingRole.Arn
       Timeout: 60
       MemorySize: 128
-
-  TxingDischargeThingsOnStackDelete:
-    Type: Custom::TxingDischargeThings
-    DependsOn:
-      - TxingEnlistFunction
-    Properties:
-      ServiceToken: !GetAtt TxingEnlistFunction.Arn
-      CleanupType: TxingDischargeThings
-      PhysicalResourceId: txing-discharge-things-on-delete
 
 Outputs:
   EnlistFunctionName:

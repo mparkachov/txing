@@ -1,0 +1,148 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: txing aws-publish-release Lambda.
+
+Parameters:
+  AwsAdminCodeS3Bucket:
+    Type: String
+    Description: S3 bucket containing the packaged AWS admin Lambda code.
+  AwsAdminCodeS3Key:
+    Type: String
+    Description: S3 key containing the packaged AWS admin Lambda code.
+  LambdaArtifactsBucketName:
+    Type: String
+    Description: S3 bucket containing release-built Lambda bootstrap zip artifacts.
+  GreengrassArtifactsBucketName:
+    Type: String
+  GithubRepository:
+    Type: String
+    Default: mparkachov/txing
+    AllowedPattern: "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+    Description: Public GitHub repository containing txing release assets.
+
+Resources:
+  AwsPublishReleaseLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/aws-publish-release
+      RetentionInDays: 14
+
+  AwsPublishReleaseRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: Publishes txing release artifacts to Lambda and Greengrass.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: release-publisher
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ReleasePublisherLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !GetAtt AwsPublishReleaseLogGroup.Arn
+                  - !Sub ${AwsPublishReleaseLogGroup.Arn}:*
+              - Sid: ListLambdaArtifacts
+                Effect: Allow
+                Action:
+                  - s3:ListBucket
+                  - s3:ListBucketMultipartUploads
+                Resource: !Sub arn:${AWS::Partition}:s3:::${LambdaArtifactsBucketName}
+                Condition:
+                  StringLike:
+                    s3:prefix:
+                      - lambda/*
+              - Sid: WriteLambdaArtifacts
+                Effect: Allow
+                Action:
+                  - s3:AbortMultipartUpload
+                  - s3:GetObject
+                  - s3:ListMultipartUploadParts
+                  - s3:PutObject
+                Resource: !Sub arn:${AWS::Partition}:s3:::${LambdaArtifactsBucketName}/lambda/*
+              - Sid: ListGreengrassArtifacts
+                Effect: Allow
+                Action:
+                  - s3:ListBucket
+                  - s3:ListBucketMultipartUploads
+                Resource: !Sub arn:${AWS::Partition}:s3:::${GreengrassArtifactsBucketName}
+                Condition:
+                  StringLike:
+                    s3:prefix:
+                      - artifacts/*
+              - Sid: WriteGreengrassArtifacts
+                Effect: Allow
+                Action:
+                  - s3:AbortMultipartUpload
+                  - s3:GetObject
+                  - s3:ListMultipartUploadParts
+                  - s3:PutObject
+                Resource: !Sub arn:${AWS::Partition}:s3:::${GreengrassArtifactsBucketName}/artifacts/*
+              - Sid: UpdateReleaseLambdas
+                Effect: Allow
+                Action:
+                  - lambda:GetFunction
+                  - lambda:GetFunctionConfiguration
+                  - lambda:UpdateFunctionCode
+                Resource:
+                  - !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:txing-witness-lambda
+                  - !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:txing-cloud-rig-lambda
+                  - !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:txing-cloud-mcu-lambda
+              - Sid: PublishGreengrassComponents
+                Effect: Allow
+                Action:
+                  - greengrass:CreateComponentVersion
+                  - greengrass:CreateDeployment
+                Resource: "*"
+              - Sid: ManageGreengrassThingGroups
+                Effect: Allow
+                Action:
+                  - iot:CreateThingGroup
+                  - iot:DescribeThingGroup
+                  - iot:DescribeEndpoint
+                Resource: "*"
+              - Sid: CreateGreengrassDeploymentJobs
+                Effect: Allow
+                Action:
+                  - iot:CancelJob
+                  - iot:CreateJob
+                  - iot:DescribeJob
+                  - iot:UpdateJob
+                Resource:
+                  - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thinggroup/txing-rig-type-*
+                  - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:job/*
+
+  AwsPublishReleaseFunction:
+    Type: AWS::Lambda::Function
+    DependsOn:
+      - AwsPublishReleaseLogGroup
+    Properties:
+      FunctionName: aws-publish-release
+      Description: Publishes txing release artifacts to Lambda and Greengrass.
+      Runtime: python3.12
+      Handler: aws_admin.publish_release.handler.lambda_handler
+      Code:
+        S3Bucket: !Ref AwsAdminCodeS3Bucket
+        S3Key: !Ref AwsAdminCodeS3Key
+      Role: !GetAtt AwsPublishReleaseRole.Arn
+      Timeout: 300
+      MemorySize: 512
+      Environment:
+        Variables:
+          TXING_GITHUB_REPOSITORY: !Ref GithubRepository
+          TXING_LAMBDA_ARTIFACT_BUCKET: !Ref LambdaArtifactsBucketName
+          TXING_GREENGRASS_ARTIFACT_BUCKET: !Ref GreengrassArtifactsBucketName
+
+Outputs:
+  ReleasePublisherFunctionName:
+    Value: !Ref AwsPublishReleaseFunction
+  ReleasePublisherFunctionArn:
+    Value: !GetAtt AwsPublishReleaseFunction.Arn

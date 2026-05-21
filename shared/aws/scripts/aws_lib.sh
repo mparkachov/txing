@@ -258,13 +258,20 @@ deploy_template() {
   if [ "${#parameter_values[@]}" -gt 0 ]; then
     parameter_overrides+=(--parameter-overrides "${parameter_values[@]}")
   fi
-  aws cloudformation deploy \
-    --stack-name "$stack_name" \
-    --template-file "$packaged_template" \
-    --capabilities CAPABILITY_IAM \
-    --no-fail-on-empty-changeset \
-    "${parameter_overrides[@]}" \
-    "$@"
+  if [ "${#parameter_overrides[@]}" -gt 0 ]; then
+    aws cloudformation deploy \
+      --stack-name "$stack_name" \
+      --template-file "$packaged_template" \
+      --capabilities CAPABILITY_IAM \
+      --no-fail-on-empty-changeset \
+      "${parameter_overrides[@]}"
+  else
+    aws cloudformation deploy \
+      --stack-name "$stack_name" \
+      --template-file "$packaged_template" \
+      --capabilities CAPABILITY_IAM \
+      --no-fail-on-empty-changeset
+  fi
   rm -rf "$packaged_template_dir"
 }
 
