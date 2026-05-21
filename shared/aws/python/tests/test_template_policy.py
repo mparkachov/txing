@@ -502,7 +502,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("- arm64", template)
         self.assertIn("RetentionInDays: 14", template)
         self.assertIn("CpuArchitecture: ARM64", template)
-        self.assertIn("public.ecr.aws/docker/library/alpine:3.20", template)
+        self.assertIn("ecr-public.aws.com/docker/library/alpine:3.20", template)
         self.assertIn(
             "FunctionName: txing-cloud-rig-lambda",
             template,

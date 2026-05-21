@@ -9,7 +9,7 @@ Parameters:
     Default: rate(1 minute)
   CloudMcuEcsTaskImage:
     Type: String
-    Default: public.ecr.aws/docker/library/alpine:3.20
+    Default: ecr-public.aws.com/docker/library/alpine:3.20
   LambdaArtifactsBucketName:
     Type: String
     Description: S3 bucket containing release-built Lambda bootstrap zip artifacts.
