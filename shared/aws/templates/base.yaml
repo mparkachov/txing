@@ -764,7 +764,7 @@ Resources:
       Description: Projects Sparkplug MQTT state into sparkplug named shadows.
       Role: !GetAtt TxingWitnessRole.Arn
       Runtime: provided.al2023
-      Handler: rust.handler
+      Handler: bootstrap
       Architectures:
         - arm64
       MemorySize: 128

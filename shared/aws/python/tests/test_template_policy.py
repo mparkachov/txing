@@ -99,7 +99,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("Sid: WitnessDescribeThings", template)
         self.assertIn("Action: iot:DescribeThing", template)
         self.assertIn("Runtime: provided.al2023", template)
-        self.assertIn("Handler: rust.handler", template)
+        self.assertIn("Handler: bootstrap", template)
         self.assertIn("Architectures:", template)
         self.assertIn("- arm64", template)
         self.assertIn("FunctionName: txing-witness-lambda", template)
@@ -497,12 +497,12 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("ecs:CreateAction: RunTask", template)
         self.assertIn("iam:PassRole", template)
         self.assertIn("Runtime: provided.al2023", template)
-        self.assertIn("Handler: rust.handler", template)
+        self.assertIn("Handler: bootstrap", template)
         self.assertIn("Architectures:", template)
         self.assertIn("- arm64", template)
         self.assertIn("RetentionInDays: 14", template)
         self.assertIn("CpuArchitecture: ARM64", template)
-        self.assertIn("public.ecr.aws/docker/library/alpine:3.20", template)
+        self.assertIn("ecr-public.aws.com/docker/library/alpine:3.20", template)
         self.assertIn(
             "FunctionName: txing-cloud-rig-lambda",
             template,
@@ -529,7 +529,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("LogGroupName: /aws/lambda/txing-enlist-lambda", enlist_template)
         self.assertIn("RetentionInDays: 14", enlist_template)
         self.assertIn("Runtime: provided.al2023", enlist_template)
-        self.assertIn("Handler: rust.handler", enlist_template)
+        self.assertIn("Handler: bootstrap", enlist_template)
         self.assertIn("Architectures:", enlist_template)
         self.assertIn("- arm64", enlist_template)
         self.assertIn("LambdaArtifactsBucketName:", enlist_template)
@@ -596,6 +596,9 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         cloud_mcu_template = (AWS_DIR / "templates" / "types" / "cloud-mcu.yaml").read_text(
             encoding="utf-8"
         )
+        cloud_mcu_source = (
+            REPO_ROOT / "devices" / "cloud-mcu" / "lambda" / "internal" / "cloudmcu" / "cloudmcu.go"
+        ).read_text(encoding="utf-8")
         aws_justfile = (AWS_DIR / "justfile").read_text(encoding="utf-8")
         root_justfile = (REPO_ROOT / "justfile").read_text(encoding="utf-8")
         project_version = (REPO_ROOT / "VERSION").read_text(encoding="utf-8").strip()
@@ -620,10 +623,35 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("WebAppUrl: !Ref StackWebAppUrl", root_template)
         self.assertIn("TemplateURL: templates/types/cloud-mcu.yaml", root_template)
         self.assertIn("Runtime: provided.al2023", cloud_mcu_template)
-        self.assertIn("Handler: rust.handler", cloud_mcu_template)
+        self.assertIn("Handler: bootstrap", cloud_mcu_template)
         self.assertIn("- arm64", cloud_mcu_template)
         self.assertIn("lambda/txing-cloud-rig-lambda/current/bootstrap.zip", cloud_mcu_template)
         self.assertIn("lambda/txing-cloud-mcu-lambda/current/bootstrap.zip", cloud_mcu_template)
+        self.assertIn("Type: AWS::EC2::VPCCidrBlock", cloud_mcu_template)
+        self.assertIn("AmazonProvidedIpv6CidrBlock: true", cloud_mcu_template)
+        self.assertIn("Type: AWS::EC2::EgressOnlyInternetGateway", cloud_mcu_template)
+        self.assertIn("Ipv6Native: true", cloud_mcu_template)
+        self.assertIn("AssignIpv6AddressOnCreation: true", cloud_mcu_template)
+        self.assertIn("EnableResourceNameDnsAAAARecord: true", cloud_mcu_template)
+        self.assertIn("EnableResourceNameDnsARecord: false", cloud_mcu_template)
+        self.assertIn("HostnameType: resource-name", cloud_mcu_template)
+        self.assertIn("DestinationIpv6CidrBlock: ::/0", cloud_mcu_template)
+        self.assertIn(
+            "EgressOnlyInternetGatewayId: !Ref CloudMcuEgressOnlyInternetGateway",
+            cloud_mcu_template,
+        )
+        self.assertIn("CidrIpv6: ::/0", cloud_mcu_template)
+        self.assertNotIn("Type: AWS::EC2::InternetGateway", cloud_mcu_template)
+        self.assertNotIn("Type: AWS::EC2::VPCGatewayAttachment", cloud_mcu_template)
+        self.assertNotIn("CidrBlock: 10.83.0.0/25", cloud_mcu_template)
+        self.assertNotIn("MapPublicIpOnLaunch", cloud_mcu_template)
+        self.assertNotIn("DestinationCidrBlock: 0.0.0.0/0", cloud_mcu_template)
+        self.assertNotIn("CidrIp: 0.0.0.0/0", cloud_mcu_template)
+        self.assertNotIn("Type: AWS::ECR::Repository", cloud_mcu_template)
+        self.assertNotIn("CloudMcuContainerRepositoryDualStackUri", cloud_mcu_template)
+        self.assertNotIn("ecr:GetAuthorizationToken", cloud_mcu_template)
+        self.assertIn("AssignPublicIp: ecstypes.AssignPublicIpDisabled", cloud_mcu_source)
+        self.assertNotIn("AssignPublicIp: ecstypes.AssignPublicIpEnabled", cloud_mcu_source)
         self.assertNotIn("--parameter-overrides", aws_justfile)
 
     def test_web_hosting_is_external_to_aws_stack(self) -> None:
@@ -645,9 +673,9 @@ class AwsTemplatePolicyTests(unittest.TestCase):
     def test_static_manifests_use_plain_semver_only(self) -> None:
         manifest_paths = [
             REPO_ROOT / "shared" / "aws" / "python" / "pyproject.toml",
-            REPO_ROOT / "shared" / "aws" / "enlist" / "Cargo.toml",
-            REPO_ROOT / "devices" / "cloud-mcu" / "lambda" / "Cargo.toml",
-            REPO_ROOT / "witness" / "Cargo.toml",
+            REPO_ROOT / "shared" / "aws" / "enlist" / "go.mod",
+            REPO_ROOT / "devices" / "cloud-mcu" / "lambda" / "go.mod",
+            REPO_ROOT / "witness" / "go.mod",
             REPO_ROOT / "devices" / "unit" / "board" / "pyproject.toml",
             REPO_ROOT / "rig" / "capability-protocol" / "Cargo.toml",
             REPO_ROOT / "rig" / "sparkplug-manager" / "Cargo.toml",

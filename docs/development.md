@@ -35,11 +35,11 @@ semantic version such as `x.y.z`.
 Production Greengrass component versions use `VERSION` exactly. Git SHA and
 dirty state are exported separately for diagnostics, but they are not part of
 the Greengrass `ComponentVersion`. Create releases with the manual
-`Txing Release` GitHub Actions workflow from `main` after bumping and
-pushing the managed version files yourself. The workflow reads the pushed root
+`Txing Release` GitHub Actions workflow from the selected branch after bumping
+and pushing the managed version files yourself. The workflow reads that branch's root
 `VERSION`, fails unless it is newer than the latest existing `v*` tag,
 publishes the GitHub Release, and also publishes the board, rig, and Lambda
-artifacts. It does not commit or push version changes back to `main`.
+artifacts. It does not commit or push version changes back to the selected branch.
 
 After a release workflow finishes, the operator Mac publishes Lambda artifacts
 to AWS Lambda and applies AWS infrastructure changes with:
@@ -101,6 +101,7 @@ just unit::board::run
 just office::dev
 just office::write-env
 just aws::deploy-lambdas latest
+just aws::deploy-local-lambda txing-witness-lambda
 just aws::deploy
 just aws::deploy-town town
 just aws::deploy-rig <town-id> raspi server
@@ -170,7 +171,11 @@ just rig::log <rig-id>
 That source-checkout rig loop is for development and admin builder use.
 Production `raspi` rig hosts receive Greengrass deployments published from the
 operator machine instead. Production `cloud` rigs are updated through
-`just aws::deploy-lambdas latest` and `just aws::deploy`.
+`just aws::deploy-lambdas latest` and `just aws::deploy`. For local Lambda
+iteration without a GitHub release, use `just aws::deploy-local-lambda
+<function>`; it builds a local `linux/arm64` `bootstrap` zip, uploads it to the
+stable S3 `current/bootstrap.zip` key, and updates the existing Lambda function
+from that key.
 
 Board:
 
