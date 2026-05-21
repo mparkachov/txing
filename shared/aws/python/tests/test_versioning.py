@@ -240,7 +240,6 @@ class VersionEnvironmentTests(unittest.TestCase):
             REPO_ROOT / "rig" / "scripts" / "txing-rig-deploy-release",
             REPO_ROOT / "devices" / "unit" / "justfile",
             REPO_ROOT / "devices" / "unit" / "daemon" / "justfile",
-            REPO_ROOT / "devices" / "unit" / "board" / "justfile",
             REPO_ROOT / "office" / "justfile",
         ]
         for path in operator_files:
@@ -303,7 +302,9 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("KVS_MASTER_BINARY: txing-board-kvs-master", workflow)
         self.assertIn("Build native KVS master in Trixie container", workflow)
         self.assertIn("docker run --rm -i", workflow)
-        self.assertIn("just unit::board::build-native", workflow)
+        self.assertIn("just unit::daemon::kvs-submodules", workflow)
+        self.assertIn("just unit::daemon::kvs-build-native", workflow)
+        self.assertNotIn("just unit::board::", workflow)
         self.assertIn("URIs: https://archive.raspberrypi.com/debian/", workflow)
         self.assertIn("Trusted: yes", workflow)
         self.assertIn("apt-cache policy libcamera-dev libcamera0.7", workflow)
@@ -420,12 +421,14 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn('docker_build_dir := daemon_dir + "/target/docker-build"', justfile)
         self.assertIn('docker_kvs_master_build_image := "debian:trixie"', justfile)
         self.assertIn('TXING_DAEMON_BUILD_VERSION="$version"', justfile)
-        self.assertIn("just unit::board::build-native", justfile)
+        self.assertIn("just unit::daemon::kvs-submodules", justfile)
+        self.assertIn("just unit::daemon::kvs-build-native", justfile)
+        self.assertNotIn("just unit::board::", justfile)
         self.assertIn("URIs: https://archive.raspberrypi.com/debian/", justfile)
         self.assertIn("apt-cache policy libcamera-dev libcamera0.7", justfile)
         self.assertIn('grep -F "libcamera.so.0.7"', justfile)
         self.assertIn('grep -F "libcamera-base.so.0.7"', justfile)
-        self.assertIn('"outputs": {', justfile)
+        self.assertIn("outputs: {", justfile)
         self.assertIn("txing-unit-daemon", justfile)
         self.assertIn("txing-board-kvs-master", justfile)
         self.assertNotIn("gh release create", justfile)
@@ -526,7 +529,6 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn("sudo -u txing env HOME=/home/txing", installation_docs)
         self.assertNotIn("sudo -u txing env HOME=/home/txing", artifacts_docs)
         self.assertNotIn("mise-txing-unit-daemon-feature", artifacts_docs)
-        self.assertNotIn("BOARD_VIDEO_SENDER_COMMAND", installation_docs)
         self.assertNotIn("just unit::board::build-native", installation_docs)
         self.assertNotIn("sudo systemctl status board", installation_docs)
         self.assertNotIn("git clone <repo-url>", installation_docs)

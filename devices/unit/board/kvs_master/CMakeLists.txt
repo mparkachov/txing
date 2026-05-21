@@ -109,7 +109,7 @@ function(txing_find_sdk_library output_var)
   if(NOT ${output_var} AND TXING_FIND_REQUIRED)
     message(FATAL_ERROR
       "Required AWS SDK library '${TXING_FIND_FRIENDLY_NAME}' was not found. "
-      "Build the local AWS SDK install first with `just unit::board::build-aws-sdk`."
+      "Build the local AWS SDK install first with `just unit::daemon::kvs-build-aws-sdk`."
     )
   endif()
 endfunction()
@@ -135,7 +135,7 @@ if(TXING_KVS_REAL_SDK)
   if(NOT EXISTS "${TXING_KVS_WEBRTC_SDK_INSTALL_DIR}/include/com/amazonaws/kinesis/video/webrtcclient/Include.h")
     message(FATAL_ERROR
       "AWS KVS WebRTC SDK install not found at '${TXING_KVS_WEBRTC_SDK_INSTALL_DIR}'. "
-      "Run `just unit::board::submodules` and `just unit::board::build-aws-sdk` first."
+      "Run `just unit::daemon::kvs-submodules` and `just unit::daemon::kvs-build-aws-sdk` first."
     )
   endif()
 

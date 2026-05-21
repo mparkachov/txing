@@ -187,7 +187,7 @@ Validate runtime access:
 
 ```bash
 just rig::check <rig-id>
-just unit::board::check
+just unit::daemon::run
 ```
 
 Production `raspi` rig services run as Greengrass Lite components. Production

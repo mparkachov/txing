@@ -557,8 +557,8 @@ jobs:
           mise use --global --yes just@latest
           git config --global --add safe.directory "$PWD"
           git config --global --add safe.directory "$PWD/modules/awslabs/amazon-kinesis-video-streams-webrtc-sdk-c"
-          just unit::board::submodules
-          just unit::board::build-native
+          just unit::daemon::kvs-submodules
+          just unit::daemon::kvs-build-native
           ldd devices/unit/board/kvs_master/build/txing-board-kvs-master
           if ldd devices/unit/board/kvs_master/build/txing-board-kvs-master | grep -Fq "not found"; then
             echo "txing-board-kvs-master has unresolved shared libraries" >&2

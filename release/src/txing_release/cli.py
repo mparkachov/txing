@@ -32,13 +32,11 @@ STANDALONE_CARGO_MANIFESTS = (
 PYTHON_PROJECTS = (
     Path("release/pyproject.toml"),
     Path("shared/aws/python/pyproject.toml"),
-    Path("devices/unit/board/pyproject.toml"),
 )
 
 PYTHON_LOCK_PACKAGES = (
     (Path("release/uv.lock"), ("txing-release",)),
     (Path("shared/aws/python/uv.lock"), ("aws",)),
-    (Path("devices/unit/board/uv.lock"), ("aws", "board")),
 )
 
 NODE_PACKAGES = (
@@ -56,18 +54,6 @@ class TextVersion:
 
 
 TEXT_VERSIONS = (
-    TextVersion(
-        Path("devices/unit/board/src/board/mcp_service.py"),
-        "board MCP default server version",
-        re.compile(r'DEFAULT_MCP_SERVER_VERSION = "[^"]+"'),
-        'DEFAULT_MCP_SERVER_VERSION = "{version}"',
-    ),
-    TextVersion(
-        Path("devices/unit/board/src/board/video_service.py"),
-        "board video default server version",
-        re.compile(r'DEFAULT_VIDEO_SERVER_VERSION = "[^"]+"'),
-        'DEFAULT_VIDEO_SERVER_VERSION = "{version}"',
-    ),
     TextVersion(
         Path("devices/unit/board/kvs_master/include/kvs_master/version.hpp"),
         "board native KVS master version",

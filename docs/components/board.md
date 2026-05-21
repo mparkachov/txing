@@ -5,9 +5,6 @@ runs the root-owned Rust `txing-unit-daemon`, supervises the native
 `txing-board-kvs-master` process, publishes board-owned runtime state, and
 exposes board MCP for motion control.
 
-The older Python `txing-board` runtime remains in the repository for legacy and
-development reference only. It is not the release runtime path.
-
 ## Responsibilities
 
 - publish the `board` named shadow
@@ -576,29 +573,25 @@ The local daemon uses
 Provision that directory with `just unit::cert <thing-id>` only when AWS
 resource changes are intended.
 
-Native worker and legacy Python board commands:
+Daemon and native KVS worker commands:
 
 ```bash
-just unit::board::check
-just unit::board::submodules
-just unit::board::build-native
-just unit::board::build
-just unit::board::run
-just unit::board::once
+just unit::daemon::test
+just unit::daemon::run
+just unit::daemon::kvs-submodules
+just unit::daemon::kvs-build-native
+just unit::daemon::kvs-test-native
 ```
 
-`build-native` builds the native sender against the shared AWS KVS WebRTC SDK
-submodule under `devices/common/board/`. Initialize it with
-`just unit::board::submodules` before the first native build. Third-party KVS
-dependencies come from distro packages, not from the SDK's bundled source
+`kvs-build-native` builds `txing-board-kvs-master` against the shared AWS KVS
+WebRTC SDK submodule under `devices/common/board/`. Initialize it with
+`just unit::daemon::kvs-submodules` before the first native build. Third-party
+KVS dependencies come from distro packages, not from the SDK's bundled source
 builds.
 
-Manual motor bring-up:
-
-```bash
-just unit::board::motor-raw 240 240
-just unit::board::motor-stop
-```
+Direct raw motor bring-up is no longer supported. Live motion testing goes
+through the Rust daemon MCP `cmd_vel` path, including the active-control lease
+gate.
 
 ## References
 

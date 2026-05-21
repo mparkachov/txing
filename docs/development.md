@@ -97,7 +97,6 @@ just rig::check <rig-id>
 just rig::deploy
 just rig::status <rig-id>
 just unit::daemon::run
-just unit::board::run
 just office::dev
 just office::write-env
 just aws::deploy-lambdas latest
@@ -181,10 +180,10 @@ Board:
 
 ```bash
 just unit::daemon::run
-just unit::board::check
-just unit::board::build-native
-just unit::board::build
-just unit::board::once
+just unit::daemon::test
+just unit::daemon::kvs-submodules
+just unit::daemon::kvs-build-native
+just unit::daemon::kvs-test-native
 ```
 
 The Rust unit daemon loads its default config from

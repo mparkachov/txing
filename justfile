@@ -200,21 +200,6 @@ _project-aws-env scope='aws' stack_name='':
     else
       schema_file=""
     fi
-    board_video_region="${BOARD_VIDEO_REGION:-$aws_region}"
-    board_video_sender_command="${BOARD_VIDEO_SENDER_COMMAND:-}"
-    kvs_dualstack_endpoints="${KVS_DUALSTACK_ENDPOINTS:-}"
-    board_drive_raw_max_speed="${BOARD_DRIVE_RAW_MAX_SPEED:-}"
-    board_drive_cmd_raw_min_speed="${BOARD_DRIVE_CMD_RAW_MIN_SPEED:-}"
-    board_drive_cmd_raw_max_speed="${BOARD_DRIVE_CMD_RAW_MAX_SPEED:-}"
-    board_drive_pwm_hz="${BOARD_DRIVE_PWM_HZ:-}"
-    board_drive_pwm_chip="${BOARD_DRIVE_PWM_CHIP:-}"
-    board_drive_left_pwm_channel="${BOARD_DRIVE_LEFT_PWM_CHANNEL:-}"
-    board_drive_right_pwm_channel="${BOARD_DRIVE_RIGHT_PWM_CHANNEL:-}"
-    board_drive_gpio_chip="${BOARD_DRIVE_GPIO_CHIP:-}"
-    board_drive_left_dir_gpio="${BOARD_DRIVE_LEFT_DIR_GPIO:-}"
-    board_drive_right_dir_gpio="${BOARD_DRIVE_RIGHT_DIR_GPIO:-}"
-    board_drive_left_inverted="${BOARD_DRIVE_LEFT_INVERTED:-}"
-    board_drive_right_inverted="${BOARD_DRIVE_RIGHT_INVERTED:-}"
     thing_name="$txing_thing_id"
 
     export_line TXING_PROJECT_ROOT "$project_root"
@@ -243,73 +228,6 @@ _project-aws-env scope='aws' stack_name='':
     export_line CLOUDWATCH_LOG_GROUP "$cloudwatch_log_group"
     export_line THING_NAME "$thing_name"
     export_line SCHEMA_FILE "$schema_file"
-    export_line BOARD_VIDEO_REGION "$board_video_region"
-    export_line BOARD_VIDEO_SENDER_COMMAND "$board_video_sender_command"
-    if [ -n "$kvs_dualstack_endpoints" ]; then
-      export_line KVS_DUALSTACK_ENDPOINTS "$kvs_dualstack_endpoints"
-    else
-      printf 'unset KVS_DUALSTACK_ENDPOINTS\n'
-    fi
-    if [ -n "$board_drive_raw_max_speed" ]; then
-      export_line BOARD_DRIVE_RAW_MAX_SPEED "$board_drive_raw_max_speed"
-    else
-      printf 'unset BOARD_DRIVE_RAW_MAX_SPEED\n'
-    fi
-    if [ -n "$board_drive_cmd_raw_min_speed" ]; then
-      export_line BOARD_DRIVE_CMD_RAW_MIN_SPEED "$board_drive_cmd_raw_min_speed"
-    else
-      printf 'unset BOARD_DRIVE_CMD_RAW_MIN_SPEED\n'
-    fi
-    if [ -n "$board_drive_cmd_raw_max_speed" ]; then
-      export_line BOARD_DRIVE_CMD_RAW_MAX_SPEED "$board_drive_cmd_raw_max_speed"
-    else
-      printf 'unset BOARD_DRIVE_CMD_RAW_MAX_SPEED\n'
-    fi
-    if [ -n "$board_drive_pwm_hz" ]; then
-      export_line BOARD_DRIVE_PWM_HZ "$board_drive_pwm_hz"
-    else
-      printf 'unset BOARD_DRIVE_PWM_HZ\n'
-    fi
-    if [ -n "$board_drive_pwm_chip" ]; then
-      export_line BOARD_DRIVE_PWM_CHIP "$board_drive_pwm_chip"
-    else
-      printf 'unset BOARD_DRIVE_PWM_CHIP\n'
-    fi
-    if [ -n "$board_drive_left_pwm_channel" ]; then
-      export_line BOARD_DRIVE_LEFT_PWM_CHANNEL "$board_drive_left_pwm_channel"
-    else
-      printf 'unset BOARD_DRIVE_LEFT_PWM_CHANNEL\n'
-    fi
-    if [ -n "$board_drive_right_pwm_channel" ]; then
-      export_line BOARD_DRIVE_RIGHT_PWM_CHANNEL "$board_drive_right_pwm_channel"
-    else
-      printf 'unset BOARD_DRIVE_RIGHT_PWM_CHANNEL\n'
-    fi
-    if [ -n "$board_drive_gpio_chip" ]; then
-      export_line BOARD_DRIVE_GPIO_CHIP "$board_drive_gpio_chip"
-    else
-      printf 'unset BOARD_DRIVE_GPIO_CHIP\n'
-    fi
-    if [ -n "$board_drive_left_dir_gpio" ]; then
-      export_line BOARD_DRIVE_LEFT_DIR_GPIO "$board_drive_left_dir_gpio"
-    else
-      printf 'unset BOARD_DRIVE_LEFT_DIR_GPIO\n'
-    fi
-    if [ -n "$board_drive_right_dir_gpio" ]; then
-      export_line BOARD_DRIVE_RIGHT_DIR_GPIO "$board_drive_right_dir_gpio"
-    else
-      printf 'unset BOARD_DRIVE_RIGHT_DIR_GPIO\n'
-    fi
-    if [ -n "$board_drive_left_inverted" ]; then
-      export_line BOARD_DRIVE_LEFT_INVERTED "$board_drive_left_inverted"
-    else
-      printf 'unset BOARD_DRIVE_LEFT_INVERTED\n'
-    fi
-    if [ -n "$board_drive_right_inverted" ]; then
-      export_line BOARD_DRIVE_RIGHT_INVERTED "$board_drive_right_inverted"
-    else
-      printf 'unset BOARD_DRIVE_RIGHT_INVERTED\n'
-    fi
 
 [positional-arguments]
 aws-rig *args:
@@ -333,7 +251,6 @@ aws-device *args:
     command aws "$@"
 
 mod rig 'rig/justfile'
-mod board 'devices/unit/board/justfile'
 mod aws 'shared/aws/justfile'
 mod witness 'witness/justfile'
 mod unit 'devices/unit/justfile'

@@ -1,4 +1,4 @@
-# Board
+# Board Native KVS Worker
 
 The authoritative board documentation now lives in [../../../docs/components/board.md](../../../docs/components/board.md).
 

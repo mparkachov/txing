@@ -3,7 +3,6 @@ set quiet := true
 
 unit_dir := source_directory()
 
-mod board 'board/justfile'
 mod daemon 'daemon/justfile'
 mod mcu 'mcu/justfile'
 

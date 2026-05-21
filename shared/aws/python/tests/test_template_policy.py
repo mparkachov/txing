@@ -676,7 +676,6 @@ class AwsTemplatePolicyTests(unittest.TestCase):
             REPO_ROOT / "shared" / "aws" / "enlist" / "go.mod",
             REPO_ROOT / "devices" / "cloud-mcu" / "lambda" / "go.mod",
             REPO_ROOT / "witness" / "go.mod",
-            REPO_ROOT / "devices" / "unit" / "board" / "pyproject.toml",
             REPO_ROOT / "rig" / "capability-protocol" / "Cargo.toml",
             REPO_ROOT / "rig" / "sparkplug-manager" / "Cargo.toml",
             REPO_ROOT / "rig" / "ble-connectivity" / "Cargo.toml",
