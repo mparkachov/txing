@@ -327,7 +327,7 @@ Resources:
       FunctionName: txing-cloud-rig-lambda
       Description: EventBridge scheduler for cloud MCU SQS watch-link ticks.
       Runtime: provided.al2023
-      Handler: rust.handler
+      Handler: bootstrap
       Architectures:
         - arm64
       Code:
@@ -348,7 +348,7 @@ Resources:
       FunctionName: txing-cloud-mcu-lambda
       Description: SQS and Sparkplug DCMD runtime for cloud MCU devices.
       Runtime: provided.al2023
-      Handler: rust.handler
+      Handler: bootstrap
       Architectures:
         - arm64
       Code:

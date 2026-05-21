@@ -12,7 +12,7 @@ live with the owning component:
 Releases:
 
 - tag and release name: `v<VERSION>`
-- publisher: manual `Txing Release` GitHub Actions workflow from `main`
+- publisher: manual `Txing Release` GitHub Actions workflow from the selected branch
 - release immutability: the workflow fails if `VERSION` is not newer than the
   latest existing `v*` tag, or if the tag/release already exists
 - release retention: after publishing, the workflow keeps the newest 10 project
@@ -34,16 +34,16 @@ txing-cloud-mcu-lambda-linux-aarch64.zip
 ```
 
 Each `.tar.gz` archive contains one root-level executable with the same command
-name. Each Lambda `.zip` contains one root-level executable named `bootstrap`
-for the `provided.al2023` arm64 runtime. Lambda release artifacts are built
-inside Amazon Linux 2023 so the executable does not depend on newer host glibc
-symbols than the Lambda runtime provides.
+name. Each Lambda `.zip` contains one root-level Go executable named
+`bootstrap` for the `provided.al2023` arm64 runtime. Lambda release artifacts
+are built as `linux/arm64` binaries with `CGO_ENABLED=0`, so they are static
+and do not depend on host glibc.
 
 Release publishing flow:
 
 1. Update all managed version files locally.
-2. Push the intended code to `main`.
-3. Run the `Txing Release` workflow manually from `main`.
+2. Push the intended code to the branch that should be released.
+3. Run the `Txing Release` workflow manually from that branch.
 4. Deploy Lambda code from the operator machine with
    `just aws::deploy-lambdas latest`.
 5. Apply AWS infrastructure changes with `just aws::deploy`.
@@ -52,11 +52,11 @@ Release publishing flow:
 7. If a board needs the new binaries, update it manually from a board root
    shell with writable root, root-owned `mise upgrade`, and a reboot.
 
-The workflow reads the pushed root `VERSION`, checks that all managed version
+The workflow reads the selected branch's root `VERSION`, checks that all managed version
 files already match, fails unless the version is newer than the latest existing
 release, publishes the GitHub Release, and publishes the board, rig, and Lambda
 artifacts. After a successful publish, it prunes older project releases down to
-the newest 10. It does not bump versions, commit, push back to `main`, build
+the newest 10. It does not bump versions, commit, push back to a branch, build
 Greengrass Lite, upload Lambda code to AWS, or deploy to hosts.
 
 ## Lambda Artifacts

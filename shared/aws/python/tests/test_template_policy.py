@@ -99,7 +99,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("Sid: WitnessDescribeThings", template)
         self.assertIn("Action: iot:DescribeThing", template)
         self.assertIn("Runtime: provided.al2023", template)
-        self.assertIn("Handler: rust.handler", template)
+        self.assertIn("Handler: bootstrap", template)
         self.assertIn("Architectures:", template)
         self.assertIn("- arm64", template)
         self.assertIn("FunctionName: txing-witness-lambda", template)
@@ -497,7 +497,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("ecs:CreateAction: RunTask", template)
         self.assertIn("iam:PassRole", template)
         self.assertIn("Runtime: provided.al2023", template)
-        self.assertIn("Handler: rust.handler", template)
+        self.assertIn("Handler: bootstrap", template)
         self.assertIn("Architectures:", template)
         self.assertIn("- arm64", template)
         self.assertIn("RetentionInDays: 14", template)
@@ -529,7 +529,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("LogGroupName: /aws/lambda/txing-enlist-lambda", enlist_template)
         self.assertIn("RetentionInDays: 14", enlist_template)
         self.assertIn("Runtime: provided.al2023", enlist_template)
-        self.assertIn("Handler: rust.handler", enlist_template)
+        self.assertIn("Handler: bootstrap", enlist_template)
         self.assertIn("Architectures:", enlist_template)
         self.assertIn("- arm64", enlist_template)
         self.assertIn("LambdaArtifactsBucketName:", enlist_template)
@@ -620,7 +620,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("WebAppUrl: !Ref StackWebAppUrl", root_template)
         self.assertIn("TemplateURL: templates/types/cloud-mcu.yaml", root_template)
         self.assertIn("Runtime: provided.al2023", cloud_mcu_template)
-        self.assertIn("Handler: rust.handler", cloud_mcu_template)
+        self.assertIn("Handler: bootstrap", cloud_mcu_template)
         self.assertIn("- arm64", cloud_mcu_template)
         self.assertIn("lambda/txing-cloud-rig-lambda/current/bootstrap.zip", cloud_mcu_template)
         self.assertIn("lambda/txing-cloud-mcu-lambda/current/bootstrap.zip", cloud_mcu_template)
@@ -645,9 +645,9 @@ class AwsTemplatePolicyTests(unittest.TestCase):
     def test_static_manifests_use_plain_semver_only(self) -> None:
         manifest_paths = [
             REPO_ROOT / "shared" / "aws" / "python" / "pyproject.toml",
-            REPO_ROOT / "shared" / "aws" / "enlist" / "Cargo.toml",
-            REPO_ROOT / "devices" / "cloud-mcu" / "lambda" / "Cargo.toml",
-            REPO_ROOT / "witness" / "Cargo.toml",
+            REPO_ROOT / "shared" / "aws" / "enlist" / "go.mod",
+            REPO_ROOT / "devices" / "cloud-mcu" / "lambda" / "go.mod",
+            REPO_ROOT / "witness" / "go.mod",
             REPO_ROOT / "devices" / "unit" / "board" / "pyproject.toml",
             REPO_ROOT / "rig" / "capability-protocol" / "Cargo.toml",
             REPO_ROOT / "rig" / "sparkplug-manager" / "Cargo.toml",

@@ -4,12 +4,13 @@ set quiet := true
 enlist_dir := source_directory()
 
 @test:
-    cargo test --manifest-path "{{enlist_dir}}/Cargo.toml"
+    cd "{{enlist_dir}}" && go test -tags lambda.norpc ./...
 
 build:
     #!/usr/bin/env bash
     set -euo pipefail
-    cargo build --release --manifest-path "{{enlist_dir}}/Cargo.toml"
+    cd "{{enlist_dir}}"
+    GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -tags lambda.norpc -ldflags="-s -w" -o target/release/txing-enlist-lambda ./cmd/txing-enlist-lambda
 
 deploy:
     @echo "Direct local Lambda deploy is disabled. Build a GitHub release and run: just aws::deploy-lambdas latest" >&2

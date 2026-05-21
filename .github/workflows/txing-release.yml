@@ -61,10 +61,6 @@ jobs:
             echo "Release workflow must be run manually from a branch, got ref type: ${GITHUB_REF_TYPE}" >&2
             exit 1
           fi
-          if [ "${GITHUB_REF_NAME}" != "main" ]; then
-            echo "Release workflow is only allowed from main, got: ${GITHUB_REF_NAME}" >&2
-            exit 1
-          fi
 
           git fetch --tags --force origin
           latest_release_version=""
@@ -374,19 +370,19 @@ jobs:
         include:
           - function_name: txing-witness-lambda
             working_directory: witness
-            lock_file: witness/Cargo.lock
+            package_path: ./cmd/txing-witness-lambda
             asset_name: txing-witness-lambda-linux-aarch64.zip
           - function_name: txing-enlist-lambda
             working_directory: shared/aws/enlist
-            lock_file: shared/aws/enlist/Cargo.lock
+            package_path: ./cmd/txing-enlist-lambda
             asset_name: txing-enlist-lambda-linux-aarch64.zip
           - function_name: txing-cloud-rig-lambda
             working_directory: devices/cloud-mcu/lambda
-            lock_file: devices/cloud-mcu/lambda/Cargo.lock
+            package_path: ./cmd/txing-cloud-rig-lambda
             asset_name: txing-cloud-rig-lambda-linux-aarch64.zip
           - function_name: txing-cloud-mcu-lambda
             working_directory: devices/cloud-mcu/lambda
-            lock_file: devices/cloud-mcu/lambda/Cargo.lock
+            package_path: ./cmd/txing-cloud-mcu-lambda
             asset_name: txing-cloud-mcu-lambda-linux-aarch64.zip
 
     steps:
@@ -412,106 +408,55 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential pkg-config cmake perl file curl git \
-            binutils libssl-dev unzip zip
+            ca-certificates file git golang-go unzip zip
 
-      - name: Restore Rust toolchain cache
+      - name: Restore Go cache
         uses: actions/cache@v4
         with:
           path: |
-            ~/.rustup/toolchains/1.95.0-aarch64-unknown-linux-gnu
-            ~/.rustup/update-hashes/1.95.0-aarch64-unknown-linux-gnu
-          key: rustup-${{ runner.os }}-${{ runner.arch }}-1.95.0
-
-      - name: Install Rust toolchain
-        shell: bash
-        run: |
-          set -euo pipefail
-          rustup toolchain install "$RUST_VERSION" --profile minimal
-          rustup default "$RUST_VERSION"
-          rustc -vV
-          cargo -V
-
-      - name: Restore Cargo cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            ${{ matrix.working_directory }}/target
-          key: cargo-release-${{ matrix.function_name }}-${{ runner.os }}-${{ runner.arch }}-rust-1.95.0-${{ hashFiles(matrix.lock_file) }}
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-lambda-${{ matrix.function_name }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('witness/go.mod', 'witness/go.sum', 'shared/aws/enlist/go.mod', 'shared/aws/enlist/go.sum', 'devices/cloud-mcu/lambda/go.mod', 'devices/cloud-mcu/lambda/go.sum') }}
           restore-keys: |
-            cargo-release-${{ matrix.function_name }}-${{ runner.os }}-${{ runner.arch }}-rust-1.95.0-
-            cargo-release-${{ runner.os }}-${{ runner.arch }}-rust-1.95.0-
+            go-lambda-${{ matrix.function_name }}-${{ runner.os }}-${{ runner.arch }}-
+            go-lambda-${{ runner.os }}-${{ runner.arch }}-
 
-      - name: Test and build ${{ matrix.function_name }} in Amazon Linux 2023
+      - name: Test and build ${{ matrix.function_name }}
         shell: bash
         run: |
           set -euo pipefail
-          cargo_home="$RUNNER_TEMP/cargo-${{ matrix.function_name }}"
-          rustup_home="$RUNNER_TEMP/rustup-lambda-${{ matrix.function_name }}"
-          install -d "$cargo_home" "$rustup_home"
-          rm -rf "${{ matrix.working_directory }}/target"
-          docker run --rm \
-            --env CARGO_HOME=/cargo \
-            --env RUSTUP_HOME=/rustup \
-            --env RUST_VERSION="$RUST_VERSION" \
-            --env HOST_UID="$(id -u)" \
-            --env HOST_GID="$(id -g)" \
-            --volume "$PWD:/work" \
-            --volume "$cargo_home:/cargo" \
-            --volume "$rustup_home:/rustup" \
-            --workdir "/work/${{ matrix.working_directory }}" \
-            public.ecr.aws/amazonlinux/amazonlinux:2023 \
-            bash -euxo pipefail -c '
-              dnf install -y gcc gcc-c++ make pkgconf-pkg-config cmake perl openssl-devel curl-minimal ca-certificates git
-              if ! getent group "$HOST_GID" >/dev/null; then
-                groupadd -g "$HOST_GID" txing
-              fi
-              if ! id -u txing >/dev/null 2>&1; then
-                useradd -m -u "$HOST_UID" -g "$HOST_GID" txing
-              fi
-              chown -R "$HOST_UID:$HOST_GID" /cargo /rustup
-              runuser -u txing -- env CARGO_HOME=/cargo RUSTUP_HOME=/rustup RUST_VERSION="$RUST_VERSION" bash -euxo pipefail -c "
-                curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal --default-toolchain \"\$RUST_VERSION\"
-                . /cargo/env
-                rustc -vV
-                cargo -V
-                cargo test
-                cargo build --release
-              "
-            '
+          cd "${{ matrix.working_directory }}"
+          go version
+          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test -tags lambda.norpc ./...
+          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 \
+            go build -trimpath -tags lambda.norpc -ldflags="-s -w" \
+            -o "$RUNNER_TEMP/${{ matrix.function_name }}" \
+            "${{ matrix.package_path }}"
 
       - name: Package ${{ matrix.asset_name }}
         shell: bash
         run: |
           set -euo pipefail
-          source="${{ matrix.working_directory }}/target/release/${{ matrix.function_name }}"
+          source="$RUNNER_TEMP/${{ matrix.function_name }}"
           package_dir="$RUNNER_TEMP/package-${{ matrix.function_name }}"
           asset_path="$RUNNER_TEMP/${{ matrix.asset_name }}"
           test -x "$source"
           rm -rf "$package_dir"
           install -d "$package_dir"
           install -m 755 "$source" "$package_dir/bootstrap"
-          if file "$package_dir/bootstrap" | grep -q 'ELF'; then
-            strip "$package_dir/bootstrap"
+          bootstrap_file="$(file "$package_dir/bootstrap")"
+          echo "$bootstrap_file"
+          if ! grep -q 'ELF 64-bit LSB executable, ARM aarch64' <<<"$bootstrap_file"; then
+            echo "Expected ${{ matrix.function_name }} bootstrap to be a Linux ARM64 executable, got:" >&2
+            echo "$bootstrap_file" >&2
+            exit 1
           fi
-          glibc_versions="$(
-            objdump -T "$package_dir/bootstrap" \
-              | sed -n 's/.*GLIBC_\([0-9][0-9.]*\).*/\1/p' \
-              | sort -Vu
-          )"
-          python3 - "$glibc_versions" <<'PY'
-          import sys
-
-          versions = [tuple(int(part) for part in line.split(".")) for line in sys.argv[1].splitlines()]
-          too_new = [version for version in versions if version > (2, 34)]
-          if too_new:
-              rendered = ", ".join(".".join(str(part) for part in version) for version in too_new)
-              raise SystemExit(f"Lambda bootstrap requires glibc newer than AL2023 supports: {rendered}")
-          PY
-          file "$package_dir/bootstrap"
+          ldd_output="$(ldd "$package_dir/bootstrap" 2>&1 || true)"
+          if ! grep -Eq 'not a dynamic executable|statically linked' <<<"$ldd_output"; then
+            echo "Expected ${{ matrix.function_name }} bootstrap to be statically linked, got:" >&2
+            printf '%s\n' "$ldd_output" >&2
+            exit 1
+          fi
           (cd "$package_dir" && zip -q "$asset_path" bootstrap)
           archive_listing="$(unzip -Z1 "$asset_path")"
           if [ "$archive_listing" != "bootstrap" ]; then
