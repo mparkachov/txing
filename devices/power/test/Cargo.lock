@@ -645,7 +645,7 @@ checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
 
 [[package]]
 name = "power-device-test"
-version = "0.10.2"
+version = "0.10.3"
 dependencies = [
  "async-trait",
  "btleplug",

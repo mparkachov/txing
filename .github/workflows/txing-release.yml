@@ -407,8 +407,26 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
+
+          go_package=""
+          go_root=""
+          for version in 1.26 1.25 1.24; do
+            candidate="golang-${version}-go"
+            if apt-cache show "$candidate" >/dev/null 2>&1; then
+              go_package="$candidate"
+              go_root="/usr/lib/go-${version}"
+              break
+            fi
+          done
+          if [ -z "$go_package" ]; then
+            echo "Expected a Go 1.24+ compiler package in Ubuntu Noble apt repositories." >&2
+            exit 1
+          fi
+
           sudo apt-get install -y \
-            ca-certificates file git golang-go unzip zip
+            ca-certificates file git "$go_package" unzip zip
+          echo "$go_root/bin" >>"$GITHUB_PATH"
+          "$go_root/bin/go" version
 
       - name: Restore Go cache
         uses: actions/cache@v4

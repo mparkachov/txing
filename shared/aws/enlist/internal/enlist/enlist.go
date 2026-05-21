@@ -622,7 +622,7 @@ func (c *AWSClient) DeleteShadow(ctx context.Context, thingName, shadowName stri
 }
 
 func (c *AWSClient) GetParametersByPath(ctx context.Context, path string, nextToken *string) (ParameterPage, error) {
-	out, err := c.ssm.GetParametersByPath(ctx, &ssm.GetParametersByPathInput{Path: aws.String(path), Recursive: true, WithDecryption: false, NextToken: nextToken})
+	out, err := c.ssm.GetParametersByPath(ctx, &ssm.GetParametersByPathInput{Path: aws.String(path), Recursive: aws.Bool(true), WithDecryption: aws.Bool(false), NextToken: nextToken})
 	if err != nil {
 		return ParameterPage{}, err
 	}
@@ -927,10 +927,10 @@ func (s *Service) searchOne(ctx context.Context, query, missing, multiple string
 		return nil, err
 	}
 	if len(names) == 0 {
-		return nil, enlistError(missing)
+		return nil, enlistError("%s", missing)
 	}
 	if len(names) > 1 {
-		return nil, enlistError(multiple)
+		return nil, enlistError("%s", multiple)
 	}
 	return s.describeThing(ctx, names[0])
 }
