@@ -81,15 +81,16 @@ bootstrap keys exist before CloudFormation creates the Lambda functions.
 `just aws::deploy-local-lambda <function>` builds local Lambda code with Go,
 uploads the zip to the stable `lambda/<function>/current/bootstrap.zip` S3 key,
 and updates an existing Lambda function from that key. It accepts `all`,
-`witness`, `enlist`, `cloud-rig`, `cloud-mcu`, or a full function name. This is
-for local iteration and does not create a GitHub release artifact.
+`witness`, `cloud-rig`, `cloud-mcu`, or a full runtime function name. This is
+for local runtime Lambda iteration and does not create a GitHub release artifact.
 
 `just aws::deploy` deploys the base root stack and applies AWS infrastructure
-changes only. It does not build Lambda crates or change Lambda code versions.
-That root stack owns Cognito for web authentication, common IoT policies,
-artifact buckets, the Sparkplug witness infrastructure, Fleet Indexing, shared
-rig/device runtime IAM, AWS IoT ThingTypes, and the SSM type catalog. Web
-hosting is externalized to Cloudflare Pages. The type catalog is
+changes. It packages the Python AWS admin Lambdas into the stack, but does not
+build or publish runtime Lambda release artifacts. That root stack owns Cognito
+for web authentication, common IoT policies, artifact buckets, the Sparkplug
+witness infrastructure, Fleet Indexing, shared rig/device runtime IAM, AWS IoT
+ThingTypes, and the SSM type catalog. Web hosting is externalized to Cloudflare
+Pages. The type catalog is
 CloudFormation-managed under `/txing` as leaf parameters such as
 `/txing/town/cloud/cloud-mcu/kind` and
 `/txing/town/cloud/cloud-mcu/capabilities`.

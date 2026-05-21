@@ -6,7 +6,7 @@ Parameters:
     Type: String
 
 Resources:
-  UnitTypeCatalog:
+  UnitTypeCatalogV2:
     Type: Custom::TxingTypeCatalog
     Properties:
       ServiceToken: !Ref TypeCatalogServiceToken

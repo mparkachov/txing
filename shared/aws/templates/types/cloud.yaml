@@ -6,7 +6,7 @@ Parameters:
     Type: String
 
 Resources:
-  CloudTypeCatalog:
+  CloudTypeCatalogV2:
     Type: Custom::TxingTypeCatalog
     Properties:
       ServiceToken: !Ref TypeCatalogServiceToken

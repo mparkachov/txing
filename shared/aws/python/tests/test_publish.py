@@ -7,7 +7,7 @@ import tempfile
 import unittest
 import zipfile
 
-from aws.publish.core import (
+from aws_admin.publish_release.core import (
     LAMBDA_ASSETS,
     RIG_COMPONENTS,
     PublishError,
@@ -39,7 +39,6 @@ class PublishTests(unittest.TestCase):
             [asset.asset_name for asset in LAMBDA_ASSETS],
             [
                 "txing-witness-lambda-linux-aarch64.zip",
-                "txing-enlist-lambda-linux-aarch64.zip",
                 "txing-cloud-rig-lambda-linux-aarch64.zip",
                 "txing-cloud-mcu-lambda-linux-aarch64.zip",
             ],

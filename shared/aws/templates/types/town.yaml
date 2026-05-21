@@ -6,7 +6,7 @@ Parameters:
     Type: String
 
 Resources:
-  TownTypeCatalog:
+  TownTypeCatalogV2:
     Type: Custom::TxingTypeCatalog
     Properties:
       ServiceToken: !Ref TypeCatalogServiceToken

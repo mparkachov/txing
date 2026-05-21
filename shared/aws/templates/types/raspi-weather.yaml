@@ -6,7 +6,7 @@ Parameters:
     Type: String
 
 Resources:
-  WeatherTypeCatalog:
+  WeatherTypeCatalogV2:
     Type: Custom::TxingTypeCatalog
     Properties:
       ServiceToken: !Ref TypeCatalogServiceToken

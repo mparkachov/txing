@@ -28,13 +28,12 @@ txing-ble-connectivity-linux-aarch64.tar.gz
 txing-aws-connectivity-linux-aarch64.tar.gz
 txing-rig-deploy-linux-aarch64.tar.gz
 txing-witness-lambda-linux-aarch64.zip
-txing-enlist-lambda-linux-aarch64.zip
 txing-cloud-rig-lambda-linux-aarch64.zip
 txing-cloud-mcu-lambda-linux-aarch64.zip
 ```
 
 Each `.tar.gz` archive contains one root-level executable with the same command
-name. Each Lambda `.zip` contains one root-level Go executable named
+name. Each runtime Lambda `.zip` contains one root-level Go executable named
 `bootstrap` for the `provided.al2023` arm64 runtime. Lambda release artifacts
 are built as `linux/arm64` binaries with `CGO_ENABLED=0`, so they are static
 and do not depend on host glibc.
@@ -74,8 +73,8 @@ updates existing Lambda functions, creates Greengrass component versions, and
 creates both `raspi` and `cloud` Greengrass deployments.
 `aws::publish-lambda` runs the same Lambda publish code locally and is kept for
 first-time stack creation before the publisher Lambda exists.
-`just aws::deploy` applies CloudFormation only; it does not build, upload, or
-change Lambda code versions.
+`just aws::deploy` applies CloudFormation and publishes Python admin Lambda
+source used by `aws-publish-release`, `aws-enlist-txing`, and `aws-clean-stack`.
 
 For local Lambda iteration from macOS or Linux, use:
 
@@ -83,11 +82,11 @@ For local Lambda iteration from macOS or Linux, use:
 just aws::deploy-local-lambda txing-witness-lambda
 ```
 
-The argument can be `all`, `witness`, `enlist`, `cloud-rig`, `cloud-mcu`, or the
-full Lambda function name. This builds local `linux/arm64` `bootstrap` zips,
+The argument can be `all`, `witness`, `cloud-rig`, `cloud-mcu`, or the full
+runtime Lambda function name. This builds local `linux/arm64` `bootstrap` zips,
 replaces the stable `lambda/<function>/current/bootstrap.zip` object in S3, and
-updates existing Lambda functions from that S3 object. It does not create a
-GitHub release or immutable versioned release artifact.
+updates existing runtime Lambda functions from that S3 object. It does not
+create a GitHub release or immutable versioned release artifact.
 
 ## Board Assets
 

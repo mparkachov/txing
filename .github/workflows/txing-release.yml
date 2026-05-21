@@ -20,7 +20,6 @@ env:
   AWS_CONNECTIVITY_ASSET: txing-aws-connectivity-linux-aarch64.tar.gz
   RIG_DEPLOY_ASSET: txing-rig-deploy-linux-aarch64.tar.gz
   WITNESS_LAMBDA_ASSET: txing-witness-lambda-linux-aarch64.zip
-  ENLIST_LAMBDA_ASSET: txing-enlist-lambda-linux-aarch64.zip
   CLOUD_RIG_LAMBDA_ASSET: txing-cloud-rig-lambda-linux-aarch64.zip
   CLOUD_MCU_LAMBDA_ASSET: txing-cloud-mcu-lambda-linux-aarch64.zip
   KVS_MASTER_BUILD_IMAGE: debian:trixie
@@ -372,10 +371,6 @@ jobs:
             working_directory: witness
             package_path: ./cmd/txing-witness-lambda
             asset_name: txing-witness-lambda-linux-aarch64.zip
-          - function_name: txing-enlist-lambda
-            working_directory: shared/aws/enlist
-            package_path: ./cmd/txing-enlist-lambda
-            asset_name: txing-enlist-lambda-linux-aarch64.zip
           - function_name: txing-cloud-rig-lambda
             working_directory: devices/cloud-mcu/lambda
             package_path: ./cmd/txing-cloud-rig-lambda
@@ -434,7 +429,7 @@ jobs:
           path: |
             ~/go/pkg/mod
             ~/.cache/go-build
-          key: go-lambda-${{ matrix.function_name }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('witness/go.mod', 'witness/go.sum', 'shared/aws/enlist/go.mod', 'shared/aws/enlist/go.sum', 'devices/cloud-mcu/lambda/go.mod', 'devices/cloud-mcu/lambda/go.sum') }}
+          key: go-lambda-${{ matrix.function_name }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('witness/go.mod', 'witness/go.sum', 'devices/cloud-mcu/lambda/go.mod', 'devices/cloud-mcu/lambda/go.sum') }}
           restore-keys: |
             go-lambda-${{ matrix.function_name }}-${{ runner.os }}-${{ runner.arch }}-
             go-lambda-${{ runner.os }}-${{ runner.arch }}-

@@ -15,7 +15,7 @@ Parameters:
     Description: S3 bucket containing release-built Lambda bootstrap zip artifacts.
 
 Resources:
-  CloudMcuTypeCatalog:
+  CloudMcuTypeCatalogV2:
     Type: Custom::TxingTypeCatalog
     Properties:
       ServiceToken: !Ref TypeCatalogServiceToken

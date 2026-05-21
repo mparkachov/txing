@@ -349,11 +349,14 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         template = _template_text()
 
         self.assertIn("TxingStackCleanupFunction:", template)
+        self.assertIn("AwsCleanStackFunction:", template)
+        self.assertIn("FunctionName: aws-clean-stack", template)
+        self.assertIn("LogGroupName: /aws/lambda/aws-clean-stack", template)
+        self.assertIn("Handler: aws_admin.clean_stack.lambda_handler", template)
         self.assertIn("Type: Custom::TxingS3BucketCleanup", template)
         self.assertIn("TxingGreengrassArtifactsBucketCleanup:", template)
         self.assertNotIn("TxingWebBucketCleanup:", template)
-        self.assertIn('paginator = s3.get_paginator("list_object_versions")', template)
-        self.assertIn('object_paginator = s3.get_paginator("list_objects_v2")', template)
+        self.assertNotIn("ZipFile: |", template)
         self.assertIn("s3:DeleteObjectVersion", template)
 
     def test_base_stack_detaches_iot_policy_targets_on_delete(self) -> None:
@@ -364,8 +367,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("CleanupType: IotPolicyAttachments", template)
         self.assertIn("iot:ListTargetsForPolicy", template)
         self.assertIn("iot:DetachPolicy", template)
-        self.assertIn("iot.list_targets_for_policy", template)
-        self.assertIn("iot.detach_policy", template)
+        self.assertIn("Handler: aws_admin.clean_stack.lambda_handler", template)
 
     def test_base_stack_configures_iot_fleet_indexing(self) -> None:
         template = _template_text()
@@ -376,18 +378,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("PhysicalResourceId: txing-iot-fleet-indexing", template)
         self.assertIn("iot:UpdateIndexingConfiguration", template)
         self.assertIn("iot:GetIndexingConfiguration", template)
-        self.assertIn("iot.update_indexing_configuration", template)
-        self.assertIn('configuration.get("thingIndexingMode") == "REGISTRY"', template)
-        self.assertIn(
-            'configuration.get("thingConnectivityIndexingMode") == "STATUS"',
-            template,
-        )
-        self.assertIn('"attributes.name"', template)
-        self.assertIn('"attributes.kind"', template)
-        self.assertIn('"attributes.townId"', template)
-        self.assertIn('"attributes.rigId"', template)
-        self.assertNotIn('"attributes.rigType"', template)
-        self.assertNotIn('"attributes.deviceType"', template)
+        self.assertIn("Handler: aws_admin.clean_stack.lambda_handler", template)
 
     def test_base_stack_custom_resource_manages_type_catalog(self) -> None:
         template = _template_text()
@@ -400,15 +391,8 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("ssm:PutParameter", template)
         self.assertIn("ssm:DeleteParameter", template)
         self.assertIn("ssm:GetParametersByPath", template)
-        self.assertIn("iot.create_thing_type", template)
-        self.assertIn("iot.update_thing_type", template)
-        self.assertIn("ssm.get_parameters_by_path", template)
-        self.assertIn("parameter_names.add(normalized_base_path)", template)
-        self.assertIn("ssm.put_parameter", template)
-        self.assertIn("SSM_THROTTLE_ERROR_CODES", template)
-        self.assertIn("_ssm_call", template)
-        self.assertIn("existing_parameters.get(name) == value_text", template)
-        self.assertIn("Overwrite=True", template)
+        self.assertIn("cloudformation:DescribeStacks", template)
+        self.assertIn("Handler: aws_admin.clean_stack.lambda_handler", template)
 
     def test_root_stack_owns_type_catalog_and_runtime_layers(self) -> None:
         root_template = (AWS_DIR / "template.yaml").read_text(encoding="utf-8")
@@ -525,17 +509,19 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("EnlistLayer:", root_template)
         self.assertIn("TemplateURL: templates/enlist.yaml", root_template)
         self.assertIn("TxingEnlistFunction:", enlist_template)
-        self.assertIn("FunctionName: txing-enlist-lambda", enlist_template)
-        self.assertIn("LogGroupName: /aws/lambda/txing-enlist-lambda", enlist_template)
+        self.assertIn("AwsEnlistTxingFunction:", enlist_template)
+        self.assertIn("FunctionName: aws-enlist-txing", enlist_template)
+        self.assertIn("LogGroupName: /aws/lambda/aws-enlist-txing", enlist_template)
         self.assertIn("RetentionInDays: 14", enlist_template)
-        self.assertIn("Runtime: provided.al2023", enlist_template)
-        self.assertIn("Handler: bootstrap", enlist_template)
-        self.assertIn("Architectures:", enlist_template)
-        self.assertIn("- arm64", enlist_template)
-        self.assertIn("LambdaArtifactsBucketName:", enlist_template)
-        self.assertIn("S3Bucket: !Ref LambdaArtifactsBucketName", enlist_template)
-        self.assertIn("S3Key: lambda/txing-enlist-lambda/current/bootstrap.zip", enlist_template)
-        self.assertNotIn("enlist/target/lambda/txing-enlist-lambda/bootstrap.zip", enlist_template)
+        self.assertIn("Runtime: python3.12", enlist_template)
+        self.assertIn("Handler: aws_admin.enlist_txing.lambda_handler", enlist_template)
+        self.assertNotIn("Handler: bootstrap", enlist_template)
+        self.assertIn("AwsAdminCodeS3Bucket:", enlist_template)
+        self.assertIn("S3Bucket: !Ref AwsAdminCodeS3Bucket", enlist_template)
+        self.assertIn("S3Key: !Ref AwsAdminCodeS3Key", enlist_template)
+        self.assertIn("FunctionName: txing-enlist-lambda", enlist_template)
+        self.assertIn("Legacy service-token bridge", enlist_template)
+        self.assertNotIn("lambda/txing-enlist-lambda/current/bootstrap.zip", enlist_template)
         self.assertIn("MemorySize: 128", enlist_template)
         self.assertIn("TxingDischargeThingsOnStackDelete:", enlist_template)
         self.assertNotIn("TxingDischargeThingsOnDelete:", enlist_template)
@@ -561,6 +547,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
             "kinesisvideo:CreateSignalingChannel",
             "kinesisvideo:DescribeSignalingChannel",
             "ssm:GetParametersByPath",
+            "cloudformation:DescribeStacks",
         ):
             self.assertIn(action, enlist_template)
         self.assertIn("EnlistBoardVideoChannels", enlist_template)
@@ -594,14 +581,14 @@ class AwsTemplatePolicyTests(unittest.TestCase):
     def test_root_template_defines_release_publisher_lambda(self) -> None:
         root_template = (AWS_DIR / "template.yaml").read_text(encoding="utf-8")
 
-        self.assertIn("TxingReleasePublisherFunction", root_template)
-        self.assertIn("FunctionName: txing-release-publisher-lambda", root_template)
+        self.assertIn("AwsPublishReleaseFunction", root_template)
+        self.assertIn("FunctionName: aws-publish-release", root_template)
         self.assertIn("Runtime: python3.12", root_template)
-        self.assertIn("Handler: aws.publish.handler.lambda_handler", root_template)
-        self.assertIn("ReleasePublisherCodeS3Bucket:", root_template)
-        self.assertIn("ReleasePublisherCodeS3Key:", root_template)
-        self.assertIn("S3Bucket: !Ref ReleasePublisherCodeS3Bucket", root_template)
-        self.assertIn("S3Key: !Ref ReleasePublisherCodeS3Key", root_template)
+        self.assertIn("Handler: aws_admin.publish_release.handler.lambda_handler", root_template)
+        self.assertIn("AwsAdminCodeS3Bucket:", root_template)
+        self.assertIn("AwsAdminCodeS3Key:", root_template)
+        self.assertIn("S3Bucket: !Ref AwsAdminCodeS3Bucket", root_template)
+        self.assertIn("S3Key: !Ref AwsAdminCodeS3Key", root_template)
         self.assertIn("TXING_GITHUB_REPOSITORY", root_template)
         self.assertIn("TXING_LAMBDA_ARTIFACT_BUCKET", root_template)
         self.assertIn("TXING_GREENGRASS_ARTIFACT_BUCKET", root_template)
@@ -715,7 +702,6 @@ class AwsTemplatePolicyTests(unittest.TestCase):
     def test_static_manifests_use_plain_semver_only(self) -> None:
         manifest_paths = [
             REPO_ROOT / "shared" / "aws" / "python" / "pyproject.toml",
-            REPO_ROOT / "shared" / "aws" / "enlist" / "go.mod",
             REPO_ROOT / "devices" / "cloud-mcu" / "lambda" / "go.mod",
             REPO_ROOT / "witness" / "go.mod",
             REPO_ROOT / "rig" / "capability-protocol" / "Cargo.toml",

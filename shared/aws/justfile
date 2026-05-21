@@ -123,7 +123,7 @@ publish-lambda release='latest':
     artifact_bucket="$(ensure_artifact_bucket)"
     export TXING_LAMBDA_ARTIFACT_BUCKET="$artifact_bucket"
     exec uv run --project "{{aws_dir}}/python" \
-      python -m aws.publish lambda --release "{{release}}"
+      python -m aws_admin.publish_release lambda --release "{{release}}"
 
 publish-rig release='latest':
     #!/usr/bin/env bash
@@ -147,19 +147,19 @@ publish-rig release='latest':
     export TXING_GREENGRASS_ARTIFACT_BUCKET
     TXING_GREENGRASS_ARTIFACT_BUCKET="$(stack_output "$TXING_AWS_STACK" GreengrassArtifactsBucketName)"
     exec uv run --project "{{aws_dir}}/python" \
-      python -m aws.publish rig --release "{{release}}"
+      python -m aws_admin.publish_release rig --release "{{release}}"
 
 deploy-local-lambda function_name='all':
     #!/usr/bin/env bash
     set -euo pipefail
     case "{{function_name}}" in
-      all|witness|enlist|cloud-rig|cloud-mcu|txing-witness-lambda|txing-enlist-lambda|txing-cloud-rig-lambda|txing-cloud-mcu-lambda) ;;
+      all|witness|cloud-rig|cloud-mcu|txing-witness-lambda|txing-cloud-rig-lambda|txing-cloud-mcu-lambda) ;;
       *=*)
-        echo "function_name must be all, witness, enlist, cloud-rig, cloud-mcu, or a txing Lambda function name." >&2
+        echo "function_name must be all, witness, cloud-rig, cloud-mcu, or a runtime txing Lambda function name." >&2
         exit 1
         ;;
       *)
-        echo "function_name must be all, witness, enlist, cloud-rig, cloud-mcu, or a txing Lambda function name." >&2
+        echo "function_name must be all, witness, cloud-rig, cloud-mcu, or a runtime txing Lambda function name." >&2
         exit 1
         ;;
     esac

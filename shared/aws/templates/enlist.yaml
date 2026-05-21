@@ -2,15 +2,24 @@ AWSTemplateFormatVersion: "2010-09-09"
 Description: txing enlist Lambda for town, rig, and device enrollment.
 
 Parameters:
-  LambdaArtifactsBucketName:
+  AwsAdminCodeS3Bucket:
     Type: String
-    Description: S3 bucket containing release-built Lambda bootstrap zip artifacts.
+    Description: S3 bucket containing the packaged AWS admin Lambda code.
+  AwsAdminCodeS3Key:
+    Type: String
+    Description: S3 key containing the packaged AWS admin Lambda code.
 
 Resources:
   TxingEnlistLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: /aws/lambda/txing-enlist-lambda
+      RetentionInDays: 14
+
+  AwsEnlistTxingLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/aws-enlist-txing
       RetentionInDays: 14
 
   TxingEnlistRole:
@@ -37,6 +46,8 @@ Resources:
                 Resource:
                   - !GetAtt TxingEnlistLogGroup.Arn
                   - !Sub ${TxingEnlistLogGroup.Arn}:*
+                  - !GetAtt AwsEnlistTxingLogGroup.Arn
+                  - !Sub ${AwsEnlistTxingLogGroup.Arn}:*
               - Sid: EnlistThingRegistryWrite
                 Effect: Allow
                 Action:
@@ -87,20 +98,40 @@ Resources:
                   - kinesisvideo:CreateSignalingChannel
                   - kinesisvideo:DescribeSignalingChannel
                 Resource: "*"
+              - Sid: EnlistDescribeCloudFormationStack
+                Effect: Allow
+                Action: cloudformation:DescribeStacks
+                Resource: "*"
   TxingEnlistFunction:
     Type: AWS::Lambda::Function
     DependsOn:
       - TxingEnlistLogGroup
     Properties:
       FunctionName: txing-enlist-lambda
-      Description: Enlists txing towns, rigs, devices, and assignments.
-      Runtime: provided.al2023
-      Handler: bootstrap
+      Description: Legacy service-token bridge for pre-aws-enlist-txing custom resources.
+      Runtime: python3.12
+      Handler: aws_admin.enlist_txing.lambda_handler
+      Code:
+        S3Bucket: !Ref AwsAdminCodeS3Bucket
+        S3Key: !Ref AwsAdminCodeS3Key
+      Role: !GetAtt TxingEnlistRole.Arn
+      Timeout: 60
+      MemorySize: 128
       Architectures:
         - arm64
+
+  AwsEnlistTxingFunction:
+    Type: AWS::Lambda::Function
+    DependsOn:
+      - AwsEnlistTxingLogGroup
+    Properties:
+      FunctionName: aws-enlist-txing
+      Description: Enlists txing towns, rigs, devices, and assignments.
+      Runtime: python3.12
+      Handler: aws_admin.enlist_txing.lambda_handler
       Code:
-        S3Bucket: !Ref LambdaArtifactsBucketName
-        S3Key: lambda/txing-enlist-lambda/current/bootstrap.zip
+        S3Bucket: !Ref AwsAdminCodeS3Bucket
+        S3Key: !Ref AwsAdminCodeS3Key
       Role: !GetAtt TxingEnlistRole.Arn
       Timeout: 60
       MemorySize: 128
@@ -116,6 +147,6 @@ Resources:
 
 Outputs:
   EnlistFunctionName:
-    Value: !Ref TxingEnlistFunction
+    Value: !Ref AwsEnlistTxingFunction
   EnlistFunctionArn:
-    Value: !GetAtt TxingEnlistFunction.Arn
+    Value: !GetAtt AwsEnlistTxingFunction.Arn

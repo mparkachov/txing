@@ -6,7 +6,7 @@ Parameters:
     Type: String
 
 Resources:
-  RaspiTypeCatalog:
+  RaspiTypeCatalogV2:
     Type: Custom::TxingTypeCatalog
     Properties:
       ServiceToken: !Ref TypeCatalogServiceToken

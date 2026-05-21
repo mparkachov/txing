@@ -219,40 +219,40 @@ deploy_template() {
   if grep -q '^  LambdaArtifactsBucketName:' "$packaged_template"; then
     parameter_values+=("LambdaArtifactsBucketName=$artifact_bucket")
   fi
-  if grep -q '^  ReleasePublisherCodeS3Key:' "$packaged_template"; then
-    local publisher_source_dir
-    local publisher_zip
-    local publisher_hash
-    local publisher_key
-    publisher_source_dir="python/src"
-    publisher_zip="$packaged_template_dir/release-publisher.zip"
-    if [ ! -d "$publisher_source_dir/aws/publish" ]; then
-      echo "Release publisher source is missing: $publisher_source_dir/aws/publish" >&2
+  if grep -q '^  AwsAdminCodeS3Key:' "$packaged_template"; then
+    local admin_source_dir
+    local admin_zip
+    local admin_hash
+    local admin_key
+    admin_source_dir="python/src"
+    admin_zip="$packaged_template_dir/aws-admin.zip"
+    if [ ! -d "$admin_source_dir/aws_admin" ]; then
+      echo "AWS admin Lambda source is missing: $admin_source_dir/aws_admin" >&2
       return 1
     fi
     (
-      cd "$publisher_source_dir"
-      find aws -type f \
+      cd "$admin_source_dir"
+      find aws aws_admin -type f \
         ! -path '*/__pycache__/*' \
         ! -name '*.pyc' \
         ! -name '*.pyo' \
-        -print | LC_ALL=C sort | zip -q -X "$publisher_zip" -@
+        -print | LC_ALL=C sort | zip -q -X "$admin_zip" -@
     )
     if command -v shasum >/dev/null 2>&1; then
-      publisher_hash="$(shasum -a 256 "$publisher_zip" | awk '{print $1}')"
+      admin_hash="$(shasum -a 256 "$admin_zip" | awk '{print $1}')"
     elif command -v sha256sum >/dev/null 2>&1; then
-      publisher_hash="$(sha256sum "$publisher_zip" | awk '{print $1}')"
+      admin_hash="$(sha256sum "$admin_zip" | awk '{print $1}')"
     else
-      echo "shasum or sha256sum is required to package the release publisher Lambda" >&2
+      echo "shasum or sha256sum is required to package AWS admin Lambda code" >&2
       return 1
     fi
-    publisher_key="cfn/release-publisher/$publisher_hash.zip"
-    if ! aws s3api head-object --bucket "$artifact_bucket" --key "$publisher_key" >/dev/null 2>&1; then
-      aws s3 cp "$publisher_zip" "s3://$artifact_bucket/$publisher_key" >/dev/null
+    admin_key="cfn/aws-admin/$admin_hash.zip"
+    if ! aws s3api head-object --bucket "$artifact_bucket" --key "$admin_key" >/dev/null 2>&1; then
+      aws s3 cp "$admin_zip" "s3://$artifact_bucket/$admin_key" >/dev/null
     fi
     parameter_values+=(
-      "ReleasePublisherCodeS3Bucket=$artifact_bucket"
-      "ReleasePublisherCodeS3Key=$publisher_key"
+      "AwsAdminCodeS3Bucket=$artifact_bucket"
+      "AwsAdminCodeS3Key=$admin_key"
     )
   fi
   if [ "${#parameter_values[@]}" -gt 0 ]; then

@@ -88,7 +88,6 @@ class PublishConfig:
 
 LAMBDA_ASSETS: tuple[LambdaAsset, ...] = (
     LambdaAsset("txing-witness-lambda", "txing-witness-lambda-linux-aarch64.zip"),
-    LambdaAsset("txing-enlist-lambda", "txing-enlist-lambda-linux-aarch64.zip"),
     LambdaAsset("txing-cloud-rig-lambda", "txing-cloud-rig-lambda-linux-aarch64.zip"),
     LambdaAsset("txing-cloud-mcu-lambda", "txing-cloud-mcu-lambda-linux-aarch64.zip"),
 )
@@ -709,7 +708,7 @@ def _ensure_thing_group(iot, group_name: str) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="python -m aws.publish")
+    parser = argparse.ArgumentParser(prog="python -m aws_admin.publish_release")
     subparsers = parser.add_subparsers(dest="command", required=True)
     for command in ("lambda", "rig", "all"):
         command_parser = subparsers.add_parser(command)

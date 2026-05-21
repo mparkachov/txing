@@ -28,12 +28,12 @@ Parameters:
     Default: mparkachov/txing
     AllowedPattern: "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
     Description: Public GitHub repository containing txing release assets.
-  ReleasePublisherCodeS3Bucket:
+  AwsAdminCodeS3Bucket:
     Type: String
-    Description: S3 bucket containing the packaged release publisher Lambda code.
-  ReleasePublisherCodeS3Key:
+    Description: S3 bucket containing the packaged AWS admin Lambda code.
+  AwsAdminCodeS3Key:
     Type: String
-    Description: S3 key containing the packaged release publisher Lambda code.
+    Description: S3 key containing the packaged AWS admin Lambda code.
 
 Resources:
   BaseEnvironment:
@@ -47,6 +47,8 @@ Resources:
         LocalhostAltAppUrl: !Ref LocalhostAltAppUrl
         WebAppUrl: !Ref StackWebAppUrl
         LambdaArtifactsBucketName: !Ref LambdaArtifactsBucketName
+        AwsAdminCodeS3Bucket: !Ref AwsAdminCodeS3Bucket
+        AwsAdminCodeS3Key: !Ref AwsAdminCodeS3Key
 
   TownTypeCatalog:
     Type: AWS::CloudFormation::Stack
@@ -145,15 +147,16 @@ Resources:
     Properties:
       TemplateURL: templates/enlist.yaml
       Parameters:
-        LambdaArtifactsBucketName: !Ref LambdaArtifactsBucketName
+        AwsAdminCodeS3Bucket: !Ref AwsAdminCodeS3Bucket
+        AwsAdminCodeS3Key: !Ref AwsAdminCodeS3Key
 
-  TxingReleasePublisherLogGroup:
+  AwsPublishReleaseLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: /aws/lambda/txing-release-publisher-lambda
+      LogGroupName: /aws/lambda/aws-publish-release
       RetentionInDays: 14
 
-  TxingReleasePublisherRole:
+  AwsPublishReleaseRole:
     Type: AWS::IAM::Role
     Properties:
       Description: Publishes txing release artifacts to Lambda and Greengrass.
@@ -175,8 +178,8 @@ Resources:
                   - logs:CreateLogStream
                   - logs:PutLogEvents
                 Resource:
-                  - !GetAtt TxingReleasePublisherLogGroup.Arn
-                  - !Sub ${TxingReleasePublisherLogGroup.Arn}:*
+                  - !GetAtt AwsPublishReleaseLogGroup.Arn
+                  - !Sub ${AwsPublishReleaseLogGroup.Arn}:*
               - Sid: ListLambdaArtifacts
                 Effect: Allow
                 Action:
@@ -225,7 +228,6 @@ Resources:
                   - lambda:UpdateFunctionCode
                 Resource:
                   - !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:txing-witness-lambda
-                  - !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:txing-enlist-lambda
                   - !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:txing-cloud-rig-lambda
                   - !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:txing-cloud-mcu-lambda
               - Sid: PublishGreengrassComponents
@@ -252,20 +254,20 @@ Resources:
                   - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thinggroup/txing-rig-type-*
                   - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:job/*
 
-  TxingReleasePublisherFunction:
+  AwsPublishReleaseFunction:
     Type: AWS::Lambda::Function
     DependsOn:
-      - TxingReleasePublisherLogGroup
+      - AwsPublishReleaseLogGroup
       - BaseEnvironment
     Properties:
-      FunctionName: txing-release-publisher-lambda
+      FunctionName: aws-publish-release
       Description: Publishes txing release artifacts to Lambda and Greengrass.
       Runtime: python3.12
-      Handler: aws.publish.handler.lambda_handler
+      Handler: aws_admin.publish_release.handler.lambda_handler
       Code:
-        S3Bucket: !Ref ReleasePublisherCodeS3Bucket
-        S3Key: !Ref ReleasePublisherCodeS3Key
-      Role: !GetAtt TxingReleasePublisherRole.Arn
+        S3Bucket: !Ref AwsAdminCodeS3Bucket
+        S3Key: !Ref AwsAdminCodeS3Key
+      Role: !GetAtt AwsPublishReleaseRole.Arn
       Timeout: 300
       MemorySize: 512
       Environment:
@@ -300,9 +302,9 @@ Outputs:
   GreengrassArtifactsBucketName:
     Value: !GetAtt BaseEnvironment.Outputs.GreengrassArtifactsBucketName
   ReleasePublisherFunctionName:
-    Value: !Ref TxingReleasePublisherFunction
+    Value: !Ref AwsPublishReleaseFunction
   ReleasePublisherFunctionArn:
-    Value: !GetAtt TxingReleasePublisherFunction.Arn
+    Value: !GetAtt AwsPublishReleaseFunction.Arn
   RigRuntimeRoleArn:
     Value: !GetAtt RigRuntimeLayer.Outputs.RigRuntimeRoleArn
   RigRuntimeRoleName:

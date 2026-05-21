@@ -114,6 +114,5 @@ upload_lambda_asset() {
 printf 'deploying txing Lambda release %s from %s using bucket %s\n' "$release_tag" "$repo_full" "$artifact_bucket"
 
 upload_lambda_asset txing-witness-lambda txing-witness-lambda-linux-aarch64.zip
-upload_lambda_asset txing-enlist-lambda txing-enlist-lambda-linux-aarch64.zip
 upload_lambda_asset txing-cloud-rig-lambda txing-cloud-rig-lambda-linux-aarch64.zip
 upload_lambda_asset txing-cloud-mcu-lambda txing-cloud-mcu-lambda-linux-aarch64.zip

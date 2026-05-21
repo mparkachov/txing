@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-Usage: txing-lambda-deploy-local [all|txing-witness-lambda|txing-enlist-lambda|txing-cloud-rig-lambda|txing-cloud-mcu-lambda]
+Usage: txing-lambda-deploy-local [all|txing-witness-lambda|txing-cloud-rig-lambda|txing-cloud-mcu-lambda]
 
 Builds txing Lambda bootstrap zips locally as linux/arm64 Go binaries, uploads
 them to the stable current/bootstrap.zip keys in the txing CloudFormation
@@ -65,13 +65,11 @@ case "$selector" in
   all)
     functions=(
       txing-witness-lambda
-      txing-enlist-lambda
       txing-cloud-rig-lambda
       txing-cloud-mcu-lambda
     )
     ;;
   witness|txing-witness-lambda) functions=(txing-witness-lambda) ;;
-  enlist|txing-enlist-lambda) functions=(txing-enlist-lambda) ;;
   cloud-rig|txing-cloud-rig-lambda) functions=(txing-cloud-rig-lambda) ;;
   cloud-mcu|txing-cloud-mcu-lambda) functions=(txing-cloud-mcu-lambda) ;;
   *)
@@ -83,7 +81,6 @@ esac
 lambda_workdir() {
   case "$1" in
     txing-witness-lambda) printf '%s\n' "$project_root/witness" ;;
-    txing-enlist-lambda) printf '%s\n' "$project_root/shared/aws/enlist" ;;
     txing-cloud-rig-lambda|txing-cloud-mcu-lambda) printf '%s\n' "$project_root/devices/cloud-mcu/lambda" ;;
     *) fail "unknown Lambda function: $1" ;;
   esac
@@ -92,7 +89,6 @@ lambda_workdir() {
 lambda_package() {
   case "$1" in
     txing-witness-lambda) printf '%s\n' "./cmd/txing-witness-lambda" ;;
-    txing-enlist-lambda) printf '%s\n' "./cmd/txing-enlist-lambda" ;;
     txing-cloud-rig-lambda) printf '%s\n' "./cmd/txing-cloud-rig-lambda" ;;
     txing-cloud-mcu-lambda) printf '%s\n' "./cmd/txing-cloud-mcu-lambda" ;;
     *) fail "unknown Lambda function: $1" ;;
