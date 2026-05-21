@@ -25,7 +25,7 @@ Runtime Lambdas are Go:
 
 These functions stay as static `linux/arm64` `bootstrap` executables for
 `provided.al2023`. They are published as release artifacts and updated by
-`aws::publish` or `aws::deploy-local-lambda`.
+`aws::publish` or `aws::publish-lambda`.
 
 Rust remains the implementation language for firmware, Greengrass runtime code,
 and other non-Lambda Rust components. This boundary is intentionally language

@@ -149,28 +149,6 @@ publish-rig release='latest':
     exec uv run --project "{{aws_dir}}/python" \
       python -m aws_admin.publish_release rig --release "{{release}}"
 
-deploy-local-lambda function_name='all':
-    #!/usr/bin/env bash
-    set -euo pipefail
-    case "{{function_name}}" in
-      all|witness|cloud-rig|cloud-mcu|txing-witness-lambda|txing-cloud-rig-lambda|txing-cloud-mcu-lambda) ;;
-      *=*)
-        echo "function_name must be all, witness, cloud-rig, cloud-mcu, or a runtime txing Lambda function name." >&2
-        exit 1
-        ;;
-      *)
-        echo "function_name must be all, witness, cloud-rig, cloud-mcu, or a runtime txing Lambda function name." >&2
-        exit 1
-        ;;
-    esac
-    cd "{{aws_dir}}"
-    source "{{aws_lib}}"
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws)"
-    txing_aws_init
-    artifact_bucket="$(ensure_artifact_bucket)"
-    export TXING_LAMBDA_ARTIFACT_BUCKET="$artifact_bucket"
-    exec "{{aws_dir}}/scripts/txing-lambda-deploy-local" "{{function_name}}"
-
 delete stack_name=stack_name wait='true' delete_packaging_buckets='true':
     #!/usr/bin/env bash
     set -euo pipefail

@@ -8,10 +8,13 @@ import unittest
 import zipfile
 
 from aws_admin.publish_release.core import (
+    GREENGRASS_COMPONENT_VERSIONS_TO_KEEP,
     LAMBDA_ASSETS,
     RIG_COMPONENTS,
     PublishError,
+    cleanup_greengrass_component_versions,
     greengrass_components_for_target,
+    greengrass_component_versions_to_delete,
     greengrass_recipe,
     lambda_current_key,
     lambda_version_key,
@@ -180,6 +183,92 @@ class PublishTests(unittest.TestCase):
             "arn:aws:iot:eu-central-1:123456789012:thinggroup/txing-rig-type-raspi",
         )
         self.assertEqual(iot.created_groups, ["txing-rig-type-raspi"])
+
+    def test_greengrass_component_cleanup_keeps_newest_10_semver_versions(self) -> None:
+        versions = [
+            {
+                "componentVersion": f"1.0.{patch}",
+                "arn": (
+                    "arn:aws:greengrass:eu-central-1:123456789012:"
+                    f"components/dev.txing.rig.SparkplugManager/versions/1.0.{patch}"
+                ),
+            }
+            for patch in range(12)
+        ]
+
+        delete = greengrass_component_versions_to_delete(
+            versions, keep_versions=GREENGRASS_COMPONENT_VERSIONS_TO_KEEP
+        )
+
+        self.assertEqual(
+            [version["componentVersion"] for version in delete],
+            ["1.0.1", "1.0.0"],
+        )
+
+    def test_greengrass_component_cleanup_deletes_only_old_txing_versions(self) -> None:
+        class FakePaginator:
+            def __init__(self, pages: list[dict[str, object]]) -> None:
+                self.pages = pages
+
+            def paginate(self, **kwargs: object):
+                yield from self.pages
+
+        class FakeGreengrass:
+            def __init__(self) -> None:
+                self.deleted: list[str] = []
+
+            def get_paginator(self, operation: str) -> FakePaginator:
+                if operation == "list_components":
+                    return FakePaginator(
+                        [
+                            {
+                                "components": [
+                                    {
+                                        "componentName": "dev.txing.rig.SparkplugManager",
+                                        "arn": "component-arn",
+                                    },
+                                    {
+                                        "componentName": "unrelated",
+                                        "arn": "unrelated-arn",
+                                    },
+                                ]
+                            }
+                        ]
+                    )
+                if operation == "list_component_versions":
+                    return FakePaginator(
+                        [
+                            {
+                                "componentVersions": [
+                                    {
+                                        "componentVersion": f"2.0.{patch}",
+                                        "arn": f"component-version-arn-{patch}",
+                                    }
+                                    for patch in range(11)
+                                ]
+                            }
+                        ]
+                    )
+                raise AssertionError(operation)
+
+            def delete_component(self, *, arn: str) -> None:
+                self.deleted.append(arn)
+
+        greengrass = FakeGreengrass()
+
+        result = cleanup_greengrass_component_versions(
+            greengrass,
+            ["dev.txing.rig.SparkplugManager", "dev.txing.rig.BleConnectivity"],
+        )
+
+        self.assertEqual(
+            result,
+            {
+                "dev.txing.rig.SparkplugManager": ["2.0.0"],
+                "dev.txing.rig.BleConnectivity": [],
+            },
+        )
+        self.assertEqual(greengrass.deleted, ["component-version-arn-0"])
 
 
 if __name__ == "__main__":

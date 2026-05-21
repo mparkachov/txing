@@ -70,23 +70,12 @@ just aws::publish latest
 `aws::publish` invokes the AWS-hosted publisher Lambda. The publisher downloads
 public GitHub release assets over HTTPS, uploads Lambda and Greengrass artifacts,
 updates existing Lambda functions, creates Greengrass component versions, and
-creates both `raspi` and `cloud` Greengrass deployments.
+creates both `raspi` and `cloud` Greengrass deployments. After publishing, it
+prunes each txing Greengrass component to the newest 10 semantic versions.
 `aws::publish-lambda` runs the same Lambda publish code locally and is kept for
 first-time stack creation before the publisher Lambda exists.
 `just aws::deploy` applies CloudFormation and publishes Python admin Lambda
 source used by `aws-publish-release`, `aws-enlist-txing`, and `aws-clean-stack`.
-
-For local Lambda iteration from macOS or Linux, use:
-
-```bash
-just aws::deploy-local-lambda txing-witness-lambda
-```
-
-The argument can be `all`, `witness`, `cloud-rig`, `cloud-mcu`, or the full
-runtime Lambda function name. This builds local `linux/arm64` `bootstrap` zips,
-replaces the stable `lambda/<function>/current/bootstrap.zip` object in S3, and
-updates existing runtime Lambda functions from that S3 object. It does not
-create a GitHub release or immutable versioned release artifact.
 
 ## Board Assets
 

@@ -27,8 +27,8 @@ aws sts get-caller-identity
 
 Set `TXING_AWS_STACK` explicitly before running stack-backed commands such as
 `just aws::deploy`, `just aws::publish`, `just aws::publish-lambda`,
-`just aws::deploy-local-lambda`, `just aws::check`, `just office::write-env`,
-`just aws::publish-rig`, and `just unit::cert`.
+`just aws::check`, `just office::write-env`, `just aws::publish-rig`, and
+`just unit::cert`.
 Export it in the operator shell or pass a positional stack name to recipes that
 accept one. Those commands fail if `TXING_AWS_STACK` is unset and no positional
 stack name is provided.
@@ -71,18 +71,13 @@ name.
 `just aws::publish latest` invokes the AWS-hosted publisher Lambda, which
 downloads public GitHub release assets, uploads Lambda and Greengrass artifacts,
 updates existing Lambda functions, publishes Greengrass component versions, and
-creates both `raspi` and `cloud` Greengrass deployments. Run it after the
+creates both `raspi` and `cloud` Greengrass deployments. It also prunes each
+txing Greengrass component to the newest 10 semantic versions. Run it after the
 `Txing Release` workflow once the stack already exists.
 
 `just aws::publish-lambda latest` runs the same Lambda publish code locally. Use
 it before the first `aws::deploy` in a new account/stack so the stable Lambda S3
 bootstrap keys exist before CloudFormation creates the Lambda functions.
-
-`just aws::deploy-local-lambda <function>` builds local Lambda code with Go,
-uploads the zip to the stable `lambda/<function>/current/bootstrap.zip` S3 key,
-and updates an existing Lambda function from that key. It accepts `all`,
-`witness`, `cloud-rig`, `cloud-mcu`, or a full runtime function name. This is
-for local runtime Lambda iteration and does not create a GitHub release artifact.
 
 `just aws::deploy` deploys the base root stack and applies AWS infrastructure
 changes. It packages the Python AWS admin Lambdas into the stack, but does not
@@ -274,12 +269,10 @@ For a full teardown, delete resources in reverse dependency order:
 just aws-town cloudformation delete-stack --stack-name "$TXING_AWS_STACK"
 ```
 
-The base stack has delete-time cleanup custom resources for disposable S3 bucket
-contents and IoT policy attachments created outside CloudFormation, such as rig
-certificates and browser Cognito identities. You should not need to manually
-empty `GreengrassArtifactsBucketName`, and the base IoT policies should be
-detached from their principals before CloudFormation deletes the policy
-resources.
+The stack has a delete-time cleanup custom resource for disposable
+`GreengrassArtifactsBucketName` contents. It does not detach IoT policies or
+delete manually enlisted IoT things; manually rolled-in resources must be
+handled explicitly by the operator.
 
 Legacy AWS-hosted web stacks previously owned `WebAppBucketName` and
 `WebAppDistributionId`. Current CloudFormation removes those resources because

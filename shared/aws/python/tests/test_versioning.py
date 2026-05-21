@@ -234,7 +234,6 @@ class VersionEnvironmentTests(unittest.TestCase):
             REPO_ROOT / "justfile",
             REPO_ROOT / "shared" / "aws" / "justfile",
             REPO_ROOT / "shared" / "aws" / "scripts" / "aws_lib.sh",
-            REPO_ROOT / "shared" / "aws" / "scripts" / "txing-lambda-deploy-release",
             REPO_ROOT / "rig" / "justfile",
             REPO_ROOT / "rig" / "scripts" / "txing-rig-deploy",
             REPO_ROOT / "rig" / "scripts" / "txing-rig-deploy-release",
@@ -617,58 +616,32 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn("sudo", release_deploy)
         self.assertNotIn("chown", release_deploy)
 
-    def test_lambda_release_deploy_runs_from_operator_assets(self) -> None:
+    def test_lambda_release_publish_uses_shared_python_only(self) -> None:
         aws_justfile = (REPO_ROOT / "shared" / "aws" / "justfile").read_text(
             encoding="utf-8"
         )
         aws_lib = (REPO_ROOT / "shared" / "aws" / "scripts" / "aws_lib.sh").read_text(
             encoding="utf-8"
         )
-        release_deploy = (
-            REPO_ROOT / "shared" / "aws" / "scripts" / "txing-lambda-deploy-release"
-        ).read_text(encoding="utf-8")
-        local_deploy = (
-            REPO_ROOT / "shared" / "aws" / "scripts" / "txing-lambda-deploy-local"
-        ).read_text(encoding="utf-8")
+        scripts_dir = REPO_ROOT / "shared" / "aws" / "scripts"
 
         self.assertIn("publish release='latest'", aws_justfile)
         self.assertIn("publish-lambda release='latest'", aws_justfile)
         self.assertIn("publish-rig release='latest'", aws_justfile)
         self.assertNotIn("deploy-lambdas release='latest'", aws_justfile)
-        self.assertIn("deploy-local-lambda function_name='all'", aws_justfile)
+        self.assertNotIn("deploy-local-lambda", aws_justfile)
         self.assertIn("TXING_LAMBDA_ARTIFACT_BUCKET", aws_justfile)
         self.assertIn("python -m aws_admin.publish_release lambda --release", aws_justfile)
         self.assertIn("ReleasePublisherFunctionName", aws_justfile)
-        self.assertNotIn('scripts/txing-lambda-deploy-release" "{{release}}"', aws_justfile)
-        self.assertIn('scripts/txing-lambda-deploy-local" "{{function_name}}"', aws_justfile)
+        self.assertNotIn("scripts/txing-lambda-deploy", aws_justfile)
         self.assertNotIn("witness::build", aws_justfile)
         self.assertNotIn('enlist/justfile" build', aws_justfile)
         self.assertIn("LambdaArtifactsBucketName=$artifact_bucket", aws_lib)
         self.assertIn("AwsAdminCodeS3Bucket=$artifact_bucket", aws_lib)
         self.assertIn("AwsAdminCodeS3Key=$admin_key", aws_lib)
         self.assertIn("cfn/aws-admin/$admin_hash.zip", aws_lib)
-        self.assertIn("gh release download", release_deploy)
-        self.assertIn("txing-witness-lambda-linux-aarch64.zip", release_deploy)
-        self.assertNotIn("txing-enlist-lambda-linux-aarch64.zip", release_deploy)
-        self.assertIn("txing-cloud-rig-lambda-linux-aarch64.zip", release_deploy)
-        self.assertIn("txing-cloud-mcu-lambda-linux-aarch64.zip", release_deploy)
-        self.assertIn('version_key="lambda/$function_name/$version/bootstrap.zip"', release_deploy)
-        self.assertIn('current_key="lambda/$function_name/current/bootstrap.zip"', release_deploy)
-        self.assertIn("aws lambda update-function-code", release_deploy)
-        self.assertIn("does not exist yet; seeded S3 bootstrap", release_deploy)
-        self.assertNotIn("sudo", release_deploy)
-        self.assertNotIn("chown", release_deploy)
-        self.assertIn("GOOS=linux GOARCH=arm64 CGO_ENABLED=0", local_deploy)
-        self.assertIn("go build -trimpath -tags lambda.norpc", local_deploy)
-        self.assertIn('current_key="lambda/$function_name/current/bootstrap.zip"', local_deploy)
-        self.assertIn('aws s3 cp "$asset_path" "s3://$artifact_bucket/$current_key"', local_deploy)
-        self.assertIn("aws lambda update-function-code", local_deploy)
-        self.assertIn('--s3-key "$current_key"', local_deploy)
-        self.assertIn("txing-cloud-mcu-lambda", local_deploy)
-        self.assertNotIn("gh release download", local_deploy)
-        self.assertNotIn("version_key=", local_deploy)
-        self.assertNotIn("sudo", local_deploy)
-        self.assertNotIn("chown", local_deploy)
+        self.assertFalse((scripts_dir / "txing-lambda-deploy-release").exists())
+        self.assertFalse((scripts_dir / "txing-lambda-deploy-local").exists())
 
     def test_greengrass_lite_submodule_removed_for_distribution_install(self) -> None:
         self.assertFalse((REPO_ROOT / "rig" / "greengrass-lite-build.env").exists())

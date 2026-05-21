@@ -101,6 +101,9 @@ Resources:
                 Action:
                   - greengrass:CreateComponentVersion
                   - greengrass:CreateDeployment
+                  - greengrass:DeleteComponent
+                  - greengrass:ListComponents
+                  - greengrass:ListComponentVersions
                 Resource: "*"
               - Sid: ManageGreengrassThingGroups
                 Effect: Allow

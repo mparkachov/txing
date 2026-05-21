@@ -20,6 +20,7 @@ from botocore.exceptions import ClientError
 
 
 DEFAULT_GITHUB_REPOSITORY = "mparkachov/txing"
+GREENGRASS_COMPONENT_VERSIONS_TO_KEEP = 10
 _SEMVER_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 _USER_AGENT = "txing-release-publisher"
 
@@ -148,6 +149,13 @@ def lambda_current_key(function_name: str) -> str:
 
 def rig_artifact_key(component_name: str, version: str, binary_name: str) -> str:
     return f"artifacts/{component_name}/{version}/{binary_name}"
+
+
+def semantic_version_key(version: str) -> tuple[int, int, int]:
+    if not _SEMVER_RE.fullmatch(version):
+        raise PublishError(f"component version must be SemVer X.Y.Z, got: {version}")
+    major, minor, patch = version.split(".")
+    return (int(major), int(minor), int(patch))
 
 
 def validate_lambda_zip(path: Path) -> None:
@@ -606,6 +614,11 @@ def publish_rig(
             components=greengrass_components_for_target(release.version, rig_type),
         )
         deployments[rig_type] = target_arn
+    deleted_component_versions = cleanup_greengrass_component_versions(
+        greengrass,
+        [component.component_name for component in RIG_COMPONENTS],
+        keep_versions=GREENGRASS_COMPONENT_VERSIONS_TO_KEEP,
+    )
     return {
         "releaseTag": release.tag,
         "version": release.version,
@@ -613,6 +626,7 @@ def publish_rig(
             "components": created_components,
             "artifacts": artifacts,
             "deployments": deployments,
+            "deletedComponentVersions": deleted_component_versions,
         },
     }
 
@@ -693,6 +707,87 @@ def _create_component_version(greengrass, recipe: dict[str, object]) -> None:
             )
             return
         raise
+
+
+def cleanup_greengrass_component_versions(
+    greengrass,
+    component_names: list[str],
+    *,
+    keep_versions: int = GREENGRASS_COMPONENT_VERSIONS_TO_KEEP,
+) -> dict[str, list[str]]:
+    if keep_versions < 1:
+        raise PublishError("keep_versions must be at least 1")
+
+    component_arns = _greengrass_component_arns(greengrass, set(component_names))
+    deleted_by_component: dict[str, list[str]] = {}
+    for component_name in component_names:
+        component_arn = component_arns.get(component_name)
+        if not component_arn:
+            deleted_by_component[component_name] = []
+            continue
+        versions = _greengrass_component_versions(greengrass, component_arn)
+        old_versions = greengrass_component_versions_to_delete(
+            versions, keep_versions=keep_versions
+        )
+        deleted_versions: list[str] = []
+        for version in old_versions:
+            version_text = str(version["componentVersion"])
+            try:
+                greengrass.delete_component(arn=version["arn"])
+            except ClientError as err:
+                code = err.response.get("Error", {}).get("Code", "")
+                if code != "ResourceNotFoundException":
+                    raise
+            print(f"deleted Greengrass component {component_name} {version_text}")
+            deleted_versions.append(version_text)
+        deleted_by_component[component_name] = deleted_versions
+    return deleted_by_component
+
+
+def greengrass_component_versions_to_delete(
+    versions: list[dict[str, str]], *, keep_versions: int
+) -> list[dict[str, str]]:
+    if keep_versions < 1:
+        raise PublishError("keep_versions must be at least 1")
+    sortable_versions = []
+    for version in versions:
+        version_text = version.get("componentVersion", "")
+        arn = version.get("arn", "")
+        if not version_text or not arn:
+            continue
+        sortable_versions.append((semantic_version_key(version_text), version))
+    sortable_versions.sort(key=lambda item: item[0], reverse=True)
+    return [version for _, version in sortable_versions[keep_versions:]]
+
+
+def _greengrass_component_arns(
+    greengrass, component_names: set[str]
+) -> dict[str, str]:
+    component_arns: dict[str, str] = {}
+    paginator = greengrass.get_paginator("list_components")
+    for page in paginator.paginate(scope="PRIVATE"):
+        for component in page.get("components", []):
+            name = component.get("componentName")
+            arn = component.get("arn")
+            if name in component_names and isinstance(arn, str) and arn:
+                component_arns[name] = arn
+        if component_names.issubset(component_arns):
+            break
+    return component_arns
+
+
+def _greengrass_component_versions(
+    greengrass, component_arn: str
+) -> list[dict[str, str]]:
+    versions: list[dict[str, str]] = []
+    paginator = greengrass.get_paginator("list_component_versions")
+    for page in paginator.paginate(arn=component_arn):
+        for version in page.get("componentVersions", []):
+            version_text = version.get("componentVersion")
+            arn = version.get("arn")
+            if isinstance(version_text, str) and isinstance(arn, str):
+                versions.append({"componentVersion": version_text, "arn": arn})
+    return versions
 
 
 def _ensure_thing_group(iot, group_name: str) -> str:

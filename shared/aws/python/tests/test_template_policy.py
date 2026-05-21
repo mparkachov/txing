@@ -634,6 +634,9 @@ class AwsTemplatePolicyTests(unittest.TestCase):
             "lambda:GetFunctionConfiguration",
             "greengrass:CreateComponentVersion",
             "greengrass:CreateDeployment",
+            "greengrass:DeleteComponent",
+            "greengrass:ListComponents",
+            "greengrass:ListComponentVersions",
             "iot:CreateThingGroup",
             "iot:DescribeThingGroup",
             "iot:DescribeEndpoint",
@@ -777,6 +780,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("deploy_init_parameter_name()", text)
         self.assertIn("/txing/stack", text)
         self.assertIn("deploy stack_name=stack_name", text)
+        self.assertNotIn("deploy-local-lambda", text)
         self.assertNotIn("deploy-lambda-drain", text)
         self.assertNotIn("deploy-lambda-migrate", text)
         self.assertNotIn("LambdaStackMigrationPhase", text)

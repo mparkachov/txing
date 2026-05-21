@@ -272,8 +272,9 @@ just aws::publish-rig latest
 stack name is unset. The command downloads public GitHub release assets over
 HTTPS, uploads the Linux component binaries to the Greengrass artifact bucket,
 creates Greengrass component versions from the project SemVer, and creates
-continuous deployments for the `raspi` and `cloud` rig-type thing groups. The
-Linux component binaries are not executed on the operator Mac.
+continuous deployments for the `raspi` and `cloud` rig-type thing groups. After
+publishing, it prunes each txing Greengrass component to the newest 10 semantic
+versions. The Linux component binaries are not executed on the operator Mac.
 
 Local Greengrass-only fallback:
 

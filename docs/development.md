@@ -101,7 +101,6 @@ just unit::daemon::run
 just office::dev
 just office::write-env
 just aws::publish-lambda latest
-just aws::deploy-local-lambda txing-witness-lambda
 just aws::deploy
 just aws::deploy-town town
 just aws::deploy-rig <town-id> raspi server
@@ -171,11 +170,9 @@ just rig::log <rig-id>
 That source-checkout rig loop is for development and admin builder use.
 Production `raspi` rig hosts receive Greengrass deployments published from the
 operator machine instead. Production `cloud` rigs are updated through
-`just aws::deploy` and `just aws::publish latest`. For local Lambda
-iteration without a GitHub release, use `just aws::deploy-local-lambda
-<function>`; it builds a local `linux/arm64` `bootstrap` zip, uploads it to the
-stable S3 `current/bootstrap.zip` key, and updates the existing Lambda function
-from that key.
+`just aws::deploy` and `just aws::publish latest`. Runtime Lambda updates flow
+through GitHub release artifacts plus `just aws::publish-lambda latest` or
+`just aws::publish latest`.
 
 Board:
 
