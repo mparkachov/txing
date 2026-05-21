@@ -596,6 +596,9 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         cloud_mcu_template = (AWS_DIR / "templates" / "types" / "cloud-mcu.yaml").read_text(
             encoding="utf-8"
         )
+        cloud_mcu_source = (
+            REPO_ROOT / "devices" / "cloud-mcu" / "lambda" / "internal" / "cloudmcu" / "cloudmcu.go"
+        ).read_text(encoding="utf-8")
         aws_justfile = (AWS_DIR / "justfile").read_text(encoding="utf-8")
         root_justfile = (REPO_ROOT / "justfile").read_text(encoding="utf-8")
         project_version = (REPO_ROOT / "VERSION").read_text(encoding="utf-8").strip()
@@ -624,6 +627,31 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("- arm64", cloud_mcu_template)
         self.assertIn("lambda/txing-cloud-rig-lambda/current/bootstrap.zip", cloud_mcu_template)
         self.assertIn("lambda/txing-cloud-mcu-lambda/current/bootstrap.zip", cloud_mcu_template)
+        self.assertIn("Type: AWS::EC2::VPCCidrBlock", cloud_mcu_template)
+        self.assertIn("AmazonProvidedIpv6CidrBlock: true", cloud_mcu_template)
+        self.assertIn("Type: AWS::EC2::EgressOnlyInternetGateway", cloud_mcu_template)
+        self.assertIn("Ipv6Native: true", cloud_mcu_template)
+        self.assertIn("AssignIpv6AddressOnCreation: true", cloud_mcu_template)
+        self.assertIn("EnableResourceNameDnsAAAARecord: true", cloud_mcu_template)
+        self.assertIn("EnableResourceNameDnsARecord: false", cloud_mcu_template)
+        self.assertIn("HostnameType: resource-name", cloud_mcu_template)
+        self.assertIn("DestinationIpv6CidrBlock: ::/0", cloud_mcu_template)
+        self.assertIn(
+            "EgressOnlyInternetGatewayId: !Ref CloudMcuEgressOnlyInternetGateway",
+            cloud_mcu_template,
+        )
+        self.assertIn("CidrIpv6: ::/0", cloud_mcu_template)
+        self.assertNotIn("Type: AWS::EC2::InternetGateway", cloud_mcu_template)
+        self.assertNotIn("Type: AWS::EC2::VPCGatewayAttachment", cloud_mcu_template)
+        self.assertNotIn("CidrBlock: 10.83.0.0/25", cloud_mcu_template)
+        self.assertNotIn("MapPublicIpOnLaunch", cloud_mcu_template)
+        self.assertNotIn("DestinationCidrBlock: 0.0.0.0/0", cloud_mcu_template)
+        self.assertNotIn("CidrIp: 0.0.0.0/0", cloud_mcu_template)
+        self.assertNotIn("Type: AWS::ECR::Repository", cloud_mcu_template)
+        self.assertNotIn("CloudMcuContainerRepositoryDualStackUri", cloud_mcu_template)
+        self.assertNotIn("ecr:GetAuthorizationToken", cloud_mcu_template)
+        self.assertIn("AssignPublicIp: ecstypes.AssignPublicIpDisabled", cloud_mcu_source)
+        self.assertNotIn("AssignPublicIp: ecstypes.AssignPublicIpEnabled", cloud_mcu_source)
         self.assertNotIn("--parameter-overrides", aws_justfile)
 
     def test_web_hosting_is_external_to_aws_stack(self) -> None:

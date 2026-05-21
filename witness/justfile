@@ -13,7 +13,7 @@ build:
     GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -tags lambda.norpc -ldflags="-s -w" -o target/release/txing-witness-lambda ./cmd/txing-witness-lambda
 
 deploy:
-    @echo "Direct local Lambda deploy is disabled. Build a GitHub release and run: just aws::deploy-lambdas latest" >&2
+    @echo "Direct per-function deploy is disabled. Use: just aws::deploy-local-lambda txing-witness-lambda" >&2
     @exit 1
 
 @default:

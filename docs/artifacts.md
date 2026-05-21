@@ -75,6 +75,18 @@ functions, and seeds stable S3 bootstrap keys for first-time stack creation.
 `just aws::deploy` applies CloudFormation only; it does not build, upload, or
 change Lambda code versions.
 
+For local Lambda iteration from macOS or Linux, use:
+
+```bash
+just aws::deploy-local-lambda txing-witness-lambda
+```
+
+The argument can be `all`, `witness`, `enlist`, `cloud-rig`, `cloud-mcu`, or the
+full Lambda function name. This builds local `linux/arm64` `bootstrap` zips,
+replaces the stable `lambda/<function>/current/bootstrap.zip` object in S3, and
+updates existing Lambda functions from that S3 object. It does not create a
+GitHub release or immutable versioned release artifact.
+
 ## Board Assets
 
 Boards install these two release assets with root-owned `mise`:

@@ -63,34 +63,41 @@ Resources:
       EnableDnsHostnames: true
       EnableDnsSupport: true
 
-  CloudMcuInternetGateway:
-    Type: AWS::EC2::InternetGateway
+  CloudMcuVpcIpv6CidrBlock:
+    Type: AWS::EC2::VPCCidrBlock
+    Properties:
+      AmazonProvidedIpv6CidrBlock: true
+      VpcId: !Ref CloudMcuVpc
 
-  CloudMcuVpcGatewayAttachment:
-    Type: AWS::EC2::VPCGatewayAttachment
+  CloudMcuEgressOnlyInternetGateway:
+    Type: AWS::EC2::EgressOnlyInternetGateway
     Properties:
       VpcId: !Ref CloudMcuVpc
-      InternetGatewayId: !Ref CloudMcuInternetGateway
 
   CloudMcuSubnet:
     Type: AWS::EC2::Subnet
+    DependsOn: CloudMcuVpcIpv6CidrBlock
     Properties:
       VpcId: !Ref CloudMcuVpc
-      CidrBlock: 10.83.0.0/25
-      MapPublicIpOnLaunch: true
+      Ipv6Native: true
+      Ipv6CidrBlock: !Select [0, !Cidr [!Select [0, !GetAtt CloudMcuVpc.Ipv6CidrBlocks], 1, 64]]
+      AssignIpv6AddressOnCreation: true
+      PrivateDnsNameOptionsOnLaunch:
+        EnableResourceNameDnsAAAARecord: true
+        EnableResourceNameDnsARecord: false
+        HostnameType: resource-name
 
   CloudMcuRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
       VpcId: !Ref CloudMcuVpc
 
-  CloudMcuDefaultRoute:
+  CloudMcuIpv6DefaultRoute:
     Type: AWS::EC2::Route
-    DependsOn: CloudMcuVpcGatewayAttachment
     Properties:
       RouteTableId: !Ref CloudMcuRouteTable
-      DestinationCidrBlock: 0.0.0.0/0
-      GatewayId: !Ref CloudMcuInternetGateway
+      DestinationIpv6CidrBlock: ::/0
+      EgressOnlyInternetGatewayId: !Ref CloudMcuEgressOnlyInternetGateway
 
   CloudMcuSubnetRouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
@@ -105,7 +112,7 @@ Resources:
       VpcId: !Ref CloudMcuVpc
       SecurityGroupEgress:
         - IpProtocol: -1
-          CidrIp: 0.0.0.0/0
+          CidrIpv6: ::/0
 
   CloudMcuCluster:
     Type: AWS::ECS::Cluster

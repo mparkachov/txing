@@ -365,7 +365,7 @@ func (c *AWSClient) RunTask(ctx context.Context, thingName, rigID string) (EcsTa
 		NetworkConfiguration: &ecstypes.NetworkConfiguration{AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{
 			Subnets:        append([]string(nil), c.ecsSubnets...),
 			SecurityGroups: append([]string(nil), c.ecsSecurityGroups...),
-			AssignPublicIp: ecstypes.AssignPublicIpEnabled,
+			AssignPublicIp: ecstypes.AssignPublicIpDisabled,
 		}},
 		Count:     aws.Int32(1),
 		StartedBy: aws.String(startedBy),

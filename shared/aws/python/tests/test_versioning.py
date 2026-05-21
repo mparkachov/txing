@@ -621,10 +621,15 @@ class VersionEnvironmentTests(unittest.TestCase):
         release_deploy = (
             REPO_ROOT / "shared" / "aws" / "scripts" / "txing-lambda-deploy-release"
         ).read_text(encoding="utf-8")
+        local_deploy = (
+            REPO_ROOT / "shared" / "aws" / "scripts" / "txing-lambda-deploy-local"
+        ).read_text(encoding="utf-8")
 
         self.assertIn("deploy-lambdas release='latest'", aws_justfile)
+        self.assertIn("deploy-local-lambda function_name='all'", aws_justfile)
         self.assertIn("TXING_LAMBDA_ARTIFACT_BUCKET", aws_justfile)
         self.assertIn('scripts/txing-lambda-deploy-release" "{{release}}"', aws_justfile)
+        self.assertIn('scripts/txing-lambda-deploy-local" "{{function_name}}"', aws_justfile)
         self.assertNotIn("witness::build", aws_justfile)
         self.assertNotIn('enlist/justfile" build', aws_justfile)
         self.assertIn("LambdaArtifactsBucketName=$artifact_bucket", aws_lib)
@@ -639,6 +644,17 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("does not exist yet; seeded S3 bootstrap", release_deploy)
         self.assertNotIn("sudo", release_deploy)
         self.assertNotIn("chown", release_deploy)
+        self.assertIn("GOOS=linux GOARCH=arm64 CGO_ENABLED=0", local_deploy)
+        self.assertIn("go build -trimpath -tags lambda.norpc", local_deploy)
+        self.assertIn('current_key="lambda/$function_name/current/bootstrap.zip"', local_deploy)
+        self.assertIn('aws s3 cp "$asset_path" "s3://$artifact_bucket/$current_key"', local_deploy)
+        self.assertIn("aws lambda update-function-code", local_deploy)
+        self.assertIn('--s3-key "$current_key"', local_deploy)
+        self.assertIn("txing-cloud-mcu-lambda", local_deploy)
+        self.assertNotIn("gh release download", local_deploy)
+        self.assertNotIn("version_key=", local_deploy)
+        self.assertNotIn("sudo", local_deploy)
+        self.assertNotIn("chown", local_deploy)
 
     def test_greengrass_lite_submodule_removed_for_distribution_install(self) -> None:
         self.assertFalse((REPO_ROOT / "rig" / "greengrass-lite-build.env").exists())

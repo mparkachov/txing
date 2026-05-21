@@ -26,8 +26,9 @@ aws sts get-caller-identity
 ```
 
 Set `TXING_AWS_STACK` explicitly before running stack-backed commands such as
-`just aws::deploy`, `just aws::deploy-lambdas`, `just aws::check`,
-`just office::write-env`, `just rig::deploy-release`, and `just unit::cert`.
+`just aws::deploy`, `just aws::deploy-lambdas`,
+`just aws::deploy-local-lambda`, `just aws::check`, `just office::write-env`,
+`just rig::deploy-release`, and `just unit::cert`.
 Export it in the operator shell or pass a positional stack name to recipes that
 accept one. Those commands fail if `TXING_AWS_STACK` is unset and no positional
 stack name is provided.
@@ -71,6 +72,12 @@ GitHub, uploads them to the shared `txing-cfn-*` artifact bucket, updates
 existing Lambda functions, and seeds stable S3 bootstrap keys for first stack
 creation. Run it after the `Txing Release` workflow and before a first
 `aws::deploy` in a new account/stack.
+
+`just aws::deploy-local-lambda <function>` builds local Lambda code with Go,
+uploads the zip to the stable `lambda/<function>/current/bootstrap.zip` S3 key,
+and updates an existing Lambda function from that key. It accepts `all`,
+`witness`, `enlist`, `cloud-rig`, `cloud-mcu`, or a full function name. This is
+for local iteration and does not create a GitHub release artifact.
 
 `just aws::deploy` deploys the base root stack and applies AWS infrastructure
 changes only. It does not build Lambda crates or change Lambda code versions.
