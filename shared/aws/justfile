@@ -61,7 +61,7 @@ deploy stack_name=stack_name template_file=template_file:
     deploy_template "$TXING_AWS_STACK" "{{template_file}}"
     describe_stack_outputs "$TXING_AWS_STACK"
 
-deploy-lambdas release='latest':
+publish release='latest':
     #!/usr/bin/env bash
     set -euo pipefail
     case "{{release}}" in
@@ -79,9 +79,75 @@ deploy-lambdas release='latest':
     source "{{aws_lib}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws)"
     txing_aws_init
+    export AWS_DEFAULT_REGION="$TXING_AWS_REGION"
+    function_name="$(stack_output "$TXING_AWS_STACK" ReleasePublisherFunctionName)"
+    payload_file="$(mktemp "${TMPDIR:-/tmp}/txing-publish-payload.XXXXXX")"
+    response_file="$(mktemp "${TMPDIR:-/tmp}/txing-publish-response.XXXXXX")"
+    metadata_file="$(mktemp "${TMPDIR:-/tmp}/txing-publish-metadata.XXXXXX")"
+    trap 'rm -f "$payload_file" "$response_file" "$metadata_file"' EXIT
+    jq -n --arg release "{{release}}" '{release: $release}' >"$payload_file"
+    aws lambda invoke \
+      --function-name "$function_name" \
+      --cli-binary-format raw-in-base64-out \
+      --payload "fileb://$payload_file" \
+      "$response_file" >"$metadata_file"
+    if jq -e '.FunctionError? // empty' "$metadata_file" >/dev/null; then
+      cat "$response_file" >&2
+      exit 1
+    fi
+    if ! jq -e '.ok == true' "$response_file" >/dev/null; then
+      cat "$response_file" >&2
+      exit 1
+    fi
+    jq '.' "$response_file"
+
+publish-lambda release='latest':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case "{{release}}" in
+      latest|v[0-9]*|[0-9]*) ;;
+      *=*)
+        echo "release must be latest, vX.Y.Z, or X.Y.Z." >&2
+        exit 1
+        ;;
+      *)
+        echo "release must be latest, vX.Y.Z, or X.Y.Z." >&2
+        exit 1
+        ;;
+    esac
+    cd "{{aws_dir}}"
+    source "{{aws_lib}}"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws)"
+    txing_aws_init
+    export AWS_DEFAULT_REGION="$TXING_AWS_REGION"
     artifact_bucket="$(ensure_artifact_bucket)"
     export TXING_LAMBDA_ARTIFACT_BUCKET="$artifact_bucket"
-    exec "{{aws_dir}}/scripts/txing-lambda-deploy-release" "{{release}}"
+    exec uv run --project "{{aws_dir}}/python" \
+      python -m aws.publish lambda --release "{{release}}"
+
+publish-rig release='latest':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case "{{release}}" in
+      latest|v[0-9]*|[0-9]*) ;;
+      *=*)
+        echo "release must be latest, vX.Y.Z, or X.Y.Z." >&2
+        exit 1
+        ;;
+      *)
+        echo "release must be latest, vX.Y.Z, or X.Y.Z." >&2
+        exit 1
+        ;;
+    esac
+    cd "{{aws_dir}}"
+    source "{{aws_lib}}"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws)"
+    txing_aws_init
+    export AWS_DEFAULT_REGION="$TXING_AWS_REGION"
+    export TXING_GREENGRASS_ARTIFACT_BUCKET
+    TXING_GREENGRASS_ARTIFACT_BUCKET="$(stack_output "$TXING_AWS_STACK" GreengrassArtifactsBucketName)"
+    exec uv run --project "{{aws_dir}}/python" \
+      python -m aws.publish rig --release "{{release}}"
 
 deploy-local-lambda function_name='all':
     #!/usr/bin/env bash

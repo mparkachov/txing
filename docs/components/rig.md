@@ -133,7 +133,7 @@ Production `raspi` setup is intentionally split:
 2. The rig host installs the upstream Greengrass Lite Debian package and copies
    the generated certificate/config files into the Greengrass locations.
 3. The operator publishes txing release artifacts to Greengrass with
-   `just rig::deploy-release latest raspi`.
+   `just aws::publish-rig latest`.
 4. Greengrass Lite pulls and runs the deployed components.
 
 Repository code does not install host files, write system directories, create
@@ -264,29 +264,28 @@ scripts. Publish txing component versions from the operator machine after the
 `Txing Release` workflow finishes:
 
 ```bash
-gh auth status
-just rig::deploy-release latest raspi
+just aws::publish-rig latest
 ```
 
-`rig::deploy-release` relies on native AWS CLI configuration plus an explicit
+`aws::publish-rig` relies on native AWS CLI configuration plus an explicit
 `TXING_AWS_STACK` in the operator environment; it fails before deployment if the
-stack name is unset. The command downloads the GitHub release assets with `gh`,
-uploads the Linux component binaries to the Greengrass artifact bucket, creates
-Greengrass component versions from the project SemVer, and creates continuous
-deployments for the `raspi` rig-type thing group. The Linux component binaries
-are not executed on the operator Mac.
+stack name is unset. The command downloads public GitHub release assets over
+HTTPS, uploads the Linux component binaries to the Greengrass artifact bucket,
+creates Greengrass component versions from the project SemVer, and creates
+continuous deployments for the `raspi` and `cloud` rig-type thing groups. The
+Linux component binaries are not executed on the operator Mac.
 
-Use an explicit target when needed:
+Local Greengrass-only fallback:
 
 ```bash
-just rig::deploy-release latest raspi
+just aws::publish-rig latest
 ```
 
 Normal update:
 
 1. Bump and push the project version files.
 2. Run the `Txing Release` workflow on GitHub.
-3. Run `just rig::deploy-release latest raspi` from the operator machine.
+3. Run `just aws::publish-rig latest` from the operator machine.
 
 Greengrass Lite itself is installed as an upstream Debian package, not as a
 txing release artifact or mise tool. Upgrade it manually only when AWS publishes

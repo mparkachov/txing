@@ -23,6 +23,17 @@ Parameters:
   LambdaArtifactsBucketName:
     Type: String
     Description: S3 bucket containing release-built Lambda bootstrap zip artifacts.
+  GithubRepository:
+    Type: String
+    Default: mparkachov/txing
+    AllowedPattern: "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+    Description: Public GitHub repository containing txing release assets.
+  ReleasePublisherCodeS3Bucket:
+    Type: String
+    Description: S3 bucket containing the packaged release publisher Lambda code.
+  ReleasePublisherCodeS3Key:
+    Type: String
+    Description: S3 key containing the packaged release publisher Lambda code.
 
 Resources:
   BaseEnvironment:
@@ -136,6 +147,133 @@ Resources:
       Parameters:
         LambdaArtifactsBucketName: !Ref LambdaArtifactsBucketName
 
+  TxingReleasePublisherLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/txing-release-publisher-lambda
+      RetentionInDays: 14
+
+  TxingReleasePublisherRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: Publishes txing release artifacts to Lambda and Greengrass.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: release-publisher
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ReleasePublisherLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !GetAtt TxingReleasePublisherLogGroup.Arn
+                  - !Sub ${TxingReleasePublisherLogGroup.Arn}:*
+              - Sid: ListLambdaArtifacts
+                Effect: Allow
+                Action:
+                  - s3:ListBucket
+                  - s3:ListBucketMultipartUploads
+                Resource: !Sub arn:${AWS::Partition}:s3:::${LambdaArtifactsBucketName}
+                Condition:
+                  StringLike:
+                    s3:prefix:
+                      - lambda/*
+              - Sid: WriteLambdaArtifacts
+                Effect: Allow
+                Action:
+                  - s3:AbortMultipartUpload
+                  - s3:GetObject
+                  - s3:ListMultipartUploadParts
+                  - s3:PutObject
+                Resource: !Sub arn:${AWS::Partition}:s3:::${LambdaArtifactsBucketName}/lambda/*
+              - Sid: ListGreengrassArtifacts
+                Effect: Allow
+                Action:
+                  - s3:ListBucket
+                  - s3:ListBucketMultipartUploads
+                Resource: !Sub
+                  - arn:${AWS::Partition}:s3:::${BucketName}
+                  - BucketName: !GetAtt BaseEnvironment.Outputs.GreengrassArtifactsBucketName
+                Condition:
+                  StringLike:
+                    s3:prefix:
+                      - artifacts/*
+              - Sid: WriteGreengrassArtifacts
+                Effect: Allow
+                Action:
+                  - s3:AbortMultipartUpload
+                  - s3:GetObject
+                  - s3:ListMultipartUploadParts
+                  - s3:PutObject
+                Resource: !Sub
+                  - arn:${AWS::Partition}:s3:::${BucketName}/artifacts/*
+                  - BucketName: !GetAtt BaseEnvironment.Outputs.GreengrassArtifactsBucketName
+              - Sid: UpdateReleaseLambdas
+                Effect: Allow
+                Action:
+                  - lambda:GetFunction
+                  - lambda:GetFunctionConfiguration
+                  - lambda:UpdateFunctionCode
+                Resource:
+                  - !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:txing-witness-lambda
+                  - !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:txing-enlist-lambda
+                  - !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:txing-cloud-rig-lambda
+                  - !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:txing-cloud-mcu-lambda
+              - Sid: PublishGreengrassComponents
+                Effect: Allow
+                Action:
+                  - greengrass:CreateComponentVersion
+                  - greengrass:CreateDeployment
+                Resource: "*"
+              - Sid: ManageGreengrassThingGroups
+                Effect: Allow
+                Action:
+                  - iot:CreateThingGroup
+                  - iot:DescribeThingGroup
+                  - iot:DescribeEndpoint
+                Resource: "*"
+              - Sid: CreateGreengrassDeploymentJobs
+                Effect: Allow
+                Action:
+                  - iot:CancelJob
+                  - iot:CreateJob
+                  - iot:DescribeJob
+                  - iot:UpdateJob
+                Resource:
+                  - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thinggroup/txing-rig-type-*
+                  - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:job/*
+
+  TxingReleasePublisherFunction:
+    Type: AWS::Lambda::Function
+    DependsOn:
+      - TxingReleasePublisherLogGroup
+      - BaseEnvironment
+    Properties:
+      FunctionName: txing-release-publisher-lambda
+      Description: Publishes txing release artifacts to Lambda and Greengrass.
+      Runtime: python3.12
+      Handler: aws.publish.handler.lambda_handler
+      Code:
+        S3Bucket: !Ref ReleasePublisherCodeS3Bucket
+        S3Key: !Ref ReleasePublisherCodeS3Key
+      Role: !GetAtt TxingReleasePublisherRole.Arn
+      Timeout: 300
+      MemorySize: 512
+      Environment:
+        Variables:
+          TXING_GITHUB_REPOSITORY: !Ref GithubRepository
+          TXING_LAMBDA_ARTIFACT_BUCKET: !Ref LambdaArtifactsBucketName
+          TXING_GREENGRASS_ARTIFACT_BUCKET: !GetAtt BaseEnvironment.Outputs.GreengrassArtifactsBucketName
+
 Outputs:
   RigLogGroupPattern:
     Value: !GetAtt BaseEnvironment.Outputs.RigLogGroupPattern
@@ -161,6 +299,10 @@ Outputs:
     Value: !GetAtt BaseEnvironment.Outputs.WebExpectedAdminEmail
   GreengrassArtifactsBucketName:
     Value: !GetAtt BaseEnvironment.Outputs.GreengrassArtifactsBucketName
+  ReleasePublisherFunctionName:
+    Value: !Ref TxingReleasePublisherFunction
+  ReleasePublisherFunctionArn:
+    Value: !GetAtt TxingReleasePublisherFunction.Arn
   RigRuntimeRoleArn:
     Value: !GetAtt RigRuntimeLayer.Outputs.RigRuntimeRoleArn
   RigRuntimeRoleName:

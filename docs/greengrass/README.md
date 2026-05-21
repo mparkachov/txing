@@ -10,7 +10,7 @@ rig Greengrass components. Production `raspi` rigs do not run host-local
 the operator machine with:
 
 ```bash
-just rig::deploy-release latest raspi
+just aws::publish-rig latest
 ```
 
 The local deployment path is retained only for debugging txing components

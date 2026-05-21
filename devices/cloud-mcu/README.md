@@ -28,8 +28,9 @@ device.
 Create or update the shared AWS stack and release Lambda artifacts:
 
 ```sh
-just aws::deploy-lambdas latest
+just aws::publish-lambda latest
 just aws::deploy
+just aws::publish latest
 ```
 
 Register a device on a cloud rig:

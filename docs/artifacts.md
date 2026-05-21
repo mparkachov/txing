@@ -44,11 +44,11 @@ Release publishing flow:
 1. Update all managed version files locally.
 2. Push the intended code to the branch that should be released.
 3. Run the `Txing Release` workflow manually from that branch.
-4. Deploy Lambda code from the operator machine with
-   `just aws::deploy-lambdas latest`.
+4. For a brand-new stack only, seed Lambda bootstrap artifacts with
+   `just aws::publish-lambda latest`.
 5. Apply AWS infrastructure changes with `just aws::deploy`.
-6. Deploy `raspi` rig components from the operator machine with
-   `just rig::deploy-release latest raspi`.
+6. Publish Lambda code and Greengrass components from the operator machine with
+   `just aws::publish latest`.
 7. If a board needs the new binaries, update it manually from a board root
    shell with writable root, root-owned `mise upgrade`, and a reboot.
 
@@ -65,13 +65,15 @@ Production Lambda code is deployed from GitHub release assets by the operator
 machine:
 
 ```bash
-gh auth status
-just aws::deploy-lambdas latest
+just aws::publish latest
 ```
 
-`aws::deploy-lambdas` downloads the release-built Lambda zips with `gh`, uploads
-them to the shared `txing-cfn-*` artifact bucket, updates existing Lambda
-functions, and seeds stable S3 bootstrap keys for first-time stack creation.
+`aws::publish` invokes the AWS-hosted publisher Lambda. The publisher downloads
+public GitHub release assets over HTTPS, uploads Lambda and Greengrass artifacts,
+updates existing Lambda functions, creates Greengrass component versions, and
+creates both `raspi` and `cloud` Greengrass deployments.
+`aws::publish-lambda` runs the same Lambda publish code locally and is kept for
+first-time stack creation before the publisher Lambda exists.
 `just aws::deploy` applies CloudFormation only; it does not build, upload, or
 change Lambda code versions.
 
@@ -148,12 +150,12 @@ Production `cloud` rig code is shipped as Lambda release artifacts:
 `txing-cloud-rig-lambda-linux-aarch64.zip` and
 `txing-cloud-mcu-lambda-linux-aarch64.zip`.
 
-`just rig::deploy-release latest raspi` runs on the operator Mac, applies the
-repository AWS profile/credentials, downloads GitHub release assets with `gh`,
-uploads Linux component binaries to the Greengrass artifacts bucket, creates
-Greengrass component versions from the project SemVer, and creates continuous
-deployments for the `raspi` rig-type thing group. The Linux component binaries
-are not executed on the operator Mac.
+`just aws::publish-rig latest` runs the same Greengrass publish code locally as
+a fallback. It uses the operator AWS credentials, downloads public GitHub
+release assets over HTTPS, uploads Linux component binaries to the Greengrass
+artifacts bucket, creates Greengrass component versions from the project SemVer,
+and creates continuous deployments for both `raspi` and `cloud` rig-type thing
+groups. The Linux component binaries are not executed on the operator Mac.
 
 Greengrass Lite is installed from the official upstream AWS release, not from a
 txing release asset:
@@ -172,7 +174,8 @@ upgrade the upstream distribution package manually on rig hosts.
 The implemented integrity policy is:
 
 - release tags and releases are immutable
-- assets are retrieved from GitHub Releases over HTTPS through `mise` or `gh`
+- assets are retrieved from GitHub Releases over HTTPS through `mise` or the
+  Python publisher
 
 Checksum assets or GitHub artifact attestations are not implemented yet. Add
 them later only when stronger artifact integrity requirements are needed.
@@ -190,4 +193,4 @@ boards and Greengrass rigs:
 - browser MCP motor control over WebRTC data channel at REDCON `1`
 - MQTT MCP fallback at REDCON `2`
 - rig component publish from GitHub release assets through
-  `just rig::deploy-release`
+  `just aws::publish-rig`

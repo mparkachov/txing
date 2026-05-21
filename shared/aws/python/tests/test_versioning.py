@@ -255,6 +255,9 @@ class VersionEnvironmentTests(unittest.TestCase):
 
     def test_rig_deploy_defaults_to_project_release_and_immutable_artifacts(self) -> None:
         rig_justfile = (REPO_ROOT / "rig" / "justfile").read_text(encoding="utf-8")
+        aws_justfile = (REPO_ROOT / "shared" / "aws" / "justfile").read_text(
+            encoding="utf-8"
+        )
 
         self.assertIn("deploy target='auto'", rig_justfile)
         self.assertNotIn("check-greengrass-lite", rig_justfile)
@@ -273,10 +276,11 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn('local key="artifacts/$component/$resolved_component_version/$filename"', rig_justfile)
         self.assertIn("aws s3api head-object", rig_justfile)
         self.assertNotIn("artifact_version_path", rig_justfile)
-        self.assertIn("deploy-release release='latest' target='all'", rig_justfile)
-        self.assertIn('_project-aws-env aws)', rig_justfile)
+        self.assertNotIn("deploy-release release='latest' target='all'", rig_justfile)
+        self.assertIn('_project-aws-env aws)', aws_justfile)
         self.assertNotIn("TXING_RIG_ENV_FILE", rig_justfile)
-        self.assertIn('scripts/txing-rig-deploy-release" "{{release}}" "{{target}}"', rig_justfile)
+        self.assertIn("publish-rig release='latest'", aws_justfile)
+        self.assertIn("python -m aws.publish rig --release", aws_justfile)
 
     def test_release_publishes_only_project_assets(self) -> None:
         workflow = (
@@ -584,7 +588,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn('GGL_CONFIG="./greengrass-lite.yaml"', rig_docs)
         self.assertIn("/etc/greengrass/config.d/greengrass-lite.yaml", rig_docs)
         self.assertIn("/var/lib/greengrass/credentials/", rig_docs)
-        self.assertIn("just rig::deploy-release latest raspi", rig_docs)
+        self.assertIn("just aws::publish-rig latest", rig_docs)
         self.assertIn("The `raspi` rig host does not run AWS CLI", rig_docs)
         self.assertIn("production `raspi` rig does not need", rig_docs)
         self.assertIn("a repo checkout, mise, AWS CLI", rig_docs)
@@ -627,14 +631,22 @@ class VersionEnvironmentTests(unittest.TestCase):
             REPO_ROOT / "shared" / "aws" / "scripts" / "txing-lambda-deploy-local"
         ).read_text(encoding="utf-8")
 
-        self.assertIn("deploy-lambdas release='latest'", aws_justfile)
+        self.assertIn("publish release='latest'", aws_justfile)
+        self.assertIn("publish-lambda release='latest'", aws_justfile)
+        self.assertIn("publish-rig release='latest'", aws_justfile)
+        self.assertNotIn("deploy-lambdas release='latest'", aws_justfile)
         self.assertIn("deploy-local-lambda function_name='all'", aws_justfile)
         self.assertIn("TXING_LAMBDA_ARTIFACT_BUCKET", aws_justfile)
-        self.assertIn('scripts/txing-lambda-deploy-release" "{{release}}"', aws_justfile)
+        self.assertIn("python -m aws.publish lambda --release", aws_justfile)
+        self.assertIn("ReleasePublisherFunctionName", aws_justfile)
+        self.assertNotIn('scripts/txing-lambda-deploy-release" "{{release}}"', aws_justfile)
         self.assertIn('scripts/txing-lambda-deploy-local" "{{function_name}}"', aws_justfile)
         self.assertNotIn("witness::build", aws_justfile)
         self.assertNotIn('enlist/justfile" build', aws_justfile)
         self.assertIn("LambdaArtifactsBucketName=$artifact_bucket", aws_lib)
+        self.assertIn("ReleasePublisherCodeS3Bucket=$artifact_bucket", aws_lib)
+        self.assertIn("ReleasePublisherCodeS3Key=$publisher_key", aws_lib)
+        self.assertIn("cfn/release-publisher/$publisher_hash.zip", aws_lib)
         self.assertIn("gh release download", release_deploy)
         self.assertIn("txing-witness-lambda-linux-aarch64.zip", release_deploy)
         self.assertIn("txing-enlist-lambda-linux-aarch64.zip", release_deploy)

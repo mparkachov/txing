@@ -591,6 +591,48 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("Type: AWS::CloudFormation::Stack", root_template)
         self.assertIn("TemplateURL: templates/base.yaml", root_template)
 
+    def test_root_template_defines_release_publisher_lambda(self) -> None:
+        root_template = (AWS_DIR / "template.yaml").read_text(encoding="utf-8")
+
+        self.assertIn("TxingReleasePublisherFunction", root_template)
+        self.assertIn("FunctionName: txing-release-publisher-lambda", root_template)
+        self.assertIn("Runtime: python3.12", root_template)
+        self.assertIn("Handler: aws.publish.handler.lambda_handler", root_template)
+        self.assertIn("ReleasePublisherCodeS3Bucket:", root_template)
+        self.assertIn("ReleasePublisherCodeS3Key:", root_template)
+        self.assertIn("S3Bucket: !Ref ReleasePublisherCodeS3Bucket", root_template)
+        self.assertIn("S3Key: !Ref ReleasePublisherCodeS3Key", root_template)
+        self.assertIn("TXING_GITHUB_REPOSITORY", root_template)
+        self.assertIn("TXING_LAMBDA_ARTIFACT_BUCKET", root_template)
+        self.assertIn("TXING_GREENGRASS_ARTIFACT_BUCKET", root_template)
+        self.assertIn("ReleasePublisherFunctionName", root_template)
+        self.assertIn("ReleasePublisherFunctionArn", root_template)
+        for action in (
+            "lambda:UpdateFunctionCode",
+            "lambda:GetFunction",
+            "lambda:GetFunctionConfiguration",
+            "greengrass:CreateComponentVersion",
+            "greengrass:CreateDeployment",
+            "iot:CreateThingGroup",
+            "iot:DescribeThingGroup",
+            "iot:DescribeEndpoint",
+            "iot:CancelJob",
+            "iot:CreateJob",
+            "iot:DescribeJob",
+            "iot:UpdateJob",
+            "s3:PutObject",
+            "s3:GetObject",
+            "s3:AbortMultipartUpload",
+            "s3:ListMultipartUploadParts",
+            "s3:ListBucketMultipartUploads",
+        ):
+            self.assertIn(action, root_template)
+        self.assertIn("Sid: CreateGreengrassDeploymentJobs", root_template)
+        self.assertIn("thinggroup/txing-rig-type-*", root_template)
+        self.assertIn("job/*", root_template)
+        self.assertNotIn("FunctionUrlConfig", root_template)
+        self.assertNotIn("GITHUB_TOKEN", root_template)
+
     def test_cloud_mcu_runtime_uses_release_lambda_assets(self) -> None:
         root_template = (AWS_DIR / "template.yaml").read_text(encoding="utf-8")
         cloud_mcu_template = (AWS_DIR / "templates" / "types" / "cloud-mcu.yaml").read_text(
@@ -701,10 +743,11 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("deploy_init_parameter_name()", text)
         self.assertIn("/txing/stack", text)
         self.assertIn("deploy stack_name=stack_name", text)
-        self.assertIn(
-            'parameter_overrides+=(--parameter-overrides "LambdaArtifactsBucketName=$artifact_bucket")',
-            text,
-        )
+        self.assertIn('parameter_values+=("LambdaArtifactsBucketName=$artifact_bucket")', text)
+        self.assertIn('parameter_overrides+=(--parameter-overrides "${parameter_values[@]}")', text)
+        self.assertIn("describe_stack_outputs()", text)
+        self.assertIn("--output json | jq '.'", text)
+        self.assertNotIn("--output table", text)
         self.assertNotIn("deploy CognitoDomainPrefix", text)
         self.assertNotIn("aws ssm get-parameter", text)
         self.assertIn("deploy-town town_name", text)

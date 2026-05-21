@@ -15,7 +15,7 @@ Witness is the only authority that writes the `sparkplug` named shadow for rig a
 Deploy or update the release-built Lambda code:
 
 ```bash
-just aws::deploy-lambdas latest
+just aws::publish-lambda latest
 ```
 
 The `witness/` directory is a Go Lambda project and owns the active
@@ -29,7 +29,7 @@ just aws::deploy
 ```
 
 `aws::deploy` does not build or upload witness code. The direct local Lambda
-deploy recipe is disabled; use the release workflow and `aws::deploy-lambdas`
+deploy recipe is disabled; use the release workflow and `aws::publish-lambda`
 for production updates.
 
 The deeper projection semantics are documented in:

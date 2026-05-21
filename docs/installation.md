@@ -30,13 +30,13 @@ Repo-wide developer tooling:
 - `just`
 - `jq`
 - AWS CLI v2
-- GitHub CLI (`gh`) for operator-side release, Lambda, and Greengrass deploys
+- GitHub CLI (`gh`) only for legacy release inspection or helper scripts
 
 Install operator CLIs with the package manager you use for the development
 machine. `mise` is acceptable for missing or stale CLI versions:
 
 ```bash
-mise use --global uv@latest just@latest aws-cli@latest gh@latest jq@latest
+mise use --global uv@latest just@latest aws-cli@latest jq@latest
 ```
 
 Day-to-day development commands live in [development.md](./development.md).
@@ -62,8 +62,8 @@ The short production flow is:
 4. Copy `rig.cert.pem`, `rig.private.key`, `AmazonRootCA1.pem`, and
    `greengrass-lite.yaml` to the Greengrass locations on the rig.
 5. Restart `greengrass-lite.target`.
-6. Deploy txing components from the operator machine with
-   `just rig::deploy-release latest raspi`.
+6. Publish release artifacts from the operator machine with
+   `just aws::publish latest`.
 
 ## Cloud Rig Runtime
 
@@ -71,8 +71,9 @@ The `cloud` rig type is AWS-hosted. Deploy its Lambda/EventBridge/SQS runtime
 through the AWS stack and Lambda release assets:
 
 ```bash
-just aws::deploy-lambdas latest
+just aws::publish-lambda latest
 just aws::deploy
+just aws::publish latest
 ```
 
 Cloud MCU registration and runtime behavior are documented in

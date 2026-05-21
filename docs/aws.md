@@ -11,7 +11,7 @@ positional recipe arguments.
 Install operator CLIs with mise if they are not already available:
 
 ```bash
-mise use --global aws-cli@latest gh@latest jq@latest
+mise use --global aws-cli@latest jq@latest
 ```
 
 ## Native AWS Config
@@ -26,9 +26,9 @@ aws sts get-caller-identity
 ```
 
 Set `TXING_AWS_STACK` explicitly before running stack-backed commands such as
-`just aws::deploy`, `just aws::deploy-lambdas`,
+`just aws::deploy`, `just aws::publish`, `just aws::publish-lambda`,
 `just aws::deploy-local-lambda`, `just aws::check`, `just office::write-env`,
-`just rig::deploy-release`, and `just unit::cert`.
+`just aws::publish-rig`, and `just unit::cert`.
 Export it in the operator shell or pass a positional stack name to recipes that
 accept one. Those commands fail if `TXING_AWS_STACK` is unset and no positional
 stack name is provided.
@@ -46,8 +46,9 @@ export TXING_AWS_STACK=town
 cp shared/aws/deploy-init.example.json shared/aws/deploy-init.json
 $EDITOR shared/aws/deploy-init.json
 just aws::deploy-init
-just aws::deploy-lambdas latest
+just aws::publish-lambda latest
 just aws::deploy
+just aws::publish latest
 just aws::deploy-town town
 just aws::deploy-rig <town-id> raspi server
 just aws::deploy-device <rig-id> unit bot
@@ -67,11 +68,15 @@ can run without the JSON file or any repository config file present on disk, as
 long as `TXING_AWS_STACK` is provided in the environment or as a positional stack
 name.
 
-`just aws::deploy-lambdas latest` downloads release-built Lambda zips from
-GitHub, uploads them to the shared `txing-cfn-*` artifact bucket, updates
-existing Lambda functions, and seeds stable S3 bootstrap keys for first stack
-creation. Run it after the `Txing Release` workflow and before a first
-`aws::deploy` in a new account/stack.
+`just aws::publish latest` invokes the AWS-hosted publisher Lambda, which
+downloads public GitHub release assets, uploads Lambda and Greengrass artifacts,
+updates existing Lambda functions, publishes Greengrass component versions, and
+creates both `raspi` and `cloud` Greengrass deployments. Run it after the
+`Txing Release` workflow once the stack already exists.
+
+`just aws::publish-lambda latest` runs the same Lambda publish code locally. Use
+it before the first `aws::deploy` in a new account/stack so the stable Lambda S3
+bootstrap keys exist before CloudFormation creates the Lambda functions.
 
 `just aws::deploy-local-lambda <function>` builds local Lambda code with Go,
 uploads the zip to the stable `lambda/<function>/current/bootstrap.zip` S3 key,

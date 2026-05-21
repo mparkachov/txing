@@ -21,7 +21,7 @@ Repo-wide tooling:
 - `just`
 - `jq`
 - AWS CLI v2
-- GitHub CLI (`gh`) for operator-side release, Lambda, and Greengrass deploys
+- GitHub CLI (`gh`) only for legacy release inspection or helper scripts
 
 Host-specific setup starts in [installation.md](./installation.md). Detailed
 board runtime setup, including read-only rootfs, lives in
@@ -41,19 +41,20 @@ and pushing the managed version files yourself. The workflow reads that branch's
 publishes the GitHub Release, and also publishes the board, rig, and Lambda
 artifacts. It does not commit or push version changes back to the selected branch.
 
-After a release workflow finishes, the operator Mac publishes Lambda artifacts
-to AWS Lambda and applies AWS infrastructure changes with:
+After a release workflow finishes, the operator Mac applies AWS infrastructure
+changes and then asks the AWS-hosted publisher Lambda to publish Lambda and
+Greengrass artifacts with:
 
 ```bash
-just aws::deploy-lambdas latest
 just aws::deploy
+just aws::publish latest
 ```
 
 Production `raspi` rigs do not pull the repository and do not run AWS CLI. The
-operator Mac publishes `raspi` rig release artifacts to Greengrass with:
+local fallback for publishing only rig release artifacts to Greengrass is:
 
 ```bash
-just rig::deploy-release latest raspi
+just aws::publish-rig latest
 ```
 
 Development direction for installable host tools and board-side native
@@ -99,7 +100,7 @@ just rig::status <rig-id>
 just unit::daemon::run
 just office::dev
 just office::write-env
-just aws::deploy-lambdas latest
+just aws::publish-lambda latest
 just aws::deploy-local-lambda txing-witness-lambda
 just aws::deploy
 just aws::deploy-town town
@@ -170,7 +171,7 @@ just rig::log <rig-id>
 That source-checkout rig loop is for development and admin builder use.
 Production `raspi` rig hosts receive Greengrass deployments published from the
 operator machine instead. Production `cloud` rigs are updated through
-`just aws::deploy-lambdas latest` and `just aws::deploy`. For local Lambda
+`just aws::deploy` and `just aws::publish latest`. For local Lambda
 iteration without a GitHub release, use `just aws::deploy-local-lambda
 <function>`; it builds a local `linux/arm64` `bootstrap` zip, uploads it to the
 stable S3 `current/bootstrap.zip` key, and updates the existing Lambda function
