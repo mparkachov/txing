@@ -5,7 +5,7 @@ For the system overview, see [../README.md](../README.md). For the documentation
 ## Repository Layout
 
 - `devices/unit/`: self-contained current `unit` device type, including MCU, board runtime, rig process implementation, AWS shadow contracts, docs, and web detail adapter
-- `rig/`: Rust Greengrass components and host tooling for `raspi` rigs
+- `rig/`: standalone Go daemons and host tooling for `raspi` rigs
 - `devices/cloud-mcu/`: AWS-hosted `cloud` rig and `cloud-mcu` Lambda runtime
 - `office/`: React + Vite admin/operator SPA
 - `www/`: public static HTML/CSS/assets site for `txing.dev`
@@ -21,7 +21,7 @@ Repo-wide tooling:
 - `just`
 - `jq`
 - AWS CLI v2
-- GitHub CLI (`gh`) for operator-side release, Lambda, and Greengrass deploys
+- GitHub CLI (`gh`) only for legacy release inspection or helper scripts
 
 Host-specific setup starts in [installation.md](./installation.md). Detailed
 board runtime setup, including read-only rootfs, lives in
@@ -32,28 +32,22 @@ board runtime setup, including read-only rootfs, lives in
 `VERSION` is the release version for the repository. It must stay a base
 semantic version such as `x.y.z`.
 
-Production Greengrass component versions use `VERSION` exactly. Git SHA and
-dirty state are exported separately for diagnostics, but they are not part of
-the Greengrass `ComponentVersion`. Create releases with the manual
+Production release artifacts use `VERSION` exactly. Git SHA and dirty state are
+exported separately for diagnostics. Create releases with the manual
 `Txing Release` GitHub Actions workflow from the selected branch after bumping
-and pushing the managed version files yourself. The workflow reads that branch's root
-`VERSION`, fails unless it is newer than the latest existing `v*` tag,
+and pushing the managed version files yourself. The workflow reads that branch's
+root `VERSION`, fails unless it is newer than the latest existing `v*` tag,
 publishes the GitHub Release, and also publishes the board, rig, and Lambda
-artifacts. It does not commit or push version changes back to the selected branch.
+artifacts. It does not commit or push version changes back to the selected
+branch.
 
-After a release workflow finishes, the operator Mac publishes Lambda artifacts
-to AWS Lambda and applies AWS infrastructure changes with:
+After a release workflow finishes, the operator Mac applies AWS infrastructure
+changes and then asks the AWS-hosted publisher Lambda to publish Lambda
+artifacts with:
 
 ```bash
-just aws::deploy-lambdas latest
 just aws::deploy
-```
-
-Production `raspi` rigs do not pull the repository and do not run AWS CLI. The
-operator Mac publishes `raspi` rig release artifacts to Greengrass with:
-
-```bash
-just rig::deploy-release latest raspi
+just aws::publish latest
 ```
 
 Development direction for installable host tools and board-side native
@@ -61,10 +55,10 @@ artifacts:
 
 - release artifacts point at the artifact built from `VERSION`, for example `x.y.z`.
 - GitHub release assets should be immutable for each exact artifact version.
-- The unit daemon uses mise's GitHub backend directly; rig components are
-  published to Greengrass from GitHub release assets; Lambda code is uploaded
-  to AWS Lambda from GitHub release assets; see [artifacts.md](./artifacts.md).
-- Board binary updates are manual writable-root maintenance actions. The
+- Board and rig host binaries use mise's GitHub backend directly; Lambda code
+  is uploaded to AWS Lambda from GitHub release assets; see
+  [artifacts.md](./artifacts.md).
+- Board and rig binary updates are manual writable-root maintenance actions. The
   installed systemd service starts offline from root-owned mise shims and does
   not call GitHub during normal service restart.
 
@@ -72,8 +66,9 @@ artifacts:
 
 Native AWS CLI configuration is the source of truth for AWS account,
 credentials, selected profile, and region. `TXING_AWS_STACK` and optional
-selected thing IDs come from the operator shell. The wrapper recipes run plain
-AWS CLI commands:
+selected thing IDs come from the operator shell. `TXING_AWS_STACK` is the
+environment prefix; the base CloudFormation stack is
+`<TXING_AWS_STACK>-aws-base`. The wrapper recipes run plain AWS CLI commands:
 
 - `just aws-town ...`
 - `just aws-rig ...`
@@ -82,7 +77,9 @@ AWS CLI commands:
 AWS bring-up and destructive rebuild steps live in [aws.md](./aws.md).
 Web/admin base stack parameters are initialized separately with
 `just aws::deploy-init`; CloudFormation reads the resulting `/txing/stack/*`
-SSM Parameter Store values during `aws::deploy`.
+SSM Parameter Store values during `aws::deploy`. `just aws::delete` leaves
+those manual init parameters in place; `just aws::delete-init` removes only
+those final inputs.
 
 ## Task Runner
 
@@ -93,15 +90,14 @@ Common commands:
 ```bash
 just --list
 just unit::mcu::build
-just rig::check <rig-id>
-just rig::deploy
-just rig::status <rig-id>
+just rig::test
+just rig::build
+just rig::check <config-dir>
+just rig::start <config-dir> true
+just rig::stop
 just unit::daemon::run
-just unit::board::run
 just office::dev
 just office::write-env
-just aws::deploy-lambdas latest
-just aws::deploy-local-lambda txing-witness-lambda
 just aws::deploy
 just aws::deploy-town town
 just aws::deploy-rig <town-id> raspi server
@@ -162,36 +158,34 @@ just unit::mcu::build-nve-hex unit-test
 Rig:
 
 ```bash
-just rig::check <rig-id>
+just rig::test
 just rig::build
-just rig::deploy
-just rig::log <rig-id>
+just rig::start <config-dir> true
+just rig::log
+just rig::stop
 ```
 
-That source-checkout rig loop is for development and admin builder use.
-Production `raspi` rig hosts receive Greengrass deployments published from the
-operator machine instead. Production `cloud` rigs are updated through
-`just aws::deploy-lambdas latest` and `just aws::deploy`. For local Lambda
-iteration without a GitHub release, use `just aws::deploy-local-lambda
-<function>`; it builds a local `linux/arm64` `bootstrap` zip, uploads it to the
-stable S3 `current/bootstrap.zip` key, and updates the existing Lambda function
-from that key.
+That source-checkout rig loop is for development. Production `raspi` rig hosts
+install GitHub release assets through root-owned `mise` and systemd. Production
+`cloud` rigs are updated through `just aws::deploy` and
+`just aws::publish latest`. Runtime Lambda updates flow through GitHub
+release artifacts plus per-function `publish` recipes or `just aws::publish latest`.
 
 Board:
 
 ```bash
 just unit::daemon::run
-just unit::board::check
-just unit::board::build-native
-just unit::board::build
-just unit::board::once
+just unit::daemon::test
+just unit::daemon::kvs-submodules
+just unit::daemon::kvs-build-native
+just unit::daemon::kvs-test-native
 ```
 
 The Rust unit daemon loads its default config from
 `${TXING_DAEMON_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/txing/unit-daemon}/daemon.env`
 and expects certificate files in the same directory unless explicit certificate
 path overrides are supplied. Provision that directory with
-`just unit::cert <thing-id>` only when AWS resource changes are
+`just aws::cert <thing-id>` only when AWS resource changes are
 intended; the recipe renders sourceable `daemon.env` content from
 `devices/unit/daemon/daemon.env.template` and refuses to overwrite existing
 daemon env or certificate material.

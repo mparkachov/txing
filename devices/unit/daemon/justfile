@@ -1,11 +1,31 @@
-set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+set shell := ["sh", "-eu", "-c"]
 set quiet := true
 
 daemon_dir := source_directory()
 project_root := canonicalize(daemon_dir + "/../../..")
+tmp_dir := project_root + "/tmp"
+export TMPDIR := tmp_dir
 root_justfile := project_root + "/justfile"
+daemon_justfile := daemon_dir + "/justfile"
 aws_lib := project_root + "/shared/aws/scripts/aws_lib.sh"
 daemon_env_template := daemon_dir + "/daemon.env.template"
+unit_board_dir := project_root + "/devices/unit/board"
+common_board_dir := project_root + "/devices/common/board"
+native_kvs_master_dir := unit_board_dir + "/kvs_master"
+native_kvs_master_build_dir := native_kvs_master_dir + "/build"
+native_kvs_master_test_build_dir := native_kvs_master_dir + "/build-tests"
+built_native_kvs_master := native_kvs_master_build_dir + "/txing-board-kvs-master"
+aws_kvs_sdk_dir := project_root + "/modules/awslabs/amazon-kinesis-video-streams-webrtc-sdk-c"
+aws_kvs_sdk_commit := "bb106510cf74edd2c24881c1ae94ceaa0083d15c"
+aws_kvs_sdk_build_dir := common_board_dir + "/aws-kvs-webrtc-sdk-build"
+aws_kvs_sdk_install_dir := common_board_dir + "/aws-kvs-webrtc-sdk-install"
+aws_kvs_sdk_system_deps_dir := common_board_dir + "/aws-kvs-webrtc-sdk-system-deps"
+aws_kvs_sdk_install_header := aws_kvs_sdk_install_dir + "/include/com/amazonaws/kinesis/video/webrtcclient/Include.h"
+aws_kvs_sdk_install_common_header := aws_kvs_sdk_install_dir + "/include/com/amazonaws/kinesis/video/common/Include.h"
+aws_kvs_sdk_install_library := aws_kvs_sdk_install_dir + "/lib/libkvsWebrtcClient.a"
+aws_kvs_sdk_flags_file := aws_kvs_sdk_build_dir + "/CMakeFiles/kvsWebrtcSignalingClient.dir/flags.make"
+aws_kvs_sdk_state_file := aws_kvs_sdk_install_dir + "/.txing-sdk-build-state"
+default_kvs_system_ca_cert_path := env_var_or_default("TXING_BOARD_KVS_SYSTEM_CA_CERT_PATH", "/etc/ssl/certs/Starfield_Services_Root_Certificate_Authority_-_G2.pem")
 
 config_dir := ""
 docker_build_dir := daemon_dir + "/target/docker-build"
@@ -17,213 +37,29 @@ docker_cargo_git_volume := "txing-cargo-git"
 docker_target_volume := "txing-unit-daemon-target"
 docker_kvs_master_build_image := "debian:trixie"
 
-cert thing_id='' config_dir=config_dir:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    requested_thing_name="{{thing_id}}"
-    if [[ "$requested_thing_name" == *=* ]]; then
-      echo "Do not pass just recipe arguments as name=value. Use: just unit::cert <thing-id>" >&2
-      exit 2
-    fi
-    requested_config_dir="{{config_dir}}"
-    if [[ "$requested_config_dir" == *=* ]]; then
-      echo "Do not pass just recipe arguments as name=value. Use positional arguments." >&2
-      exit 2
-    fi
-    if [ -n "$requested_thing_name" ]; then
-      export TXING_THING_ID="$requested_thing_name"
-    fi
-    source "{{aws_lib}}"
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env device)"
-    txing_aws_init
-    effective_thing_name="${requested_thing_name:-$THING_NAME}"
-    if [[ "$effective_thing_name" == *=* ]]; then
-      echo "Invalid Thing ID '$effective_thing_name'. Use positional just arguments, for example: just unit::cert unit-bl95f2" >&2
-      exit 2
-    fi
-    if [[ ! "$effective_thing_name" =~ ^[a-zA-Z0-9:_-]+$ ]]; then
-      echo "Invalid Thing ID '$effective_thing_name'. Allowed characters: letters, digits, colon, underscore, hyphen." >&2
-      exit 2
-    fi
-    daemon_policy_name="$(stack_output "$TXING_AWS_STACK" DeviceDaemonIotPolicyName)"
-    if [ -z "$daemon_policy_name" ] || [ "$daemon_policy_name" = "None" ]; then
-      echo "Could not resolve DeviceDaemonIotPolicyName from stack $TXING_AWS_STACK." >&2
-      exit 1
-    fi
-    account_id="$(aws sts get-caller-identity --query Account --output text)"
-    caller_arn="$(aws sts get-caller-identity --query Arn --output text)"
-    partition="$(cut -d: -f2 <<<"$caller_arn")"
-    daemon_role_name="txing-daemon-$effective_thing_name"
-    iot_role_alias="txing-daemon-$effective_thing_name"
-    if [ "${#daemon_role_name}" -gt 64 ]; then
-      echo "IAM role name $daemon_role_name is longer than 64 characters." >&2
-      exit 1
-    fi
-    if [ "${#iot_role_alias}" -gt 128 ]; then
-      echo "IoT role alias $iot_role_alias is longer than 128 characters." >&2
-      exit 1
-    fi
-    cloudwatch_log_group="txing/${TXING_TOWN_ID}/${TXING_RIG_ID}/${effective_thing_name}"
-    video_channel_name="${TXING_BOARD_VIDEO_CHANNEL_NAME:-${effective_thing_name}-board-video}"
-    iot_data_endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS --query endpointAddress --output text)"
-    iot_credential_endpoint="$(aws iot describe-endpoint --endpoint-type iot:CredentialProvider --query endpointAddress --output text)"
-    default_output_root() {
-      printf '%s\n' "{{project_root}}/config/certs/unit/$effective_thing_name"
-    }
-    default_config_dir() {
-      if [ -n "${TXING_DAEMON_CONFIG_DIR:-}" ]; then
-        printf '%s\n' "$TXING_DAEMON_CONFIG_DIR"
-      else
-        printf '%s\n' "$(default_output_root)/unit-daemon"
-      fi
-    }
-    daemon_config_dir="${requested_config_dir:-$(default_config_dir)}"
-    if [ -n "$requested_config_dir" ]; then
-      output_root="$(dirname "$daemon_config_dir")"
-      tarball_path="$output_root/${effective_thing_name}-daemon-config.tgz"
-    elif [ -n "${TXING_DAEMON_CONFIG_DIR:-}" ]; then
-      output_root="$(dirname "$daemon_config_dir")"
-      tarball_path="$output_root/${effective_thing_name}-daemon-config.tgz"
-    else
-      output_root="$(default_output_root)"
-      tarball_path="{{project_root}}/config/certs/unit/${effective_thing_name}-daemon-config.tgz"
-    fi
-    env_file="$daemon_config_dir/daemon.env"
-    cert_path="$daemon_config_dir/certificate.pem.crt"
-    public_key_path="$daemon_config_dir/public.pem.key"
-    private_key_path="$daemon_config_dir/private.pem.key"
-    cert_arn_path="$daemon_config_dir/certificate.arn"
-    root_ca_path="$daemon_config_dir/AmazonRootCA1.pem"
-    daemon_env_template="{{daemon_env_template}}"
-    [ -r "$daemon_env_template" ] || { echo "Missing daemon env template: $daemon_env_template" >&2; exit 1; }
-    install -d -m 700 "$daemon_config_dir"
-    if [ -e "$env_file" ] || [ -e "$cert_path" ] || [ -e "$public_key_path" ] || [ -e "$private_key_path" ] || [ -e "$cert_arn_path" ] || [ -e "$tarball_path" ]; then
-      echo "Daemon certificate or env material already exists under $daemon_config_dir." >&2
-      echo "Daemon config tarball path: $tarball_path" >&2
-      echo "Move or delete those files before issuing a replacement certificate." >&2
-      exit 1
-    fi
-    temp_files=()
-    cleanup_temp_files() {
-      if [ "${#temp_files[@]}" -gt 0 ]; then
-        rm -f "${temp_files[@]}"
-      fi
-    }
-    trap cleanup_temp_files EXIT
-    trust_policy_file="$(mktemp "${TMPDIR:-/tmp}/txing-daemon-trust.XXXXXX")"
-    credential_policy_file="$(mktemp "${TMPDIR:-/tmp}/txing-daemon-credential-policy.XXXXXX")"
-    temp_files+=("$trust_policy_file" "$credential_policy_file")
-    jq -n '{Version: "2012-10-17", Statement: [{Effect: "Allow", Principal: {Service: "credentials.iot.amazonaws.com"}, Action: "sts:AssumeRole"}]}' >"$trust_policy_file"
-    jq -n \
-      --arg iotShadowArn "arn:${partition}:iot:${TXING_AWS_REGION}:${account_id}:thing/${effective_thing_name}/sparkplug" \
-      --arg cloudwatchLogGroupArn "arn:${partition}:logs:${TXING_AWS_REGION}:${account_id}:log-group:${cloudwatch_log_group}" \
-      --arg cloudwatchLogStreamArn "arn:${partition}:logs:${TXING_AWS_REGION}:${account_id}:log-group:${cloudwatch_log_group}:log-stream:*" \
-      --arg kvsChannelArn "arn:${partition}:kinesisvideo:${TXING_AWS_REGION}:${account_id}:channel/${effective_thing_name}-board-video/*" \
-      '{Version: "2012-10-17", Statement: [
-        {Sid: "DaemonSparkplugShadowRead", Effect: "Allow", Action: "iot:GetThingShadow", Resource: $iotShadowArn},
-        {Sid: "DaemonCloudWatchLogsWrite", Effect: "Allow", Action: ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:DescribeLogStreams", "logs:PutRetentionPolicy", "logs:PutLogEvents"], Resource: [$cloudwatchLogGroupArn, $cloudwatchLogStreamArn]},
-        {Sid: "DaemonBoardVideoMaster", Effect: "Allow", Action: ["kinesisvideo:DescribeSignalingChannel", "kinesisvideo:GetSignalingChannelEndpoint", "kinesisvideo:GetIceServerConfig", "kinesisvideo:ConnectAsMaster"], Resource: $kvsChannelArn}
-      ]}' \
-      >"$credential_policy_file"
-    if aws iam get-role --role-name "$daemon_role_name" >/dev/null 2>&1; then
-      aws iam update-assume-role-policy --role-name "$daemon_role_name" --policy-document "file://$trust_policy_file"
-    else
-      aws iam create-role --role-name "$daemon_role_name" --assume-role-policy-document "file://$trust_policy_file" >/dev/null
-    fi
-    aws iam put-role-policy \
-      --role-name "$daemon_role_name" \
-      --policy-name txing-daemon-own-thing \
-      --policy-document "file://$credential_policy_file"
-    daemon_role_arn="$(aws iam get-role --role-name "$daemon_role_name" --query 'Role.Arn' --output text)"
-    if aws iot describe-role-alias --role-alias "$iot_role_alias" >/dev/null 2>&1; then
-      aws iot update-role-alias --role-alias "$iot_role_alias" --role-arn "$daemon_role_arn" --credential-duration-seconds 3600 >/dev/null
-    else
-      aws iot create-role-alias --role-alias "$iot_role_alias" --role-arn "$daemon_role_arn" --credential-duration-seconds 3600 >/dev/null
-    fi
-    curl -fsSL https://www.amazontrust.com/repository/AmazonRootCA1.pem -o "$root_ca_path"
-    cert_arn="$(
-      aws iot create-keys-and-certificate \
-        --set-as-active \
-        --certificate-pem-outfile "$cert_path" \
-        --public-key-outfile "$public_key_path" \
-        --private-key-outfile "$private_key_path" \
-        --query certificateArn \
-        --output text
-    )"
-    aws iot attach-policy --policy-name "$daemon_policy_name" --target "$cert_arn"
-    aws iot attach-thing-principal \
-      --thing-name "$effective_thing_name" \
-      --principal "$cert_arn" \
-      --thing-principal-type EXCLUSIVE_THING
-    printf '%s\n' "$cert_arn" >"$cert_arn_path"
-    render_daemon_env_template() {
-      local line
-      while IFS= read -r line || [ -n "$line" ]; do
-        line="${line//\{\{TXING_THING_ID\}\}/$effective_thing_name}"
-        line="${line//\{\{AWS_REGION\}\}/$TXING_AWS_REGION}"
-        line="${line//\{\{TXING_IOT_ENDPOINT\}\}/$iot_data_endpoint}"
-        line="${line//\{\{TXING_IOT_CREDENTIAL_ENDPOINT\}\}/$iot_credential_endpoint}"
-        line="${line//\{\{TXING_IOT_ROLE_ALIAS\}\}/$iot_role_alias}"
-        line="${line//\{\{TXING_BOARD_VIDEO_CHANNEL_NAME\}\}/$video_channel_name}"
-        line="${line//\{\{TXING_CLOUDWATCH_LOG_GROUP\}\}/$cloudwatch_log_group}"
-        printf '%s\n' "$line"
-      done <"$daemon_env_template"
-    }
-    render_daemon_env_template >"$env_file"
-    chmod 600 "$env_file" "$cert_path" "$public_key_path" "$private_key_path" "$cert_arn_path"
-    chmod 644 "$root_ca_path"
-    COPYFILE_DISABLE=1 tar -C "$output_root" -czf "$tarball_path" "$(basename "$daemon_config_dir")"
-    chmod 600 "$tarball_path"
-    jq -n \
-      --arg thingName "$effective_thing_name" \
-      --arg policyName "$daemon_policy_name" \
-      --arg certificateArn "$cert_arn" \
-      --arg certificatePem "$cert_path" \
-      --arg publicKey "$public_key_path" \
-      --arg privateKey "$private_key_path" \
-      --arg certificateArnFile "$cert_arn_path" \
-      --arg rootCaFile "$root_ca_path" \
-      --arg envFile "$env_file" \
-      --arg iotDataEndpoint "$iot_data_endpoint" \
-      --arg iotCredentialEndpoint "$iot_credential_endpoint" \
-      --arg iotRoleAlias "$iot_role_alias" \
-      --arg videoRegion "$TXING_AWS_REGION" \
-      --arg videoChannelName "$video_channel_name" \
-      --arg cloudWatchLogGroup "$cloudwatch_log_group" \
-      --arg daemonRoleName "$daemon_role_name" \
-      --arg daemonRoleArn "$daemon_role_arn" \
-      --arg configTarball "$tarball_path" \
-      '{thingName: $thingName, policyName: $policyName, certificateArn: $certificateArn, certificatePem: $certificatePem, publicKey: $publicKey, privateKey: $privateKey, certificateArnFile: $certificateArnFile, rootCaFile: $rootCaFile, envFile: $envFile, configTarball: $configTarball, iotDataEndpoint: $iotDataEndpoint, iotCredentialEndpoint: $iotCredentialEndpoint, iotRoleAlias: $iotRoleAlias, videoRegion: $videoRegion, videoChannelName: $videoChannelName, cloudWatchLogGroup: $cloudWatchLogGroup, daemonRoleName: $daemonRoleName, daemonRoleArn: $daemonRoleArn}'
-
 role-policy thing_id='':
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     requested_thing_name="{{thing_id}}"
-    if [[ "$requested_thing_name" == *=* ]]; then
-      echo "Do not pass just recipe arguments as name=value. Use: just unit::daemon::role-policy <thing-id>" >&2
-      exit 2
-    fi
+    case "$requested_thing_name" in *=*) echo "Do not pass just recipe arguments as name=value. Use: just unit::daemon::role-policy <thing-id>" >&2; exit 2 ;; esac
     if [ -n "$requested_thing_name" ]; then
       export TXING_THING_ID="$requested_thing_name"
     fi
-    source "{{aws_lib}}"
+    . "{{aws_lib}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env device)"
     txing_aws_init
     effective_thing_name="${requested_thing_name:-$THING_NAME}"
-    if [[ "$effective_thing_name" == *=* ]]; then
-      echo "Invalid Thing ID '$effective_thing_name'. Use positional just arguments, for example: just unit::daemon::role-policy unit-bl95f2" >&2
-      exit 2
-    fi
-    if [[ ! "$effective_thing_name" =~ ^[a-zA-Z0-9:_-]+$ ]]; then
+    case "$effective_thing_name" in *=*) echo "Invalid Thing ID '$effective_thing_name'. Use positional just arguments, for example: just unit::daemon::role-policy unit-bl95f2" >&2; exit 2 ;; esac
+    if ! printf '%s\n' "$effective_thing_name" | grep -E -q '^[a-zA-Z0-9:_-]+$'; then
       echo "Invalid Thing ID '$effective_thing_name'. Allowed characters: letters, digits, colon, underscore, hyphen." >&2
       exit 2
     fi
     account_id="$(aws sts get-caller-identity --query Account --output text)"
     caller_arn="$(aws sts get-caller-identity --query Arn --output text)"
-    partition="$(cut -d: -f2 <<<"$caller_arn")"
+    partition="$(printf '%s\n' "$caller_arn" | cut -d: -f2)"
     daemon_role_name="txing-daemon-$effective_thing_name"
     if ! aws iam get-role --role-name "$daemon_role_name" >/dev/null 2>&1; then
-      echo "Daemon IAM role $daemon_role_name does not exist. Run just unit::cert <thing-id> first." >&2
+      echo "Daemon IAM role $daemon_role_name does not exist. Run just aws::cert <thing-id> first." >&2
       exit 1
     fi
     cloudwatch_log_group="txing/${TXING_TOWN_ID}/${TXING_RIG_ID}/${effective_thing_name}"
@@ -256,23 +92,20 @@ test:
     cargo test --manifest-path "{{daemon_dir}}/Cargo.toml"
 
 run:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     cd "{{project_root}}"
     cargo run --manifest-path devices/unit/daemon/Cargo.toml
 
 docker-builder-image rust_toolchain="stable":
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
 
     rust_toolchain="{{rust_toolchain}}"
     image="{{docker_builder_image}}"
     dockerfile="{{docker_builder_dockerfile}}"
 
-    if [[ "$rust_toolchain" == *=* ]]; then
-      echo "Do not pass just recipe arguments as name=value. Use positional arguments." >&2
-      exit 2
-    fi
+    case "$rust_toolchain" in *=*) echo "Do not pass just recipe arguments as name=value. Use positional arguments." >&2; exit 2 ;; esac
     command -v docker >/dev/null || {
       echo "docker is required to build the board binaries builder image." >&2
       exit 1
@@ -282,6 +115,7 @@ docker-builder-image rust_toolchain="stable":
       exit 1
     fi
 
+    mkdir -p "$TMPDIR"
     empty_context="$(mktemp -d "${TMPDIR:-/tmp}/txing-board-binaries-builder-context.XXXXXX")"
     cleanup() {
       rm -rf "$empty_context"
@@ -295,8 +129,8 @@ docker-builder-image rust_toolchain="stable":
       "$empty_context"
 
 docker-builder-shell:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
 
     project_root="{{project_root}}"
     image="{{docker_builder_image}}"
@@ -323,11 +157,184 @@ docker-builder-shell:
       -e CARGO_TARGET_DIR=/target \
       -w "$project_root" \
       "$image" \
-      bash
+      sh
+
+@_kvs-ensure-aws-sdk-submodule:
+    test -f "{{aws_kvs_sdk_dir}}/CMakeLists.txt" || { echo "missing AWS KVS WebRTC SDK submodule. Run: just unit::daemon::kvs-submodules" >&2; exit 1; }
+    test "$(git -C "{{aws_kvs_sdk_dir}}" rev-parse HEAD)" = "{{aws_kvs_sdk_commit}}" || { echo "AWS KVS WebRTC SDK submodule is not at {{aws_kvs_sdk_commit}}. Run: just unit::daemon::kvs-submodules" >&2; exit 1; }
+
+@_kvs-check-system-dependencies:
+    #!/bin/sh
+    set -eu
+    if [ "$(uname -s)" != "Linux" ]; then
+        exit 0
+    fi
+
+    missing=""
+    add_missing() {
+        if [ -z "$missing" ]; then
+            missing="$1"
+        else
+            missing="$missing $1"
+        fi
+    }
+    for pc in openssl libcurl libwebsockets zlib; do
+        if ! pkg-config --exists "$pc"; then
+            add_missing "$pc"
+        fi
+    done
+
+    for header in usrsctp.h srtp2/srtp.h; do
+        if ! printf '#include <%s>\nint main(void) { return 0; }\n' "$header" | cc -x c - -fsyntax-only >/dev/null 2>&1; then
+            add_missing "$header"
+        fi
+    done
+    if ! printf '#include <log4cplus/logger.h>\nint main() { return 0; }\n' | c++ -x c++ - -fsyntax-only >/dev/null 2>&1; then
+        add_missing "log4cplus/logger.h"
+    fi
+
+    for library in srtp2 usrsctp log4cplus curl websockets z ssl crypto; do
+        path="$(cc -print-file-name="lib${library}.so")"
+        if [ "$path" = "lib${library}.so" ] || [ ! -f "$path" ]; then
+            add_missing "lib${library}.so"
+        fi
+    done
+
+    if [ -n "$missing" ]; then
+        printf 'Missing system KVS dependency/dependencies: %s\n' "$missing" >&2
+        printf 'Install distro packages, for example:\n' >&2
+        printf '  apt install -y libssl-dev libcurl4-openssl-dev liblog4cplus-dev libsrtp2-dev libusrsctp-dev libwebsockets-dev zlib1g-dev\n' >&2
+        exit 1
+    fi
+
+@kvs-submodules:
+    git -C "{{project_root}}" submodule update --init --recursive -- modules/awslabs/amazon-kinesis-video-streams-webrtc-sdk-c
+    git -C "{{aws_kvs_sdk_dir}}" fetch --depth=1 origin "{{aws_kvs_sdk_commit}}"
+    git -C "{{aws_kvs_sdk_dir}}" checkout --detach "{{aws_kvs_sdk_commit}}"
+
+@kvs-build-aws-sdk: _kvs-ensure-aws-sdk-submodule
+    #!/bin/sh
+    set -eu
+    just --justfile "{{daemon_justfile}}" _kvs-check-system-dependencies
+    if [ "$(uname -s)" != "Linux" ]; then
+        echo "kvs-build-aws-sdk uses apt/distro system dependencies and must run on the Linux board host." >&2
+        exit 1
+    fi
+    rm -rf "{{aws_kvs_sdk_build_dir}}" "{{aws_kvs_sdk_install_dir}}" "{{aws_kvs_sdk_system_deps_dir}}"
+    mkdir -p "{{aws_kvs_sdk_system_deps_dir}}/lib" "{{aws_kvs_sdk_system_deps_dir}}/include"
+    openssl_libdir="$(pkg-config --variable=libdir openssl)"
+    openssl_includedir="$(pkg-config --variable=includedir openssl)"
+    openssl_ssl_library="$openssl_libdir/libssl.so"
+    openssl_crypto_library="$openssl_libdir/libcrypto.so"
+    if [ ! -f "$openssl_ssl_library" ] || [ ! -f "$openssl_crypto_library" ]; then
+        echo "Expected shared OpenSSL libraries were not found under $openssl_libdir" >&2
+        exit 1
+    fi
+
+    for library in srtp2 usrsctp log4cplus curl websockets z ssl crypto; do
+        library_path="$(cc -print-file-name="lib${library}.so")"
+        if [ "$library_path" = "lib${library}.so" ] || [ ! -f "$library_path" ]; then
+            echo "System lib${library}.so not found; install the matching distro development package" >&2
+            exit 1
+        fi
+        ln -s "$library_path" "{{aws_kvs_sdk_system_deps_dir}}/lib/lib${library}.so"
+        ln -s "$library_path" "{{aws_kvs_sdk_system_deps_dir}}/lib${library}.so"
+    done
+    cmake \
+        -S "{{aws_kvs_sdk_dir}}" \
+        -B "{{aws_kvs_sdk_build_dir}}" \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX="{{aws_kvs_sdk_install_dir}}" \
+        -DOPEN_SRC_INSTALL_PREFIX="{{aws_kvs_sdk_system_deps_dir}}" \
+        -DBUILD_DEPENDENCIES=OFF \
+        -DBUILD_SAMPLE=OFF \
+        -DBUILD_TEST=OFF \
+        -DBUILD_BENCHMARK=OFF \
+        -DBUILD_STATIC_LIBS=ON \
+        -DUSE_OPENSSL=ON \
+        -DUSE_MBEDTLS=OFF \
+        -DOPENSSL_USE_STATIC_LIBS=FALSE \
+        -DOPENSSL_INCLUDE_DIR="$openssl_includedir" \
+        -DOPENSSL_SSL_LIBRARY="$openssl_ssl_library" \
+        -DOPENSSL_CRYPTO_LIBRARY="$openssl_crypto_library"
+    cmake --build "{{aws_kvs_sdk_build_dir}}" --config Release
+    cmake --install "{{aws_kvs_sdk_build_dir}}" --config Release
+    if [ ! -f "{{aws_kvs_sdk_system_deps_dir}}/include/com/amazonaws/kinesis/video/common/Include.h" ]; then
+        echo "Expected AWS SDK support headers were not built under {{aws_kvs_sdk_system_deps_dir}}/include" >&2
+        exit 1
+    fi
+    cp -a "{{aws_kvs_sdk_system_deps_dir}}/include/com" "{{aws_kvs_sdk_install_dir}}/include/"
+    for aws_library in kvsCommonLws kvspicUtils kvspicState; do
+        source_library="{{aws_kvs_sdk_system_deps_dir}}/lib/lib${aws_library}.a"
+        if [ ! -f "$source_library" ]; then
+            echo "Expected AWS SDK support library was not built: $source_library" >&2
+            exit 1
+        fi
+        cp -a "$source_library" "{{aws_kvs_sdk_install_dir}}/lib/"
+    done
+    sdk_head="$(git -C "{{aws_kvs_sdk_dir}}" rev-parse HEAD)"
+    printf 'sdk_head=%s\nbuild_dependencies=OFF\ndependency_source=system\n' "$sdk_head" > "{{aws_kvs_sdk_state_file}}"
+
+@kvs-ensure-aws-sdk: _kvs-ensure-aws-sdk-submodule
+    #!/bin/sh
+    set -eu
+    sdk_head="$(git -C "{{aws_kvs_sdk_dir}}" rev-parse HEAD)"
+    if [ ! -f "{{aws_kvs_sdk_install_header}}" ] || [ ! -f "{{aws_kvs_sdk_install_common_header}}" ] || [ ! -f "{{aws_kvs_sdk_install_library}}" ] || [ ! -f "{{aws_kvs_sdk_install_dir}}/lib/libkvsCommonLws.a" ] || [ ! -f "{{aws_kvs_sdk_install_dir}}/lib/libkvspicUtils.a" ] || [ ! -f "{{aws_kvs_sdk_install_dir}}/lib/libkvspicState.a" ] || [ ! -f "{{aws_kvs_sdk_state_file}}" ]; then
+        just --justfile "{{daemon_justfile}}" kvs-build-aws-sdk
+    elif ! grep -Fqx "sdk_head=$sdk_head" "{{aws_kvs_sdk_state_file}}"; then
+        just --justfile "{{daemon_justfile}}" kvs-build-aws-sdk
+    elif ! grep -Fqx "build_dependencies=OFF" "{{aws_kvs_sdk_state_file}}"; then
+        just --justfile "{{daemon_justfile}}" kvs-build-aws-sdk
+    elif ! grep -Fqx "dependency_source=system" "{{aws_kvs_sdk_state_file}}"; then
+        just --justfile "{{daemon_justfile}}" kvs-build-aws-sdk
+    elif [ "$(uname -s)" = "Linux" ] && { [ ! -f "{{aws_kvs_sdk_flags_file}}" ] || grep -E -q 'KVS_CA_CERT_PATH=|CMAKE_DETECTED_CACERT_PATH' "{{aws_kvs_sdk_flags_file}}"; }; then
+        just --justfile "{{daemon_justfile}}" kvs-build-aws-sdk
+    fi
+
+@kvs-build-native:
+    #!/bin/sh
+    set -eu
+    if [ "$(uname -s)" = "Linux" ]; then
+        just --justfile "{{daemon_justfile}}" _kvs-check-system-dependencies
+        just --justfile "{{daemon_justfile}}" kvs-ensure-aws-sdk
+        openssl_libdir="$(pkg-config --variable=libdir openssl)"
+        openssl_includedir="$(pkg-config --variable=includedir openssl)"
+        cmake \
+            -S "{{native_kvs_master_dir}}" \
+            -B "{{native_kvs_master_build_dir}}" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=OFF \
+            -DTXING_KVS_SYSTEM_CA_CERT_PATH="{{default_kvs_system_ca_cert_path}}" \
+            -DTXING_KVS_WEBRTC_SDK_DIR="{{aws_kvs_sdk_dir}}" \
+            -DTXING_KVS_WEBRTC_SDK_INSTALL_DIR="{{aws_kvs_sdk_install_dir}}" \
+            -DOPENSSL_USE_STATIC_LIBS=FALSE \
+            -DOPENSSL_INCLUDE_DIR="$openssl_includedir" \
+            -DOPENSSL_SSL_LIBRARY="$openssl_libdir/libssl.so" \
+            -DOPENSSL_CRYPTO_LIBRARY="$openssl_libdir/libcrypto.so"
+    else
+        cmake \
+            -S "{{native_kvs_master_dir}}" \
+            -B "{{native_kvs_master_build_dir}}" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=OFF \
+            -DTXING_KVS_SYSTEM_CA_CERT_PATH="{{default_kvs_system_ca_cert_path}}" \
+            -DTXING_KVS_WEBRTC_SDK_DIR="{{aws_kvs_sdk_dir}}" \
+            -DTXING_KVS_WEBRTC_SDK_INSTALL_DIR="{{aws_kvs_sdk_install_dir}}"
+    fi
+    cmake --build "{{native_kvs_master_build_dir}}" --config Release
+    test -x "{{built_native_kvs_master}}"
+
+@kvs-test-native:
+    cmake -S "{{native_kvs_master_dir}}" -B "{{native_kvs_master_test_build_dir}}" -DCMAKE_BUILD_TYPE=Debug -DTXING_KVS_REAL_SDK=OFF -DTXING_KVS_SYSTEM_CA_CERT_PATH="{{default_kvs_system_ca_cert_path}}"
+    cmake --build "{{native_kvs_master_test_build_dir}}" --config Debug --target txing-board-kvs-master-tests
+    ctest --test-dir "{{native_kvs_master_test_build_dir}}" --output-on-failure
+
+@kvs-clean:
+    rm -rf "{{native_kvs_master_build_dir}}" "{{native_kvs_master_test_build_dir}}" "{{aws_kvs_sdk_build_dir}}" "{{aws_kvs_sdk_install_dir}}" "{{aws_kvs_sdk_system_deps_dir}}"
 
 docker-build:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
 
     project_root="{{project_root}}"
     daemon_dir="{{daemon_dir}}"
@@ -342,7 +349,7 @@ docker-build:
     daemon_binary_path="$bin_dir/$daemon_binary_name"
     kvs_master_binary_path="$bin_dir/$kvs_master_binary_name"
 
-    for command in docker git python3 file; do
+    for command in docker git jq file; do
       if ! command -v "$command" >/dev/null 2>&1; then
         echo "unit daemon docker-build requires '$command'." >&2
         exit 1
@@ -360,7 +367,7 @@ docker-build:
     fi
 
     version="$(tr -d '[:space:]' < "$project_root/VERSION")"
-    if [[ ! "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+    if ! printf '%s\n' "$version" | grep -E -q '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; then
       echo "VERSION must contain a base semantic version like x.y.z." >&2
       exit 1
     fi
@@ -387,8 +394,8 @@ docker-build:
       -e TXING_DAEMON_BINARY_NAME="$daemon_binary_name" \
       -w "$project_root" \
       "$builder_image" \
-      bash -se <<'DAEMON_BUILD'
-    set -euo pipefail
+      sh -se <<'DAEMON_BUILD'
+    set -eu
 
     build_host="$(hostname)"
     build_kernel="$(uname -a)"
@@ -410,8 +417,8 @@ docker-build:
       -e DEBIAN_FRONTEND=noninteractive \
       -e KVS_MASTER_BINARY="$kvs_master_binary_name" \
       "$kvs_master_build_image" \
-      bash -se <<'KVS_MASTER_BUILD'
-    set -euo pipefail
+      sh -se <<'KVS_MASTER_BUILD'
+    set -eu
     build_host="$(hostname)"
     build_kernel="$(uname -a)"
     printf '%s\n' "$build_host" > /out/kvs-master-build-host
@@ -442,8 +449,8 @@ docker-build:
     mise use --global --yes just@latest
     git config --global --add safe.directory "$PWD"
     git config --global --add safe.directory "$PWD/modules/awslabs/amazon-kinesis-video-streams-webrtc-sdk-c"
-    just unit::board::submodules
-    just unit::board::build-native
+    just unit::daemon::kvs-submodules
+    just unit::daemon::kvs-build-native
     kvs_master_build_binary="devices/unit/board/kvs_master/build/$KVS_MASTER_BINARY"
     test -x "$kvs_master_build_binary"
     ldd "$kvs_master_build_binary"
@@ -465,28 +472,33 @@ docker-build:
     kvs_master_build_host="$(cat "$docker_out_dir/kvs-master-build-host")"
     kvs_master_build_kernel="$(cat "$docker_out_dir/kvs-master-build-kernel")"
 
-    python3 - "$metadata_path" <<PY
-    import json
-    import sys
-
-    metadata = {
-        "version": "$version",
-        "commit": "$commit",
-        "timestamp": int("$timestamp"),
-        "outputs": {
-            "$daemon_binary_name": "$daemon_binary_path",
-            "$kvs_master_binary_name": "$kvs_master_binary_path",
+    jq -n \
+      --arg version "$version" \
+      --arg commit "$commit" \
+      --argjson timestamp "$timestamp" \
+      --arg daemonBinaryName "$daemon_binary_name" \
+      --arg daemonBinaryPath "$daemon_binary_path" \
+      --arg kvsMasterBinaryName "$kvs_master_binary_name" \
+      --arg kvsMasterBinaryPath "$kvs_master_binary_path" \
+      --arg projectRoot "$project_root" \
+      --arg daemonBuildHost "$daemon_build_host" \
+      --arg daemonBuildKernel "$daemon_build_kernel" \
+      --arg kvsMasterBuildHost "$kvs_master_build_host" \
+      --arg kvsMasterBuildKernel "$kvs_master_build_kernel" \
+      '{
+        version: $version,
+        commit: $commit,
+        timestamp: $timestamp,
+        outputs: {
+          ($daemonBinaryName): $daemonBinaryPath,
+          ($kvsMasterBinaryName): $kvsMasterBinaryPath
         },
-        "projectRoot": "$project_root",
-        "daemonBuildHost": "$daemon_build_host",
-        "daemonBuildKernel": "$daemon_build_kernel",
-        "kvsMasterBuildHost": "$kvs_master_build_host",
-        "kvsMasterBuildKernel": "$kvs_master_build_kernel",
-    }
-    with open(sys.argv[1], "w", encoding="utf-8") as handle:
-        json.dump(metadata, handle, indent=2)
-        handle.write("\n")
-    PY
+        projectRoot: $projectRoot,
+        daemonBuildHost: $daemonBuildHost,
+        daemonBuildKernel: $daemonBuildKernel,
+        kvsMasterBuildHost: $kvsMasterBuildHost,
+        kvsMasterBuildKernel: $kvsMasterBuildKernel
+      }' >"$metadata_path"
 
     rm -rf "$docker_out_dir"
 

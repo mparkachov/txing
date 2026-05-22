@@ -1,21 +1,85 @@
-set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+set shell := ["sh", "-eu", "-c"]
 set quiet := true
 
 lambda_dir := source_directory()
+project_root := canonicalize(lambda_dir + "/../../..")
+tmp_dir := project_root + "/tmp"
+export TMPDIR := tmp_dir
+root_justfile := project_root + "/justfile"
+aws_lib := project_root + "/shared/aws/scripts/aws_lib.sh"
+cloud_rig_template := lambda_dir + "/cmd/txing-cloud-rig-lambda/template.yaml"
+cloud_mcu_template := lambda_dir + "/cmd/txing-cloud-mcu-lambda/template.yaml"
+
+stack_name := ""
 
 @test:
     cd "{{lambda_dir}}" && go test -tags lambda.norpc ./...
 
-build:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    cd "{{lambda_dir}}"
-    GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -tags lambda.norpc -ldflags="-s -w" -o target/release/txing-cloud-rig-lambda ./cmd/txing-cloud-rig-lambda
-    GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -tags lambda.norpc -ldflags="-s -w" -o target/release/txing-cloud-mcu-lambda ./cmd/txing-cloud-mcu-lambda
+deploy stack_name=stack_name:
+    just --justfile "{{lambda_dir}}/justfile" deploy-cloud-mcu "{{stack_name}}"
+    just --justfile "{{lambda_dir}}/justfile" deploy-cloud-rig "{{stack_name}}"
 
-deploy:
-    @echo "Direct per-function deploy is disabled. Use: just aws::deploy-local-lambda txing-cloud-mcu-lambda" >&2
-    @exit 1
+publish release='latest' stack_name=stack_name:
+    just --justfile "{{lambda_dir}}/justfile" publish-cloud-rig "{{release}}" "{{stack_name}}"
+    just --justfile "{{lambda_dir}}/justfile" publish-cloud-mcu "{{release}}" "{{stack_name}}"
+
+deploy-cloud-rig stack_name=stack_name:
+    #!/bin/sh
+    set -eu
+    cd "{{lambda_dir}}"
+    . "{{aws_lib}}"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{stack_name}}")"
+    txing_aws_init
+    artifact_bucket="$(ensure_artifact_bucket)"
+    ensure_lambda_seed_artifact txing-cloud-rig-lambda "$artifact_bucket"
+    deploy_template "$(lambda_stack_name cloud-rig)" "{{cloud_rig_template}}" \
+      "EnvironmentStackName=$TXING_AWS_STACK"
+
+deploy-cloud-mcu stack_name=stack_name:
+    #!/bin/sh
+    set -eu
+    cd "{{lambda_dir}}"
+    . "{{aws_lib}}"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{stack_name}}")"
+    txing_aws_init
+    artifact_bucket="$(ensure_artifact_bucket)"
+    ensure_lambda_seed_artifact txing-cloud-mcu-lambda "$artifact_bucket"
+    deploy_template "$(lambda_stack_name cloud-mcu)" "{{cloud_mcu_template}}" \
+      "EnvironmentStackName=$TXING_AWS_STACK"
+
+publish-cloud-rig release='latest' stack_name=stack_name:
+    #!/bin/sh
+    set -eu
+    cd "{{lambda_dir}}"
+    . "{{aws_lib}}"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{stack_name}}")"
+    txing_aws_init
+    artifact_bucket="$(ensure_artifact_bucket)"
+    export AWS_DEFAULT_REGION="$TXING_AWS_REGION"
+    export TXING_LAMBDA_ARTIFACT_BUCKET="$artifact_bucket"
+    export TXING_LAMBDA_FUNCTIONS_JSON
+    TXING_LAMBDA_FUNCTIONS_JSON="$(lambda_release_targets_json)"
+    exec uv run --project "{{project_root}}/shared/aws/python" \
+      python -m aws_admin.publish_release lambda \
+      --function txing-cloud-rig-lambda \
+      --release "{{release}}"
+
+publish-cloud-mcu release='latest' stack_name=stack_name:
+    #!/bin/sh
+    set -eu
+    cd "{{lambda_dir}}"
+    . "{{aws_lib}}"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{stack_name}}")"
+    txing_aws_init
+    artifact_bucket="$(ensure_artifact_bucket)"
+    export AWS_DEFAULT_REGION="$TXING_AWS_REGION"
+    export TXING_LAMBDA_ARTIFACT_BUCKET="$artifact_bucket"
+    export TXING_LAMBDA_FUNCTIONS_JSON
+    TXING_LAMBDA_FUNCTIONS_JSON="$(lambda_release_targets_json)"
+    exec uv run --project "{{project_root}}/shared/aws/python" \
+      python -m aws_admin.publish_release lambda \
+      --function txing-cloud-mcu-lambda \
+      --release "{{release}}"
 
 @default:
     @just --list

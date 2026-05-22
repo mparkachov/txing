@@ -5,9 +5,6 @@ runs the root-owned Rust `txing-unit-daemon`, supervises the native
 `txing-board-kvs-master` process, publishes board-owned runtime state, and
 exposes board MCP for motion control.
 
-The older Python `txing-board` runtime remains in the repository for legacy and
-development reference only. It is not the release runtime path.
-
 ## Responsibilities
 
 - publish the `board` named shadow
@@ -34,7 +31,7 @@ For the current `unit` device type:
 - `REDCON 1`: board, MCP, and video are available.
 
 The board publishes retained v2 capability state for `board`, `mcp`, and
-`video`. `rig/sparkplug-manager` consumes that retained state directly for
+`video`. `txing-sparkplug-manager` consumes that retained state directly for
 REDCON projection. When BLE confirms REDCON `4` / `power=false`, Sparkplug
 projection clears board-owned capabilities and does not reuse stale retained
 board state on the next wake; fresh board daemon state must arrive before
@@ -335,15 +332,15 @@ mise --version
 On the operator machine:
 
 ```bash
-just unit::cert <thing-id>
-scp config/certs/unit/<thing-id>-daemon-config.tgz txing:/tmp/<thing-id>-daemon-config.tgz
+just aws::cert <thing-id>
+scp certs/<thing-id>/<thing-id>-daemon-config.tgz txing:/tmp/<thing-id>-daemon-config.tgz
 ```
 
 On the board from the root shell:
 
 ```bash
-install -d -m 700 "$HOME/.config/txing"
-tar --no-same-owner -xzf /tmp/<thing-id>-daemon-config.tgz -C "$HOME/.config/txing"
+install -d -m 700 "$HOME/.config/txing/unit-daemon"
+tar --no-same-owner -xzf /tmp/<thing-id>-daemon-config.tgz -C "$HOME/.config/txing/unit-daemon"
 chmod 700 "$HOME/.config/txing/unit-daemon"
 chmod 600 "$HOME/.config/txing/unit-daemon/daemon.env"
 chmod 600 "$HOME/.config/txing/unit-daemon/certificate.arn"
@@ -573,32 +570,28 @@ just unit::daemon::run
 
 The local daemon uses
 `${TXING_DAEMON_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/txing/unit-daemon}`.
-Provision that directory with `just unit::cert <thing-id>` only when AWS
+Provision that directory with `just aws::cert <thing-id>` only when AWS
 resource changes are intended.
 
-Native worker and legacy Python board commands:
+Daemon and native KVS worker commands:
 
 ```bash
-just unit::board::check
-just unit::board::submodules
-just unit::board::build-native
-just unit::board::build
-just unit::board::run
-just unit::board::once
+just unit::daemon::test
+just unit::daemon::run
+just unit::daemon::kvs-submodules
+just unit::daemon::kvs-build-native
+just unit::daemon::kvs-test-native
 ```
 
-`build-native` builds the native sender against the shared AWS KVS WebRTC SDK
-submodule under `devices/common/board/`. Initialize it with
-`just unit::board::submodules` before the first native build. Third-party KVS
-dependencies come from distro packages, not from the SDK's bundled source
+`kvs-build-native` builds `txing-board-kvs-master` against the shared AWS KVS
+WebRTC SDK submodule under `devices/common/board/`. Initialize it with
+`just unit::daemon::kvs-submodules` before the first native build. Third-party
+KVS dependencies come from distro packages, not from the SDK's bundled source
 builds.
 
-Manual motor bring-up:
-
-```bash
-just unit::board::motor-raw 240 240
-just unit::board::motor-stop
-```
+Direct raw motor bring-up is no longer supported. Live motion testing goes
+through the Rust daemon MCP `cmd_vel` path, including the active-control lease
+gate.
 
 ## References
 

@@ -1,0 +1,137 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: txing cloud rig runtime Lambda stack.
+
+Parameters:
+  EnvironmentStackName:
+    Type: String
+    Description: txing environment stack prefix, for example town.
+  LambdaArtifactsBucketName:
+    Type: String
+    Description: S3 bucket containing release-built Lambda bootstrap zip artifacts.
+  CloudMcuTickQueueUrl:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /txing/stack/CloudMcuTickQueueUrl
+  CloudMcuTickQueueArn:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /txing/stack/CloudMcuTickQueueArn
+  CloudMcuRuntimeScheduleExpression:
+    Type: String
+    Default: rate(1 minute)
+
+Resources:
+  CloudRigLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${EnvironmentStackName}-cloud-rig
+      RetentionInDays: 14
+
+  CloudRigRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${EnvironmentStackName}-cloud-rig-runtime
+      Description: Schedules cloud MCU SQS watch-link ticks for cloud rigs.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: cloud-rig-runtime
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: CloudRigRuntimeLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !GetAtt CloudRigLogGroup.Arn
+                  - !Sub ${CloudRigLogGroup.Arn}:*
+              - Sid: CloudRigRuntimeSparkplug
+                Effect: Allow
+                Action: iot:Publish
+                Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/spBv1.0/*
+              - Sid: CloudRigRuntimeFleetIndexing
+                Effect: Allow
+                Action: iot:SearchIndex
+                Resource: "*"
+              - Sid: CloudRigRuntimeDescribeEndpoint
+                Effect: Allow
+                Action: iot:DescribeEndpoint
+                Resource: "*"
+              - Sid: CloudRigRuntimeSqs
+                Effect: Allow
+                Action: sqs:SendMessage
+                Resource: !Ref CloudMcuTickQueueArn
+
+  CloudRigFunction:
+    Type: AWS::Lambda::Function
+    DependsOn:
+      - CloudRigLogGroup
+    Properties:
+      FunctionName: !Sub ${EnvironmentStackName}-cloud-rig
+      Description: EventBridge scheduler for cloud MCU SQS watch-link ticks.
+      Runtime: provided.al2023
+      Handler: bootstrap
+      Architectures:
+        - arm64
+      Code:
+        S3Bucket: !Ref LambdaArtifactsBucketName
+        S3Key: lambda/txing-cloud-rig-lambda/current/bootstrap.zip
+      Role: !GetAtt CloudRigRole.Arn
+      Timeout: 60
+      MemorySize: 128
+      Environment:
+        Variables:
+          CLOUD_MCU_TICK_QUEUE_URL: !Ref CloudMcuTickQueueUrl
+
+  CloudRigScheduleRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub ${EnvironmentStackName}-cloud-rig-runtime
+      Description: Schedule cloud MCU watch-link ticks once per minute.
+      ScheduleExpression: !Ref CloudMcuRuntimeScheduleExpression
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt CloudRigFunction.Arn
+          Id: CloudRigFunction
+
+  CloudRigSchedulePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref CloudRigFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt CloudRigScheduleRule.Arn
+
+  StackParameterCloudRigRuntimeFunctionName:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /txing/stack/CloudRigRuntimeFunctionName
+      Type: String
+      Value: !Ref CloudRigFunction
+
+  StackParameterCloudRigRuntimeFunctionArn:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /txing/stack/CloudRigRuntimeFunctionArn
+      Type: String
+      Value: !GetAtt CloudRigFunction.Arn
+
+  StackParameterCloudRigRuntimeScheduleRuleName:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /txing/stack/CloudRigRuntimeScheduleRuleName
+      Type: String
+      Value: !Ref CloudRigScheduleRule
+
+Outputs:
+  CloudRigRuntimeFunctionName:
+    Value: !Ref CloudRigFunction
+  CloudRigRuntimeFunctionArn:
+    Value: !GetAtt CloudRigFunction.Arn
+  CloudRigRuntimeScheduleRuleName:
+    Value: !Ref CloudRigScheduleRule

@@ -1,23 +1,24 @@
-set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+set shell := ["sh", "-eu", "-c"]
 set quiet := true
 
 aws_dir := source_directory()
-project_root := aws_dir + "/../.."
+project_root := canonicalize(aws_dir + "/../..")
+tmp_dir := project_root + "/tmp"
+export TMPDIR := tmp_dir
 root_justfile := project_root + "/justfile"
 aws_lib := aws_dir + "/scripts/aws_lib.sh"
+rig_env_template := project_root + "/rig/rig-daemon.env.template"
+unit_daemon_env_template := project_root + "/devices/unit/daemon/daemon.env.template"
 
 stack_name := ""
 template_file := "template.yaml"
-town_template_file := "templates/town.yaml"
-rig_template_file := "templates/rig.yaml"
-device_template_file := "templates/device.yaml"
 deploy_init_file := "deploy-init.json"
 
 deploy-init parameter_file=deploy_init_file:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     cd "{{aws_dir}}"
-    source "{{aws_lib}}"
+    . "{{aws_lib}}"
     parameter_file="{{parameter_file}}"
     if [ ! -f "$parameter_file" ]; then
       echo "Deploy init file $parameter_file not found. Copy shared/aws/deploy-init.example.json to shared/aws/deploy-init.json and edit it first." >&2
@@ -41,7 +42,7 @@ deploy-init parameter_file=deploy_init_file:
     )"
     for parameter_key in CognitoDomainPrefix AdminEmail WebAppUrl; do
       parameter_name="$(deploy_init_parameter_name "$parameter_key")"
-      parameter_value="$(jq -r --arg key "$parameter_key" '.[$key]' <<<"$deploy_config_json")"
+      parameter_value="$(printf '%s\n' "$deploy_config_json" | jq -r --arg key "$parameter_key" '.[$key]')"
       aws ssm put-parameter \
         --name "$parameter_name" \
         --type String \
@@ -51,19 +52,51 @@ deploy-init parameter_file=deploy_init_file:
       printf 'stored deploy init parameter %s\n' "$parameter_name"
     done
 
-deploy stack_name=stack_name template_file=template_file:
-    #!/usr/bin/env bash
-    set -euo pipefail
+delete-init:
+    #!/bin/sh
+    set -eu
     cd "{{aws_dir}}"
-    source "{{aws_lib}}"
+    . "{{aws_lib}}"
+    txing_ensure_tmpdir
+    error_file="$(mktemp "${TMPDIR:-/tmp}/txing-delete-init.XXXXXX")"
+    trap 'rm -f "$error_file"' EXIT
+    for parameter_key in CognitoDomainPrefix AdminEmail WebAppUrl; do
+      parameter_name="$(deploy_init_parameter_name "$parameter_key")"
+      : >"$error_file"
+      if aws ssm delete-parameter --name "$parameter_name" >/dev/null 2>"$error_file"; then
+        printf 'deleted deploy init parameter %s\n' "$parameter_name"
+      elif grep -q 'ParameterNotFound' "$error_file"; then
+        printf 'missing deploy init parameter %s\n' "$parameter_name"
+      else
+        cat "$error_file" >&2
+        exit 1
+      fi
+    done
+
+deploy stack_name=stack_name:
+    #!/bin/sh
+    set -eu
+    just --justfile "{{aws_dir}}/justfile" clean-stack::deploy "{{stack_name}}"
+    just --justfile "{{aws_dir}}/justfile" deploy-base "{{stack_name}}"
+    just --justfile "{{root_justfile}}" witness::deploy "{{stack_name}}"
+    just --justfile "{{root_justfile}}" cloud-mcu::deploy "{{stack_name}}"
+    just --justfile "{{aws_dir}}/justfile" enlist-lambda::deploy "{{stack_name}}"
+    just --justfile "{{aws_dir}}/justfile" publish-release-lambda::deploy "{{stack_name}}"
+
+deploy-base stack_name=stack_name template_file=template_file:
+    #!/bin/sh
+    set -eu
+    cd "{{aws_dir}}"
+    . "{{aws_lib}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{stack_name}}")"
     txing_aws_init
-    deploy_template "$TXING_AWS_STACK" "{{template_file}}"
-    describe_stack_outputs "$TXING_AWS_STACK"
+    base_stack="$(base_stack_name)"
+    deploy_template "$base_stack" "{{template_file}}"
+    describe_stack_parameters
 
-deploy-lambdas release='latest':
-    #!/usr/bin/env bash
-    set -euo pipefail
+publish release='latest':
+    #!/bin/sh
+    set -eu
     case "{{release}}" in
       latest|v[0-9]*|[0-9]*) ;;
       *=*)
@@ -76,55 +109,87 @@ deploy-lambdas release='latest':
         ;;
     esac
     cd "{{aws_dir}}"
-    source "{{aws_lib}}"
+    . "{{aws_lib}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws)"
     txing_aws_init
-    artifact_bucket="$(ensure_artifact_bucket)"
-    export TXING_LAMBDA_ARTIFACT_BUCKET="$artifact_bucket"
-    exec "{{aws_dir}}/scripts/txing-lambda-deploy-release" "{{release}}"
+    export AWS_DEFAULT_REGION="$TXING_AWS_REGION"
+    function_name="$(stack_parameter ReleasePublisherFunctionName)"
+    payload_file="$(mktemp "${TMPDIR:-/tmp}/txing-publish-payload.XXXXXX")"
+    response_file="$(mktemp "${TMPDIR:-/tmp}/txing-publish-response.XXXXXX")"
+    metadata_file="$(mktemp "${TMPDIR:-/tmp}/txing-publish-metadata.XXXXXX")"
+    trap 'rm -f "$payload_file" "$response_file" "$metadata_file"' EXIT
+    jq -n --arg release "{{release}}" '{release: $release}' >"$payload_file"
+    aws lambda invoke \
+      --function-name "$function_name" \
+      --cli-binary-format raw-in-base64-out \
+      --payload "fileb://$payload_file" \
+      "$response_file" >"$metadata_file"
+    if jq -e '.FunctionError? // empty' "$metadata_file" >/dev/null; then
+      cat "$response_file" >&2
+      exit 1
+    fi
+    if ! jq -e '.ok == true' "$response_file" >/dev/null; then
+      cat "$response_file" >&2
+      exit 1
+    fi
+    jq '.' "$response_file"
 
-deploy-local-lambda function_name='all':
-    #!/usr/bin/env bash
-    set -euo pipefail
-    case "{{function_name}}" in
-      all|witness|enlist|cloud-rig|cloud-mcu|txing-witness-lambda|txing-enlist-lambda|txing-cloud-rig-lambda|txing-cloud-mcu-lambda) ;;
+publish-lambda release='latest':
+    #!/bin/sh
+    set -eu
+    case "{{release}}" in
+      latest|v[0-9]*|[0-9]*) ;;
       *=*)
-        echo "function_name must be all, witness, enlist, cloud-rig, cloud-mcu, or a txing Lambda function name." >&2
+        echo "release must be latest, vX.Y.Z, or X.Y.Z." >&2
         exit 1
         ;;
       *)
-        echo "function_name must be all, witness, enlist, cloud-rig, cloud-mcu, or a txing Lambda function name." >&2
+        echo "release must be latest, vX.Y.Z, or X.Y.Z." >&2
         exit 1
         ;;
     esac
     cd "{{aws_dir}}"
-    source "{{aws_lib}}"
+    . "{{aws_lib}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws)"
     txing_aws_init
+    export AWS_DEFAULT_REGION="$TXING_AWS_REGION"
     artifact_bucket="$(ensure_artifact_bucket)"
     export TXING_LAMBDA_ARTIFACT_BUCKET="$artifact_bucket"
-    exec "{{aws_dir}}/scripts/txing-lambda-deploy-local" "{{function_name}}"
+    export TXING_LAMBDA_FUNCTIONS_JSON
+    TXING_LAMBDA_FUNCTIONS_JSON="$(lambda_release_targets_json)"
+    exec uv run --project "{{aws_dir}}/python" \
+      python -m aws_admin.publish_release lambda --release "{{release}}"
 
-delete stack_name=stack_name wait='true' delete_packaging_buckets='true':
-    #!/usr/bin/env bash
-    set -euo pipefail
+delete stack_name=stack_name delete_packaging_buckets='true':
+    #!/bin/sh
+    set -eu
     cd "{{aws_dir}}"
-    source "{{aws_lib}}"
+    . "{{aws_lib}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{stack_name}}")"
     txing_aws_init
-    echo "Deleting CloudFormation stack $TXING_AWS_STACK"
-    aws cloudformation delete-stack --stack-name "$TXING_AWS_STACK"
-    if [ "{{wait}}" = "true" ]; then
-      aws cloudformation wait stack-delete-complete --stack-name "$TXING_AWS_STACK"
-      echo "Deleted CloudFormation stack $TXING_AWS_STACK"
-    fi
+    delete_cloudformation_stack_if_exists "$(lambda_stack_name aws-publish-release)" true
+    delete_cloudformation_stack_if_exists "$(lambda_stack_name aws-enlist-txing)" true
+    delete_cloudformation_stack_if_exists "$(lambda_stack_name cloud-rig)" true
+    delete_cloudformation_stack_if_exists "$(lambda_stack_name cloud-mcu)" true
+    delete_cloudformation_stack_if_exists "$(lambda_stack_name witness)" true
+    delete_cloudformation_stack_if_exists "$(base_stack_name)" true
+    delete_cloudformation_stack_if_exists "$(lambda_stack_name aws-clean-stack)" true
     if [ "{{delete_packaging_buckets}}" = "true" ]; then
       delete_s3_bucket_if_exists "$(artifact_bucket_name)"
     fi
 
+delete-base stack_name=stack_name wait='true':
+    #!/bin/sh
+    set -eu
+    cd "{{aws_dir}}"
+    . "{{aws_lib}}"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{stack_name}}")"
+    txing_aws_init
+    delete_cloudformation_stack_if_exists "$(base_stack_name)" "{{wait}}"
+
 type-list path='/txing':
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     cd "{{aws_dir}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws)"
     uv run --project "{{aws_dir}}/python" \
@@ -132,8 +197,8 @@ type-list path='/txing':
       list "{{path}}"
 
 type-describe path:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     cd "{{aws_dir}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws)"
     uv run --project "{{aws_dir}}/python" \
@@ -141,10 +206,10 @@ type-describe path:
       describe "{{path}}"
 
 deploy-town town_name stack_name=stack_name:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     cd "{{aws_dir}}"
-    source "{{aws_lib}}"
+    . "{{aws_lib}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{stack_name}}")"
     txing_aws_init
     payload_file="$(mktemp "${TMPDIR:-/tmp}/txing-enlist-town.XXXXXX")"
@@ -152,14 +217,14 @@ deploy-town town_name stack_name=stack_name:
     jq -n --arg townName "{{town_name}}" \
       '{action:"enlistTown", townName:$townName}' >"$payload_file"
     registration="$(invoke_enlist_payload_file "$payload_file")"
-    jq -r '"town id: \(.thingName)"' <<<"$registration"
-    jq '.' <<<"$registration"
+    printf '%s\n' "$registration" | jq -r '"town id: \(.thingName)"'
+    printf '%s\n' "$registration" | jq '.'
 
 deploy-rig town_id rig_type rig_name stack_name=stack_name:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     cd "{{aws_dir}}"
-    source "{{aws_lib}}"
+    . "{{aws_lib}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{stack_name}}")"
     txing_aws_init
     payload_file="$(mktemp "${TMPDIR:-/tmp}/txing-enlist-rig.XXXXXX")"
@@ -170,14 +235,14 @@ deploy-rig town_id rig_type rig_name stack_name=stack_name:
       --arg rigName "{{rig_name}}" \
       '{action:"enlistRig", townId:$townId, rigType:$rigType, rigName:$rigName}' >"$payload_file"
     registration="$(invoke_enlist_payload_file "$payload_file")"
-    jq -r '"rig id: \(.thingName)"' <<<"$registration"
-    jq '.' <<<"$registration"
+    printf '%s\n' "$registration" | jq -r '"rig id: \(.thingName)"'
+    printf '%s\n' "$registration" | jq '.'
 
 deploy-device rig_id device_type device_name stack_name=stack_name:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     cd "{{aws_dir}}"
-    source "{{aws_lib}}"
+    . "{{aws_lib}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{stack_name}}")"
     txing_aws_init
     payload_file="$(mktemp "${TMPDIR:-/tmp}/txing-enlist-device.XXXXXX")"
@@ -188,23 +253,23 @@ deploy-device rig_id device_type device_name stack_name=stack_name:
       --arg deviceName "{{device_name}}" \
       '{action:"enlistDevice", rigId:$rigId, deviceType:$deviceType, deviceName:$deviceName}' >"$payload_file"
     registration="$(invoke_enlist_payload_file "$payload_file")"
-    jq -r '"device id: \(.thingName)"' <<<"$registration"
-    jq '.' <<<"$registration"
+    printf '%s\n' "$registration" | jq -r '"device id: \(.thingName)"'
+    printf '%s\n' "$registration" | jq '.'
 
 enlist payload_file stack_name=stack_name:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     cd "{{aws_dir}}"
-    source "{{aws_lib}}"
+    . "{{aws_lib}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{stack_name}}")"
     txing_aws_init
     invoke_enlist_payload_file "{{payload_file}}" | jq '.'
 
 discharge thing_id stack_name=stack_name:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     cd "{{aws_dir}}"
-    source "{{aws_lib}}"
+    . "{{aws_lib}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{stack_name}}")"
     txing_aws_init
     payload_file="$(mktemp "${TMPDIR:-/tmp}/txing-discharge-thing.XXXXXX")"
@@ -215,19 +280,23 @@ discharge thing_id stack_name=stack_name:
     invoke_enlist_payload_file "$payload_file" | jq '.'
 
 configure-indexing:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     cd "{{aws_dir}}"
-    source "{{aws_lib}}"
+    . "{{aws_lib}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws)"
     txing_aws_init
     configure_indexing_and_wait
 
+mod clean-stack 'lambdas/aws-clean-stack/justfile'
+mod enlist-lambda 'lambdas/aws-enlist-txing/justfile'
+mod publish-release-lambda 'lambdas/aws-publish-release/justfile'
+
 check-template template_file=template_file stack_name=stack_name:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     cd "{{aws_dir}}"
-    source "{{aws_lib}}"
+    . "{{aws_lib}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{stack_name}}")"
     txing_aws_init
     artifact_bucket="$(ensure_artifact_bucket)"
@@ -238,13 +307,14 @@ check-template template_file=template_file stack_name=stack_name:
       --template-file "{{template_file}}" \
       --s3-bucket "$artifact_bucket" \
       --output-template-file "$packaged_template"
-    aws cloudformation validate-template --template-body "file://$packaged_template"
+    template_url="$(upload_packaged_template "$artifact_bucket" "$packaged_template")"
+    aws cloudformation validate-template --template-url "$template_url"
 
 packaging-buckets stack_name=stack_name:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     cd "{{aws_dir}}"
-    source "{{aws_lib}}"
+    . "{{aws_lib}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{stack_name}}")"
     txing_aws_init
     bucket="$(artifact_bucket_name)"
@@ -255,44 +325,57 @@ packaging-buckets stack_name=stack_name:
     fi
 
 delete-packaging-buckets stack_name=stack_name:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     cd "{{aws_dir}}"
-    source "{{aws_lib}}"
+    . "{{aws_lib}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{stack_name}}")"
     txing_aws_init
     delete_s3_bucket_if_exists "$(artifact_bucket_name)"
 
 describe stack_name=stack_name:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     cd "{{aws_dir}}"
-    source "{{aws_lib}}"
+    . "{{aws_lib}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{stack_name}}")"
     txing_aws_init
-    describe_stack_outputs "$TXING_AWS_STACK"
+    describe_stack_parameters
 
 describe-all stack_name=stack_name:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     cd "{{aws_dir}}"
-    source "{{aws_lib}}"
+    . "{{aws_lib}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{stack_name}}")"
     txing_aws_init
-    for stack in "$TXING_AWS_STACK"; do
+    for stack in \
+      "$(lambda_stack_name aws-clean-stack)" \
+      "$(base_stack_name)" \
+      "$(lambda_stack_name witness)" \
+      "$(lambda_stack_name cloud-mcu)" \
+      "$(lambda_stack_name cloud-rig)" \
+      "$(lambda_stack_name aws-enlist-txing)" \
+      "$(lambda_stack_name aws-publish-release)"; do
       echo "== $stack =="
-      describe_stack_outputs "$stack"
+      if stack_status="$(aws cloudformation describe-stacks --stack-name "$stack" --query 'Stacks[0].StackStatus' --output text 2>/dev/null)"; then
+        printf 'status: %s\n' "$stack_status"
+      else
+        echo "missing"
+      fi
     done
+    echo "== /txing/stack =="
+    describe_stack_parameters
 
 create-admin-user AdminPassword stack_name=stack_name:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     cd "{{aws_dir}}"
-    source "{{aws_lib}}"
+    . "{{aws_lib}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{stack_name}}")"
     txing_aws_init
-    user_pool_id="$(stack_output "$TXING_AWS_STACK" WebCognitoUserPoolId)"
-    admin_email="$(stack_output "$TXING_AWS_STACK" WebExpectedAdminEmail)"
+    user_pool_id="$(stack_parameter WebCognitoUserPoolId)"
+    admin_email="$(stack_parameter WebExpectedAdminEmail)"
     if aws cognito-idp admin-get-user \
       --user-pool-id "$user_pool_id" \
       --username "$admin_email" \
@@ -316,10 +399,10 @@ create-admin-user AdminPassword stack_name=stack_name:
     echo "Admin user password set."
 
 check rig_id='' thing_id='' log_group_name='':
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     cd "{{aws_dir}}"
-    source "{{aws_lib}}"
+    . "{{aws_lib}}"
     if [ -n "{{rig_id}}" ]; then
       export TXING_RIG_ID="{{rig_id}}"
     fi
@@ -341,11 +424,12 @@ check rig_id='' thing_id='' log_group_name='':
     else
       echo "ok: AWS STS caller identity"
     fi
-    if ! aws cloudformation describe-stacks --stack-name "$TXING_AWS_STACK" --query "Stacks[0].StackStatus" --output text >/dev/null; then
-      echo "fail: CloudFormation stack $TXING_AWS_STACK"
+    base_stack="$(base_stack_name)"
+    if ! aws cloudformation describe-stacks --stack-name "$base_stack" --query "Stacks[0].StackStatus" --output text >/dev/null; then
+      echo "fail: CloudFormation stack $base_stack"
       failures=$((failures + 1))
     else
-      echo "ok: CloudFormation stack $TXING_AWS_STACK"
+      echo "ok: CloudFormation stack $base_stack"
     fi
     if ! aws iot describe-endpoint --endpoint-type iot:Data-ATS --query endpointAddress --output text >/dev/null; then
       echo "fail: AWS IoT Data-ATS endpoint"
@@ -385,10 +469,10 @@ check rig_id='' thing_id='' log_group_name='':
     echo "AWS check passed."
 
 things-for-rig rig_id='':
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     cd "{{aws_dir}}"
-    source "{{aws_lib}}"
+    . "{{aws_lib}}"
     if [ -n "{{rig_id}}" ]; then
       export TXING_RIG_ID="{{rig_id}}"
     fi
@@ -422,19 +506,16 @@ things-for-rig rig_id='':
           }]'
       )"
     done
-    jq '.' <<<"$result"
+    printf '%s\n' "$result" | jq '.'
 
 shadow thing_name='' shadow_name='':
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     cd "{{aws_dir}}"
-    source "{{aws_lib}}"
-    if [ -n "{{thing_name}}" ]; then
-      export TXING_THING_ID="{{thing_name}}"
-    fi
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env device)"
+    . "{{aws_lib}}"
+    effective_thing_name="$(txing_resolve_requested_thing_id "{{thing_name}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws)"
     txing_aws_init
-    effective_thing_name="${thing_name:-$THING_NAME}"
     endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS --query endpointAddress --output text)"
     if [ -n "{{shadow_name}}" ]; then
       aws iot-data get-thing-shadow \
@@ -445,12 +526,12 @@ shadow thing_name='' shadow_name='':
       exit 0
     fi
     thing_json="$(aws iot describe-thing --thing-name "$effective_thing_name" --output json)"
-    thing_type="$(jq -r '.thingTypeName // empty' <<<"$thing_json")"
+    thing_type="$(printf '%s\n' "$thing_json" | jq -r '.thingTypeName // empty')"
     if [ "$thing_type" = "town" ]; then
       catalog_path="/txing/town"
-    elif [ -n "$(jq -r '.attributes.rigId // empty' <<<"$thing_json")" ]; then
-      rig_json="$(aws iot describe-thing --thing-name "$(jq -r '.attributes.rigId' <<<"$thing_json")" --output json)"
-      catalog_path="/txing/town/$(jq -r '.thingTypeName' <<<"$rig_json")/$thing_type"
+    elif [ -n "$(printf '%s\n' "$thing_json" | jq -r '.attributes.rigId // empty')" ]; then
+      rig_json="$(aws iot describe-thing --thing-name "$(printf '%s\n' "$thing_json" | jq -r '.attributes.rigId')" --output json)"
+      catalog_path="/txing/town/$(printf '%s\n' "$rig_json" | jq -r '.thingTypeName')/$thing_type"
     else
       catalog_path="/txing/town/$thing_type"
     fi
@@ -460,8 +541,10 @@ shadow thing_name='' shadow_name='':
         describe "$catalog_path" \
         | jq -r '.capabilities | join(",")'
     )"
-    result="{}"
-    while IFS= read -r current_shadow_name; do
+    result_file="$(mktemp "${TMPDIR:-/tmp}/txing-shadow-result.XXXXXX")"
+    trap 'rm -f "$result_file"' EXIT
+    printf '{}\n' >"$result_file"
+    printf '%s\n' "$capabilities_set" | tr ',' '\n' | while IFS= read -r current_shadow_name; do
       [ -n "$current_shadow_name" ] || continue
       if payload="$(
         aws iot-data get-thing-shadow \
@@ -474,49 +557,50 @@ shadow thing_name='' shadow_name='':
       else
         payload='{"missing":true}'
       fi
-      result="$(jq --arg shadowName "$current_shadow_name" --argjson shadowPayload "$payload" '. + {($shadowName): $shadowPayload}' <<<"$result")"
-    done < <(tr ',' '\n' <<<"$capabilities_set")
-    jq '.' <<<"$result"
+      next_result="$(
+        printf '%s\n' "$(cat "$result_file")" \
+          | jq --arg shadowName "$current_shadow_name" --argjson shadowPayload "$payload" '. + {($shadowName): $shadowPayload}'
+      )"
+      printf '%s\n' "$next_result" >"$result_file"
+    done
+    jq '.' "$result_file"
 
 shadow-reset thing_name='' shadow_name='sparkplug' payload_file='':
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     cd "{{aws_dir}}"
-    source "{{aws_lib}}"
-    if [ -n "{{thing_name}}" ]; then
-      export TXING_THING_ID="{{thing_name}}"
-    fi
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env device)"
+    . "{{aws_lib}}"
+    effective_thing_name="$(txing_resolve_requested_thing_id "{{thing_name}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws)"
     txing_aws_init
-    effective_thing_name="${thing_name:-$THING_NAME}"
     endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS --query endpointAddress --output text)"
     payload_file="{{payload_file}}"
     if [ -z "$payload_file" ]; then
       payload_file="$(mktemp "${TMPDIR:-/tmp}/txing-shadow.XXXXXX")"
       trap 'rm -f "$payload_file"' EXIT
       thing_json="$(aws iot describe-thing --thing-name "$effective_thing_name" --output json)"
-      thing_type="$(jq -r '.thingTypeName // empty' <<<"$thing_json")"
+      thing_type="$(printf '%s\n' "$thing_json" | jq -r '.thingTypeName // empty')"
       case "$thing_type:{{shadow_name}}" in
         town:sparkplug)
           jq -n '{state: {reported: {payload: {metrics: {redcon: 1}}}}}' >"$payload_file"
           ;;
         raspi:sparkplug|cloud:sparkplug)
-          town_json="$(aws iot describe-thing --thing-name "$(jq -r '.attributes.townId' <<<"$thing_json")" --output json)"
+          town_json="$(aws iot describe-thing --thing-name "$(printf '%s\n' "$thing_json" | jq -r '.attributes.townId')" --output json)"
           jq \
             -n \
-            --arg groupId "$(jq -r '.attributes.name' <<<"$town_json")" \
-            --arg edgeNodeId "$(jq -r '.attributes.name' <<<"$thing_json")" \
+            --arg groupId "$(printf '%s\n' "$town_json" | jq -r '.attributes.name')" \
+            --arg edgeNodeId "$(printf '%s\n' "$thing_json" | jq -r '.attributes.name')" \
             '{state: {reported: {topic: {namespace: "spBv1.0", groupId: $groupId, messageType: "NDEATH", edgeNodeId: $edgeNodeId}, payload: {metrics: {redcon: 4}}}}}' \
             >"$payload_file"
           ;;
         *:sparkplug)
-          rig_json="$(aws iot describe-thing --thing-name "$(jq -r '.attributes.rigId' <<<"$thing_json")" --output json)"
-          town_json="$(aws iot describe-thing --thing-name "$(jq -r '.attributes.townId' <<<"$thing_json")" --output json)"
+          rig_json="$(aws iot describe-thing --thing-name "$(printf '%s\n' "$thing_json" | jq -r '.attributes.rigId')" --output json)"
+          town_json="$(aws iot describe-thing --thing-name "$(printf '%s\n' "$thing_json" | jq -r '.attributes.townId')" --output json)"
           jq \
             -n \
-            --arg groupId "$(jq -r '.attributes.name' <<<"$town_json")" \
-            --arg edgeNodeId "$(jq -r '.attributes.name' <<<"$rig_json")" \
-            --arg deviceId "$(jq -r '.thingName' <<<"$thing_json")" \
+            --arg groupId "$(printf '%s\n' "$town_json" | jq -r '.attributes.name')" \
+            --arg edgeNodeId "$(printf '%s\n' "$rig_json" | jq -r '.attributes.name')" \
+            --arg deviceId "$(printf '%s\n' "$thing_json" | jq -r '.thingName')" \
             '{state: {reported: {topic: {namespace: "spBv1.0", groupId: $groupId, messageType: "DDEATH", edgeNodeId: $edgeNodeId, deviceId: $deviceId}, payload: {metrics: {}}}}}' \
             >"$payload_file"
           ;;
@@ -546,151 +630,33 @@ shadow-reset thing_name='' shadow_name='sparkplug' payload_file='':
       --payload "fileb://$payload_file" \
       /dev/stdout | jq '.'
 
-cert rig_id='':
-    #!/usr/bin/env bash
-    set -euo pipefail
+cert thing_id='':
+    #!/bin/sh
+    set -eu
     cd "{{aws_dir}}"
-    source "{{aws_lib}}"
-    if [ -n "{{rig_id}}" ]; then
-      export TXING_RIG_ID="{{rig_id}}"
-    fi
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig)"
+    . "{{aws_lib}}"
+    requested_thing_id="{{thing_id}}"
+    txing_validate_iot_thing_id "$requested_thing_id" "Use: just aws::cert <thing-id>"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws)"
     txing_aws_init
-    effective_thing_name="$TXING_RIG_ID"
-    effective_policy_name="$(stack_output "$TXING_AWS_STACK" PolicyName)"
-    cert_dir="{{project_root}}/config/certs/rig"
-    cert_path="$cert_dir/rig.cert.pem"
-    public_key_path="$cert_dir/rig.public.key"
-    private_key_path="$cert_dir/rig.private.key"
-    cert_arn_path="$cert_dir/rig.cert.arn"
-    root_ca_path="$cert_dir/AmazonRootCA1.pem"
-    greengrass_config_path="$cert_dir/greengrass-lite.yaml"
-    install -d -m 700 "$cert_dir"
-    if [ -e "$cert_path" ] || [ -e "$public_key_path" ] || [ -e "$private_key_path" ] || [ -e "$cert_arn_path" ] || [ -e "$greengrass_config_path" ]; then
-      echo "Certificate material already exists under $cert_dir." >&2
-      echo "Move or delete those files before issuing a replacement certificate." >&2
-      exit 1
-    fi
-    iot_data_endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS --query endpointAddress --output text)"
-    iot_cred_endpoint="$(aws iot describe-endpoint --endpoint-type iot:CredentialProvider --query endpointAddress --output text)"
-    iot_role_alias="$(stack_output "$TXING_AWS_STACK" GreengrassTokenExchangeRoleAlias)"
-    curl -fsSL https://www.amazontrust.com/repository/AmazonRootCA1.pem -o "$root_ca_path"
-    cert_arn="$(
-      aws iot create-keys-and-certificate \
-        --set-as-active \
-        --certificate-pem-outfile "$cert_path" \
-        --public-key-outfile "$public_key_path" \
-        --private-key-outfile "$private_key_path" \
-        --query certificateArn \
-        --output text
-    )"
-    aws iot attach-policy --policy-name "$effective_policy_name" --target "$cert_arn"
-    aws iot attach-thing-principal --thing-name "$effective_thing_name" --principal "$cert_arn"
-    printf '%s\n' "$cert_arn" >"$cert_arn_path"
-    {
-      printf 'system:\n'
-      printf '  privateKeyPath: "/var/lib/greengrass/credentials/rig.private.key"\n'
-      printf '  certificateFilePath: "/var/lib/greengrass/credentials/rig.cert.pem"\n'
-      printf '  rootCaPath: "/var/lib/greengrass/credentials/AmazonRootCA1.pem"\n'
-      printf '  rootPath: "/var/lib/greengrass"\n'
-      printf '  thingName: "%s"\n' "$effective_thing_name"
-      printf 'services:\n'
-      printf '  aws.greengrass.NucleusLite:\n'
-      printf '    componentType: "NUCLEUS"\n'
-      printf '    configuration:\n'
-      printf '      awsRegion: "%s"\n' "$TXING_AWS_REGION"
-      printf '      iotCredEndpoint: "%s"\n' "$iot_cred_endpoint"
-      printf '      iotDataEndpoint: "%s"\n' "$iot_data_endpoint"
-      printf '      iotRoleAlias: "%s"\n' "$iot_role_alias"
-      printf '      runWithDefault:\n'
-      printf '        posixUser: "gg_component:gg_component"\n'
-      printf '      greengrassDataPlanePort: "8443"\n'
-      printf '      platformOverride: {}\n'
-    } >"$greengrass_config_path"
-    chmod 600 "$cert_path" "$public_key_path" "$private_key_path" "$cert_arn_path"
-    chmod 600 "$greengrass_config_path"
-    chmod 644 "$root_ca_path"
-    jq -n \
-      --arg thingName "$effective_thing_name" \
-      --arg policyName "$effective_policy_name" \
-      --arg certificateArn "$cert_arn" \
-      --arg certificatePem "$cert_path" \
-      --arg publicKey "$public_key_path" \
-      --arg privateKey "$private_key_path" \
-      --arg certificateArnFile "$cert_arn_path" \
-      --arg rootCaFile "$root_ca_path" \
-      --arg greengrassConfig "$greengrass_config_path" \
-      '{thingName: $thingName, policyName: $policyName, certificateArn: $certificateArn, certificatePem: $certificatePem, publicKey: $publicKey, privateKey: $privateKey, certificateArnFile: $certificateArnFile, rootCaFile: $rootCaFile, greengrassConfig: $greengrassConfig}'
-
-greengrass-config rig_id='':
-    #!/usr/bin/env bash
-    set -euo pipefail
-    cd "{{aws_dir}}"
-    source "{{aws_lib}}"
-    if [ -n "{{rig_id}}" ]; then
-      export TXING_RIG_ID="{{rig_id}}"
-    fi
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig)"
-    txing_aws_init
-    effective_thing_name="$TXING_RIG_ID"
-    cert_dir="{{project_root}}/config/certs/rig"
-    cert_path="$cert_dir/rig.cert.pem"
-    private_key_path="$cert_dir/rig.private.key"
-    root_ca_path="$cert_dir/AmazonRootCA1.pem"
-    greengrass_config_path="$cert_dir/greengrass-lite.yaml"
-    if [ ! -f "$cert_path" ] || [ ! -f "$private_key_path" ] || [ ! -f "$root_ca_path" ]; then
-      echo "Rig certificate material is missing under $cert_dir." >&2
-      echo "Run 'just aws::cert <rig-id>' first, or restore rig.cert.pem, rig.private.key, and AmazonRootCA1.pem." >&2
-      exit 1
-    fi
-    iot_data_endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS --query endpointAddress --output text)"
-    iot_cred_endpoint="$(aws iot describe-endpoint --endpoint-type iot:CredentialProvider --query endpointAddress --output text)"
-    iot_role_alias="$(stack_output "$TXING_AWS_STACK" GreengrassTokenExchangeRoleAlias)"
-    {
-      printf 'system:\n'
-      printf '  privateKeyPath: "/var/lib/greengrass/credentials/rig.private.key"\n'
-      printf '  certificateFilePath: "/var/lib/greengrass/credentials/rig.cert.pem"\n'
-      printf '  rootCaPath: "/var/lib/greengrass/credentials/AmazonRootCA1.pem"\n'
-      printf '  rootPath: "/var/lib/greengrass"\n'
-      printf '  thingName: "%s"\n' "$effective_thing_name"
-      printf 'services:\n'
-      printf '  aws.greengrass.NucleusLite:\n'
-      printf '    componentType: "NUCLEUS"\n'
-      printf '    configuration:\n'
-      printf '      awsRegion: "%s"\n' "$TXING_AWS_REGION"
-      printf '      iotCredEndpoint: "%s"\n' "$iot_cred_endpoint"
-      printf '      iotDataEndpoint: "%s"\n' "$iot_data_endpoint"
-      printf '      iotRoleAlias: "%s"\n' "$iot_role_alias"
-      printf '      runWithDefault:\n'
-      printf '        posixUser: "gg_component:gg_component"\n'
-      printf '      greengrassDataPlanePort: "8443"\n'
-      printf '      platformOverride: {}\n'
-    } >"$greengrass_config_path"
-    chmod 600 "$greengrass_config_path"
-    jq -n \
-      --arg thingName "$effective_thing_name" \
-      --arg greengrassConfig "$greengrass_config_path" \
-      '{thingName: $thingName, greengrassConfig: $greengrassConfig}'
+    txing_generate_iot_certificate_bundle "$requested_thing_id" "{{rig_env_template}}" "{{unit_daemon_env_template}}"
 
 init-shadow thing_name='' shadow_name='sparkplug' payload_file='' shadow_response_file='':
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     cd "{{aws_dir}}"
-    source "{{aws_lib}}"
-    if [ -n "{{thing_name}}" ]; then
-      export TXING_THING_ID="{{thing_name}}"
-    fi
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env device)"
+    . "{{aws_lib}}"
+    effective_thing_name="$(txing_resolve_requested_thing_id "{{thing_name}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws)"
     txing_aws_init
-    effective_thing_name="${thing_name:-$THING_NAME}"
     endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS --query endpointAddress --output text)"
     payload_file="{{payload_file}}"
     if [ -z "$payload_file" ]; then
       payload_file="$(mktemp "${TMPDIR:-/tmp}/txing-shadow.XXXXXX")"
       trap 'rm -f "$payload_file"' EXIT
       thing_json="$(aws iot describe-thing --thing-name "$effective_thing_name" --output json)"
-      thing_type="$(jq -r '.thingTypeName // empty' <<<"$thing_json")"
-      thing_kind="$(jq -r '.attributes.kind // empty' <<<"$thing_json")"
+      thing_type="$(printf '%s\n' "$thing_json" | jq -r '.thingTypeName // empty')"
+      thing_kind="$(printf '%s\n' "$thing_json" | jq -r '.attributes.kind // empty')"
       case "$thing_kind:{{shadow_name}}" in
         townType:sparkplug)
           jq -n '{state: {reported: {payload: {metrics: {redcon: 1}}}}}' >"$payload_file"
@@ -698,17 +664,17 @@ init-shadow thing_name='' shadow_name='sparkplug' payload_file='' shadow_respons
         rigType:sparkplug)
           jq \
             -n \
-            --arg groupId "$(jq -r '.attributes.townId' <<<"$thing_json")" \
-            --arg edgeNodeId "$(jq -r '.thingName' <<<"$thing_json")" \
+            --arg groupId "$(printf '%s\n' "$thing_json" | jq -r '.attributes.townId')" \
+            --arg edgeNodeId "$(printf '%s\n' "$thing_json" | jq -r '.thingName')" \
             '{state: {reported: {topic: {namespace: "spBv1.0", groupId: $groupId, messageType: "NDEATH", edgeNodeId: $edgeNodeId}, payload: {metrics: {redcon: 4}}}}}' \
             >"$payload_file"
           ;;
         deviceType:sparkplug)
           jq \
             -n \
-            --arg groupId "$(jq -r '.attributes.townId' <<<"$thing_json")" \
-            --arg edgeNodeId "$(jq -r '.attributes.rigId' <<<"$thing_json")" \
-            --arg deviceId "$(jq -r '.thingName' <<<"$thing_json")" \
+            --arg groupId "$(printf '%s\n' "$thing_json" | jq -r '.attributes.townId')" \
+            --arg edgeNodeId "$(printf '%s\n' "$thing_json" | jq -r '.attributes.rigId')" \
+            --arg deviceId "$(printf '%s\n' "$thing_json" | jq -r '.thingName')" \
             '{state: {reported: {topic: {namespace: "spBv1.0", groupId: $groupId, messageType: "DDEATH", edgeNodeId: $edgeNodeId, deviceId: $deviceId}, payload: {metrics: {}}}}}' \
             >"$payload_file"
           ;;
@@ -736,10 +702,10 @@ init-shadow thing_name='' shadow_name='sparkplug' payload_file='' shadow_respons
       "$response_target"
 
 assign-device device_id rig_id:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     cd "{{aws_dir}}"
-    source "{{aws_lib}}"
+    . "{{aws_lib}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws)"
     txing_aws_init
     payload_file="$(mktemp "${TMPDIR:-/tmp}/txing-enlist-assign.XXXXXX")"

@@ -9,12 +9,12 @@ design notes have been folded into the owning component guides.
 - [Installation](./installation.md)
 - [Artifacts](./artifacts.md)
 - [AWS bring-up and rebuild](./aws.md)
+- [AWS Lambda language boundary](./aws-lambda-boundary.md)
 - [Future work](./future-work.md)
 
 ## Component Guides
 
 - [Rig](./components/rig.md)
-- [Greengrass](./greengrass/)
 - [Board](./components/board.md)
 - [MCU](./components/mcu.md)
 - [Office](./components/office.md)

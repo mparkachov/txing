@@ -1,8 +1,10 @@
-set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+set shell := ["sh", "-eu", "-c"]
 set quiet
 
 mcu_dir := source_directory()
 project_root := canonicalize(mcu_dir + "/../../..")
+tmp_dir := project_root + "/tmp"
+export TMPDIR := tmp_dir
 common_mcu_dir := canonicalize(project_root + "/devices/common/mcu")
 ncs_dir := common_mcu_dir + "/ncs"
 ncs_repo := project_root + "/modules/nrfconnect/sdk-nrf"
@@ -64,7 +66,7 @@ _firmware-hex:
 
 @check-flash: _ensure-openocd
     firmware="$(just --justfile "{{ mcu_dir }}/justfile" _firmware-hex)"; \
-    printf '%q ' \
+    printf '%s ' \
       openocd \
       -s "{{ openocd_support_dir }}" \
       -f "{{ openocd_cfg }}" \
@@ -84,7 +86,7 @@ _firmware-hex:
 
 @check-nve thing_name="power-test": _ensure-openocd
     just --justfile "{{ mcu_dir }}/justfile" build-nve-hex "{{ thing_name }}"
-    printf '%q ' \
+    printf '%s ' \
       openocd \
       -s "{{ openocd_support_dir }}" \
       -f "{{ openocd_cfg }}" \

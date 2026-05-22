@@ -1,20 +1,46 @@
-set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+set shell := ["sh", "-eu", "-c"]
 set quiet := true
 
 witness_dir := source_directory()
+project_root := canonicalize(witness_dir + "/..")
+tmp_dir := project_root + "/tmp"
+export TMPDIR := tmp_dir
+root_justfile := project_root + "/justfile"
+aws_lib := project_root + "/shared/aws/scripts/aws_lib.sh"
+
+stack_name := ""
 
 @test:
     cd "{{witness_dir}}" && go test -tags lambda.norpc ./...
 
-build:
-    #!/usr/bin/env bash
-    set -euo pipefail
+deploy stack_name=stack_name:
+    #!/bin/sh
+    set -eu
     cd "{{witness_dir}}"
-    GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -tags lambda.norpc -ldflags="-s -w" -o target/release/txing-witness-lambda ./cmd/txing-witness-lambda
+    . "{{aws_lib}}"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{stack_name}}")"
+    txing_aws_init
+    artifact_bucket="$(ensure_artifact_bucket)"
+    ensure_lambda_seed_artifact txing-witness-lambda "$artifact_bucket"
+    deploy_template "$(lambda_stack_name witness)" "{{witness_dir}}/template.yaml" \
+      "EnvironmentStackName=$TXING_AWS_STACK"
 
-deploy:
-    @echo "Direct per-function deploy is disabled. Use: just aws::deploy-local-lambda txing-witness-lambda" >&2
-    @exit 1
+publish release='latest' stack_name=stack_name:
+    #!/bin/sh
+    set -eu
+    cd "{{witness_dir}}"
+    . "{{aws_lib}}"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{stack_name}}")"
+    txing_aws_init
+    artifact_bucket="$(ensure_artifact_bucket)"
+    export AWS_DEFAULT_REGION="$TXING_AWS_REGION"
+    export TXING_LAMBDA_ARTIFACT_BUCKET="$artifact_bucket"
+    export TXING_LAMBDA_FUNCTIONS_JSON
+    TXING_LAMBDA_FUNCTIONS_JSON="$(lambda_release_targets_json)"
+    exec uv run --project "{{project_root}}/shared/aws/python" \
+      python -m aws_admin.publish_release lambda \
+      --function txing-witness-lambda \
+      --release "{{release}}"
 
 @default:
     @just --list

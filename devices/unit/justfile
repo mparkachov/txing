@@ -1,16 +1,13 @@
-set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+set shell := ["sh", "-eu", "-c"]
 set quiet := true
 
 unit_dir := source_directory()
+project_root := canonicalize(unit_dir + "/../..")
+tmp_dir := project_root + "/tmp"
+export TMPDIR := tmp_dir
 
-mod board 'board/justfile'
 mod daemon 'daemon/justfile'
 mod mcu 'mcu/justfile'
 
 @default:
     @just --list
-
-cert thing_id='' config_dir='':
-    #!/usr/bin/env bash
-    set -euo pipefail
-    just --justfile "{{unit_dir}}/justfile" daemon::cert "{{thing_id}}" "{{config_dir}}"

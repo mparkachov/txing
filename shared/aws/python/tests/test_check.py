@@ -219,7 +219,6 @@ class AwsCheckTests(unittest.TestCase):
 
         failure_messages = [result.message for result in results if not result.ok]
         self.assertIn("Shadow schema file missing or not a file (/missing/schema.json)", failure_messages)
-        self.assertNotIn("Board video sender command missing ($BOARD_VIDEO_SENDER_COMMAND)", failure_messages)
 
     def test_validate_device_environment_defaults_video_region_to_aws_region(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:

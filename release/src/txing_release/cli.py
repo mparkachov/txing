@@ -15,14 +15,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 SEMVER_RE = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
 
-RIG_PACKAGES = (
-    "txing-aws-connectivity",
-    "txing-ble-connectivity",
-    "txing-capability-protocol",
-    "txing-rig-local-pubsub",
-    "txing-sparkplug-manager",
-)
-
 STANDALONE_CARGO_MANIFESTS = (
     Path("devices/unit/daemon/Cargo.toml"),
     Path("devices/power/test/Cargo.toml"),
@@ -32,13 +24,11 @@ STANDALONE_CARGO_MANIFESTS = (
 PYTHON_PROJECTS = (
     Path("release/pyproject.toml"),
     Path("shared/aws/python/pyproject.toml"),
-    Path("devices/unit/board/pyproject.toml"),
 )
 
 PYTHON_LOCK_PACKAGES = (
     (Path("release/uv.lock"), ("txing-release",)),
     (Path("shared/aws/python/uv.lock"), ("aws",)),
-    (Path("devices/unit/board/uv.lock"), ("aws", "board")),
 )
 
 NODE_PACKAGES = (
@@ -56,18 +46,6 @@ class TextVersion:
 
 
 TEXT_VERSIONS = (
-    TextVersion(
-        Path("devices/unit/board/src/board/mcp_service.py"),
-        "board MCP default server version",
-        re.compile(r'DEFAULT_MCP_SERVER_VERSION = "[^"]+"'),
-        'DEFAULT_MCP_SERVER_VERSION = "{version}"',
-    ),
-    TextVersion(
-        Path("devices/unit/board/src/board/video_service.py"),
-        "board video default server version",
-        re.compile(r'DEFAULT_VIDEO_SERVER_VERSION = "[^"]+"'),
-        'DEFAULT_VIDEO_SERVER_VERSION = "{version}"',
-    ),
     TextVersion(
         Path("devices/unit/board/kvs_master/include/kvs_master/version.hpp"),
         "board native KVS master version",
@@ -190,8 +168,7 @@ def run(command: list[str], *, cwd: Path = ROOT) -> None:
 
 
 def refresh_lockfiles() -> None:
-    cargo_manifests = [Path("rig/Cargo.toml"), *STANDALONE_CARGO_MANIFESTS]
-    for manifest in cargo_manifests:
+    for manifest in STANDALONE_CARGO_MANIFESTS:
         run(["cargo", "generate-lockfile", "--manifest-path", str(ROOT / manifest)])
     for pyproject in PYTHON_PROJECTS:
         run(["uv", "lock", "--project", str(ROOT / pyproject.parent)])
@@ -200,8 +177,6 @@ def refresh_lockfiles() -> None:
 def managed_version_paths() -> set[Path]:
     paths: set[Path] = {
         Path("VERSION"),
-        Path("rig/Cargo.toml"),
-        Path("rig/Cargo.lock"),
         *STANDALONE_CARGO_MANIFESTS,
         *PYTHON_PROJECTS,
         *NODE_PACKAGES,
@@ -266,8 +241,6 @@ def bump(target: str) -> None:
     changed: list[str] = []
     if write_text_if_changed(Path("VERSION"), target + "\n"):
         changed.append("VERSION")
-    if set_toml_package_version(Path("rig/Cargo.toml"), target):
-        changed.append("rig/Cargo.toml")
     for path in STANDALONE_CARGO_MANIFESTS:
         if set_toml_package_version(path, target):
             changed.append(rel(path))
@@ -423,14 +396,6 @@ def collect_version_problems(reports: list[str] | None = None) -> list[str]:
     if reports is not None:
         reports.append(f"VERSION: {expected!r}")
 
-    rig_workspace = load_toml(Path("rig/Cargo.toml"))
-    check_value(
-        problems,
-        "rig/Cargo.toml workspace.package.version",
-        value_at(rig_workspace, ("workspace", "package", "version")),
-        expected,
-        reports,
-    )
     for path in STANDALONE_CARGO_MANIFESTS:
         check_value(
             problems,
@@ -459,7 +424,6 @@ def collect_version_problems(reports: list[str] | None = None) -> list[str]:
             reports,
         )
 
-    check_cargo_lock(problems, Path("rig/Cargo.lock"), RIG_PACKAGES, expected, reports)
     for manifest in STANDALONE_CARGO_MANIFESTS:
         package_name = toml_package_name(manifest)
         check_cargo_lock(

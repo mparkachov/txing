@@ -25,16 +25,13 @@ txing-unit-daemon-linux-aarch64.tar.gz
 txing-board-kvs-master-linux-aarch64.tar.gz
 txing-sparkplug-manager-linux-aarch64.tar.gz
 txing-ble-connectivity-linux-aarch64.tar.gz
-txing-aws-connectivity-linux-aarch64.tar.gz
-txing-rig-deploy-linux-aarch64.tar.gz
 txing-witness-lambda-linux-aarch64.zip
-txing-enlist-lambda-linux-aarch64.zip
 txing-cloud-rig-lambda-linux-aarch64.zip
 txing-cloud-mcu-lambda-linux-aarch64.zip
 ```
 
 Each `.tar.gz` archive contains one root-level executable with the same command
-name. Each Lambda `.zip` contains one root-level Go executable named
+name. Each runtime Lambda `.zip` contains one root-level Go executable named
 `bootstrap` for the `provided.al2023` arm64 runtime. Lambda release artifacts
 are built as `linux/arm64` binaries with `CGO_ENABLED=0`, so they are static
 and do not depend on host glibc.
@@ -44,20 +41,20 @@ Release publishing flow:
 1. Update all managed version files locally.
 2. Push the intended code to the branch that should be released.
 3. Run the `Txing Release` workflow manually from that branch.
-4. Deploy Lambda code from the operator machine with
-   `just aws::deploy-lambdas latest`.
-5. Apply AWS infrastructure changes with `just aws::deploy`.
-6. Deploy `raspi` rig components from the operator machine with
-   `just rig::deploy-release latest raspi`.
-7. If a board needs the new binaries, update it manually from a board root
-   shell with writable root, root-owned `mise upgrade`, and a reboot.
+4. Deploy AWS infrastructure and all standalone Lambda stacks with
+   `just aws::deploy`.
+5. Publish runtime Lambda code from the operator machine with
+   `just aws::publish latest`.
+6. If a board or rig needs new binaries, update it manually from a root shell
+   with writable root and root-owned `mise upgrade`; boards reboot, rigs
+   restart `rig-daemon.target`.
 
 The workflow reads the selected branch's root `VERSION`, checks that all managed version
 files already match, fails unless the version is newer than the latest existing
 release, publishes the GitHub Release, and publishes the board, rig, and Lambda
 artifacts. After a successful publish, it prunes older project releases down to
-the newest 10. It does not bump versions, commit, push back to a branch, build
-Greengrass Lite, upload Lambda code to AWS, or deploy to hosts.
+the newest 10. It does not bump versions, commit, push back to a branch, upload
+Lambda code to AWS, or deploy to hosts.
 
 ## Lambda Artifacts
 
@@ -65,27 +62,18 @@ Production Lambda code is deployed from GitHub release assets by the operator
 machine:
 
 ```bash
-gh auth status
-just aws::deploy-lambdas latest
+just aws::publish latest
 ```
 
-`aws::deploy-lambdas` downloads the release-built Lambda zips with `gh`, uploads
-them to the shared `txing-cfn-*` artifact bucket, updates existing Lambda
-functions, and seeds stable S3 bootstrap keys for first-time stack creation.
-`just aws::deploy` applies CloudFormation only; it does not build, upload, or
-change Lambda code versions.
-
-For local Lambda iteration from macOS or Linux, use:
-
-```bash
-just aws::deploy-local-lambda txing-witness-lambda
-```
-
-The argument can be `all`, `witness`, `enlist`, `cloud-rig`, `cloud-mcu`, or the
-full Lambda function name. This builds local `linux/arm64` `bootstrap` zips,
-replaces the stable `lambda/<function>/current/bootstrap.zip` object in S3, and
-updates existing Lambda functions from that S3 object. It does not create a
-GitHub release or immutable versioned release artifact.
+`aws::publish` invokes the AWS-hosted publisher Lambda. The publisher downloads
+public GitHub release assets over HTTPS, uploads Lambda artifacts, and updates
+existing Lambda functions.
+Runtime Lambda deploy recipes seed placeholder bootstrap zips so first-time
+stack creation does not depend on release artifacts already being uploaded.
+`aws::publish-lambda` runs the same runtime Lambda publish code locally and is
+kept for manual repair or one-off publishing before the publisher Lambda exists.
+Admin Lambda deploy recipes package the current Python source into each
+standalone admin Lambda stack.
 
 ## Board Assets
 
@@ -140,39 +128,51 @@ and reboot.
 
 ## Rig Artifacts
 
-Production `raspi` rig hosts receive txing binaries through Greengrass cloud
-deployments. The rig host does not need a source checkout, `mise`, AWS CLI, AWS
-access keys, or local Rust/CMake compilation for the release runtime path.
+Production `raspi` rig hosts install txing binaries through root-owned `mise`
+from GitHub Releases. The rig host does not need a source checkout, AWS CLI, AWS
+access keys, or local compilation for the release runtime path.
 
 Production `cloud` rig code is shipped as Lambda release artifacts:
 `txing-cloud-rig-lambda-linux-aarch64.zip` and
 `txing-cloud-mcu-lambda-linux-aarch64.zip`.
 
-`just rig::deploy-release latest raspi` runs on the operator Mac, applies the
-repository AWS profile/credentials, downloads GitHub release assets with `gh`,
-uploads Linux component binaries to the Greengrass artifacts bucket, creates
-Greengrass component versions from the project SemVer, and creates continuous
-deployments for the `raspi` rig-type thing group. The Linux component binaries
-are not executed on the operator Mac.
-
-Greengrass Lite is installed from the official upstream AWS release, not from a
-txing release asset:
+Rig assets:
 
 ```text
-https://github.com/aws-greengrass/aws-greengrass-lite/releases
-aws-greengrass-lite-deb-arm64.zip
+txing-sparkplug-manager-linux-aarch64.tar.gz
+txing-ble-connectivity-linux-aarch64.tar.gz
 ```
 
-The release workflow does not build, package, or publish Greengrass Lite. The
-repository no longer keeps a Greengrass Lite source checkout; install and
-upgrade the upstream distribution package manually on rig hosts.
+Installed commands:
+
+```text
+txing-sparkplug-manager
+txing-ble-connectivity
+```
+
+Rigs use root's persistent mise config and install tree:
+
+```text
+/root/.config/txing/rig-daemon/daemon.env
+/root/.config/mise/conf.d/txing-rig.toml
+/root/.local/share/mise/installs/txing-sparkplug-manager/latest/txing-sparkplug-manager
+/root/.local/share/mise/installs/txing-ble-connectivity/latest/txing-ble-connectivity
+/etc/systemd/system/txing-sparkplug-manager.service
+/etc/systemd/system/txing-ble-connectivity.service
+/etc/systemd/system/rig-daemon.target
+```
+
+Publishing a new GitHub Release does not upgrade a rig; the operator must log
+in to the rig, switch to root, run root-owned `mise upgrade`, verify versions,
+sync, and restart `rig-daemon.target`.
 
 ## Integrity Policy
 
 The implemented integrity policy is:
 
 - release tags and releases are immutable
-- assets are retrieved from GitHub Releases over HTTPS through `mise` or `gh`
+- assets are retrieved from GitHub Releases over HTTPS through `mise` or the
+  Python publisher
 
 Checksum assets or GitHub artifact attestations are not implemented yet. Add
 them later only when stronger artifact integrity requirements are needed.
@@ -180,7 +180,7 @@ them later only when stronger artifact integrity requirements are needed.
 ## Verified Behavior
 
 The current release flow has been manually verified on Raspberry Pi Zero 2 W
-boards and Greengrass rigs:
+boards and standalone rig daemons:
 
 - board install into `/root/.local/share/mise/installs`
 - board manual upgrade with root-owned `mise upgrade`
@@ -189,5 +189,5 @@ boards and Greengrass rigs:
 - browser AWS KVS video
 - browser MCP motor control over WebRTC data channel at REDCON `1`
 - MQTT MCP fallback at REDCON `2`
-- rig component publish from GitHub release assets through
-  `just rig::deploy-release`
+- rig daemon install and upgrade from GitHub release assets through root-owned
+  `mise`

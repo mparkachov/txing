@@ -1,6 +1,4 @@
 # Editor settings
-.vscode/
-.idea/
 *.swp
 *.swo
 *~
@@ -15,20 +13,16 @@
 __pycache__/
 *.py[cod]
 
+# Initial config for stack
 /shared/aws/deploy-init.json
 
 # Generated AWS IoT certificates and private keys
+/certs/
 /config/certs/
 
 # Native dependency checkouts/build artifacts
-/rig/build/
-/rig/connectedhomeip/
 /devices/*/web/node_modules
 
-# tmp for logs
-/tmp
-
-# Retired local web app artifacts left behind after web/ was renamed to office/.
-/web/.env.local
-/web/dist/
-/web/node_modules/
+# tmp for logs and repository-local script scratch files
+/tmp/*
+!/tmp/.gitkeep

@@ -1,0 +1,147 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: txing release publisher Lambda stack.
+
+Parameters:
+  EnvironmentStackName:
+    Type: String
+    Description: txing environment stack prefix, for example town.
+  AwsAdminCodeS3Bucket:
+    Type: String
+    Description: S3 bucket containing the packaged AWS admin Lambda code.
+  AwsAdminCodeS3Key:
+    Type: String
+    Description: S3 key containing the packaged AWS admin Lambda code.
+  LambdaArtifactsBucketName:
+    Type: String
+    Description: S3 bucket containing release-built Lambda bootstrap zip artifacts.
+  WitnessFunctionArn:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /txing/stack/WitnessFunctionArn
+    Description: SSM parameter containing the Sparkplug witness Lambda ARN.
+  WitnessFunctionName:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /txing/stack/WitnessFunctionName
+    Description: SSM parameter containing the Sparkplug witness Lambda name.
+  CloudRigRuntimeFunctionArn:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /txing/stack/CloudRigRuntimeFunctionArn
+    Description: SSM parameter containing the cloud rig runtime Lambda ARN.
+  CloudRigRuntimeFunctionName:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /txing/stack/CloudRigRuntimeFunctionName
+    Description: SSM parameter containing the cloud rig runtime Lambda name.
+  CloudMcuRuntimeFunctionArn:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /txing/stack/CloudMcuRuntimeFunctionArn
+    Description: SSM parameter containing the cloud MCU runtime Lambda ARN.
+  CloudMcuRuntimeFunctionName:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /txing/stack/CloudMcuRuntimeFunctionName
+    Description: SSM parameter containing the cloud MCU runtime Lambda name.
+  GithubRepository:
+    Type: String
+    Default: mparkachov/txing
+    AllowedPattern: "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+    Description: Public GitHub repository containing txing release assets.
+
+Resources:
+  PublishReleaseLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${EnvironmentStackName}-aws-publish-release
+      RetentionInDays: 14
+
+  PublishReleaseRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${EnvironmentStackName}-aws-publish-release
+      Description: Publishes txing release artifacts to Lambda.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: release-publisher
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ReleasePublisherLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !GetAtt PublishReleaseLogGroup.Arn
+                  - !Sub ${PublishReleaseLogGroup.Arn}:*
+              - Sid: ListLambdaArtifacts
+                Effect: Allow
+                Action:
+                  - s3:ListBucket
+                  - s3:ListBucketMultipartUploads
+                Resource: !Sub arn:${AWS::Partition}:s3:::${LambdaArtifactsBucketName}
+                Condition:
+                  StringLike:
+                    s3:prefix:
+                      - lambda/*
+              - Sid: WriteLambdaArtifacts
+                Effect: Allow
+                Action:
+                  - s3:AbortMultipartUpload
+                  - s3:GetObject
+                  - s3:ListMultipartUploadParts
+                  - s3:PutObject
+                Resource: !Sub arn:${AWS::Partition}:s3:::${LambdaArtifactsBucketName}/lambda/*
+              - Sid: UpdateReleaseLambdas
+                Effect: Allow
+                Action:
+                  - lambda:GetFunction
+                  - lambda:GetFunctionConfiguration
+                  - lambda:UpdateFunctionCode
+                Resource:
+                  - !Ref WitnessFunctionArn
+                  - !Ref CloudRigRuntimeFunctionArn
+                  - !Ref CloudMcuRuntimeFunctionArn
+
+  PublishReleaseFunction:
+    Type: AWS::Lambda::Function
+    DependsOn:
+      - PublishReleaseLogGroup
+    Properties:
+      FunctionName: !Sub ${EnvironmentStackName}-aws-publish-release
+      Description: Publishes txing release artifacts to Lambda.
+      Runtime: python3.12
+      Handler: aws_admin.publish_release.handler.lambda_handler
+      Code:
+        S3Bucket: !Ref AwsAdminCodeS3Bucket
+        S3Key: !Ref AwsAdminCodeS3Key
+      Role: !GetAtt PublishReleaseRole.Arn
+      Timeout: 300
+      MemorySize: 512
+      Environment:
+        Variables:
+          TXING_GITHUB_REPOSITORY: !Ref GithubRepository
+          TXING_LAMBDA_ARTIFACT_BUCKET: !Ref LambdaArtifactsBucketName
+          TXING_LAMBDA_FUNCTIONS_JSON: !Sub '{"txing-witness-lambda":"${WitnessFunctionName}","txing-cloud-rig-lambda":"${CloudRigRuntimeFunctionName}","txing-cloud-mcu-lambda":"${CloudMcuRuntimeFunctionName}"}'
+
+  StackParameterReleasePublisherFunctionName:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /txing/stack/ReleasePublisherFunctionName
+      Type: String
+      Value: !Ref PublishReleaseFunction
+
+  StackParameterReleasePublisherFunctionArn:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /txing/stack/ReleasePublisherFunctionArn
+      Type: String
+      Value: !GetAtt PublishReleaseFunction.Arn
+
+Outputs:
+  ReleasePublisherFunctionName:
+    Value: !Ref PublishReleaseFunction
+  ReleasePublisherFunctionArn:
+    Value: !GetAtt PublishReleaseFunction.Arn

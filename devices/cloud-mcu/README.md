@@ -3,19 +3,21 @@
 `cloud-mcu` is a software-only txing device type for cloud rigs. Its watch link
 is SQS, and its MCU behavior runs in AWS Lambda.
 
-The runtime is split into two release-built Lambda functions:
+The runtime is split into two release-built Lambda artifacts. Deployed function
+names are prefixed with the environment stack name, for example
+`town-cloud-rig`:
 
 ```text
 txing-cloud-rig-lambda
 txing-cloud-mcu-lambda
 ```
 
-`txing-cloud-rig-lambda` is invoked once per minute by EventBridge. It publishes
-the cloud rig Sparkplug node as REDCON `1`, discovers registered `cloud-mcu`
-devices, and sends one SQS batch per device with ten watch-link ticks at offsets
-`0, 6, ..., 54` seconds.
+The cloud rig runtime Lambda is invoked once per minute by EventBridge. It
+publishes the cloud rig Sparkplug node as REDCON `1`, discovers registered
+`cloud-mcu` devices, and sends one SQS batch per device with ten watch-link
+ticks at offsets `0, 6, ..., 54` seconds.
 
-`txing-cloud-mcu-lambda` is invoked by SQS ticks and Sparkplug `DCMD.redcon`.
+The cloud MCU runtime Lambda is invoked by SQS ticks and Sparkplug `DCMD.redcon`.
 `DCMD.redcon` stores desired REDCON `3` or `4` in the `power` named shadow. The
 next SQS tick reconciles the desired state by starting or stopping one tagged
 Fargate task for the device. Tasks are also started with a deterministic ECS
@@ -28,9 +30,18 @@ device.
 Create or update the shared AWS stack and release Lambda artifacts:
 
 ```sh
-just aws::deploy-lambdas latest
 just aws::deploy
+just aws::publish latest
 ```
+
+The cloud MCU deploy step called by `just aws::deploy` owns all cloud
+MCU-specific AWS infrastructure: the `cloud-mcu` type catalog entry, SQS tick
+queues, IPv6-only ECS task network, placeholder task definition, and the two
+runtime Lambda stacks. The base AWS stack only creates the shared `cloud` rig
+type and common txing infrastructure.
+The cloud MCU stack publishes queue and runtime values under `/txing/stack/...`;
+the cloud rig stack reads those parameters instead of reading CloudFormation
+outputs from the cloud MCU stack.
 
 Register a device on a cloud rig:
 

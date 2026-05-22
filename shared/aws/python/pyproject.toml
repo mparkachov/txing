@@ -1,6 +1,6 @@
 [project]
 name = "aws"
-version = "0.10.4"
+version = "0.10.8"
 description = "Shared AWS runtime helpers for txing subprojects"
 requires-python = ">=3.12"
 dependencies = [
@@ -11,6 +11,9 @@ dependencies = [
 [build-system]
 requires = ["uv_build>=0.10.6,<0.11.0"]
 build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = ["aws", "aws_admin"]
 
 [dependency-groups]
 dev = [

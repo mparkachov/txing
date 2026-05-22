@@ -17,10 +17,7 @@ env:
   KVS_MASTER_BINARY: txing-board-kvs-master
   SPARKPLUG_MANAGER_ASSET: txing-sparkplug-manager-linux-aarch64.tar.gz
   BLE_CONNECTIVITY_ASSET: txing-ble-connectivity-linux-aarch64.tar.gz
-  AWS_CONNECTIVITY_ASSET: txing-aws-connectivity-linux-aarch64.tar.gz
-  RIG_DEPLOY_ASSET: txing-rig-deploy-linux-aarch64.tar.gz
   WITNESS_LAMBDA_ASSET: txing-witness-lambda-linux-aarch64.zip
-  ENLIST_LAMBDA_ASSET: txing-enlist-lambda-linux-aarch64.zip
   CLOUD_RIG_LAMBDA_ASSET: txing-cloud-rig-lambda-linux-aarch64.zip
   CLOUD_MCU_LAMBDA_ASSET: txing-cloud-mcu-lambda-linux-aarch64.zip
   KVS_MASTER_BUILD_IMAGE: debian:trixie
@@ -154,28 +151,6 @@ jobs:
             asset_name: txing-unit-daemon-linux-aarch64.tar.gz
             test_command: cargo test --manifest-path devices/unit/daemon/Cargo.toml
             build_command: cargo build --release --manifest-path devices/unit/daemon/Cargo.toml --bin daemon
-            greengrass_cc: "false"
-          - binary_name: txing-sparkplug-manager
-            manifest_path: rig/sparkplug-manager/Cargo.toml
-            binary_path: rig/target/release/txing-sparkplug-manager
-            asset_name: txing-sparkplug-manager-linux-aarch64.tar.gz
-            test_command: ""
-            build_command: cargo build --release --features greengrass-sdk --manifest-path rig/sparkplug-manager/Cargo.toml
-            greengrass_cc: "true"
-          - binary_name: txing-ble-connectivity
-            manifest_path: rig/ble-connectivity/Cargo.toml
-            binary_path: rig/target/release/txing-ble-connectivity
-            asset_name: txing-ble-connectivity-linux-aarch64.tar.gz
-            test_command: ""
-            build_command: cargo build --release --features greengrass-sdk --manifest-path rig/ble-connectivity/Cargo.toml
-            greengrass_cc: "true"
-          - binary_name: txing-aws-connectivity
-            manifest_path: rig/aws-connectivity/Cargo.toml
-            binary_path: rig/target/release/txing-aws-connectivity
-            asset_name: txing-aws-connectivity-linux-aarch64.tar.gz
-            test_command: ""
-            build_command: cargo build --release --features greengrass-sdk --manifest-path rig/aws-connectivity/Cargo.toml
-            greengrass_cc: "true"
 
     steps:
       - name: Check out repository
@@ -231,8 +206,7 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             devices/unit/daemon/target
-            rig/target
-          key: cargo-release-${{ matrix.binary_name }}-${{ runner.os }}-${{ runner.arch }}-rust-1.95.0-${{ hashFiles(matrix.manifest_path, 'devices/unit/daemon/Cargo.lock', 'rig/Cargo.lock') }}
+          key: cargo-release-${{ matrix.binary_name }}-${{ runner.os }}-${{ runner.arch }}-rust-1.95.0-${{ hashFiles(matrix.manifest_path, 'devices/unit/daemon/Cargo.lock') }}
           restore-keys: |
             cargo-release-${{ matrix.binary_name }}-${{ runner.os }}-${{ runner.arch }}-rust-1.95.0-
             cargo-release-${{ runner.os }}-${{ runner.arch }}-rust-1.95.0-
@@ -252,12 +226,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ "${{ matrix.greengrass_cc }}" = "true" ]; then
-            TXING_REAL_CC="${CC:-cc}" CC="$PWD/rig/tools/cc-greengrass-info-log" \
-              ${{ matrix.build_command }}
-          else
-            ${{ matrix.build_command }}
-          fi
+          ${{ matrix.build_command }}
 
       - name: Package ${{ matrix.asset_name }}
         shell: bash
@@ -290,10 +259,20 @@ jobs:
           path: ${{ runner.temp }}/${{ matrix.asset_name }}
           if-no-files-found: error
 
-  test-rig-workspace:
-    name: Test rig Rust workspace
+  build-go-rig-binary:
+    name: Build ${{ matrix.binary_name }}
     runs-on: ubuntu-24.04-arm
     needs: metadata
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - binary_name: txing-sparkplug-manager
+            package_path: ./cmd/txing-sparkplug-manager
+            asset_name: txing-sparkplug-manager-linux-aarch64.tar.gz
+          - binary_name: txing-ble-connectivity
+            package_path: ./cmd/txing-ble-connectivity
+            asset_name: txing-ble-connectivity-linux-aarch64.tar.gz
 
     steps:
       - name: Check out repository
@@ -317,48 +296,81 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
+
+          go_package=""
+          go_root=""
+          for version in 1.26 1.25 1.24; do
+            candidate="golang-${version}-go"
+            if apt-cache show "$candidate" >/dev/null 2>&1; then
+              go_package="$candidate"
+              go_root="/usr/lib/go-${version}"
+              break
+            fi
+          done
+          if [ -z "$go_package" ]; then
+            echo "Expected a Go 1.24+ compiler package in Ubuntu Noble apt repositories." >&2
+            exit 1
+          fi
+
           sudo apt-get install -y \
-            build-essential pkg-config cmake perl file curl git \
-            libssl-dev libcurl4-openssl-dev libdbus-1-dev uuid-dev \
-            libzip-dev libyaml-dev libsystemd-dev libevent-dev liburiparser-dev \
-            liblog4cplus-dev libsrtp2-dev libusrsctp-dev libwebsockets-dev \
-            zlib1g-dev
+            build-essential ca-certificates file git "$go_package" \
+            pkg-config libdbus-1-dev
+          echo "$go_root/bin" >>"$GITHUB_PATH"
+          "$go_root/bin/go" version
 
-      - name: Restore Rust toolchain cache
+      - name: Restore Go cache
         uses: actions/cache@v4
         with:
           path: |
-            ~/.rustup/toolchains/1.95.0-aarch64-unknown-linux-gnu
-            ~/.rustup/update-hashes/1.95.0-aarch64-unknown-linux-gnu
-          key: rustup-${{ runner.os }}-${{ runner.arch }}-1.95.0
-
-      - name: Install Rust toolchain
-        shell: bash
-        run: |
-          set -euo pipefail
-          rustup toolchain install "$RUST_VERSION" --profile minimal
-          rustup default "$RUST_VERSION"
-          rustc -vV
-          cargo -V
-
-      - name: Restore Cargo cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            rig/target
-          key: cargo-release-rig-tests-${{ runner.os }}-${{ runner.arch }}-rust-1.95.0-${{ hashFiles('rig/Cargo.lock') }}
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-rig-${{ matrix.binary_name }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rig/go.mod', 'rig/go.sum') }}
           restore-keys: |
-            cargo-release-rig-tests-${{ runner.os }}-${{ runner.arch }}-rust-1.95.0-
-            cargo-release-${{ runner.os }}-${{ runner.arch }}-rust-1.95.0-
+            go-rig-${{ matrix.binary_name }}-${{ runner.os }}-${{ runner.arch }}-
+            go-rig-${{ runner.os }}-${{ runner.arch }}-
 
-      - name: Test rig Rust workspace
+      - name: Test and build ${{ matrix.binary_name }}
         shell: bash
         run: |
           set -euo pipefail
-          cargo test --manifest-path rig/Cargo.toml --workspace
+          cd rig
+          go version
+          GOOS=linux GOARCH=arm64 CGO_ENABLED=1 go test ./...
+          GOOS=linux GOARCH=arm64 CGO_ENABLED=1 \
+            go build -trimpath \
+            -ldflags="-s -w -X github.com/mparkachov/txing/rig/internal/version.Version=${{ needs.metadata.outputs.version }}" \
+            -o "$RUNNER_TEMP/${{ matrix.binary_name }}" \
+            "${{ matrix.package_path }}"
+
+      - name: Package ${{ matrix.asset_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          source="$RUNNER_TEMP/${{ matrix.binary_name }}"
+          package_dir="$RUNNER_TEMP/package-${{ matrix.binary_name }}"
+          asset_path="$RUNNER_TEMP/${{ matrix.asset_name }}"
+          test -x "$source"
+          rm -rf "$package_dir"
+          install -d "$package_dir"
+          install -m 755 "$source" "$package_dir/${{ matrix.binary_name }}"
+          if file "$package_dir/${{ matrix.binary_name }}" | grep -q 'ELF'; then
+            strip "$package_dir/${{ matrix.binary_name }}"
+          fi
+          file "$package_dir/${{ matrix.binary_name }}"
+          tar -C "$package_dir" -czf "$asset_path" "${{ matrix.binary_name }}"
+          archive_listing="$(tar -tzf "$asset_path")"
+          if [ "$archive_listing" != "${{ matrix.binary_name }}" ]; then
+            echo "Expected ${{ matrix.asset_name }} to contain only root-level ${{ matrix.binary_name }}, got:" >&2
+            printf '%s\n' "$archive_listing" >&2
+            exit 1
+          fi
+
+      - name: Upload ${{ matrix.asset_name }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: ${{ runner.temp }}/${{ matrix.asset_name }}
+          if-no-files-found: error
 
   build-lambda:
     name: Build ${{ matrix.function_name }}
@@ -372,10 +384,6 @@ jobs:
             working_directory: witness
             package_path: ./cmd/txing-witness-lambda
             asset_name: txing-witness-lambda-linux-aarch64.zip
-          - function_name: txing-enlist-lambda
-            working_directory: shared/aws/enlist
-            package_path: ./cmd/txing-enlist-lambda
-            asset_name: txing-enlist-lambda-linux-aarch64.zip
           - function_name: txing-cloud-rig-lambda
             working_directory: devices/cloud-mcu/lambda
             package_path: ./cmd/txing-cloud-rig-lambda
@@ -434,7 +442,7 @@ jobs:
           path: |
             ~/go/pkg/mod
             ~/.cache/go-build
-          key: go-lambda-${{ matrix.function_name }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('witness/go.mod', 'witness/go.sum', 'shared/aws/enlist/go.mod', 'shared/aws/enlist/go.sum', 'devices/cloud-mcu/lambda/go.mod', 'devices/cloud-mcu/lambda/go.sum') }}
+          key: go-lambda-${{ matrix.function_name }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('witness/go.mod', 'witness/go.sum', 'devices/cloud-mcu/lambda/go.mod', 'devices/cloud-mcu/lambda/go.sum') }}
           restore-keys: |
             go-lambda-${{ matrix.function_name }}-${{ runner.os }}-${{ runner.arch }}-
             go-lambda-${{ runner.os }}-${{ runner.arch }}-
@@ -557,8 +565,8 @@ jobs:
           mise use --global --yes just@latest
           git config --global --add safe.directory "$PWD"
           git config --global --add safe.directory "$PWD/modules/awslabs/amazon-kinesis-video-streams-webrtc-sdk-c"
-          just unit::board::submodules
-          just unit::board::build-native
+          just unit::daemon::kvs-submodules
+          just unit::daemon::kvs-build-native
           ldd devices/unit/board/kvs_master/build/txing-board-kvs-master
           if ldd devices/unit/board/kvs_master/build/txing-board-kvs-master | grep -Fq "not found"; then
             echo "txing-board-kvs-master has unresolved shared libraries" >&2
@@ -600,51 +608,15 @@ jobs:
           path: ${{ runner.temp }}/${{ env.KVS_MASTER_ASSET }}
           if-no-files-found: error
 
-  package-rig-deploy:
-    name: Package txing-rig-deploy
-    runs-on: ubuntu-24.04-arm
-    needs: metadata
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Package ${{ env.RIG_DEPLOY_ASSET }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          package_dir="$RUNNER_TEMP/package-txing-rig-deploy"
-          asset_path="$RUNNER_TEMP/$RIG_DEPLOY_ASSET"
-          rm -rf "$package_dir"
-          install -d "$package_dir"
-          install -m 755 rig/scripts/txing-rig-deploy "$package_dir/txing-rig-deploy"
-          tar -C "$package_dir" -czf "$asset_path" txing-rig-deploy
-          archive_listing="$(tar -tzf "$asset_path")"
-          if [ "$archive_listing" != "txing-rig-deploy" ]; then
-            echo "Expected $RIG_DEPLOY_ASSET to contain only root-level txing-rig-deploy, got:" >&2
-            printf '%s\n' "$archive_listing" >&2
-            exit 1
-          fi
-
-      - name: Upload ${{ env.RIG_DEPLOY_ASSET }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.RIG_DEPLOY_ASSET }}
-          path: ${{ runner.temp }}/${{ env.RIG_DEPLOY_ASSET }}
-          if-no-files-found: error
-
   publish:
     name: Publish release
     runs-on: ubuntu-24.04-arm
     needs:
       - metadata
       - build-rust-binary
-      - test-rig-workspace
+      - build-go-rig-binary
       - build-lambda
       - build-kvs-master
-      - package-rig-deploy
 
     steps:
       - name: Download release assets
@@ -669,10 +641,7 @@ jobs:
             "$KVS_MASTER_ASSET"
             "$SPARKPLUG_MANAGER_ASSET"
             "$BLE_CONNECTIVITY_ASSET"
-            "$AWS_CONNECTIVITY_ASSET"
-            "$RIG_DEPLOY_ASSET"
             "$WITNESS_LAMBDA_ASSET"
-            "$ENLIST_LAMBDA_ASSET"
             "$CLOUD_RIG_LAMBDA_ASSET"
             "$CLOUD_MCU_LAMBDA_ASSET"
           )

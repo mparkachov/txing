@@ -1,7 +1,7 @@
 # Power Device
 
 `power` is a raspi-compatible txing device type with REDCON BLE firmware,
-Sparkplug runtime components, AWS type catalog support, and a simple web
+standalone rig daemon support, AWS type catalog support, and a simple web
 adapter. It is separate from `weather`; weather stays active as its own device
 type.
 
@@ -29,10 +29,11 @@ just power::mcu::check-nve <power-thing-id>
 just power::mcu::flash-nve <power-thing-id>
 ```
 
-Deploy rig components after registration:
+Restart rig daemons after registration if the rig inventory should refresh
+immediately:
 
 ```sh
-just rig::deploy raspi
+just rig::restart <config-dir>
 ```
 
 Agents may render `check-nve` commands, but firmware/NVE flashing remains a

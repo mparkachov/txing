@@ -13,7 +13,6 @@ The dependency review covered the project-owned Rust lockfiles:
 - `devices/power/test/Cargo.lock`
 - `devices/unit/daemon/Cargo.lock`
 - `devices/weather/test/Cargo.lock`
-- `rig/Cargo.lock`
 
 Vendored third-party lockfiles under the MCU SDK/vendor tree are intentionally
 out of scope. They are not actionable repository dependencies.
@@ -38,13 +37,13 @@ opportunities:
 
 | Area | Duplicate versions | Seen in | Main cause | Decision |
 | --- | --- | --- | --- | --- |
-| AWS HTTP/TLS stack | `http 0.2/1`, `http-body 0.4/1`, `hyper 0.14/1`, `h2 0.3/0.4`, `hyper-rustls 0.24/0.27`, `rustls 0.21/0.23`, `tokio-rustls 0.24/0.26` | Unit daemon, rig | AWS SDK and Smithy currently carry both older and newer HTTP/TLS stacks | Defer. Do not chase with local overrides. Revisit when upgrading AWS SDK/Smithy or replacing a larger AWS client surface. |
+| AWS HTTP/TLS stack | `http 0.2/1`, `http-body 0.4/1`, `hyper 0.14/1`, `h2 0.3/0.4`, `hyper-rustls 0.24/0.27`, `rustls 0.21/0.23`, `tokio-rustls 0.24/0.26` | Unit daemon | AWS SDK and Smithy currently carry both older and newer HTTP/TLS stacks | Defer. Do not chase with local overrides. Revisit when upgrading AWS SDK/Smithy or replacing a larger AWS client surface. |
 | RustCrypto stack | `block-buffer 0.10/0.12`, `crypto-common 0.1/0.2`, `digest 0.10/0.11`, `cpufeatures 0.2/0.3` | AWS-heavy Rust projects | `aws-config -> sha1 0.10` keeps old `digest/crypto-common`; newer AWS signing code uses newer traits | Defer. Local bump is blocked by upstream pins, including `generic-array = "=0.14.7"`. |
 | `reqwest` | Direct use is still `0.12`; `0.13` is available | Unit daemon | Direct dependency version, with changed feature names and TLS behavior | Separate migration task. Requires daemon IoT/TLS testing. |
-| Randomness stack | `rand 0.8/0.9/0.10`, `rand_core 0.6/0.9/0.10`, `rand_chacha 0.3/0.9`, `getrandom 0.2/0.3/0.4` | Unit daemon, rig | Transitive `gneiss-mqtt`, `tungstenite`, AWS, UUID, and BLE dependencies | Defer. Do not expect direct local changes to remove all duplicate `rand` versions. |
+| Randomness stack | `rand 0.8/0.9/0.10`, `rand_core 0.6/0.9/0.10`, `rand_chacha 0.3/0.9`, `getrandom 0.2/0.3/0.4` | Unit daemon | Transitive `gneiss-mqtt`, `tungstenite`, AWS, and UUID dependencies | Defer. Do not expect direct local changes to remove all duplicate `rand` versions. |
 | Platform target crates | `windows-sys`, `windows-targets`, Windows target crates, `core-foundation`, `security-framework`, `rustls-native-certs`, `openssl-probe` | Cross-platform lockfiles | Cargo locks include non-Linux target dependencies | Ignore for Raspberry Pi/Linux `aarch64` work unless those targets become release targets. |
-| Java/native test deps | `jni-sys 0.3/0.4`, `thiserror 1/2` | Power/weather tests, rig | Target-specific/native transitive dependencies; older WebSocket stack also keeps `thiserror 1` | Defer. Not on the unit daemon runtime path. |
-| Utility/data crates | `hashbrown 0.14/0.15/0.17`, `itertools 0.13/0.14` | Unit daemon, rig | Normal transitive ecosystem drift | Ignore unless touching the direct caller or an upstream update removes the duplicate naturally. |
+| Java/native test deps | `jni-sys 0.3/0.4`, `thiserror 1/2` | Power/weather tests | Target-specific/native transitive dependencies; older WebSocket stack also keeps `thiserror 1` | Defer. Not on the unit daemon runtime path. |
+| Utility/data crates | `hashbrown 0.14/0.15/0.17`, `itertools 0.13/0.14` | Unit daemon | Normal transitive ecosystem drift | Ignore unless touching the direct caller or an upstream update removes the duplicate naturally. |
 
 ### Candidate Follow-Up Tasks
 
@@ -64,10 +63,10 @@ opportunities:
 - Do not combine `reqwest 0.13` migration with release or daemon deployment
   changes; it deserves its own test cycle.
 
-## Rig Deploy Credentials
+## Rig Host Credentials
 
-Rig deployment is operator-side. The rig host keeps only the Greengrass
-certificate/private key and does not store AWS access keys for deployment.
+The standalone rig host keeps only its IoT certificate/private key and does not
+store AWS access keys.
 
 ## Cloud And Control-Only RTC Consumers
 

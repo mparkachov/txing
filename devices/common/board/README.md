@@ -13,8 +13,8 @@ Generated content:
 - `aws-kvs-webrtc-sdk-install/`
 - `aws-kvs-webrtc-sdk-system-deps/`
 
-Use `just unit::board::submodules` to initialize the SDK checkout and
-`just unit::board::build-aws-sdk` on the Linux board host to rebuild the
+Use `just unit::daemon::kvs-submodules` to initialize the SDK checkout and
+`just unit::daemon::kvs-build-aws-sdk` on the Linux board host to rebuild the
 generated native install. The build disables the SDK's third-party source
 builds; distro packages provide OpenSSL, libcurl, libwebsockets, libsrtp2,
 usrsctp, zlib, and log4cplus. The system-deps directory is a generated staging

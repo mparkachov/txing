@@ -1,23 +1,33 @@
-set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+set shell := ["sh", "-eu", "-c"]
 set quiet
 
 root_dir := source_directory()
+tmp_dir := root_dir + "/tmp"
+export TMPDIR := tmp_dir
 
 [private]
 _project-version-env:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
 
     project_root="{{ root_dir }}"
 
+    shell_quote() {
+      printf "'"
+      printf '%s' "$1" | sed "s/'/'\\\\''/g"
+      printf "'"
+    }
+
     export_line() {
-      local name="$1"
-      local value="$2"
-      printf 'export %s=%q\n' "$name" "$value"
+      name="$1"
+      value="$2"
+      printf 'export %s=' "$name"
+      shell_quote "$value"
+      printf '\n'
     }
 
     version_base="$(tr -d '[:space:]' < "$project_root/VERSION")"
-    if ! [[ "$version_base" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    if ! printf '%s\n' "$version_base" | grep -E -q '^[0-9]+\.[0-9]+\.[0-9]+$'; then
       echo "VERSION must contain a base semantic version like x.y.z." >&2
       exit 1
     fi
@@ -35,10 +45,10 @@ _project-version-env:
             printf '%s\n' "$git_status"
             git -C "$project_root" diff --binary --ignore-submodules -- 2>/dev/null || true
             git -C "$project_root" diff --cached --binary --ignore-submodules -- 2>/dev/null || true
-            while IFS= read -r -d '' untracked_file; do
+            git -C "$project_root" ls-files --others --exclude-standard 2>/dev/null | while IFS= read -r untracked_file; do
               printf 'untracked:%s\n' "$untracked_file"
               git -C "$project_root" hash-object -- "$untracked_file" 2>/dev/null || true
-            done < <(git -C "$project_root" ls-files --others --exclude-standard -z 2>/dev/null || true)
+            done
           } | git -C "$project_root" hash-object --stdin | cut -c1-12
         )"
       fi
@@ -52,13 +62,13 @@ _project-version-env:
 
 [private]
 _project-aws-env scope='aws' stack_name='':
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
 
     project_root="{{ root_dir }}"
 
     resolve_path() {
-      local candidate="$1"
+      candidate="$1"
       if [ -z "$candidate" ]; then
         return 0
       fi
@@ -68,10 +78,18 @@ _project-aws-env scope='aws' stack_name='':
       esac
     }
 
+    shell_quote() {
+      printf "'"
+      printf '%s' "$1" | sed "s/'/'\\\\''/g"
+      printf "'"
+    }
+
     export_line() {
-      local name="$1"
-      local value="$2"
-      printf 'export %s=%q\n' "$name" "$value"
+      name="$1"
+      value="$2"
+      printf 'export %s=' "$name"
+      shell_quote "$value"
+      printf '\n'
     }
 
     unset RIG_ENV_FILE BOARD_ENV_FILE
@@ -84,8 +102,8 @@ _project-aws-env scope='aws' stack_name='':
     }
 
     require_value() {
-      local label="$1"
-      local value="$2"
+      label="$1"
+      value="$2"
       if [ -z "$value" ]; then
         echo "Missing required $label." >&2
         exit 1
@@ -94,7 +112,6 @@ _project-aws-env scope='aws' stack_name='':
     }
 
     resolve_aws_cli_region() {
-      local value
       value="$(aws configure get region 2>/dev/null || true)"
       if [ -z "$value" ]; then
         echo "AWS CLI region is not configured. Set it with 'aws configure set region <aws-region>' or in your AWS CLI config." >&2
@@ -104,15 +121,14 @@ _project-aws-env scope='aws' stack_name='':
     }
 
     normalize_required_slug() {
-      local label="$1"
-      local raw="$2"
-      local normalized
+      label="$1"
+      raw="$2"
       normalized="$(normalize_slug "$raw")"
       require_value "$label" "$normalized"
     }
 
     normalize_optional_slug() {
-      local raw="$1"
+      raw="$1"
       if [ -z "$raw" ]; then
         return 0
       fi
@@ -135,16 +151,16 @@ _project-aws-env scope='aws' stack_name='':
     txing_aws_stack="$(require_value TXING_AWS_STACK "${requested_stack_name:-${TXING_AWS_STACK:-}}")"
 
     describe_thing_json() {
-      local thing_id="$1"
+      thing_id="$1"
       aws iot describe-thing \
         --thing-name "$thing_id" \
         --output json
     }
 
     jq_string() {
-      local json="$1"
-      local query="$2"
-      jq -r "$query // empty" <<<"$json"
+      json="$1"
+      query="$2"
+      printf '%s\n' "$json" | jq -r "$query // empty"
     }
 
     txing_town_id="$(normalize_optional_slug "${TXING_TOWN_ID:-}")"
@@ -183,6 +199,7 @@ _project-aws-env scope='aws' stack_name='':
     txing_town_stack_name="${TXING_TOWN_STACK_NAME:-}"
     txing_rig_stack_name="${TXING_RIG_STACK_NAME:-}"
     txing_device_stack_name="${TXING_DEVICE_STACK_NAME:-}"
+    txing_aws_base_stack="$txing_aws_stack-aws-base"
 
     rig_name="$txing_rig_id"
     rig_id="$txing_rig_id"
@@ -200,21 +217,6 @@ _project-aws-env scope='aws' stack_name='':
     else
       schema_file=""
     fi
-    board_video_region="${BOARD_VIDEO_REGION:-$aws_region}"
-    board_video_sender_command="${BOARD_VIDEO_SENDER_COMMAND:-}"
-    kvs_dualstack_endpoints="${KVS_DUALSTACK_ENDPOINTS:-}"
-    board_drive_raw_max_speed="${BOARD_DRIVE_RAW_MAX_SPEED:-}"
-    board_drive_cmd_raw_min_speed="${BOARD_DRIVE_CMD_RAW_MIN_SPEED:-}"
-    board_drive_cmd_raw_max_speed="${BOARD_DRIVE_CMD_RAW_MAX_SPEED:-}"
-    board_drive_pwm_hz="${BOARD_DRIVE_PWM_HZ:-}"
-    board_drive_pwm_chip="${BOARD_DRIVE_PWM_CHIP:-}"
-    board_drive_left_pwm_channel="${BOARD_DRIVE_LEFT_PWM_CHANNEL:-}"
-    board_drive_right_pwm_channel="${BOARD_DRIVE_RIGHT_PWM_CHANNEL:-}"
-    board_drive_gpio_chip="${BOARD_DRIVE_GPIO_CHIP:-}"
-    board_drive_left_dir_gpio="${BOARD_DRIVE_LEFT_DIR_GPIO:-}"
-    board_drive_right_dir_gpio="${BOARD_DRIVE_RIGHT_DIR_GPIO:-}"
-    board_drive_left_inverted="${BOARD_DRIVE_LEFT_INVERTED:-}"
-    board_drive_right_inverted="${BOARD_DRIVE_RIGHT_INVERTED:-}"
     thing_name="$txing_thing_id"
 
     export_line TXING_PROJECT_ROOT "$project_root"
@@ -224,6 +226,7 @@ _project-aws-env scope='aws' stack_name='':
     export_line TXING_GIT_DIRTY "$TXING_GIT_DIRTY"
     export_line TXING_GIT_DIRTY_HASH "$TXING_GIT_DIRTY_HASH"
     export_line TXING_AWS_STACK "$txing_aws_stack"
+    export_line TXING_AWS_BASE_STACK "$txing_aws_base_stack"
     export_line TXING_AWS_REGION "$aws_region"
     printf 'unset RIG_ENV_FILE\n'
     printf 'unset BOARD_ENV_FILE\n'
@@ -243,97 +246,29 @@ _project-aws-env scope='aws' stack_name='':
     export_line CLOUDWATCH_LOG_GROUP "$cloudwatch_log_group"
     export_line THING_NAME "$thing_name"
     export_line SCHEMA_FILE "$schema_file"
-    export_line BOARD_VIDEO_REGION "$board_video_region"
-    export_line BOARD_VIDEO_SENDER_COMMAND "$board_video_sender_command"
-    if [ -n "$kvs_dualstack_endpoints" ]; then
-      export_line KVS_DUALSTACK_ENDPOINTS "$kvs_dualstack_endpoints"
-    else
-      printf 'unset KVS_DUALSTACK_ENDPOINTS\n'
-    fi
-    if [ -n "$board_drive_raw_max_speed" ]; then
-      export_line BOARD_DRIVE_RAW_MAX_SPEED "$board_drive_raw_max_speed"
-    else
-      printf 'unset BOARD_DRIVE_RAW_MAX_SPEED\n'
-    fi
-    if [ -n "$board_drive_cmd_raw_min_speed" ]; then
-      export_line BOARD_DRIVE_CMD_RAW_MIN_SPEED "$board_drive_cmd_raw_min_speed"
-    else
-      printf 'unset BOARD_DRIVE_CMD_RAW_MIN_SPEED\n'
-    fi
-    if [ -n "$board_drive_cmd_raw_max_speed" ]; then
-      export_line BOARD_DRIVE_CMD_RAW_MAX_SPEED "$board_drive_cmd_raw_max_speed"
-    else
-      printf 'unset BOARD_DRIVE_CMD_RAW_MAX_SPEED\n'
-    fi
-    if [ -n "$board_drive_pwm_hz" ]; then
-      export_line BOARD_DRIVE_PWM_HZ "$board_drive_pwm_hz"
-    else
-      printf 'unset BOARD_DRIVE_PWM_HZ\n'
-    fi
-    if [ -n "$board_drive_pwm_chip" ]; then
-      export_line BOARD_DRIVE_PWM_CHIP "$board_drive_pwm_chip"
-    else
-      printf 'unset BOARD_DRIVE_PWM_CHIP\n'
-    fi
-    if [ -n "$board_drive_left_pwm_channel" ]; then
-      export_line BOARD_DRIVE_LEFT_PWM_CHANNEL "$board_drive_left_pwm_channel"
-    else
-      printf 'unset BOARD_DRIVE_LEFT_PWM_CHANNEL\n'
-    fi
-    if [ -n "$board_drive_right_pwm_channel" ]; then
-      export_line BOARD_DRIVE_RIGHT_PWM_CHANNEL "$board_drive_right_pwm_channel"
-    else
-      printf 'unset BOARD_DRIVE_RIGHT_PWM_CHANNEL\n'
-    fi
-    if [ -n "$board_drive_gpio_chip" ]; then
-      export_line BOARD_DRIVE_GPIO_CHIP "$board_drive_gpio_chip"
-    else
-      printf 'unset BOARD_DRIVE_GPIO_CHIP\n'
-    fi
-    if [ -n "$board_drive_left_dir_gpio" ]; then
-      export_line BOARD_DRIVE_LEFT_DIR_GPIO "$board_drive_left_dir_gpio"
-    else
-      printf 'unset BOARD_DRIVE_LEFT_DIR_GPIO\n'
-    fi
-    if [ -n "$board_drive_right_dir_gpio" ]; then
-      export_line BOARD_DRIVE_RIGHT_DIR_GPIO "$board_drive_right_dir_gpio"
-    else
-      printf 'unset BOARD_DRIVE_RIGHT_DIR_GPIO\n'
-    fi
-    if [ -n "$board_drive_left_inverted" ]; then
-      export_line BOARD_DRIVE_LEFT_INVERTED "$board_drive_left_inverted"
-    else
-      printf 'unset BOARD_DRIVE_LEFT_INVERTED\n'
-    fi
-    if [ -n "$board_drive_right_inverted" ]; then
-      export_line BOARD_DRIVE_RIGHT_INVERTED "$board_drive_right_inverted"
-    else
-      printf 'unset BOARD_DRIVE_RIGHT_INVERTED\n'
-    fi
 
 [positional-arguments]
 aws-rig *args:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     eval "$(just --justfile "{{ root_dir }}/justfile" _project-aws-env rig)"
     command aws "$@"
 
 [positional-arguments]
 aws-town *args:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     eval "$(just --justfile "{{ root_dir }}/justfile" _project-aws-env town)"
     command aws "$@"
 
 [positional-arguments]
 aws-device *args:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     eval "$(just --justfile "{{ root_dir }}/justfile" _project-aws-env device)"
     command aws "$@"
 
 mod rig 'rig/justfile'
-mod board 'devices/unit/board/justfile'
 mod aws 'shared/aws/justfile'
 mod witness 'witness/justfile'
 mod unit 'devices/unit/justfile'

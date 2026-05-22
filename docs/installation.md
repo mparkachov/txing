@@ -8,19 +8,21 @@ component that owns the host behavior.
 - Development machines may use a repository checkout.
 - Production board hosts install release artifacts with `mise` and do not need a
   source checkout for the release runtime path.
-- Production `raspi` rig hosts receive txing components through Greengrass
-  cloud deployments and do not need a source checkout, `mise`, AWS CLI, or AWS
-  access keys.
+- Production `raspi` rig hosts install standalone txing daemon release
+  artifacts with root-owned `mise` and systemd.
 - Production `cloud` rigs are AWS-hosted Lambda/EventBridge/SQS runtimes and
   do not have a host install path.
 - Operator AWS account, credentials, profile selection, and region come from
   native AWS CLI configuration.
 - Stack-backed operator commands and deploys fail unless `TXING_AWS_STACK` is
   set explicitly in the operator environment or passed as a positional stack
-  name where supported.
+  prefix where supported. The base CloudFormation stack is derived as
+  `<TXING_AWS_STACK>-aws-base`.
 - The one-off `just aws::deploy-init` step stores office/admin deploy parameters
   from `shared/aws/deploy-init.json` as separate `/txing/stack/*` SSM Parameter
-  Store values before the first base stack deployment.
+  Store values before the first base stack deployment. These three manual input
+  parameters intentionally remain after `just aws::delete`; use
+  `just aws::delete-init` only when you want to remove them too.
 
 ## Development Machine
 
@@ -30,13 +32,13 @@ Repo-wide developer tooling:
 - `just`
 - `jq`
 - AWS CLI v2
-- GitHub CLI (`gh`) for operator-side release, Lambda, and Greengrass deploys
+- GitHub CLI (`gh`) only for legacy release inspection or helper scripts
 
 Install operator CLIs with the package manager you use for the development
 machine. `mise` is acceptable for missing or stale CLI versions:
 
 ```bash
-mise use --global uv@latest just@latest aws-cli@latest gh@latest jq@latest
+mise use --global uv@latest just@latest aws-cli@latest jq@latest
 ```
 
 Day-to-day development commands live in [development.md](./development.md).
@@ -45,25 +47,27 @@ AWS bring-up and teardown live in [aws.md](./aws.md).
 ## Raspi Rig Host
 
 The `raspi` rig is the always-on host coordinator that owns Sparkplug
-publication for local BLE-managed devices. Production `raspi` rig hosts run the
-official AWS Greengrass Lite Debian package plus txing Greengrass components
-delivered by cloud deployments.
+publication for local BLE-managed devices. Production `raspi` rig hosts run
+`txing-sparkplug-manager` and `txing-ble-connectivity` as standalone systemd
+services.
 
-Canonical `raspi` rig installation, Greengrass Lite configuration, Bluetooth
-permission, deployment, health-check, update, and cleanup instructions live in
+Canonical `raspi` rig installation, Bluetooth setup, root-owned `mise`,
+systemd units, health-check, and update instructions live in
 [components/rig.md](./components/rig.md).
 
 The short production flow is:
 
-1. Install the upstream Greengrass Lite Debian package on the rig.
-2. Add `gg_component` to the OS `bluetooth` group for `RIG_TYPE=raspi`.
-3. Generate `config/certs/rig/` certificate material and
-   `greengrass-lite.yaml` on the operator machine.
-4. Copy `rig.cert.pem`, `rig.private.key`, `AmazonRootCA1.pem`, and
-   `greengrass-lite.yaml` to the Greengrass locations on the rig.
-5. Restart `greengrass-lite.target`.
-6. Deploy txing components from the operator machine with
-   `just rig::deploy-release latest raspi`.
+1. Install host packages, Bluetooth, and root-owned `mise` on the rig.
+2. Generate rig daemon config/cert material on the operator machine with
+   `just aws::cert <rig-id>`.
+3. Copy and unpack `<rig-id>-rig-daemon-config.tgz` under
+   `/root/.config/txing/rig-daemon`.
+4. Install `txing-sparkplug-manager` and `txing-ble-connectivity` through
+   root-owned `mise`.
+5. Create `txing-sparkplug-manager.service`,
+   `txing-ble-connectivity.service`, and `rig-daemon.target` manually.
+6. Start or upgrade with `sudo systemctl restart rig-daemon.target` after
+   `mise upgrade`.
 
 ## Cloud Rig Runtime
 
@@ -71,8 +75,8 @@ The `cloud` rig type is AWS-hosted. Deploy its Lambda/EventBridge/SQS runtime
 through the AWS stack and Lambda release assets:
 
 ```bash
-just aws::deploy-lambdas latest
 just aws::deploy
+just aws::publish latest
 ```
 
 Cloud MCU registration and runtime behavior are documented in
@@ -94,7 +98,7 @@ The short production flow is:
 2. Enter a root shell on the board.
 3. Install OS packages, `NetworkManager`, and root-owned `mise`.
 4. Generate daemon config/cert material on the operator machine with
-   `just unit::cert <thing-id>`.
+   `just aws::cert <thing-id>`.
 5. Copy and unpack `<thing-id>-daemon-config.tgz` under
    `/root/.config/txing/unit-daemon`, including `daemon.env` and certificate
    files.
