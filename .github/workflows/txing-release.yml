@@ -35,7 +35,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -154,7 +154,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -182,7 +182,7 @@ jobs:
             zlib1g-dev
 
       - name: Restore Rust toolchain cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.rustup/toolchains/1.95.0-aarch64-unknown-linux-gnu
@@ -199,7 +199,7 @@ jobs:
           cargo -V
 
       - name: Restore Cargo cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry/index
@@ -253,7 +253,7 @@ jobs:
           fi
 
       - name: Upload ${{ matrix.asset_name }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.asset_name }}
           path: ${{ runner.temp }}/${{ matrix.asset_name }}
@@ -276,7 +276,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -319,7 +319,7 @@ jobs:
           "$go_root/bin/go" version
 
       - name: Restore Go cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/go/pkg/mod
@@ -366,7 +366,7 @@ jobs:
           fi
 
       - name: Upload ${{ matrix.asset_name }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.asset_name }}
           path: ${{ runner.temp }}/${{ matrix.asset_name }}
@@ -395,7 +395,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -437,7 +437,7 @@ jobs:
           "$go_root/bin/go" version
 
       - name: Restore Go cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/go/pkg/mod
@@ -492,7 +492,7 @@ jobs:
           fi
 
       - name: Upload ${{ matrix.asset_name }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.asset_name }}
           path: ${{ runner.temp }}/${{ matrix.asset_name }}
@@ -505,7 +505,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -602,7 +602,7 @@ jobs:
           fi
 
       - name: Upload ${{ env.KVS_MASTER_ASSET }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ env.KVS_MASTER_ASSET }}
           path: ${{ runner.temp }}/${{ env.KVS_MASTER_ASSET }}
@@ -620,7 +620,7 @@ jobs:
 
     steps:
       - name: Download release assets
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: ${{ runner.temp }}/release-assets
           merge-multiple: true
