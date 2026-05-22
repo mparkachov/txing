@@ -22,20 +22,21 @@ import (
 )
 
 type runtimeState struct {
-	cfg          rigconfig.Config
-	logger       *awsx.CloudWatchLogger
-	ipc          *ipc.Client
-	specs        map[string]rigble.DeviceSpec
-	addresses    map[string]bluetooth.Address
-	lastConnect  map[string]time.Time
-	connectSlots chan struct{}
-	seq          uint64
-	mu           sync.Mutex
-	txingUUID    bluetooth.UUID
-	commandUUID  bluetooth.UUID
-	stateUUID    bluetooth.UUID
-	powerUUID    bluetooth.UUID
-	weatherUUID  bluetooth.UUID
+	cfg            rigconfig.Config
+	logger         *awsx.CloudWatchLogger
+	ipc            *ipc.Client
+	specs          map[string]rigble.DeviceSpec
+	addresses      map[string]bluetooth.Address
+	lastConnect    map[string]time.Time
+	activeConnects map[string]chan struct{}
+	connectSlots   chan struct{}
+	seq            uint64
+	mu             sync.Mutex
+	txingUUID      bluetooth.UUID
+	commandUUID    bluetooth.UUID
+	stateUUID      bluetooth.UUID
+	powerUUID      bluetooth.UUID
+	weatherUUID    bluetooth.UUID
 }
 
 func main() {
@@ -167,18 +168,19 @@ func newRuntimeState(cfg rigconfig.Config, logger *awsx.CloudWatchLogger, client
 		connectSlots = make(chan struct{}, cfg.MaxBLEConnections)
 	}
 	return &runtimeState{
-		cfg:          cfg,
-		logger:       logger,
-		ipc:          client,
-		specs:        map[string]rigble.DeviceSpec{},
-		addresses:    map[string]bluetooth.Address{},
-		lastConnect:  map[string]time.Time{},
-		connectSlots: connectSlots,
-		txingUUID:    txingUUID,
-		commandUUID:  commandUUID,
-		stateUUID:    stateUUID,
-		powerUUID:    powerUUID,
-		weatherUUID:  weatherUUID,
+		cfg:            cfg,
+		logger:         logger,
+		ipc:            client,
+		specs:          map[string]rigble.DeviceSpec{},
+		addresses:      map[string]bluetooth.Address{},
+		lastConnect:    map[string]time.Time{},
+		activeConnects: map[string]chan struct{}{},
+		connectSlots:   connectSlots,
+		txingUUID:      txingUUID,
+		commandUUID:    commandUUID,
+		stateUUID:      stateUUID,
+		powerUUID:      powerUUID,
+		weatherUUID:    weatherUUID,
 	}, nil
 }
 
@@ -202,7 +204,7 @@ func (s *runtimeState) handleIPCMessage(ctx context.Context, message ipc.Message
 			s.logger.Print(ctx, "warning", fmt.Sprintf("command thing mismatch topic=%s payloadThing=%s", message.Topic, command.ThingName))
 			return
 		}
-		go s.handleCommand(context.Background(), command)
+		go s.handleCommand(ctx, command)
 	}
 }
 
@@ -333,7 +335,9 @@ func (s *runtimeState) handleCommand(ctx context.Context, command protocol.Capab
 		s.publishCommandResult(ctx, command, protocol.CommandRejected, &message, &command.Target.Redcon)
 		return
 	}
-	if err := s.connectAndPublish(ctx, spec, &normalized); err != nil {
+	commandCtx, cancel := s.commandContext(ctx, command)
+	defer cancel()
+	if err := s.connectAndPublishCommand(commandCtx, command, spec, normalized); err != nil {
 		message := err.Error()
 		s.publishCommandResult(ctx, command, protocol.CommandFailed, &message, &command.Target.Redcon)
 		return
@@ -341,7 +345,66 @@ func (s *runtimeState) handleCommand(ctx context.Context, command protocol.Capab
 	s.publishCommandResult(ctx, command, protocol.CommandSucceeded, nil, &command.Target.Redcon)
 }
 
+func (s *runtimeState) commandContext(ctx context.Context, command protocol.CapabilityCommand) (context.Context, context.CancelFunc) {
+	deadline := time.Now().Add(s.cfg.CommandTimeout)
+	if command.DeadlineMS != nil {
+		commandDeadline := time.UnixMilli(int64(*command.DeadlineMS))
+		if commandDeadline.Before(deadline) {
+			deadline = commandDeadline
+		}
+	}
+	return context.WithDeadline(ctx, deadline)
+}
+
+func (s *runtimeState) connectAndPublishCommand(ctx context.Context, command protocol.CapabilityCommand, spec rigble.DeviceSpec, normalizedRedcon uint8) error {
+	var failures uint32
+	for {
+		err := s.connectAndPublish(ctx, spec, &normalizedRedcon)
+		if err == nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return fmt.Errorf("bluetooth command stopped after error: %w", err)
+		}
+		if protocol.CommandDeadlineExpired(command, uint64(time.Now().UnixMilli())) {
+			return fmt.Errorf("bluetooth command deadline expired after error: %w", err)
+		}
+		message := err.Error()
+		if !rigble.BLECommandConnectErrorIsRetryable(message) {
+			return err
+		}
+		delayMS := bleCommandRetryDelayMS(spec.ThingName, message, failures)
+		delay := time.Duration(delayMS) * time.Millisecond
+		if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) <= delay {
+			return fmt.Errorf("bluetooth command deadline expired before retry after error: %w", err)
+		}
+		s.logger.Print(ctx, "warning", fmt.Sprintf("BLE command connect retry thing=%s targetRedcon=%d normalizedRedcon=%d attempt=%d error=%q retryMs=%d", spec.ThingName, command.Target.Redcon, normalizedRedcon, failures+1, err, delayMS))
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("bluetooth command stopped after error: %w", err)
+		case <-time.After(delay):
+		}
+		failures++
+	}
+}
+
+func bleCommandRetryDelayMS(thingName string, message string, failures uint32) uint64 {
+	baseDelayMS := rigble.BLERetryMinDelayMS
+	if rigble.BLEErrorIndicatesInProgress(message) {
+		baseDelayMS = rigble.BluezInProgressReconnectDelayMS
+	} else if rigble.BLEErrorIndicatesHostResourceExhaustion(message) {
+		baseDelayMS = rigble.BLUEResourceExhaustedReconnectDelayMS
+	}
+	return rigble.BoundedRetryDelayMS(baseDelayMS, failures, rigble.BLERetryMaxDelayMS) +
+		rigble.StableJitterMS(thingName, 250)
+}
+
 func (s *runtimeState) connectAndPublish(ctx context.Context, spec rigble.DeviceSpec, targetRedcon *uint8) error {
+	releaseDevice, err := s.acquireDeviceConnect(ctx, spec.ThingName)
+	if err != nil {
+		return err
+	}
+	defer releaseDevice()
 	releaseSlot, err := s.acquireConnectSlot(ctx)
 	if err != nil {
 		return err
@@ -431,6 +494,35 @@ func (s *runtimeState) connectAndPublish(ctx context.Context, spec rigble.Device
 	}
 	s.publishSample(ctx, rigble.PowerStateSample(spec, state.Redcon, powerMeasurement, &addressText, s.nextSeq(), now), true)
 	return nil
+}
+
+func (s *runtimeState) acquireDeviceConnect(ctx context.Context, thingName string) (func(), error) {
+	for {
+		s.mu.Lock()
+		if s.activeConnects == nil {
+			s.activeConnects = map[string]chan struct{}{}
+		}
+		done, active := s.activeConnects[thingName]
+		if !active {
+			done = make(chan struct{})
+			s.activeConnects[thingName] = done
+			s.mu.Unlock()
+			return func() {
+				s.mu.Lock()
+				if s.activeConnects[thingName] == done {
+					delete(s.activeConnects, thingName)
+					close(done)
+				}
+				s.mu.Unlock()
+			}, nil
+		}
+		s.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-done:
+		}
+	}
 }
 
 func (s *runtimeState) acquireConnectSlot(ctx context.Context) (func(), error) {
