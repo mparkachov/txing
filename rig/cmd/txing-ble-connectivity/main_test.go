@@ -88,6 +88,32 @@ func TestCommandContextUsesCommandDeadlineInsteadOfBleAttemptTimeout(t *testing.
 	}
 }
 
+func TestBackgroundConnectContextIsBounded(t *testing.T) {
+	state := &runtimeState{
+		cfg: rigconfig.Config{ConnectTimeout: 8 * time.Second},
+	}
+	ctx, cancel := state.backgroundConnectContext(context.Background())
+	defer cancel()
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		t.Fatal("background connect context has no deadline")
+	}
+	remaining := time.Until(deadline)
+	if remaining < 8500*time.Millisecond || remaining > 11*time.Second {
+		t.Fatalf("background deadline remaining = %s, want about 10s", remaining)
+	}
+}
+
+func TestConsumeScanStoppedForConnectOnlyOnce(t *testing.T) {
+	state := &runtimeState{scanStoppedForConnect: true}
+	if !state.consumeScanStoppedForConnect() {
+		t.Fatal("expected scan stop flag")
+	}
+	if state.consumeScanStoppedForConnect() {
+		t.Fatal("scan stop flag should be cleared")
+	}
+}
+
 func TestDiscoveryUUIDsOnlyRequireWeatherForWeatherDevices(t *testing.T) {
 	state := testRuntimeStateWithUUIDs(t)
 	powerUUIDs := state.discoveryUUIDs(rigble.DeviceSpec{ThingName: "unit-1", Kind: rigble.DeviceKindPower})

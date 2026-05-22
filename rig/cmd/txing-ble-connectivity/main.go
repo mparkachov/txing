@@ -22,21 +22,22 @@ import (
 )
 
 type runtimeState struct {
-	cfg            rigconfig.Config
-	logger         *awsx.CloudWatchLogger
-	ipc            *ipc.Client
-	specs          map[string]rigble.DeviceSpec
-	addresses      map[string]bluetooth.Address
-	lastConnect    map[string]time.Time
-	activeConnects map[string]chan struct{}
-	connectSlots   chan struct{}
-	seq            uint64
-	mu             sync.Mutex
-	txingUUID      bluetooth.UUID
-	commandUUID    bluetooth.UUID
-	stateUUID      bluetooth.UUID
-	powerUUID      bluetooth.UUID
-	weatherUUID    bluetooth.UUID
+	cfg                   rigconfig.Config
+	logger                *awsx.CloudWatchLogger
+	ipc                   *ipc.Client
+	specs                 map[string]rigble.DeviceSpec
+	addresses             map[string]bluetooth.Address
+	lastConnect           map[string]time.Time
+	activeConnects        map[string]chan struct{}
+	connectSlots          chan struct{}
+	scanStoppedForConnect bool
+	seq                   uint64
+	mu                    sync.Mutex
+	txingUUID             bluetooth.UUID
+	commandUUID           bluetooth.UUID
+	stateUUID             bluetooth.UUID
+	powerUUID             bluetooth.UUID
+	weatherUUID           bluetooth.UUID
 }
 
 func main() {
@@ -234,6 +235,11 @@ func (s *runtimeState) scanLoop(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
+		if s.consumeScanStoppedForConnect() {
+			failures = 0
+			s.waitForActiveConnects(ctx)
+			continue
+		}
 		delayMS := rigble.BoundedRetryDelayMS(rigble.BLERetryMinDelayMS, failures, rigble.BLERetryMaxDelayMS)
 		failures++
 		if err != nil {
@@ -290,13 +296,24 @@ func (s *runtimeState) scan(ctx context.Context) error {
 			rigble.AdvertisementPublishesCapabilityState(spec),
 		)
 		if s.shouldBackgroundConnect(name) {
-			go s.connectAndPublish(context.Background(), spec, nil)
+			go s.connectAndPublishBackground(ctx, spec)
 		}
 	})
 	if err != nil && ctx.Err() == nil {
 		return err
 	}
 	return nil
+}
+
+func (s *runtimeState) connectAndPublishBackground(ctx context.Context, spec rigble.DeviceSpec) {
+	connectCtx, cancel := s.backgroundConnectContext(ctx)
+	defer cancel()
+	_ = s.connectAndPublish(connectCtx, spec, nil)
+}
+
+func (s *runtimeState) backgroundConnectContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	timeoutMS := rigble.ConnectSessionTimeoutMS(uint64(s.cfg.ConnectTimeout / time.Millisecond))
+	return context.WithTimeout(ctx, time.Duration(timeoutMS)*time.Millisecond)
 }
 
 func (s *runtimeState) shouldBackgroundConnect(thingName string) bool {
@@ -421,6 +438,10 @@ func (s *runtimeState) connectAndPublish(ctx context.Context, spec rigble.Device
 	if !ok {
 		return fmt.Errorf("no BLE advertisement address recorded for %s", spec.ThingName)
 	}
+	s.pauseScanForConnect()
+	if err := prepareBLEConnection(ctx, address); err != nil {
+		return err
+	}
 	device, err := bluetooth.DefaultAdapter.Connect(address, bluetooth.ConnectionParams{
 		ConnectionTimeout: bluetooth.NewDuration(s.cfg.ConnectTimeout),
 	})
@@ -499,6 +520,41 @@ func (s *runtimeState) connectAndPublish(ctx context.Context, spec rigble.Device
 	}
 	s.publishSample(ctx, rigble.PowerStateSample(spec, state.Redcon, powerMeasurement, &addressText, s.nextSeq(), now), true, true)
 	return nil
+}
+
+func (s *runtimeState) pauseScanForConnect() {
+	if err := bluetooth.DefaultAdapter.StopScan(); err != nil {
+		return
+	}
+	s.mu.Lock()
+	s.scanStoppedForConnect = true
+	s.mu.Unlock()
+}
+
+func (s *runtimeState) consumeScanStoppedForConnect() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	stopped := s.scanStoppedForConnect
+	s.scanStoppedForConnect = false
+	return stopped
+}
+
+func (s *runtimeState) waitForActiveConnects(ctx context.Context) {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		s.mu.Lock()
+		active := len(s.activeConnects)
+		s.mu.Unlock()
+		if active == 0 {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }
 
 func (s *runtimeState) discoveryUUIDs(spec rigble.DeviceSpec) []bluetooth.UUID {

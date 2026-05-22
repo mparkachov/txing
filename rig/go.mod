@@ -9,6 +9,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/iot v1.73.0
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.68.6
 	github.com/eclipse/paho.mqtt.golang v1.5.1
+	github.com/godbus/dbus/v5 v5.1.0
 	tinygo.org/x/bluetooth v0.15.0
 )
 
@@ -27,7 +28,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sts v1.42.1 // indirect
 	github.com/aws/smithy-go v1.25.1 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
-	github.com/godbus/dbus/v5 v5.1.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/saltosystems/winrt-go v0.0.0-20260317170058-9c2fec580d96 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
