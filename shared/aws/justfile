@@ -513,12 +513,9 @@ shadow thing_name='' shadow_name='':
     set -eu
     cd "{{aws_dir}}"
     . "{{aws_lib}}"
-    if [ -n "{{thing_name}}" ]; then
-      export TXING_THING_ID="{{thing_name}}"
-    fi
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env device)"
+    effective_thing_name="$(txing_resolve_requested_thing_id "{{thing_name}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws)"
     txing_aws_init
-    effective_thing_name="${thing_name:-$THING_NAME}"
     endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS --query endpointAddress --output text)"
     if [ -n "{{shadow_name}}" ]; then
       aws iot-data get-thing-shadow \
@@ -573,12 +570,9 @@ shadow-reset thing_name='' shadow_name='sparkplug' payload_file='':
     set -eu
     cd "{{aws_dir}}"
     . "{{aws_lib}}"
-    if [ -n "{{thing_name}}" ]; then
-      export TXING_THING_ID="{{thing_name}}"
-    fi
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env device)"
+    effective_thing_name="$(txing_resolve_requested_thing_id "{{thing_name}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws)"
     txing_aws_init
-    effective_thing_name="${thing_name:-$THING_NAME}"
     endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS --query endpointAddress --output text)"
     payload_file="{{payload_file}}"
     if [ -z "$payload_file" ]; then
@@ -642,7 +636,7 @@ cert thing_id='':
     cd "{{aws_dir}}"
     . "{{aws_lib}}"
     requested_thing_id="{{thing_id}}"
-    txing_validate_iot_thing_id "$requested_thing_id"
+    txing_validate_iot_thing_id "$requested_thing_id" "Use: just aws::cert <thing-id>"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws)"
     txing_aws_init
     txing_generate_iot_certificate_bundle "$requested_thing_id" "{{rig_env_template}}" "{{unit_daemon_env_template}}"
@@ -652,12 +646,9 @@ init-shadow thing_name='' shadow_name='sparkplug' payload_file='' shadow_respons
     set -eu
     cd "{{aws_dir}}"
     . "{{aws_lib}}"
-    if [ -n "{{thing_name}}" ]; then
-      export TXING_THING_ID="{{thing_name}}"
-    fi
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env device)"
+    effective_thing_name="$(txing_resolve_requested_thing_id "{{thing_name}}")"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws)"
     txing_aws_init
-    effective_thing_name="${thing_name:-$THING_NAME}"
     endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS --query endpointAddress --output text)"
     payload_file="{{payload_file}}"
     if [ -z "$payload_file" ]; then

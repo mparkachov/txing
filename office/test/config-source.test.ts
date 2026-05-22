@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 const repoRoot = resolve(import.meta.dir, '../..')
@@ -52,7 +52,6 @@ describe('office config wiring', () => {
 
   test('production hosting is configured for Cloudflare Pages', () => {
     const justfile = readFileSync(resolve(repoRoot, 'office/justfile'), 'utf-8')
-    const redirects = readFileSync(resolve(repoRoot, 'office/public/_redirects'), 'utf-8')
     const tsconfig = readFileSync(resolve(repoRoot, 'office/tsconfig.app.json'), 'utf-8')
     const viteConfigSource = readFileSync(resolve(repoRoot, 'office/vite.config.ts'), 'utf-8')
 
@@ -65,7 +64,7 @@ describe('office config wiring', () => {
     expect(justfile).not.toContain('ln -snf')
     expect(justfile).not.toContain('aws s3 sync')
     expect(justfile).not.toContain('aws cloudfront create-invalidation')
-    expect(redirects.trim()).toBe('/* /index.html 200')
+    expect(existsSync(resolve(repoRoot, 'office/public/_redirects'))).toBe(false)
     expect(tsconfig).toContain('"react": ["./node_modules/@types/react"]')
     expect(tsconfig).toContain('"react/jsx-runtime": ["./node_modules/@types/react/jsx-runtime"]')
     expect(viteConfigSource).toContain("new URL('./node_modules/react/index.js'")

@@ -68,13 +68,14 @@ txing_required_json_string() {
 
 txing_validate_iot_thing_id() {
   thing_id="$1"
+  usage="${2:-Use a positional thing ID.}"
   if [ -z "$thing_id" ]; then
-    echo "Thing ID is required. Use: just aws::cert <thing-id>" >&2
+    echo "Thing ID is required. $usage" >&2
     return 2
   fi
   case "$thing_id" in
     *=*)
-      echo "Do not pass just recipe arguments as name=value. Use: just aws::cert <thing-id>" >&2
+      echo "Do not pass just recipe arguments as name=value. $usage" >&2
       return 2
       ;;
   esac
@@ -82,6 +83,32 @@ txing_validate_iot_thing_id() {
     echo "Invalid Thing ID '$thing_id'. Allowed characters: letters, digits, colon, underscore, hyphen." >&2
     return 2
   fi
+}
+
+txing_resolve_requested_thing_id() {
+  requested_thing_id="$1"
+  if [ -n "$requested_thing_id" ]; then
+    txing_validate_iot_thing_id "$requested_thing_id" "Use a positional thing ID."
+    printf '%s\n' "$requested_thing_id"
+    return 0
+  fi
+  if [ -n "${TXING_THING_ID:-}" ]; then
+    txing_validate_iot_thing_id "$TXING_THING_ID" "Use a valid TXING_THING_ID."
+    printf '%s\n' "$TXING_THING_ID"
+    return 0
+  fi
+  if [ -n "${TXING_RIG_ID:-}" ]; then
+    txing_validate_iot_thing_id "$TXING_RIG_ID" "Use a valid TXING_RIG_ID."
+    printf '%s\n' "$TXING_RIG_ID"
+    return 0
+  fi
+  if [ -n "${TXING_TOWN_ID:-}" ]; then
+    txing_validate_iot_thing_id "$TXING_TOWN_ID" "Use a valid TXING_TOWN_ID."
+    printf '%s\n' "$TXING_TOWN_ID"
+    return 0
+  fi
+  echo "Thing ID is required. Pass it positionally or export TXING_THING_ID, TXING_RIG_ID, or TXING_TOWN_ID." >&2
+  return 2
 }
 
 txing_cert_output_dir() {
@@ -409,7 +436,7 @@ txing_generate_iot_certificate_bundle() {
   thing_id="$1"
   rig_env_template="$2"
   unit_env_template="$3"
-  txing_validate_iot_thing_id "$thing_id"
+  txing_validate_iot_thing_id "$thing_id" "Use: just aws::cert <thing-id>"
   thing_json="$(aws iot describe-thing --thing-name "$thing_id" --output json)"
   thing_type="$(txing_json_string "$thing_json" '.thingTypeName')"
   thing_kind="$(txing_json_string "$thing_json" '.attributes.kind')"

@@ -939,6 +939,21 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("TXING_CLOUDWATCH_LOG_GROUP=__TXING_CLOUDWATCH_LOG_GROUP__", rig_env_template)
         self.assertIn("/certs/", gitignore)
 
+    def test_shadow_recipes_resolve_rig_town_or_device_ids_directly(self) -> None:
+        justfile = (AWS_DIR / "justfile").read_text(encoding="utf-8")
+        aws_lib = (AWS_DIR / "scripts" / "aws_lib.sh").read_text(encoding="utf-8")
+
+        self.assertIn("txing_resolve_requested_thing_id()", aws_lib)
+        self.assertIn("TXING_THING_ID", aws_lib)
+        self.assertIn("TXING_RIG_ID", aws_lib)
+        self.assertIn("TXING_TOWN_ID", aws_lib)
+        for recipe_name in ("shadow ", "shadow-reset ", "init-shadow "):
+            recipe = justfile.split(recipe_name, 1)[1].split("\n\n", 1)[0]
+            self.assertIn('effective_thing_name="$(txing_resolve_requested_thing_id "{{thing_name}}")"', recipe)
+            self.assertIn('_project-aws-env aws', recipe)
+            self.assertNotIn('_project-aws-env device', recipe)
+            self.assertNotIn("THING_NAME", recipe)
+
     def test_aws_justfile_enables_thing_connectivity_indexing(self) -> None:
         justfile = (AWS_DIR / "justfile").read_text(encoding="utf-8")
         deploy_recipe = justfile.split("deploy ", 1)[1].split("\n\n", 1)[0]

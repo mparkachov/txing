@@ -104,9 +104,10 @@ CloudFront upload. Use these Cloudflare Pages settings:
   - `VITE_COGNITO_SCOPE`
   - `VITE_ADMIN_EMAIL`
 
-`office/public/_redirects` keeps deep SPA routes on `index.html` when served by
-Cloudflare Pages. `just office::deploy` is now informational and prints the
-Cloudflare Pages settings.
+Cloudflare Pages provides SPA fallback automatically when there is no top-level
+`404.html`; do not add a `/* /index.html 200` `_redirects` rule because Pages
+now treats that as an infinite loop. `just office::deploy` is now informational
+and prints the Cloudflare Pages settings.
 
 ## Public Sign-In Entry
 
