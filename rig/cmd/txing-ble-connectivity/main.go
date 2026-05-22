@@ -448,7 +448,12 @@ func (s *runtimeState) connectAndPublish(ctx context.Context, spec rigble.Device
 	if err != nil {
 		return err
 	}
-	defer device.Disconnect()
+	keepConnection := false
+	defer func() {
+		if !keepConnection {
+			_ = device.Disconnect()
+		}
+	}()
 	services, err := device.DiscoverServices([]bluetooth.UUID{s.txingUUID})
 	if err != nil {
 		return err
@@ -512,6 +517,7 @@ func (s *runtimeState) connectAndPublish(ctx context.Context, spec rigble.Device
 			}
 		}
 		s.publishSample(ctx, rigble.WeatherStateSample(spec, state.Redcon, powerMeasurement, weatherMeasurement, &addressText, s.nextSeq(), now), true, true)
+		keepConnection = true
 		return nil
 	}
 	state, err := rigble.ParsePowerState(stateBytes)
@@ -519,6 +525,7 @@ func (s *runtimeState) connectAndPublish(ctx context.Context, spec rigble.Device
 		return err
 	}
 	s.publishSample(ctx, rigble.PowerStateSample(spec, state.Redcon, powerMeasurement, &addressText, s.nextSeq(), now), true, true)
+	keepConnection = true
 	return nil
 }
 
