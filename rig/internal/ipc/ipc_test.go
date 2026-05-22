@@ -28,11 +28,7 @@ func TestTopicMatchesMQTTWildcards(t *testing.T) {
 }
 
 func TestBrokerFansOutAndReplaysRetainedMessages(t *testing.T) {
-	dir, err := os.MkdirTemp("/private/tmp", "txing-ipc-test.")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(dir)
+	dir := shortSocketTempDir(t)
 	socketPath := filepath.Join(dir, "ipc.sock")
 	broker := NewBroker(socketPath)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -88,6 +84,27 @@ func TestBrokerFansOutAndReplaysRetainedMessages(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("broker did not stop")
 	}
+}
+
+func shortSocketTempDir(t *testing.T) string {
+	t.Helper()
+	for _, root := range []string{"/tmp", os.TempDir()} {
+		if root == "" {
+			continue
+		}
+		if stat, err := os.Stat(root); err != nil || !stat.IsDir() {
+			continue
+		}
+		dir, err := os.MkdirTemp(root, "txing-ipc-test.")
+		if err != nil {
+			continue
+		}
+		t.Cleanup(func() {
+			_ = os.RemoveAll(dir)
+		})
+		return dir
+	}
+	return t.TempDir()
 }
 
 func waitForDial(t *testing.T, socketPath string) {
