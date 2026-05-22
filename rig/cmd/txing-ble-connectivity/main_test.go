@@ -6,6 +6,7 @@ import (
 	"time"
 
 	rigble "github.com/mparkachov/txing/rig/internal/ble"
+	"tinygo.org/x/bluetooth"
 )
 
 func TestAcquireConnectSlotHonorsLimit(t *testing.T) {
@@ -57,5 +58,43 @@ func TestBleCommandRetryDelayClassifiesBluezInProgress(t *testing.T) {
 	}
 	if delay > rigble.BluezInProgressReconnectDelayMS+250 {
 		t.Fatalf("delay = %d, want bounded jitter above %d", delay, rigble.BluezInProgressReconnectDelayMS)
+	}
+}
+
+func TestDiscoveryUUIDsOnlyRequireWeatherForWeatherDevices(t *testing.T) {
+	state := testRuntimeStateWithUUIDs(t)
+	powerUUIDs := state.discoveryUUIDs(rigble.DeviceSpec{ThingName: "unit-1", Kind: rigble.DeviceKindPower})
+	if len(powerUUIDs) != 3 {
+		t.Fatalf("power discovery UUID count = %d, want 3", len(powerUUIDs))
+	}
+	for _, uuid := range powerUUIDs {
+		if uuid.String() == rigble.WeatherMeasurementUUID {
+			t.Fatal("power discovery requested weather measurement characteristic")
+		}
+	}
+
+	weatherUUIDs := state.discoveryUUIDs(rigble.DeviceSpec{ThingName: "weather-1", Kind: rigble.DeviceKindWeather})
+	if len(weatherUUIDs) != 4 {
+		t.Fatalf("weather discovery UUID count = %d, want 4", len(weatherUUIDs))
+	}
+	if weatherUUIDs[3].String() != rigble.WeatherMeasurementUUID {
+		t.Fatalf("last weather discovery UUID = %s, want %s", weatherUUIDs[3].String(), rigble.WeatherMeasurementUUID)
+	}
+}
+
+func testRuntimeStateWithUUIDs(t *testing.T) *runtimeState {
+	t.Helper()
+	parse := func(value string) bluetooth.UUID {
+		uuid, err := bluetooth.ParseUUID(value)
+		if err != nil {
+			t.Fatalf("parse UUID %s: %v", value, err)
+		}
+		return uuid
+	}
+	return &runtimeState{
+		commandUUID: parse(rigble.TxingBLECommandUUID),
+		stateUUID:   parse(rigble.TxingBLEStateUUID),
+		powerUUID:   parse(rigble.PowerMeasurementUUID),
+		weatherUUID: parse(rigble.WeatherMeasurementUUID),
 	}
 }

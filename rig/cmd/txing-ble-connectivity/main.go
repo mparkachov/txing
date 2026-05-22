@@ -430,7 +430,7 @@ func (s *runtimeState) connectAndPublish(ctx context.Context, spec rigble.Device
 	if len(services) == 0 {
 		return fmt.Errorf("txing BLE service not found")
 	}
-	characteristics, err := services[0].DiscoverCharacteristics([]bluetooth.UUID{s.commandUUID, s.stateUUID, s.powerUUID, s.weatherUUID})
+	characteristics, err := services[0].DiscoverCharacteristics(s.discoveryUUIDs(spec))
 	if err != nil {
 		return err
 	}
@@ -494,6 +494,14 @@ func (s *runtimeState) connectAndPublish(ctx context.Context, spec rigble.Device
 	}
 	s.publishSample(ctx, rigble.PowerStateSample(spec, state.Redcon, powerMeasurement, &addressText, s.nextSeq(), now), true)
 	return nil
+}
+
+func (s *runtimeState) discoveryUUIDs(spec rigble.DeviceSpec) []bluetooth.UUID {
+	uuids := []bluetooth.UUID{s.commandUUID, s.stateUUID, s.powerUUID}
+	if spec.Kind.SupportsWeather() {
+		uuids = append(uuids, s.weatherUUID)
+	}
+	return uuids
 }
 
 func (s *runtimeState) acquireDeviceConnect(ctx context.Context, thingName string) (func(), error) {
