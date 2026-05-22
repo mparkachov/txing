@@ -346,7 +346,7 @@ func (s *runtimeState) handleCommand(ctx context.Context, command protocol.Capab
 }
 
 func (s *runtimeState) commandContext(ctx context.Context, command protocol.CapabilityCommand) (context.Context, context.CancelFunc) {
-	deadline := time.Now().Add(s.cfg.CommandTimeout)
+	deadline := time.Now().Add(s.cfg.CommandDeadline)
 	if command.DeadlineMS != nil {
 		commandDeadline := time.UnixMilli(int64(*command.DeadlineMS))
 		if commandDeadline.Before(deadline) {

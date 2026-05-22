@@ -6,6 +6,8 @@ import (
 	"time"
 
 	rigble "github.com/mparkachov/txing/rig/internal/ble"
+	"github.com/mparkachov/txing/rig/internal/protocol"
+	"github.com/mparkachov/txing/rig/internal/rigconfig"
 	"tinygo.org/x/bluetooth"
 )
 
@@ -58,6 +60,31 @@ func TestBleCommandRetryDelayClassifiesBluezInProgress(t *testing.T) {
 	}
 	if delay > rigble.BluezInProgressReconnectDelayMS+250 {
 		t.Fatalf("delay = %d, want bounded jitter above %d", delay, rigble.BluezInProgressReconnectDelayMS)
+	}
+}
+
+func TestCommandContextUsesCommandDeadlineInsteadOfBleAttemptTimeout(t *testing.T) {
+	now := time.Now()
+	nowMS := uint64(now.UnixMilli())
+	deadlineMS := uint64(now.Add(2 * time.Second).UnixMilli())
+	command, err := protocol.NewCapabilityCommand("cmd-1", "unit-1", 3, "test", nowMS, 1, &deadlineMS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := &runtimeState{
+		cfg: rigconfig.Config{
+			CommandTimeout:  10 * time.Millisecond,
+			CommandDeadline: 5 * time.Second,
+		},
+	}
+	ctx, cancel := state.commandContext(context.Background(), command)
+	defer cancel()
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		t.Fatal("command context has no deadline")
+	}
+	if remaining := deadline.Sub(now); remaining < time.Second {
+		t.Fatalf("deadline remaining = %s, command context was capped by BLE attempt timeout", remaining)
 	}
 }
 
