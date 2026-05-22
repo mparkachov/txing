@@ -48,6 +48,394 @@ stack_parameter() {
   printf '%s\n' "$value"
 }
 
+txing_json_string() {
+  json="$1"
+  query="$2"
+  printf '%s\n' "$json" | jq -r "$query // empty"
+}
+
+txing_required_json_string() {
+  json="$1"
+  query="$2"
+  label="$3"
+  value="$(txing_json_string "$json" "$query")"
+  if [ -z "$value" ] || [ "$value" = "null" ]; then
+    echo "$label is missing" >&2
+    return 1
+  fi
+  printf '%s\n' "$value"
+}
+
+txing_validate_iot_thing_id() {
+  thing_id="$1"
+  if [ -z "$thing_id" ]; then
+    echo "Thing ID is required. Use: just aws::cert <thing-id>" >&2
+    return 2
+  fi
+  case "$thing_id" in
+    *=*)
+      echo "Do not pass just recipe arguments as name=value. Use: just aws::cert <thing-id>" >&2
+      return 2
+      ;;
+  esac
+  if ! printf '%s\n' "$thing_id" | grep -E -q '^[a-zA-Z0-9:_-]+$'; then
+    echo "Invalid Thing ID '$thing_id'. Allowed characters: letters, digits, colon, underscore, hyphen." >&2
+    return 2
+  fi
+}
+
+txing_cert_output_dir() {
+  thing_id="$1"
+  printf '%s/certs/%s\n' "$TXING_PROJECT_ROOT" "$thing_id"
+}
+
+txing_cert_refuse_existing_material() {
+  output_dir="$1"
+  shift
+  existing_count=0
+  for candidate in \
+    "$output_dir/daemon.env" \
+    "$output_dir/certificate.pem.crt" \
+    "$output_dir/public.pem.key" \
+    "$output_dir/private.pem.key" \
+    "$output_dir/certificate.arn" \
+    "$output_dir/AmazonRootCA1.pem" \
+    "$@"; do
+    [ -n "$candidate" ] || continue
+    if [ -e "$candidate" ]; then
+      if [ "$existing_count" -eq 0 ]; then
+        echo "Certificate or daemon material already exists under $output_dir:" >&2
+      fi
+      printf '  - %s\n' "$candidate" >&2
+      existing_count=$((existing_count + 1))
+    fi
+  done
+  if [ "$existing_count" -ne 0 ]; then
+    echo "Move or delete those files before issuing a replacement certificate." >&2
+    return 1
+  fi
+}
+
+txing_cert_create_iot_bundle() {
+  thing_id="$1"
+  output_dir="$2"
+  policy_name="$3"
+  cert_path="$output_dir/certificate.pem.crt"
+  public_key_path="$output_dir/public.pem.key"
+  private_key_path="$output_dir/private.pem.key"
+  cert_arn_path="$output_dir/certificate.arn"
+  root_ca_path="$output_dir/AmazonRootCA1.pem"
+
+  curl -fsSL https://www.amazontrust.com/repository/AmazonRootCA1.pem -o "$root_ca_path"
+  cert_arn="$(
+    aws iot create-keys-and-certificate \
+      --set-as-active \
+      --certificate-pem-outfile "$cert_path" \
+      --public-key-outfile "$public_key_path" \
+      --private-key-outfile "$private_key_path" \
+      --query certificateArn \
+      --output text
+  )"
+  if [ -n "$policy_name" ]; then
+    aws iot attach-policy --policy-name "$policy_name" --target "$cert_arn" >/dev/null
+  fi
+  aws iot attach-thing-principal \
+    --thing-name "$thing_id" \
+    --principal "$cert_arn" \
+    --thing-principal-type EXCLUSIVE_THING \
+    >/dev/null
+  printf '%s\n' "$cert_arn" >"$cert_arn_path"
+  chmod 600 "$cert_path" "$public_key_path" "$private_key_path" "$cert_arn_path"
+  chmod 644 "$root_ca_path"
+  printf '%s\n' "$cert_arn"
+}
+
+txing_cert_write_runtime_tarball() {
+  output_dir="$1"
+  tarball_path="$2"
+  COPYFILE_DISABLE=1 tar -C "$output_dir" -czf "$tarball_path" \
+    daemon.env \
+    certificate.pem.crt \
+    public.pem.key \
+    private.pem.key \
+    certificate.arn \
+    AmazonRootCA1.pem
+  chmod 600 "$tarball_path"
+}
+
+txing_cert_write_rig_env() {
+  output_dir="$1"
+  env_template="$2"
+  thing_id="$3"
+  town_id="$4"
+  iot_data_endpoint="$5"
+  iot_credential_endpoint="$6"
+  iot_role_alias="$7"
+  cloudwatch_log_group="$8"
+  env_file="$output_dir/daemon.env"
+
+  [ -r "$env_template" ] || { echo "Missing rig daemon env template: $env_template" >&2; return 1; }
+  sed \
+    -e "s|__TXING_RIG_ID__|$thing_id|g" \
+    -e "s|__TXING_TOWN_ID__|$town_id|g" \
+    -e "s|__AWS_REGION__|$TXING_AWS_REGION|g" \
+    -e "s|__TXING_IOT_ENDPOINT__|$iot_data_endpoint|g" \
+    -e "s|__TXING_IOT_CREDENTIAL_ENDPOINT__|$iot_credential_endpoint|g" \
+    -e "s|__TXING_IOT_ROLE_ALIAS__|$iot_role_alias|g" \
+    -e "s|__TXING_CLOUDWATCH_LOG_GROUP__|$cloudwatch_log_group|g" \
+    "$env_template" >"$env_file"
+  chmod 600 "$env_file"
+}
+
+txing_cert_write_unit_env() {
+  output_dir="$1"
+  env_template="$2"
+  thing_id="$3"
+  iot_data_endpoint="$4"
+  iot_credential_endpoint="$5"
+  iot_role_alias="$6"
+  video_channel_name="$7"
+  cloudwatch_log_group="$8"
+  env_file="$output_dir/daemon.env"
+
+  [ -r "$env_template" ] || { echo "Missing unit daemon env template: $env_template" >&2; return 1; }
+  sed \
+    -e "s|[{][{]TXING_THING_ID[}][}]|$thing_id|g" \
+    -e "s|[{][{]AWS_REGION[}][}]|$TXING_AWS_REGION|g" \
+    -e "s|[{][{]TXING_IOT_ENDPOINT[}][}]|$iot_data_endpoint|g" \
+    -e "s|[{][{]TXING_IOT_CREDENTIAL_ENDPOINT[}][}]|$iot_credential_endpoint|g" \
+    -e "s|[{][{]TXING_IOT_ROLE_ALIAS[}][}]|$iot_role_alias|g" \
+    -e "s|[{][{]TXING_BOARD_VIDEO_CHANNEL_NAME[}][}]|$video_channel_name|g" \
+    -e "s|[{][{]TXING_CLOUDWATCH_LOG_GROUP[}][}]|$cloudwatch_log_group|g" \
+    "$env_template" >"$env_file"
+  chmod 600 "$env_file"
+}
+
+txing_cert_upsert_credential_role() {
+  role_name="$1"
+  managed_policy_arn="$2"
+  inline_policy_name="$3"
+  inline_policy_file="$4"
+  trust_policy_file="$5"
+
+  if aws iam get-role --role-name "$role_name" >/dev/null 2>&1; then
+    aws iam update-assume-role-policy --role-name "$role_name" --policy-document "file://$trust_policy_file" >/dev/null
+  else
+    aws iam create-role --role-name "$role_name" --assume-role-policy-document "file://$trust_policy_file" >/dev/null
+  fi
+  if [ -n "$managed_policy_arn" ]; then
+    aws iam attach-role-policy --role-name "$role_name" --policy-arn "$managed_policy_arn" >/dev/null
+  fi
+  if [ -n "$inline_policy_file" ]; then
+    aws iam put-role-policy \
+      --role-name "$role_name" \
+      --policy-name "$inline_policy_name" \
+      --policy-document "file://$inline_policy_file" \
+      >/dev/null
+  fi
+  aws iam get-role --role-name "$role_name" --query 'Role.Arn' --output text
+}
+
+txing_cert_upsert_role_alias() {
+  role_alias="$1"
+  role_arn="$2"
+  if aws iot describe-role-alias --role-alias "$role_alias" >/dev/null 2>&1; then
+    aws iot update-role-alias --role-alias "$role_alias" --role-arn "$role_arn" --credential-duration-seconds 3600 >/dev/null
+  else
+    aws iot create-role-alias --role-alias "$role_alias" --role-arn "$role_arn" --credential-duration-seconds 3600 >/dev/null
+  fi
+}
+
+txing_cert_generate_generic_bundle() {
+  thing_id="$1"
+  thing_type="$2"
+  thing_kind="$3"
+  output_dir="$4"
+  policy_name="$5"
+
+  txing_cert_refuse_existing_material "$output_dir"
+  install -d -m 700 "$output_dir"
+  cert_arn="$(txing_cert_create_iot_bundle "$thing_id" "$output_dir" "$policy_name")"
+  jq -n \
+    --arg thingName "$thing_id" \
+    --arg thingType "$thing_type" \
+    --arg thingKind "$thing_kind" \
+    --arg bundleType generic \
+    --arg policyName "$policy_name" \
+    --arg certificateArn "$cert_arn" \
+    --arg certificatePem "$output_dir/certificate.pem.crt" \
+    --arg publicKey "$output_dir/public.pem.key" \
+    --arg privateKey "$output_dir/private.pem.key" \
+    --arg certificateArnFile "$output_dir/certificate.arn" \
+    --arg rootCaFile "$output_dir/AmazonRootCA1.pem" \
+    '{thingName: $thingName, thingType: $thingType, thingKind: $thingKind, bundleType: $bundleType, policyName: $policyName, certificateArn: $certificateArn, certificatePem: $certificatePem, publicKey: $publicKey, privateKey: $privateKey, certificateArnFile: $certificateArnFile, rootCaFile: $rootCaFile}'
+}
+
+txing_cert_generate_rig_bundle() {
+  thing_id="$1"
+  thing_type="$2"
+  thing_kind="$3"
+  output_dir="$4"
+  policy_name="$5"
+  rig_env_template="$6"
+  thing_json="$7"
+  town_id="$(txing_required_json_string "$thing_json" '.attributes.townId' "$thing_id townId")"
+  runtime_policy_arn="$(stack_parameter RigRuntimeManagedPolicyArn)"
+  daemon_role_name="txing-rig-daemon-$thing_id"
+  iot_role_alias="txing-rig-daemon-$thing_id"
+  tarball_path="$output_dir/${thing_id}-rig-daemon-config.tgz"
+
+  if [ "${#daemon_role_name}" -gt 64 ]; then
+    echo "IAM role name $daemon_role_name is longer than 64 characters." >&2
+    return 1
+  fi
+  if [ "${#iot_role_alias}" -gt 128 ]; then
+    echo "IoT role alias $iot_role_alias is longer than 128 characters." >&2
+    return 1
+  fi
+
+  txing_cert_refuse_existing_material "$output_dir" "$tarball_path"
+  install -d -m 700 "$output_dir"
+  trust_policy_file="$(mktemp "${TMPDIR:-/tmp}/txing-rig-daemon-trust.XXXXXX")"
+  jq -n '{Version: "2012-10-17", Statement: [{Effect: "Allow", Principal: {Service: "credentials.iot.amazonaws.com"}, Action: "sts:AssumeRole"}]}' >"$trust_policy_file"
+  daemon_role_arn="$(txing_cert_upsert_credential_role "$daemon_role_name" "$runtime_policy_arn" "" "" "$trust_policy_file")"
+  txing_cert_upsert_role_alias "$iot_role_alias" "$daemon_role_arn"
+  iot_data_endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS --query endpointAddress --output text)"
+  iot_credential_endpoint="$(aws iot describe-endpoint --endpoint-type iot:CredentialProvider --query endpointAddress --output text)"
+  cloudwatch_log_group="txing/$town_id/$thing_id"
+  cert_arn="$(txing_cert_create_iot_bundle "$thing_id" "$output_dir" "$policy_name")"
+  txing_cert_write_rig_env "$output_dir" "$rig_env_template" "$thing_id" "$town_id" "$iot_data_endpoint" "$iot_credential_endpoint" "$iot_role_alias" "$cloudwatch_log_group"
+  txing_cert_write_runtime_tarball "$output_dir" "$tarball_path"
+  jq -n \
+    --arg thingName "$thing_id" \
+    --arg thingType "$thing_type" \
+    --arg thingKind "$thing_kind" \
+    --arg bundleType rig-daemon \
+    --arg policyName "$policy_name" \
+    --arg certificateArn "$cert_arn" \
+    --arg certificatePem "$output_dir/certificate.pem.crt" \
+    --arg publicKey "$output_dir/public.pem.key" \
+    --arg privateKey "$output_dir/private.pem.key" \
+    --arg certificateArnFile "$output_dir/certificate.arn" \
+    --arg rootCaFile "$output_dir/AmazonRootCA1.pem" \
+    --arg envFile "$output_dir/daemon.env" \
+    --arg configTarball "$tarball_path" \
+    --arg iotDataEndpoint "$iot_data_endpoint" \
+    --arg iotCredentialEndpoint "$iot_credential_endpoint" \
+    --arg iotRoleAlias "$iot_role_alias" \
+    --arg cloudWatchLogGroup "$cloudwatch_log_group" \
+    --arg daemonRoleName "$daemon_role_name" \
+    --arg daemonRoleArn "$daemon_role_arn" \
+    '{thingName: $thingName, thingType: $thingType, thingKind: $thingKind, bundleType: $bundleType, policyName: $policyName, certificateArn: $certificateArn, certificatePem: $certificatePem, publicKey: $publicKey, privateKey: $privateKey, certificateArnFile: $certificateArnFile, rootCaFile: $rootCaFile, envFile: $envFile, configTarball: $configTarball, iotDataEndpoint: $iotDataEndpoint, iotCredentialEndpoint: $iotCredentialEndpoint, iotRoleAlias: $iotRoleAlias, cloudWatchLogGroup: $cloudWatchLogGroup, daemonRoleName: $daemonRoleName, daemonRoleArn: $daemonRoleArn}'
+}
+
+txing_cert_generate_unit_bundle() {
+  thing_id="$1"
+  thing_type="$2"
+  thing_kind="$3"
+  output_dir="$4"
+  unit_env_template="$5"
+  thing_json="$6"
+  daemon_policy_name="$(stack_parameter DeviceDaemonIotPolicyName)"
+  account_id="$(aws sts get-caller-identity --query Account --output text)"
+  caller_arn="$(aws sts get-caller-identity --query Arn --output text)"
+  partition="$(printf '%s\n' "$caller_arn" | cut -d: -f2)"
+  town_id="$(txing_required_json_string "$thing_json" '.attributes.townId' "$thing_id townId")"
+  rig_id="$(txing_required_json_string "$thing_json" '.attributes.rigId' "$thing_id rigId")"
+  daemon_role_name="txing-daemon-$thing_id"
+  iot_role_alias="txing-daemon-$thing_id"
+  cloudwatch_log_group="txing/${town_id}/${rig_id}/${thing_id}"
+  video_channel_name="${TXING_BOARD_VIDEO_CHANNEL_NAME:-${thing_id}-board-video}"
+  tarball_path="$output_dir/${thing_id}-daemon-config.tgz"
+
+  if [ "${#daemon_role_name}" -gt 64 ]; then
+    echo "IAM role name $daemon_role_name is longer than 64 characters." >&2
+    return 1
+  fi
+  if [ "${#iot_role_alias}" -gt 128 ]; then
+    echo "IoT role alias $iot_role_alias is longer than 128 characters." >&2
+    return 1
+  fi
+
+  txing_cert_refuse_existing_material "$output_dir" "$tarball_path"
+  install -d -m 700 "$output_dir"
+  trust_policy_file="$(mktemp "${TMPDIR:-/tmp}/txing-daemon-trust.XXXXXX")"
+  credential_policy_file="$(mktemp "${TMPDIR:-/tmp}/txing-daemon-credential-policy.XXXXXX")"
+  jq -n '{Version: "2012-10-17", Statement: [{Effect: "Allow", Principal: {Service: "credentials.iot.amazonaws.com"}, Action: "sts:AssumeRole"}]}' >"$trust_policy_file"
+  jq -n \
+    --arg iotShadowArn "arn:${partition}:iot:${TXING_AWS_REGION}:${account_id}:thing/${thing_id}/sparkplug" \
+    --arg cloudwatchLogGroupArn "arn:${partition}:logs:${TXING_AWS_REGION}:${account_id}:log-group:${cloudwatch_log_group}" \
+    --arg cloudwatchLogStreamArn "arn:${partition}:logs:${TXING_AWS_REGION}:${account_id}:log-group:${cloudwatch_log_group}:log-stream:*" \
+    --arg kvsChannelArn "arn:${partition}:kinesisvideo:${TXING_AWS_REGION}:${account_id}:channel/${thing_id}-board-video/*" \
+    '{Version: "2012-10-17", Statement: [
+      {Sid: "DaemonSparkplugShadowRead", Effect: "Allow", Action: "iot:GetThingShadow", Resource: $iotShadowArn},
+      {Sid: "DaemonCloudWatchLogsWrite", Effect: "Allow", Action: ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:DescribeLogStreams", "logs:PutRetentionPolicy", "logs:PutLogEvents"], Resource: [$cloudwatchLogGroupArn, $cloudwatchLogStreamArn]},
+      {Sid: "DaemonBoardVideoMaster", Effect: "Allow", Action: ["kinesisvideo:DescribeSignalingChannel", "kinesisvideo:GetSignalingChannelEndpoint", "kinesisvideo:GetIceServerConfig", "kinesisvideo:ConnectAsMaster"], Resource: $kvsChannelArn}
+    ]}' \
+    >"$credential_policy_file"
+  daemon_role_arn="$(txing_cert_upsert_credential_role "$daemon_role_name" "" txing-daemon-own-thing "$credential_policy_file" "$trust_policy_file")"
+  txing_cert_upsert_role_alias "$iot_role_alias" "$daemon_role_arn"
+  iot_data_endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS --query endpointAddress --output text)"
+  iot_credential_endpoint="$(aws iot describe-endpoint --endpoint-type iot:CredentialProvider --query endpointAddress --output text)"
+  cert_arn="$(txing_cert_create_iot_bundle "$thing_id" "$output_dir" "$daemon_policy_name")"
+  txing_cert_write_unit_env "$output_dir" "$unit_env_template" "$thing_id" "$iot_data_endpoint" "$iot_credential_endpoint" "$iot_role_alias" "$video_channel_name" "$cloudwatch_log_group"
+  txing_cert_write_runtime_tarball "$output_dir" "$tarball_path"
+  jq -n \
+    --arg thingName "$thing_id" \
+    --arg thingType "$thing_type" \
+    --arg thingKind "$thing_kind" \
+    --arg bundleType unit-daemon \
+    --arg policyName "$daemon_policy_name" \
+    --arg certificateArn "$cert_arn" \
+    --arg certificatePem "$output_dir/certificate.pem.crt" \
+    --arg publicKey "$output_dir/public.pem.key" \
+    --arg privateKey "$output_dir/private.pem.key" \
+    --arg certificateArnFile "$output_dir/certificate.arn" \
+    --arg rootCaFile "$output_dir/AmazonRootCA1.pem" \
+    --arg envFile "$output_dir/daemon.env" \
+    --arg configTarball "$tarball_path" \
+    --arg iotDataEndpoint "$iot_data_endpoint" \
+    --arg iotCredentialEndpoint "$iot_credential_endpoint" \
+    --arg iotRoleAlias "$iot_role_alias" \
+    --arg videoRegion "$TXING_AWS_REGION" \
+    --arg videoChannelName "$video_channel_name" \
+    --arg cloudWatchLogGroup "$cloudwatch_log_group" \
+    --arg daemonRoleName "$daemon_role_name" \
+    --arg daemonRoleArn "$daemon_role_arn" \
+    '{thingName: $thingName, thingType: $thingType, thingKind: $thingKind, bundleType: $bundleType, policyName: $policyName, certificateArn: $certificateArn, certificatePem: $certificatePem, publicKey: $publicKey, privateKey: $privateKey, certificateArnFile: $certificateArnFile, rootCaFile: $rootCaFile, envFile: $envFile, configTarball: $configTarball, iotDataEndpoint: $iotDataEndpoint, iotCredentialEndpoint: $iotCredentialEndpoint, iotRoleAlias: $iotRoleAlias, videoRegion: $videoRegion, videoChannelName: $videoChannelName, cloudWatchLogGroup: $cloudWatchLogGroup, daemonRoleName: $daemonRoleName, daemonRoleArn: $daemonRoleArn}'
+}
+
+txing_generate_iot_certificate_bundle() {
+  thing_id="$1"
+  rig_env_template="$2"
+  unit_env_template="$3"
+  txing_validate_iot_thing_id "$thing_id"
+  thing_json="$(aws iot describe-thing --thing-name "$thing_id" --output json)"
+  thing_type="$(txing_json_string "$thing_json" '.thingTypeName')"
+  thing_kind="$(txing_json_string "$thing_json" '.attributes.kind')"
+  output_dir="$(txing_cert_output_dir "$thing_id")"
+  base_policy_name="$(stack_parameter PolicyName)"
+  trust_policy_file=""
+  credential_policy_file=""
+  txing_cert_cleanup_temp_files() {
+    [ -z "$trust_policy_file" ] || rm -f "$trust_policy_file"
+    [ -z "$credential_policy_file" ] || rm -f "$credential_policy_file"
+  }
+  trap txing_cert_cleanup_temp_files EXIT
+
+  case "$thing_kind:$thing_type" in
+    rigType:raspi)
+      txing_cert_generate_rig_bundle "$thing_id" "$thing_type" "$thing_kind" "$output_dir" "$base_policy_name" "$rig_env_template" "$thing_json"
+      ;;
+    deviceType:unit)
+      txing_cert_generate_unit_bundle "$thing_id" "$thing_type" "$thing_kind" "$output_dir" "$unit_env_template" "$thing_json"
+      ;;
+    *)
+      txing_cert_generate_generic_bundle "$thing_id" "$thing_type" "$thing_kind" "$output_dir" "$base_policy_name"
+      ;;
+  esac
+}
+
 describe_stack_parameters() {
   aws ssm get-parameters-by-path \
     --path /txing/stack \

@@ -332,15 +332,15 @@ mise --version
 On the operator machine:
 
 ```bash
-just unit::cert <thing-id>
-scp config/certs/unit/<thing-id>-daemon-config.tgz txing:/tmp/<thing-id>-daemon-config.tgz
+just aws::cert <thing-id>
+scp certs/<thing-id>/<thing-id>-daemon-config.tgz txing:/tmp/<thing-id>-daemon-config.tgz
 ```
 
 On the board from the root shell:
 
 ```bash
-install -d -m 700 "$HOME/.config/txing"
-tar --no-same-owner -xzf /tmp/<thing-id>-daemon-config.tgz -C "$HOME/.config/txing"
+install -d -m 700 "$HOME/.config/txing/unit-daemon"
+tar --no-same-owner -xzf /tmp/<thing-id>-daemon-config.tgz -C "$HOME/.config/txing/unit-daemon"
 chmod 700 "$HOME/.config/txing/unit-daemon"
 chmod 600 "$HOME/.config/txing/unit-daemon/daemon.env"
 chmod 600 "$HOME/.config/txing/unit-daemon/certificate.arn"
@@ -570,7 +570,7 @@ just unit::daemon::run
 
 The local daemon uses
 `${TXING_DAEMON_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/txing/unit-daemon}`.
-Provision that directory with `just unit::cert <thing-id>` only when AWS
+Provision that directory with `just aws::cert <thing-id>` only when AWS
 resource changes are intended.
 
 Daemon and native KVS worker commands:

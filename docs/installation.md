@@ -59,7 +59,7 @@ The short production flow is:
 
 1. Install host packages, Bluetooth, and root-owned `mise` on the rig.
 2. Generate rig daemon config/cert material on the operator machine with
-   `just rig::cert <rig-id>`.
+   `just aws::cert <rig-id>`.
 3. Copy and unpack `<rig-id>-rig-daemon-config.tgz` under
    `/root/.config/txing/rig-daemon`.
 4. Install `txing-sparkplug-manager` and `txing-ble-connectivity` through
@@ -98,7 +98,7 @@ The short production flow is:
 2. Enter a root shell on the board.
 3. Install OS packages, `NetworkManager`, and root-owned `mise`.
 4. Generate daemon config/cert material on the operator machine with
-   `just unit::cert <thing-id>`.
+   `just aws::cert <thing-id>`.
 5. Copy and unpack `<thing-id>-daemon-config.tgz` under
    `/root/.config/txing/unit-daemon`, including `daemon.env` and certificate
    files.

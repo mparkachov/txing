@@ -17,6 +17,7 @@ __pycache__/
 /shared/aws/deploy-init.json
 
 # Generated AWS IoT certificates and private keys
+/certs/
 /config/certs/
 
 # Native dependency checkouts/build artifacts

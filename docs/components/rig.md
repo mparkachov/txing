@@ -81,11 +81,11 @@ Important defaults:
 Generate rig daemon material on the operator machine:
 
 ```bash
-just rig::cert <rig-id>
+just aws::cert <rig-id>
 ```
 
-Copy `<rig-id>-rig-daemon-config.tgz` to the rig and unpack it under
-`/root/.config/txing`.
+Copy `certs/<rig-id>/<rig-id>-rig-daemon-config.tgz` to the rig and unpack it
+under `/root/.config/txing/rig-daemon`.
 
 ## Release Artifacts
 

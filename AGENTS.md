@@ -49,3 +49,6 @@
 - In the sleep state, the MCU stays in RTC-driven low-power idle between periodic rendezvous wakeups.
 - The sleep-state rendezvous interval is every `5 s`: the MCU wakes briefly, refreshes BLE state, advertises for a bounded window, and returns to low-power idle if no BLE session is needed.
 - Use `wakeup state` / `sleep state` when describing the external device power contract. Distinguish that from the firmware's internal `Wake` step inside the sleep-state rendezvous cycle.
+
+## Execution policy
+- Agent execution behavior, escalation rules, ambiguity handling, and implementation discipline are defined in `POLICY.md`.

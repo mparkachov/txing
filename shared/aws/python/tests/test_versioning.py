@@ -311,6 +311,9 @@ class VersionEnvironmentTests(unittest.TestCase):
         aws_justfile = (REPO_ROOT / "shared" / "aws" / "justfile").read_text(
             encoding="utf-8"
         )
+        aws_lib = (
+            REPO_ROOT / "shared" / "aws" / "scripts" / "aws_lib.sh"
+        ).read_text(encoding="utf-8")
         env_template = (REPO_ROOT / "rig" / "rig-daemon.env.template").read_text(
             encoding="utf-8"
         )
@@ -321,16 +324,16 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("txing-sparkplug-manager.pid", rig_justfile)
         self.assertIn("txing-ble-connectivity.pid", rig_justfile)
         self.assertIn("TXING_RIG_IPC_SOCKET", rig_justfile)
-        self.assertIn("cert rig_id='' config_dir=config_dir:", rig_justfile)
-        self.assertIn("RigRuntimeManagedPolicyArn", rig_justfile)
-        self.assertIn("txing-rig-daemon-$effective_rig_name", rig_justfile)
-        self.assertIn("rig-daemon.env.template", rig_justfile)
         self.assertIn("install-mise-tools:", rig_justfile)
         self.assertNotIn("TXING_RIG_ENV_FILE", rig_justfile)
         self.assertNotIn("deploy target='auto'", rig_justfile)
         self.assertNotIn("check-greengrass-lite", rig_justfile)
         self.assertNotIn("greengrass", rig_justfile.lower())
-        self.assertIn("cert rig_id='' config_dir='':", aws_justfile)
+        self.assertIn("cert thing_id='':", aws_justfile)
+        self.assertIn("txing_generate_iot_certificate_bundle", aws_justfile)
+        self.assertIn("RigRuntimeManagedPolicyArn", aws_lib)
+        self.assertIn("txing-rig-daemon-$thing_id", aws_lib)
+        self.assertIn("rig-daemon.env.template", aws_justfile)
         self.assertNotIn("publish-rig release='latest'", aws_justfile)
         self.assertNotIn("python -m aws_admin.publish_release rig --release", aws_justfile)
         self.assertIn("TXING_RIG_IPC_SOCKET=/run/txing-rig/rig-ipc.sock", env_template)

@@ -6,7 +6,6 @@ project_root := canonicalize(rig_dir + "/..")
 tmp_dir := project_root + "/tmp"
 export TMPDIR := tmp_dir
 root_justfile := project_root + "/justfile"
-aws_lib := project_root + "/shared/aws/scripts/aws_lib.sh"
 bin_dir := rig_dir + "/target/local"
 run_dir := env_var_or_default("TXING_RIG_RUN_DIR", "/tmp/txing-rig")
 default_ipc_socket := run_dir + "/rig-ipc.sock"
@@ -135,111 +134,6 @@ check config_dir=config_dir:
       "{{bin_dir}}/txing-sparkplug-manager" --dry-run
       "{{bin_dir}}/txing-ble-connectivity" --dry-run --no-ble
     fi
-
-cert rig_id='' config_dir=config_dir:
-    #!/bin/sh
-    set -eu
-    requested_rig_name="{{rig_id}}"
-    requested_config_dir="{{config_dir}}"
-    case "$requested_rig_name" in *=*) echo "Do not pass just recipe arguments as name=value. Use positional arguments." >&2; exit 2 ;; esac
-    case "$requested_config_dir" in *=*) echo "Do not pass just recipe arguments as name=value. Use positional arguments." >&2; exit 2 ;; esac
-    if [ -n "$requested_rig_name" ]; then
-      export TXING_RIG_ID="$requested_rig_name"
-    fi
-    . "{{aws_lib}}"
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig)"
-    txing_aws_init
-    effective_rig_name="${requested_rig_name:-$TXING_RIG_ID}"
-    if ! printf '%s\n' "$effective_rig_name" | grep -E -q '^[a-zA-Z0-9:_-]+$'; then
-      echo "Invalid rig ID '$effective_rig_name'. Allowed characters: letters, digits, colon, underscore, hyphen." >&2
-      exit 2
-    fi
-    runtime_policy_arn="$(stack_parameter RigRuntimeManagedPolicyArn)"
-    if [ -z "$runtime_policy_arn" ] || [ "$runtime_policy_arn" = "None" ]; then
-      echo "Could not resolve /txing/stack/RigRuntimeManagedPolicyArn." >&2
-      exit 1
-    fi
-    daemon_role_name="txing-rig-daemon-$effective_rig_name"
-    iot_role_alias="txing-rig-daemon-$effective_rig_name"
-    if [ "${#daemon_role_name}" -gt 64 ]; then
-      echo "IAM role name $daemon_role_name is longer than 64 characters." >&2
-      exit 1
-    fi
-    iot_data_endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS --query endpointAddress --output text)"
-    iot_credential_endpoint="$(aws iot describe-endpoint --endpoint-type iot:CredentialProvider --query endpointAddress --output text)"
-    default_output_root() {
-      printf '%s\n' "{{project_root}}/config/certs/rig/$effective_rig_name"
-    }
-    daemon_config_dir="${requested_config_dir:-$(default_output_root)/rig-daemon}"
-    output_root="$(dirname "$daemon_config_dir")"
-    tarball_path="$output_root/${effective_rig_name}-rig-daemon-config.tgz"
-    env_file="$daemon_config_dir/daemon.env"
-    cert_path="$daemon_config_dir/certificate.pem.crt"
-    public_key_path="$daemon_config_dir/public.pem.key"
-    private_key_path="$daemon_config_dir/private.pem.key"
-    cert_arn_path="$daemon_config_dir/certificate.arn"
-    root_ca_path="$daemon_config_dir/AmazonRootCA1.pem"
-    if [ -e "$env_file" ] || [ -e "$cert_path" ] || [ -e "$public_key_path" ] || [ -e "$private_key_path" ] || [ -e "$cert_arn_path" ] || [ -e "$tarball_path" ]; then
-      echo "Rig daemon certificate or env material already exists under $daemon_config_dir." >&2
-      echo "Move or delete those files before issuing a replacement certificate." >&2
-      exit 1
-    fi
-    install -d -m 700 "$daemon_config_dir"
-    trust_policy_file="$(mktemp "${TMPDIR:-/tmp}/txing-rig-daemon-trust.XXXXXX")"
-    trap 'rm -f "$trust_policy_file"' EXIT
-    jq -n '{Version: "2012-10-17", Statement: [{Effect: "Allow", Principal: {Service: "credentials.iot.amazonaws.com"}, Action: "sts:AssumeRole"}]}' >"$trust_policy_file"
-    if aws iam get-role --role-name "$daemon_role_name" >/dev/null 2>&1; then
-      aws iam update-assume-role-policy --role-name "$daemon_role_name" --policy-document "file://$trust_policy_file"
-    else
-      aws iam create-role --role-name "$daemon_role_name" --assume-role-policy-document "file://$trust_policy_file" >/dev/null
-    fi
-    aws iam attach-role-policy --role-name "$daemon_role_name" --policy-arn "$runtime_policy_arn" >/dev/null
-    daemon_role_arn="$(aws iam get-role --role-name "$daemon_role_name" --query 'Role.Arn' --output text)"
-    if aws iot describe-role-alias --role-alias "$iot_role_alias" >/dev/null 2>&1; then
-      aws iot update-role-alias --role-alias "$iot_role_alias" --role-arn "$daemon_role_arn" --credential-duration-seconds 3600 >/dev/null
-    else
-      aws iot create-role-alias --role-alias "$iot_role_alias" --role-arn "$daemon_role_arn" --credential-duration-seconds 3600 >/dev/null
-    fi
-    curl -fsSL https://www.amazontrust.com/repository/AmazonRootCA1.pem -o "$root_ca_path"
-    cert_arn="$(
-      aws iot create-keys-and-certificate \
-        --set-as-active \
-        --certificate-pem-outfile "$cert_path" \
-        --public-key-outfile "$public_key_path" \
-        --private-key-outfile "$private_key_path" \
-        --query certificateArn \
-        --output text
-    )"
-    aws iot attach-thing-principal \
-      --thing-name "$effective_rig_name" \
-      --principal "$cert_arn" \
-      --thing-principal-type EXCLUSIVE_THING
-    printf '%s\n' "$cert_arn" >"$cert_arn_path"
-    sed \
-      -e "s|__TXING_RIG_ID__|$effective_rig_name|g" \
-      -e "s|__TXING_TOWN_ID__|$TXING_TOWN_ID|g" \
-      -e "s|__AWS_REGION__|$TXING_AWS_REGION|g" \
-      -e "s|__TXING_IOT_ENDPOINT__|$iot_data_endpoint|g" \
-      -e "s|__TXING_IOT_CREDENTIAL_ENDPOINT__|$iot_credential_endpoint|g" \
-      -e "s|__TXING_IOT_ROLE_ALIAS__|$iot_role_alias|g" \
-      -e "s|__TXING_CLOUDWATCH_LOG_GROUP__|txing/$TXING_TOWN_ID/$effective_rig_name|g" \
-      "{{rig_dir}}/rig-daemon.env.template" >"$env_file"
-    chmod 600 "$env_file" "$cert_path" "$public_key_path" "$private_key_path" "$cert_arn_path"
-    chmod 644 "$root_ca_path"
-    COPYFILE_DISABLE=1 tar -C "$output_root" -czf "$tarball_path" "$(basename "$daemon_config_dir")"
-    chmod 600 "$tarball_path"
-    jq -n \
-      --arg rigName "$effective_rig_name" \
-      --arg certificateArn "$cert_arn" \
-      --arg envFile "$env_file" \
-      --arg configTarball "$tarball_path" \
-      --arg iotDataEndpoint "$iot_data_endpoint" \
-      --arg iotCredentialEndpoint "$iot_credential_endpoint" \
-      --arg iotRoleAlias "$iot_role_alias" \
-      --arg cloudWatchLogGroup "txing/$TXING_TOWN_ID/$effective_rig_name" \
-      --arg daemonRoleName "$daemon_role_name" \
-      --arg daemonRoleArn "$daemon_role_arn" \
-      '{rigName: $rigName, certificateArn: $certificateArn, envFile: $envFile, configTarball: $configTarball, iotDataEndpoint: $iotDataEndpoint, iotCredentialEndpoint: $iotCredentialEndpoint, iotRoleAlias: $iotRoleAlias, cloudWatchLogGroup: $cloudWatchLogGroup, daemonRoleName: $daemonRoleName, daemonRoleArn: $daemonRoleArn}'
 
 install-mise-tools:
     #!/bin/sh

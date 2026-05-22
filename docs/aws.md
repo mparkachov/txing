@@ -27,8 +27,7 @@ aws sts get-caller-identity
 
 Set `TXING_AWS_STACK` explicitly before running stack-backed commands such as
 `just aws::deploy`, `just aws::publish`, `just aws::publish-lambda`,
-`just aws::check`, `just office::write-env`, `just rig::cert`, and
-`just unit::cert`.
+`just aws::check`, `just office::write-env`, and `just aws::cert`.
 Export it in the operator shell or pass a positional stack name to recipes that
 accept one. Those commands fail if `TXING_AWS_STACK` is unset and no positional
 stack name is provided.
@@ -270,29 +269,32 @@ just aws::init-shadow <thing-name> sparkplug
 
 ## Certificates
 
-`aws::cert` is a compatibility wrapper for `rig::cert`. It resolves the rig
-thing by generated thing ID, creates a new active AWS IoT certificate, creates
-or updates the rig daemon IoT role alias, attaches the certificate to the rig
-thing, renders `daemon.env`, and writes material under `config/certs/rig/`.
+`aws::cert` resolves any generated thing ID, creates a new active AWS IoT
+certificate, attaches it to the thing, and writes certificate material under
+`certs/<thing-id>/`.
 
 ```bash
-just aws::cert <rig-id>
+just aws::cert <thing-id>
 ```
 
-Generated files:
+All things receive:
 
-- `config/certs/rig/<rig-id>/rig-daemon/daemon.env`
-- `config/certs/rig/<rig-id>/rig-daemon/certificate.pem.crt`
-- `config/certs/rig/<rig-id>/rig-daemon/public.pem.key`
-- `config/certs/rig/<rig-id>/rig-daemon/private.pem.key`
-- `config/certs/rig/<rig-id>/rig-daemon/certificate.arn`
-- `config/certs/rig/<rig-id>/rig-daemon/AmazonRootCA1.pem`
-- `config/certs/rig/<rig-id>/<rig-id>-rig-daemon-config.tgz`
+- `certs/<thing-id>/certificate.pem.crt`
+- `certs/<thing-id>/public.pem.key`
+- `certs/<thing-id>/private.pem.key`
+- `certs/<thing-id>/certificate.arn`
+- `certs/<thing-id>/AmazonRootCA1.pem`
 
-`config/certs/` is explicitly ignored by git. The recipe refuses to overwrite
-existing material; move or delete the files first if you intentionally rotate the
-rig certificate. On a stable `raspi` rig host, unpack the tarball under
-`/root/.config/txing`. `cloud` rigs do not use this host certificate path.
+`town`, `cloud` rig, and non-host device things receive only that generic IoT
+certificate bundle attached to the base IoT policy. `raspi` rigs also receive
+`daemon.env` and `<thing-id>-rig-daemon-config.tgz`; `unit` devices also receive
+`daemon.env` and `<thing-id>-daemon-config.tgz`.
+
+`certs/` is explicitly ignored by git. The recipe refuses to overwrite existing
+material; move or delete the files first if you intentionally rotate a
+certificate. On stable hosts, unpack daemon tarballs into the service config
+directory, such as `/root/.config/txing/rig-daemon` or
+`/root/.config/txing/unit-daemon`.
 
 ## Cleanup
 

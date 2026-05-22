@@ -185,7 +185,7 @@ The Rust unit daemon loads its default config from
 `${TXING_DAEMON_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/txing/unit-daemon}/daemon.env`
 and expects certificate files in the same directory unless explicit certificate
 path overrides are supplied. Provision that directory with
-`just unit::cert <thing-id>` only when AWS resource changes are
+`just aws::cert <thing-id>` only when AWS resource changes are
 intended; the recipe renders sourceable `daemon.env` content from
 `devices/unit/daemon/daemon.env.template` and refuses to overwrite existing
 daemon env or certificate material.

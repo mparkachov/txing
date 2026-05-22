@@ -11,8 +11,3 @@ mod mcu 'mcu/justfile'
 
 @default:
     @just --list
-
-cert thing_id='' config_dir='':
-    #!/bin/sh
-    set -eu
-    just --justfile "{{unit_dir}}/justfile" daemon::cert "{{thing_id}}" "{{config_dir}}"
