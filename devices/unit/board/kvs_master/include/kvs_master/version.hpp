@@ -5,7 +5,7 @@
 
 namespace txing::board::kvs_master {
 
-inline constexpr std::string_view kTxingBoardKvsMasterVersion = "0.10.12";
+inline constexpr std::string_view kTxingBoardKvsMasterVersion = "0.10.13";
 
 }  // namespace txing::board::kvs_master
 

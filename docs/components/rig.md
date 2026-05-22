@@ -154,6 +154,7 @@ Write the systemd units manually:
 # /etc/systemd/system/txing-sparkplug-manager.service
 [Unit]
 Description=Txing Sparkplug manager
+PartOf=rig-daemon.target
 Wants=network-online.target systemd-time-wait-sync.service
 After=network-online.target systemd-time-wait-sync.service time-sync.target
 
@@ -179,6 +180,7 @@ WantedBy=rig-daemon.target
 # /etc/systemd/system/txing-ble-connectivity.service
 [Unit]
 Description=Txing BLE connectivity
+PartOf=rig-daemon.target
 Requires=txing-sparkplug-manager.service
 Wants=bluetooth.service
 After=txing-sparkplug-manager.service bluetooth.service

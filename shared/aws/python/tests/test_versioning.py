@@ -637,6 +637,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("rig-daemon.target", rig_docs)
         self.assertIn("/root/.config/txing/rig-daemon", rig_docs)
         self.assertIn("/run/txing-rig/rig-ipc.sock", rig_docs)
+        self.assertIn("PartOf=rig-daemon.target", rig_docs)
         self.assertIn("sudo systemctl restart rig-daemon.target", rig_docs)
         self.assertIn("mise upgrade", rig_docs)
         self.assertIn("bluetooth", rig_docs)

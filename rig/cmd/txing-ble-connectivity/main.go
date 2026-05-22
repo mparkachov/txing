@@ -222,7 +222,7 @@ func (s *runtimeState) reconcileInventory(ctx context.Context, inventory protoco
 	s.logger.Print(ctx, "info", fmt.Sprintf("BLE inventory reconciled devices=%d", len(next)))
 	if s.cfg.NoBLE {
 		for _, spec := range next {
-			s.publishSample(ctx, rigble.OfflineSample(spec, s.nextSeq(), uint64(time.Now().UnixMilli())), false)
+			s.publishSample(ctx, rigble.OfflineSample(spec, s.nextSeq(), uint64(time.Now().UnixMilli())), false, true)
 		}
 	}
 }
@@ -283,7 +283,12 @@ func (s *runtimeState) scan(ctx context.Context) error {
 			ObservedAtMS: uint64(time.Now().UnixMilli()),
 			Seq:          s.nextSeq(),
 		}
-		s.publishSample(context.Background(), rigble.AdvertisementSample(spec, advertisement, s.nextSeq()), true)
+		s.publishSample(
+			context.Background(),
+			rigble.AdvertisementSample(spec, advertisement, s.nextSeq()),
+			true,
+			rigble.AdvertisementPublishesCapabilityState(spec),
+		)
 		if s.shouldBackgroundConnect(name) {
 			go s.connectAndPublish(context.Background(), spec, nil)
 		}
@@ -485,14 +490,14 @@ func (s *runtimeState) connectAndPublish(ctx context.Context, spec rigble.Device
 				}
 			}
 		}
-		s.publishSample(ctx, rigble.WeatherStateSample(spec, state.Redcon, powerMeasurement, weatherMeasurement, &addressText, s.nextSeq(), now), true)
+		s.publishSample(ctx, rigble.WeatherStateSample(spec, state.Redcon, powerMeasurement, weatherMeasurement, &addressText, s.nextSeq(), now), true, true)
 		return nil
 	}
 	state, err := rigble.ParsePowerState(stateBytes)
 	if err != nil {
 		return err
 	}
-	s.publishSample(ctx, rigble.PowerStateSample(spec, state.Redcon, powerMeasurement, &addressText, s.nextSeq(), now), true)
+	s.publishSample(ctx, rigble.PowerStateSample(spec, state.Redcon, powerMeasurement, &addressText, s.nextSeq(), now), true, true)
 	return nil
 }
 
@@ -554,17 +559,19 @@ func readCharacteristic(characteristic bluetooth.DeviceCharacteristic, size int)
 	return append([]byte(nil), buffer[:n]...), nil
 }
 
-func (s *runtimeState) publishSample(ctx context.Context, sample rigble.CapabilitySample, includeShadow bool) {
-	state := rigble.CapabilityStateFromSample(rigble.AdapterID, sample)
-	payload, err := state.Marshal()
-	if err != nil {
-		s.logger.Print(ctx, "warning", fmt.Sprintf("capability state encode failed thing=%s error=%q", sample.ThingName, err))
-		return
-	}
-	topic, err := protocol.BuildCapabilityStateTopic(sample.ThingName, rigble.AdapterID)
-	if err == nil {
-		if err := s.ipc.PublishRetained(topic, payload); err != nil {
-			s.logger.Print(ctx, "warning", fmt.Sprintf("capability state publish failed thing=%s error=%q", sample.ThingName, err))
+func (s *runtimeState) publishSample(ctx context.Context, sample rigble.CapabilitySample, includeShadow bool, includeCapabilityState bool) {
+	if includeCapabilityState {
+		state := rigble.CapabilityStateFromSample(rigble.AdapterID, sample)
+		payload, err := state.Marshal()
+		if err != nil {
+			s.logger.Print(ctx, "warning", fmt.Sprintf("capability state encode failed thing=%s error=%q", sample.ThingName, err))
+			return
+		}
+		topic, err := protocol.BuildCapabilityStateTopic(sample.ThingName, rigble.AdapterID)
+		if err == nil {
+			if err := s.ipc.PublishRetained(topic, payload); err != nil {
+				s.logger.Print(ctx, "warning", fmt.Sprintf("capability state publish failed thing=%s error=%q", sample.ThingName, err))
+			}
 		}
 	}
 	if !includeShadow {
