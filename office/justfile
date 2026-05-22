@@ -6,6 +6,7 @@ project_root := canonicalize(office_dir + "/..")
 tmp_dir := project_root + "/tmp"
 export TMPDIR := tmp_dir
 root_justfile := project_root + "/justfile"
+aws_lib := project_root + "/shared/aws/scripts/aws_lib.sh"
 stack_name := ""
 office_dist_dir := office_dir + "/dist"
 
@@ -52,42 +53,20 @@ write-env sparkplug_group_id='' town_thing_name='' stack_name=stack_name:
     set -eu
     cd "{{office_dir}}"
 
+    . "{{aws_lib}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{stack_name}}")"
-    stack_name="$TXING_AWS_STACK"
+    txing_aws_init
     region="$TXING_AWS_REGION"
 
-    cognito_domain="$(aws cloudformation describe-stacks \
-      --stack-name "$stack_name" \
-      --query "Stacks[0].Outputs[?OutputKey=='WebCognitoDomain'].OutputValue | [0]" \
-      --output text)"
-
-    cognito_client_id="$(aws cloudformation describe-stacks \
-      --stack-name "$stack_name" \
-      --query "Stacks[0].Outputs[?OutputKey=='WebCognitoUserPoolClientId'].OutputValue | [0]" \
-      --output text)"
-
-    cognito_user_pool_id="$(aws cloudformation describe-stacks \
-      --stack-name "$stack_name" \
-      --query "Stacks[0].Outputs[?OutputKey=='WebCognitoUserPoolId'].OutputValue | [0]" \
-      --output text)"
-
-    cognito_identity_pool_id="$(aws cloudformation describe-stacks \
-      --stack-name "$stack_name" \
-      --query "Stacks[0].Outputs[?OutputKey=='WebCognitoIdentityPoolId'].OutputValue | [0]" \
-      --output text)"
-
-    web_iot_policy_name="$(aws cloudformation describe-stacks \
-      --stack-name "$stack_name" \
-      --query "Stacks[0].Outputs[?OutputKey=='WebIotPolicyName'].OutputValue | [0]" \
-      --output text)"
-
-    admin_email="$(aws cloudformation describe-stacks \
-      --stack-name "$stack_name" \
-      --query "Stacks[0].Outputs[?OutputKey=='WebExpectedAdminEmail'].OutputValue | [0]" \
-      --output text)"
+    cognito_domain="$(stack_parameter WebCognitoDomain)"
+    cognito_client_id="$(stack_parameter WebCognitoUserPoolClientId)"
+    cognito_user_pool_id="$(stack_parameter WebCognitoUserPoolId)"
+    cognito_identity_pool_id="$(stack_parameter WebCognitoIdentityPoolId)"
+    web_iot_policy_name="$(stack_parameter WebIotPolicyName)"
+    admin_email="$(stack_parameter WebExpectedAdminEmail)"
 
     if [ "$cognito_domain" = "None" ] || [ "$cognito_client_id" = "None" ] || [ "$cognito_user_pool_id" = "None" ] || [ "$cognito_identity_pool_id" = "None" ] || [ "$web_iot_policy_name" = "None" ] || [ "$admin_email" = "None" ]; then
-      echo "Required office outputs are missing in stack $stack_name. Deploy shared/aws/template.yaml first." >&2
+      echo "Required office parameters are missing under /txing/stack. Run just aws::deploy first." >&2
       exit 1
     fi
 
@@ -114,4 +93,4 @@ write-env sparkplug_group_id='' town_thing_name='' stack_name=stack_name:
       "VITE_ADMIN_EMAIL=$admin_email" \
       > .env.local
 
-    echo "Wrote {{office_dir}}/.env.local from stack $stack_name outputs."
+    echo "Wrote {{office_dir}}/.env.local from /txing/stack parameters."

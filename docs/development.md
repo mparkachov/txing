@@ -46,12 +46,7 @@ changes and then asks the AWS-hosted publisher Lambda to publish Lambda
 artifacts with:
 
 ```bash
-just aws::clean-stack::deploy
 just aws::deploy
-just witness::deploy
-just cloud-mcu::deploy
-just aws::enlist-lambda::deploy
-just aws::publish-release-lambda::deploy
 just aws::publish latest
 ```
 
@@ -71,8 +66,9 @@ artifacts:
 
 Native AWS CLI configuration is the source of truth for AWS account,
 credentials, selected profile, and region. `TXING_AWS_STACK` and optional
-selected thing IDs come from the operator shell. The wrapper recipes run plain
-AWS CLI commands:
+selected thing IDs come from the operator shell. `TXING_AWS_STACK` is the
+environment prefix; the base CloudFormation stack is
+`<TXING_AWS_STACK>-aws-base`. The wrapper recipes run plain AWS CLI commands:
 
 - `just aws-town ...`
 - `just aws-rig ...`
@@ -81,7 +77,9 @@ AWS CLI commands:
 AWS bring-up and destructive rebuild steps live in [aws.md](./aws.md).
 Web/admin base stack parameters are initialized separately with
 `just aws::deploy-init`; CloudFormation reads the resulting `/txing/stack/*`
-SSM Parameter Store values during `aws::deploy`.
+SSM Parameter Store values during `aws::deploy`. `just aws::delete` leaves
+those manual init parameters in place; `just aws::delete-init` removes only
+those final inputs.
 
 ## Task Runner
 
@@ -100,12 +98,7 @@ just rig::stop
 just unit::daemon::run
 just office::dev
 just office::write-env
-just aws::clean-stack::deploy
 just aws::deploy
-just witness::deploy
-just cloud-mcu::deploy
-just aws::enlist-lambda::deploy
-just aws::publish-release-lambda::deploy
 just aws::deploy-town town
 just aws::deploy-rig <town-id> raspi server
 just aws::deploy-device <rig-id> unit bot
@@ -174,8 +167,8 @@ just rig::stop
 
 That source-checkout rig loop is for development. Production `raspi` rig hosts
 install GitHub release assets through root-owned `mise` and systemd. Production
-`cloud` rigs are updated through `just aws::deploy`, `just cloud-mcu::deploy`,
-and `just aws::publish latest`. Runtime Lambda updates flow through GitHub
+`cloud` rigs are updated through `just aws::deploy` and
+`just aws::publish latest`. Runtime Lambda updates flow through GitHub
 release artifacts plus per-function `publish` recipes or `just aws::publish latest`.
 
 Board:

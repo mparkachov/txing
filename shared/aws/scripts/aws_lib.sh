@@ -24,28 +24,37 @@ txing_aws_init() {
   export TXING_AWS_REGION
 }
 
-stack_output() {
-  stack_name="$1"
-  output_key="$2"
+stack_parameter_name() {
+  parameter_key="$1"
+  case "$parameter_key" in
+    /*) printf '%s\n' "$parameter_key" ;;
+    *) printf '/txing/stack/%s\n' "$parameter_key" ;;
+  esac
+}
+
+stack_parameter() {
+  parameter_name="$(stack_parameter_name "$1")"
   value="$(
-    aws cloudformation describe-stacks \
-      --stack-name "$stack_name" \
-      --query "Stacks[0].Outputs[?OutputKey=='${output_key}'].OutputValue | [0]" \
+    aws ssm get-parameter \
+      --name "$parameter_name" \
+      --with-decryption \
+      --query Parameter.Value \
       --output text
   )"
   if [ -z "$value" ] || [ "$value" = "None" ]; then
-    echo "CloudFormation output $output_key not found in stack $stack_name" >&2
+    echo "SSM parameter $parameter_name is missing or empty" >&2
     return 1
   fi
   printf '%s\n' "$value"
 }
 
-describe_stack_outputs() {
-  stack_name="$1"
-  aws cloudformation describe-stacks \
-    --stack-name "$stack_name" \
-    --query "Stacks[0].Outputs" \
-    --output json | jq '.'
+describe_stack_parameters() {
+  aws ssm get-parameters-by-path \
+    --path /txing/stack \
+    --recursive \
+    --with-decryption \
+    --query 'Parameters[].{Name:Name,Value:Value}' \
+    --output json | jq 'sort_by(.Name)'
 }
 
 _resolve_unique_thing_name() {
@@ -102,25 +111,6 @@ resolve_device_thing_name() {
   return 1
 }
 
-assume_stack_role() {
-  stack_name="$1"
-  output_key="$2"
-  role_arn="$(stack_output "$stack_name" "$output_key")"
-  creds="$(
-    aws sts assume-role \
-      --role-arn "$role_arn" \
-      --role-session-name "txing-${output_key}-$(date -u +%Y%m%dT%H%M%SZ)" \
-      --query Credentials \
-      --output json
-  )"
-  export AWS_ACCESS_KEY_ID
-  export AWS_SECRET_ACCESS_KEY
-  export AWS_SESSION_TOKEN
-  AWS_ACCESS_KEY_ID="$(printf '%s\n' "$creds" | jq -r '.AccessKeyId')"
-  AWS_SECRET_ACCESS_KEY="$(printf '%s\n' "$creds" | jq -r '.SecretAccessKey')"
-  AWS_SESSION_TOKEN="$(printf '%s\n' "$creds" | jq -r '.SessionToken')"
-}
-
 artifact_bucket_name() {
   account_id="$(aws sts get-caller-identity --query Account --output text)"
   printf 'txing-cfn-%s-%s-%s' "$account_id" "$TXING_AWS_REGION" "$TXING_AWS_STACK" \
@@ -131,9 +121,13 @@ artifact_bucket_name() {
     | sed 's/[.]*$//'
 }
 
+base_stack_name() {
+  printf '%s\n' "${TXING_AWS_BASE_STACK:-$TXING_AWS_STACK-aws-base}"
+}
+
 deploy_init_parameter_name() {
   parameter_key="$1"
-  printf '/txing/stack/%s' "$parameter_key"
+  stack_parameter_name "$parameter_key"
 }
 
 lambda_stack_name() {
@@ -141,9 +135,100 @@ lambda_stack_name() {
   printf '%s-%s' "$TXING_AWS_STACK" "$stack_suffix"
 }
 
-lambda_function_name() {
-  function_suffix="$1"
-  printf '%s-%s' "$TXING_AWS_STACK" "$function_suffix"
+lambda_release_targets_json() {
+  jq -cn \
+    --arg witness "$(stack_parameter WitnessFunctionName)" \
+    --arg cloud_rig "$(stack_parameter CloudRigRuntimeFunctionName)" \
+    --arg cloud_mcu "$(stack_parameter CloudMcuRuntimeFunctionName)" \
+    '{
+      "txing-witness-lambda": $witness,
+      "txing-cloud-rig-lambda": $cloud_rig,
+      "txing-cloud-mcu-lambda": $cloud_mcu
+    }'
+}
+
+template_log_group_names() {
+  template_file="$1"
+  environment_stack_name="$2"
+  cloudformation_stack_name="$3"
+  awk '
+    /^[ ]+LogGroupName:[ ]+!Sub[ ]+/ {
+      line = $0
+      sub(/^[ ]+LogGroupName:[ ]+!Sub[ ]+/, "", line)
+      print line
+    }
+  ' "$template_file" | while IFS= read -r log_group_name; do
+    printf '%s\n' "$log_group_name" \
+      | sed \
+          -e "s|\${EnvironmentStackName}|$environment_stack_name|g" \
+          -e "s|\${AWS::StackName}|$cloudformation_stack_name|g"
+  done
+}
+
+preflight_named_log_groups() {
+  stack_name="$1"
+  template_file="$2"
+  shift 2
+  environment_stack_name="$TXING_AWS_STACK"
+  for parameter_override in "$@"; do
+    case "$parameter_override" in
+      EnvironmentStackName=*)
+        environment_stack_name="${parameter_override#EnvironmentStackName=}"
+        ;;
+    esac
+  done
+
+  log_group_names="$(template_log_group_names "$template_file" "$environment_stack_name" "$stack_name")"
+  if [ -z "$log_group_names" ]; then
+    return 0
+  fi
+
+  stack_log_groups="$(
+    aws cloudformation describe-stack-resources \
+      --stack-name "$stack_name" \
+      --query "StackResources[?ResourceType=='AWS::Logs::LogGroup'].PhysicalResourceId" \
+      --output text 2>/dev/null || true
+  )"
+  conflict_count=0
+  for log_group_name in $log_group_names; do
+    if printf '%s\n' "$stack_log_groups" | tr '\t' '\n' | grep -Fx "$log_group_name" >/dev/null; then
+      continue
+    fi
+    existing_log_group="$(
+      aws logs describe-log-groups \
+        --log-group-name-prefix "$log_group_name" \
+        --output json 2>/dev/null \
+        | jq -r --arg name "$log_group_name" '.logGroups[]?.logGroupName | select(. == $name)' \
+        | sed -n '1p'
+    )"
+    if [ -n "$existing_log_group" ]; then
+      if [ "$conflict_count" -eq 0 ]; then
+        echo "CloudFormation cannot create stack $stack_name because named log groups already exist outside that stack:" >&2
+      fi
+      printf '  - %s\n' "$existing_log_group" >&2
+      conflict_count=$((conflict_count + 1))
+    fi
+  done
+
+  if [ "$conflict_count" -ne 0 ]; then
+    echo "These log groups may contain useful failure logs. Preserve or export them, then import them into CloudFormation, delete them manually, or use a different TXING_AWS_STACK prefix before rerunning deploy." >&2
+    return 1
+  fi
+}
+
+delete_cloudformation_stack_if_exists() {
+  stack_name="$1"
+  wait_for_delete="$2"
+  if ! aws cloudformation describe-stacks --stack-name "$stack_name" >/dev/null 2>&1; then
+    echo "skip: CloudFormation stack $stack_name does not exist"
+    return 0
+  fi
+  echo "Deleting CloudFormation stack $stack_name"
+  aws cloudformation delete-stack --stack-name "$stack_name"
+  if [ "$wait_for_delete" = "true" ]; then
+    aws cloudformation wait stack-delete-complete --stack-name "$stack_name"
+    echo "Deleted CloudFormation stack $stack_name"
+  fi
 }
 
 ensure_artifact_bucket() {
@@ -259,6 +344,7 @@ deploy_template() {
   stack_name="$1"
   template_file="$2"
   shift 2
+  preflight_named_log_groups "$stack_name" "$template_file" "$@"
   parameter_count=$#
   lambda_artifacts_bucket_parameter=""
   aws_admin_code_bucket_parameter=""
@@ -335,7 +421,7 @@ deploy_template() {
 invoke_enlist_payload_file() {
   txing_ensure_tmpdir
   payload_file="$1"
-  function_name="$(stack_output "$TXING_AWS_STACK" EnlistFunctionName)"
+  function_name="$(stack_parameter EnlistFunctionName)"
   response_file="$(mktemp "${TMPDIR:-/tmp}/txing-enlist-response.XXXXXX")"
   invoke_metadata_file="$(mktemp "${TMPDIR:-/tmp}/txing-enlist-metadata.XXXXXX")"
   aws lambda invoke \

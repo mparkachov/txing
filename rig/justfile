@@ -154,9 +154,9 @@ cert rig_id='' config_dir=config_dir:
       echo "Invalid rig ID '$effective_rig_name'. Allowed characters: letters, digits, colon, underscore, hyphen." >&2
       exit 2
     fi
-    runtime_policy_arn="$(stack_output "$TXING_AWS_STACK" RigRuntimeManagedPolicyArn)"
+    runtime_policy_arn="$(stack_parameter RigRuntimeManagedPolicyArn)"
     if [ -z "$runtime_policy_arn" ] || [ "$runtime_policy_arn" = "None" ]; then
-      echo "Could not resolve RigRuntimeManagedPolicyArn from stack $TXING_AWS_STACK." >&2
+      echo "Could not resolve /txing/stack/RigRuntimeManagedPolicyArn." >&2
       exit 1
     fi
     daemon_role_name="txing-rig-daemon-$effective_rig_name"

@@ -18,7 +18,7 @@
 The rig is not a Sparkplug device. The rig is the Sparkplug edge node. In
 production, `raspi` rigs publish that edge node from the standalone
 `txing-sparkplug-manager` daemon, while `cloud` rigs publish it from
-the stack-prefixed cloud rig runtime Lambda.
+the cloud rig runtime Lambda recorded in `/txing/stack/CloudRigRuntimeFunctionName`.
 
 - `spBv1.0/<town>/NBIRTH/<rig>` means the rig edge node is born.
 - `spBv1.0/<town>/NDEATH/<rig>` means the rig edge node is dead.
@@ -297,7 +297,7 @@ The current implementation keeps the derived-behavior model rather than making R
 
 - `shared/aws` owns the base environment stack and standalone Python admin Lambda stacks.
 - `witness/` owns the Sparkplug witness Lambda template, source, and tests.
-- `just aws::clean-stack::deploy` must run before the first base stack deploy because the base stack calls that custom-resource Lambda.
-- `just aws::deploy` deploys shared environment resources and computed Lambda outputs, but does not own runtime Lambda functions.
+- `just aws::deploy` deploys the custom-resource Lambda, the `<TXING_AWS_STACK>-aws-base` base stack, and standalone Lambda stacks in dependency order.
+- `just aws::deploy-base` deploys only shared environment resources; it does not own runtime Lambda functions.
 - `just witness::deploy` deploys the Sparkplug witness Lambda infrastructure, IoT rule, and role with a seeded placeholder bootstrap artifact when needed.
 - `just witness::publish` deploys release-built witness Lambda code.

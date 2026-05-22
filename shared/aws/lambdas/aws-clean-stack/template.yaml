@@ -4,7 +4,7 @@ Description: txing CloudFormation custom-resource Lambda stack.
 Parameters:
   EnvironmentStackName:
     Type: String
-    Description: Base txing environment stack name, for example town.
+    Description: txing environment stack prefix, for example town.
   AwsAdminCodeS3Bucket:
     Type: String
     Description: S3 bucket containing the packaged AWS admin Lambda code.
@@ -62,6 +62,7 @@ Resources:
                 Action:
                   - ssm:PutParameter
                   - ssm:DeleteParameter
+                  - ssm:DeleteParameters
                   - ssm:GetParametersByPath
                 Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/txing/*
               - Sid: DescribeCloudFormationStack
@@ -84,6 +85,20 @@ Resources:
       Code:
         S3Bucket: !Ref AwsAdminCodeS3Bucket
         S3Key: !Ref AwsAdminCodeS3Key
+
+  StackParameterAwsCleanStackFunctionName:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /txing/stack/AwsCleanStackFunctionName
+      Type: String
+      Value: !Ref CleanStackFunction
+
+  StackParameterAwsCleanStackFunctionArn:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /txing/stack/AwsCleanStackFunctionArn
+      Type: String
+      Value: !GetAtt CleanStackFunction.Arn
 
 Outputs:
   CleanStackFunctionName:

@@ -66,7 +66,7 @@ cp office/.env.example office/.env.local
 - `VITE_AWS_REGION`
 - `VITE_TOWN_THING_NAME`
 - `VITE_SPARKPLUG_GROUP_ID`
-- the Cognito stack outputs
+- Cognito and IoT values from `/txing/stack/...` SSM parameters
 
 The office bundle version is injected by Vite from the root `VERSION` file during
 the build. It is not a Cloudflare environment variable.

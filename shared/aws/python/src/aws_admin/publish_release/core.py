@@ -30,7 +30,6 @@ class PublishError(RuntimeError):
 class LambdaAsset:
     artifact_id: str
     asset_name: str
-    function_suffix: str
 
 
 @dataclass(frozen=True)
@@ -46,7 +45,7 @@ class PublishConfig:
     lambda_artifact_bucket: str | None
     aws_region: str
     txing_version_base: str | None = None
-    lambda_function_prefix: str = ""
+    lambda_function_names: dict[str, str] | None = None
 
     @classmethod
     def from_env(cls) -> "PublishConfig":
@@ -72,28 +71,32 @@ class PublishConfig:
             lambda_artifact_bucket=os.environ.get("TXING_LAMBDA_ARTIFACT_BUCKET"),
             aws_region=region,
             txing_version_base=os.environ.get("TXING_VERSION_BASE"),
-            lambda_function_prefix=os.environ.get("TXING_LAMBDA_FUNCTION_PREFIX", ""),
+            lambda_function_names=_lambda_function_names_from_env(),
         )
 
     def deployed_lambda_function_name(self, asset: LambdaAsset) -> str:
-        return f"{self.lambda_function_prefix}{asset.function_suffix}"
+        if (
+            self.lambda_function_names
+            and asset.artifact_id in self.lambda_function_names
+        ):
+            return self.lambda_function_names[asset.artifact_id]
+        raise PublishError(
+            f"missing deployed Lambda function name for artifact {asset.artifact_id}"
+        )
 
 
 LAMBDA_ASSETS: tuple[LambdaAsset, ...] = (
     LambdaAsset(
         "txing-witness-lambda",
         "txing-witness-lambda-linux-aarch64.zip",
-        "witness",
     ),
     LambdaAsset(
         "txing-cloud-rig-lambda",
         "txing-cloud-rig-lambda-linux-aarch64.zip",
-        "cloud-rig",
     ),
     LambdaAsset(
         "txing-cloud-mcu-lambda",
         "txing-cloud-mcu-lambda-linux-aarch64.zip",
-        "cloud-mcu",
     ),
 )
 
@@ -104,6 +107,26 @@ def _repository_from_owner_repo_env() -> str | None:
     if owner and repo:
         return f"{owner}/{repo}"
     return None
+
+
+def _lambda_function_names_from_env() -> dict[str, str] | None:
+    raw = os.environ.get("TXING_LAMBDA_FUNCTIONS_JSON")
+    if not raw:
+        return None
+    try:
+        decoded = json.loads(raw)
+    except json.JSONDecodeError as err:
+        raise PublishError("TXING_LAMBDA_FUNCTIONS_JSON must be a JSON object") from err
+    if not isinstance(decoded, dict):
+        raise PublishError("TXING_LAMBDA_FUNCTIONS_JSON must be a JSON object")
+    function_names: dict[str, str] = {}
+    for key, value in decoded.items():
+        if not isinstance(key, str) or not isinstance(value, str) or not value:
+            raise PublishError(
+                "TXING_LAMBDA_FUNCTIONS_JSON must map artifact ids to function names"
+            )
+        function_names[key] = value
+    return function_names
 
 
 def normalize_release_tag(release_ref: str, latest_tag: str | None = None) -> str:

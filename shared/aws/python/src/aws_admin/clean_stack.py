@@ -46,10 +46,14 @@ IOT_FLEET_INDEXING_CUSTOM_FIELDS = [
 SSM_THROTTLE_ERROR_CODES = {
     "ThrottlingException",
     "ThrottledException",
+    "TooManyUpdates",
     "TooManyRequestsException",
     "RequestLimitExceeded",
     "RateExceededException",
 }
+SSM_MAX_ATTEMPTS = 12
+SSM_DELETE_BATCH_SIZE = 10
+SSM_DELETE_BATCH_DELAY_SECONDS = 0.25
 
 
 def _send_response(
@@ -102,17 +106,18 @@ def _is_ssm_throttle(error):
 
 
 def _ssm_call(description, operation, **kwargs):
-    for attempt in range(8):
+    for attempt in range(SSM_MAX_ATTEMPTS):
         try:
             return operation(**kwargs)
         except Exception as error:
-            if not _is_ssm_throttle(error) or attempt == 7:
+            if not _is_ssm_throttle(error) or attempt == SSM_MAX_ATTEMPTS - 1:
                 raise
-            delay = min(15.0, 0.75 * (2 ** attempt))
+            delay = min(30.0, 1.0 * (2**attempt))
             LOGGER.warning(
-                "SSM %s throttled; retrying attempt %s/8 in %.1fs: %s",
+                "SSM %s throttled; retrying attempt %s/%s in %.1fs: %s",
                 description,
                 attempt + 2,
+                SSM_MAX_ATTEMPTS,
                 delay,
                 error,
             )
@@ -368,18 +373,17 @@ def _delete_type_catalog_parameters(properties):
     parameter_names.add(normalized_base_path)
 
     deleted = 0
-    for name in sorted(parameter_names, reverse=True):
-        try:
-            _ssm_call(
-                "delete type catalog parameter",
-                _ssm().delete_parameter,
-                Name=name,
-            )
-        except Exception as error:
-            if _error_code(error) != "ParameterNotFound":
-                raise
-        else:
-            deleted += 1
+    sorted_names = sorted(parameter_names, reverse=True)
+    for offset in range(0, len(sorted_names), SSM_DELETE_BATCH_SIZE):
+        batch = sorted_names[offset : offset + SSM_DELETE_BATCH_SIZE]
+        response = _ssm_call(
+            "delete type catalog parameters",
+            _ssm().delete_parameters,
+            Names=batch,
+        )
+        deleted += len(response.get("DeletedParameters", []))
+        if offset + SSM_DELETE_BATCH_SIZE < len(sorted_names):
+            time.sleep(SSM_DELETE_BATCH_DELAY_SECONDS)
     return {"deletedParameters": deleted, "thingTypeDeletion": "skipped"}
 
 

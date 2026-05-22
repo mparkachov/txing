@@ -46,6 +46,35 @@ case "$1 $2 ${3:-}" in
   "ssm put-parameter "*)
     printf '{}\\n'
     ;;
+  "ssm delete-parameter "*)
+    printf '{}\\n'
+    ;;
+  "ssm get-parameter "*)
+    joined=" $* "
+    case "$joined" in
+      *"/txing/stack/ReleasePublisherFunctionName"*|*"ReleasePublisherFunctionName"*)
+        printf 'town-aws-publish-release\\n'
+        ;;
+      *"/txing/stack/EnlistFunctionName"*|*"EnlistFunctionName"*)
+        printf 'town-aws-enlist-txing\\n'
+        ;;
+      *"/txing/stack/WitnessFunctionName"*|*"WitnessFunctionName"*)
+        printf 'town-witness\\n'
+        ;;
+      *"/txing/stack/CloudRigRuntimeFunctionName"*|*"CloudRigRuntimeFunctionName"*)
+        printf 'town-cloud-rig\\n'
+        ;;
+      *"/txing/stack/CloudMcuRuntimeFunctionName"*|*"CloudMcuRuntimeFunctionName"*)
+        printf 'town-cloud-mcu\\n'
+        ;;
+      *)
+        printf 'txing-parameter-value\\n'
+        ;;
+    esac
+    ;;
+  "ssm get-parameters-by-path "*)
+    printf '[]\\n'
+    ;;
   *)
     printf '{}\\n'
     ;;
@@ -142,6 +171,7 @@ class VersionEnvironmentTests(unittest.TestCase):
             )
 
         self.assertIn("export TXING_AWS_STACK='town'", result.stdout)
+        self.assertIn("export TXING_AWS_BASE_STACK='town-aws-base'", result.stdout)
         self.assertIn("export TXING_AWS_REGION='eu-central-1'", result.stdout)
         self.assertNotIn("AWS_STACK_NAME", result.stdout)
         self.assertNotIn("AWS_SELECTED_PROFILE", result.stdout)
@@ -211,6 +241,28 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("/txing/stack/AdminEmail", result.stdout)
         self.assertIn("/txing/stack/WebAppUrl", result.stdout)
 
+    def test_delete_init_removes_web_admin_parameters_from_ssm(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bin_dir = Path(temp_dir) / "bin"
+            bin_dir.mkdir()
+            _write_fake_aws(bin_dir)
+            result = subprocess.run(
+                [
+                    "just",
+                    "--justfile",
+                    str(REPO_ROOT / "justfile"),
+                    "aws::delete-init",
+                ],
+                check=True,
+                env=_native_aws_env(bin_dir, stack=None),
+                text=True,
+                stdout=subprocess.PIPE,
+            )
+
+        self.assertIn("/txing/stack/CognitoDomainPrefix", result.stdout)
+        self.assertIn("/txing/stack/AdminEmail", result.stdout)
+        self.assertIn("/txing/stack/WebAppUrl", result.stdout)
+
     def test_aws_check_default_does_not_require_rig_or_device_ids(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             bin_dir = Path(temp_dir)
@@ -228,7 +280,7 @@ class VersionEnvironmentTests(unittest.TestCase):
                 stdout=subprocess.PIPE,
             )
 
-        self.assertIn("ok: CloudFormation stack town", result.stdout)
+        self.assertIn("ok: CloudFormation stack town-aws-base", result.stdout)
         self.assertIn("ok: AWS IoT Data-ATS endpoint", result.stdout)
         self.assertNotIn("Checking rig Python service environment", result.stdout)
         self.assertNotIn("Checking device Python service environment", result.stdout)
@@ -605,11 +657,16 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("publish-lambda release='latest'", aws_justfile)
         self.assertNotIn("publish-rig release='latest'", aws_justfile)
         self.assertNotIn("deploy-lambdas release='latest'", aws_justfile)
+        self.assertNotIn("deploy-lambdas stack_name=stack_name", aws_justfile)
         self.assertNotIn("deploy-local-lambda", aws_justfile)
         self.assertIn("TXING_LAMBDA_ARTIFACT_BUCKET", aws_justfile)
+        self.assertIn("TXING_LAMBDA_FUNCTIONS_JSON", aws_justfile)
         self.assertIn("python -m aws_admin.publish_release lambda --release", aws_justfile)
-        self.assertIn("lambda_function_name aws-publish-release", aws_justfile)
-        self.assertIn("deploy-lambdas stack_name=stack_name", aws_justfile)
+        self.assertIn("stack_parameter ReleasePublisherFunctionName", aws_justfile)
+        self.assertIn("deploy-base stack_name=stack_name", aws_justfile)
+        self.assertIn("clean-stack::deploy", aws_justfile)
+        self.assertIn("witness::deploy", aws_justfile)
+        self.assertIn("cloud-mcu::deploy", aws_justfile)
         self.assertNotIn("scripts/txing-lambda-deploy", aws_justfile)
         self.assertNotIn("witness::build", aws_justfile)
         self.assertNotIn('enlist/justfile" build', aws_justfile)

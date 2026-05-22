@@ -16,8 +16,8 @@ stack_name := ""
     cd "{{lambda_dir}}" && go test -tags lambda.norpc ./...
 
 deploy stack_name=stack_name:
-    just --justfile "{{lambda_dir}}/justfile" deploy-cloud-rig "{{stack_name}}"
     just --justfile "{{lambda_dir}}/justfile" deploy-cloud-mcu "{{stack_name}}"
+    just --justfile "{{lambda_dir}}/justfile" deploy-cloud-rig "{{stack_name}}"
 
 publish release='latest' stack_name=stack_name:
     just --justfile "{{lambda_dir}}/justfile" publish-cloud-rig "{{release}}" "{{stack_name}}"
@@ -33,9 +33,7 @@ deploy-cloud-rig stack_name=stack_name:
     artifact_bucket="$(ensure_artifact_bucket)"
     ensure_lambda_seed_artifact txing-cloud-rig-lambda "$artifact_bucket"
     deploy_template "$(lambda_stack_name cloud-rig)" "{{cloud_rig_template}}" \
-      "EnvironmentStackName=$TXING_AWS_STACK" \
-      "CloudMcuTickQueueUrl=$(stack_output "$TXING_AWS_STACK" CloudMcuTickQueueUrl)" \
-      "CloudMcuTickQueueArn=$(stack_output "$TXING_AWS_STACK" CloudMcuTickQueueArn)"
+      "EnvironmentStackName=$TXING_AWS_STACK"
 
 deploy-cloud-mcu stack_name=stack_name:
     #!/bin/sh
@@ -47,14 +45,7 @@ deploy-cloud-mcu stack_name=stack_name:
     artifact_bucket="$(ensure_artifact_bucket)"
     ensure_lambda_seed_artifact txing-cloud-mcu-lambda "$artifact_bucket"
     deploy_template "$(lambda_stack_name cloud-mcu)" "{{cloud_mcu_template}}" \
-      "EnvironmentStackName=$TXING_AWS_STACK" \
-      "CloudMcuTickQueueArn=$(stack_output "$TXING_AWS_STACK" CloudMcuTickQueueArn)" \
-      "CloudMcuClusterName=$(stack_output "$TXING_AWS_STACK" CloudMcuClusterName)" \
-      "CloudMcuTaskDefinitionArn=$(stack_output "$TXING_AWS_STACK" CloudMcuTaskDefinitionArn)" \
-      "CloudMcuSubnetId=$(stack_output "$TXING_AWS_STACK" CloudMcuSubnetId)" \
-      "CloudMcuTaskSecurityGroupId=$(stack_output "$TXING_AWS_STACK" CloudMcuTaskSecurityGroupId)" \
-      "CloudMcuTaskExecutionRoleArn=$(stack_output "$TXING_AWS_STACK" CloudMcuTaskExecutionRoleArn)" \
-      "CloudMcuTaskRoleArn=$(stack_output "$TXING_AWS_STACK" CloudMcuTaskRoleArn)"
+      "EnvironmentStackName=$TXING_AWS_STACK"
 
 publish-cloud-rig release='latest' stack_name=stack_name:
     #!/bin/sh
@@ -66,7 +57,8 @@ publish-cloud-rig release='latest' stack_name=stack_name:
     artifact_bucket="$(ensure_artifact_bucket)"
     export AWS_DEFAULT_REGION="$TXING_AWS_REGION"
     export TXING_LAMBDA_ARTIFACT_BUCKET="$artifact_bucket"
-    export TXING_LAMBDA_FUNCTION_PREFIX="$TXING_AWS_STACK-"
+    export TXING_LAMBDA_FUNCTIONS_JSON
+    TXING_LAMBDA_FUNCTIONS_JSON="$(lambda_release_targets_json)"
     exec uv run --project "{{project_root}}/shared/aws/python" \
       python -m aws_admin.publish_release lambda \
       --function txing-cloud-rig-lambda \
@@ -82,7 +74,8 @@ publish-cloud-mcu release='latest' stack_name=stack_name:
     artifact_bucket="$(ensure_artifact_bucket)"
     export AWS_DEFAULT_REGION="$TXING_AWS_REGION"
     export TXING_LAMBDA_ARTIFACT_BUCKET="$artifact_bucket"
-    export TXING_LAMBDA_FUNCTION_PREFIX="$TXING_AWS_STACK-"
+    export TXING_LAMBDA_FUNCTIONS_JSON
+    TXING_LAMBDA_FUNCTIONS_JSON="$(lambda_release_targets_json)"
     exec uv run --project "{{project_root}}/shared/aws/python" \
       python -m aws_admin.publish_release lambda \
       --function txing-cloud-mcu-lambda \

@@ -147,9 +147,9 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertNotIn("witness/target/lambda/txing-witness-lambda/bootstrap.zip", template)
         self.assertIn("encode(*, 'base64')", template)
         self.assertIn("iot:DescribeEndpoint", template)
-        self.assertIn("WitnessFunctionName:", root_template)
-        self.assertIn("WitnessFunctionArn:", root_template)
-        self.assertIn("Value: !Sub ${AWS::StackName}-witness", root_template)
+        self.assertNotIn("WitnessFunctionName:", root_template)
+        self.assertNotIn("WitnessFunctionArn:", root_template)
+        self.assertIn("WitnessFunctionName:", template)
 
     def test_template_uses_dynamic_txing_log_group_prefix_for_rig_logs(self) -> None:
         template = _template_text()
@@ -393,10 +393,9 @@ class AwsTemplatePolicyTests(unittest.TestCase):
             template,
         )
         self.assertIn("Handler: aws_admin.clean_stack.lambda_handler", template)
-        self.assertIn(
-            "ServiceToken: !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-aws-clean-stack",
-            root_template,
-        )
+        self.assertIn("Default: /txing/stack/AwsCleanStackFunctionArn", root_template)
+        self.assertIn("ServiceToken: !Ref AwsCleanStackFunctionArn", root_template)
+        self.assertIn("Name: /txing/stack/AwsCleanStackFunctionArn", template)
         self.assertNotIn("TxingStackCleanupFunction:", template)
         self.assertNotIn("RetainLegacyCustomResourceFunctionCondition", template)
         self.assertNotIn("FunctionName: town-BaseEnvironment", template)
@@ -434,16 +433,14 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         template = _template_text()
         clean_template = _aws_lambda_template_text("aws-clean-stack")
 
-        self.assertIn(
-            "ServiceToken: !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-aws-clean-stack",
-            template,
-        )
+        self.assertIn("ServiceToken: !Ref AwsCleanStackFunctionArn", template)
         self.assertIn("CleanupType: TypeCatalog", template)
         self.assertIn("iot:CreateThingType", clean_template)
         self.assertIn("iot:DescribeThingType", clean_template)
         self.assertIn("iot:UpdateThingType", clean_template)
         self.assertIn("ssm:PutParameter", clean_template)
         self.assertIn("ssm:DeleteParameter", clean_template)
+        self.assertIn("ssm:DeleteParameters", clean_template)
         self.assertIn("ssm:GetParametersByPath", clean_template)
         self.assertIn("cloudformation:DescribeStacks", clean_template)
         self.assertIn("Handler: aws_admin.clean_stack.lambda_handler", clean_template)
@@ -461,19 +458,24 @@ class AwsTemplatePolicyTests(unittest.TestCase):
             "WeatherTypeCatalogV2",
             "PowerTypeCatalogV2",
             "CloudTypeCatalogV2",
-            "CloudMcuTypeCatalogV2",
             "TxingRigRuntimeManagedPolicy",
             "TxingRuntimeManagedPolicy",
         ):
             self.assertIn(f"  {logical_id}:", root_template)
 
+        self.assertIn("  CloudMcuTypeCatalogV2:", cloud_mcu_lambda_template)
+        self.assertNotIn("  CloudMcuTypeCatalogV2:", root_template)
         self.assertIn("Type: Custom::TxingTypeCatalog", template)
-        self.assertIn(
-            "ServiceToken: !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-aws-clean-stack",
-            root_template,
-        )
+        self.assertIn("Type: Custom::TxingTypeCatalog", cloud_mcu_lambda_template)
+        self.assertIn("ServiceToken: !Ref AwsCleanStackFunctionArn", root_template)
+        self.assertIn("ServiceToken: !Ref AwsCleanStackFunctionArn", cloud_mcu_lambda_template)
         self.assertNotIn("Type: AWS::CloudFormation::Stack", root_template)
         self.assertNotIn("Type: AWS::Lambda::Function", root_template)
+        self.assertNotIn("Type: AWS::SQS::Queue", root_template)
+        self.assertNotIn("Type: AWS::ECS::Cluster", root_template)
+        self.assertNotIn("Type: AWS::EC2::VPC", root_template)
+        self.assertNotIn("CloudMcuTickQueue:", root_template)
+        self.assertNotIn("CloudMcuCluster:", root_template)
         self.assertNotIn("TemplateURL:", root_template)
         self.assertNotIn("LambdaStackMigrationPhase", root_template)
         self.assertNotIn("CreateLambdaStacks", root_template)
@@ -483,7 +485,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("ThingTypeName: cloud", template)
         self.assertIn("ThingTypeName: unit", template)
         self.assertIn("ThingTypeName: power", template)
-        self.assertIn("ThingTypeName: cloud-mcu", template)
+        self.assertIn("ThingTypeName: cloud-mcu", cloud_mcu_lambda_template)
         self.assertIn("CloudRigFunction:", cloud_rig_template)
         self.assertIn("CloudMcuFunction:", cloud_mcu_lambda_template)
         self.assertIn(
@@ -495,12 +497,12 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         )
         self.assertIn("S3Key: lambda/txing-cloud-rig-lambda/current/bootstrap.zip", cloud_rig_template)
         self.assertIn("S3Key: lambda/txing-cloud-mcu-lambda/current/bootstrap.zip", cloud_mcu_lambda_template)
-        self.assertIn("CatalogBasePath: /txing/town/cloud/cloud-mcu", template)
+        self.assertIn("CatalogBasePath: /txing/town/cloud/cloud-mcu", cloud_mcu_lambda_template)
         self.assertIn("CatalogBasePath: /txing/town/raspi/unit", template)
         self.assertIn("CatalogBasePath: /txing/town/raspi/power", template)
         self.assertIn("kind: deviceType", template)
-        self.assertIn("EnlistFunctionName:", root_template)
-        self.assertIn("EnlistFunctionArn:", root_template)
+        self.assertNotIn("EnlistFunctionName:", root_template)
+        self.assertNotIn("EnlistFunctionArn:", root_template)
         self.assertIn("RigTypeCatalogRead", template)
         self.assertIn("ssm:GetParametersByPath", template)
 
@@ -591,8 +593,10 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertNotIn("TxingDischargeThingsOnDelete:", enlist_template)
         self.assertNotIn("Type: Custom::TxingDischargeThings", enlist_template)
         self.assertNotIn("CleanupType: TxingDischargeThings", enlist_template)
-        self.assertIn("EnlistFunctionName:", root_template)
-        self.assertIn("EnlistFunctionArn:", root_template)
+        self.assertNotIn("EnlistFunctionName:", root_template)
+        self.assertNotIn("EnlistFunctionArn:", root_template)
+        self.assertIn("EnlistFunctionName:", enlist_template)
+        self.assertIn("EnlistFunctionArn:", enlist_template)
         for action in (
             "iot:CreateThing",
             "iot:DeleteThing",
@@ -625,6 +629,8 @@ class AwsTemplatePolicyTests(unittest.TestCase):
 
     def test_global_resources_use_deterministic_names(self) -> None:
         template = _template_text()
+        cloud_rig_template = _cloud_rig_template_text()
+        cloud_mcu_template = _cloud_mcu_lambda_template_text()
 
         self.assertIn("Type: AWS::IAM::Role", template)
         self.assertIn("Type: AWS::IAM::ManagedPolicy", template)
@@ -638,8 +644,26 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("PolicyName: !Sub ${AWS::StackName}-web-admin", template)
         self.assertIn("PolicyName: !Sub ${AWS::StackName}-device-daemon", template)
         self.assertIn("RoleAlias: !Sub ${AWS::StackName}-rig-daemon", template)
-        self.assertIn("QueueName: !Sub ${AWS::StackName}-cloud-mcu-tick", template)
-        self.assertIn("ClusterName: !Sub ${AWS::StackName}-cloud-mcu", template)
+        self.assertNotIn("QueueName: !Sub ${AWS::StackName}-cloud-mcu-tick", template)
+        self.assertNotIn("ClusterName: !Sub ${AWS::StackName}-cloud-mcu", template)
+        self.assertIn(
+            "QueueName: !Sub ${EnvironmentStackName}-cloud-mcu-tick",
+            cloud_mcu_template,
+        )
+        self.assertIn(
+            "ClusterName: !Sub ${EnvironmentStackName}-cloud-mcu",
+            cloud_mcu_template,
+        )
+        self.assertIn("Name: /txing/stack/CloudMcuTickQueueUrl", cloud_mcu_template)
+        self.assertIn("Name: /txing/stack/CloudMcuRuntimeFunctionArn", cloud_mcu_template)
+        self.assertIn("Default: /txing/stack/CloudMcuTickQueueUrl", cloud_rig_template)
+        self.assertIn("Default: /txing/stack/CloudMcuTickQueueArn", cloud_rig_template)
+        self.assertNotIn(
+            "stack_output",
+            (REPO_ROOT / "devices" / "cloud-mcu" / "lambda" / "justfile").read_text(
+                encoding="utf-8"
+            ),
+        )
 
     def test_root_template_uses_single_stack_resources(self) -> None:
         root_template = (AWS_DIR / "template.yaml").read_text(encoding="utf-8")
@@ -669,10 +693,22 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("S3Key: !Ref AwsAdminCodeS3Key", publish_template)
         self.assertIn("TXING_GITHUB_REPOSITORY", publish_template)
         self.assertIn("TXING_LAMBDA_ARTIFACT_BUCKET", publish_template)
-        self.assertIn("TXING_LAMBDA_FUNCTION_PREFIX", publish_template)
+        self.assertIn("TXING_LAMBDA_FUNCTIONS_JSON", publish_template)
+        self.assertNotIn("TXING_LAMBDA_FUNCTION_PREFIX", publish_template)
         self.assertNotIn("TXING_GREENGRASS_ARTIFACT_BUCKET", publish_template)
-        self.assertIn("ReleasePublisherFunctionName", root_template)
-        self.assertIn("ReleasePublisherFunctionArn", root_template)
+        self.assertNotIn("ReleasePublisherFunctionName", root_template)
+        self.assertNotIn("ReleasePublisherFunctionArn", root_template)
+        self.assertIn("ReleasePublisherFunctionName", publish_template)
+        self.assertIn("ReleasePublisherFunctionArn", publish_template)
+        self.assertIn("Name: /txing/stack/ReleasePublisherFunctionName", publish_template)
+        self.assertIn("Default: /txing/stack/WitnessFunctionArn", publish_template)
+        self.assertIn("Default: /txing/stack/WitnessFunctionName", publish_template)
+        self.assertIn("Default: /txing/stack/CloudRigRuntimeFunctionArn", publish_template)
+        self.assertIn("Default: /txing/stack/CloudRigRuntimeFunctionName", publish_template)
+        self.assertIn("Default: /txing/stack/CloudMcuRuntimeFunctionArn", publish_template)
+        self.assertIn("Default: /txing/stack/CloudMcuRuntimeFunctionName", publish_template)
+        self.assertIn("- !Ref WitnessFunctionArn", publish_template)
+        self.assertNotIn("function:${EnvironmentStackName}-witness", publish_template)
         for action in (
             "lambda:UpdateFunctionCode",
             "lambda:GetFunction",
@@ -703,7 +739,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
 
     def test_cloud_mcu_runtime_uses_release_lambda_assets(self) -> None:
         root_template = (AWS_DIR / "template.yaml").read_text(encoding="utf-8")
-        cloud_mcu_template = root_template
+        cloud_mcu_template = _cloud_mcu_lambda_template_text()
         lambda_templates = "\n".join(
             [_cloud_rig_template_text(), _cloud_mcu_lambda_template_text()]
         )
@@ -729,6 +765,17 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("Default: /txing/stack/CognitoDomainPrefix", root_template)
         self.assertIn("Default: /txing/stack/AdminEmail", root_template)
         self.assertIn("Default: /txing/stack/WebAppUrl", root_template)
+        for parameter_name in (
+            "WebCognitoDomain",
+            "WebCognitoUserPoolClientId",
+            "WebCognitoUserPoolId",
+            "WebCognitoIdentityPoolId",
+            "WebIotPolicyName",
+            "WebExpectedAdminEmail",
+            "RigRuntimeManagedPolicyArn",
+            "DeviceDaemonIotPolicyName",
+        ):
+            self.assertIn(f"Name: /txing/stack/{parameter_name}", root_template)
         self.assertIn("Domain: !Ref StackCognitoDomainPrefix", root_template)
         self.assertIn("admin-email: !Ref StackAdminEmail", root_template)
         self.assertIn('!Sub "${StackWebAppUrl}/"', root_template)
@@ -800,11 +847,18 @@ class AwsTemplatePolicyTests(unittest.TestCase):
             AWS_DIR / "justfile",
             AWS_DIR / "scripts" / "aws_lib.sh",
             REPO_ROOT / "devices" / "cloud-mcu" / "justfile",
+            REPO_ROOT / "devices" / "cloud-mcu" / "lambda" / "justfile",
+            REPO_ROOT / "devices" / "unit" / "daemon" / "justfile",
+            REPO_ROOT / "office" / "justfile",
+            REPO_ROOT / "rig" / "justfile",
+            REPO_ROOT / "witness" / "justfile",
         ]
         text = "\n".join(path.read_text(encoding="utf-8") for path in checked_paths)
 
         self.assertIn("deploy-init parameter_file", text)
+        self.assertIn("delete-init:", text)
         self.assertIn("aws ssm put-parameter", text)
+        self.assertIn("aws ssm delete-parameter", text)
         self.assertIn("deploy_init_parameter_name()", text)
         self.assertIn("/txing/stack", text)
         self.assertIn("deploy stack_name=stack_name", text)
@@ -820,11 +874,15 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn('lambda_artifacts_bucket_parameter="LambdaArtifactsBucketName=$artifact_bucket"', text)
         self.assertIn("set -- --parameter-overrides", text)
         self.assertIn('aws_admin_code_bucket_parameter="AwsAdminCodeS3Bucket=$artifact_bucket"', text)
-        self.assertIn("describe_stack_outputs()", text)
-        self.assertIn("--output json | jq '.'", text)
+        self.assertIn("describe_stack_parameters()", text)
+        self.assertIn("stack_parameter()", text)
+        self.assertIn("preflight_named_log_groups()", text)
+        self.assertIn("CloudFormation cannot create stack", text)
+        self.assertIn("--output json | jq 'sort_by(.Name)'", text)
         self.assertNotIn("--output table", text)
+        self.assertNotIn("Outputs[?OutputKey", text)
         self.assertNotIn("deploy CognitoDomainPrefix", text)
-        self.assertNotIn("aws ssm get-parameter", text)
+        self.assertIn("aws ssm get-parameter", text)
         self.assertIn("deploy-town town_name", text)
         self.assertIn("deploy-rig town_id", text)
         self.assertIn("deploy-device rig_id", text)
@@ -834,12 +892,13 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("aws lambda invoke", text)
         self.assertIn("aws cloudformation delete-stack", text)
         self.assertIn("stack-delete-complete", text)
-        self.assertIn("EnlistFunctionName", text)
-        self.assertIn("stack_output()", text)
+        self.assertNotIn("stack_output \"$TXING_AWS_STACK\" EnlistFunctionName", text)
+        self.assertIn('function_name="$(stack_parameter EnlistFunctionName)"', text)
+        self.assertNotIn("stack_output()", text)
         self.assertIn("resolve_town_thing_name()", text)
         self.assertIn("resolve_rig_thing_name()", text)
         self.assertIn("resolve_device_thing_name()", text)
-        self.assertIn("assume_stack_role()", text)
+        self.assertNotIn("assume_stack_role()", text)
         self.assertIn("delete-packaging-buckets stack_name", text)
         self.assertIn("delete_s3_bucket_if_exists", text)
         self.assertNotIn("@deploy-lambda", text)

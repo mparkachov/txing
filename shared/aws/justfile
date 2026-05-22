@@ -50,15 +50,47 @@ deploy-init parameter_file=deploy_init_file:
       printf 'stored deploy init parameter %s\n' "$parameter_name"
     done
 
-deploy stack_name=stack_name template_file=template_file:
+delete-init:
+    #!/bin/sh
+    set -eu
+    cd "{{aws_dir}}"
+    . "{{aws_lib}}"
+    txing_ensure_tmpdir
+    error_file="$(mktemp "${TMPDIR:-/tmp}/txing-delete-init.XXXXXX")"
+    trap 'rm -f "$error_file"' EXIT
+    for parameter_key in CognitoDomainPrefix AdminEmail WebAppUrl; do
+      parameter_name="$(deploy_init_parameter_name "$parameter_key")"
+      : >"$error_file"
+      if aws ssm delete-parameter --name "$parameter_name" >/dev/null 2>"$error_file"; then
+        printf 'deleted deploy init parameter %s\n' "$parameter_name"
+      elif grep -q 'ParameterNotFound' "$error_file"; then
+        printf 'missing deploy init parameter %s\n' "$parameter_name"
+      else
+        cat "$error_file" >&2
+        exit 1
+      fi
+    done
+
+deploy stack_name=stack_name:
+    #!/bin/sh
+    set -eu
+    just --justfile "{{aws_dir}}/justfile" clean-stack::deploy "{{stack_name}}"
+    just --justfile "{{aws_dir}}/justfile" deploy-base "{{stack_name}}"
+    just --justfile "{{root_justfile}}" witness::deploy "{{stack_name}}"
+    just --justfile "{{root_justfile}}" cloud-mcu::deploy "{{stack_name}}"
+    just --justfile "{{aws_dir}}/justfile" enlist-lambda::deploy "{{stack_name}}"
+    just --justfile "{{aws_dir}}/justfile" publish-release-lambda::deploy "{{stack_name}}"
+
+deploy-base stack_name=stack_name template_file=template_file:
     #!/bin/sh
     set -eu
     cd "{{aws_dir}}"
     . "{{aws_lib}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{stack_name}}")"
     txing_aws_init
-    deploy_template "$TXING_AWS_STACK" "{{template_file}}"
-    describe_stack_outputs "$TXING_AWS_STACK"
+    base_stack="$(base_stack_name)"
+    deploy_template "$base_stack" "{{template_file}}"
+    describe_stack_parameters
 
 publish release='latest':
     #!/bin/sh
@@ -79,7 +111,7 @@ publish release='latest':
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws)"
     txing_aws_init
     export AWS_DEFAULT_REGION="$TXING_AWS_REGION"
-    function_name="$(lambda_function_name aws-publish-release)"
+    function_name="$(stack_parameter ReleasePublisherFunctionName)"
     payload_file="$(mktemp "${TMPDIR:-/tmp}/txing-publish-payload.XXXXXX")"
     response_file="$(mktemp "${TMPDIR:-/tmp}/txing-publish-response.XXXXXX")"
     metadata_file="$(mktemp "${TMPDIR:-/tmp}/txing-publish-metadata.XXXXXX")"
@@ -121,33 +153,37 @@ publish-lambda release='latest':
     export AWS_DEFAULT_REGION="$TXING_AWS_REGION"
     artifact_bucket="$(ensure_artifact_bucket)"
     export TXING_LAMBDA_ARTIFACT_BUCKET="$artifact_bucket"
-    export TXING_LAMBDA_FUNCTION_PREFIX="$TXING_AWS_STACK-"
+    export TXING_LAMBDA_FUNCTIONS_JSON
+    TXING_LAMBDA_FUNCTIONS_JSON="$(lambda_release_targets_json)"
     exec uv run --project "{{aws_dir}}/python" \
       python -m aws_admin.publish_release lambda --release "{{release}}"
 
-deploy-lambdas stack_name=stack_name:
-    #!/bin/sh
-    set -eu
-    just --justfile "{{aws_dir}}/justfile" clean-stack::deploy "{{stack_name}}"
-    just --justfile "{{aws_dir}}/justfile" enlist-lambda::deploy "{{stack_name}}"
-    just --justfile "{{aws_dir}}/justfile" publish-release-lambda::deploy "{{stack_name}}"
-
-delete stack_name=stack_name wait='true' delete_packaging_buckets='true':
+delete stack_name=stack_name delete_packaging_buckets='true':
     #!/bin/sh
     set -eu
     cd "{{aws_dir}}"
     . "{{aws_lib}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{stack_name}}")"
     txing_aws_init
-    echo "Deleting CloudFormation stack $TXING_AWS_STACK"
-    aws cloudformation delete-stack --stack-name "$TXING_AWS_STACK"
-    if [ "{{wait}}" = "true" ]; then
-      aws cloudformation wait stack-delete-complete --stack-name "$TXING_AWS_STACK"
-      echo "Deleted CloudFormation stack $TXING_AWS_STACK"
-    fi
+    delete_cloudformation_stack_if_exists "$(lambda_stack_name aws-publish-release)" true
+    delete_cloudformation_stack_if_exists "$(lambda_stack_name aws-enlist-txing)" true
+    delete_cloudformation_stack_if_exists "$(lambda_stack_name cloud-rig)" true
+    delete_cloudformation_stack_if_exists "$(lambda_stack_name cloud-mcu)" true
+    delete_cloudformation_stack_if_exists "$(lambda_stack_name witness)" true
+    delete_cloudformation_stack_if_exists "$(base_stack_name)" true
+    delete_cloudformation_stack_if_exists "$(lambda_stack_name aws-clean-stack)" true
     if [ "{{delete_packaging_buckets}}" = "true" ]; then
       delete_s3_bucket_if_exists "$(artifact_bucket_name)"
     fi
+
+delete-base stack_name=stack_name wait='true':
+    #!/bin/sh
+    set -eu
+    cd "{{aws_dir}}"
+    . "{{aws_lib}}"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{stack_name}}")"
+    txing_aws_init
+    delete_cloudformation_stack_if_exists "$(base_stack_name)" "{{wait}}"
 
 type-list path='/txing':
     #!/bin/sh
@@ -302,7 +338,7 @@ describe stack_name=stack_name:
     . "{{aws_lib}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{stack_name}}")"
     txing_aws_init
-    describe_stack_outputs "$TXING_AWS_STACK"
+    describe_stack_parameters
 
 describe-all stack_name=stack_name:
     #!/bin/sh
@@ -311,10 +347,23 @@ describe-all stack_name=stack_name:
     . "{{aws_lib}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{stack_name}}")"
     txing_aws_init
-    for stack in "$TXING_AWS_STACK"; do
+    for stack in \
+      "$(lambda_stack_name aws-clean-stack)" \
+      "$(base_stack_name)" \
+      "$(lambda_stack_name witness)" \
+      "$(lambda_stack_name cloud-mcu)" \
+      "$(lambda_stack_name cloud-rig)" \
+      "$(lambda_stack_name aws-enlist-txing)" \
+      "$(lambda_stack_name aws-publish-release)"; do
       echo "== $stack =="
-      describe_stack_outputs "$stack"
+      if stack_status="$(aws cloudformation describe-stacks --stack-name "$stack" --query 'Stacks[0].StackStatus' --output text 2>/dev/null)"; then
+        printf 'status: %s\n' "$stack_status"
+      else
+        echo "missing"
+      fi
     done
+    echo "== /txing/stack =="
+    describe_stack_parameters
 
 create-admin-user AdminPassword stack_name=stack_name:
     #!/bin/sh
@@ -323,8 +372,8 @@ create-admin-user AdminPassword stack_name=stack_name:
     . "{{aws_lib}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{stack_name}}")"
     txing_aws_init
-    user_pool_id="$(stack_output "$TXING_AWS_STACK" WebCognitoUserPoolId)"
-    admin_email="$(stack_output "$TXING_AWS_STACK" WebExpectedAdminEmail)"
+    user_pool_id="$(stack_parameter WebCognitoUserPoolId)"
+    admin_email="$(stack_parameter WebExpectedAdminEmail)"
     if aws cognito-idp admin-get-user \
       --user-pool-id "$user_pool_id" \
       --username "$admin_email" \
@@ -373,11 +422,12 @@ check rig_id='' thing_id='' log_group_name='':
     else
       echo "ok: AWS STS caller identity"
     fi
-    if ! aws cloudformation describe-stacks --stack-name "$TXING_AWS_STACK" --query "Stacks[0].StackStatus" --output text >/dev/null; then
-      echo "fail: CloudFormation stack $TXING_AWS_STACK"
+    base_stack="$(base_stack_name)"
+    if ! aws cloudformation describe-stacks --stack-name "$base_stack" --query "Stacks[0].StackStatus" --output text >/dev/null; then
+      echo "fail: CloudFormation stack $base_stack"
       failures=$((failures + 1))
     else
-      echo "ok: CloudFormation stack $TXING_AWS_STACK"
+      echo "ok: CloudFormation stack $base_stack"
     fi
     if ! aws iot describe-endpoint --endpoint-type iot:Data-ATS --query endpointAddress --output text >/dev/null; then
       echo "fail: AWS IoT Data-ATS endpoint"

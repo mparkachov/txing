@@ -56,9 +56,9 @@ cert thing_id='' config_dir=config_dir:
       echo "Invalid Thing ID '$effective_thing_name'. Allowed characters: letters, digits, colon, underscore, hyphen." >&2
       exit 2
     fi
-    daemon_policy_name="$(stack_output "$TXING_AWS_STACK" DeviceDaemonIotPolicyName)"
+    daemon_policy_name="$(stack_parameter DeviceDaemonIotPolicyName)"
     if [ -z "$daemon_policy_name" ] || [ "$daemon_policy_name" = "None" ]; then
-      echo "Could not resolve DeviceDaemonIotPolicyName from stack $TXING_AWS_STACK." >&2
+      echo "Could not resolve /txing/stack/DeviceDaemonIotPolicyName." >&2
       exit 1
     fi
     account_id="$(aws sts get-caller-identity --query Account --output text)"

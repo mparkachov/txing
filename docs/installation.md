@@ -16,10 +16,13 @@ component that owns the host behavior.
   native AWS CLI configuration.
 - Stack-backed operator commands and deploys fail unless `TXING_AWS_STACK` is
   set explicitly in the operator environment or passed as a positional stack
-  name where supported.
+  prefix where supported. The base CloudFormation stack is derived as
+  `<TXING_AWS_STACK>-aws-base`.
 - The one-off `just aws::deploy-init` step stores office/admin deploy parameters
   from `shared/aws/deploy-init.json` as separate `/txing/stack/*` SSM Parameter
-  Store values before the first base stack deployment.
+  Store values before the first base stack deployment. These three manual input
+  parameters intentionally remain after `just aws::delete`; use
+  `just aws::delete-init` only when you want to remove them too.
 
 ## Development Machine
 
@@ -72,12 +75,7 @@ The `cloud` rig type is AWS-hosted. Deploy its Lambda/EventBridge/SQS runtime
 through the AWS stack and Lambda release assets:
 
 ```bash
-just aws::clean-stack::deploy
 just aws::deploy
-just witness::deploy
-just cloud-mcu::deploy
-just aws::enlist-lambda::deploy
-just aws::publish-release-lambda::deploy
 just aws::publish latest
 ```
 

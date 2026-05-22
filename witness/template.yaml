@@ -4,7 +4,7 @@ Description: txing Sparkplug witness Lambda stack.
 Parameters:
   EnvironmentStackName:
     Type: String
-    Description: Base txing environment stack name, for example town.
+    Description: txing environment stack prefix, for example town.
   LambdaArtifactsBucketName:
     Type: String
     Description: S3 bucket containing release-built Lambda bootstrap zip artifacts.
@@ -105,6 +105,27 @@ Resources:
         Actions:
           - Lambda:
               FunctionArn: !GetAtt WitnessFunction.Arn
+
+  StackParameterWitnessFunctionName:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /txing/stack/WitnessFunctionName
+      Type: String
+      Value: !Ref WitnessFunction
+
+  StackParameterWitnessFunctionArn:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /txing/stack/WitnessFunctionArn
+      Type: String
+      Value: !GetAtt WitnessFunction.Arn
+
+  StackParameterWitnessTopicRuleArn:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /txing/stack/WitnessTopicRuleArn
+      Type: String
+      Value: !GetAtt WitnessTopicRule.Arn
 
 Outputs:
   WitnessFunctionName:

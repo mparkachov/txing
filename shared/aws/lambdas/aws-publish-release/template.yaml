@@ -4,7 +4,7 @@ Description: txing release publisher Lambda stack.
 Parameters:
   EnvironmentStackName:
     Type: String
-    Description: Base txing environment stack name, for example town.
+    Description: txing environment stack prefix, for example town.
   AwsAdminCodeS3Bucket:
     Type: String
     Description: S3 bucket containing the packaged AWS admin Lambda code.
@@ -14,6 +14,30 @@ Parameters:
   LambdaArtifactsBucketName:
     Type: String
     Description: S3 bucket containing release-built Lambda bootstrap zip artifacts.
+  WitnessFunctionArn:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /txing/stack/WitnessFunctionArn
+    Description: SSM parameter containing the Sparkplug witness Lambda ARN.
+  WitnessFunctionName:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /txing/stack/WitnessFunctionName
+    Description: SSM parameter containing the Sparkplug witness Lambda name.
+  CloudRigRuntimeFunctionArn:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /txing/stack/CloudRigRuntimeFunctionArn
+    Description: SSM parameter containing the cloud rig runtime Lambda ARN.
+  CloudRigRuntimeFunctionName:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /txing/stack/CloudRigRuntimeFunctionName
+    Description: SSM parameter containing the cloud rig runtime Lambda name.
+  CloudMcuRuntimeFunctionArn:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /txing/stack/CloudMcuRuntimeFunctionArn
+    Description: SSM parameter containing the cloud MCU runtime Lambda ARN.
+  CloudMcuRuntimeFunctionName:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /txing/stack/CloudMcuRuntimeFunctionName
+    Description: SSM parameter containing the cloud MCU runtime Lambda name.
   GithubRepository:
     Type: String
     Default: mparkachov/txing
@@ -77,9 +101,9 @@ Resources:
                   - lambda:GetFunctionConfiguration
                   - lambda:UpdateFunctionCode
                 Resource:
-                  - !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${EnvironmentStackName}-witness
-                  - !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${EnvironmentStackName}-cloud-rig
-                  - !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${EnvironmentStackName}-cloud-mcu
+                  - !Ref WitnessFunctionArn
+                  - !Ref CloudRigRuntimeFunctionArn
+                  - !Ref CloudMcuRuntimeFunctionArn
 
   PublishReleaseFunction:
     Type: AWS::Lambda::Function
@@ -100,7 +124,21 @@ Resources:
         Variables:
           TXING_GITHUB_REPOSITORY: !Ref GithubRepository
           TXING_LAMBDA_ARTIFACT_BUCKET: !Ref LambdaArtifactsBucketName
-          TXING_LAMBDA_FUNCTION_PREFIX: !Sub ${EnvironmentStackName}-
+          TXING_LAMBDA_FUNCTIONS_JSON: !Sub '{"txing-witness-lambda":"${WitnessFunctionName}","txing-cloud-rig-lambda":"${CloudRigRuntimeFunctionName}","txing-cloud-mcu-lambda":"${CloudMcuRuntimeFunctionName}"}'
+
+  StackParameterReleasePublisherFunctionName:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /txing/stack/ReleasePublisherFunctionName
+      Type: String
+      Value: !Ref PublishReleaseFunction
+
+  StackParameterReleasePublisherFunctionArn:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /txing/stack/ReleasePublisherFunctionArn
+      Type: String
+      Value: !GetAtt PublishReleaseFunction.Arn
 
 Outputs:
   ReleasePublisherFunctionName:

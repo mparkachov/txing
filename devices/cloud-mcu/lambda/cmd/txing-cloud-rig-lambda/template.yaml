@@ -4,14 +4,16 @@ Description: txing cloud rig runtime Lambda stack.
 Parameters:
   EnvironmentStackName:
     Type: String
-    Description: Base txing environment stack name, for example town.
+    Description: txing environment stack prefix, for example town.
   LambdaArtifactsBucketName:
     Type: String
     Description: S3 bucket containing release-built Lambda bootstrap zip artifacts.
   CloudMcuTickQueueUrl:
-    Type: String
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /txing/stack/CloudMcuTickQueueUrl
   CloudMcuTickQueueArn:
-    Type: String
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /txing/stack/CloudMcuTickQueueArn
   CloudMcuRuntimeScheduleExpression:
     Type: String
     Default: rate(1 minute)
@@ -104,6 +106,27 @@ Resources:
       FunctionName: !Ref CloudRigFunction
       Principal: events.amazonaws.com
       SourceArn: !GetAtt CloudRigScheduleRule.Arn
+
+  StackParameterCloudRigRuntimeFunctionName:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /txing/stack/CloudRigRuntimeFunctionName
+      Type: String
+      Value: !Ref CloudRigFunction
+
+  StackParameterCloudRigRuntimeFunctionArn:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /txing/stack/CloudRigRuntimeFunctionArn
+      Type: String
+      Value: !GetAtt CloudRigFunction.Arn
+
+  StackParameterCloudRigRuntimeScheduleRuleName:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /txing/stack/CloudRigRuntimeScheduleRuleName
+      Type: String
+      Value: !Ref CloudRigScheduleRule
 
 Outputs:
   CloudRigRuntimeFunctionName:

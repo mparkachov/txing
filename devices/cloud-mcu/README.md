@@ -30,11 +30,18 @@ device.
 Create or update the shared AWS stack and release Lambda artifacts:
 
 ```sh
-just aws::clean-stack::deploy
 just aws::deploy
-just cloud-mcu::deploy
 just aws::publish latest
 ```
+
+The cloud MCU deploy step called by `just aws::deploy` owns all cloud
+MCU-specific AWS infrastructure: the `cloud-mcu` type catalog entry, SQS tick
+queues, IPv6-only ECS task network, placeholder task definition, and the two
+runtime Lambda stacks. The base AWS stack only creates the shared `cloud` rig
+type and common txing infrastructure.
+The cloud MCU stack publishes queue and runtime values under `/txing/stack/...`;
+the cloud rig stack reads those parameters instead of reading CloudFormation
+outputs from the cloud MCU stack.
 
 Register a device on a cloud rig:
 

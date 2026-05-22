@@ -199,6 +199,7 @@ _project-aws-env scope='aws' stack_name='':
     txing_town_stack_name="${TXING_TOWN_STACK_NAME:-}"
     txing_rig_stack_name="${TXING_RIG_STACK_NAME:-}"
     txing_device_stack_name="${TXING_DEVICE_STACK_NAME:-}"
+    txing_aws_base_stack="$txing_aws_stack-aws-base"
 
     rig_name="$txing_rig_id"
     rig_id="$txing_rig_id"
@@ -225,6 +226,7 @@ _project-aws-env scope='aws' stack_name='':
     export_line TXING_GIT_DIRTY "$TXING_GIT_DIRTY"
     export_line TXING_GIT_DIRTY_HASH "$TXING_GIT_DIRTY_HASH"
     export_line TXING_AWS_STACK "$txing_aws_stack"
+    export_line TXING_AWS_BASE_STACK "$txing_aws_base_stack"
     export_line TXING_AWS_REGION "$aws_region"
     printf 'unset RIG_ENV_FILE\n'
     printf 'unset BOARD_ENV_FILE\n'

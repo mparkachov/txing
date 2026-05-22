@@ -41,14 +41,11 @@ Release publishing flow:
 1. Update all managed version files locally.
 2. Push the intended code to the branch that should be released.
 3. Run the `Txing Release` workflow manually from that branch.
-4. Deploy the standalone custom-resource Lambda with `just aws::clean-stack::deploy`.
-5. Apply shared AWS infrastructure changes with `just aws::deploy`.
-6. Deploy standalone Lambda stacks with `just witness::deploy`,
-   `just cloud-mcu::deploy`, `just aws::enlist-lambda::deploy`, and
-   `just aws::publish-release-lambda::deploy`.
-7. Publish runtime Lambda code from the operator machine with
+4. Deploy AWS infrastructure and all standalone Lambda stacks with
+   `just aws::deploy`.
+5. Publish runtime Lambda code from the operator machine with
    `just aws::publish latest`.
-8. If a board or rig needs new binaries, update it manually from a root shell
+6. If a board or rig needs new binaries, update it manually from a root shell
    with writable root and root-owned `mise upgrade`; boards reboot, rigs
    restart `rig-daemon.target`.
 

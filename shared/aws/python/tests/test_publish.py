@@ -47,18 +47,28 @@ class PublishTests(unittest.TestCase):
             "lambda/txing-witness-lambda/current/bootstrap.zip",
         )
 
-    def test_deployed_lambda_function_names_can_be_stack_prefixed(self) -> None:
+    def test_deployed_lambda_function_names_come_from_parameter_store_contract(self) -> None:
         config = PublishConfig(
             github_repository="mparkachov/txing",
             lambda_artifact_bucket="bucket",
             aws_region="eu-central-1",
-            lambda_function_prefix="town-",
+            lambda_function_names={"txing-witness-lambda": "town-witness"},
         )
 
         self.assertEqual(
             config.deployed_lambda_function_name(LAMBDA_ASSETS[0]),
             "town-witness",
         )
+
+    def test_deployed_lambda_function_names_require_parameter_store_contract(self) -> None:
+        config = PublishConfig(
+            github_repository="mparkachov/txing",
+            lambda_artifact_bucket="bucket",
+            aws_region="eu-central-1",
+        )
+
+        with self.assertRaises(PublishError):
+            config.deployed_lambda_function_name(LAMBDA_ASSETS[0])
 
     def test_validates_lambda_zip_shape(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
