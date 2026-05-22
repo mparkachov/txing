@@ -10,7 +10,7 @@ Admin Lambdas are Python:
 - `aws-clean-stack`
 
 These functions call boto3-heavy AWS control-plane APIs for CloudFormation, S3,
-IoT registry, Greengrass, SSM, and operator publishing workflows. They are
+IoT registry, SSM, and operator publishing workflows. They are
 packaged with `just aws::deploy` as CloudFormation-managed stack code, not as
 GitHub release runtime artifacts.
 Each Lambda is owned by a dedicated nested stack under `shared/aws/templates/lambdas/`.
@@ -27,6 +27,7 @@ These functions stay as static `linux/arm64` `bootstrap` executables for
 `provided.al2023`. They are published as release artifacts and updated by
 `aws::publish` or `aws::publish-lambda`.
 
-Rust remains the implementation language for firmware, Greengrass runtime code,
-and other non-Lambda Rust components. This boundary is intentionally language
-based so Lambda build and release behavior stays predictable.
+Rust remains the implementation language for firmware and other non-Lambda Rust
+components. Standalone rig daemons and runtime Lambdas are Go. This boundary is
+intentionally language based so Lambda build and release behavior stays
+predictable.

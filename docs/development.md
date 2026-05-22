@@ -5,7 +5,7 @@ For the system overview, see [../README.md](../README.md). For the documentation
 ## Repository Layout
 
 - `devices/unit/`: self-contained current `unit` device type, including MCU, board runtime, rig process implementation, AWS shadow contracts, docs, and web detail adapter
-- `rig/`: Rust Greengrass components and host tooling for `raspi` rigs
+- `rig/`: standalone Go daemons and host tooling for `raspi` rigs
 - `devices/cloud-mcu/`: AWS-hosted `cloud` rig and `cloud-mcu` Lambda runtime
 - `office/`: React + Vite admin/operator SPA
 - `www/`: public static HTML/CSS/assets site for `txing.dev`
@@ -32,29 +32,22 @@ board runtime setup, including read-only rootfs, lives in
 `VERSION` is the release version for the repository. It must stay a base
 semantic version such as `x.y.z`.
 
-Production Greengrass component versions use `VERSION` exactly. Git SHA and
-dirty state are exported separately for diagnostics, but they are not part of
-the Greengrass `ComponentVersion`. Create releases with the manual
+Production release artifacts use `VERSION` exactly. Git SHA and dirty state are
+exported separately for diagnostics. Create releases with the manual
 `Txing Release` GitHub Actions workflow from the selected branch after bumping
-and pushing the managed version files yourself. The workflow reads that branch's root
-`VERSION`, fails unless it is newer than the latest existing `v*` tag,
+and pushing the managed version files yourself. The workflow reads that branch's
+root `VERSION`, fails unless it is newer than the latest existing `v*` tag,
 publishes the GitHub Release, and also publishes the board, rig, and Lambda
-artifacts. It does not commit or push version changes back to the selected branch.
+artifacts. It does not commit or push version changes back to the selected
+branch.
 
 After a release workflow finishes, the operator Mac applies AWS infrastructure
-changes and then asks the AWS-hosted publisher Lambda to publish Lambda and
-Greengrass artifacts with:
+changes and then asks the AWS-hosted publisher Lambda to publish Lambda
+artifacts with:
 
 ```bash
 just aws::deploy
 just aws::publish latest
-```
-
-Production `raspi` rigs do not pull the repository and do not run AWS CLI. The
-local fallback for publishing only rig release artifacts to Greengrass is:
-
-```bash
-just aws::publish-rig latest
 ```
 
 Development direction for installable host tools and board-side native
@@ -62,10 +55,10 @@ artifacts:
 
 - release artifacts point at the artifact built from `VERSION`, for example `x.y.z`.
 - GitHub release assets should be immutable for each exact artifact version.
-- The unit daemon uses mise's GitHub backend directly; rig components are
-  published to Greengrass from GitHub release assets; Lambda code is uploaded
-  to AWS Lambda from GitHub release assets; see [artifacts.md](./artifacts.md).
-- Board binary updates are manual writable-root maintenance actions. The
+- Board and rig host binaries use mise's GitHub backend directly; Lambda code
+  is uploaded to AWS Lambda from GitHub release assets; see
+  [artifacts.md](./artifacts.md).
+- Board and rig binary updates are manual writable-root maintenance actions. The
   installed systemd service starts offline from root-owned mise shims and does
   not call GitHub during normal service restart.
 
@@ -94,9 +87,11 @@ Common commands:
 ```bash
 just --list
 just unit::mcu::build
-just rig::check <rig-id>
-just rig::deploy
-just rig::status <rig-id>
+just rig::test
+just rig::build
+just rig::check <config-dir>
+just rig::start <config-dir> true
+just rig::stop
 just unit::daemon::run
 just office::dev
 just office::write-env
@@ -161,18 +156,18 @@ just unit::mcu::build-nve-hex unit-test
 Rig:
 
 ```bash
-just rig::check <rig-id>
+just rig::test
 just rig::build
-just rig::deploy
-just rig::log <rig-id>
+just rig::start <config-dir> true
+just rig::log
+just rig::stop
 ```
 
-That source-checkout rig loop is for development and admin builder use.
-Production `raspi` rig hosts receive Greengrass deployments published from the
-operator machine instead. Production `cloud` rigs are updated through
-`just aws::deploy` and `just aws::publish latest`. Runtime Lambda updates flow
-through GitHub release artifacts plus `just aws::publish-lambda latest` or
-`just aws::publish latest`.
+That source-checkout rig loop is for development. Production `raspi` rig hosts
+install GitHub release assets through root-owned `mise` and systemd. Production
+`cloud` rigs are updated through `just aws::deploy` and `just aws::publish
+latest`. Runtime Lambda updates flow through GitHub release artifacts plus
+`just aws::publish-lambda latest` or `just aws::publish latest`.
 
 Board:
 

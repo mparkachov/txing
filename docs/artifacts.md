@@ -25,8 +25,6 @@ txing-unit-daemon-linux-aarch64.tar.gz
 txing-board-kvs-master-linux-aarch64.tar.gz
 txing-sparkplug-manager-linux-aarch64.tar.gz
 txing-ble-connectivity-linux-aarch64.tar.gz
-txing-aws-connectivity-linux-aarch64.tar.gz
-txing-rig-deploy-linux-aarch64.tar.gz
 txing-witness-lambda-linux-aarch64.zip
 txing-cloud-rig-lambda-linux-aarch64.zip
 txing-cloud-mcu-lambda-linux-aarch64.zip
@@ -46,17 +44,17 @@ Release publishing flow:
 4. For a brand-new stack only, seed Lambda bootstrap artifacts with
    `just aws::publish-lambda latest`.
 5. Apply AWS infrastructure changes with `just aws::deploy`.
-6. Publish Lambda code and Greengrass components from the operator machine with
-   `just aws::publish latest`.
-7. If a board needs the new binaries, update it manually from a board root
-   shell with writable root, root-owned `mise upgrade`, and a reboot.
+6. Publish Lambda code from the operator machine with `just aws::publish latest`.
+7. If a board or rig needs new binaries, update it manually from a root shell
+   with writable root and root-owned `mise upgrade`; boards reboot, rigs
+   restart `rig-daemon.target`.
 
 The workflow reads the selected branch's root `VERSION`, checks that all managed version
 files already match, fails unless the version is newer than the latest existing
 release, publishes the GitHub Release, and publishes the board, rig, and Lambda
 artifacts. After a successful publish, it prunes older project releases down to
-the newest 10. It does not bump versions, commit, push back to a branch, build
-Greengrass Lite, upload Lambda code to AWS, or deploy to hosts.
+the newest 10. It does not bump versions, commit, push back to a branch, upload
+Lambda code to AWS, or deploy to hosts.
 
 ## Lambda Artifacts
 
@@ -68,10 +66,8 @@ just aws::publish latest
 ```
 
 `aws::publish` invokes the AWS-hosted publisher Lambda. The publisher downloads
-public GitHub release assets over HTTPS, uploads Lambda and Greengrass artifacts,
-updates existing Lambda functions, creates Greengrass component versions, and
-creates both `raspi` and `cloud` Greengrass deployments. After publishing, it
-prunes each txing Greengrass component to the newest 10 semantic versions.
+public GitHub release assets over HTTPS, uploads Lambda artifacts, and updates
+existing Lambda functions.
 `aws::publish-lambda` runs the same Lambda publish code locally and is kept for
 first-time stack creation before the publisher Lambda exists.
 `just aws::deploy` applies CloudFormation and publishes Python admin Lambda
@@ -130,32 +126,43 @@ and reboot.
 
 ## Rig Artifacts
 
-Production `raspi` rig hosts receive txing binaries through Greengrass cloud
-deployments. The rig host does not need a source checkout, `mise`, AWS CLI, AWS
-access keys, or local Rust/CMake compilation for the release runtime path.
+Production `raspi` rig hosts install txing binaries through root-owned `mise`
+from GitHub Releases. The rig host does not need a source checkout, AWS CLI, AWS
+access keys, or local compilation for the release runtime path.
 
 Production `cloud` rig code is shipped as Lambda release artifacts:
 `txing-cloud-rig-lambda-linux-aarch64.zip` and
 `txing-cloud-mcu-lambda-linux-aarch64.zip`.
 
-`just aws::publish-rig latest` runs the same Greengrass publish code locally as
-a fallback. It uses the operator AWS credentials, downloads public GitHub
-release assets over HTTPS, uploads Linux component binaries to the Greengrass
-artifacts bucket, creates Greengrass component versions from the project SemVer,
-and creates continuous deployments for both `raspi` and `cloud` rig-type thing
-groups. The Linux component binaries are not executed on the operator Mac.
-
-Greengrass Lite is installed from the official upstream AWS release, not from a
-txing release asset:
+Rig assets:
 
 ```text
-https://github.com/aws-greengrass/aws-greengrass-lite/releases
-aws-greengrass-lite-deb-arm64.zip
+txing-sparkplug-manager-linux-aarch64.tar.gz
+txing-ble-connectivity-linux-aarch64.tar.gz
 ```
 
-The release workflow does not build, package, or publish Greengrass Lite. The
-repository no longer keeps a Greengrass Lite source checkout; install and
-upgrade the upstream distribution package manually on rig hosts.
+Installed commands:
+
+```text
+txing-sparkplug-manager
+txing-ble-connectivity
+```
+
+Rigs use root's persistent mise config and install tree:
+
+```text
+/root/.config/txing/rig-daemon/daemon.env
+/root/.config/mise/conf.d/txing-rig.toml
+/root/.local/share/mise/installs/txing-sparkplug-manager/latest/txing-sparkplug-manager
+/root/.local/share/mise/installs/txing-ble-connectivity/latest/txing-ble-connectivity
+/etc/systemd/system/txing-sparkplug-manager.service
+/etc/systemd/system/txing-ble-connectivity.service
+/etc/systemd/system/rig-daemon.target
+```
+
+Publishing a new GitHub Release does not upgrade a rig; the operator must log
+in to the rig, switch to root, run root-owned `mise upgrade`, verify versions,
+sync, and restart `rig-daemon.target`.
 
 ## Integrity Policy
 
@@ -171,7 +178,7 @@ them later only when stronger artifact integrity requirements are needed.
 ## Verified Behavior
 
 The current release flow has been manually verified on Raspberry Pi Zero 2 W
-boards and Greengrass rigs:
+boards and standalone rig daemons:
 
 - board install into `/root/.local/share/mise/installs`
 - board manual upgrade with root-owned `mise upgrade`
@@ -180,5 +187,5 @@ boards and Greengrass rigs:
 - browser AWS KVS video
 - browser MCP motor control over WebRTC data channel at REDCON `1`
 - MQTT MCP fallback at REDCON `2`
-- rig component publish from GitHub release assets through
-  `just aws::publish-rig`
+- rig daemon install and upgrade from GitHub release assets through root-owned
+  `mise`

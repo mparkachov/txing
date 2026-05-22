@@ -43,7 +43,7 @@ class CleanStackTests(unittest.TestCase):
             "ResponseURL": "https://cloudformation-response.example",
             "StackId": "stack",
             "RequestId": "request",
-            "LogicalResourceId": "TxingGreengrassArtifactsBucketCleanup",
+            "LogicalResourceId": "TxingIotFleetIndexing",
             "ResourceProperties": {
                 "CleanupType": "S3Bucket",
                 "BucketName": "bucket",

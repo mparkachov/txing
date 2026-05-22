@@ -6,7 +6,7 @@
   and reflected availability metrics under `capability.*`
 - Group model: `town` is the Sparkplug group id
 - Edge model: `rig` is the Sparkplug edge node. A `raspi` edge node is the
-  Greengrass Lite core running txing rig components; a `cloud` edge node is the
+  standalone `txing-sparkplug-manager` daemon; a `cloud` edge node is the
   AWS-hosted `txing-cloud-rig-lambda` runtime.
 - Device model: each physical `txing` is one Sparkplug device and one AWS IoT thing
 - Sparkplug MQTT is the source protocol
@@ -16,15 +16,15 @@
 ## Hard Edge Node Requirement
 
 The rig is not a Sparkplug device. The rig is the Sparkplug edge node. In
-production, `raspi` rigs publish that edge node from the Greengrass Lite
-Sparkplug process component, while `cloud` rigs publish it from
+production, `raspi` rigs publish that edge node from the standalone
+`txing-sparkplug-manager` daemon, while `cloud` rigs publish it from
 `txing-cloud-rig-lambda`.
 
 - `spBv1.0/<town>/NBIRTH/<rig>` means the rig edge node is born.
 - `spBv1.0/<town>/NDEATH/<rig>` means the rig edge node is dead.
-- A born rig edge node is healthy REDCON 1. For `raspi`, if Greengrass Lite is
-  running, the rig Sparkplug and connectivity component services are active,
-  and `just rig::check` passes, the rig thing's Sparkplug projection must be
+- A born rig edge node is healthy REDCON 1. For `raspi`, if
+  `rig-daemon.target` is running, both rig daemon services are active, and
+  `just rig::check` passes, the rig thing's Sparkplug projection must be
   `NBIRTH` with `payload.metrics.redcon=1`. For `cloud`, the EventBridge minute
   schedule must refresh `NBIRTH` within the witness timeout. A retained
   `NDEATH`, missing `NBIRTH`, or any non-1 born rig REDCON in those conditions
@@ -36,9 +36,9 @@ Sparkplug process component, while `cloud` rigs publish it from
 - `spBv1.0/<town>/DBIRTH/<rig>/...` and `spBv1.0/<town>/DDEATH/<rig>/...` must never represent the rig itself.
 - `DBIRTH`, `DDATA`, and `DDEATH` are only for device things managed by the rig.
 - Witness projects node `NBIRTH` and `NDEATH` messages onto the registered rig thing's `sparkplug` named shadow.
-- Greengrass core/device/component status, Lambda invocation status, and AWS
-  IoT MQTT lifecycle events are observability signals only; they do not replace
-  Sparkplug `NBIRTH` and `NDEATH`.
+- systemd service status, Lambda invocation status, and AWS IoT MQTT lifecycle
+  events are observability signals only; they do not replace Sparkplug `NBIRTH`
+  and `NDEATH`.
 - For `raspi`, the Sparkplug node MQTT session uses
   `<rig>-sparkplug-manager` as its AWS IoT MQTT client id. For `cloud`, the
   Lambda runtime publishes the same Sparkplug topic model from the AWS-hosted
@@ -159,14 +159,16 @@ Capability-owned shadow rule:
 - each capability that produces typed data owns its corresponding named shadow
 - Sparkplug reflects only availability with `capability.<name>` and lifecycle
   with `redcon`
-- a capability component that needs to update its shadow must do so itself
-  through Greengrass IPC to AWS IoT Core, using named shadow MQTT topics such as
-  `$aws/things/<thingName>/shadow/name/<capability>/update`
-- if a capability component needs to read its shadow, it must use the same
-  Greengrass IoT Core IPC path with shadow `/get`, `/get/accepted`, and
+- a capability component that needs to update its shadow must publish named
+  shadow MQTT topics such as
+  `$aws/things/<thingName>/shadow/name/<capability>/update`; on standalone
+  `raspi` rigs, `txing-ble-connectivity` sends those updates over local IPC and
+  `txing-sparkplug-manager` forwards them to AWS IoT Core
+- if a capability component needs to read its shadow, it must use the same AWS
+  IoT named-shadow MQTT topic model with shadow `/get`, `/get/accepted`, and
   `/get/rejected` topics
-- for BLE devices, `dev.txing.rig.BleConnectivity` owns the `ble` named shadow
-  and device-domain shadows such as `power` and `weather`
+- for BLE devices, `txing-ble-connectivity` owns the `ble` named shadow and
+  device-domain shadows such as `power` and `weather`
 - capability-owned named shadows must contain only required domain fields; they
   must not publish generic bookkeeping fields such as `observedAtMs` or `seq`
 - readers that need freshness or ordering for a named shadow should use AWS IoT

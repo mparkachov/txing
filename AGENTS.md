@@ -18,7 +18,7 @@
 - Prefer manual cleanup plus CloudFormation-forward changes over backward-compatible migration code. When existing AWS resources must be removed, renamed, imported, or otherwise reconciled, explain the required manual steps and let the user perform them.
 - Prefer moving development to new functionality without preserving backward compatibility, except for protocols and protocol versions. Before making a change that drops or ignores backward compatibility, ask the user every time whether that is acceptable.
 - After every code, firmware, infrastructure, or configuration change, explain the relevant deployment or rollout steps in the final response, including any manual steps the user must perform.
-- When a new immutable release or Greengrass component version is required, inform the user to bump the whole project to a new release version; do not add deploy bypasses or automated cargo/component version enforcement checks.
+- When a new immutable release or host/runtime artifact version is required, inform the user to bump the whole project to a new release version; do not add deploy bypasses or automated cargo/component version enforcement checks.
 - Do not perform `git commit` automatically.
 - Create commits only when explicitly requested by the user.
 - Flashing/programming firmware onto hardware must only be performed manually by the user. Agents may prepare artifacts and commands, but must not run flashing steps automatically.

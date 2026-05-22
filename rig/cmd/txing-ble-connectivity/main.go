@@ -1,0 +1,522 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"os"
+	"os/signal"
+	"sync"
+	"syscall"
+	"time"
+
+	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
+	"github.com/mparkachov/txing/rig/internal/awsx"
+	rigble "github.com/mparkachov/txing/rig/internal/ble"
+	"github.com/mparkachov/txing/rig/internal/ipc"
+	"github.com/mparkachov/txing/rig/internal/protocol"
+	"github.com/mparkachov/txing/rig/internal/rigconfig"
+	"github.com/mparkachov/txing/rig/internal/version"
+	"tinygo.org/x/bluetooth"
+)
+
+type runtimeState struct {
+	cfg          rigconfig.Config
+	logger       *awsx.CloudWatchLogger
+	ipc          *ipc.Client
+	specs        map[string]rigble.DeviceSpec
+	addresses    map[string]bluetooth.Address
+	lastConnect  map[string]time.Time
+	connectSlots chan struct{}
+	seq          uint64
+	mu           sync.Mutex
+	txingUUID    bluetooth.UUID
+	commandUUID  bluetooth.UUID
+	stateUUID    bluetooth.UUID
+	powerUUID    bluetooth.UUID
+	weatherUUID  bluetooth.UUID
+}
+
+func main() {
+	var configDir string
+	var dryRun bool
+	var showVersion bool
+	var noBLE bool
+	flag.StringVar(&configDir, "config-dir", "", "rig daemon config directory")
+	flag.BoolVar(&dryRun, "dry-run", false, "validate configuration and exit")
+	flag.BoolVar(&showVersion, "version", false, "print version and exit")
+	flag.BoolVar(&noBLE, "no-ble", false, "disable BLE hardware access and publish offline state")
+	flag.Parse()
+
+	if showVersion {
+		fmt.Println(version.Version)
+		return
+	}
+	cfg, err := rigconfig.Load(configDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "configuration error: %v\n", err)
+		os.Exit(2)
+	}
+	if noBLE {
+		cfg.NoBLE = true
+	}
+	if dryRun {
+		fmt.Printf("txing-ble-connectivity version=%s rig=%s town=%s ipc=%s noBle=%t\n", version.Version, cfg.RigID, cfg.TownID, cfg.IPCSocket, cfg.NoBLE)
+		return
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if err := run(ctx, cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "ble connectivity stopped with error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func run(ctx context.Context, cfg rigconfig.Config) error {
+	awsConfig, err := awsx.LoadConfig(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	logger := awsx.NewCloudWatchLogger(cloudwatchlogs.NewFromConfig(awsConfig), cfg.CloudWatchLogGroup, "txing-ble-connectivity", cfg.CloudWatchRetentionDays)
+	logger.Ensure(ctx)
+	logger.Print(ctx, "info", fmt.Sprintf("version=%s rig=%s noBle=%t", version.Version, cfg.RigID, cfg.NoBLE))
+
+	client, err := ipc.Dial(ctx, cfg.IPCSocket)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	for _, filter := range []string{
+		protocol.InventoryTopic,
+		protocol.CapabilityCommandTopicPrefix + "/#",
+	} {
+		if err := client.Subscribe(filter); err != nil {
+			return err
+		}
+	}
+
+	state, err := newRuntimeState(cfg, logger, client)
+	if err != nil {
+		return err
+	}
+
+	if !cfg.NoBLE {
+		if err := bluetooth.DefaultAdapter.Enable(); err != nil {
+			return err
+		}
+		go state.scanLoop(ctx)
+	}
+
+	messages := make(chan ipc.Message, 256)
+	ipcErrors := make(chan error, 1)
+	go func() {
+		for {
+			message, err := client.Receive()
+			if err != nil {
+				ipcErrors <- err
+				return
+			}
+			messages <- message
+		}
+	}()
+
+	heartbeat := time.NewTicker(cfg.HeartbeatInterval)
+	defer heartbeat.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			logger.Print(context.Background(), "info", "ble connectivity stopped")
+			return nil
+		case err := <-ipcErrors:
+			return fmt.Errorf("IPC receive failed: %w", err)
+		case <-heartbeat.C:
+			state.publishHeartbeat(ctx, nil)
+		case message := <-messages:
+			state.handleIPCMessage(ctx, message)
+		}
+	}
+}
+
+func newRuntimeState(cfg rigconfig.Config, logger *awsx.CloudWatchLogger, client *ipc.Client) (*runtimeState, error) {
+	parse := func(value string) (bluetooth.UUID, error) {
+		return bluetooth.ParseUUID(value)
+	}
+	txingUUID, err := parse(rigble.TxingBLEServiceUUID)
+	if err != nil {
+		return nil, err
+	}
+	commandUUID, err := parse(rigble.TxingBLECommandUUID)
+	if err != nil {
+		return nil, err
+	}
+	stateUUID, err := parse(rigble.TxingBLEStateUUID)
+	if err != nil {
+		return nil, err
+	}
+	powerUUID, err := parse(rigble.PowerMeasurementUUID)
+	if err != nil {
+		return nil, err
+	}
+	weatherUUID, err := parse(rigble.WeatherMeasurementUUID)
+	if err != nil {
+		return nil, err
+	}
+	var connectSlots chan struct{}
+	if cfg.MaxBLEConnections > 0 {
+		connectSlots = make(chan struct{}, cfg.MaxBLEConnections)
+	}
+	return &runtimeState{
+		cfg:          cfg,
+		logger:       logger,
+		ipc:          client,
+		specs:        map[string]rigble.DeviceSpec{},
+		addresses:    map[string]bluetooth.Address{},
+		lastConnect:  map[string]time.Time{},
+		connectSlots: connectSlots,
+		txingUUID:    txingUUID,
+		commandUUID:  commandUUID,
+		stateUUID:    stateUUID,
+		powerUUID:    powerUUID,
+		weatherUUID:  weatherUUID,
+	}, nil
+}
+
+func (s *runtimeState) handleIPCMessage(ctx context.Context, message ipc.Message) {
+	if message.Topic == protocol.InventoryTopic {
+		inventory, err := protocol.DecodeInventory(message.Payload)
+		if err != nil {
+			s.logger.Print(ctx, "warning", fmt.Sprintf("inventory decode failed error=%q", err))
+			return
+		}
+		s.reconcileInventory(ctx, inventory)
+		return
+	}
+	if thingName, ok := protocol.ParseCapabilityCommandTopic(message.Topic); ok {
+		command, err := protocol.DecodeCapabilityCommand(message.Payload)
+		if err != nil {
+			s.logger.Print(ctx, "warning", fmt.Sprintf("command decode failed topic=%s error=%q", message.Topic, err))
+			return
+		}
+		if command.ThingName != thingName {
+			s.logger.Print(ctx, "warning", fmt.Sprintf("command thing mismatch topic=%s payloadThing=%s", message.Topic, command.ThingName))
+			return
+		}
+		go s.handleCommand(context.Background(), command)
+	}
+}
+
+func (s *runtimeState) reconcileInventory(ctx context.Context, inventory protocol.Inventory) {
+	next := map[string]rigble.DeviceSpec{}
+	for _, device := range inventory.Devices {
+		spec := rigble.DeviceSpecFromInventory(device)
+		if spec != nil {
+			next[spec.ThingName] = *spec
+		}
+	}
+	s.mu.Lock()
+	s.specs = next
+	s.mu.Unlock()
+	s.logger.Print(ctx, "info", fmt.Sprintf("BLE inventory reconciled devices=%d", len(next)))
+	if s.cfg.NoBLE {
+		for _, spec := range next {
+			s.publishSample(ctx, rigble.OfflineSample(spec, s.nextSeq(), uint64(time.Now().UnixMilli())), false)
+		}
+	}
+}
+
+func (s *runtimeState) scanLoop(ctx context.Context) {
+	var failures uint32
+	for ctx.Err() == nil {
+		err := s.scan(ctx)
+		if ctx.Err() != nil {
+			return
+		}
+		delayMS := rigble.BoundedRetryDelayMS(rigble.BLERetryMinDelayMS, failures, rigble.BLERetryMaxDelayMS)
+		failures++
+		if err != nil {
+			s.logger.Print(context.Background(), "warning", fmt.Sprintf("BLE scan stopped error=%q retryMs=%d", err, delayMS))
+		} else {
+			s.logger.Print(context.Background(), "warning", fmt.Sprintf("BLE scan stopped unexpectedly retryMs=%d", delayMS))
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Duration(delayMS) * time.Millisecond):
+		}
+	}
+}
+
+func (s *runtimeState) scan(ctx context.Context) error {
+	err := bluetooth.DefaultAdapter.Scan(func(adapter *bluetooth.Adapter, result bluetooth.ScanResult) {
+		select {
+		case <-ctx.Done():
+			_ = adapter.StopScan()
+			return
+		default:
+		}
+		if !result.HasServiceUUID(s.txingUUID) {
+			return
+		}
+		name := result.LocalName()
+		if name == "" {
+			return
+		}
+		s.mu.Lock()
+		spec, ok := s.specs[name]
+		if ok {
+			s.addresses[name] = result.Address
+		}
+		s.mu.Unlock()
+		if !ok {
+			return
+		}
+		rssi := result.RSSI
+		identity := name
+		advertisement := rigble.Advertisement{
+			Address:      result.Address.String(),
+			IdentityName: &identity,
+			Services:     []string{rigble.TxingBLEServiceUUID},
+			RSSI:         &rssi,
+			ObservedAtMS: uint64(time.Now().UnixMilli()),
+			Seq:          s.nextSeq(),
+		}
+		s.publishSample(context.Background(), rigble.AdvertisementSample(spec, advertisement, s.nextSeq()), true)
+		if s.shouldBackgroundConnect(name) {
+			go s.connectAndPublish(context.Background(), spec, nil)
+		}
+	})
+	if err != nil && ctx.Err() == nil {
+		return err
+	}
+	return nil
+}
+
+func (s *runtimeState) shouldBackgroundConnect(thingName string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	last := s.lastConnect[thingName]
+	if time.Since(last) < s.cfg.ReconnectDelay {
+		return false
+	}
+	s.lastConnect[thingName] = time.Now()
+	return true
+}
+
+func (s *runtimeState) handleCommand(ctx context.Context, command protocol.CapabilityCommand) {
+	s.mu.Lock()
+	spec, ok := s.specs[command.ThingName]
+	s.mu.Unlock()
+	if !ok {
+		message := "device is not managed by BLE connectivity"
+		s.publishCommandResult(ctx, command, protocol.CommandRejected, &message, &command.Target.Redcon)
+		return
+	}
+	if protocol.CommandDeadlineExpired(command, uint64(time.Now().UnixMilli())) {
+		message := "command deadline expired"
+		s.publishCommandResult(ctx, command, protocol.CommandFailed, &message, &command.Target.Redcon)
+		return
+	}
+	if reason := rigble.WeatherCommandRejectReason(command, spec); reason != nil {
+		s.publishCommandResult(ctx, command, protocol.CommandRejected, reason, &command.Target.Redcon)
+		return
+	}
+	if s.cfg.NoBLE {
+		message := "BLE is disabled for this daemon instance"
+		s.publishCommandResult(ctx, command, protocol.CommandFailed, &message, &command.Target.Redcon)
+		return
+	}
+	s.publishCommandResult(ctx, command, protocol.CommandAccepted, nil, &command.Target.Redcon)
+	normalized, err := protocol.NormalizeBleTargetRedcon(command.Target.Redcon)
+	if err != nil {
+		message := err.Error()
+		s.publishCommandResult(ctx, command, protocol.CommandRejected, &message, &command.Target.Redcon)
+		return
+	}
+	if err := s.connectAndPublish(ctx, spec, &normalized); err != nil {
+		message := err.Error()
+		s.publishCommandResult(ctx, command, protocol.CommandFailed, &message, &command.Target.Redcon)
+		return
+	}
+	s.publishCommandResult(ctx, command, protocol.CommandSucceeded, nil, &command.Target.Redcon)
+}
+
+func (s *runtimeState) connectAndPublish(ctx context.Context, spec rigble.DeviceSpec, targetRedcon *uint8) error {
+	releaseSlot, err := s.acquireConnectSlot(ctx)
+	if err != nil {
+		return err
+	}
+	defer releaseSlot()
+	s.mu.Lock()
+	address, ok := s.addresses[spec.ThingName]
+	s.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("no BLE advertisement address recorded for %s", spec.ThingName)
+	}
+	device, err := bluetooth.DefaultAdapter.Connect(address, bluetooth.ConnectionParams{
+		ConnectionTimeout: bluetooth.NewDuration(s.cfg.ConnectTimeout),
+	})
+	if err != nil {
+		return err
+	}
+	defer device.Disconnect()
+	services, err := device.DiscoverServices([]bluetooth.UUID{s.txingUUID})
+	if err != nil {
+		return err
+	}
+	if len(services) == 0 {
+		return fmt.Errorf("txing BLE service not found")
+	}
+	characteristics, err := services[0].DiscoverCharacteristics([]bluetooth.UUID{s.commandUUID, s.stateUUID, s.powerUUID, s.weatherUUID})
+	if err != nil {
+		return err
+	}
+	chars := map[string]bluetooth.DeviceCharacteristic{}
+	for _, characteristic := range characteristics {
+		chars[characteristic.UUID().String()] = characteristic
+	}
+	if targetRedcon != nil {
+		payload, err := rigble.EncodeRedconCommand(*targetRedcon)
+		if err != nil {
+			return err
+		}
+		commandChar, ok := chars[s.commandUUID.String()]
+		if !ok {
+			return fmt.Errorf("command characteristic not found")
+		}
+		if _, err := commandChar.Write(payload); err != nil {
+			return err
+		}
+	}
+	stateChar, ok := chars[s.stateUUID.String()]
+	if !ok {
+		return fmt.Errorf("state characteristic not found")
+	}
+	stateBytes, err := readCharacteristic(stateChar, 16)
+	if err != nil {
+		return err
+	}
+	powerChar, hasPowerChar := chars[s.powerUUID.String()]
+	var powerMeasurement *rigble.PowerMeasurement
+	if hasPowerChar {
+		if data, err := readCharacteristic(powerChar, 16); err == nil {
+			measurement, err := rigble.ParsePowerMeasurement(data)
+			if err == nil {
+				powerMeasurement = &measurement
+			}
+		}
+	}
+	addressText := address.String()
+	now := uint64(time.Now().UnixMilli())
+	if spec.Kind == rigble.DeviceKindWeather {
+		state, err := rigble.ParseWeatherState(stateBytes)
+		if err != nil {
+			return err
+		}
+		var weatherMeasurement *rigble.WeatherMeasurement
+		if weatherChar, ok := chars[s.weatherUUID.String()]; ok {
+			if data, err := readCharacteristic(weatherChar, 32); err == nil {
+				measurement, err := rigble.ParseWeatherMeasurement(data)
+				if err == nil {
+					weatherMeasurement = &measurement
+				}
+			}
+		}
+		s.publishSample(ctx, rigble.WeatherStateSample(spec, state.Redcon, powerMeasurement, weatherMeasurement, &addressText, s.nextSeq(), now), true)
+		return nil
+	}
+	state, err := rigble.ParsePowerState(stateBytes)
+	if err != nil {
+		return err
+	}
+	s.publishSample(ctx, rigble.PowerStateSample(spec, state.Redcon, powerMeasurement, &addressText, s.nextSeq(), now), true)
+	return nil
+}
+
+func (s *runtimeState) acquireConnectSlot(ctx context.Context) (func(), error) {
+	if s.connectSlots == nil {
+		return func() {}, nil
+	}
+	select {
+	case s.connectSlots <- struct{}{}:
+		return func() { <-s.connectSlots }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func readCharacteristic(characteristic bluetooth.DeviceCharacteristic, size int) ([]byte, error) {
+	buffer := make([]byte, size)
+	n, err := characteristic.Read(buffer)
+	if err != nil {
+		return nil, err
+	}
+	return append([]byte(nil), buffer[:n]...), nil
+}
+
+func (s *runtimeState) publishSample(ctx context.Context, sample rigble.CapabilitySample, includeShadow bool) {
+	state := rigble.CapabilityStateFromSample(rigble.AdapterID, sample)
+	payload, err := state.Marshal()
+	if err != nil {
+		s.logger.Print(ctx, "warning", fmt.Sprintf("capability state encode failed thing=%s error=%q", sample.ThingName, err))
+		return
+	}
+	topic, err := protocol.BuildCapabilityStateTopic(sample.ThingName, rigble.AdapterID)
+	if err == nil {
+		if err := s.ipc.PublishRetained(topic, payload); err != nil {
+			s.logger.Print(ctx, "warning", fmt.Sprintf("capability state publish failed thing=%s error=%q", sample.ThingName, err))
+		}
+	}
+	if !includeShadow {
+		return
+	}
+	updates, err := rigble.ShadowUpdatesFromSample(sample)
+	if err != nil {
+		s.logger.Print(ctx, "warning", fmt.Sprintf("shadow update build failed thing=%s error=%q", sample.ThingName, err))
+		return
+	}
+	for _, update := range updates {
+		if err := s.ipc.Publish(update.Topic, update.Payload); err != nil {
+			s.logger.Print(ctx, "warning", fmt.Sprintf("shadow update publish failed topic=%s error=%q", update.Topic, err))
+		}
+	}
+}
+
+func (s *runtimeState) publishHeartbeat(ctx context.Context, activeThingName *string) {
+	heartbeat := protocol.NewCapabilityHeartbeat(rigble.AdapterID, protocol.HeartbeatRunning, activeThingName, uint64(time.Now().UnixMilli()), s.nextSeq())
+	payload, err := heartbeat.Marshal()
+	if err != nil {
+		return
+	}
+	topic, err := protocol.BuildCapabilityHeartbeatTopic(rigble.AdapterID)
+	if err != nil {
+		return
+	}
+	if err := s.ipc.PublishRetained(topic, payload); err != nil {
+		s.logger.Print(ctx, "warning", fmt.Sprintf("heartbeat publish failed error=%q", err))
+	}
+}
+
+func (s *runtimeState) publishCommandResult(ctx context.Context, command protocol.CapabilityCommand, status string, message *string, redcon *uint8) {
+	topic, payload, err := rigble.PublishCommandResult(rigble.AdapterID, command, status, message, redcon, uint64(time.Now().UnixMilli()), s.nextSeq())
+	if err != nil {
+		s.logger.Print(ctx, "warning", fmt.Sprintf("command result build failed thing=%s error=%q", command.ThingName, err))
+		return
+	}
+	if err := s.ipc.Publish(topic, payload); err != nil {
+		s.logger.Print(ctx, "warning", fmt.Sprintf("command result publish failed thing=%s error=%q", command.ThingName, err))
+	}
+}
+
+func (s *runtimeState) nextSeq() uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	seq := s.seq
+	s.seq++
+	return seq
+}
+
+func _jsonDebug(value any) string {
+	payload, _ := json.Marshal(value)
+	return string(payload)
+}

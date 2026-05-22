@@ -27,7 +27,7 @@ aws sts get-caller-identity
 
 Set `TXING_AWS_STACK` explicitly before running stack-backed commands such as
 `just aws::deploy`, `just aws::publish`, `just aws::publish-lambda`,
-`just aws::check`, `just office::write-env`, `just aws::publish-rig`, and
+`just aws::check`, `just office::write-env`, `just rig::cert`, and
 `just unit::cert`.
 Export it in the operator shell or pass a positional stack name to recipes that
 accept one. Those commands fail if `TXING_AWS_STACK` is unset and no positional
@@ -69,11 +69,9 @@ long as `TXING_AWS_STACK` is provided in the environment or as a positional stac
 name.
 
 `just aws::publish latest` invokes the AWS-hosted publisher Lambda, which
-downloads public GitHub release assets, uploads Lambda and Greengrass artifacts,
-updates existing Lambda functions, publishes Greengrass component versions, and
-creates both `raspi` and `cloud` Greengrass deployments. It also prunes each
-txing Greengrass component to the newest 10 semantic versions. Run it after the
-`Txing Release` workflow once the stack already exists.
+downloads public GitHub release assets, uploads Lambda artifacts, and updates
+existing Lambda functions. Run it after the `Txing Release` workflow once the
+stack already exists.
 
 `just aws::publish-lambda latest` runs the same Lambda publish code locally. Use
 it before the first `aws::deploy` in a new account/stack so the stable Lambda S3
@@ -96,9 +94,9 @@ generated town thing ID.
 
 `just aws::deploy-rig <town-id> <rig-type> <rig-name>` idempotently creates or
 updates only the rig thing with ThingType `raspi` or `cloud` plus the rig
-`sparkplug` shadow. Shared Greengrass token exchange outputs support `raspi`
-rig hosts; AWS-hosted `cloud` rig runtime IAM is deployed with the cloud MCU
-type stack.
+`sparkplug` shadow. Standalone `raspi` rig daemon IAM and IoT role-alias
+resources are deployed by the rig runtime layer; AWS-hosted `cloud` rig runtime
+IAM is deployed with the cloud MCU type stack.
 
 `just aws::deploy-device <rig-id> <device-type> <device-name>` idempotently
 creates or updates only the device thing, named shadows, and optional
@@ -191,7 +189,7 @@ just rig::check <rig-id>
 just unit::daemon::run
 ```
 
-Production `raspi` rig services run as Greengrass Lite components. Production
+Production `raspi` rig services run as standalone systemd daemons. Production
 `cloud` rig services run as AWS Lambda functions. Local command wrappers use
 native AWS CLI configuration and live AWS resolution; they do not depend on
 generated local AWS config files.
@@ -229,37 +227,29 @@ just aws::init-shadow <thing-name> sparkplug
 
 ## Certificates
 
-`aws::cert` is for `raspi` rig hosts. It resolves the rig thing by generated
-thing ID, creates a new active AWS IoT certificate,
-attaches the base stack IoT policy, attaches the certificate to the rig thing,
-resolves the Greengrass Lite endpoint config, and writes material under
-`config/certs/rig/`.
+`aws::cert` is a compatibility wrapper for `rig::cert`. It resolves the rig
+thing by generated thing ID, creates a new active AWS IoT certificate, creates
+or updates the rig daemon IoT role alias, attaches the certificate to the rig
+thing, renders `daemon.env`, and writes material under `config/certs/rig/`.
 
 ```bash
 just aws::cert <rig-id>
 ```
 
-For existing certificate material, regenerate only the Greengrass Lite config
-fragment with:
-
-```bash
-just aws::greengrass-config <rig-id>
-```
-
 Generated files:
 
-- `config/certs/rig/rig.cert.pem`
-- `config/certs/rig/rig.public.key`
-- `config/certs/rig/rig.private.key`
-- `config/certs/rig/rig.cert.arn`
-- `config/certs/rig/AmazonRootCA1.pem`
-- `config/certs/rig/greengrass-lite.yaml`
+- `config/certs/rig/<rig-id>/rig-daemon/daemon.env`
+- `config/certs/rig/<rig-id>/rig-daemon/certificate.pem.crt`
+- `config/certs/rig/<rig-id>/rig-daemon/public.pem.key`
+- `config/certs/rig/<rig-id>/rig-daemon/private.pem.key`
+- `config/certs/rig/<rig-id>/rig-daemon/certificate.arn`
+- `config/certs/rig/<rig-id>/rig-daemon/AmazonRootCA1.pem`
+- `config/certs/rig/<rig-id>/<rig-id>-rig-daemon-config.tgz`
 
 `config/certs/` is explicitly ignored by git. The recipe refuses to overwrite
 existing material; move or delete the files first if you intentionally rotate the
-rig certificate. On a stable `raspi` rig host, copy the certificate, private
-key, root CA, and generated `greengrass-lite.yaml` during manual Greengrass Lite
-host configuration. `cloud` rigs do not use this host certificate path.
+rig certificate. On a stable `raspi` rig host, unpack the tarball under
+`/root/.config/txing`. `cloud` rigs do not use this host certificate path.
 
 ## Cleanup
 
@@ -269,10 +259,8 @@ For a full teardown, delete resources in reverse dependency order:
 just aws-town cloudformation delete-stack --stack-name "$TXING_AWS_STACK"
 ```
 
-The stack has a delete-time cleanup custom resource for disposable
-`GreengrassArtifactsBucketName` contents. It does not detach IoT policies or
-delete manually enlisted IoT things; manually rolled-in resources must be
-handled explicitly by the operator.
+The stack does not detach IoT policies or delete manually enlisted IoT things;
+manually rolled-in resources must be handled explicitly by the operator.
 
 Legacy AWS-hosted web stacks previously owned `WebAppBucketName` and
 `WebAppDistributionId`. Current CloudFormation removes those resources because

@@ -7,8 +7,6 @@ import os
 from pathlib import Path
 import re
 import shutil
-import stat
-import tarfile
 import tempfile
 import urllib.error
 import urllib.parse
@@ -20,7 +18,6 @@ from botocore.exceptions import ClientError
 
 
 DEFAULT_GITHUB_REPOSITORY = "mparkachov/txing"
-GREENGRASS_COMPONENT_VERSIONS_TO_KEEP = 10
 _SEMVER_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 _USER_AGENT = "txing-release-publisher"
 
@@ -36,13 +33,6 @@ class LambdaAsset:
 
 
 @dataclass(frozen=True)
-class RigComponent:
-    component_name: str
-    asset_name: str
-    binary_name: str
-
-
-@dataclass(frozen=True)
 class ReleaseInfo:
     tag: str
     version: str
@@ -53,7 +43,6 @@ class ReleaseInfo:
 class PublishConfig:
     github_repository: str
     lambda_artifact_bucket: str | None
-    greengrass_artifact_bucket: str | None
     aws_region: str
     txing_version_base: str | None = None
 
@@ -79,9 +68,6 @@ class PublishConfig:
         return cls(
             github_repository=repository,
             lambda_artifact_bucket=os.environ.get("TXING_LAMBDA_ARTIFACT_BUCKET"),
-            greengrass_artifact_bucket=os.environ.get(
-                "TXING_GREENGRASS_ARTIFACT_BUCKET"
-            ),
             aws_region=region,
             txing_version_base=os.environ.get("TXING_VERSION_BASE"),
         )
@@ -91,24 +77,6 @@ LAMBDA_ASSETS: tuple[LambdaAsset, ...] = (
     LambdaAsset("txing-witness-lambda", "txing-witness-lambda-linux-aarch64.zip"),
     LambdaAsset("txing-cloud-rig-lambda", "txing-cloud-rig-lambda-linux-aarch64.zip"),
     LambdaAsset("txing-cloud-mcu-lambda", "txing-cloud-mcu-lambda-linux-aarch64.zip"),
-)
-
-RIG_COMPONENTS: tuple[RigComponent, ...] = (
-    RigComponent(
-        "dev.txing.rig.SparkplugManager",
-        "txing-sparkplug-manager-linux-aarch64.tar.gz",
-        "txing-sparkplug-manager",
-    ),
-    RigComponent(
-        "dev.txing.rig.BleConnectivity",
-        "txing-ble-connectivity-linux-aarch64.tar.gz",
-        "txing-ble-connectivity",
-    ),
-    RigComponent(
-        "dev.txing.rig.AwsConnectivity",
-        "txing-aws-connectivity-linux-aarch64.tar.gz",
-        "txing-aws-connectivity",
-    ),
 )
 
 
@@ -147,17 +115,6 @@ def lambda_current_key(function_name: str) -> str:
     return f"lambda/{function_name}/current/bootstrap.zip"
 
 
-def rig_artifact_key(component_name: str, version: str, binary_name: str) -> str:
-    return f"artifacts/{component_name}/{version}/{binary_name}"
-
-
-def semantic_version_key(version: str) -> tuple[int, int, int]:
-    if not _SEMVER_RE.fullmatch(version):
-        raise PublishError(f"component version must be SemVer X.Y.Z, got: {version}")
-    major, minor, patch = version.split(".")
-    return (int(major), int(minor), int(patch))
-
-
 def validate_lambda_zip(path: Path) -> None:
     try:
         with zipfile.ZipFile(path) as archive:
@@ -168,294 +125,6 @@ def validate_lambda_zip(path: Path) -> None:
         raise PublishError(
             f"{path.name} must contain exactly one root-level bootstrap executable"
         )
-
-
-def validate_and_extract_rig_binary(
-    archive_path: Path, binary_name: str, output_dir: Path
-) -> Path:
-    output_dir.mkdir(parents=True, exist_ok=True)
-    try:
-        with tarfile.open(archive_path, mode="r:gz") as archive:
-            files = [member for member in archive.getmembers() if member.isfile()]
-            normalized_names = [
-                member.name[2:] if member.name.startswith("./") else member.name
-                for member in files
-            ]
-            if normalized_names != [binary_name]:
-                raise PublishError(
-                    f"{archive_path.name} must contain exactly root-level {binary_name}"
-                )
-            member = files[0]
-            if "/" in normalized_names[0]:
-                raise PublishError(
-                    f"{archive_path.name} must contain root-level {binary_name}"
-                )
-            if member.mode & stat.S_IXUSR == 0:
-                raise PublishError(
-                    f"{binary_name} in {archive_path.name} is not executable"
-                )
-            extracted = archive.extractfile(member)
-            if extracted is None:
-                raise PublishError(
-                    f"could not extract {binary_name} from {archive_path.name}"
-                )
-            output_path = output_dir / binary_name
-            with extracted, output_path.open("wb") as output:
-                shutil.copyfileobj(extracted, output)
-            os.chmod(output_path, member.mode & 0o777)
-            return output_path
-    except tarfile.TarError as err:
-        raise PublishError(f"{archive_path.name} is not a valid tar.gz file") from err
-
-
-def greengrass_components_for_target(
-    version: str, rig_type: str
-) -> dict[str, dict[str, str]]:
-    if rig_type == "raspi":
-        component_names = (
-            "dev.txing.rig.SparkplugManager",
-            "dev.txing.rig.BleConnectivity",
-        )
-    elif rig_type == "cloud":
-        component_names = (
-            "dev.txing.rig.SparkplugManager",
-            "dev.txing.rig.AwsConnectivity",
-        )
-    else:
-        raise PublishError(f"unsupported Greengrass rig type: {rig_type}")
-    return {name: {"componentVersion": version} for name in component_names}
-
-
-def greengrass_recipe(
-    component_name: str,
-    version: str,
-    artifact_uri: str,
-    aws_region: str,
-    iot_data_endpoint: str,
-    txing_version_base: str | None = None,
-) -> dict[str, object]:
-    txing_version_base = txing_version_base or version
-    if component_name == "dev.txing.rig.SparkplugManager":
-        return _sparkplug_manager_recipe(
-            version, artifact_uri, aws_region, iot_data_endpoint, txing_version_base
-        )
-    if component_name == "dev.txing.rig.BleConnectivity":
-        return _ble_connectivity_recipe(version, artifact_uri)
-    if component_name == "dev.txing.rig.AwsConnectivity":
-        return _aws_connectivity_recipe(
-            version, artifact_uri, aws_region, iot_data_endpoint, txing_version_base
-        )
-    raise PublishError(f"unsupported Greengrass component: {component_name}")
-
-
-def _base_recipe(
-    component_name: str,
-    version: str,
-    description: str,
-    artifact_uri: str,
-    run_script: str,
-    default_configuration: dict[str, object],
-    dependencies: dict[str, object] | None = None,
-) -> dict[str, object]:
-    recipe: dict[str, object] = {
-        "RecipeFormatVersion": "2020-01-25",
-        "ComponentName": component_name,
-        "ComponentVersion": version,
-        "ComponentType": "aws.greengrass.generic",
-        "ComponentDescription": description,
-        "ComponentPublisher": "txing",
-        "ComponentConfiguration": {"DefaultConfiguration": default_configuration},
-        "Manifests": [
-            {
-                "Platform": {"os": "linux", "runtime": "aws_nucleus_lite"},
-                "Lifecycle": {"run": {"Script": run_script}},
-                "Artifacts": [
-                    {
-                        "Uri": artifact_uri,
-                        "Unarchive": "NONE",
-                        "Permission": {"Read": "ALL", "Execute": "ALL"},
-                    }
-                ],
-            }
-        ],
-    }
-    if dependencies:
-        recipe["ComponentDependencies"] = dependencies
-    return recipe
-
-
-def _sparkplug_manager_recipe(
-    version: str,
-    artifact_uri: str,
-    aws_region: str,
-    iot_data_endpoint: str,
-    txing_version_base: str,
-) -> dict[str, object]:
-    return _base_recipe(
-        "dev.txing.rig.SparkplugManager",
-        version,
-        "txing rig Sparkplug lifecycle manager.",
-        artifact_uri,
-        "\n".join(
-            [
-                f'export AWS_REGION="{aws_region}"',
-                f'export AWS_DEFAULT_REGION="{aws_region}"',
-                f'export AWS_IOT_ENDPOINT="{iot_data_endpoint}"',
-                f'export TXING_VERSION_BASE="{txing_version_base}"',
-                f'export TXING_VERSION="{version}"',
-                'exec "{artifacts:path}/txing-sparkplug-manager" \\',
-                f'  --iot-endpoint "{iot_data_endpoint}" \\',
-                f'  --aws-region "{aws_region}" \\',
-                '  --inventory-interval-seconds "{configuration:/InventoryIntervalSeconds}" \\',
-                '  --command-deadline-ms "{configuration:/CommandDeadlineMs}"',
-            ]
-        ),
-        {
-            "InventoryIntervalSeconds": 30,
-            "CommandDeadlineMs": 60000,
-            "accessControl": {
-                "aws.greengrass.ipc.pubsub": {
-                    "dev.txing.rig.SparkplugManager:pubsub:1": {
-                        "policyDescription": (
-                            "Allows Sparkplug manager to exchange v2 capability "
-                            "messages with rig adapters."
-                        ),
-                        "operations": [
-                            "aws.greengrass#PublishToTopic",
-                            "aws.greengrass#SubscribeToTopic",
-                        ],
-                        "resources": ["dev/txing/rig/v2/*"],
-                    }
-                }
-            },
-        },
-        {
-            "aws.greengrass.TokenExchangeService": {
-                "VersionRequirement": ">=0.0.0",
-                "DependencyType": "HARD",
-            }
-        },
-    )
-
-
-def _ble_connectivity_recipe(version: str, artifact_uri: str) -> dict[str, object]:
-    return _base_recipe(
-        "dev.txing.rig.BleConnectivity",
-        version,
-        "txing rig-wide BLE connectivity adapter for power and weather devices.",
-        artifact_uri,
-        "\n".join(
-            [
-                'exec "{artifacts:path}/txing-ble-connectivity" \\',
-                '  --adapter-id "{configuration:/AdapterId}" \\',
-                '  --scan-interval-ms "{configuration:/ScanIntervalMs}" \\',
-                '  --presence-timeout-ms "{configuration:/PresenceTimeoutMs}" \\',
-                '  --reconnect-delay-ms "{configuration:/ReconnectDelayMs}" \\',
-                '  --connect-timeout-ms "{configuration:/ConnectTimeoutMs}" \\',
-                '  --command-timeout-ms "{configuration:/CommandTimeoutMs}" \\',
-                '  --heartbeat-interval-ms "{configuration:/HeartbeatIntervalMs}" \\',
-                '  --max-connections "{configuration:/MaxConnections}"',
-            ]
-        ),
-        {
-            "AdapterId": "dev.txing.rig.BleConnectivity",
-            "ScanIntervalMs": 500,
-            "PresenceTimeoutMs": 20000,
-            "ReconnectDelayMs": 2000,
-            "ConnectTimeoutMs": 8000,
-            "CommandTimeoutMs": 8000,
-            "HeartbeatIntervalMs": 10000,
-            "MaxConnections": 0,
-            "accessControl": {
-                "aws.greengrass.ipc.pubsub": {
-                    "dev.txing.rig.BleConnectivity:pubsub:1": {
-                        "policyDescription": (
-                            "Allows BLE connectivity to exchange v2 capability "
-                            "messages with the Sparkplug manager."
-                        ),
-                        "operations": [
-                            "aws.greengrass#PublishToTopic",
-                            "aws.greengrass#SubscribeToTopic",
-                        ],
-                        "resources": ["dev/txing/rig/v2/*"],
-                    }
-                },
-                "aws.greengrass.ipc.mqttproxy": {
-                    "dev.txing.rig.BleConnectivity:mqttproxy:1": {
-                        "policyDescription": (
-                            "Allows BLE connectivity to publish BLE-owned named "
-                            "shadow updates."
-                        ),
-                        "operations": ["aws.greengrass#PublishToIoTCore"],
-                        "resources": [
-                            "$aws/things/+/shadow/name/ble/update",
-                            "$aws/things/+/shadow/name/power/update",
-                            "$aws/things/+/shadow/name/weather/update",
-                        ],
-                    }
-                },
-            },
-        },
-    )
-
-
-def _aws_connectivity_recipe(
-    version: str,
-    artifact_uri: str,
-    aws_region: str,
-    iot_data_endpoint: str,
-    txing_version_base: str,
-) -> dict[str, object]:
-    return _base_recipe(
-        "dev.txing.rig.AwsConnectivity",
-        version,
-        "txing rig-wide AWS retained MQTT connectivity adapter for cloud devices.",
-        artifact_uri,
-        "\n".join(
-            [
-                f'export AWS_REGION="{aws_region}"',
-                f'export AWS_DEFAULT_REGION="{aws_region}"',
-                f'export AWS_IOT_ENDPOINT="{iot_data_endpoint}"',
-                f'export TXING_VERSION_BASE="{txing_version_base}"',
-                f'export TXING_VERSION="{version}"',
-                'exec "{artifacts:path}/txing-aws-connectivity" \\',
-                '  --adapter-id "{configuration:/AdapterId}" \\',
-                f'  --iot-endpoint "{iot_data_endpoint}" \\',
-                f'  --aws-region "{aws_region}" \\',
-                '  --heartbeat-interval-ms "{configuration:/HeartbeatIntervalMs}" \\',
-                '  --state-report-interval-ms "{configuration:/StateReportIntervalMs}" \\',
-                '  --keep-alive-seconds "{configuration:/KeepAliveSeconds}" \\',
-                "  --include-capability time",
-            ]
-        ),
-        {
-            "AdapterId": "dev.txing.rig.AwsConnectivity",
-            "HeartbeatIntervalMs": 10000,
-            "StateReportIntervalMs": 10000,
-            "KeepAliveSeconds": 60,
-            "accessControl": {
-                "aws.greengrass.ipc.pubsub": {
-                    "dev.txing.rig.AwsConnectivity:pubsub:1": {
-                        "policyDescription": (
-                            "Allows AWS connectivity to exchange v2 capability "
-                            "messages with the Sparkplug manager."
-                        ),
-                        "operations": [
-                            "aws.greengrass#PublishToTopic",
-                            "aws.greengrass#SubscribeToTopic",
-                        ],
-                        "resources": ["dev/txing/rig/v2/*"],
-                    }
-                }
-            },
-        },
-        {
-            "aws.greengrass.TokenExchangeService": {
-                "VersionRequirement": ">=0.0.0",
-                "DependencyType": "HARD",
-            }
-        },
-    )
 
 
 class GitHubReleaseClient:
@@ -561,89 +230,15 @@ def publish_lambdas(
     }
 
 
-def publish_rig(
-    release_ref: str,
-    config: PublishConfig | None = None,
-    github: GitHubReleaseClient | None = None,
-) -> dict[str, object]:
-    config = config or PublishConfig.from_env()
-    if not config.greengrass_artifact_bucket:
-        raise PublishError("TXING_GREENGRASS_ARTIFACT_BUCKET is required")
-    github = github or GitHubReleaseClient(config.github_repository)
-    release = github.resolve_release(release_ref)
-    s3 = boto3.client("s3")
-    greengrass = boto3.client("greengrassv2")
-    iot = boto3.client("iot")
-    endpoint = iot.describe_endpoint(endpointType="iot:Data-ATS")["endpointAddress"]
-    artifacts: dict[str, str] = {}
-    with tempfile.TemporaryDirectory(prefix="txing-rig-release.") as work_dir_raw:
-        work_dir = Path(work_dir_raw)
-        for component in RIG_COMPONENTS:
-            asset_path = work_dir / component.asset_name
-            github.download_asset(release, component.asset_name, asset_path)
-            binary_path = validate_and_extract_rig_binary(
-                asset_path, component.binary_name, work_dir / component.binary_name
-            )
-            key = rig_artifact_key(
-                component.component_name, release.version, component.binary_name
-            )
-            _upload_file_if_missing(
-                s3, config.greengrass_artifact_bucket, key, binary_path
-            )
-            artifacts[component.component_name] = (
-                f"s3://{config.greengrass_artifact_bucket}/{key}"
-            )
-    created_components = []
-    for component in RIG_COMPONENTS:
-        recipe = greengrass_recipe(
-            component.component_name,
-            release.version,
-            artifacts[component.component_name],
-            config.aws_region,
-            endpoint,
-            config.txing_version_base,
-        )
-        _create_component_version(greengrass, recipe)
-        created_components.append(component.component_name)
-    deployments = {}
-    for rig_type in ("raspi", "cloud"):
-        target_arn = _ensure_thing_group(iot, f"txing-rig-type-{rig_type}")
-        greengrass.create_deployment(
-            targetArn=target_arn,
-            deploymentName=f"txing-{rig_type}-{release.version}",
-            components=greengrass_components_for_target(release.version, rig_type),
-        )
-        deployments[rig_type] = target_arn
-    deleted_component_versions = cleanup_greengrass_component_versions(
-        greengrass,
-        [component.component_name for component in RIG_COMPONENTS],
-        keep_versions=GREENGRASS_COMPONENT_VERSIONS_TO_KEEP,
-    )
-    return {
-        "releaseTag": release.tag,
-        "version": release.version,
-        "greengrass": {
-            "components": created_components,
-            "artifacts": artifacts,
-            "deployments": deployments,
-            "deletedComponentVersions": deleted_component_versions,
-        },
-    }
-
-
 def publish_all(
     release_ref: str, config: PublishConfig | None = None
 ) -> dict[str, object]:
-    config = config or PublishConfig.from_env()
-    github = GitHubReleaseClient(config.github_repository)
-    lambda_result = publish_lambdas(release_ref, config=config, github=github)
-    rig_result = publish_rig(release_ref, config=config, github=github)
+    lambda_result = publish_lambdas(release_ref, config=config)
     return {
         "ok": True,
         "releaseTag": lambda_result["releaseTag"],
         "version": lambda_result["version"],
         "lambdas": lambda_result["lambdas"],
-        "greengrass": rig_result["greengrass"],
     }
 
 
@@ -689,132 +284,16 @@ def _update_lambda_function(
     return True
 
 
-def _create_component_version(greengrass, recipe: dict[str, object]) -> None:
-    body = json.dumps(recipe, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    try:
-        greengrass.create_component_version(inlineRecipe=body)
-        print(
-            "published component recipe "
-            f"{recipe['ComponentName']} {recipe['ComponentVersion']}"
-        )
-    except ClientError as err:
-        code = err.response.get("Error", {}).get("Code", "")
-        message = err.response.get("Error", {}).get("Message", "")
-        if code == "ConflictException" or "already exists" in message.lower():
-            print(
-                "component recipe already exists: "
-                f"{recipe['ComponentName']} {recipe['ComponentVersion']}"
-            )
-            return
-        raise
-
-
-def cleanup_greengrass_component_versions(
-    greengrass,
-    component_names: list[str],
-    *,
-    keep_versions: int = GREENGRASS_COMPONENT_VERSIONS_TO_KEEP,
-) -> dict[str, list[str]]:
-    if keep_versions < 1:
-        raise PublishError("keep_versions must be at least 1")
-
-    component_arns = _greengrass_component_arns(greengrass, set(component_names))
-    deleted_by_component: dict[str, list[str]] = {}
-    for component_name in component_names:
-        component_arn = component_arns.get(component_name)
-        if not component_arn:
-            deleted_by_component[component_name] = []
-            continue
-        versions = _greengrass_component_versions(greengrass, component_arn)
-        old_versions = greengrass_component_versions_to_delete(
-            versions, keep_versions=keep_versions
-        )
-        deleted_versions: list[str] = []
-        for version in old_versions:
-            version_text = str(version["componentVersion"])
-            try:
-                greengrass.delete_component(arn=version["arn"])
-            except ClientError as err:
-                code = err.response.get("Error", {}).get("Code", "")
-                if code != "ResourceNotFoundException":
-                    raise
-            print(f"deleted Greengrass component {component_name} {version_text}")
-            deleted_versions.append(version_text)
-        deleted_by_component[component_name] = deleted_versions
-    return deleted_by_component
-
-
-def greengrass_component_versions_to_delete(
-    versions: list[dict[str, str]], *, keep_versions: int
-) -> list[dict[str, str]]:
-    if keep_versions < 1:
-        raise PublishError("keep_versions must be at least 1")
-    sortable_versions = []
-    for version in versions:
-        version_text = version.get("componentVersion", "")
-        arn = version.get("arn", "")
-        if not version_text or not arn:
-            continue
-        sortable_versions.append((semantic_version_key(version_text), version))
-    sortable_versions.sort(key=lambda item: item[0], reverse=True)
-    return [version for _, version in sortable_versions[keep_versions:]]
-
-
-def _greengrass_component_arns(
-    greengrass, component_names: set[str]
-) -> dict[str, str]:
-    component_arns: dict[str, str] = {}
-    paginator = greengrass.get_paginator("list_components")
-    for page in paginator.paginate(scope="PRIVATE"):
-        for component in page.get("components", []):
-            name = component.get("componentName")
-            arn = component.get("arn")
-            if name in component_names and isinstance(arn, str) and arn:
-                component_arns[name] = arn
-        if component_names.issubset(component_arns):
-            break
-    return component_arns
-
-
-def _greengrass_component_versions(
-    greengrass, component_arn: str
-) -> list[dict[str, str]]:
-    versions: list[dict[str, str]] = []
-    paginator = greengrass.get_paginator("list_component_versions")
-    for page in paginator.paginate(arn=component_arn):
-        for version in page.get("componentVersions", []):
-            version_text = version.get("componentVersion")
-            arn = version.get("arn")
-            if isinstance(version_text, str) and isinstance(arn, str):
-                versions.append({"componentVersion": version_text, "arn": arn})
-    return versions
-
-
-def _ensure_thing_group(iot, group_name: str) -> str:
-    try:
-        iot.create_thing_group(thingGroupName=group_name)
-        print(f"created thing group {group_name}")
-    except ClientError as err:
-        code = err.response.get("Error", {}).get("Code", "")
-        if code != "ResourceAlreadyExistsException":
-            raise
-    response = iot.describe_thing_group(thingGroupName=group_name)
-    return response["thingGroupArn"]
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m aws_admin.publish_release")
     subparsers = parser.add_subparsers(dest="command", required=True)
-    for command in ("lambda", "rig", "all"):
+    for command in ("lambda", "all"):
         command_parser = subparsers.add_parser(command)
         command_parser.add_argument("--release", default="latest")
     args = parser.parse_args(argv)
     config = PublishConfig.from_env()
     if args.command == "lambda":
         result = publish_lambdas(args.release, config=config)
-        result = {"ok": True, **result}
-    elif args.command == "rig":
-        result = publish_rig(args.release, config=config)
         result = {"ok": True, **result}
     else:
         result = publish_all(args.release, config=config)

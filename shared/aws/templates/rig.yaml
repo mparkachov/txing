@@ -1,15 +1,11 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: txing rig AWS runtime layer.
 
-Parameters:
-  GreengrassArtifactsBucketName:
-    Type: String
-
 Resources:
   TxingRigRuntimeManagedPolicy:
     Type: AWS::IAM::ManagedPolicy
     Properties:
-      Description: Rig runtime policy for SigV4 MQTT/WSS, registry reads, shadows, logs, and Greengrass artifacts.
+      Description: Rig runtime policy for MQTT, registry reads, shadows, and logs.
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -114,39 +110,6 @@ Resources:
             Resource:
               - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:txing/*
               - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:txing/*:log-stream:*
-          - Sid: RigGreengrassArtifactBucketRead
-            Effect: Allow
-            Action:
-              - s3:GetBucketLocation
-              - s3:ListBucket
-            Resource: !Sub arn:${AWS::Partition}:s3:::${GreengrassArtifactsBucketName}
-          - Sid: RigGreengrassArtifactObjectRead
-            Effect: Allow
-            Action: s3:GetObject
-            Resource: !Sub arn:${AWS::Partition}:s3:::${GreengrassArtifactsBucketName}/*
-          - Sid: RigGreengrassComponentDeploy
-            Effect: Allow
-            Action:
-              - greengrass:CreateComponentVersion
-              - greengrass:CreateDeployment
-              - greengrass:DescribeComponent
-              - greengrass:GetComponent
-              - greengrass:GetDeployment
-              - greengrass:ListComponentVersions
-              - greengrass:ListDeployments
-            Resource: "*"
-          - Sid: RigGreengrassArtifactObjectWrite
-            Effect: Allow
-            Action:
-              - s3:AbortMultipartUpload
-              - s3:PutObject
-            Resource: !Sub arn:${AWS::Partition}:s3:::${GreengrassArtifactsBucketName}/*
-          - Sid: RigTypeThingGroupDeploy
-            Effect: Allow
-            Action:
-              - iot:CreateThingGroup
-              - iot:DescribeThingGroup
-            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thinggroup/txing-rig-type-*
 
   TxingRigRuntimeRole:
     Type: AWS::IAM::Role
@@ -162,10 +125,10 @@ Resources:
       ManagedPolicyArns:
         - !Ref TxingRigRuntimeManagedPolicy
 
-  TxingGreengrassTokenExchangeRole:
+  TxingRigDaemonCredentialRole:
     Type: AWS::IAM::Role
     Properties:
-      Description: Token exchange IAM role assumed by AWS IoT Credentials Provider for Greengrass Lite rig components.
+      Description: IAM role assumed by AWS IoT Credentials Provider for standalone rig daemons.
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -176,10 +139,10 @@ Resources:
       ManagedPolicyArns:
         - !Ref TxingRigRuntimeManagedPolicy
 
-  TxingGreengrassTokenExchangeRoleAlias:
+  TxingRigDaemonCredentialRoleAlias:
     Type: AWS::IoT::RoleAlias
     Properties:
-      RoleArn: !GetAtt TxingGreengrassTokenExchangeRole.Arn
+      RoleArn: !GetAtt TxingRigDaemonCredentialRole.Arn
       CredentialDurationSeconds: 3600
 
   TxingRigBootstrapManagedPolicy:
@@ -201,15 +164,13 @@ Outputs:
     Value: !Ref TxingRigRuntimeRole
   RigRuntimeManagedPolicyArn:
     Value: !Ref TxingRigRuntimeManagedPolicy
-  GreengrassRigTokenExchangeManagedPolicyArn:
-    Value: !Ref TxingRigRuntimeManagedPolicy
-  GreengrassTokenExchangeRoleArn:
-    Value: !GetAtt TxingGreengrassTokenExchangeRole.Arn
-  GreengrassTokenExchangeRoleName:
-    Value: !Ref TxingGreengrassTokenExchangeRole
-  GreengrassTokenExchangeRoleAlias:
-    Value: !Ref TxingGreengrassTokenExchangeRoleAlias
-  GreengrassTokenExchangeRoleAliasArn:
-    Value: !GetAtt TxingGreengrassTokenExchangeRoleAlias.RoleAliasArn
+  RigDaemonCredentialRoleArn:
+    Value: !GetAtt TxingRigDaemonCredentialRole.Arn
+  RigDaemonCredentialRoleName:
+    Value: !Ref TxingRigDaemonCredentialRole
+  RigDaemonCredentialRoleAlias:
+    Value: !Ref TxingRigDaemonCredentialRoleAlias
+  RigDaemonCredentialRoleAliasArn:
+    Value: !GetAtt TxingRigDaemonCredentialRoleAlias.RoleAliasArn
   RigBootstrapManagedPolicyArn:
     Value: !Ref TxingRigBootstrapManagedPolicy

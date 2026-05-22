@@ -320,29 +320,28 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertNotIn("AWS_STACK_NAME", daemon_justfile)
         self.assertNotIn("DeviceDaemonCredentialRoleAlias", daemon_justfile)
 
-    def test_template_defines_greengrass_token_exchange_resources(self) -> None:
+    def test_template_defines_rig_daemon_credential_resources(self) -> None:
         template = _template_text()
 
-        self.assertIn("TxingGreengrassTokenExchangeRole:", template)
+        self.assertIn("TxingRigDaemonCredentialRole:", template)
         self.assertIn("Service: credentials.iot.amazonaws.com", template)
-        self.assertIn("TxingGreengrassTokenExchangeRoleAlias:", template)
+        self.assertIn("TxingRigDaemonCredentialRoleAlias:", template)
         self.assertIn("Type: AWS::IoT::RoleAlias", template)
         self.assertIn("CredentialDurationSeconds: 3600", template)
         self.assertIn("iot:AssumeRoleWithCertificate", template)
         self.assertNotIn("greengrass:*", template)
-        self.assertIn("TxingGreengrassArtifactsBucket:", template)
-        self.assertIn("Sid: RigGreengrassArtifactObjectRead", template)
-        self.assertIn("Sid: RigGreengrassComponentDeploy", template)
-        self.assertIn("greengrass:CreateComponentVersion", template)
-        self.assertIn("greengrass:CreateDeployment", template)
-        self.assertIn("greengrass:ListThingGroupsForCoreDevice", template)
-        self.assertIn("greengrass:ResolveComponentCandidates", template)
-        self.assertIn("Sid: RigGreengrassArtifactObjectWrite", template)
-        self.assertIn("s3:PutObject", template)
-        self.assertIn("Sid: RigTypeThingGroupDeploy", template)
-        self.assertIn("thinggroup/txing-rig-type-*", template)
-        self.assertIn("GreengrassTokenExchangeRoleAliasArn:", template)
-        self.assertIn("GreengrassArtifactsBucketName:", template)
+        self.assertNotIn("TxingGreengrassArtifactsBucket:", template)
+        self.assertNotIn("Sid: RigGreengrassArtifactObjectRead", template)
+        self.assertNotIn("Sid: RigGreengrassComponentDeploy", template)
+        self.assertNotIn("greengrass:CreateComponentVersion", template)
+        self.assertNotIn("greengrass:CreateDeployment", template)
+        self.assertNotIn("greengrass:ListThingGroupsForCoreDevice", template)
+        self.assertNotIn("greengrass:ResolveComponentCandidates", template)
+        self.assertNotIn("Sid: RigGreengrassArtifactObjectWrite", template)
+        self.assertNotIn("Sid: RigTypeThingGroupDeploy", template)
+        self.assertNotIn("thinggroup/txing-rig-type-*", template)
+        self.assertIn("RigDaemonCredentialRoleAliasArn:", template)
+        self.assertNotIn("GreengrassArtifactsBucketName:", template)
 
     def test_base_stack_cleans_disposable_buckets_on_delete(self) -> None:
         template = _template_text()
@@ -351,15 +350,14 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("FunctionName: aws-clean-stack", template)
         self.assertIn("LogGroupName: /aws/lambda/aws-clean-stack", template)
         self.assertIn("Handler: aws_admin.clean_stack.lambda_handler", template)
-        self.assertIn("Type: Custom::TxingS3BucketCleanup", template)
-        self.assertIn("AwsCleanStackGreengrassArtifactsBucketCleanup:", template)
         self.assertIn("TemplateURL: templates/lambdas/aws-clean-stack.yaml", template)
         self.assertNotIn("TxingStackCleanupFunction:", template)
         self.assertNotIn("RetainLegacyCustomResourceFunctionCondition", template)
         self.assertNotIn("FunctionName: town-BaseEnvironment", template)
         self.assertNotIn("TxingWebBucketCleanup:", template)
         self.assertNotIn("ZipFile: |", template)
-        self.assertIn("s3:DeleteObjectVersion", template)
+        self.assertNotIn("Type: Custom::TxingS3BucketCleanup", template)
+        self.assertNotIn("s3:DeleteObjectVersion", template)
 
     def test_base_stack_does_not_mutate_iot_policy_targets_on_delete(self) -> None:
         template = _template_text()
@@ -625,25 +623,13 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("S3Key: !Ref AwsAdminCodeS3Key", publish_template)
         self.assertIn("TXING_GITHUB_REPOSITORY", publish_template)
         self.assertIn("TXING_LAMBDA_ARTIFACT_BUCKET", publish_template)
-        self.assertIn("TXING_GREENGRASS_ARTIFACT_BUCKET", publish_template)
+        self.assertNotIn("TXING_GREENGRASS_ARTIFACT_BUCKET", publish_template)
         self.assertIn("ReleasePublisherFunctionName", root_template)
         self.assertIn("ReleasePublisherFunctionArn", root_template)
         for action in (
             "lambda:UpdateFunctionCode",
             "lambda:GetFunction",
             "lambda:GetFunctionConfiguration",
-            "greengrass:CreateComponentVersion",
-            "greengrass:CreateDeployment",
-            "greengrass:DeleteComponent",
-            "greengrass:ListComponents",
-            "greengrass:ListComponentVersions",
-            "iot:CreateThingGroup",
-            "iot:DescribeThingGroup",
-            "iot:DescribeEndpoint",
-            "iot:CancelJob",
-            "iot:CreateJob",
-            "iot:DescribeJob",
-            "iot:UpdateJob",
             "s3:PutObject",
             "s3:GetObject",
             "s3:AbortMultipartUpload",
@@ -651,9 +637,20 @@ class AwsTemplatePolicyTests(unittest.TestCase):
             "s3:ListBucketMultipartUploads",
         ):
             self.assertIn(action, publish_template)
-        self.assertIn("Sid: CreateGreengrassDeploymentJobs", publish_template)
-        self.assertIn("thinggroup/txing-rig-type-*", publish_template)
-        self.assertIn("job/*", publish_template)
+        for action in (
+            "greengrass:CreateComponentVersion",
+            "greengrass:CreateDeployment",
+            "greengrass:DeleteComponent",
+            "greengrass:ListComponents",
+            "greengrass:ListComponentVersions",
+            "iot:CreateThingGroup",
+            "iot:CreateJob",
+            "iot:UpdateJob",
+        ):
+            self.assertNotIn(action, publish_template)
+        self.assertNotIn("Sid: CreateGreengrassDeploymentJobs", publish_template)
+        self.assertNotIn("thinggroup/txing-rig-type-*", publish_template)
+        self.assertNotIn("job/*", publish_template)
         self.assertNotIn("FunctionUrlConfig", template)
         self.assertNotIn("GITHUB_TOKEN", template)
 
@@ -755,10 +752,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
             REPO_ROOT / "shared" / "aws" / "python" / "pyproject.toml",
             REPO_ROOT / "devices" / "cloud-mcu" / "lambda" / "go.mod",
             REPO_ROOT / "witness" / "go.mod",
-            REPO_ROOT / "rig" / "capability-protocol" / "Cargo.toml",
-            REPO_ROOT / "rig" / "sparkplug-manager" / "Cargo.toml",
-            REPO_ROOT / "rig" / "ble-connectivity" / "Cargo.toml",
-            REPO_ROOT / "rig" / "aws-connectivity" / "Cargo.toml",
+            REPO_ROOT / "rig" / "go.mod",
             REPO_ROOT / "office" / "package.json",
         ]
         for path in manifest_paths:
@@ -822,27 +816,36 @@ class AwsTemplatePolicyTests(unittest.TestCase):
 
     def test_cert_recipe_is_parameterless_and_writes_ignored_config_certs(self) -> None:
         justfile = (AWS_DIR / "justfile").read_text(encoding="utf-8")
+        rig_justfile = (REPO_ROOT / "rig" / "justfile").read_text(encoding="utf-8")
+        rig_env_template = (REPO_ROOT / "rig" / "rig-daemon.env.template").read_text(
+            encoding="utf-8"
+        )
         gitignore = (REPO_ROOT / ".gitignore").read_text(encoding="utf-8")
 
-        self.assertIn("cert rig_id='':", justfile)
-        self.assertIn("greengrass-config rig_id='':", justfile)
-        self.assertIn('effective_thing_name="$TXING_RIG_ID"', justfile)
-        self.assertIn('cert_dir="{{project_root}}/config/certs/rig"', justfile)
-        self.assertIn('root_ca_path="$cert_dir/AmazonRootCA1.pem"', justfile)
-        self.assertIn('greengrass_config_path="$cert_dir/greengrass-lite.yaml"', justfile)
-        self.assertIn("--endpoint-type iot:CredentialProvider", justfile)
-        self.assertIn("--endpoint-type iot:Data-ATS", justfile)
-        self.assertIn("GreengrassTokenExchangeRoleAlias", justfile)
-        self.assertIn('privateKeyPath: "/var/lib/greengrass/credentials/rig.private.key"', justfile)
-        self.assertIn('certificateFilePath: "/var/lib/greengrass/credentials/rig.cert.pem"', justfile)
-        self.assertIn("greengrassConfig", justfile)
-        self.assertIn("Rig certificate material is missing under $cert_dir", justfile)
-        self.assertIn("https://www.amazontrust.com/repository/AmazonRootCA1.pem", justfile)
-        self.assertIn("rootCaFile", justfile)
-        self.assertIn("Certificate material already exists", justfile)
+        self.assertIn("cert rig_id='' config_dir='':", justfile)
+        self.assertIn('just --justfile "{{project_root}}/rig/justfile" cert', justfile)
+        self.assertNotIn("greengrass-config", justfile)
+        self.assertIn("cert rig_id='' config_dir=config_dir:", rig_justfile)
+        self.assertIn("RigRuntimeManagedPolicyArn", rig_justfile)
+        self.assertIn('daemon_role_name="txing-rig-daemon-$effective_rig_name"', rig_justfile)
+        self.assertIn('iot_role_alias="txing-rig-daemon-$effective_rig_name"', rig_justfile)
+        self.assertIn("credentials.iot.amazonaws.com", rig_justfile)
+        self.assertIn("--endpoint-type iot:CredentialProvider", rig_justfile)
+        self.assertIn("--endpoint-type iot:Data-ATS", rig_justfile)
+        self.assertIn("create-role-alias", rig_justfile)
+        self.assertIn("create-keys-and-certificate", rig_justfile)
+        self.assertIn("attach-thing-principal", rig_justfile)
+        self.assertIn("--thing-principal-type EXCLUSIVE_THING", rig_justfile)
+        self.assertIn("https://www.amazontrust.com/repository/AmazonRootCA1.pem", rig_justfile)
+        self.assertIn("Rig daemon certificate or env material already exists", rig_justfile)
+        self.assertIn("__TXING_IOT_ROLE_ALIAS__", rig_env_template)
+        self.assertIn("TXING_RIG_IPC_SOCKET=/run/txing-rig/rig-ipc.sock", rig_env_template)
+        self.assertIn("TXING_CLOUDWATCH_LOG_GROUP=__TXING_CLOUDWATCH_LOG_GROUP__", rig_env_template)
         self.assertIn("/config/certs/", gitignore)
-        self.assertNotIn("@cert thing_name", justfile)
-        self.assertNotIn("output_dir", justfile)
+        self.assertNotIn("greengrass-lite.yaml", rig_justfile)
+        self.assertNotIn("/etc/greengrass", rig_justfile)
+        self.assertNotIn("@cert thing_name", rig_justfile)
+        self.assertNotIn("output_dir", rig_justfile)
 
     def test_aws_justfile_enables_thing_connectivity_indexing(self) -> None:
         justfile = (AWS_DIR / "justfile").read_text(encoding="utf-8")

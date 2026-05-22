@@ -31,7 +31,7 @@ For the current `unit` device type:
 - `REDCON 1`: board, MCP, and video are available.
 
 The board publishes retained v2 capability state for `board`, `mcp`, and
-`video`. `rig/sparkplug-manager` consumes that retained state directly for
+`video`. `txing-sparkplug-manager` consumes that retained state directly for
 REDCON projection. When BLE confirms REDCON `4` / `power=false`, Sparkplug
 projection clears board-owned capabilities and does not reuse stale retained
 board state on the next wake; fresh board daemon state must arrive before

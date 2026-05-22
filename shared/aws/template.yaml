@@ -55,8 +55,6 @@ Resources:
       Parameters:
         AwsAdminCodeS3Bucket: !Ref AwsAdminCodeS3Bucket
         AwsAdminCodeS3Key: !Ref AwsAdminCodeS3Key
-        GreengrassArtifactsBucketName: !GetAtt BaseEnvironment.Outputs.GreengrassArtifactsBucketName
-        GreengrassArtifactsBucketArn: !GetAtt BaseEnvironment.Outputs.GreengrassArtifactsBucketArn
 
   WitnessLayer:
     Type: AWS::CloudFormation::Stack
@@ -164,8 +162,6 @@ Resources:
     DependsOn: BaseEnvironment
     Properties:
       TemplateURL: templates/rig.yaml
-      Parameters:
-        GreengrassArtifactsBucketName: !GetAtt BaseEnvironment.Outputs.GreengrassArtifactsBucketName
 
   DeviceRuntimeLayer:
     Type: AWS::CloudFormation::Stack
@@ -202,7 +198,6 @@ Resources:
         AwsAdminCodeS3Bucket: !Ref AwsAdminCodeS3Bucket
         AwsAdminCodeS3Key: !Ref AwsAdminCodeS3Key
         LambdaArtifactsBucketName: !Ref LambdaArtifactsBucketName
-        GreengrassArtifactsBucketName: !GetAtt BaseEnvironment.Outputs.GreengrassArtifactsBucketName
         GithubRepository: !Ref GithubRepository
 
 Outputs:
@@ -228,8 +223,6 @@ Outputs:
     Value: !GetAtt BaseEnvironment.Outputs.WebAppUrl
   WebExpectedAdminEmail:
     Value: !GetAtt BaseEnvironment.Outputs.WebExpectedAdminEmail
-  GreengrassArtifactsBucketName:
-    Value: !GetAtt BaseEnvironment.Outputs.GreengrassArtifactsBucketName
   ReleasePublisherFunctionName:
     Value: !GetAtt PublishReleaseLayer.Outputs.ReleasePublisherFunctionName
   ReleasePublisherFunctionArn:
@@ -240,16 +233,14 @@ Outputs:
     Value: !GetAtt RigRuntimeLayer.Outputs.RigRuntimeRoleName
   RigRuntimeManagedPolicyArn:
     Value: !GetAtt RigRuntimeLayer.Outputs.RigRuntimeManagedPolicyArn
-  GreengrassRigTokenExchangeManagedPolicyArn:
-    Value: !GetAtt RigRuntimeLayer.Outputs.GreengrassRigTokenExchangeManagedPolicyArn
-  GreengrassTokenExchangeRoleArn:
-    Value: !GetAtt RigRuntimeLayer.Outputs.GreengrassTokenExchangeRoleArn
-  GreengrassTokenExchangeRoleName:
-    Value: !GetAtt RigRuntimeLayer.Outputs.GreengrassTokenExchangeRoleName
-  GreengrassTokenExchangeRoleAlias:
-    Value: !GetAtt RigRuntimeLayer.Outputs.GreengrassTokenExchangeRoleAlias
-  GreengrassTokenExchangeRoleAliasArn:
-    Value: !GetAtt RigRuntimeLayer.Outputs.GreengrassTokenExchangeRoleAliasArn
+  RigDaemonCredentialRoleArn:
+    Value: !GetAtt RigRuntimeLayer.Outputs.RigDaemonCredentialRoleArn
+  RigDaemonCredentialRoleName:
+    Value: !GetAtt RigRuntimeLayer.Outputs.RigDaemonCredentialRoleName
+  RigDaemonCredentialRoleAlias:
+    Value: !GetAtt RigRuntimeLayer.Outputs.RigDaemonCredentialRoleAlias
+  RigDaemonCredentialRoleAliasArn:
+    Value: !GetAtt RigRuntimeLayer.Outputs.RigDaemonCredentialRoleAliasArn
   RigBootstrapManagedPolicyArn:
     Value: !GetAtt RigRuntimeLayer.Outputs.RigBootstrapManagedPolicyArn
   DeviceRuntimeRoleArn:

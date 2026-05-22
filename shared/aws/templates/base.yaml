@@ -19,22 +19,6 @@ Parameters:
     AllowedPattern: "^https://.+[^/]$"
 
 Resources:
-  TxingGreengrassArtifactsBucket:
-    Type: AWS::S3::Bucket
-    Properties:
-      BucketEncryption:
-        ServerSideEncryptionConfiguration:
-          - ServerSideEncryptionByDefault:
-              SSEAlgorithm: AES256
-      OwnershipControls:
-        Rules:
-          - ObjectOwnership: BucketOwnerEnforced
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        IgnorePublicAcls: true
-        BlockPublicPolicy: true
-        RestrictPublicBuckets: true
-
   TxingGatewayLogsManagedPolicy:
     Type: AWS::IAM::ManagedPolicy
     Properties:
@@ -93,20 +77,7 @@ Resources:
             Effect: Allow
             Action: iot:Subscribe
             Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/*
-          - Sid: GreengrassControlPlane
-            Effect: Allow
-            Action:
-              - greengrass:CreateComponentVersion
-              - greengrass:CreateDeployment
-              - greengrass:DescribeComponent
-              - greengrass:GetComponent
-              - greengrass:GetDeployment
-              - greengrass:ListThingGroupsForCoreDevice
-              - greengrass:ResolveComponentCandidates
-              - greengrass:ListComponentVersions
-              - greengrass:ListDeployments
-            Resource: "*"
-          - Sid: GreengrassTokenExchangeAssumeRole
+          - Sid: IoTRoleAliasAssumeRole
             Effect: Allow
             Action: iot:AssumeRoleWithCertificate
             Resource: "*"
@@ -301,7 +272,3 @@ Outputs:
     Value: !Sub "${WebAppUrl}/"
   WebExpectedAdminEmail:
     Value: !Ref AdminEmail
-  GreengrassArtifactsBucketName:
-    Value: !Ref TxingGreengrassArtifactsBucket
-  GreengrassArtifactsBucketArn:
-    Value: !GetAtt TxingGreengrassArtifactsBucket.Arn

@@ -8,9 +8,8 @@ component that owns the host behavior.
 - Development machines may use a repository checkout.
 - Production board hosts install release artifacts with `mise` and do not need a
   source checkout for the release runtime path.
-- Production `raspi` rig hosts receive txing components through Greengrass
-  cloud deployments and do not need a source checkout, `mise`, AWS CLI, or AWS
-  access keys.
+- Production `raspi` rig hosts install standalone txing daemon release
+  artifacts with root-owned `mise` and systemd.
 - Production `cloud` rigs are AWS-hosted Lambda/EventBridge/SQS runtimes and
   do not have a host install path.
 - Operator AWS account, credentials, profile selection, and region come from
@@ -45,25 +44,27 @@ AWS bring-up and teardown live in [aws.md](./aws.md).
 ## Raspi Rig Host
 
 The `raspi` rig is the always-on host coordinator that owns Sparkplug
-publication for local BLE-managed devices. Production `raspi` rig hosts run the
-official AWS Greengrass Lite Debian package plus txing Greengrass components
-delivered by cloud deployments.
+publication for local BLE-managed devices. Production `raspi` rig hosts run
+`txing-sparkplug-manager` and `txing-ble-connectivity` as standalone systemd
+services.
 
-Canonical `raspi` rig installation, Greengrass Lite configuration, Bluetooth
-permission, deployment, health-check, update, and cleanup instructions live in
+Canonical `raspi` rig installation, Bluetooth setup, root-owned `mise`,
+systemd units, health-check, and update instructions live in
 [components/rig.md](./components/rig.md).
 
 The short production flow is:
 
-1. Install the upstream Greengrass Lite Debian package on the rig.
-2. Add `gg_component` to the OS `bluetooth` group for `RIG_TYPE=raspi`.
-3. Generate `config/certs/rig/` certificate material and
-   `greengrass-lite.yaml` on the operator machine.
-4. Copy `rig.cert.pem`, `rig.private.key`, `AmazonRootCA1.pem`, and
-   `greengrass-lite.yaml` to the Greengrass locations on the rig.
-5. Restart `greengrass-lite.target`.
-6. Publish release artifacts from the operator machine with
-   `just aws::publish latest`.
+1. Install host packages, Bluetooth, and root-owned `mise` on the rig.
+2. Generate rig daemon config/cert material on the operator machine with
+   `just rig::cert <rig-id>`.
+3. Copy and unpack `<rig-id>-rig-daemon-config.tgz` under
+   `/root/.config/txing/rig-daemon`.
+4. Install `txing-sparkplug-manager` and `txing-ble-connectivity` through
+   root-owned `mise`.
+5. Create `txing-sparkplug-manager.service`,
+   `txing-ble-connectivity.service`, and `rig-daemon.target` manually.
+6. Start or upgrade with `sudo systemctl restart rig-daemon.target` after
+   `mise upgrade`.
 
 ## Cloud Rig Runtime
 
