@@ -1,23 +1,22 @@
-set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+set shell := ["sh", "-eu", "-c"]
 set quiet := true
 
 aws_dir := source_directory()
-project_root := aws_dir + "/../.."
+project_root := canonicalize(aws_dir + "/../..")
+tmp_dir := project_root + "/tmp"
+export TMPDIR := tmp_dir
 root_justfile := project_root + "/justfile"
 aws_lib := aws_dir + "/scripts/aws_lib.sh"
 
 stack_name := ""
 template_file := "template.yaml"
-town_template_file := "templates/town.yaml"
-rig_template_file := "templates/rig.yaml"
-device_template_file := "templates/device.yaml"
 deploy_init_file := "deploy-init.json"
 
 deploy-init parameter_file=deploy_init_file:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     cd "{{aws_dir}}"
-    source "{{aws_lib}}"
+    . "{{aws_lib}}"
     parameter_file="{{parameter_file}}"
     if [ ! -f "$parameter_file" ]; then
       echo "Deploy init file $parameter_file not found. Copy shared/aws/deploy-init.example.json to shared/aws/deploy-init.json and edit it first." >&2
@@ -41,7 +40,7 @@ deploy-init parameter_file=deploy_init_file:
     )"
     for parameter_key in CognitoDomainPrefix AdminEmail WebAppUrl; do
       parameter_name="$(deploy_init_parameter_name "$parameter_key")"
-      parameter_value="$(jq -r --arg key "$parameter_key" '.[$key]' <<<"$deploy_config_json")"
+      parameter_value="$(printf '%s\n' "$deploy_config_json" | jq -r --arg key "$parameter_key" '.[$key]')"
       aws ssm put-parameter \
         --name "$parameter_name" \
         --type String \
@@ -52,18 +51,18 @@ deploy-init parameter_file=deploy_init_file:
     done
 
 deploy stack_name=stack_name template_file=template_file:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     cd "{{aws_dir}}"
-    source "{{aws_lib}}"
+    . "{{aws_lib}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{stack_name}}")"
     txing_aws_init
     deploy_template "$TXING_AWS_STACK" "{{template_file}}"
     describe_stack_outputs "$TXING_AWS_STACK"
 
 publish release='latest':
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     case "{{release}}" in
       latest|v[0-9]*|[0-9]*) ;;
       *=*)
@@ -76,11 +75,11 @@ publish release='latest':
         ;;
     esac
     cd "{{aws_dir}}"
-    source "{{aws_lib}}"
+    . "{{aws_lib}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws)"
     txing_aws_init
     export AWS_DEFAULT_REGION="$TXING_AWS_REGION"
-    function_name="$(stack_output "$TXING_AWS_STACK" ReleasePublisherFunctionName)"
+    function_name="$(lambda_function_name aws-publish-release)"
     payload_file="$(mktemp "${TMPDIR:-/tmp}/txing-publish-payload.XXXXXX")"
     response_file="$(mktemp "${TMPDIR:-/tmp}/txing-publish-response.XXXXXX")"
     metadata_file="$(mktemp "${TMPDIR:-/tmp}/txing-publish-metadata.XXXXXX")"
@@ -102,8 +101,8 @@ publish release='latest':
     jq '.' "$response_file"
 
 publish-lambda release='latest':
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     case "{{release}}" in
       latest|v[0-9]*|[0-9]*) ;;
       *=*)
@@ -116,20 +115,28 @@ publish-lambda release='latest':
         ;;
     esac
     cd "{{aws_dir}}"
-    source "{{aws_lib}}"
+    . "{{aws_lib}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws)"
     txing_aws_init
     export AWS_DEFAULT_REGION="$TXING_AWS_REGION"
     artifact_bucket="$(ensure_artifact_bucket)"
     export TXING_LAMBDA_ARTIFACT_BUCKET="$artifact_bucket"
+    export TXING_LAMBDA_FUNCTION_PREFIX="$TXING_AWS_STACK-"
     exec uv run --project "{{aws_dir}}/python" \
       python -m aws_admin.publish_release lambda --release "{{release}}"
 
+deploy-lambdas stack_name=stack_name:
+    #!/bin/sh
+    set -eu
+    just --justfile "{{aws_dir}}/justfile" clean-stack::deploy "{{stack_name}}"
+    just --justfile "{{aws_dir}}/justfile" enlist-lambda::deploy "{{stack_name}}"
+    just --justfile "{{aws_dir}}/justfile" publish-release-lambda::deploy "{{stack_name}}"
+
 delete stack_name=stack_name wait='true' delete_packaging_buckets='true':
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     cd "{{aws_dir}}"
-    source "{{aws_lib}}"
+    . "{{aws_lib}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{stack_name}}")"
     txing_aws_init
     echo "Deleting CloudFormation stack $TXING_AWS_STACK"
@@ -143,8 +150,8 @@ delete stack_name=stack_name wait='true' delete_packaging_buckets='true':
     fi
 
 type-list path='/txing':
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     cd "{{aws_dir}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws)"
     uv run --project "{{aws_dir}}/python" \
@@ -152,8 +159,8 @@ type-list path='/txing':
       list "{{path}}"
 
 type-describe path:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     cd "{{aws_dir}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws)"
     uv run --project "{{aws_dir}}/python" \
@@ -161,10 +168,10 @@ type-describe path:
       describe "{{path}}"
 
 deploy-town town_name stack_name=stack_name:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     cd "{{aws_dir}}"
-    source "{{aws_lib}}"
+    . "{{aws_lib}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{stack_name}}")"
     txing_aws_init
     payload_file="$(mktemp "${TMPDIR:-/tmp}/txing-enlist-town.XXXXXX")"
@@ -172,14 +179,14 @@ deploy-town town_name stack_name=stack_name:
     jq -n --arg townName "{{town_name}}" \
       '{action:"enlistTown", townName:$townName}' >"$payload_file"
     registration="$(invoke_enlist_payload_file "$payload_file")"
-    jq -r '"town id: \(.thingName)"' <<<"$registration"
-    jq '.' <<<"$registration"
+    printf '%s\n' "$registration" | jq -r '"town id: \(.thingName)"'
+    printf '%s\n' "$registration" | jq '.'
 
 deploy-rig town_id rig_type rig_name stack_name=stack_name:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     cd "{{aws_dir}}"
-    source "{{aws_lib}}"
+    . "{{aws_lib}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{stack_name}}")"
     txing_aws_init
     payload_file="$(mktemp "${TMPDIR:-/tmp}/txing-enlist-rig.XXXXXX")"
@@ -190,14 +197,14 @@ deploy-rig town_id rig_type rig_name stack_name=stack_name:
       --arg rigName "{{rig_name}}" \
       '{action:"enlistRig", townId:$townId, rigType:$rigType, rigName:$rigName}' >"$payload_file"
     registration="$(invoke_enlist_payload_file "$payload_file")"
-    jq -r '"rig id: \(.thingName)"' <<<"$registration"
-    jq '.' <<<"$registration"
+    printf '%s\n' "$registration" | jq -r '"rig id: \(.thingName)"'
+    printf '%s\n' "$registration" | jq '.'
 
 deploy-device rig_id device_type device_name stack_name=stack_name:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     cd "{{aws_dir}}"
-    source "{{aws_lib}}"
+    . "{{aws_lib}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{stack_name}}")"
     txing_aws_init
     payload_file="$(mktemp "${TMPDIR:-/tmp}/txing-enlist-device.XXXXXX")"
@@ -208,23 +215,23 @@ deploy-device rig_id device_type device_name stack_name=stack_name:
       --arg deviceName "{{device_name}}" \
       '{action:"enlistDevice", rigId:$rigId, deviceType:$deviceType, deviceName:$deviceName}' >"$payload_file"
     registration="$(invoke_enlist_payload_file "$payload_file")"
-    jq -r '"device id: \(.thingName)"' <<<"$registration"
-    jq '.' <<<"$registration"
+    printf '%s\n' "$registration" | jq -r '"device id: \(.thingName)"'
+    printf '%s\n' "$registration" | jq '.'
 
 enlist payload_file stack_name=stack_name:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     cd "{{aws_dir}}"
-    source "{{aws_lib}}"
+    . "{{aws_lib}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{stack_name}}")"
     txing_aws_init
     invoke_enlist_payload_file "{{payload_file}}" | jq '.'
 
 discharge thing_id stack_name=stack_name:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     cd "{{aws_dir}}"
-    source "{{aws_lib}}"
+    . "{{aws_lib}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{stack_name}}")"
     txing_aws_init
     payload_file="$(mktemp "${TMPDIR:-/tmp}/txing-discharge-thing.XXXXXX")"
@@ -235,19 +242,23 @@ discharge thing_id stack_name=stack_name:
     invoke_enlist_payload_file "$payload_file" | jq '.'
 
 configure-indexing:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     cd "{{aws_dir}}"
-    source "{{aws_lib}}"
+    . "{{aws_lib}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws)"
     txing_aws_init
     configure_indexing_and_wait
 
+mod clean-stack 'lambdas/aws-clean-stack/justfile'
+mod enlist-lambda 'lambdas/aws-enlist-txing/justfile'
+mod publish-release-lambda 'lambdas/aws-publish-release/justfile'
+
 check-template template_file=template_file stack_name=stack_name:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     cd "{{aws_dir}}"
-    source "{{aws_lib}}"
+    . "{{aws_lib}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{stack_name}}")"
     txing_aws_init
     artifact_bucket="$(ensure_artifact_bucket)"
@@ -258,13 +269,14 @@ check-template template_file=template_file stack_name=stack_name:
       --template-file "{{template_file}}" \
       --s3-bucket "$artifact_bucket" \
       --output-template-file "$packaged_template"
-    aws cloudformation validate-template --template-body "file://$packaged_template"
+    template_url="$(upload_packaged_template "$artifact_bucket" "$packaged_template")"
+    aws cloudformation validate-template --template-url "$template_url"
 
 packaging-buckets stack_name=stack_name:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     cd "{{aws_dir}}"
-    source "{{aws_lib}}"
+    . "{{aws_lib}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{stack_name}}")"
     txing_aws_init
     bucket="$(artifact_bucket_name)"
@@ -275,28 +287,28 @@ packaging-buckets stack_name=stack_name:
     fi
 
 delete-packaging-buckets stack_name=stack_name:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     cd "{{aws_dir}}"
-    source "{{aws_lib}}"
+    . "{{aws_lib}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{stack_name}}")"
     txing_aws_init
     delete_s3_bucket_if_exists "$(artifact_bucket_name)"
 
 describe stack_name=stack_name:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     cd "{{aws_dir}}"
-    source "{{aws_lib}}"
+    . "{{aws_lib}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{stack_name}}")"
     txing_aws_init
     describe_stack_outputs "$TXING_AWS_STACK"
 
 describe-all stack_name=stack_name:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     cd "{{aws_dir}}"
-    source "{{aws_lib}}"
+    . "{{aws_lib}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{stack_name}}")"
     txing_aws_init
     for stack in "$TXING_AWS_STACK"; do
@@ -305,10 +317,10 @@ describe-all stack_name=stack_name:
     done
 
 create-admin-user AdminPassword stack_name=stack_name:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     cd "{{aws_dir}}"
-    source "{{aws_lib}}"
+    . "{{aws_lib}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{stack_name}}")"
     txing_aws_init
     user_pool_id="$(stack_output "$TXING_AWS_STACK" WebCognitoUserPoolId)"
@@ -336,10 +348,10 @@ create-admin-user AdminPassword stack_name=stack_name:
     echo "Admin user password set."
 
 check rig_id='' thing_id='' log_group_name='':
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     cd "{{aws_dir}}"
-    source "{{aws_lib}}"
+    . "{{aws_lib}}"
     if [ -n "{{rig_id}}" ]; then
       export TXING_RIG_ID="{{rig_id}}"
     fi
@@ -405,10 +417,10 @@ check rig_id='' thing_id='' log_group_name='':
     echo "AWS check passed."
 
 things-for-rig rig_id='':
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     cd "{{aws_dir}}"
-    source "{{aws_lib}}"
+    . "{{aws_lib}}"
     if [ -n "{{rig_id}}" ]; then
       export TXING_RIG_ID="{{rig_id}}"
     fi
@@ -442,13 +454,13 @@ things-for-rig rig_id='':
           }]'
       )"
     done
-    jq '.' <<<"$result"
+    printf '%s\n' "$result" | jq '.'
 
 shadow thing_name='' shadow_name='':
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     cd "{{aws_dir}}"
-    source "{{aws_lib}}"
+    . "{{aws_lib}}"
     if [ -n "{{thing_name}}" ]; then
       export TXING_THING_ID="{{thing_name}}"
     fi
@@ -465,12 +477,12 @@ shadow thing_name='' shadow_name='':
       exit 0
     fi
     thing_json="$(aws iot describe-thing --thing-name "$effective_thing_name" --output json)"
-    thing_type="$(jq -r '.thingTypeName // empty' <<<"$thing_json")"
+    thing_type="$(printf '%s\n' "$thing_json" | jq -r '.thingTypeName // empty')"
     if [ "$thing_type" = "town" ]; then
       catalog_path="/txing/town"
-    elif [ -n "$(jq -r '.attributes.rigId // empty' <<<"$thing_json")" ]; then
-      rig_json="$(aws iot describe-thing --thing-name "$(jq -r '.attributes.rigId' <<<"$thing_json")" --output json)"
-      catalog_path="/txing/town/$(jq -r '.thingTypeName' <<<"$rig_json")/$thing_type"
+    elif [ -n "$(printf '%s\n' "$thing_json" | jq -r '.attributes.rigId // empty')" ]; then
+      rig_json="$(aws iot describe-thing --thing-name "$(printf '%s\n' "$thing_json" | jq -r '.attributes.rigId')" --output json)"
+      catalog_path="/txing/town/$(printf '%s\n' "$rig_json" | jq -r '.thingTypeName')/$thing_type"
     else
       catalog_path="/txing/town/$thing_type"
     fi
@@ -480,8 +492,10 @@ shadow thing_name='' shadow_name='':
         describe "$catalog_path" \
         | jq -r '.capabilities | join(",")'
     )"
-    result="{}"
-    while IFS= read -r current_shadow_name; do
+    result_file="$(mktemp "${TMPDIR:-/tmp}/txing-shadow-result.XXXXXX")"
+    trap 'rm -f "$result_file"' EXIT
+    printf '{}\n' >"$result_file"
+    printf '%s\n' "$capabilities_set" | tr ',' '\n' | while IFS= read -r current_shadow_name; do
       [ -n "$current_shadow_name" ] || continue
       if payload="$(
         aws iot-data get-thing-shadow \
@@ -494,15 +508,19 @@ shadow thing_name='' shadow_name='':
       else
         payload='{"missing":true}'
       fi
-      result="$(jq --arg shadowName "$current_shadow_name" --argjson shadowPayload "$payload" '. + {($shadowName): $shadowPayload}' <<<"$result")"
-    done < <(tr ',' '\n' <<<"$capabilities_set")
-    jq '.' <<<"$result"
+      next_result="$(
+        printf '%s\n' "$(cat "$result_file")" \
+          | jq --arg shadowName "$current_shadow_name" --argjson shadowPayload "$payload" '. + {($shadowName): $shadowPayload}'
+      )"
+      printf '%s\n' "$next_result" >"$result_file"
+    done
+    jq '.' "$result_file"
 
 shadow-reset thing_name='' shadow_name='sparkplug' payload_file='':
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     cd "{{aws_dir}}"
-    source "{{aws_lib}}"
+    . "{{aws_lib}}"
     if [ -n "{{thing_name}}" ]; then
       export TXING_THING_ID="{{thing_name}}"
     fi
@@ -515,28 +533,28 @@ shadow-reset thing_name='' shadow_name='sparkplug' payload_file='':
       payload_file="$(mktemp "${TMPDIR:-/tmp}/txing-shadow.XXXXXX")"
       trap 'rm -f "$payload_file"' EXIT
       thing_json="$(aws iot describe-thing --thing-name "$effective_thing_name" --output json)"
-      thing_type="$(jq -r '.thingTypeName // empty' <<<"$thing_json")"
+      thing_type="$(printf '%s\n' "$thing_json" | jq -r '.thingTypeName // empty')"
       case "$thing_type:{{shadow_name}}" in
         town:sparkplug)
           jq -n '{state: {reported: {payload: {metrics: {redcon: 1}}}}}' >"$payload_file"
           ;;
         raspi:sparkplug|cloud:sparkplug)
-          town_json="$(aws iot describe-thing --thing-name "$(jq -r '.attributes.townId' <<<"$thing_json")" --output json)"
+          town_json="$(aws iot describe-thing --thing-name "$(printf '%s\n' "$thing_json" | jq -r '.attributes.townId')" --output json)"
           jq \
             -n \
-            --arg groupId "$(jq -r '.attributes.name' <<<"$town_json")" \
-            --arg edgeNodeId "$(jq -r '.attributes.name' <<<"$thing_json")" \
+            --arg groupId "$(printf '%s\n' "$town_json" | jq -r '.attributes.name')" \
+            --arg edgeNodeId "$(printf '%s\n' "$thing_json" | jq -r '.attributes.name')" \
             '{state: {reported: {topic: {namespace: "spBv1.0", groupId: $groupId, messageType: "NDEATH", edgeNodeId: $edgeNodeId}, payload: {metrics: {redcon: 4}}}}}' \
             >"$payload_file"
           ;;
         *:sparkplug)
-          rig_json="$(aws iot describe-thing --thing-name "$(jq -r '.attributes.rigId' <<<"$thing_json")" --output json)"
-          town_json="$(aws iot describe-thing --thing-name "$(jq -r '.attributes.townId' <<<"$thing_json")" --output json)"
+          rig_json="$(aws iot describe-thing --thing-name "$(printf '%s\n' "$thing_json" | jq -r '.attributes.rigId')" --output json)"
+          town_json="$(aws iot describe-thing --thing-name "$(printf '%s\n' "$thing_json" | jq -r '.attributes.townId')" --output json)"
           jq \
             -n \
-            --arg groupId "$(jq -r '.attributes.name' <<<"$town_json")" \
-            --arg edgeNodeId "$(jq -r '.attributes.name' <<<"$rig_json")" \
-            --arg deviceId "$(jq -r '.thingName' <<<"$thing_json")" \
+            --arg groupId "$(printf '%s\n' "$town_json" | jq -r '.attributes.name')" \
+            --arg edgeNodeId "$(printf '%s\n' "$rig_json" | jq -r '.attributes.name')" \
+            --arg deviceId "$(printf '%s\n' "$thing_json" | jq -r '.thingName')" \
             '{state: {reported: {topic: {namespace: "spBv1.0", groupId: $groupId, messageType: "DDEATH", edgeNodeId: $edgeNodeId, deviceId: $deviceId}, payload: {metrics: {}}}}}' \
             >"$payload_file"
           ;;
@@ -567,15 +585,15 @@ shadow-reset thing_name='' shadow_name='sparkplug' payload_file='':
       /dev/stdout | jq '.'
 
 cert rig_id='' config_dir='':
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     just --justfile "{{project_root}}/rig/justfile" cert "{{rig_id}}" "{{config_dir}}"
 
 init-shadow thing_name='' shadow_name='sparkplug' payload_file='' shadow_response_file='':
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     cd "{{aws_dir}}"
-    source "{{aws_lib}}"
+    . "{{aws_lib}}"
     if [ -n "{{thing_name}}" ]; then
       export TXING_THING_ID="{{thing_name}}"
     fi
@@ -588,8 +606,8 @@ init-shadow thing_name='' shadow_name='sparkplug' payload_file='' shadow_respons
       payload_file="$(mktemp "${TMPDIR:-/tmp}/txing-shadow.XXXXXX")"
       trap 'rm -f "$payload_file"' EXIT
       thing_json="$(aws iot describe-thing --thing-name "$effective_thing_name" --output json)"
-      thing_type="$(jq -r '.thingTypeName // empty' <<<"$thing_json")"
-      thing_kind="$(jq -r '.attributes.kind // empty' <<<"$thing_json")"
+      thing_type="$(printf '%s\n' "$thing_json" | jq -r '.thingTypeName // empty')"
+      thing_kind="$(printf '%s\n' "$thing_json" | jq -r '.attributes.kind // empty')"
       case "$thing_kind:{{shadow_name}}" in
         townType:sparkplug)
           jq -n '{state: {reported: {payload: {metrics: {redcon: 1}}}}}' >"$payload_file"
@@ -597,17 +615,17 @@ init-shadow thing_name='' shadow_name='sparkplug' payload_file='' shadow_respons
         rigType:sparkplug)
           jq \
             -n \
-            --arg groupId "$(jq -r '.attributes.townId' <<<"$thing_json")" \
-            --arg edgeNodeId "$(jq -r '.thingName' <<<"$thing_json")" \
+            --arg groupId "$(printf '%s\n' "$thing_json" | jq -r '.attributes.townId')" \
+            --arg edgeNodeId "$(printf '%s\n' "$thing_json" | jq -r '.thingName')" \
             '{state: {reported: {topic: {namespace: "spBv1.0", groupId: $groupId, messageType: "NDEATH", edgeNodeId: $edgeNodeId}, payload: {metrics: {redcon: 4}}}}}' \
             >"$payload_file"
           ;;
         deviceType:sparkplug)
           jq \
             -n \
-            --arg groupId "$(jq -r '.attributes.townId' <<<"$thing_json")" \
-            --arg edgeNodeId "$(jq -r '.attributes.rigId' <<<"$thing_json")" \
-            --arg deviceId "$(jq -r '.thingName' <<<"$thing_json")" \
+            --arg groupId "$(printf '%s\n' "$thing_json" | jq -r '.attributes.townId')" \
+            --arg edgeNodeId "$(printf '%s\n' "$thing_json" | jq -r '.attributes.rigId')" \
+            --arg deviceId "$(printf '%s\n' "$thing_json" | jq -r '.thingName')" \
             '{state: {reported: {topic: {namespace: "spBv1.0", groupId: $groupId, messageType: "DDEATH", edgeNodeId: $edgeNodeId, deviceId: $deviceId}, payload: {metrics: {}}}}}' \
             >"$payload_file"
           ;;
@@ -635,10 +653,10 @@ init-shadow thing_name='' shadow_name='sparkplug' payload_file='' shadow_respons
       "$response_target"
 
 assign-device device_id rig_id:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     cd "{{aws_dir}}"
-    source "{{aws_lib}}"
+    . "{{aws_lib}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws)"
     txing_aws_init
     payload_file="$(mktemp "${TMPDIR:-/tmp}/txing-enlist-assign.XXXXXX")"

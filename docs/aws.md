@@ -42,12 +42,16 @@ are initialized with `aws::deploy-init`; the type catalog root is always
 Run the setup in this order:
 
 ```bash
-export TXING_AWS_STACK=town
+export TXING_AWS_STACK=town-BaseEnvironment
 cp shared/aws/deploy-init.example.json shared/aws/deploy-init.json
 $EDITOR shared/aws/deploy-init.json
 just aws::deploy-init
-just aws::publish-lambda latest
+just aws::clean-stack::deploy
 just aws::deploy
+just witness::deploy
+just cloud-mcu::deploy
+just aws::enlist-lambda::deploy
+just aws::publish-release-lambda::deploy
 just aws::publish latest
 just aws::deploy-town town
 just aws::deploy-rig <town-id> raspi server
@@ -68,22 +72,33 @@ can run without the JSON file or any repository config file present on disk, as
 long as `TXING_AWS_STACK` is provided in the environment or as a positional stack
 name.
 
+`just aws::clean-stack::deploy` deploys the standalone custom-resource Lambda.
+The base environment stack calls that function while creating Fleet Indexing and
+the type catalog, so it must exist before the first `just aws::deploy`.
+
+`just aws::deploy` deploys the single base environment stack and applies shared
+AWS infrastructure changes. The stack owns Cognito for web authentication,
+common IoT policies, artifact buckets, Fleet Indexing, shared rig/device runtime
+IAM, AWS IoT ThingTypes, cloud MCU shared infrastructure, and the SSM type
+catalog. It does not own Lambda functions.
+
+`just witness::deploy`, `just cloud-mcu::deploy`,
+`just aws::enlist-lambda::deploy`, and `just aws::publish-release-lambda::deploy`
+deploy standalone Lambda stacks. Runtime Lambda deploy recipes create the shared
+artifact bucket and seed a placeholder `current/bootstrap.zip` object when the
+release artifact has not been published yet.
+
 `just aws::publish latest` invokes the AWS-hosted publisher Lambda, which
-downloads public GitHub release assets, uploads Lambda artifacts, and updates
-existing Lambda functions. Run it after the `Txing Release` workflow once the
-stack already exists.
+downloads public GitHub release assets, uploads runtime Lambda artifacts, and
+updates existing runtime Lambda functions. Run it after the `Txing Release`
+workflow and after the standalone Lambda stacks exist.
 
-`just aws::publish-lambda latest` runs the same Lambda publish code locally. Use
-it before the first `aws::deploy` in a new account/stack so the stable Lambda S3
-bootstrap keys exist before CloudFormation creates the Lambda functions.
+`just aws::publish-lambda latest` runs the same runtime Lambda publish code
+locally and remains available for manual repair or one-off publishing, but stack
+creation no longer depends on it.
 
-`just aws::deploy` deploys the base root stack and applies AWS infrastructure
-changes. It packages the Python AWS admin Lambdas into the stack, but does not
-build or publish runtime Lambda release artifacts. That root stack owns Cognito
-for web authentication, common IoT policies, artifact buckets, the Sparkplug
-witness infrastructure, Fleet Indexing, shared rig/device runtime IAM, AWS IoT
-ThingTypes, and the SSM type catalog. Web hosting is externalized to Cloudflare
-Pages. The type catalog is
+Resource names are deterministic from `TXING_AWS_STACK` where AWS exposes a physical name.
+Web hosting is externalized to Cloudflare Pages. The type catalog is
 CloudFormation-managed under `/txing` as leaf parameters such as
 `/txing/town/cloud/cloud-mcu/kind` and
 `/txing/town/cloud/cloud-mcu/capabilities`.
@@ -95,8 +110,8 @@ generated town thing ID.
 `just aws::deploy-rig <town-id> <rig-type> <rig-name>` idempotently creates or
 updates only the rig thing with ThingType `raspi` or `cloud` plus the rig
 `sparkplug` shadow. Standalone `raspi` rig daemon IAM and IoT role-alias
-resources are deployed by the rig runtime layer; AWS-hosted `cloud` rig runtime
-IAM is deployed with the cloud MCU type stack.
+resources are deployed by the environment stack; AWS-hosted `cloud` rig runtime
+IAM is deployed by the same stack.
 
 `just aws::deploy-device <rig-id> <device-type> <device-name>` idempotently
 creates or updates only the device thing, named shadows, and optional
@@ -149,7 +164,7 @@ Do not set `VITE_TXING_VERSION`, `VITE_DEVICE_THING_NAME`, or
 build from the root `VERSION` file, and the admin SPA discovers rigs and devices
 from the configured town.
 
-The base stack reads `WebAppUrl` from `/txing/stack/WebAppUrl`.
+The environment stack reads `WebAppUrl` from `/txing/stack/WebAppUrl`.
 Cognito callback URLs are:
 
 - `https://office.txing.dev/`

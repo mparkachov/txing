@@ -1,8 +1,10 @@
-set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+set shell := ["sh", "-eu", "-c"]
 set quiet := true
 
 office_dir := source_directory()
-project_root := office_dir + "/.."
+project_root := canonicalize(office_dir + "/..")
+tmp_dir := project_root + "/tmp"
+export TMPDIR := tmp_dir
 root_justfile := project_root + "/justfile"
 stack_name := ""
 office_dist_dir := office_dir + "/dist"
@@ -12,20 +14,20 @@ office_dist_dir := office_dir + "/dist"
     bun install
 
 dev:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     cd "{{office_dir}}"
     bun run dev
 
 build:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     cd "{{office_dir}}"
     bun --bun run build
 
 deploy stack_name=stack_name office_dist_dir=office_dist_dir:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     cd "{{office_dir}}"
 
     if [ ! -d "{{office_dist_dir}}" ]; then
@@ -46,8 +48,8 @@ deploy stack_name=stack_name office_dist_dir=office_dist_dir:
     bun run lint
 
 write-env sparkplug_group_id='' town_thing_name='' stack_name=stack_name:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     cd "{{office_dir}}"
 
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env town "{{stack_name}}")"

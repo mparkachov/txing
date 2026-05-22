@@ -7,7 +7,7 @@
 - Group model: `town` is the Sparkplug group id
 - Edge model: `rig` is the Sparkplug edge node. A `raspi` edge node is the
   standalone `txing-sparkplug-manager` daemon; a `cloud` edge node is the
-  AWS-hosted `txing-cloud-rig-lambda` runtime.
+  AWS-hosted cloud rig runtime Lambda.
 - Device model: each physical `txing` is one Sparkplug device and one AWS IoT thing
 - Sparkplug MQTT is the source protocol
 - The `sparkplug` named shadow is the AWS-side materialized Sparkplug view, not device intent storage
@@ -18,7 +18,7 @@
 The rig is not a Sparkplug device. The rig is the Sparkplug edge node. In
 production, `raspi` rigs publish that edge node from the standalone
 `txing-sparkplug-manager` daemon, while `cloud` rigs publish it from
-`txing-cloud-rig-lambda`.
+the stack-prefixed cloud rig runtime Lambda.
 
 - `spBv1.0/<town>/NBIRTH/<rig>` means the rig edge node is born.
 - `spBv1.0/<town>/NDEATH/<rig>` means the rig edge node is dead.
@@ -295,7 +295,9 @@ The current implementation keeps the derived-behavior model rather than making R
 
 ## Deploy Boundary
 
-- `shared/aws` owns the nested AWS stacks.
-- `just aws::deploy` deploys the base stack, including the Sparkplug witness Lambda infrastructure, IoT rule, and role.
-- `just aws::publish-lambda` deploys release-built witness Lambda code.
-- `witness/` owns the Lambda source and tests, not a separate primary stack.
+- `shared/aws` owns the base environment stack and standalone Python admin Lambda stacks.
+- `witness/` owns the Sparkplug witness Lambda template, source, and tests.
+- `just aws::clean-stack::deploy` must run before the first base stack deploy because the base stack calls that custom-resource Lambda.
+- `just aws::deploy` deploys shared environment resources and computed Lambda outputs, but does not own runtime Lambda functions.
+- `just witness::deploy` deploys the Sparkplug witness Lambda infrastructure, IoT rule, and role with a seeded placeholder bootstrap artifact when needed.
+- `just witness::publish` deploys release-built witness Lambda code.

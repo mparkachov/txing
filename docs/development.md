@@ -46,7 +46,12 @@ changes and then asks the AWS-hosted publisher Lambda to publish Lambda
 artifacts with:
 
 ```bash
+just aws::clean-stack::deploy
 just aws::deploy
+just witness::deploy
+just cloud-mcu::deploy
+just aws::enlist-lambda::deploy
+just aws::publish-release-lambda::deploy
 just aws::publish latest
 ```
 
@@ -95,8 +100,12 @@ just rig::stop
 just unit::daemon::run
 just office::dev
 just office::write-env
-just aws::publish-lambda latest
+just aws::clean-stack::deploy
 just aws::deploy
+just witness::deploy
+just cloud-mcu::deploy
+just aws::enlist-lambda::deploy
+just aws::publish-release-lambda::deploy
 just aws::deploy-town town
 just aws::deploy-rig <town-id> raspi server
 just aws::deploy-device <rig-id> unit bot
@@ -165,9 +174,9 @@ just rig::stop
 
 That source-checkout rig loop is for development. Production `raspi` rig hosts
 install GitHub release assets through root-owned `mise` and systemd. Production
-`cloud` rigs are updated through `just aws::deploy` and `just aws::publish
-latest`. Runtime Lambda updates flow through GitHub release artifacts plus
-`just aws::publish-lambda latest` or `just aws::publish latest`.
+`cloud` rigs are updated through `just aws::deploy`, `just cloud-mcu::deploy`,
+and `just aws::publish latest`. Runtime Lambda updates flow through GitHub
+release artifacts plus per-function `publish` recipes or `just aws::publish latest`.
 
 Board:
 

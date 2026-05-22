@@ -11,6 +11,8 @@
 - Treat this repository as a monorepo with the subprojects above.
 - Keep changes scoped to the relevant subproject.
 - `just` recipe arguments in this repository are positional. Do not invoke recipes with `name=value` syntax such as `just unit::daemon::cert thing_id=unit-bl95f2`; pass values positionally, for example `just unit::daemon::cert unit-bl95f2`.
+- Repository shell code must be strictly POSIX `sh` compatible. Use `#!/bin/sh`, `set -eu`, and `.` for sourcing. Do not use Bash/Zsh-only features such as arrays, `[[ ... ]]`, `=~`, `mapfile`/`readarray`, process substitution, here strings, `local`, `printf %q`, or `pipefail`. Just recipes must use POSIX shell syntax so they run under macOS Bash 3.2, zsh, and other POSIX shells.
+- Justfiles must export `TMPDIR` to the repository-local `./tmp` directory by default. Host temp directories such as `/tmp` or macOS `/var/folders/...` must not be the default scratch location for repository scripts; create `./tmp` before using it from standalone scripts.
 - Do not read from, copy from, execute from, or depend on files outside this repository (`/Users/Maxim/Developer/txing`) unless the user explicitly provides the content in the conversation or explicitly asks to vendor it into the repository first.
 - Do not run any command against AWS that could create, update, or delete cloud resources. Agents may run read-only AWS inspection commands only when needed.
 - Do not write host-side runtime code, installer scripts, release assets, or generated commands that assume they run as root. Do not use `sudo` inside repository code intended to run on deployed hosts. When privileged host configuration is required, provide explicit manual steps for the user to run in chat/docs instead.

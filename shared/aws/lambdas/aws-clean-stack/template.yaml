@@ -1,7 +1,10 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: txing aws-clean-stack Lambda and base cleanup custom resources.
+Description: txing CloudFormation custom-resource Lambda stack.
 
 Parameters:
+  EnvironmentStackName:
+    Type: String
+    Description: Base txing environment stack name, for example town.
   AwsAdminCodeS3Bucket:
     Type: String
     Description: S3 bucket containing the packaged AWS admin Lambda code.
@@ -10,15 +13,16 @@ Parameters:
     Description: S3 key containing the packaged AWS admin Lambda code.
 
 Resources:
-  AwsCleanStackLogGroup:
+  CleanStackLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: /aws/lambda/aws-clean-stack
+      LogGroupName: !Sub /aws/lambda/${EnvironmentStackName}-aws-clean-stack
       RetentionInDays: 14
 
-  AwsCleanStackRole:
+  CleanStackRole:
     Type: AWS::IAM::Role
     Properties:
+      RoleName: !Sub ${EnvironmentStackName}-aws-clean-stack
       Description: Handles txing base-stack custom resources for cleanup and Fleet Indexing.
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
@@ -65,14 +69,14 @@ Resources:
                 Action: cloudformation:DescribeStacks
                 Resource: "*"
 
-  AwsCleanStackFunction:
+  CleanStackFunction:
     Type: AWS::Lambda::Function
     DependsOn:
-      - AwsCleanStackLogGroup
+      - CleanStackLogGroup
     Properties:
-      FunctionName: aws-clean-stack
+      FunctionName: !Sub ${EnvironmentStackName}-aws-clean-stack
       Description: CloudFormation custom resources for txing cleanup and Fleet Indexing.
-      Role: !GetAtt AwsCleanStackRole.Arn
+      Role: !GetAtt CleanStackRole.Arn
       Runtime: python3.12
       Handler: aws_admin.clean_stack.lambda_handler
       MemorySize: 128
@@ -81,17 +85,8 @@ Resources:
         S3Bucket: !Ref AwsAdminCodeS3Bucket
         S3Key: !Ref AwsAdminCodeS3Key
 
-  AwsCleanStackIotFleetIndexing:
-    Type: Custom::TxingIotFleetIndexing
-    Properties:
-      ServiceToken: !GetAtt AwsCleanStackFunction.Arn
-      CleanupType: IotFleetIndexing
-      PhysicalResourceId: txing-iot-fleet-indexing
-
 Outputs:
-  CustomResourceServiceToken:
-    Value: !GetAtt AwsCleanStackFunction.Arn
   CleanStackFunctionName:
-    Value: !Ref AwsCleanStackFunction
+    Value: !Ref CleanStackFunction
   CleanStackFunctionArn:
-    Value: !GetAtt AwsCleanStackFunction.Arn
+    Value: !GetAtt CleanStackFunction.Arn

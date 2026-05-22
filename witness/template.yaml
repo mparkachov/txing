@@ -1,21 +1,25 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: txing-witness-lambda runtime.
+Description: txing Sparkplug witness Lambda stack.
 
 Parameters:
+  EnvironmentStackName:
+    Type: String
+    Description: Base txing environment stack name, for example town.
   LambdaArtifactsBucketName:
     Type: String
     Description: S3 bucket containing release-built Lambda bootstrap zip artifacts.
 
 Resources:
-  TxingWitnessLogGroup:
+  WitnessLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: /aws/lambda/txing-witness-lambda
+      LogGroupName: !Sub /aws/lambda/${EnvironmentStackName}-witness
       RetentionInDays: 14
 
-  TxingWitnessRole:
+  WitnessRole:
     Type: AWS::IAM::Role
     Properties:
+      RoleName: !Sub ${EnvironmentStackName}-witness
       Description: Executes the Sparkplug witness projection from MQTT topics into named shadows.
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
@@ -53,17 +57,17 @@ Resources:
                   - logs:CreateLogStream
                   - logs:PutLogEvents
                 Resource:
-                  - !GetAtt TxingWitnessLogGroup.Arn
-                  - !Sub ${TxingWitnessLogGroup.Arn}:*
+                  - !GetAtt WitnessLogGroup.Arn
+                  - !Sub ${WitnessLogGroup.Arn}:*
 
-  TxingSparkplugWitnessFunction:
+  WitnessFunction:
     Type: AWS::Lambda::Function
     DependsOn:
-      - TxingWitnessLogGroup
+      - WitnessLogGroup
     Properties:
-      FunctionName: txing-witness-lambda
+      FunctionName: !Sub ${EnvironmentStackName}-witness
       Description: Projects Sparkplug MQTT state into sparkplug named shadows.
-      Role: !GetAtt TxingWitnessRole.Arn
+      Role: !GetAtt WitnessRole.Arn
       Runtime: provided.al2023
       Handler: bootstrap
       Architectures:
@@ -74,18 +78,24 @@ Resources:
         S3Bucket: !Ref LambdaArtifactsBucketName
         S3Key: lambda/txing-witness-lambda/current/bootstrap.zip
 
-  TxingSparkplugWitnessInvokePermission:
+  WitnessInvokePermission:
     Type: AWS::Lambda::Permission
     Properties:
       Action: lambda:InvokeFunction
-      FunctionName: !Ref TxingSparkplugWitnessFunction
+      FunctionName: !Ref WitnessFunction
       Principal: iot.amazonaws.com
 
-  TxingSparkplugWitnessTopicRule:
+  WitnessTopicRule:
     Type: AWS::IoT::TopicRule
     DependsOn:
-      - TxingSparkplugWitnessInvokePermission
+      - WitnessInvokePermission
     Properties:
+      RuleName: !Join
+        - "_"
+        - - !Join
+            - "_"
+            - !Split ["-", !Ref EnvironmentStackName]
+          - sparkplug_witness
       TopicRulePayload:
         RuleDisabled: false
         AwsIotSqlVersion: "2016-03-23"
@@ -94,10 +104,12 @@ Resources:
           FROM 'spBv1.0/+/+/#'
         Actions:
           - Lambda:
-              FunctionArn: !GetAtt TxingSparkplugWitnessFunction.Arn
+              FunctionArn: !GetAtt WitnessFunction.Arn
 
 Outputs:
   WitnessFunctionName:
-    Value: !Ref TxingSparkplugWitnessFunction
+    Value: !Ref WitnessFunction
   WitnessFunctionArn:
-    Value: !GetAtt TxingSparkplugWitnessFunction.Arn
+    Value: !GetAtt WitnessFunction.Arn
+  WitnessTopicRuleArn:
+    Value: !GetAtt WitnessTopicRule.Arn

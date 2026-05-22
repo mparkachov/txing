@@ -1,7 +1,10 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: txing aws-enlist-txing Lambda.
+Description: txing registry enlistment Lambda stack.
 
 Parameters:
+  EnvironmentStackName:
+    Type: String
+    Description: Base txing environment stack name, for example town.
   AwsAdminCodeS3Bucket:
     Type: String
     Description: S3 bucket containing the packaged AWS admin Lambda code.
@@ -10,15 +13,16 @@ Parameters:
     Description: S3 key containing the packaged AWS admin Lambda code.
 
 Resources:
-  AwsEnlistTxingLogGroup:
+  EnlistLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: /aws/lambda/aws-enlist-txing
+      LogGroupName: !Sub /aws/lambda/${EnvironmentStackName}-aws-enlist-txing
       RetentionInDays: 14
 
-  AwsEnlistTxingRole:
+  EnlistRole:
     Type: AWS::IAM::Role
     Properties:
+      RoleName: !Sub ${EnvironmentStackName}-aws-enlist
       Description: Executes txing town, rig, and device enlistment.
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
@@ -38,8 +42,8 @@ Resources:
                   - logs:CreateLogStream
                   - logs:PutLogEvents
                 Resource:
-                  - !GetAtt AwsEnlistTxingLogGroup.Arn
-                  - !Sub ${AwsEnlistTxingLogGroup.Arn}:*
+                  - !GetAtt EnlistLogGroup.Arn
+                  - !Sub ${EnlistLogGroup.Arn}:*
               - Sid: EnlistThingRegistryWrite
                 Effect: Allow
                 Action:
@@ -91,24 +95,24 @@ Resources:
                   - kinesisvideo:DescribeSignalingChannel
                 Resource: "*"
 
-  AwsEnlistTxingFunction:
+  EnlistFunction:
     Type: AWS::Lambda::Function
     DependsOn:
-      - AwsEnlistTxingLogGroup
+      - EnlistLogGroup
     Properties:
-      FunctionName: aws-enlist-txing
+      FunctionName: !Sub ${EnvironmentStackName}-aws-enlist-txing
       Description: Enlists txing towns, rigs, devices, and assignments.
       Runtime: python3.12
       Handler: aws_admin.enlist_txing.lambda_handler
       Code:
         S3Bucket: !Ref AwsAdminCodeS3Bucket
         S3Key: !Ref AwsAdminCodeS3Key
-      Role: !GetAtt AwsEnlistTxingRole.Arn
+      Role: !GetAtt EnlistRole.Arn
       Timeout: 60
       MemorySize: 128
 
 Outputs:
   EnlistFunctionName:
-    Value: !Ref AwsEnlistTxingFunction
+    Value: !Ref EnlistFunction
   EnlistFunctionArn:
-    Value: !GetAtt AwsEnlistTxingFunction.Arn
+    Value: !GetAtt EnlistFunction.Arn

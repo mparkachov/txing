@@ -28,8 +28,9 @@ class PublishError(RuntimeError):
 
 @dataclass(frozen=True)
 class LambdaAsset:
-    function_name: str
+    artifact_id: str
     asset_name: str
+    function_suffix: str
 
 
 @dataclass(frozen=True)
@@ -45,6 +46,7 @@ class PublishConfig:
     lambda_artifact_bucket: str | None
     aws_region: str
     txing_version_base: str | None = None
+    lambda_function_prefix: str = ""
 
     @classmethod
     def from_env(cls) -> "PublishConfig":
@@ -70,13 +72,29 @@ class PublishConfig:
             lambda_artifact_bucket=os.environ.get("TXING_LAMBDA_ARTIFACT_BUCKET"),
             aws_region=region,
             txing_version_base=os.environ.get("TXING_VERSION_BASE"),
+            lambda_function_prefix=os.environ.get("TXING_LAMBDA_FUNCTION_PREFIX", ""),
         )
+
+    def deployed_lambda_function_name(self, asset: LambdaAsset) -> str:
+        return f"{self.lambda_function_prefix}{asset.function_suffix}"
 
 
 LAMBDA_ASSETS: tuple[LambdaAsset, ...] = (
-    LambdaAsset("txing-witness-lambda", "txing-witness-lambda-linux-aarch64.zip"),
-    LambdaAsset("txing-cloud-rig-lambda", "txing-cloud-rig-lambda-linux-aarch64.zip"),
-    LambdaAsset("txing-cloud-mcu-lambda", "txing-cloud-mcu-lambda-linux-aarch64.zip"),
+    LambdaAsset(
+        "txing-witness-lambda",
+        "txing-witness-lambda-linux-aarch64.zip",
+        "witness",
+    ),
+    LambdaAsset(
+        "txing-cloud-rig-lambda",
+        "txing-cloud-rig-lambda-linux-aarch64.zip",
+        "cloud-rig",
+    ),
+    LambdaAsset(
+        "txing-cloud-mcu-lambda",
+        "txing-cloud-mcu-lambda-linux-aarch64.zip",
+        "cloud-mcu",
+    ),
 )
 
 
@@ -191,6 +209,7 @@ def publish_lambdas(
     release_ref: str,
     config: PublishConfig | None = None,
     github: GitHubReleaseClient | None = None,
+    function_filter: set[str] | None = None,
 ) -> dict[str, object]:
     config = config or PublishConfig.from_env()
     if not config.lambda_artifact_bucket:
@@ -203,22 +222,26 @@ def publish_lambdas(
     with tempfile.TemporaryDirectory(prefix="txing-lambda-release.") as work_dir_raw:
         work_dir = Path(work_dir_raw)
         for asset in LAMBDA_ASSETS:
+            if function_filter is not None and asset.artifact_id not in function_filter:
+                continue
             asset_path = work_dir / asset.asset_name
             github.download_asset(release, asset.asset_name, asset_path)
             validate_lambda_zip(asset_path)
-            version_key = lambda_version_key(asset.function_name, release.version)
-            current_key = lambda_current_key(asset.function_name)
+            version_key = lambda_version_key(asset.artifact_id, release.version)
+            current_key = lambda_current_key(asset.artifact_id)
             _upload_file_if_missing(
                 s3, config.lambda_artifact_bucket, version_key, asset_path
             )
             s3.upload_file(str(asset_path), config.lambda_artifact_bucket, current_key)
+            deployed_function_name = config.deployed_lambda_function_name(asset)
             updated = _update_lambda_function(
                 lambda_client,
-                asset.function_name,
+                deployed_function_name,
                 config.lambda_artifact_bucket,
                 version_key,
             )
-            published[asset.function_name] = {
+            published[asset.artifact_id] = {
+                "functionName": deployed_function_name,
                 "versionKey": version_key,
                 "currentKey": current_key,
                 "updated": updated,
@@ -287,13 +310,23 @@ def _update_lambda_function(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m aws_admin.publish_release")
     subparsers = parser.add_subparsers(dest="command", required=True)
-    for command in ("lambda", "all"):
-        command_parser = subparsers.add_parser(command)
-        command_parser.add_argument("--release", default="latest")
+    lambda_parser = subparsers.add_parser("lambda")
+    lambda_parser.add_argument("--release", default="latest")
+    lambda_parser.add_argument(
+        "--function",
+        action="append",
+        choices=[asset.artifact_id for asset in LAMBDA_ASSETS],
+        help="Publish one Lambda artifact id. May be passed more than once.",
+    )
+    all_parser = subparsers.add_parser("all")
+    all_parser.add_argument("--release", default="latest")
     args = parser.parse_args(argv)
     config = PublishConfig.from_env()
     if args.command == "lambda":
-        result = publish_lambdas(args.release, config=config)
+        function_filter = set(args.function) if args.function else None
+        result = publish_lambdas(
+            args.release, config=config, function_filter=function_filter
+        )
         result = {"ok": True, **result}
     else:
         result = publish_all(args.release, config=config)

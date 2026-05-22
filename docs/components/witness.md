@@ -1,6 +1,7 @@
 # Witness
 
-Witness is the Go Sparkplug projection Lambda deployed by the base AWS stack.
+Witness is the Go Sparkplug projection Lambda deployed by the standalone
+`witness/` stack.
 
 ## Responsibilities
 
@@ -12,25 +13,22 @@ Witness is the only authority that writes the `sparkplug` named shadow for rig a
 
 ## Deploy
 
-Deploy or update the release-built Lambda code:
+Create or update the witness Lambda stack:
 
 ```bash
-just aws::publish-lambda latest
+just witness::deploy
 ```
 
-The `witness/` directory is a Go Lambda project and owns the active
-Lambda source and tests. The primary deployment flow does not use a separate
-witness stack or a witness-local CloudFormation template.
-
-Apply infrastructure changes with the shared AWS stack:
+Publish release-built witness code after the GitHub release exists:
 
 ```bash
-just aws::deploy
+just witness::publish latest
 ```
 
-`aws::deploy` does not build or upload witness code. The direct local Lambda
-deploy recipe is disabled; use the release workflow and `aws::publish-lambda`
-for production updates.
+`witness::deploy` creates the shared Lambda artifact bucket when needed and
+seeds a placeholder `lambda/txing-witness-lambda/current/bootstrap.zip` object
+before creating the function. The placeholder is only a bootstrap artifact for
+CloudFormation; release code is still published from GitHub release assets.
 
 The deeper projection semantics are documented in:
 

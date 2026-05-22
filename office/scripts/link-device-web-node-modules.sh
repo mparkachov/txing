@@ -1,7 +1,8 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 
-office_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+office_dir="$(CDPATH= cd -- "$script_dir/.." && pwd)"
 repo_root="$(cd "$office_dir/.." && pwd)"
 
 for device_web_dir in "$repo_root"/devices/*/web; do

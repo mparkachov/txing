@@ -1,7 +1,10 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: txing-cloud-mcu-lambda runtime.
+Description: txing cloud MCU runtime Lambda stack.
 
 Parameters:
+  EnvironmentStackName:
+    Type: String
+    Description: Base txing environment stack name, for example town.
   LambdaArtifactsBucketName:
     Type: String
     Description: S3 bucket containing release-built Lambda bootstrap zip artifacts.
@@ -21,15 +24,16 @@ Parameters:
     Type: String
 
 Resources:
-  CloudMcuRuntimeLogGroup:
+  CloudMcuLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: /aws/lambda/txing-cloud-mcu-lambda
+      LogGroupName: !Sub /aws/lambda/${EnvironmentStackName}-cloud-mcu
       RetentionInDays: 14
 
-  CloudMcuRuntimeFunctionRole:
+  CloudMcuRole:
     Type: AWS::IAM::Role
     Properties:
+      RoleName: !Sub ${EnvironmentStackName}-cloud-mcu-runtime
       Description: Executes cloud MCU SQS tick and REDCON reconciliation.
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
@@ -49,8 +53,8 @@ Resources:
                   - logs:CreateLogStream
                   - logs:PutLogEvents
                 Resource:
-                  - !GetAtt CloudMcuRuntimeLogGroup.Arn
-                  - !Sub ${CloudMcuRuntimeLogGroup.Arn}:*
+                  - !GetAtt CloudMcuLogGroup.Arn
+                  - !Sub ${CloudMcuLogGroup.Arn}:*
               - Sid: CloudMcuRuntimeSparkplug
                 Effect: Allow
                 Action: iot:Publish
@@ -98,12 +102,12 @@ Resources:
                   - !Ref CloudMcuTaskExecutionRoleArn
                   - !Ref CloudMcuTaskRoleArn
 
-  CloudMcuRuntimeFunction:
+  CloudMcuFunction:
     Type: AWS::Lambda::Function
     DependsOn:
-      - CloudMcuRuntimeLogGroup
+      - CloudMcuLogGroup
     Properties:
-      FunctionName: txing-cloud-mcu-lambda
+      FunctionName: !Sub ${EnvironmentStackName}-cloud-mcu
       Description: SQS and Sparkplug DCMD runtime for cloud MCU devices.
       Runtime: provided.al2023
       Handler: bootstrap
@@ -112,7 +116,7 @@ Resources:
       Code:
         S3Bucket: !Ref LambdaArtifactsBucketName
         S3Key: lambda/txing-cloud-mcu-lambda/current/bootstrap.zip
-      Role: !GetAtt CloudMcuRuntimeFunctionRole.Arn
+      Role: !GetAtt CloudMcuRole.Arn
       Timeout: 30
       MemorySize: 128
       Environment:
@@ -127,11 +131,17 @@ Resources:
     Properties:
       BatchSize: 1
       EventSourceArn: !Ref CloudMcuTickQueueArn
-      FunctionName: !Ref CloudMcuRuntimeFunction
+      FunctionName: !Ref CloudMcuFunction
 
   CloudMcuDcmdTopicRule:
     Type: AWS::IoT::TopicRule
     Properties:
+      RuleName: !Join
+        - "_"
+        - - !Join
+            - "_"
+            - !Split ["-", !Ref EnvironmentStackName]
+          - cloud_mcu_dcmd
       TopicRulePayload:
         AwsIotSqlVersion: "2016-03-23"
         RuleDisabled: false
@@ -141,20 +151,20 @@ Resources:
           WHERE startswith(topic(5), 'cloud-mcu-')
         Actions:
           - Lambda:
-              FunctionArn: !GetAtt CloudMcuRuntimeFunction.Arn
+              FunctionArn: !GetAtt CloudMcuFunction.Arn
 
   CloudMcuDcmdRulePermission:
     Type: AWS::Lambda::Permission
     Properties:
       Action: lambda:InvokeFunction
-      FunctionName: !Ref CloudMcuRuntimeFunction
+      FunctionName: !Ref CloudMcuFunction
       Principal: iot.amazonaws.com
       SourceArn: !GetAtt CloudMcuDcmdTopicRule.Arn
 
 Outputs:
   CloudMcuRuntimeFunctionName:
-    Value: !Ref CloudMcuRuntimeFunction
+    Value: !Ref CloudMcuFunction
   CloudMcuRuntimeFunctionArn:
-    Value: !GetAtt CloudMcuRuntimeFunction.Arn
+    Value: !GetAtt CloudMcuFunction.Arn
   CloudMcuDcmdTopicRuleArn:
     Value: !GetAtt CloudMcuDcmdTopicRule.Arn

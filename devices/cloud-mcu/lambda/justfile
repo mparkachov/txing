@@ -1,14 +1,92 @@
-set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+set shell := ["sh", "-eu", "-c"]
 set quiet := true
 
 lambda_dir := source_directory()
+project_root := canonicalize(lambda_dir + "/../../..")
+tmp_dir := project_root + "/tmp"
+export TMPDIR := tmp_dir
+root_justfile := project_root + "/justfile"
+aws_lib := project_root + "/shared/aws/scripts/aws_lib.sh"
+cloud_rig_template := lambda_dir + "/cmd/txing-cloud-rig-lambda/template.yaml"
+cloud_mcu_template := lambda_dir + "/cmd/txing-cloud-mcu-lambda/template.yaml"
+
+stack_name := ""
 
 @test:
     cd "{{lambda_dir}}" && go test -tags lambda.norpc ./...
 
-deploy:
-    @echo "Direct per-function deploy is disabled. Use the release workflow and just aws::publish-lambda latest." >&2
-    @exit 1
+deploy stack_name=stack_name:
+    just --justfile "{{lambda_dir}}/justfile" deploy-cloud-rig "{{stack_name}}"
+    just --justfile "{{lambda_dir}}/justfile" deploy-cloud-mcu "{{stack_name}}"
+
+publish release='latest' stack_name=stack_name:
+    just --justfile "{{lambda_dir}}/justfile" publish-cloud-rig "{{release}}" "{{stack_name}}"
+    just --justfile "{{lambda_dir}}/justfile" publish-cloud-mcu "{{release}}" "{{stack_name}}"
+
+deploy-cloud-rig stack_name=stack_name:
+    #!/bin/sh
+    set -eu
+    cd "{{lambda_dir}}"
+    . "{{aws_lib}}"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{stack_name}}")"
+    txing_aws_init
+    artifact_bucket="$(ensure_artifact_bucket)"
+    ensure_lambda_seed_artifact txing-cloud-rig-lambda "$artifact_bucket"
+    deploy_template "$(lambda_stack_name cloud-rig)" "{{cloud_rig_template}}" \
+      "EnvironmentStackName=$TXING_AWS_STACK" \
+      "CloudMcuTickQueueUrl=$(stack_output "$TXING_AWS_STACK" CloudMcuTickQueueUrl)" \
+      "CloudMcuTickQueueArn=$(stack_output "$TXING_AWS_STACK" CloudMcuTickQueueArn)"
+
+deploy-cloud-mcu stack_name=stack_name:
+    #!/bin/sh
+    set -eu
+    cd "{{lambda_dir}}"
+    . "{{aws_lib}}"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{stack_name}}")"
+    txing_aws_init
+    artifact_bucket="$(ensure_artifact_bucket)"
+    ensure_lambda_seed_artifact txing-cloud-mcu-lambda "$artifact_bucket"
+    deploy_template "$(lambda_stack_name cloud-mcu)" "{{cloud_mcu_template}}" \
+      "EnvironmentStackName=$TXING_AWS_STACK" \
+      "CloudMcuTickQueueArn=$(stack_output "$TXING_AWS_STACK" CloudMcuTickQueueArn)" \
+      "CloudMcuClusterName=$(stack_output "$TXING_AWS_STACK" CloudMcuClusterName)" \
+      "CloudMcuTaskDefinitionArn=$(stack_output "$TXING_AWS_STACK" CloudMcuTaskDefinitionArn)" \
+      "CloudMcuSubnetId=$(stack_output "$TXING_AWS_STACK" CloudMcuSubnetId)" \
+      "CloudMcuTaskSecurityGroupId=$(stack_output "$TXING_AWS_STACK" CloudMcuTaskSecurityGroupId)" \
+      "CloudMcuTaskExecutionRoleArn=$(stack_output "$TXING_AWS_STACK" CloudMcuTaskExecutionRoleArn)" \
+      "CloudMcuTaskRoleArn=$(stack_output "$TXING_AWS_STACK" CloudMcuTaskRoleArn)"
+
+publish-cloud-rig release='latest' stack_name=stack_name:
+    #!/bin/sh
+    set -eu
+    cd "{{lambda_dir}}"
+    . "{{aws_lib}}"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{stack_name}}")"
+    txing_aws_init
+    artifact_bucket="$(ensure_artifact_bucket)"
+    export AWS_DEFAULT_REGION="$TXING_AWS_REGION"
+    export TXING_LAMBDA_ARTIFACT_BUCKET="$artifact_bucket"
+    export TXING_LAMBDA_FUNCTION_PREFIX="$TXING_AWS_STACK-"
+    exec uv run --project "{{project_root}}/shared/aws/python" \
+      python -m aws_admin.publish_release lambda \
+      --function txing-cloud-rig-lambda \
+      --release "{{release}}"
+
+publish-cloud-mcu release='latest' stack_name=stack_name:
+    #!/bin/sh
+    set -eu
+    cd "{{lambda_dir}}"
+    . "{{aws_lib}}"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{stack_name}}")"
+    txing_aws_init
+    artifact_bucket="$(ensure_artifact_bucket)"
+    export AWS_DEFAULT_REGION="$TXING_AWS_REGION"
+    export TXING_LAMBDA_ARTIFACT_BUCKET="$artifact_bucket"
+    export TXING_LAMBDA_FUNCTION_PREFIX="$TXING_AWS_STACK-"
+    exec uv run --project "{{project_root}}/shared/aws/python" \
+      python -m aws_admin.publish_release lambda \
+      --function txing-cloud-mcu-lambda \
+      --release "{{release}}"
 
 @default:
     @just --list

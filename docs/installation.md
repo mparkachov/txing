@@ -72,8 +72,12 @@ The `cloud` rig type is AWS-hosted. Deploy its Lambda/EventBridge/SQS runtime
 through the AWS stack and Lambda release assets:
 
 ```bash
-just aws::publish-lambda latest
+just aws::clean-stack::deploy
 just aws::deploy
+just witness::deploy
+just cloud-mcu::deploy
+just aws::enlist-lambda::deploy
+just aws::publish-release-lambda::deploy
 just aws::publish latest
 ```
 

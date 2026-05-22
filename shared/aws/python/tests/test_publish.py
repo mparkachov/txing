@@ -7,6 +7,7 @@ import zipfile
 
 from aws_admin.publish_release.core import (
     LAMBDA_ASSETS,
+    PublishConfig,
     PublishError,
     lambda_current_key,
     lambda_version_key,
@@ -44,6 +45,19 @@ class PublishTests(unittest.TestCase):
         self.assertEqual(
             lambda_current_key("txing-witness-lambda"),
             "lambda/txing-witness-lambda/current/bootstrap.zip",
+        )
+
+    def test_deployed_lambda_function_names_can_be_stack_prefixed(self) -> None:
+        config = PublishConfig(
+            github_repository="mparkachov/txing",
+            lambda_artifact_bucket="bucket",
+            aws_region="eu-central-1",
+            lambda_function_prefix="town-",
+        )
+
+        self.assertEqual(
+            config.deployed_lambda_function_name(LAMBDA_ASSETS[0]),
+            "town-witness",
         )
 
     def test_validates_lambda_zip_shape(self) -> None:

@@ -41,11 +41,14 @@ Release publishing flow:
 1. Update all managed version files locally.
 2. Push the intended code to the branch that should be released.
 3. Run the `Txing Release` workflow manually from that branch.
-4. For a brand-new stack only, seed Lambda bootstrap artifacts with
-   `just aws::publish-lambda latest`.
-5. Apply AWS infrastructure changes with `just aws::deploy`.
-6. Publish Lambda code from the operator machine with `just aws::publish latest`.
-7. If a board or rig needs new binaries, update it manually from a root shell
+4. Deploy the standalone custom-resource Lambda with `just aws::clean-stack::deploy`.
+5. Apply shared AWS infrastructure changes with `just aws::deploy`.
+6. Deploy standalone Lambda stacks with `just witness::deploy`,
+   `just cloud-mcu::deploy`, `just aws::enlist-lambda::deploy`, and
+   `just aws::publish-release-lambda::deploy`.
+7. Publish runtime Lambda code from the operator machine with
+   `just aws::publish latest`.
+8. If a board or rig needs new binaries, update it manually from a root shell
    with writable root and root-owned `mise upgrade`; boards reboot, rigs
    restart `rig-daemon.target`.
 
@@ -68,10 +71,12 @@ just aws::publish latest
 `aws::publish` invokes the AWS-hosted publisher Lambda. The publisher downloads
 public GitHub release assets over HTTPS, uploads Lambda artifacts, and updates
 existing Lambda functions.
-`aws::publish-lambda` runs the same Lambda publish code locally and is kept for
-first-time stack creation before the publisher Lambda exists.
-`just aws::deploy` applies CloudFormation and publishes Python admin Lambda
-source used by `aws-publish-release`, `aws-enlist-txing`, and `aws-clean-stack`.
+Runtime Lambda deploy recipes seed placeholder bootstrap zips so first-time
+stack creation does not depend on release artifacts already being uploaded.
+`aws::publish-lambda` runs the same runtime Lambda publish code locally and is
+kept for manual repair or one-off publishing before the publisher Lambda exists.
+Admin Lambda deploy recipes package the current Python source into each
+standalone admin Lambda stack.
 
 ## Board Assets
 

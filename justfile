@@ -1,23 +1,33 @@
-set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+set shell := ["sh", "-eu", "-c"]
 set quiet
 
 root_dir := source_directory()
+tmp_dir := root_dir + "/tmp"
+export TMPDIR := tmp_dir
 
 [private]
 _project-version-env:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
 
     project_root="{{ root_dir }}"
 
+    shell_quote() {
+      printf "'"
+      printf '%s' "$1" | sed "s/'/'\\\\''/g"
+      printf "'"
+    }
+
     export_line() {
-      local name="$1"
-      local value="$2"
-      printf 'export %s=%q\n' "$name" "$value"
+      name="$1"
+      value="$2"
+      printf 'export %s=' "$name"
+      shell_quote "$value"
+      printf '\n'
     }
 
     version_base="$(tr -d '[:space:]' < "$project_root/VERSION")"
-    if ! [[ "$version_base" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    if ! printf '%s\n' "$version_base" | grep -E -q '^[0-9]+\.[0-9]+\.[0-9]+$'; then
       echo "VERSION must contain a base semantic version like x.y.z." >&2
       exit 1
     fi
@@ -35,10 +45,10 @@ _project-version-env:
             printf '%s\n' "$git_status"
             git -C "$project_root" diff --binary --ignore-submodules -- 2>/dev/null || true
             git -C "$project_root" diff --cached --binary --ignore-submodules -- 2>/dev/null || true
-            while IFS= read -r -d '' untracked_file; do
+            git -C "$project_root" ls-files --others --exclude-standard 2>/dev/null | while IFS= read -r untracked_file; do
               printf 'untracked:%s\n' "$untracked_file"
               git -C "$project_root" hash-object -- "$untracked_file" 2>/dev/null || true
-            done < <(git -C "$project_root" ls-files --others --exclude-standard -z 2>/dev/null || true)
+            done
           } | git -C "$project_root" hash-object --stdin | cut -c1-12
         )"
       fi
@@ -52,13 +62,13 @@ _project-version-env:
 
 [private]
 _project-aws-env scope='aws' stack_name='':
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
 
     project_root="{{ root_dir }}"
 
     resolve_path() {
-      local candidate="$1"
+      candidate="$1"
       if [ -z "$candidate" ]; then
         return 0
       fi
@@ -68,10 +78,18 @@ _project-aws-env scope='aws' stack_name='':
       esac
     }
 
+    shell_quote() {
+      printf "'"
+      printf '%s' "$1" | sed "s/'/'\\\\''/g"
+      printf "'"
+    }
+
     export_line() {
-      local name="$1"
-      local value="$2"
-      printf 'export %s=%q\n' "$name" "$value"
+      name="$1"
+      value="$2"
+      printf 'export %s=' "$name"
+      shell_quote "$value"
+      printf '\n'
     }
 
     unset RIG_ENV_FILE BOARD_ENV_FILE
@@ -84,8 +102,8 @@ _project-aws-env scope='aws' stack_name='':
     }
 
     require_value() {
-      local label="$1"
-      local value="$2"
+      label="$1"
+      value="$2"
       if [ -z "$value" ]; then
         echo "Missing required $label." >&2
         exit 1
@@ -94,7 +112,6 @@ _project-aws-env scope='aws' stack_name='':
     }
 
     resolve_aws_cli_region() {
-      local value
       value="$(aws configure get region 2>/dev/null || true)"
       if [ -z "$value" ]; then
         echo "AWS CLI region is not configured. Set it with 'aws configure set region <aws-region>' or in your AWS CLI config." >&2
@@ -104,15 +121,14 @@ _project-aws-env scope='aws' stack_name='':
     }
 
     normalize_required_slug() {
-      local label="$1"
-      local raw="$2"
-      local normalized
+      label="$1"
+      raw="$2"
       normalized="$(normalize_slug "$raw")"
       require_value "$label" "$normalized"
     }
 
     normalize_optional_slug() {
-      local raw="$1"
+      raw="$1"
       if [ -z "$raw" ]; then
         return 0
       fi
@@ -135,16 +151,16 @@ _project-aws-env scope='aws' stack_name='':
     txing_aws_stack="$(require_value TXING_AWS_STACK "${requested_stack_name:-${TXING_AWS_STACK:-}}")"
 
     describe_thing_json() {
-      local thing_id="$1"
+      thing_id="$1"
       aws iot describe-thing \
         --thing-name "$thing_id" \
         --output json
     }
 
     jq_string() {
-      local json="$1"
-      local query="$2"
-      jq -r "$query // empty" <<<"$json"
+      json="$1"
+      query="$2"
+      printf '%s\n' "$json" | jq -r "$query // empty"
     }
 
     txing_town_id="$(normalize_optional_slug "${TXING_TOWN_ID:-}")"
@@ -231,22 +247,22 @@ _project-aws-env scope='aws' stack_name='':
 
 [positional-arguments]
 aws-rig *args:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     eval "$(just --justfile "{{ root_dir }}/justfile" _project-aws-env rig)"
     command aws "$@"
 
 [positional-arguments]
 aws-town *args:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     eval "$(just --justfile "{{ root_dir }}/justfile" _project-aws-env town)"
     command aws "$@"
 
 [positional-arguments]
 aws-device *args:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     eval "$(just --justfile "{{ root_dir }}/justfile" _project-aws-env device)"
     command aws "$@"
 

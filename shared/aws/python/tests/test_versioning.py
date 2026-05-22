@@ -14,8 +14,8 @@ REPO_ROOT = AWS_DIR.parents[1]
 def _write_fake_aws(bin_dir: Path) -> None:
     aws = bin_dir / "aws"
     aws.write_text(
-        """#!/usr/bin/env bash
-set -euo pipefail
+        """#!/bin/sh
+set -eu
 case "$1 $2 ${3:-}" in
   "configure get region")
     printf 'eu-central-1\\n'
@@ -31,13 +31,17 @@ case "$1 $2 ${3:-}" in
     ;;
   "iot get-indexing-configuration "*)
     joined=" $* "
-    if [[ "$joined" == *ThingConnectivityIndexingMode* || "$joined" == *thingConnectivityIndexingMode* ]]; then
+    case "$joined" in
+      *ThingConnectivityIndexingMode*|*thingConnectivityIndexingMode*)
       printf 'STATUS\\n'
-    elif [[ "$joined" == *ThingIndexingMode* || "$joined" == *thingIndexingMode* ]]; then
+      ;;
+      *ThingIndexingMode*|*thingIndexingMode*)
       printf 'REGISTRY\\n'
-    else
+      ;;
+      *)
       printf '{}\\n'
-    fi
+      ;;
+    esac
     ;;
   "ssm put-parameter "*)
     printf '{}\\n'
@@ -104,8 +108,8 @@ class VersionEnvironmentTests(unittest.TestCase):
                 text=True,
                 stdout=subprocess.PIPE,
             ).stdout
-            self.assertIn("export TXING_VERSION=1.2.3", clean)
-            self.assertIn("export TXING_GIT_DIRTY=false", clean)
+            self.assertIn("export TXING_VERSION='1.2.3'", clean)
+            self.assertIn("export TXING_GIT_DIRTY='false'", clean)
 
             (repo / "dirty.txt").write_text("dirty\n", encoding="utf-8")
             dirty = subprocess.run(
@@ -115,8 +119,8 @@ class VersionEnvironmentTests(unittest.TestCase):
                 text=True,
                 stdout=subprocess.PIPE,
             ).stdout
-            self.assertIn("export TXING_VERSION=1.2.3", dirty)
-            self.assertIn("export TXING_GIT_DIRTY=true", dirty)
+            self.assertIn("export TXING_VERSION='1.2.3'", dirty)
+            self.assertIn("export TXING_GIT_DIRTY='true'", dirty)
             self.assertNotIn("+g", dirty)
 
     def test_project_aws_env_uses_txing_stack_and_native_cli_region(self) -> None:
@@ -137,8 +141,8 @@ class VersionEnvironmentTests(unittest.TestCase):
                 stdout=subprocess.PIPE,
             )
 
-        self.assertIn("export TXING_AWS_STACK=town", result.stdout)
-        self.assertIn("export TXING_AWS_REGION=eu-central-1", result.stdout)
+        self.assertIn("export TXING_AWS_STACK='town'", result.stdout)
+        self.assertIn("export TXING_AWS_REGION='eu-central-1'", result.stdout)
         self.assertNotIn("AWS_STACK_NAME", result.stdout)
         self.assertNotIn("AWS_SELECTED_PROFILE", result.stdout)
         self.assertNotIn("AWS_SHARED_CREDENTIALS_FILE", result.stdout)
@@ -604,7 +608,8 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn("deploy-local-lambda", aws_justfile)
         self.assertIn("TXING_LAMBDA_ARTIFACT_BUCKET", aws_justfile)
         self.assertIn("python -m aws_admin.publish_release lambda --release", aws_justfile)
-        self.assertIn("ReleasePublisherFunctionName", aws_justfile)
+        self.assertIn("lambda_function_name aws-publish-release", aws_justfile)
+        self.assertIn("deploy-lambdas stack_name=stack_name", aws_justfile)
         self.assertNotIn("scripts/txing-lambda-deploy", aws_justfile)
         self.assertNotIn("witness::build", aws_justfile)
         self.assertNotIn('enlist/justfile" build', aws_justfile)

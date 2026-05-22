@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: txing base environment root stack.
+Description: txing base environment stack.
 
 Parameters:
   StackCognitoDomainPrefix:
@@ -20,256 +20,1085 @@ Parameters:
     Type: AWS::SSM::Parameter::Value<String>
     Default: /txing/stack/WebAppUrl
     Description: SSM parameter containing the Cloudflare Pages production web app URL without a trailing slash.
-  LambdaArtifactsBucketName:
+  CloudMcuEcsTaskImage:
     Type: String
-    Description: S3 bucket containing release-built Lambda bootstrap zip artifacts.
-  GithubRepository:
-    Type: String
-    Default: mparkachov/txing
-    AllowedPattern: "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
-    Description: Public GitHub repository containing txing release assets.
-  AwsAdminCodeS3Bucket:
-    Type: String
-    Description: S3 bucket containing the packaged AWS admin Lambda code.
-  AwsAdminCodeS3Key:
-    Type: String
-    Description: S3 key containing the packaged AWS admin Lambda code.
+    Default: ecr-public.aws.com/docker/library/alpine:3.20
 
 Resources:
-  BaseEnvironment:
-    Type: AWS::CloudFormation::Stack
+  TxingGatewayLogsManagedPolicy:
+    Type: AWS::IAM::ManagedPolicy
     Properties:
-      TemplateURL: templates/base.yaml
-      Parameters:
-        CognitoDomainPrefix: !Ref StackCognitoDomainPrefix
-        AdminEmail: !Ref StackAdminEmail
-        LocalhostAppUrl: !Ref LocalhostAppUrl
-        LocalhostAltAppUrl: !Ref LocalhostAltAppUrl
-        WebAppUrl: !Ref StackWebAppUrl
+      ManagedPolicyName: !Sub ${AWS::StackName}-gateway-logs
+      Description: Dynamic txing CloudWatch logs and IoT fleet registry access.
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: GatewayCloudWatchLogsWrite
+            Effect: Allow
+            Action:
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:DescribeLogStreams
+              - logs:PutRetentionPolicy
+              - logs:PutLogEvents
+            Resource:
+              - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:txing/*
+              - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:txing/*:log-stream:*
+          - Sid: GatewayThingRegistryReadWrite
+            Effect: Allow
+            Action:
+              - iot:DescribeThing
+              - iot:UpdateThing
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/*
+          - Sid: GatewayFleetRegistryRead
+            Effect: Allow
+            Action:
+              - iot:GetIndexingConfiguration
+              - iot:SearchIndex
+            Resource: "*"
 
-  CleanStackLayer:
-    Type: AWS::CloudFormation::Stack
-    DependsOn: BaseEnvironment
+  TxingGatewayPolicy:
+    Type: AWS::IoT::Policy
     Properties:
-      TemplateURL: templates/lambdas/aws-clean-stack.yaml
-      Parameters:
-        AwsAdminCodeS3Bucket: !Ref AwsAdminCodeS3Bucket
-        AwsAdminCodeS3Key: !Ref AwsAdminCodeS3Key
+      PolicyName: !Sub ${AWS::StackName}-gateway
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: Connect
+            Effect: Allow
+            Action: iot:Connect
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/*
+          - Sid: ThingShadow
+            Effect: Allow
+            Action:
+              - iot:GetThingShadow
+              - iot:UpdateThingShadow
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/*
+          - Sid: MessagingPublishReceive
+            Effect: Allow
+            Action:
+              - iot:Publish
+              - iot:RetainPublish
+              - iot:Receive
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/*
+          - Sid: MessagingSubscribe
+            Effect: Allow
+            Action: iot:Subscribe
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/*
+          - Sid: IoTRoleAliasAssumeRole
+            Effect: Allow
+            Action: iot:AssumeRoleWithCertificate
+            Resource: "*"
 
-  WitnessLayer:
-    Type: AWS::CloudFormation::Stack
-    DependsOn: BaseEnvironment
+  TxingWebAdminIotPolicy:
+    Type: AWS::IoT::Policy
     Properties:
-      TemplateURL: templates/lambdas/txing-witness-lambda.yaml
-      Parameters:
-        LambdaArtifactsBucketName: !Ref LambdaArtifactsBucketName
+      PolicyName: !Sub ${AWS::StackName}-web-admin
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: iot:Connect
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/*
+          - Effect: Allow
+            Action:
+              - iot:Publish
+              - iot:RetainPublish
+              - iot:Receive
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/*
+          - Effect: Allow
+            Action: iot:Subscribe
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/*
+          - Sid: AllowDirectThingShadowReads
+            Effect: Allow
+            Action: iot:GetThingShadow
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/*
 
-  TownTypeCatalog:
-    Type: AWS::CloudFormation::Stack
-    DependsOn: CleanStackLayer
+  TxingAdminUserPool:
+    Type: AWS::Cognito::UserPool
     Properties:
-      TemplateURL: templates/types/town.yaml
-      Parameters:
-        TypeCatalogServiceToken: !GetAtt CleanStackLayer.Outputs.CustomResourceServiceToken
+      UserPoolName: !Sub ${AWS::StackName}-admin
+      AutoVerifiedAttributes:
+        - email
+      UsernameAttributes:
+        - email
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+      MfaConfiguration: "OFF"
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - Name: verified_email
+            Priority: 1
+      Schema:
+        - Name: email
+          Required: true
+          Mutable: true
+      UserPoolTags:
+        project: txing
+        app: web-admin
+        admin-email: !Ref StackAdminEmail
 
-  RaspiTypeCatalog:
-    Type: AWS::CloudFormation::Stack
+  TxingAdminUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref TxingAdminUserPool
+      ClientName: !Sub ${AWS::StackName}-shadow-admin-spa
+      GenerateSecret: false
+      PreventUserExistenceErrors: ENABLED
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows:
+        - code
+      AllowedOAuthScopes:
+        - openid
+        - email
+        - profile
+      SupportedIdentityProviders:
+        - COGNITO
+      CallbackURLs:
+        - !Sub "${StackWebAppUrl}/"
+        - !Sub "${LocalhostAppUrl}/"
+        - !Sub "${LocalhostAltAppUrl}/"
+      LogoutURLs:
+        - !Sub "${StackWebAppUrl}/"
+        - https://txing.dev/
+        - !Sub "${LocalhostAppUrl}/"
+        - !Sub "${LocalhostAltAppUrl}/"
+      AccessTokenValidity: 60
+      IdTokenValidity: 60
+      RefreshTokenValidity: 30
+      TokenValidityUnits:
+        AccessToken: minutes
+        IdToken: minutes
+        RefreshToken: days
+      ExplicitAuthFlows:
+        - ALLOW_REFRESH_TOKEN_AUTH
+
+  TxingAdminUserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      UserPoolId: !Ref TxingAdminUserPool
+      Domain: !Ref StackCognitoDomainPrefix
+
+  TxingAdminIdentityPool:
+    Type: AWS::Cognito::IdentityPool
+    Properties:
+      IdentityPoolName: !Sub ${AWS::StackName}-shadow-admin
+      AllowUnauthenticatedIdentities: false
+      CognitoIdentityProviders:
+        - ClientId: !Ref TxingAdminUserPoolClient
+          ProviderName: !Sub cognito-idp.${AWS::Region}.amazonaws.com/${TxingAdminUserPool}
+          ServerSideTokenCheck: true
+
+  TxingAdminIdentityPoolAuthenticatedRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AWS::StackName}-admin-auth
+      Description: IAM role assumed by authenticated txing web admin identities.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: cognito-identity.amazonaws.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                cognito-identity.amazonaws.com:aud: !Ref TxingAdminIdentityPool
+              ForAnyValue:StringLike:
+                cognito-identity.amazonaws.com:amr: authenticated
+      Policies:
+        - PolicyName: iot-shadow-direct-access-txing
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: AllowAttachWebIotPolicy
+                Effect: Allow
+                Action: iot:AttachPolicy
+                Resource: "*"
+              - Sid: AllowDescribeIotEndpoint
+                Effect: Allow
+                Action: iot:DescribeEndpoint
+                Resource: "*"
+              - Sid: AllowThingCatalogListing
+                Effect: Allow
+                Action:
+                  - iot:DescribeThing
+                  - iot:SearchIndex
+                Resource: "*"
+              - Sid: AllowDirectThingShadowReads
+                Effect: Allow
+                Action: iot:GetThingShadow
+                Resource: "*"
+              - Sid: ShadowConnect
+                Effect: Allow
+                Action: iot:Connect
+                Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/*
+              - Sid: IoTPublishReceive
+                Effect: Allow
+                Action:
+                  - iot:Publish
+                  - iot:RetainPublish
+                  - iot:Receive
+                Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/*
+              - Sid: IoTSubscribe
+                Effect: Allow
+                Action: iot:Subscribe
+                Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/*
+              - Sid: BoardVideoViewer
+                Effect: Allow
+                Action:
+                  - kinesisvideo:DescribeSignalingChannel
+                  - kinesisvideo:GetSignalingChannelEndpoint
+                  - kinesisvideo:GetIceServerConfig
+                  - kinesisvideo:ConnectAsViewer
+                Resource: "*"
+
+  TxingAdminIdentityPoolRoleAttachment:
+    Type: AWS::Cognito::IdentityPoolRoleAttachment
+    Properties:
+      IdentityPoolId: !Ref TxingAdminIdentityPool
+      Roles:
+        authenticated: !GetAtt TxingAdminIdentityPoolAuthenticatedRole.Arn
+
+  AwsCleanStackIotFleetIndexing:
+    Type: Custom::TxingIotFleetIndexing
+    Properties:
+      ServiceToken: !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-aws-clean-stack
+      CleanupType: IotFleetIndexing
+      PhysicalResourceId: !Sub ${AWS::StackName}-iot-fleet-indexing
+
+  TownTypeCatalogV2:
+    Type: Custom::TxingTypeCatalog
+    Properties:
+      ServiceToken: !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-aws-clean-stack
+      CleanupType: TypeCatalog
+      PhysicalResourceId: !Sub ${AWS::StackName}-type-catalog-town
+      ThingTypeName: town
+      ThingTypeDescription: txing town type
+      SearchableAttributes:
+        - name
+      CatalogBasePath: /txing/town
+      CatalogParameters:
+        kind: townType
+        schemaVersion: "1.0"
+        thingType: town
+        displayName: Town
+        defaultName: town
+        capabilities: sparkplug
+        requiredAttributes: name,shortId
+        searchableAttributes: name
+
+  RaspiTypeCatalogV2:
+    Type: Custom::TxingTypeCatalog
     DependsOn:
-      - TownTypeCatalog
+      - TownTypeCatalogV2
     Properties:
-      TemplateURL: templates/types/raspi.yaml
-      Parameters:
-        TypeCatalogServiceToken: !GetAtt CleanStackLayer.Outputs.CustomResourceServiceToken
+      ServiceToken: !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-aws-clean-stack
+      CleanupType: TypeCatalog
+      PhysicalResourceId: !Sub ${AWS::StackName}-type-catalog-raspi
+      ThingTypeName: raspi
+      ThingTypeDescription: txing Raspberry Pi rig type
+      SearchableAttributes:
+        - name
+        - townId
+      CatalogBasePath: /txing/town/raspi
+      CatalogParameters:
+        kind: rigType
+        schemaVersion: "1.0"
+        thingType: raspi
+        rigType: raspi
+        displayName: Raspberry Pi Rig
+        defaultName: server
+        capabilities: sparkplug
+        requiredAttributes: name,shortId,townId
+        searchableAttributes: name,townId
+        hostServices: bluetooth.service
 
-  RaspiUnitTypeCatalog:
-    Type: AWS::CloudFormation::Stack
+  UnitTypeCatalogV2:
+    Type: Custom::TxingTypeCatalog
     DependsOn:
-      - BaseEnvironment
-      - RaspiTypeCatalog
+      - RaspiTypeCatalogV2
     Properties:
-      TemplateURL: templates/types/raspi-unit.yaml
-      Parameters:
-        TypeCatalogServiceToken: !GetAtt CleanStackLayer.Outputs.CustomResourceServiceToken
+      ServiceToken: !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-aws-clean-stack
+      CleanupType: TypeCatalog
+      PhysicalResourceId: !Sub ${AWS::StackName}-type-catalog-unit
+      ThingTypeName: unit
+      ThingTypeDescription: txing unit device type
+      SearchableAttributes:
+        - name
+        - townId
+        - rigId
+      CatalogBasePath: /txing/town/raspi/unit
+      CatalogParameters:
+        kind: deviceType
+        schemaVersion: "1.0"
+        thingType: unit
+        deviceType: unit
+        rigType: raspi
+        displayName: Bot
+        defaultName: bot
+        capabilities: sparkplug,ble,power,board,mcp,video
+        redconCommandLevels: 4,3,2,1
+        redconRules/4: sparkplug,ble
+        redconRules/3: sparkplug,ble,power
+        redconRules/2: sparkplug,ble,power,board,mcp
+        redconRules/1: sparkplug,ble,power,board,mcp,video
+        requiredAttributes: name,shortId,townId,rigId
+        searchableAttributes: name,townId,rigId
+        shadows/sparkplug/schema: aws/sparkplug-shadow.schema.json
+        shadows/sparkplug/default: aws/default-sparkplug-shadow.json
+        shadows/sparkplug/defaultPayload: '{"state":{"reported":{"topic":{"namespace":"spBv1.0","groupId":"town","messageType":"DDEATH","edgeNodeId":"rig","deviceId":"unit-local"},"payload":{"metrics":{}}}}}'
+        shadows/ble/schema: aws/ble-shadow.schema.json
+        shadows/ble/default: aws/default-ble-shadow.json
+        shadows/ble/defaultPayload: '{"state":{"reported":{}}}'
+        shadows/power/schema: aws/power-shadow.schema.json
+        shadows/power/default: aws/default-power-shadow.json
+        shadows/power/defaultPayload: '{"state":{"reported":{}}}'
+        shadows/board/schema: aws/board-shadow.schema.json
+        shadows/board/default: aws/default-board-shadow.json
+        shadows/board/defaultPayload: '{"state":{"reported":{"power":false,"wifi":{"online":false,"ipv4":null,"ipv6":null}}}}'
+        shadows/mcp/schema: aws/mcp-shadow.schema.json
+        shadows/mcp/default: aws/default-mcp-shadow.json
+        shadows/mcp/defaultPayload: '{"state":{"reported":{"descriptor":null,"status":{"serviceId":"mcp","available":false,"updatedAtMs":0}}}}'
+        shadows/video/schema: aws/video-shadow.schema.json
+        shadows/video/default: aws/default-video-shadow.json
+        shadows/video/defaultPayload: '{"state":{"reported":{"descriptor":null,"status":{"serviceId":"video","available":false,"ready":false,"status":"unavailable","viewerConnected":false,"lastError":null}}}}'
+        web/adapter: web/unit-adapter.tsx
+        resources/boardVideo/channelName: "{device_id}-board-video"
 
-  RaspiWeatherTypeCatalog:
-    Type: AWS::CloudFormation::Stack
+  WeatherTypeCatalogV2:
+    Type: Custom::TxingTypeCatalog
     DependsOn:
-      - BaseEnvironment
-      - RaspiTypeCatalog
+      - RaspiTypeCatalogV2
     Properties:
-      TemplateURL: templates/types/raspi-weather.yaml
-      Parameters:
-        TypeCatalogServiceToken: !GetAtt CleanStackLayer.Outputs.CustomResourceServiceToken
+      ServiceToken: !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-aws-clean-stack
+      CleanupType: TypeCatalog
+      PhysicalResourceId: !Sub ${AWS::StackName}-type-catalog-weather
+      ThingTypeName: weather
+      ThingTypeDescription: txing weather device type
+      SearchableAttributes:
+        - name
+        - townId
+        - rigId
+      CatalogBasePath: /txing/town/raspi/weather
+      CatalogParameters:
+        kind: deviceType
+        schemaVersion: "1.0"
+        thingType: weather
+        deviceType: weather
+        rigType: raspi
+        displayName: Weather
+        defaultName: outside
+        capabilities: sparkplug,ble,power,weather
+        redconCommandLevels: 4
+        redconRules/4: sparkplug,ble,power,weather
+        requiredAttributes: name,shortId,townId,rigId
+        searchableAttributes: name,townId,rigId
+        shadows/sparkplug/schema: aws/sparkplug-shadow.schema.json
+        shadows/sparkplug/default: aws/default-sparkplug-shadow.json
+        shadows/sparkplug/defaultPayload: '{"state":{"reported":{"topic":{"namespace":"spBv1.0","groupId":"town","messageType":"DDEATH","edgeNodeId":"rig","deviceId":"weather-local"},"payload":{"metrics":{}}}}}'
+        shadows/ble/schema: aws/ble-shadow.schema.json
+        shadows/ble/default: aws/default-ble-shadow.json
+        shadows/ble/defaultPayload: '{"state":{"reported":{}}}'
+        shadows/power/schema: aws/power-shadow.schema.json
+        shadows/power/default: aws/default-power-shadow.json
+        shadows/power/defaultPayload: '{"state":{"reported":{}}}'
+        shadows/weather/schema: aws/weather-shadow.schema.json
+        shadows/weather/default: aws/default-weather-shadow.json
+        shadows/weather/defaultPayload: '{"state":{"reported":{}}}'
+        web/adapter: web/weather-adapter.tsx
 
-  RaspiPowerTypeCatalog:
-    Type: AWS::CloudFormation::Stack
+  PowerTypeCatalogV2:
+    Type: Custom::TxingTypeCatalog
     DependsOn:
-      - BaseEnvironment
-      - RaspiTypeCatalog
+      - RaspiTypeCatalogV2
     Properties:
-      TemplateURL: templates/types/raspi-power.yaml
-      Parameters:
-        TypeCatalogServiceToken: !GetAtt CleanStackLayer.Outputs.CustomResourceServiceToken
+      ServiceToken: !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-aws-clean-stack
+      CleanupType: TypeCatalog
+      PhysicalResourceId: !Sub ${AWS::StackName}-type-catalog-power
+      ThingTypeName: power
+      ThingTypeDescription: txing power device type
+      SearchableAttributes:
+        - name
+        - townId
+        - rigId
+      CatalogBasePath: /txing/town/raspi/power
+      CatalogParameters:
+        kind: deviceType
+        schemaVersion: "1.0"
+        thingType: power
+        deviceType: power
+        rigType: raspi
+        displayName: Power
+        defaultName: power
+        capabilities: sparkplug,ble,power
+        redconCommandLevels: 4,3
+        redconRules/4: sparkplug,ble
+        redconRules/3: sparkplug,ble,power
+        requiredAttributes: name,shortId,townId,rigId
+        searchableAttributes: name,townId,rigId
+        shadows/sparkplug/schema: aws/sparkplug-shadow.schema.json
+        shadows/sparkplug/default: aws/default-sparkplug-shadow.json
+        shadows/sparkplug/defaultPayload: '{"state":{"reported":{"topic":{"namespace":"spBv1.0","groupId":"town","messageType":"DDEATH","edgeNodeId":"rig","deviceId":"power-local"},"payload":{"metrics":{}}}}}'
+        shadows/ble/schema: aws/ble-shadow.schema.json
+        shadows/ble/default: aws/default-ble-shadow.json
+        shadows/ble/defaultPayload: '{"state":{"reported":{}}}'
+        shadows/power/schema: aws/power-shadow.schema.json
+        shadows/power/default: aws/default-power-shadow.json
+        shadows/power/defaultPayload: '{"state":{"reported":{}}}'
+        web/adapter: web/power-adapter.tsx
 
-  CloudTypeCatalog:
-    Type: AWS::CloudFormation::Stack
+  CloudTypeCatalogV2:
+    Type: Custom::TxingTypeCatalog
     DependsOn:
-      - TownTypeCatalog
+      - TownTypeCatalogV2
     Properties:
-      TemplateURL: templates/types/cloud.yaml
-      Parameters:
-        TypeCatalogServiceToken: !GetAtt CleanStackLayer.Outputs.CustomResourceServiceToken
+      ServiceToken: !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-aws-clean-stack
+      CleanupType: TypeCatalog
+      PhysicalResourceId: !Sub ${AWS::StackName}-type-catalog-cloud
+      ThingTypeName: cloud
+      ThingTypeDescription: txing cloud rig type
+      SearchableAttributes:
+        - name
+        - townId
+      CatalogBasePath: /txing/town/cloud
+      CatalogParameters:
+        kind: rigType
+        schemaVersion: "1.0"
+        thingType: cloud
+        rigType: cloud
+        displayName: Cloud Rig
+        defaultName: aws
+        capabilities: sparkplug
+        requiredAttributes: name,shortId,townId
+        searchableAttributes: name,townId
 
-  CloudMcuTypeCatalog:
-    Type: AWS::CloudFormation::Stack
+  CloudMcuTypeCatalogV2:
+    Type: Custom::TxingTypeCatalog
     DependsOn:
-      - BaseEnvironment
-      - CloudTypeCatalog
+      - CloudTypeCatalogV2
     Properties:
-      TemplateURL: templates/types/cloud-mcu.yaml
-      Parameters:
-        TypeCatalogServiceToken: !GetAtt CleanStackLayer.Outputs.CustomResourceServiceToken
+      ServiceToken: !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-aws-clean-stack
+      CleanupType: TypeCatalog
+      PhysicalResourceId: !Sub ${AWS::StackName}-type-catalog-cloud-mcu
+      ThingTypeName: cloud-mcu
+      ThingTypeDescription: txing cloud MCU device type
+      SearchableAttributes:
+        - name
+        - townId
+        - rigId
+      CatalogBasePath: /txing/town/cloud/cloud-mcu
+      CatalogParameters:
+        kind: deviceType
+        schemaVersion: "1.0"
+        thingType: cloud-mcu
+        deviceType: cloud-mcu
+        rigType: cloud
+        displayName: Cloud MCU
+        defaultName: cloud
+        capabilities: sparkplug,sqs,power,ecs
+        redconCommandLevels: 4,3
+        redconRules/4: sparkplug,sqs
+        redconRules/3: sparkplug,sqs,power
+        requiredAttributes: name,shortId,townId,rigId
+        searchableAttributes: name,townId,rigId
+        shadows/sparkplug/schema: aws/sparkplug-shadow.schema.json
+        shadows/sparkplug/default: aws/default-sparkplug-shadow.json
+        shadows/sparkplug/defaultPayload: '{"state":{"reported":{"payload":{"metrics":{"redcon":4}}}}}'
+        shadows/sqs/schema: aws/sqs-shadow.schema.json
+        shadows/sqs/default: aws/default-sqs-shadow.json
+        shadows/sqs/defaultPayload: '{"state":{"reported":{}}}'
+        shadows/power/schema: aws/power-shadow.schema.json
+        shadows/power/default: aws/default-power-shadow.json
+        shadows/power/defaultPayload: '{"state":{"reported":{"desiredRedcon":4,"powered":false,"ecsTaskArn":null,"ecsTaskStatus":null,"pendingCommand":null,"sparkplugBorn":false}}}'
+        shadows/ecs/schema: aws/ecs-shadow.schema.json
+        shadows/ecs/default: aws/default-ecs-shadow.json
+        shadows/ecs/defaultPayload: '{"state":{"reported":{}}}'
+        web/adapter: web/cloud-mcu-adapter.tsx
 
-  CloudRigRuntimeLambdaLayer:
-    Type: AWS::CloudFormation::Stack
-    DependsOn:
-      - CloudMcuTypeCatalog
+  CloudMcuVpc:
+    Type: AWS::EC2::VPC
     Properties:
-      TemplateURL: templates/lambdas/txing-cloud-rig-lambda.yaml
-      Parameters:
-        LambdaArtifactsBucketName: !Ref LambdaArtifactsBucketName
-        CloudMcuTickQueueArn: !GetAtt CloudMcuTypeCatalog.Outputs.CloudMcuTickQueueArn
-        CloudMcuTickQueueUrl: !GetAtt CloudMcuTypeCatalog.Outputs.CloudMcuTickQueueUrl
+      CidrBlock: 10.83.0.0/24
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-cloud-mcu-vpc
 
-  CloudMcuRuntimeLambdaLayer:
-    Type: AWS::CloudFormation::Stack
-    DependsOn:
-      - CloudMcuTypeCatalog
+  CloudMcuVpcIpv6CidrBlock:
+    Type: AWS::EC2::VPCCidrBlock
     Properties:
-      TemplateURL: templates/lambdas/txing-cloud-mcu-lambda.yaml
-      Parameters:
-        LambdaArtifactsBucketName: !Ref LambdaArtifactsBucketName
-        CloudMcuTickQueueArn: !GetAtt CloudMcuTypeCatalog.Outputs.CloudMcuTickQueueArn
-        CloudMcuClusterName: !GetAtt CloudMcuTypeCatalog.Outputs.CloudMcuClusterName
-        CloudMcuTaskDefinitionArn: !GetAtt CloudMcuTypeCatalog.Outputs.CloudMcuTaskDefinitionArn
-        CloudMcuSubnetId: !GetAtt CloudMcuTypeCatalog.Outputs.CloudMcuSubnetId
-        CloudMcuTaskSecurityGroupId: !GetAtt CloudMcuTypeCatalog.Outputs.CloudMcuTaskSecurityGroupId
-        CloudMcuTaskExecutionRoleArn: !GetAtt CloudMcuTypeCatalog.Outputs.CloudMcuTaskExecutionRoleArn
-        CloudMcuTaskRoleArn: !GetAtt CloudMcuTypeCatalog.Outputs.CloudMcuTaskRoleArn
+      AmazonProvidedIpv6CidrBlock: true
+      VpcId: !Ref CloudMcuVpc
 
-  RigRuntimeLayer:
-    Type: AWS::CloudFormation::Stack
-    DependsOn: BaseEnvironment
+  CloudMcuEgressOnlyInternetGateway:
+    Type: AWS::EC2::EgressOnlyInternetGateway
     Properties:
-      TemplateURL: templates/rig.yaml
+      VpcId: !Ref CloudMcuVpc
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-cloud-mcu-egress
 
-  DeviceRuntimeLayer:
-    Type: AWS::CloudFormation::Stack
-    DependsOn: BaseEnvironment
+  CloudMcuSubnet:
+    Type: AWS::EC2::Subnet
+    DependsOn: CloudMcuVpcIpv6CidrBlock
     Properties:
-      TemplateURL: templates/device.yaml
+      VpcId: !Ref CloudMcuVpc
+      Ipv6Native: true
+      Ipv6CidrBlock: !Select [0, !Cidr [!Select [0, !GetAtt CloudMcuVpc.Ipv6CidrBlocks], 1, 64]]
+      AssignIpv6AddressOnCreation: true
+      PrivateDnsNameOptionsOnLaunch:
+        EnableResourceNameDnsAAAARecord: true
+        EnableResourceNameDnsARecord: false
+        HostnameType: resource-name
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-cloud-mcu-subnet
 
-  EnlistLayer:
-    Type: AWS::CloudFormation::Stack
-    DependsOn:
-      - TownTypeCatalog
-      - RaspiTypeCatalog
-      - RaspiUnitTypeCatalog
-      - RaspiWeatherTypeCatalog
-      - RaspiPowerTypeCatalog
-      - CloudTypeCatalog
-      - CloudMcuTypeCatalog
+  CloudMcuRouteTable:
+    Type: AWS::EC2::RouteTable
     Properties:
-      TemplateURL: templates/lambdas/aws-enlist-txing.yaml
-      Parameters:
-        AwsAdminCodeS3Bucket: !Ref AwsAdminCodeS3Bucket
-        AwsAdminCodeS3Key: !Ref AwsAdminCodeS3Key
+      VpcId: !Ref CloudMcuVpc
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-cloud-mcu-routes
 
-  PublishReleaseLayer:
-    Type: AWS::CloudFormation::Stack
-    DependsOn:
-      - BaseEnvironment
-      - WitnessLayer
-      - CloudRigRuntimeLambdaLayer
-      - CloudMcuRuntimeLambdaLayer
+  CloudMcuIpv6DefaultRoute:
+    Type: AWS::EC2::Route
     Properties:
-      TemplateURL: templates/lambdas/aws-publish-release.yaml
-      Parameters:
-        AwsAdminCodeS3Bucket: !Ref AwsAdminCodeS3Bucket
-        AwsAdminCodeS3Key: !Ref AwsAdminCodeS3Key
-        LambdaArtifactsBucketName: !Ref LambdaArtifactsBucketName
-        GithubRepository: !Ref GithubRepository
+      RouteTableId: !Ref CloudMcuRouteTable
+      DestinationIpv6CidrBlock: ::/0
+      EgressOnlyInternetGatewayId: !Ref CloudMcuEgressOnlyInternetGateway
+
+  CloudMcuSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref CloudMcuSubnet
+      RouteTableId: !Ref CloudMcuRouteTable
+
+  CloudMcuTaskSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub ${AWS::StackName}-cloud-mcu-task
+      GroupDescription: Allows cloud MCU placeholder ECS tasks outbound access.
+      VpcId: !Ref CloudMcuVpc
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIpv6: ::/0
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-cloud-mcu-task
+
+  CloudMcuCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub ${AWS::StackName}-cloud-mcu
+
+  CloudMcuTaskLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/ecs/${AWS::StackName}-cloud-mcu
+      RetentionInDays: 14
+
+  CloudMcuTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AWS::StackName}-cloud-mcu-execution
+      Description: Execution role for placeholder cloud MCU Fargate tasks.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: cloud-mcu-task-execution
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: CloudMcuTaskLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !GetAtt CloudMcuTaskLogGroup.Arn
+                  - !Sub ${CloudMcuTaskLogGroup.Arn}:*
+
+  CloudMcuTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AWS::StackName}-cloud-mcu-task
+      Description: Placeholder task role for future cloud MCU ECS runtime.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+
+  CloudMcuTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub ${AWS::StackName}-cloud-mcu
+      Cpu: "256"
+      Memory: "512"
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      RuntimePlatform:
+        CpuArchitecture: ARM64
+        OperatingSystemFamily: LINUX
+      ExecutionRoleArn: !GetAtt CloudMcuTaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt CloudMcuTaskRole.Arn
+      ContainerDefinitions:
+        - Name: cloud-mcu
+          Image: !Ref CloudMcuEcsTaskImage
+          Essential: true
+          Command:
+            - sh
+            - -c
+            - "while true; do sleep 3600; done"
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref CloudMcuTaskLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: cloud-mcu
+
+  CloudMcuTickDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub ${AWS::StackName}-cloud-mcu-tick-dlq
+      MessageRetentionPeriod: 1209600
+
+  CloudMcuTickQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub ${AWS::StackName}-cloud-mcu-tick
+      VisibilityTimeout: 60
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt CloudMcuTickDeadLetterQueue.Arn
+        maxReceiveCount: 5
+
+  TxingRigRuntimeManagedPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub ${AWS::StackName}-rig-runtime
+      Description: Rig runtime policy for MQTT, registry reads, shadows, and logs.
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: RigMqttConnect
+            Effect: Allow
+            Action: iot:Connect
+            Resource:
+              # Per-device Sparkplug sessions intentionally use the managed
+              # thing name as MQTT client id so AWS IoT thing connectivity
+              # status tracks DBIRTH/DDEATH session state.
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/*
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/rig-*
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/rig-cmd-*
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/rig-log-*
+          - Sid: RigShadowMqttTopics
+            Effect: Allow
+            Action:
+              - iot:Publish
+              - iot:Receive
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/*/shadow/*
+          - Sid: RigShadowMqttTopicFilters
+            Effect: Allow
+            Action: iot:Subscribe
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/$aws/things/*/shadow/*
+          - Sid: RigSparkplugMqttTopics
+            Effect: Allow
+            Action:
+              - iot:Publish
+              - iot:Receive
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/spBv1.0/*
+          - Sid: RigSparkplugMqttTopicFilters
+            Effect: Allow
+            Action: iot:Subscribe
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/spBv1.0/*
+          - Sid: RigVideoDiscoveryTopics
+            Effect: Allow
+            Action: iot:Receive
+            Resource:
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/*/mcp/descriptor
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/*/mcp/status
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/*/video/descriptor
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/*/video/status
+          - Sid: RigVideoDiscoveryTopicFilters
+            Effect: Allow
+            Action: iot:Subscribe
+            Resource:
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/txings/*/mcp/descriptor
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/txings/*/mcp/status
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/txings/*/video/descriptor
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/txings/*/video/status
+          - Sid: RigCapabilityServiceTopics
+            Effect: Allow
+            Action:
+              - iot:Publish
+              - iot:RetainPublish
+              - iot:Receive
+            Resource:
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/*/capability/v2/command
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/*/capability/v2/state
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/*/capability/v2/command-result
+          - Sid: RigCapabilityServiceTopicFilters
+            Effect: Allow
+            Action: iot:Subscribe
+            Resource:
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/txings/*/capability/v2/state
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/txings/*/capability/v2/command-result
+          - Sid: RigThingShadowApi
+            Effect: Allow
+            Action:
+              - iot:GetThingShadow
+              - iot:UpdateThingShadow
+              - iot:DeleteThingShadow
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/*
+          - Sid: RigThingRegistryReadWrite
+            Effect: Allow
+            Action:
+              - iot:DescribeThing
+              - iot:UpdateThing
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/*
+          - Sid: RigFleetRegistryRead
+            Effect: Allow
+            Action:
+              - iot:GetIndexingConfiguration
+              - iot:SearchIndex
+            Resource: "*"
+          - Sid: RigTypeCatalogRead
+            Effect: Allow
+            Action: ssm:GetParametersByPath
+            Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/txing/*
+          - Sid: RigDescribeEndpoint
+            Effect: Allow
+            Action: iot:DescribeEndpoint
+            Resource: "*"
+          - Sid: RigCloudWatchLogsWrite
+            Effect: Allow
+            Action:
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:DescribeLogStreams
+              - logs:PutRetentionPolicy
+              - logs:PutLogEvents
+            Resource:
+              - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:txing/*
+              - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:txing/*:log-stream:*
+
+  TxingRigRuntimeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AWS::StackName}-rig-runtime
+      Description: Town-scoped runtime IAM role assumed by rig hosts for SigV4 MQTT/WSS and control-plane access.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:root
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Ref TxingRigRuntimeManagedPolicy
+
+  TxingRigDaemonCredentialRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AWS::StackName}-rig-daemon-credentials
+      Description: IAM role assumed by AWS IoT Credentials Provider for standalone rig daemons.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: credentials.iot.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Ref TxingRigRuntimeManagedPolicy
+
+  TxingRigDaemonCredentialRoleAlias:
+    Type: AWS::IoT::RoleAlias
+    Properties:
+      RoleAlias: !Sub ${AWS::StackName}-rig-daemon
+      RoleArn: !GetAtt TxingRigDaemonCredentialRole.Arn
+      CredentialDurationSeconds: 3600
+
+  TxingRigBootstrapManagedPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub ${AWS::StackName}-rig-bootstrap
+      Description: Grants only sts:AssumeRole for the town rig runtime role.
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AssumeRigRuntimeRole
+            Effect: Allow
+            Action: sts:AssumeRole
+            Resource: !GetAtt TxingRigRuntimeRole.Arn
+
+  TxingRuntimeManagedPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub ${AWS::StackName}-device-runtime
+      Description: Device endpoint runtime policy for SigV4 MQTT/WSS and board video.
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DeviceMqttConnect
+            Effect: Allow
+            Action: iot:Connect
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/device-*
+          - Sid: DeviceShadowMqttTopics
+            Effect: Allow
+            Action:
+              - iot:Publish
+              - iot:Receive
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/*/shadow/*
+          - Sid: DeviceShadowMqttTopicFilters
+            Effect: Allow
+            Action: iot:Subscribe
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/$aws/things/*/shadow/*
+          - Sid: DeviceSparkplugMqttTopics
+            Effect: Allow
+            Action: iot:Receive
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/spBv1.0/*
+          - Sid: DeviceSparkplugMqttTopicFilters
+            Effect: Allow
+            Action: iot:Subscribe
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/spBv1.0/*
+          - Sid: DeviceMcpTopics
+            Effect: Allow
+            Action:
+              - iot:Publish
+              - iot:RetainPublish
+              - iot:Receive
+            Resource:
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/*/mcp/descriptor
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/*/mcp/status
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/*/mcp/session/*/c2s
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/*/mcp/session/*/s2c
+          - Sid: DeviceMcpTopicFilters
+            Effect: Allow
+            Action: iot:Subscribe
+            Resource:
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/txings/*/mcp/descriptor
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/txings/*/mcp/status
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/txings/*/mcp/session/*/s2c
+          - Sid: DeviceVideoTopics
+            Effect: Allow
+            Action:
+              - iot:Publish
+              - iot:RetainPublish
+              - iot:Receive
+            Resource:
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/*/video/descriptor
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/*/video/status
+          - Sid: DeviceCapabilityServiceTopics
+            Effect: Allow
+            Action:
+              - iot:Publish
+              - iot:RetainPublish
+            Resource:
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/*/capability/v2/state
+          - Sid: DeviceThingShadowApi
+            Effect: Allow
+            Action: iot:GetThingShadow
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/*
+          - Sid: DeviceDescribeThing
+            Effect: Allow
+            Action: iot:DescribeThing
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/*
+          - Sid: DeviceDescribeEndpoint
+            Effect: Allow
+            Action: iot:DescribeEndpoint
+            Resource: "*"
+          - Sid: DeviceBoardVideoMaster
+            Effect: Allow
+            Action:
+              - kinesisvideo:DescribeSignalingChannel
+              - kinesisvideo:GetSignalingChannelEndpoint
+              - kinesisvideo:GetIceServerConfig
+              - kinesisvideo:ConnectAsMaster
+            Resource: "*"
+
+  TxingRuntimeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AWS::StackName}-device-runtime
+      Description: Town-scoped IAM role assumed by registered device endpoint hosts.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:root
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Ref TxingRuntimeManagedPolicy
+
+  TxingBootstrapManagedPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub ${AWS::StackName}-device-bootstrap
+      Description: Grants only sts:AssumeRole for the device runtime role.
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AssumeDeviceRuntimeRole
+            Effect: Allow
+            Action: sts:AssumeRole
+            Resource: !GetAtt TxingRuntimeRole.Arn
+
+  TxingBoardVideoSenderManagedPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub ${AWS::StackName}-board-video-sender
+      Description: Attach to the AWS principal used by per-device board video senders.
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: BoardVideoMaster
+            Effect: Allow
+            Action:
+              - kinesisvideo:DescribeSignalingChannel
+              - kinesisvideo:GetSignalingChannelEndpoint
+              - kinesisvideo:GetIceServerConfig
+              - kinesisvideo:ConnectAsMaster
+            Resource: "*"
+
+  TxingDaemonIotPolicy:
+    Type: AWS::IoT::Policy
+    Properties:
+      PolicyName: !Sub ${AWS::StackName}-device-daemon
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DaemonConnect
+            Effect: Allow
+            Action: iot:Connect
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/${!iot:Connection.Thing.ThingName}-daemon-*
+            Condition:
+              Bool:
+                iot:Connection.Thing.IsAttached: "true"
+          - Sid: DaemonOwnThingTopics
+            Effect: Allow
+            Action:
+              - iot:Publish
+              - iot:RetainPublish
+              - iot:Receive
+            Resource:
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/${!iot:Connection.Thing.ThingName}/shadow/name/*/update
+              - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/txings/${!iot:Connection.Thing.ThingName}/*
+          - Sid: DaemonOwnThingTopicFilters
+            Effect: Allow
+            Action: iot:Subscribe
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/txings/${!iot:Connection.Thing.ThingName}/*
+          - Sid: DaemonCredentialProvider
+            Effect: Allow
+            Action: iot:AssumeRoleWithCertificate
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:rolealias/txing-daemon-${!iot:Connection.Thing.ThingName}
+            Condition:
+              Bool:
+                iot:Connection.Thing.IsAttached: "true"
 
 Outputs:
   RigLogGroupPattern:
-    Value: !GetAtt BaseEnvironment.Outputs.RigLogGroupPattern
+    Value: txing/<town-thing-name>/<rig-thing-name>
   DeviceLogGroupPattern:
-    Value: !GetAtt BaseEnvironment.Outputs.DeviceLogGroupPattern
+    Value: txing/<town-thing-name>/<rig-thing-name>/<device-thing-name>
   RigLogsManagedPolicyArn:
-    Value: !GetAtt BaseEnvironment.Outputs.RigLogsManagedPolicyArn
+    Value: !Ref TxingGatewayLogsManagedPolicy
   PolicyName:
-    Value: !GetAtt BaseEnvironment.Outputs.PolicyName
+    Value: !Ref TxingGatewayPolicy
   WebIotPolicyName:
-    Value: !GetAtt BaseEnvironment.Outputs.WebIotPolicyName
+    Value: !Ref TxingWebAdminIotPolicy
   WebCognitoUserPoolId:
-    Value: !GetAtt BaseEnvironment.Outputs.WebCognitoUserPoolId
+    Value: !Ref TxingAdminUserPool
   WebCognitoUserPoolClientId:
-    Value: !GetAtt BaseEnvironment.Outputs.WebCognitoUserPoolClientId
+    Value: !Ref TxingAdminUserPoolClient
   WebCognitoIdentityPoolId:
-    Value: !GetAtt BaseEnvironment.Outputs.WebCognitoIdentityPoolId
+    Value: !Ref TxingAdminIdentityPool
   WebCognitoDomain:
-    Value: !GetAtt BaseEnvironment.Outputs.WebCognitoDomain
+    Value: !Sub https://${StackCognitoDomainPrefix}.auth.${AWS::Region}.amazoncognito.com
   WebAppUrl:
-    Value: !GetAtt BaseEnvironment.Outputs.WebAppUrl
+    Value: !Sub "${StackWebAppUrl}/"
   WebExpectedAdminEmail:
-    Value: !GetAtt BaseEnvironment.Outputs.WebExpectedAdminEmail
+    Value: !Ref StackAdminEmail
   ReleasePublisherFunctionName:
-    Value: !GetAtt PublishReleaseLayer.Outputs.ReleasePublisherFunctionName
+    Value: !Sub ${AWS::StackName}-aws-publish-release
   ReleasePublisherFunctionArn:
-    Value: !GetAtt PublishReleaseLayer.Outputs.ReleasePublisherFunctionArn
+    Value: !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-aws-publish-release
   RigRuntimeRoleArn:
-    Value: !GetAtt RigRuntimeLayer.Outputs.RigRuntimeRoleArn
+    Value: !GetAtt TxingRigRuntimeRole.Arn
   RigRuntimeRoleName:
-    Value: !GetAtt RigRuntimeLayer.Outputs.RigRuntimeRoleName
+    Value: !Ref TxingRigRuntimeRole
   RigRuntimeManagedPolicyArn:
-    Value: !GetAtt RigRuntimeLayer.Outputs.RigRuntimeManagedPolicyArn
+    Value: !Ref TxingRigRuntimeManagedPolicy
   RigDaemonCredentialRoleArn:
-    Value: !GetAtt RigRuntimeLayer.Outputs.RigDaemonCredentialRoleArn
+    Value: !GetAtt TxingRigDaemonCredentialRole.Arn
   RigDaemonCredentialRoleName:
-    Value: !GetAtt RigRuntimeLayer.Outputs.RigDaemonCredentialRoleName
+    Value: !Ref TxingRigDaemonCredentialRole
   RigDaemonCredentialRoleAlias:
-    Value: !GetAtt RigRuntimeLayer.Outputs.RigDaemonCredentialRoleAlias
+    Value: !Ref TxingRigDaemonCredentialRoleAlias
   RigDaemonCredentialRoleAliasArn:
-    Value: !GetAtt RigRuntimeLayer.Outputs.RigDaemonCredentialRoleAliasArn
+    Value: !GetAtt TxingRigDaemonCredentialRoleAlias.RoleAliasArn
   RigBootstrapManagedPolicyArn:
-    Value: !GetAtt RigRuntimeLayer.Outputs.RigBootstrapManagedPolicyArn
+    Value: !Ref TxingRigBootstrapManagedPolicy
   DeviceRuntimeRoleArn:
-    Value: !GetAtt DeviceRuntimeLayer.Outputs.DeviceRuntimeRoleArn
+    Value: !GetAtt TxingRuntimeRole.Arn
   DeviceRuntimeRoleName:
-    Value: !GetAtt DeviceRuntimeLayer.Outputs.DeviceRuntimeRoleName
+    Value: !Ref TxingRuntimeRole
   DeviceRuntimeManagedPolicyArn:
-    Value: !GetAtt DeviceRuntimeLayer.Outputs.DeviceRuntimeManagedPolicyArn
+    Value: !Ref TxingRuntimeManagedPolicy
   DeviceBootstrapManagedPolicyArn:
-    Value: !GetAtt DeviceRuntimeLayer.Outputs.DeviceBootstrapManagedPolicyArn
+    Value: !Ref TxingBootstrapManagedPolicy
   BoardVideoSenderManagedPolicyArn:
-    Value: !GetAtt DeviceRuntimeLayer.Outputs.BoardVideoSenderManagedPolicyArn
+    Value: !Ref TxingBoardVideoSenderManagedPolicy
   DeviceDaemonIotPolicyName:
-    Value: !GetAtt DeviceRuntimeLayer.Outputs.DeviceDaemonIotPolicyName
+    Value: !Ref TxingDaemonIotPolicy
   EnlistFunctionName:
-    Value: !GetAtt EnlistLayer.Outputs.EnlistFunctionName
+    Value: !Sub ${AWS::StackName}-aws-enlist-txing
   EnlistFunctionArn:
-    Value: !GetAtt EnlistLayer.Outputs.EnlistFunctionArn
+    Value: !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-aws-enlist-txing
   WitnessFunctionName:
-    Value: !GetAtt WitnessLayer.Outputs.WitnessFunctionName
+    Value: !Sub ${AWS::StackName}-witness
   WitnessFunctionArn:
-    Value: !GetAtt WitnessLayer.Outputs.WitnessFunctionArn
+    Value: !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-witness
   CloudRigRuntimeFunctionName:
-    Value: !GetAtt CloudRigRuntimeLambdaLayer.Outputs.CloudRigRuntimeFunctionName
+    Value: !Sub ${AWS::StackName}-cloud-rig
   CloudMcuRuntimeFunctionName:
-    Value: !GetAtt CloudMcuRuntimeLambdaLayer.Outputs.CloudMcuRuntimeFunctionName
+    Value: !Sub ${AWS::StackName}-cloud-mcu
   CloudMcuTickQueueUrl:
-    Value: !GetAtt CloudMcuTypeCatalog.Outputs.CloudMcuTickQueueUrl
+    Value: !Ref CloudMcuTickQueue
+  CloudMcuTickQueueArn:
+    Value: !GetAtt CloudMcuTickQueue.Arn
+  CloudMcuClusterName:
+    Value: !Ref CloudMcuCluster
+  CloudMcuTaskDefinitionArn:
+    Value: !Ref CloudMcuTaskDefinition
+  CloudMcuSubnetId:
+    Value: !Ref CloudMcuSubnet
+  CloudMcuTaskSecurityGroupId:
+    Value: !Ref CloudMcuTaskSecurityGroup
+  CloudMcuTaskExecutionRoleArn:
+    Value: !GetAtt CloudMcuTaskExecutionRole.Arn
+  CloudMcuTaskRoleArn:
+    Value: !GetAtt CloudMcuTaskRole.Arn
   CloudRigRuntimeScheduleRuleName:
-    Value: !GetAtt CloudRigRuntimeLambdaLayer.Outputs.CloudRigRuntimeScheduleRuleName
+    Value: !Sub ${AWS::StackName}-cloud-rig-runtime
   CloudMcuDcmdTopicRuleArn:
-    Value: !GetAtt CloudMcuRuntimeLambdaLayer.Outputs.CloudMcuDcmdTopicRuleArn
+    Value: !Join
+      - ""
+      - - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:rule/
+        - !Join
+          - "_"
+          - !Split ["-", !Ref AWS::StackName]
+        - _cloud_mcu_dcmd

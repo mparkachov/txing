@@ -1,5 +1,5 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 
 fail() {
   echo "error: $*" >&2
@@ -17,7 +17,14 @@ config_dir="$rig_home/.config/mise/conf.d"
 config_file="$config_dir/txing-rig.toml"
 install -d -m 700 "$config_dir"
 
-tmp="$(mktemp)"
+if [ -z "${TMPDIR:-}" ]; then
+  script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+  project_root="$(CDPATH= cd -- "$script_dir/.." && pwd)"
+  TMPDIR="$project_root/tmp"
+  export TMPDIR
+fi
+mkdir -p "$TMPDIR"
+tmp="$(mktemp "${TMPDIR:-/tmp}/txing-mise-tools.XXXXXX")"
 trap 'rm -f "$tmp"' EXIT
 cat >"$tmp" <<EOF
 [settings]

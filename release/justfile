@@ -1,7 +1,10 @@
-set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+set shell := ["sh", "-eu", "-c"]
 set quiet := true
 
 release_dir := source_directory()
+project_root := canonicalize(release_dir + "/..")
+tmp_dir := project_root + "/tmp"
+export TMPDIR := tmp_dir
 
 bump target:
     uv run --project "{{ release_dir }}" txing-release bump "{{ target }}"

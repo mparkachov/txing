@@ -1,8 +1,10 @@
-set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+set shell := ["sh", "-eu", "-c"]
 set quiet := true
 
 rig_dir := source_directory()
-project_root := rig_dir + "/.."
+project_root := canonicalize(rig_dir + "/..")
+tmp_dir := project_root + "/tmp"
+export TMPDIR := tmp_dir
 root_justfile := project_root + "/justfile"
 aws_lib := project_root + "/shared/aws/scripts/aws_lib.sh"
 bin_dir := rig_dir + "/target/local"
@@ -12,20 +14,20 @@ config_dir := ""
 
 [positional-arguments]
 aws *args:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig)"
     command aws "$@"
 
 test:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     cd "{{rig_dir}}"
     go test ./...
 
 build:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     cd "{{rig_dir}}"
     install -d -m 755 "{{bin_dir}}"
     version="$(tr -d '[:space:]' < "{{project_root}}/VERSION")"
@@ -35,33 +37,28 @@ build:
       -o "{{bin_dir}}/txing-ble-connectivity" ./cmd/txing-ble-connectivity
 
 start config_dir=config_dir no_ble='false':
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     requested_config_dir="{{config_dir}}"
     requested_no_ble="{{no_ble}}"
-    if [[ "$requested_config_dir" == *=* || "$requested_no_ble" == *=* ]]; then
-      echo "Do not pass just recipe arguments as name=value. Use positional arguments." >&2
-      exit 2
-    fi
+    case "$requested_config_dir" in *=*) echo "Do not pass just recipe arguments as name=value. Use positional arguments." >&2; exit 2 ;; esac
+    case "$requested_no_ble" in *=*) echo "Do not pass just recipe arguments as name=value. Use positional arguments." >&2; exit 2 ;; esac
     just --justfile "{{rig_dir}}/justfile" build
     install -d -m 755 "{{run_dir}}"
     export TXING_RIG_IPC_SOCKET="${TXING_RIG_IPC_SOCKET:-{{default_ipc_socket}}}"
-    sparkplug_args=()
-    ble_args=()
-    if [ -n "$requested_config_dir" ]; then
-      sparkplug_args+=(--config-dir "$requested_config_dir")
-      ble_args+=(--config-dir "$requested_config_dir")
-    fi
-    if [ "$requested_no_ble" = "true" ]; then
-      ble_args+=(--no-ble)
-    fi
     if [ -f "{{run_dir}}/txing-sparkplug-manager.pid" ] &&
       kill -0 "$(cat "{{run_dir}}/txing-sparkplug-manager.pid")" >/dev/null 2>&1; then
       echo "txing-sparkplug-manager already running"
     else
-      TXING_RIG_IPC_SOCKET="$TXING_RIG_IPC_SOCKET" \
-        nohup "{{bin_dir}}/txing-sparkplug-manager" "${sparkplug_args[@]}" \
-        >"{{run_dir}}/txing-sparkplug-manager.log" 2>&1 &
+      if [ -n "$requested_config_dir" ]; then
+        TXING_RIG_IPC_SOCKET="$TXING_RIG_IPC_SOCKET" \
+          nohup "{{bin_dir}}/txing-sparkplug-manager" --config-dir "$requested_config_dir" \
+          >"{{run_dir}}/txing-sparkplug-manager.log" 2>&1 &
+      else
+        TXING_RIG_IPC_SOCKET="$TXING_RIG_IPC_SOCKET" \
+          nohup "{{bin_dir}}/txing-sparkplug-manager" \
+          >"{{run_dir}}/txing-sparkplug-manager.log" 2>&1 &
+      fi
       echo "$!" >"{{run_dir}}/txing-sparkplug-manager.pid"
     fi
     sleep 1
@@ -69,17 +66,31 @@ start config_dir=config_dir no_ble='false':
       kill -0 "$(cat "{{run_dir}}/txing-ble-connectivity.pid")" >/dev/null 2>&1; then
       echo "txing-ble-connectivity already running"
     else
-      TXING_RIG_IPC_SOCKET="$TXING_RIG_IPC_SOCKET" \
-        nohup "{{bin_dir}}/txing-ble-connectivity" "${ble_args[@]}" \
-        >"{{run_dir}}/txing-ble-connectivity.log" 2>&1 &
+      if [ -n "$requested_config_dir" ] && [ "$requested_no_ble" = "true" ]; then
+        TXING_RIG_IPC_SOCKET="$TXING_RIG_IPC_SOCKET" \
+          nohup "{{bin_dir}}/txing-ble-connectivity" --config-dir "$requested_config_dir" --no-ble \
+          >"{{run_dir}}/txing-ble-connectivity.log" 2>&1 &
+      elif [ -n "$requested_config_dir" ]; then
+        TXING_RIG_IPC_SOCKET="$TXING_RIG_IPC_SOCKET" \
+          nohup "{{bin_dir}}/txing-ble-connectivity" --config-dir "$requested_config_dir" \
+          >"{{run_dir}}/txing-ble-connectivity.log" 2>&1 &
+      elif [ "$requested_no_ble" = "true" ]; then
+        TXING_RIG_IPC_SOCKET="$TXING_RIG_IPC_SOCKET" \
+          nohup "{{bin_dir}}/txing-ble-connectivity" --no-ble \
+          >"{{run_dir}}/txing-ble-connectivity.log" 2>&1 &
+      else
+        TXING_RIG_IPC_SOCKET="$TXING_RIG_IPC_SOCKET" \
+          nohup "{{bin_dir}}/txing-ble-connectivity" \
+          >"{{run_dir}}/txing-ble-connectivity.log" 2>&1 &
+      fi
       echo "$!" >"{{run_dir}}/txing-ble-connectivity.pid"
     fi
     echo "rig daemons started"
     echo "logs: {{run_dir}}/txing-sparkplug-manager.log {{run_dir}}/txing-ble-connectivity.log"
 
 stop:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     for name in txing-ble-connectivity txing-sparkplug-manager; do
       pid_file="{{run_dir}}/${name}.pid"
       if [ ! -f "$pid_file" ]; then
@@ -88,10 +99,12 @@ stop:
       pid="$(cat "$pid_file")"
       if kill -0 "$pid" >/dev/null 2>&1; then
         kill "$pid"
-        for _ in $(seq 1 40); do
+        wait_attempts=0
+        while [ "$wait_attempts" -lt 40 ]; do
           if ! kill -0 "$pid" >/dev/null 2>&1; then
             break
           fi
+          wait_attempts=$((wait_attempts + 1))
           sleep 0.25
         done
       fi
@@ -101,44 +114,43 @@ stop:
     echo "rig daemons stopped"
 
 restart config_dir=config_dir no_ble='false':
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     just --justfile "{{rig_dir}}/justfile" stop
     just --justfile "{{rig_dir}}/justfile" start "{{config_dir}}" "{{no_ble}}"
 
 log:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     tail -n 160 -f "{{run_dir}}/txing-sparkplug-manager.log" "{{run_dir}}/txing-ble-connectivity.log"
 
 check config_dir=config_dir:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     just --justfile "{{rig_dir}}/justfile" build
-    args=()
     if [ -n "{{config_dir}}" ]; then
-      args+=(--config-dir "{{config_dir}}")
+      "{{bin_dir}}/txing-sparkplug-manager" --dry-run --config-dir "{{config_dir}}"
+      "{{bin_dir}}/txing-ble-connectivity" --dry-run --config-dir "{{config_dir}}" --no-ble
+    else
+      "{{bin_dir}}/txing-sparkplug-manager" --dry-run
+      "{{bin_dir}}/txing-ble-connectivity" --dry-run --no-ble
     fi
-    "{{bin_dir}}/txing-sparkplug-manager" --dry-run "${args[@]}"
-    "{{bin_dir}}/txing-ble-connectivity" --dry-run "${args[@]}" --no-ble
 
 cert rig_id='' config_dir=config_dir:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     requested_rig_name="{{rig_id}}"
     requested_config_dir="{{config_dir}}"
-    if [[ "$requested_rig_name" == *=* || "$requested_config_dir" == *=* ]]; then
-      echo "Do not pass just recipe arguments as name=value. Use positional arguments." >&2
-      exit 2
-    fi
+    case "$requested_rig_name" in *=*) echo "Do not pass just recipe arguments as name=value. Use positional arguments." >&2; exit 2 ;; esac
+    case "$requested_config_dir" in *=*) echo "Do not pass just recipe arguments as name=value. Use positional arguments." >&2; exit 2 ;; esac
     if [ -n "$requested_rig_name" ]; then
       export TXING_RIG_ID="$requested_rig_name"
     fi
-    source "{{aws_lib}}"
+    . "{{aws_lib}}"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env rig)"
     txing_aws_init
     effective_rig_name="${requested_rig_name:-$TXING_RIG_ID}"
-    if [[ ! "$effective_rig_name" =~ ^[a-zA-Z0-9:_-]+$ ]]; then
+    if ! printf '%s\n' "$effective_rig_name" | grep -E -q '^[a-zA-Z0-9:_-]+$'; then
       echo "Invalid rig ID '$effective_rig_name'. Allowed characters: letters, digits, colon, underscore, hyphen." >&2
       exit 2
     fi
@@ -230,6 +242,6 @@ cert rig_id='' config_dir=config_dir:
       '{rigName: $rigName, certificateArn: $certificateArn, envFile: $envFile, configTarball: $configTarball, iotDataEndpoint: $iotDataEndpoint, iotCredentialEndpoint: $iotCredentialEndpoint, iotRoleAlias: $iotRoleAlias, cloudWatchLogGroup: $cloudWatchLogGroup, daemonRoleName: $daemonRoleName, daemonRoleArn: $daemonRoleArn}'
 
 install-mise-tools:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
     "{{rig_dir}}/install-mise-tools.sh"

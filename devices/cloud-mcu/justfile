@@ -1,13 +1,22 @@
-set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+set shell := ["sh", "-eu", "-c"]
 set quiet := true
 
 cloud_mcu_dir := source_directory()
+project_root := canonicalize(cloud_mcu_dir + "/../..")
+tmp_dir := project_root + "/tmp"
+export TMPDIR := tmp_dir
 
 @test:
     just --justfile "{{cloud_mcu_dir}}/lambda/justfile" test
 
 @build:
     just --justfile "{{cloud_mcu_dir}}/lambda/justfile" build
+
+deploy stack_name='':
+    just --justfile "{{cloud_mcu_dir}}/lambda/justfile" deploy "{{stack_name}}"
+
+publish release='latest' stack_name='':
+    just --justfile "{{cloud_mcu_dir}}/lambda/justfile" publish "{{release}}" "{{stack_name}}"
 
 mod lambda 'lambda/justfile'
 

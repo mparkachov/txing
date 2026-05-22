@@ -1,7 +1,10 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: txing aws-publish-release Lambda.
+Description: txing release publisher Lambda stack.
 
 Parameters:
+  EnvironmentStackName:
+    Type: String
+    Description: Base txing environment stack name, for example town.
   AwsAdminCodeS3Bucket:
     Type: String
     Description: S3 bucket containing the packaged AWS admin Lambda code.
@@ -18,15 +21,16 @@ Parameters:
     Description: Public GitHub repository containing txing release assets.
 
 Resources:
-  AwsPublishReleaseLogGroup:
+  PublishReleaseLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: /aws/lambda/aws-publish-release
+      LogGroupName: !Sub /aws/lambda/${EnvironmentStackName}-aws-publish-release
       RetentionInDays: 14
 
-  AwsPublishReleaseRole:
+  PublishReleaseRole:
     Type: AWS::IAM::Role
     Properties:
+      RoleName: !Sub ${EnvironmentStackName}-aws-publish-release
       Description: Publishes txing release artifacts to Lambda.
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
@@ -46,8 +50,8 @@ Resources:
                   - logs:CreateLogStream
                   - logs:PutLogEvents
                 Resource:
-                  - !GetAtt AwsPublishReleaseLogGroup.Arn
-                  - !Sub ${AwsPublishReleaseLogGroup.Arn}:*
+                  - !GetAtt PublishReleaseLogGroup.Arn
+                  - !Sub ${PublishReleaseLogGroup.Arn}:*
               - Sid: ListLambdaArtifacts
                 Effect: Allow
                 Action:
@@ -73,32 +77,33 @@ Resources:
                   - lambda:GetFunctionConfiguration
                   - lambda:UpdateFunctionCode
                 Resource:
-                  - !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:txing-witness-lambda
-                  - !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:txing-cloud-rig-lambda
-                  - !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:txing-cloud-mcu-lambda
+                  - !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${EnvironmentStackName}-witness
+                  - !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${EnvironmentStackName}-cloud-rig
+                  - !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${EnvironmentStackName}-cloud-mcu
 
-  AwsPublishReleaseFunction:
+  PublishReleaseFunction:
     Type: AWS::Lambda::Function
     DependsOn:
-      - AwsPublishReleaseLogGroup
+      - PublishReleaseLogGroup
     Properties:
-      FunctionName: aws-publish-release
+      FunctionName: !Sub ${EnvironmentStackName}-aws-publish-release
       Description: Publishes txing release artifacts to Lambda.
       Runtime: python3.12
       Handler: aws_admin.publish_release.handler.lambda_handler
       Code:
         S3Bucket: !Ref AwsAdminCodeS3Bucket
         S3Key: !Ref AwsAdminCodeS3Key
-      Role: !GetAtt AwsPublishReleaseRole.Arn
+      Role: !GetAtt PublishReleaseRole.Arn
       Timeout: 300
       MemorySize: 512
       Environment:
         Variables:
           TXING_GITHUB_REPOSITORY: !Ref GithubRepository
           TXING_LAMBDA_ARTIFACT_BUCKET: !Ref LambdaArtifactsBucketName
+          TXING_LAMBDA_FUNCTION_PREFIX: !Sub ${EnvironmentStackName}-
 
 Outputs:
   ReleasePublisherFunctionName:
-    Value: !Ref AwsPublishReleaseFunction
+    Value: !Ref PublishReleaseFunction
   ReleasePublisherFunctionArn:
-    Value: !GetAtt AwsPublishReleaseFunction.Arn
+    Value: !GetAtt PublishReleaseFunction.Arn
