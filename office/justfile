@@ -71,7 +71,7 @@ write-env sparkplug_group_id='' town_thing_name='' stack_name=stack_name:
     fi
 
     current_sparkplug_group_id="$SPARKPLUG_GROUP_ID"
-    current_town_thing_name="$SPARKPLUG_GROUP_ID"
+    current_town_thing_name="$TXING_TOWN_ID"
 
     if [ -n "{{sparkplug_group_id}}" ]; then
       current_sparkplug_group_id="{{sparkplug_group_id}}"

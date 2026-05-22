@@ -35,7 +35,7 @@ const buildConfig = () => {
   const txingVersion =
     typeof __TXING_VERSION__ === 'string' && __TXING_VERSION__.trim()
       ? __TXING_VERSION__.trim()
-      : '0.10.8'
+      : '0.10.9'
 
   const errors: string[] = []
 

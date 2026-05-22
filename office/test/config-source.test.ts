@@ -12,7 +12,7 @@ describe('office config wiring', () => {
       "write-env sparkplug_group_id='' town_thing_name=''",
     )
     expect(justfile).toContain('current_sparkplug_group_id="$SPARKPLUG_GROUP_ID"')
-    expect(justfile).toContain('current_town_thing_name="$SPARKPLUG_GROUP_ID"')
+    expect(justfile).toContain('current_town_thing_name="$TXING_TOWN_ID"')
     expect(justfile).not.toContain('_project-aws-env device')
     expect(justfile).not.toContain('_project-aws-env rig')
     expect(justfile).not.toContain('town_search_query=')
