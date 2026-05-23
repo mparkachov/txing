@@ -5,7 +5,7 @@ status: Done
 assignee:
   - Codex
 created_date: '2026-05-23 19:24'
-updated_date: '2026-05-23 19:58'
+updated_date: '2026-05-23 23:58'
 labels: []
 milestone: Power MCU stock Zephyr power trial
 dependencies: []
@@ -50,4 +50,6 @@ ordinal: 18000
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
 Implemented power MCU stock Zephyr build/install flow pinned to stock Zephyr v4.4.0 using the stock xiao_nrf54l15/nrf54l15/cpuapp board. Preserved direct OpenOCD flash/check-flash recipes and shared redcon_nve.py NVE generation. Verified install, paths, check, build, check-flash, and check-nve power-test; generated config selects the stock Zephyr split LL controller path and contains no NCS SoftDevice/SDC settings. Recipes export HOME and caches into directories under devices/power/mcu plus the repo-local tmp directory.
+
+Manual measurement follow-up on 2026-05-23: with the same board, rig setup, shared REDCON code, and NVE identity, the stock Zephyr v4.4.0 split-LL power firmware required `CONFIG_BT_CTLR_TX_PWR_0=y` for stable rig connection and measured about 0.10 mA while connected idle. A temporary NCS/SoftDevice power experiment using the same shared REDCON code and `CONFIG_BT_CTLR_TX_PWR_MINUS_20=y` measured about 0.08 mA while connected idle, matching the unit firmware. Rebuilding the current stock-Zephyr branch restored the expected stock config (`CONFIG_BT_LL_SW_SPLIT=y`, `CONFIG_BT_CTLR_TX_PWR_DBM=0`) and reproduced about 0.10 mA connected idle. Conclusion: the connected-idle delta is attributable to the stock Zephyr controller/clock path rather than the REDCON application logic, NVE, hardware placement, or rig behavior.
 <!-- SECTION:FINAL_SUMMARY:END -->
