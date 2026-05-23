@@ -78,10 +78,15 @@ if(TXING_KVS_GRPC_BRIDGE)
   find_package(gRPC CONFIG REQUIRED)
   find_program(GRPC_CPP_PLUGIN_EXECUTABLE grpc_cpp_plugin REQUIRED)
 
-  set(TXING_BOARD_VIDEO_PROTO
-      "${CMAKE_CURRENT_SOURCE_DIR}/../../proto/txing/unit/board_video/v1/board_video.proto")
-  set(TXING_BOARD_VIDEO_PROTO_ROOT
-      "${CMAKE_CURRENT_SOURCE_DIR}/../../proto")
+  get_filename_component(
+    TXING_BOARD_VIDEO_PROTO_ROOT
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../proto"
+    ABSOLUTE
+  )
+  set(
+    TXING_BOARD_VIDEO_PROTO
+    "${TXING_BOARD_VIDEO_PROTO_ROOT}/txing/unit/board_video/v1/board_video.proto"
+  )
   set(TXING_BOARD_VIDEO_PROTO_GEN_DIR
       "${CMAKE_CURRENT_BINARY_DIR}/generated")
   set(TXING_BOARD_VIDEO_PROTO_SRCS
