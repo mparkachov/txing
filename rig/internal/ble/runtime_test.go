@@ -83,9 +83,9 @@ func TestWeatherCommandRejectsRedconThreeBeforeBleWrite(t *testing.T) {
 	}
 }
 
-func TestAdvertisementCapabilityStateIsOnlyPublishedForWeatherDevices(t *testing.T) {
-	if AdvertisementPublishesCapabilityState(DeviceSpec{ThingName: "unit-1", Kind: DeviceKindPower}) {
-		t.Fatal("power advertisements should only update BLE shadow metadata")
+func TestAdvertisementCapabilityStateIsPublishedForManagedDevices(t *testing.T) {
+	if !AdvertisementPublishesCapabilityState(DeviceSpec{ThingName: "unit-1", Kind: DeviceKindPower}) {
+		t.Fatal("power advertisements should publish BLE reachability state")
 	}
 	if !AdvertisementPublishesCapabilityState(DeviceSpec{ThingName: "weather-1", Kind: DeviceKindWeather}) {
 		t.Fatal("weather advertisements should publish idle capability state")

@@ -106,8 +106,8 @@ func WeatherCommandRejectReason(command protocol.CapabilityCommand, spec DeviceS
 	return &reason
 }
 
-func AdvertisementPublishesCapabilityState(spec DeviceSpec) bool {
-	return spec.Kind.SupportsWeather()
+func AdvertisementPublishesCapabilityState(_ DeviceSpec) bool {
+	return true
 }
 
 func BoundedRetryDelayMS(baseDelayMS uint64, failureCount uint32, maxDelayMS uint64) uint64 {
