@@ -14,6 +14,7 @@ const (
 	BLERetryMaxDelayMS                    = uint64(120_000)
 	BLUEResourceExhaustedReconnectDelayMS = uint64(60_000)
 	BluezInProgressReconnectDelayMS       = uint64(10_000)
+	BluezInProgressScanRetryDelayMS       = uint64(1_000)
 	BLEScannerUnmanagedTxingLogIntervalMS = uint64(30_000)
 	BLEConnectSessionMaxTimeoutMS         = uint64(20_000)
 	BLEActiveMeasurementStaleMS           = uint64(20_000)

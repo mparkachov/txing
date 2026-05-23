@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -111,6 +112,33 @@ func TestConsumeScanStoppedForConnectOnlyOnce(t *testing.T) {
 	}
 	if state.consumeScanStoppedForConnect() {
 		t.Fatal("scan stop flag should be cleared")
+	}
+}
+
+func TestScanRetryDecisionRecoversBluezAlreadyActiveDiscovery(t *testing.T) {
+	decision := scanRetryDecision(errors.New("Operation already in progress"), 7)
+	if decision.delayMS != rigble.BluezInProgressScanRetryDelayMS {
+		t.Fatalf("delay = %d, want %d", decision.delayMS, rigble.BluezInProgressScanRetryDelayMS)
+	}
+	if decision.nextFailures != 0 {
+		t.Fatalf("nextFailures = %d, want 0", decision.nextFailures)
+	}
+	if !decision.resetDiscovery {
+		t.Fatal("expected stale discovery reset")
+	}
+}
+
+func TestScanRetryDecisionKeepsGenericBackoff(t *testing.T) {
+	decision := scanRetryDecision(errors.New("adapter unavailable"), 2)
+	wantDelay := rigble.BoundedRetryDelayMS(rigble.BLERetryMinDelayMS, 2, rigble.BLERetryMaxDelayMS)
+	if decision.delayMS != wantDelay {
+		t.Fatalf("delay = %d, want %d", decision.delayMS, wantDelay)
+	}
+	if decision.nextFailures != 3 {
+		t.Fatalf("nextFailures = %d, want 3", decision.nextFailures)
+	}
+	if decision.resetDiscovery {
+		t.Fatal("generic failures must not reset discovery")
 	}
 }
 

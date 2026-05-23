@@ -240,18 +240,41 @@ func (s *runtimeState) scanLoop(ctx context.Context) {
 			s.waitForActiveConnects(ctx)
 			continue
 		}
-		delayMS := rigble.BoundedRetryDelayMS(rigble.BLERetryMinDelayMS, failures, rigble.BLERetryMaxDelayMS)
-		failures++
+		decision := scanRetryDecision(err, failures)
+		failures = decision.nextFailures
+		if decision.resetDiscovery {
+			_ = bluetooth.DefaultAdapter.StopScan()
+		}
 		if err != nil {
-			s.logger.Print(context.Background(), "warning", fmt.Sprintf("BLE scan stopped error=%q retryMs=%d", err, delayMS))
+			s.logger.Print(context.Background(), "warning", fmt.Sprintf("BLE scan stopped error=%q retryMs=%d", err, decision.delayMS))
 		} else {
-			s.logger.Print(context.Background(), "warning", fmt.Sprintf("BLE scan stopped unexpectedly retryMs=%d", delayMS))
+			s.logger.Print(context.Background(), "warning", fmt.Sprintf("BLE scan stopped unexpectedly retryMs=%d", decision.delayMS))
 		}
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(time.Duration(delayMS) * time.Millisecond):
+		case <-time.After(time.Duration(decision.delayMS) * time.Millisecond):
 		}
+	}
+}
+
+type scanRetry struct {
+	delayMS        uint64
+	nextFailures   uint32
+	resetDiscovery bool
+}
+
+func scanRetryDecision(err error, failures uint32) scanRetry {
+	if err != nil && rigble.BLEErrorIndicatesInProgress(err.Error()) {
+		return scanRetry{
+			delayMS:        rigble.BluezInProgressScanRetryDelayMS,
+			nextFailures:   0,
+			resetDiscovery: true,
+		}
+	}
+	return scanRetry{
+		delayMS:      rigble.BoundedRetryDelayMS(rigble.BLERetryMinDelayMS, failures, rigble.BLERetryMaxDelayMS),
+		nextFailures: failures + 1,
 	}
 }
 
