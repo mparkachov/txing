@@ -72,13 +72,16 @@ planned feature:
 
 1. Confirm the user invoked `/goal <milestone>` or explicitly asked to implement
    a specific Backlog task.
-2. Check whether Backlog.md already has task coverage for that milestone/task.
-3. If suitable tasks do not exist, stop and create the missing tasks instead of
+2. If the user named a Backlog task ID, run `backlog task <id> --plain` before
+   any repository-wide search. Treat the task's Documentation and References
+   fields as the starting context.
+3. Check whether Backlog.md already has task coverage for that milestone/task.
+4. If suitable tasks do not exist, stop and create the missing tasks instead of
    implementing.
-4. Report the selected task ID.
-5. Start exactly one task by moving it to `In Progress`, assigning it to
+5. Report the selected task ID.
+6. Start exactly one task by moving it to `In Progress`, assigning it to
    yourself, and adding its implementation plan.
-6. Implement only that task's acceptance criteria.
+7. Implement only that task's acceptance criteria.
 
 If the Backlog.md CLI is unavailable or task creation fails, stop and report the
 blocker instead of continuing from the chat plan. The only exception is an
@@ -92,6 +95,9 @@ explicit user instruction such as "skip Backlog for this change".
 - Use `--plain` when reading tasks or search output for agent consumption:
   `backlog task <id> --plain`, `backlog task list --plain`, and
   `backlog search "topic" --plain`.
+- When a prompt includes a Backlog task ID, do not enumerate the repository to
+  infer the task. Load the task directly with `backlog task <id> --plain`, then
+  follow its Documentation and References fields.
 - Express dependencies only on existing tasks. Do not reference future task IDs.
 
 Typical Plan Mode closeout shape:

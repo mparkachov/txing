@@ -62,6 +62,9 @@ unless a shared contract or consistency issue requires coordinated updates.
   explicitly asks to implement a specific Backlog task. During `/goal`, execute
   exactly one milestone at a time. Stop after milestone completion and wait for
   the user to choose or approve the next milestone.
+- If a goal or prompt names a Backlog task ID, load that task first with
+  `backlog task <id> --plain`. Do not search the repository to discover what
+  the Backlog task means.
 
 ## Non-negotiable gates
 
