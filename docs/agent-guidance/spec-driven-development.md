@@ -38,7 +38,8 @@ code changes begin.
 
 Plan Mode ends with durable planning output, not code.
 
-After the user approves the architecture or design direction:
+When the user approves the architecture/design direction, presses Implement, or
+otherwise asks to implement an approved plan:
 
 - Create Backlog.md tasks for the selected milestone or milestone set.
 - Make each task goal-oriented, atomic, and verifiable.
@@ -50,6 +51,26 @@ After the user approves the architecture or design direction:
   are added only after a task is selected for execution.
 - If ambiguity remains, ask for clarification instead of creating speculative
   tasks.
+
+## Plan-to-implementation gate
+
+Do not implement a planned feature directly from the chat plan. The chat plan is
+not a substitute for Backlog.md.
+
+Before the first code, firmware, infrastructure, or configuration change for a
+planned feature:
+
+1. Check whether Backlog.md already has task coverage for the approved plan or
+   selected milestone.
+2. If suitable tasks do not exist, create them with the `backlog` CLI.
+3. Report the created or selected task IDs.
+4. Start exactly one task by moving it to `In Progress`, assigning it to
+   yourself, and adding its implementation plan.
+5. Implement only that task's acceptance criteria.
+
+If the Backlog.md CLI is unavailable or task creation fails, stop and report the
+blocker instead of continuing from the chat plan. The only exception is an
+explicit user instruction such as "skip Backlog for this change".
 
 ## Backlog.md rules
 

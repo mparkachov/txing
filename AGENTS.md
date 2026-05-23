@@ -51,9 +51,10 @@ unless a shared contract or consistency issue requires coordinated updates.
 - During `/plan architecture`, inspect the repo, identify affected contracts,
   capture risks and non-goals, and produce planning artifacts. Do not implement
   code during architecture planning.
-- Plan Mode must end with durable planning output. After the user approves the
-  architecture or design direction, create goal-oriented Backlog.md tasks for
-  the selected milestone or milestone set.
+- Plan Mode must end with durable planning output. When the user leaves Plan
+  Mode, presses Implement, or otherwise asks to implement an approved plan,
+  create or select goal-oriented Backlog.md tasks for the selected milestone
+  before changing code.
 - Tasks must describe outcomes and acceptance criteria, not implementation
   steps. If meaningful ambiguity remains, ask for clarification instead of
   creating speculative tasks.
@@ -66,6 +67,9 @@ unless a shared contract or consistency issue requires coordinated updates.
   requested by the user.
 - Do not run AWS commands that create, update, or delete cloud resources.
   Read-only AWS inspection commands are allowed only when needed.
+- Do not implement a planned feature directly from the chat plan. Implementation
+  must start from a Backlog.md task unless the user explicitly says to skip
+  Backlog for that work.
 - Do not run firmware flashing/programming steps. Prepare artifacts and commands
   for the user to run manually.
 - Do not read from, copy from, execute from, or depend on files outside this

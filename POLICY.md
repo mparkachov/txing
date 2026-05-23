@@ -23,6 +23,26 @@ The agent must not continue into future milestones automatically unless explicit
 
 ---
 
+# Plan-To-Implementation Gate
+
+When work starts from a completed Plan Mode discussion, an approved architecture
+plan, or the user's Implement action, the agent must not begin code,
+firmware, infrastructure, or configuration changes directly from the chat plan.
+
+Before implementation, the agent must:
+1. find or create Backlog.md tasks that cover the selected milestone or approved
+   plan
+2. report the selected or created task IDs
+3. start exactly one task by setting it `In Progress`, assigning it to itself,
+   and recording an implementation plan in the task
+4. implement only that task's acceptance criteria
+
+If Backlog.md is unavailable, task creation fails, or the selected milestone is
+ambiguous, the agent must stop and ask for confirmation. The only exception is
+an explicit user instruction to skip Backlog for that work.
+
+---
+
 # Ambiguity Policy
 
 Do not silently resolve meaningful ambiguity.
