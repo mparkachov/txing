@@ -241,7 +241,7 @@ func (s *runtimeState) reconcileInventory(ctx context.Context, inventory protoco
 		return
 	}
 	for _, spec := range refreshCandidates {
-		if s.shouldBackgroundConnect(spec.ThingName) {
+		if s.shouldBackgroundConnect(spec) {
 			s.debugPrint(ctx, fmt.Sprintf("BLE background connect scheduled thing=%s reason=cached-address", spec.ThingName))
 			go s.connectAndPublishBackground(ctx, spec)
 		}
@@ -377,7 +377,7 @@ func (s *runtimeState) scan(ctx context.Context) error {
 			s.debugPrint(context.Background(), fmt.Sprintf("BLE advertisement capability state suppressed thing=%s reason=recent-state-read", spec.ThingName))
 		}
 		s.debugPrint(context.Background(), fmt.Sprintf("BLE advertisement published thing=%s address=%s rssi=%d", spec.ThingName, result.Address.String(), rssi))
-		if s.shouldBackgroundConnect(name) {
+		if s.shouldBackgroundConnect(spec) {
 			s.debugPrint(context.Background(), fmt.Sprintf("BLE background connect scheduled thing=%s address=%s", spec.ThingName, result.Address.String()))
 			go s.connectAndPublishBackground(ctx, spec)
 		}
@@ -416,35 +416,39 @@ func (s *runtimeState) backgroundConnectContext(ctx context.Context) (context.Co
 	return context.WithTimeout(ctx, time.Duration(timeoutMS)*time.Millisecond)
 }
 
-func (s *runtimeState) shouldBackgroundConnect(thingName string) bool {
-	return s.shouldBackgroundConnectAt(thingName, time.Now())
+func (s *runtimeState) shouldBackgroundConnect(spec rigble.DeviceSpec) bool {
+	return s.shouldBackgroundConnectAt(spec, time.Now())
 }
 
-func (s *runtimeState) shouldBackgroundConnectAt(thingName string, now time.Time) bool {
+func (s *runtimeState) shouldBackgroundConnectAt(spec rigble.DeviceSpec, now time.Time) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, active := s.activeConnects[thingName]; active {
+	if _, active := s.activeConnects[spec.ThingName]; active {
 		return false
 	}
-	if _, held := s.connectionHolds[thingName]; held {
+	if _, held := s.connectionHolds[spec.ThingName]; held {
 		return false
 	}
-	lastStateRead := s.lastStateRead[thingName]
-	if !lastStateRead.IsZero() && now.Sub(lastStateRead) < time.Duration(rigble.BLEActiveMeasurementStaleMS)*time.Millisecond {
+	lastStateRead := s.lastStateRead[spec.ThingName]
+	if !spec.Kind.SupportsWeather() && lastStateRead.IsZero() {
 		return false
 	}
-	last := s.lastConnect[thingName]
+	if !lastStateRead.IsZero() && now.Sub(lastStateRead) < passiveConnectedStateFreshness(spec) {
+		return false
+	}
+	last := s.lastConnect[spec.ThingName]
 	if now.Sub(last) < s.cfg.ReconnectDelay {
 		return false
 	}
 	if s.lastConnect == nil {
 		s.lastConnect = map[string]time.Time{}
 	}
-	s.lastConnect[thingName] = now
+	s.lastConnect[spec.ThingName] = now
 	return true
 }
 
 func (s *runtimeState) handleCommand(ctx context.Context, command protocol.CapabilityCommand) {
+	s.debugPrint(ctx, fmt.Sprintf("BLE command received thing=%s targetRedcon=%d command=%s", command.ThingName, command.Target.Redcon, command.CommandID))
 	s.mu.Lock()
 	spec, ok := s.specs[command.ThingName]
 	s.mu.Unlock()
@@ -478,9 +482,11 @@ func (s *runtimeState) handleCommand(ctx context.Context, command protocol.Capab
 	defer cancel()
 	if err := s.connectAndPublishCommand(commandCtx, command, spec, normalized); err != nil {
 		message := err.Error()
+		s.debugPrint(ctx, fmt.Sprintf("BLE command failed thing=%s targetRedcon=%d normalizedRedcon=%d command=%s error=%q", command.ThingName, command.Target.Redcon, normalized, command.CommandID, err))
 		s.publishCommandResult(ctx, command, protocol.CommandFailed, &message, &command.Target.Redcon)
 		return
 	}
+	s.debugPrint(ctx, fmt.Sprintf("BLE command succeeded thing=%s targetRedcon=%d normalizedRedcon=%d command=%s", command.ThingName, command.Target.Redcon, normalized, command.CommandID))
 	s.publishCommandResult(ctx, command, protocol.CommandSucceeded, nil, &command.Target.Redcon)
 }
 
@@ -694,8 +700,15 @@ func (s *runtimeState) shouldPublishAdvertisementCapabilityState(spec rigble.Dev
 	if last.IsZero() {
 		return true
 	}
-	staleAfter := time.Duration(rigble.BLEActiveMeasurementStaleMS) * time.Millisecond
+	staleAfter := passiveConnectedStateFreshness(spec)
 	return now.Sub(last) >= staleAfter
+}
+
+func passiveConnectedStateFreshness(spec rigble.DeviceSpec) time.Duration {
+	if spec.Kind.SupportsWeather() {
+		return time.Duration(rigble.BLEIdleMeasurementStaleMS) * time.Millisecond
+	}
+	return time.Duration(rigble.BLEIdleMeasurementStaleMS) * time.Millisecond
 }
 
 func (s *runtimeState) recordConnectionHold(thingName string) uint64 {

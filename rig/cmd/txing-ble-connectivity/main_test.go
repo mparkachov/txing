@@ -178,24 +178,42 @@ func TestBackgroundConnectSkippedWhileStateReadIsFresh(t *testing.T) {
 		cfg:         rigconfig.Config{ReconnectDelay: 2 * time.Second},
 		lastConnect: map[string]time.Time{},
 	}
-	state.recordStateRead("unit-1", now)
+	spec := rigble.DeviceSpec{ThingName: "unit-1", Kind: rigble.DeviceKindPower}
+	state.recordStateRead(spec.ThingName, now)
 
-	if state.shouldBackgroundConnectAt("unit-1", now.Add(time.Second)) {
+	if state.shouldBackgroundConnectAt(spec, now.Add(time.Second)) {
 		t.Fatal("fresh connected state should suppress background GATT refresh")
 	}
 
-	staleAt := now.Add(time.Duration(rigble.BLEActiveMeasurementStaleMS) * time.Millisecond)
-	if !state.shouldBackgroundConnectAt("unit-1", staleAt) {
+	activeStaleAt := now.Add(time.Duration(rigble.BLEActiveMeasurementStaleMS) * time.Millisecond)
+	if state.shouldBackgroundConnectAt(spec, activeStaleAt) {
+		t.Fatal("active measurement staleness alone should not start passive unit GATT refresh")
+	}
+
+	staleAt := now.Add(time.Duration(rigble.BLEIdleMeasurementStaleMS) * time.Millisecond)
+	if !state.shouldBackgroundConnectAt(spec, staleAt) {
 		t.Fatal("stale connected state should allow background GATT refresh")
 	}
 }
 
-func TestBackgroundConnectSkippedWhileDeviceConnectActive(t *testing.T) {
+func TestBackgroundConnectSkippedForPowerBeforeFirstStateRead(t *testing.T) {
 	state := &runtimeState{
-		activeConnects: map[string]chan struct{}{"unit-1": make(chan struct{})},
+		lastConnect: map[string]time.Time{},
+	}
+	spec := rigble.DeviceSpec{ThingName: "unit-1", Kind: rigble.DeviceKindPower}
+	if state.shouldBackgroundConnectAt(spec, time.Unix(100, 0)) {
+		t.Fatal("power devices should not start passive GATT refresh before the first connected state read")
+	}
+}
+
+func TestBackgroundConnectSkippedWhileDeviceConnectActive(t *testing.T) {
+	spec := rigble.DeviceSpec{ThingName: "unit-1", Kind: rigble.DeviceKindPower}
+	state := &runtimeState{
+		activeConnects: map[string]chan struct{}{spec.ThingName: make(chan struct{})},
 		lastConnect:    map[string]time.Time{},
 	}
-	if state.shouldBackgroundConnectAt("unit-1", time.Unix(100, 0)) {
+	state.recordStateRead(spec.ThingName, time.Unix(90, 0))
+	if state.shouldBackgroundConnectAt(spec, time.Unix(100, 0)) {
 		t.Fatal("active per-device connect should suppress another background refresh")
 	}
 }
@@ -240,7 +258,12 @@ func TestAdvertisementCapabilityStateSuppressedAfterRecentPowerStateRead(t *test
 		t.Fatal("recent connected state read should suppress advertisement-only capability state")
 	}
 
-	staleAt := now.Add(time.Duration(rigble.BLEActiveMeasurementStaleMS) * time.Millisecond)
+	activeStaleAt := now.Add(time.Duration(rigble.BLEActiveMeasurementStaleMS) * time.Millisecond)
+	if state.shouldPublishAdvertisementCapabilityState(spec, activeStaleAt) {
+		t.Fatal("active measurement staleness alone should not publish advertisement-only capability state")
+	}
+
+	staleAt := now.Add(time.Duration(rigble.BLEIdleMeasurementStaleMS) * time.Millisecond)
 	if !state.shouldPublishAdvertisementCapabilityState(spec, staleAt) {
 		t.Fatal("advertisement-only capability state should resume once the connected state read is stale")
 	}
