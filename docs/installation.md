@@ -85,8 +85,9 @@ Cloud MCU registration and runtime behavior are documented in
 ## Board Host
 
 The board is the device-side Raspberry Pi. Production boards run the root-owned
-Rust `txing-unit-daemon` and native `txing-board-kvs-master` installed from
-GitHub Release assets through `mise`.
+Rust `txing-unit-daemon`, native `txing-board-kvs-master`, and native
+`txing-unit-hardware-worker` installed from GitHub Release assets through
+`mise`.
 
 Canonical board installation, runtime config, root-owned service setup,
 read-only-root layout, manual maintenance, and validation instructions live in
@@ -103,11 +104,12 @@ The short production flow is:
    `/root/.config/txing/unit-daemon`, including `daemon.env` and certificate
    files.
 6. Install the root-owned mise release tools and create `txing-board.target`
-   with `txing-unit-daemon.service` plus `txing-board-kvs-master.service`
-   manually as documented in the board guide.
+   with `txing-unit-daemon.service`, `txing-board-kvs-master.service`, and
+   `txing-unit-hardware-worker.service` manually as documented in the board
+   guide.
 7. Configure the PWM overlay and read-only-root tmpfs layout.
-8. Reboot and verify both board services, KVS readiness, and REDCON
-   convergence.
+8. Reboot and verify all three board services, KVS readiness, hardware-worker
+   readiness, and REDCON convergence.
 
 ## Web
 

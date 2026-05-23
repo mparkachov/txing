@@ -2,8 +2,8 @@
 
 The board is the device-side Raspberry Pi. It is power-switched by the MCU,
 runs the root-owned Rust `txing-unit-daemon` and native
-`txing-board-kvs-master` systemd services, publishes board-owned runtime state,
-and exposes board MCP for motion control.
+`txing-board-kvs-master` plus `txing-unit-hardware-worker` systemd services,
+publishes board-owned runtime state, and exposes board MCP for motion control.
 
 ## Responsibilities
 
@@ -16,10 +16,14 @@ and exposes board MCP for motion control.
 - publish retained v2 capability state for `board`, `mcp`, and `video`
 - serve the local BoardVideoBridge gRPC socket for native KVS worker config,
   temporary credentials, video state, and MCP forwarding
+- connect to the local UnitHardware gRPC socket for actuator readiness,
+  `cmd_vel` application, and local motor stop requests
 - subscribe to Sparkplug `DCMD.redcon` and halt locally on `redcon=4`
 - enforce MCP active-control ownership for actuator tools
-- stop motors on command silence, active-control expiry, session close,
+- send hardware stop requests on active-control expiry, session close,
   transport switch, REDCON `4`, and daemon shutdown
+- neutralize motors inside the hardware worker on command expiry, explicit stop,
+  shutdown, and hardware errors
 
 ## REDCON Contract
 
@@ -79,7 +83,7 @@ Current video is headless AWS Kinesis Video Streams WebRTC:
 The native worker owns camera capture, H.264 encode, AWS KVS master behavior,
 WebRTC peer connections, and data-channel transport. The Rust daemon owns
 worker configuration, KVS temporary credentials, readiness interpretation,
-retained state publication, MCP business logic, and motor authority.
+retained state publication, MCP business logic, and actuator policy.
 
 The daemon and native worker communicate through the local
 BoardVideoBridge gRPC contract:
@@ -97,6 +101,36 @@ not a media-quality guarantee.
 
 The board video contract is documented in
 [devices/unit/docs/board-video.md](../../devices/unit/docs/board-video.md).
+
+### Motion Hardware
+
+Motion commands use strict ROS `Twist`/`cmd_vel` semantics. The daemon owns MCP
+active-control, epoch validation, REDCON handling, and all cloud publication.
+The root-owned `txing-unit-hardware-worker` owns motor hardware devices,
+calibration, differential tank mixing, PWM/GPIO output, local hardware
+readiness, and motor neutralization.
+
+The daemon is a gRPC client and the worker is a gRPC server on the local Unix
+domain socket:
+
+```text
+/run/txing-unit-hardware-worker/unit-hardware.sock
+```
+
+The worker API is `txing.unit.hardware.v1.UnitHardware`:
+
+- `GetStatus`
+- `ApplyVelocity`
+- `Stop`
+
+Every `ApplyVelocity` carries a canonical `deadline_unix_ms`. v1 accepts only
+`linear.x` and `angular.z`; non-zero unsupported `Twist` axes are rejected.
+The worker may clamp command deadlines to its configured watchdog timeout. If
+the worker is unavailable or reports not ready, the daemon rejects actuator MCP
+tools as unavailable after active-control validation.
+
+The hardware worker contract is documented in
+[docs/contracts/unit-hardware-worker.md](../contracts/unit-hardware-worker.md).
 
 ### MCP
 
@@ -225,22 +259,29 @@ Default runtime inputs include:
 - `TXING_BOARD_VIDEO_CHANNEL_NAME`
 - `TXING_KVS_PREFER_IPV6`
 - `TXING_KVS_DISABLE_IPV4_TURN`
+- `TXING_HARDWARE_WORKER_SOCKET_PATH`
+- `TXING_HARDWARE_WORKER_TIMEOUT_MS`
 - `TXING_MOTOR_*`
 - CloudWatch log configuration
 
 The default video channel is `<thing_id>-board-video`. The default bridge
 socket path is `/run/txing-unit-daemon/board-video-bridge.sock`. Existing
 boards with an older generated `daemon.env` must add
-`TXING_BOARD_VIDEO_BRIDGE_SOCKET_PATH`; generated config files are not
-overwritten by binary upgrades.
+`TXING_BOARD_VIDEO_BRIDGE_SOCKET_PATH`,
+`TXING_HARDWARE_WORKER_SOCKET_PATH`, and
+`TXING_HARDWARE_WORKER_TIMEOUT_MS`; generated config files are not overwritten
+by binary upgrades. The daemon ignores `TXING_MOTOR_*`; those values are
+consumed by `txing-unit-hardware-worker` when its systemd unit loads the same
+root-owned env file.
 
 ## Release Artifacts
 
-Boards install two GitHub Release assets through root-owned `mise`:
+Boards install three GitHub Release assets through root-owned `mise`:
 
 ```text
 txing-unit-daemon-linux-aarch64.tar.gz
 txing-board-kvs-master-linux-aarch64.tar.gz
+txing-unit-hardware-worker-linux-aarch64.tar.gz
 ```
 
 Each archive contains one root-level executable:
@@ -248,6 +289,7 @@ Each archive contains one root-level executable:
 ```text
 txing-unit-daemon
 txing-board-kvs-master
+txing-unit-hardware-worker
 ```
 
 Boards use root's persistent mise config and install tree:
@@ -256,8 +298,10 @@ Boards use root's persistent mise config and install tree:
 /root/.config/mise/conf.d/txing-unit-daemon.toml
 /root/.local/share/mise/installs/txing-unit-daemon/latest/txing-unit-daemon
 /root/.local/share/mise/installs/txing-board-kvs-master/latest/txing-board-kvs-master
+/root/.local/share/mise/installs/txing-unit-hardware-worker/latest/txing-unit-hardware-worker
 /root/.local/share/mise/installs/txing-unit-daemon/
 /root/.local/share/mise/installs/txing-board-kvs-master/
+/root/.local/share/mise/installs/txing-unit-hardware-worker/
 ```
 
 Service starts are offline by design. Restarting
@@ -373,6 +417,7 @@ fetch_remote_versions_cache = "10m"
 [tool_alias]
 txing-unit-daemon = "github:mparkachov/txing"
 txing-board-kvs-master = "github:mparkachov/txing"
+txing-unit-hardware-worker = "github:mparkachov/txing"
 
 [tools.txing-unit-daemon]
 version = "latest"
@@ -381,10 +426,14 @@ asset_pattern = "txing-unit-daemon-linux-aarch64.tar.gz"
 [tools.txing-board-kvs-master]
 version = "latest"
 asset_pattern = "txing-board-kvs-master-linux-aarch64.tar.gz"
+
+[tools.txing-unit-hardware-worker]
+version = "latest"
+asset_pattern = "txing-unit-hardware-worker-linux-aarch64.tar.gz"
 EOF
 
 MISE_TRUSTED_CONFIG_PATHS=/root/.config/mise \
-  /root/.local/bin/mise install txing-unit-daemon@latest txing-board-kvs-master@latest
+  /root/.local/bin/mise install txing-unit-daemon@latest txing-board-kvs-master@latest txing-unit-hardware-worker@latest
 ```
 
 Check the resolved binaries before writing the service:
@@ -393,22 +442,25 @@ Check the resolved binaries before writing the service:
 /root/.local/bin/mise list
 /root/.local/share/mise/installs/txing-unit-daemon/latest/txing-unit-daemon --version
 /root/.local/share/mise/installs/txing-board-kvs-master/latest/txing-board-kvs-master --version
+/root/.local/share/mise/installs/txing-unit-hardware-worker/latest/txing-unit-hardware-worker --version
 ldd /root/.local/share/mise/installs/txing-unit-daemon/latest/txing-unit-daemon
 ldd /root/.local/share/mise/installs/txing-board-kvs-master/latest/txing-board-kvs-master
+ldd /root/.local/share/mise/installs/txing-unit-hardware-worker/latest/txing-unit-hardware-worker
 ldd /root/.local/share/mise/installs/txing-board-kvs-master/latest/txing-board-kvs-master | grep -F "libcamera.so.0.7"
 ldd /root/.local/share/mise/installs/txing-board-kvs-master/latest/txing-board-kvs-master | grep -F "libcamera-base.so.0.7"
 ```
 
 Write the root-owned systemd units and group them under `txing-board.target`.
-The daemon owns the bridge socket; the KVS master connects to it as a separate
-service.
+The daemon owns the board-video bridge socket; the KVS master connects to it as
+a separate service. The hardware worker owns the UnitHardware socket; the daemon
+connects to it as a client and degrades if it is unavailable.
 
 ```bash
 cat >/etc/systemd/system/txing-unit-daemon.service <<'EOF'
 [Unit]
 Description=Txing Unit Daemon
-Wants=network-online.target systemd-time-wait-sync.service
-After=network-online.target systemd-time-wait-sync.service time-sync.target
+Wants=network-online.target systemd-time-wait-sync.service txing-unit-hardware-worker.service
+After=network-online.target systemd-time-wait-sync.service time-sync.target txing-unit-hardware-worker.service
 PartOf=txing-board.target
 StartLimitIntervalSec=10min
 StartLimitBurst=5
@@ -428,6 +480,36 @@ Environment=HOME=/root
 ExecStartPre=/usr/bin/test -x /root/.local/share/mise/installs/txing-unit-daemon/latest/txing-unit-daemon
 ExecStartPre=-/root/.local/share/mise/installs/txing-unit-daemon/latest/txing-unit-daemon --version
 ExecStart=/root/.local/share/mise/installs/txing-unit-daemon/latest/txing-unit-daemon
+
+[Install]
+WantedBy=txing-board.target
+EOF
+
+cat >/etc/systemd/system/txing-unit-hardware-worker.service <<'EOF'
+[Unit]
+Description=Txing Unit Hardware Worker
+PartOf=txing-board.target
+Before=txing-unit-daemon.service
+StartLimitIntervalSec=10min
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=/root
+KillSignal=SIGINT
+TimeoutStartSec=30
+TimeoutStopSec=10
+Restart=on-failure
+RestartSec=2
+RuntimeDirectory=txing-unit-hardware-worker
+RuntimeDirectoryMode=0755
+
+EnvironmentFile=/root/.config/txing/unit-daemon/daemon.env
+Environment=HOME=/root
+
+ExecStartPre=/usr/bin/test -x /root/.local/share/mise/installs/txing-unit-hardware-worker/latest/txing-unit-hardware-worker
+ExecStartPre=-/root/.local/share/mise/installs/txing-unit-hardware-worker/latest/txing-unit-hardware-worker --version
+ExecStart=/root/.local/share/mise/installs/txing-unit-hardware-worker/latest/txing-unit-hardware-worker
 
 [Install]
 WantedBy=txing-board.target
@@ -465,7 +547,7 @@ EOF
 cat >/etc/systemd/system/txing-board.target <<'EOF'
 [Unit]
 Description=Txing Board Runtime
-Wants=txing-unit-daemon.service txing-board-kvs-master.service
+Wants=txing-unit-daemon.service txing-board-kvs-master.service txing-unit-hardware-worker.service
 After=network-online.target systemd-time-wait-sync.service time-sync.target
 
 [Install]
@@ -480,6 +562,8 @@ systemctl daemon-reload
 systemctl enable txing-board.target
 systemctl enable txing-unit-daemon.service
 systemctl enable txing-board-kvs-master.service
+systemctl enable txing-unit-hardware-worker.service
+systemctl restart txing-unit-hardware-worker.service
 systemctl restart txing-unit-daemon.service
 systemctl restart txing-board-kvs-master.service
 systemctl start txing-board.target
@@ -491,19 +575,25 @@ Verify:
 systemctl status --no-pager -l txing-board.target
 systemctl status --no-pager -l txing-unit-daemon.service
 systemctl status --no-pager -l txing-board-kvs-master.service
+systemctl status --no-pager -l txing-unit-hardware-worker.service
 journalctl -u txing-unit-daemon.service -n 160 --no-pager
 journalctl -u txing-board-kvs-master.service -n 160 --no-pager
+journalctl -u txing-unit-hardware-worker.service -n 160 --no-pager
 /root/.local/bin/mise list
 /root/.local/share/mise/installs/txing-unit-daemon/latest/txing-unit-daemon --version
 /root/.local/share/mise/installs/txing-board-kvs-master/latest/txing-board-kvs-master --version
+/root/.local/share/mise/installs/txing-unit-hardware-worker/latest/txing-unit-hardware-worker --version
 ```
 
 Expected:
 
-- `txing-board.target` is active and includes both board services
-- stopping or restarting `txing-board.target` propagates to both services
+- `txing-board.target` is active and includes all three board services
+- stopping or restarting `txing-board.target` propagates to all three services
 - the daemon log includes `version=<release-version>`
 - the daemon binds `/run/txing-unit-daemon/board-video-bridge.sock`
+- the hardware worker binds `/run/txing-unit-hardware-worker/unit-hardware.sock`
+- the worker logs version and local actuator readiness or a clear hardware
+  error
 - MQTT connects
 - retained `board`, dynamic `mcp`, and `video` state is published
 - the KVS master service reaches READY over the bridge when camera and
@@ -561,11 +651,13 @@ Operational rules:
 
 - do package installs, `mise` installs/updates, daemon config changes, and
   systemd unit changes while root is writable
-- switch back to read-only only after runtime, native KVS master, and config
-  files are in place
+- switch back to read-only only after runtime binaries, native workers, and
+  config files are in place
 - the service runs as root with `HOME=/root`
 - AWS-backed services wait for network-online and clock synchronization so TLS
   validation does not race NTP
+- the hardware worker neutralizes motors internally; systemd restart latency is
+  supervision only, not the motion-control safety layer
 
 ### 8. Final Reboot Check
 
@@ -580,11 +672,14 @@ After reconnecting:
 systemctl status --no-pager -l txing-board.target
 systemctl status --no-pager -l txing-unit-daemon.service
 systemctl status --no-pager -l txing-board-kvs-master.service
+systemctl status --no-pager -l txing-unit-hardware-worker.service
 journalctl -u txing-unit-daemon.service -b --no-pager
 journalctl -u txing-board-kvs-master.service -b --no-pager
+journalctl -u txing-unit-hardware-worker.service -b --no-pager
 /root/.local/bin/mise list
 /root/.local/share/mise/installs/txing-unit-daemon/latest/txing-unit-daemon --version
 /root/.local/share/mise/installs/txing-board-kvs-master/latest/txing-board-kvs-master --version
+/root/.local/share/mise/installs/txing-unit-hardware-worker/latest/txing-unit-hardware-worker --version
 ```
 
 Expected:
@@ -593,6 +688,7 @@ Expected:
 - `txing-board.target` is active
 - `txing-unit-daemon.service` starts without a source checkout
 - `txing-board-kvs-master.service` starts without a source checkout
+- `txing-unit-hardware-worker.service` starts without a source checkout
 - daemon log includes `version=<release-version>`
 - MQTT connects and retained board/MCP/video state is published
 
@@ -606,9 +702,11 @@ root-rw
 apt update
 apt dist-upgrade -y
 MISE_TRUSTED_CONFIG_PATHS=/root/.config/mise \
-  /root/.local/bin/mise upgrade txing-unit-daemon txing-board-kvs-master
+  /root/.local/bin/mise upgrade txing-unit-daemon txing-board-kvs-master txing-unit-hardware-worker
 /root/.local/share/mise/installs/txing-unit-daemon/latest/txing-unit-daemon --version
 /root/.local/share/mise/installs/txing-board-kvs-master/latest/txing-board-kvs-master --version
+/root/.local/share/mise/installs/txing-unit-hardware-worker/latest/txing-unit-hardware-worker --version
+ldd /root/.local/share/mise/installs/txing-unit-hardware-worker/latest/txing-unit-hardware-worker
 ldd /root/.local/share/mise/installs/txing-board-kvs-master/latest/txing-board-kvs-master | grep -F "libcamera.so.0.7"
 ldd /root/.local/share/mise/installs/txing-board-kvs-master/latest/txing-board-kvs-master | grep -F "libcamera-base.so.0.7"
 sync
@@ -628,13 +726,17 @@ The local daemon uses
 Provision that directory with `just aws::cert <thing-id>` only when AWS
 resource changes are intended.
 
-Daemon and native KVS worker commands:
+Daemon and native board worker commands:
 
 ```bash
 just unit::daemon::test
 just unit::daemon::run
 just unit::daemon::kvs-build-native
 just unit::daemon::kvs-test-native
+just unit::daemon::kvs-build-trixie
+just unit::daemon::hardware-build-native
+just unit::daemon::hardware-test-native
+just unit::daemon::hardware-build-trixie
 ```
 
 `kvs-build-native` builds `txing-board-kvs-master` and lets the worker CMake
@@ -645,7 +747,7 @@ source builds.
 
 Direct raw motor bring-up is no longer supported. Live motion testing goes
 through the Rust daemon MCP `cmd_vel` path, including the active-control lease
-gate.
+gate, with the hardware worker applying accepted commands locally.
 
 ## References
 
@@ -653,6 +755,7 @@ gate.
 - [Installation overview](../installation.md)
 - [Unit board video contract](../../devices/unit/docs/board-video.md)
 - [Board video bridge contract](../contracts/board-video-bridge.md)
+- [Unit hardware worker contract](../contracts/unit-hardware-worker.md)
 - [Unit thing shadow model](../../devices/unit/docs/thing-shadow.md)
 - [Unit device-rig shadow contract](../../devices/unit/docs/device-rig-shadow-spec.md)
 - [Sparkplug lifecycle](../sparkplug-lifecycle.md)

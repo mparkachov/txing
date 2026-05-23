@@ -8,6 +8,7 @@ fn main() {
     println!("cargo:rustc-env=TXING_DAEMON_BUILD_VERSION={version}");
 
     println!("cargo:rerun-if-changed=../proto/txing/unit/board_video/v1/board_video.proto");
+    println!("cargo:rerun-if-changed=../proto/txing/unit/hardware/v1/unit_hardware.proto");
     let protoc = protoc_bin_vendored::protoc_bin_path().expect("find vendored protoc");
     unsafe {
         env::set_var("PROTOC", protoc);
@@ -16,10 +17,11 @@ fn main() {
         .build_server(true)
         .build_client(true)
         .compile_protos(
-            &[PathBuf::from(
-                "../proto/txing/unit/board_video/v1/board_video.proto",
-            )],
+            &[
+                PathBuf::from("../proto/txing/unit/board_video/v1/board_video.proto"),
+                PathBuf::from("../proto/txing/unit/hardware/v1/unit_hardware.proto"),
+            ],
             &[PathBuf::from("../proto")],
         )
-        .expect("compile board video bridge protobuf");
+        .expect("compile unit daemon protobuf");
 }

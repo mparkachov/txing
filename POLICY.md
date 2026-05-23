@@ -23,23 +23,30 @@ The agent must not continue into future milestones automatically unless explicit
 
 ---
 
-# Plan-To-Implementation Gate
+# Plan Closeout Gate
 
 When work starts from a completed Plan Mode discussion, an approved architecture
-plan, or the user's Implement action, the agent must not begin code,
-firmware, infrastructure, or configuration changes directly from the chat plan.
+plan, or the user's Implement action, the agent must not begin code, firmware,
+infrastructure, or configuration changes directly from the chat plan.
 
-Before implementation, the agent must:
-1. find or create Backlog.md tasks that cover the selected milestone or approved
-   plan
-2. report the selected or created task IDs
-3. start exactly one task by setting it `In Progress`, assigning it to itself,
-   and recording an implementation plan in the task
-4. implement only that task's acceptance criteria
+In this repository, the Plan Mode Implement action is a planning closeout
+signal. It means:
+1. create or update the architecture/design doc
+2. create one Backlog.md milestone doc per planned milestone
+3. create one separate goal-oriented Backlog.md task per milestone, plus smaller
+   child or follow-up implementation tasks when a milestone is too large for one
+   reviewable change
+4. report the milestone docs and task IDs
+5. stop without changing code
+
+Implementation may begin only after the user invokes `/goal <milestone>` or
+explicitly asks to implement a specific Backlog task. Before implementation,
+the agent must set exactly one task to `In Progress`, assign it to itself, and
+record an implementation plan in the task.
 
 If Backlog.md is unavailable, task creation fails, or the selected milestone is
 ambiguous, the agent must stop and ask for confirmation. The only exception is
-an explicit user instruction to skip Backlog for that work.
+an explicit user instruction to skip Backlog and implement immediately.
 
 ---
 

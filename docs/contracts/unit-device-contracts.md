@@ -20,6 +20,9 @@ semantics.
   device type.
 - `txing-unit-daemon` remains the only publisher of `board.*` Thing Shadow
   updates.
+- `txing-unit-hardware-worker` owns board-local motor hardware access and local
+  failsafe neutralization only. It does not own MCP sessions, REDCON policy,
+  cloud publication, Thing Shadow state, or actuator authorization.
 
 ## Runtime reliability
 
@@ -63,6 +66,9 @@ Rig, MCU, board, and cloud-facing systems are correctness-critical.
 - The repo ships the native sender in-tree. The sender and daemon run as
   separate systemd services and communicate through the local BoardVideoBridge
   contract.
+- The repo ships the native hardware worker in-tree. The worker and daemon run
+  as separate systemd services and communicate through the local UnitHardware
+  gRPC contract documented in `docs/contracts/unit-hardware-worker.md`.
 - Browser-to-board motion control uses board MCP tools with a lease hard gate.
 - The legacy raw `<device_id>/board/cmd_vel` path is removed.
 

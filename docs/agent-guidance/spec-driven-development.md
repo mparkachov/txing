@@ -16,13 +16,15 @@ code changes begin.
 4. Create or update a constraints/rules document. Keep durable constraints,
    terminology, safety rules, and cross-cutting decisions there instead of
    burying them in tasks.
-5. `/goal <one milestone>`: execute exactly one milestone at a time. Stay within
+5. End Plan Mode by materializing the plan into Backlog.md milestone docs and
+   milestone tasks, then stop.
+6. `/goal <one milestone>`: execute exactly one milestone at a time. Stay within
    the selected milestone and do not continue into later milestones without the
    user's explicit instruction.
-6. Review the completed milestone with the user. Summarize changes, risks,
+7. Review the completed milestone with the user. Summarize changes, risks,
    unresolved questions, validation, deployment implications, and manual rollout
    steps.
-7. Continue only after the user selects or approves the next milestone.
+8. Continue only after the user selects or approves the next milestone.
 
 ## Planning artifacts
 
@@ -39,10 +41,15 @@ code changes begin.
 Plan Mode ends with durable planning output, not code.
 
 When the user approves the architecture/design direction, presses Implement, or
-otherwise asks to implement an approved plan:
+otherwise approves a plan:
 
-- Create Backlog.md tasks for the selected milestone or milestone set.
-- Make each task goal-oriented, atomic, and verifiable.
+- Create or update the architecture/design doc.
+- Create one Backlog.md milestone doc per planned milestone.
+- Create one separate goal-oriented Backlog.md task per milestone. If the
+  milestone is too large for one reviewable change, also create smaller child or
+  follow-up implementation tasks under that milestone.
+- Assign tasks to their milestone with `-m` where the CLI supports it.
+- Make each task atomic and verifiable.
 - Use outcome-based acceptance criteria. Avoid criteria that merely name a
   function, file, class, or implementation technique.
 - Link each task to relevant design, milestone, and constraints docs with
@@ -51,22 +58,27 @@ otherwise asks to implement an approved plan:
   are added only after a task is selected for execution.
 - If ambiguity remains, ask for clarification instead of creating speculative
   tasks.
+- After creating the docs and tasks, report the milestone docs and task IDs,
+  then stop. Do not start code changes from the Plan Mode Implement action.
 
-## Plan-to-implementation gate
+## Goal-to-implementation gate
 
-Do not implement a planned feature directly from the chat plan. The chat plan is
-not a substitute for Backlog.md.
+Do not implement a planned feature directly from the chat plan or from the Plan
+Mode Implement action. The chat plan is not a substitute for Backlog.md, and
+Implement is treated as a planning closeout signal in this repository.
 
 Before the first code, firmware, infrastructure, or configuration change for a
 planned feature:
 
-1. Check whether Backlog.md already has task coverage for the approved plan or
-   selected milestone.
-2. If suitable tasks do not exist, create them with the `backlog` CLI.
-3. Report the created or selected task IDs.
-4. Start exactly one task by moving it to `In Progress`, assigning it to
+1. Confirm the user invoked `/goal <milestone>` or explicitly asked to implement
+   a specific Backlog task.
+2. Check whether Backlog.md already has task coverage for that milestone/task.
+3. If suitable tasks do not exist, stop and create the missing tasks instead of
+   implementing.
+4. Report the selected task ID.
+5. Start exactly one task by moving it to `In Progress`, assigning it to
    yourself, and adding its implementation plan.
-5. Implement only that task's acceptance criteria.
+6. Implement only that task's acceptance criteria.
 
 If the Backlog.md CLI is unavailable or task creation fails, stop and report the
 blocker instead of continuing from the chat plan. The only exception is an
@@ -89,11 +101,15 @@ backlog doc create "Unit video architecture" -p architecture/unit-video -t speci
 backlog doc update doc-1 --content "..."
 backlog doc create "Milestone: board video readiness" -p milestones/board-video-readiness -t guide
 backlog doc create "Constraints: board video" -p constraints/board-video -t guide
-backlog task create "Publish board video readiness status" \
+backlog task create "Milestone: board video readiness" \
   -m "board video readiness" \
   --doc backlog/docs/milestones/board-video-readiness.md \
   --doc backlog/docs/constraints/board-video.md \
   --ac "Rig can derive REDCON state from retained video readiness topics" \
+  --ac "The milestone has reviewable implementation tasks with validation notes"
+backlog task create "Publish board video readiness status" \
+  -m "board video readiness" \
+  --doc backlog/docs/milestones/board-video-readiness.md \
   --ac "Status publication tolerates transient sender failures without resource churn"
 ```
 

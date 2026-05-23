@@ -53,6 +53,12 @@ TEXT_VERSIONS = (
         'inline constexpr std::string_view kTxingBoardKvsMasterVersion = "{version}";',
     ),
     TextVersion(
+        Path("devices/unit/board/hardware_worker/include/hardware_worker/version.hpp"),
+        "unit hardware worker version",
+        re.compile(r'#define TXING_UNIT_HARDWARE_WORKER_VERSION "[^"]+"'),
+        '#define TXING_UNIT_HARDWARE_WORKER_VERSION "{version}"',
+    ),
+    TextVersion(
         Path("office/src/config.ts"),
         "office runtime fallback version",
         re.compile(r": '[0-9]+\.[0-9]+\.[0-9]+'"),

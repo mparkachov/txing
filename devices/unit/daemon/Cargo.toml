@@ -35,6 +35,3 @@ tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 [build-dependencies]
 protoc-bin-vendored = "3"
 tonic-build = "0.12"
-
-[target.'cfg(target_os = "linux")'.dependencies]
-gpiocdev = "0.8"

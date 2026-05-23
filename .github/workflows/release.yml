@@ -15,6 +15,8 @@ env:
   UNIT_DAEMON_ASSET: txing-unit-daemon-linux-aarch64.tar.gz
   KVS_MASTER_ASSET: txing-board-kvs-master-linux-aarch64.tar.gz
   KVS_MASTER_BINARY: txing-board-kvs-master
+  HARDWARE_WORKER_ASSET: txing-unit-hardware-worker-linux-aarch64.tar.gz
+  HARDWARE_WORKER_BINARY: txing-unit-hardware-worker
   SPARKPLUG_MANAGER_ASSET: txing-sparkplug-manager-linux-aarch64.tar.gz
   BLE_CONNECTIVITY_ASSET: txing-ble-connectivity-linux-aarch64.tar.gz
   WITNESS_LAMBDA_ASSET: txing-witness-lambda-linux-aarch64.zip
@@ -630,6 +632,112 @@ jobs:
           path: ${{ runner.temp }}/${{ env.KVS_MASTER_ASSET }}
           if-no-files-found: error
 
+  build-hardware-worker:
+    name: Build txing-unit-hardware-worker
+    runs-on: ubuntu-24.04-arm
+    needs: metadata
+    container:
+      image: debian:trixie
+      env:
+        DEBIAN_FRONTEND: noninteractive
+
+    steps:
+      - name: Install container bootstrap tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'Acquire::ForceIPv4 "true";\nAcquire::Retries "5";\n' \
+            >/etc/apt/apt.conf.d/99txing-ci-network
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates curl git binutils file
+
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Install hardware worker dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential pkg-config cmake file git ca-certificates \
+            libprotobuf-dev protobuf-compiler libgrpc++-dev protobuf-compiler-grpc
+          protoc --version
+          grpc_cpp_plugin_path="$(command -v grpc_cpp_plugin)"
+          test -x "$grpc_cpp_plugin_path"
+          file "$grpc_cpp_plugin_path"
+          ldd "$grpc_cpp_plugin_path"
+
+      - name: Build txing-unit-hardware-worker
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          project_root="$PWD"
+          hardware_worker_dir="$project_root/devices/unit/board/hardware_worker"
+          hardware_worker_build_dir="$hardware_worker_dir/build"
+          unit_hardware_proto="$project_root/devices/unit/proto/txing/unit/hardware/v1/unit_hardware.proto"
+
+          git config --global --add safe.directory "$PWD"
+          git ls-tree -r HEAD -- devices/unit/proto
+          if [ ! -f "$unit_hardware_proto" ]; then
+            echo "UnitHardware proto missing from checkout: $unit_hardware_proto" >&2
+            git status --short >&2
+            find devices/unit -maxdepth 4 -type d | sort >&2
+            exit 1
+          fi
+
+          cmake \
+            -S "$hardware_worker_dir" \
+            -B "$hardware_worker_build_dir" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=ON \
+            -DTXING_HARDWARE_WORKER_GRPC=ON
+          cmake --build "$hardware_worker_build_dir" --config Release --target txing-unit-hardware-worker-tests
+          ctest --test-dir "$hardware_worker_build_dir" --output-on-failure
+          cmake --build "$hardware_worker_build_dir" --config Release --target txing-unit-hardware-worker
+
+          hardware_worker_build_binary="devices/unit/board/hardware_worker/build/$HARDWARE_WORKER_BINARY"
+          test -x "$hardware_worker_build_binary"
+          ldd "$hardware_worker_build_binary"
+          if ldd "$hardware_worker_build_binary" | grep -Fq "not found"; then
+            echo "txing-unit-hardware-worker has unresolved shared libraries" >&2
+            exit 1
+          fi
+          file "$hardware_worker_build_binary"
+          install -m 755 "$hardware_worker_build_binary" "$RUNNER_TEMP/$HARDWARE_WORKER_BINARY"
+
+      - name: Package ${{ env.HARDWARE_WORKER_ASSET }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_dir="$RUNNER_TEMP/package-$HARDWARE_WORKER_BINARY"
+          asset_path="$RUNNER_TEMP/$HARDWARE_WORKER_ASSET"
+          rm -rf "$package_dir"
+          install -d "$package_dir"
+          install -m 755 "$RUNNER_TEMP/$HARDWARE_WORKER_BINARY" "$package_dir/$HARDWARE_WORKER_BINARY"
+          if file "$package_dir/$HARDWARE_WORKER_BINARY" | grep -q 'ELF'; then
+            strip "$package_dir/$HARDWARE_WORKER_BINARY"
+          fi
+          file "$package_dir/$HARDWARE_WORKER_BINARY"
+          tar -C "$package_dir" -czf "$asset_path" "$HARDWARE_WORKER_BINARY"
+          archive_listing="$(tar -tzf "$asset_path")"
+          if [ "$archive_listing" != "$HARDWARE_WORKER_BINARY" ]; then
+            echo "Expected $HARDWARE_WORKER_ASSET to contain only root-level $HARDWARE_WORKER_BINARY, got:" >&2
+            printf '%s\n' "$archive_listing" >&2
+            exit 1
+          fi
+
+      - name: Upload ${{ env.HARDWARE_WORKER_ASSET }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.HARDWARE_WORKER_ASSET }}
+          path: ${{ runner.temp }}/${{ env.HARDWARE_WORKER_ASSET }}
+          if-no-files-found: error
+
   publish:
     name: Publish release
     runs-on: ubuntu-24.04-arm
@@ -639,6 +747,7 @@ jobs:
       - build-go-rig-binary
       - build-lambda
       - build-kvs-master
+      - build-hardware-worker
 
     steps:
       - name: Download release assets
@@ -661,6 +770,7 @@ jobs:
           release_assets=(
             "$UNIT_DAEMON_ASSET"
             "$KVS_MASTER_ASSET"
+            "$HARDWARE_WORKER_ASSET"
             "$SPARKPLUG_MANAGER_ASSET"
             "$BLE_CONNECTIVITY_ASSET"
             "$WITNESS_LAMBDA_ASSET"

@@ -53,6 +53,10 @@ pub mod board_video_bridge {
     tonic::include_proto!("txing.unit.board_video.v1");
 }
 
+pub mod unit_hardware {
+    tonic::include_proto!("txing.unit.hardware.v1");
+}
+
 pub const SCHEMA_VERSION: &str = "2.0";
 pub const DAEMON_VERSION: &str = env!("TXING_DAEMON_BUILD_VERSION");
 pub const ADAPTER_ID: &str = "dev.txing.unit.Daemon";
@@ -73,27 +77,14 @@ pub const DEFAULT_IOT_ROOT_CA_FILE_NAME: &str = "AmazonRootCA1.pem";
 pub const DEFAULT_CAPABILITY_TTL_SECONDS: u64 = 150;
 pub const DEFAULT_HEARTBEAT_SECONDS: u64 = 60;
 pub const DEFAULT_MCP_ACTIVE_TTL_MS: u64 = 5_000;
-pub const DEFAULT_MOTOR_WATCHDOG_TIMEOUT_MS: u64 = DEFAULT_MCP_ACTIVE_TTL_MS;
-pub const DEFAULT_MOTOR_PWM_SYSFS_ROOT: &str = "/sys/class/pwm";
-pub const DEFAULT_MOTOR_RAW_MAX_SPEED: i32 = 480;
-pub const DEFAULT_MOTOR_CMD_RAW_MIN_SPEED: i32 = 50;
-pub const DEFAULT_MOTOR_CMD_RAW_MAX_SPEED: i32 = 250;
-pub const DEFAULT_MOTOR_PWM_HZ: u64 = 20_000;
-pub const DEFAULT_MOTOR_PWM_CHIP: u32 = 0;
-pub const DEFAULT_MOTOR_GPIO_CHIP: u32 = 0;
-pub const DEFAULT_MOTOR_LEFT_PWM_CHANNEL: u32 = 0;
-pub const DEFAULT_MOTOR_RIGHT_PWM_CHANNEL: u32 = 1;
-pub const DEFAULT_MOTOR_LEFT_DIR_GPIO: u32 = 5;
-pub const DEFAULT_MOTOR_RIGHT_DIR_GPIO: u32 = 6;
-pub const DEFAULT_MOTOR_LEFT_INVERTED: bool = false;
-pub const DEFAULT_MOTOR_RIGHT_INVERTED: bool = false;
-pub const DEFAULT_TRACK_WIDTH_M: f64 = 0.28;
-pub const DEFAULT_MAX_WHEEL_LINEAR_SPEED_MPS: f64 = 0.50;
 pub const DEFAULT_CLOUDWATCH_LOG_RETENTION_DAYS: i32 = 14;
 pub const DEFAULT_KVS_MASTER_COMMAND: &str = "txing-board-kvs-master";
 pub const DEFAULT_MCP_WEBRTC_SOCKET_PATH: &str = "/run/txing-unit-daemon/mcp-webrtc.sock";
 pub const DEFAULT_BOARD_VIDEO_BRIDGE_SOCKET_PATH: &str =
     "/run/txing-unit-daemon/board-video-bridge.sock";
+pub const DEFAULT_HARDWARE_WORKER_SOCKET_PATH: &str =
+    "/run/txing-unit-hardware-worker/unit-hardware.sock";
+pub const DEFAULT_HARDWARE_WORKER_TIMEOUT_MS: u64 = 700;
 pub const MCP_WEBRTC_DATA_CHANNEL_LABEL: &str = "txing.mcp.v1";
 pub const DEFAULT_MCP_RESPONSE_TIMEOUT_MS: u32 = 7_000;
 pub const DEFAULT_VIDEO_CODEC: &str = "h264";
@@ -957,74 +948,11 @@ pub struct Cli {
     #[arg(long = "video-channel-name")]
     pub video_channel_name: Option<String>,
 
-    #[arg(long = "motor-enabled")]
-    pub motor_enabled: Option<String>,
+    #[arg(long = "hardware-worker-socket-path")]
+    pub hardware_worker_socket_path: Option<String>,
 
-    #[arg(long = "motor-pwm-sysfs-root")]
-    pub motor_pwm_sysfs_root: Option<String>,
-
-    #[arg(long = "motor-gpio-chip")]
-    pub motor_gpio_chip: Option<u32>,
-
-    #[arg(long = "motor-raw-max-speed")]
-    pub motor_raw_max_speed: Option<i32>,
-
-    #[arg(long = "motor-cmd-raw-min-speed")]
-    pub motor_cmd_raw_min_speed: Option<i32>,
-
-    #[arg(long = "motor-cmd-raw-max-speed")]
-    pub motor_cmd_raw_max_speed: Option<i32>,
-
-    #[arg(long = "motor-pwm-hz")]
-    pub motor_pwm_hz: Option<u64>,
-
-    #[arg(long = "motor-pwm-chip")]
-    pub motor_pwm_chip: Option<u32>,
-
-    #[arg(long = "motor-left-pwm-channel")]
-    pub motor_left_pwm_channel: Option<u32>,
-
-    #[arg(long = "motor-right-pwm-channel")]
-    pub motor_right_pwm_channel: Option<u32>,
-
-    #[arg(long = "motor-left-dir-gpio")]
-    pub motor_left_dir_gpio: Option<u32>,
-
-    #[arg(long = "motor-right-dir-gpio")]
-    pub motor_right_dir_gpio: Option<u32>,
-
-    #[arg(long = "motor-left-inverted")]
-    pub motor_left_inverted: Option<String>,
-
-    #[arg(long = "motor-right-inverted")]
-    pub motor_right_inverted: Option<String>,
-
-    #[arg(long = "motor-track-width-m")]
-    pub motor_track_width_m: Option<f64>,
-
-    #[arg(long = "motor-max-wheel-linear-speed-mps")]
-    pub motor_max_wheel_linear_speed_mps: Option<f64>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct MotorConfig {
-    pub enabled: bool,
-    pub pwm_sysfs_root: String,
-    pub raw_max_speed: i32,
-    pub cmd_raw_min_speed: i32,
-    pub cmd_raw_max_speed: i32,
-    pub pwm_hz: u64,
-    pub pwm_chip: u32,
-    pub gpio_chip: u32,
-    pub left_pwm_channel: u32,
-    pub right_pwm_channel: u32,
-    pub left_dir_gpio: u32,
-    pub right_dir_gpio: u32,
-    pub left_inverted: bool,
-    pub right_inverted: bool,
-    pub track_width_m: f64,
-    pub max_wheel_linear_speed_mps: f64,
-    pub watchdog_timeout: Duration,
+    #[arg(long = "hardware-worker-timeout-ms")]
+    pub hardware_worker_timeout_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1048,7 +976,8 @@ pub struct RuntimeConfig {
     pub kvs_disable_ipv4_turn: bool,
     pub video_region: String,
     pub video_channel_name: String,
-    pub motor: MotorConfig,
+    pub hardware_worker_socket_path: String,
+    pub hardware_worker_timeout: Duration,
     pub cloudwatch_logging: Option<CloudWatchLogConfig>,
 }
 
@@ -1078,7 +1007,6 @@ impl RuntimeConfig {
         file_env: &BTreeMap<String, String>,
         env_file_dir: Option<&Path>,
     ) -> Result<Self> {
-        let motor = resolve_motor_config(&cli, process_env, file_env)?;
         let thing_id = required_config_value(
             cli.thing_id,
             process_env,
@@ -1156,6 +1084,27 @@ impl RuntimeConfig {
         .unwrap_or_else(|| DEFAULT_BOARD_VIDEO_BRIDGE_SOCKET_PATH.to_string());
         if board_video_bridge_socket_path.trim().is_empty() {
             bail!("board-video-bridge-socket-path must not be empty");
+        }
+        let hardware_worker_socket_path = optional_config_value(
+            cli.hardware_worker_socket_path,
+            process_env,
+            file_env,
+            "TXING_HARDWARE_WORKER_SOCKET_PATH",
+        )
+        .unwrap_or_else(|| DEFAULT_HARDWARE_WORKER_SOCKET_PATH.to_string());
+        if hardware_worker_socket_path.trim().is_empty() {
+            bail!("hardware-worker-socket-path must not be empty");
+        }
+        let hardware_worker_timeout_ms = cli
+            .hardware_worker_timeout_ms
+            .or(optional_u64_config(
+                process_env,
+                file_env,
+                "TXING_HARDWARE_WORKER_TIMEOUT_MS",
+            )?)
+            .unwrap_or(DEFAULT_HARDWARE_WORKER_TIMEOUT_MS);
+        if hardware_worker_timeout_ms == 0 {
+            bail!("hardware-worker-timeout-ms must be positive");
         }
         let kvs_prefer_ipv6 = optional_bool_config(
             cli.kvs_prefer_ipv6,
@@ -1271,7 +1220,8 @@ impl RuntimeConfig {
             kvs_disable_ipv4_turn,
             video_region: aws_region,
             video_channel_name,
-            motor,
+            hardware_worker_socket_path,
+            hardware_worker_timeout: Duration::from_millis(hardware_worker_timeout_ms),
             cloudwatch_logging,
         })
     }
@@ -2096,7 +2046,7 @@ pub struct Twist {
     pub angular: Vector3,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct DriveState {
     #[serde(rename = "leftSpeed")]
     pub left_speed: i32,
@@ -2105,420 +2055,224 @@ pub struct DriveState {
     pub sequence: u64,
 }
 
-pub trait MotorDriver: Send {
-    fn set_speeds(&mut self, left_percent: i32, right_percent: i32) -> Result<()>;
-    fn close(&mut self) -> Result<()> {
-        self.set_speeds(0, 0)
-    }
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HardwareStatusSnapshot {
+    pub actuator_ready: bool,
+    pub motion: DriveState,
 }
 
-#[derive(Debug, Default)]
-pub struct NoopMotorDriver;
-
-impl MotorDriver for NoopMotorDriver {
-    fn set_speeds(&mut self, _left_percent: i32, _right_percent: i32) -> Result<()> {
-        Ok(())
-    }
+#[async_trait]
+pub trait HardwareClient: Send {
+    async fn get_status(&mut self) -> Result<HardwareStatusSnapshot>;
+    async fn apply_velocity(&mut self, twist: Twist, deadline_unix_ms: u64) -> Result<DriveState>;
+    async fn stop(&mut self) -> Result<DriveState>;
 }
 
-#[derive(Debug)]
-pub struct SysfsMotorDriver {
-    config: MotorConfig,
-    left_pwm: SysfsPwmChannel,
-    right_pwm: SysfsPwmChannel,
-    left_dir: GpioOutputPin,
-    right_dir: GpioOutputPin,
+struct GrpcHardwareClient {
+    socket_path: String,
+    timeout_duration: Duration,
+    client:
+        Option<unit_hardware::unit_hardware_client::UnitHardwareClient<tonic::transport::Channel>>,
 }
 
-impl SysfsMotorDriver {
-    pub fn new(config: MotorConfig) -> Result<Self> {
-        let left_pwm = SysfsPwmChannel::open(
-            &config.pwm_sysfs_root,
-            config.pwm_chip,
-            config.left_pwm_channel,
-            config.pwm_hz,
-        )?;
-        let right_pwm = SysfsPwmChannel::open(
-            &config.pwm_sysfs_root,
-            config.pwm_chip,
-            config.right_pwm_channel,
-            config.pwm_hz,
-        )?;
-        let left_dir = GpioOutputPin::open(config.gpio_chip, config.left_dir_gpio)?;
-        let right_dir = GpioOutputPin::open(config.gpio_chip, config.right_dir_gpio)?;
-        let mut driver = Self {
-            config,
-            left_pwm,
-            right_pwm,
-            left_dir,
-            right_dir,
-        };
-        driver.set_raw_speeds(0, 0)?;
-        Ok(driver)
-    }
-
-    fn set_raw_speeds(&mut self, left_raw: i32, right_raw: i32) -> Result<()> {
-        apply_motor_side(
-            left_raw,
-            self.config.raw_max_speed,
-            self.config.left_inverted,
-            &mut self.left_pwm,
-            &mut self.left_dir,
-        )?;
-        apply_motor_side(
-            right_raw,
-            self.config.raw_max_speed,
-            self.config.right_inverted,
-            &mut self.right_pwm,
-            &mut self.right_dir,
-        )
-    }
-}
-
-impl MotorDriver for SysfsMotorDriver {
-    fn set_speeds(&mut self, left_percent: i32, right_percent: i32) -> Result<()> {
-        let left_raw = scale_percent_to_raw(left_percent, &self.config);
-        let right_raw = scale_percent_to_raw(right_percent, &self.config);
-        if let Err(err) = self.set_raw_speeds(left_raw, right_raw) {
-            let _ = self.set_raw_speeds(0, 0);
-            return Err(err);
+impl GrpcHardwareClient {
+    fn new(socket_path: String, timeout_duration: Duration) -> Self {
+        Self {
+            socket_path,
+            timeout_duration,
+            client: None,
         }
-        Ok(())
     }
 
-    fn close(&mut self) -> Result<()> {
-        self.set_raw_speeds(0, 0)?;
-        let _ = self.left_pwm.close();
-        let _ = self.right_pwm.close();
-        Ok(())
-    }
-}
-
-fn clamp_i32(value: i32, low: i32, high: i32) -> i32 {
-    value.max(low).min(high)
-}
-
-fn scale_percent_to_raw(value: i32, config: &MotorConfig) -> i32 {
-    let clamped = clamp_i32(value, -100, 100);
-    if clamped == 0 {
-        return 0;
-    }
-    let magnitude = clamped.abs();
-    let scaled = if config.cmd_raw_min_speed == 0 {
-        ((magnitude as f64 / 100.0) * config.cmd_raw_max_speed as f64).round() as i32
-    } else {
-        let position = if magnitude == 1 {
-            0.0
-        } else {
-            (magnitude - 1) as f64 / 99.0
-        };
-        (config.cmd_raw_min_speed as f64
-            + position * (config.cmd_raw_max_speed - config.cmd_raw_min_speed) as f64)
-            .round() as i32
-    };
-    if clamped < 0 { -scaled } else { scaled }
-}
-
-fn apply_motor_side(
-    raw_speed: i32,
-    raw_max_speed: i32,
-    inverted: bool,
-    pwm: &mut SysfsPwmChannel,
-    direction: &mut GpioOutputPin,
-) -> Result<()> {
-    let clamped = clamp_i32(raw_speed, -raw_max_speed, raw_max_speed);
-    let effective = if inverted { -clamped } else { clamped };
-    direction.set_value(effective < 0)?;
-    let duty =
-        ((effective.abs() as f64 / raw_max_speed as f64) * pwm.period_ns as f64).round() as u64;
-    pwm.set_duty_cycle_ns(duty)
-}
-
-#[derive(Debug)]
-struct SysfsPwmChannel {
-    chip_path: PathBuf,
-    channel_path: PathBuf,
-    period_ns: u64,
-    owns_channel: bool,
-    closed: bool,
-}
-
-impl SysfsPwmChannel {
-    fn open(root: &str, chip: u32, channel: u32, frequency_hz: u64) -> Result<Self> {
-        let chip_path = Path::new(root).join(format!("pwmchip{chip}"));
-        if !chip_path.is_dir() {
-            bail!("PWM chip path does not exist: {}", chip_path.display());
-        }
-        let channel_path = chip_path.join(format!("pwm{channel}"));
-        let mut owns_channel = false;
-        if !channel_path.is_dir() {
-            write_int(chip_path.join("export"), channel)?;
-            owns_channel = true;
-            wait_for_dir(&channel_path, Duration::from_secs(1))?;
-        }
-        let period_ns = (1_000_000_000.0 / frequency_hz as f64).round() as u64;
-        let mut pwm = Self {
-            chip_path,
-            channel_path,
-            period_ns,
-            owns_channel,
-            closed: false,
-        };
-        let _ = pwm.disable();
-        pwm.set_period_ns(period_ns)?;
-        pwm.set_duty_cycle_ns(0)?;
-        pwm.enable()?;
-        Ok(pwm)
-    }
-
-    fn set_period_ns(&mut self, value: u64) -> Result<()> {
-        write_int(self.channel_path.join("period"), value)
-    }
-
-    fn set_duty_cycle_ns(&mut self, value: u64) -> Result<()> {
-        write_int(
-            self.channel_path.join("duty_cycle"),
-            value.min(self.period_ns),
-        )
-    }
-
-    fn enable(&mut self) -> Result<()> {
-        write_int(self.channel_path.join("enable"), 1_u8)
-    }
-
-    fn disable(&mut self) -> Result<()> {
-        write_int(self.channel_path.join("enable"), 0_u8)
-    }
-
-    fn close(&mut self) -> Result<()> {
-        if self.closed {
+    async fn ensure_client(&mut self) -> Result<()> {
+        if self.client.is_some() {
             return Ok(());
         }
-        self.closed = true;
-        let _ = self.set_duty_cycle_ns(0);
-        let _ = self.disable();
-        if self.owns_channel {
-            write_int(
-                self.chip_path.join("unexport"),
-                channel_number_from_path(&self.channel_path)?,
-            )?;
-        }
-        Ok(())
-    }
-}
-
-impl Drop for SysfsPwmChannel {
-    fn drop(&mut self) {
-        let _ = self.close();
-    }
-}
-
-fn channel_number_from_path(path: &Path) -> Result<u32> {
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .and_then(|name| name.strip_prefix("pwm"))
-        .ok_or_else(|| anyhow!("invalid PWM channel path {}", path.display()))?
-        .parse::<u32>()
-        .context("parse PWM channel number")
-}
-
-#[cfg(target_os = "linux")]
-#[derive(Debug)]
-struct GpioOutputPin {
-    request: gpiocdev::Request,
-    chip: u32,
-    pin: u32,
-}
-
-#[cfg(target_os = "linux")]
-impl GpioOutputPin {
-    fn open(chip: u32, pin: u32) -> Result<Self> {
-        let chip_path = format!("/dev/gpiochip{chip}");
-        let request = gpiocdev::Request::builder()
-            .on_chip(chip_path.as_str())
-            .with_consumer("txing-unit-daemon")
-            .with_line(pin)
-            .as_output(gpiocdev::line::Value::Inactive)
-            .request()
-            .with_context(|| {
-                format!("request GPIO direction pin {pin} from {chip_path} as output")
-            })?;
-        Ok(Self { request, chip, pin })
-    }
-
-    fn set_value(&mut self, high: bool) -> Result<()> {
-        self.request
-            .set_lone_value(gpiocdev::line::Value::from(high))
-            .with_context(|| {
-                format!(
-                    "set GPIO direction pin {} on gpiochip{}",
-                    self.pin, self.chip
-                )
-            })
-    }
-}
-
-#[cfg(target_os = "linux")]
-impl Drop for GpioOutputPin {
-    fn drop(&mut self) {
-        let _ = self.set_value(false);
-    }
-}
-
-#[cfg(not(target_os = "linux"))]
-#[derive(Debug)]
-struct GpioOutputPin;
-
-#[cfg(not(target_os = "linux"))]
-impl GpioOutputPin {
-    fn open(chip: u32, pin: u32) -> Result<Self> {
-        bail!(
-            "GPIO direction pins require Linux GPIO character devices: /dev/gpiochip{chip} pin {pin}"
+        let socket_path = PathBuf::from(self.socket_path.clone());
+        let endpoint = tonic::transport::Endpoint::try_from("http://[::]:50051")
+            .context("create hardware worker gRPC endpoint")?;
+        let channel = timeout(
+            self.timeout_duration,
+            endpoint.connect_with_connector(tower::service_fn(move |_| {
+                let path = socket_path.clone();
+                async move {
+                    UnixStream::connect(path)
+                        .await
+                        .map(hyper_util::rt::TokioIo::new)
+                }
+            })),
         )
-    }
-
-    fn set_value(&mut self, _high: bool) -> Result<()> {
+        .await
+        .context("connect to hardware worker timed out")?
+        .context("connect to hardware worker")?;
+        self.client = Some(unit_hardware::unit_hardware_client::UnitHardwareClient::new(channel));
         Ok(())
     }
-}
 
-fn write_int(path: PathBuf, value: impl fmt::Display) -> Result<()> {
-    write_text(path, &format!("{value}\n"))
-}
-
-fn write_text(path: PathBuf, value: &str) -> Result<()> {
-    fs::write(&path, value).with_context(|| format!("write {}", path.display()))
-}
-
-fn wait_for_dir(path: &Path, timeout_duration: Duration) -> Result<()> {
-    let started = std::time::Instant::now();
-    while started.elapsed() < timeout_duration {
-        if path.is_dir() {
-            return Ok(());
-        }
-        std::thread::sleep(Duration::from_millis(10));
+    fn drop_client(&mut self) {
+        self.client = None;
     }
-    bail!("path did not appear after export: {}", path.display())
+}
+
+#[async_trait]
+impl HardwareClient for GrpcHardwareClient {
+    async fn get_status(&mut self) -> Result<HardwareStatusSnapshot> {
+        self.ensure_client().await?;
+        let result = {
+            let client = self.client.as_mut().expect("hardware client initialized");
+            timeout(
+                self.timeout_duration,
+                client.get_status(unit_hardware::GetStatusRequest {}),
+            )
+            .await
+        };
+        match result {
+            Ok(Ok(response)) => Ok(status_from_proto(response.into_inner())),
+            Ok(Err(err)) => {
+                self.drop_client();
+                Err(anyhow!("hardware worker status failed: {}", err.message()))
+            }
+            Err(_) => {
+                self.drop_client();
+                Err(anyhow!("hardware worker status timed out"))
+            }
+        }
+    }
+
+    async fn apply_velocity(&mut self, twist: Twist, deadline_unix_ms: u64) -> Result<DriveState> {
+        self.ensure_client().await?;
+        let request = unit_hardware::ApplyVelocityRequest {
+            twist: Some(twist_to_proto(twist)),
+            deadline_unix_ms,
+            command_id: format!("cmd_vel-{deadline_unix_ms}"),
+        };
+        let result = {
+            let client = self.client.as_mut().expect("hardware client initialized");
+            timeout(self.timeout_duration, client.apply_velocity(request)).await
+        };
+        match result {
+            Ok(Ok(response)) => Ok(motion_from_proto(response.into_inner().motion)),
+            Ok(Err(err)) => {
+                self.drop_client();
+                Err(anyhow!(
+                    "hardware worker apply velocity failed: {}",
+                    err.message()
+                ))
+            }
+            Err(_) => {
+                self.drop_client();
+                Err(anyhow!("hardware worker apply velocity timed out"))
+            }
+        }
+    }
+
+    async fn stop(&mut self) -> Result<DriveState> {
+        self.ensure_client().await?;
+        let request = unit_hardware::StopRequest {
+            reason: "daemon-policy".to_string(),
+        };
+        let result = {
+            let client = self.client.as_mut().expect("hardware client initialized");
+            timeout(self.timeout_duration, client.stop(request)).await
+        };
+        match result {
+            Ok(Ok(response)) => Ok(motion_from_proto(response.into_inner().motion)),
+            Ok(Err(err)) => {
+                self.drop_client();
+                Err(anyhow!("hardware worker stop failed: {}", err.message()))
+            }
+            Err(_) => {
+                self.drop_client();
+                Err(anyhow!("hardware worker stop timed out"))
+            }
+        }
+    }
+}
+
+fn twist_to_proto(twist: Twist) -> unit_hardware::Twist {
+    unit_hardware::Twist {
+        linear: Some(unit_hardware::Vector3 {
+            x: twist.linear.x,
+            y: twist.linear.y,
+            z: twist.linear.z,
+        }),
+        angular: Some(unit_hardware::Vector3 {
+            x: twist.angular.x,
+            y: twist.angular.y,
+            z: twist.angular.z,
+        }),
+    }
+}
+
+fn motion_from_proto(motion: Option<unit_hardware::MotionState>) -> DriveState {
+    let motion = motion.unwrap_or_default();
+    DriveState {
+        left_speed: motion.left_speed,
+        right_speed: motion.right_speed,
+        sequence: motion.sequence,
+    }
+}
+
+fn status_from_proto(status: unit_hardware::HardwareStatus) -> HardwareStatusSnapshot {
+    HardwareStatusSnapshot {
+        actuator_ready: status.actuator_ready,
+        motion: motion_from_proto(status.motion),
+    }
 }
 
 pub struct CmdVelController {
-    config: MotorConfig,
-    driver: Box<dyn MotorDriver>,
+    client: Box<dyn HardwareClient>,
     drive_state: DriveState,
-    last_command_at_ms: Option<u64>,
 }
 
 impl CmdVelController {
-    pub fn new(config: MotorConfig, driver: Box<dyn MotorDriver>) -> Self {
+    pub fn new(client: Box<dyn HardwareClient>) -> Self {
         Self {
-            config,
-            driver,
+            client,
             drive_state: DriveState {
                 left_speed: 0,
                 right_speed: 0,
                 sequence: 0,
             },
-            last_command_at_ms: None,
         }
     }
 
-    pub fn from_config(config: MotorConfig) -> Result<Self> {
-        let driver: Box<dyn MotorDriver> = if config.enabled {
-            Box::new(SysfsMotorDriver::new(config.clone())?)
-        } else {
-            Box::new(NoopMotorDriver)
-        };
-        Ok(Self::new(config, driver))
+    pub fn from_config(config: &RuntimeConfig) -> Self {
+        Self::new(Box::new(GrpcHardwareClient::new(
+            config.hardware_worker_socket_path.clone(),
+            config.hardware_worker_timeout,
+        )))
     }
 
     pub fn drive_state(&self) -> DriveState {
         self.drive_state.clone()
     }
 
-    pub fn publish_twist(&mut self, twist: Twist, now_ms: u64) -> Result<DriveState> {
-        validate_twist(&twist)?;
-        let (left_speed, right_speed) = mix_twist_to_tank_speeds(&twist, &self.config)?;
-        self.last_command_at_ms = Some(now_ms);
-        self.apply_speeds(left_speed, right_speed, false)?;
+    pub async fn publish_twist(
+        &mut self,
+        twist: Twist,
+        deadline_unix_ms: u64,
+    ) -> Result<DriveState> {
+        let motion = self.client.apply_velocity(twist, deadline_unix_ms).await?;
+        self.drive_state = motion;
         Ok(self.drive_state())
     }
 
-    pub fn stop(&mut self, force: bool) -> Result<DriveState> {
-        self.last_command_at_ms = None;
-        self.apply_speeds(0, 0, force)?;
+    pub async fn stop(&mut self, _force: bool) -> Result<DriveState> {
+        let motion = self.client.stop().await?;
+        self.drive_state = motion;
         Ok(self.drive_state())
     }
 
-    pub fn tick_watchdog(&mut self, now_ms: u64) -> Result<Option<DriveState>> {
-        let Some(last_command_at_ms) = self.last_command_at_ms else {
-            return Ok(None);
-        };
-        if now_ms.saturating_sub(last_command_at_ms) < duration_millis(self.config.watchdog_timeout)
-        {
-            return Ok(None);
+    pub async fn refresh_status(&mut self) -> Result<bool> {
+        let status = self.client.get_status().await?;
+        let changed = self.drive_state != status.motion;
+        self.drive_state = status.motion;
+        if !status.actuator_ready {
+            bail!("hardware worker actuator unavailable");
         }
-        self.stop(false).map(Some)
+        Ok(changed)
     }
-
-    pub fn close(&mut self) -> Result<()> {
-        let _ = self.stop(true);
-        self.driver.close()
-    }
-
-    fn apply_speeds(&mut self, left_speed: i32, right_speed: i32, force: bool) -> Result<()> {
-        if !force
-            && self.drive_state.left_speed == left_speed
-            && self.drive_state.right_speed == right_speed
-        {
-            return Ok(());
-        }
-        self.driver.set_speeds(left_speed, right_speed)?;
-        self.drive_state.left_speed = left_speed;
-        self.drive_state.right_speed = right_speed;
-        self.drive_state.sequence = self.drive_state.sequence.saturating_add(1);
-        Ok(())
-    }
-}
-
-fn validate_twist(twist: &Twist) -> Result<()> {
-    for (name, value) in [
-        ("linear.x", twist.linear.x),
-        ("linear.y", twist.linear.y),
-        ("linear.z", twist.linear.z),
-        ("angular.x", twist.angular.x),
-        ("angular.y", twist.angular.y),
-        ("angular.z", twist.angular.z),
-    ] {
-        if !value.is_finite() {
-            bail!("cmd_vel {name} must be finite");
-        }
-    }
-    let unsupported = [
-        ("linear.y", twist.linear.y),
-        ("linear.z", twist.linear.z),
-        ("angular.x", twist.angular.x),
-        ("angular.y", twist.angular.y),
-    ]
-    .into_iter()
-    .filter_map(|(name, value)| (value != 0.0).then_some(format!("{name}={value:.3}")))
-    .collect::<Vec<_>>();
-    if !unsupported.is_empty() {
-        bail!("unsupported cmd_vel axes: {}", unsupported.join(", "));
-    }
-    Ok(())
-}
-
-pub fn mix_twist_to_tank_speeds(twist: &Twist, config: &MotorConfig) -> Result<(i32, i32)> {
-    validate_motor_config(config)?;
-    let half_track_width_m = config.track_width_m / 2.0;
-    let left_wheel_linear_speed = twist.linear.x - (twist.angular.z * half_track_width_m);
-    let right_wheel_linear_speed = twist.linear.x + (twist.angular.z * half_track_width_m);
-    let left = (left_wheel_linear_speed / config.max_wheel_linear_speed_mps).clamp(-1.0, 1.0);
-    let right = (right_wheel_linear_speed / config.max_wheel_linear_speed_mps).clamp(-1.0, 1.0);
-    Ok((
-        (left * 100.0).round() as i32,
-        (right * 100.0).round() as i32,
-    ))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -2700,17 +2454,16 @@ impl McpServer {
         })
     }
 
-    fn clear_expired(&mut self, now_ms: u64, cmd_vel: &mut CmdVelController) -> Result<bool> {
+    fn clear_expired(&mut self, now_ms: u64) -> bool {
         if self
             .active
             .as_ref()
             .is_some_and(|active| active.expires_at_ms <= now_ms)
         {
             self.active = None;
-            cmd_vel.stop(true)?;
-            return Ok(true);
+            return true;
         }
-        Ok(false)
+        false
     }
 
     fn activate(
@@ -2720,19 +2473,18 @@ impl McpServer {
         transport: &str,
         takeover: bool,
         now_ms: u64,
-        cmd_vel: &mut CmdVelController,
-    ) -> Result<ActiveControlState> {
-        self.clear_expired(now_ms, cmd_vel)?;
+    ) -> Result<(ActiveControlState, bool)> {
+        let mut stop_required = self.clear_expired(now_ms);
         if let Some(active) = &self.active {
             if active.session_id != session_id {
                 if !takeover {
                     bail!("active control busy");
                 }
+                stop_required = true;
             } else {
-                return Ok(active.clone());
+                return Ok((active.clone(), stop_required));
             }
         }
-        cmd_vel.stop(true)?;
         self.next_epoch = self.next_epoch.saturating_add(1);
         let active = ActiveControlState {
             session_id: session_id.to_string(),
@@ -2743,27 +2495,26 @@ impl McpServer {
             epoch: self.next_epoch,
         };
         self.active = Some(active.clone());
-        Ok(active)
+        Ok((active, stop_required))
     }
 
-    fn clear_active(&mut self, cmd_vel: &mut CmdVelController) -> Result<bool> {
+    fn clear_active(&mut self) -> bool {
         if self.active.is_none() {
-            return Ok(false);
+            return false;
         }
         self.active = None;
-        cmd_vel.stop(true)?;
-        Ok(true)
+        true
     }
 
-    fn close_session(&mut self, session_id: &str, cmd_vel: &mut CmdVelController) -> Result<bool> {
+    fn close_session(&mut self, session_id: &str) -> bool {
         if self
             .active
             .as_ref()
             .is_some_and(|active| active.session_id == session_id)
         {
-            return self.clear_active(cmd_vel);
+            return self.clear_active();
         }
-        Ok(false)
+        false
     }
 
     fn renew_active(
@@ -2771,24 +2522,17 @@ impl McpServer {
         session_id: &str,
         epoch: u64,
         now_ms: u64,
-        cmd_vel: &mut CmdVelController,
     ) -> Result<ActiveControlState> {
-        self.ensure_active(session_id, epoch, now_ms, cmd_vel)?;
+        self.ensure_active(session_id, epoch, now_ms)?;
         let active = self.active.as_mut().expect("active checked");
         active.expires_at_ms = now_ms.saturating_add(duration_millis(self.active_ttl));
         Ok(active.clone())
     }
 
-    fn release_active(
-        &mut self,
-        session_id: &str,
-        epoch: u64,
-        now_ms: u64,
-        cmd_vel: &mut CmdVelController,
-    ) -> Result<DriveState> {
-        self.ensure_active(session_id, epoch, now_ms, cmd_vel)?;
+    fn release_active(&mut self, session_id: &str, epoch: u64, now_ms: u64) -> Result<bool> {
+        self.ensure_active(session_id, epoch, now_ms)?;
         self.active = None;
-        cmd_vel.stop(true)
+        Ok(true)
     }
 
     fn ensure_active(
@@ -2796,9 +2540,8 @@ impl McpServer {
         session_id: &str,
         epoch: u64,
         now_ms: u64,
-        cmd_vel: &mut CmdVelController,
-    ) -> Result<()> {
-        self.clear_expired(now_ms, cmd_vel)?;
+    ) -> Result<ActiveControlState> {
+        self.clear_expired(now_ms);
         let Some(active) = &self.active else {
             bail!("no active control");
         };
@@ -2808,7 +2551,7 @@ impl McpServer {
         if active.epoch != epoch {
             bail!("stale active control epoch");
         }
-        Ok(())
+        Ok(active.clone())
     }
 
     pub fn robot_state(
@@ -2866,8 +2609,18 @@ pub struct RuntimeState {
 
 impl RuntimeState {
     pub fn new(config: RuntimeConfig) -> Result<Self> {
+        Self::new_with_hardware(config, None)
+    }
+
+    pub fn new_with_hardware(
+        config: RuntimeConfig,
+        hardware_client: Option<Box<dyn HardwareClient>>,
+    ) -> Result<Self> {
         let capability_manager = CapabilityManager::new(&config.capabilities)?;
-        let cmd_vel = CmdVelController::from_config(config.motor.clone())?;
+        let cmd_vel = match hardware_client {
+            Some(client) => CmdVelController::new(client),
+            None => CmdVelController::from_config(&config),
+        };
         Ok(Self {
             config,
             capability_manager,
@@ -2932,7 +2685,7 @@ impl RuntimeState {
         observed_at_ms: u64,
     ) -> Result<()> {
         info!(thing_id = %self.config.thing_id, "publishing offline state");
-        let _ = self.cmd_vel.stop(true);
+        let _ = self.cmd_vel.stop(true).await;
         self.publish_board_shadow(publisher, build_offline_board_report())
             .await?;
         self.publish_mcp_unavailable(publisher, observed_at_ms)
@@ -2989,8 +2742,11 @@ impl RuntimeState {
         publisher: &P,
         observed_at_ms: u64,
     ) -> Result<()> {
-        let changed = self.mcp.clear_expired(observed_at_ms, &mut self.cmd_vel)?;
-        let motion_changed = self.cmd_vel.tick_watchdog(observed_at_ms)?.is_some();
+        let changed = self.mcp.clear_expired(observed_at_ms);
+        if changed {
+            let _ = self.cmd_vel.stop(true).await;
+        }
+        let motion_changed = self.cmd_vel.refresh_status().await.unwrap_or(false);
         if changed || motion_changed {
             self.publish_mcp_status(publisher, observed_at_ms).await?;
         }
@@ -3010,7 +2766,7 @@ impl RuntimeState {
             }
             RuntimeMqttEvent::Disconnected => {
                 self.mcp.active = None;
-                self.cmd_vel.stop(true)?;
+                let _ = self.cmd_vel.stop(true).await;
                 Ok(())
             }
         }
@@ -3030,12 +2786,14 @@ impl RuntimeState {
         let mcp_status_changed = match event {
             VideoWorkerEvent::McpDataChannelClosed { session_id, reason } => {
                 info!(session_id = %session_id, reason = %reason, "MCP WebRTC data channel closed");
-                self.mcp.close_session(&session_id, &mut self.cmd_vel)?
+                let stop_required = self.mcp.close_session(&session_id);
+                self.stop_if_required(stop_required).await
             }
             VideoWorkerEvent::McpDataChannelError { session_id, detail } => {
                 warn!(session_id = ?session_id, error = %detail, "MCP WebRTC data channel error");
                 if let Some(session_id) = session_id {
-                    self.mcp.close_session(&session_id, &mut self.cmd_vel)?
+                    let stop_required = self.mcp.close_session(&session_id);
+                    self.stop_if_required(stop_required).await
                 } else {
                     false
                 }
@@ -3055,7 +2813,8 @@ impl RuntimeState {
         };
         let next_transport = self.mcp_transport_mode();
         if previous_transport != next_transport {
-            let _ = self.mcp.clear_active(&mut self.cmd_vel)?;
+            let stop_required = self.mcp.clear_active();
+            let _ = self.stop_if_required(stop_required).await;
             self.publish_mcp_discovery(publisher, observed_at_ms)
                 .await?;
         }
@@ -3095,7 +2854,9 @@ impl RuntimeState {
                 let response = match serde_json::from_str::<Value>(&payload) {
                     Ok(request) => {
                         let request_id = request.get("id").cloned();
-                        match self.handle_mcp_json_rpc_request(&session_id, request, observed_at_ms)
+                        match self
+                            .handle_mcp_json_rpc_request(&session_id, request, observed_at_ms)
+                            .await
                         {
                             Ok(result) => {
                                 updates_status = result.updates_status;
@@ -3128,7 +2889,8 @@ impl RuntimeState {
             }
             RuntimeMcpIpcEvent::Close { session_id, reason } => {
                 info!(session_id = %session_id, reason = %reason, "MCP WebRTC IPC session closed");
-                if self.mcp.close_session(&session_id, &mut self.cmd_vel)? {
+                let stop_required = self.mcp.close_session(&session_id);
+                if self.stop_if_required(stop_required).await {
                     self.publish_mcp_status(publisher, observed_at_ms).await?;
                 }
             }
@@ -3141,6 +2903,18 @@ impl RuntimeState {
             .capabilities
             .iter()
             .any(|capability| capability == VIDEO_CAPABILITY)
+    }
+
+    async fn stop_if_required(&mut self, required: bool) -> bool {
+        if required {
+            if let Err(err) = self.cmd_vel.stop(true).await {
+                warn!(
+                    error = %format_args!("{err:#}"),
+                    "failed to stop hardware worker during control cleanup"
+                );
+            }
+        }
+        required
     }
 
     fn mcp_transport_mode(&self) -> McpTransportMode {
@@ -3390,7 +3164,9 @@ impl RuntimeState {
                 .publish_mcp_response(publisher, &session_id, response)
                 .await;
         }
-        let result = self.handle_mcp_json_rpc_request(&session_id, request, observed_at_ms)?;
+        let result = self
+            .handle_mcp_json_rpc_request(&session_id, request, observed_at_ms)
+            .await?;
         if let Some(payload) = result.response {
             self.publish_mcp_response(publisher, &session_id, payload)
                 .await?;
@@ -3401,7 +3177,7 @@ impl RuntimeState {
         Ok(())
     }
 
-    fn handle_mcp_json_rpc_request(
+    async fn handle_mcp_json_rpc_request(
         &mut self,
         session_id: &str,
         request: Value,
@@ -3442,6 +3218,7 @@ impl RuntimeState {
             })),
             "tools/call" => {
                 self.handle_mcp_tool_call(&session_id, request.get("params"), observed_at_ms)
+                    .await
             }
             _ => Err(json_rpc_error(-32601, "method not found")),
         };
@@ -3455,7 +3232,7 @@ impl RuntimeState {
         })
     }
 
-    fn handle_mcp_tool_call(
+    async fn handle_mcp_tool_call(
         &mut self,
         session_id: &str,
         params: Option<&Value>,
@@ -3477,6 +3254,7 @@ impl RuntimeState {
             .unwrap_or_else(|| serde_json::json!({}));
         let structured = self
             .handle_mcp_tool(session_id, name, &arguments, observed_at_ms)
+            .await
             .map_err(|err| tool_error_to_json_rpc_error(name, &err))?;
         Ok(serde_json::json!({
             "structuredContent": structured,
@@ -3484,7 +3262,7 @@ impl RuntimeState {
         }))
     }
 
-    fn handle_mcp_tool(
+    async fn handle_mcp_tool(
         &mut self,
         session_id: &str,
         name: &str,
@@ -3514,14 +3292,14 @@ impl RuntimeState {
                     .get("takeover")
                     .and_then(Value::as_bool)
                     .unwrap_or(false);
-                let active = self.mcp.activate(
+                let (active, stop_required) = self.mcp.activate(
                     session_id,
                     actor,
                     self.mcp_transport_mode().name(),
                     takeover,
                     observed_at_ms,
-                    &mut self.cmd_vel,
                 )?;
+                self.stop_if_required(stop_required).await;
                 Ok(serde_json::json!({
                     "activeControl": active,
                     "activeTtlMs": DEFAULT_MCP_ACTIVE_TTL_MS,
@@ -3529,9 +3307,7 @@ impl RuntimeState {
             }
             "control.renew_active" => {
                 let epoch = parse_epoch_argument(arguments)?;
-                let active =
-                    self.mcp
-                        .renew_active(session_id, epoch, observed_at_ms, &mut self.cmd_vel)?;
+                let active = self.mcp.renew_active(session_id, epoch, observed_at_ms)?;
                 Ok(serde_json::json!({
                     "activeControl": active,
                     "activeTtlMs": DEFAULT_MCP_ACTIVE_TTL_MS,
@@ -3539,24 +3315,23 @@ impl RuntimeState {
             }
             "control.release_active" => {
                 let epoch = parse_epoch_argument(arguments)?;
-                let motion = self.mcp.release_active(
-                    session_id,
-                    epoch,
-                    observed_at_ms,
-                    &mut self.cmd_vel,
-                )?;
+                let stop_required = self.mcp.release_active(session_id, epoch, observed_at_ms)?;
+                self.stop_if_required(stop_required).await;
+                let motion = self.cmd_vel.drive_state();
                 Ok(serde_json::json!({ "motion": motion }))
             }
             "cmd_vel.publish" => {
                 let epoch = parse_epoch_argument(arguments)?;
-                self.mcp
-                    .ensure_active(session_id, epoch, observed_at_ms, &mut self.cmd_vel)?;
+                let active = self.mcp.ensure_active(session_id, epoch, observed_at_ms)?;
                 let twist_value = arguments
                     .get("twist")
                     .ok_or_else(|| anyhow!("cmd_vel.publish requires twist"))?;
                 let twist: Twist =
                     serde_json::from_value(twist_value.clone()).context("parse cmd_vel twist")?;
-                let motion = self.cmd_vel.publish_twist(twist, observed_at_ms)?;
+                let motion = self
+                    .cmd_vel
+                    .publish_twist(twist, active.expires_at_ms)
+                    .await?;
                 let state =
                     self.mcp
                         .robot_state(session_id, motion.clone(), self.video.robot_report());
@@ -3568,9 +3343,8 @@ impl RuntimeState {
             }
             "cmd_vel.stop" => {
                 let epoch = parse_epoch_argument(arguments)?;
-                self.mcp
-                    .ensure_active(session_id, epoch, observed_at_ms, &mut self.cmd_vel)?;
-                let motion = self.cmd_vel.stop(true)?;
+                self.mcp.ensure_active(session_id, epoch, observed_at_ms)?;
+                let motion = self.cmd_vel.stop(true).await?;
                 let state =
                     self.mcp
                         .robot_state(session_id, motion.clone(), self.video.robot_report());
@@ -3581,6 +3355,7 @@ impl RuntimeState {
                 }))
             }
             "robot.get_state" => {
+                let _ = self.cmd_vel.refresh_status().await;
                 let state = self.mcp.robot_state(
                     session_id,
                     self.cmd_vel.drive_state(),
@@ -4855,34 +4630,6 @@ fn optional_i32_config(
         .map(Some)
 }
 
-fn optional_u32_config(
-    process_env: &BTreeMap<String, String>,
-    file_env: &BTreeMap<String, String>,
-    env_name: &str,
-) -> Result<Option<u32>> {
-    let Some(value) = optional_config_value(None, process_env, file_env, env_name) else {
-        return Ok(None);
-    };
-    value
-        .parse::<u32>()
-        .with_context(|| format!("{env_name} must be an unsigned integer"))
-        .map(Some)
-}
-
-fn optional_f64_config(
-    process_env: &BTreeMap<String, String>,
-    file_env: &BTreeMap<String, String>,
-    env_name: &str,
-) -> Result<Option<f64>> {
-    let Some(value) = optional_config_value(None, process_env, file_env, env_name) else {
-        return Ok(None);
-    };
-    value
-        .parse::<f64>()
-        .with_context(|| format!("{env_name} must be a number"))
-        .map(Some)
-}
-
 fn parse_bool_text(value: &str, label: &str) -> Result<bool> {
     match value.trim().to_ascii_lowercase().as_str() {
         "1" | "true" | "yes" | "on" => Ok(true),
@@ -4902,195 +4649,6 @@ fn optional_bool_config(
         return Ok(None);
     };
     parse_bool_text(&value, label).map(Some)
-}
-
-fn resolve_motor_config(
-    cli: &Cli,
-    process_env: &BTreeMap<String, String>,
-    file_env: &BTreeMap<String, String>,
-) -> Result<MotorConfig> {
-    let enabled = optional_bool_config(
-        cli.motor_enabled.clone(),
-        process_env,
-        file_env,
-        "TXING_MOTOR_ENABLED",
-        "motor-enabled",
-    )?
-    .unwrap_or(true);
-    let left_inverted = optional_bool_config(
-        cli.motor_left_inverted.clone(),
-        process_env,
-        file_env,
-        "TXING_MOTOR_LEFT_INVERTED",
-        "motor-left-inverted",
-    )?
-    .unwrap_or(DEFAULT_MOTOR_LEFT_INVERTED);
-    let right_inverted = optional_bool_config(
-        cli.motor_right_inverted.clone(),
-        process_env,
-        file_env,
-        "TXING_MOTOR_RIGHT_INVERTED",
-        "motor-right-inverted",
-    )?
-    .unwrap_or(DEFAULT_MOTOR_RIGHT_INVERTED);
-    let raw_max_speed = cli
-        .motor_raw_max_speed
-        .or(optional_i32_config(
-            process_env,
-            file_env,
-            "TXING_MOTOR_RAW_MAX_SPEED",
-        )?)
-        .unwrap_or(DEFAULT_MOTOR_RAW_MAX_SPEED);
-    let cmd_raw_min_speed = cli
-        .motor_cmd_raw_min_speed
-        .or(optional_i32_config(
-            process_env,
-            file_env,
-            "TXING_MOTOR_CMD_RAW_MIN_SPEED",
-        )?)
-        .unwrap_or(DEFAULT_MOTOR_CMD_RAW_MIN_SPEED);
-    let cmd_raw_max_speed = cli
-        .motor_cmd_raw_max_speed
-        .or(optional_i32_config(
-            process_env,
-            file_env,
-            "TXING_MOTOR_CMD_RAW_MAX_SPEED",
-        )?)
-        .unwrap_or(DEFAULT_MOTOR_CMD_RAW_MAX_SPEED);
-    let pwm_hz = cli
-        .motor_pwm_hz
-        .or(optional_u64_config(
-            process_env,
-            file_env,
-            "TXING_MOTOR_PWM_HZ",
-        )?)
-        .unwrap_or(DEFAULT_MOTOR_PWM_HZ);
-    let pwm_chip = cli
-        .motor_pwm_chip
-        .or(optional_u32_config(
-            process_env,
-            file_env,
-            "TXING_MOTOR_PWM_CHIP",
-        )?)
-        .unwrap_or(DEFAULT_MOTOR_PWM_CHIP);
-    let gpio_chip = cli
-        .motor_gpio_chip
-        .or(optional_u32_config(
-            process_env,
-            file_env,
-            "TXING_MOTOR_GPIO_CHIP",
-        )?)
-        .unwrap_or(DEFAULT_MOTOR_GPIO_CHIP);
-    let left_pwm_channel = cli
-        .motor_left_pwm_channel
-        .or(optional_u32_config(
-            process_env,
-            file_env,
-            "TXING_MOTOR_LEFT_PWM_CHANNEL",
-        )?)
-        .unwrap_or(DEFAULT_MOTOR_LEFT_PWM_CHANNEL);
-    let right_pwm_channel = cli
-        .motor_right_pwm_channel
-        .or(optional_u32_config(
-            process_env,
-            file_env,
-            "TXING_MOTOR_RIGHT_PWM_CHANNEL",
-        )?)
-        .unwrap_or(DEFAULT_MOTOR_RIGHT_PWM_CHANNEL);
-    let left_dir_gpio = cli
-        .motor_left_dir_gpio
-        .or(optional_u32_config(
-            process_env,
-            file_env,
-            "TXING_MOTOR_LEFT_DIR_GPIO",
-        )?)
-        .unwrap_or(DEFAULT_MOTOR_LEFT_DIR_GPIO);
-    let right_dir_gpio = cli
-        .motor_right_dir_gpio
-        .or(optional_u32_config(
-            process_env,
-            file_env,
-            "TXING_MOTOR_RIGHT_DIR_GPIO",
-        )?)
-        .unwrap_or(DEFAULT_MOTOR_RIGHT_DIR_GPIO);
-    let track_width_m = cli
-        .motor_track_width_m
-        .or(optional_f64_config(
-            process_env,
-            file_env,
-            "TXING_MOTOR_TRACK_WIDTH_M",
-        )?)
-        .unwrap_or(DEFAULT_TRACK_WIDTH_M);
-    let max_wheel_linear_speed_mps = cli
-        .motor_max_wheel_linear_speed_mps
-        .or(optional_f64_config(
-            process_env,
-            file_env,
-            "TXING_MOTOR_MAX_WHEEL_LINEAR_SPEED_MPS",
-        )?)
-        .unwrap_or(DEFAULT_MAX_WHEEL_LINEAR_SPEED_MPS);
-    let pwm_sysfs_root = optional_config_value(
-        cli.motor_pwm_sysfs_root.clone(),
-        process_env,
-        file_env,
-        "TXING_MOTOR_PWM_SYSFS_ROOT",
-    )
-    .unwrap_or_else(|| DEFAULT_MOTOR_PWM_SYSFS_ROOT.to_string());
-    let config = MotorConfig {
-        enabled,
-        pwm_sysfs_root,
-        raw_max_speed,
-        cmd_raw_min_speed,
-        cmd_raw_max_speed,
-        pwm_hz,
-        pwm_chip,
-        gpio_chip,
-        left_pwm_channel,
-        right_pwm_channel,
-        left_dir_gpio,
-        right_dir_gpio,
-        left_inverted,
-        right_inverted,
-        track_width_m,
-        max_wheel_linear_speed_mps,
-        watchdog_timeout: Duration::from_millis(DEFAULT_MOTOR_WATCHDOG_TIMEOUT_MS),
-    };
-    validate_motor_config(&config)?;
-    Ok(config)
-}
-
-fn validate_motor_config(config: &MotorConfig) -> Result<()> {
-    if config.raw_max_speed <= 0 {
-        bail!("motor-raw-max-speed must be positive");
-    }
-    if config.cmd_raw_min_speed < 0 {
-        bail!("motor-cmd-raw-min-speed must be non-negative");
-    }
-    if config.cmd_raw_max_speed <= 0 {
-        bail!("motor-cmd-raw-max-speed must be positive");
-    }
-    if config.cmd_raw_min_speed >= config.cmd_raw_max_speed {
-        bail!("motor-cmd-raw-min-speed must be less than motor-cmd-raw-max-speed");
-    }
-    if config.cmd_raw_max_speed > config.raw_max_speed {
-        bail!("motor-cmd-raw-max-speed must be less than or equal to motor-raw-max-speed");
-    }
-    if config.pwm_hz == 0 {
-        bail!("motor-pwm-hz must be positive");
-    }
-    if config.left_pwm_channel == config.right_pwm_channel {
-        bail!("left and right motor PWM channels must differ");
-    }
-    if config.left_dir_gpio == config.right_dir_gpio {
-        bail!("left and right motor direction GPIOs must differ");
-    }
-    if config.track_width_m <= 0.0 || !config.track_width_m.is_finite() {
-        bail!("motor-track-width-m must be a positive finite number");
-    }
-    if config.max_wheel_linear_speed_mps <= 0.0 || !config.max_wheel_linear_speed_mps.is_finite() {
-        bail!("motor-max-wheel-linear-speed-mps must be a positive finite number");
-    }
-    Ok(())
 }
 
 fn resolve_cloudwatch_log_config(
@@ -5425,23 +4983,65 @@ mod tests {
     }
 
     #[derive(Clone, Default)]
-    struct RecordingMotorDriver {
-        calls: Arc<Mutex<Vec<(i32, i32)>>>,
+    struct FakeHardwareClient {
+        calls: Arc<Mutex<Vec<String>>>,
+        motion: Arc<Mutex<DriveState>>,
+        fail: Arc<AtomicBool>,
     }
 
-    impl RecordingMotorDriver {
-        fn calls(&self) -> Vec<(i32, i32)> {
+    impl FakeHardwareClient {
+        fn unavailable() -> Self {
+            let client = Self::default();
+            client.fail.store(true, Ordering::SeqCst);
+            client
+        }
+
+        fn calls(&self) -> Vec<String> {
             self.calls.lock().unwrap().clone()
         }
     }
 
-    impl MotorDriver for RecordingMotorDriver {
-        fn set_speeds(&mut self, left_percent: i32, right_percent: i32) -> Result<()> {
+    #[async_trait]
+    impl HardwareClient for FakeHardwareClient {
+        async fn get_status(&mut self) -> Result<HardwareStatusSnapshot> {
+            if self.fail.load(Ordering::SeqCst) {
+                bail!("hardware worker unavailable");
+            }
+            Ok(HardwareStatusSnapshot {
+                actuator_ready: true,
+                motion: self.motion.lock().unwrap().clone(),
+            })
+        }
+
+        async fn apply_velocity(
+            &mut self,
+            _twist: Twist,
+            deadline_unix_ms: u64,
+        ) -> Result<DriveState> {
+            if self.fail.load(Ordering::SeqCst) {
+                bail!("hardware worker unavailable");
+            }
             self.calls
                 .lock()
                 .unwrap()
-                .push((left_percent, right_percent));
-            Ok(())
+                .push(format!("apply:{deadline_unix_ms}"));
+            let mut motion = self.motion.lock().unwrap();
+            motion.left_speed = 50;
+            motion.right_speed = 50;
+            motion.sequence = motion.sequence.saturating_add(1);
+            Ok(motion.clone())
+        }
+
+        async fn stop(&mut self) -> Result<DriveState> {
+            if self.fail.load(Ordering::SeqCst) {
+                bail!("hardware worker unavailable");
+            }
+            self.calls.lock().unwrap().push("stop".to_string());
+            let mut motion = self.motion.lock().unwrap();
+            motion.left_speed = 0;
+            motion.right_speed = 0;
+            motion.sequence = motion.sequence.saturating_add(1);
+            Ok(motion.clone())
         }
     }
 
@@ -5590,31 +5190,15 @@ mod tests {
             kvs_disable_ipv4_turn: false,
             video_region: "eu-central-1".to_string(),
             video_channel_name: "unit-local-board-video".to_string(),
-            motor: motor_config(false),
+            hardware_worker_socket_path: DEFAULT_HARDWARE_WORKER_SOCKET_PATH.to_string(),
+            hardware_worker_timeout: Duration::from_millis(DEFAULT_HARDWARE_WORKER_TIMEOUT_MS),
             cloudwatch_logging: None,
         }
     }
 
-    fn motor_config(enabled: bool) -> MotorConfig {
-        MotorConfig {
-            enabled,
-            pwm_sysfs_root: DEFAULT_MOTOR_PWM_SYSFS_ROOT.to_string(),
-            raw_max_speed: DEFAULT_MOTOR_RAW_MAX_SPEED,
-            cmd_raw_min_speed: DEFAULT_MOTOR_CMD_RAW_MIN_SPEED,
-            cmd_raw_max_speed: DEFAULT_MOTOR_CMD_RAW_MAX_SPEED,
-            pwm_hz: DEFAULT_MOTOR_PWM_HZ,
-            pwm_chip: DEFAULT_MOTOR_PWM_CHIP,
-            gpio_chip: DEFAULT_MOTOR_GPIO_CHIP,
-            left_pwm_channel: DEFAULT_MOTOR_LEFT_PWM_CHANNEL,
-            right_pwm_channel: DEFAULT_MOTOR_RIGHT_PWM_CHANNEL,
-            left_dir_gpio: DEFAULT_MOTOR_LEFT_DIR_GPIO,
-            right_dir_gpio: DEFAULT_MOTOR_RIGHT_DIR_GPIO,
-            left_inverted: DEFAULT_MOTOR_LEFT_INVERTED,
-            right_inverted: DEFAULT_MOTOR_RIGHT_INVERTED,
-            track_width_m: DEFAULT_TRACK_WIDTH_M,
-            max_wheel_linear_speed_mps: DEFAULT_MAX_WHEEL_LINEAR_SPEED_MPS,
-            watchdog_timeout: Duration::from_millis(DEFAULT_MOTOR_WATCHDOG_TIMEOUT_MS),
-        }
+    fn runtime_state() -> RuntimeState {
+        RuntimeState::new_with_hardware(config(), Some(Box::new(FakeHardwareClient::default())))
+            .unwrap()
     }
 
     fn file_env() -> BTreeMap<String, String> {
@@ -5779,7 +5363,7 @@ mod tests {
     #[tokio::test]
     async fn runtime_publishes_board_shadow_then_capability_and_sequences_refreshes() {
         let publisher = FakePublisher::default();
-        let mut runtime = RuntimeState::new(config()).unwrap();
+        let mut runtime = runtime_state();
 
         runtime
             .publish_online(
@@ -5874,7 +5458,7 @@ mod tests {
     #[tokio::test]
     async fn video_worker_events_publish_status_shadow_and_capability() {
         let publisher = FakePublisher::default();
-        let mut runtime = RuntimeState::new(config()).unwrap();
+        let mut runtime = runtime_state();
 
         runtime
             .handle_video_event(
@@ -5923,7 +5507,7 @@ mod tests {
     #[tokio::test]
     async fn mqtt_mcp_requests_are_rejected_while_webrtc_only_is_advertised() {
         let publisher = FakePublisher::default();
-        let mut runtime = RuntimeState::new(config()).unwrap();
+        let mut runtime = runtime_state();
         runtime
             .handle_video_event(
                 &publisher,
@@ -5973,7 +5557,7 @@ mod tests {
     #[tokio::test]
     async fn mcp_ipc_requests_use_core_and_close_clears_active_control() {
         let publisher = FakePublisher::default();
-        let mut runtime = RuntimeState::new(config()).unwrap();
+        let mut runtime = runtime_state();
         runtime
             .handle_video_event(
                 &publisher,
@@ -6113,7 +5697,7 @@ mod tests {
     async fn mcp_ipc_returns_response_even_when_status_publish_fails() {
         let publisher = FakePublisher::default();
         let failing_publisher = FailingPublisher;
-        let mut runtime = RuntimeState::new(config()).unwrap();
+        let mut runtime = runtime_state();
         runtime
             .handle_video_event(
                 &publisher,
@@ -6152,7 +5736,7 @@ mod tests {
     #[tokio::test]
     async fn video_status_refresh_updates_freshness_timestamp() {
         let publisher = FakePublisher::default();
-        let mut runtime = RuntimeState::new(config()).unwrap();
+        let mut runtime = runtime_state();
 
         runtime
             .handle_video_event(
@@ -6347,7 +5931,7 @@ mod tests {
     #[tokio::test]
     async fn mcp_bridge_open_session_does_not_grant_active_control() {
         let publisher = FakePublisher::default();
-        let mut state = RuntimeState::new(config()).unwrap();
+        let mut state = runtime_state();
         state
             .handle_mcp_ipc_event(
                 &publisher,
@@ -6508,116 +6092,96 @@ mod tests {
 
     #[test]
     fn mcp_active_control_enforces_single_session_epoch_and_expiry() {
-        let recorder = RecordingMotorDriver::default();
-        let mut cmd_vel = CmdVelController::new(motor_config(false), Box::new(recorder.clone()));
         let mut mcp = McpServer::new(Duration::from_millis(DEFAULT_MCP_ACTIVE_TTL_MS));
 
-        let active = mcp
+        let (active, stop_required) = mcp
             .activate(
                 "session-a",
                 Some("operator".to_string()),
                 "mqtt-jsonrpc",
                 false,
                 1_000,
-                &mut cmd_vel,
             )
             .unwrap();
+        assert!(!stop_required);
         assert_eq!(active.session_id, "session-a");
         assert_eq!(active.actor.as_deref(), Some("operator"));
         assert_eq!(active.epoch, 1);
         assert_eq!(active.expires_at_ms, 6_000);
         assert!(
-            mcp.activate(
-                "session-b",
-                None,
-                "mqtt-jsonrpc",
-                false,
-                1_500,
-                &mut cmd_vel
-            )
-            .unwrap_err()
-            .to_string()
-            .contains("active control busy")
+            mcp.activate("session-b", None, "mqtt-jsonrpc", false, 1_500,)
+                .unwrap_err()
+                .to_string()
+                .contains("active control busy")
         );
-        let takeover = mcp
+        let (takeover, stop_required) = mcp
             .activate(
                 "session-b",
                 Some("operator-b".to_string()),
                 "webrtc-datachannel",
                 true,
                 1_600,
-                &mut cmd_vel,
             )
             .unwrap();
+        assert!(stop_required);
         assert_eq!(takeover.session_id, "session-b");
         assert_eq!(takeover.actor.as_deref(), Some("operator-b"));
         assert_eq!(takeover.transport, "webrtc-datachannel");
         assert_eq!(takeover.epoch, active.epoch + 1);
         assert_eq!(takeover.expires_at_ms, 6_600);
         assert!(
-            mcp.renew_active("session-a", active.epoch, 1_700, &mut cmd_vel)
+            mcp.renew_active("session-a", active.epoch, 1_700)
                 .unwrap_err()
                 .to_string()
                 .contains("no active control")
         );
         let released_takeover = mcp
-            .release_active("session-b", takeover.epoch, 1_800, &mut cmd_vel)
+            .release_active("session-b", takeover.epoch, 1_800)
             .unwrap();
-        assert_eq!(released_takeover.left_speed, 0);
-        assert_eq!(released_takeover.right_speed, 0);
+        assert!(released_takeover);
 
-        let active = mcp
+        let (active, stop_required) = mcp
             .activate(
                 "session-a",
                 Some("operator".to_string()),
                 "mqtt-jsonrpc",
                 false,
                 1_900,
-                &mut cmd_vel,
             )
             .unwrap();
+        assert!(!stop_required);
         assert!(
-            mcp.renew_active("session-a", active.epoch + 1, 2_000, &mut cmd_vel)
+            mcp.renew_active("session-a", active.epoch + 1, 2_000)
                 .unwrap_err()
                 .to_string()
                 .contains("stale active control epoch")
         );
 
-        let renewed = mcp
-            .renew_active("session-a", active.epoch, 2_000, &mut cmd_vel)
-            .unwrap();
+        let renewed = mcp.renew_active("session-a", active.epoch, 2_000).unwrap();
         assert_eq!(renewed.epoch, active.epoch);
         assert_eq!(renewed.expires_at_ms, 7_000);
 
         let released = mcp
-            .release_active("session-a", active.epoch, 2_100, &mut cmd_vel)
+            .release_active("session-a", active.epoch, 2_100)
             .unwrap();
-        assert_eq!(released.left_speed, 0);
-        assert_eq!(released.right_speed, 0);
+        assert!(released);
         assert!(
-            mcp.renew_active("session-a", active.epoch, 2_200, &mut cmd_vel)
+            mcp.renew_active("session-a", active.epoch, 2_200)
                 .unwrap_err()
                 .to_string()
                 .contains("no active control")
         );
 
-        let expired = mcp
-            .activate(
-                "session-a",
-                None,
-                "mqtt-jsonrpc",
-                false,
-                3_000,
-                &mut cmd_vel,
-            )
+        let (expired, stop_required) = mcp
+            .activate("session-a", None, "mqtt-jsonrpc", false, 3_000)
             .unwrap();
+        assert!(!stop_required);
         assert!(
-            mcp.renew_active("session-a", expired.epoch, 8_000, &mut cmd_vel)
+            mcp.renew_active("session-a", expired.epoch, 8_000)
                 .unwrap_err()
                 .to_string()
                 .contains("no active control")
         );
-        assert!(recorder.calls().contains(&(0, 0)));
     }
 
     #[test]
@@ -6645,87 +6209,78 @@ mod tests {
         assert!(mcp_request_updates_status("tools/call", Some(&release)));
     }
 
-    #[test]
-    fn cmd_vel_rejects_unsupported_axes_and_mixes_tank_speeds() {
-        let config = motor_config(false);
-        let forward = Twist {
-            linear: Vector3 {
-                x: 0.50,
-                y: 0.0,
-                z: 0.0,
-            },
-            angular: Vector3 {
-                x: 0.0,
-                y: 0.0,
-                z: 0.0,
-            },
-        };
-        assert_eq!(
-            mix_twist_to_tank_speeds(&forward, &config).unwrap(),
-            (100, 100)
-        );
+    #[tokio::test]
+    async fn cmd_vel_publish_delegates_to_hardware_worker_with_active_deadline() {
+        let hardware = FakeHardwareClient::default();
+        let probe = hardware.clone();
+        let mut runtime =
+            RuntimeState::new_with_hardware(config(), Some(Box::new(hardware))).unwrap();
+        let active = runtime
+            .handle_mcp_tool(
+                "session-a",
+                "control.activate",
+                &serde_json::json!({"actor": "operator"}),
+                1_000,
+            )
+            .await
+            .unwrap();
+        let epoch = active["activeControl"]["epoch"].as_u64().unwrap();
 
-        let turn = Twist {
-            linear: Vector3 {
-                x: 0.0,
-                y: 0.0,
-                z: 0.0,
-            },
-            angular: Vector3 {
-                x: 0.0,
-                y: 0.0,
-                z: 1.0,
-            },
-        };
-        assert_eq!(mix_twist_to_tank_speeds(&turn, &config).unwrap(), (-28, 28));
+        let response = runtime
+            .handle_mcp_tool(
+                "session-a",
+                "cmd_vel.publish",
+                &serde_json::json!({
+                    "epoch": epoch,
+                    "twist": {
+                        "linear": {"x": 0.25, "y": 0.0, "z": 0.0},
+                        "angular": {"x": 0.0, "y": 0.0, "z": 0.0}
+                    }
+                }),
+                1_100,
+            )
+            .await
+            .unwrap();
 
-        let unsupported = Twist {
-            linear: Vector3 {
-                x: 0.0,
-                y: 0.1,
-                z: 0.0,
-            },
-            angular: Vector3 {
-                x: 0.0,
-                y: 0.0,
-                z: 0.0,
-            },
-        };
-        assert!(
-            validate_twist(&unsupported)
-                .unwrap_err()
-                .to_string()
-                .contains("unsupported cmd_vel axes")
-        );
+        assert_eq!(response["motion"]["leftSpeed"], 50);
+        assert_eq!(response["activeExpiresAtMs"], 6_000);
+        assert_eq!(probe.calls(), vec!["apply:6000".to_string()]);
     }
 
-    #[test]
-    fn cmd_vel_watchdog_neutralizes_on_command_silence() {
-        let recorder = RecordingMotorDriver::default();
-        let mut config = motor_config(false);
-        config.watchdog_timeout = Duration::from_millis(1_000);
-        let mut cmd_vel = CmdVelController::new(config, Box::new(recorder.clone()));
-        let twist = Twist {
-            linear: Vector3 {
-                x: 0.25,
-                y: 0.0,
-                z: 0.0,
-            },
-            angular: Vector3 {
-                x: 0.0,
-                y: 0.0,
-                z: 0.0,
-            },
-        };
+    #[tokio::test]
+    async fn cmd_vel_publish_rejects_when_hardware_worker_is_unavailable() {
+        let mut runtime = RuntimeState::new_with_hardware(
+            config(),
+            Some(Box::new(FakeHardwareClient::unavailable())),
+        )
+        .unwrap();
+        let active = runtime
+            .handle_mcp_tool(
+                "session-a",
+                "control.activate",
+                &serde_json::json!({"actor": "operator"}),
+                1_000,
+            )
+            .await
+            .unwrap();
+        let epoch = active["activeControl"]["epoch"].as_u64().unwrap();
 
-        let drive = cmd_vel.publish_twist(twist, 1_000).unwrap();
-        assert_eq!(drive.left_speed, 50);
-        assert_eq!(drive.right_speed, 50);
-        assert!(cmd_vel.tick_watchdog(1_500).unwrap().is_none());
-        let stopped = cmd_vel.tick_watchdog(2_000).unwrap().unwrap();
-        assert_eq!(stopped.left_speed, 0);
-        assert_eq!(stopped.right_speed, 0);
-        assert_eq!(recorder.calls(), vec![(50, 50), (0, 0)]);
+        let err = runtime
+            .handle_mcp_tool(
+                "session-a",
+                "cmd_vel.publish",
+                &serde_json::json!({
+                    "epoch": epoch,
+                    "twist": {
+                        "linear": {"x": 0.25, "y": 0.0, "z": 0.0},
+                        "angular": {"x": 0.0, "y": 0.0, "z": 0.0}
+                    }
+                }),
+                1_100,
+            )
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("hardware worker unavailable"));
     }
 
     #[test]
@@ -6766,11 +6321,6 @@ mod tests {
                 .get(key)
                 .unwrap_or_else(|| panic!("missing daemon env template key {key}"))
         };
-        let parse_i32 = |key: &str| get(key).parse::<i32>().unwrap();
-        let parse_u32 = |key: &str| get(key).parse::<u32>().unwrap();
-        let parse_u64 = |key: &str| get(key).parse::<u64>().unwrap();
-        let parse_f64 = |key: &str| get(key).parse::<f64>().unwrap();
-
         assert!(template.contains("export TXING_DAEMON_CAPABILITIES=board,mcp,video"));
         assert!(template.contains(&format!(
             "export TXING_CAPABILITY_TTL_SECONDS={DEFAULT_CAPABILITY_TTL_SECONDS}"
@@ -6780,6 +6330,12 @@ mod tests {
         )));
         assert!(template.contains(&format!(
             "export TXING_BOARD_VIDEO_BRIDGE_SOCKET_PATH={DEFAULT_BOARD_VIDEO_BRIDGE_SOCKET_PATH}"
+        )));
+        assert!(template.contains(&format!(
+            "export TXING_HARDWARE_WORKER_SOCKET_PATH={DEFAULT_HARDWARE_WORKER_SOCKET_PATH}"
+        )));
+        assert!(template.contains(&format!(
+            "export TXING_HARDWARE_WORKER_TIMEOUT_MS={DEFAULT_HARDWARE_WORKER_TIMEOUT_MS}"
         )));
         assert!(!template.contains("TXING_KVS_MASTER_COMMAND"));
         assert!(!template.contains("TXING_MCP_WEBRTC_SOCKET_PATH"));
@@ -6794,39 +6350,9 @@ mod tests {
         assert!(!template.contains("TXING_BOARD_VIDEO_REGION"));
         assert!(!template.contains("export BOARD_DRIVE_"));
         assert!(!template.contains("export BOARD_VIDEO_"));
-
-        let motor = MotorConfig {
-            enabled: parse_bool_text(get("TXING_MOTOR_ENABLED"), "TXING_MOTOR_ENABLED").unwrap(),
-            pwm_sysfs_root: normalize_required(
-                get("TXING_MOTOR_PWM_SYSFS_ROOT").to_string(),
-                "TXING_MOTOR_PWM_SYSFS_ROOT",
-            )
-            .unwrap(),
-            raw_max_speed: parse_i32("TXING_MOTOR_RAW_MAX_SPEED"),
-            cmd_raw_min_speed: parse_i32("TXING_MOTOR_CMD_RAW_MIN_SPEED"),
-            cmd_raw_max_speed: parse_i32("TXING_MOTOR_CMD_RAW_MAX_SPEED"),
-            pwm_hz: parse_u64("TXING_MOTOR_PWM_HZ"),
-            pwm_chip: parse_u32("TXING_MOTOR_PWM_CHIP"),
-            gpio_chip: parse_u32("TXING_MOTOR_GPIO_CHIP"),
-            left_pwm_channel: parse_u32("TXING_MOTOR_LEFT_PWM_CHANNEL"),
-            right_pwm_channel: parse_u32("TXING_MOTOR_RIGHT_PWM_CHANNEL"),
-            left_dir_gpio: parse_u32("TXING_MOTOR_LEFT_DIR_GPIO"),
-            right_dir_gpio: parse_u32("TXING_MOTOR_RIGHT_DIR_GPIO"),
-            left_inverted: parse_bool_text(
-                get("TXING_MOTOR_LEFT_INVERTED"),
-                "TXING_MOTOR_LEFT_INVERTED",
-            )
-            .unwrap(),
-            right_inverted: parse_bool_text(
-                get("TXING_MOTOR_RIGHT_INVERTED"),
-                "TXING_MOTOR_RIGHT_INVERTED",
-            )
-            .unwrap(),
-            track_width_m: parse_f64("TXING_MOTOR_TRACK_WIDTH_M"),
-            max_wheel_linear_speed_mps: parse_f64("TXING_MOTOR_MAX_WHEEL_LINEAR_SPEED_MPS"),
-            watchdog_timeout: Duration::from_millis(DEFAULT_MOTOR_WATCHDOG_TIMEOUT_MS),
-        };
-        validate_motor_config(&motor).unwrap();
+        assert_eq!(get("TXING_MOTOR_ENABLED"), "true");
+        assert_eq!(get("TXING_MOTOR_PWM_SYSFS_ROOT"), "/sys/class/pwm");
+        assert_eq!(get("TXING_MOTOR_WATCHDOG_TIMEOUT_MS"), "5000");
     }
 
     #[test]
@@ -6991,6 +6517,14 @@ mod tests {
         assert_eq!(config.video_region, "from-file");
         assert_eq!(config.video_channel_name, "from-cli-board-video");
         assert_eq!(
+            config.hardware_worker_socket_path,
+            DEFAULT_HARDWARE_WORKER_SOCKET_PATH
+        );
+        assert_eq!(
+            config.hardware_worker_timeout,
+            Duration::from_millis(DEFAULT_HARDWARE_WORKER_TIMEOUT_MS)
+        );
+        assert_eq!(
             config.capabilities,
             vec![
                 BOARD_CAPABILITY.to_string(),
@@ -7095,6 +6629,14 @@ mod tests {
         );
         assert_eq!(config.video_region, "eu-central-1");
         assert_eq!(config.video_channel_name, "unit-local-board-video");
+        assert_eq!(
+            config.hardware_worker_socket_path,
+            DEFAULT_HARDWARE_WORKER_SOCKET_PATH
+        );
+        assert_eq!(
+            config.hardware_worker_timeout,
+            Duration::from_millis(DEFAULT_HARDWARE_WORKER_TIMEOUT_MS)
+        );
         assert!(config.client_id.starts_with("unit-local-daemon-"));
         assert_eq!(config.cloudwatch_logging, None);
     }

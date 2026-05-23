@@ -51,15 +51,17 @@ unless a shared contract or consistency issue requires coordinated updates.
 - During `/plan architecture`, inspect the repo, identify affected contracts,
   capture risks and non-goals, and produce planning artifacts. Do not implement
   code during architecture planning.
-- Plan Mode must end with durable planning output. When the user leaves Plan
-  Mode, presses Implement, or otherwise asks to implement an approved plan,
-  create or select goal-oriented Backlog.md tasks for the selected milestone
-  before changing code.
+- Plan Mode must end with durable planning output, not implementation. When the
+  user leaves Plan Mode, presses Implement, or otherwise approves a plan, create
+  or update milestone docs and create separate goal-oriented Backlog.md tasks
+  for the planned milestones, then stop.
 - Tasks must describe outcomes and acceptance criteria, not implementation
   steps. If meaningful ambiguity remains, ask for clarification instead of
   creating speculative tasks.
-- During `/goal`, execute exactly one milestone at a time. Stop after milestone
-  completion and wait for the user to choose or approve the next milestone.
+- Implementation starts only when the user invokes `/goal <milestone>` or
+  explicitly asks to implement a specific Backlog task. During `/goal`, execute
+  exactly one milestone at a time. Stop after milestone completion and wait for
+  the user to choose or approve the next milestone.
 
 ## Non-negotiable gates
 
@@ -67,9 +69,10 @@ unless a shared contract or consistency issue requires coordinated updates.
   requested by the user.
 - Do not run AWS commands that create, update, or delete cloud resources.
   Read-only AWS inspection commands are allowed only when needed.
-- Do not implement a planned feature directly from the chat plan. Implementation
-  must start from a Backlog.md task unless the user explicitly says to skip
-  Backlog for that work.
+- Do not implement a planned feature directly from the chat plan or the Plan
+  Mode Implement action. That action closes planning by creating Backlog.md
+  milestone/task records; it does not authorize code changes unless the user
+  explicitly says to skip Backlog and implement immediately.
 - Do not run firmware flashing/programming steps. Prepare artifacts and commands
   for the user to run manually.
 - Do not read from, copy from, execute from, or depend on files outside this

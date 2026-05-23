@@ -15,6 +15,10 @@ native_kvs_master_dir := unit_board_dir + "/kvs_master"
 native_kvs_master_build_dir := native_kvs_master_dir + "/build"
 native_kvs_master_test_build_dir := native_kvs_master_dir + "/build-tests"
 built_native_kvs_master := native_kvs_master_build_dir + "/txing-board-kvs-master"
+native_hardware_worker_dir := unit_board_dir + "/hardware_worker"
+native_hardware_worker_build_dir := native_hardware_worker_dir + "/build"
+native_hardware_worker_test_build_dir := native_hardware_worker_dir + "/build-tests"
+built_native_hardware_worker := native_hardware_worker_build_dir + "/txing-unit-hardware-worker"
 aws_kvs_sdk_commit := "bb106510cf74edd2c24881c1ae94ceaa0083d15c"
 legacy_aws_kvs_sdk_build_dir := common_board_dir + "/aws-kvs-webrtc-sdk-build"
 legacy_aws_kvs_sdk_install_dir := common_board_dir + "/aws-kvs-webrtc-sdk-install"
@@ -238,8 +242,171 @@ docker-builder-shell:
     cmake --build "{{native_kvs_master_test_build_dir}}" --config Debug --target txing-board-kvs-master-tests
     ctest --test-dir "{{native_kvs_master_test_build_dir}}" --output-on-failure
 
+@hardware-build-native:
+    cmake -S "{{native_hardware_worker_dir}}" -B "{{native_hardware_worker_build_dir}}" -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DTXING_HARDWARE_WORKER_GRPC=ON
+    cmake --build "{{native_hardware_worker_build_dir}}" --config Release --target txing-unit-hardware-worker
+    test -x "{{built_native_hardware_worker}}"
+
+@hardware-test-native:
+    cmake -S "{{native_hardware_worker_dir}}" -B "{{native_hardware_worker_test_build_dir}}" -DCMAKE_BUILD_TYPE=Debug -DTXING_HARDWARE_WORKER_GRPC=OFF
+    cmake --build "{{native_hardware_worker_test_build_dir}}" --config Debug --target txing-unit-hardware-worker-tests
+    ctest --test-dir "{{native_hardware_worker_test_build_dir}}" --output-on-failure
+
+@kvs-build-trixie:
+    just --quiet --justfile "{{daemon_justfile}}" _cpp-build-trixie kvs-master
+
+@hardware-build-trixie:
+    just --quiet --justfile "{{daemon_justfile}}" _cpp-build-trixie hardware-worker
+
+[private]
+@_cpp-build-trixie project:
+    #!/bin/sh
+    set -eu
+
+    project="{{project}}"
+    project_root="{{project_root}}"
+    image="{{docker_kvs_master_build_image}}"
+
+    case "$project" in
+      kvs-master|hardware-worker) ;;
+      *)
+        echo "Unsupported C++ Trixie project: $project" >&2
+        exit 2
+        ;;
+    esac
+
+    command -v docker >/dev/null || {
+      echo "docker is required to build C++ board projects in Debian Trixie." >&2
+      exit 1
+    }
+
+    docker run --rm -i \
+      --platform linux/arm64 \
+      --mount "type=bind,source=$project_root,target=$project_root,readonly" \
+      -w "$project_root" \
+      -e DEBIAN_FRONTEND=noninteractive \
+      -e TXING_CPP_TRIXIE_PROJECT="$project" \
+      -e TXING_AWS_KVS_WEBRTC_SDK_GIT_TAG="{{aws_kvs_sdk_commit}}" \
+      -e TXING_BOARD_KVS_SYSTEM_CA_CERT_PATH="{{default_kvs_system_ca_cert_path}}" \
+      "$image" \
+      sh -se <<'CPP_TRIXIE_BUILD'
+    set -eu
+
+    case "$TXING_CPP_TRIXIE_PROJECT" in
+      kvs-master)
+        project_name="txing-board-kvs-master"
+        source_dir="$PWD/devices/unit/board/kvs_master"
+        binary_name="txing-board-kvs-master"
+        ;;
+      hardware-worker)
+        project_name="txing-unit-hardware-worker"
+        source_dir="$PWD/devices/unit/board/hardware_worker"
+        binary_name="txing-unit-hardware-worker"
+        ;;
+      *)
+        echo "Unsupported C++ Trixie project: $TXING_CPP_TRIXIE_PROJECT" >&2
+        exit 2
+        ;;
+    esac
+
+    apt-get update
+    apt-get install -y --no-install-recommends ca-certificates curl
+
+    if [ "$TXING_CPP_TRIXIE_PROJECT" = "kvs-master" ]; then
+      cat >/etc/apt/sources.list.d/raspi.sources <<'APT_SOURCE'
+    Types: deb
+    URIs: https://archive.raspberrypi.com/debian/
+    Suites: trixie
+    Components: main
+    Architectures: arm64
+    Trusted: yes
+    APT_SOURCE
+      cat >/etc/apt/preferences.d/raspi-libcamera <<'APT_PREFERENCES'
+    Package: libcamera* python3-libcamera gstreamer1.0-libcamera libpisp* libtensorflow-lite*
+    Pin: origin archive.raspberrypi.com
+    Pin-Priority: 1001
+
+    Package: *
+    Pin: origin archive.raspberrypi.com
+    Pin-Priority: 100
+    APT_PREFERENCES
+      apt-get update
+    fi
+
+    apt-get install -y --no-install-recommends \
+      build-essential pkg-config cmake file git \
+      libprotobuf-dev protobuf-compiler libgrpc++-dev protobuf-compiler-grpc
+
+    if [ "$TXING_CPP_TRIXIE_PROJECT" = "kvs-master" ]; then
+      apt-get install -y --no-install-recommends \
+        perl libssl-dev libcurl4-openssl-dev liblog4cplus-dev libsrtp2-dev \
+        libusrsctp-dev libwebsockets-dev zlib1g-dev libcamera-dev
+      apt-cache policy libcamera-dev libcamera0.7 libpisp1 libc6
+      libc_version="$(dpkg-query -W -f='${Version}' libc6)"
+      case "$libc_version" in
+        *rpt*)
+          echo "Unexpected Raspberry Pi libc6 selected in Debian Trixie build: $libc_version" >&2
+          exit 1
+          ;;
+      esac
+    fi
+
+    protoc --version
+    grpc_cpp_plugin_path="$(command -v grpc_cpp_plugin)"
+    test -x "$grpc_cpp_plugin_path"
+    file "$grpc_cpp_plugin_path"
+    ldd "$grpc_cpp_plugin_path"
+
+    build_dir="$(mktemp -d "/tmp/${project_name}-build.XXXXXX")"
+    case "$TXING_CPP_TRIXIE_PROJECT" in
+      kvs-master)
+        openssl_libdir="$(pkg-config --variable=libdir openssl)"
+        openssl_includedir="$(pkg-config --variable=includedir openssl)"
+        cmake \
+          -S "$source_dir" \
+          -B "$build_dir" \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DBUILD_TESTING=ON \
+          -DTXING_KVS_SYSTEM_CA_CERT_PATH="$TXING_BOARD_KVS_SYSTEM_CA_CERT_PATH" \
+          -DTXING_KVS_GRPC_BRIDGE=ON \
+          -DTXING_AWS_KVS_WEBRTC_SDK_GIT_TAG="$TXING_AWS_KVS_WEBRTC_SDK_GIT_TAG" \
+          -DOPENSSL_USE_STATIC_LIBS=FALSE \
+          -DOPENSSL_INCLUDE_DIR="$openssl_includedir" \
+          -DOPENSSL_SSL_LIBRARY="$openssl_libdir/libssl.so" \
+          -DOPENSSL_CRYPTO_LIBRARY="$openssl_libdir/libcrypto.so"
+        ;;
+      hardware-worker)
+        cmake \
+          -S "$source_dir" \
+          -B "$build_dir" \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DBUILD_TESTING=ON \
+          -DTXING_HARDWARE_WORKER_GRPC=ON
+        ;;
+    esac
+
+    cmake --build "$build_dir" --config Release
+    ctest --test-dir "$build_dir" --output-on-failure
+
+    built_binary="$build_dir/$binary_name"
+    test -x "$built_binary"
+    ldd "$built_binary"
+    if ldd "$built_binary" | grep -Fq "not found"; then
+      echo "$binary_name has unresolved shared libraries" >&2
+      exit 1
+    fi
+
+    if [ "$TXING_CPP_TRIXIE_PROJECT" = "kvs-master" ]; then
+      ldd "$built_binary" | grep -F "libcamera.so.0.7"
+      ldd "$built_binary" | grep -F "libcamera-base.so.0.7"
+    fi
+
+    file "$built_binary"
+    "$built_binary" --version
+    CPP_TRIXIE_BUILD
+
 @kvs-clean:
-    rm -rf "{{native_kvs_master_build_dir}}" "{{native_kvs_master_test_build_dir}}" "{{legacy_aws_kvs_sdk_build_dir}}" "{{legacy_aws_kvs_sdk_install_dir}}" "{{legacy_aws_kvs_sdk_system_deps_dir}}"
+    rm -rf "{{native_kvs_master_build_dir}}" "{{native_kvs_master_test_build_dir}}" "{{native_hardware_worker_build_dir}}" "{{native_hardware_worker_test_build_dir}}" "{{legacy_aws_kvs_sdk_build_dir}}" "{{legacy_aws_kvs_sdk_install_dir}}" "{{legacy_aws_kvs_sdk_system_deps_dir}}"
 
 docker-build:
     #!/bin/sh
@@ -255,8 +422,10 @@ docker-build:
     bin_dir="$docker_build_dir/bin"
     daemon_binary_name="txing-unit-daemon"
     kvs_master_binary_name="txing-board-kvs-master"
+    hardware_worker_binary_name="txing-unit-hardware-worker"
     daemon_binary_path="$bin_dir/$daemon_binary_name"
     kvs_master_binary_path="$bin_dir/$kvs_master_binary_name"
+    hardware_worker_binary_path="$bin_dir/$hardware_worker_binary_name"
 
     for command in docker git jq file; do
       if ! command -v "$command" >/dev/null 2>&1; then
@@ -325,6 +494,7 @@ docker-build:
       -w "$project_root" \
       -e DEBIAN_FRONTEND=noninteractive \
       -e KVS_MASTER_BINARY="$kvs_master_binary_name" \
+      -e HARDWARE_WORKER_BINARY="$hardware_worker_binary_name" \
       "$kvs_master_build_image" \
       sh -se <<'KVS_MASTER_BUILD'
     set -eu
@@ -343,9 +513,13 @@ docker-build:
     Trusted: yes
     APT_SOURCE
     cat >/etc/apt/preferences.d/raspi-libcamera <<'APT_PREFERENCES'
-    Package: libcamera* python3-libcamera gstreamer1.0-libcamera
+    Package: libcamera* python3-libcamera gstreamer1.0-libcamera libpisp* libtensorflow-lite*
     Pin: origin archive.raspberrypi.com
     Pin-Priority: 1001
+
+    Package: *
+    Pin: origin archive.raspberrypi.com
+    Pin-Priority: 100
     APT_PREFERENCES
     apt-get update
     apt-get install -y --no-install-recommends \
@@ -353,7 +527,14 @@ docker-build:
       libssl-dev libcurl4-openssl-dev liblog4cplus-dev libsrtp2-dev \
       libusrsctp-dev libwebsockets-dev zlib1g-dev libcamera-dev \
       libprotobuf-dev protobuf-compiler libgrpc++-dev protobuf-compiler-grpc
-    apt-cache policy libcamera-dev libcamera0.7
+    apt-cache policy libcamera-dev libcamera0.7 libpisp1 libc6
+    libc_version="$(dpkg-query -W -f='${Version}' libc6)"
+    case "$libc_version" in
+      *rpt*)
+        echo "Unexpected Raspberry Pi libc6 selected in Debian Trixie build: $libc_version" >&2
+        exit 1
+        ;;
+    esac
     protoc --version
     grpc_cpp_plugin_path="$(command -v grpc_cpp_plugin)"
     test -x "$grpc_cpp_plugin_path"
@@ -394,10 +575,31 @@ docker-build:
     install -m 755 "$kvs_master_build_binary" "/out/$KVS_MASTER_BINARY"
     strip "/out/$KVS_MASTER_BINARY"
     file "/out/$KVS_MASTER_BINARY"
+
+    native_hardware_worker_dir="$PWD/devices/unit/board/hardware_worker"
+    native_hardware_worker_build_dir="$native_hardware_worker_dir/build"
+    cmake \
+      -S "$native_hardware_worker_dir" \
+      -B "$native_hardware_worker_build_dir" \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DBUILD_TESTING=OFF \
+      -DTXING_HARDWARE_WORKER_GRPC=ON
+    cmake --build "$native_hardware_worker_build_dir" --config Release --target txing-unit-hardware-worker
+    hardware_worker_build_binary="devices/unit/board/hardware_worker/build/$HARDWARE_WORKER_BINARY"
+    test -x "$hardware_worker_build_binary"
+    ldd "$hardware_worker_build_binary"
+    if ldd "$hardware_worker_build_binary" | grep -Fq "not found"; then
+      echo "txing-unit-hardware-worker has unresolved shared libraries" >&2
+      exit 1
+    fi
+    install -m 755 "$hardware_worker_build_binary" "/out/$HARDWARE_WORKER_BINARY"
+    strip "/out/$HARDWARE_WORKER_BINARY"
+    file "/out/$HARDWARE_WORKER_BINARY"
     KVS_MASTER_BUILD
 
     install -m 755 "$docker_out_dir/$daemon_binary_name" "$daemon_binary_path"
     install -m 755 "$docker_out_dir/$kvs_master_binary_name" "$kvs_master_binary_path"
+    install -m 755 "$docker_out_dir/$hardware_worker_binary_name" "$hardware_worker_binary_path"
     daemon_build_host="$(cat "$docker_out_dir/daemon-build-host")"
     daemon_build_kernel="$(cat "$docker_out_dir/daemon-build-kernel")"
     kvs_master_build_host="$(cat "$docker_out_dir/kvs-master-build-host")"
@@ -411,6 +613,8 @@ docker-build:
       --arg daemonBinaryPath "$daemon_binary_path" \
       --arg kvsMasterBinaryName "$kvs_master_binary_name" \
       --arg kvsMasterBinaryPath "$kvs_master_binary_path" \
+      --arg hardwareWorkerBinaryName "$hardware_worker_binary_name" \
+      --arg hardwareWorkerBinaryPath "$hardware_worker_binary_path" \
       --arg projectRoot "$project_root" \
       --arg daemonBuildHost "$daemon_build_host" \
       --arg daemonBuildKernel "$daemon_build_kernel" \
@@ -422,7 +626,8 @@ docker-build:
         timestamp: $timestamp,
         outputs: {
           ($daemonBinaryName): $daemonBinaryPath,
-          ($kvsMasterBinaryName): $kvsMasterBinaryPath
+          ($kvsMasterBinaryName): $kvsMasterBinaryPath,
+          ($hardwareWorkerBinaryName): $hardwareWorkerBinaryPath
         },
         projectRoot: $projectRoot,
         daemonBuildHost: $daemonBuildHost,
@@ -438,4 +643,5 @@ docker-build:
     printf '  commit: %s\n' "$commit"
     printf '  daemon binary: %s\n' "$daemon_binary_path"
     printf '  KVS master binary: %s\n' "$kvs_master_binary_path"
+    printf '  hardware worker binary: %s\n' "$hardware_worker_binary_path"
     printf '  metadata: %s\n' "$metadata_path"

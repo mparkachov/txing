@@ -1,0 +1,66 @@
+syntax = "proto3";
+
+package txing.unit.hardware.v1;
+
+service UnitHardware {
+  rpc GetStatus(GetStatusRequest) returns (HardwareStatus);
+  rpc ApplyVelocity(ApplyVelocityRequest) returns (ApplyVelocityResponse);
+  rpc Stop(StopRequest) returns (StopResponse);
+}
+
+message GetStatusRequest {}
+
+message Vector3 {
+  double x = 1;
+  double y = 2;
+  double z = 3;
+}
+
+message Twist {
+  Vector3 linear = 1;
+  Vector3 angular = 2;
+}
+
+message MotionState {
+  int32 left_speed = 1;
+  int32 right_speed = 2;
+  uint64 sequence = 3;
+}
+
+enum HardwareState {
+  HARDWARE_STATE_UNSPECIFIED = 0;
+  STARTING = 1;
+  READY = 2;
+  DEGRADED = 3;
+  ERROR = 4;
+  STOPPED = 5;
+}
+
+message HardwareStatus {
+  HardwareState state = 1;
+  bool actuator_ready = 2;
+  string last_error = 3;
+  MotionState motion = 4;
+  optional uint64 active_deadline_unix_ms = 5;
+  string worker_version = 6;
+}
+
+message ApplyVelocityRequest {
+  Twist twist = 1;
+  uint64 deadline_unix_ms = 2;
+  string command_id = 3;
+}
+
+message ApplyVelocityResponse {
+  MotionState motion = 1;
+  HardwareStatus status = 2;
+}
+
+message StopRequest {
+  string reason = 1;
+}
+
+message StopResponse {
+  MotionState motion = 1;
+  HardwareStatus status = 2;
+}

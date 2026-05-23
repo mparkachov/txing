@@ -350,6 +350,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("build-go-rig-binary:", workflow)
         self.assertIn("build-lambda:", workflow)
         self.assertIn("build-kvs-master:", workflow)
+        self.assertIn("build-hardware-worker:", workflow)
         self.assertNotIn("package-rig-deploy:", workflow)
         self.assertIn("publish:", workflow)
         self.assertIn("strategy:", workflow)
@@ -359,10 +360,13 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("merge-multiple: true", workflow)
         self.assertIn("txing-unit-daemon-linux-aarch64.tar.gz", workflow)
         self.assertIn("txing-board-kvs-master-linux-aarch64.tar.gz", workflow)
+        self.assertIn("txing-unit-hardware-worker-linux-aarch64.tar.gz", workflow)
         self.assertIn("KVS_MASTER_BINARY: txing-board-kvs-master", workflow)
+        self.assertIn("HARDWARE_WORKER_BINARY: txing-unit-hardware-worker", workflow)
         self.assertIn("container:", workflow)
         self.assertIn("image: debian:trixie", workflow)
         self.assertIn("Build native KVS master", workflow)
+        self.assertIn("Build txing-unit-hardware-worker", workflow)
         self.assertNotIn("docker run --rm -i", workflow)
         self.assertNotIn("just unit::daemon::kvs-submodules", workflow)
         self.assertNotIn("just unit::daemon::kvs-build-native", workflow)
@@ -493,6 +497,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("outputs: {", justfile)
         self.assertIn("txing-unit-daemon", justfile)
         self.assertIn("txing-board-kvs-master", justfile)
+        self.assertIn("txing-unit-hardware-worker", justfile)
         self.assertNotIn("gh release create", justfile)
         self.assertNotIn(removed_cli_flag, justfile)
         self.assertNotIn(removed_publish_recipe, justfile)
@@ -509,15 +514,18 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertFalse((daemon_dir / removed_installer).exists())
         self.assertIn('txing-unit-daemon = "github:mparkachov/txing"', board_docs)
         self.assertIn('txing-board-kvs-master = "github:mparkachov/txing"', board_docs)
+        self.assertIn('txing-unit-hardware-worker = "github:mparkachov/txing"', board_docs)
         self.assertIn('asset_pattern = "txing-unit-daemon-linux-aarch64.tar.gz"', board_docs)
         self.assertIn('asset_pattern = "txing-board-kvs-master-linux-aarch64.tar.gz"', board_docs)
+        self.assertIn('asset_pattern = "txing-unit-hardware-worker-linux-aarch64.tar.gz"', board_docs)
         self.assertIn("MISE_TRUSTED_CONFIG_PATHS=/root/.config/mise", board_docs)
         self.assertIn("cat >/etc/systemd/system/txing-board.target", board_docs)
-        self.assertIn("Wants=txing-unit-daemon.service txing-board-kvs-master.service", board_docs)
+        self.assertIn("Wants=txing-unit-daemon.service txing-board-kvs-master.service txing-unit-hardware-worker.service", board_docs)
         self.assertIn("WantedBy=txing-board.target", board_docs)
         self.assertIn("PartOf=txing-board.target", board_docs)
         self.assertIn("systemctl enable txing-board.target", board_docs)
         self.assertIn("txing-board-kvs-master.service", board_docs)
+        self.assertIn("txing-unit-hardware-worker.service", board_docs)
         self.assertIn(
             "Environment=TXING_BOARD_VIDEO_BRIDGE_SOCKET_PATH=/run/"
             "txing-unit-daemon/board-video-bridge.sock",
@@ -529,7 +537,7 @@ class VersionEnvironmentTests(unittest.TestCase):
             board_docs,
         )
         self.assertIn(
-            "/root/.local/bin/mise upgrade txing-unit-daemon txing-board-kvs-master",
+            "/root/.local/bin/mise upgrade txing-unit-daemon txing-board-kvs-master txing-unit-hardware-worker",
             board_docs,
         )
         self.assertIn("sudo su -", board_docs)
@@ -538,8 +546,10 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn("MISE_SHARED_INSTALL_DIRS", board_docs)
         self.assertNotIn("txing-unit-daemon-service", board_docs)
         self.assertNotIn("txing-board-kvs-master-service", board_docs)
+        self.assertNotIn("txing-unit-hardware-worker-service", board_docs)
         self.assertNotIn("mise exec -- txing-unit-daemon", board_docs)
         self.assertNotIn("mise exec -- txing-board-kvs-master", board_docs)
+        self.assertNotIn("mise exec -- txing-unit-hardware-worker", board_docs)
 
     def test_board_docs_use_daemon_kvs_master_release_path(self) -> None:
         removed_installer = "install-" + "systemd.sh"
@@ -564,7 +574,9 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("just unit::daemon::role-policy <thing-id>", board_docs)
         self.assertIn("dynamic `mcp`", board_docs)
         self.assertIn("txing-board-kvs-master-linux-aarch64.tar.gz", artifacts_docs)
+        self.assertIn("txing-unit-hardware-worker-linux-aarch64.tar.gz", artifacts_docs)
         self.assertIn("/etc/systemd/system/txing-board.target", artifacts_docs)
+        self.assertIn("/etc/systemd/system/txing-unit-hardware-worker.service", artifacts_docs)
         self.assertIn("PartOf=txing-board.target", artifacts_docs)
         self.assertIn("txing-board.target", installation_docs)
         self.assertIn("txing-board.target", board_docs)
@@ -592,6 +604,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn("MISE_OFFLINE=1", artifacts_docs)
         self.assertNotIn("txing-unit-daemon-service", artifacts_docs)
         self.assertNotIn("txing-board-kvs-master-service", artifacts_docs)
+        self.assertNotIn("txing-unit-hardware-worker-service", artifacts_docs)
         self.assertNotIn(removed_installer, installation_docs)
         self.assertNotIn(removed_installer, artifacts_docs)
         self.assertNotIn(removed_mise_env, artifacts_docs)
