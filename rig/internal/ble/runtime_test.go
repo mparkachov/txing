@@ -98,6 +98,10 @@ func TestTransientBleCommandConnectErrorsAreRetryable(t *testing.T) {
 		"No discovery started",
 		"resource temporarily unavailable",
 		"peripheral not found",
+		"no BLE advertisement has been observed for unit-1",
+		"last BLE advertisement for unit-1 is stale",
+		"BLE peripheral AA:BB:CC:DD:EE:FF is not visible",
+		"connect BLE peripheral: le-connection-abort-by-local",
 	}
 	for _, message := range retryable {
 		if !BLECommandConnectErrorIsRetryable(message) {

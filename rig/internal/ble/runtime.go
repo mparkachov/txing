@@ -155,10 +155,18 @@ func BLEErrorIndicatesHostResourceExhaustion(message string) bool {
 }
 
 func BLECommandConnectErrorIsRetryable(message string) bool {
+	lower := strings.ToLower(message)
 	return BLEErrorIndicatesInProgress(message) ||
 		BLEErrorIndicatesNoDiscovery(message) ||
 		BLEErrorIndicatesHostResourceExhaustion(message) ||
-		strings.Contains(strings.ToLower(message), "not found")
+		strings.Contains(lower, "not found") ||
+		strings.Contains(lower, "no ble advertisement has been observed") ||
+		strings.Contains(lower, "last ble advertisement") ||
+		strings.Contains(lower, "is not visible") ||
+		strings.Contains(lower, "ble connect timed out") ||
+		strings.Contains(lower, "ble connect session timed out") ||
+		strings.Contains(lower, "connect ble peripheral") ||
+		strings.Contains(lower, "le-connection-abort-by-local")
 }
 
 func ShouldPublishScannerAdvertisement(targetNames map[string]struct{}, advertisement Advertisement, nowMS uint64, lastPublished map[string]uint64, minIntervalMS uint64) bool {

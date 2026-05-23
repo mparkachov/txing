@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -52,16 +53,6 @@ func TestAcquireDeviceConnectSerializesSameThing(t *testing.T) {
 		t.Fatalf("acquire after release failed: %v", err)
 	}
 	nextRelease()
-}
-
-func TestBleCommandRetryDelayClassifiesBluezInProgress(t *testing.T) {
-	delay := bleCommandRetryDelayMS("unit-1", "bluetooth: failed to connect: In Progress", 0)
-	if delay < rigble.BluezInProgressReconnectDelayMS {
-		t.Fatalf("delay = %d, want at least %d", delay, rigble.BluezInProgressReconnectDelayMS)
-	}
-	if delay > rigble.BluezInProgressReconnectDelayMS+250 {
-		t.Fatalf("delay = %d, want bounded jitter above %d", delay, rigble.BluezInProgressReconnectDelayMS)
-	}
 }
 
 func TestCommandContextUsesCommandDeadlineInsteadOfBleAttemptTimeout(t *testing.T) {
@@ -142,141 +133,16 @@ func TestScanRetryDecisionKeepsGenericBackoff(t *testing.T) {
 	}
 }
 
-func TestCommandConnectionReleasePolicyKeepsOnlyActiveRedcon(t *testing.T) {
-	if got := commandConnectionReleasePolicy(rigble.RedconActive); got != holdCommandConnectionBriefly {
-		t.Fatalf("active redcon policy = %d, want hold", got)
-	}
-	if got := commandConnectionReleasePolicy(rigble.RedconIdle); got != disconnectImmediately {
-		t.Fatalf("idle redcon policy = %d, want immediate disconnect", got)
-	}
-}
-
-func TestConnectionHoldTokensSupersedeOlderHolds(t *testing.T) {
-	state := &runtimeState{}
-	first := state.recordConnectionHold("unit-1")
-	second := state.recordConnectionHold("unit-1")
-	if first == second {
-		t.Fatal("hold tokens should be unique")
-	}
-	if state.consumeConnectionHold("unit-1", first) {
-		t.Fatal("older hold token should not consume a newer hold")
-	}
-	if !state.connectionHoldActive("unit-1") {
-		t.Fatal("newer hold should still be active")
-	}
-	if !state.consumeConnectionHold("unit-1", second) {
-		t.Fatal("newer hold token should consume active hold")
-	}
-	if state.connectionHoldActive("unit-1") {
-		t.Fatal("hold should be cleared after consuming current token")
-	}
-}
-
-func TestBackgroundConnectSkippedWhileStateReadIsFresh(t *testing.T) {
-	now := time.Unix(100, 0)
-	state := &runtimeState{
-		cfg:         rigconfig.Config{ReconnectDelay: 2 * time.Second},
-		lastConnect: map[string]time.Time{},
-	}
-	spec := rigble.DeviceSpec{ThingName: "unit-1", Kind: rigble.DeviceKindPower}
-	state.recordStateRead(spec.ThingName, now)
-
-	if state.shouldBackgroundConnectAt(spec, now.Add(time.Second)) {
-		t.Fatal("fresh connected state should suppress background GATT refresh")
-	}
-
-	activeStaleAt := now.Add(time.Duration(rigble.BLEActiveMeasurementStaleMS) * time.Millisecond)
-	if state.shouldBackgroundConnectAt(spec, activeStaleAt) {
-		t.Fatal("active measurement staleness alone should not start passive unit GATT refresh")
-	}
-
-	staleAt := now.Add(time.Duration(rigble.BLEIdleMeasurementStaleMS) * time.Millisecond)
-	if !state.shouldBackgroundConnectAt(spec, staleAt) {
-		t.Fatal("stale connected state should allow background GATT refresh")
-	}
-}
-
-func TestBackgroundConnectSkippedForPowerBeforeFirstStateRead(t *testing.T) {
-	state := &runtimeState{
-		lastConnect: map[string]time.Time{},
-	}
-	spec := rigble.DeviceSpec{ThingName: "unit-1", Kind: rigble.DeviceKindPower}
-	if state.shouldBackgroundConnectAt(spec, time.Unix(100, 0)) {
-		t.Fatal("power devices should not start passive GATT refresh before the first connected state read")
-	}
-}
-
-func TestBackgroundConnectSkippedWhileDeviceConnectActive(t *testing.T) {
-	spec := rigble.DeviceSpec{ThingName: "unit-1", Kind: rigble.DeviceKindPower}
-	state := &runtimeState{
-		activeConnects: map[string]chan struct{}{spec.ThingName: make(chan struct{})},
-		lastConnect:    map[string]time.Time{},
-	}
-	state.recordStateRead(spec.ThingName, time.Unix(90, 0))
-	if state.shouldBackgroundConnectAt(spec, time.Unix(100, 0)) {
-		t.Fatal("active per-device connect should suppress another background refresh")
-	}
-}
-
 func TestAdvertisementAddressCachedBeforeInventory(t *testing.T) {
 	state := &runtimeState{}
-	state.recordAdvertisementAddress("weather-1", bluetooth.Address{})
+	advertisement := testAdvertisement("weather-1", time.Now())
+	state.recordAdvertisement("weather-1", bluetooth.Address{}, advertisement)
 
 	if _, ok := state.addresses["weather-1"]; !ok {
 		t.Fatal("pre-inventory advertisement address was not cached")
 	}
-}
-
-func TestInventoryReconcileRefreshCandidatesUseCachedAddresses(t *testing.T) {
-	state := &runtimeState{}
-	state.recordAdvertisementAddress("unit-1", bluetooth.Address{})
-
-	candidates := state.updateInventorySpecs(map[string]rigble.DeviceSpec{
-		"unit-1": {ThingName: "unit-1", Kind: rigble.DeviceKindPower},
-		"unit-2": {ThingName: "unit-2", Kind: rigble.DeviceKindPower},
-	})
-
-	if len(candidates) != 1 || candidates[0].ThingName != "unit-1" {
-		t.Fatalf("refresh candidates = %#v, want only unit-1", candidates)
-	}
-	if _, ok := state.specs["unit-2"]; !ok {
-		t.Fatal("inventory specs were not updated")
-	}
-}
-
-func TestAdvertisementCapabilityStateSuppressedAfterRecentPowerStateRead(t *testing.T) {
-	state := &runtimeState{}
-	spec := rigble.DeviceSpec{ThingName: "unit-1", Kind: rigble.DeviceKindPower}
-	now := time.Unix(100, 0)
-
-	if !state.shouldPublishAdvertisementCapabilityState(spec, now) {
-		t.Fatal("first advertisement should publish BLE reachability state")
-	}
-
-	state.recordStateRead(spec.ThingName, now)
-	if state.shouldPublishAdvertisementCapabilityState(spec, now.Add(time.Second)) {
-		t.Fatal("recent connected state read should suppress advertisement-only capability state")
-	}
-
-	activeStaleAt := now.Add(time.Duration(rigble.BLEActiveMeasurementStaleMS) * time.Millisecond)
-	if state.shouldPublishAdvertisementCapabilityState(spec, activeStaleAt) {
-		t.Fatal("active measurement staleness alone should not publish advertisement-only capability state")
-	}
-
-	staleAt := now.Add(time.Duration(rigble.BLEIdleMeasurementStaleMS) * time.Millisecond)
-	if !state.shouldPublishAdvertisementCapabilityState(spec, staleAt) {
-		t.Fatal("advertisement-only capability state should resume once the connected state read is stale")
-	}
-}
-
-func TestWeatherAdvertisementCapabilityStateBypassesRecentStateRead(t *testing.T) {
-	state := &runtimeState{}
-	spec := rigble.DeviceSpec{ThingName: "weather-1", Kind: rigble.DeviceKindWeather}
-	now := time.Unix(100, 0)
-
-	state.recordStateRead(spec.ThingName, now)
-	if !state.shouldPublishAdvertisementCapabilityState(spec, now.Add(time.Second)) {
-		t.Fatal("weather advertisements should continue publishing idle capability state")
+	if cached, ok := state.cachedAdvertisements["weather-1"]; !ok || cached.Address != advertisement.Address {
+		t.Fatalf("cached advertisement = %#v, want %#v", cached, advertisement)
 	}
 }
 
@@ -335,6 +201,177 @@ func TestDiscoveryUUIDsOnlyRequireWeatherForWeatherDevices(t *testing.T) {
 	}
 }
 
+func TestInventorySessionsStartStopAndReplayCachedAdvertisement(t *testing.T) {
+	state := testSessionRuntime(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ad := testAdvertisement("unit-1", time.Now())
+	state.cachedAdvertisements["unit-1"] = ad
+	deliveries := state.updateInventorySessions(ctx, map[string]rigble.DeviceSpec{
+		"unit-1": {ThingName: "unit-1", Kind: rigble.DeviceKindPower},
+	})
+	if len(state.sessions) != 1 || state.sessions["unit-1"] == nil {
+		t.Fatalf("sessions = %#v, want unit-1 session", state.sessions)
+	}
+	if len(deliveries) != 1 || deliveries[0].advertisement.Address != ad.Address {
+		t.Fatalf("deliveries = %#v, want cached unit advertisement", deliveries)
+	}
+
+	state.updateInventorySessions(ctx, map[string]rigble.DeviceSpec{
+		"weather-1": {ThingName: "weather-1", Kind: rigble.DeviceKindWeather},
+	})
+	if _, ok := state.sessions["unit-1"]; ok {
+		t.Fatal("removed inventory device still has a session")
+	}
+	if _, ok := state.sessions["weather-1"]; !ok {
+		t.Fatal("new inventory device did not get a session")
+	}
+}
+
+func TestConnectedSessionIgnoresAdvertisementState(t *testing.T) {
+	state := testSessionRuntime(t)
+	samples := []rigble.CapabilitySample{}
+	state.sampleSink = func(sample rigble.CapabilitySample, includeShadow bool, includeCapabilityState bool) {
+		samples = append(samples, sample)
+	}
+	session := newDeviceSession(state, rigble.DeviceSpec{ThingName: "unit-1", Kind: rigble.DeviceKindPower})
+	session.connected = &fakeBLEConnection{connected: true, address: "AA:BB:CC:DD:EE:FF"}
+
+	session.handleAdvertisement(context.Background(), testAdvertisement("unit-1", time.Now()))
+
+	if len(samples) != 0 {
+		t.Fatalf("connected advertisement published %d samples, want none", len(samples))
+	}
+	if session.lastAdvertisement == nil {
+		t.Fatal("connected advertisements should still refresh last advertisement evidence")
+	}
+}
+
+func TestSessionCommandReusesConnectedDevice(t *testing.T) {
+	state := testSessionRuntime(t)
+	connector := &fakeBLEConnector{}
+	state.connector = connector
+	statuses := []string{}
+	state.commandResultSink = func(command protocol.CapabilityCommand, status string, message *string, redcon *uint8) {
+		statuses = append(statuses, status)
+	}
+	conn := &fakeBLEConnection{connected: true, address: "AA:BB:CC:DD:EE:FF", powerState: rigble.PowerState{Redcon: rigble.RedconActive}}
+	session := newDeviceSession(state, rigble.DeviceSpec{ThingName: "unit-1", Kind: rigble.DeviceKindPower})
+	session.connected = conn
+
+	session.handleCommand(context.Background(), testCommand(t, "unit-1", 3))
+
+	if connector.calls != 0 {
+		t.Fatalf("connector calls = %d, want reuse of existing connection", connector.calls)
+	}
+	if len(conn.writes) != 1 || conn.writes[0] != rigble.RedconActive {
+		t.Fatalf("writes = %#v, want REDCON 3 write", conn.writes)
+	}
+	assertStatuses(t, statuses, []string{protocol.CommandAccepted, protocol.CommandSucceeded})
+}
+
+func TestCommandWaitsForFreshAdvertisementBeforeConnectRetry(t *testing.T) {
+	state := testSessionRuntime(t)
+	connector := &fakeBLEConnector{
+		results: []fakeConnectResult{{
+			connection: &fakeBLEConnection{connected: true, address: "AA:BB:CC:DD:EE:FF", powerState: rigble.PowerState{Redcon: rigble.RedconActive}},
+			outcome:    connectOutcomeConnected,
+		}},
+	}
+	state.connector = connector
+	statuses := []string{}
+	state.commandResultSink = func(command protocol.CapabilityCommand, status string, message *string, redcon *uint8) {
+		statuses = append(statuses, status)
+	}
+	session := newDeviceSession(state, rigble.DeviceSpec{ThingName: "unit-1", Kind: rigble.DeviceKindPower})
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		session.handleCommand(context.Background(), testCommand(t, "unit-1", 3))
+	}()
+
+	select {
+	case <-done:
+		t.Fatal("command completed before a fresh advertisement arrived")
+	case <-time.After(20 * time.Millisecond):
+	}
+	session.enqueueAdvertisement(context.Background(), testAdvertisement("unit-1", time.Now()))
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("command did not complete after fresh advertisement")
+	}
+
+	if connector.calls != 1 {
+		t.Fatalf("connector calls = %d, want one connect after advertisement", connector.calls)
+	}
+	if len(connector.waitForCapacity) != 1 || !connector.waitForCapacity[0] {
+		t.Fatalf("waitForCapacity = %#v, want command connect to wait for capacity", connector.waitForCapacity)
+	}
+	assertStatuses(t, statuses, []string{protocol.CommandAccepted, protocol.CommandSucceeded})
+}
+
+func TestConnectedSessionAgesMeasurementsByRedcon(t *testing.T) {
+	state := testSessionRuntime(t)
+	published := 0
+	state.sampleSink = func(sample rigble.CapabilitySample, includeShadow bool, includeCapabilityState bool) {
+		published++
+	}
+	session := newDeviceSession(state, rigble.DeviceSpec{ThingName: "unit-1", Kind: rigble.DeviceKindPower})
+	session.connected = &fakeBLEConnection{connected: true, address: "AA:BB:CC:DD:EE:FF"}
+	battery := uint16(3900)
+
+	session.setLastRedcon(rigble.RedconActive)
+	session.lastPowerMeasurement = &timedMeasurement[rigble.PowerMeasurement]{
+		value:        rigble.PowerMeasurement{BatteryMV: &battery},
+		observedAtMS: uint64(time.Now().Add(-25 * time.Second).UnixMilli()),
+	}
+	session.checkStale(context.Background())
+	if session.lastPowerMeasurement != nil {
+		t.Fatal("active REDCON measurement older than 20s should be cleared")
+	}
+	if published == 0 {
+		t.Fatal("stale measurement clear should publish aggregate state")
+	}
+
+	published = 0
+	session.setLastRedcon(rigble.RedconIdle)
+	session.lastPowerMeasurement = &timedMeasurement[rigble.PowerMeasurement]{
+		value:        rigble.PowerMeasurement{BatteryMV: &battery},
+		observedAtMS: uint64(time.Now().Add(-30 * time.Second).UnixMilli()),
+	}
+	session.checkStale(context.Background())
+	if session.lastPowerMeasurement == nil {
+		t.Fatal("idle REDCON measurement newer than 120s should be retained")
+	}
+	if published != 0 {
+		t.Fatal("fresh idle measurement should not publish a stale-clear sample")
+	}
+}
+
+func TestBackgroundAdvertisementConnectDefersWithoutCapacity(t *testing.T) {
+	state := testSessionRuntime(t)
+	connector := &fakeBLEConnector{
+		results: []fakeConnectResult{{outcome: connectOutcomeDeferredNoCapacity}},
+	}
+	state.connector = connector
+	session := newDeviceSession(state, rigble.DeviceSpec{ThingName: "unit-1", Kind: rigble.DeviceKindPower})
+
+	session.handleAdvertisement(context.Background(), testAdvertisement("unit-1", time.Now()))
+
+	if connector.calls != 1 {
+		t.Fatalf("connector calls = %d, want one background attempt", connector.calls)
+	}
+	if len(connector.waitForCapacity) != 1 || connector.waitForCapacity[0] {
+		t.Fatalf("waitForCapacity = %#v, want background connect to avoid waiting for capacity", connector.waitForCapacity)
+	}
+	if session.nextConnectAfter.IsZero() {
+		t.Fatal("deferred background connect should set reconnect backoff")
+	}
+}
+
 func testRuntimeStateWithUUIDs(t *testing.T) *runtimeState {
 	t.Helper()
 	parse := func(value string) bluetooth.UUID {
@@ -350,4 +387,142 @@ func testRuntimeStateWithUUIDs(t *testing.T) *runtimeState {
 		powerUUID:   parse(rigble.PowerMeasurementUUID),
 		weatherUUID: parse(rigble.WeatherMeasurementUUID),
 	}
+}
+
+func testSessionRuntime(t *testing.T) *runtimeState {
+	t.Helper()
+	state := testRuntimeStateWithUUIDs(t)
+	state.cfg = rigconfig.Config{
+		PresenceTimeout: 20 * time.Second,
+		ReconnectDelay:  2 * time.Second,
+		ConnectTimeout:  8 * time.Second,
+		CommandDeadline: 5 * time.Second,
+	}
+	state.specs = map[string]rigble.DeviceSpec{}
+	state.sessions = map[string]*deviceSession{}
+	state.addresses = map[string]bluetooth.Address{}
+	state.cachedAdvertisements = map[string]rigble.Advertisement{}
+	state.scannerLastPublished = map[string]uint64{}
+	state.lastStateRead = map[string]time.Time{}
+	state.activeConnects = map[string]chan struct{}{}
+	state.connector = &fakeBLEConnector{}
+	state.sampleSink = func(rigble.CapabilitySample, bool, bool) {}
+	return state
+}
+
+func testAdvertisement(thingName string, observedAt time.Time) rigble.Advertisement {
+	name := thingName
+	rssi := int16(-50)
+	return rigble.Advertisement{
+		Address:      "AA:BB:CC:DD:EE:FF",
+		IdentityName: &name,
+		Services:     []string{rigble.TxingBLEServiceUUID},
+		RSSI:         &rssi,
+		ObservedAtMS: uint64(observedAt.UnixMilli()),
+		Seq:          1,
+	}
+}
+
+func testCommand(t *testing.T, thingName string, redcon uint8) protocol.CapabilityCommand {
+	t.Helper()
+	now := uint64(time.Now().UnixMilli())
+	deadline := uint64(time.Now().Add(2 * time.Second).UnixMilli())
+	command, err := protocol.NewCapabilityCommand("cmd-1", thingName, redcon, "test", now, 1, &deadline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return command
+}
+
+func assertStatuses(t *testing.T, got []string, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("statuses = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("statuses = %#v, want %#v", got, want)
+		}
+	}
+}
+
+type fakeConnectResult struct {
+	connection bleConnection
+	outcome    connectOutcome
+	err        error
+}
+
+type fakeBLEConnector struct {
+	calls           int
+	waitForCapacity []bool
+	results         []fakeConnectResult
+}
+
+func (f *fakeBLEConnector) ConnectBLE(ctx context.Context, spec rigble.DeviceSpec, advertisement rigble.Advertisement, waitForCapacity bool) (bleConnection, connectOutcome, error) {
+	f.calls++
+	f.waitForCapacity = append(f.waitForCapacity, waitForCapacity)
+	if len(f.results) == 0 {
+		return nil, connectOutcomeConnected, fmt.Errorf("not found")
+	}
+	result := f.results[0]
+	f.results = f.results[1:]
+	return result.connection, result.outcome, result.err
+}
+
+type fakeBLEConnection struct {
+	connected          bool
+	address            string
+	powerState         rigble.PowerState
+	weatherState       rigble.WeatherState
+	powerMeasurement   rigble.PowerMeasurement
+	weatherMeasurement rigble.WeatherMeasurement
+	writes             []uint8
+	notifications      []bleNotification
+	disconnects        int
+}
+
+func (f *fakeBLEConnection) Address() string {
+	return f.address
+}
+
+func (f *fakeBLEConnection) Connected() bool {
+	return f.connected
+}
+
+func (f *fakeBLEConnection) Disconnect() {
+	f.disconnects++
+	f.connected = false
+}
+
+func (f *fakeBLEConnection) WriteRedcon(redcon uint8) error {
+	f.writes = append(f.writes, redcon)
+	return nil
+}
+
+func (f *fakeBLEConnection) ReadPowerState() (rigble.PowerState, error) {
+	if f.powerState.Redcon == 0 {
+		return rigble.PowerState{Redcon: rigble.RedconIdle}, nil
+	}
+	return f.powerState, nil
+}
+
+func (f *fakeBLEConnection) ReadWeatherState() (rigble.WeatherState, error) {
+	if f.weatherState.Redcon == 0 {
+		return rigble.WeatherState{Redcon: rigble.RedconIdle}, nil
+	}
+	return f.weatherState, nil
+}
+
+func (f *fakeBLEConnection) ReadPowerMeasurement() (rigble.PowerMeasurement, error) {
+	return f.powerMeasurement, nil
+}
+
+func (f *fakeBLEConnection) ReadWeatherMeasurement() (rigble.WeatherMeasurement, error) {
+	return f.weatherMeasurement, nil
+}
+
+func (f *fakeBLEConnection) DrainNotifications() []bleNotification {
+	notifications := f.notifications
+	f.notifications = nil
+	return notifications
 }
