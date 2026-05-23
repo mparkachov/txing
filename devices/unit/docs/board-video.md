@@ -29,7 +29,7 @@ Explicit non-goals for this slice:
 ## Current Design
 
 - The board stays fully headless.
-- `txing-unit-daemon` publishes board power and wifi state for the stable Rust
+- `txing-unit-daemon` publishes board power and wifi state for the stable Go
   runtime path.
 - `txing-unit-daemon` publishes retained video descriptor/status topics under `txings/<device_id>/video/*`.
 - The current implementation uses one live video path only: board camera -> plain AWS WebRTC signaling channel -> operator.

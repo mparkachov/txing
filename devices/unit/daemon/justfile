@@ -31,11 +31,6 @@ default_kvs_system_ca_cert_path := env_var_or_default("TXING_BOARD_KVS_SYSTEM_CA
 config_dir := ""
 docker_build_dir := daemon_dir + "/target/docker-build"
 docker_build_metadata := docker_build_dir + "/metadata.json"
-docker_builder_image := "txing-board-binaries-builder:ubuntu24-rust-stable"
-docker_builder_dockerfile := daemon_dir + "/Dockerfile.docker-builder"
-docker_cargo_registry_volume := "txing-cargo-registry"
-docker_cargo_git_volume := "txing-cargo-git"
-docker_target_volume := "txing-unit-daemon-target"
 docker_kvs_master_build_image := "debian:trixie"
 
 role-policy thing_id='':
@@ -97,68 +92,6 @@ run:
     set -eu
     cd "{{daemon_dir}}"
     go run ./cmd/txing-unit-daemon
-
-docker-builder-image rust_toolchain="stable":
-    #!/bin/sh
-    set -eu
-
-    rust_toolchain="{{rust_toolchain}}"
-    image="{{docker_builder_image}}"
-    dockerfile="{{docker_builder_dockerfile}}"
-
-    case "$rust_toolchain" in *=*) echo "Do not pass just recipe arguments as name=value. Use positional arguments." >&2; exit 2 ;; esac
-    command -v docker >/dev/null || {
-      echo "docker is required to build the board binaries builder image." >&2
-      exit 1
-    }
-    if [ ! -r "$dockerfile" ]; then
-      echo "Missing Docker builder Dockerfile: $dockerfile" >&2
-      exit 1
-    fi
-
-    mkdir -p "$TMPDIR"
-    empty_context="$(mktemp -d "${TMPDIR:-/tmp}/txing-board-binaries-builder-context.XXXXXX")"
-    cleanup() {
-      rm -rf "$empty_context"
-    }
-    trap cleanup EXIT
-
-    docker build \
-      --build-arg "RUST_TOOLCHAIN=$rust_toolchain" \
-      -f "$dockerfile" \
-      -t "$image" \
-      "$empty_context"
-
-docker-builder-shell:
-    #!/bin/sh
-    set -eu
-
-    project_root="{{project_root}}"
-    image="{{docker_builder_image}}"
-
-    command -v docker >/dev/null || {
-      echo "docker is required to run the board binaries builder shell." >&2
-      exit 1
-    }
-    if ! docker image inspect "$image" >/dev/null 2>&1; then
-      echo "Missing Docker builder image: $image" >&2
-      echo "Run: just unit::daemon::docker-builder-image" >&2
-      exit 1
-    fi
-
-    docker volume create "{{docker_cargo_registry_volume}}" >/dev/null
-    docker volume create "{{docker_cargo_git_volume}}" >/dev/null
-    docker volume create "{{docker_target_volume}}" >/dev/null
-
-    exec docker run --rm -it \
-      --mount "type=bind,source=$project_root,target=$project_root,readonly" \
-      --mount "type=volume,source={{docker_cargo_registry_volume}},target=/opt/cargo/registry" \
-      --mount "type=volume,source={{docker_cargo_git_volume}},target=/opt/cargo/git" \
-      --mount "type=volume,source={{docker_target_volume}},target=/target" \
-      -e CARGO_TARGET_DIR=/target \
-      -w "$project_root" \
-      "$image" \
-      sh
 
 @_kvs-check-system-dependencies:
     #!/bin/sh
