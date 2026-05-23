@@ -1,4 +1,4 @@
-name: Txing Release
+name: Release
 
 on:
   workflow_dispatch:
@@ -20,7 +20,6 @@ env:
   WITNESS_LAMBDA_ASSET: txing-witness-lambda-linux-aarch64.zip
   CLOUD_RIG_LAMBDA_ASSET: txing-cloud-rig-lambda-linux-aarch64.zip
   CLOUD_MCU_LAMBDA_ASSET: txing-cloud-mcu-lambda-linux-aarch64.zip
-  KVS_MASTER_BUILD_IMAGE: debian:trixie
   RELEASE_RETENTION_COUNT: "10"
 
 jobs:
@@ -502,45 +501,31 @@ jobs:
     name: Build txing-board-kvs-master
     runs-on: ubuntu-24.04-arm
     needs: metadata
+    container:
+      image: debian:trixie
+      env:
+        DEBIAN_FRONTEND: noninteractive
 
     steps:
+      - name: Install container bootstrap tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'Acquire::ForceIPv4 "true";\nAcquire::Retries "5";\n' \
+            >/etc/apt/apt.conf.d/99txing-ci-network
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates curl git binutils file
+
       - name: Check out repository
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
-      - name: Configure apt networking
+      - name: Install native KVS master dependencies
         shell: bash
         run: |
           set -euo pipefail
-          for source in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
-            [ -e "$source" ] || continue
-            sudo sed -i 's|http://ports.ubuntu.com/ubuntu-ports|https://ports.ubuntu.com/ubuntu-ports|g' "$source"
-          done
-          printf 'Acquire::ForceIPv4 "true";\nAcquire::Retries "5";\n' \
-            | sudo tee /etc/apt/apt.conf.d/99txing-ci-network >/dev/null
-
-      - name: Install packaging tools
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y binutils file
-
-      - name: Build native KVS master in Trixie container
-        shell: bash
-        run: |
-          set -euo pipefail
-          docker run --rm -i \
-            -v "$PWD:$PWD" \
-            -w "$PWD" \
-            -e DEBIAN_FRONTEND=noninteractive \
-            -e KVS_MASTER_BINARY="$KVS_MASTER_BINARY" \
-            "$KVS_MASTER_BUILD_IMAGE" \
-          bash -se <<'TRIXIE_BUILD'
-          set -euo pipefail
-          apt-get update
-          apt-get install -y --no-install-recommends ca-certificates curl
           cat >/etc/apt/sources.list.d/raspi.sources <<'APT_SOURCE'
           Types: deb
           URIs: https://archive.raspberrypi.com/debian/
@@ -558,15 +543,92 @@ jobs:
           apt-get install -y --no-install-recommends \
             build-essential pkg-config cmake perl file curl git ca-certificates \
             libssl-dev libcurl4-openssl-dev liblog4cplus-dev libsrtp2-dev \
-            libusrsctp-dev libwebsockets-dev zlib1g-dev libcamera-dev
+            libusrsctp-dev libwebsockets-dev zlib1g-dev libcamera-dev \
+            libprotobuf-dev protobuf-compiler libgrpc++-dev protobuf-compiler-grpc
           apt-cache policy libcamera-dev libcamera0.7
-          curl https://mise.run | sh
-          export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"
-          mise use --global --yes just@latest
+
+      - name: Build native KVS master
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          project_root="$PWD"
+          native_kvs_master_dir="$project_root/devices/unit/board/kvs_master"
+          native_kvs_master_build_dir="$native_kvs_master_dir/build"
+          common_board_dir="$project_root/devices/common/board"
+          aws_kvs_sdk_dir="$project_root/modules/awslabs/amazon-kinesis-video-streams-webrtc-sdk-c"
+          aws_kvs_sdk_commit="bb106510cf74edd2c24881c1ae94ceaa0083d15c"
+          aws_kvs_sdk_build_dir="$common_board_dir/aws-kvs-webrtc-sdk-build"
+          aws_kvs_sdk_install_dir="$common_board_dir/aws-kvs-webrtc-sdk-install"
+          aws_kvs_sdk_system_deps_dir="$common_board_dir/aws-kvs-webrtc-sdk-system-deps"
+          default_kvs_system_ca_cert_path="${TXING_BOARD_KVS_SYSTEM_CA_CERT_PATH:-/etc/ssl/certs/Starfield_Services_Root_Certificate_Authority_-_G2.pem}"
+
           git config --global --add safe.directory "$PWD"
           git config --global --add safe.directory "$PWD/modules/awslabs/amazon-kinesis-video-streams-webrtc-sdk-c"
-          just unit::daemon::kvs-submodules
-          just unit::daemon::kvs-build-native
+          git -C "$project_root" submodule update --init --recursive -- modules/awslabs/amazon-kinesis-video-streams-webrtc-sdk-c
+          git -C "$aws_kvs_sdk_dir" fetch --depth=1 origin "$aws_kvs_sdk_commit"
+          git -C "$aws_kvs_sdk_dir" checkout --detach "$aws_kvs_sdk_commit"
+
+          rm -rf "$aws_kvs_sdk_build_dir" "$aws_kvs_sdk_install_dir" "$aws_kvs_sdk_system_deps_dir"
+          mkdir -p "$aws_kvs_sdk_system_deps_dir/lib" "$aws_kvs_sdk_system_deps_dir/include"
+
+          openssl_libdir="$(pkg-config --variable=libdir openssl)"
+          openssl_includedir="$(pkg-config --variable=includedir openssl)"
+          openssl_ssl_library="$openssl_libdir/libssl.so"
+          openssl_crypto_library="$openssl_libdir/libcrypto.so"
+          test -f "$openssl_ssl_library"
+          test -f "$openssl_crypto_library"
+
+          for library in srtp2 usrsctp log4cplus curl websockets z ssl crypto; do
+            library_path="$(cc -print-file-name="lib${library}.so")"
+            if [ "$library_path" = "lib${library}.so" ] || [ ! -f "$library_path" ]; then
+              echo "System lib${library}.so not found" >&2
+              exit 1
+            fi
+            ln -s "$library_path" "$aws_kvs_sdk_system_deps_dir/lib/lib${library}.so"
+            ln -s "$library_path" "$aws_kvs_sdk_system_deps_dir/lib${library}.so"
+          done
+
+          cmake \
+            -S "$aws_kvs_sdk_dir" \
+            -B "$aws_kvs_sdk_build_dir" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$aws_kvs_sdk_install_dir" \
+            -DOPEN_SRC_INSTALL_PREFIX="$aws_kvs_sdk_system_deps_dir" \
+            -DBUILD_DEPENDENCIES=OFF \
+            -DBUILD_SAMPLE=OFF \
+            -DBUILD_TEST=OFF \
+            -DBUILD_BENCHMARK=OFF \
+            -DBUILD_STATIC_LIBS=ON \
+            -DUSE_OPENSSL=ON \
+            -DUSE_MBEDTLS=OFF \
+            -DOPENSSL_USE_STATIC_LIBS=FALSE \
+            -DOPENSSL_INCLUDE_DIR="$openssl_includedir" \
+            -DOPENSSL_SSL_LIBRARY="$openssl_ssl_library" \
+            -DOPENSSL_CRYPTO_LIBRARY="$openssl_crypto_library"
+          cmake --build "$aws_kvs_sdk_build_dir" --config Release
+          cmake --install "$aws_kvs_sdk_build_dir" --config Release
+
+          cp -a "$aws_kvs_sdk_system_deps_dir/include/com" "$aws_kvs_sdk_install_dir/include/"
+          for aws_library in kvsCommonLws kvspicUtils kvspicState; do
+            cp -a "$aws_kvs_sdk_system_deps_dir/lib/lib${aws_library}.a" "$aws_kvs_sdk_install_dir/lib/"
+          done
+
+          cmake \
+            -S "$native_kvs_master_dir" \
+            -B "$native_kvs_master_build_dir" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=OFF \
+            -DTXING_KVS_SYSTEM_CA_CERT_PATH="$default_kvs_system_ca_cert_path" \
+            -DTXING_KVS_GRPC_BRIDGE=ON \
+            -DTXING_KVS_WEBRTC_SDK_DIR="$aws_kvs_sdk_dir" \
+            -DTXING_KVS_WEBRTC_SDK_INSTALL_DIR="$aws_kvs_sdk_install_dir" \
+            -DOPENSSL_USE_STATIC_LIBS=FALSE \
+            -DOPENSSL_INCLUDE_DIR="$openssl_includedir" \
+            -DOPENSSL_SSL_LIBRARY="$openssl_ssl_library" \
+            -DOPENSSL_CRYPTO_LIBRARY="$openssl_crypto_library"
+          cmake --build "$native_kvs_master_build_dir" --config Release
+
           ldd devices/unit/board/kvs_master/build/txing-board-kvs-master
           if ldd devices/unit/board/kvs_master/build/txing-board-kvs-master | grep -Fq "not found"; then
             echo "txing-board-kvs-master has unresolved shared libraries" >&2
@@ -574,7 +636,6 @@ jobs:
           fi
           ldd devices/unit/board/kvs_master/build/txing-board-kvs-master | grep -F "libcamera.so.0.7"
           ldd devices/unit/board/kvs_master/build/txing-board-kvs-master | grep -F "libcamera-base.so.0.7"
-          TRIXIE_BUILD
           kvs_master_build_binary="devices/unit/board/kvs_master/build/$KVS_MASTER_BINARY"
           test -x "$kvs_master_build_binary"
           file "$kvs_master_build_binary"
