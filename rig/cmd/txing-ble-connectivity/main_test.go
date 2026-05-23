@@ -142,6 +142,36 @@ func TestScanRetryDecisionKeepsGenericBackoff(t *testing.T) {
 	}
 }
 
+func TestCommandConnectionReleasePolicyKeepsOnlyActiveRedcon(t *testing.T) {
+	if got := commandConnectionReleasePolicy(rigble.RedconActive); got != holdCommandConnectionBriefly {
+		t.Fatalf("active redcon policy = %d, want hold", got)
+	}
+	if got := commandConnectionReleasePolicy(rigble.RedconIdle); got != disconnectImmediately {
+		t.Fatalf("idle redcon policy = %d, want immediate disconnect", got)
+	}
+}
+
+func TestConnectionHoldTokensSupersedeOlderHolds(t *testing.T) {
+	state := &runtimeState{}
+	first := state.recordConnectionHold("unit-1")
+	second := state.recordConnectionHold("unit-1")
+	if first == second {
+		t.Fatal("hold tokens should be unique")
+	}
+	if state.consumeConnectionHold("unit-1", first) {
+		t.Fatal("older hold token should not consume a newer hold")
+	}
+	if !state.connectionHoldActive("unit-1") {
+		t.Fatal("newer hold should still be active")
+	}
+	if !state.consumeConnectionHold("unit-1", second) {
+		t.Fatal("newer hold token should consume active hold")
+	}
+	if state.connectionHoldActive("unit-1") {
+		t.Fatal("hold should be cleared after consuming current token")
+	}
+}
+
 func TestAdvertisementAddressCachedBeforeInventory(t *testing.T) {
 	state := &runtimeState{}
 	state.recordAdvertisementAddress("weather-1", bluetooth.Address{})

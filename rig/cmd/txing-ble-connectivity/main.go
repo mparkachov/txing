@@ -30,6 +30,8 @@ type runtimeState struct {
 	addresses             map[string]bluetooth.Address
 	lastConnect           map[string]time.Time
 	lastStateRead         map[string]time.Time
+	connectionHolds       map[string]uint64
+	nextConnectionHold    uint64
 	activeConnects        map[string]chan struct{}
 	connectSlots          chan struct{}
 	scanStoppedForConnect bool
@@ -41,6 +43,15 @@ type runtimeState struct {
 	powerUUID             bluetooth.UUID
 	weatherUUID           bluetooth.UUID
 }
+
+type connectionReleasePolicy uint8
+
+const (
+	disconnectImmediately connectionReleasePolicy = iota
+	holdCommandConnectionBriefly
+
+	commandConnectionHoldDuration = 15 * time.Second
+)
 
 func main() {
 	var configDir string
@@ -171,20 +182,21 @@ func newRuntimeState(cfg rigconfig.Config, logger *awsx.CloudWatchLogger, client
 		connectSlots = make(chan struct{}, cfg.MaxBLEConnections)
 	}
 	return &runtimeState{
-		cfg:            cfg,
-		logger:         logger,
-		ipc:            client,
-		specs:          map[string]rigble.DeviceSpec{},
-		addresses:      map[string]bluetooth.Address{},
-		lastConnect:    map[string]time.Time{},
-		lastStateRead:  map[string]time.Time{},
-		activeConnects: map[string]chan struct{}{},
-		connectSlots:   connectSlots,
-		txingUUID:      txingUUID,
-		commandUUID:    commandUUID,
-		stateUUID:      stateUUID,
-		powerUUID:      powerUUID,
-		weatherUUID:    weatherUUID,
+		cfg:             cfg,
+		logger:          logger,
+		ipc:             client,
+		specs:           map[string]rigble.DeviceSpec{},
+		addresses:       map[string]bluetooth.Address{},
+		lastConnect:     map[string]time.Time{},
+		lastStateRead:   map[string]time.Time{},
+		connectionHolds: map[string]uint64{},
+		activeConnects:  map[string]chan struct{}{},
+		connectSlots:    connectSlots,
+		txingUUID:       txingUUID,
+		commandUUID:     commandUUID,
+		stateUUID:       stateUUID,
+		powerUUID:       powerUUID,
+		weatherUUID:     weatherUUID,
 	}, nil
 }
 
@@ -386,9 +398,13 @@ func (s *runtimeState) recordAdvertisementAddress(thingName string, address blue
 }
 
 func (s *runtimeState) connectAndPublishBackground(ctx context.Context, spec rigble.DeviceSpec) {
+	if s.connectionHoldActive(spec.ThingName) {
+		s.debugPrint(context.Background(), fmt.Sprintf("BLE background connect skipped thing=%s reason=command-connection-held", spec.ThingName))
+		return
+	}
 	connectCtx, cancel := s.backgroundConnectContext(ctx)
 	defer cancel()
-	if err := s.connectAndPublish(connectCtx, spec, nil); err != nil {
+	if err := s.connectAndPublish(connectCtx, spec, nil, disconnectImmediately); err != nil {
 		s.debugPrint(context.Background(), fmt.Sprintf("BLE background connect failed thing=%s error=%q", spec.ThingName, err))
 		return
 	}
@@ -465,7 +481,7 @@ func (s *runtimeState) commandContext(ctx context.Context, command protocol.Capa
 func (s *runtimeState) connectAndPublishCommand(ctx context.Context, command protocol.CapabilityCommand, spec rigble.DeviceSpec, normalizedRedcon uint8) error {
 	var failures uint32
 	for {
-		err := s.connectAndPublish(ctx, spec, &normalizedRedcon)
+		err := s.connectAndPublish(ctx, spec, &normalizedRedcon, commandConnectionReleasePolicy(normalizedRedcon))
 		if err == nil {
 			return nil
 		}
@@ -505,7 +521,14 @@ func bleCommandRetryDelayMS(thingName string, message string, failures uint32) u
 		rigble.StableJitterMS(thingName, 250)
 }
 
-func (s *runtimeState) connectAndPublish(ctx context.Context, spec rigble.DeviceSpec, targetRedcon *uint8) error {
+func commandConnectionReleasePolicy(normalizedRedcon uint8) connectionReleasePolicy {
+	if normalizedRedcon == rigble.RedconIdle {
+		return disconnectImmediately
+	}
+	return holdCommandConnectionBriefly
+}
+
+func (s *runtimeState) connectAndPublish(ctx context.Context, spec rigble.DeviceSpec, targetRedcon *uint8, successPolicy connectionReleasePolicy) error {
 	releaseDevice, err := s.acquireDeviceConnect(ctx, spec.ThingName)
 	if err != nil {
 		return err
@@ -532,7 +555,8 @@ func (s *runtimeState) connectAndPublish(ctx context.Context, spec rigble.Device
 	if err != nil {
 		return err
 	}
-	defer func() { _ = device.Disconnect() }()
+	releasePolicy := disconnectImmediately
+	defer func() { s.releaseBLEDevice(spec.ThingName, device, releasePolicy) }()
 	services, err := device.DiscoverServices([]bluetooth.UUID{s.txingUUID})
 	if err != nil {
 		return err
@@ -598,6 +622,7 @@ func (s *runtimeState) connectAndPublish(ctx context.Context, spec rigble.Device
 		}
 		s.recordStateRead(spec.ThingName, observedAt)
 		s.publishSample(ctx, rigble.WeatherStateSample(spec, state.Redcon, powerMeasurement, weatherMeasurement, &addressText, s.nextSeq(), now), true, true)
+		releasePolicy = successPolicy
 		return nil
 	}
 	state, err := rigble.ParsePowerState(stateBytes)
@@ -606,7 +631,28 @@ func (s *runtimeState) connectAndPublish(ctx context.Context, spec rigble.Device
 	}
 	s.recordStateRead(spec.ThingName, observedAt)
 	s.publishSample(ctx, rigble.PowerStateSample(spec, state.Redcon, powerMeasurement, &addressText, s.nextSeq(), now), true, true)
+	releasePolicy = successPolicy
 	return nil
+}
+
+func (s *runtimeState) releaseBLEDevice(thingName string, device bluetooth.Device, policy connectionReleasePolicy) {
+	if policy != holdCommandConnectionBriefly {
+		s.clearConnectionHold(thingName)
+		_ = device.Disconnect()
+		return
+	}
+	token := s.recordConnectionHold(thingName)
+	hold := commandConnectionHoldDuration
+	s.debugPrint(context.Background(), fmt.Sprintf("BLE command connection held thing=%s holdMs=%d", thingName, hold.Milliseconds()))
+	go func() {
+		timer := time.NewTimer(hold)
+		defer timer.Stop()
+		<-timer.C
+		if s.consumeConnectionHold(thingName, token) {
+			_ = device.Disconnect()
+			s.debugPrint(context.Background(), fmt.Sprintf("BLE command connection released thing=%s reason=hold-expired", thingName))
+		}
+	}()
 }
 
 func (s *runtimeState) recordStateRead(thingName string, observedAt time.Time) {
@@ -633,6 +679,41 @@ func (s *runtimeState) shouldPublishAdvertisementCapabilityState(spec rigble.Dev
 	}
 	staleAfter := time.Duration(rigble.BLEActiveMeasurementStaleMS) * time.Millisecond
 	return now.Sub(last) >= staleAfter
+}
+
+func (s *runtimeState) recordConnectionHold(thingName string) uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.connectionHolds == nil {
+		s.connectionHolds = map[string]uint64{}
+	}
+	s.nextConnectionHold++
+	token := s.nextConnectionHold
+	s.connectionHolds[thingName] = token
+	return token
+}
+
+func (s *runtimeState) connectionHoldActive(thingName string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.connectionHolds[thingName]
+	return ok
+}
+
+func (s *runtimeState) consumeConnectionHold(thingName string, token uint64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.connectionHolds[thingName] != token {
+		return false
+	}
+	delete(s.connectionHolds, thingName)
+	return true
+}
+
+func (s *runtimeState) clearConnectionHold(thingName string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.connectionHolds, thingName)
 }
 
 func (s *runtimeState) pauseScanForConnect() {
