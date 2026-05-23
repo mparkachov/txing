@@ -311,6 +311,7 @@ type BoardRtcVideoConsumer = {
 type SharedBoardRtcSession = {
   sessionId: string
   addVideoConsumer: (consumer: BoardRtcVideoConsumer) => () => void
+  waitForMcpOpen: (timeoutMs?: number) => Promise<void>
   acquireMcpHandle: () => McpDataChannelHandle
   close: () => void
 }
@@ -392,6 +393,30 @@ const createSharedBoardRtcSession = async (
   let dataChannelOpened = false
   let remoteStream: MediaStream | null = null
   let signalingClient: KvsWebRtcSignalingClient | null = null
+  let mcpOpenSettled = false
+  let resolveMcpOpen: () => void = () => undefined
+  let rejectMcpOpen: (error: Error) => void = () => undefined
+  const mcpOpenPromise = new Promise<void>((resolve, reject) => {
+    resolveMcpOpen = resolve
+    rejectMcpOpen = reject
+  })
+  void mcpOpenPromise.catch(() => undefined)
+
+  const resolveMcpOpenOnce = (): void => {
+    if (mcpOpenSettled) {
+      return
+    }
+    mcpOpenSettled = true
+    resolveMcpOpen()
+  }
+
+  const rejectMcpOpenOnce = (error: Error): void => {
+    if (mcpOpenSettled) {
+      return
+    }
+    mcpOpenSettled = true
+    rejectMcpOpen(error)
+  }
 
   const rejectPending = (error: Error): void => {
     for (const [requestId, pending] of [...pendingRequests.entries()]) {
@@ -408,6 +433,7 @@ const createSharedBoardRtcSession = async (
     closed = true
     sharedBoardRtcSessions.delete(key)
     rejectPending(new Error('MCP WebRTC data channel closed'))
+    rejectMcpOpenOnce(new Error(errorMessage))
     signalingClient?.removeAllListeners()
     signalingClient?.close()
     dataChannel.close()
@@ -532,6 +558,36 @@ const createSharedBoardRtcSession = async (
         },
       }
     },
+    waitForMcpOpen: async (timeoutMs) => {
+      if (closed) {
+        throw new Error('Board RTC session is closed')
+      }
+      if (dataChannelOpened && dataChannel.readyState === 'open') {
+        return
+      }
+      if (timeoutMs && timeoutMs > 0) {
+        await new Promise<void>((resolve, reject) => {
+          const timeoutId = window.setTimeout(() => {
+            reject(new Error('Timed out opening MCP WebRTC data channel'))
+          }, timeoutMs)
+          void mcpOpenPromise.then(
+            () => {
+              window.clearTimeout(timeoutId)
+              resolve()
+            },
+            (error: unknown) => {
+              window.clearTimeout(timeoutId)
+              reject(error instanceof Error ? error : new Error('MCP WebRTC data channel failed before opening'))
+            },
+          )
+        })
+      } else {
+        await mcpOpenPromise
+      }
+      if (closed || !dataChannelOpened || dataChannel.readyState !== 'open') {
+        throw new Error('MCP WebRTC data channel is not open')
+      }
+    },
     close: () => closePeer(false),
   }
 
@@ -577,6 +633,11 @@ const createSharedBoardRtcSession = async (
     }
   })
   dataChannel.addEventListener('message', handleDataChannelMessage)
+  dataChannel.addEventListener('open', () => {
+    dataChannelOpened = true
+    logDebug('MCP data channel open', { clientId })
+    resolveMcpOpenOnce()
+  })
   dataChannel.addEventListener('close', () => {
     closePeer(true, 'MCP WebRTC data channel closed')
   })
@@ -592,28 +653,6 @@ const createSharedBoardRtcSession = async (
     region: options.region,
     clientId,
     credentials: toSignalingCredentials(credentials),
-  })
-
-  const openPromise = new Promise<SharedBoardRtcSession>((resolve, reject) => {
-    dataChannel.addEventListener(
-      'open',
-      () => {
-        dataChannelOpened = true
-        logDebug('MCP data channel open', { clientId })
-        resolve(session)
-      },
-      { once: true },
-    )
-    dataChannel.addEventListener(
-      'error',
-      () => reject(new Error('MCP WebRTC data channel failed before opening')),
-      { once: true },
-    )
-    dataChannel.addEventListener(
-      'close',
-      () => reject(new Error('MCP WebRTC data channel closed before opening')),
-      { once: true },
-    )
   })
 
   signalingClient.on('open', () => {
@@ -650,7 +689,7 @@ const createSharedBoardRtcSession = async (
   })
   signalingClient.open()
 
-  return openPromise
+  return session
 }
 
 const getSharedBoardRtcSession = (
@@ -697,19 +736,10 @@ const startSharedBoardMcpDataChannelRuntime = async (
   options: StartMcpDataChannelOptions,
 ): Promise<McpDataChannelHandle> => {
   const sessionPromise = getSharedBoardRtcSession(options)
-  const openTimeoutPromise =
-    options.openTimeoutMs && options.openTimeoutMs > 0
-      ? new Promise<SharedBoardRtcSession>((_resolve, reject) => {
-          window.setTimeout(() => {
-            reject(new Error('Timed out opening MCP WebRTC data channel'))
-          }, options.openTimeoutMs)
-        })
-      : null
 
   try {
-    const session = await (openTimeoutPromise
-      ? Promise.race([sessionPromise, openTimeoutPromise])
-      : sessionPromise)
+    const session = await sessionPromise
+    await session.waitForMcpOpen(options.openTimeoutMs)
     return session.acquireMcpHandle()
   } catch (error) {
     void sessionPromise.then((session) => session.close()).catch(() => undefined)

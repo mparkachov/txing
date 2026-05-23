@@ -1436,7 +1436,7 @@ class AwsIotShadowSession implements ShadowSession {
         this.setActiveMcpTransport('webrtc-datachannel')
         return
       } catch {
-        this.mcpWebRtcUnavailable = true
+        this.mcpWebRtcUnavailable = hasMcpMqttTransport(this.mcpDescriptor)
         this.closeMcpWebRtcHandle()
         if (!hasMcpMqttTransport(this.mcpDescriptor)) {
           throw new Error('MCP WebRTC data channel is unavailable and MQTT MCP is not advertised')
@@ -1824,7 +1824,7 @@ class AwsIotShadowSession implements ShadowSession {
   }
 
   private handleMcpWebRtcFailure(): void {
-    this.mcpWebRtcUnavailable = true
+    this.mcpWebRtcUnavailable = hasMcpMqttTransport(this.mcpDescriptor)
     this.closeMcpWebRtcHandle()
     this.mcpActiveControl = null
     this.mcpInitialized = false
