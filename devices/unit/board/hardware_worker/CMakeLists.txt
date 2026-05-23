@@ -98,11 +98,18 @@ if(TXING_HARDWARE_WORKER_GRPC)
   )
   add_dependencies(txing-unit-hardware-worker txing_unit_hardware_proto)
   install(TARGETS txing-unit-hardware-worker RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+endif()
 
-  if(BUILD_TESTING)
+if(BUILD_TESTING)
+  add_executable(txing-unit-hardware-worker-tests tests/test_main.cpp)
+  target_link_libraries(txing-unit-hardware-worker-tests PRIVATE txing_unit_hardware_worker_core)
+  add_test(NAME txing-unit-hardware-worker-tests COMMAND txing-unit-hardware-worker-tests)
+
+  if(TXING_HARDWARE_WORKER_GRPC)
+    add_dependencies(txing-unit-hardware-worker-tests txing-unit-hardware-worker)
     add_test(
       NAME txing-unit-hardware-worker-version
-      COMMAND txing-unit-hardware-worker --version
+      COMMAND $<TARGET_FILE:txing-unit-hardware-worker> --version
     )
     set_tests_properties(
       txing-unit-hardware-worker-version
@@ -110,10 +117,4 @@ if(TXING_HARDWARE_WORKER_GRPC)
         PASS_REGULAR_EXPRESSION "^txing-unit-hardware-worker [0-9]+\\.[0-9]+\\.[0-9]+"
     )
   endif()
-endif()
-
-if(BUILD_TESTING)
-  add_executable(txing-unit-hardware-worker-tests tests/test_main.cpp)
-  target_link_libraries(txing-unit-hardware-worker-tests PRIVATE txing_unit_hardware_worker_core)
-  add_test(NAME txing-unit-hardware-worker-tests COMMAND txing-unit-hardware-worker-tests)
 endif()

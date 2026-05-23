@@ -1,6 +1,6 @@
 [package]
 name = "weather-device-test"
-version = "0.12.1"
+version = "0.12.2"
 edition = "2024"
 description = "Weather device physical BLE contract tests"
 
