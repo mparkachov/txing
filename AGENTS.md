@@ -1,54 +1,85 @@
 # txing agent guide
 
-## Repository structure
-- `devices/unit/mcu/`: Rust firmware subproject for the current `unit` device type MCU.
-- `rig/`: Python subproject for the Raspberry Pi 5 rig runtime (AWS IoT MQTT + BLE communication with MCU).
-- `devices/unit/board/`: native KVS worker sources for the current `unit` device-side Raspberry Pi board video path.
-- `office/`: React/Vite SPA for admin management of Thing Shadow.
-- `www/`: strictly static public web site for `txing.dev`.
+This is the root routing guide for agents working in the `txing` monorepo.
+Keep it short: durable technical details live in focused docs and subproject
+`AGENTS.md` files. User instructions override this file.
 
-## Working rules
-- Treat this repository as a monorepo with the subprojects above.
-- Keep changes scoped to the relevant subproject.
-- `just` recipe arguments in this repository are positional. Do not invoke recipes with `name=value` syntax such as `just unit::daemon::cert thing_id=unit-bl95f2`; pass values positionally, for example `just unit::daemon::cert unit-bl95f2`.
-- Repository shell code must be strictly POSIX `sh` compatible. Use `#!/bin/sh`, `set -eu`, and `.` for sourcing. Do not use Bash/Zsh-only features such as arrays, `[[ ... ]]`, `=~`, `mapfile`/`readarray`, process substitution, here strings, `local`, `printf %q`, or `pipefail`. Just recipes must use POSIX shell syntax so they run under macOS Bash 3.2, zsh, and other POSIX shells.
-- Justfiles must export `TMPDIR` to the repository-local `./tmp` directory by default. Host temp directories such as `/tmp` or macOS `/var/folders/...` must not be the default scratch location for repository scripts; create `./tmp` before using it from standalone scripts.
-- Do not read from, copy from, execute from, or depend on files outside this repository (`/Users/Maxim/Developer/txing`) unless the user explicitly provides the content in the conversation or explicitly asks to vendor it into the repository first.
-- Do not run any command against AWS that could create, update, or delete cloud resources. Agents may run read-only AWS inspection commands only when needed.
-- Do not write host-side runtime code, installer scripts, release assets, or generated commands that assume they run as root. Do not use `sudo` inside repository code intended to run on deployed hosts. When privileged host configuration is required, provide explicit manual steps for the user to run in chat/docs instead.
-- Never add CloudFormation, custom-resource, migration, rollback, or cleanup logic that deletes or mutates manually rolled-in resources. Resources created manually by an operator must remain untouched across CloudFormation deploy, update, rollback, and delete unless the user explicitly asks for that exact destructive operation.
-- Prefer manual cleanup plus CloudFormation-forward changes over backward-compatible migration code. When existing AWS resources must be removed, renamed, imported, or otherwise reconciled, explain the required manual steps and let the user perform them.
-- Prefer moving development to new functionality without preserving backward compatibility, except for protocols and protocol versions. Before making a change that drops or ignores backward compatibility, ask the user every time whether that is acceptable.
-- After every code, firmware, infrastructure, or configuration change, explain the relevant deployment or rollout steps in the final response, including any manual steps the user must perform.
-- When a new immutable release or host/runtime artifact version is required, inform the user to bump the whole project to a new release version; do not add deploy bypasses or automated cargo/component version enforcement checks.
-- Do not perform `git commit` automatically.
-- Create commits only when explicitly requested by the user.
-- Flashing/programming firmware onto hardware must only be performed manually by the user. Agents may prepare artifacts and commands, but must not run flashing steps automatically.
-- Rig runtime stability is a hard requirement: `rig` services are not user-serviced applications. All rig network, BLE, AWS, IPC, and supervisor-facing loops must tolerate transient failures with bounded retries, backoff, and log throttling where repeated failures are expected, and must avoid resource churn or leaks.
+## Start here
 
-## Shared contracts
-- Thing Shadow schema source of truth for the current `unit` device type: `devices/unit/aws/*-shadow.schema.json`.
-- Current rig-era shadow + BLE compatibility contract: `devices/unit/docs/device-rig-shadow-spec.md`.
-- Sparkplug lifecycle design: `docs/sparkplug-lifecycle.md`.
-- Ownership rule: `rig` owns the `sparkplug`, `device`, and `mcu` named shadow contracts.
-- Ownership rule: `txing-unit-daemon` owns the `board` named shadow contract for the `unit` device type.
+- Follow `POLICY.md` for execution policy, ambiguity handling, escalation,
+  approval gates, milestone discipline, and completion behavior.
+- Read the nearest subproject `AGENTS.md` before editing under a subdirectory.
+  The closer file carries the local build, test, and contract guidance for that
+  area.
+- Read referenced docs before changing the related behavior. Do not rely on this
+  root file as the full project specification.
 
-## Board Video
-- Board video is a headless network-service design. Do not assume any GUI, local browser, or desktop session on the board.
-- `txing-unit-daemon` remains the only publisher of `board.*` Thing Shadow updates.
-- The current implementation uses plain AWS KVS WebRTC signaling as the live operator video path.
-- `txing-unit-daemon` writes local runtime state, probes supervised sender readiness, publishes retained video descriptor/status topics for `rig`, and mirrors descriptor/status into the `video` named shadow for readers.
-- `rig` consumes retained MQTT video service topics for REDCON derivation.
-- The browser operator path uses the AWS KVS viewer flow, not a board-local iframe page.
-- The repo ships the native sender in-tree and supervises it as a child process from `txing-unit-daemon`.
-- Browser-to-board motion control uses board MCP tools with a lease hard gate; the legacy raw `<device_id>/board/cmd_vel` path is removed.
+## Repository map
 
-## Terminology
-- `power=true` means the device is in the wakeup state.
-- `power=false` means the device is in the sleep state.
-- In the sleep state, the MCU stays in RTC-driven low-power idle between periodic rendezvous wakeups.
-- The sleep-state rendezvous interval is every `5 s`: the MCU wakes briefly, refreshes BLE state, advertises for a bounded window, and returns to low-power idle if no BLE session is needed.
-- Use `wakeup state` / `sleep state` when describing the external device power contract. Distinguish that from the firmware's internal `Wake` step inside the sleep-state rendezvous cycle.
+- `devices/unit/mcu/`: Rust firmware for the current `unit` device type MCU.
+- `rig/`: Raspberry Pi 5 rig runtime for AWS IoT MQTT and BLE communication.
+- `devices/unit/board/`: native board-side KVS worker sources for unit video.
+- `devices/cloud-mcu/`: AWS-hosted cloud rig and cloud MCU runtime support.
+- `shared/aws/`: shared AWS CLI helpers, CloudFormation, registry utilities,
+  and admin Lambda packaging.
+- `witness/`: Sparkplug-to-shadow projection Lambda source and tests.
+- `office/`: React/Vite admin SPA for Thing Shadow management.
+- `www/`: static public web site for `txing.dev`.
 
-## Execution policy
-- Agent execution behavior, escalation rules, ambiguity handling, and implementation discipline are defined in `POLICY.md`.
+Treat the repo as a monorepo. Keep changes scoped to the relevant subproject
+unless a shared contract or consistency issue requires coordinated updates.
+
+## Required references
+
+- Spec-driven planning and Backlog.md workflow:
+  `docs/agent-guidance/spec-driven-development.md`
+- Extracted component editing boundaries from project docs:
+  `docs/agent-guidance/editing-boundaries.md`
+- Repository-wide development, safety, deployment, and tooling constraints:
+  `docs/constraints/repository-rules.md`
+- Unit device contracts, ownership, board video, power terminology, and runtime
+  reliability: `docs/contracts/unit-device-contracts.md`
+- MCU shared stack invariant and firmware reference: `docs/components/mcu.md`
+- AWS Lambda language boundary: `docs/aws-lambda-boundary.md`
+- Sparkplug lifecycle design: `docs/sparkplug-lifecycle.md`
+- Current rig-era shadow plus BLE compatibility contract:
+  `devices/unit/docs/device-rig-shadow-spec.md`
+- Current unit Thing Shadow schemas: `devices/unit/aws/*-shadow.schema.json`
+
+## Planning and goals
+
+- During `/plan architecture`, inspect the repo, identify affected contracts,
+  capture risks and non-goals, and produce planning artifacts. Do not implement
+  code during architecture planning.
+- Plan Mode must end with durable planning output. After the user approves the
+  architecture or design direction, create goal-oriented Backlog.md tasks for
+  the selected milestone or milestone set.
+- Tasks must describe outcomes and acceptance criteria, not implementation
+  steps. If meaningful ambiguity remains, ask for clarification instead of
+  creating speculative tasks.
+- During `/goal`, execute exactly one milestone at a time. Stop after milestone
+  completion and wait for the user to choose or approve the next milestone.
+
+## Non-negotiable gates
+
+- Do not perform `git commit` automatically. Create commits only when explicitly
+  requested by the user.
+- Do not run AWS commands that create, update, or delete cloud resources.
+  Read-only AWS inspection commands are allowed only when needed.
+- Do not run firmware flashing/programming steps. Prepare artifacts and commands
+  for the user to run manually.
+- Do not read from, copy from, execute from, or depend on files outside this
+  repository unless the user explicitly provides the content or asks to vendor it
+  into the repository.
+- After any code, firmware, infrastructure, or configuration change, include
+  deployment or rollout steps in the final response, including manual steps.
+
+## Documentation placement
+
+- Keep root `AGENTS.md` limited to routing, workflow, and critical gates.
+- Put durable technical contracts in `docs/contracts/`.
+- Put operational and tooling constraints in `docs/constraints/`.
+- Put active planning artifacts created during Plan Mode in Backlog.md docs
+  unless they should become permanent repository documentation.
+- Use nested `AGENTS.md` files only for local instructions an agent must know
+  before editing that subtree.

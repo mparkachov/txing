@@ -105,9 +105,9 @@ CloudFront upload. Use these Cloudflare Pages settings:
   - `VITE_ADMIN_EMAIL`
 
 Cloudflare Pages provides SPA fallback automatically when there is no top-level
-`404.html`; do not add a `/* /index.html 200` `_redirects` rule because Pages
-now treats that as an infinite loop. `just office::deploy` is now informational
-and prints the Cloudflare Pages settings.
+`404.html`. The app does not use a `/* /index.html 200` `_redirects` rule
+because Pages now treats that as an infinite loop. `just office::deploy` is now
+informational and prints the Cloudflare Pages settings.
 
 ## Public Sign-In Entry
 
@@ -115,7 +115,7 @@ The public `txing.dev` site is a separate Cloudflare Pages project under
 `www/`. Its sign-in link points to `https://office.txing.dev/?signin=1`.
 The office SPA consumes that query parameter, starts the existing PKCE Cognito
 flow from the office origin, and Cognito returns to `https://office.txing.dev/`.
-Do not add `txing.dev` as a Cognito callback URL for this entry flow.
+`txing.dev` is not a Cognito callback URL for this entry flow.
 Production sign-off redirects through Cognito to `https://txing.dev/`; local
 development sign-off returns to the current local office origin.
 

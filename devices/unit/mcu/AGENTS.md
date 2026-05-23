@@ -8,9 +8,15 @@
 - Run firmware build/test commands from `mcu/` through the `just unit::mcu::*` recipes.
 - Follow repository-level rule: do not create commits unless explicitly requested by the user.
 - Do not flash firmware or NVE records automatically; prepare artifacts and commands only.
+- Read `../../../docs/components/mcu.md` before changing the shared XIAO
+  nRF54L15 firmware stack.
 - Use `../aws/ble-shadow.schema.json` and `../aws/power-shadow.schema.json` as the BLE/power shadow contract references.
 - Treat `rig` as owner of the `ble` and `power` named shadow contracts.
+- Do not copy `redcon.c`, fork the REDCON UUID/payload handling, or add a
+  per-device NCS install/build path for a XIAO nRF54L15 target.
 
 ## Shared workflow
-- Follow the repository-level Beads workflow in `../AGENTS.md`.
-- If an `mcu/`-specific task is created under a shared epic, mention `mcu/` in the Beads title or description so ownership is obvious.
+- Follow the repository-level Backlog.md workflow in `../../../AGENTS.md`.
+- If an `mcu/`-specific task is created under a shared milestone, mention
+  `devices/unit/mcu/` in the Backlog task title or description so ownership is
+  obvious.

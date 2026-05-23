@@ -61,8 +61,8 @@ The board-owned named shadow is a reported-only read model:
 Notes:
 
 - `reported.power=false` is best-effort clean shutdown state only.
-- stale `power=true` or `wifi.online=true` must not be treated as
-  authoritative after a hard power cut.
+- stale `power=true` or `wifi.online=true` is not authoritative after a hard
+  power cut.
 
 ### Video
 
@@ -513,8 +513,8 @@ Operational rules:
 - switch back to read-only only after runtime, native KVS master, and config
   files are in place
 - the service runs as root with `HOME=/root`
-- AWS-backed services must wait for network-online and clock synchronization so
-  TLS validation does not race NTP
+- AWS-backed services wait for network-online and clock synchronization so TLS
+  validation does not race NTP
 
 ### 8. Final Reboot Check
 

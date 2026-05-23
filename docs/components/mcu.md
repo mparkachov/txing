@@ -23,8 +23,9 @@ All active MCU targets use the same shared stack:
 
 Device-specific behavior belongs in the local `src/main.c` hooks passed through
 `struct txing_redcon_ops`, local `zephyr/prj.conf`, and local devicetree
-overlays. Do not copy `redcon.c`, fork the REDCON UUID/payload handling, or add
-a per-device NCS install/build path for a new XIAO nRF54L15 MCU target.
+overlays. The shared REDCON implementation remains single-source: active XIAO
+nRF54L15 targets share `redcon.c`, the REDCON UUID/payload handling, and the
+common NCS install/build path.
 
 ## Current Behavior
 

@@ -160,7 +160,7 @@ Cloudflare Pages:
 - Production branch: `main`
 - Root directory: `office`
 - Build command: `bun install --frozen-lockfile && bun --bun run build`
-- Deploy command: leave empty; do not use `npx wrangler deploy`
+- Deploy command: leave empty; Cloudflare Pages publishes `dist`
 - Build output directory: `dist`
 - Domain: `office.txing.dev`
 - Environment variables:
@@ -176,10 +176,11 @@ Cloudflare Pages:
   - `VITE_COGNITO_SCOPE`
   - `VITE_ADMIN_EMAIL`
 
-Do not set `VITE_TXING_VERSION`, `VITE_DEVICE_THING_NAME`, or
-`VITE_SPARKPLUG_EDGE_NODE_ID` in Cloudflare. The version is injected by the Vite
-build from the root `VERSION` file, and the admin SPA discovers rigs and devices
-from the configured town.
+`VITE_TXING_VERSION`, `VITE_DEVICE_THING_NAME`, and
+`VITE_SPARKPLUG_EDGE_NODE_ID` are intentionally absent from Cloudflare
+configuration. The version is injected by the Vite build from the root
+`VERSION` file, and the admin SPA discovers rigs and devices from the configured
+town.
 
 The environment stack reads `WebAppUrl` from `/txing/stack/WebAppUrl`.
 Cognito callback URLs are:
@@ -205,7 +206,7 @@ Public `txing.dev` is a separate Cloudflare Pages project:
 - Production branch: `main`
 - Root directory: `www`
 - Build command: `exit 0`
-- Deploy command: leave empty; do not use `npx wrangler deploy`
+- Deploy command: leave empty; Cloudflare Pages publishes the static directory
 - Build output directory: `.` when Root directory is `www`
 - Domain: `txing.dev`
 - Environment variables: none
@@ -239,9 +240,9 @@ generated local AWS config files.
 ## Important Naming Rule
 
 IAM roles, IAM managed policies, IoT role aliases, and IoT policies use
-CloudFormation-generated physical names. Do not depend on old fixed names such as
-`town-rig-runtime` or `town-rig-device-policy`; use `/txing/stack/...`
-parameters or AWS API lookups.
+CloudFormation-generated physical names. Consumers resolve them through
+`/txing/stack/...` parameters or AWS API lookups instead of old fixed names such
+as `town-rig-runtime` or `town-rig-device-policy`.
 
 ## Shadow Inspection
 
