@@ -44,35 +44,24 @@ manual hardware step.
 Install host tools manually:
 
 ```sh
-brew install cmake ninja dtc open-ocd
+brew install cmake ninja dtc open-ocd arm-none-eabi-gcc
 ```
 
-Initialize the repo-local NCS manifest submodule:
-
-```sh
-just power::mcu::submodules
-```
-
-Create the NCS west workspace, Python environment, and local Zephyr SDK:
+Create the repo-local Python environment and stock Zephyr west workspace:
 
 ```sh
 just power::mcu::install
 ```
 
-All XIAO nRF54L15 MCU targets use the shared NCS helper at
-`devices/common/mcu/scripts/ncs_mcu.py`. Override the Python used to create the
-NCS environment only when needed:
-
-```sh
-export TXING_MCU_NCS_PYTHON=/opt/homebrew/bin/python3.13
-# Or for power only:
-export POWER_MCU_NCS_PYTHON=/opt/homebrew/bin/python3.13
-```
+The power MCU workspace is local to `devices/power/mcu/.zephyr-workspace` and
+is pinned to stock Zephyr `v4.4.0`, the latest stable Zephyr release at the time
+this power trial was created. The recipes keep `HOME`, pip cache, Zephyr cache,
+ccache, and temporary files inside the repository while installing and building.
 
 ## Build
 
-The firmware uses stock nRF Connect SDK `west build` with the built-in Seeed
-board identifier `xiao_nrf54l15/nrf54l15/cpuapp`. Build-time values live in
+The firmware uses stock Zephyr `west build` with the built-in Seeed board
+identifier `xiao_nrf54l15/nrf54l15/cpuapp`. Build-time values live in
 `mcu/zephyr/prj.conf`; app-specific Kconfig includes the shared REDCON symbols
 from `devices/common/mcu/xiao_nrf54l15/Kconfig`. The power CMake target links
 the same `devices/common/mcu/xiao_nrf54l15/src/redcon.c` implementation used by
@@ -90,7 +79,7 @@ just power::mcu::check-flash
 The build output is:
 
 ```text
-devices/power/mcu/build/ncs-xiao_nrf54l15_cpuapp/zephyr/zephyr/zephyr.hex
+devices/power/mcu/build/zephyr-xiao_nrf54l15_cpuapp/zephyr/zephyr.hex
 ```
 
 ## Factory/NVE Data
@@ -126,7 +115,7 @@ Manual flash only:
 just power::mcu::flash
 ```
 
-The flash path intentionally uses OpenOCD with the NCS Zephyr Seeed board
+The flash path intentionally uses OpenOCD with the stock Zephyr Seeed board
 configuration. No `nrfutil` runner is used by this subproject.
 
 ## Firmware Behavior

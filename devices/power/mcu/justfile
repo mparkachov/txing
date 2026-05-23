@@ -5,31 +5,59 @@ mcu_dir := source_directory()
 project_root := canonicalize(mcu_dir + "/../../..")
 tmp_dir := project_root + "/tmp"
 export TMPDIR := tmp_dir
+local_home := mcu_dir + "/.home"
+export HOME := local_home
+export XDG_CACHE_HOME := local_home + "/.cache"
+export PIP_CACHE_DIR := mcu_dir + "/.pip-cache"
+export ZEPHYR_CACHE_DIR := mcu_dir + "/.zephyr-cache"
+export CCACHE_DIR := mcu_dir + "/.ccache"
 common_mcu_dir := canonicalize(project_root + "/devices/common/mcu")
-ncs_dir := common_mcu_dir + "/ncs"
-ncs_repo := project_root + "/modules/nrfconnect/sdk-nrf"
-zephyr_base := ncs_dir + "/zephyr"
+zephyr_version := "v4.4.0"
+zephyr_repo := "https://github.com/zephyrproject-rtos/zephyr"
+workspace_dir := mcu_dir + "/.zephyr-workspace"
+zephyr_base := workspace_dir + "/zephyr"
+venv_dir := mcu_dir + "/.venv"
+venv_python := venv_dir + "/bin/python"
+west_bin := venv_dir + "/bin/west"
+west_config := workspace_dir + "/.west/config"
 board := "xiao_nrf54l15/nrf54l15/cpuapp"
-build_version := "ncs-v3.3.0"
-build_dir := mcu_dir + "/build/ncs-xiao_nrf54l15_cpuapp"
-firmware_hex := build_dir + "/zephyr/zephyr/zephyr.hex"
-firmware_hex_fallback := build_dir + "/zephyr/zephyr.hex"
+build_version := "zephyr-v4.4.0"
+build_dir := mcu_dir + "/build/zephyr-xiao_nrf54l15_cpuapp"
+firmware_hex := build_dir + "/zephyr/zephyr.hex"
+firmware_hex_fallback := build_dir + "/zephyr/zephyr/zephyr.hex"
 nve_script := common_mcu_dir + "/xiao_nrf54l15/scripts/redcon_nve.py"
-ncs_script := common_mcu_dir + "/scripts/ncs_mcu.py"
 nve_hex := build_dir + "/redcon-factory-nve.hex"
 nve_address := "0x000f0000"
-default_ncs_python := env_var_or_default("TXING_MCU_NCS_PYTHON", "python3")
-ncs_python := env_var_or_default("POWER_MCU_NCS_PYTHON", default_ncs_python)
 openocd_support_dir := zephyr_base + "/boards/seeed/xiao_nrf54l15/support"
 openocd_cfg := openocd_support_dir + "/openocd.cfg"
 
 [private]
-_ensure-ncs-submodule:
-    test -f "{{ ncs_repo }}/west.yml" || { echo "missing NCS sdk-nrf submodule. Run: just power::mcu::submodules" >&2; exit 1; }
+_ensure-local-dirs:
+    mkdir -p "{{ tmp_dir }}" "{{ local_home }}" "{{ local_home }}/.cache" "{{ PIP_CACHE_DIR }}" "{{ ZEPHYR_CACHE_DIR }}" "{{ CCACHE_DIR }}"
+
+[private]
+_ensure-host-tools:
+    for command in git python3 cmake ninja dtc arm-none-eabi-gcc; do \
+      command -v "$command" >/dev/null || { echo "missing host tool: $command" >&2; exit 1; }; \
+    done
+
+[private]
+_ensure-west:
+    test -x "{{ west_bin }}" || { echo "missing repo-local west. Run: just power::mcu::install" >&2; exit 1; }
+
+[private]
+_ensure-zephyr-workspace: _ensure-west
+    test -f "{{ west_config }}" || { echo "missing stock Zephyr west workspace. Run: just power::mcu::install" >&2; exit 1; }
+    test -d "{{ zephyr_base }}" || { echo "missing stock Zephyr checkout: {{ zephyr_base }}. Run: just power::mcu::install" >&2; exit 1; }
+    manifest_path="$(cd "{{ workspace_dir }}" && "{{ west_bin }}" config manifest.path 2>/dev/null || true)"; \
+    test "$manifest_path" = "zephyr" || { echo "unexpected west manifest.path: $manifest_path" >&2; exit 1; }
+    expected="$(git -C "{{ zephyr_base }}" rev-list -n 1 "{{ zephyr_version }}")"; \
+    actual="$(git -C "{{ zephyr_base }}" rev-parse HEAD)"; \
+    test "$actual" = "$expected" || { echo "unexpected Zephyr checkout: $actual; expected {{ zephyr_version }} ($expected)" >&2; exit 1; }
 
 [private]
 _ensure-openocd:
-    test -f "{{ openocd_cfg }}" || { echo "missing NCS Seeed OpenOCD config: {{ openocd_cfg }}. Run: just power::mcu::install" >&2; exit 1; }
+    test -f "{{ openocd_cfg }}" || { echo "missing stock Zephyr Seeed OpenOCD config: {{ openocd_cfg }}. Run: just power::mcu::install" >&2; exit 1; }
     command -v openocd >/dev/null || { echo "missing OpenOCD. Install manually with: brew install open-ocd" >&2; exit 1; }
 
 [private]
@@ -39,17 +67,40 @@ _firmware-hex:
     test -f "$firmware" || { echo "missing firmware hex. Run: just power::mcu::check" >&2; exit 1; }; \
     printf '%s\n' "$firmware"
 
-@submodules:
-    git -C "{{ project_root }}" submodule update --init --recursive -- modules/nrfconnect/sdk-nrf
+@install: _ensure-local-dirs _ensure-host-tools
+    if [ -x "{{ venv_python }}" ] && ! "{{ venv_python }}" -c "import sys" >/dev/null 2>&1; then rm -rf "{{ venv_dir }}"; fi
+    if [ ! -x "{{ venv_python }}" ]; then python3 -m venv "{{ venv_dir }}"; fi
+    "{{ venv_python }}" -m pip install --upgrade pip west
+    if [ -e "{{ workspace_dir }}" ] && [ ! -f "{{ west_config }}" ]; then \
+      echo "refusing to use existing non-west workspace: {{ workspace_dir }}" >&2; \
+      exit 1; \
+    fi
+    if [ ! -f "{{ west_config }}" ]; then \
+      "{{ west_bin }}" init -m "{{ zephyr_repo }}" --mr "{{ zephyr_version }}" "{{ workspace_dir }}"; \
+    fi
+    cd "{{ workspace_dir }}" && "{{ west_bin }}" update --narrow --fetch-opt=--filter=blob:none
+    cd "{{ workspace_dir }}" && "{{ west_bin }}" manifest --validate
+    "{{ venv_python }}" -m pip install --upgrade -r "{{ zephyr_base }}/scripts/requirements-base.txt" -r "{{ zephyr_base }}/scripts/requirements-build-test.txt"
 
-@install: submodules
-    "{{ ncs_python }}" "{{ ncs_script }}" --mcu-dir "{{ mcu_dir }}" --device-label power install
+@check: build
 
-@check: _ensure-ncs-submodule
-    "{{ ncs_python }}" "{{ ncs_script }}" --mcu-dir "{{ mcu_dir }}" --device-label power check
-
-@build: _ensure-ncs-submodule
-    "{{ ncs_python }}" "{{ ncs_script }}" --mcu-dir "{{ mcu_dir }}" --device-label power build
+@build: _ensure-local-dirs _ensure-host-tools _ensure-zephyr-workspace
+    if [ -z "${ZEPHYR_TOOLCHAIN_VARIANT:-}" ]; then export ZEPHYR_TOOLCHAIN_VARIANT=gnuarmemb; fi; \
+    if [ "$ZEPHYR_TOOLCHAIN_VARIANT" = "gnuarmemb" ] && [ -z "${GNUARMEMB_TOOLCHAIN_PATH:-}" ]; then \
+      gcc_path="$(command -v arm-none-eabi-gcc)"; \
+      export GNUARMEMB_TOOLCHAIN_PATH="$(cd "$(dirname "$gcc_path")/.." && pwd)"; \
+    fi; \
+    unset BOARD_ROOT POWER_BOARD_ROOT ZEPHYR_MODULES ZEPHYR_SDK_INSTALL_DIRS CROSS_COMPILE; \
+    cd "{{ workspace_dir }}" && "{{ west_bin }}" -z "{{ zephyr_base }}" build \
+      -p auto \
+      -b "{{ board }}" \
+      "{{ mcu_dir }}/zephyr" \
+      -d "{{ build_dir }}" \
+      -- \
+      -DCONF_FILE="{{ mcu_dir }}/zephyr/prj.conf" \
+      -DDTC_OVERLAY_FILE="{{ mcu_dir }}/zephyr/boards/xiao_nrf54l15_nrf54l15_cpuapp.overlay" \
+      -DBUILD_VERSION="{{ build_version }}"
+    test -f "{{ firmware_hex }}" || test -f "{{ firmware_hex_fallback }}" || { echo "build completed, but no expected firmware HEX was created" >&2; exit 1; }
 
 @flash: _ensure-openocd
     firmware="$(just --justfile "{{ mcu_dir }}/justfile" _firmware-hex)"; \
@@ -113,15 +164,25 @@ _firmware-hex:
       -c shutdown
 
 @paths:
-    "{{ ncs_python }}" "{{ ncs_script }}" --mcu-dir "{{ mcu_dir }}" --device-label power paths
+    echo "projectRoot: {{ project_root }} exists=$([ -d "{{ project_root }}" ] && echo 1 || echo 0)"
+    echo "device: power"
+    echo "mcuDir: {{ mcu_dir }} exists=$([ -d "{{ mcu_dir }}" ] && echo 1 || echo 0)"
+    echo "workspaceDir: {{ workspace_dir }} exists=$([ -d "{{ workspace_dir }}" ] && echo 1 || echo 0)"
+    echo "zephyrBase: {{ zephyr_base }} exists=$([ -d "{{ zephyr_base }}" ] && echo 1 || echo 0)"
+    echo "zephyrVersion: {{ zephyr_version }}"
+    echo "venv: {{ venv_dir }} exists=$([ -d "{{ venv_dir }}" ] && echo 1 || echo 0)"
+    echo "west: {{ west_bin }} exists=$([ -x "{{ west_bin }}" ] && echo 1 || echo 0)"
     echo "board: {{ board }}"
     echo "buildVersion: {{ build_version }}"
+    echo "buildDir: {{ build_dir }} exists=$([ -d "{{ build_dir }}" ] && echo 1 || echo 0)"
+    echo "firmwareHex: {{ firmware_hex }} exists=$([ -f "{{ firmware_hex }}" ] && echo 1 || echo 0)"
+    echo "openocdCfg: {{ openocd_cfg }} exists=$([ -f "{{ openocd_cfg }}" ] && echo 1 || echo 0)"
     echo "nveScript: {{ nve_script }} exists=$([ -f "{{ nve_script }}" ] && echo 1 || echo 0)"
     echo "nveHex: {{ nve_hex }} exists=$([ -f "{{ nve_hex }}" ] && echo 1 || echo 0)"
     echo "nveAddress: {{ nve_address }}"
 
 @clean:
-    "{{ ncs_python }}" "{{ ncs_script }}" --mcu-dir "{{ mcu_dir }}" --device-label power clean
+    rm -rf "{{ build_dir }}"
 
 @default:
     @just --list
