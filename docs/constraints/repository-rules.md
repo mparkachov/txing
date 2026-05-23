@@ -70,7 +70,7 @@ logic, shell scripts, or firmware programming workflows.
   manual steps the user must perform.
 - When a new immutable release or host/runtime artifact version is required,
   inform the user to bump the whole project to a new release version.
-- Do not add deploy bypasses or automated cargo/component version enforcement
+- Do not add deploy bypasses or automated component version enforcement
   checks.
 - Preserve the current release separation: the release workflow publishes
   artifacts, but does not bump versions, commit, push back to a branch, upload

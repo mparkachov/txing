@@ -320,7 +320,8 @@ Assumptions:
 - Raspberry Pi OS Lite 64-bit, Trixie
 - `NetworkManager` manages networking
 - AWS resources and the target unit thing already exist
-- daemon config/certificate archive has been generated on the operator machine
+- daemon environment/certificate archive has been generated on the operator
+  machine
 
 ### 1. Create The Card
 

@@ -43,15 +43,6 @@ changes, or future-work implementation.
 
 ## Future-work boundaries
 
-Rust dependency cleanup:
-
-- Do not add local dependency overrides for AWS, Smithy, RustCrypto, TLS, or
-  platform crates just to reduce duplicate rows in `cargo tree -d`.
-- Do not treat `generic-array 0.14.9` as a normal patch update until the
-  upstream exact pin is gone.
-- Do not combine `reqwest 0.13` migration with release or daemon deployment
-  changes. It needs a dedicated test cycle.
-
 Cloud and control-only RTC consumers:
 
 - Do not add a second KVS channel to the current `unit` path without an

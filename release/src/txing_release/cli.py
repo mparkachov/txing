@@ -15,11 +15,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 SEMVER_RE = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
 
-STANDALONE_CARGO_MANIFESTS = (
-    Path("devices/power/test/Cargo.toml"),
-    Path("devices/weather/test/Cargo.toml"),
-)
-
 PYTHON_PROJECTS = (
     Path("release/pyproject.toml"),
     Path("shared/aws/python/pyproject.toml"),
@@ -99,7 +94,6 @@ SCAN_EXTENSIONS = {
     ".json",
     ".md",
     ".py",
-    ".rs",
     ".toml",
     ".ts",
     ".tsx",
@@ -179,8 +173,6 @@ def run(command: list[str], *, cwd: Path = ROOT) -> None:
 
 
 def refresh_lockfiles() -> None:
-    for manifest in STANDALONE_CARGO_MANIFESTS:
-        run(["cargo", "generate-lockfile", "--manifest-path", str(ROOT / manifest)])
     for pyproject in PYTHON_PROJECTS:
         run(["uv", "lock", "--project", str(ROOT / pyproject.parent)])
 
@@ -188,12 +180,10 @@ def refresh_lockfiles() -> None:
 def managed_version_paths() -> set[Path]:
     paths: set[Path] = {
         Path("VERSION"),
-        *STANDALONE_CARGO_MANIFESTS,
         *PYTHON_PROJECTS,
         *NODE_PACKAGES,
         *(spec.path for spec in TEXT_VERSIONS),
     }
-    paths.update(manifest.parent / "Cargo.lock" for manifest in STANDALONE_CARGO_MANIFESTS)
     paths.update(pyproject.parent / "uv.lock" for pyproject in PYTHON_PROJECTS)
     return paths
 
@@ -207,7 +197,7 @@ def should_scan_path(path: Path, managed_paths: set[Path]) -> bool:
         return False
     if any(path_is_under(path, prefix) for prefix in SCAN_IGNORED_PREFIXES):
         return False
-    if path.name in {"Cargo.lock", "uv.lock", "bun.lock", "bun.lockb", "package-lock.json"}:
+    if path.name in {"uv.lock", "bun.lock", "bun.lockb", "package-lock.json"}:
         return False
     if path.name == "justfile":
         return True
@@ -252,9 +242,6 @@ def bump(target: str) -> None:
     changed: list[str] = []
     if write_text_if_changed(Path("VERSION"), target + "\n"):
         changed.append("VERSION")
-    for path in STANDALONE_CARGO_MANIFESTS:
-        if set_toml_package_version(path, target):
-            changed.append(rel(path))
     for path in PYTHON_PROJECTS:
         if set_toml_package_version(path, target):
             changed.append(rel(path))
@@ -294,13 +281,6 @@ def load_toml(path: Path) -> dict:
     return tomllib.loads(read_text(path))
 
 
-def toml_package_name(path: Path) -> str:
-    package = load_toml(path).get("package")
-    if not isinstance(package, dict) or not isinstance(package.get("name"), str):
-        raise SystemExit(f"{rel(path)} is missing [package].name")
-    return package["name"]
-
-
 def toml_project_name(path: Path) -> str:
     project = load_toml(path).get("project")
     if not isinstance(project, dict) or not isinstance(project.get("name"), str):
@@ -328,37 +308,6 @@ def check_value(
         reports.append(f"{label}: {actual!r}")
     if actual != expected:
         problems.append(f"{label}: expected {expected}, got {actual!r}")
-
-
-def check_cargo_lock(
-    problems: list[str],
-    lock_path: Path,
-    package_names: tuple[str, ...],
-    expected: str,
-    reports: list[str] | None = None,
-) -> None:
-    full_path = ROOT / lock_path
-    if not full_path.exists():
-        problems.append(f"{rel(lock_path)}: missing Cargo lockfile")
-        return
-    payload = tomllib.loads(full_path.read_text(encoding="utf-8"))
-    packages = payload.get("package")
-    if not isinstance(packages, list):
-        problems.append(f"{rel(lock_path)}: missing package entries")
-        return
-    versions = {
-        package.get("name"): package.get("version")
-        for package in packages
-        if isinstance(package, dict)
-    }
-    for name in package_names:
-        check_value(
-            problems,
-            f"{rel(lock_path)} package {name}",
-            versions.get(name),
-            expected,
-            reports,
-        )
 
 
 def check_uv_lock(
@@ -407,14 +356,6 @@ def collect_version_problems(reports: list[str] | None = None) -> list[str]:
     if reports is not None:
         reports.append(f"VERSION: {expected!r}")
 
-    for path in STANDALONE_CARGO_MANIFESTS:
-        check_value(
-            problems,
-            f"{rel(path)} package.version",
-            value_at(load_toml(path), ("package", "version")),
-            expected,
-            reports,
-        )
     for path in PYTHON_PROJECTS:
         check_value(
             problems,
@@ -431,16 +372,6 @@ def collect_version_problems(reports: list[str] | None = None) -> list[str]:
             problems,
             f"{rel(spec.path)} {spec.label}",
             text_version_value(spec),
-            expected,
-            reports,
-        )
-
-    for manifest in STANDALONE_CARGO_MANIFESTS:
-        package_name = toml_package_name(manifest)
-        check_cargo_lock(
-            problems,
-            manifest.parent / "Cargo.lock",
-            (package_name,),
             expected,
             reports,
         )

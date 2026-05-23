@@ -129,31 +129,6 @@ just power::mcu::flash
 The flash path intentionally uses OpenOCD with the NCS Zephyr Seeed board
 configuration. No `nrfutil` runner is used by this subproject.
 
-## Physical BLE Test
-
-Run the power-specific Rust BLE test after flashing firmware and NVE:
-
-```sh
-just power::test 1 <power-thing-id>
-```
-
-This runs through Cargo's ignored physical-test harness with terse output and no
-log files by default. The test is scoped to the power contract: it connects to
-the advertised power Thing ID, wakes the device with REDCON `3`, checks active
-battery reports, sends REDCON `4`, keeps the BLE link connected, and waits for
-the delayed connected-idle battery report. On macOS the test does not require
-the service UUID in the advertisement by default, because CoreBluetooth may
-expose only the local name during scanning.
-
-Useful options:
-
-```sh
-just power::test 1 <power-thing-id> --logs
-just power::test 1 <power-thing-id> --output-dir /tmp/power-connected-idle
-just power::test 1 <power-thing-id> --require-service
-just power::test 1 <power-thing-id> --idle-report-timeout 90
-```
-
 ## Firmware Behavior
 
 - Boots into REDCON `4` sleep state with the XIAO user LED and D1 `power` GPIO off.

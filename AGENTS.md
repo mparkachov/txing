@@ -16,7 +16,8 @@ Keep it short: durable technical details live in focused docs and subproject
 
 ## Repository map
 
-- `devices/unit/mcu/`: Rust firmware for the current `unit` device type MCU.
+- `devices/unit/mcu/`: NCS/Zephyr C firmware for the current `unit` device type
+  MCU.
 - `rig/`: Raspberry Pi 5 rig runtime for AWS IoT MQTT and BLE communication.
 - `devices/unit/board/`: native board-side KVS worker sources for unit video.
 - `devices/cloud-mcu/`: AWS-hosted cloud rig and cloud MCU runtime support.

@@ -908,8 +908,6 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertNotIn(".state", text)
         self.assertNotIn("local_state_dir", text)
         self.assertNotIn("packaged_template_file", text)
-        self.assertNotIn("config/rig.env", text)
-        self.assertNotIn("config/board.env", text)
         self.assertNotIn("python -m aws.type_catalog \\\n      --region \"$AWS_REGION\" \\\n      sync", text)
         self.assertNotIn("python -m aws.device_registry", text)
         self.assertNotIn("ensure-town", text)
