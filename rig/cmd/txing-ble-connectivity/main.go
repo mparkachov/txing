@@ -29,6 +29,7 @@ type runtimeState struct {
 	specs                 map[string]rigble.DeviceSpec
 	addresses             map[string]bluetooth.Address
 	lastConnect           map[string]time.Time
+	lastStateRead         map[string]time.Time
 	activeConnects        map[string]chan struct{}
 	connectSlots          chan struct{}
 	scanStoppedForConnect bool
@@ -176,6 +177,7 @@ func newRuntimeState(cfg rigconfig.Config, logger *awsx.CloudWatchLogger, client
 		specs:          map[string]rigble.DeviceSpec{},
 		addresses:      map[string]bluetooth.Address{},
 		lastConnect:    map[string]time.Time{},
+		lastStateRead:  map[string]time.Time{},
 		activeConnects: map[string]chan struct{}{},
 		connectSlots:   connectSlots,
 		txingUUID:      txingUUID,
@@ -327,20 +329,25 @@ func (s *runtimeState) scan(ctx context.Context) error {
 		}
 		rssi := result.RSSI
 		identity := name
+		now := time.Now()
 		advertisement := rigble.Advertisement{
 			Address:      result.Address.String(),
 			IdentityName: &identity,
 			Services:     []string{rigble.TxingBLEServiceUUID},
 			RSSI:         &rssi,
-			ObservedAtMS: uint64(time.Now().UnixMilli()),
+			ObservedAtMS: uint64(now.UnixMilli()),
 			Seq:          s.nextSeq(),
 		}
+		includeCapabilityState := s.shouldPublishAdvertisementCapabilityState(spec, now)
 		s.publishSample(
 			context.Background(),
 			rigble.AdvertisementSample(spec, advertisement, s.nextSeq()),
 			true,
-			rigble.AdvertisementPublishesCapabilityState(spec),
+			includeCapabilityState,
 		)
+		if !includeCapabilityState {
+			s.debugPrint(context.Background(), fmt.Sprintf("BLE advertisement capability state suppressed thing=%s reason=recent-state-read", spec.ThingName))
+		}
 		s.debugPrint(context.Background(), fmt.Sprintf("BLE advertisement published thing=%s address=%s rssi=%d", spec.ThingName, result.Address.String(), rssi))
 		if s.shouldBackgroundConnect(name) {
 			s.debugPrint(context.Background(), fmt.Sprintf("BLE background connect scheduled thing=%s address=%s", spec.ThingName, result.Address.String()))
@@ -500,12 +507,7 @@ func (s *runtimeState) connectAndPublish(ctx context.Context, spec rigble.Device
 	if err != nil {
 		return err
 	}
-	keepConnection := false
-	defer func() {
-		if !keepConnection {
-			_ = device.Disconnect()
-		}
-	}()
+	defer func() { _ = device.Disconnect() }()
 	services, err := device.DiscoverServices([]bluetooth.UUID{s.txingUUID})
 	if err != nil {
 		return err
@@ -553,7 +555,8 @@ func (s *runtimeState) connectAndPublish(ctx context.Context, spec rigble.Device
 		}
 	}
 	addressText := address.String()
-	now := uint64(time.Now().UnixMilli())
+	observedAt := time.Now()
+	now := uint64(observedAt.UnixMilli())
 	if spec.Kind == rigble.DeviceKindWeather {
 		state, err := rigble.ParseWeatherState(stateBytes)
 		if err != nil {
@@ -568,17 +571,43 @@ func (s *runtimeState) connectAndPublish(ctx context.Context, spec rigble.Device
 				}
 			}
 		}
+		s.recordStateRead(spec.ThingName, observedAt)
 		s.publishSample(ctx, rigble.WeatherStateSample(spec, state.Redcon, powerMeasurement, weatherMeasurement, &addressText, s.nextSeq(), now), true, true)
-		keepConnection = true
 		return nil
 	}
 	state, err := rigble.ParsePowerState(stateBytes)
 	if err != nil {
 		return err
 	}
+	s.recordStateRead(spec.ThingName, observedAt)
 	s.publishSample(ctx, rigble.PowerStateSample(spec, state.Redcon, powerMeasurement, &addressText, s.nextSeq(), now), true, true)
-	keepConnection = true
 	return nil
+}
+
+func (s *runtimeState) recordStateRead(thingName string, observedAt time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.lastStateRead == nil {
+		s.lastStateRead = map[string]time.Time{}
+	}
+	s.lastStateRead[thingName] = observedAt
+}
+
+func (s *runtimeState) shouldPublishAdvertisementCapabilityState(spec rigble.DeviceSpec, now time.Time) bool {
+	if !rigble.AdvertisementPublishesCapabilityState(spec) {
+		return false
+	}
+	if spec.Kind.SupportsWeather() {
+		return true
+	}
+	s.mu.Lock()
+	last := s.lastStateRead[spec.ThingName]
+	s.mu.Unlock()
+	if last.IsZero() {
+		return true
+	}
+	staleAfter := time.Duration(rigble.BLEActiveMeasurementStaleMS) * time.Millisecond
+	return now.Sub(last) >= staleAfter
 }
 
 func (s *runtimeState) pauseScanForConnect() {

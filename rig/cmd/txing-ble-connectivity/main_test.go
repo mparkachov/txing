@@ -142,6 +142,37 @@ func TestScanRetryDecisionKeepsGenericBackoff(t *testing.T) {
 	}
 }
 
+func TestAdvertisementCapabilityStateSuppressedAfterRecentPowerStateRead(t *testing.T) {
+	state := &runtimeState{}
+	spec := rigble.DeviceSpec{ThingName: "unit-1", Kind: rigble.DeviceKindPower}
+	now := time.Unix(100, 0)
+
+	if !state.shouldPublishAdvertisementCapabilityState(spec, now) {
+		t.Fatal("first advertisement should publish BLE reachability state")
+	}
+
+	state.recordStateRead(spec.ThingName, now)
+	if state.shouldPublishAdvertisementCapabilityState(spec, now.Add(time.Second)) {
+		t.Fatal("recent connected state read should suppress advertisement-only capability state")
+	}
+
+	staleAt := now.Add(time.Duration(rigble.BLEActiveMeasurementStaleMS) * time.Millisecond)
+	if !state.shouldPublishAdvertisementCapabilityState(spec, staleAt) {
+		t.Fatal("advertisement-only capability state should resume once the connected state read is stale")
+	}
+}
+
+func TestWeatherAdvertisementCapabilityStateBypassesRecentStateRead(t *testing.T) {
+	state := &runtimeState{}
+	spec := rigble.DeviceSpec{ThingName: "weather-1", Kind: rigble.DeviceKindWeather}
+	now := time.Unix(100, 0)
+
+	state.recordStateRead(spec.ThingName, now)
+	if !state.shouldPublishAdvertisementCapabilityState(spec, now.Add(time.Second)) {
+		t.Fatal("weather advertisements should continue publishing idle capability state")
+	}
+}
+
 func TestLooksLikeTxingThingName(t *testing.T) {
 	for _, name := range []string{"unit-wrd8ti", "power-asw355", "weather-ebkwfx"} {
 		if !looksLikeTxingThingName(name) {
