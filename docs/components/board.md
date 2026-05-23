@@ -399,8 +399,9 @@ ldd /root/.local/share/mise/installs/txing-board-kvs-master/latest/txing-board-k
 ldd /root/.local/share/mise/installs/txing-board-kvs-master/latest/txing-board-kvs-master | grep -F "libcamera-base.so.0.7"
 ```
 
-Write the root-owned systemd units. The daemon owns the bridge socket; the KVS
-master connects to it as a separate service.
+Write the root-owned systemd units and group them under `txing-board.target`.
+The daemon owns the bridge socket; the KVS master connects to it as a separate
+service.
 
 ```bash
 cat >/etc/systemd/system/txing-unit-daemon.service <<'EOF'
@@ -428,7 +429,7 @@ ExecStartPre=-/root/.local/share/mise/installs/txing-unit-daemon/latest/txing-un
 ExecStart=/root/.local/share/mise/installs/txing-unit-daemon/latest/txing-unit-daemon
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=txing-board.target
 EOF
 
 cat >/etc/systemd/system/txing-board-kvs-master.service <<'EOF'
@@ -456,6 +457,16 @@ ExecStartPre=-/root/.local/share/mise/installs/txing-board-kvs-master/latest/txi
 ExecStart=/root/.local/share/mise/installs/txing-board-kvs-master/latest/txing-board-kvs-master
 
 [Install]
+WantedBy=txing-board.target
+EOF
+
+cat >/etc/systemd/system/txing-board.target <<'EOF'
+[Unit]
+Description=Txing Board Runtime
+Wants=txing-unit-daemon.service txing-board-kvs-master.service
+After=network-online.target systemd-time-wait-sync.service time-sync.target
+
+[Install]
 WantedBy=multi-user.target
 EOF
 
@@ -464,15 +475,18 @@ if systemctl list-unit-files NetworkManager-wait-online.service --no-legend --no
   systemctl enable NetworkManager-wait-online.service
 fi
 systemctl daemon-reload
+systemctl enable txing-board.target
 systemctl enable txing-unit-daemon.service
 systemctl enable txing-board-kvs-master.service
 systemctl restart txing-unit-daemon.service
 systemctl restart txing-board-kvs-master.service
+systemctl start txing-board.target
 ```
 
 Verify:
 
 ```bash
+systemctl status --no-pager -l txing-board.target
 systemctl status --no-pager -l txing-unit-daemon.service
 systemctl status --no-pager -l txing-board-kvs-master.service
 journalctl -u txing-unit-daemon.service -n 160 --no-pager
@@ -484,6 +498,7 @@ journalctl -u txing-board-kvs-master.service -n 160 --no-pager
 
 Expected:
 
+- `txing-board.target` is active and includes both board services
 - the daemon log includes `version=<release-version>`
 - the daemon binds `/run/txing-unit-daemon/board-video-bridge.sock`
 - MQTT connects
@@ -559,6 +574,7 @@ reboot
 After reconnecting:
 
 ```bash
+systemctl status --no-pager -l txing-board.target
 systemctl status --no-pager -l txing-unit-daemon.service
 systemctl status --no-pager -l txing-board-kvs-master.service
 journalctl -u txing-unit-daemon.service -b --no-pager
@@ -571,6 +587,7 @@ journalctl -u txing-board-kvs-master.service -b --no-pager
 Expected:
 
 - root filesystem is read-only
+- `txing-board.target` is active
 - `txing-unit-daemon.service` starts without a source checkout
 - `txing-board-kvs-master.service` starts without a source checkout
 - daemon log includes `version=<release-version>`

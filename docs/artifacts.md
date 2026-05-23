@@ -105,6 +105,7 @@ The root-owned runtime layout is:
 /root/.local/share/mise/installs/txing-board-kvs-master/latest/txing-board-kvs-master
 /root/.local/share/mise/installs/txing-unit-daemon/
 /root/.local/share/mise/installs/txing-board-kvs-master/
+/etc/systemd/system/txing-board.target
 /etc/systemd/system/txing-unit-daemon.service
 /etc/systemd/system/txing-board-kvs-master.service
 ```
@@ -120,10 +121,12 @@ Pi OS Trixie packages. Release workflows assert that the asset links against
 `libcamera.so.0.7` and `libcamera-base.so.0.7`; board maintenance instructions
 run `ldd` on the installed `latest` binary before rebooting.
 
-The board systemd units start the root-owned binaries under mise's `latest`
-install paths. The daemon owns the local BoardVideoBridge gRPC socket and the
-KVS master connects as a separate service. Service restarts do not invoke mise,
-call GitHub, depend on generated shims, or use separate wrapper scripts.
+The `txing-board.target` unit groups the daemon and KVS master services for
+boot. The board systemd units start the root-owned binaries under mise's
+`latest` install paths. The daemon owns the local BoardVideoBridge gRPC socket.
+The KVS master connects as a separate service. Restarts do not invoke mise or
+call GitHub. They do not depend on generated shims or use separate wrapper
+scripts.
 Publishing a new GitHub Release does not upgrade a board; the operator must log
 in to the board, switch to root, run `root-rw`, run root-owned `mise upgrade`,
 verify versions, sync, and reboot.

@@ -512,6 +512,10 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn('asset_pattern = "txing-unit-daemon-linux-aarch64.tar.gz"', board_docs)
         self.assertIn('asset_pattern = "txing-board-kvs-master-linux-aarch64.tar.gz"', board_docs)
         self.assertIn("MISE_TRUSTED_CONFIG_PATHS=/root/.config/mise", board_docs)
+        self.assertIn("cat >/etc/systemd/system/txing-board.target", board_docs)
+        self.assertIn("Wants=txing-unit-daemon.service txing-board-kvs-master.service", board_docs)
+        self.assertIn("WantedBy=txing-board.target", board_docs)
+        self.assertIn("systemctl enable txing-board.target", board_docs)
         self.assertIn("txing-board-kvs-master.service", board_docs)
         self.assertIn(
             "Environment=TXING_BOARD_VIDEO_BRIDGE_SOCKET_PATH=/run/"
@@ -559,6 +563,9 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("just unit::daemon::role-policy <thing-id>", board_docs)
         self.assertIn("dynamic `mcp`", board_docs)
         self.assertIn("txing-board-kvs-master-linux-aarch64.tar.gz", artifacts_docs)
+        self.assertIn("/etc/systemd/system/txing-board.target", artifacts_docs)
+        self.assertIn("txing-board.target", installation_docs)
+        self.assertIn("txing-board.target", board_docs)
         self.assertNotIn("TXING_KVS_MASTER_COMMAND", board_docs)
         self.assertIn("daemon.env", installation_docs)
         self.assertIn("daemon.env", artifacts_docs)

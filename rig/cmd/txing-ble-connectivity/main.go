@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -279,6 +280,7 @@ func scanRetryDecision(err error, failures uint32) scanRetry {
 }
 
 func (s *runtimeState) scan(ctx context.Context) error {
+	s.debugPrint(ctx, "BLE scan starting")
 	err := bluetooth.DefaultAdapter.Scan(func(adapter *bluetooth.Adapter, result bluetooth.ScanResult) {
 		select {
 		case <-ctx.Done():
@@ -286,11 +288,31 @@ func (s *runtimeState) scan(ctx context.Context) error {
 			return
 		default:
 		}
-		if !result.HasServiceUUID(s.txingUUID) {
+		name := result.LocalName()
+		hasTxingService := result.HasServiceUUID(s.txingUUID)
+		knownTarget := s.hasSpec(name)
+		if s.shouldDebugScanCandidate(name, hasTxingService, knownTarget) {
+			s.debugPrint(
+				context.Background(),
+				fmt.Sprintf(
+					"BLE scan candidate name=%q address=%s rssi=%d txingService=%t knownTarget=%t serviceUUIDs=%v",
+					name,
+					result.Address.String(),
+					result.RSSI,
+					hasTxingService,
+					knownTarget,
+					scanServiceUUIDs(result),
+				),
+			)
+		}
+		if !hasTxingService {
+			if s.shouldDebugScanCandidate(name, hasTxingService, knownTarget) {
+				s.debugPrint(context.Background(), fmt.Sprintf("BLE scan ignored name=%q address=%s reason=no-txing-service", name, result.Address.String()))
+			}
 			return
 		}
-		name := result.LocalName()
 		if name == "" {
+			s.debugPrint(context.Background(), fmt.Sprintf("BLE scan ignored address=%s reason=missing-local-name serviceUUIDs=%v", result.Address.String(), scanServiceUUIDs(result)))
 			return
 		}
 		s.mu.Lock()
@@ -300,6 +322,7 @@ func (s *runtimeState) scan(ctx context.Context) error {
 		}
 		s.mu.Unlock()
 		if !ok {
+			s.debugPrint(context.Background(), fmt.Sprintf("BLE scan ignored name=%q address=%s reason=unmanaged-target", name, result.Address.String()))
 			return
 		}
 		rssi := result.RSSI
@@ -318,7 +341,9 @@ func (s *runtimeState) scan(ctx context.Context) error {
 			true,
 			rigble.AdvertisementPublishesCapabilityState(spec),
 		)
+		s.debugPrint(context.Background(), fmt.Sprintf("BLE advertisement published thing=%s address=%s rssi=%d", spec.ThingName, result.Address.String(), rssi))
 		if s.shouldBackgroundConnect(name) {
+			s.debugPrint(context.Background(), fmt.Sprintf("BLE background connect scheduled thing=%s address=%s", spec.ThingName, result.Address.String()))
 			go s.connectAndPublishBackground(ctx, spec)
 		}
 	})
@@ -331,7 +356,11 @@ func (s *runtimeState) scan(ctx context.Context) error {
 func (s *runtimeState) connectAndPublishBackground(ctx context.Context, spec rigble.DeviceSpec) {
 	connectCtx, cancel := s.backgroundConnectContext(ctx)
 	defer cancel()
-	_ = s.connectAndPublish(connectCtx, spec, nil)
+	if err := s.connectAndPublish(connectCtx, spec, nil); err != nil {
+		s.debugPrint(context.Background(), fmt.Sprintf("BLE background connect failed thing=%s error=%q", spec.ThingName, err))
+		return
+	}
+	s.debugPrint(context.Background(), fmt.Sprintf("BLE background connect succeeded thing=%s", spec.ThingName))
 }
 
 func (s *runtimeState) backgroundConnectContext(ctx context.Context) (context.Context, context.CancelFunc) {
@@ -657,6 +686,8 @@ func (s *runtimeState) publishSample(ctx context.Context, sample rigble.Capabili
 		if err == nil {
 			if err := s.ipc.PublishRetained(topic, payload); err != nil {
 				s.logger.Print(ctx, "warning", fmt.Sprintf("capability state publish failed thing=%s error=%q", sample.ThingName, err))
+			} else {
+				s.debugPrint(ctx, fmt.Sprintf("BLE capability state published thing=%s topic=%s capabilities=%s metrics=%s", sample.ThingName, topic, _jsonDebug(state.Capabilities), _jsonDebug(state.Metrics)))
 			}
 		}
 	}
@@ -707,6 +738,42 @@ func (s *runtimeState) nextSeq() uint64 {
 	seq := s.seq
 	s.seq++
 	return seq
+}
+
+func (s *runtimeState) hasSpec(thingName string) bool {
+	if thingName == "" {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.specs[thingName]
+	return ok
+}
+
+func (s *runtimeState) shouldDebugScanCandidate(name string, hasTxingService bool, knownTarget bool) bool {
+	return s.cfg.Debug && (hasTxingService || knownTarget || looksLikeTxingThingName(name))
+}
+
+func (s *runtimeState) debugPrint(ctx context.Context, message string) {
+	if !s.cfg.Debug {
+		return
+	}
+	s.logger.Print(ctx, "debug", message)
+}
+
+func looksLikeTxingThingName(name string) bool {
+	return strings.HasPrefix(name, "unit-") ||
+		strings.HasPrefix(name, "power-") ||
+		strings.HasPrefix(name, "weather-")
+}
+
+func scanServiceUUIDs(result bluetooth.ScanResult) []string {
+	uuids := result.ServiceUUIDs()
+	values := make([]string, 0, len(uuids))
+	for _, uuid := range uuids {
+		values = append(values, uuid.String())
+	}
+	return values
 }
 
 func _jsonDebug(value any) string {

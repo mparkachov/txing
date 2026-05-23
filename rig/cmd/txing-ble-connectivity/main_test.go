@@ -142,6 +142,40 @@ func TestScanRetryDecisionKeepsGenericBackoff(t *testing.T) {
 	}
 }
 
+func TestLooksLikeTxingThingName(t *testing.T) {
+	for _, name := range []string{"unit-wrd8ti", "power-asw355", "weather-ebkwfx"} {
+		if !looksLikeTxingThingName(name) {
+			t.Fatalf("%s should be treated as txing-like", name)
+		}
+	}
+	for _, name := range []string{"", "Phone", "my-unit-1", "sensor-weather"} {
+		if looksLikeTxingThingName(name) {
+			t.Fatalf("%s should not be treated as txing-like", name)
+		}
+	}
+}
+
+func TestDebugScanCandidateRequiresDebugAndRelevance(t *testing.T) {
+	state := &runtimeState{cfg: rigconfig.Config{Debug: true}}
+	if !state.shouldDebugScanCandidate("unit-wrd8ti", false, false) {
+		t.Fatal("txing-like names should be logged in debug mode")
+	}
+	if !state.shouldDebugScanCandidate("Phone", true, false) {
+		t.Fatal("txing service candidates should be logged in debug mode")
+	}
+	if !state.shouldDebugScanCandidate("managed-thing", false, true) {
+		t.Fatal("known inventory targets should be logged in debug mode")
+	}
+	if state.shouldDebugScanCandidate("Phone", false, false) {
+		t.Fatal("irrelevant candidates should not be logged")
+	}
+
+	state.cfg.Debug = false
+	if state.shouldDebugScanCandidate("unit-wrd8ti", true, true) {
+		t.Fatal("scan candidate logs must be disabled when debug is false")
+	}
+}
+
 func TestDiscoveryUUIDsOnlyRequireWeatherForWeatherDevices(t *testing.T) {
 	state := testRuntimeStateWithUUIDs(t)
 	powerUUIDs := state.discoveryUUIDs(rigble.DeviceSpec{ThingName: "unit-1", Kind: rigble.DeviceKindPower})
