@@ -84,9 +84,19 @@ if(TXING_KVS_GRPC_BRIDGE)
     ABSOLUTE
   )
   set(
-    TXING_BOARD_VIDEO_PROTO
-    "${TXING_BOARD_VIDEO_PROTO_ROOT}/txing/unit/board_video/v1/board_video.proto"
+    TXING_BOARD_VIDEO_PROTO_RELATIVE
+    "txing/unit/board_video/v1/board_video.proto"
   )
+  set(
+    TXING_BOARD_VIDEO_PROTO
+    "${TXING_BOARD_VIDEO_PROTO_ROOT}/${TXING_BOARD_VIDEO_PROTO_RELATIVE}"
+  )
+  if(NOT EXISTS "${TXING_BOARD_VIDEO_PROTO}")
+    message(FATAL_ERROR
+      "BoardVideoBridge proto not found at '${TXING_BOARD_VIDEO_PROTO}'. "
+      "The repository checkout must include devices/unit/proto."
+    )
+  endif()
   set(TXING_BOARD_VIDEO_PROTO_GEN_DIR
       "${CMAKE_CURRENT_BINARY_DIR}/generated")
   set(TXING_BOARD_VIDEO_PROTO_SRCS
@@ -100,12 +110,13 @@ if(TXING_KVS_GRPC_BRIDGE)
     OUTPUT ${TXING_BOARD_VIDEO_PROTO_SRCS} ${TXING_BOARD_VIDEO_PROTO_HDRS}
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${TXING_BOARD_VIDEO_PROTO_GEN_DIR}"
     COMMAND protobuf::protoc
-      --proto_path="${TXING_BOARD_VIDEO_PROTO_ROOT}"
+      --proto_path "${TXING_BOARD_VIDEO_PROTO_ROOT}"
       --cpp_out="${TXING_BOARD_VIDEO_PROTO_GEN_DIR}"
       --grpc_out="${TXING_BOARD_VIDEO_PROTO_GEN_DIR}"
       --plugin=protoc-gen-grpc="${GRPC_CPP_PLUGIN_EXECUTABLE}"
-      "${TXING_BOARD_VIDEO_PROTO}"
+      "${TXING_BOARD_VIDEO_PROTO_RELATIVE}"
     DEPENDS "${TXING_BOARD_VIDEO_PROTO}"
+    WORKING_DIRECTORY "${TXING_BOARD_VIDEO_PROTO_ROOT}"
     VERBATIM
   )
   add_library(txing_board_video_bridge_proto OBJECT ${TXING_BOARD_VIDEO_PROTO_SRCS})

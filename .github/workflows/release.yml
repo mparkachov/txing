@@ -556,6 +556,7 @@ jobs:
           native_kvs_master_dir="$project_root/devices/unit/board/kvs_master"
           native_kvs_master_build_dir="$native_kvs_master_dir/build"
           common_board_dir="$project_root/devices/common/board"
+          board_video_proto="$project_root/devices/unit/proto/txing/unit/board_video/v1/board_video.proto"
           aws_kvs_sdk_dir="$project_root/modules/awslabs/amazon-kinesis-video-streams-webrtc-sdk-c"
           aws_kvs_sdk_commit="bb106510cf74edd2c24881c1ae94ceaa0083d15c"
           aws_kvs_sdk_build_dir="$common_board_dir/aws-kvs-webrtc-sdk-build"
@@ -565,6 +566,13 @@ jobs:
 
           git config --global --add safe.directory "$PWD"
           git config --global --add safe.directory "$PWD/modules/awslabs/amazon-kinesis-video-streams-webrtc-sdk-c"
+          git ls-tree -r HEAD -- devices/unit/proto
+          if [ ! -f "$board_video_proto" ]; then
+            echo "BoardVideoBridge proto missing from checkout: $board_video_proto" >&2
+            git status --short >&2
+            find devices/unit -maxdepth 3 -type d | sort >&2
+            exit 1
+          fi
           git -C "$project_root" submodule update --init --recursive -- modules/awslabs/amazon-kinesis-video-streams-webrtc-sdk-c
           git -C "$aws_kvs_sdk_dir" fetch --depth=1 origin "$aws_kvs_sdk_commit"
           git -C "$aws_kvs_sdk_dir" checkout --detach "$aws_kvs_sdk_commit"
