@@ -557,12 +557,37 @@ func mustJSON(t *testing.T, payload []byte, target interface{}) {
 
 func shortUnixSocketPath(t *testing.T, name string) string {
 	t.Helper()
-	dir := filepath.Join("/private/tmp", fmt.Sprintf("txing-daemon-%d-%d", os.Getpid(), time.Now().UnixNano()))
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		t.Fatalf("create short temp dir: %v", err)
+	candidates := []string{os.Getenv("TXING_TEST_UNIX_SOCKET_DIR"), "/tmp", os.TempDir(), t.TempDir()}
+	var lastErr error
+	for _, base := range candidates {
+		if base == "" {
+			continue
+		}
+		info, err := os.Stat(base)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if !info.IsDir() {
+			lastErr = fmt.Errorf("%s is not a directory", base)
+			continue
+		}
+		dir, err := os.MkdirTemp(base, fmt.Sprintf("txing-daemon-%d-", os.Getpid()))
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		socketPath := filepath.Join(dir, name)
+		if len(socketPath) >= 100 {
+			_ = os.RemoveAll(dir)
+			lastErr = fmt.Errorf("unix socket path too long: %s", socketPath)
+			continue
+		}
+		t.Cleanup(func() { _ = os.RemoveAll(dir) })
+		return socketPath
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	return filepath.Join(dir, name)
+	t.Fatalf("create short temp dir: %v", lastErr)
+	return ""
 }
 
 func ptrString(value string) *string {
