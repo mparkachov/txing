@@ -1,5 +1,5 @@
 package daemon
 
-const packageVersion = "0.12.2"
+const packageVersion = "0.12.3"
 
 var DaemonVersion = packageVersion
