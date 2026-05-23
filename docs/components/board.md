@@ -409,6 +409,7 @@ cat >/etc/systemd/system/txing-unit-daemon.service <<'EOF'
 Description=Txing Unit Daemon
 Wants=network-online.target systemd-time-wait-sync.service
 After=network-online.target systemd-time-wait-sync.service time-sync.target
+PartOf=txing-board.target
 StartLimitIntervalSec=10min
 StartLimitBurst=5
 
@@ -437,6 +438,7 @@ cat >/etc/systemd/system/txing-board-kvs-master.service <<'EOF'
 Description=Txing Board KVS Master
 Wants=network-online.target txing-unit-daemon.service
 After=network-online.target txing-unit-daemon.service
+PartOf=txing-board.target
 StartLimitIntervalSec=10min
 StartLimitBurst=5
 
@@ -499,6 +501,7 @@ journalctl -u txing-board-kvs-master.service -n 160 --no-pager
 Expected:
 
 - `txing-board.target` is active and includes both board services
+- stopping or restarting `txing-board.target` propagates to both services
 - the daemon log includes `version=<release-version>`
 - the daemon binds `/run/txing-unit-daemon/board-video-bridge.sock`
 - MQTT connects

@@ -515,6 +515,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("cat >/etc/systemd/system/txing-board.target", board_docs)
         self.assertIn("Wants=txing-unit-daemon.service txing-board-kvs-master.service", board_docs)
         self.assertIn("WantedBy=txing-board.target", board_docs)
+        self.assertIn("PartOf=txing-board.target", board_docs)
         self.assertIn("systemctl enable txing-board.target", board_docs)
         self.assertIn("txing-board-kvs-master.service", board_docs)
         self.assertIn(
@@ -564,6 +565,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("dynamic `mcp`", board_docs)
         self.assertIn("txing-board-kvs-master-linux-aarch64.tar.gz", artifacts_docs)
         self.assertIn("/etc/systemd/system/txing-board.target", artifacts_docs)
+        self.assertIn("PartOf=txing-board.target", artifacts_docs)
         self.assertIn("txing-board.target", installation_docs)
         self.assertIn("txing-board.target", board_docs)
         self.assertNotIn("TXING_KVS_MASTER_COMMAND", board_docs)
@@ -582,7 +584,7 @@ class VersionEnvironmentTests(unittest.TestCase):
             artifacts_docs,
         )
         self.assertIn("do not invoke mise", artifacts_docs)
-        self.assertIn("depend on generated shims", artifacts_docs)
+        self.assertIn("generated shims", artifacts_docs)
         self.assertIn("Service starts are offline", board_docs)
         self.assertIn("Release does not upgrade a board", artifacts_docs)
         self.assertIn("keeps the newest 10 project", artifacts_docs)

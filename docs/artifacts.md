@@ -124,9 +124,10 @@ run `ldd` on the installed `latest` binary before rebooting.
 The `txing-board.target` unit groups the daemon and KVS master services for
 boot. The board systemd units start the root-owned binaries under mise's
 `latest` install paths. The daemon owns the local BoardVideoBridge gRPC socket.
-The KVS master connects as a separate service. Restarts do not invoke mise or
-call GitHub. They do not depend on generated shims or use separate wrapper
-scripts.
+The KVS master connects as a separate service. Both services declare
+`PartOf=txing-board.target`, so stopping or restarting the target propagates to
+the services. Restarts do not invoke mise or call GitHub. They do not depend on
+generated shims. They do not use separate wrapper scripts.
 Publishing a new GitHub Release does not upgrade a board; the operator must log
 in to the board, switch to root, run `root-rw`, run root-owned `mise upgrade`,
 verify versions, sync, and reboot.
