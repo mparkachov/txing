@@ -172,6 +172,34 @@ func TestConnectionHoldTokensSupersedeOlderHolds(t *testing.T) {
 	}
 }
 
+func TestBackgroundConnectSkippedWhileStateReadIsFresh(t *testing.T) {
+	now := time.Unix(100, 0)
+	state := &runtimeState{
+		cfg:         rigconfig.Config{ReconnectDelay: 2 * time.Second},
+		lastConnect: map[string]time.Time{},
+	}
+	state.recordStateRead("unit-1", now)
+
+	if state.shouldBackgroundConnectAt("unit-1", now.Add(time.Second)) {
+		t.Fatal("fresh connected state should suppress background GATT refresh")
+	}
+
+	staleAt := now.Add(time.Duration(rigble.BLEActiveMeasurementStaleMS) * time.Millisecond)
+	if !state.shouldBackgroundConnectAt("unit-1", staleAt) {
+		t.Fatal("stale connected state should allow background GATT refresh")
+	}
+}
+
+func TestBackgroundConnectSkippedWhileDeviceConnectActive(t *testing.T) {
+	state := &runtimeState{
+		activeConnects: map[string]chan struct{}{"unit-1": make(chan struct{})},
+		lastConnect:    map[string]time.Time{},
+	}
+	if state.shouldBackgroundConnectAt("unit-1", time.Unix(100, 0)) {
+		t.Fatal("active per-device connect should suppress another background refresh")
+	}
+}
+
 func TestAdvertisementAddressCachedBeforeInventory(t *testing.T) {
 	state := &runtimeState{}
 	state.recordAdvertisementAddress("weather-1", bluetooth.Address{})

@@ -417,13 +417,30 @@ func (s *runtimeState) backgroundConnectContext(ctx context.Context) (context.Co
 }
 
 func (s *runtimeState) shouldBackgroundConnect(thingName string) bool {
+	return s.shouldBackgroundConnectAt(thingName, time.Now())
+}
+
+func (s *runtimeState) shouldBackgroundConnectAt(thingName string, now time.Time) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	last := s.lastConnect[thingName]
-	if time.Since(last) < s.cfg.ReconnectDelay {
+	if _, active := s.activeConnects[thingName]; active {
 		return false
 	}
-	s.lastConnect[thingName] = time.Now()
+	if _, held := s.connectionHolds[thingName]; held {
+		return false
+	}
+	lastStateRead := s.lastStateRead[thingName]
+	if !lastStateRead.IsZero() && now.Sub(lastStateRead) < time.Duration(rigble.BLEActiveMeasurementStaleMS)*time.Millisecond {
+		return false
+	}
+	last := s.lastConnect[thingName]
+	if now.Sub(last) < s.cfg.ReconnectDelay {
+		return false
+	}
+	if s.lastConnect == nil {
+		s.lastConnect = map[string]time.Time{}
+	}
+	s.lastConnect[thingName] = now
 	return true
 }
 
