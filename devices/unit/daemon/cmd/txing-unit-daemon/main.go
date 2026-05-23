@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/mparkachov/txing/devices/unit/daemon/internal/daemon"
 )
@@ -17,10 +20,15 @@ func main() {
 		fmt.Printf("txing-unit-daemon %s\n", daemon.DaemonVersion)
 		return
 	}
-	if _, err := daemon.RuntimeConfigFromCLI(cli); err != nil {
+	config, err := daemon.RuntimeConfigFromCLI(cli)
+	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	fmt.Fprintln(os.Stderr, "txing-unit-daemon Go runtime is not implemented in this milestone")
-	os.Exit(1)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if err := daemon.RunRuntime(ctx, config); err != nil && err != context.Canceled {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 }
