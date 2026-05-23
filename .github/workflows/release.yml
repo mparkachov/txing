@@ -546,6 +546,11 @@ jobs:
             libusrsctp-dev libwebsockets-dev zlib1g-dev libcamera-dev \
             libprotobuf-dev protobuf-compiler libgrpc++-dev protobuf-compiler-grpc
           apt-cache policy libcamera-dev libcamera0.7
+          protoc --version
+          grpc_cpp_plugin_path="$(command -v grpc_cpp_plugin)"
+          test -x "$grpc_cpp_plugin_path"
+          file "$grpc_cpp_plugin_path"
+          ldd "$grpc_cpp_plugin_path"
 
       - name: Build native KVS master
         shell: bash
@@ -555,17 +560,11 @@ jobs:
           project_root="$PWD"
           native_kvs_master_dir="$project_root/devices/unit/board/kvs_master"
           native_kvs_master_build_dir="$native_kvs_master_dir/build"
-          common_board_dir="$project_root/devices/common/board"
           board_video_proto="$project_root/devices/unit/proto/txing/unit/board_video/v1/board_video.proto"
-          aws_kvs_sdk_dir="$project_root/modules/awslabs/amazon-kinesis-video-streams-webrtc-sdk-c"
           aws_kvs_sdk_commit="bb106510cf74edd2c24881c1ae94ceaa0083d15c"
-          aws_kvs_sdk_build_dir="$common_board_dir/aws-kvs-webrtc-sdk-build"
-          aws_kvs_sdk_install_dir="$common_board_dir/aws-kvs-webrtc-sdk-install"
-          aws_kvs_sdk_system_deps_dir="$common_board_dir/aws-kvs-webrtc-sdk-system-deps"
           default_kvs_system_ca_cert_path="${TXING_BOARD_KVS_SYSTEM_CA_CERT_PATH:-/etc/ssl/certs/Starfield_Services_Root_Certificate_Authority_-_G2.pem}"
 
           git config --global --add safe.directory "$PWD"
-          git config --global --add safe.directory "$PWD/modules/awslabs/amazon-kinesis-video-streams-webrtc-sdk-c"
           git ls-tree -r HEAD -- devices/unit/proto
           if [ ! -f "$board_video_proto" ]; then
             echo "BoardVideoBridge proto missing from checkout: $board_video_proto" >&2
@@ -573,54 +572,9 @@ jobs:
             find devices/unit -maxdepth 3 -type d | sort >&2
             exit 1
           fi
-          git -C "$project_root" submodule update --init --recursive -- modules/awslabs/amazon-kinesis-video-streams-webrtc-sdk-c
-          git -C "$aws_kvs_sdk_dir" fetch --depth=1 origin "$aws_kvs_sdk_commit"
-          git -C "$aws_kvs_sdk_dir" checkout --detach "$aws_kvs_sdk_commit"
-
-          rm -rf "$aws_kvs_sdk_build_dir" "$aws_kvs_sdk_install_dir" "$aws_kvs_sdk_system_deps_dir"
-          mkdir -p "$aws_kvs_sdk_system_deps_dir/lib" "$aws_kvs_sdk_system_deps_dir/include"
 
           openssl_libdir="$(pkg-config --variable=libdir openssl)"
           openssl_includedir="$(pkg-config --variable=includedir openssl)"
-          openssl_ssl_library="$openssl_libdir/libssl.so"
-          openssl_crypto_library="$openssl_libdir/libcrypto.so"
-          test -f "$openssl_ssl_library"
-          test -f "$openssl_crypto_library"
-
-          for library in srtp2 usrsctp log4cplus curl websockets z ssl crypto; do
-            library_path="$(cc -print-file-name="lib${library}.so")"
-            if [ "$library_path" = "lib${library}.so" ] || [ ! -f "$library_path" ]; then
-              echo "System lib${library}.so not found" >&2
-              exit 1
-            fi
-            ln -s "$library_path" "$aws_kvs_sdk_system_deps_dir/lib/lib${library}.so"
-            ln -s "$library_path" "$aws_kvs_sdk_system_deps_dir/lib${library}.so"
-          done
-
-          cmake \
-            -S "$aws_kvs_sdk_dir" \
-            -B "$aws_kvs_sdk_build_dir" \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_INSTALL_PREFIX="$aws_kvs_sdk_install_dir" \
-            -DOPEN_SRC_INSTALL_PREFIX="$aws_kvs_sdk_system_deps_dir" \
-            -DBUILD_DEPENDENCIES=OFF \
-            -DBUILD_SAMPLE=OFF \
-            -DBUILD_TEST=OFF \
-            -DBUILD_BENCHMARK=OFF \
-            -DBUILD_STATIC_LIBS=ON \
-            -DUSE_OPENSSL=ON \
-            -DUSE_MBEDTLS=OFF \
-            -DOPENSSL_USE_STATIC_LIBS=FALSE \
-            -DOPENSSL_INCLUDE_DIR="$openssl_includedir" \
-            -DOPENSSL_SSL_LIBRARY="$openssl_ssl_library" \
-            -DOPENSSL_CRYPTO_LIBRARY="$openssl_crypto_library"
-          cmake --build "$aws_kvs_sdk_build_dir" --config Release
-          cmake --install "$aws_kvs_sdk_build_dir" --config Release
-
-          cp -a "$aws_kvs_sdk_system_deps_dir/include/com" "$aws_kvs_sdk_install_dir/include/"
-          for aws_library in kvsCommonLws kvspicUtils kvspicState; do
-            cp -a "$aws_kvs_sdk_system_deps_dir/lib/lib${aws_library}.a" "$aws_kvs_sdk_install_dir/lib/"
-          done
 
           cmake \
             -S "$native_kvs_master_dir" \
@@ -629,12 +583,11 @@ jobs:
             -DBUILD_TESTING=OFF \
             -DTXING_KVS_SYSTEM_CA_CERT_PATH="$default_kvs_system_ca_cert_path" \
             -DTXING_KVS_GRPC_BRIDGE=ON \
-            -DTXING_KVS_WEBRTC_SDK_DIR="$aws_kvs_sdk_dir" \
-            -DTXING_KVS_WEBRTC_SDK_INSTALL_DIR="$aws_kvs_sdk_install_dir" \
+            -DTXING_AWS_KVS_WEBRTC_SDK_GIT_TAG="$aws_kvs_sdk_commit" \
             -DOPENSSL_USE_STATIC_LIBS=FALSE \
             -DOPENSSL_INCLUDE_DIR="$openssl_includedir" \
-            -DOPENSSL_SSL_LIBRARY="$openssl_ssl_library" \
-            -DOPENSSL_CRYPTO_LIBRARY="$openssl_crypto_library"
+            -DOPENSSL_SSL_LIBRARY="$openssl_libdir/libssl.so" \
+            -DOPENSSL_CRYPTO_LIBRARY="$openssl_libdir/libcrypto.so"
           cmake --build "$native_kvs_master_build_dir" --config Release
 
           ldd devices/unit/board/kvs_master/build/txing-board-kvs-master

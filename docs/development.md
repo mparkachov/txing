@@ -176,7 +176,6 @@ Board:
 ```bash
 just unit::daemon::run
 just unit::daemon::test
-just unit::daemon::kvs-submodules
 just unit::daemon::kvs-build-native
 just unit::daemon::kvs-test-native
 ```

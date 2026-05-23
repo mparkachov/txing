@@ -613,17 +613,15 @@ Daemon and native KVS worker commands:
 ```bash
 just unit::daemon::test
 just unit::daemon::run
-just unit::daemon::kvs-submodules
 just unit::daemon::kvs-build-native
 just unit::daemon::kvs-test-native
 ```
 
-`kvs-build-native` builds `txing-board-kvs-master` against the shared AWS KVS
-WebRTC SDK submodule under `devices/common/board/` and enables the
-BoardVideoBridge gRPC client on Linux. Initialize the SDK with
-`just unit::daemon::kvs-submodules` before the first native build. Third-party
-KVS, protobuf, and gRPC dependencies come from distro packages, not from the
-SDK's bundled source builds.
+`kvs-build-native` builds `txing-board-kvs-master` and lets the worker CMake
+project fetch the pinned AWS KVS WebRTC SDK into the local build directory. It
+enables the BoardVideoBridge gRPC client on Linux. Third-party KVS, protobuf,
+and gRPC dependencies come from distro packages, not from the SDK's bundled
+source builds.
 
 Direct raw motor bring-up is no longer supported. Live motion testing goes
 through the Rust daemon MCP `cmd_vel` path, including the active-control lease

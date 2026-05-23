@@ -1,6 +1,3 @@
 [submodule "nrfconnect/sdk-nrf"]
 	path = modules/nrfconnect/sdk-nrf
 	url = https://github.com/nrfconnect/sdk-nrf.git
-[submodule "awslabs/amazon-kinesis-video-streams-webrtc-sdk-c"]
-	path = modules/awslabs/amazon-kinesis-video-streams-webrtc-sdk-c
-	url = https://github.com/awslabs/amazon-kinesis-video-streams-webrtc-sdk-c.git

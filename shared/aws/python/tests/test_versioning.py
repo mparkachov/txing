@@ -341,10 +341,10 @@ class VersionEnvironmentTests(unittest.TestCase):
 
     def test_release_publishes_only_project_assets(self) -> None:
         workflow = (
-            REPO_ROOT / ".github" / "workflows" / "txing-release.yml"
+            REPO_ROOT / ".github" / "workflows" / "release.yml"
         ).read_text(encoding="utf-8")
 
-        self.assertIn("name: Txing Release", workflow)
+        self.assertIn("name: Release", workflow)
         self.assertIn("metadata:", workflow)
         self.assertIn("build-rust-binary:", workflow)
         self.assertIn("build-go-rig-binary:", workflow)
@@ -354,28 +354,26 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("publish:", workflow)
         self.assertIn("strategy:", workflow)
         self.assertIn("matrix:", workflow)
-        self.assertIn("actions/upload-artifact@v4", workflow)
-        self.assertIn("actions/download-artifact@v4", workflow)
+        self.assertIn("actions/upload-artifact@v7", workflow)
+        self.assertIn("actions/download-artifact@v8", workflow)
         self.assertIn("merge-multiple: true", workflow)
         self.assertIn("txing-unit-daemon-linux-aarch64.tar.gz", workflow)
         self.assertIn("txing-board-kvs-master-linux-aarch64.tar.gz", workflow)
-        self.assertIn("KVS_MASTER_BUILD_IMAGE: debian:trixie", workflow)
         self.assertIn("KVS_MASTER_BINARY: txing-board-kvs-master", workflow)
-        self.assertIn("Build native KVS master in Trixie container", workflow)
-        self.assertIn("docker run --rm -i", workflow)
-        self.assertIn("just unit::daemon::kvs-submodules", workflow)
-        self.assertIn("just unit::daemon::kvs-build-native", workflow)
+        self.assertIn("container:", workflow)
+        self.assertIn("image: debian:trixie", workflow)
+        self.assertIn("Build native KVS master", workflow)
+        self.assertNotIn("docker run --rm -i", workflow)
+        self.assertNotIn("just unit::daemon::kvs-submodules", workflow)
+        self.assertNotIn("just unit::daemon::kvs-build-native", workflow)
         self.assertNotIn("just unit::board::", workflow)
         self.assertIn("URIs: https://archive.raspberrypi.com/debian/", workflow)
         self.assertIn("Trusted: yes", workflow)
         self.assertIn("apt-cache policy libcamera-dev libcamera0.7", workflow)
-        self.assertIn(
-            'git config --global --add safe.directory "$PWD/modules/awslabs/amazon-kinesis-video-streams-webrtc-sdk-c"',
-            workflow,
-        )
-        self.assertIn("curl https://mise.run | sh", workflow)
-        self.assertIn("mise/shims", workflow)
-        self.assertIn("mise use --global --yes just@latest", workflow)
+        self.assertIn("TXING_AWS_KVS_WEBRTC_SDK_GIT_TAG", workflow)
+        self.assertNotIn("curl https://mise.run | sh", workflow)
+        self.assertNotIn("mise/shims", workflow)
+        self.assertNotIn("mise use --global --yes just@latest", workflow)
         self.assertIn('grep -F "libcamera.so.0.7"', workflow)
         self.assertIn('grep -F "libcamera-base.so.0.7"', workflow)
         self.assertIn('kvs_master_build_binary="devices/unit/board/kvs_master/build/$KVS_MASTER_BINARY"', workflow)
@@ -485,8 +483,8 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn('docker_build_dir := daemon_dir + "/target/docker-build"', justfile)
         self.assertIn('docker_kvs_master_build_image := "debian:trixie"', justfile)
         self.assertIn('TXING_DAEMON_BUILD_VERSION="$version"', justfile)
-        self.assertIn("just unit::daemon::kvs-submodules", justfile)
-        self.assertIn("just unit::daemon::kvs-build-native", justfile)
+        self.assertNotIn("just unit::daemon::kvs-submodules", justfile)
+        self.assertNotIn("just unit::daemon::kvs-build-native", justfile)
         self.assertNotIn("just unit::board::", justfile)
         self.assertIn("URIs: https://archive.raspberrypi.com/debian/", justfile)
         self.assertIn("apt-cache policy libcamera-dev libcamera0.7", justfile)
@@ -514,9 +512,10 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn('asset_pattern = "txing-unit-daemon-linux-aarch64.tar.gz"', board_docs)
         self.assertIn('asset_pattern = "txing-board-kvs-master-linux-aarch64.tar.gz"', board_docs)
         self.assertIn("MISE_TRUSTED_CONFIG_PATHS=/root/.config/mise", board_docs)
+        self.assertIn("txing-board-kvs-master.service", board_docs)
         self.assertIn(
-            "Environment=TXING_KVS_MASTER_COMMAND=/root/.local/share/mise/installs/"
-            "txing-board-kvs-master/latest/txing-board-kvs-master",
+            "Environment=TXING_BOARD_VIDEO_BRIDGE_SOCKET_PATH=/run/"
+            "txing-unit-daemon/board-video-bridge.sock",
             board_docs,
         )
         self.assertIn(
@@ -560,7 +559,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("just unit::daemon::role-policy <thing-id>", board_docs)
         self.assertIn("dynamic `mcp`", board_docs)
         self.assertIn("txing-board-kvs-master-linux-aarch64.tar.gz", artifacts_docs)
-        self.assertIn("TXING_KVS_MASTER_COMMAND", board_docs)
+        self.assertNotIn("TXING_KVS_MASTER_COMMAND", board_docs)
         self.assertIn("daemon.env", installation_docs)
         self.assertIn("daemon.env", artifacts_docs)
         self.assertIn("Raspberry Pi OS Trixie", board_docs)
@@ -576,7 +575,7 @@ class VersionEnvironmentTests(unittest.TestCase):
             artifacts_docs,
         )
         self.assertIn("do not invoke mise", artifacts_docs)
-        self.assertIn("depend on\ngenerated shims", artifacts_docs)
+        self.assertIn("depend on generated shims", artifacts_docs)
         self.assertIn("Service starts are offline", board_docs)
         self.assertIn("Release does not upgrade a board", artifacts_docs)
         self.assertIn("keeps the newest 10 project", artifacts_docs)
@@ -694,11 +693,11 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn(
             "path = modules/aws-greengrass/aws-greengrass-lite", gitmodules
         )
-        self.assertIn(
+        self.assertNotIn(
             '[submodule "awslabs/amazon-kinesis-video-streams-webrtc-sdk-c"]',
             gitmodules,
         )
-        self.assertIn(
+        self.assertNotIn(
             "path = modules/awslabs/amazon-kinesis-video-streams-webrtc-sdk-c",
             gitmodules,
         )

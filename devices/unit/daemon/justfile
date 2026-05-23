@@ -15,16 +15,10 @@ native_kvs_master_dir := unit_board_dir + "/kvs_master"
 native_kvs_master_build_dir := native_kvs_master_dir + "/build"
 native_kvs_master_test_build_dir := native_kvs_master_dir + "/build-tests"
 built_native_kvs_master := native_kvs_master_build_dir + "/txing-board-kvs-master"
-aws_kvs_sdk_dir := project_root + "/modules/awslabs/amazon-kinesis-video-streams-webrtc-sdk-c"
 aws_kvs_sdk_commit := "bb106510cf74edd2c24881c1ae94ceaa0083d15c"
-aws_kvs_sdk_build_dir := common_board_dir + "/aws-kvs-webrtc-sdk-build"
-aws_kvs_sdk_install_dir := common_board_dir + "/aws-kvs-webrtc-sdk-install"
-aws_kvs_sdk_system_deps_dir := common_board_dir + "/aws-kvs-webrtc-sdk-system-deps"
-aws_kvs_sdk_install_header := aws_kvs_sdk_install_dir + "/include/com/amazonaws/kinesis/video/webrtcclient/Include.h"
-aws_kvs_sdk_install_common_header := aws_kvs_sdk_install_dir + "/include/com/amazonaws/kinesis/video/common/Include.h"
-aws_kvs_sdk_install_library := aws_kvs_sdk_install_dir + "/lib/libkvsWebrtcClient.a"
-aws_kvs_sdk_flags_file := aws_kvs_sdk_build_dir + "/CMakeFiles/kvsWebrtcSignalingClient.dir/flags.make"
-aws_kvs_sdk_state_file := aws_kvs_sdk_install_dir + "/.txing-sdk-build-state"
+legacy_aws_kvs_sdk_build_dir := common_board_dir + "/aws-kvs-webrtc-sdk-build"
+legacy_aws_kvs_sdk_install_dir := common_board_dir + "/aws-kvs-webrtc-sdk-install"
+legacy_aws_kvs_sdk_system_deps_dir := common_board_dir + "/aws-kvs-webrtc-sdk-system-deps"
 default_kvs_system_ca_cert_path := env_var_or_default("TXING_BOARD_KVS_SYSTEM_CA_CERT_PATH", "/etc/ssl/certs/Starfield_Services_Root_Certificate_Authority_-_G2.pem")
 
 config_dir := ""
@@ -159,10 +153,6 @@ docker-builder-shell:
       "$image" \
       sh
 
-@_kvs-ensure-aws-sdk-submodule:
-    test -f "{{aws_kvs_sdk_dir}}/CMakeLists.txt" || { echo "missing AWS KVS WebRTC SDK submodule. Run: just unit::daemon::kvs-submodules" >&2; exit 1; }
-    test "$(git -C "{{aws_kvs_sdk_dir}}" rev-parse HEAD)" = "{{aws_kvs_sdk_commit}}" || { echo "AWS KVS WebRTC SDK submodule is not at {{aws_kvs_sdk_commit}}. Run: just unit::daemon::kvs-submodules" >&2; exit 1; }
-
 @_kvs-check-system-dependencies:
     #!/bin/sh
     set -eu
@@ -209,96 +199,14 @@ docker-builder-shell:
         exit 1
     fi
 
-@kvs-submodules:
-    git -C "{{project_root}}" submodule update --init --recursive -- modules/awslabs/amazon-kinesis-video-streams-webrtc-sdk-c
-    git -C "{{aws_kvs_sdk_dir}}" fetch --depth=1 origin "{{aws_kvs_sdk_commit}}"
-    git -C "{{aws_kvs_sdk_dir}}" checkout --detach "{{aws_kvs_sdk_commit}}"
-
-@kvs-build-aws-sdk: _kvs-ensure-aws-sdk-submodule
-    #!/bin/sh
-    set -eu
-    just --justfile "{{daemon_justfile}}" _kvs-check-system-dependencies
-    if [ "$(uname -s)" != "Linux" ]; then
-        echo "kvs-build-aws-sdk uses apt/distro system dependencies and must run on the Linux board host." >&2
-        exit 1
-    fi
-    rm -rf "{{aws_kvs_sdk_build_dir}}" "{{aws_kvs_sdk_install_dir}}" "{{aws_kvs_sdk_system_deps_dir}}"
-    mkdir -p "{{aws_kvs_sdk_system_deps_dir}}/lib" "{{aws_kvs_sdk_system_deps_dir}}/include"
-    openssl_libdir="$(pkg-config --variable=libdir openssl)"
-    openssl_includedir="$(pkg-config --variable=includedir openssl)"
-    openssl_ssl_library="$openssl_libdir/libssl.so"
-    openssl_crypto_library="$openssl_libdir/libcrypto.so"
-    if [ ! -f "$openssl_ssl_library" ] || [ ! -f "$openssl_crypto_library" ]; then
-        echo "Expected shared OpenSSL libraries were not found under $openssl_libdir" >&2
-        exit 1
-    fi
-
-    for library in srtp2 usrsctp log4cplus curl websockets z ssl crypto; do
-        library_path="$(cc -print-file-name="lib${library}.so")"
-        if [ "$library_path" = "lib${library}.so" ] || [ ! -f "$library_path" ]; then
-            echo "System lib${library}.so not found; install the matching distro development package" >&2
-            exit 1
-        fi
-        ln -s "$library_path" "{{aws_kvs_sdk_system_deps_dir}}/lib/lib${library}.so"
-        ln -s "$library_path" "{{aws_kvs_sdk_system_deps_dir}}/lib${library}.so"
-    done
-    cmake \
-        -S "{{aws_kvs_sdk_dir}}" \
-        -B "{{aws_kvs_sdk_build_dir}}" \
-        -DCMAKE_BUILD_TYPE=Release \
-        -DCMAKE_INSTALL_PREFIX="{{aws_kvs_sdk_install_dir}}" \
-        -DOPEN_SRC_INSTALL_PREFIX="{{aws_kvs_sdk_system_deps_dir}}" \
-        -DBUILD_DEPENDENCIES=OFF \
-        -DBUILD_SAMPLE=OFF \
-        -DBUILD_TEST=OFF \
-        -DBUILD_BENCHMARK=OFF \
-        -DBUILD_STATIC_LIBS=ON \
-        -DUSE_OPENSSL=ON \
-        -DUSE_MBEDTLS=OFF \
-        -DOPENSSL_USE_STATIC_LIBS=FALSE \
-        -DOPENSSL_INCLUDE_DIR="$openssl_includedir" \
-        -DOPENSSL_SSL_LIBRARY="$openssl_ssl_library" \
-        -DOPENSSL_CRYPTO_LIBRARY="$openssl_crypto_library"
-    cmake --build "{{aws_kvs_sdk_build_dir}}" --config Release
-    cmake --install "{{aws_kvs_sdk_build_dir}}" --config Release
-    if [ ! -f "{{aws_kvs_sdk_system_deps_dir}}/include/com/amazonaws/kinesis/video/common/Include.h" ]; then
-        echo "Expected AWS SDK support headers were not built under {{aws_kvs_sdk_system_deps_dir}}/include" >&2
-        exit 1
-    fi
-    cp -a "{{aws_kvs_sdk_system_deps_dir}}/include/com" "{{aws_kvs_sdk_install_dir}}/include/"
-    for aws_library in kvsCommonLws kvspicUtils kvspicState; do
-        source_library="{{aws_kvs_sdk_system_deps_dir}}/lib/lib${aws_library}.a"
-        if [ ! -f "$source_library" ]; then
-            echo "Expected AWS SDK support library was not built: $source_library" >&2
-            exit 1
-        fi
-        cp -a "$source_library" "{{aws_kvs_sdk_install_dir}}/lib/"
-    done
-    sdk_head="$(git -C "{{aws_kvs_sdk_dir}}" rev-parse HEAD)"
-    printf 'sdk_head=%s\nbuild_dependencies=OFF\ndependency_source=system\n' "$sdk_head" > "{{aws_kvs_sdk_state_file}}"
-
-@kvs-ensure-aws-sdk: _kvs-ensure-aws-sdk-submodule
-    #!/bin/sh
-    set -eu
-    sdk_head="$(git -C "{{aws_kvs_sdk_dir}}" rev-parse HEAD)"
-    if [ ! -f "{{aws_kvs_sdk_install_header}}" ] || [ ! -f "{{aws_kvs_sdk_install_common_header}}" ] || [ ! -f "{{aws_kvs_sdk_install_library}}" ] || [ ! -f "{{aws_kvs_sdk_install_dir}}/lib/libkvsCommonLws.a" ] || [ ! -f "{{aws_kvs_sdk_install_dir}}/lib/libkvspicUtils.a" ] || [ ! -f "{{aws_kvs_sdk_install_dir}}/lib/libkvspicState.a" ] || [ ! -f "{{aws_kvs_sdk_state_file}}" ]; then
-        just --justfile "{{daemon_justfile}}" kvs-build-aws-sdk
-    elif ! grep -Fqx "sdk_head=$sdk_head" "{{aws_kvs_sdk_state_file}}"; then
-        just --justfile "{{daemon_justfile}}" kvs-build-aws-sdk
-    elif ! grep -Fqx "build_dependencies=OFF" "{{aws_kvs_sdk_state_file}}"; then
-        just --justfile "{{daemon_justfile}}" kvs-build-aws-sdk
-    elif ! grep -Fqx "dependency_source=system" "{{aws_kvs_sdk_state_file}}"; then
-        just --justfile "{{daemon_justfile}}" kvs-build-aws-sdk
-    elif [ "$(uname -s)" = "Linux" ] && { [ ! -f "{{aws_kvs_sdk_flags_file}}" ] || grep -E -q 'KVS_CA_CERT_PATH=|CMAKE_DETECTED_CACERT_PATH' "{{aws_kvs_sdk_flags_file}}"; }; then
-        just --justfile "{{daemon_justfile}}" kvs-build-aws-sdk
-    fi
-
 @kvs-build-native:
     #!/bin/sh
     set -eu
+    if [ -f "{{native_kvs_master_build_dir}}/CMakeCache.txt" ] && grep -Fq "TXING_KVS_WEBRTC_SDK_" "{{native_kvs_master_build_dir}}/CMakeCache.txt"; then
+        rm -rf "{{native_kvs_master_build_dir}}"
+    fi
     if [ "$(uname -s)" = "Linux" ]; then
         just --justfile "{{daemon_justfile}}" _kvs-check-system-dependencies
-        just --justfile "{{daemon_justfile}}" kvs-ensure-aws-sdk
         openssl_libdir="$(pkg-config --variable=libdir openssl)"
         openssl_includedir="$(pkg-config --variable=includedir openssl)"
         cmake \
@@ -308,8 +216,7 @@ docker-builder-shell:
             -DBUILD_TESTING=OFF \
             -DTXING_KVS_SYSTEM_CA_CERT_PATH="{{default_kvs_system_ca_cert_path}}" \
             -DTXING_KVS_GRPC_BRIDGE=ON \
-            -DTXING_KVS_WEBRTC_SDK_DIR="{{aws_kvs_sdk_dir}}" \
-            -DTXING_KVS_WEBRTC_SDK_INSTALL_DIR="{{aws_kvs_sdk_install_dir}}" \
+            -DTXING_AWS_KVS_WEBRTC_SDK_GIT_TAG="{{aws_kvs_sdk_commit}}" \
             -DOPENSSL_USE_STATIC_LIBS=FALSE \
             -DOPENSSL_INCLUDE_DIR="$openssl_includedir" \
             -DOPENSSL_SSL_LIBRARY="$openssl_libdir/libssl.so" \
@@ -321,9 +228,7 @@ docker-builder-shell:
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_TESTING=OFF \
             -DTXING_KVS_SYSTEM_CA_CERT_PATH="{{default_kvs_system_ca_cert_path}}" \
-            -DTXING_KVS_GRPC_BRIDGE=OFF \
-            -DTXING_KVS_WEBRTC_SDK_DIR="{{aws_kvs_sdk_dir}}" \
-            -DTXING_KVS_WEBRTC_SDK_INSTALL_DIR="{{aws_kvs_sdk_install_dir}}"
+            -DTXING_KVS_GRPC_BRIDGE=OFF
     fi
     cmake --build "{{native_kvs_master_build_dir}}" --config Release
     test -x "{{built_native_kvs_master}}"
@@ -334,7 +239,7 @@ docker-builder-shell:
     ctest --test-dir "{{native_kvs_master_test_build_dir}}" --output-on-failure
 
 @kvs-clean:
-    rm -rf "{{native_kvs_master_build_dir}}" "{{native_kvs_master_test_build_dir}}" "{{aws_kvs_sdk_build_dir}}" "{{aws_kvs_sdk_install_dir}}" "{{aws_kvs_sdk_system_deps_dir}}"
+    rm -rf "{{native_kvs_master_build_dir}}" "{{native_kvs_master_test_build_dir}}" "{{legacy_aws_kvs_sdk_build_dir}}" "{{legacy_aws_kvs_sdk_install_dir}}" "{{legacy_aws_kvs_sdk_system_deps_dir}}"
 
 docker-build:
     #!/bin/sh
@@ -449,13 +354,34 @@ docker-build:
       libusrsctp-dev libwebsockets-dev zlib1g-dev libcamera-dev \
       libprotobuf-dev protobuf-compiler libgrpc++-dev protobuf-compiler-grpc
     apt-cache policy libcamera-dev libcamera0.7
-    curl https://mise.run | sh
-    export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"
-    mise use --global --yes just@latest
-    git config --global --add safe.directory "$PWD"
-    git config --global --add safe.directory "$PWD/modules/awslabs/amazon-kinesis-video-streams-webrtc-sdk-c"
-    just unit::daemon::kvs-submodules
-    just unit::daemon::kvs-build-native
+    protoc --version
+    grpc_cpp_plugin_path="$(command -v grpc_cpp_plugin)"
+    test -x "$grpc_cpp_plugin_path"
+    file "$grpc_cpp_plugin_path"
+    ldd "$grpc_cpp_plugin_path"
+
+    native_kvs_master_dir="$PWD/devices/unit/board/kvs_master"
+    native_kvs_master_build_dir="$native_kvs_master_dir/build"
+    default_kvs_system_ca_cert_path="${TXING_BOARD_KVS_SYSTEM_CA_CERT_PATH:-/etc/ssl/certs/Starfield_Services_Root_Certificate_Authority_-_G2.pem}"
+    openssl_libdir="$(pkg-config --variable=libdir openssl)"
+    openssl_includedir="$(pkg-config --variable=includedir openssl)"
+    if [ -f "$native_kvs_master_build_dir/CMakeCache.txt" ] && grep -Fq "TXING_KVS_WEBRTC_SDK_" "$native_kvs_master_build_dir/CMakeCache.txt"; then
+      rm -rf "$native_kvs_master_build_dir"
+    fi
+
+    cmake \
+      -S "$native_kvs_master_dir" \
+      -B "$native_kvs_master_build_dir" \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DBUILD_TESTING=OFF \
+      -DTXING_KVS_SYSTEM_CA_CERT_PATH="$default_kvs_system_ca_cert_path" \
+      -DTXING_KVS_GRPC_BRIDGE=ON \
+      -DTXING_AWS_KVS_WEBRTC_SDK_GIT_TAG="{{aws_kvs_sdk_commit}}" \
+      -DOPENSSL_USE_STATIC_LIBS=FALSE \
+      -DOPENSSL_INCLUDE_DIR="$openssl_includedir" \
+      -DOPENSSL_SSL_LIBRARY="$openssl_libdir/libssl.so" \
+      -DOPENSSL_CRYPTO_LIBRARY="$openssl_libdir/libcrypto.so"
+    cmake --build "$native_kvs_master_build_dir" --config Release
     kvs_master_build_binary="devices/unit/board/kvs_master/build/$KVS_MASTER_BINARY"
     test -x "$kvs_master_build_binary"
     ldd "$kvs_master_build_binary"

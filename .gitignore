@@ -22,6 +22,10 @@ __pycache__/
 
 # Native dependency checkouts/build artifacts
 /devices/*/web/node_modules
+/devices/common/board/aws-kvs-webrtc-sdk-build/
+/devices/common/board/aws-kvs-webrtc-sdk-install/
+/devices/common/board/aws-kvs-webrtc-sdk-system-deps/
+/modules/awslabs/amazon-kinesis-video-streams-webrtc-sdk-c/
 
 # tmp for logs and repository-local script scratch files
 /tmp/*
