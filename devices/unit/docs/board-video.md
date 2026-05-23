@@ -10,7 +10,7 @@
   `control.activate` with `takeover: true` switches ownership
 - Field-validation status: manual field validation was completed and accepted the plain-AWS-WebRTC path from a business perspective; no lab-grade metrics dataset is recorded in-repo
 - Current implementation: `txing-unit-daemon` and the native
-  `txing-board-kvs-master` run as separate systemd services. The daemon serves
+  `txing-unit-kvs-master` run as separate systemd services. The daemon serves
   the local BoardVideoBridge gRPC socket, publishes retained video service
   topics, `rig` consumes them for REDCON readiness, and the browser uses AWS
   KVS signaling + WebRTC for the viewer path. When video is ready, MCP control
@@ -41,7 +41,7 @@ Explicit non-goals for this slice:
 - ML and other cloud-side consumers are explicitly outside the current media path.
 - A second direct operator path remains deferred. The recorded manual field validation did not justify reopening it.
 - The native sender implementation is shipped in-tree and packaged as the
-  `txing-board-kvs-master` release asset. The daemon and worker communicate
+  `txing-unit-kvs-master` release asset. The daemon and worker communicate
   through the language-neutral BoardVideoBridge gRPC contract.
 
 ## High-Level Architecture
@@ -54,7 +54,7 @@ txing-unit-daemon
   -> tracks coarse board video readiness and failures
 
 native sender command
-  -> is shipped as txing-board-kvs-master
+  -> is shipped as txing-unit-kvs-master
   -> owns the actual camera capture, encode, and KVS master session
   -> connects to BoardVideoBridge for config, credentials, state, and MCP forwarding
 

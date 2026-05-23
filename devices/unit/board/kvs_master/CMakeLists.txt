@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(txing_board_kvs_master LANGUAGES C CXX)
+project(txing_unit_kvs_master LANGUAGES C CXX)
 
 include(GNUInstallDirs)
 include(CTest)
@@ -13,12 +13,12 @@ endif()
 
 option(
   TXING_KVS_REAL_SDK
-  "Build txing-board-kvs-master against the AWS KVS WebRTC C SDK"
+  "Build txing-unit-kvs-master against the AWS KVS WebRTC C SDK"
   ${_txing_kvs_real_sdk_default}
 )
 option(
   TXING_KVS_GRPC_BRIDGE
-  "Build txing-board-kvs-master with the daemon BoardVideoBridge gRPC client"
+  "Build txing-unit-kvs-master with the daemon BoardVideoBridge gRPC client"
   OFF
 )
 
@@ -67,7 +67,7 @@ set(
 )
 
 add_library(
-  txing_board_kvs_master_lib
+  txing_unit_kvs_master_lib
   STATIC
     src/aws_env.cpp
     src/config.cpp
@@ -76,14 +76,14 @@ add_library(
 )
 
 target_include_directories(
-  txing_board_kvs_master_lib
+  txing_unit_kvs_master_lib
   PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
 )
 
-target_compile_features(txing_board_kvs_master_lib PUBLIC cxx_std_17)
+target_compile_features(txing_unit_kvs_master_lib PUBLIC cxx_std_17)
 target_compile_options(
-  txing_board_kvs_master_lib
+  txing_unit_kvs_master_lib
   PRIVATE
     -Wall
     -Wextra
@@ -142,24 +142,24 @@ if(TXING_KVS_GRPC_BRIDGE)
   target_compile_features(txing_board_video_bridge_proto PUBLIC cxx_std_17)
 
   target_sources(
-    txing_board_kvs_master_lib
+    txing_unit_kvs_master_lib
     PRIVATE
       src/board_video_bridge_grpc.cpp
       $<TARGET_OBJECTS:txing_board_video_bridge_proto>
   )
-  target_compile_definitions(txing_board_kvs_master_lib PRIVATE TXING_KVS_GRPC_BRIDGE=1)
-  target_include_directories(txing_board_kvs_master_lib PRIVATE "${TXING_BOARD_VIDEO_PROTO_GEN_DIR}")
-  target_link_libraries(txing_board_kvs_master_lib PRIVATE protobuf::libprotobuf gRPC::grpc++)
-  add_dependencies(txing_board_kvs_master_lib txing_board_video_bridge_proto)
+  target_compile_definitions(txing_unit_kvs_master_lib PRIVATE TXING_KVS_GRPC_BRIDGE=1)
+  target_include_directories(txing_unit_kvs_master_lib PRIVATE "${TXING_BOARD_VIDEO_PROTO_GEN_DIR}")
+  target_link_libraries(txing_unit_kvs_master_lib PRIVATE protobuf::libprotobuf gRPC::grpc++)
+  add_dependencies(txing_unit_kvs_master_lib txing_board_video_bridge_proto)
 else()
-  target_sources(txing_board_kvs_master_lib PRIVATE src/board_video_bridge_stub.cpp)
-  target_compile_definitions(txing_board_kvs_master_lib PRIVATE TXING_KVS_GRPC_BRIDGE=0)
+  target_sources(txing_unit_kvs_master_lib PRIVATE src/board_video_bridge_stub.cpp)
+  target_compile_definitions(txing_unit_kvs_master_lib PRIVATE TXING_KVS_GRPC_BRIDGE=0)
 endif()
 
 find_package(PkgConfig QUIET)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   if(NOT PKG_CONFIG_FOUND)
-    message(FATAL_ERROR "pkg-config is required to build txing-board-kvs-master on Linux")
+    message(FATAL_ERROR "pkg-config is required to build txing-unit-kvs-master on Linux")
   endif()
   pkg_check_modules(LIBCAMERA QUIET libcamera)
   if(NOT LIBCAMERA_FOUND)
@@ -168,14 +168,14 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-  target_sources(txing_board_kvs_master_lib PRIVATE src/video_capturer_libcamera.cpp)
-  target_include_directories(txing_board_kvs_master_lib PRIVATE ${LIBCAMERA_INCLUDE_DIRS})
-  target_compile_options(txing_board_kvs_master_lib PRIVATE ${LIBCAMERA_CFLAGS_OTHER})
-  target_link_libraries(txing_board_kvs_master_lib PRIVATE ${LIBCAMERA_LIBRARIES})
-  target_compile_definitions(txing_board_kvs_master_lib PRIVATE TXING_KVS_HAS_LIBCAMERA=1)
+  target_sources(txing_unit_kvs_master_lib PRIVATE src/video_capturer_libcamera.cpp)
+  target_include_directories(txing_unit_kvs_master_lib PRIVATE ${LIBCAMERA_INCLUDE_DIRS})
+  target_compile_options(txing_unit_kvs_master_lib PRIVATE ${LIBCAMERA_CFLAGS_OTHER})
+  target_link_libraries(txing_unit_kvs_master_lib PRIVATE ${LIBCAMERA_LIBRARIES})
+  target_compile_definitions(txing_unit_kvs_master_lib PRIVATE TXING_KVS_HAS_LIBCAMERA=1)
 else()
-  target_sources(txing_board_kvs_master_lib PRIVATE src/video_capturer_stub.cpp)
-  target_compile_definitions(txing_board_kvs_master_lib PRIVATE TXING_KVS_HAS_LIBCAMERA=0)
+  target_sources(txing_unit_kvs_master_lib PRIVATE src/video_capturer_stub.cpp)
+  target_compile_definitions(txing_unit_kvs_master_lib PRIVATE TXING_KVS_HAS_LIBCAMERA=0)
 endif()
 
 function(txing_find_system_library output_var)
@@ -190,7 +190,7 @@ function(txing_find_system_library output_var)
   if(NOT ${output_var} AND TXING_FIND_REQUIRED)
     message(FATAL_ERROR
       "Required system library '${TXING_FIND_FRIENDLY_NAME}' was not found. "
-      "Install the distro development package before building txing-board-kvs-master."
+      "Install the distro development package before building txing-unit-kvs-master."
     )
   endif()
 endfunction()
@@ -287,23 +287,23 @@ if(TXING_KVS_REAL_SDK)
   find_library(TXING_KVS_CAP_LIBRARY NAMES cap)
 
   target_sources(
-    txing_board_kvs_master_lib
+    txing_unit_kvs_master_lib
     PRIVATE
       src/kvs_session_real.cpp
   )
   target_compile_definitions(
-    txing_board_kvs_master_lib
+    txing_unit_kvs_master_lib
     PRIVATE
       TXING_KVS_REAL_SDK=1
       TXING_KVS_SYSTEM_CA_CERT_PATH=\"${TXING_KVS_SYSTEM_CA_CERT_PATH}\"
   )
   target_include_directories(
-    txing_board_kvs_master_lib
+    txing_unit_kvs_master_lib
     PRIVATE
       "${TXING_AWS_KVS_WEBRTC_SDK_INSTALL_DIR}/include"
   )
   target_link_libraries(
-    txing_board_kvs_master_lib
+    txing_unit_kvs_master_lib
     PRIVATE
       "${TXING_KVS_WEBRTC_CLIENT_LIBRARY}"
       "${TXING_KVS_WEBRTC_SIGNALING_CLIENT_LIBRARY}"
@@ -320,22 +320,22 @@ if(TXING_KVS_REAL_SDK)
       m
       "${CMAKE_DL_LIBS}"
   )
-  add_dependencies(txing_board_kvs_master_lib txing_aws_kvs_webrtc_sdk)
+  add_dependencies(txing_unit_kvs_master_lib txing_aws_kvs_webrtc_sdk)
   if(TXING_KVS_CAP_LIBRARY)
-    target_link_libraries(txing_board_kvs_master_lib PRIVATE "${TXING_KVS_CAP_LIBRARY}")
+    target_link_libraries(txing_unit_kvs_master_lib PRIVATE "${TXING_KVS_CAP_LIBRARY}")
   endif()
 else()
-  target_sources(txing_board_kvs_master_lib PRIVATE src/kvs_session_stub.cpp)
-  target_compile_definitions(txing_board_kvs_master_lib PRIVATE TXING_KVS_REAL_SDK=0)
+  target_sources(txing_unit_kvs_master_lib PRIVATE src/kvs_session_stub.cpp)
+  target_compile_definitions(txing_unit_kvs_master_lib PRIVATE TXING_KVS_REAL_SDK=0)
 endif()
 
-add_executable(txing-board-kvs-master src/main.cpp)
-target_link_libraries(txing-board-kvs-master PRIVATE txing_board_kvs_master_lib)
+add_executable(txing-unit-kvs-master src/main.cpp)
+target_link_libraries(txing-unit-kvs-master PRIVATE txing_unit_kvs_master_lib)
 
-install(TARGETS txing-board-kvs-master RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+install(TARGETS txing-unit-kvs-master RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 
 if(BUILD_TESTING)
-  add_executable(txing-board-kvs-master-tests tests/test_main.cpp)
-  target_link_libraries(txing-board-kvs-master-tests PRIVATE txing_board_kvs_master_lib)
-  add_test(NAME txing-board-kvs-master-tests COMMAND txing-board-kvs-master-tests)
+  add_executable(txing-unit-kvs-master-tests tests/test_main.cpp)
+  target_link_libraries(txing-unit-kvs-master-tests PRIVATE txing_unit_kvs_master_lib)
+  add_test(NAME txing-unit-kvs-master-tests COMMAND txing-unit-kvs-master-tests)
 endif()

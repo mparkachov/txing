@@ -315,7 +315,7 @@ func TestBoardVideoBridgeWorkerConfigAndUnixSocketEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get worker config: %v", err)
 	}
-	if workerConfig.GetRegion() != "eu-central-1" || workerConfig.GetChannelName() != "unit-local-board-video" || workerConfig.GetClientId() != "unit-local-board-kvs-master" || !workerConfig.GetPreferIpv6() {
+	if workerConfig.GetRegion() != "eu-central-1" || workerConfig.GetChannelName() != "unit-local-board-video" || workerConfig.GetClientId() != "unit-local-unit-kvs-master" || !workerConfig.GetPreferIpv6() {
 		t.Fatalf("worker config mismatch: %#v", workerConfig)
 	}
 	if _, err := client.ReportVideoState(ctx, &boardvideov1.VideoState{State: boardvideov1.VideoState_READY, ViewerCount: 1}); err != nil {

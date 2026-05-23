@@ -1,6 +1,6 @@
 # Board Video Bridge Contract
 
-`txing-unit-daemon` and `txing-board-kvs-master` communicate over a local,
+`txing-unit-daemon` and `txing-unit-kvs-master` communicate over a local,
 versioned gRPC contract. The proto source is:
 
 ```text
@@ -40,7 +40,7 @@ for the daemon to advertise WebRTC MCP transport; it is not a media-quality
 guarantee.
 
 `OpenMcpSession`, `HandleMcp`, and `CloseMcpSession` forward MCP session
-lifecycle and opaque MCP JSON-RPC bytes. `txing-board-kvs-master` does not
+lifecycle and opaque MCP JSON-RPC bytes. `txing-unit-kvs-master` does not
 parse MCP tools and does not enforce active-control policy.
 
 ## Ownership

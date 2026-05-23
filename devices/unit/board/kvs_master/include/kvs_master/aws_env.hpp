@@ -1,5 +1,5 @@
-#ifndef TXING_BOARD_KVS_MASTER_AWS_ENV_HPP
-#define TXING_BOARD_KVS_MASTER_AWS_ENV_HPP
+#ifndef TXING_UNIT_KVS_MASTER_AWS_ENV_HPP
+#define TXING_UNIT_KVS_MASTER_AWS_ENV_HPP
 
 #include "kvs_master/config.hpp"
 

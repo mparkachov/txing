@@ -32,7 +32,7 @@ const (
 	DefaultHeartbeatSeconds       = uint64(60)
 	DefaultMCPActiveTTLMillis     = uint64(5000)
 	DefaultLogRetentionDays       = int32(14)
-	DefaultKVSMasterCommand       = "txing-board-kvs-master"
+	DefaultKVSMasterCommand       = "txing-unit-kvs-master"
 	DefaultMCPWebRTCSocketPath    = "/run/txing-unit-daemon/mcp-webrtc.sock"
 	DefaultBoardVideoBridgeSocket = "/run/txing-unit-daemon/board-video-bridge.sock"
 	DefaultHardwareSocketPath     = "/run/txing-unit-hardware-worker/unit-hardware.sock"

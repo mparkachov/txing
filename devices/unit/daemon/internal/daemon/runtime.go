@@ -1416,7 +1416,7 @@ func BridgeCredentialsFromIot(credentials IotTemporaryCredentials) (*boardvideov
 }
 
 func BoardVideoWorkerClientID(config RuntimeConfig) string {
-	return config.ThingID + "-board-kvs-master"
+	return config.ThingID + "-unit-kvs-master"
 }
 
 type IotCredentialsRequest struct {

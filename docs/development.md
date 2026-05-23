@@ -184,7 +184,7 @@ just unit::daemon::hardware-test-native
 just unit::daemon::hardware-build-trixie
 ```
 
-The Rust unit daemon loads its default config from
+The Go unit daemon loads its default config from
 `${TXING_DAEMON_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/txing/unit-daemon}/daemon.env`
 and expects certificate files in the same directory unless explicit certificate
 path overrides are supplied. Provision that directory with

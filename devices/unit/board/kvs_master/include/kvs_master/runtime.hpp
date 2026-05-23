@@ -1,5 +1,5 @@
-#ifndef TXING_BOARD_KVS_MASTER_RUNTIME_HPP
-#define TXING_BOARD_KVS_MASTER_RUNTIME_HPP
+#ifndef TXING_UNIT_KVS_MASTER_RUNTIME_HPP
+#define TXING_UNIT_KVS_MASTER_RUNTIME_HPP
 
 #include "kvs_master/aws_env.hpp"
 #include "kvs_master/board_video_bridge.hpp"

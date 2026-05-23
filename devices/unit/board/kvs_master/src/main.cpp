@@ -18,8 +18,8 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (parsed.show_version) {
-            std::cout << "txing-board-kvs-master "
-                      << txing::board::kvs_master::kTxingBoardKvsMasterVersion
+            std::cout << "txing-unit-kvs-master "
+                      << txing::board::kvs_master::kTxingUnitKvsMasterVersion
                       << '\n';
             return 0;
         }

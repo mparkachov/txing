@@ -241,11 +241,11 @@ ParsedCli ParseCli(int argc, char** argv, const EnvLookup& lookup_env) {
 std::string UsageText() {
     std::ostringstream usage;
     usage
-        << "Usage: txing-board-kvs-master [options]\n\n"
+        << "Usage: txing-unit-kvs-master [options]\n\n"
         << "Options:\n"
         << "  --region <aws-region>                  or BOARD_VIDEO_REGION\n"
         << "  --channel-name <channel-name>          or BOARD_VIDEO_CHANNEL_NAME\n"
-        << "  --client-id <id>                       default: txing-board-kvs-master\n"
+        << "  --client-id <id>                       default: txing-unit-kvs-master\n"
         << "  --mcp-webrtc-socket-path <path>        or BOARD_MCP_WEBRTC_SOCKET_PATH\n"
         << "  --board-video-bridge-socket-path <path> or TXING_BOARD_VIDEO_BRIDGE_SOCKET_PATH\n"
         << "  --prefer-ipv6 <bool>                   default: true\n"

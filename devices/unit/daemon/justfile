@@ -14,7 +14,7 @@ common_board_dir := project_root + "/devices/common/board"
 native_kvs_master_dir := unit_board_dir + "/kvs_master"
 native_kvs_master_build_dir := native_kvs_master_dir + "/build"
 native_kvs_master_test_build_dir := native_kvs_master_dir + "/build-tests"
-built_native_kvs_master := native_kvs_master_build_dir + "/txing-board-kvs-master"
+built_native_kvs_master := native_kvs_master_build_dir + "/txing-unit-kvs-master"
 native_hardware_worker_dir := unit_board_dir + "/hardware_worker"
 native_hardware_worker_build_dir := native_hardware_worker_dir + "/build"
 native_hardware_worker_test_build_dir := native_hardware_worker_dir + "/build-tests"
@@ -87,13 +87,13 @@ role-policy thing_id='':
     printf '  video region: %s\n' "$TXING_AWS_REGION"
 
 test:
-    cargo test --manifest-path "{{daemon_dir}}/Cargo.toml"
+    cd "{{daemon_dir}}" && go test ./...
 
 run:
     #!/bin/sh
     set -eu
-    cd "{{project_root}}"
-    cargo run --manifest-path devices/unit/daemon/Cargo.toml
+    cd "{{daemon_dir}}"
+    go run ./cmd/txing-unit-daemon
 
 docker-builder-image rust_toolchain="stable":
     #!/bin/sh
@@ -239,7 +239,7 @@ docker-builder-shell:
 
 @kvs-test-native:
     cmake -S "{{native_kvs_master_dir}}" -B "{{native_kvs_master_test_build_dir}}" -DCMAKE_BUILD_TYPE=Debug -DTXING_KVS_REAL_SDK=OFF -DTXING_KVS_SYSTEM_CA_CERT_PATH="{{default_kvs_system_ca_cert_path}}"
-    cmake --build "{{native_kvs_master_test_build_dir}}" --config Debug --target txing-board-kvs-master-tests
+    cmake --build "{{native_kvs_master_test_build_dir}}" --config Debug --target txing-unit-kvs-master-tests
     ctest --test-dir "{{native_kvs_master_test_build_dir}}" --output-on-failure
 
 @hardware-build-native:
@@ -294,9 +294,9 @@ docker-builder-shell:
 
     case "$TXING_CPP_TRIXIE_PROJECT" in
       kvs-master)
-        project_name="txing-board-kvs-master"
+        project_name="txing-unit-kvs-master"
         source_dir="$PWD/devices/unit/board/kvs_master"
-        binary_name="txing-board-kvs-master"
+        binary_name="txing-unit-kvs-master"
         ;;
       hardware-worker)
         project_name="txing-unit-hardware-worker"
@@ -416,28 +416,22 @@ docker-build:
     daemon_dir="{{daemon_dir}}"
     docker_build_dir="{{docker_build_dir}}"
     metadata_path="{{docker_build_metadata}}"
-    builder_image="{{docker_builder_image}}"
     kvs_master_build_image="{{docker_kvs_master_build_image}}"
     docker_out_dir="$docker_build_dir/docker-out"
     bin_dir="$docker_build_dir/bin"
     daemon_binary_name="txing-unit-daemon"
-    kvs_master_binary_name="txing-board-kvs-master"
+    kvs_master_binary_name="txing-unit-kvs-master"
     hardware_worker_binary_name="txing-unit-hardware-worker"
     daemon_binary_path="$bin_dir/$daemon_binary_name"
     kvs_master_binary_path="$bin_dir/$kvs_master_binary_name"
     hardware_worker_binary_path="$bin_dir/$hardware_worker_binary_name"
 
-    for command in docker git jq file; do
+    for command in docker git go jq file; do
       if ! command -v "$command" >/dev/null 2>&1; then
         echo "unit daemon docker-build requires '$command'." >&2
         exit 1
       fi
     done
-    if ! docker image inspect "$builder_image" >/dev/null 2>&1; then
-      echo "Missing Docker builder image: $builder_image" >&2
-      echo "Run: just unit::daemon::docker-builder-image" >&2
-      exit 1
-    fi
     server_platform="$(docker version | awk '/^  OS\/Arch:/ {print $2; exit}')"
     if [ "$server_platform" != "linux/arm64" ]; then
       echo "unit daemon docker-build requires a native linux/arm64 Docker daemon, got: $server_platform" >&2
@@ -452,41 +446,25 @@ docker-build:
     commit="$(git -C "$project_root" rev-parse HEAD)"
     timestamp="$(date -u +%s)"
 
-    docker volume create "{{docker_cargo_registry_volume}}" >/dev/null
-    docker volume create "{{docker_cargo_git_volume}}" >/dev/null
-    docker volume create "{{docker_target_volume}}" >/dev/null
-
     rm -rf "$docker_build_dir"
     install -d "$docker_build_dir" "$bin_dir"
     rm -rf "$docker_out_dir"
     install -d "$docker_out_dir"
 
-    docker run --rm -i \
-      --mount "type=bind,source=$project_root,target=$project_root,readonly" \
-      --mount "type=bind,source=$docker_out_dir,target=/out" \
-      --mount "type=volume,source={{docker_cargo_registry_volume}},target=/opt/cargo/registry" \
-      --mount "type=volume,source={{docker_cargo_git_volume}},target=/opt/cargo/git" \
-      --mount "type=volume,source={{docker_target_volume}},target=/target" \
-      -e CARGO_TARGET_DIR=/target \
-      -e TXING_DAEMON_BUILD_VERSION="$version" \
-      -e TXING_DAEMON_BINARY_NAME="$daemon_binary_name" \
-      -w "$project_root" \
-      "$builder_image" \
-      sh -se <<'DAEMON_BUILD'
-    set -eu
-
     build_host="$(hostname)"
     build_kernel="$(uname -a)"
-    printf '%s\n' "$build_host" > /out/daemon-build-host
-    printf '%s\n' "$build_kernel" > /out/daemon-build-kernel
-
-    cargo test --manifest-path devices/unit/daemon/Cargo.toml
-    cargo build --release --manifest-path devices/unit/daemon/Cargo.toml --bin daemon
-
-    install -m 755 "$CARGO_TARGET_DIR/release/daemon" "/out/$TXING_DAEMON_BINARY_NAME"
-    strip "/out/$TXING_DAEMON_BINARY_NAME"
-    file "/out/$TXING_DAEMON_BINARY_NAME"
-    DAEMON_BUILD
+    printf '%s\n' "$build_host" > "$docker_out_dir/daemon-build-host"
+    printf '%s\n' "$build_kernel" > "$docker_out_dir/daemon-build-kernel"
+    (
+      cd "$daemon_dir"
+      GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test ./...
+      GOOS=linux GOARCH=arm64 CGO_ENABLED=0 \
+        go build -trimpath \
+          -ldflags="-s -w -X github.com/mparkachov/txing/devices/unit/daemon/internal/daemon.DaemonVersion=$version" \
+          -o "$docker_out_dir/$daemon_binary_name" \
+          ./cmd/txing-unit-daemon
+    )
+    file "$docker_out_dir/$daemon_binary_name"
 
     docker run --rm -i \
       -v "$project_root:$project_root" \
@@ -567,7 +545,7 @@ docker-build:
     test -x "$kvs_master_build_binary"
     ldd "$kvs_master_build_binary"
     if ldd "$kvs_master_build_binary" | grep -Fq "not found"; then
-      echo "txing-board-kvs-master has unresolved shared libraries" >&2
+      echo "txing-unit-kvs-master has unresolved shared libraries" >&2
       exit 1
     fi
     ldd "$kvs_master_build_binary" | grep -F "libcamera.so.0.7"

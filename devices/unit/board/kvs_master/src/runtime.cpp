@@ -117,8 +117,8 @@ BridgeWorkerConfig GetWorkerConfigWithRetry(BoardVideoBridgeClient& bridge_clien
     while (!g_stop_requested.load()) {
         try {
             return bridge_client.GetWorkerConfig(
-                "txing-board-kvs-master",
-                std::string(kTxingBoardKvsMasterVersion)
+                "txing-unit-kvs-master",
+                std::string(kTxingUnitKvsMasterVersion)
             );
         } catch (const std::exception& error) {
             std::fprintf(
@@ -285,7 +285,7 @@ void Run(const RuntimeConfig& config, const RuntimeHooks& hooks) {
             if (!ready_emitted && frame.is_keyframe) {
                 EmitMarker(
                     "TXING_KVS_READY",
-                    {{"version", std::string(kTxingBoardKvsMasterVersion)}}
+                    {{"version", std::string(kTxingUnitKvsMasterVersion)}}
                 );
                 TryReportVideoState(bridge_client.get(), BridgeVideoState::kReady, 0, "");
                 ready_emitted = true;

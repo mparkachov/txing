@@ -78,7 +78,7 @@ pub const DEFAULT_CAPABILITY_TTL_SECONDS: u64 = 150;
 pub const DEFAULT_HEARTBEAT_SECONDS: u64 = 60;
 pub const DEFAULT_MCP_ACTIVE_TTL_MS: u64 = 5_000;
 pub const DEFAULT_CLOUDWATCH_LOG_RETENTION_DAYS: i32 = 14;
-pub const DEFAULT_KVS_MASTER_COMMAND: &str = "txing-board-kvs-master";
+pub const DEFAULT_KVS_MASTER_COMMAND: &str = "txing-unit-kvs-master";
 pub const DEFAULT_MCP_WEBRTC_SOCKET_PATH: &str = "/run/txing-unit-daemon/mcp-webrtc.sock";
 pub const DEFAULT_BOARD_VIDEO_BRIDGE_SOCKET_PATH: &str =
     "/run/txing-unit-daemon/board-video-bridge.sock";
@@ -1891,7 +1891,7 @@ fn system_time_to_protobuf_timestamp(time: SystemTime) -> Result<prost_types::Ti
 }
 
 fn board_video_worker_client_id(config: &RuntimeConfig) -> String {
-    format!("{}-board-kvs-master", config.thing_id)
+    format!("{}-unit-kvs-master", config.thing_id)
 }
 
 #[async_trait]
@@ -5843,7 +5843,7 @@ mod tests {
     fn video_worker_command_includes_mcp_socket_and_ipv6_environment() {
         let (event_tx, _event_rx) = mpsc::unbounded_channel();
         let run_config = VideoWorkerRunConfig {
-            command: "txing-board-kvs-master".to_string(),
+            command: "txing-unit-kvs-master".to_string(),
             mcp_webrtc_socket_path: "/tmp/mcp.sock".to_string(),
             kvs_prefer_ipv6: true,
             kvs_disable_ipv4_turn: true,
@@ -5907,7 +5907,7 @@ mod tests {
 
         assert_eq!(response.region, "eu-central-1");
         assert_eq!(response.channel_name, "unit-local-board-video");
-        assert_eq!(response.client_id, "unit-local-board-kvs-master");
+        assert_eq!(response.client_id, "unit-local-unit-kvs-master");
         assert_eq!(
             response.mcp_data_channel_label,
             MCP_WEBRTC_DATA_CHANNEL_LABEL

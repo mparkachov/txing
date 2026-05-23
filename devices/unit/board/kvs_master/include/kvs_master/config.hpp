@@ -1,5 +1,5 @@
-#ifndef TXING_BOARD_KVS_MASTER_CONFIG_HPP
-#define TXING_BOARD_KVS_MASTER_CONFIG_HPP
+#ifndef TXING_UNIT_KVS_MASTER_CONFIG_HPP
+#define TXING_UNIT_KVS_MASTER_CONFIG_HPP
 
 #include <cstdint>
 #include <functional>
@@ -23,7 +23,7 @@ struct CameraConfig {
 struct RuntimeConfig {
     std::string region;
     std::string channel_name;
-    std::string client_id = "txing-board-kvs-master";
+    std::string client_id = "txing-unit-kvs-master";
     std::optional<std::string> mcp_webrtc_socket_path;
     std::optional<std::string> board_video_bridge_socket_path;
     std::string mcp_data_channel_label = "txing.mcp.v1";

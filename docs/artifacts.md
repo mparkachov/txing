@@ -22,7 +22,7 @@ Project releases publish these Linux `aarch64` assets:
 
 ```text
 txing-unit-daemon-linux-aarch64.tar.gz
-txing-board-kvs-master-linux-aarch64.tar.gz
+txing-unit-kvs-master-linux-aarch64.tar.gz
 txing-unit-hardware-worker-linux-aarch64.tar.gz
 txing-sparkplug-manager-linux-aarch64.tar.gz
 txing-ble-connectivity-linux-aarch64.tar.gz
@@ -82,7 +82,7 @@ Boards install these three release assets with root-owned `mise`:
 
 ```text
 txing-unit-daemon-linux-aarch64.tar.gz
-txing-board-kvs-master-linux-aarch64.tar.gz
+txing-unit-kvs-master-linux-aarch64.tar.gz
 txing-unit-hardware-worker-linux-aarch64.tar.gz
 ```
 
@@ -90,7 +90,7 @@ Installed commands:
 
 ```text
 txing-unit-daemon
-txing-board-kvs-master
+txing-unit-kvs-master
 txing-unit-hardware-worker
 ```
 
@@ -105,21 +105,21 @@ The root-owned runtime layout is:
 /root/.config/txing/unit-daemon/public.pem.key
 /root/.config/mise/conf.d/txing-unit-daemon.toml
 /root/.local/share/mise/installs/txing-unit-daemon/latest/txing-unit-daemon
-/root/.local/share/mise/installs/txing-board-kvs-master/latest/txing-board-kvs-master
+/root/.local/share/mise/installs/txing-unit-kvs-master/latest/txing-unit-kvs-master
 /root/.local/share/mise/installs/txing-unit-hardware-worker/latest/txing-unit-hardware-worker
 /root/.local/share/mise/installs/txing-unit-daemon/
-/root/.local/share/mise/installs/txing-board-kvs-master/
+/root/.local/share/mise/installs/txing-unit-kvs-master/
 /root/.local/share/mise/installs/txing-unit-hardware-worker/
-/etc/systemd/system/txing-board.target
+/etc/systemd/system/txing-unit.target
 /etc/systemd/system/txing-unit-daemon.service
-/etc/systemd/system/txing-board-kvs-master.service
+/etc/systemd/system/txing-unit-kvs-master.service
 /etc/systemd/system/txing-unit-hardware-worker.service
 ```
 
 The `daemon.env` file is a systemd-compatible environment file rendered from
 `devices/unit/daemon/daemon.env.template`. It contains daemon-owned `TXING_*`
 runtime defaults for video, capabilities, CloudWatch, hardware-worker socket
-configuration, and motor control. The daemon consumes the daemon/cloud/video
+configuration, and motor control. The Go daemon consumes the daemon/cloud/video
 keys. The hardware worker consumes the `TXING_HARDWARE_WORKER_*` and
 `TXING_MOTOR_*` keys when its systemd unit loads the same root-owned env file.
 Certificate paths are omitted by default; the daemon derives colocated
@@ -130,18 +130,22 @@ Pi OS Trixie packages. Release workflows assert that the asset links against
 `libcamera.so.0.7` and `libcamera-base.so.0.7`; board maintenance instructions
 run `ldd` on the installed `latest` binary before rebooting.
 
-The `txing-board.target` unit groups the daemon, KVS master, and hardware
+The `txing-unit.target` unit groups the daemon, KVS master, and hardware
 worker services for boot. The board systemd units start the root-owned binaries
 under mise's `latest` install paths. The daemon owns the local BoardVideoBridge
 gRPC socket. The hardware worker owns the local UnitHardware gRPC socket. The
 KVS master and daemon connect as separate services. All three services declare
-`PartOf=txing-board.target`, so stopping or restarting the target propagates to
+`PartOf=txing-unit.target`, so stopping or restarting the target propagates to
 the services. Restarts do not invoke mise or call GitHub. They do not depend on
 generated shims. They do not use separate wrapper scripts.
 Publishing a new GitHub Release does not upgrade a board automatically. Release
 does not upgrade a board; the operator must log in to the board, switch to
 root, run `root-rw`, run root-owned `mise upgrade`, verify versions, sync, and
 reboot.
+Boards that already ran the older board-named runtime need one manual cleanup
+during that writable-root maintenance window: disable and remove
+`txing-board.target` and `txing-board-kvs-master.service`, then run
+`systemctl daemon-reload` before rebooting into `txing-unit.target`.
 
 ## Rig Artifacts
 

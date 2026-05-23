@@ -2,7 +2,7 @@
 
 `txing-unit-hardware-worker` is the root-owned board-local hardware adapter for
 the current `unit` device type. It runs as a subordinate systemd service under
-`txing-board.target` and communicates with `txing-unit-daemon` over a Unix
+`txing-unit.target` and communicates with `txing-unit-daemon` over a Unix
 domain socket.
 
 ## Ownership Boundary

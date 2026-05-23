@@ -35,7 +35,7 @@ The video route is derived from the selected route and office origin. It is not 
 
 The app expects `capabilities` to include `sparkplug` and uses it to decide which named shadows should exist for a selected thing.
 
-For `unit` devices, the Rust unit daemon publishes retained
+For `unit` devices, the Go unit daemon publishes retained
 `txings/<device_id>/capability/v2/state` messages for `board`, `mcp`, and
 `video`. Sparkplug projection reflects those into the capability stack; `video`
 becomes enabled only when the native KVS worker is ready.

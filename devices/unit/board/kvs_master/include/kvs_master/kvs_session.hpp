@@ -1,5 +1,5 @@
-#ifndef TXING_BOARD_KVS_MASTER_KVS_SESSION_HPP
-#define TXING_BOARD_KVS_MASTER_KVS_SESSION_HPP
+#ifndef TXING_UNIT_KVS_MASTER_KVS_SESSION_HPP
+#define TXING_UNIT_KVS_MASTER_KVS_SESSION_HPP
 
 #include "kvs_master/aws_env.hpp"
 #include "kvs_master/config.hpp"

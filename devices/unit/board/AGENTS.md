@@ -3,8 +3,8 @@
 ## Scope
 - This directory contains native board-side support code for the unit Raspberry Pi board video and local hardware adapter paths.
 - This board is distinct from the `rig/` Raspberry Pi 5 gateway.
-- The production board runtime is the Rust `txing-unit-daemon`; this directory does not contain a Python board runtime.
-- The native `txing-board-kvs-master` worker connects to AWS KVS WebRTC signaling and communicates with `txing-unit-daemon` over the local BoardVideoBridge gRPC socket.
+- The production board runtime is the Go `txing-unit-daemon`; this directory does not contain a Python board runtime.
+- The native `txing-unit-kvs-master` worker connects to AWS KVS WebRTC signaling and communicates with `txing-unit-daemon` over the local BoardVideoBridge gRPC socket.
 - The native `txing-unit-hardware-worker` owns board-local motor hardware access and communicates with `txing-unit-daemon` over the local UnitHardware gRPC socket.
 
 ## Notes

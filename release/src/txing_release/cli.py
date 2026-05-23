@@ -16,7 +16,6 @@ ROOT = Path(__file__).resolve().parents[3]
 SEMVER_RE = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
 
 STANDALONE_CARGO_MANIFESTS = (
-    Path("devices/unit/daemon/Cargo.toml"),
     Path("devices/power/test/Cargo.toml"),
     Path("devices/weather/test/Cargo.toml"),
 )
@@ -47,10 +46,16 @@ class TextVersion:
 
 TEXT_VERSIONS = (
     TextVersion(
+        Path("devices/unit/daemon/internal/daemon/version.go"),
+        "unit daemon Go version",
+        re.compile(r'const packageVersion = "[^"]+"'),
+        'const packageVersion = "{version}"',
+    ),
+    TextVersion(
         Path("devices/unit/board/kvs_master/include/kvs_master/version.hpp"),
         "board native KVS master version",
-        re.compile(r'inline constexpr std::string_view kTxingBoardKvsMasterVersion = "[^"]+";'),
-        'inline constexpr std::string_view kTxingBoardKvsMasterVersion = "{version}";',
+        re.compile(r'inline constexpr std::string_view kTxingUnitKvsMasterVersion = "[^"]+";'),
+        'inline constexpr std::string_view kTxingUnitKvsMasterVersion = "{version}";',
     ),
     TextVersion(
         Path("devices/unit/board/hardware_worker/include/hardware_worker/version.hpp"),

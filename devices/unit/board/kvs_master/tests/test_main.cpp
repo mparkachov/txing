@@ -32,7 +32,7 @@ using txing::board::kvs_master::RuntimeHooks;
 using txing::board::kvs_master::UsageText;
 using txing::board::kvs_master::VideoCapturer;
 using txing::board::kvs_master::VideoCapturerStatus;
-using txing::board::kvs_master::kTxingBoardKvsMasterVersion;
+using txing::board::kvs_master::kTxingUnitKvsMasterVersion;
 
 int g_failures = 0;
 
@@ -242,7 +242,7 @@ RuntimeConfig TestRuntimeConfig() {
 void TestCliParsing() {
     const auto parsed = ParseCli(
         {
-            "txing-board-kvs-master",
+            "txing-unit-kvs-master",
             "--region",
             "eu-central-1",
             "--channel-name",
@@ -294,7 +294,7 @@ void TestCliParsing() {
 void TestBridgeCliDoesNotRequireStaticWorkerConfig() {
     const auto parsed = ParseCli(
         {
-            "txing-board-kvs-master",
+            "txing-unit-kvs-master",
             "--board-video-bridge-socket-path",
             "/tmp/txing_board_video_bridge.sock",
         },
@@ -312,7 +312,7 @@ void TestBridgeCliDoesNotRequireStaticWorkerConfig() {
 void TestCliRequiresStaticWorkerConfigWithoutBridge() {
     bool threw = false;
     try {
-        ParseCli({"txing-board-kvs-master"}, EnvFrom({}));
+        ParseCli({"txing-unit-kvs-master"}, EnvFrom({}));
     } catch (const std::exception&) {
         threw = true;
     }
@@ -347,12 +347,12 @@ void TestUsageText() {
 }
 
 void TestVersionParsing() {
-    const auto parsed = ParseCli({"txing-board-kvs-master", "--version"}, EnvFrom({}));
+    const auto parsed = ParseCli({"txing-unit-kvs-master", "--version"}, EnvFrom({}));
 
     Expect(parsed.show_version, "CLI should parse --version without requiring runtime configuration");
     Expect(!parsed.show_help, "version output should not imply help output");
     Expect(
-        std::string(kTxingBoardKvsMasterVersion).find('.') != std::string::npos,
+        std::string(kTxingUnitKvsMasterVersion).find('.') != std::string::npos,
         "native sender version should be populated"
     );
 }
@@ -373,7 +373,7 @@ void TestCredentialResolution() {
     Expect(env_credentials.secret_access_key == "env-secret", "env secret key should win");
     Expect(env_credentials.session_token == "env-token", "env session token should be preserved");
 
-    const auto temp_dir = std::filesystem::temp_directory_path() / "txing-board-kvs-master-tests";
+    const auto temp_dir = std::filesystem::temp_directory_path() / "txing-unit-kvs-master-tests";
     std::filesystem::create_directories(temp_dir);
     const auto credentials_path = temp_dir / "credentials";
     {
@@ -438,7 +438,7 @@ void TestRuntimeReadyAndTimestamps() {
         "runtime should emit readiness only after receiving a keyframe"
     );
     Expect(
-        output.find("version=" + std::string(kTxingBoardKvsMasterVersion)) != std::string::npos,
+        output.find("version=" + std::string(kTxingUnitKvsMasterVersion)) != std::string::npos,
         "runtime readiness marker should include the native sender version"
     );
 }

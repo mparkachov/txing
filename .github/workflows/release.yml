@@ -11,10 +11,9 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  RUST_VERSION: 1.95.0
   UNIT_DAEMON_ASSET: txing-unit-daemon-linux-aarch64.tar.gz
-  KVS_MASTER_ASSET: txing-board-kvs-master-linux-aarch64.tar.gz
-  KVS_MASTER_BINARY: txing-board-kvs-master
+  KVS_MASTER_ASSET: txing-unit-kvs-master-linux-aarch64.tar.gz
+  KVS_MASTER_BINARY: txing-unit-kvs-master
   HARDWARE_WORKER_ASSET: txing-unit-hardware-worker-linux-aarch64.tar.gz
   HARDWARE_WORKER_BINARY: txing-unit-hardware-worker
   SPARKPLUG_MANAGER_ASSET: txing-sparkplug-manager-linux-aarch64.tar.gz
@@ -138,20 +137,10 @@ jobs:
 
           python3 release/src/txing_release/cli.py check
 
-  build-rust-binary:
-    name: Build ${{ matrix.binary_name }}
+  build-go-unit-daemon:
+    name: Build txing-unit-daemon
     runs-on: ubuntu-24.04-arm
     needs: metadata
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - binary_name: txing-unit-daemon
-            manifest_path: devices/unit/daemon/Cargo.toml
-            binary_path: devices/unit/daemon/target/release/daemon
-            asset_name: txing-unit-daemon-linux-aarch64.tar.gz
-            test_command: cargo test --manifest-path devices/unit/daemon/Cargo.toml
-            build_command: cargo build --release --manifest-path devices/unit/daemon/Cargo.toml --bin daemon
 
     steps:
       - name: Check out repository
@@ -175,89 +164,79 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
+
+          go_package=""
+          go_root=""
+          for version in 1.26 1.25 1.24; do
+            candidate="golang-${version}-go"
+            if apt-cache show "$candidate" >/dev/null 2>&1; then
+              go_package="$candidate"
+              go_root="/usr/lib/go-${version}"
+              break
+            fi
+          done
+          if [ -z "$go_package" ]; then
+            echo "Expected a Go 1.24+ compiler package in Ubuntu Noble apt repositories." >&2
+            exit 1
+          fi
+
           sudo apt-get install -y \
-            build-essential pkg-config cmake perl file curl git \
-            libssl-dev libcurl4-openssl-dev libdbus-1-dev uuid-dev \
-            libzip-dev libyaml-dev libsystemd-dev libevent-dev liburiparser-dev \
-            liblog4cplus-dev libsrtp2-dev libusrsctp-dev libwebsockets-dev \
-            zlib1g-dev
+            build-essential ca-certificates file git "$go_package" \
+            pkg-config
+          echo "$go_root/bin" >>"$GITHUB_PATH"
+          "$go_root/bin/go" version
 
-      - name: Restore Rust toolchain cache
+      - name: Restore Go cache
         uses: actions/cache@v5
         with:
           path: |
-            ~/.rustup/toolchains/1.95.0-aarch64-unknown-linux-gnu
-            ~/.rustup/update-hashes/1.95.0-aarch64-unknown-linux-gnu
-          key: rustup-${{ runner.os }}-${{ runner.arch }}-1.95.0
-
-      - name: Install Rust toolchain
-        shell: bash
-        run: |
-          set -euo pipefail
-          rustup toolchain install "$RUST_VERSION" --profile minimal
-          rustup default "$RUST_VERSION"
-          rustc -vV
-          cargo -V
-
-      - name: Restore Cargo cache
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            devices/unit/daemon/target
-          key: cargo-release-${{ matrix.binary_name }}-${{ runner.os }}-${{ runner.arch }}-rust-1.95.0-${{ hashFiles(matrix.manifest_path, 'devices/unit/daemon/Cargo.lock') }}
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-unit-daemon-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('devices/unit/daemon/go.mod', 'devices/unit/daemon/go.sum') }}
           restore-keys: |
-            cargo-release-${{ matrix.binary_name }}-${{ runner.os }}-${{ runner.arch }}-rust-1.95.0-
-            cargo-release-${{ runner.os }}-${{ runner.arch }}-rust-1.95.0-
+            go-unit-daemon-${{ runner.os }}-${{ runner.arch }}-
 
-      - name: Test ${{ matrix.binary_name }}
-        if: matrix.test_command != ''
-        env:
-          TXING_DAEMON_BUILD_VERSION: ${{ needs.metadata.outputs.version }}
+      - name: Test and build txing-unit-daemon
         shell: bash
         run: |
           set -euo pipefail
-          ${{ matrix.test_command }}
+          cd devices/unit/daemon
+          go version
+          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test ./...
+          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 \
+            go build -trimpath \
+            -ldflags="-s -w -X github.com/mparkachov/txing/devices/unit/daemon/internal/daemon.DaemonVersion=${{ needs.metadata.outputs.version }}" \
+            -o "$RUNNER_TEMP/txing-unit-daemon" \
+            ./cmd/txing-unit-daemon
 
-      - name: Build ${{ matrix.binary_name }}
-        env:
-          TXING_DAEMON_BUILD_VERSION: ${{ needs.metadata.outputs.version }}
+      - name: Package ${{ env.UNIT_DAEMON_ASSET }}
         shell: bash
         run: |
           set -euo pipefail
-          ${{ matrix.build_command }}
-
-      - name: Package ${{ matrix.asset_name }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          source="${{ matrix.binary_path }}"
-          binary_name="${{ matrix.binary_name }}"
-          asset_name="${{ matrix.asset_name }}"
-          package_dir="$RUNNER_TEMP/package-$binary_name"
-          asset_path="$RUNNER_TEMP/$asset_name"
+          source="$RUNNER_TEMP/txing-unit-daemon"
+          package_dir="$RUNNER_TEMP/package-txing-unit-daemon"
+          asset_path="$RUNNER_TEMP/$UNIT_DAEMON_ASSET"
+          test -x "$source"
           rm -rf "$package_dir"
           install -d "$package_dir"
-          install -m 755 "$source" "$package_dir/$binary_name"
-          if file "$package_dir/$binary_name" | grep -q 'ELF'; then
-            strip "$package_dir/$binary_name"
+          install -m 755 "$source" "$package_dir/txing-unit-daemon"
+          if file "$package_dir/txing-unit-daemon" | grep -q 'ELF'; then
+            strip "$package_dir/txing-unit-daemon"
           fi
-          file "$package_dir/$binary_name"
-          tar -C "$package_dir" -czf "$asset_path" "$binary_name"
+          file "$package_dir/txing-unit-daemon"
+          tar -C "$package_dir" -czf "$asset_path" txing-unit-daemon
           archive_listing="$(tar -tzf "$asset_path")"
-          if [ "$archive_listing" != "$binary_name" ]; then
-            echo "Expected $asset_name to contain only root-level $binary_name, got:" >&2
+          if [ "$archive_listing" != "txing-unit-daemon" ]; then
+            echo "Expected $UNIT_DAEMON_ASSET to contain only root-level txing-unit-daemon, got:" >&2
             printf '%s\n' "$archive_listing" >&2
             exit 1
           fi
 
-      - name: Upload ${{ matrix.asset_name }}
+      - name: Upload ${{ env.UNIT_DAEMON_ASSET }}
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ matrix.asset_name }}
-          path: ${{ runner.temp }}/${{ matrix.asset_name }}
+          name: ${{ env.UNIT_DAEMON_ASSET }}
+          path: ${{ runner.temp }}/${{ env.UNIT_DAEMON_ASSET }}
           if-no-files-found: error
 
   build-go-rig-binary:
@@ -500,7 +479,7 @@ jobs:
           if-no-files-found: error
 
   build-kvs-master:
-    name: Build txing-board-kvs-master
+    name: Build txing-unit-kvs-master
     runs-on: ubuntu-24.04-arm
     needs: metadata
     container:
@@ -592,13 +571,13 @@ jobs:
             -DOPENSSL_CRYPTO_LIBRARY="$openssl_libdir/libcrypto.so"
           cmake --build "$native_kvs_master_build_dir" --config Release
 
-          ldd devices/unit/board/kvs_master/build/txing-board-kvs-master
-          if ldd devices/unit/board/kvs_master/build/txing-board-kvs-master | grep -Fq "not found"; then
-            echo "txing-board-kvs-master has unresolved shared libraries" >&2
+          ldd devices/unit/board/kvs_master/build/txing-unit-kvs-master
+          if ldd devices/unit/board/kvs_master/build/txing-unit-kvs-master | grep -Fq "not found"; then
+            echo "txing-unit-kvs-master has unresolved shared libraries" >&2
             exit 1
           fi
-          ldd devices/unit/board/kvs_master/build/txing-board-kvs-master | grep -F "libcamera.so.0.7"
-          ldd devices/unit/board/kvs_master/build/txing-board-kvs-master | grep -F "libcamera-base.so.0.7"
+          ldd devices/unit/board/kvs_master/build/txing-unit-kvs-master | grep -F "libcamera.so.0.7"
+          ldd devices/unit/board/kvs_master/build/txing-unit-kvs-master | grep -F "libcamera-base.so.0.7"
           kvs_master_build_binary="devices/unit/board/kvs_master/build/$KVS_MASTER_BINARY"
           test -x "$kvs_master_build_binary"
           file "$kvs_master_build_binary"
@@ -743,7 +722,7 @@ jobs:
     runs-on: ubuntu-24.04-arm
     needs:
       - metadata
-      - build-rust-binary
+      - build-go-unit-daemon
       - build-go-rig-binary
       - build-lambda
       - build-kvs-master
