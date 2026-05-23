@@ -68,6 +68,32 @@ std::uint32_t ParseUnsigned(
     }
 }
 
+bool ParseBoolValue(const std::string& value, const std::string& name) {
+    if (value == "1" || value == "true" || value == "TRUE" || value == "yes" || value == "YES" || value == "on" || value == "ON") {
+        return true;
+    }
+    if (value == "0" || value == "false" || value == "FALSE" || value == "no" || value == "NO" || value == "off" || value == "OFF") {
+        return false;
+    }
+    throw std::runtime_error(name + " must be a boolean");
+}
+
+bool ParseBool(
+    const std::unordered_map<std::string, std::string>& options,
+    const std::string& key,
+    const EnvLookup& lookup_env,
+    const std::string& env_name,
+    bool default_value
+) {
+    if (const auto option = options.find(key); option != options.end()) {
+        return ParseBoolValue(option->second, "--" + key);
+    }
+    if (const auto value = lookup_env(env_name); value && !value->empty()) {
+        return ParseBoolValue(*value, env_name);
+    }
+    return default_value;
+}
+
 std::unordered_map<std::string, std::string> ParseOptions(
     const std::vector<std::string>& arguments,
     bool& show_help,
@@ -125,20 +151,46 @@ ParsedCli ParseCli(const std::vector<std::string>& arguments, const EnvLookup& l
         return parsed;
     }
 
-    parsed.config.region = RequireValue(
-        options,
-        "region",
-        lookup_env,
-        "BOARD_VIDEO_REGION",
-        "TXING_BOARD_VIDEO_REGION"
-    );
-    parsed.config.channel_name = RequireValue(
-        options,
-        "channel-name",
-        lookup_env,
-        "BOARD_VIDEO_CHANNEL_NAME",
-        "TXING_BOARD_VIDEO_CHANNEL_NAME"
-    );
+    if (const auto socket_path = LookupValue(
+            options,
+            "board-video-bridge-socket-path",
+            lookup_env,
+            "TXING_BOARD_VIDEO_BRIDGE_SOCKET_PATH"
+        );
+        socket_path && !socket_path->empty()) {
+        parsed.config.board_video_bridge_socket_path = *socket_path;
+    }
+    if (parsed.config.board_video_bridge_socket_path.has_value()) {
+        parsed.config.region = LookupValue(
+            options,
+            "region",
+            lookup_env,
+            "BOARD_VIDEO_REGION",
+            "TXING_BOARD_VIDEO_REGION"
+        ).value_or("");
+        parsed.config.channel_name = LookupValue(
+            options,
+            "channel-name",
+            lookup_env,
+            "BOARD_VIDEO_CHANNEL_NAME",
+            "TXING_BOARD_VIDEO_CHANNEL_NAME"
+        ).value_or("");
+    } else {
+        parsed.config.region = RequireValue(
+            options,
+            "region",
+            lookup_env,
+            "BOARD_VIDEO_REGION",
+            "TXING_BOARD_VIDEO_REGION"
+        );
+        parsed.config.channel_name = RequireValue(
+            options,
+            "channel-name",
+            lookup_env,
+            "BOARD_VIDEO_CHANNEL_NAME",
+            "TXING_BOARD_VIDEO_CHANNEL_NAME"
+        );
+    }
 
     if (const auto client_id = LookupValue(options, "client-id", lookup_env, ""); client_id && !client_id->empty()) {
         parsed.config.client_id = *client_id;
@@ -152,6 +204,20 @@ ParsedCli ParseCli(const std::vector<std::string>& arguments, const EnvLookup& l
         socket_path && !socket_path->empty()) {
         parsed.config.mcp_webrtc_socket_path = *socket_path;
     }
+    parsed.config.prefer_ipv6 = ParseBool(
+        options,
+        "prefer-ipv6",
+        lookup_env,
+        "KVS_DUALSTACK_ENDPOINTS",
+        parsed.config.prefer_ipv6
+    );
+    parsed.config.disable_ipv4_turn = ParseBool(
+        options,
+        "disable-ipv4-turn",
+        lookup_env,
+        "KVS_DISABLE_IPV4_TURN",
+        parsed.config.disable_ipv4_turn
+    );
 
     parsed.config.camera.camera = ParseUnsigned(options, "camera", parsed.config.camera.camera);
     parsed.config.camera.width = ParseUnsigned(options, "width", parsed.config.camera.width);
@@ -181,6 +247,9 @@ std::string UsageText() {
         << "  --channel-name <channel-name>          or BOARD_VIDEO_CHANNEL_NAME\n"
         << "  --client-id <id>                       default: txing-board-kvs-master\n"
         << "  --mcp-webrtc-socket-path <path>        or BOARD_MCP_WEBRTC_SOCKET_PATH\n"
+        << "  --board-video-bridge-socket-path <path> or TXING_BOARD_VIDEO_BRIDGE_SOCKET_PATH\n"
+        << "  --prefer-ipv6 <bool>                   default: true\n"
+        << "  --disable-ipv4-turn <bool>             default: false\n"
         << "  --camera <index>                       default: 0\n"
         << "  --width <pixels>                       default: 1920\n"
         << "  --height <pixels>                      default: 1080\n"

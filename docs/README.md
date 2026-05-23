@@ -34,6 +34,7 @@ design notes have been folded into the owning component guides.
 - [Unit thing shadow model](../devices/unit/docs/thing-shadow.md)
 - [Unit device-rig shadow contract](../devices/unit/docs/device-rig-shadow-spec.md)
 - [Unit board video contract](../devices/unit/docs/board-video.md)
+- [Board video bridge gRPC contract](./contracts/board-video-bridge.md)
 
 ## Current Named-Shadow Capabilities
 

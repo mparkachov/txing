@@ -102,10 +102,11 @@ The short production flow is:
 5. Copy and unpack `<thing-id>-daemon-config.tgz` under
    `/root/.config/txing/unit-daemon`, including `daemon.env` and certificate
    files.
-6. Install the root-owned mise release tools and
-   `txing-unit-daemon.service` manually as documented in the board guide.
+6. Install the root-owned mise release tools and create
+   `txing-unit-daemon.service` plus `txing-board-kvs-master.service` manually
+   as documented in the board guide.
 7. Configure the PWM overlay and read-only-root tmpfs layout.
-8. Reboot and verify `txing-unit-daemon.service`, KVS readiness, and REDCON
+8. Reboot and verify both board services, KVS readiness, and REDCON
    convergence.
 
 ## Web

@@ -15,6 +15,11 @@ option(
   "Build txing-board-kvs-master against the AWS KVS WebRTC C SDK"
   ${_txing_kvs_real_sdk_default}
 )
+option(
+  TXING_KVS_GRPC_BRIDGE
+  "Build txing-board-kvs-master with the daemon BoardVideoBridge gRPC client"
+  OFF
+)
 
 set(
   _txing_kvs_default_sdk_source_dir
@@ -67,6 +72,56 @@ target_compile_options(
     -Wextra
     -Wpedantic
 )
+
+if(TXING_KVS_GRPC_BRIDGE)
+  find_package(Protobuf REQUIRED)
+  find_package(gRPC CONFIG REQUIRED)
+  find_program(GRPC_CPP_PLUGIN_EXECUTABLE grpc_cpp_plugin REQUIRED)
+
+  set(TXING_BOARD_VIDEO_PROTO
+      "${CMAKE_CURRENT_SOURCE_DIR}/../../proto/txing/unit/board_video/v1/board_video.proto")
+  set(TXING_BOARD_VIDEO_PROTO_ROOT
+      "${CMAKE_CURRENT_SOURCE_DIR}/../../proto")
+  set(TXING_BOARD_VIDEO_PROTO_GEN_DIR
+      "${CMAKE_CURRENT_BINARY_DIR}/generated")
+  set(TXING_BOARD_VIDEO_PROTO_SRCS
+      "${TXING_BOARD_VIDEO_PROTO_GEN_DIR}/txing/unit/board_video/v1/board_video.pb.cc"
+      "${TXING_BOARD_VIDEO_PROTO_GEN_DIR}/txing/unit/board_video/v1/board_video.grpc.pb.cc")
+  set(TXING_BOARD_VIDEO_PROTO_HDRS
+      "${TXING_BOARD_VIDEO_PROTO_GEN_DIR}/txing/unit/board_video/v1/board_video.pb.h"
+      "${TXING_BOARD_VIDEO_PROTO_GEN_DIR}/txing/unit/board_video/v1/board_video.grpc.pb.h")
+
+  add_custom_command(
+    OUTPUT ${TXING_BOARD_VIDEO_PROTO_SRCS} ${TXING_BOARD_VIDEO_PROTO_HDRS}
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${TXING_BOARD_VIDEO_PROTO_GEN_DIR}"
+    COMMAND protobuf::protoc
+      --proto_path="${TXING_BOARD_VIDEO_PROTO_ROOT}"
+      --cpp_out="${TXING_BOARD_VIDEO_PROTO_GEN_DIR}"
+      --grpc_out="${TXING_BOARD_VIDEO_PROTO_GEN_DIR}"
+      --plugin=protoc-gen-grpc="${GRPC_CPP_PLUGIN_EXECUTABLE}"
+      "${TXING_BOARD_VIDEO_PROTO}"
+    DEPENDS "${TXING_BOARD_VIDEO_PROTO}"
+    VERBATIM
+  )
+  add_library(txing_board_video_bridge_proto OBJECT ${TXING_BOARD_VIDEO_PROTO_SRCS})
+  target_include_directories(txing_board_video_bridge_proto PUBLIC "${TXING_BOARD_VIDEO_PROTO_GEN_DIR}")
+  target_link_libraries(txing_board_video_bridge_proto PUBLIC protobuf::libprotobuf gRPC::grpc++)
+  target_compile_features(txing_board_video_bridge_proto PUBLIC cxx_std_17)
+
+  target_sources(
+    txing_board_kvs_master_lib
+    PRIVATE
+      src/board_video_bridge_grpc.cpp
+      $<TARGET_OBJECTS:txing_board_video_bridge_proto>
+  )
+  target_compile_definitions(txing_board_kvs_master_lib PRIVATE TXING_KVS_GRPC_BRIDGE=1)
+  target_include_directories(txing_board_kvs_master_lib PRIVATE "${TXING_BOARD_VIDEO_PROTO_GEN_DIR}")
+  target_link_libraries(txing_board_kvs_master_lib PRIVATE protobuf::libprotobuf gRPC::grpc++)
+  add_dependencies(txing_board_kvs_master_lib txing_board_video_bridge_proto)
+else()
+  target_sources(txing_board_kvs_master_lib PRIVATE src/board_video_bridge_stub.cpp)
+  target_compile_definitions(txing_board_kvs_master_lib PRIVATE TXING_KVS_GRPC_BRIDGE=0)
+endif()
 
 find_package(PkgConfig QUIET)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")

@@ -25,6 +25,10 @@ struct RuntimeConfig {
     std::string channel_name;
     std::string client_id = "txing-board-kvs-master";
     std::optional<std::string> mcp_webrtc_socket_path;
+    std::optional<std::string> board_video_bridge_socket_path;
+    std::string mcp_data_channel_label = "txing.mcp.v1";
+    bool prefer_ipv6 = true;
+    bool disable_ipv4_turn = false;
     CameraConfig camera;
 };
 

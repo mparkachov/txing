@@ -9,12 +9,13 @@
 - Active-control model: one MCP session owns actuator authority; explicit
   `control.activate` with `takeover: true` switches ownership
 - Field-validation status: manual field validation was completed and accepted the plain-AWS-WebRTC path from a business perspective; no lab-grade metrics dataset is recorded in-repo
-- Current implementation: `txing-unit-daemon` supervises the native
-  `txing-board-kvs-master`, publishes retained video service topics, `rig`
-  consumes them for REDCON readiness, and the browser uses AWS KVS signaling +
-  WebRTC for the viewer path. When video is ready, MCP control uses the
-  `txing.mcp.v1` data channel on the same media peer connection; MQTT MCP is
-  the REDCON `2` fallback when video is unavailable/not ready.
+- Current implementation: `txing-unit-daemon` and the native
+  `txing-board-kvs-master` run as separate systemd services. The daemon serves
+  the local BoardVideoBridge gRPC socket, publishes retained video service
+  topics, `rig` consumes them for REDCON readiness, and the browser uses AWS
+  KVS signaling + WebRTC for the viewer path. When video is ready, MCP control
+  uses the `txing.mcp.v1` data channel on the same media peer connection; MQTT
+  MCP is the REDCON `2` fallback when video is unavailable/not ready.
 
 Explicit non-goals for this slice:
 
@@ -40,21 +41,22 @@ Explicit non-goals for this slice:
 - ML and other cloud-side consumers are explicitly outside the current media path.
 - A second direct operator path remains deferred. The recorded manual field validation did not justify reopening it.
 - The native sender implementation is shipped in-tree and packaged as the
-  `txing-board-kvs-master` release asset. The stable daemon launches it as a
-  supervised child process.
+  `txing-board-kvs-master` release asset. The daemon and worker communicate
+  through the language-neutral BoardVideoBridge gRPC contract.
 
 ## High-Level Architecture
 
 ```text
 txing-unit-daemon
   -> owns board power and wifi shadow state
-  -> supervises native KVS master state
+  -> serves BoardVideoBridge gRPC over a Unix socket
   -> publishes retained board video descriptor/status topics
   -> tracks coarse board video readiness and failures
 
 native sender command
   -> is shipped as txing-board-kvs-master
   -> owns the actual camera capture, encode, and KVS master session
+  -> connects to BoardVideoBridge for config, credentials, state, and MCP forwarding
 
 operator client
   -> connects as viewer through the KVS WebRTC signaling channel
@@ -107,7 +109,8 @@ Notes:
 - The AWS WebRTC signaling channel name is computed as `<device_id>-board-video`.
 - The current implementation means plain KVS WebRTC signaling, not ingestion/storage.
 - `board.video.local.*` is no longer part of the active contract.
-- `ready` and `viewerConnected` are coarse runtime signals derived from the supervised sender state, not a full media-quality guarantee.
+- `ready` and `viewerConnected` are coarse runtime signals reported over the
+  bridge, not a full media-quality guarantee.
 - Single-operator scope is an operational assumption only. `viewerConnected` is not an admission-control signal and does not prove that only one viewer exists.
 
 ## Runtime Layout
@@ -119,20 +122,24 @@ Responsibilities:
 - publish board power and wifi Thing Shadow updates
 - halt locally when Sparkplug `DCMD.redcon=4` arrives for the assigned device
 - refresh board IPv4 and IPv6 on each publish loop
-- supervise the native KVS master child process
+- serve the BoardVideoBridge gRPC socket for the native KVS master
 - publish retained video descriptor/status topics
 - gate retained video `ready` on sender readiness rather than any board-local iframe endpoint
 - surface the last coarse media error through retained video `lastError`
 
-### Native KVS Master Supervision
+### BoardVideoBridge
 
 Responsibilities:
 
-- inject IoT role-alias temporary credentials into the child process
-- restart the child before credential expiry and after failures with bounded backoff
-- translate child output markers into coarse `ready`, `viewerConnected`, and
-  `lastError` state
+- provide worker config and IoT role-alias temporary credentials
+- refresh credentials before expiry without requiring a process restart
+- receive coarse `STARTING`, `READY`, `ERROR`, and viewer-count state
+- forward opaque MCP JSON-RPC bytes by explicit `mcp_session_id`
+- keep active-control policy, takeover, epochs, and REDCON in the daemon
 - publish unavailable video state on daemon shutdown
+
+The durable contract is documented in
+[docs/contracts/board-video-bridge.md](../../../docs/contracts/board-video-bridge.md).
 
 ### Native Sender Command
 
@@ -175,7 +182,7 @@ The current implementation uses:
 - H.264 as the expected video codec
 - one live uplink from the device
 - no direct browser-to-board media path in the default design
-- a repo-managed sender supervisor that launches the repo-shipped native sender as a child process by default
+- a repo-managed native sender that runs as its own systemd service by default
 
 The current implementation does not use:
 

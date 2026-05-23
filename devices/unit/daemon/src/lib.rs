@@ -38,6 +38,9 @@ use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio::time::{Instant, MissedTickBehavior, interval_at, sleep, timeout};
+use tokio_stream::wrappers::UnixListenerStream;
+use tonic::transport::Server as TonicServer;
+use tonic::{Request as TonicRequest, Response as TonicResponse, Status as TonicStatus};
 use tracing::field::{Field, Visit};
 use tracing::{Event, Level, Metadata, Subscriber};
 use tracing::{debug, info, warn};
@@ -45,6 +48,10 @@ use tracing_subscriber::EnvFilter;
 use tracing_subscriber::Layer;
 use tracing_subscriber::layer::Context as LayerContext;
 use tracing_subscriber::prelude::*;
+
+pub mod board_video_bridge {
+    tonic::include_proto!("txing.unit.board_video.v1");
+}
 
 pub const SCHEMA_VERSION: &str = "2.0";
 pub const DAEMON_VERSION: &str = env!("TXING_DAEMON_BUILD_VERSION");
@@ -85,6 +92,10 @@ pub const DEFAULT_MAX_WHEEL_LINEAR_SPEED_MPS: f64 = 0.50;
 pub const DEFAULT_CLOUDWATCH_LOG_RETENTION_DAYS: i32 = 14;
 pub const DEFAULT_KVS_MASTER_COMMAND: &str = "txing-board-kvs-master";
 pub const DEFAULT_MCP_WEBRTC_SOCKET_PATH: &str = "/run/txing-unit-daemon/mcp-webrtc.sock";
+pub const DEFAULT_BOARD_VIDEO_BRIDGE_SOCKET_PATH: &str =
+    "/run/txing-unit-daemon/board-video-bridge.sock";
+pub const MCP_WEBRTC_DATA_CHANNEL_LABEL: &str = "txing.mcp.v1";
+pub const DEFAULT_MCP_RESPONSE_TIMEOUT_MS: u32 = 7_000;
 pub const DEFAULT_VIDEO_CODEC: &str = "h264";
 pub const DEFAULT_VIDEO_TRANSPORT: &str = "aws-webrtc";
 pub const VIDEO_STATUS_STARTING: &str = "starting";
@@ -101,9 +112,13 @@ const CLOUDWATCH_LOG_BATCH_MAX_BYTES: usize = 256 * 1024;
 const CLOUDWATCH_LOG_FLUSH_INTERVAL_SECONDS: u64 = 2;
 const CLOUDWATCH_LOG_SHUTDOWN_TIMEOUT_SECONDS: u64 = 5;
 const VIDEO_STATUS_HEARTBEAT_SECONDS: u64 = 5;
+#[allow(dead_code)]
 const VIDEO_RESTART_BACKOFF_INITIAL_SECONDS: u64 = 1;
+#[allow(dead_code)]
 const VIDEO_RESTART_BACKOFF_MAX_SECONDS: u64 = 30;
+#[allow(dead_code)]
 const VIDEO_CREDENTIAL_RESTART_MARGIN_SECONDS: u64 = 300;
+#[allow(dead_code)]
 const VIDEO_CREDENTIAL_RESTART_MIN_SECONDS: u64 = 30;
 static RUSTLS_CRYPTO_PROVIDER: Once = Once::new();
 
@@ -930,6 +945,9 @@ pub struct Cli {
     #[arg(long = "mcp-webrtc-socket-path")]
     pub mcp_webrtc_socket_path: Option<String>,
 
+    #[arg(long = "board-video-bridge-socket-path")]
+    pub board_video_bridge_socket_path: Option<String>,
+
     #[arg(long = "kvs-prefer-ipv6")]
     pub kvs_prefer_ipv6: Option<String>,
 
@@ -1025,6 +1043,7 @@ pub struct RuntimeConfig {
     pub heartbeat: Duration,
     pub kvs_master_command: String,
     pub mcp_webrtc_socket_path: String,
+    pub board_video_bridge_socket_path: String,
     pub kvs_prefer_ipv6: bool,
     pub kvs_disable_ipv4_turn: bool,
     pub video_region: String,
@@ -1127,6 +1146,16 @@ impl RuntimeConfig {
         .unwrap_or_else(|| DEFAULT_MCP_WEBRTC_SOCKET_PATH.to_string());
         if mcp_webrtc_socket_path.trim().is_empty() {
             bail!("mcp-webrtc-socket-path must not be empty");
+        }
+        let board_video_bridge_socket_path = optional_config_value(
+            cli.board_video_bridge_socket_path,
+            process_env,
+            file_env,
+            "TXING_BOARD_VIDEO_BRIDGE_SOCKET_PATH",
+        )
+        .unwrap_or_else(|| DEFAULT_BOARD_VIDEO_BRIDGE_SOCKET_PATH.to_string());
+        if board_video_bridge_socket_path.trim().is_empty() {
+            bail!("board-video-bridge-socket-path must not be empty");
         }
         let kvs_prefer_ipv6 = optional_bool_config(
             cli.kvs_prefer_ipv6,
@@ -1237,6 +1266,7 @@ impl RuntimeConfig {
             heartbeat: Duration::from_secs(heartbeat_seconds),
             kvs_master_command,
             mcp_webrtc_socket_path,
+            board_video_bridge_socket_path,
             kvs_prefer_ipv6,
             kvs_disable_ipv4_turn,
             video_region: aws_region,
@@ -1268,6 +1298,11 @@ pub enum RuntimeMqttEvent {
 
 #[derive(Debug)]
 pub enum RuntimeMcpIpcEvent {
+    Open {
+        session_id: String,
+        transport: String,
+        peer_id: Option<String>,
+    },
     Request {
         session_id: String,
         payload: String,
@@ -1279,6 +1314,7 @@ pub enum RuntimeMcpIpcEvent {
     },
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct McpIpcFrame {
     #[serde(rename = "type")]
@@ -1416,12 +1452,14 @@ impl MqttPublisher {
     }
 }
 
+#[allow(dead_code)]
 struct McpIpcServerHandle {
     stop: Arc<AtomicBool>,
     path: String,
     task: JoinHandle<()>,
 }
 
+#[allow(dead_code)]
 impl McpIpcServerHandle {
     async fn shutdown(self) {
         self.stop.store(true, Ordering::SeqCst);
@@ -1445,6 +1483,7 @@ impl McpIpcServerHandle {
     }
 }
 
+#[allow(dead_code)]
 fn start_mcp_ipc_server(
     socket_path: String,
     event_tx: mpsc::UnboundedSender<RuntimeMcpIpcEvent>,
@@ -1465,23 +1504,28 @@ fn start_mcp_ipc_server(
     })
 }
 
+#[allow(dead_code)]
 fn bind_mcp_ipc_listener(socket_path: &str) -> Result<UnixListener> {
-    let path = Path::new(&socket_path);
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("create MCP IPC socket directory {}", parent.display()))?;
-    }
-    if let Err(err) = fs::remove_file(path)
-        && err.kind() != ErrorKind::NotFound
-    {
-        return Err(err).with_context(|| format!("remove stale MCP IPC socket {socket_path}"));
-    }
-    let listener =
-        UnixListener::bind(path).with_context(|| format!("bind MCP IPC socket {socket_path}"))?;
+    let listener = bind_unix_listener(socket_path, "MCP IPC")?;
     info!(path = %socket_path, "MCP WebRTC IPC server started");
     Ok(listener)
 }
 
+fn bind_unix_listener(socket_path: &str, label: &str) -> Result<UnixListener> {
+    let path = Path::new(socket_path);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("create {label} socket directory {}", parent.display()))?;
+    }
+    if let Err(err) = fs::remove_file(path)
+        && err.kind() != ErrorKind::NotFound
+    {
+        return Err(err).with_context(|| format!("remove stale {label} socket {socket_path}"));
+    }
+    UnixListener::bind(path).with_context(|| format!("bind {label} socket {socket_path}"))
+}
+
+#[allow(dead_code)]
 async fn run_mcp_ipc_server(
     listener: UnixListener,
     event_tx: mpsc::UnboundedSender<RuntimeMcpIpcEvent>,
@@ -1511,6 +1555,7 @@ async fn run_mcp_ipc_server(
     Ok(())
 }
 
+#[allow(dead_code)]
 async fn handle_mcp_ipc_connection(
     stream: UnixStream,
     event_tx: mpsc::UnboundedSender<RuntimeMcpIpcEvent>,
@@ -1596,6 +1641,307 @@ async fn handle_mcp_ipc_connection(
             }
         }
     }
+}
+
+struct BoardVideoBridgeServerHandle {
+    path: String,
+    shutdown_tx: Option<oneshot::Sender<()>>,
+    task: JoinHandle<()>,
+}
+
+impl BoardVideoBridgeServerHandle {
+    async fn shutdown(mut self) {
+        if let Some(shutdown_tx) = self.shutdown_tx.take() {
+            let _ = shutdown_tx.send(());
+        }
+        let mut task = self.task;
+        tokio::select! {
+            join_result = &mut task => {
+                if let Err(err) = join_result {
+                    warn!(error = %err, "board video bridge server task failed during shutdown");
+                }
+            }
+            _ = tokio::time::sleep(Duration::from_secs(2)) => {
+                task.abort();
+                warn!("board video bridge server did not stop within timeout; aborting task");
+            }
+        }
+        if let Err(err) = fs::remove_file(&self.path)
+            && err.kind() != ErrorKind::NotFound
+        {
+            warn!(path = %self.path, error = %err, "failed to remove board video bridge socket");
+        }
+    }
+}
+
+fn start_board_video_bridge_server(
+    config: RuntimeConfig,
+    video_event_tx: mpsc::UnboundedSender<VideoWorkerEvent>,
+    mcp_event_tx: mpsc::UnboundedSender<RuntimeMcpIpcEvent>,
+) -> Result<BoardVideoBridgeServerHandle> {
+    let socket_path = config.board_video_bridge_socket_path.clone();
+    let listener = bind_unix_listener(&socket_path, "board video bridge")?;
+    let incoming = UnixListenerStream::new(listener);
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let service = BoardVideoBridgeService {
+        config: Arc::new(config),
+        video_event_tx,
+        mcp_event_tx,
+    };
+    let task_path = socket_path.clone();
+    let task = tokio::spawn(async move {
+        let server =
+            board_video_bridge::board_video_bridge_server::BoardVideoBridgeServer::new(service);
+        info!(path = %task_path, "board video bridge gRPC server started");
+        if let Err(err) = TonicServer::builder()
+            .add_service(server)
+            .serve_with_incoming_shutdown(incoming, async {
+                let _ = shutdown_rx.await;
+            })
+            .await
+        {
+            warn!(error = %err, "board video bridge gRPC server stopped");
+        }
+    });
+    Ok(BoardVideoBridgeServerHandle {
+        path: socket_path,
+        shutdown_tx: Some(shutdown_tx),
+        task,
+    })
+}
+
+#[derive(Clone)]
+struct BoardVideoBridgeService {
+    config: Arc<RuntimeConfig>,
+    video_event_tx: mpsc::UnboundedSender<VideoWorkerEvent>,
+    mcp_event_tx: mpsc::UnboundedSender<RuntimeMcpIpcEvent>,
+}
+
+#[tonic::async_trait]
+impl board_video_bridge::board_video_bridge_server::BoardVideoBridge for BoardVideoBridgeService {
+    async fn get_worker_config(
+        &self,
+        request: TonicRequest<board_video_bridge::WorkerHello>,
+    ) -> std::result::Result<TonicResponse<board_video_bridge::WorkerConfig>, TonicStatus> {
+        let hello = request.into_inner();
+        if hello.protocol_version.trim() != "1" {
+            return Err(TonicStatus::invalid_argument(
+                "unsupported board video bridge protocol_version",
+            ));
+        }
+        let credentials = fetch_iot_temporary_credentials(&self.config)
+            .await
+            .map_err(|err| {
+                TonicStatus::unavailable(format!("resolve KVS worker credentials: {err:#}"))
+            })?;
+        let response = build_worker_config_response(&self.config, credentials)
+            .map_err(|err| TonicStatus::internal(format!("{err:#}")))?;
+        info!(
+            worker_name = %hello.worker_name,
+            worker_version = %hello.worker_version,
+            channel_name = %response.channel_name,
+            "board video worker config served"
+        );
+        Ok(TonicResponse::new(response))
+    }
+
+    async fn refresh_credentials(
+        &self,
+        _request: TonicRequest<board_video_bridge::RefreshCredentialsRequest>,
+    ) -> std::result::Result<TonicResponse<board_video_bridge::KvsCredentials>, TonicStatus> {
+        let credentials = fetch_iot_temporary_credentials(&self.config)
+            .await
+            .map_err(|err| {
+                TonicStatus::unavailable(format!("refresh KVS worker credentials: {err:#}"))
+            })?;
+        let response = bridge_credentials_from_iot(credentials)
+            .map_err(|err| TonicStatus::internal(format!("{err:#}")))?;
+        Ok(TonicResponse::new(response))
+    }
+
+    async fn report_video_state(
+        &self,
+        request: TonicRequest<board_video_bridge::VideoState>,
+    ) -> std::result::Result<TonicResponse<board_video_bridge::Ack>, TonicStatus> {
+        let report = request.into_inner();
+        let state = board_video_bridge::video_state::State::try_from(report.state)
+            .unwrap_or(board_video_bridge::video_state::State::Unspecified);
+        match state {
+            board_video_bridge::video_state::State::Starting => {
+                self.send_video_event(VideoWorkerEvent::Starting)?;
+                self.send_video_event(VideoWorkerEvent::ViewerConnected {
+                    connected: report.viewer_count > 0,
+                })?;
+            }
+            board_video_bridge::video_state::State::Ready => {
+                self.send_video_event(VideoWorkerEvent::Ready {
+                    worker_version: None,
+                })?;
+                self.send_video_event(VideoWorkerEvent::ViewerConnected {
+                    connected: report.viewer_count > 0,
+                })?;
+            }
+            board_video_bridge::video_state::State::Error => {
+                self.send_video_event(VideoWorkerEvent::Error {
+                    detail: if report.error.trim().is_empty() {
+                        "board video worker reported an error".to_string()
+                    } else {
+                        report.error
+                    },
+                })?;
+                self.send_video_event(VideoWorkerEvent::ViewerConnected {
+                    connected: report.viewer_count > 0,
+                })?;
+            }
+            board_video_bridge::video_state::State::Unspecified => {
+                return Err(TonicStatus::invalid_argument(
+                    "video state must be STARTING, READY, or ERROR",
+                ));
+            }
+        }
+        Ok(TonicResponse::new(board_video_bridge::Ack {}))
+    }
+
+    async fn open_mcp_session(
+        &self,
+        request: TonicRequest<board_video_bridge::OpenMcpSessionRequest>,
+    ) -> std::result::Result<TonicResponse<board_video_bridge::Ack>, TonicStatus> {
+        let request = request.into_inner();
+        let session_id = normalize_bridge_session_id(request.mcp_session_id)?;
+        let transport = if request.transport.trim().is_empty() {
+            "webrtc-datachannel".to_string()
+        } else {
+            request.transport
+        };
+        let peer_id = if request.peer_id.trim().is_empty() {
+            None
+        } else {
+            Some(request.peer_id)
+        };
+        self.send_mcp_event(RuntimeMcpIpcEvent::Open {
+            session_id,
+            transport,
+            peer_id,
+        })?;
+        Ok(TonicResponse::new(board_video_bridge::Ack {}))
+    }
+
+    async fn handle_mcp(
+        &self,
+        request: TonicRequest<board_video_bridge::McpRequest>,
+    ) -> std::result::Result<TonicResponse<board_video_bridge::McpResponse>, TonicStatus> {
+        let request = request.into_inner();
+        let session_id = normalize_bridge_session_id(request.mcp_session_id)?;
+        let payload = String::from_utf8(request.payload)
+            .map_err(|_| TonicStatus::invalid_argument("MCP payload must be UTF-8 JSON-RPC"))?;
+        let (response_tx, response_rx) = oneshot::channel();
+        self.send_mcp_event(RuntimeMcpIpcEvent::Request {
+            session_id,
+            payload,
+            response_tx,
+        })?;
+        let response = timeout(
+            Duration::from_millis(u64::from(DEFAULT_MCP_RESPONSE_TIMEOUT_MS)),
+            response_rx,
+        )
+        .await
+        .map_err(|_| TonicStatus::deadline_exceeded("MCP response timed out"))?
+        .map_err(|_| TonicStatus::unavailable("daemon MCP runtime stopped"))?;
+        let response = match response {
+            Some(payload) => board_video_bridge::McpResponse {
+                has_payload: true,
+                payload: payload.into_bytes(),
+            },
+            None => board_video_bridge::McpResponse {
+                has_payload: false,
+                payload: Vec::new(),
+            },
+        };
+        Ok(TonicResponse::new(response))
+    }
+
+    async fn close_mcp_session(
+        &self,
+        request: TonicRequest<board_video_bridge::CloseMcpSessionRequest>,
+    ) -> std::result::Result<TonicResponse<board_video_bridge::Ack>, TonicStatus> {
+        let request = request.into_inner();
+        let session_id = normalize_bridge_session_id(request.mcp_session_id)?;
+        let reason = if request.reason.trim().is_empty() {
+            "MCP bridge session closed".to_string()
+        } else {
+            request.reason
+        };
+        self.send_mcp_event(RuntimeMcpIpcEvent::Close { session_id, reason })?;
+        Ok(TonicResponse::new(board_video_bridge::Ack {}))
+    }
+}
+
+impl BoardVideoBridgeService {
+    fn send_video_event(&self, event: VideoWorkerEvent) -> std::result::Result<(), TonicStatus> {
+        self.video_event_tx
+            .send(event)
+            .map_err(|_| TonicStatus::unavailable("daemon video runtime stopped"))
+    }
+
+    fn send_mcp_event(&self, event: RuntimeMcpIpcEvent) -> std::result::Result<(), TonicStatus> {
+        self.mcp_event_tx
+            .send(event)
+            .map_err(|_| TonicStatus::unavailable("daemon MCP runtime stopped"))
+    }
+}
+
+fn normalize_bridge_session_id(session_id: String) -> std::result::Result<String, TonicStatus> {
+    let trimmed = session_id.trim();
+    if trimmed.is_empty() {
+        return Err(TonicStatus::invalid_argument("mcp_session_id is required"));
+    }
+    Ok(trimmed.to_string())
+}
+
+fn build_worker_config_response(
+    config: &RuntimeConfig,
+    credentials: IotTemporaryCredentials,
+) -> Result<board_video_bridge::WorkerConfig> {
+    Ok(board_video_bridge::WorkerConfig {
+        region: config.video_region.clone(),
+        channel_name: config.video_channel_name.clone(),
+        client_id: board_video_worker_client_id(config),
+        mcp_data_channel_label: MCP_WEBRTC_DATA_CHANNEL_LABEL.to_string(),
+        mcp_response_timeout_ms: DEFAULT_MCP_RESPONSE_TIMEOUT_MS,
+        prefer_ipv6: config.kvs_prefer_ipv6,
+        disable_ipv4_turn: config.kvs_disable_ipv4_turn,
+        credentials: Some(bridge_credentials_from_iot(credentials)?),
+    })
+}
+
+fn bridge_credentials_from_iot(
+    credentials: IotTemporaryCredentials,
+) -> Result<board_video_bridge::KvsCredentials> {
+    Ok(board_video_bridge::KvsCredentials {
+        access_key_id: credentials.access_key_id,
+        secret_access_key: credentials.secret_access_key,
+        session_token: credentials.session_token,
+        expires_at: Some(system_time_to_protobuf_timestamp(
+            parse_iot_temporary_credentials_expiration(&credentials.expiration)?,
+        )?),
+    })
+}
+
+fn system_time_to_protobuf_timestamp(time: SystemTime) -> Result<prost_types::Timestamp> {
+    let duration = time
+        .duration_since(UNIX_EPOCH)
+        .context("board video bridge credential expiration is before Unix epoch")?;
+    Ok(prost_types::Timestamp {
+        seconds: duration
+            .as_secs()
+            .try_into()
+            .context("board video bridge credential expiration exceeds protobuf timestamp range")?,
+        nanos: duration.subsec_nanos() as i32,
+    })
+}
+
+fn board_video_worker_client_id(config: &RuntimeConfig) -> String {
+    format!("{}-board-kvs-master", config.thing_id)
 }
 
 #[async_trait]
@@ -2728,6 +3074,18 @@ impl RuntimeState {
         observed_at_ms: u64,
     ) -> Result<()> {
         match event {
+            RuntimeMcpIpcEvent::Open {
+                session_id,
+                transport,
+                peer_id,
+            } => {
+                info!(
+                    session_id = %session_id,
+                    transport = %transport,
+                    peer_id = peer_id.as_deref().unwrap_or(""),
+                    "MCP bridge session opened"
+                );
+            }
             RuntimeMcpIpcEvent::Request {
                 session_id,
                 payload,
@@ -3423,11 +3781,13 @@ fn parse_marker_field(fields: &str, key: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+#[allow(dead_code)]
 struct VideoSupervisorHandle {
     stop: Arc<AtomicBool>,
     task: JoinHandle<()>,
 }
 
+#[allow(dead_code)]
 impl VideoSupervisorHandle {
     async fn shutdown(self) {
         self.stop.store(true, Ordering::SeqCst);
@@ -3446,6 +3806,7 @@ impl VideoSupervisorHandle {
     }
 }
 
+#[allow(dead_code)]
 fn start_video_supervisor(
     config: RuntimeConfig,
     event_tx: mpsc::UnboundedSender<VideoWorkerEvent>,
@@ -3458,6 +3819,7 @@ fn start_video_supervisor(
     VideoSupervisorHandle { stop, task }
 }
 
+#[allow(dead_code)]
 async fn run_video_supervisor(
     config: RuntimeConfig,
     event_tx: mpsc::UnboundedSender<VideoWorkerEvent>,
@@ -3527,10 +3889,12 @@ async fn run_video_supervisor(
 }
 
 #[derive(Debug, Default)]
+#[allow(dead_code)]
 struct VideoRestartBackoff {
     next_seconds: u64,
 }
 
+#[allow(dead_code)]
 impl VideoRestartBackoff {
     fn next_delay(&mut self) -> Duration {
         let delay = if self.next_seconds == 0 {
@@ -3549,6 +3913,7 @@ impl VideoRestartBackoff {
     }
 }
 
+#[allow(dead_code)]
 async fn sleep_until_stop(stop: Arc<AtomicBool>, duration: Duration) {
     let deadline = Instant::now() + duration;
     while !stop.load(Ordering::SeqCst) {
@@ -3561,6 +3926,7 @@ async fn sleep_until_stop(stop: Arc<AtomicBool>, duration: Duration) {
     }
 }
 
+#[allow(dead_code)]
 struct VideoWorkerRunConfig {
     command: String,
     mcp_webrtc_socket_path: String,
@@ -3575,12 +3941,14 @@ struct VideoWorkerRunConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)]
 enum VideoWorkerRunResult {
     CredentialRefresh,
     Failed(String),
     Stopped,
 }
 
+#[allow(dead_code)]
 fn run_video_worker_blocking(config: VideoWorkerRunConfig) -> VideoWorkerRunResult {
     let restart_at = video_credential_restart_at(config.expires_at, SystemTime::now());
     let mut command = std::process::Command::new(&config.command);
@@ -3649,6 +4017,7 @@ fn run_video_worker_blocking(config: VideoWorkerRunConfig) -> VideoWorkerRunResu
     }
 }
 
+#[allow(dead_code)]
 fn configure_video_worker_command(
     command: &mut std::process::Command,
     config: &VideoWorkerRunConfig,
@@ -3696,6 +4065,7 @@ fn configure_video_worker_command(
     }
 }
 
+#[allow(dead_code)]
 fn video_credential_restart_at(expires_at: SystemTime, now: SystemTime) -> SystemTime {
     let margin = Duration::from_secs(VIDEO_CREDENTIAL_RESTART_MARGIN_SECONDS);
     let min_delay = Duration::from_secs(VIDEO_CREDENTIAL_RESTART_MIN_SECONDS);
@@ -3709,6 +4079,7 @@ fn video_credential_restart_at(expires_at: SystemTime, now: SystemTime) -> Syste
     }
 }
 
+#[allow(dead_code)]
 fn spawn_video_marker_reader<R>(
     stream_name: &'static str,
     reader: R,
@@ -3759,6 +4130,7 @@ where
         .expect("spawn KVS worker marker reader")
 }
 
+#[allow(dead_code)]
 fn log_video_worker_output_line(stream_name: &'static str, line: &str) {
     if video_worker_output_level(stream_name) == Level::WARN {
         warn!(stream = stream_name, line = %line, "native KVS worker output");
@@ -3767,6 +4139,7 @@ fn log_video_worker_output_line(stream_name: &'static str, line: &str) {
     }
 }
 
+#[allow(dead_code)]
 fn video_worker_output_level(stream_name: &str) -> Level {
     if stream_name == "stderr" {
         Level::WARN
@@ -3775,12 +4148,14 @@ fn video_worker_output_level(stream_name: &str) -> Level {
     }
 }
 
+#[allow(dead_code)]
 fn join_video_marker_readers(readers: Vec<std::thread::JoinHandle<()>>) {
     for reader in readers {
         let _ = reader.join();
     }
 }
 
+#[allow(dead_code)]
 fn terminate_video_child(child: &mut std::process::Child) {
     if child.try_wait().ok().flatten().is_some() {
         return;
@@ -3832,16 +4207,12 @@ async fn run_connected_runtime(
         .iter()
         .any(|capability| capability == VIDEO_CAPABILITY);
     let (mcp_ipc_event_tx, mut mcp_ipc_events) = mpsc::unbounded_channel();
-    let mcp_ipc_server = if video_enabled {
-        Some(start_mcp_ipc_server(
-            config.mcp_webrtc_socket_path.clone(),
+    let board_video_bridge_server = if video_enabled {
+        Some(start_board_video_bridge_server(
+            config.clone(),
+            video_event_tx,
             mcp_ipc_event_tx,
         )?)
-    } else {
-        None
-    };
-    let video_supervisor = if video_enabled {
-        Some(start_video_supervisor(config.clone(), video_event_tx))
     } else {
         None
     };
@@ -3905,11 +4276,8 @@ async fn run_connected_runtime(
         }
     }
 
-    if let Some(video_supervisor) = video_supervisor {
-        video_supervisor.shutdown().await;
-    }
-    if let Some(mcp_ipc_server) = mcp_ipc_server {
-        mcp_ipc_server.shutdown().await;
+    if let Some(board_video_bridge_server) = board_video_bridge_server {
+        board_video_bridge_server.shutdown().await;
     }
     if let Err(err) = state.publish_offline(publisher, now_ms()).await {
         warn!(error = %format_args!("{err:#}"), "failed to publish offline state");
@@ -5217,6 +5585,7 @@ mod tests {
             heartbeat: Duration::from_secs(60),
             kvs_master_command: DEFAULT_KVS_MASTER_COMMAND.to_string(),
             mcp_webrtc_socket_path: DEFAULT_MCP_WEBRTC_SOCKET_PATH.to_string(),
+            board_video_bridge_socket_path: DEFAULT_BOARD_VIDEO_BRIDGE_SOCKET_PATH.to_string(),
             kvs_prefer_ipv6: true,
             kvs_disable_ipv4_turn: false,
             video_region: "eu-central-1".to_string(),
@@ -5940,6 +6309,179 @@ mod tests {
     }
 
     #[test]
+    fn board_video_bridge_worker_config_maps_runtime_config_and_credentials() {
+        let mut config = config();
+        config.kvs_prefer_ipv6 = false;
+        config.kvs_disable_ipv4_turn = true;
+        let response = build_worker_config_response(
+            &config,
+            IotTemporaryCredentials {
+                access_key_id: "akid".to_string(),
+                secret_access_key: "secret".to_string(),
+                session_token: "token".to_string(),
+                expiration: "2026-05-14T12:00:00Z".to_string(),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(response.region, "eu-central-1");
+        assert_eq!(response.channel_name, "unit-local-board-video");
+        assert_eq!(response.client_id, "unit-local-board-kvs-master");
+        assert_eq!(
+            response.mcp_data_channel_label,
+            MCP_WEBRTC_DATA_CHANNEL_LABEL
+        );
+        assert_eq!(
+            response.mcp_response_timeout_ms,
+            DEFAULT_MCP_RESPONSE_TIMEOUT_MS
+        );
+        assert!(!response.prefer_ipv6);
+        assert!(response.disable_ipv4_turn);
+        let credentials = response.credentials.unwrap();
+        assert_eq!(credentials.access_key_id, "akid");
+        assert_eq!(credentials.secret_access_key, "secret");
+        assert_eq!(credentials.session_token, "token");
+        assert_eq!(credentials.expires_at.unwrap().seconds, 1_778_760_000);
+    }
+
+    #[tokio::test]
+    async fn mcp_bridge_open_session_does_not_grant_active_control() {
+        let publisher = FakePublisher::default();
+        let mut state = RuntimeState::new(config()).unwrap();
+        state
+            .handle_mcp_ipc_event(
+                &publisher,
+                RuntimeMcpIpcEvent::Open {
+                    session_id: "session-a".to_string(),
+                    transport: "webrtc-datachannel".to_string(),
+                    peer_id: Some("peer-a".to_string()),
+                },
+                now_ms(),
+            )
+            .await
+            .unwrap();
+
+        assert!(state.mcp.active.is_none());
+        assert!(publisher.messages().is_empty());
+    }
+
+    #[tokio::test]
+    async fn board_video_bridge_serves_video_state_and_mcp_over_unix_socket() {
+        let temp_dir = PathBuf::from(format!("/tmp/txing-bvb-{}-{}", process::id(), now_ms()));
+        let socket_path = temp_dir.join("bridge.sock");
+        let mut config = config();
+        config.board_video_bridge_socket_path = socket_path.to_string_lossy().to_string();
+        let (video_event_tx, mut video_events) = mpsc::unbounded_channel();
+        let (mcp_event_tx, mut mcp_events) = mpsc::unbounded_channel();
+        let server = start_board_video_bridge_server(config, video_event_tx, mcp_event_tx).unwrap();
+
+        let connector_path = socket_path.clone();
+        let channel = tonic::transport::Endpoint::try_from("http://[::]:50051")
+            .unwrap()
+            .connect_with_connector(tower::service_fn(move |_| {
+                let path = connector_path.clone();
+                async move {
+                    UnixStream::connect(path)
+                        .await
+                        .map(hyper_util::rt::TokioIo::new)
+                }
+            }))
+            .await
+            .unwrap();
+        let mut client =
+            board_video_bridge::board_video_bridge_client::BoardVideoBridgeClient::new(channel);
+
+        client
+            .report_video_state(board_video_bridge::VideoState {
+                state: board_video_bridge::video_state::State::Ready as i32,
+                viewer_count: 2,
+                error: String::new(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            video_events.recv().await.unwrap(),
+            VideoWorkerEvent::Ready {
+                worker_version: None
+            }
+        );
+        assert_eq!(
+            video_events.recv().await.unwrap(),
+            VideoWorkerEvent::ViewerConnected { connected: true }
+        );
+
+        client
+            .open_mcp_session(board_video_bridge::OpenMcpSessionRequest {
+                mcp_session_id: "session-a".to_string(),
+                transport: "webrtc-datachannel".to_string(),
+                peer_id: "peer-a".to_string(),
+            })
+            .await
+            .unwrap();
+        match mcp_events.recv().await.unwrap() {
+            RuntimeMcpIpcEvent::Open {
+                session_id,
+                transport,
+                peer_id,
+            } => {
+                assert_eq!(session_id, "session-a");
+                assert_eq!(transport, "webrtc-datachannel");
+                assert_eq!(peer_id.as_deref(), Some("peer-a"));
+            }
+            other => panic!("unexpected MCP event: {other:?}"),
+        }
+
+        let mut request_client = client.clone();
+        let response_task = tokio::spawn(async move {
+            request_client
+                .handle_mcp(board_video_bridge::McpRequest {
+                    mcp_session_id: "session-a".to_string(),
+                    payload: br#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#.to_vec(),
+                })
+                .await
+                .unwrap()
+                .into_inner()
+        });
+        match mcp_events.recv().await.unwrap() {
+            RuntimeMcpIpcEvent::Request {
+                session_id,
+                payload,
+                response_tx,
+            } => {
+                assert_eq!(session_id, "session-a");
+                assert!(payload.contains("\"method\":\"ping\""));
+                response_tx
+                    .send(Some(r#"{"jsonrpc":"2.0","id":1,"result":{}}"#.to_string()))
+                    .unwrap();
+            }
+            other => panic!("unexpected MCP event: {other:?}"),
+        }
+        let response = response_task.await.unwrap();
+        assert!(response.has_payload);
+        assert_eq!(
+            String::from_utf8(response.payload).unwrap(),
+            r#"{"jsonrpc":"2.0","id":1,"result":{}}"#
+        );
+
+        client
+            .close_mcp_session(board_video_bridge::CloseMcpSessionRequest {
+                mcp_session_id: "session-a".to_string(),
+                reason: "test done".to_string(),
+            })
+            .await
+            .unwrap();
+        match mcp_events.recv().await.unwrap() {
+            RuntimeMcpIpcEvent::Close { session_id, reason } => {
+                assert_eq!(session_id, "session-a");
+                assert_eq!(reason, "test done");
+            }
+            other => panic!("unexpected MCP event: {other:?}"),
+        }
+
+        server.shutdown().await;
+    }
+
+    #[test]
     fn video_restart_backoff_is_bounded_and_resettable() {
         let mut backoff = VideoRestartBackoff::default();
 
@@ -6237,11 +6779,10 @@ mod tests {
             "export TXING_HEARTBEAT_SECONDS={DEFAULT_HEARTBEAT_SECONDS}"
         )));
         assert!(template.contains(&format!(
-            "export TXING_KVS_MASTER_COMMAND={DEFAULT_KVS_MASTER_COMMAND}"
+            "export TXING_BOARD_VIDEO_BRIDGE_SOCKET_PATH={DEFAULT_BOARD_VIDEO_BRIDGE_SOCKET_PATH}"
         )));
-        assert!(template.contains(&format!(
-            "export TXING_MCP_WEBRTC_SOCKET_PATH={DEFAULT_MCP_WEBRTC_SOCKET_PATH}"
-        )));
+        assert!(!template.contains("TXING_KVS_MASTER_COMMAND"));
+        assert!(!template.contains("TXING_MCP_WEBRTC_SOCKET_PATH"));
         assert_eq!(get("TXING_KVS_PREFER_IPV6"), "true");
         assert_eq!(get("TXING_KVS_DISABLE_IPV4_TURN"), "false");
         assert!(
@@ -6443,6 +6984,10 @@ mod tests {
         assert_eq!(config.capability_ttl, Duration::from_secs(120));
         assert_eq!(config.heartbeat, Duration::from_secs(30));
         assert_eq!(config.kvs_master_command, DEFAULT_KVS_MASTER_COMMAND);
+        assert_eq!(
+            config.board_video_bridge_socket_path,
+            DEFAULT_BOARD_VIDEO_BRIDGE_SOCKET_PATH
+        );
         assert_eq!(config.video_region, "from-file");
         assert_eq!(config.video_channel_name, "from-cli-board-video");
         assert_eq!(
@@ -6544,6 +7089,10 @@ mod tests {
         assert_eq!(config.capability_ttl, Duration::from_secs(150));
         assert_eq!(config.heartbeat, Duration::from_secs(60));
         assert_eq!(config.kvs_master_command, DEFAULT_KVS_MASTER_COMMAND);
+        assert_eq!(
+            config.board_video_bridge_socket_path,
+            DEFAULT_BOARD_VIDEO_BRIDGE_SOCKET_PATH
+        );
         assert_eq!(config.video_region, "eu-central-1");
         assert_eq!(config.video_channel_name, "unit-local-board-video");
         assert!(config.client_id.starts_with("unit-local-daemon-"));

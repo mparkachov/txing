@@ -53,14 +53,16 @@ Rig, MCU, board, and cloud-facing systems are correctness-critical.
   authoritative after a hard board power cut.
 - The current implementation uses plain AWS KVS WebRTC signaling as the live
   operator video path.
-- `txing-unit-daemon` writes local runtime state, probes supervised sender
-  readiness, publishes retained video descriptor/status topics for `rig`, and
-  mirrors descriptor/status into the `video` named shadow for readers.
+- `txing-unit-daemon` writes local runtime state, receives coarse sender
+  readiness over BoardVideoBridge gRPC, publishes retained video
+  descriptor/status topics for `rig`, and mirrors descriptor/status into the
+  `video` named shadow for readers.
 - `rig` consumes retained MQTT video service topics for REDCON derivation.
 - The browser operator path uses the AWS KVS viewer flow, not a board-local
   iframe page.
-- The repo ships the native sender in-tree and supervises it as a child process
-  from `txing-unit-daemon`.
+- The repo ships the native sender in-tree. The sender and daemon run as
+  separate systemd services and communicate through the local BoardVideoBridge
+  contract.
 - Browser-to-board motion control uses board MCP tools with a lease hard gate.
 - The legacy raw `<device_id>/board/cmd_vel` path is removed.
 

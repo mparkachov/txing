@@ -4,7 +4,7 @@
 - This directory contains native board-side support code for the unit Raspberry Pi board video path.
 - This board is distinct from the `rig/` Raspberry Pi 5 gateway.
 - The production board runtime is the Rust `txing-unit-daemon`; this directory does not contain a Python board runtime.
-- The native `txing-board-kvs-master` worker connects to AWS KVS WebRTC signaling and is supervised by `txing-unit-daemon`.
+- The native `txing-board-kvs-master` worker connects to AWS KVS WebRTC signaling and communicates with `txing-unit-daemon` over the local BoardVideoBridge gRPC socket.
 
 ## Notes
 - Follow repository-level rule: do not create commits unless explicitly requested by the user.
@@ -25,8 +25,8 @@
 - `txing-unit-daemon` is the only process allowed to publish `board.*` updates into the Thing Shadow.
 - The current implementation uses one live operator path only: board camera -> AWS KVS WebRTC signaling channel -> operator.
 - The board does not expose a board-local viewer page, iframe endpoint, or direct browser-to-board media transport.
-- `txing-unit-daemon` supervises `txing-board-kvs-master`, publishes retained video descriptor/status topics for `rig`, and mirrors descriptor/status into the `video` named shadow for readers.
-- `txing-unit-daemon` vends IoT credentials to the supervised native worker for KVS access.
+- `txing-unit-daemon` serves the BoardVideoBridge gRPC socket, publishes retained video descriptor/status topics for `rig`, and mirrors descriptor/status into the `video` named shadow for readers.
+- `txing-unit-daemon` vends IoT credentials to the native worker for KVS access through the bridge.
 - The current implementation does not use MediaMTX, `webrtcsink`, `gstwebrtc-api`, `kvssink`, ingestion/storage, or multiviewer.
 
 ## Shared workflow

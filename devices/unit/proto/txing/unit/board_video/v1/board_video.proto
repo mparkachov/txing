@@ -1,0 +1,81 @@
+syntax = "proto3";
+
+package txing.unit.board_video.v1;
+
+import "google/protobuf/timestamp.proto";
+
+service BoardVideoBridge {
+  rpc GetWorkerConfig(WorkerHello) returns (WorkerConfig);
+  rpc RefreshCredentials(RefreshCredentialsRequest) returns (KvsCredentials);
+
+  rpc ReportVideoState(VideoState) returns (Ack);
+
+  rpc OpenMcpSession(OpenMcpSessionRequest) returns (Ack);
+  rpc HandleMcp(McpRequest) returns (McpResponse);
+  rpc CloseMcpSession(CloseMcpSessionRequest) returns (Ack);
+}
+
+message Ack {}
+
+message WorkerHello {
+  string protocol_version = 1;
+  string worker_name = 2;
+  string worker_version = 3;
+}
+
+message WorkerConfig {
+  string region = 1;
+  string channel_name = 2;
+  string client_id = 3;
+
+  string mcp_data_channel_label = 4;
+  uint32 mcp_response_timeout_ms = 5;
+
+  bool prefer_ipv6 = 6;
+  bool disable_ipv4_turn = 7;
+
+  KvsCredentials credentials = 8;
+}
+
+message RefreshCredentialsRequest {}
+
+message KvsCredentials {
+  string access_key_id = 1;
+  string secret_access_key = 2;
+  string session_token = 3;
+  google.protobuf.Timestamp expires_at = 4;
+}
+
+message VideoState {
+  enum State {
+    STATE_UNSPECIFIED = 0;
+    STARTING = 1;
+    READY = 2;
+    ERROR = 3;
+  }
+
+  State state = 1;
+  uint32 viewer_count = 2;
+  string error = 3;
+}
+
+message OpenMcpSessionRequest {
+  string mcp_session_id = 1;
+  string transport = 2;
+  string peer_id = 3;
+}
+
+message McpRequest {
+  string mcp_session_id = 1;
+  bytes payload = 2;
+}
+
+message McpResponse {
+  bool has_payload = 1;
+  bytes payload = 2;
+}
+
+message CloseMcpSessionRequest {
+  string mcp_session_id = 1;
+  string reason = 2;
+}

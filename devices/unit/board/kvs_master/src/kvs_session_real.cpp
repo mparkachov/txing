@@ -1,5 +1,6 @@
 #include "kvs_master/kvs_session.hpp"
 
+#include "kvs_master/board_video_bridge.hpp"
 #include "kvs_master/markers.hpp"
 
 #include <arpa/inet.h>
@@ -55,7 +56,7 @@ constexpr CHAR kControlPlaneUriEnvVar[] = "CONTROL_PLANE_URI";
 constexpr CHAR kIceTransportPolicyEnvVar[] = "KVS_ICE_TRANSPORT_POLICY";
 constexpr CHAR kVideoStreamId[] = "txingBoardVideo";
 constexpr CHAR kVideoTrackId[] = "txingBoardVideoTrack";
-constexpr CHAR kMcpDataChannelLabel[] = "txing.mcp.v1";
+constexpr CHAR kDefaultMcpDataChannelLabel[] = "txing.mcp.v1";
 constexpr char kSystemCaCertPath[] = TXING_KVS_SYSTEM_CA_CERT_PATH;
 constexpr std::size_t kCandidateAddressTokenIndex = 4;
 constexpr int kMcpIpcResponseTimeoutMs = 7000;
@@ -460,7 +461,9 @@ class RealKvsSession final : public KvsSession {
           secret_access_key_(credentials.secret_access_key),
           session_token_(credentials.session_token),
           ca_cert_path_(ResolveSignalingCaCertPath()),
-          mcp_webrtc_socket_path_(config.mcp_webrtc_socket_path),
+          bridge_socket_path_(config.board_video_bridge_socket_path),
+          bridge_client_(bridge_socket_path_.has_value() ? CreateBoardVideoBridgeClient(*bridge_socket_path_) : nullptr),
+          mcp_data_channel_label_(config.mcp_data_channel_label.empty() ? kDefaultMcpDataChannelLabel : config.mcp_data_channel_label),
           video_bitrate_bps_(config.camera.bitrate) {
         try {
             CreateCredentialProvider();
@@ -868,7 +871,7 @@ class RealKvsSession final : public KvsSession {
     }
 
     STATUS AddMcpDataChannelHandler(StreamingSession* session) {
-        if (!mcp_webrtc_socket_path_.has_value()) {
+        if (bridge_client_ == nullptr) {
             return STATUS_SUCCESS;
         }
         return peerConnectionOnDataChannel(
@@ -879,39 +882,9 @@ class RealKvsSession final : public KvsSession {
     }
 
     bool EnsureMcpIpcConnected(StreamingSession* session) {
-        if (session == nullptr || !mcp_webrtc_socket_path_.has_value()) {
+        if (session == nullptr || bridge_client_ == nullptr) {
             return false;
         }
-        if (session->mcp_ipc_fd >= 0) {
-            return true;
-        }
-
-        if (mcp_webrtc_socket_path_->size() >= sizeof(sockaddr_un::sun_path)) {
-            std::fprintf(stderr, "WARN kvs_session_real: MCP IPC socket path is too long\n");
-            return false;
-        }
-
-        int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
-        if (fd < 0) {
-            std::fprintf(stderr, "WARN kvs_session_real: failed to create MCP IPC socket errno=%d\n", errno);
-            return false;
-        }
-
-        sockaddr_un address{};
-        address.sun_family = AF_UNIX;
-        std::snprintf(address.sun_path, sizeof(address.sun_path), "%s", mcp_webrtc_socket_path_->c_str());
-        if (::connect(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0) {
-            std::fprintf(
-                stderr,
-                "WARN kvs_session_real: failed to connect MCP IPC socket path=%s errno=%d\n",
-                mcp_webrtc_socket_path_->c_str(),
-                errno
-            );
-            ::close(fd);
-            return false;
-        }
-
-        session->mcp_ipc_fd = fd;
         return true;
     }
 
@@ -930,18 +903,22 @@ class RealKvsSession final : public KvsSession {
             session->mcp_data_channel = nullptr;
         }
         std::lock_guard<std::mutex> lock(session->mcp_ipc_lock);
-        if (session->mcp_ipc_fd < 0) {
+        if (bridge_client_ == nullptr) {
             return;
         }
-        const std::string close_frame =
-            std::string("{\"type\":\"close\",\"sessionId\":\"") +
-            EscapeJsonString(session->peer_id) +
-            "\",\"reason\":\"" +
-            EscapeJsonString(reason == nullptr ? "MCP WebRTC data channel closed" : reason) +
-            "\"}\n";
-        UNUSED_PARAM(WriteAll(session->mcp_ipc_fd, close_frame));
-        ::close(session->mcp_ipc_fd);
-        session->mcp_ipc_fd = -1;
+        try {
+            bridge_client_->CloseMcpSession(
+                session->peer_id,
+                reason == nullptr ? "MCP WebRTC data channel closed" : reason
+            );
+        } catch (const std::exception& error) {
+            std::fprintf(
+                stderr,
+                "WARN kvs_session_real: failed to close MCP bridge session peer=%s error=%s\n",
+                session->peer_id.c_str(),
+                error.what()
+            );
+        }
     }
 
     void ReportMcpDataChannelError(StreamingSession* session, std::string_view detail) {
@@ -954,6 +931,39 @@ class RealKvsSession final : public KvsSession {
         );
     }
 
+    void OpenMcpDataChannel(StreamingSession* session) {
+        if (session == nullptr || bridge_client_ == nullptr) {
+            return;
+        }
+        std::lock_guard<std::mutex> lock(session->mcp_ipc_lock);
+        try {
+            bridge_client_->OpenMcpSession(session->peer_id, "webrtc-datachannel", session->peer_id);
+        } catch (const std::exception& error) {
+            ReportMcpDataChannelError(session, "open MCP bridge session failed");
+            std::fprintf(
+                stderr,
+                "WARN kvs_session_real: failed to open MCP bridge session peer=%s error=%s\n",
+                session->peer_id.c_str(),
+                error.what()
+            );
+        }
+    }
+
+    void ReportReadyViewerCount(std::uint32_t viewer_count) noexcept {
+        if (bridge_client_ == nullptr) {
+            return;
+        }
+        try {
+            bridge_client_->ReportVideoState(BridgeVideoState::kReady, viewer_count, "");
+        } catch (const std::exception& error) {
+            std::fprintf(
+                stderr,
+                "WARN kvs_session_real: failed to report viewer count to board video bridge: %s\n",
+                error.what()
+            );
+        }
+    }
+
     std::optional<std::string> DispatchMcpDataChannelMessage(
         StreamingSession* session,
         std::string_view payload
@@ -963,43 +973,21 @@ class RealKvsSession final : public KvsSession {
         }
         std::lock_guard<std::mutex> lock(session->mcp_ipc_lock);
         if (!EnsureMcpIpcConnected(session)) {
-            ReportMcpDataChannelError(session, "MCP IPC unavailable");
+            ReportMcpDataChannelError(session, "MCP bridge unavailable");
             if (HasJsonField(payload, "id")) {
-                return BuildJsonRpcErrorResponse(payload, -32000, "MCP WebRTC IPC is unavailable");
+                return BuildJsonRpcErrorResponse(payload, -32000, "MCP bridge is unavailable");
             }
             return std::nullopt;
         }
-        const std::string request_frame =
-            std::string("{\"type\":\"request\",\"sessionId\":\"") +
-            EscapeJsonString(session->peer_id) +
-            "\",\"payload\":\"" +
-            EscapeJsonString(payload) +
-            "\"}\n";
-        if (!WriteAll(session->mcp_ipc_fd, request_frame)) {
-            ::close(session->mcp_ipc_fd);
-            session->mcp_ipc_fd = -1;
-            ReportMcpDataChannelError(session, "write MCP IPC request failed");
+        try {
+            return bridge_client_->HandleMcp(session->peer_id, std::string(payload));
+        } catch (const std::exception& error) {
+            ReportMcpDataChannelError(session, "MCP bridge request failed");
             if (HasJsonField(payload, "id")) {
-                return BuildJsonRpcErrorResponse(payload, -32000, "MCP WebRTC IPC write failed");
+                return BuildJsonRpcErrorResponse(payload, -32000, std::string("MCP bridge request failed: ") + error.what());
             }
             return std::nullopt;
         }
-        if (!HasJsonField(payload, "id")) {
-            return std::nullopt;
-        }
-        const auto response_line = ReadLine(session->mcp_ipc_fd, kMcpIpcResponseTimeoutMs);
-        if (!response_line.has_value()) {
-            ::close(session->mcp_ipc_fd);
-            session->mcp_ipc_fd = -1;
-            ReportMcpDataChannelError(session, "read MCP IPC response failed");
-            return BuildJsonRpcErrorResponse(payload, -32000, "MCP WebRTC IPC read failed");
-        }
-        const auto response_payload = ExtractJsonStringField(*response_line, "payload");
-        if (!response_payload.has_value()) {
-            ReportMcpDataChannelError(session, "MCP IPC response missing payload");
-            return BuildJsonRpcErrorResponse(payload, -32000, "MCP WebRTC IPC returned an invalid response");
-        }
-        return response_payload;
     }
 
     STATUS CreateStreamingSession(const std::string& peer_id, std::shared_ptr<StreamingSession>* session_out) {
@@ -1472,6 +1460,9 @@ class RealKvsSession final : public KvsSession {
         if (emit_disconnected) {
             EmitMarker("TXING_VIEWER_DISCONNECTED", {{"clientId", client_id}, {"viewers", std::to_string(viewer_count)}});
         }
+        if (emit_connected || emit_disconnected) {
+            ReportReadyViewerCount(viewer_count);
+        }
     }
 
     void DestroySession(const std::shared_ptr<StreamingSession>& session) noexcept {
@@ -1643,7 +1634,7 @@ class RealKvsSession final : public KvsSession {
         if (session == nullptr || session->owner == nullptr || data_channel == nullptr) {
             return;
         }
-        if (std::string(data_channel->name) != kMcpDataChannelLabel) {
+        if (std::string(data_channel->name) != session->owner->mcp_data_channel_label_) {
             std::fprintf(
                 stderr,
                 "INFO kvs_session_real: ignoring unsupported data channel label=%s peer=%s\n",
@@ -1654,6 +1645,7 @@ class RealKvsSession final : public KvsSession {
         }
         session->mcp_data_channel = data_channel;
         EmitMarker("TXING_MCP_DATACHANNEL_OPEN", {{"sessionId", session->peer_id}});
+        session->owner->OpenMcpDataChannel(session);
         const STATUS status = dataChannelOnMessage(data_channel, custom_data, OnDataChannelMessage);
         if (STATUS_FAILED(status)) {
             EmitMarker(
@@ -1745,7 +1737,9 @@ class RealKvsSession final : public KvsSession {
     std::string secret_access_key_;
     std::optional<std::string> session_token_;
     std::string ca_cert_path_;
-    std::optional<std::string> mcp_webrtc_socket_path_;
+    std::optional<std::string> bridge_socket_path_;
+    std::unique_ptr<BoardVideoBridgeClient> bridge_client_;
+    std::string mcp_data_channel_label_;
     UINT32 video_bitrate_bps_ = 0;
 
     std::optional<std::string> control_plane_url_;

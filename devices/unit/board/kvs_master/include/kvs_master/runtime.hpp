@@ -2,6 +2,7 @@
 #define TXING_BOARD_KVS_MASTER_RUNTIME_HPP
 
 #include "kvs_master/aws_env.hpp"
+#include "kvs_master/board_video_bridge.hpp"
 #include "kvs_master/config.hpp"
 #include "kvs_master/kvs_session.hpp"
 #include "kvs_master/video_capturer.hpp"
@@ -13,6 +14,7 @@ namespace txing::board::kvs_master {
 
 struct RuntimeHooks {
     std::function<AwsCredentials()> resolve_aws_credentials;
+    std::function<std::unique_ptr<BoardVideoBridgeClient>(const std::string&)> create_bridge_client;
     std::function<std::unique_ptr<KvsSession>(const RuntimeConfig&, const AwsCredentials&)> create_kvs_session;
     std::function<std::unique_ptr<VideoCapturer>()> create_video_capturer;
 };

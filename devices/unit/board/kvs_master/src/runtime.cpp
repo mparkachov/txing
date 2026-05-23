@@ -8,16 +8,24 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <csignal>
+#include <cstdio>
+#include <cstdlib>
 #include <cstdint>
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <thread>
 
 namespace txing::board::kvs_master {
 namespace {
 
 std::atomic_bool g_stop_requested = false;
+constexpr auto kCredentialRefreshMargin = std::chrono::minutes(5);
+constexpr auto kCredentialRefreshMinDelay = std::chrono::seconds(30);
+constexpr auto kBridgeRetryInitialDelay = std::chrono::seconds(1);
+constexpr auto kBridgeRetryMaxDelay = std::chrono::seconds(30);
 
 extern "C" void OnSignal(int) {
     g_stop_requested.store(true);
@@ -63,11 +71,94 @@ std::uint64_t DefaultFrameDuration100ns(const CameraConfig& config) {
     return std::uint64_t(10'000'000) / framerate;
 }
 
+std::chrono::system_clock::time_point CredentialRefreshAt(
+    std::chrono::system_clock::time_point expires_at
+) {
+    const auto now = std::chrono::system_clock::now();
+    if (expires_at > now + kCredentialRefreshMargin + kCredentialRefreshMinDelay) {
+        return expires_at - kCredentialRefreshMargin;
+    }
+    return now + kCredentialRefreshMinDelay;
+}
+
+void TryReportVideoState(
+    BoardVideoBridgeClient* bridge_client,
+    BridgeVideoState state,
+    std::uint32_t viewer_count,
+    const std::string& error
+) noexcept {
+    if (bridge_client == nullptr) {
+        return;
+    }
+    try {
+        bridge_client->ReportVideoState(state, viewer_count, error);
+    } catch (const std::exception& report_error) {
+        std::fprintf(
+            stderr,
+            "WARN runtime: failed to report video state to board video bridge: %s\n",
+            report_error.what()
+        );
+    }
+}
+
+void SleepUntilStopped(std::chrono::milliseconds duration) {
+    const auto deadline = std::chrono::steady_clock::now() + duration;
+    while (!g_stop_requested.load() && std::chrono::steady_clock::now() < deadline) {
+        const auto remaining = deadline - std::chrono::steady_clock::now();
+        std::this_thread::sleep_for(std::min<std::chrono::milliseconds>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(remaining),
+            std::chrono::milliseconds(200)
+        ));
+    }
+}
+
+BridgeWorkerConfig GetWorkerConfigWithRetry(BoardVideoBridgeClient& bridge_client) {
+    auto delay = kBridgeRetryInitialDelay;
+    while (!g_stop_requested.load()) {
+        try {
+            return bridge_client.GetWorkerConfig(
+                "txing-board-kvs-master",
+                std::string(kTxingBoardKvsMasterVersion)
+            );
+        } catch (const std::exception& error) {
+            std::fprintf(
+                stderr,
+                "WARN runtime: board video bridge config unavailable: %s\n",
+                error.what()
+            );
+            SleepUntilStopped(std::chrono::duration_cast<std::chrono::milliseconds>(delay));
+            delay = std::min(delay * 2, kBridgeRetryMaxDelay);
+        }
+    }
+    throw std::runtime_error("stopped before board video bridge config was available");
+}
+
+void SetEnvironmentFlag(const char* name, bool enabled, const char* enabled_value) {
+#if defined(_WIN32)
+    _putenv_s(name, enabled ? enabled_value : "");
+#else
+    if (enabled) {
+        setenv(name, enabled_value, 1);
+    } else {
+        unsetenv(name);
+    }
+#endif
+}
+
+void ConfigureKvsNetworkEnvironment(const RuntimeConfig& config) {
+    SetEnvironmentFlag("KVS_DUALSTACK_ENDPOINTS", config.prefer_ipv6, "ON");
+    SetEnvironmentFlag("AWS_USE_DUALSTACK_ENDPOINT", config.prefer_ipv6, "true");
+    SetEnvironmentFlag("KVS_DISABLE_IPV4_TURN", config.disable_ipv4_turn, "ON");
+}
+
 }  // namespace
 
 RuntimeHooks DefaultRuntimeHooks() {
     RuntimeHooks hooks;
     hooks.resolve_aws_credentials = []() { return ResolveAwsCredentials(); };
+    hooks.create_bridge_client = [](const std::string& socket_path) {
+        return CreateBoardVideoBridgeClient(socket_path);
+    };
     hooks.create_kvs_session = [](
                                    const RuntimeConfig& config,
                                    const AwsCredentials& credentials
@@ -81,15 +172,34 @@ void Run(const RuntimeConfig& config) {
 }
 
 void Run(const RuntimeConfig& config, const RuntimeHooks& hooks) {
-    if (!hooks.resolve_aws_credentials || !hooks.create_kvs_session || !hooks.create_video_capturer) {
+    if (!hooks.resolve_aws_credentials || !hooks.create_bridge_client || !hooks.create_kvs_session || !hooks.create_video_capturer) {
         throw std::runtime_error("runtime hooks are incomplete");
     }
 
     g_stop_requested.store(false);
     InstallSignalHandlers();
 
-    const auto credentials = hooks.resolve_aws_credentials();
-    auto kvs_session = hooks.create_kvs_session(config, credentials);
+    RuntimeConfig effective_config = config;
+    std::unique_ptr<BoardVideoBridgeClient> bridge_client;
+    AwsCredentials credentials;
+    std::optional<std::chrono::system_clock::time_point> credential_refresh_at;
+    if (config.board_video_bridge_socket_path.has_value()) {
+        bridge_client = hooks.create_bridge_client(*config.board_video_bridge_socket_path);
+        if (bridge_client == nullptr) {
+            throw std::runtime_error("board video bridge client is not initialized");
+        }
+        auto worker_config = GetWorkerConfigWithRetry(*bridge_client);
+        worker_config.runtime_config.camera = config.camera;
+        worker_config.runtime_config.board_video_bridge_socket_path = config.board_video_bridge_socket_path;
+        effective_config = worker_config.runtime_config;
+        credentials = worker_config.credentials.credentials;
+        credential_refresh_at = CredentialRefreshAt(worker_config.credentials.expires_at);
+    } else {
+        credentials = hooks.resolve_aws_credentials();
+    }
+
+    ConfigureKvsNetworkEnvironment(effective_config);
+    auto kvs_session = hooks.create_kvs_session(effective_config, credentials);
     auto capturer = hooks.create_video_capturer();
 
     if (kvs_session == nullptr || capturer == nullptr) {
@@ -104,14 +214,41 @@ void Run(const RuntimeConfig& config, const RuntimeHooks& hooks) {
     const auto default_duration_100ns = DefaultFrameDuration100ns(config.camera);
 
     try {
+        TryReportVideoState(bridge_client.get(), BridgeVideoState::kStarting, 0, "");
         kvs_session->Start();
-        capturer->Configure(config.camera);
+        capturer->Configure(effective_config.camera);
         capturer->Start();
 
         while (!g_stop_requested.load()) {
             if (const auto fatal_error = kvs_session->TakeFatalError()) {
                 first_error = *fatal_error;
                 break;
+            }
+            if (
+                bridge_client != nullptr &&
+                credential_refresh_at.has_value() &&
+                std::chrono::system_clock::now() >= *credential_refresh_at
+            ) {
+                try {
+                    const auto refreshed = bridge_client->RefreshCredentials();
+                    credentials = refreshed.credentials;
+                    credential_refresh_at = CredentialRefreshAt(refreshed.expires_at);
+                    kvs_session->Stop();
+                    kvs_session = hooks.create_kvs_session(effective_config, credentials);
+                    if (kvs_session == nullptr) {
+                        throw std::runtime_error("KVS session is not initialized after credential refresh");
+                    }
+                    kvs_session->Start();
+                    ready_emitted = false;
+                    TryReportVideoState(bridge_client.get(), BridgeVideoState::kStarting, 0, "");
+                } catch (const std::exception& refresh_error) {
+                    std::fprintf(
+                        stderr,
+                        "WARN runtime: failed to refresh board video bridge credentials: %s\n",
+                        refresh_error.what()
+                    );
+                    credential_refresh_at = std::chrono::system_clock::now() + kCredentialRefreshMinDelay;
+                }
             }
 
             auto maybe_frame = capturer->GetFrame(100);
@@ -150,6 +287,7 @@ void Run(const RuntimeConfig& config, const RuntimeHooks& hooks) {
                     "TXING_KVS_READY",
                     {{"version", std::string(kTxingBoardKvsMasterVersion)}}
                 );
+                TryReportVideoState(bridge_client.get(), BridgeVideoState::kReady, 0, "");
                 ready_emitted = true;
             }
         }
@@ -161,6 +299,7 @@ void Run(const RuntimeConfig& config, const RuntimeHooks& hooks) {
     kvs_session->Stop();
 
     if (first_error) {
+        TryReportVideoState(bridge_client.get(), BridgeVideoState::kError, 0, *first_error);
         throw std::runtime_error(*first_error);
     }
 }

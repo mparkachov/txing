@@ -1,9 +1,9 @@
 # Board
 
 The board is the device-side Raspberry Pi. It is power-switched by the MCU,
-runs the root-owned Rust `txing-unit-daemon`, supervises the native
-`txing-board-kvs-master` process, publishes board-owned runtime state, and
-exposes board MCP for motion control.
+runs the root-owned Rust `txing-unit-daemon` and native
+`txing-board-kvs-master` systemd services, publishes board-owned runtime state,
+and exposes board MCP for motion control.
 
 ## Responsibilities
 
@@ -14,8 +14,8 @@ exposes board MCP for motion control.
 - publish retained MCP descriptor/status topics under
   `txings/<device_id>/mcp/*`
 - publish retained v2 capability state for `board`, `mcp`, and `video`
-- supervise the native KVS WebRTC worker as a child process
-- inject IoT role-alias temporary credentials into the native worker
+- serve the local BoardVideoBridge gRPC socket for native KVS worker config,
+  temporary credentials, video state, and MCP forwarding
 - subscribe to Sparkplug `DCMD.redcon` and halt locally on `redcon=4`
 - enforce MCP active-control ownership for actuator tools
 - stop motors on command silence, active-control expiry, session close,
@@ -77,21 +77,23 @@ Current video is headless AWS Kinesis Video Streams WebRTC:
 - worker binary: `txing-board-kvs-master`
 
 The native worker owns camera capture, H.264 encode, AWS KVS master behavior,
-WebRTC peer connections, and data-channel forwarding. The Rust daemon owns
-worker supervision, readiness interpretation, retained state publication, MCP
-business logic, and motor authority.
+WebRTC peer connections, and data-channel transport. The Rust daemon owns
+worker configuration, KVS temporary credentials, readiness interpretation,
+retained state publication, MCP business logic, and motor authority.
+
+The daemon and native worker communicate through the local
+BoardVideoBridge gRPC contract:
+[docs/contracts/board-video-bridge.md](../contracts/board-video-bridge.md).
+The proto source is
+`devices/unit/proto/txing/unit/board_video/v1/board_video.proto`.
 
 By default the daemon asks the native worker to use KVS dual-stack endpoints
 and IPv6-preferred TURN behavior. `TXING_KVS_DISABLE_IPV4_TURN=true` is a
 validation override, not the normal runtime setting.
 
-The daemon parses native worker markers:
-
-- `TXING_KVS_READY`
-- `TXING_VIEWER_CONNECTED`
-- `TXING_VIEWER_DISCONNECTED`
-- `TXING_KVS_ERROR`
-- MCP data-channel lifecycle markers
+The worker reports coarse state through `ReportVideoState`. `READY` means the
+worker is ready enough for the daemon to advertise WebRTC MCP transport; it is
+not a media-quality guarantee.
 
 The board video contract is documented in
 [devices/unit/docs/board-video.md](../../devices/unit/docs/board-video.md).
@@ -218,20 +220,19 @@ directory.
 Default runtime inputs include:
 
 - `AWS_REGION`
-- `TXING_CAPABILITIES`
-- `TXING_KVS_MASTER_COMMAND`
+- `TXING_DAEMON_CAPABILITIES`
+- `TXING_BOARD_VIDEO_BRIDGE_SOCKET_PATH`
 - `TXING_BOARD_VIDEO_CHANNEL_NAME`
-- `TXING_MCP_WEBRTC_SOCKET_PATH`
 - `TXING_KVS_PREFER_IPV6`
 - `TXING_KVS_DISABLE_IPV4_TURN`
 - `TXING_MOTOR_*`
 - CloudWatch log configuration
 
-The default video channel is `<thing_id>-board-video`. The default MCP WebRTC
-IPC socket path is `/run/txing-unit-daemon/mcp-webrtc.sock`.
-Existing boards with an older generated `daemon.env` must update
-`TXING_MCP_WEBRTC_SOCKET_PATH`; generated config files are not overwritten by
-binary upgrades.
+The default video channel is `<thing_id>-board-video`. The default bridge
+socket path is `/run/txing-unit-daemon/board-video-bridge.sock`. Existing
+boards with an older generated `daemon.env` must add
+`TXING_BOARD_VIDEO_BRIDGE_SOCKET_PATH`; generated config files are not
+overwritten by binary upgrades.
 
 ## Release Artifacts
 
@@ -301,6 +302,7 @@ apt install -y \
   curl jq \
   libssl-dev libcurl4-openssl-dev liblog4cplus-dev libsrtp2-dev \
   libusrsctp-dev libwebsockets-dev zlib1g-dev libcamera-dev \
+  libprotobuf-dev protobuf-compiler libgrpc++-dev protobuf-compiler-grpc \
   ca-certificates network-manager
 ```
 
@@ -397,7 +399,8 @@ ldd /root/.local/share/mise/installs/txing-board-kvs-master/latest/txing-board-k
 ldd /root/.local/share/mise/installs/txing-board-kvs-master/latest/txing-board-kvs-master | grep -F "libcamera-base.so.0.7"
 ```
 
-Write the root-owned systemd unit:
+Write the root-owned systemd units. The daemon owns the bridge socket; the KVS
+master connects to it as a separate service.
 
 ```bash
 cat >/etc/systemd/system/txing-unit-daemon.service <<'EOF'
@@ -419,13 +422,38 @@ RestartSec=5
 
 Environment=TXING_DAEMON_CONFIG_DIR=/root/.config/txing/unit-daemon
 Environment=HOME=/root
-Environment=TXING_KVS_MASTER_COMMAND=/root/.local/share/mise/installs/txing-board-kvs-master/latest/txing-board-kvs-master
 
 ExecStartPre=/usr/bin/test -x /root/.local/share/mise/installs/txing-unit-daemon/latest/txing-unit-daemon
-ExecStartPre=/usr/bin/test -x /root/.local/share/mise/installs/txing-board-kvs-master/latest/txing-board-kvs-master
 ExecStartPre=-/root/.local/share/mise/installs/txing-unit-daemon/latest/txing-unit-daemon --version
-ExecStartPre=-/root/.local/share/mise/installs/txing-board-kvs-master/latest/txing-board-kvs-master --version
 ExecStart=/root/.local/share/mise/installs/txing-unit-daemon/latest/txing-unit-daemon
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+cat >/etc/systemd/system/txing-board-kvs-master.service <<'EOF'
+[Unit]
+Description=Txing Board KVS Master
+Wants=network-online.target txing-unit-daemon.service
+After=network-online.target txing-unit-daemon.service
+StartLimitIntervalSec=10min
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=/root
+KillSignal=SIGINT
+TimeoutStartSec=180
+TimeoutStopSec=30
+Restart=on-failure
+RestartSec=5
+
+Environment=HOME=/root
+Environment=TXING_BOARD_VIDEO_BRIDGE_SOCKET_PATH=/run/txing-unit-daemon/board-video-bridge.sock
+
+ExecStartPre=/usr/bin/test -x /root/.local/share/mise/installs/txing-board-kvs-master/latest/txing-board-kvs-master
+ExecStartPre=-/root/.local/share/mise/installs/txing-board-kvs-master/latest/txing-board-kvs-master --version
+ExecStart=/root/.local/share/mise/installs/txing-board-kvs-master/latest/txing-board-kvs-master
 
 [Install]
 WantedBy=multi-user.target
@@ -437,14 +465,18 @@ if systemctl list-unit-files NetworkManager-wait-online.service --no-legend --no
 fi
 systemctl daemon-reload
 systemctl enable txing-unit-daemon.service
+systemctl enable txing-board-kvs-master.service
 systemctl restart txing-unit-daemon.service
+systemctl restart txing-board-kvs-master.service
 ```
 
 Verify:
 
 ```bash
 systemctl status --no-pager -l txing-unit-daemon.service
+systemctl status --no-pager -l txing-board-kvs-master.service
 journalctl -u txing-unit-daemon.service -n 160 --no-pager
+journalctl -u txing-board-kvs-master.service -n 160 --no-pager
 /root/.local/bin/mise list
 /root/.local/share/mise/installs/txing-unit-daemon/latest/txing-unit-daemon --version
 /root/.local/share/mise/installs/txing-board-kvs-master/latest/txing-board-kvs-master --version
@@ -453,10 +485,11 @@ journalctl -u txing-unit-daemon.service -n 160 --no-pager
 Expected:
 
 - the daemon log includes `version=<release-version>`
+- the daemon binds `/run/txing-unit-daemon/board-video-bridge.sock`
 - MQTT connects
 - retained `board`, dynamic `mcp`, and `video` state is published
-- the KVS master child reaches `TXING_KVS_READY` when camera and signaling are
-  available
+- the KVS master service reaches READY over the bridge when camera and
+  signaling are available
 - REDCON can reach `1` after Sparkplug projection sees fresh `board`, `mcp`,
   and `video` capability state
 
@@ -527,7 +560,9 @@ After reconnecting:
 
 ```bash
 systemctl status --no-pager -l txing-unit-daemon.service
-journalctl -u txing-unit-daemon.service -b -u txing-unit-daemon.service --no-pager
+systemctl status --no-pager -l txing-board-kvs-master.service
+journalctl -u txing-unit-daemon.service -b --no-pager
+journalctl -u txing-board-kvs-master.service -b --no-pager
 /root/.local/bin/mise list
 /root/.local/share/mise/installs/txing-unit-daemon/latest/txing-unit-daemon --version
 /root/.local/share/mise/installs/txing-board-kvs-master/latest/txing-board-kvs-master --version
@@ -537,7 +572,7 @@ Expected:
 
 - root filesystem is read-only
 - `txing-unit-daemon.service` starts without a source checkout
-- service start logs daemon and KVS master versions
+- `txing-board-kvs-master.service` starts without a source checkout
 - daemon log includes `version=<release-version>`
 - MQTT connects and retained board/MCP/video state is published
 
@@ -584,10 +619,11 @@ just unit::daemon::kvs-test-native
 ```
 
 `kvs-build-native` builds `txing-board-kvs-master` against the shared AWS KVS
-WebRTC SDK submodule under `devices/common/board/`. Initialize it with
+WebRTC SDK submodule under `devices/common/board/` and enables the
+BoardVideoBridge gRPC client on Linux. Initialize the SDK with
 `just unit::daemon::kvs-submodules` before the first native build. Third-party
-KVS dependencies come from distro packages, not from the SDK's bundled source
-builds.
+KVS, protobuf, and gRPC dependencies come from distro packages, not from the
+SDK's bundled source builds.
 
 Direct raw motor bring-up is no longer supported. Live motion testing goes
 through the Rust daemon MCP `cmd_vel` path, including the active-control lease
@@ -598,6 +634,7 @@ gate.
 - [Artifacts](../artifacts.md)
 - [Installation overview](../installation.md)
 - [Unit board video contract](../../devices/unit/docs/board-video.md)
+- [Board video bridge contract](../contracts/board-video-bridge.md)
 - [Unit thing shadow model](../../devices/unit/docs/thing-shadow.md)
 - [Unit device-rig shadow contract](../../devices/unit/docs/device-rig-shadow-spec.md)
 - [Sparkplug lifecycle](../sparkplug-lifecycle.md)

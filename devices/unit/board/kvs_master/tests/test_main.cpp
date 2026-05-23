@@ -215,6 +215,9 @@ RuntimeHooks HooksFrom(FakeKvsState* kvs_state, FakeCapturerState* capturer_stat
         credentials.session_token = std::nullopt;
         return credentials;
     };
+    hooks.create_bridge_client = [](const std::string&) -> std::unique_ptr<txing::board::kvs_master::BoardVideoBridgeClient> {
+        throw std::runtime_error("bridge client should not be created by this test");
+    };
     hooks.create_kvs_session = [kvs_state](
                                    const RuntimeConfig&,
                                    const AwsCredentials&
@@ -248,6 +251,12 @@ void TestCliParsing() {
             "board-master",
             "--mcp-webrtc-socket-path",
             "/tmp/txing_board_mcp_webrtc.sock",
+            "--board-video-bridge-socket-path",
+            "/tmp/txing_board_video_bridge.sock",
+            "--prefer-ipv6",
+            "false",
+            "--disable-ipv4-turn",
+            "true",
             "--width",
             "1280",
             "--height",
@@ -269,11 +278,46 @@ void TestCliParsing() {
         parsed.config.mcp_webrtc_socket_path == "/tmp/txing_board_mcp_webrtc.sock",
         "CLI should parse optional MCP WebRTC socket path"
     );
+    Expect(
+        parsed.config.board_video_bridge_socket_path == "/tmp/txing_board_video_bridge.sock",
+        "CLI should parse optional board video bridge socket path"
+    );
+    Expect(!parsed.config.prefer_ipv6, "CLI should parse prefer IPv6");
+    Expect(parsed.config.disable_ipv4_turn, "CLI should parse disable IPv4 TURN");
     Expect(parsed.config.camera.width == 1280, "CLI should parse width");
     Expect(parsed.config.camera.height == 720, "CLI should parse height");
     Expect(parsed.config.camera.framerate == 15, "CLI should parse framerate");
     Expect(parsed.config.camera.bitrate == 1'200'000, "CLI should parse bitrate");
     Expect(parsed.config.camera.intra == 15, "CLI should parse intra");
+}
+
+void TestBridgeCliDoesNotRequireStaticWorkerConfig() {
+    const auto parsed = ParseCli(
+        {
+            "txing-board-kvs-master",
+            "--board-video-bridge-socket-path",
+            "/tmp/txing_board_video_bridge.sock",
+        },
+        EnvFrom({})
+    );
+
+    Expect(
+        parsed.config.board_video_bridge_socket_path == "/tmp/txing_board_video_bridge.sock",
+        "bridge CLI should parse the bridge socket"
+    );
+    Expect(parsed.config.region.empty(), "bridge CLI should not require a static region");
+    Expect(parsed.config.channel_name.empty(), "bridge CLI should not require a static channel name");
+}
+
+void TestCliRequiresStaticWorkerConfigWithoutBridge() {
+    bool threw = false;
+    try {
+        ParseCli({"txing-board-kvs-master"}, EnvFrom({}));
+    } catch (const std::exception&) {
+        threw = true;
+    }
+
+    Expect(threw, "CLI should still require static worker config without bridge mode");
 }
 
 void TestUsageText() {
@@ -294,6 +338,10 @@ void TestUsageText() {
     Expect(
         usage.find("BOARD_MCP_WEBRTC_SOCKET_PATH") != std::string::npos,
         "usage text should document the optional MCP WebRTC socket path environment variable"
+    );
+    Expect(
+        usage.find("TXING_BOARD_VIDEO_BRIDGE_SOCKET_PATH") != std::string::npos,
+        "usage text should document the board video bridge socket path environment variable"
     );
     Expect(usage.find("--version") != std::string::npos, "usage text should document version output");
 }
@@ -464,6 +512,8 @@ void TestMarkerFormatting() {
 
 int main() {
     TestCliParsing();
+    TestBridgeCliDoesNotRequireStaticWorkerConfig();
+    TestCliRequiresStaticWorkerConfigWithoutBridge();
     TestUsageText();
     TestVersionParsing();
     TestCredentialResolution();
