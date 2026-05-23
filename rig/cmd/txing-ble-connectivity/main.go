@@ -220,15 +220,33 @@ func (s *runtimeState) reconcileInventory(ctx context.Context, inventory protoco
 			next[spec.ThingName] = *spec
 		}
 	}
-	s.mu.Lock()
-	s.specs = next
-	s.mu.Unlock()
+	refreshCandidates := s.updateInventorySpecs(next)
 	s.logger.Print(ctx, "info", fmt.Sprintf("BLE inventory reconciled devices=%d", len(next)))
 	if s.cfg.NoBLE {
 		for _, spec := range next {
 			s.publishSample(ctx, rigble.OfflineSample(spec, s.nextSeq(), uint64(time.Now().UnixMilli())), false, true)
 		}
+		return
 	}
+	for _, spec := range refreshCandidates {
+		if s.shouldBackgroundConnect(spec.ThingName) {
+			s.debugPrint(ctx, fmt.Sprintf("BLE background connect scheduled thing=%s reason=cached-address", spec.ThingName))
+			go s.connectAndPublishBackground(ctx, spec)
+		}
+	}
+}
+
+func (s *runtimeState) updateInventorySpecs(next map[string]rigble.DeviceSpec) []rigble.DeviceSpec {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.specs = next
+	refreshCandidates := make([]rigble.DeviceSpec, 0, len(next))
+	for thingName, spec := range next {
+		if _, ok := s.addresses[thingName]; ok {
+			refreshCandidates = append(refreshCandidates, spec)
+		}
+	}
+	return refreshCandidates
 }
 
 func (s *runtimeState) scanLoop(ctx context.Context) {
@@ -317,14 +335,12 @@ func (s *runtimeState) scan(ctx context.Context) error {
 			s.debugPrint(context.Background(), fmt.Sprintf("BLE scan ignored address=%s reason=missing-local-name serviceUUIDs=%v", result.Address.String(), scanServiceUUIDs(result)))
 			return
 		}
+		s.recordAdvertisementAddress(name, result.Address)
 		s.mu.Lock()
 		spec, ok := s.specs[name]
-		if ok {
-			s.addresses[name] = result.Address
-		}
 		s.mu.Unlock()
 		if !ok {
-			s.debugPrint(context.Background(), fmt.Sprintf("BLE scan ignored name=%q address=%s reason=unmanaged-target", name, result.Address.String()))
+			s.debugPrint(context.Background(), fmt.Sprintf("BLE scan ignored name=%q address=%s reason=unmanaged-target cachedAddress=true", name, result.Address.String()))
 			return
 		}
 		rssi := result.RSSI
@@ -358,6 +374,15 @@ func (s *runtimeState) scan(ctx context.Context) error {
 		return err
 	}
 	return nil
+}
+
+func (s *runtimeState) recordAdvertisementAddress(thingName string, address bluetooth.Address) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.addresses == nil {
+		s.addresses = map[string]bluetooth.Address{}
+	}
+	s.addresses[thingName] = address
 }
 
 func (s *runtimeState) connectAndPublishBackground(ctx context.Context, spec rigble.DeviceSpec) {

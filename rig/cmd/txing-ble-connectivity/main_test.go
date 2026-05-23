@@ -142,6 +142,32 @@ func TestScanRetryDecisionKeepsGenericBackoff(t *testing.T) {
 	}
 }
 
+func TestAdvertisementAddressCachedBeforeInventory(t *testing.T) {
+	state := &runtimeState{}
+	state.recordAdvertisementAddress("weather-1", bluetooth.Address{})
+
+	if _, ok := state.addresses["weather-1"]; !ok {
+		t.Fatal("pre-inventory advertisement address was not cached")
+	}
+}
+
+func TestInventoryReconcileRefreshCandidatesUseCachedAddresses(t *testing.T) {
+	state := &runtimeState{}
+	state.recordAdvertisementAddress("unit-1", bluetooth.Address{})
+
+	candidates := state.updateInventorySpecs(map[string]rigble.DeviceSpec{
+		"unit-1": {ThingName: "unit-1", Kind: rigble.DeviceKindPower},
+		"unit-2": {ThingName: "unit-2", Kind: rigble.DeviceKindPower},
+	})
+
+	if len(candidates) != 1 || candidates[0].ThingName != "unit-1" {
+		t.Fatalf("refresh candidates = %#v, want only unit-1", candidates)
+	}
+	if _, ok := state.specs["unit-2"]; !ok {
+		t.Fatal("inventory specs were not updated")
+	}
+}
+
 func TestAdvertisementCapabilityStateSuppressedAfterRecentPowerStateRead(t *testing.T) {
 	state := &runtimeState{}
 	spec := rigble.DeviceSpec{ThingName: "unit-1", Kind: rigble.DeviceKindPower}
