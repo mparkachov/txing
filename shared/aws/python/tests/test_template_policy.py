@@ -292,14 +292,16 @@ class AwsTemplatePolicyTests(unittest.TestCase):
             'video_channel_name="${TXING_BOARD_VIDEO_CHANNEL_NAME:-${thing_id}-board-video}"',
             aws_lib,
         )
-        self.assertIn("export TXING_BOARD_VIDEO_CHANNEL_NAME={{TXING_BOARD_VIDEO_CHANNEL_NAME}}", daemon_env_template)
+        self.assertIn("TXING_BOARD_VIDEO_CHANNEL_NAME={{TXING_BOARD_VIDEO_CHANNEL_NAME}}", daemon_env_template)
         self.assertIn(
-            "export TXING_HARDWARE_WORKER_SOCKET_PATH=/run/"
+            "TXING_HARDWARE_WORKER_SOCKET_PATH=/run/"
             "txing-unit-hardware-worker/unit-hardware.sock",
             daemon_env_template,
         )
-        self.assertIn("export TXING_HARDWARE_WORKER_TIMEOUT_MS=700", daemon_env_template)
-        self.assertIn("export AWS_REGION={{AWS_REGION}}", daemon_env_template)
+        self.assertIn("TXING_HARDWARE_WORKER_TIMEOUT_MS=700", daemon_env_template)
+        self.assertIn("AWS_REGION={{AWS_REGION}}", daemon_env_template)
+        self.assertNotIn("export TXING_", daemon_env_template)
+        self.assertNotIn("export AWS_REGION", daemon_env_template)
         self.assertNotIn("AWS_DEFAULT_REGION", daemon_env_template)
         self.assertNotIn("TXING_BOARD_VIDEO_REGION", daemon_env_template)
         daemon_env_values = _parse_env_template_exports(daemon_env_template)
@@ -355,8 +357,8 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertTrue(math.isfinite(max_wheel_linear_speed_mps))
         self.assertGreater(max_wheel_linear_speed_mps, 0.0)
         self.assertGreater(watchdog_timeout_ms, 0)
-        self.assertNotIn("export BOARD_DRIVE_", daemon_env_template)
-        self.assertNotIn("export BOARD_VIDEO_", daemon_env_template)
+        self.assertNotIn("\nBOARD_DRIVE_", "\n" + daemon_env_template)
+        self.assertNotIn("\nBOARD_VIDEO_", "\n" + daemon_env_template)
         self.assertNotIn("AWS_STACK_NAME", daemon_justfile)
         self.assertNotIn("DeviceDaemonCredentialRoleAlias", daemon_justfile)
 

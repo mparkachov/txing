@@ -246,10 +246,12 @@ Deployed boards use root-owned config:
 /root/.config/txing/unit-daemon/public.pem.key
 ```
 
-`daemon.env` is sourceable and rendered from
-`devices/unit/daemon/daemon.env.template`. Certificate paths are omitted by
-default; the daemon derives colocated paths from the loaded `daemon.env`
-directory.
+`daemon.env` is a systemd-compatible environment file rendered from
+`devices/unit/daemon/daemon.env.template`. It uses plain `KEY=value` lines so
+both `txing-unit-hardware-worker.service` and the daemon can consume the same
+root-owned file. Certificate paths are omitted by default; the daemon derives
+colocated paths from the loaded `daemon.env` directory. For manual shell export,
+use `set -a; . /root/.config/txing/unit-daemon/daemon.env; set +a`.
 
 Default runtime inputs include:
 
@@ -266,7 +268,8 @@ Default runtime inputs include:
 
 The default video channel is `<thing_id>-board-video`. The default bridge
 socket path is `/run/txing-unit-daemon/board-video-bridge.sock`. Existing
-boards with an older generated `daemon.env` must add
+boards with an older generated `daemon.env` must remove leading `export `
+prefixes for systemd `EnvironmentFile=` compatibility and add
 `TXING_BOARD_VIDEO_BRIDGE_SOCKET_PATH`,
 `TXING_HARDWARE_WORKER_SOCKET_PATH`, and
 `TXING_HARDWARE_WORKER_TIMEOUT_MS`; generated config files are not overwritten

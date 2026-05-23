@@ -98,6 +98,18 @@ if(TXING_HARDWARE_WORKER_GRPC)
   )
   add_dependencies(txing-unit-hardware-worker txing_unit_hardware_proto)
   install(TARGETS txing-unit-hardware-worker RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+
+  if(BUILD_TESTING)
+    add_test(
+      NAME txing-unit-hardware-worker-version
+      COMMAND txing-unit-hardware-worker --version
+    )
+    set_tests_properties(
+      txing-unit-hardware-worker-version
+      PROPERTIES
+        PASS_REGULAR_EXPRESSION "^txing-unit-hardware-worker [0-9]+\\.[0-9]+\\.[0-9]+"
+    )
+  endif()
 endif()
 
 if(BUILD_TESTING)

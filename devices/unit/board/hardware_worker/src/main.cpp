@@ -159,7 +159,9 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (parsed.show_version) {
-            std::cout << hw::kTxingUnitHardwareWorkerVersion << "\n";
+            std::cout << "txing-unit-hardware-worker "
+                      << hw::kTxingUnitHardwareWorkerVersion
+                      << "\n";
             return 0;
         }
 

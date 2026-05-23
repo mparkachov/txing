@@ -189,7 +189,7 @@ The Rust unit daemon loads its default config from
 and expects certificate files in the same directory unless explicit certificate
 path overrides are supplied. Provision that directory with
 `just aws::cert <thing-id>` only when AWS resource changes are
-intended; the recipe renders sourceable `daemon.env` content from
+intended; the recipe renders systemd-compatible `daemon.env` content from
 `devices/unit/daemon/daemon.env.template` and refuses to overwrite existing
 daemon env or certificate material.
 

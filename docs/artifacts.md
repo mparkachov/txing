@@ -116,7 +116,7 @@ The root-owned runtime layout is:
 /etc/systemd/system/txing-unit-hardware-worker.service
 ```
 
-The `daemon.env` file is sourceable and rendered from
+The `daemon.env` file is a systemd-compatible environment file rendered from
 `devices/unit/daemon/daemon.env.template`. It contains daemon-owned `TXING_*`
 runtime defaults for video, capabilities, CloudWatch, hardware-worker socket
 configuration, and motor control. The daemon consumes the daemon/cloud/video

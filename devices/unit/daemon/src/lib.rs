@@ -4512,12 +4512,9 @@ pub fn parse_env_file_contents(contents: &str) -> Result<BTreeMap<String, String
     let mut values = BTreeMap::new();
     for (index, raw_line) in contents.lines().enumerate() {
         let line_number = index + 1;
-        let mut line = raw_line.trim();
+        let line = raw_line.trim();
         if line.is_empty() || line.starts_with('#') {
             continue;
-        }
-        if let Some(without_export) = line.strip_prefix("export ") {
-            line = without_export.trim_start();
         }
         let Some((key, value)) = line.split_once('=') else {
             bail!("invalid daemon env line {line_number}: expected KEY=VALUE");
@@ -6288,7 +6285,7 @@ mod tests {
         let parsed = parse_env_file_contents(
             r#"
             # comment
-            export TXING_THING_ID=unit-local
+            TXING_THING_ID=unit-local
             AWS_REGION="eu-central-1"
             TXING_IOT_ROLE_ALIAS='alias-name'
             EMPTY=
@@ -6309,6 +6306,7 @@ mod tests {
             Some("alias-name")
         );
         assert_eq!(parsed.get("EMPTY").map(String::as_str), Some(""));
+        assert!(parse_env_file_contents("export TXING_THING_ID=unit-local").is_err());
         assert!(parse_env_file_contents("$(echo bad)").is_err());
     }
 
@@ -6321,35 +6319,35 @@ mod tests {
                 .get(key)
                 .unwrap_or_else(|| panic!("missing daemon env template key {key}"))
         };
-        assert!(template.contains("export TXING_DAEMON_CAPABILITIES=board,mcp,video"));
+        assert!(template.contains("TXING_DAEMON_CAPABILITIES=board,mcp,video"));
+        assert!(!template.contains("export TXING_"));
+        assert!(!template.contains("export AWS_REGION"));
         assert!(template.contains(&format!(
-            "export TXING_CAPABILITY_TTL_SECONDS={DEFAULT_CAPABILITY_TTL_SECONDS}"
+            "TXING_CAPABILITY_TTL_SECONDS={DEFAULT_CAPABILITY_TTL_SECONDS}"
         )));
         assert!(template.contains(&format!(
-            "export TXING_HEARTBEAT_SECONDS={DEFAULT_HEARTBEAT_SECONDS}"
+            "TXING_HEARTBEAT_SECONDS={DEFAULT_HEARTBEAT_SECONDS}"
         )));
         assert!(template.contains(&format!(
-            "export TXING_BOARD_VIDEO_BRIDGE_SOCKET_PATH={DEFAULT_BOARD_VIDEO_BRIDGE_SOCKET_PATH}"
+            "TXING_BOARD_VIDEO_BRIDGE_SOCKET_PATH={DEFAULT_BOARD_VIDEO_BRIDGE_SOCKET_PATH}"
         )));
         assert!(template.contains(&format!(
-            "export TXING_HARDWARE_WORKER_SOCKET_PATH={DEFAULT_HARDWARE_WORKER_SOCKET_PATH}"
+            "TXING_HARDWARE_WORKER_SOCKET_PATH={DEFAULT_HARDWARE_WORKER_SOCKET_PATH}"
         )));
         assert!(template.contains(&format!(
-            "export TXING_HARDWARE_WORKER_TIMEOUT_MS={DEFAULT_HARDWARE_WORKER_TIMEOUT_MS}"
+            "TXING_HARDWARE_WORKER_TIMEOUT_MS={DEFAULT_HARDWARE_WORKER_TIMEOUT_MS}"
         )));
         assert!(!template.contains("TXING_KVS_MASTER_COMMAND"));
         assert!(!template.contains("TXING_MCP_WEBRTC_SOCKET_PATH"));
         assert_eq!(get("TXING_KVS_PREFER_IPV6"), "true");
         assert_eq!(get("TXING_KVS_DISABLE_IPV4_TURN"), "false");
         assert!(
-            template.contains(
-                "export TXING_BOARD_VIDEO_CHANNEL_NAME={{TXING_BOARD_VIDEO_CHANNEL_NAME}}"
-            )
+            template.contains("TXING_BOARD_VIDEO_CHANNEL_NAME={{TXING_BOARD_VIDEO_CHANNEL_NAME}}")
         );
         assert!(!template.contains("AWS_DEFAULT_REGION"));
         assert!(!template.contains("TXING_BOARD_VIDEO_REGION"));
-        assert!(!template.contains("export BOARD_DRIVE_"));
-        assert!(!template.contains("export BOARD_VIDEO_"));
+        assert!(!template.contains("\nBOARD_DRIVE_"));
+        assert!(!template.contains("\nBOARD_VIDEO_"));
         assert_eq!(get("TXING_MOTOR_ENABLED"), "true");
         assert_eq!(get("TXING_MOTOR_PWM_SYSFS_ROOT"), "/sys/class/pwm");
         assert_eq!(get("TXING_MOTOR_WATCHDOG_TIMEOUT_MS"), "5000");
@@ -6362,7 +6360,7 @@ mod tests {
         fs::create_dir_all(&config_dir).unwrap();
         fs::write(
             &env_file,
-            "export TXING_THING_ID=unit-local\nexport AWS_REGION=eu-central-1\n",
+            "TXING_THING_ID=unit-local\nAWS_REGION=eu-central-1\n",
         )
         .unwrap();
 
