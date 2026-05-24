@@ -3,7 +3,7 @@ id: doc-7
 title: 'Constraints: MCU stock Zephyr shared stack'
 type: guide
 created_date: '2026-05-24 13:20'
-updated_date: '2026-05-24 13:20'
+updated_date: '2026-05-24 18:48'
 ---
 # Constraints: MCU Stock Zephyr Shared Stack
 
@@ -14,15 +14,16 @@ updated_date: '2026-05-24 13:20'
 - Device-specific behavior remains in local `src/main.c`, `zephyr/prj.conf`, Kconfig, and devicetree overlays.
 
 ## Command Rules
-- Builds stay device-owned through `just <device>::mcu::build` and `check`.
+- Builds stay device-owned through `just <device>::mcu::build`.
 - Shared setup and hardware programming commands use root `mcu` recipes.
+- `mcu::check` is the shared non-flashing preflight for host tools, the stock Zephyr workspace, Seeed OpenOCD config, shared board config, and NVE script.
 - `mcu::flash <device-type>` must use an existing built firmware HEX and must not build implicitly.
 - NVE commands are shared because the TXR1 layout and address `0x000f0000` are common.
 - Just recipe arguments remain positional.
 
 ## Safety Rules
 - Agents must not run firmware or NVE flashing commands.
-- Agents may run build/check/path commands and `check-flash` / `check-nve` recipes that print commands without programming hardware.
+- Agents may run build and `mcu::check` commands, but must not run `mcu::flash` or `mcu::nve`.
 - Host tools remain manual prerequisites: `git`, `python3`, `cmake`, `ninja`, `dtc`, `arm-none-eabi-gcc`, and `openocd`.
 - Repository shell and just code must stay POSIX `sh` compatible.
 

@@ -3,7 +3,7 @@ id: doc-11
 title: 'Milestone: MCU NCS cleanup'
 type: guide
 created_date: '2026-05-24 13:20'
-updated_date: '2026-05-24 13:21'
+updated_date: '2026-05-24 18:48'
 ---
 # Milestone: MCU NCS Cleanup
 
@@ -31,8 +31,7 @@ After all active MCU targets build and validate on the shared stock Zephyr stack
 
 ## Validation
 - `just power::mcu::build`, `just weather::mcu::build`, and `just unit::mcu::build` all pass on the shared stock Zephyr stack.
-- `just mcu::check-flash power`, `weather`, and `unit` all print valid firmware commands.
-- `just mcu::check-nve power-test`, `weather-test`, and `unit-test` all print valid NVE commands.
+- `just mcu::check` passes as the shared non-flashing preflight for host tools, the stock Zephyr workspace, Seeed OpenOCD config, shared board config, and NVE script.
 - Source/doc searches show no active NCS command path remains for active MCU builds.
 - Device-specific MCU directories contain only source/config/tooling that remains part of the active stock Zephyr flow.
 

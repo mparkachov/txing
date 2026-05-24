@@ -1,7 +1,7 @@
 # Spec-driven development workflow
 
 This repo uses a milestone-oriented, spec-driven workflow. The goal is to make
-architecture, constraints, milestones, and implementation tasks explicit before
+architecture, constraints, one milestone, and implementation tasks explicit before
 code changes begin.
 
 ## Planning flow
@@ -11,13 +11,13 @@ code changes begin.
    implementation during architecture planning.
 2. Refine the plan into a design document. Capture intended behavior, ownership
    boundaries, alternatives considered, operational impact, and rollout notes.
-3. Create milestone documents. Each milestone should describe one outcome, scope
-   boundaries, dependencies, validation, and exit criteria.
+3. Create one milestone document for the approved plan. It should describe one
+   outcome, scope boundaries, dependencies, validation, and exit criteria.
 4. Create or update a constraints/rules document. Keep durable constraints,
    terminology, safety rules, and cross-cutting decisions there instead of
    burying them in tasks.
-5. End Plan Mode by materializing the plan into Backlog.md milestone docs and
-   milestone tasks, then stop.
+5. End Plan Mode by materializing the plan into one Backlog.md milestone doc
+   and implementation-step tasks under that milestone, then stop.
 6. `/goal <one milestone>`: execute exactly one milestone at a time. Stay within
    the selected milestone and do not continue into later milestones without the
    user's explicit instruction.
@@ -44,10 +44,11 @@ When the user approves the architecture/design direction, presses Implement, or
 otherwise approves a plan:
 
 - Create or update the architecture/design doc.
-- Create one Backlog.md milestone doc per planned milestone.
-- Create one separate goal-oriented Backlog.md task per milestone. If the
-  milestone is too large for one reviewable change, also create smaller child or
-  follow-up implementation tasks under that milestone.
+- Create exactly one Backlog.md milestone doc for the approved plan.
+- Create separate goal-oriented Backlog.md tasks under that milestone for the
+  plan's implementation steps. If an implementation step is too large for one
+  reviewable change, split it into smaller follow-up tasks under the same
+  milestone.
 - Assign tasks to their milestone with `-m` where the CLI supports it.
 - Make each task atomic and verifiable.
 - Use outcome-based acceptance criteria. Avoid criteria that merely name a
@@ -58,7 +59,7 @@ otherwise approves a plan:
   are added only after a task is selected for execution.
 - If ambiguity remains, ask for clarification instead of creating speculative
   tasks.
-- After creating the docs and tasks, report the milestone docs and task IDs,
+- After creating the doc and tasks, report the milestone doc and task IDs,
   then stop. Do not start code changes from the Plan Mode Implement action.
 
 ## Goal-to-implementation gate

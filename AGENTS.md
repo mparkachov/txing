@@ -16,7 +16,7 @@ Keep it short: durable technical details live in focused docs and subproject
 
 ## Repository map
 
-- `devices/unit/mcu/`: NCS/Zephyr C firmware for the current `unit` device type
+- `devices/unit/mcu/`: stock Zephyr C firmware for the current `unit` device type
   MCU.
 - `rig/`: Raspberry Pi 5 rig runtime for AWS IoT MQTT and BLE communication.
 - `devices/unit/board/`: native board-side KVS worker sources for unit video.
@@ -54,8 +54,9 @@ unless a shared contract or consistency issue requires coordinated updates.
   code during architecture planning.
 - Plan Mode must end with durable planning output, not implementation. When the
   user leaves Plan Mode, presses Implement, or otherwise approves a plan, create
-  or update milestone docs and create separate goal-oriented Backlog.md tasks
-  for the planned milestones, then stop.
+  or update one Backlog.md milestone doc for the approved plan and create
+  separate goal-oriented Backlog.md tasks for the plan's implementation steps
+  under that single milestone, then stop.
 - Tasks must describe outcomes and acceptance criteria, not implementation
   steps. If meaningful ambiguity remains, ask for clarification instead of
   creating speculative tasks.

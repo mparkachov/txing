@@ -3,7 +3,7 @@ id: doc-6
 title: MCU stock Zephyr shared stack migration
 type: specification
 created_date: '2026-05-24 13:20'
-updated_date: '2026-05-24 13:20'
+updated_date: '2026-05-24 18:48'
 ---
 # MCU Stock Zephyr Shared Stack Migration
 
@@ -13,24 +13,19 @@ Move the active XIAO nRF54L15 MCU firmware targets (`power`, `weather`, and `uni
 TASK-12 is the baseline: the power MCU has already validated stock Zephyr v4.4.0 with the stock `xiao_nrf54l15/nrf54l15/cpuapp` board, the shared REDCON implementation, the existing NVE format, and direct OpenOCD flash commands.
 
 ## Current State
-- `power` builds on stock Zephyr v4.4.0 from a per-device workspace under `devices/power/mcu/.zephyr-workspace`.
-- `unit` and `weather` still build through the shared NCS helper and the `modules/nrfconnect/sdk-nrf` submodule.
-- `devices/common/mcu/xiao_nrf54l15` already owns shared REDCON source, headers, Kconfig, and the NVE writer.
-- Planning builds showed that `unit` and `weather` compile on stock Zephyr after removing only the NCS-only `CONFIG_NCS_BOOT_BANNER=n` config line.
+- `power`, `weather`, and `unit` build on stock Zephyr v4.4.0 from the shared workspace under `devices/common/mcu/zephyr`.
+- `devices/common/mcu/xiao_nrf54l15` owns shared REDCON source, headers, Kconfig, board defaults, and the NVE writer.
+- The obsolete NCS helper, generated NCS workspace, and `modules/nrfconnect/sdk-nrf` submodule are retired by the MCU NCS cleanup milestone.
 
 ## Intended Command Contract
 Shared setup and hardware command surfaces move to root `mcu` recipes:
 
 ```sh
 just mcu::install
-just mcu::paths
-just mcu::check-flash power
-just mcu::check-flash weather
-just mcu::check-flash unit
+just mcu::check
 just mcu::flash power
 just mcu::flash weather
 just mcu::flash unit
-just mcu::check-nve <thing-name>
 just mcu::nve <thing-name>
 ```
 
@@ -58,4 +53,4 @@ just unit::mcu::build
 - No local Seeed board fork unless a later explicit milestone proves stock board support is insufficient.
 
 ## Validation Strategy
-Each milestone must end with local build validation and printed OpenOCD flash/NVE commands. Physical firmware and NVE flashing remain manual user actions. Manual hardware validation records BLE identity, REDCON service behavior, battery reporting, and device-specific behavior before the next milestone starts.
+Each milestone must end with local build validation and `just mcu::check` preflight validation. Physical firmware and NVE flashing remain manual user actions. Manual hardware validation records BLE identity, REDCON service behavior, battery reporting, and device-specific behavior before the next milestone starts.

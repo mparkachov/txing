@@ -32,11 +32,11 @@ infrastructure, or configuration changes directly from the chat plan.
 In this repository, the Plan Mode Implement action is a planning closeout
 signal. It means:
 1. create or update the architecture/design doc
-2. create one Backlog.md milestone doc per planned milestone
-3. create one separate goal-oriented Backlog.md task per milestone, plus smaller
-   child or follow-up implementation tasks when a milestone is too large for one
-   reviewable change
-4. report the milestone docs and task IDs
+2. create exactly one Backlog.md milestone doc for the approved plan
+3. create separate goal-oriented Backlog.md tasks under that milestone for the
+   plan's implementation steps, including smaller follow-up tasks when needed
+   to keep work reviewable
+4. report the milestone doc and task IDs
 5. stop without changing code
 
 Implementation may begin only after the user invokes `/goal <milestone>` or
